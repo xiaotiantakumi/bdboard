@@ -10,6 +10,7 @@ import {
   fetchStatus,
   fetchSyncHealth,
   type BoardCardDto,
+  type Lane,
   type PendingDecisionDto,
   type PrBadgeDto,
   type ProjectDto,
@@ -56,6 +57,7 @@ import {
   validatePriorityCeiling,
   priorityCeilingValue,
   validateIssueTypeArray,
+  validateLaneArray,
   validateBoardFilterPresets,
   type BoardFilterPreset,
   type BoardFilterPresetState,
@@ -104,6 +106,11 @@ export function App() {
     UI_STORAGE_KEYS.stalledOnly,
     false,
     validateBoolean,
+  );
+  const [collapsedLanes, setCollapsedLanes] = usePersistedState(
+    UI_STORAGE_KEYS.collapsedLanes,
+    [],
+    validateLaneArray,
   );
   const [boardPriorityCeiling, setBoardPriorityCeiling] = usePersistedState(
     UI_STORAGE_KEYS.boardPriorityCeiling,
@@ -256,6 +263,20 @@ export function App() {
     }
     return map;
   }, [prLinksQuery.data]);
+
+  const collapsedLanesSet = useMemo(
+    () => new Set<Lane>(collapsedLanes),
+    [collapsedLanes],
+  );
+
+  const handleToggleLaneCollapse = useCallback(
+    (lane: Lane) => {
+      setCollapsedLanes((prev) =>
+        prev.includes(lane) ? prev.filter((item) => item !== lane) : [...prev, lane],
+      );
+    },
+    [setCollapsedLanes],
+  );
 
   const boardFilter = useMemo(
     () => ({
@@ -815,6 +836,8 @@ export function App() {
               prLinksById={prLinksById}
               sectionKey={`merged-${selectedProjectIdsJoined}`}
               onCardClick={handleSelectTicket}
+              collapsedLanes={collapsedLanesSet}
+              onToggleLaneCollapse={handleToggleLaneCollapse}
             />
           )
         )}
@@ -830,6 +853,8 @@ export function App() {
             onCardClick={handleSelectTicket}
             onSessionBadgeClick={handleOpenSessionList}
             syncHealthByProject={syncHealthByProject}
+            collapsedLanes={collapsedLanesSet}
+            onToggleLaneCollapse={handleToggleLaneCollapse}
           />
         )}
         {boardQuery.data !== undefined && view === 'next' && boardQuery.data.merged !== null && (

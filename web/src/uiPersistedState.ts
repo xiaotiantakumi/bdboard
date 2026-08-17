@@ -1,4 +1,4 @@
-import type { BoardMode } from './api';
+import { LANES, type BoardMode, type Lane } from './api';
 
 export type ViewMode =
   | 'merged'
@@ -28,6 +28,7 @@ export const UI_STORAGE_KEYS = {
   lastChatProjectId: 'bdboard.ui.lastChatProjectId',
   selectedProjectIds: 'bdboard.ui.selectedProjectIds',
   hideDone: 'bdboard.ui.hideDone',
+  collapsedLanes: 'bdboard.ui.collapsedLanes',
   stalledOnly: 'bdboard.ui.stalledOnly',
   nextUpLimit: 'bdboard.ui.nextUpLimit',
   activityWindowDays: 'bdboard.ui.activityWindowDays',
@@ -81,6 +82,20 @@ export function validateIssueTypeArray(value: unknown): string[] | null {
     return null;
   }
   return value;
+}
+
+export function validateLaneArray(value: unknown): Lane[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  if (!value.every((item) => typeof item === 'string')) {
+    return null;
+  }
+  const allowed = new Set<string>(LANES);
+  if (!value.every((item) => allowed.has(item))) {
+    return null;
+  }
+  return value as Lane[];
 }
 
 
