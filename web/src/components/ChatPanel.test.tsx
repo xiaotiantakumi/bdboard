@@ -4528,4 +4528,64 @@ describe('ChatPanel', () => {
       expect(screen.getByLabelText('チャットエージェント')).toHaveValue('example-agent');
     });
   });
+
+  describe('quick commands', () => {
+    it('renders quick command chips above the message input', () => {
+      renderChatPanel([PROJECT_A], { leaveSettingsCollapsed: true });
+      expect(screen.getByRole('group', { name: 'クイックコマンド' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'ready一覧を入力欄に挿入' }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'チケット相談を入力欄に挿入' })).toBeInTheDocument();
+    });
+
+    it('prefills the input (without sending) when a quick command chip is tapped', async () => {
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A], { leaveSettingsCollapsed: true });
+      await user.click(screen.getByRole('button', { name: 'ready一覧を入力欄に挿入' }));
+
+      const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+      const expected = '着手可能(ready)なチケットを一覧し、優先度が高い順に要約してください。';
+      expect(textarea).toHaveValue(expected);
+      await waitFor(() => {
+        expect(textarea.selectionStart).toBe(expected.length);
+        expect(textarea.selectionEnd).toBe(expected.length);
+      });
+      // 誤タップでそのまま送信されないことを確認する(bdboard-3tw.133)。
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(0);
+    });
+
+    it('prefills the input when the free-text quick command chip is tapped', async () => {
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A], { leaveSettingsCollapsed: true });
+      await user.click(screen.getByRole('button', { name: 'チケット相談を入力欄に挿入' }));
+
+      const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+      expect(textarea).toHaveValue('次のチケットについて: ');
+      await waitFor(() => {
+        expect(textarea.selectionStart).toBe('次のチケットについて: '.length);
+        expect(textarea.selectionEnd).toBe('次のチケットについて: '.length);
+      });
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(0);
+    });
+
+    it('disables quick command chips while sending', async () => {
+      const user = userEvent.setup();
+      const deferred = createDeferred<Response>();
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message' && init?.method === 'POST') {
+          return deferred.promise;
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A], { leaveSettingsCollapsed: true });
+      await user.type(screen.getByLabelText('メッセージ'), 'hold');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      expect(
+        screen.getByRole('button', { name: 'ready一覧を入力欄に挿入' }),
+      ).toBeDisabled();
+    });
+  });
 });
