@@ -62,7 +62,10 @@ export function diffBoardNotificationSnapshots(
   }
 
   for (const ticketId of next.decisionPendingTicketIds) {
-    if (!prev.decisionPendingTicketIds.has(ticketId)) {
+    if (
+      !prev.decisionPendingTicketIds.has(ticketId) &&
+      prev.knownTicketIds.has(ticketId)
+    ) {
       events.push({ kind: 'decision_pending', ticketId });
     }
   }

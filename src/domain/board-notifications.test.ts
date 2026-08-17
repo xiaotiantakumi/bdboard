@@ -144,20 +144,37 @@ describe('diffBoardNotificationSnapshots', () => {
     ]);
   });
 
-  it('emits decision_pending only for ids newly present in next.decisionPendingTicketIds', () => {
+  it('emits decision_pending only for ids newly present in next.decisionPendingTicketIds that were already known', () => {
     const prev: BoardNotificationSnapshot = {
       readyTicketIds: new Set(),
       decisionPendingTicketIds: new Set(['bdboard-a']),
-      knownTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
     };
     const next: BoardNotificationSnapshot = {
       readyTicketIds: new Set(),
       decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-      knownTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
     };
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
       { kind: 'decision_pending', ticketId: 'bdboard-b' },
+    ]);
+  });
+
+  it('does not emit decision_pending for a newly appeared ticket id even when gated', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(),
+      decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'decision_pending', ticketId: 'bdboard-a' },
     ]);
   });
 
