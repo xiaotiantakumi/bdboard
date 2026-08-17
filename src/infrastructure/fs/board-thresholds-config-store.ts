@@ -5,21 +5,43 @@ import type {
   BoardThresholdsConfigPort,
 } from '../../application/ports/board-thresholds-config.js';
 
+type MutableBoardThresholdsConfig = {
+  -readonly [K in keyof BoardThresholdsConfig]?: BoardThresholdsConfig[K];
+};
+
 const THRESHOLD_KEYS = [
   'stalledAfterMs',
   'livenessActiveMs',
   'livenessIdleMs',
   'livenessStaleMs',
+  'inProgressWipLimit',
 ] as const satisfies readonly (keyof BoardThresholdsConfig)[];
+
+const RECORD_KEYS = ['inProgressWipLimitByProject'] as const satisfies readonly (keyof BoardThresholdsConfig)[];
 
 function isValidThresholdValue(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0;
 }
 
+function isValidProjectWipLimitMap(value: unknown): value is Record<string, number> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  for (const [key, limit] of Object.entries(value)) {
+    if (typeof key !== 'string' || key.trim() === '') {
+      return false;
+    }
+    if (!isValidThresholdValue(limit)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function parseConfig(value: unknown): BoardThresholdsConfig | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const record = value as Record<string, unknown>;
-  const config: Partial<Record<keyof BoardThresholdsConfig, number>> = {};
+  const config: MutableBoardThresholdsConfig = {};
   let hasAny = false;
 
   for (const key of THRESHOLD_KEYS) {
@@ -28,6 +50,19 @@ function parseConfig(value: unknown): BoardThresholdsConfig | undefined {
       continue;
     }
     if (!isValidThresholdValue(raw)) {
+      console.warn(`bdboard: ignoring invalid board-thresholds key ${key} in config`);
+      continue;
+    }
+    config[key] = raw;
+    hasAny = true;
+  }
+
+  for (const key of RECORD_KEYS) {
+    const raw = record[key];
+    if (raw === undefined) {
+      continue;
+    }
+    if (!isValidProjectWipLimitMap(raw)) {
       console.warn(`bdboard: ignoring invalid board-thresholds key ${key} in config`);
       continue;
     }

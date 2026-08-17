@@ -485,12 +485,16 @@ export interface BoardThresholdsConfigDto {
   livenessActiveMs: number;
   livenessIdleMs: number;
   livenessStaleMs: number;
+  inProgressWipLimit: number | null;
+  inProgressWipLimitByProject: Record<string, number>;
   version: string;
   defaults: {
     stalledAfterMs: number;
     livenessActiveMs: number;
     livenessIdleMs: number;
     livenessStaleMs: number;
+    inProgressWipLimit: number | null;
+    inProgressWipLimitByProject: Record<string, number>;
   };
 }
 
@@ -503,6 +507,8 @@ export function putBoardThresholdsConfig(config: {
   livenessActiveMs?: number;
   livenessIdleMs?: number;
   livenessStaleMs?: number;
+  inProgressWipLimit?: number | null;
+  inProgressWipLimitByProject?: Record<string, number>;
   version: string;
 }): Promise<BoardThresholdsConfigDto> {
   return fetchJson<BoardThresholdsConfigDto>('/api/settings/board-thresholds', {

@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 
 const SAVE_FEEDBACK_MS = 2000;
@@ -64,6 +64,41 @@ function parseMinutes(value: string): number | undefined {
   const parsed = Number(trimmed);
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
   return parsed * 60 * 1000;
+}
+
+function parseWipLimit(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+interface ProjectWipOverrideRow {
+  projectId: string;
+  limit: string;
+}
+
+function projectWipOverridesFromConfig(
+  byProject: Record<string, number>,
+): ProjectWipOverrideRow[] {
+  return Object.entries(byProject).map(([projectId, limit]) => ({
+    projectId,
+    limit: String(limit),
+  }));
+}
+
+function projectWipOverridesToConfig(
+  rows: readonly ProjectWipOverrideRow[],
+): Record<string, number> | undefined {
+  const entries: [string, number][] = [];
+  for (const row of rows) {
+    const limit = parseWipLimit(row.limit);
+    if (row.projectId.trim() !== '' && limit !== undefined) {
+      entries.push([row.projectId, limit]);
+    }
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : {};
 }
 
 function isBoardThresholdErrors(details: unknown): details is { errors: string[] } {
@@ -194,6 +229,10 @@ export function SettingsPanel() {
     queryKey: ['board-thresholds-config'],
     queryFn: fetchBoardThresholdsConfig,
   });
+  const projectsQuery = useQuery({
+    queryKey: ['projects'],
+    queryFn: fetchProjects,
+  });
   const aiQuotaAlertQuery = useQuery({
     queryKey: ['ai-quota-alert-config'],
     queryFn: fetchAiQuotaAlertConfig,
@@ -220,6 +259,13 @@ export function SettingsPanel() {
   const [thresholdsFeedback, setThresholdsFeedback] = useState<ReactNode>('');
   const [thresholdsFeedbackIsError, setThresholdsFeedbackIsError] = useState(false);
   const [thresholdsDirty, setThresholdsDirty] = useState(false);
+  const [globalWipLimit, setGlobalWipLimit] = useState('');
+  const [projectWipOverrides, setProjectWipOverrides] = useState<ProjectWipOverrideRow[]>([]);
+  const [newWipProjectId, setNewWipProjectId] = useState('');
+  const [newWipProjectLimit, setNewWipProjectLimit] = useState('');
+  const [wipFeedback, setWipFeedback] = useState<ReactNode>('');
+  const [wipFeedbackIsError, setWipFeedbackIsError] = useState(false);
+  const [wipDirty, setWipDirty] = useState(false);
   const [aiQuotaThresholdPercent, setAiQuotaThresholdPercent] = useState('');
   const [aiQuotaAlertVersion, setAiQuotaAlertVersion] = useState('');
   const [aiQuotaAlertFeedback, setAiQuotaAlertFeedback] = useState<ReactNode>('');
@@ -243,6 +289,20 @@ export function SettingsPanel() {
       setThresholdsVersion(thresholdsQuery.data.version);
     }
   }, [thresholdsDirty, thresholdsQuery.data]);
+
+  useEffect(() => {
+    if (thresholdsQuery.data !== undefined && !wipDirty) {
+      setGlobalWipLimit(
+        thresholdsQuery.data.inProgressWipLimit !== null
+          ? String(thresholdsQuery.data.inProgressWipLimit)
+          : '',
+      );
+      setProjectWipOverrides(
+        projectWipOverridesFromConfig(thresholdsQuery.data.inProgressWipLimitByProject),
+      );
+      setThresholdsVersion(thresholdsQuery.data.version);
+    }
+  }, [wipDirty, thresholdsQuery.data]);
 
   useEffect(() => {
     if (aiQuotaAlertQuery.data !== undefined && !aiQuotaAlertDirty) {
@@ -326,6 +386,43 @@ export function SettingsPanel() {
       setThresholdsFeedback(describeBoardThresholdWriteError(error));
       if (error instanceof ApiError && error.status === 409) {
         setThresholdsDirty(false);
+        void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
+      }
+    },
+  });
+
+  const saveWipLimitsMutation = useMutation({
+    mutationFn: () => {
+      const trimmedGlobal = globalWipLimit.trim();
+      const parsedGlobal = trimmedGlobal.length === 0 ? null : parseWipLimit(trimmedGlobal);
+      if (trimmedGlobal.length > 0 && parsedGlobal === undefined) {
+        throw new Error('invalid local wip limit input');
+      }
+      const byProject = projectWipOverridesToConfig(projectWipOverrides);
+      return putBoardThresholdsConfig({
+        inProgressWipLimit: parsedGlobal,
+        inProgressWipLimitByProject: byProject,
+        version: thresholdsVersion,
+      });
+    },
+    onSuccess: async (data) => {
+      setThresholdsVersion(data.version);
+      await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
+      setWipDirty(false);
+      try {
+        await postRefresh();
+      } catch (error) {
+        console.warn('Failed to refresh board after saving wip limits', error);
+      }
+      setWipFeedbackIsError(false);
+      setWipFeedback('WIP上限を保存しました');
+      window.setTimeout(() => setWipFeedback(''), SAVE_FEEDBACK_MS);
+    },
+    onError: (error) => {
+      setWipFeedbackIsError(true);
+      setWipFeedback(describeBoardThresholdWriteError(error));
+      if (error instanceof ApiError && error.status === 409) {
+        setWipDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
       }
     },
@@ -655,6 +752,153 @@ export function SettingsPanel() {
               role={thresholdsFeedbackIsError ? 'alert' : undefined}
             >
               {thresholdsFeedback}
+            </div>
+          </div>
+        </form>
+      </section>
+      <section className="settings-panel-section" aria-labelledby="wip-limits-title">
+        <h3 id="wip-limits-title">WIP上限</h3>
+        <p className="settings-panel-subtitle">
+          In Progress レーンの同時着手枚数の上限を設定します。超過時はレーンヘッダーが警告表示されます。空欄は上限なしです。
+        </p>
+        <form
+          className="settings-panel-thresholds-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveWipLimitsMutation.mutate();
+          }}
+        >
+          <label htmlFor="settings-global-wip-limit">In Progress 上限 (全体)</label>
+          <input
+            id="settings-global-wip-limit"
+            type="number"
+            min={1}
+            step={1}
+            value={globalWipLimit}
+            placeholder="未設定 (上限なし)"
+            disabled={saveWipLimitsMutation.isPending}
+            onChange={(event) => {
+              setGlobalWipLimit(event.target.value);
+              setWipDirty(true);
+            }}
+          />
+          <p className="settings-panel-subtitle">プロジェクト別の上限</p>
+          {projectWipOverrides.length > 0 ? (
+            <ul className="settings-panel-edit-list">
+              {projectWipOverrides.map((row, index) => {
+                const projectName =
+                  projectsQuery.data?.find((project) => project.id === row.projectId)?.name ??
+                  row.projectId;
+                return (
+                  <li key={`${row.projectId}-${index}`} className="settings-panel-wip-override-row">
+                    <span className="settings-panel-wip-override-label">{projectName}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      aria-label={`${projectName} の WIP上限`}
+                      value={row.limit}
+                      disabled={saveWipLimitsMutation.isPending}
+                      onChange={(event) => {
+                        setProjectWipOverrides((current) =>
+                          current.map((entry, entryIndex) =>
+                            entryIndex === index
+                              ? { ...entry, limit: event.target.value }
+                              : entry,
+                          ),
+                        );
+                        setWipDirty(true);
+                      }}
+                    />
+                    <button
+                      type="button"
+                      disabled={saveWipLimitsMutation.isPending}
+                      onClick={() => {
+                        setProjectWipOverrides((current) =>
+                          current.filter((_, entryIndex) => entryIndex !== index),
+                        );
+                        setWipDirty(true);
+                      }}
+                    >
+                      削除
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="settings-panel-empty">プロジェクト別の上限はありません</p>
+          )}
+          <div className="settings-panel-add-form">
+            <label htmlFor="settings-wip-project-select">プロジェクト別上限を追加</label>
+            <div className="settings-panel-add-row">
+              <select
+                id="settings-wip-project-select"
+                value={newWipProjectId}
+                disabled={saveWipLimitsMutation.isPending || projectsQuery.isPending}
+                onChange={(event) => setNewWipProjectId(event.target.value)}
+              >
+                <option value="">プロジェクトを選択</option>
+                {(projectsQuery.data ?? [])
+                  .filter(
+                    (project) =>
+                      !projectWipOverrides.some((row) => row.projectId === project.id),
+                  )
+                  .map((project) => (
+                    <option key={project.id} value={project.id}>
+                      {project.name}
+                    </option>
+                  ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                aria-label="追加する WIP上限"
+                value={newWipProjectLimit}
+                placeholder="上限"
+                disabled={saveWipLimitsMutation.isPending}
+                onChange={(event) => setNewWipProjectLimit(event.target.value)}
+              />
+              <button
+                type="button"
+                disabled={
+                  saveWipLimitsMutation.isPending ||
+                  newWipProjectId === '' ||
+                  parseWipLimit(newWipProjectLimit) === undefined
+                }
+                onClick={() => {
+                  const limit = parseWipLimit(newWipProjectLimit);
+                  if (newWipProjectId === '' || limit === undefined) {
+                    return;
+                  }
+                  setProjectWipOverrides((current) => [
+                    ...current,
+                    { projectId: newWipProjectId, limit: String(limit) },
+                  ]);
+                  setNewWipProjectId('');
+                  setNewWipProjectLimit('');
+                  setWipDirty(true);
+                }}
+              >
+                追加
+              </button>
+            </div>
+          </div>
+          <div className="settings-panel-footer">
+            <button
+              type="submit"
+              className="settings-panel-save"
+              disabled={!wipDirty || saveWipLimitsMutation.isPending}
+            >
+              {saveWipLimitsMutation.isPending ? '保存中…' : 'WIP上限を保存'}
+            </button>
+            <div
+              className="settings-panel-feedback"
+              aria-live="polite"
+              role={wipFeedbackIsError ? 'alert' : undefined}
+            >
+              {wipFeedback}
             </div>
           </div>
         </form>

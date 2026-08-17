@@ -99,4 +99,37 @@ describe('createFileBoardThresholdsConfigStore', () => {
 
     expect(readdirSync(path.dirname(filePath))).toEqual(['config.json']);
   });
+
+  it('round-trips wip limit fields', async () => {
+    const filePath = makePath();
+    const store = createFileBoardThresholdsConfigStore(filePath);
+    const config = {
+      inProgressWipLimit: 5,
+      inProgressWipLimitByProject: { 'proj-a': 3 },
+    } as const;
+    await store.write(config);
+    expect(await store.read()).toEqual(config);
+  });
+
+  it('ignores invalid wip limit map while keeping valid scalar fields', async () => {
+    const filePath = makePath();
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(
+      filePath,
+      JSON.stringify({
+        inProgressWipLimit: 5,
+        inProgressWipLimitByProject: { '': 1, 'proj-a': 'bad' },
+      }),
+      'utf8',
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      expect(await createFileBoardThresholdsConfigStore(filePath).read()).toEqual({
+        inProgressWipLimit: 5,
+      });
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

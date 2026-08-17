@@ -355,3 +355,33 @@ describe('LaneColumn collapse', () => {
     );
   });
 });
+
+describe('LaneColumn wip exceeded', () => {
+  const emptyMaps = {
+    projectNames: new Map<string, string>(),
+    projectActiveSessions: new Map<string, number>(),
+    pendingDecisionIds: new Set<string>(),
+    prLinksById: new Map<string, never>(),
+  };
+
+  it('shows wip exceeded label and warning class on the in_progress header', () => {
+    render(
+      <LaneColumn
+        lane="in_progress"
+        cards={[makeCard('bdboard-wip-1'), makeCard('bdboard-wip-2')]}
+        showProjectName={false}
+        projectNames={emptyMaps.projectNames}
+        projectActiveSessions={emptyMaps.projectActiveSessions}
+        pendingDecisionIds={emptyMaps.pendingDecisionIds}
+        prLinksById={emptyMaps.prLinksById}
+        onCardClick={() => {}}
+        wipStatus={{ limit: 1, count: 2, exceeded: true }}
+      />,
+    );
+
+    expect(screen.getByText('WIP超過: 2/1')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '進行中 (WIP超過: 2/1)' })).toHaveClass(
+      'lane-header-wip-exceeded',
+    );
+  });
+});

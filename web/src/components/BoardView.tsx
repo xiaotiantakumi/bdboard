@@ -19,6 +19,11 @@ import { BoardKeyboardNavProvider, useBoardKeyboardNav } from './BoardKeyboardNa
 import { LaneColumn } from './LaneColumn';
 import { ProjectHarnessBadges } from './ProjectHarnessBadges';
 import { SyncHealthBadge } from './SyncHealthBadge';
+import {
+  computeWipStatus,
+  resolveWipLimitForLane,
+  type WipLimitsOverrides,
+} from '../wip-limits';
 
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
 const EMPTY_SESSION_COUNTS = new Map<string, number>();
@@ -38,6 +43,9 @@ interface BoardLanesProps {
   showDndError?: boolean;
   collapsedLanes?: ReadonlySet<Lane>;
   onToggleLaneCollapse?: (lane: Lane) => void;
+  wipLimitsOverrides?: WipLimitsOverrides;
+  /** SplitBoard ではプロジェクト ID、全体ビューでは undefined */
+  wipProjectId?: string;
 }
 
 function visibleLanes(hideDone: boolean): Lane[] {
@@ -79,6 +87,8 @@ function LanesRow({
   onCardClick,
   collapsedLanes,
   onToggleLaneCollapse,
+  wipLimitsOverrides,
+  wipProjectId,
 }: {
   lanes: Lane[];
   board: BoardDto;
@@ -93,6 +103,8 @@ function LanesRow({
   onCardClick: (ticketId: string) => void;
   collapsedLanes?: ReadonlySet<Lane>;
   onToggleLaneCollapse?: (lane: Lane) => void;
+  wipLimitsOverrides?: WipLimitsOverrides;
+  wipProjectId?: string;
 }) {
   const boardNav = useBoardKeyboardNav();
   const filterKey = boardFilterKey(filter);
@@ -103,6 +115,18 @@ function LanesRow({
         const laneCards = board.lanes[lane] ?? [];
         const afterStalled = applyStalledOnly(laneCards, stalledOnly);
         const filteredCards = filterBoardCards(afterStalled, filter);
+        const wipLimit =
+          lane === 'in_progress'
+            ? resolveWipLimitForLane(wipLimitsOverrides, wipProjectId)
+            : undefined;
+        const wipStatus =
+          lane === 'in_progress' && wipLimit !== undefined
+            ? computeWipStatus(laneCards.length, wipLimit)
+            : undefined;
+        const wipStatusForColumn =
+          wipStatus?.exceeded === true && wipStatus.limit !== undefined
+            ? { limit: wipStatus.limit, count: wipStatus.count, exceeded: true }
+            : undefined;
         return (
         <LaneColumn
           key={`${sectionKey}-${lane}-${filterKey}`}
@@ -126,6 +150,7 @@ function LanesRow({
               ? () => onToggleLaneCollapse(lane)
               : undefined
           }
+          wipStatus={wipStatusForColumn}
         />
         );
       })}
@@ -148,6 +173,8 @@ export function BoardLanes({
   showDndError = true,
   collapsedLanes,
   onToggleLaneCollapse,
+  wipLimitsOverrides,
+  wipProjectId,
 }: BoardLanesProps) {
   const boardDnD = useBoardDnD();
   const lanes = visibleLanes(hideDone);
@@ -175,6 +202,8 @@ export function BoardLanes({
           onCardClick={onCardClick}
           collapsedLanes={collapsedLanes}
           onToggleLaneCollapse={onToggleLaneCollapse}
+          wipLimitsOverrides={wipLimitsOverrides}
+          wipProjectId={wipProjectId}
         />
       </BoardKeyboardNavProvider>
     </>
@@ -206,6 +235,7 @@ interface SplitBoardProps {
   readonly syncHealthByProject?: Map<string, SyncHealthDto>;
   collapsedLanes?: ReadonlySet<Lane>;
   onToggleLaneCollapse?: (lane: Lane) => void;
+  wipLimitsOverrides?: WipLimitsOverrides;
 }
 
 export function SplitBoard({
@@ -221,6 +251,7 @@ export function SplitBoard({
   syncHealthByProject,
   collapsedLanes,
   onToggleLaneCollapse,
+  wipLimitsOverrides,
 }: SplitBoardProps) {
   const boardDnD = useBoardDnD();
   const visibleProjects = projects.filter((entry) =>
@@ -287,6 +318,8 @@ export function SplitBoard({
             showDndError={false}
             collapsedLanes={collapsedLanes}
             onToggleLaneCollapse={onToggleLaneCollapse}
+            wipLimitsOverrides={wipLimitsOverrides}
+            wipProjectId={entry.project.id}
           />
         </section>
       ))}

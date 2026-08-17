@@ -8,6 +8,10 @@ import {
   validateBoardThresholds,
 } from '../../domain/board-thresholds.js';
 import {
+  DEFAULT_WIP_LIMITS_OVERRIDES,
+  validateWipLimits,
+} from '../../domain/wip-limits.js';
+import {
   createWriteGuardMiddleware,
   type WriteGuardDeps,
 } from './write-guard.js';
@@ -18,12 +22,17 @@ export interface BoardThresholdsRoutesDeps {
 }
 
 const thresholdFieldSchema = z.number().int().positive().optional();
+const wipLimitFieldSchema = z.union([z.number().int().positive(), z.null()]).optional();
 
 const boardThresholdsBodySchema = z.object({
   stalledAfterMs: thresholdFieldSchema,
   livenessActiveMs: thresholdFieldSchema,
   livenessIdleMs: thresholdFieldSchema,
   livenessStaleMs: thresholdFieldSchema,
+  inProgressWipLimit: wipLimitFieldSchema,
+  inProgressWipLimitByProject: z
+    .record(z.string().min(1), z.number().int().positive())
+    .optional(),
   version: z.string().min(1).max(256),
 });
 
@@ -38,6 +47,8 @@ export function computeBoardThresholdsVersion(
         livenessActiveMs: normalized.livenessActiveMs,
         livenessIdleMs: normalized.livenessIdleMs,
         livenessStaleMs: normalized.livenessStaleMs,
+        inProgressWipLimit: normalized.inProgressWipLimit ?? null,
+        inProgressWipLimitByProject: normalized.inProgressWipLimitByProject ?? {},
       }),
     )
     .digest('hex');
@@ -50,8 +61,49 @@ function toEffectiveDto(config: Awaited<ReturnType<BoardThresholdsConfigPort['re
     livenessActiveMs: resolved.livenessThresholds.activeMs,
     livenessIdleMs: resolved.livenessThresholds.idleMs,
     livenessStaleMs: resolved.livenessThresholds.staleMs,
-    defaults: { ...DEFAULT_BOARD_THRESHOLDS_OVERRIDES },
+    inProgressWipLimit: config?.inProgressWipLimit ?? null,
+    inProgressWipLimitByProject: config?.inProgressWipLimitByProject ?? {},
+    defaults: {
+      ...DEFAULT_BOARD_THRESHOLDS_OVERRIDES,
+      ...DEFAULT_WIP_LIMITS_OVERRIDES,
+      inProgressWipLimit: null,
+      inProgressWipLimitByProject: {},
+    },
   };
+}
+
+function mergeBoardThresholdsConfig(
+  current: Awaited<ReturnType<BoardThresholdsConfigPort['read']>>,
+  body: z.infer<typeof boardThresholdsBodySchema>,
+) {
+  const nextConfig = { ...(current ?? {}) };
+
+  const thresholdFields = {
+    stalledAfterMs: body.stalledAfterMs,
+    livenessActiveMs: body.livenessActiveMs,
+    livenessIdleMs: body.livenessIdleMs,
+    livenessStaleMs: body.livenessStaleMs,
+  } as const;
+
+  for (const [key, value] of Object.entries(thresholdFields)) {
+    if (value !== undefined) {
+      nextConfig[key as keyof typeof thresholdFields] = value;
+    }
+  }
+
+  if (body.inProgressWipLimit !== undefined) {
+    if (body.inProgressWipLimit === null) {
+      delete nextConfig.inProgressWipLimit;
+    } else {
+      nextConfig.inProgressWipLimit = body.inProgressWipLimit;
+    }
+  }
+
+  if (body.inProgressWipLimitByProject !== undefined) {
+    nextConfig.inProgressWipLimitByProject = body.inProgressWipLimitByProject;
+  }
+
+  return nextConfig;
 }
 
 export function createBoardThresholdsRoutes(deps: BoardThresholdsRoutesDeps): Hono {
@@ -101,29 +153,27 @@ export function createBoardThresholdsRoutes(deps: BoardThresholdsRoutesDeps): Ho
         );
       }
 
-      const nextOverrides = {
-        stalledAfterMs: parsed.data.stalledAfterMs,
-        livenessActiveMs: parsed.data.livenessActiveMs,
-        livenessIdleMs: parsed.data.livenessIdleMs,
-        livenessStaleMs: parsed.data.livenessStaleMs,
-      };
-      const validation = validateBoardThresholds(nextOverrides);
-      if (!validation.ok) {
+      const nextConfig = mergeBoardThresholdsConfig(currentConfig, parsed.data);
+      const thresholdValidation = validateBoardThresholds({
+        stalledAfterMs: nextConfig.stalledAfterMs,
+        livenessActiveMs: nextConfig.livenessActiveMs,
+        livenessIdleMs: nextConfig.livenessIdleMs,
+        livenessStaleMs: nextConfig.livenessStaleMs,
+      });
+      const wipValidation = validateWipLimits({
+        inProgressWipLimit: nextConfig.inProgressWipLimit,
+        inProgressWipLimitByProject: nextConfig.inProgressWipLimitByProject,
+      });
+      const errors = [...thresholdValidation.errors, ...wipValidation.errors];
+      if (errors.length > 0) {
         return c.json(
           {
             error: 'invalid board thresholds',
-            details: { errors: validation.errors },
+            details: { errors },
           },
           400,
         );
       }
-
-      const nextConfig = {
-        ...(currentConfig ?? {}),
-        ...Object.fromEntries(
-          Object.entries(nextOverrides).filter(([, value]) => value !== undefined),
-        ),
-      };
 
       try {
         await deps.store.write(nextConfig);

@@ -109,3 +109,39 @@ describe('BoardLanes lane pagination', () => {
     expect(screen.getAllByRole('option')).toHaveLength(50);
   });
 });
+
+describe('BoardLanes wip limits', () => {
+  beforeEach(() => {
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it('shows wip exceeded on the in_progress lane header when over the configured limit', () => {
+    const inProgressCards = Array.from({ length: 3 }, (_, index) =>
+      makeCard(`wip-${index}`, 'in_progress'),
+    );
+    const board: BoardDto = {
+      lanes: {
+        ready: [],
+        in_progress: inProgressCards,
+        blocked: [],
+        done: [],
+      },
+      cardCount: 3,
+      closedTotal: 0,
+      truncatedClosedIds: [],
+    };
+
+    render(
+      <BoardLanes
+        {...sharedProps}
+        board={board}
+        wipLimitsOverrides={{ inProgressWipLimit: 2 }}
+      />,
+    );
+
+    expect(screen.getByText('WIP超過: 3/2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '進行中 (WIP超過: 3/2)' })).toHaveClass(
+      'lane-header-wip-exceeded',
+    );
+  });
+});

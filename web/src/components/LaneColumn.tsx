@@ -368,6 +368,8 @@ export interface LaneColumnProps {
   hiddenCount?: number;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /** in_progress レーンの WIP 状態。exceeded 時にヘッダー警告を表示する。 */
+  wipStatus?: { limit: number; count: number; exceeded: boolean };
 }
 
 const PAGE_SIZE = 50;
@@ -385,6 +387,7 @@ export function LaneColumn({
   hiddenCount,
   collapsed = false,
   onToggleCollapse = () => {},
+  wipStatus,
 }: LaneColumnProps) {
   const boardDnD = useBoardDnD();
   const boardNav = useBoardKeyboardNav();
@@ -430,9 +433,16 @@ export function LaneColumn({
     ) : null;
 
   const countLabel =
-    unfilteredCount !== undefined && cards.length !== unfilteredCount
-      ? `${cards.length}/${unfilteredCount}`
-      : String(cards.length);
+    wipStatus?.exceeded === true
+      ? `WIP超過: ${wipStatus.count}/${wipStatus.limit}`
+      : unfilteredCount !== undefined && cards.length !== unfilteredCount
+        ? `${cards.length}/${unfilteredCount}`
+        : String(cards.length);
+
+  const headerAriaLabel =
+    wipStatus?.exceeded === true
+      ? `${LANE_LABELS[lane]} (WIP超過: ${wipStatus.count}/${wipStatus.limit})`
+      : `${LANE_LABELS[lane]} (${countLabel}件)`;
 
   return (
     <section
@@ -442,10 +452,10 @@ export function LaneColumn({
     >
       <button
         type="button"
-        className="lane-header"
+        className={`lane-header${wipStatus?.exceeded === true ? ' lane-header-wip-exceeded' : ''}`}
         onClick={onToggleCollapse}
         aria-expanded={!collapsed}
-        aria-label={`${LANE_LABELS[lane]} (${countLabel}件)`}
+        aria-label={headerAriaLabel}
       >
         <span className="lane-header-label">
           <span className="lane-chevron" aria-hidden="true">

@@ -42,12 +42,16 @@ describe('createBoardThresholdsRoutes', () => {
       livenessActiveMs: DEFAULT_LIVENESS_THRESHOLDS.activeMs,
       livenessIdleMs: DEFAULT_LIVENESS_THRESHOLDS.idleMs,
       livenessStaleMs: DEFAULT_LIVENESS_THRESHOLDS.staleMs,
+      inProgressWipLimit: null,
+      inProgressWipLimitByProject: {},
       version: EMPTY_VERSION,
       defaults: {
         stalledAfterMs: DEFAULT_STALLED_THRESHOLDS.stalledAfterMs,
         livenessActiveMs: DEFAULT_LIVENESS_THRESHOLDS.activeMs,
         livenessIdleMs: DEFAULT_LIVENESS_THRESHOLDS.idleMs,
         livenessStaleMs: DEFAULT_LIVENESS_THRESHOLDS.staleMs,
+        inProgressWipLimit: null,
+        inProgressWipLimitByProject: {},
       },
     });
   });
@@ -113,6 +117,48 @@ describe('createBoardThresholdsRoutes', () => {
       LOCAL_ENV,
     );
     expect(response.status).toBe(409);
+  });
+
+  it('writes wip limit fields and can clear the global limit with null', async () => {
+    const store = makePersistedStore({ inProgressWipLimit: 5 });
+    const setResponse = await createBoardThresholdsRoutes({ store }).request(
+      '/api/settings/board-thresholds',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          inProgressWipLimit: 7,
+          inProgressWipLimitByProject: { 'proj-a': 3 },
+          version: computeBoardThresholdsVersion({ inProgressWipLimit: 5 }),
+        }),
+      },
+      LOCAL_ENV,
+    );
+    expect(setResponse.status).toBe(200);
+    expect(store.write).toHaveBeenLastCalledWith({
+      inProgressWipLimit: 7,
+      inProgressWipLimitByProject: { 'proj-a': 3 },
+    });
+
+    const clearResponse = await createBoardThresholdsRoutes({ store }).request(
+      '/api/settings/board-thresholds',
+      {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          inProgressWipLimit: null,
+          version: computeBoardThresholdsVersion({
+            inProgressWipLimit: 7,
+            inProgressWipLimitByProject: { 'proj-a': 3 },
+          }),
+        }),
+      },
+      LOCAL_ENV,
+    );
+    expect(clearResponse.status).toBe(200);
+    expect(store.write).toHaveBeenLastCalledWith({
+      inProgressWipLimitByProject: { 'proj-a': 3 },
+    });
   });
 
   it('rejects a non-local unauthenticated write', async () => {
