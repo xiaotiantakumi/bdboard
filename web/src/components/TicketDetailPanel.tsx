@@ -302,7 +302,7 @@ export function TicketDetailPanel({
   const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
-  const panelRef = useRef<HTMLElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const cancelQuickActionRef = useRef<HTMLButtonElement>(null);
@@ -705,7 +705,7 @@ export function TicketDetailPanel({
       onClick={onClose}
       role="presentation"
     >
-      <aside
+      <div
         ref={panelRef}
         className="detail-panel"
         onClick={(event) => event.stopPropagation()}
@@ -1690,7 +1690,7 @@ export function TicketDetailPanel({
             </div>
           </>
         )}
-      </aside>
+      </div>
     </div>
   );
 }

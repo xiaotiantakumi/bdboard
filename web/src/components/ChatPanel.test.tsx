@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ProjectDto } from '../api';
+import { expectNoA11yViolations } from '../test/axe';
 import { installFakeHistory } from '../test/fakeHistory';
 import { writePersistedChatThread, readPersistedChatThreads } from '../chatThreadStorage';
 import { CHAT_BUSY_HELP } from '../writeAccessMessage';
@@ -225,6 +226,16 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue(
       'bdboard-abc.1 について: ',
     );
+  });
+
+  it('has no a11y violations in the default loaded state', async () => {
+    fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+    const { container } = renderChatPanel([PROJECT_A], {
+      initialProjectId: 'proj-a',
+    });
+
+    await screen.findByLabelText('メッセージ');
+    await expectNoA11yViolations(container);
   });
 
   it('resolves the initial project when projects arrive after a regular chat mount', async () => {
