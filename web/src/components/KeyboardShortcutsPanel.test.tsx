@@ -38,8 +38,10 @@ describe('KeyboardShortcutsPanel', () => {
     expect(screen.getByText('h / ←')).toBeInTheDocument();
     expect(screen.getByText('l / →')).toBeInTheDocument();
     expect(screen.getByText('Enter / Space')).toBeInTheDocument();
+    expect(screen.getByText('x')).toBeInTheDocument();
+    expect(screen.getByText('Shift + j / k')).toBeInTheDocument();
     expect(screen.getByText('⌘/Ctrl + K')).toBeInTheDocument();
-    expect(screen.getByText('Escape')).toBeInTheDocument();
+    expect(screen.getAllByText('Escape').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText('?')).toBeInTheDocument();
   });
 

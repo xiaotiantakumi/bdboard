@@ -11,6 +11,10 @@ import {
   type ReactNode,
 } from 'react';
 import { LANES, type Lane } from '../api';
+import {
+  idsInInclusiveRange,
+  useBulkSelection,
+} from './BulkSelectionProvider';
 
 export interface CardNavProps {
   tabIndex: number;
@@ -46,8 +50,18 @@ export function BoardKeyboardNavProvider(props: {
   /** レーンごとに最後にフォーカスしていたカード ID（h/l で戻るときに復帰） */
   const lastFocusedCardByLaneRef = useRef<Map<Lane, string>>(new Map());
   const pendingFocusRef = useRef(false);
+  /** Shift+j/k 範囲選択のアンカー。通常の j/k 移動でリセットする */
+  const rangeAnchorRef = useRef<string | null>(null);
+  /** 直前の Shift+j/k で選択した範囲（行き過ぎ補正用） */
+  const lastRangeIdsRef = useRef<readonly string[]>([]);
+
+  const resetRangeSelectionRefs = () => {
+    rangeAnchorRef.current = null;
+    lastRangeIdsRef.current = [];
+  };
   const [laneRegistryVersion, bumpLaneRegistry] = useState(0);
   const [focusedCardId, setFocusedCardId] = useState<string | null>(null);
+  const bulkSelection = useBulkSelection();
 
   const registerLane = useCallback((lane: Lane, ids: readonly string[]) => {
     laneCardsRef.current.set(lane, ids);
@@ -133,10 +147,50 @@ export function BoardKeyboardNavProvider(props: {
     pendingFocusRef.current = false;
   }, [focusedCardId]);
 
+  const resolveMoveWithinLane = useCallback(
+    (currentId: string, direction: 'next' | 'prev'): string | null => {
+      const lane = findLaneForCard(currentId);
+      if (lane === null) {
+        return null;
+      }
+
+      const ids = laneCardsRef.current.get(lane);
+      if (ids === undefined || ids.length === 0) {
+        return null;
+      }
+
+      const currentIndex = ids.indexOf(currentId);
+      if (currentIndex === -1) {
+        return null;
+      }
+
+      let nextIndex = currentIndex;
+      switch (direction) {
+        case 'next':
+          nextIndex = Math.min(currentIndex + 1, ids.length - 1);
+          break;
+        case 'prev':
+          nextIndex = Math.max(currentIndex - 1, 0);
+          break;
+      }
+
+      return ids[nextIndex] ?? null;
+    },
+    [findLaneForCard],
+  );
+
   const moveWithinLane = useCallback(
     (direction: 'next' | 'prev' | 'first' | 'last') => {
       const currentId = focusedCardId ?? getDefaultFocusedCardId();
       if (currentId === null) {
+        return;
+      }
+
+      if (direction === 'next' || direction === 'prev') {
+        const nextId = resolveMoveWithinLane(currentId, direction);
+        if (nextId !== null) {
+          focusCardByKeyboard(nextId);
+        }
         return;
       }
 
@@ -158,25 +212,16 @@ export function BoardKeyboardNavProvider(props: {
         return;
       }
 
-      let nextIndex = currentIndex;
-      switch (direction) {
-        case 'next':
-          nextIndex = Math.min(currentIndex + 1, ids.length - 1);
-          break;
-        case 'prev':
-          nextIndex = Math.max(currentIndex - 1, 0);
-          break;
-        case 'first':
-          nextIndex = 0;
-          break;
-        case 'last':
-          nextIndex = ids.length - 1;
-          break;
-      }
-
+      const nextIndex = direction === 'first' ? 0 : ids.length - 1;
       focusCardByKeyboard(ids[nextIndex]!);
     },
-    [findLaneForCard, focusCardByKeyboard, focusedCardId, getDefaultFocusedCardId],
+    [
+      findLaneForCard,
+      focusCardByKeyboard,
+      focusedCardId,
+      getDefaultFocusedCardId,
+      resolveMoveWithinLane,
+    ],
   );
 
   const moveAcrossLanes = useCallback(
@@ -240,7 +285,7 @@ export function BoardKeyboardNavProvider(props: {
       if (event.defaultPrevented) {
         return;
       }
-      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+      if (event.metaKey || event.ctrlKey || event.altKey) {
         return;
       }
       const target = event.target;
@@ -257,6 +302,70 @@ export function BoardKeyboardNavProvider(props: {
       }
 
       const key = event.key;
+      const shift = event.shiftKey;
+      const isNextInLane = key === 'ArrowDown' || key === 'j';
+      const isPrevInLane = key === 'ArrowUp' || key === 'k';
+
+      if (
+        key === 'Escape' &&
+        bulkSelection !== null &&
+        bulkSelection.selectedIds.size > 0
+      ) {
+        event.preventDefault();
+        bulkSelection.clear();
+        resetRangeSelectionRefs();
+        return;
+      }
+
+      if ((key === 'x' || key === 'X') && !shift) {
+        if (focusedCardId !== null && bulkSelection !== null) {
+          event.preventDefault();
+          bulkSelection.toggle(focusedCardId);
+          rangeAnchorRef.current = focusedCardId;
+          lastRangeIdsRef.current = [];
+        }
+        return;
+      }
+
+      if (shift && (isNextInLane || isPrevInLane)) {
+        event.preventDefault();
+        const currentId = focusedCardId ?? getDefaultFocusedCardId();
+        if (currentId === null) {
+          return;
+        }
+
+        const direction = isNextInLane ? 'next' : 'prev';
+        const anchor = rangeAnchorRef.current ?? currentId;
+        rangeAnchorRef.current = anchor;
+        const nextId = resolveMoveWithinLane(currentId, direction);
+        if (nextId === null) {
+          return;
+        }
+
+        focusCardByKeyboard(nextId);
+
+        if (bulkSelection !== null) {
+          const lane = findLaneForCard(currentId);
+          const laneIds =
+            lane !== null ? laneCardsRef.current.get(lane) : undefined;
+          if (laneIds !== undefined) {
+            const newRange = idsInInclusiveRange(laneIds, anchor, nextId);
+            const idsToRemove = lastRangeIdsRef.current.filter(
+              (id) => !newRange.includes(id),
+            );
+            if (idsToRemove.length > 0) {
+              bulkSelection.deselectAll(idsToRemove);
+            }
+            bulkSelection.selectRange(laneIds, anchor, nextId);
+            lastRangeIdsRef.current = newRange;
+          }
+        }
+        return;
+      }
+
+      if (shift) {
+        return;
+      }
 
       if (focusedCardId === null) {
         const defaultId = getDefaultFocusedCardId();
@@ -285,29 +394,35 @@ export function BoardKeyboardNavProvider(props: {
         case 'ArrowDown':
         case 'j':
           event.preventDefault();
+          resetRangeSelectionRefs();
           moveWithinLane('next');
           break;
         case 'ArrowUp':
         case 'k':
           event.preventDefault();
+          resetRangeSelectionRefs();
           moveWithinLane('prev');
           break;
         case 'ArrowRight':
         case 'l':
           event.preventDefault();
+          resetRangeSelectionRefs();
           moveAcrossLanes('next');
           break;
         case 'ArrowLeft':
         case 'h':
           event.preventDefault();
+          resetRangeSelectionRefs();
           moveAcrossLanes('prev');
           break;
         case 'Home':
           event.preventDefault();
+          resetRangeSelectionRefs();
           moveWithinLane('first');
           break;
         case 'End':
           event.preventDefault();
+          resetRangeSelectionRefs();
           moveWithinLane('last');
           break;
         default:
@@ -315,11 +430,14 @@ export function BoardKeyboardNavProvider(props: {
       }
     },
     [
+      bulkSelection,
+      findLaneForCard,
       focusCardByKeyboard,
       focusedCardId,
       getDefaultFocusedCardId,
       moveAcrossLanes,
       moveWithinLane,
+      resolveMoveWithinLane,
     ],
   );
 
@@ -342,6 +460,10 @@ export function BoardKeyboardNavProvider(props: {
         onFocus: () => {
           rememberLaneFocus(cardId);
           setFocusedCardId(cardId);
+          // キーボード移動(focusCardByKeyboard)由来の focus ではアンカーを維持する
+          if (!pendingFocusRef.current) {
+            resetRangeSelectionRefs();
+          }
         },
         cardRef: (el: HTMLElement | null) => {
           if (el === null) {

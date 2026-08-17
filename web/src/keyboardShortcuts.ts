@@ -60,6 +60,24 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcutDefinition[] = [
     description: 'フォーカス中のカードの詳細を開く',
   },
   {
+    id: 'board-toggle-select',
+    category: 'ボード',
+    keys: 'x',
+    description: 'フォーカス中のカードの選択をトグル',
+  },
+  {
+    id: 'board-range-select',
+    category: 'ボード',
+    keys: 'Shift + j / k',
+    description: 'レーン内で範囲選択を拡張',
+  },
+  {
+    id: 'board-clear-selection',
+    category: 'ボード',
+    keys: 'Escape',
+    description: 'バルク選択をすべて解除',
+  },
+  {
     id: 'global-command-palette',
     category: '全体',
     keys: COMMAND_PALETTE_KEYS_LABEL,
@@ -75,7 +93,7 @@ export const KEYBOARD_SHORTCUTS: readonly KeyboardShortcutDefinition[] = [
     id: 'global-close',
     category: '全体',
     keys: 'Escape',
-    description: '開いているパネル・モーダルを閉じる',
+    description: '開いているパネル・モーダルを閉じる / バルク選択を解除',
   },
   {
     id: 'palette-nav',

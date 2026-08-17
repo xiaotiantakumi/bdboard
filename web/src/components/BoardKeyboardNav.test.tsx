@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto, BoardDto } from '../api';
 import { EMPTY_BOARD_FILTER } from '../boardFilter';
+import { BulkSelectionProvider } from './BulkSelectionProvider';
 import { BoardLanes } from './BoardView';
 
 function makeCard(
@@ -61,21 +62,27 @@ const projectActiveSessions = new Map([['proj-1', 0]]);
 
 function renderBoardLanes(onCardClick = vi.fn()) {
   render(
-    <BoardLanes
-      board={makeBoard()}
-      hideDone
-      stalledOnly={false}
-      filter={EMPTY_BOARD_FILTER}
-      showProjectName
-      projectNames={projectNames}
-      projectActiveSessions={projectActiveSessions}
-      pendingDecisionIds={new Set()}
-      prLinksById={new Map()}
-      sectionKey="test"
-      onCardClick={onCardClick}
-    />,
+    <BulkSelectionProvider>
+      <BoardLanes
+        board={makeBoard()}
+        hideDone
+        stalledOnly={false}
+        filter={EMPTY_BOARD_FILTER}
+        showProjectName
+        projectNames={projectNames}
+        projectActiveSessions={projectActiveSessions}
+        pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
+        sectionKey="test"
+        onCardClick={onCardClick}
+      />
+    </BulkSelectionProvider>,
   );
   return { onCardClick };
+}
+
+function checkboxFor(id: string): HTMLElement {
+  return screen.getByRole('checkbox', { name: `${id} を選択` });
 }
 
 function getCardOptions() {
@@ -189,19 +196,21 @@ describe('BoardKeyboardNav', () => {
     const user = userEvent.setup();
     const initialBoard = makeBoard();
     const { rerender } = render(
-      <BoardLanes
-        board={initialBoard}
-        hideDone
-        stalledOnly={false}
-        filter={EMPTY_BOARD_FILTER}
-        showProjectName
-        projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
-        pendingDecisionIds={new Set()}
-        prLinksById={new Map()}
-        sectionKey="test"
-        onCardClick={vi.fn()}
-      />,
+      <BulkSelectionProvider>
+        <BoardLanes
+          board={initialBoard}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+      </BulkSelectionProvider>,
     );
 
     getCardById('ready-2').focus();
@@ -225,19 +234,21 @@ describe('BoardKeyboardNav', () => {
     };
 
     rerender(
-      <BoardLanes
-        board={boardWithExtraReadyCard}
-        hideDone
-        stalledOnly={false}
-        filter={EMPTY_BOARD_FILTER}
-        showProjectName
-        projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
-        pendingDecisionIds={new Set()}
-        prLinksById={new Map()}
-        sectionKey="test"
-        onCardClick={vi.fn()}
-      />,
+      <BulkSelectionProvider>
+        <BoardLanes
+          board={boardWithExtraReadyCard}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+      </BulkSelectionProvider>,
     );
 
     await user.keyboard('h');
@@ -247,19 +258,21 @@ describe('BoardKeyboardNav', () => {
   it('clamps to index when returning to a lane whose remembered card is gone', async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <BoardLanes
-        board={makeBoard()}
-        hideDone
-        stalledOnly={false}
-        filter={EMPTY_BOARD_FILTER}
-        showProjectName
-        projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
-        pendingDecisionIds={new Set()}
-        prLinksById={new Map()}
-        sectionKey="test"
-        onCardClick={vi.fn()}
-      />,
+      <BulkSelectionProvider>
+        <BoardLanes
+          board={makeBoard()}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+      </BulkSelectionProvider>,
     );
 
     getCardById('ready-2').focus();
@@ -279,19 +292,21 @@ describe('BoardKeyboardNav', () => {
     };
 
     rerender(
-      <BoardLanes
-        board={boardWithoutReady2}
-        hideDone
-        stalledOnly={false}
-        filter={EMPTY_BOARD_FILTER}
-        showProjectName
-        projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
-        pendingDecisionIds={new Set()}
-        prLinksById={new Map()}
-        sectionKey="test"
-        onCardClick={vi.fn()}
-      />,
+      <BulkSelectionProvider>
+        <BoardLanes
+          board={boardWithoutReady2}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+      </BulkSelectionProvider>,
     );
 
     await user.keyboard('h');
@@ -377,5 +392,130 @@ describe('BoardKeyboardNav', () => {
       name: '着手可能 のチケット',
     });
     expect(within(readyListbox).getAllByRole('option')).toHaveLength(3);
+  });
+
+  it('toggles bulk selection on the focused card with x', async () => {
+    const user = userEvent.setup();
+    renderBoardLanes();
+
+    getCardById('ready-2').focus();
+    await user.keyboard('x');
+
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-1')).not.toBeChecked();
+
+    await user.keyboard('x');
+    expect(checkboxFor('ready-2')).not.toBeChecked();
+  });
+
+  it('extends bulk selection within a lane with Shift+j and Shift+k', async () => {
+    const user = userEvent.setup();
+    renderBoardLanes();
+
+    getCardById('ready-1').focus();
+    await user.keyboard('{Shift>}j{/Shift}');
+    await user.keyboard('{Shift>}j{/Shift}');
+
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-3')).toBeChecked();
+    expect(checkboxFor('progress-1')).not.toBeChecked();
+
+    getCardById('ready-3').focus();
+    await user.keyboard('{Shift>}k{/Shift}');
+
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-3')).not.toBeChecked();
+  });
+
+  it('deselects overshot cards when shrinking a Shift+j/k range in one sequence', async () => {
+    const user = userEvent.setup();
+    const boardWithFourReady: BoardDto = {
+      ...makeBoard(),
+      lanes: {
+        ...makeBoard().lanes,
+        ready: [
+          makeCard('ready-1', 'ready', 'Ready One'),
+          makeCard('ready-2', 'ready', 'Ready Two'),
+          makeCard('ready-3', 'ready', 'Ready Three'),
+          makeCard('ready-4', 'ready', 'Ready Four'),
+        ],
+      },
+      cardCount: 7,
+    };
+
+    render(
+      <BulkSelectionProvider>
+        <BoardLanes
+          board={boardWithFourReady}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+      </BulkSelectionProvider>,
+    );
+
+    getCardById('ready-1').focus();
+    await user.keyboard('{Shift>}j{/Shift}');
+    await user.keyboard('{Shift>}j{/Shift}');
+    await user.keyboard('{Shift>}j{/Shift}');
+
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-3')).toBeChecked();
+    expect(checkboxFor('ready-4')).toBeChecked();
+
+    await user.keyboard('{Shift>}k{/Shift}');
+
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-3')).toBeChecked();
+    expect(checkboxFor('ready-4')).not.toBeChecked();
+  });
+
+  it('resets range anchor when focus moves via mouse click before Shift+j/k', async () => {
+    const user = userEvent.setup();
+    renderBoardLanes();
+
+    getCardById('ready-1').focus();
+    await user.keyboard('{Shift>}j{/Shift}');
+
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-3')).not.toBeChecked();
+
+    await user.click(getCardById('ready-3'));
+    expect(getCardById('ready-3')).toHaveFocus();
+
+    await user.keyboard('{Shift>}k{/Shift}');
+    await user.keyboard('{Shift>}k{/Shift}');
+
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+    expect(checkboxFor('ready-3')).toBeChecked();
+  });
+
+  it('clears bulk selection with Escape', async () => {
+    const user = userEvent.setup();
+    renderBoardLanes();
+
+    getCardById('ready-1').focus();
+    await user.keyboard('x');
+    await user.keyboard('{Shift>}j{/Shift}');
+    expect(checkboxFor('ready-1')).toBeChecked();
+    expect(checkboxFor('ready-2')).toBeChecked();
+
+    await user.keyboard('{Escape}');
+
+    expect(checkboxFor('ready-1')).not.toBeChecked();
+    expect(checkboxFor('ready-2')).not.toBeChecked();
   });
 });
