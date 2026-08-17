@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Stub `bd` CLI used only by the E2E smoke suite (test/e2e). CI does not
+# install the real bd binary (bdboard-3tw.88): this script sits ahead of the
+# real `bd` on PATH (see test/e2e/global-setup.ts) and answers the one
+# subcommand the smoke scenarios actually exercise on the request path —
+# `bd --readonly -C <rootPath> list --json --all --limit 0 --no-pager`
+# (see src/infrastructure/bd/bd-cli-issue-repository.ts) — with a canned
+# golden fixture from test/fixtures/bd/*.json.
+#
+# Every other bd subcommand (session-link reads, human-decisions, etc.) exits
+# non-zero on purpose. Each of those call sites already tolerates a failing
+# bd call (try/catch or Promise.allSettled) because that is also how a real
+# bd failure behaves in production, so an unimplemented stub subcommand is a
+# safe, deliberate no-op rather than a gap.
+set -euo pipefail
+
+for arg in "$@"; do
+  if [[ "$arg" == "list" ]]; then
+    if [[ -z "${BDBOARD_E2E_BD_LIST_FIXTURE:-}" ]]; then
+      echo "bd stub: BDBOARD_E2E_BD_LIST_FIXTURE is not set" >&2
+      exit 1
+    fi
+    if [[ ! -f "$BDBOARD_E2E_BD_LIST_FIXTURE" ]]; then
+      echo "bd stub: fixture not found: $BDBOARD_E2E_BD_LIST_FIXTURE" >&2
+      exit 1
+    fi
+    cat "$BDBOARD_E2E_BD_LIST_FIXTURE"
+    exit 0
+  fi
+done
+
+echo "bd stub: unsupported subcommand (not needed by the smoke scenarios): $*" >&2
+exit 1

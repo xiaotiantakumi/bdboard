@@ -1,0 +1,376 @@
+[
+  {
+    "id": "bdboard-3tw.2",
+    "title": "Fixture ticket bdboard-3tw.2",
+    "description": "Fixture description for bdboard-3tw.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:37Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T11:47:51Z",
+    "started_at": "2026-08-14T09:13:24Z",
+    "closed_at": "2026-08-14T11:47:51Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.2",
+        "depends_on_id": "bdboard-3tw.1",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:37Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.2",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:37Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 4,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw",
+    "title": "Fixture ticket bdboard-3tw",
+    "description": "Fixture description for bdboard-3tw (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:36Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:36Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "bdboard-3tw.1",
+    "title": "Fixture ticket bdboard-3tw.1",
+    "description": "Fixture description for bdboard-3tw.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "notes": "Fixture notes.",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:36Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:55:56Z",
+    "started_at": "2026-08-14T08:49:15Z",
+    "closed_at": "2026-08-14T08:55:56Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.1",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:36Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.8",
+    "title": "Fixture ticket bdboard-3tw.8",
+    "description": "Fixture description for bdboard-3tw.8 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:43Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:43Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.8",
+        "depends_on_id": "bdboard-3tw.2",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:43Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.8",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:43Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.7",
+    "title": "Fixture ticket bdboard-3tw.7",
+    "description": "Fixture description for bdboard-3tw.7 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:42Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:42Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.7",
+        "depends_on_id": "bdboard-3tw.6",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:42Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.7",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:42Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.6",
+    "title": "Fixture ticket bdboard-3tw.6",
+    "description": "Fixture description for bdboard-3tw.6 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:41Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:41Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.6",
+        "depends_on_id": "bdboard-3tw.5",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:41Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.6",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:41Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.5",
+    "title": "Fixture ticket bdboard-3tw.5",
+    "description": "Fixture description for bdboard-3tw.5 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:40Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:40Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.5",
+        "depends_on_id": "bdboard-3tw.4",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:40Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.5",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:40Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.5",
+        "depends_on_id": "bdboard-3tw.3",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:40Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.4",
+    "title": "Fixture ticket bdboard-3tw.4",
+    "description": "Fixture description for bdboard-3tw.4 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:39Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:39Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.4",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:39Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.4",
+        "depends_on_id": "bdboard-3tw.2",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:39Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.3",
+    "title": "Fixture ticket bdboard-3tw.3",
+    "description": "Fixture description for bdboard-3tw.3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:38Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T11:58:53Z",
+    "closed_at": "2026-08-14T11:58:53Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.3",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:38Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.3",
+        "depends_on_id": "bdboard-3tw.2",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:38Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.10",
+    "title": "Fixture ticket bdboard-3tw.10",
+    "description": "Fixture description for bdboard-3tw.10 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:45Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:45Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.10",
+        "depends_on_id": "bdboard-3tw.2",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:45Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.10",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:45Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  },
+  {
+    "id": "bdboard-3tw.9",
+    "title": "Fixture ticket bdboard-3tw.9",
+    "description": "Fixture description for bdboard-3tw.9 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:44Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:44Z",
+    "dependencies": [
+      {
+        "issue_id": "bdboard-3tw.9",
+        "depends_on_id": "bdboard-3tw.8",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:44Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.9",
+        "depends_on_id": "bdboard-3tw.5",
+        "type": "blocks",
+        "created_at": "2026-08-14T17:47:44Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "bdboard-3tw.9",
+        "depends_on_id": "bdboard-3tw",
+        "type": "parent-child",
+        "created_at": "2026-08-14T17:47:44Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "bdboard-3tw"
+  }
+]

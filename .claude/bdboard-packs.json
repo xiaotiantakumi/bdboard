@@ -1,0 +1,16 @@
+{
+  "packs": [
+    {
+      "name": "bdboard-harness",
+      "version": "0.1.1",
+      "injectedAt": "2026-08-16T02:11:14.427Z",
+      "files": [
+        ".claude/skills/bdboard-harness/SKILL.md",
+        ".claude/skills/bdboard-harness/references/lease-params.md",
+        ".claude/skills/bdboard-harness/references/question-template.md",
+        ".claude/skills/bdboard-harness/references/verification.md",
+        ".claude/skills/bdboard-harness/references/worktree-pr-flow.md"
+      ]
+    }
+  ]
+}

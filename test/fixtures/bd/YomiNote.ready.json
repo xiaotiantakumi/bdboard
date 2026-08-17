@@ -1,0 +1,17 @@
+[
+  {
+    "id": "YomiNote-dvn",
+    "title": "Fixture ticket YomiNote-dvn",
+    "description": "Fixture description for YomiNote-dvn (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T08:22:40Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T08:22:40Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  }
+]

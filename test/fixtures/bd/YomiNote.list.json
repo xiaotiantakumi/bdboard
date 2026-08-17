@@ -1,0 +1,996 @@
+[
+  {
+    "id": "YomiNote-mog.1",
+    "title": "Fixture ticket YomiNote-mog.1",
+    "description": "Fixture description for YomiNote-mog.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 0,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T06:47:50Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T07:14:26Z",
+    "started_at": "2026-07-22T06:51:02Z",
+    "closed_at": "2026-07-22T07:14:26Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-mog.1",
+        "depends_on_id": "YomiNote-mog",
+        "type": "parent-child",
+        "created_at": "2026-07-22T15:47:50Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-mog"
+  },
+  {
+    "id": "YomiNote-mog",
+    "title": "Fixture ticket YomiNote-mog",
+    "description": "Fixture description for YomiNote-mog (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T06:24:41Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T07:25:29Z",
+    "started_at": "2026-07-22T06:26:12Z",
+    "closed_at": "2026-07-22T07:25:29Z",
+    "close_reason": "Closed (fixture data).",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-44g.4",
+    "title": "Fixture ticket YomiNote-44g.4",
+    "description": "Fixture description for YomiNote-44g.4 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:07:51Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T01:26:28Z",
+    "started_at": "2026-07-22T00:52:50Z",
+    "closed_at": "2026-07-22T01:26:28Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-44g.4",
+        "depends_on_id": "YomiNote-44g",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:07:51Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-44g"
+  },
+  {
+    "id": "YomiNote-44g.3",
+    "title": "Fixture ticket YomiNote-44g.3",
+    "description": "Fixture description for YomiNote-44g.3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:07:50Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T01:26:27Z",
+    "started_at": "2026-07-22T00:52:50Z",
+    "closed_at": "2026-07-22T01:26:27Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-44g.3",
+        "depends_on_id": "YomiNote-44g",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:07:50Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-44g"
+  },
+  {
+    "id": "YomiNote-44g.2",
+    "title": "Fixture ticket YomiNote-44g.2",
+    "description": "Fixture description for YomiNote-44g.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:07:32Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T23:07:49Z",
+    "closed_at": "2026-07-21T23:07:49Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-44g.2",
+        "depends_on_id": "YomiNote-44g",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:07:32Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-44g"
+  },
+  {
+    "id": "YomiNote-44g.1",
+    "title": "Fixture ticket YomiNote-44g.1",
+    "description": "Fixture description for YomiNote-44g.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:07:26Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T01:26:26Z",
+    "started_at": "2026-07-22T00:52:49Z",
+    "closed_at": "2026-07-22T01:26:26Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-44g.1",
+        "depends_on_id": "YomiNote-44g",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:07:25Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-44g"
+  },
+  {
+    "id": "YomiNote-44g",
+    "title": "Fixture ticket YomiNote-44g",
+    "description": "Fixture description for YomiNote-44g (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:07:13Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T01:51:24Z",
+    "closed_at": "2026-07-22T01:51:24Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-44g",
+        "depends_on_id": "YomiNote-umm",
+        "type": "blocks",
+        "created_at": "2026-07-22T08:07:24Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-umm.3",
+    "title": "Fixture ticket YomiNote-umm.3",
+    "description": "Fixture description for YomiNote-umm.3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:07:03Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T23:49:52Z",
+    "started_at": "2026-07-21T23:09:34Z",
+    "closed_at": "2026-07-21T23:49:52Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-umm.3",
+        "depends_on_id": "YomiNote-umm",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:07:03Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-umm"
+  },
+  {
+    "id": "YomiNote-umm.2",
+    "title": "Fixture ticket YomiNote-umm.2",
+    "description": "Fixture description for YomiNote-umm.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:06:55Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T23:49:51Z",
+    "started_at": "2026-07-21T23:09:34Z",
+    "closed_at": "2026-07-21T23:49:51Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-umm.2",
+        "depends_on_id": "YomiNote-umm",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:06:55Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-umm"
+  },
+  {
+    "id": "YomiNote-umm.1",
+    "title": "Fixture ticket YomiNote-umm.1",
+    "description": "Fixture description for YomiNote-umm.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:06:41Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T23:49:51Z",
+    "started_at": "2026-07-21T23:09:33Z",
+    "closed_at": "2026-07-21T23:49:51Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-umm.1",
+        "depends_on_id": "YomiNote-umm",
+        "type": "parent-child",
+        "created_at": "2026-07-22T08:06:41Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-umm"
+  },
+  {
+    "id": "YomiNote-umm",
+    "title": "Fixture ticket YomiNote-umm",
+    "description": "Fixture description for YomiNote-umm (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T23:06:23Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T23:49:52Z",
+    "started_at": "2026-07-21T23:09:33Z",
+    "closed_at": "2026-07-21T23:49:52Z",
+    "close_reason": "Closed (fixture data).",
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-dn2.7",
+    "title": "Fixture ticket YomiNote-dn2.7",
+    "description": "Fixture description for YomiNote-dn2.7 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:58Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T19:09:51Z",
+    "started_at": "2026-07-20T18:43:14Z",
+    "closed_at": "2026-07-20T19:09:51Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.7",
+        "depends_on_id": "YomiNote-dn2.6",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:18Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.7",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:57Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.7",
+        "depends_on_id": "YomiNote-dn2.5",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:18Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  },
+  {
+    "id": "YomiNote-dn2.1",
+    "title": "Fixture ticket YomiNote-dn2.1",
+    "description": "Fixture description for YomiNote-dn2.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:53Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T15:22:26Z",
+    "started_at": "2026-07-20T15:08:06Z",
+    "closed_at": "2026-07-20T15:22:26Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.1",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:52Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  },
+  {
+    "id": "YomiNote-dn2.2",
+    "title": "Fixture ticket YomiNote-dn2.2",
+    "description": "Fixture description for YomiNote-dn2.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:53Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T15:43:31Z",
+    "started_at": "2026-07-20T15:30:34Z",
+    "closed_at": "2026-07-20T15:43:31Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.2",
+        "depends_on_id": "YomiNote-dn2.1",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:14Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.2",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:53Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 3,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  },
+  {
+    "id": "YomiNote-dn2",
+    "title": "Fixture ticket YomiNote-dn2",
+    "description": "Fixture description for YomiNote-dn2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 1,
+    "issue_type": "epic",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:25Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T19:09:52Z",
+    "started_at": "2026-07-20T15:08:07Z",
+    "closed_at": "2026-07-20T19:09:52Z",
+    "close_reason": "Closed (fixture data).",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-esl.2",
+    "title": "Fixture ticket YomiNote-esl.2",
+    "description": "Fixture description for YomiNote-esl.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:14Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:55:33Z",
+    "closed_at": "2026-07-21T14:55:33Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-esl.2",
+        "depends_on_id": "YomiNote-esl",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:13Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-esl.2",
+        "depends_on_id": "YomiNote-esl.1",
+        "type": "blocks",
+        "created_at": "2026-07-21T22:37:14Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-esl"
+  },
+  {
+    "id": "YomiNote-esl.1",
+    "title": "Fixture ticket YomiNote-esl.1",
+    "description": "Fixture description for YomiNote-esl.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:13Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:55:32Z",
+    "started_at": "2026-07-21T13:39:24Z",
+    "closed_at": "2026-07-21T14:55:32Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-esl.1",
+        "depends_on_id": "YomiNote-esl",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:12Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-esl"
+  },
+  {
+    "id": "YomiNote-dtv.5",
+    "title": "Fixture ticket YomiNote-dtv.5",
+    "description": "Fixture description for YomiNote-dtv.5 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:10Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:41:22Z",
+    "started_at": "2026-07-21T14:12:43Z",
+    "closed_at": "2026-07-21T14:41:22Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dtv.5",
+        "depends_on_id": "YomiNote-dtv.3",
+        "type": "blocks",
+        "created_at": "2026-07-21T22:37:11Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dtv.5",
+        "depends_on_id": "YomiNote-dtv.4",
+        "type": "blocks",
+        "created_at": "2026-07-21T22:37:11Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dtv.5",
+        "depends_on_id": "YomiNote-dtv",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:09Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-dtv"
+  },
+  {
+    "id": "YomiNote-dtv.4",
+    "title": "Fixture ticket YomiNote-dtv.4",
+    "description": "Fixture description for YomiNote-dtv.4 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:09Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:12:42Z",
+    "started_at": "2026-07-21T14:10:13Z",
+    "closed_at": "2026-07-21T14:12:42Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dtv.4",
+        "depends_on_id": "YomiNote-dtv",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:08Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dtv"
+  },
+  {
+    "id": "YomiNote-dtv.3",
+    "title": "Fixture ticket YomiNote-dtv.3",
+    "description": "Fixture description for YomiNote-dtv.3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:08Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:10:12Z",
+    "started_at": "2026-07-21T14:06:58Z",
+    "closed_at": "2026-07-21T14:10:12Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dtv.3",
+        "depends_on_id": "YomiNote-dtv",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:08Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dtv.3",
+        "depends_on_id": "YomiNote-dtv.2",
+        "type": "blocks",
+        "created_at": "2026-07-21T22:37:10Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dtv"
+  },
+  {
+    "id": "YomiNote-dtv.2",
+    "title": "Fixture ticket YomiNote-dtv.2",
+    "description": "Fixture description for YomiNote-dtv.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:07Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:06:51Z",
+    "started_at": "2026-07-21T13:56:23Z",
+    "closed_at": "2026-07-21T14:06:51Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dtv.2",
+        "depends_on_id": "YomiNote-dtv.1",
+        "type": "blocks",
+        "created_at": "2026-07-21T22:37:10Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dtv.2",
+        "depends_on_id": "YomiNote-dtv",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:07Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dtv"
+  },
+  {
+    "id": "YomiNote-dtv.1",
+    "title": "Fixture ticket YomiNote-dtv.1",
+    "description": "Fixture description for YomiNote-dtv.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:37:06Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T13:49:20Z",
+    "started_at": "2026-07-21T13:41:53Z",
+    "closed_at": "2026-07-21T13:49:20Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dtv.1",
+        "depends_on_id": "YomiNote-dtv",
+        "type": "parent-child",
+        "created_at": "2026-07-21T22:37:06Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dtv"
+  },
+  {
+    "id": "YomiNote-esl",
+    "title": "Fixture ticket YomiNote-esl",
+    "description": "Fixture description for YomiNote-esl (scrubbed for public repo; original content contained project-specific detail).",
+    "notes": "Fixture notes.",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "epic",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:36:30Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:55:34Z",
+    "closed_at": "2026-07-21T14:55:34Z",
+    "close_reason": "Closed (fixture data).",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-dtv",
+    "title": "Fixture ticket YomiNote-dtv",
+    "description": "Fixture description for YomiNote-dtv (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "epic",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-21T13:36:29Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-21T14:41:23Z",
+    "started_at": "2026-07-21T13:41:53Z",
+    "closed_at": "2026-07-21T14:41:23Z",
+    "close_reason": "Closed (fixture data).",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-dn2.5",
+    "title": "Fixture ticket YomiNote-dn2.5",
+    "description": "Fixture description for YomiNote-dn2.5 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:56Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T18:41:04Z",
+    "started_at": "2026-07-20T18:31:04Z",
+    "closed_at": "2026-07-20T18:41:04Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.5",
+        "depends_on_id": "YomiNote-dn2.4",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:16Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.5",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:56Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.5",
+        "depends_on_id": "YomiNote-dn2.3",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:16Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  },
+  {
+    "id": "YomiNote-dn2.4",
+    "title": "Fixture ticket YomiNote-dn2.4",
+    "description": "Fixture description for YomiNote-dn2.4 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:55Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T18:28:49Z",
+    "started_at": "2026-07-20T15:45:40Z",
+    "closed_at": "2026-07-20T18:28:49Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.4",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:55Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.4",
+        "depends_on_id": "YomiNote-dn2.2",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:15Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  },
+  {
+    "id": "YomiNote-dn2.3",
+    "title": "Fixture ticket YomiNote-dn2.3",
+    "description": "Fixture description for YomiNote-dn2.3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 2,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:54Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T18:28:49Z",
+    "started_at": "2026-07-20T15:45:40Z",
+    "closed_at": "2026-07-20T18:28:49Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.3",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:54Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.3",
+        "depends_on_id": "YomiNote-dn2.2",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:14Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  },
+  {
+    "id": "YomiNote-dvn",
+    "title": "Fixture ticket YomiNote-dvn",
+    "description": "Fixture description for YomiNote-dvn (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T08:22:40Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T08:22:40Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "YomiNote-mog.2",
+    "title": "Fixture ticket YomiNote-mog.2",
+    "description": "Fixture description for YomiNote-mog.2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 3,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T07:25:11Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T08:02:32Z",
+    "started_at": "2026-07-22T07:37:26Z",
+    "closed_at": "2026-07-22T08:02:32Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-mog.2",
+        "depends_on_id": "YomiNote-mog",
+        "type": "parent-child",
+        "created_at": "2026-07-22T16:25:10Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-mog"
+  },
+  {
+    "id": "YomiNote-44g.5",
+    "title": "Fixture ticket YomiNote-44g.5",
+    "description": "Fixture description for YomiNote-44g.5 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 3,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T01:51:03Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T08:02:31Z",
+    "started_at": "2026-07-22T07:37:26Z",
+    "closed_at": "2026-07-22T08:02:31Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-44g.5",
+        "depends_on_id": "YomiNote-44g",
+        "type": "parent-child",
+        "created_at": "2026-07-22T10:51:02Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-44g"
+  },
+  {
+    "id": "YomiNote-umm.4",
+    "title": "Fixture ticket YomiNote-umm.4",
+    "description": "Fixture description for YomiNote-umm.4 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 3,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-22T00:37:08Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-22T08:02:30Z",
+    "started_at": "2026-07-22T07:37:26Z",
+    "closed_at": "2026-07-22T08:02:30Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-umm.4",
+        "depends_on_id": "YomiNote-umm",
+        "type": "parent-child",
+        "created_at": "2026-07-22T09:37:07Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "YomiNote-umm"
+  },
+  {
+    "id": "YomiNote-dn2.6",
+    "title": "Fixture ticket YomiNote-dn2.6",
+    "description": "Fixture description for YomiNote-dn2.6 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "closed",
+    "priority": 3,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-20T15:00:57Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-20T18:42:54Z",
+    "started_at": "2026-07-20T18:42:54Z",
+    "closed_at": "2026-07-20T18:42:54Z",
+    "close_reason": "Closed (fixture data).",
+    "dependencies": [
+      {
+        "issue_id": "YomiNote-dn2.6",
+        "depends_on_id": "YomiNote-dn2",
+        "type": "parent-child",
+        "created_at": "2026-07-21T00:00:56Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.6",
+        "depends_on_id": "YomiNote-dn2.1",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:17Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "YomiNote-dn2.6",
+        "depends_on_id": "YomiNote-dn2.2",
+        "type": "blocks",
+        "created_at": "2026-07-21T00:01:17Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 2,
+    "dependent_count": 1,
+    "comment_count": 0,
+    "parent": "YomiNote-dn2"
+  }
+]

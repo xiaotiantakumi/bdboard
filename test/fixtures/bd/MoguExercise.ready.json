@@ -1,0 +1,374 @@
+[
+  {
+    "id": "epic-haslett-00ae14-7sv.23",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.23",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.23 (scrubbed for public repo; original content contained project-specific detail).",
+    "design": "Fixture design notes.",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "notes": "Fixture notes.",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "feature",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T23:13:44Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T23:13:44Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.23",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-13T08:13:44Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.22",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.22",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.22 (scrubbed for public repo; original content contained project-specific detail).",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T12:59:23Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T12:59:23Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.22",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T21:59:23Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.5",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.5",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.5 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:35Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:35Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.5",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T10:47:34Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 1,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:07Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:07Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-ac7",
+    "title": "Fixture ticket epic-haslett-00ae14-ac7",
+    "description": "Fixture description for epic-haslett-00ae14-ac7 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T06:27:05Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T06:27:05Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.20",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.20",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.20 (scrubbed for public repo; original content contained project-specific detail).",
+    "notes": "Fixture notes.",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T09:51:05Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T10:02:30Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.20",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T18:51:05Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 2,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.19",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.19",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.19 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T09:51:04Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T09:51:04Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.19",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T18:51:04Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-mwo.3",
+    "title": "Fixture ticket epic-haslett-00ae14-mwo.3",
+    "description": "Fixture description for epic-haslett-00ae14-mwo.3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "feature",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T02:55:10Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T02:55:10Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-mwo.3",
+        "depends_on_id": "epic-haslett-00ae14-mwo",
+        "type": "parent-child",
+        "created_at": "2026-08-14T11:55:10Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-mwo"
+  },
+  {
+    "id": "epic-haslett-00ae14-mwo.1",
+    "title": "Fixture ticket epic-haslett-00ae14-mwo.1",
+    "description": "Fixture description for epic-haslett-00ae14-mwo.1 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "feature",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T02:48:13Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T02:48:13Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-mwo.1",
+        "depends_on_id": "epic-haslett-00ae14-mwo",
+        "type": "parent-child",
+        "created_at": "2026-08-14T11:48:13Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-mwo"
+  },
+  {
+    "id": "epic-haslett-00ae14-7w8",
+    "title": "Fixture ticket epic-haslett-00ae14-7w8",
+    "description": "Fixture description for epic-haslett-00ae14-7w8 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T09:40:12Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T09:40:12Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-lz2",
+    "title": "Fixture ticket epic-haslett-00ae14-lz2",
+    "description": "Fixture description for epic-haslett-00ae14-lz2 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T07:48:22Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T07:48:22Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-46n",
+    "title": "Fixture ticket epic-haslett-00ae14-46n",
+    "description": "Fixture description for epic-haslett-00ae14-46n (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T07:12:29Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T07:12:29Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-ivh",
+    "title": "Fixture ticket epic-haslett-00ae14-ivh",
+    "description": "Fixture description for epic-haslett-00ae14-ivh (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T04:14:39Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T04:14:39Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-5qh",
+    "title": "Fixture ticket epic-haslett-00ae14-5qh",
+    "description": "Fixture description for epic-haslett-00ae14-5qh (scrubbed for public repo; original content contained project-specific detail).",
+    "notes": "Fixture notes.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "assignee": "Fixture Owner",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T06:55:13Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T13:00:04Z",
+    "started_at": "2026-08-12T09:51:01Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.13",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.13",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.13 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:42Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:42Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.13",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T10:47:42Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.11",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.11",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.11 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:40Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:40Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.11",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T10:47:40Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.14",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.14",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.14 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 4,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:43Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:43Z",
+    "dependencies": [
+      {
+        "issue_id": "epic-haslett-00ae14-7sv.14",
+        "depends_on_id": "epic-haslett-00ae14-7sv",
+        "type": "parent-child",
+        "created_at": "2026-08-12T10:47:43Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "epic-haslett-00ae14-7sv"
+  }
+]

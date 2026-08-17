@@ -1,0 +1,35 @@
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+
+# Node / build artifacts
+node_modules/
+dist/
+web/node_modules/
+web/dist/
+
+# Local runtime artifacts
+logs/
+.claude/worktrees/
+
+# Local environment (contains auth credentials)
+.env
+.env.local
+*.env
+
+# OS / credential files (defense in depth; none of these are expected to exist)
+.DS_Store
+*.pem
+*.key
+credentials.json
+
+# Playwright E2E output (test/e2e)
+/playwright-report/
+/test-results/
+/blob-report/
+
+# bd gate create の副産物 (ランタイムロックファイル)
+.beads.gate.lock

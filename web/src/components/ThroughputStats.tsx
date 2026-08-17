@@ -1,0 +1,435 @@
+import { useQuery } from '@tanstack/react-query';
+import type {
+  AgeDistributionDto,
+  CfdDayEntryDto,
+  ProjectCfdStatsDto,
+  ProjectThroughputStatsDto,
+  ThroughputStatsDto,
+  WeeklyCloseCountDto,
+} from '../api';
+import { fetchCfdStats, fetchThroughputStats } from '../api';
+import {
+  STATS_WEEKS,
+  statsWeeksLabel,
+  type StatsWeeks,
+} from '../uiPersistedState';
+import {
+  ageBucketEntries,
+  formatWeekLabel,
+  hasAnyOpenTickets,
+  hasAnyWeeklyCloses,
+} from './throughputStatsFormatting';
+
+export interface ThroughputStatsProps {
+  readonly projectIds: readonly string[];
+  weeks: StatsWeeks;
+  onWeeksChange: (weeks: StatsWeeks) => void;
+}
+
+const CFD_STATUS_ORDER = [
+  'open',
+  'in_progress',
+  'blocked',
+  'closed',
+  'deferred',
+  'pinned',
+  'hooked',
+] as const;
+
+const CFD_STATUS_LABELS: Record<string, string> = {
+  open: '未着手',
+  in_progress: '作業中',
+  blocked: 'ブロック中',
+  closed: '完了',
+  deferred: '延期',
+  pinned: '固定',
+  hooked: 'フック',
+};
+
+const CFD_STATUS_COLORS: Record<string, string> = {
+  open: 'var(--throughput-cfd-open, #60a5fa)',
+  in_progress: 'var(--throughput-cfd-in-progress, #34d399)',
+  blocked: 'var(--throughput-cfd-blocked, #f87171)',
+  closed: 'var(--throughput-cfd-closed, #94a3b8)',
+  deferred: 'var(--throughput-cfd-deferred, #fbbf24)',
+  pinned: 'var(--throughput-cfd-pinned, #c084fc)',
+  hooked: 'var(--throughput-cfd-hooked, #fb7185)',
+};
+
+interface WeeklyBarChartProps {
+  weeklyCloses: readonly WeeklyCloseCountDto[];
+  chartLabel: string;
+}
+
+interface AgeBarChartProps {
+  distribution: AgeDistributionDto;
+  chartLabel: string;
+}
+
+interface CfdStackedChartProps {
+  days: readonly CfdDayEntryDto[];
+  chartLabel: string;
+}
+
+function formatCfdDateLabel(date: string): string {
+  const [year, month, day] = date.split('-');
+  if (year === undefined || month === undefined || day === undefined) {
+    return date;
+  }
+  return `${month}/${day}`;
+}
+
+function collectCfdStatuses(days: readonly CfdDayEntryDto[]): readonly string[] {
+  const known = new Set<string>(CFD_STATUS_ORDER);
+  const extras = new Set<string>();
+
+  for (const day of days) {
+    for (const status of Object.keys(day.counts)) {
+      if (!known.has(status)) {
+        extras.add(status);
+      }
+    }
+  }
+
+  return [...CFD_STATUS_ORDER, ...[...extras].sort()];
+}
+
+function dayTotal(counts: Record<string, number>): number {
+  return Object.values(counts).reduce((sum, count) => sum + count, 0);
+}
+
+function hasAnyCfdData(days: readonly CfdDayEntryDto[]): boolean {
+  return days.some((day) => dayTotal(day.counts) > 0);
+}
+
+function CfdStackedChart({ days, chartLabel }: CfdStackedChartProps) {
+  if (days.length === 0 || !hasAnyCfdData(days)) {
+    return (
+      <div className="throughput-chart-block">
+        <h4 className="throughput-chart-heading">累積フロー図 (CFD)</h4>
+        <p className="empty-message">CFDデータはまだありません</p>
+      </div>
+    );
+  }
+
+  const statuses = collectCfdStatuses(days);
+  const maxTotal = Math.max(1, ...days.map((day) => dayTotal(day.counts)));
+  const chartHeight = 56;
+  const barWidth = 100 / Math.max(days.length, 1);
+
+  return (
+    <div className="throughput-chart-block">
+      <h4 className="throughput-chart-heading">累積フロー図 (CFD)</h4>
+      <ul className="throughput-cfd-list">
+        {days.map((day) => (
+          <li key={day.date} className="throughput-cfd-item">
+            <span className="throughput-cfd-label">{formatCfdDateLabel(day.date)}</span>
+            <span className="throughput-cfd-count">{dayTotal(day.counts)}件</span>
+          </li>
+        ))}
+      </ul>
+      <svg
+        className="throughput-cfd-chart"
+        viewBox={`0 0 100 ${chartHeight}`}
+        width="100%"
+        role="img"
+        aria-label={chartLabel}
+      >
+        {days.map((day, dayIndex) => {
+          let cumulative = 0;
+          const x = dayIndex * barWidth + barWidth * 0.12;
+          const width = barWidth * 0.76;
+
+          return statuses.flatMap((status) => {
+            const count = day.counts[status] ?? 0;
+            if (count <= 0) {
+              return [];
+            }
+
+            const segmentHeight = (count / maxTotal) * (chartHeight - 8);
+            const y = chartHeight - cumulative - segmentHeight;
+            cumulative += (count / maxTotal) * (chartHeight - 8);
+            const label = `${formatCfdDateLabel(day.date)} ${CFD_STATUS_LABELS[status] ?? status}: ${count}件`;
+
+            return [
+              <rect
+                key={`${day.date}-${status}`}
+                x={x}
+                y={y}
+                width={width}
+                height={segmentHeight}
+                className={`throughput-cfd-bar throughput-cfd-bar-${status.replace(/[^a-z0-9_-]/gi, '_')}`}
+                style={{ fill: CFD_STATUS_COLORS[status] ?? '#64748b' }}
+                aria-hidden="true"
+              >
+                <title>{label}</title>
+              </rect>,
+            ];
+          });
+        })}
+      </svg>
+      <ul className="throughput-cfd-legend">
+        {statuses
+          .filter((status) =>
+            days.some((day) => (day.counts[status] ?? 0) > 0),
+          )
+          .map((status) => (
+            <li key={status} className="throughput-cfd-legend-item">
+              <span
+                className="throughput-cfd-legend-swatch"
+                style={{ background: CFD_STATUS_COLORS[status] ?? '#64748b' }}
+                aria-hidden="true"
+              />
+              <span>{CFD_STATUS_LABELS[status] ?? status}</span>
+            </li>
+          ))}
+      </ul>
+    </div>
+  );
+}
+
+function WeeklyBarChart({ weeklyCloses, chartLabel }: WeeklyBarChartProps) {
+  const maxCount = Math.max(1, ...weeklyCloses.map((entry) => entry.count));
+  const barWidth = 100 / Math.max(weeklyCloses.length, 1);
+  const chartHeight = 48;
+
+  return (
+    <div className="throughput-chart-block">
+      <h4 className="throughput-chart-heading">週次クローズ数</h4>
+      <ul className="throughput-week-list">
+        {weeklyCloses.map((entry) => (
+          <li key={entry.weekStart} className="throughput-week-item">
+            <span className="throughput-week-label">
+              {formatWeekLabel(entry.weekStart)}
+            </span>
+            <span className="throughput-week-count">{entry.count}件</span>
+          </li>
+        ))}
+      </ul>
+      <svg
+        className="throughput-week-chart"
+        viewBox={`0 0 100 ${chartHeight}`}
+        width="100%"
+        role="img"
+        aria-label={chartLabel}
+      >
+        {weeklyCloses.map((entry, index) => {
+          const barHeight = (entry.count / maxCount) * (chartHeight - 8);
+          const x = index * barWidth + barWidth * 0.15;
+          const width = barWidth * 0.7;
+          const y = chartHeight - barHeight;
+          const label = `${formatWeekLabel(entry.weekStart)}: ${entry.count}件`;
+
+          return (
+            <g key={entry.weekStart}>
+              <rect
+                x={x}
+                y={y}
+                width={width}
+                height={barHeight}
+                rx={1.5}
+                className="throughput-week-bar"
+                aria-hidden="true"
+              >
+                <title>{label}</title>
+              </rect>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function AgeBarChart({ distribution, chartLabel }: AgeBarChartProps) {
+  const entries = ageBucketEntries(distribution);
+  const maxCount = Math.max(1, ...entries.map((entry) => entry.count));
+  const chartWidth = 100;
+
+  return (
+    <div className="throughput-chart-block">
+      <h4 className="throughput-chart-heading">未完了チケットの年齢分布</h4>
+      <ul className="throughput-age-list">
+        {entries.map((entry) => (
+          <li key={entry.key} className="throughput-age-item">
+            <span className="throughput-age-label">{entry.label}</span>
+            <span className="throughput-age-count">{entry.count}件</span>
+          </li>
+        ))}
+      </ul>
+      <svg
+        className="throughput-age-chart"
+        viewBox={`0 0 ${chartWidth} ${entries.length * 16}`}
+        width="100%"
+        role="img"
+        aria-label={chartLabel}
+      >
+        {entries.map((entry, index) => {
+          const barWidth = (entry.count / maxCount) * (chartWidth - 24);
+          const y = index * 16 + 3;
+          const label = `${entry.label}: ${entry.count}件`;
+
+          return (
+            <g key={entry.key}>
+              <rect
+                x={24}
+                y={y}
+                width={barWidth}
+                height={10}
+                rx={2}
+                className="throughput-age-bar"
+                aria-hidden="true"
+              >
+                <title>{label}</title>
+              </rect>
+              <text
+                x={0}
+                y={y + 8}
+                className="throughput-age-axis-label"
+                aria-hidden="true"
+              >
+                {entry.label}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
+function StatsCard({
+  title,
+  weeklyCloses,
+  openTicketAge,
+  cfdDays,
+}: {
+  title: string;
+  weeklyCloses: readonly WeeklyCloseCountDto[];
+  openTicketAge: AgeDistributionDto;
+  cfdDays: readonly CfdDayEntryDto[];
+}) {
+  const weeklyLabel = `${title}の週次クローズ数`;
+  const ageLabel = `${title}の未完了チケット年齢分布`;
+  const cfdLabel = `${title}の累積フロー図`;
+
+  return (
+    <article className="throughput-stats-card">
+      <h3 className="throughput-stats-card-title">{title}</h3>
+      <WeeklyBarChart weeklyCloses={weeklyCloses} chartLabel={weeklyLabel} />
+      <AgeBarChart distribution={openTicketAge} chartLabel={ageLabel} />
+      <CfdStackedChart days={cfdDays} chartLabel={cfdLabel} />
+    </article>
+  );
+}
+
+function hasAnyStatsData(stats: ThroughputStatsDto): boolean {
+  if (hasAnyWeeklyCloses(stats.totals.weeklyCloses)) {
+    return true;
+  }
+  if (hasAnyOpenTickets(stats.totals.openTicketAge)) {
+    return true;
+  }
+  return stats.projects.some(
+    (project) =>
+      hasAnyWeeklyCloses(project.weeklyCloses) ||
+      hasAnyOpenTickets(project.openTicketAge),
+  );
+}
+
+function hasAnyDisplayedData(
+  stats: ThroughputStatsDto | undefined,
+  cfdStats: { totals: readonly CfdDayEntryDto[] } | undefined,
+): boolean {
+  if (stats !== undefined && hasAnyStatsData(stats)) {
+    return true;
+  }
+  if (cfdStats !== undefined && hasAnyCfdData(cfdStats.totals)) {
+    return true;
+  }
+  return false;
+}
+
+function findProjectCfdDays(
+  cfdStats: { projects: readonly ProjectCfdStatsDto[] } | undefined,
+  projectId: string,
+): readonly CfdDayEntryDto[] {
+  return cfdStats?.projects.find((project) => project.projectId === projectId)?.days ?? [];
+}
+
+export function ThroughputStats({
+  projectIds,
+  weeks,
+  onWeeksChange,
+}: ThroughputStatsProps) {
+  const projectIdsKey = projectIds.join(',');
+  const cfdDays = weeks * 7;
+  const query = useQuery({
+    queryKey: ['throughput-stats', weeks, projectIdsKey],
+    queryFn: () => fetchThroughputStats(weeks, projectIds),
+  });
+  const cfdQuery = useQuery({
+    queryKey: ['cfd-stats', cfdDays, projectIdsKey],
+    queryFn: () => fetchCfdStats(cfdDays, projectIds),
+  });
+
+  const isLoading = query.isLoading || cfdQuery.isLoading;
+  const isError = query.isError || cfdQuery.isError;
+  const errorMessage =
+    (query.error instanceof Error ? query.error.message : undefined) ??
+    (cfdQuery.error instanceof Error ? cfdQuery.error.message : undefined) ??
+    '統計の読み込みに失敗しました';
+
+  return (
+    <section className="throughput-stats" aria-label="統計">
+      <div className="throughput-stats-header">
+        <h2 className="throughput-stats-title">統計</h2>
+        <div className="throughput-weeks-group">
+          <span className="header-label">期間</span>
+          <div className="toggle-group">
+            {STATS_WEEKS.map((option) => (
+              <button
+                key={option}
+                type="button"
+                className={`toggle-btn${weeks === option ? ' active' : ''}`}
+                onClick={() => onWeeksChange(option)}
+              >
+                {statsWeeksLabel(option)}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {isLoading && <p className="loading">読み込み中…</p>}
+      {isError && <p className="error-message">{errorMessage}</p>}
+      {!isLoading &&
+        !isError &&
+        !hasAnyDisplayedData(query.data, cfdQuery.data) && (
+          <p className="empty-message">この期間の統計データはありません</p>
+        )}
+      {!isLoading &&
+        !isError &&
+        hasAnyDisplayedData(query.data, cfdQuery.data) &&
+        query.data !== undefined && (
+          <div className="throughput-stats-cards">
+            <StatsCard
+              title="全体"
+              weeklyCloses={query.data.totals.weeklyCloses}
+              openTicketAge={query.data.totals.openTicketAge}
+              cfdDays={cfdQuery.data?.totals ?? []}
+            />
+            {query.data.projects.map((project: ProjectThroughputStatsDto) => (
+              <StatsCard
+                key={project.projectId}
+                title={project.projectName}
+                weeklyCloses={project.weeklyCloses}
+                openTicketAge={project.openTicketAge}
+                cfdDays={findProjectCfdDays(cfdQuery.data, project.projectId)}
+              />
+            ))}
+          </div>
+        )}
+    </section>
+  );
+}

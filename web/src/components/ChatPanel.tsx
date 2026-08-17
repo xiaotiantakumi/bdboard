@@ -1,0 +1,1761 @@
+import {
+  type FormEvent,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import {
+  ApiError,
+  fetchChatAgents,
+  fetchChatThreads,
+  deleteChatThread,
+  fetchChatSessionMessages,
+  postChatMessage,
+  postChatMessageStream,
+  type ChatAgentDto,
+  type ChatMessageResponseDto,
+  type ProjectDto,
+  type ChatThreadDto,
+  type SessionTailMessageDto,
+} from '../api';
+import {
+  readPersistedChatThreads,
+  writePersistedChatThread,
+  writePersistedChatThreadState,
+} from '../chatThreadStorage';
+import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
+import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
+import { CHAT_BUSY_HELP, writeAccessErrorMessage } from '../writeAccessMessage';
+
+interface ChatPanelProps {
+  projects: readonly ProjectDto[];
+  initialProjectId?: string;
+  initialInput?: string;
+  ticketContextToken?: number;
+  onProjectIdChange?: (projectId: string) => void;
+  onClose: () => void;
+}
+
+type ChatMessage = {
+  role: 'user' | 'assistant' | 'error';
+  text: string;
+  at: number;
+  /** このターンで実行できなかった bd ツール呼び出しの名前(bdboard-l1t.4 MF3)。 */
+  failedTools?: string[];
+};
+
+// SF3: 会話キーの「新規ドラフト」書式(セッションIDを持たない未送信スレッド)を
+// 1箇所に集約する。以前はこの文字列テンプレートが複数箇所(state 初期化・
+// startNewDraftThread・draftKey ローカル関数・handleAgentChange)に散在していた。
+function makeDraftKey(projectId: string, nonce: number): string {
+  return `new:${projectId}:${nonce}`;
+}
+
+function resolveInitialProjectId(
+  projects: readonly ProjectDto[],
+  initialProjectId?: string,
+): string {
+  if (
+    initialProjectId !== undefined &&
+    projects.some((project) => project.id === initialProjectId)
+  ) {
+    return initialProjectId;
+  }
+  return projects[0]?.id ?? '';
+}
+
+function hasSelectableModels(agent: ChatAgentDto): boolean {
+  return (agent.models?.length ?? 0) >= 2;
+}
+
+function formatAgentOptionLabel(agent: ChatAgentDto): string {
+  let label = agent.label;
+  // モデルを選べるエージェントでは、隣のモデルセレクトが現在値を持っている。
+  // ここに descriptor 既定(例: sonnet)を出すと、Opus を選んでいるのに
+  // "Claude Code (sonnet)" と表示され、2つのコントロールが矛盾する。
+  if (
+    !hasSelectableModels(agent) &&
+    agent.model !== undefined &&
+    agent.model !== ''
+  ) {
+    label += ` (${agent.model})`;
+  }
+  if (agent.experimental) {
+    label += ' [experimental]';
+  }
+  if (agent.capability !== 'bd-only') {
+    label += ` [${agent.capability}]`;
+  }
+  if (agent.availability === 'unavailable') {
+    label += '（利用不可）';
+  } else if (agent.availability === 'unknown') {
+    label += '（認証未確認）';
+  }
+  return label;
+}
+
+function resolveDefaultModel(agent: ChatAgentDto): string {
+  const models = agent.models ?? [];
+  if (
+    agent.model !== undefined &&
+    models.some((entry) => entry.id === agent.model)
+  ) {
+    return agent.model;
+  }
+  return models[0]?.id ?? '';
+}
+
+function summarizeTitle(content: string): string {
+  const chars = Array.from(content.trim());
+  return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : chars.join('');
+}
+
+export function ChatPanel({
+  projects,
+  initialProjectId,
+  initialInput,
+  ticketContextToken,
+  onProjectIdChange,
+  onClose,
+}: ChatPanelProps) {
+  const panelRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  const [selectedProjectId, setSelectedProjectId] = useState(() =>
+    resolveInitialProjectId(projects, initialProjectId),
+  );
+  const [conversations, setConversations] = useState<
+    Record<
+      string,
+      { messages: ChatMessage[]; sessionId?: string; agentId?: string }
+    >
+  >({});
+  const [threadLists, setThreadLists] = useState<Record<string, ChatThreadDto[]>>({});
+  const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
+  const [selectedThreadIds, setSelectedThreadIds] = useState<Record<string, string | undefined>>({});
+  const [draftNonces, setDraftNonces] = useState<Record<string, number>>({});
+  const [confirmingDeleteSessionId, setConfirmingDeleteSessionId] = useState<string | null>(null);
+  const [threadError, setThreadError] = useState<string | null>(null);
+  const [ticketProjectFallbackNotice, setTicketProjectFallbackNotice] = useState<string | null>(null);
+  const [agents, setAgents] = useState<readonly ChatAgentDto[]>([]);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
+  const [showDiscoveredSessions, setShowDiscoveredSessions] = useState(false);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
+  // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
+  // ticketContextToken 由来のプリフィル文言は常にここへ「対象プロジェクト+文言」
+  // だけを積んでおき、実際にそのプロジェクトのドラフトキーが startNewDraftThread
+  // によって採番されたタイミングでのみ消化する(下記 startNewDraftThread 参照)。
+  // これにより、遅延適用の窓(プロジェクトを跨ぐ場合やスレッド一覧 fetch 未完了の
+  // 場合)で他の要因により nonce がずれても、予測ズレによる孤児エントリが原理的に
+  // 発生しない。SF1: この消化タイミングで、直前のドラフト(旧キー)がユーザーに
+  // よって編集されていれば、プリフィルではなく旧キーの値を優先して引き継ぐ
+  // (詳細は draftSeedTextRef と startNewDraftThread 内のコメント)。これにより
+  // 「窓の間にユーザーが編集した本文が消化時に無言でプリフィルへ巻き戻る」
+  // 退行を防いでいる。
+  //
+  // マウント時点の initialInput(nonce 0 の初期シード、下の conversationInputs
+  // 参照)は意図的にここへは積まない: nonce 0 は「これから採番される」ものではなく
+  // 初回レンダーの時点で確定している唯一のドラフトキーなので、
+  // pendingPrefillRef を経由しなくても予測ズレは起こり得ない。ここに混ぜると
+  // 「pendingPrefillRef が非 null で始まる」ケースが生まれ、StrictMode の開発時
+  // ダブルレンダー(mount→cleanup→mount で effect が二重発火する)との整合を
+  // 取るための追加の仕組みが必要になる(実際に試して壊れた)。ticketContextToken
+  // 側の effect が実際に発火するまでは null のままで十分。
+  // 104.17 Opus レビュー should-fix1: isUserEdit はこのプリフィルが(システムの
+  // 文言ではなく)コールドウィンドウ中のユーザー編集そのものであることを示す。
+  // 消化側(startNewDraftThread)がこれを見て draftSeedTextRef への「システム
+  // シード」記録を抑止する(詳細はそちら側のコメント)。
+  const pendingPrefillRef = useRef<{ projectId: string; text: string; isUserEdit?: boolean } | null>(null);
+  // SF1: 各ドラフトキーが最後に「システムによって(ユーザー操作を経ずに)シード
+  // された」ときの文言を憶えておく。プリフィル消化やマウント時シードで
+  // conversationInputs へ書き込むたびに、その値をここにも記録する。textarea の
+  // onChange(手入力)を経たキーは記録を更新しない(=最後に記録された値と現在値が
+  // 食い違う)ので、「現在値が空でなく、かつ記録されたシード文言と一致しない」を
+  // 「ユーザーが編集した」の判定に使える。
+  //
+  // 単純に「現在値 !== 今回新しく適用しようとしているプリフィル文言」で判定する
+  // (=前回のプリフィルとの比較を省略する)と、チケットが連続して開かれた場合に
+  // 「前回のチケットの(誰も編集していない)シード文言」まで「今回のプリフィルと
+  // 違うから編集済み」と誤判定し、今回の新しいプリフィルを適用し損なう
+  // (既存の回帰テスト「starts a fresh draft and replaces the input on each
+  // ticket context token」で実際に検出された)。旧キーごとに「そのキー自身が
+  // 最後に何でシードされたか」を憶えておくことで、この誤判定を避けている。
+  // SFX: conversationInputs へ書き込む箇所(mount シード・startNewDraftThread の
+  // プリフィル消化・handleAgentChange の引き継ぎなど)は、値をコピー/設定する
+  // たびにこの記録との整合を維持する義務を負う(値だけコピーしてシード記録を
+  // 移し忘れると、次回比較時に「記録が無い」→無条件で「編集済み」と誤判定する)。
+  // bdboard-dpq レビュー nit: 以前は下の conversationInputs の useState
+  // lazy initializer 内で draftSeedTextRef.current への書き込み(副作用)を
+  // 行っていた。値そのものは各レンダーで再計算しても同じなので実害は無いが、
+  // useState の初期化関数は本来副作用を持たない純粋関数であるべき、という
+  // ルール上のnitだった(bdboard-ysu で解消)。useRef の初期値引数は
+  // 毎レンダー評価されコミット後は破棄される(React の既知の挙動)ため、
+  // ここで conversationInputs 側と同じ計算を独立に行っても、両者の間に
+  // 書き込み順の依存を作らずに同じ初期値へ揃えられる。N3 と同じ理由で
+  // resolveInitialProjectId を再度呼ばず selectedProjectId state をそのまま
+  // 使う点も変えていない。
+  // bdboard-ysu Opus レビュー N2: この計算(マウント時点の nonce 0 シード)を
+  // useRef 側・useState 側それぞれで独立に書くと、将来どちらか片方だけ
+  // 変更されて drift する恐れがある(SFX の「書き込み側が draftSeedTextRef の
+  // 同期を所有する」不変条件のオーナーシップが暗黙のまま2箇所に分散する)。
+  // 1つの const にまとめ、両方の初期値をここから作る。state 側は
+  // draftSeedTextRef.current と同一オブジェクト参照を共有しない(spread で
+  // コピーを渡す) — 同一参照だと、どちらかが後で自分の Record を直接 mutate
+  // した場合にもう片方まで無自覚に汚染されてしまうため。
+  const initialDraftSeed: Record<string, string> =
+    initialInput !== undefined && initialInput !== ''
+      ? { [makeDraftKey(selectedProjectId, 0)]: initialInput }
+      : {};
+  const draftSeedTextRef = useRef<Record<string, string>>(initialDraftSeed);
+  const [conversationInputs, setConversationInputs] = useState<Record<string, string>>(
+    () => ({ ...initialDraftSeed }),
+  );
+  const [isSending, setIsSending] = useState(false);
+  const [streamingReply, setStreamingReply] = useState<{ key: string; text: string } | null>(null);
+  const [historyLoadedFor, setHistoryLoadedFor] = useState<
+    Record<string, true>
+  >({});
+  const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(
+    null,
+  );
+  // 会話(スレッド)ごとに直近確定したモデルIDをキャッシュする。サーバーから復元した
+  // 値も、送信時に実際に使った値も、ここに会話キー(セッションID、または新規ドラフト
+  // キー)で記録しておく。エージェント読み込みタイミング(M1)やスレッド切り替え
+  // (MF3)に関わらず、「今表示している会話キーに対応する値があればそれを使う」
+  // という1つの規則だけで両方のケースを解ける。
+  //
+  // bdboard-2n8: モデル select の onChange(手動選択、下の handleModelChange)でも
+  // このキャッシュに書く。理由は2つ:
+  // (a) 履歴フェッチが in-flight のときに手動選択すると、フェッチ解決時の
+  //     setThreadModelIds が後勝ちで上書きしてしまう競合を防ぐ(履歴解決側は
+  //     「まだ値が無いキーにだけ書く」よう変更済み)。
+  // (b) 未送信ドラフトスレッド(draftKey)で選んだモデルも、そのキーのまま他の
+  //     会話キーへ切り替えて戻ってきたとき(例: プロジェクトを切り替えて戻る)に
+  //     保持されるようにする。104.9 ではドラフトキーをキャッシュに書く経路が
+  //     単に無かっただけで、意図的な禁止ではなかった。
+  //     注意(bdboard-2n8 レビュー訂正): draftKey は `new:${projectId}:${nonce}`
+  //     で nonce はプロジェクト単位に保持されるため、「別プロジェクトへ切り替えて
+  //     戻る」「開いているスレッドを全部閉じて選択スレッドが無くなる」「CLI
+  //     セッション再開後にそのタブを閉じる」等の経路では同じ draftKey へ普通に
+  //     戻ってくる(ChatPanel.test.tsx の対応するテストがこれを望ましい挙動として
+  //     assert している)。つまり「古い draftKey のキャッシュエントリは二度と
+  //     読まれない」という主張は誤り。クロスエージェントのモデル漏れを実際に
+  //     防いでいるのはこの点ではなく、下の復元 effect が持つメンバーシップ
+  //     チェック(`cached` が現在選択中エージェントの `models` に実在するときだけ
+  //     適用し、無ければ既定モデルへフォールバックする)であり、エージェントを
+  //     切り替える操作が draftKey の nonce を進めることでキーが自然に分離される
+  //     ことも合わせて働く。
+  const [threadModelIds, setThreadModelIds] = useState<Record<string, string>>({});
+  const historyRequestIdRef = useRef(0);
+  const draftNoncesRef = useRef(draftNonces);
+  draftNoncesRef.current = draftNonces;
+  // SF1: startNewDraftThread ([] 依存の useCallback)が「切り替え直前のドラフトに
+  // 何が入っていたか」を stale closure を経由せず読めるようにするための参照。
+  // draftNoncesRef と同じ「state をミラーする ref」パターン。
+  const conversationInputsRef = useRef(conversationInputs);
+  conversationInputsRef.current = conversationInputs;
+  // bdboard-ysu: 下の project-sync effect が、非同期に解決する
+  // fetchChatThreads().then/.catch の中から「今まさにどのスレッドが選択
+  // されているか」を stale closure を経由せず読むための参照。draftNoncesRef /
+  // conversationInputsRef と同じミラーパターン。
+  const selectedThreadIdsRef = useRef(selectedThreadIds);
+  selectedThreadIdsRef.current = selectedThreadIds;
+  const pendingTicketDraftProjectRef = useRef<string | null>(null);
+  const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
+
+  // 不変条件(N1): この関数を同一 tick 内(同期的なコールバック連鎖の中)で同じ
+  // projectId に対して2回呼ぶと、両方とも同じ draftNoncesRef.current[projectId]
+  // を読んでから +1 するため nonce が衝突し、2つのドラフトが同じ会話キーを
+  // 奪い合う。呼び出し側(下の各 useEffect)は必ず「1回のトリガーにつき
+  // startNewDraftThread は高々1回」を守ること。
+  const startNewDraftThread = useCallback((projectId: string) => {
+    const previousDraftNonce = draftNoncesRef.current[projectId] ?? 0;
+    const previousDraftKey = makeDraftKey(projectId, previousDraftNonce);
+    const nextDraftNonce = previousDraftNonce + 1;
+    const nextDraftKey = makeDraftKey(projectId, nextDraftNonce);
+    setSelectedThreadIds((prev) => ({ ...prev, [projectId]: undefined }));
+    setDraftNonces((prev) => ({ ...prev, [projectId]: nextDraftNonce }));
+    setHistoryLoadedFor((prev) => ({
+      ...prev,
+      [nextDraftKey]: true,
+    }));
+    setConfirmingDeleteSessionId(null);
+    // MF1/SF1/SF2: ここが会話キーの nonce を実際に採番する唯一の場所なので、
+    // 保留中のプリフィル(pendingPrefillRef、対象プロジェクトが一致する場合のみ)
+    // をこのタイミングで、いま採番した本物のドラフトキーへ消化する。呼び出し元
+    // (ticket-context effect からの即時呼び出し・スレッド一覧 fetch 側での
+    // pending 消化・handleNewThread のいずれでも)を問わず同じ経路を通るため、
+    // 未来のキーを先読み予測する必要が無く、予測ズレによる孤児エントリも
+    // 発生しない。「新規スレッド」ボタン(handleNewThread)からの呼び出しでは
+    // SF5 により pendingPrefillRef が事前にクリアされるので、この分岐は素通りし、
+    // 従来どおり空の新規ドラフトになる。
+    if (
+      pendingPrefillRef.current !== null &&
+      pendingPrefillRef.current.projectId === projectId
+    ) {
+      const prefillText = pendingPrefillRef.current.text;
+      // 104.17 Opus レビュー should-fix1: このプリフィルがシステムの文言では
+      // なく、コールドウィンドウ中にユーザーが実際にタイプした本文そのもので
+      // ある場合(104.17 の cold-key 引き継ぎ、ticket-context effect 側で
+      // isUserEdit を立てる)、それは「システムがシードした文言」ではないので
+      // draftSeedTextRef へシード記録してはいけない。記録してしまうと、次に
+      // 同じチケットが再び開かれたとき(token 2 など)、下の SF1 判定が
+      // 「draftSeedTextRef と現在値が一致する = 未編集」と誤断し、今まさに
+      // 保持したはずのユーザー本文を次のプリフィルで無言上書きしてしまう。
+      const prefillIsUserEdit = pendingPrefillRef.current.isUserEdit === true;
+      pendingPrefillRef.current = null;
+      // SF1(N1: handleAgentChange の書きかけ本文引き継ぎと同じ family ——
+      // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という不変
+      // 条件): pendingPrefillRef 消化で置き換えられる旧ドラフト(previousDraftKey)
+      // が、プリフィルの窓(fetch 待ちなど)の間にユーザーによって編集・追記され
+      // ていた場合、無条件でプリフィルを上書き適用するとその編集を無言で失わせて
+      // しまう(bdboard-dpq の趣旨に反する退行)。draftSeedTextRef(旧キーが最後に
+      // システムによってシードされたときの文言)と旧キーの現在値を比べ、両者が
+      // 食い違っていれば「ユーザーが編集した」とみなしてプリフィルではなく旧キー
+      // の値をそのまま新キーへ引き継ぐ。旧キーが空、またはシード時のままなら
+      // (=誰も編集していない)従来どおりプリフィルを適用する。
+      const previousValue = conversationInputsRef.current[previousDraftKey] ?? '';
+      const previousSeedText = draftSeedTextRef.current[previousDraftKey];
+      const previousValueIsUneditedSeed =
+        previousValue === '' || previousValue === previousSeedText;
+      const textToApply = previousValueIsUneditedSeed ? prefillText : previousValue;
+      if (textToApply === prefillText && !prefillIsUserEdit) {
+        draftSeedTextRef.current[nextDraftKey] = prefillText;
+      } else {
+        delete draftSeedTextRef.current[nextDraftKey];
+      }
+      setConversationInputs((prev) => ({ ...prev, [nextDraftKey]: textToApply }));
+    }
+    // N2: ドラフトへの切り替えは意図的に writePersistedChatThreadState を呼ばない。
+    // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
+    // selectedSessionId をここで書き換える対象が無い — 既存の永続化済み選択は
+    // そのまま(次回訪問時にまた同じ既存スレッドへ戻れるように)残す。
+  }, []);
+
+  const { requestClose } = useHistoryBackClose({
+    panelId: 'chat',
+    onClose,
+  });
+
+  useFocusTrap({
+    containerRef: panelRef,
+    initialFocusRef: closeButtonRef,
+    onEscape: requestClose,
+  });
+
+  const currentSessionId = selectedThreadIds[selectedProjectId];
+  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
+  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
+  const currentInput = conversationInputs[currentConversationKey] ?? '';
+  // bdboard-pbf: 既存スレッド選択中で履歴がまだ解決していない間は送信を
+  // ブロックする(送信ボタン disabled + handleSubmit 冒頭ガード)。この窓で
+  // 送信すると conversations[key] が未定義のため sessionId 無しで POST され、
+  // 既存スレッドの続きではなく別のサーバーセッションにフォークしてしまう。
+  // loadingHistoryFor でなく historyLoadedFor を見るのは、履歴 effect が発火する
+  // 前の1フレームも覆うため。履歴 fetch は成功/失敗どちらでも finally で
+  // historyLoadedFor[key]=true を立てるので、永久にロックされることはない。
+  const isHistoryPending =
+    currentSessionId !== undefined &&
+    historyLoadedFor[currentConversationKey] !== true;
+  const currentMessages = conversations[currentConversationKey]?.messages ?? [];
+  const selectedProject = projects.find(
+    (project) => project.id === selectedProjectId,
+  );
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+
+  useEffect(() => {
+    if (selectedProjectId !== '') {
+      onProjectIdChange?.(selectedProjectId);
+    }
+  }, [selectedProjectId, onProjectIdChange]);
+
+  useEffect(() => {
+    // ticketContextToken が定義されている場合は、下の ticket-context effect が
+    // projects の遅延到着を処理するため、ここでは通常のチャット起動だけを扱う。
+    if (ticketContextToken !== undefined) return;
+    if (selectedProjectId !== '') return;
+    const resolved = resolveInitialProjectId(projects, initialProjectId);
+    if (resolved === '') return;
+
+    // projects 未解決中(selectedProjectId==='')でも draftNonces[''] は進み得る:
+    // 「新規スレッド」ボタン(handleNewThread、selectedProjectId!=='' でゲート
+    // されていない)や、エージェント select の変更(handleAgentChange、agents の
+    // ロードだけで表示されうる)がどちらも startNewDraftThread('') を呼べる。
+    // ここで移行元キーを makeDraftKey('', 0) に固定すると、その間に nonce が
+    // 進んでいた場合に本物のライブ入力キー(例: new::1)を見逃し、移行が
+    // 空振りしてドラフトが消失/古い文言に巻き戻る。draftNoncesRef.current['']
+    // (無ければ 0)を都度読んで、実際に今使われているキーを特定する。
+    const coldNonce = draftNoncesRef.current[''] ?? 0;
+    const staleKey = makeDraftKey('', coldNonce);
+    // bdboard-ysu(Opus レビュー SF2): coldNonce > 0 は「projects 未解決の
+    // コールドウィンドウ中に、ユーザーが '' キースペースで明示的に新規ドラフト
+    // 操作(新規スレッド/エージェント切替)を行った」ことを意味する。この事実を
+    // resolved 側の draftNonces へ引き継がないと、下の project-sync effect の
+    // 「nonce>0 かつ選択が undefined」ガード(SF1 コメント参照)が resolved
+    // プロジェクトの初回 fetch 開始時点でこれを検出できず、fetch が既存
+    // スレッドで解決した瞬間にこのドラフト選択が上書きされてしまう(チケットの
+    // 症状そのもの、実測で確認済み)。targetNonce は「実際にこの移行後の
+    // 文言が書き込まれる資格キーの nonce」でもあるため、bump は
+    // targetKey を計算する前に確定させる — 後から bump すると、
+    // draftKey(resolved) が指す「現在のドラフトキー」の nonce と、実際に
+    // 文言を書き込んだキーの nonce がずれて、移行したはずの文言が孤児になる
+    // (currentConversationKey が別の nonce を指してしまう)。'' キースペース
+    // の nonce 残骸は二度と読まれないので、bump と同じ setDraftNonces 呼び出し
+    // でまとめて掃除する。
+    let targetNonce = draftNoncesRef.current[resolved] ?? 0;
+    if (coldNonce > 0) {
+      targetNonce += 1;
+      const bumpedTargetNonce = targetNonce;
+      setDraftNonces((prev) => {
+        const next: Record<string, number> = { ...prev, [resolved]: bumpedTargetNonce };
+        delete next[''];
+        return next;
+      });
+    }
+    const targetKey = makeDraftKey(resolved, targetNonce);
+
+    setConversationInputs((prev) => {
+      if (!(staleKey in prev)) return prev;
+      const { [staleKey]: staleValue, ...rest } = prev;
+      if (staleValue === undefined || staleValue === '') return rest;
+      if (rest[targetKey] !== undefined && rest[targetKey] !== '') return rest;
+      return { ...rest, [targetKey]: staleValue };
+    });
+    // N5/N6: 現行の App.tsx 配線では initialInput は ticketContextToken と
+    // 常に連動して渡される(実質「両方あるか両方無いか」)ため、この effect
+    // (ticketContextToken===undefined 限定)が実際に到達するケースでは
+    // initialInput は常に undefined であり、draftSeedTextRef に '' キーの
+    // シード記録が存在すること自体が現状のプロダクションコードパスでは
+    // 到達不能。それでも安全側として、上の conversationInputs 側の
+    // early-return(staleKey が無ければ何もしない)とは非対称に、ここは
+    // 無条件で実行している: 万一 staleKey にシード記録だけが残っていた場合、
+    // それを引き継がず delete だけすると「記録が無い」→次回比較で
+    // 無条件に「ユーザーが編集した」扱いになり、常に安全側(=誤ってプリフィル
+    // 扱いにされるより、誤って編集済み扱いにされる方が実害が小さい)に倒れる。
+    // updater 内で setConversationInputs のような setState 経由にしていない
+    // のは、draftSeedTextRef が ref(state ではない)であり、更新の純粋性を
+    // React の setState updater に持ち込む必要が無いため。
+    if (staleKey in draftSeedTextRef.current) {
+      if (!(targetKey in draftSeedTextRef.current)) {
+        draftSeedTextRef.current[targetKey] = draftSeedTextRef.current[staleKey];
+      }
+      delete draftSeedTextRef.current[staleKey];
+    }
+
+    setSelectedProjectId(resolved);
+  }, [projects, initialProjectId, selectedProjectId, ticketContextToken]);
+
+  useEffect(() => {
+    if (selectedProjectId === '') return;
+    // MF2/MF3: 別プロジェクト宛のまま残った pending 意図はここ(effect 本体の
+    // 先頭)で無効化する。以前は cleanup 側で「この effect が担当していた
+    // selectedProjectId 宛の pending だけ」を落としていたが、StrictMode の
+    // 開発時ダブル実行(mount→destroy→mount)では destroy(cleanup) が
+    // mount#2 の前に走ってしまい、「ユーザーがプロジェクトを離脱した」わけでも
+    // ないのに mount#1 が立てた pending を消してしまっていた。mount#2 の
+    // ticket-context effect は appliedTicketContextTokenRef の「適用済み」
+    // ガードにより張り直さないため、結果として「チャットを開いた直後の主経路」
+    // で pending が誰にも消化されず、既存スレッドが選択される回帰があった
+    // (MF3、StrictMode で render を包んだ回帰テストで検出)。ここ(本体の
+    // 先頭、selectedProjectId 変化のたびに必ず1回だけ実行される箇所)で
+    // 「今の selectedProjectId 宛ではない pending」を無効化すれば、
+    // StrictMode の疑似アンマウントでは selectedProjectId が変わらない
+    // (同じプロジェクトへの mount→destroy→mount)ため誤って消されず、
+    // 本当にプロジェクトが切り替わったとき(MF2 が意図した「離脱」)だけ
+    // 正しく無効化される。
+    if (
+      pendingTicketDraftProjectRef.current !== null &&
+      pendingTicketDraftProjectRef.current !== selectedProjectId
+    ) {
+      pendingTicketDraftProjectRef.current = null;
+    }
+    // pendingTicketDraftProjectRef と同じ理由での無効化。別プロジェクト宛の
+    // まま残ったプリフィル文言の意図もここで一緒に無効化しないと、離脱後に
+    // 同じプロジェクトへ戻って(ticketContext を介さず)手動で「新規スレッド」
+    // した際、無関係になったはずの古いプリフィル文言が resurrect してしまう。
+    if (
+      pendingPrefillRef.current !== null &&
+      pendingPrefillRef.current.projectId !== selectedProjectId
+    ) {
+      pendingPrefillRef.current = null;
+    }
+    let cancelled = false;
+    const persisted = readPersistedChatThreads()[selectedProjectId];
+    // bdboard-ysu(Opus レビュー SF1 で正確化): 「今このプロジェクトの選択が
+    // ユーザーの明示操作による新規ドラフトかどうか」を、draftNonces と
+    // selectedThreadIds の組み合わせで判定する。draftNonces[projectId] を
+    // 実際に進める(≡ startNewDraftThread を呼ぶ)経路は2つある —
+    // 「新規スレッド」ボタン(handleNewThread→startNewDraftThread)と、
+    // エージェント切替(handleAgentChange、setDraftNonces を直接呼ぶ)。
+    // どちらもユーザーの明示操作であり、どちらも同じタイミングで
+    // selectedThreadIds[projectId] を undefined にする。
+    //
+    // 判定を「fetch 開始時点からの nonce の変化」ではなく「fetch 解決時点で
+    // nonce>0 かつ選択が undefined のまま」という絶対条件にしているのは、
+    // 後者(handleAgentChange 由来のケースや、後述のコールドウィンドウ引き継ぎ
+    // 由来のケース)ではドラフトへの切り替えが必ずしも「この fetch の in-flight
+    // 中」に起きるとは限らない(コールドウィンドウ経由では、プロジェクト解決
+    // effect が selectedProjectId を切り替えるのと同じタイミングで nonce も
+    // 引き継がれて進むため、fetch 開始のスナップショットを取った時点で
+    // 既に反映済みになり、「変化した」比較では検出できない)ため。nonce>0 は
+    // 「このプロジェクトで一度でも明示的な新規ドラフト操作があった」ことを
+    // 意味し、selectedThreadIds[projectId]===undefined は「その後、既存
+    // スレッドへ明示的に切り替えていない(まだドラフトを見ている)」ことを
+    // 意味する。両方満たす間は、fetch 解決による persisted/open[0] の自動
+    // 選択で上書きしてはならない — でないと fetch 解決時に既存スレッド選択
+    // へ無言で巻き戻ってしまう(bdboard-dpq 最終レビューの nit、bdboard-ysu
+    // で修正)。ticket-context 経由の新規ドラフト(pendingTicketDraftProjectRef
+    // 分岐)は自分自身の startNewDraftThread 呼び出しがこの判定より前に
+    // return するため、影響しない。
+    //
+    // bdboard-ysu(Opus 再レビュー最終追補): この条件は「fetch の in-flight
+    // 窓の間だけ」の一時的な保護ではない、持続的な条件である。ドラフトを
+    // 作った後(fetch が一度解決済みで in-flight ではない状態)にプロジェクトを
+    // 離れ、スレッドを選び直さないまま同じプロジェクトへ再訪した場合、その
+    // 再訪で新たに発火する fetch の解決時にも(nonce>0 かつ選択が undefined の
+    // ままである限り)同じ判定が働き、自動選択は依然としてスキップされる —
+    // 「ユーザーが明示的に行った選択(ここではドラフトを見ている状態)を自動で
+    // 覆さない」という dpq 系の不変条件を、fetch の特定の1回の in-flight
+    // だけでなく「そのドラフトを見続けている間ずっと」適用した結果であり、
+    // 意図した挙動(base との差分、実測確認済み)。ページをリロードすると
+    // draftNonces は state なので消え(ドラフトは意図的に永続化しない、
+    // startNewDraftThread 内の「N2: ドラフトへの切り替えは意図的に
+    // writePersistedChatThreadState を呼ばない」コメント参照)、次回訪問時は
+    // nonce が 0 に戻るため通常どおり persisted/open[0] の復元に戻る。
+    const isExplicitDraftStillSelected = () =>
+      (draftNoncesRef.current[selectedProjectId] ?? 0) > 0 &&
+      selectedThreadIdsRef.current[selectedProjectId] === undefined;
+    void fetchChatThreads(selectedProjectId)
+      .then((threads) => {
+        if (cancelled) return;
+        setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
+        const available = new Set(threads.map((thread) => thread.sessionId));
+        const persistedOpen = (persisted?.activeSessionIds ?? []).filter((id) =>
+          available.has(id),
+        );
+        const open = persisted !== undefined
+          ? persistedOpen
+          : threads.map((thread) => thread.sessionId);
+        setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
+        if (pendingTicketDraftProjectRef.current === selectedProjectId) {
+          pendingTicketDraftProjectRef.current = null;
+          startNewDraftThread(selectedProjectId);
+          return;
+        }
+        if (isExplicitDraftStillSelected()) {
+          return;
+        }
+        const selected = persisted?.selectedSessionId && available.has(persisted.selectedSessionId)
+          ? persisted.selectedSessionId : open[0];
+        setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: selected }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setThreadError('スレッド一覧の取得に失敗しました。');
+        const open = persisted?.activeSessionIds ?? [];
+        setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
+        if (pendingTicketDraftProjectRef.current === selectedProjectId) {
+          pendingTicketDraftProjectRef.current = null;
+          startNewDraftThread(selectedProjectId);
+          return;
+        }
+        if (isExplicitDraftStillSelected()) {
+          return;
+        }
+        setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: persisted?.selectedSessionId ?? open[0] }));
+      });
+    return () => { cancelled = true; };
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (ticketContextToken === undefined) {
+      return;
+    }
+    if (appliedTicketContextTokenRef.current === ticketContextToken) {
+      // S3: この token は既に適用済み(targetProjectId を一度確定し、必要なら
+      // フォールバックした)。ただし依存配列に `projects` が入っているため、
+      // 適用済みの token のままでも projects が変化するたびにこの effect は
+      // 再実行される。フォールバック発生時に出した「見つからない」notice を
+      // 放置すると、その後(スキャンルート復帰・再読み込み等で)実際に
+      // initialProjectId が projects に現れても notice だけが事実と乖離した
+      // まま残り続ける。ここで notice を「利用可能になった」旨へ更新して
+      // 解消する。selectedProjectId 自体は自動で切り替えない — ユーザーが
+      // 入力中のドラフトや送信先(handleSubmit は selectedProjectId 宛)を
+      // 勝手に動かさないため。切り替えは既存のプロジェクト select から
+      // 手動で行える。
+      if (
+        ticketProjectFallbackNotice !== null &&
+        initialProjectId !== undefined &&
+        projects.some((project) => project.id === initialProjectId)
+      ) {
+        const recoveredName =
+          projects.find((project) => project.id === initialProjectId)?.name ??
+          initialProjectId;
+        setTicketProjectFallbackNotice(
+          `チケットのプロジェクト「${recoveredName}」が利用可能になりました。プロジェクト選択から切り替えられます。`,
+        );
+      }
+      return;
+    }
+
+    const requestedProjectId = initialProjectId;
+    const requestedProjectFound =
+      requestedProjectId !== undefined &&
+      projects.some((project) => project.id === requestedProjectId);
+    const targetProjectId = requestedProjectFound
+      ? requestedProjectId
+      : selectedProjectId !== ''
+        ? selectedProjectId
+        : (projects[0]?.id ?? '');
+
+    if (targetProjectId === '') {
+      // S1: projects がまだ読み込まれておらず(または initialProjectId が
+      // 存在するプロジェクト一覧の中に無く) 対象を解決できない。ここで
+      // appliedTicketContextTokenRef を進めてしまうと、下の deps に `projects`
+      // を含めていても「トークンはもう適用済み」のガードで即 return するだけに
+      // なり、projects が後から読み込まれても二度とこの token を処理できなくなる
+      // (永久に何も起きない)。target を解決できるまでは「未適用」のままにして
+      // おき、`projects` が変わって effect が再実行されたときに再度資格判定できる
+      // ようにする。
+      return;
+    }
+    if (!requestedProjectFound && requestedProjectId !== undefined) {
+      const fallbackName =
+        projects.find((project) => project.id === targetProjectId)?.name ??
+        targetProjectId;
+      // S2: handleSubmit は selectedProjectId(=ここでは targetProjectId)宛に
+      // 送信するため、「表示しています」だけでは受動的すぎ、チケットの
+      // プロンプトが fallback 先プロジェクトのルートに対して実行されることが
+      // 伝わらない。送信先が変わっている事実を明示する。
+      setTicketProjectFallbackNotice(
+        `チケットのプロジェクト(id: ${requestedProjectId})が見つからないため、「${fallbackName}」で開いています。この内容は「${fallbackName}」に対して送信されます。`,
+      );
+    } else {
+      setTicketProjectFallbackNotice(null);
+    }
+    appliedTicketContextTokenRef.current = ticketContextToken;
+
+    // 104.17: selectedProjectId==='' のコールドウィンドウ中(projects 未到着で
+    // ticket-context の解決自体が S1 で足止めされていた間)は、マウント時シード
+    // (上の conversationInputs 初期化)が '' キースペース(makeDraftKey('', N)、
+    // つまり `new::N` 形式のキー)に積まれており、ユーザーがその間に書きかけた
+    // 編集もそこへ乗る。targetProjectId は上の S1 早期 return を通過済みなので
+    // 非空が保証されているが、selectedProjectId はこの分岐に入っている時点で
+    // 定義上 '' そのもの(非空なら下の MF1 分岐は targetProjectId !==
+    // selectedProjectId かどうかに関わらず通常の対象プロジェクト内で処理される)
+    // なので、targetProjectId !== selectedProjectId は必ず成立し、下の MF1
+    // 分岐で新しい projectId のキースペースへ切り替わる。'' キースペースは
+    // 以後二度と currentConversationKey に選ばれない。104.10 の stale-key
+    // migration effect は ticketContextToken !== undefined の間をこの分岐用に
+    // 意図的に skip しているため、ここで引き継がないとユーザーの編集が
+    // silently discard され、'' キーが conversationInputs / draftSeedTextRef の
+    // 両方に孤児として残る。「システムがシードした文言のままか(未編集)」の
+    // 判定は startNewDraftThread の SF1 と同じパターン(draftSeedTextRef との
+    // 比較)を使う。appliedTicketContextTokenRef の上のガードにより、この
+    // token に対してこのブロックはちょうど1回しか実行されない(StrictMode の
+    // 二重実行でも2回目は早期 return される)ので、ここでの delete は安全。
+    let ticketPrefillText = initialInput ?? '';
+    // 104.17 Opus レビュー should-fix1: ticketPrefillText がユーザー自身の
+    // 編集本文であり、システムのプリフィル文言と偶然一致しているだけの場合に
+    // 備え、フラグで明示的に区別する。消化側(startNewDraftThread)はこれを見て
+    // draftSeedTextRef への「システムシード」記録を抑止する — 記録してしまうと
+    // 次にこの effect が別 token で再実行されたとき、SF1 判定が「未編集」と
+    // 誤断してこのユーザー編集を破棄してしまう(probe で実証済み)。
+    let ticketPrefillIsUserEdit = false;
+    if (selectedProjectId === '') {
+      const coldDraftKey = makeDraftKey('', draftNoncesRef.current[''] ?? 0);
+      const coldValue = conversationInputsRef.current[coldDraftKey];
+      if (coldValue !== undefined) {
+        const coldSeedText = draftSeedTextRef.current[coldDraftKey];
+        const coldValueIsEdited = coldValue !== '' && coldValue !== coldSeedText;
+        if (coldValueIsEdited) {
+          ticketPrefillText = coldValue;
+          ticketPrefillIsUserEdit = true;
+        }
+      }
+      // 104.17 Opus レビュー nit2/nit5: 引き継ぎ対象は「今ライブな nonce の
+      // キー」1個だけに限らない。コールドウィンドウ中に「新規スレッド」ボタンや
+      // エージェント切替で draftNonces[''] が複数回進んだ場合、古い nonce の
+      // キー(例: new::0)が使われなくなった後も conversationInputs /
+      // draftSeedTextRef に残り得る。104.10 の stale-key migration effect と
+      // 同じ安全側パターン(値の有無に関わらず無条件で削除)に揃え、'' キー
+      // スペース(`new::` prefix)にマッチする全キーをここで一括して掃除する。
+      const coldKeyPattern = /^new::/;
+      setConversationInputs((prev) => {
+        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
+        if (staleKeys.length === 0) return prev;
+        const next = { ...prev };
+        for (const key of staleKeys) {
+          delete next[key];
+        }
+        return next;
+      });
+      for (const key of Object.keys(draftSeedTextRef.current)) {
+        if (coldKeyPattern.test(key)) {
+          delete draftSeedTextRef.current[key];
+        }
+      }
+    }
+
+    // S2/S4-b(MF1/SF1/SF2 一括解消): プリフィルは「対象プロジェクト+文言」だけを
+    // pendingPrefillRef に積む。以前はここで draftNoncesRef から次の nonce を
+    // 先読み予測し、その予測キーへ直接書き込んでいたが、遅延適用の窓(プロジェクト
+    // を跨ぐ場合やスレッド一覧 fetch 未完了の場合、下の分岐で startNewDraftThread
+    // が実際に呼ばれるのがこの effect の外・後になるケース)で他の要因により
+    // nonce がずれると、予測と実際の採番が食い違って孤児エントリになり得た。
+    // 実際にどの nonce のドラフトキーへ適用するかは、nonce を実際に発行する
+    // 唯一の場所である startNewDraftThread 側(このファイル上部)に一本化する。
+    // 104.17: text はコールドウィンドウ中の未編集の initialInput、またはその間に
+    // ユーザーが編集していればその編集後の文言(ticketPrefillText)のどちらか。
+    // isUserEdit は後者の場合にのみ true(should-fix1、上のコメント参照)。
+    pendingPrefillRef.current = {
+      projectId: targetProjectId,
+      text: ticketPrefillText,
+      isUserEdit: ticketPrefillIsUserEdit,
+    };
+
+    // S4-b: フォーカス+キャレット移動はプリフィル意図の記録直後、分岐より前に置く。
+    // 以前はプロジェクトを跨ぐ経路(MF1、直後に return する)より後ろにあり、
+    // クロスプロジェクトのチケット起動だけフォーカス処理が実行されなかった。
+    // N4: caretPosition は DOM(textarea.value)の現在値ではなく、この
+    // effect が確定させた文言の長さから決定的に求める — rAF が実行されるまでの
+    // 間に(理論上は)別の入力でテキストエリアの値が変わっていても、この起動が
+    // 意図したプリフィル文言の末尾へキャレットを置くことを狙っている。104.17
+    // Opus レビュー nit6: ただしプロジェクトを跨ぐ経路(MF1、コールドウィンドウ
+    // からの解決を含む)では、rAF 実行時点で textarea.value はまだ空(この
+    // effect が起こす setSelectedProjectId/setConversationInputs の反映は
+    // 後続のレンダーを待つ)なので setSelectionRange(prefillLength,
+    // prefillLength) は 0 にクランプされ、実質何もしていない。104.17 でコールド
+    // ウィンドウ中の編集を引き継いだ場合に ticketPrefillText の長さを使うのも、
+    // 上記と同じ理由でこの経路(常にプロジェクトを跨ぐ)では効果が無い —
+    // 意図の一貫性のために initialInput ではなく実際に適用される文言の長さを
+    // 使っているだけで、挙動そのものは 104.17 以前と変わらない。
+    // N5: rAF ハンドルを保持し、コンポーネントがアンマウントされたら
+    // cancelAnimationFrame する(useFocusTrap と同じパターン)。
+    const prefillLength = ticketPrefillText.length;
+    const rafId = requestAnimationFrame(() => {
+      const textarea = inputRef.current;
+      if (textarea === null) {
+        return;
+      }
+      textarea.focus();
+      textarea.setSelectionRange(prefillLength, prefillLength);
+    });
+
+    if (targetProjectId !== selectedProjectId) {
+      // MF1: プロジェクトを跨ぐ場合、setSelectedProjectId は下のスレッド一覧
+      // fetch effect を(依存配列 [selectedProjectId] の変化により)再実行させる。
+      // その fetch は解決時に persisted/open[0] を selectedThreadIds に書き込む
+      // ため、ここで target プロジェクトが「訪問済み(openThreadIds に値がある)」
+      // からといって即座に startNewDraftThread を呼んでしまうと、再実行される
+      // fetch の解決が後からそれを上書きしてしまう(既存スレッドへ合流する
+      // バグの再現条件)。プロジェクトを跨ぐ場合は必ず pending 経由にし、
+      // 実際にドラフトへ切り替えるのは再実行後の fetch 解決(またはその
+      // catch)側に一本化する。
+      setSelectedProjectId(targetProjectId);
+      pendingTicketDraftProjectRef.current = targetProjectId; // 再走する fetch 側で消化させる
+      return () => cancelAnimationFrame(rafId);
+    }
+
+    if (openThreadIds[targetProjectId] !== undefined) {
+      // プロジェクトは変わらず、かつ既にスレッド一覧を取得済み(fetch effect が
+      // 再実行される見込みが無い) → 競合なく即座に新規ドラフトへ切り替えてよい。
+      startNewDraftThread(targetProjectId);
+    } else {
+      // 初回マウント直後などでスレッド一覧 fetch がまだ完了していない。
+      // fetch 完了時に上書きされないよう、pending 意図だけ記録しておく。
+      pendingTicketDraftProjectRef.current = targetProjectId;
+    }
+
+    return () => cancelAnimationFrame(rafId);
+    // ticketContextToken の変化(と、S1 で対象未解決だった場合の再評価、および
+    // S3 で fallback notice を解消するための projects の変化)だけを起点にする
+    // 意図的な依存配列。selectedProjectId / openThreadIds / initialProjectId /
+    // initialInput / ticketProjectFallbackNotice はトリガー時点の最新値を
+    // 都度読みたいだけであり、それら自体の変化で再実行したくない。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketContextToken, projects]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchChatAgents()
+      .then((list) => {
+        if (cancelled) {
+          return;
+        }
+        setAgents(list);
+        if (list.length > 0) {
+          setSelectedAgentId((current) =>
+            current === '' ? list[0]!.id : current,
+          );
+        }
+      })
+      .catch(() => {
+        // エージェント一覧が取れなくてもチャット自体は従来どおり使える
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedAgent === undefined) {
+      return;
+    }
+    const cached = threadModelIds[currentConversationKey];
+    if (
+      cached !== undefined &&
+      (selectedAgent.models ?? []).some((model) => model.id === cached)
+    ) {
+      setSelectedModelId(cached);
+      return;
+    }
+    setSelectedModelId(resolveDefaultModel(selectedAgent));
+  }, [selectedAgent, currentConversationKey, threadModelIds]);
+
+  useEffect(() => {
+    if (selectedProjectId === '') {
+      return;
+    }
+
+    const conversation = conversations[currentConversationKey];
+    if ((conversation?.messages.length ?? 0) > 0) {
+      return;
+    }
+    if (historyLoadedFor[currentConversationKey] === true) {
+      return;
+    }
+
+    const sessionId = conversation?.sessionId ?? currentSessionId;
+    if (sessionId === undefined) {
+      setHistoryLoadedFor((prev) => ({ ...prev, [currentConversationKey]: true }));
+      return;
+    }
+
+    const requestId = historyRequestIdRef.current;
+    setLoadingHistoryFor(currentConversationKey);
+
+    void fetchChatSessionMessages(sessionId, selectedProjectId)
+      .then((payload) => {
+        if (requestId !== historyRequestIdRef.current) {
+          return;
+        }
+        setConversations((prev) => ({
+          ...prev,
+          [currentConversationKey]: {
+            messages: payload.messages.map((message) => ({
+              role: message.role,
+              text: message.content,
+              at: Date.parse(message.createdAt),
+              ...(message.failedTools !== undefined && message.failedTools.length > 0
+                ? { failedTools: message.failedTools }
+                : {}),
+            })),
+            sessionId: payload.sessionId,
+            agentId: payload.agentId,
+          },
+        }));
+        writePersistedChatThread(selectedProjectId, {
+          sessionId: payload.sessionId,
+          agentId: payload.agentId,
+        });
+        // bdboard-2n8: 以前はここで「リクエスト開始時点の selectedAgentId のスナップ
+        // ショット(agentIdAtRequestStart, ref経由)」と「現在の selectedAgentId」を
+        // 比較し、一致したときだけ復元していた。しかしこのスナップショットは
+        // 「エージェント一覧ロード後の既定エージェント自動選択」(下のagents取得
+        // useEffect内、`current === '' ? list[0]!.id : current` で1回だけ発火する)
+        // でも動いてしまう。そのため初回マウント時に履歴取得より先にエージェント
+        // 一覧が解決して既定エージェントが自動セットされる(スナップショットは ''
+        // のまま)と、ユーザーは何も手動操作していないのに「不一致」と誤判定され、
+        // 永続化されていたエージェントへの復元が失敗していた(stale-ref bug)。
+        //
+        // 正しく守りたい不変条件は「このレスポンスが今表示中の会話
+        // (currentConversationKey)に対応する最新のリクエストである」ことだけで、
+        // これは直前の `requestId !== historyRequestIdRef.current` ガードで既に
+        // 保証されている(`currentConversationKey` はこの effect の依存配列に
+        // 入っており、キーが変わると cleanup で historyRequestIdRef がインクリ
+        // メントされ、古い Promise は無効化される)。そして「ユーザーがエージェント
+        // を手動変更した」操作(handleAgentChange / handleResumeDiscoveredSession)は
+        // 必ず currentConversationKey も変える設計なので、「手動変更があった」ことと
+        // 「requestId が古くなる」ことは常に同時に起きる。よって追加のスナップ
+        // ショット比較は不要かつ有害で、104.9 のモデル復元(threadModelIds キャッシュ
+        // と現在の state だけを見る宣言的な比較)と同じ「現在の state(request の
+        // 生存性)との整合チェックだけに頼る」パターンに揃える。
+        if (payload.agentId !== '') {
+          setSelectedAgentId(payload.agentId);
+        }
+        if (payload.model !== undefined && payload.model !== '') {
+          const restoredModel = payload.model;
+          // bdboard-2n8: ユーザーが履歴フェッチの解決を待たずに手動でモデルを
+          // 選んでいた場合はそちらを優先し、サーバー復元値で上書きしない。
+          // 手動選択は下のモデル select の onChange (handleModelChange) が
+          // 既に threadModelIds[currentConversationKey] へ書き込み済みなので
+          // (このスレッドが選択中なら currentConversationKey === payload.sessionId)、
+          // 「まだ値が無いキーにだけ書く」ことで両立できる。
+          setThreadModelIds((prev) =>
+            prev[payload.sessionId] !== undefined
+              ? prev
+              : { ...prev, [payload.sessionId]: restoredModel },
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        if (requestId !== historyRequestIdRef.current) {
+          return;
+        }
+        if (
+          error instanceof ApiError &&
+          (error.status === 404 ||
+            (error.status === 400 && error.errorMessage === 'unknown chat session'))
+        ) {
+          setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((id) => id !== sessionId) }));
+          // bdboard-pbf: タブの prune だけだと selectedThreadIds が死んだ
+          // セッション id を指したまま残り、handleSubmit のフォールバックが
+          // 既知の死亡 id で POST して 400 エラー表示になる (修正前は silent に
+          // 新セッションで届いていた)。選択も外してドラフトへ戻し、サーバー側
+          // eviction (CHAT_SESSION_MAX_PER_PROJECT) 後の自動回復を維持する。
+          setSelectedThreadIds((prev) =>
+            prev[selectedProjectId] === sessionId
+              ? { ...prev, [selectedProjectId]: undefined }
+              : prev,
+          );
+        }
+      })
+      .finally(() => {
+        if (requestId !== historyRequestIdRef.current) {
+          return;
+        }
+        setLoadingHistoryFor(null);
+        setHistoryLoadedFor((prev) => ({
+          ...prev,
+          [currentConversationKey]: true,
+        }));
+      });
+
+    return () => {
+      historyRequestIdRef.current += 1;
+      setLoadingHistoryFor(null);
+    };
+  }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor]);
+
+  useEffect(() => {
+    const container = messagesRef.current;
+    if (container !== null) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [currentMessages, isSending]);
+
+  const showModelSelect = useMemo(
+    () => selectedAgent !== undefined && hasSelectableModels(selectedAgent),
+    [selectedAgent],
+  );
+
+  /**
+   * 描画にも送信にもこの派生値だけを使う。エージェントを切り替えた直後の1フレームは
+   * selectedModelId が前のエージェントのモデルIDのままなので、state を直接使うと
+   * 「どのオプションにも一致しない select」や「前のエージェントのモデルでの送信」が
+   * 一瞬成立してしまう。上の useEffect は state 側を追随させるだけの役割にする。
+   */
+  const effectiveModelId = useMemo(() => {
+    if (selectedAgent === undefined) {
+      return '';
+    }
+    const models = selectedAgent.models ?? [];
+    if (models.some((model) => model.id === selectedModelId)) {
+      return selectedModelId;
+    }
+    return resolveDefaultModel(selectedAgent);
+  }, [selectedAgent, selectedModelId]);
+
+  const applyChatSuccess = useCallback(
+    (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
+      setConversations((prev) => ({
+        ...prev,
+        [result.sessionId]: {
+          messages: [
+            ...(prev[convKey]?.messages ?? []),
+            {
+              role: 'assistant' as const,
+              text: result.reply,
+              at: Date.now(),
+              ...(result.failedTools !== undefined && result.failedTools.length > 0
+                ? { failedTools: result.failedTools }
+                : {}),
+            },
+          ],
+          sessionId: result.sessionId,
+          agentId: result.agentId,
+        },
+      }));
+      // bdboard-pbf: ドラフトからの初回送信で新しい sessionId が確定した直後、
+      // 下の setSelectedThreadIds でこのセッションが選択される。会話は今
+      // ここで組み立てた最新状態なので履歴ロード済みとして扱わないと、
+      // isHistoryPending が true のまま送信ボタンがロックされ続けてしまう
+      // (履歴 effect は messages がある会話では early-return して
+      // historyLoadedFor を立てないため)。
+      setHistoryLoadedFor((prev) => ({ ...prev, [result.sessionId]: true }));
+      writePersistedChatThread(selectedProjectId, {
+        sessionId: result.sessionId,
+        agentId: result.agentId,
+      });
+      if (showModelSelect && effectiveModelId !== '') {
+        // 送信で実際に使われたモデルは常に確定値として勝つべきなので、ここだけは
+        // 無条件で上書きする(履歴解決側の「未設定キーにだけ書く」ガードとは非対称)。
+        setThreadModelIds((prev) => ({ ...prev, [result.sessionId]: effectiveModelId }));
+      }
+      setThreadLists((prev) => ({
+        ...prev,
+        [selectedProjectId]: [
+          ...(prev[selectedProjectId] ?? []).filter((thread) => thread.sessionId !== result.sessionId),
+          { sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), updatedAt: new Date().toISOString() },
+        ],
+      }));
+      setOpenThreadIds((prev) => ({
+        ...prev,
+        [selectedProjectId]: [...(prev[selectedProjectId] ?? []).filter((id) => id !== result.sessionId), result.sessionId],
+      }));
+      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
+    },
+    [effectiveModelId, selectedProjectId, showModelSelect],
+  );
+
+  const applyChatError = useCallback(
+    (convKey: string, sentText: string, error: unknown) => {
+      let errorText: string;
+      let clearSession = false;
+      const accessMessage = writeAccessErrorMessage(error);
+      if (accessMessage !== null) {
+        errorText = accessMessage;
+      } else if (error instanceof ApiError) {
+        if (error.status === 403) errorText = 'チャットを利用する権限がありません。';
+        else if (error.status === 409) {
+          // bdboard-yzn: writeAccessMessage.ts の CHAT_BUSY_HELP と共有し、文言の fork を防ぐ。
+          errorText = CHAT_BUSY_HELP;
+        } else if (error.status === 400 && error.errorMessage === 'unknown chat session') {
+          errorText = '会話の続きが失われました。もう一度送信してください。';
+          clearSession = true;
+        } else if (error.status === 400 && error.errorMessage === 'chat agent mismatch') {
+          errorText = 'エージェントが切り替わったため、会話をやり直します。もう一度送信してください。';
+          clearSession = true;
+        } else if (error.status === 404) errorText = 'プロジェクトが見つかりません。';
+        else if (error.status === 502 && error.code === 'agent-workspace-untrusted') {
+          // bdboard-l1t.5 Opus 再レビュー DF1: サーバー側は agent-workspace-untrusted
+          // (chat-agent.ts) を返しているのに、ここで拾わないと汎用の
+          // error.errorMessage ('chat failed') しか出ず利用者に理由が伝わらない。
+          errorText = 'このプロジェクト(ワークスペース)を cursor-agent に信頼させる必要があります。bdboard の外で一度 cursor-agent を対話実行し、ワークスペース信頼プロンプトに答えてから、もう一度送信してください。';
+        } else if (error.status === 502 && error.code === 'agent-headless-denied') {
+          // bdboard-l1t.6 Opus レビュー SF1 (l1t.5 DF1 と同型): agy の headless モードが
+          // ツール呼び出しを自動拒否して空応答になったケース。汎用文言では利用者に
+          // 「運用者側の許可設定が要る」ことが伝わらないため、code をマップして案内する。
+          errorText = 'エージェントの headless モードがツール呼び出しを自動拒否したため、応答を得られませんでした。bdboard の外で agy 側の設定 (~/.gemini/antigravity-cli/settings.json) の permissions.allow に bd コマンドの許可ルール(例: "command(bd)")を追加してから、もう一度送信してください。';
+        } else errorText = error.errorMessage ?? error.message;
+      } else if (error instanceof Error) errorText = error.message;
+      else errorText = '送信に失敗しました';
+
+      setConversations((prev) => {
+        const current = prev[convKey] ?? { messages: [] };
+        return {
+          ...prev,
+          [convKey]: {
+            messages: [...current.messages, { role: 'error', text: errorText, at: Date.now() }],
+            sessionId: clearSession ? undefined : current.sessionId,
+            agentId: clearSession ? undefined : current.agentId,
+          },
+        };
+      });
+      if (clearSession) writePersistedChatThread(selectedProjectId, undefined);
+
+      // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ
+      // 本文を復元する。送信時のクリア(handleSubmit、try の前)は失敗しても巻き戻ら
+      // ないため、送信をやり損ねた本文がそのまま消えていた。復元先は convKey ——
+      // 呼び出し元(handleSubmit)がクロージャで捕まえた「送信時点の会話キー」
+      // (sendKey)であり、現在表示中のキー(currentConversationKey)ではない。
+      // 送信中にユーザーがスレッド/プロジェクトを切り替えていた場合、現在の入力欄
+      // ではなく元のキーへ復元することで、現在の入力欄を汚染しない。
+      // sentText は handleSubmit が渡す trim 前の本文(SF2、Opus レビュー) —
+      // プリフィル文言(例: `${ticketId} について: `)は末尾に半角スペースを
+      // 含む形式が本番で実在するため、trim 済みの値を復元すると下の SF1 の
+      // 「未編集シードの復元は seed 記録を維持する」判定が壊れる(復元値が
+      // draftSeedTextRef の末尾スペース込みシード文言と一致しなくなるため)。
+      // N5(Opus レビュー): 送信中にこの convKey 自体が(新規ドラフト採番などで)
+      // どこからも表示されなくなっていた場合、復元した本文もこのエラー
+      // メッセージ(上で conversations[convKey] へ積んだもの)も、以後どの UI
+      // 操作からも到達できない。ただしこれは base(このチケット以前)でも本文が
+      // 失われていた状況と同じであり、挙動の劣化ではない — 到達可能な場合の
+      // 復元漏れを防ぐのがこの変更の目的で、到達不能キーへの保証までは範囲外。
+      //
+      // 上書き防止(dpq「書きかけ本文を消さない」不変条件): 失敗するまでの間に
+      // ユーザーが同じ convKey へ新しい本文を打ち込んでいた場合、送信文言で
+      // それを上書きしてはいけない。conversationInputsRef(現在値を stale
+      // closure なしで読むための ref ミラー、このファイル内の他の書き込み側と
+      // 同じパターン)を見て、該当キーが空のときだけ復元する。
+      // N4(Opus レビュー): 現状の UI では isSending の間 textarea/各 select が
+      // すべて disabled になるため、送信中にこの convKey(=sendKey)へ新しい本文を
+      // 書き込める手段は実際には存在せず、このガードは現状到達しない防御的
+      // コードである。将来 disabled 制御を緩める変更が入ったときの保険として
+      // 残す(ガードとそれを固定する回帰テストは維持する)。
+      //
+      // SF1(Opus レビュー): ここで draftSeedTextRef.current[convKey] を delete
+      // しては**いけない**。104.17 の isUserEdit は「ユーザーが書いた本文を
+      // システムシードとして記録するな」という規則だが、この復元が上書きする
+      // ケース(conversationInputsRef.current[convKey] === '')は、そもそも「未編集
+      // のプリフィルをそのまま送信して失敗した」場合そのものであり、復元される
+      // sentText は元のシード文言と一致する(=正真正銘のシード)。ここで delete
+      // すると、次にこの convKey に対して startNewDraftThread 等の「値がシード
+      // 文言のままなら未編集」判定が働いたとき、記録が失われているせいで
+      // 無条件に「編集済み」とみなされ、後続のプリフィル適用が無言で捨てられて
+      // 古い文言が居座ってしまう(実測で確認)。ユーザーが実際に編集していた
+      // ケースでは draftSeedTextRef は古いプリフィルのままなので、delete しなくても
+      // `value !== seed` により正しく「編集済み」と判定される — つまり delete
+      // 無しの現状のまま(=既存の記録を変更しない)で両ケースとも正しい。
+      if ((conversationInputsRef.current[convKey] ?? '') === '') {
+        setConversationInputs((prev) => ({ ...prev, [convKey]: sentText }));
+      }
+    },
+    [selectedProjectId],
+  );
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent) => {
+      event.preventDefault();
+      const text = currentInput.trim();
+      // bdboard-otf Opus レビュー SF2: 送信失敗時の復元(下の applyChatError 呼び出し)
+      // には、この trim 済み text ではなく trim 前の本文を渡す。プリフィル文言は
+      // 末尾に半角スペースを含む形式(例: `${ticketId} について: `)が本番で実在し、
+      // 復元値が trim 済みだと未編集シード(draftSeedTextRef、末尾スペース込み)と
+      // 一致しなくなり、SF1 の「未編集シードの復元は seed 記録を維持する」判定が
+      // 壊れる。送信ペイロード自体は従来どおり trim 済み text を使う。
+      const sentRawText = currentInput;
+      if (text === '' || isSending || selectedProjectId === '' || isHistoryPending) {
+        return;
+      }
+
+      const conversation = conversations[currentConversationKey];
+      const agentMatches =
+        selectedAgentId === '' ||
+        conversation?.agentId === undefined ||
+        conversation.agentId === selectedAgentId;
+      // bdboard-pbf: conversations[key] が「まだ無い」(履歴 fetch がエラー等で
+      // 会話が復元されていない)ときは選択中スレッドの currentSessionId へ
+      // フォールバックし、sessionId 無し POST による別セッションへのフォークを防ぐ。
+      // 一方、conversation が「存在するが sessionId が undefined」なのは
+      // 'unknown chat session' 等の clearSession で意図的にクリアされた状態なので、
+      // そのときはフォールバックせず新規セッションを開始する(従来挙動)。
+      // 履歴 fetch の in-flight 中は上の isHistoryPending ガードで送信自体を
+      // ブロックしているため、ここに来る「conversation 無し」は fetch 失敗後のみ。
+      const sessionId = agentMatches
+        ? conversation !== undefined
+          ? conversation.sessionId
+          : currentSessionId
+        : undefined;
+      const sentAt = Date.now();
+
+      setConversations((prev) => ({
+        ...prev,
+        [currentConversationKey]: {
+          ...prev[currentConversationKey],
+          // bdboard-pbf: 解決済みの sessionId を楽観的書き込みの時点で会話に
+          // 焼き込む。これが無いと、フォールバック (conversation 未定義 →
+          // currentSessionId) で送った 1 回目が transient エラー (409 等) に
+          // なったとき、エラーパスが「sessionId 無しの conversation」を作って
+          // しまい、リトライ時に clearSession 済みと誤分類されて sessionId 無し
+          // POST でフォークする。clearSession 経路ではそもそもローカルの
+          // sessionId が undefined なので、この条件付き spread は挙動を変えない。
+          ...(sessionId !== undefined ? { sessionId } : {}),
+          messages: [
+            ...(prev[currentConversationKey]?.messages ?? []),
+            { role: 'user', text, at: sentAt },
+          ],
+        },
+      }));
+      setConversationInputs((prev) => ({
+        ...prev,
+        [currentConversationKey]: '',
+      }));
+      setIsSending(true);
+      const sendKey = currentConversationKey;
+
+      try {
+        const messagePayload: {
+          projectId: string;
+          message: string;
+          sessionId?: string;
+          agentId?: string;
+          model?: string;
+        } = {
+          projectId: selectedProjectId,
+          message: text,
+        };
+        if (sessionId !== undefined) {
+          messagePayload.sessionId = sessionId;
+        }
+        if (selectedAgentId !== '') {
+          messagePayload.agentId = selectedAgentId;
+        }
+        if (showModelSelect && effectiveModelId !== '') {
+          messagePayload.model = effectiveModelId;
+        }
+        if (selectedAgent?.supportsStreaming === true) {
+          setStreamingReply({ key: sendKey, text: '' });
+          try {
+            // bdboard-l1t.9 Opus レビュー S5: unmount/スレッド切替時に能動的に
+            // abort する機能は別チケット化(議長側で起票)。ここでは signal を
+            // 渡さない — 一度も abort されない AbortController を作るだけの
+            // デッドコードにしないため。postChatMessageStream の signal 引数
+            // 自体は将来のために残す。
+            const result = await postChatMessageStream(messagePayload, {
+              onDelta: (delta) =>
+                setStreamingReply((prev) =>
+                  prev !== null && prev.key === sendKey ? { key: sendKey, text: prev.text + delta } : prev,
+                ),
+            });
+            applyChatSuccess(sendKey, text, result);
+          } catch (error) {
+            applyChatError(sendKey, sentRawText, error);
+          } finally {
+            setStreamingReply(null);
+          }
+        } else {
+          try {
+            const result = await postChatMessage(messagePayload);
+            applyChatSuccess(sendKey, text, result);
+          } catch (error) {
+            applyChatError(sendKey, sentRawText, error);
+          }
+        }
+      } finally {
+        setIsSending(false);
+        inputRef.current?.focus();
+      }
+    },
+    [
+      conversations,
+      currentInput,
+      isSending,
+      selectedAgentId,
+      effectiveModelId,
+      selectedProjectId,
+      currentConversationKey,
+      currentSessionId,
+      isHistoryPending,
+      showModelSelect,
+      selectedAgent,
+      applyChatSuccess,
+      applyChatError,
+    ],
+  );
+
+  const handleModelChange = useCallback(
+    (nextModelId: string) => {
+      setSelectedModelId(nextModelId);
+      // bdboard-2n8: このキャッシュ書き込みの理由は上の threadModelIds 宣言部の
+      // コメントを参照(履歴フェッチとの競合防止 / ドラフトスレッドでの保持)。
+      setThreadModelIds((prev) => ({
+        ...prev,
+        [currentConversationKey]: nextModelId,
+      }));
+    },
+    [currentConversationKey],
+  );
+
+  const handleAgentChange = useCallback(
+    (nextId: string) => {
+      // モデル選択のリセットはここでは行わない。selectedAgent を見る useEffect が
+      // 一箇所で担当する(同じ規則を2箇所に持つと片方だけ直す drift が起きる)。
+      historyRequestIdRef.current += 1;
+      setLoadingHistoryFor(null);
+      writePersistedChatThread(selectedProjectId, undefined);
+      setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [] }));
+      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
+      const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
+      const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);
+      setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
+      // MF1(N1: startNewDraftThread の SF1 引き継ぎと同じ family ——
+      // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という
+      // 不変条件): エージェント切替は会話キーを強制的に新しいドラフトへ進める
+      // が、その瞬間まで入力欄にあった書きかけの本文(既存スレッド閲覧中でも
+      // ドラフト中でも)はユーザーがまだ送信していない作業なので、失わせず
+      // 新しいドラフトキーへ引き継ぐ。「新規スレッド」ボタン
+      // (handleNewThread→startNewDraftThread)は明示的な新規作成の意図なので、
+      // こちらは従来どおり引き継がず空のドラフトのままにする。
+      setConversationInputs((prev) => ({
+        ...prev,
+        [nextDraftKey]: prev[currentConversationKey] ?? '',
+      }));
+      // SFX: 値と一緒に draftSeedTextRef のシード記録も無条件でコピーする。値だけ
+      // コピーしてシード記録を移し忘れると、新キーでは
+      // draftSeedTextRef.current[nextDraftKey] が undefined のままになり、後で
+      // startNewDraftThread がこの新キーを previousDraftKey として比較する際
+      // 「シード記録が無い」→無条件で「編集済み」と誤判定してしまう(旧キーが
+      // 実際には未編集のプリフィルそのままだった場合でも、次のチケット起動で
+      // その旧文言が居座ってプリフィルが適用されない)。値とシードを同時に
+      // コピーしておけば、新キーでの「value === seed」判定結果が旧キーでの
+      // 判定結果と完全に一致するので、条件分岐は不要。
+      if (currentConversationKey in draftSeedTextRef.current) {
+        draftSeedTextRef.current[nextDraftKey] = draftSeedTextRef.current[currentConversationKey];
+      } else {
+        delete draftSeedTextRef.current[nextDraftKey];
+      }
+      setSelectedAgentId(nextId);
+      setConversations((prev) => {
+        const current = prev[currentConversationKey];
+        if (current === undefined) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [currentConversationKey]: {
+            ...current,
+            sessionId: undefined,
+            agentId: undefined,
+          },
+        };
+      });
+    },
+    [selectedProjectId, currentConversationKey],
+  );
+
+  const handleKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        event.preventDefault();
+        formRef.current?.requestSubmit();
+      }
+    },
+    [],
+  );
+
+  const openThreads = openThreadIds[selectedProjectId] ?? [];
+  const threadById = new Map((threadLists[selectedProjectId] ?? []).map((thread) => [thread.sessionId, thread]));
+  const handleNewThread = () => {
+    // SF5: pendingPrefillRef/pendingTicketDraftProjectRef の消化窓
+    // (チケット文脈からの起動でスレッド一覧 fetch がまだ終わっていない間)に
+    // ユーザーが自分で「新規スレッド」を押した場合、ユーザーの明示的な空ドラフト
+    // 要求が保留中のチケット文脈の意図に優先する。ここでクリアせずに
+    // startNewDraftThread を呼ぶと、(a) このタイミングで pendingPrefillRef が
+    // 誤って消化されチケット文言がこの新規ドラフトに混入し、(b) さらに後で
+    // fetch が解決した際 pendingTicketDraftProjectRef が selectedProjectId と
+    // まだ一致しているせいで startNewDraftThread がもう一度呼ばれて nonce が
+    // 二重に進み、しかも pendingPrefillRef は (a) で既に消費済みのためプリフィル
+    // が結局どのドラフトにも表示されない、という二重の不整合が起きる。
+    pendingPrefillRef.current = null;
+    pendingTicketDraftProjectRef.current = null;
+    startNewDraftThread(selectedProjectId);
+  };
+  const handleCloseThread = (sessionId: string) => {
+    const next = openThreads.filter((id) => id !== sessionId);
+    const selectedSessionId = selectedThreadIds[selectedProjectId];
+    const wasSelected = selectedSessionId === sessionId;
+    const nextSelectedSessionId = wasSelected ? next[0] : selectedSessionId;
+    setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
+    if (wasSelected) {
+      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: next[0] }));
+    }
+    writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: nextSelectedSessionId });
+    if (confirmingDeleteSessionId === sessionId) {
+      setConfirmingDeleteSessionId(null);
+    }
+  };
+  /**
+   * bdboard-3tw.104.3 レビュー MF2: adopt 直後は `selectedThreadIds[projectId]` を
+   * 新しいセッションIDに向け、`openThreadIds`/`threadLists` を更新し、
+   * `writePersistedChatThreadState` で永続化する(104.2 のマルチスレッド化前は
+   * `conversations[selectedProjectId]` に直書きしていたが、会話キーはスレッド
+   * (sessionId)単位になったのでプロジェクトIDキーでは合わなくなっていた)。
+   *
+   * M1(レビュー再指摘): 履歴シードは `/api/sessions/:id/tail`(ライブセッション
+   * インデックス由来、実測10件程度)を別途叩くのではなく、adopt レスポンスに
+   * 同梱された `seedMessages`(discovery が local-only ガード配下で既に読んだ
+   * トランスクリプト末尾)をそのまま使う。終了済みセッション(この機能の主用途)は
+   * ライブインデックスにまず載らないため、以前の実装(`fetchSessionTail` 呼び出し)
+   * はほぼ確実に 404 していた。取れる会話が無ければ簡単な説明メッセージ1行に
+   * フォールバックする。
+   *
+   * S4(レビュー指摘): `writePersistedChatThreadState`(localStorage への書き込み)は
+   * `setOpenThreadIds` の updater 関数の中では呼ばない — React の StrictMode は
+   * updater を2回呼び得るため、副作用がその中にあると二重発火する。ここでは
+   * 既に render スコープにある `openThreads`(このコンポーネント冒頭で
+   * `openThreadIds[selectedProjectId] ?? []` から導出済み)から次の配列を計算し、
+   * `setOpenThreadIds` には具体値を渡したうえで、副作用は updater の外側で呼ぶ
+   * (`handleCloseThread` と同じパターン)。
+   *
+   * threadModelIds との関係(レビュー指摘: 意図された挙動): 下で
+   * `historyLoadedFor[sessionId] = true` を先回りしてセットし、通常の
+   * ChatMessageRepository 由来の履歴読み込み effect(`payload.model` から
+   * `threadModelIds` を埋める側)を抑止している。そのため adopt したスレッドは
+   * `threadModelIds` に何も入らず、モデルセレクトは選択中エージェントの既定モデルに
+   * フォールバックする(= CLI セッション側が最後に使っていたモデルとは限らない)。
+   * これはこの実装の既知の制約であり、修正対象ではない — 是正するには adopt
+   * レスポンスにモデルIDも含めて `threadModelIds` を明示的に設定する追加変更が
+   * 必要だが、現状スコープ外。
+   *
+   * S5(レビュー指摘・既知の制約): シードした会話は `conversations`(メモリ上の
+   * state)にしか置かれず、`writePersistedChatThreadState` が永続化するのは
+   * スレッドの開閉状態(`activeSessionIds`/`selectedSessionId`)だけでメッセージ
+   * 本文は含まない。そのためページをリロードすると、スレッドタブ自体は
+   * 復元されるがシードした会話内容は失われ、通常の履歴読み込み effect が
+   * ChatMessageRepository(adopt 直後はまだ空)から読み直して「まだメッセージは
+   * ありません」に戻る。M1 はサーバー側のデータソースの問題(ライブインデックス
+   * vs トランスクリプト全体)を解決するもので、クライアント側の永続化範囲とは
+   * 別の話であり、ここには畳み込めない。会話メッセージ全体をクライアント
+   * ストレージへ永続化する設計変更は現状スコープ外のため、既知の制約として
+   * 明文化するに留める。
+   */
+  const handleResumeDiscoveredSession = (
+    sessionId: string,
+    agentId: string,
+    seedMessages: readonly SessionTailMessageDto[],
+  ) => {
+    const projectId = selectedProjectId;
+    const fallbackNote: ChatMessage = {
+      role: 'assistant',
+      text: 'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。',
+      at: Date.now(),
+    };
+    const seeded: ChatMessage[] =
+      seedMessages.length > 0
+        ? seedMessages.map((message, index) => ({
+            role: message.role,
+            text: message.text,
+            at:
+              message.timestamp !== undefined
+                ? Date.parse(message.timestamp)
+                : Date.now() + index,
+          }))
+        : [fallbackNote];
+
+    // bdboard-2n8 レビュー should-fix: handleAgentChange と同じ理由でここでも
+    // historyRequestIdRef を進める。resume したセッションIDが現在選択中の
+    // 会話キーと同じ(=既にそのスレッドが開かれていて履歴フェッチが in-flight)
+    // だった場合、キー自体は変わらないので通常の invalidation(currentConversationKey
+    // の変化に伴う effect cleanup)が働かない。increment しないと、下でセットする
+    // seeded conversation / agentId を、後から解決する古い履歴フェッチの `.then` が
+    // (サーバー側の別内容で)上書きしてしまう。
+    historyRequestIdRef.current += 1;
+    setSelectedAgentId(agentId);
+    setConversations((prev) => ({
+      ...prev,
+      [sessionId]: { messages: seeded, sessionId, agentId },
+    }));
+    // 履歴は上で seedMessages から取り込み済みなので、通常の(常に空の)
+    // ChatMessageRepository 由来の自動読み込み effect は動かさない。
+    setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
+
+    const nextOpenThreads = openThreads.includes(sessionId)
+      ? openThreads
+      : [...openThreads, sessionId];
+    setOpenThreadIds((prev) => ({ ...prev, [projectId]: nextOpenThreads }));
+    writePersistedChatThreadState(projectId, {
+      activeSessionIds: nextOpenThreads,
+      selectedSessionId: sessionId,
+    });
+
+    setSelectedThreadIds((prev) => ({ ...prev, [projectId]: sessionId }));
+    setConfirmingDeleteSessionId(null);
+    setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
+
+    void fetchChatThreads(projectId)
+      .then((threads) => {
+        setThreadLists((prev) => ({ ...prev, [projectId]: threads }));
+      })
+      .catch(() => {
+        // 一覧の更新に失敗してもタブ表示が「(無題)」になるだけで再開自体は成立している。
+      });
+  };
+
+  const handleDeleteThread = async (sessionId: string) => {
+    try {
+      await deleteChatThread(sessionId, selectedProjectId);
+      handleCloseThread(sessionId);
+      setThreadLists((prev) => ({ ...prev, [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((thread) => thread.sessionId !== sessionId) }));
+      setThreadError(null);
+    } catch (error) {
+      console.error('chat thread delete failed', error);
+      setThreadError('スレッドの削除に失敗しました。');
+    } finally {
+      setConfirmingDeleteSessionId(null);
+    }
+  };
+
+  const currentThreadTitle =
+    currentSessionId !== undefined
+      ? (threadById.get(currentSessionId)?.title ?? '(無題)')
+      : '新規';
+  const chatSettingsSummaryParts = [
+    'チャット設定',
+    selectedProject?.name,
+    currentThreadTitle,
+    selectedAgent?.label,
+  ].filter((part): part is string => part !== undefined && part !== '');
+
+  return (
+    <div className="overlay" onClick={requestClose} role="presentation">
+      <aside
+        ref={panelRef}
+        className="detail-panel chat-panel"
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="chat-panel-title"
+      >
+        <div className="detail-header">
+          <h2 id="chat-panel-title" className="detail-title">
+            チャット
+          </h2>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="btn detail-close"
+            onClick={requestClose}
+          >
+            閉じる
+          </button>
+        </div>
+
+        <details className="chat-panel-settings">
+          <summary className="chat-panel-settings-summary">
+            {chatSettingsSummaryParts.join(' — ')}
+          </summary>
+          <div className="chat-panel-settings-body">
+        {projects.length <= 1 ? (
+          <p className="chat-project-name">{selectedProject?.name ?? '—'}</p>
+        ) : (
+          <select
+            className="chat-project-select"
+            aria-label="対象プロジェクト"
+            value={selectedProjectId}
+            disabled={isSending}
+            onChange={(event) => {
+              setSelectedProjectId(event.target.value);
+              setTicketProjectFallbackNotice(null);
+            }}
+          >
+            {projects.map((project) => (
+              <option key={project.id} value={project.id}>
+                {project.name}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {ticketProjectFallbackNotice !== null && (
+          <p className="chat-ticket-project-fallback-notice" role="status">
+            {ticketProjectFallbackNotice}
+          </p>
+        )}
+
+        <div className="chat-thread-toolbar" aria-label="チャットスレッド">
+          <div className="chat-thread-tabs" role="tablist" aria-label="開いているスレッド">
+            {openThreads.map((sessionId) => {
+              const thread = threadById.get(sessionId);
+              return (
+                <div className={`chat-thread-tab${currentSessionId === sessionId ? ' is-selected' : ''}`} key={sessionId}>
+                  <button type="button" role="tab" aria-selected={currentSessionId === sessionId} onClick={() => { setConfirmingDeleteSessionId(null); setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId })); writePersistedChatThreadState(selectedProjectId, { activeSessionIds: openThreads, selectedSessionId: sessionId }); }}>
+                    {thread?.title ?? '(無題)'}
+                  </button>
+                  <button type="button" className="chat-thread-close" aria-label={`スレッド「${thread?.title ?? '(無題)'}」を閉じる`} onClick={() => handleCloseThread(sessionId)}>×</button>
+                  {currentSessionId === sessionId && (
+                    confirmingDeleteSessionId === sessionId ? (
+                      <button type="button" className="chat-thread-delete" aria-label={`スレッド「${thread?.title ?? '(無題)'}」の削除を確定`} onClick={() => void handleDeleteThread(sessionId)}>本当に削除</button>
+                    ) : (
+                      <button type="button" className="chat-thread-delete" aria-label={`スレッド「${thread?.title ?? '(無題)'}」を削除`} onClick={() => setConfirmingDeleteSessionId(sessionId)}>削除</button>
+                    )
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <button type="button" className="btn" onClick={handleNewThread}>新規スレッド</button>
+        </div>
+        {(threadLists[selectedProjectId] ?? []).some((thread) => !openThreads.includes(thread.sessionId)) && (
+          <select
+            className="chat-thread-reopen"
+            aria-label="閉じたスレッドを開く"
+            value=""
+            onChange={(event) => {
+              const sessionId = event.target.value;
+              if (sessionId === '') return;
+              const next = [...openThreads, sessionId];
+              setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
+              setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
+              writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: sessionId });
+            }}
+          >
+            <option value="">閉じたスレッドを開く…</option>
+            {(threadLists[selectedProjectId] ?? []).filter((thread) => !openThreads.includes(thread.sessionId)).map((thread) => (
+              <option key={thread.sessionId} value={thread.sessionId}>スレッド: {thread.title ?? '(無題)'}</option>
+            ))}
+          </select>
+        )}
+        {threadError !== null && <p className="chat-message-error chat-thread-error" role="alert">{threadError}</p>}
+
+        {agents.length > 0 && (
+          <select
+            className="chat-agent-select"
+            aria-label="チャットエージェント"
+            value={selectedAgentId}
+            disabled={isSending}
+            onChange={(event) => handleAgentChange(event.target.value)}
+          >
+            {agents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {formatAgentOptionLabel(agent)}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {selectedProjectId !== '' && (
+          <button
+            type="button"
+            className="btn chat-discovered-sessions-toggle"
+            onClick={() => setShowDiscoveredSessions((prev) => !prev)}
+            disabled={isSending}
+          >
+            CLIセッションを再開
+          </button>
+        )}
+
+        {selectedAgent !== undefined && showModelSelect && (
+          <select
+            className="chat-model-select"
+            aria-label="モデル"
+            value={effectiveModelId}
+            disabled={isSending}
+            onChange={(event) => handleModelChange(event.target.value)}
+          >
+            {(selectedAgent.models ?? []).map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {selectedAgent !== undefined &&
+          selectedAgent.availability === 'unavailable' && (
+            <p className="chat-agent-availability-note" role="status">
+              このエージェントは利用できません（CLI が無いか、認証が通っていません）。
+            </p>
+          )}
+
+        {selectedAgent !== undefined &&
+          selectedAgent.capability !== 'bd-only' && (
+            <p className="chat-agent-capability-warning" role="note">
+              このエージェントは bd チケット操作以外の権限を持ちます（
+              {selectedAgent.capability}）。
+            </p>
+          )}
+
+        {selectedAgent === undefined || selectedAgent.capability === 'bd-only' ? (
+          <p className="detail-help">
+            このチャットは localhost からのみ利用できます。AIが実行できるのは、このプロジェクトの
+            bdチケット操作(一覧・詳細・claim・状態変更・クローズ・コメント追加)だけです。
+          </p>
+        ) : null}
+
+        {showDiscoveredSessions && selectedProjectId !== '' && (
+          <DiscoveredSessionsPanel
+            projectId={selectedProjectId}
+            onClose={() => setShowDiscoveredSessions(false)}
+            onResume={handleResumeDiscoveredSession}
+          />
+        )}
+          </div>
+        </details>
+
+        <div
+          ref={messagesRef}
+          className="chat-messages"
+          role="log"
+          aria-live="polite"
+        >
+          {currentMessages.length === 0 &&
+            loadingHistoryFor !== currentConversationKey && (
+              <p className="empty-message">まだメッセージはありません</p>
+            )}
+          {loadingHistoryFor === currentConversationKey && (
+            <p className="chat-pending">履歴を読み込み中…</p>
+          )}
+          {currentMessages.map((message, index) => (
+            <div
+              key={`${message.at}-${index}`}
+              className={`chat-message chat-message-${message.role}`}
+            >
+              <p className="chat-message-text">{message.text}</p>
+              {message.failedTools !== undefined &&
+                message.failedTools.length > 0 && (
+                  <p className="chat-message-failed-tools" role="alert">
+                    一部のツール呼び出しが実行できませんでした:{' '}
+                    {message.failedTools.join(', ')}
+                  </p>
+                )}
+            </div>
+          ))}
+          {(() => {
+            const activeStreamingText =
+              streamingReply !== null && streamingReply.key === currentConversationKey
+                ? streamingReply.text
+                : '';
+            return (
+              <>
+                {activeStreamingText !== '' && (
+                  <div className="chat-message chat-message-assistant chat-message-streaming">
+                    <p className="chat-message-text">{activeStreamingText}</p>
+                  </div>
+                )}
+                {/* bdboard-l1t.9 Opus レビュー N5: streaming で部分テキストが
+                    表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
+                    テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
+                {isSending && activeStreamingText === '' && (
+                  <p className="chat-pending">考え中…（最大3分かかることがあります）</p>
+                )}
+              </>
+            );
+          })()}
+        </div>
+
+        <form
+          ref={formRef}
+          className="chat-input-form"
+          onSubmit={(event) => {
+            void handleSubmit(event);
+          }}
+        >
+          <textarea
+            ref={inputRef}
+            className="chat-input"
+            rows={3}
+            placeholder="例: in_progress のまま止まっているチケットを教えて"
+            aria-label="メッセージ"
+            maxLength={4000}
+            value={currentInput}
+            disabled={isSending}
+            onChange={(event) => {
+              const value = event.target.value;
+              setConversationInputs((prev) => ({ ...prev, [currentConversationKey]: value }));
+            }}
+            onKeyDown={handleKeyDown}
+          />
+          <button
+            type="submit"
+            className="btn"
+            disabled={isSending || isHistoryPending || currentInput.trim() === ''}
+          >
+            送信
+          </button>
+          <span className="chat-input-hint">⌘/Ctrl + Enter で送信</span>
+        </form>
+      </aside>
+    </div>
+  );
+}

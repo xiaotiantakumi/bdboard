@@ -1,0 +1,114 @@
+[
+  {
+    "id": "KakeiSnap-7pi",
+    "title": "Fixture ticket KakeiSnap-7pi",
+    "description": "Fixture description for KakeiSnap-7pi (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-26T06:21:44Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-26T06:21:44Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-5tu"
+    ]
+  },
+  {
+    "id": "KakeiSnap-d81",
+    "title": "Fixture ticket KakeiSnap-d81",
+    "description": "Fixture description for KakeiSnap-d81 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-24T18:13:09Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-24T18:13:09Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-ap9"
+    ]
+  },
+  {
+    "id": "KakeiSnap-g7s",
+    "title": "Fixture ticket KakeiSnap-g7s",
+    "description": "Fixture description for KakeiSnap-g7s (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-27T06:34:46Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-27T06:34:46Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-756"
+    ]
+  },
+  {
+    "id": "KakeiSnap-5l7",
+    "title": "Fixture ticket KakeiSnap-5l7",
+    "description": "Fixture description for KakeiSnap-5l7 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-26T21:35:26Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-26T21:35:26Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-w5a"
+    ]
+  },
+  {
+    "id": "KakeiSnap-rwn",
+    "title": "Fixture ticket KakeiSnap-rwn",
+    "description": "Fixture description for KakeiSnap-rwn (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-26T21:35:25Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-26T21:35:25Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-w5a"
+    ]
+  },
+  {
+    "id": "KakeiSnap-cg6",
+    "title": "Fixture ticket KakeiSnap-cg6",
+    "description": "Fixture description for KakeiSnap-cg6 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-26T18:53:31Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-26T18:53:31Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-w5a"
+    ]
+  },
+  {
+    "id": "KakeiSnap-h1t",
+    "title": "Fixture ticket KakeiSnap-h1t",
+    "description": "Fixture description for KakeiSnap-h1t (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-07-26T18:53:30Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-07-26T18:53:30Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "KakeiSnap-w5a"
+    ]
+  }
+]

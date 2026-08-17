@@ -1,0 +1,41 @@
+{
+  "name": "bdboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
+    "start": "tsx --env-file-if-exists=.env src/main.ts",
+    "dev:web": "npm --prefix web run dev",
+    "build:web": "npm --prefix web run build",
+    "install:web": "npm --prefix web install",
+    "test": "vitest run && npm --prefix web run test",
+    "test:server": "vitest run",
+    "test:web": "npm --prefix web run test",
+    "build": "tsc --noEmit",
+    "depcruise": "depcruise --config .dependency-cruiser.cjs src web/src",
+    "check:boundaries": "npm run depcruise",
+    "mcp:config": "tsx src/infrastructure/chat/mcp-client-config-main.ts",
+    "verify": "npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
+    "test:e2e": "npm run build:web && playwright test --config test/e2e/playwright.config.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.14.4",
+    "better-sqlite3": "^11.9.1",
+    "chokidar": "^4.0.3",
+    "hono": "^4.7.10",
+    "zod": "^3.25.28"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.15.21",
+    "dependency-cruiser": "^16.10.1",
+    "tsx": "^4.23.12",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}

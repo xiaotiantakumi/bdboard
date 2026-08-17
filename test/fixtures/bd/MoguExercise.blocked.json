@@ -1,0 +1,52 @@
+[
+  {
+    "id": "epic-haslett-00ae14-7sv.8",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.8",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.8 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:38Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:38Z",
+    "blocked_by_count": 2,
+    "blocked_by": [
+      "epic-haslett-00ae14-7sv.21",
+      "epic-haslett-00ae14-7sv.20"
+    ]
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.7",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.7",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.7 (scrubbed for public repo; original content contained project-specific detail).",
+    "notes": "Fixture notes.",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:37Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T10:03:11Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "epic-haslett-00ae14-7sv.21"
+    ]
+  },
+  {
+    "id": "epic-haslett-00ae14-7sv.10",
+    "title": "Fixture ticket epic-haslett-00ae14-7sv.10",
+    "description": "Fixture description for epic-haslett-00ae14-7sv.10 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-12T01:47:39Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-12T01:47:39Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "epic-haslett-00ae14-7sv.20"
+    ]
+  }
+]

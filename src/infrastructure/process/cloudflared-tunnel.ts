@@ -1,0 +1,348 @@
+import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import type {
+  TunnelProcess,
+  TunnelStartResult,
+} from '../../application/ports/tunnel.js';
+
+const TRY_CLOUDFLARE_URL_PATTERN =
+  /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+
+const DEFAULT_START_TIMEOUT_MS = 30_000;
+const DEFAULT_STOP_GRACE_MS = 5_000;
+const DEFAULT_LOG_FILE_PATH = path.join(process.cwd(), 'logs', 'cloudflared-tunnel.log');
+/** ログファイルの既定サイズ上限(5MB)。超過すると .log -> .log.1 へ退避される。 */
+const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
+
+// cloudflared の標準出力に資格情報が乗ることは通常無いが、事後調査用ログとして残す以上、
+// 万一それらしき文字列が混ざっていた場合の最終防衛として伏せ字にする。
+const SECRET_LIKE_PATTERN = /\b(password|passwd|token|secret|authorization)\s*[:=]\s*\S+/gi;
+
+function maskSecrets(text: string): string {
+  return text.replace(SECRET_LIKE_PATTERN, (match) => {
+    const separatorIndex = match.search(/[:=]/);
+    return `${match.slice(0, separatorIndex + 1)} ***`;
+  });
+}
+
+/** cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する) */
+export interface LogSink {
+  write(chunk: string): void;
+  close(): void;
+}
+
+/**
+ * filePath が maxBytes 以上であれば filePath -> `${filePath}.1` へリネームして退避する
+ * (世代は1つのみ。既存の .1 があれば上書きされる)。ファイルが存在しない場合は何もしない。
+ * 起動時チェック程度の粗い運用でよいため、書き込み中の継続監視は行わない。
+ */
+function rotateLogFileIfOversized(filePath: string, maxBytes: number): void {
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(filePath);
+  } catch {
+    return; // ファイルがまだ無い(初回起動など)
+  }
+
+  if (stats.size < maxBytes) {
+    return;
+  }
+
+  try {
+    fs.renameSync(filePath, `${filePath}.1`);
+  } catch {
+    // ローテーション失敗時は既存ファイルへの追記を続ける(ベストエフォート)
+  }
+}
+
+function createFileLogSink(filePath: string, maxBytes: number): LogSink {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  rotateLogFileIfOversized(filePath, maxBytes);
+  const fd = fs.openSync(filePath, 'a');
+  return {
+    write: (chunk: string) => {
+      try {
+        fs.writeSync(fd, chunk);
+      } catch {
+        // ログ書き込み失敗はトンネル動作自体を阻害しない
+      }
+    },
+    close: () => {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // already closed, ignore
+      }
+    },
+  };
+}
+
+export interface DataStream {
+  on(event: 'data', listener: (chunk: Buffer | string) => void): void;
+}
+
+export interface SpawnedProcess {
+  readonly stdout: DataStream | null;
+  readonly stderr: DataStream | null;
+  kill(signal?: NodeJS.Signals): boolean;
+  on(event: 'close', listener: (code: number | null) => void): this;
+  on(event: 'error', listener: (err: Error) => void): this;
+}
+
+export type SpawnFn = (
+  command: string,
+  args: readonly string[],
+) => SpawnedProcess;
+
+export interface CloudflaredTunnelOptions {
+  readonly port: number;
+  readonly spawnFn?: SpawnFn;
+  readonly startTimeoutMs?: number;
+  readonly stopGraceMs?: number;
+  readonly pathEnv?: string;
+  readonly resolveExecutable?: () => string | null;
+  /** cloudflared の継続的な出力ログの保存先(既定: <cwd>/logs/cloudflared-tunnel.log) */
+  readonly logFilePath?: string;
+  /** ログファイルのサイズ上限(バイト、既定: 5MB)。超過時は起動時に .log.1 へ退避する */
+  readonly logMaxBytes?: number;
+  /** テスト用にログ書き込み先を差し替えるフック */
+  readonly createLogSink?: (filePath: string, maxBytes: number) => LogSink;
+}
+
+function resolveCloudflaredInPath(pathEnv: string): string | null {
+  const directories = pathEnv.split(path.delimiter);
+
+  for (const directory of directories) {
+    if (directory.length === 0) {
+      continue;
+    }
+
+    const candidate = path.join(directory, 'cloudflared');
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // try next directory
+    }
+  }
+
+  return null;
+}
+
+function appendChunk(buffer: string, chunk: Buffer | string): string {
+  const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+  return buffer + text;
+}
+
+function extractTunnelUrl(buffer: string): string | null {
+  const match = buffer.match(TRY_CLOUDFLARE_URL_PATTERN);
+  return match?.[0] ?? null;
+}
+
+function asSpawnedProcess(child: ChildProcess): SpawnedProcess {
+  const processHandle: SpawnedProcess = {
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: (signal?: NodeJS.Signals) => child.kill(signal),
+    on: (event, listener) => {
+      child.on(event, listener as never);
+      return processHandle;
+    },
+  };
+  return processHandle;
+}
+
+export function createCloudflaredTunnel(
+  options: CloudflaredTunnelOptions,
+): TunnelProcess {
+  const spawnFn =
+    options.spawnFn ??
+    ((cmd, args): SpawnedProcess =>
+      asSpawnedProcess(
+        nodeSpawn(cmd, [...args], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+        }),
+      ));
+  const startTimeoutMs = options.startTimeoutMs ?? DEFAULT_START_TIMEOUT_MS;
+  const stopGraceMs = options.stopGraceMs ?? DEFAULT_STOP_GRACE_MS;
+  const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
+  const resolveExecutable =
+    options.resolveExecutable ?? ((): string | null => resolveCloudflaredInPath(pathEnv));
+  const logFilePath = options.logFilePath ?? DEFAULT_LOG_FILE_PATH;
+  const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
+  const createLogSink = options.createLogSink ?? createFileLogSink;
+
+  let availabilityCache: boolean | null = null;
+  let child: SpawnedProcess | null = null;
+  let outputBuffer = '';
+  const unexpectedExitListeners: Array<() => void> = [];
+
+  const onUnexpectedExit = (listener: () => void): void => {
+    unexpectedExitListeners.push(listener);
+  };
+
+  const notifyUnexpectedExit = (): void => {
+    for (const listener of unexpectedExitListeners) {
+      listener();
+    }
+  };
+
+  const isAvailable = async (): Promise<boolean> => {
+    if (availabilityCache !== null) {
+      return availabilityCache;
+    }
+
+    availabilityCache = resolveExecutable() !== null;
+    return availabilityCache;
+  };
+
+  const stop = async (): Promise<void> => {
+    const current = child;
+    if (current === null) {
+      return;
+    }
+
+    child = null;
+    outputBuffer = '';
+
+    if (!current.kill('SIGTERM')) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = (): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(forceKillTimer);
+        resolve();
+      };
+
+      const forceKillTimer = setTimeout(() => {
+        current.kill('SIGKILL');
+        finish();
+      }, stopGraceMs);
+
+      current.on('close', () => {
+        finish();
+      });
+
+      current.on('error', () => {
+        finish();
+      });
+    });
+  };
+
+  const stopExistingSynchronously = (): void => {
+    const current = child;
+    if (current === null) {
+      return;
+    }
+
+    child = null;
+    outputBuffer = '';
+    current.kill('SIGTERM');
+  };
+
+  const start = (): Promise<TunnelStartResult> => {
+    const executable = resolveExecutable();
+    if (executable === null) {
+      return Promise.reject(
+        new Error('cloudflared executable not found in PATH'),
+      );
+    }
+
+    stopExistingSynchronously();
+
+    outputBuffer = '';
+    const processHandle = spawnFn(executable, [
+      'tunnel',
+      '--url',
+      `http://127.0.0.1:${options.port}`,
+    ]);
+    child = processHandle;
+
+    const logSink = createLogSink(logFilePath, logMaxBytes);
+    logSink.write(`\n[${new Date().toISOString()}] cloudflared starting (port ${options.port})\n`);
+
+    return new Promise<TunnelStartResult>((resolve, reject) => {
+      let settled = false;
+
+      const fail = (err: Error): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutTimer);
+        void stop().finally(() => {
+          reject(err);
+        });
+      };
+
+      const succeed = (url: string): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(timeoutTimer);
+        resolve({ url });
+      };
+
+      const onData = (chunk: Buffer | string): void => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        logSink.write(maskSecrets(text));
+
+        outputBuffer = appendChunk(outputBuffer, chunk);
+        const url = extractTunnelUrl(outputBuffer);
+        if (url !== null) {
+          succeed(url);
+        }
+      };
+
+      const timeoutTimer = setTimeout(() => {
+        fail(new Error('timed out waiting for cloudflared tunnel URL'));
+      }, startTimeoutMs);
+
+      processHandle.stdout?.on('data', onData);
+      processHandle.stderr?.on('data', onData);
+
+      processHandle.on('error', (err) => {
+        fail(err);
+      });
+
+      processHandle.on('close', (code) => {
+        logSink.write(`[${new Date().toISOString()}] cloudflared exited (code=${String(code)})\n`);
+        logSink.close();
+
+        if (!settled) {
+          fail(
+            new Error(
+              `cloudflared exited before publishing a URL (code=${String(code)})`,
+            ),
+          );
+          return;
+        }
+
+        // 起動成功後の close: このハンドルがまだ「現在のトンネル」として追跡されている
+        // (= 自分たちが stop() を呼んで child をクリアしていない)場合のみ、予期せぬ終了と
+        // みなす。stop() は kill 前に child を null にするため、意図した停止ではここに
+        // 入らない。
+        if (child === processHandle) {
+          child = null;
+          outputBuffer = '';
+          notifyUnexpectedExit();
+        }
+      });
+    });
+  };
+
+  return {
+    start,
+    onUnexpectedExit,
+    stop,
+    isAvailable,
+  };
+}

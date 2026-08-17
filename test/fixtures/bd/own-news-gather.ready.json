@@ -1,0 +1,590 @@
+[
+  {
+    "id": "own-news-gather-z5p",
+    "title": "Fixture ticket own-news-gather-z5p",
+    "description": "Fixture description for own-news-gather-z5p (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T15:25:53Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T15:25:53Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-z5p",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-14T00:25:52Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "own-news-gather-rdi"
+  },
+  {
+    "id": "own-news-gather-e2q",
+    "title": "Fixture ticket own-news-gather-e2q",
+    "description": "Fixture description for own-news-gather-e2q (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T15:18:14Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T15:18:14Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-e2q",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-14T00:18:13Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "own-news-gather-rdi"
+  },
+  {
+    "id": "own-news-gather-hih",
+    "title": "Fixture ticket own-news-gather-hih",
+    "description": "Fixture description for own-news-gather-hih (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T15:18:13Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T15:18:13Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-hih",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-14T00:18:12Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "own-news-gather-rdi"
+  },
+  {
+    "id": "own-news-gather-rdi",
+    "title": "Fixture ticket own-news-gather-rdi",
+    "description": "Fixture description for own-news-gather-rdi (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:24Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:24Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-5l9",
+    "title": "Fixture ticket own-news-gather-5l9",
+    "description": "Fixture description for own-news-gather-5l9 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "epic",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-02T15:01:27Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-02T15:01:27Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-uyw",
+    "title": "Fixture ticket own-news-gather-uyw",
+    "status": "open",
+    "priority": 1,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-02T13:54:02Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-02T13:54:02Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-hqd",
+    "title": "Fixture ticket own-news-gather-hqd",
+    "description": "Fixture description for own-news-gather-hqd (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "bug",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T23:53:44Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T23:53:44Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-0ii",
+    "title": "Fixture ticket own-news-gather-0ii",
+    "description": "Fixture description for own-news-gather-0ii (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T15:18:14Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T15:18:14Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-0ii",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-14T00:18:14Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "own-news-gather-rdi"
+  },
+  {
+    "id": "own-news-gather-6o9",
+    "title": "Fixture ticket own-news-gather-6o9",
+    "description": "Fixture description for own-news-gather-6o9 (scrubbed for public repo; original content contained project-specific detail).",
+    "notes": "Fixture notes.",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:29Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T15:18:12Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-6o9",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:29Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-6o9",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:55Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-ll3",
+    "title": "Fixture ticket own-news-gather-ll3",
+    "description": "Fixture description for own-news-gather-ll3 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:28Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:28Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-ll3",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:28Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-ll3",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:54Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-r1o",
+    "title": "Fixture ticket own-news-gather-r1o",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:28Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:28Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-r1o",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:27Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-r1o",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:53Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-4h4",
+    "title": "Fixture ticket own-news-gather-4h4",
+    "description": "Fixture description for own-news-gather-4h4 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:27Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:27Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-4h4",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:27Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-4h4",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:53Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-ahp",
+    "title": "Fixture ticket own-news-gather-ahp",
+    "description": "Fixture description for own-news-gather-ahp (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:26Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:26Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-ahp",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:52Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-ahp",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:26Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-anw",
+    "title": "Fixture ticket own-news-gather-anw",
+    "description": "Fixture description for own-news-gather-anw (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-03T01:58:45Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-03T01:58:45Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-q3g",
+    "title": "Fixture ticket own-news-gather-q3g",
+    "description": "Fixture description for own-news-gather-q3g (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-03T01:58:45Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-03T01:58:45Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-h5c",
+    "title": "Fixture ticket own-news-gather-h5c",
+    "description": "Fixture description for own-news-gather-h5c (scrubbed for public repo; original content contained project-specific detail).",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "bug",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-03T01:03:27Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-03T01:03:27Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-rfe",
+    "title": "Fixture ticket own-news-gather-rfe",
+    "description": "Fixture description for own-news-gather-rfe (scrubbed for public repo; original content contained project-specific detail).",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-03T00:58:26Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-03T00:58:26Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-8r8",
+    "title": "Fixture ticket own-news-gather-8r8",
+    "description": "Fixture description for own-news-gather-8r8 (scrubbed for public repo; original content contained project-specific detail).",
+    "design": "Fixture design notes.",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "bug",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-02T15:57:28Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-02T15:57:28Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-uyw.7",
+    "title": "Fixture ticket own-news-gather-uyw.7",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-02T13:54:08Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-02T13:54:08Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-uyw.7",
+        "depends_on_id": "own-news-gather-uyw",
+        "type": "parent-child",
+        "created_at": "2026-08-02T22:54:07Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "own-news-gather-uyw"
+  },
+  {
+    "id": "own-news-gather-x1t",
+    "title": "Fixture ticket own-news-gather-x1t",
+    "description": "Fixture description for own-news-gather-x1t (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T07:10:03Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T07:10:03Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-2cs",
+    "title": "Fixture ticket own-news-gather-2cs",
+    "description": "Fixture description for own-news-gather-2cs (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:30Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:30Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-2cs",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:30Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-2cs",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:56Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-yts",
+    "title": "Fixture ticket own-news-gather-yts",
+    "description": "Fixture description for own-news-gather-yts (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-13T13:07:30Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-13T13:07:30Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-yts",
+        "depends_on_id": "own-news-gather-rdi",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:55Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      },
+      {
+        "issue_id": "own-news-gather-yts",
+        "depends_on_id": "",
+        "type": "parent-child",
+        "created_at": "2026-08-13T22:07:29Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": ""
+  },
+  {
+    "id": "own-news-gather-5hw",
+    "title": "Fixture ticket own-news-gather-5hw",
+    "description": "Fixture description for own-news-gather-5hw (scrubbed for public repo; original content contained project-specific detail).",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-03T00:58:25Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-03T00:58:25Z",
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-w49",
+    "title": "Fixture ticket own-news-gather-w49",
+    "description": "Fixture description for own-news-gather-w49 (scrubbed for public repo; original content contained project-specific detail).",
+    "design": "Fixture design notes.",
+    "acceptance_criteria": "Fixture acceptance criteria.",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-02T15:51:19Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-02T15:51:19Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-w49",
+        "depends_on_id": "own-news-gather-uyw.17",
+        "type": "blocks",
+        "created_at": "2026-08-03T00:51:26Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 1,
+    "dependent_count": 0,
+    "comment_count": 0
+  },
+  {
+    "id": "own-news-gather-uyw.8",
+    "title": "Fixture ticket own-news-gather-uyw.8",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-02T13:54:09Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-02T13:54:09Z",
+    "dependencies": [
+      {
+        "issue_id": "own-news-gather-uyw.8",
+        "depends_on_id": "own-news-gather-uyw",
+        "type": "parent-child",
+        "created_at": "2026-08-02T22:54:08Z",
+        "created_by": "Fixture Owner",
+        "metadata": "{}"
+      }
+    ],
+    "dependency_count": 0,
+    "dependent_count": 0,
+    "comment_count": 0,
+    "parent": "own-news-gather-uyw"
+  }
+]

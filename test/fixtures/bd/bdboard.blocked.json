@@ -1,0 +1,67 @@
+[
+  {
+    "id": "bdboard-3tw.7",
+    "title": "Fixture ticket bdboard-3tw.7",
+    "description": "Fixture description for bdboard-3tw.7 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:42Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:42Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "bdboard-3tw.6"
+    ]
+  },
+  {
+    "id": "bdboard-3tw.6",
+    "title": "Fixture ticket bdboard-3tw.6",
+    "description": "Fixture description for bdboard-3tw.6 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:41Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:41Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "bdboard-3tw.5"
+    ]
+  },
+  {
+    "id": "bdboard-3tw.5",
+    "title": "Fixture ticket bdboard-3tw.5",
+    "description": "Fixture description for bdboard-3tw.5 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 2,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:40Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:40Z",
+    "blocked_by_count": 1,
+    "blocked_by": [
+      "bdboard-3tw.4"
+    ]
+  },
+  {
+    "id": "bdboard-3tw.9",
+    "title": "Fixture ticket bdboard-3tw.9",
+    "description": "Fixture description for bdboard-3tw.9 (scrubbed for public repo; original content contained project-specific detail).",
+    "status": "open",
+    "priority": 3,
+    "issue_type": "task",
+    "owner": "fixture-owner@example.com",
+    "created_at": "2026-08-14T08:47:44Z",
+    "created_by": "Fixture Owner",
+    "updated_at": "2026-08-14T08:47:44Z",
+    "blocked_by_count": 2,
+    "blocked_by": [
+      "bdboard-3tw.8",
+      "bdboard-3tw.5"
+    ]
+  }
+]
