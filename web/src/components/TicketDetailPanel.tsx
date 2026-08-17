@@ -717,6 +717,18 @@ export function TicketDetailPanel({
                 <div>{data.owner}</div>
               </div>
             )}
+            {data.labels !== undefined && data.labels.length > 0 && (
+              <div className="detail-field">
+                <div className="detail-field-label">Labels</div>
+                <div className="detail-label-badges">
+                  {data.labels.map((label) => (
+                    <span key={label} className="badge badge-label">
+                      {label}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             {data.parentId !== undefined && (
               <div className="detail-field">
                 <div className="detail-field-label">Parent ID</div>

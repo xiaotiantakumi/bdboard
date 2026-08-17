@@ -7,14 +7,18 @@ function renderBar(
   overrides: Partial<{
     priorityCeiling: 'all' | '0' | '1' | '2' | '3' | '4';
     issueTypes: string[];
+    labels: string[];
+    availableLabels: string[];
     filterText: string;
     onPriorityCeilingChange: (choice: 'all' | '0' | '1' | '2' | '3' | '4') => void;
     onIssueTypesChange: (types: string[]) => void;
+    onLabelsChange: (labels: string[]) => void;
     onFilterTextChange: (text: string) => void;
   }> = {},
 ) {
   const onPriorityCeilingChange = overrides.onPriorityCeilingChange ?? vi.fn();
   const onIssueTypesChange = overrides.onIssueTypesChange ?? vi.fn();
+  const onLabelsChange = overrides.onLabelsChange ?? vi.fn();
   const onFilterTextChange = overrides.onFilterTextChange ?? vi.fn();
 
   render(
@@ -23,6 +27,9 @@ function renderBar(
       onPriorityCeilingChange={onPriorityCeilingChange}
       issueTypes={overrides.issueTypes ?? []}
       onIssueTypesChange={onIssueTypesChange}
+      labels={overrides.labels ?? []}
+      onLabelsChange={onLabelsChange}
+      availableLabels={overrides.availableLabels ?? ['human', 'needs-review']}
       filterText={overrides.filterText ?? ''}
       onFilterTextChange={onFilterTextChange}
     />,
@@ -31,6 +38,7 @@ function renderBar(
   return {
     onPriorityCeilingChange,
     onIssueTypesChange,
+    onLabelsChange,
     onFilterTextChange,
   };
 }
@@ -56,6 +64,9 @@ describe('BoardFilterBar', () => {
         onPriorityCeilingChange={vi.fn()}
         issueTypes={[]}
         onIssueTypesChange={onIssueTypesChange}
+        labels={[]}
+        onLabelsChange={vi.fn()}
+        availableLabels={['human']}
         filterText=""
         onFilterTextChange={vi.fn()}
       />,
@@ -70,6 +81,9 @@ describe('BoardFilterBar', () => {
         onPriorityCeilingChange={vi.fn()}
         issueTypes={['bug']}
         onIssueTypesChange={onIssueTypesChange}
+        labels={[]}
+        onLabelsChange={vi.fn()}
+        availableLabels={['human']}
         filterText=""
         onFilterTextChange={vi.fn()}
       />,
@@ -77,6 +91,51 @@ describe('BoardFilterBar', () => {
 
     await user.click(screen.getByRole('button', { name: 'bug' }));
     expect(onIssueTypesChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it('toggles label chips on and off', async () => {
+    const user = userEvent.setup();
+    const onLabelsChange = vi.fn();
+
+    const { rerender } = render(
+      <BoardFilterBar
+        priorityCeiling="all"
+        onPriorityCeilingChange={vi.fn()}
+        issueTypes={[]}
+        onIssueTypesChange={vi.fn()}
+        labels={[]}
+        onLabelsChange={onLabelsChange}
+        availableLabels={['human', 'needs-review']}
+        filterText=""
+        onFilterTextChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'human' }));
+    expect(onLabelsChange).toHaveBeenCalledWith(['human']);
+
+    rerender(
+      <BoardFilterBar
+        priorityCeiling="all"
+        onPriorityCeilingChange={vi.fn()}
+        issueTypes={[]}
+        onIssueTypesChange={vi.fn()}
+        labels={['human']}
+        onLabelsChange={onLabelsChange}
+        availableLabels={['human', 'needs-review']}
+        filterText=""
+        onFilterTextChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'human' }));
+    expect(onLabelsChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it('hides label section when availableLabels is empty', () => {
+    renderBar({ availableLabels: [] });
+
+    expect(screen.queryByRole('button', { name: 'human' })).not.toBeInTheDocument();
   });
 
   it('marks selected issue type chips as pressed', () => {
@@ -114,14 +173,17 @@ describe('BoardFilterBar', () => {
     const user = userEvent.setup();
     const onPriorityCeilingChange = vi.fn();
     const onIssueTypesChange = vi.fn();
+    const onLabelsChange = vi.fn();
     const onFilterTextChange = vi.fn();
 
     renderBar({
       priorityCeiling: '1',
       issueTypes: ['bug'],
+      labels: ['human'],
       filterText: 'alpha',
       onPriorityCeilingChange,
       onIssueTypesChange,
+      onLabelsChange,
       onFilterTextChange,
     });
 
@@ -129,6 +191,7 @@ describe('BoardFilterBar', () => {
 
     expect(onPriorityCeilingChange).toHaveBeenCalledWith('all');
     expect(onIssueTypesChange).toHaveBeenCalledWith([]);
+    expect(onLabelsChange).toHaveBeenCalledWith([]);
     expect(onFilterTextChange).toHaveBeenCalledWith('');
   });
 });

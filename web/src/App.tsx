@@ -58,7 +58,7 @@ import {
   type BoardFilterPresetState,
 } from './uiPersistedState';
 import { type StreamState, useBoardStream } from './useBoardStream';
-import { collectBoardTicketIds } from './boardTicketIds';
+import { collectBoardTicketIds, collectBoardLabels } from './boardTicketIds';
 import { buildPaletteActions } from './paletteActions';
 
 function streamLabel(state: StreamState): string {
@@ -107,6 +107,11 @@ export function App() {
     UI_STORAGE_KEYS.boardIssueTypes,
     [],
     validateIssueTypeArray,
+  );
+  const [boardLabels, setBoardLabels] = usePersistedState(
+    UI_STORAGE_KEYS.boardLabels,
+    [],
+    validateStringArray,
   );
   const [boardFilterText, setBoardFilterText] = usePersistedState(
     UI_STORAGE_KEYS.boardFilterText,
@@ -249,9 +254,10 @@ export function App() {
     () => ({
       priorityCeiling: priorityCeilingValue(boardPriorityCeiling),
       issueTypes: boardIssueTypes,
+      labels: boardLabels,
       text: boardFilterText,
     }),
-    [boardPriorityCeiling, boardIssueTypes, boardFilterText],
+    [boardPriorityCeiling, boardIssueTypes, boardLabels, boardFilterText],
   );
 
   const boardFilterPresetState = useMemo<BoardFilterPresetState>(
@@ -260,6 +266,7 @@ export function App() {
       selectedProjectIds,
       priorityCeiling: boardPriorityCeiling,
       issueTypes: boardIssueTypes,
+      labels: boardLabels,
       filterText: boardFilterText,
     }),
     [
@@ -267,6 +274,7 @@ export function App() {
       selectedProjectIds,
       boardPriorityCeiling,
       boardIssueTypes,
+      boardLabels,
       boardFilterText,
     ],
   );
@@ -276,12 +284,14 @@ export function App() {
     setSelectedProjectIds(preset.selectedProjectIds);
     setBoardPriorityCeiling(preset.priorityCeiling);
     setBoardIssueTypes(preset.issueTypes);
+    setBoardLabels(preset.labels);
     setBoardFilterText(preset.filterText);
   }, [
     setView,
     setSelectedProjectIds,
     setBoardPriorityCeiling,
     setBoardIssueTypes,
+    setBoardLabels,
     setBoardFilterText,
   ]);
 
@@ -333,6 +343,21 @@ export function App() {
       collectBoardTicketIds(entry.board, ids);
     }
     return ids;
+  }, [boardQuery.data]);
+
+  const availableLabels = useMemo(() => {
+    const labels = new Set<string>();
+    const data = boardQuery.data;
+    if (data === undefined) {
+      return [];
+    }
+    if (data.merged !== null) {
+      collectBoardLabels(data.merged, labels);
+    }
+    for (const entry of data.projects) {
+      collectBoardLabels(entry.board, labels);
+    }
+    return [...labels].sort();
   }, [boardQuery.data]);
 
   const projectRootPaths = useMemo(() => {
@@ -704,6 +729,9 @@ export function App() {
             onPriorityCeilingChange={setBoardPriorityCeiling}
             issueTypes={boardIssueTypes}
             onIssueTypesChange={setBoardIssueTypes}
+            labels={boardLabels}
+            onLabelsChange={setBoardLabels}
+            availableLabels={availableLabels}
             filterText={boardFilterText}
             onFilterTextChange={setBoardFilterText}
           />

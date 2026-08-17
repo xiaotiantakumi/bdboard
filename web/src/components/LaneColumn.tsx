@@ -292,6 +292,11 @@ export function CardItem({
             確認待ち
           </span>
         )}
+        {(ticket.labels ?? []).map((label) => (
+          <span key={label} className="badge badge-label">
+            {label}
+          </span>
+        ))}
         <PrLinkBadge prLink={prLink} />
         {blockedBy.length > 0 && (
           <span className="badge badge-blocked">

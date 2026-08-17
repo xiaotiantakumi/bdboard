@@ -28,6 +28,7 @@ interface SerializedTicket {
   readonly parentId?: string;
   readonly description?: string;
   readonly notes?: string;
+  readonly labels?: readonly string[];
   readonly models?: readonly { readonly stage: string; readonly model: string }[];
 }
 
@@ -75,6 +76,7 @@ function serializeTicket(ticket: Ticket): SerializedTicket {
       ? { description: ticket.description }
       : {}),
     ...(ticket.notes !== undefined ? { notes: ticket.notes } : {}),
+    ...(ticket.labels !== undefined ? { labels: ticket.labels } : {}),
     ...(ticket.models !== undefined ? { models: ticket.models } : {}),
   };
 }
@@ -99,6 +101,7 @@ function deserializeTicket(raw: SerializedTicket): Ticket {
     ...(raw.parentId !== undefined ? { parentId: raw.parentId as TicketId } : {}),
     ...(raw.description !== undefined ? { description: raw.description } : {}),
     ...(raw.notes !== undefined ? { notes: raw.notes } : {}),
+    ...(raw.labels !== undefined ? { labels: raw.labels } : {}),
     ...(raw.models !== undefined ? { models: raw.models } : {}),
   };
 

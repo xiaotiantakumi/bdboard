@@ -15,6 +15,7 @@ function makeCard(
     title?: string;
     priority?: number;
     issueType?: string;
+    labels?: string[];
     effectivePriority?: number;
   } = {},
 ): BoardCardDto {
@@ -30,6 +31,7 @@ function makeCard(
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
       commentCount: 0,
+      ...(overrides.labels !== undefined ? { labels: overrides.labels } : {}),
     },
     lane: 'ready',
     projectId: 'proj-1',
@@ -60,6 +62,18 @@ describe('boardFilterKey', () => {
     expect(boardFilterKey(filterA)).toBe(boardFilterKey(filterB));
   });
 
+  it('returns the same key regardless of labels order', () => {
+    const filterA: BoardFilter = {
+      ...EMPTY_BOARD_FILTER,
+      labels: ['human', 'needs-review'],
+    };
+    const filterB: BoardFilter = {
+      ...EMPTY_BOARD_FILTER,
+      labels: ['needs-review', 'human'],
+    };
+    expect(boardFilterKey(filterA)).toBe(boardFilterKey(filterB));
+  });
+
   it('returns different keys when filter criteria differ', () => {
     const base = boardFilterKey(EMPTY_BOARD_FILTER);
     expect(
@@ -67,6 +81,9 @@ describe('boardFilterKey', () => {
     ).not.toBe(base);
     expect(
       boardFilterKey({ ...EMPTY_BOARD_FILTER, issueTypes: ['bug'] }),
+    ).not.toBe(base);
+    expect(
+      boardFilterKey({ ...EMPTY_BOARD_FILTER, labels: ['human'] }),
     ).not.toBe(base);
     expect(
       boardFilterKey({ ...EMPTY_BOARD_FILTER, text: 'alpha' }),
@@ -85,6 +102,9 @@ describe('isBoardFilterActive', () => {
     ).toBe(true);
     expect(
       isBoardFilterActive({ ...EMPTY_BOARD_FILTER, issueTypes: ['bug'] }),
+    ).toBe(true);
+    expect(
+      isBoardFilterActive({ ...EMPTY_BOARD_FILTER, labels: ['human'] }),
     ).toBe(true);
     expect(
       isBoardFilterActive({ ...EMPTY_BOARD_FILTER, text: 'alpha' }),
@@ -121,6 +141,32 @@ describe('cardMatchesBoardFilter', () => {
     expect(cardMatchesBoardFilter(task, filter)).toBe(false);
   });
 
+  it('filters by labels with OR semantics when labels are selected', () => {
+    const human = makeCard({ labels: ['human'] });
+    const review = makeCard({ labels: ['needs-review'] });
+    const both = makeCard({ labels: ['human', 'needs-review'] });
+    const none = makeCard();
+    const filter: BoardFilter = {
+      ...EMPTY_BOARD_FILTER,
+      labels: ['human', 'needs-review'],
+    };
+    expect(cardMatchesBoardFilter(human, filter)).toBe(true);
+    expect(cardMatchesBoardFilter(review, filter)).toBe(true);
+    expect(cardMatchesBoardFilter(both, filter)).toBe(true);
+    expect(cardMatchesBoardFilter(none, filter)).toBe(false);
+  });
+
+  it('passes all cards when labels filter is empty', () => {
+    const card = makeCard({ labels: ['human'] });
+    expect(cardMatchesBoardFilter(card, EMPTY_BOARD_FILTER)).toBe(true);
+  });
+
+  it('rejects cards without labels when label filter is active', () => {
+    const card = makeCard();
+    const filter: BoardFilter = { ...EMPTY_BOARD_FILTER, labels: ['human'] };
+    expect(cardMatchesBoardFilter(card, filter)).toBe(false);
+  });
+
   it('matches text against title and id case-insensitively', () => {
     const card = makeCard({
       id: 'bdboard-Alpha',
@@ -154,6 +200,7 @@ describe('cardMatchesBoardFilter', () => {
     const filter: BoardFilter = {
       priorityCeiling: 1,
       issueTypes: ['bug'],
+      labels: [],
       text: 'login',
     };
     expect(cardMatchesBoardFilter(card, filter)).toBe(true);

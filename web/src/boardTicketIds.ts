@@ -22,3 +22,13 @@ export function collectBoardTicketIds(board: BoardDto, ids: Set<string>): void {
     ids.add(id);
   }
 }
+
+export function collectBoardLabels(board: BoardDto, labels: Set<string>): void {
+  for (const lane of LANES) {
+    for (const card of board.lanes[lane] ?? []) {
+      for (const label of card.ticket.labels ?? []) {
+        labels.add(label);
+      }
+    }
+  }
+}

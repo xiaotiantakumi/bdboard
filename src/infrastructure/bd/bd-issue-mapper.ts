@@ -29,6 +29,7 @@ type OptionalTicketFields = {
     | 'parentId'
     | 'description'
     | 'notes'
+    | 'labels'
     | 'models']?: Ticket[K];
 };
 
@@ -118,6 +119,9 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   }
   if (raw.notes !== undefined) {
     optionalFields.notes = raw.notes;
+  }
+  if (raw.labels !== undefined) {
+    optionalFields.labels = raw.labels;
   }
   const models = parseTicketModelRecords(raw.metadata);
   if (models.length > 0) {

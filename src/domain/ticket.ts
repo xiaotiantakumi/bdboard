@@ -22,5 +22,6 @@ export interface Ticket {
   readonly parentId?: TicketId;
   readonly description?: string;
   readonly notes?: string;
+  readonly labels?: readonly string[];
   readonly models?: readonly TicketModelRecord[];
 }

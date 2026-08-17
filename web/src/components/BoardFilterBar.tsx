@@ -8,6 +8,9 @@ export interface BoardFilterBarProps {
   onPriorityCeilingChange: (choice: PriorityCeilingChoice) => void;
   issueTypes: string[];
   onIssueTypesChange: (types: string[]) => void;
+  labels: string[];
+  onLabelsChange: (labels: string[]) => void;
+  availableLabels: string[];
   filterText: string;
   onFilterTextChange: (text: string) => void;
 }
@@ -24,11 +27,13 @@ const PRIORITY_CEILING_OPTIONS: { value: PriorityCeilingChoice; label: string }[
 function isFilterActive(
   priorityCeiling: PriorityCeilingChoice,
   issueTypes: string[],
+  labels: string[],
   filterText: string,
 ): boolean {
   return (
     priorityCeiling !== 'all' ||
     issueTypes.length > 0 ||
+    labels.length > 0 ||
     filterText.trim() !== ''
   );
 }
@@ -38,10 +43,18 @@ export function BoardFilterBar({
   onPriorityCeilingChange,
   issueTypes,
   onIssueTypesChange,
+  labels,
+  onLabelsChange,
+  availableLabels,
   filterText,
   onFilterTextChange,
 }: BoardFilterBarProps) {
-  const filterActive = isFilterActive(priorityCeiling, issueTypes, filterText);
+  const filterActive = isFilterActive(
+    priorityCeiling,
+    issueTypes,
+    labels,
+    filterText,
+  );
 
   const handleIssueTypeToggle = (type: string) => {
     if (issueTypes.includes(type)) {
@@ -51,9 +64,18 @@ export function BoardFilterBar({
     }
   };
 
+  const handleLabelToggle = (label: string) => {
+    if (labels.includes(label)) {
+      onLabelsChange(labels.filter((item) => item !== label));
+    } else {
+      onLabelsChange([...labels, label]);
+    }
+  };
+
   const handleClearFilter = () => {
     onPriorityCeilingChange('all');
     onIssueTypesChange([]);
+    onLabelsChange([]);
     onFilterTextChange('');
   };
 
@@ -99,6 +121,28 @@ export function BoardFilterBar({
           })}
         </div>
       </div>
+
+      {availableLabels.length > 0 && (
+        <div className="board-filter-group">
+          <span className="header-label">ラベル</span>
+          <div className="toggle-group board-filter-label-group">
+            {availableLabels.map((label) => {
+              const selected = labels.includes(label);
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  className={`toggle-btn${selected ? ' active' : ''}`}
+                  aria-pressed={selected}
+                  onClick={() => handleLabelToggle(label)}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="board-filter-group board-filter-text-group">
         <input

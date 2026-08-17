@@ -589,6 +589,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
           selectedProjectIds: ['proj-1'],
           priorityCeiling: '1',
           issueTypes: ['bug'],
+          labels: [],
           filterText: 'UniqueText',
         },
       ]),
