@@ -284,7 +284,7 @@ function persistenceFilterBoardView(): BoardViewDto {
       ...makeEmptyLanes(),
       ready: [
         makeFilterCard('persist-match', 'ready', {
-          priority: 2,
+          priority: 1,
           issueType: 'bug',
           title: 'Persist Match UniqueText',
         }),
@@ -541,5 +541,82 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     expect(screen.getByText('Combo Stalled Bug')).toBeInTheDocument();
     expect(screen.queryByText('Combo Stalled Task')).not.toBeInTheDocument();
     expect(screen.queryByText('Combo Fresh Bug')).not.toBeInTheDocument();
+  });
+});
+
+describe('board filter presets (bdboard-3tw.112)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', MockEventSource);
+    window.history.replaceState(null, '', '/');
+    localStorage.clear();
+
+    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
+    fetchStatusMock.mockResolvedValue({
+      lastRefreshAt: '2026-01-01T00:00:00.000Z',
+      errors: [],
+      projectCount: 1,
+    } satisfies StatusDto);
+    fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
+    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
+    fetchChatAvailabilityMock.mockResolvedValue({
+      availability: 'unavailable',
+    } satisfies ChatAvailabilityDto);
+    fetchTicketMock.mockResolvedValue(sampleTicket);
+    fetchTicketCommentsMock.mockResolvedValue([] satisfies CommentDto[]);
+    fetchTunnelMock.mockResolvedValue({
+      state: 'off',
+      available: true,
+    });
+    fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
+    setupFilterApiMocks(persistenceFilterBoardView());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('applies a saved preset from the header in one tap', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      UI_STORAGE_KEYS.boardFilterPresets,
+      JSON.stringify([
+        {
+          id: 'preset-bug-filter',
+          name: 'P1バグだけ',
+          view: 'merged',
+          selectedProjectIds: ['proj-1'],
+          priorityCeiling: '1',
+          issueTypes: ['bug'],
+          filterText: 'UniqueText',
+        },
+      ]),
+    );
+    localStorage.setItem(UI_STORAGE_KEYS.boardPriorityCeiling, JSON.stringify('all'));
+    localStorage.setItem(UI_STORAGE_KEYS.boardIssueTypes, JSON.stringify([]));
+    localStorage.setItem(UI_STORAGE_KEYS.boardFilterText, JSON.stringify(''));
+
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
+      expect(screen.getByText('Persist Miss Priority UniqueText')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'P1バグだけ' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('優先度上限')).toHaveValue('1');
+      expect(screen.getByRole('button', { name: 'bug' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('UniqueText');
+      expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Persist Miss Priority UniqueText')).not.toBeInTheDocument();
+    expect(screen.queryByText('Persist Miss Type UniqueText')).not.toBeInTheDocument();
   });
 });
