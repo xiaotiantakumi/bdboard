@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, fetchScanRootsConfig, postRefresh, putScanRootsConfig } from '../api';
+import { ApiError, fetchBoardThresholdsConfig, fetchScanRootsConfig, postRefresh, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 
 const SAVE_FEEDBACK_MS = 2000;
@@ -25,6 +25,61 @@ const DANGEROUS_SCAN_ROOT_ROW_WARNING = 'このパスは保存時にサーバー
  */
 const CONFLICT_WRITE_MESSAGE =
   '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。';
+
+const INVALID_BOARD_THRESHOLDS_ERROR = 'invalid board thresholds';
+
+function msToHours(ms: number): string {
+  return String(ms / (60 * 60 * 1000));
+}
+
+function msToMinutes(ms: number): string {
+  return String(ms / (60 * 1000));
+}
+
+function parseHours(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed * 60 * 60 * 1000;
+}
+
+function parseMinutes(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed * 60 * 1000;
+}
+
+function isBoardThresholdErrors(details: unknown): details is { errors: string[] } {
+  if (typeof details !== 'object' || details === null || !('errors' in details)) {
+    return false;
+  }
+  const errors = details.errors;
+  return Array.isArray(errors) && errors.every((entry) => typeof entry === 'string');
+}
+
+function describeBoardThresholdWriteError(error: unknown): ReactNode {
+  if (
+    error instanceof ApiError &&
+    error.status === 400 &&
+    error.errorMessage === INVALID_BOARD_THRESHOLDS_ERROR &&
+    isBoardThresholdErrors(error.details)
+  ) {
+    return (
+      <ul className="settings-panel-error-list">
+        {error.details.errors.map((message) => (
+          <li key={message}>{message}</li>
+        ))}
+      </ul>
+    );
+  }
+  if (error instanceof ApiError && error.status === 409) {
+    return CONFLICT_WRITE_MESSAGE;
+  }
+  return describeWriteError(error, '閾値設定を保存できませんでした');
+}
 
 function isRejectedScanRootDetails(
   details: unknown,
@@ -100,6 +155,10 @@ function isAbsolutePath(path: string): boolean {
 export function SettingsPanel() {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ['scan-roots-config'], queryFn: fetchScanRootsConfig });
+  const thresholdsQuery = useQuery({
+    queryKey: ['board-thresholds-config'],
+    queryFn: fetchBoardThresholdsConfig,
+  });
   const [scanRoots, setScanRoots] = useState<string[]>([]);
   const [excludePaths, setExcludePaths] = useState<string[]>([]);
   const [version, setVersion] = useState('');
@@ -110,6 +169,14 @@ export function SettingsPanel() {
   const [pathHint, setPathHint] = useState('');
   const [excludePathHint, setExcludePathHint] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [stalledHours, setStalledHours] = useState('');
+  const [activeMinutes, setActiveMinutes] = useState('');
+  const [idleMinutes, setIdleMinutes] = useState('');
+  const [staleHours, setStaleHours] = useState('');
+  const [thresholdsVersion, setThresholdsVersion] = useState('');
+  const [thresholdsFeedback, setThresholdsFeedback] = useState<ReactNode>('');
+  const [thresholdsFeedbackIsError, setThresholdsFeedbackIsError] = useState(false);
+  const [thresholdsDirty, setThresholdsDirty] = useState(false);
 
   useEffect(() => {
     if (query.data !== undefined && !dirty) {
@@ -118,6 +185,16 @@ export function SettingsPanel() {
       setVersion(query.data.version);
     }
   }, [dirty, query.data]);
+
+  useEffect(() => {
+    if (thresholdsQuery.data !== undefined && !thresholdsDirty) {
+      setStalledHours(msToHours(thresholdsQuery.data.stalledAfterMs));
+      setActiveMinutes(msToMinutes(thresholdsQuery.data.livenessActiveMs));
+      setIdleMinutes(msToMinutes(thresholdsQuery.data.livenessIdleMs));
+      setStaleHours(msToHours(thresholdsQuery.data.livenessStaleMs));
+      setThresholdsVersion(thresholdsQuery.data.version);
+    }
+  }, [thresholdsDirty, thresholdsQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -154,14 +231,59 @@ export function SettingsPanel() {
     },
   });
 
-  if (query.isPending) {
+  const saveThresholdsMutation = useMutation({
+    mutationFn: () => {
+      const stalledAfterMs = parseHours(stalledHours);
+      const livenessActiveMs = parseMinutes(activeMinutes);
+      const livenessIdleMs = parseMinutes(idleMinutes);
+      const livenessStaleMs = parseHours(staleHours);
+      if (
+        stalledAfterMs === undefined ||
+        livenessActiveMs === undefined ||
+        livenessIdleMs === undefined ||
+        livenessStaleMs === undefined
+      ) {
+        throw new Error('invalid local threshold input');
+      }
+      return putBoardThresholdsConfig({
+        stalledAfterMs,
+        livenessActiveMs,
+        livenessIdleMs,
+        livenessStaleMs,
+        version: thresholdsVersion,
+      });
+    },
+    onSuccess: async (data) => {
+      setThresholdsVersion(data.version);
+      await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
+      setThresholdsDirty(false);
+      try {
+        await postRefresh();
+      } catch (error) {
+        console.warn('Failed to refresh board after saving board thresholds', error);
+      }
+      setThresholdsFeedbackIsError(false);
+      setThresholdsFeedback('閾値設定を保存しました');
+      window.setTimeout(() => setThresholdsFeedback(''), SAVE_FEEDBACK_MS);
+    },
+    onError: (error) => {
+      setThresholdsFeedbackIsError(true);
+      setThresholdsFeedback(describeBoardThresholdWriteError(error));
+      if (error instanceof ApiError && error.status === 409) {
+        setThresholdsDirty(false);
+        void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
+      }
+    },
+  });
+
+  if (query.isPending || thresholdsQuery.isPending) {
     return (
       <section className="settings-panel" aria-label="設定">
         読み込み中…
       </section>
     );
   }
-  if (query.isError || query.data === undefined) {
+  if (query.isError || query.data === undefined || thresholdsQuery.isError || thresholdsQuery.data === undefined) {
     return (
       <section className="settings-panel" aria-label="設定">
         <p className="settings-panel-error">設定を読み込めませんでした</p>
@@ -358,6 +480,92 @@ export function SettingsPanel() {
             </button>
           </div>
           {excludePathHint && <p className="settings-panel-path-hint">{excludePathHint}</p>}
+        </form>
+      </section>
+      <section className="settings-panel-section" aria-labelledby="board-thresholds-title">
+        <h3 id="board-thresholds-title">滞留・liveness 閾値</h3>
+        <p className="settings-panel-subtitle">
+          チケットの滞留判定とセッションの liveness 帯域を調整します。保存後、次回のボード取得から反映されます。
+        </p>
+        <form
+          className="settings-panel-thresholds-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveThresholdsMutation.mutate();
+          }}
+        >
+          <label htmlFor="settings-stalled-hours">滞留判定 (時間)</label>
+          <input
+            id="settings-stalled-hours"
+            type="number"
+            min={1}
+            step={1}
+            value={stalledHours}
+            placeholder={msToHours(thresholdsQuery.data.defaults.stalledAfterMs)}
+            disabled={saveThresholdsMutation.isPending}
+            onChange={(event) => {
+              setStalledHours(event.target.value);
+              setThresholdsDirty(true);
+            }}
+          />
+          <label htmlFor="settings-active-minutes">liveness active (分)</label>
+          <input
+            id="settings-active-minutes"
+            type="number"
+            min={1}
+            step={1}
+            value={activeMinutes}
+            placeholder={msToMinutes(thresholdsQuery.data.defaults.livenessActiveMs)}
+            disabled={saveThresholdsMutation.isPending}
+            onChange={(event) => {
+              setActiveMinutes(event.target.value);
+              setThresholdsDirty(true);
+            }}
+          />
+          <label htmlFor="settings-idle-minutes">liveness idle (分)</label>
+          <input
+            id="settings-idle-minutes"
+            type="number"
+            min={1}
+            step={1}
+            value={idleMinutes}
+            placeholder={msToMinutes(thresholdsQuery.data.defaults.livenessIdleMs)}
+            disabled={saveThresholdsMutation.isPending}
+            onChange={(event) => {
+              setIdleMinutes(event.target.value);
+              setThresholdsDirty(true);
+            }}
+          />
+          <label htmlFor="settings-stale-hours">liveness stale (時間)</label>
+          <input
+            id="settings-stale-hours"
+            type="number"
+            min={1}
+            step={1}
+            value={staleHours}
+            placeholder={msToHours(thresholdsQuery.data.defaults.livenessStaleMs)}
+            disabled={saveThresholdsMutation.isPending}
+            onChange={(event) => {
+              setStaleHours(event.target.value);
+              setThresholdsDirty(true);
+            }}
+          />
+          <div className="settings-panel-footer">
+            <button
+              type="submit"
+              className="settings-panel-save"
+              disabled={!thresholdsDirty || saveThresholdsMutation.isPending}
+            >
+              {saveThresholdsMutation.isPending ? '保存中…' : '閾値を保存'}
+            </button>
+            <div
+              className="settings-panel-feedback"
+              aria-live="polite"
+              role={thresholdsFeedbackIsError ? 'alert' : undefined}
+            >
+              {thresholdsFeedback}
+            </div>
+          </div>
         </form>
       </section>
       <div className="settings-panel-footer">

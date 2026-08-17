@@ -456,6 +456,38 @@ export function putScanRootsConfig(config: {
   });
 }
 
+export interface BoardThresholdsConfigDto {
+  stalledAfterMs: number;
+  livenessActiveMs: number;
+  livenessIdleMs: number;
+  livenessStaleMs: number;
+  version: string;
+  defaults: {
+    stalledAfterMs: number;
+    livenessActiveMs: number;
+    livenessIdleMs: number;
+    livenessStaleMs: number;
+  };
+}
+
+export function fetchBoardThresholdsConfig(): Promise<BoardThresholdsConfigDto> {
+  return fetchJson<BoardThresholdsConfigDto>('/api/settings/board-thresholds');
+}
+
+export function putBoardThresholdsConfig(config: {
+  stalledAfterMs?: number;
+  livenessActiveMs?: number;
+  livenessIdleMs?: number;
+  livenessStaleMs?: number;
+  version: string;
+}): Promise<BoardThresholdsConfigDto> {
+  return fetchJson<BoardThresholdsConfigDto>('/api/settings/board-thresholds', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+}
+
 export function postRefresh(): Promise<void> {
   return fetchJson<{ ok: boolean }>('/api/refresh', { method: 'POST' }).then(() => undefined);
 }

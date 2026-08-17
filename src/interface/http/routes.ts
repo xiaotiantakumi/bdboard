@@ -14,6 +14,7 @@ import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import { getThroughputStats } from '../../application/board/get-throughput-stats.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
 import { getBoard } from '../../application/board/get-board.js';
+import type { GetBoardDeps } from '../../application/board/get-board.js';
 import {
   getTicketTokenUsage,
   hasTicketTokenUsage,
@@ -34,6 +35,7 @@ import {
 } from '../../application/ports/issue-writer.js';
 import type { SessionLinkReaderPort } from '../../application/ports/session-link-reader.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
+import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
@@ -117,6 +119,7 @@ export interface ApiDeps {
    * 省略された場合、書き込みは従来どおり localhost 直アクセス限定になる(fail-closed)。
    */
   readonly writeAccess?: WriteGuardDeps;
+  readonly getBoardThresholds?: () => Promise<ResolvedBoardThresholds>;
 }
 
 interface QueuedSseMessage {
@@ -408,6 +411,24 @@ function relayEventName(
   );
 }
 
+async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
+  const thresholds = await deps.getBoardThresholds?.();
+  const sessions = deps.sessions?.();
+  const links = deps.links?.();
+  return {
+    cache: deps.cache,
+    now: deps.now(),
+    ...(sessions !== undefined ? { sessions } : {}),
+    ...(links !== undefined ? { links } : {}),
+    ...(thresholds !== undefined
+      ? {
+          stalledThresholds: thresholds.stalledThresholds,
+          livenessThresholds: thresholds.livenessThresholds,
+        }
+      : {}),
+  };
+}
+
 export function createApiRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
 
@@ -470,16 +491,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
     }
 
-    const sessions = deps.sessions?.();
-    const links = deps.links?.();
-
     const view = await getBoard(
-      {
-        cache: deps.cache,
-        now: deps.now(),
-        ...(sessions !== undefined ? { sessions } : {}),
-        ...(links !== undefined ? { links } : {}),
-      },
+      await buildGetBoardDeps(deps),
       {
         ...(projectIds !== undefined ? { projectIds } : {}),
         ...(epicId !== undefined && epicId.length > 0 ? { epicId } : {}),
@@ -704,18 +717,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
   app.get('/api/tickets/:id{.+}', async (c) => {
     const id = c.req.param('id');
-    const sessions = deps.sessions?.();
     const links = deps.links?.();
-
-    const view = await getBoard(
-      {
-        cache: deps.cache,
-        now: deps.now(),
-        ...(sessions !== undefined ? { sessions } : {}),
-        ...(links !== undefined ? { links } : {}),
-      },
-      { mode: 'merged' },
-    );
+    const view = await getBoard(await buildGetBoardDeps(deps), { mode: 'merged' });
 
     const card = view.merged?.cards.find((entry) => entry.ticket.id === id);
     if (card === undefined) {
@@ -1233,18 +1236,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     const id = c.req.param('id');
-    const sessions = deps.sessions?.();
-    const links = deps.links?.();
-
-    const view = await getBoard(
-      {
-        cache: deps.cache,
-        now: deps.now(),
-        ...(sessions !== undefined ? { sessions } : {}),
-        ...(links !== undefined ? { links } : {}),
-      },
-      { mode: 'merged' },
-    );
+    const view = await getBoard(await buildGetBoardDeps(deps), { mode: 'merged' });
 
     const card = view.merged?.cards.find((entry) => entry.ticket.id === id);
     if (card === undefined) {

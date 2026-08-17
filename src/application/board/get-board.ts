@@ -2,6 +2,7 @@ import { buildBoard, mergeBoards, type Board, type BoardCard } from '../../domai
 import { compareStrings } from '../../domain/compare.js';
 import { filterTicketsByEpic } from '../../domain/epic-closure.js';
 import type { LivenessThresholds } from '../../domain/liveness.js';
+import type { StalledThresholds } from '../../domain/stalled.js';
 import type { Project } from '../../domain/project.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { TicketId } from '../../domain/ticket-id.js';
@@ -49,6 +50,7 @@ export interface GetBoardDeps {
   readonly sessions?: readonly AgentSession[];
   readonly links?: readonly SessionLink[];
   readonly livenessThresholds?: LivenessThresholds;
+  readonly stalledThresholds?: StalledThresholds;
 }
 
 export interface GetBoardOptions {
@@ -176,6 +178,9 @@ export async function getBoard(
     ...(deps.links !== undefined ? { links: deps.links } : {}),
     ...(deps.livenessThresholds !== undefined
       ? { livenessThresholds: deps.livenessThresholds }
+      : {}),
+    ...(deps.stalledThresholds !== undefined
+      ? { stalledThresholds: deps.stalledThresholds }
       : {}),
   };
 

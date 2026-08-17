@@ -293,6 +293,45 @@ describe('getBoard', () => {
     expect(card?.liveness).toBe('active');
   });
 
+  it('passes stalledThresholds to buildBoard', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const oldUpdatedAt = new Date(NOW.getTime() - 3 * 60 * 60_000);
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-stalled',
+          projectId: a.id,
+          status: 'in_progress',
+          updatedAt: oldUpdatedAt,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const shortThresholdView = await getBoard({
+      cache,
+      now: NOW,
+      stalledThresholds: { stalledAfterMs: 60 * 60_000 },
+    });
+    expect(
+      shortThresholdView.projects[0]?.board.cards.find((card) => card.ticket.id === 'bdboard-stalled')
+        ?.stalled,
+    ).toBe(true);
+
+    const longThresholdView = await getBoard({
+      cache,
+      now: NOW,
+      stalledThresholds: { stalledAfterMs: 24 * 60 * 60_000 },
+    });
+    expect(
+      longThresholdView.projects[0]?.board.cards.find((card) => card.ticket.id === 'bdboard-stalled')
+        ?.stalled,
+    ).toBe(false);
+  });
+
   it('sets generatedAt from deps.now', async () => {
     const cache = createFakeBoardCache();
     const view = await getBoard({ cache, now: NOW });
