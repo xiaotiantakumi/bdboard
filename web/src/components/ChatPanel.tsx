@@ -36,6 +36,7 @@ import {
   UI_STORAGE_KEYS,
   validateChatModelSelections,
 } from '../uiPersistedState';
+import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
 import { CHAT_BUSY_HELP, writeAccessErrorMessage } from '../writeAccessMessage';
 
 interface ChatPanelProps {
@@ -1245,17 +1246,8 @@ export function ChatPanel({
     [selectedProjectId],
   );
 
-  const handleSubmit = useCallback(
-    async (event: FormEvent) => {
-      event.preventDefault();
-      const text = currentInput.trim();
-      // bdboard-otf Opus レビュー SF2: 送信失敗時の復元(下の applyChatError 呼び出し)
-      // には、この trim 済み text ではなく trim 前の本文を渡す。プリフィル文言は
-      // 末尾に半角スペースを含む形式(例: `${ticketId} について: `)が本番で実在し、
-      // 復元値が trim 済みだと未編集シード(draftSeedTextRef、末尾スペース込み)と
-      // 一致しなくなり、SF1 の「未編集シードの復元は seed 記録を維持する」判定が
-      // 壊れる。送信ペイロード自体は従来どおり trim 済み text を使う。
-      const sentRawText = currentInput;
+  const submitChatMessage = useCallback(
+    async (text: string, sentRawText: string) => {
       if (text === '' || isSending || selectedProjectId === '' || isHistoryPending) {
         return;
       }
@@ -1371,7 +1363,6 @@ export function ChatPanel({
     },
     [
       conversations,
-      currentInput,
       isSending,
       selectedAgentId,
       effectiveModelId,
@@ -1384,6 +1375,47 @@ export function ChatPanel({
       applyChatSuccess,
       applyChatError,
     ],
+  );
+
+  const handleSubmit = useCallback(
+    async (event: FormEvent) => {
+      event.preventDefault();
+      const text = currentInput.trim();
+      // bdboard-otf Opus レビュー SF2: 送信失敗時の復元(下の applyChatError 呼び出し)
+      // には、この trim 済み text ではなく trim 前の本文を渡す。プリフィル文言は
+      // 末尾に半角スペースを含む形式(例: `${ticketId} について: `)が本番で実在し、
+      // 復元値が trim 済みだと未編集シード(draftSeedTextRef、末尾スペース込み)と
+      // 一致しなくなり、SF1 の「未編集シードの復元は seed 記録を維持する」判定が
+      // 壊れる。送信ペイロード自体は従来どおり trim 済み text を使う。
+      await submitChatMessage(text, currentInput);
+    },
+    [currentInput, submitChatMessage],
+  );
+
+  // bdboard-3tw.133: クイックコマンドは常にプリフィル(入力欄に文言を入れて
+  // フォーカスするだけ)で、即時送信はしない。誤タップでそのまま送信されて
+  // しまうのを避けるため、送信するかはユーザーが送信ボタン/⌘+Enterで判断する。
+  const handleQuickCommand = useCallback(
+    (command: ChatQuickCommand) => {
+      if (isSending || selectedProjectId === '' || isHistoryPending) {
+        return;
+      }
+      const prompt = command.prompt;
+      draftSeedTextRef.current[currentConversationKey] = prompt;
+      setConversationInputs((prev) => ({
+        ...prev,
+        [currentConversationKey]: prompt,
+      }));
+      requestAnimationFrame(() => {
+        const textarea = inputRef.current;
+        if (textarea === null) {
+          return;
+        }
+        textarea.focus();
+        textarea.setSelectionRange(prompt.length, prompt.length);
+      });
+    },
+    [currentConversationKey, isHistoryPending, isSending, selectedProjectId],
   );
 
   const handleModelChange = useCallback(
@@ -1985,6 +2017,26 @@ export function ChatPanel({
             void handleSubmit(event);
           }}
         >
+          <div
+            className="chat-quick-commands"
+            role="group"
+            aria-label="クイックコマンド"
+          >
+            {CHAT_QUICK_COMMANDS.map((command) => (
+              <button
+                key={command.id}
+                type="button"
+                className="chat-quick-command-chip"
+                disabled={
+                  isSending || isHistoryPending || selectedProjectId === ''
+                }
+                aria-label={`${command.label}を入力欄に挿入`}
+                onClick={() => handleQuickCommand(command)}
+              >
+                {command.label}
+              </button>
+            ))}
+          </div>
           <textarea
             ref={inputRef}
             className="chat-input"
