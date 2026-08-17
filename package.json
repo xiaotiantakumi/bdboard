@@ -19,7 +19,8 @@
     "depcruise": "depcruise --config .dependency-cruiser.cjs src web/src",
     "check:boundaries": "npm run depcruise",
     "mcp:config": "tsx src/infrastructure/chat/mcp-client-config-main.ts",
-    "verify": "npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
+    "verify": "node scripts/verify.mjs",
+    "verify:steps": "npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
     "test:e2e": "npm run build:web && playwright test --config test/e2e/playwright.config.ts"
   },
   "dependencies": {
