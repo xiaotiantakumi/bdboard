@@ -3,31 +3,55 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import { searchTickets, type TicketSearchResultDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { filterPaletteActions, type PaletteAction } from '../paletteActions';
 
 const DEBOUNCE_MS = 200;
 const SEARCH_LIMIT = 30;
 
+type PaletteRow =
+  | { kind: 'action'; action: PaletteAction }
+  | { kind: 'ticket'; ticket: TicketSearchResultDto };
+
 interface SearchPaletteProps {
   onClose: () => void;
   onSelect: (ticketId: string) => void;
+  actions: PaletteAction[];
 }
 
-export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
+export function SearchPalette({ onClose, onSelect, actions }: SearchPaletteProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<TicketSearchResultDto[]>([]);
+  const [ticketResults, setTicketResults] = useState<TicketSearchResultDto[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   const trimmedQuery = query.trim();
   const hasQuery = trimmedQuery.length > 0;
+
+  const filteredActions = useMemo(
+    () => filterPaletteActions(actions, trimmedQuery),
+    [actions, trimmedQuery],
+  );
+
+  const rows = useMemo<PaletteRow[]>(() => {
+    const actionRows: PaletteRow[] = filteredActions.map((action) => ({
+      kind: 'action',
+      action,
+    }));
+    const ticketRows: PaletteRow[] = ticketResults.map((ticket) => ({
+      kind: 'ticket',
+      ticket,
+    }));
+    return [...actionRows, ...ticketRows];
+  }, [filteredActions, ticketResults]);
 
   useFocusTrap({
     containerRef: panelRef,
@@ -40,11 +64,14 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
   }, []);
 
   useEffect(() => {
+    setSelectedIndex(0);
+  }, [rows]);
+
+  useEffect(() => {
     if (!hasQuery) {
-      setResults([]);
+      setTicketResults([]);
       setIsLoading(false);
       setError(null);
-      setSelectedIndex(0);
       return;
     }
 
@@ -54,15 +81,14 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
     const handle = window.setTimeout(() => {
       void searchTickets(trimmedQuery, SEARCH_LIMIT)
         .then((hits) => {
-          setResults(hits);
-          setSelectedIndex(0);
+          setTicketResults(hits);
           setIsLoading(false);
         })
         .catch((caught: unknown) => {
           setError(
             caught instanceof Error ? caught : new Error('検索に失敗しました'),
           );
-          setResults([]);
+          setTicketResults([]);
           setIsLoading(false);
         });
     }, DEBOUNCE_MS);
@@ -72,35 +98,46 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
     };
   }, [hasQuery, trimmedQuery]);
 
-  const handleSelect = useCallback(
-    (ticketId: string) => {
-      onSelect(ticketId);
+  const handleActivateRow = useCallback(
+    (row: PaletteRow) => {
+      if (row.kind === 'action') {
+        row.action.onSelect();
+      } else {
+        onSelect(row.ticket.id);
+      }
       onClose();
     },
     [onClose, onSelect],
   );
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'ArrowDown' && results.length > 0) {
+    if (event.key === 'ArrowDown' && rows.length > 0) {
       event.preventDefault();
-      setSelectedIndex((current) => Math.min(current + 1, results.length - 1));
+      setSelectedIndex((current) => Math.min(current + 1, rows.length - 1));
       return;
     }
 
-    if (event.key === 'ArrowUp' && results.length > 0) {
+    if (event.key === 'ArrowUp' && rows.length > 0) {
       event.preventDefault();
       setSelectedIndex((current) => Math.max(current - 1, 0));
       return;
     }
 
-    if (event.key === 'Enter' && results.length > 0) {
+    if (event.key === 'Enter' && rows.length > 0) {
       event.preventDefault();
-      const hit = results[selectedIndex];
-      if (hit !== undefined) {
-        handleSelect(hit.id);
+      const row = rows[selectedIndex];
+      if (row !== undefined) {
+        handleActivateRow(row);
       }
     }
   };
+
+  const showEmptyTicketsMessage =
+    hasQuery &&
+    !isLoading &&
+    error === null &&
+    ticketResults.length === 0 &&
+    filteredActions.length === 0;
 
   return (
     <div className="overlay search-overlay" onClick={onClose} role="presentation">
@@ -113,13 +150,13 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
         aria-labelledby="search-palette-title"
       >
         <h2 id="search-palette-title" className="sr-only">
-          チケット検索
+          コマンドパレット
         </h2>
         <input
           ref={inputRef}
           type="search"
           className="search-palette-input"
-          placeholder="チケット ID・タイトル・説明を検索"
+          placeholder="チケット検索・ビュー切替・アクション"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           onKeyDown={handleInputKeyDown}
@@ -129,40 +166,67 @@ export function SearchPalette({ onClose, onSelect }: SearchPaletteProps) {
         />
 
         {!hasQuery && (
-          <p className="search-palette-hint">ID、タイトル、説明で検索できます</p>
-        )}
-
-        {hasQuery && isLoading && <p className="loading">読み込み中…</p>}
-
-        {hasQuery && !isLoading && error !== null && (
-          <p className="error-message">
-            {error.message}
+          <p className="search-palette-hint">
+            チケット検索のほか、ビュー切替やパネル起動ができます
           </p>
         )}
 
-        {hasQuery && !isLoading && error === null && results.length === 0 && (
-          <p className="empty-message">該当するチケットがありません</p>
+        {hasQuery && isLoading && (
+          <p className="loading">チケットを検索中…</p>
         )}
 
-        {hasQuery && !isLoading && error === null && results.length > 0 && (
+        {hasQuery && !isLoading && error !== null && (
+          <p className="error-message">{error.message}</p>
+        )}
+
+        {showEmptyTicketsMessage && (
+          <p className="empty-message">該当するコマンドやチケットがありません</p>
+        )}
+
+        {rows.length > 0 && (
           <ul className="search-result-list" role="listbox" aria-label="検索結果">
-            {results.map((hit, index) => (
-              <li key={hit.id}>
-                <button
-                  type="button"
-                  className={`search-result-item${index === selectedIndex ? ' selected' : ''}`}
-                  role="option"
-                  aria-selected={index === selectedIndex}
-                  onMouseEnter={() => setSelectedIndex(index)}
-                  onClick={() => handleSelect(hit.id)}
-                >
-                  <span className="search-result-project">{hit.projectName}</span>
-                  <span className="search-result-id">{hit.id}</span>
-                  <span className="search-result-title">{hit.title}</span>
-                  <span className="search-result-priority">P{hit.priority}</span>
-                </button>
-              </li>
-            ))}
+            {rows.map((row, index) => {
+              if (row.kind === 'action') {
+                const { action } = row;
+                return (
+                  <li key={action.id}>
+                    <button
+                      type="button"
+                      className={`search-result-item search-result-action${index === selectedIndex ? ' selected' : ''}`}
+                      role="option"
+                      aria-selected={index === selectedIndex}
+                      onMouseEnter={() => setSelectedIndex(index)}
+                      onClick={() => handleActivateRow(row)}
+                    >
+                      <span className="search-result-group">{action.group}</span>
+                      <span className="search-result-title">{action.label}</span>
+                      {action.detail !== undefined && (
+                        <span className="search-result-detail">{action.detail}</span>
+                      )}
+                    </button>
+                  </li>
+                );
+              }
+
+              const { ticket } = row;
+              return (
+                <li key={ticket.id}>
+                  <button
+                    type="button"
+                    className={`search-result-item search-result-ticket${index === selectedIndex ? ' selected' : ''}`}
+                    role="option"
+                    aria-selected={index === selectedIndex}
+                    onMouseEnter={() => setSelectedIndex(index)}
+                    onClick={() => handleActivateRow(row)}
+                  >
+                    <span className="search-result-project">{ticket.projectName}</span>
+                    <span className="search-result-id">{ticket.id}</span>
+                    <span className="search-result-title">{ticket.title}</span>
+                    <span className="search-result-priority">P{ticket.priority}</span>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>

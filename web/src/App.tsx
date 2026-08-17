@@ -55,6 +55,7 @@ import {
 } from './uiPersistedState';
 import { type StreamState, useBoardStream } from './useBoardStream';
 import { collectBoardTicketIds } from './boardTicketIds';
+import { buildPaletteActions } from './paletteActions';
 
 function streamLabel(state: StreamState): string {
   switch (state) {
@@ -356,6 +357,31 @@ export function App() {
     setSearchOpen(false);
   }, []);
 
+  const paletteActions = useMemo(
+    () =>
+      buildPaletteActions({
+        onViewChange: setView,
+        onOpenChat: () => setChatOpen(true),
+        onToggleHideDone: () => setHideDone((current) => !current),
+        hideDone,
+        onToggleStalledOnly: () => setStalledOnly((current) => !current),
+        stalledOnly,
+        onOpenSessionList: () => handleOpenSessionList(),
+        onRefresh: handleRefresh,
+        chatAvailable,
+      }),
+    [
+      chatAvailable,
+      handleOpenSessionList,
+      handleRefresh,
+      hideDone,
+      setHideDone,
+      setStalledOnly,
+      setView,
+      stalledOnly,
+    ],
+  );
+
   const handleFilterByEpic = useCallback((ticketId: string) => {
     setEpicFilterId(ticketId);
     handleCloseDetail();
@@ -580,7 +606,7 @@ export function App() {
         <button
           type="button"
           className="btn btn-search"
-          aria-label="チケットを検索 (Cmd+K)"
+          aria-label="コマンドパレット (Cmd+K)"
           onClick={handleOpenSearch}
         >
           検索
@@ -795,6 +821,7 @@ export function App() {
         <SearchPalette
           onClose={handleCloseSearch}
           onSelect={handleSelectTicket}
+          actions={paletteActions}
         />
       )}
 

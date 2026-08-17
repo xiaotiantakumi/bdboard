@@ -2627,6 +2627,29 @@ body {
   justify-self: end;
 }
 
+.search-result-action {
+  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto;
+  grid-template-areas: 'group title detail';
+  align-items: center;
+}
+
+.search-result-group {
+  grid-area: group;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.search-result-detail {
+  grid-area: detail;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  justify-self: end;
+  white-space: nowrap;
+}
+
 .btn-search {
   min-height: 34px;
 }
