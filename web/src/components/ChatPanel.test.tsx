@@ -3430,6 +3430,140 @@ describe('ChatPanel', () => {
     expect(parseChatMessageBody(fetchMock)).not.toHaveProperty('sessionId');
   });
 
+  it('prunes the dead thread from threadLists and syncs the cleared selection to localStorage (bdboard-23u)', async () => {
+    // bdboard-23u: 上のテストの SF2a 回帰に続く pbf デルタレビュー残 nit。
+    // (1) threadLists からも死亡スレッドを prune しないと、「閉じたスレッドを
+    //     開く」(threadLists 由来の reopen dropdown) から死亡スレッドを
+    //     再選択でき、historyLoadedFor 済み扱いのため送信すると 400 になる。
+    // (2) writePersistedChatThreadState を呼ばないと、localStorage に死亡した
+    //     selectedSessionId が残り続ける (handleCloseThread との非一貫)。
+    writePersistedChatThread('proj-a', {
+      sessionId: 'sess-evicted-prune',
+      agentId: 'claude',
+    });
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-evicted-prune',
+        agentId: 'claude',
+        title: 'evicted prune thread',
+        updatedAt: '2026-08-16T03:00:00.000Z',
+      },
+    ]);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/chat/sessions/sess-evicted-prune/messages')) {
+        return jsonResponse({ error: 'not found' }, 404);
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => {
+      expect(screen.queryByText('履歴を読み込み中…')).not.toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('tab', { name: 'evicted prune thread' }),
+      ).not.toBeInTheDocument();
+    });
+
+    // (1) threadLists からも prune 済みなので、候補が無くなり reopen dropdown
+    // 自体が現れない。
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('combobox', { name: '閉じたスレッドを開く' }),
+      ).not.toBeInTheDocument();
+    });
+
+    // (2) 開いているスレッドが無くなったので、writePersistedChatThreadState は
+    // 永続化エントリごと削除する (activeSessionIds が空の書き込みは
+    // chatThreadStorage の実装上、エントリ削除と等価)。
+    expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+  });
+
+  it('advances the draft nonce during auto-recovery so a stale optimistic message does not resurface (bdboard-23u)', async () => {
+    // bdboard-23u: このクリア処理が現在の draft nonce を再利用すると、
+    // applyChatSuccess が re-key 元として消さずに残す旧・楽観的メッセージ
+    // (同じ draftKey に残留) が、ドラフトへのフォールバックで再表示されて
+    // しまう (最終タブ close と同根の既存の問題)。handleAgentChange と同じ
+    // パターンで nonce を前進させることで、フォールバック先を新しい draftKey
+    // にする。
+    const user = userEvent.setup();
+    writePersistedChatThread('proj-a', {
+      sessionId: 'sess-parked',
+      agentId: 'claude',
+    });
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-parked',
+        agentId: 'claude',
+        title: 'parked thread',
+        updatedAt: '2026-08-16T03:00:00.000Z',
+      },
+      {
+        sessionId: 'sess-evicted-orphan',
+        agentId: 'claude',
+        title: 'evicted orphan thread',
+        updatedAt: '2026-08-16T03:00:00.000Z',
+      },
+    ]);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/chat/sessions/sess-parked/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-parked',
+          agentId: 'claude',
+          messages: [],
+        });
+      }
+      if (url.startsWith('/api/chat/sessions/sess-evicted-orphan/messages')) {
+        return jsonResponse({ error: 'not found' }, 404);
+      }
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse({
+          reply: 'first reply',
+          sessionId: 'sess-first',
+          agentId: 'claude',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    await waitFor(() => {
+      expect(screen.queryByText('履歴を読み込み中…')).not.toBeInTheDocument();
+    });
+
+    // 唯一開いていた 'sess-parked' タブを閉じ、draft nonce 0 のドラフトへ
+    // 落ちる (既存経路、今回の修正対象外)。
+    await user.click(
+      screen.getByRole('button', { name: 'スレッド「parked thread」を閉じる' }),
+    );
+
+    // nonce 0 のドラフトから送信し、新セッション 'sess-first' が確定する。
+    // applyChatSuccess は旧 draftKey ('new:proj-a:0') のエントリを消さずに
+    // 残すため、そこには「first message」の楽観的メッセージが孤児として残る。
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('first reply');
+
+    // 「閉じたスレッドを開く」から、後で 404 する 'sess-evicted-orphan' を
+    // 選択する。draft nonce はまだ 0 のまま進んでいない。
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: '閉じたスレッドを開く' }),
+      'sess-evicted-orphan',
+    );
+
+    // 404 による自動回復でドラフトへ戻る。修正前は同じ nonce 0 の draftKey
+    // へ戻るため、上で送信した 'first message' が孤児として再表示されていた。
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('tab', { name: 'evicted orphan thread' }),
+      ).not.toBeInTheDocument();
+    });
+    expect(
+      within(screen.getByRole('log')).queryByText('first message'),
+    ).not.toBeInTheDocument();
+  });
+
   it('continues the same session after non-empty history is restored', async () => {
     // N1: 新ガード下の主経路 —「実際に履歴が復元された既存スレッド」からの送信が
     // 同一セッションの継続として届くこと (空履歴バリアントは上の blocking テスト)。
