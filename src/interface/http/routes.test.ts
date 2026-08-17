@@ -1133,6 +1133,58 @@ describe('createApiRoutes', () => {
     expect((await invalidDays.json()) as unknown[]).toHaveLength(100);
   });
 
+  it('returns ticket timeline events for a cached ticket id', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const createdAt = new Date('2026-06-01T08:00:00.000Z');
+    const startedAt = new Date('2026-06-01T09:00:00.000Z');
+    const closedAt = new Date('2026-06-01T10:00:00.000Z');
+
+    cache.putProject({
+      project: { ...a, name: 'Alpha Project' },
+      tickets: [
+        makeTicket({
+          id: 'bdboard-timeline',
+          projectId: a.id,
+          title: 'Timeline ticket',
+          createdAt,
+          startedAt,
+          closedAt,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/tickets/bdboard-timeline/timeline');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveLength(3);
+    expect(body[0]).toEqual({
+      kind: 'closed',
+      at: closedAt.toISOString(),
+      id: 'bdboard-timeline',
+      projectId: a.id,
+      projectName: 'Alpha Project',
+      title: 'Timeline ticket',
+      status: 'open',
+      priority: 2,
+      issueType: 'task',
+    });
+    assertNoDates(body);
+  });
+
+  it('returns an empty array for ticket timeline when ticket is missing', async () => {
+    const cache = createFakeBoardCache();
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/tickets/missing-ticket/timeline');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
   it('returns throughput stats with ISO weekStart and projectName', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');

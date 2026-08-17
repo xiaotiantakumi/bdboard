@@ -701,6 +701,17 @@ export function fetchActivity(
   return getJson<ActivityEventDto[]>(`/api/activity?${searchParams.toString()}`);
 }
 
+export function fetchTicketTimeline(
+  ticketId: string,
+  limit = 200,
+): Promise<ActivityEventDto[]> {
+  const searchParams = new URLSearchParams();
+  searchParams.set('limit', String(limit));
+  return getJson<ActivityEventDto[]>(
+    `/api/tickets/${encodeURIComponent(ticketId)}/timeline?${searchParams.toString()}`,
+  );
+}
+
 export function fetchThroughputStats(
   weeks = 8,
   projectIds: readonly string[] = [],

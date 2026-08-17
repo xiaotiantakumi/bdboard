@@ -13,6 +13,7 @@ import {
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
+  fetchTicketTimeline,
   postTicketComment,
   postTicketDecision,
   postTicketDependency,
@@ -24,6 +25,7 @@ import {
   type PrBadgeDto,
   type QuickActionRequest,
   type SessionDto,
+  type ActivityEventDto,
   type TicketSearchResultDto,
   LANE_LABELS,
 } from '../api';
@@ -37,11 +39,37 @@ import {
 import { MarkdownContent } from './MarkdownContent';
 import { PrLinkBadge } from './PrLinkBadge';
 import { useUndoSnackbar } from './UndoSnackbar';
+import {
+  ACTIVITY_KIND_LABELS,
+  formatActivityTime,
+  groupEventsByDate,
+} from './activityFeedFormatting';
 
 const DEPENDENCY_SEARCH_DEBOUNCE_MS = 200;
 const DEPENDENCY_SEARCH_LIMIT = 20;
 
 const COPY_FEEDBACK_MS = 2000;
+
+function timelineKindBadgeClass(
+  kind: ActivityEventDto['kind'],
+): string {
+  return `activity-kind-badge activity-kind-${kind}`;
+}
+
+function formatTimelineChangeDetail(
+  kind: ActivityEventDto['kind'],
+  from: string | undefined,
+  to: string | undefined,
+): string | undefined {
+  if (
+    (kind === 'status_changed' || kind === 'priority_changed') &&
+    from !== undefined &&
+    to !== undefined
+  ) {
+    return `${from} → ${to}`;
+  }
+  return undefined;
+}
 
 interface TicketDetailPanelProps {
   ticketId: string;
@@ -202,6 +230,16 @@ export function TicketDetailPanel({
     queryKey: ['ticket-comments', ticketId],
     queryFn: () => fetchTicketComments(ticketId),
     enabled: commentsEnabled,
+  });
+  const [timelineExpanded, setTimelineExpanded] = useState(false);
+  const {
+    data: timelineEvents,
+    isLoading: timelineLoading,
+    error: timelineError,
+  } = useQuery({
+    queryKey: ['ticket-timeline', ticketId],
+    queryFn: () => fetchTicketTimeline(ticketId),
+    enabled: timelineExpanded,
   });
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback | null>(null);
   const [ariaLiveMessage, setAriaLiveMessage] = useState('');
@@ -1086,6 +1124,85 @@ export function TicketDetailPanel({
                 <p className="detail-help">回答を送信しました</p>
               </div>
             )}
+            <div className="detail-section">
+              <div className="ticket-timeline-header">
+                <h3>変更履歴</h3>
+                <button
+                  type="button"
+                  className="btn ticket-timeline-toggle-btn"
+                  onClick={() => setTimelineExpanded((expanded) => !expanded)}
+                >
+                  {timelineExpanded ? '閉じる' : '表示'}
+                </button>
+              </div>
+              {timelineExpanded && timelineLoading && (
+                <p className="loading">読み込み中…</p>
+              )}
+              {timelineExpanded && timelineError !== null && (
+                <p className="error-message">
+                  {timelineError instanceof Error
+                    ? timelineError.message
+                    : '変更履歴の読み込みに失敗しました'}
+                </p>
+              )}
+              {timelineExpanded &&
+                timelineEvents !== undefined &&
+                timelineEvents.length === 0 && (
+                  <p className="detail-help">変更履歴はありません</p>
+                )}
+              {timelineExpanded &&
+                timelineEvents !== undefined &&
+                timelineEvents.length > 0 && (
+                  <div className="ticket-timeline-groups">
+                    {groupEventsByDate(timelineEvents, new Date()).map((group) => (
+                      <section key={group.heading} className="ticket-timeline-date-group">
+                        <h4 className="ticket-timeline-date-heading">{group.heading}</h4>
+                        <ul className="ticket-timeline-list">
+                          {group.events.map((event) => {
+                            const at = new Date(event.at);
+                            const changeDetail = formatTimelineChangeDetail(
+                              event.kind,
+                              event.from,
+                              event.to,
+                            );
+                            const secondaryParts = [
+                              event.actor !== undefined ? `@${event.actor}` : undefined,
+                              changeDetail,
+                              event.reason,
+                            ].filter(
+                              (part): part is string =>
+                                part !== undefined && part.length > 0,
+                            );
+                            const secondaryText =
+                              secondaryParts.length > 0
+                                ? secondaryParts.join(' · ')
+                                : undefined;
+
+                            return (
+                              <li
+                                key={`${event.kind}-${event.at}`}
+                                className="ticket-timeline-item"
+                              >
+                                <span className="ticket-timeline-time">
+                                  {formatActivityTime(at)}
+                                </span>
+                                <span className={timelineKindBadgeClass(event.kind)}>
+                                  {ACTIVITY_KIND_LABELS[event.kind]}
+                                </span>
+                                {secondaryText !== undefined && (
+                                  <span className="ticket-timeline-detail">
+                                    {secondaryText}
+                                  </span>
+                                )}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </section>
+                    ))}
+                  </div>
+                )}
+            </div>
             <div className="detail-section">
               <h3>コメント</h3>
               {!commentsEnabled && (

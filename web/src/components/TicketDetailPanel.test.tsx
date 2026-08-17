@@ -2,7 +2,15 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CommentDto, PendingDecisionDto, PrBadgeDto, SessionDto, TicketDetailDto, TicketSearchResultDto } from '../api';
+import type {
+  ActivityEventDto,
+  CommentDto,
+  PendingDecisionDto,
+  PrBadgeDto,
+  SessionDto,
+  TicketDetailDto,
+  TicketSearchResultDto,
+} from '../api';
 import {
   ApiError,
   deleteTicketDependency,
@@ -10,6 +18,7 @@ import {
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
+  fetchTicketTimeline,
   postTicketComment,
   postTicketDecision,
   postTicketDependency,
@@ -28,6 +37,7 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     fetchTicket: vi.fn(),
     fetchTicketComments: vi.fn(),
+    fetchTicketTimeline: vi.fn(),
     postTicketDecision: vi.fn(),
     postTicketQuickAction: vi.fn(),
     postTicketQuickActionUndo: vi.fn(),
@@ -43,6 +53,7 @@ vi.mock('../api', async (importOriginal) => {
 
 const mockFetchTicket = vi.mocked(fetchTicket);
 const mockFetchTicketComments = vi.mocked(fetchTicketComments);
+const mockFetchTicketTimeline = vi.mocked(fetchTicketTimeline);
 const mockPostTicketDecision = vi.mocked(postTicketDecision);
 const mockPostTicketQuickAction = vi.mocked(postTicketQuickAction);
 const mockPostTicketQuickActionUndo = vi.mocked(postTicketQuickActionUndo);
@@ -1363,5 +1374,44 @@ describe('TicketDetailPanel session link', () => {
     expect(
       await screen.findByText('failed to link session'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('変更履歴タイムライン', () => {
+  const user = userEvent.setup();
+
+  beforeEach(() => {
+    mockFetchTicket.mockResolvedValue(sampleTicket);
+    mockFetchTicketComments.mockResolvedValue([]);
+    mockFetchTicketTimeline.mockResolvedValue([
+      {
+        kind: 'status_changed',
+        at: '2026-06-01T09:00:00.000Z',
+        id: sampleTicket.id,
+        projectId: sampleTicket.projectId,
+        projectName: 'Example project',
+        title: sampleTicket.title,
+        status: sampleTicket.status,
+        priority: sampleTicket.priority,
+        issueType: sampleTicket.issueType,
+        actor: 'example-actor',
+        from: 'open',
+        to: 'in_progress',
+      } satisfies ActivityEventDto,
+    ]);
+  });
+
+  it('loads timeline when expanded and shows enriched status change', async () => {
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '表示' }));
+
+    await waitFor(() => {
+      expect(mockFetchTicketTimeline).toHaveBeenCalledWith(sampleTicket.id);
+    });
+
+    expect(await screen.findByText('状態変更')).toBeInTheDocument();
+    expect(screen.getByText(/@example-actor/)).toBeInTheDocument();
+    expect(screen.getByText(/open → in_progress/)).toBeInTheDocument();
   });
 });

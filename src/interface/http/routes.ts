@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { getActivityFeed } from '../../application/board/get-activity-feed.js';
+import { getTicketTimeline } from '../../application/board/get-ticket-timeline.js';
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getPrBadges } from '../../application/board/get-pr-badges.js';
@@ -692,6 +693,13 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     return c.json(result);
+  });
+
+  app.get('/api/tickets/:id/timeline', (c) => {
+    const id = c.req.param('id');
+    const limit = parseActivityLimit(c.req.query('limit'));
+    const events = getTicketTimeline(deps.cache, id, { limit });
+    return c.json(events.map(toActivityEventDto));
   });
 
   app.get('/api/tickets/:id{.+}', async (c) => {
