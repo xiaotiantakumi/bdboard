@@ -3299,6 +3299,12 @@ body {
   align-items: center;
 }
 
+.quick-action-defer-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .quick-action-btn {
   min-height: 30px;
 }

@@ -6,7 +6,14 @@ import {
   type BoardCardDto,
   type QuickActionRequest,
 } from '../api';
-import { formatDeferDate } from '../bdCommands';
+import {
+  computeDeferUntilDate,
+  DEFAULT_DEFER_PERIOD,
+  DEFER_PERIOD_OPTIONS,
+  isFutureLocalDate,
+  todayLocalDateInputValue,
+  type DeferPeriodKind,
+} from '../deferPeriods';
 import {
   type BulkQuickActionOutcome,
   type BulkQuickActionTarget,
@@ -142,6 +149,9 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
   const queryClient = useQueryClient();
   const [confirmingAction, setConfirmingAction] =
     useState<BulkConfirmingAction | null>(null);
+  const [deferPeriodKind, setDeferPeriodKind] =
+    useState<DeferPeriodKind>(DEFAULT_DEFER_PERIOD);
+  const [customDeferDate, setCustomDeferDate] = useState('');
   const [closeReason, setCloseReason] = useState('');
   const [lastOutcome, setLastOutcome] = useState<BulkQuickActionOutcome | null>(
     null,
@@ -186,6 +196,8 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
       await queryClient.invalidateQueries({ queryKey: ['board'] });
       setLastOutcome(outcome);
       setConfirmingAction(null);
+      setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
+      setCustomDeferDate('');
       setCloseReason('');
       bulkSelection?.deselectAll(outcome.succeeded.map((target) => target.id));
 
@@ -228,6 +240,8 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
       return;
     }
     setConfirmingAction(null);
+    setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
+    setCustomDeferDate('');
     setCloseReason('');
   }, [bulkMutation.isPending]);
 
@@ -253,6 +267,14 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
     bulkMutation,
   ]);
 
+  const handleDeferBulkAction = useCallback(() => {
+    const untilDate =
+      deferPeriodKind === 'custom'
+        ? customDeferDate
+        : computeDeferUntilDate(deferPeriodKind);
+    setConfirmingAction({ kind: 'defer', untilDate });
+  }, [customDeferDate, deferPeriodKind]);
+
   if (bulkSelection === null || selectedCount === 0) {
     return null;
   }
@@ -264,6 +286,8 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
 
   const actionsDisabled =
     bulkMutation.isPending || confirmingAction !== null;
+  const deferSubmitDisabled =
+    deferPeriodKind === 'custom' && !isFutureLocalDate(customDeferDate);
 
   return (
     <div className="bulk-action-bar">
@@ -287,19 +311,39 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
         >
           完了
         </button>
-        <button
-          type="button"
-          className="btn btn-small bulk-action-btn"
-          disabled={actionsDisabled}
-          onClick={() =>
-            setConfirmingAction({
-              kind: 'defer',
-              untilDate: formatDeferDate(),
-            })
-          }
-        >
-          1週間延期
-        </button>
+        <div className="quick-action-defer-group">
+          <select
+            aria-label="延期期間"
+            value={deferPeriodKind}
+            onChange={(event) =>
+              setDeferPeriodKind(event.target.value as DeferPeriodKind)
+            }
+            disabled={actionsDisabled}
+          >
+            {DEFER_PERIOD_OPTIONS.map(({ kind, label }) => (
+              <option key={kind} value={kind}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {deferPeriodKind === 'custom' && (
+            <input
+              type="date"
+              min={todayLocalDateInputValue()}
+              value={customDeferDate}
+              onChange={(event) => setCustomDeferDate(event.target.value)}
+              disabled={actionsDisabled}
+            />
+          )}
+          <button
+            type="button"
+            className="btn btn-small bulk-action-btn"
+            disabled={actionsDisabled || deferSubmitDisabled}
+            onClick={handleDeferBulkAction}
+          >
+            延期
+          </button>
+        </div>
         <button
           type="button"
           className="btn btn-small bulk-action-btn"
