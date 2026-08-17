@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -14,6 +14,7 @@ import type {
 import {
   ApiError,
   deleteTicketDependency,
+  deleteTicketLabel,
   deleteTicketSessionLink,
   fetchSessions,
   fetchTicket,
@@ -21,6 +22,7 @@ import {
   fetchTicketTimeline,
   postTicketComment,
   postTicketDecision,
+  postTicketAddLabel,
   postTicketDependency,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -43,8 +45,10 @@ vi.mock('../api', async (importOriginal) => {
     postTicketQuickAction: vi.fn(),
     postTicketQuickActionUndo: vi.fn(),
     postTicketComment: vi.fn(),
+    postTicketAddLabel: vi.fn(),
     postTicketDependency: vi.fn(),
     deleteTicketDependency: vi.fn(),
+    deleteTicketLabel: vi.fn(),
     searchTickets: vi.fn(),
     fetchSessions: vi.fn(),
     postTicketSessionLink: vi.fn(),
@@ -59,8 +63,10 @@ const mockPostTicketDecision = vi.mocked(postTicketDecision);
 const mockPostTicketQuickAction = vi.mocked(postTicketQuickAction);
 const mockPostTicketQuickActionUndo = vi.mocked(postTicketQuickActionUndo);
 const mockPostTicketComment = vi.mocked(postTicketComment);
+const mockPostTicketAddLabel = vi.mocked(postTicketAddLabel);
 const mockPostTicketDependency = vi.mocked(postTicketDependency);
 const mockDeleteTicketDependency = vi.mocked(deleteTicketDependency);
+const mockDeleteTicketLabel = vi.mocked(deleteTicketLabel);
 const mockSearchTickets = vi.mocked(searchTickets);
 const mockFetchSessions = vi.mocked(fetchSessions);
 const mockPostTicketSessionLink = vi.mocked(postTicketSessionLink);
@@ -93,6 +99,7 @@ function renderPanel(
       queries: { retry: false },
     },
   }),
+  availableLabels: string[] = [],
 ) {
   const view = render(
     <QueryClientProvider client={queryClient}>
@@ -106,6 +113,7 @@ function renderPanel(
         onOpenTicket={() => {}}
         isTicketOnBoard={() => true}
         onFilterByEpic={() => {}}
+        availableLabels={availableLabels}
       />
     </QueryClientProvider>,
   );
@@ -1176,6 +1184,80 @@ describe('TicketDetailPanel dependency editing', () => {
         'would create circular dependency: bdboard-abc.1 -> bdboard-same.1',
       ),
     ).toBeInTheDocument();
+  });
+});
+
+describe('TicketDetailPanel label editing', () => {
+  let user: ReturnType<typeof userEvent.setup>;
+
+  const ticketWithLabels: TicketDetailDto = {
+    ...sampleTicket,
+    labels: ['human'],
+  };
+
+  beforeEach(() => {
+    mockFetchTicket.mockResolvedValue(ticketWithLabels);
+    mockFetchTicketComments.mockResolvedValue([]);
+    mockPostTicketAddLabel.mockResolvedValue(undefined);
+    mockDeleteTicketLabel.mockResolvedValue(undefined);
+    user = userEvent.setup();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('adds a label from the input', async () => {
+    renderPanel(new Map(), undefined, undefined, undefined, [
+      'human',
+      'needs-review',
+    ]);
+
+    const input = await screen.findByLabelText('ラベルを追加');
+    await user.type(input, 'needs-review');
+    await user.click(screen.getByRole('button', { name: '追加' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketAddLabel).toHaveBeenCalledWith(
+        sampleTicket.id,
+        'needs-review',
+      );
+    });
+  });
+
+  it('removes an existing label', async () => {
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'ラベル human を削除' }),
+    );
+
+    await waitFor(() => {
+      expect(mockDeleteTicketLabel).toHaveBeenCalledWith(
+        sampleTicket.id,
+        'human',
+      );
+    });
+  });
+
+  it('shows label suggestions from availableLabels', async () => {
+    renderPanel(new Map(), undefined, undefined, undefined, [
+      'human',
+      'needs-review',
+    ]);
+
+    const input = await screen.findByLabelText('ラベルを追加');
+    await user.type(input, 'need');
+
+    const suggestionList = document.querySelector('.label-suggestions');
+    expect(suggestionList).not.toBeNull();
+    expect(
+      within(suggestionList as HTMLElement).getByText('needs-review'),
+    ).toBeInTheDocument();
+    expect(
+      within(suggestionList as HTMLElement).queryByText('human'),
+    ).not.toBeInTheDocument();
   });
 });
 

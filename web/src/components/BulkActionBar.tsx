@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import {
+  postTicketAddLabel,
   postTicketQuickAction,
   postTicketQuickActionUndo,
   type BoardCardDto,
@@ -15,8 +16,10 @@ import {
   type DeferPeriodKind,
 } from '../deferPeriods';
 import {
+  type BulkIdOutcome,
   type BulkQuickActionOutcome,
   type BulkQuickActionTarget,
+  runBulkById,
   runBulkQuickAction,
 } from '../bulkQuickAction';
 import { planQuickActionUndo } from '../quickActionUndo';
@@ -28,7 +31,8 @@ type BulkConfirmingAction =
   | { kind: 'close' }
   | { kind: 'defer'; untilDate: string }
   | { kind: 'priority-up' }
-  | { kind: 'priority-down' };
+  | { kind: 'priority-down' }
+  | { kind: 'add-label'; label: string };
 
 function formatBulkConfirmTitle(action: BulkConfirmingAction): string {
   switch (action.kind) {
@@ -40,6 +44,8 @@ function formatBulkConfirmTitle(action: BulkConfirmingAction): string {
       return '一括で優先度を上げる確認';
     case 'priority-down':
       return '一括で優先度を下げる確認';
+    case 'add-label':
+      return '一括ラベル付与の確認';
   }
 }
 
@@ -56,6 +62,8 @@ function formatBulkConfirmDescription(
       return `選択中のうち優先度を上げられる ${targetCount} 件の優先度を上げます。よろしいですか?`;
     case 'priority-down':
       return `選択中のうち優先度を下げられる ${targetCount} 件の優先度を下げます。よろしいですか?`;
+    case 'add-label':
+      return `選択中の ${targetCount} 件にラベル「${action.label}」を付与します。よろしいですか?`;
   }
 }
 
@@ -69,6 +77,8 @@ function bulkSuccessMessage(action: BulkConfirmingAction, count: number): string
       return `${count}件の優先度を上げました`;
     case 'priority-down':
       return `${count}件の優先度を下げました`;
+    case 'add-label':
+      return `${count}件にラベルを付与しました`;
   }
 }
 
@@ -121,6 +131,8 @@ function buildTargetsForAction(
           previousPriority: priority,
         });
         break;
+      case 'add-label':
+        break;
     }
   }
   return targets;
@@ -131,19 +143,28 @@ function countEligibleForAction(
   selectedIds: ReadonlySet<string>,
   cardsById: ReadonlyMap<string, BoardCardDto>,
 ): number {
+  if (action.kind === 'add-label') {
+    return selectedIds.size;
+  }
   return buildTargetsForAction(action, selectedIds, cardsById, '').length;
 }
 
-function formatBulkFailure(outcome: BulkQuickActionOutcome): string {
+function formatBulkFailure(
+  outcome: BulkQuickActionOutcome | BulkIdOutcome,
+): string {
   const ids = outcome.failed.map((entry) => entry.id).join(', ');
   return `${outcome.failed.length}件失敗: ${ids}`;
 }
 
 export interface BulkActionBarProps {
   cardsById: ReadonlyMap<string, BoardCardDto>;
+  availableLabels?: readonly string[];
 }
 
-export function BulkActionBar({ cardsById }: BulkActionBarProps) {
+export function BulkActionBar({
+  cardsById,
+  availableLabels = [],
+}: BulkActionBarProps) {
   const bulkSelection = useBulkSelection();
   const undoSnackbar = useUndoSnackbar();
   const queryClient = useQueryClient();
@@ -153,13 +174,25 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
     useState<DeferPeriodKind>(DEFAULT_DEFER_PERIOD);
   const [customDeferDate, setCustomDeferDate] = useState('');
   const [closeReason, setCloseReason] = useState('');
-  const [lastOutcome, setLastOutcome] = useState<BulkQuickActionOutcome | null>(
-    null,
-  );
+  const [bulkLabelInput, setBulkLabelInput] = useState('');
+  const [lastOutcome, setLastOutcome] = useState<
+    BulkQuickActionOutcome | BulkIdOutcome | null
+  >(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
 
   const selectedIds = bulkSelection?.selectedIds ?? new Set<string>();
   const selectedCount = selectedIds.size;
+
+  const trimmedBulkLabelInput = bulkLabelInput.trim();
+  const bulkLabelSuggestions = availableLabels
+    .filter(
+      (label) =>
+        trimmedBulkLabelInput.length === 0 ||
+        label.toLowerCase().includes(trimmedBulkLabelInput.toLowerCase()),
+    )
+    .slice(0, 20);
+
+  const canSubmitBulkLabel = trimmedBulkLabelInput.length > 0;
 
   const canRaiseAny = useMemo(() => {
     for (const id of selectedIds) {
@@ -235,18 +268,42 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
     },
   });
 
+  const bulkLabelMutation = useMutation({
+    mutationFn: async (vars: { label: string; ids: string[] }) => {
+      const outcome = await runBulkById(vars.ids, (id) =>
+        postTicketAddLabel(id, vars.label),
+      );
+      return { label: vars.label, outcome };
+    },
+    onSuccess: async ({ outcome }) => {
+      await queryClient.invalidateQueries({ queryKey: ['board'] });
+      setLastOutcome(outcome);
+      setConfirmingAction(null);
+      setBulkLabelInput('');
+      bulkSelection?.deselectAll(outcome.succeeded);
+    },
+  });
+
   const handleCancelConfirm = useCallback(() => {
-    if (bulkMutation.isPending) {
+    if (bulkMutation.isPending || bulkLabelMutation.isPending) {
       return;
     }
     setConfirmingAction(null);
     setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
     setCustomDeferDate('');
     setCloseReason('');
-  }, [bulkMutation.isPending]);
+  }, [bulkMutation.isPending, bulkLabelMutation.isPending]);
 
   const handleConfirm = useCallback(() => {
     if (confirmingAction === null) {
+      return;
+    }
+    if (confirmingAction.kind === 'add-label') {
+      const ids = [...selectedIds];
+      if (ids.length === 0) {
+        return;
+      }
+      bulkLabelMutation.mutate({ label: confirmingAction.label, ids });
       return;
     }
     const targets = buildTargetsForAction(
@@ -265,6 +322,7 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
     cardsById,
     closeReason,
     bulkMutation,
+    bulkLabelMutation,
   ]);
 
   const handleDeferBulkAction = useCallback(() => {
@@ -274,6 +332,13 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
         : computeDeferUntilDate(deferPeriodKind);
     setConfirmingAction({ kind: 'defer', untilDate });
   }, [customDeferDate, deferPeriodKind]);
+
+  const handleBulkLabelAction = useCallback(() => {
+    if (!canSubmitBulkLabel) {
+      return;
+    }
+    setConfirmingAction({ kind: 'add-label', label: trimmedBulkLabelInput });
+  }, [canSubmitBulkLabel, trimmedBulkLabelInput]);
 
   if (bulkSelection === null || selectedCount === 0) {
     return null;
@@ -285,9 +350,13 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
       : 0;
 
   const actionsDisabled =
-    bulkMutation.isPending || confirmingAction !== null;
+    bulkMutation.isPending ||
+    bulkLabelMutation.isPending ||
+    confirmingAction !== null;
   const deferSubmitDisabled =
     deferPeriodKind === 'custom' && !isFutureLocalDate(customDeferDate);
+  const mutationPending = bulkMutation.isPending || bulkLabelMutation.isPending;
+  const mutationError = bulkMutation.error ?? bulkLabelMutation.error;
 
   return (
     <div className="bulk-action-bar">
@@ -297,7 +366,7 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
           type="button"
           className="btn btn-small bulk-action-bar-clear"
           onClick={() => bulkSelection.clear()}
-          disabled={bulkMutation.isPending}
+          disabled={mutationPending}
         >
           全解除
         </button>
@@ -360,16 +429,64 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
         >
           優先度を下げる
         </button>
+        <div className="bulk-action-label-group">
+          <input
+            type="text"
+            className="bulk-action-label-input"
+            aria-label="付与するラベル"
+            value={bulkLabelInput}
+            onChange={(event) => setBulkLabelInput(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                if (canSubmitBulkLabel && !actionsDisabled) {
+                  handleBulkLabelAction();
+                }
+              }
+            }}
+            disabled={actionsDisabled}
+            maxLength={200}
+            placeholder="ラベル"
+          />
+          {trimmedBulkLabelInput.length > 0 &&
+            bulkLabelSuggestions.length > 0 && (
+              <ul className="dependency-suggestions bulk-label-suggestions">
+                {bulkLabelSuggestions.map((label) => (
+                  <li key={label}>
+                    <button
+                      type="button"
+                      className="dependency-suggestion-btn"
+                      disabled={actionsDisabled}
+                      onClick={() => {
+                        setBulkLabelInput(label);
+                        setConfirmingAction({ kind: 'add-label', label });
+                      }}
+                    >
+                      {label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          <button
+            type="button"
+            className="btn btn-small bulk-action-btn"
+            disabled={actionsDisabled || !canSubmitBulkLabel}
+            onClick={handleBulkLabelAction}
+          >
+            ラベル付与
+          </button>
+        </div>
       </div>
       {lastOutcome !== null && lastOutcome.failed.length > 0 && (
         <p className="bulk-action-failure" role="alert">
           {formatBulkFailure(lastOutcome)}
         </p>
       )}
-      {bulkMutation.error !== null && (
+      {mutationError !== null && (
         <p className="error-message bulk-action-error">
           {describeWriteError(
-            bulkMutation.error,
+            mutationError,
             '一括操作に失敗しました',
           )}
         </p>
@@ -412,7 +529,7 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
                 onChange={(event) => setCloseReason(event.target.value)}
                 rows={3}
                 maxLength={2000}
-                disabled={bulkMutation.isPending}
+                disabled={mutationPending}
               />
             </>
           )}
@@ -421,7 +538,7 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
               type="button"
               className="btn quick-action-confirm-cancel"
               onClick={handleCancelConfirm}
-              disabled={bulkMutation.isPending}
+              disabled={mutationPending}
             >
               キャンセル
             </button>
@@ -430,10 +547,10 @@ export function BulkActionBar({ cardsById }: BulkActionBarProps) {
               className="btn"
               onClick={handleConfirm}
               disabled={
-                bulkMutation.isPending || confirmingTargetCount === 0
+                mutationPending || confirmingTargetCount === 0
               }
             >
-              {bulkMutation.isPending ? '実行中…' : '実行する'}
+              {mutationPending ? '実行中…' : '実行する'}
             </button>
           </div>
         </div>

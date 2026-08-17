@@ -2220,6 +2220,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2255,6 +2257,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2292,6 +2296,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2345,6 +2351,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2386,6 +2394,8 @@ describe('createApiRoutes', () => {
         throw new StatusConflictError('bdboard-a', 'deferred', 'open');
       }),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2421,6 +2431,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2454,6 +2466,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2481,6 +2495,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2513,6 +2529,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2564,6 +2582,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2600,6 +2620,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2633,6 +2655,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2666,6 +2690,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2712,6 +2738,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2758,6 +2786,8 @@ describe('createApiRoutes', () => {
         throw new StatusConflictError('bdboard-a', 'deferred', 'closed');
       }),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2798,6 +2828,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2852,6 +2884,8 @@ describe('createApiRoutes', () => {
       undoPriority: vi.fn(async () => {
         throw new PriorityConflictError('bdboard-a', 1, 2);
       }),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -2892,6 +2926,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2925,6 +2961,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2957,6 +2995,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -2988,6 +3028,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -3021,6 +3063,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -3061,6 +3105,8 @@ describe('createApiRoutes', () => {
       }),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -3115,6 +3161,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -3149,6 +3197,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -3177,6 +3227,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ issueWriter }));
@@ -3217,6 +3269,8 @@ describe('createApiRoutes', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
 
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
@@ -3550,6 +3604,193 @@ describe('createApiRoutes', () => {
       dependsOnId: 'bdboard-b',
     });
     expect(dependencyWriter.removeDependency).not.toHaveBeenCalled();
+  });
+
+  it('returns 501 when issue writer port is not configured for label add', async () => {
+    const app = createApiRoutes(createDeps());
+    const response = await app.request(
+      '/api/tickets/bdboard-a/labels',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'human' }),
+      },
+      LOCAL_ENV,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(501);
+    expect(body).toEqual({ error: 'label editing not available' });
+  });
+
+  it('posts a local label add', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('proj-a', '/root/a');
+    cache.putProject({
+      project: proj,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: proj.id })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const issueWriter: IssueWriterPort = {
+      claim: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      defer: vi.fn(async () => {}),
+      setPriority: vi.fn(async () => {}),
+      addComment: vi.fn(async () => {}),
+      reopen: vi.fn(async () => {}),
+      unclaim: vi.fn(async () => {}),
+      undefer: vi.fn(async () => {}),
+      undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, issueWriter }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/labels',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'human' }),
+      },
+      LOCAL_ENV,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ ok: true });
+    expect(issueWriter.addLabel).toHaveBeenCalledWith(
+      '/root/a',
+      'bdboard-a',
+      'human',
+    );
+  });
+
+  it('returns 400 for unsafe label on add', async () => {
+    const cache = createFakeBoardCache();
+    seedCache(cache, [
+      { project: project('proj-a', '/root/a'), ticketId: 'bdboard-a' },
+    ]);
+
+    const issueWriter: IssueWriterPort = {
+      claim: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      defer: vi.fn(async () => {}),
+      setPriority: vi.fn(async () => {}),
+      addComment: vi.fn(async () => {}),
+      reopen: vi.fn(async () => {}),
+      unclaim: vi.fn(async () => {}),
+      undefer: vi.fn(async () => {}),
+      undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, issueWriter }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/labels',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: '-rf' }),
+      },
+      LOCAL_ENV,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body).toEqual({ error: 'invalid request body' });
+    expect(issueWriter.addLabel).not.toHaveBeenCalled();
+  });
+
+  it('deletes a local label', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('proj-a', '/root/a');
+    cache.putProject({
+      project: proj,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-a',
+          projectId: proj.id,
+          labels: ['human'],
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const issueWriter: IssueWriterPort = {
+      claim: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      defer: vi.fn(async () => {}),
+      setPriority: vi.fn(async () => {}),
+      addComment: vi.fn(async () => {}),
+      reopen: vi.fn(async () => {}),
+      unclaim: vi.fn(async () => {}),
+      undefer: vi.fn(async () => {}),
+      undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, issueWriter }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/labels/human',
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ ok: true });
+    expect(issueWriter.removeLabel).toHaveBeenCalledWith(
+      '/root/a',
+      'bdboard-a',
+      'human',
+    );
+  });
+
+  it('returns 409 when deleting a label absent from cache', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('proj-a', '/root/a');
+    cache.putProject({
+      project: proj,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: proj.id })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const issueWriter: IssueWriterPort = {
+      claim: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      defer: vi.fn(async () => {}),
+      setPriority: vi.fn(async () => {}),
+      addComment: vi.fn(async () => {}),
+      reopen: vi.fn(async () => {}),
+      unclaim: vi.fn(async () => {}),
+      undefer: vi.fn(async () => {}),
+      undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, issueWriter }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/labels/human',
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body).toEqual({
+      error: 'label not found on this ticket',
+      id: 'bdboard-a',
+      label: 'human',
+    });
+    expect(issueWriter.removeLabel).not.toHaveBeenCalled();
   });
 
   it('calls refresh handler on POST /api/refresh', async () => {
@@ -4612,6 +4853,8 @@ describe('tunnel write access (bdboard-9rz)', () => {
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
       undoPriority: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
     };
   }
 

@@ -7,8 +7,8 @@ import {
 const PROJECT_ROOT = '/tmp/bdboard-test-project';
 
 describe('BD_TOOL_DEFINITIONS', () => {
-  it('exposes exactly 14 tools', () => {
-    expect(BD_TOOL_DEFINITIONS).toHaveLength(14);
+  it('exposes exactly 16 tools', () => {
+    expect(BD_TOOL_DEFINITIONS).toHaveLength(16);
     expect(BD_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
       'bd_list',
       'bd_ready',
@@ -20,6 +20,8 @@ describe('BD_TOOL_DEFINITIONS', () => {
       'bd_comment',
       'bd_defer',
       'bd_priority',
+      'bd_label_add',
+      'bd_label_remove',
       'bd_create',
       'bd_search',
       'bd_dep_add',
@@ -306,6 +308,30 @@ describe('buildBdToolArgs', () => {
     });
   });
 
+  it('builds bd_label_add argv', () => {
+    const result = buildBdToolArgs(
+      'bd_label_add',
+      { id: 'bdboard-3tw.42', label: 'human' },
+      PROJECT_ROOT,
+    );
+    expect(result).toEqual({
+      ok: true,
+      args: ['-C', PROJECT_ROOT, 'label', 'add', 'bdboard-3tw.42', 'human'],
+    });
+  });
+
+  it('builds bd_label_remove argv', () => {
+    const result = buildBdToolArgs(
+      'bd_label_remove',
+      { id: 'bdboard-3tw.42', label: 'gt:slot' },
+      PROJECT_ROOT,
+    );
+    expect(result).toEqual({
+      ok: true,
+      args: ['-C', PROJECT_ROOT, 'label', 'remove', 'bdboard-3tw.42', 'gt:slot'],
+    });
+  });
+
   it('injects projectRootPath immediately after -C for every tool', () => {
     const cases: Array<{ tool: string; rawArgs: unknown }> = [
       { tool: 'bd_list', rawArgs: {} },
@@ -318,6 +344,14 @@ describe('buildBdToolArgs', () => {
       { tool: 'bd_comment', rawArgs: { id: 'bdboard-3tw.13', text: 'ok' } },
       { tool: 'bd_defer', rawArgs: { id: 'bdboard-3tw.13', untilDate: '2026-08-22' } },
       { tool: 'bd_priority', rawArgs: { id: 'bdboard-3tw.13', priority: 1 } },
+      {
+        tool: 'bd_label_add',
+        rawArgs: { id: 'bdboard-3tw.42', label: 'human' },
+      },
+      {
+        tool: 'bd_label_remove',
+        rawArgs: { id: 'bdboard-3tw.42', label: 'gt:slot' },
+      },
       { tool: 'bd_create', rawArgs: { title: 'New task' } },
       { tool: 'bd_search', rawArgs: { query: 'keyword' } },
       {
@@ -352,6 +386,8 @@ describe('buildBdToolArgs', () => {
       'bd_comment',
       'bd_defer',
       'bd_priority',
+      'bd_label_add',
+      'bd_label_remove',
       'bd_create',
       'bd_dep_add',
       'bd_dep_remove',
@@ -383,11 +419,13 @@ describe('buildBdToolArgs', () => {
               ? { id: 'bdboard-3tw.13', untilDate: '2026-08-22' }
               : tool === 'bd_priority'
                 ? { id: 'bdboard-3tw.13', priority: 1 }
-                : tool === 'bd_create'
-                  ? { title: 'New task' }
-                  : tool === 'bd_dep_add' || tool === 'bd_dep_remove'
-                    ? { id: 'bdboard-3tw.42', dependsOnId: 'bdboard-3tw.41' }
-                    : { id: 'bdboard-3tw.13' };
+                : tool === 'bd_label_add' || tool === 'bd_label_remove'
+                  ? { id: 'bdboard-3tw.42', label: 'human' }
+                  : tool === 'bd_create'
+                    ? { title: 'New task' }
+                    : tool === 'bd_dep_add' || tool === 'bd_dep_remove'
+                      ? { id: 'bdboard-3tw.42', dependsOnId: 'bdboard-3tw.41' }
+                      : { id: 'bdboard-3tw.13' };
       const result = buildBdToolArgs(tool, rawArgs, PROJECT_ROOT);
       expect(result.ok).toBe(true);
       if (result.ok) {
@@ -607,5 +645,30 @@ describe('buildBdToolArgs', () => {
       PROJECT_ROOT,
     );
     expect(badDependsOnId.ok).toBe(false);
+  });
+
+  it('rejects invalid bd_label_add arguments', () => {
+    const badId = buildBdToolArgs(
+      'bd_label_add',
+      { id: '-rf', label: 'human' },
+      PROJECT_ROOT,
+    );
+    expect(badId.ok).toBe(false);
+
+    const badLabel = buildBdToolArgs(
+      'bd_label_add',
+      { id: 'bdboard-3tw.42', label: '-rf' },
+      PROJECT_ROOT,
+    );
+    expect(badLabel.ok).toBe(false);
+  });
+
+  it('rejects invalid bd_label_remove arguments', () => {
+    const badLabel = buildBdToolArgs(
+      'bd_label_remove',
+      { id: 'bdboard-3tw.42', label: '-rf' },
+      PROJECT_ROOT,
+    );
+    expect(badLabel.ok).toBe(false);
   });
 });

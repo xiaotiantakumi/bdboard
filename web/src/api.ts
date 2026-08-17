@@ -740,6 +740,26 @@ export function deleteTicketDependency(
   ).then(() => undefined);
 }
 
+export function postTicketAddLabel(id: string, label: string): Promise<void> {
+  return fetchJson<{ ok: true }>(
+    `/api/tickets/${encodeURIComponent(id)}/labels`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    },
+  ).then(() => undefined);
+}
+
+export function deleteTicketLabel(id: string, label: string): Promise<void> {
+  return fetchJson<{ ok: true }>(
+    `/api/tickets/${encodeURIComponent(id)}/labels/${encodeURIComponent(label)}`,
+    {
+      method: 'DELETE',
+    },
+  ).then(() => undefined);
+}
+
 export function postTicketSessionLink(
   id: string,
   sessionId: string,
