@@ -8,12 +8,18 @@ export interface ChatSessionRecord {
   /** このセッションIDを発行したチャットエージェントの ID。 */
   readonly agentId: string;
   readonly model?: string;
+  /** 手動リネームされたカスタムタイトル。未設定なら省略。 */
+  readonly title?: string;
+  readonly pinned?: boolean;
 }
 
 export interface ChatSessionListRecord {
   readonly sessionId: string;
   readonly agentId: string;
   readonly lastUsedAt: Date;
+  /** カスタムタイトル。未設定なら null。 */
+  readonly title: string | null;
+  readonly pinned: boolean;
 }
 
 export interface ChatSessionRepository {
@@ -30,6 +36,17 @@ export interface ChatSessionRepository {
    * 発行時から不変だが model は可変)。セッションが未知なら no-op。
    */
   updateModel(projectId: string, sessionId: string, model: string): void;
+
+  /**
+   * 既知セッションのカスタムタイトルを更新する。title に null を渡すとカスタム
+   * タイトルをクリアして自動タイトルに戻す。セッションが未知なら no-op。
+   */
+  rename(projectId: string, sessionId: string, title: string | null): void;
+
+  /**
+   * 既知セッションのピン留め状態を更新する。セッションが未知なら no-op。
+   */
+  setPinned(projectId: string, sessionId: string, pinned: boolean): void;
 
   /** projectId のもとで sessionId の記録を返す。未知なら undefined。 */
   lookup(projectId: string, sessionId: string): ChatSessionRecord | undefined;

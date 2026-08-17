@@ -15,6 +15,15 @@ vi.mock('../api', async (importOriginal) => {
     fetchChatAgents: vi.fn(() => Promise.resolve<ChatAgentDto[]>([])),
     fetchChatThreads: vi.fn(() => Promise.resolve<ChatThreadDto[]>([])),
     deleteChatThread: vi.fn(() => Promise.resolve()),
+    updateChatThread: vi.fn(() =>
+      Promise.resolve<ChatThreadDto>({
+        sessionId: 'sess-1',
+        agentId: 'claude',
+        title: 'updated',
+        pinned: false,
+        updatedAt: '2026-01-01T00:00:00Z',
+      }),
+    ),
     fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
   };
 });
@@ -24,11 +33,13 @@ import {
   fetchChatAgents,
   fetchChatThreads,
   fetchDiscoveredChatSessions,
+  updateChatThread,
 } from '../api';
 
 const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
+const updateChatThreadMock = vi.mocked(updateChatThread);
 const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 
 function makeProjectDto(
@@ -177,6 +188,13 @@ describe('ChatPanel', () => {
     fetchChatAgentsMock.mockResolvedValue([]);
     fetchChatThreadsMock.mockResolvedValue([]);
     deleteChatThreadMock.mockResolvedValue();
+    updateChatThreadMock.mockResolvedValue({
+      sessionId: 'sess-1',
+      agentId: 'claude',
+      title: 'updated',
+      pinned: false,
+      updatedAt: '2026-01-01T00:00:00Z',
+    });
     fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === '/api/chat/message' && init?.method === 'POST') {
         return jsonResponse({
@@ -626,6 +644,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -658,6 +677,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -682,8 +702,8 @@ describe('ChatPanel', () => {
   it('clears only the submitted conversation input after a successful send', async () => {
     const user = userEvent.setup();
     fetchChatThreadsMock.mockResolvedValue([
-      { sessionId: 'sess-first', agentId: 'claude', title: 'first thread', updatedAt: '2026-01-02T00:00:00Z' },
-      { sessionId: 'sess-second', agentId: 'claude', title: 'second thread', updatedAt: '2026-01-01T00:00:00Z' },
+      { sessionId: 'sess-first', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+      { sessionId: 'sess-second', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
     ]);
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/chat/sessions/')) {
@@ -759,6 +779,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -798,6 +819,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -859,6 +881,7 @@ describe('ChatPanel', () => {
                 sessionId: 'sess-b-existing',
                 agentId: 'claude',
                 title: 'B既存スレッド',
+                pinned: false,
                 updatedAt: '2026-01-03T00:00:00Z',
               },
             ]
@@ -939,6 +962,7 @@ describe('ChatPanel', () => {
           sessionId: 'sess-b-existing',
           agentId: 'claude',
           title: 'B既存スレッド',
+          pinned: false,
           updatedAt: '2026-01-03T00:00:00Z',
         },
       ]);
@@ -1071,6 +1095,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -1107,6 +1132,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -1150,6 +1176,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -1233,6 +1260,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -1260,6 +1288,7 @@ describe('ChatPanel', () => {
             sessionId: 'sess-existing',
             agentId: 'claude',
             title: '既存スレッド',
+            pinned: false,
             updatedAt: '2026-01-02T00:00:00Z',
           },
         ]);
@@ -1355,6 +1384,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-existing',
         agentId: 'claude',
         title: '既存スレッド',
+        pinned: false,
         updatedAt: '2026-01-02T00:00:00Z',
       },
     ]);
@@ -1650,12 +1680,14 @@ describe('ChatPanel', () => {
           sessionId: 'sess-1',
           agentId: 'claude',
           title: 'first thread',
+          pinned: false,
           updatedAt: '2026-01-02T00:00:00Z',
         },
         {
           sessionId: 'sess-2',
           agentId: 'claude',
           title: 'second thread',
+          pinned: false,
           updatedAt: '2026-01-01T00:00:00Z',
         },
       ]);
@@ -1750,12 +1782,14 @@ describe('ChatPanel', () => {
           sessionId: 'sess-1',
           agentId: 'claude',
           title: 'first thread',
+          pinned: false,
           updatedAt: '2026-01-02T00:00:00Z',
         },
         {
           sessionId: 'sess-2',
           agentId: 'claude',
           title: 'second thread',
+          pinned: false,
           updatedAt: '2026-01-01T00:00:00Z',
         },
       ]);
@@ -1927,8 +1961,8 @@ describe('ChatPanel', () => {
     it('restores the draft into the original conversation key, not the one currently visible, when the user switched threads while the send was pending', async () => {
       const user = userEvent.setup();
       fetchChatThreadsMock.mockResolvedValue([
-        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', updatedAt: '2026-01-02T00:00:00Z' },
-        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', updatedAt: '2026-01-01T00:00:00Z' },
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
       ]);
       const deferred = createDeferred<Response>();
       fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -2102,8 +2136,8 @@ describe('ChatPanel', () => {
   it('shows thread tabs, switches them, closes without deleting, and deletes after confirmation', async () => {
     const user = userEvent.setup();
     fetchChatThreadsMock.mockResolvedValue([
-      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', updatedAt: '2026-01-02T00:00:00Z' },
-      { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', updatedAt: '2026-01-01T00:00:00Z' },
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+      { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
     ]);
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/chat/sessions/sess-1/messages')) {
@@ -2133,6 +2167,102 @@ describe('ChatPanel', () => {
     await user.click(screen.getByRole('button', { name: 'スレッド「first thread」の削除を確定' }));
     await waitFor(() => expect(deleteChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a'));
     expect(screen.queryByRole('tab', { name: 'first thread' })).not.toBeInTheDocument();
+  });
+
+  it('renames a thread via inline edit and clears custom title when empty', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    updateChatThreadMock.mockImplementation(async (sessionId, _projectId, patch) => ({
+      sessionId,
+      agentId: 'claude',
+      title: patch.title === null ? null : (patch.title ?? 'first thread'),
+      pinned: patch.pinned ?? false,
+      updatedAt: '2026-01-02T01:00:00Z',
+    }));
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+    renderChatPanel([PROJECT_A]);
+
+    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」をリネーム' }));
+
+    const renameInput = screen.getByLabelText('スレッド「first thread」の新しいタイトル');
+    await user.clear(renameInput);
+    await user.type(renameInput, 'renamed thread');
+    fireEvent.blur(renameInput);
+
+    await waitFor(() =>
+      expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { title: 'renamed thread' }),
+    );
+    expect(await screen.findByRole('tab', { name: 'renamed thread' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'スレッド「renamed thread」をリネーム' }));
+    const clearInput = screen.getByLabelText('スレッド「renamed thread」の新しいタイトル');
+    await user.clear(clearInput);
+    fireEvent.blur(clearInput);
+
+    await waitFor(() =>
+      expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { title: null }),
+    );
+  });
+
+  it('toggles thread pin state immediately', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    updateChatThreadMock.mockImplementation(async (sessionId, _projectId, patch) => ({
+      sessionId,
+      agentId: 'claude',
+      title: 'first thread',
+      pinned: patch.pinned ?? false,
+      updatedAt: '2026-01-02T01:00:00Z',
+    }));
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+    renderChatPanel([PROJECT_A]);
+
+    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」をピン留め' }));
+    await waitFor(() =>
+      expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { pinned: true }),
+    );
+    expect(screen.getByRole('button', { name: 'スレッド「first thread」のピン留めを解除' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」のピン留めを解除' }));
+    await waitFor(() =>
+      expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { pinned: false }),
+    );
+  });
+
+  it('shows thread error when updateChatThread fails', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    updateChatThreadMock.mockRejectedValue(new Error('patch failed'));
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+    renderChatPanel([PROJECT_A]);
+
+    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」をピン留め' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('ピン留めの変更に失敗しました。');
   });
 
   it('starts a new draft without displaying or sending the previous session', async () => {
@@ -2971,6 +3101,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-model-race',
         agentId: 'claude',
         title: 'race',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3030,6 +3161,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-invalid-model',
         agentId: 'example-agent',
         title: 'invalid',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3093,6 +3225,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-agent-race',
         agentId: 'example-agent',
         title: 'race',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3154,6 +3287,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-sent-model',
         agentId: 'claude',
         title: 'sent',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3196,6 +3330,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-manual-race',
         agentId: 'claude',
         title: 'manual',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3297,8 +3432,8 @@ describe('ChatPanel', () => {
     };
     fetchChatAgentsMock.mockResolvedValue([modelEnabledClaude]);
     fetchChatThreadsMock.mockResolvedValue([
-      { sessionId: 'sess-thread-a', agentId: 'claude', title: 'thread A', updatedAt: '2026-08-16T03:00:00.000Z' },
-      { sessionId: 'sess-thread-b', agentId: 'claude', title: 'thread B', updatedAt: '2026-08-16T03:01:00.000Z' },
+      { sessionId: 'sess-thread-a', agentId: 'claude', title: 'thread A', pinned: false, updatedAt: '2026-08-16T03:00:00.000Z' },
+      { sessionId: 'sess-thread-b', agentId: 'claude', title: 'thread B', pinned: false, updatedAt: '2026-08-16T03:01:00.000Z' },
     ]);
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url.startsWith('/api/chat/sessions/sess-thread-a/messages')) {
@@ -3338,7 +3473,7 @@ describe('ChatPanel', () => {
       agentId: 'claude',
     });
     fetchChatThreadsMock.mockResolvedValue([
-      { sessionId: 'sess-restored', agentId: 'claude', title: 'restored', updatedAt: '2026-08-16T03:00:00.000Z' },
+      { sessionId: 'sess-restored', agentId: 'claude', title: 'restored', pinned: false, updatedAt: '2026-08-16T03:00:00.000Z' },
     ]);
     fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
@@ -3397,6 +3532,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-history-pending',
         agentId: 'claude',
         title: 'pending history',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3452,6 +3588,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-history-error',
         agentId: 'claude',
         title: 'history error',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3498,6 +3635,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-transient-retry',
         agentId: 'claude',
         title: 'transient retry',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3558,6 +3696,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-evicted',
         agentId: 'claude',
         title: 'evicted thread',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3611,6 +3750,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-evicted-prune',
         agentId: 'claude',
         title: 'evicted prune thread',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3662,12 +3802,14 @@ describe('ChatPanel', () => {
         sessionId: 'sess-parked',
         agentId: 'claude',
         title: 'parked thread',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
       {
         sessionId: 'sess-evicted-orphan',
         agentId: 'claude',
         title: 'evicted orphan thread',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3742,6 +3884,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-restored-history',
         agentId: 'claude',
         title: 'restored history',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3797,6 +3940,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-restored-failed-tools',
         agentId: 'claude',
         title: 'restored',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3847,6 +3991,7 @@ describe('ChatPanel', () => {
         sessionId: 'sess-restored-agent-warnings',
         agentId: 'agy',
         title: 'restored',
+        pinned: false,
         updatedAt: '2026-08-16T03:00:00.000Z',
       },
     ]);
@@ -3899,7 +4044,7 @@ describe('ChatPanel', () => {
     });
     fetchChatThreadsMock.mockImplementation((projectId) => Promise.resolve(
       projectId === 'proj-a'
-        ? [{ sessionId: 'sess-pending-a', agentId: 'claude', title: 'pending', updatedAt: '2026-08-16T03:00:00.000Z' }]
+        ? [{ sessionId: 'sess-pending-a', agentId: 'claude', title: 'pending', pinned: false, updatedAt: '2026-08-16T03:00:00.000Z' }]
         : [],
     ));
     fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
@@ -3962,7 +4107,7 @@ describe('ChatPanel', () => {
     });
     fetchChatThreadsMock.mockImplementation((projectId) => Promise.resolve(
       projectId === 'proj-a'
-        ? [{ sessionId: 'sess-pending-a', agentId: 'claude', title: 'pending', updatedAt: '2026-08-16T03:00:00.000Z' }]
+        ? [{ sessionId: 'sess-pending-a', agentId: 'claude', title: 'pending', pinned: false, updatedAt: '2026-08-16T03:00:00.000Z' }]
         : [],
     ));
     fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT, EXAMPLE_AGENT]);
@@ -4026,7 +4171,7 @@ describe('ChatPanel', () => {
       agentId: 'claude',
     });
     fetchChatThreadsMock.mockResolvedValue([
-      { sessionId: 'sess-pending-agent', agentId: 'claude', title: 'pending', updatedAt: '2026-08-16T03:00:00.000Z' },
+      { sessionId: 'sess-pending-agent', agentId: 'claude', title: 'pending', pinned: false, updatedAt: '2026-08-16T03:00:00.000Z' },
     ]);
     fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT, EXAMPLE_AGENT]);
 
@@ -4196,6 +4341,7 @@ describe('ChatPanel', () => {
           sessionId: 'sess-dup',
           agentId: 'claude',
           title: 'existing',
+          pinned: false,
           updatedAt: '2026-08-16T03:00:00.000Z',
         },
       ]);

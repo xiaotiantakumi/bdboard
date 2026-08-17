@@ -84,6 +84,21 @@ const sessionMessagesQuerySchema = z.object({
 
 const threadsQuerySchema = sessionMessagesQuerySchema;
 
+const threadPatchBodySchema = z
+  .object({
+    projectId: z.string().min(1).max(200),
+    title: z
+      .union([
+        z.null(),
+        z.string().transform((value) => value.trim()).pipe(z.string().min(1).max(200)),
+      ])
+      .optional(),
+    pinned: z.boolean().optional(),
+  })
+  .refine((body) => body.title !== undefined || body.pinned !== undefined, {
+    message: 'invalid request body',
+  });
+
 // bdboard-3tw.104.3 レビュー n9 → S1 で一般化: adopt は子プロセスを一切起こさない
 // (ストアへの登録のみ)ので、トンネル経由でもレート制限のコスト計上から除外する。動的
 // セグメント(:projectId/:sessionId)を挟むため exemptPaths(完全一致 Set)では表現できず、
@@ -337,9 +352,56 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         sessionId: thread.sessionId,
         agentId: thread.agentId,
         title: thread.title,
+        pinned: thread.pinned,
         updatedAt: thread.updatedAt.toISOString(),
       })),
     );
+  });
+
+  app.patch('/api/chat/sessions/:sessionId/thread', async (c) => {
+    const sessionId = c.req.param('sessionId');
+    if (!isValidChatSessionId(sessionId)) {
+      return c.json({ error: 'invalid session id' }, 400);
+    }
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
+
+    const parsed = threadPatchBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
+
+    const { projectId, title, pinned } = parsed.data;
+    if (deps.store.lookup(projectId, sessionId) === undefined) {
+      return c.json({ error: 'unknown chat session' }, 404);
+    }
+
+    if (title !== undefined) {
+      deps.store.rename(projectId, sessionId, title);
+    }
+    if (pinned !== undefined) {
+      deps.store.setPinned(projectId, sessionId, pinned);
+    }
+
+    const thread = listChatThreads(deps.store, deps.messages, projectId).find(
+      (entry) => entry.sessionId === sessionId,
+    );
+    if (thread === undefined) {
+      return c.json({ error: 'unknown chat session' }, 404);
+    }
+
+    return c.json({
+      sessionId: thread.sessionId,
+      agentId: thread.agentId,
+      title: thread.title,
+      pinned: thread.pinned,
+      updatedAt: thread.updatedAt.toISOString(),
+    });
   });
 
   app.delete('/api/chat/sessions/:sessionId', (c) => {

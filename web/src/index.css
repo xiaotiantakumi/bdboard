@@ -3443,6 +3443,39 @@ body {
 .chat-thread-delete:hover {
   background: color-mix(in srgb, var(--color-danger) 10%, transparent);
 }
+
+.chat-thread-rename,
+.chat-thread-pin {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.8125rem;
+  border-left: 1px solid var(--color-border);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.chat-thread-rename:hover,
+.chat-thread-pin:hover {
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+
+.chat-thread-rename-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 0.8125rem;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+}
+
+.chat-thread-rename-input:focus {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: -2px;
+}
+
 .chat-thread-error { margin: 4px 0; }
 
 .chat-thread-reopen {

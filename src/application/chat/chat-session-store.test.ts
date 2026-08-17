@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createChatSessionStore } from './chat-session-store.js';
 
 describe('createChatSessionStore', () => {
@@ -111,6 +111,69 @@ describe('createChatSessionStore', () => {
     store.updateModel('project-a', 'unknown-session', 'opus');
 
     expect(store.lookup('project-a', 'unknown-session')).toBeUndefined();
+  });
+
+  it('renames and pins sessions through the in-memory repository', () => {
+    const store = createChatSessionStore();
+    store.remember('project-a', 'session-1', 'claude');
+
+    store.rename('project-a', 'session-1', '運用相談');
+    store.setPinned('project-a', 'session-1', true);
+
+    expect(store.lookup('project-a', 'session-1')).toEqual({
+      agentId: 'claude',
+      title: '運用相談',
+      pinned: true,
+    });
+    expect(store.listByProject('project-a')).toEqual([
+      expect.objectContaining({
+        sessionId: 'session-1',
+        title: '運用相談',
+        pinned: true,
+      }),
+    ]);
+  });
+
+  it('clears a custom title when rename is called with null', () => {
+    const store = createChatSessionStore();
+    store.remember('project-a', 'session-1', 'claude');
+    store.rename('project-a', 'session-1', '運用相談');
+
+    store.rename('project-a', 'session-1', null);
+
+    expect(store.lookup('project-a', 'session-1')).toEqual({ agentId: 'claude' });
+    expect(store.listByProject('project-a')[0]?.title).toBeNull();
+  });
+
+  it('no-ops rename and setPinned for unknown sessions', () => {
+    const store = createChatSessionStore();
+
+    store.rename('project-a', 'missing', 'ignored');
+    store.setPinned('project-a', 'missing', true);
+
+    expect(store.lookup('project-a', 'missing')).toBeUndefined();
+  });
+
+  it('delegates rename and setPinned to the injected repository', () => {
+    const rename = vi.fn();
+    const setPinned = vi.fn();
+    const store = createChatSessionStore({
+      repository: {
+        remember: () => {},
+        updateModel: () => {},
+        rename,
+        setPinned,
+        lookup: () => ({ agentId: 'claude' }),
+        listByProject: () => [],
+        forget: () => {},
+      },
+    });
+
+    store.rename('project-a', 'session-1', '運用相談');
+    store.setPinned('project-a', 'session-1', true);
+
+    expect(rename).toHaveBeenCalledWith('project-a', 'session-1', '運用相談');
+    expect(setPinned).toHaveBeenCalledWith('project-a', 'session-1', true);
   });
 
   it('does not carry an acquired lock over to a new store instance ("restart")', () => {
