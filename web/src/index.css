@@ -1992,15 +1992,13 @@ body {
   transition: background-color 0.12s ease, outline-color 0.12s ease;
 }
 
-.lane.lane-drop-allowed,
-.lane-cards.lane-drop-allowed {
+.lane.lane-drop-allowed {
   outline: 2px dashed var(--color-accent);
   outline-offset: -2px;
   background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-grouped));
 }
 
-.lane.lane-drop-rejected,
-.lane-cards.lane-drop-rejected {
+.lane.lane-drop-rejected {
   outline: 2px dashed var(--color-danger);
   outline-offset: -2px;
   background: color-mix(in srgb, var(--color-danger) 6%, var(--color-bg-grouped));
