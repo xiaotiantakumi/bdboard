@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TicketSearchResultDto } from '../api';
 import { searchTickets } from '../api';
 import type { PaletteAction } from '../paletteActions';
+import type { RecentTicketEntry } from '../uiPersistedState';
 import { SearchPalette } from './SearchPalette';
 
 vi.mock('../api', async (importOriginal) => {
@@ -66,13 +67,20 @@ function renderPalette(
   onSelect = vi.fn(),
   onClose = vi.fn(),
   actions: PaletteAction[] = sampleActions,
+  recentTickets?: RecentTicketEntry[],
 ) {
   return {
     onSelect,
     onClose,
     actions,
+    recentTickets,
     ...render(
-      <SearchPalette onClose={onClose} onSelect={onSelect} actions={actions} />,
+      <SearchPalette
+        onClose={onClose}
+        onSelect={onSelect}
+        actions={actions}
+        recentTickets={recentTickets}
+      />,
     ),
   };
 }
@@ -253,5 +261,85 @@ describe('SearchPalette', () => {
     await user.type(getSearchInput(), 'boom');
 
     expect(await screen.findByText('検索に失敗しました')).toBeInTheDocument();
+  });
+
+  it('shows recent tickets when query is empty', () => {
+    const recentTickets: RecentTicketEntry[] = [
+      {
+        id: 'bdboard-recent-1',
+        title: 'Recent ticket one',
+        projectName: 'Recent Project',
+      },
+    ];
+    renderPalette(vi.fn(), vi.fn(), sampleActions, recentTickets);
+
+    expect(screen.getByText('最近開いたチケット')).toBeInTheDocument();
+    expect(screen.getByText('bdboard-recent-1')).toBeInTheDocument();
+    expect(screen.getByText('Recent ticket one')).toBeInTheDocument();
+    expect(screen.getByText('Recent Project')).toBeInTheDocument();
+    expect(mockSearchTickets).not.toHaveBeenCalled();
+  });
+
+  it('opens a recent ticket on click', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    const recentTickets: RecentTicketEntry[] = [
+      {
+        id: 'bdboard-recent-1',
+        title: 'Recent ticket one',
+        projectName: 'Recent Project',
+      },
+    ];
+    renderPalette(onSelect, onClose, sampleActions, recentTickets);
+
+    await user.click(screen.getByText('Recent ticket one'));
+
+    expect(onSelect).toHaveBeenCalledWith('bdboard-recent-1');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens a recent ticket on arrow keys and Enter', async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    const recentTickets: RecentTicketEntry[] = [
+      {
+        id: 'bdboard-recent-1',
+        title: 'Recent ticket one',
+        projectName: 'Recent Project',
+      },
+      {
+        id: 'bdboard-recent-2',
+        title: 'Recent ticket two',
+        projectName: 'Recent Project',
+      },
+    ];
+    renderPalette(onSelect, onClose, [], recentTickets);
+
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(onSelect).toHaveBeenCalledWith('bdboard-recent-2');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides recent tickets when query is entered', async () => {
+    const user = userEvent.setup();
+    const recentTickets: RecentTicketEntry[] = [
+      {
+        id: 'bdboard-recent-1',
+        title: 'Recent ticket one',
+        projectName: 'Recent Project',
+      },
+    ];
+    renderPalette(vi.fn(), vi.fn(), sampleActions, recentTickets);
+
+    expect(screen.getByText('Recent ticket one')).toBeInTheDocument();
+
+    await user.type(getSearchInput(), 'alpha');
+
+    expect(screen.queryByText('Recent ticket one')).not.toBeInTheDocument();
+    expect(screen.queryByText('最近開いたチケット')).not.toBeInTheDocument();
+    expect(await screen.findByText('First result')).toBeInTheDocument();
   });
 });

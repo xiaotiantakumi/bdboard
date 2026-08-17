@@ -3,15 +3,19 @@ import {
   boardFilterPresetStatesEqual,
   findMatchingBoardFilterPreset,
   priorityCeilingValue,
+  recordRecentTicket,
   validateBoardFilterPresets,
   validateIssueTypeArray,
   validateLaneArray,
   validatePriorityCeiling,
+  validateRecentTickets,
   validateStatsWeeks,
   validateString,
   validateViewMode,
   type BoardFilterPreset,
   type BoardFilterPresetState,
+  type RecentTicketEntry,
+  RECENT_TICKETS_MAX,
 } from './uiPersistedState';
 
 describe('uiPersistedState', () => {
@@ -160,5 +164,52 @@ describe('uiPersistedState', () => {
         filterText: 'beta',
       }),
     ).toBeNull();
+  });
+
+  it('validates recent tickets', () => {
+    const entries: RecentTicketEntry[] = [
+      {
+        id: 'bdboard-alpha',
+        title: 'Alpha ticket',
+        projectName: 'Alpha',
+      },
+    ];
+    expect(validateRecentTickets(entries)).toEqual(entries);
+    expect(validateRecentTickets([{ ...entries[0], id: '' }])).toBeNull();
+    expect(
+      validateRecentTickets([{ ...entries[0], title: 1 }]),
+    ).toBeNull();
+    expect(validateRecentTickets('bad')).toBeNull();
+  });
+
+  it('records recent tickets with dedup and trim', () => {
+    const base: RecentTicketEntry[] = [
+      { id: 'bdboard-1', title: 'One', projectName: 'P1' },
+      { id: 'bdboard-2', title: 'Two', projectName: 'P2' },
+    ];
+    const promoted = recordRecentTicket(base, {
+      id: 'bdboard-2',
+      title: 'Two updated',
+      projectName: 'P2',
+    });
+    expect(promoted[0]).toEqual({
+      id: 'bdboard-2',
+      title: 'Two updated',
+      projectName: 'P2',
+    });
+    expect(promoted.map((entry) => entry.id)).toEqual(['bdboard-2', 'bdboard-1']);
+
+    const many: RecentTicketEntry[] = Array.from({ length: RECENT_TICKETS_MAX }, (_, i) => ({
+      id: `bdboard-${i}`,
+      title: `Ticket ${i}`,
+      projectName: 'Proj',
+    }));
+    const trimmed = recordRecentTicket(many, {
+      id: 'bdboard-new',
+      title: 'New',
+      projectName: 'Proj',
+    });
+    expect(trimmed.length).toBe(RECENT_TICKETS_MAX);
+    expect(trimmed[0].id).toBe('bdboard-new');
   });
 });

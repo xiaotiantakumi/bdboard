@@ -43,7 +43,16 @@ export const UI_STORAGE_KEYS = {
   notificationEvents: 'bdboard.ui.notificationEvents',
   notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
   notificationsEnabled: 'bdboard.ui.notificationsEnabled',
+  recentTickets: 'bdboard.ui.recentTickets',
 } as const;
+
+export const RECENT_TICKETS_MAX = 10;
+
+export interface RecentTicketEntry {
+  id: string;
+  title: string;
+  projectName: string;
+}
 
 export const BOARD_ISSUE_TYPES = ['bug', 'feature', 'task', 'chore', 'epic'] as const;
 
@@ -291,6 +300,51 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
     labels,
     filterText,
   };
+}
+
+function validateRecentTicketEntry(value: unknown): RecentTicketEntry | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== 'string' || record.id.trim() === '') {
+    return null;
+  }
+  if (typeof record.title !== 'string') {
+    return null;
+  }
+  if (typeof record.projectName !== 'string') {
+    return null;
+  }
+  return {
+    id: record.id,
+    title: record.title,
+    projectName: record.projectName,
+  };
+}
+
+export function validateRecentTickets(value: unknown): RecentTicketEntry[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const entries: RecentTicketEntry[] = [];
+  for (const item of value) {
+    const entry = validateRecentTicketEntry(item);
+    if (entry === null) {
+      return null;
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
+export function recordRecentTicket(
+  current: RecentTicketEntry[],
+  entry: RecentTicketEntry,
+): RecentTicketEntry[] {
+  const withoutDuplicate = current.filter((ticket) => ticket.id !== entry.id);
+  const next = [entry, ...withoutDuplicate];
+  return next.slice(0, RECENT_TICKETS_MAX);
 }
 
 export function validateBoardFilterPresets(value: unknown): BoardFilterPreset[] | null {

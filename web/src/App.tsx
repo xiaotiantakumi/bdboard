@@ -59,6 +59,8 @@ import {
   validateIssueTypeArray,
   validateLaneArray,
   validateBoardFilterPresets,
+  validateRecentTickets,
+  recordRecentTicket,
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from './uiPersistedState';
@@ -156,6 +158,11 @@ export function App() {
     UI_STORAGE_KEYS.statsWeeks,
     8,
     validateStatsWeeks,
+  );
+  const [recentTickets, setRecentTickets] = usePersistedState(
+    UI_STORAGE_KEYS.recentTickets,
+    [],
+    validateRecentTickets,
   );
   const [epicFilterId, setEpicFilterId] = useState<string | undefined>(undefined);
   const {
@@ -410,6 +417,19 @@ export function App() {
     }
     return map;
   }, [projectsQuery.data]);
+
+  const handleRecordRecentTicket = useCallback(
+    (entry: { id: string; title: string; projectId: string }) => {
+      setRecentTickets((current) =>
+        recordRecentTicket(current, {
+          id: entry.id,
+          title: entry.title,
+          projectName: projectNames.get(entry.projectId) ?? entry.projectId,
+        }),
+      );
+    },
+    [projectNames, setRecentTickets],
+  );
 
   const isTicketOnBoard = useCallback(
     (ticketId: string) => boardTicketIds.has(ticketId),
@@ -935,6 +955,7 @@ export function App() {
           onOpenTicket={handleSelectTicket}
           isTicketOnBoard={isTicketOnBoard}
           onFilterByEpic={handleFilterByEpic}
+          onTicketViewed={handleRecordRecentTicket}
         />
       )}
 
@@ -950,6 +971,7 @@ export function App() {
           onClose={handleCloseSearch}
           onSelect={handleSelectTicket}
           actions={paletteActions}
+          recentTickets={recentTickets}
         />
       )}
 

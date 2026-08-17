@@ -87,6 +87,7 @@ interface TicketDetailPanelProps {
   onOpenTicket: (ticketId: string) => void;
   isTicketOnBoard: (ticketId: string) => boolean;
   onFilterByEpic: (ticketId: string) => void;
+  onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
 }
 
 type CopyFeedback =
@@ -210,6 +211,7 @@ export function TicketDetailPanel({
   onOpenTicket,
   isTicketOnBoard,
   onFilterByEpic,
+  onTicketViewed,
 }: TicketDetailPanelProps) {
   const queryClient = useQueryClient();
   const undoSnackbar = useUndoSnackbar();
@@ -217,6 +219,18 @@ export function TicketDetailPanel({
     queryKey: ['ticket', ticketId],
     queryFn: () => fetchTicket(ticketId),
   });
+
+  useEffect(() => {
+    if (data === undefined) {
+      return;
+    }
+    onTicketViewed?.({
+      id: data.id,
+      title: data.title,
+      projectId: data.projectId,
+    });
+  }, [data?.id, data?.title, data?.projectId, onTicketViewed]);
+
   const [submittedDecision, setSubmittedDecision] =
     useState<SubmittedDecision | null>(null);
   const commentsEnabled =
