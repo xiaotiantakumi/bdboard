@@ -22,7 +22,7 @@ bd ready --exclude-label gt:slot   # Find available work (merge-slot bead除外)
 bd show <id>          # View issue details
 bd update <id> --claim  # Claim work atomically
 bd close <id>         # Complete work
-bd dolt push          # Push beads data to remote
+bd dolt push --remote legacy  # Push beads data to the PRIVATE remote (never bare — see "Dolt sync" below)
 ```
 
 ## Non-Interactive Shell Commands
@@ -308,9 +308,26 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
     bdboard-3tw.61 (a shell whose `$PWD` fell back to `"."` spun a CPU core
     for 102 minutes).
 - **`.beads/` Dolt sync** (separate from the above): `bd dolt push`/`bd dolt
-  pull` sync issue history to `refs/dolt/data` on the same GitHub remote —
-  fully independent of code branches/PRs, invisible in any diff. Push
-  periodically at session end, not per-ticket.
+  pull` sync issue history to `refs/dolt/data` on a git remote — fully
+  independent of code branches/PRs, invisible in any diff. **This repo has
+  two git remotes**: `origin` (public, `xiaotiantakumi/bdboard`) and
+  `legacy` (private, `xiaotiantakumi/bdboard-legacy-private`). Issue
+  history is private and must go to `legacy` only — see bdboard-23v for why.
+  **Always run `bd dolt push --remote legacy` / `bd dolt pull --remote
+  legacy`. Never run a bare `bd dolt push` or `bd dolt pull` on this repo.**
+  A bare push can silently push to (or adopt) a Dolt-layer remote derived
+  from `git origin` — i.e. the public repo — leaking private issue history;
+  `bd dolt push --help` documents this remote-adoption behavior. This is not
+  hypothetical: on 2026-08-17 (bdboard-jb1) the main checkout itself still
+  had a Dolt-layer `origin` remote pointing at the public repo, even though
+  `.beads/config.yaml`'s `sync.remote` had already been commented out
+  (bdboard-23v) — disabling that app-level default did not remove the
+  Dolt-layer remote already registered underneath it. Before ever running a
+  bare `bd dolt push`/`bd dolt pull` on **any** checkout of this repo
+  (including a freshly-cloned one right after `bd init`), run `bd dolt
+  remote list` and confirm it shows no `origin` entry — if it does, remove
+  it with `bd dolt remote remove origin` first. Push periodically at
+  session end, not per-ticket.
 - GitHub Free private repos can't enforce branch protection rules; this is
   covered by convention + CI + always merging through `gh pr merge` instead.
   Revisit if the repo goes public or moves to a paid plan.
