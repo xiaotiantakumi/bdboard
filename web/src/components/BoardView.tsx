@@ -3,6 +3,7 @@ import {
   type BoardCardDto,
   type Lane,
   LANES,
+  type PrBadgeDto,
   type ProjectBoardDto,
   type SyncHealthDto,
 } from '../api';
@@ -31,6 +32,7 @@ interface BoardLanesProps {
   projectNames: Map<string, string>;
   projectActiveSessions: Map<string, number>;
   pendingDecisionIds: ReadonlySet<string>;
+  prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKey: string;
   onCardClick: (ticketId: string) => void;
   showDndError?: boolean;
@@ -70,6 +72,7 @@ function LanesRow({
   projectNames,
   projectActiveSessions,
   pendingDecisionIds,
+  prLinksById,
   sectionKey,
   onCardClick,
 }: {
@@ -81,6 +84,7 @@ function LanesRow({
   projectNames: Map<string, string>;
   projectActiveSessions: Map<string, number>;
   pendingDecisionIds: ReadonlySet<string>;
+  prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKey: string;
   onCardClick: (ticketId: string) => void;
 }) {
@@ -103,6 +107,7 @@ function LanesRow({
           projectNames={projectNames}
           projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={pendingDecisionIds}
+          prLinksById={prLinksById}
           onCardClick={onCardClick}
           hiddenCount={
             lane === 'done'
@@ -125,6 +130,7 @@ export function BoardLanes({
   projectNames,
   projectActiveSessions,
   pendingDecisionIds,
+  prLinksById,
   sectionKey,
   onCardClick,
   showDndError = true,
@@ -150,6 +156,7 @@ export function BoardLanes({
           projectNames={projectNames}
           projectActiveSessions={projectActiveSessions}
           pendingDecisionIds={pendingDecisionIds}
+          prLinksById={prLinksById}
           sectionKey={sectionKey}
           onCardClick={onCardClick}
         />
@@ -176,6 +183,7 @@ interface SplitBoardProps {
   stalledOnly: boolean;
   filter: BoardFilter;
   pendingDecisionIds: ReadonlySet<string>;
+  prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKeyPrefix: string;
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick?: (projectId: string) => void;
@@ -188,6 +196,7 @@ export function SplitBoard({
   stalledOnly,
   filter,
   pendingDecisionIds,
+  prLinksById,
   sectionKeyPrefix,
   onCardClick,
   onSessionBadgeClick,
@@ -252,6 +261,7 @@ export function SplitBoard({
             projectNames={EMPTY_PROJECT_NAMES}
             projectActiveSessions={EMPTY_SESSION_COUNTS}
             pendingDecisionIds={pendingDecisionIds}
+            prLinksById={prLinksById}
             sectionKey={`${sectionKeyPrefix}-${entry.project.id}`}
             onCardClick={onCardClick}
             showDndError={false}

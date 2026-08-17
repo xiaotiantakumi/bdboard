@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CommentDto, PendingDecisionDto, SessionDto, TicketDetailDto, TicketSearchResultDto } from '../api';
+import type { CommentDto, PendingDecisionDto, PrBadgeDto, SessionDto, TicketDetailDto, TicketSearchResultDto } from '../api';
 import {
   ApiError,
   deleteTicketDependency,
@@ -75,6 +75,7 @@ const sampleTicket: TicketDetailDto = {
 function renderPanel(
   projectRootPaths: ReadonlyMap<string, string>,
   pendingDecision?: PendingDecisionDto,
+  prLink?: PrBadgeDto,
   queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -87,6 +88,7 @@ function renderPanel(
         ticketId={sampleTicket.id}
         projectRootPaths={projectRootPaths}
         pendingDecision={pendingDecision}
+        prLink={prLink}
         onClose={() => {}}
         onChatAboutTicket={() => {}}
         onOpenTicket={() => {}}
@@ -104,6 +106,7 @@ function rerenderPanel(
   queryClient: QueryClient,
   projectRootPaths: ReadonlyMap<string, string>,
   pendingDecision?: PendingDecisionDto,
+  prLink?: PrBadgeDto,
 ) {
   rerender(
     <QueryClientProvider client={queryClient}>
@@ -111,6 +114,7 @@ function rerenderPanel(
         ticketId={sampleTicket.id}
         projectRootPaths={projectRootPaths}
         pendingDecision={pendingDecision}
+        prLink={prLink}
         onClose={() => {}}
         onChatAboutTicket={() => {}}
         onOpenTicket={() => {}}
@@ -454,7 +458,7 @@ describe('TicketDetailPanel comments', () => {
       },
     });
 
-    renderPanel(new Map(), undefined, queryClient);
+    renderPanel(new Map(), undefined, undefined, queryClient);
 
     await waitFor(() => {
       expect(mockFetchTicketComments).toHaveBeenCalledTimes(1);
@@ -500,7 +504,7 @@ describe('TicketDetailPanel comment form', () => {
     });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    renderPanel(new Map(), undefined, queryClient);
+    renderPanel(new Map(), undefined, undefined, queryClient);
 
     await user.type(
       await screen.findByLabelText('コメントを追加'),
@@ -570,6 +574,29 @@ describe('TicketDetailPanel token usage', () => {
     expect(await screen.findByText('AI使用量')).toBeInTheDocument();
     expect(screen.getByText('1,234')).toBeInTheDocument();
     expect(screen.getByText(/claude-opus-5: 入力 1,234/)).toBeInTheDocument();
+  });
+});
+
+describe('TicketDetailPanel PR link', () => {
+  beforeEach(() => {
+    mockFetchTicket.mockResolvedValue(sampleTicket);
+    mockFetchTicketComments.mockResolvedValue([]);
+  });
+
+  it('shows the PR detail field when prLink is provided', async () => {
+    renderPanel(new Map(), undefined, {
+      ticketId: sampleTicket.id,
+      projectId: sampleTicket.projectId,
+      url: 'https://github.com/example-org/example-repo/pull/7',
+      state: 'open',
+      checkStatus: null,
+    });
+
+    expect(await screen.findByText('PR')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'PR open' })).toHaveAttribute(
+      'href',
+      'https://github.com/example-org/example-repo/pull/7',
+    );
   });
 });
 
@@ -1232,7 +1259,7 @@ describe('TicketDetailPanel session link', () => {
     });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    renderPanel(new Map(), undefined, queryClient);
+    renderPanel(new Map(), undefined, undefined, queryClient);
 
     await user.click(
       await screen.findByRole('button', {
@@ -1284,7 +1311,7 @@ describe('TicketDetailPanel session link', () => {
     });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
-    renderPanel(new Map(), undefined, queryClient);
+    renderPanel(new Map(), undefined, undefined, queryClient);
 
     await user.click(
       await screen.findByRole('button', { name: 'セッションをリンク' }),

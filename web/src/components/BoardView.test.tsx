@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BoardCardDto, BoardDto } from '../api';
+import type { BoardCardDto, BoardDto, PrBadgeDto } from '../api';
 import { EMPTY_BOARD_FILTER, type BoardFilter } from '../boardFilter';
 import { BoardLanes } from './BoardView';
 
@@ -59,6 +59,7 @@ const sharedProps = {
   projectNames: new Map<string, string>(),
   projectActiveSessions: new Map<string, number>(),
   pendingDecisionIds: new Set<string>(),
+  prLinksById: new Map<string, PrBadgeDto>(),
   sectionKey: 'pagination-test',
   onCardClick: vi.fn(),
 };

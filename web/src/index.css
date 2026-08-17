@@ -2037,6 +2037,46 @@ body {
   color: var(--badge-pending-decision-fg);
 }
 
+.badge-pr-open {
+  background: var(--badge-defer-bg);
+  color: var(--badge-defer-fg);
+}
+
+.badge-pr-merged {
+  background: var(--badge-unblocks-bg);
+  color: var(--badge-unblocks-fg);
+}
+
+.badge-pr-closed {
+  background: var(--badge-blocked-bg);
+  color: var(--badge-blocked-fg);
+}
+
+.badge-pr-unknown {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+}
+
+.pr-check-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  margin-left: 3px;
+}
+
+.pr-check-pass {
+  background: var(--color-success);
+}
+
+.pr-check-fail {
+  background: var(--badge-blocked-fg);
+}
+
+.pr-check-pending {
+  background: var(--badge-stalled-fg);
+}
+
 .epic-progress {
   margin-bottom: 8px;
 }

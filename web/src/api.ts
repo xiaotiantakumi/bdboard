@@ -532,6 +532,26 @@ export function fetchPendingDecisions(): Promise<PendingDecisionDto[]> {
   return fetchJson<PendingDecisionDto[]>('/api/tickets/pending-decisions');
 }
 
+export interface PrBadgeDto {
+  ticketId: string;
+  projectId: string;
+  url: string;
+  state: string | null;
+  checkStatus: string | null;
+}
+
+export function fetchPrLinks(
+  projectIds: readonly string[] = [],
+): Promise<PrBadgeDto[]> {
+  const searchParams = new URLSearchParams();
+  if (projectIds.length > 0) {
+    searchParams.set('projects', projectIds.join(','));
+  }
+  const query = searchParams.toString();
+  const path = query.length > 0 ? `/api/pr-links?${query}` : '/api/pr-links';
+  return getJson<PrBadgeDto[]>(path);
+}
+
 export function postTicketDecision(
   id: string,
   body: { choice?: string; freeform?: string },

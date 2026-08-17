@@ -4,11 +4,13 @@ import {
   fetchBoard,
   fetchChatAvailability,
   fetchPendingDecisions,
+  fetchPrLinks,
   fetchProjects,
   fetchSessions,
   fetchStatus,
   fetchSyncHealth,
   type PendingDecisionDto,
+  type PrBadgeDto,
   type ProjectDto,
   type SyncHealthDto,
 } from './api';
@@ -185,6 +187,12 @@ export function App() {
     queryFn: fetchPendingDecisions,
   });
 
+  const prLinksQuery = useQuery({
+    queryKey: ['pr-links', selectedProjectIdsJoined],
+    queryFn: () => fetchPrLinks(selectedProjectIds),
+    retry: false,
+  });
+
   useAppBadge(pendingDecisionsQuery.data?.length);
 
   const notificationEvents = useNotificationEvents();
@@ -218,6 +226,14 @@ export function App() {
   const pendingDecisionIds = useMemo(() => {
     return new Set(pendingDecisionsById.keys());
   }, [pendingDecisionsById]);
+
+  const prLinksById = useMemo(() => {
+    const map = new Map<string, PrBadgeDto>();
+    for (const badge of prLinksQuery.data ?? []) {
+      map.set(badge.ticketId, badge);
+    }
+    return map;
+  }, [prLinksQuery.data]);
 
   const boardFilter = useMemo(
     () => ({
@@ -669,6 +685,7 @@ export function App() {
               projectNames={projectNames}
               projectActiveSessions={projectActiveSessions}
               pendingDecisionIds={pendingDecisionIds}
+              prLinksById={prLinksById}
               sectionKey={`merged-${selectedProjectIdsJoined}`}
               onCardClick={handleSelectTicket}
             />
@@ -681,6 +698,7 @@ export function App() {
             stalledOnly={stalledOnly}
             filter={boardFilter}
             pendingDecisionIds={pendingDecisionIds}
+            prLinksById={prLinksById}
             sectionKeyPrefix={selectedProjectIdsJoined}
             onCardClick={handleSelectTicket}
             onSessionBadgeClick={handleOpenSessionList}
@@ -695,6 +713,7 @@ export function App() {
             projectNames={projectNames}
             projectActiveSessions={projectActiveSessions}
             pendingDecisionIds={pendingDecisionIds}
+            prLinksById={prLinksById}
             onCardClick={handleSelectTicket}
           />
         )}
@@ -748,6 +767,7 @@ export function App() {
           ticketId={selectedTicketId}
           projectRootPaths={projectRootPaths}
           pendingDecision={pendingDecisionsById.get(selectedTicketId)}
+          prLink={prLinksById.get(selectedTicketId)}
           onClose={handleCloseDetail}
           onChatAboutTicket={
             chatAvailable

@@ -1,4 +1,4 @@
-import { type BoardDto, projectNameFallback } from '../api';
+import { type BoardDto, type PrBadgeDto, projectNameFallback } from '../api';
 import { NEXT_UP_LIMITS, type NextUpLimit } from '../uiPersistedState';
 import { CardItem } from './LaneColumn';
 
@@ -9,6 +9,7 @@ export interface NextUpViewProps {
   projectNames: Map<string, string>;
   projectActiveSessions: Map<string, number>;
   pendingDecisionIds: ReadonlySet<string>;
+  prLinksById: ReadonlyMap<string, PrBadgeDto>;
   onCardClick: (ticketId: string) => void;
 }
 
@@ -19,6 +20,7 @@ export function NextUpView({
   projectNames,
   projectActiveSessions,
   pendingDecisionIds,
+  prLinksById,
   onCardClick,
 }: NextUpViewProps) {
   const readyCards = board.lanes.ready ?? [];
@@ -60,6 +62,7 @@ export function NextUpView({
               }
               activeSessionCount={projectActiveSessions.get(card.projectId) ?? 0}
               hasPendingDecision={pendingDecisionIds.has(card.ticket.id)}
+              prLink={prLinksById.get(card.ticket.id)}
               onClick={onCardClick}
             />
           ))}

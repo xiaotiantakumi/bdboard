@@ -70,6 +70,7 @@ function renderBoardLanes(onCardClick = vi.fn()) {
       projectNames={projectNames}
       projectActiveSessions={projectActiveSessions}
       pendingDecisionIds={new Set()}
+      prLinksById={new Map()}
       sectionKey="test"
       onCardClick={onCardClick}
     />,
@@ -197,6 +198,7 @@ describe('BoardKeyboardNav', () => {
         projectNames={projectNames}
         projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
         sectionKey="test"
         onCardClick={vi.fn()}
       />,
@@ -232,6 +234,7 @@ describe('BoardKeyboardNav', () => {
         projectNames={projectNames}
         projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
         sectionKey="test"
         onCardClick={vi.fn()}
       />,
@@ -253,6 +256,7 @@ describe('BoardKeyboardNav', () => {
         projectNames={projectNames}
         projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
         sectionKey="test"
         onCardClick={vi.fn()}
       />,
@@ -284,6 +288,7 @@ describe('BoardKeyboardNav', () => {
         projectNames={projectNames}
         projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
         sectionKey="test"
         onCardClick={vi.fn()}
       />,
