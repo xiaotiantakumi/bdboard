@@ -8,10 +8,15 @@ function kindLabel(kind: NotificationEventItem['kind']): string {
       return '決定待ち';
     case 'session_died':
       return 'セッション終了';
+    case 'ai_quota_threshold':
+      return 'クォータ低下';
   }
 }
 
 function eventPrimaryText(item: NotificationEventItem): string {
+  if (item.providerId !== undefined) {
+    return `${item.providerLabel ?? item.providerId} ${item.metricLabel ?? ''} 残り${item.percentRemaining}%(閾値${item.thresholdPercent}%)`.trim();
+  }
   if (item.ticketId !== undefined) {
     if (item.title !== undefined && item.title.length > 0) {
       return `${item.title} (${item.ticketId})`;

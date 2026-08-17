@@ -13,7 +13,7 @@ export const NOTIFICATION_BATCH_THRESHOLD = 3;
 
 export interface NotificationEventItem {
   readonly id: string;
-  readonly kind: 'ticket_ready' | 'decision_pending' | 'session_died';
+  readonly kind: 'ticket_ready' | 'decision_pending' | 'session_died' | 'ai_quota_threshold';
   readonly occurredAt: string;
   readonly ticketId?: string;
   readonly title?: string;
@@ -21,6 +21,12 @@ export interface NotificationEventItem {
   readonly sessionId?: string;
   readonly cwd?: string;
   readonly name?: string;
+  readonly providerId?: string;
+  readonly providerLabel?: string;
+  readonly metricLabel?: string;
+  readonly percentRemaining?: number;
+  readonly thresholdPercent?: number;
+  readonly resetAt?: string;
 }
 
 export interface UseNotificationEventsResult {
@@ -53,6 +59,16 @@ type NotificationPayload =
       name?: string;
       lastActivityAt: string;
       occurredAt: string;
+    }
+  | {
+      kind: 'ai_quota_threshold';
+      providerId: string;
+      providerLabel: string;
+      metricLabel: string;
+      percentRemaining: number;
+      thresholdPercent: number;
+      resetAt?: string;
+      occurredAt: string;
     };
 
 function isTicketNotificationKind(kind: unknown): kind is TicketNotificationKind {
@@ -73,6 +89,15 @@ function isNotificationPayload(value: unknown): value is NotificationPayload {
   if (payload.kind === 'session_died') {
     return typeof payload.sessionId === 'string' && typeof payload.cwd === 'string';
   }
+  if (payload.kind === 'ai_quota_threshold') {
+    return (
+      typeof payload.providerId === 'string' &&
+      typeof payload.providerLabel === 'string' &&
+      typeof payload.metricLabel === 'string' &&
+      typeof payload.percentRemaining === 'number' &&
+      typeof payload.thresholdPercent === 'number'
+    );
+  }
   return false;
 }
 
@@ -85,7 +110,8 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     typeof item.id !== 'string' ||
     (item.kind !== 'ticket_ready' &&
       item.kind !== 'decision_pending' &&
-      item.kind !== 'session_died') ||
+      item.kind !== 'session_died' &&
+      item.kind !== 'ai_quota_threshold') ||
     typeof item.occurredAt !== 'string'
   ) {
     return null;
@@ -106,6 +132,24 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     return null;
   }
   if (item.name !== undefined && typeof item.name !== 'string') {
+    return null;
+  }
+  if (item.providerId !== undefined && typeof item.providerId !== 'string') {
+    return null;
+  }
+  if (item.providerLabel !== undefined && typeof item.providerLabel !== 'string') {
+    return null;
+  }
+  if (item.metricLabel !== undefined && typeof item.metricLabel !== 'string') {
+    return null;
+  }
+  if (item.percentRemaining !== undefined && typeof item.percentRemaining !== 'number') {
+    return null;
+  }
+  if (item.thresholdPercent !== undefined && typeof item.thresholdPercent !== 'number') {
+    return null;
+  }
+  if (item.resetAt !== undefined && typeof item.resetAt !== 'string') {
     return null;
   }
   return value as NotificationEventItem;
@@ -144,6 +188,19 @@ function buildNotificationEventItem(payload: NotificationPayload): NotificationE
       name: payload.name,
     };
   }
+  if (payload.kind === 'ai_quota_threshold') {
+    return {
+      id: `${payload.kind}:${payload.providerId}:${payload.metricLabel}:${payload.occurredAt}`,
+      kind: payload.kind,
+      occurredAt: payload.occurredAt,
+      providerId: payload.providerId,
+      providerLabel: payload.providerLabel,
+      metricLabel: payload.metricLabel,
+      percentRemaining: payload.percentRemaining,
+      thresholdPercent: payload.thresholdPercent,
+      resetAt: payload.resetAt,
+    };
+  }
   return {
     id: `${payload.kind}:${payload.ticketId}:${payload.occurredAt}`,
     kind: payload.kind,
@@ -171,6 +228,11 @@ function notificationCopy(item: NotificationEventItem): { title: string; body: s
         title: 'セッションが終了しました',
         body: `${item.name ?? item.cwd}`,
       };
+    case 'ai_quota_threshold':
+      return {
+        title: 'AIクォータ残量が閾値を下回りました',
+        body: `${item.providerLabel ?? item.providerId} ${item.metricLabel ?? ''} 残り${item.percentRemaining}%(閾値${item.thresholdPercent}%)`.trim(),
+      };
   }
 }
 
@@ -182,6 +244,8 @@ function kindSummaryLabel(kind: NotificationEventItem['kind'], count: number): s
       return `決定待ち ${count}件`;
     case 'session_died':
       return `セッション終了 ${count}件`;
+    case 'ai_quota_threshold':
+      return `クォータ低下 ${count}件`;
   }
 }
 

@@ -3,12 +3,15 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  fetchAiQuotaAlertConfig,
   fetchBoardThresholdsConfig,
   fetchScanRootsConfig,
   postRefresh,
+  putAiQuotaAlertConfig,
   putBoardThresholdsConfig,
   putScanRootsConfig,
   ApiError,
+  type AiQuotaAlertConfigDto,
   type BoardThresholdsConfigDto,
   type ScanRootsConfigDto,
 } from '../api';
@@ -20,17 +23,29 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     fetchScanRootsConfig: vi.fn(),
     fetchBoardThresholdsConfig: vi.fn(),
+    fetchAiQuotaAlertConfig: vi.fn(),
     postRefresh: vi.fn(),
     putScanRootsConfig: vi.fn(),
     putBoardThresholdsConfig: vi.fn(),
+    putAiQuotaAlertConfig: vi.fn(),
   };
 });
 
 const fetchScanRootsConfigMock = vi.mocked(fetchScanRootsConfig);
 const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
+const fetchAiQuotaAlertConfigMock = vi.mocked(fetchAiQuotaAlertConfig);
 const postRefreshMock = vi.mocked(postRefresh);
 const putScanRootsConfigMock = vi.mocked(putScanRootsConfig);
 const putBoardThresholdsConfigMock = vi.mocked(putBoardThresholdsConfig);
+const putAiQuotaAlertConfigMock = vi.mocked(putAiQuotaAlertConfig);
+function makeAiQuotaAlertConfig(overrides: Partial<AiQuotaAlertConfigDto> = {}): AiQuotaAlertConfigDto {
+  return {
+    thresholdPercent: 20,
+    version: 'ai-quota-alert-v1',
+    defaults: { thresholdPercent: 20 },
+    ...overrides,
+  };
+}
 function makeThresholdsConfig(overrides: Partial<BoardThresholdsConfigDto> = {}): BoardThresholdsConfigDto {
   return {
     stalledAfterMs: 86_400_000,
@@ -67,14 +82,18 @@ describe('SettingsPanel', () => {
   beforeEach(() => {
     fetchScanRootsConfigMock.mockReset();
     fetchBoardThresholdsConfigMock.mockReset();
+    fetchAiQuotaAlertConfigMock.mockReset();
     postRefreshMock.mockReset();
     putScanRootsConfigMock.mockReset();
     putBoardThresholdsConfigMock.mockReset();
+    putAiQuotaAlertConfigMock.mockReset();
     fetchScanRootsConfigMock.mockResolvedValue(makeConfig());
     fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
+    fetchAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig());
     postRefreshMock.mockResolvedValue(undefined);
     putScanRootsConfigMock.mockResolvedValue({ scanRoots: ['/configured'], excludePaths: ['/excluded'], version: 'v2' });
     putBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig({ version: 'thresholds-v2' }));
+    putAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig({ version: 'ai-quota-alert-v2' }));
   });
   it('shows effective roots with the user-configured badge', async () => {
     renderSettings();
@@ -405,12 +424,12 @@ describe('SettingsPanel', () => {
   it('saves edited board thresholds and refreshes the board', async () => {
     const user = userEvent.setup();
     renderSettings();
-    await screen.findByLabelText('滞留判定 (時間)');
-    const saveButton = screen.getByRole('button', { name: '閾値を保存' });
+    const boardThresholdsSection = await screen.findByRole('region', { name: '滞留・liveness 閾値' });
+    const saveButton = within(boardThresholdsSection).getByRole('button', { name: '閾値を保存' });
     expect(saveButton).toBeDisabled();
 
-    await user.clear(screen.getByLabelText('滞留判定 (時間)'));
-    await user.type(screen.getByLabelText('滞留判定 (時間)'), '12');
+    await user.clear(within(boardThresholdsSection).getByLabelText('滞留判定 (時間)'));
+    await user.type(within(boardThresholdsSection).getByLabelText('滞留判定 (時間)'), '12');
     expect(saveButton).toBeEnabled();
     await user.click(saveButton);
 
@@ -436,12 +455,58 @@ describe('SettingsPanel', () => {
       }),
     );
     renderSettings();
-    await screen.findByLabelText('liveness active (分)');
-    await user.clear(screen.getByLabelText('liveness active (分)'));
-    await user.type(screen.getByLabelText('liveness active (分)'), '60');
-    await user.click(screen.getByRole('button', { name: '閾値を保存' }));
+    const boardThresholdsSection = await screen.findByRole('region', { name: '滞留・liveness 閾値' });
+    await user.clear(within(boardThresholdsSection).getByLabelText('liveness active (分)'));
+    await user.type(within(boardThresholdsSection).getByLabelText('liveness active (分)'), '60');
+    await user.click(within(boardThresholdsSection).getByRole('button', { name: '閾値を保存' }));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'liveness active は liveness idle より短くしてください',
+    );
+  });
+
+  it('shows the ai quota alert threshold section with effective values', async () => {
+    renderSettings();
+    const section = await screen.findByRole('region', { name: 'AIクォータ通知閾値' });
+    expect(within(section).getByLabelText('クォータ通知閾値 (%)')).toHaveValue(20);
+  });
+
+  it('saves edited ai quota alert threshold without refreshing the board', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const section = await screen.findByRole('region', { name: 'AIクォータ通知閾値' });
+    const saveButton = within(section).getByRole('button', { name: '閾値を保存' });
+    expect(saveButton).toBeDisabled();
+
+    await user.clear(within(section).getByLabelText('クォータ通知閾値 (%)'));
+    await user.type(within(section).getByLabelText('クォータ通知閾値 (%)'), '30');
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(putAiQuotaAlertConfigMock).toHaveBeenCalledWith({
+        thresholdPercent: 30,
+        version: 'ai-quota-alert-v1',
+      }),
+    );
+    expect(postRefreshMock).not.toHaveBeenCalled();
+    expect(await screen.findByText('AIクォータ通知閾値を保存しました')).toBeInTheDocument();
+  });
+
+  it('shows server validation errors for ai quota alert threshold', async () => {
+    const user = userEvent.setup();
+    putAiQuotaAlertConfigMock.mockRejectedValue(
+      new ApiError(400, 'invalid ai quota alert threshold', {
+        errorMessage: 'invalid ai quota alert threshold',
+        details: { errors: ['thresholdPercent は 1〜99 の整数で指定してください'] },
+      }),
+    );
+    renderSettings();
+    const section = await screen.findByRole('region', { name: 'AIクォータ通知閾値' });
+    await user.clear(within(section).getByLabelText('クォータ通知閾値 (%)'));
+    await user.type(within(section).getByLabelText('クォータ通知閾値 (%)'), '0');
+    await user.click(within(section).getByRole('button', { name: '閾値を保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'thresholdPercent は 1〜99 の整数で指定してください',
     );
   });
 });

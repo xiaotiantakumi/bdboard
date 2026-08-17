@@ -71,6 +71,19 @@ function ticketReadyPayload(overrides: Record<string, string> = {}) {
   });
 }
 
+function aiQuotaThresholdPayload(overrides: Record<string, unknown> = {}) {
+  return JSON.stringify({
+    kind: 'ai_quota_threshold',
+    providerId: 'codex',
+    providerLabel: 'Codex',
+    metricLabel: '週次リクエスト',
+    percentRemaining: 15,
+    thresholdPercent: 20,
+    occurredAt: '2026-08-17T11:00:00.000Z',
+    ...overrides,
+  });
+}
+
 function advanceBatchWindow() {
   act(() => {
     vi.advanceTimersByTime(NOTIFICATION_BATCH_WINDOW_MS);
@@ -124,6 +137,62 @@ describe('useNotificationEvents', () => {
       id: 'ticket_ready:bdboard-abc:2026-08-17T10:00:00.000Z',
     });
     expect(result.current.unreadCount).toBe(1);
+  });
+
+  it('adds an ai_quota_threshold event when a notification SSE message is received', () => {
+    const { result, es } = renderNotificationEvents();
+
+    act(() => {
+      es.dispatch('notification', aiQuotaThresholdPayload());
+    });
+
+    expect(result.current.events).toHaveLength(1);
+    expect(result.current.events[0]).toMatchObject({
+      kind: 'ai_quota_threshold',
+      providerId: 'codex',
+      providerLabel: 'Codex',
+      metricLabel: '週次リクエスト',
+      percentRemaining: 15,
+      thresholdPercent: 20,
+      id: 'ai_quota_threshold:codex:週次リクエスト:2026-08-17T11:00:00.000Z',
+    });
+  });
+
+  it('ignores invalid ai_quota_threshold payloads missing required fields', () => {
+    const { result, es } = renderNotificationEvents();
+
+    act(() => {
+      es.dispatch(
+        'notification',
+        JSON.stringify({
+          kind: 'ai_quota_threshold',
+          providerId: 'codex',
+          occurredAt: '2026-08-17T11:00:00.000Z',
+        }),
+      );
+    });
+
+    expect(result.current.events).toHaveLength(0);
+  });
+
+  it('calls Notification with ai_quota_threshold copy when hidden, enabled, and granted', () => {
+    withFakeBatchTimers(() => {
+      MockNotification.permission = 'granted';
+      localStorage.setItem(UI_STORAGE_KEYS.notificationsEnabled, 'true');
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+
+      const { es } = renderNotificationEvents();
+
+      act(() => {
+        es.dispatch('notification', aiQuotaThresholdPayload());
+      });
+      advanceBatchWindow();
+
+      expect(notificationCtor).toHaveBeenCalledWith('AIクォータ残量が閾値を下回りました', {
+        body: 'Codex 週次リクエスト 残り15%(閾値20%)',
+        tag: 'ai_quota_threshold:codex:週次リクエスト:2026-08-17T11:00:00.000Z',
+      });
+    });
   });
 
   it('does not call Notification when the tab is visible and focused even if enabled and granted', () => {

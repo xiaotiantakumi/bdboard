@@ -64,6 +64,31 @@ describe('EventCenterPanel', () => {
     expect(screen.getByText('Example ticket (bdboard-abc)')).toBeInTheDocument();
   });
 
+  it('lists ai_quota_threshold events when present', () => {
+    render(
+      <EventCenterPanel
+        {...makeProps({
+          events: [
+            {
+              id: 'ai_quota_threshold:codex:週次リクエスト:2026-08-17T11:00:00.000Z',
+              kind: 'ai_quota_threshold',
+              providerId: 'codex',
+              providerLabel: 'Codex',
+              metricLabel: '週次リクエスト',
+              percentRemaining: 15,
+              thresholdPercent: 20,
+              occurredAt: '2026-08-17T11:00:00.000Z',
+            },
+          ],
+          unreadCount: 1,
+        })}
+      />,
+    );
+
+    expect(screen.getByText('クォータ低下')).toBeInTheDocument();
+    expect(screen.getByText('Codex 週次リクエスト 残り15%(閾値20%)')).toBeInTheDocument();
+  });
+
   it('calls enableNotifications when the enable button is clicked', async () => {
     const user = userEvent.setup();
     const enableNotifications = vi.fn(async () => {});

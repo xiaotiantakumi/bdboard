@@ -23,6 +23,7 @@ import {
   DEFAULT_RECLAIM_OLDER_THAN,
 } from './application/lease/reclaim-scheduler.js';
 import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
+import { createAiQuotaThresholdPublisher } from './application/ai-quota/ai-quota-threshold-alerts.js';
 import { createChatSessionStore } from './application/chat/chat-session-store.js';
 import { buildChatAgentRegistry } from './infrastructure/chat/chat-agent-registry-builder.js';
 import { createTunnelService } from './application/tunnel/tunnel-service.js';
@@ -34,6 +35,7 @@ import {
   type BoardSnapshotProjectInput,
 } from './domain/board-notifications.js';
 import { resolveBoardThresholds } from './domain/board-thresholds.js';
+import { resolveAiQuotaAlertThresholdPercent } from './domain/ai-quota-alert-thresholds.js';
 import { compareStrings } from './domain/compare.js';
 import { generatePassphrase } from './domain/passphrase.js';
 import type { AgentSession, SessionLink } from './domain/session.js';
@@ -57,6 +59,7 @@ import {
   createFileTunnelInterruptionStore,
   createFileScanRootsConfigStore,
   createFileBoardThresholdsConfigStore,
+  createFileAiQuotaAlertConfigStore,
   createFsHarnessInjector,
   createFsPackRegistry,
   createFsProjectDiscovery,
@@ -95,6 +98,7 @@ import {
 import { createHarnessRoutes } from './interface/http/harness-routes.js';
 import { createScanRootsRoutes } from './interface/http/scan-roots-routes.js';
 import { createBoardThresholdsRoutes } from './interface/http/board-thresholds-routes.js';
+import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
 import { createEventHub } from './interface/sse/event-hub.js';
@@ -232,6 +236,9 @@ async function main(): Promise<void> {
   );
   const boardThresholdsConfigStore = createFileBoardThresholdsConfigStore(
     envString('BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH', configFilePath),
+  );
+  const aiQuotaAlertConfigStore = createFileAiQuotaAlertConfigStore(
+    envString('BDBOARD_AI_QUOTA_ALERT_CONFIG_PATH', configFilePath),
   );
 
   const scanRootsRaw = process.env.BDBOARD_SCAN_ROOTS;
@@ -619,6 +626,7 @@ async function main(): Promise<void> {
 
   let transcriptIntervalTimer: ReturnType<typeof setInterval> | undefined;
   let cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
+  let aiQuotaAlertIntervalTimer: ReturnType<typeof setInterval> | undefined;
 
   if (transcriptIntervalMs > 0) {
     try {
@@ -822,6 +830,14 @@ async function main(): Promise<void> {
     }),
   );
 
+  app.route(
+    '/',
+    createAiQuotaAlertRoutes({
+      store: aiQuotaAlertConfigStore,
+      writeAccess,
+    }),
+  );
+
   app.route('/', createTunnelRoutes({ tunnelService, access: tunnelAccess }));
 
   const aiQuotaDisabled = envBool('BDBOARD_AI_QUOTA_DISABLED');
@@ -836,6 +852,35 @@ async function main(): Promise<void> {
       ttlMs: envInt('BDBOARD_AI_QUOTA_CACHE_MS', 5 * 60_000),
     });
     app.route('/', createAiQuotaRoutes({ aiQuotaService }));
+
+    const aiQuotaThresholdPublisher = createAiQuotaThresholdPublisher();
+    const checkAiQuotaThresholds = async (): Promise<void> => {
+      try {
+        const state = await aiQuotaService.getSnapshot();
+        if (state.kind !== 'ok') {
+          return;
+        }
+        const config = await aiQuotaAlertConfigStore.read();
+        const thresholdPercent = resolveAiQuotaAlertThresholdPercent(config);
+        const occurredAt = new Date();
+        for (const payload of aiQuotaThresholdPublisher.collectBreaches(
+          state.providers,
+          thresholdPercent,
+          occurredAt,
+        )) {
+          events.publish({ name: 'notification', data: payload });
+        }
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.error(`AI quota threshold check error: ${detail}`);
+      }
+    };
+    void checkAiQuotaThresholds();
+    aiQuotaAlertIntervalTimer = setInterval(
+      () => void checkAiQuotaThresholds(),
+      envInt('BDBOARD_AI_QUOTA_ALERT_INTERVAL_MS', 60_000),
+    );
+
     console.log('AI quota widget: enabled');
   } else {
     console.log('AI quota widget: disabled');
@@ -985,6 +1030,9 @@ async function main(): Promise<void> {
     }
     if (cfdSnapshotIntervalTimer !== undefined) {
       clearInterval(cfdSnapshotIntervalTimer);
+    }
+    if (aiQuotaAlertIntervalTimer !== undefined) {
+      clearInterval(aiQuotaAlertIntervalTimer);
     }
     reclaimScheduler.stop();
     shutdown();
