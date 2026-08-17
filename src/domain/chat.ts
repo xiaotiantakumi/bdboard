@@ -22,6 +22,12 @@ export const CHAT_MESSAGES_MAX_PER_SESSION = 200;
  */
 export const CHAT_FAILED_TOOLS_MAX = 20;
 
+/**
+ * assistant メッセージに永続化する agentWarnings の上限 (重複除去後)。
+ * 固定文言の運用警告が主用途なので小さな上限で十分。
+ */
+export const CHAT_AGENT_WARNINGS_MAX = 10;
+
 export const CHAT_SESSION_ID_MAX_LENGTH = 200;
 
 /**

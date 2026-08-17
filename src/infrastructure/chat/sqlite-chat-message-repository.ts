@@ -17,6 +17,7 @@ interface ChatMessageRowDb {
   readonly content: string;
   readonly created_at: string;
   readonly failed_tools: string | null;
+  readonly agent_warnings: string | null;
 }
 
 interface ChatThreadSummaryRowDb {
@@ -51,11 +52,11 @@ export function createSqliteChatMessageRepository(
   `);
 
   const insertStmt = db.prepare(`
-    INSERT INTO chat_messages (session_id, role, content, created_at, failed_tools)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO chat_messages (session_id, role, content, created_at, failed_tools, agent_warnings)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
   const listStmt = db.prepare(`
-    SELECT role, content, created_at, failed_tools
+    SELECT role, content, created_at, failed_tools, agent_warnings
     FROM chat_messages
     WHERE session_id = ?
     ORDER BY created_at ASC, rowid ASC
@@ -98,6 +99,9 @@ export function createSqliteChatMessageRepository(
             message.failedTools !== undefined && message.failedTools.length > 0
               ? JSON.stringify(message.failedTools)
               : null,
+            message.agentWarnings !== undefined && message.agentWarnings.length > 0
+              ? JSON.stringify(message.agentWarnings)
+              : null,
           );
         }
         trimToCap(sessionId);
@@ -113,12 +117,14 @@ export function createSqliteChatMessageRepository(
         if (role === undefined) {
           continue;
         }
-        const failedTools = parseFailedTools(row.failed_tools);
+        const failedTools = parseJsonStringArray(row.failed_tools);
+        const agentWarnings = parseJsonStringArray(row.agent_warnings);
         records.push({
           role,
           content: row.content,
           createdAt: new Date(row.created_at),
           ...(failedTools !== undefined ? { failedTools } : {}),
+          ...(agentWarnings !== undefined ? { agentWarnings } : {}),
         });
       }
       return records;
@@ -166,7 +172,7 @@ export function createSqliteChatMessageRepository(
   };
 }
 
-function parseFailedTools(raw: string | null | undefined): readonly string[] | undefined {
+function parseJsonStringArray(raw: string | null | undefined): readonly string[] | undefined {
   if (raw === undefined || raw === null || raw === '') {
     return undefined;
   }

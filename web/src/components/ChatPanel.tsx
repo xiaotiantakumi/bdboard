@@ -51,6 +51,8 @@ type ChatMessage = {
   at: number;
   /** このターンで実行できなかった bd ツール呼び出しの名前(bdboard-l1t.4 MF3)。 */
   failedTools?: string[];
+  /** ターンは成功したが運用者に知らせるべきエージェント側の警告(bdboard-l1t.6 N-e)。 */
+  agentWarnings?: string[];
 };
 
 // SF3: 会話キーの「新規ドラフト」書式(セッションIDを持たない未送信スレッド)を
@@ -915,6 +917,9 @@ export function ChatPanel({
               ...(message.failedTools !== undefined && message.failedTools.length > 0
                 ? { failedTools: message.failedTools }
                 : {}),
+              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
+                ? { agentWarnings: message.agentWarnings }
+                : {}),
             })),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
@@ -1084,6 +1089,9 @@ export function ChatPanel({
               at: Date.now(),
               ...(result.failedTools !== undefined && result.failedTools.length > 0
                 ? { failedTools: result.failedTools }
+                : {}),
+              ...(result.agentWarnings !== undefined && result.agentWarnings.length > 0
+                ? { agentWarnings: result.agentWarnings }
                 : {}),
             },
           ],
@@ -1823,6 +1831,12 @@ export function ChatPanel({
                   <p className="chat-message-failed-tools" role="alert">
                     一部のツール呼び出しが実行できませんでした:{' '}
                     {message.failedTools.join(', ')}
+                  </p>
+                )}
+              {message.agentWarnings !== undefined &&
+                message.agentWarnings.length > 0 && (
+                  <p className="chat-message-agent-warnings" role="alert">
+                    エージェントの警告: {message.agentWarnings.join('; ')}
                   </p>
                 )}
             </div>

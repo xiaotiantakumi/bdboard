@@ -1,4 +1,8 @@
-import { CHAT_MESSAGE_MAX_LENGTH, CHAT_FAILED_TOOLS_MAX } from '../../domain/chat.js';
+import {
+  CHAT_AGENT_WARNINGS_MAX,
+  CHAT_FAILED_TOOLS_MAX,
+  CHAT_MESSAGE_MAX_LENGTH,
+} from '../../domain/chat.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { ChatMessageRepository } from '../ports/chat-message-repository.js';
 import {
@@ -36,6 +40,7 @@ export type SendChatMessageResult =
        * 呼ぶ)。1件も無ければ省略する(bdboard-l1t.4 MF3)。
        */
       readonly failedTools?: readonly string[];
+      readonly agentWarnings?: readonly string[];
     }
   | { readonly ok: false; readonly failure: SendChatMessageFailure };
 
@@ -129,10 +134,19 @@ export function finalizeChatTurnSuccess(
   // 1エントリ生まれるため、そのまま永続化すると同名の羅列で無制限に膨らむ
   // (bdboard-l1t.4 MF3)。
   const failedTools = [...new Set(turnResult.failedTools)].slice(0, CHAT_FAILED_TOOLS_MAX);
+  const agentWarnings =
+    turnResult.agentWarnings !== undefined
+      ? [...new Set(turnResult.agentWarnings)].slice(0, CHAT_AGENT_WARNINGS_MAX)
+      : [];
   try {
     deps.messages.append(turnResult.sessionId, [
       { role: 'user', content: input.message.trim() },
-      { role: 'assistant', content: turnResult.reply, ...(failedTools.length > 0 ? { failedTools } : {}) },
+      {
+        role: 'assistant',
+        content: turnResult.reply,
+        ...(failedTools.length > 0 ? { failedTools } : {}),
+        ...(agentWarnings.length > 0 ? { agentWarnings } : {}),
+      },
     ]);
   } catch {
     // History persistence is best-effort.
@@ -144,6 +158,7 @@ export function finalizeChatTurnSuccess(
     agentId: turnResult.agentId,
     ...(turnResult.model !== undefined ? { model: turnResult.model } : {}),
     ...(failedTools.length > 0 ? { failedTools } : {}),
+    ...(agentWarnings.length > 0 ? { agentWarnings } : {}),
   };
 }
 

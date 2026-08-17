@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { isValidChatSessionId } from '../../../domain/chat.js';
 import type { ChatTurnRequest } from '../../../application/ports/chat-agent.js';
 import type { CliTurnContext } from '../cli-chat-agent.js';
-import { createAgySpec } from './agy-spec.js';
+import { createAgySpec, AGY_HEADLESS_DENIAL_WITH_REPLY_WARNING } from './agy-spec.js';
 
 const context: CliTurnContext = { systemPrompt: 'system', mcpServers: [], toolNames: [], scratchDir: '/tmp' };
 const request = (overrides: Partial<ChatTurnRequest> = {}): ChatTurnRequest => ({ projectRootPath: '/tmp/demo', projectName: 'demo', message: 'hello', ...overrides });
@@ -71,6 +71,8 @@ describe('createAgySpec (bdboard-l1t.6)', () => {
     const result = spec.parseTurn({ stdout: success('partial answer\n'), stderr: 'required the "command" permission that headless mode cannot prompt for, so it was auto-denied.', exitCode: 0 }, () => undefined);
     expect(result.reply).toBe('partial answer\n');
     expect(result.sessionId).toBe('d876c288-12df-4038-bcf2-21b9fbd1ade5');
+    expect(result.agentWarnings).toEqual([AGY_HEADLESS_DENIAL_WITH_REPLY_WARNING]);
+    expect(result.failedTools).toEqual([]);
   });
 
   it('classifyFailure maps the deny marker on non-zero exits and defers otherwise (SF3)', () => {

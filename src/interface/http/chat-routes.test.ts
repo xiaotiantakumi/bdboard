@@ -639,6 +639,46 @@ describe('createChatRoutes behavior', () => {
     });
   });
 
+  it('returns agentWarnings in the response when the agent reports operational warnings (bdboard-l1t.6 N-e)', async () => {
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const app = createApp({
+      cache,
+      agent: createFakeAgent({
+        sendMessage: vi.fn(async () => ({
+          reply: 'partial from agent',
+          sessionId: '550e8400-e29b-41d4-a716-446655440099',
+          failedTools: [],
+          agentWarnings: [
+            'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+          ],
+          agentId: 'test-agent',
+        })),
+      }),
+    });
+
+    const res = await app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
+      },
+      LOCAL_ENV,
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      reply: 'partial from agent',
+      sessionId: '550e8400-e29b-41d4-a716-446655440099',
+      agentId: 'test-agent',
+      agentWarnings: [
+        'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+      ],
+    });
+  });
+
   it('returns 400 for unknown chat session', async () => {
     const cache = createFakeBoardCache([
       cachedProject(project('proj-a', '/projects/a')),
@@ -1955,6 +1995,62 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
         content: 'hello from agent',
         createdAt: expect.any(String),
         failedTools: ['bd_ready'],
+      },
+    ]);
+  });
+
+  it('persists and returns agentWarnings when fetching session messages (bdboard-l1t.6 N-e)', async () => {
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const messages = createInMemoryChatMessageRepository();
+    const app = createApp({
+      cache,
+      messages,
+      agent: createFakeAgent({
+        sendMessage: vi.fn(async () => ({
+          reply: 'partial from agent',
+          sessionId: '550e8400-e29b-41d4-a716-446655440099',
+          failedTools: [],
+          agentWarnings: [
+            'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+          ],
+          agentId: 'test-agent',
+        })),
+      }),
+    });
+
+    const sendRes = await app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(sendRes.status).toBe(200);
+    const sendBody = await sendRes.json();
+    expect(sendBody.agentWarnings).toEqual([
+      'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+    ]);
+
+    const getRes = await app.request(
+      `/api/chat/sessions/${sendBody.sessionId}/messages?projectId=proj-a`,
+      { method: 'GET' },
+      LOCAL_ENV,
+    );
+    expect(getRes.status).toBe(200);
+    const getBody = await getRes.json();
+    expect(getBody.messages).toEqual([
+      { role: 'user', content: 'hi', createdAt: expect.any(String) },
+      {
+        role: 'assistant',
+        content: 'partial from agent',
+        createdAt: expect.any(String),
+        agentWarnings: [
+          'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+        ],
       },
     ]);
   });

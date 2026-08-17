@@ -115,6 +115,7 @@ function toChatMessageResponseBody(
   readonly agentId: string;
   readonly model?: string;
   readonly failedTools?: readonly string[];
+  readonly agentWarnings?: readonly string[];
 } {
   return {
     reply: success.reply,
@@ -122,6 +123,7 @@ function toChatMessageResponseBody(
     agentId: success.agentId,
     ...(success.model !== undefined ? { model: success.model } : {}),
     ...(success.failedTools !== undefined ? { failedTools: success.failedTools } : {}),
+    ...(success.agentWarnings !== undefined ? { agentWarnings: success.agentWarnings } : {}),
   };
 }
 
@@ -319,6 +321,9 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         createdAt: row.createdAt.toISOString(),
         ...(row.failedTools !== undefined && row.failedTools.length > 0
           ? { failedTools: row.failedTools }
+          : {}),
+        ...(row.agentWarnings !== undefined && row.agentWarnings.length > 0
+          ? { agentWarnings: row.agentWarnings }
           : {}),
       })),
     });

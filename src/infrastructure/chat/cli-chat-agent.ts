@@ -174,6 +174,9 @@ function buildTurnResult(
     failedTools: parsed.failedTools,
     agentId,
     ...(model !== undefined ? { model } : {}),
+    ...(parsed.agentWarnings !== undefined && parsed.agentWarnings.length > 0
+      ? { agentWarnings: parsed.agentWarnings }
+      : {}),
   };
 }
 
