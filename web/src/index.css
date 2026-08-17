@@ -1942,6 +1942,7 @@ body {
 }
 
 .card {
+  position: relative;
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -1971,6 +1972,81 @@ body {
 .card.card-dragging {
   opacity: 0.45;
   border-style: dashed;
+}
+
+.card-bulk-selected {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-elevated));
+}
+
+.card-bulk-checkbox {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.card-bulk-checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.card:has(.card-bulk-checkbox) {
+  padding-right: 40px;
+}
+
+.bulk-action-bar {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bulk-action-bar-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-action-bar-count {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.bulk-action-bar-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bulk-action-failure {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-danger, #b42318);
+  word-break: break-word;
+}
+
+.bulk-action-error {
+  margin: 0;
+}
+
+.bulk-action-confirm-panel {
+  margin-top: 4px;
 }
 
 .card-title {
@@ -3857,6 +3933,31 @@ body {
 
   .card-title {
     font-size: 0.9375rem;
+  }
+
+  .card-bulk-checkbox {
+    min-width: 44px;
+    min-height: 44px;
+    top: 4px;
+    right: 4px;
+  }
+
+  .card-bulk-checkbox input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bulk-action-bar-buttons {
+    width: 100%;
+  }
+
+  .bulk-action-bar-buttons .btn {
+    flex: 1 1 auto;
+    min-height: 34px;
+  }
+
+  .bulk-action-bar-summary .btn {
+    min-height: 34px;
   }
 
   /* Direct children only: the inline copy/reveal buttons sit next to the value

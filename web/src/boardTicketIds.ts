@@ -1,4 +1,4 @@
-import { type BoardDto, LANES } from './api';
+import { type BoardCardDto, type BoardDto, LANES } from './api';
 
 /**
  * 1つの BoardDto から「ボード上に存在する」とみなせるチケットIDを集める。
@@ -29,6 +29,18 @@ export function collectBoardLabels(board: BoardDto, labels: Set<string>): void {
       for (const label of card.ticket.labels ?? []) {
         labels.add(label);
       }
+    }
+  }
+}
+
+/** ボード上のカードを ticket ID で引ける Map に集める(バルク選択の priority 参照等)。 */
+export function collectBoardCardsById(
+  board: BoardDto,
+  cardsById: Map<string, BoardCardDto>,
+): void {
+  for (const lane of LANES) {
+    for (const card of board.lanes[lane] ?? []) {
+      cardsById.set(card.ticket.id, card);
     }
   }
 }

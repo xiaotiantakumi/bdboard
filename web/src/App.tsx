@@ -9,6 +9,7 @@ import {
   fetchSessions,
   fetchStatus,
   fetchSyncHealth,
+  type BoardCardDto,
   type PendingDecisionDto,
   type PrBadgeDto,
   type ProjectDto,
@@ -18,6 +19,8 @@ import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView'
 import { BoardFilterBar } from './components/BoardFilterBar';
 import { BoardFilterPresets } from './components/BoardFilterPresets';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
+import { BulkActionBar } from './components/BulkActionBar';
+import { BulkSelectionProvider } from './components/BulkSelectionProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
 import { ActivityFeed } from './components/ActivityFeed';
 import { DailyDigest } from './components/DailyDigest';
@@ -58,7 +61,11 @@ import {
   type BoardFilterPresetState,
 } from './uiPersistedState';
 import { type StreamState, useBoardStream } from './useBoardStream';
-import { collectBoardTicketIds, collectBoardLabels } from './boardTicketIds';
+import {
+  collectBoardCardsById,
+  collectBoardLabels,
+  collectBoardTicketIds,
+} from './boardTicketIds';
 import { buildPaletteActions } from './paletteActions';
 
 function streamLabel(state: StreamState): string {
@@ -358,6 +365,21 @@ export function App() {
       collectBoardLabels(entry.board, labels);
     }
     return [...labels].sort();
+  }, [boardQuery.data]);
+
+  const boardCardsById = useMemo(() => {
+    const map = new Map<string, BoardCardDto>();
+    const data = boardQuery.data;
+    if (data === undefined) {
+      return map;
+    }
+    if (data.merged !== null) {
+      collectBoardCardsById(data.merged, map);
+    }
+    for (const entry of data.projects) {
+      collectBoardCardsById(entry.board, map);
+    }
+    return map;
   }, [boardQuery.data]);
 
   const projectRootPaths = useMemo(() => {
@@ -723,6 +745,7 @@ export function App() {
 
       <main className="main">
         <BoardDnDProvider>
+        <BulkSelectionProvider>
         {(view === 'merged' || view === 'split') && (
           <BoardFilterBar
             priorityCeiling={boardPriorityCeiling}
@@ -758,6 +781,9 @@ export function App() {
               ? boardQuery.error.message
               : 'ボードの読み込みに失敗しました'}
           </p>
+        )}
+        {(view === 'merged' || view === 'split') && (
+          <BulkActionBar cardsById={boardCardsById} />
         )}
         {boardQuery.data !== undefined && view === 'merged' && boardQuery.data.merged !== null && (
           (stalledOnly || isBoardFilterActive(boardFilter)) &&
@@ -860,6 +886,7 @@ export function App() {
           boardQuery.data.merged === null && (
             <p className="empty-message">統合ビューのデータがありません</p>
           )}
+        </BulkSelectionProvider>
         </BoardDnDProvider>
       </main>
 
