@@ -85,6 +85,18 @@ function streamLabel(state: StreamState): string {
   }
 }
 
+export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string {
+  const ageMinutes = Math.floor((nowMs - new Date(generatedAt).getTime()) / 60000);
+  if (ageMinutes < 1) {
+    return 'たった今';
+  }
+  if (ageMinutes < 60) {
+    return `${ageMinutes}分前`;
+  }
+  const ageHours = Math.floor(ageMinutes / 60);
+  return `${ageHours}時間前`;
+}
+
 export function App() {
   const [view, setView] = usePersistedState(
     UI_STORAGE_KEYS.view,
@@ -770,6 +782,17 @@ export function App() {
           <span className={`stream-dot ${streamState}`} />
           <span>{streamLabel(streamState)}</span>
         </div>
+
+        {boardQuery.data?.generatedAt !== null &&
+          boardQuery.data?.generatedAt !== undefined && (
+            <span
+              className="meta-text"
+              title={new Date(boardQuery.data.generatedAt).toLocaleString()}
+            >
+              盤面取得:{' '}
+              {formatGeneratedAtAge(boardQuery.data.generatedAt, Date.now())}
+            </span>
+          )}
 
         {lastRefreshAt !== null && lastRefreshAt !== undefined && (
           <span className="meta-text">

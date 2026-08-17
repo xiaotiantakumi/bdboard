@@ -16,7 +16,7 @@ import type {
   SyncHealthDto,
   TicketDetailDto,
 } from './api';
-import { App } from './App';
+import { App, formatGeneratedAtAge } from './App';
 import { UI_STORAGE_KEYS } from './uiPersistedState';
 
 class MockEventSource {
@@ -706,5 +706,82 @@ describe('keyboard shortcuts help (bdboard-3tw.119)', () => {
     expect(
       screen.getByRole('dialog', { name: 'キーボードショートカット' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('formatGeneratedAtAge (bdboard-3tw.125)', () => {
+  const nowMs = new Date('2026-01-01T12:00:00.000Z').getTime();
+
+  it('returns たった今 for less than 1 minute', () => {
+    expect(formatGeneratedAtAge('2026-01-01T11:59:30.000Z', nowMs)).toBe('たった今');
+  });
+
+  it('returns N分前 for 1–59 minutes', () => {
+    expect(formatGeneratedAtAge('2026-01-01T11:55:00.000Z', nowMs)).toBe('5分前');
+  });
+
+  it('returns N時間前 for 60+ minutes', () => {
+    expect(formatGeneratedAtAge('2026-01-01T10:00:00.000Z', nowMs)).toBe('2時間前');
+  });
+});
+
+describe('board generatedAt freshness (bdboard-3tw.125)', () => {
+  const fixedNowMs = new Date('2026-01-01T12:00:00.000Z').getTime();
+
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', MockEventSource);
+    window.history.replaceState(null, '', '/');
+    localStorage.clear();
+
+    fetchProjectsMock.mockResolvedValue([
+      {
+        id: 'proj-1',
+        name: 'Project One',
+        rootPath: '/projects/a',
+        prefixes: ['bdboard'],
+        sessionCount: 0,
+        activeSessionCount: 0,
+        sessions: [],
+      } satisfies ProjectDto,
+    ]);
+    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
+    fetchStatusMock.mockResolvedValue({
+      lastRefreshAt: '2026-01-01T00:00:00.000Z',
+      errors: [],
+      projectCount: 1,
+    } satisfies StatusDto);
+    fetchBoardMock.mockResolvedValue({
+      ...emptyBoard,
+      generatedAt: '2026-01-01T11:55:00.000Z',
+    });
+    fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
+    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
+    fetchChatAvailabilityMock.mockResolvedValue({
+      availability: 'unavailable',
+    } satisfies ChatAvailabilityDto);
+    fetchTicketMock.mockResolvedValue(sampleTicket);
+    fetchTicketCommentsMock.mockResolvedValue([] satisfies CommentDto[]);
+    fetchTunnelMock.mockResolvedValue({
+      state: 'off',
+      available: true,
+    });
+    fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
+
+    vi.spyOn(Date, 'now').mockReturnValue(fixedNowMs);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('renders board generatedAt freshness near stream indicator', async () => {
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('盤面取得: 5分前')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/最終更新:/)).toBeInTheDocument();
   });
 });
