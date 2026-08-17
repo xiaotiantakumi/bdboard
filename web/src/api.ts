@@ -1081,6 +1081,7 @@ export interface ChatThreadDto {
   sessionId: string;
   agentId: string;
   title: string | null;
+  pinned: boolean;
   updatedAt: string;
 }
 
@@ -1125,6 +1126,21 @@ export function deleteChatThread(sessionId: string, projectId: string): Promise<
   return fetchJson<void>(
     `/api/chat/sessions/${encodeURIComponent(sessionId)}?${params.toString()}`,
     { method: 'DELETE' },
+  );
+}
+
+export function updateChatThread(
+  sessionId: string,
+  projectId: string,
+  patch: { title?: string | null; pinned?: boolean },
+): Promise<ChatThreadDto> {
+  return fetchJson<ChatThreadDto>(
+    `/api/chat/sessions/${encodeURIComponent(sessionId)}/thread`,
+    {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ projectId, ...patch }),
+    },
   );
 }
 

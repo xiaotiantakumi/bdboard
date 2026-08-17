@@ -48,10 +48,10 @@ describe('chat thread API', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('fetchChatThreads encodes projectId and returns DTOs', async () => {
-    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify([{ sessionId: 's1', agentId: 'claude', title: 'hello', updatedAt: '2026-01-01T00:00:00Z' }]))));
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(JSON.stringify([{ sessionId: 's1', agentId: 'claude', title: 'hello', pinned: false, updatedAt: '2026-01-01T00:00:00Z' }]))));
     vi.stubGlobal('fetch', fetchMock);
     await expect(fetchChatThreads('project/a')).resolves.toEqual([
-      { sessionId: 's1', agentId: 'claude', title: 'hello', updatedAt: '2026-01-01T00:00:00Z' },
+      { sessionId: 's1', agentId: 'claude', title: 'hello', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
     ]);
     expect(fetchMock).toHaveBeenCalledWith('/api/chat/threads?projectId=project%2Fa', undefined);
   });

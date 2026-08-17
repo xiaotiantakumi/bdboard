@@ -12,12 +12,16 @@ interface CountRow {
 interface ChatSessionRow {
   readonly agentId: string;
   readonly model: string | null;
+  readonly title: string | null;
+  readonly pinned: number;
 }
 
 interface SessionListRow {
   readonly sessionId: string;
   readonly agentId: string;
   readonly lastUsedAt: string;
+  readonly title: string | null;
+  readonly pinned: number;
 }
 
 /**
@@ -43,10 +47,17 @@ export function createSqliteChatSessionRepository(
     VALUES (?, ?, ?, ?)
   `);
   const lookupStmt = db.prepare(`
-    SELECT agent_id AS agentId, model FROM chat_sessions WHERE project_id = ? AND session_id = ? LIMIT 1
+    SELECT agent_id AS agentId, model, title, pinned
+    FROM chat_sessions WHERE project_id = ? AND session_id = ? LIMIT 1
   `);
   const updateModelStmt = db.prepare(`
     UPDATE chat_sessions SET model = ? WHERE project_id = ? AND session_id = ?
+  `);
+  const renameStmt = db.prepare(`
+    UPDATE chat_sessions SET title = ? WHERE project_id = ? AND session_id = ?
+  `);
+  const setPinnedStmt = db.prepare(`
+    UPDATE chat_sessions SET pinned = ? WHERE project_id = ? AND session_id = ?
   `);
   const countForProjectStmt = db.prepare(
     `SELECT COUNT(*) AS count FROM chat_sessions WHERE project_id = ?`,
@@ -61,7 +72,8 @@ export function createSqliteChatSessionRepository(
     )
   `);
   const listByProjectStmt = db.prepare(`
-    SELECT session_id AS sessionId, agent_id AS agentId, last_used_at AS lastUsedAt
+    SELECT session_id AS sessionId, agent_id AS agentId, last_used_at AS lastUsedAt,
+           title, pinned
     FROM chat_sessions WHERE project_id = ? ORDER BY last_used_at DESC, rowid DESC
   `);
   const forgetStmt = db.prepare(`DELETE FROM chat_sessions WHERE project_id = ? AND session_id = ?`);
@@ -90,14 +102,25 @@ export function createSqliteChatSessionRepository(
       updateModelStmt.run(model, projectId, sessionId);
     },
 
+    rename(projectId: string, sessionId: string, title: string | null): void {
+      renameStmt.run(title, projectId, sessionId);
+    },
+
+    setPinned(projectId: string, sessionId: string, pinned: boolean): void {
+      setPinnedStmt.run(pinned ? 1 : 0, projectId, sessionId);
+    },
+
     lookup(projectId: string, sessionId: string): ChatSessionRecord | undefined {
       const row = lookupStmt.get(projectId, sessionId) as ChatSessionRow | undefined;
       if (row === undefined) {
         return undefined;
       }
-      return row.model === null
-        ? { agentId: row.agentId }
-        : { agentId: row.agentId, model: row.model };
+      return {
+        agentId: row.agentId,
+        ...(row.model !== null ? { model: row.model } : {}),
+        ...(row.title !== null ? { title: row.title } : {}),
+        ...(row.pinned !== 0 ? { pinned: true } : {}),
+      };
     },
 
     listByProject(projectId: string) {
@@ -105,6 +128,8 @@ export function createSqliteChatSessionRepository(
         sessionId: row.sessionId,
         agentId: row.agentId,
         lastUsedAt: new Date(row.lastUsedAt),
+        title: row.title,
+        pinned: row.pinned !== 0,
       }));
     },
 

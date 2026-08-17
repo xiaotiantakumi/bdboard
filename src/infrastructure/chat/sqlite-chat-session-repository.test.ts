@@ -258,4 +258,67 @@ describe('createSqliteChatSessionRepository', () => {
       agentId: 'codex',
     });
   });
+
+  it('round-trips title and pinned through rename, setPinned, lookup, and listByProject', () => {
+    const path_ = makeTmpDbPath('bdboard-chat-sessions-title-pinned-');
+    const first = createSqliteChatSessionRepository(path_);
+    first.remember('project-a', 'session-1', 'claude');
+    first.rename('project-a', 'session-1', '運用相談');
+    first.setPinned('project-a', 'session-1', true);
+
+    const second = createSqliteChatSessionRepository(path_);
+    expect(second.lookup('project-a', 'session-1')).toEqual({
+      agentId: 'claude',
+      title: '運用相談',
+      pinned: true,
+    });
+    expect(second.listByProject('project-a')).toEqual([
+      expect.objectContaining({
+        sessionId: 'session-1',
+        title: '運用相談',
+        pinned: true,
+      }),
+    ]);
+  });
+
+  it('clears a custom title when rename is called with null', () => {
+    const path_ = makeTmpDbPath('bdboard-chat-sessions-title-clear-');
+    const repo = createSqliteChatSessionRepository(path_);
+    repo.remember('project-a', 'session-1', 'claude');
+    repo.rename('project-a', 'session-1', '運用相談');
+    repo.rename('project-a', 'session-1', null);
+
+    expect(repo.lookup('project-a', 'session-1')).toEqual({ agentId: 'claude' });
+    expect(repo.listByProject('project-a')[0]?.title).toBeNull();
+    expect(repo.listByProject('project-a')[0]?.pinned).toBe(false);
+  });
+
+  it('opens a database without title/pinned columns and migrates persistence', () => {
+    const path_ = makeTmpDbPath('bdboard-chat-sessions-migrate-title-pinned-');
+    const db = openCacheDatabase(path_);
+    db.exec(`ALTER TABLE chat_sessions DROP COLUMN title`);
+    db.exec(`ALTER TABLE chat_sessions DROP COLUMN pinned`);
+    db.prepare(
+      `INSERT INTO chat_sessions (project_id, session_id, last_used_at, agent_id) VALUES (?, ?, ?, ?)`,
+    ).run('project-a', 'legacy-session', '2026-08-15T00:00:00.000Z', 'claude');
+    db.close();
+
+    const repo = createSqliteChatSessionRepository(path_);
+    expect(repo.listByProject('project-a')[0]).toEqual(
+      expect.objectContaining({
+        sessionId: 'legacy-session',
+        title: null,
+        pinned: false,
+      }),
+    );
+    repo.rename('project-a', 'legacy-session', 'legacy title');
+    repo.setPinned('project-a', 'legacy-session', true);
+
+    const restarted = createSqliteChatSessionRepository(path_);
+    expect(restarted.lookup('project-a', 'legacy-session')).toEqual({
+      agentId: 'claude',
+      title: 'legacy title',
+      pinned: true,
+    });
+  });
 });

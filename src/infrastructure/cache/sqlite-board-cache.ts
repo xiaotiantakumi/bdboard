@@ -255,6 +255,24 @@ function ensureChatSessionsModelColumn(db: Database.Database): void {
   }
 }
 
+function ensureChatSessionsTitleColumn(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(chat_sessions)`)
+    .all() as TableInfoRow[];
+  if (!columns.some((column) => column.name === 'title')) {
+    db.exec(`ALTER TABLE chat_sessions ADD COLUMN title TEXT`);
+  }
+}
+
+function ensureChatSessionsPinnedColumn(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(chat_sessions)`)
+    .all() as TableInfoRow[];
+  if (!columns.some((column) => column.name === 'pinned')) {
+    db.exec(`ALTER TABLE chat_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
 function ensureChatMessagesFailedToolsColumn(db: Database.Database): void {
   const columns = db
     .prepare(`PRAGMA table_info(chat_messages)`)
@@ -342,6 +360,8 @@ function initializeSchema(db: Database.Database, recreate: boolean): void {
       last_used_at TEXT NOT NULL,
       agent_id TEXT NOT NULL DEFAULT 'claude',
       model TEXT,
+      title TEXT,
+      pinned INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (project_id, session_id)
     );
     CREATE TABLE IF NOT EXISTS chat_messages (
@@ -373,6 +393,9 @@ function initializeSchema(db: Database.Database, recreate: boolean): void {
   ensureChatSessionsAgentIdColumn(db);
   // model 列追加は in-place 移行なので SCHEMA_VERSION を上げない。
   ensureChatSessionsModelColumn(db);
+  // title / pinned 列追加は in-place 移行なので SCHEMA_VERSION を上げない。
+  ensureChatSessionsTitleColumn(db);
+  ensureChatSessionsPinnedColumn(db);
   // failed_tools 列追加は in-place 移行なので SCHEMA_VERSION を上げない。
   ensureChatMessagesFailedToolsColumn(db);
   // agent_warnings 列追加は in-place 移行なので SCHEMA_VERSION を上げない。

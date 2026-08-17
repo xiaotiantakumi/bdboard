@@ -7,6 +7,8 @@ import type {
 export interface ChatSessionStore {
   remember(projectId: string, sessionId: string, agentId: string): void;
   updateModel(projectId: string, sessionId: string, model: string): void;
+  rename(projectId: string, sessionId: string, title: string | null): void;
+  setPinned(projectId: string, sessionId: string, pinned: boolean): void;
   lookup(projectId: string, sessionId: string): ChatSessionRecord | undefined;
   listByProject(projectId: string): ReturnType<ChatSessionRepository['listByProject']>;
   forget(projectId: string, sessionId: string): void;
@@ -69,6 +71,29 @@ export function createInMemoryChatSessionRepository(options?: {
       entry.known.set(sessionId, { ...record, model });
     },
 
+    rename(projectId: string, sessionId: string, title: string | null): void {
+      const entry = sessionsByProject.get(projectId);
+      const record = entry?.known.get(sessionId);
+      if (entry === undefined || record === undefined) {
+        return;
+      }
+      if (title === null) {
+        const { title: _removed, ...rest } = record;
+        entry.known.set(sessionId, rest);
+        return;
+      }
+      entry.known.set(sessionId, { ...record, title });
+    },
+
+    setPinned(projectId: string, sessionId: string, pinned: boolean): void {
+      const entry = sessionsByProject.get(projectId);
+      const record = entry?.known.get(sessionId);
+      if (entry === undefined || record === undefined) {
+        return;
+      }
+      entry.known.set(sessionId, { ...record, pinned });
+    },
+
     lookup(projectId: string, sessionId: string): ChatSessionRecord | undefined {
       const entry = sessionsByProject.get(projectId);
       return entry?.known.get(sessionId);
@@ -76,11 +101,16 @@ export function createInMemoryChatSessionRepository(options?: {
 
     listByProject(projectId: string) {
       const entry = sessionsByProject.get(projectId);
-      return [...(entry?.order ?? [])].reverse().map((sessionId) => ({
-        sessionId,
-        agentId: entry!.known.get(sessionId)!.agentId,
-        lastUsedAt: new Date(0),
-      }));
+      return [...(entry?.order ?? [])].reverse().map((sessionId) => {
+        const record = entry!.known.get(sessionId)!;
+        return {
+          sessionId,
+          agentId: record.agentId,
+          lastUsedAt: new Date(0),
+          title: record.title ?? null,
+          pinned: record.pinned ?? false,
+        };
+      });
     },
 
     forget(projectId: string, sessionId: string): void {
@@ -117,6 +147,14 @@ export function createChatSessionStore(options?: {
 
     updateModel(projectId: string, sessionId: string, model: string): void {
       repository.updateModel(projectId, sessionId, model);
+    },
+
+    rename(projectId: string, sessionId: string, title: string | null): void {
+      repository.rename(projectId, sessionId, title);
+    },
+
+    setPinned(projectId: string, sessionId: string, pinned: boolean): void {
+      repository.setPinned(projectId, sessionId, pinned);
     },
 
     lookup(projectId: string, sessionId: string): ChatSessionRecord | undefined {

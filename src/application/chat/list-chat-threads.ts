@@ -5,6 +5,7 @@ export interface ChatThread {
   readonly sessionId: string;
   readonly agentId: string;
   readonly title: string | null;
+  readonly pinned: boolean;
   readonly updatedAt: Date;
 }
 
@@ -25,15 +26,23 @@ export function listChatThreads(
   return projectSessions
     .map((session) => {
       const summary = summaries.get(session.sessionId);
+      const customTitle =
+        session.title !== null && session.title.length > 0 ? session.title : undefined;
       return {
         sessionId: session.sessionId,
         agentId: session.agentId,
         title:
-          summary?.firstUserContentPrefix === undefined
+          customTitle ??
+          (summary?.firstUserContentPrefix === undefined
             ? null
-            : summarize(summary.firstUserContentPrefix),
+            : summarize(summary.firstUserContentPrefix)),
+        pinned: session.pinned,
         updatedAt: summary?.lastMessageAt ?? session.lastUsedAt,
       };
     })
-    .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+    .sort(
+      (a, b) =>
+        Number(b.pinned) - Number(a.pinned) ||
+        b.updatedAt.getTime() - a.updatedAt.getTime(),
+    );
 }

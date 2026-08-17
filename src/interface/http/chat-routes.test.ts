@@ -1879,8 +1879,127 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     const res = await app.request('/api/chat/threads?projectId=proj-a', {}, LOCAL_ENV);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
-      expect.objectContaining({ sessionId: sessionA, agentId: 'claude', title: 'project A title' }),
+      expect.objectContaining({ sessionId: sessionA, agentId: 'claude', title: 'project A title', pinned: false }),
     ]);
+  });
+
+  it('patches a chat thread title and pinned state', async () => {
+    const store = createChatSessionStore();
+    const messages = createInMemoryChatMessageRepository();
+    const sessionId = '550e8400-e29b-41d4-a716-446655440099';
+    store.remember('proj-a', sessionId, 'claude');
+    messages.append(sessionId, [{ role: 'user', content: 'auto title from first message', createdAt: NOW }]);
+    const app = createApp({ store, messages });
+
+    const renamed = await app.request(
+      `/api/chat/sessions/${sessionId}/thread`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', title: '  運用相談  ' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toEqual({
+      sessionId,
+      agentId: 'claude',
+      title: '運用相談',
+      pinned: false,
+      updatedAt: NOW.toISOString(),
+    });
+
+    const pinned = await app.request(
+      `/api/chat/sessions/${sessionId}/thread`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', pinned: true }),
+      },
+      LOCAL_ENV,
+    );
+    expect(pinned.status).toBe(200);
+    expect(await pinned.json()).toEqual({
+      sessionId,
+      agentId: 'claude',
+      title: '運用相談',
+      pinned: true,
+      updatedAt: NOW.toISOString(),
+    });
+
+    const cleared = await app.request(
+      `/api/chat/sessions/${sessionId}/thread`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', title: null }),
+      },
+      LOCAL_ENV,
+    );
+    expect(cleared.status).toBe(200);
+    expect(await cleared.json()).toEqual({
+      sessionId,
+      agentId: 'claude',
+      title: 'auto title from first message',
+      pinned: true,
+      updatedAt: NOW.toISOString(),
+    });
+  });
+
+  it('rejects invalid thread patch requests', async () => {
+    const store = createChatSessionStore();
+    const messages = createInMemoryChatMessageRepository();
+    const sessionId = '550e8400-e29b-41d4-a716-446655440099';
+    store.remember('proj-a', sessionId, 'claude');
+    const app = createApp({ store, messages });
+
+    const invalidSession = await app.request(
+      '/api/chat/sessions/-rf/thread',
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', title: 'x' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(invalidSession.status).toBe(400);
+    expect(await invalidSession.json()).toEqual({ error: 'invalid session id' });
+
+    const unknown = await app.request(
+      `/api/chat/sessions/550e8400-e29b-41d4-a716-446655440098/thread`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', title: 'x' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({ error: 'unknown chat session' });
+
+    const emptyPatch = await app.request(
+      `/api/chat/sessions/${sessionId}/thread`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(emptyPatch.status).toBe(400);
+    expect(await emptyPatch.json()).toEqual({ error: 'invalid request body' });
+
+    const blankTitle = await app.request(
+      `/api/chat/sessions/${sessionId}/thread`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', title: '   ' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(blankTitle.status).toBe(400);
+    expect(await blankTitle.json()).toEqual({ error: 'invalid request body' });
   });
 
   it('requires projectId and keeps thread listing behind the chat guard', async () => {
