@@ -1151,6 +1151,11 @@ body {
   color: #007aff;
 }
 
+.hygiene-kind-dependency_cycle {
+  background: rgba(255, 45, 85, 0.14);
+  color: #c41e3a;
+}
+
 .hygiene-kind-merged_leftover {
   background: rgba(255, 149, 0, 0.14);
   color: #c93400;
@@ -1246,6 +1251,29 @@ body {
 
 .hygiene-cleanup-copy:hover {
   border-color: var(--color-border-strong);
+}
+
+.hygiene-cycle-tickets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 4px;
+}
+
+.hygiene-cycle-ticket-link {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.hygiene-cycle-ticket-link:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
 }
 
 .hygiene-repair {

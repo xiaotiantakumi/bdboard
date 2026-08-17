@@ -14,12 +14,18 @@ import type { Ticket } from './ticket.js';
 import type { TicketId } from './ticket-id.js';
 
 export type HygieneIssueKind =
+  | 'dependency_cycle'
   | 'overdue_defer'
   | 'stale_epic'
   | 'stale_in_progress'
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'merged_leftover';
+
+export interface HygieneCycleEdge {
+  readonly issueId: TicketId;
+  readonly dependsOnId: TicketId;
+}
 
 export interface HygieneCleanupTarget {
   readonly repoRootPath: string;
@@ -37,6 +43,10 @@ export interface HygieneIssue {
   readonly cleanup?: HygieneCleanupTarget;
   /** overdue_defer のときだけ入る。Undo で元の日付へ戻すための材料 */
   readonly deferUntil?: string;
+  /** dependency_cycle のときだけ入る */
+  readonly cycleTicketIds?: readonly TicketId[];
+  /** dependency_cycle のときだけ入る */
+  readonly cycleEdges?: readonly HygieneCycleEdge[];
 }
 
 export interface HygieneThresholds {
@@ -262,7 +272,146 @@ function checkMergedLeftover(
   };
 }
 
+export interface DependencyCycle {
+  readonly ticketIds: readonly TicketId[];
+  readonly edges: readonly HygieneCycleEdge[];
+}
+
+function buildBlocksIndex(
+  tickets: readonly Ticket[],
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): Map<TicketId, TicketId[]> {
+  const index = new Map<TicketId, TicketId[]>();
+
+  for (const ticket of tickets) {
+    for (const edge of ticket.dependencies) {
+      if (edge.kind !== 'blocks') {
+        continue;
+      }
+      if (!ticketById.has(edge.issueId) || !ticketById.has(edge.dependsOnId)) {
+        continue;
+      }
+
+      let successors = index.get(edge.dependsOnId);
+      if (successors === undefined) {
+        successors = [];
+        index.set(edge.dependsOnId, successors);
+      }
+      successors.push(edge.issueId);
+    }
+  }
+
+  return index;
+}
+
+function compareCycleEdges(
+  a: HygieneCycleEdge,
+  b: HygieneCycleEdge,
+): number {
+  const issueDiff = a.issueId.localeCompare(b.issueId);
+  if (issueDiff !== 0) {
+    return issueDiff;
+  }
+  return a.dependsOnId.localeCompare(b.dependsOnId);
+}
+
+function collectCycleEdges(
+  tickets: readonly Ticket[],
+  memberSet: ReadonlySet<TicketId>,
+): readonly HygieneCycleEdge[] {
+  const seen = new Set<string>();
+  const edges: HygieneCycleEdge[] = [];
+
+  for (const ticket of tickets) {
+    for (const edge of ticket.dependencies) {
+      if (edge.kind !== 'blocks') {
+        continue;
+      }
+      if (!memberSet.has(edge.issueId) || !memberSet.has(edge.dependsOnId)) {
+        continue;
+      }
+
+      const key = `${edge.issueId}\0${edge.dependsOnId}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      edges.push({ issueId: edge.issueId, dependsOnId: edge.dependsOnId });
+    }
+  }
+
+  return edges.sort(compareCycleEdges);
+}
+
+export function findDependencyCycles(
+  tickets: readonly Ticket[],
+): readonly DependencyCycle[] {
+  const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket] as const));
+  const blocksIndex = buildBlocksIndex(tickets, ticketById);
+
+  function neighbors(id: TicketId): readonly TicketId[] {
+    return (blocksIndex.get(id) ?? []).filter((successor) => ticketById.has(successor));
+  }
+
+  let indexCounter = 0;
+  const indices = new Map<TicketId, number>();
+  const lowlink = new Map<TicketId, number>();
+  const onStack = new Set<TicketId>();
+  const tarjanStack: TicketId[] = [];
+  const sccMembers: TicketId[][] = [];
+
+  function strongConnect(v: TicketId): void {
+    indices.set(v, indexCounter);
+    lowlink.set(v, indexCounter);
+    indexCounter += 1;
+    tarjanStack.push(v);
+    onStack.add(v);
+
+    for (const w of neighbors(v)) {
+      if (!indices.has(w)) {
+        strongConnect(w);
+        lowlink.set(v, Math.min(lowlink.get(v)!, lowlink.get(w)!));
+      } else if (onStack.has(w)) {
+        lowlink.set(v, Math.min(lowlink.get(v)!, indices.get(w)!));
+      }
+    }
+
+    if (lowlink.get(v) === indices.get(v)) {
+      const component: TicketId[] = [];
+      let w: TicketId;
+      do {
+        w = tarjanStack.pop()!;
+        onStack.delete(w);
+        component.push(w);
+      } while (w !== v);
+      sccMembers.push(component);
+    }
+  }
+
+  for (const ticket of tickets) {
+    if (!indices.has(ticket.id)) {
+      strongConnect(ticket.id);
+    }
+  }
+
+  const cycles: DependencyCycle[] = [];
+
+  for (const component of sccMembers) {
+    if (component.length < 2) {
+      continue;
+    }
+
+    const ticketIds = [...component].sort((a, b) => a.localeCompare(b));
+    const memberSet = new Set(ticketIds);
+    const edges = collectCycleEdges(tickets, memberSet);
+    cycles.push({ ticketIds, edges });
+  }
+
+  return cycles.sort((a, b) => a.ticketIds[0]!.localeCompare(b.ticketIds[0]!));
+}
+
 const KIND_ORDER: readonly HygieneIssueKind[] = [
+  'dependency_cycle',
   'overdue_defer',
   'stale_epic',
   'stale_in_progress',
@@ -336,6 +485,24 @@ export function checkHygiene(
         issues.push(mergedLeftover);
       }
     }
+  }
+
+  for (const cycle of findDependencyCycles(tickets)) {
+    const representativeId = cycle.ticketIds[0]!;
+    const representative = ticketById.get(representativeId);
+    if (representative === undefined) {
+      continue;
+    }
+
+    issues.push({
+      kind: 'dependency_cycle',
+      ticketId: representativeId,
+      projectId: representative.projectId,
+      message: `${cycle.ticketIds.length}件のチケットが循環依存(blocks)しています: ${cycle.ticketIds.join(', ')}`,
+      severity: 'warning',
+      cycleTicketIds: cycle.ticketIds,
+      cycleEdges: cycle.edges,
+    });
   }
 
   return [...issues].sort(compareIssues);

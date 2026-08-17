@@ -103,6 +103,7 @@ function renderHygienePanel(
   options?: {
     projectIds?: readonly string[];
     onSelectTicket?: (ticketId: string) => void;
+    projectRootPaths?: ReadonlyMap<string, string>;
     queryClient?: QueryClient;
   },
 ) {
@@ -121,6 +122,7 @@ function renderHygienePanel(
       <HygienePanel
         projectIds={options?.projectIds ?? []}
         onSelectTicket={onSelectTicket}
+        projectRootPaths={options?.projectRootPaths}
       />
     </QueryClientProvider>,
   );
@@ -305,6 +307,97 @@ describe('HygienePanel', () => {
     );
 
     expect(onSelectTicket).toHaveBeenCalledWith('bdboard-merged-leftover');
+  });
+
+  it('renders dependency_cycle tickets as clickable links and removal commands', async () => {
+    const user = userEvent.setup();
+    const removalScript =
+      "bd dep remove 'bdboard-a' 'bdboard-b'\n" +
+      "bd dep remove 'bdboard-b' 'bdboard-a'";
+
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-a',
+        kind: 'dependency_cycle',
+        message: 'blocks 依存に循環があります',
+        cycleTicketIds: ['bdboard-a', 'bdboard-b'],
+        cycleEdges: [
+          { issueId: 'bdboard-a', dependsOnId: 'bdboard-b' },
+          { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
+        ],
+      }),
+    ]);
+
+    const { onSelectTicket, container } = renderHygienePanel();
+
+    expect(await screen.findByText('循環依存')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-a' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-b' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'bdboard-a' }));
+    expect(onSelectTicket).toHaveBeenCalledWith('bdboard-a');
+
+    await user.click(screen.getByRole('button', { name: 'bdboard-b' }));
+    expect(onSelectTicket).toHaveBeenCalledWith('bdboard-b');
+
+    const cleanupCommand = container.querySelector('.hygiene-cleanup-command');
+    expect(cleanupCommand).not.toBeNull();
+    expect(cleanupCommand!.textContent).toBe(removalScript);
+  });
+
+  it('copies dependency_cycle removal commands and shows success feedback', async () => {
+    const user = userEvent.setup();
+    const removalScript =
+      "bd dep remove 'bdboard-a' 'bdboard-b'\n" +
+      "bd dep remove 'bdboard-b' 'bdboard-a'";
+
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-a',
+        kind: 'dependency_cycle',
+        message: 'blocks 依存に循環があります',
+        cycleTicketIds: ['bdboard-a', 'bdboard-b'],
+        cycleEdges: [
+          { issueId: 'bdboard-a', dependsOnId: 'bdboard-b' },
+          { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
+        ],
+      }),
+    ]);
+
+    renderHygienePanel();
+
+    await screen.findByText('循環依存');
+    await user.click(screen.getByRole('button', { name: '解消コマンドをコピー' }));
+
+    expect(copyTextToClipboardMock).toHaveBeenCalledWith(removalScript);
+    expect(await screen.findByText('掃除コマンドをコピーしました')).toBeInTheDocument();
+  });
+
+  it('includes -C in dependency_cycle removal commands when projectRootPaths is provided', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-a',
+        projectId: 'proj-a',
+        kind: 'dependency_cycle',
+        message: 'blocks 依存に循環があります',
+        cycleTicketIds: ['bdboard-a', 'bdboard-b'],
+        cycleEdges: [
+          { issueId: 'bdboard-a', dependsOnId: 'bdboard-b' },
+          { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
+        ],
+      }),
+    ]);
+
+    const projectRootPaths = new Map<string, string>([['proj-a', '/repo/root']]);
+    const { container } = renderHygienePanel({ projectRootPaths });
+
+    await screen.findByText('循環依存');
+    const cleanupCommand = container.querySelector('.hygiene-cleanup-command');
+    expect(cleanupCommand).not.toBeNull();
+    expect(cleanupCommand!.textContent).toBe(
+      "bd -C '/repo/root' dep remove 'bdboard-a' 'bdboard-b'\n" +
+        "bd -C '/repo/root' dep remove 'bdboard-b' 'bdboard-a'",
+    );
   });
 });
 

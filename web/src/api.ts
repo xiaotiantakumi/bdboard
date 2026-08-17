@@ -279,12 +279,18 @@ export interface CfdStatsDto {
 }
 
 export type HygieneIssueKindDto =
+  | 'dependency_cycle'
   | 'overdue_defer'
   | 'stale_epic'
   | 'stale_in_progress'
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'merged_leftover';
+
+export interface HygieneCycleEdgeDto {
+  issueId: string;
+  dependsOnId: string;
+}
 
 export interface HygieneCleanupTargetDto {
   repoRootPath: string;
@@ -301,6 +307,8 @@ export interface HygieneIssueDto {
   cleanup?: HygieneCleanupTargetDto;
   /** overdue_defer のときだけ入る。Undo で元の日付へ再 defer するための材料。サーバーがローカルタイムゾーンで `YYYY-MM-DD` に整形済み */
   deferUntil?: string;
+  cycleTicketIds?: string[];
+  cycleEdges?: HygieneCycleEdgeDto[];
 }
 
 export interface PendingDecisionDto {

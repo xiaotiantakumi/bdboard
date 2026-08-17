@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildBdCommand,
+  buildDependencyCycleRemovalCommands,
   buildWorktreeCleanupCommands,
   DEFER_DAYS,
   formatDeferDate,
+  formatDependencyCycleRemovalScript,
   formatWorktreeCleanupScript,
   shellQuote,
 } from './bdCommands';
@@ -193,5 +195,59 @@ describe('formatWorktreeCleanupScript', () => {
         branchName: null,
       }),
     ).toBe('');
+  });
+});
+
+describe('buildDependencyCycleRemovalCommands', () => {
+  it('returns bd dep remove without -C when rootPath is omitted', () => {
+    expect(
+      buildDependencyCycleRemovalCommands([
+        { issueId: 'bdboard-a', dependsOnId: 'bdboard-b' },
+      ]),
+    ).toEqual(["bd dep remove 'bdboard-a' 'bdboard-b'"]);
+  });
+
+  it('returns bd -C dep remove when rootPath is provided', () => {
+    expect(
+      buildDependencyCycleRemovalCommands(
+        [{ issueId: 'bdboard-a', dependsOnId: 'bdboard-b' }],
+        '/repo/root',
+      ),
+    ).toEqual(["bd -C '/repo/root' dep remove 'bdboard-a' 'bdboard-b'"]);
+  });
+
+  it('returns one command per edge', () => {
+    expect(
+      buildDependencyCycleRemovalCommands([
+        { issueId: 'bdboard-a', dependsOnId: 'bdboard-b' },
+        { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
+      ]),
+    ).toEqual([
+      "bd dep remove 'bdboard-a' 'bdboard-b'",
+      "bd dep remove 'bdboard-b' 'bdboard-a'",
+    ]);
+  });
+});
+
+describe('formatDependencyCycleRemovalScript', () => {
+  it('joins commands with newlines', () => {
+    expect(
+      formatDependencyCycleRemovalScript([
+        { issueId: 'bdboard-a', dependsOnId: 'bdboard-b' },
+        { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
+      ]),
+    ).toBe(
+      "bd dep remove 'bdboard-a' 'bdboard-b'\n" +
+        "bd dep remove 'bdboard-b' 'bdboard-a'",
+    );
+  });
+
+  it('includes -C when rootPath is provided', () => {
+    expect(
+      formatDependencyCycleRemovalScript(
+        [{ issueId: 'bdboard-a', dependsOnId: 'bdboard-b' }],
+        '/repo/root',
+      ),
+    ).toBe("bd -C '/repo/root' dep remove 'bdboard-a' 'bdboard-b'");
   });
 });
