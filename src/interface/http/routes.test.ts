@@ -1514,7 +1514,10 @@ describe('createApiRoutes', () => {
       readMergeSlotSignal: vi.fn(async () => ({
         status: 'in_progress',
         holder: 'session-merge-holder',
-        updatedAt: '2026-08-17T10:47:14Z',
+        // 15 minutes before the suite's frozen NOW, so heldForMs below is a
+        // real positive delta rather than clamping to 0 (a future-relative-
+        // to-NOW updatedAt would silently mask a heldForMs regression).
+        updatedAt: '2026-06-01T11:45:00.000Z',
       })),
     };
 
@@ -1529,8 +1532,8 @@ describe('createApiRoutes', () => {
         present: true,
         held: true,
         holder: 'session-merge-holder',
-        heldSinceIso: '2026-08-17T10:47:14Z',
-        heldForMs: 0,
+        heldSinceIso: '2026-06-01T11:45:00.000Z',
+        heldForMs: 15 * 60_000,
         isLongHeld: false,
       },
     ]);
