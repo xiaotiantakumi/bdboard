@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto } from '../api';
-import { CardItem } from './LaneColumn';
+import { CardItem, LaneColumn } from './LaneColumn';
 import { BulkSelectionProvider } from './BulkSelectionProvider';
 
 function makeCard(id: string): BoardCardDto {
@@ -262,5 +262,96 @@ describe('CardItem bulk selection checkbox', () => {
     ).toBeChecked();
     expect(card).toHaveAttribute('aria-selected', 'true');
     expect(card.className).toContain('card-bulk-selected');
+  });
+});
+
+describe('LaneColumn collapse', () => {
+  const emptyMaps = {
+    projectNames: new Map<string, string>(),
+    projectActiveSessions: new Map<string, number>(),
+    pendingDecisionIds: new Set<string>(),
+    prLinksById: new Map<string, never>(),
+  };
+
+  it('calls onToggleCollapse when the header is clicked', () => {
+    const onToggleCollapse = vi.fn();
+
+    render(
+      <LaneColumn
+        lane="ready"
+        cards={[makeCard('bdboard-collapse-1')]}
+        showProjectName={false}
+        projectNames={emptyMaps.projectNames}
+        projectActiveSessions={emptyMaps.projectActiveSessions}
+        pendingDecisionIds={emptyMaps.pendingDecisionIds}
+        prLinksById={emptyMaps.prLinksById}
+        onCardClick={() => {}}
+        onToggleCollapse={onToggleCollapse}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /着手可能/ }));
+
+    expect(onToggleCollapse).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides cards when collapsed but keeps the count badge visible', () => {
+    render(
+      <LaneColumn
+        lane="ready"
+        cards={[makeCard('bdboard-collapse-2'), makeCard('bdboard-collapse-3')]}
+        showProjectName={false}
+        projectNames={emptyMaps.projectNames}
+        projectActiveSessions={emptyMaps.projectActiveSessions}
+        pendingDecisionIds={emptyMaps.pendingDecisionIds}
+        prLinksById={emptyMaps.prLinksById}
+        onCardClick={() => {}}
+        collapsed
+      />,
+    );
+
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('bdboard-collapse-2')).not.toBeInTheDocument();
+    expect(screen.queryByText('bdboard-collapse-3')).not.toBeInTheDocument();
+  });
+
+  it('sets aria-expanded opposite to collapsed', () => {
+    const { rerender } = render(
+      <LaneColumn
+        lane="ready"
+        cards={[makeCard('bdboard-collapse-4')]}
+        showProjectName={false}
+        projectNames={emptyMaps.projectNames}
+        projectActiveSessions={emptyMaps.projectActiveSessions}
+        pendingDecisionIds={emptyMaps.pendingDecisionIds}
+        prLinksById={emptyMaps.prLinksById}
+        onCardClick={() => {}}
+        collapsed={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /着手可能/ })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
+
+    rerender(
+      <LaneColumn
+        lane="ready"
+        cards={[makeCard('bdboard-collapse-4')]}
+        showProjectName={false}
+        projectNames={emptyMaps.projectNames}
+        projectActiveSessions={emptyMaps.projectActiveSessions}
+        pendingDecisionIds={emptyMaps.pendingDecisionIds}
+        prLinksById={emptyMaps.prLinksById}
+        onCardClick={() => {}}
+        collapsed
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /着手可能/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
   });
 });

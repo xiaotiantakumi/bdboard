@@ -366,6 +366,8 @@ export interface LaneColumnProps {
    * (doneレーンのみ意味を持つ; bdboard-3tw.86)。0またはundefinedなら非表示。
    */
   hiddenCount?: number;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
 const PAGE_SIZE = 50;
@@ -381,6 +383,8 @@ export function LaneColumn({
   prLinksById,
   onCardClick,
   hiddenCount,
+  collapsed = false,
+  onToggleCollapse = () => {},
 }: LaneColumnProps) {
   const boardDnD = useBoardDnD();
   const boardNav = useBoardKeyboardNav();
@@ -408,11 +412,11 @@ export function LaneColumn({
     }
     // idsKey は visibleCardIds の内容キー。内容が同じ間は再登録不要なので、
     // visibleCardIds 自体は依存に入れない(毎レンダー新しい配列になるため)。
-    registerLane(lane, visibleCardIds);
+    registerLane(lane, collapsed ? [] : visibleCardIds);
     return () => {
       unregisterLane(lane);
     };
-  }, [registerLane, unregisterLane, lane, idsKey]);
+  }, [registerLane, unregisterLane, lane, idsKey, collapsed]);
 
   const showMoreButton =
     remaining > 0 ? (
@@ -425,54 +429,72 @@ export function LaneColumn({
       </button>
     ) : null;
 
+  const countLabel =
+    unfilteredCount !== undefined && cards.length !== unfilteredCount
+      ? `${cards.length}/${unfilteredCount}`
+      : String(cards.length);
+
   return (
-    <section className="lane">
-      <div className="lane-header">
-        <span>{LANE_LABELS[lane]}</span>
-        <span className="lane-count">
-          {unfilteredCount !== undefined && cards.length !== unfilteredCount
-            ? `${cards.length}/${unfilteredCount}`
-            : cards.length}
-        </span>
-      </div>
-      <div
-        className={`lane-cards${dropHoverClass}`}
-        onDragOver={(event) => boardDnD?.onLaneDragOver(lane, event)}
-        onDrop={(event) => boardDnD?.onLaneDrop(lane, event)}
-        {...(boardNav !== null
-          ? {
-              role: 'listbox' as const,
-              'aria-label': `${LANE_LABELS[lane]} のチケット`,
-              'aria-orientation': 'vertical' as const,
-            }
-          : {})}
+    <section
+      className={`lane${collapsed ? ' lane-collapsed' : ''}${dropHoverClass}`}
+      onDragOver={(event) => boardDnD?.onLaneDragOver(lane, event)}
+      onDrop={(event) => boardDnD?.onLaneDrop(lane, event)}
+    >
+      <button
+        type="button"
+        className="lane-header"
+        onClick={onToggleCollapse}
+        aria-expanded={!collapsed}
+        aria-label={`${LANE_LABELS[lane]} (${countLabel}件)`}
       >
-        {visibleCards.map((card) => (
-          <CardItem
-            key={card.ticket.id}
-            card={card}
-            lane={lane}
-            showProjectName={showProjectName}
-            projectName={projectNames.get(card.projectId) ?? projectNameFallback(card.projectId)}
-            activeSessionCount={projectActiveSessions.get(card.projectId) ?? 0}
-            hasPendingDecision={pendingDecisionIds.has(card.ticket.id)}
-            prLink={prLinksById.get(card.ticket.id)}
-            onClick={onCardClick}
-            enableDrag={boardDnD !== null}
-            nav={boardNav?.getCardNavProps(lane, card.ticket.id)}
-          />
-        ))}
-      </div>
-      {showMoreButton !== null && (
-        <div className="lane-show-more">{showMoreButton}</div>
-      )}
-      {hiddenCount !== undefined && hiddenCount > 0 && (
-        <div
-          className="lane-hidden-note"
-          title="サーバー側の上限を超えた古いチケットは一覧に含まれていません"
-        >
-          他 {hiddenCount} 件 (非表示)
-        </div>
+        <span className="lane-header-label">
+          <span className="lane-chevron" aria-hidden="true">
+            {collapsed ? '▶' : '▼'}
+          </span>
+          <span>{LANE_LABELS[lane]}</span>
+        </span>
+        <span className="lane-count">{countLabel}</span>
+      </button>
+      {!collapsed && (
+        <>
+          <div
+            className="lane-cards"
+            {...(boardNav !== null
+              ? {
+                  role: 'listbox' as const,
+                  'aria-label': `${LANE_LABELS[lane]} のチケット`,
+                  'aria-orientation': 'vertical' as const,
+                }
+              : {})}
+          >
+            {visibleCards.map((card) => (
+              <CardItem
+                key={card.ticket.id}
+                card={card}
+                lane={lane}
+                showProjectName={showProjectName}
+                projectName={projectNames.get(card.projectId) ?? projectNameFallback(card.projectId)}
+                activeSessionCount={projectActiveSessions.get(card.projectId) ?? 0}
+                hasPendingDecision={pendingDecisionIds.has(card.ticket.id)}
+                prLink={prLinksById.get(card.ticket.id)}
+                onClick={onCardClick}
+                enableDrag={boardDnD !== null}
+                nav={boardNav?.getCardNavProps(lane, card.ticket.id)}
+              />
+            ))}
+          </div>
+          {showMoreButton !== null && (
+            <div className="lane-show-more">{showMoreButton}</div>
+          )}
+          {hiddenCount !== undefined && hiddenCount > 0 && (
+            <div
+              className="lane-hidden-note"
+              title="サーバー側の上限を超えた古いチケットは一覧に含まれていません"
+            >
+              他 {hiddenCount} 件 (非表示)
+            </div>
+          )}
+        </>
       )}
     </section>
   );

@@ -5,6 +5,7 @@ import {
   priorityCeilingValue,
   validateBoardFilterPresets,
   validateIssueTypeArray,
+  validateLaneArray,
   validatePriorityCeiling,
   validateStatsWeeks,
   validateString,
@@ -63,6 +64,14 @@ describe('uiPersistedState', () => {
     expect(validateIssueTypeArray(['bug', 'unknown'])).toBeNull();
     expect(validateIssueTypeArray('bug')).toBeNull();
     expect(validateIssueTypeArray([1, 2])).toBeNull();
+  });
+
+  it('validates lane arrays', () => {
+    expect(validateLaneArray(['ready', 'done'])).toEqual(['ready', 'done']);
+    expect(validateLaneArray([])).toEqual([]);
+    expect(validateLaneArray(['ready', 'unknown'])).toBeNull();
+    expect(validateLaneArray('ready')).toBeNull();
+    expect(validateLaneArray([1, 2])).toBeNull();
   });
 
   it('validates string values', () => {

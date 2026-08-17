@@ -36,6 +36,8 @@ interface BoardLanesProps {
   sectionKey: string;
   onCardClick: (ticketId: string) => void;
   showDndError?: boolean;
+  collapsedLanes?: ReadonlySet<Lane>;
+  onToggleLaneCollapse?: (lane: Lane) => void;
 }
 
 function visibleLanes(hideDone: boolean): Lane[] {
@@ -75,6 +77,8 @@ function LanesRow({
   prLinksById,
   sectionKey,
   onCardClick,
+  collapsedLanes,
+  onToggleLaneCollapse,
 }: {
   lanes: Lane[];
   board: BoardDto;
@@ -87,6 +91,8 @@ function LanesRow({
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   sectionKey: string;
   onCardClick: (ticketId: string) => void;
+  collapsedLanes?: ReadonlySet<Lane>;
+  onToggleLaneCollapse?: (lane: Lane) => void;
 }) {
   const boardNav = useBoardKeyboardNav();
   const filterKey = boardFilterKey(filter);
@@ -114,6 +120,12 @@ function LanesRow({
               ? Math.max(0, board.closedTotal - (board.lanes.done?.length ?? 0))
               : undefined
           }
+          collapsed={collapsedLanes?.has(lane) ?? false}
+          onToggleCollapse={
+            onToggleLaneCollapse !== undefined
+              ? () => onToggleLaneCollapse(lane)
+              : undefined
+          }
         />
         );
       })}
@@ -134,6 +146,8 @@ export function BoardLanes({
   sectionKey,
   onCardClick,
   showDndError = true,
+  collapsedLanes,
+  onToggleLaneCollapse,
 }: BoardLanesProps) {
   const boardDnD = useBoardDnD();
   const lanes = visibleLanes(hideDone);
@@ -159,6 +173,8 @@ export function BoardLanes({
           prLinksById={prLinksById}
           sectionKey={sectionKey}
           onCardClick={onCardClick}
+          collapsedLanes={collapsedLanes}
+          onToggleLaneCollapse={onToggleLaneCollapse}
         />
       </BoardKeyboardNavProvider>
     </>
@@ -188,6 +204,8 @@ interface SplitBoardProps {
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick?: (projectId: string) => void;
   readonly syncHealthByProject?: Map<string, SyncHealthDto>;
+  collapsedLanes?: ReadonlySet<Lane>;
+  onToggleLaneCollapse?: (lane: Lane) => void;
 }
 
 export function SplitBoard({
@@ -201,6 +219,8 @@ export function SplitBoard({
   onCardClick,
   onSessionBadgeClick,
   syncHealthByProject,
+  collapsedLanes,
+  onToggleLaneCollapse,
 }: SplitBoardProps) {
   const boardDnD = useBoardDnD();
   const visibleProjects = projects.filter((entry) =>
@@ -265,6 +285,8 @@ export function SplitBoard({
             sectionKey={`${sectionKeyPrefix}-${entry.project.id}`}
             onCardClick={onCardClick}
             showDndError={false}
+            collapsedLanes={collapsedLanes}
+            onToggleLaneCollapse={onToggleLaneCollapse}
           />
         </section>
       ))}
