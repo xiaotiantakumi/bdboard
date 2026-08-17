@@ -3,10 +3,13 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  fetchBoardThresholdsConfig,
   fetchScanRootsConfig,
   postRefresh,
+  putBoardThresholdsConfig,
   putScanRootsConfig,
   ApiError,
+  type BoardThresholdsConfigDto,
   type ScanRootsConfigDto,
 } from '../api';
 import { SettingsPanel } from './SettingsPanel';
@@ -16,14 +19,34 @@ vi.mock('../api', async (importOriginal) => {
   return {
     ...actual,
     fetchScanRootsConfig: vi.fn(),
+    fetchBoardThresholdsConfig: vi.fn(),
     postRefresh: vi.fn(),
     putScanRootsConfig: vi.fn(),
+    putBoardThresholdsConfig: vi.fn(),
   };
 });
 
 const fetchScanRootsConfigMock = vi.mocked(fetchScanRootsConfig);
+const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
 const postRefreshMock = vi.mocked(postRefresh);
 const putScanRootsConfigMock = vi.mocked(putScanRootsConfig);
+const putBoardThresholdsConfigMock = vi.mocked(putBoardThresholdsConfig);
+function makeThresholdsConfig(overrides: Partial<BoardThresholdsConfigDto> = {}): BoardThresholdsConfigDto {
+  return {
+    stalledAfterMs: 86_400_000,
+    livenessActiveMs: 120_000,
+    livenessIdleMs: 1_800_000,
+    livenessStaleMs: 86_400_000,
+    version: 'thresholds-v1',
+    defaults: {
+      stalledAfterMs: 86_400_000,
+      livenessActiveMs: 120_000,
+      livenessIdleMs: 1_800_000,
+      livenessStaleMs: 86_400_000,
+    },
+    ...overrides,
+  };
+}
 function makeConfig(overrides: Partial<ScanRootsConfigDto> = {}): ScanRootsConfigDto {
   return {
     scanRoots: ['/configured'],
@@ -43,11 +66,15 @@ function renderSettings() {
 describe('SettingsPanel', () => {
   beforeEach(() => {
     fetchScanRootsConfigMock.mockReset();
+    fetchBoardThresholdsConfigMock.mockReset();
     postRefreshMock.mockReset();
     putScanRootsConfigMock.mockReset();
+    putBoardThresholdsConfigMock.mockReset();
     fetchScanRootsConfigMock.mockResolvedValue(makeConfig());
+    fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
     postRefreshMock.mockResolvedValue(undefined);
     putScanRootsConfigMock.mockResolvedValue({ scanRoots: ['/configured'], excludePaths: ['/excluded'], version: 'v2' });
+    putBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig({ version: 'thresholds-v2' }));
   });
   it('shows effective roots with the user-configured badge', async () => {
     renderSettings();
@@ -364,5 +391,57 @@ describe('SettingsPanel', () => {
     await user.click(screen.getByRole('button', { name: '保存' }));
     await waitFor(() => expect(postRefreshMock).toHaveBeenCalledOnce());
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['projects'] });
+  });
+
+  it('shows the board thresholds section with effective values', async () => {
+    renderSettings();
+    expect(await screen.findByRole('region', { name: '滞留・liveness 閾値' })).toBeInTheDocument();
+    expect(screen.getByLabelText('滞留判定 (時間)')).toHaveValue(24);
+    expect(screen.getByLabelText('liveness active (分)')).toHaveValue(2);
+    expect(screen.getByLabelText('liveness idle (分)')).toHaveValue(30);
+    expect(screen.getByLabelText('liveness stale (時間)')).toHaveValue(24);
+  });
+
+  it('saves edited board thresholds and refreshes the board', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    await screen.findByLabelText('滞留判定 (時間)');
+    const saveButton = screen.getByRole('button', { name: '閾値を保存' });
+    expect(saveButton).toBeDisabled();
+
+    await user.clear(screen.getByLabelText('滞留判定 (時間)'));
+    await user.type(screen.getByLabelText('滞留判定 (時間)'), '12');
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(putBoardThresholdsConfigMock).toHaveBeenCalledWith({
+        stalledAfterMs: 12 * 60 * 60_000,
+        livenessActiveMs: 120_000,
+        livenessIdleMs: 1_800_000,
+        livenessStaleMs: 86_400_000,
+        version: 'thresholds-v1',
+      }),
+    );
+    await waitFor(() => expect(postRefreshMock).toHaveBeenCalled());
+    expect(await screen.findByText('閾値設定を保存しました')).toBeInTheDocument();
+  });
+
+  it('shows server validation errors for board thresholds', async () => {
+    const user = userEvent.setup();
+    putBoardThresholdsConfigMock.mockRejectedValue(
+      new ApiError(400, 'invalid board thresholds', {
+        errorMessage: 'invalid board thresholds',
+        details: { errors: ['liveness active は liveness idle より短くしてください'] },
+      }),
+    );
+    renderSettings();
+    await screen.findByLabelText('liveness active (分)');
+    await user.clear(screen.getByLabelText('liveness active (分)'));
+    await user.type(screen.getByLabelText('liveness active (分)'), '60');
+    await user.click(screen.getByRole('button', { name: '閾値を保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'liveness active は liveness idle より短くしてください',
+    );
   });
 });

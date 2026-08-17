@@ -31,6 +31,7 @@ import {
   type BoardNotificationSnapshot,
   type BoardSnapshotProjectInput,
 } from './domain/board-notifications.js';
+import { resolveBoardThresholds } from './domain/board-thresholds.js';
 import { compareStrings } from './domain/compare.js';
 import { generatePassphrase } from './domain/passphrase.js';
 import type { AgentSession, SessionLink } from './domain/session.js';
@@ -53,6 +54,7 @@ import {
   createCloudflaredTunnel,
   createFileTunnelInterruptionStore,
   createFileScanRootsConfigStore,
+  createFileBoardThresholdsConfigStore,
   createFsHarnessInjector,
   createFsPackRegistry,
   createFsProjectDiscovery,
@@ -90,6 +92,7 @@ import {
 } from './interface/http/chat-rate-limit.js';
 import { createHarnessRoutes } from './interface/http/harness-routes.js';
 import { createScanRootsRoutes } from './interface/http/scan-roots-routes.js';
+import { createBoardThresholdsRoutes } from './interface/http/board-thresholds-routes.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
 import { createEventHub } from './interface/sse/event-hub.js';
@@ -221,8 +224,12 @@ async function main(): Promise<void> {
   const fsPort = new NodeFileSystem();
   const commandRunner = new NodeCommandRunner();
   const streamingCommandRunner = new NodeStreamingCommandRunner();
+  const configFilePath = resolveConfigFilePath();
   const scanRootsConfigStore = createFileScanRootsConfigStore(
-    envString('BDBOARD_SCAN_ROOTS_CONFIG_PATH', resolveConfigFilePath()),
+    envString('BDBOARD_SCAN_ROOTS_CONFIG_PATH', configFilePath),
+  );
+  const boardThresholdsConfigStore = createFileBoardThresholdsConfigStore(
+    envString('BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH', configFilePath),
   );
 
   const scanRootsRaw = process.env.BDBOARD_SCAN_ROOTS;
@@ -803,6 +810,8 @@ async function main(): Promise<void> {
     leaseReader,
     mergeSlotReader,
     reclaimScheduler,
+    getBoardThresholds: async () =>
+      resolveBoardThresholds(await boardThresholdsConfigStore.read()),
   });
 
   const app = new Hono();
@@ -839,6 +848,14 @@ async function main(): Promise<void> {
       isEnvOverridden: isScanRootsEnvOverridden,
       envScanRoots: isScanRootsEnvOverridden ? envScanRootsList : undefined,
       resolveDefaultScanRoots: () => resolveDefaultScanRoots(fsPort),
+    }),
+  );
+
+  app.route(
+    '/',
+    createBoardThresholdsRoutes({
+      store: boardThresholdsConfigStore,
+      writeAccess,
     }),
   );
 

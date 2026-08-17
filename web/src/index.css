@@ -905,6 +905,31 @@ body {
   font-size: 0.8125rem;
 }
 
+.settings-panel-thresholds-form {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-panel-thresholds-form label {
+  font-size: 0.875rem;
+}
+
+.settings-panel-thresholds-form input {
+  width: 100%;
+  max-width: 12rem;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.settings-panel-error-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--color-danger, #c0392b);
+}
+
 .event-center-panel {
   display: flex;
   flex-direction: column;
