@@ -24,6 +24,13 @@ import { buildChatAgentRegistry } from './infrastructure/chat/chat-agent-registr
 import { createTunnelService } from './application/tunnel/tunnel-service.js';
 import { createTunnelAccessService } from './application/tunnel/tunnel-access.js';
 import type { CachedProject, SessionLinkRow } from './application/ports/board-cache.js';
+import {
+  computeBoardNotificationSnapshot,
+  diffBoardNotificationSnapshots,
+  diffSessionLiveness,
+  type BoardNotificationSnapshot,
+  type BoardSnapshotProjectInput,
+} from './domain/board-notifications.js';
 import { compareStrings } from './domain/compare.js';
 import { generatePassphrase } from './domain/passphrase.js';
 import type { AgentSession, SessionLink } from './domain/session.js';
@@ -260,6 +267,60 @@ async function main(): Promise<void> {
 
   let sessions: readonly AgentSession[] = [];
   let previousSessionFingerprint: string | null = null;
+  let previousBoardNotificationSnapshot: BoardNotificationSnapshot | null = null;
+
+  const boardSnapshotInputFromCache = (
+    entries: readonly CachedProject[],
+  ): readonly BoardSnapshotProjectInput[] =>
+    entries.map((entry) => ({
+      tickets: entry.tickets,
+      decisionPendingTicketIds: entry.pendingDecisions?.map(
+        (decision) => decision.id,
+      ),
+    }));
+
+  const findTicketMeta = (
+    entries: readonly CachedProject[],
+    ticketId: string,
+  ): { title: string; projectId: string } | undefined => {
+    for (const entry of entries) {
+      const ticket = entry.tickets.find((candidate) => candidate.id === ticketId);
+      if (ticket !== undefined) {
+        return { title: ticket.title, projectId: ticket.projectId };
+      }
+    }
+    return undefined;
+  };
+
+  const publishBoardNotificationTransitions = (
+    entries: readonly CachedProject[],
+    nextSnapshot: BoardNotificationSnapshot,
+  ): void => {
+    if (previousBoardNotificationSnapshot === null) {
+      previousBoardNotificationSnapshot = nextSnapshot;
+      return;
+    }
+
+    const transitions = diffBoardNotificationSnapshots(
+      previousBoardNotificationSnapshot,
+      nextSnapshot,
+    );
+
+    for (const transition of transitions) {
+      const meta = findTicketMeta(entries, transition.ticketId);
+      events.publish({
+        name: 'notification',
+        data: {
+          kind: transition.kind,
+          ticketId: transition.ticketId,
+          ...(meta !== undefined ? { title: meta.title, projectId: meta.projectId } : {}),
+          occurredAt: new Date().toISOString(),
+        },
+      });
+    }
+
+    previousBoardNotificationSnapshot = nextSnapshot;
+  };
 
   const LINK_KEY_SEP = '\0';
   const MAX_TRANSCRIPT_LINKS = MAX_TRANSCRIPT_SESSION_LINKS;
@@ -351,6 +412,7 @@ async function main(): Promise<void> {
 
   const refreshSessions = async (): Promise<void> => {
     try {
+      const prevSessions = sessions;
       const next = await sessionRegistry.listSessions();
       const fingerprint = JSON.stringify(
         next.map(
@@ -361,6 +423,20 @@ async function main(): Promise<void> {
       const changed =
         previousSessionFingerprint !== null &&
         fingerprint !== previousSessionFingerprint;
+
+      for (const diedEvent of diffSessionLiveness(prevSessions, next)) {
+        events.publish({
+          name: 'notification',
+          data: {
+            kind: 'session_died',
+            sessionId: diedEvent.sessionId,
+            cwd: diedEvent.cwd,
+            ...(diedEvent.name !== undefined ? { name: diedEvent.name } : {}),
+            lastActivityAt: diedEvent.lastActivityAt.toISOString(),
+            occurredAt: new Date().toISOString(),
+          },
+        });
+      }
 
       // Always take the newest snapshot: the fingerprint only covers the fields
       // clients react to (id/alive/lastActivityAt), not cwd/name/pid.
@@ -499,6 +575,15 @@ async function main(): Promise<void> {
         }
       } while (refreshPending);
 
+      const cacheEntries = cache.listProjects();
+      publishBoardNotificationTransitions(
+        cacheEntries,
+        computeBoardNotificationSnapshot(
+          boardSnapshotInputFromCache(cacheEntries),
+          new Date(),
+        ),
+      );
+
       // discovery で増えた/消えたプロジェクトを監視対象に反映する。これが無いと
       // 起動後に現れたプロジェクトは定期リフレッシュ間隔ぶん遅れてしか画面に出ない。
       try {
@@ -544,6 +629,12 @@ async function main(): Promise<void> {
   await refreshSessions();
   console.log(
     `Initial sessions: total=${sessions.length} alive=${sessions.filter((session) => session.alive).length}`,
+  );
+
+  const initialCacheEntries = cache.listProjects();
+  previousBoardNotificationSnapshot = computeBoardNotificationSnapshot(
+    boardSnapshotInputFromCache(initialCacheEntries),
+    new Date(),
   );
 
   const initialCfdSnapshot = recordCfdSnapshot(cache, new Date());

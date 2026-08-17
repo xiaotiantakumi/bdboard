@@ -23,6 +23,7 @@ import { ChatPanel } from './components/ChatPanel';
 import { DependencyGraphView } from './components/DependencyGraphView';
 import { HygienePanel } from './components/HygienePanel';
 import { SettingsPanel } from './components/SettingsPanel';
+import { EventCenterPanel } from './components/EventCenterPanel';
 import { NextUpView } from './components/NextUpView';
 import { ThroughputStats } from './components/ThroughputStats';
 import { SearchPalette } from './components/SearchPalette';
@@ -31,6 +32,7 @@ import { TicketDetailPanel } from './components/TicketDetailPanel';
 import { TunnelControl } from './components/TunnelControl';
 import { isBoardFilterActive } from './boardFilter';
 import { useAppBadge } from './hooks/useAppBadge';
+import { useNotificationEvents } from './hooks/useNotificationEvents';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useTicketDeepLink } from './hooks/useTicketDeepLink';
 import {
@@ -184,6 +186,8 @@ export function App() {
   });
 
   useAppBadge(pendingDecisionsQuery.data?.length);
+
+  const notificationEvents = useNotificationEvents();
 
   const syncHealthQuery = useQuery({
     queryKey: ['sync-health', selectedProjectIdsJoined],
@@ -467,6 +471,16 @@ export function App() {
             </button>
             <button
               type="button"
+              className={`toggle-btn${view === 'events' ? ' active' : ''}`}
+              onClick={() => setView('events')}
+            >
+              イベント
+              {notificationEvents.unreadCount > 0
+                ? ` (${notificationEvents.unreadCount})`
+                : ''}
+            </button>
+            <button
+              type="button"
               className={`toggle-btn${view === 'settings' ? ' active' : ''}`}
               onClick={() => setView('settings')}
             >
@@ -720,6 +734,7 @@ export function App() {
           />
         )}
         {view === 'settings' && <SettingsPanel />}
+        {view === 'events' && <EventCenterPanel {...notificationEvents} />}
         {boardQuery.data !== undefined &&
           (view === 'merged' || view === 'next') &&
           boardQuery.data.merged === null && (

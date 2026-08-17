@@ -9,6 +9,7 @@ export type ViewMode =
   | 'stats'
   | 'graph'
   | 'hygiene'
+  | 'events'
   | 'settings';
 
 export const DEFAULT_VIEW: ViewMode = 'merged';
@@ -36,6 +37,9 @@ export const UI_STORAGE_KEYS = {
   boardIssueTypes: 'bdboard.ui.boardIssueTypes',
   boardFilterText: 'bdboard.ui.boardFilterText',
   chatModelSelections: 'bdboard.ui.chatModelSelections',
+  notificationEvents: 'bdboard.ui.notificationEvents',
+  notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
+  notificationsEnabled: 'bdboard.ui.notificationsEnabled',
 } as const;
 
 export const BOARD_ISSUE_TYPES = ['bug', 'feature', 'task', 'chore', 'epic'] as const;
@@ -95,6 +99,7 @@ export function validateViewMode(value: unknown): ViewMode | null {
     value === 'stats' ||
     value === 'graph' ||
     value === 'hygiene' ||
+    value === 'events' ||
     value === 'settings'
   ) {
     return value;

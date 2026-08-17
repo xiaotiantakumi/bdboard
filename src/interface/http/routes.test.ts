@@ -3626,6 +3626,43 @@ describe('createApiRoutes', () => {
     expect(events.subscriberCount()).toBe(0);
   });
 
+  it('relays notification events over SSE', async () => {
+    const events = createEventHub();
+    const deps = createDeps({ events });
+    const app = createApiRoutes(deps);
+
+    const controller = new AbortController();
+    const requestPromise = app.request('/api/events', {
+      signal: controller.signal,
+    });
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 30);
+    });
+
+    events.publish({
+      name: 'notification',
+      data: {
+        kind: 'ticket_ready',
+        ticketId: 'bdboard-ready',
+        occurredAt: NOW.toISOString(),
+      },
+    });
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 30);
+    });
+
+    controller.abort();
+
+    const response = await requestPromise;
+    const bodyText = await response.text();
+
+    expect(bodyText).toContain('event: notification');
+    expect(bodyText).toContain('"kind":"ticket_ready"');
+    expect(bodyText).toContain('"ticketId":"bdboard-ready"');
+  });
+
   it('returns 501 when session tail reader is not configured', async () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request('/api/sessions/session-1/tail');
