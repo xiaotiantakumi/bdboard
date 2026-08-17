@@ -1,5 +1,4 @@
-import { execFile, type ChildProcess } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn, type ChildProcess } from 'node:child_process';
 import type {
   CommandFailureKind,
   CommandResult,
@@ -7,87 +6,133 @@ import type {
   CommandRunner,
 } from '../../application/ports/command-runner.js';
 
-type ExecFilePromise = Promise<{ stdout: string; stderr: string }> & {
-  child: ChildProcess;
-};
-
-const execFileAsync = promisify(execFile) as (
-  command: string,
-  args: string[],
-  options: object,
-) => ExecFilePromise;
-
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_BUFFER = 32 * 1024 * 1024;
 
-interface ExecFileError extends Error {
-  code?: number | string;
-  stdout?: string | Buffer;
-  stderr?: string | Buffer;
-  killed?: boolean;
-  signal?: string;
+function appendChunk(chunks: Buffer[], size: number, text: string): number {
+  if (size >= MAX_BUFFER) {
+    return size;
+  }
+
+  const chunk = Buffer.from(text, 'utf8');
+  const remaining = MAX_BUFFER - size;
+  chunks.push(chunk.length <= remaining ? chunk : chunk.subarray(0, remaining));
+  return size + Math.min(chunk.length, remaining);
 }
 
-function toString(value: string | Buffer | undefined): string {
-  if (value === undefined) {
-    return '';
+function resultFrom(
+  stdoutChunks: Buffer[],
+  stderrChunks: Buffer[],
+  exitCode: number,
+  failureKind?: CommandFailureKind,
+): CommandResult {
+  return {
+    stdout: Buffer.concat(stdoutChunks).toString('utf8'),
+    stderr: Buffer.concat(stderrChunks).toString('utf8'),
+    exitCode,
+    ...(failureKind === undefined ? {} : { failureKind }),
+  };
+}
+
+function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid === undefined) {
+    return;
   }
-  return typeof value === 'string' ? value : value.toString('utf8');
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
+      child.kill(signal);
+    }
+  }
 }
 
 export class NodeCommandRunner implements CommandRunner {
-  async run(
+  run(
     command: string,
     args: readonly string[],
     options?: CommandRunOptions,
   ): Promise<CommandResult> {
+    let child: ChildProcess;
     try {
-      const execOptions = {
+      child = spawn(command, [...args], {
         cwd: options?.cwd,
-        timeout: options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        maxBuffer: MAX_BUFFER,
-        encoding: 'utf8' as const,
+        detached: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
         ...(options?.env !== undefined ? { env: { ...options.env } } : {}),
-      };
-
-      const promise = execFileAsync(command, [...args], execOptions);
-
-      if (options?.input !== undefined) {
-        const stdin = promise.child.stdin;
-        if (stdin !== null && stdin !== undefined) {
-          // The child may exit before draining stdin (bad args, early exit).
-          // Without this handler the resulting EPIPE is an uncaught exception
-          // that would take down the whole server process.
-          stdin.on('error', () => {});
-          stdin.end(options.input);
-        }
-      }
-
-      const { stdout, stderr } = await promise;
-
-      return {
-        stdout: toString(stdout),
-        stderr: toString(stderr),
-        exitCode: 0,
-      };
-    } catch (error: unknown) {
-      const execError = error as ExecFileError;
-      const exitCode = typeof execError.code === 'number' ? execError.code : -1;
-
-      // timeout オプションを常に渡しているため、 killed === true はほぼ確実にタイムアウト。
-      let failureKind: CommandFailureKind | undefined;
-      if (execError.killed === true) {
-        failureKind = 'timeout';
-      } else if (typeof execError.code === 'string') {
-        failureKind = 'spawn-failed';
-      }
-
-      return {
-        stdout: toString(execError.stdout),
-        stderr: toString(execError.stderr),
-        exitCode,
-        ...(failureKind !== undefined ? { failureKind } : {}),
-      };
+      });
+    } catch {
+      return Promise.resolve({
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        failureKind: 'spawn-failed',
+      });
     }
+
+    return new Promise<CommandResult>((resolve) => {
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+      let stdoutSize = 0;
+      let stderrSize = 0;
+      let failureKind: CommandFailureKind | undefined;
+      let settled = false;
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+
+      const clearTimeoutTimer = (): void => {
+        if (timeoutTimer !== undefined) {
+          clearTimeout(timeoutTimer);
+        }
+      };
+
+      const finish = (exitCode: number): void => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeoutTimer();
+        resolve(resultFrom(stdoutChunks, stderrChunks, exitCode, failureKind));
+      };
+
+      const onData = (stream: 'stdout' | 'stderr', chunk: Buffer | string): void => {
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        if (stream === 'stdout') {
+          stdoutSize = appendChunk(stdoutChunks, stdoutSize, text);
+        } else {
+          stderrSize = appendChunk(stderrChunks, stderrSize, text);
+        }
+      };
+
+      child.stdout?.on('data', (chunk: Buffer | string) => onData('stdout', chunk));
+      child.stderr?.on('data', (chunk: Buffer | string) => onData('stderr', chunk));
+
+      child.on('error', () => {
+        if (failureKind === undefined) {
+          failureKind = 'spawn-failed';
+        }
+        finish(-1);
+      });
+      child.on('close', (code) => {
+        finish(code ?? -1);
+      });
+
+      if (child.stdin !== null && options?.input !== undefined) {
+        // The child may exit before draining stdin. Ignore EPIPE so it cannot
+        // become an uncaught exception in the server process.
+        child.stdin.on('error', () => {});
+        child.stdin.end(options.input);
+      }
+
+      timeoutTimer = setTimeout(() => {
+        if (settled) {
+          return;
+        }
+        if (failureKind === undefined) {
+          failureKind = 'timeout';
+        }
+        killGroup(child, 'SIGTERM');
+      }, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    });
   }
 }

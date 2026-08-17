@@ -142,4 +142,45 @@ describe('NodeStreamingCommandRunner', () => {
       }
     }
   });
+
+  it('kills grandchild processes in the same process group on timeout', async () => {
+    const childScript =
+      "const { spawn } = require('node:child_process');" +
+      "const gc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 10_000)']);" +
+      "process.stdout.write(String(gc.pid) + ':' + String(process.pid));" +
+      'setInterval(() => {}, 10_000);';
+
+    const result = await runner.run(process.execPath, ['-e', childScript], {
+      timeoutMs: 200,
+      onChunk: () => {},
+    });
+
+    expect(result.failureKind).toBe('timeout');
+    const grandchildPid = Number(result.stdout.split(':')[0]);
+    expect(Number.isInteger(grandchildPid)).toBe(true);
+    expect(grandchildPid).toBeGreaterThan(0);
+    await expectProcessToBeGone(grandchildPid);
+  });
+
+  it('kills grandchild processes in the same process group on abort', async () => {
+    const childScript =
+      "const { spawn } = require('node:child_process');" +
+      "const gc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 10_000)']);" +
+      "process.stdout.write(String(gc.pid) + ':' + String(process.pid));" +
+      'setInterval(() => {}, 10_000);';
+
+    const controller = new AbortController();
+    const resultPromise = runner.run(process.execPath, ['-e', childScript], {
+      signal: controller.signal,
+      onChunk: () => {},
+    });
+    setTimeout(() => controller.abort(), 200);
+
+    const result = await resultPromise;
+    expect(result.failureKind).toBe('aborted');
+    const grandchildPid = Number(result.stdout.split(':')[0]);
+    expect(Number.isInteger(grandchildPid)).toBe(true);
+    expect(grandchildPid).toBeGreaterThan(0);
+    await expectProcessToBeGone(grandchildPid);
+  });
 });

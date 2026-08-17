@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { NodeCommandRunner } from './node-command-runner.js';
 
+async function expectProcessToBeGone(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`child process ${pid} is still alive`);
+}
+
 describe('NodeCommandRunner', () => {
   const runner = new NodeCommandRunner();
 
@@ -86,5 +98,23 @@ describe('NodeCommandRunner', () => {
 
     expect(result.exitCode).toBe(3);
     expect(result.failureKind).toBeUndefined();
+  });
+
+  it('kills grandchild processes in the same process group on timeout', async () => {
+    const childScript =
+      "const { spawn } = require('node:child_process');" +
+      "const gc = spawn(process.execPath, ['-e', 'setInterval(() => {}, 10_000)']);" +
+      "process.stdout.write(String(gc.pid) + ':' + String(process.pid));" +
+      'setInterval(() => {}, 10_000);';
+
+    const result = await runner.run(process.execPath, ['-e', childScript], {
+      timeoutMs: 200,
+    });
+
+    expect(result.failureKind).toBe('timeout');
+    const grandchildPid = Number(result.stdout.split(':')[0]);
+    expect(Number.isInteger(grandchildPid)).toBe(true);
+    expect(grandchildPid).toBeGreaterThan(0);
+    await expectProcessToBeGone(grandchildPid);
   });
 });
