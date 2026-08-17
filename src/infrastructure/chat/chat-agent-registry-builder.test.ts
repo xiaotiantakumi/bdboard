@@ -155,6 +155,40 @@ describe('buildChatAgentRegistry (bdboard-l1t.4 SF6)', () => {
     expect(models?.find((entry) => entry.id === 'opus')?.weight).toBe(5);
   });
 
+  it('threads BDBOARD_CHAT_MODELS into the claude descriptor model ids', () => {
+    const { registry } = buildChatAgentRegistry(
+      { BDBOARD_CHAT_MODELS: 'opus,haiku', BDBOARD_CHAT_MODEL: 'opus' },
+      fakeCommandRunner(),
+    );
+
+    expect(registry.get('claude')?.descriptor.models?.map((entry) => entry.id)).toEqual([
+      'opus',
+      'haiku',
+    ]);
+  });
+
+  it('uses the default claude model ids when BDBOARD_CHAT_MODELS is unset', () => {
+    const { registry } = buildChatAgentRegistry({}, fakeCommandRunner());
+
+    expect(registry.get('claude')?.descriptor.models?.map((entry) => entry.id)).toEqual([
+      'sonnet',
+      'opus',
+      'haiku',
+    ]);
+  });
+
+  it('normalizes BDBOARD_CHAT_MODELS by trimming, dropping empties, and deduplicating', () => {
+    const { registry } = buildChatAgentRegistry(
+      { BDBOARD_CHAT_MODELS: ' sonnet , opus ,, opus ' },
+      fakeCommandRunner(),
+    );
+
+    expect(registry.get('claude')?.descriptor.models?.map((entry) => entry.id)).toEqual([
+      'sonnet',
+      'opus',
+    ]);
+  });
+
   it('threads BDBOARD_BD_PATH into the cursor adapter system prompt (bdboard-l1t.5 Opus review MF2)', async () => {
     let capturedInput: string | undefined;
     const capturingRunner: CommandRunner = {

@@ -47,6 +47,24 @@ function envFloat(env: NodeJS.ProcessEnv, name: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function envStringList(env: NodeJS.ProcessEnv, name: string): readonly string[] | undefined {
+  const raw = env[name];
+  if (raw === undefined || raw === '') {
+    return undefined;
+  }
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const part of raw.split(',')) {
+    const trimmed = part.trim();
+    if (trimmed === '' || seen.has(trimmed)) {
+      continue;
+    }
+    seen.add(trimmed);
+    result.push(trimmed);
+  }
+  return result.length > 0 ? result : undefined;
+}
+
 export interface ChatAgentRegistryBuildResult {
   readonly registry: ChatAgentRegistry;
   /** codex アダプタが今回の env で opt-in されて登録されたかどうか。呼び出し元のログ出し分けに使う。 */
@@ -92,6 +110,7 @@ export function buildChatAgentRegistry(
         sonnet: envFloat(env, 'BDBOARD_CHAT_RATE_WEIGHT_SONNET'),
         haiku: envFloat(env, 'BDBOARD_CHAT_RATE_WEIGHT_HAIKU'),
       },
+      models: envStringList(env, 'BDBOARD_CHAT_MODELS'),
     }, streamingCommandRunner),
   );
 

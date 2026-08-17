@@ -240,6 +240,45 @@ describe('createClaudeSpec', () => {
     expect(customSpec.descriptor.models?.find((entry) => entry.id === 'haiku')?.weight).toBe(1);
   });
 
+  it('uses only the configured models list without prepending defaults', () => {
+    const customSpec = createClaudeSpec({
+      claudePath: CLAUDE_PATH,
+      model: 'opus',
+      timeoutMs: 180_000,
+      models: ['opus', 'haiku'],
+    });
+
+    expect(customSpec.descriptor.models).toEqual([
+      { id: 'opus', label: 'Opus', weight: 5 },
+      { id: 'haiku', label: 'Haiku', weight: 1 },
+    ]);
+  });
+
+  it('includes unlisted custom model ids from the configured models list', () => {
+    const customSpec = createClaudeSpec({
+      claudePath: CLAUDE_PATH,
+      model: 'sonnet',
+      timeoutMs: 180_000,
+      models: ['sonnet', 'my-custom-model'],
+    });
+
+    expect(customSpec.descriptor.models).toContainEqual({
+      id: 'my-custom-model',
+      label: 'my-custom-model',
+      weight: 1,
+    });
+  });
+
+  it('keeps the default CLAUDE_CHAT_MODELS when models is omitted', () => {
+    const customSpec = createClaudeSpec({
+      claudePath: CLAUDE_PATH,
+      model: MODEL,
+      timeoutMs: 180_000,
+    });
+
+    expect(customSpec.descriptor.models).toEqual([...CLAUDE_CHAT_MODELS]);
+  });
+
   it('parseTurn throws agent-bad-output on invalid JSON', () => {
     expect(() =>
       spec.parseTurn({ stdout: 'not-json', stderr: '', exitCode: 0 }, () => undefined),

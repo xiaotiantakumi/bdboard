@@ -21,6 +21,7 @@ export interface ClaudeChatAgentOptions {
   readonly bdPath?: string;
   readonly model?: string;
   readonly modelWeights?: ClaudeModelWeights;
+  readonly models?: readonly string[];
   readonly timeoutMs?: number;
   readonly mcpServerEntryPath?: string;
   readonly nodeExecPath?: string;
@@ -33,6 +34,7 @@ interface ResolvedClaudeChatAgentOptions {
   readonly bdPath: string;
   readonly model: string;
   readonly modelWeights?: ClaudeModelWeights;
+  readonly models?: readonly string[];
   readonly timeoutMs: number;
   readonly mcpServerEntryPath: string;
   readonly nodeExecPath: string;
@@ -47,6 +49,7 @@ function resolveOptions(options?: ClaudeChatAgentOptions): ResolvedClaudeChatAge
     bdPath: options?.bdPath ?? DEFAULT_BD_PATH,
     model: options?.model ?? DEFAULT_MODEL,
     modelWeights: options?.modelWeights,
+    models: options?.models,
     timeoutMs: options?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     mcpServerEntryPath: options?.mcpServerEntryPath ?? DEFAULT_MCP_SERVER_ENTRY_PATH,
     nodeExecPath: options?.nodeExecPath ?? process.execPath,
@@ -65,6 +68,7 @@ export function createClaudeChatAgent(
     claudePath: resolved.claudePath,
     model: resolved.model,
     modelWeights: resolved.modelWeights,
+    models: resolved.models,
     timeoutMs: resolved.timeoutMs,
   });
 
