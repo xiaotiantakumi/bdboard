@@ -13,6 +13,12 @@ const maxTestWorkers = Math.max(2, Math.ceil(availableParallelism() / 4));
 export default defineConfig({
   test: {
     include: ['src/**/*.test.ts'],
+    // maxWorkers はプール非依存のフォールバック(vitest 3.2.7 実装:
+    // `poolOptions.maxForks ?? vitest.config.maxWorkers ?? threadsCount`)。
+    // poolOptions.<pool>.* は現在の既定プールにのみ効き、将来既定プールが
+    // 変わると黙って無効化される(threads→forks の既定変更で 3tw.106 の
+    // キャップが死んでいたのと同じ罠)。両方に設定して安全網とする。
+    maxWorkers: maxTestWorkers,
     poolOptions: {
       forks: {
         maxForks: maxTestWorkers,

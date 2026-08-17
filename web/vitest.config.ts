@@ -20,6 +20,12 @@ export default defineConfig({
     globals: true,
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    // maxWorkers はプール非依存のフォールバック(vitest 3.2.7 実装:
+    // `poolOptions.maxForks ?? vitest.config.maxWorkers ?? threadsCount`)。
+    // poolOptions.<pool>.* は現在の既定プールにのみ効き、将来既定プールが
+    // 変わると黙って無効化される(まさに 3tw.106 が踏んだ罠)。両方に設定して
+    // 安全網とする。
+    maxWorkers: maxTestWorkers,
     poolOptions: {
       forks: {
         maxForks: maxTestWorkers,
