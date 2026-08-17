@@ -173,7 +173,7 @@ export function ChatPanel({
   // 文言ではなく)コールドウィンドウ中のユーザー編集そのものであることを示す。
   // 消化側(startNewDraftThread)がこれを見て draftSeedTextRef への「システム
   // シード」記録を抑止する(詳細はそちら側のコメント)。
-  const pendingPrefillRef = useRef<{ projectId: string; text: string; isUserEdit?: boolean } | null>(null);
+  const pendingPrefillRef = useRef<{ projectId: string; text: string; isUserEdit?: boolean; modelId?: string } | null>(null);
   // SF1: 各ドラフトキーが最後に「システムによって(ユーザー操作を経ずに)シード
   // された」ときの文言を憶えておく。プリフィル消化やマウント時シードで
   // conversationInputs へ書き込むたびに、その値をここにも記録する。textarea の
@@ -254,6 +254,8 @@ export function ChatPanel({
   //     切り替える操作が draftKey の nonce を進めることでキーが自然に分離される
   //     ことも合わせて働く。
   const [threadModelIds, setThreadModelIds] = useState<Record<string, string>>({});
+  const threadModelIdsRef = useRef(threadModelIds);
+  threadModelIdsRef.current = threadModelIds;
   const historyRequestIdRef = useRef(0);
   const draftNoncesRef = useRef(draftNonces);
   draftNoncesRef.current = draftNonces;
@@ -318,6 +320,7 @@ export function ChatPanel({
       // 「draftSeedTextRef と現在値が一致する = 未編集」と誤断し、今まさに
       // 保持したはずのユーザー本文を次のプリフィルで無言上書きしてしまう。
       const prefillIsUserEdit = pendingPrefillRef.current.isUserEdit === true;
+      const prefillModelId = pendingPrefillRef.current.modelId;
       pendingPrefillRef.current = null;
       // SF1(N1: handleAgentChange の書きかけ本文引き継ぎと同じ family ——
       // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という不変
@@ -340,6 +343,9 @@ export function ChatPanel({
         delete draftSeedTextRef.current[nextDraftKey];
       }
       setConversationInputs((prev) => ({ ...prev, [nextDraftKey]: textToApply }));
+      if (prefillModelId !== undefined) {
+        setThreadModelIds((prev) => ({ ...prev, [nextDraftKey]: prefillModelId }));
+      }
     }
     // N2: ドラフトへの切り替えは意図的に writePersistedChatThreadState を呼ばない。
     // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
@@ -684,6 +690,7 @@ export function ChatPanel({
     // 次にこの effect が別 token で再実行されたとき、SF1 判定が「未編集」と
     // 誤断してこのユーザー編集を破棄してしまう(probe で実証済み)。
     let ticketPrefillIsUserEdit = false;
+    let ticketPrefillModelId: string | undefined;
     if (selectedProjectId === '') {
       const coldDraftKey = makeDraftKey('', draftNoncesRef.current[''] ?? 0);
       const coldValue = conversationInputsRef.current[coldDraftKey];
@@ -694,6 +701,10 @@ export function ChatPanel({
           ticketPrefillText = coldValue;
           ticketPrefillIsUserEdit = true;
         }
+      }
+      const coldModelId = threadModelIdsRef.current[coldDraftKey];
+      if (coldModelId !== undefined) {
+        ticketPrefillModelId = coldModelId;
       }
       // 104.17 Opus レビュー nit2/nit5: 引き継ぎ対象は「今ライブな nonce の
       // キー」1個だけに限らない。コールドウィンドウ中に「新規スレッド」ボタンや
@@ -717,6 +728,15 @@ export function ChatPanel({
           delete draftSeedTextRef.current[key];
         }
       }
+      setThreadModelIds((prev) => {
+        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
+        if (staleKeys.length === 0) return prev;
+        const next = { ...prev };
+        for (const key of staleKeys) {
+          delete next[key];
+        }
+        return next;
+      });
     }
 
     // S2/S4-b(MF1/SF1/SF2 一括解消): プリフィルは「対象プロジェクト+文言」だけを
@@ -734,6 +754,7 @@ export function ChatPanel({
       projectId: targetProjectId,
       text: ticketPrefillText,
       isUserEdit: ticketPrefillIsUserEdit,
+      modelId: ticketPrefillModelId,
     };
 
     // S4-b: フォーカス+キャレット移動はプリフィル意図の記録直後、分岐より前に置く。
