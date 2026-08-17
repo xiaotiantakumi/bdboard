@@ -10,21 +10,30 @@ import {
 import { searchTickets, type TicketSearchResultDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { filterPaletteActions, type PaletteAction } from '../paletteActions';
+import type { RecentTicketEntry } from '../uiPersistedState';
 
 const DEBOUNCE_MS = 200;
 const SEARCH_LIMIT = 30;
+const EMPTY_RECENT_TICKETS: RecentTicketEntry[] = [];
 
 type PaletteRow =
   | { kind: 'action'; action: PaletteAction }
-  | { kind: 'ticket'; ticket: TicketSearchResultDto };
+  | { kind: 'ticket'; ticket: TicketSearchResultDto }
+  | { kind: 'recent'; ticket: RecentTicketEntry };
 
 interface SearchPaletteProps {
   onClose: () => void;
   onSelect: (ticketId: string) => void;
   actions: PaletteAction[];
+  recentTickets?: RecentTicketEntry[];
 }
 
-export function SearchPalette({ onClose, onSelect, actions }: SearchPaletteProps) {
+export function SearchPalette({
+  onClose,
+  onSelect,
+  actions,
+  recentTickets = EMPTY_RECENT_TICKETS,
+}: SearchPaletteProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState('');
@@ -46,12 +55,21 @@ export function SearchPalette({ onClose, onSelect, actions }: SearchPaletteProps
       kind: 'action',
       action,
     }));
+
+    if (!hasQuery) {
+      const recentRows: PaletteRow[] = recentTickets.map((ticket) => ({
+        kind: 'recent',
+        ticket,
+      }));
+      return [...actionRows, ...recentRows];
+    }
+
     const ticketRows: PaletteRow[] = ticketResults.map((ticket) => ({
       kind: 'ticket',
       ticket,
     }));
     return [...actionRows, ...ticketRows];
-  }, [filteredActions, ticketResults]);
+  }, [filteredActions, ticketResults, hasQuery, recentTickets]);
 
   useFocusTrap({
     containerRef: panelRef,
@@ -139,6 +157,8 @@ export function SearchPalette({ onClose, onSelect, actions }: SearchPaletteProps
     ticketResults.length === 0 &&
     filteredActions.length === 0;
 
+  const showRecentHeading = !hasQuery && recentTickets.length > 0;
+
   return (
     <div className="overlay search-overlay" onClick={onClose} role="presentation">
       <div
@@ -169,6 +189,10 @@ export function SearchPalette({ onClose, onSelect, actions }: SearchPaletteProps
           <p className="search-palette-hint">
             チケット検索のほか、ビュー切替やパネル起動ができます
           </p>
+        )}
+
+        {showRecentHeading && (
+          <p className="search-palette-recent-heading">最近開いたチケット</p>
         )}
 
         {hasQuery && isLoading && (
@@ -203,6 +227,26 @@ export function SearchPalette({ onClose, onSelect, actions }: SearchPaletteProps
                       {action.detail !== undefined && (
                         <span className="search-result-detail">{action.detail}</span>
                       )}
+                    </button>
+                  </li>
+                );
+              }
+
+              if (row.kind === 'recent') {
+                const { ticket } = row;
+                return (
+                  <li key={`recent-${ticket.id}`}>
+                    <button
+                      type="button"
+                      className={`search-result-item search-result-recent${index === selectedIndex ? ' selected' : ''}`}
+                      role="option"
+                      aria-selected={index === selectedIndex}
+                      onMouseEnter={() => setSelectedIndex(index)}
+                      onClick={() => handleActivateRow(row)}
+                    >
+                      <span className="search-result-project">{ticket.projectName}</span>
+                      <span className="search-result-id">{ticket.id}</span>
+                      <span className="search-result-title">{ticket.title}</span>
                     </button>
                   </li>
                 );
