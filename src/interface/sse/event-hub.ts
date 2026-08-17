@@ -1,4 +1,8 @@
-export type AppEventName = 'board.changed' | 'session.changed' | 'project.scanned';
+export type AppEventName =
+  | 'board.changed'
+  | 'session.changed'
+  | 'project.scanned'
+  | 'notification';
 
 export interface AppEvent {
   readonly name: AppEventName;

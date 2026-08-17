@@ -386,11 +386,16 @@ function buildTicketSessionLinkDtos(
 
 function relayEventName(
   name: string,
-): name is 'board.changed' | 'session.changed' | 'project.scanned' {
+): name is
+  | 'board.changed'
+  | 'session.changed'
+  | 'project.scanned'
+  | 'notification' {
   return (
     name === 'board.changed' ||
     name === 'session.changed' ||
-    name === 'project.scanned'
+    name === 'project.scanned' ||
+    name === 'notification'
   );
 }
 

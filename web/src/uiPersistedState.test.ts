@@ -25,6 +25,10 @@ describe('uiPersistedState', () => {
     expect(validateViewMode('settings')).toBe('settings');
   });
 
+  it('accepts events as a view mode', () => {
+    expect(validateViewMode('events')).toBe('events');
+  });
+
   it('validates stats weeks options', () => {
     expect(validateStatsWeeks(4)).toBe(4);
     expect(validateStatsWeeks(8)).toBe(8);

@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { acquireSharedEventSource } from './lib/sseConnection';
 
 export type StreamState = 'connecting' | 'open' | 'error';
 
@@ -14,12 +15,7 @@ export function useBoardStream(): StreamState {
   const [state, setState] = useState<StreamState>('connecting');
 
   useEffect(() => {
-    // Absolute, built from origin rather than the relative '/api/events': a
-    // relative URL resolves against the document URL, and if that still carries
-    // QR credentials WebKit rejects the EventSource outright. `origin` never
-    // includes userinfo, so this holds even if the history rewrite in main.tsx
-    // did not run. See stripUrlCredentials.ts.
-    const es = new EventSource(`${window.location.origin}/api/events`);
+    const conn = acquireSharedEventSource();
 
     // Tracks whether the connection has been through an error/disconnect
     // since the effect mounted (or since the last successful revalidation).
@@ -36,7 +32,7 @@ export function useBoardStream(): StreamState {
       lastRevalidateAtRef.current = Date.now();
     };
 
-    es.onopen = () => {
+    const onOpen = () => {
       setState('open');
       if (hadErrorRef.current) {
         hadErrorRef.current = false;
@@ -44,10 +40,13 @@ export function useBoardStream(): StreamState {
       }
     };
 
-    es.onerror = () => {
+    const onError = () => {
       setState('error');
       hadErrorRef.current = true;
     };
+
+    conn.addOpenListener(onOpen);
+    conn.addErrorListener(onError);
 
     const onBoardChanged = () => {
       void queryClient.invalidateQueries({ queryKey: ['board'] });
@@ -64,8 +63,8 @@ export function useBoardStream(): StreamState {
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
     };
 
-    es.addEventListener('board.changed', onBoardChanged);
-    es.addEventListener('session.changed', onSessionChanged);
+    conn.addEventListener('board.changed', onBoardChanged);
+    conn.addEventListener('session.changed', onSessionChanged);
 
     // Mobile PWAs frequently freeze/kill the SSE connection when backgrounded
     // without ever firing onerror — the socket just silently stops delivering
@@ -81,10 +80,12 @@ export function useBoardStream(): StreamState {
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     return () => {
-      es.removeEventListener('board.changed', onBoardChanged);
-      es.removeEventListener('session.changed', onSessionChanged);
+      conn.removeEventListener('board.changed', onBoardChanged);
+      conn.removeEventListener('session.changed', onSessionChanged);
+      conn.removeOpenListener(onOpen);
+      conn.removeErrorListener(onError);
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      es.close();
+      conn.release();
     };
   }, [queryClient]);
 

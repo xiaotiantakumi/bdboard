@@ -1,0 +1,274 @@
+import { describe, expect, it } from 'vitest';
+import {
+  computeBoardNotificationSnapshot,
+  diffBoardNotificationSnapshots,
+  diffSessionLiveness,
+  type BoardNotificationSnapshot,
+} from './board-notifications.js';
+import { makeSession, makeTicket } from './test-support.js';
+
+const NOW = new Date('2026-06-01T12:00:00.000Z');
+
+function blocksEdge(issueId: string, dependsOnId: string) {
+  return { issueId, dependsOnId, kind: 'blocks' as const };
+}
+
+describe('computeBoardNotificationSnapshot', () => {
+  it('includes open unblocked tickets in readyTicketIds', () => {
+    const readyTicket = makeTicket({ id: 'bdboard-ready', status: 'open' });
+    const snapshot = computeBoardNotificationSnapshot(
+      [{ tickets: [readyTicket] }],
+      NOW,
+    );
+
+    expect([...snapshot.readyTicketIds]).toEqual(['bdboard-ready']);
+  });
+
+  it('excludes blocked tickets from readyTicketIds', () => {
+    const blocker = makeTicket({ id: 'bdboard-blocker', status: 'open' });
+    const blocked = makeTicket({
+      id: 'bdboard-blocked',
+      status: 'open',
+      dependencies: [blocksEdge('bdboard-blocked', 'bdboard-blocker')],
+    });
+    const snapshot = computeBoardNotificationSnapshot(
+      [{ tickets: [blocker, blocked] }],
+      NOW,
+    );
+
+    expect([...snapshot.readyTicketIds]).toEqual(['bdboard-blocker']);
+  });
+
+  it('collects decisionPendingTicketIds from project input', () => {
+    const snapshot = computeBoardNotificationSnapshot(
+      [
+        {
+          tickets: [],
+          decisionPendingTicketIds: ['bdboard-a', 'bdboard-b'],
+        },
+      ],
+      NOW,
+    );
+
+    expect([...snapshot.decisionPendingTicketIds]).toEqual([
+      'bdboard-a',
+      'bdboard-b',
+    ]);
+  });
+
+  it('collects all ticket ids in knownTicketIds regardless of ready status', () => {
+    const blocker = makeTicket({ id: 'bdboard-blocker', status: 'open' });
+    const blocked = makeTicket({
+      id: 'bdboard-blocked',
+      status: 'open',
+      dependencies: [blocksEdge('bdboard-blocked', 'bdboard-blocker')],
+    });
+    const inProgress = makeTicket({
+      id: 'bdboard-ip',
+      status: 'in_progress',
+    });
+    const snapshot = computeBoardNotificationSnapshot(
+      [{ tickets: [blocker, blocked, inProgress] }],
+      NOW,
+    );
+
+    expect([...snapshot.knownTicketIds].sort()).toEqual([
+      'bdboard-blocked',
+      'bdboard-blocker',
+      'bdboard-ip',
+    ]);
+  });
+
+  it('collects knownTicketIds across multiple projects', () => {
+    const ticketA = makeTicket({ id: 'bdboard-a', status: 'open' });
+    const ticketB = makeTicket({ id: 'bdboard-b', status: 'closed' });
+    const snapshot = computeBoardNotificationSnapshot(
+      [{ tickets: [ticketA] }, { tickets: [ticketB] }],
+      NOW,
+    );
+
+    expect([...snapshot.knownTicketIds].sort()).toEqual([
+      'bdboard-a',
+      'bdboard-b',
+    ]);
+  });
+});
+
+describe('diffBoardNotificationSnapshots', () => {
+  it('emits ticket_ready only for ids newly present in next.readyTicketIds that were already known', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'ticket_ready', ticketId: 'bdboard-b' },
+    ]);
+  });
+
+  it('does not emit ticket_ready for newly appeared ticket ids even when ready', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
+  });
+
+  it('emits ticket_ready for blocked-to-ready transition on a previously known ticket', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-blocker']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'ticket_ready', ticketId: 'bdboard-blocked' },
+    ]);
+  });
+
+  it('emits decision_pending only for ids newly present in next.decisionPendingTicketIds that were already known', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(),
+      decisionPendingTicketIds: new Set(['bdboard-a']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(),
+      decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'decision_pending', ticketId: 'bdboard-b' },
+    ]);
+  });
+
+  it('does not emit decision_pending for a newly appeared ticket id even when gated', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(),
+      decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'decision_pending', ticketId: 'bdboard-a' },
+    ]);
+  });
+
+  it('does not re-notify ids present in both snapshots', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a']),
+      decisionPendingTicketIds: new Set(['bdboard-x']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-x']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a']),
+      decisionPendingTicketIds: new Set(['bdboard-x']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-x']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
+  });
+
+  it('ignores ids that disappeared from next (no removal events)', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+      decisionPendingTicketIds: new Set(['bdboard-x']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b', 'bdboard-x']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
+  });
+});
+
+describe('diffSessionLiveness', () => {
+  it('detects alive to dead transitions as session_died', () => {
+    const prev = [
+      makeSession({
+        sessionId: 'session-1',
+        alive: true,
+        cwd: '/projects/a',
+        name: 'agent-a',
+        lastActivityAt: NOW,
+      }),
+    ];
+    const next = [
+      makeSession({
+        sessionId: 'session-1',
+        alive: false,
+        cwd: '/projects/a',
+        name: 'agent-a',
+        lastActivityAt: NOW,
+      }),
+    ];
+
+    expect(diffSessionLiveness(prev, next)).toEqual([
+      {
+        kind: 'session_died',
+        sessionId: 'session-1',
+        cwd: '/projects/a',
+        name: 'agent-a',
+        lastActivityAt: NOW,
+      },
+    ]);
+  });
+
+  it('ignores sessions that were already dead', () => {
+    const prev = [
+      makeSession({ sessionId: 'session-1', alive: false }),
+    ];
+    const next = [
+      makeSession({ sessionId: 'session-1', alive: false }),
+    ];
+
+    expect(diffSessionLiveness(prev, next)).toEqual([]);
+  });
+
+  it('ignores sessions that stay alive', () => {
+    const prev = [
+      makeSession({ sessionId: 'session-1', alive: true }),
+    ];
+    const next = [
+      makeSession({ sessionId: 'session-1', alive: true }),
+    ];
+
+    expect(diffSessionLiveness(prev, next)).toEqual([]);
+  });
+
+  it('ignores new sessions that first appear as dead', () => {
+    const prev: ReturnType<typeof makeSession>[] = [];
+    const next = [
+      makeSession({ sessionId: 'session-new', alive: false }),
+    ];
+
+    expect(diffSessionLiveness(prev, next)).toEqual([]);
+  });
+});

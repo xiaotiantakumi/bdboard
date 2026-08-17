@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { __resetSharedEventSourceForTests } from './lib/sseConnection';
 import { useBoardStream } from './useBoardStream';
 
 // Minimal controllable EventSource stand-in. jsdom has no real EventSource,
@@ -11,6 +12,7 @@ class MockEventSource {
   static instances: MockEventSource[] = [];
 
   url: string;
+  readyState = 0;
   onopen: (() => void) | null = null;
   onerror: (() => void) | null = null;
   private listeners = new Map<string, Set<() => void>>();
@@ -68,11 +70,13 @@ function invalidatedKeys(invalidateSpy: InvalidateSpy): string[] {
 describe('useBoardStream', () => {
   beforeEach(() => {
     MockEventSource.instances = [];
+    __resetSharedEventSourceForTests();
     vi.stubGlobal('EventSource', MockEventSource);
     vi.useFakeTimers();
   });
 
   afterEach(() => {
+    __resetSharedEventSourceForTests();
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
