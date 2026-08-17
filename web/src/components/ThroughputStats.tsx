@@ -2,12 +2,13 @@ import { useQuery } from '@tanstack/react-query';
 import type {
   AgeDistributionDto,
   CfdDayEntryDto,
+  ModelStatsDto,
   ProjectCfdStatsDto,
   ProjectThroughputStatsDto,
   ThroughputStatsDto,
   WeeklyCloseCountDto,
 } from '../api';
-import { fetchCfdStats, fetchThroughputStats } from '../api';
+import { fetchCfdStats, fetchModelStats, fetchThroughputStats } from '../api';
 import {
   STATS_WEEKS,
   statsWeeksLabel,
@@ -357,6 +358,98 @@ function findProjectCfdDays(
   return cfdStats?.projects.find((project) => project.projectId === projectId)?.days ?? [];
 }
 
+function collectModelNames(
+  weeklyCloses: readonly { counts: Record<string, number> }[],
+  stageDistribution: readonly { counts: Record<string, number> }[],
+): readonly string[] {
+  const names = new Set<string>();
+  for (const entry of weeklyCloses) {
+    for (const model of Object.keys(entry.counts)) {
+      names.add(model);
+    }
+  }
+  for (const entry of stageDistribution) {
+    for (const model of Object.keys(entry.counts)) {
+      names.add(model);
+    }
+  }
+  return [...names].sort();
+}
+
+function hasAnyModelStatsData(stats: ModelStatsDto): boolean {
+  const hasWeekly = stats.weeklyCloses.some(
+    (entry) => Object.keys(entry.counts).length > 0,
+  );
+  const hasStage = stats.stageModelDistribution.some(
+    (entry) => Object.keys(entry.counts).length > 0,
+  );
+  return hasWeekly || hasStage;
+}
+
+function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
+  if (!hasAnyModelStatsData(stats)) {
+    return (
+      <p className="empty-message">モデル別の実績データはまだありません</p>
+    );
+  }
+
+  const modelNames = collectModelNames(
+    stats.weeklyCloses,
+    stats.stageModelDistribution,
+  );
+
+  return (
+    <>
+      <div className="throughput-chart-block">
+        <h4 className="throughput-chart-heading">モデル別クローズ件数(週次)</h4>
+        <table className="model-stats-table">
+          <thead>
+            <tr>
+              <th>週</th>
+              {modelNames.map((model) => (
+                <th key={model}>{model}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {stats.weeklyCloses.map((entry) => (
+              <tr key={entry.weekStart}>
+                <td>{formatWeekLabel(entry.weekStart)}</td>
+                {modelNames.map((model) => (
+                  <td key={model}>{entry.counts[model] ?? 0}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="throughput-chart-block">
+        <h4 className="throughput-chart-heading">工程×モデルの分布</h4>
+        <table className="model-stats-table">
+          <thead>
+            <tr>
+              <th>工程</th>
+              {modelNames.map((model) => (
+                <th key={model}>{model}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {stats.stageModelDistribution.map((entry) => (
+              <tr key={entry.stage}>
+                <td>{entry.stage}</td>
+                {modelNames.map((model) => (
+                  <td key={model}>{entry.counts[model] ?? 0}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 export function ThroughputStats({
   projectIds,
   weeks,
@@ -372,12 +465,18 @@ export function ThroughputStats({
     queryKey: ['cfd-stats', cfdDays, projectIdsKey],
     queryFn: () => fetchCfdStats(cfdDays, projectIds),
   });
+  const modelStatsQuery = useQuery({
+    queryKey: ['model-stats', weeks, projectIdsKey],
+    queryFn: () => fetchModelStats(weeks, projectIds),
+  });
 
-  const isLoading = query.isLoading || cfdQuery.isLoading;
-  const isError = query.isError || cfdQuery.isError;
+  const isLoading =
+    query.isLoading || cfdQuery.isLoading || modelStatsQuery.isLoading;
+  const isError = query.isError || cfdQuery.isError || modelStatsQuery.isError;
   const errorMessage =
     (query.error instanceof Error ? query.error.message : undefined) ??
     (cfdQuery.error instanceof Error ? cfdQuery.error.message : undefined) ??
+    (modelStatsQuery.error instanceof Error ? modelStatsQuery.error.message : undefined) ??
     '統計の読み込みに失敗しました';
 
   return (
@@ -429,6 +528,13 @@ export function ThroughputStats({
               />
             ))}
           </div>
+        )}
+      {!isLoading &&
+        !isError &&
+        modelStatsQuery.data !== undefined && (
+          <section className="model-stats-block">
+            <ModelStatsTables stats={modelStatsQuery.data} />
+          </section>
         )}
     </section>
   );

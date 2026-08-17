@@ -1231,6 +1231,55 @@ describe('createApiRoutes', () => {
     assertNoDates(body);
   });
 
+  it('returns model stats with ISO weekStart and project filter', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    const closedAt = new Date('2026-06-01T10:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-model-a',
+          projectId: a.id,
+          closedAt,
+          models: [{ stage: 'implement', model: 'composer-2.5' }],
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+    cache.putProject({
+      project: b,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-model-b',
+          projectId: b.id,
+          closedAt,
+          models: [{ stage: 'implement', model: 'gpt-5' }],
+        }),
+      ],
+      fingerprint: 'fp-b',
+      fetchedAt: NOW,
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request(
+      `/api/model-stats?weeks=1&projects=${encodeURIComponent(a.id)}`,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.weeklyCloses).toHaveLength(1);
+    expect(typeof body.weeklyCloses[0].weekStart).toBe('string');
+    expect(body.weeklyCloses[0].counts).toEqual({ 'composer-2.5': 1 });
+    expect(body.stageModelDistribution).toEqual([
+      { stage: 'implement', counts: { 'composer-2.5': 1 } },
+    ]);
+    assertNoDates(body);
+  });
+
   it('returns hygiene issues filtered by projects', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');

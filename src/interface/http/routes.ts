@@ -12,6 +12,7 @@ import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js'
 import { getSyncHealth } from '../../application/board/get-sync-health.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import { getThroughputStats } from '../../application/board/get-throughput-stats.js';
+import { getModelStats } from '../../application/board/get-model-stats.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
 import { getBoard } from '../../application/board/get-board.js';
 import type { GetBoardDeps } from '../../application/board/get-board.js';
@@ -63,6 +64,7 @@ import {
   toSessionTailMessageDto,
   toDependencyGraphDto,
   toThroughputStatsDto,
+  toModelStatsDto,
   toCfdStatsDto,
   toHygieneIssueDto,
   toLeaseHealthDto,
@@ -554,6 +556,16 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       weeks,
     });
     return c.json(toThroughputStatsDto(stats));
+  });
+
+  app.get('/api/model-stats', (c) => {
+    const projectIds = parseProjectIds(c.req.query('projects'));
+    const weeks = parseStatsWeeks(c.req.query('weeks'));
+    const stats = getModelStats(deps.cache, deps.now(), {
+      ...(projectIds !== undefined ? { projectIds } : {}),
+      weeks,
+    });
+    return c.json(toModelStatsDto(stats));
   });
 
   app.get('/api/cfd', (c) => {
