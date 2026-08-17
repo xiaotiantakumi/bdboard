@@ -1028,7 +1028,7 @@ export function ChatPanel({
   );
 
   const applyChatError = useCallback(
-    (convKey: string, sentText: string, error: unknown) => {
+    (convKey: string, sentText: string, error: unknown, sentAt: number) => {
       let errorText: string;
       let clearSession = false;
       const accessMessage = writeAccessErrorMessage(error);
@@ -1062,10 +1062,20 @@ export function ChatPanel({
 
       setConversations((prev) => {
         const current = prev[convKey] ?? { messages: [] };
+        // bdboard-sp2(議長裁定 方針(a)): 送信は成立しなかった — 楽観的に積んだ
+        // ユーザーメッセージを transcript から取り消し、本文は下の入力欄復元で返す。
+        // 取り消さないと失敗直後に transcript と入力欄で同じ本文が二重表示され、
+        // 1クリック再送で transcript にユーザー発話が二重に積まれる。
+        const messagesWithoutOptimisticUser = current.messages.filter(
+          (message) => !(message.role === 'user' && message.at === sentAt),
+        );
         return {
           ...prev,
           [convKey]: {
-            messages: [...current.messages, { role: 'error', text: errorText, at: Date.now() }],
+            messages: [
+              ...messagesWithoutOptimisticUser,
+              { role: 'error', text: errorText, at: Date.now() },
+            ],
             sessionId: clearSession ? undefined : current.sessionId,
             agentId: clearSession ? undefined : current.agentId,
           },
@@ -1219,7 +1229,7 @@ export function ChatPanel({
             });
             applyChatSuccess(sendKey, text, result);
           } catch (error) {
-            applyChatError(sendKey, sentRawText, error);
+            applyChatError(sendKey, sentRawText, error, sentAt);
           } finally {
             setStreamingReply(null);
           }
@@ -1228,7 +1238,7 @@ export function ChatPanel({
             const result = await postChatMessage(messagePayload);
             applyChatSuccess(sendKey, text, result);
           } catch (error) {
-            applyChatError(sendKey, sentRawText, error);
+            applyChatError(sendKey, sentRawText, error, sentAt);
           }
         }
       } finally {

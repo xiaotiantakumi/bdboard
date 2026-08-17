@@ -1742,6 +1742,77 @@ describe('ChatPanel', () => {
         expect(screen.getByLabelText('メッセージ')).toHaveValue(secondPrefill);
       });
     });
+
+    it('shows only one user message in the transcript after failure and retry (bdboard-sp2)', async () => {
+      const user = userEvent.setup();
+      const messageText = 'retry after failure';
+      let postCount = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message' && init?.method === 'POST') {
+          postCount += 1;
+          if (postCount === 1) {
+            return jsonResponse({ error: 'boom' }, 500);
+          }
+          return jsonResponse({
+            reply: 'success reply',
+            sessionId: 'sess-retry',
+            agentId: 'claude',
+          });
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      const input = screen.getByLabelText('メッセージ');
+      await user.type(input, messageText);
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      await screen.findByText('boom');
+      const messages = screen.getByRole('log');
+      const userMessagesAfterFailure = [...messages.querySelectorAll('.chat-message-user')].filter(
+        (element) => element.textContent === messageText,
+      );
+      expect(userMessagesAfterFailure).toHaveLength(0);
+      expect(screen.getByLabelText('メッセージ')).toHaveValue(messageText);
+
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await screen.findByText('success reply');
+
+      const userMessagesAfterRetry = [...messages.querySelectorAll('.chat-message-user')].filter(
+        (element) => element.textContent === messageText,
+      );
+      expect(userMessagesAfterRetry).toHaveLength(1);
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(2);
+    });
+
+    it('removes the optimistic user message from the transcript after a streaming send failure (bdboard-sp2)', async () => {
+      const user = userEvent.setup();
+      const messageText = 'failed stream rollback';
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new TextEncoder().encode(
+              'event: error\ndata: {"error":"stream boom","code":"agent-error"}\n\n',
+            ),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+      const input = screen.getByLabelText('メッセージ');
+      await user.type(input, messageText);
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      await screen.findByText('stream boom');
+      const messages = screen.getByRole('log');
+      const userMessagesAfterFailure = [...messages.querySelectorAll('.chat-message-user')].filter(
+        (element) => element.textContent === messageText,
+      );
+      expect(userMessagesAfterFailure).toHaveLength(0);
+    });
   });
 
   it('shows thread tabs, switches them, closes without deleting, and deletes after confirmation', async () => {
