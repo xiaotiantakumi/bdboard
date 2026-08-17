@@ -8,7 +8,7 @@ import {
   createEmptySessionLinksCacheMethods,
   createInMemoryCfdCacheMethods,
 } from '../ports/board-cache-fakes.js';
-import { formatLocalDate, recordCfdSnapshot } from './record-cfd-snapshot.js';
+import { formatLocalDate, pruneOldCfdSnapshots, recordCfdSnapshot } from './record-cfd-snapshot.js';
 
 function localDate(
   year: number,
@@ -171,5 +171,50 @@ describe('recordCfdSnapshot', () => {
         }),
       ]),
     );
+  });
+});
+
+describe('pruneOldCfdSnapshots', () => {
+  it('does nothing when retentionDays is zero or negative', () => {
+    const cache = createFakeBoardCache();
+    const now = localDate(2026, 8, 18, 12);
+    cache.putCfdSnapshot('2026-01-01', now, [
+      { projectId: 'proj-a', status: 'open', count: 1 },
+    ]);
+
+    expect(pruneOldCfdSnapshots(cache, now, 0)).toEqual({
+      deletedCount: 0,
+      cutoffDate: formatLocalDate(now),
+    });
+    expect(pruneOldCfdSnapshots(cache, now, -1)).toEqual({
+      deletedCount: 0,
+      cutoffDate: formatLocalDate(now),
+    });
+    expect(cache.listCfdSnapshots()).toHaveLength(1);
+  });
+
+  it('deletes snapshots older than the retention cutoff', () => {
+    const cache = createFakeBoardCache();
+    const now = localDate(2026, 8, 18, 12);
+    const snapshottedAt = new Date('2026-08-18T03:00:00.000Z');
+
+    cache.putCfdSnapshot('2025-08-17', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 1 },
+    ]);
+    cache.putCfdSnapshot('2025-08-18', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 2 },
+    ]);
+    cache.putCfdSnapshot('2026-08-18', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 3 },
+    ]);
+
+    const result = pruneOldCfdSnapshots(cache, now, 365);
+
+    expect(result.deletedCount).toBe(1);
+    expect(result.cutoffDate).toBe('2025-08-18');
+    expect(cache.listCfdSnapshots().map((row) => row.snapshotDate)).toEqual([
+      '2025-08-18',
+      '2026-08-18',
+    ]);
   });
 });

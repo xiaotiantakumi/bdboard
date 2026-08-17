@@ -5,7 +5,11 @@ import type { BoardCache, CfdSnapshotRow, SessionLinkRow } from './board-cache.j
 /** テスト用: CFD メソッドを no-op / 空配列で満たす */
 export function createEmptyCfdCacheMethods(): Pick<
   BoardCache,
-  'putCfdSnapshot' | 'listCfdSnapshots' | 'getLatestCfdSnapshotDate'
+  | 'putCfdSnapshot'
+  | 'listCfdSnapshots'
+  | 'getLatestCfdSnapshotDate'
+  | 'pruneCfdSnapshots'
+  | 'getCacheStats'
 > {
   return {
     putCfdSnapshot(): void {},
@@ -15,13 +19,23 @@ export function createEmptyCfdCacheMethods(): Pick<
     getLatestCfdSnapshotDate(): string | undefined {
       return undefined;
     },
+    pruneCfdSnapshots(): number {
+      return 0;
+    },
+    getCacheStats() {
+      return { sizeBytes: 0, tables: [] };
+    },
   };
 }
 
 /** テスト用: メモリ上に CFD スナップショットを保持する */
 export function createInMemoryCfdCacheMethods(): Pick<
   BoardCache,
-  'putCfdSnapshot' | 'listCfdSnapshots' | 'getLatestCfdSnapshotDate'
+  | 'putCfdSnapshot'
+  | 'listCfdSnapshots'
+  | 'getLatestCfdSnapshotDate'
+  | 'pruneCfdSnapshots'
+  | 'getCacheStats'
 > & { readonly cfdSnapshots: CfdSnapshotRow[] } {
   const cfdSnapshots: CfdSnapshotRow[] = [];
 
@@ -78,6 +92,18 @@ export function createInMemoryCfdCacheMethods(): Pick<
       return cfdSnapshots.reduce((latest, entry) =>
         entry.snapshotDate > latest ? entry.snapshotDate : latest,
       cfdSnapshots[0]!.snapshotDate);
+    },
+    pruneCfdSnapshots(olderThanDate: string): number {
+      const before = cfdSnapshots.length;
+      for (let index = cfdSnapshots.length - 1; index >= 0; index -= 1) {
+        if (cfdSnapshots[index]!.snapshotDate < olderThanDate) {
+          cfdSnapshots.splice(index, 1);
+        }
+      }
+      return before - cfdSnapshots.length;
+    },
+    getCacheStats() {
+      return { sizeBytes: 0, tables: [] };
     },
   };
 }

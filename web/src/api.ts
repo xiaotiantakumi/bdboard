@@ -512,6 +512,15 @@ export function putBoardThresholdsConfig(config: {
   });
 }
 
+export interface DbStatsDto {
+  sizeBytes: number;
+  tables: { name: string; rowCount: number }[];
+}
+
+export function fetchDbStats(): Promise<DbStatsDto> {
+  return fetchJson<DbStatsDto>('/api/settings/db-stats');
+}
+
 export interface AiQuotaAlertConfigDto {
   thresholdPercent: number;
   version: string;

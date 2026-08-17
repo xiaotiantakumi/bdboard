@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchAiQuotaAlertConfig,
   fetchBoardThresholdsConfig,
+  fetchDbStats,
   fetchScanRootsConfig,
   postRefresh,
   putAiQuotaAlertConfig,
@@ -13,6 +14,7 @@ import {
   ApiError,
   type AiQuotaAlertConfigDto,
   type BoardThresholdsConfigDto,
+  type DbStatsDto,
   type ScanRootsConfigDto,
 } from '../api';
 import { SettingsPanel } from './SettingsPanel';
@@ -23,6 +25,7 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     fetchScanRootsConfig: vi.fn(),
     fetchBoardThresholdsConfig: vi.fn(),
+    fetchDbStats: vi.fn(),
     fetchAiQuotaAlertConfig: vi.fn(),
     postRefresh: vi.fn(),
     putScanRootsConfig: vi.fn(),
@@ -33,11 +36,22 @@ vi.mock('../api', async (importOriginal) => {
 
 const fetchScanRootsConfigMock = vi.mocked(fetchScanRootsConfig);
 const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
+const fetchDbStatsMock = vi.mocked(fetchDbStats);
 const fetchAiQuotaAlertConfigMock = vi.mocked(fetchAiQuotaAlertConfig);
 const postRefreshMock = vi.mocked(postRefresh);
 const putScanRootsConfigMock = vi.mocked(putScanRootsConfig);
 const putBoardThresholdsConfigMock = vi.mocked(putBoardThresholdsConfig);
 const putAiQuotaAlertConfigMock = vi.mocked(putAiQuotaAlertConfig);
+function makeDbStats(overrides: Partial<DbStatsDto> = {}): DbStatsDto {
+  return {
+    sizeBytes: 12_800_000,
+    tables: [
+      { name: 'cfd_snapshots', rowCount: 42 },
+      { name: 'projects', rowCount: 3 },
+    ],
+    ...overrides,
+  };
+}
 function makeAiQuotaAlertConfig(overrides: Partial<AiQuotaAlertConfigDto> = {}): AiQuotaAlertConfigDto {
   return {
     thresholdPercent: 20,
@@ -82,6 +96,7 @@ describe('SettingsPanel', () => {
   beforeEach(() => {
     fetchScanRootsConfigMock.mockReset();
     fetchBoardThresholdsConfigMock.mockReset();
+    fetchDbStatsMock.mockReset();
     fetchAiQuotaAlertConfigMock.mockReset();
     postRefreshMock.mockReset();
     putScanRootsConfigMock.mockReset();
@@ -89,6 +104,7 @@ describe('SettingsPanel', () => {
     putAiQuotaAlertConfigMock.mockReset();
     fetchScanRootsConfigMock.mockResolvedValue(makeConfig());
     fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
+    fetchDbStatsMock.mockResolvedValue(makeDbStats());
     fetchAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig());
     postRefreshMock.mockResolvedValue(undefined);
     putScanRootsConfigMock.mockResolvedValue({ scanRoots: ['/configured'], excludePaths: ['/excluded'], version: 'v2' });
@@ -508,5 +524,15 @@ describe('SettingsPanel', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'thresholdPercent は 1〜99 の整数で指定してください',
     );
+  });
+
+  it('shows local db stats with formatted size and table row counts', async () => {
+    renderSettings();
+    const section = await screen.findByRole('region', { name: 'ローカルDB統計' });
+    expect(within(section).getByText('DBサイズ: 12.2 MB')).toBeInTheDocument();
+    expect(within(section).getByText('cfd_snapshots')).toBeInTheDocument();
+    expect(within(section).getByText('42')).toBeInTheDocument();
+    expect(within(section).getByText('projects')).toBeInTheDocument();
+    expect(within(section).getByText('3')).toBeInTheDocument();
   });
 });

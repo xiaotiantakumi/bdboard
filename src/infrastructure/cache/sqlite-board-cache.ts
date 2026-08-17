@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type {
   BoardCache,
   CachedProject,
+  CacheStats,
   CfdSnapshotRow,
   SessionLinkRow,
 } from '../../application/ports/board-cache.js';
@@ -15,6 +16,18 @@ import { MAX_TRANSCRIPT_SESSION_LINKS, type SessionLinkSource } from '../../doma
 import { deserializeTickets, serializeTickets } from './ticket-serialization.js';
 
 const SCHEMA_VERSION = '6';
+
+const CACHE_TABLE_NAMES = [
+  'projects',
+  'transcript_offsets',
+  'session_usage',
+  'meta',
+  'cfd_snapshots',
+  'session_links',
+  'chat_sessions',
+  'chat_messages',
+  'interactions',
+] as const;
 
 const MAX_INTERACTIONS = 5000;
 
@@ -476,6 +489,15 @@ export function createSqliteBoardCache(dbPath: string): BoardCache {
   const getLatestCfdSnapshotDateStmt = db.prepare(`
     SELECT MAX(snapshot_date) AS snapshot_date FROM cfd_snapshots
   `);
+  const pruneCfdSnapshotsStmt = db.prepare(`
+    DELETE FROM cfd_snapshots WHERE snapshot_date < ?
+  `);
+  const countTableRowsStmts = Object.fromEntries(
+    CACHE_TABLE_NAMES.map((tableName) => [
+      tableName,
+      db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`),
+    ]),
+  ) as Record<(typeof CACHE_TABLE_NAMES)[number], Database.Statement>;
   const upsertSessionLinkStmt = db.prepare(`
     INSERT INTO session_links (
       ticket_id, session_id, project_id, source, confidence, observed_at
@@ -718,6 +740,23 @@ export function createSqliteBoardCache(dbPath: string): BoardCache {
         return undefined;
       }
       return row.snapshot_date;
+    },
+
+    pruneCfdSnapshots(olderThanDate: string): number {
+      const result = pruneCfdSnapshotsStmt.run(olderThanDate);
+      return result.changes;
+    },
+
+    getCacheStats(): CacheStats {
+      const sizeBytes =
+        dbPath === ':memory:'
+          ? 0
+          : statSync(dbPath, { throwIfNoEntry: false })?.size ?? 0;
+      const tables = CACHE_TABLE_NAMES.map((name) => {
+        const row = countTableRowsStmts[name].get() as { readonly count: number };
+        return { name, rowCount: row.count };
+      });
+      return { sizeBytes, tables };
     },
 
     upsertSessionLinks(rows: readonly SessionLinkRow[]): void {

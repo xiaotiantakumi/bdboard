@@ -27,6 +27,11 @@ export interface CfdSnapshotRow {
   readonly count: number;
 }
 
+export interface CacheStats {
+  readonly sizeBytes: number;
+  readonly tables: readonly { readonly name: string; readonly rowCount: number }[];
+}
+
 export interface BoardCache {
   getProject(projectId: string): CachedProject | undefined;
   putProject(entry: CachedProject): void;
@@ -51,6 +56,10 @@ export interface BoardCache {
   listCfdSnapshots(projectIds?: readonly string[]): readonly CfdSnapshotRow[];
   /** 直近のスナップショット日付(YYYY-MM-DD)。無ければ undefined */
   getLatestCfdSnapshotDate(): string | undefined;
+  /** snapshot_date < olderThanDate (YYYY-MM-DD) の行を削除し、削除件数を返す */
+  pruneCfdSnapshots(olderThanDate: string): number;
+  /** DBファイルサイズとテーブル別件数 */
+  getCacheStats(): CacheStats;
   /**
    * トランスクリプト走査由来のセッションリンクを upsert する((ticketId, sessionId)で一意)。
    * MAX_TRANSCRIPT_SESSION_LINKS を超えた分は observedAt が古い順に削除される。
