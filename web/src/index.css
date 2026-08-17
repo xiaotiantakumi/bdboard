@@ -2840,6 +2840,85 @@ body {
   min-height: 34px;
 }
 
+.shortcuts-help-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 16px;
+}
+
+.shortcuts-help-panel {
+  width: min(520px, 100%);
+  max-height: min(75vh, 640px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px var(--color-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.shortcuts-help-body {
+  overflow-y: auto;
+  padding-bottom: 20px;
+}
+
+.shortcuts-help-section {
+  margin-bottom: 16px;
+}
+
+.shortcuts-help-section:last-child {
+  margin-bottom: 0;
+}
+
+.shortcuts-help-category {
+  margin: 0 0 8px;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.shortcuts-help-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shortcuts-help-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+  font-size: 0.875rem;
+}
+
+.shortcuts-help-row:last-child {
+  border-bottom: none;
+}
+
+.shortcuts-help-keys {
+  flex-shrink: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  color: var(--color-text);
+}
+
+.shortcuts-help-description {
+  color: var(--color-text-secondary);
+  text-align: right;
+}
+
+.btn-shortcuts-help {
+  min-height: 34px;
+  min-width: 34px;
+  padding: 0 10px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
 .detail-list {
   margin: 0;
   padding-left: 1.2em;
