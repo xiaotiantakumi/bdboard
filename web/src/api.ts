@@ -512,6 +512,27 @@ export function putBoardThresholdsConfig(config: {
   });
 }
 
+export interface AiQuotaAlertConfigDto {
+  thresholdPercent: number;
+  version: string;
+  defaults: { thresholdPercent: number };
+}
+
+export function fetchAiQuotaAlertConfig(): Promise<AiQuotaAlertConfigDto> {
+  return fetchJson<AiQuotaAlertConfigDto>('/api/settings/ai-quota-alert');
+}
+
+export function putAiQuotaAlertConfig(config: {
+  thresholdPercent: number;
+  version: string;
+}): Promise<AiQuotaAlertConfigDto> {
+  return fetchJson<AiQuotaAlertConfigDto>('/api/settings/ai-quota-alert', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+}
+
 export function postRefresh(): Promise<void> {
   return fetchJson<{ ok: boolean }>('/api/refresh', { method: 'POST' }).then(() => undefined);
 }

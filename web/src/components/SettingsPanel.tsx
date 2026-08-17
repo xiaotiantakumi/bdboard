@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, fetchBoardThresholdsConfig, fetchScanRootsConfig, postRefresh, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 
 const SAVE_FEEDBACK_MS = 2000;
@@ -27,6 +27,7 @@ const CONFLICT_WRITE_MESSAGE =
   '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。';
 
 const INVALID_BOARD_THRESHOLDS_ERROR = 'invalid board thresholds';
+const INVALID_AI_QUOTA_ALERT_THRESHOLD_ERROR = 'invalid ai quota alert threshold';
 
 function msToHours(ms: number): string {
   return String(ms / (60 * 60 * 1000));
@@ -79,6 +80,27 @@ function describeBoardThresholdWriteError(error: unknown): ReactNode {
     return CONFLICT_WRITE_MESSAGE;
   }
   return describeWriteError(error, '閾値設定を保存できませんでした');
+}
+
+function describeAiQuotaAlertWriteError(error: unknown): ReactNode {
+  if (
+    error instanceof ApiError &&
+    error.status === 400 &&
+    error.errorMessage === INVALID_AI_QUOTA_ALERT_THRESHOLD_ERROR &&
+    isBoardThresholdErrors(error.details)
+  ) {
+    return (
+      <ul className="settings-panel-error-list">
+        {error.details.errors.map((message) => (
+          <li key={message}>{message}</li>
+        ))}
+      </ul>
+    );
+  }
+  if (error instanceof ApiError && error.status === 409) {
+    return CONFLICT_WRITE_MESSAGE;
+  }
+  return describeWriteError(error, 'AIクォータ通知閾値を保存できませんでした');
 }
 
 function isRejectedScanRootDetails(
@@ -159,6 +181,10 @@ export function SettingsPanel() {
     queryKey: ['board-thresholds-config'],
     queryFn: fetchBoardThresholdsConfig,
   });
+  const aiQuotaAlertQuery = useQuery({
+    queryKey: ['ai-quota-alert-config'],
+    queryFn: fetchAiQuotaAlertConfig,
+  });
   const [scanRoots, setScanRoots] = useState<string[]>([]);
   const [excludePaths, setExcludePaths] = useState<string[]>([]);
   const [version, setVersion] = useState('');
@@ -177,6 +203,11 @@ export function SettingsPanel() {
   const [thresholdsFeedback, setThresholdsFeedback] = useState<ReactNode>('');
   const [thresholdsFeedbackIsError, setThresholdsFeedbackIsError] = useState(false);
   const [thresholdsDirty, setThresholdsDirty] = useState(false);
+  const [aiQuotaThresholdPercent, setAiQuotaThresholdPercent] = useState('');
+  const [aiQuotaAlertVersion, setAiQuotaAlertVersion] = useState('');
+  const [aiQuotaAlertFeedback, setAiQuotaAlertFeedback] = useState<ReactNode>('');
+  const [aiQuotaAlertFeedbackIsError, setAiQuotaAlertFeedbackIsError] = useState(false);
+  const [aiQuotaAlertDirty, setAiQuotaAlertDirty] = useState(false);
 
   useEffect(() => {
     if (query.data !== undefined && !dirty) {
@@ -195,6 +226,13 @@ export function SettingsPanel() {
       setThresholdsVersion(thresholdsQuery.data.version);
     }
   }, [thresholdsDirty, thresholdsQuery.data]);
+
+  useEffect(() => {
+    if (aiQuotaAlertQuery.data !== undefined && !aiQuotaAlertDirty) {
+      setAiQuotaThresholdPercent(String(aiQuotaAlertQuery.data.thresholdPercent));
+      setAiQuotaAlertVersion(aiQuotaAlertQuery.data.version);
+    }
+  }, [aiQuotaAlertDirty, aiQuotaAlertQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -276,14 +314,50 @@ export function SettingsPanel() {
     },
   });
 
-  if (query.isPending || thresholdsQuery.isPending) {
+  const saveAiQuotaAlertMutation = useMutation({
+    mutationFn: () => {
+      const thresholdPercent = Number(aiQuotaThresholdPercent.trim());
+      if (!Number.isInteger(thresholdPercent)) {
+        throw new Error('invalid local ai quota threshold input');
+      }
+      return putAiQuotaAlertConfig({
+        thresholdPercent,
+        version: aiQuotaAlertVersion,
+      });
+    },
+    onSuccess: async (data) => {
+      setAiQuotaAlertVersion(data.version);
+      await queryClient.invalidateQueries({ queryKey: ['ai-quota-alert-config'] });
+      setAiQuotaAlertDirty(false);
+      setAiQuotaAlertFeedbackIsError(false);
+      setAiQuotaAlertFeedback('AIクォータ通知閾値を保存しました');
+      window.setTimeout(() => setAiQuotaAlertFeedback(''), SAVE_FEEDBACK_MS);
+    },
+    onError: (error) => {
+      setAiQuotaAlertFeedbackIsError(true);
+      setAiQuotaAlertFeedback(describeAiQuotaAlertWriteError(error));
+      if (error instanceof ApiError && error.status === 409) {
+        setAiQuotaAlertDirty(false);
+        void queryClient.invalidateQueries({ queryKey: ['ai-quota-alert-config'] });
+      }
+    },
+  });
+
+  if (query.isPending || thresholdsQuery.isPending || aiQuotaAlertQuery.isPending) {
     return (
       <section className="settings-panel" aria-label="設定">
         読み込み中…
       </section>
     );
   }
-  if (query.isError || query.data === undefined || thresholdsQuery.isError || thresholdsQuery.data === undefined) {
+  if (
+    query.isError ||
+    query.data === undefined ||
+    thresholdsQuery.isError ||
+    thresholdsQuery.data === undefined ||
+    aiQuotaAlertQuery.isError ||
+    aiQuotaAlertQuery.data === undefined
+  ) {
     return (
       <section className="settings-panel" aria-label="設定">
         <p className="settings-panel-error">設定を読み込めませんでした</p>
@@ -564,6 +638,52 @@ export function SettingsPanel() {
               role={thresholdsFeedbackIsError ? 'alert' : undefined}
             >
               {thresholdsFeedback}
+            </div>
+          </div>
+        </form>
+      </section>
+      <section className="settings-panel-section" aria-labelledby="ai-quota-alert-title">
+        <h3 id="ai-quota-alert-title">AIクォータ通知閾値</h3>
+        <p className="settings-panel-subtitle">
+          AIクォータ残量がこの値(%)を下回ったらイベントセンターに通知します。
+        </p>
+        <form
+          className="settings-panel-thresholds-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveAiQuotaAlertMutation.mutate();
+          }}
+        >
+          <label htmlFor="settings-ai-quota-threshold-percent">クォータ通知閾値 (%)</label>
+          <input
+            id="settings-ai-quota-threshold-percent"
+            type="number"
+            min={1}
+            max={99}
+            step={1}
+            value={aiQuotaThresholdPercent}
+            placeholder={String(aiQuotaAlertQuery.data.defaults.thresholdPercent)}
+            disabled={saveAiQuotaAlertMutation.isPending}
+            onChange={(event) => {
+              setAiQuotaThresholdPercent(event.target.value);
+              setAiQuotaAlertDirty(true);
+            }}
+          />
+          <div className="settings-panel-footer">
+            <button
+              type="submit"
+              className="settings-panel-save"
+              disabled={!aiQuotaAlertDirty || saveAiQuotaAlertMutation.isPending}
+            >
+              {saveAiQuotaAlertMutation.isPending ? '保存中…' : '閾値を保存'}
+            </button>
+            <div
+              className="settings-panel-feedback"
+              aria-live="polite"
+              role={aiQuotaAlertFeedbackIsError ? 'alert' : undefined}
+            >
+              {aiQuotaAlertFeedback}
             </div>
           </div>
         </form>

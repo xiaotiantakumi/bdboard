@@ -25,6 +25,7 @@ export * from './fs/tunnel-interruption-store.js';
 export * from './fs/config-path.js';
 export * from './fs/scan-roots-config-store.js';
 export * from './fs/board-thresholds-config-store.js';
+export * from './fs/ai-quota-alert-config-store.js';
 export * from './fs/node-file-system.js';
 export * from './harness/fs-pack-registry.js';
 export * from './harness/fs-harness-injector.js';
