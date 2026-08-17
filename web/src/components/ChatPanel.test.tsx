@@ -332,6 +332,46 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('proj-b');
   });
 
+  it('carries a model selection made during the cold ticket-launch window (projects not yet arrived) into the resolved project draft instead of reverting to the agent default (104.18 regression)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([
+      {
+        ...CLAUDE_AGENT,
+        model: 'sonnet',
+        models: [
+          { id: 'sonnet', label: 'Sonnet' },
+          { id: 'opus', label: 'Opus' },
+        ],
+      },
+    ]);
+
+    const rendered = renderChatPanel([], {
+      initialProjectId: 'proj-b',
+      initialInput: 'proj-b のチケットについて: ',
+      ticketContextToken: 1,
+    });
+
+    const modelSelect = await screen.findByLabelText('モデル');
+    expect(modelSelect).toHaveValue('sonnet');
+    await user.selectOptions(modelSelect, 'opus');
+    expect(modelSelect).toHaveValue('opus');
+
+    rendered.rerender(
+      <ChatPanel
+        projects={[PROJECT_A, PROJECT_B]}
+        initialProjectId="proj-b"
+        initialInput="proj-b のチケットについて: "
+        ticketContextToken={1}
+        onClose={rendered.onClose}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-b');
+      expect(screen.getByLabelText('モデル')).toHaveValue('opus');
+    });
+  });
+
   it('keeps a cold-window edit intact when the same ticket is opened again with a new context token (104.17 Opus review should-fix1 regression)', async () => {
     // 104.17 Opus レビュー should-fix1 再現: 上のテストで「コールドウィンドウ中の
     // 編集がプリフィルとして pendingPrefillRef に積まれ、解決後の会話キーへ適用
