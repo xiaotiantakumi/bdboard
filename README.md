@@ -118,7 +118,8 @@ npm run dev:web   # Vite の dev サーバー(HMR)。/api は上記サーバー�
 | `BDBOARD_AI_QUOTA_CACHE_MS` | AI クォータ結果のキャッシュ有効期間(ミリ秒) | `300000`(5分) |
 | `BDBOARD_CHAT_DISABLED` | `1` または `true`(大小無視)でチャット機能を無効化 | `false` |
 | `BDBOARD_CLAUDE_PATH` | チャット機能が呼び出す `claude` CLI のパス/名前 | `claude` |
-| `BDBOARD_CHAT_MODEL` | チャットで使うモデル | `sonnet` |
+| `BDBOARD_CHAT_MODEL` | チャットで使うモデル(起動時の既定値1つ) | `sonnet` |
+| `BDBOARD_CHAT_MODELS` | チャットの claude エージェントで選択可能なモデル一覧(カンマ区切り) | `sonnet,opus,haiku` |
 | `BDBOARD_CHAT_TIMEOUT_MS` | チャット1リクエストのタイムアウト(ミリ秒) | `180000`(3分) |
 | `BDBOARD_CHAT_RATE_WEIGHT_OPUS` | チャットレート制限の claude エージェント opus モデルの重み(claude エージェント限定。他エージェントの同名モデルには適用されない) | `5` |
 | `BDBOARD_CHAT_RATE_WEIGHT_SONNET` | チャットレート制限の claude エージェント sonnet モデルの重み(claude エージェント限定) | `1` |

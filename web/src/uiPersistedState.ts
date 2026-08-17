@@ -35,6 +35,7 @@ export const UI_STORAGE_KEYS = {
   boardPriorityCeiling: 'bdboard.ui.boardPriorityCeiling',
   boardIssueTypes: 'bdboard.ui.boardIssueTypes',
   boardFilterText: 'bdboard.ui.boardFilterText',
+  chatModelSelections: 'bdboard.ui.chatModelSelections',
 } as const;
 
 export const BOARD_ISSUE_TYPES = ['bug', 'feature', 'task', 'chore', 'epic'] as const;
@@ -156,6 +157,31 @@ export function validateStringArray(value: unknown): string[] | null {
     return null;
   }
   return value;
+}
+
+export function validateChatModelSelections(
+  value: unknown,
+): Record<string, Record<string, string>> | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const entries = Object.entries(value);
+  if (
+    !entries.every(([projectId, agentMap]) => {
+      if (typeof projectId !== 'string') {
+        return false;
+      }
+      if (agentMap === null || typeof agentMap !== 'object' || Array.isArray(agentMap)) {
+        return false;
+      }
+      return Object.entries(agentMap).every(
+        ([agentId, modelId]) => typeof agentId === 'string' && typeof modelId === 'string',
+      );
+    })
+  ) {
+    return null;
+  }
+  return value as Record<string, Record<string, string>>;
 }
 
 export function validateBoolean(value: unknown): boolean | null {

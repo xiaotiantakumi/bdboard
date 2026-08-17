@@ -124,6 +124,8 @@ export const DEFAULT_CLAUDE_MODEL_WEIGHTS: Required<ClaudeModelWeights> = {
   haiku: 1,
 };
 
+export const DEFAULT_CLAUDE_MODEL_IDS: readonly string[] = ['sonnet', 'opus', 'haiku'] as const;
+
 /**
  * `options.modelWeights` の未指定フィールドを DEFAULT_CLAUDE_MODEL_WEIGHTS で埋めた完全形にする。
  * 重みの既定値適用はこの spec に一元化されている(bdboard-3tw.104.11 Opus レビュー N2)ので、
@@ -138,12 +140,27 @@ function resolveClaudeModelWeights(weights: ClaudeModelWeights): Required<Claude
   };
 }
 
-function buildClaudeChatModels(weights: Required<ClaudeModelWeights>): readonly ChatModelOption[] {
-  return [
-    { id: 'sonnet', label: 'Sonnet', weight: weights.sonnet },
-    { id: 'opus', label: 'Opus', weight: weights.opus },
-    { id: 'haiku', label: 'Haiku', weight: weights.haiku },
-  ];
+function resolveClaudeModelIds(models: readonly string[] | undefined): readonly string[] {
+  return models ?? DEFAULT_CLAUDE_MODEL_IDS;
+}
+
+function buildClaudeChatModels(
+  ids: readonly string[],
+  weights: Required<ClaudeModelWeights>,
+): readonly ChatModelOption[] {
+  return ids.map((id) => {
+    const normalized = id.toLowerCase();
+    if (normalized === 'sonnet') {
+      return { id, label: 'Sonnet', weight: weights.sonnet };
+    }
+    if (normalized === 'opus') {
+      return { id, label: 'Opus', weight: weights.opus };
+    }
+    if (normalized === 'haiku') {
+      return { id, label: 'Haiku', weight: weights.haiku };
+    }
+    return { id, label: id, weight: weightForUnlistedClaudeModel(id, weights) };
+  });
 }
 
 /**
@@ -152,13 +169,17 @@ function buildClaudeChatModels(weights: Required<ClaudeModelWeights>): readonly 
  * 上書きされていればこの定数とは値がずれる(bdboard-3tw.104.11 Opus レビュー N1)。
  * 並び順は既存どおり「安い方を先頭」(Sonnet 先頭)を維持すること。
  */
-export const CLAUDE_CHAT_MODELS: readonly ChatModelOption[] = buildClaudeChatModels(DEFAULT_CLAUDE_MODEL_WEIGHTS);
+export const CLAUDE_CHAT_MODELS: readonly ChatModelOption[] = buildClaudeChatModels(
+  DEFAULT_CLAUDE_MODEL_IDS,
+  DEFAULT_CLAUDE_MODEL_WEIGHTS,
+);
 
 export interface ClaudeSpecOptions {
   readonly claudePath: string;
   readonly model: string;
   readonly timeoutMs: number;
   readonly modelWeights?: ClaudeModelWeights;
+  readonly models?: readonly string[];
 }
 
 /**
@@ -293,7 +314,11 @@ function parseClaudeResultLine(line: string): Omit<ChatTurnResult, 'agentId'> {
 
 export function createClaudeSpec(options: ClaudeSpecOptions): CliChatAgentSpec {
   const resolvedWeights = resolveClaudeModelWeights(options.modelWeights ?? {});
-  const models = normalizeModelList(options.model, buildClaudeChatModels(resolvedWeights), resolvedWeights);
+  const models = normalizeModelList(
+    options.model,
+    buildClaudeChatModels(resolveClaudeModelIds(options.models), resolvedWeights),
+    resolvedWeights,
+  );
 
   const descriptor: CliChatAgentSpec['descriptor'] = {
     id: 'claude',

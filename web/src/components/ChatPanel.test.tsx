@@ -2836,6 +2836,72 @@ describe('ChatPanel', () => {
     expect(await screen.findByLabelText('モデル')).toHaveValue('fast');
   });
 
+  it('restores a draft model selection after remounting without sending', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([
+      {
+        ...CLAUDE_AGENT,
+        model: 'sonnet',
+        models: [
+          { id: 'sonnet', label: 'Sonnet' },
+          { id: 'opus', label: 'Opus' },
+        ],
+      },
+    ]);
+
+    const first = renderChatPanel([PROJECT_A]);
+    const modelSelect = await screen.findByLabelText('モデル');
+    await user.selectOptions(modelSelect, 'opus');
+    expect(modelSelect).toHaveValue('opus');
+    first.unmount();
+
+    renderChatPanel([PROJECT_A]);
+    await waitFor(() => {
+      expect(screen.getByLabelText('モデル')).toHaveValue('opus');
+    });
+  });
+
+  it('preserves model selection when switching back to the same agent', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([
+      {
+        ...CLAUDE_AGENT,
+        model: 'sonnet',
+        models: [
+          { id: 'sonnet', label: 'Sonnet' },
+          { id: 'opus', label: 'Opus' },
+        ],
+      },
+      {
+        ...EXAMPLE_AGENT,
+        model: 'fast',
+        models: [
+          { id: 'fast', label: 'Fast' },
+          { id: 'slow', label: 'Slow' },
+        ],
+      },
+    ]);
+
+    renderChatPanel([PROJECT_A]);
+    const modelSelect = await screen.findByLabelText('モデル');
+    await user.selectOptions(modelSelect, 'opus');
+    expect(modelSelect).toHaveValue('opus');
+
+    await user.selectOptions(
+      screen.getByLabelText('チャットエージェント'),
+      'example-agent',
+    );
+
+    expect(await screen.findByLabelText('モデル')).toHaveValue('fast');
+
+    await user.selectOptions(
+      screen.getByLabelText('チャットエージェント'),
+      'claude',
+    );
+
+    expect(await screen.findByLabelText('モデル')).toHaveValue('opus');
+  });
+
   it('restores the model after history resolves before the agents request', async () => {
     writePersistedChatThread('proj-a', {
       sessionId: 'sess-model-race',

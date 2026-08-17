@@ -29,6 +29,11 @@ import {
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
+import { usePersistedState } from '../hooks/usePersistedState';
+import {
+  UI_STORAGE_KEYS,
+  validateChatModelSelections,
+} from '../uiPersistedState';
 import { CHAT_BUSY_HELP, writeAccessErrorMessage } from '../writeAccessMessage';
 
 interface ChatPanelProps {
@@ -254,6 +259,9 @@ export function ChatPanel({
   //     切り替える操作が draftKey の nonce を進めることでキーが自然に分離される
   //     ことも合わせて働く。
   const [threadModelIds, setThreadModelIds] = useState<Record<string, string>>({});
+  const [chatModelSelections, setChatModelSelections] = usePersistedState<
+    Record<string, Record<string, string>>
+  >(UI_STORAGE_KEYS.chatModelSelections, {}, validateChatModelSelections);
   const threadModelIdsRef = useRef(threadModelIds);
   threadModelIdsRef.current = threadModelIds;
   const historyRequestIdRef = useRef(0);
@@ -853,8 +861,22 @@ export function ChatPanel({
       setSelectedModelId(cached);
       return;
     }
+    const persisted = chatModelSelections[selectedProjectId]?.[selectedAgent.id];
+    if (
+      persisted !== undefined &&
+      (selectedAgent.models ?? []).some((model) => model.id === persisted)
+    ) {
+      setSelectedModelId(persisted);
+      return;
+    }
     setSelectedModelId(resolveDefaultModel(selectedAgent));
-  }, [selectedAgent, currentConversationKey, threadModelIds]);
+  }, [
+    selectedAgent,
+    selectedProjectId,
+    currentConversationKey,
+    threadModelIds,
+    chatModelSelections,
+  ]);
 
   useEffect(() => {
     if (selectedProjectId === '') {
@@ -1357,8 +1379,17 @@ export function ChatPanel({
         ...prev,
         [currentConversationKey]: nextModelId,
       }));
+      if (selectedAgentId !== '' && selectedProjectId !== '') {
+        setChatModelSelections((prev) => ({
+          ...prev,
+          [selectedProjectId]: {
+            ...(prev[selectedProjectId] ?? {}),
+            [selectedAgentId]: nextModelId,
+          },
+        }));
+      }
     },
-    [currentConversationKey],
+    [currentConversationKey, selectedAgentId, selectedProjectId, setChatModelSelections],
   );
 
   const handleAgentChange = useCallback(
