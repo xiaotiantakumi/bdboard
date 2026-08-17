@@ -30,6 +30,7 @@ import type { SyncHealth } from '../../domain/sync-health.js';
 import type { DependencyGraph } from '../../domain/dependency-graph.js';
 import type { BoardView } from '../../application/board/get-board.js';
 import type { TicketSearchHit } from '../../application/board/search-tickets.js';
+import type { SimilarTicketHit } from '../../application/board/find-similar-tickets.js';
 import type { TicketTokenUsage } from '../../application/board/get-ticket-token-usage.js';
 import type {
   SessionHistoryEntry,
@@ -237,6 +238,17 @@ export interface TicketSearchResultDto {
   status: string;
   priority: number;
   issueType: string;
+}
+
+export interface TicketSimilarResultDto {
+  id: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  status: string;
+  priority: number;
+  issueType: string;
+  score: number;
 }
 
 export interface ActivityEventDto {
@@ -665,6 +677,19 @@ export function toTicketSearchResultDto(hit: TicketSearchHit): TicketSearchResul
     status: hit.ticket.status,
     priority: hit.ticket.priority,
     issueType: hit.ticket.issueType,
+  };
+}
+
+export function toTicketSimilarResultDto(hit: SimilarTicketHit): TicketSimilarResultDto {
+  return {
+    id: hit.ticket.id,
+    projectId: hit.ticket.projectId,
+    projectName: hit.project.name,
+    title: hit.ticket.title,
+    status: hit.ticket.status,
+    priority: hit.ticket.priority,
+    issueType: hit.ticket.issueType,
+    score: hit.score,
   };
 }
 

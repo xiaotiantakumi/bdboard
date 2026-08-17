@@ -3,6 +3,7 @@ import {
   ApiError,
   deleteChatThread,
   fetchChatThreads,
+  fetchSimilarTickets,
   LANE_EXPECTED_STATUS,
   LANE_LABELS,
   LANES,
@@ -132,5 +133,48 @@ describe('scan roots config error details (bdboard-mmb review S2)', () => {
     expect(apiError.status).toBe(400);
     expect(apiError.errorMessage).toBe('dangerous scan root rejected');
     expect(apiError.details).toEqual({ rejected: ['/etc', '/usr'] });
+  });
+});
+
+describe('fetchSimilarTickets', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('requests similar tickets with encoded ticket id and limit', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify([
+            {
+              id: 'bdboard-similar',
+              projectId: 'proj-1',
+              projectName: 'Alpha Project',
+              title: 'Similar ticket detection',
+              status: 'open',
+              priority: 2,
+              issueType: 'task',
+              score: 0.8,
+            },
+          ]),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchSimilarTickets('bdboard/target', 3)).resolves.toEqual([
+      {
+        id: 'bdboard-similar',
+        projectId: 'proj-1',
+        projectName: 'Alpha Project',
+        title: 'Similar ticket detection',
+        status: 'open',
+        priority: 2,
+        issueType: 'task',
+        score: 0.8,
+      },
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/tickets/bdboard%2Ftarget/similar?limit=3',
+    );
   });
 });

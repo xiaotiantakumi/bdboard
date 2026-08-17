@@ -14,6 +14,7 @@ import {
   fetchTicket,
   fetchTicketComments,
   fetchTicketTimeline,
+  fetchSimilarTickets,
   postTicketComment,
   postTicketDecision,
   postTicketAddLabel,
@@ -28,6 +29,7 @@ import {
   type SessionDto,
   type ActivityEventDto,
   type TicketSearchResultDto,
+  type TicketSimilarResultDto,
   LANE_LABELS,
 } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -265,6 +267,14 @@ export function TicketDetailPanel({
     queryKey: ['ticket-timeline', ticketId],
     queryFn: () => fetchTicketTimeline(ticketId),
     enabled: timelineExpanded,
+  });
+  const {
+    data: similarTickets,
+    isLoading: similarTicketsLoading,
+    error: similarTicketsError,
+  } = useQuery({
+    queryKey: ['similar-tickets', ticketId],
+    queryFn: () => fetchSimilarTickets(ticketId),
   });
   const [copyFeedback, setCopyFeedback] = useState<CopyFeedback | null>(null);
   const [ariaLiveMessage, setAriaLiveMessage] = useState('');
@@ -923,6 +933,38 @@ export function TicketDetailPanel({
                 </button>
               </div>
             )}
+            <div className="detail-section">
+              <h3>似ているチケット</h3>
+              {similarTicketsLoading && (
+                <p className="detail-help">読み込み中…</p>
+              )}
+              {similarTicketsError !== null && (
+                <p className="detail-help">似ているチケットの取得に失敗しました。</p>
+              )}
+              {!similarTicketsLoading &&
+                similarTicketsError === null &&
+                similarTickets !== undefined &&
+                similarTickets.length === 0 && (
+                  <p className="detail-help">似ているチケットはありません。</p>
+                )}
+              {similarTickets !== undefined && similarTickets.length > 0 && (
+                <ul className="detail-list">
+                  {similarTickets.map((similar: TicketSimilarResultDto) => (
+                    <li key={similar.id}>
+                      <TicketIdLink
+                        id={similar.id}
+                        isTicketOnBoard={isTicketOnBoard}
+                        onOpenTicket={onOpenTicket}
+                      />{' '}
+                      <span>{similar.title}</span>{' '}
+                      <span className="badge">
+                        {Math.round(similar.score * 100)}%
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <div className="detail-field">
               <div className="detail-field-label">Created</div>
               <div>{formatDateTime(data.createdAt)}</div>

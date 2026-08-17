@@ -20,6 +20,7 @@ import {
   fetchTicket,
   fetchTicketComments,
   fetchTicketTimeline,
+  fetchSimilarTickets,
   postTicketComment,
   postTicketDecision,
   postTicketAddLabel,
@@ -41,6 +42,7 @@ vi.mock('../api', async (importOriginal) => {
     fetchTicket: vi.fn(),
     fetchTicketComments: vi.fn(),
     fetchTicketTimeline: vi.fn(),
+    fetchSimilarTickets: vi.fn(),
     postTicketDecision: vi.fn(),
     postTicketQuickAction: vi.fn(),
     postTicketQuickActionUndo: vi.fn(),
@@ -59,6 +61,7 @@ vi.mock('../api', async (importOriginal) => {
 const mockFetchTicket = vi.mocked(fetchTicket);
 const mockFetchTicketComments = vi.mocked(fetchTicketComments);
 const mockFetchTicketTimeline = vi.mocked(fetchTicketTimeline);
+const mockFetchSimilarTickets = vi.mocked(fetchSimilarTickets);
 const mockPostTicketDecision = vi.mocked(postTicketDecision);
 const mockPostTicketQuickAction = vi.mocked(postTicketQuickAction);
 const mockPostTicketQuickActionUndo = vi.mocked(postTicketQuickActionUndo);
@@ -71,6 +74,10 @@ const mockSearchTickets = vi.mocked(searchTickets);
 const mockFetchSessions = vi.mocked(fetchSessions);
 const mockPostTicketSessionLink = vi.mocked(postTicketSessionLink);
 const mockDeleteTicketSessionLink = vi.mocked(deleteTicketSessionLink);
+
+beforeEach(() => {
+  mockFetchSimilarTickets.mockResolvedValue([]);
+});
 
 const sampleTicket: TicketDetailDto = {
   id: 'bdboard-abc.1',
@@ -1535,5 +1542,30 @@ describe('変更履歴タイムライン', () => {
     expect(await screen.findByText('状態変更')).toBeInTheDocument();
     expect(screen.getByText(/@example-actor/)).toBeInTheDocument();
     expect(screen.getByText(/open → in_progress/)).toBeInTheDocument();
+  });
+
+  it('loads and shows similar tickets in the detail panel', async () => {
+    mockFetchSimilarTickets.mockResolvedValue([
+      {
+        id: 'bdboard-similar',
+        projectId: sampleTicket.projectId,
+        projectName: 'Example project',
+        title: 'Similar ticket detection',
+        status: 'open',
+        priority: 2,
+        issueType: 'task',
+        score: 0.82,
+      },
+    ]);
+
+    renderPanel(new Map());
+
+    await waitFor(() => {
+      expect(mockFetchSimilarTickets).toHaveBeenCalledWith(sampleTicket.id);
+    });
+
+    expect(await screen.findByText('似ているチケット')).toBeInTheDocument();
+    expect(screen.getByText('Similar ticket detection')).toBeInTheDocument();
+    expect(screen.getByText('82%')).toBeInTheDocument();
   });
 });

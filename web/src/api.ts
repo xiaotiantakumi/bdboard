@@ -198,6 +198,17 @@ export interface TicketSearchResultDto {
   issueType: string;
 }
 
+export interface TicketSimilarResultDto {
+  id: string;
+  projectId: string;
+  projectName: string;
+  title: string;
+  status: string;
+  priority: number;
+  issueType: string;
+  score: number;
+}
+
 export interface ActivityEventDto {
   kind:
     | 'created'
@@ -821,6 +832,17 @@ export function fetchTicketTimeline(
   searchParams.set('limit', String(limit));
   return getJson<ActivityEventDto[]>(
     `/api/tickets/${encodeURIComponent(ticketId)}/timeline?${searchParams.toString()}`,
+  );
+}
+
+export function fetchSimilarTickets(
+  ticketId: string,
+  limit = 5,
+): Promise<TicketSimilarResultDto[]> {
+  const searchParams = new URLSearchParams();
+  searchParams.set('limit', String(limit));
+  return getJson<TicketSimilarResultDto[]>(
+    `/api/tickets/${encodeURIComponent(ticketId)}/similar?${searchParams.toString()}`,
   );
 }
 
