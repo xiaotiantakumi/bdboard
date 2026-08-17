@@ -25,6 +25,7 @@ function fullIssue(): BdIssue {
     parent: 'proj-parent',
     description: 'desc',
     notes: 'notes',
+    labels: ['human', 'needs-review'],
     dependency_count: 1,
     dependent_count: 0,
     comment_count: 0,
@@ -64,6 +65,7 @@ describe('mapBdIssueToTicket', () => {
       parentId: 'proj-parent',
       description: 'desc',
       notes: 'notes',
+      labels: ['human', 'needs-review'],
       dependencies: [
         { issueId: 'proj-abc', dependsOnId: 'proj-blocker', kind: 'blocks' },
         { issueId: 'proj-abc', dependsOnId: 'proj-parent', kind: 'parent-child' },
@@ -122,6 +124,14 @@ describe('mapBdIssueToTicket', () => {
       'my-project',
     );
     expect(emptyMetadata.models).toBeUndefined();
+  });
+
+  it('omits labels when the field is absent (older bd output)', () => {
+    const issue = fullIssue();
+    const { labels: _removed, ...withoutLabels } = issue;
+    const ticket = mapBdIssueToTicket(withoutLabels, 'my-project');
+
+    expect(ticket.labels).toBeUndefined();
   });
 });
 

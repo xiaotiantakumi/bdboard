@@ -9,6 +9,7 @@ const currentState: BoardFilterPresetState = {
   selectedProjectIds: ['proj-1'],
   priorityCeiling: '1',
   issueTypes: ['bug'],
+  labels: [],
   filterText: 'alpha',
 };
 
@@ -20,6 +21,7 @@ const samplePresets: BoardFilterPreset[] = [
     selectedProjectIds: ['proj-1'],
     priorityCeiling: '1',
     issueTypes: ['bug'],
+    labels: [],
     filterText: 'alpha',
   },
   {
@@ -29,6 +31,7 @@ const samplePresets: BoardFilterPreset[] = [
     selectedProjectIds: [],
     priorityCeiling: 'all',
     issueTypes: [],
+    labels: [],
     filterText: '',
   },
 ];
@@ -97,6 +100,7 @@ describe('BoardFilterPresets', () => {
     expect(nextPresets[0]?.selectedProjectIds).toEqual(['proj-1']);
     expect(nextPresets[0]?.priorityCeiling).toBe('1');
     expect(nextPresets[0]?.issueTypes).toEqual(['bug']);
+    expect(nextPresets[0]?.labels).toEqual([]);
     expect(nextPresets[0]?.filterText).toBe('alpha');
     expect(nextPresets[0]?.id).toEqual(expect.any(String));
   });

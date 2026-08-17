@@ -82,6 +82,7 @@ describe('uiPersistedState', () => {
         selectedProjectIds: ['proj-1'],
         priorityCeiling: '1',
         issueTypes: ['bug'],
+        labels: [],
         filterText: '',
       },
     ];
@@ -97,6 +98,7 @@ describe('uiPersistedState', () => {
       selectedProjectIds: ['proj-1'],
       priorityCeiling: '1',
       issueTypes: ['bug', 'task'],
+      labels: ['human'],
       filterText: 'alpha',
     };
     const presets: BoardFilterPreset[] = [
@@ -112,6 +114,7 @@ describe('uiPersistedState', () => {
         selectedProjectIds: [],
         priorityCeiling: 'all',
         issueTypes: [],
+        labels: [],
         filterText: '',
       },
     ];
@@ -127,6 +130,18 @@ describe('uiPersistedState', () => {
       boardFilterPresetStatesEqual(state, {
         ...state,
         issueTypes: ['bug'],
+      }),
+    ).toBe(false);
+    expect(
+      boardFilterPresetStatesEqual(state, {
+        ...state,
+        labels: ['human'],
+      }),
+    ).toBe(true);
+    expect(
+      boardFilterPresetStatesEqual(state, {
+        ...state,
+        labels: [],
       }),
     ).toBe(false);
     expect(findMatchingBoardFilterPreset(presets, state)?.id).toBe('preset-1');

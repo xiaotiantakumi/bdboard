@@ -32,6 +32,7 @@ function fullTicket(): Ticket {
     parentId: 'proj-parent',
     description: 'desc',
     notes: 'notes',
+    labels: ['human', 'needs-review'],
     commentCount: 3,
   };
 }
@@ -72,6 +73,7 @@ describe('ticket serialization', () => {
     expect(parsed[0]).not.toHaveProperty('parentId');
     expect(parsed[0]).not.toHaveProperty('description');
     expect(parsed[0]).not.toHaveProperty('notes');
+    expect(parsed[0]).not.toHaveProperty('labels');
 
     const restored = deserializeTickets(json)[0];
     expect(restored).toEqual(original);

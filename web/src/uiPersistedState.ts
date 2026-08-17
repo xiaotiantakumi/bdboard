@@ -35,6 +35,7 @@ export const UI_STORAGE_KEYS = {
   statsWeeks: 'bdboard.ui.statsWeeks',
   boardPriorityCeiling: 'bdboard.ui.boardPriorityCeiling',
   boardIssueTypes: 'bdboard.ui.boardIssueTypes',
+  boardLabels: 'bdboard.ui.boardLabels',
   boardFilterText: 'bdboard.ui.boardFilterText',
   boardFilterPresets: 'bdboard.ui.boardFilterPresets',
   chatModelSelections: 'bdboard.ui.chatModelSelections',
@@ -213,6 +214,7 @@ export interface BoardFilterPreset {
   selectedProjectIds: string[];
   priorityCeiling: PriorityCeilingChoice;
   issueTypes: string[];
+  labels: string[];
   filterText: string;
 }
 
@@ -221,6 +223,7 @@ export interface BoardFilterPresetState {
   selectedProjectIds: string[];
   priorityCeiling: PriorityCeilingChoice;
   issueTypes: string[];
+  labels: string[];
   filterText: string;
 }
 
@@ -255,6 +258,10 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
   if (issueTypes === null) {
     return null;
   }
+  const labels = validateStringArray(record.labels);
+  if (labels === null) {
+    return null;
+  }
   const filterText = validateString(record.filterText);
   if (filterText === null) {
     return null;
@@ -266,6 +273,7 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
     selectedProjectIds,
     priorityCeiling,
     issueTypes,
+    labels,
     filterText,
   };
 }
@@ -325,6 +333,7 @@ export function boardFilterPresetStatesEqual(
     left.priorityCeiling === right.priorityCeiling &&
     left.filterText === right.filterText &&
     stringArraysEqualUnordered(left.issueTypes, right.issueTypes) &&
+    stringArraysEqualUnordered(left.labels, right.labels) &&
     stringArraysEqualUnordered(left.selectedProjectIds, right.selectedProjectIds)
   );
 }

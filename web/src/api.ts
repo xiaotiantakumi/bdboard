@@ -32,6 +32,7 @@ export interface TicketSummaryDto {
   owner?: string;
   parentId?: string;
   commentCount: number;
+  labels?: string[];
 }
 
 export interface SessionDto {

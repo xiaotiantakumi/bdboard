@@ -43,6 +43,8 @@
   --badge-session-fg: #1f8a3d;
   --badge-pending-decision-bg: rgba(90, 200, 250, 0.14);
   --badge-pending-decision-fg: #007aff;
+  --badge-label-bg: rgba(142, 142, 147, 0.14);
+  --badge-label-fg: #636366;
 
   --radius-lg: 16px;
   --radius-md: 12px;
@@ -96,6 +98,8 @@
     --badge-session-fg: #6fe28f;
     --badge-pending-decision-bg: rgba(100, 210, 255, 0.2);
     --badge-pending-decision-fg: #64d2ff;
+    --badge-label-bg: rgba(142, 142, 147, 0.24);
+    --badge-label-fg: #aeaeb2;
   }
 }
 
@@ -2040,6 +2044,12 @@ body {
   color: var(--badge-neutral-fg);
 }
 
+.badge-label {
+  background: var(--badge-label-bg);
+  color: var(--badge-label-fg);
+  font-weight: 500;
+}
+
 .badge-priority-inherited {
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.02em;
@@ -2292,6 +2302,13 @@ body {
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+}
+
+.detail-label-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
 }
 
 .detail-pre {

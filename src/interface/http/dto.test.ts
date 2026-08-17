@@ -422,6 +422,25 @@ describe('dto', () => {
     expect('assignee' in dto).toBe(false);
     expect('owner' in dto).toBe(false);
     expect('parentId' in dto).toBe(false);
+    expect('labels' in dto).toBe(false);
+  });
+
+  it('includes labels on TicketSummaryDto and BoardCardDto', () => {
+    const ticket = makeTicket({
+      labels: ['human', 'needs-review'],
+    });
+    const board = buildBoard({
+      projectId: '/projects/a',
+      tickets: [ticket],
+      now: NOW,
+    });
+    const card = board.cards[0]!;
+
+    const summary = toTicketSummaryDto(ticket);
+    expect(summary.labels).toEqual(['human', 'needs-review']);
+
+    const cardDto = toBoardCardDto(card, NOW);
+    expect(cardDto.ticket.labels).toEqual(['human', 'needs-review']);
   });
 
   it('includes ticket detail fields from BoardCard', () => {

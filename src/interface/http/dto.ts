@@ -59,6 +59,7 @@ export interface TicketSummaryDto {
   owner?: string;
   parentId?: string;
   commentCount: number;
+  labels?: string[];
 }
 
 export interface DependencyEdgeDto {
@@ -443,6 +444,7 @@ export function toTicketSummaryDto(ticket: Ticket): TicketSummaryDto {
     ...(ticket.owner !== undefined ? { owner: ticket.owner } : {}),
     ...(ticket.parentId !== undefined ? { parentId: ticket.parentId } : {}),
     commentCount: ticket.commentCount,
+    ...(ticket.labels !== undefined ? { labels: [...ticket.labels] } : {}),
   };
 }
 
