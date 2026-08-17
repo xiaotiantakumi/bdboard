@@ -37,6 +37,22 @@ function resultFrom(
   };
 }
 
+function killGroup(child: ChildProcess, signal: NodeJS.Signals): boolean {
+  const pid = child.pid;
+  if (pid === undefined) {
+    return false;
+  }
+  try {
+    process.kill(-pid, signal);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+      return false;
+    }
+    return child.kill(signal);
+  }
+}
+
 export class NodeStreamingCommandRunner implements StreamingCommandRunner {
   run(
     command: string,
@@ -47,6 +63,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
     try {
       child = spawn(command, [...args], {
         cwd: options.cwd,
+        detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         ...(options.env !== undefined ? { env: { ...options.env } } : {}),
       });
@@ -106,7 +123,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         // ChildProcess 自身の 'close' 判定(このプロセスの stdio が閉じたか)は
         // 満たされるようにする。
         destroyStdio();
-        if (!child.kill('SIGKILL')) {
+        if (!killGroup(child, 'SIGKILL')) {
           return;
         }
         stopTimer = undefined;
@@ -118,7 +135,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         }
         stopping = true;
         failureKind = kind;
-        if (!child.kill('SIGTERM')) {
+        if (!killGroup(child, 'SIGTERM')) {
           return;
         }
         stopTimer = setTimeout(forceStop, STOP_GRACE_MS);
@@ -130,7 +147,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         }
         stopping = true;
         failureKind = 'buffer-limit-exceeded';
-        if (child.kill('SIGTERM')) {
+        if (killGroup(child, 'SIGTERM')) {
           stopTimer = setTimeout(forceStop, STOP_GRACE_MS);
         }
       };
