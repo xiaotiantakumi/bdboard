@@ -39,6 +39,7 @@ export const bdIssueSchema = z.object({
   acceptance_criteria: z.string().optional(),
   notes: z.string().optional(),
   design: z.string().optional(),
+  metadata: z.record(z.unknown()).optional(),
   defer_until: z.string().optional(),
 });
 

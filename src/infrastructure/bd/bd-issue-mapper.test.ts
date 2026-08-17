@@ -102,6 +102,27 @@ describe('mapBdIssueToTicket', () => {
       expect((error as BdError).kind).toBe('schema-mismatch');
     }
   });
+
+  it('maps metadata to models when bdboard.model.* keys are present', () => {
+    const issue = {
+      ...fullIssue(),
+      metadata: { 'bdboard.model.implement': 'composer-2.5' },
+    };
+    const ticket = mapBdIssueToTicket(issue, 'my-project');
+
+    expect(ticket.models).toEqual([{ stage: 'implement', model: 'composer-2.5' }]);
+  });
+
+  it('omits models when metadata is absent or yields no records', () => {
+    const withoutMetadata = mapBdIssueToTicket(fullIssue(), 'my-project');
+    expect(withoutMetadata.models).toBeUndefined();
+
+    const emptyMetadata = mapBdIssueToTicket(
+      { ...fullIssue(), metadata: {} },
+      'my-project',
+    );
+    expect(emptyMetadata.models).toBeUndefined();
+  });
 });
 
 describe('mapBdListToTickets', () => {

@@ -1,20 +1,22 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CfdStatsDto, ThroughputStatsDto } from '../api';
+import type { CfdStatsDto, ModelStatsDto, ThroughputStatsDto } from '../api';
 import { ThroughputStats } from './ThroughputStats';
 import { formatWeekLabel } from './throughputStatsFormatting';
 
 vi.mock('../api', () => ({
   fetchThroughputStats: vi.fn(),
   fetchCfdStats: vi.fn(),
+  fetchModelStats: vi.fn(),
 }));
 
-import { fetchCfdStats, fetchThroughputStats } from '../api';
+import { fetchCfdStats, fetchModelStats, fetchThroughputStats } from '../api';
 
 const fetchThroughputStatsMock = vi.mocked(fetchThroughputStats);
 const fetchCfdStatsMock = vi.mocked(fetchCfdStats);
+const fetchModelStatsMock = vi.mocked(fetchModelStats);
 
 function makeCfdStats(overrides?: Partial<CfdStatsDto>): CfdStatsDto {
   return {
@@ -31,6 +33,26 @@ function makeCfdStats(overrides?: Partial<CfdStatsDto>): CfdStatsDto {
     totals: [
       { date: '2026-08-13', counts: { open: 2, blocked: 1 } },
       { date: '2026-08-14', counts: { open: 1, in_progress: 1 } },
+    ],
+    ...overrides,
+  };
+}
+
+function makeModelStats(overrides?: Partial<ModelStatsDto>): ModelStatsDto {
+  return {
+    weeklyCloses: [
+      {
+        weekStart: '2026-08-04T15:00:00.000Z',
+        counts: { 'composer-2.5': 2, 'gpt-5': 1 },
+      },
+      {
+        weekStart: '2026-08-11T15:00:00.000Z',
+        counts: { 'composer-2.5': 1 },
+      },
+    ],
+    stageModelDistribution: [
+      { stage: 'implement', counts: { 'composer-2.5': 2, 'gpt-5': 1 } },
+      { stage: 'review', counts: { 'composer-2.5': 1 } },
     ],
     ...overrides,
   };
@@ -102,7 +124,9 @@ describe('ThroughputStats', () => {
   beforeEach(() => {
     fetchThroughputStatsMock.mockReset();
     fetchCfdStatsMock.mockReset();
+    fetchModelStatsMock.mockReset();
     fetchCfdStatsMock.mockResolvedValue(makeCfdStats());
+    fetchModelStatsMock.mockResolvedValue(makeModelStats());
   });
 
   it('shows weekly close counts and age bucket counts', async () => {
@@ -239,6 +263,49 @@ describe('ThroughputStats', () => {
 
     expect(fetchThroughputStatsMock).toHaveBeenCalledWith(4, ['proj-a', 'proj-b']);
     expect(fetchCfdStatsMock).toHaveBeenCalledWith(28, ['proj-a', 'proj-b']);
+    expect(fetchModelStatsMock).toHaveBeenCalledWith(4, ['proj-a', 'proj-b']);
+  });
+
+  it('renders model stats tables when data exists', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchModelStatsMock.mockResolvedValue(makeModelStats());
+
+    renderThroughputStats();
+
+    const weeklyHeading = await screen.findByText('モデル別クローズ件数(週次)');
+    const stageHeading = screen.getByText('工程×モデルの分布');
+
+    const weeklyBlock = weeklyHeading.closest('.throughput-chart-block');
+    const stageBlock = stageHeading.closest('.throughput-chart-block');
+    expect(weeklyBlock).not.toBeNull();
+    expect(stageBlock).not.toBeNull();
+
+    const weeklyScope = within(weeklyBlock as HTMLElement);
+    const stageScope = within(stageBlock as HTMLElement);
+
+    expect(weeklyScope.getByText('composer-2.5')).toBeInTheDocument();
+    expect(weeklyScope.getByText('gpt-5')).toBeInTheDocument();
+
+    expect(stageScope.getByText('composer-2.5')).toBeInTheDocument();
+    expect(stageScope.getByText('gpt-5')).toBeInTheDocument();
+    expect(stageScope.getByText('implement')).toBeInTheDocument();
+    expect(stageScope.getByText('review')).toBeInTheDocument();
+  });
+
+  it('shows model stats empty state when there is no model data', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchModelStatsMock.mockResolvedValue(
+      makeModelStats({
+        weeklyCloses: [{ weekStart: '2026-08-11T15:00:00.000Z', counts: {} }],
+        stageModelDistribution: [],
+      }),
+    );
+
+    renderThroughputStats();
+
+    expect(
+      await screen.findByText('モデル別の実績データはまだありません'),
+    ).toBeInTheDocument();
   });
 });
 

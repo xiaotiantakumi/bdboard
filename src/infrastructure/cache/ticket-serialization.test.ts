@@ -114,4 +114,28 @@ describe('ticket serialization', () => {
     const restored = deserializeTickets(json)[0];
     expect(restored?.commentCount).toBe(0);
   });
+
+  it('round-trips models when present', () => {
+    const original: Ticket = {
+      ...minimalTicket(),
+      models: [
+        { stage: 'implement', model: 'composer-2.5' },
+        { stage: 'review', model: 'gpt-5' },
+      ],
+    };
+    const restored = deserializeTickets(serializeTickets([original]))[0];
+    expect(restored).toEqual(original);
+  });
+
+  it('omits models after round-trip when absent', () => {
+    const original = minimalTicket();
+    const json = serializeTickets([original]);
+    const parsed = JSON.parse(json) as Record<string, unknown>[];
+
+    expect(parsed[0]).not.toHaveProperty('models');
+
+    const restored = deserializeTickets(json)[0];
+    expect(restored).toEqual(original);
+    expect(restored?.models).toBeUndefined();
+  });
 });

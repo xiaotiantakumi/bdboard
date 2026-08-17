@@ -5,6 +5,7 @@ import type { DependencyEdge } from '../../domain/dependency.js';
 import type { Priority } from '../../domain/status.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { parseTicketId } from '../../domain/ticket-id.js';
+import { parseTicketModelRecords } from '../../domain/ticket-model.js';
 import { bdIssueSchema, type BdIssue } from './bd-issue-schema.js';
 
 const MAX_ZOD_ISSUES = 5;
@@ -27,7 +28,8 @@ type OptionalTicketFields = {
     | 'deferUntil'
     | 'parentId'
     | 'description'
-    | 'notes']?: Ticket[K];
+    | 'notes'
+    | 'models']?: Ticket[K];
 };
 
 function summarizeZodError(error: { issues: readonly { path: readonly (string | number)[]; message: string }[] }): string {
@@ -116,6 +118,10 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   }
   if (raw.notes !== undefined) {
     optionalFields.notes = raw.notes;
+  }
+  const models = parseTicketModelRecords(raw.metadata);
+  if (models.length > 0) {
+    optionalFields.models = models;
   }
 
   return { ...ticket, ...optionalFields };

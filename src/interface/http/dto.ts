@@ -13,6 +13,11 @@ import type {
   WeeklyCloseCount,
 } from '../../application/board/get-throughput-stats.js';
 import type { CfdDayEntry, CfdStats, ProjectCfdStats } from '../../application/board/get-cfd-stats.js';
+import type {
+  ModelStats,
+  StageModelCounts,
+  WeeklyModelCloseCounts,
+} from '../../application/board/get-model-stats.js';
 import type { HygieneIssue } from '../../domain/hygiene.js';
 import type { StaleLeaseIssue } from '../../domain/lease.js';
 import type { MergeSlotStatus } from '../../domain/merge-slot.js';
@@ -280,6 +285,21 @@ export interface ThroughputStatsDto {
     weeklyCloses: WeeklyCloseCountDto[];
     openTicketAge: AgeDistributionDto;
   };
+}
+
+export interface WeeklyModelCloseCountsDto {
+  weekStart: string;
+  counts: Record<string, number>;
+}
+
+export interface StageModelCountsDto {
+  stage: string;
+  counts: Record<string, number>;
+}
+
+export interface ModelStatsDto {
+  weeklyCloses: WeeklyModelCloseCountsDto[];
+  stageModelDistribution: StageModelCountsDto[];
 }
 
 export interface CfdDayEntryDto {
@@ -690,6 +710,29 @@ export function toThroughputStatsDto(stats: ThroughputStats): ThroughputStatsDto
       weeklyCloses: stats.totals.weeklyCloses.map(toWeeklyCloseCountDto),
       openTicketAge: toAgeDistributionDto(stats.totals.openTicketAge),
     },
+  };
+}
+
+function toWeeklyModelCloseCountsDto(
+  entry: WeeklyModelCloseCounts,
+): WeeklyModelCloseCountsDto {
+  return {
+    weekStart: entry.weekStart.toISOString(),
+    counts: { ...entry.counts },
+  };
+}
+
+function toStageModelCountsDto(entry: StageModelCounts): StageModelCountsDto {
+  return {
+    stage: entry.stage,
+    counts: { ...entry.counts },
+  };
+}
+
+export function toModelStatsDto(stats: ModelStats): ModelStatsDto {
+  return {
+    weeklyCloses: stats.weeklyCloses.map(toWeeklyModelCloseCountsDto),
+    stageModelDistribution: stats.stageModelDistribution.map(toStageModelCountsDto),
   };
 }
 

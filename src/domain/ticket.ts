@@ -1,5 +1,6 @@
 import type { DependencyEdge } from './dependency.js';
 import type { Priority, Status } from './status.js';
+import type { TicketModelRecord } from './ticket-model.js';
 import type { TicketId } from './ticket-id.js';
 
 export interface Ticket {
@@ -21,4 +22,5 @@ export interface Ticket {
   readonly parentId?: TicketId;
   readonly description?: string;
   readonly notes?: string;
+  readonly models?: readonly TicketModelRecord[];
 }

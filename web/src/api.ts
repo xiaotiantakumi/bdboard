@@ -246,6 +246,21 @@ export interface ThroughputStatsDto {
   };
 }
 
+export interface WeeklyModelCloseCountsDto {
+  weekStart: string;
+  counts: Record<string, number>;
+}
+
+export interface StageModelCountsDto {
+  stage: string;
+  counts: Record<string, number>;
+}
+
+export interface ModelStatsDto {
+  weeklyCloses: WeeklyModelCloseCountsDto[];
+  stageModelDistribution: StageModelCountsDto[];
+}
+
 export interface CfdDayEntryDto {
   date: string;
   counts: Record<string, number>;
@@ -754,6 +769,18 @@ export function fetchThroughputStats(
     searchParams.set('projects', projectIds.join(','));
   }
   return getJson<ThroughputStatsDto>(`/api/stats?${searchParams.toString()}`);
+}
+
+export function fetchModelStats(
+  weeks = 8,
+  projectIds: readonly string[] = [],
+): Promise<ModelStatsDto> {
+  const searchParams = new URLSearchParams();
+  searchParams.set('weeks', String(weeks));
+  if (projectIds.length > 0) {
+    searchParams.set('projects', projectIds.join(','));
+  }
+  return getJson<ModelStatsDto>(`/api/model-stats?${searchParams.toString()}`);
 }
 
 export function fetchCfdStats(
