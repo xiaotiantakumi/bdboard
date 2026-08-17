@@ -36,6 +36,7 @@ export const UI_STORAGE_KEYS = {
   boardPriorityCeiling: 'bdboard.ui.boardPriorityCeiling',
   boardIssueTypes: 'bdboard.ui.boardIssueTypes',
   boardFilterText: 'bdboard.ui.boardFilterText',
+  boardFilterPresets: 'bdboard.ui.boardFilterPresets',
   chatModelSelections: 'bdboard.ui.chatModelSelections',
   notificationEvents: 'bdboard.ui.notificationEvents',
   notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
@@ -201,6 +202,138 @@ export function validateString(value: unknown): string | null {
     return value;
   }
   return null;
+}
+
+export const BOARD_FILTER_PRESET_NAME_MAX_LENGTH = 40;
+
+export interface BoardFilterPreset {
+  id: string;
+  name: string;
+  view: ViewMode;
+  selectedProjectIds: string[];
+  priorityCeiling: PriorityCeilingChoice;
+  issueTypes: string[];
+  filterText: string;
+}
+
+export interface BoardFilterPresetState {
+  view: ViewMode;
+  selectedProjectIds: string[];
+  priorityCeiling: PriorityCeilingChoice;
+  issueTypes: string[];
+  filterText: string;
+}
+
+function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (typeof record.id !== 'string' || record.id.trim() === '') {
+    return null;
+  }
+  if (typeof record.name !== 'string') {
+    return null;
+  }
+  const name = record.name.trim();
+  if (name === '' || name.length > BOARD_FILTER_PRESET_NAME_MAX_LENGTH) {
+    return null;
+  }
+  const view = validateViewMode(record.view);
+  if (view === null) {
+    return null;
+  }
+  const selectedProjectIds = validateStringArray(record.selectedProjectIds);
+  if (selectedProjectIds === null) {
+    return null;
+  }
+  const priorityCeiling = validatePriorityCeiling(record.priorityCeiling);
+  if (priorityCeiling === null) {
+    return null;
+  }
+  const issueTypes = validateIssueTypeArray(record.issueTypes);
+  if (issueTypes === null) {
+    return null;
+  }
+  const filterText = validateString(record.filterText);
+  if (filterText === null) {
+    return null;
+  }
+  return {
+    id: record.id,
+    name,
+    view,
+    selectedProjectIds,
+    priorityCeiling,
+    issueTypes,
+    filterText,
+  };
+}
+
+export function validateBoardFilterPresets(value: unknown): BoardFilterPreset[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const presets: BoardFilterPreset[] = [];
+  const seenIds = new Set<string>();
+  for (const item of value) {
+    const preset = validateBoardFilterPreset(item);
+    if (preset === null || seenIds.has(preset.id)) {
+      return null;
+    }
+    seenIds.add(preset.id);
+    presets.push(preset);
+  }
+  return presets;
+}
+
+export function createBoardFilterPresetId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `preset-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function stringArraysEqualUnordered(left: readonly string[], right: readonly string[]): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const rightCounts = new Map<string, number>();
+  for (const value of right) {
+    rightCounts.set(value, (rightCounts.get(value) ?? 0) + 1);
+  }
+  for (const value of left) {
+    const count = rightCounts.get(value);
+    if (count === undefined || count === 0) {
+      return false;
+    }
+    if (count === 1) {
+      rightCounts.delete(value);
+    } else {
+      rightCounts.set(value, count - 1);
+    }
+  }
+  return rightCounts.size === 0;
+}
+
+export function boardFilterPresetStatesEqual(
+  left: BoardFilterPresetState,
+  right: BoardFilterPresetState,
+): boolean {
+  return (
+    left.view === right.view &&
+    left.priorityCeiling === right.priorityCeiling &&
+    left.filterText === right.filterText &&
+    stringArraysEqualUnordered(left.issueTypes, right.issueTypes) &&
+    stringArraysEqualUnordered(left.selectedProjectIds, right.selectedProjectIds)
+  );
+}
+
+export function findMatchingBoardFilterPreset(
+  presets: readonly BoardFilterPreset[],
+  state: BoardFilterPresetState,
+): BoardFilterPreset | null {
+  return presets.find((preset) => boardFilterPresetStatesEqual(preset, state)) ?? null;
 }
 
 export function sanitizeProjectFilter(

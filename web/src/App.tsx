@@ -16,6 +16,7 @@ import {
 } from './api';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
+import { BoardFilterPresets } from './components/BoardFilterPresets';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
 import { ActivityFeed } from './components/ActivityFeed';
@@ -52,6 +53,9 @@ import {
   validatePriorityCeiling,
   priorityCeilingValue,
   validateIssueTypeArray,
+  validateBoardFilterPresets,
+  type BoardFilterPreset,
+  type BoardFilterPresetState,
 } from './uiPersistedState';
 import { type StreamState, useBoardStream } from './useBoardStream';
 import { collectBoardTicketIds } from './boardTicketIds';
@@ -108,6 +112,11 @@ export function App() {
     UI_STORAGE_KEYS.boardFilterText,
     '',
     validateString,
+  );
+  const [boardFilterPresets, setBoardFilterPresets] = usePersistedState(
+    UI_STORAGE_KEYS.boardFilterPresets,
+    [],
+    validateBoardFilterPresets,
   );
   const [nextUpLimit, setNextUpLimit] = usePersistedState(
     UI_STORAGE_KEYS.nextUpLimit,
@@ -244,6 +253,37 @@ export function App() {
     }),
     [boardPriorityCeiling, boardIssueTypes, boardFilterText],
   );
+
+  const boardFilterPresetState = useMemo<BoardFilterPresetState>(
+    () => ({
+      view,
+      selectedProjectIds,
+      priorityCeiling: boardPriorityCeiling,
+      issueTypes: boardIssueTypes,
+      filterText: boardFilterText,
+    }),
+    [
+      view,
+      selectedProjectIds,
+      boardPriorityCeiling,
+      boardIssueTypes,
+      boardFilterText,
+    ],
+  );
+
+  const handleApplyBoardFilterPreset = useCallback((preset: BoardFilterPreset) => {
+    setView(preset.view);
+    setSelectedProjectIds(preset.selectedProjectIds);
+    setBoardPriorityCeiling(preset.priorityCeiling);
+    setBoardIssueTypes(preset.issueTypes);
+    setBoardFilterText(preset.filterText);
+  }, [
+    setView,
+    setSelectedProjectIds,
+    setBoardPriorityCeiling,
+    setBoardIssueTypes,
+    setBoardFilterText,
+  ]);
 
   const projectNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -561,6 +601,13 @@ export function App() {
             </div>
           </details>
         </div>
+
+        <BoardFilterPresets
+          presets={boardFilterPresets}
+          onPresetsChange={setBoardFilterPresets}
+          currentState={boardFilterPresetState}
+          onApplyPreset={handleApplyBoardFilterPreset}
+        />
 
         {(view === 'merged' || view === 'split') && (
           <>

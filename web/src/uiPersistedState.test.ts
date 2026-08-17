@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  boardFilterPresetStatesEqual,
+  findMatchingBoardFilterPreset,
   priorityCeilingValue,
+  validateBoardFilterPresets,
   validateIssueTypeArray,
   validatePriorityCeiling,
   validateStatsWeeks,
   validateString,
   validateViewMode,
+  type BoardFilterPreset,
+  type BoardFilterPresetState,
 } from './uiPersistedState';
 
 describe('uiPersistedState', () => {
@@ -66,5 +71,70 @@ describe('uiPersistedState', () => {
     expect(validateString(42)).toBeNull();
     expect(validateString(null)).toBeNull();
     expect(validateString(undefined)).toBeNull();
+  });
+
+  it('validates board filter presets', () => {
+    const presets: BoardFilterPreset[] = [
+      {
+        id: 'preset-1',
+        name: 'P1バグだけ',
+        view: 'merged',
+        selectedProjectIds: ['proj-1'],
+        priorityCeiling: '1',
+        issueTypes: ['bug'],
+        filterText: '',
+      },
+    ];
+    expect(validateBoardFilterPresets(presets)).toEqual(presets);
+    expect(validateBoardFilterPresets([{ ...presets[0], id: '' }])).toBeNull();
+    expect(validateBoardFilterPresets([{ ...presets[0], view: 'invalid' }])).toBeNull();
+    expect(validateBoardFilterPresets('bad')).toBeNull();
+  });
+
+  it('matches board filter preset state', () => {
+    const state: BoardFilterPresetState = {
+      view: 'next',
+      selectedProjectIds: ['proj-1'],
+      priorityCeiling: '1',
+      issueTypes: ['bug', 'task'],
+      filterText: 'alpha',
+    };
+    const presets: BoardFilterPreset[] = [
+      {
+        id: 'preset-1',
+        name: 'Match',
+        ...state,
+      },
+      {
+        id: 'preset-2',
+        name: 'Other',
+        view: 'merged',
+        selectedProjectIds: [],
+        priorityCeiling: 'all',
+        issueTypes: [],
+        filterText: '',
+      },
+    ];
+
+    expect(boardFilterPresetStatesEqual(state, { ...state })).toBe(true);
+    expect(
+      boardFilterPresetStatesEqual(state, {
+        ...state,
+        issueTypes: ['task', 'bug'],
+      }),
+    ).toBe(true);
+    expect(
+      boardFilterPresetStatesEqual(state, {
+        ...state,
+        issueTypes: ['bug'],
+      }),
+    ).toBe(false);
+    expect(findMatchingBoardFilterPreset(presets, state)?.id).toBe('preset-1');
+    expect(
+      findMatchingBoardFilterPreset(presets, {
+        ...state,
+        filterText: 'beta',
+      }),
+    ).toBeNull();
   });
 });
