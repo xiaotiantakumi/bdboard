@@ -4,6 +4,7 @@ import {
   diffBoardNotificationSnapshots,
   diffSessionLiveness,
   type BoardNotificationSnapshot,
+  type ProjectNotificationSnapshot,
 } from './board-notifications.js';
 import { makeSession, makeTicket } from './test-support.js';
 
@@ -13,15 +14,37 @@ function blocksEdge(issueId: string, dependsOnId: string) {
   return { issueId, dependsOnId, kind: 'blocks' as const };
 }
 
+function projectSnapshot(
+  overrides: Partial<{
+    readyTicketIds: readonly string[];
+    decisionPendingTicketIds: readonly string[];
+    knownTicketIds: readonly string[];
+  }> = {},
+): ProjectNotificationSnapshot {
+  return {
+    readyTicketIds: new Set(overrides.readyTicketIds ?? []),
+    decisionPendingTicketIds: new Set(overrides.decisionPendingTicketIds ?? []),
+    knownTicketIds: new Set(overrides.knownTicketIds ?? []),
+  };
+}
+
+function boardSnapshot(
+  projects: Record<string, ProjectNotificationSnapshot>,
+): BoardNotificationSnapshot {
+  return { projects: new Map(Object.entries(projects)) };
+}
+
 describe('computeBoardNotificationSnapshot', () => {
   it('includes open unblocked tickets in readyTicketIds', () => {
     const readyTicket = makeTicket({ id: 'bdboard-ready', status: 'open' });
     const snapshot = computeBoardNotificationSnapshot(
-      [{ tickets: [readyTicket] }],
+      [{ projectId: 'proj', tickets: [readyTicket] }],
       NOW,
     );
 
-    expect([...snapshot.readyTicketIds]).toEqual(['bdboard-ready']);
+    const project = snapshot.projects.get('proj');
+    expect(project).toBeDefined();
+    expect([...project!.readyTicketIds]).toEqual(['bdboard-ready']);
   });
 
   it('excludes blocked tickets from readyTicketIds', () => {
@@ -32,17 +55,19 @@ describe('computeBoardNotificationSnapshot', () => {
       dependencies: [blocksEdge('bdboard-blocked', 'bdboard-blocker')],
     });
     const snapshot = computeBoardNotificationSnapshot(
-      [{ tickets: [blocker, blocked] }],
+      [{ projectId: 'proj', tickets: [blocker, blocked] }],
       NOW,
     );
 
-    expect([...snapshot.readyTicketIds]).toEqual(['bdboard-blocker']);
+    const project = snapshot.projects.get('proj');
+    expect([...project!.readyTicketIds]).toEqual(['bdboard-blocker']);
   });
 
   it('collects decisionPendingTicketIds from project input', () => {
     const snapshot = computeBoardNotificationSnapshot(
       [
         {
+          projectId: 'proj',
           tickets: [],
           decisionPendingTicketIds: ['bdboard-a', 'bdboard-b'],
         },
@@ -50,7 +75,8 @@ describe('computeBoardNotificationSnapshot', () => {
       NOW,
     );
 
-    expect([...snapshot.decisionPendingTicketIds]).toEqual([
+    const project = snapshot.projects.get('proj');
+    expect([...project!.decisionPendingTicketIds]).toEqual([
       'bdboard-a',
       'bdboard-b',
     ]);
@@ -68,27 +94,35 @@ describe('computeBoardNotificationSnapshot', () => {
       status: 'in_progress',
     });
     const snapshot = computeBoardNotificationSnapshot(
-      [{ tickets: [blocker, blocked, inProgress] }],
+      [{ projectId: 'proj', tickets: [blocker, blocked, inProgress] }],
       NOW,
     );
 
-    expect([...snapshot.knownTicketIds].sort()).toEqual([
+    const project = snapshot.projects.get('proj');
+    expect([...project!.knownTicketIds].sort()).toEqual([
       'bdboard-blocked',
       'bdboard-blocker',
       'bdboard-ip',
     ]);
   });
 
-  it('collects knownTicketIds across multiple projects', () => {
+  it('stores per-project snapshots keyed by projectId', () => {
     const ticketA = makeTicket({ id: 'bdboard-a', status: 'open' });
     const ticketB = makeTicket({ id: 'bdboard-b', status: 'closed' });
     const snapshot = computeBoardNotificationSnapshot(
-      [{ tickets: [ticketA] }, { tickets: [ticketB] }],
+      [
+        { projectId: 'proj-a', tickets: [ticketA] },
+        { projectId: 'proj-b', tickets: [ticketB] },
+      ],
       NOW,
     );
 
-    expect([...snapshot.knownTicketIds].sort()).toEqual([
+    expect(snapshot.projects.has('proj-a')).toBe(true);
+    expect(snapshot.projects.has('proj-b')).toBe(true);
+    expect([...snapshot.projects.get('proj-a')!.knownTicketIds]).toEqual([
       'bdboard-a',
+    ]);
+    expect([...snapshot.projects.get('proj-b')!.knownTicketIds]).toEqual([
       'bdboard-b',
     ]);
   });
@@ -96,16 +130,18 @@ describe('computeBoardNotificationSnapshot', () => {
 
 describe('diffBoardNotificationSnapshots', () => {
   it('emits ticket_ready only for ids newly present in next.readyTicketIds that were already known', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        knownTicketIds: ['bdboard-a', 'bdboard-b'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a', 'bdboard-b'],
+        knownTicketIds: ['bdboard-a', 'bdboard-b'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
       { kind: 'ticket_ready', ticketId: 'bdboard-b' },
@@ -113,31 +149,35 @@ describe('diffBoardNotificationSnapshots', () => {
   });
 
   it('does not emit ticket_ready for newly appeared ticket ids even when ready', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-a']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a', 'bdboard-new']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-new']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        knownTicketIds: ['bdboard-a'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a', 'bdboard-new'],
+        knownTicketIds: ['bdboard-a', 'bdboard-new'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
   });
 
   it('emits ticket_ready for blocked-to-ready transition on a previously known ticket', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-blocker']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-blocker'],
+        knownTicketIds: ['bdboard-blocker', 'bdboard-blocked'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-blocker', 'bdboard-blocked'],
+        knownTicketIds: ['bdboard-blocker', 'bdboard-blocked'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
       { kind: 'ticket_ready', ticketId: 'bdboard-blocked' },
@@ -145,16 +185,18 @@ describe('diffBoardNotificationSnapshots', () => {
   });
 
   it('emits decision_pending only for ids newly present in next.decisionPendingTicketIds that were already known', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(),
-      decisionPendingTicketIds: new Set(['bdboard-a']),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(),
-      decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        decisionPendingTicketIds: ['bdboard-a'],
+        knownTicketIds: ['bdboard-a', 'bdboard-b'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        decisionPendingTicketIds: ['bdboard-a', 'bdboard-b'],
+        knownTicketIds: ['bdboard-a', 'bdboard-b'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
       { kind: 'decision_pending', ticketId: 'bdboard-b' },
@@ -162,16 +204,17 @@ describe('diffBoardNotificationSnapshots', () => {
   });
 
   it('does not emit decision_pending for a newly appeared ticket id even when gated', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-a']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(),
-      decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-new']),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-new']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        knownTicketIds: ['bdboard-a'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        decisionPendingTicketIds: ['bdboard-a', 'bdboard-new'],
+        knownTicketIds: ['bdboard-a', 'bdboard-new'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
       { kind: 'decision_pending', ticketId: 'bdboard-a' },
@@ -179,31 +222,82 @@ describe('diffBoardNotificationSnapshots', () => {
   });
 
   it('does not re-notify ids present in both snapshots', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a']),
-      decisionPendingTicketIds: new Set(['bdboard-x']),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-x']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a']),
-      decisionPendingTicketIds: new Set(['bdboard-x']),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-x']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        decisionPendingTicketIds: ['bdboard-x'],
+        knownTicketIds: ['bdboard-a', 'bdboard-x'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        decisionPendingTicketIds: ['bdboard-x'],
+        knownTicketIds: ['bdboard-a', 'bdboard-x'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
   });
 
   it('ignores ids that disappeared from next (no removal events)', () => {
-    const prev: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a', 'bdboard-b']),
-      decisionPendingTicketIds: new Set(['bdboard-x']),
-      knownTicketIds: new Set(['bdboard-a', 'bdboard-b', 'bdboard-x']),
-    };
-    const next: BoardNotificationSnapshot = {
-      readyTicketIds: new Set(['bdboard-a']),
-      decisionPendingTicketIds: new Set(),
-      knownTicketIds: new Set(['bdboard-a']),
-    };
+    const prev = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a', 'bdboard-b'],
+        decisionPendingTicketIds: ['bdboard-x'],
+        knownTicketIds: ['bdboard-a', 'bdboard-b', 'bdboard-x'],
+      }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        knownTicketIds: ['bdboard-a'],
+      }),
+    });
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
+  });
+
+  it('does not emit events for projects that re-enter after cache eviction while still diffing stable projects', () => {
+    const prev = boardSnapshot({
+      'project-a': projectSnapshot({
+        readyTicketIds: ['bdboard-a1'],
+        knownTicketIds: ['bdboard-a1', 'bdboard-a2'],
+      }),
+    });
+    const next = boardSnapshot({
+      'project-a': projectSnapshot({
+        readyTicketIds: ['bdboard-a1', 'bdboard-a2'],
+        knownTicketIds: ['bdboard-a1', 'bdboard-a2'],
+      }),
+      'project-b': projectSnapshot({
+        readyTicketIds: ['bdboard-b1', 'bdboard-b2'],
+        knownTicketIds: ['bdboard-b1', 'bdboard-b2'],
+      }),
+    });
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'ticket_ready', ticketId: 'bdboard-a2' },
+    ]);
+  });
+
+  it('skips projects absent from prev even when they have ready tickets in next', () => {
+    const prev = boardSnapshot({
+      'project-a': projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        knownTicketIds: ['bdboard-a'],
+      }),
+    });
+    const next = boardSnapshot({
+      'project-a': projectSnapshot({
+        readyTicketIds: ['bdboard-a'],
+        knownTicketIds: ['bdboard-a'],
+      }),
+      'project-b': projectSnapshot({
+        readyTicketIds: ['bdboard-b1', 'bdboard-b2'],
+        knownTicketIds: ['bdboard-b1', 'bdboard-b2'],
+      }),
+    });
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
   });
