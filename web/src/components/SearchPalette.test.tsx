@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TicketSearchResultDto } from '../api';
 import { searchTickets } from '../api';
+import type { PaletteAction } from '../paletteActions';
 import { SearchPalette } from './SearchPalette';
 
 vi.mock('../api', async (importOriginal) => {
@@ -36,11 +37,43 @@ const sampleResults: TicketSearchResultDto[] = [
   },
 ];
 
-function renderPalette(onSelect = vi.fn(), onClose = vi.fn()) {
+const sampleActions: PaletteAction[] = [
+  {
+    id: 'view:hygiene',
+    label: 'ビュー: 健全性',
+    keywords: 'hygiene 健全性',
+    group: 'ビュー',
+    onSelect: vi.fn(),
+  },
+  {
+    id: 'panel:chat',
+    label: 'チャットを開く',
+    keywords: 'chat チャット',
+    group: 'パネル',
+    onSelect: vi.fn(),
+  },
+  {
+    id: 'board:toggle-hide-done',
+    label: 'doneレーン表示切替',
+    keywords: 'done レーン',
+    group: 'ボード',
+    detail: '現在: 隠す',
+    onSelect: vi.fn(),
+  },
+];
+
+function renderPalette(
+  onSelect = vi.fn(),
+  onClose = vi.fn(),
+  actions: PaletteAction[] = sampleActions,
+) {
   return {
     onSelect,
     onClose,
-    ...render(<SearchPalette onClose={onClose} onSelect={onSelect} />),
+    actions,
+    ...render(
+      <SearchPalette onClose={onClose} onSelect={onSelect} actions={actions} />,
+    ),
   };
 }
 
@@ -52,6 +85,9 @@ describe('SearchPalette', () => {
   beforeEach(() => {
     mockSearchTickets.mockReset();
     mockSearchTickets.mockResolvedValue(sampleResults);
+    for (const action of sampleActions) {
+      vi.mocked(action.onSelect).mockReset();
+    }
   });
 
   afterEach(() => {
@@ -64,16 +100,62 @@ describe('SearchPalette', () => {
     expect(getSearchInput()).toHaveFocus();
   });
 
+  it('lists palette actions before typing', () => {
+    renderPalette();
+
+    expect(screen.getByText('ビュー: 健全性')).toBeInTheDocument();
+    expect(screen.getByText('チャットを開く')).toBeInTheDocument();
+    expect(screen.getByText('doneレーン表示切替')).toBeInTheDocument();
+    expect(mockSearchTickets).not.toHaveBeenCalled();
+  });
+
+  it('runs a palette action on click', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    const actions = [
+      {
+        ...sampleActions[1],
+        onSelect: vi.fn(),
+      },
+    ];
+    renderPalette(vi.fn(), onClose, actions);
+
+    await user.click(screen.getByText('チャットを開く'));
+
+    expect(actions[0].onSelect).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the highlighted palette action on Enter without a ticket query', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderPalette(vi.fn(), onClose);
+
+    await user.keyboard('{ArrowDown}{Enter}');
+
+    expect(sampleActions[1].onSelect).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(mockSearchTickets).not.toHaveBeenCalled();
+  });
+
+  it('filters palette actions locally by query', async () => {
+    const user = userEvent.setup();
+    renderPalette();
+
+    await user.type(getSearchInput(), '健全性');
+
+    expect(screen.getByText('ビュー: 健全性')).toBeInTheDocument();
+    expect(screen.queryByText('チャットを開く')).not.toBeInTheDocument();
+  });
+
   it('debounces rapid input into a single search for the latest query', async () => {
     renderPalette();
     const input = getSearchInput();
 
-    // 3 回続けて打ち込んでも、走るのは最後のクエリの 1 回だけ。
     fireEvent.change(input, { target: { value: 'a' } });
     fireEvent.change(input, { target: { value: 'al' } });
     fireEvent.change(input, { target: { value: 'alpha' } });
 
-    // debounce 前なので、まだ API は叩かれていない。
     expect(mockSearchTickets).not.toHaveBeenCalled();
 
     await waitFor(() => {
@@ -82,7 +164,7 @@ describe('SearchPalette', () => {
     expect(mockSearchTickets).toHaveBeenCalledWith('alpha', 30);
   });
 
-  it('shows results after debounced search input', async () => {
+  it('shows ticket results after debounced search input', async () => {
     const user = userEvent.setup();
     renderPalette();
 
@@ -92,6 +174,27 @@ describe('SearchPalette', () => {
     expect(screen.getByText('Alpha')).toBeInTheDocument();
     expect(screen.getByText('bdboard-alpha')).toBeInTheDocument();
     expect(screen.getByText('P1')).toBeInTheDocument();
+  });
+
+  it('lists matching actions before ticket hits when both match', async () => {
+    const user = userEvent.setup();
+    const actions: PaletteAction[] = [
+      {
+        id: 'view:merged',
+        label: 'ビュー: 統合',
+        keywords: 'merged alpha 統合',
+        group: 'ビュー',
+        onSelect: vi.fn(),
+      },
+      ...sampleActions.slice(1),
+    ];
+    renderPalette(vi.fn(), vi.fn(), actions);
+
+    await user.type(getSearchInput(), 'alpha');
+
+    const options = screen.getAllByRole('option');
+    expect(options[0]).toHaveTextContent('ビュー: 統合');
+    expect(await screen.findByText('First result')).toBeInTheDocument();
   });
 
   it('calls onSelect with the highlighted ticket on Enter', async () => {
@@ -130,15 +233,15 @@ describe('SearchPalette', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('shows empty state when search returns no hits', async () => {
+  it('shows empty state when search returns no hits and no actions match', async () => {
     const user = userEvent.setup();
     mockSearchTickets.mockResolvedValue([]);
     renderPalette();
 
-    await user.type(getSearchInput(), 'missing');
+    await user.type(getSearchInput(), 'missing-xyz');
 
     expect(
-      await screen.findByText('該当するチケットがありません'),
+      await screen.findByText('該当するコマンドやチケットがありません'),
     ).toBeInTheDocument();
   });
 
