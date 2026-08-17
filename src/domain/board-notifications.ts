@@ -3,14 +3,20 @@ import type { AgentSession } from './session.js';
 import type { Ticket } from './ticket.js';
 import type { TicketId } from './ticket-id.js';
 
-export interface BoardNotificationSnapshot {
+export interface ProjectNotificationSnapshot {
   readonly readyTicketIds: ReadonlySet<TicketId>;
   readonly decisionPendingTicketIds: ReadonlySet<TicketId>;
   /** All ticket IDs observed when this snapshot was taken (regardless of ready status). */
   readonly knownTicketIds: ReadonlySet<TicketId>;
 }
 
+export interface BoardNotificationSnapshot {
+  /** Project ID -> per-project notification snapshot. */
+  readonly projects: ReadonlyMap<string, ProjectNotificationSnapshot>;
+}
+
 export interface BoardSnapshotProjectInput {
+  readonly projectId: string;
   readonly tickets: readonly Ticket[];
   readonly decisionPendingTicketIds?: readonly TicketId[];
 }
@@ -19,11 +25,13 @@ export function computeBoardNotificationSnapshot(
   projects: readonly BoardSnapshotProjectInput[],
   now: Date,
 ): BoardNotificationSnapshot {
-  const readyTicketIds = new Set<TicketId>();
-  const decisionPendingTicketIds = new Set<TicketId>();
-  const knownTicketIds = new Set<TicketId>();
+  const projectSnapshots = new Map<string, ProjectNotificationSnapshot>();
 
   for (const project of projects) {
+    const readyTicketIds = new Set<TicketId>();
+    const decisionPendingTicketIds = new Set<TicketId>();
+    const knownTicketIds = new Set<TicketId>();
+
     const ctx = createReadinessContext(project.tickets);
     for (const ticket of project.tickets) {
       knownTicketIds.add(ticket.id);
@@ -37,18 +45,24 @@ export function computeBoardNotificationSnapshot(
         decisionPendingTicketIds.add(ticketId);
       }
     }
+
+    projectSnapshots.set(project.projectId, {
+      readyTicketIds,
+      decisionPendingTicketIds,
+      knownTicketIds,
+    });
   }
 
-  return { readyTicketIds, decisionPendingTicketIds, knownTicketIds };
+  return { projects: projectSnapshots };
 }
 
 export type BoardTransitionEvent =
   | { readonly kind: 'ticket_ready'; readonly ticketId: TicketId }
   | { readonly kind: 'decision_pending'; readonly ticketId: TicketId };
 
-export function diffBoardNotificationSnapshots(
-  prev: BoardNotificationSnapshot,
-  next: BoardNotificationSnapshot,
+function diffProjectNotificationSnapshots(
+  prev: ProjectNotificationSnapshot,
+  next: ProjectNotificationSnapshot,
 ): readonly BoardTransitionEvent[] {
   const events: BoardTransitionEvent[] = [];
 
@@ -68,6 +82,26 @@ export function diffBoardNotificationSnapshots(
     ) {
       events.push({ kind: 'decision_pending', ticketId });
     }
+  }
+
+  return events;
+}
+
+export function diffBoardNotificationSnapshots(
+  prev: BoardNotificationSnapshot,
+  next: BoardNotificationSnapshot,
+): readonly BoardTransitionEvent[] {
+  const events: BoardTransitionEvent[] = [];
+
+  for (const [projectId, nextProject] of next.projects) {
+    const prevProject = prev.projects.get(projectId);
+    if (prevProject === undefined) {
+      // Project was not in prev (newly discovered or returned from cache eviction).
+      // Skip diffing to avoid notification bursts on re-entry.
+      continue;
+    }
+
+    events.push(...diffProjectNotificationSnapshots(prevProject, nextProject));
   }
 
   return events;
