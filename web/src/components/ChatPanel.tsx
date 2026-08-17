@@ -268,6 +268,12 @@ export function ChatPanel({
   // conversationInputsRef と同じミラーパターン。
   const selectedThreadIdsRef = useRef(selectedThreadIds);
   selectedThreadIdsRef.current = selectedThreadIds;
+  // bdboard-23u: 404/unknown session 自動回復の catch (このファイル内、下の
+  // 履歴フェッチ effect) が、依存配列に openThreadIds を含まないまま
+  // writePersistedChatThreadState 用の最新 activeSessionIds を stale closure
+  // なしで読むための参照。draftNoncesRef 等と同じミラーパターン。
+  const openThreadIdsRef = useRef(openThreadIds);
+  openThreadIdsRef.current = openThreadIds;
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
   const streamAbortControllerRef = useRef<AbortController | null>(null);
@@ -930,11 +936,50 @@ export function ChatPanel({
           // 既知の死亡 id で POST して 400 エラー表示になる (修正前は silent に
           // 新セッションで届いていた)。選択も外してドラフトへ戻し、サーバー側
           // eviction (CHAT_SESSION_MAX_PER_PROJECT) 後の自動回復を維持する。
-          setSelectedThreadIds((prev) =>
-            prev[selectedProjectId] === sessionId
-              ? { ...prev, [selectedProjectId]: undefined }
-              : prev,
-          );
+          //
+          // bdboard-23u: pbf デルタレビュー残 nit の続き。ここで threadLists も
+          // prune しないと、handleDeleteThread (:1507付近) が prune しているのと
+          // 非対称になり、「閉じたスレッドを開く」(threadLists 由来の reopen
+          // dropdown、:1608付近) から死亡スレッドを再選択できてしまう。
+          // 再選択すると historyLoadedFor はこの effect で既に true 済み扱いの
+          // ままなので通常の履歴再取得が起きず、送信すると死亡 id での POST で
+          // 400 になる。
+          setThreadLists((prev) => ({
+            ...prev,
+            [selectedProjectId]: (prev[selectedProjectId] ?? []).filter(
+              (thread) => thread.sessionId !== sessionId,
+            ),
+          }));
+          const wasSelected = selectedThreadIdsRef.current[selectedProjectId] === sessionId;
+          if (wasSelected) {
+            setSelectedThreadIds((prev) =>
+              prev[selectedProjectId] === sessionId
+                ? { ...prev, [selectedProjectId]: undefined }
+                : prev,
+            );
+            // bdboard-23u: handleCloseThread (:1391付近) と同じパターンで選択
+            // クリアを localStorage にも同期する。呼ばないと死亡した
+            // selectedSessionId が persisted state に残り続ける (reload 時の
+            // available フィルタで実害は無いが、handleCloseThread との非一貫は
+            // レビュー指摘済み)。
+            const nextOpenThreads = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
+              (id) => id !== sessionId,
+            );
+            writePersistedChatThreadState(selectedProjectId, {
+              activeSessionIds: nextOpenThreads,
+              selectedSessionId: undefined,
+            });
+            // bdboard-23u: 最終タブ close (draft nonce を進めない既存の問題) と
+            // 同根 — このクリア処理が現在の draft nonce を再利用すると、同じ
+            // draftKey に applyChatSuccess が re-key 元として消さずに残した
+            // 古い楽観的メッセージが、ドラフトへのフォールバックで再表示されて
+            // しまう。handleAgentChange (:1307付近) と同じインラインの nonce
+            // 前進パターンに揃える (pendingPrefillRef の消化などプリフィル固有
+            // の副作用を伴う startNewDraftThread は、ユーザー起因でないこの
+            // 自動回復では意図的に呼ばない)。
+            const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
+            setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
+          }
         }
       })
       .finally(() => {
