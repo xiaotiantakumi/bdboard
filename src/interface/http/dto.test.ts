@@ -8,6 +8,7 @@ import {
   toBoardDto,
   toBoardViewDto,
   toActivityEventDto,
+  toMergeSlotStatusDto,
   toProjectDto,
   toSessionDto,
   toTicketDetailDto,
@@ -764,5 +765,50 @@ describe('dto', () => {
     expect(dto.kind).toBe('priority_changed');
     expect(dto.from).toBe('2');
     expect(dto.to).toBe('1');
+  });
+
+  it('converts merge slot status to DTO', () => {
+    const dto = toMergeSlotStatusDto({
+      projectId: 'proj-a',
+      present: true,
+      held: true,
+      holder: 'session-merge',
+      heldSinceIso: '2026-08-17T10:47:14Z',
+      heldForMs: 30 * 60_000,
+      isLongHeld: false,
+    });
+
+    expect(dto).toEqual({
+      projectId: 'proj-a',
+      present: true,
+      held: true,
+      holder: 'session-merge',
+      heldSinceIso: '2026-08-17T10:47:14Z',
+      heldForMs: 30 * 60_000,
+      isLongHeld: false,
+    });
+    assertNoDates(dto);
+  });
+
+  it('converts absent merge slot status to DTO', () => {
+    const dto = toMergeSlotStatusDto({
+      projectId: 'proj-b',
+      present: false,
+      held: false,
+      holder: null,
+      heldSinceIso: null,
+      heldForMs: 0,
+      isLongHeld: false,
+    });
+
+    expect(dto).toEqual({
+      projectId: 'proj-b',
+      present: false,
+      held: false,
+      holder: null,
+      heldSinceIso: null,
+      heldForMs: 0,
+      isLongHeld: false,
+    });
   });
 });

@@ -5,6 +5,7 @@ import { getActivityFeed } from '../../application/board/get-activity-feed.js';
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
+import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
 import { getSyncHealth } from '../../application/board/get-sync-health.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
@@ -35,6 +36,7 @@ import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
+import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import { getSessionHistory } from '../../application/session/get-session-history.js';
 import { listAgentProcesses } from '../../application/session/list-agent-processes.js';
@@ -59,6 +61,7 @@ import {
   toCfdStatsDto,
   toHygieneIssueDto,
   toLeaseHealthDto,
+  toMergeSlotStatusDto,
   toSyncHealthDto,
   toTicketDetailDto,
   toTicketSearchResultDto,
@@ -102,6 +105,7 @@ export interface ApiDeps {
   readonly sessionLinkReader?: SessionLinkReaderPort;
   readonly sessionTail?: SessionTailReader;
   readonly leaseReader?: LeaseReader;
+  readonly mergeSlotReader?: MergeSlotReader;
   readonly reclaimScheduler?: ReclaimScheduler;
   /**
    * トンネル経由の書き込みを開放するための依存(bdboard-9rz)。
@@ -608,6 +612,29 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     const projects = entries.map((entry) => entry.project);
     const health = await getSyncHealth(projects, deps.syncHealthReader);
     return c.json(health.map(toSyncHealthDto));
+  });
+
+  app.get('/api/merge-slot-status', async (c) => {
+    if (deps.mergeSlotReader === undefined) {
+      return c.json({ error: 'merge slot status not available' }, 501);
+    }
+
+    const projectIds = parseProjectIds(c.req.query('projects'));
+    let entries = deps.cache.listProjects();
+    if (projectIds !== undefined) {
+      const filterSet = new Set(projectIds);
+      entries = entries.filter((entry) => filterSet.has(entry.project.id));
+    }
+
+    const projects = entries.map((entry) => entry.project);
+    const statuses = await getMergeSlotStatus(
+      projects,
+      deps.mergeSlotReader,
+      deps.now(),
+      projectIds !== undefined ? { projectIds } : undefined,
+    );
+
+    return c.json(statuses.map(toMergeSlotStatusDto));
   });
 
   app.get('/api/graph', (c) => {

@@ -15,6 +15,7 @@ import type {
 import type { CfdDayEntry, CfdStats, ProjectCfdStats } from '../../application/board/get-cfd-stats.js';
 import type { HygieneIssue } from '../../domain/hygiene.js';
 import type { StaleLeaseIssue } from '../../domain/lease.js';
+import type { MergeSlotStatus } from '../../domain/merge-slot.js';
 import type {
   ReclaimSchedulerStatus,
   ReclaimProjectStatus,
@@ -336,6 +337,16 @@ export interface StaleLeaseDto {
   projectId: string;
   leaseExpiresAt: string;
   staleForMs: number;
+}
+
+export interface MergeSlotStatusDto {
+  projectId: string;
+  present: boolean;
+  held: boolean;
+  holder: string | null;
+  heldSinceIso: string | null;
+  heldForMs: number;
+  isLongHeld: boolean;
 }
 
 export interface ReclaimProjectStatusDto {
@@ -738,6 +749,18 @@ export function toStaleLeaseDto(issue: StaleLeaseIssue): StaleLeaseDto {
     projectId: issue.projectId,
     leaseExpiresAt: issue.leaseExpiresAt,
     staleForMs: issue.staleForMs,
+  };
+}
+
+export function toMergeSlotStatusDto(status: MergeSlotStatus): MergeSlotStatusDto {
+  return {
+    projectId: status.projectId,
+    present: status.present,
+    held: status.held,
+    holder: status.holder,
+    heldSinceIso: status.heldSinceIso,
+    heldForMs: status.heldForMs,
+    isLongHeld: status.isLongHeld,
   };
 }
 

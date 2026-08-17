@@ -1137,7 +1137,8 @@ body {
   color: #d70015;
 }
 
-.hygiene-stale-lease-group {
+.hygiene-stale-lease-group,
+.hygiene-merge-slot-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
