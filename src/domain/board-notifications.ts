@@ -6,6 +6,8 @@ import type { TicketId } from './ticket-id.js';
 export interface BoardNotificationSnapshot {
   readonly readyTicketIds: ReadonlySet<TicketId>;
   readonly decisionPendingTicketIds: ReadonlySet<TicketId>;
+  /** All ticket IDs observed when this snapshot was taken (regardless of ready status). */
+  readonly knownTicketIds: ReadonlySet<TicketId>;
 }
 
 export interface BoardSnapshotProjectInput {
@@ -19,10 +21,12 @@ export function computeBoardNotificationSnapshot(
 ): BoardNotificationSnapshot {
   const readyTicketIds = new Set<TicketId>();
   const decisionPendingTicketIds = new Set<TicketId>();
+  const knownTicketIds = new Set<TicketId>();
 
   for (const project of projects) {
     const ctx = createReadinessContext(project.tickets);
     for (const ticket of project.tickets) {
+      knownTicketIds.add(ticket.id);
       if (isReady(ticket, ctx, now)) {
         readyTicketIds.add(ticket.id);
       }
@@ -35,7 +39,7 @@ export function computeBoardNotificationSnapshot(
     }
   }
 
-  return { readyTicketIds, decisionPendingTicketIds };
+  return { readyTicketIds, decisionPendingTicketIds, knownTicketIds };
 }
 
 export type BoardTransitionEvent =
@@ -49,7 +53,10 @@ export function diffBoardNotificationSnapshots(
   const events: BoardTransitionEvent[] = [];
 
   for (const ticketId of next.readyTicketIds) {
-    if (!prev.readyTicketIds.has(ticketId)) {
+    if (
+      !prev.readyTicketIds.has(ticketId) &&
+      prev.knownTicketIds.has(ticketId)
+    ) {
       events.push({ kind: 'ticket_ready', ticketId });
     }
   }

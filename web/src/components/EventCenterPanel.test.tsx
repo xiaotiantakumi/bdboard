@@ -16,6 +16,7 @@ function makeProps(
     permission: 'default',
     enableNotifications: vi.fn(async () => {}),
     disableNotifications: vi.fn(),
+    notificationDeliveryError: null,
     ...overrides,
   };
 }

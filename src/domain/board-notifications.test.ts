@@ -55,17 +55,56 @@ describe('computeBoardNotificationSnapshot', () => {
       'bdboard-b',
     ]);
   });
+
+  it('collects all ticket ids in knownTicketIds regardless of ready status', () => {
+    const blocker = makeTicket({ id: 'bdboard-blocker', status: 'open' });
+    const blocked = makeTicket({
+      id: 'bdboard-blocked',
+      status: 'open',
+      dependencies: [blocksEdge('bdboard-blocked', 'bdboard-blocker')],
+    });
+    const inProgress = makeTicket({
+      id: 'bdboard-ip',
+      status: 'in_progress',
+    });
+    const snapshot = computeBoardNotificationSnapshot(
+      [{ tickets: [blocker, blocked, inProgress] }],
+      NOW,
+    );
+
+    expect([...snapshot.knownTicketIds].sort()).toEqual([
+      'bdboard-blocked',
+      'bdboard-blocker',
+      'bdboard-ip',
+    ]);
+  });
+
+  it('collects knownTicketIds across multiple projects', () => {
+    const ticketA = makeTicket({ id: 'bdboard-a', status: 'open' });
+    const ticketB = makeTicket({ id: 'bdboard-b', status: 'closed' });
+    const snapshot = computeBoardNotificationSnapshot(
+      [{ tickets: [ticketA] }, { tickets: [ticketB] }],
+      NOW,
+    );
+
+    expect([...snapshot.knownTicketIds].sort()).toEqual([
+      'bdboard-a',
+      'bdboard-b',
+    ]);
+  });
 });
 
 describe('diffBoardNotificationSnapshots', () => {
-  it('emits ticket_ready only for ids newly present in next.readyTicketIds', () => {
+  it('emits ticket_ready only for ids newly present in next.readyTicketIds that were already known', () => {
     const prev: BoardNotificationSnapshot = {
       readyTicketIds: new Set(['bdboard-a']),
       decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
     };
     const next: BoardNotificationSnapshot = {
       readyTicketIds: new Set(['bdboard-a', 'bdboard-b']),
       decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b']),
     };
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
@@ -73,14 +112,48 @@ describe('diffBoardNotificationSnapshots', () => {
     ]);
   });
 
+  it('does not emit ticket_ready for newly appeared ticket ids even when ready', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-new']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
+  });
+
+  it('emits ticket_ready for blocked-to-ready transition on a previously known ticket', () => {
+    const prev: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-blocker']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
+    };
+    const next: BoardNotificationSnapshot = {
+      readyTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
+      decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-blocker', 'bdboard-blocked']),
+    };
+
+    expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
+      { kind: 'ticket_ready', ticketId: 'bdboard-blocked' },
+    ]);
+  });
+
   it('emits decision_pending only for ids newly present in next.decisionPendingTicketIds', () => {
     const prev: BoardNotificationSnapshot = {
       readyTicketIds: new Set(),
       decisionPendingTicketIds: new Set(['bdboard-a']),
+      knownTicketIds: new Set(),
     };
     const next: BoardNotificationSnapshot = {
       readyTicketIds: new Set(),
       decisionPendingTicketIds: new Set(['bdboard-a', 'bdboard-b']),
+      knownTicketIds: new Set(),
     };
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([
@@ -92,10 +165,12 @@ describe('diffBoardNotificationSnapshots', () => {
     const prev: BoardNotificationSnapshot = {
       readyTicketIds: new Set(['bdboard-a']),
       decisionPendingTicketIds: new Set(['bdboard-x']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-x']),
     };
     const next: BoardNotificationSnapshot = {
       readyTicketIds: new Set(['bdboard-a']),
       decisionPendingTicketIds: new Set(['bdboard-x']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-x']),
     };
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
@@ -105,10 +180,12 @@ describe('diffBoardNotificationSnapshots', () => {
     const prev: BoardNotificationSnapshot = {
       readyTicketIds: new Set(['bdboard-a', 'bdboard-b']),
       decisionPendingTicketIds: new Set(['bdboard-x']),
+      knownTicketIds: new Set(['bdboard-a', 'bdboard-b', 'bdboard-x']),
     };
     const next: BoardNotificationSnapshot = {
       readyTicketIds: new Set(['bdboard-a']),
       decisionPendingTicketIds: new Set(),
+      knownTicketIds: new Set(['bdboard-a']),
     };
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);

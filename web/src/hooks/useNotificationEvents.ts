@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { acquireSharedEventSource } from '../lib/sseConnection';
 import { UI_STORAGE_KEYS, validateBoolean, validateString } from '../uiPersistedState';
 import { usePersistedState } from './usePersistedState';
 
 const MAX_EVENTS = 50;
+
+/** Short window for coalescing burst browser notifications. */
+export const NOTIFICATION_BATCH_WINDOW_MS = 2500;
+
+/** At or above this count within the window, emit one summary notification. */
+export const NOTIFICATION_BATCH_THRESHOLD = 3;
 
 export interface NotificationEventItem {
   readonly id: string;
@@ -25,6 +32,8 @@ export interface UseNotificationEventsResult {
   readonly permission: NotificationPermission | 'unsupported';
   readonly enableNotifications: () => Promise<void>;
   readonly disableNotifications: () => void;
+  /** Set when `new Notification()` fails (e.g. Android Chrome Illegal constructor). */
+  readonly notificationDeliveryError: string | null;
 }
 
 type TicketNotificationKind = 'ticket_ready' | 'decision_pending';
@@ -165,24 +174,47 @@ function notificationCopy(item: NotificationEventItem): { title: string; body: s
   }
 }
 
-function maybeShowBrowserNotification(
-  item: NotificationEventItem,
-  notificationsEnabled: boolean,
-): void {
+function kindSummaryLabel(kind: NotificationEventItem['kind'], count: number): string {
+  switch (kind) {
+    case 'ticket_ready':
+      return `着手可能 ${count}件`;
+    case 'decision_pending':
+      return `決定待ち ${count}件`;
+    case 'session_died':
+      return `セッション終了 ${count}件`;
+  }
+}
+
+function buildSummaryNotification(items: NotificationEventItem[]): { title: string; body: string } {
+  const counts = new Map<NotificationEventItem['kind'], number>();
+  for (const item of items) {
+    counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+  }
+  const parts = Array.from(counts.entries()).map(([kind, count]) => kindSummaryLabel(kind, count));
+  return {
+    title: `${items.length}件の更新があります`,
+    body: parts.join('、'),
+  };
+}
+
+function shouldSuppressBrowserNotification(): boolean {
+  return document.visibilityState === 'visible' && document.hasFocus();
+}
+
+function passesBrowserNotificationGate(notificationsEnabled: boolean): boolean {
   if (typeof Notification === 'undefined') {
-    return;
+    return false;
   }
   if (Notification.permission !== 'granted') {
-    return;
+    return false;
   }
   if (!notificationsEnabled) {
-    return;
+    return false;
   }
-  if (document.visibilityState === 'visible') {
-    return;
+  if (shouldSuppressBrowserNotification()) {
+    return false;
   }
-  const { title, body } = notificationCopy(item);
-  new Notification(title, { body, tag: item.id });
+  return true;
 }
 
 export function useNotificationEvents(): UseNotificationEventsResult {
@@ -201,14 +233,71 @@ export function useNotificationEvents(): UseNotificationEventsResult {
     false,
     validateBoolean,
   );
+  const [notificationDeliveryError, setNotificationDeliveryError] = useState<string | null>(null);
 
   const notificationsEnabledRef = useRef(notificationsEnabled);
+  const batchBufferRef = useRef<NotificationEventItem[]>([]);
+  const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled;
   }, [notificationsEnabled]);
 
+  const deliverBrowserNotification = useCallback((title: string, body: string, tag: string) => {
+    try {
+      new Notification(title, { body, tag });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Browser notification constructor failed';
+      console.warn('Browser notification delivery failed:', error);
+      setNotificationDeliveryError(message);
+    }
+  }, []);
+
+  const flushNotificationBatch = useCallback(() => {
+    batchTimerRef.current = null;
+    const items = batchBufferRef.current;
+    batchBufferRef.current = [];
+
+    if (items.length === 0) {
+      return;
+    }
+    if (!passesBrowserNotificationGate(notificationsEnabledRef.current)) {
+      return;
+    }
+
+    if (items.length >= NOTIFICATION_BATCH_THRESHOLD) {
+      const summary = buildSummaryNotification(items);
+      deliverBrowserNotification(summary.title, summary.body, `batch:${items[0]!.occurredAt}`);
+      return;
+    }
+
+    for (const item of items) {
+      const { title, body } = notificationCopy(item);
+      deliverBrowserNotification(title, body, item.id);
+    }
+  }, [deliverBrowserNotification]);
+
+  const enqueueBrowserNotification = useCallback(
+    (item: NotificationEventItem, notificationsEnabled: boolean) => {
+      if (!passesBrowserNotificationGate(notificationsEnabled)) {
+        return;
+      }
+
+      batchBufferRef.current.push(item);
+      if (batchTimerRef.current !== null) {
+        return;
+      }
+
+      batchTimerRef.current = setTimeout(() => {
+        flushNotificationBatch();
+      }, NOTIFICATION_BATCH_WINDOW_MS);
+    },
+    [flushNotificationBatch],
+  );
+
   useEffect(() => {
-    const es = new EventSource(`${window.location.origin}/api/events`);
+    const conn = acquireSharedEventSource();
 
     const onNotification = (event: MessageEvent<string>) => {
       let payload: unknown;
@@ -223,16 +312,21 @@ export function useNotificationEvents(): UseNotificationEventsResult {
 
       const item = buildNotificationEventItem(payload);
       setEvents((prev) => [item, ...prev].slice(0, MAX_EVENTS));
-      maybeShowBrowserNotification(item, notificationsEnabledRef.current);
+      enqueueBrowserNotification(item, notificationsEnabledRef.current);
     };
 
-    es.addEventListener('notification', onNotification as EventListener);
+    conn.addEventListener('notification', onNotification as EventListener);
 
     return () => {
-      es.removeEventListener('notification', onNotification as EventListener);
-      es.close();
+      conn.removeEventListener('notification', onNotification as EventListener);
+      conn.release();
+      if (batchTimerRef.current !== null) {
+        clearTimeout(batchTimerRef.current);
+        batchTimerRef.current = null;
+      }
+      batchBufferRef.current = [];
     };
-  }, [setEvents]);
+  }, [setEvents, enqueueBrowserNotification]);
 
   const unreadCount = useMemo(() => {
     const boundary = lastReadAt ?? '';
@@ -276,5 +370,6 @@ export function useNotificationEvents(): UseNotificationEventsResult {
     permission,
     enableNotifications,
     disableNotifications,
+    notificationDeliveryError,
   };
 }
