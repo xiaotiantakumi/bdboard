@@ -415,7 +415,11 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
 
 ## Architecture Overview
 
-_Add a brief overview of your project architecture_
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the onion 4-layer breakdown
+(domain/application/infrastructure/interface), the port list, the bd CLI → cache →
+SSE → UI data flow, and the safety guarantees (readonly bd calls, the write-guard
+middleware, and why the agent Runner is currently unwired). See
+[docs/PLAN.md](docs/PLAN.md) for the original full design doc.
 
 ## Conventions & Patterns
 
