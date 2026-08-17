@@ -49,11 +49,13 @@ vi.mock('./api', async (importOriginal) => {
     searchTickets: vi.fn(),
     fetchTunnel: vi.fn(),
     fetchAiQuota: vi.fn(),
+    fetchBoardThresholdsConfig: vi.fn(),
   };
 });
 
 import {
   fetchBoard,
+  fetchBoardThresholdsConfig,
   fetchChatAvailability,
   fetchPendingDecisions,
   fetchProjects,
@@ -77,6 +79,31 @@ const fetchTicketMock = vi.mocked(fetchTicket);
 const fetchTicketCommentsMock = vi.mocked(fetchTicketComments);
 const fetchTunnelMock = vi.mocked(fetchTunnel);
 const fetchAiQuotaMock = vi.mocked(fetchAiQuota);
+const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
+
+function makeBoardThresholdsConfig() {
+  return {
+    stalledAfterMs: 86_400_000,
+    livenessActiveMs: 120_000,
+    livenessIdleMs: 1_800_000,
+    livenessStaleMs: 86_400_000,
+    inProgressWipLimit: null,
+    inProgressWipLimitByProject: {},
+    version: 'thresholds-v1',
+    defaults: {
+      stalledAfterMs: 86_400_000,
+      livenessActiveMs: 120_000,
+      livenessIdleMs: 1_800_000,
+      livenessStaleMs: 86_400_000,
+      inProgressWipLimit: null,
+      inProgressWipLimitByProject: {},
+    },
+  };
+}
+
+beforeEach(() => {
+  fetchBoardThresholdsConfigMock.mockResolvedValue(makeBoardThresholdsConfig());
+});
 
 const ticketId = 'bdboard-3tw.94';
 

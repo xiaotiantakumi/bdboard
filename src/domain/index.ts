@@ -20,3 +20,4 @@ export * from './ticket.js';
 export * from './ticket-id.js';
 export * from './passphrase.js';
 export * from './scan-root-policy.js';
+export * from './wip-limits.js';

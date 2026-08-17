@@ -6,6 +6,7 @@ import {
   fetchAiQuotaAlertConfig,
   fetchBoardThresholdsConfig,
   fetchDbStats,
+  fetchProjects,
   fetchScanRootsConfig,
   postRefresh,
   putAiQuotaAlertConfig,
@@ -26,6 +27,7 @@ vi.mock('../api', async (importOriginal) => {
     fetchScanRootsConfig: vi.fn(),
     fetchBoardThresholdsConfig: vi.fn(),
     fetchDbStats: vi.fn(),
+    fetchProjects: vi.fn(),
     fetchAiQuotaAlertConfig: vi.fn(),
     postRefresh: vi.fn(),
     putScanRootsConfig: vi.fn(),
@@ -37,6 +39,7 @@ vi.mock('../api', async (importOriginal) => {
 const fetchScanRootsConfigMock = vi.mocked(fetchScanRootsConfig);
 const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
 const fetchDbStatsMock = vi.mocked(fetchDbStats);
+const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchAiQuotaAlertConfigMock = vi.mocked(fetchAiQuotaAlertConfig);
 const postRefreshMock = vi.mocked(postRefresh);
 const putScanRootsConfigMock = vi.mocked(putScanRootsConfig);
@@ -66,12 +69,16 @@ function makeThresholdsConfig(overrides: Partial<BoardThresholdsConfigDto> = {})
     livenessActiveMs: 120_000,
     livenessIdleMs: 1_800_000,
     livenessStaleMs: 86_400_000,
+    inProgressWipLimit: null,
+    inProgressWipLimitByProject: {},
     version: 'thresholds-v1',
     defaults: {
       stalledAfterMs: 86_400_000,
       livenessActiveMs: 120_000,
       livenessIdleMs: 1_800_000,
       livenessStaleMs: 86_400_000,
+      inProgressWipLimit: null,
+      inProgressWipLimitByProject: {},
     },
     ...overrides,
   };
@@ -97,6 +104,7 @@ describe('SettingsPanel', () => {
     fetchScanRootsConfigMock.mockReset();
     fetchBoardThresholdsConfigMock.mockReset();
     fetchDbStatsMock.mockReset();
+    fetchProjectsMock.mockReset();
     fetchAiQuotaAlertConfigMock.mockReset();
     postRefreshMock.mockReset();
     putScanRootsConfigMock.mockReset();
@@ -105,6 +113,9 @@ describe('SettingsPanel', () => {
     fetchScanRootsConfigMock.mockResolvedValue(makeConfig());
     fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
     fetchDbStatsMock.mockResolvedValue(makeDbStats());
+    fetchProjectsMock.mockResolvedValue([
+      { id: 'proj-a', name: 'Project Alpha', rootPath: '/alpha', prefixes: [], sessionCount: 0, activeSessionCount: 0, sessions: [] },
+    ]);
     fetchAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig());
     postRefreshMock.mockResolvedValue(undefined);
     putScanRootsConfigMock.mockResolvedValue({ scanRoots: ['/configured'], excludePaths: ['/excluded'], version: 'v2' });
@@ -460,6 +471,28 @@ describe('SettingsPanel', () => {
     );
     await waitFor(() => expect(postRefreshMock).toHaveBeenCalled());
     expect(await screen.findByText('閾値設定を保存しました')).toBeInTheDocument();
+  });
+
+  it('shows the wip limits section and saves edited values', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const wipSection = await screen.findByRole('region', { name: 'WIP上限' });
+    const saveButton = within(wipSection).getByRole('button', { name: 'WIP上限を保存' });
+    expect(saveButton).toBeDisabled();
+
+    await user.type(within(wipSection).getByLabelText('In Progress 上限 (全体)'), '5');
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(putBoardThresholdsConfigMock).toHaveBeenCalledWith({
+        inProgressWipLimit: 5,
+        inProgressWipLimitByProject: {},
+        version: 'thresholds-v1',
+      }),
+    );
+    await waitFor(() => expect(postRefreshMock).toHaveBeenCalled());
+    expect(await screen.findByText('WIP上限を保存しました')).toBeInTheDocument();
   });
 
   it('shows server validation errors for board thresholds', async () => {

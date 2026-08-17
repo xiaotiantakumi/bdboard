@@ -880,6 +880,36 @@ body {
   color: var(--color-text);
 }
 
+.settings-panel-add-row select {
+  min-width: 0;
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.settings-panel-wip-override-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-panel-wip-override-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-panel-wip-override-row input {
+  width: 5rem;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
 .settings-panel-save {
   align-self: flex-start;
   background: var(--color-accent, #007aff);
@@ -1948,6 +1978,16 @@ body {
 .lane-header:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: -2px;
+}
+
+.lane-header.lane-header-wip-exceeded {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+
+.lane-header.lane-header-wip-exceeded .lane-count {
+  background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  color: var(--color-warning);
 }
 
 .lane-header-label {

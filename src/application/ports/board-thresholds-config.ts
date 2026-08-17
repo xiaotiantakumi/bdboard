@@ -3,6 +3,8 @@ export interface BoardThresholdsConfig {
   readonly livenessActiveMs?: number;
   readonly livenessIdleMs?: number;
   readonly livenessStaleMs?: number;
+  readonly inProgressWipLimit?: number;
+  readonly inProgressWipLimitByProject?: Record<string, number>;
 }
 
 export interface BoardThresholdsConfigPort {

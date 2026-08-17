@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchBoard,
+  fetchBoardThresholdsConfig,
   fetchChatAvailability,
   fetchPendingDecisions,
   fetchPrLinks,
@@ -39,6 +40,7 @@ import { SessionListPanel } from './components/SessionListPanel';
 import { TicketDetailPanel } from './components/TicketDetailPanel';
 import { TunnelControl } from './components/TunnelControl';
 import { isBoardFilterActive } from './boardFilter';
+import type { WipLimitsOverrides } from './wip-limits';
 import { useAppBadge } from './hooks/useAppBadge';
 import { useNotificationEvents } from './hooks/useNotificationEvents';
 import { usePersistedState } from './hooks/usePersistedState';
@@ -259,6 +261,25 @@ export function App() {
     queryFn: fetchChatAvailability,
     retry: false,
   });
+
+  const boardThresholdsQuery = useQuery({
+    queryKey: ['board-thresholds-config'],
+    queryFn: fetchBoardThresholdsConfig,
+    retry: false,
+  });
+
+  const wipLimitsOverrides = useMemo((): WipLimitsOverrides => {
+    const config = boardThresholdsQuery.data;
+    if (config === undefined) {
+      return {};
+    }
+    return {
+      ...(config.inProgressWipLimit !== null
+        ? { inProgressWipLimit: config.inProgressWipLimit }
+        : {}),
+      inProgressWipLimitByProject: config.inProgressWipLimitByProject,
+    };
+  }, [boardThresholdsQuery.data]);
 
   // 'unknown'(認証未確認) でもチャット自体は開かせる。開けなくすると
   // 「判定できていないだけ」を「使えない」と扱う別種の嘘になる。
@@ -940,6 +961,7 @@ export function App() {
               onCardClick={handleSelectTicket}
               collapsedLanes={collapsedLanesSet}
               onToggleLaneCollapse={handleToggleLaneCollapse}
+              wipLimitsOverrides={wipLimitsOverrides}
             />
           )
         )}
@@ -957,6 +979,7 @@ export function App() {
             syncHealthByProject={syncHealthByProject}
             collapsedLanes={collapsedLanesSet}
             onToggleLaneCollapse={handleToggleLaneCollapse}
+            wipLimitsOverrides={wipLimitsOverrides}
           />
         )}
         {boardQuery.data !== undefined && view === 'next' && boardQuery.data.merged !== null && (
