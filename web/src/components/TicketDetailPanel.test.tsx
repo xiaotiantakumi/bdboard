@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -29,6 +29,7 @@ import {
 } from '../api';
 import { TicketDetailPanel } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
+import { computeDeferUntilDate } from '../deferPeriods';
 import { NETWORK_FETCH_HELP, TUNNEL_WRITE_HELP } from '../writeAccessMessage';
 
 vi.mock('../api', async (importOriginal) => {
@@ -773,15 +774,19 @@ describe('TicketDetailPanel pending decisions', () => {
 
 describe('TicketDetailPanel quick actions', () => {
   let user: ReturnType<typeof userEvent.setup>;
+  const fixedNow = new Date(2026, 7, 17, 12, 0, 0);
 
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(fixedNow);
     mockFetchTicket.mockResolvedValue(sampleTicket);
     mockFetchTicketComments.mockResolvedValue([]);
     mockPostTicketQuickAction.mockResolvedValue(undefined);
-    user = userEvent.setup();
+    user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -818,33 +823,68 @@ describe('TicketDetailPanel quick actions', () => {
     });
   });
 
-  it('posts defer quick action from the 1週間延期 button', async () => {
+  it('posts defer quick action with the default one-week period', async () => {
     renderPanel(new Map());
 
-    const deferButtons = await screen.findAllByRole('button', {
-      name: '1週間延期',
-    });
+    const deferButtons = await screen.findAllByRole('button', { name: '延期' });
     await user.click(deferButtons[0]!);
     await user.click(screen.getByRole('button', { name: '実行する' }));
 
     await waitFor(() => {
-      expect(mockPostTicketQuickAction).toHaveBeenCalledWith(
-        sampleTicket.id,
-        expect.objectContaining({
-          action: 'defer',
-          untilDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-        }),
-      );
+      expect(mockPostTicketQuickAction).toHaveBeenCalledWith(sampleTicket.id, {
+        action: 'defer',
+        untilDate: computeDeferUntilDate('1week', fixedNow),
+      });
     });
+  });
 
-    const body = mockPostTicketQuickAction.mock.calls.at(-1)?.[1];
-    expect(body?.action).toBe('defer');
-    if (body?.action === 'defer') {
-      const deferDate = new Date(`${body.untilDate}T00:00:00`);
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      expect(deferDate.getTime()).toBeGreaterThan(today.getTime());
-    }
+  it('posts defer quick action for the selected tomorrow period', async () => {
+    renderPanel(new Map());
+
+    const periodSelects = await screen.findAllByLabelText('延期期間');
+    await user.selectOptions(periodSelects[0]!, 'tomorrow');
+    const deferButtons = await screen.findAllByRole('button', { name: '延期' });
+    await user.click(deferButtons[0]!);
+    await user.click(screen.getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketQuickAction).toHaveBeenCalledWith(sampleTicket.id, {
+        action: 'defer',
+        untilDate: computeDeferUntilDate('tomorrow', fixedNow),
+      });
+    });
+  });
+
+  it('posts defer quick action with a custom future date', async () => {
+    renderPanel(new Map());
+
+    const periodSelects = await screen.findAllByLabelText('延期期間');
+    await user.selectOptions(periodSelects[0]!, 'custom');
+    const dateInput = document.querySelector(
+      'input[type="date"]',
+    ) as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: '2026-09-01' } });
+
+    const deferButtons = await screen.findAllByRole('button', { name: '延期' });
+    await user.click(deferButtons[0]!);
+    await user.click(screen.getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketQuickAction).toHaveBeenCalledWith(sampleTicket.id, {
+        action: 'defer',
+        untilDate: '2026-09-01',
+      });
+    });
+  });
+
+  it('disables defer submit when custom date is not a future local date', async () => {
+    renderPanel(new Map());
+
+    const periodSelects = await screen.findAllByLabelText('延期期間');
+    await user.selectOptions(periodSelects[0]!, 'custom');
+
+    const deferButtons = await screen.findAllByRole('button', { name: '延期' });
+    expect(deferButtons[0]).toBeDisabled();
   });
 });
 

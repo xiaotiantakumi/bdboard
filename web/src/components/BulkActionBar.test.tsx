@@ -1,7 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import type { BoardCardDto } from '../api';
+import { computeDeferUntilDate } from '../deferPeriods';
 import { BulkActionBar } from './BulkActionBar';
 import {
   BulkSelectionProvider,
@@ -100,11 +102,21 @@ function renderBulkBar(
 }
 
 describe('BulkActionBar', () => {
+  const fixedNow = new Date(2026, 7, 17, 12, 0, 0);
+  let user: ReturnType<typeof userEvent.setup>;
+
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(fixedNow);
     mockPostTicketQuickAction.mockReset();
     mockPostTicketQuickAction.mockResolvedValue(undefined);
     mockPostTicketQuickActionUndo.mockReset();
     mockPostTicketQuickActionUndo.mockResolvedValue(undefined);
+    user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('shows selection count and runs bulk close with partial failure reporting', async () => {
@@ -217,39 +229,63 @@ describe('BulkActionBar', () => {
     ).toBeDisabled();
   });
 
-  it('runs bulk defer for every selected card', async () => {
-    const cards = new Map([
-      ['bdboard-a', makeCard('bdboard-a')],
-      ['bdboard-b', makeCard('bdboard-b')],
-    ]);
+  it('runs bulk defer with the default one-week period', async () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
 
-    renderBulkBar(cards, ['bdboard-a', 'bdboard-b']);
-
-    fireEvent.click(screen.getByRole('button', { name: '1週間延期' }));
-    expect(
-      screen.getByText(/選択中の 2 件を .+ まで延期します。よろしいですか?/),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: '実行する' }));
+    await user.click(screen.getByRole('button', { name: '延期' }));
+    await user.click(screen.getByRole('button', { name: '実行する' }));
 
     await waitFor(() => {
-      expect(mockPostTicketQuickAction).toHaveBeenCalledTimes(2);
+      expect(mockPostTicketQuickAction).toHaveBeenCalledWith('bdboard-ok', {
+        action: 'defer',
+        untilDate: computeDeferUntilDate('1week', fixedNow),
+      });
     });
+  });
 
-    for (const id of ['bdboard-a', 'bdboard-b']) {
-      expect(mockPostTicketQuickAction).toHaveBeenCalledWith(
-        id,
-        expect.objectContaining({
-          action: 'defer',
-          untilDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
-        }),
-      );
-    }
+  it('runs bulk defer for the selected tomorrow period', async () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
 
-    const deferCalls = mockPostTicketQuickAction.mock.calls.filter(
-      ([, request]) => request.action === 'defer',
-    );
-    expect(deferCalls[0]?.[1]).toEqual(deferCalls[1]?.[1]);
+    await user.selectOptions(screen.getByLabelText('延期期間'), 'tomorrow');
+    await user.click(screen.getByRole('button', { name: '延期' }));
+    await user.click(screen.getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketQuickAction).toHaveBeenCalledWith('bdboard-ok', {
+        action: 'defer',
+        untilDate: computeDeferUntilDate('tomorrow', fixedNow),
+      });
+    });
+  });
+
+  it('runs bulk defer with a custom future date', async () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
+
+    await user.selectOptions(screen.getByLabelText('延期期間'), 'custom');
+    const dateInput = document.querySelector(
+      'input[type="date"]',
+    ) as HTMLInputElement;
+    fireEvent.change(dateInput, { target: { value: '2026-09-01' } });
+    await user.click(screen.getByRole('button', { name: '延期' }));
+    await user.click(screen.getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketQuickAction).toHaveBeenCalledWith('bdboard-ok', {
+        action: 'defer',
+        untilDate: '2026-09-01',
+      });
+    });
+  });
+
+  it('disables bulk defer submit when custom date is empty', async () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
+
+    await user.selectOptions(screen.getByLabelText('延期期間'), 'custom');
+    expect(screen.getByRole('button', { name: '延期' })).toBeDisabled();
   });
 
   it('reports undo partial failure when some undo requests fail', async () => {

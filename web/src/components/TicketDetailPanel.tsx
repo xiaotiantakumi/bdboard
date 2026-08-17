@@ -5,7 +5,6 @@ import {
   buildBdCommand,
   type BdCommandKind,
   copyTextToClipboard,
-  formatDeferDate,
 } from '../bdCommands';
 import {
   deleteTicketDependency,
@@ -44,6 +43,14 @@ import {
   formatActivityTime,
   groupEventsByDate,
 } from './activityFeedFormatting';
+import {
+  computeDeferUntilDate,
+  DEFAULT_DEFER_PERIOD,
+  DEFER_PERIOD_OPTIONS,
+  isFutureLocalDate,
+  todayLocalDateInputValue,
+  type DeferPeriodKind,
+} from '../deferPeriods';
 
 const DEPENDENCY_SEARCH_DEBOUNCE_MS = 200;
 const DEPENDENCY_SEARCH_LIMIT = 20;
@@ -263,6 +270,9 @@ export function TicketDetailPanel({
   const [freeformText, setFreeformText] = useState('');
   const [confirmingQuickAction, setConfirmingQuickAction] =
     useState<ConfirmingQuickAction | null>(null);
+  const [deferPeriodKind, setDeferPeriodKind] =
+    useState<DeferPeriodKind>(DEFAULT_DEFER_PERIOD);
+  const [customDeferDate, setCustomDeferDate] = useState('');
   const [closeReason, setCloseReason] = useState('');
   const [commentText, setCommentText] = useState('');
   const [dependencySearchQuery, setDependencySearchQuery] = useState('');
@@ -293,6 +303,8 @@ export function TicketDetailPanel({
       setSubmittedDecision(null);
     }
     setConfirmingQuickAction(null);
+    setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
+    setCustomDeferDate('');
     setCloseReason('');
     setCommentText('');
     setDependencySearchQuery('');
@@ -325,6 +337,8 @@ export function TicketDetailPanel({
 
   const handleCancelQuickAction = useCallback(() => {
     setConfirmingQuickAction(null);
+    setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
+    setCustomDeferDate('');
     setCloseReason('');
   }, []);
 
@@ -608,6 +622,16 @@ export function TicketDetailPanel({
   const canLowerPriority = data !== undefined && data.priority < 4;
   const quickActionsDisabled =
     quickActionMutation.isPending || confirmingQuickAction !== null;
+  const deferSubmitDisabled =
+    deferPeriodKind === 'custom' && !isFutureLocalDate(customDeferDate);
+
+  const handleDeferQuickAction = useCallback(() => {
+    const untilDate =
+      deferPeriodKind === 'custom'
+        ? customDeferDate
+        : computeDeferUntilDate(deferPeriodKind);
+    setConfirmingQuickAction({ kind: 'defer', untilDate });
+  }, [customDeferDate, deferPeriodKind]);
 
   return (
     <div
@@ -1338,19 +1362,39 @@ export function TicketDetailPanel({
                 >
                   完了
                 </button>
-                <button
-                  type="button"
-                  className="btn quick-action-btn"
-                  disabled={quickActionsDisabled}
-                  onClick={() =>
-                    setConfirmingQuickAction({
-                      kind: 'defer',
-                      untilDate: formatDeferDate(),
-                    })
-                  }
-                >
-                  1週間延期
-                </button>
+                <div className="quick-action-defer-group">
+                  <select
+                    aria-label="延期期間"
+                    value={deferPeriodKind}
+                    onChange={(event) =>
+                      setDeferPeriodKind(event.target.value as DeferPeriodKind)
+                    }
+                    disabled={quickActionsDisabled}
+                  >
+                    {DEFER_PERIOD_OPTIONS.map(({ kind, label }) => (
+                      <option key={kind} value={kind}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  {deferPeriodKind === 'custom' && (
+                    <input
+                      type="date"
+                      min={todayLocalDateInputValue()}
+                      value={customDeferDate}
+                      onChange={(event) => setCustomDeferDate(event.target.value)}
+                      disabled={quickActionsDisabled}
+                    />
+                  )}
+                  <button
+                    type="button"
+                    className="btn quick-action-btn"
+                    disabled={quickActionsDisabled || deferSubmitDisabled}
+                    onClick={handleDeferQuickAction}
+                  >
+                    延期
+                  </button>
+                </div>
                 <button
                   type="button"
                   className="btn quick-action-btn"
