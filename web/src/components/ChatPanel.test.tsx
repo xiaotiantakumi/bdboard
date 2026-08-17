@@ -1526,6 +1526,240 @@ describe('ChatPanel', () => {
     });
   });
 
+  describe('streaming abort on unmount / conversation switch (bdboard-7st)', () => {
+    function makeGatedStreamingFetchMock(
+      fetchMock: ReturnType<typeof vi.fn>,
+      options: { capturedSignal?: { current: AbortSignal | undefined } } = {},
+    ) {
+      let releaseRemainingChunks: () => void = () => {};
+      const remainingChunksGate = new Promise<void>((resolve) => {
+        releaseRemainingChunks = resolve;
+      });
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          if (options.capturedSignal !== undefined) {
+            options.capturedSignal.current = init.signal ?? undefined;
+          }
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'),
+                );
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(
+                    new DOMException('The operation was aborted.', 'AbortError'),
+                  );
+                });
+                await remainingChunksGate;
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"partial reply","sessionId":"sess-stream","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+      return { releaseRemainingChunks };
+    }
+
+    it('aborts the fetch signal on unmount while streaming', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      const capturedSignal: { current: AbortSignal | undefined } = { current: undefined };
+      makeGatedStreamingFetchMock(fetchMock, { capturedSignal });
+
+      const view = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+      await user.type(screen.getByLabelText('メッセージ'), 'stream then unmount');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      const messages = screen.getByRole('log');
+      await waitFor(() => {
+        const streamingText = messages.querySelector('.chat-message-streaming .chat-message-text');
+        expect(streamingText).not.toBeNull();
+        expect(streamingText?.textContent).toBe('partial ');
+      });
+      expect(capturedSignal.current).toBeDefined();
+
+      view.unmount();
+      await waitFor(() => {
+        expect(capturedSignal.current?.aborted).toBe(true);
+      });
+    });
+
+    it('aborts the fetch signal when switching threads while streaming', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        {
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          title: 'first thread',
+          updatedAt: '2026-01-02T00:00:00Z',
+        },
+        {
+          sessionId: 'sess-2',
+          agentId: 'claude',
+          title: 'second thread',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]);
+      const capturedSignal: { current: AbortSignal | undefined } = { current: undefined };
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          capturedSignal.current = init.signal ?? undefined;
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'),
+                );
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(
+                    new DOMException('The operation was aborted.', 'AbortError'),
+                  );
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText('メッセージ'), 'message for first');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      const messages = screen.getByRole('log');
+      await waitFor(() => {
+        expect(messages.querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+      expect(capturedSignal.current).toBeDefined();
+
+      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+
+      await waitFor(() => {
+        expect(capturedSignal.current?.aborted).toBe(true);
+      });
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+
+    it('aborts the fetch signal when switching projects while streaming', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      const capturedSignal: { current: AbortSignal | undefined } = { current: undefined };
+      makeGatedStreamingFetchMock(fetchMock, { capturedSignal });
+
+      const rendered = renderChatPanel([PROJECT_A, PROJECT_B], {
+        initialProjectId: 'proj-a',
+        ticketContextToken: 1,
+      });
+      await screen.findByLabelText('チャットエージェント');
+      await user.type(screen.getByLabelText('メッセージ'), 'project switch abort');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      const messages = screen.getByRole('log');
+      await waitFor(() => {
+        expect(messages.querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+      expect(capturedSignal.current).toBeDefined();
+
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A, PROJECT_B]}
+          initialProjectId="proj-b"
+          ticketContextToken={2}
+          onClose={rendered.onClose}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(capturedSignal.current?.aborted).toBe(true);
+      });
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
+    });
+
+    it('does not add an error bubble when abort comes from a thread switch', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        {
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          title: 'first thread',
+          updatedAt: '2026-01-02T00:00:00Z',
+        },
+        {
+          sessionId: 'sess-2',
+          agentId: 'claude',
+          title: 'second thread',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]);
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'),
+                );
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(
+                    new DOMException('The operation was aborted.', 'AbortError'),
+                  );
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText('メッセージ'), 'abort without error bubble');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
+      });
+
+      await user.click(screen.getByRole('tab', { name: 'first thread' }));
+      const firstThreadMessages = screen.getByRole('log');
+      await waitFor(() => {
+        expect(within(firstThreadMessages).getByText('abort without error bubble')).toBeInTheDocument();
+      });
+      expect(firstThreadMessages.querySelectorAll('.chat-message-error')).toHaveLength(0);
+      expect(firstThreadMessages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
   // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ本文を
   // 復元する回帰テスト群。
   describe('restores the input after a send failure (bdboard-otf)', () => {
