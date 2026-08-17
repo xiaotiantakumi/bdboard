@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
+import { isSafeCliArgument } from '../../domain/chat.js';
 import { getActivityFeed } from '../../application/board/get-activity-feed.js';
 import { getTicketTimeline } from '../../application/board/get-ticket-timeline.js';
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
@@ -183,6 +184,14 @@ const dependencyBodySchema = z.object({
 
 const sessionLinkBodySchema = z.object({
   sessionId: z.string().min(1).max(200),
+});
+
+const labelBodySchema = z.object({
+  label: z
+    .string()
+    .min(1)
+    .max(200)
+    .refine(isSafeCliArgument, { message: 'unsafe label' }),
 });
 
 const quickActionBodySchema = z.discriminatedUnion('action', [
@@ -1126,6 +1135,87 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
       const detail = error instanceof Error ? error.message : String(error);
       return c.json({ error: 'failed to remove dependency', detail }, 502);
+    }
+  });
+
+  app.post('/api/tickets/:id/labels', async (c) => {
+    if (deps.issueWriter === undefined) {
+      return c.json({ error: 'label editing not available' }, 501);
+    }
+
+    const id = c.req.param('id');
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const parsed = labelBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
+
+    const rootPath = findProjectRootPathForTicket(deps.cache, id);
+    if (rootPath === undefined) {
+      return c.json({ error: 'ticket not found', id }, 404);
+    }
+
+    try {
+      await deps.issueWriter.addLabel(rootPath, id, parsed.data.label);
+      return c.json({ ok: true });
+    } catch (error: unknown) {
+      if (error instanceof BdError) {
+        return c.json(
+          { error: 'failed to add label', detail: error.detail },
+          502,
+        );
+      }
+
+      const detail = error instanceof Error ? error.message : String(error);
+      return c.json({ error: 'failed to add label', detail }, 502);
+    }
+  });
+
+  app.delete('/api/tickets/:id/labels/:label{.+}', async (c) => {
+    if (deps.issueWriter === undefined) {
+      return c.json({ error: 'label editing not available' }, 501);
+    }
+
+    const id = c.req.param('id');
+    const label = c.req.param('label');
+
+    if (!isSafeCliArgument(label)) {
+      return c.json({ error: 'invalid label' }, 400);
+    }
+
+    const cached = findCachedTicket(deps.cache, id);
+    if (cached === undefined) {
+      return c.json({ error: 'ticket not found', id }, 404);
+    }
+
+    const currentLabels = cached.ticket.labels ?? [];
+    if (!currentLabels.includes(label)) {
+      return c.json(
+        { error: 'label not found on this ticket', id, label },
+        409,
+      );
+    }
+
+    try {
+      await deps.issueWriter.removeLabel(cached.rootPath, id, label);
+      return c.json({ ok: true });
+    } catch (error: unknown) {
+      if (error instanceof BdError) {
+        return c.json(
+          { error: 'failed to remove label', detail: error.detail },
+          502,
+        );
+      }
+
+      const detail = error instanceof Error ? error.message : String(error);
+      return c.json({ error: 'failed to remove label', detail }, 502);
     }
   });
 

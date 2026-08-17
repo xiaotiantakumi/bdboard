@@ -903,7 +903,10 @@ export function App() {
           </p>
         )}
         {(view === 'merged' || view === 'split') && (
-          <BulkActionBar cardsById={boardCardsById} />
+          <BulkActionBar
+            cardsById={boardCardsById}
+            availableLabels={availableLabels}
+          />
         )}
         {boardQuery.data !== undefined && view === 'merged' && boardQuery.data.merged !== null && (
           (stalledOnly || isBoardFilterActive(boardFilter)) &&
@@ -1035,6 +1038,7 @@ export function App() {
           isTicketOnBoard={isTicketOnBoard}
           onFilterByEpic={handleFilterByEpic}
           onTicketViewed={handleRecordRecentTicket}
+          availableLabels={availableLabels}
         />
       )}
 

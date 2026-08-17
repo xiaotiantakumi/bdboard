@@ -146,6 +146,19 @@ const bdDepSchema = z
   })
   .strict();
 
+const labelSchema = z
+  .string()
+  .min(1, 'label must not be empty')
+  .max(200, 'label too long')
+  .refine(isSafeCliArgument, { message: 'unsafe label' });
+
+const bdLabelSchema = z
+  .object({
+    id: ticketIdSchema,
+    label: labelSchema,
+  })
+  .strict();
+
 export const BD_TOOL_DEFINITIONS: readonly BdToolDefinition[] = [
   {
     name: 'bd_list',
@@ -319,6 +332,46 @@ export const BD_TOOL_DEFINITIONS: readonly BdToolDefinition[] = [
         priority: {
           type: 'number',
           description: '優先度(0=最高..4=最低)',
+        },
+      },
+    },
+  },
+  {
+    name: 'bd_label_add',
+    description: 'bdチケットにラベルを追加する',
+    writes: true,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'label'],
+      properties: {
+        id: {
+          type: 'string',
+          description: 'チケットID',
+        },
+        label: {
+          type: 'string',
+          description: 'ラベル名',
+        },
+      },
+    },
+  },
+  {
+    name: 'bd_label_remove',
+    description: 'bdチケットからラベルを削除する',
+    writes: true,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'label'],
+      properties: {
+        id: {
+          type: 'string',
+          description: 'チケットID',
+        },
+        label: {
+          type: 'string',
+          description: 'ラベル名',
         },
       },
     },
@@ -686,6 +739,34 @@ export function buildBdToolArgs(
         'remove',
         parsed.data.id,
         parsed.data.dependsOnId,
+      ]);
+    }
+    case 'bd_label_add': {
+      const parsed = bdLabelSchema.safeParse(rawArgs);
+      if (!parsed.success) {
+        return reject(describeZodError(parsed.error));
+      }
+
+      return ok([
+        ...buildWritePrefix(projectRootPath),
+        'label',
+        'add',
+        parsed.data.id,
+        parsed.data.label,
+      ]);
+    }
+    case 'bd_label_remove': {
+      const parsed = bdLabelSchema.safeParse(rawArgs);
+      if (!parsed.success) {
+        return reject(describeZodError(parsed.error));
+      }
+
+      return ok([
+        ...buildWritePrefix(projectRootPath),
+        'label',
+        'remove',
+        parsed.data.id,
+        parsed.data.label,
       ]);
     }
     default:

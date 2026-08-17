@@ -17,13 +17,15 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     postTicketQuickAction: vi.fn(),
     postTicketQuickActionUndo: vi.fn(),
+    postTicketAddLabel: vi.fn(),
   };
 });
 
-import { postTicketQuickAction, postTicketQuickActionUndo } from '../api';
+import { postTicketQuickAction, postTicketQuickActionUndo, postTicketAddLabel } from '../api';
 
 const mockPostTicketQuickAction = vi.mocked(postTicketQuickAction);
 const mockPostTicketQuickActionUndo = vi.mocked(postTicketQuickActionUndo);
+const mockPostTicketAddLabel = vi.mocked(postTicketAddLabel);
 
 function makeCard(id: string, priority = 2): BoardCardDto {
   return {
@@ -57,9 +59,11 @@ function makeCard(id: string, priority = 2): BoardCardDto {
 function SelectionHarness({
   selectedIds,
   cardsById,
+  availableLabels = [],
 }: {
   selectedIds: string[];
   cardsById: Map<string, BoardCardDto>;
+  availableLabels?: string[];
 }) {
   const bulk = useBulkSelection();
   return (
@@ -73,7 +77,7 @@ function SelectionHarness({
           選択 {id}
         </button>
       ))}
-      <BulkActionBar cardsById={cardsById} />
+      <BulkActionBar cardsById={cardsById} availableLabels={availableLabels} />
     </>
   );
 }
@@ -81,6 +85,7 @@ function SelectionHarness({
 function renderBulkBar(
   cardsById: Map<string, BoardCardDto>,
   selectedIds: string[] = [],
+  availableLabels: string[] = [],
 ) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -90,7 +95,11 @@ function renderBulkBar(
     <QueryClientProvider client={queryClient}>
       <UndoSnackbarProvider>
         <BulkSelectionProvider>
-          <SelectionHarness selectedIds={selectedIds} cardsById={cardsById} />
+          <SelectionHarness
+            selectedIds={selectedIds}
+            cardsById={cardsById}
+            availableLabels={availableLabels}
+          />
         </BulkSelectionProvider>
       </UndoSnackbarProvider>
     </QueryClientProvider>,
@@ -112,6 +121,8 @@ describe('BulkActionBar', () => {
     mockPostTicketQuickAction.mockResolvedValue(undefined);
     mockPostTicketQuickActionUndo.mockReset();
     mockPostTicketQuickActionUndo.mockResolvedValue(undefined);
+    mockPostTicketAddLabel.mockReset();
+    mockPostTicketAddLabel.mockResolvedValue(undefined);
     user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   });
 
@@ -320,5 +331,32 @@ describe('BulkActionBar', () => {
     });
 
     expect(mockPostTicketQuickActionUndo).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs bulk label add for all selected tickets', async () => {
+    const cards = new Map([
+      ['bdboard-a', makeCard('bdboard-a')],
+      ['bdboard-b', makeCard('bdboard-b')],
+    ]);
+
+    renderBulkBar(cards, ['bdboard-a', 'bdboard-b'], ['human', 'needs-review']);
+
+    const labelInput = screen.getByRole('textbox', { name: '付与するラベル' });
+    await user.type(labelInput, 'human');
+    fireEvent.click(screen.getByRole('button', { name: 'ラベル付与' }));
+
+    expect(
+      screen.getByText(
+        '選択中の 2 件にラベル「human」を付与します。よろしいですか?',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketAddLabel).toHaveBeenCalledTimes(2);
+    });
+    expect(mockPostTicketAddLabel).toHaveBeenCalledWith('bdboard-a', 'human');
+    expect(mockPostTicketAddLabel).toHaveBeenCalledWith('bdboard-b', 'human');
   });
 });

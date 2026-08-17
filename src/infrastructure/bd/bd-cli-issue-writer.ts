@@ -201,6 +201,39 @@ export function createBdCliIssueWriter(
       );
     },
 
+    // bd-tool-catalog 経由でチャットエージェントと同じ bd label add/remove を叩く。
+    async addLabel(
+      rootPath: string,
+      ticketId: string,
+      label: string,
+    ): Promise<void> {
+      await runBdTool(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        'bd_label_add',
+        { id: ticketId, label },
+        ticketId,
+      );
+    },
+
+    async removeLabel(
+      rootPath: string,
+      ticketId: string,
+      label: string,
+    ): Promise<void> {
+      await runBdTool(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        'bd_label_remove',
+        { id: ticketId, label },
+        ticketId,
+      );
+    },
+
     // 以下 3 メソッドはクイックアクションの逆操作(undo)専用。bd-tool-catalog(チャット
     // エージェントに公開するツール一覧)を経由せず bd を直接呼ぶ。理由は
     // bd-cli-tool-runner.ts の runBdCommand の doc コメントを参照。

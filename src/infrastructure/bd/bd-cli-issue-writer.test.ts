@@ -124,6 +124,38 @@ describe('createBdCliIssueWriter', () => {
     ]);
   });
 
+  it('adds label via bd_label_add args', async () => {
+    const { runner, calls } = createFakeRunner();
+    const port = createBdCliIssueWriter(runner);
+
+    await port.addLabel(ROOT, TICKET_ID, 'human');
+
+    expect(calls[0]?.args).toEqual([
+      '-C',
+      ROOT,
+      'label',
+      'add',
+      TICKET_ID,
+      'human',
+    ]);
+  });
+
+  it('removes label via bd_label_remove args', async () => {
+    const { runner, calls } = createFakeRunner();
+    const port = createBdCliIssueWriter(runner);
+
+    await port.removeLabel(ROOT, TICKET_ID, 'gt:slot');
+
+    expect(calls[0]?.args).toEqual([
+      '-C',
+      ROOT,
+      'label',
+      'remove',
+      TICKET_ID,
+      'gt:slot',
+    ]);
+  });
+
   it('reopens via bd reopen args after confirming the ticket is still closed (CAS success)', async () => {
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {

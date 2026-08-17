@@ -8,6 +8,7 @@ import {
 } from '../bdCommands';
 import {
   deleteTicketDependency,
+  deleteTicketLabel,
   deleteTicketSessionLink,
   fetchSessions,
   fetchTicket,
@@ -15,6 +16,7 @@ import {
   fetchTicketTimeline,
   postTicketComment,
   postTicketDecision,
+  postTicketAddLabel,
   postTicketDependency,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -95,6 +97,7 @@ interface TicketDetailPanelProps {
   isTicketOnBoard: (ticketId: string) => boolean;
   onFilterByEpic: (ticketId: string) => void;
   onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
+  availableLabels?: readonly string[];
 }
 
 type CopyFeedback =
@@ -219,6 +222,7 @@ export function TicketDetailPanel({
   isTicketOnBoard,
   onFilterByEpic,
   onTicketViewed,
+  availableLabels = [],
 }: TicketDetailPanelProps) {
   const queryClient = useQueryClient();
   const undoSnackbar = useUndoSnackbar();
@@ -283,6 +287,7 @@ export function TicketDetailPanel({
   const [dependencySearchError, setDependencySearchError] = useState<Error | null>(
     null,
   );
+  const [labelInputQuery, setLabelInputQuery] = useState('');
   const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
@@ -311,6 +316,7 @@ export function TicketDetailPanel({
     setDependencyCandidates([]);
     setDependencySearchLoading(false);
     setDependencySearchError(null);
+    setLabelInputQuery('');
     setSessionLinkPickerOpen(false);
     if (copyTimeoutRef.current !== null) {
       clearTimeout(copyTimeoutRef.current);
@@ -562,10 +568,59 @@ export function TicketDetailPanel({
     },
   });
 
+  const addLabelMutation = useMutation({
+    mutationFn: async (label: string) => {
+      await postTicketAddLabel(ticketId, label);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      await queryClient.invalidateQueries({ queryKey: ['board'] });
+      setLabelInputQuery('');
+    },
+  });
+
+  const removeLabelMutation = useMutation({
+    mutationFn: async (label: string) => {
+      await deleteTicketLabel(ticketId, label);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      await queryClient.invalidateQueries({ queryKey: ['board'] });
+    },
+  });
+
   const dependencyMutationPending =
     addDependencyMutation.isPending || removeDependencyMutation.isPending;
   const dependencyMutationError =
     addDependencyMutation.error ?? removeDependencyMutation.error;
+
+  const labelMutationPending =
+    addLabelMutation.isPending || removeLabelMutation.isPending;
+  const labelMutationError = addLabelMutation.error ?? removeLabelMutation.error;
+
+  const currentLabels = data?.labels ?? [];
+  const trimmedLabelInput = labelInputQuery.trim();
+  const labelSuggestions = availableLabels
+    .filter((label) => !currentLabels.includes(label))
+    .filter(
+      (label) =>
+        trimmedLabelInput.length === 0 ||
+        label.toLowerCase().includes(trimmedLabelInput.toLowerCase()),
+    )
+    .slice(0, 20);
+  const canSubmitLabel =
+    trimmedLabelInput.length > 0 && !currentLabels.includes(trimmedLabelInput);
+
+  const handleAddLabel = useCallback(
+    (label: string) => {
+      const trimmed = label.trim();
+      if (trimmed.length === 0 || currentLabels.includes(trimmed)) {
+        return;
+      }
+      addLabelMutation.mutate(trimmed);
+    },
+    [addLabelMutation, currentLabels],
+  );
 
   // 'sessions' クエリキーは SessionListPanel と共有している(同じアクティブ
   // セッション一覧なので、既存キャッシュがあれば流用できる)。
@@ -755,18 +810,82 @@ export function TicketDetailPanel({
                 <div>{data.owner}</div>
               </div>
             )}
-            {data.labels !== undefined && data.labels.length > 0 && (
-              <div className="detail-field">
-                <div className="detail-field-label">Labels</div>
+            <div className="detail-field">
+              <div className="detail-field-label">Labels</div>
+              {currentLabels.length > 0 && (
                 <div className="detail-label-badges">
-                  {data.labels.map((label) => (
+                  {currentLabels.map((label) => (
                     <span key={label} className="badge badge-label">
                       {label}
+                      <button
+                        type="button"
+                        className="btn btn-small label-remove-btn"
+                        aria-label={`ラベル ${label} を削除`}
+                        disabled={labelMutationPending}
+                        onClick={() => removeLabelMutation.mutate(label)}
+                      >
+                        削除
+                      </button>
                     </span>
                   ))}
                 </div>
+              )}
+              <label className="label-add-label" htmlFor="label-add-input">
+                ラベルを追加
+              </label>
+              <input
+                id="label-add-input"
+                type="text"
+                className="label-add-input"
+                value={labelInputQuery}
+                onChange={(event) => setLabelInputQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (canSubmitLabel && !labelMutationPending) {
+                      handleAddLabel(trimmedLabelInput);
+                    }
+                  }
+                }}
+                disabled={labelMutationPending}
+                maxLength={200}
+              />
+              {trimmedLabelInput.length > 0 &&
+                labelSuggestions.length > 0 && (
+                  <ul className="dependency-suggestions label-suggestions">
+                    {labelSuggestions.map((label) => (
+                      <li key={label}>
+                        <button
+                          type="button"
+                          className="dependency-suggestion-btn"
+                          disabled={labelMutationPending}
+                          onClick={() => handleAddLabel(label)}
+                        >
+                          {label}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              <div className="label-add-actions">
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={!canSubmitLabel || labelMutationPending}
+                  onClick={() => handleAddLabel(trimmedLabelInput)}
+                >
+                  {addLabelMutation.isPending ? '追加中…' : '追加'}
+                </button>
               </div>
-            )}
+              {labelMutationError !== null && (
+                <p className="error-message">
+                  {describeWriteError(
+                    labelMutationError,
+                    'ラベルの更新に失敗しました',
+                  )}
+                </p>
+              )}
+            </div>
             {data.parentId !== undefined && (
               <div className="detail-field">
                 <div className="detail-field-label">Parent ID</div>

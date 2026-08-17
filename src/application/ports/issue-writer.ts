@@ -4,6 +4,8 @@ export interface IssueWriterPort {
   defer(rootPath: string, ticketId: string, untilDate: string): Promise<void>;
   setPriority(rootPath: string, ticketId: string, priority: number): Promise<void>;
   addComment(rootPath: string, ticketId: string, text: string): Promise<void>;
+  addLabel(rootPath: string, ticketId: string, label: string): Promise<void>;
+  removeLabel(rootPath: string, ticketId: string, label: string): Promise<void>;
   /**
    * close の逆操作。ステータスを open に戻し closed_at をクリアする(bd reopen 相当)。
    *
