@@ -39,6 +39,9 @@ export function createInMemoryChatMessageRepository(options?: {
           ...(message.failedTools !== undefined && message.failedTools.length > 0
             ? { failedTools: message.failedTools }
             : {}),
+          ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
+            ? { agentWarnings: message.agentWarnings }
+            : {}),
         }),
       );
       bySession.set(sessionId, [...existing, ...appended]);

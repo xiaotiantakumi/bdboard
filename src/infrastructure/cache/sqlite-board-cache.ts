@@ -264,6 +264,15 @@ function ensureChatMessagesFailedToolsColumn(db: Database.Database): void {
   }
 }
 
+function ensureChatMessagesAgentWarningsColumn(db: Database.Database): void {
+  const columns = db
+    .prepare(`PRAGMA table_info(chat_messages)`)
+    .all() as TableInfoRow[];
+  if (!columns.some((column) => column.name === 'agent_warnings')) {
+    db.exec(`ALTER TABLE chat_messages ADD COLUMN agent_warnings TEXT`);
+  }
+}
+
 function initializeSchema(db: Database.Database, recreate: boolean): void {
   if (recreate) {
     // cfd_snapshots / chat_sessions / chat_messages は意図的に対象外: いずれも
@@ -340,7 +349,8 @@ function initializeSchema(db: Database.Database, recreate: boolean): void {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      failed_tools TEXT
+      failed_tools TEXT,
+      agent_warnings TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages (session_id, created_at);
     CREATE TABLE IF NOT EXISTS interactions (
@@ -365,6 +375,8 @@ function initializeSchema(db: Database.Database, recreate: boolean): void {
   ensureChatSessionsModelColumn(db);
   // failed_tools 列追加は in-place 移行なので SCHEMA_VERSION を上げない。
   ensureChatMessagesFailedToolsColumn(db);
+  // agent_warnings 列追加は in-place 移行なので SCHEMA_VERSION を上げない。
+  ensureChatMessagesAgentWarningsColumn(db);
 
   db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`).run(
     'schema_version',

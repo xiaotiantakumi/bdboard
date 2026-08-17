@@ -68,6 +68,16 @@ const EXAMPLE_AGENT: ChatAgentDto = {
   supportsStreaming: false,
 };
 
+const AGY_AGENT: ChatAgentDto = {
+  id: 'agy',
+  label: 'Antigravity',
+  models: [{ id: 'gemini', label: 'Gemini' }],
+  experimental: true,
+  capability: 'bd-only',
+  availability: 'available',
+  supportsStreaming: false,
+};
+
 const READS_PROJECT_AGENT: ChatAgentDto = {
   id: 'reads-project-agent',
   label: 'Reads Project Agent',
@@ -2210,6 +2220,55 @@ describe('ChatPanel', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows an agent-warnings banner when the response reports agentWarnings (bdboard-l1t.6 N-e)', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse({
+          reply: 'partial reply',
+          sessionId: 'sess-1',
+          agentId: 'agy',
+          agentWarnings: [
+            'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    expect(await screen.findByText('partial reply')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'エージェントの警告: headless auto-deny: some tool call(s) were soft-denied mid-turn',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('does not show an agent-warnings banner when the response has none (bdboard-l1t.6 N-e)', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse({
+          reply: 'clean reply',
+          sessionId: 'sess-1',
+          agentId: 'agy',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    expect(await screen.findByText('clean reply')).toBeInTheDocument();
+    expect(screen.queryByText(/エージェントの警告:/)).not.toBeInTheDocument();
+  });
+
   it('includes sessionId from the previous response on the second message', async () => {
     const user = userEvent.setup();
     let postCount = 0;
@@ -3775,6 +3834,60 @@ describe('ChatPanel', () => {
     });
     expect(
       await screen.findByText('一部のツール呼び出しが実行できませんでした: bd_ready'),
+    ).toBeInTheDocument();
+  });
+
+  it('reconstructs the agent-warnings banner purely from restored history on reload (bdboard-l1t.6 N-e)', async () => {
+    writePersistedChatThread('proj-a', {
+      sessionId: 'sess-restored-agent-warnings',
+      agentId: 'agy',
+    });
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-restored-agent-warnings',
+        agentId: 'agy',
+        title: 'restored',
+        updatedAt: '2026-08-16T03:00:00.000Z',
+      },
+    ]);
+    fetchChatAgentsMock.mockResolvedValue([AGY_AGENT]);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (
+        url.startsWith('/api/chat/sessions/sess-restored-agent-warnings/messages') &&
+        (init?.method ?? 'GET') === 'GET'
+      ) {
+        return jsonResponse({
+          sessionId: 'sess-restored-agent-warnings',
+          agentId: 'agy',
+          messages: [
+            {
+              role: 'user',
+              content: 'previous question',
+              createdAt: '2026-08-16T03:00:00.000Z',
+            },
+            {
+              role: 'assistant',
+              content: 'previous partial answer',
+              createdAt: '2026-08-16T03:00:01.000Z',
+              agentWarnings: [
+                'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+              ],
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+
+    await waitFor(() => {
+      expect(screen.getByText('previous partial answer')).toBeInTheDocument();
+    });
+    expect(
+      await screen.findByText(
+        'エージェントの警告: headless auto-deny: some tool call(s) were soft-denied mid-turn',
+      ),
     ).toBeInTheDocument();
   });
 

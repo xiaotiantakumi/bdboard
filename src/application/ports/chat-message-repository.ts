@@ -5,6 +5,7 @@ export interface ChatMessageRecord {
   readonly content: string;
   readonly createdAt: Date;
   readonly failedTools?: readonly string[];
+  readonly agentWarnings?: readonly string[];
 }
 
 export interface ChatMessageAppendInput {
@@ -12,6 +13,7 @@ export interface ChatMessageAppendInput {
   readonly content: string;
   readonly createdAt?: Date;
   readonly failedTools?: readonly string[];
+  readonly agentWarnings?: readonly string[];
 }
 
 export interface ChatThreadSummary {

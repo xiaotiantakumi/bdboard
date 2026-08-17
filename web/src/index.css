@@ -3327,6 +3327,12 @@ body {
   color: var(--color-warning);
 }
 
+.chat-message-agent-warnings {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-warning);
+}
+
 .chat-pending {
   margin: 0;
   font-size: 0.8125rem;

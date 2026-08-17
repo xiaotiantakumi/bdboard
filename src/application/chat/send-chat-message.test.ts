@@ -424,6 +424,111 @@ describe('sendChatMessage', () => {
     expect(result.ok && 'failedTools' in result).toBe(false);
   });
 
+  it('surfaces agentWarnings when the agent reports operational warnings (bdboard-l1t.6 N-e)', async () => {
+    const store = createChatSessionStore();
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const sendMessage = vi.fn<ChatAgentPort['sendMessage']>().mockResolvedValue({
+      reply: 'partial',
+      sessionId: '550e8400-e29b-41d4-a716-446655440099',
+      failedTools: [],
+      agentWarnings: [
+        'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+      ],
+      agentId: 'test-agent',
+    });
+    const agent = createFakeAgent('test-agent', { sendMessage });
+
+    const result = await sendChatMessage(
+      {
+        cache,
+        agents: createRegistryWithAgents([agent]),
+        store,
+        messages: createInMemoryChatMessageRepository(),
+      },
+      { projectId: 'proj-a', message: 'hello' },
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      reply: 'partial',
+      sessionId: '550e8400-e29b-41d4-a716-446655440099',
+      agentId: 'test-agent',
+      agentWarnings: [
+        'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+      ],
+    });
+  });
+
+  it('persists agentWarnings on the assistant message when present (bdboard-l1t.6 N-e)', async () => {
+    const store = createChatSessionStore();
+    const messages = createInMemoryChatMessageRepository();
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const agent = createFakeAgent('test-agent', {
+      sendMessage: vi.fn<ChatAgentPort['sendMessage']>().mockResolvedValue({
+        reply: 'partial',
+        sessionId: '550e8400-e29b-41d4-a716-446655440099',
+        failedTools: [],
+        agentWarnings: [
+          'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+        ],
+        agentId: 'test-agent',
+      }),
+    });
+
+    await sendChatMessage(
+      {
+        cache,
+        agents: createRegistryWithAgents([agent]),
+        store,
+        messages,
+      },
+      { projectId: 'proj-a', message: 'hello' },
+    );
+
+    expect(messages.listBySession('550e8400-e29b-41d4-a716-446655440099')).toEqual([
+      { role: 'user', content: 'hello', createdAt: expect.any(Date) },
+      {
+        role: 'assistant',
+        content: 'partial',
+        createdAt: expect.any(Date),
+        agentWarnings: [
+          'headless auto-deny: some tool call(s) were soft-denied mid-turn',
+        ],
+      },
+    ]);
+  });
+
+  it('omits agentWarnings when the agent reports none (bdboard-l1t.6 N-e)', async () => {
+    const store = createChatSessionStore();
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const sendMessage = vi.fn<ChatAgentPort['sendMessage']>().mockResolvedValue({
+      reply: 'done',
+      sessionId: '550e8400-e29b-41d4-a716-446655440099',
+      failedTools: [],
+      agentId: 'test-agent',
+    });
+    const agent = createFakeAgent('test-agent', { sendMessage });
+
+    const result = await sendChatMessage(
+      {
+        cache,
+        agents: createRegistryWithAgents([agent]),
+        store,
+        messages: createInMemoryChatMessageRepository(),
+      },
+      { projectId: 'proj-a', message: 'hello' },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.ok && 'agentWarnings' in result).toBe(false);
+  });
+
   it('persists user and assistant messages for the session on success', async () => {
     const store = createChatSessionStore();
     const messages = createInMemoryChatMessageRepository();

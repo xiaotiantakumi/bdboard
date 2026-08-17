@@ -34,6 +34,10 @@ export const AGY_ENV_ALLOWLIST = ['PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'L
 // agy 節を参照)。全ツールを自動承認する危険フラグは方針どおり使わない。
 const HEADLESS_AUTO_DENY_MARKER = 'headless mode cannot prompt';
 
+/** denial-with-reply 時に UI へ返す固定警告(stderr の生テキストは含めない)。 */
+export const AGY_HEADLESS_DENIAL_WITH_REPLY_WARNING =
+  'headless auto-deny: some tool call(s) were soft-denied mid-turn';
+
 // agy 内部の --print-timeout(既定 5m)と CliChatAgentSpec.timeoutMs(CommandRunner の
 // プロセス kill)のどちらが先に発火するかを固定するための余白。--print-timeout には
 // 常に timeoutMs + この余白を渡すので、bdboard 側の timeoutMs が必ず先に発火し、
@@ -232,12 +236,18 @@ export function createAgySpec(options: AgySpecOptions): CliChatAgentSpec {
       }
       if (denied) {
         // ターンの途中でツール呼び出しが soft-deny されたが、モデルは最終応答を
-        // 返せたケース(MF1)。応答は活かし、運用者が気づけるようログだけ残す。
+        // 返せたケース(MF1)。応答は活かし、運用者が気づけるようログと UI 警告を残す。
         // stderr の生テキストはログにも応答にも含めない(bdboard-pvl と同じ配慮で、
         // 固定文言の検知事実のみを書く)。
         console.warn(
           'chat agy-spec: headless auto-deny marker present but the turn still produced a reply; returning the reply (some tool call(s) were soft-denied mid-turn)',
         );
+        return {
+          reply: validated.response,
+          sessionId: validated.conversation_id,
+          failedTools: [],
+          agentWarnings: [AGY_HEADLESS_DENIAL_WITH_REPLY_WARNING],
+        };
       }
       // bd MCP ツールを一切繋いでいないため failedTools は常に空(cursor と同じ)。
       return { reply: validated.response, sessionId: validated.conversation_id, failedTools: [] };

@@ -87,6 +87,101 @@ describe('createSqliteChatMessageRepository', () => {
     ]);
   });
 
+  it('round-trips agentWarnings alongside messages, omitting the field when absent (bdboard-l1t.6 N-e)', () => {
+    const path_ = makeTmpDbPath('bdboard-chat-messages-agent-warnings-roundtrip-');
+    const sessionId = '550e8400-e29b-41d4-a716-446655440099';
+    const at = new Date('2026-08-16T03:00:00.000Z');
+
+    const first = createSqliteChatMessageRepository(path_);
+    first.append(sessionId, [
+      { role: 'user', content: 'hello', createdAt: at },
+      {
+        role: 'assistant',
+        content: 'partial but warned',
+        createdAt: at,
+        agentWarnings: ['headless auto-deny: some tool call(s) were soft-denied mid-turn'],
+      },
+    ]);
+
+    const rawDb = new Database(path_);
+    rawDb
+      .prepare(
+        `INSERT INTO chat_sessions (project_id, session_id, last_used_at, agent_id) VALUES (?, ?, ?, ?)`,
+      )
+      .run('project-agent-warnings-roundtrip', sessionId, '2026-08-16T03:00:00.000Z', 'agy');
+    rawDb.close();
+
+    const second = createSqliteChatMessageRepository(path_);
+    expect(second.listBySession(sessionId)).toEqual([
+      { role: 'user', content: 'hello', createdAt: at },
+      {
+        role: 'assistant',
+        content: 'partial but warned',
+        createdAt: at,
+        agentWarnings: ['headless auto-deny: some tool call(s) were soft-denied mid-turn'],
+      },
+    ]);
+  });
+
+  it('adds agent_warnings column when migrating an older chat_messages table in place (bdboard-l1t.6 N-e)', () => {
+    const path_ = makeTmpDbPath('bdboard-chat-messages-agent-warnings-migrate-');
+    const sessionId = 'sess-agent-warnings-migrate';
+    const at = new Date('2026-08-16T03:00:00.000Z');
+
+    const rawDb = new Database(path_);
+    rawDb.exec(`
+      CREATE TABLE chat_sessions (
+        project_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        last_used_at TEXT NOT NULL,
+        agent_id TEXT NOT NULL DEFAULT 'claude',
+        PRIMARY KEY (project_id, session_id)
+      );
+      CREATE TABLE chat_messages (
+        session_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        failed_tools TEXT
+      );
+    `);
+    rawDb
+      .prepare(
+        `INSERT INTO chat_sessions (project_id, session_id, last_used_at, agent_id) VALUES (?, ?, ?, ?)`,
+      )
+      .run('project-migrate', sessionId, '2026-08-16T03:00:00.000Z', 'agy');
+    rawDb
+      .prepare(
+        `INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`,
+      )
+      .run(sessionId, 'assistant', 'legacy reply', at.toISOString());
+    rawDb.close();
+
+    const repo = createSqliteChatMessageRepository(path_);
+    repo.append(sessionId, [
+      {
+        role: 'assistant',
+        content: 'warned reply',
+        createdAt: at,
+        agentWarnings: ['warning one'],
+      },
+    ]);
+
+    const columns = new Database(path_)
+      .prepare(`PRAGMA table_info(chat_messages)`)
+      .all() as Array<{ name: string }>;
+    expect(columns.some((column) => column.name === 'agent_warnings')).toBe(true);
+    expect(repo.listBySession(sessionId)).toEqual([
+      { role: 'assistant', content: 'legacy reply', createdAt: at },
+      {
+        role: 'assistant',
+        content: 'warned reply',
+        createdAt: at,
+        agentWarnings: ['warning one'],
+      },
+    ]);
+  });
+
   it('trims the oldest messages once the per-session cap is exceeded', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-cap-');
 
@@ -104,6 +199,23 @@ describe('createSqliteChatMessageRepository', () => {
       'm2',
       'm3',
       'm4',
+    ]);
+  });
+
+  it('omits agentWarnings rather than throwing when the stored value is not a JSON string array (bdboard-l1t.6 N-e)', () => {
+    const path_ = makeTmpDbPath('bdboard-chat-messages-agent-warnings-garbage-');
+    const repo = createSqliteChatMessageRepository(path_);
+    const sessionId = 'session-agent-warnings-garbage';
+    repo.append(sessionId, [{ role: 'assistant', content: 'ok' }]);
+
+    const rawDb = new Database(path_);
+    rawDb
+      .prepare(`UPDATE chat_messages SET agent_warnings = ? WHERE session_id = ?`)
+      .run('not json', sessionId);
+    rawDb.close();
+
+    expect(repo.listBySession(sessionId)).toEqual([
+      { role: 'assistant', content: 'ok', createdAt: expect.any(Date) },
     ]);
   });
 

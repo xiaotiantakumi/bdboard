@@ -54,6 +54,12 @@ export interface ChatTurnResult {
    * `failedTools` に改称した(DTO/UI 側とも統一。bdboard-l1t.4)。
    */
   readonly failedTools: readonly string[];
+  /**
+   * ターンは成功したが、運用者に知らせるべきエージェント側の警告(例: agy の
+   * headless soft-deny が途中で発生したがモデルは最終応答を返したケース)。
+   * stderr の生テキストは含めず固定文言のみ。bdboard-l1t.6 N-e。
+   */
+  readonly agentWarnings?: readonly string[];
   readonly agentId: string;
   /**
    * CLI が実際に使ったモデルを返せる場合はその実測値、取得できない場合は

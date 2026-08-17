@@ -945,6 +945,8 @@ export interface ChatMessageResponseDto {
   model?: string;
   /** 今回のターンで実行できなかった bd ツール呼び出しの名前。無ければ省略される。 */
   failedTools?: string[];
+  /** ターンは成功したが運用者に知らせるべきエージェント側の警告。無ければ省略される。 */
+  agentWarnings?: string[];
 }
 
 export interface ChatSessionMessageDto {
@@ -952,6 +954,7 @@ export interface ChatSessionMessageDto {
   content: string;
   createdAt: string;
   failedTools?: string[];
+  agentWarnings?: string[];
 }
 
 export interface ChatSessionMessagesDto {
