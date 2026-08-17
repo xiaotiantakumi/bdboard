@@ -16,6 +16,7 @@ import type { CfdDayEntry, CfdStats, ProjectCfdStats } from '../../application/b
 import type { HygieneIssue } from '../../domain/hygiene.js';
 import type { StaleLeaseIssue } from '../../domain/lease.js';
 import type { MergeSlotStatus } from '../../domain/merge-slot.js';
+import type { PrBadge } from '../../domain/pr-link.js';
 import type {
   ReclaimSchedulerStatus,
   ReclaimProjectStatus,
@@ -347,6 +348,14 @@ export interface MergeSlotStatusDto {
   heldSinceIso: string | null;
   heldForMs: number;
   isLongHeld: boolean;
+}
+
+export interface PrBadgeDto {
+  ticketId: string;
+  projectId: string;
+  url: string;
+  state: string | null;
+  checkStatus: string | null;
 }
 
 export interface ReclaimProjectStatusDto {
@@ -761,6 +770,16 @@ export function toMergeSlotStatusDto(status: MergeSlotStatus): MergeSlotStatusDt
     heldSinceIso: status.heldSinceIso,
     heldForMs: status.heldForMs,
     isLongHeld: status.isLongHeld,
+  };
+}
+
+export function toPrBadgeDto(badge: PrBadge): PrBadgeDto {
+  return {
+    ticketId: badge.ticketId,
+    projectId: badge.projectId,
+    url: badge.url,
+    state: badge.status?.state ?? null,
+    checkStatus: badge.status?.checkStatus ?? null,
   };
 }
 

@@ -21,6 +21,7 @@ import {
   postTicketSessionLink,
   searchTickets,
   type PendingDecisionDto,
+  type PrBadgeDto,
   type QuickActionRequest,
   type SessionDto,
   type TicketSearchResultDto,
@@ -34,6 +35,7 @@ import {
   filterDependencyCandidates,
 } from './dependencyEditing';
 import { MarkdownContent } from './MarkdownContent';
+import { PrLinkBadge } from './PrLinkBadge';
 import { useUndoSnackbar } from './UndoSnackbar';
 
 const DEPENDENCY_SEARCH_DEBOUNCE_MS = 200;
@@ -51,6 +53,7 @@ interface TicketDetailPanelProps {
    */
   projectRootPaths: ReadonlyMap<string, string>;
   pendingDecision: PendingDecisionDto | undefined;
+  prLink?: PrBadgeDto;
   onClose: () => void;
   onChatAboutTicket?: (ctx: { projectId: string; ticketId: string }) => void;
   onOpenTicket: (ticketId: string) => void;
@@ -173,6 +176,7 @@ export function TicketDetailPanel({
   ticketId,
   projectRootPaths,
   pendingDecision,
+  prLink,
   onClose,
   onChatAboutTicket,
   onOpenTicket,
@@ -655,6 +659,14 @@ export function TicketDetailPanel({
               <div className="detail-field-label">Issue Type</div>
               <div>{data.issueType}</div>
             </div>
+            {prLink !== undefined && (
+              <div className="detail-field">
+                <div className="detail-field-label">PR</div>
+                <div>
+                  <PrLinkBadge prLink={prLink} />
+                </div>
+              </div>
+            )}
             {data.assignee !== undefined && (
               <div className="detail-field">
                 <div className="detail-field-label">Assignee</div>

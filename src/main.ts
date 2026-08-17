@@ -56,6 +56,7 @@ import {
   createFsHarnessInjector,
   createFsPackRegistry,
   createFsProjectDiscovery,
+  createGhCliPrStatusReader,
   createGitSyncHealthReader,
   createGitWorktreeScanner,
   createFsChatSessionDiscovery,
@@ -203,6 +204,7 @@ async function main(): Promise<void> {
   );
   const cfdSnapshotIntervalMs = envInt('BDBOARD_CFD_SNAPSHOT_INTERVAL_MS', 3_600_000);
   const bdPath = envString('BDBOARD_BD_PATH', 'bd');
+  const ghPath = envString('BDBOARD_GH_PATH', 'gh');
   const reclaimEnabled = envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED');
   const reclaimIntervalMs = envInt(
     'BDBOARD_RECLAIM_INTERVAL_MS',
@@ -248,6 +250,7 @@ async function main(): Promise<void> {
   const mergeSlotReader = createBdCliMergeSlotReader(commandRunner, { bdPath });
   const leaseReclaimer = createBdCliLeaseReclaimer(commandRunner, { bdPath });
   const commentReader = createBdCliCommentReader(commandRunner);
+  const prStatusReader = createGhCliPrStatusReader(commandRunner, { ghPath });
   const humanDecisions = createBdCliHumanDecisions(commandRunner);
   const syncHealthReader = createGitSyncHealthReader(commandRunner, fsPort);
   const worktreeScanner = createGitWorktreeScanner(commandRunner);
@@ -786,6 +789,7 @@ async function main(): Promise<void> {
     sessions: () => sessions,
     links: () => listTranscriptLinks(),
     commentReader,
+    prStatusReader,
     processScanner,
     humanDecisions,
     syncHealthReader,

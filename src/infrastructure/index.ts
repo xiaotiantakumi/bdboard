@@ -19,6 +19,7 @@ export * from './cache/ticket-serialization.js';
 export * from './discovery/fs-project-discovery.js';
 export * from './git/git-sync-health-reader.js';
 export * from './git/git-worktree-scanner.js';
+export * from './gh/gh-cli-pr-status-reader.js';
 export * from './fs/beads-fingerprinter.js';
 export * from './fs/tunnel-interruption-store.js';
 export * from './fs/config-path.js';

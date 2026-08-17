@@ -57,6 +57,7 @@ const ALL_INVALIDATED_KEYS = [
   'ticket',
   'ticket-comments',
   'pending-decisions',
+  'pr-links',
   'sessions',
   'projects',
 ];

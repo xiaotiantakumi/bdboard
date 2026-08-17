@@ -66,6 +66,31 @@ describe('CardItem pending decision badge', () => {
   });
 });
 
+describe('CardItem PR link badge', () => {
+  it('shows the PR badge when prLink is provided', () => {
+    render(
+      <CardItem
+        card={makeCard('bdboard-pr')}
+        lane="ready"
+        showProjectName={false}
+        projectName="Project One"
+        activeSessionCount={0}
+        hasPendingDecision={false}
+        prLink={{
+          ticketId: 'bdboard-pr',
+          projectId: 'proj-1',
+          url: 'https://github.com/example-org/example-repo/pull/42',
+          state: 'open',
+          checkStatus: null,
+        }}
+        onClick={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('link', { name: 'PR open' })).toBeInTheDocument();
+  });
+});
+
 // bdboard-662: 保留(deferred)はブロック(blocked)レーンへ表示統合された。その際に
 // deferDays/deferUrgency の「あと何日」表示を失わないことが受け入れ条件のひとつ。
 describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', () => {

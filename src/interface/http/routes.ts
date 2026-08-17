@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { getActivityFeed } from '../../application/board/get-activity-feed.js';
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
+import { getPrBadges } from '../../application/board/get-pr-badges.js';
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
@@ -37,6 +38,7 @@ import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
+import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import { getSessionHistory } from '../../application/session/get-session-history.js';
 import { listAgentProcesses } from '../../application/session/list-agent-processes.js';
@@ -62,6 +64,7 @@ import {
   toHygieneIssueDto,
   toLeaseHealthDto,
   toMergeSlotStatusDto,
+  toPrBadgeDto,
   toSyncHealthDto,
   toTicketDetailDto,
   toTicketSearchResultDto,
@@ -106,6 +109,7 @@ export interface ApiDeps {
   readonly sessionTail?: SessionTailReader;
   readonly leaseReader?: LeaseReader;
   readonly mergeSlotReader?: MergeSlotReader;
+  readonly prStatusReader?: PrStatusReader;
   readonly reclaimScheduler?: ReclaimScheduler;
   /**
    * トンネル経由の書き込みを開放するための依存(bdboard-9rz)。
@@ -595,6 +599,21 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         reclaim: deps.reclaimScheduler.getStatus(),
       }),
     );
+  });
+
+  app.get('/api/pr-links', async (c) => {
+    if (deps.commentReader === undefined || deps.prStatusReader === undefined) {
+      return c.json({ error: 'pr links not available' }, 501);
+    }
+
+    const projectIds = parseProjectIds(c.req.query('projects'));
+    const badges = await getPrBadges(
+      deps.cache,
+      deps.commentReader,
+      deps.prStatusReader,
+      projectIds !== undefined ? { projectIds } : undefined,
+    );
+    return c.json(badges.map(toPrBadgeDto));
   });
 
   app.get('/api/sync-health', async (c) => {

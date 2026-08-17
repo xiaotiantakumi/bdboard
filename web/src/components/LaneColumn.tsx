@@ -4,6 +4,7 @@ import {
   isLaneStatusMismatch,
   type Lane,
   LANE_LABELS,
+  type PrBadgeDto,
   projectNameFallback,
 } from '../api';
 import { livenessClass } from '../liveness';
@@ -12,6 +13,7 @@ import {
   type CardNavProps,
   useBoardKeyboardNav,
 } from './BoardKeyboardNavProvider';
+import { PrLinkBadge } from './PrLinkBadge';
 
 export interface CardItemProps {
   card: BoardCardDto;
@@ -20,6 +22,7 @@ export interface CardItemProps {
   projectName: string;
   activeSessionCount: number;
   hasPendingDecision: boolean;
+  prLink?: PrBadgeDto;
   onClick: (ticketId: string) => void;
   enableDrag?: boolean;
   nav?: CardNavProps;
@@ -150,6 +153,7 @@ export function CardItem({
   projectName,
   activeSessionCount,
   hasPendingDecision,
+  prLink,
   onClick,
   enableDrag = false,
   nav,
@@ -288,6 +292,7 @@ export function CardItem({
             確認待ち
           </span>
         )}
+        <PrLinkBadge prLink={prLink} />
         {blockedBy.length > 0 && (
           <span className="badge badge-blocked">
             <BlockedIcon />
@@ -331,6 +336,7 @@ export interface LaneColumnProps {
   projectNames: Map<string, string>;
   projectActiveSessions: Map<string, number>;
   pendingDecisionIds: ReadonlySet<string>;
+  prLinksById: ReadonlyMap<string, PrBadgeDto>;
   onCardClick: (ticketId: string) => void;
   /**
    * サーバー側のclosedLimitで切り捨てられ、このレーンに一切届いていないカード数
@@ -349,6 +355,7 @@ export function LaneColumn({
   projectNames,
   projectActiveSessions,
   pendingDecisionIds,
+  prLinksById,
   onCardClick,
   hiddenCount,
 }: LaneColumnProps) {
@@ -426,6 +433,7 @@ export function LaneColumn({
             projectName={projectNames.get(card.projectId) ?? projectNameFallback(card.projectId)}
             activeSessionCount={projectActiveSessions.get(card.projectId) ?? 0}
             hasPendingDecision={pendingDecisionIds.has(card.ticket.id)}
+            prLink={prLinksById.get(card.ticket.id)}
             onClick={onCardClick}
             enableDrag={boardDnD !== null}
             nav={boardNav?.getCardNavProps(lane, card.ticket.id)}

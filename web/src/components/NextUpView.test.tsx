@@ -66,6 +66,7 @@ function renderNextUpView(
       projectNames={projectNames}
       projectActiveSessions={projectActiveSessions}
       pendingDecisionIds={new Set()}
+      prLinksById={new Map()}
       onCardClick={() => {}}
     />,
   );
@@ -123,6 +124,7 @@ describe('NextUpView', () => {
         projectNames={projectNames}
         projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
         onCardClick={() => {}}
       />,
     );
@@ -138,6 +140,7 @@ describe('NextUpView', () => {
         projectNames={projectNames}
         projectActiveSessions={projectActiveSessions}
         pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
         onCardClick={() => {}}
       />,
     );
