@@ -870,6 +870,7 @@ export function App() {
           <HygienePanel
             projectIds={selectedProjectIds}
             onSelectTicket={handleSelectTicket}
+            projectRootPaths={projectRootPaths}
           />
         )}
         {view === 'graph' && (

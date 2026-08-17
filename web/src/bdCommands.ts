@@ -109,6 +109,35 @@ export function formatWorktreeCleanupScript(
   return buildWorktreeCleanupCommands(target).join('\n');
 }
 
+export interface DependencyCycleEdgeTarget {
+  readonly issueId: string;
+  readonly dependsOnId: string;
+}
+
+/**
+ * 循環依存を構成する blocks エッジを切るコマンド一覧を組み立てる。
+ * 実行はしない。コピー用の文字列を返すだけ(依存編集は破壊的操作であり、
+ * ユーザーが確認してから手元で実行する)。
+ */
+export function buildDependencyCycleRemovalCommands(
+  edges: readonly DependencyCycleEdgeTarget[],
+  rootPath?: string,
+): readonly string[] {
+  const prefix = formatBdPrefix(rootPath);
+  return edges.map(
+    (edge) =>
+      `${prefix} dep remove ${shellQuote(edge.issueId)} ${shellQuote(edge.dependsOnId)}`,
+  );
+}
+
+/** buildDependencyCycleRemovalCommands の結果を改行で連結した、そのまま貼れる文字列 */
+export function formatDependencyCycleRemovalScript(
+  edges: readonly DependencyCycleEdgeTarget[],
+  rootPath?: string,
+): string {
+  return buildDependencyCycleRemovalCommands(edges, rootPath).join('\n');
+}
+
 export async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText !== undefined) {
     try {

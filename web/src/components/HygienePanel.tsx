@@ -21,6 +21,7 @@ import {
 import {
   buildWorktreeCleanupCommands,
   copyTextToClipboard,
+  formatDependencyCycleRemovalScript,
   formatWorktreeCleanupScript,
 } from '../bdCommands';
 import { formatActivityTime } from './activityFeedFormatting';
@@ -32,6 +33,7 @@ import { useUndoSnackbar } from './UndoSnackbar';
 export interface HygienePanelProps {
   readonly projectIds: readonly string[];
   onSelectTicket: (ticketId: string) => void;
+  readonly projectRootPaths?: ReadonlyMap<string, string>;
 }
 
 interface HarnessDriftItem {
@@ -47,6 +49,7 @@ const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
 
 const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
+  dependency_cycle: '循環依存',
   overdue_defer: '期限超過の保留',
   stale_epic: '完了済みエピック',
   stale_in_progress: '長期 in_progress',
@@ -216,7 +219,11 @@ function formatReclaimProjectLine(status: ReclaimProjectStatusDto): string {
   return parts.join(' / ');
 }
 
-export function HygienePanel({ projectIds, onSelectTicket }: HygienePanelProps) {
+export function HygienePanel({
+  projectIds,
+  onSelectTicket,
+  projectRootPaths,
+}: HygienePanelProps) {
   const projectIdsKey = projectIds.join(',');
   const queryClient = useQueryClient();
   const undoSnackbar = useUndoSnackbar();
@@ -633,8 +640,64 @@ export function HygienePanel({ projectIds, onSelectTicket }: HygienePanelProps) 
             );
           })}
           {hygieneIssues.map((issue) => {
-            const cleanupScript = resolveCleanupScript(issue);
             const rowKey = issueRowKey(issue);
+
+            if (issue.kind === 'dependency_cycle' && issue.cycleTicketIds !== undefined) {
+              const cycleTicketIds = issue.cycleTicketIds;
+              const cycleEdges = issue.cycleEdges ?? [];
+              const rootPath = projectRootPaths?.get(issue.projectId);
+              const removalScript = formatDependencyCycleRemovalScript(
+                cycleEdges,
+                rootPath,
+              );
+
+              return (
+                <li key={rowKey}>
+                  <div className="hygiene-issue-row hygiene-issue-row-static">
+                    <span className={kindBadgeClass(issue.kind)}>
+                      {KIND_LABELS[issue.kind]}
+                    </span>
+                    <span className={severityBadgeClass(issue.severity)}>
+                      {issue.severity === 'warning' ? '警告' : '情報'}
+                    </span>
+                    <span className="hygiene-issue-project">{issue.projectId}</span>
+                    <span className="hygiene-issue-message">{issue.message}</span>
+                  </div>
+                  <div
+                    className="hygiene-cycle-tickets"
+                    aria-label="循環依存の構成チケット"
+                  >
+                    {cycleTicketIds.map((ticketId) => (
+                      <button
+                        key={ticketId}
+                        type="button"
+                        className="hygiene-cycle-ticket-link"
+                        onClick={() => onSelectTicket(ticketId)}
+                      >
+                        {ticketId}
+                      </button>
+                    ))}
+                  </div>
+                  {removalScript.length > 0 && (
+                    <div className="hygiene-cleanup">
+                      <code className="hygiene-cleanup-command">{removalScript}</code>
+                      <button
+                        type="button"
+                        className="hygiene-cleanup-copy"
+                        title="コピーのみ。実行はしません"
+                        onClick={() => {
+                          void handleCopyCleanup(removalScript);
+                        }}
+                      >
+                        解消コマンドをコピー
+                      </button>
+                    </div>
+                  )}
+                </li>
+              );
+            }
+
+            const cleanupScript = resolveCleanupScript(issue);
             const repairable = getRepairableKind(issue.kind);
             const isConfirming = confirmingRepairKey === rowKey;
             const isExecuting =
