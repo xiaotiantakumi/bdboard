@@ -33,6 +33,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { EventCenterPanel } from './components/EventCenterPanel';
 import { NextUpView } from './components/NextUpView';
 import { ThroughputStats } from './components/ThroughputStats';
+import { KeyboardShortcutsPanel } from './components/KeyboardShortcutsPanel';
 import { SearchPalette } from './components/SearchPalette';
 import { SessionListPanel } from './components/SessionListPanel';
 import { TicketDetailPanel } from './components/TicketDetailPanel';
@@ -71,6 +72,7 @@ import {
   collectBoardTicketIds,
 } from './boardTicketIds';
 import { buildPaletteActions } from './paletteActions';
+import { isTypingTarget } from './keyboardShortcuts';
 
 function streamLabel(state: StreamState): string {
   switch (state) {
@@ -171,6 +173,7 @@ export function App() {
     closeDetail: handleCloseDetail,
   } = useTicketDeepLink({ view, onViewChange: setView });
   const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatContext, setChatContext] = useState<
     { projectId: string; ticketId: string } | undefined
@@ -485,6 +488,14 @@ export function App() {
     setSearchOpen(false);
   }, []);
 
+  const handleOpenShortcuts = useCallback(() => {
+    setShortcutsOpen(true);
+  }, []);
+
+  const handleCloseShortcuts = useCallback(() => {
+    setShortcutsOpen(false);
+  }, []);
+
   const paletteActions = useMemo(
     () =>
       buildPaletteActions({
@@ -551,16 +562,8 @@ export function App() {
         return;
       }
 
-      const target = event.target;
-      if (target instanceof HTMLElement) {
-        const tag = target.tagName;
-        if (
-          tag === 'INPUT' ||
-          tag === 'TEXTAREA' ||
-          target.isContentEditable
-        ) {
-          return;
-        }
+      if (isTypingTarget(event.target)) {
+        return;
       }
 
       event.preventDefault();
@@ -570,6 +573,50 @@ export function App() {
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '?') {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+
+      if (isTypingTarget(event.target)) {
+        return;
+      }
+
+      if (shortcutsOpen) {
+        event.preventDefault();
+        handleCloseShortcuts();
+        return;
+      }
+
+      if (
+        searchOpen ||
+        chatOpen ||
+        sessionListOpen ||
+        selectedTicketId !== null
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      handleOpenShortcuts();
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [
+    chatOpen,
+    handleCloseShortcuts,
+    handleOpenShortcuts,
+    searchOpen,
+    sessionListOpen,
+    selectedTicketId,
+    shortcutsOpen,
+  ]);
 
   const lastRefreshAt = statusQuery.data?.lastRefreshAt;
   const statusErrors = statusQuery.data?.errors ?? [];
@@ -736,6 +783,15 @@ export function App() {
           onClick={() => handleOpenSessionList()}
         >
           セッション: {totalSessionCount}（稼働中 {activeSessionCount}）
+        </button>
+
+        <button
+          type="button"
+          className="btn btn-shortcuts-help"
+          aria-label="キーボードショートカット (?)"
+          onClick={handleOpenShortcuts}
+        >
+          ?
         </button>
 
         <button
@@ -964,6 +1020,10 @@ export function App() {
           projectId={sessionListProjectId}
           onClose={handleCloseSessionList}
         />
+      )}
+
+      {shortcutsOpen && (
+        <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
       )}
 
       {searchOpen && (

@@ -621,3 +621,90 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     expect(screen.queryByText('Persist Miss Type UniqueText')).not.toBeInTheDocument();
   });
 });
+
+describe('keyboard shortcuts help (bdboard-3tw.119)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('EventSource', MockEventSource);
+    window.history.replaceState(null, '', '/');
+    localStorage.clear();
+
+    fetchSessionsMock.mockResolvedValue([] satisfies SessionDto[]);
+    fetchStatusMock.mockResolvedValue({
+      lastRefreshAt: '2026-01-01T00:00:00.000Z',
+      errors: [],
+      projectCount: 1,
+    } satisfies StatusDto);
+    fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
+    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
+    fetchChatAvailabilityMock.mockResolvedValue({
+      availability: 'unavailable',
+    } satisfies ChatAvailabilityDto);
+    fetchTicketMock.mockResolvedValue(sampleTicket);
+    fetchTicketCommentsMock.mockResolvedValue([] satisfies CommentDto[]);
+    fetchTunnelMock.mockResolvedValue({
+      state: 'off',
+      available: true,
+    });
+    fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
+    setupFilterApiMocks(priorityFilterBoardView());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('opens the shortcuts overlay on ? and closes on second ?', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+    });
+
+    await user.keyboard('?');
+
+    expect(
+      screen.getByRole('dialog', { name: 'キーボードショートカット' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('⌘/Ctrl + K')).toBeInTheDocument();
+
+    await user.keyboard('?');
+
+    expect(
+      screen.queryByRole('dialog', { name: 'キーボードショートカット' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not open shortcuts on ? while an input is focused', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('優先度上限')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByLabelText('優先度上限'));
+    await user.keyboard('?');
+
+    expect(
+      screen.queryByRole('dialog', { name: 'キーボードショートカット' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens shortcuts from the header button', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'キーボードショートカット (?)' }));
+
+    expect(
+      screen.getByRole('dialog', { name: 'キーボードショートカット' }),
+    ).toBeInTheDocument();
+  });
+});
