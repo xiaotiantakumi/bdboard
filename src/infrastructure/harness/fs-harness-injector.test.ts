@@ -10,6 +10,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HarnessPathTraversalError } from '../../application/ports/harness-injector.js';
+import {
+  GITIGNORE_MANAGED_HEADER,
+  MANIFEST_RELATIVE_PATH,
+} from '../../domain/harness-path.js';
 import { createFsHarnessInjector } from './fs-harness-injector.js';
 
 describe('createFsHarnessInjector', () => {
@@ -246,5 +250,109 @@ describe('createFsHarnessInjector', () => {
     mkdirSync(path.join(projectRoot, '.claude'), { recursive: true });
     writeFileSync(path.join(projectRoot, '.claude/bdboard-packs.json'), '{bad', 'utf8');
     expect(await injector.readManifest(projectRoot)).toEqual({ packs: [] });
+  });
+
+  it('creates .gitignore with manifest and pack entries when missing', async () => {
+    const injector = setupFixture();
+    writePack('bdboard-harness', '0.1.0', { 'SKILL.md': '# harness' });
+
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'bdboard-harness',
+        version: '0.1.0',
+        description: 'test',
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-08-16T10:00:00.000Z'),
+    );
+
+    const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+    expect(gitignore).toContain(GITIGNORE_MANAGED_HEADER);
+    expect(gitignore).toContain(MANIFEST_RELATIVE_PATH);
+    expect(gitignore).toContain('.claude/skills/bdboard-harness/');
+  });
+
+  it('appends gitignore entries without modifying existing content', async () => {
+    const injector = setupFixture();
+    writePack('bdboard-harness', '0.1.0', { 'SKILL.md': '# harness' });
+    writeFileSync(path.join(projectRoot, '.gitignore'), 'node_modules/\ndist/\n', 'utf8');
+
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'bdboard-harness',
+        version: '0.1.0',
+        description: 'test',
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-08-16T10:00:00.000Z'),
+    );
+
+    const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+    expect(gitignore.startsWith('node_modules/\ndist/\n')).toBe(true);
+    expect(gitignore).toContain(GITIGNORE_MANAGED_HEADER);
+    expect(gitignore).toContain(MANIFEST_RELATIVE_PATH);
+    expect(gitignore).toContain('.claude/skills/bdboard-harness/');
+  });
+
+  it('does not duplicate gitignore entries on repeated injection of the same pack', async () => {
+    const injector = setupFixture();
+    writePack('bdboard-harness', '0.1.0', { 'SKILL.md': '# v1' });
+    writePack('bdboard-harness', '0.2.0', { 'SKILL.md': '# v2' });
+
+    const pack = {
+      name: 'bdboard-harness',
+      version: '0.1.0',
+      description: 'test',
+      files: [{ relativePath: 'SKILL.md' }],
+    };
+
+    await injector.injectPack(projectRoot, pack, new Date('2026-08-16T10:00:00.000Z'));
+    await injector.injectPack(
+      projectRoot,
+      { ...pack, version: '0.2.0' },
+      new Date('2026-08-16T11:00:00.000Z'),
+    );
+
+    const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+    const lines = gitignore.split('\n').filter((line) => line.length > 0);
+    expect(lines.filter((line) => line === GITIGNORE_MANAGED_HEADER)).toHaveLength(1);
+    expect(lines.filter((line) => line === MANIFEST_RELATIVE_PATH)).toHaveLength(1);
+    expect(lines.filter((line) => line === '.claude/skills/bdboard-harness/')).toHaveLength(1);
+  });
+
+  it('adds separate gitignore lines per pack without duplicating the header', async () => {
+    const injector = setupFixture();
+    writePack('alpha-pack', '1.0.0', { 'SKILL.md': '# alpha' });
+    writePack('beta-pack', '1.0.0', { 'SKILL.md': '# beta' });
+
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'alpha-pack',
+        version: '1.0.0',
+        description: 'alpha',
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-08-16T09:00:00.000Z'),
+    );
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'beta-pack',
+        version: '1.0.0',
+        description: 'beta',
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-08-16T10:00:00.000Z'),
+    );
+
+    const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+    const lines = gitignore.split('\n').filter((line) => line.length > 0);
+    expect(lines.filter((line) => line === GITIGNORE_MANAGED_HEADER)).toHaveLength(1);
+    expect(lines.filter((line) => line === MANIFEST_RELATIVE_PATH)).toHaveLength(1);
+    expect(lines.filter((line) => line === '.claude/skills/alpha-pack/')).toHaveLength(1);
+    expect(lines.filter((line) => line === '.claude/skills/beta-pack/')).toHaveLength(1);
   });
 });

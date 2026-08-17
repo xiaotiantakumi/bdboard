@@ -7,6 +7,8 @@ import {
   type PackDefinition,
 } from '../../domain/harness-pack.js';
 import {
+  appendGitignoreEntries,
+  GITIGNORE_FILENAME,
   MANIFEST_RELATIVE_PATH,
   resolveUnderClaudeDir,
   skillInstallRelativePath,
@@ -168,6 +170,30 @@ export function createFsHarnessInjector(options: {
     await fs.promises.writeFile(manifestAbsolute, serializeManifest(manifest), 'utf8');
   };
 
+  const updateGitignoreForPack = async (
+    projectRootPath: string,
+    packName: string,
+  ): Promise<void> => {
+    const gitignorePath = path.join(projectRootPath, GITIGNORE_FILENAME);
+    let existingContent = '';
+
+    try {
+      existingContent = await fs.promises.readFile(gitignorePath, 'utf8');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    const updatedContent = appendGitignoreEntries(existingContent, packName);
+    if (updatedContent === existingContent) {
+      return;
+    }
+
+    await fs.promises.writeFile(gitignorePath, updatedContent, 'utf8');
+  };
+
   return {
     readManifest: readManifestFromDisk,
 
@@ -217,6 +243,12 @@ export function createFsHarnessInjector(options: {
         await writeManifestToDisk(projectRootPath, manifest);
       } catch (error) {
         throw new HarnessInjectionError('failed to write harness manifest', error);
+      }
+
+      try {
+        await updateGitignoreForPack(projectRootPath, pack.name);
+      } catch (error) {
+        throw new HarnessInjectionError('failed to update .gitignore for harness pack', error);
       }
 
       return manifest;

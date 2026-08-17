@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendGitignoreEntries,
+  GITIGNORE_MANAGED_HEADER,
+  gitignoreLinesToAppend,
+  gitignoreManifestEntry,
+  gitignorePackSkillDirEntry,
   isUnderClaudeDir,
+  MANIFEST_RELATIVE_PATH,
   normalizeProjectRelativePath,
   resolveUnderClaudeDir,
   skillInstallRelativePath,
@@ -46,5 +52,45 @@ describe('harness-path', () => {
     expect(skillInstallRelativePath('bdboard-harness', 'references/a.md')).toBe(
       '.claude/skills/bdboard-harness/references/a.md',
     );
+  });
+
+  it('builds gitignore entries for manifest and pack skill dir', () => {
+    expect(gitignoreManifestEntry()).toBe(MANIFEST_RELATIVE_PATH);
+    expect(gitignorePackSkillDirEntry('bdboard-harness')).toBe(
+      '.claude/skills/bdboard-harness/',
+    );
+    expect(gitignorePackSkillDirEntry('../evil')).toBeNull();
+  });
+
+  it('appends gitignore lines idempotently', () => {
+    const first = appendGitignoreEntries('', 'alpha-pack');
+    expect(first).toBe(
+      `${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n.claude/skills/alpha-pack/\n`,
+    );
+
+    const second = appendGitignoreEntries(first, 'alpha-pack');
+    expect(second).toBe(first);
+
+    const withBeta = appendGitignoreEntries(first, 'beta-pack');
+    expect(withBeta).toBe(
+      `${GITIGNORE_MANAGED_HEADER}\n${MANIFEST_RELATIVE_PATH}\n.claude/skills/alpha-pack/\n.claude/skills/beta-pack/\n`,
+    );
+    expect(gitignoreLinesToAppend(withBeta, 'alpha-pack')).toEqual([]);
+    expect(gitignoreLinesToAppend(withBeta, 'beta-pack')).toEqual([]);
+  });
+
+  it('preserves existing gitignore content when appending', () => {
+    const existing = 'node_modules/\ndist/\n';
+    const updated = appendGitignoreEntries(existing, 'bdboard-harness');
+    expect(updated.startsWith('node_modules/\ndist/\n')).toBe(true);
+    expect(updated).toContain(GITIGNORE_MANAGED_HEADER);
+    expect(updated).toContain(MANIFEST_RELATIVE_PATH);
+    expect(updated).toContain('.claude/skills/bdboard-harness/');
+  });
+
+  it('adds newline before append when existing file lacks trailing newline', () => {
+    const existing = 'node_modules/';
+    const updated = appendGitignoreEntries(existing, 'bdboard-harness');
+    expect(updated.startsWith('node_modules/\n')).toBe(true);
   });
 });
