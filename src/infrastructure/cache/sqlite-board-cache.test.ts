@@ -313,6 +313,63 @@ describe('createSqliteBoardCache', () => {
     cache.close();
   });
 
+  it('prunes cfd snapshots older than the cutoff date', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const snapshottedAt = new Date('2026-08-18T09:00:00.000Z');
+
+    cache.putCfdSnapshot('2025-08-17', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 1 },
+    ]);
+    cache.putCfdSnapshot('2025-08-18', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 2 },
+    ]);
+    cache.putCfdSnapshot('2026-08-18', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 3 },
+    ]);
+
+    expect(cache.pruneCfdSnapshots('2025-08-18')).toBe(1);
+    expect(cache.listCfdSnapshots().map((row) => row.snapshotDate)).toEqual([
+      '2025-08-18',
+      '2026-08-18',
+    ]);
+    cache.close();
+  });
+
+  it('returns db file size and per-table row counts', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-cache-stats-'));
+    const dbPath = path.join(tmpDir, 'cache.db');
+    const cache = createSqliteBoardCache(dbPath);
+
+    cache.putProject(makeEntry({}));
+    cache.putCfdSnapshot('2026-08-18', new Date('2026-08-18T09:00:00.000Z'), [
+      { projectId: 'proj-a', status: 'open', count: 1 },
+      { projectId: 'proj-a', status: 'blocked', count: 2 },
+    ]);
+
+    const stats = cache.getCacheStats();
+    expect(stats.sizeBytes).toBeGreaterThan(0);
+    expect(stats.tables).toEqual([
+      { name: 'projects', rowCount: 1 },
+      { name: 'transcript_offsets', rowCount: 0 },
+      { name: 'session_usage', rowCount: 0 },
+      { name: 'meta', rowCount: 1 },
+      { name: 'cfd_snapshots', rowCount: 2 },
+      { name: 'session_links', rowCount: 0 },
+      { name: 'chat_sessions', rowCount: 0 },
+      { name: 'chat_messages', rowCount: 0 },
+      { name: 'interactions', rowCount: 0 },
+    ]);
+
+    cache.close();
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('reports zero bytes for in-memory databases', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    expect(cache.getCacheStats().sizeBytes).toBe(0);
+    cache.close();
+  });
+
   it('stores and retrieves transcript offsets', () => {
     const cache = createSqliteBoardCache(':memory:');
 

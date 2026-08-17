@@ -9,7 +9,7 @@ import { Hono } from 'hono';
 import { refreshProjects } from './application/board/refresh-projects.js';
 import type { RefreshResult } from './application/board/refresh-projects.js';
 import { runInitialRefresh } from './application/board/run-initial-refresh.js';
-import { recordCfdSnapshot } from './application/board/record-cfd-snapshot.js';
+import { recordCfdSnapshot, pruneOldCfdSnapshots } from './application/board/record-cfd-snapshot.js';
 import { createShutdownDrain } from './application/board/shutdown-drain.js';
 import {
   createBoardNotificationPublisher,
@@ -98,6 +98,7 @@ import {
 import { createHarnessRoutes } from './interface/http/harness-routes.js';
 import { createScanRootsRoutes } from './interface/http/scan-roots-routes.js';
 import { createBoardThresholdsRoutes } from './interface/http/board-thresholds-routes.js';
+import { createDbStatsRoutes } from './interface/http/db-stats-routes.js';
 import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
@@ -212,6 +213,7 @@ async function main(): Promise<void> {
     DEFAULT_SHUTDOWN_TIMEOUT_MS,
   );
   const cfdSnapshotIntervalMs = envInt('BDBOARD_CFD_SNAPSHOT_INTERVAL_MS', 3_600_000);
+  const cfdSnapshotRetentionDays = envInt('BDBOARD_CFD_SNAPSHOT_RETENTION_DAYS', 365);
   const bdPath = envString('BDBOARD_BD_PATH', 'bd');
   const ghPath = envString('BDBOARD_GH_PATH', 'gh');
   const reclaimEnabled = envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED');
@@ -623,6 +625,12 @@ async function main(): Promise<void> {
   console.log(
     `Initial CFD snapshot: recorded=${initialCfdSnapshot.recorded} date=${initialCfdSnapshot.snapshotDate}`,
   );
+  const initialPrune = pruneOldCfdSnapshots(cache, new Date(), cfdSnapshotRetentionDays);
+  if (initialPrune.deletedCount > 0) {
+    console.log(
+      `Initial CFD snapshot prune: deleted=${initialPrune.deletedCount} cutoff=${initialPrune.cutoffDate}`,
+    );
+  }
 
   let transcriptIntervalTimer: ReturnType<typeof setInterval> | undefined;
   let cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
@@ -683,6 +691,12 @@ async function main(): Promise<void> {
       const result = recordCfdSnapshot(cache, new Date());
       if (result.recorded) {
         console.log(`CFD snapshot recorded: date=${result.snapshotDate}`);
+      }
+      const pruneResult = pruneOldCfdSnapshots(cache, new Date(), cfdSnapshotRetentionDays);
+      if (pruneResult.deletedCount > 0) {
+        console.log(
+          `CFD snapshot prune: deleted=${pruneResult.deletedCount} cutoff=${pruneResult.cutoffDate}`,
+        );
       }
     }, cfdSnapshotIntervalMs);
   }
@@ -829,6 +843,8 @@ async function main(): Promise<void> {
       writeAccess,
     }),
   );
+
+  app.route('/', createDbStatsRoutes({ cache }));
 
   app.route(
     '/',

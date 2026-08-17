@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 
 const SAVE_FEEDBACK_MS = 2000;
@@ -35,6 +35,19 @@ function msToHours(ms: number): string {
 
 function msToMinutes(ms: number): string {
   return String(ms / (60 * 1000));
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
 function parseHours(value: string): number | undefined {
@@ -184,6 +197,10 @@ export function SettingsPanel() {
   const aiQuotaAlertQuery = useQuery({
     queryKey: ['ai-quota-alert-config'],
     queryFn: fetchAiQuotaAlertConfig,
+  });
+  const dbStatsQuery = useQuery({
+    queryKey: ['db-stats'],
+    queryFn: fetchDbStats,
   });
   const [scanRoots, setScanRoots] = useState<string[]>([]);
   const [excludePaths, setExcludePaths] = useState<string[]>([]);
@@ -687,6 +704,37 @@ export function SettingsPanel() {
             </div>
           </div>
         </form>
+      </section>
+      <section className="settings-panel-section" aria-labelledby="db-stats-title">
+        <h3 id="db-stats-title">ローカルDB統計</h3>
+        <p className="settings-panel-subtitle">
+          SQLiteキャッシュのファイルサイズとテーブル別件数です。CFDスナップショット等は起動時・定期処理で保持期間に応じて整理されます。
+        </p>
+        {dbStatsQuery.isPending ? (
+          <p>読み込み中…</p>
+        ) : dbStatsQuery.isError || dbStatsQuery.data === undefined ? (
+          <p className="settings-panel-error">DB統計を読み込めませんでした</p>
+        ) : (
+          <>
+            <p>DBサイズ: {formatBytes(dbStatsQuery.data.sizeBytes)}</p>
+            <table className="model-stats-table">
+              <thead>
+                <tr>
+                  <th scope="col">テーブル</th>
+                  <th scope="col">件数</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dbStatsQuery.data.tables.map((table) => (
+                  <tr key={table.name}>
+                    <td>{table.name}</td>
+                    <td>{table.rowCount}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        )}
       </section>
       <div className="settings-panel-footer">
         <button

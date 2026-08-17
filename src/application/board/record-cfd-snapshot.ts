@@ -52,3 +52,24 @@ export function recordCfdSnapshot(
   cache.putCfdSnapshot(snapshotDate, now, rows);
   return { recorded: true, snapshotDate };
 }
+
+export interface PruneCfdSnapshotsResult {
+  readonly deletedCount: number;
+  readonly cutoffDate: string;
+}
+
+export function pruneOldCfdSnapshots(
+  cache: BoardCache,
+  now: Date,
+  retentionDays: number,
+): PruneCfdSnapshotsResult {
+  if (retentionDays <= 0) {
+    return { deletedCount: 0, cutoffDate: formatLocalDate(now) };
+  }
+
+  const cutoffDate = formatLocalDate(
+    new Date(now.getTime() - retentionDays * 86_400_000),
+  );
+  const deletedCount = cache.pruneCfdSnapshots(cutoffDate);
+  return { deletedCount, cutoffDate };
+}
