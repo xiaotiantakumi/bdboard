@@ -270,6 +270,7 @@ export function ChatPanel({
   selectedThreadIdsRef.current = selectedThreadIds;
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
+  const streamAbortControllerRef = useRef<AbortController | null>(null);
 
   // 不変条件(N1): この関数を同一 tick 内(同期的なコールバック連鎖の中)で同じ
   // projectId に対して2回呼ぶと、両方とも同じ draftNoncesRef.current[projectId]
@@ -370,6 +371,13 @@ export function ChatPanel({
     (project) => project.id === selectedProjectId,
   );
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+
+  useEffect(() => {
+    return () => {
+      streamAbortControllerRef.current?.abort();
+      streamAbortControllerRef.current = null;
+    };
+  }, [currentConversationKey]);
 
   useEffect(() => {
     if (selectedProjectId !== '') {
@@ -1215,22 +1223,33 @@ export function ChatPanel({
         }
         if (selectedAgent?.supportsStreaming === true) {
           setStreamingReply({ key: sendKey, text: '' });
+          const streamController = new AbortController();
+          streamAbortControllerRef.current = streamController;
           try {
-            // bdboard-l1t.9 Opus レビュー S5: unmount/スレッド切替時に能動的に
-            // abort する機能は別チケット化(議長側で起票)。ここでは signal を
-            // 渡さない — 一度も abort されない AbortController を作るだけの
-            // デッドコードにしないため。postChatMessageStream の signal 引数
-            // 自体は将来のために残す。
-            const result = await postChatMessageStream(messagePayload, {
-              onDelta: (delta) =>
-                setStreamingReply((prev) =>
-                  prev !== null && prev.key === sendKey ? { key: sendKey, text: prev.text + delta } : prev,
-                ),
-            });
+            const result = await postChatMessageStream(
+              messagePayload,
+              {
+                onDelta: (delta) =>
+                  setStreamingReply((prev) =>
+                    prev !== null && prev.key === sendKey
+                      ? { key: sendKey, text: prev.text + delta }
+                      : prev,
+                  ),
+              },
+              streamController.signal,
+            );
             applyChatSuccess(sendKey, text, result);
           } catch (error) {
-            applyChatError(sendKey, sentRawText, error, sentAt);
+            if (error instanceof DOMException && error.name === 'AbortError') {
+              // unmount / スレッド切替 / プロジェクト切替由来の意図的 abort。
+              // エラーバブルや入力欄復元は行わない。
+            } else {
+              applyChatError(sendKey, sentRawText, error, sentAt);
+            }
           } finally {
+            if (streamAbortControllerRef.current === streamController) {
+              streamAbortControllerRef.current = null;
+            }
             setStreamingReply(null);
           }
         } else {
