@@ -65,4 +65,11 @@
 # - linear.api_key  → use LINEAR_API_KEY env var instead
 # - github.token    → use GITHUB_TOKEN env var instead
 
-sync.remote: "git+https://github.com/xiaotiantakumi/bdboard.git"
+# Dolt remote sync disabled 2026-08-17 (bdboard-23v): repo is migrating to a
+# fresh public GitHub repo (xiaotiantakumi/bdboard) with squashed history.
+# The old sync.remote pointed at that same name, which would push issue-tracker
+# history (refs/dolt/data) to what is about to become a public repo.
+# Full private issue history remains synced at xiaotiantakumi/bdboard-legacy-private
+# (fetch via: git fetch legacy refs/dolt/data) until/unless a new private Dolt
+# remote is set up.
+# sync.remote: "git+https://github.com/xiaotiantakumi/bdboard.git"
