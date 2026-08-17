@@ -3672,6 +3672,10 @@ body {
   margin: 0;
 }
 
+.chat-message-text.markdown-body {
+  white-space: normal;
+}
+
 .chat-message-failed-tools {
   margin: 6px 0 0;
   font-size: 0.8125rem;

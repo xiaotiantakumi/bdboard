@@ -160,9 +160,13 @@ function renderChatPanel(
     ticketContextToken?: number;
     onProjectIdChange?: (projectId: string) => void;
     leaveSettingsCollapsed?: boolean;
+    isTicketOnBoard?: (ticketId: string) => boolean;
+    onOpenTicket?: (ticketId: string) => void;
   } = {},
 ) {
   const onClose = vi.fn();
+  const onOpenTicket = options.onOpenTicket ?? vi.fn();
+  const isTicketOnBoard = options.isTicketOnBoard ?? (() => false);
   const rendered = render(
     <ChatPanel
       projects={projects}
@@ -170,13 +174,15 @@ function renderChatPanel(
       initialInput={options.initialInput}
       ticketContextToken={options.ticketContextToken}
       onProjectIdChange={options.onProjectIdChange}
+      isTicketOnBoard={isTicketOnBoard}
+      onOpenTicket={onOpenTicket}
       onClose={onClose}
     />,
   );
   if (!options.leaveSettingsCollapsed) {
     openChatSettings(rendered.container);
   }
-  return { onClose, ...rendered };
+  return { onClose, onOpenTicket, isTicketOnBoard, ...rendered };
 }
 
 describe('ChatPanel', () => {
@@ -233,6 +239,8 @@ describe('ChatPanel', () => {
         projects={[PROJECT_A, PROJECT_B]}
         initialProjectId="proj-b"
         onProjectIdChange={onProjectIdChange}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -252,6 +260,8 @@ describe('ChatPanel', () => {
       <ChatPanel
         projects={[PROJECT_A, PROJECT_B]}
         initialProjectId="proj-b"
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -281,6 +291,8 @@ describe('ChatPanel', () => {
       <ChatPanel
         projects={[PROJECT_A, PROJECT_B]}
         initialProjectId="proj-b"
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -304,6 +316,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="proj-b のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -345,6 +359,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="proj-b のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -390,6 +406,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="proj-b のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -428,6 +446,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="最初のプリフィル: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -443,6 +463,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="2回目のプリフィル: "
         ticketContextToken={2}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -467,6 +489,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-missing"
         initialInput="proj-missing のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -490,6 +514,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-missing"
         initialInput="proj-missing のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -542,6 +568,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-missing"
         initialInput="proj-missing のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -570,6 +598,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-missing"
         initialInput="proj-missing のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -602,6 +632,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-missing"
         initialInput="proj-missing のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -623,6 +655,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-missing"
         initialInput="proj-missing のチケットについて: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -802,6 +836,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-a"
         initialInput="bdboard-x.1 について: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -847,6 +883,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-a"
         initialInput="2回目のチケット: "
         ticketContextToken={2}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -912,6 +950,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-a"
         initialInput="bdboard-a.1 について: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -926,6 +966,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="bdboard-b.1 について: "
         ticketContextToken={2}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -982,6 +1024,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-b"
         initialInput="bdboard-b.1 について: "
         ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -1245,6 +1289,8 @@ describe('ChatPanel', () => {
       <ChatPanel
         projects={[PROJECT_A]}
         initialProjectId="proj-a"
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -1359,6 +1405,8 @@ describe('ChatPanel', () => {
         initialProjectId="proj-a"
         initialInput="チケットB について: "
         ticketContextToken={2}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
         onClose={rendered.onClose}
       />,
     );
@@ -1406,6 +1454,8 @@ describe('ChatPanel', () => {
           initialProjectId="proj-a"
           initialInput="bdboard-x.1 について: "
           ticketContextToken={1}
+          isTicketOnBoard={() => false}
+          onOpenTicket={vi.fn()}
           onClose={vi.fn()}
         />
       </StrictMode>,
@@ -1764,6 +1814,8 @@ describe('ChatPanel', () => {
           projects={[PROJECT_A, PROJECT_B]}
           initialProjectId="proj-b"
           ticketContextToken={2}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
           onClose={rendered.onClose}
         />,
       );
@@ -2052,6 +2104,8 @@ describe('ChatPanel', () => {
           initialProjectId="proj-a"
           initialInput={secondPrefill}
           ticketContextToken={2}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
           onClose={rendered.onClose}
         />,
       );
@@ -2688,10 +2742,63 @@ describe('ChatPanel', () => {
     await user.click(screen.getByRole('button', { name: '送信' }));
 
     const messageText = await screen.findByText(xssPayload);
-    expect(messageText).toHaveClass('chat-message-text');
-    expect(messageText.querySelector('img')).toBeNull();
+    const messageContainer = messageText.closest('.chat-message-text');
+    expect(messageContainer).not.toBeNull();
+    expect(messageContainer).toHaveClass('markdown-body');
+    expect(messageContainer?.querySelector('img')).toBeNull();
     expect(document.querySelector('.chat-message-text img')).toBeNull();
-    expect(messageText.innerHTML).not.toMatch(/<img\b/i);
+    expect(messageContainer?.innerHTML).not.toMatch(/<img\b/i);
+  });
+
+  it('renders assistant markdown including headings and code blocks', async () => {
+    const user = userEvent.setup();
+    const markdownReply = ['# Summary', '', '```ts', 'const x = 1;', '```'].join('\n');
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse({
+          reply: markdownReply,
+          sessionId: 'sess-markdown',
+          agentId: 'claude',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await user.type(screen.getByLabelText('メッセージ'), 'markdown test');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Summary' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('const x = 1;')).toBeInTheDocument();
+  });
+
+  it('links known bead IDs in assistant messages and calls onOpenTicket', async () => {
+    const user = userEvent.setup();
+    const onOpenTicket = vi.fn();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse({
+          reply: 'Blocked by bdboard-abc.1 until done.',
+          sessionId: 'sess-bead-link',
+          agentId: 'claude',
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A], {
+      isTicketOnBoard: (id) => id === 'bdboard-abc.1',
+      onOpenTicket,
+    });
+    await user.type(screen.getByLabelText('メッセージ'), 'bead link test');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const ticketButton = await screen.findByRole('button', { name: 'bdboard-abc.1' });
+    expect(ticketButton).toHaveClass('ticket-id-link');
+    await user.click(ticketButton);
+    expect(onOpenTicket).toHaveBeenCalledWith('bdboard-abc.1');
   });
 
   it('selects the sole claude agent by default when only one option exists', async () => {

@@ -28,6 +28,7 @@ import {
   writePersistedChatThreadState,
 } from '../chatThreadStorage';
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
+import { MarkdownContent } from './MarkdownContent';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -43,6 +44,8 @@ interface ChatPanelProps {
   initialInput?: string;
   ticketContextToken?: number;
   onProjectIdChange?: (projectId: string) => void;
+  isTicketOnBoard: (ticketId: string) => boolean;
+  onOpenTicket: (ticketId: string) => void;
   onClose: () => void;
 }
 
@@ -128,6 +131,8 @@ export function ChatPanel({
   initialInput,
   ticketContextToken,
   onProjectIdChange,
+  isTicketOnBoard,
+  onOpenTicket,
   onClose,
 }: ChatPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
@@ -1925,7 +1930,16 @@ export function ChatPanel({
               key={`${message.at}-${index}`}
               className={`chat-message chat-message-${message.role}`}
             >
-              <p className="chat-message-text">{message.text}</p>
+              {message.role === 'assistant' ? (
+                <MarkdownContent
+                  text={message.text}
+                  isTicketOnBoard={isTicketOnBoard}
+                  onOpenTicket={onOpenTicket}
+                  className="chat-message-text"
+                />
+              ) : (
+                <p className="chat-message-text">{message.text}</p>
+              )}
               {message.failedTools !== undefined &&
                 message.failedTools.length > 0 && (
                   <p className="chat-message-failed-tools" role="alert">

@@ -890,6 +890,8 @@ export function App() {
           }
           ticketContextToken={chatContext === undefined ? undefined : chatContextToken}
           onProjectIdChange={setLastChatProjectId}
+          isTicketOnBoard={isTicketOnBoard}
+          onOpenTicket={handleSelectTicket}
           onClose={() => {
             setChatOpen(false);
             setChatContext(undefined);
