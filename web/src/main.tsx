@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import { App } from './App';
+import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
 import { resolveCredentialRedirect } from './stripUrlCredentials';
 
 const REDIRECT_GUARD_KEY = 'bdboard.credential-redirect';
@@ -33,7 +34,9 @@ function mount(): void {
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <WatchedTicketsProvider>
+          <App />
+        </WatchedTicketsProvider>
       </QueryClientProvider>
     </StrictMode>,
   );

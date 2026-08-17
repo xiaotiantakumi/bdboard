@@ -14,6 +14,7 @@ import {
   useBoardKeyboardNav,
 } from './BoardKeyboardNavProvider';
 import { PrLinkBadge } from './PrLinkBadge';
+import { WatchToggle } from './WatchToggle';
 import { useBulkSelection } from './BulkSelectionProvider';
 
 export interface CardItemProps {
@@ -238,7 +239,10 @@ export function CardItem({
           />
         </label>
       )}
-      <h4 className="card-title">{ticket.title}</h4>
+      <div className="card-title-row">
+        <h4 className="card-title">{ticket.title}</h4>
+        <WatchToggle ticketId={ticket.id} className="card-watch-toggle" />
+      </div>
       <div className="card-id">{ticket.id}</div>
       {showEpicProgress && (
         <div className="epic-progress">

@@ -5,6 +5,7 @@ import type { BoardCardDto, BoardDto } from '../api';
 import { EMPTY_BOARD_FILTER } from '../boardFilter';
 import { BulkSelectionProvider } from './BulkSelectionProvider';
 import { BoardLanes } from './BoardView';
+import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
 function makeCard(
   id: string,
@@ -63,6 +64,7 @@ const projectActiveSessions = new Map([['proj-1', 0]]);
 function renderBoardLanes(onCardClick = vi.fn()) {
   render(
     <BulkSelectionProvider>
+      <WatchedTicketsProvider>
       <BoardLanes
         board={makeBoard()}
         hideDone
@@ -76,6 +78,7 @@ function renderBoardLanes(onCardClick = vi.fn()) {
         sectionKey="test"
         onCardClick={onCardClick}
       />
+      </WatchedTicketsProvider>
     </BulkSelectionProvider>,
   );
   return { onCardClick };
@@ -197,6 +200,7 @@ describe('BoardKeyboardNav', () => {
     const initialBoard = makeBoard();
     const { rerender } = render(
       <BulkSelectionProvider>
+        <WatchedTicketsProvider>
         <BoardLanes
           board={initialBoard}
           hideDone
@@ -210,6 +214,7 @@ describe('BoardKeyboardNav', () => {
           sectionKey="test"
           onCardClick={vi.fn()}
         />
+        </WatchedTicketsProvider>
       </BulkSelectionProvider>,
     );
 
@@ -235,6 +240,7 @@ describe('BoardKeyboardNav', () => {
 
     rerender(
       <BulkSelectionProvider>
+        <WatchedTicketsProvider>
         <BoardLanes
           board={boardWithExtraReadyCard}
           hideDone
@@ -248,6 +254,7 @@ describe('BoardKeyboardNav', () => {
           sectionKey="test"
           onCardClick={vi.fn()}
         />
+        </WatchedTicketsProvider>
       </BulkSelectionProvider>,
     );
 
@@ -259,6 +266,7 @@ describe('BoardKeyboardNav', () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <BulkSelectionProvider>
+        <WatchedTicketsProvider>
         <BoardLanes
           board={makeBoard()}
           hideDone
@@ -272,6 +280,7 @@ describe('BoardKeyboardNav', () => {
           sectionKey="test"
           onCardClick={vi.fn()}
         />
+        </WatchedTicketsProvider>
       </BulkSelectionProvider>,
     );
 
@@ -293,6 +302,7 @@ describe('BoardKeyboardNav', () => {
 
     rerender(
       <BulkSelectionProvider>
+        <WatchedTicketsProvider>
         <BoardLanes
           board={boardWithoutReady2}
           hideDone
@@ -306,6 +316,7 @@ describe('BoardKeyboardNav', () => {
           sectionKey="test"
           onCardClick={vi.fn()}
         />
+        </WatchedTicketsProvider>
       </BulkSelectionProvider>,
     );
 
@@ -447,19 +458,21 @@ describe('BoardKeyboardNav', () => {
 
     render(
       <BulkSelectionProvider>
-        <BoardLanes
-          board={boardWithFourReady}
-          hideDone
-          stalledOnly={false}
-          filter={EMPTY_BOARD_FILTER}
-          showProjectName
-          projectNames={projectNames}
-          projectActiveSessions={projectActiveSessions}
-          pendingDecisionIds={new Set()}
-          prLinksById={new Map()}
-          sectionKey="test"
-          onCardClick={vi.fn()}
-        />
+        <WatchedTicketsProvider>
+          <BoardLanes
+            board={boardWithFourReady}
+            hideDone
+            stalledOnly={false}
+            filter={EMPTY_BOARD_FILTER}
+            showProjectName
+            projectNames={projectNames}
+            projectActiveSessions={projectActiveSessions}
+            pendingDecisionIds={new Set()}
+            prLinksById={new Map()}
+            sectionKey="test"
+            onCardClick={vi.fn()}
+          />
+        </WatchedTicketsProvider>
       </BulkSelectionProvider>,
     );
 

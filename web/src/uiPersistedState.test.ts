@@ -12,6 +12,7 @@ import {
   validateStatsWeeks,
   validateString,
   validateViewMode,
+  validateWatchedTicketIds,
   type BoardFilterPreset,
   type BoardFilterPresetState,
   type RecentTicketEntry,
@@ -68,6 +69,15 @@ describe('uiPersistedState', () => {
     expect(validateIssueTypeArray(['bug', 'unknown'])).toBeNull();
     expect(validateIssueTypeArray('bug')).toBeNull();
     expect(validateIssueTypeArray([1, 2])).toBeNull();
+  });
+
+  it('validates watched ticket id arrays', () => {
+    expect(validateWatchedTicketIds(['bdboard-a', 'bdboard-b'])).toEqual([
+      'bdboard-a',
+      'bdboard-b',
+    ]);
+    expect(validateWatchedTicketIds(['bdboard-a', 'bdboard-a'])).toBeNull();
+    expect(validateWatchedTicketIds([''])).toBeNull();
   });
 
   it('validates lane arrays', () => {

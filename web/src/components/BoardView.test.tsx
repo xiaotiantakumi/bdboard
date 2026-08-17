@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto, BoardDto, PrBadgeDto } from '../api';
 import { EMPTY_BOARD_FILTER, type BoardFilter } from '../boardFilter';
 import { BoardLanes } from './BoardView';
+import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
 function makeCard(id: string, lane: BoardCardDto['lane'] = 'ready'): BoardCardDto {
   return {
@@ -72,10 +73,12 @@ describe('BoardLanes lane pagination', () => {
   it('keeps expanded visible count when board data changes without filter change', async () => {
     const user = userEvent.setup();
     const { rerender } = render(
-      <BoardLanes
-        {...sharedProps}
-        board={makeBoardWithReadyCards(60, 'set-a')}
-      />,
+      <WatchedTicketsProvider>
+        <BoardLanes
+          {...sharedProps}
+          board={makeBoardWithReadyCards(60, 'set-a')}
+        />
+      </WatchedTicketsProvider>,
     );
 
     expect(screen.getAllByRole('option')).toHaveLength(50);
@@ -83,10 +86,12 @@ describe('BoardLanes lane pagination', () => {
     expect(screen.getAllByRole('option')).toHaveLength(60);
 
     rerender(
-      <BoardLanes
-        {...sharedProps}
-        board={makeBoardWithReadyCards(60, 'set-b')}
-      />,
+      <WatchedTicketsProvider>
+        <BoardLanes
+          {...sharedProps}
+          board={makeBoardWithReadyCards(60, 'set-b')}
+        />
+      </WatchedTicketsProvider>,
     );
     expect(screen.getAllByRole('option')).toHaveLength(60);
   });
@@ -95,7 +100,9 @@ describe('BoardLanes lane pagination', () => {
     const user = userEvent.setup();
     const board = makeBoardWithReadyCards(60, 'set-c');
     const { rerender } = render(
-      <BoardLanes {...sharedProps} board={board} />,
+      <WatchedTicketsProvider>
+        <BoardLanes {...sharedProps} board={board} />
+      </WatchedTicketsProvider>,
     );
 
     await user.click(screen.getByRole('button', { name: /さらに表示/ }));
@@ -105,7 +112,11 @@ describe('BoardLanes lane pagination', () => {
       ...EMPTY_BOARD_FILTER,
       priorityCeiling: 4,
     };
-    rerender(<BoardLanes {...sharedProps} board={board} filter={activeFilter} />);
+    rerender(
+      <WatchedTicketsProvider>
+        <BoardLanes {...sharedProps} board={board} filter={activeFilter} />
+      </WatchedTicketsProvider>,
+    );
     expect(screen.getAllByRole('option')).toHaveLength(50);
   });
 });
@@ -132,11 +143,13 @@ describe('BoardLanes wip limits', () => {
     };
 
     render(
-      <BoardLanes
-        {...sharedProps}
-        board={board}
-        wipLimitsOverrides={{ inProgressWipLimit: 2 }}
-      />,
+      <WatchedTicketsProvider>
+        <BoardLanes
+          {...sharedProps}
+          board={board}
+          wipLimitsOverrides={{ inProgressWipLimit: 2 }}
+        />
+      </WatchedTicketsProvider>,
     );
 
     expect(screen.getByText('WIP超過: 3/2')).toBeInTheDocument();

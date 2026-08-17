@@ -32,6 +32,7 @@ import {
 } from '../api';
 import { TicketDetailPanel } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
+import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 import { computeDeferUntilDate } from '../deferPeriods';
 import { NETWORK_FETCH_HELP, TUNNEL_WRITE_HELP } from '../writeAccessMessage';
 
@@ -110,18 +111,20 @@ function renderPanel(
 ) {
   const view = render(
     <QueryClientProvider client={queryClient}>
-      <TicketDetailPanel
-        ticketId={sampleTicket.id}
-        projectRootPaths={projectRootPaths}
-        pendingDecision={pendingDecision}
-        prLink={prLink}
-        onClose={() => {}}
-        onChatAboutTicket={() => {}}
-        onOpenTicket={() => {}}
-        isTicketOnBoard={() => true}
-        onFilterByEpic={() => {}}
-        availableLabels={availableLabels}
-      />
+      <WatchedTicketsProvider>
+        <TicketDetailPanel
+          ticketId={sampleTicket.id}
+          projectRootPaths={projectRootPaths}
+          pendingDecision={pendingDecision}
+          prLink={prLink}
+          onClose={() => {}}
+          onChatAboutTicket={() => {}}
+          onOpenTicket={() => {}}
+          isTicketOnBoard={() => true}
+          onFilterByEpic={() => {}}
+          availableLabels={availableLabels}
+        />
+      </WatchedTicketsProvider>
     </QueryClientProvider>,
   );
 
@@ -137,17 +140,19 @@ function rerenderPanel(
 ) {
   rerender(
     <QueryClientProvider client={queryClient}>
-      <TicketDetailPanel
-        ticketId={sampleTicket.id}
-        projectRootPaths={projectRootPaths}
-        pendingDecision={pendingDecision}
-        prLink={prLink}
-        onClose={() => {}}
+      <WatchedTicketsProvider>
+        <TicketDetailPanel
+          ticketId={sampleTicket.id}
+          projectRootPaths={projectRootPaths}
+          pendingDecision={pendingDecision}
+          prLink={prLink}
+          onClose={() => {}}
         onChatAboutTicket={() => {}}
         onOpenTicket={() => {}}
         isTicketOnBoard={() => true}
         onFilterByEpic={() => {}}
-      />
+        />
+      </WatchedTicketsProvider>
     </QueryClientProvider>,
   );
 }
@@ -163,16 +168,18 @@ function renderPanelWithUndoSnackbar(
   const view = render(
     <UndoSnackbarProvider>
       <QueryClientProvider client={queryClient}>
-        <TicketDetailPanel
-          ticketId={sampleTicket.id}
-          projectRootPaths={projectRootPaths}
-          pendingDecision={undefined}
-          onClose={() => {}}
-          onChatAboutTicket={() => {}}
-          onOpenTicket={() => {}}
-          isTicketOnBoard={() => true}
-          onFilterByEpic={() => {}}
-        />
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={projectRootPaths}
+            pendingDecision={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+          />
+        </WatchedTicketsProvider>
       </QueryClientProvider>
     </UndoSnackbarProvider>,
   );
@@ -190,16 +197,18 @@ describe('TicketDetailPanel chat', () => {
       <QueryClientProvider
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
-        <TicketDetailPanel
-          ticketId={sampleTicket.id}
-          projectRootPaths={new Map()}
-          pendingDecision={undefined}
-          onClose={() => {}}
-          onChatAboutTicket={onChatAboutTicket}
-          onFilterByEpic={() => {}}
-          onOpenTicket={() => {}}
-          isTicketOnBoard={() => true}
-        />
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={onChatAboutTicket}
+            onFilterByEpic={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+          />
+        </WatchedTicketsProvider>
       </QueryClientProvider>,
     );
 
@@ -220,15 +229,17 @@ describe('TicketDetailPanel chat', () => {
       <QueryClientProvider
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
-        <TicketDetailPanel
-          ticketId={sampleTicket.id}
-          projectRootPaths={new Map()}
-          pendingDecision={undefined}
-          onClose={() => {}}
-          onFilterByEpic={() => {}}
-          onOpenTicket={() => {}}
-          isTicketOnBoard={() => true}
-        />
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={undefined}
+            onClose={() => {}}
+            onFilterByEpic={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+          />
+        </WatchedTicketsProvider>
       </QueryClientProvider>,
     );
 

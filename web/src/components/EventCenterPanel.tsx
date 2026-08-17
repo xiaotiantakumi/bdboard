@@ -10,10 +10,39 @@ function kindLabel(kind: NotificationEventItem['kind']): string {
       return 'セッション終了';
     case 'ai_quota_threshold':
       return 'クォータ低下';
+    case 'watched_lane_changed':
+      return 'ウォッチ: レーン遷移';
+    case 'watched_comment_changed':
+      return 'ウォッチ: コメント';
+    case 'watched_session_changed':
+      return 'ウォッチ: セッション';
   }
 }
 
 function eventPrimaryText(item: NotificationEventItem): string {
+  if (item.kind === 'watched_lane_changed') {
+    const ticketLabel =
+      item.title !== undefined && item.title.length > 0
+        ? `${item.title} (${item.ticketId})`
+        : item.ticketId ?? '—';
+    return `${ticketLabel}: ${item.fromLane ?? ''} → ${item.toLane ?? ''}`;
+  }
+  if (item.kind === 'watched_comment_changed') {
+    const ticketLabel =
+      item.title !== undefined && item.title.length > 0
+        ? `${item.title} (${item.ticketId})`
+        : item.ticketId ?? '—';
+    return `${ticketLabel}: ${item.previousCommentCount ?? 0} → ${item.commentCount ?? 0}`;
+  }
+  if (item.kind === 'watched_session_changed') {
+    const ticketLabel =
+      item.title !== undefined && item.title.length > 0
+        ? `${item.title} (${item.ticketId})`
+        : item.ticketId ?? '—';
+    const added = item.addedSessionIds?.length ?? 0;
+    const removed = item.removedSessionIds?.length ?? 0;
+    return `${ticketLabel}: +${added} -${removed}`;
+  }
   if (item.providerId !== undefined) {
     return `${item.providerLabel ?? item.providerId} ${item.metricLabel ?? ''} 残り${item.percentRemaining}%(閾値${item.thresholdPercent}%)`.trim();
   }

@@ -1,8 +1,14 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto, BoardDto } from '../api';
 import { NextUpView } from './NextUpView';
+import { WatchedTicketsProvider } from './WatchedTicketsProvider';
+
+function renderWithWatch(ui: ReactElement) {
+  return render(<WatchedTicketsProvider>{ui}</WatchedTicketsProvider>);
+}
 
 function makeCard(id: string, title: string, projectId = 'proj-1'): BoardCardDto {
   return {
@@ -58,7 +64,7 @@ function renderNextUpView(
   },
 ) {
   const onLimitChange = options?.onLimitChange ?? vi.fn();
-  render(
+  renderWithWatch(
     <NextUpView
       board={board}
       limit={options?.limit ?? 10}
@@ -116,7 +122,7 @@ describe('NextUpView', () => {
     const board = makeBoard(cards);
     const onLimitChange = vi.fn();
 
-    const { rerender } = render(
+    const { rerender } = renderWithWatch(
       <NextUpView
         board={board}
         limit={5}
@@ -133,16 +139,18 @@ describe('NextUpView', () => {
     expect(screen.queryByText('Task 6')).not.toBeInTheDocument();
 
     rerender(
-      <NextUpView
-        board={board}
-        limit={10}
-        onLimitChange={onLimitChange}
-        projectNames={projectNames}
-        projectActiveSessions={projectActiveSessions}
-        pendingDecisionIds={new Set()}
-        prLinksById={new Map()}
-        onCardClick={() => {}}
-      />,
+      <WatchedTicketsProvider>
+        <NextUpView
+          board={board}
+          limit={10}
+          onLimitChange={onLimitChange}
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          onCardClick={() => {}}
+        />
+      </WatchedTicketsProvider>,
     );
 
     expect(screen.getByText('Task 10')).toBeInTheDocument();

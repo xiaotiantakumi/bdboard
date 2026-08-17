@@ -39,10 +39,12 @@ import { SearchPalette } from './components/SearchPalette';
 import { SessionListPanel } from './components/SessionListPanel';
 import { TicketDetailPanel } from './components/TicketDetailPanel';
 import { TunnelControl } from './components/TunnelControl';
+import { useWatchedTickets } from './components/WatchedTicketsProvider';
 import { isBoardFilterActive } from './boardFilter';
 import type { WipLimitsOverrides } from './wip-limits';
 import { useAppBadge } from './hooks/useAppBadge';
 import { useNotificationEvents } from './hooks/useNotificationEvents';
+import { useWatchedTicketDetails } from './hooks/useWatchedTicketDetails';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useTicketDeepLink } from './hooks/useTicketDeepLink';
 import {
@@ -248,8 +250,6 @@ export function App() {
 
   useAppBadge(pendingDecisionsQuery.data?.length);
 
-  const notificationEvents = useNotificationEvents();
-
   const syncHealthQuery = useQuery({
     queryKey: ['sync-health', selectedProjectIdsJoined],
     queryFn: () => fetchSyncHealth(selectedProjectIds),
@@ -445,6 +445,15 @@ export function App() {
     }
     return map;
   }, [boardQuery.data]);
+
+  const { watchedSet } = useWatchedTickets();
+  const watchedTicketDetails = useWatchedTicketDetails(watchedSet, boardCardsById);
+
+  const notificationEvents = useNotificationEvents({
+    watchedTicketIds: watchedSet,
+    boardCardsById,
+    watchedTicketDetails,
+  });
 
   const projectRootPaths = useMemo(() => {
     const map = new Map<string, string>();

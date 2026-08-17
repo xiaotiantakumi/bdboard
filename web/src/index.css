@@ -2172,6 +2172,45 @@ body {
   line-height: 1.35;
 }
 
+.card-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.card-title-row .card-title {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.watch-toggle {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  font-size: 1rem;
+}
+
+.watch-toggle:hover {
+  color: var(--color-text);
+}
+
+.watch-toggle-active {
+  color: var(--color-accent, #f5a623);
+}
+
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
 .card-id {
   font-size: 0.6875rem;
   color: var(--color-text-tertiary);
