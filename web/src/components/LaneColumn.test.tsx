@@ -1,7 +1,8 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto } from '../api';
 import { CardItem } from './LaneColumn';
+import { BulkSelectionProvider } from './BulkSelectionProvider';
 
 function makeCard(id: string): BoardCardDto {
   return {
@@ -197,5 +198,69 @@ describe('CardItem priority inheritance badge', () => {
     );
 
     expect(screen.queryByText(/→P/)).not.toBeInTheDocument();
+  });
+});
+
+describe('CardItem bulk selection checkbox', () => {
+  it('does not open the detail panel when the checkbox is clicked', () => {
+    const onClick = vi.fn();
+
+    render(
+      <BulkSelectionProvider>
+        <CardItem
+          card={makeCard('bdboard-bulk-click')}
+          lane="ready"
+          showProjectName={false}
+          projectName="Project One"
+          activeSessionCount={0}
+          hasPendingDecision={false}
+          onClick={onClick}
+        />
+      </BulkSelectionProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'bdboard-bulk-click を選択' }),
+    );
+
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('keeps bulk checkbox state independent from keyboard focus aria-selected', () => {
+    render(
+      <BulkSelectionProvider>
+        <CardItem
+          card={makeCard('bdboard-bulk-aria')}
+          lane="ready"
+          showProjectName={false}
+          projectName="Project One"
+          activeSessionCount={0}
+          hasPendingDecision={false}
+          onClick={() => {}}
+          nav={{
+            tabIndex: 0,
+            ariaSelected: true,
+            cardRef: () => {},
+            onFocus: () => {},
+          }}
+        />
+      </BulkSelectionProvider>,
+    );
+
+    const card = screen.getByRole('option');
+    expect(card).toHaveAttribute('aria-selected', 'true');
+    expect(
+      screen.getByRole('checkbox', { name: 'bdboard-bulk-aria を選択' }),
+    ).not.toBeChecked();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'bdboard-bulk-aria を選択' }),
+    );
+
+    expect(
+      screen.getByRole('checkbox', { name: 'bdboard-bulk-aria を選択' }),
+    ).toBeChecked();
+    expect(card).toHaveAttribute('aria-selected', 'true');
+    expect(card.className).toContain('card-bulk-selected');
   });
 });

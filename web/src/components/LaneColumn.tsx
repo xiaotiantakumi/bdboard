@@ -14,6 +14,7 @@ import {
   useBoardKeyboardNav,
 } from './BoardKeyboardNavProvider';
 import { PrLinkBadge } from './PrLinkBadge';
+import { useBulkSelection } from './BulkSelectionProvider';
 
 export interface CardItemProps {
   card: BoardCardDto;
@@ -159,6 +160,7 @@ export function CardItem({
   nav,
 }: CardItemProps) {
   const boardDnD = useBoardDnD();
+  const bulkSelection = useBulkSelection();
   const {
     ticket,
     blockedBy,
@@ -171,6 +173,8 @@ export function CardItem({
     effectivePriority,
     priorityInheritedFrom,
   } = card;
+  const bulkSelected =
+    bulkSelection !== null && bulkSelection.isSelected(ticket.id);
   const statusMismatch = isLaneStatusMismatch(lane, ticket.status);
   const showEpicProgress =
     epicProgress !== null && epicProgress.total > 0;
@@ -202,7 +206,7 @@ export function CardItem({
 
   return (
     <article
-      className={`card${isDragging ? ' card-dragging' : ''}`}
+      className={`card${isDragging ? ' card-dragging' : ''}${bulkSelected ? ' card-bulk-selected' : ''}`}
       title={ticket.title}
       draggable={enableDrag && boardDnD !== null}
       onClick={handleClick}
@@ -220,6 +224,20 @@ export function CardItem({
       ref={nav?.cardRef}
       onFocus={nav?.onFocus}
     >
+      {bulkSelection !== null && (
+        <label
+          className="card-bulk-checkbox"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <input
+            type="checkbox"
+            checked={bulkSelected}
+            aria-label={`${ticket.id} を選択`}
+            onChange={() => bulkSelection.toggle(ticket.id)}
+            onClick={(event) => event.stopPropagation()}
+          />
+        </label>
+      )}
       <h4 className="card-title">{ticket.title}</h4>
       <div className="card-id">{ticket.id}</div>
       {showEpicProgress && (
