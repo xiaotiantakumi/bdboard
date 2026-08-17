@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { isSafeCliArgument } from '../../domain/chat.js';
 import { getActivityFeed } from '../../application/board/get-activity-feed.js';
 import { getTicketTimeline } from '../../application/board/get-ticket-timeline.js';
+import { getSimilarTickets } from '../../application/board/find-similar-tickets.js';
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getPrBadges } from '../../application/board/get-pr-badges.js';
@@ -74,6 +75,7 @@ import {
   toSyncHealthDto,
   toTicketDetailDto,
   toTicketSearchResultDto,
+  toTicketSimilarResultDto,
   toTicketTokenUsageDto,
   type ProjectDto,
   type TicketChildDto,
@@ -133,6 +135,9 @@ interface QueuedSseMessage {
 const SEARCH_DEFAULT_LIMIT = 30;
 const SEARCH_MIN_LIMIT = 1;
 const SEARCH_MAX_LIMIT = 50;
+const SIMILAR_DEFAULT_LIMIT = 5;
+const SIMILAR_MIN_LIMIT = 1;
+const SIMILAR_MAX_LIMIT = 20;
 
 const ACTIVITY_DEFAULT_DAYS = 1;
 const ACTIVITY_MIN_DAYS = 1;
@@ -236,6 +241,19 @@ function parseSearchLimit(raw: string | undefined): number {
   }
 
   return Math.min(SEARCH_MAX_LIMIT, Math.max(SEARCH_MIN_LIMIT, parsed));
+}
+
+function parseSimilarLimit(raw: string | undefined): number {
+  if (raw === undefined || raw === '') {
+    return SIMILAR_DEFAULT_LIMIT;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) {
+    return SIMILAR_DEFAULT_LIMIT;
+  }
+
+  return Math.min(SIMILAR_MAX_LIMIT, Math.max(SIMILAR_MIN_LIMIT, parsed));
 }
 
 function parseActivityDays(raw: string | undefined): number {
@@ -734,6 +752,13 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     const limit = parseActivityLimit(c.req.query('limit'));
     const events = getTicketTimeline(deps.cache, id, { limit });
     return c.json(events.map(toActivityEventDto));
+  });
+
+  app.get('/api/tickets/:id/similar', (c) => {
+    const id = c.req.param('id');
+    const limit = parseSimilarLimit(c.req.query('limit'));
+    const hits = getSimilarTickets(deps.cache, id, { limit });
+    return c.json(hits.map(toTicketSimilarResultDto));
   });
 
   app.get('/api/tickets/:id{.+}', async (c) => {

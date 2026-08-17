@@ -1185,6 +1185,120 @@ describe('createApiRoutes', () => {
     expect(await response.json()).toEqual([]);
   });
 
+  it('returns similar tickets sorted by score for a cached ticket id', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    const target = makeTicket({
+      id: 'bdboard-target',
+      projectId: a.id,
+      title: 'Similar ticket detection',
+      description: 'Show similar tickets in the detail panel',
+    });
+    const high = makeTicket({
+      id: 'bdboard-high',
+      projectId: a.id,
+      title: 'Similar ticket detection',
+      description: 'Show similar tickets in the detail panel',
+    });
+    const medium = makeTicket({
+      id: 'bdboard-medium',
+      projectId: b.id,
+      title: 'Similar ticket panel',
+      description: 'Show similar tickets in the detail panel',
+    });
+    const unrelated = makeTicket({
+      id: 'bdboard-unrelated',
+      projectId: b.id,
+      title: 'Mobile tunnel QR code',
+      description: 'Fix Safari credential URL handling',
+    });
+
+    cache.putProject({
+      project: { ...a, name: 'Alpha Project' },
+      tickets: [target, high],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+    cache.putProject({
+      project: { ...b, name: 'Beta Project' },
+      tickets: [medium, unrelated],
+      fingerprint: 'fp-b',
+      fetchedAt: NOW,
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/tickets/bdboard-target/similar');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveLength(2);
+    expect(body[0]).toEqual({
+      id: 'bdboard-high',
+      projectId: a.id,
+      projectName: 'Alpha Project',
+      title: 'Similar ticket detection',
+      status: 'open',
+      priority: 2,
+      issueType: 'task',
+      score: 1,
+    });
+    expect(body[1].id).toBe('bdboard-medium');
+    expect(body[1].score).toBeGreaterThan(0);
+    expect(body.some((entry: { id: string }) => entry.id === 'bdboard-target')).toBe(false);
+    expect(body.some((entry: { id: string }) => entry.id === 'bdboard-unrelated')).toBe(false);
+    assertNoDates(body);
+  });
+
+  it('returns an empty array for similar tickets when ticket is missing', async () => {
+    const cache = createFakeBoardCache();
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/tickets/missing-ticket/similar');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it('clamps similar ticket limit between 1 and 20', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const target = makeTicket({
+      id: 'bdboard-target',
+      projectId: a.id,
+      title: 'Similar ticket detection',
+      description: 'Detail panel display',
+    });
+    const similarTickets = Array.from({ length: 25 }, (_, index) =>
+      makeTicket({
+        id: `bdboard-similar-${index}`,
+        projectId: a.id,
+        title: 'Similar ticket detection',
+        description: 'Detail panel display',
+      }),
+    );
+
+    cache.putProject({
+      project: a,
+      tickets: [target, ...similarTickets],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+
+    const over = await app.request('/api/tickets/bdboard-target/similar?limit=100');
+    expect(over.status).toBe(200);
+    expect((await over.json()) as unknown[]).toHaveLength(20);
+
+    const under = await app.request('/api/tickets/bdboard-target/similar?limit=0');
+    expect(under.status).toBe(200);
+    expect((await under.json()) as unknown[]).toHaveLength(1);
+
+    const defaultLimit = await app.request('/api/tickets/bdboard-target/similar');
+    expect(defaultLimit.status).toBe(200);
+    expect((await defaultLimit.json()) as unknown[]).toHaveLength(5);
+  });
+
   it('returns throughput stats with ISO weekStart and projectName', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');

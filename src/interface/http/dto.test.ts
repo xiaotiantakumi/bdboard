@@ -12,6 +12,7 @@ import {
   toProjectDto,
   toSessionDto,
   toTicketDetailDto,
+  toTicketSimilarResultDto,
   toTicketSummaryDto,
   toTicketTokenUsageDto,
 } from './dto.js';
@@ -829,5 +830,36 @@ describe('dto', () => {
       heldForMs: 0,
       isLongHeld: false,
     });
+  });
+
+  it('converts similar ticket hits to DTOs with score', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-similar',
+      projectId: '/projects/a',
+      title: 'Similar ticket detection',
+    });
+    const dto = toTicketSimilarResultDto({
+      ticket,
+      project: {
+        id: '/projects/a',
+        name: 'Alpha Project',
+        rootPath: '/projects/a',
+        prefixes: ['bdboard'],
+        aliasPaths: [],
+      },
+      score: 0.75,
+    });
+
+    expect(dto).toEqual({
+      id: 'bdboard-similar',
+      projectId: '/projects/a',
+      projectName: 'Alpha Project',
+      title: 'Similar ticket detection',
+      status: 'open',
+      priority: 2,
+      issueType: 'task',
+      score: 0.75,
+    });
+    assertNoDates(dto);
   });
 });

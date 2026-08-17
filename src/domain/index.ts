@@ -18,6 +18,7 @@ export * from './stalled.js';
 export * from './status.js';
 export * from './ticket.js';
 export * from './ticket-id.js';
+export * from './ticket-similarity.js';
 export * from './passphrase.js';
 export * from './scan-root-policy.js';
 export * from './wip-limits.js';
