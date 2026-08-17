@@ -3,7 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, type HygieneIssueDto, type LeaseHealthDto } from '../api';
+import { ApiError, type HygieneIssueDto, type LeaseHealthDto, type MergeSlotStatusDto } from '../api';
 import {
   CONFLICT_WRITE_HELP,
   TUNNEL_WRITE_HELP,
@@ -18,6 +18,7 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     fetchHygieneIssues: vi.fn(),
     fetchLeaseHealth: vi.fn(),
+    fetchMergeSlotStatus: vi.fn(),
     fetchAllHarnessStatus: vi.fn(),
     postProjectHarnessInject: vi.fn(),
     postTicketQuickAction: vi.fn(),
@@ -42,6 +43,7 @@ import {
   fetchAllHarnessStatus,
   fetchHygieneIssues,
   fetchLeaseHealth,
+  fetchMergeSlotStatus,
   postProjectHarnessInject,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -50,6 +52,7 @@ import { copyTextToClipboard } from '../bdCommands';
 
 const fetchHygieneIssuesMock = vi.mocked(fetchHygieneIssues);
 const fetchLeaseHealthMock = vi.mocked(fetchLeaseHealth);
+const fetchMergeSlotStatusMock = vi.mocked(fetchMergeSlotStatus);
 const fetchAllHarnessStatusMock = vi.mocked(fetchAllHarnessStatus);
 const postProjectHarnessInjectMock = vi.mocked(postProjectHarnessInject);
 const postTicketQuickActionMock = vi.mocked(postTicketQuickAction);
@@ -78,6 +81,20 @@ function makeLeaseHealth(
       olderThan: '10m',
       projects: [],
     },
+    ...overrides,
+  };
+}
+
+function makeMergeSlotStatus(
+  overrides: Partial<MergeSlotStatusDto> & Pick<MergeSlotStatusDto, 'projectId'>,
+): MergeSlotStatusDto {
+  return {
+    present: true,
+    held: false,
+    holder: null,
+    heldSinceIso: null,
+    heldForMs: 0,
+    isLongHeld: false,
     ...overrides,
   };
 }
@@ -115,10 +132,12 @@ describe('HygienePanel', () => {
   beforeEach(() => {
     fetchHygieneIssuesMock.mockReset();
     fetchLeaseHealthMock.mockReset();
+    fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
     postProjectHarnessInjectMock.mockReset();
     fetchHygieneIssuesMock.mockResolvedValue([]);
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
+    fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
     copyTextToClipboardMock.mockReset();
     copyTextToClipboardMock.mockResolvedValue(undefined);
@@ -293,9 +312,11 @@ describe('HygienePanel stale lease display', () => {
   beforeEach(() => {
     fetchHygieneIssuesMock.mockReset();
     fetchLeaseHealthMock.mockReset();
+    fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
     fetchHygieneIssuesMock.mockResolvedValue([]);
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
+    fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
   });
 
@@ -489,16 +510,107 @@ describe('HygienePanel stale lease display', () => {
   });
 });
 
+describe('HygienePanel merge slot display', () => {
+  beforeEach(() => {
+    fetchHygieneIssuesMock.mockReset();
+    fetchLeaseHealthMock.mockReset();
+    fetchMergeSlotStatusMock.mockReset();
+    fetchAllHarnessStatusMock.mockReset();
+    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
+    fetchMergeSlotStatusMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
+  });
+
+  it('renders held merge slot with holder name and kind label', async () => {
+    fetchMergeSlotStatusMock.mockResolvedValue([
+      makeMergeSlotStatus({
+        projectId: 'proj-a',
+        held: true,
+        holder: 'example-user',
+        heldSinceIso: '2026-08-17T10:00:00.000Z',
+        heldForMs: 300_000,
+        isLongHeld: false,
+      }),
+    ]);
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('マージスロット')).toBeInTheDocument();
+    expect(screen.getByText('proj-a')).toBeInTheDocument();
+    expect(screen.getByText('example-user')).toBeInTheDocument();
+    expect(screen.getByText('保持中 5分')).toBeInTheDocument();
+  });
+
+  it('shows warning badge when merge slot is long held', async () => {
+    fetchMergeSlotStatusMock.mockResolvedValue([
+      makeMergeSlotStatus({
+        projectId: 'proj-a',
+        held: true,
+        holder: 'example-user',
+        heldForMs: 2_100_000,
+        isLongHeld: true,
+      }),
+    ]);
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('マージスロット')).toBeInTheDocument();
+    expect(screen.getByText('警告')).toBeInTheDocument();
+  });
+
+  it('does not show warning badge when merge slot is not long held', async () => {
+    fetchMergeSlotStatusMock.mockResolvedValue([
+      makeMergeSlotStatus({
+        projectId: 'proj-a',
+        held: true,
+        holder: 'example-user',
+        heldForMs: 300_000,
+        isLongHeld: false,
+      }),
+    ]);
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('マージスロット')).toBeInTheDocument();
+    expect(screen.queryByText('警告')).not.toBeInTheDocument();
+  });
+
+  it('does not render unheld merge slot entries', async () => {
+    fetchMergeSlotStatusMock.mockResolvedValue([
+      makeMergeSlotStatus({
+        projectId: 'proj-a',
+        held: false,
+      }),
+    ]);
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('警告はありません')).toBeInTheDocument();
+    expect(screen.queryByText('マージスロット')).not.toBeInTheDocument();
+  });
+
+  it('passes projectIds to fetchMergeSlotStatus when provided', async () => {
+    renderHygienePanel({ projectIds: ['proj-a', 'proj-b'] });
+
+    await screen.findByText('警告はありません');
+
+    expect(fetchMergeSlotStatusMock).toHaveBeenCalledWith(['proj-a', 'proj-b']);
+  });
+});
+
 describe('HygienePanel repair actions', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
   beforeEach(() => {
     fetchHygieneIssuesMock.mockReset();
     fetchLeaseHealthMock.mockReset();
+    fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
     postProjectHarnessInjectMock.mockReset();
     fetchHygieneIssuesMock.mockResolvedValue([]);
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
+    fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
     postTicketQuickActionMock.mockReset();
     postTicketQuickActionUndoMock.mockReset();

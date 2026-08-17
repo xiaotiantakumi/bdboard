@@ -8,6 +8,7 @@ export * from './bd/bd-cli-issue-writer.js';
 export * from './bd/bd-cli-dependency-writer.js';
 export * from './bd/bd-cli-issue-repository.js';
 export * from './bd/bd-cli-lease-reader.js';
+export * from './bd/bd-cli-merge-slot-reader.js';
 export * from './bd/bd-cli-lease-reclaimer.js';
 export * from './bd/bd-cli-session-link-reader.js';
 export * from './bd/bd-cli-session-link-writer.js';

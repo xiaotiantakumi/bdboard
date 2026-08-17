@@ -788,6 +788,29 @@ export function fetchLeaseHealth(
   return getJson<LeaseHealthDto>(path);
 }
 
+export interface MergeSlotStatusDto {
+  projectId: string;
+  present: boolean;
+  held: boolean;
+  holder: string | null;
+  heldSinceIso: string | null;
+  heldForMs: number;
+  isLongHeld: boolean;
+}
+
+export function fetchMergeSlotStatus(
+  projectIds: readonly string[] = [],
+): Promise<MergeSlotStatusDto[]> {
+  const searchParams = new URLSearchParams();
+  if (projectIds.length > 0) {
+    searchParams.set('projects', projectIds.join(','));
+  }
+  const query = searchParams.toString();
+  const path =
+    query.length > 0 ? `/api/merge-slot-status?${query}` : '/api/merge-slot-status';
+  return getJson<MergeSlotStatusDto[]>(path);
+}
+
 export interface GraphNodeDto {
   ticketId: string;
   projectId: string;

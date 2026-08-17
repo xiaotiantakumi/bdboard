@@ -21,6 +21,7 @@ import type { SessionLinkReaderPort } from '../../application/ports/session-link
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
+import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import { createEventHub } from '../sse/event-hub.js';
@@ -1493,6 +1494,79 @@ describe('createApiRoutes', () => {
         reasons: [],
       },
     ]);
+  });
+
+  it('returns 501 when merge slot reader is not configured', async () => {
+    const app = createApiRoutes(createDeps());
+    const response = await app.request('/api/merge-slot-status');
+    const body = await response.json();
+
+    expect(response.status).toBe(501);
+    expect(body).toEqual({ error: 'merge slot status not available' });
+  });
+
+  it('returns held merge slot status for cached projects', async () => {
+    const cache = createFakeBoardCache();
+    const projectA = project('proj-a', '/projects/a');
+    seedCache(cache, [{ project: projectA, ticketId: 'bdboard-a' }]);
+
+    const mergeSlotReader: MergeSlotReader = {
+      readMergeSlotSignal: vi.fn(async () => ({
+        status: 'in_progress',
+        holder: 'session-merge-holder',
+        // 15 minutes before the suite's frozen NOW, so heldForMs below is a
+        // real positive delta rather than clamping to 0 (a future-relative-
+        // to-NOW updatedAt would silently mask a heldForMs regression).
+        updatedAt: '2026-06-01T11:45:00.000Z',
+      })),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, mergeSlotReader }));
+    const response = await app.request('/api/merge-slot-status');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual([
+      {
+        projectId: 'proj-a',
+        present: true,
+        held: true,
+        holder: 'session-merge-holder',
+        heldSinceIso: '2026-06-01T11:45:00.000Z',
+        heldForMs: 15 * 60_000,
+        isLongHeld: false,
+      },
+    ]);
+    assertNoDates(body);
+  });
+
+  it('filters merge slot status by projects query parameter', async () => {
+    const cache = createFakeBoardCache();
+    const projectA = project('proj-a', '/projects/a');
+    const projectB = project('proj-b', '/projects/b');
+    seedCache(cache, [
+      { project: projectA, ticketId: 'bdboard-a' },
+      { project: projectB, ticketId: 'bdboard-b' },
+    ]);
+
+    const readMergeSlotSignal = vi.fn(async () => ({
+      status: 'open',
+      holder: null,
+      updatedAt: '2026-08-17T10:48:26Z',
+    }));
+    const mergeSlotReader: MergeSlotReader = { readMergeSlotSignal };
+
+    const app = createApiRoutes(createDeps({ cache, mergeSlotReader }));
+    const response = await app.request(
+      `/api/merge-slot-status?projects=${encodeURIComponent(projectA.id)}`,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toHaveLength(1);
+    expect(body[0]?.projectId).toBe('proj-a');
+    expect(readMergeSlotSignal).toHaveBeenCalledTimes(1);
+    expect(readMergeSlotSignal).toHaveBeenCalledWith('/projects/a');
   });
 
   it('clamps stats weeks between 1 and 26 and defaults invalid values to 8', async () => {

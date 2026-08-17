@@ -41,6 +41,7 @@ import {
   createBdCliHumanDecisions,
   createBdCliIssueRepository,
   createBdCliLeaseReader,
+  createBdCliMergeSlotReader,
   createBdCliLeaseReclaimer,
   createBdCliDependencyWriter,
   createBdCliIssueWriter,
@@ -244,6 +245,7 @@ async function main(): Promise<void> {
 
   const repository = createBdCliIssueRepository(commandRunner, { bdPath });
   const leaseReader = createBdCliLeaseReader(commandRunner, { bdPath });
+  const mergeSlotReader = createBdCliMergeSlotReader(commandRunner, { bdPath });
   const leaseReclaimer = createBdCliLeaseReclaimer(commandRunner, { bdPath });
   const commentReader = createBdCliCommentReader(commandRunner);
   const humanDecisions = createBdCliHumanDecisions(commandRunner);
@@ -795,6 +797,7 @@ async function main(): Promise<void> {
     sessionTail: sessionTailReader,
     writeAccess,
     leaseReader,
+    mergeSlotReader,
     reclaimScheduler,
   });
 

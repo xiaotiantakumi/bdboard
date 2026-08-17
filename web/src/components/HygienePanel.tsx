@@ -13,6 +13,7 @@ import {
   fetchAllHarnessStatus,
   fetchHygieneIssues,
   fetchLeaseHealth,
+  fetchMergeSlotStatus,
   postProjectHarnessInject,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -43,6 +44,7 @@ const REPAIR_FEEDBACK_MS = 4000;
 const DEFAULT_REPAIR_PRIORITY = 2;
 const HARNESS_DRIFT_KIND_LABEL = 'ハーネス要更新';
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
+const MERGE_SLOT_KIND_LABEL = 'マージスロット';
 
 const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   overdue_defer: '期限超過の保留',
@@ -229,6 +231,10 @@ export function HygienePanel({ projectIds, onSelectTicket }: HygienePanelProps) 
   const leaseHealthQuery = useQuery({
     queryKey: ['lease-health', projectIdsKey],
     queryFn: () => fetchLeaseHealth(projectIds),
+  });
+  const mergeSlotQuery = useQuery({
+    queryKey: ['merge-slot-status', projectIdsKey],
+    queryFn: () => fetchMergeSlotStatus(projectIds),
   });
 
   const [ariaLiveMessage, setAriaLiveMessage] = useState('');
@@ -430,14 +436,23 @@ export function HygienePanel({ projectIds, onSelectTicket }: HygienePanelProps) 
   const harnessDriftItems = harnessDriftQuery.data ?? [];
   const hygieneIssues = query.data ?? [];
   const staleLeases = leaseHealthQuery.data?.staleLeases ?? [];
+  const heldMergeSlots = (mergeSlotQuery.data ?? []).filter(
+    (status) => status.held,
+  );
   const reclaimProjects = filterReclaimProjects(
     leaseHealthQuery.data,
     projectIds,
   );
   const isLoading =
-    query.isLoading || harnessDriftQuery.isLoading || leaseHealthQuery.isLoading;
+    query.isLoading ||
+    harnessDriftQuery.isLoading ||
+    leaseHealthQuery.isLoading ||
+    mergeSlotQuery.isLoading;
   const isError =
-    query.isError || harnessDriftQuery.isError || leaseHealthQuery.isError;
+    query.isError ||
+    harnessDriftQuery.isError ||
+    leaseHealthQuery.isError ||
+    mergeSlotQuery.isError;
   const loadError =
     query.error instanceof Error
       ? query.error
@@ -445,11 +460,14 @@ export function HygienePanel({ projectIds, onSelectTicket }: HygienePanelProps) 
         ? harnessDriftQuery.error
         : leaseHealthQuery.error instanceof Error
           ? leaseHealthQuery.error
-          : null;
+          : mergeSlotQuery.error instanceof Error
+            ? mergeSlotQuery.error
+            : null;
   const hasAnyIssues =
     hygieneIssues.length > 0 ||
     harnessDriftItems.length > 0 ||
-    staleLeases.length > 0;
+    staleLeases.length > 0 ||
+    heldMergeSlots.length > 0;
 
   return (
     <section className="hygiene-panel" aria-label="ボード健全性">
@@ -524,6 +542,34 @@ export function HygienePanel({ projectIds, onSelectTicket }: HygienePanelProps) 
                     ))
                   )}
                 </div>
+              </div>
+            </li>
+          )}
+          {heldMergeSlots.length > 0 && (
+            <li key="merge-slot">
+              <div className="hygiene-merge-slot-group">
+                {heldMergeSlots.map((status) => (
+                  <div
+                    key={status.projectId}
+                    className="hygiene-issue-row hygiene-issue-row-static"
+                  >
+                    <span className="hygiene-kind-badge hygiene-kind-merge_slot">
+                      {MERGE_SLOT_KIND_LABEL}
+                    </span>
+                    {status.isLongHeld && (
+                      <span className="badge badge-stalled">警告</span>
+                    )}
+                    <span className="hygiene-issue-project">
+                      {status.projectId}
+                    </span>
+                    <span className="hygiene-issue-id">
+                      {status.holder ?? '(不明)'}
+                    </span>
+                    <span className="hygiene-issue-message">
+                      保持中 {formatStaleDuration(status.heldForMs)}
+                    </span>
+                  </div>
+                ))}
               </div>
             </li>
           )}
