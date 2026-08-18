@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type {
   AgeDistributionDto,
@@ -57,6 +58,65 @@ const CFD_STATUS_COLORS: Record<string, string> = {
   hooked: 'var(--throughput-cfd-hooked, #fb7185)',
 };
 
+const CHART_DESCRIPTIONS = {
+  openTicketAge:
+    '未完了チケットが作成から何日経過しているか(件数)',
+  modelWeeklyCloses:
+    '工程で使用したAIモデルごとの、週次クローズ件数',
+  modelStageDistribution:
+    '実装/テスト/レビュー等の工程ごとに、どのAIモデルが何件使われたか',
+} as const;
+
+const SECTION_DESCRIPTIONS = {
+  throughput:
+    'チケットの完了ペースと、未完了チケットの滞留状況',
+  flow:
+    '日々のステータス別件数の推移からボトルネックを読み取る',
+  modelStats:
+    'bdメタデータ(bdboard.model.<工程>)から集計した、工程ごとのAIモデル使用実績',
+} as const;
+
+function ChartBlockHeader({
+  heading,
+  description,
+  level,
+}: {
+  heading: string;
+  description?: string;
+  level: 4 | 5;
+}) {
+  const Heading = level === 4 ? 'h4' : 'h5';
+
+  return (
+    <>
+      <Heading className="throughput-chart-heading">{heading}</Heading>
+      {description !== undefined && (
+        <p className="throughput-chart-description">{description}</p>
+      )}
+    </>
+  );
+}
+
+function StatsSection({
+  heading,
+  description,
+  children,
+}: {
+  heading: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="throughput-stats-section" aria-label={heading}>
+      <div className="throughput-stats-section-header">
+        <h4 className="throughput-stats-section-heading">{heading}</h4>
+        <p className="throughput-stats-section-description">{description}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 interface WeeklyBarChartProps {
   weeklyCloses: readonly WeeklyCloseCountDto[];
   chartLabel: string;
@@ -107,7 +167,10 @@ function CfdStackedChart({ days, chartLabel }: CfdStackedChartProps) {
   if (days.length === 0 || !hasAnyCfdData(days)) {
     return (
       <div className="throughput-chart-block">
-        <h4 className="throughput-chart-heading">累積フロー図 (CFD)</h4>
+        <ChartBlockHeader
+          heading="累積フロー図 (CFD)"
+          level={5}
+        />
         <p className="empty-message">CFDデータはまだありません</p>
       </div>
     );
@@ -117,10 +180,17 @@ function CfdStackedChart({ days, chartLabel }: CfdStackedChartProps) {
   const maxTotal = Math.max(1, ...days.map((day) => dayTotal(day.counts)));
   const chartHeight = 56;
   const barWidth = 100 / Math.max(days.length, 1);
+  const latestDay = days[days.length - 1];
+  const visibleStatuses = statuses.filter((status) =>
+    days.some((day) => (day.counts[status] ?? 0) > 0),
+  );
 
   return (
     <div className="throughput-chart-block">
-      <h4 className="throughput-chart-heading">累積フロー図 (CFD)</h4>
+      <ChartBlockHeader
+        heading="累積フロー図 (CFD)"
+        level={5}
+      />
       <ul className="throughput-cfd-list">
         {days.map((day) => (
           <li key={day.date} className="throughput-cfd-item">
@@ -129,6 +199,29 @@ function CfdStackedChart({ days, chartLabel }: CfdStackedChartProps) {
           </li>
         ))}
       </ul>
+      {visibleStatuses.length > 0 && (
+        <ul className="throughput-cfd-legend throughput-cfd-legend-above-chart" aria-label="ステータス凡例">
+          {visibleStatuses.map((status) => {
+            const latestCount = latestDay?.counts[status] ?? 0;
+            return (
+              <li key={status} className="throughput-cfd-legend-item">
+                <span
+                  className="throughput-cfd-legend-swatch"
+                  style={{ background: CFD_STATUS_COLORS[status] ?? '#64748b' }}
+                  aria-hidden="true"
+                />
+                <span>
+                  {CFD_STATUS_LABELS[status] ?? status}
+                  <span className="throughput-cfd-legend-count">
+                    {' '}
+                    (最新 {latestCount}件)
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
       <svg
         className="throughput-cfd-chart"
         viewBox={`0 0 100 ${chartHeight}`}
@@ -169,22 +262,6 @@ function CfdStackedChart({ days, chartLabel }: CfdStackedChartProps) {
           });
         })}
       </svg>
-      <ul className="throughput-cfd-legend">
-        {statuses
-          .filter((status) =>
-            days.some((day) => (day.counts[status] ?? 0) > 0),
-          )
-          .map((status) => (
-            <li key={status} className="throughput-cfd-legend-item">
-              <span
-                className="throughput-cfd-legend-swatch"
-                style={{ background: CFD_STATUS_COLORS[status] ?? '#64748b' }}
-                aria-hidden="true"
-              />
-              <span>{CFD_STATUS_LABELS[status] ?? status}</span>
-            </li>
-          ))}
-      </ul>
     </div>
   );
 }
@@ -196,7 +273,10 @@ function WeeklyBarChart({ weeklyCloses, chartLabel }: WeeklyBarChartProps) {
 
   return (
     <div className="throughput-chart-block">
-      <h4 className="throughput-chart-heading">週次クローズ数</h4>
+      <ChartBlockHeader
+        heading="週次クローズ数"
+        level={5}
+      />
       <ul className="throughput-week-list">
         {weeklyCloses.map((entry) => (
           <li key={entry.weekStart} className="throughput-week-item">
@@ -249,7 +329,11 @@ function AgeBarChart({ distribution, chartLabel }: AgeBarChartProps) {
 
   return (
     <div className="throughput-chart-block">
-      <h4 className="throughput-chart-heading">未完了チケットの年齢分布</h4>
+      <ChartBlockHeader
+        heading="未完了チケットの年齢分布"
+        description={CHART_DESCRIPTIONS.openTicketAge}
+        level={5}
+      />
       <ul className="throughput-age-list">
         {entries.map((entry) => (
           <li key={entry.key} className="throughput-age-item">
@@ -317,9 +401,13 @@ function StatsCard({
   return (
     <article className="throughput-stats-card">
       <h3 className="throughput-stats-card-title">{title}</h3>
-      <WeeklyBarChart weeklyCloses={weeklyCloses} chartLabel={weeklyLabel} />
-      <AgeBarChart distribution={openTicketAge} chartLabel={ageLabel} />
-      <CfdStackedChart days={cfdDays} chartLabel={cfdLabel} />
+      <StatsSection heading="スループット" description={SECTION_DESCRIPTIONS.throughput}>
+        <WeeklyBarChart weeklyCloses={weeklyCloses} chartLabel={weeklyLabel} />
+        <AgeBarChart distribution={openTicketAge} chartLabel={ageLabel} />
+      </StatsSection>
+      <StatsSection heading="フロー" description={SECTION_DESCRIPTIONS.flow}>
+        <CfdStackedChart days={cfdDays} chartLabel={cfdLabel} />
+      </StatsSection>
     </article>
   );
 }
@@ -401,7 +489,11 @@ function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
   return (
     <>
       <div className="throughput-chart-block">
-        <h4 className="throughput-chart-heading">モデル別クローズ件数(週次)</h4>
+        <ChartBlockHeader
+          heading="モデル別クローズ件数(週次)"
+          description={CHART_DESCRIPTIONS.modelWeeklyCloses}
+          level={4}
+        />
         <table className="model-stats-table">
           <thead>
             <tr>
@@ -424,7 +516,11 @@ function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
         </table>
       </div>
       <div className="throughput-chart-block">
-        <h4 className="throughput-chart-heading">工程×モデルの分布</h4>
+        <ChartBlockHeader
+          heading="工程×モデルの分布"
+          description={CHART_DESCRIPTIONS.modelStageDistribution}
+          level={4}
+        />
         <table className="model-stats-table">
           <thead>
             <tr>
@@ -532,7 +628,13 @@ export function ThroughputStats({
       {!isLoading &&
         !isError &&
         modelStatsQuery.data !== undefined && (
-          <section className="model-stats-block">
+          <section className="model-stats-block" aria-label="モデル別実績">
+            <div className="throughput-stats-section-header">
+              <h3 className="throughput-stats-section-heading">モデル別実績</h3>
+              <p className="throughput-stats-section-description">
+                {SECTION_DESCRIPTIONS.modelStats}
+              </p>
+            </div>
             <ModelStatsTables stats={modelStatsQuery.data} />
           </section>
         )}

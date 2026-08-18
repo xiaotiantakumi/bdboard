@@ -157,6 +157,28 @@ describe('ThroughputStats', () => {
     expect(screen.getAllByText('ブロック中').length).toBeGreaterThan(0);
   });
 
+  it('shows each CFD legend count from the latest snapshot', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(
+      makeStats({ projects: [] }),
+    );
+    fetchCfdStatsMock.mockResolvedValue(
+      makeCfdStats({
+        projects: [],
+        totals: [
+          { date: '2026-08-13', counts: { open: 2 } },
+          { date: '2026-08-14', counts: { open: 7 } },
+        ],
+      }),
+    );
+
+    renderThroughputStats();
+
+    const legend = await screen.findByLabelText('ステータス凡例');
+    const [openItem] = within(legend).getAllByRole('listitem');
+    expect(openItem).toHaveTextContent('未着手 (最新 7件)');
+    expect(openItem).not.toHaveTextContent('最新 2件');
+  });
+
   it('shows CFD empty state when snapshot data is missing', async () => {
     fetchThroughputStatsMock.mockResolvedValue(makeStats());
     fetchCfdStatsMock.mockResolvedValue(
