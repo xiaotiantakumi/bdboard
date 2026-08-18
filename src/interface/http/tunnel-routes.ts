@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { TunnelAccessService } from '../../application/tunnel/tunnel-access.js';
 import type { TunnelService, TunnelState } from '../../application/tunnel/tunnel-service.js';
-import { isLocalControlRequest } from './local-request.js';
+import { isLocalBasicAuthRequest } from './local-request.js';
 
 export interface TunnelRoutesDeps {
   readonly tunnelService: TunnelService;
@@ -50,7 +50,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
   const app = new Hono();
 
   const localOnlyGuard: MiddlewareHandler = async (c, next) => {
-    if (!isLocalControlRequest(c)) {
+    if (!isLocalBasicAuthRequest(c)) {
       return c.json({ error: 'tunnel control API is local-only' }, 403);
     }
     await next();
