@@ -10,6 +10,7 @@ import {
   LANE_LABELS,
   LANES,
   isLaneStatusMismatch,
+  postChatMessage,
   postChatMessageStream,
   putScanRootsConfig,
 } from './api';
@@ -107,6 +108,50 @@ describe('chat thread API', () => {
       reply: 'ABCD', sessionId: 's1', agentId: 'claude',
     });
     expect(onDelta.mock.calls).toEqual([['AB'], ['CD']]);
+  });
+
+  it('includes image payloads in both non-streaming and streaming chat requests', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ reply: 'bulk', sessionId: 's1', agentId: 'claude' }),
+          { headers: { 'Content-Type': 'application/json' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: done\ndata: {"reply":"stream","sessionId":"s2","agentId":"claude"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+        ),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+    const images = [{ mimeType: 'image/png' as const, data: 'aW1hZ2U=' }];
+
+    await postChatMessage({ projectId: 'p', message: 'bulk image', images });
+    await postChatMessageStream(
+      { projectId: 'p', message: 'stream image', images },
+      { onDelta: vi.fn() },
+    );
+
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      projectId: 'p',
+      message: 'bulk image',
+      images,
+    });
+    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toEqual({
+      projectId: 'p',
+      message: 'stream image',
+      images,
+    });
   });
 
   it('postChatMessageStream converts stream errors to ApiError', async () => {

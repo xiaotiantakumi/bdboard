@@ -7,6 +7,7 @@ import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { ChatMessageRepository } from '../ports/chat-message-repository.js';
 import {
   ChatAgentError,
+  type ChatImageAttachment,
   type ChatAgentPort,
   type ChatFailureCode,
   type ChatTurnRequest,
@@ -25,6 +26,7 @@ export type SendChatMessageFailure =
   | { readonly kind: 'agent-unavailable'; readonly detail: string }
   | { readonly kind: 'busy' }
   | { readonly kind: 'streaming-not-supported' }
+  | { readonly kind: 'image-not-supported' }
   | { readonly kind: 'agent-error'; readonly code: ChatFailureCode; readonly detail: string };
 
 export type SendChatMessageResult =
@@ -57,6 +59,16 @@ export interface SendChatMessageInput {
   readonly sessionId?: string;
   readonly agentId?: string;
   readonly model?: string;
+  readonly images?: readonly ChatImageAttachment[];
+}
+
+export const IMAGE_ONLY_CHAT_MESSAGE = '添付画像の内容を説明してください。';
+
+function normalizedInputMessage(input: Pick<SendChatMessageInput, 'message' | 'images'>): string {
+  const trimmed = input.message.trim();
+  return trimmed.length > 0 ? trimmed : input.images !== undefined && input.images.length > 0
+    ? IMAGE_ONLY_CHAT_MESSAGE
+    : '';
 }
 
 export interface ResolvedChatTurnAgent {
@@ -78,7 +90,7 @@ export async function resolveChatTurnAgent(
 ): Promise<ResolveChatTurnAgentResult> {
   const cachedProject = deps.cache.getProject(input.projectId);
   if (cachedProject === undefined) return { ok: false, failure: { kind: 'project-not-found' } };
-  const trimmedMessage = input.message.trim();
+  const trimmedMessage = normalizedInputMessage(input);
   if (trimmedMessage.length === 0) return { ok: false, failure: { kind: 'invalid-message', detail: 'message is empty' } };
   if (trimmedMessage.length > CHAT_MESSAGE_MAX_LENGTH) return { ok: false, failure: { kind: 'invalid-message', detail: 'message is too long' } };
 
@@ -100,13 +112,18 @@ export async function resolveChatTurnAgent(
   if (input.model !== undefined && !(agent.descriptor.models ?? []).some((entry) => entry.id === input.model)) {
     return { ok: false, failure: { kind: 'unknown-model', detail: 'unknown chat model' } };
   }
+  // capability 判定は agent/session/model 解決後に行うが、project lock を
+  // 取得する前に拒否する。画像非対応の入力で他のターンを busy にしない。
+  if ((input.images?.length ?? 0) > 0 && agent.descriptor.supportsImages !== true) {
+    return { ok: false, failure: { kind: 'image-not-supported' } };
+  }
   if (!deps.store.tryAcquire(input.projectId)) return { ok: false, failure: { kind: 'busy' } };
   return { ok: true, agent, trimmedMessage, cachedProject, resolvedAgentId, release: () => deps.store.release(input.projectId) };
 }
 
 export function createChatTurnRequest(
   resolved: Pick<ResolvedChatTurnAgent, 'cachedProject' | 'trimmedMessage'>,
-  input: Pick<SendChatMessageInput, 'sessionId' | 'model'>,
+  input: Pick<SendChatMessageInput, 'sessionId' | 'model' | 'images'>,
 ): ChatTurnRequest {
   return {
     projectRootPath: resolved.cachedProject.project.rootPath,
@@ -114,6 +131,7 @@ export function createChatTurnRequest(
     message: resolved.trimmedMessage,
     ...(input.sessionId !== undefined ? { resumeSessionId: input.sessionId } : {}),
     ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.images !== undefined && input.images.length > 0 ? { images: input.images } : {}),
   };
 }
 
@@ -140,7 +158,7 @@ export function finalizeChatTurnSuccess(
       : [];
   try {
     deps.messages.append(turnResult.sessionId, [
-      { role: 'user', content: input.message.trim() },
+      { role: 'user', content: normalizedInputMessage(input) },
       {
         role: 'assistant',
         content: turnResult.reply,

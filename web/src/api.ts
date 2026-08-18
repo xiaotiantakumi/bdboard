@@ -1136,6 +1136,24 @@ export interface ChatAgentDto {
   capability: ChatAgentCapability;
   availability: ChatAgentAvailability;
   supportsStreaming: boolean;
+  supportsImages: boolean;
+}
+
+export type ChatImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp';
+
+export interface ChatImagePayload {
+  mimeType: ChatImageMimeType;
+  /** data URL prefix を含まない base64 本体。 */
+  data: string;
+}
+
+export interface ChatMessageRequest {
+  projectId: string;
+  message: string;
+  sessionId?: string;
+  agentId?: string;
+  model?: string;
+  images?: ChatImagePayload[];
 }
 
 export interface ChatMessageResponseDto {
@@ -1256,22 +1274,10 @@ export function updateChatThread(
 }
 
 export function postChatMessage(
-  body: {
-    projectId: string;
-    message: string;
-    sessionId?: string;
-    agentId?: string;
-    model?: string;
-  },
+  body: ChatMessageRequest,
   signal?: AbortSignal,
 ): Promise<ChatMessageResponseDto> {
-  const payload: {
-    projectId: string;
-    message: string;
-    sessionId?: string;
-    agentId?: string;
-    model?: string;
-  } = {
+  const payload: ChatMessageRequest = {
     projectId: body.projectId,
     message: body.message,
   };
@@ -1284,6 +1290,9 @@ export function postChatMessage(
   if (body.model !== undefined) {
     payload.model = body.model;
   }
+  if (body.images !== undefined) {
+    payload.images = body.images;
+  }
   return fetchJson<ChatMessageResponseDto>('/api/chat/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1293,13 +1302,7 @@ export function postChatMessage(
 }
 
 export function postChatMessageStream(
-  body: {
-    projectId: string;
-    message: string;
-    sessionId?: string;
-    agentId?: string;
-    model?: string;
-  },
+  body: ChatMessageRequest,
   callbacks: { onDelta: (text: string) => void },
   signal?: AbortSignal,
 ): Promise<ChatMessageResponseDto> {
@@ -1307,6 +1310,7 @@ export function postChatMessageStream(
   if (body.sessionId !== undefined) payload.sessionId = body.sessionId;
   if (body.agentId !== undefined) payload.agentId = body.agentId;
   if (body.model !== undefined) payload.model = body.model;
+  if (body.images !== undefined) payload.images = body.images;
 
   return (async () => {
     const res = await fetch('/api/chat/message/stream', {

@@ -1,9 +1,18 @@
+export type ChatImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp';
+
+export interface ChatImageAttachment {
+  readonly mimeType: ChatImageMimeType;
+  /** HTTP 境界で検証・decode 済みの画像 bytes。base64 文字列は application 層へ渡さない。 */
+  readonly data: Uint8Array;
+}
+
 export interface ChatTurnRequest {
   readonly projectRootPath: string;
   readonly projectName: string;
   readonly message: string;
   readonly resumeSessionId?: string;
   readonly model?: string;
+  readonly images?: readonly ChatImageAttachment[];
 }
 
 export type ChatAgentCapability = 'bd-only' | 'reads-project' | 'unrestricted';
@@ -27,6 +36,8 @@ export interface ChatAgentDescriptor {
   readonly experimental: boolean;
   readonly capability: ChatAgentCapability;
   readonly supportsStreaming?: boolean;
+  /** 省略時は false。画像 bytes を安全に provider へ渡せる adapter だけ true にする。 */
+  readonly supportsImages?: boolean;
 }
 
 /**

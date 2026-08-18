@@ -208,17 +208,24 @@ describe('createCliChatAgent streaming', () => {
     ['success', { exitCode: 0 } as const],
     ['failure', { exitCode: 1 } as const],
     ['aborted', { exitCode: 1, failureKind: 'aborted' as const }],
-  ])('cleans up lastMessageFile on %s', async (_label, result) => {
+  ])('cleans up output and input temporary files on %s', async (_label, result) => {
     const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-streaming-test-'));
     scratchDirs.push(scratchDir);
     const lastMessageFile = path.join(scratchDir, 'artifact.txt');
+    const inputFile = path.join(scratchDir, 'image.png');
     const runner = createStreamingRunner(async () => ({ stdout: '', stderr: '', ...result }));
     const agent = createCliChatAgent(
       { run: async () => ({ stdout: '', stderr: '', exitCode: 0 }) },
       createDummySpec({
         buildStreamingTurn(request) {
           writeFileSync(lastMessageFile, 'artifact', 'utf8');
-          return { args: ['stream'], stdin: request.message, lastMessageFile };
+          writeFileSync(inputFile, 'image', 'utf8');
+          return {
+            args: ['stream'],
+            stdin: request.message,
+            lastMessageFile,
+            temporaryFiles: [inputFile],
+          };
         },
       }),
       {
@@ -230,6 +237,7 @@ describe('createCliChatAgent streaming', () => {
     const outcome = agent.sendMessageStream!(request(), () => {}).catch((error) => error);
     await outcome;
     expect(existsSync(lastMessageFile)).toBe(false);
+    expect(existsSync(inputFile)).toBe(false);
   });
 
   it('passes the supplied AbortSignal through to the streaming runner', async () => {
