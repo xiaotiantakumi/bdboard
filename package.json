@@ -16,7 +16,7 @@
     "test:server": "vitest run",
     "test:web": "npm --prefix web run test",
     "build": "tsc --noEmit",
-    "depcruise": "depcruise --config .dependency-cruiser.cjs src web/src",
+    "depcruise": "depcruise --config .dependency-cruiser.cjs src web",
     "check:boundaries": "npm run depcruise",
     "mcp:config": "tsx src/infrastructure/chat/mcp-client-config-main.ts",
     "verify": "node scripts/verify.mjs",

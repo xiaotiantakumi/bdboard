@@ -67,7 +67,7 @@ module.exports = {
       severity: 'error',
       comment:
         'web/ (browser bundle) must not import from src/ (server). DTO 等は web/src 側で別途定義する',
-      from: { path: '^web/src' },
+      from: { path: '^web/' },
       to: { path: '^src/' },
     },
     {
