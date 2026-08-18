@@ -1172,6 +1172,16 @@ export interface ChatThreadDto {
   updatedAt: string;
 }
 
+export type ChatTurnStatusDto =
+  | { state: 'idle' }
+  | { state: 'processing' }
+  | {
+      state: 'completed';
+      sessionId: string;
+      agentId: string;
+      completedAt: string;
+    };
+
 export interface DiscoveredChatSessionDto {
   sessionId: string;
   lastActivityAt: string;
@@ -1208,6 +1218,20 @@ export function fetchChatThreads(projectId: string): Promise<ChatThreadDto[]> {
   return fetchJson<ChatThreadDto[]>(`/api/chat/threads?${params.toString()}`);
 }
 
+export function fetchChatTurnStatus(projectId: string): Promise<ChatTurnStatusDto> {
+  const params = new URLSearchParams({ projectId });
+  return fetchJson<ChatTurnStatusDto>(
+    `/api/chat/turn-status?${params.toString()}`,
+  );
+}
+
+export function acknowledgeChatTurn(projectId: string, sessionId: string): Promise<void> {
+  const params = new URLSearchParams({ projectId, sessionId });
+  return fetchJson<void>(`/api/chat/turn-status?${params.toString()}`, {
+    method: 'DELETE',
+  });
+}
+
 export function deleteChatThread(sessionId: string, projectId: string): Promise<void> {
   const params = new URLSearchParams({ projectId });
   return fetchJson<void>(
@@ -1231,13 +1255,16 @@ export function updateChatThread(
   );
 }
 
-export function postChatMessage(body: {
-  projectId: string;
-  message: string;
-  sessionId?: string;
-  agentId?: string;
-  model?: string;
-}): Promise<ChatMessageResponseDto> {
+export function postChatMessage(
+  body: {
+    projectId: string;
+    message: string;
+    sessionId?: string;
+    agentId?: string;
+    model?: string;
+  },
+  signal?: AbortSignal,
+): Promise<ChatMessageResponseDto> {
   const payload: {
     projectId: string;
     message: string;
@@ -1261,6 +1288,7 @@ export function postChatMessage(body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+    ...(signal !== undefined ? { signal } : {}),
   });
 }
 

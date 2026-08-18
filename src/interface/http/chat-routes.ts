@@ -110,6 +110,7 @@ const ADOPT_DISCOVERED_SESSION_PATH_PATTERN =
 // 104.12 で着地した、子プロセスを起こさない GET(SQLite/インメモリ読み取りのみ)の免除。
 const CHAT_SESSION_MESSAGES_PATH_PATTERN = /^\/api\/chat\/sessions\/[^/]+\/messages$/;
 const CHAT_THREADS_PATH_PATTERN = /^\/api\/chat\/threads$/;
+const CHAT_TURN_STATUS_PATH_PATTERN = /^\/api\/chat\/turn-status$/;
 
 interface QueuedSseMessage {
   readonly event: string;
@@ -145,6 +146,8 @@ function toChatMessageResponseBody(
 const CHAT_RATE_LIMIT_EXEMPT_PATH_PATTERNS: readonly ChatRateLimitExemptPattern[] = [
   { method: 'GET', pattern: CHAT_SESSION_MESSAGES_PATH_PATTERN },
   { method: 'GET', pattern: CHAT_THREADS_PATH_PATTERN },
+  { method: 'GET', pattern: CHAT_TURN_STATUS_PATH_PATTERN },
+  { method: 'DELETE', pattern: CHAT_TURN_STATUS_PATH_PATTERN },
   { method: 'POST', pattern: ADOPT_DISCOVERED_SESSION_PATH_PATTERN },
 ];
 
@@ -159,6 +162,14 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     perDay: deps.rateLimit?.perDay,
   });
   const defaultWeight = deps.rateLimit?.defaultWeight ?? DEFAULT_CHAT_RATE_LIMIT_WEIGHT;
+  const completedTurns = new Map<
+    string,
+    {
+      readonly sessionId: string;
+      readonly agentId: string;
+      readonly completedAt: string;
+    }
+  >();
   const rateLimit = createChatRateLimitMiddleware(limiter, {
     // /api/chat/agents は免除しない: 1 リクエストで N 個の --version 子プロセスを
     // 起こしうる増幅があるため、ミドルウェアの per-request カウントで抑える。
@@ -358,6 +369,35 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     );
   });
 
+  app.get('/api/chat/turn-status', (c) => {
+    const parsed = threadsQuerySchema.safeParse({ projectId: c.req.query('projectId') });
+    if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
+    if (deps.store.isBusy(parsed.data.projectId)) {
+      return c.json({ state: 'processing' as const });
+    }
+    const completed = completedTurns.get(parsed.data.projectId);
+    if (completed !== undefined) {
+      return c.json({ state: 'completed' as const, ...completed });
+    }
+    return c.json({ state: 'idle' as const });
+  });
+
+  app.delete('/api/chat/turn-status', (c) => {
+    const parsed = z.object({
+      projectId: z.string().min(1).max(200),
+      sessionId: z.string().refine(isValidChatSessionId),
+    }).safeParse({
+      projectId: c.req.query('projectId'),
+      sessionId: c.req.query('sessionId'),
+    });
+    if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
+    const completed = completedTurns.get(parsed.data.projectId);
+    if (completed?.sessionId === parsed.data.sessionId) {
+      completedTurns.delete(parsed.data.projectId);
+    }
+    return c.body(null, 204);
+  });
+
   app.patch('/api/chat/sessions/:sessionId/thread', async (c) => {
     const sessionId = c.req.param('sessionId');
     if (!isValidChatSessionId(sessionId)) {
@@ -442,9 +482,19 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
     };
 
+    completedTurns.delete(parsed.data.projectId);
+
     const result = await sendChatMessage(deps, sendInput);
 
     if (result.ok) {
+      // Publish before writing the response. The client explicitly ACKs only after it
+      // incorporated the reply, closing the finalize-vs-disconnect race for both bulk
+      // and streaming transports.
+      completedTurns.set(parsed.data.projectId, {
+        sessionId: result.sessionId,
+        agentId: result.agentId,
+        completedAt: now().toISOString(),
+      });
       return c.json(toChatMessageResponseBody(result));
     }
 
@@ -528,6 +578,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       ...(parsed.data.agentId !== undefined ? { agentId: parsed.data.agentId } : {}),
       ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
     };
+    completedTurns.delete(parsed.data.projectId);
     const resolved = await resolveChatStreamTurn(deps, sendInput);
     if (!resolved.ok) {
       switch (resolved.failure.kind) {
@@ -554,7 +605,6 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       let clientGone = false;
       let cleanedUp = false;
       let finished = false;
-      const controller = new AbortController();
       const signal = c.req.raw.signal;
       const waitForQueue = (): Promise<void> => new Promise((resolve) => {
         wake = resolve;
@@ -573,49 +623,43 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         wakeUp();
       };
       const cleanup = (): void => {
-        // bdboard-l1t.9 Opus レビュー N7: 冪等ガードは副作用の前に置く。
-        // stream.onAbort() と signal の 'abort' リスナーの両方から呼ばれるため、
-        // 2回目の呼び出しで controller.abort()/wakeUp() を再度走らせても実害は
-        // 無いが、意図(「1回だけ実行する」)をガードの位置で表明しておく。
+        // bdboard-7st added the browser-side fetch abort, but the old server cleanup
+        // forwarded that abort to the CLI process and killed the actual AI turn.
+        // A disconnect now stops SSE delivery only; runTurn deliberately receives no
+        // request signal and continues through finalizeChatTurnSuccess for recovery.
+        // onAbort() and the request signal can both arrive, so cleanup stays idempotent.
         if (cleanedUp) return;
         cleanedUp = true;
         clientGone = true;
-        controller.abort();
         wakeUp();
         signal.removeEventListener('abort', cleanup);
       };
       stream.onAbort(cleanup);
       if (signal.aborted) {
-        // bdboard-l1t.9 Opus レビュー N3: エントリ時点で既にクライアントが
-        // いなければ claude プロセスを spawn すること自体が無駄なので早期に
-        // 手を引く(busy lock 自体は resolveChatStreamTurn で既に取得済みで、
-        // ここで節約できるのは claude の spawn だけ。lock の取得タイミングは
-        // 変わらない)。
         cleanup();
       } else {
         signal.addEventListener('abort', cleanup);
       }
 
       const runTurn = async (): Promise<void> => {
-        // bdboard-l1t.9 Opus レビュー N3: エントリ時点(または addEventListener の
-        // 前)ですでに clientGone なら、claude プロセスを spawn するだけ無駄なので
-        // sendMessageStream 自体を呼ばない。
-        if (clientGone) {
-          return;
-        }
         try {
           const turnResult = await resolved.handle.agent.sendMessageStream!(
             resolved.handle.turnRequest,
-            (delta) => enqueue({ event: 'delta', data: JSON.stringify({ text: delta.text }) }),
-            controller.signal,
+            (delta) => {
+              if (!clientGone) {
+                enqueue({ event: 'delta', data: JSON.stringify({ text: delta.text }) });
+              }
+            },
           );
-          // bdboard-l1t.9 Opus レビュー S2: finalize(store.remember + messages.append)は
-          // clientGone に関わらず必ず実行する。クライアント切断と、abort が子プロセスへ
-          // 実際に伝わるまでの間に agent 側の処理がたまたま成功で resolve した場合、
-          // ここを clientGone でガードしてしまうとターンが成立したのにセッションIDが
-          // 記憶されず、次回の会話が繋がらなくなる。SSE で通知できるかどうか
-          // (enqueue)だけを clientGone でガードする。
+          // finalize(store.remember + messages.append) is the durable boundary and must
+          // run even after clientGone. Only SSE delivery is conditional on the subscriber;
+          // the detached turn itself remains server-owned until this point.
           const success = finalizeChatTurnSuccess(deps, sendInput, turnResult);
+          completedTurns.set(parsed.data.projectId, {
+            sessionId: success.sessionId,
+            agentId: success.agentId,
+            completedAt: now().toISOString(),
+          });
           if (!clientGone) {
             enqueue({ event: 'done', data: JSON.stringify(toChatMessageResponseBody(success)) });
           }

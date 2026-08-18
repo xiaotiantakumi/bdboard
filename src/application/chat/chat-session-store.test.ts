@@ -47,6 +47,16 @@ describe('createChatSessionStore', () => {
     expect(store.tryAcquire('project-a')).toBe(true);
   });
 
+  it('exposes the project lock as read-only processing status', () => {
+    const store = createChatSessionStore();
+
+    expect(store.isBusy('project-a')).toBe(false);
+    expect(store.tryAcquire('project-a')).toBe(true);
+    expect(store.isBusy('project-a')).toBe(true);
+    store.release('project-a');
+    expect(store.isBusy('project-a')).toBe(false);
+  });
+
   it('drops the oldest remembered sessions when the per-project cap is exceeded', () => {
     const store = createChatSessionStore({ maxSessionsPerProject: 3 });
 
