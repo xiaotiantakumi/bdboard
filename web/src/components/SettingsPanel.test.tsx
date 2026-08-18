@@ -18,6 +18,7 @@ import {
   type DbStatsDto,
   type ScanRootsConfigDto,
 } from '../api';
+import { expectNoA11yViolations } from '../test/axe';
 import { SettingsPanel } from './SettingsPanel';
 
 vi.mock('../api', async (importOriginal) => {
@@ -122,6 +123,13 @@ describe('SettingsPanel', () => {
     putBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig({ version: 'thresholds-v2' }));
     putAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig({ version: 'ai-quota-alert-v2' }));
   });
+  it('has no a11y violations in the default loaded state', async () => {
+    const { container } = renderSettings();
+
+    await screen.findByText('/configured');
+    await expectNoA11yViolations(container);
+  });
+
   it('shows effective roots with the user-configured badge', async () => {
     renderSettings();
     expect(await screen.findByText('/configured')).toBeInTheDocument();

@@ -2,6 +2,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { UseNotificationEventsResult } from '../hooks/useNotificationEvents';
+import { expectNoA11yViolations } from '../test/axe';
 import { EventCenterPanel } from './EventCenterPanel';
 
 function makeProps(
@@ -40,6 +41,13 @@ describe('EventCenterPanel', () => {
   it('shows empty state when there are no events', () => {
     render(<EventCenterPanel {...makeProps()} />);
     expect(screen.getByText('まだイベントはありません')).toBeInTheDocument();
+  });
+
+  it('has no a11y violations in the empty state', async () => {
+    const { container } = render(<EventCenterPanel {...makeProps()} />);
+
+    expect(screen.getByText('まだイベントはありません')).toBeInTheDocument();
+    await expectNoA11yViolations(container);
   });
 
   it('lists events when present', () => {

@@ -34,6 +34,7 @@ import { TicketDetailPanel } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 import { computeDeferUntilDate } from '../deferPeriods';
+import { expectNoA11yViolations } from '../test/axe';
 import { NETWORK_FETCH_HELP, TUNNEL_WRITE_HELP } from '../writeAccessMessage';
 
 vi.mock('../api', async (importOriginal) => {
@@ -1514,6 +1515,20 @@ describe('TicketDetailPanel session link', () => {
     expect(
       await screen.findByText('failed to link session'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('TicketDetailPanel accessibility', () => {
+  beforeEach(() => {
+    mockFetchTicket.mockResolvedValue(sampleTicket);
+    mockFetchTicketComments.mockResolvedValue([]);
+  });
+
+  it('has no a11y violations in the default loaded state', async () => {
+    const { container } = renderPanel(new Map());
+
+    await screen.findByText(sampleTicket.title);
+    await expectNoA11yViolations(container);
   });
 });
 

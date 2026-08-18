@@ -136,7 +136,7 @@ export function ChatPanel({
   onOpenTicket,
   onClose,
 }: ChatPanelProps) {
-  const panelRef = useRef<HTMLElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1714,7 +1714,7 @@ export function ChatPanel({
 
   return (
     <div className="overlay" onClick={requestClose} role="presentation">
-      <aside
+      <div
         ref={panelRef}
         className="detail-panel chat-panel"
         tabIndex={-1}
@@ -2061,7 +2061,7 @@ export function ChatPanel({
           </button>
           <span className="chat-input-hint">⌘/Ctrl + Enter で送信</span>
         </form>
-      </aside>
+      </div>
     </div>
   );
 }
