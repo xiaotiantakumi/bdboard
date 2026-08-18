@@ -9,6 +9,7 @@ const LOCAL_ENV = {
   incoming: {
     socket: {
       remoteAddress: '127.0.0.1',
+      localPort: 8787,
     },
   },
 };
@@ -63,7 +64,11 @@ describe('createTunnelRoutes local-only guard', () => {
     const service = createFakeTunnelService();
     const app = createApp(service);
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     expect(res.status).toBe(200);
   });
 
@@ -73,7 +78,19 @@ describe('createTunnelRoutes local-only guard', () => {
 
     const res = await app.request(
       '/api/tunnel',
-      { headers: { 'CF-Ray': 'abc123' } },
+      { headers: { Host: 'localhost:8787', 'CF-Ray': 'abc123' } },
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 403 for loopback with a non-local Host header', async () => {
+    const service = createFakeTunnelService();
+    const app = createApp(service);
+
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'attacker.example:8787' } },
       LOCAL_ENV,
     );
     expect(res.status).toBe(403);
@@ -139,7 +156,11 @@ describe('createTunnelRoutes behavior', () => {
     });
     const app = createApp(service);
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body).toEqual({ state: 'off', available: true, authEnabled: true });
@@ -155,7 +176,7 @@ describe('createTunnelRoutes behavior', () => {
       '/api/tunnel/start',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Host: 'localhost:8787', 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: 'a' }),
       },
       LOCAL_ENV,
@@ -182,7 +203,7 @@ describe('createTunnelRoutes behavior', () => {
       '/api/tunnel/start',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Host: 'localhost:8787', 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: 'example-password' }),
       },
       LOCAL_ENV,
@@ -197,7 +218,11 @@ describe('createTunnelRoutes behavior', () => {
     const service = createFakeTunnelService({ start });
     const app = createApp(service, undefined, false);
 
-    const stateRes = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const stateRes = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     expect(await stateRes.json()).toEqual({
       state: 'off',
       available: true,
@@ -208,7 +233,7 @@ describe('createTunnelRoutes behavior', () => {
       '/api/tunnel/start',
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { Host: 'localhost:8787', 'Content-Type': 'application/json' },
         body: '{}',
       },
       LOCAL_ENV,
@@ -227,7 +252,7 @@ describe('createTunnelRoutes behavior', () => {
 
     const res = await app.request(
       '/api/tunnel/stop',
-      { method: 'POST' },
+      { method: 'POST', headers: { Host: 'localhost:8787' } },
       LOCAL_ENV,
     );
 
@@ -245,7 +270,11 @@ describe('createTunnelRoutes behavior', () => {
 
     const res = await app.request(
       '/api/tunnel/start',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      {
+        method: 'POST',
+        headers: { Host: 'localhost:8787', 'Content-Type': 'application/json' },
+        body: '{}',
+      },
       LOCAL_ENV,
     );
 
@@ -296,6 +325,7 @@ describe('CSRF protection reaches tunnel routes via main.ts mount order (regress
       {
         method: 'POST',
         headers: {
+          Host: 'localhost:8787',
           'Content-Type': 'application/json',
           'sec-fetch-site': 'cross-site',
         },
@@ -319,6 +349,7 @@ describe('CSRF protection reaches tunnel routes via main.ts mount order (regress
       {
         method: 'POST',
         headers: {
+          Host: 'localhost:8787',
           'Content-Type': 'application/json',
           'sec-fetch-site': 'same-origin',
         },
@@ -356,7 +387,7 @@ describe('POST /api/tunnel/access-token', () => {
 
     const res = await app.request(
       '/api/tunnel/access-token',
-      { method: 'POST' },
+      { method: 'POST', headers: { Host: 'localhost:8787' } },
       LOCAL_ENV,
     );
 
@@ -371,7 +402,7 @@ describe('POST /api/tunnel/access-token', () => {
 
     const tokenRes = await app.request(
       '/api/tunnel/access-token',
-      { method: 'POST' },
+      { method: 'POST', headers: { Host: 'localhost:8787' } },
       LOCAL_ENV,
     );
     expect(tokenRes.status).toBe(200);
@@ -381,7 +412,11 @@ describe('POST /api/tunnel/access-token', () => {
       expiresAt: '2026-08-15T12:00:00.000Z',
     });
 
-    const stateRes = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const stateRes = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const stateBody = await stateRes.json();
     expect(stateBody).not.toHaveProperty('token');
     expect(stateBody).not.toHaveProperty('password');
@@ -395,7 +430,10 @@ describe('POST /api/tunnel/access-token', () => {
 
     const res = await app.request(
       '/api/tunnel/access-token',
-      { method: 'POST', headers: { 'CF-Ray': 'abc123' } },
+      {
+        method: 'POST',
+        headers: { Host: 'localhost:8787', 'CF-Ray': 'abc123' },
+      },
       LOCAL_ENV,
     );
     expect(res.status).toBe(403);
@@ -412,7 +450,11 @@ describe('write access in the tunnel state DTO', () => {
     });
     const app = createApp(service);
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body.writeAccess).toBe(true);
@@ -425,7 +467,11 @@ describe('write access in the tunnel state DTO', () => {
     });
     const app = createApp(service);
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body.writeAccess).toBe(false);
@@ -434,7 +480,11 @@ describe('write access in the tunnel state DTO', () => {
   it('omits writeAccess when the tunnel is off', async () => {
     const app = createApp(createFakeTunnelService());
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body).not.toHaveProperty('writeAccess');
@@ -450,7 +500,11 @@ describe('tunnel interruption in the state DTO', () => {
     });
     const app = createApp(service);
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body.interruptedAt).toBe(interruptedAt.toISOString());
@@ -459,7 +513,11 @@ describe('tunnel interruption in the state DTO', () => {
   it('omits interruptedAt on GET when no record exists', async () => {
     const app = createApp(createFakeTunnelService());
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body).not.toHaveProperty('interruptedAt');
@@ -472,7 +530,11 @@ describe('tunnel interruption in the state DTO', () => {
     });
     const app = createApp(service);
 
-    const res = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const res = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     const body = await res.json();
 
     expect(body).not.toHaveProperty('interruptedAt');
@@ -492,14 +554,18 @@ describe('tunnel interruption in the state DTO', () => {
 
     const dismissRes = await app.request(
       '/api/tunnel/interruption/dismiss',
-      { method: 'POST' },
+      { method: 'POST', headers: { Host: 'localhost:8787' } },
       LOCAL_ENV,
     );
     expect(dismissRes.status).toBe(200);
     expect(dismissInterruption).toHaveBeenCalledOnce();
     expect(await dismissRes.json()).not.toHaveProperty('interruptedAt');
 
-    const getRes = await app.request('/api/tunnel', {}, LOCAL_ENV);
+    const getRes = await app.request(
+      '/api/tunnel',
+      { headers: { Host: 'localhost:8787' } },
+      LOCAL_ENV,
+    );
     expect(await getRes.json()).not.toHaveProperty('interruptedAt');
   });
 
