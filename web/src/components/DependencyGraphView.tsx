@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { DependencyGraphDto, GraphEdgeDto, GraphNodeDto } from '../api';
 import { fetchDependencyGraph } from '../api';
 
@@ -167,7 +167,7 @@ function renderEdge(
 
 export function DependencyGraphView({
   projectIds,
-  focusTicketId,
+  focusTicketId: externalFocusTicketId,
   onCardClick,
 }: DependencyGraphViewProps) {
   const projectIdsKey = projectIds.join(',');
@@ -176,8 +176,15 @@ export function DependencyGraphView({
     queryFn: () => fetchDependencyGraph(projectIds),
   });
 
+  const [focusTicketId, setFocusTicketId] = useState<string | undefined>(
+    externalFocusTicketId,
+  );
   const [focusEnabled, setFocusEnabled] = useState(true);
   const [focusDepth, setFocusDepth] = useState<FocusDepth>(2);
+
+  useEffect(() => {
+    setFocusTicketId(externalFocusTicketId);
+  }, [externalFocusTicketId]);
 
   const fullGraph = query.data;
   const canFocus =
@@ -313,36 +320,74 @@ export function DependencyGraphView({
                   key={node.ticketId}
                   transform={`translate(${x}, ${y})`}
                   className="dependency-graph-node-group"
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`${node.ticketId}: ${node.title}`}
-                  onClick={() => onCardClick(node.ticketId)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      onCardClick(node.ticketId);
-                    }
-                  }}
                 >
-                  <rect
-                    width={NODE_WIDTH}
-                    height={NODE_HEIGHT}
-                    rx={8}
-                    className={`dependency-graph-node ${statusClassName(node.status)}${
-                      focusActive && node.ticketId === focusTicketId
-                        ? ' dependency-graph-node-focus-center'
-                        : ''
-                    }`}
-                  />
-                  <text x={10} y={18} className="dependency-graph-node-id">
-                    {node.ticketId}
-                  </text>
-                  <text x={10} y={34} className="dependency-graph-node-title">
-                    {truncateTitle(node.title)}
-                  </text>
-                  <text x={10} y={46} className="dependency-graph-node-meta">
-                    {node.status}
-                  </text>
+                  <g
+                    className="dependency-graph-node-clickarea"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${node.ticketId}: ${node.title}`}
+                    onClick={() => setFocusTicketId(node.ticketId)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        setFocusTicketId(node.ticketId);
+                      }
+                    }}
+                  >
+                    <rect
+                      width={NODE_WIDTH}
+                      height={NODE_HEIGHT}
+                      rx={8}
+                      className={`dependency-graph-node ${statusClassName(node.status)}${
+                        focusActive && node.ticketId === focusTicketId
+                          ? ' dependency-graph-node-focus-center'
+                          : ''
+                      }`}
+                    />
+                    <text x={10} y={18} className="dependency-graph-node-id">
+                      {node.ticketId}
+                    </text>
+                    <text x={10} y={34} className="dependency-graph-node-title">
+                      {truncateTitle(node.title)}
+                    </text>
+                    <text x={10} y={46} className="dependency-graph-node-meta">
+                      {node.status}
+                    </text>
+                  </g>
+                  <g
+                    className="dependency-graph-node-detail-button"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${node.ticketId} の詳細を開く`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onCardClick(node.ticketId);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onCardClick(node.ticketId);
+                      }
+                    }}
+                  >
+                    <rect
+                      x={NODE_WIDTH - 34}
+                      y={4}
+                      width={30}
+                      height={14}
+                      rx={3}
+                      className="dependency-graph-node-detail-button-bg"
+                    />
+                    <text
+                      x={NODE_WIDTH - 19}
+                      y={14}
+                      textAnchor="middle"
+                      className="dependency-graph-node-detail-button-label"
+                    >
+                      詳細
+                    </text>
+                  </g>
                 </g>
               ))}
             </g>
