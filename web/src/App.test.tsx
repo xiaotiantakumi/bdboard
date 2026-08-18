@@ -755,6 +755,19 @@ describe('header help overlays', () => {
     expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Kanban（看板）' })).toBeInTheDocument();
   });
+
+  it('opens the help panel from a board tip', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('使い方のヒント')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: '詳しく' }));
+
+    expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
+  });
 });
 
 describe('formatGeneratedAtAge (bdboard-3tw.125)', () => {
