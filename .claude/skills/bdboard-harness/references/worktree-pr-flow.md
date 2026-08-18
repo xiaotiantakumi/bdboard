@@ -114,6 +114,58 @@ git push
 実例・より詳しい教訓: グローバル orchestration skill の `reference/lessons-learned.md`
 「GitHub Actionsのwebhook dispatchが障害中に無言で失われる（bdboard, 2026-08-17）」。
 
+**CI待ちのポーリングで GraphQL rate limit を食い潰さない**: `gh pr create`・`gh pr merge`・
+`gh pr checks`・`gh pr view --json` は、gh CLI の内部実装がいずれも GraphQL API 経由で、
+REST(core) とは**独立した** GraphQL 枠を消費する（`git push` は裸の git プロトコルなので
+この枠と無関係）。しかも枠は**アカウント（トークン）単位でリポジトリ単位ではない**ため、
+同一アカウントで動く他セッション・他リポジトリの gh 呼び出しとも共有され、自分の
+セッションが節約していても枯渇しうる。実測: bdboard-p5l.10（3並列レーン運用中に
+GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 5000/5000 で無傷、
+`git push` は成功済みだった）。
+
+- `gh pr checks --watch --interval 15` のような**短間隔の内蔵 watch を常用しない**。
+  ポーリングは既定 30 秒以上の間隔にする。Monitor のような能動的なポーリング手段が
+  あるなら、`gh pr checks <N> --json name,bucket` を 30 秒間隔で叩いて前回結果との
+  差分だけを報告し（実装例: 前回スナップショットと `comm -13` で突き合わせる）、
+  bucket が pending のチェックが無くなったら終了する形にする。CI の典型所要時間が
+  分かっているなら、初回ポーリングまでその分待ってから始めるのも呼び出し削減に効く。
+  さらに枠を温存したければ、上の 503 障害時と同じ `check-runs` の REST 照会で
+  ポーリングしてもよい（こちらは core 枠を消費する）。
+- **複数 PR を同時に見張るときは、PR ごとに watch を立てず 1 本の監視ループへ集約する**。
+  1 周で全対象 PR をまとめて照会すれば、ポーリング回数（= 枠の消費速度）が PR の
+  本数に比例して増えない。
+
+**GraphQL 枠が実際に枯渇したら**（`GraphQL: API rate limit already exceeded ...`）:
+
+1. **`git push` は影響を受けていない**。`gh pr create` が枯渇で失敗しても、ブランチは
+   既にリモートに存在している — 復旧は `gh pr create` のリトライだけでよく、worktree や
+   ブランチの作り直しは不要。状態確認だけなら、上の 503 障害時の REST コマンド群も
+   core 枠なのでそのまま使える。
+2. 正確なリセット時刻を取る（`gh api rate_limit` 自体は REST(core) 枠なので、GraphQL が
+   枯渇していても通る）:
+
+   ```bash
+   gh api rate_limit --jq '.resources.graphql | {remaining, reset, wait_sec: ((.reset - now) | floor)}'
+   ```
+
+3. `wait_sec` に数秒の余裕を足した秒数を待ってからリトライする。待ちは **`sleep <秒数>`
+   単体の Bash 呼び出し 1 回**で行い、後続コマンドとチェーンしない
+   （`sleep N && gh pr create ...` の形はハーネスにブロックされる既知の制約がある）。
+   リトライは sleep 完了後の**別の** Bash 呼び出しで行う。待ちが長いなら、その間に
+   GraphQL を使わない作業（実装・検証・`git push` まで）を進めてから戻ってよい。
+4. `gh pr merge` の途中で枯渇した場合は、リトライの前に**マージが実際どこまで進んだかを
+   REST で確認する**（GitHub 側は成功していて、CLI のレスポンス取得だけが失敗した
+   可能性がある。盲目リトライは二重マージ・状態不整合のもと）:
+
+   ```bash
+   gh api repos/<owner>/<repo>/pulls/<N> --jq '{state, merged}'
+   ```
+
+   `merged: true` ならマージ済み — リトライせず層3（着地後検証）へ進む。
+5. **merge-slot を保持したまま長時間待たない**。リセットまでの待ちが 15 分を超えるなら、
+   いったん `bd merge-slot release` して待ち、リセット後に acquire し直してから再試行する
+   （slot を握ったまま待つと、他セッションのマージを丸ごと止める）。
+
 ### 5. マージ排他3層
 
 並列セッションが同時に main へマージしてくること自体は（branch protection が無い環境では）
