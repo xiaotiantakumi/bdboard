@@ -89,7 +89,7 @@ function makeAgentProcessDto(
   };
 }
 
-function renderSessionListPanel() {
+function renderSessionListPanel(projectId?: string) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -98,7 +98,7 @@ function renderSessionListPanel() {
 
   render(
     <QueryClientProvider client={queryClient}>
-      <SessionListPanel onClose={vi.fn()} />
+      <SessionListPanel projectId={projectId} onClose={vi.fn()} />
     </QueryClientProvider>,
   );
 }
@@ -211,6 +211,17 @@ describe('SessionListPanel', () => {
     expect(screen.getByText('bdboard-done — Finished ticket')).toBeInTheDocument();
     expect(screen.getByText('bdboard-only-id')).toBeInTheDocument();
     expect(fetchSessionHistoryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('requests ended session history filtered by the selected project', async () => {
+    const user = userEvent.setup();
+    fetchSessionHistoryMock.mockResolvedValue([]);
+
+    renderSessionListPanel('proj-a');
+    await screen.findByText('Live session');
+    await user.click(screen.getByRole('button', { name: '終了' }));
+
+    expect(fetchSessionHistoryMock).toHaveBeenCalledWith(50, 'proj-a');
   });
 
   it('shows empty state when there are no ended sessions', async () => {

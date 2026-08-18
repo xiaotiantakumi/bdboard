@@ -571,10 +571,16 @@ export function fetchSessions(): Promise<SessionDto[]> {
   return getJson<SessionDto[]>('/api/sessions');
 }
 
-export function fetchSessionHistory(limit?: number): Promise<SessionHistoryEntryDto[]> {
+export function fetchSessionHistory(
+  limit?: number,
+  projectId?: string,
+): Promise<SessionHistoryEntryDto[]> {
   const searchParams = new URLSearchParams();
   if (limit !== undefined) {
     searchParams.set('limit', String(limit));
+  }
+  if (projectId !== undefined) {
+    searchParams.set('projects', projectId);
   }
   const query = searchParams.toString();
   const path =

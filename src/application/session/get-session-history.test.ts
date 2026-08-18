@@ -222,6 +222,51 @@ describe('getSessionHistory', () => {
     expect(getSessionHistory(sessions, [], cache)).toHaveLength(50);
   });
 
+  it('filters by project before applying the history limit', () => {
+    const cache = createFakeBoardCache();
+    const target = project('/target', '/projects/target');
+    const other = project('/other', '/projects/other');
+    for (const proj of [target, other]) {
+      cache.putProject({
+        project: proj,
+        tickets: [],
+        fingerprint: `fp-${proj.id}`,
+        fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+      });
+    }
+
+    const otherSessions = Array.from({ length: 55 }, (_, index) =>
+      makeSession({
+        sessionId: `other-${index}`,
+        cwd: '/projects/other',
+        alive: false,
+        lastActivityAt: new Date(
+          new Date('2026-06-02T12:00:00.000Z').getTime() - index * 60_000,
+        ),
+      }),
+    );
+    const targetSessions = Array.from({ length: 3 }, (_, index) =>
+      makeSession({
+        sessionId: `target-${index}`,
+        cwd: '/projects/target',
+        alive: false,
+        lastActivityAt: new Date(
+          new Date('2026-06-01T12:00:00.000Z').getTime() - index * 60_000,
+        ),
+      }),
+    );
+
+    const history = getSessionHistory([...otherSessions, ...targetSessions], [], cache, {
+      projectIds: [target.id],
+    });
+
+    expect(history.map((entry) => entry.session.sessionId)).toEqual([
+      'target-0',
+      'target-1',
+      'target-2',
+    ]);
+  });
+
   it('returns empty array when limit is zero or negative', () => {
     const cache = createFakeBoardCache();
     const session = makeSession({ alive: false });

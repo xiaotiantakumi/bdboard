@@ -18,6 +18,7 @@ export interface SessionHistoryEntry {
 
 export interface GetSessionHistoryOptions {
   readonly limit?: number;
+  readonly projectIds?: readonly string[];
 }
 
 const DEFAULT_LIMIT = 50;
@@ -83,12 +84,20 @@ export function getSessionHistory(
 
   const projects = cache.listProjects().map((entry) => entry.project);
   const ticketTitles = buildTicketTitleMap(cache);
+  const projectIds =
+    options?.projectIds === undefined ? undefined : new Set(options.projectIds);
 
   const endedSessions = sessions.filter((session) => session.alive === false);
   const entries: SessionHistoryEntry[] = [];
 
   for (const session of endedSessions) {
     const project = resolveSessionProject(session.cwd, projects);
+    if (
+      projectIds !== undefined &&
+      (project === undefined || !projectIds.has(project.id))
+    ) {
+      continue;
+    }
     const tickets = ticketsForSession(session.sessionId, links, ticketTitles);
 
     entries.push({

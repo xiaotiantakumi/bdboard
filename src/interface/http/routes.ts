@@ -1400,9 +1400,13 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   app.get('/api/sessions/history', (c) => {
     const now = deps.now();
     const limit = parseSessionHistoryLimit(c.req.query('limit'));
+    const projectIds = parseProjectIds(c.req.query('projects'));
     const sessions = deps.sessions?.() ?? [];
     const links = deps.links?.() ?? [];
-    const history = getSessionHistory(sessions, links, deps.cache, { limit });
+    const history = getSessionHistory(sessions, links, deps.cache, {
+      limit,
+      ...(projectIds !== undefined ? { projectIds } : {}),
+    });
 
     return c.json(history.map((entry) => toSessionHistoryEntryDto(entry, now)));
   });
