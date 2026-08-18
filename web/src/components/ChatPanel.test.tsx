@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatAgentDto, ChatThreadDto, ProjectDto } from '../api';
+import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
 import { expectNoA11yViolations } from '../test/axe';
 import { installFakeHistory } from '../test/fakeHistory';
 import { writePersistedChatThread, readPersistedChatThreads } from '../chatThreadStorage';
@@ -15,6 +15,8 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     fetchChatAgents: vi.fn(() => Promise.resolve<ChatAgentDto[]>([])),
     fetchChatThreads: vi.fn(() => Promise.resolve<ChatThreadDto[]>([])),
+    fetchChatTurnStatus: vi.fn(() => Promise.resolve<ChatTurnStatusDto>({ state: 'idle' })),
+    acknowledgeChatTurn: vi.fn(() => Promise.resolve()),
     deleteChatThread: vi.fn(() => Promise.resolve()),
     updateChatThread: vi.fn(() =>
       Promise.resolve<ChatThreadDto>({
@@ -30,15 +32,19 @@ vi.mock('../api', async (importOriginal) => {
 });
 
 import {
+  acknowledgeChatTurn,
   deleteChatThread,
   fetchChatAgents,
   fetchChatThreads,
+  fetchChatTurnStatus,
   fetchDiscoveredChatSessions,
   updateChatThread,
 } from '../api';
 
 const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
+const fetchChatTurnStatusMock = vi.mocked(fetchChatTurnStatus);
+const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
 const updateChatThreadMock = vi.mocked(updateChatThread);
 const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
@@ -195,6 +201,8 @@ describe('ChatPanel', () => {
     localStorage.clear();
     fetchChatAgentsMock.mockResolvedValue([]);
     fetchChatThreadsMock.mockResolvedValue([]);
+    fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+    acknowledgeChatTurnMock.mockResolvedValue();
     deleteChatThreadMock.mockResolvedValue();
     updateChatThreadMock.mockResolvedValue({
       sessionId: 'sess-1',
@@ -1619,6 +1627,7 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(within(messages).getByText('streamed reply')).toBeInTheDocument();
     });
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-stream');
     expect(messages.querySelector('.chat-message-streaming')).toBeNull();
     expect(
       fetchMock.mock.calls.filter(
@@ -1649,6 +1658,123 @@ describe('ChatPanel', () => {
         (request as RequestInit | undefined)?.method === 'POST',
       ),
     ).toBe(false);
+  });
+
+  it('shows a detached turn as processing, then refreshes and restores its completed reply', async () => {
+    fetchChatTurnStatusMock
+      .mockResolvedValueOnce({ state: 'processing' })
+      .mockResolvedValue({
+        state: 'completed',
+        sessionId: 'sess-detached',
+        agentId: 'claude',
+        completedAt: '2026-08-18T12:00:00.000Z',
+      });
+    fetchChatThreadsMock
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([
+        {
+          sessionId: 'sess-detached',
+          agentId: 'claude',
+          title: 'detached question',
+          pinned: false,
+          updatedAt: '2026-08-18T12:00:00.000Z',
+        },
+      ]);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-detached/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-detached',
+          agentId: 'claude',
+          messages: [
+            {
+              role: 'user',
+              content: 'detached question',
+              createdAt: '2026-08-18T11:59:00.000Z',
+            },
+            {
+              role: 'assistant',
+              content: 'reply completed after close',
+              createdAt: '2026-08-18T12:00:00.000Z',
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+
+    expect(
+      await screen.findByText('返信をバックグラウンドで処理中…'),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'バックグラウンドの返信が完了しました。',
+        {},
+        { timeout: 2_500 },
+      ),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText('reply completed after close', {}, { timeout: 2_500 }),
+    ).toBeInTheDocument();
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-detached');
+  });
+
+  it('ignores an older initial thread-list response that resolves after recovery', async () => {
+    const initialThreads = createDeferred<ChatThreadDto[]>();
+    let threadRequestCount = 0;
+    fetchChatThreadsMock.mockImplementation(() => {
+      threadRequestCount += 1;
+      if (threadRequestCount === 1) return initialThreads.promise;
+      return Promise.resolve([
+        {
+          sessionId: 'sess-recovered',
+          agentId: 'claude',
+          title: 'recovered thread',
+          pinned: false,
+          updatedAt: '2026-08-18T12:00:00.000Z',
+        },
+      ]);
+    });
+    fetchChatTurnStatusMock.mockResolvedValue({
+      state: 'completed',
+      sessionId: 'sess-recovered',
+      agentId: 'claude',
+      completedAt: '2026-08-18T12:00:00.000Z',
+    });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-recovered/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-recovered',
+          agentId: 'claude',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'recovered history',
+              createdAt: '2026-08-18T12:00:00.000Z',
+            },
+          ],
+        });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    expect(await screen.findByRole('tab', { name: 'recovered thread' })).toBeInTheDocument();
+    initialThreads.resolve([
+      {
+        sessionId: 'sess-stale',
+        agentId: 'claude',
+        title: 'stale initial thread',
+        pinned: false,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: 'stale initial thread' })).not.toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: 'recovered thread' })).toBeInTheDocument();
+    });
   });
 
   it('shows the stream error and clears the partial streaming reply', async () => {
@@ -1838,6 +1964,235 @@ describe('ChatPanel', () => {
         expect(capturedSignal.current?.aborted).toBe(true);
       });
       expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+
+    it('recovers a detached reply after switching threads within the same project', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      const threads: ChatThreadDto[] = [
+        {
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          title: 'first thread',
+          pinned: false,
+          updatedAt: '2026-01-02T00:00:00Z',
+        },
+        {
+          sessionId: 'sess-2',
+          agentId: 'claude',
+          title: 'second thread',
+          pinned: false,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ];
+      fetchChatThreadsMock.mockResolvedValue(threads);
+      fetchChatTurnStatusMock
+        .mockResolvedValueOnce({ state: 'idle' })
+        .mockResolvedValueOnce({ state: 'processing' })
+        .mockResolvedValue({
+          state: 'completed',
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          completedAt: '2026-08-18T12:00:00.000Z',
+        });
+      let sess1HistoryCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages:
+              sess1HistoryCalls === 1
+                ? []
+                : [
+                    {
+                      role: 'user',
+                      content: 'finish after switch',
+                      createdAt: '2026-08-18T11:59:00.000Z',
+                    },
+                    {
+                      role: 'assistant',
+                      content: 'recovered detached reply',
+                      createdAt: '2026-08-18T12:00:00.000Z',
+                    },
+                  ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: delta\ndata: {"text":"partial "}\n\n',
+                  ),
+                );
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(
+                    new DOMException('The operation was aborted.', 'AbortError'),
+                  );
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+      await user.type(screen.getByLabelText('メッセージ'), 'finish after switch');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+      expect(
+        await screen.findByText('返信をバックグラウンドで処理中…'),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText(
+          'バックグラウンドの返信が完了しました。',
+          {},
+          { timeout: 2_500 },
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole('tab', { name: 'first thread' }));
+      expect(
+        await screen.findByText('recovered detached reply'),
+      ).toBeInTheDocument();
+      expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it('aborts a bulk subscription, then restores its agent/model and resumes the same session', async () => {
+      const user = userEvent.setup();
+      const recoveryAgent: ChatAgentDto = {
+        id: 'recovery-agent',
+        label: 'Recovery Agent',
+        models: [
+          { id: 'fast', label: 'Fast' },
+          { id: 'slow', label: 'Slow' },
+        ],
+        model: 'fast',
+        experimental: false,
+        capability: 'bd-only',
+        availability: 'available',
+        supportsStreaming: false,
+      };
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT, recoveryAgent]);
+      fetchChatThreadsMock.mockResolvedValue([
+        {
+          sessionId: 'sess-bulk',
+          agentId: 'recovery-agent',
+          title: 'bulk thread',
+          pinned: false,
+          updatedAt: '2026-01-02T00:00:00Z',
+        },
+        {
+          sessionId: 'sess-other',
+          agentId: 'claude',
+          title: 'other thread',
+          pinned: false,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]);
+      fetchChatTurnStatusMock
+        .mockResolvedValueOnce({ state: 'idle' })
+        .mockResolvedValueOnce({ state: 'processing' })
+        .mockResolvedValue({
+          state: 'completed',
+          sessionId: 'sess-bulk',
+          agentId: 'recovery-agent',
+          completedAt: '2026-08-18T12:00:00.000Z',
+        });
+      let bulkPostCount = 0;
+      let capturedBulkSignal: AbortSignal | undefined;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-bulk/messages')) {
+          return jsonResponse({
+            sessionId: 'sess-bulk',
+            agentId: 'recovery-agent',
+            model: 'slow',
+            messages: [
+              {
+                role: 'user',
+                content: 'bulk before switch',
+                createdAt: '2026-08-18T11:59:00.000Z',
+              },
+              {
+                role: 'assistant',
+                content: 'bulk recovered reply',
+                createdAt: '2026-08-18T12:00:00.000Z',
+              },
+            ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-other/messages')) {
+          return jsonResponse({ sessionId: 'sess-other', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message' && init?.method === 'POST') {
+          bulkPostCount += 1;
+          if (bulkPostCount === 1) {
+            capturedBulkSignal = init.signal ?? undefined;
+            return await new Promise<Response>((_resolve, reject) => {
+              init.signal?.addEventListener('abort', () => {
+                reject(new DOMException('The operation was aborted.', 'AbortError'));
+              });
+            });
+          }
+          return jsonResponse({
+            reply: 'continued reply',
+            sessionId: 'sess-bulk',
+            agentId: 'recovery-agent',
+          });
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      expect(await screen.findByRole('tab', { name: 'bulk thread' })).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText('チャットエージェント')).toHaveValue('recovery-agent');
+      });
+      await user.type(screen.getByLabelText('メッセージ'), 'bulk before switch');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await user.click(screen.getByRole('tab', { name: 'other thread' }));
+      await waitFor(() => expect(capturedBulkSignal?.aborted).toBe(true));
+      expect(
+        await screen.findByText(
+          'バックグラウンドの返信が完了しました。',
+          {},
+          { timeout: 2_500 },
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(screen.getByRole('tab', { name: 'bulk thread' }));
+      expect(await screen.findByText('bulk recovered reply')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByLabelText('チャットエージェント')).toHaveValue('recovery-agent');
+        expect(screen.getByLabelText('モデル')).toHaveValue('slow');
+      });
+      expect(readPersistedChatThreads()['proj-a']).toEqual({
+        activeSessionIds: ['sess-other', 'sess-bulk'],
+        selectedSessionId: 'sess-bulk',
+      });
+      await user.clear(screen.getByLabelText('メッセージ'));
+      await user.type(screen.getByLabelText('メッセージ'), 'continue recovered');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => expect(getChatMessagePostCalls(fetchMock)).toHaveLength(2));
+      expect(parseChatMessageBody(fetchMock)).toEqual({
+        projectId: 'proj-a',
+        message: 'continue recovered',
+        sessionId: 'sess-bulk',
+        agentId: 'recovery-agent',
+        model: 'slow',
+      });
     });
 
     it('aborts the fetch signal when switching projects while streaming', async () => {

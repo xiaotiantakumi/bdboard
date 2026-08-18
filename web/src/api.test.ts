@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
+  acknowledgeChatTurn,
   deleteChatThread,
   fetchChatThreads,
+  fetchChatTurnStatus,
   fetchSimilarTickets,
   LANE_EXPECTED_STATUS,
   LANE_LABELS,
@@ -55,6 +57,32 @@ describe('chat thread API', () => {
       { sessionId: 's1', agentId: 'claude', title: 'hello', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
     ]);
     expect(fetchMock).toHaveBeenCalledWith('/api/chat/threads?projectId=project%2Fa', undefined);
+  });
+
+  it('fetchChatTurnStatus returns the server-side processing state', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ state: 'processing' }))),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchChatTurnStatus('project a')).resolves.toEqual({
+      state: 'processing',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/chat/turn-status?projectId=project+a',
+      undefined,
+    );
+  });
+
+  it('acknowledgeChatTurn deletes only the matching recovery marker', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response(null, { status: 204 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(acknowledgeChatTurn('project/a', 'session 1')).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/chat/turn-status?projectId=project%2Fa&sessionId=session+1',
+      { method: 'DELETE' },
+    );
   });
 
   it('deleteChatThread sends DELETE with both identifiers', async () => {

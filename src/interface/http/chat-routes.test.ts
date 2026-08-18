@@ -11,7 +11,6 @@ import type { ChatSessionDiscoveryPort } from '../../application/ports/chat-sess
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import {
   CHAT_FAILURE_MESSAGES,
-  ChatAgentAbortedError,
   ChatAgentError,
   type ChatTurnResult,
   type ChatAgentPort,
@@ -270,6 +269,19 @@ describe('POST /api/chat/message/stream', () => {
     expect(text.match(/event: delta/g)).toHaveLength(2);
     expect(text.match(/event: done/g)).toHaveLength(1);
     expect(text).toContain('"reply":"ABCD"');
+    const status = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    expect(await status.json()).toEqual(expect.objectContaining({
+      state: 'completed',
+      sessionId: '550e8400-e29b-41d4-a716-446655440099',
+    }));
+    const ack = await app.request(
+      '/api/chat/turn-status?projectId=p&sessionId=550e8400-e29b-41d4-a716-446655440099',
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ack.status).toBe(204);
+    const idle = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    expect(await idle.json()).toEqual({ state: 'idle' });
   });
 
   it('returns JSON 400 without starting SSE for a non-streaming agent', async () => {
@@ -281,21 +293,20 @@ describe('POST /api/chat/message/stream', () => {
     expect(await res.json()).toEqual({ error: 'chat agent does not support streaming' });
   });
 
-  it('propagates client abort to the streaming agent and releases the busy lock', async () => {
-    let capturedSignal: AbortSignal | undefined;
+  it('keeps the server turn running after bdboard-7st aborts only the client subscription', async () => {
+    let resolveAgent: (result: ChatTurnResult) => void = () => {};
     const streamingAgent = createFakeAgent({
       descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
       sendMessageStream: vi.fn(
-        async (_request, _onDelta, signal): Promise<ChatTurnResult> =>
-          await new Promise<ChatTurnResult>((_resolve, reject) => {
-            capturedSignal = signal;
-            signal?.addEventListener('abort', () => reject(new ChatAgentAbortedError()), { once: true });
+        async (): Promise<ChatTurnResult> =>
+          await new Promise<ChatTurnResult>((resolve) => {
+            resolveAgent = resolve;
           }),
       ),
     });
     const store = createChatSessionStore();
     const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
-    const app = createApp({ agent: streamingAgent, cache, store });
+    const app = createApp({ agent: streamingAgent, cache, store, now: () => NOW });
     const controller = new AbortController();
     const responsePromise = app.request(
       '/api/chat/message/stream',
@@ -308,12 +319,41 @@ describe('POST /api/chat/message/stream', () => {
       LOCAL_ENV,
     );
 
-    await vi.waitFor(() => expect(capturedSignal).toBeDefined());
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(() => expect(streamingAgent.sendMessageStream).toHaveBeenCalled());
     controller.abort();
-    await responsePromise;
+    expect(vi.mocked(streamingAgent.sendMessageStream!).mock.calls[0]?.[2]).toBeUndefined();
 
-    await vi.waitFor(() => expect(capturedSignal?.aborted).toBe(true));
+    const processing = await app.request(
+      '/api/chat/turn-status?projectId=p',
+      {},
+      LOCAL_ENV,
+    );
+    expect(await processing.json()).toEqual({ state: 'processing' });
+
+    resolveAgent({
+      reply: 'reply after disconnect',
+      sessionId: '550e8400-e29b-41d4-a716-446655440088',
+      agentId: 'test-agent',
+      failedTools: [],
+    });
+    await responsePromise;
+    await vi.waitFor(() =>
+      expect(store.lookup('p', '550e8400-e29b-41d4-a716-446655440088')).toEqual({
+        agentId: 'test-agent',
+      }),
+    );
+    const completed = await app.request(
+      '/api/chat/turn-status?projectId=p',
+      {},
+      LOCAL_ENV,
+    );
+    expect(await completed.json()).toEqual({
+      state: 'completed',
+      sessionId: '550e8400-e29b-41d4-a716-446655440088',
+      agentId: 'test-agent',
+      completedAt: NOW.toISOString(),
+    });
+
     const followUp = await app.request(
       '/api/chat/message',
       {
@@ -326,7 +366,7 @@ describe('POST /api/chat/message/stream', () => {
     expect(followUp.status).toBe(200);
   });
 
-  it('remembers the session even when the client disconnects before the agent resolves (bdboard-l1t.9 delta 再レビュー S2)', async () => {
+  it('persists a detached turn that resolves after the client disconnects', async () => {
     let resolveAgent: (result: ChatTurnResult) => void = () => {};
     let sendMessageStreamCalled = false;
     const streamingAgent = createFakeAgent({
@@ -356,16 +396,12 @@ describe('POST /api/chat/message/stream', () => {
       LOCAL_ENV,
     );
 
-    // sendMessageStream が呼ばれた(=エントリ時点の N3 早期リターンに引っかからな
-    // かった)のを確認してから切断する。
+    // The accepted server turn must already be running before the subscriber leaves.
     await vi.waitFor(() => expect(sendMessageStreamCalled).toBe(true));
     controller.abort();
     await responsePromise;
 
-    // 実運用では abort が子プロセスまで伝わって reject することが多いが、
-    // クライアント切断と abort 伝播の間に agent 側がたまたま成功で resolve
-    // してしまうケースがある。S2: そのケースでも finalize(store.remember)
-    // は必ず走らなければ、次回の会話がこのセッションIDに繋がらなくなる。
+    // Resolving after disconnect must still cross the same durable finalize boundary.
     resolveAgent({
       reply: 'late reply',
       sessionId: '550e8400-e29b-41d4-a716-446655440077',
@@ -464,6 +500,99 @@ describe('POST /api/chat/message/stream', () => {
     expect(Object.keys(JSON.parse(errorEvents[0]![1]!)).sort()).toEqual(['code', 'detail', 'error']);
   });
 
+});
+
+describe('detached bulk chat turn recovery', () => {
+  it('keeps a bulk completion until the receiving client ACKs it', async () => {
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ cache });
+
+    const response = await app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(200);
+    const status = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const completed = await status.json() as { state: string; sessionId: string };
+    expect(completed).toEqual(expect.objectContaining({
+      state: 'completed',
+      sessionId: '550e8400-e29b-41d4-a716-446655440099',
+    }));
+
+    await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=wrong-session`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed' }));
+
+    const ack = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${completed.sessionId}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ack.status).toBe(204);
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual({ state: 'idle' });
+  });
+
+  it('continues a bulk turn after disconnect and exposes its completed session', async () => {
+    let resolveAgent: (result: ChatTurnResult) => void = () => {};
+    const sendMessage = vi.fn(
+      async (): Promise<ChatTurnResult> =>
+        await new Promise<ChatTurnResult>((resolve) => {
+          resolveAgent = resolve;
+        }),
+    );
+    const store = createChatSessionStore();
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({
+      agent: createFakeAgent({ sendMessage }),
+      cache,
+      store,
+      now: () => NOW,
+    });
+    const controller = new AbortController();
+    const responsePromise = app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+        signal: controller.signal,
+      },
+      LOCAL_ENV,
+    );
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    controller.abort();
+    const processing = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    expect(await processing.json()).toEqual({ state: 'processing' });
+
+    resolveAgent({
+      reply: 'bulk reply after disconnect',
+      sessionId: 'bulk-detached-session',
+      agentId: 'test-agent',
+      failedTools: [],
+    });
+    await responsePromise;
+    await vi.waitFor(() =>
+      expect(store.lookup('p', 'bulk-detached-session')).toEqual({ agentId: 'test-agent' }),
+    );
+    const completed = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    expect(await completed.json()).toEqual({
+      state: 'completed',
+      sessionId: 'bulk-detached-session',
+      agentId: 'test-agent',
+      completedAt: NOW.toISOString(),
+    });
+  });
 });
 
 describe('createChatRoutes behavior', () => {
@@ -1448,6 +1577,20 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
         LOCAL_ENV,
       );
       expect(threads.status).toBe(200);
+
+      const turnStatus = await app.request(
+        '/api/chat/turn-status?projectId=proj-a',
+        { headers: TUNNEL_HEADERS },
+        LOCAL_ENV,
+      );
+      expect(turnStatus.status).toBe(200);
+
+      const ack = await app.request(
+        `/api/chat/turn-status?projectId=proj-a&sessionId=${sessionId}`,
+        { method: 'DELETE', headers: TUNNEL_HEADERS },
+        LOCAL_ENV,
+      );
+      expect(ack.status).toBe(204);
     }
 
     expect((await messageRequest(app)).status).toBe(200);
@@ -1460,6 +1603,7 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
     const paths = [
       `/api/chat/sessions/${sessionId}/messages?projectId=proj-a`,
       '/api/chat/threads?projectId=proj-a',
+      '/api/chat/turn-status?projectId=proj-a',
     ];
 
     for (const path of paths) {
@@ -1471,6 +1615,14 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ error: CHAT_NOT_AUTHORIZED });
     }
+
+    const ack = await createApp().request(
+      `/api/chat/turn-status?projectId=proj-a&sessionId=${sessionId}`,
+      { method: 'DELETE' },
+      { incoming: { socket: { remoteAddress: '203.0.113.5' } } },
+    );
+    expect(ack.status).toBe(403);
+    expect(await ack.json()).toEqual({ error: CHAT_NOT_AUTHORIZED });
   });
 
   it('shares per-agent availability cache between /agents and /availability', async () => {

@@ -10,8 +10,10 @@ import {
 } from 'react';
 import {
   ApiError,
+  acknowledgeChatTurn,
   fetchChatAgents,
   fetchChatThreads,
+  fetchChatTurnStatus,
   deleteChatThread,
   updateChatThread,
   fetchChatSessionMessages,
@@ -21,6 +23,7 @@ import {
   type ChatMessageResponseDto,
   type ProjectDto,
   type ChatThreadDto,
+  type ChatTurnStatusDto,
   type SessionTailMessageDto,
 } from '../api';
 import {
@@ -259,6 +262,11 @@ export function ChatPanel({
   );
   const [isSending, setIsSending] = useState(false);
   const [streamingReply, setStreamingReply] = useState<{ key: string; text: string } | null>(null);
+  const [backgroundTurnStatus, setBackgroundTurnStatus] = useState<ChatTurnStatusDto>({
+    state: 'idle',
+  });
+  const [backgroundTurnProjectId, setBackgroundTurnProjectId] = useState('');
+  const [turnRecoveryGeneration, setTurnRecoveryGeneration] = useState(0);
   const [historyLoadedFor, setHistoryLoadedFor] = useState<
     Record<string, true>
   >({});
@@ -305,6 +313,7 @@ export function ChatPanel({
   const threadModelIdsRef = useRef(threadModelIds);
   threadModelIdsRef.current = threadModelIds;
   const historyRequestIdRef = useRef(0);
+  const threadListRequestIdRef = useRef(0);
   const draftNoncesRef = useRef(draftNonces);
   draftNoncesRef.current = draftNonces;
   // SF1: startNewDraftThread ([] 依存の useCallback)が「切り替え直前のドラフトに
@@ -326,7 +335,7 @@ export function ChatPanel({
   openThreadIdsRef.current = openThreadIds;
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
-  const streamAbortControllerRef = useRef<AbortController | null>(null);
+  const requestAbortControllerRef = useRef<AbortController | null>(null);
 
   // 不変条件(N1): この関数を同一 tick 内(同期的なコールバック連鎖の中)で同じ
   // projectId に対して2回呼ぶと、両方とも同じ draftNoncesRef.current[projectId]
@@ -433,9 +442,21 @@ export function ChatPanel({
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
 
   useEffect(() => {
+    if (currentSessionId === undefined) return;
+    const conversationAgentId = conversations[currentSessionId]?.agentId;
+    if (
+      conversationAgentId !== undefined &&
+      conversationAgentId !== '' &&
+      agents.some((agent) => agent.id === conversationAgentId)
+    ) {
+      setSelectedAgentId(conversationAgentId);
+    }
+  }, [currentSessionId, conversations, agents]);
+
+  useEffect(() => {
     return () => {
-      streamAbortControllerRef.current?.abort();
-      streamAbortControllerRef.current = null;
+      requestAbortControllerRef.current?.abort();
+      requestAbortControllerRef.current = null;
     };
   }, [currentConversationKey]);
 
@@ -556,6 +577,7 @@ export function ChatPanel({
       pendingPrefillRef.current = null;
     }
     let cancelled = false;
+    const threadListRequestId = ++threadListRequestIdRef.current;
     const persisted = readPersistedChatThreads()[selectedProjectId];
     // bdboard-ysu(Opus レビュー SF1 で正確化): 「今このプロジェクトの選択が
     // ユーザーの明示操作による新規ドラフトかどうか」を、draftNonces と
@@ -603,7 +625,7 @@ export function ChatPanel({
       selectedThreadIdsRef.current[selectedProjectId] === undefined;
     void fetchChatThreads(selectedProjectId)
       .then((threads) => {
-        if (cancelled) return;
+        if (cancelled || threadListRequestId !== threadListRequestIdRef.current) return;
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
         const available = new Set(threads.map((thread) => thread.sessionId));
         const persistedOpen = (persisted?.activeSessionIds ?? []).filter((id) =>
@@ -626,7 +648,7 @@ export function ChatPanel({
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: selected }));
       })
       .catch(() => {
-        if (cancelled) return;
+        if (cancelled || threadListRequestId !== threadListRequestIdRef.current) return;
         setThreadError('スレッド一覧の取得に失敗しました。');
         const open = persisted?.activeSessionIds ?? [];
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
@@ -642,6 +664,105 @@ export function ChatPanel({
       });
     return () => { cancelled = true; };
   }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (selectedProjectId === '') return;
+    let cancelled = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    if (turnRecoveryGeneration > 0) {
+      historyRequestIdRef.current += 1;
+      threadListRequestIdRef.current += 1;
+      setLoadingHistoryFor(null);
+    }
+    setBackgroundTurnProjectId(selectedProjectId);
+    setBackgroundTurnStatus({ state: 'idle' });
+
+    const checkTurnStatus = async (): Promise<void> => {
+      try {
+        const status = await fetchChatTurnStatus(selectedProjectId);
+        if (cancelled) return;
+        setBackgroundTurnStatus(status);
+        if (status.state === 'processing') {
+          pollTimer = setTimeout(() => {
+            void checkTurnStatus();
+          }, 1_000);
+          return;
+        }
+        if (status.state !== 'completed') return;
+
+        // A detached turn can create a session whose id was unknown when the tab closed.
+        // Invalidate older history/thread-list requests before hydrating the server-owned
+        // result so a late initial response cannot overwrite the recovered state.
+        historyRequestIdRef.current += 1;
+        setLoadingHistoryFor(null);
+        const recoveryThreadRequestId = ++threadListRequestIdRef.current;
+        const [threads, payload] = await Promise.all([
+          fetchChatThreads(selectedProjectId),
+          fetchChatSessionMessages(status.sessionId, selectedProjectId),
+        ]);
+        if (
+          cancelled ||
+          recoveryThreadRequestId !== threadListRequestIdRef.current
+        ) return;
+        const currentOpen = openThreadIdsRef.current[selectedProjectId] ?? [];
+        const nextOpen = [
+          ...currentOpen.filter((id) => id !== status.sessionId),
+          status.sessionId,
+        ];
+        const currentSelected = selectedThreadIdsRef.current[selectedProjectId];
+        const nextSelected = currentSelected ?? status.sessionId;
+        setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
+        setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
+        setConversations((prev) => ({
+          ...prev,
+          [status.sessionId]: {
+            messages: payload.messages.map((message) => ({
+              role: message.role,
+              text: message.content,
+              at: Date.parse(message.createdAt),
+              ...(message.failedTools !== undefined && message.failedTools.length > 0
+                ? { failedTools: message.failedTools }
+                : {}),
+              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
+                ? { agentWarnings: message.agentWarnings }
+                : {}),
+            })),
+            sessionId: payload.sessionId,
+            agentId: payload.agentId,
+          },
+        }));
+        setHistoryLoadedFor((prev) => ({ ...prev, [status.sessionId]: true }));
+        if (payload.model !== undefined && payload.model !== '') {
+          setThreadModelIds((prev) => ({
+            ...prev,
+            [status.sessionId]: payload.model!,
+          }));
+        }
+        setSelectedThreadIds((prev) => ({
+          ...prev,
+          [selectedProjectId]: nextSelected,
+        }));
+        if (nextSelected === status.sessionId && payload.agentId !== '') {
+          setSelectedAgentId(payload.agentId);
+        }
+        writePersistedChatThreadState(selectedProjectId, {
+          activeSessionIds: nextOpen,
+          selectedSessionId: nextSelected,
+        });
+        void acknowledgeChatTurn(selectedProjectId, status.sessionId).catch(() => {
+          // ACK is best-effort; a later mount can safely hydrate the same persisted turn.
+        });
+      } catch {
+        // Status recovery is additive. Ordinary thread/history loading remains usable.
+      }
+    };
+
+    void checkTurnStatus();
+    return () => {
+      cancelled = true;
+      if (pollTimer !== undefined) clearTimeout(pollTimer);
+    };
+  }, [selectedProjectId, turnRecoveryGeneration]);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -1165,6 +1286,9 @@ export function ChatPanel({
         [selectedProjectId]: [...(prev[selectedProjectId] ?? []).filter((id) => id !== result.sessionId), result.sessionId],
       }));
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
+      void acknowledgeChatTurn(selectedProjectId, result.sessionId).catch(() => {
+        // The reply is already incorporated. A failed ACK only causes safe re-hydration later.
+      });
     },
     [effectiveModelId, selectedProjectId, showModelSelect],
   );
@@ -1323,6 +1447,7 @@ export function ChatPanel({
         ...prev,
         [currentConversationKey]: '',
       }));
+      setBackgroundTurnStatus({ state: 'idle' });
       setIsSending(true);
       const sendKey = currentConversationKey;
 
@@ -1346,10 +1471,10 @@ export function ChatPanel({
         if (showModelSelect && effectiveModelId !== '') {
           messagePayload.model = effectiveModelId;
         }
+        const requestController = new AbortController();
+        requestAbortControllerRef.current = requestController;
         if (selectedAgent?.supportsStreaming === true) {
           setStreamingReply({ key: sendKey, text: '' });
-          const streamController = new AbortController();
-          streamAbortControllerRef.current = streamController;
           try {
             const result = await postChatMessageStream(
               messagePayload,
@@ -1361,30 +1486,41 @@ export function ChatPanel({
                       : prev,
                   ),
               },
-              streamController.signal,
+              requestController.signal,
             );
             applyChatSuccess(sendKey, text, result);
           } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') {
               // unmount / スレッド切替 / プロジェクト切替由来の意図的 abort。
-              // エラーバブルや入力欄復元は行わない。
+              // エラーバブルや入力欄復元は行わない。同一 project 内のスレッド
+              // 切替では selectedProjectId が変わらないため、status 回収 effect を
+              // generation で明示的に再起動する。
+              setTurnRecoveryGeneration((generation) => generation + 1);
             } else {
               applyChatError(sendKey, sentRawText, error, sentAt);
             }
           } finally {
-            if (streamAbortControllerRef.current === streamController) {
-              streamAbortControllerRef.current = null;
-            }
             setStreamingReply(null);
           }
         } else {
           try {
-            const result = await postChatMessage(messagePayload);
+            const result = await postChatMessage(messagePayload, requestController.signal);
             applyChatSuccess(sendKey, text, result);
           } catch (error) {
-            applyChatError(sendKey, sentRawText, error, sentAt);
+            if (error instanceof DOMException && error.name === 'AbortError') {
+              setTurnRecoveryGeneration((generation) => generation + 1);
+            } else {
+              applyChatError(sendKey, sentRawText, error, sentAt);
+            }
           }
         }
+        if (requestAbortControllerRef.current === requestController) {
+          requestAbortControllerRef.current = null;
+        }
+      } catch (error) {
+        // Keep the common controller ref from surviving an unexpected adapter failure.
+        requestAbortControllerRef.current = null;
+        throw error;
       } finally {
         setIsSending(false);
         inputRef.current?.focus();
@@ -2103,6 +2239,20 @@ export function ChatPanel({
             )}
           {loadingHistoryFor === currentConversationKey && (
             <p className="chat-pending">履歴を読み込み中…</p>
+          )}
+          {!isSending &&
+            backgroundTurnProjectId === selectedProjectId &&
+            backgroundTurnStatus.state === 'processing' && (
+            <p className="chat-pending" role="status">
+              返信をバックグラウンドで処理中…
+            </p>
+          )}
+          {!isSending &&
+            backgroundTurnProjectId === selectedProjectId &&
+            backgroundTurnStatus.state === 'completed' && (
+            <p className="chat-pending" role="status">
+              バックグラウンドの返信が完了しました。
+            </p>
           )}
           {currentMessages.map((message, index) => (
             <div

@@ -13,6 +13,7 @@ export interface ChatSessionStore {
   listByProject(projectId: string): ReturnType<ChatSessionRepository['listByProject']>;
   forget(projectId: string, sessionId: string): void;
   tryAcquire(projectId: string): boolean;
+  isBusy(projectId: string): boolean;
   release(projectId: string): void;
 }
 
@@ -176,6 +177,10 @@ export function createChatSessionStore(options?: {
 
       locks.add(projectId);
       return true;
+    },
+
+    isBusy(projectId: string): boolean {
+      return locks.has(projectId);
     },
 
     release(projectId: string): void {
