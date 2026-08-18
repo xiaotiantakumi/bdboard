@@ -15,6 +15,7 @@ vi.mock('../api', () => ({
   fetchSessions: vi.fn(),
   fetchSessionHistory: vi.fn(),
   fetchAgentProcesses: vi.fn(),
+  fetchSessionTail: vi.fn(),
   ApiError: class ApiError extends Error {
     readonly status: number;
 
@@ -31,6 +32,7 @@ import {
   fetchAgentProcesses,
   fetchProjects,
   fetchSessionHistory,
+  fetchSessionTail,
   fetchSessions,
 } from '../api';
 
@@ -38,6 +40,7 @@ const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchSessionsMock = vi.mocked(fetchSessions);
 const fetchSessionHistoryMock = vi.mocked(fetchSessionHistory);
 const fetchAgentProcessesMock = vi.mocked(fetchAgentProcesses);
+const fetchSessionTailMock = vi.mocked(fetchSessionTail);
 
 function makeSessionDto(
   overrides: Partial<SessionDto> & Pick<SessionDto, 'sessionId'>,
@@ -106,6 +109,7 @@ describe('SessionListPanel', () => {
     fetchSessionsMock.mockReset();
     fetchSessionHistoryMock.mockReset();
     fetchAgentProcessesMock.mockReset();
+    fetchSessionTailMock.mockReset();
 
     fetchProjectsMock.mockResolvedValue([
       makeProjectDto({
@@ -123,6 +127,10 @@ describe('SessionListPanel', () => {
     ]);
     fetchSessionHistoryMock.mockResolvedValue([]);
     fetchAgentProcessesMock.mockResolvedValue([]);
+    fetchSessionTailMock.mockResolvedValue({
+      sessionId: 'session-live',
+      messages: [],
+    });
   });
 
   it('shows active sessions by default on the active tab', async () => {
@@ -133,6 +141,44 @@ describe('SessionListPanel', () => {
       screen.getByRole('button', { name: '稼働中' }),
     ).toBeInTheDocument();
     expect(fetchSessionHistoryMock).not.toHaveBeenCalled();
+  });
+
+  it('opens the tail viewer above the session list for an active session', async () => {
+    const user = userEvent.setup();
+    renderSessionListPanel();
+
+    await screen.findByText('Live session');
+    await user.click(screen.getByRole('button', { name: 'テールを見る' }));
+
+    expect(
+      await screen.findByRole('dialog', { name: 'トランスクリプト — Live session' }),
+    ).toBeInTheDocument();
+    expect(fetchSessionTailMock).toHaveBeenCalledWith('session-live');
+  });
+
+  it('disables the tail viewer for a non-active session', async () => {
+    fetchSessionsMock.mockResolvedValue([
+      makeSessionDto({
+        sessionId: 'session-stale',
+        name: 'Stale session',
+        alive: false,
+        liveness: 'stale',
+      }),
+    ]);
+
+    const user = userEvent.setup();
+    renderSessionListPanel();
+
+    await screen.findByText('Stale session');
+    const button = screen.getByRole('button', { name: 'テールを見る' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      'title',
+      'テールは稼働中のセッションでのみ表示できます',
+    );
+
+    await user.click(button);
+    expect(fetchSessionTailMock).not.toHaveBeenCalled();
   });
 
   it('shows ended session history when the ended tab is selected', async () => {

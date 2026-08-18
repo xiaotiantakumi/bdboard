@@ -214,13 +214,6 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
 
   return (
     <>
-      {tailSession !== null && (
-        <SessionTailViewer
-          sessionId={tailSession.sessionId}
-          sessionLabel={tailSession.name ?? tailSession.sessionId}
-          onClose={() => setTailSession(null)}
-        />
-      )}
       <div className="overlay" onClick={requestClose} role="presentation">
       <aside
         ref={panelRef}
@@ -339,7 +332,13 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
                     <button
                       type="button"
                       className="btn btn-small session-tail-open-btn"
+                      disabled={row.liveness !== 'active'}
                       onClick={() => setTailSession(row.session)}
+                      title={
+                        row.liveness === 'active'
+                          ? undefined
+                          : 'テールは稼働中のセッションでのみ表示できます'
+                      }
                     >
                       テールを見る
                     </button>
@@ -443,6 +442,13 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
           )}
       </aside>
     </div>
+      {tailSession !== null && (
+        <SessionTailViewer
+          sessionId={tailSession.sessionId}
+          sessionLabel={tailSession.name ?? tailSession.sessionId}
+          onClose={() => setTailSession(null)}
+        />
+      )}
     </>
   );
 }
