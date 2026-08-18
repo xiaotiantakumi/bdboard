@@ -23,6 +23,9 @@ function toMetricJson(metric: AiQuotaMetric): Record<string, unknown> {
   if (metric.status !== undefined) {
     json.status = metric.status;
   }
+  if (metric.valueText !== undefined) {
+    json.valueText = metric.valueText;
+  }
   return json;
 }
 
@@ -30,6 +33,7 @@ function toProviderJson(provider: AiQuotaProviderSnapshot): Record<string, unkno
   const json: Record<string, unknown> = {
     id: provider.id,
     label: provider.label,
+    availability: provider.availability,
     metrics: provider.metrics.map(toMetricJson),
   };
   if (provider.vendor !== undefined) {
@@ -37,6 +41,9 @@ function toProviderJson(provider: AiQuotaProviderSnapshot): Record<string, unkno
   }
   if (provider.plan !== undefined) {
     json.plan = provider.plan;
+  }
+  if (provider.detail !== undefined) {
+    json.detail = provider.detail;
   }
   return json;
 }

@@ -23,6 +23,7 @@ describe('GET /api/ai-quota', () => {
           label: 'Antigravity (Gemini sub)',
           vendor: 'Google',
           plan: 'Google AI Pro',
+          availability: 'live',
           metrics: [
             {
               label: 'Weekly Limit Remaining',
@@ -30,7 +31,16 @@ describe('GET /api/ai-quota', () => {
               resetInText: '88h 21m',
               resetAt: new Date('2026-08-18T16:21:00.000Z'),
             },
+            { label: 'Credits', valueText: '25 credits' },
           ],
+        },
+        {
+          id: 'cursor',
+          label: 'Cursor (cursor-agent)',
+          vendor: 'Anysphere',
+          availability: 'manual',
+          detail: '自動取得未対応。Settings → Usage で確認。',
+          metrics: [],
         },
       ],
     });
@@ -47,6 +57,7 @@ describe('GET /api/ai-quota', () => {
           label: 'Antigravity (Gemini sub)',
           vendor: 'Google',
           plan: 'Google AI Pro',
+          availability: 'live',
           metrics: [
             {
               label: 'Weekly Limit Remaining',
@@ -54,7 +65,16 @@ describe('GET /api/ai-quota', () => {
               resetInText: '88h 21m',
               resetAt: '2026-08-18T16:21:00.000Z',
             },
+            { label: 'Credits', valueText: '25 credits' },
           ],
+        },
+        {
+          id: 'cursor',
+          label: 'Cursor (cursor-agent)',
+          vendor: 'Anysphere',
+          availability: 'manual',
+          detail: '自動取得未対応。Settings → Usage で確認。',
+          metrics: [],
         },
       ],
     });
@@ -77,6 +97,7 @@ describe('GET /api/ai-quota', () => {
         {
           id: 'agy',
           label: 'Antigravity (Gemini sub)',
+          availability: 'live',
           metrics: [{ label: 'Weekly Limit Remaining', percentRemaining: 92 }],
         },
       ],

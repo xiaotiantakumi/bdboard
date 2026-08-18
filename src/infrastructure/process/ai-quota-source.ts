@@ -6,15 +6,14 @@ import type {
   AiQuotaSourceResult,
 } from '../../application/ports/ai-quota-source.js';
 
-// agyの自動取得(pty経由でTUIの/quotaを叩く)はready 8s + panel 12s程度かかる。将来
-// AUTO_DEFAULTにプロバイダが増えても余裕を持たせるため広めに取ってある。
-const DEFAULT_TIMEOUT_MS = 30_000;
+// `ai-quota all` は自動取得対象の agy と codex を順番に probe する。両方の ready + panel
+// 時間を合わせると50秒強になり得るため、プロセス終了処理の余裕も含めて広めに取る。
+const DEFAULT_TIMEOUT_MS = 70_000;
 const DEFAULT_COMMAND = 'ai-quota';
 
 export interface NodeAiQuotaSourceOptions {
   readonly command?: string;
-  /** 既定は引数なし(bare)呼び出し。AUTO_DEFAULT([agy])だけを高速に取得し、
-   *  それ以外は「確認方法」の案内テキストになる(構造化データとしては無視される)。 */
+  /** 既定は `all`。登録済みの全プロバイダについて、ライブ値または確認方法を取得する。 */
   readonly args?: readonly string[];
   readonly timeoutMs?: number;
 }
@@ -27,8 +26,9 @@ interface ProviderBlock {
 interface ParsedBlockContent {
   readonly plan?: string;
   readonly metrics: readonly AiQuotaMetric[];
-  /** プロバイダ側のprobeが例外を投げた場合の原文メッセージ(ツール由来、機密は含まれない想定) */
-  readonly errorMessage?: string;
+  readonly availability: AiQuotaProviderSnapshot['availability'];
+  /** `ai-quota` が出した確認方法だけを保持し、probe例外の原文は返さない。 */
+  readonly detail?: string;
 }
 
 function extractProviderBlocks(stdout: string): readonly ProviderBlock[] {
@@ -106,15 +106,67 @@ function parseDurationMs(text: string): number | undefined {
   return found ? totalMs : undefined;
 }
 
+function parseAbsoluteResetAt(text: string, fetchedAt: Date): Date | undefined {
+  const match = text.match(
+    /^(\d{1,2}):(\d{2})\s*(AM|PM)(?:\s+on\s+([A-Za-z]{3})\s+(\d{1,2}))?$/i,
+  );
+  if (!match) {
+    return undefined;
+  }
+
+  let hour = Number(match[1]) % 12;
+  if (match[3].toUpperCase() === 'PM') {
+    hour += 12;
+  }
+  const minute = Number(match[2]);
+  const monthNames = [
+    'jan',
+    'feb',
+    'mar',
+    'apr',
+    'may',
+    'jun',
+    'jul',
+    'aug',
+    'sep',
+    'oct',
+    'nov',
+    'dec',
+  ];
+  const month = match[4]?.toLowerCase();
+  const monthIndex = month === undefined ? fetchedAt.getMonth() : monthNames.indexOf(month);
+  if (monthIndex < 0) {
+    return undefined;
+  }
+
+  const day = match[5] === undefined ? fetchedAt.getDate() : Number(match[5]);
+  const resetAt = new Date(fetchedAt.getFullYear(), monthIndex, day, hour, minute, 0, 0);
+  if (Number.isNaN(resetAt.getTime())) {
+    return undefined;
+  }
+
+  if (resetAt.getTime() <= fetchedAt.getTime()) {
+    if (match[4] === undefined) {
+      resetAt.setDate(resetAt.getDate() + 1);
+    } else {
+      resetAt.setFullYear(resetAt.getFullYear() + 1);
+    }
+  }
+  return resetAt;
+}
+
 function parseBlockContent(lines: readonly string[], fetchedAt: Date): ParsedBlockContent {
   let plan: string | undefined;
   let currentGroup: string | undefined;
   let pendingLabel: string | undefined;
-  let errorMessage: string | undefined;
+  let autoFailed = false;
+  let manualOnly = false;
+  let detail: string | undefined;
   const metrics: AiQuotaMetric[] = [];
 
   for (const rawLine of lines) {
-    const line = rawLine.trim();
+    // TUIの枠線が残るCLIもあるため、左右端の罫線だけを除去してから解釈する。
+    const line = rawLine.trim().replace(/^[│┃]\s*/, '').replace(/\s*[│┃]$/, '').trim();
     if (line.length === 0) {
       continue;
     }
@@ -132,13 +184,22 @@ function parseBlockContent(lines: readonly string[], fetchedAt: Date): ParsedBlo
 
     const failMatch = line.match(/^\(自動取得に失敗: (.+)\)$/);
     if (failMatch) {
-      errorMessage = failMatch[1];
+      // 例外本文は将来CLI側がアカウント名やパスを含める可能性があるため保持しない。
+      autoFailed = true;
       continue;
     }
 
-    if (/^\(ライブ取得できず\)/.test(line) || /^確認方法:/.test(line)) {
-      // 手動確認のみのプロバイダ、またはauto probeがライブ取得できなかった場合。
-      // 数値データが無いのでメトリクスとしては扱わない。
+    const liveFallbackMatch = line.match(/^\(ライブ取得できず\)\s*確認方法:\s*(.+)$/);
+    if (liveFallbackMatch) {
+      autoFailed = true;
+      detail = `ライブ取得できず。確認方法: ${liveFallbackMatch[1].trim()}`;
+      continue;
+    }
+
+    const manualMatch = line.match(/^確認方法:\s*(.+)$/);
+    if (manualMatch) {
+      manualOnly = true;
+      detail = `自動取得未対応。確認方法: ${manualMatch[1].trim()}`;
       continue;
     }
 
@@ -151,25 +212,75 @@ function parseBlockContent(lines: readonly string[], fetchedAt: Date): ParsedBlo
       continue;
     }
 
-    if (/Limit Remaining$/i.test(line)) {
-      pendingLabel = currentGroup ? `${currentGroup} ${line}` : line;
+    const usageGroupMatch = line.match(/^Usage limits?(?::\s*(.+))?$/i);
+    if (usageGroupMatch) {
+      currentGroup = usageGroupMatch[1]?.trim();
       continue;
     }
 
-    const percentMatch = line.match(
-      /^(\d{1,3})%\s*remaining(?:\s*·\s*Refreshes in\s*(.+))?$/i,
-    );
-    if (percentMatch && pendingLabel !== undefined) {
+    const namedLimitGroupMatch = line.match(/^(.+?)\s+limit:?$/i);
+    if (
+      namedLimitGroupMatch &&
+      !/^(?:5h|weekly|hourly)$/i.test(namedLimitGroupMatch[1]) &&
+      !/^monthly credit$/i.test(namedLimitGroupMatch[1])
+    ) {
+      currentGroup = namedLimitGroupMatch[1].trim();
+      continue;
+    }
+
+    const creditMatch = line.match(/^(Credits|Monthly credit limit):\s*(.+)$/i);
+    if (creditMatch) {
+      const label = currentGroup ? `${currentGroup} ${creditMatch[1]}` : creditMatch[1];
+      metrics.push({ label, valueText: creditMatch[2].trim() });
+      continue;
+    }
+
+    if (/^\d+(?:\.\d+)?\s+of\s+\d+(?:\.\d+)?\s+credits?\s+used$/i.test(line)) {
+      const label = currentGroup ? `${currentGroup} Credits` : 'Credits';
+      metrics.push({ label, valueText: line });
+      continue;
+    }
+
+    if (/Limit Remaining$/i.test(line) || /^(?:5h|weekly|hourly)\s+limit:?$/i.test(line)) {
+      const limitLabel = line.replace(/:$/, '');
+      pendingLabel = currentGroup ? `${currentGroup} ${limitLabel}` : limitLabel;
+      continue;
+    }
+
+    // agy: "92% remaining · Refreshes in 88h 21m"
+    // codex: "5h limit: 93% left (resets 2:43 PM)"（装飾バーが間に入る場合もある）
+    const percentMatch = line.match(/(\d{1,3})%\s*(?:remaining|left)\b/i);
+    if (percentMatch) {
       const percentRemaining = Number(percentMatch[1]);
-      const resetInText = percentMatch[2]?.trim();
+      if (percentRemaining > 100) {
+        continue;
+      }
+
+      const inlinePrefix = line
+        .slice(0, percentMatch.index)
+        .replace(/\s*\[[^\]]*\]\s*$/, '')
+        .replace(/:\s*$/, '')
+        .trim();
+      const label =
+        pendingLabel ?? (currentGroup ? `${currentGroup} ${inlinePrefix}` : inlinePrefix);
+      if (label.length === 0) {
+        continue;
+      }
+
+      const resetMatch = line.match(/(?:Refreshes|Resets)(?:\s+in)?\s+(.+?)\)?$/i);
+      const resetInText = resetMatch?.[1]?.trim();
       const durationMs = resetInText !== undefined ? parseDurationMs(resetInText) : undefined;
+      const resetAt =
+        durationMs !== undefined
+          ? new Date(fetchedAt.getTime() + durationMs)
+          : resetInText !== undefined
+            ? parseAbsoluteResetAt(resetInText, fetchedAt)
+            : undefined;
       metrics.push({
-        label: pendingLabel,
+        label,
         percentRemaining,
         ...(resetInText !== undefined ? { resetInText } : {}),
-        ...(durationMs !== undefined
-          ? { resetAt: new Date(fetchedAt.getTime() + durationMs) }
-          : {}),
+        ...(resetAt !== undefined ? { resetAt } : {}),
       });
       pendingLabel = undefined;
       continue;
@@ -193,7 +304,17 @@ function parseBlockContent(lines: readonly string[], fetchedAt: Date): ParsedBlo
   return {
     ...(plan !== undefined ? { plan } : {}),
     metrics,
-    ...(errorMessage !== undefined ? { errorMessage } : {}),
+    availability:
+      metrics.length > 0 ? 'live' : manualOnly && !autoFailed ? 'manual' : 'unavailable',
+    ...(detail !== undefined
+      ? { detail }
+      : autoFailed
+        ? { detail: 'ライブ取得に失敗しました。対象CLI内のクォータ画面で確認してください。' }
+        : manualOnly
+          ? { detail: '自動取得未対応です。対象サービスで手動確認してください。' }
+          : metrics.length === 0
+            ? { detail: 'このプロバイダの数値メトリクスを取得できませんでした。' }
+            : {}),
   };
 }
 
@@ -208,17 +329,13 @@ export function parseAiQuotaOutput(
     const { id, label, vendor } = parseHeader(block.header);
     const content = parseBlockContent(block.lines, fetchedAt);
 
-    // errorMessage(自動取得に失敗)、または数値メトリクスが1つも取れなかった(=手動確認のみ)
-    // プロバイダはウィジェットに出す情報が無いので結果から除外する。
-    if (content.errorMessage !== undefined || content.metrics.length === 0) {
-      continue;
-    }
-
     providers.push({
       id,
       label,
       ...(vendor !== undefined ? { vendor } : {}),
       ...(content.plan !== undefined ? { plan: content.plan } : {}),
+      availability: content.availability,
+      ...(content.detail !== undefined ? { detail: content.detail } : {}),
       metrics: content.metrics,
     });
   }
@@ -231,7 +348,7 @@ export function createNodeAiQuotaSource(
   options?: NodeAiQuotaSourceOptions,
 ): AiQuotaSource {
   const command = options?.command ?? DEFAULT_COMMAND;
-  const args = options?.args ?? [];
+  const args = options?.args ?? ['all'];
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
@@ -240,13 +357,15 @@ export function createNodeAiQuotaSource(
       const fetchedAt = new Date();
 
       if (result.exitCode !== 0) {
-        const detail = (result.stderr || result.stdout || '').trim().slice(0, 500);
-        throw new Error(
-          `ai-quota exited with code ${result.exitCode}${detail.length > 0 ? `: ${detail}` : ''}`,
-        );
+        // stderr/stdout はCLIや環境によってローカルパス・アカウント情報を含み得るため、
+        // APIへ伝播させない。
+        throw new Error(`ai-quota exited with code ${result.exitCode}`);
       }
 
       const providers = parseAiQuotaOutput(result.stdout, fetchedAt);
+      if (providers.length === 0) {
+        throw new Error('ai-quota returned no provider data');
+      }
       return { fetchedAt, providers };
     },
   };

@@ -7,7 +7,7 @@ function makeProvider(
   label: string,
   metrics: AiQuotaProviderSnapshot['metrics'],
 ): AiQuotaProviderSnapshot {
-  return { id, label, metrics };
+  return { id, label, availability: 'live', metrics };
 }
 
 describe('createAiQuotaThresholdPublisher', () => {

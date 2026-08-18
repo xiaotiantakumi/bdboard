@@ -15,6 +15,7 @@ const SAMPLE_RESULT: AiQuotaSourceResult = {
     {
       id: 'agy',
       label: 'Antigravity (Gemini sub)',
+      availability: 'live',
       metrics: [{ label: 'Weekly Limit Remaining', percentRemaining: 92 }],
     },
   ],

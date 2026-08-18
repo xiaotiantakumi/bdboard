@@ -10,14 +10,22 @@ export interface AiQuotaMetric {
   readonly resetAt?: Date;
   /** %が出ない「Quota available/exhausted」表示向け */
   readonly status?: 'available' | 'exhausted';
+  /** 割合でない取得値(例: Codexの残credit、Unlimited)。 */
+  readonly valueText?: string;
 }
 
-/** 自動取得(auto probe)に成功した1プロバイダ分の残量情報。 */
+/** プロバイダの取得状態。manual/unavailable は detail に安全な確認方法を持つ。 */
+export type AiQuotaProviderAvailability = 'live' | 'manual' | 'unavailable';
+
+/** `ai-quota all` が返した1プロバイダ分の残量情報。 */
 export interface AiQuotaProviderSnapshot {
   readonly id: string;
   readonly label: string;
   readonly vendor?: string;
   readonly plan?: string;
+  readonly availability: AiQuotaProviderAvailability;
+  /** 手動確認方法、またはライブ取得できなかった場合の案内。アカウント情報は含めない。 */
+  readonly detail?: string;
   readonly metrics: readonly AiQuotaMetric[];
 }
 

@@ -48,10 +48,22 @@ const ALL_MODE_STDOUT = [
   '  92% remaining · Refreshes in 88h 21m',
   '',
   '## codex — Codex (ChatGPT sub) (OpenAI)',
-  '  (自動取得に失敗: [Errno 5] Input/output error)',
+  '  Usage limit: codex',
+  '  │ 5h limit: 81% left (resets 4:42 PM) │',
+  '  │ Weekly limit: 64% left (resets 8:00 AM on Aug 22) │',
+  '  Credits: 25 credits',
+  '  codex-other limit:',
+  '  │ 5h limit: [███░] 40% left (resets 6:15 PM) │',
+  '  300 of 1000 credits used',
   '',
   '## claude — Claude Code (claude.ai sub) (Anthropic)',
-  '  確認方法: claude セッション内で `/usage`。',
+  '  確認方法: claude セッション内で `/usage`（プラン使用量・5h/週次）。',
+  '',
+  '## cursor — Cursor (cursor-agent) (Anysphere)',
+  '  確認方法: CLI に残量コマンド無し。https://cursor.com/dashboard で確認。',
+  '',
+  '## gemini — Gemini CLI (Google)',
+  '  (ライブ取得できず) 確認方法: AI Studio / Cloud Console で確認。',
   '',
 ].join('\n');
 
@@ -66,6 +78,8 @@ describe('parseAiQuotaOutput', () => {
     expect(agy.label).toBe('Antigravity (Gemini sub)');
     expect(agy.vendor).toBe('Google');
     expect(agy.plan).toBe('Google AI Pro');
+    expect(agy.availability).toBe('live');
+    expect(agy.detail).toBeUndefined();
 
     expect(agy.metrics).toHaveLength(4);
     const weekly = agy.metrics.find((m) => m.label === 'GEMINI MODELS Weekly Limit Remaining');
@@ -87,10 +101,97 @@ describe('parseAiQuotaOutput', () => {
     expect(claudeWeekly?.percentRemaining).toBeUndefined();
   });
 
-  it('drops providers whose auto probe failed and providers with no live metrics', () => {
-    const providers = parseAiQuotaOutput(ALL_MODE_STDOUT, new Date());
-    expect(providers).toHaveLength(1);
-    expect(providers[0].id).toBe('agy');
+  it('keeps all providers, including manual and unavailable entries, and parses Codex metrics', () => {
+    const fetchedAt = new Date('2026-08-15T00:00:00.000Z');
+    const providers = parseAiQuotaOutput(ALL_MODE_STDOUT, fetchedAt);
+    expect(providers.map((provider) => provider.id)).toEqual([
+      'agy',
+      'codex',
+      'claude',
+      'cursor',
+      'gemini',
+    ]);
+
+    const codex = providers[1];
+    expect(codex.availability).toBe('live');
+    expect(codex.metrics).toEqual([
+      {
+        label: 'codex 5h limit',
+        percentRemaining: 81,
+        resetInText: '4:42 PM',
+        resetAt: expect.any(Date),
+      },
+      {
+        label: 'codex Weekly limit',
+        percentRemaining: 64,
+        resetInText: '8:00 AM on Aug 22',
+        resetAt: expect.any(Date),
+      },
+      {
+        label: 'codex Credits',
+        valueText: '25 credits',
+      },
+      {
+        label: 'codex-other 5h limit',
+        percentRemaining: 40,
+        resetInText: '6:15 PM',
+        resetAt: expect.any(Date),
+      },
+      {
+        label: 'codex-other Credits',
+        valueText: '300 of 1000 credits used',
+      },
+    ]);
+    for (const metric of codex.metrics.filter((item) => item.resetAt !== undefined)) {
+      expect(metric.resetAt!.getTime()).toBeGreaterThan(fetchedAt.getTime());
+    }
+
+    expect(providers[2]).toMatchObject({
+      id: 'claude',
+      availability: 'manual',
+      metrics: [],
+      detail: expect.stringContaining('/usage'),
+    });
+    expect(providers[3]).toMatchObject({
+      id: 'cursor',
+      availability: 'manual',
+      metrics: [],
+      detail: expect.stringContaining('cursor.com/dashboard'),
+    });
+    expect(providers[4]).toMatchObject({
+      id: 'gemini',
+      availability: 'unavailable',
+      metrics: [],
+      detail: expect.stringContaining('ライブ取得できず'),
+    });
+  });
+
+  it('does not expose auto-probe exception details', () => {
+    const stdout = [
+      '## codex — Codex (ChatGPT sub) (OpenAI)',
+      '  (自動取得に失敗: /Users/private-account/.codex denied)',
+      '  (ライブ取得できず) 確認方法: codex 起動 → `/status`。',
+    ].join('\n');
+    const [provider] = parseAiQuotaOutput(stdout, new Date());
+
+    expect(provider.availability).toBe('unavailable');
+    expect(provider.detail).toContain('/status');
+    expect(JSON.stringify(provider)).not.toContain('private-account');
+  });
+
+  it('marks an unrecognized metric format as unavailable instead of manual-only', () => {
+    const stdout = [
+      '## codex — Codex (ChatGPT sub) (OpenAI)',
+      '  Rate limit information changed to an unknown format',
+    ].join('\n');
+    const [provider] = parseAiQuotaOutput(stdout, new Date());
+
+    expect(provider).toMatchObject({
+      id: 'codex',
+      availability: 'unavailable',
+      metrics: [],
+      detail: expect.stringContaining('数値メトリクスを取得できません'),
+    });
   });
 
   it('returns an empty list when the output has no provider blocks', () => {
@@ -100,7 +201,7 @@ describe('parseAiQuotaOutput', () => {
 });
 
 describe('createNodeAiQuotaSource', () => {
-  it('runs the configured command with no args by default and parses stdout', async () => {
+  it('runs the configured command in all mode by default and parses stdout', async () => {
     const { runner, calls } = createFakeRunner(() => ({
       stdout: SAMPLE_STDOUT,
       stderr: '',
@@ -110,7 +211,7 @@ describe('createNodeAiQuotaSource', () => {
 
     const result = await source.fetch();
 
-    expect(calls).toEqual([{ command: 'ai-quota', args: [] }]);
+    expect(calls).toEqual([{ command: 'ai-quota', args: ['all'] }]);
     expect(result.providers).toHaveLength(1);
     expect(result.providers[0].id).toBe('agy');
     expect(result.fetchedAt).toBeInstanceOf(Date);
@@ -133,14 +234,25 @@ describe('createNodeAiQuotaSource', () => {
     expect(calls).toEqual([{ command: '/opt/custom/ai-quota', args: ['all'] }]);
   });
 
-  it('throws when the command exits non-zero, without leaking secrets beyond tool stderr', async () => {
+  it('throws when the command exits non-zero without leaking tool output', async () => {
     const { runner } = createFakeRunner(() => ({
       stdout: '',
-      stderr: 'command not found',
+      stderr: 'failure for private-account@example.com',
       exitCode: 127,
     }));
     const source = createNodeAiQuotaSource(runner);
 
-    await expect(source.fetch()).rejects.toThrow(/ai-quota exited with code 127/);
+    await expect(source.fetch()).rejects.toThrow(/^ai-quota exited with code 127$/);
+  });
+
+  it('throws a safe error when the command succeeds without provider blocks', async () => {
+    const { runner } = createFakeRunner(() => ({
+      stdout: 'unexpected output',
+      stderr: '',
+      exitCode: 0,
+    }));
+    const source = createNodeAiQuotaSource(runner);
+
+    await expect(source.fetch()).rejects.toThrow(/^ai-quota returned no provider data$/);
   });
 });

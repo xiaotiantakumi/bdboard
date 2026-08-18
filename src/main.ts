@@ -867,7 +867,7 @@ async function main(): Promise<void> {
   if (!aiQuotaDisabled) {
     const aiQuotaSource = createNodeAiQuotaSource(commandRunner, {
       command: envString('BDBOARD_AI_QUOTA_PATH', 'ai-quota'),
-      timeoutMs: envInt('BDBOARD_AI_QUOTA_TIMEOUT_MS', 30_000),
+      timeoutMs: envInt('BDBOARD_AI_QUOTA_TIMEOUT_MS', 70_000),
     });
     const aiQuotaService = createAiQuotaService({
       source: aiQuotaSource,
