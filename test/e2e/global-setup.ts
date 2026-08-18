@@ -79,6 +79,12 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const dbPath = path.join(tmpRoot, 'cache.db');
 
   const binDir = path.join(here, 'fixtures', 'bin');
+  const claudeStub = path.join(binDir, 'claude');
+  try {
+    fs.chmodSync(claudeStub, 0o755);
+  } catch {
+    // Best-effort: CI may already mark the stub executable.
+  }
   const listFixture = path.join(
     repoRoot,
     'test',
@@ -109,7 +115,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       BDBOARD_AUTH_DISABLED: '1',
       BDBOARD_AUTH_USER: '',
       BDBOARD_AUTH_PASSWORD: '',
-      BDBOARD_CHAT_DISABLED: '1',
+      // Chat stays enabled for chat-mobile e2e; smoke scenarios never open the panel.
+      BDBOARD_CLAUDE_PATH: claudeStub,
       BDBOARD_AI_QUOTA_DISABLED: '1',
       BDBOARD_E2E_BD_LIST_FIXTURE: listFixture,
     },

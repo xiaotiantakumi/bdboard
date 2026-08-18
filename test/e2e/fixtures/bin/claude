@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Stub `claude` CLI for E2E tests that open the chat panel. Answers only the
+# probes chat-routes uses on startup (version + auth status) so
+# GET /api/chat/availability returns `available` without a real Claude install.
+set -euo pipefail
+
+if [[ "${1:-}" == "--version" ]]; then
+  echo 'claude 2.1.0 (bdboard-e2e-stub)'
+  exit 0
+fi
+
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  echo '{"loggedIn":true}'
+  exit 0
+fi
+
+echo "claude stub: unsupported invocation (not needed by chat-mobile e2e): $*" >&2
+exit 1
