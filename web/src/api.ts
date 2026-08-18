@@ -1421,6 +1421,7 @@ export interface AiQuotaMetricDto {
   resetInText?: string;
   resetAt?: string;
   status?: 'available' | 'exhausted';
+  valueText?: string;
 }
 
 export interface AiQuotaProviderDto {
@@ -1428,6 +1429,8 @@ export interface AiQuotaProviderDto {
   label: string;
   vendor?: string;
   plan?: string;
+  availability: 'live' | 'manual' | 'unavailable';
+  detail?: string;
   metrics: AiQuotaMetricDto[];
 }
 

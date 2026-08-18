@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiQuotaWidget } from './AiQuotaWidget';
 import type { AiQuotaDto } from '../api';
@@ -48,6 +48,7 @@ describe('AiQuotaWidget', () => {
           label: 'Antigravity (Gemini sub)',
           vendor: 'Google',
           plan: 'Google AI Pro',
+          availability: 'live',
           metrics: [
             {
               label: 'GEMINI MODELS Weekly Limit Remaining',
@@ -59,6 +60,7 @@ describe('AiQuotaWidget', () => {
               label: 'CLAUDE AND GPT MODELS Five Hour Limit Remaining',
               status: 'available',
             },
+            { label: 'Credits', valueText: '25 credits' },
           ],
         },
       ],
@@ -69,6 +71,7 @@ describe('AiQuotaWidget', () => {
     await screen.findByText('agy');
     expect(screen.getByText('週次 92%')).toBeInTheDocument();
     expect(screen.getByText('5時間 空きあり')).toBeInTheDocument();
+    expect(screen.getByText('Credits 25 credits')).toBeInTheDocument();
   });
 
   it('renders nothing while there is no data yet', () => {
@@ -82,34 +85,62 @@ describe('AiQuotaWidget', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('hides itself (renders nothing) when the API reports an error state', async () => {
-    const fetchMock = installFetchMock({
+  it('renders a safe failure note when the API reports an error state', async () => {
+    installFetchMock({
       state: 'error',
       message: 'ai-quota exited with code 127',
     });
 
-    const { container } = renderWidget();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
+    renderWidget();
+    expect(await screen.findByText('取得失敗')).toBeInTheDocument();
   });
 
-  it('hides itself when the fetch itself fails (command missing, network error, etc.)', async () => {
-    const fetchMock = installFetchMock('network-error');
+  it('renders a safe failure note when the fetch itself fails', async () => {
+    installFetchMock('network-error');
 
-    const { container } = renderWidget();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
+    renderWidget();
+    expect(await screen.findByText('取得失敗')).toBeInTheDocument();
   });
 
-  it('hides itself when there are no providers with live metrics', async () => {
-    const fetchMock = installFetchMock({
+  it('renders manual and unavailable providers with safe confirmation guidance', async () => {
+    installFetchMock({
+      state: 'ok',
+      fetchedAt: '2026-08-15T00:00:00.000Z',
+      providers: [
+        {
+          id: 'claude',
+          label: 'Claude Code (claude.ai sub)',
+          vendor: 'Anthropic',
+          availability: 'manual',
+          detail: '自動取得未対応。確認方法: claude セッション内で `/usage`。',
+          metrics: [],
+        },
+        {
+          id: 'codex',
+          label: 'Codex (ChatGPT sub)',
+          vendor: 'OpenAI',
+          availability: 'unavailable',
+          detail: 'ライブ取得できず。確認方法: codex 起動 → `/status`。',
+          metrics: [],
+        },
+      ],
+    });
+
+    renderWidget();
+    expect(await screen.findByText('claude')).toBeInTheDocument();
+    expect(screen.getByText(/自動取得未対応.*\/usage/)).toBeInTheDocument();
+    expect(screen.getByText('codex')).toBeInTheDocument();
+    expect(screen.getByText(/ライブ取得できず.*\/status/)).toBeInTheDocument();
+  });
+
+  it('renders a safe failure note if an empty provider response reaches the UI', async () => {
+    installFetchMock({
       state: 'ok',
       fetchedAt: '2026-08-15T00:00:00.000Z',
       providers: [],
     });
 
-    const { container } = renderWidget();
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-    expect(container).toBeEmptyDOMElement();
+    renderWidget();
+    expect(await screen.findByText('取得失敗')).toBeInTheDocument();
   });
 });

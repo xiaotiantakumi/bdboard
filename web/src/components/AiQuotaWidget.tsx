@@ -13,11 +13,17 @@ const PERIOD_LABELS: Record<string, string> = {
 };
 
 function splitMetricLabel(label: string): { group?: string; period: string } {
-  const match = label.match(/(Weekly|Five Hour|Hourly) Limit Remaining$/);
+  const match = label.match(/(Weekly|Five Hour|5h|Hourly) Limit(?: Remaining)?$/i);
   if (!match) {
     return { period: label };
   }
-  const period = PERIOD_LABELS[match[1]] ?? match[1];
+  const rawPeriod = match[1].toLowerCase();
+  const period =
+    rawPeriod === 'weekly'
+      ? PERIOD_LABELS.Weekly
+      : rawPeriod === 'five hour' || rawPeriod === '5h'
+        ? PERIOD_LABELS['Five Hour']
+        : PERIOD_LABELS.Hourly;
   const group = label.slice(0, match.index).trim();
   return { group: group.length > 0 ? group : undefined, period };
 }
@@ -76,23 +82,64 @@ function MetricChip({ metric }: { metric: AiQuotaMetricDto }) {
     );
   }
 
+  if (metric.valueText !== undefined) {
+    return (
+      <span className="ai-quota-chip" title={title}>
+        {metric.label} {metric.valueText}
+      </span>
+    );
+  }
+
   return null;
 }
 
 function ProviderChips({ provider }: { provider: AiQuotaProviderDto }) {
   return (
-    <span className="ai-quota-provider">
+    <div className="ai-quota-provider">
       <span className="ai-quota-provider-label">{provider.id}</span>
       {provider.metrics.map((metric, index) => (
         <MetricChip key={`${provider.id}-${index}`} metric={metric} />
       ))}
-    </span>
+      {provider.availability !== 'live' && (
+        <details className="ai-quota-note">
+          <summary
+            className={
+              provider.availability === 'unavailable'
+                ? 'ai-quota-chip ai-quota-chip-warn'
+                : 'ai-quota-chip ai-quota-chip-manual'
+            }
+            aria-label={`${provider.label}: ${provider.detail ?? '数値を自動取得できません'}`}
+          >
+            {provider.availability === 'manual' ? '手動確認' : '取得失敗'}
+          </summary>
+          <span className="ai-quota-note-detail">
+            {provider.detail ?? '数値を自動取得できません。対象サービスで確認してください。'}
+          </span>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function QuotaErrorNotice() {
+  return (
+    <div className="ai-quota-widget header-group" aria-label="AIクォータ残量">
+      <div className="ai-quota-provider">
+        <span className="ai-quota-provider-label">AI quota</span>
+        <details className="ai-quota-note">
+          <summary className="ai-quota-chip ai-quota-chip-warn">取得失敗</summary>
+          <span className="ai-quota-note-detail">
+            ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。
+          </span>
+        </details>
+      </div>
+    </div>
   );
 }
 
 /**
- * ヘッダに常駐する、連携AIのクォータ残量ウィジェット。`ai-quota` コマンドが無い/失敗する
- * 環境でもボードが壊れないよう、取得できない場合は静かに何も描画しない(非表示)。
+ * ヘッダに常駐する、連携AIのクォータ残量ウィジェット。数値を自動取得できない
+ * プロバイダも、手動確認方法または取得失敗理由を開閉できる注記で案内する。
  */
 export function AiQuotaWidget() {
   const query = useQuery({
@@ -100,23 +147,25 @@ export function AiQuotaWidget() {
     queryFn: fetchAiQuota,
     retry: false,
     refetchInterval: POLL_INTERVAL_MS,
-    // 失敗を画面に出す機能ではないので、フォーカス復帰のたびに再取得しなくてよい。
+    // TUIを起動する重い取得なので、フォーカス復帰のたびに再実行しない。
     refetchOnWindowFocus: false,
   });
 
   const data = query.data;
-  if (data === undefined || data.state === 'error') {
+  if (query.isError) {
+    return <QuotaErrorNotice />;
+  }
+  if (data === undefined) {
     return null;
   }
 
-  const providers = data.providers.filter((provider) => provider.metrics.length > 0);
-  if (providers.length === 0) {
-    return null;
+  if (data.state === 'error' || data.providers.length === 0) {
+    return <QuotaErrorNotice />;
   }
 
   return (
     <div className="ai-quota-widget header-group" aria-label="AIクォータ残量">
-      {providers.map((provider) => (
+      {data.providers.map((provider) => (
         <ProviderChips key={provider.id} provider={provider} />
       ))}
     </div>

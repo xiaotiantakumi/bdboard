@@ -116,7 +116,7 @@ loopback 接続をローカル直アクセスとみなす認証免除の前提�
 | `BDBOARD_AUTH_DISABLED` | `1` または `true`(完全一致)で Basic 認証を明示的に無効化する。未設定かつ認証情報も未設定だと、リモートリクエストは `503` になる(フェイルクローズ)。ローカル直アクセスは下記条件で免除され、Basic 認証が有効でなければトンネル公開はできない | (未設定 = 無効化しない) |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
-| `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `30000`(30秒) |
+| `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |
 | `BDBOARD_AI_QUOTA_CACHE_MS` | AI クォータ結果のキャッシュ有効期間(ミリ秒) | `300000`(5分) |
 | `BDBOARD_CHAT_DISABLED` | `1` または `true`(大小無視)でチャット機能を無効化 | `false` |
 | `BDBOARD_CLAUDE_PATH` | チャット機能が呼び出す `claude` CLI のパス/名前 | `claude` |
