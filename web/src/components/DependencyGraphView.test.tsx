@@ -244,13 +244,39 @@ describe('DependencyGraphView', () => {
     expect(await screen.findByText('network failed')).toBeInTheDocument();
   });
 
-  it('calls onCardClick when a node is clicked', async () => {
+  it('does not call onCardClick when a node body is clicked', async () => {
     fetchDependencyGraphMock.mockResolvedValue(makeGraph());
 
     const { onCardClick } = renderDependencyGraphView();
 
-    const node = await screen.findByRole('button', { name: /bdboard-a/i });
+    const node = await screen.findByRole('button', { name: /^bdboard-a:/i });
     fireEvent.click(node);
+
+    expect(onCardClick).not.toHaveBeenCalled();
+  });
+
+  it('switches focus center when a node body is clicked', async () => {
+    fetchDependencyGraphMock.mockResolvedValue(makeDeepChainGraph());
+
+    renderDependencyGraphView();
+
+    const node = await screen.findByRole('button', { name: /^bdboard-b:/i });
+    fireEvent.click(node);
+
+    expect(
+      await screen.findByText(/bdboard-b を中心に 4 件を表示中（全 5 件）/),
+    ).toBeInTheDocument();
+  });
+
+  it('calls onCardClick when the detail button is clicked', async () => {
+    fetchDependencyGraphMock.mockResolvedValue(makeGraph());
+
+    const { onCardClick } = renderDependencyGraphView();
+
+    const detailButton = await screen.findByRole('button', {
+      name: 'bdboard-a の詳細を開く',
+    });
+    fireEvent.click(detailButton);
 
     expect(onCardClick).toHaveBeenCalledWith('bdboard-a');
   });

@@ -1717,10 +1717,14 @@ body {
 }
 
 .dependency-graph-node-group {
+  cursor: default;
+}
+
+.dependency-graph-node-clickarea {
   cursor: pointer;
 }
 
-.dependency-graph-node-group:focus-visible {
+.dependency-graph-node-clickarea:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
 }
@@ -1731,8 +1735,35 @@ body {
   stroke-width: 1.5;
 }
 
-.dependency-graph-node-group:hover .dependency-graph-node {
+.dependency-graph-node-clickarea:hover .dependency-graph-node {
   stroke: var(--color-accent);
+}
+
+.dependency-graph-node-detail-button {
+  cursor: pointer;
+}
+
+.dependency-graph-node-detail-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.dependency-graph-node-detail-button-bg {
+  fill: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-elevated));
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.dependency-graph-node-detail-button:hover .dependency-graph-node-detail-button-bg,
+.dependency-graph-node-detail-button:focus-visible .dependency-graph-node-detail-button-bg {
+  fill: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-elevated));
+  stroke: var(--color-accent);
+}
+
+.dependency-graph-node-detail-button-label {
+  font-size: 8px;
+  fill: var(--color-text-secondary);
+  pointer-events: none;
 }
 
 .dependency-graph-node-focus-center {
