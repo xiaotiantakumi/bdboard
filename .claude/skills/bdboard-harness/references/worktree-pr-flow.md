@@ -30,6 +30,23 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
 
 ### 2. worktree 内でのセットアップと実装
 
+- **依存インストールの前に Node のバージョンを確認する**（`node --version`）。プロジェクトの
+  `package.json` の `engines.node` を満たさないバージョンで `npm install` すると、依存関係の
+  解決結果・`package-lock.json` の内容（例: `license` フィールドの有無）が変わりうる。これは
+  ハーネスのシェルスナップショットが `nvm` 関数は持つが `NVM_DIR` を欠くために `.zshrc` の
+  `nvm use --silent default` が無言で失敗し、意図しない Node バージョンが PATH に残る既知の
+  ハーネス側バグに起因する（bdboard-hmj）。要件を満たさなければ、原因調査に進む前にまず
+  正しいバージョンを PATH の先頭に通してからやり直す:
+
+  ```bash
+  node --version   # package.json の engines.node と突き合わせる
+  # 満たさない場合の例（インストール済みバージョンのパスは環境依存。nvm ls で確認）:
+  export PATH="$HOME/.nvm/versions/node/<必要なバージョン>/bin:$PATH"
+  node --version   # 期待値に一致することを確認してから続行
+  ```
+
+  この節はハーネス側バグの検知と回避（回復コマンド）を目的としており、根本原因（`NVM_DIR`
+  欠落そのもの）の修正はこの skill の対象外 — 該当ハーネスの開発元へ別途報告する。
 - 依存インストール（`node_modules` 等は worktree 間で共有されない）。コマンドは
   プロジェクトの CLAUDE.md に従う。
 - **worktree からポートを掴む常駐プロセス（dev サーバー等）を起動しない。** ポートは
