@@ -35,6 +35,7 @@ import { EventCenterPanel } from './components/EventCenterPanel';
 import { NextUpView } from './components/NextUpView';
 import { ThroughputStats } from './components/ThroughputStats';
 import { KeyboardShortcutsPanel } from './components/KeyboardShortcutsPanel';
+import { HelpPanel } from './components/HelpPanel';
 import { SearchPalette } from './components/SearchPalette';
 import { SessionListPanel } from './components/SessionListPanel';
 import { TicketDetailPanel } from './components/TicketDetailPanel';
@@ -190,6 +191,7 @@ export function App() {
   } = useTicketDeepLink({ view, onViewChange: setView });
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatContext, setChatContext] = useState<
     { projectId: string; ticketId: string } | undefined
@@ -538,6 +540,14 @@ export function App() {
     setShortcutsOpen(false);
   }, []);
 
+  const handleOpenHelp = useCallback(() => {
+    setHelpOpen(true);
+  }, []);
+
+  const handleCloseHelp = useCallback(() => {
+    setHelpOpen(false);
+  }, []);
+
   const paletteActions = useMemo(
     () =>
       buildPaletteActions({
@@ -608,13 +618,17 @@ export function App() {
         return;
       }
 
+      if (helpOpen) {
+        return;
+      }
+
       event.preventDefault();
       setSearchOpen(true);
     };
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [helpOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -637,6 +651,7 @@ export function App() {
 
       if (
         searchOpen ||
+        helpOpen ||
         chatOpen ||
         sessionListOpen ||
         selectedTicketId !== null
@@ -652,6 +667,7 @@ export function App() {
     return () => document.removeEventListener('keydown', onKeyDown);
   }, [
     chatOpen,
+    helpOpen,
     handleCloseShortcuts,
     handleOpenShortcuts,
     searchOpen,
@@ -845,6 +861,15 @@ export function App() {
           onClick={handleOpenShortcuts}
         >
           ?
+        </button>
+
+        <button
+          type="button"
+          className="btn btn-help"
+          aria-label="ヘルプ"
+          onClick={handleOpenHelp}
+        >
+          ヘルプ
         </button>
 
         <button
@@ -1084,6 +1109,8 @@ export function App() {
       {shortcutsOpen && (
         <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
       )}
+
+      {helpOpen && <HelpPanel onClose={handleCloseHelp} />}
 
       {searchOpen && (
         <SearchPalette
