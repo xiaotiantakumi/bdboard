@@ -65,6 +65,38 @@ bd comment <id> "PR: <url>"
 PR を開いた時点では **close しない**（SKILL.md 規律4）。CI が緑になるのを待つ
 （待ち時間に他チケットを進めてよい）。
 
+**CI待ち中に `gh pr checks`/`gh pr view` が503等で失敗し続ける場合**（GitHub障害時など）:
+「障害で確認できないだけ」と決めつけない。これらはGraphQL裏付けのコマンドで、GraphQLが
+落ちていてもREST APIは動いていることが多い。まずRESTへ切り替えて実態を確認する:
+
+```bash
+gh api repos/<owner>/<repo>/pulls/<N> --jq '{state,merged,mergeable,mergeable_state}'
+gh api repos/<owner>/<repo>/commits/<HEAD_SHA>/check-runs --jq '.check_runs[] | {name,status,conclusion}'
+gh api "repos/<owner>/<repo>/actions/runs?branch=<branch>&per_page=5" --jq '.workflow_runs[] | {name,status,conclusion,head_sha,created_at}'
+```
+
+**非自明な落とし穴**: 障害中の force-push は、CIワークフロー自体が一度も起動しないことが
+ある（webhookの`synchronize`イベント配送が無言でドロップされる）。上記の`check-runs`/
+`actions/runs`に対象コミットのSHAに対応する行が一件も無ければ、それは「pending中」ではなく
+「起動していない」——いつまで待っても状態は変わらないので、Monitorで503/pendingを
+リトライし続けても無意味。判定は次で行う:
+
+```bash
+gh api repos/<owner>/<repo>/commits/<HEAD_SHA>/check-suites --jq '.check_suites[] | {app: .app.name, status, conclusion}'
+```
+
+CI(GitHub Actions)のcheck-suiteそのものが存在せず、GitGuardian等サードパーティのappだけが
+並んでいれば起動漏れと確定できる。復旧は空コミットで新しいsynchronizeイベントを強制発生
+させるだけでよい（コード変更不要・可逆）:
+
+```bash
+git commit --allow-empty -m "chore: retrigger CI (Actions dispatch missed during GitHub outage)"
+git push
+```
+
+実例・より詳しい教訓: グローバル orchestration skill の `reference/lessons-learned.md`
+「GitHub Actionsのwebhook dispatchが障害中に無言で失われる（bdboard, 2026-08-17）」。
+
 ### 5. マージ排他3層
 
 並列セッションが同時に main へマージしてくること自体は（branch protection が無い環境では）
