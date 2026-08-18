@@ -23,9 +23,13 @@
 //   自グループごと SIGTERM → SIGKILL する(孤児化の恒久防止)。
 // - どちらの監視も常時稼働サーバー(BDBOARD_PORT)や無関係な node には触れない
 //   (対象は自分の作った新プロセスグループのみ)。
+//
+// bdboard-d48: さらに外側モードは、リーダー起動前にマシン単位の実行スロット
+// (既定2、verify-slot.mjs) を獲得する。verify の同時実行本数の上限はここで効く。
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { acquireVerifySlot, envSlotOptions, SlotWaitTimeoutError } from './verify-slot.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
@@ -94,7 +98,26 @@ if (process.argv.includes('--group-leader')) {
     process.exit(1);
   });
 } else {
-  // ---- 外側モード: リーダーを新プロセスグループ(detached)で起動し、シグナルを中継する ----
+  // ---- 外側モード: 実行スロットを獲得してから、リーダーを新プロセスグループ(detached)で起動する ----
+  // スロット待機中のシグナルは「列から抜けて終了」(holder file は acquire 側の
+  // exit フックが片付ける)。リーダー起動後は下の killLeaderGroup 系に役目を渡す。
+  const waitPhaseHandlers = new Map();
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+    const handler = () => process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
+    waitPhaseHandlers.set(signal, handler);
+    process.on(signal, handler);
+  }
+  let slot;
+  try {
+    slot = await acquireVerifySlot(envSlotOptions());
+  } catch (error) {
+    if (error instanceof SlotWaitTimeoutError) {
+      console.error(error.message);
+      process.exit(1);
+    }
+    throw error;
+  }
+
   const leader = spawn(
     process.execPath,
     [fileURLToPath(import.meta.url), '--group-leader'],
@@ -115,6 +138,10 @@ if (process.argv.includes('--group-leader')) {
     setTimeout(() => killGroup(leader.pid, 'SIGKILL'), GRACE_MS).unref();
   };
 
+  // 待機フェーズ用ハンドラを外し、以後のシグナルはリーダーグループの後始末に回す。
+  for (const [signal, handler] of waitPhaseHandlers) {
+    process.removeListener(signal, handler);
+  }
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
     process.on(signal, killLeaderGroup);
   }
@@ -128,6 +155,8 @@ if (process.argv.includes('--group-leader')) {
 
   leader.on('exit', (code, signal) => {
     clearInterval(orphanWatch);
+    // グループ全体の SIGKILL 猶予を待つ経路でも、スロット自体は今すぐ返す。
+    slot.release();
     process.exit(signal !== null ? (SIGNAL_EXIT_CODES[signal] ?? 1) : (code ?? 1));
   });
   leader.on('error', (error) => {
