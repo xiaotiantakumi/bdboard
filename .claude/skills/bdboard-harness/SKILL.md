@@ -131,4 +131,4 @@ worktree 作成から PR・マージまでの全体フロー:
 | [references/worktree-pr-flow.md](references/worktree-pr-flow.md) | per-ticket worktree+branch+PR フローの全手順とマージ排他3層 |
 | [references/lease-params.md](references/lease-params.md) | lease/heartbeat/reclaim の既定パラメータと失敗時の意味 |
 | [references/question-template.md](references/question-template.md) | 確認待ちコメントの書き方テンプレ |
-| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律 |
+| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ） |
