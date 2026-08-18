@@ -34,7 +34,7 @@
   シェル経由の `bd` コマンドに委ねる(詳細は下記環境変数表と各アダプタの節を参照)
 - **AI クォータ表示**: 外部の `ai-quota` コマンドの出力をウィジェット表示
 - **トンネル公開 + QR**: `cloudflared` quick tunnel でローカル画面を一時公開し、ワンタイムの
-  Basic 認証情報を QR コードで配布(スマホなど別端末から見るため)。なお設定 API
+  セッショントークン URL を QR コードで渡す(スマホなど別端末から見るため)。なお設定 API
   (`GET /api/settings/scan-roots`)の `defaultScanRoots` はホームディレクトリのパス
   (= OS ユーザー名)を含むため、トンネル読み取りアクセスにもこの情報が露出する
   (bdboard-9a9 の裁定により意図的に許容)
@@ -69,6 +69,8 @@ npm run dev:web   # Vite の dev サーバー(HMR)。/api は上記サーバー�
 
 `npm run dev` と `npm run dev:web` は同時に別ポートで動かして併用する想定。`dev:web` の Vite
 プロキシは `http://127.0.0.1:8787` 固定なので、`dev` 側のポートも既定値のまま使うこと。
+Vite は `127.0.0.1` のみに待ち受ける。`vite --host` などでこのプロキシを LAN に公開すると、
+loopback 接続をローカル直アクセスとみなす認証免除の前提が崩れるため使用しないこと。
 
 `.env` ファイル(git 管理外)を置くと `npm run dev` / `npm run start` が自動で読み込む
 (`tsx --env-file-if-exists=.env`)。雛形は `.env.example` を参照(認証用の2変数のみ)。
@@ -111,7 +113,7 @@ npm run dev:web   # Vite の dev サーバー(HMR)。/api は上記サーバー�
 | `BDBOARD_TUNNEL_LOG_MAX_BYTES` | `cloudflared` トンネルログのローテーション閾値(バイト) | `5242880`(5MB) |
 | `BDBOARD_AUTH_USER` | Basic 認証のユーザー名。`BDBOARD_AUTH_PASSWORD` と両方に値がある場合のみ認証が有効化される | (未設定) |
 | `BDBOARD_AUTH_PASSWORD` | Basic 認証のパスワード。上記と同様 | (未設定) |
-| `BDBOARD_AUTH_DISABLED` | `1` または `true`(完全一致)で Basic 認証を明示的に無効化する。未設定かつ認証情報も未設定だと、全リクエストが `503` になる(フェイルクローズ) | (未設定 = 無効化しない) |
+| `BDBOARD_AUTH_DISABLED` | `1` または `true`(完全一致)で Basic 認証を明示的に無効化する。未設定かつ認証情報も未設定だと、リモートリクエストは `503` になる(フェイルクローズ)。ローカル直アクセスは下記条件で免除され、Basic 認証が有効でなければトンネル公開はできない | (未設定 = 無効化しない) |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `30000`(30秒) |
@@ -308,12 +310,22 @@ agy アダプタは運用者がログイン済みの OAuth アカウント(`~/.g
 コード内コメントを参照。
 
 `BDBOARD_AUTH_USER` は、Basic 認証を有効化する目的では既定値が無い(パスワードとセットで
-明示設定が必須)。ただしトンネル機能がワンタイム資格情報を発行する際のユーザー名としては、
-未設定でも `bdboard` が既定値として使われる(この場合もサイト全体への Basic 認証自体は
-`BDBOARD_AUTH_USER`/`BDBOARD_AUTH_PASSWORD` が両方揃っていないと有効にならない)。
+明示設定が必須)。トンネル公開ボタンも、両方が揃って Basic 認証が有効なときだけ使える。
+スマホへ渡す QR コードは Basic 認証情報そのものではなく、約5分有効・1回限りの
+セッショントークン URL である。
 
 認証情報の実値や `.env` の中身をコミットしたり Issue/PR に書いたりしないこと。設定すると
-ローカル配信(および上記トンネル経由の公開)に Basic 認証がかかる、という点だけ押さえておけばよい。
+Cloudflare トンネル経由の公開には Basic 認証がかかる(ローカル直アクセスにはかからない)。
+ローカルとトンネルの区別は `src/interface/http/local-request.ts` で、TCP 接続元が loopback、
+Cloudflare 転送ヘッダ(`cf-connecting-ip` / `cf-ray` / `cf-visitor`)が無いことを確認し、
+Basic 認証の免除ではさらに `Host` が `localhost` / `127.0.0.1` / `[::1]` と実際の待受ポートに
+一致することも要求する(不一致・判定不能は免除しない)。
+
+この区別が安全に使えるのは、bdboardへ直接接続するローカルブラウザと、HTTP モードの
+`cloudflared` quick tunnel に限る。`ssh -L` / `ngrok` / `socat` /
+`kubectl port-forward` など、Cloudflare ヘッダを付けず loopback で終端する橋渡しは認証免除の
+前提外なので、このサーバーへ向けて使用しないこと。必要ならローカル免除を無効化する仕組みを
+先に追加する。
 
 ## 外部 MCP クライアント (Claude Code / Codex / Cursor)
 

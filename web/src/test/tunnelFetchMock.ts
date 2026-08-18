@@ -4,6 +4,7 @@ import type { TunnelDto } from '../api';
 const OFF_TUNNEL: TunnelDto = {
   state: 'off',
   available: true,
+  authEnabled: true,
 };
 
 export type TunnelFetchMockOptions = {
@@ -60,7 +61,11 @@ export function installTunnelFetchMock(
 
     if (url === '/api/tunnel/start' && init?.method === 'POST') {
       return new Response(
-        JSON.stringify({ state: 'starting', available: true } satisfies TunnelDto),
+        JSON.stringify({
+          state: 'starting',
+          available: true,
+          authEnabled: tunnelResponse.authEnabled,
+        } satisfies TunnelDto),
         {
           status: 200,
           headers: { 'Content-Type': 'application/json' },

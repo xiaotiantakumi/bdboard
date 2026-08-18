@@ -17,6 +17,7 @@ export interface BasicAuthMiddlewareOptions {
   readonly lockDurationMs?: number;
   readonly getExtraCredentials?: () => BasicAuthConfig | null;
   readonly hasValidSession?: (c: Context) => boolean;
+  readonly isLocalRequest?: (c: Context) => boolean;
 }
 
 const DEFAULT_MAX_FAILURES = 10;
@@ -308,9 +309,24 @@ export function createBasicAuthMiddleware(
   modeOrGetter: AuthMode | (() => AuthMode),
   options?: BasicAuthMiddlewareOptions,
 ): MiddlewareHandler {
-  if (typeof modeOrGetter === 'function') {
-    return createDynamicMiddleware(modeOrGetter, options);
+  const inner =
+    typeof modeOrGetter === 'function'
+      ? createDynamicMiddleware(modeOrGetter, options)
+      : createMiddlewareForMode(modeOrGetter, options);
+
+  const isLocalRequest = options?.isLocalRequest;
+  if (isLocalRequest === undefined) {
+    return inner;
   }
 
-  return createMiddlewareForMode(modeOrGetter, options);
+  return async (c, next) => {
+    // ローカル直アクセスは mode を問わず常に免除する。unconfigured の 503 は
+    // トンネルや将来のリモート越しに無防備公開される事故を防ぐための fail-closed であり、
+    // isLocalRequest で確実にローカルと判定できるリクエストまで適用する必要はない。
+    if (isLocalRequest(c)) {
+      await next();
+      return;
+    }
+    return inner(c, next);
+  };
 }

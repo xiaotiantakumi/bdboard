@@ -3687,19 +3687,6 @@ body {
   max-width: 100%;
 }
 
-.tunnel-field-value {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 0.8125rem;
-  color: var(--color-text);
-  word-break: break-all;
-  overflow-wrap: anywhere;
-}
-
-.tunnel-mono {
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
-}
-
 .tunnel-qr-hint {
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
@@ -3741,12 +3728,6 @@ body {
   color: var(--color-danger);
   line-height: 1.4;
   word-break: break-word;
-}
-
-.tunnel-copy-feedback {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--color-success);
 }
 
 .detail-panel.chat-panel {

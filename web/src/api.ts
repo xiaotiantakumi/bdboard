@@ -1044,6 +1044,8 @@ export type TunnelStateKind =
 export interface TunnelDtoBase {
   state: TunnelStateKind;
   available: boolean;
+  /** Site-wide Basic Auth is active, so starting a public tunnel is safe. */
+  authEnabled: boolean;
   /** 前回サーバー停止時にトンネルが稼働していた場合の停止時刻 (bdboard-8v8)。
    *  サーバーは state==='on' のときは返さない。資格情報は含まれない。 */
   interruptedAt?: string;
@@ -1052,8 +1054,6 @@ export interface TunnelDtoBase {
 export interface TunnelDtoOn extends TunnelDtoBase {
   state: 'on';
   url: string;
-  username: string;
-  password: string;
   startedAt: string;
   /** トンネル経由の書き込みが開いているか(bdboard-9rz)。短いパスワードで起動した
    *  トンネルは読み取り専用になるので、UI 側で理由を説明するのに使える。 */

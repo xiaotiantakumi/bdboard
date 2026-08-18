@@ -288,13 +288,12 @@ wanted, that is a separate, explicitly user-approved change.
   curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   ```
 
-  **Judge by the status code, not by curl's exit status.** `/api/health` sits
-  behind the Basic auth gate, so a perfectly healthy server answers **401**
-  whenever auth is configured — and **200** only when auth is explicitly
-  disabled. Both mean "running, leave it alone". Do **not** use `curl -f`
-  here: `--fail` turns that normal 401 into exit 22, and an agent following
-  the old instruction would try to start a second server on top of a healthy
-  one (observed 2026-08-16, bdboard-c7v).
+  **Judge by the status code, not by curl's exit status.** Local direct
+  requests bypass Basic auth, so a healthy server answers **200** regardless
+  of whether auth is configured. A **401/503** still proves an HTTP server is
+  listening but means the request was not classified as local direct access;
+  investigate Host/proxy configuration instead of starting a second server.
+  Do **not** use `curl -f`, because it hides the response body/status distinction.
 
   Only a **connection failure** means the server is down: curl prints `000`
   and exits 7. In that case start it — prefer the Browser tool's

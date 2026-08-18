@@ -7,6 +7,8 @@ import { isLocalControlRequest } from './local-request.js';
 
 export interface TunnelRoutesDeps {
   readonly tunnelService: TunnelService;
+  /** Public tunnels are allowed only while site-wide Basic Auth is enabled. */
+  readonly authEnabled: boolean;
   readonly access?: TunnelAccessService;
 }
 
@@ -17,18 +19,18 @@ const startBodySchema = z.object({
 function toPublicState(
   state: TunnelState,
   available: boolean,
+  authEnabled: boolean,
   writeAccess: boolean,
   interruptedAt: Date | null,
 ): Record<string, unknown> {
   const base: Record<string, unknown> = {
     state: state.kind,
     available,
+    authEnabled,
   };
 
   if (state.kind === 'on') {
     base.url = state.url;
-    base.username = state.username;
-    base.password = state.password;
     base.startedAt = state.startedAt.toISOString();
     // 短いパスワードで起動したトンネルは読み取り専用になる(bdboard-9rz)。
     // スマホから書き込めない理由が UI 側で説明できるように状態として返す。
@@ -67,6 +69,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
       toPublicState(
         deps.tunnelService.getState(),
         available,
+        deps.authEnabled,
         deps.tunnelService.isWriteAllowed(),
         deps.tunnelService.getInterruptedAt(),
       ),
@@ -74,6 +77,13 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
   });
 
   app.post('/api/tunnel/start', async (c) => {
+    if (!deps.authEnabled) {
+      return c.json(
+        { error: 'Basic Auth must be enabled before starting a tunnel' },
+        409,
+      );
+    }
+
     let body: unknown;
     try {
       body = await c.req.json();
@@ -114,6 +124,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
       toPublicState(
         state,
         available,
+        deps.authEnabled,
         deps.tunnelService.isWriteAllowed(),
         deps.tunnelService.getInterruptedAt(),
       ),
@@ -127,6 +138,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
       toPublicState(
         state,
         available,
+        deps.authEnabled,
         deps.tunnelService.isWriteAllowed(),
         deps.tunnelService.getInterruptedAt(),
       ),
@@ -140,6 +152,7 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
       toPublicState(
         deps.tunnelService.getState(),
         available,
+        deps.authEnabled,
         deps.tunnelService.isWriteAllowed(),
         deps.tunnelService.getInterruptedAt(),
       ),
