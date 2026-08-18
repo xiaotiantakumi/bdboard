@@ -356,7 +356,9 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
   on the port with the main checkout. `vitest`/`tsc`/`depcruise` don't bind a
   port, so those run fine in parallel worktrees.
 - **Lifecycle**: `bd update <id> --claim` → create worktree+branch →
-  implement → `npm run verify` locally (must be clean before opening a PR) →
+  implement → 機能追加/変更ならヘルプ原本 `docs/help-content.json` の追従を
+  確認 (「Conventions & Patterns」の **ヘルプドキュメントの追従** 参照) →
+  `npm run verify` locally (must be clean before opening a PR) →
   `gh pr create --fill --body "Closes: <ticket-id>\n\n<summary>"` →
   `bd comment <id> "PR: <url>"` → wait for CI green → merge per **Merge
   serialization** below (slot → CAS → `gh pr merge --squash --delete-branch`)
@@ -471,6 +473,28 @@ middleware, and why the agent Runner is currently unwired). See
   Do not just delete the values to dodge the scanner; that weakens the test.
   See bdboard-3tw.81 and the earlier bdboard-1qm PR#3 precedent
   (`web/src/components/TunnelControl.test.tsx`).
+- **ヘルプドキュメントの追従 — 機能追加/変更のPRは `docs/help-content.json`
+  の更新確認を完了条件に含める** (bdboard-3tw.138.4)。ヘルプ系の表示は
+  すべて `docs/help-content.json` を単一原本とする: Webヘルプ画面
+  (`web/src/helpContent.ts` → `web/src/components/HelpPanel.tsx`)、チャットの
+  system prompt (`src/infrastructure/chat/help-content.ts` →
+  `src/infrastructure/chat/bd-system-prompt.ts`)、ボード上部のTips
+  (`web/src/tipsContent.ts` → `web/src/components/TipsBanner.tsx`) は
+  いずれもここから派生する (bdboard-3tw.138.1〜138.3)。運用ルール:
+  - ユーザーから見える機能・操作・画面/ビュー名を追加・変更・削除するPRでは、
+    PRを開く前に `docs/help-content.json` の該当セクション
+    (title/description/steps) が変更後の実態と一致しているか確認し、ズレて
+    いれば**同じPR内で**原本を更新する。後追いの別チケットに回さない —
+    分離した瞬間に陳腐化が始まるのがこのルールの動機 (bdboard-3tw.138.4)。
+  - 確認の結果「更新不要」も正当な結論 (内部リファクタ、ヘルプに記載の
+    ない細部の変更等)。その場合は何も書き換えずに進めてよいが、確認自体は
+    省略しない。
+  - ヘルプ文言の修正は必ず原本 `docs/help-content.json` だけを編集する。
+    派生ファイル側に文言をハードコードして原本と二重管理にしない。
+  - schema の破れ (空文字・id重複・steps欠落等) は
+    `parseBdboardHelpSections` がサーバー起動時とテストで検証し、派生
+    ファイルの型は `npm run verify` が守る。機械的に守れないのは
+    「内容の陳腐化」だけで、それがこの運用ルールの対象。
 - 工程ごとの使用モデルは bd のメタデータに記録する:
   `bd update <id> --set-metadata bdboard.model.<工程>=<モデル名>`
   (例: `bd update bdboard-aeg --set-metadata bdboard.model.implement=composer-2.5`)。
