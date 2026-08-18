@@ -41,6 +41,11 @@ export interface CliTurnPlan {
    * 成功/失敗を問わず createCliChatAgent 側が自動で削除する。
    */
   readonly lastMessageFile?: string;
+  /**
+   * spec がターン用に作成した入力 artifact。成功・子プロセス失敗・parse 失敗・
+   * streaming 終了のすべてで、scratchDir 配下のものだけを自動削除する。
+   */
+  readonly temporaryFiles?: readonly string[];
 }
 
 /**
@@ -149,7 +154,7 @@ function isWithinDirectory(target: string, directory: string): boolean {
 }
 
 /**
- * 一時ファイルの後始末。無かった/消せなかった場合も黙って続行する(ベストエフォート)。
+ * 一時ファイルの後始末。失敗してもターンは続行するが、ENOENT以外は警告する。
  * 呼び出し前に `scratchDir` 配下であることを確認しているのを前提とする
  * (bdboard-l1t.4 SF8: spec のバグで scratchDir 外の任意パスが渡ってきても、
  * ここで無関係なファイルを消してしまわないようにするための防御)。
@@ -157,8 +162,31 @@ function isWithinDirectory(target: string, directory: string): boolean {
 function cleanupArtifactFile(filePath: string): void {
   try {
     unlinkSync(filePath);
-  } catch {
-    // ENOENT (そもそも書かれなかった) 等は無視してよい。片付けの失敗でターン自体は失敗させない。
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      // パスや内容はログへ出さない。片付けの失敗でターン自体も失敗させない。
+      console.error('chat cli-chat-agent: failed to remove a temporary chat artifact');
+    }
+  }
+}
+
+function cleanupTurnFiles(
+  plan: Pick<CliTurnPlan, 'lastMessageFile' | 'temporaryFiles'>,
+  ctx: CliTurnContext,
+  agentId: string,
+): void {
+  const files = [
+    ...(plan.lastMessageFile !== undefined ? [plan.lastMessageFile] : []),
+    ...(plan.temporaryFiles ?? []),
+  ];
+  for (const filePath of new Set(files)) {
+    if (isWithinDirectory(filePath, ctx.scratchDir)) {
+      cleanupArtifactFile(filePath);
+    } else {
+      console.error(
+        `chat cli-chat-agent: refusing to delete temporary file outside scratchDir (agent=${agentId}, scratchDir=${ctx.scratchDir}, file=${filePath})`,
+      );
+    }
   }
 }
 
@@ -297,15 +325,7 @@ export function createCliChatAgent(
         // 削除前に scratchDir 配下であることを確認する(bdboard-l1t.4 SF8): spec の
         // buildTurn がバグって scratchDir 外の任意パスを lastMessageFile に入れて
         // 返してきても、ここで無関係なファイルを消してしまわないようにするため。
-        if (lastMessageFile !== undefined) {
-          if (isWithinDirectory(lastMessageFile, ctx.scratchDir)) {
-            cleanupArtifactFile(lastMessageFile);
-          } else {
-            console.error(
-              `chat cli-chat-agent: refusing to delete lastMessageFile outside scratchDir (agent=${spec.descriptor.id}, scratchDir=${ctx.scratchDir}, lastMessageFile=${lastMessageFile})`,
-            );
-          }
-        }
+        cleanupTurnFiles(plan, ctx, spec.descriptor.id);
       }
     },
     ...(streamingEnabled
@@ -412,15 +432,7 @@ export function createCliChatAgent(
               }
               return buildTurnResult(parsed, spec.descriptor.id, request.model ?? spec.descriptor.model);
             } finally {
-              if (lastMessageFile !== undefined) {
-                if (isWithinDirectory(lastMessageFile, ctx.scratchDir)) {
-                  cleanupArtifactFile(lastMessageFile);
-                } else {
-                  console.error(
-                    `chat cli-chat-agent: refusing to delete lastMessageFile outside scratchDir (agent=${spec.descriptor.id}, scratchDir=${ctx.scratchDir}, lastMessageFile=${lastMessageFile})`,
-                  );
-                }
-              }
+              cleanupTurnFiles(plan, ctx, spec.descriptor.id);
             }
           },
         }

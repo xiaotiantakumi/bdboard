@@ -1,6 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ChatTurnRequest } from '../../../application/ports/chat-agent.js';
-import type { CliTurnContext } from '../cli-chat-agent.js';
+import type { CommandRunner } from '../../../application/ports/command-runner.js';
+import { createCliChatAgent, type CliTurnContext } from '../cli-chat-agent.js';
 import { createCodexSpec } from './codex-spec.js';
 
 const root = '/tmp/demo';
@@ -11,6 +15,13 @@ const context: CliTurnContext = {
   scratchDir: '/tmp/bdboard-scratch',
 };
 const request = (overrides: Partial<ChatTurnRequest> = {}): ChatTurnRequest => ({ projectRootPath: root, projectName: 'demo', message: 'hello', ...overrides });
+const scratchDirs: string[] = [];
+
+afterEach(() => {
+  for (const scratchDir of scratchDirs.splice(0)) {
+    rmSync(scratchDir, { recursive: true, force: true });
+  }
+});
 
 describe('createCodexSpec buildTurn', () => {
   it('builds a safe new-turn command with injected MCP and output artifact', () => {
@@ -26,7 +37,7 @@ describe('createCodexSpec buildTurn', () => {
     expect(plan.lastMessageFile).toBe(plan.args[plan.args.indexOf('-o') + 1]);
     expect(plan.lastMessageFile?.startsWith(context.scratchDir)).toBe(true);
     expect(plan.stdin).toBe('prompt\n\n---\n\nhello');
-    expect(spec.descriptor).toMatchObject({ id: 'codex', capability: 'unrestricted', experimental: true });
+    expect(spec.descriptor).toMatchObject({ id: 'codex', capability: 'unrestricted', experimental: true, supportsImages: true });
   });
 
   it('prefixes the system prompt on resume turns too', () => {
@@ -83,6 +94,90 @@ describe('createCodexSpec buildTurn', () => {
       mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['tab\ttab'] }],
     };
     expect(() => spec.buildTurn(request(), tabInArgs)).toThrow(/control character/);
+  });
+});
+
+describe('createCodexSpec image artifacts', () => {
+  it.each([
+    ['new turn', undefined],
+    ['resume turn', 'resume-thread'],
+  ])('passes repeated -i paths on a %s and cleans mode-0600 files', async (_label, resumeSessionId) => {
+    const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-codex-image-test-'));
+    scratchDirs.push(scratchDir);
+    const capturedArgs: string[][] = [];
+    let capturedImagePaths: string[] = [];
+    const runner: CommandRunner = {
+      async run(_command, args) {
+        capturedArgs.push([...args]);
+        capturedImagePaths = args.flatMap((arg, index) => arg === '-i' ? [args[index + 1]!] : []);
+        expect(capturedImagePaths).toHaveLength(2);
+        expect(capturedImagePaths.map((imagePath) => path.extname(imagePath))).toEqual(['.png', '.jpg']);
+        for (const imagePath of capturedImagePaths) {
+          expect(existsSync(imagePath)).toBe(true);
+          expect(statSync(imagePath).mode & 0o777).toBe(0o600);
+        }
+        expect([...readFileSync(capturedImagePaths[0]!)]).toEqual([0x89, 0x50]);
+        expect([...readFileSync(capturedImagePaths[1]!)]).toEqual([0xff, 0xd8]);
+        const outputPath = args[args.indexOf('-o') + 1]!;
+        writeFileSync(outputPath, 'reply', 'utf8');
+        return {
+          stdout: JSON.stringify({
+            type: 'thread.started',
+            thread_id: resumeSessionId ?? 'new-thread',
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      },
+    };
+    const spec = createCodexSpec({ codexPath: 'codex', model: '', timeoutMs: 1000 });
+    const agent = createCliChatAgent(runner, spec, {
+      buildContext: () => ({ ...context, scratchDir }),
+    });
+
+    await agent.sendMessage(request({
+      ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+      images: [
+        { mimeType: 'image/png', data: Uint8Array.from([0x89, 0x50]) },
+        { mimeType: 'image/jpeg', data: Uint8Array.from([0xff, 0xd8]) },
+      ],
+    }));
+
+    if (resumeSessionId === undefined) {
+      expect(capturedArgs[0]?.[0]).toBe('exec');
+      expect(capturedArgs[0]).toContain('--approve-for-me');
+    } else {
+      expect(capturedArgs[0]?.slice(0, 3)).toEqual(['exec', 'resume', resumeSessionId]);
+    }
+    expect(capturedImagePaths.every((imagePath) => !existsSync(imagePath))).toBe(true);
+  });
+
+  it.each([
+    ['CLI exit non-zero', { stdout: '', stderr: 'failed', exitCode: 1 }],
+    ['parse error', { stdout: '{}', stderr: '', exitCode: 0 }],
+  ])('cleans image artifacts on %s', async (_label, commandResult) => {
+    const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-codex-image-failure-test-'));
+    scratchDirs.push(scratchDir);
+    let imagePath = '';
+    const runner: CommandRunner = {
+      async run(_command, args) {
+        imagePath = args[args.indexOf('-i') + 1]!;
+        expect(existsSync(imagePath)).toBe(true);
+        const outputPath = args[args.indexOf('-o') + 1]!;
+        writeFileSync(outputPath, 'partial', 'utf8');
+        return commandResult;
+      },
+    };
+    const agent = createCliChatAgent(
+      runner,
+      createCodexSpec({ codexPath: 'codex', model: '', timeoutMs: 1000 }),
+      { buildContext: () => ({ ...context, scratchDir }) },
+    );
+
+    await expect(agent.sendMessage(request({
+      images: [{ mimeType: 'image/webp', data: Uint8Array.from([1, 2, 3]) }],
+    }))).rejects.toBeDefined();
+    expect(existsSync(imagePath)).toBe(false);
   });
 });
 

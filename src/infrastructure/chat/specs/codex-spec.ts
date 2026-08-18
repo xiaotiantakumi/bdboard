@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { ChatAgentError, type ChatAgentAvailability, type ChatTurnRequest, type ChatTurnResult } from '../../../application/ports/chat-agent.js';
+import { ChatAgentError, type ChatAgentAvailability, type ChatImageAttachment, type ChatTurnRequest, type ChatTurnResult } from '../../../application/ports/chat-agent.js';
 import type { CommandResult } from '../../../application/ports/command-runner.js';
 import type { CliChatAgentSpec, CliMcpServerSpec, CliTurnContext, CliTurnPlan } from '../cli-chat-agent.js';
 
@@ -98,9 +99,44 @@ function buildCodexStdin(ctx: CliTurnContext, message: string): string {
   return `${ctx.systemPrompt}\n\n---\n\n${message}`;
 }
 
-function buildCodexArgs(request: ChatTurnRequest, ctx: CliTurnContext, model: string, lastMessageFile: string): string[] {
+function imageExtension(image: ChatImageAttachment): string {
+  switch (image.mimeType) {
+    case 'image/png': return 'png';
+    case 'image/jpeg': return 'jpg';
+    case 'image/webp': return 'webp';
+  }
+}
+
+function buildImagePaths(images: readonly ChatImageAttachment[], scratchDir: string): string[] {
+  return images.map((image) =>
+    path.join(scratchDir, `bdboard-codex-image-${randomUUID()}.${imageExtension(image)}`));
+}
+
+function writeImageFiles(images: readonly ChatImageAttachment[], imagePaths: readonly string[]): void {
+  try {
+    images.forEach((image, index) => {
+      writeFileSync(imagePaths[index]!, image.data, { flag: 'wx', mode: 0o600 });
+    });
+  } catch (err) {
+    // buildTurn が plan を返す前の失敗は createCliChatAgent の finally へ届かない。
+    // 部分的に作られたファイルをここで必ず片付けてから再throwする。
+    for (const imagePath of imagePaths) {
+      try {
+        unlinkSync(imagePath);
+      } catch (cleanupError) {
+        if ((cleanupError as NodeJS.ErrnoException).code !== 'ENOENT') {
+          console.error('chat codex-spec: failed to remove a partial image artifact');
+        }
+      }
+    }
+    throw err;
+  }
+}
+
+function buildCodexArgs(request: ChatTurnRequest, ctx: CliTurnContext, model: string, lastMessageFile: string, imagePaths: readonly string[]): string[] {
   const sharedFlags = [
     ...buildMcpConfigArgs(ctx.mcpServers), ...(model !== '' ? ['-m', model] : []),
+    ...imagePaths.flatMap((imagePath) => ['-i', imagePath]),
     '--ignore-user-config', '--ignore-rules', '--strict-config', '--skip-git-repo-check', '--json', '-o', lastMessageFile,
   ];
   if (request.resumeSessionId !== undefined) {
@@ -186,6 +222,7 @@ export function createCodexSpec(options: CodexSpecOptions): CliChatAgentSpec {
         : {}),
       experimental: true,
       capability: 'unrestricted',
+      supportsImages: true,
     },
     binaryPath: options.codexPath,
     envAllowlist: CODEX_ENV_ALLOWLIST,
@@ -203,10 +240,23 @@ export function createCodexSpec(options: CodexSpecOptions): CliChatAgentSpec {
     timeoutMs: options.timeoutMs,
     buildTurn(request, ctx): CliTurnPlan {
       const lastMessageFile = path.join(ctx.scratchDir, `bdboard-codex-turn-${randomUUID()}.txt`);
+      const images = request.images ?? [];
+      const imagePaths = buildImagePaths(images, ctx.scratchDir);
+      // TOML/MCP validation can throw. Build argv before creating any image artifact so
+      // that a validation failure cannot leak a temporary file.
+      const args = buildCodexArgs(
+        request,
+        ctx,
+        request.model ?? options.model,
+        lastMessageFile,
+        imagePaths,
+      );
+      writeImageFiles(images, imagePaths);
       return {
-        args: buildCodexArgs(request, ctx, request.model ?? options.model, lastMessageFile),
+        args,
         stdin: buildCodexStdin(ctx, request.message),
         lastMessageFile,
+        ...(imagePaths.length > 0 ? { temporaryFiles: imagePaths } : {}),
       };
     },
     parseTurn(result: CommandResult, readLastMessageFile: () => string | undefined): Omit<ChatTurnResult, 'agentId'> {

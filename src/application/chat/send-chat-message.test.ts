@@ -13,7 +13,7 @@ import {
 import { createChatAgentRegistry } from './chat-agent-registry.js';
 import { createInMemoryChatMessageRepository } from './in-memory-chat-message-repository.js';
 import { createChatSessionStore } from './chat-session-store.js';
-import { sendChatMessage } from './send-chat-message.js';
+import { IMAGE_ONLY_CHAT_MESSAGE, sendChatMessage } from './send-chat-message.js';
 
 const NOW = new Date('2026-08-15T12:00:00.000Z');
 
@@ -143,6 +143,70 @@ describe('sendChatMessage', () => {
       ok: false,
       failure: { kind: 'invalid-message', detail: 'message is empty' },
     });
+  });
+
+  it('uses the fixed prompt for an image-only turn and propagates decoded bytes', async () => {
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const images = [{ mimeType: 'image/png' as const, data: Uint8Array.from([1, 2, 3]) }];
+    const supportedAgent = createFakeAgent('test-agent', {
+      descriptor: {
+        id: 'test-agent',
+        label: 'Test Agent',
+        models: [{ id: 'sonnet', label: 'Sonnet' }],
+        experimental: false,
+        capability: 'bd-only',
+        supportsImages: true,
+      },
+    });
+    const messages = createInMemoryChatMessageRepository();
+
+    const result = await sendChatMessage(
+      {
+        cache,
+        agents: createRegistryWithAgents([supportedAgent]),
+        store: createChatSessionStore(),
+        messages,
+      },
+      { projectId: 'proj-a', message: '   ', agentId: 'test-agent', images },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(supportedAgent.sendMessage).toHaveBeenCalledWith({
+      projectRootPath: '/projects/a',
+      projectName: 'proj-a',
+      message: IMAGE_ONLY_CHAT_MESSAGE,
+      images,
+    });
+    expect(messages.listBySession('new-session-id')[0]?.content).toBe(IMAGE_ONLY_CHAT_MESSAGE);
+  });
+
+  it('rejects images unsupported by the resolved agent before acquiring the project lock', async () => {
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const unsupportedAgent = createFakeAgent('test-agent');
+    const store = createChatSessionStore();
+    const acquire = vi.spyOn(store, 'tryAcquire');
+
+    const result = await sendChatMessage(
+      {
+        cache,
+        agents: createRegistryWithAgents([unsupportedAgent]),
+        store,
+        messages: createInMemoryChatMessageRepository(),
+      },
+      {
+        projectId: 'proj-a',
+        message: 'look',
+        images: [{ mimeType: 'image/png', data: Uint8Array.from([1]) }],
+      },
+    );
+
+    expect(result).toEqual({ ok: false, failure: { kind: 'image-not-supported' } });
+    expect(acquire).not.toHaveBeenCalled();
+    expect(unsupportedAgent.sendMessage).not.toHaveBeenCalled();
   });
 
   it('returns invalid-message when the message exceeds the max length', async () => {

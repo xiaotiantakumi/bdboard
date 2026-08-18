@@ -1,5 +1,6 @@
 import { Hono, type MiddlewareHandler } from 'hono';
 import { streamSSE } from 'hono/streaming';
+import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import type { ChatSessionStore } from '../../application/chat/chat-session-store.js';
 import {
@@ -38,6 +39,11 @@ import {
   createPrivilegedApiGuardMiddleware,
   type WriteGuardDeps,
 } from './write-guard.js';
+import {
+  CHAT_IMAGE_MAX_COUNT,
+  CHAT_MESSAGE_BODY_MAX_BYTES,
+  decodeChatImages,
+} from './chat-image-validation.js';
 
 export const CHAT_CSRF_DENIED = 'cross-site chat request blocked';
 export const CHAT_NOT_AUTHORIZED =
@@ -70,12 +76,17 @@ export interface ChatRoutesDeps {
 
 const messageBodySchema = z.object({
   projectId: z.string().min(1).max(200),
-  message: z.string().min(1).max(4000),
+  // 画像だけのターンでは空文字を許可する。画像も無ければ application 層が従来どおり拒否する。
+  message: z.string().max(4000),
   // UUID 固定にしない: セッションIDの形式は CLI アダプタごとに違う (claude は UUID だが
   // 他ツールはそうとは限らない)。不透明な識別子として安全性だけを domain 側で検証する。
   sessionId: z.string().refine(isValidChatSessionId).optional(),
   agentId: z.string().min(1).max(200).optional(),
   model: z.string().min(1).max(100).optional(),
+  images: z.array(z.object({
+    mimeType: z.enum(['image/png', 'image/jpeg', 'image/webp']),
+    data: z.string(),
+  })).max(CHAT_IMAGE_MAX_COUNT).optional(),
 });
 
 const sessionMessagesQuerySchema = z.object({
@@ -212,6 +223,14 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
 
   app.use('/api/chat', chatGuard);
   app.use('/api/chat/*', chatGuard);
+  // rate-limit middleware also parses POST JSON to resolve model weight. Put the body
+  // guard first so an oversized base64 payload is rejected before either JSON parse.
+  const chatMessageBodyLimit = bodyLimit({
+    maxSize: CHAT_MESSAGE_BODY_MAX_BYTES,
+    onError: (c) => c.json({ error: 'request body too large' }, 413),
+  });
+  app.use('/api/chat/message', chatMessageBodyLimit);
+  app.use('/api/chat/message/stream', chatMessageBodyLimit);
   app.use('/api/chat', rateLimit);
   app.use('/api/chat/*', rateLimit);
 
@@ -469,6 +488,10 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     if (!parsed.success) {
       return c.json({ error: 'invalid request body' }, 400);
     }
+    const images = decodeChatImages(parsed.data.images);
+    if (images === undefined && parsed.data.images !== undefined) {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
 
     const sendInput = {
       projectId: parsed.data.projectId,
@@ -480,9 +503,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         ? { agentId: parsed.data.agentId }
         : {}),
       ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
+      ...(images !== undefined && images.length > 0 ? { images } : {}),
     };
-
-    completedTurns.delete(parsed.data.projectId);
 
     const result = await sendChatMessage(deps, sendInput);
 
@@ -544,6 +566,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           { error: 'chat failed', code: 'agent-exit-nonzero', detail: 'unexpected failure kind' },
           500,
         );
+      case 'image-not-supported':
+        return c.json({ error: 'chat agent does not support image attachments' }, 400);
       case 'agent-error':
         // detail は CHAT_FAILURE_MESSAGES 由来の定型文だけ。子プロセスの
         // 生出力をここに載せてはいけない (bdboard-pvl)。
@@ -571,14 +595,18 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     }
     const parsed = messageBodySchema.safeParse(body);
     if (!parsed.success) return c.json({ error: 'invalid request body' }, 400);
+    const images = decodeChatImages(parsed.data.images);
+    if (images === undefined && parsed.data.images !== undefined) {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
     const sendInput = {
       projectId: parsed.data.projectId,
       message: parsed.data.message,
       ...(parsed.data.sessionId !== undefined ? { sessionId: parsed.data.sessionId } : {}),
       ...(parsed.data.agentId !== undefined ? { agentId: parsed.data.agentId } : {}),
       ...(parsed.data.model !== undefined ? { model: parsed.data.model } : {}),
+      ...(images !== undefined && images.length > 0 ? { images } : {}),
     };
-    completedTurns.delete(parsed.data.projectId);
     const resolved = await resolveChatStreamTurn(deps, sendInput);
     if (!resolved.ok) {
       switch (resolved.failure.kind) {
@@ -591,9 +619,15 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         case 'agent-unavailable': return c.json({ error: 'chat agent unavailable', detail: resolved.failure.detail }, 503);
         case 'busy': return c.json({ error: 'chat is busy for this project' }, 409);
         case 'streaming-not-supported': return c.json({ error: 'chat agent does not support streaming' }, 400);
+        case 'image-not-supported': return c.json({ error: 'chat agent does not support image attachments' }, 400);
         case 'agent-error': return c.json({ error: 'chat failed', code: resolved.failure.code, detail: resolved.failure.detail }, 502);
       }
     }
+
+    // A rejected request must not erase a detached turn that is still waiting for its
+    // explicit ACK. Once resolution succeeds, isBusy() takes precedence while this new
+    // turn runs and the eventual completion replaces the previous metadata.
+    completedTurns.delete(parsed.data.projectId);
 
     // bdboard-l1t.9 Opus レビュー N6: リバースプロキシ(nginx等)が SSE をバッファ
     // リングして届かない/遅延することがあるための明示無効化。トンネル実機での

@@ -1,4 +1,5 @@
 import {
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
   type PointerEvent,
@@ -20,7 +21,10 @@ import {
   postChatMessage,
   postChatMessageStream,
   type ChatAgentDto,
+  type ChatImageMimeType,
+  type ChatImagePayload,
   type ChatMessageResponseDto,
+  type ChatMessageRequest,
   type ProjectDto,
   type ChatThreadDto,
   type ChatTurnStatusDto,
@@ -63,6 +67,20 @@ type ChatMessage = {
   failedTools?: string[];
   /** ターンは成功したが運用者に知らせるべきエージェント側の警告(bdboard-l1t.6 N-e)。 */
   agentWarnings?: string[];
+  /** 画像バイナリは履歴 API に残らないため、このマウント中だけ表示する preview。 */
+  images?: ChatMessageImage[];
+};
+
+type ChatMessageImage = {
+  previewUrl: string;
+  name: string;
+  size: number;
+};
+
+type ChatAttachment = ChatMessageImage & {
+  id: string;
+  file: File;
+  mimeType: ChatImageMimeType;
 };
 
 const CHAT_PANEL_DEFAULT_WIDTH = 480;
@@ -70,6 +88,83 @@ const CHAT_PANEL_MIN_WIDTH = 360;
 const CHAT_PANEL_MAX_WIDTH = 720;
 const CHAT_PANEL_MIN_REMAINING_WIDTH = 320;
 const CHAT_PANEL_RESIZE_STEP = 20;
+const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
+const CHAT_IMAGE_MAX_COUNT = 4;
+const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const CHAT_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+const CHAT_IMAGE_TYPES: readonly ChatImageMimeType[] = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+];
+
+function isChatImageMimeType(value: string): value is ChatImageMimeType {
+  return CHAT_IMAGE_TYPES.some((mimeType) => mimeType === value);
+}
+
+function validateChatAttachments(
+  existing: readonly ChatAttachment[],
+  incoming: readonly File[],
+): string | null {
+  const unsupported = incoming.find((file) => !isChatImageMimeType(file.type));
+  if (unsupported !== undefined) {
+    return 'PNG・JPEG・WebP 形式の画像だけ貼り付けられます。';
+  }
+  if (existing.length + incoming.length > CHAT_IMAGE_MAX_COUNT) {
+    return `画像は最大 ${CHAT_IMAGE_MAX_COUNT} 枚まで添付できます。`;
+  }
+  const oversized = incoming.find((file) => file.size > CHAT_IMAGE_MAX_FILE_BYTES);
+  if (oversized !== undefined) {
+    return `「${oversized.name || '名称なしの画像'}」は 5 MiB を超えています。`;
+  }
+  const totalBytes =
+    existing.reduce((total, attachment) => total + attachment.size, 0) +
+    incoming.reduce((total, file) => total + file.size, 0);
+  if (totalBytes > CHAT_IMAGE_MAX_TOTAL_BYTES) {
+    return '画像の合計サイズは 10 MiB 以下にしてください。';
+  }
+  return null;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('画像を読み込めませんでした。'));
+      }
+    });
+    reader.addEventListener('error', () =>
+      reject(reader.error ?? new Error('画像を読み込めませんでした。')),
+    );
+    reader.readAsDataURL(file);
+  });
+}
+
+function attachmentsToPayload(
+  attachments: readonly ChatAttachment[],
+): ChatImagePayload[] {
+  return attachments.map((attachment) => {
+    const dataUrl = attachment.previewUrl;
+    const commaIndex = dataUrl.indexOf(',');
+    if (commaIndex < 0) {
+      throw new Error('画像を送信形式に変換できませんでした。');
+    }
+    return {
+      mimeType: attachment.mimeType,
+      data: dataUrl.slice(commaIndex + 1),
+    };
+  });
+}
+
+function formatImageSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+  return `${Math.max(1, Math.ceil(bytes / 1024))} KiB`;
+}
 
 function clampChatPanelWidth(width: number): number {
   const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
@@ -128,6 +223,7 @@ function formatAgentOptionLabel(agent: ChatAgentDto): string {
   if (agent.capability !== 'bd-only') {
     label += ` [${agent.capability}]`;
   }
+  label += agent.supportsImages ? ' [画像対応]' : ' [画像非対応]';
   if (agent.availability === 'unavailable') {
     label += '（利用不可）';
   } else if (agent.availability === 'unknown') {
@@ -192,8 +288,9 @@ export function ChatPanel({
   const [selectedModelId, setSelectedModelId] = useState('');
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
-  // ticketContextToken 由来のプリフィル文言は常にここへ「対象プロジェクト+文言」
-  // だけを積んでおき、実際にそのプロジェクトのドラフトキーが startNewDraftThread
+  // ticketContextToken 由来のプリフィル文言と、プロジェクト解決前に貼られた画像は
+  // 常にここへ「対象プロジェクト+ドラフト内容」を積んでおき、実際にその
+  // プロジェクトのドラフトキーが startNewDraftThread
   // によって採番されたタイミングでのみ消化する(下記 startNewDraftThread 参照)。
   // これにより、遅延適用の窓(プロジェクトを跨ぐ場合やスレッド一覧 fetch 未完了の
   // 場合)で他の要因により nonce がずれても、予測ズレによる孤児エントリが原理的に
@@ -215,7 +312,13 @@ export function ChatPanel({
   // 文言ではなく)コールドウィンドウ中のユーザー編集そのものであることを示す。
   // 消化側(startNewDraftThread)がこれを見て draftSeedTextRef への「システム
   // シード」記録を抑止する(詳細はそちら側のコメント)。
-  const pendingPrefillRef = useRef<{ projectId: string; text: string; isUserEdit?: boolean; modelId?: string } | null>(null);
+  const pendingPrefillRef = useRef<{
+    projectId: string;
+    text: string;
+    isUserEdit?: boolean;
+    modelId?: string;
+    attachments?: readonly ChatAttachment[];
+  } | null>(null);
   // SF1: 各ドラフトキーが最後に「システムによって(ユーザー操作を経ずに)シード
   // された」ときの文言を憶えておく。プリフィル消化やマウント時シードで
   // conversationInputs へ書き込むたびに、その値をここにも記録する。textarea の
@@ -260,6 +363,12 @@ export function ChatPanel({
   const [conversationInputs, setConversationInputs] = useState<Record<string, string>>(
     () => ({ ...initialDraftSeed }),
   );
+  // File/data URL はこの React state のみに置き、localStorage や履歴 DTO へは流さない。
+  // 本文と同じ会話キーを使うことで、project/thread 切替でも添付が混線しない。
+  const [conversationAttachments, setConversationAttachments] = useState<
+    Record<string, ChatAttachment[]>
+  >({});
+  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
   const [streamingReply, setStreamingReply] = useState<{ key: string; text: string } | null>(null);
   const [backgroundTurnStatus, setBackgroundTurnStatus] = useState<ChatTurnStatusDto>({
@@ -316,11 +425,26 @@ export function ChatPanel({
   const threadListRequestIdRef = useRef(0);
   const draftNoncesRef = useRef(draftNonces);
   draftNoncesRef.current = draftNonces;
-  // SF1: startNewDraftThread ([] 依存の useCallback)が「切り替え直前のドラフトに
+  // SF1: startNewDraftThread (stable callback)が「切り替え直前のドラフトに
   // 何が入っていたか」を stale closure を経由せず読めるようにするための参照。
   // draftNoncesRef と同じ「state をミラーする ref」パターン。
   const conversationInputsRef = useRef(conversationInputs);
   conversationInputsRef.current = conversationInputs;
+  const conversationAttachmentsRef = useRef(conversationAttachments);
+  conversationAttachmentsRef.current = conversationAttachments;
+  const attachmentIdRef = useRef(0);
+  const updateConversationAttachments = useCallback(
+    (
+      updater: (
+        previous: Record<string, ChatAttachment[]>,
+      ) => Record<string, ChatAttachment[]>,
+    ) => {
+      const next = updater(conversationAttachmentsRef.current);
+      conversationAttachmentsRef.current = next;
+      setConversationAttachments(next);
+    },
+    [],
+  );
   // bdboard-ysu: 下の project-sync effect が、非同期に解決する
   // fetchChatThreads().then/.catch の中から「今まさにどのスレッドが選択
   // されているか」を stale closure を経由せず読むための参照。draftNoncesRef /
@@ -378,6 +502,7 @@ export function ChatPanel({
       // 保持したはずのユーザー本文を次のプリフィルで無言上書きしてしまう。
       const prefillIsUserEdit = pendingPrefillRef.current.isUserEdit === true;
       const prefillModelId = pendingPrefillRef.current.modelId;
+      const prefillAttachments = pendingPrefillRef.current.attachments ?? [];
       pendingPrefillRef.current = null;
       // SF1(N1: handleAgentChange の書きかけ本文引き継ぎと同じ family ——
       // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という不変
@@ -403,12 +528,24 @@ export function ChatPanel({
       if (prefillModelId !== undefined) {
         setThreadModelIds((prev) => ({ ...prev, [nextDraftKey]: prefillModelId }));
       }
+      const liveAttachments = conversationAttachmentsRef.current[previousDraftKey] ?? [];
+      const attachmentsToCarry = liveAttachments.length > 0
+        ? liveAttachments
+        : prefillAttachments;
+      if (attachmentsToCarry.length > 0) {
+        updateConversationAttachments((prev) => ({
+          ...Object.fromEntries(
+            Object.entries(prev).filter(([key]) => key !== previousDraftKey),
+          ),
+          [nextDraftKey]: [...attachmentsToCarry],
+        }));
+      }
     }
     // N2: ドラフトへの切り替えは意図的に writePersistedChatThreadState を呼ばない。
     // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
     // selectedSessionId をここで書き換える対象が無い — 既存の永続化済み選択は
     // そのまま(次回訪問時にまた同じ既存スレッドへ戻れるように)残す。
-  }, []);
+  }, [updateConversationAttachments]);
 
   const { requestClose } = useHistoryBackClose({
     panelId: 'chat',
@@ -424,7 +561,11 @@ export function ChatPanel({
   const currentSessionId = selectedThreadIds[selectedProjectId];
   const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
   const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
+  const currentConversationKeyRef = useRef(currentConversationKey);
+  currentConversationKeyRef.current = currentConversationKey;
   const currentInput = conversationInputs[currentConversationKey] ?? '';
+  const currentAttachments = conversationAttachments[currentConversationKey] ?? [];
+  const currentAttachmentError = attachmentErrors[currentConversationKey] ?? null;
   // bdboard-pbf: 既存スレッド選択中で履歴がまだ解決していない間は送信を
   // ブロックする(送信ボタン disabled + handleSubmit 冒頭ガード)。この窓で
   // 送信すると conversations[key] が未定義のため sessionId 無しで POST され、
@@ -440,6 +581,8 @@ export function ChatPanel({
     (project) => project.id === selectedProjectId,
   );
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+  const hasUnsupportedAttachments =
+    currentAttachments.length > 0 && selectedAgent?.supportsImages !== true;
 
   useEffect(() => {
     if (currentSessionId === undefined) return;
@@ -518,6 +661,19 @@ export function ChatPanel({
       if (rest[targetKey] !== undefined && rest[targetKey] !== '') return rest;
       return { ...rest, [targetKey]: staleValue };
     });
+    updateConversationAttachments((prev) => {
+      if (!(staleKey in prev)) return prev;
+      const { [staleKey]: staleAttachments, ...rest } = prev;
+      if (staleAttachments === undefined || staleAttachments.length === 0) return rest;
+      if ((rest[targetKey]?.length ?? 0) > 0) return rest;
+      return { ...rest, [targetKey]: staleAttachments };
+    });
+    setAttachmentErrors((prev) => {
+      if (!(staleKey in prev)) return prev;
+      const { [staleKey]: staleError, ...rest } = prev;
+      if (staleError === undefined || rest[targetKey] !== undefined) return rest;
+      return { ...rest, [targetKey]: staleError };
+    });
     // N5/N6: 現行の App.tsx 配線では initialInput は ticketContextToken と
     // 常に連動して渡される(実質「両方あるか両方無いか」)ため、この effect
     // (ticketContextToken===undefined 限定)が実際に到達するケースでは
@@ -540,7 +696,7 @@ export function ChatPanel({
     }
 
     setSelectedProjectId(resolved);
-  }, [projects, initialProjectId, selectedProjectId, ticketContextToken]);
+  }, [projects, initialProjectId, selectedProjectId, ticketContextToken, updateConversationAttachments]);
 
   useEffect(() => {
     if (selectedProjectId === '') return;
@@ -860,6 +1016,7 @@ export function ChatPanel({
     // 誤断してこのユーザー編集を破棄してしまう(probe で実証済み)。
     let ticketPrefillIsUserEdit = false;
     let ticketPrefillModelId: string | undefined;
+    let ticketPrefillAttachments: readonly ChatAttachment[] | undefined;
     if (selectedProjectId === '') {
       const coldDraftKey = makeDraftKey('', draftNoncesRef.current[''] ?? 0);
       const coldValue = conversationInputsRef.current[coldDraftKey];
@@ -874,6 +1031,10 @@ export function ChatPanel({
       const coldModelId = threadModelIdsRef.current[coldDraftKey];
       if (coldModelId !== undefined) {
         ticketPrefillModelId = coldModelId;
+      }
+      const coldAttachments = conversationAttachmentsRef.current[coldDraftKey];
+      if (coldAttachments !== undefined && coldAttachments.length > 0) {
+        ticketPrefillAttachments = [...coldAttachments];
       }
       // 104.17 Opus レビュー nit2/nit5: 引き継ぎ対象は「今ライブな nonce の
       // キー」1個だけに限らない。コールドウィンドウ中に「新規スレッド」ボタンや
@@ -906,10 +1067,29 @@ export function ChatPanel({
         }
         return next;
       });
+      updateConversationAttachments((prev) => {
+        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
+        if (staleKeys.length === 0) return prev;
+        const next = { ...prev };
+        for (const key of staleKeys) {
+          delete next[key];
+        }
+        return next;
+      });
+      setAttachmentErrors((prev) => {
+        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
+        if (staleKeys.length === 0) return prev;
+        const next = { ...prev };
+        for (const key of staleKeys) {
+          delete next[key];
+        }
+        return next;
+      });
     }
 
     // S2/S4-b(MF1/SF1/SF2 一括解消): プリフィルは「対象プロジェクト+文言」だけを
-    // pendingPrefillRef に積む。以前はここで draftNoncesRef から次の nonce を
+    // pendingPrefillRef に積む。コールドウィンドウ中の画像も同じ意図に含める。
+    // 以前はここで draftNoncesRef から次の nonce を
     // 先読み予測し、その予測キーへ直接書き込んでいたが、遅延適用の窓(プロジェクト
     // を跨ぐ場合やスレッド一覧 fetch 未完了の場合、下の分岐で startNewDraftThread
     // が実際に呼ばれるのがこの effect の外・後になるケース)で他の要因により
@@ -924,6 +1104,7 @@ export function ChatPanel({
       text: ticketPrefillText,
       isUserEdit: ticketPrefillIsUserEdit,
       modelId: ticketPrefillModelId,
+      attachments: ticketPrefillAttachments,
     };
 
     // S4-b: フォーカス+キャレット移動はプリフィル意図の記録直後、分岐より前に置く。
@@ -1218,6 +1399,96 @@ export function ChatPanel({
     [selectedAgent],
   );
 
+  const handleImagePaste = useCallback(
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
+        file.type.startsWith('image/'),
+      );
+      // 通常のテキスト paste はブラウザへ委ねる。画像を含む paste のときだけ
+      // textarea へのバイナリ由来文字列挿入を止める。
+      if (imageFiles.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      const attachmentKey = currentConversationKey;
+      const validationError = validateChatAttachments(
+        conversationAttachmentsRef.current[attachmentKey] ?? [],
+        imageFiles,
+      );
+      if (validationError !== null) {
+        setAttachmentErrors((prev) => ({ ...prev, [attachmentKey]: validationError }));
+        return;
+      }
+
+      void Promise.all(
+        imageFiles.map(async (file) => {
+          const previewUrl = await readFileAsDataUrl(file);
+          attachmentIdRef.current += 1;
+          return {
+            id: `chat-image-${attachmentIdRef.current}`,
+            file,
+            mimeType: file.type as ChatImageMimeType,
+            previewUrl,
+            name: file.name || `貼り付け画像 ${attachmentIdRef.current}`,
+            size: file.size,
+          } satisfies ChatAttachment;
+        }),
+      )
+        .then((prepared) => {
+          // FileReaderの完了前に会話が切り替わった場合、到達不能な旧キーへ
+          // 大きなdata URLを残さない。現在の入力欄へ貼り直せる状態を優先する。
+          if (currentConversationKeyRef.current !== attachmentKey) return;
+          const latestValidationError = validateChatAttachments(
+            conversationAttachmentsRef.current[attachmentKey] ?? [],
+            imageFiles,
+          );
+          if (latestValidationError !== null) {
+            setAttachmentErrors((prev) => ({
+              ...prev,
+              [attachmentKey]: latestValidationError,
+            }));
+            return;
+          }
+          updateConversationAttachments((prev) => ({
+            ...prev,
+            [attachmentKey]: [...(prev[attachmentKey] ?? []), ...prepared],
+          }));
+          setAttachmentErrors((prev) => {
+            if (!(attachmentKey in prev)) return prev;
+            const next = { ...prev };
+            delete next[attachmentKey];
+            return next;
+          });
+        })
+        .catch(() => {
+          setAttachmentErrors((prev) => ({
+            ...prev,
+            [attachmentKey]: '画像を読み込めませんでした。',
+          }));
+        });
+    },
+    [currentConversationKey, updateConversationAttachments],
+  );
+
+  const removeAttachment = useCallback(
+    (attachmentKey: string, attachmentId: string) => {
+      if (isSending) return;
+      updateConversationAttachments((prev) => ({
+        ...prev,
+        [attachmentKey]: (prev[attachmentKey] ?? []).filter(
+          (attachment) => attachment.id !== attachmentId,
+        ),
+      }));
+      setAttachmentErrors((prev) => {
+        if (!(attachmentKey in prev)) return prev;
+        const next = { ...prev };
+        delete next[attachmentKey];
+        return next;
+      });
+    },
+    [isSending, updateConversationAttachments],
+  );
+
   /**
    * 描画にも送信にもこの派生値だけを使う。エージェントを切り替えた直後の1フレームは
    * selectedModelId が前のエージェントのモデルIDのままなので、state を直接使うと
@@ -1237,9 +1508,10 @@ export function ChatPanel({
 
   const applyChatSuccess = useCallback(
     (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
-      setConversations((prev) => ({
-        ...prev,
-        [result.sessionId]: {
+      setConversations((prev) => {
+        const next = {
+          ...prev,
+          [result.sessionId]: {
           messages: [
             ...(prev[convKey]?.messages ?? []),
             {
@@ -1256,8 +1528,11 @@ export function ChatPanel({
           ],
           sessionId: result.sessionId,
           agentId: result.agentId,
-        },
-      }));
+          },
+        };
+        if (convKey !== result.sessionId) delete next[convKey];
+        return next;
+      });
       // bdboard-pbf: ドラフトからの初回送信で新しい sessionId が確定した直後、
       // 下の setSelectedThreadIds でこのセッションが選択される。会話は今
       // ここで組み立てた最新状態なので履歴ロード済みとして扱わないと、
@@ -1294,7 +1569,13 @@ export function ChatPanel({
   );
 
   const applyChatError = useCallback(
-    (convKey: string, sentText: string, error: unknown, sentAt: number) => {
+    (
+      convKey: string,
+      sentText: string,
+      sentAttachments: readonly ChatAttachment[],
+      error: unknown,
+      sentAt: number,
+    ) => {
       let errorText: string;
       let clearSession = false;
       const accessMessage = writeAccessErrorMessage(error);
@@ -1311,6 +1592,11 @@ export function ChatPanel({
         } else if (error.status === 400 && error.errorMessage === 'chat agent mismatch') {
           errorText = 'エージェントが切り替わったため、会話をやり直します。もう一度送信してください。';
           clearSession = true;
+        } else if (
+          error.status === 400 &&
+          error.errorMessage === 'chat agent does not support image attachments'
+        ) {
+          errorText = 'このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。';
         } else if (error.status === 404) errorText = 'プロジェクトが見つかりません。';
         else if (error.status === 502 && error.code === 'agent-workspace-untrusted') {
           // bdboard-l1t.5 Opus 再レビュー DF1: サーバー側は agent-workspace-untrusted
@@ -1395,13 +1681,34 @@ export function ChatPanel({
       if ((conversationInputsRef.current[convKey] ?? '') === '') {
         setConversationInputs((prev) => ({ ...prev, [convKey]: sentText }));
       }
+      // 本文と同じく送信元キーへだけ戻し、送信後に同じキーへ新しい添付が
+      // 置かれていた場合は上書きしない。AbortError はこの関数へ来ない。
+      if (
+        sentAttachments.length > 0 &&
+        (conversationAttachmentsRef.current[convKey]?.length ?? 0) === 0
+      ) {
+        updateConversationAttachments((prev) => ({
+          ...prev,
+          [convKey]: [...sentAttachments],
+        }));
+      }
     },
-    [selectedProjectId],
+    [selectedProjectId, updateConversationAttachments],
   );
 
   const submitChatMessage = useCallback(
-    async (text: string, sentRawText: string) => {
-      if (text === '' || isSending || selectedProjectId === '' || isHistoryPending) {
+    async (
+      text: string,
+      sentRawText: string,
+      sentAttachments: readonly ChatAttachment[],
+    ) => {
+      if (
+        (text === '' && sentAttachments.length === 0) ||
+        isSending ||
+        selectedProjectId === '' ||
+        isHistoryPending ||
+        (sentAttachments.length > 0 && selectedAgent?.supportsImages !== true)
+      ) {
         return;
       }
 
@@ -1424,6 +1731,26 @@ export function ChatPanel({
           : currentSessionId
         : undefined;
       const sentAt = Date.now();
+      const messagePayload: ChatMessageRequest = {
+        projectId: selectedProjectId,
+        message: text,
+      };
+      if (sessionId !== undefined) messagePayload.sessionId = sessionId;
+      if (selectedAgentId !== '') messagePayload.agentId = selectedAgentId;
+      if (showModelSelect && effectiveModelId !== '') messagePayload.model = effectiveModelId;
+      if (sentAttachments.length > 0) {
+        try {
+          // preview生成時に読み終えたdata URLを再利用する。送信後にFileReaderを
+          // 再度待たず、POST開始前の切替でdraftを失う非同期の窓を作らない。
+          messagePayload.images = attachmentsToPayload(sentAttachments);
+        } catch {
+          setAttachmentErrors((prev) => ({
+            ...prev,
+            [currentConversationKey]: '画像を送信形式に変換できませんでした。',
+          }));
+          return;
+        }
+      }
 
       setConversations((prev) => ({
         ...prev,
@@ -1439,7 +1766,20 @@ export function ChatPanel({
           ...(sessionId !== undefined ? { sessionId } : {}),
           messages: [
             ...(prev[currentConversationKey]?.messages ?? []),
-            { role: 'user', text, at: sentAt },
+            {
+              role: 'user',
+              text,
+              at: sentAt,
+              ...(sentAttachments.length > 0
+                ? {
+                    images: sentAttachments.map(({ previewUrl, name, size }) => ({
+                      previewUrl,
+                      name,
+                      size,
+                    })),
+                  }
+                : {}),
+            },
           ],
         },
       }));
@@ -1447,32 +1787,17 @@ export function ChatPanel({
         ...prev,
         [currentConversationKey]: '',
       }));
+      updateConversationAttachments((prev) => ({
+        ...prev,
+        [currentConversationKey]: [],
+      }));
       setBackgroundTurnStatus({ state: 'idle' });
       setIsSending(true);
       const sendKey = currentConversationKey;
+      const requestController = new AbortController();
+      requestAbortControllerRef.current = requestController;
 
       try {
-        const messagePayload: {
-          projectId: string;
-          message: string;
-          sessionId?: string;
-          agentId?: string;
-          model?: string;
-        } = {
-          projectId: selectedProjectId,
-          message: text,
-        };
-        if (sessionId !== undefined) {
-          messagePayload.sessionId = sessionId;
-        }
-        if (selectedAgentId !== '') {
-          messagePayload.agentId = selectedAgentId;
-        }
-        if (showModelSelect && effectiveModelId !== '') {
-          messagePayload.model = effectiveModelId;
-        }
-        const requestController = new AbortController();
-        requestAbortControllerRef.current = requestController;
         if (selectedAgent?.supportsStreaming === true) {
           setStreamingReply({ key: sendKey, text: '' });
           try {
@@ -1497,7 +1822,7 @@ export function ChatPanel({
               // generation で明示的に再起動する。
               setTurnRecoveryGeneration((generation) => generation + 1);
             } else {
-              applyChatError(sendKey, sentRawText, error, sentAt);
+              applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
           } finally {
             setStreamingReply(null);
@@ -1510,18 +1835,18 @@ export function ChatPanel({
             if (error instanceof DOMException && error.name === 'AbortError') {
               setTurnRecoveryGeneration((generation) => generation + 1);
             } else {
-              applyChatError(sendKey, sentRawText, error, sentAt);
+              applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
           }
-        }
-        if (requestAbortControllerRef.current === requestController) {
-          requestAbortControllerRef.current = null;
         }
       } catch (error) {
         // Keep the common controller ref from surviving an unexpected adapter failure.
         requestAbortControllerRef.current = null;
         throw error;
       } finally {
+        if (requestAbortControllerRef.current === requestController) {
+          requestAbortControllerRef.current = null;
+        }
         setIsSending(false);
         inputRef.current?.focus();
       }
@@ -1539,22 +1864,27 @@ export function ChatPanel({
       selectedAgent,
       applyChatSuccess,
       applyChatError,
+      updateConversationAttachments,
     ],
   );
 
   const handleSubmit = useCallback(
     async (event: FormEvent) => {
       event.preventDefault();
-      const text = currentInput.trim();
+      const trimmedText = currentInput.trim();
+      const text =
+        trimmedText === '' && currentAttachments.length > 0
+          ? CHAT_IMAGE_ONLY_PROMPT
+          : trimmedText;
       // bdboard-otf Opus レビュー SF2: 送信失敗時の復元(下の applyChatError 呼び出し)
       // には、この trim 済み text ではなく trim 前の本文を渡す。プリフィル文言は
       // 末尾に半角スペースを含む形式(例: `${ticketId} について: `)が本番で実在し、
       // 復元値が trim 済みだと未編集シード(draftSeedTextRef、末尾スペース込み)と
       // 一致しなくなり、SF1 の「未編集シードの復元は seed 記録を維持する」判定が
       // 壊れる。送信ペイロード自体は従来どおり trim 済み text を使う。
-      await submitChatMessage(text, currentInput);
+      await submitChatMessage(text, currentInput, currentAttachments);
     },
-    [currentInput, submitChatMessage],
+    [currentAttachments, currentInput, submitChatMessage],
   );
 
   // bdboard-3tw.133: クイックコマンドは常にプリフィル(入力欄に文言を入れて
@@ -1629,6 +1959,12 @@ export function ChatPanel({
         ...prev,
         [nextDraftKey]: prev[currentConversationKey] ?? '',
       }));
+      updateConversationAttachments((prev) => {
+        const moved = [...(prev[currentConversationKey] ?? [])];
+        const next = { ...prev };
+        delete next[currentConversationKey];
+        return { ...next, [nextDraftKey]: moved };
+      });
       // SFX: 値と一緒に draftSeedTextRef のシード記録も無条件でコピーする。値だけ
       // コピーしてシード記録を移し忘れると、新キーでは
       // draftSeedTextRef.current[nextDraftKey] が undefined のままになり、後で
@@ -1659,7 +1995,7 @@ export function ChatPanel({
         };
       });
     },
-    [selectedProjectId, currentConversationKey],
+    [selectedProjectId, currentConversationKey, updateConversationAttachments],
   );
 
   const handleKeyDown = useCallback(
@@ -1694,6 +2030,18 @@ export function ChatPanel({
     // が結局どのドラフトにも表示されない、という二重の不整合が起きる。
     pendingPrefillRef.current = null;
     pendingTicketDraftProjectRef.current = null;
+    updateConversationAttachments((prev) => {
+      if (!(currentConversationKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[currentConversationKey];
+      return next;
+    });
+    setAttachmentErrors((prev) => {
+      if (!(currentConversationKey in prev)) return prev;
+      const next = { ...prev };
+      delete next[currentConversationKey];
+      return next;
+    });
     startNewDraftThread(selectedProjectId);
   };
   const handleCloseThread = (sessionId: string) => {
@@ -2269,6 +2617,18 @@ export function ChatPanel({
               ) : (
                 <p className="chat-message-text">{message.text}</p>
               )}
+              {message.images !== undefined && message.images.length > 0 && (
+                <div className="chat-message-images" aria-label="添付画像" role="list">
+                  {message.images.map((image, imageIndex) => (
+                    <figure key={`${image.previewUrl}-${imageIndex}`} role="listitem">
+                      <img src={image.previewUrl} alt={`添付画像: ${image.name}`} />
+                      <figcaption>
+                        {image.name} · {formatImageSize(image.size)}
+                      </figcaption>
+                    </figure>
+                  ))}
+                </div>
+              )}
               {message.failedTools !== undefined &&
                 message.failedTools.length > 0 && (
                   <p className="chat-message-failed-tools" role="alert">
@@ -2334,6 +2694,44 @@ export function ChatPanel({
               </button>
             ))}
           </div>
+          {currentAttachments.length > 0 && (
+            <div className="chat-attachments" aria-label="送信前の添付画像" role="list">
+              {currentAttachments.map((attachment) => (
+                <div className="chat-attachment" key={attachment.id} role="listitem">
+                  <img
+                    className="chat-attachment-preview"
+                    src={attachment.previewUrl}
+                    alt={`送信前の添付画像: ${attachment.name}`}
+                  />
+                  <span className="chat-attachment-details">
+                    <span className="chat-attachment-name">{attachment.name}</span>
+                    <span className="chat-attachment-size">
+                      {formatImageSize(attachment.size)}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="chat-attachment-remove"
+                    aria-label={`添付画像「${attachment.name}」を削除`}
+                    disabled={isSending}
+                    onClick={() => removeAttachment(currentConversationKey, attachment.id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          {currentAttachmentError !== null && (
+            <p className="chat-attachment-error" role="alert">
+              {currentAttachmentError}
+            </p>
+          )}
+          {hasUnsupportedAttachments && (
+            <p className="chat-attachment-unsupported" role="alert">
+              このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。
+            </p>
+          )}
           <textarea
             ref={inputRef}
             className="chat-input"
@@ -2347,16 +2745,27 @@ export function ChatPanel({
               const value = event.target.value;
               setConversationInputs((prev) => ({ ...prev, [currentConversationKey]: value }));
             }}
+            onPaste={handleImagePaste}
             onKeyDown={handleKeyDown}
           />
           <button
             type="submit"
             className="btn"
-            disabled={isSending || isHistoryPending || currentInput.trim() === ''}
+            disabled={
+              isSending ||
+              isHistoryPending ||
+              hasUnsupportedAttachments ||
+              (currentInput.trim() === '' && currentAttachments.length === 0)
+            }
           >
             送信
           </button>
-          <span className="chat-input-hint">⌘/Ctrl + Enter で送信</span>
+          <span className="chat-input-hint">
+            ⌘/Ctrl + Enter で送信 · PNG/JPEG/WebP を貼り付け（最大4枚）
+          </span>
+          <span className="chat-image-privacy-hint">
+            画像はこの画面のメモリ上だけに保持され、履歴 API / localStorage には保存されません。
+          </span>
         </form>
       </div>
     </div>

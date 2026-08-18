@@ -10,9 +10,9 @@ const cached = { project: { id: 'p', name: 'Project', rootPath: '/tmp/project', 
 const cache = { getProject: (id: string) => id === 'p' ? cached : undefined } as BoardCache;
 const messages = {} as ChatMessageRepository;
 
-function agent(streaming: boolean): ChatAgentPort {
+function agent(streaming: boolean, supportsImages = false): ChatAgentPort {
   return {
-    descriptor: { id: 'test-agent', label: 'Test', experimental: false, capability: 'bd-only', models: [{ id: 'sonnet', label: 'Sonnet' }] },
+    descriptor: { id: 'test-agent', label: 'Test', experimental: false, capability: 'bd-only', models: [{ id: 'sonnet', label: 'Sonnet' }], supportsImages },
     checkAvailability: vi.fn(async () => 'available' as const),
     sendMessage: vi.fn(),
     ...(streaming ? { sendMessageStream: vi.fn(async () => ({ reply: '', sessionId: '', agentId: 'test-agent', failedTools: [] })) } : {}),
@@ -46,6 +46,30 @@ describe('resolveChatStreamTurn', () => {
     expect(result).toEqual({ ok: false, failure: { kind: 'streaming-not-supported' } });
     expect(store.tryAcquire('p')).toBe(true);
     store.release('p');
+  });
+
+  it('propagates images to a streaming agent', async () => {
+    const images = [{ mimeType: 'image/webp' as const, data: Uint8Array.from([1, 2]) }];
+    const result = await resolveChatStreamTurn(deps(agent(true, true)), {
+      projectId: 'p', message: 'look', images,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.handle.turnRequest.images).toBe(images);
+      result.handle.release();
+    }
+  });
+
+  it('rejects unsupported images before acquiring the project lock', async () => {
+    const store = createChatSessionStore();
+    const acquire = vi.spyOn(store, 'tryAcquire');
+    const result = await resolveChatStreamTurn(deps(agent(true), store), {
+      projectId: 'p',
+      message: 'look',
+      images: [{ mimeType: 'image/png', data: Uint8Array.from([1]) }],
+    });
+    expect(result).toEqual({ ok: false, failure: { kind: 'image-not-supported' } });
+    expect(acquire).not.toHaveBeenCalled();
   });
 
   it.each([

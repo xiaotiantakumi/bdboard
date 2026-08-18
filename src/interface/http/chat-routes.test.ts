@@ -36,6 +36,8 @@ const LOCAL_ENV = {
 };
 
 const NOW = new Date('2026-08-15T12:00:00.000Z');
+const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
+const PNG_BASE64 = Buffer.from(PNG_BYTES).toString('base64');
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -251,6 +253,41 @@ describe('createChatRoutes local-only guard', () => {
 });
 
 describe('POST /api/chat/message/stream', () => {
+  it('decodes and propagates image attachments through the streaming request', async () => {
+    const streamingAgent = createFakeAgent({
+      descriptor: {
+        ...createFakeAgent().descriptor,
+        supportsStreaming: true,
+        supportsImages: true,
+      },
+      sendMessageStream: vi.fn(async () => ({
+        reply: 'image reply',
+        sessionId: 'stream-image-session',
+        agentId: 'test-agent',
+        failedTools: [],
+      })),
+    });
+    const app = createApp({
+      agent: streamingAgent,
+      cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
+    });
+    const res = await app.request('/api/chat/message/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'p',
+        message: 'look',
+        images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
+      }),
+    }, LOCAL_ENV);
+
+    expect(res.status).toBe(200);
+    await res.text();
+    const request = vi.mocked(streamingAgent.sendMessageStream!).mock.calls[0]?.[0];
+    expect(request?.images?.[0]?.mimeType).toBe('image/png');
+    expect([...request!.images![0]!.data]).toEqual(PNG_BYTES);
+  });
+
   it('streams deltas followed by the finalized turn', async () => {
     const streamingAgent = createFakeAgent({
       descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
@@ -636,6 +673,141 @@ describe('createChatRoutes behavior', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid request body' });
   });
+
+  it.each([
+    ['unsupported GIF MIME', { mimeType: 'image/gif', data: 'R0lGODlh' }],
+    ['non-strict base64', { mimeType: 'image/png', data: `${PNG_BASE64}\n` }],
+    ['MIME/magic mismatch', { mimeType: 'image/jpeg', data: PNG_BASE64 }],
+  ])('returns 400 for %s image input', async (_label, image) => {
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const app = createApp({
+      cache,
+      agent: createFakeAgent({
+        descriptor: { ...createFakeAgent().descriptor, supportsImages: true },
+      }),
+    });
+    const res = await app.request('/api/chat/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'proj-a', message: 'look', images: [image] }),
+    }, LOCAL_ENV);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid request body' });
+  });
+
+  it('returns JSON 413 before parsing a body over the 15 MiB transport limit', async () => {
+    const app = createApp();
+    const res = await app.request('/api/chat/message', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': String(15 * 1024 * 1024 + 1),
+      },
+      body: '{}',
+    }, LOCAL_ENV);
+
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: 'request body too large' });
+  });
+
+  it('decodes bulk images, allows an empty message, and passes the fixed prompt to the agent', async () => {
+    const cache = createFakeBoardCache([
+      cachedProject(project('proj-a', '/projects/a')),
+    ]);
+    const imageAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsImages: true },
+    });
+    const app = createApp({ cache, agent: imageAgent });
+    const res = await app.request('/api/chat/message', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        projectId: 'proj-a',
+        message: '',
+        images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
+      }),
+    }, LOCAL_ENV);
+
+    expect(res.status).toBe(200);
+    const request = vi.mocked(imageAgent.sendMessage).mock.calls[0]?.[0];
+    expect(request?.message).toBe('添付画像の内容を説明してください。');
+    expect(request?.images?.[0]?.mimeType).toBe('image/png');
+    expect([...request!.images![0]!.data]).toEqual(PNG_BYTES);
+  });
+
+  it.each(['/api/chat/message', '/api/chat/message/stream'])(
+    'returns the fixed image-not-supported 400 from %s before invoking the agent',
+    async (endpoint) => {
+      const cache = createFakeBoardCache([
+        cachedProject(project('proj-a', '/projects/a')),
+      ]);
+      const unsupportedAgent = createFakeAgent({
+        descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+        sendMessageStream: vi.fn(),
+      });
+      const app = createApp({ cache, agent: unsupportedAgent });
+      const res = await app.request(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'proj-a',
+          message: 'look',
+          images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
+        }),
+      }, LOCAL_ENV);
+
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({
+        error: 'chat agent does not support image attachments',
+      });
+      expect(unsupportedAgent.sendMessage).not.toHaveBeenCalled();
+      expect(unsupportedAgent.sendMessageStream).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['/api/chat/message', '/api/chat/message/stream'])(
+    'keeps an unacknowledged completed turn when %s rejects an unsupported image',
+    async (endpoint) => {
+      const cache = createFakeBoardCache([
+        cachedProject(project('proj-a', '/projects/a')),
+      ]);
+      const unsupportedAgent = createFakeAgent({
+        descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+        sendMessageStream: vi.fn(),
+      });
+      const app = createApp({ cache, agent: unsupportedAgent });
+      const completedResponse = await app.request('/api/chat/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'proj-a', message: 'first turn' }),
+      }, LOCAL_ENV);
+      const completedBody = await completedResponse.json() as { sessionId: string };
+
+      const rejected = await app.request(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId: 'proj-a',
+          message: 'look',
+          images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
+        }),
+      }, LOCAL_ENV);
+      expect(rejected.status).toBe(400);
+
+      const status = await app.request(
+        '/api/chat/turn-status?projectId=proj-a',
+        {},
+        LOCAL_ENV,
+      );
+      expect(await status.json()).toEqual(expect.objectContaining({
+        state: 'completed',
+        sessionId: completedBody.sessionId,
+      }));
+    },
+  );
 
   it('returns 404 when the project is unknown', async () => {
     const app = createApp();
@@ -1395,6 +1567,7 @@ describe('GET /api/chat/agents (bdboard-l1t.2 step 2)', () => {
           { id: 'other-model', label: 'other-model' },
         ],
         experimental: false,
+        supportsImages: true,
         capability: 'bd-only',
       },
     });
@@ -1429,6 +1602,7 @@ describe('GET /api/chat/agents (bdboard-l1t.2 step 2)', () => {
       ],
       experimental: false,
       supportsStreaming: false,
+      supportsImages: true,
       capability: 'bd-only',
       availability: 'available',
     });
@@ -1438,6 +1612,7 @@ describe('GET /api/chat/agents (bdboard-l1t.2 step 2)', () => {
       models: [],
       experimental: true,
       supportsStreaming: false,
+      supportsImages: false,
       capability: 'reads-project',
       availability: 'available',
     });

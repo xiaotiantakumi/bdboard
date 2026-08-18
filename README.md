@@ -138,6 +138,22 @@ loopback 接続をローカル直アクセスとみなす認証免除の前提�
 | `BDBOARD_AGY_PATH` | (`BDBOARD_CHAT_AGENTS` に `agy` を含めた場合のみ有効)呼び出す Antigravity CLI のパス/名前 | `agy` |
 | `BDBOARD_AGY_MODEL` | (同上)agy のモデル。未設定時はアカウント既定。`agy models` の id (例: `gemini-3.7-flash-medium`) を指定 | (未設定) |
 
+チャットの画像添付対応は次のとおり。
+
+| チャットバックエンド | 画像添付 |
+| --- | --- |
+| Codex CLI | 対応 (`image/png`, `image/jpeg`, `image/webp`) |
+| Claude CLI | 非対応 |
+| Cursor Agent CLI | 非対応 |
+| Antigravity CLI (`agy`) | 非対応 |
+
+1ターンに添付できる画像は最大4枚、decode後は1枚5 MiB以下・合計10 MiB以下。SVG/GIFは
+受け付けず、base64 と画像の magic bytes が宣言されたMIME typeに一致しない入力も拒否する。
+画像bytesはbdboardのDBやチャット本文には永続化しない。Codexへ渡す直前にランダム名・mode
+`0600` の一時ファイルへ書き、ターンの成功、CLIエラー、出力parseエラーのいずれでも終了時に
+削除する。ただしCodexなどprovider CLI自身が会話sessionへ入力や画像由来の情報を保存する可能性は
+あり、bdboard側の非永続化はprovider側のsession保存を無効化するものではない。
+
 `BDBOARD_CHAT_AGENTS=codex` で Codex アダプタを opt-in すると、claude アダプタが持つ
 「bd 以外の組み込みツールを全廃する」制御が Codex CLI には存在しないため、実質的に shell
 コマンド実行とプロジェクト内外のファイル読み書きまで許可することになる(descriptor の

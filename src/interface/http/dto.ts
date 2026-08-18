@@ -957,6 +957,7 @@ export interface ChatAgentDto {
   models?: { id: string; label: string }[];
   experimental: boolean;
   supportsStreaming: boolean;
+  supportsImages: boolean;
   capability: ChatAgentCapability;
   availability: ChatAgentAvailability;
 }
@@ -979,6 +980,7 @@ export function toChatAgentDto(
       : {}),
     experimental: descriptor.experimental,
     supportsStreaming: descriptor.supportsStreaming ?? false,
+    supportsImages: descriptor.supportsImages ?? false,
     capability: descriptor.capability,
     availability,
   };
