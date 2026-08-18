@@ -17,6 +17,7 @@ import type {
   TicketDetailDto,
 } from './api';
 import { App, formatGeneratedAtAge } from './App';
+import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
 import { UI_STORAGE_KEYS } from './uiPersistedState';
 
 class MockEventSource {
@@ -357,7 +358,9 @@ function renderApp() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <App />
+      <WatchedTicketsProvider>
+        <App />
+      </WatchedTicketsProvider>
     </QueryClientProvider>,
   );
 }

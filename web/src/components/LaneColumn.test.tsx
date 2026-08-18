@@ -1,8 +1,14 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto } from '../api';
 import { CardItem, LaneColumn } from './LaneColumn';
 import { BulkSelectionProvider } from './BulkSelectionProvider';
+import { WatchedTicketsProvider } from './WatchedTicketsProvider';
+
+function renderWithWatch(ui: ReactElement) {
+  return render(<WatchedTicketsProvider>{ui}</WatchedTicketsProvider>);
+}
 
 function makeCard(id: string): BoardCardDto {
   return {
@@ -35,7 +41,7 @@ function makeCard(id: string): BoardCardDto {
 
 describe('CardItem pending decision badge', () => {
   it('shows the pending decision badge when hasPendingDecision is true', () => {
-    render(
+    renderWithWatch(
       <CardItem
         card={makeCard('bdboard-pending')}
         lane="ready"
@@ -51,7 +57,7 @@ describe('CardItem pending decision badge', () => {
   });
 
   it('hides the pending decision badge when hasPendingDecision is false', () => {
-    render(
+    renderWithWatch(
       <CardItem
         card={makeCard('bdboard-plain')}
         lane="ready"
@@ -69,7 +75,7 @@ describe('CardItem pending decision badge', () => {
 
 describe('CardItem PR link badge', () => {
   it('shows the PR badge when prLink is provided', () => {
-    render(
+    renderWithWatch(
       <CardItem
         card={makeCard('bdboard-pr')}
         lane="ready"
@@ -102,7 +108,7 @@ describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', 
       deferUrgency: 'later',
     };
 
-    render(
+    renderWithWatch(
       <CardItem
         card={card}
         lane="blocked"
@@ -124,7 +130,7 @@ describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', 
       deferUrgency: 'later',
     };
 
-    render(
+    renderWithWatch(
       <CardItem
         card={card}
         lane="ready"
@@ -140,7 +146,7 @@ describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', 
   });
 
   it('hides the defer countdown in the blocked lane when defer fields are null (dependency-blocked, not deferred)', () => {
-    render(
+    renderWithWatch(
       <CardItem
         card={makeCard('bdboard-dep-blocked')}
         lane="blocked"
@@ -168,7 +174,7 @@ describe('CardItem priority inheritance badge', () => {
       },
     };
 
-    render(
+    renderWithWatch(
       <CardItem
         card={card}
         lane="ready"
@@ -185,7 +191,7 @@ describe('CardItem priority inheritance badge', () => {
   });
 
   it('hides inherited priority badge when priorityInheritedFrom is null', () => {
-    render(
+    renderWithWatch(
       <CardItem
         card={makeCard('bdboard-plain-inherit')}
         lane="ready"
@@ -205,7 +211,7 @@ describe('CardItem bulk selection checkbox', () => {
   it('does not open the detail panel when the checkbox is clicked', () => {
     const onClick = vi.fn();
 
-    render(
+    renderWithWatch(
       <BulkSelectionProvider>
         <CardItem
           card={makeCard('bdboard-bulk-click')}
@@ -227,7 +233,7 @@ describe('CardItem bulk selection checkbox', () => {
   });
 
   it('keeps bulk checkbox state independent from keyboard focus aria-selected', () => {
-    render(
+    renderWithWatch(
       <BulkSelectionProvider>
         <CardItem
           card={makeCard('bdboard-bulk-aria')}
@@ -276,7 +282,7 @@ describe('LaneColumn collapse', () => {
   it('calls onToggleCollapse when the header is clicked', () => {
     const onToggleCollapse = vi.fn();
 
-    render(
+    renderWithWatch(
       <LaneColumn
         lane="ready"
         cards={[makeCard('bdboard-collapse-1')]}
@@ -296,7 +302,7 @@ describe('LaneColumn collapse', () => {
   });
 
   it('hides cards when collapsed but keeps the count badge visible', () => {
-    render(
+    renderWithWatch(
       <LaneColumn
         lane="ready"
         cards={[makeCard('bdboard-collapse-2'), makeCard('bdboard-collapse-3')]}
@@ -316,7 +322,7 @@ describe('LaneColumn collapse', () => {
   });
 
   it('sets aria-expanded opposite to collapsed', () => {
-    const { rerender } = render(
+    const { rerender } = renderWithWatch(
       <LaneColumn
         lane="ready"
         cards={[makeCard('bdboard-collapse-4')]}
@@ -336,17 +342,19 @@ describe('LaneColumn collapse', () => {
     );
 
     rerender(
-      <LaneColumn
-        lane="ready"
-        cards={[makeCard('bdboard-collapse-4')]}
-        showProjectName={false}
-        projectNames={emptyMaps.projectNames}
-        projectActiveSessions={emptyMaps.projectActiveSessions}
-        pendingDecisionIds={emptyMaps.pendingDecisionIds}
-        prLinksById={emptyMaps.prLinksById}
-        onCardClick={() => {}}
-        collapsed
-      />,
+      <WatchedTicketsProvider>
+        <LaneColumn
+          lane="ready"
+          cards={[makeCard('bdboard-collapse-4')]}
+          showProjectName={false}
+          projectNames={emptyMaps.projectNames}
+          projectActiveSessions={emptyMaps.projectActiveSessions}
+          pendingDecisionIds={emptyMaps.pendingDecisionIds}
+          prLinksById={emptyMaps.prLinksById}
+          onCardClick={() => {}}
+          collapsed
+        />
+      </WatchedTicketsProvider>,
     );
 
     expect(screen.getByRole('button', { name: /着手可能/ })).toHaveAttribute(
@@ -365,7 +373,7 @@ describe('LaneColumn wip exceeded', () => {
   };
 
   it('shows wip exceeded label and warning class on the in_progress header', () => {
-    render(
+    renderWithWatch(
       <LaneColumn
         lane="in_progress"
         cards={[makeCard('bdboard-wip-1'), makeCard('bdboard-wip-2')]}

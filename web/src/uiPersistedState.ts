@@ -43,6 +43,7 @@ export const UI_STORAGE_KEYS = {
   notificationEvents: 'bdboard.ui.notificationEvents',
   notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
   notificationsEnabled: 'bdboard.ui.notificationsEnabled',
+  watchedTicketIds: 'bdboard.ui.watchedTicketIds',
   recentTickets: 'bdboard.ui.recentTickets',
 } as const;
 
@@ -188,6 +189,24 @@ export function validateStringArray(value: unknown): string[] | null {
     return null;
   }
   return value;
+}
+
+export function validateWatchedTicketIds(value: unknown): string[] | null {
+  const ids = validateStringArray(value);
+  if (ids === null) {
+    return null;
+  }
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  for (const id of ids) {
+    const trimmed = id.trim();
+    if (trimmed === '' || seen.has(trimmed)) {
+      return null;
+    }
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+  return normalized;
 }
 
 export function validateChatModelSelections(

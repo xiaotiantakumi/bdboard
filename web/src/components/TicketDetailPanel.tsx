@@ -41,6 +41,7 @@ import {
 } from './dependencyEditing';
 import { MarkdownContent } from './MarkdownContent';
 import { PrLinkBadge } from './PrLinkBadge';
+import { WatchToggle } from './WatchToggle';
 import { useUndoSnackbar } from './UndoSnackbar';
 import {
   ACTIVITY_KIND_LABELS,
@@ -752,14 +753,17 @@ export function TicketDetailPanel({
           <h2 id="detail-title" className="detail-title">
             {isLoading ? '読み込み中…' : data?.title ?? 'チケット詳細'}
           </h2>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            className="btn detail-close"
-            onClick={onClose}
-          >
-            閉じる
-          </button>
+          <div className="detail-header-actions">
+            <WatchToggle ticketId={ticketId} className="detail-watch-toggle" />
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="btn detail-close"
+              onClick={onClose}
+            >
+              閉じる
+            </button>
+          </div>
         </div>
 
         {isLoading && <p className="loading">読み込み中…</p>}

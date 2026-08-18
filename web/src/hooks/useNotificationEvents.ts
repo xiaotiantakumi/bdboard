@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { BoardCardDto, TicketDetailDto } from '../api';
 import { acquireSharedEventSource } from '../lib/sseConnection';
+import {
+  buildTicketWatchSnapshot,
+  diffTicketWatchSnapshots,
+  type TicketWatchEvent,
+  type TicketWatchSnapshot,
+} from '../ticketWatch';
 import { UI_STORAGE_KEYS, validateBoolean, validateString } from '../uiPersistedState';
 import { usePersistedState } from './usePersistedState';
 
@@ -13,7 +20,14 @@ export const NOTIFICATION_BATCH_THRESHOLD = 3;
 
 export interface NotificationEventItem {
   readonly id: string;
-  readonly kind: 'ticket_ready' | 'decision_pending' | 'session_died' | 'ai_quota_threshold';
+  readonly kind:
+    | 'ticket_ready'
+    | 'decision_pending'
+    | 'session_died'
+    | 'ai_quota_threshold'
+    | 'watched_lane_changed'
+    | 'watched_comment_changed'
+    | 'watched_session_changed';
   readonly occurredAt: string;
   readonly ticketId?: string;
   readonly title?: string;
@@ -27,6 +41,18 @@ export interface NotificationEventItem {
   readonly percentRemaining?: number;
   readonly thresholdPercent?: number;
   readonly resetAt?: string;
+  readonly fromLane?: string;
+  readonly toLane?: string;
+  readonly previousCommentCount?: number;
+  readonly commentCount?: number;
+  readonly addedSessionIds?: readonly string[];
+  readonly removedSessionIds?: readonly string[];
+}
+
+export interface UseNotificationEventsOptions {
+  readonly watchedTicketIds?: ReadonlySet<string>;
+  readonly boardCardsById?: ReadonlyMap<string, BoardCardDto>;
+  readonly watchedTicketDetails?: ReadonlyMap<string, TicketDetailDto>;
 }
 
 export interface UseNotificationEventsResult {
@@ -111,7 +137,10 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     (item.kind !== 'ticket_ready' &&
       item.kind !== 'decision_pending' &&
       item.kind !== 'session_died' &&
-      item.kind !== 'ai_quota_threshold') ||
+      item.kind !== 'ai_quota_threshold' &&
+      item.kind !== 'watched_lane_changed' &&
+      item.kind !== 'watched_comment_changed' &&
+      item.kind !== 'watched_session_changed') ||
     typeof item.occurredAt !== 'string'
   ) {
     return null;
@@ -150,6 +179,32 @@ function validateNotificationEventItem(value: unknown): NotificationEventItem | 
     return null;
   }
   if (item.resetAt !== undefined && typeof item.resetAt !== 'string') {
+    return null;
+  }
+  if (item.fromLane !== undefined && typeof item.fromLane !== 'string') {
+    return null;
+  }
+  if (item.toLane !== undefined && typeof item.toLane !== 'string') {
+    return null;
+  }
+  if (item.previousCommentCount !== undefined && typeof item.previousCommentCount !== 'number') {
+    return null;
+  }
+  if (item.commentCount !== undefined && typeof item.commentCount !== 'number') {
+    return null;
+  }
+  if (
+    item.addedSessionIds !== undefined &&
+    (!Array.isArray(item.addedSessionIds) ||
+      !item.addedSessionIds.every((entry) => typeof entry === 'string'))
+  ) {
+    return null;
+  }
+  if (
+    item.removedSessionIds !== undefined &&
+    (!Array.isArray(item.removedSessionIds) ||
+      !item.removedSessionIds.every((entry) => typeof entry === 'string'))
+  ) {
     return null;
   }
   return value as NotificationEventItem;
@@ -211,7 +266,48 @@ function buildNotificationEventItem(payload: NotificationPayload): NotificationE
   };
 }
 
+function buildWatchedNotificationEventItem(
+  event: TicketWatchEvent,
+  snapshot: TicketWatchSnapshot,
+  occurredAt: string,
+): NotificationEventItem {
+  const base = {
+    occurredAt,
+    ticketId: event.ticketId,
+    ...(snapshot.title !== undefined ? { title: snapshot.title } : {}),
+    ...(snapshot.projectId !== undefined ? { projectId: snapshot.projectId } : {}),
+  };
+
+  switch (event.kind) {
+    case 'lane_changed':
+      return {
+        id: `watched_lane_changed:${event.ticketId}:${event.fromLane}:${event.toLane}:${occurredAt}`,
+        kind: 'watched_lane_changed',
+        fromLane: event.fromLane,
+        toLane: event.toLane,
+        ...base,
+      };
+    case 'comment_count_changed':
+      return {
+        id: `watched_comment_changed:${event.ticketId}:${event.fromCount}:${event.toCount}:${occurredAt}`,
+        kind: 'watched_comment_changed',
+        previousCommentCount: event.fromCount,
+        commentCount: event.toCount,
+        ...base,
+      };
+    case 'session_links_changed':
+      return {
+        id: `watched_session_changed:${event.ticketId}:${occurredAt}`,
+        kind: 'watched_session_changed',
+        addedSessionIds: event.addedSessionIds,
+        removedSessionIds: event.removedSessionIds,
+        ...base,
+      };
+  }
+}
+
 function notificationCopy(item: NotificationEventItem): { title: string; body: string } {
+  const ticketLabel = `${item.title ?? item.ticketId ?? 'チケット'} (${item.ticketId ?? ''})`.trim();
   switch (item.kind) {
     case 'ticket_ready':
       return {
@@ -233,6 +329,23 @@ function notificationCopy(item: NotificationEventItem): { title: string; body: s
         title: 'AIクォータ残量が閾値を下回りました',
         body: `${item.providerLabel ?? item.providerId} ${item.metricLabel ?? ''} 残り${item.percentRemaining}%(閾値${item.thresholdPercent}%)`.trim(),
       };
+    case 'watched_lane_changed':
+      return {
+        title: 'ウォッチ中のチケットがレーン遷移しました',
+        body: `${ticketLabel}: ${item.fromLane ?? ''} → ${item.toLane ?? ''}`,
+      };
+    case 'watched_comment_changed':
+      return {
+        title: 'ウォッチ中のチケットのコメントが更新されました',
+        body: `${ticketLabel}: ${item.previousCommentCount ?? 0} → ${item.commentCount ?? 0}`,
+      };
+    case 'watched_session_changed':
+      const added = item.addedSessionIds?.length ?? 0;
+      const removed = item.removedSessionIds?.length ?? 0;
+      return {
+        title: 'ウォッチ中のチケットのセッション紐付けが変わりました',
+        body: `${ticketLabel}: +${added} -${removed}`,
+      };
   }
 }
 
@@ -246,6 +359,12 @@ function kindSummaryLabel(kind: NotificationEventItem['kind'], count: number): s
       return `セッション終了 ${count}件`;
     case 'ai_quota_threshold':
       return `クォータ低下 ${count}件`;
+    case 'watched_lane_changed':
+      return `ウォッチレーン遷移 ${count}件`;
+    case 'watched_comment_changed':
+      return `ウォッチコメント ${count}件`;
+    case 'watched_session_changed':
+      return `ウォッチセッション ${count}件`;
   }
 }
 
@@ -281,7 +400,9 @@ function passesBrowserNotificationGate(notificationsEnabled: boolean): boolean {
   return true;
 }
 
-export function useNotificationEvents(): UseNotificationEventsResult {
+export function useNotificationEvents(
+  options?: UseNotificationEventsOptions,
+): UseNotificationEventsResult {
   const [events, setEvents] = usePersistedState<NotificationEventItem[]>(
     UI_STORAGE_KEYS.notificationEvents,
     [],
@@ -302,6 +423,11 @@ export function useNotificationEvents(): UseNotificationEventsResult {
   const notificationsEnabledRef = useRef(notificationsEnabled);
   const batchBufferRef = useRef<NotificationEventItem[]>([]);
   const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const watchedSnapshotsRef = useRef<Map<string, TicketWatchSnapshot>>(new Map());
+
+  const watchedTicketIds = options?.watchedTicketIds;
+  const boardCardsById = options?.boardCardsById;
+  const watchedTicketDetails = options?.watchedTicketDetails;
 
   useEffect(() => {
     notificationsEnabledRef.current = notificationsEnabled;
@@ -359,6 +485,63 @@ export function useNotificationEvents(): UseNotificationEventsResult {
     },
     [flushNotificationBatch],
   );
+
+  const appendNotificationItems = useCallback(
+    (items: readonly NotificationEventItem[]) => {
+      if (items.length === 0) {
+        return;
+      }
+      setEvents((prev) => [...items, ...prev].slice(0, MAX_EVENTS));
+      for (const item of items) {
+        enqueueBrowserNotification(item, notificationsEnabledRef.current);
+      }
+    },
+    [setEvents, enqueueBrowserNotification],
+  );
+
+  useEffect(() => {
+    if (
+      watchedTicketIds === undefined ||
+      watchedTicketIds.size === 0 ||
+      boardCardsById === undefined
+    ) {
+      watchedSnapshotsRef.current = new Map();
+      return;
+    }
+
+    const details = watchedTicketDetails ?? new Map<string, TicketDetailDto>();
+    const occurredAt = new Date().toISOString();
+    const newItems: NotificationEventItem[] = [];
+    const nextSnapshots = new Map<string, TicketWatchSnapshot>();
+
+    for (const ticketId of watchedTicketIds) {
+      const current = buildTicketWatchSnapshot(ticketId, boardCardsById, details);
+      if (current === null) {
+        continue;
+      }
+
+      const previous = watchedSnapshotsRef.current.get(ticketId);
+      if (previous === undefined) {
+        nextSnapshots.set(ticketId, current);
+        continue;
+      }
+
+      const transitions = diffTicketWatchSnapshots(previous, current);
+      for (const transition of transitions) {
+        newItems.push(buildWatchedNotificationEventItem(transition, current, occurredAt));
+      }
+      nextSnapshots.set(ticketId, current);
+    }
+
+    for (const ticketId of watchedSnapshotsRef.current.keys()) {
+      if (!watchedTicketIds.has(ticketId)) {
+        nextSnapshots.delete(ticketId);
+      }
+    }
+
+    watchedSnapshotsRef.current = nextSnapshots;
+    appendNotificationItems(newItems);
+  }, [watchedTicketIds, boardCardsById, watchedTicketDetails, appendNotificationItems]);
 
   useEffect(() => {
     const conn = acquireSharedEventSource();
