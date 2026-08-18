@@ -97,8 +97,8 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
   });
 
   const historyQuery = useQuery({
-    queryKey: ['sessionHistory', SESSION_HISTORY_LIMIT],
-    queryFn: () => fetchSessionHistory(SESSION_HISTORY_LIMIT),
+    queryKey: ['sessionHistory', SESSION_HISTORY_LIMIT, projectId],
+    queryFn: () => fetchSessionHistory(SESSION_HISTORY_LIMIT, projectId),
     enabled: tab === 'ended',
     refetchInterval: tab === 'ended' ? 10_000 : false,
   });
@@ -157,13 +157,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
     });
   }, [sessionsQuery.data, sessionProjectMap, projectId]);
 
-  const historyRows = useMemo((): readonly SessionHistoryEntryDto[] => {
-    const entries = historyQuery.data ?? [];
-    if (projectId === undefined) {
-      return entries;
-    }
-    return entries.filter((entry) => entry.projectId === projectId);
-  }, [historyQuery.data, projectId]);
+  const historyRows: readonly SessionHistoryEntryDto[] = historyQuery.data ?? [];
 
   const processRows = useMemo((): readonly AgentProcessDto[] => {
     const processes = processesQuery.data ?? [];

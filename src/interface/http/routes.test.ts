@@ -4072,6 +4072,48 @@ describe('createApiRoutes', () => {
     expect((await invalidLimit.json()) as unknown[]).toHaveLength(50);
   });
 
+  it('filters session history using the shared projects query parameter', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    for (const proj of [a, b]) {
+      cache.putProject({
+        project: proj,
+        tickets: [],
+        fingerprint: `fp-${proj.id}`,
+        fetchedAt: NOW,
+      });
+    }
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        sessions: () => [
+          makeSession({
+            sessionId: 'session-a',
+            cwd: '/projects/a',
+            alive: false,
+            lastActivityAt: NOW,
+          }),
+          makeSession({
+            sessionId: 'session-b',
+            cwd: '/projects/b',
+            alive: false,
+            lastActivityAt: NOW,
+          }),
+        ],
+      }),
+    );
+
+    const response = await app.request('/api/sessions/history?projects=%2Fa');
+
+    expect(response.status).toBe(200);
+    expect(
+      (await response.json()).map(
+        (entry: { session: { sessionId: string } }) => entry.session.sessionId,
+      ),
+    ).toEqual(['session-a']);
+  });
+
   it('keeps GET /api/sessions working alongside session history route', async () => {
     const session = makeSession({
       sessionId: 'session-live',
