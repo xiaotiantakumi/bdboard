@@ -233,6 +233,43 @@ npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
 ```
 
+### Verify slots (max 2 concurrent `npm run verify` per machine)
+
+`npm run verify` throttles itself: before running anything, `scripts/verify.mjs`
+takes a slot in a machine-local FIFO ticket queue (holder files under
+`$TMPDIR/bdboard-verify-slots/`, logic in `scripts/verify-slot.mjs`), and at
+most **2** verifies run at once per machine. This is the fix for the
+2026-08-18 incident where 6 concurrent verifies self-amplified into load
+average 190–258 for hours (bdboard-d48) — the per-run vitest worker caps
+(bdboard-255) cannot prevent that alone, because more *submissions* still
+pile up. Unlike `bd merge-slot`, this is not a cooperative convention you
+must remember to follow: the lock lives inside the only sanctioned entry
+point, so every `npm run verify` is throttled automatically, and there is no
+bead behind it (nothing new to exclude from `bd ready`).
+
+What this means operationally:
+
+- **Always run the full chain via `npm run verify`.** Never run
+  `npm run verify:steps` directly — it is the wrapper's internal entry point
+  and bypasses both the process-group kill (bdboard-kia) and the slot.
+  Running individual steps (`npm run build`, `npm run test:server`, …) while
+  iterating is still fine; the slot only guards the full chain.
+- **Queue waits are normal, not hangs.** While waiting, verify prints
+  `verify: waiting for a verify slot (queue position N/M, holders: pid …)`
+  every 10s on stderr. Leave it queued — the queue is FIFO, so the wait is
+  bounded, and killing + re-running re-enters the queue at the back. Give
+  the command a generous timeout instead of assuming it wedged.
+- **Stale handling is automatic.** A holder whose pid is dead is reclaimed
+  immediately (covers SIGKILLed verifies); a live holder in the queue for
+  >30 min stops counting toward the limit (logged, file left alone). If a
+  wait exceeds 15 min, verify exits non-zero naming the holder pids —
+  investigate those pids (hung verify?) rather than disabling the slot.
+- **Env knobs are for tests and emergencies only**: `BDBOARD_VERIFY_SLOTS`
+  (default 2; `0` disables gating), `BDBOARD_VERIFY_SLOT_DIR`,
+  `BDBOARD_VERIFY_SLOT_WAIT_MS`. Do not raise or disable them just to run
+  more verifies in parallel — that recreates the incident. CI needs no
+  special casing (one verify per runner; the slot is acquired instantly).
+
 `npm run start` serves the backend + built `web/dist` together on `BDBOARD_PORT` (default `8787` —
 `.claude/launch.json`'s preview port must match this, not 3000). `npm run dev` / `npm run dev:web` are
 for local iteration (server watch mode / Vite dev server, respectively).
