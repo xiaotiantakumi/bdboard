@@ -19,6 +19,15 @@ export interface ShutdownDrainDeps {
  * ここを stop() に戻すと SIGTERM 時の中断通知が無言で壊れる。
  * deps の型が Pick<TunnelService, 'shutdown'> なので stop() へ戻すと型エラーにもなる(二重防御)。
  *
+ * 実行順序は tunnelService.shutdown → watchHandle.stop → cache.close とする (bdboard-bch)。
+ * preview_stop 等でプロセスグループ全体に SIGTERM が届くと、cloudflared 子プロセスが
+ * tunnelService.shutdown() より先に終了し onUnexpectedExit で state が 'on' から 'error' へ
+ * 化けることがある。旧順序 (watchHandle.stop を先に await) だと chokidar の watcher.close()
+ * 待ちの間にその割り込みが起き、後段の shutdown() で state.kind === 'on' が偽になり
+ * markInterrupted() が呼ばれない。shutdown() を最初に置けば、state 判定とマーカー書き込みは
+ * 最初の await 前の同期区間で完了し、このレースを実質的に防げる。watchHandle と tunnel は
+ * 独立したリソースなので順序入れ替えに依存関係上の問題はない。
+ *
  * 各ステップは個別に try/catch し、1件でも失敗しても残りを best-effort で実行する (bdboard-crw)。
  * 失敗があれば全ステップ完了後に {@link AggregateError} で reject する (errors は発生順)。
  * 全成功なら resolve する。
@@ -41,16 +50,15 @@ export function createShutdownDrain(deps: ShutdownDrainDeps): () => Promise<void
     };
 
     try {
-      await deps.watchHandle.stop();
-    } catch (err: unknown) {
-      record('watchHandle.stop', err);
-    }
-
-    // 稼働中のトンネルがあれば中断記録を残してから off へ (bdboard-8v8)。
-    try {
       await deps.tunnelService.shutdown();
     } catch (err: unknown) {
       record('tunnelService.shutdown', err);
+    }
+
+    try {
+      await deps.watchHandle.stop();
+    } catch (err: unknown) {
+      record('watchHandle.stop', err);
     }
 
     try {

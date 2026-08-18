@@ -1,8 +1,40 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardCache } from '../ports/board-cache.js';
 import type { ProjectWatchHandle } from '../ports/project-watcher.js';
+import { createInMemoryTunnelInterruptionStore } from '../ports/tunnel-interruption-store-fakes.js';
+import type { TunnelProcess, TunnelStartResult } from '../ports/tunnel.js';
 import type { TunnelService, TunnelState } from '../tunnel/tunnel-service.js';
+import { createTunnelService } from '../tunnel/tunnel-service.js';
 import { createShutdownDrain } from './shutdown-drain.js';
+
+const TUNNEL_URL = 'https://abc.trycloudflare.com';
+const FIXED_NOW = new Date('2026-08-15T03:00:00.000Z');
+
+function createFakeTunnel(
+  overrides: Partial<TunnelProcess> = {},
+): TunnelProcess & {
+  readonly triggerUnexpectedExit: () => void;
+} {
+  const unexpectedExitListeners: Array<() => void> = [];
+
+  return {
+    start:
+      overrides.start ??
+      (async (): Promise<TunnelStartResult> => ({ url: TUNNEL_URL })),
+    stop: overrides.stop ?? (async (): Promise<void> => {}),
+    isAvailable: overrides.isAvailable ?? (async (): Promise<boolean> => true),
+    onUnexpectedExit:
+      overrides.onUnexpectedExit ??
+      ((listener: () => void) => {
+        unexpectedExitListeners.push(listener);
+      }),
+    triggerUnexpectedExit: () => {
+      for (const listener of unexpectedExitListeners) {
+        listener();
+      }
+    },
+  };
+}
 
 function fakeDeps(overrides?: {
   watchStop?: () => Promise<void>;
@@ -69,21 +101,21 @@ describe('createShutdownDrain', () => {
     expect(tunnelService.shutdown).toHaveBeenCalledOnce();
     expect(tunnelService.stop).not.toHaveBeenCalled();
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
   });
 
-  it('runs watchHandle.stop, tunnelService.shutdown, then cache.close in order', async () => {
+  it('runs tunnelService.shutdown, watchHandle.stop, then cache.close in order', async () => {
     const { watchHandle, tunnelService, cache, calls } = fakeDeps();
     const drain = createShutdownDrain({ watchHandle, tunnelService, cache });
 
     await drain();
 
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
   });
@@ -111,8 +143,8 @@ describe('createShutdownDrain', () => {
     expect(tunnelService.shutdown).toHaveBeenCalledOnce();
     expect(cache.close).toHaveBeenCalledOnce();
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
   });
@@ -141,8 +173,8 @@ describe('createShutdownDrain', () => {
 
     expect(cache.close).toHaveBeenCalledOnce();
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
   });
@@ -171,8 +203,8 @@ describe('createShutdownDrain', () => {
       expect(err).toBeInstanceOf(AggregateError);
       const aggregate = err as AggregateError;
       expect(aggregate.errors).toHaveLength(3);
-      expect(aggregate.errors[0]).toBe(watchError);
-      expect(aggregate.errors[1]).toBe(tunnelError);
+      expect(aggregate.errors[0]).toBe(tunnelError);
+      expect(aggregate.errors[1]).toBe(watchError);
       expect(aggregate.errors[2]).toBe(cacheError);
       // onError は err.message しか出さないので、ステップ名だけでなく理由も message に
       // 畳み込まれていること (bdboard-crw)。
@@ -184,8 +216,8 @@ describe('createShutdownDrain', () => {
     }
 
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
   });
@@ -212,8 +244,8 @@ describe('createShutdownDrain', () => {
 
     expect(tunnelService.shutdown).toHaveBeenCalledOnce();
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
   });
@@ -240,9 +272,41 @@ describe('createShutdownDrain', () => {
     }
 
     expect(calls).toEqual([
-      'watchHandle.stop',
       'tunnelService.shutdown',
+      'watchHandle.stop',
       'cache.close',
     ]);
+  });
+
+  it('records the interruption marker even if the tunnel process exits unexpectedly while watchHandle.stop() is still pending (bdboard-bch race regression)', async () => {
+    const fakeTunnel = createFakeTunnel();
+    const interruptions = createInMemoryTunnelInterruptionStore();
+    const tunnelService = createTunnelService({
+      tunnel: fakeTunnel,
+      now: () => FIXED_NOW,
+      username: 'example-user',
+      generatePassword: () => 'x',
+      interruptions,
+    });
+
+    await tunnelService.start({ password: 'example-password' });
+
+    let resolveWatchStop: (() => void) | undefined;
+    const watchStopPending = new Promise<void>((resolve) => {
+      resolveWatchStop = resolve;
+    });
+    const watchHandle: Pick<ProjectWatchHandle, 'stop'> = {
+      stop: vi.fn(async () => watchStopPending),
+    };
+    const cache: Pick<BoardCache, 'close'> = { close: vi.fn() };
+
+    const drain = createShutdownDrain({ watchHandle, tunnelService, cache });
+    const drainPromise = drain();
+
+    fakeTunnel.triggerUnexpectedExit();
+    resolveWatchStop!();
+    await drainPromise;
+
+    expect(interruptions.read()).toEqual(FIXED_NOW);
   });
 });
