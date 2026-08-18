@@ -1,6 +1,7 @@
 import {
   type FormEvent,
   type KeyboardEvent,
+  type PointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -34,6 +35,7 @@ import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { usePersistedState } from '../hooks/usePersistedState';
 import {
   UI_STORAGE_KEYS,
+  validateChatPanelWidth,
   validateChatModelSelections,
 } from '../uiPersistedState';
 import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
@@ -59,6 +61,27 @@ type ChatMessage = {
   /** ターンは成功したが運用者に知らせるべきエージェント側の警告(bdboard-l1t.6 N-e)。 */
   agentWarnings?: string[];
 };
+
+const CHAT_PANEL_DEFAULT_WIDTH = 480;
+const CHAT_PANEL_MIN_WIDTH = 360;
+const CHAT_PANEL_MAX_WIDTH = 720;
+const CHAT_PANEL_MIN_REMAINING_WIDTH = 320;
+const CHAT_PANEL_RESIZE_STEP = 20;
+
+function clampChatPanelWidth(width: number): number {
+  const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
+  const viewportMaximum = Math.max(
+    CHAT_PANEL_MIN_WIDTH,
+    viewportWidth - CHAT_PANEL_MIN_REMAINING_WIDTH,
+  );
+  return Math.round(
+    Math.min(Math.max(width, CHAT_PANEL_MIN_WIDTH), CHAT_PANEL_MAX_WIDTH, viewportMaximum),
+  );
+}
+
+function canResizeChatPanel(): boolean {
+  return typeof window !== 'undefined' && window.innerWidth > 700;
+}
 
 // SF3: 会話キーの「新規ドラフト」書式(セッションIDを持たない未送信スレッド)を
 // 1箇所に集約する。以前はこの文字列テンプレートが複数箇所(state 初期化・
@@ -273,6 +296,12 @@ export function ChatPanel({
   const [chatModelSelections, setChatModelSelections] = usePersistedState<
     Record<string, Record<string, string>>
   >(UI_STORAGE_KEYS.chatModelSelections, {}, validateChatModelSelections);
+  const [chatPanelWidth, setChatPanelWidth] = usePersistedState<number>(
+    UI_STORAGE_KEYS.chatPanelWidth,
+    CHAT_PANEL_DEFAULT_WIDTH,
+    validateChatPanelWidth,
+  );
+  const [isResizingPanel, setIsResizingPanel] = useState(false);
   const threadModelIdsRef = useRef(threadModelIds);
   threadModelIdsRef.current = threadModelIds;
   const historyRequestIdRef = useRef(0);
@@ -1715,18 +1744,82 @@ export function ChatPanel({
     currentThreadTitle,
     selectedAgent?.label,
   ].filter((part): part is string => part !== undefined && part !== '');
+  const effectiveChatPanelWidth = clampChatPanelWidth(chatPanelWidth);
+  const maximumChatPanelWidth = clampChatPanelWidth(CHAT_PANEL_MAX_WIDTH);
+
+  const updateChatPanelWidth = (width: number) => {
+    setChatPanelWidth(clampChatPanelWidth(width));
+  };
+
+  const handleResizePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (!canResizeChatPanel()) {
+      return;
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setIsResizingPanel(true);
+    updateChatPanelWidth(window.innerWidth - event.clientX);
+  };
+
+  const handleResizePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (isResizingPanel) {
+      updateChatPanelWidth(window.innerWidth - event.clientX);
+    }
+  };
+
+  const handleResizePointerEnd = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+    setIsResizingPanel(false);
+  };
+
+  const handleResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!canResizeChatPanel()) {
+      return;
+    }
+    let nextWidth: number | undefined;
+    if (event.key === 'ArrowLeft') {
+      nextWidth = effectiveChatPanelWidth + CHAT_PANEL_RESIZE_STEP;
+    } else if (event.key === 'ArrowRight') {
+      nextWidth = effectiveChatPanelWidth - CHAT_PANEL_RESIZE_STEP;
+    } else if (event.key === 'Home') {
+      nextWidth = CHAT_PANEL_MIN_WIDTH;
+    } else if (event.key === 'End') {
+      nextWidth = CHAT_PANEL_MAX_WIDTH;
+    }
+    if (nextWidth !== undefined) {
+      event.preventDefault();
+      updateChatPanelWidth(nextWidth);
+    }
+  };
 
   return (
     <div className="overlay" onClick={requestClose} role="presentation">
       <div
         ref={panelRef}
-        className="detail-panel chat-panel"
+        className={`detail-panel chat-panel${isResizingPanel ? ' is-resizing' : ''}`}
+        style={{ width: `${chatPanelWidth}px` }}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="chat-panel-title"
       >
+        <div
+          className="chat-panel-resize-handle"
+          role="separator"
+          aria-label="チャットパネルの幅を変更"
+          aria-orientation="vertical"
+          aria-valuemin={CHAT_PANEL_MIN_WIDTH}
+          aria-valuemax={maximumChatPanelWidth}
+          aria-valuenow={effectiveChatPanelWidth}
+          tabIndex={0}
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+          onKeyDown={handleResizeKeyDown}
+        />
         <div className="detail-header">
           <h2 id="chat-panel-title" className="detail-title">
             チャット

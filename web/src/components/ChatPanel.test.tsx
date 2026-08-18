@@ -42,6 +42,7 @@ const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
 const updateChatThreadMock = vi.mocked(updateChatThread);
 const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
+const defaultWindowInnerWidth = window.innerWidth;
 
 function makeProjectDto(
   overrides: Partial<ProjectDto> & Pick<ProjectDto, 'id'>,
@@ -216,6 +217,10 @@ describe('ChatPanel', () => {
   });
 
   afterEach(() => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: defaultWindowInnerWidth,
+    });
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -236,6 +241,41 @@ describe('ChatPanel', () => {
 
     await screen.findByLabelText('メッセージ');
     await expectNoA11yViolations(container);
+  });
+
+  it('resizes the desktop chat panel within bounds and remembers the width', () => {
+    Object.defineProperty(window, 'innerWidth', {
+      configurable: true,
+      value: 1000,
+    });
+    const first = renderChatPanel([PROJECT_A]);
+    const panel = first.container.querySelector('.detail-panel.chat-panel');
+    const handle = screen.getByRole('separator', { name: 'チャットパネルの幅を変更' });
+
+    expect(panel).toHaveStyle({ width: '480px' });
+
+    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, clientX: 0 }));
+    expect(panel).toHaveStyle({ width: '680px' });
+    fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, clientX: 900 }));
+    expect(panel).toHaveStyle({ width: '360px' });
+    fireEvent(handle, new MouseEvent('pointerup', { bubbles: true }));
+    expect(localStorage.getItem('bdboard.ui.chatPanelWidth')).toBe('360');
+
+    first.unmount();
+    const second = renderChatPanel([PROJECT_A]);
+    expect(second.container.querySelector('.detail-panel.chat-panel')).toHaveStyle({
+      width: '360px',
+    });
+  });
+
+  it('supports keyboard resizing on desktop', () => {
+    const { container } = renderChatPanel([PROJECT_A]);
+    const panel = container.querySelector('.detail-panel.chat-panel');
+    const handle = screen.getByRole('separator', { name: 'チャットパネルの幅を変更' });
+
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+
+    expect(panel).toHaveStyle({ width: '500px' });
   });
 
   it('resolves the initial project when projects arrive after a regular chat mount', async () => {
