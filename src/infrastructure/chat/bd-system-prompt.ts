@@ -1,4 +1,5 @@
 import type { ChatAgentCapability } from '../../application/ports/chat-agent.js';
+import { BDBOARD_HELP_PROMPT_LINES } from './help-content.js';
 
 function buildCapabilityLines(
   capability: ChatAgentCapability,
@@ -173,6 +174,8 @@ export function buildBdSystemPrompt(input: {
     '',
     ...(hasBdTools ? BD_TOOL_USAGE_LINES : []),
     ...(hasBdTools ? [''] : []),
+    ...BDBOARD_HELP_PROMPT_LINES,
+    '',
     '破壊的な操作(close / status変更)は、実行前に対象IDとやることを一言添えてから行い、',
     '実行後は結果を簡潔に報告してください。',
     '',
