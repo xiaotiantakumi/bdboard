@@ -655,7 +655,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
   });
 });
 
-describe('keyboard shortcuts help (bdboard-3tw.119)', () => {
+describe('header help overlays', () => {
   beforeEach(() => {
     vi.stubGlobal('EventSource', MockEventSource);
     window.history.replaceState(null, '', '/');
@@ -740,6 +740,20 @@ describe('keyboard shortcuts help (bdboard-3tw.119)', () => {
     expect(
       screen.getByRole('dialog', { name: 'キーボードショートカット' }),
     ).toBeInTheDocument();
+  });
+
+  it('opens the feature help panel from the header button', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'ヘルプ' }));
+
+    expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Kanban（看板）' })).toBeInTheDocument();
   });
 });
 
