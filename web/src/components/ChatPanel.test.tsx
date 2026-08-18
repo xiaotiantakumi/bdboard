@@ -294,7 +294,7 @@ describe('ChatPanel', () => {
 
     // projects 未解決のうちに「新規スレッド」を押して draftNonces[''] を 0→1 へ
     // 進める(この時点の空ドラフトは意図的に空のまま)。
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     // 進んだ nonce のキー(new::1)へ実際に入力する。
     await user.type(screen.getByLabelText('メッセージ'), '進んだnonceでのドラフト');
 
@@ -735,7 +735,7 @@ describe('ChatPanel', () => {
 
     renderChatPanel([PROJECT_A]);
     const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     await user.type(screen.getByLabelText('メッセージ'), '書きかけのドラフト');
     await user.click(existingTab);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
@@ -1103,7 +1103,7 @@ describe('ChatPanel', () => {
 
     // スレッド一覧 fetch がまだ pending(=保留中のプリフィルがまだ消化されていない)
     // うちに、ユーザーが自分で「新規スレッド」を押す。
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
     // 後から fetch が解決しても、消化済みのはずの pending なプリフィルが誤って
@@ -1138,7 +1138,7 @@ describe('ChatPanel', () => {
     // ticketContextToken 無し(通常のチャットを開いた場合)で、スレッド一覧
     // fetch が pending のうちにユーザーが「新規スレッド」を押す。
     renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
     // fetch が既存スレッドを1件返して解決しても、fetch 開始前に無かった
@@ -1254,7 +1254,7 @@ describe('ChatPanel', () => {
     fetchChatThreadsMock.mockImplementation(() => deferred.promise);
 
     renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
     deferred.reject(new Error('boom'));
@@ -1292,7 +1292,7 @@ describe('ChatPanel', () => {
     const rendered = renderChatPanel([], { initialProjectId: 'proj-a' });
 
     // コールド中に「新規スレッド」を押す(draftNonces[''] が 0→1 へ進む)。
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
     // ここで projects が到着し、selectedProjectId が 'proj-a' へ解決される。
@@ -1369,7 +1369,7 @@ describe('ChatPanel', () => {
     // スレッド」を押す — in-flight 中ではなく、既に fetch が片付いた後の
     // 明示操作であることが sticky 判定を確認するうえで重要。
     await screen.findByRole('tab', { name: '既存スレッド' });
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
     // スレッドを選び直さないまま B へ離脱する。
@@ -2349,7 +2349,7 @@ describe('ChatPanel', () => {
     await user.click(screen.getByRole('button', { name: '送信' }));
     expect(await screen.findByText('first reply')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '新規スレッド' }));
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     const messageLog = within(screen.getByRole('log'));
     expect(messageLog.queryByText('first message')).not.toBeInTheDocument();
     expect(messageLog.queryByText('first reply')).not.toBeInTheDocument();

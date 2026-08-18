@@ -1512,6 +1512,10 @@ export function ChatPanel({
   const displayedOpenThreads = [...openThreads].sort(
     (a, b) => Number(threadById.get(b)?.pinned ?? false) - Number(threadById.get(a)?.pinned ?? false),
   );
+  const closedThreads = (threadLists[selectedProjectId] ?? []).filter(
+    (thread) => !openThreads.includes(thread.sessionId),
+  );
+  const hasClosedThreads = closedThreads.length > 0;
   const handleNewThread = () => {
     // SF5: pendingPrefillRef/pendingTicketDraftProjectRef の消化窓
     // (チケット文脈からの起動でスレッド一覧 fetch がまだ終わっていない間)に
@@ -1809,13 +1813,22 @@ export function ChatPanel({
                       {threadTitle}
                     </button>
                   )}
-                  <button type="button" className="chat-thread-close" aria-label={`スレッド「${threadTitle}」を閉じる`} onClick={() => handleCloseThread(sessionId)}>×</button>
+                  <button
+                    type="button"
+                    className="chat-thread-close"
+                    aria-label={`スレッド「${threadTitle}」を閉じる`}
+                    title="このスレッドをタブから閉じます(削除はされません。あとで「閉じたスレッドを開く」から再度開けます)"
+                    onClick={() => handleCloseThread(sessionId)}
+                  >
+                    ×
+                  </button>
                   {currentSessionId === sessionId && (
                     <>
                       <button
                         type="button"
                         className="chat-thread-rename"
                         aria-label={`スレッド「${threadTitle}」をリネーム`}
+                        title={`スレッド「${threadTitle}」をリネーム`}
                         onClick={() => {
                           setConfirmingDeleteSessionId(null);
                           setRenamingSessionId(sessionId);
@@ -1828,14 +1841,33 @@ export function ChatPanel({
                         type="button"
                         className="chat-thread-pin"
                         aria-label={thread?.pinned ? `スレッド「${threadTitle}」のピン留めを解除` : `スレッド「${threadTitle}」をピン留め`}
+                        title={thread?.pinned ? `スレッド「${threadTitle}」のピン留めを解除` : `スレッド「${threadTitle}」をピン留め`}
                         onClick={() => void handlePinToggle(sessionId, thread?.pinned ?? false)}
                       >
                         {thread?.pinned ? 'ピン留め解除' : 'ピン留め'}
                       </button>
                       {confirmingDeleteSessionId === sessionId ? (
-                        <button type="button" className="chat-thread-delete" aria-label={`スレッド「${threadTitle}」の削除を確定`} onClick={() => void handleDeleteThread(sessionId)}>本当に削除</button>
+                        <button
+                          type="button"
+                          className="chat-thread-delete"
+                          aria-label={`スレッド「${threadTitle}」の削除を確定`}
+                          title="このスレッドを完全に削除します(元に戻せません)"
+                          onClick={() => void handleDeleteThread(sessionId)}
+                        >
+                          <span className="chat-thread-delete-icon" aria-hidden="true">🗑</span>
+                          本当に削除
+                        </button>
                       ) : (
-                        <button type="button" className="chat-thread-delete" aria-label={`スレッド「${threadTitle}」を削除`} onClick={() => setConfirmingDeleteSessionId(sessionId)}>削除</button>
+                        <button
+                          type="button"
+                          className="chat-thread-delete"
+                          aria-label={`スレッド「${threadTitle}」を削除`}
+                          title="このスレッドを完全に削除します(元に戻せません)"
+                          onClick={() => setConfirmingDeleteSessionId(sessionId)}
+                        >
+                          <span className="chat-thread-delete-icon" aria-hidden="true">🗑</span>
+                          削除
+                        </button>
                       )}
                     </>
                   )}
@@ -1843,29 +1875,51 @@ export function ChatPanel({
               );
             })}
           </div>
-          <button type="button" className="btn" onClick={handleNewThread}>新規スレッド</button>
-        </div>
-        {(threadLists[selectedProjectId] ?? []).some((thread) => !openThreads.includes(thread.sessionId)) && (
-          <select
-            className="chat-thread-reopen"
-            aria-label="閉じたスレッドを開く"
-            value=""
-            onChange={(event) => {
-              const sessionId = event.target.value;
-              if (sessionId === '') return;
-              const next = [...openThreads, sessionId];
-              setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
-              setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
-              writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: sessionId });
-            }}
+          <button
+            type="button"
+            className="btn chat-thread-new"
+            aria-label="新しい空のスレッドを開始"
+            title="新しい空のスレッドを開始します(今開いているスレッドはそのまま残ります)"
+            onClick={handleNewThread}
           >
-            <option value="">閉じたスレッドを開く…</option>
-            {(threadLists[selectedProjectId] ?? []).filter((thread) => !openThreads.includes(thread.sessionId)).map((thread) => (
-              <option key={thread.sessionId} value={thread.sessionId}>
-                {thread.pinned ? '📌 ' : ''}スレッド: {thread.title ?? '(無題)'}
-              </option>
-            ))}
-          </select>
+            + 新規スレッド
+          </button>
+        </div>
+        {displayedOpenThreads.length === 0 && (
+          <p className="chat-thread-empty-hint" role="status">
+            {hasClosedThreads
+              ? '開いているスレッドはありません。「+ 新規スレッド」で新しく始めるか、下の「閉じたスレッドを開く」から再開できます。'
+              : '開いているスレッドはありません。「+ 新規スレッド」で新しく始めてください。'}
+          </p>
+        )}
+        {hasClosedThreads && (
+          <div className="chat-thread-reopen-row">
+            <label className="chat-thread-reopen-label" htmlFor="chat-thread-reopen-select">
+              閉じたスレッドを開く
+            </label>
+            <select
+              id="chat-thread-reopen-select"
+              className="chat-thread-reopen"
+              aria-label="閉じたスレッドを開く"
+              title="表示から閉じたスレッドを選んで再度タブとして開きます(削除済みのスレッドはここには出ません)"
+              value=""
+              onChange={(event) => {
+                const sessionId = event.target.value;
+                if (sessionId === '') return;
+                const next = [...openThreads, sessionId];
+                setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
+                setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
+                writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: sessionId });
+              }}
+            >
+              <option value="">スレッドを選ぶ…</option>
+              {closedThreads.map((thread) => (
+                <option key={thread.sessionId} value={thread.sessionId}>
+                  {thread.pinned ? '📌 ' : ''}スレッド: {thread.title ?? '(無題)'}
+                </option>
+              ))}
+            </select>
+          </div>
         )}
         {threadError !== null && <p className="chat-message-error chat-thread-error" role="alert">{threadError}</p>}
 

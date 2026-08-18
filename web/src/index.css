@@ -3780,6 +3780,30 @@ body {
   margin: 8px 0;
 }
 
+.chat-thread-new {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-elevated));
+  color: var(--color-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.chat-thread-new:hover {
+  background: color-mix(in srgb, var(--color-accent) 20%, var(--color-bg-elevated));
+}
+
+.chat-thread-empty-hint {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
 .chat-thread-tabs {
   display: flex;
   gap: 4px;
@@ -3841,11 +3865,12 @@ body {
   line-height: 1;
   border-left: 1px solid var(--color-border);
   color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-text) 3%, transparent);
 }
 
 .chat-thread-close:hover {
   color: var(--color-text);
-  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  background: color-mix(in srgb, var(--color-text) 10%, transparent);
 }
 
 .chat-thread-delete {
@@ -3853,13 +3878,18 @@ body {
   min-height: 32px;
   padding: 0 10px;
   font-size: 0.8125rem;
-  border-left: 1px solid var(--color-border);
+  border-left: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
   color: var(--color-danger) !important;
+  background: color-mix(in srgb, var(--color-danger) 6%, transparent);
   white-space: nowrap;
 }
 
+.chat-thread-delete-icon {
+  margin-right: 4px;
+}
+
 .chat-thread-delete:hover {
-  background: color-mix(in srgb, var(--color-danger) 10%, transparent);
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 }
 
 .chat-thread-rename,
@@ -3895,6 +3925,19 @@ body {
 }
 
 .chat-thread-error { margin: 4px 0; }
+
+.chat-thread-reopen-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.chat-thread-reopen-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
 
 .chat-thread-reopen {
   width: 100%;
