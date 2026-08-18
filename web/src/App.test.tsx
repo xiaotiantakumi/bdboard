@@ -399,6 +399,7 @@ describe('App ticket deep link', () => {
     fetchTunnelMock.mockResolvedValue({
       state: 'off',
       available: true,
+      authEnabled: true,
     });
     fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
   });
@@ -458,6 +459,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     fetchTunnelMock.mockResolvedValue({
       state: 'off',
       available: true,
+      authEnabled: true,
     });
     fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
   });
@@ -596,6 +598,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     fetchTunnelMock.mockResolvedValue({
       state: 'off',
       available: true,
+      authEnabled: true,
     });
     fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
     setupFilterApiMocks(persistenceFilterBoardView());
@@ -674,6 +677,7 @@ describe('keyboard shortcuts help (bdboard-3tw.119)', () => {
     fetchTunnelMock.mockResolvedValue({
       state: 'off',
       available: true,
+      authEnabled: true,
     });
     fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
     setupFilterApiMocks(priorityFilterBoardView());
@@ -794,6 +798,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
     fetchTunnelMock.mockResolvedValue({
       state: 'off',
       available: true,
+      authEnabled: true,
     });
     fetchAiQuotaMock.mockRejectedValue(new Error('not configured'));
 

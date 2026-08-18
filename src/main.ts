@@ -760,7 +760,7 @@ async function main(): Promise<void> {
     console.log('Basic auth: DISABLED explicitly (BDBOARD_AUTH_DISABLED)');
   } else {
     console.log(
-      'Basic auth: not configured; all requests will be rejected with 503. Set BDBOARD_AUTH_USER and BDBOARD_AUTH_PASSWORD.',
+      'Basic auth: not configured; local direct requests are allowed, while remote requests return 503 and tunnel publishing is disabled. Set BDBOARD_AUTH_USER and BDBOARD_AUTH_PASSWORD to publish.',
     );
   }
 
@@ -854,7 +854,14 @@ async function main(): Promise<void> {
     }),
   );
 
-  app.route('/', createTunnelRoutes({ tunnelService, access: tunnelAccess }));
+  app.route(
+    '/',
+    createTunnelRoutes({
+      tunnelService,
+      authEnabled: authMode.kind === 'enabled',
+      access: tunnelAccess,
+    }),
+  );
 
   const aiQuotaDisabled = envBool('BDBOARD_AI_QUOTA_DISABLED');
   if (!aiQuotaDisabled) {

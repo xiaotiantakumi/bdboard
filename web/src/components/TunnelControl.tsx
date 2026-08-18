@@ -16,7 +16,6 @@ import { TUNNEL_NOT_RUNNING_HELP } from '../writeAccessMessage';
 
 const TUNNEL_QUERY_KEY = ['tunnel'] as const;
 const POLL_INTERVAL_MS = 1200;
-const COPY_FEEDBACK_MS = 2000;
 
 function isLocalOnlyError(error: unknown): boolean {
   return error instanceof ApiError && error.status === 403;
@@ -40,17 +39,14 @@ function accessTokenErrorMessage(error: unknown): string {
 export function TunnelControl() {
   const queryClient = useQueryClient();
   const [passwordInput, setPasswordInput] = useState('');
-  const [passwordVisible, setPasswordVisible] = useState(false);
   // The QR encodes a one-time token, so it stays hidden until explicitly
-  // requested — same as the password field above.
+  // requested.
   const [qrVisible, setQrVisible] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [localOnlyNotice, setLocalOnlyNotice] = useState(false);
-  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [publishPhase, setPublishPhase] = useState<'idle' | 'confirming'>('idle');
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
 
@@ -142,36 +138,6 @@ export function TunnelControl() {
     }
   }, [tunnelQuery.error]);
 
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current !== null) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  const handleCopy = useCallback(async (text: string) => {
-    if (copyTimeoutRef.current !== null) {
-      clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = null;
-    }
-
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopyFeedback('コピーしました');
-      copyTimeoutRef.current = setTimeout(() => {
-        setCopyFeedback(null);
-        copyTimeoutRef.current = null;
-      }, COPY_FEEDBACK_MS);
-    } catch {
-      setCopyFeedback('コピーできませんでした');
-      copyTimeoutRef.current = setTimeout(() => {
-        setCopyFeedback(null);
-        copyTimeoutRef.current = null;
-      }, COPY_FEEDBACK_MS);
-    }
-  }, []);
-
   const handleRequestPublish = useCallback(() => {
     setValidationError(null);
     setActionError(null);
@@ -239,6 +205,7 @@ export function TunnelControl() {
 
   const data = tunnelQuery.data;
   const unavailable = data !== undefined && !data.available;
+  const authUnavailable = data !== undefined && data.authEnabled !== true;
   // Never offer the publish control before the first response has told us whether
   // cloudflared exists and whether this board is allowed to control the tunnel.
   // The error state keeps the controls visible too, so a retry does not resend a
@@ -253,17 +220,29 @@ export function TunnelControl() {
 
   const startDisabled =
     unavailable ||
+    authUnavailable ||
     isMutating ||
     data?.state === 'starting' ||
     isOn ||
     publishPhase === 'confirming';
   const passwordDisabled =
-    unavailable || isMutating || data?.state === 'starting' || isOn;
+    unavailable ||
+    authUnavailable ||
+    isMutating ||
+    data?.state === 'starting' ||
+    isOn;
   const stopDisabled = isMutating || data?.state === 'starting' || !isOn;
 
   return (
     <div className="tunnel-control header-group">
       <span className="header-label">スマホ公開</span>
+
+      {authUnavailable && (
+        <p className="tunnel-help tunnel-error-message" role="status">
+          Basic Authが有効でないためトンネル公開はできません。
+          BDBOARD_AUTH_USERとBDBOARD_AUTH_PASSWORDを設定してください。
+        </p>
+      )}
 
       {interruptedAt !== null && (
         <div className="tunnel-interrupted-notice" role="status">
@@ -333,7 +312,11 @@ export function TunnelControl() {
               className="btn"
               onClick={handleRequestPublish}
               disabled={startDisabled}
-              title={unavailable ? 'cloudflared が見つかりません' : undefined}
+              title={
+                authUnavailable
+                  ? 'Basic Authが有効でないためトンネル公開はできません'
+                  : undefined
+              }
             >
               {startMutation.isPending ? '送信中…' : 'スマホ用に公開'}
             </button>
@@ -361,10 +344,10 @@ export function TunnelControl() {
                   公開すると、全プロジェクトのチケット内容がインターネットから読める状態になります。
                 </p>
                 <p>
-                  ただし Basic 認証が掛かるため、ユーザー名とパスワードを知っている人だけが読めます。
+                  公開先には Basic 認証が掛かります。スマホはこの画面で発行する1回限りのQRコードから認証済みセッションを開始します。
                 </p>
                 <p>
-                  パスワードを空欄のまま公開した場合は、ランダムなパスワードが自動生成され、公開後にこの画面に表示されます。
+                  パスワードを空欄のまま公開した場合は、安全なランダムパスワードが自動生成されます。スマホでは公開後のQRコードから開きます。
                 </p>
                 <p>「キャンセル」を選べば、何も起きずに元の画面に戻れます。</p>
               </div>
@@ -410,7 +393,7 @@ export function TunnelControl() {
               <span className="tunnel-field-label">スマホからの操作</span>
               {data.writeAccess ? (
                 <p className="tunnel-write-access tunnel-write-access-on">
-                  変更もできます。ただしQRコードから開いた端末に限られます（URLとパスワードを手入力して開いた場合は読み取り専用です）。
+                  変更もできます。公開後のQRコードからスマホで開いてください。
                 </p>
               ) : (
                 <p className="tunnel-write-access tunnel-write-access-off">
@@ -461,46 +444,6 @@ export function TunnelControl() {
               </div>
             )}
           </div>
-          <div className="tunnel-field">
-            <span className="tunnel-field-label">URL</span>
-            <div className="tunnel-field-row">
-              <span className="tunnel-field-value tunnel-mono">{data.url}</span>
-              <button
-                type="button"
-                className="btn btn-small"
-                onClick={() => handleCopy(data.url)}
-              >
-                コピー
-              </button>
-            </div>
-          </div>
-          <div className="tunnel-field">
-            <span className="tunnel-field-label">ユーザー名</span>
-            <span className="tunnel-field-value tunnel-mono">{data.username}</span>
-          </div>
-          <div className="tunnel-field">
-            <span className="tunnel-field-label">パスワード</span>
-            <div className="tunnel-field-row">
-              <span className="tunnel-field-value tunnel-mono">
-                {passwordVisible ? data.password : '••••••••••••'}
-              </span>
-              <button
-                type="button"
-                className="btn btn-small"
-                onClick={() => setPasswordVisible((visible) => !visible)}
-                aria-label={passwordVisible ? 'パスワードを隠す' : 'パスワードを表示'}
-              >
-                {passwordVisible ? '非表示' : '表示'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-small"
-                onClick={() => handleCopy(data.password)}
-              >
-                コピー
-              </button>
-            </div>
-          </div>
           <button
             type="button"
             className="btn"
@@ -527,10 +470,6 @@ export function TunnelControl() {
 
       {actionError !== null && (
         <p className="tunnel-error-message">{actionError}</p>
-      )}
-
-      {copyFeedback !== null && (
-        <p className="tunnel-copy-feedback">{copyFeedback}</p>
       )}
     </div>
   );

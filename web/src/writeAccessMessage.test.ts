@@ -34,6 +34,7 @@ describe('writeAccessErrorMessage', () => {
   it('names the QR entrance and the password length as the two fixes', () => {
     expect(TUNNEL_WRITE_HELP).toContain('QRコード');
     expect(TUNNEL_WRITE_HELP).toContain('12文字未満');
+    expect(TUNNEL_WRITE_HELP).not.toContain('手入力');
   });
 
   it('explains the CSRF 403 separately', () => {

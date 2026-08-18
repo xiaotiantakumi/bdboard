@@ -413,6 +413,56 @@ describe('createBasicAuthMiddleware', () => {
     });
   });
 
+  describe('isLocalRequest bypass', () => {
+    it('passes through in enabled mode without Authorization when isLocalRequest returns true', async () => {
+      const app = createTestApp(enabledMode, {
+        isLocalRequest: () => true,
+      });
+
+      const res = await app.request('/test');
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('ok');
+    });
+
+    it('passes through in unconfigured mode when isLocalRequest returns true', async () => {
+      const app = createTestApp({ kind: 'unconfigured' }, {
+        isLocalRequest: () => true,
+      });
+
+      const res = await app.request('/test');
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('ok');
+    });
+
+    it('still passes through in disabled-explicitly mode when isLocalRequest returns true', async () => {
+      const app = createTestApp({ kind: 'disabled-explicitly' }, {
+        isLocalRequest: () => true,
+      });
+
+      const res = await app.request('/test');
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('ok');
+    });
+
+    it('does not bypass auth when isLocalRequest returns false in enabled mode', async () => {
+      const app = createTestApp(enabledMode, {
+        isLocalRequest: () => false,
+      });
+
+      const res = await app.request('/test');
+      expect(res.status).toBe(401);
+    });
+
+    it('does not bypass unconfigured 503 when isLocalRequest returns false', async () => {
+      const app = createTestApp({ kind: 'unconfigured' }, {
+        isLocalRequest: () => false,
+      });
+
+      const res = await app.request('/test');
+      expect(res.status).toBe(503);
+    });
+  });
+
   describe('cookie session bypass', () => {
     it('allows access with valid session in static mode', async () => {
       const app = createTestApp(enabledMode, {

@@ -137,13 +137,44 @@ describe('TunnelControl publish confirmation', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(countTunnelStartPosts(fetchMock)).toBe(0);
   });
+
+  it('disables publishing and explains why when Basic Auth is not enabled', async () => {
+    vi.unstubAllGlobals();
+    fetchMock = installTunnelFetchMock({
+      state: 'off',
+      available: true,
+      authEnabled: false,
+    });
+    renderTunnelControl();
+
+    const publish = await screen.findByRole('button', { name: 'スマホ用に公開' });
+    expect(publish).toBeDisabled();
+    expect(screen.getByLabelText('トンネル用パスワード（任意）')).toBeDisabled();
+    expect(
+      screen.getByText(/Basic Authが有効でないためトンネル公開はできません/),
+    ).toBeInTheDocument();
+    expect(countTunnelStartPosts(fetchMock)).toBe(0);
+  });
+
+  it('describes QR-only access without promising to display a password', async () => {
+    const user = userEvent.setup();
+    renderTunnelControl();
+
+    await user.click(await screen.findByRole('button', { name: 'スマホ用に公開' }));
+    const dialog = screen.getByRole('alertdialog');
+    expect(dialog).toHaveTextContent('公開後のQRコードから開きます');
+    expect(dialog).not.toHaveTextContent('公開後にこの画面に表示されます');
+  });
 });
 
 describe('TunnelControl QR code', () => {
   const ON_TUNNEL = {
     state: 'on',
     available: true,
+    authEnabled: true,
     url: 'https://brave-lamp-47.trycloudflare.com',
+    // Legacy servers returned these values. Keep them as hostile extra fields
+    // to prove the QR-only UI never renders them even during a rolling upgrade.
     username: 'example-user',
     // Placeholder-shaped on purpose: a realistic-looking literal assigned to a
     // field named `password` is what GitGuardian's generic-password detector
@@ -199,6 +230,17 @@ describe('TunnelControl QR code', () => {
     expect(screen.queryByText('example-token')).toBeNull();
   });
 
+  it('does not show tunnel URL, username, or password as visible text', async () => {
+    installTunnelFetchMock(ON_TUNNEL);
+    renderTunnelControl();
+
+    await screen.findByRole('button', { name: 'QRを表示' });
+
+    expect(screen.queryByText(ON_TUNNEL.url)).not.toBeInTheDocument();
+    expect(screen.queryByText(ON_TUNNEL.username)).not.toBeInTheDocument();
+    expect(screen.queryByText(ON_TUNNEL.password)).not.toBeInTheDocument();
+  });
+
   it('shows an error message when access token issuance fails with 409', async () => {
     const user = userEvent.setup();
     fetchMock = installTunnelFetchMock(ON_TUNNEL, { accessTokenStatus: 409 });
@@ -247,12 +289,8 @@ describe('TunnelControl write access notice', () => {
   const BASE_ON_TUNNEL = {
     state: 'on',
     available: true,
+    authEnabled: true,
     url: 'https://brave-lamp-47.trycloudflare.com',
-    username: 'example-user',
-    // Placeholder-shaped on purpose: a realistic-looking literal assigned to a
-    // field named `password` is what GitGuardian's generic-password detector
-    // fires on, fake or not.
-    password: 'example-password',
     startedAt: '2026-08-15T07:00:00.000Z',
   } as const;
 
@@ -275,7 +313,8 @@ describe('TunnelControl write access notice', () => {
     renderTunnelControl();
 
     const notice = await screen.findByText(/変更もできます/);
-    expect(notice.textContent).toContain('QRコードから開いた端末');
+    expect(notice.textContent).toContain('公開後のQRコード');
+    expect(notice.textContent).not.toContain('手入力');
     expect(screen.queryByText(/読み取り専用です。パスワードが/)).not.toBeInTheDocument();
   });
 
@@ -306,6 +345,7 @@ describe('TunnelControl tunnel interruption notice', () => {
   const INTERRUPTED_OFF_TUNNEL = {
     state: 'off',
     available: true,
+    authEnabled: true,
     interruptedAt: INTERRUPTED_AT,
   } as const;
 
@@ -341,9 +381,8 @@ describe('TunnelControl tunnel interruption notice', () => {
     installTunnelFetchMock({
       state: 'on',
       available: true,
+      authEnabled: true,
       url: 'https://brave-lamp-47.trycloudflare.com',
-      username: 'example-user',
-      password: 'example-password',
       startedAt: '2026-08-15T07:00:00.000Z',
       interruptedAt: INTERRUPTED_AT,
     });
@@ -373,6 +412,7 @@ describe('TunnelControl tunnel interruption notice', () => {
     installTunnelFetchMock({
       state: 'off',
       available: true,
+      authEnabled: true,
       interruptedAt: INTERRUPTED_AT,
       url: 'https://leaked-url.example.trycloudflare.com',
       password: 'example-leaked-password',
