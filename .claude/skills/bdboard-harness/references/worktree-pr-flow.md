@@ -219,6 +219,36 @@ git remote prune origin
 
 掃除はマージした本人の責務。残骸は全セッションの空き確認（規律2）を狂わせる。
 
+**層3の `gh pr merge --delete-branch` はブランチ削除の後処理がまず失敗する — エラーが
+指すブランチ名で2パターンを見分ける**。観測例ではいずれも squash マージ自体は GitHub 側で
+成功していた（マージが失敗したように見えて実は成功している）。どちらのパターンでも慌てて
+再マージせず、まずマージの成否を事実で確認する:
+
+```bash
+gh pr view <N> --json state,mergedAt,mergeCommit   # state が MERGED ならマージ済み
+```
+
+- **エラーが PR 自身のブランチを指す**（`cannot delete branch 'bd/<id>' used by worktree
+  at …`）— 既知の通常パス。リモートブランチの削除は**成功**しており、ローカルブランチが
+  worktree に掴まれて消せないだけ。エラーではなく worktree 運用の通常の帰結 — 上記の
+  掃除どおり worktree を削除してから `git branch -D bd/<id>` で完了する。
+- **エラーが `main` を指す**（`failed to run git: fatal: 'main' is already used by
+  worktree at '<メインチェックアウト>'`）— こちらは**remote ブランチの削除まで実行されず
+  残る**のが既知パターンとの最大の違い。マージ成功を確認したら、追加で remote の残存を
+  確認し、残っていれば手動で削除する:
+
+  ```bash
+  git ls-remote origin refs/heads/bd/<id>   # 出力があれば remote に未削除で残っている
+  git push origin --delete bd/<id>
+  ```
+
+  見落とすと `bd/<id>` が remote に残骸として蓄積する。原因は未検証の推定: `gh pr merge
+  --delete-branch` はマージ成功後、ローカルブランチ削除の前に一旦デフォルトブランチ
+  （main）へのチェックアウトを試みるらしく、PR 自身の worktree を cwd にして実行すると
+  main が常にメインチェックアウト側で使用中のため worktree 競合で失敗し、後続の remote 側
+  削除まで巻き込まれて実行されない、と考えられる。実測: bdboard-3tw.104.24（PR #62）・
+  bdboard-p5l.10（PR #63）、2026-08-18（記録: bdboard-p5l.11）。
+
 ## 例外・補足
 
 - マージは常に**一度に1本**。複数 PR が溜まっていても、1本ごとに層2→マージ→層3を回す。
