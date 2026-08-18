@@ -36,6 +36,7 @@ import { NextUpView } from './components/NextUpView';
 import { ThroughputStats } from './components/ThroughputStats';
 import { KeyboardShortcutsPanel } from './components/KeyboardShortcutsPanel';
 import { HelpPanel } from './components/HelpPanel';
+import { TipsBanner } from './components/TipsBanner';
 import { SearchPalette } from './components/SearchPalette';
 import { SessionListPanel } from './components/SessionListPanel';
 import { TicketDetailPanel } from './components/TicketDetailPanel';
@@ -917,6 +918,8 @@ export function App() {
           </div>
         )}
       </header>
+
+      <TipsBanner onOpenHelp={handleOpenHelp} />
 
       <main className="main">
         <BoardDnDProvider>
