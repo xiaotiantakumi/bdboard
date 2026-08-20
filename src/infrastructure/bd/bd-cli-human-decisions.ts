@@ -75,20 +75,28 @@ function buildListArgs(rootPath: string): readonly string[] {
   ];
 }
 
-function buildRespondArgs(
+function buildAddResponseCommentArgs(
   rootPath: string,
   issueId: string,
   responseText: string,
 ): readonly string[] {
+  // bdboard-07d: bd-m7zzd's needsStoreHumanSubcommands exception to
+  // noDbCommands regressed between beads v1.2.1 and v1.2.2. Avoid `human
+  // respond` until upstream keeps that fix.
   return [
     '-C',
     rootPath,
-    'human',
-    'respond',
+    'comment',
     issueId,
-    '--response',
-    responseText,
+    `Response: ${responseText}`,
   ];
+}
+
+function buildCloseRespondedIssueArgs(
+  rootPath: string,
+  issueId: string,
+): readonly string[] {
+  return ['-C', rootPath, 'close', issueId, '--reason', 'Responded'];
 }
 
 function parseAllowFreeform(value: unknown): boolean {
@@ -242,19 +250,35 @@ export function createBdCliHumanDecisions(
       issueId: string,
       responseText: string,
     ): Promise<void> {
-      const result = await commandRunner.run(
+      const commentResult = await commandRunner.run(
         bdPath,
-        buildRespondArgs(rootPath, issueId, responseText),
+        buildAddResponseCommentArgs(rootPath, issueId, responseText),
         { timeoutMs },
       );
 
-      if (result.exitCode !== 0) {
-        const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
-        const kind = classifyBdError(result.exitCode, combined);
+      if (commentResult.exitCode !== 0) {
+        const combined = `${commentResult.stdout}\n${commentResult.stderr}`.toLowerCase();
+        const kind = classifyBdError(commentResult.exitCode, combined);
         throw new BdError(
           kind,
           issueId,
-          combined.trim() || `exit code ${result.exitCode}`,
+          combined.trim() || `exit code ${commentResult.exitCode}`,
+        );
+      }
+
+      const closeResult = await commandRunner.run(
+        bdPath,
+        buildCloseRespondedIssueArgs(rootPath, issueId),
+        { timeoutMs },
+      );
+
+      if (closeResult.exitCode !== 0) {
+        const combined = `${closeResult.stdout}\n${closeResult.stderr}`.toLowerCase();
+        const kind = classifyBdError(closeResult.exitCode, combined);
+        throw new BdError(
+          kind,
+          issueId,
+          combined.trim() || `exit code ${closeResult.exitCode}`,
         );
       }
     },

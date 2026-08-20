@@ -16,19 +16,22 @@ const expectedListArgs = (rootPath: string): readonly string[] => [
   '--no-pager',
 ];
 
-const expectedRespondArgs = (
+const expectedAddResponseCommentArgs = (
   rootPath: string,
   issueId: string,
   responseText: string,
 ): readonly string[] => [
   '-C',
   rootPath,
-  'human',
-  'respond',
+  'comment',
   issueId,
-  '--response',
-  responseText,
+  `Response: ${responseText}`,
 ];
+
+const expectedCloseRespondedIssueArgs = (
+  rootPath: string,
+  issueId: string,
+): readonly string[] => ['-C', rootPath, 'close', issueId, '--reason', 'Responded'];
 
 interface FakeRunnerOptions {
   readonly handler?: (
@@ -227,17 +230,61 @@ describe('createBdCliHumanDecisions', () => {
     expect(calls[0]?.args).toContain('--readonly');
   });
 
-  it('calls respond with fixed argument array and without --readonly', async () => {
+  it('adds a response comment and then closes the issue without --readonly', async () => {
     const { runner, calls } = createFakeRunner();
     const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
 
     await port.respond('/my/root', 'bdboard-abc', 'A案を採用');
 
-    expect(calls).toHaveLength(1);
-    expect(calls[0]).toEqual({
-      command: '/usr/bin/bd',
-      args: expectedRespondArgs('/my/root', 'bdboard-abc', 'A案を採用'),
+    expect(calls).toEqual([
+      {
+        command: '/usr/bin/bd',
+        args: expectedAddResponseCommentArgs('/my/root', 'bdboard-abc', 'A案を採用'),
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedCloseRespondedIssueArgs('/my/root', 'bdboard-abc'),
+      },
+    ]);
+    expect(calls.flatMap((call) => call.args)).not.toContain('--readonly');
+  });
+
+  it('does not close the issue when adding the response comment fails', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'database is locked',
+        exitCode: 1,
+      }),
     });
-    expect(calls[0]?.args).not.toContain('--readonly');
+    const port = createBdCliHumanDecisions(runner);
+
+    await expect(port.respond('/my/root', 'bdboard-abc', 'A案を採用')).rejects.toMatchObject({
+      kind: 'lock-contention',
+    } satisfies Partial<BdError>);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.args).toEqual(
+      expectedAddResponseCommentArgs('/my/root', 'bdboard-abc', 'A案を採用'),
+    );
+  });
+
+  it('propagates a close failure after adding the response comment', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('close')) {
+          return { stdout: '', stderr: 'bd command not found', exitCode: 127 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner);
+
+    await expect(port.respond('/my/root', 'bdboard-abc', 'A案を採用')).rejects.toMatchObject({
+      kind: 'bd-not-found',
+    } satisfies Partial<BdError>);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.args).toEqual(
+      expectedCloseRespondedIssueArgs('/my/root', 'bdboard-abc'),
+    );
   });
 });
