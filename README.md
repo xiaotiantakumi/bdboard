@@ -99,6 +99,13 @@ loopback 接続をローカル直アクセスとみなす認証免除の前提�
 
 `src/main.ts` が読む `BDBOARD_*` 環境変数の一覧(既定値は同ファイルの実装から)。
 
+### bd CLI の前提バージョン
+
+bdboard は `bd` CLI **v1.2.1** を前提にしています。`brew upgrade beads` で不用意に更新しないでください。
+`bd human respond` / `bd human dismiss` が `storage is nil` で失敗する upstream の不具合
+(`bd-m7zzd`)は v1.2.1 で修正済みだった一方、
+v1.2.2 で一度リグレッションしました。起動時にはこの前提バージョンとの差異を警告ログで検知します。
+
 | 変数名 | 意味 | 既定値 |
 |---|---|---|
 | `BDBOARD_PORT` | 待ち受けポート | `8787` |
