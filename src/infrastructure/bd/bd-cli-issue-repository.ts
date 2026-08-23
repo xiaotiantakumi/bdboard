@@ -7,6 +7,7 @@ import {
 } from '../../application/ports/issue-repository.js';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
+import { withLockContentionRetry } from './bd-retry.js';
 import { collectPrefixes, mapBdListToTickets } from './bd-issue-mapper.js';
 
 const DEFAULT_BD_PATH = 'bd';
@@ -100,16 +101,22 @@ export function createBdCliIssueRepository(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
 
+  // bd list --readonly は読み取り専用でべき等なので、lock-contention
+  // (embedded doltのflock競合)なら数回まで自動リトライしてよい(bdboard-3tj)。
   async function listTickets(project: Project): Promise<ProjectTickets> {
-    const commandResult = await commandRunner.run(bdPath, buildListArgs(project.rootPath), {
-      timeoutMs,
-    });
+    const commandResult = await withLockContentionRetry(async () => {
+      const result = await commandRunner.run(bdPath, buildListArgs(project.rootPath), {
+        timeoutMs,
+      });
 
-    if (commandResult.exitCode !== 0) {
-      const combined = `${commandResult.stdout}\n${commandResult.stderr}`.toLowerCase();
-      const kind = classifyBdError(commandResult.exitCode, combined);
-      throw new BdError(kind, project.id, combined.trim() || `exit code ${commandResult.exitCode}`);
-    }
+      if (result.exitCode !== 0) {
+        const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
+        const kind = classifyBdError(result.exitCode, combined);
+        throw new BdError(kind, project.id, combined.trim() || `exit code ${result.exitCode}`);
+      }
+
+      return result;
+    });
 
     const trimmedStdout = commandResult.stdout.trim();
     if (trimmedStdout.length === 0) {

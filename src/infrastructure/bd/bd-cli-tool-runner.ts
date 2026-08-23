@@ -4,6 +4,7 @@ import {
   type BdErrorKind,
 } from '../../application/ports/issue-repository.js';
 import { buildBdToolArgs } from '../chat/bd-tool-catalog.js';
+import { withLockContentionRetry } from './bd-retry.js';
 
 function classifyBdError(
   exitCode: number,
@@ -55,6 +56,14 @@ function throwBdToolFailure(
  * ツール定義一覧)を経由しないため、ここで追加した引数がエージェントの利用可能ツールとして
  * 露出することはない。quick-action の逆操作(reopen/unclaim/undefer)のように、チャットツールと
  * しては公開したくない書き込みコマンドを issue-writer 層から直接叩く用途に使う。
+ *
+ * NOTE(bdboard-3tj): このコードベースでは runBdCommand/runBdTool は claim/close/comment/
+ * defer/priority/label add-remove/reopen/unclaim/undefer/dependency add-remove など
+ * 常に書き込みコマンドの実行に使われている(読み取りは runBdCommandForStdout 側)。
+ * bd自体がこれら書き込みコマンドの冪等性を保証していない(特に bd comment は追記系で
+ * 呼ぶたびに増える)ため、lock-contention への自動リトライは意図的に入れていない。
+ * 二重実行のリスクを避けるため、ここへリトライを追加する場合はコマンドごとの
+ * 冪等性を個別に確認すること。
  */
 export async function runBdCommand(
   commandRunner: CommandRunner,
@@ -86,6 +95,11 @@ export async function runBdCommand(
  * 返す版。bd show のような読み取りコマンドの出力をパースしたい場合に使う(undoPriority の
  * CAS チェックなど)。bd-tool-catalog を経由しない直叩き専用という位置づけも runBdCommand と
  * 同じ。
+ *
+ * NOTE(bdboard-3tj): 現状の呼び出し元(bd-cli-issue-writer.ts の CAS 用 bd show 読み取り、
+ * bd-cli-version-reader.ts の bd version 読み取り)はすべて読み取り専用でべき等なので、
+ * lock-contention エラーには数回まで自動リトライする。書き込みに転用しないこと
+ * (転用するなら runBdCommand 同様リトライを外す)。
  */
 export async function runBdCommandForStdout(
   commandRunner: CommandRunner,
@@ -95,19 +109,23 @@ export async function runBdCommandForStdout(
   args: readonly string[],
   errorSubject: string,
 ): Promise<string> {
-  const result = await commandRunner.run(bdPath, args, {
-    cwd: rootPath,
-    timeoutMs,
-  });
+  const result = await withLockContentionRetry(async () => {
+    const commandResult = await commandRunner.run(bdPath, args, {
+      cwd: rootPath,
+      timeoutMs,
+    });
 
-  if (result.exitCode !== 0) {
-    throwBdToolFailure(
-      result.exitCode,
-      result.stdout,
-      result.stderr,
-      errorSubject,
-    );
-  }
+    if (commandResult.exitCode !== 0) {
+      throwBdToolFailure(
+        commandResult.exitCode,
+        commandResult.stdout,
+        commandResult.stderr,
+        errorSubject,
+      );
+    }
+
+    return commandResult;
+  });
 
   return result.stdout;
 }

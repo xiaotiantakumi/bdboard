@@ -9,6 +9,7 @@ import {
   BdError,
   type BdErrorKind,
 } from '../../application/ports/issue-repository.js';
+import { withLockContentionRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -225,26 +226,39 @@ export function createBdCliHumanDecisions(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
+    // bd list --readonly は読み取り専用でべき等なので、lock-contention なら
+    // 数回まで自動リトライしてよい(bdboard-3tj)。respond() 側の bd comment /
+    // bd close はどちらも書き込みで、特に comment は追記系でべき等ではないため
+    // (二重投稿のリスク)意図的にリトライ対象から外している。
     async listPendingDecisions(rootPath: string): Promise<readonly PendingDecision[]> {
-      const result = await commandRunner.run(
-        bdPath,
-        buildListArgs(rootPath),
-        { timeoutMs },
-      );
-
-      if (result.exitCode !== 0) {
-        const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
-        const kind = classifyBdError(result.exitCode, combined);
-        throw new BdError(
-          kind,
-          rootPath,
-          combined.trim() || `exit code ${result.exitCode}`,
+      const result = await withLockContentionRetry(async () => {
+        const commandResult = await commandRunner.run(
+          bdPath,
+          buildListArgs(rootPath),
+          { timeoutMs },
         );
-      }
+
+        if (commandResult.exitCode !== 0) {
+          const combined = `${commandResult.stdout}\n${commandResult.stderr}`.toLowerCase();
+          const kind = classifyBdError(commandResult.exitCode, combined);
+          throw new BdError(
+            kind,
+            rootPath,
+            combined.trim() || `exit code ${commandResult.exitCode}`,
+          );
+        }
+
+        return commandResult;
+      });
 
       return parseListStdout(result.stdout);
     },
 
+    // NOTE(bdboard-3tj): 以下の respond() はリトライ非対応のまま。bd comment は
+    // 追記系で呼ぶたびに新しいコメントが増えるためべき等ではなく、bd close も
+    // bd自体の冪等性が未確認のため、lock-contention時にここで自動リトライすると
+    // 二重実行のリスクがある(例: コメント二重投稿)。手動リトライ(呼び出し元での
+    // 再実行)に委ねる。
     async respond(
       rootPath: string,
       issueId: string,

@@ -8,6 +8,7 @@ import {
   BdError,
   type BdErrorKind,
 } from '../../application/ports/issue-repository.js';
+import { withLockContentionRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -85,22 +86,28 @@ export function createBdCliMergeSlotReader(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
+    // bd list --readonly は読み取り専用でべき等なので、lock-contention
+    // なら数回まで自動リトライしてよい(bdboard-3tj)。
     async readMergeSlotSignal(projectRootPath: string): Promise<MergeSlotSignal | null> {
-      const commandResult = await commandRunner.run(
-        bdPath,
-        buildListArgs(projectRootPath),
-        { timeoutMs },
-      );
-
-      if (commandResult.exitCode !== 0) {
-        const combined = `${commandResult.stdout}\n${commandResult.stderr}`.toLowerCase();
-        const kind = classifyBdError(commandResult.exitCode, combined);
-        throw new BdError(
-          kind,
-          projectRootPath,
-          combined.trim() || `exit code ${commandResult.exitCode}`,
+      const commandResult = await withLockContentionRetry(async () => {
+        const result = await commandRunner.run(
+          bdPath,
+          buildListArgs(projectRootPath),
+          { timeoutMs },
         );
-      }
+
+        if (result.exitCode !== 0) {
+          const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
+          const kind = classifyBdError(result.exitCode, combined);
+          throw new BdError(
+            kind,
+            projectRootPath,
+            combined.trim() || `exit code ${result.exitCode}`,
+          );
+        }
+
+        return result;
+      });
 
       const trimmedStdout = commandResult.stdout.trim();
       if (trimmedStdout.length === 0) {
