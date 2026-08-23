@@ -63,9 +63,21 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
    台帳記録であって排他ではない。worktree より先に claim を打たない（claim だけ通って
    worktree で負けると、台帳だけ汚れる）。
 4. **作業中は heartbeat を打ち続ける**: `bd heartbeat <id>` を lease TTL より十分速い間隔で
-   （目安 TTL/3 以下。長いビルド/テストの前後にも1回）。heartbeat が**失敗したら自分は
-   もう所有者ではない** — 直ちに手を止めて `bd show <id>` で状況を確認する
-   （[references/lease-params.md](references/lease-params.md)）。
+   （目安 TTL/3 以下、かつどれだけ TTL が長くても 5 分以下。長いビルド/テストの前後にも1回）。
+   heartbeat が**失敗したら自分はもう所有者ではない** — 直ちに手を止めて `bd show <id>` で
+   状況を確認する（[references/lease-params.md](references/lease-params.md)）。
+   - **複数チケットを並行して in_progress で保持しているとき**（gate 待ちに載せて次へ進んだ、
+     委譲を投げて別チケットへ移った等）は、「いま触っているチケットだけ」ではなく
+     **全 in-flight チケットへ同じ周期で一括して打つ**:
+
+     ```bash
+     for id in <id1> <id2> <id3>; do bd heartbeat "$id"; done
+     ```
+
+     アクティブな1枚だけ延命する癖は、残りの保持チケットの lease を静かに失効させ、
+     reclaim の誤発火（生きている並行作業の回収）を招く（実測: 8並列運用で発生 —
+     bdboard-3tw.99 / bdboard-l1t.4）。詳細:
+     [references/lease-params.md](references/lease-params.md)
 5. **負けたときの振る舞い**: 相手の in_progress を open に戻さない（先行セッションが実作業中
    である以上 in_progress は事実として正しい）。相手のプロセスも kill しない。誤って作業して
    しまっていたら成果を patch に退避して撤退する。
@@ -94,10 +106,15 @@ worktree 作成から PR・マージまでの全体フロー:
    チケットを blocked 化し、`bd ready` から外す（回答が来るまで誰も誤って着手しない）。
 4. **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。
    ブロックしたチケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
+   ただしブロック中もそのチケットは in_progress のまま自分の保持下にある —
+   規律2 手順4の**一括 heartbeat の対象に含め続ける**（外すと reclaim に回収される）。
 5. 回答が来たら（gate resolve + コメント）、`bd label remove <id> human` してから作業を
    再開する。
 6. **特定チケットに紐づかない横断的な確認だけ**、質問専用チケットを別に切って human ラベルを
-   付ける（この場合の回答は `bd human respond` がチケットを close する形でよい）。
+   付ける（この場合の回答は `bd comment <id> "<回答>"` → `bd close <id>` でチケットごと
+   閉じる。**`bd human respond` は使わない** — upstream の "storage is nil" regression を
+   確定的に踏むため、comment+close へ置換済み。詳細:
+   [references/question-template.md](references/question-template.md)）。
 7. **例外 — その場で確認するもの**: 破壊的・不可逆・外向きの操作（本番デプロイ、データ削除、
    push/publish/送信、課金）は、レーンに載せて先へ進む方式にしない。実行前にその場で
    ユーザーに確認する。確認待ちの間、**その操作に依存しない別チケット**を進めるのは構わない。
@@ -131,4 +148,5 @@ worktree 作成から PR・マージまでの全体フロー:
 | [references/worktree-pr-flow.md](references/worktree-pr-flow.md) | per-ticket worktree+branch+PR フローの全手順とマージ排他3層 |
 | [references/lease-params.md](references/lease-params.md) | lease/heartbeat/reclaim の既定パラメータと失敗時の意味 |
 | [references/question-template.md](references/question-template.md) | 確認待ちコメントの書き方テンプレ |
-| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律 |
+| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ） |
+| [references/frontend-gotchas.md](references/frontend-gotchas.md) | bd/git 運用規律ではなく web/ 実装（React+Vite）自体で踏んだ非自明な罠。`<details>` の子要素に無条件 `display` を当てると閉じていても常時レンダリングされクリックを奪う問題、dev限定の現象かを本番ビルド(`vite build && vite preview`)で切り分ける手順 |
