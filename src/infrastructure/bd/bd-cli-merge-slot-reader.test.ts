@@ -155,6 +155,25 @@ describe('createBdCliMergeSlotReader', () => {
     });
   });
 
+  it('retries once on lock-contention and succeeds on the second attempt (bdboard-3tj)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+        }
+        return { stdout: '[]', stderr: '', exitCode: 0 };
+      },
+    });
+    const reader = createBdCliMergeSlotReader(runner);
+
+    const signal = await reader.readMergeSlotSignal(ROOT);
+
+    expect(signal).toBeNull();
+    expect(calls).toHaveLength(2);
+  });
+
   it('throws schema-mismatch BdError for invalid JSON', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({ stdout: 'not-json', stderr: '', exitCode: 0 }),

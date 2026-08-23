@@ -361,6 +361,33 @@ describe('createBdCliIssueWriter', () => {
     );
   });
 
+  it('retries the CAS bd show read on lock-contention before writing undefer (bdboard-3tj)', async () => {
+    let showAttempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          showAttempts += 1;
+          if (showAttempts === 1) {
+            return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+          }
+          return {
+            stdout: JSON.stringify([{ id: TICKET_ID, status: 'deferred' }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await port.undefer(ROOT, TICKET_ID);
+
+    // 2 回目の bd show でCASが通ってから undefer が1回だけ実行される
+    expect(calls.filter((call) => call.args.includes('show'))).toHaveLength(2);
+    expect(calls.filter((call) => call.args.includes('undefer'))).toHaveLength(1);
+  });
+
   it('undoes priority by reading the current value first and writing back when it still matches (CAS success)', async () => {
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {

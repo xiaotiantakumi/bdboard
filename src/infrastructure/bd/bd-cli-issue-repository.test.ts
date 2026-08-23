@@ -172,6 +172,26 @@ describe('createBdCliIssueRepository', () => {
     } satisfies Partial<BdError>);
   });
 
+  it('retries once on lock-contention and succeeds on the second attempt (bdboard-3tj)', async () => {
+    const issue = minimalBdIssue('proj-retry');
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+        }
+        return { stdout: JSON.stringify([issue]), stderr: '', exitCode: 0 };
+      },
+    });
+
+    const repo = createBdCliIssueRepository(runner);
+    const result = await repo.listTickets(project('p', '/root'));
+
+    expect(result.tickets).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
   it('classifies unknown errors', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({

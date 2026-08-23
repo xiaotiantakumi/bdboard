@@ -138,6 +138,25 @@ describe('createBdCliCommentReader', () => {
     } satisfies Partial<BdError>);
   });
 
+  it('retries once on lock-contention and succeeds on the second attempt (bdboard-3tj)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+        }
+        return { stdout: '[]', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const reader = createBdCliCommentReader(runner);
+    const comments = await reader.listComments('/root/proj', 'bdboard-abc');
+
+    expect(comments).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
   it('passes the expected command and args including --readonly', async () => {
     const issueId = 'bdboard-3tw.27';
     const { runner, calls } = createFakeRunner();

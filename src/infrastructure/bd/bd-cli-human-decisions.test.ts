@@ -216,6 +216,25 @@ describe('createBdCliHumanDecisions', () => {
     } satisfies Partial<BdError>);
   });
 
+  it('retries once on lock-contention and succeeds on the second attempt (bdboard-3tj)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+        }
+        return { stdout: '[]', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const port = createBdCliHumanDecisions(runner);
+    const decisions = await port.listPendingDecisions('/root/proj');
+
+    expect(decisions).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
   it('passes the expected list command args including --readonly', async () => {
     const { runner, calls } = createFakeRunner();
     const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });

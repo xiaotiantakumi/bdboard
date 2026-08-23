@@ -111,6 +111,24 @@ describe('createBdCliSessionLinkWriter', () => {
     });
   });
 
+  it('retries once on lock-contention and succeeds on the second attempt (bdboard-3tj)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'error: database is locked', exitCode: 1 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliSessionLinkWriter(runner);
+
+    await port.linkSession(ROOT, TICKET_ID, SESSION_ID);
+
+    expect(calls).toHaveLength(2);
+  });
+
   it('rejects an invalid ticket id without invoking the runner', async () => {
     const { runner, calls } = createFakeRunner();
     const port = createBdCliSessionLinkWriter(runner);
