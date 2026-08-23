@@ -392,6 +392,15 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     const parsed = threadsQuerySchema.safeParse({ projectId: c.req.query('projectId') });
     if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
     if (deps.store.isBusy(parsed.data.projectId)) {
+      const pending = deps.store.pendingTurn(parsed.data.projectId);
+      if (pending !== undefined) {
+        return c.json({
+          state: 'processing' as const,
+          message: pending.message,
+          agentId: pending.agentId,
+          ...(pending.sessionId !== undefined ? { sessionId: pending.sessionId } : {}),
+        });
+      }
       return c.json({ state: 'processing' as const });
     }
     const completed = completedTurns.get(parsed.data.projectId);

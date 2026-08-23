@@ -14,7 +14,7 @@ import {
   type ChatTurnResult,
 } from '../ports/chat-agent.js';
 import type { ChatAgentRegistry } from './chat-agent-registry.js';
-import type { ChatSessionStore } from './chat-session-store.js';
+import type { ChatSessionStore, PendingChatTurn } from './chat-session-store.js';
 
 export type SendChatMessageFailure =
   | { readonly kind: 'project-not-found' }
@@ -117,7 +117,14 @@ export async function resolveChatTurnAgent(
   if ((input.images?.length ?? 0) > 0 && agent.descriptor.supportsImages !== true) {
     return { ok: false, failure: { kind: 'image-not-supported' } };
   }
-  if (!deps.store.tryAcquire(input.projectId)) return { ok: false, failure: { kind: 'busy' } };
+  const pending: PendingChatTurn = {
+    message: trimmedMessage,
+    agentId: resolvedAgentId,
+    ...(input.sessionId !== undefined ? { sessionId: input.sessionId } : {}),
+  };
+  if (!deps.store.tryAcquire(input.projectId, pending)) {
+    return { ok: false, failure: { kind: 'busy' } };
+  }
   return { ok: true, agent, trimmedMessage, cachedProject, resolvedAgentId, release: () => deps.store.release(input.projectId) };
 }
 

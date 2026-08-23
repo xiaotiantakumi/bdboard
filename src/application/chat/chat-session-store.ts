@@ -4,6 +4,12 @@ import type {
   ChatSessionRepository,
 } from '../ports/chat-session-repository.js';
 
+export interface PendingChatTurn {
+  readonly message: string;
+  readonly agentId: string;
+  readonly sessionId?: string;
+}
+
 export interface ChatSessionStore {
   remember(projectId: string, sessionId: string, agentId: string): void;
   updateModel(projectId: string, sessionId: string, model: string): void;
@@ -12,9 +18,10 @@ export interface ChatSessionStore {
   lookup(projectId: string, sessionId: string): ChatSessionRecord | undefined;
   listByProject(projectId: string): ReturnType<ChatSessionRepository['listByProject']>;
   forget(projectId: string, sessionId: string): void;
-  tryAcquire(projectId: string): boolean;
+  tryAcquire(projectId: string, pending?: PendingChatTurn): boolean;
   isBusy(projectId: string): boolean;
   release(projectId: string): void;
+  pendingTurn(projectId: string): PendingChatTurn | undefined;
 }
 
 interface ProjectSessionEntry {
@@ -139,7 +146,7 @@ export function createChatSessionStore(options?: {
 
   // ロックはプロセス内限定の概念 (排他制御) なので、repository が永続化バックでも
   // 常にインメモリのまま — 再起動をまたいでロックが残留することはない。
-  const locks = new Set<string>();
+  const locks = new Map<string, PendingChatTurn | undefined>();
 
   return {
     remember(projectId: string, sessionId: string, agentId: string): void {
@@ -170,12 +177,12 @@ export function createChatSessionStore(options?: {
       repository.forget(projectId, sessionId);
     },
 
-    tryAcquire(projectId: string): boolean {
+    tryAcquire(projectId: string, pending?: PendingChatTurn): boolean {
       if (locks.has(projectId)) {
         return false;
       }
 
-      locks.add(projectId);
+      locks.set(projectId, pending);
       return true;
     },
 
@@ -185,6 +192,10 @@ export function createChatSessionStore(options?: {
 
     release(projectId: string): void {
       locks.delete(projectId);
+    },
+
+    pendingTurn(projectId: string): PendingChatTurn | undefined {
+      return locks.get(projectId);
     },
   };
 }
