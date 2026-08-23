@@ -41,6 +41,9 @@ export const UI_STORAGE_KEYS = {
   boardFilterPresets: 'bdboard.ui.boardFilterPresets',
   chatModelSelections: 'bdboard.ui.chatModelSelections',
   chatPanelWidth: 'bdboard.ui.chatPanelWidth',
+  ticketDetailPanelWidth: 'bdboard.ui.ticketDetailPanelWidth',
+  sessionListPanelWidth: 'bdboard.ui.sessionListPanelWidth',
+  sessionTailPanelWidth: 'bdboard.ui.sessionTailPanelWidth',
   notificationEvents: 'bdboard.ui.notificationEvents',
   notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
   notificationsEnabled: 'bdboard.ui.notificationsEnabled',
@@ -158,18 +161,6 @@ export function validateStatsWeeks(value: unknown): StatsWeeks | null {
     return value;
   }
   return null;
-}
-
-export function validateChatPanelWidth(value: unknown): number | null {
-  if (
-    typeof value !== 'number' ||
-    !Number.isInteger(value) ||
-    value < 360 ||
-    value > 720
-  ) {
-    return null;
-  }
-  return value;
 }
 
 export function activityWindowLabel(days: ActivityWindowDays): string {

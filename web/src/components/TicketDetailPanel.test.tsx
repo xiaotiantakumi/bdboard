@@ -1532,6 +1532,26 @@ describe('TicketDetailPanel accessibility', () => {
   });
 });
 
+describe('TicketDetailPanel resize', () => {
+  beforeEach(() => {
+    mockFetchTicket.mockResolvedValue(sampleTicket);
+    mockFetchTicketComments.mockResolvedValue([]);
+  });
+
+  it('resizes on desktop and remembers its width', async () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    const first = renderPanel(new Map());
+    await screen.findByText(sampleTicket.title);
+    const panel = first.container.querySelector('.detail-panel');
+    const handle = screen.getByRole('separator', { name: 'チケット詳細パネルの幅を変更' });
+
+    expect(panel).toHaveStyle({ width: '480px' });
+    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, clientX: 0 }));
+    expect(panel).toHaveStyle({ width: '680px' });
+    expect(localStorage.getItem('bdboard.ui.ticketDetailPanelWidth')).toBe('680');
+  });
+});
+
 describe('変更履歴タイムライン', () => {
   const user = userEvent.setup();
 

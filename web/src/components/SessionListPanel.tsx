@@ -15,6 +15,11 @@ import { compareStrings } from '../compare';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import {
+  SidePanelResizeHandle,
+  useResizableSidePanel,
+} from '../hooks/useResizableSidePanel';
+import { UI_STORAGE_KEYS } from '../uiPersistedState';
+import {
   LIVENESS_ORDER,
   livenessClass,
   livenessLabel,
@@ -68,6 +73,9 @@ function processProjectLabel(process: AgentProcessDto): string {
 }
 
 export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) {
+  const sessionListPanel = useResizableSidePanel(
+    UI_STORAGE_KEYS.sessionListPanelWidth,
+  );
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const [tab, setTab] = useState<SessionListTab>('active');
@@ -211,13 +219,18 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
       <div className="overlay" onClick={requestClose} role="presentation">
       <aside
         ref={panelRef}
-        className="detail-panel"
+        className={`detail-panel resizable-side-panel${sessionListPanel.isResizing ? ' is-resizing' : ''}`}
+        style={{ width: `${sessionListPanel.width}px` }}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="session-list-title"
       >
+        <SidePanelResizeHandle
+          label="セッション一覧パネルの幅を変更"
+          panel={sessionListPanel}
+        />
         <div className="detail-header">
           <h2 id="session-list-title" className="detail-title">
             {title}

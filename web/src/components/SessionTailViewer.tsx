@@ -7,6 +7,11 @@ import {
 } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
+import {
+  SidePanelResizeHandle,
+  useResizableSidePanel,
+} from '../hooks/useResizableSidePanel';
+import { UI_STORAGE_KEYS } from '../uiPersistedState';
 
 interface SessionTailViewerProps {
   sessionId: string;
@@ -27,6 +32,9 @@ export function SessionTailViewer({
   sessionLabel,
   onClose,
 }: SessionTailViewerProps) {
+  const sessionTailPanel = useResizableSidePanel(
+    UI_STORAGE_KEYS.sessionTailPanelWidth,
+  );
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -60,13 +68,18 @@ export function SessionTailViewer({
     <div className="overlay" onClick={requestClose} role="presentation">
       <aside
         ref={panelRef}
-        className="detail-panel session-tail-panel"
+        className={`detail-panel session-tail-panel resizable-side-panel${sessionTailPanel.isResizing ? ' is-resizing' : ''}`}
+        style={{ width: `${sessionTailPanel.width}px` }}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="session-tail-title"
       >
+        <SidePanelResizeHandle
+          label="トランスクリプトパネルの幅を変更"
+          panel={sessionTailPanel}
+        />
         <div className="detail-header">
           <h2 id="session-tail-title" className="detail-title">
             {title}
