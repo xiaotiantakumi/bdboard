@@ -63,6 +63,10 @@ export const bdCommentListSchema = z.array(bdCommentSchema);
 export const bdVersionSchema = z
   .object({
     version: z.string(),
-    schema_version: z.number(),
+    // schema_version はドリフト検知(読むのは version のみ)に不要。必須にすると
+    // upstream がこのフィールドを落とす/型を変えるだけで safeParse が失敗し、
+    // バージョン警告そのものが無言で機能停止する — 検知が最も必要な瞬間に沈黙
+    // するのは本末転倒なので optional にする。
+    schema_version: z.number().optional(),
   })
   .passthrough();

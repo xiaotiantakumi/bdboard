@@ -32,12 +32,14 @@ describe('runBdVersionStartupCheck', () => {
     expect(logger.log).not.toHaveBeenCalled();
   });
 
-  it('remains silent when the version is unavailable', async () => {
+  it('logs (not warns) when the version is unavailable, so it is distinguishable from silence', async () => {
     const logger = createLogger();
 
     await runBdVersionStartupCheck(async () => null, logger);
 
-    expect(logger.log).not.toHaveBeenCalled();
+    expect(logger.log).toHaveBeenCalledWith(
+      `bd CLI version could not be determined; expected ${EXPECTED_BD_VERSION}.`,
+    );
     expect(logger.warn).not.toHaveBeenCalled();
   });
 

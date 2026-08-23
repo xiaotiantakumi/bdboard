@@ -16,7 +16,12 @@ export async function runBdVersionStartupCheck(
     const result = evaluateBdVersion(await readVersion());
     if (result.status === 'mismatch') {
       logger.warn(result.message);
-    } else if (result.status === 'match') {
+    } else {
+      // 'match' と 'unknown' はどちらも同じ log レベルで出す。
+      // 'unknown' を無音にすると「bd が見つからない/読めない」場合と
+      // 「バージョンが一致している」場合が起動ログ上で区別できなくなり、
+      // ドリフト検知が最も必要な瞬間(bd 実行環境が壊れている)に無言で
+      // 機能停止しているように見えてしまう。
       logger.log(result.message);
     }
   } catch {

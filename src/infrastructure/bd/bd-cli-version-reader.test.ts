@@ -65,4 +65,14 @@ describe('readBdVersion', () => {
     await expect(readBdVersion(invalidJson.runner, 'bd', 3_000, ROOT)).resolves.toBeNull();
     await expect(readBdVersion(invalidSchema.runner, 'bd', 3_000, ROOT)).resolves.toBeNull();
   });
+
+  it('still returns the version when schema_version is missing (upstream may drop/change it)', async () => {
+    const { runner } = createFakeRunner({
+      stdout: JSON.stringify({ version: EXPECTED_BD_VERSION }),
+      stderr: '',
+      exitCode: 0,
+    });
+
+    await expect(readBdVersion(runner, 'bd', 3_000, ROOT)).resolves.toBe(EXPECTED_BD_VERSION);
+  });
 });
