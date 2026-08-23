@@ -129,6 +129,15 @@ describe('ticket serialization', () => {
     expect(restored).toEqual(original);
   });
 
+  it('round-trips a manual session link when present', () => {
+    const original: Ticket = {
+      ...minimalTicket(),
+      manualSessionId: 'sess-manual',
+    };
+
+    expect(deserializeTickets(serializeTickets([original]))[0]).toEqual(original);
+  });
+
   it('omits models after round-trip when absent', () => {
     const original = minimalTicket();
     const json = serializeTickets([original]);

@@ -36,7 +36,6 @@ import {
   StatusConflictError,
   type IssueWriterPort,
 } from '../../application/ports/issue-writer.js';
-import type { SessionLinkReaderPort } from '../../application/ports/session-link-reader.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
 import type { Ticket } from '../../domain/ticket.js';
@@ -113,7 +112,6 @@ export interface ApiDeps {
   readonly issueWriter?: IssueWriterPort;
   readonly dependencyWriter?: DependencyWriterPort;
   readonly sessionLinkWriter?: SessionLinkWriterPort;
-  readonly sessionLinkReader?: SessionLinkReaderPort;
   readonly sessionTail?: SessionTailReader;
   readonly leaseReader?: LeaseReader;
   readonly mergeSlotReader?: MergeSlotReader;
@@ -771,31 +769,10 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       return c.json({ error: 'ticket not found', id }, 404);
     }
 
-    let manualSessionId: string | undefined;
-    let models: readonly { stage: string; model: string }[] = [];
-    if (deps.sessionLinkReader !== undefined) {
-      const rootPath = findProjectRootPathForTicket(deps.cache, id);
-      if (rootPath !== undefined) {
-        try {
-          const metadata = await deps.sessionLinkReader.readTicketMetadata(
-            rootPath,
-            id,
-          );
-          manualSessionId = metadata.manualSessionId;
-          models = metadata.models;
-        } catch (error: unknown) {
-          // 表示専用の補助データなので、読み取り失敗でチケット詳細全体を
-          // 落とさない(セッションリンクの欄が空になるだけ)。
-          const detail = error instanceof Error ? error.message : String(error);
-          console.error(`session link read error for ${id}: ${detail}`);
-        }
-      }
-    }
-
     const transcriptLinks = (links ?? []).filter((link) => link.ticketId === id);
     const sessionLinks = buildTicketSessionLinkDtos(
       transcriptLinks,
-      manualSessionId,
+      card.ticket.manualSessionId,
     );
 
     const cardsById = new Map(view.merged?.cards.map((entry) => [entry.ticket.id, entry]) ?? []);
@@ -811,7 +788,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         lane: child.lane,
       }));
 
-    const detail = toTicketDetailDto(card, sessionLinks, models, children);
+    const detail = toTicketDetailDto(card, sessionLinks, card.ticket.models ?? [], children);
     if (links !== undefined) {
       const usage = getTicketTokenUsage(id, links, deps.cache);
       if (hasTicketTokenUsage(usage)) {

@@ -51,7 +51,6 @@ import {
   createBdCliLeaseReclaimer,
   createBdCliDependencyWriter,
   createBdCliIssueWriter,
-  createBdCliSessionLinkReader,
   createBdCliSessionLinkWriter,
   readBdVersion,
   createBeadsFingerprinter,
@@ -283,7 +282,6 @@ async function main(): Promise<void> {
   const issueWriter = createBdCliIssueWriter(commandRunner);
   const dependencyWriter = createBdCliDependencyWriter(commandRunner);
   const sessionLinkWriter = createBdCliSessionLinkWriter(commandRunner);
-  const sessionLinkReader = createBdCliSessionLinkReader(commandRunner);
   const processScanner = createPsProcessScanner(commandRunner);
   const fingerprinter = createBeadsFingerprinter(fsPort);
   const events = createEventHub();
@@ -797,7 +795,6 @@ async function main(): Promise<void> {
     issueWriter,
     dependencyWriter,
     sessionLinkWriter,
-    sessionLinkReader,
     sessionTail: sessionTailReader,
     writeAccess,
     leaseReader,

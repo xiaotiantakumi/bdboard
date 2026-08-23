@@ -6,6 +6,7 @@ import type { Priority } from '../../domain/status.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { parseTicketId } from '../../domain/ticket-id.js';
 import { parseTicketModelRecords } from '../../domain/ticket-model.js';
+import { parseTicketManualSessionId } from '../../domain/ticket-session-link.js';
 import { bdIssueSchema, type BdIssue } from './bd-issue-schema.js';
 
 const MAX_ZOD_ISSUES = 5;
@@ -30,6 +31,7 @@ type OptionalTicketFields = {
     | 'description'
     | 'notes'
     | 'labels'
+    | 'manualSessionId'
     | 'models']?: Ticket[K];
 };
 
@@ -122,6 +124,10 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   }
   if (raw.labels !== undefined) {
     optionalFields.labels = raw.labels;
+  }
+  const manualSessionId = parseTicketManualSessionId(raw.metadata);
+  if (manualSessionId !== undefined) {
+    optionalFields.manualSessionId = manualSessionId;
   }
   const models = parseTicketModelRecords(raw.metadata);
   if (models.length > 0) {
