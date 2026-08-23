@@ -248,6 +248,15 @@ function summarizeTitle(content: string): string {
   return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : chars.join('');
 }
 
+// bdboard チャット改善(Chat Redesign 1b): スレッド一覧ドロワーの各行に出す
+// 更新日時の短縮表示。「N分前」のような相対表記は Date.now() 依存でテストが
+// 時刻に脆くなるため避け、月/日の絶対表記だけを返す決定的な実装にしている。
+function formatThreadUpdatedAt(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
 export function ChatPanel({
   projects,
   initialProjectId,
@@ -280,6 +289,19 @@ export function ChatPanel({
   const [confirmingDeleteSessionId, setConfirmingDeleteSessionId] = useState<string | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
+  // Chat Redesign 1b: タブ帯を捨て、スレッド切り替えは「現在のスレッド名+件数」
+  // ボタン1つ→ドロワー(縦一覧)へ集約する。threadDrawerOpen がドロワーの開閉、
+  // threadActionMenuSessionId がドロワー内の各行にぶら下がる「⋯」操作メニュー
+  // (リネーム/ピン留め/タブから閉じる/削除)のうち今開いているものを指す
+  // (同時に1つだけ開ける設計。renamingSessionId/confirmingDeleteSessionId は
+  // 既存のリネーム確定/削除確認フローをそのまま流用する)。
+  const [threadDrawerOpen, setThreadDrawerOpen] = useState(false);
+  const [threadActionMenuSessionId, setThreadActionMenuSessionId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!threadDrawerOpen) {
+      setThreadActionMenuSessionId(null);
+    }
+  }, [threadDrawerOpen]);
   const [threadError, setThreadError] = useState<string | null>(null);
   const [ticketProjectFallbackNotice, setTicketProjectFallbackNotice] = useState<string | null>(null);
   const [agents, setAgents] = useState<readonly ChatAgentDto[]>([]);
@@ -370,6 +392,22 @@ export function ChatPanel({
   >({});
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
+  // Chat Redesign 改善点3: 「考え中…」表示に経過秒数を出す。isSending が false→true
+  // に変わるたびに 0 から数え直し、1秒ごとに更新する。Date.now() は開始時点で
+  // 1回だけ読んで setInterval のクロージャに閉じ込め、以後は差分計算にのみ使う。
+  const [sendElapsedSeconds, setSendElapsedSeconds] = useState(0);
+  useEffect(() => {
+    if (!isSending) {
+      setSendElapsedSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    setSendElapsedSeconds(0);
+    const timer = setInterval(() => {
+      setSendElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [isSending]);
   const [streamingReply, setStreamingReply] = useState<{ key: string; text: string } | null>(null);
   const [backgroundTurnStatus, setBackgroundTurnStatus] = useState<ChatTurnStatusDto>({
     state: 'idle',
@@ -2228,6 +2266,214 @@ export function ChatPanel({
     currentThreadTitle,
     selectedAgent?.label,
   ].filter((part): part is string => part !== undefined && part !== '');
+
+  // Chat Redesign 1b: スレッド一覧ドロワーの行データ。ピン留めは開いている/
+  // 閉じたスレッドのどちらに属していても「ピン留め」節へ寄せ、開いている/
+  // 閉じた節には残さない(mutual exclusion)。displayedOpenThreads は既に
+  // ピン留め優先ソート済みなので、その並びをそのまま踏襲する。
+  const pinnedOpenSessionIds = displayedOpenThreads.filter(
+    (sessionId) => threadById.get(sessionId)?.pinned === true,
+  );
+  const unpinnedOpenSessionIds = displayedOpenThreads.filter(
+    (sessionId) => threadById.get(sessionId)?.pinned !== true,
+  );
+  const pinnedClosedThreadList = closedThreads.filter((thread) => thread.pinned === true);
+  const unpinnedClosedThreadList = closedThreads.filter((thread) => thread.pinned !== true);
+  const hasVisibleClosedThreads = unpinnedClosedThreadList.length > 0;
+
+  const renderThreadDrawerOpenRow = (sessionId: string) => {
+    const thread = threadById.get(sessionId);
+    const threadTitle = thread?.title ?? '(無題)';
+    const isSelected = currentSessionId === sessionId;
+    const isPinned = thread?.pinned ?? false;
+    const isRenaming = renamingSessionId === sessionId;
+    const isMenuOpen = threadActionMenuSessionId === sessionId;
+    const isConfirmingDelete = confirmingDeleteSessionId === sessionId;
+    const agentLabel = agents.find((agent) => agent.id === thread?.agentId)?.label ?? thread?.agentId;
+    const metaParts = [
+      thread !== undefined ? formatThreadUpdatedAt(thread.updatedAt) : undefined,
+      agentLabel,
+    ].filter((part): part is string => part !== undefined && part !== '');
+
+    return (
+      <div
+        className={`chat-thread-drawer-item${isSelected ? ' is-selected' : ''}`}
+        key={sessionId}
+      >
+        {isRenaming ? (
+          <input
+            className="chat-thread-rename-input"
+            type="text"
+            aria-label={`スレッド「${threadTitle}」の新しいタイトル`}
+            value={renameDraft}
+            autoFocus
+            onChange={(event) => setRenameDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                void handleRenameConfirm(sessionId);
+              } else if (event.key === 'Escape') {
+                event.preventDefault();
+                setRenamingSessionId(null);
+              }
+            }}
+            onBlur={() => void handleRenameConfirm(sessionId)}
+          />
+        ) : (
+          <button
+            type="button"
+            className="chat-thread-drawer-item-select"
+            aria-current={isSelected ? 'true' : undefined}
+            onClick={() => {
+              setConfirmingDeleteSessionId(null);
+              setRenamingSessionId(null);
+              setThreadActionMenuSessionId(null);
+              setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
+              writePersistedChatThreadState(selectedProjectId, {
+                activeSessionIds: openThreads,
+                selectedSessionId: sessionId,
+              });
+              setThreadDrawerOpen(false);
+            }}
+          >
+            {isPinned && (
+              <span className="chat-thread-drawer-item-pin" aria-hidden="true">
+                📌
+              </span>
+            )}
+            <span className="chat-thread-drawer-item-title">{threadTitle}</span>
+            {metaParts.length > 0 && (
+              <span className="chat-thread-drawer-item-meta" aria-hidden="true">
+                {metaParts.join(' · ')}
+              </span>
+            )}
+          </button>
+        )}
+        <div className="chat-thread-drawer-item-menu-wrap">
+          <button
+            type="button"
+            className="chat-thread-drawer-item-menu-toggle"
+            aria-label={`スレッド「${threadTitle}」の操作`}
+            aria-haspopup="menu"
+            aria-expanded={isMenuOpen}
+            onClick={() =>
+              setThreadActionMenuSessionId((prev) => (prev === sessionId ? null : sessionId))
+            }
+          >
+            ⋯
+          </button>
+          {isMenuOpen && (
+            <div
+              className="chat-thread-drawer-item-menu"
+              role="menu"
+              aria-label={`スレッド「${threadTitle}」の操作メニュー`}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-thread-drawer-menu-item"
+                onClick={() => {
+                  setThreadActionMenuSessionId(null);
+                  setConfirmingDeleteSessionId(null);
+                  setRenamingSessionId(sessionId);
+                  setRenameDraft(thread?.title ?? '');
+                }}
+              >
+                リネーム
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-thread-drawer-menu-item"
+                onClick={() => {
+                  setThreadActionMenuSessionId(null);
+                  void handlePinToggle(sessionId, isPinned);
+                }}
+              >
+                {isPinned ? 'ピン留め解除' : 'ピン留め'}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="chat-thread-drawer-menu-item"
+                onClick={() => {
+                  setThreadActionMenuSessionId(null);
+                  handleCloseThread(sessionId);
+                }}
+              >
+                タブから閉じる
+                <span className="chat-thread-drawer-item-menu-hint">
+                  履歴は残る。「閉じたスレッド」から戻せる
+                </span>
+              </button>
+              <div className="chat-thread-drawer-item-menu-divider" />
+              {isConfirmingDelete ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat-thread-drawer-menu-item chat-thread-drawer-menu-item-danger"
+                  onClick={() => void handleDeleteThread(sessionId)}
+                >
+                  <span className="chat-thread-delete-icon" aria-hidden="true">
+                    🗑
+                  </span>
+                  本当に削除
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="chat-thread-drawer-menu-item chat-thread-drawer-menu-item-danger"
+                  onClick={() => setConfirmingDeleteSessionId(sessionId)}
+                >
+                  <span className="chat-thread-delete-icon" aria-hidden="true">
+                    🗑
+                  </span>
+                  削除
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderThreadDrawerClosedRow = (thread: ChatThreadDto) => {
+    const threadTitle = thread.title ?? '(無題)';
+    return (
+      <button
+        type="button"
+        key={thread.sessionId}
+        className="chat-thread-drawer-item chat-thread-drawer-item-closed"
+        onClick={() => {
+          const next = [...openThreads, thread.sessionId];
+          setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
+          setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: thread.sessionId }));
+          writePersistedChatThreadState(selectedProjectId, {
+            activeSessionIds: next,
+            selectedSessionId: thread.sessionId,
+          });
+          setThreadDrawerOpen(false);
+        }}
+      >
+        {thread.pinned && (
+          <span className="chat-thread-drawer-item-pin" aria-hidden="true">
+            📌
+          </span>
+        )}
+        <span className="chat-thread-drawer-item-title">{threadTitle}</span>
+      </button>
+    );
+  };
+
+  const pinnedThreadDrawerRows = [
+    ...pinnedOpenSessionIds.map(renderThreadDrawerOpenRow),
+    ...pinnedClosedThreadList.map(renderThreadDrawerClosedRow),
+  ];
+  const openThreadDrawerRows = unpinnedOpenSessionIds.map(renderThreadDrawerOpenRow);
+  const closedThreadDrawerRows = unpinnedClosedThreadList.map(renderThreadDrawerClosedRow);
+
   const effectiveChatPanelWidth = clampChatPanelWidth(chatPanelWidth);
   const maximumChatPanelWidth = clampChatPanelWidth(CHAT_PANEL_MAX_WIDTH);
 
@@ -2318,6 +2564,135 @@ export function ChatPanel({
           </button>
         </div>
 
+        {/* Chat Redesign 1b: タブ帯を「現在のスレッド名+件数」ボタン1つに圧縮し、
+            押すと縦一覧ドロワーがかぶさる形に置き換えた。個別のリネーム/ピン留め/
+            タブから閉じる/削除は各行の「⋯」メニューへ集約し(旧: 選択中タブにだけ
+            並んでいたボタン列)、ピン留め/開いている/閉じた/外部CLIセッションの
+            3+1種類を見出しで言葉として示す。
+            チャット設定(details)の外に置く: details の body は閉じている間も
+            常にレンダリングされる既存バグ(chat-panel-settings-body に
+            display:flex を無条件付与しており、UA既定の details:not([open])
+            > :not(summary){display:none} を上書きしてしまう)があり、この中に
+            置くと chat-messages と座標が重なってクリックを奪われる
+            (bdboard-wkl で発見)。スレッド切替は常時表示すべき主導線でもあるため、
+            details の外側に出す。 */}
+        <div className="chat-thread-switcher">
+          <button
+            type="button"
+            className="chat-thread-switcher-toggle"
+            aria-haspopup="dialog"
+            aria-expanded={threadDrawerOpen}
+            aria-controls="chat-thread-drawer"
+            onClick={() => setThreadDrawerOpen((prev) => !prev)}
+          >
+            <span className="chat-thread-switcher-icon" aria-hidden="true">☰</span>
+            <span className="chat-thread-switcher-title">{currentThreadTitle}</span>
+            <span className="chat-thread-switcher-count">スレッド {openThreads.length}</span>
+          </button>
+          <button
+            type="button"
+            className="btn chat-thread-new"
+            aria-label="新しい空のスレッドを開始"
+            title="新しい空のスレッドを開始します(今開いているスレッドはそのまま残ります)"
+            onClick={() => {
+              setThreadDrawerOpen(false);
+              handleNewThread();
+            }}
+          >
+            + 新規スレッド
+          </button>
+        </div>
+        {displayedOpenThreads.length === 0 && (
+          <p className="chat-thread-empty-hint" role="status">
+            {hasClosedThreads
+              ? '開いているスレッドはありません。「+ 新規スレッド」で新しく始めるか、スレッド一覧の「閉じたスレッド」から再開できます。'
+              : '開いているスレッドはありません。「+ 新規スレッド」で新しく始めてください。'}
+          </p>
+        )}
+        {threadDrawerOpen && (
+          <div
+            className="chat-thread-drawer-overlay"
+            role="presentation"
+            onClick={() => setThreadDrawerOpen(false)}
+          >
+            <div
+              id="chat-thread-drawer"
+              className="chat-thread-drawer"
+              role="dialog"
+              aria-label="スレッド一覧"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="chat-thread-drawer-header">
+                <span className="chat-thread-drawer-title">スレッド</span>
+                <button
+                  type="button"
+                  className="chat-thread-drawer-close"
+                  onClick={() => setThreadDrawerOpen(false)}
+                >
+                  閉じる
+                </button>
+              </div>
+
+              {pinnedThreadDrawerRows.length > 0 && (
+                <div className="chat-thread-drawer-section">
+                  <p className="chat-thread-drawer-section-title">ピン留め</p>
+                  {pinnedThreadDrawerRows}
+                </div>
+              )}
+
+              <div className="chat-thread-drawer-section">
+                <p className="chat-thread-drawer-section-title">開いているスレッド</p>
+                {openThreadDrawerRows.length > 0 ? (
+                  openThreadDrawerRows
+                ) : (
+                  <p className="chat-thread-drawer-section-empty">
+                    他に開いているスレッドはありません。
+                  </p>
+                )}
+              </div>
+
+              {hasVisibleClosedThreads && (
+                <div className="chat-thread-drawer-section">
+                  <p className="chat-thread-drawer-section-title">閉じたスレッド</p>
+                  <p className="chat-thread-drawer-section-hint">
+                    履歴は残っています。選ぶと一覧の上に戻ります。
+                  </p>
+                  {closedThreadDrawerRows}
+                </div>
+              )}
+
+              {selectedProjectId !== '' && (
+                <div className="chat-thread-drawer-section">
+                  <p className="chat-thread-drawer-section-title">
+                    bdboard 外で動いていた CLI セッション
+                  </p>
+                  <p className="chat-thread-drawer-section-hint">
+                    ターミナルの Claude Code の会話。選ぶと続きから話せます。
+                  </p>
+                  <button
+                    type="button"
+                    className="btn chat-discovered-sessions-toggle"
+                    onClick={() => setShowDiscoveredSessions((prev) => !prev)}
+                    disabled={isSending}
+                  >
+                    CLIセッションを再開
+                  </button>
+                  {showDiscoveredSessions && (
+                    <DiscoveredSessionsPanel
+                      projectId={selectedProjectId}
+                      onClose={() => setShowDiscoveredSessions(false)}
+                      onResume={(sessionId, agentId, seedMessages) => {
+                        handleResumeDiscoveredSession(sessionId, agentId, seedMessages);
+                        setThreadDrawerOpen(false);
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         <details className="chat-panel-settings">
           <summary className="chat-panel-settings-summary">
             {chatSettingsSummaryParts.join(' — ')}
@@ -2350,154 +2725,6 @@ export function ChatPanel({
           </p>
         )}
 
-        <div className="chat-thread-toolbar" aria-label="チャットスレッド">
-          <div className="chat-thread-tabs" role="tablist" aria-label="開いているスレッド">
-            {displayedOpenThreads.map((sessionId) => {
-              const thread = threadById.get(sessionId);
-              const threadTitle = thread?.title ?? '(無題)';
-              return (
-                <div className={`chat-thread-tab${currentSessionId === sessionId ? ' is-selected' : ''}`} key={sessionId}>
-                  {renamingSessionId === sessionId ? (
-                    <input
-                      className="chat-thread-rename-input"
-                      type="text"
-                      aria-label={`スレッド「${threadTitle}」の新しいタイトル`}
-                      value={renameDraft}
-                      onChange={(event) => setRenameDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault();
-                          void handleRenameConfirm(sessionId);
-                        } else if (event.key === 'Escape') {
-                          event.preventDefault();
-                          setRenamingSessionId(null);
-                        }
-                      }}
-                      onBlur={() => void handleRenameConfirm(sessionId)}
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={currentSessionId === sessionId}
-                      onClick={() => {
-                        setConfirmingDeleteSessionId(null);
-                        setRenamingSessionId(null);
-                        setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
-                        writePersistedChatThreadState(selectedProjectId, { activeSessionIds: openThreads, selectedSessionId: sessionId });
-                      }}
-                    >
-                      {threadTitle}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className="chat-thread-close"
-                    aria-label={`スレッド「${threadTitle}」を閉じる`}
-                    title="このスレッドをタブから閉じます(削除はされません。あとで「閉じたスレッドを開く」から再度開けます)"
-                    onClick={() => handleCloseThread(sessionId)}
-                  >
-                    ×
-                  </button>
-                  {currentSessionId === sessionId && (
-                    <>
-                      <button
-                        type="button"
-                        className="chat-thread-rename"
-                        aria-label={`スレッド「${threadTitle}」をリネーム`}
-                        title={`スレッド「${threadTitle}」をリネーム`}
-                        onClick={() => {
-                          setConfirmingDeleteSessionId(null);
-                          setRenamingSessionId(sessionId);
-                          setRenameDraft(thread?.title ?? '');
-                        }}
-                      >
-                        リネーム
-                      </button>
-                      <button
-                        type="button"
-                        className="chat-thread-pin"
-                        aria-label={thread?.pinned ? `スレッド「${threadTitle}」のピン留めを解除` : `スレッド「${threadTitle}」をピン留め`}
-                        title={thread?.pinned ? `スレッド「${threadTitle}」のピン留めを解除` : `スレッド「${threadTitle}」をピン留め`}
-                        onClick={() => void handlePinToggle(sessionId, thread?.pinned ?? false)}
-                      >
-                        {thread?.pinned ? 'ピン留め解除' : 'ピン留め'}
-                      </button>
-                      {confirmingDeleteSessionId === sessionId ? (
-                        <button
-                          type="button"
-                          className="chat-thread-delete"
-                          aria-label={`スレッド「${threadTitle}」の削除を確定`}
-                          title="このスレッドを完全に削除します(元に戻せません)"
-                          onClick={() => void handleDeleteThread(sessionId)}
-                        >
-                          <span className="chat-thread-delete-icon" aria-hidden="true">🗑</span>
-                          本当に削除
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="chat-thread-delete"
-                          aria-label={`スレッド「${threadTitle}」を削除`}
-                          title="このスレッドを完全に削除します(元に戻せません)"
-                          onClick={() => setConfirmingDeleteSessionId(sessionId)}
-                        >
-                          <span className="chat-thread-delete-icon" aria-hidden="true">🗑</span>
-                          削除
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          <button
-            type="button"
-            className="btn chat-thread-new"
-            aria-label="新しい空のスレッドを開始"
-            title="新しい空のスレッドを開始します(今開いているスレッドはそのまま残ります)"
-            onClick={handleNewThread}
-          >
-            + 新規スレッド
-          </button>
-        </div>
-        {displayedOpenThreads.length === 0 && (
-          <p className="chat-thread-empty-hint" role="status">
-            {hasClosedThreads
-              ? '開いているスレッドはありません。「+ 新規スレッド」で新しく始めるか、下の「閉じたスレッドを開く」から再開できます。'
-              : '開いているスレッドはありません。「+ 新規スレッド」で新しく始めてください。'}
-          </p>
-        )}
-        {hasClosedThreads && (
-          <div className="chat-thread-reopen-row">
-            <label className="chat-thread-reopen-label" htmlFor="chat-thread-reopen-select">
-              閉じたスレッドを開く
-            </label>
-            <select
-              id="chat-thread-reopen-select"
-              className="chat-thread-reopen"
-              aria-label="閉じたスレッドを開く"
-              title="表示から閉じたスレッドを選んで再度タブとして開きます(削除済みのスレッドはここには出ません)"
-              value=""
-              onChange={(event) => {
-                const sessionId = event.target.value;
-                if (sessionId === '') return;
-                const next = [...openThreads, sessionId];
-                setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
-                setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
-                writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: sessionId });
-              }}
-            >
-              <option value="">スレッドを選ぶ…</option>
-              {closedThreads.map((thread) => (
-                <option key={thread.sessionId} value={thread.sessionId}>
-                  {thread.pinned ? '📌 ' : ''}スレッド: {thread.title ?? '(無題)'}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
         {threadError !== null && <p className="chat-message-error chat-thread-error" role="alert">{threadError}</p>}
 
         {agents.length > 0 && (
@@ -2514,17 +2741,6 @@ export function ChatPanel({
               </option>
             ))}
           </select>
-        )}
-
-        {selectedProjectId !== '' && (
-          <button
-            type="button"
-            className="btn chat-discovered-sessions-toggle"
-            onClick={() => setShowDiscoveredSessions((prev) => !prev)}
-            disabled={isSending}
-          >
-            CLIセッションを再開
-          </button>
         )}
 
         {selectedAgent !== undefined && showModelSelect && (
@@ -2564,14 +2780,6 @@ export function ChatPanel({
             bdチケット操作(一覧・詳細・claim・状態変更・クローズ・コメント追加)だけです。
           </p>
         ) : null}
-
-        {showDiscoveredSessions && selectedProjectId !== '' && (
-          <DiscoveredSessionsPanel
-            projectId={selectedProjectId}
-            onClose={() => setShowDiscoveredSessions(false)}
-            onResume={handleResumeDiscoveredSession}
-          />
-        )}
           </div>
         </details>
 
@@ -2660,7 +2868,9 @@ export function ChatPanel({
                     表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
                     テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
                 {isSending && activeStreamingText === '' && (
-                  <p className="chat-pending">考え中…（最大3分かかることがあります）</p>
+                  <p className="chat-pending">
+                    考え中…{sendElapsedSeconds}秒（最大3分かかることがあります）
+                  </p>
                 )}
               </>
             );
