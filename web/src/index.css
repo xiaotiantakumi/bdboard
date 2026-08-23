@@ -4042,10 +4042,14 @@ body {
 }
 
 .chat-panel-settings-body {
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 8px;
   padding-top: 8px;
+}
+
+.chat-panel-settings[open] .chat-panel-settings-body {
+  display: flex;
 }
 
 .chat-project-name {
