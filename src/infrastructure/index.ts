@@ -12,6 +12,7 @@ export * from './bd/bd-cli-merge-slot-reader.js';
 export * from './bd/bd-cli-lease-reclaimer.js';
 export * from './bd/bd-cli-session-link-reader.js';
 export * from './bd/bd-cli-session-link-writer.js';
+export * from './bd/bd-cli-version-reader.js';
 export * from './bd/bd-issue-mapper.js';
 export * from './bd/bd-issue-schema.js';
 export * from './cache/sqlite-board-cache.js';

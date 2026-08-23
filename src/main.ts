@@ -8,6 +8,7 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { refreshProjects } from './application/board/refresh-projects.js';
 import type { RefreshResult } from './application/board/refresh-projects.js';
+import { runBdVersionStartupCheck } from './application/bd/run-bd-version-startup-check.js';
 import { runInitialRefresh } from './application/board/run-initial-refresh.js';
 import { recordCfdSnapshot, pruneOldCfdSnapshots } from './application/board/record-cfd-snapshot.js';
 import { createShutdownDrain } from './application/board/shutdown-drain.js';
@@ -52,6 +53,7 @@ import {
   createBdCliIssueWriter,
   createBdCliSessionLinkReader,
   createBdCliSessionLinkWriter,
+  readBdVersion,
   createBeadsFingerprinter,
   createChokidarProjectWatcher,
   createClaudeSessionRegistry,
@@ -199,6 +201,7 @@ function updateStatusFromResult(
 }
 
 async function main(): Promise<void> {
+  const bdVersionCheckTimeoutMs = 3_000;
   const port = envInt('BDBOARD_PORT', 8787);
   const host = envString('BDBOARD_HOST', '127.0.0.1');
   const dbPath = envString(
@@ -231,6 +234,11 @@ async function main(): Promise<void> {
   const cache = createSqliteBoardCache(dbPath);
   const fsPort = new NodeFileSystem();
   const commandRunner = new NodeCommandRunner();
+  // 診断だけが目的なので、bd が未導入・壊れている場合も起動を止めない。
+  void runBdVersionStartupCheck(
+    () => readBdVersion(commandRunner, bdPath, bdVersionCheckTimeoutMs, process.cwd()),
+    console,
+  );
   const streamingCommandRunner = new NodeStreamingCommandRunner();
   const configFilePath = resolveConfigFilePath();
   const scanRootsConfigStore = createFileScanRootsConfigStore(
