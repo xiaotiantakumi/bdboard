@@ -33,6 +33,11 @@ import {
   LANE_LABELS,
 } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import {
+  SidePanelResizeHandle,
+  useResizableSidePanel,
+} from '../hooks/useResizableSidePanel';
+import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { describeWriteError } from '../writeAccessMessage';
 import { planQuickActionUndo } from '../quickActionUndo';
 import {
@@ -227,6 +232,9 @@ export function TicketDetailPanel({
   onTicketViewed,
   availableLabels = [],
 }: TicketDetailPanelProps) {
+  const detailPanel = useResizableSidePanel(
+    UI_STORAGE_KEYS.ticketDetailPanelWidth,
+  );
   const queryClient = useQueryClient();
   const undoSnackbar = useUndoSnackbar();
   const { data, isLoading, error } = useQuery({
@@ -707,7 +715,8 @@ export function TicketDetailPanel({
     >
       <div
         ref={panelRef}
-        className="detail-panel"
+        className={`detail-panel resizable-side-panel${detailPanel.isResizing ? ' is-resizing' : ''}`}
+        style={{ width: `${detailPanel.width}px` }}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.defaultPrevented) {
@@ -749,6 +758,10 @@ export function TicketDetailPanel({
         aria-labelledby="detail-title"
         tabIndex={-1}
       >
+        <SidePanelResizeHandle
+          label="チケット詳細パネルの幅を変更"
+          panel={detailPanel}
+        />
         <div className="detail-header">
           <h2 id="detail-title" className="detail-title">
             {isLoading ? '読み込み中…' : data?.title ?? 'チケット詳細'}
