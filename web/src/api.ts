@@ -1198,7 +1198,12 @@ export interface ChatThreadDto {
 
 export type ChatTurnStatusDto =
   | { state: 'idle' }
-  | { state: 'processing' }
+  | {
+      state: 'processing';
+      sessionId?: string;
+      agentId?: string;
+      message?: string;
+    }
   | {
       state: 'completed';
       sessionId: string;

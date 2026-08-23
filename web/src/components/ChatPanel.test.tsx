@@ -2061,7 +2061,11 @@ describe('ChatPanel', () => {
 
   it('shows a detached turn as processing, then refreshes and restores its completed reply', async () => {
     fetchChatTurnStatusMock
-      .mockResolvedValueOnce({ state: 'processing' })
+      .mockResolvedValueOnce({
+        state: 'processing',
+        message: 'detached question',
+        agentId: 'claude',
+      })
       .mockResolvedValue({
         state: 'completed',
         sessionId: 'sess-detached',
@@ -2117,6 +2121,33 @@ describe('ChatPanel', () => {
       await screen.findByText('reply completed after close', {}, { timeout: 2_500 }),
     ).toBeInTheDocument();
     expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-detached');
+  });
+
+  it('shows the pending user message while a detached turn is still processing', async () => {
+    fetchChatTurnStatusMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                state: 'processing',
+                message: 'detached question',
+                agentId: 'claude',
+              }),
+            50,
+          );
+        }),
+    );
+    fetchChatThreadsMock.mockResolvedValue([]);
+
+    renderChatPanel([PROJECT_A]);
+
+    expect(
+      await screen.findByText('返信をバックグラウンドで処理中…'),
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByRole('log')).getByText('detached question'),
+    ).toBeInTheDocument();
   });
 
   it('ignores an older initial thread-list response that resolves after recovery', async () => {

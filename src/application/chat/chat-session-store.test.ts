@@ -57,6 +57,21 @@ describe('createChatSessionStore', () => {
     expect(store.isBusy('project-a')).toBe(false);
   });
 
+  it('stores pending turn metadata while locked and clears it on release', () => {
+    const store = createChatSessionStore();
+    const pending = {
+      message: 'hello',
+      agentId: 'claude',
+      sessionId: 'session-1',
+    };
+
+    expect(store.pendingTurn('project-a')).toBeUndefined();
+    expect(store.tryAcquire('project-a', pending)).toBe(true);
+    expect(store.pendingTurn('project-a')).toEqual(pending);
+    store.release('project-a');
+    expect(store.pendingTurn('project-a')).toBeUndefined();
+  });
+
   it('drops the oldest remembered sessions when the per-project cap is exceeded', () => {
     const store = createChatSessionStore({ maxSessionsPerProject: 3 });
 

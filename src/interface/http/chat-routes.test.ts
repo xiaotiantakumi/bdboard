@@ -365,7 +365,11 @@ describe('POST /api/chat/message/stream', () => {
       {},
       LOCAL_ENV,
     );
-    expect(await processing.json()).toEqual({ state: 'processing' });
+    expect(await processing.json()).toEqual({
+      state: 'processing',
+      message: 'hello',
+      agentId: 'test-agent',
+    });
 
     resolveAgent({
       reply: 'reply after disconnect',
@@ -610,7 +614,11 @@ describe('detached bulk chat turn recovery', () => {
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
     controller.abort();
     const processing = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
-    expect(await processing.json()).toEqual({ state: 'processing' });
+    expect(await processing.json()).toEqual({
+      state: 'processing',
+      message: 'hello',
+      agentId: 'test-agent',
+    });
 
     resolveAgent({
       reply: 'bulk reply after disconnect',
@@ -629,6 +637,55 @@ describe('detached bulk chat turn recovery', () => {
       agentId: 'test-agent',
       completedAt: NOW.toISOString(),
     });
+  });
+
+  it('includes sessionId in processing turn-status for an existing session turn', async () => {
+    const sessionId = '550e8400-e29b-41d4-a716-446655440099';
+    let resolveAgent: (result: ChatTurnResult) => void = () => {};
+    const sendMessage = vi.fn(
+      async (): Promise<ChatTurnResult> =>
+        await new Promise<ChatTurnResult>((resolve) => {
+          resolveAgent = resolve;
+        }),
+    );
+    const store = createChatSessionStore();
+    store.remember('p', sessionId, 'test-agent');
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({
+      agent: createFakeAgent({ sendMessage }),
+      cache,
+      store,
+      now: () => NOW,
+    });
+    const controller = new AbortController();
+    const responsePromise = app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', sessionId, message: 'follow-up question' }),
+        signal: controller.signal,
+      },
+      LOCAL_ENV,
+    );
+
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    controller.abort();
+    const processing = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    expect(await processing.json()).toEqual({
+      state: 'processing',
+      message: 'follow-up question',
+      agentId: 'test-agent',
+      sessionId,
+    });
+
+    resolveAgent({
+      reply: 'reply to existing session',
+      sessionId,
+      agentId: 'test-agent',
+      failedTools: [],
+    });
+    await responsePromise;
   });
 });
 

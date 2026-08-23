@@ -2712,6 +2712,17 @@ export function ChatPanel({
           )}
           {!isSending &&
             backgroundTurnProjectId === selectedProjectId &&
+            backgroundTurnStatus.state === 'processing' &&
+            backgroundTurnStatus.message !== undefined && (
+            // プロジェクト単位の busy 粒度に合わせ、sessionId との突き合わせは行わない
+            // (bdboard-3tw.104.22 の処理中バナーと同じスコープ。新規セッションは送信時点で
+            // sessionId が未確定のため、厳密な会話一致は原理的にできない)。
+            <div className="chat-message chat-message-user">
+              <p className="chat-message-text">{backgroundTurnStatus.message}</p>
+            </div>
+          )}
+          {!isSending &&
+            backgroundTurnProjectId === selectedProjectId &&
             backgroundTurnStatus.state === 'processing' && (
             <p className="chat-pending" role="status">
               返信をバックグラウンドで処理中…
