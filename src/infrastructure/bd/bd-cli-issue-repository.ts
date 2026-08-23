@@ -1,3 +1,4 @@
+import { runWithConcurrencyLimit } from '../../application/concurrency.js';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
 import {
   BdError,
@@ -67,30 +68,6 @@ function buildSkippedWarning(
   });
   const detail = `${skipped.length}件のチケットを読み飛ばしました: ${summaries.join('; ')}`;
   return new BdError('schema-mismatch', projectId, detail);
-}
-
-async function runWithConcurrencyLimit<T>(
-  items: readonly T[],
-  limit: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  if (items.length === 0) {
-    return;
-  }
-
-  const executing = new Set<Promise<void>>();
-  for (const item of items) {
-    const task = worker(item).finally(() => {
-      executing.delete(task);
-    });
-    executing.add(task);
-
-    if (executing.size >= limit) {
-      await Promise.race(executing);
-    }
-  }
-
-  await Promise.all(executing);
 }
 
 export function createBdCliIssueRepository(
