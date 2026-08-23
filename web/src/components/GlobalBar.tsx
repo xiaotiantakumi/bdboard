@@ -55,7 +55,7 @@ export function GlobalBar({
     <div className="global-bar">
       <h1 className="header-title">bdboard</h1>
 
-      <div className="header-group">
+      <div className="header-group view-switcher">
         <span className="header-label">ビュー</span>
         <div className="toggle-group">
           <button

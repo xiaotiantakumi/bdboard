@@ -179,6 +179,40 @@ body {
   white-space: nowrap;
 }
 
+/*
+  ビュー切替タブ列(.view-switcher)は常に自分の行の中で潰れてよく、あふれた分は内側の
+  .toggle-group(既に横スクロール対応済み)が吸収する。これが無いと、幅の狭い画面で
+  view-switcher自体が(潰れず)自然幅のまま次の行に落ち、ページ全体が横に溢れて右側の
+  要素が画面外へ切れる(699x900で実測。480px以下でだけ .header-group{width:100%}が
+  効いて偶然回避されていたが、480〜700px近辺は素通りしていた)。
+*/
+.global-bar > .view-switcher {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.global-bar > .view-switcher .toggle-group {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+  幅に余裕がある画面だけ、GlobalBar を折り返さない1行固定にする(bdboard-3tw.149)。
+  折り返しに任せると、幅が足りないときに最後の子(⋯メニュー)だけが孤立した行の左端に
+  落ち、絶対配置のポップオーバーが画面外に描画されて開けなくなる(1280x800で実測)。
+  あふれる分は上の view-switcher だけが吸収し、ロゴ・検索・状態ピル・プロジェクト
+  フィルタ・⋯メニューは常に本来の位置(⋯は右端)を保つ。
+  700px 未満(既存のモバイル向けブレークポイントと同じ閾値)ではこの1行固定はしない —
+  view-switcher をゼロ幅まで潰しても他の固定要素の合計だけで幅を超えるナロー端末では、
+  そもそも複数行への折り返しが正しいフォールバックであるため(375x812で実測)。
+*/
+@media (min-width: 700px) {
+  .global-bar {
+    flex-wrap: nowrap;
+  }
+}
+
 .view-toolbar {
   justify-content: space-between;
 }
@@ -197,6 +231,8 @@ body {
   gap: 8px;
   align-items: center;
   flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .status-pill-widget {
@@ -414,6 +450,7 @@ body {
 }
 
 .header-label {
+  flex: 0 0 auto;
   color: var(--color-text-secondary);
   font-size: 0.8125rem;
 }
@@ -584,33 +621,6 @@ body {
   background: var(--color-bg-grouped);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-}
-
-.stream-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary);
-}
-
-.stream-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.stream-dot.open {
-  background: var(--color-success);
-}
-
-.stream-dot.connecting {
-  background: var(--color-warning);
-}
-
-.stream-dot.error {
-  background: var(--color-danger);
 }
 
 .meta-text {
@@ -5255,7 +5265,6 @@ body {
     justify-content: flex-start;
   }
 
-  .stream-indicator,
   .meta-text {
     width: auto;
   }
