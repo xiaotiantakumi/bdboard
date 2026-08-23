@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   ApiError,
@@ -36,7 +36,12 @@ function accessTokenErrorMessage(error: unknown): string {
   return 'QRコードの準備に失敗しました';
 }
 
-export function TunnelControl() {
+export interface TunnelControlProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+export function TunnelControl({ open, onClose }: TunnelControlProps) {
   const queryClient = useQueryClient();
   const [passwordInput, setPasswordInput] = useState('');
   // The QR encodes a one-time token, so it stays hidden until explicitly
@@ -49,6 +54,8 @@ export function TunnelControl() {
   const [publishPhase, setPublishPhase] = useState<'idle' | 'confirming'>('idle');
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const modalPanelRef = useRef<HTMLElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const tunnelQuery = useQuery({
     queryKey: TUNNEL_QUERY_KEY,
@@ -175,68 +182,70 @@ export function TunnelControl() {
   }, [qrVisible, tokenMutation]);
 
   useFocusTrap({
+    containerRef: modalPanelRef,
+    initialFocusRef: closeButtonRef,
+    enabled: open && publishPhase !== 'confirming',
+    onEscape: onClose,
+  });
+
+  useFocusTrap({
     containerRef: confirmPanelRef,
     initialFocusRef: cancelPublishRef,
-    enabled: publishPhase === 'confirming',
+    enabled: open && publishPhase === 'confirming',
     onEscape: handleCancelPublish,
   });
 
-  if (localOnlyNotice || (tunnelQuery.error !== null && isLocalOnlyError(tunnelQuery.error))) {
-    return (
-      <div className="tunnel-control header-group">
-        <p className="tunnel-local-only">
-          この操作はローカルの画面からのみ実行できます
-        </p>
-      </div>
-    );
+  if (!open) {
+    return null;
   }
 
-  if (tunnelQuery.error !== null) {
+  let panelBody: ReactNode;
+
+  if (localOnlyNotice || (tunnelQuery.error !== null && isLocalOnlyError(tunnelQuery.error))) {
+    panelBody = (
+      <p className="tunnel-local-only">
+        この操作はローカルの画面からのみ実行できます
+      </p>
+    );
+  } else if (tunnelQuery.error !== null) {
     const message =
       tunnelQuery.error instanceof Error
         ? tunnelQuery.error.message
         : 'トンネル状態の取得に失敗しました';
-    return (
-      <div className="tunnel-control header-group">
-        <p className="tunnel-error-message">{message}</p>
-      </div>
-    );
-  }
+    panelBody = <p className="tunnel-error-message">{message}</p>;
+  } else {
+    const data = tunnelQuery.data;
+    const unavailable = data !== undefined && !data.available;
+    const authUnavailable = data !== undefined && data.authEnabled !== true;
+    // Never offer the publish control before the first response has told us whether
+    // cloudflared exists and whether this board is allowed to control the tunnel.
+    // The error state keeps the controls visible too, so a retry does not resend a
+    // password the user can no longer see.
+    const showOffControls =
+      data !== undefined && (data.state === 'off' || data.state === 'error');
+    const isOn = data?.state === 'on';
+    const interruptedAt =
+      data !== undefined && data.interruptedAt !== undefined && data.state !== 'on'
+        ? data.interruptedAt
+        : null;
 
-  const data = tunnelQuery.data;
-  const unavailable = data !== undefined && !data.available;
-  const authUnavailable = data !== undefined && data.authEnabled !== true;
-  // Never offer the publish control before the first response has told us whether
-  // cloudflared exists and whether this board is allowed to control the tunnel.
-  // The error state keeps the controls visible too, so a retry does not resend a
-  // password the user can no longer see.
-  const showOffControls =
-    data !== undefined && (data.state === 'off' || data.state === 'error');
-  const isOn = data?.state === 'on';
-  const interruptedAt =
-    data !== undefined && data.interruptedAt !== undefined && data.state !== 'on'
-      ? data.interruptedAt
-      : null;
+    const startDisabled =
+      unavailable ||
+      authUnavailable ||
+      isMutating ||
+      data?.state === 'starting' ||
+      isOn ||
+      publishPhase === 'confirming';
+    const passwordDisabled =
+      unavailable ||
+      authUnavailable ||
+      isMutating ||
+      data?.state === 'starting' ||
+      isOn;
+    const stopDisabled = isMutating || data?.state === 'starting' || !isOn;
 
-  const startDisabled =
-    unavailable ||
-    authUnavailable ||
-    isMutating ||
-    data?.state === 'starting' ||
-    isOn ||
-    publishPhase === 'confirming';
-  const passwordDisabled =
-    unavailable ||
-    authUnavailable ||
-    isMutating ||
-    data?.state === 'starting' ||
-    isOn;
-  const stopDisabled = isMutating || data?.state === 'starting' || !isOn;
-
-  return (
-    <div className="tunnel-control header-group">
-      <span className="header-label">スマホ公開</span>
-
+    panelBody = (
+      <>
       {authUnavailable && (
         <p className="tunnel-help tunnel-error-message" role="status">
           Basic Authが有効でないためトンネル公開はできません。
@@ -471,6 +480,43 @@ export function TunnelControl() {
       {actionError !== null && (
         <p className="tunnel-error-message">{actionError}</p>
       )}
+      </>
+    );
+  }
+
+  return (
+    <div
+      className="overlay tunnel-modal-overlay"
+      onClick={onClose}
+      role="presentation"
+    >
+      <aside
+        ref={modalPanelRef}
+        className="tunnel-modal-panel"
+        onClick={(event) => event.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tunnel-modal-title"
+        tabIndex={-1}
+      >
+        <div className="detail-header">
+          <h2 id="tunnel-modal-title" className="detail-title">
+            スマホ公開
+          </h2>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            className="btn detail-close"
+            onClick={onClose}
+          >
+            閉じる
+          </button>
+        </div>
+
+        <div className="tunnel-modal-body">
+          <div className="tunnel-control header-group">{panelBody}</div>
+        </div>
+      </aside>
     </div>
   );
 }

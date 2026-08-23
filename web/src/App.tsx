@@ -19,14 +19,15 @@ import {
 } from './api';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
-import { BoardFilterPresets } from './components/BoardFilterPresets';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
 import { BulkActionBar } from './components/BulkActionBar';
 import { BulkSelectionProvider } from './components/BulkSelectionProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
 import { ActivityFeed } from './components/ActivityFeed';
 import { DailyDigest } from './components/DailyDigest';
-import { AiQuotaWidget } from './components/AiQuotaWidget';
+import { AlertBar } from './components/AlertBar';
+import { GlobalBar } from './components/GlobalBar';
+import { ViewToolbar } from './components/ViewToolbar';
 import { ChatPanel } from './components/ChatPanel';
 import { DependencyGraphView } from './components/DependencyGraphView';
 import { HygienePanel } from './components/HygienePanel';
@@ -71,7 +72,7 @@ import {
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from './uiPersistedState';
-import { type StreamState, useBoardStream } from './useBoardStream';
+import { useBoardStream } from './useBoardStream';
 import {
   collectBoardCardsById,
   collectBoardLabels,
@@ -79,29 +80,6 @@ import {
 } from './boardTicketIds';
 import { buildPaletteActions } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
-
-function streamLabel(state: StreamState): string {
-  switch (state) {
-    case 'open':
-      return '接続中';
-    case 'connecting':
-      return '接続待ち';
-    case 'error':
-      return 'エラー';
-  }
-}
-
-export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string {
-  const ageMinutes = Math.floor((nowMs - new Date(generatedAt).getTime()) / 60000);
-  if (ageMinutes < 1) {
-    return 'たった今';
-  }
-  if (ageMinutes < 60) {
-    return `${ageMinutes}分前`;
-  }
-  const ageHours = Math.floor(ageMinutes / 60);
-  return `${ageHours}時間前`;
-}
 
 export function App() {
   const [view, setView] = usePersistedState(
@@ -202,6 +180,8 @@ export function App() {
   const [sessionListProjectId, setSessionListProjectId] = useState<string | undefined>(
     undefined,
   );
+  const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
+  const [statusDetailOpen, setStatusDetailOpen] = useState(false);
 
   const streamState = useBoardStream();
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
@@ -619,7 +599,7 @@ export function App() {
         return;
       }
 
-      if (helpOpen) {
+      if (helpOpen || tunnelModalOpen) {
         return;
       }
 
@@ -629,7 +609,7 @@ export function App() {
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [helpOpen]);
+  }, [helpOpen, tunnelModalOpen]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -655,6 +635,7 @@ export function App() {
         helpOpen ||
         chatOpen ||
         sessionListOpen ||
+        tunnelModalOpen ||
         selectedTicketId !== null
       ) {
         return;
@@ -673,6 +654,7 @@ export function App() {
     handleOpenShortcuts,
     searchOpen,
     sessionListOpen,
+    tunnelModalOpen,
     selectedTicketId,
     shortcutsOpen,
   ]);
@@ -684,240 +666,70 @@ export function App() {
     <UndoSnackbarProvider>
     <div className="app">
       <header className="header">
-        <h1 className="header-title">bdboard</h1>
-
-        <div className="header-group">
-          <span className="header-label">ビュー</span>
-          <div className="toggle-group">
-            <button
-              type="button"
-              className={`toggle-btn${view === 'merged' ? ' active' : ''}`}
-              onClick={() => setView('merged')}
-            >
-              統合
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'split' ? ' active' : ''}`}
-              onClick={() => setView('split')}
-            >
-              分割
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'next' ? ' active' : ''}`}
-              onClick={() => setView('next')}
-            >
-              Next Up
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'activity' ? ' active' : ''}`}
-              onClick={() => setView('activity')}
-            >
-              アクティビティ
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'digest' ? ' active' : ''}`}
-              onClick={() => setView('digest')}
-            >
-              ダイジェスト
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'stats' ? ' active' : ''}`}
-              onClick={() => setView('stats')}
-            >
-              統計
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'hygiene' ? ' active' : ''}`}
-              onClick={() => setView('hygiene')}
-            >
-              健全性
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'graph' ? ' active' : ''}`}
-              onClick={() => setView('graph')}
-            >
-              依存グラフ
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'events' ? ' active' : ''}`}
-              onClick={() => setView('events')}
-            >
-              イベント
-              {notificationEvents.unreadCount > 0
-                ? ` (${notificationEvents.unreadCount})`
-                : ''}
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${view === 'settings' ? ' active' : ''}`}
-              onClick={() => setView('settings')}
-            >
-              設定
-            </button>
-          </div>
-        </div>
-
-        <div className="header-group project-filter">
-          <details>
-            <summary>
-              プロジェクト
-              {selectedProjectIds.length > 0
-                ? ` (${selectedProjectIds.length} 件選択)`
-                : ' (全件)'}
-            </summary>
-            <div className="project-list">
-              <button type="button" className="btn btn-small" onClick={handleSelectAll}>
-                全選択
-              </button>
-              <button type="button" className="btn btn-small" onClick={handleClearAll}>
-                全解除
-              </button>
-              {(projectsQuery.data ?? []).map((project) => (
-                <label key={project.id} className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={selectedProjectIds.includes(project.id)}
-                    onChange={(event) =>
-                      handleToggleProject(project.id, event.target.checked)
-                    }
-                  />
-                  {project.name}
-                </label>
-              ))}
-            </div>
-          </details>
-        </div>
-
-        <BoardFilterPresets
-          presets={boardFilterPresets}
-          onPresetsChange={setBoardFilterPresets}
-          currentState={boardFilterPresetState}
-          onApplyPreset={handleApplyBoardFilterPreset}
+        <GlobalBar
+          view={view}
+          onViewChange={setView}
+          notificationUnreadCount={notificationEvents.unreadCount}
+          onOpenSearch={handleOpenSearch}
+          streamState={streamState}
+          generatedAt={boardQuery.data?.generatedAt}
+          lastRefreshAt={lastRefreshAt}
+          totalSessionCount={totalSessionCount}
+          activeSessionCount={activeSessionCount}
+          onOpenSessionList={() => handleOpenSessionList()}
+          statusDetailOpen={statusDetailOpen}
+          onStatusDetailOpenChange={setStatusDetailOpen}
+          projects={projectsQuery.data ?? []}
+          selectedProjectIds={selectedProjectIds}
+          onToggleProject={handleToggleProject}
+          onSelectAllProjects={handleSelectAll}
+          onClearAllProjects={handleClearAll}
+          onOpenSettings={() => setView('settings')}
+          onOpenTunnel={() => setTunnelModalOpen(true)}
+          onOpenHelp={handleOpenHelp}
+          onOpenShortcuts={handleOpenShortcuts}
         />
 
-        {(view === 'merged' || view === 'split') && (
-          <>
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={hideDone}
-                onChange={(event) => setHideDone(event.target.checked)}
-              />
-              done レーンを隠す
-            </label>
-
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                checked={stalledOnly}
-                onChange={(event) => setStalledOnly(event.target.checked)}
-              />
-              滞留のみ表示
-            </label>
-          </>
-        )}
-
-        <div className="stream-indicator">
-          <span className={`stream-dot ${streamState}`} />
-          <span>{streamLabel(streamState)}</span>
-        </div>
-
-        {boardQuery.data?.generatedAt !== null &&
-          boardQuery.data?.generatedAt !== undefined && (
-            <span
-              className="meta-text"
-              title={new Date(boardQuery.data.generatedAt).toLocaleString()}
-            >
-              盤面取得:{' '}
-              {formatGeneratedAtAge(boardQuery.data.generatedAt, Date.now())}
-            </span>
-          )}
-
-        {lastRefreshAt !== null && lastRefreshAt !== undefined && (
-          <span className="meta-text">
-            最終更新: {new Date(lastRefreshAt).toLocaleString()}
-          </span>
-        )}
-
-        <button
-          type="button"
-          className="meta-text meta-text-btn"
-          onClick={() => handleOpenSessionList()}
-        >
-          セッション: {totalSessionCount}（稼働中 {activeSessionCount}）
-        </button>
-
-        <button
-          type="button"
-          className="btn btn-shortcuts-help"
-          aria-label="キーボードショートカット (?)"
-          onClick={handleOpenShortcuts}
-        >
-          ?
-        </button>
-
-        <button
-          type="button"
-          className="btn btn-help"
-          aria-label="ヘルプ"
-          onClick={handleOpenHelp}
-        >
-          ヘルプ
-        </button>
-
-        <button
-          type="button"
-          className="btn btn-search"
-          aria-label="コマンドパレット (Cmd+K)"
-          onClick={handleOpenSearch}
-        >
-          検索
-        </button>
-
-        <button
-          type="button"
-          className="btn"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-        >
-          {isRefreshing ? '更新中…' : '手動更新'}
-        </button>
-
-        {chatAvailable && (
-          <button
-            type="button"
-            className="btn"
-            onClick={() => setChatOpen(true)}
-          >
-            チャット
-          </button>
-        )}
-
-        <AiQuotaWidget />
-
-        <TunnelControl />
-
-        {statusErrors.length > 0 && (
-          <div className="error-banner">
-            <strong>ステータスエラー ({statusErrors.length} 件)</strong>
-            <ul>
-              {statusErrors.map((entry, index) => (
-                <li key={`${entry.kind}-${entry.projectId}-${index}`}>
-                  [{entry.kind}] {entry.projectId}: {entry.detail}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <ViewToolbar
+          view={view}
+          boardFilterPresets={boardFilterPresets}
+          onBoardFilterPresetsChange={setBoardFilterPresets}
+          boardFilterPresetState={boardFilterPresetState}
+          onApplyBoardFilterPreset={handleApplyBoardFilterPreset}
+          hideDone={hideDone}
+          onHideDoneChange={setHideDone}
+          stalledOnly={stalledOnly}
+          onStalledOnlyChange={setStalledOnly}
+          totalSessionCount={totalSessionCount}
+          activeSessionCount={activeSessionCount}
+          onOpenSessionList={() => handleOpenSessionList()}
+          onRefresh={handleRefresh}
+          isRefreshing={isRefreshing}
+          chatAvailable={chatAvailable}
+          onOpenChat={() => setChatOpen(true)}
+        />
       </header>
+
+      <AlertBar
+        streamState={streamState}
+        generatedAt={boardQuery.data?.generatedAt}
+        onRefresh={handleRefresh}
+        isRefreshing={isRefreshing}
+        onOpenDetails={() => setStatusDetailOpen(true)}
+      />
+
+      {statusErrors.length > 0 && (
+        <div className="header-status-errors error-banner">
+          <strong>ステータスエラー ({statusErrors.length} 件)</strong>
+          <ul>
+            {statusErrors.map((entry, index) => (
+              <li key={`${entry.kind}-${entry.projectId}-${index}`}>
+                [{entry.kind}] {entry.projectId}: {entry.detail}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <TipsBanner onOpenHelp={handleOpenHelp} />
 
@@ -1123,6 +935,11 @@ export function App() {
           recentTickets={recentTickets}
         />
       )}
+
+      <TunnelControl
+        open={tunnelModalOpen}
+        onClose={() => setTunnelModalOpen(false)}
+      />
 
       {chatOpen && (
         <ChatPanel

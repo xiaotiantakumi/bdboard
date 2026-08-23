@@ -157,9 +157,280 @@ body {
   padding: calc(12px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
     12px calc(20px + env(safe-area-inset-left));
   display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.global-bar,
+.view-toolbar {
+  display: flex;
   flex-wrap: wrap;
   gap: 10px 16px;
   align-items: center;
+  width: 100%;
+}
+
+.global-bar > *,
+.view-toolbar-left > *,
+.view-toolbar-right > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/*
+  ビュー切替タブ列(.view-switcher)は常に自分の行の中で潰れてよく、あふれた分は内側の
+  .toggle-group(既に横スクロール対応済み)が吸収する。これが無いと、幅の狭い画面で
+  view-switcher自体が(潰れず)自然幅のまま次の行に落ち、ページ全体が横に溢れて右側の
+  要素が画面外へ切れる(699x900で実測。480px以下でだけ .header-group{width:100%}が
+  効いて偶然回避されていたが、480〜700px近辺は素通りしていた)。
+*/
+.global-bar > .view-switcher {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.global-bar > .view-switcher .toggle-group {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+  幅に余裕がある画面だけ、GlobalBar を折り返さない1行固定にする(bdboard-3tw.149)。
+  折り返しに任せると、幅が足りないときに最後の子(⋯メニュー)だけが孤立した行の左端に
+  落ち、絶対配置のポップオーバーが画面外に描画されて開けなくなる(1280x800で実測)。
+  あふれる分は上の view-switcher だけが吸収し、ロゴ・検索・状態ピル・プロジェクト
+  フィルタ・⋯メニューは常に本来の位置(⋯は右端)を保つ。
+  700px 未満(既存のモバイル向けブレークポイントと同じ閾値)ではこの1行固定はしない —
+  view-switcher をゼロ幅まで潰しても他の固定要素の合計だけで幅を超えるナロー端末では、
+  そもそも複数行への折り返しが正しいフォールバックであるため(375x812で実測)。
+*/
+@media (min-width: 700px) {
+  .global-bar {
+    flex-wrap: nowrap;
+  }
+}
+
+.view-toolbar {
+  justify-content: space-between;
+}
+
+.view-toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.view-toolbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.status-pill-widget {
+  position: relative;
+}
+
+.status-pill {
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 5px 12px;
+  min-height: 28px;
+  transition: opacity 0.15s ease;
+}
+
+.status-pill:hover {
+  opacity: 0.88;
+}
+
+.status-pill-ok {
+  background: var(--badge-session-bg);
+  color: var(--badge-session-fg);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.status-pill-delayed {
+  background: var(--badge-stalled-bg);
+  color: var(--badge-stalled-fg);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.status-pill-disconnected {
+  background: var(--badge-p0-bg);
+  color: var(--badge-p0-fg);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+.status-pill-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 12px 14px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+}
+
+.status-pill-detail {
+  margin: 0 0 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.status-pill-session-btn {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.status-pill-session-btn:hover {
+  color: var(--color-text);
+}
+
+.alert-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px calc(20px + env(safe-area-inset-right)) 10px
+    calc(20px + env(safe-area-inset-left));
+  background: var(--badge-stalled-bg);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  color: var(--badge-stalled-fg);
+}
+
+.alert-bar-message {
+  font-size: 0.8125rem;
+}
+
+.alert-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.header-status-errors {
+  margin: 0;
+  padding: 10px calc(20px + env(safe-area-inset-right)) 10px
+    calc(20px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--badge-p0-fg);
+}
+
+.overflow-menu {
+  position: relative;
+}
+
+.overflow-menu-button {
+  background: var(--badge-neutral-bg);
+  border: none;
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  min-height: 30px;
+  min-width: 36px;
+  padding: 4px 10px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.overflow-menu-button:hover {
+  background: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.overflow-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 6px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+}
+
+.overflow-menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  padding: 8px 10px;
+  text-align: left;
+  transition: background-color 0.15s ease;
+}
+
+.overflow-menu-item:hover {
+  background: var(--badge-neutral-bg);
+}
+
+.overflow-menu-footnote {
+  margin: 6px 2px 2px;
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.filter-chip {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  min-height: 30px;
+  padding: 5px 12px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.filter-chip:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.filter-chip-active {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.filter-chip-clear {
+  font-size: 0.75rem;
+  line-height: 1;
+  opacity: 0.85;
 }
 
 .header-title {
@@ -179,6 +450,7 @@ body {
 }
 
 .header-label {
+  flex: 0 0 auto;
   color: var(--color-text-secondary);
   font-size: 0.8125rem;
 }
@@ -349,33 +621,6 @@ body {
   background: var(--color-bg-grouped);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-}
-
-.stream-indicator {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary);
-}
-
-.stream-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.stream-dot.open {
-  background: var(--color-success);
-}
-
-.stream-dot.connecting {
-  background: var(--color-warning);
-}
-
-.stream-dot.error {
-  background: var(--color-danger);
 }
 
 .meta-text {
@@ -3126,6 +3371,29 @@ body {
   padding: 10vh 16px 16px;
 }
 
+.tunnel-modal-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 16px;
+}
+
+.tunnel-modal-panel {
+  width: min(520px, 100%);
+  max-height: min(85vh, 720px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px var(--color-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tunnel-modal-body {
+  overflow-y: auto;
+  padding: 0 20px 20px;
+}
+
 .shortcuts-help-panel {
   width: min(520px, 100%);
   max-height: min(75vh, 640px);
@@ -3770,7 +4038,66 @@ body {
 }
 
 .ai-quota-widget {
+  position: relative;
   gap: 10px;
+}
+
+.ai-quota-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--badge-neutral-bg);
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ai-quota-badge-warn {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.ai-quota-badge-critical {
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+}
+
+.ai-quota-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: min(420px, 90vw);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 3px 10px var(--color-shadow);
+}
+
+.ai-quota-popover-error {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.ai-quota-popover-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
 }
 
 .ai-quota-provider {
@@ -4832,7 +5159,10 @@ body {
 
   .header-title {
     font-size: 1.0625rem;
-    width: 100%;
+  }
+
+  .global-bar .header-title {
+    width: auto;
   }
 
   .main {
@@ -4935,7 +5265,6 @@ body {
     justify-content: flex-start;
   }
 
-  .stream-indicator,
   .meta-text {
     width: auto;
   }

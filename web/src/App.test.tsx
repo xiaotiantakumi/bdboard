@@ -16,7 +16,7 @@ import type {
   SyncHealthDto,
   TicketDetailDto,
 } from './api';
-import { App, formatGeneratedAtAge } from './App';
+import { App } from './App';
 import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
 import { UI_STORAGE_KEYS } from './uiPersistedState';
 
@@ -567,7 +567,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
       expect(screen.getByText('Combo Fresh Bug')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByLabelText('滞留のみ表示'));
+    await user.click(screen.getByRole('button', { name: '滞留のみ表示' }));
     await user.click(screen.getByRole('button', { name: 'bug' }));
 
     expect(screen.getByText('Combo Stalled Bug')).toBeInTheDocument();
@@ -735,7 +735,8 @@ describe('header help overlays', () => {
       expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'キーボードショートカット (?)' }));
+    await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+    await user.click(screen.getByRole('menuitem', { name: 'キーボードショートカット' }));
 
     expect(
       screen.getByRole('dialog', { name: 'キーボードショートカット' }),
@@ -750,7 +751,8 @@ describe('header help overlays', () => {
       expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole('button', { name: 'ヘルプ' }));
+    await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+    await user.click(screen.getByRole('menuitem', { name: 'ヘルプ' }));
 
     expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Kanban（看板）' })).toBeInTheDocument();
@@ -767,22 +769,6 @@ describe('header help overlays', () => {
     await user.click(screen.getByRole('button', { name: '詳しく' }));
 
     expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
-  });
-});
-
-describe('formatGeneratedAtAge (bdboard-3tw.125)', () => {
-  const nowMs = new Date('2026-01-01T12:00:00.000Z').getTime();
-
-  it('returns たった今 for less than 1 minute', () => {
-    expect(formatGeneratedAtAge('2026-01-01T11:59:30.000Z', nowMs)).toBe('たった今');
-  });
-
-  it('returns N分前 for 1–59 minutes', () => {
-    expect(formatGeneratedAtAge('2026-01-01T11:55:00.000Z', nowMs)).toBe('5分前');
-  });
-
-  it('returns N時間前 for 60+ minutes', () => {
-    expect(formatGeneratedAtAge('2026-01-01T10:00:00.000Z', nowMs)).toBe('2時間前');
   });
 });
 
@@ -838,8 +824,15 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
     localStorage.clear();
   });
 
-  it('renders board generatedAt freshness near stream indicator', async () => {
+  it('renders board generatedAt freshness in status pill popover', async () => {
+    const user = userEvent.setup();
     renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /接続状態:/ })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /接続状態:/ }));
 
     await waitFor(() => {
       expect(screen.getByText('盤面取得: 5分前')).toBeInTheDocument();
