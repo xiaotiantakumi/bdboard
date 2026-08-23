@@ -23,5 +23,7 @@ export interface Ticket {
   readonly description?: string;
   readonly notes?: string;
   readonly labels?: readonly string[];
+  /** `bdboard.session` メタデータ由来の手動セッションリンク。 */
+  readonly manualSessionId?: string;
   readonly models?: readonly TicketModelRecord[];
 }

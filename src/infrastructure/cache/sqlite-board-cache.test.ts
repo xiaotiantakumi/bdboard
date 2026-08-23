@@ -90,6 +90,7 @@ describe('createSqliteBoardCache', () => {
         makeTicket({
           projectId: 'proj-a',
           assignee: 'alice',
+          manualSessionId: 'sess-manual',
           dependencies: [
             {
               issueId: 'pfx-abc',

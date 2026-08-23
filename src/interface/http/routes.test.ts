@@ -17,7 +17,6 @@ import {
   StatusConflictError,
   type IssueWriterPort,
 } from '../../application/ports/issue-writer.js';
-import type { SessionLinkReaderPort } from '../../application/ports/session-link-reader.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
@@ -89,7 +88,11 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 
 function seedCache(
   cache: BoardCache,
-  items: readonly { readonly project: Project; readonly ticketId: string }[],
+  items: readonly {
+    readonly project: Project;
+    readonly ticketId: string;
+    readonly ticket?: Parameters<typeof makeTicket>[0];
+  }[],
 ): void {
   for (const item of items) {
     cache.putProject({
@@ -98,6 +101,7 @@ function seedCache(
         makeTicket({
           id: item.ticketId,
           projectId: item.project.id,
+          ...item.ticket,
         }),
       ],
       fingerprint: `fp-${item.project.id}`,
@@ -4575,10 +4579,14 @@ describe('createApiRoutes', () => {
       ]);
     });
 
-    it('merges the manual link from sessionLinkReader, preferring metadata over transcript for the same session', async () => {
+    it('merges the cached manual link, preferring metadata over transcript for the same session', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
-      seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
+      seedCache(cache, [{
+        project: a,
+        ticketId: 'bdboard-a',
+        ticket: { manualSessionId: 'sess-shared' },
+      }]);
 
       const links = () => [
         makeSessionLink({
@@ -4587,16 +4595,7 @@ describe('createApiRoutes', () => {
           source: 'transcript',
         }),
       ];
-      const sessionLinkReader: SessionLinkReaderPort = {
-        readTicketMetadata: vi.fn(async () => ({
-          manualSessionId: 'sess-shared',
-          models: [],
-        })),
-      };
-
-      const app = createApiRoutes(
-        createDeps({ cache, links, sessionLinkReader }),
-      );
+      const app = createApiRoutes(createDeps({ cache, links }));
       const response = await app.request('/api/tickets/bdboard-a');
       const body = await response.json();
 
@@ -4604,31 +4603,24 @@ describe('createApiRoutes', () => {
       expect(body.sessionLinks).toEqual([
         { sessionId: 'sess-shared', source: 'metadata' },
       ]);
-      expect(sessionLinkReader.readTicketMetadata).toHaveBeenCalledWith(
-        '/root/a',
-        'bdboard-a',
-      );
-      expect(sessionLinkReader.readTicketMetadata).toHaveBeenCalledTimes(1);
     });
 
-    it('includes models from sessionLinkReader in stage order', async () => {
+    it('includes models cached with the ticket in stage order', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
-      seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
-
-      const sessionLinkReader: SessionLinkReaderPort = {
-        readTicketMetadata: vi.fn(async () => ({
+      seedCache(cache, [{
+        project: a,
+        ticketId: 'bdboard-a',
+        ticket: {
           models: [
             { stage: 'implement', model: 'composer-2.5' },
             { stage: 'test', model: 'opus' },
             { stage: 'review', model: 'fable' },
           ],
-        })),
-      };
+        },
+      }]);
 
-      const app = createApiRoutes(
-        createDeps({ cache, sessionLinkReader }),
-      );
+      const app = createApiRoutes(createDeps({ cache }));
       const response = await app.request('/api/tickets/bdboard-a');
       const body = await response.json();
 
@@ -4638,13 +4630,16 @@ describe('createApiRoutes', () => {
         { stage: 'test', model: 'opus' },
         { stage: 'review', model: 'fable' },
       ]);
-      expect(sessionLinkReader.readTicketMetadata).toHaveBeenCalledTimes(1);
     });
 
     it('keeps distinct manual and inferred links side by side', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
-      seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
+      seedCache(cache, [{
+        project: a,
+        ticketId: 'bdboard-a',
+        ticket: { manualSessionId: 'sess-manual' },
+      }]);
 
       const links = () => [
         makeSessionLink({
@@ -4653,16 +4648,7 @@ describe('createApiRoutes', () => {
           source: 'transcript',
         }),
       ];
-      const sessionLinkReader: SessionLinkReaderPort = {
-        readTicketMetadata: vi.fn(async () => ({
-          manualSessionId: 'sess-manual',
-          models: [],
-        })),
-      };
-
-      const app = createApiRoutes(
-        createDeps({ cache, links, sessionLinkReader }),
-      );
+      const app = createApiRoutes(createDeps({ cache, links }));
       const response = await app.request('/api/tickets/bdboard-a');
       const body = await response.json();
 
@@ -4673,18 +4659,12 @@ describe('createApiRoutes', () => {
       ]);
     });
 
-    it('degrades to no manual link and empty models when sessionLinkReader throws', async () => {
+    it('returns no manual link and empty models when the cache has no metadata', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
       seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);
 
-      const sessionLinkReader: SessionLinkReaderPort = {
-        readTicketMetadata: vi.fn(async () => {
-          throw new Error('bd unavailable');
-        }),
-      };
-
-      const app = createApiRoutes(createDeps({ cache, sessionLinkReader }));
+      const app = createApiRoutes(createDeps({ cache }));
       const response = await app.request('/api/tickets/bdboard-a');
       const body = await response.json();
 
@@ -4694,7 +4674,7 @@ describe('createApiRoutes', () => {
       expect(body.id).toBe('bdboard-a');
     });
 
-    it('returns an empty sessionLinks array when no links/reader are configured', async () => {
+    it('returns an empty sessionLinks array when no links are configured', async () => {
       const cache = createFakeBoardCache();
       const a = project('proj-a', '/root/a');
       seedCache(cache, [{ project: a, ticketId: 'bdboard-a' }]);

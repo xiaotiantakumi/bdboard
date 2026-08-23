@@ -72,7 +72,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `MergeSlotReader` | `BdCliMergeSlotReader` | マージ直列化用スロットの読み取り |
 | `CommentReader` | `BdCliCommentReader` | チケットコメント取得 |
 | `HumanDecisionsPort` | `BdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
-| `SessionLinkReader` / `SessionLinkWriter` | `BdCliSessionLinkReader` / `Writer` | チケット⇔セッションの紐付け |
+| `SessionLinkWriter` | `BdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
 | `PrStatusReader` | `GhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
 | `SyncHealthReader` | `GitSyncHealthReader` | git/Doltの同期健全性チェック |
 | `WorktreeScanner` | `GitWorktreeScanner` | worktree一覧のスキャン |

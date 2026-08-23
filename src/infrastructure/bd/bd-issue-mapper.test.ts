@@ -115,6 +115,15 @@ describe('mapBdIssueToTicket', () => {
     expect(ticket.models).toEqual([{ stage: 'implement', model: 'composer-2.5' }]);
   });
 
+  it('maps bdboard.session metadata to a manual session link', () => {
+    const ticket = mapBdIssueToTicket(
+      { ...fullIssue(), metadata: { 'bdboard.session': 'sess-manual' } },
+      'my-project',
+    );
+
+    expect(ticket.manualSessionId).toBe('sess-manual');
+  });
+
   it('omits models when metadata is absent or yields no records', () => {
     const withoutMetadata = mapBdIssueToTicket(fullIssue(), 'my-project');
     expect(withoutMetadata.models).toBeUndefined();

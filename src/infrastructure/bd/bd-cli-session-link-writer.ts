@@ -5,12 +5,12 @@ import {
 } from '../../application/ports/issue-repository.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import { isSafeCliArgument, isValidBdTicketId } from '../../domain/chat.js';
+import { SESSION_LINK_METADATA_KEY } from '../../domain/ticket-session-link.js';
+
+export { SESSION_LINK_METADATA_KEY } from '../../domain/ticket-session-link.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
-
-/** bd update --set-metadata / --unset-metadata で読み書きするキー名。 */
-export const SESSION_LINK_METADATA_KEY = 'bdboard.session';
 
 export interface BdCliSessionLinkWriterOptions {
   readonly bdPath?: string;

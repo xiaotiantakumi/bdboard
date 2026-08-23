@@ -29,6 +29,7 @@ interface SerializedTicket {
   readonly description?: string;
   readonly notes?: string;
   readonly labels?: readonly string[];
+  readonly manualSessionId?: string;
   readonly models?: readonly { readonly stage: string; readonly model: string }[];
 }
 
@@ -77,6 +78,9 @@ function serializeTicket(ticket: Ticket): SerializedTicket {
       : {}),
     ...(ticket.notes !== undefined ? { notes: ticket.notes } : {}),
     ...(ticket.labels !== undefined ? { labels: ticket.labels } : {}),
+    ...(ticket.manualSessionId !== undefined
+      ? { manualSessionId: ticket.manualSessionId }
+      : {}),
     ...(ticket.models !== undefined ? { models: ticket.models } : {}),
   };
 }
@@ -102,6 +106,9 @@ function deserializeTicket(raw: SerializedTicket): Ticket {
     ...(raw.description !== undefined ? { description: raw.description } : {}),
     ...(raw.notes !== undefined ? { notes: raw.notes } : {}),
     ...(raw.labels !== undefined ? { labels: raw.labels } : {}),
+    ...(raw.manualSessionId !== undefined
+      ? { manualSessionId: raw.manualSessionId }
+      : {}),
     ...(raw.models !== undefined ? { models: raw.models } : {}),
   };
 
