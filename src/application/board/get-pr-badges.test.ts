@@ -342,6 +342,53 @@ describe('getPrBadges', () => {
     expect(badges[0]?.ticketId).toBe('bdboard-b');
   });
 
+  it('limits comment fetch concurrency to the configured maximum', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+
+    cache.putProject({
+      project: a,
+      tickets: Array.from({ length: 8 }, (_, index) =>
+        makeTicket({
+          id: `bdboard-${index}`,
+          projectId: a.id,
+          commentCount: 1,
+        }),
+      ),
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    let activeCount = 0;
+    const maxObserved = { value: 0 };
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => {
+        activeCount += 1;
+        maxObserved.value = Math.max(maxObserved.value, activeCount);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        activeCount -= 1;
+        return [
+          {
+            id: 'c1',
+            issueId: 'bdboard-x',
+            author: 'agent',
+            text: `PR: ${PR_URL}`,
+            createdAt: new Date('2026-06-01T12:00:00.000Z'),
+          },
+        ];
+      }),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => null),
+    };
+
+    await getPrBadges(cache, commentReader, prStatusReader);
+
+    expect(maxObserved.value).toBeLessThanOrEqual(3);
+    expect(maxObserved.value).toBeGreaterThan(1);
+  });
+
   it('sorts badges by projectId then ticketId', async () => {
     const cache = createFakeBoardCache();
     const a = project('proj-a', '/projects/a');
