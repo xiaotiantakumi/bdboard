@@ -197,6 +197,61 @@ function openChatSettings(container: HTMLElement) {
   }
 }
 
+// Chat Redesign 1b: 旧タブ帯(role="tab")はスレッド切替ボタン1つ+縦ドロワーに
+// 置き換わった。以下はドロワー操作を統一する共通ヘルパー。個々のテストが
+// container.querySelector を直書きしないようにするため、必ずこれらを介する。
+function openThreadDrawer(container: HTMLElement) {
+  if (container.querySelector('#chat-thread-drawer') !== null) {
+    return;
+  }
+  const toggle = container.querySelector('.chat-thread-switcher-toggle');
+  if (!(toggle instanceof HTMLButtonElement)) {
+    throw new Error('chat-thread-switcher-toggle button not found');
+  }
+  fireEvent.click(toggle);
+}
+
+function getThreadDrawer(container: HTMLElement): HTMLElement {
+  const drawer = container.querySelector('#chat-thread-drawer');
+  if (!(drawer instanceof HTMLElement)) {
+    throw new Error('Thread drawer is not open. Call openThreadDrawer(container) first.');
+  }
+  return drawer;
+}
+
+// スレッド行の「選択」ボタン(開いている行・閉じた行どちらも)をドロワー越しに押す。
+// タブ切替・閉じたスレッドの再開の両方をこれ1つで代替する。
+async function selectThreadFromDrawer(
+  container: HTMLElement,
+  user: ReturnType<typeof userEvent.setup>,
+  threadTitle: string,
+) {
+  openThreadDrawer(container);
+  const drawer = getThreadDrawer(container);
+  await user.click(await within(drawer).findByRole('button', { name: threadTitle }));
+}
+
+// 行の「⋯」メニューを開き、以後の menuitem 操作に使うメニュー要素を返す。
+// メニューはリネーム/ピン留め/削除等のクリックでも(確認2段階を除き)閉じるので、
+// 複数操作を連続で行う場合は都度呼び直すこと。
+async function openThreadDrawerItemMenu(
+  container: HTMLElement,
+  user: ReturnType<typeof userEvent.setup>,
+  threadTitle: string,
+): Promise<HTMLElement> {
+  openThreadDrawer(container);
+  const drawer = getThreadDrawer(container);
+  const menuName = `スレッド「${threadTitle}」の操作メニュー`;
+  const existingMenu = within(drawer).queryByRole('menu', { name: menuName });
+  if (existingMenu !== null) {
+    return existingMenu;
+  }
+  await user.click(
+    await within(drawer).findByRole('button', { name: `スレッド「${threadTitle}」の操作` }),
+  );
+  return within(drawer).getByRole('menu', { name: menuName });
+}
+
 function renderChatPanel(
   projects: readonly ProjectDto[] = [PROJECT_A, PROJECT_B],
   options: {
@@ -522,8 +577,11 @@ describe('ChatPanel', () => {
         }
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
-      renderChatPanel([PROJECT_A]);
-      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
       const input = screen.getByLabelText('メッセージ');
       await user.type(input, 'abort image');
       pasteFiles(input, [makeImageFile('abort.png')]);
@@ -533,8 +591,8 @@ describe('ChatPanel', () => {
         expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
       });
 
-      await user.click(screen.getByRole('tab', { name: 'second thread' }));
-      await user.click(screen.getByRole('tab', { name: 'first thread' }));
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'first thread');
 
       expect(screen.getByLabelText('メッセージ')).toHaveValue('');
       expect(
@@ -1046,13 +1104,16 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], {
+    const { container } = renderChatPanel([PROJECT_A], {
       initialProjectId: 'proj-a',
       initialInput: 'bdboard-x.1 について: ',
       ticketContextToken: 1,
     });
 
-    expect(await screen.findByRole('tab', { name: '既存スレッド' })).toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('既存の履歴')).not.toBeInTheDocument();
     expect(screen.getByLabelText('メッセージ')).toHaveValue('bdboard-x.1 について: ');
   });
@@ -1075,14 +1136,18 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    renderChatPanel([PROJECT_A]);
-    const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
+    const { container } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     await user.type(screen.getByLabelText('メッセージ'), '書きかけのドラフト');
-    await user.click(existingTab);
+    await selectThreadFromDrawer(container, user, '既存スレッド');
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
-    await user.click(screen.getByRole('button', { name: 'スレッド「既存スレッド」を閉じる' }));
+    const menu = await openThreadDrawerItemMenu(container, user, '既存スレッド');
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('書きかけのドラフト');
   });
 
@@ -1102,16 +1167,17 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel([PROJECT_A]);
-    await screen.findByRole('tab', { name: 'first thread' });
+    const { container } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' });
     await user.type(screen.getByLabelText('メッセージ'), 'first draft');
-    await user.click(screen.getByRole('tab', { name: 'second thread' }));
+    await selectThreadFromDrawer(container, user, 'second thread');
     await user.type(screen.getByLabelText('メッセージ'), 'second draft');
     await user.click(screen.getByRole('button', { name: '送信' }));
 
     await screen.findByText('送信成功');
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
-    await user.click(screen.getByRole('tab', { name: 'first thread' }));
+    await selectThreadFromDrawer(container, user, 'first thread');
     expect(screen.getByLabelText('メッセージ')).toHaveValue('first draft');
   });
 
@@ -1148,15 +1214,14 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel([PROJECT_A]);
+    const { container } = renderChatPanel([PROJECT_A]);
     await user.type(screen.getByLabelText('メッセージ'), 'first message');
     await user.click(screen.getByRole('button', { name: '送信' }));
     await screen.findByText('reply');
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
-    await user.click(
-      screen.getByRole('button', { name: 'スレッド「first message」を閉じる' }),
-    );
+    const menu = await openThreadDrawerItemMenu(container, user, 'first message');
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
   });
 
@@ -1182,6 +1247,7 @@ describe('ChatPanel', () => {
     });
 
     const rendered = renderChatPanel([PROJECT_A]);
+    const { container } = rendered;
     expect(await screen.findByText('保持される履歴')).toBeInTheDocument();
     rendered.rerender(
       <ChatPanel
@@ -1195,9 +1261,12 @@ describe('ChatPanel', () => {
       />,
     );
 
-    expect(await screen.findByRole('tab', { name: '既存スレッド' })).toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('保持される履歴')).not.toBeInTheDocument();
-    await userEvent.setup().click(screen.getByRole('tab', { name: '既存スレッド' }));
+    await selectThreadFromDrawer(container, userEvent.setup(), '既存スレッド');
     expect(await screen.findByText('保持される履歴')).toBeInTheDocument();
   });
 
@@ -1217,18 +1286,22 @@ describe('ChatPanel', () => {
       initialInput: '最初のチケット: ',
       ticketContextToken: 1,
     });
-    expect(await screen.findByRole('tab', { name: '既存スレッド' })).toBeInTheDocument();
+    const { container } = rendered;
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText('メッセージ')).toHaveValue('最初のチケット: ');
 
     // N6: 1回目のドラフトから既存スレッドへ手動で切り替え、選択状態を作ってから
     // 2回目のチケット起動を投げる。これにより「2回目のトークンが既存スレッドの
     // 選択を確実に上書きする」ことを、単なる新規ドラフトの初期状態(元々
     // 未選択)ではなく、実際に選択済みだった状態からの遷移として検証できる。
-    await user.click(screen.getByRole('tab', { name: '既存スレッド' }));
-    expect(screen.getByRole('tab', { name: '既存スレッド' })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
+    await selectThreadFromDrawer(container, user, '既存スレッド');
+    openThreadDrawer(container);
+    expect(
+      within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+    ).toHaveAttribute('aria-current', 'true');
 
     rendered.rerender(
       <ChatPanel
@@ -1250,10 +1323,10 @@ describe('ChatPanel', () => {
     // できない(恒真アサーション)。観測可能な差分として、既存スレッドタブが
     // 「選択されていない」(aria-selected=false, つまり新規ドラフトが選択中)
     // ことを直接確認する。
-    expect(screen.getByRole('tab', { name: '既存スレッド' })).toHaveAttribute(
-      'aria-selected',
-      'false',
-    );
+    openThreadDrawer(container);
+    expect(
+      within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+    ).not.toHaveAttribute('aria-current');
   });
 
   it('opens a fresh draft when crossing projects into an already-visited project (MF1 regression)', async () => {
@@ -1294,7 +1367,11 @@ describe('ChatPanel', () => {
     const rendered = renderChatPanel([PROJECT_A, PROJECT_B], {
       initialProjectId: 'proj-b',
     });
-    expect(await screen.findByRole('tab', { name: 'B既存スレッド' })).toBeInTheDocument();
+    const { container } = rendered;
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'B既存スレッド' }),
+    ).toBeInTheDocument();
 
     // 2. プロジェクトA のチケットでチャットを開く(トークン1)。
     rendered.rerender(
@@ -1328,13 +1405,15 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(screen.getByLabelText('メッセージ')).toHaveValue('bdboard-b.1 について: ');
     });
-    expect(await screen.findByRole('tab', { name: 'B既存スレッド' })).toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'B既存スレッド' }),
+    ).toBeInTheDocument();
     expect(screen.queryByText('B既存の履歴')).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: 'B既存スレッド' })).toHaveAttribute(
-        'aria-selected',
-        'false',
-      );
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'B既存スレッド' }),
+      ).not.toHaveAttribute('aria-current');
     });
   });
 
@@ -1366,6 +1445,7 @@ describe('ChatPanel', () => {
     const rendered = renderChatPanel([PROJECT_A, PROJECT_B], {
       initialProjectId: 'proj-a',
     });
+    const { container } = rendered;
     await waitFor(() => {
       expect(fetchChatThreadsMock.mock.calls.some(([id]) => id === 'proj-a')).toBe(true);
     });
@@ -1395,9 +1475,12 @@ describe('ChatPanel', () => {
     // ユーザーが自発的にプロジェクトB へ戻る(ticketContext を介さない通常のナビゲーション)。
     await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
 
-    const existingTab = await screen.findByRole('tab', { name: 'B既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: 'B既存スレッド' });
     await waitFor(() => {
-      expect(existingTab).toHaveAttribute('aria-selected', 'true');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'B既存スレッド' }),
+      ).toHaveAttribute('aria-current', 'true');
     });
   });
 
@@ -1479,7 +1562,7 @@ describe('ChatPanel', () => {
 
     // ticketContextToken 無し(通常のチャットを開いた場合)で、スレッド一覧
     // fetch が pending のうちにユーザーが「新規スレッド」を押す。
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
     await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
@@ -1497,9 +1580,12 @@ describe('ChatPanel', () => {
       },
     ]);
 
-    const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
     await waitFor(() => {
-      expect(existingTab).toHaveAttribute('aria-selected', 'false');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+      ).not.toHaveAttribute('aria-current');
     });
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
     expect(screen.queryByText('既存の履歴')).not.toBeInTheDocument();
@@ -1520,7 +1606,7 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
 
     // fetch が pending のうちはユーザーは何もしない(比較対象の regression
     // テストと違い、明示的な新規ドラフト操作が一切無い)。
@@ -1534,9 +1620,12 @@ describe('ChatPanel', () => {
       },
     ]);
 
-    const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
     await waitFor(() => {
-      expect(existingTab).toHaveAttribute('aria-selected', 'true');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+      ).toHaveAttribute('aria-current', 'true');
     });
   });
 
@@ -1561,7 +1650,7 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
     await screen.findByLabelText('チャットエージェント');
 
     // スレッド一覧 fetch が pending のうちに、エージェントを切り替える。
@@ -1578,9 +1667,12 @@ describe('ChatPanel', () => {
       },
     ]);
 
-    const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
     await waitFor(() => {
-      expect(existingTab).toHaveAttribute('aria-selected', 'false');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+      ).not.toHaveAttribute('aria-current');
     });
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
     expect(screen.queryByText('既存の履歴')).not.toBeInTheDocument();
@@ -1595,7 +1687,7 @@ describe('ChatPanel', () => {
     const deferred = createDeferred<ChatThreadDto[]>();
     fetchChatThreadsMock.mockImplementation(() => deferred.promise);
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
     await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
@@ -1604,8 +1696,9 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('スレッド一覧の取得に失敗しました。')).toBeInTheDocument();
     });
-    const tab = screen.getByRole('tab', { name: '(無題)' });
-    expect(tab).toHaveAttribute('aria-selected', 'false');
+    openThreadDrawer(container);
+    const draftButton = within(getThreadDrawer(container)).getByRole('button', { name: '(無題)' });
+    expect(draftButton).not.toHaveAttribute('aria-current');
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
   });
 
@@ -1632,6 +1725,7 @@ describe('ChatPanel', () => {
 
     // projects が遅延到着する(=プロジェクト未解決のコールドウィンドウ)。
     const rendered = renderChatPanel([], { initialProjectId: 'proj-a' });
+    const { container } = rendered;
 
     // コールド中に「新規スレッド」を押す(draftNonces[''] が 0→1 へ進む)。
     await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
@@ -1664,9 +1758,12 @@ describe('ChatPanel', () => {
       },
     ]);
 
-    const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
     await waitFor(() => {
-      expect(existingTab).toHaveAttribute('aria-selected', 'false');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+      ).not.toHaveAttribute('aria-current');
     });
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
     expect(screen.queryByText('既存の履歴')).not.toBeInTheDocument();
@@ -1705,12 +1802,13 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${url}`);
     });
 
-    renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
 
     // A の最初の fetch が(既存スレッドで)解決してから、明示的に「新規
     // スレッド」を押す — in-flight 中ではなく、既に fetch が片付いた後の
     // 明示操作であることが sticky 判定を確認するうえで重要。
-    await screen.findByRole('tab', { name: '既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
     await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
@@ -1720,9 +1818,12 @@ describe('ChatPanel', () => {
     // A へ戻る → 新しい fetch(A) が発火し、既存スレッドで解決する。
     await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
 
-    const existingTab = await screen.findByRole('tab', { name: '既存スレッド' });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
     await waitFor(() => {
-      expect(existingTab).toHaveAttribute('aria-selected', 'false');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+      ).not.toHaveAttribute('aria-current');
     });
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
     expect(screen.queryByText('既存の履歴')).not.toBeInTheDocument();
@@ -1815,23 +1916,27 @@ describe('ChatPanel', () => {
     );
     openChatSettings(view.container);
 
-    expect(await screen.findByRole('tab', { name: '既存スレッド' })).toBeInTheDocument();
+    openThreadDrawer(view.container);
+    expect(
+      await within(getThreadDrawer(view.container)).findByRole('button', { name: '既存スレッド' }),
+    ).toBeInTheDocument();
     expect(screen.getByLabelText('メッセージ')).toHaveValue('bdboard-x.1 について: ');
     expect(screen.queryByText('既存の履歴')).not.toBeInTheDocument();
     await waitFor(() => {
-      expect(screen.getByRole('tab', { name: '既存スレッド' })).toHaveAttribute(
-        'aria-selected',
-        'false',
-      );
+      expect(
+        within(getThreadDrawer(view.container)).getByRole('button', { name: '既存スレッド' }),
+      ).not.toHaveAttribute('aria-current');
     });
   });
 
   it('opens the CLI session discovery panel', async () => {
     const user = userEvent.setup();
     fetchDiscoveredChatSessionsMock.mockResolvedValue({ sessions: [] });
-    renderChatPanel([PROJECT_A]);
+    const { container } = renderChatPanel([PROJECT_A]);
 
-    await user.click(screen.getByRole('button', { name: 'CLIセッションを再開' }));
+    openThreadDrawer(container);
+    const drawer = getThreadDrawer(container);
+    await user.click(within(drawer).getByRole('button', { name: 'CLIセッションを再開' }));
     expect(await screen.findByText('再開できるCLIセッションはありません。')).toBeInTheDocument();
     expect(fetchDiscoveredChatSessionsMock).toHaveBeenCalledWith('proj-a');
   });
@@ -2053,8 +2158,11 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: GET ${url}`);
     });
 
-    renderChatPanel([PROJECT_A]);
-    expect(await screen.findByRole('tab', { name: 'recovered thread' })).toBeInTheDocument();
+    const { container } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'recovered thread' }),
+    ).toBeInTheDocument();
     initialThreads.resolve([
       {
         sessionId: 'sess-stale',
@@ -2066,8 +2174,13 @@ describe('ChatPanel', () => {
     ]);
     await new Promise((resolve) => setTimeout(resolve, 0));
     await waitFor(() => {
-      expect(screen.queryByRole('tab', { name: 'stale initial thread' })).not.toBeInTheDocument();
-      expect(screen.getByRole('tab', { name: 'recovered thread' })).toBeInTheDocument();
+      openThreadDrawer(container);
+      expect(
+        within(getThreadDrawer(container)).queryByRole('button', { name: 'stale initial thread' }),
+      ).not.toBeInTheDocument();
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'recovered thread' }),
+      ).toBeInTheDocument();
     });
   });
 
@@ -2240,8 +2353,11 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
-      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
 
       await user.type(screen.getByLabelText('メッセージ'), 'message for first');
       await user.click(screen.getByRole('button', { name: '送信' }));
@@ -2252,7 +2368,7 @@ describe('ChatPanel', () => {
       });
       expect(capturedSignal.current).toBeDefined();
 
-      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+      await selectThreadFromDrawer(container, user, 'second thread');
 
       await waitFor(() => {
         expect(capturedSignal.current?.aborted).toBe(true);
@@ -2337,15 +2453,18 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
-      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
       await user.type(screen.getByLabelText('メッセージ'), 'finish after switch');
       await user.click(screen.getByRole('button', { name: '送信' }));
       await waitFor(() => {
         expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
       });
 
-      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+      await selectThreadFromDrawer(container, user, 'second thread');
       expect(
         await screen.findByText('返信をバックグラウンドで処理中…'),
       ).toBeInTheDocument();
@@ -2357,7 +2476,7 @@ describe('ChatPanel', () => {
         ),
       ).toBeInTheDocument();
 
-      await user.click(screen.getByRole('tab', { name: 'first thread' }));
+      await selectThreadFromDrawer(container, user, 'first thread');
       expect(
         await screen.findByText('recovered detached reply'),
       ).toBeInTheDocument();
@@ -2450,14 +2569,17 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
-      expect(await screen.findByRole('tab', { name: 'bulk thread' })).toBeInTheDocument();
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'bulk thread' }),
+      ).toBeInTheDocument();
       await waitFor(() => {
         expect(screen.getByLabelText('チャットエージェント')).toHaveValue('recovery-agent');
       });
       await user.type(screen.getByLabelText('メッセージ'), 'bulk before switch');
       await user.click(screen.getByRole('button', { name: '送信' }));
-      await user.click(screen.getByRole('tab', { name: 'other thread' }));
+      await selectThreadFromDrawer(container, user, 'other thread');
       await waitFor(() => expect(capturedBulkSignal?.aborted).toBe(true));
       expect(
         await screen.findByText(
@@ -2467,7 +2589,7 @@ describe('ChatPanel', () => {
         ),
       ).toBeInTheDocument();
 
-      await user.click(screen.getByRole('tab', { name: 'bulk thread' }));
+      await selectThreadFromDrawer(container, user, 'bulk thread');
       expect(await screen.findByText('bulk recovered reply')).toBeInTheDocument();
       await waitFor(() => {
         expect(screen.getByLabelText('チャットエージェント')).toHaveValue('recovery-agent');
@@ -2572,8 +2694,11 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
-      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
 
       await user.type(screen.getByLabelText('メッセージ'), 'abort without error bubble');
       await user.click(screen.getByRole('button', { name: '送信' }));
@@ -2582,12 +2707,12 @@ describe('ChatPanel', () => {
         expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
       });
 
-      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+      await selectThreadFromDrawer(container, user, 'second thread');
       await waitFor(() => {
         expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
       });
 
-      await user.click(screen.getByRole('tab', { name: 'first thread' }));
+      await selectThreadFromDrawer(container, user, 'first thread');
       const firstThreadMessages = screen.getByRole('log');
       await waitFor(() => {
         expect(within(firstThreadMessages).getByText('abort without error bubble')).toBeInTheDocument();
@@ -2731,8 +2856,11 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
-      expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
 
       const input = screen.getByLabelText('メッセージ');
       await user.type(input, 'message for the first thread');
@@ -2740,7 +2868,7 @@ describe('ChatPanel', () => {
 
       // 送信中でもスレッドタブの切り替え自体は disabled になっていないため、
       // ユーザーは送信の完了を待たずに別スレッドへ切り替えられる。
-      await user.click(screen.getByRole('tab', { name: 'second thread' }));
+      await selectThreadFromDrawer(container, user, 'second thread');
       // 現在表示中(second thread)の入力欄は、まだ何も打っていないので空のまま。
       expect(screen.getByLabelText('メッセージ')).toHaveValue('');
 
@@ -2755,7 +2883,7 @@ describe('ChatPanel', () => {
         expect(screen.getByLabelText('メッセージ')).toHaveValue('');
       });
 
-      await user.click(screen.getByRole('tab', { name: 'first thread' }));
+      await selectThreadFromDrawer(container, user, 'first thread');
       await waitFor(() => {
         expect(screen.getByLabelText('メッセージ')).toHaveValue('message for the first thread');
       });
@@ -2904,24 +3032,31 @@ describe('ChatPanel', () => {
       if (url === '/api/chat/message' && init?.method === 'POST') return jsonResponse({ reply: 'reply', sessionId: 'sess-2', agentId: 'claude' });
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
-    renderChatPanel([PROJECT_A]);
+    const { container } = renderChatPanel([PROJECT_A]);
 
-    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
     expect(await screen.findByText('one')).toBeInTheDocument();
-    await user.click(screen.getByRole('tab', { name: 'second thread' }));
+    await selectThreadFromDrawer(container, user, 'second thread');
     expect(await screen.findByText('two')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'スレッド「second thread」を閉じる' }));
-    expect(screen.queryByRole('tab', { name: 'second thread' })).not.toBeInTheDocument();
+    let menu = await openThreadDrawerItemMenu(container, user, 'second thread');
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
+    openThreadDrawer(container);
+    // タブから閉じても削除はされない。「開いているスレッド」からは外れ、
+    // 「閉じたスレッド」の行として引き続き見える(chat-thread-drawer-item-closed)。
+    expect(
+      within(getThreadDrawer(container)).getByText('second thread').closest('.chat-thread-drawer-item'),
+    ).toHaveClass('chat-thread-drawer-item-closed');
     expect(deleteChatThreadMock).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('tab', { name: 'first thread' }));
-    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」を削除' }));
+    menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: '削除' }));
     expect(deleteChatThreadMock).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」の削除を確定' }));
+    menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: '本当に削除' }));
     await waitFor(() => expect(deleteChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a'));
-    expect(screen.queryByRole('tab', { name: 'first thread' })).not.toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(within(getThreadDrawer(container)).queryByRole('button', { name: 'first thread' })).not.toBeInTheDocument();
   });
 
   it('renames a thread via inline edit and clears custom title when empty', async () => {
@@ -2942,10 +3077,10 @@ describe('ChatPanel', () => {
       }
       throw new Error(`Unexpected fetch: GET ${url}`);
     });
-    renderChatPanel([PROJECT_A]);
+    const { container } = renderChatPanel([PROJECT_A]);
 
-    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」をリネーム' }));
+    let menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: 'リネーム' }));
 
     const renameInput = screen.getByLabelText('スレッド「first thread」の新しいタイトル');
     await user.clear(renameInput);
@@ -2955,9 +3090,13 @@ describe('ChatPanel', () => {
     await waitFor(() =>
       expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { title: 'renamed thread' }),
     );
-    expect(await screen.findByRole('tab', { name: 'renamed thread' })).toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'renamed thread' }),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'スレッド「renamed thread」をリネーム' }));
+    menu = await openThreadDrawerItemMenu(container, user, 'renamed thread');
+    await user.click(within(menu).getByRole('menuitem', { name: 'リネーム' }));
     const clearInput = screen.getByLabelText('スレッド「renamed thread」の新しいタイトル');
     await user.clear(clearInput);
     fireEvent.blur(clearInput);
@@ -2985,16 +3124,17 @@ describe('ChatPanel', () => {
       }
       throw new Error(`Unexpected fetch: GET ${url}`);
     });
-    renderChatPanel([PROJECT_A]);
+    const { container } = renderChatPanel([PROJECT_A]);
 
-    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」をピン留め' }));
+    let menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: 'ピン留め' }));
     await waitFor(() =>
       expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { pinned: true }),
     );
-    expect(screen.getByRole('button', { name: 'スレッド「first thread」のピン留めを解除' })).toBeInTheDocument();
+    menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    expect(within(menu).getByRole('menuitem', { name: 'ピン留め解除' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」のピン留めを解除' }));
+    await user.click(within(menu).getByRole('menuitem', { name: 'ピン留め解除' }));
     await waitFor(() =>
       expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { pinned: false }),
     );
@@ -3012,10 +3152,10 @@ describe('ChatPanel', () => {
       }
       throw new Error(`Unexpected fetch: GET ${url}`);
     });
-    renderChatPanel([PROJECT_A]);
+    const { container } = renderChatPanel([PROJECT_A]);
 
-    expect(await screen.findByRole('tab', { name: 'first thread' })).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'スレッド「first thread」をピン留め' }));
+    const menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: 'ピン留め' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('ピン留めの変更に失敗しました。');
   });
@@ -3415,7 +3555,9 @@ describe('ChatPanel', () => {
       expect(textarea).toBeDisabled();
       expect(submitButton).toBeDisabled();
     });
-    expect(screen.getByText('考え中…（最大3分かかることがあります）')).toBeInTheDocument();
+    expect(
+      screen.getByText(/考え中…\d+秒（最大3分かかることがあります）/),
+    ).toBeInTheDocument();
 
     deferred.resolve(
       jsonResponse({ reply: 'done', sessionId: 'sess-done', agentId: 'claude' }),
@@ -4257,19 +4399,22 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
 
-    expect(await screen.findByRole('tab', { name: 'thread A' })).toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'thread A' }),
+    ).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.getByLabelText('モデル')).toHaveValue('sonnet');
     });
 
-    await user.click(screen.getByRole('tab', { name: 'thread B' }));
+    await selectThreadFromDrawer(container, user, 'thread B');
     await waitFor(() => {
       expect(screen.getByLabelText('モデル')).toHaveValue('opus');
     });
 
-    await user.click(screen.getByRole('tab', { name: 'thread A' }));
+    await selectThreadFromDrawer(container, user, 'thread A');
     await waitFor(() => {
       expect(screen.getByLabelText('モデル')).toHaveValue('sonnet');
     });
@@ -4522,13 +4667,14 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
     await waitFor(() => {
       expect(screen.queryByText('履歴を読み込み中…')).not.toBeInTheDocument();
     });
     await waitFor(() => {
+      openThreadDrawer(container);
       expect(
-        screen.queryByRole('tab', { name: 'evicted thread' }),
+        within(getThreadDrawer(container)).queryByRole('button', { name: 'evicted thread' }),
       ).not.toBeInTheDocument();
     });
 
@@ -4569,21 +4715,23 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
     await waitFor(() => {
       expect(screen.queryByText('履歴を読み込み中…')).not.toBeInTheDocument();
     });
     await waitFor(() => {
+      openThreadDrawer(container);
       expect(
-        screen.queryByRole('tab', { name: 'evicted prune thread' }),
+        within(getThreadDrawer(container)).queryByRole('button', { name: 'evicted prune thread' }),
       ).not.toBeInTheDocument();
     });
 
     // (1) threadLists からも prune 済みなので、候補が無くなり reopen dropdown
     // 自体が現れない。
     await waitFor(() => {
+      openThreadDrawer(container);
       expect(
-        screen.queryByRole('combobox', { name: '閉じたスレッドを開く' }),
+        within(getThreadDrawer(container)).queryByText('閉じたスレッド'),
       ).not.toBeInTheDocument();
     });
 
@@ -4642,16 +4790,15 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+    const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
     await waitFor(() => {
       expect(screen.queryByText('履歴を読み込み中…')).not.toBeInTheDocument();
     });
 
     // 唯一開いていた 'sess-parked' タブを閉じ、draft nonce 0 のドラフトへ
     // 落ちる (既存経路、今回の修正対象外)。
-    await user.click(
-      screen.getByRole('button', { name: 'スレッド「parked thread」を閉じる' }),
-    );
+    const menu = await openThreadDrawerItemMenu(container, user, 'parked thread');
+    await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
 
     // nonce 0 のドラフトから送信し、新セッション 'sess-first' が確定する。
     // applyChatSuccess は旧 draftKey ('new:proj-a:0') のエントリを消さずに
@@ -4660,18 +4807,16 @@ describe('ChatPanel', () => {
     await user.click(screen.getByRole('button', { name: '送信' }));
     await screen.findByText('first reply');
 
-    // 「閉じたスレッドを開く」から、後で 404 する 'sess-evicted-orphan' を
+    // 閉じたスレッド一覧から、後で 404 する 'evicted orphan thread' を
     // 選択する。draft nonce はまだ 0 のまま進んでいない。
-    await user.selectOptions(
-      screen.getByRole('combobox', { name: '閉じたスレッドを開く' }),
-      'sess-evicted-orphan',
-    );
+    await selectThreadFromDrawer(container, user, 'evicted orphan thread');
 
     // 404 による自動回復でドラフトへ戻る。修正前は同じ nonce 0 の draftKey
     // へ戻るため、上で送信した 'first message' が孤児として再表示されていた。
     await waitFor(() => {
+      openThreadDrawer(container);
       expect(
-        screen.queryByRole('tab', { name: 'evicted orphan thread' }),
+        within(getThreadDrawer(container)).queryByRole('button', { name: 'evicted orphan thread' }),
       ).not.toBeInTheDocument();
     });
     expect(
@@ -5070,19 +5215,19 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
+      const { container } = renderChatPanel([PROJECT_A]);
 
-      await user.click(screen.getByRole('button', { name: 'CLIセッションを再開' }));
+      openThreadDrawer(container);
+      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }));
       await user.click(await screen.findByRole('button', { name: 'セッション discovered-1 を再開' }));
 
       // 履歴シードは adopt レスポンス同梱の seedMessages から反映される (M1)。
       expect(await screen.findByText('seeded question')).toBeInTheDocument();
       expect(screen.getByText('seeded answer')).toBeInTheDocument();
 
-      // selectedThreadIds が新セッションIDへ retarget され、タブが選択状態になる (S3)。
-      const tabs = screen.getAllByRole('tab');
-      expect(tabs).toHaveLength(1);
-      expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
+      // selectedThreadIds が新セッションIDへ retarget され、開いているスレッドが
+      // 1件・選択中であることがスイッチャーの件数表示に反映される (S3)。
+      expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 1');
 
       // openThreadIds に新セッションIDが加わり、writePersistedChatThreadState の
       // ペイロードが activeSessionIds/selectedSessionId とも正しい (S3/S4)。
@@ -5121,9 +5266,10 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A]);
+      const { container } = renderChatPanel([PROJECT_A]);
 
-      await user.click(screen.getByRole('button', { name: 'CLIセッションを再開' }));
+      openThreadDrawer(container);
+      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }));
       await user.click(await screen.findByRole('button', { name: 'セッション discovered-2 を再開' }));
 
       expect(
@@ -5187,7 +5333,7 @@ describe('ChatPanel', () => {
         throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
       });
 
-      renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+      const { container } = renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
 
       await waitFor(() => {
         expect(
@@ -5200,7 +5346,8 @@ describe('ChatPanel', () => {
       });
       expect(await screen.findByText('履歴を読み込み中…')).toBeInTheDocument();
 
-      await user.click(screen.getByRole('button', { name: 'CLIセッションを再開' }));
+      openThreadDrawer(container);
+      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }));
       await user.click(await screen.findByRole('button', { name: 'セッション sess-dup を再開' }));
 
       expect(await screen.findByText('resumed question')).toBeInTheDocument();
