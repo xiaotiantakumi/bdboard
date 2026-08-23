@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TunnelDto } from '../api';
@@ -12,7 +12,7 @@ import {
 } from '../test/tunnelFetchMock';
 import { TUNNEL_NOT_RUNNING_HELP } from '../writeAccessMessage';
 
-function renderTunnelControl() {
+function renderTunnelControl(onClose: () => void = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -20,11 +20,14 @@ function renderTunnelControl() {
     },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <TunnelControl />
-    </QueryClientProvider>,
-  );
+  return {
+    onClose,
+    ...render(
+      <QueryClientProvider client={queryClient}>
+        <TunnelControl open onClose={onClose} />
+      </QueryClientProvider>,
+    ),
+  };
 }
 
 describe('TunnelControl publish confirmation', () => {
@@ -164,6 +167,41 @@ describe('TunnelControl publish confirmation', () => {
     const dialog = screen.getByRole('alertdialog');
     expect(dialog).toHaveTextContent('公開後のQRコードから開きます');
     expect(dialog).not.toHaveTextContent('公開後にこの画面に表示されます');
+  });
+
+  it('calls onClose when the modal close button is clicked', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderTunnelControl(onClose);
+
+    const modal = await screen.findByRole('dialog');
+    await user.click(within(modal).getByRole('button', { name: '閉じる' }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onClose when the overlay is clicked', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const { container } = renderTunnelControl(onClose);
+
+    await screen.findByRole('dialog');
+    const overlay = container.querySelector('.tunnel-modal-overlay');
+    expect(overlay).not.toBeNull();
+    await user.click(overlay!);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onClose when Escape is pressed outside publish confirmation', async () => {
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderTunnelControl(onClose);
+
+    await screen.findByRole('dialog');
+    await user.keyboard('{Escape}');
+
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -398,7 +436,8 @@ describe('TunnelControl tunnel interruption notice', () => {
     renderTunnelControl();
 
     await screen.findByRole('status');
-    await user.click(screen.getByRole('button', { name: '閉じる' }));
+    const notice = screen.getByRole('status');
+    await user.click(within(notice).getByRole('button', { name: '閉じる' }));
 
     await waitFor(() => {
       expect(countTunnelDismissPosts(fetchMock)).toBe(1);

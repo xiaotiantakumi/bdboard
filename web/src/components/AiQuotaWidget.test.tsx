@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiQuotaWidget } from './AiQuotaWidget';
 import type { AiQuotaDto } from '../api';
@@ -39,6 +40,7 @@ describe('AiQuotaWidget', () => {
   });
 
   it('renders percent + reset time chips for providers with live metrics', async () => {
+    const user = userEvent.setup();
     installFetchMock({
       state: 'ok',
       fetchedAt: '2026-08-15T00:00:00.000Z',
@@ -68,7 +70,11 @@ describe('AiQuotaWidget', () => {
 
     renderWidget();
 
-    await screen.findByText('agy');
+    expect(await screen.findByRole('button', { name: 'AIクォータ 8%使用' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'AIクォータ 8%使用' }));
+
+    expect(screen.getByText('agy')).toBeInTheDocument();
     expect(screen.getByText('週次 92%')).toBeInTheDocument();
     expect(screen.getByText('5時間 空きあり')).toBeInTheDocument();
     expect(screen.getByText('Credits 25 credits')).toBeInTheDocument();
@@ -86,23 +92,42 @@ describe('AiQuotaWidget', () => {
   });
 
   it('renders a safe failure note when the API reports an error state', async () => {
+    const user = userEvent.setup();
     installFetchMock({
       state: 'error',
       message: 'ai-quota exited with code 127',
     });
 
     renderWidget();
-    expect(await screen.findByText('取得失敗')).toBeInTheDocument();
+    const badge = await screen.findByRole('button', { name: '取得失敗' });
+    expect(badge).toBeInTheDocument();
+
+    await user.click(badge);
+    expect(
+      screen.getByText(
+        'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('renders a safe failure note when the fetch itself fails', async () => {
+    const user = userEvent.setup();
     installFetchMock('network-error');
 
     renderWidget();
-    expect(await screen.findByText('取得失敗')).toBeInTheDocument();
+    const badge = await screen.findByRole('button', { name: '取得失敗' });
+    expect(badge).toBeInTheDocument();
+
+    await user.click(badge);
+    expect(
+      screen.getByText(
+        'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('renders manual and unavailable providers with safe confirmation guidance', async () => {
+    const user = userEvent.setup();
     installFetchMock({
       state: 'ok',
       fetchedAt: '2026-08-15T00:00:00.000Z',
@@ -127,13 +152,18 @@ describe('AiQuotaWidget', () => {
     });
 
     renderWidget();
-    expect(await screen.findByText('claude')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'AIクォータ 0%使用' }));
+
+    expect(screen.getByText('claude')).toBeInTheDocument();
+    await user.click(screen.getByText('手動確認'));
     expect(screen.getByText(/自動取得未対応.*\/usage/)).toBeInTheDocument();
     expect(screen.getByText('codex')).toBeInTheDocument();
+    await user.click(screen.getByText('取得失敗'));
     expect(screen.getByText(/ライブ取得できず.*\/status/)).toBeInTheDocument();
   });
 
   it('renders a safe failure note if an empty provider response reaches the UI', async () => {
+    const user = userEvent.setup();
     installFetchMock({
       state: 'ok',
       fetchedAt: '2026-08-15T00:00:00.000Z',
@@ -141,6 +171,14 @@ describe('AiQuotaWidget', () => {
     });
 
     renderWidget();
-    expect(await screen.findByText('取得失敗')).toBeInTheDocument();
+    const badge = await screen.findByRole('button', { name: '取得失敗' });
+    expect(badge).toBeInTheDocument();
+
+    await user.click(badge);
+    expect(
+      screen.getByText(
+        'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。',
+      ),
+    ).toBeInTheDocument();
   });
 });
