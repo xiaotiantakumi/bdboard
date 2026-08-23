@@ -93,7 +93,23 @@ export function useHistoryBackClose({
 
       if (pushedRef.current) {
         pushedRef.current = false;
-        window.history.back();
+        // history.back() は非同期(実ブラウザではpopstateの発火が次タスクまで
+        // 遅延する)。React 18 StrictMode の開発モードは effect を
+        // 「マウント→クリーンアップ→再マウント」の順で同一tick内に同期的に
+        // 二重実行するため、ここで同期的に back() を呼ぶと、直後の再マウントが
+        // 同じトークンで pushState し直した後に、遅れて発火した popstate が
+        // (back() 要求後にpushされた分だけ余分に戻ってしまい)トークン不一致の
+        // stateで届いてしまい、開いたばかりのパネルを誤って閉じてしまう
+        // (実機のpushState/back/popstateのタイミングを計測して確認: 2026-08-24,
+        // bdboard-ge1)。back() 呼び出しをマイクロタスクへ遅延し、その時点でも
+        // まだ pushedRef が false のまま(=同期的な再マウントで再pushされて
+        // いない、つまり本当にアンマウントされた)場合にのみ実行することで、
+        // StrictMode の二重実行を安全に無視できるようにする。
+        queueMicrotask(() => {
+          if (!pushedRef.current) {
+            window.history.back();
+          }
+        });
       }
     };
   }, [enabled, panelId]);
