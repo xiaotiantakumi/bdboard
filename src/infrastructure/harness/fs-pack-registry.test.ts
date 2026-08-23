@@ -82,7 +82,7 @@ describe('createFsPackRegistry (repo fixture)', () => {
 
     expect(pack).toMatchObject({
       name: 'bdboard-harness',
-      version: '0.1.1',
+      version: '0.1.2',
     });
     expect(pack?.files.some((file) => file.relativePath === 'SKILL.md')).toBe(true);
     expect(

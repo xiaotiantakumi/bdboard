@@ -51,5 +51,9 @@ bd gate create --type=human --blocks <id> --reason="<一行要約>"
 - **再開手順を省かない**。回答時点で元のセッションは死んでいる前提。worktree の場所と
   途中状態を書いていないと、回答が来ても再開コストが跳ね上がる。
 - 特定チケットに紐づかない横断的な確認は、このテンプレで**質問専用チケット**を切って
-  human ラベルを付ける（その場合は `bd human respond` がチケットごと close する運用でよい。
-  作業チケット直付けの場合に respond で作業チケットを close しないこと）。
+  human ラベルを付ける。質問専用チケットへの回答は `bd comment <id> "<回答>"` で本文を
+  書き、続けて `bd close <id>` でチケットごと閉じる。**`bd human respond` は使わない** —
+  upstream の respond/dismiss はストア初期化を経ずに実行される "storage is nil" regression を
+  抱えており確定的に失敗するため、comment+close の2コマンドへ置換済み（bdboard の
+  「回答を送信」も同じ置換で動く）。作業チケット直付けの質問では、回答が来ても作業チケットを
+  close しないこと（close はマージ成功後だけ — SKILL.md 規律4）。
