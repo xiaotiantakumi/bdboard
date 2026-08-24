@@ -7,9 +7,6 @@ const AI_QUOTA_QUERY_KEY = ['ai-quota'] as const;
 // ポーリングしても意味が無い。
 const POLL_INTERVAL_MS = 5 * 60 * 1000;
 
-const QUOTA_FETCH_ERROR_DETAIL =
-  'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。';
-
 const PERIOD_LABELS: Record<string, string> = {
   Weekly: '週次',
   'Five Hour': '5時間',
@@ -114,14 +111,10 @@ function ManualProviderNote({ provider }: { provider: AiQuotaProviderDto }) {
       <span className="ai-quota-provider-label">{provider.id}</span>
       <details className="ai-quota-note">
         <summary
-          className={
-            provider.availability === 'unavailable'
-              ? 'ai-quota-chip ai-quota-chip-warn'
-              : 'ai-quota-chip ai-quota-chip-manual'
-          }
+          className="ai-quota-chip ai-quota-chip-manual"
           aria-label={`${provider.label}: ${provider.detail ?? '数値を自動取得できません'}`}
         >
-          {provider.availability === 'manual' ? '手動確認' : '取得失敗'}
+          手動確認
         </summary>
         <span className="ai-quota-note-detail">
           {provider.detail ?? '数値を自動取得できません。対象サービスで確認してください。'}
@@ -152,14 +145,7 @@ function computeQuotaSummary(providers: AiQuotaProviderDto[]): {
   return { maxUsagePercent, isExhausted };
 }
 
-function badgeClassName(
-  isFailure: boolean,
-  maxUsagePercent: number,
-  isExhausted: boolean,
-): string {
-  if (isFailure) {
-    return 'ai-quota-badge ai-quota-badge-warn';
-  }
+function badgeClassName(maxUsagePercent: number, isExhausted: boolean): string {
   if (isExhausted || maxUsagePercent >= 100) {
     return 'ai-quota-badge ai-quota-badge-critical';
   }
@@ -171,7 +157,7 @@ function badgeClassName(
 
 /**
  * ヘッダに常駐する、連携AIのクォータ残量ウィジェット。数値を自動取得できない
- * プロバイダも、手動確認方法または取得失敗理由を開閉できる注記で案内する。
+ * プロバイダは手動確認方法を開閉できる注記で案内する。取得に失敗した場合は非表示。
  */
 export function AiQuotaWidget() {
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -208,24 +194,20 @@ export function AiQuotaWidget() {
   }, [popoverOpen]);
 
   const data = query.data;
-  if (!query.isError && data === undefined) {
+  if (query.isError || data === undefined || data.state === 'error') {
     return null;
   }
 
-  const providers =
-    data !== undefined && data.state === 'ok' ? data.providers : [];
-  const isFailure =
-    query.isError || data?.state === 'error' || providers.length === 0;
-  const { maxUsagePercent, isExhausted } = computeQuotaSummary(providers);
+  const providers = data.state === 'ok' ? data.providers : [];
   const liveProviders = providers.filter((provider) => provider.availability === 'live');
-  const manualProviders = providers.filter(
-    (provider) =>
-      provider.availability === 'manual' || provider.availability === 'unavailable',
-  );
+  if (liveProviders.length === 0) {
+    return null;
+  }
 
-  const badgeLabel = isFailure
-    ? '取得失敗'
-    : `AIクォータ ${maxUsagePercent}%使用`;
+  const { maxUsagePercent, isExhausted } = computeQuotaSummary(liveProviders);
+  const manualProviders = providers.filter((provider) => provider.availability === 'manual');
+
+  const badgeLabel = `AIクォータ ${maxUsagePercent}%使用`;
 
   return (
     <div
@@ -235,7 +217,7 @@ export function AiQuotaWidget() {
     >
       <button
         type="button"
-        className={badgeClassName(isFailure, maxUsagePercent, isExhausted)}
+        className={badgeClassName(maxUsagePercent, isExhausted)}
         aria-expanded={popoverOpen}
         aria-haspopup="dialog"
         onClick={() => {
@@ -247,15 +229,9 @@ export function AiQuotaWidget() {
 
       {popoverOpen && (
         <div className="ai-quota-popover" role="region" aria-label="AIクォータ詳細">
-          {isFailure ? (
-            <p className="ai-quota-popover-error">{QUOTA_FETCH_ERROR_DETAIL}</p>
-          ) : (
-            <>
-              {liveProviders.map((provider) => (
-                <ProviderChips key={provider.id} provider={provider} />
-              ))}
-            </>
-          )}
+          {liveProviders.map((provider) => (
+            <ProviderChips key={provider.id} provider={provider} />
+          ))}
 
           {manualProviders.length > 0 && (
             <div className="ai-quota-popover-manual">
