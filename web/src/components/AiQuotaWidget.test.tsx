@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AiQuotaWidget } from './AiQuotaWidget';
@@ -91,47 +91,46 @@ describe('AiQuotaWidget', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('renders a safe failure note when the API reports an error state', async () => {
-    const user = userEvent.setup();
+  it('renders nothing when the API reports an error state', async () => {
     installFetchMock({
       state: 'error',
       message: 'ai-quota exited with code 127',
     });
 
-    renderWidget();
-    const badge = await screen.findByRole('button', { name: '取得失敗' });
-    expect(badge).toBeInTheDocument();
-
-    await user.click(badge);
-    expect(
-      screen.getByText(
-        'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。',
-      ),
-    ).toBeInTheDocument();
+    const { container } = renderWidget();
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 
-  it('renders a safe failure note when the fetch itself fails', async () => {
-    const user = userEvent.setup();
+  it('renders nothing when the fetch itself fails', async () => {
     installFetchMock('network-error');
 
-    renderWidget();
-    const badge = await screen.findByRole('button', { name: '取得失敗' });
-    expect(badge).toBeInTheDocument();
-
-    await user.click(badge);
-    expect(
-      screen.getByText(
-        'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。',
-      ),
-    ).toBeInTheDocument();
+    const { container } = renderWidget();
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 
-  it('renders manual and unavailable providers with safe confirmation guidance', async () => {
+  it('renders only manual providers, hides providers whose auto-fetch failed', async () => {
     const user = userEvent.setup();
     installFetchMock({
       state: 'ok',
       fetchedAt: '2026-08-15T00:00:00.000Z',
       providers: [
+        {
+          id: 'agy',
+          label: 'Antigravity (Gemini sub)',
+          vendor: 'Google',
+          plan: 'Google AI Pro',
+          availability: 'live',
+          metrics: [
+            {
+              label: 'GEMINI MODELS Weekly Limit Remaining',
+              percentRemaining: 100,
+            },
+          ],
+        },
         {
           id: 'claude',
           label: 'Claude Code (claude.ai sub)',
@@ -154,31 +153,54 @@ describe('AiQuotaWidget', () => {
     renderWidget();
     await user.click(await screen.findByRole('button', { name: 'AIクォータ 0%使用' }));
 
+    expect(screen.getByText('agy')).toBeInTheDocument();
     expect(screen.getByText('claude')).toBeInTheDocument();
     await user.click(screen.getByText('手動確認'));
     expect(screen.getByText(/自動取得未対応.*\/usage/)).toBeInTheDocument();
-    expect(screen.getByText('codex')).toBeInTheDocument();
-    await user.click(screen.getByText('取得失敗'));
-    expect(screen.getByText(/ライブ取得できず.*\/status/)).toBeInTheDocument();
+    expect(screen.queryByText('codex')).not.toBeInTheDocument();
+    expect(screen.queryByText('取得失敗')).not.toBeInTheDocument();
   });
 
-  it('renders a safe failure note if an empty provider response reaches the UI', async () => {
-    const user = userEvent.setup();
+  it('renders nothing if an empty provider response reaches the UI', async () => {
     installFetchMock({
       state: 'ok',
       fetchedAt: '2026-08-15T00:00:00.000Z',
       providers: [],
     });
 
-    renderWidget();
-    const badge = await screen.findByRole('button', { name: '取得失敗' });
-    expect(badge).toBeInTheDocument();
+    const { container } = renderWidget();
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement();
+    });
+  });
 
-    await user.click(badge);
-    expect(
-      screen.getByText(
-        'ai-quota コマンドを実行できませんでした。各CLIまたはダッシュボードで確認してください。',
-      ),
-    ).toBeInTheDocument();
+  it('renders nothing when all providers are unavailable (no live metrics)', async () => {
+    installFetchMock({
+      state: 'ok',
+      fetchedAt: '2026-08-15T00:00:00.000Z',
+      providers: [
+        {
+          id: 'codex',
+          label: 'Codex (ChatGPT sub)',
+          vendor: 'OpenAI',
+          availability: 'unavailable',
+          detail: 'ライブ取得できず。確認方法: codex 起動 → `/status`。',
+          metrics: [],
+        },
+        {
+          id: 'cursor',
+          label: 'Cursor',
+          vendor: 'Cursor',
+          availability: 'unavailable',
+          detail: 'ライブ取得できず。',
+          metrics: [],
+        },
+      ],
+    });
+
+    const { container } = renderWidget();
+    await waitFor(() => {
+      expect(container).toBeEmptyDOMElement();
+    });
   });
 });
