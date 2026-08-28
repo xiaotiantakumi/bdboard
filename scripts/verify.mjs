@@ -10,8 +10,8 @@
 // spawn detached + process.kill(-pid)) と同じプロセスグループkillパターンを、
 // 「開発者/エージェントが verify を起動する経路」に適用する。
 //
-// 構造 (dev=macOS / CI=Linux+Windows。win32 でも verify:steps は動くが、
-// kill 機構は POSIX 限定 — 下の killGroup の注記を参照):
+// 構造 (dev=macOS / CI=Linux+Windows。kill 機構は POSIX がプロセスグループ、
+// win32 が taskkill /T で、分岐は process-tree.mjs に集約してある — bdboard-6l7):
 //
 //   npm run verify
 //     └─ node scripts/verify.mjs              … 外側。呼び出し元の直系(タイムアウトで殺される側)
@@ -20,8 +20,9 @@
 //
 // - 外側が SIGTERM/SIGINT/SIGHUP を受けたら: リーダーのグループ全体に SIGTERM →
 //   GRACE_MS 後に SIGKILL。verify の全プロセス(ワーカー含む)が確実に死ぬ。
-// - 外側が SIGKILL 等で掃除なしに死んだ場合: リーダーが自分の PPID=1 化を検知して
-//   自グループごと SIGTERM → SIGKILL する(孤児化の恒久防止)。
+// - 外側が SIGKILL 等で掃除なしに死んだ場合: リーダーが自分の孤児化を検知して
+//   自グループごと SIGTERM → SIGKILL する(孤児化の恒久防止)。検知は POSIX が
+//   PPID=1、win32 が「起動時に控えた親 PID の生存確認」(process-tree.mjs)。
 // - どちらの監視も常時稼働サーバー(BDBOARD_PORT)や無関係な node には触れない
 //   (対象は自分の作った新プロセスグループのみ)。
 //
@@ -31,35 +32,16 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { npmRunSpawnSpec } from './npm-command.mjs';
+import { isOrphaned, killProcessTree } from './process-tree.mjs';
 import { acquireVerifySlot, envSlotOptions, SlotWaitTimeoutError } from './verify-slot.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// node-command-runner.ts の killGroup と同じ: グループ宛てに送り、ESRCH は無視する。
-//
-// win32 ではこの関数は丸ごと no-op になる。libuv の uv_kill (src/win/process.c) は
-// 負の pid をそのまま OpenProcess に渡し、負値が巨大な DWORD になって失敗するため
-// ERROR_INVALID_PARAMETER -> UV_ESRCH にマップされる。ESRCH は上で握りつぶすので
-// 単発 kill のフォールバックにも入らない。つまり win32 でタイムアウトした場合、
-// 子孫ツリー (cmd.exe -> npm -> vitest ワーカー) は残る。リーダーの孤児検知
-// process.ppid === 1 も win32 では成立しない (親が死んでも reparent されない)。
-// CI は使い捨て VM なので実害は限定的だが、Windows をサポート対象に格上げするなら
-// taskkill /T か platform 分岐が要る (bdboard-6l7)。
-function killGroup(pid, signal) {
-  try {
-    process.kill(-pid, signal);
-  } catch (error) {
-    if (error.code !== 'ESRCH') {
-      try {
-        process.kill(pid, signal);
-      } catch {
-        /* already gone */
-      }
-    }
-  }
-}
+// 起動時の親 PID。win32 の孤児検知はこれの生存確認で行う (process-tree.mjs の isOrphaned)。
+// 分岐前に採るので、外側モードでは呼び出し元シェル、リーダーモードでは外側の PID になる。
+const INITIAL_PPID = process.ppid;
 
 const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGKILL: 137, SIGTERM: 143 };
 
@@ -72,17 +54,34 @@ if (process.argv.includes('--group-leader')) {
     ...options,
   });
 
+  // 後始末の根にする pid。
+  //
+  // POSIX は自分を含むプロセスグループ全体 (自分も道連れでよい) なので process.pid。
+  // win32 は taskkill を spawn する方式なので自分の pid を根にすると、taskkill 自身が
+  // リーダーの子 = /T の走査対象ツリーの中に入り、走査の途中で自分や親を殺してツリーの
+  // 一部が生き残りうる (fable レビュー指摘, bdboard-6l7)。npm 子を根にすれば taskkill は
+  // 対象ツリーの外に出る。リーダー自身は child の exit を受けて通常経路で終わるので
+  // 掃除は完結するし、リーダーが刺さった場合は外側モードの
+  // killProcessTree(leader.pid) が効く (あちらの taskkill は外側の子なので同じ問題を
+  // 持たない)。
+  const cleanupRootPid = () => (process.platform === 'win32' ? child.pid : process.pid);
+
   let killSequenceStarted = false;
   const ensureGroupDies = (sendTerm) => {
     if (killSequenceStarted) {
       return;
     }
     killSequenceStarted = true;
-    if (sendTerm) {
-      killGroup(process.pid, 'SIGTERM');
+    const rootPid = cleanupRootPid();
+    if (rootPid === undefined) {
+      // win32 で npm の spawn 自体に失敗した場合。下の 'error' ハンドラが exit する。
+      return;
     }
-    // 猶予後に自グループごと SIGKILL(自分も含む)。正常終了時は exit で消えるタイマー。
-    setTimeout(() => killGroup(process.pid, 'SIGKILL'), GRACE_MS).unref();
+    if (sendTerm) {
+      killProcessTree(rootPid, 'SIGTERM');
+    }
+    // 猶予後に SIGKILL(POSIX では自分も含む)。正常終了時は exit で消えるタイマー。
+    setTimeout(() => killProcessTree(rootPid, 'SIGKILL'), GRACE_MS).unref();
   };
 
   // 外側からのグループ宛て SIGTERM で自分だけ先に死なない(猶予中の SIGKILL 番人を残す)。
@@ -92,7 +91,7 @@ if (process.argv.includes('--group-leader')) {
 
   // 外側が SIGKILL 等で掃除なしに消えたら、自グループを畳む。
   const orphanWatch = setInterval(() => {
-    if (process.ppid === 1) {
+    if (isOrphaned(INITIAL_PPID)) {
       ensureGroupDies(true);
     }
   }, ORPHAN_POLL_MS);
@@ -147,8 +146,8 @@ if (process.argv.includes('--group-leader')) {
       return;
     }
     killSequenceStarted = true;
-    killGroup(leader.pid, 'SIGTERM');
-    setTimeout(() => killGroup(leader.pid, 'SIGKILL'), GRACE_MS).unref();
+    killProcessTree(leader.pid, 'SIGTERM');
+    setTimeout(() => killProcessTree(leader.pid, 'SIGKILL'), GRACE_MS).unref();
   };
 
   // 待機フェーズ用ハンドラを外し、以後のシグナルはリーダーグループの後始末に回す。
@@ -161,7 +160,7 @@ if (process.argv.includes('--group-leader')) {
 
   // 直系の親(sh/npm/zsh)だけが殺されて自分が取り残された場合も、グループを畳んで従う。
   const orphanWatch = setInterval(() => {
-    if (process.ppid === 1) {
+    if (isOrphaned(INITIAL_PPID)) {
       killLeaderGroup();
     }
   }, ORPHAN_POLL_MS);

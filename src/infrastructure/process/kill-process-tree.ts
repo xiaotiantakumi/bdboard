@@ -14,6 +14,10 @@ import { spawn, type ChildProcess } from 'node:child_process';
  * STOP_GRACE_MS エスカレーション (SIGTERM → 猶予 → SIGKILL) は Windows では
  * 構造としては動くが実質的な意味を持たない。
  *
+ * 同じ問題・同じ対処が scripts/process-tree.mjs にもある (verify.mjs 用。素の Node
+ * スクリプトから import されるので TypeScript のこちらとは共有できない — bdboard-6l7)。
+ * 挙動を変えるときは両方を見ること。
+ *
  * 既知の非対称 (bdboard-dpm): POSIX のプロセスグループはリーダーが死んでも存続する
  * ので kill(-pid) は孤児化した孫にも届くが、taskkill /T は起動時点の親子連鎖を辿る
  * ため、直接の子が既に終了していると孫を殺し損ねる。完全にやるなら Job Object が要る。
