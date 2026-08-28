@@ -29,6 +29,18 @@ describe('useExclusivePopover', () => {
     expect(screen.queryByRole('dialog', { name: 'Aの中身' })).not.toBeInTheDocument();
   });
 
+  it('returns focus to the trigger after closing with Escape', async () => {
+    const user = userEvent.setup();
+    render(<Popover id="a" label="A" />);
+
+    const trigger = screen.getByRole('button', { name: 'Aを開閉' });
+    await user.click(trigger);
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('dialog', { name: 'Aの中身' })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
   it('closes when clicking outside the container', async () => {
     const user = userEvent.setup();
     render(
@@ -51,6 +63,37 @@ describe('useExclusivePopover', () => {
 
     await user.click(screen.getByRole('button', { name: 'Aを開閉' }));
     await user.click(screen.getByRole('dialog', { name: 'Aの中身' }));
+
+    expect(screen.getByRole('dialog', { name: 'Aの中身' })).toBeInTheDocument();
+  });
+
+  it('ignores Escape while focus sits in another layer (e.g. an open dialog)', async () => {
+    const user = userEvent.setup();
+    render(
+      <div>
+        <Popover id="a" label="A" />
+        <input aria-label="別レイヤーの入力" />
+      </div>,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Aを開閉' }));
+    screen.getByLabelText('別レイヤーの入力').focus();
+    await user.keyboard('{Escape}');
+
+    // 最前面のレイヤーだけが Esc に反応する。1打で背後まで閉じない。
+    expect(screen.getByRole('dialog', { name: 'Aの中身' })).toBeInTheDocument();
+  });
+
+  it('ignores Escape that another handler already consumed', async () => {
+    const user = userEvent.setup();
+    render(<Popover id="a" label="A" />);
+
+    await user.click(screen.getByRole('button', { name: 'Aを開閉' }));
+    expect(screen.getByRole('dialog', { name: 'Aの中身' })).toBeInTheDocument();
+
+    const event = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    event.preventDefault();
+    document.dispatchEvent(event);
 
     expect(screen.getByRole('dialog', { name: 'Aの中身' })).toBeInTheDocument();
   });

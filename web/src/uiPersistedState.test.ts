@@ -16,6 +16,7 @@ import {
   validateString,
   validateViewMode,
   validateWatchedTicketIds,
+  sanitizeProjectFilter,
   viewLabel,
   UI_STORAGE_KEYS,
   VIEW_ITEMS,
@@ -332,5 +333,22 @@ describe('describeBoardFilterPresetState', () => {
     expect(describeBoardFilterPresetState({ ...state, filterText: '   ' })).toBe(
       'ビュー: 統合 / 全プロジェクト',
     );
+  });
+});
+
+describe('sanitizeProjectFilter', () => {
+  it('returns the very same array when nothing has to be removed', () => {
+    const empty: string[] = [];
+    expect(sanitizeProjectFilter(empty, ['a', 'b'])).toBe(empty);
+
+    const selected = ['a', 'b'];
+    // 参照が変わらないことが「変わっていないなら localStorage に書かない」の前提。
+    expect(sanitizeProjectFilter(selected, ['a', 'b', 'c'])).toBe(selected);
+  });
+
+  it('drops ids that no longer exist', () => {
+    expect(sanitizeProjectFilter(['a', 'gone'], ['a', 'b'])).toEqual(['a']);
+    expect(sanitizeProjectFilter(['gone'], ['a'])).toEqual([]);
+    expect(sanitizeProjectFilter(['a'], [])).toEqual([]);
   });
 });

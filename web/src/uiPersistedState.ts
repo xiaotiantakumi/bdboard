@@ -545,5 +545,7 @@ export function sanitizeProjectFilter(
   if (filtered.length === 0) {
     return [];
   }
-  return filtered;
+  // 取り除くものが無いときは同じ参照を返す。呼び出し側(usePersistedState)が
+  // 「変わっていないなら書かない」で判定できるようにするため。
+  return filtered.length === selectedIds.length ? selectedIds : filtered;
 }

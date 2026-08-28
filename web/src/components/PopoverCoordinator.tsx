@@ -104,9 +104,33 @@ export function useExclusivePopover(
       }
     };
 
+    /*
+      Esc は「いま自分が最前面にいるとき」だけ処理する。ポップオーバーを開いたまま
+      Cmd+K でコマンドパレットを開けてしまうため、無条件に閉じると Esc 1打で
+      パレットと背後のポップオーバーが同時に閉じる。フォーカスが自分の中(または
+      どこにも無い)ときだけ閉じることで、最前面のレイヤーだけが反応する。
+    */
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        onOpenChangeRef.current(false);
+      if (event.key !== 'Escape' || event.defaultPrevented) {
+        return;
+      }
+      const active = document.activeElement;
+      const focusIsElsewhere =
+        active !== null &&
+        active !== document.body &&
+        containerRef.current !== null &&
+        !containerRef.current.contains(active);
+      if (focusIsElsewhere) {
+        return;
+      }
+      onOpenChangeRef.current(false);
+      /*
+        中で操作していたなら、閉じたあとの行き先を作る。閉じると同時に
+        フォーカスされていた要素が外れて body に落ちると、Tab が先頭から
+        やり直しになるため、開閉ボタン(コンテナ先頭のボタン)へ戻す。
+      */
+      if (active !== null && active !== document.body) {
+        containerRef.current?.querySelector('button')?.focus();
       }
     };
 

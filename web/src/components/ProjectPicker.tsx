@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ProjectDto } from '../api';
 import { useExclusivePopover } from './PopoverCoordinator';
 
@@ -47,6 +47,14 @@ export function ProjectPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const containerRef = useExclusivePopover('project-picker', open, setOpen);
+
+  // 閉じたら検索文字列を捨てる。次に開いたときに前回の絞り込みが残っていると、
+  // 空のリストがいきなり出てプロジェクトが消えたように見えるため。
+  useEffect(() => {
+    if (!open) {
+      setQuery('');
+    }
+  }, [open]);
 
   const label = projectPickerLabel(projects, selectedProjectIds);
   const showSearch = projects.length >= PROJECT_PICKER_SEARCH_THRESHOLD;

@@ -186,6 +186,36 @@ describe('PresetControl', () => {
     expect(saved[2]).toMatchObject({ name: 'あたらしい', ...currentState });
   });
 
+  it('submits the name inputs with Enter', async () => {
+    const user = userEvent.setup();
+    const { onPresetsChange } = renderControl();
+
+    await openControl(user, 'P1バグだけ');
+    await user.click(screen.getByRole('button', { name: '新規保存…' }));
+    await user.type(screen.getByLabelText('新しいプリセットの名前'), 'あたらしい{Enter}');
+
+    expect(onPresetsChange).toHaveBeenCalledTimes(1);
+    expect(onPresetsChange.mock.calls[0][0][2]).toMatchObject({ name: 'あたらしい' });
+  });
+
+  it('submits a rename with Enter', async () => {
+    const user = userEvent.setup();
+    const { onPresetsChange } = renderControl();
+
+    await openControl(user, 'P1バグだけ');
+    await user.click(screen.getByRole('button', { name: '「Next Up」の操作' }));
+    await user.click(screen.getByRole('menuitem', { name: '名前を変更' }));
+
+    const input = screen.getByLabelText('「Next Up」の新しい名前');
+    await user.clear(input);
+    await user.type(input, '次にやる{Enter}');
+
+    expect(onPresetsChange).toHaveBeenCalledWith([
+      samplePresets[0],
+      { ...samplePresets[1], name: '次にやる' },
+    ]);
+  });
+
   it('opens straight into the new-save row when saveIntentToken increments', async () => {
     const onPresetsChange = vi.fn();
     const onApplyPreset = vi.fn();

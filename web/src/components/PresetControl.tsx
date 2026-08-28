@@ -251,6 +251,12 @@ export function PresetControl({
                         setRenameDraft(event.target.value);
                         setError(null);
                       }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          handleRenameCommit(preset);
+                        }
+                      }}
                     />
                     <button
                       type="button"
@@ -377,6 +383,12 @@ export function PresetControl({
                   onChange={(event) => {
                     setDraftName(event.target.value);
                     setError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      handleNewSave();
+                    }
                   }}
                 />
                 <button type="button" className="btn btn-small" onClick={handleNewSave}>

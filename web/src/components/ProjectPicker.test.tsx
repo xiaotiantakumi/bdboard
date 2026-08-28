@@ -115,6 +115,24 @@ describe('ProjectPicker', () => {
     expect(screen.getByText('該当するプロジェクトがありません')).toBeInTheDocument();
   });
 
+  it('drops the search text when closed, so reopening shows the whole list', async () => {
+    const user = userEvent.setup();
+    renderPicker();
+
+    const trigger = screen.getByRole('button', {
+      name: 'プロジェクトの絞り込み: すべてのプロジェクト',
+    });
+    await user.click(trigger);
+    await user.type(screen.getByLabelText('プロジェクトを検索'), 'zzz');
+    expect(screen.getByText('該当するプロジェクトがありません')).toBeInTheDocument();
+
+    await user.keyboard('{Escape}');
+    await user.click(trigger);
+
+    expect(screen.getByLabelText('プロジェクトを検索')).toHaveValue('');
+    expect(screen.getByRole('checkbox', { name: 'alpha' })).toBeInTheDocument();
+  });
+
   it('hides the search box when there are only a couple of projects', async () => {
     const user = userEvent.setup();
     renderPicker({ projects: projects.slice(0, 2) });

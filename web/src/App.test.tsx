@@ -648,6 +648,78 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     expect(screen.queryByText('Persist Miss Priority UniqueText')).not.toBeInTheDocument();
     expect(screen.queryByText('Persist Miss Type UniqueText')).not.toBeInTheDocument();
   });
+
+  /*
+    「既定」プリセットの自動適用は、絞り込みがまだ1つも保存されていない端末でだけ
+    起きる。単体テストだけだと、起動のたびに走る正規化 effect が localStorage へ
+    無用に書き込んで永久に発火しなくなる、といった合成後の壊れ方を捕まえられない
+    (レビュー指摘 M1)。ここは App ごと立ち上げて確かめる。
+  */
+  function seedDefaultPreset() {
+    localStorage.setItem(
+      UI_STORAGE_KEYS.boardFilterPresets,
+      JSON.stringify([
+        {
+          id: 'preset-default',
+          name: '既定プリセット',
+          view: 'merged',
+          selectedProjectIds: ['proj-1'],
+          priorityCeiling: '1',
+          issueTypes: ['bug'],
+          labels: [],
+          filterText: 'UniqueText',
+          isDefault: true,
+        },
+      ]),
+    );
+  }
+
+  it('applies the default preset on a browser that has no saved filter state', async () => {
+    seedDefaultPreset();
+
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('優先度上限')).toHaveValue('1');
+      expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('UniqueText');
+    });
+    expect(screen.getByRole('button', { name: 'bug' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('does not write filter state just by opening the board (keeps the first-run signal intact)', async () => {
+    const { unmount } = renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
+    });
+    unmount();
+
+    // 一度ボードを開いただけの端末は「まだ絞り込みを保存していない」ままであること。
+    expect(localStorage.getItem(UI_STORAGE_KEYS.selectedProjectIds)).toBeNull();
+
+    seedDefaultPreset();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('優先度上限')).toHaveValue('1');
+    });
+  });
+
+  it('leaves an existing filter state alone even when a default preset exists', async () => {
+    seedDefaultPreset();
+    localStorage.setItem(UI_STORAGE_KEYS.boardPriorityCeiling, JSON.stringify('all'));
+
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('優先度上限')).toHaveValue('all');
+    expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('');
+  });
 });
 
 describe('header help overlays', () => {
