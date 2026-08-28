@@ -21,15 +21,27 @@ export interface UpdateCheckService {
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
 
 export function createUpdateCheckService(deps: UpdateCheckServiceDeps): UpdateCheckService {
-  const ttlMs = deps.ttlMs ?? DEFAULT_TTL_MS;
+  // 負値や NaN (BDBOARD_UPDATE_CHECK_CACHE_MS の設定ミス) をそのまま使うと鮮度判定が
+  // 常に false になり、リクエストのたびに GitHub を叩いて未認証の 60 req/h に当たる。
+  // 0 に丸めても同じことになるので、意味を成さない値は「未指定」とみなして既定へ
+  // 戻す。チェックを止めたいときは enabled:false が正規の手段
+  // (PR#112 fable レビュー nit)。
+  const requestedTtlMs = deps.ttlMs;
+  const ttlMs =
+    requestedTtlMs === undefined || !Number.isFinite(requestedTtlMs) || requestedTtlMs < 0
+      ? DEFAULT_TTL_MS
+      : requestedTtlMs;
   const enabled = deps.enabled ?? true;
 
   let cached: { readonly state: UpdateCheck; readonly cachedAt: number } | null = null;
   // 同時に複数リクエストが来ても外部への問い合わせは1回にまとめる。
   let inFlight: Promise<UpdateCheck> | null = null;
 
-  const isFresh = (): boolean =>
-    cached !== null && deps.now().getTime() - cached.cachedAt < ttlMs;
+  const readFresh = (): UpdateCheck | null => {
+    const snapshot = cached;
+    if (snapshot === null) return null;
+    return deps.now().getTime() - snapshot.cachedAt < ttlMs ? snapshot.state : null;
+  };
 
   const fetchFresh = async (): Promise<UpdateCheck> => {
     const currentVersion = deps.applicationVersion.getVersion();
@@ -54,8 +66,9 @@ export function createUpdateCheckService(deps: UpdateCheckServiceDeps): UpdateCh
         return { kind: 'unknown', currentVersion: deps.applicationVersion.getVersion() };
       }
 
-      if (isFresh()) {
-        return (cached as { readonly state: UpdateCheck }).state;
+      const fresh = readFresh();
+      if (fresh !== null) {
+        return fresh;
       }
 
       if (inFlight !== null) {

@@ -35,6 +35,16 @@ describe('parseSemver', () => {
     expect(parseSemver('1.2.3-alpha.beta')?.prerelease).toEqual(['alpha', 'beta']);
   });
 
+  it('still accepts alphanumeric identifiers that merely start with a digit', () => {
+    // 先頭ゼロ弾きが「数字を含む英数字識別子」まで巻き込んでいないことの確認。
+    expect(parseSemver('1.2.3-0alpha')).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+      prerelease: ['0alpha'],
+    });
+  });
+
   it('accepts but discards build metadata (it does not affect precedence)', () => {
     expect(parseSemver('1.2.3+build.5')).toEqual(parseSemver('1.2.3'));
   });
@@ -43,6 +53,10 @@ describe('parseSemver', () => {
     ['not a version', 'nightly'],
     ['missing patch', '1.2'],
     ['leading zero', '01.2.3'],
+    // 数値識別子の先頭ゼロは SemVer 9 で不正。受理すると英数字識別子扱いになり
+    // 1.0.0-01 > 1.0.0-1 という誤った順序を生む (PR#112 fable レビュー minor-3)。
+    ['leading zero in a numeric prerelease identifier', '1.2.3-01'],
+    ['leading zero in a later prerelease identifier', '1.2.3-rc.007'],
     ['empty prerelease identifier', '1.2.3-a..b'],
     ['trailing dash with nothing after it', '1.2.3-'],
     ['empty string', ''],

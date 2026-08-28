@@ -35,7 +35,12 @@ export function parseSemver(input: string): Semver | null {
 
   // `1.0.0-` や `1.0.0-a..b` のような空識別子は SemVer 的に不正。正規表現だけでは
   // 弾けないのでここで落とす。
-  if (identifiers.some((part) => part === '')) {
+  //
+  // 先頭ゼロ付きの数値識別子 (`1.0.0-01`) も SemVer 9 で禁止されている。上の map は
+  // `01` を数値化せず文字列のまま残すため、放置すると英数字識別子として扱われ
+  // 「1.0.0-01 > 1.0.0-1」という誤った順序になる (SemVer 11.4.3 では数値識別子が
+  // 常に小さい)。不正な入力を黙って誤解釈するより弾く (PR#112 fable レビュー minor-3)。
+  if (identifiers.some((part) => part === '' || (typeof part === 'string' && /^\d+$/.test(part)))) {
     return null;
   }
 

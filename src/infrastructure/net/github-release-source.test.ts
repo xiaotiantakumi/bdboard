@@ -42,8 +42,8 @@ describe('createGithubReleaseSource', () => {
     expect(url).toBe(`https://api.github.com/repos/${REPO}/releases/latest`);
     const headers = init.headers as Record<string, string>;
     expect(headers.Accept).toBe('application/vnd.github+json');
-    // GitHub API は User-Agent を要求する。自バージョンを載せておくと、
-    // 向こう側のログから古い版の分布が見える。
+    // GitHub API は User-Agent を要求する (無しだと 403)。自バージョンを載せるのは
+    // GitHub 側にレート制限や不具合を相談するときに、どの版からの通信か示せるようにするため。
     expect(headers['User-Agent']).toBe('bdboard/1.0.0');
     // タイムアウトを付けないと、オフラインや GitHub 障害時にリクエストが
     // 吊られたままになる。
@@ -55,8 +55,11 @@ describe('createGithubReleaseSource', () => {
     ['403 (rate limited)', 403],
     ['500 (github is down)', 500],
   ])('returns null on %s', async (_label, status) => {
+    // 本文はあえて正当なリリース応答にする。エラー本文にしてしまうと readLatestRelease
+    // 側の検証でも null になり、!response.ok を消しても落ちない空虚なテストになる
+    // (PR#112 fable レビュー minor-2)。
     const fetchImpl = vi.fn(async () =>
-      jsonResponse({ message: 'nope' }, { status }),
+      jsonResponse({ tag_name: 'v2.0.0', html_url: RELEASE_URL }, { status }),
     ) as unknown as typeof fetch;
 
     await expect(createSource(fetchImpl).fetchLatest()).resolves.toBeNull();
@@ -90,6 +93,16 @@ describe('createGithubReleaseSource', () => {
     [
       'html_url points somewhere other than github.com',
       { tag_name: 'v2.0.0', html_url: 'https://evil.example.com/releases/tag/v2' },
+    ],
+    [
+      // ホスト判定を endsWith に弱めると通ってしまう形。完全一致であることを固定する。
+      'html_url only suffixes github.com',
+      { tag_name: 'v2.0.0', html_url: 'https://github.com.evil.example/a/b/releases/tag/v2' },
+    ],
+    [
+      // 同上。サブドメインは releases を返さないので受理する理由が無い。
+      'html_url is a github.com subdomain',
+      { tag_name: 'v2.0.0', html_url: 'https://gist.github.com/a/b' },
     ],
     [
       'html_url is a javascript: url',

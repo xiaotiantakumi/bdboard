@@ -59,6 +59,29 @@ describe('createUpdateCheckService', () => {
     expect(fetchLatest).toHaveBeenCalledTimes(2);
   });
 
+  it.each([
+    ['a negative ttl', -1],
+    ['NaN (an unparsable BDBOARD_UPDATE_CHECK_CACHE_MS)', Number.NaN],
+  ])('falls back to the default ttl for %s instead of disabling the cache', async (
+    _label,
+    ttlMs,
+  ) => {
+    // 設定ミスで鮮度判定が常に false になると、リクエストごとに GitHub を叩いて
+    // 未認証の 60 req/h を使い切る。既定 (6時間) に戻ることを固定する
+    // (PR#112 fable レビュー nit)。
+    const fetchLatest = vi.fn(async () => RELEASE);
+    const { service, clock } = createService({ fetchLatest }, { ttlMs });
+
+    await service.getUpdateCheck();
+    clock.advance(6 * 60 * 60 * 1000 - 1);
+    await service.getUpdateCheck();
+    expect(fetchLatest).toHaveBeenCalledTimes(1);
+
+    clock.advance(1);
+    await service.getUpdateCheck();
+    expect(fetchLatest).toHaveBeenCalledTimes(2);
+  });
+
   it('collapses concurrent calls into a single fetch', async () => {
     // 未認証の GitHub API は IP あたり 60 req/h しかない。タブを複数開いた程度で
     // 使い切らないよう、同時リクエストは1回にまとめる。
