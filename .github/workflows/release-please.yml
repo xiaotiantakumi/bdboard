@@ -4,16 +4,27 @@ on:
   push:
     branches: [main]
 
-# GITHUB_TOKEN で作成された PR には pull_request トリガーのワークフロー (ci.yml 等) は
-# 起動しない GitHub の仕様がある。release PR の検証は手動で rebase/push するか、
-# workflow_dispatch 等の別経路を検討すること。
+# GITHUB_TOKEN 起因のイベントは新しいワークフロー実行を起こさない、という GitHub の仕様がある。
+# 帰結が2つある:
+#   1. release-please が作る release PR には pull_request トリガーの ci.yml が走らない。
+#      検証したいなら人間が close -> reopen するか手動 push する。
+#   2. release-please が作るタグ / Release も、on: push: tags や on: release の
+#      ワークフローを起動しない。publish (bdboard-70z.4) を素朴に tag トリガーで書くと
+#      無音で何も起きない。同一ワークフロー内で action の outputs
+#      (releases_created / tag_name) を使って publish ジョブを連結するか、PAT を使うこと。
+
+# upstream の release-please-action README が要求する3点セット。issues: write は
+# autorelease ラベルの付替え (pending -> tagged) とリリースコメント投稿に要る。
 permissions:
   contents: write
+  issues: write
   pull-requests: write
 
 # main への push は squash マージ以外にも chore(beads) 直コミット等で重なりうる。
-# release-please が途中キャンセルされるとタグだけ残り Release 未作成等の中途半端な状態になり、
-# 次回以降の changelog 生成が壊れうるため、後続実行を待たせる (cancel-in-progress: false)。
+# release-please のリリース処理は Release 作成 -> ラベル付替え の多段 API 呼び出しなので、
+# 途中でキャンセルされると「Release は作られたがラベルが autorelease: pending のまま」という
+# 中途半端な状態になる (次回 run が DuplicateReleaseError を検知して自己修復はするが、
+# その回は red になる)。無駄な失敗を避けるため後続実行を待たせる。
 concurrency:
   group: release-please-${{ github.ref }}
   cancel-in-progress: false
@@ -21,6 +32,7 @@ concurrency:
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       # initial-version は初回リリース後は manifest に反映されるため、以降は config から削除してよい。
       - uses: googleapis/release-please-action@v4
