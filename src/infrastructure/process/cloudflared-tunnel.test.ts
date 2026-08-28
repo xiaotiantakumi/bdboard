@@ -482,6 +482,123 @@ function isInside(parent: string, child: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
+describe('log sink creation failure (bdboard-nte)', () => {
+  // 既存の restoreAllMocks は describe('createCloudflaredTunnel') スコープなので
+  // ここには及ばない。付けないと console.error のモックがファイル末尾まで残り、
+  // 後続 describe の診断出力が黙殺される (PR#113 fable レビュー minor)。
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // ログ書き込みの失敗は既に「トンネル動作を阻害しない」設計 (write/close/
+  // ローテーションはいずれも握り潰す) なのに、シンクの生成だけがその方針から
+  // 外れて start() を巻き込んでいた。しかも spawn の後に呼ばれるので、
+  // cloudflared の子プロセスを起動した後で例外が飛んでいた。
+  function startWithFailingSink() {
+    const fake = createFakeSpawnedProcess();
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/local/bin/cloudflared',
+      spawnFn: () => fake,
+      logFilePath: path.join(tmpdir(), 'bdboard-nte', 'cloudflared-tunnel.log'),
+      createLogSink: () => {
+        throw new Error('EACCES: permission denied');
+      },
+    });
+    return { fake, tunnel };
+  }
+
+  it('still starts the tunnel when the log sink cannot be created', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { fake, tunnel } = startWithFailingSink();
+
+    const startPromise = tunnel.start();
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+
+    await expect(startPromise).resolves.toEqual({ url: TUNNEL_URL });
+  });
+
+  it('reports the failure once, naming the path and the reason', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { fake, tunnel } = startWithFailingSink();
+
+    const startPromise = tunnel.start();
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await startPromise;
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const message = String(errorSpy.mock.calls[0]?.[0]);
+    // 黙って握り潰すのではなく、なぜログが無いのかを1回だけ知らせる。
+    expect(message).toContain('cloudflared-tunnel.log');
+    expect(message).toContain('EACCES: permission denied');
+  });
+
+  it('keeps working after start: output handling does not throw without a sink', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { fake, tunnel } = startWithFailingSink();
+
+    const startPromise = tunnel.start();
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await startPromise;
+
+    // no-op シンクに差し替わっているので、以降の出力も stop も素通りする。
+    expect(() => fake.emitStdout('more output\n')).not.toThrow();
+    expect(() => fake.emitStderr('a warning\n')).not.toThrow();
+
+    const stopPromise = tunnel.stop();
+    fake.emitClose(0);
+    await expect(stopPromise).resolves.toBeUndefined();
+  });
+
+  it('retries sink creation on the next start instead of falling back forever', async () => {
+    // フォールバックは恒久ではなく start ごとの判断。シンクをファクトリ外に
+    // キャッシュするリファクタが入ると、FS の問題が直ってもログが戻らなくなる
+    // (PR#113 fable レビュー nit)。
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const written: string[] = [];
+    let attempt = 0;
+    let spawned = 0;
+    const fakes = [createFakeSpawnedProcess(), createFakeSpawnedProcess()];
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/local/bin/cloudflared',
+      // シンク生成は spawn の後なので、spawn 側は独自にカウントする。
+      spawnFn: () => {
+        spawned += 1;
+        return fakes[spawned - 1] as ReturnType<typeof createFakeSpawnedProcess>;
+      },
+      logFilePath: path.join(tmpdir(), 'bdboard-nte', 'cloudflared-tunnel.log'),
+      createLogSink: () => {
+        attempt += 1;
+        if (attempt === 1) {
+          throw new Error('EACCES: permission denied');
+        }
+        return {
+          write: (chunk: string) => written.push(chunk),
+          close: () => {},
+        };
+      },
+    });
+
+    const firstStart = tunnel.start();
+    fakes[0]?.emitStdout(`${TUNNEL_URL}\n`);
+    await firstStart;
+    fakes[0]?.emitStdout('lost to the failed sink\n');
+    expect(written).toEqual([]);
+
+    const firstStop = tunnel.stop();
+    fakes[0]?.emitClose(0);
+    await firstStop;
+
+    const secondStart = tunnel.start();
+    fakes[1]?.emitStdout(`${TUNNEL_URL}\n`);
+    await secondStart;
+
+    expect(attempt).toBe(2);
+    expect(written.join('')).toContain(TUNNEL_URL);
+  });
+});
+
 describe('default log path wiring', () => {
   // 上の describe は解決関数そのものしか見ていない。関数が正しくても
   // createCloudflaredTunnel 側の fallback を cwd 基準に書き戻せばバグは再発するので、

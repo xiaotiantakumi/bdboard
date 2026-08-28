@@ -48,7 +48,13 @@ function maskSecrets(text: string): string {
   });
 }
 
-/** cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する) */
+/**
+ * cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する)。
+ *
+ * 契約: write/close は例外を投げてはならない。呼び出し側 (onData / close ハンドラ)
+ * は無防備に呼ぶため、投げるとログの都合でトンネル動作が壊れる — この方針は
+ * 生成失敗にもフォールバックを入れて揃えた (bdboard-nte)。
+ */
 export interface LogSink {
   write(chunk: string): void;
   close(): void;
@@ -76,6 +82,17 @@ function rotateLogFileIfOversized(filePath: string, maxBytes: number): void {
   } catch {
     // ローテーション失敗時は既存ファイルへの追記を続ける(ベストエフォート)
   }
+}
+
+/**
+ * 何も書かないシンク。ログ出力先を用意できなかったときのフォールバック
+ * (bdboard-nte)。
+ */
+function createNoopLogSink(): LogSink {
+  return {
+    write: () => {},
+    close: () => {},
+  };
 }
 
 function createFileLogSink(filePath: string, maxBytes: number): LogSink {
@@ -295,7 +312,26 @@ export function createCloudflaredTunnel(
     ]);
     child = processHandle;
 
-    const logSink = createLogSink(logFilePath, logMaxBytes);
+    // シンクの生成失敗でトンネル起動を巻き込まない (bdboard-nte)。
+    // 出力先が通常ファイルとして存在する・権限が無い・read-only FS といった
+    // ケースで createFileLogSink の mkdirSync/openSync は throw する。書き込み
+    // 失敗自体は既に「トンネル動作を阻害しない」設計 (createFileLogSink の
+    // write/close、rotateLogFileIfOversized) なので、生成だけがその方針から
+    // 外れているのは一貫していない。
+    //
+    // なお、シンクを spawn より前に作る順序も検討したが採らなかった。先に
+    // 作ると spawnFn が throw した場合に開いた fd が閉じられずに漏れる。
+    // 「生成失敗を握り潰す」だけで目的は足りている。
+    let logSink: LogSink;
+    try {
+      logSink = createLogSink(logFilePath, logMaxBytes);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(
+        `cloudflared log sink unavailable (${logFilePath}): ${detail}. Continuing without a tunnel log.`,
+      );
+      logSink = createNoopLogSink();
+    }
     logSink.write(`\n[${new Date().toISOString()}] cloudflared starting (port ${options.port})\n`);
 
     return new Promise<TunnelStartResult>((resolve, reject) => {
