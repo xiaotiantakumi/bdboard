@@ -24,6 +24,7 @@ import {
   DEFAULT_RECLAIM_OLDER_THAN,
 } from './application/lease/reclaim-scheduler.js';
 import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
+import { createUpdateCheckService } from './application/update/get-update-check.js';
 import { createAiQuotaThresholdPublisher } from './application/ai-quota/ai-quota-threshold-alerts.js';
 import { createChatSessionStore } from './application/chat/chat-session-store.js';
 import { buildChatAgentRegistry } from './infrastructure/chat/chat-agent-registry-builder.js';
@@ -58,6 +59,7 @@ import {
   createClaudeSessionRegistry,
   createCloudflaredTunnel,
   resolveDefaultTunnelLogFilePath,
+  createGithubReleaseSource,
   createFileTunnelInterruptionStore,
   createFileScanRootsConfigStore,
   createFileBoardThresholdsConfigStore,
@@ -89,6 +91,7 @@ import {
 import { mountSecurityMiddleware } from './interface/http/app-security.js';
 import { createSessionValidator } from './interface/http/tunnel-session.js';
 import { createAiQuotaRoutes } from './interface/http/ai-quota-routes.js';
+import { createUpdateCheckRoutes } from './interface/http/update-check-routes.js';
 import { createCompressionMiddleware } from './interface/http/compression.js';
 import { createApiRoutes, type ApiStatus } from './interface/http/routes.js';
 import { createChatRoutes } from './interface/http/chat-routes.js';
@@ -881,6 +884,25 @@ async function main(): Promise<void> {
       access: tunnelAccess,
     }),
   );
+
+  // 新しいリリースの通知 (bdboard-70z.7)。bdboard はローカル完結のツールなので、
+  // 外部への通信が増えるのは性質の変化にあたる。既定は有効だが
+  // BDBOARD_UPDATE_CHECK_DISABLED=1 で完全に無効化でき、無効時は
+  // createUpdateCheckService がネットワークへ一切出ない (ルート自体は残り、
+  // 常に state=unknown を返す — UI 側はそれを「黙る」として扱う)。
+  const updateCheckEnabled = !envBool('BDBOARD_UPDATE_CHECK_DISABLED');
+  const updateCheckService = createUpdateCheckService({
+    applicationVersion,
+    source: createGithubReleaseSource({
+      repository: envString('BDBOARD_UPDATE_CHECK_REPO', 'xiaotiantakumi/bdboard'),
+      timeoutMs: envInt('BDBOARD_UPDATE_CHECK_TIMEOUT_MS', 3_000),
+      userAgent: applicationVersion.getVersion(),
+    }),
+    now: () => new Date(),
+    ttlMs: envInt('BDBOARD_UPDATE_CHECK_CACHE_MS', 6 * 60 * 60_000),
+    enabled: updateCheckEnabled,
+  });
+  app.route('/', createUpdateCheckRoutes({ updateCheckService }));
 
   const aiQuotaDisabled = envBool('BDBOARD_AI_QUOTA_DISABLED');
   if (!aiQuotaDisabled) {
