@@ -126,6 +126,9 @@ function createDeps(
 
   return {
     cache,
+    applicationVersion: {
+      getVersion: () => 'test-version',
+    },
     now: () => NOW,
     getStatus: () => status,
     events,
@@ -155,15 +158,19 @@ function assertNoDates(value: unknown): void {
 }
 
 describe('createApiRoutes', () => {
-  it('returns health payload with ISO now', async () => {
-    const deps = createDeps();
+  it('returns health payload with ISO now and application version', async () => {
+    const deps = createDeps({
+      applicationVersion: {
+        getVersion: () => '1.2.3',
+      },
+    });
     const app = createApiRoutes(deps);
 
     const response = await app.request('/api/health');
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true, now: NOW.toISOString() });
+    expect(body).toEqual({ ok: true, now: NOW.toISOString(), version: '1.2.3' });
   });
 
   it('returns status with ISO lastRefreshAt', async () => {

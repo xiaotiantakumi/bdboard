@@ -34,6 +34,7 @@ export * from './process/node-command-runner.js';
 export * from './process/node-streaming-command-runner.js';
 export * from './process/node-process-probe.js';
 export * from './process/ps-process-scanner.js';
+export * from './version/package-json-version-provider.js';
 export * from './runners/claude-resume-runner.js';
 export * from './runners/claude-runner.js';
 export * from './runners/claude-spawn-runner.js';
