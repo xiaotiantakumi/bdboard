@@ -2219,27 +2219,6 @@ body {
   margin-left: 6px;
 }
 
-.sync-health-badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 3px 8px;
-  border-radius: var(--radius-pill);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  vertical-align: middle;
-}
-
-.sync-health-badge-attention {
-  background: var(--badge-stalled-bg);
-  color: var(--badge-stalled-fg);
-  border: 1px solid var(--badge-stalled-fg);
-}
-
-.sync-health-badge-unknown {
-  background: var(--badge-neutral-bg);
-  color: var(--badge-neutral-fg);
-}
-
 .project-harness-badges {
   display: inline-flex;
   flex-wrap: wrap;
@@ -3500,6 +3479,14 @@ body {
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.16em;
+}
+
+.help-panel-version {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .help-panel-body {

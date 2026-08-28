@@ -26,7 +26,6 @@ import type {
   ReclaimSchedulerStatus,
   ReclaimProjectStatus,
 } from '../../application/lease/reclaim-scheduler.js';
-import type { SyncHealth } from '../../domain/sync-health.js';
 import type { DependencyGraph } from '../../domain/dependency-graph.js';
 import type { BoardView } from '../../application/board/get-board.js';
 import type { TicketSearchHit } from '../../application/board/search-tickets.js';
@@ -361,17 +360,6 @@ export interface HygieneIssueDto {
   deferUntil?: string;
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
-}
-
-export interface SyncHealthReasonDto {
-  kind: string;
-  message: string;
-}
-
-export interface SyncHealthDto {
-  projectId: string;
-  status: string;
-  reasons: SyncHealthReasonDto[];
 }
 
 export interface StaleLeaseDto {
@@ -827,17 +815,6 @@ export function toHygieneIssueDto(issue: HygieneIssue): HygieneIssueDto {
           })),
         }
       : {}),
-  };
-}
-
-export function toSyncHealthDto(health: SyncHealth): SyncHealthDto {
-  return {
-    projectId: health.projectId,
-    status: health.status,
-    reasons: health.reasons.map((reason) => ({
-      kind: reason.kind,
-      message: reason.message,
-    })),
   };
 }
 
