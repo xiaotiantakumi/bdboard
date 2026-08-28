@@ -311,12 +311,14 @@ describe('createShutdownDrain', () => {
   });
 
   it('closes every chat repository after cache.close when chatRepositories is provided (bdboard-9dm)', async () => {
-    const chatCloseCalls: string[] = [];
-    const chatRepositories = [
-      { close: vi.fn(() => chatCloseCalls.push('chat[0].close')) },
-      { close: vi.fn(() => chatCloseCalls.push('chat[1].close')) },
-    ];
     const { watchHandle, tunnelService, cache, calls } = fakeDeps();
+    // chat の close を別配列に記録すると、実装が chat を先頭へ動かしても両方の配列は
+    // 同じ内容になり「cache.close の後」を固定できない。共有の calls に載せて
+    // インターリーブごと assert する (fable レビュー指摘, bdboard-9dm)。
+    const chatRepositories = [
+      { close: vi.fn(() => { calls.push('chat[0].close'); }) },
+      { close: vi.fn(() => { calls.push('chat[1].close'); }) },
+    ];
     const drain = createShutdownDrain({
       watchHandle,
       tunnelService,
@@ -326,11 +328,12 @@ describe('createShutdownDrain', () => {
 
     await drain();
 
-    expect(chatCloseCalls).toEqual(['chat[0].close', 'chat[1].close']);
     expect(calls).toEqual([
       'tunnelService.shutdown',
       'watchHandle.stop',
       'cache.close',
+      'chat[0].close',
+      'chat[1].close',
     ]);
   });
 

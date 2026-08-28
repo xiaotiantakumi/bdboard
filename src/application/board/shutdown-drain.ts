@@ -2,12 +2,28 @@ import type { BoardCache } from '../ports/board-cache.js';
 import type { ProjectWatchHandle } from '../ports/project-watcher.js';
 import type { TunnelService } from '../tunnel/tunnel-service.js';
 
+/** close() だけを要求する構造的型。infra への import を持ち込まないための最小面。 */
+export interface Closeable {
+  readonly close: () => void;
+}
+
 export interface ShutdownDrainDeps {
   readonly watchHandle: Pick<ProjectWatchHandle, 'stop'>;
   readonly tunnelService: Pick<TunnelService, 'shutdown'>;
   readonly cache: Pick<BoardCache, 'close'>;
-  /** sqlite 実装固有の close()。application ポートには載せず、main から配線する (bdboard-9dm)。 */
-  readonly chatRepositories?: readonly { readonly close: () => void }[];
+  /**
+   * sqlite 実装固有の close()。application ポートには載せず、main から配線する (bdboard-9dm)。
+   *
+   * BoardCache は port 自身が close() を持つ (board-cache.ts) ので「同じ流儀なら
+   * ChatSessionRepository / ChatMessageRepository にも載せるべき」という指摘があったが、
+   * 採らなかった (fable レビュー, bdboard-9dm): close() は sqlite 実装のリソース寿命の
+   * 話であって chat リポジトリの契約ではなく、in-memory 実装と各テストの fake 全部に
+   * no-op を強いるだけになる。さらに session/message は別型なので、ポートに載せても
+   * ここの異種配列は結局 Closeable のままで解消しない。
+   *
+   * 名前 (chat 固有) と形 (汎用 Closeable) がずれている点は、型に名前を付けて明示する。
+   */
+  readonly chatRepositories?: readonly Closeable[];
 }
 
 /**
