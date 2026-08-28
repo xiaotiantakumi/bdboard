@@ -997,8 +997,8 @@ async function main(): Promise<void> {
 
     // root には絶対パスを渡す。以前は path.relative(process.cwd(), webDistDir) を
     // 渡していて実際に動いていたが、それは @hono/node-server の serve-static が
-    // root を検証も正規化もせず join(root, filename) の結果をそのまま statSync に
-    // 渡す (= cwd 基準で解決される) という非保証の実装詳細と、path.relative の
+    // root を (存在チェックの警告ログを除いて) 検証も正規化もせず、join(root, filename)
+    // の結果をそのまま statSync に渡す (= cwd 基準で解決される) 実装詳細と、path.relative の
     // 計算がちょうど相殺していただけだった。任意の cwd から起動すると root は
     // ".." を含む相対パスになる。serve-static が将来 root を正規化・検証するように
     // なれば黙って壊れる類の依存なので、cwd に依存しない絶対パスに寄せる

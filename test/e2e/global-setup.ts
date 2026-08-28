@@ -103,6 +103,13 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   // 注意: これは「相対 root だと壊れる」を捕まえるテストではない — 現行の
   // serve-static は root を検証しないので相対 root でもこの構成で通る。捕まえるのは
   // 「起動 cwd に依存して静的配信が壊れる」という性質そのもの。
+  //
+  // もう一点、cwd を移したことで tsx の tsconfig 探索もリポジトリから外れる。tsx は
+  // tsconfig.json をエントリファイルではなく **cwd から** 探すので、ここでサーバーは
+  // リポジトリの tsconfig.json 無しで走る。これは配布形態 (npx bdboard = 任意 cwd で
+  // tsx 実行) と同じ条件なので意図どおりだが、将来 src/ に paths エイリアスを入れると
+  // e2e だけが `Cannot find module` で落ちることになる。そのときは tsconfig を
+  // 明示的に渡すこと。
   const serverCwd = path.join(tmpRoot, 'server-cwd');
   fs.mkdirSync(serverCwd, { recursive: true });
 
