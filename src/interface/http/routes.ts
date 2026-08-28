@@ -22,6 +22,7 @@ import {
   hasTicketTokenUsage,
 } from '../../application/board/get-ticket-token-usage.js';
 import { searchTickets } from '../../application/board/search-tickets.js';
+import type { ApplicationVersionProvider } from '../../application/ports/application-version.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
 import { BdError } from '../../application/ports/issue-repository.js';
@@ -95,6 +96,7 @@ export interface ApiStatus {
 
 export interface ApiDeps {
   readonly cache: BoardCache;
+  readonly applicationVersion: ApplicationVersionProvider;
   readonly now: () => Date;
   readonly getStatus: () => ApiStatus;
   readonly refresh: () => Promise<void>;
@@ -454,6 +456,7 @@ async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
 
 export function createApiRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
+  const applicationVersion = deps.applicationVersion.getVersion();
 
   // 書き込みガードはここ 1 箇所だけ。ルート個別のチェックは持たない(bdboard-9rz)。
   // '*' でメソッド判定するので、この下に後から足された POST/PUT/PATCH/DELETE は
@@ -462,7 +465,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   app.use('*', createWriteGuardMiddleware(deps.writeAccess ?? {}));
 
   app.get('/api/health', (c) => {
-    return c.json({ ok: true, now: deps.now().toISOString() });
+    return c.json({ ok: true, now: deps.now().toISOString(), version: applicationVersion });
   });
 
   app.get('/api/status', (c) => {

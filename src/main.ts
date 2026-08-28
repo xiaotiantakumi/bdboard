@@ -79,6 +79,7 @@ import {
   NodeStreamingCommandRunner,
   NodeFileSystem,
   NodeProcessProbe,
+  createPackageJsonVersionProvider,
   resolveConfigFilePath,
 } from './infrastructure/index.js';
 import {
@@ -199,6 +200,7 @@ function updateStatusFromResult(
 }
 
 async function main(): Promise<void> {
+  const applicationVersion = createPackageJsonVersionProvider();
   const bdVersionCheckTimeoutMs = 3_000;
   const port = envInt('BDBOARD_PORT', 8787);
   const host = envString('BDBOARD_HOST', '127.0.0.1');
@@ -778,6 +780,7 @@ async function main(): Promise<void> {
 
   const inner = createApiRoutes({
     cache,
+    applicationVersion,
     now: () => new Date(),
     getStatus: () => status,
     refresh: () => runRefresh(true),
