@@ -112,9 +112,31 @@ function buildImagePaths(images: readonly ChatImageAttachment[], scratchDir: str
     path.join(scratchDir, `bdboard-codex-image-${randomUUID()}.${imageExtension(image)}`));
 }
 
+// 一時画像ファイルの秘匿性について (bdboard-che)。
+//
+// `mode: 0o600` が実際に効くのは POSIX だけで、Windows の Node は POSIX パーミッションを
+// 実装していない — fs は書き込み可能ファイルを一律 0o666 相当と報告し、chmod で操作できるのは
+// 読み取り専用ビットだけ (CI 実測: expected 384 (0o600), received 438 (0o666))。ACL を直接
+// 触る API は Node コアに無い。
+//
+// 方針として、Windows では **ACL を明示設定せず、置き場所に依拠する**。ここに渡る scratchDir は
+// `os.tmpdir()` = `%TEMP%` で、既定ではユーザープロファイル配下 (`%LOCALAPPDATA%\Temp`) に
+// 解決され、そのディレクトリの ACL を継承する。つまり秘匿性は「このプロセスが設定した権限」では
+// なく「実行ユーザーの %TEMP% が他ユーザーから読めない構成になっていること」に依存する — 既定の
+// Windows ではそうなるが、TEMP を共有ディレクトリへ向けた環境では成り立たない。**コードが強制する
+// 保証ではなく、環境に対する前提**である点を明示しておく。
+//
+// icacls 相当を毎ファイル呼ぶ案は採らない: 画像1枚ごとに子プロセスを起こすことになり、失敗時の
+// 分岐 (icacls が無い/権限が足りない/パスにクォートが要る) がここで扱うには重すぎる。ローカル
+// 開発ツールが自分の %TEMP% に置く一時ファイルという用途に対して割に合わない。
+//
+// `flag: 'wx'` は上とは別の目的で、プラットフォーム共通に効く。既存パスへの書き込みを拒否する
+// ので、事前に置かれたファイルやシンボリックリンクを掴まされる経路を塞ぐ (パス名は randomUUID
+// なので予測もできない)。POSIX の /tmp のような共有ディレクトリで意味を持つのはこちら。
 function writeImageFiles(images: readonly ChatImageAttachment[], imagePaths: readonly string[]): void {
   try {
     images.forEach((image, index) => {
+      // POSIX では 0600。win32 では無視される (上のコメント参照) — 害は無いので落とさない。
       writeFileSync(imagePaths[index]!, image.data, { flag: 'wx', mode: 0o600 });
     });
   } catch (err) {
