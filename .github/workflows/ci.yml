@@ -40,9 +40,15 @@ jobs:
       - run: npm run verify
 
   # Kept separate from `verify` rather than using a matrix so the existing
-  # check name does not change. `continue-on-error` keeps this advisory while
-  # bdboard-70z.8 records current Windows failures; bdboard-70z.9 will decide
-  # when it can become required.
+  # check name `verify` stays unchanged — our merge convention waits on that
+  # name, and we do not want to break a future required Windows gate either.
+  # `continue-on-error` keeps this advisory while bdboard-70z.8 records current
+  # Windows failures; bdboard-70z.9 will decide when it can become required.
+  # Steps call build/test targets directly instead of `npm run verify` because
+  # scripts/verify.mjs spawns `npm` without shell:true; on Windows npm is
+  # npm.cmd so verify dies immediately with ENOENT and never runs the
+  # underlying steps. The slot queue and process-group kill in verify.mjs are
+  # for local dev machines and are unnecessary on ephemeral CI runners.
   verify-windows:
     continue-on-error: true
     runs-on: windows-latest
@@ -60,7 +66,47 @@ jobs:
 
       - run: npm ci
       - run: npm --prefix web ci
-      - run: npm run verify
+
+      - name: npm run build
+        id: build
+        continue-on-error: true
+        run: npm run build
+
+      - name: npm run build:web
+        id: build-web
+        continue-on-error: true
+        run: npm run build:web
+
+      - name: npm run test:server
+        id: test-server
+        continue-on-error: true
+        run: npm run test:server
+
+      - name: npm run test:web
+        id: test-web
+        continue-on-error: true
+        run: npm run test:web
+
+      - name: npm run check:boundaries
+        id: check-boundaries
+        continue-on-error: true
+        run: npm run check:boundaries
+
+      - name: Summarize step outcomes
+        if: always()
+        shell: pwsh
+        run: |
+          @"
+          ### verify-windows step results
+
+          | Step | Outcome |
+          | --- | --- |
+          | build | ${{ steps.build.outcome }} |
+          | build:web | ${{ steps.build-web.outcome }} |
+          | test:server | ${{ steps.test-server.outcome }} |
+          | test:web | ${{ steps.test-web.outcome }} |
+          | check:boundaries | ${{ steps.check-boundaries.outcome }} |
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
   # Kept separate from `verify` on purpose (bdboard-3tw.88): a real browser +
   # server boot is a different failure class than tsc/vitest/depcruise, and a
