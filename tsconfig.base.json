@@ -3,7 +3,8 @@
   //
   // 対象は tsconfig.node.json / test/e2e/tsconfig.json / web/tsconfig.json / web/tsconfig.node.json。
   // これらは lib・module 解決・types・include が互いに違う (だから project が分かれている) 一方で、
-  // 厳格さの設定だけは同一で、bdboard-ruf と bdboard-u97 で1ファイルずつ手コピーされて4つに増えた。
+  // 厳格さの設定だけは同一で、bdboard-ruf (#96) が1ファイル、bdboard-u97 (#101) が2ファイルを
+  // 手コピーで足した結果4つに増えた。
   // 片方だけフラグを足す/外すドリフトを防ぐために、同一な部分だけをここへ集約する。
   //
   // ここに入れないもの:
