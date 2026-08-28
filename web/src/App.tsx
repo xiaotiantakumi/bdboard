@@ -70,7 +70,7 @@ import {
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from './uiPersistedState';
-import { useBoardStream } from './useBoardStream';
+import { useLastServerContact } from './hooks/useLastServerContact';
 import {
   collectBoardCardsById,
   collectBoardLabels,
@@ -181,7 +181,6 @@ export function App() {
   const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
   const [statusDetailOpen, setStatusDetailOpen] = useState(false);
 
-  const streamState = useBoardStream();
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
 
@@ -217,6 +216,8 @@ export function App() {
         ...(epicFilterId !== undefined ? { epicId: epicFilterId } : {}),
       }),
   });
+
+  const { streamState, lastContactAtMs } = useLastServerContact(boardQuery.dataUpdatedAt);
 
   const pendingDecisionsQuery = useQuery({
     queryKey: ['pending-decisions'],
@@ -656,6 +657,7 @@ export function App() {
           notificationUnreadCount={notificationEvents.unreadCount}
           onOpenSearch={handleOpenSearch}
           streamState={streamState}
+          lastContactAtMs={lastContactAtMs}
           generatedAt={boardQuery.data?.generatedAt}
           lastRefreshAt={lastRefreshAt}
           totalSessionCount={totalSessionCount}
@@ -696,7 +698,7 @@ export function App() {
 
       <AlertBar
         streamState={streamState}
-        generatedAt={boardQuery.data?.generatedAt}
+        lastContactAtMs={lastContactAtMs}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onOpenDetails={() => setStatusDetailOpen(true)}

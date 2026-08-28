@@ -10,6 +10,7 @@ import type { StreamState } from '../useBoardStream';
 
 export interface StatusPillProps {
   streamState: StreamState;
+  lastContactAtMs: number | null | undefined;
   generatedAt: string | null | undefined;
   lastRefreshAt: string | null | undefined;
   totalSessionCount: number;
@@ -32,6 +33,7 @@ function statusPillClass(level: StatusLevel): string {
 
 export function StatusPill({
   streamState,
+  lastContactAtMs,
   generatedAt,
   lastRefreshAt,
   totalSessionCount,
@@ -42,7 +44,7 @@ export function StatusPill({
 }: StatusPillProps) {
   const nowMs = useNow();
   const containerRef = useRef<HTMLDivElement>(null);
-  const level = computeStatusLevel(streamState, generatedAt, nowMs);
+  const level = computeStatusLevel(streamState, lastContactAtMs, nowMs);
 
   useEffect(() => {
     if (!open) {
