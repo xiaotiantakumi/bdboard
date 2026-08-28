@@ -603,7 +603,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     localStorage.clear();
   });
 
-  it('applies a saved preset from the header in one tap', async () => {
+  it('applies a saved preset from the header popover', async () => {
     const user = userEvent.setup();
     localStorage.setItem(
       UI_STORAGE_KEYS.boardFilterPresets,
@@ -631,6 +631,8 @@ describe('board filter presets (bdboard-3tw.112)', () => {
       expect(screen.getByText('Persist Miss Priority UniqueText')).toBeInTheDocument();
     });
 
+    // プリセットは行内に並ばずポップオーバーの中にある(Turn 4 / 4b)。
+    await user.click(screen.getByRole('button', { name: 'フィルタプリセット: 未選択' }));
     await user.click(screen.getByRole('button', { name: 'P1バグだけ' }));
 
     await waitFor(() => {

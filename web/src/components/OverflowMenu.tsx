@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { useExclusivePopover } from './PopoverCoordinator';
 
 export interface OverflowMenuProps {
   onOpenSettings: () => void;
@@ -14,28 +15,7 @@ export function OverflowMenu({
   onOpenShortcuts,
 }: OverflowMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) {
-      return;
-    }
-
-    const handleMouseDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      if (containerRef.current !== null && !containerRef.current.contains(target)) {
-        setMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, [menuOpen]);
+  const containerRef = useExclusivePopover('overflow-menu', menuOpen, setMenuOpen);
 
   const handleItemClick = (action: () => void) => {
     setMenuOpen(false);

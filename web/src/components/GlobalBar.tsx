@@ -1,7 +1,8 @@
 import type { ProjectDto } from '../api';
-import type { ViewMode } from '../uiPersistedState';
+import { VIEW_ITEMS, type ViewMode } from '../uiPersistedState';
 import type { StreamState } from '../useBoardStream';
 import { OverflowMenu } from './OverflowMenu';
+import { ProjectPicker } from './ProjectPicker';
 import { StatusPill } from './StatusPill';
 
 export interface GlobalBarProps {
@@ -23,6 +24,7 @@ export interface GlobalBarProps {
   onToggleProject: (projectId: string, checked: boolean) => void;
   onSelectAllProjects: () => void;
   onClearAllProjects: () => void;
+  onSaveProjectCombination: () => void;
   onOpenSettings: () => void;
   onOpenTunnel: () => void;
   onOpenHelp: () => void;
@@ -48,6 +50,7 @@ export function GlobalBar({
   onToggleProject,
   onSelectAllProjects,
   onClearAllProjects,
+  onSaveProjectCombination,
   onOpenSettings,
   onOpenTunnel,
   onOpenHelp,
@@ -60,77 +63,19 @@ export function GlobalBar({
       <div className="header-group view-switcher">
         <span className="header-label">ビュー</span>
         <div className="toggle-group">
-          <button
-            type="button"
-            className={`toggle-btn${view === 'merged' ? ' active' : ''}`}
-            onClick={() => onViewChange('merged')}
-          >
-            統合
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'split' ? ' active' : ''}`}
-            onClick={() => onViewChange('split')}
-          >
-            分割
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'next' ? ' active' : ''}`}
-            onClick={() => onViewChange('next')}
-          >
-            Next Up
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'activity' ? ' active' : ''}`}
-            onClick={() => onViewChange('activity')}
-          >
-            アクティビティ
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'digest' ? ' active' : ''}`}
-            onClick={() => onViewChange('digest')}
-          >
-            ダイジェスト
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'stats' ? ' active' : ''}`}
-            onClick={() => onViewChange('stats')}
-          >
-            統計
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'hygiene' ? ' active' : ''}`}
-            onClick={() => onViewChange('hygiene')}
-          >
-            健全性
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'graph' ? ' active' : ''}`}
-            onClick={() => onViewChange('graph')}
-          >
-            依存グラフ
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'events' ? ' active' : ''}`}
-            onClick={() => onViewChange('events')}
-          >
-            イベント
-            {notificationUnreadCount > 0 ? ` (${notificationUnreadCount})` : ''}
-          </button>
-          <button
-            type="button"
-            className={`toggle-btn${view === 'settings' ? ' active' : ''}`}
-            onClick={() => onViewChange('settings')}
-          >
-            設定
-          </button>
+          {VIEW_ITEMS.map((item) => (
+            <button
+              key={item.view}
+              type="button"
+              className={`toggle-btn${view === item.view ? ' active' : ''}`}
+              onClick={() => onViewChange(item.view)}
+            >
+              {item.label}
+              {item.view === 'events' && notificationUnreadCount > 0
+                ? ` (${notificationUnreadCount})`
+                : ''}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -155,34 +100,14 @@ export function GlobalBar({
         onOpenChange={onStatusDetailOpenChange}
       />
 
-      <div className="header-group project-filter">
-        <details>
-          <summary>
-            プロジェクト
-            {selectedProjectIds.length > 0
-              ? ` (${selectedProjectIds.length} 件選択)`
-              : ' (全件)'}
-          </summary>
-          <div className="project-list">
-            <button type="button" className="btn btn-small" onClick={onSelectAllProjects}>
-              全選択
-            </button>
-            <button type="button" className="btn btn-small" onClick={onClearAllProjects}>
-              全解除
-            </button>
-            {projects.map((project) => (
-              <label key={project.id} className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={selectedProjectIds.includes(project.id)}
-                  onChange={(event) => onToggleProject(project.id, event.target.checked)}
-                />
-                {project.name}
-              </label>
-            ))}
-          </div>
-        </details>
-      </div>
+      <ProjectPicker
+        projects={projects}
+        selectedProjectIds={selectedProjectIds}
+        onToggleProject={onToggleProject}
+        onSelectAllProjects={onSelectAllProjects}
+        onClearAllProjects={onClearAllProjects}
+        onSaveCombination={onSaveProjectCombination}
+      />
 
       <OverflowMenu
         onOpenSettings={onOpenSettings}

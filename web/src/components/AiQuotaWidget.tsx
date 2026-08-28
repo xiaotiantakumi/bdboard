@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { fetchAiQuota, type AiQuotaMetricDto, type AiQuotaProviderDto } from '../api';
+import { useExclusivePopover } from './PopoverCoordinator';
 
 const AI_QUOTA_QUERY_KEY = ['ai-quota'] as const;
 // サーバー側のキャッシュTTL(既定5分)と同じ周期でしか変わらないので、それより高頻度で
@@ -161,7 +162,7 @@ function badgeClassName(maxUsagePercent: number, isExhausted: boolean): string {
  */
 export function AiQuotaWidget() {
   const [popoverOpen, setPopoverOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useExclusivePopover('ai-quota', popoverOpen, setPopoverOpen);
 
   const query = useQuery({
     queryKey: AI_QUOTA_QUERY_KEY,
@@ -171,27 +172,6 @@ export function AiQuotaWidget() {
     // TUIを起動する重い取得なので、フォーカス復帰のたびに再実行しない。
     refetchOnWindowFocus: false,
   });
-
-  useEffect(() => {
-    if (!popoverOpen) {
-      return;
-    }
-
-    const handleMouseDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      if (containerRef.current !== null && !containerRef.current.contains(target)) {
-        setPopoverOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, [popoverOpen]);
 
   const data = query.data;
   if (query.isError || data === undefined || data.state === 'error') {

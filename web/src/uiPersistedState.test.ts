@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   boardFilterPresetStatesEqual,
+  describeBoardFilterPresetState,
+  findDefaultBoardFilterPreset,
   findMatchingBoardFilterPreset,
+  hasStoredBoardFilterState,
   priorityCeilingValue,
   recordRecentTicket,
   validateBoardFilterPresets,
@@ -13,6 +16,9 @@ import {
   validateString,
   validateViewMode,
   validateWatchedTicketIds,
+  viewLabel,
+  UI_STORAGE_KEYS,
+  VIEW_ITEMS,
   type BoardFilterPreset,
   type BoardFilterPresetState,
   type RecentTicketEntry,
@@ -221,5 +227,110 @@ describe('uiPersistedState', () => {
     });
     expect(trimmed.length).toBe(RECENT_TICKETS_MAX);
     expect(trimmed[0].id).toBe('bdboard-new');
+  });
+});
+
+describe('VIEW_ITEMS / viewLabel', () => {
+  it('covers every view mode exactly once', () => {
+    const views = VIEW_ITEMS.map((item) => item.view);
+    expect(new Set(views).size).toBe(views.length);
+    for (const item of VIEW_ITEMS) {
+      expect(viewLabel(item.view)).toBe(item.label);
+    }
+  });
+});
+
+describe('preset defaults (Header Redesign Turn 4 / 4b)', () => {
+  const base: BoardFilterPreset = {
+    id: 'preset-1',
+    name: 'P1バグだけ',
+    view: 'merged',
+    selectedProjectIds: ['proj-1'],
+    priorityCeiling: '1',
+    issueTypes: ['bug'],
+    labels: [],
+    filterText: 'alpha',
+  };
+
+  it('keeps isDefault absent for legacy records and true when stored', () => {
+    const [legacy] = validateBoardFilterPresets([base]) ?? [];
+    expect(legacy.isDefault).toBeUndefined();
+
+    const [flagged] = validateBoardFilterPresets([{ ...base, isDefault: true }]) ?? [];
+    expect(flagged.isDefault).toBe(true);
+
+    // true 以外は「既定ではない」に倒す(壊れた値でプリセット全体を捨てない)。
+    const [loose] = validateBoardFilterPresets([{ ...base, isDefault: 'yes' }]) ?? [];
+    expect(loose.isDefault).toBeUndefined();
+  });
+
+  it('finds the default preset, if any', () => {
+    expect(findDefaultBoardFilterPreset([base])).toBeNull();
+    const flagged = { ...base, id: 'preset-2', isDefault: true };
+    expect(findDefaultBoardFilterPreset([base, flagged])).toBe(flagged);
+  });
+});
+
+describe('hasStoredBoardFilterState', () => {
+  function fakeStorage(entries: Record<string, string>) {
+    return { getItem: (key: string) => entries[key] ?? null };
+  }
+
+  it('is false only when no filter-shaped key was ever written', () => {
+    expect(hasStoredBoardFilterState(fakeStorage({}))).toBe(false);
+    expect(hasStoredBoardFilterState(fakeStorage({ [UI_STORAGE_KEYS.view]: '"merged"' }))).toBe(
+      true,
+    );
+    expect(
+      hasStoredBoardFilterState(fakeStorage({ [UI_STORAGE_KEYS.boardFilterText]: '""' })),
+    ).toBe(true);
+  });
+
+  it('falls back to true when storage cannot be read (never auto-apply blindly)', () => {
+    const throwing = {
+      getItem: () => {
+        throw new Error('denied');
+      },
+    };
+    expect(hasStoredBoardFilterState(throwing)).toBe(true);
+  });
+});
+
+describe('describeBoardFilterPresetState', () => {
+  const state: BoardFilterPresetState = {
+    view: 'merged',
+    selectedProjectIds: [],
+    priorityCeiling: 'all',
+    issueTypes: [],
+    labels: [],
+    filterText: '',
+  };
+
+  it('always names the view and the project scope', () => {
+    expect(describeBoardFilterPresetState(state)).toBe('ビュー: 統合 / 全プロジェクト');
+    expect(
+      describeBoardFilterPresetState({ ...state, view: 'next', selectedProjectIds: ['a', 'b'] }),
+    ).toBe('ビュー: Next Up / プロジェクト2件');
+  });
+
+  it('lists only the filters that are actually set', () => {
+    expect(
+      describeBoardFilterPresetState({
+        ...state,
+        selectedProjectIds: ['a', 'b', 'c'],
+        priorityCeiling: '1',
+        issueTypes: ['bug'],
+        labels: ['x', 'y'],
+        filterText: '  alpha  ',
+      }),
+    ).toBe(
+      'ビュー: 統合 / プロジェクト3件 / P1以上 / 種別1件 / ラベル2件 / 検索「alpha」',
+    );
+  });
+
+  it('ignores whitespace-only search text', () => {
+    expect(describeBoardFilterPresetState({ ...state, filterText: '   ' })).toBe(
+      'ビュー: 統合 / 全プロジェクト',
+    );
   });
 });
