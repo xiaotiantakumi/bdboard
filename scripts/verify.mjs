@@ -54,17 +54,34 @@ if (process.argv.includes('--group-leader')) {
     ...options,
   });
 
+  // 後始末の根にする pid。
+  //
+  // POSIX は自分を含むプロセスグループ全体 (自分も道連れでよい) なので process.pid。
+  // win32 は taskkill を spawn する方式なので自分の pid を根にすると、taskkill 自身が
+  // リーダーの子 = /T の走査対象ツリーの中に入り、走査の途中で自分や親を殺してツリーの
+  // 一部が生き残りうる (fable レビュー指摘, bdboard-6l7)。npm 子を根にすれば taskkill は
+  // 対象ツリーの外に出る。リーダー自身は child の exit を受けて通常経路で終わるので
+  // 掃除は完結するし、リーダーが刺さった場合は外側モードの
+  // killProcessTree(leader.pid) が効く (あちらの taskkill は外側の子なので同じ問題を
+  // 持たない)。
+  const cleanupRootPid = () => (process.platform === 'win32' ? child.pid : process.pid);
+
   let killSequenceStarted = false;
   const ensureGroupDies = (sendTerm) => {
     if (killSequenceStarted) {
       return;
     }
     killSequenceStarted = true;
-    if (sendTerm) {
-      killProcessTree(process.pid, 'SIGTERM');
+    const rootPid = cleanupRootPid();
+    if (rootPid === undefined) {
+      // win32 で npm の spawn 自体に失敗した場合。下の 'error' ハンドラが exit する。
+      return;
     }
-    // 猶予後に自グループごと SIGKILL(自分も含む)。正常終了時は exit で消えるタイマー。
-    setTimeout(() => killProcessTree(process.pid, 'SIGKILL'), GRACE_MS).unref();
+    if (sendTerm) {
+      killProcessTree(rootPid, 'SIGTERM');
+    }
+    // 猶予後に SIGKILL(POSIX では自分も含む)。正常終了時は exit で消えるタイマー。
+    setTimeout(() => killProcessTree(rootPid, 'SIGKILL'), GRACE_MS).unref();
   };
 
   // 外側からのグループ宛て SIGTERM で自分だけ先に死なない(猶予中の SIGKILL 番人を残す)。

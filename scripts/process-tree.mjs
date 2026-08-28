@@ -38,7 +38,7 @@ export function killProcessTree(pid, signal, deps = {}) {
       });
       taskkill.on('error', () => {});
       // taskkill の終了待ちでイベントループを生かさない。
-      taskkill.unref?.();
+      taskkill.unref();
     } catch {
       /* taskkill 自体を起動できなければ、ここでできることはもう無い */
     }

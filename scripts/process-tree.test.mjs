@@ -66,6 +66,16 @@ describe('killProcessTree', () => {
     const spawnFn = vi.fn(() => { throw new Error('ENOENT'); });
     expect(() => killProcessTree(1, 'SIGKILL', { platform: 'win32', spawn: spawnFn })).not.toThrow();
   });
+
+  it("registers an 'error' handler on the taskkill child on win32", () => {
+    // 実物の ENOENT は同期 throw ではなく 'error' イベントで届く。ハンドラを
+    // 登録し忘れると unhandled 'error' が verify 自体をクラッシュさせるので、
+    // 上の同期 throw のテストとは別に登録そのものを固定する
+    // (fable レビュー指摘, bdboard-6l7)。
+    const child = { on: vi.fn(), unref: vi.fn() };
+    killProcessTree(1, 'SIGKILL', { platform: 'win32', spawn: vi.fn(() => child) });
+    expect(child.on).toHaveBeenCalledWith('error', expect.any(Function));
+  });
 });
 
 describe('isOrphaned', () => {
