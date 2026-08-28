@@ -328,20 +328,39 @@ wanted, that is a separate, explicitly user-approved change.
   stale serverId) → `preview_start`; starting a second server would just fail
   to bind. If `lsof` prints nothing, the port really is free and it is safe to
   start.
-- **`preview_start` can flake on the very first call** (observed 2026-08-29):
-  it returns a success response with a `serverId`, but the underlying process
-  dies or never actually binds — the immediately following `curl
-  /api/health` refuses the connection, `lsof` shows no listener, and
-  `preview_logs`/`preview_list` report that same `serverId` as already gone
-  ("not found" / empty process list). **Do not trust the opened browser tab
-  as proof the server is up** — a tab left over from an earlier load can
-  still render a fully populated board (from cache/bfcache) with only a
-  quiet "disconnected" badge as the tell, which looks like a working app at
-  a glance. Verify liveness by the `curl` status code (and `lsof`), never by
-  what the tab shows. If the first `preview_start` attempt shows this
-  pattern, don't chase the stale `serverId` — just call `preview_start`
-  again with the same `start` config; a plain retry brought the server up
-  cleanly in practice.
+- **Never call `preview_start` from a worktree session** (measured
+  2026-08-29). `preview_start {name: "start"}` resolves
+  `.claude/launch.json` relative to *the session's* cwd, and that file is
+  tracked, so every worktree has one. From a worktree it therefore runs
+  `npm run start` **in the worktree**, which binds port 8787 — the main
+  checkout's port — and, because worktrees have no `web/dist`, serves the
+  API only:
+
+  ```
+  web/dist not found; serving API only
+  bdboard listening on http://127.0.0.1:8787
+  ```
+
+  `/api/health` answers **200** and `/` answers **404**. So the session-start
+  health check passes while the board itself is gone, and the running server
+  is the wrong one. Reproduced twice in a row; retrying does not help,
+  because the cause is the cwd, not a flake.
+
+  From a worktree, start the server in the main checkout instead:
+
+  ```bash
+  cd /path/to/main/checkout && nohup npm run start > /tmp/bdboard-server.log 2>&1 &
+  ```
+
+  Confirm with `Serving static web UI from <main checkout>/web/dist` in that
+  log, and check **both** status codes — `/api/health` **and** `/`. Health
+  alone cannot distinguish "the board is being served" from "API only".
+
+- **Do not trust the opened browser tab as proof the server is up.** A tab
+  left over from an earlier load can still render a fully populated board
+  (from cache/bfcache) with only a quiet "disconnected" badge as the tell,
+  which looks like a working app at a glance. Verify liveness by `curl`
+  status codes (and `lsof`), never by what the tab shows.
 - **After merging a PR into main** (right after the fast-forward in the Git
   Workflow cleanup): `git pull --ff-only` → `npm install` /
   `npm --prefix web install` if lockfiles changed → `npm run build:web` →
