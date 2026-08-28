@@ -9,13 +9,14 @@ import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { createSqliteBoardCache } from './sqlite-board-cache.js';
 
-// bdboard-ma4: このファイルの file-backed テストは Windows の CI runner で散発的に
-// vitest 既定の 5s を超える。ローカル(darwin)では26件で計 338ms、同じ Windows runner
-// でも正常時はファイル全体で 2041ms なので、テスト側が重いわけではない — たまに
-// runner 側で数秒単位の I/O ストール(Defender のスキャン等)が1テストに直撃して落ちる。
-// 中身は変えずに待ち時間だけ伸ばす。ハングの検知は失う代わりに 30s で必ず落ちるので、
-// 「無限に待つ」方向には倒していない。全体の testTimeout を上げなかったのは、173 の
-// テストファイル全部で本物のハングの検知が 6 倍遅くなるのを避けるため。
+// bdboard-ma4: 一時ディレクトリに file-backed な sqlite DB を作るテストは、Windows の
+// CI runner で散発的に数秒のI/Oストールを食らう (新規作成される .db/-wal/-shm への
+// AV スキャンが有力)。同一 run で file-backed sqlite のテストファイルだけが 2〜9倍に
+// 膨らみ、非 sqlite のファイル (chokidar 1298→1302ms 等) は無風だったことを CI ログで
+// 確認している。テスト自体は軽い (ローカルでは1件あたり数十ms) ので、アサーションは
+// 変えずに待ち時間だけこのファイル単位で伸ばす。全体の testTimeout を上げないのは、
+// 173 のテストファイル全部で本物のハングの検知が遅くなるため。30s で必ず落ちるので
+// 「無限に待つ」方向には倒していない。
 vi.setConfig({ testTimeout: 30_000 });
 
 function makeSessionLinkRow(overrides: {
