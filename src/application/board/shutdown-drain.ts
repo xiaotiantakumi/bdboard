@@ -2,10 +2,28 @@ import type { BoardCache } from '../ports/board-cache.js';
 import type { ProjectWatchHandle } from '../ports/project-watcher.js';
 import type { TunnelService } from '../tunnel/tunnel-service.js';
 
+/** close() だけを要求する構造的型。infra への import を持ち込まないための最小面。 */
+export interface Closeable {
+  readonly close: () => void;
+}
+
 export interface ShutdownDrainDeps {
   readonly watchHandle: Pick<ProjectWatchHandle, 'stop'>;
   readonly tunnelService: Pick<TunnelService, 'shutdown'>;
   readonly cache: Pick<BoardCache, 'close'>;
+  /**
+   * sqlite 実装固有の close()。application ポートには載せず、main から配線する (bdboard-9dm)。
+   *
+   * BoardCache は port 自身が close() を持つ (board-cache.ts) ので「同じ流儀なら
+   * ChatSessionRepository / ChatMessageRepository にも載せるべき」という指摘があったが、
+   * 採らなかった (fable レビュー, bdboard-9dm): close() は sqlite 実装のリソース寿命の
+   * 話であって chat リポジトリの契約ではなく、in-memory 実装と各テストの fake 全部に
+   * no-op を強いるだけになる。さらに session/message は別型なので、ポートに載せても
+   * ここの異種配列は結局 Closeable のままで解消しない。
+   *
+   * 名前 (chat 固有) と形 (汎用 Closeable) がずれている点は、型に名前を付けて明示する。
+   */
+  readonly chatRepositories?: readonly Closeable[];
 }
 
 /**
@@ -19,7 +37,8 @@ export interface ShutdownDrainDeps {
  * ここを stop() に戻すと SIGTERM 時の中断通知が無言で壊れる。
  * deps の型が Pick<TunnelService, 'shutdown'> なので stop() へ戻すと型エラーにもなる(二重防御)。
  *
- * 実行順序は tunnelService.shutdown → watchHandle.stop → cache.close とする (bdboard-bch)。
+ * 実行順序は tunnelService.shutdown → watchHandle.stop → cache.close →
+ * chatRepositories[].close (任意) とする (bdboard-bch, bdboard-9dm)。
  * preview_stop 等でプロセスグループ全体に SIGTERM が届くと、cloudflared 子プロセスが
  * tunnelService.shutdown() より先に終了し onUnexpectedExit で state が 'on' から 'error' へ
  * 化けることがある。旧順序 (watchHandle.stop を先に await) だと chokidar の watcher.close()
@@ -65,6 +84,16 @@ export function createShutdownDrain(deps: ShutdownDrainDeps): () => Promise<void
       deps.cache.close();
     } catch (err: unknown) {
       record('cache.close', err);
+    }
+
+    if (deps.chatRepositories !== undefined) {
+      deps.chatRepositories.forEach((repository, index) => {
+        try {
+          repository.close();
+        } catch (err: unknown) {
+          record(`chatRepositories[${index}].close`, err);
+        }
+      });
     }
 
     if (errors.length > 0) {

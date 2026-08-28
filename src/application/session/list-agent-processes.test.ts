@@ -72,6 +72,54 @@ describe('listAgentProcesses', () => {
     cached(project('other', 'Other Project', '/work/other')),
   ]);
 
+  // bdboard-9dm: 区切り正規化は win32 限定。platform を注入して両方を POSIX 上で固定する。
+  describe('path separator handling (bdboard-9dm)', () => {
+    const winCache = createFakeCache([
+      // UI ヒントが案内するスラッシュ形の rootPath。
+      cached(project('win', 'Win Project', 'C:/Users/you/projects/app')),
+    ]);
+
+    it('matches a backslash cwd against a slash rootPath on win32', () => {
+      const result = listAgentProcesses(
+        [scanned({ pid: 10, command: 'claude', cwd: 'C:\\Users\\you\\projects\\app\\src' })],
+        winCache,
+        { platform: 'win32' },
+      );
+
+      expect(result[0]).toMatchObject({ projectId: 'win', projectName: 'Win Project' });
+    });
+
+    it('does not normalize separators on posix, so a literal backslash path stays outside the project', () => {
+      // POSIX ではバックスラッシュは合法なパス構成文字。'/work/a\\b' を '/work/a/b' に
+      // 寄せてしまうと別プロジェクトのプロセスが所属扱いされる (fable レビュー指摘)。
+      const posixCache = createFakeCache([
+        cached(project('ab', 'A/B Project', '/work/a/b')),
+      ]);
+
+      const result = listAgentProcesses(
+        [scanned({ pid: 11, command: 'claude', cwd: '/work/a\\b/src' })],
+        posixCache,
+        { platform: 'linux' },
+      );
+
+      expect(result[0]?.projectId).toBeUndefined();
+    });
+
+    it('still matches a plain posix path under the project on posix', () => {
+      const posixCache = createFakeCache([
+        cached(project('ab', 'A/B Project', '/work/a/b')),
+      ]);
+
+      const result = listAgentProcesses(
+        [scanned({ pid: 12, command: 'claude', cwd: '/work/a/b/src' })],
+        posixCache,
+        { platform: 'linux' },
+      );
+
+      expect(result[0]).toMatchObject({ projectId: 'ab' });
+    });
+  });
+
   it('resolves cwd that exactly matches project rootPath', () => {
     const result = listAgentProcesses(
       [scanned({ pid: 1, command: 'claude', cwd: '/work/other' })],

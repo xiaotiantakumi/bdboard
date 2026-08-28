@@ -7,6 +7,7 @@ import type {
   StreamingCommandRunner,
   StreamingCommandFailureKind,
 } from '../../application/ports/streaming-command-runner.js';
+import { killProcessTree } from './kill-process-tree.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const STOP_GRACE_MS = 3_000;
@@ -37,22 +38,6 @@ function resultFrom(
   };
 }
 
-function killGroup(child: ChildProcess, signal: NodeJS.Signals): boolean {
-  const pid = child.pid;
-  if (pid === undefined) {
-    return false;
-  }
-  try {
-    process.kill(-pid, signal);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
-      return false;
-    }
-    return child.kill(signal);
-  }
-}
-
 export class NodeStreamingCommandRunner implements StreamingCommandRunner {
   run(
     command: string,
@@ -65,6 +50,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         cwd: options.cwd,
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
         ...(options.env !== undefined ? { env: { ...options.env } } : {}),
       });
     } catch {
@@ -123,7 +109,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         // ChildProcess 自身の 'close' 判定(このプロセスの stdio が閉じたか)は
         // 満たされるようにする。
         destroyStdio();
-        if (!killGroup(child, 'SIGKILL')) {
+        if (!killProcessTree(child, 'SIGKILL')) {
           return;
         }
         stopTimer = undefined;
@@ -135,7 +121,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         }
         stopping = true;
         failureKind = kind;
-        if (!killGroup(child, 'SIGTERM')) {
+        if (!killProcessTree(child, 'SIGTERM')) {
           return;
         }
         stopTimer = setTimeout(forceStop, STOP_GRACE_MS);
@@ -147,7 +133,7 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         }
         stopping = true;
         failureKind = 'buffer-limit-exceeded';
-        if (killGroup(child, 'SIGTERM')) {
+        if (killProcessTree(child, 'SIGTERM')) {
           stopTimer = setTimeout(forceStop, STOP_GRACE_MS);
         }
       };

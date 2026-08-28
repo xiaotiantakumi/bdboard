@@ -5,6 +5,10 @@ import type {
 import { CHAT_SESSION_MAX_PER_PROJECT } from '../../domain/chat.js';
 import { openCacheDatabase } from '../cache/sqlite-board-cache.js';
 
+export type SqliteChatSessionRepository = ChatSessionRepository & {
+  readonly close: () => void;
+};
+
 interface CountRow {
   readonly count: number;
 }
@@ -36,7 +40,7 @@ interface SessionListRow {
 export function createSqliteChatSessionRepository(
   dbPath: string,
   options?: { readonly maxSessionsPerProject?: number },
-): ChatSessionRepository {
+): SqliteChatSessionRepository {
   const maxSessionsPerProject =
     options?.maxSessionsPerProject ?? CHAT_SESSION_MAX_PER_PROJECT;
 
@@ -137,6 +141,15 @@ export function createSqliteChatSessionRepository(
       db.transaction(() => {
         forgetStmt.run(projectId, sessionId);
       })();
+    },
+
+    close(): void {
+      // Windows ではオープン中の SQLite ファイルを unlink できない (EBUSY)。
+      // graceful shutdown 後も接続が残ると cache.db のロックと WAL 補助ファイルが
+      // 解放されない (bdboard-9dm)。POSIX では表面化しにくいが、close は必須。
+      if (db.open) {
+        db.close();
+      }
     },
   };
 }

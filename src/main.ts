@@ -915,6 +915,7 @@ async function main(): Promise<void> {
   }
 
   const chatDisabled = envBool('BDBOARD_CHAT_DISABLED');
+  const chatCloseables: { readonly close: () => void }[] = [];
   if (!chatDisabled) {
     // 登録配線そのもの(claude 常時登録 / codex・cursor は opt-in 時のみ)は
     // chat-agent-registry-builder.ts に切り出してユニットテスト可能にしてある
@@ -939,6 +940,7 @@ async function main(): Promise<void> {
     }
     const chatSessionRepository = createSqliteChatSessionRepository(dbPath);
     const chatMessageRepository = createSqliteChatMessageRepository(dbPath);
+    chatCloseables.push(chatSessionRepository, chatMessageRepository);
     const chatStore = createChatSessionStore({ repository: chatSessionRepository });
     const chatPerMinute = envInt(
       'BDBOARD_CHAT_TUNNEL_RATE_PER_MINUTE',
@@ -1020,7 +1022,12 @@ async function main(): Promise<void> {
   // server.close() の解決を待たない後始末(タイマー類の停止)は即座に、SSE 等の張りっぱなし
   // 接続の drain 待ちが絡む後始末(watcher/tunnel/cache)は createGracefulShutdown の
   // drain に委ねてタイムアウト保護をかける (bdboard-3tw.91)。
-  const drain = createShutdownDrain({ watchHandle, tunnelService, cache });
+  const drain = createShutdownDrain({
+    watchHandle,
+    tunnelService,
+    cache,
+    chatRepositories: chatCloseables,
+  });
 
   const shutdown = createGracefulShutdown({
     drain,
