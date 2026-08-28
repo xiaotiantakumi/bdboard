@@ -1,0 +1,29 @@
+{
+  // bdboard-b4o: 「src/ 以外の TypeScript」を検査する4つの project が共有する strict 系オプション。
+  //
+  // 対象は tsconfig.node.json / test/e2e/tsconfig.json / web/tsconfig.json / web/tsconfig.node.json。
+  // これらは lib・module 解決・types・include が互いに違う (だから project が分かれている) 一方で、
+  // 厳格さの設定だけは同一で、bdboard-ruf と bdboard-u97 で1ファイルずつ手コピーされて4つに増えた。
+  // 片方だけフラグを足す/外すドリフトを防ぐために、同一な部分だけをここへ集約する。
+  //
+  // ここに入れないもの:
+  //   - module / moduleResolution: ルート側は NodeNext、web 側は bundler で意図的に非対称
+  //     (それぞれ隣接する主 tsconfig に揃えてある)。
+  //   - lib / types / jsx / include: project ごとの前提そのもの。
+  //
+  // ルートの tsconfig.json (src/) はこれを extends しない。あちらは rootDir/outDir を持ち
+  // noUnusedLocals 系を持たない別の前提で、ここに寄せると src/ の検査の厳しさが変わってしまう。
+  "compilerOptions": {
+    "target": "ES2022",
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedSideEffectImports": true
+  }
+}

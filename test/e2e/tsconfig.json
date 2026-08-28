@@ -1,20 +1,11 @@
 {
   // bdboard-u97: Playwright E2E 用。page.evaluate 内の document/getComputedStyle が DOM lib を要するため vitest 設定(tsconfig.node.json)とは分離する。
+  // strict 系は tsconfig.base.json に集約 (bdboard-b4o)。ここには前提が違う部分だけを書く。
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "lib": ["ES2023", "DOM"],
     "module": "NodeNext",
-    "skipLibCheck": true,
     "moduleResolution": "NodeNext",
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true,
     "types": ["node"]
   },
   "include": ["./**/*.ts"]
