@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -172,45 +173,50 @@ describe('chat specs safety guards', () => {
     '$label buildTurn delivers ctx.systemPrompt to the CLI (via stdin or args)',
     ({ buildSpec }) => {
       const spec = buildSpec();
-      const ctx: CliTurnContext = {
-        systemPrompt: SYSTEM_PROMPT_MARKER,
-        mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts'] }],
-        toolNames: ['bd_ready'],
-        scratchDir: '/tmp/bdboard-scratch',
-      };
-      const request: ChatTurnRequest = {
-        projectRootPath: '/tmp/demo',
-        projectName: 'demo',
-        message: 'hello',
-      };
+      const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-scratch-'));
+      try {
+        const ctx: CliTurnContext = {
+          systemPrompt: SYSTEM_PROMPT_MARKER,
+          mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts'] }],
+          toolNames: ['bd_ready'],
+          scratchDir,
+        };
+        const request: ChatTurnRequest = {
+          projectRootPath: '/tmp/demo',
+          projectName: 'demo',
+          message: 'hello',
+        };
 
-      const plan = spec.buildTurn(request, ctx);
-      const deliveredViaStdin = plan.stdin?.includes(SYSTEM_PROMPT_MARKER) ?? false;
-      const deliveredViaArgs = plan.args.some((arg) => arg.includes(SYSTEM_PROMPT_MARKER));
-      expect(
-        deliveredViaStdin || deliveredViaArgs,
-        `${spec.descriptor.id}: buildTurn output must include ctx.systemPrompt in stdin or args`,
-      ).toBe(true);
+        const plan = spec.buildTurn(request, ctx);
+        const deliveredViaStdin = plan.stdin?.includes(SYSTEM_PROMPT_MARKER) ?? false;
+        const deliveredViaArgs = plan.args.some((arg) => arg.includes(SYSTEM_PROMPT_MARKER));
+        expect(
+          deliveredViaStdin || deliveredViaArgs,
+          `${spec.descriptor.id}: buildTurn output must include ctx.systemPrompt in stdin or args`,
+        ).toBe(true);
 
-      // resume ターンでも同様に届くこと(MF1: codex は毎ターン stdin 前置のため resume でも要確認)。
-      const resumePlan = spec.buildTurn({ ...request, resumeSessionId: 'session-1' }, ctx);
-      const resumeDeliveredViaStdin = resumePlan.stdin?.includes(SYSTEM_PROMPT_MARKER) ?? false;
-      const resumeDeliveredViaArgs = resumePlan.args.some((arg) => arg.includes(SYSTEM_PROMPT_MARKER));
-      expect(
-        resumeDeliveredViaStdin || resumeDeliveredViaArgs,
-        `${spec.descriptor.id}: resume-turn buildTurn output must include ctx.systemPrompt in stdin or args`,
-      ).toBe(true);
+        // resume ターンでも同様に届くこと(MF1: codex は毎ターン stdin 前置のため resume でも要確認)。
+        const resumePlan = spec.buildTurn({ ...request, resumeSessionId: 'session-1' }, ctx);
+        const resumeDeliveredViaStdin = resumePlan.stdin?.includes(SYSTEM_PROMPT_MARKER) ?? false;
+        const resumeDeliveredViaArgs = resumePlan.args.some((arg) => arg.includes(SYSTEM_PROMPT_MARKER));
+        expect(
+          resumeDeliveredViaStdin || resumeDeliveredViaArgs,
+          `${spec.descriptor.id}: resume-turn buildTurn output must include ctx.systemPrompt in stdin or args`,
+        ).toBe(true);
 
-      // Opus レビュー N4: ソーススキャン(上の別テスト)に加えて、実際に組み立てられた
-      // 引数列にも禁止フラグが混入していないことを直接固定する(将来 spec が引数を
-      // 動的生成するようになってもソーススキャンをすり抜けないように)。
-      for (const args of [plan.args, resumePlan.args]) {
-        for (const token of FORBIDDEN_CHAT_TOKENS) {
-          expect(
-            args.some((arg) => arg.includes(token)),
-            `${spec.descriptor.id}: buildTurn args must not include forbidden flag ${token}`,
-          ).toBe(false);
+        // Opus レビュー N4: ソーススキャン(上の別テスト)に加えて、実際に組み立てられた
+        // 引数列にも禁止フラグが混入していないことを直接固定する(将来 spec が引数を
+        // 動的生成するようになってもソーススキャンをすり抜けないように)。
+        for (const args of [plan.args, resumePlan.args]) {
+          for (const token of FORBIDDEN_CHAT_TOKENS) {
+            expect(
+              args.some((arg) => arg.includes(token)),
+              `${spec.descriptor.id}: buildTurn args must not include forbidden flag ${token}`,
+            ).toBe(false);
+          }
         }
+      } finally {
+        rmSync(scratchDir, { recursive: true, force: true });
       }
     },
   );
@@ -222,25 +228,30 @@ describe('chat specs safety guards', () => {
     '$label buildStreamingTurn delivers ctx.systemPrompt and has no forbidden flags',
     ({ buildSpec }) => {
       const spec = buildSpec();
-      const ctx: CliTurnContext = {
-        systemPrompt: SYSTEM_PROMPT_MARKER,
-        mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts'] }],
-        toolNames: ['bd_ready'],
-        scratchDir: '/tmp/bdboard-scratch',
-      };
-      const request: ChatTurnRequest = {
-        projectRootPath: '/tmp/demo',
-        projectName: 'demo',
-        message: 'hello',
-      };
+      const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-scratch-'));
+      try {
+        const ctx: CliTurnContext = {
+          systemPrompt: SYSTEM_PROMPT_MARKER,
+          mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts'] }],
+          toolNames: ['bd_ready'],
+          scratchDir,
+        };
+        const request: ChatTurnRequest = {
+          projectRootPath: '/tmp/demo',
+          projectName: 'demo',
+          message: 'hello',
+        };
 
-      const plan = spec.buildStreamingTurn!(request, ctx);
-      const deliveredViaStdin = plan.stdin?.includes(SYSTEM_PROMPT_MARKER) ?? false;
-      const deliveredViaArgs = plan.args.some((arg) => arg.includes(SYSTEM_PROMPT_MARKER));
-      expect(deliveredViaStdin || deliveredViaArgs).toBe(true);
+        const plan = spec.buildStreamingTurn!(request, ctx);
+        const deliveredViaStdin = plan.stdin?.includes(SYSTEM_PROMPT_MARKER) ?? false;
+        const deliveredViaArgs = plan.args.some((arg) => arg.includes(SYSTEM_PROMPT_MARKER));
+        expect(deliveredViaStdin || deliveredViaArgs).toBe(true);
 
-      for (const token of FORBIDDEN_CHAT_TOKENS) {
-        expect(plan.args.some((arg) => arg.includes(token))).toBe(false);
+        for (const token of FORBIDDEN_CHAT_TOKENS) {
+          expect(plan.args.some((arg) => arg.includes(token))).toBe(false);
+        }
+      } finally {
+        rmSync(scratchDir, { recursive: true, force: true });
       }
     },
   );

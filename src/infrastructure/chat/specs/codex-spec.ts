@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { ChatAgentError, type ChatAgentAvailability, type ChatImageAttachment, type ChatTurnRequest, type ChatTurnResult } from '../../../application/ports/chat-agent.js';
@@ -269,23 +269,53 @@ export function createCodexSpec(options: CodexSpecOptions): CliChatAgentSpec {
     },
     timeoutMs: options.timeoutMs,
     buildTurn(request, ctx): CliTurnPlan {
-      const lastMessageFile = path.join(ctx.scratchDir, `bdboard-codex-turn-${randomUUID()}.txt`);
       const images = request.images ?? [];
       const imagePaths = buildImagePaths(images, ctx.scratchDir);
-      // TOML/MCP validation can throw. Build argv before creating any image artifact so
-      // that a validation failure cannot leak a temporary file.
-      const args = buildCodexArgs(
-        request,
-        ctx,
-        request.model ?? options.model,
-        lastMessageFile,
-        imagePaths,
-      );
-      writeImageFiles(images, imagePaths);
+      // 応答ファイル (codex の -o / --output-last-message) の秘匿性について (bdboard-jp3)。
+      //
+      // 応答本文を書き出すのは codex CLI の子プロセスなので、こちら側から mode を指定できない。
+      // 子プロセスの umask 任せになり、POSIX では典型的に 0644 (ワールド可読) になる。先に 0600 の
+      // 空ファイルを作って CLI に渡す案は採らない — codex CLI が truncate するのか unlink→再作成
+      // するのかは検証できず、CLI 内部実装への依存が残るため。
+      //
+      // 代わりに置き場所に依拠する: `mkdtempSync` が作る 0700 ディレクトリの中に置けば、POSIX では
+      // 他ユーザーがディレクトリを traverse できないので、CLI が中のファイルを何 mode で作ろうと
+      // 秘匿性は保たれる。Windows では mkdtemp が親 (`%TEMP%`) の ACL を継承するので、画像一時
+      // ファイルと同じ「ユーザープロファイル配下の Temp の既定 ACL に依拠する」前提がそのまま乗る
+      // (コードが ACL を強制する保証ではなく環境への前提である点も同じ。根拠は writeImageFiles の
+      // コメントを参照)。
+      //
+      // lastMessageFile のパスは argv 構築に必要なので、TOML/MCP バリデーションより前にこの
+      // ディレクトリを作る。buildCodexArgs / writeImageFiles が throw したときは
+      // createCliChatAgent の finally へ届かないため、ここで必ず片付けてから再throwする。
+      const turnDir = mkdtempSync(path.join(ctx.scratchDir, 'bdboard-codex-turn-'));
+      const lastMessageFile = path.join(turnDir, 'last-message.txt');
+      let args: readonly string[];
+      try {
+        // TOML/MCP validation can throw. Build argv before creating any image artifact so
+        // that a validation failure cannot leak a temporary file.
+        args = buildCodexArgs(
+          request,
+          ctx,
+          request.model ?? options.model,
+          lastMessageFile,
+          imagePaths,
+        );
+        writeImageFiles(images, imagePaths);
+      } catch (err) {
+        try {
+          // force: true が「存在しない」を握り潰すので ENOENT の判定は要らない。
+          rmSync(turnDir, { recursive: true, force: true });
+        } catch {
+          console.error('chat codex-spec: failed to remove a partial turn artifact directory');
+        }
+        throw err;
+      }
       return {
         args,
         stdin: buildCodexStdin(ctx, request.message),
         lastMessageFile,
+        temporaryDirs: [turnDir],
         ...(imagePaths.length > 0 ? { temporaryFiles: imagePaths } : {}),
       };
     },

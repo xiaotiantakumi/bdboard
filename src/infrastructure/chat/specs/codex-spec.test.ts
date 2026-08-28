@@ -1,21 +1,27 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatTurnRequest } from '../../../application/ports/chat-agent.js';
 import type { CommandRunner } from '../../../application/ports/command-runner.js';
 import { createCliChatAgent, type CliTurnContext } from '../cli-chat-agent.js';
 import { createCodexSpec } from './codex-spec.js';
 
 const root = '/tmp/demo';
-const context: CliTurnContext = {
-  systemPrompt: 'prompt',
-  mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts', '--project-root', root] }],
-  toolNames: ['bd_ready'],
-  scratchDir: path.join(os.tmpdir(), 'bdboard-scratch'),
-};
+let context: CliTurnContext;
 const request = (overrides: Partial<ChatTurnRequest> = {}): ChatTurnRequest => ({ projectRootPath: root, projectName: 'demo', message: 'hello', ...overrides });
 const scratchDirs: string[] = [];
+
+beforeEach(() => {
+  const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-scratch-'));
+  scratchDirs.push(scratchDir);
+  context = {
+    systemPrompt: 'prompt',
+    mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts', '--project-root', root] }],
+    toolNames: ['bd_ready'],
+    scratchDir,
+  };
+});
 
 afterEach(() => {
   for (const scratchDir of scratchDirs.splice(0)) {
@@ -94,6 +100,24 @@ describe('createCodexSpec buildTurn', () => {
       mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['tab\ttab'] }],
     };
     expect(() => spec.buildTurn(request(), tabInArgs)).toThrow(/control character/);
+  });
+
+  it('places lastMessageFile inside a per-turn 0700 directory under scratchDir (bdboard-jp3)', () => {
+    const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-codex-turn-dir-test-'));
+    scratchDirs.push(scratchDir);
+    const spec = createCodexSpec({ codexPath: 'codex', model: '', timeoutMs: 1000 });
+    const plan = spec.buildTurn(request(), { ...context, scratchDir });
+
+    const turnDir = path.dirname(plan.lastMessageFile!);
+    expect(turnDir).not.toBe(scratchDir);
+    expect(path.dirname(turnDir)).toBe(scratchDir);
+    expect(plan.lastMessageFile).toBe(path.join(turnDir, 'last-message.txt'));
+    expect(plan.temporaryDirs).toEqual([turnDir]);
+    if (process.platform !== 'win32') {
+      expect(statSync(turnDir).mode & 0o777).toBe(0o700);
+    }
+
+    rmSync(turnDir, { recursive: true, force: true });
   });
 });
 

@@ -1,4 +1,4 @@
-import { readFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, rmSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import {
   ChatAgentAbortedError,
@@ -46,6 +46,11 @@ export interface CliTurnPlan {
    * streaming 終了のすべてで、scratchDir 配下のものだけを自動削除する。
    */
   readonly temporaryFiles?: readonly string[];
+  /**
+   * spec がターン用に作成した一時ディレクトリ。成功・子プロセス失敗・parse 失敗・
+   * streaming 終了のすべてで、scratchDir 配下のものだけを中身ごと再帰削除する。
+   */
+  readonly temporaryDirs?: readonly string[];
 }
 
 /**
@@ -170,8 +175,25 @@ function cleanupArtifactFile(filePath: string): void {
   }
 }
 
+/**
+ * 一時ディレクトリの後始末。失敗してもターンは続行する。
+ * 呼び出し前に `scratchDir` 配下であることを確認しているのを前提とする
+ * (bdboard-l1t.4 SF8: spec のバグで scratchDir 外の任意パスが渡ってきても、
+ * ここで無関係なディレクトリを消してしまわないようにするための防御)。
+ * ファイル側の `cleanupArtifactFile` と違って ENOENT の判定を持たないのは、
+ * `force: true` が「存在しない」を既に握り潰すため。
+ */
+function cleanupArtifactDir(dirPath: string): void {
+  try {
+    rmSync(dirPath, { recursive: true, force: true });
+  } catch {
+    // パスや内容はログへ出さない。片付けの失敗でターン自体も失敗させない。
+    console.error('chat cli-chat-agent: failed to remove a temporary chat artifact directory');
+  }
+}
+
 function cleanupTurnFiles(
-  plan: Pick<CliTurnPlan, 'lastMessageFile' | 'temporaryFiles'>,
+  plan: Pick<CliTurnPlan, 'lastMessageFile' | 'temporaryFiles' | 'temporaryDirs'>,
   ctx: CliTurnContext,
   agentId: string,
 ): void {
@@ -185,6 +207,15 @@ function cleanupTurnFiles(
     } else {
       console.error(
         `chat cli-chat-agent: refusing to delete temporary file outside scratchDir (agent=${agentId}, scratchDir=${ctx.scratchDir}, file=${filePath})`,
+      );
+    }
+  }
+  for (const dirPath of new Set(plan.temporaryDirs ?? [])) {
+    if (isWithinDirectory(dirPath, ctx.scratchDir)) {
+      cleanupArtifactDir(dirPath);
+    } else {
+      console.error(
+        `chat cli-chat-agent: refusing to delete temporary directory outside scratchDir (agent=${agentId}, scratchDir=${ctx.scratchDir}, dir=${dirPath})`,
       );
     }
   }
