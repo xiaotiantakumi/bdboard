@@ -36,6 +36,15 @@ export function useBoardStream(): BoardStreamResult {
   // EventSource keeps firing onerror every ~3s while down; without this latch,
   // each one would regress to 'reconnecting' and restart grace, flickering the banner.
   const escalatedRef = useRef(false);
+  // Tracks whether the connection has been through an error/disconnect (or an
+  // explicit reconnect) since the effect mounted, or since the last successful
+  // revalidation. Any change that happened while we were disconnected only
+  // reaches us as a fresh SSE event *after* reconnecting, so that first open
+  // has to be treated the same as an explicit board.changed/session.changed —
+  // otherwise the UI keeps showing stale data until the next live event.
+  // Lives outside the effect because reconnect() has to set it too: tearing the
+  // EventSource down drops any event fired during the close→open window.
+  const hadErrorRef = useRef(false);
 
   const clearGraceTimer = () => {
     if (graceTimerRef.current !== null) {
@@ -48,6 +57,7 @@ export function useBoardStream(): BoardStreamResult {
     const conn = acquireSharedEventSource();
     lastCommittedContactAtRef.current = null;
     escalatedRef.current = false;
+    hadErrorRef.current = false;
     clearGraceTimer();
 
     const touchContact = () => {
@@ -59,13 +69,6 @@ export function useBoardStream(): BoardStreamResult {
       }
     };
 
-    // Tracks whether the connection has been through an error/disconnect
-    // since the effect mounted (or since the last successful revalidation).
-    // Any change that happened while we were disconnected only reaches us as
-    // a fresh SSE event *after* reconnecting, so a reconnect after an error
-    // has to be treated the same as an explicit board.changed/session.changed
-    // — otherwise the UI keeps showing stale data until the next live event.
-    const hadErrorRef = { current: false };
     const lastRevalidateAtRef = { current: 0 };
 
     const revalidateAll = () => {
@@ -156,6 +159,7 @@ export function useBoardStream(): BoardStreamResult {
   const reconnect = useCallback(() => {
     clearGraceTimer();
     escalatedRef.current = false;
+    hadErrorRef.current = true;
     reconnectSharedEventSource();
     setState('connecting');
   }, []);

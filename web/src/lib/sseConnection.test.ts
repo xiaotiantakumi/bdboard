@@ -201,6 +201,23 @@ describe('sseConnection', () => {
     expect(MockEventSource.instances).toHaveLength(0);
   });
 
+  it('drops named listeners once the last consumer releases', () => {
+    const first = acquireSharedEventSource();
+    const onBoardChanged = vi.fn();
+    // A consumer that unmounts without removing its listeners (the shared
+    // connection is torn down anyway) must not have them resurrected onto the
+    // next connection, where they would fire against a dead component.
+    first.addEventListener('board.changed', onBoardChanged);
+    first.release();
+
+    const second = acquireSharedEventSource();
+    MockEventSource.instances.at(-1)!.dispatch('board.changed');
+
+    expect(onBoardChanged).not.toHaveBeenCalled();
+
+    second.release();
+  });
+
   it('does not re-attach removed named listeners after reconnect', () => {
     const conn = acquireSharedEventSource();
     const onBoardChanged = vi.fn();
