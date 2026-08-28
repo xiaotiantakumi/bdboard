@@ -10,7 +10,8 @@
 // spawn detached + process.kill(-pid)) と同じプロセスグループkillパターンを、
 // 「開発者/エージェントが verify を起動する経路」に適用する。
 //
-// 構造 (POSIX 前提。dev=macOS / CI=Linux。win32 は非対応):
+// 構造 (dev=macOS / CI=Linux+Windows。win32 でも verify:steps は動くが、
+// kill 機構は POSIX 限定 — 下の killGroup の注記を参照):
 //
 //   npm run verify
 //     └─ node scripts/verify.mjs              … 外側。呼び出し元の直系(タイムアウトで殺される側)
@@ -29,6 +30,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { npmRunSpawnSpec } from './npm-command.mjs';
 import { acquireVerifySlot, envSlotOptions, SlotWaitTimeoutError } from './verify-slot.mjs';
 
 const GRACE_MS = 5_000;
@@ -36,6 +38,15 @@ const ORPHAN_POLL_MS = 1_000;
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 // node-command-runner.ts の killGroup と同じ: グループ宛てに送り、ESRCH は無視する。
+//
+// win32 ではこの関数は丸ごと no-op になる。libuv の uv_kill (src/win/process.c) は
+// 負の pid をそのまま OpenProcess に渡し、負値が巨大な DWORD になって失敗するため
+// ERROR_INVALID_PARAMETER -> UV_ESRCH にマップされる。ESRCH は上で握りつぶすので
+// 単発 kill のフォールバックにも入らない。つまり win32 でタイムアウトした場合、
+// 子孫ツリー (cmd.exe -> npm -> vitest ワーカー) は残る。リーダーの孤児検知
+// process.ppid === 1 も win32 では成立しない (親が死んでも reparent されない)。
+// CI は使い捨て VM なので実害は限定的だが、Windows をサポート対象に格上げするなら
+// taskkill /T か platform 分岐が要る (bdboard-6l7)。
 function killGroup(pid, signal) {
   try {
     process.kill(-pid, signal);
@@ -54,9 +65,11 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGKILL: 137, SIGTERM: 143
 
 if (process.argv.includes('--group-leader')) {
   // ---- リーダーモード: 新プロセスグループの先頭。verify 本体を同グループで走らせる ----
-  const child = spawn('npm', ['run', 'verify:steps'], {
+  const { command, args, options } = npmRunSpawnSpec('verify:steps');
+  const child = spawn(command, args, {
     cwd: repoRoot,
     stdio: 'inherit',
+    ...options,
   });
 
   let killSequenceStarted = false;
