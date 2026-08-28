@@ -97,8 +97,17 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
 
   const debug = process.env.BDBOARD_E2E_DEBUG === '1';
 
+  // cwd はリポジトリルートではなく使い捨てディレクトリにする (bdboard-gki)。
+  // 配布形態 (npx bdboard) では任意の cwd から起動されるので、そちらに寄せた方が
+  // 実態に近い。上の env はすべて絶対パスで渡しているので cwd には依存しない。
+  // 注意: これは「相対 root だと壊れる」を捕まえるテストではない — 現行の
+  // serve-static は root を検証しないので相対 root でもこの構成で通る。捕まえるのは
+  // 「起動 cwd に依存して静的配信が壊れる」という性質そのもの。
+  const serverCwd = path.join(tmpRoot, 'server-cwd');
+  fs.mkdirSync(serverCwd, { recursive: true });
+
   const child = spawn(tsxBin, [mainTs], {
-    cwd: repoRoot,
+    cwd: serverCwd,
     env: {
       ...process.env,
       PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ''}`,
