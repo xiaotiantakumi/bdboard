@@ -4,7 +4,7 @@ import { useBoardStream, type StreamState } from '../useBoardStream';
 
 export function useLastServerContact(boardDataUpdatedAt: number | undefined): {
   streamState: StreamState;
-  lastContactAtMs: number | null | undefined;
+  lastContactAtMs: number | undefined;
 } {
   const { state: streamState, lastContactAtMs: streamContactAtMs } = useBoardStream();
   const lastContactAtMs = useMemo(

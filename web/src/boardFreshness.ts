@@ -27,7 +27,7 @@ export function contactAgeMinutes(lastContactAtMs: number, nowMs: number): numbe
  */
 export function mergeLastServerContact(
   ...sources: Array<number | null | undefined>
-): number | null | undefined {
+): number | undefined {
   let max: number | undefined;
   for (const source of sources) {
     if (source !== null && source !== undefined && source > 0) {

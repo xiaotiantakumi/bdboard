@@ -1,10 +1,10 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook } from '@testing-library/react';
-import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardStreamResult } from '../useBoardStream';
 import { useLastServerContact } from './useLastServerContact';
 
+// useBoardStream を丸ごと差し替えているので react-query のコンテキストは使われない。
+// QueryClientProvider の wrapper は要らない (fable レビュー指摘, bdboard-9qa)。
 const useBoardStreamMock = vi.fn<() => BoardStreamResult>(() => ({
   state: 'open',
   lastContactAtMs: 1_000,
@@ -16,14 +16,7 @@ vi.mock('../useBoardStream', () => ({
 
 describe('useLastServerContact', () => {
   it('merges SSE contact with boardQuery.dataUpdatedAt using the latest timestamp', () => {
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-
-    const { result } = renderHook(() => useLastServerContact(5_000), { wrapper });
+    const { result } = renderHook(() => useLastServerContact(5_000));
 
     expect(result.current.streamState).toBe('open');
     expect(result.current.lastContactAtMs).toBe(5_000);
@@ -35,14 +28,7 @@ describe('useLastServerContact', () => {
       lastContactAtMs: null,
     });
 
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-    const wrapper = ({ children }: { children: ReactNode }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
-
-    const { result } = renderHook(() => useLastServerContact(0), { wrapper });
+    const { result } = renderHook(() => useLastServerContact(0));
 
     expect(result.current.lastContactAtMs).toBeUndefined();
   });

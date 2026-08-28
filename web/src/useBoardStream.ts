@@ -15,8 +15,10 @@ export interface BoardStreamResult {
 // invalidation) from hammering the API with duplicate refetches.
 const MIN_REVALIDATE_INTERVAL_MS = 5000;
 
-// State へのコミット間隔。遅延判定閾値（120秒）に対して十分小さく、
-// ping 間隔（15秒）と合わせても committed 値の遅れは最大 quantum + ping ≒ 45秒に収まる。
+// State へのコミット間隔。touchContact は「前回コミットから quantum 経過後の最初の接触」で
+// 必ずコミットするので、committed 値の遅れの上限は quantum 未満（<30秒）。遅れる向きは常に
+// 「committed <= 実際の最終接触」＝バナーが早めに出る安全側で、遅延判定閾値（120秒）に対して
+// 十分小さい。
 const CONTACT_COMMIT_QUANTUM_MS = 30_000;
 
 export function useBoardStream(): BoardStreamResult {
