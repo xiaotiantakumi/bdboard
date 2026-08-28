@@ -14,20 +14,39 @@ export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string
   return `${ageHours}時間前`;
 }
 
-export function staleAgeMinutes(generatedAt: string, nowMs: number): number {
-  return Math.floor((nowMs - new Date(generatedAt).getTime()) / 60000);
+export function contactAgeMinutes(lastContactAtMs: number, nowMs: number): number {
+  return Math.floor((nowMs - lastContactAtMs) / 60000);
+}
+
+/**
+ * SSE 接触時刻と盤面フェッチ成功時刻（react-query の dataUpdatedAt）を統合し、
+ * 最も新しい正のタイムスタンプを返す。
+ *
+ * react-query の `dataUpdatedAt` はデータ未取得時 0 を返すため、0 以下の非正値は
+ * 未接触（null / undefined と同様）として無視する。
+ */
+export function mergeLastServerContact(
+  ...sources: Array<number | null | undefined>
+): number | undefined {
+  let max: number | undefined;
+  for (const source of sources) {
+    if (source !== null && source !== undefined && source > 0) {
+      max = max === undefined ? source : Math.max(max, source);
+    }
+  }
+  return max;
 }
 
 export function computeStatusLevel(
   streamState: StreamState,
-  generatedAt: string | null | undefined,
+  lastContactAtMs: number | null | undefined,
   nowMs: number,
 ): StatusLevel {
   if (streamState === 'error') {
     return 'disconnected';
   }
-  if (generatedAt !== null && generatedAt !== undefined) {
-    const ageMinutes = staleAgeMinutes(generatedAt, nowMs);
+  if (lastContactAtMs !== null && lastContactAtMs !== undefined) {
+    const ageMinutes = contactAgeMinutes(lastContactAtMs, nowMs);
     if (ageMinutes >= 2) {
       return 'delayed';
     }

@@ -1,8 +1,13 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { acquireSharedEventSource } from './lib/sseConnection';
 
 export type StreamState = 'connecting' | 'open' | 'error';
+
+export interface BoardStreamResult {
+  state: StreamState;
+  lastContactAtMs: number | null;
+}
 
 // Lower bound between two "revalidate everything" passes triggered by the
 // visibilitychange guard below. Keeps a flurry of tab focus/blur events (or a
@@ -10,12 +15,30 @@ export type StreamState = 'connecting' | 'open' | 'error';
 // invalidation) from hammering the API with duplicate refetches.
 const MIN_REVALIDATE_INTERVAL_MS = 5000;
 
-export function useBoardStream(): StreamState {
+// State へのコミット間隔。touchContact は「前回コミットから quantum 経過後の最初の接触」で
+// 必ずコミットするので、committed 値の遅れの上限は quantum 未満（<30秒）。遅れる向きは常に
+// 「committed <= 実際の最終接触」＝バナーが早めに出る安全側で、遅延判定閾値（120秒）に対して
+// 十分小さい。
+const CONTACT_COMMIT_QUANTUM_MS = 30_000;
+
+export function useBoardStream(): BoardStreamResult {
   const queryClient = useQueryClient();
   const [state, setState] = useState<StreamState>('connecting');
+  const [lastContactAtMs, setLastContactAtMs] = useState<number | null>(null);
+  const lastCommittedContactAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     const conn = acquireSharedEventSource();
+    lastCommittedContactAtRef.current = null;
+
+    const touchContact = () => {
+      const now = Date.now();
+      const lastCommitted = lastCommittedContactAtRef.current;
+      if (lastCommitted === null || now - lastCommitted >= CONTACT_COMMIT_QUANTUM_MS) {
+        lastCommittedContactAtRef.current = now;
+        setLastContactAtMs(now);
+      }
+    };
 
     // Tracks whether the connection has been through an error/disconnect
     // since the effect mounted (or since the last successful revalidation).
@@ -34,6 +57,7 @@ export function useBoardStream(): StreamState {
 
     const onOpen = () => {
       setState('open');
+      touchContact();
       if (hadErrorRef.current) {
         hadErrorRef.current = false;
         revalidateAll();
@@ -49,6 +73,7 @@ export function useBoardStream(): StreamState {
     conn.addErrorListener(onError);
 
     const onBoardChanged = () => {
+      touchContact();
       void queryClient.invalidateQueries({ queryKey: ['board'] });
       void queryClient.invalidateQueries({ queryKey: ['status'] });
       // .beads の変更を検知した = チケット本文やコメントも変わりうる
@@ -59,6 +84,7 @@ export function useBoardStream(): StreamState {
     };
 
     const onSessionChanged = () => {
+      touchContact();
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['board'] });
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
@@ -66,6 +92,8 @@ export function useBoardStream(): StreamState {
 
     conn.addEventListener('board.changed', onBoardChanged);
     conn.addEventListener('session.changed', onSessionChanged);
+    conn.addEventListener('ping', touchContact);
+    conn.addEventListener('hello', touchContact);
 
     // Mobile PWAs frequently freeze/kill the SSE connection when backgrounded
     // without ever firing onerror — the socket just silently stops delivering
@@ -83,6 +111,8 @@ export function useBoardStream(): StreamState {
     return () => {
       conn.removeEventListener('board.changed', onBoardChanged);
       conn.removeEventListener('session.changed', onSessionChanged);
+      conn.removeEventListener('ping', touchContact);
+      conn.removeEventListener('hello', touchContact);
       conn.removeOpenListener(onOpen);
       conn.removeErrorListener(onError);
       document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -90,5 +120,5 @@ export function useBoardStream(): StreamState {
     };
   }, [queryClient]);
 
-  return state;
+  return { state, lastContactAtMs };
 }

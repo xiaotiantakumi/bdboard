@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { computeStatusLevel } from './boardFreshness';
 import { __resetSharedEventSourceForTests } from './lib/sseConnection';
 import { useBoardStream } from './useBoardStream';
 
@@ -159,5 +160,78 @@ describe('useBoardStream', () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
 
     visibilityStateSpy.mockRestore();
+  });
+
+  it('commits the first contact immediately on open', () => {
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    const { es, result } = renderBoardStream();
+
+    act(() => es.onopen?.());
+
+    expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:00.000Z').getTime());
+  });
+
+  it('commits the first contact immediately on ping', () => {
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    const { es, result } = renderBoardStream();
+
+    act(() => es.dispatch('ping'));
+
+    expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:00.000Z').getTime());
+  });
+
+  it('does not change lastContactAtMs on pings within the commit quantum', () => {
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    const { es, result } = renderBoardStream();
+    const firstContactAtMs = new Date('2026-01-01T12:00:00.000Z').getTime();
+
+    act(() => es.dispatch('ping'));
+    expect(result.current.lastContactAtMs).toBe(firstContactAtMs);
+
+    vi.setSystemTime(new Date('2026-01-01T12:00:15.000Z'));
+    act(() => es.dispatch('ping'));
+
+    expect(result.current.lastContactAtMs).toBe(firstContactAtMs);
+  });
+
+  it('commits lastContactAtMs when a ping arrives after the commit quantum', () => {
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    const { es, result } = renderBoardStream();
+
+    act(() => es.dispatch('ping'));
+    expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:00.000Z').getTime());
+
+    vi.setSystemTime(new Date('2026-01-01T12:00:30.000Z'));
+    act(() => es.dispatch('ping'));
+
+    expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:30.000Z').getTime());
+  });
+
+  it('stays ok while pings are throttled (304 keepalive does not trigger delayed banner)', () => {
+    const startMs = new Date('2026-01-01T12:00:00.000Z').getTime();
+    vi.setSystemTime(startMs);
+    const { es, result } = renderBoardStream();
+
+    act(() => es.onopen?.());
+
+    // 15秒間隔で5分分の ping（304 継続時の keepalive を模擬）
+    for (let i = 1; i <= 20; i += 1) {
+      vi.setSystemTime(startMs + i * 15_000);
+      act(() => es.dispatch('ping'));
+    }
+
+    const nowMs = Date.now();
+    expect(
+      computeStatusLevel('open', result.current.lastContactAtMs, nowMs),
+    ).toBe('ok');
+  });
+
+  it('updates lastContactAtMs on hello events', () => {
+    vi.setSystemTime(new Date('2026-01-01T12:00:00.000Z'));
+    const { es, result } = renderBoardStream();
+
+    act(() => es.dispatch('hello'));
+
+    expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:00.000Z').getTime());
   });
 });

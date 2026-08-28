@@ -1,7 +1,7 @@
 import {
   computeStatusLevel,
+  contactAgeMinutes,
   shouldShowAlertBar,
-  staleAgeMinutes,
   STATUS_LABELS,
 } from '../boardFreshness';
 import { useNow } from '../hooks/useNow';
@@ -9,7 +9,7 @@ import type { StreamState } from '../useBoardStream';
 
 export interface AlertBarProps {
   streamState: StreamState;
-  generatedAt: string | null | undefined;
+  lastContactAtMs: number | null | undefined;
   onRefresh: () => void;
   isRefreshing: boolean;
   onOpenDetails: () => void;
@@ -17,29 +17,29 @@ export interface AlertBarProps {
 
 export function AlertBar({
   streamState,
-  generatedAt,
+  lastContactAtMs,
   onRefresh,
   isRefreshing,
   onOpenDetails,
 }: AlertBarProps) {
   const nowMs = useNow();
-  const level = computeStatusLevel(streamState, generatedAt, nowMs);
+  const level = computeStatusLevel(streamState, lastContactAtMs, nowMs);
 
   if (!shouldShowAlertBar(level)) {
     return null;
   }
 
   const staleMinutes =
-    generatedAt !== null && generatedAt !== undefined
-      ? staleAgeMinutes(generatedAt, nowMs)
+    lastContactAtMs !== null && lastContactAtMs !== undefined
+      ? contactAgeMinutes(lastContactAtMs, nowMs)
       : null;
 
   const message =
     level === 'disconnected'
       ? '盤面データの接続が切断されています'
       : staleMinutes !== null
-        ? `盤面が約${staleMinutes}分前から更新されていません`
-        : '盤面の更新が遅延しています';
+        ? `サーバーと約${staleMinutes}分前から通信できていません`
+        : 'サーバーとの通信が遅延しています';
 
   return (
     <div className="alert-bar" role="status">
