@@ -108,6 +108,26 @@ jobs:
           | check:boundaries | ${{ steps.check-boundaries.outcome }} |
           "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
 
+          # Step-level continue-on-error swallows each failure, so without this
+          # the job would report success no matter what broke and nobody would
+          # notice. Failing here restores a visible `failure` conclusion on the
+          # check run; the job-level continue-on-error above still keeps the PR
+          # mergeable (state stays `unstable`, not blocked).
+          $outcomes = @{
+            'build'            = '${{ steps.build.outcome }}'
+            'build:web'        = '${{ steps.build-web.outcome }}'
+            'test:server'      = '${{ steps.test-server.outcome }}'
+            'test:web'         = '${{ steps.test-web.outcome }}'
+            'check:boundaries' = '${{ steps.check-boundaries.outcome }}'
+          }
+          $failed = $outcomes.GetEnumerator() |
+            Where-Object { $_.Value -ne 'success' } |
+            ForEach-Object { "$($_.Key)=$($_.Value)" }
+          if ($failed) {
+            Write-Output "::warning::verify-windows: $($failed -join ', ')"
+            exit 1
+          }
+
   # Kept separate from `verify` on purpose (bdboard-3tw.88): a real browser +
   # server boot is a different failure class than tsc/vitest/depcruise, and a
   # flaky e2e run must not muddy the unit-test job's log or block on tsc/lint
