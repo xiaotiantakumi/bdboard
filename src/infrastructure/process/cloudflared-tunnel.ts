@@ -100,6 +100,7 @@ export interface CloudflaredTunnelOptions {
   readonly spawnFn?: SpawnFn;
   readonly startTimeoutMs?: number;
   readonly stopGraceMs?: number;
+  readonly platform?: NodeJS.Platform;
   readonly pathEnv?: string;
   readonly resolveExecutable?: () => string | null;
   /** cloudflared の継続的な出力ログの保存先(既定: <cwd>/logs/cloudflared-tunnel.log) */
@@ -110,15 +111,21 @@ export interface CloudflaredTunnelOptions {
   readonly createLogSink?: (filePath: string, maxBytes: number) => LogSink;
 }
 
-function resolveCloudflaredInPath(pathEnv: string): string | null {
-  const directories = pathEnv.split(path.delimiter);
+function resolveCloudflaredInPath(
+  pathEnv: string,
+  opts?: { platform?: NodeJS.Platform },
+): string | null {
+  const platform = opts?.platform ?? process.platform;
+  const platformPath = platform === 'win32' ? path.win32 : path.posix;
+  const executableName = platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
+  const directories = pathEnv.split(platformPath.delimiter);
 
   for (const directory of directories) {
     if (directory.length === 0) {
       continue;
     }
 
-    const candidate = path.join(directory, 'cloudflared');
+    const candidate = platformPath.join(directory, executableName);
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
@@ -168,7 +175,7 @@ export function createCloudflaredTunnel(
   const stopGraceMs = options.stopGraceMs ?? DEFAULT_STOP_GRACE_MS;
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
   const resolveExecutable =
-    options.resolveExecutable ?? ((): string | null => resolveCloudflaredInPath(pathEnv));
+    options.resolveExecutable ?? ((): string | null => resolveCloudflaredInPath(pathEnv, options));
   const logFilePath = options.logFilePath ?? DEFAULT_LOG_FILE_PATH;
   const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const createLogSink = options.createLogSink ?? createFileLogSink;
