@@ -4,13 +4,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { CHAT_MESSAGE_MAX_LENGTH } from '../../domain/chat.js';
-import { createSqliteChatMessageRepository } from './sqlite-chat-message-repository.js';
+import {
+  createSqliteChatMessageRepository,
+  type SqliteChatMessageRepository,
+} from './sqlite-chat-message-repository.js';
 
 describe('createSqliteChatMessageRepository', () => {
   let tmpDir: string;
   let dbPath: string;
+  const closables: Array<{ close(): void }> = [];
 
   afterEach(() => {
+    for (const closeable of closables) {
+      closeable.close();
+    }
+    closables.length = 0;
+
     if (tmpDir !== undefined) {
       const resolvedTmpDir = path.resolve(tmpDir);
       const resolvedTmpRoot = path.resolve(os.tmpdir());
@@ -25,18 +34,39 @@ describe('createSqliteChatMessageRepository', () => {
     return dbPath;
   }
 
+  function openRepo(
+    path_: string,
+    options?: { readonly maxMessagesPerSession?: number },
+  ): SqliteChatMessageRepository {
+    const repo = createSqliteChatMessageRepository(path_, options);
+    closables.push(repo);
+    return repo;
+  }
+
+  function openRawDb(path_: string): Database.Database {
+    const db = new Database(path_);
+    closables.push({
+      close() {
+        if (db.open) {
+          db.close();
+        }
+      },
+    });
+    return db;
+  }
+
   it('round-trips messages across repository restarts', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-roundtrip-');
     const sessionId = '550e8400-e29b-41d4-a716-446655440099';
     const at = new Date('2026-08-16T03:00:00.000Z');
 
-    const first = createSqliteChatMessageRepository(path_);
+    const first = openRepo(path_);
     first.append(sessionId, [
       { role: 'user', content: 'hello', createdAt: at },
       { role: 'assistant', content: 'hi', createdAt: at },
     ]);
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb
       .prepare(
         `INSERT INTO chat_sessions (project_id, session_id, last_used_at, agent_id) VALUES (?, ?, ?, ?)`,
@@ -44,7 +74,7 @@ describe('createSqliteChatMessageRepository', () => {
       .run('project-roundtrip', sessionId, '2026-08-16T03:00:00.000Z', 'claude');
     rawDb.close();
 
-    const second = createSqliteChatMessageRepository(path_);
+    const second = openRepo(path_);
     expect(second.listBySession(sessionId)).toEqual([
       { role: 'user', content: 'hello', createdAt: at },
       { role: 'assistant', content: 'hi', createdAt: at },
@@ -56,7 +86,7 @@ describe('createSqliteChatMessageRepository', () => {
     const sessionId = '550e8400-e29b-41d4-a716-446655440098';
     const at = new Date('2026-08-16T03:00:00.000Z');
 
-    const first = createSqliteChatMessageRepository(path_);
+    const first = openRepo(path_);
     first.append(sessionId, [
       { role: 'user', content: 'hello', createdAt: at },
       {
@@ -67,7 +97,7 @@ describe('createSqliteChatMessageRepository', () => {
       },
     ]);
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb
       .prepare(
         `INSERT INTO chat_sessions (project_id, session_id, last_used_at, agent_id) VALUES (?, ?, ?, ?)`,
@@ -75,7 +105,7 @@ describe('createSqliteChatMessageRepository', () => {
       .run('project-failed-tools-roundtrip', sessionId, '2026-08-16T03:00:00.000Z', 'claude');
     rawDb.close();
 
-    const second = createSqliteChatMessageRepository(path_);
+    const second = openRepo(path_);
     expect(second.listBySession(sessionId)).toEqual([
       { role: 'user', content: 'hello', createdAt: at },
       {
@@ -92,7 +122,7 @@ describe('createSqliteChatMessageRepository', () => {
     const sessionId = '550e8400-e29b-41d4-a716-446655440099';
     const at = new Date('2026-08-16T03:00:00.000Z');
 
-    const first = createSqliteChatMessageRepository(path_);
+    const first = openRepo(path_);
     first.append(sessionId, [
       { role: 'user', content: 'hello', createdAt: at },
       {
@@ -103,7 +133,7 @@ describe('createSqliteChatMessageRepository', () => {
       },
     ]);
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb
       .prepare(
         `INSERT INTO chat_sessions (project_id, session_id, last_used_at, agent_id) VALUES (?, ?, ?, ?)`,
@@ -111,7 +141,7 @@ describe('createSqliteChatMessageRepository', () => {
       .run('project-agent-warnings-roundtrip', sessionId, '2026-08-16T03:00:00.000Z', 'agy');
     rawDb.close();
 
-    const second = createSqliteChatMessageRepository(path_);
+    const second = openRepo(path_);
     expect(second.listBySession(sessionId)).toEqual([
       { role: 'user', content: 'hello', createdAt: at },
       {
@@ -128,7 +158,7 @@ describe('createSqliteChatMessageRepository', () => {
     const sessionId = 'sess-agent-warnings-migrate';
     const at = new Date('2026-08-16T03:00:00.000Z');
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb.exec(`
       CREATE TABLE chat_sessions (
         project_id TEXT NOT NULL,
@@ -157,7 +187,7 @@ describe('createSqliteChatMessageRepository', () => {
       .run(sessionId, 'assistant', 'legacy reply', at.toISOString());
     rawDb.close();
 
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     repo.append(sessionId, [
       {
         role: 'assistant',
@@ -167,7 +197,7 @@ describe('createSqliteChatMessageRepository', () => {
       },
     ]);
 
-    const columns = new Database(path_)
+    const columns = openRawDb(path_)
       .prepare(`PRAGMA table_info(chat_messages)`)
       .all() as Array<{ name: string }>;
     expect(columns.some((column) => column.name === 'agent_warnings')).toBe(true);
@@ -185,7 +215,7 @@ describe('createSqliteChatMessageRepository', () => {
   it('trims the oldest messages once the per-session cap is exceeded', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-cap-');
 
-    const repo = createSqliteChatMessageRepository(path_, {
+    const repo = openRepo(path_, {
       maxMessagesPerSession: 3,
     });
     const sessionId = 'sess-cap';
@@ -204,11 +234,11 @@ describe('createSqliteChatMessageRepository', () => {
 
   it('omits agentWarnings rather than throwing when the stored value is not a JSON string array (bdboard-l1t.6 N-e)', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-agent-warnings-garbage-');
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     const sessionId = 'session-agent-warnings-garbage';
     repo.append(sessionId, [{ role: 'assistant', content: 'ok' }]);
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb
       .prepare(`UPDATE chat_messages SET agent_warnings = ? WHERE session_id = ?`)
       .run('not json', sessionId);
@@ -221,7 +251,7 @@ describe('createSqliteChatMessageRepository', () => {
 
   it('deletes only messages belonging to the requested session', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-delete-');
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     repo.append('session-a', [{ role: 'user', content: 'remove me' }]);
     repo.append('session-b', [{ role: 'user', content: 'keep me' }]);
 
@@ -234,7 +264,7 @@ describe('createSqliteChatMessageRepository', () => {
   it('works against a v5 database upgraded in place to v6', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-v5-migrate-');
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb.exec(`
       CREATE TABLE chat_sessions (
         project_id TEXT NOT NULL,
@@ -254,13 +284,13 @@ describe('createSqliteChatMessageRepository', () => {
     ).run('project-a', 'session-1', '2026-08-16T03:00:00.000Z', 'claude');
     rawDb.close();
 
-    const messages = createSqliteChatMessageRepository(path_);
+    const messages = openRepo(path_);
     messages.append('session-1', [{ role: 'user', content: 'stored' }]);
     expect(messages.listBySession('session-1')).toEqual([
       expect.objectContaining({ role: 'user', content: 'stored' }),
     ]);
 
-    const reopened = new Database(path_);
+    const reopened = openRawDb(path_);
     const versionRow = reopened
       .prepare(`SELECT value FROM meta WHERE key = 'schema_version'`)
       .get() as { readonly value: string };
@@ -271,7 +301,7 @@ describe('createSqliteChatMessageRepository', () => {
   it('migrates a v6 chat_messages table without failed_tools in place, preserving existing rows (bdboard-ftn)', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-failed-tools-migrate-');
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb.exec(`
       CREATE TABLE chat_sessions (
         project_id TEXT NOT NULL,
@@ -300,7 +330,7 @@ describe('createSqliteChatMessageRepository', () => {
     ).run('session-legacy', 'user', 'pre-migration message', '2026-08-16T03:00:00.000Z');
     rawDb.close();
 
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
 
     // 移行前から存在した行は failedTools 無しで読めること (既存データを壊さない)。
     expect(repo.listBySession('session-legacy')).toEqual([
@@ -322,7 +352,7 @@ describe('createSqliteChatMessageRepository', () => {
       }),
     );
 
-    const reopened = new Database(path_);
+    const reopened = openRawDb(path_);
     const columns = reopened
       .prepare(`PRAGMA table_info(chat_messages)`)
       .all() as { readonly name: string }[];
@@ -337,11 +367,11 @@ describe('createSqliteChatMessageRepository', () => {
 
   it('omits failedTools rather than throwing when the stored value is not a JSON string array (bdboard-ftn)', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-failed-tools-garbage-');
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     const sessionId = 'session-garbage';
     repo.append(sessionId, [{ role: 'assistant', content: 'ok' }]);
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb
       .prepare(`UPDATE chat_messages SET failed_tools = ? WHERE session_id = ?`)
       .run('not json', sessionId);
@@ -355,7 +385,7 @@ describe('createSqliteChatMessageRepository', () => {
   it('removes orphan chat_messages rows without a parent session on repository creation', () => {
     const path_ = makeTmpDbPath('bdboard-chat-messages-orphan-sweep-');
 
-    const rawDb = new Database(path_);
+    const rawDb = openRawDb(path_);
     rawDb.exec(`
       CREATE TABLE chat_sessions (
         project_id TEXT NOT NULL,
@@ -397,13 +427,13 @@ describe('createSqliteChatMessageRepository', () => {
     );
     rawDb.close();
 
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     expect(repo.listBySession('session-live').map((row) => row.content)).toEqual([
       'keep me',
     ]);
     expect(repo.listBySession('session-orphan')).toEqual([]);
 
-    const reopened = new Database(path_);
+    const reopened = openRawDb(path_);
     const orphanCount = reopened
       .prepare(`SELECT COUNT(*) AS count FROM chat_messages WHERE session_id = ?`)
       .get('session-orphan') as { readonly count: number };
@@ -413,7 +443,7 @@ describe('createSqliteChatMessageRepository', () => {
 
   it('returns grouped thread summaries without loading full messages', () => {
     const path_ = makeTmpDbPath('bdboard-chat-thread-summaries-');
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     const messagesBySession = {
       'session-a': [
         { role: 'assistant' as const, content: 'welcome', createdAt: new Date('2026-08-16T03:00:00.000Z') },
@@ -451,7 +481,7 @@ describe('createSqliteChatMessageRepository', () => {
 
   it('handles empty sessions, code-point prefixes, boundary lengths, and empty input', () => {
     const path_ = makeTmpDbPath('bdboard-chat-thread-summary-details-');
-    const repo = createSqliteChatMessageRepository(path_);
+    const repo = openRepo(path_);
     const unicodeContent = `${'😀'.repeat(CHAT_MESSAGE_MAX_LENGTH - 1)}Z`;
     repo.append('session-unicode', [{
       role: 'user',

@@ -11,16 +11,32 @@ interface FakeFsOptions {
   readonly files?: Readonly<Record<string, string>>;
 }
 
+/** 実装が path.join でネイティブ区切りを作るのは正しい。fake は POSIX キーの仮想ボリュームなので境界で吸収する (bdboard-9dm)。 */
+function normalizeFakePath(pathValue: string): string {
+  return pathValue.replaceAll('\\', '/');
+}
+
+function normalizeRecordKeys<T>(record: Readonly<Record<string, T>>): Readonly<Record<string, T>> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [normalizeFakePath(key), value]),
+  );
+}
+
 function createFakeFs(options: FakeFsOptions): FileSystemPort {
-  const { dirs, realPaths = {}, throwOnRead = [], stats = {}, files = {} } = options;
-  const throwSet = new Set(throwOnRead);
+  const dirs = normalizeRecordKeys(options.dirs);
+  const realPaths = normalizeRecordKeys(options.realPaths ?? {});
+  const { throwOnRead = [], stats: rawStats = {}, files: rawFiles = {} } = options;
+  const stats = normalizeRecordKeys(rawStats);
+  const files = normalizeRecordKeys(rawFiles);
+  const throwSet = new Set(throwOnRead.map(normalizeFakePath));
 
   return {
     async readDir(dirPath: string): Promise<readonly DirEntry[]> {
-      if (throwSet.has(dirPath)) {
+      const key = normalizeFakePath(dirPath);
+      if (throwSet.has(key)) {
         throw new Error(`EACCES: permission denied: ${dirPath}`);
       }
-      const entries = dirs[dirPath];
+      const entries = dirs[key];
       if (entries === undefined) {
         throw new Error(`ENOENT: no such directory: ${dirPath}`);
       }
@@ -28,23 +44,24 @@ function createFakeFs(options: FakeFsOptions): FileSystemPort {
     },
 
     async isDirectory(dirPath: string): Promise<boolean> {
-      return Object.prototype.hasOwnProperty.call(dirs, dirPath);
+      return Object.prototype.hasOwnProperty.call(dirs, normalizeFakePath(dirPath));
     },
 
     async realPath(dirPath: string): Promise<string> {
-      return realPaths[dirPath] ?? dirPath;
+      const key = normalizeFakePath(dirPath);
+      return realPaths[key] ?? key;
     },
 
     async stat(filePath: string): Promise<FileStat | undefined> {
-      return stats[filePath];
+      return stats[normalizeFakePath(filePath)];
     },
 
     async readFile(filePath: string): Promise<string | undefined> {
-      return files[filePath];
+      return files[normalizeFakePath(filePath)];
     },
 
     async readRange(filePath: string, start: number, length: number): Promise<string | undefined> {
-      const content = files[filePath];
+      const content = files[normalizeFakePath(filePath)];
       if (content === undefined) {
         return undefined;
       }
@@ -62,7 +79,7 @@ function createFakeFs(options: FakeFsOptions): FileSystemPort {
       start: number,
       length: number,
     ): Promise<Buffer | undefined> {
-      const content = files[filePath];
+      const content = files[normalizeFakePath(filePath)];
       if (content === undefined) {
         return undefined;
       }
@@ -80,7 +97,7 @@ interface FakeGitOptions {
 }
 
 function createFakeCommandRunner(options: FakeGitOptions): CommandRunner {
-  const { responses } = options;
+  const responses = normalizeRecordKeys(options.responses);
 
   return {
     async run(
@@ -91,7 +108,7 @@ function createFakeCommandRunner(options: FakeGitOptions): CommandRunner {
       if (command !== 'git' || args.join(' ') !== 'rev-parse --path-format=absolute --git-common-dir') {
         return { stdout: '', stderr: 'unexpected command', exitCode: 1 };
       }
-      const cwd = runOptions?.cwd ?? '';
+      const cwd = normalizeFakePath(runOptions?.cwd ?? '');
       return responses[cwd] ?? { stdout: '', stderr: 'not a git repository', exitCode: 128 };
     },
   };
@@ -428,6 +445,11 @@ describe('discoverProjects', () => {
         'C:\\root\\proj': dir('.beads'),
         'C:\\rootother': dir('.beads'),
       },
+      // realPath 既定は正準化後キー。ドライブレター付き入力は realPaths で区切りを維持 (bdboard-9dm)。
+      realPaths: {
+        'C:/root/proj': 'C:\\root\\proj',
+        'C:/rootother': 'C:\\rootother',
+      },
     });
 
     const projects = await discoverProjects({
@@ -449,6 +471,11 @@ describe('discoverProjects', () => {
       dirs: {
         'C:\\root\\proj': dir('.beads'),
         'C:\\rootother': dir('.beads'),
+      },
+      // realPath 既定は正準化後キー。ドライブレター付き入力は realPaths で区切りを維持 (bdboard-9dm)。
+      realPaths: {
+        'C:/root/proj': 'C:\\root\\proj',
+        'C:/rootother': 'C:\\rootother',
       },
     });
 
