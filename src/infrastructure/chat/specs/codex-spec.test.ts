@@ -1,21 +1,27 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ChatTurnRequest } from '../../../application/ports/chat-agent.js';
 import type { CommandRunner } from '../../../application/ports/command-runner.js';
 import { createCliChatAgent, type CliTurnContext } from '../cli-chat-agent.js';
 import { createCodexSpec } from './codex-spec.js';
 
 const root = '/tmp/demo';
-const context: CliTurnContext = {
-  systemPrompt: 'prompt',
-  mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts', '--project-root', root] }],
-  toolNames: ['bd_ready'],
-  scratchDir: path.join(os.tmpdir(), 'bdboard-scratch'),
-};
+let context: CliTurnContext;
 const request = (overrides: Partial<ChatTurnRequest> = {}): ChatTurnRequest => ({ projectRootPath: root, projectName: 'demo', message: 'hello', ...overrides });
 const scratchDirs: string[] = [];
+
+beforeEach(() => {
+  const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-scratch-'));
+  scratchDirs.push(scratchDir);
+  context = {
+    systemPrompt: 'prompt',
+    mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts', '--project-root', root] }],
+    toolNames: ['bd_ready'],
+    scratchDir,
+  };
+});
 
 afterEach(() => {
   for (const scratchDir of scratchDirs.splice(0)) {
@@ -77,6 +83,14 @@ describe('createCodexSpec buildTurn', () => {
 
     // 生の改行や NUL 等の制御文字が混ざった場合は、壊れた/意図しない -c TOML を黙って
     // 生成するのではなく例外で拒否する(bdboard-l1t.4 デルタレビュー nit8: escape でなく reject)。
+    //
+    // buildTurn は argv 構築より前にターン用ディレクトリを作るので、throw したぶんだけ
+    // scratchDir にディレクトリが残りうる。createCliChatAgent の finally は buildTurn が
+    // 完了しないと plan を受け取れず片付けられないため、buildTurn 自身が消す責任を持つ
+    // (bdboard-jp3)。上の成功した buildTurn が残したディレクトリは (エージェント側が消すので)
+    // 正当に残るため、throw の前後で中身が増えていないことを見る。
+    const beforeThrows = readdirSync(context.scratchDir).sort();
+
     const newlineInCommand: CliTurnContext = {
       ...context,
       mcpServers: [{ name: 'bd', command: '/usr/bin/node\n[malicious]\ninjected="yes"', args: [] }],
@@ -94,6 +108,26 @@ describe('createCodexSpec buildTurn', () => {
       mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['tab\ttab'] }],
     };
     expect(() => spec.buildTurn(request(), tabInArgs)).toThrow(/control character/);
+
+    expect(readdirSync(context.scratchDir).sort()).toEqual(beforeThrows);
+  });
+
+  it('places lastMessageFile inside a per-turn 0700 directory under scratchDir (bdboard-jp3)', () => {
+    const scratchDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-codex-turn-dir-test-'));
+    scratchDirs.push(scratchDir);
+    const spec = createCodexSpec({ codexPath: 'codex', model: '', timeoutMs: 1000 });
+    const plan = spec.buildTurn(request(), { ...context, scratchDir });
+
+    const turnDir = path.dirname(plan.lastMessageFile!);
+    expect(turnDir).not.toBe(scratchDir);
+    expect(path.dirname(turnDir)).toBe(scratchDir);
+    expect(plan.lastMessageFile).toBe(path.join(turnDir, 'last-message.txt'));
+    expect(plan.temporaryDirs).toEqual([turnDir]);
+    if (process.platform !== 'win32') {
+      expect(statSync(turnDir).mode & 0o777).toBe(0o700);
+    }
+
+    rmSync(turnDir, { recursive: true, force: true });
   });
 });
 
