@@ -9,13 +9,11 @@ import {
   fetchProjects,
   fetchSessions,
   fetchStatus,
-  fetchSyncHealth,
   type BoardCardDto,
   type Lane,
   type PendingDecisionDto,
   type PrBadgeDto,
   type ProjectDto,
-  type SyncHealthDto,
 } from './api';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
@@ -233,12 +231,6 @@ export function App() {
 
   useAppBadge(pendingDecisionsQuery.data?.length);
 
-  const syncHealthQuery = useQuery({
-    queryKey: ['sync-health', selectedProjectIdsJoined],
-    queryFn: () => fetchSyncHealth(selectedProjectIds),
-    retry: false,
-  });
-
   const chatAvailabilityQuery = useQuery({
     queryKey: ['chat-availability'],
     queryFn: fetchChatAvailability,
@@ -364,14 +356,6 @@ export function App() {
     }
     return map;
   }, [projectsQuery.data]);
-
-  const syncHealthByProject = useMemo(() => {
-    const map = new Map<string, SyncHealthDto>();
-    for (const health of syncHealthQuery.data ?? []) {
-      map.set(health.projectId, health);
-    }
-    return map;
-  }, [syncHealthQuery.data]);
 
   useEffect(() => {
     const projects = projectsQuery.data;
@@ -825,7 +809,6 @@ export function App() {
             sectionKeyPrefix={selectedProjectIdsJoined}
             onCardClick={handleSelectTicket}
             onSessionBadgeClick={handleOpenSessionList}
-            syncHealthByProject={syncHealthByProject}
             collapsedLanes={collapsedLanesSet}
             onToggleLaneCollapse={handleToggleLaneCollapse}
             wipLimitsOverrides={wipLimitsOverrides}

@@ -5,7 +5,6 @@ import {
   LANES,
   type PrBadgeDto,
   type ProjectBoardDto,
-  type SyncHealthDto,
 } from '../api';
 import {
   type BoardFilter,
@@ -18,7 +17,6 @@ import { useBoardDnD } from './BoardDnDProvider';
 import { BoardKeyboardNavProvider, useBoardKeyboardNav } from './BoardKeyboardNavProvider';
 import { LaneColumn } from './LaneColumn';
 import { ProjectHarnessBadges } from './ProjectHarnessBadges';
-import { SyncHealthBadge } from './SyncHealthBadge';
 import {
   computeWipStatus,
   resolveWipLimitForLane,
@@ -232,7 +230,6 @@ interface SplitBoardProps {
   sectionKeyPrefix: string;
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick?: (projectId: string) => void;
-  readonly syncHealthByProject?: Map<string, SyncHealthDto>;
   collapsedLanes?: ReadonlySet<Lane>;
   onToggleLaneCollapse?: (lane: Lane) => void;
   wipLimitsOverrides?: WipLimitsOverrides;
@@ -248,7 +245,6 @@ export function SplitBoard({
   sectionKeyPrefix,
   onCardClick,
   onSessionBadgeClick,
-  syncHealthByProject,
   collapsedLanes,
   onToggleLaneCollapse,
   wipLimitsOverrides,
@@ -300,7 +296,6 @@ export function SplitBoard({
                 </span>
               )
             )}
-            <SyncHealthBadge health={syncHealthByProject?.get(entry.project.id)} />
             <ProjectHarnessBadges projectId={entry.project.id} />
           </h2>
           <BoardLanes
