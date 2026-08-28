@@ -311,9 +311,11 @@ wanted, that is a separate, explicitly user-approved change.
   Do **not** use `curl -f`, because it hides the response body/status distinction.
 
   Only a **connection failure** means the server is down: curl prints `000`
-  and exits 7. In that case start it — prefer the Browser tool's
-  `preview_start` with the `start` config in `.claude/launch.json`; otherwise
-  run `npm run start` in the background.
+  and exits 7. In that case start it — **from a session whose cwd is the
+  main checkout**, prefer the Browser tool's `preview_start` with the `start`
+  config in `.claude/launch.json`; otherwise run `npm run start` in the
+  background. From a worktree session, neither: see the `preview_start`
+  entry below.
 
   Before starting anything, confirm with
 
@@ -333,28 +335,55 @@ wanted, that is a separate, explicitly user-approved change.
   `.claude/launch.json` relative to *the session's* cwd, and that file is
   tracked, so every worktree has one. From a worktree it therefore runs
   `npm run start` **in the worktree**, which binds port 8787 — the main
-  checkout's port — and, because worktrees have no `web/dist`, serves the
-  API only:
+  checkout's port. What gets served then depends on that worktree, because
+  `webDistDir` is derived from `import.meta.url` (`src/main.ts:990`), i.e.
+  from *which checkout's `src/main.ts` is executing* — cwd is the upstream
+  cause, not the direct one:
+
+  - **A worktree that has never run `npm run build:web`** (a fresh one, or
+    one whose `npm run verify` has not finished) has no `web/dist`, so the
+    server logs `web/dist not found; serving API only`. `/api/health`
+    answers **200** and `/` answers **404**.
+  - **A worktree that has run `npm run verify`** does have a `web/dist`
+    (`web/dist/` is gitignored but `build:web` writes it), so it serves
+    **that branch's stale UI**. Both `/api/health` and `/` answer **200**.
+    This is the common case, not the exception: verify is mandatory before
+    opening a PR, so most worktrees have a `web/dist` — measured 2026-08-29,
+    9 of 12.
+
+  So **status codes alone cannot detect this.** The 200/404 pair catches only
+  the first case; the second looks completely healthy while serving a board
+  built from someone else's branch. The reliable check is the startup log
+  line:
 
   ```
-  web/dist not found; serving API only
-  bdboard listening on http://127.0.0.1:8787
+  Serving static web UI from <path>/web/dist
   ```
 
-  `/api/health` answers **200** and `/` answers **404**. So the session-start
-  health check passes while the board itself is gone, and the running server
-  is the wrong one. Reproduced twice in a row; retrying does not help,
-  because the cause is the cwd, not a flake.
+  If that path is not the main checkout, the wrong server is running
+  (`lsof -p <pid> -d cwd` answers the same question for an already-running
+  process).
 
-  From a worktree, start the server in the main checkout instead:
+  From a worktree, start the server in the main checkout instead — the `cd`
+  is load-bearing beyond picking the right `src/main.ts`, because
+  `serveStatic`'s root is `path.relative(process.cwd(), webDistDir)`
+  (`src/main.ts:994-996`):
 
   ```bash
   cd /path/to/main/checkout && nohup npm run start > /tmp/bdboard-server.log 2>&1 &
   ```
 
-  Confirm with `Serving static web UI from <main checkout>/web/dist` in that
-  log, and check **both** status codes — `/api/health` **and** `/`. Health
-  alone cannot distinguish "the board is being served" from "API only".
+  (That log path is truncated on every restart; use a distinct name if you
+  need to keep an earlier run's output.)
+
+  A separate, independently-possible failure was seen just before this one:
+  `preview_start` returned a serverId, but the port answered **connection
+  refused**, `lsof` showed no listener, and the entry had vanished from
+  `preview_list`. That is a different symptom — a listener that never came
+  up, versus one that is up and serving the wrong thing — and is best
+  explained as a startup race (the success reply arriving before the bind
+  completes). Retrying can plausibly help there; it cannot help with the
+  worktree-cwd case above, where every attempt reproduces (2/2).
 
 - **Do not trust the opened browser tab as proof the server is up.** A tab
   left over from an earlier load can still render a fully populated board
@@ -379,10 +408,12 @@ wanted, that is a separate, explicitly user-approved change.
   not a substitute for this advance warning. See bdboard-8v8.
 - **Never kill the server** except for that post-merge restart (or an explicit
   user request).
-- This rule is the guarantee behind two existing conventions: worktrees must
+- This rule is the guarantee behind three existing conventions: worktrees must
   not run `npm run dev` (the port belongs to the main checkout — see Git
-  Workflow), and `npm run dev:web` in a worktree works because its Vite proxy
-  targets this always-on server at `127.0.0.1:8787`. The mobile tunnel
+  Workflow) and must not call `preview_start` (which runs `npm run start`
+  there, taking the same port — see above), and `npm run dev:web` in a
+  worktree works because its Vite proxy targets this always-on server at
+  `127.0.0.1:8787`. The mobile tunnel
   (mobile-preview-tunnel skill) also points at this server, so tunneling
   needs no separate server-start step — just the health check.
 
