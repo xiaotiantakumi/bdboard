@@ -39,6 +39,95 @@ jobs:
       - run: npm --prefix web ci
       - run: npm run verify
 
+  # Kept separate from `verify` rather than using a matrix so the existing
+  # check name `verify` stays unchanged — our merge convention waits on that
+  # name, and we do not want to break a future required Windows gate either.
+  # `continue-on-error` keeps this advisory while bdboard-70z.8 records current
+  # Windows failures; bdboard-70z.9 will decide when it can become required.
+  # Steps call build/test targets directly instead of `npm run verify` because
+  # scripts/verify.mjs spawns `npm` without shell:true; on Windows npm is
+  # npm.cmd so verify dies immediately with ENOENT and never runs the
+  # underlying steps. The slot queue and process-group kill in verify.mjs are
+  # for local dev machines and are unnecessary on ephemeral CI runners.
+  verify-windows:
+    continue-on-error: true
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - run: npm ci
+      - run: npm --prefix web ci
+
+      - name: npm run build
+        id: build
+        continue-on-error: true
+        run: npm run build
+
+      - name: npm run build:web
+        id: build-web
+        continue-on-error: true
+        run: npm run build:web
+
+      - name: npm run test:server
+        id: test-server
+        continue-on-error: true
+        run: npm run test:server
+
+      - name: npm run test:web
+        id: test-web
+        continue-on-error: true
+        run: npm run test:web
+
+      - name: npm run check:boundaries
+        id: check-boundaries
+        continue-on-error: true
+        run: npm run check:boundaries
+
+      - name: Summarize step outcomes
+        if: always()
+        shell: pwsh
+        run: |
+          @"
+          ### verify-windows step results
+
+          | Step | Outcome |
+          | --- | --- |
+          | build | ${{ steps.build.outcome }} |
+          | build:web | ${{ steps.build-web.outcome }} |
+          | test:server | ${{ steps.test-server.outcome }} |
+          | test:web | ${{ steps.test-web.outcome }} |
+          | check:boundaries | ${{ steps.check-boundaries.outcome }} |
+          "@ | Add-Content -Path $env:GITHUB_STEP_SUMMARY
+
+          # Step-level continue-on-error swallows each failure, so without this
+          # the job would report success no matter what broke and nobody would
+          # notice. Failing here restores a visible `failure` conclusion on the
+          # check run; the job-level continue-on-error above still keeps the PR
+          # mergeable (state stays `unstable`, not blocked).
+          $outcomes = @{
+            'build'            = '${{ steps.build.outcome }}'
+            'build:web'        = '${{ steps.build-web.outcome }}'
+            'test:server'      = '${{ steps.test-server.outcome }}'
+            'test:web'         = '${{ steps.test-web.outcome }}'
+            'check:boundaries' = '${{ steps.check-boundaries.outcome }}'
+          }
+          $failed = $outcomes.GetEnumerator() |
+            Where-Object { $_.Value -ne 'success' } |
+            ForEach-Object { "$($_.Key)=$($_.Value)" }
+          if ($failed) {
+            Write-Output "::warning::verify-windows: $($failed -join ', ')"
+            exit 1
+          }
+
   # Kept separate from `verify` on purpose (bdboard-3tw.88): a real browser +
   # server boot is a different failure class than tsc/vitest/depcruise, and a
   # flaky e2e run must not muddy the unit-test job's log or block on tsc/lint
@@ -75,8 +164,8 @@ jobs:
 
       # chromium only (not `npx playwright install --with-deps` with no
       # browser argument, which would fetch all of Chromium/Firefox/WebKit):
-      # this is a private repo on GitHub Free, so Actions minutes are billed,
-      # and the smoke suite only ever launches Chromium.
+      # the smoke suite only ever launches Chromium, so the other browsers
+      # would only waste CI time and cache space.
       - name: Install Playwright chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium

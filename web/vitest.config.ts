@@ -1,6 +1,7 @@
 import { availableParallelism } from 'node:os';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+import rootPackage from '../package.json';
 
 // bdboard-3tw.106: 並列worktreeセッションでCPUが過剰契約されると、jsdom環境の
 // 起動(ファイル先頭テストに乗る固定コスト)がスケジューリング飢餓で5000msの
@@ -15,6 +16,9 @@ const maxTestWorkers = Math.max(2, Math.ceil(availableParallelism() / 4));
 
 export default defineConfig({
   plugins: [react()],
+  define: {
+    __BDBOARD_VERSION__: JSON.stringify(rootPackage.version),
+  },
   test: {
     environment: 'jsdom',
     globals: true,

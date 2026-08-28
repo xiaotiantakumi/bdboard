@@ -45,14 +45,20 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
               ヘルプ
             </h2>
           </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            className="btn detail-close"
-            onClick={requestClose}
-          >
-            閉じる
-          </button>
+          <div className="detail-header-actions">
+            <span className="help-panel-version">
+              <span className="sr-only">bdboard バージョン </span>
+              v{__BDBOARD_VERSION__}
+            </span>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="btn detail-close"
+              onClick={requestClose}
+            >
+              閉じる
+            </button>
+          </div>
         </div>
 
         <div className="help-panel-body">

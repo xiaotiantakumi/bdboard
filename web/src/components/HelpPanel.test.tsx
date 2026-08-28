@@ -12,6 +12,8 @@ describe('HelpPanel', () => {
     render(<HelpPanel onClose={vi.fn()} />);
 
     expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
+    expect(screen.getByText('bdboard バージョン', { selector: '.sr-only' })).toBeInTheDocument();
+    expect(screen.getByText(`v${__BDBOARD_VERSION__}`)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Kanban（看板）' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '依存グラフ' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '統計' })).toBeInTheDocument();
