@@ -1,0 +1,29 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+# GITHUB_TOKEN で作成された PR には pull_request トリガーのワークフロー (ci.yml 等) は
+# 起動しない GitHub の仕様がある。release PR の検証は手動で rebase/push するか、
+# workflow_dispatch 等の別経路を検討すること。
+permissions:
+  contents: write
+  pull-requests: write
+
+# main への push は squash マージ以外にも chore(beads) 直コミット等で重なりうる。
+# release-please が途中キャンセルされるとタグだけ残り Release 未作成等の中途半端な状態になり、
+# 次回以降の changelog 生成が壊れうるため、後続実行を待たせる (cancel-in-progress: false)。
+concurrency:
+  group: release-please-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # initial-version は初回リリース後は manifest に反映されるため、以降は config から削除してよい。
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
