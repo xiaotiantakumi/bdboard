@@ -483,6 +483,13 @@ function isInside(parent: string, child: string): boolean {
 }
 
 describe('log sink creation failure (bdboard-nte)', () => {
+  // 既存の restoreAllMocks は describe('createCloudflaredTunnel') スコープなので
+  // ここには及ばない。付けないと console.error のモックがファイル末尾まで残り、
+  // 後続 describe の診断出力が黙殺される (PR#113 fable レビュー minor)。
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   // ログ書き込みの失敗は既に「トンネル動作を阻害しない」設計 (write/close/
   // ローテーションはいずれも握り潰す) なのに、シンクの生成だけがその方針から
   // 外れて start() を巻き込んでいた。しかも spawn の後に呼ばれるので、
@@ -541,6 +548,54 @@ describe('log sink creation failure (bdboard-nte)', () => {
     const stopPromise = tunnel.stop();
     fake.emitClose(0);
     await expect(stopPromise).resolves.toBeUndefined();
+  });
+
+  it('retries sink creation on the next start instead of falling back forever', async () => {
+    // フォールバックは恒久ではなく start ごとの判断。シンクをファクトリ外に
+    // キャッシュするリファクタが入ると、FS の問題が直ってもログが戻らなくなる
+    // (PR#113 fable レビュー nit)。
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const written: string[] = [];
+    let attempt = 0;
+    let spawned = 0;
+    const fakes = [createFakeSpawnedProcess(), createFakeSpawnedProcess()];
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/local/bin/cloudflared',
+      // シンク生成は spawn の後なので、spawn 側は独自にカウントする。
+      spawnFn: () => {
+        spawned += 1;
+        return fakes[spawned - 1] as ReturnType<typeof createFakeSpawnedProcess>;
+      },
+      logFilePath: path.join(tmpdir(), 'bdboard-nte', 'cloudflared-tunnel.log'),
+      createLogSink: () => {
+        attempt += 1;
+        if (attempt === 1) {
+          throw new Error('EACCES: permission denied');
+        }
+        return {
+          write: (chunk: string) => written.push(chunk),
+          close: () => {},
+        };
+      },
+    });
+
+    const firstStart = tunnel.start();
+    fakes[0]?.emitStdout(`${TUNNEL_URL}\n`);
+    await firstStart;
+    fakes[0]?.emitStdout('lost to the failed sink\n');
+    expect(written).toEqual([]);
+
+    const firstStop = tunnel.stop();
+    fakes[0]?.emitClose(0);
+    await firstStop;
+
+    const secondStart = tunnel.start();
+    fakes[1]?.emitStdout(`${TUNNEL_URL}\n`);
+    await secondStart;
+
+    expect(attempt).toBe(2);
+    expect(written.join('')).toContain(TUNNEL_URL);
   });
 });
 

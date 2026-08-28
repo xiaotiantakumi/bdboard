@@ -48,7 +48,13 @@ function maskSecrets(text: string): string {
   });
 }
 
-/** cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する) */
+/**
+ * cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する)。
+ *
+ * 契約: write/close は例外を投げてはならない。呼び出し側 (onData / close ハンドラ)
+ * は無防備に呼ぶため、投げるとログの都合でトンネル動作が壊れる — この方針は
+ * 生成失敗にもフォールバックを入れて揃えた (bdboard-nte)。
+ */
 export interface LogSink {
   write(chunk: string): void;
   close(): void;
