@@ -19,5 +19,6 @@
     "noUncheckedSideEffectImports": true,
     "types": ["vitest/globals", "@testing-library/jest-dom"]
   },
-  "include": ["src"]
+  // vitest.setup.ts は src/ 外だが DOM/jest-dom 前提のため Node 用 tsconfig.node ではなくこちらで検査する
+  "include": ["src", "vitest.setup.ts"]
 }
