@@ -11,6 +11,11 @@ import { TUNNEL_SESSION_COOKIE, TUNNEL_TOKEN_QUERY_PARAM } from './tunnel-sessio
 const USER = 'example-user';
 const PASSWORD = 'example-password';
 
+function basicAuthHeader(user: string, pass: string): string {
+  const encoded = Buffer.from(`${user}:${pass}`).toString('base64');
+  return `Basic ${encoded}`;
+}
+
 const LOCAL_ENV = {
   incoming: {
     socket: {
@@ -314,6 +319,56 @@ describe('mountSecurityMiddleware', () => {
         LOCAL_ENV,
       );
       expect(wrongPort.status).toBe(503);
+    });
+  });
+
+  describe('remote requests carrying Basic credentials', () => {
+    // ここまでのテストはリモートからのアクセスがすべて 401/503 になることしか見て
+    // いない。「正しい資格情報なら通る」経路は basic-auth.test.ts の unit と
+    // 「マウント順が正しい」テストの組み合わせに依存していて、mountSecurityMiddleware
+    // を通した統合の成功パスがどこにも無かった (bdboard-cpi)。
+    function createSecuredApp() {
+      const app = new Hono();
+      mountSecurityMiddleware(app, {
+        authMode: {
+          kind: 'enabled',
+          config: { username: USER, password: PASSWORD },
+        },
+      });
+      app.get('/', (c) => c.text('ok', 200));
+      return app;
+    }
+
+    it('lets a remote request with correct credentials reach the handler', async () => {
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Authorization: basicAuthHeader(USER, PASSWORD) } },
+        REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(200);
+      // ハンドラまで到達していること自体が主張の中身。ミドルウェアが 200 を
+      // 返しただけでは通過とは言えない。
+      expect(await res.text()).toBe('ok');
+      // 認証済みのレスポンスでもクリックジャッキング対策ヘッダは付く。
+      expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+      expect(res.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'none'");
+    });
+
+    it('still rejects a remote request whose password is wrong', async () => {
+      // 上のテストが「リモートは素通し」で通っているのではないことを、同じ
+      // マウント済みスタックで示す。
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Authorization: basicAuthHeader(USER, 'wrong-password') } },
+        REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(401);
     });
   });
 });
