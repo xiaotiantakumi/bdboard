@@ -105,18 +105,27 @@ worktree 作成から PR・マージまでの全体フロー:
 3. `bd gate create --type=human --blocks <id> --reason="<一行要約>"` — human gate で
    チケットを blocked 化し、`bd ready` から外す（回答が来るまで誰も誤って着手しない）。
 
-   **`bd dep add` で代用しないこと。** 「親チケットの実装待ちだから」と
-   `bd dep add <id> <親id>` を張ろうとすると、その2者間に既に別タイプの辺
-   （典型的には、親の作業中に発見して起票したときの `discovered-from`）があると
+   **`bd dep add` で代用しないこと。** 「回答が来るまで親チケットにぶら下げて
+   おけばいい」と `bd dep add <id> <親id>` を張ろうとすると、その2者間に既に
+   別タイプの辺（典型的には、親の作業中に発見して起票したときの
+   `discovered-from`）があると
    `dependency ... already exists with type "discovered-from" (requested "blocks")`
-   で**失敗する**。bd は同じ2者間に複数タイプの辺を持てず、通すには
-   `bd dep remove` が要る = 発見元の来歴を消すことになる。gate は依存グラフとは
-   別レイヤーなので、来歴を保ったまま `bd ready` から外せる。これが step 3 が
-   `bd dep` ではなく `bd gate` である理由。
+   で**失敗する**（bd 1.2.1 で実測、bdboard-axl）。bd は同じ向きの2者間に複数
+   タイプの辺を持てず、通すには `bd dep remove` が要る = 発見元の来歴を消す
+   ことになる。一方 `bd gate` は **`Gate: human` という新しいノードを作って
+   そこへ `blocks` 辺を張る**ので、辺の相手が親チケットではなく別ノードになり、
+   既存の来歴と衝突しない。これが step 3 が `bd dep` ではなく `bd gate` である
+   理由。（gate が依存グラフの外にあるわけではない点に注意 — gate ノードは
+   `bd dep tree <id>` に `[blocks]` の辺として現れる。）
+
+   なお gate は「別チケットの完了待ち」を表現する道具ではない。`bd gate create
+   --type` は human / timer / gh:run / gh:pr のみで、bead の close を待つ gate は
+   作れない（bd 1.2.1）。human gate は親が close しても自動解除されず
+   `bd gate resolve` が要るので、ここで使うのは**ユーザーの回答待ち**に限る。
 
    なお `bd label add <id> human`（step 2）を `bd update <id> --label human` と
-   書くと `unknown flag: --label` で落ちる。`bd update` 側のラベル操作は
-   `--add-label` / `--remove-label`。
+   書くと `unknown flag: --label` で落ちる（bd 1.2.1）。`bd update` 側のラベル
+   操作は `--add-label` / `--remove-label`。
 4. **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。
    ブロックしたチケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
    ただしブロック中もそのチケットは in_progress のまま自分の保持下にある —
