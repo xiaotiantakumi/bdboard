@@ -274,14 +274,19 @@ export function createCodexSpec(options: CodexSpecOptions): CliChatAgentSpec {
       // 応答ファイル (codex の -o / --output-last-message) の秘匿性について (bdboard-jp3)。
       //
       // 応答本文を書き出すのは codex CLI の子プロセスなので、こちら側から mode を指定できない。
-      // 子プロセスの umask 任せになり、POSIX では典型的に 0644 (ワールド可読) になる。先に 0600 の
-      // 空ファイルを作って CLI に渡す案は採らない — codex CLI が truncate するのか unlink→再作成
-      // するのかは検証できず、CLI 内部実装への依存が残るため。
+      // 子プロセスの umask 任せになり、POSIX では典型的に 0644 (ワールド可読) になる。
+      //
+      // 先に 0600 の空ファイルを作って CLI に渡す案は採らない。現行の codex
+      // (codex-rs/exec/src/event_processor.rs の write_last_message_file) は `std::fs::write` で
+      // create+truncate するだけなので、この案でも「今は」mode が保たれる — つまり検証は可能で、
+      // 実際に確認もした。採らないのは版をまたいだ保証にならないから: tempfile+rename 型の
+      // アトミック書き込みに変わった時点で、こちらのコードは何も言わずに秘匿性を失う。
       //
       // 代わりに置き場所に依拠する: `mkdtempSync` が作る 0700 ディレクトリの中に置けば、POSIX では
       // 他ユーザーがディレクトリを traverse できないので、CLI が中のファイルを何 mode で作ろうと
-      // 秘匿性は保たれる。Windows では mkdtemp が親 (`%TEMP%`) の ACL を継承するので、画像一時
-      // ファイルと同じ「ユーザープロファイル配下の Temp の既定 ACL に依拠する」前提がそのまま乗る
+      // 秘匿性は保たれる (mkdtemp の mode は 0700 & ~umask。umask はビットを減らす方向にしか
+      // 効かないので、group/other が付くことは無条件にあり得ない)。Windows では mkdtemp が親
+      // (`%TEMP%`) の ACL を継承するので、画像一時ファイルと同じ「ユーザープロファイル配下の Temp の既定 ACL に依拠する」前提がそのまま乗る
       // (コードが ACL を強制する保証ではなく環境への前提である点も同じ。根拠は writeImageFiles の
       // コメントを参照)。
       //

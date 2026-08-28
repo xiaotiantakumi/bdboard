@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -83,6 +83,14 @@ describe('createCodexSpec buildTurn', () => {
 
     // 生の改行や NUL 等の制御文字が混ざった場合は、壊れた/意図しない -c TOML を黙って
     // 生成するのではなく例外で拒否する(bdboard-l1t.4 デルタレビュー nit8: escape でなく reject)。
+    //
+    // buildTurn は argv 構築より前にターン用ディレクトリを作るので、throw したぶんだけ
+    // scratchDir にディレクトリが残りうる。createCliChatAgent の finally は buildTurn が
+    // 完了しないと plan を受け取れず片付けられないため、buildTurn 自身が消す責任を持つ
+    // (bdboard-jp3)。上の成功した buildTurn が残したディレクトリは (エージェント側が消すので)
+    // 正当に残るため、throw の前後で中身が増えていないことを見る。
+    const beforeThrows = readdirSync(context.scratchDir).sort();
+
     const newlineInCommand: CliTurnContext = {
       ...context,
       mcpServers: [{ name: 'bd', command: '/usr/bin/node\n[malicious]\ninjected="yes"', args: [] }],
@@ -100,6 +108,8 @@ describe('createCodexSpec buildTurn', () => {
       mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['tab\ttab'] }],
     };
     expect(() => spec.buildTurn(request(), tabInArgs)).toThrow(/control character/);
+
+    expect(readdirSync(context.scratchDir).sort()).toEqual(beforeThrows);
   });
 
   it('places lastMessageFile inside a per-turn 0700 directory under scratchDir (bdboard-jp3)', () => {
