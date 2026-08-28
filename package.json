@@ -14,7 +14,7 @@
     "harness"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.9.0"
   },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
