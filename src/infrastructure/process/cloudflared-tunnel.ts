@@ -125,7 +125,8 @@ export interface CloudflaredTunnelOptions {
   readonly platform?: NodeJS.Platform;
   readonly pathEnv?: string;
   readonly resolveExecutable?: () => string | null;
-  /** cloudflared の継続的な出力ログの保存先(既定: <cwd>/logs/cloudflared-tunnel.log) */
+  /** cloudflared の継続的な出力ログの保存先
+   *  (既定: resolveDefaultTunnelLogFilePath() = ~/.bdboard/logs/cloudflared-tunnel.log) */
   readonly logFilePath?: string;
   /** ログファイルのサイズ上限(バイト、既定: 5MB)。超過時は起動時に .log.1 へ退避する */
   readonly logMaxBytes?: number;

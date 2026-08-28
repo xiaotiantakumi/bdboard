@@ -735,9 +735,12 @@ async function main(): Promise<void> {
   const tunnelLogMaxBytes = envInt('BDBOARD_TUNNEL_LOG_MAX_BYTES', 5 * 1024 * 1024);
   // 既定は ~/.bdboard/logs/cloudflared-tunnel.log (bdboard-3b0)。cwd 基準では
   // なくなったので、リポジトリ内にログを置きたい場合は明示的に指定してもらう。
-  const tunnelLogFilePath = envString(
-    'BDBOARD_TUNNEL_LOG_PATH',
-    resolveDefaultTunnelLogFilePath(),
+  // path.resolve で起動時の cwd に対して一度だけ固定する。相対パスを渡された
+  // まま createFileLogSink まで持っていくと、解決は start() 時点の cwd 基準に
+  // なる — このチケットが潰そうとしている cwd 依存が、明示指定の裏口から
+  // 戻ってくる (PR#111 fable レビュー minor-3)。
+  const tunnelLogFilePath = path.resolve(
+    envString('BDBOARD_TUNNEL_LOG_PATH', resolveDefaultTunnelLogFilePath()),
   );
   const tunnelProcess = createCloudflaredTunnel({
     port,

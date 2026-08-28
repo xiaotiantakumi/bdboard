@@ -482,6 +482,32 @@ function isInside(parent: string, child: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
 }
 
+describe('default log path wiring', () => {
+  // 上の describe は解決関数そのものしか見ていない。関数が正しくても
+  // createCloudflaredTunnel 側の fallback を cwd 基準に書き戻せばバグは再発するので、
+  // 「logFilePath 未指定なら既定の解決関数の結果が使われる」も固定する
+  // (PR#111 fable レビュー minor-2)。
+  it('passes resolveDefaultTunnelLogFilePath() to the sink when logFilePath is omitted', async () => {
+    const fake = createFakeSpawnedProcess();
+    const seen: string[] = [];
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/local/bin/cloudflared',
+      spawnFn: () => fake,
+      createLogSink: (filePath) => {
+        seen.push(filePath);
+        return createFakeLogSink();
+      },
+    });
+
+    const startPromise = tunnel.start();
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await startPromise;
+
+    expect(seen).toEqual([resolveDefaultTunnelLogFilePath()]);
+  });
+});
+
 describe('resolveDefaultTunnelLogFilePath', () => {
   // 既定パスが process.cwd() 基準だった頃の問題 (bdboard-3b0): npx bdboard は
   // 任意の cwd から起動されるので、トンネルを開いた瞬間にユーザーがたまたま
@@ -503,6 +529,8 @@ describe('resolveDefaultTunnelLogFilePath', () => {
     expect(resolved).toBe(
       path.join(homedir(), '.bdboard', 'logs', 'cloudflared-tunnel.log'),
     );
+    // 前提: リポジトリルートから走らせること。ホームそのものを cwd にすると
+    // ~/.bdboard は cwd 配下になるので、実装が正しくてもここは落ちる。
     expect(isInside(process.cwd(), resolved)).toBe(false);
   });
 });
