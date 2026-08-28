@@ -25,7 +25,7 @@
     "test": "vitest run && npm --prefix web run test",
     "test:server": "vitest run",
     "test:web": "npm --prefix web run test",
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p test/e2e/tsconfig.json",
     "depcruise": "depcruise --config .dependency-cruiser.cjs src web",
     "check:boundaries": "npm run depcruise",
     "mcp:config": "tsx src/infrastructure/chat/mcp-client-config-main.ts",

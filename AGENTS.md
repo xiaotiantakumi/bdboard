@@ -217,17 +217,31 @@ Before committing any change (server or web), run the full verification chain �
 npm run verify   # build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
-`npm run build` only type-checks `src/` (the server). `web/` has its own `tsc --noEmit` step inside
-`npm run build:web`, ahead of the Vite build — a real type error there is invisible to `npm run build`
-and to `npm run test:web` (vitest doesn't full-type-check). `npm run verify` runs both, plus the web
-Vite build itself, so nothing in `web/` can silently drift broken (see bdboard-419 for the incident
-that prompted this).
+`npm run build` type-checks the **server side** — three separate tsc projects, run serially, because
+they have incompatible premises (`rootDir`, `lib`, `types`) and cannot share one config:
+
+| project | covers | why separate |
+|---|---|---|
+| `tsconfig.json` | `src/**/*` | server. `rootDir: src` |
+| `tsconfig.node.json` | `vitest.config.ts` | `lib: ["ES2023"]` + `types: ["node"]`, **no DOM** |
+| `test/e2e/tsconfig.json` | `test/e2e/*.ts` | needs `DOM` for `page.evaluate`, so it can't share the row above |
+
+`web/` has its own pair of `tsc --noEmit` steps inside `npm run build:web` (`tsconfig.json` for
+`web/src`, `tsconfig.node.json` for `web/vite.config.ts` + `web/vitest.config.ts`), ahead of the Vite
+build — a real type error there is invisible to `npm run build` and to `npm run test:web` (vitest
+doesn't full-type-check). `npm run verify` runs all of it, plus the web Vite build itself, so nothing
+can silently drift broken (see bdboard-419 for the incident that prompted this, bdboard-ruf for the
+`web/` config files, and bdboard-u97 for the root ones).
+
+The rule behind the table: **a config file that is never imported by anything still has to belong to
+some tsc project, or it is unchecked.** `include` is what puts a file in a project; being reachable
+by import is not enough, and neither is sitting next to files that are checked.
 
 Individual commands, if you need to run a subset:
 
 ```bash
-npm run build            # server tsc --noEmit
-npm run build:web        # web tsc --noEmit + vite build
+npm run build            # tsc --noEmit x3 (src/, vitest.config.ts, test/e2e/)
+npm run build:web        # web tsc --noEmit x2 + vite build
 npm run test:server      # vitest run (src/)
 npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
