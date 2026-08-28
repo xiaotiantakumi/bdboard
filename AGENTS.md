@@ -224,10 +224,11 @@ they have incompatible premises (`rootDir`, `lib`, `types`) and cannot share one
 |---|---|---|
 | `tsconfig.json` | `src/**/*` | server. `rootDir: src` |
 | `tsconfig.node.json` | `vitest.config.ts` | `lib: ["ES2023"]` + `types: ["node"]`, **no DOM** |
-| `test/e2e/tsconfig.json` | `test/e2e/*.ts` | needs `DOM` for `page.evaluate`, so it can't share the row above |
+| `test/e2e/tsconfig.json` | `test/e2e/**/*.ts` (recursive — `fixtures/` included) | needs `DOM` for `page.evaluate`, so it can't share the row above |
 
 `web/` has its own pair of `tsc --noEmit` steps inside `npm run build:web` (`tsconfig.json` for
-`web/src`, `tsconfig.node.json` for `web/vite.config.ts` + `web/vitest.config.ts`), ahead of the Vite
+`web/src` + `web/vitest.setup.ts`, `tsconfig.node.json` for `web/vite.config.ts` +
+`web/vitest.config.ts`), ahead of the Vite
 build — a real type error there is invisible to `npm run build` and to `npm run test:web` (vitest
 doesn't full-type-check). `npm run verify` runs all of it, plus the web Vite build itself, so nothing
 can silently drift broken (see bdboard-419 for the incident that prompted this, bdboard-ruf for the
