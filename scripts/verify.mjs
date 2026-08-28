@@ -10,7 +10,8 @@
 // spawn detached + process.kill(-pid)) と同じプロセスグループkillパターンを、
 // 「開発者/エージェントが verify を起動する経路」に適用する。
 //
-// 構造 (POSIX 前提。dev=macOS / CI=Linux。win32 は非対応):
+// 構造 (dev=macOS / CI=Linux+Windows。win32 でも verify:steps は動くが、
+// プロセスグループ単位の確実な kill は POSIX 限定 — OS に PGID が無いため):
 //
 //   npm run verify
 //     └─ node scripts/verify.mjs              … 外側。呼び出し元の直系(タイムアウトで殺される側)
@@ -29,6 +30,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { npmRunSpawnSpec } from './npm-command.mjs';
 import { acquireVerifySlot, envSlotOptions, SlotWaitTimeoutError } from './verify-slot.mjs';
 
 const GRACE_MS = 5_000;
@@ -54,9 +56,11 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGKILL: 137, SIGTERM: 143
 
 if (process.argv.includes('--group-leader')) {
   // ---- リーダーモード: 新プロセスグループの先頭。verify 本体を同グループで走らせる ----
-  const child = spawn('npm', ['run', 'verify:steps'], {
+  const { command, args, options } = npmRunSpawnSpec('verify:steps');
+  const child = spawn(command, args, {
     cwd: repoRoot,
     stdio: 'inherit',
+    ...options,
   });
 
   let killSequenceStarted = false;
