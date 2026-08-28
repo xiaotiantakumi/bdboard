@@ -1,6 +1,6 @@
 import type { StreamState } from './useBoardStream';
 
-export type StatusLevel = 'ok' | 'delayed' | 'disconnected';
+export type StatusLevel = 'ok' | 'delayed' | 'disconnected' | 'reconnecting';
 
 export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string {
   const ageMinutes = Math.floor((nowMs - new Date(generatedAt).getTime()) / 60000);
@@ -45,6 +45,9 @@ export function computeStatusLevel(
   if (streamState === 'error') {
     return 'disconnected';
   }
+  if (streamState === 'reconnecting') {
+    return 'reconnecting';
+  }
   if (lastContactAtMs !== null && lastContactAtMs !== undefined) {
     const ageMinutes = contactAgeMinutes(lastContactAtMs, nowMs);
     if (ageMinutes >= 2) {
@@ -55,11 +58,12 @@ export function computeStatusLevel(
 }
 
 export function shouldShowAlertBar(level: StatusLevel): boolean {
-  return level === 'disconnected' || level === 'delayed';
+  return level === 'disconnected' || level === 'delayed' || level === 'reconnecting';
 }
 
 export const STATUS_LABELS: Record<StatusLevel, string> = {
   ok: '正常',
   delayed: '遅延',
   disconnected: '切断',
+  reconnecting: '再接続中',
 };

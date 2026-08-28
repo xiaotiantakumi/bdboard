@@ -217,7 +217,7 @@ export function App() {
       }),
   });
 
-  const { streamState, lastContactAtMs } = useLastServerContact(boardQuery.dataUpdatedAt);
+  const { streamState, lastContactAtMs, reconnect } = useLastServerContact(boardQuery.dataUpdatedAt);
 
   const pendingDecisionsQuery = useQuery({
     queryKey: ['pending-decisions'],
@@ -459,7 +459,8 @@ export function App() {
   const handleRefresh = useCallback(() => {
     void boardQuery.refetch();
     void statusQuery.refetch();
-  }, [boardQuery, statusQuery]);
+    reconnect();
+  }, [boardQuery, statusQuery, reconnect]);
 
   const handleToggleProject = useCallback((projectId: string, checked: boolean) => {
     setSelectedProjectIds((current) => {

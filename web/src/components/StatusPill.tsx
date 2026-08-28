@@ -28,6 +28,8 @@ function statusPillClass(level: StatusLevel): string {
       return 'status-pill status-pill-delayed';
     case 'disconnected':
       return 'status-pill status-pill-disconnected';
+    case 'reconnecting':
+      return 'status-pill status-pill-reconnecting';
   }
 }
 

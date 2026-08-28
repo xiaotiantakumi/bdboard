@@ -234,4 +234,150 @@ describe('useBoardStream', () => {
 
     expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:00.000Z').getTime());
   });
+
+  describe('reconnect grace period', () => {
+    const GRACE_MS = 12_000;
+
+    it('enters reconnecting on onError instead of error immediately', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      expect(result.current.state).toBe('reconnecting');
+    });
+
+    it('returns to open within the grace window without ever entering error', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS - 1));
+      // Pins the lower bound of the grace period: a shorter RECONNECT_GRACE_MS
+      // would already have flipped this to the hard 'error' wording.
+      expect(result.current.state).toBe('reconnecting');
+
+      act(() => es.onopen?.());
+      expect(result.current.state).toBe('open');
+
+      // The timer armed by that onError is still pending here. If onOpen did
+      // not clear it, it would fire now and knock a healthy connection back to
+      // 'error' — the exact flicker this ticket is about.
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('open');
+    });
+
+    it('replaces the shared EventSource when reconnect is invoked', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      expect(MockEventSource.instances).toHaveLength(1);
+
+      act(() => result.current.reconnect());
+
+      // Without this, the button would only repaint the banner while the dead
+      // EventSource (readyState CLOSED, never auto-retrying) stayed in place.
+      expect(es.close).toHaveBeenCalledOnce();
+      expect(MockEventSource.instances).toHaveLength(2);
+
+      const newEs = MockEventSource.instances.at(-1)!;
+      expect(newEs).not.toBe(es);
+      act(() => newEs.onopen?.());
+      expect(result.current.state).toBe('open');
+    });
+
+    it('revalidates everything after a manual reconnect reopens', () => {
+      const { es, result, invalidateSpy } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      invalidateSpy.mockClear();
+
+      act(() => result.current.reconnect());
+      act(() => MockEventSource.instances.at(-1)!.onopen?.());
+
+      // The close→open window swallows any event fired while it was down, so
+      // the first open after a manual reconnect has to refetch like an
+      // error-driven reconnect does.
+      const keys = invalidatedKeys(invalidateSpy);
+      for (const key of ALL_INVALIDATED_KEYS) {
+        expect(keys).toContain(key);
+      }
+    });
+
+    it('escalates to error after the grace window expires', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+
+      expect(result.current.state).toBe('error');
+    });
+
+    it('does not restart the grace timer on consecutive onError events', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(5000));
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(7000));
+
+      expect(result.current.state).toBe('error');
+    });
+
+    it('clears the grace timer when reconnect is invoked', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => result.current.reconnect());
+
+      expect(result.current.state).toBe('connecting');
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+
+      expect(result.current.state).toBe('connecting');
+    });
+
+    it('stays in error after escalation when EventSource keeps firing onError', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+
+      act(() => es.onerror?.());
+      expect(result.current.state).toBe('error');
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+    });
+
+    it('resets escalation on onopen so a later drop can use grace again', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+
+      act(() => es.onopen?.());
+      expect(result.current.state).toBe('open');
+
+      act(() => es.onerror?.());
+      expect(result.current.state).toBe('reconnecting');
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+    });
+  });
 });

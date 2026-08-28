@@ -37,12 +37,17 @@ export function AlertBar({
   const message =
     level === 'disconnected'
       ? '盤面データの接続が切断されています'
-      : staleMinutes !== null
-        ? `サーバーと約${staleMinutes}分前から通信できていません`
-        : 'サーバーとの通信が遅延しています';
+      : level === 'reconnecting'
+        ? 'サーバーと再接続しています…'
+        : staleMinutes !== null
+          ? `サーバーと約${staleMinutes}分前から通信できていません`
+          : 'サーバーとの通信が遅延しています';
 
   return (
-    <div className="alert-bar" role="status">
+    <div
+      className={level === 'reconnecting' ? 'alert-bar alert-bar-quiet' : 'alert-bar'}
+      role="status"
+    >
       <span className="alert-bar-message">{message}</span>
       <div className="alert-bar-actions">
         <button

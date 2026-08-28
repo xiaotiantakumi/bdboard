@@ -1,12 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
-import { acquireSharedEventSource } from './lib/sseConnection';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { acquireSharedEventSource, reconnectSharedEventSource } from './lib/sseConnection';
 
-export type StreamState = 'connecting' | 'open' | 'error';
+export type StreamState = 'connecting' | 'open' | 'reconnecting' | 'error';
+
+// EventSource retries about every 3s by default; allow several attempts before
+// we treat the drop as a hard disconnect in the UI.
+const RECONNECT_GRACE_MS = 12_000;
 
 export interface BoardStreamResult {
   state: StreamState;
   lastContactAtMs: number | null;
+  reconnect: () => void;
 }
 
 // Lower bound between two "revalidate everything" passes triggered by the
@@ -26,10 +31,34 @@ export function useBoardStream(): BoardStreamResult {
   const [state, setState] = useState<StreamState>('connecting');
   const [lastContactAtMs, setLastContactAtMs] = useState<number | null>(null);
   const lastCommittedContactAtRef = useRef<number | null>(null);
+  const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stays true after grace expires until a real reconnect (onOpen/reconnect()).
+  // EventSource keeps firing onerror every ~3s while down; without this latch,
+  // each one would regress to 'reconnecting' and restart grace, flickering the banner.
+  const escalatedRef = useRef(false);
+  // Tracks whether the connection has been through an error/disconnect (or an
+  // explicit reconnect) since the effect mounted, or since the last successful
+  // revalidation. Any change that happened while we were disconnected only
+  // reaches us as a fresh SSE event *after* reconnecting, so that first open
+  // has to be treated the same as an explicit board.changed/session.changed —
+  // otherwise the UI keeps showing stale data until the next live event.
+  // Lives outside the effect because reconnect() has to set it too: tearing the
+  // EventSource down drops any event fired during the close→open window.
+  const hadErrorRef = useRef(false);
+
+  const clearGraceTimer = () => {
+    if (graceTimerRef.current !== null) {
+      clearTimeout(graceTimerRef.current);
+      graceTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
     const conn = acquireSharedEventSource();
     lastCommittedContactAtRef.current = null;
+    escalatedRef.current = false;
+    hadErrorRef.current = false;
+    clearGraceTimer();
 
     const touchContact = () => {
       const now = Date.now();
@@ -40,13 +69,6 @@ export function useBoardStream(): BoardStreamResult {
       }
     };
 
-    // Tracks whether the connection has been through an error/disconnect
-    // since the effect mounted (or since the last successful revalidation).
-    // Any change that happened while we were disconnected only reaches us as
-    // a fresh SSE event *after* reconnecting, so a reconnect after an error
-    // has to be treated the same as an explicit board.changed/session.changed
-    // — otherwise the UI keeps showing stale data until the next live event.
-    const hadErrorRef = { current: false };
     const lastRevalidateAtRef = { current: 0 };
 
     const revalidateAll = () => {
@@ -56,6 +78,8 @@ export function useBoardStream(): BoardStreamResult {
     };
 
     const onOpen = () => {
+      clearGraceTimer();
+      escalatedRef.current = false;
       setState('open');
       touchContact();
       if (hadErrorRef.current) {
@@ -65,8 +89,19 @@ export function useBoardStream(): BoardStreamResult {
     };
 
     const onError = () => {
-      setState('error');
       hadErrorRef.current = true;
+      if (escalatedRef.current) {
+        return;
+      }
+      setState('reconnecting');
+      if (graceTimerRef.current !== null) {
+        return;
+      }
+      graceTimerRef.current = setTimeout(() => {
+        graceTimerRef.current = null;
+        escalatedRef.current = true;
+        setState('error');
+      }, RECONNECT_GRACE_MS);
     };
 
     conn.addOpenListener(onOpen);
@@ -116,9 +151,18 @@ export function useBoardStream(): BoardStreamResult {
       conn.removeOpenListener(onOpen);
       conn.removeErrorListener(onError);
       document.removeEventListener('visibilitychange', onVisibilityChange);
+      clearGraceTimer();
       conn.release();
     };
   }, [queryClient]);
 
-  return { state, lastContactAtMs };
+  const reconnect = useCallback(() => {
+    clearGraceTimer();
+    escalatedRef.current = false;
+    hadErrorRef.current = true;
+    reconnectSharedEventSource();
+    setState('connecting');
+  }, []);
+
+  return { state, lastContactAtMs, reconnect };
 }
