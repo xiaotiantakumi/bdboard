@@ -447,6 +447,25 @@ describe('useBoardStream', () => {
       expect(result.current.connectStalled).toBe(true);
     });
 
+    it('does not stall when joining a shared EventSource that is already open', () => {
+      // 共有接続の addOpenListener は readyState===OPEN なら同期で即座に listener を呼ぶ。
+      // effect 内の順序が armStallTimer() → addOpenListener なので、後乗りしたインスタンスは
+      // arm した直後の同期 onOpen でタイマーを解除できる。逆順だと 30 秒後に誤って
+      // connectStalled が立つ。
+      const first = renderBoardStream();
+      first.es.readyState = 1;
+      act(() => first.es.onopen?.());
+
+      const second = renderBoardStream();
+      expect(second.result.current.state).toBe('open');
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS));
+      expect(second.result.current.connectStalled).toBe(false);
+
+      first.unmount();
+      second.unmount();
+    });
+
     it('clears the stall timer on unmount', () => {
       const { unmount } = renderBoardStream();
 
