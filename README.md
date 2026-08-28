@@ -193,6 +193,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |
 | `BDBOARD_AI_QUOTA_CACHE_MS` | AI クォータ結果のキャッシュ有効期間(ミリ秒) | `300000`(5分) |
 | `BDBOARD_CHAT_DISABLED` | `1` または `true`(大小無視)でチャット機能を無効化 | `false` |
+| `BDBOARD_IGNORE_PLATFORM_LIMITS` | `1` / `true` で、プラットフォーム未対応判定 (Windows のセッション検出・チャット) を無視して有効化する。独自に環境を整えた場合の逃げ道 | `false` |
 | `BDBOARD_CLAUDE_PATH` | チャット機能が呼び出す `claude` CLI のパス/名前 | `claude` |
 | `BDBOARD_CHAT_MODEL` | チャットで使うモデル(起動時の既定値1つ) | `sonnet` |
 | `BDBOARD_CHAT_MODELS` | チャットの claude エージェントで選択可能なモデル一覧(カンマ区切り) | `sonnet,opus,haiku` |

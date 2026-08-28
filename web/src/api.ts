@@ -607,6 +607,26 @@ export function fetchAgentProcesses(): Promise<AgentProcessDto[]> {
   return fetchJson<AgentProcessDto[]>('/api/processes');
 }
 
+/** サーバーの実行プラットフォームで使えない機能 (bdboard-70z.9)。 */
+export type PlatformFeature = 'session-discovery' | 'chat';
+
+export interface PlatformLimitationDto {
+  feature: PlatformFeature;
+  /** UI にそのまま出す一文。 */
+  reason: string;
+  /** 「なぜ直せないのか」の技術的な根拠。 */
+  detail: string;
+}
+
+export interface PlatformSupportDto {
+  platform: string;
+  limitations: PlatformLimitationDto[];
+}
+
+export function fetchPlatformSupport(): Promise<PlatformSupportDto> {
+  return fetchJson<PlatformSupportDto>('/api/platform-support');
+}
+
 export function fetchBoard(params: {
   projectIds: string[];
   view: BoardMode;

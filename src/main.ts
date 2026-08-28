@@ -89,6 +89,14 @@ import {
   resolveAuthMode,
 } from './interface/http/basic-auth.js';
 import { mountSecurityMiddleware } from './interface/http/app-security.js';
+import {
+  describePlatformSupport,
+  isPlatformFeatureSupported,
+} from './domain/platform-support.js';
+import {
+  createPlatformFeatureGuard,
+  createPlatformSupportRoutes,
+} from './interface/http/platform-support-routes.js';
 import { createSessionValidator } from './interface/http/tunnel-session.js';
 import { createAiQuotaRoutes } from './interface/http/ai-quota-routes.js';
 import { createUpdateCheckRoutes } from './interface/http/update-check-routes.js';
@@ -286,6 +294,17 @@ async function main(): Promise<void> {
   const issueWriter = createBdCliIssueWriter(commandRunner);
   const dependencyWriter = createBdCliDependencyWriter(commandRunner);
   const sessionLinkWriter = createBdCliSessionLinkWriter(commandRunner);
+  // Windows は「全機能対応」ではなく「機能制限 + 正直な案内」で出す方針
+  // (bdboard-70z.9)。BDBOARD_IGNORE_PLATFORM_LIMITS は、独自に環境を整えた
+  // 利用者が制限を外して試せるようにするための逃げ道。
+  const platformSupport = envBool('BDBOARD_IGNORE_PLATFORM_LIMITS')
+    ? { platform: process.platform, limitations: [] }
+    : describePlatformSupport(process.platform);
+  const sessionDiscoverySupported = isPlatformFeatureSupported(
+    platformSupport,
+    'session-discovery',
+  );
+
   const processScanner = createPsProcessScanner(commandRunner);
   const fingerprinter = createBeadsFingerprinter(fsPort);
   const events = createEventHub();
@@ -618,10 +637,18 @@ async function main(): Promise<void> {
     new Date(),
   );
 
-  await refreshSessions();
-  console.log(
-    `Initial sessions: total=${sessions.length} alive=${sessions.filter((session) => session.alive).length}`,
-  );
+  if (sessionDiscoverySupported) {
+    await refreshSessions();
+    console.log(
+      `Initial sessions: total=${sessions.length} alive=${sessions.filter((session) => session.alive).length}`,
+    );
+  } else {
+    // ps/lsof が無い環境で回しても毎周期失敗するだけなので、走らせない
+    // (bdboard-70z.9)。UI 側は /api/platform-support を見て理由を出す。
+    console.log(
+      `Sessions: disabled on ${platformSupport.platform} (session discovery needs ps/lsof)`,
+    );
+  }
 
   const initialCacheEntries = cache.listProjects();
   boardNotificationPublisher.seedSnapshot(
@@ -692,9 +719,11 @@ async function main(): Promise<void> {
     void runRefresh(true);
   }, refreshIntervalMs);
 
-  const sessionIntervalTimer = setInterval(() => {
-    void refreshSessions();
-  }, sessionIntervalMs);
+  const sessionIntervalTimer = sessionDiscoverySupported
+    ? setInterval(() => {
+        void refreshSessions();
+      }, sessionIntervalMs)
+    : null;
 
   if (cfdSnapshotIntervalMs > 0) {
     cfdSnapshotIntervalTimer = setInterval(() => {
@@ -832,6 +861,17 @@ async function main(): Promise<void> {
     getExtraCredentials: () => tunnelService.getCredentials(),
   });
   app.use('*', createCompressionMiddleware());
+
+  // 未対応機能は inner へ届く前に 501 で止める。素通しすると ps/lsof や
+  // .cmd シムが無いことに由来する例外が 500 になり、「壊れている」のか
+  // 「そもそも動かない」のか区別が付かない (bdboard-70z.9)。
+  app.route('/', createPlatformSupportRoutes({ platformSupport }));
+  app.use(
+    '/api/processes',
+    createPlatformFeatureGuard(platformSupport, 'session-discovery'),
+  );
+  app.use('/api/chat/*', createPlatformFeatureGuard(platformSupport, 'chat'));
+
   app.route('/', inner);
 
   const harnessPacksRoot = path.join(repoRoot, 'harness', 'packs');
@@ -1099,7 +1139,9 @@ async function main(): Promise<void> {
 
   const shutdownForSignal = (): void => {
     clearInterval(intervalTimer);
-    clearInterval(sessionIntervalTimer);
+    if (sessionIntervalTimer !== null) {
+      clearInterval(sessionIntervalTimer);
+    }
     if (transcriptIntervalTimer !== undefined) {
       clearInterval(transcriptIntervalTimer);
     }

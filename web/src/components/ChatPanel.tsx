@@ -36,6 +36,7 @@ import {
 } from '../chatThreadStorage';
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
 import { MarkdownContent } from './MarkdownContent';
+import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -2696,6 +2697,9 @@ export function ChatPanel({
         ) : null}
           </div>
         </details>
+
+        {/* 送信して初めて 501 に気付く、では遅い (bdboard-70z.9)。 */}
+        <PlatformLimitationNotice feature="chat" />
 
         <div
           ref={messagesRef}
