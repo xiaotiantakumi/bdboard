@@ -13,7 +13,6 @@ import type {
   ProjectBoardDto,
   SessionDto,
   StatusDto,
-  SyncHealthDto,
   TicketDetailDto,
 } from './api';
 import { App } from './App';
@@ -43,7 +42,6 @@ vi.mock('./api', async (importOriginal) => {
     fetchStatus: vi.fn(),
     fetchBoard: vi.fn(),
     fetchPendingDecisions: vi.fn(),
-    fetchSyncHealth: vi.fn(),
     fetchChatAvailability: vi.fn(),
     fetchTicket: vi.fn(),
     fetchTicketComments: vi.fn(),
@@ -62,7 +60,6 @@ import {
   fetchProjects,
   fetchSessions,
   fetchStatus,
-  fetchSyncHealth,
   fetchTicket,
   fetchTicketComments,
   fetchTunnel,
@@ -74,7 +71,6 @@ const fetchSessionsMock = vi.mocked(fetchSessions);
 const fetchStatusMock = vi.mocked(fetchStatus);
 const fetchBoardMock = vi.mocked(fetchBoard);
 const fetchPendingDecisionsMock = vi.mocked(fetchPendingDecisions);
-const fetchSyncHealthMock = vi.mocked(fetchSyncHealth);
 const fetchChatAvailabilityMock = vi.mocked(fetchChatAvailability);
 const fetchTicketMock = vi.mocked(fetchTicket);
 const fetchTicketCommentsMock = vi.mocked(fetchTicketComments);
@@ -390,7 +386,6 @@ describe('App ticket deep link', () => {
     } satisfies StatusDto);
     fetchBoardMock.mockResolvedValue(emptyBoard);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -450,7 +445,6 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
       projectCount: 1,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -589,7 +583,6 @@ describe('board filter presets (bdboard-3tw.112)', () => {
       projectCount: 1,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -668,7 +661,6 @@ describe('header help overlays', () => {
       projectCount: 1,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -802,7 +794,6 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
       generatedAt: '2026-01-01T11:55:00.000Z',
     });
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);

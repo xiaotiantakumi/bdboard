@@ -17,7 +17,6 @@ export * from './bd/bd-issue-schema.js';
 export * from './cache/sqlite-board-cache.js';
 export * from './cache/ticket-serialization.js';
 export * from './discovery/fs-project-discovery.js';
-export * from './git/git-sync-health-reader.js';
 export * from './git/git-worktree-scanner.js';
 export * from './gh/gh-cli-pr-status-reader.js';
 export * from './fs/beads-fingerprinter.js';
