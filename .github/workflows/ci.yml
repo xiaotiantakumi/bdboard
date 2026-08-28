@@ -39,6 +39,29 @@ jobs:
       - run: npm --prefix web ci
       - run: npm run verify
 
+  # Kept separate from `verify` rather than using a matrix so the existing
+  # check name does not change. `continue-on-error` keeps this advisory while
+  # bdboard-70z.8 records current Windows failures; bdboard-70z.9 will decide
+  # when it can become required.
+  verify-windows:
+    continue-on-error: true
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+
+      - run: npm ci
+      - run: npm --prefix web ci
+      - run: npm run verify
+
   # Kept separate from `verify` on purpose (bdboard-3tw.88): a real browser +
   # server boot is a different failure class than tsc/vitest/depcruise, and a
   # flaky e2e run must not muddy the unit-test job's log or block on tsc/lint
@@ -75,8 +98,8 @@ jobs:
 
       # chromium only (not `npx playwright install --with-deps` with no
       # browser argument, which would fetch all of Chromium/Firefox/WebKit):
-      # this is a private repo on GitHub Free, so Actions minutes are billed,
-      # and the smoke suite only ever launches Chromium.
+      # the smoke suite only ever launches Chromium, so the other browsers
+      # would only waste CI time and cache space.
       - name: Install Playwright chromium
         if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
