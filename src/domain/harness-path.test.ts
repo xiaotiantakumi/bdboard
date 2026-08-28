@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   appendGitignoreEntries,
@@ -36,9 +37,10 @@ describe('harness-path', () => {
   });
 
   it('resolves only within .claude/', () => {
+    // resolveUnderClaudeDir はネイティブ絶対パスを返す仕様なので、期待値も path で組む (bdboard-9dm)。
     expect(
       resolveUnderClaudeDir(projectRoot, '.claude/skills/pack/SKILL.md'),
-    ).toBe('/tmp/example-project/.claude/skills/pack/SKILL.md');
+    ).toBe(path.resolve(projectRoot, '.claude', 'skills', 'pack', 'SKILL.md'));
     expect(resolveUnderClaudeDir(projectRoot, 'src/main.ts')).toBeNull();
     expect(
       resolveUnderClaudeDir(projectRoot, '.claude/skills/pack/../../outside'),

@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { FileStat, FileSystemPort } from '../../application/ports/file-system.js';
 import type { Project } from '../../domain/project.js';
@@ -35,11 +36,12 @@ function createFakeFs(state: FakeFsState): FileSystemPort {
 }
 
 function beadsPaths(rootPath: string) {
-  const beadsDir = `${rootPath}/.beads`;
+  // 実装は join(project.rootPath, '.beads') でネイティブ区切りを使う。fake のキーも合わせる (bdboard-9dm)。
+  const beadsDir = path.join(rootPath, '.beads');
   return {
-    lastTouched: `${beadsDir}/last-touched`,
-    interactions: `${beadsDir}/interactions.jsonl`,
-    dolt: `${beadsDir}/embeddeddolt`,
+    lastTouched: path.join(beadsDir, 'last-touched'),
+    interactions: path.join(beadsDir, 'interactions.jsonl'),
+    dolt: path.join(beadsDir, 'embeddeddolt'),
   };
 }
 

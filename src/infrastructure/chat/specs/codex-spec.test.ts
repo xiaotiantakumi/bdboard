@@ -12,7 +12,7 @@ const context: CliTurnContext = {
   systemPrompt: 'prompt',
   mcpServers: [{ name: 'bd', command: '/usr/bin/node', args: ['server.ts', '--project-root', root] }],
   toolNames: ['bd_ready'],
-  scratchDir: '/tmp/bdboard-scratch',
+  scratchDir: path.join(os.tmpdir(), 'bdboard-scratch'),
 };
 const request = (overrides: Partial<ChatTurnRequest> = {}): ChatTurnRequest => ({ projectRootPath: root, projectName: 'demo', message: 'hello', ...overrides });
 const scratchDirs: string[] = [];
@@ -114,7 +114,13 @@ describe('createCodexSpec image artifacts', () => {
         expect(capturedImagePaths.map((imagePath) => path.extname(imagePath))).toEqual(['.png', '.jpg']);
         for (const imagePath of capturedImagePaths) {
           expect(existsSync(imagePath)).toBe(true);
-          expect(statSync(imagePath).mode & 0o777).toBe(0o600);
+          // Windows には POSIX モードが無く、fs は書き込み可能ファイルを常に 0o666 と報告する。
+          // 緩和は %TEMP% 配下 + 既定 ACL に依拠。0600 相当(ACL)の明示担保は bdboard-che。
+          if (process.platform === 'win32') {
+            expect(statSync(imagePath).mode & 0o200).not.toBe(0);
+          } else {
+            expect(statSync(imagePath).mode & 0o777).toBe(0o600);
+          }
         }
         expect([...readFileSync(capturedImagePaths[0]!)]).toEqual([0x89, 0x50]);
         expect([...readFileSync(capturedImagePaths[1]!)]).toEqual([0xff, 0xd8]);
