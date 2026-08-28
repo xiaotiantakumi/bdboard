@@ -65,7 +65,6 @@ import {
   createFsPackRegistry,
   createFsProjectDiscovery,
   createGhCliPrStatusReader,
-  createGitSyncHealthReader,
   createGitWorktreeScanner,
   createFsChatSessionDiscovery,
   createJsonlInteractionReader,
@@ -80,6 +79,7 @@ import {
   NodeStreamingCommandRunner,
   NodeFileSystem,
   NodeProcessProbe,
+  createPackageJsonVersionProvider,
   resolveConfigFilePath,
 } from './infrastructure/index.js';
 import {
@@ -200,6 +200,7 @@ function updateStatusFromResult(
 }
 
 async function main(): Promise<void> {
+  const applicationVersion = createPackageJsonVersionProvider();
   const bdVersionCheckTimeoutMs = 3_000;
   const port = envInt('BDBOARD_PORT', 8787);
   const host = envString('BDBOARD_HOST', '127.0.0.1');
@@ -277,7 +278,6 @@ async function main(): Promise<void> {
   const commentReader = createBdCliCommentReader(commandRunner);
   const prStatusReader = createGhCliPrStatusReader(commandRunner, { ghPath });
   const humanDecisions = createBdCliHumanDecisions(commandRunner);
-  const syncHealthReader = createGitSyncHealthReader(commandRunner, fsPort);
   const worktreeScanner = createGitWorktreeScanner(commandRunner);
   const issueWriter = createBdCliIssueWriter(commandRunner);
   const dependencyWriter = createBdCliDependencyWriter(commandRunner);
@@ -780,6 +780,7 @@ async function main(): Promise<void> {
 
   const inner = createApiRoutes({
     cache,
+    applicationVersion,
     now: () => new Date(),
     getStatus: () => status,
     refresh: () => runRefresh(true),
@@ -790,7 +791,6 @@ async function main(): Promise<void> {
     prStatusReader,
     processScanner,
     humanDecisions,
-    syncHealthReader,
     worktreeScanner,
     issueWriter,
     dependencyWriter,

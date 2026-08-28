@@ -74,7 +74,6 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `HumanDecisionsPort` | `BdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
 | `SessionLinkWriter` | `BdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
 | `PrStatusReader` | `GhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
-| `SyncHealthReader` | `GitSyncHealthReader` | git/Doltの同期健全性チェック |
 | `WorktreeScanner` | `GitWorktreeScanner` | worktree一覧のスキャン |
 | `ProjectDiscovery` | `FsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
 | `ProjectFingerprinter` | `BeadsFingerprinter` | 変化検知用フィンガープリント計算 |
