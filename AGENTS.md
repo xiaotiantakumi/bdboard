@@ -328,6 +328,20 @@ wanted, that is a separate, explicitly user-approved change.
   stale serverId) → `preview_start`; starting a second server would just fail
   to bind. If `lsof` prints nothing, the port really is free and it is safe to
   start.
+- **`preview_start` can flake on the very first call** (observed 2026-08-29):
+  it returns a success response with a `serverId`, but the underlying process
+  dies or never actually binds — the immediately following `curl
+  /api/health` refuses the connection, `lsof` shows no listener, and
+  `preview_logs`/`preview_list` report that same `serverId` as already gone
+  ("not found" / empty process list). **Do not trust the opened browser tab
+  as proof the server is up** — a tab left over from an earlier load can
+  still render a fully populated board (from cache/bfcache) with only a
+  quiet "disconnected" badge as the tell, which looks like a working app at
+  a glance. Verify liveness by the `curl` status code (and `lsof`), never by
+  what the tab shows. If the first `preview_start` attempt shows this
+  pattern, don't chase the stale `serverId` — just call `preview_start`
+  again with the same `start` config; a plain retry brought the server up
+  cleanly in practice.
 - **After merging a PR into main** (right after the fast-forward in the Git
   Workflow cleanup): `git pull --ff-only` → `npm install` /
   `npm --prefix web install` if lockfiles changed → `npm run build:web` →
