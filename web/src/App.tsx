@@ -217,7 +217,7 @@ export function App() {
       }),
   });
 
-  const { streamState, lastContactAtMs, reconnect } = useLastServerContact(boardQuery.dataUpdatedAt);
+  const { streamState, lastContactAtMs, reconnect, connectStalled } = useLastServerContact(boardQuery.dataUpdatedAt);
 
   const pendingDecisionsQuery = useQuery({
     queryKey: ['pending-decisions'],
@@ -700,6 +700,7 @@ export function App() {
       <AlertBar
         streamState={streamState}
         lastContactAtMs={lastContactAtMs}
+        connectStalled={connectStalled}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onOpenDetails={() => setStatusDetailOpen(true)}

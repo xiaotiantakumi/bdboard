@@ -8,10 +8,16 @@ export type StreamState = 'connecting' | 'open' | 'reconnecting' | 'error';
 // we treat the drop as a hard disconnect in the UI.
 const RECONNECT_GRACE_MS = 12_000;
 
+// Browsers cap ~6 concurrent connections per host on HTTP/1.1. Extra tabs each
+// hold an EventSource in readyState CONNECTING without ever firing onerror, so
+// the grace timer above never runs — surface a hint after this window instead.
+export const CONNECT_STALL_MS = 30_000;
+
 export interface BoardStreamResult {
   state: StreamState;
   lastContactAtMs: number | null;
   reconnect: () => void;
+  connectStalled: boolean;
 }
 
 // Lower bound between two "revalidate everything" passes triggered by the
@@ -30,8 +36,10 @@ export function useBoardStream(): BoardStreamResult {
   const queryClient = useQueryClient();
   const [state, setState] = useState<StreamState>('connecting');
   const [lastContactAtMs, setLastContactAtMs] = useState<number | null>(null);
+  const [connectStalled, setConnectStalled] = useState(false);
   const lastCommittedContactAtRef = useRef<number | null>(null);
   const graceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stallTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Stays true after grace expires until a real reconnect (onOpen/reconnect()).
   // EventSource keeps firing onerror every ~3s while down; without this latch,
   // each one would regress to 'reconnecting' and restart grace, flickering the banner.
@@ -53,12 +61,32 @@ export function useBoardStream(): BoardStreamResult {
     }
   };
 
+  const clearStallTimer = () => {
+    if (stallTimerRef.current !== null) {
+      clearTimeout(stallTimerRef.current);
+      stallTimerRef.current = null;
+    }
+  };
+
+  const armStallTimer = () => {
+    if (stallTimerRef.current !== null) {
+      return;
+    }
+    stallTimerRef.current = setTimeout(() => {
+      stallTimerRef.current = null;
+      setConnectStalled(true);
+    }, CONNECT_STALL_MS);
+  };
+
   useEffect(() => {
     const conn = acquireSharedEventSource();
     lastCommittedContactAtRef.current = null;
     escalatedRef.current = false;
     hadErrorRef.current = false;
     clearGraceTimer();
+    clearStallTimer();
+    setConnectStalled(false);
+    armStallTimer();
 
     const touchContact = () => {
       const now = Date.now();
@@ -79,6 +107,8 @@ export function useBoardStream(): BoardStreamResult {
 
     const onOpen = () => {
       clearGraceTimer();
+      clearStallTimer();
+      setConnectStalled(false);
       escalatedRef.current = false;
       setState('open');
       touchContact();
@@ -89,6 +119,8 @@ export function useBoardStream(): BoardStreamResult {
     };
 
     const onError = () => {
+      clearStallTimer();
+      setConnectStalled(false);
       hadErrorRef.current = true;
       if (escalatedRef.current) {
         return;
@@ -152,17 +184,21 @@ export function useBoardStream(): BoardStreamResult {
       conn.removeErrorListener(onError);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       clearGraceTimer();
+      clearStallTimer();
       conn.release();
     };
   }, [queryClient]);
 
   const reconnect = useCallback(() => {
     clearGraceTimer();
+    clearStallTimer();
+    setConnectStalled(false);
     escalatedRef.current = false;
     hadErrorRef.current = true;
     reconnectSharedEventSource();
     setState('connecting');
+    armStallTimer();
   }, []);
 
-  return { state, lastContactAtMs, reconnect };
+  return { state, lastContactAtMs, reconnect, connectStalled };
 }

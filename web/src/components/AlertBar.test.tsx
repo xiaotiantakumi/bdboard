@@ -63,4 +63,56 @@ describe('AlertBar', () => {
 
     expect(onRefresh).toHaveBeenCalledOnce();
   });
+
+  it('shows the connect-stalled banner when connectStalled is true', () => {
+    render(
+      <AlertBar
+        streamState="connecting"
+        connectStalled={true}
+        lastContactAtMs={null}
+        onRefresh={vi.fn()}
+        isRefreshing={false}
+        onOpenDetails={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        'サーバーに接続できていません。このボードを多数のタブで開いていると、ブラウザの同時接続数の上限で接続待ちになることがあります。不要なタブを閉じてから再接続してください。',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('status').className).toContain('alert-bar-quiet');
+  });
+
+  it('prefers error over connectStalled when both apply', () => {
+    render(
+      <AlertBar
+        streamState="error"
+        connectStalled={true}
+        lastContactAtMs={FIXED_NOW_MS}
+        onRefresh={vi.fn()}
+        isRefreshing={false}
+        onOpenDetails={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('盤面データの接続が切断されています')).toBeInTheDocument();
+    expect(screen.queryByText(/サーバーに接続できていません/)).not.toBeInTheDocument();
+  });
+
+  it('prefers connectStalled over reconnecting when both apply', () => {
+    render(
+      <AlertBar
+        streamState="reconnecting"
+        connectStalled={true}
+        lastContactAtMs={FIXED_NOW_MS}
+        onRefresh={vi.fn()}
+        isRefreshing={false}
+        onOpenDetails={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/サーバーに接続できていません/)).toBeInTheDocument();
+    expect(screen.queryByText('サーバーと再接続しています…')).not.toBeInTheDocument();
+  });
 });
