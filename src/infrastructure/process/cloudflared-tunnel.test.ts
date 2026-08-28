@@ -1,4 +1,4 @@
-import { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -24,6 +24,7 @@ function createFakeLogSink(): LogSink & { readonly lines: string[]; closed: bool
 describe('createCloudflaredTunnel', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it('reports unavailable when cloudflared is not on PATH', async () => {
@@ -35,6 +36,100 @@ describe('createCloudflaredTunnel', () => {
     await expect(tunnel.isAvailable()).resolves.toBe(false);
     await expect(tunnel.start()).rejects.toThrow('cloudflared executable not found');
   });
+
+  it('resolves cloudflared.exe from a semicolon-delimited win32 PATH', async () => {
+    const fake = createFakeSpawnedProcess();
+    const accessSync = vi.spyOn(fs, 'accessSync').mockImplementation((candidate) => {
+      if (candidate.toString() !== 'C:\\tools\\cloudflared.exe') {
+        throw new Error('not found');
+      }
+    });
+    let capturedCommand = '';
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      platform: 'win32',
+      pathEnv: 'C:\\missing;C:\\tools',
+      spawnFn: (command) => {
+        capturedCommand = command;
+        return fake;
+      },
+      createLogSink: () => createFakeLogSink(),
+    });
+
+    const startPromise = tunnel.start();
+
+    expect(capturedCommand).toBe('C:\\tools\\cloudflared.exe');
+    expect(accessSync.mock.calls.map(([candidate]) => candidate.toString())).toEqual([
+      'C:\\missing\\cloudflared.exe',
+      'C:\\tools\\cloudflared.exe',
+    ]);
+
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await expect(startPromise).resolves.toEqual({ url: TUNNEL_URL });
+  });
+
+  it('does not resolve an extensionless cloudflared entry on win32', async () => {
+    const accessSync = vi.spyOn(fs, 'accessSync').mockImplementation((candidate) => {
+      if (candidate.toString() !== 'C:\\tools\\cloudflared') {
+        throw new Error('not found');
+      }
+    });
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      platform: 'win32',
+      pathEnv: 'C:\\tools',
+    });
+
+    await expect(tunnel.isAvailable()).resolves.toBe(false);
+    expect(accessSync).toHaveBeenCalledWith('C:\\tools\\cloudflared.exe', fs.constants.X_OK);
+  });
+
+  it('keeps resolveExecutable authoritative when platform is win32', async () => {
+    const fake = createFakeSpawnedProcess();
+    const accessSync = vi.spyOn(fs, 'accessSync');
+    let capturedCommand = '';
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      platform: 'win32',
+      pathEnv: 'C:\\tools',
+      resolveExecutable: () => 'D:\\custom\\cloudflared',
+      spawnFn: (command) => {
+        capturedCommand = command;
+        return fake;
+      },
+      createLogSink: () => createFakeLogSink(),
+    });
+
+    const startPromise = tunnel.start();
+
+    expect(capturedCommand).toBe('D:\\custom\\cloudflared');
+    expect(accessSync).not.toHaveBeenCalled();
+
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await expect(startPromise).resolves.toEqual({ url: TUNNEL_URL });
+  });
+
+  it.each(['darwin', 'linux'] as const)(
+    'keeps POSIX PATH resolution for %s',
+    async (platform) => {
+      const accessSync = vi.spyOn(fs, 'accessSync').mockImplementation((candidate) => {
+        if (candidate.toString() !== '/tools/cloudflared') {
+          throw new Error('not found');
+        }
+      });
+      const tunnel = createCloudflaredTunnel({
+        port: 8799,
+        platform,
+        pathEnv: '/missing:/tools',
+      });
+
+      await expect(tunnel.isAvailable()).resolves.toBe(true);
+      expect(accessSync.mock.calls.map(([candidate]) => candidate.toString())).toEqual([
+        '/missing/cloudflared',
+        '/tools/cloudflared',
+      ]);
+    },
+  );
 
   it('extracts URL from stdout', async () => {
     const fake = createFakeSpawnedProcess();
