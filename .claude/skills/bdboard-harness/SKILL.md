@@ -104,6 +104,19 @@ worktree 作成から PR・マージまでの全体フロー:
 2. `bd label add <id> human` — 確認待ちレーン（bdboard の awaiting_human）に載せる。
 3. `bd gate create --type=human --blocks <id> --reason="<一行要約>"` — human gate で
    チケットを blocked 化し、`bd ready` から外す（回答が来るまで誰も誤って着手しない）。
+
+   **`bd dep add` で代用しないこと。** 「親チケットの実装待ちだから」と
+   `bd dep add <id> <親id>` を張ろうとすると、その2者間に既に別タイプの辺
+   （典型的には、親の作業中に発見して起票したときの `discovered-from`）があると
+   `dependency ... already exists with type "discovered-from" (requested "blocks")`
+   で**失敗する**。bd は同じ2者間に複数タイプの辺を持てず、通すには
+   `bd dep remove` が要る = 発見元の来歴を消すことになる。gate は依存グラフとは
+   別レイヤーなので、来歴を保ったまま `bd ready` から外せる。これが step 3 が
+   `bd dep` ではなく `bd gate` である理由。
+
+   なお `bd label add <id> human`（step 2）を `bd update <id> --label human` と
+   書くと `unknown flag: --label` で落ちる。`bd update` 側のラベル操作は
+   `--add-label` / `--remove-label`。
 4. **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。
    ブロックしたチケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
    ただしブロック中もそのチケットは in_progress のまま自分の保持下にある —
