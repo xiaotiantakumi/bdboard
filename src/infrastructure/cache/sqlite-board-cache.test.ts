@@ -2,12 +2,22 @@ import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CachedProject, SessionLinkRow } from '../../application/ports/board-cache.js';
 import { MAX_TRANSCRIPT_SESSION_LINKS } from '../../domain/session.js';
 import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { createSqliteBoardCache } from './sqlite-board-cache.js';
+
+// bdboard-ma4: 一時ディレクトリに file-backed な sqlite DB を作るテストは、Windows の
+// CI runner で散発的に数秒のI/Oストールを食らう (新規作成される .db/-wal/-shm への
+// AV スキャンが有力)。同一 run で file-backed sqlite のテストファイルだけが 2〜9倍に
+// 膨らみ、非 sqlite のファイル (chokidar 1298→1302ms 等) は無風だったことを CI ログで
+// 確認している。テスト自体は軽い (ローカルでは1件あたり数十ms) ので、アサーションは
+// 変えずに待ち時間だけこのファイル単位で伸ばす。全体の testTimeout を上げないのは、
+// 173 のテストファイル全部で本物のハングの検知が遅くなるため。30s で必ず落ちるので
+// 「無限に待つ」方向には倒していない。
+vi.setConfig({ testTimeout: 30_000 });
 
 function makeSessionLinkRow(overrides: {
   ticketId: string;
