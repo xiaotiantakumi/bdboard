@@ -1,5 +1,5 @@
 // Liveness union and thresholds are defined in src/domain/liveness.ts (server).
-// Web cannot import that module directly (tsconfig include: ["src"] under web/,
+// Web cannot import that module directly (web/'s tsconfig only includes files under web/,
 // and NodeNext .js extension rules for src/), so types and labels are mirrored here.
 
 export type Liveness = 'active' | 'idle' | 'stale' | 'dormant';
