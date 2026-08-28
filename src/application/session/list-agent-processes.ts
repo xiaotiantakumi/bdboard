@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache } from '../ports/board-cache.js';
@@ -14,21 +13,26 @@ export interface ListedAgentProcess {
 }
 
 function normalizeRootPath(rootPath: string): string {
+  let normalized = rootPath;
   if (
-    rootPath.length > 1 &&
-    (rootPath.endsWith('/') || rootPath.endsWith('\\'))
+    normalized.length > 1 &&
+    (normalized.endsWith('/') || normalized.endsWith('\\'))
   ) {
-    return rootPath.slice(0, -1);
+    normalized = normalized.slice(0, -1);
   }
-  return rootPath;
+  return normalized.replaceAll('\\', '/');
 }
 
 function matchesProject(cwd: string, rootPath: string): boolean {
-  const normalized = normalizeRootPath(rootPath);
-  if (cwd === normalized) {
+  // discover-projects の isExcluded と同じ流儀 (bdboard-4iw RS1 = bdboard-h7f):
+  // UI ヒントが 'C:/Users/you/projects' 形を案内する以上、rootPath がスラッシュ形でも
+  // cwd がバックスラッシュ形(Windows の実パス)でも境界判定が効く必要がある (bdboard-9dm)。
+  const canonicalCwd = cwd.replaceAll('\\', '/');
+  const canonicalRoot = normalizeRootPath(rootPath);
+  if (canonicalCwd === canonicalRoot) {
     return true;
   }
-  return cwd.startsWith(normalized + path.sep);
+  return canonicalCwd.startsWith(`${canonicalRoot}/`);
 }
 
 function resolveProject(
