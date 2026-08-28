@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeStatusLevel } from './boardFreshness';
 import { __resetSharedEventSourceForTests } from './lib/sseConnection';
-import { useBoardStream } from './useBoardStream';
+import { CONNECT_STALL_MS, useBoardStream } from './useBoardStream';
 
 // Minimal controllable EventSource stand-in. jsdom has no real EventSource,
 // and the real one can't be driven deterministically from a test anyway —
@@ -378,6 +378,106 @@ describe('useBoardStream', () => {
 
       act(() => vi.advanceTimersByTime(GRACE_MS));
       expect(result.current.state).toBe('error');
+    });
+  });
+
+  describe('connect stall detection', () => {
+    it('pins the stall window to 30s', () => {
+      // Pinned deliberately: this window has to outlast a normal slow connect but
+      // still fire well before a user concludes the board is simply frozen.
+      // Changing it should be a reviewed decision, not an incidental edit.
+      expect(CONNECT_STALL_MS).toBe(30_000);
+    });
+
+    it('sets connectStalled after CONNECT_STALL_MS while still connecting', () => {
+      const { result } = renderBoardStream();
+
+      expect(result.current.connectStalled).toBe(false);
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS - 1));
+      expect(result.current.connectStalled).toBe(false);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(result.current.connectStalled).toBe(true);
+    });
+
+    it('does not set connectStalled when onopen arrives before the stall window', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS - 1));
+      act(() => es.onopen?.());
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(result.current.connectStalled).toBe(false);
+    });
+
+    it('does not set connectStalled when onerror arrives before the stall window', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS - 1));
+      act(() => es.onerror?.());
+
+      expect(result.current.state).toBe('reconnecting');
+      act(() => vi.advanceTimersByTime(1));
+      expect(result.current.connectStalled).toBe(false);
+    });
+
+    it('clears connectStalled when onopen follows a stall', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS));
+      expect(result.current.connectStalled).toBe(true);
+
+      act(() => es.onopen?.());
+      expect(result.current.connectStalled).toBe(false);
+    });
+
+    it('re-arms the stall timer after reconnect()', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => result.current.reconnect());
+
+      expect(result.current.connectStalled).toBe(false);
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS - 1));
+      expect(result.current.connectStalled).toBe(false);
+
+      act(() => vi.advanceTimersByTime(1));
+      expect(result.current.connectStalled).toBe(true);
+    });
+
+    it('does not stall when joining a shared EventSource that is already open', () => {
+      // 共有接続の addOpenListener は readyState===OPEN なら同期で即座に listener を呼ぶ。
+      // effect 内の順序が armStallTimer() → addOpenListener なので、後乗りしたインスタンスは
+      // arm した直後の同期 onOpen でタイマーを解除できる。逆順だと 30 秒後に誤って
+      // connectStalled が立つ。
+      const first = renderBoardStream();
+      first.es.readyState = 1;
+      act(() => first.es.onopen?.());
+
+      const second = renderBoardStream();
+      expect(second.result.current.state).toBe('open');
+
+      act(() => vi.advanceTimersByTime(CONNECT_STALL_MS));
+      expect(second.result.current.connectStalled).toBe(false);
+
+      first.unmount();
+      second.unmount();
+    });
+
+    it('clears the stall timer on unmount', () => {
+      const { unmount } = renderBoardStream();
+
+      // Still connecting: the stall timer must be pending, otherwise the
+      // assertion below would pass vacuously.
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      unmount();
+
+      // Cleanup must drop every timer this hook armed; a leaked stall timer
+      // would fire setConnectStalled() after unmount.
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });

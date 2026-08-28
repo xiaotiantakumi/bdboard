@@ -6,15 +6,17 @@ export function useLastServerContact(boardDataUpdatedAt: number | undefined): {
   streamState: StreamState;
   lastContactAtMs: number | undefined;
   reconnect: () => void;
+  connectStalled: boolean;
 } {
   const {
     state: streamState,
     lastContactAtMs: streamContactAtMs,
     reconnect,
+    connectStalled,
   } = useBoardStream();
   const lastContactAtMs = useMemo(
     () => mergeLastServerContact(streamContactAtMs, boardDataUpdatedAt),
     [streamContactAtMs, boardDataUpdatedAt],
   );
-  return { streamState, lastContactAtMs, reconnect };
+  return { streamState, lastContactAtMs, reconnect, connectStalled };
 }

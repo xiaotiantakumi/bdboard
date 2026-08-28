@@ -9,6 +9,7 @@ const useBoardStreamMock = vi.fn<() => BoardStreamResult>(() => ({
   state: 'open',
   lastContactAtMs: 1_000,
   reconnect: vi.fn(),
+  connectStalled: false,
 }));
 
 vi.mock('../useBoardStream', () => ({
@@ -28,6 +29,7 @@ describe('useLastServerContact', () => {
       state: 'connecting',
       lastContactAtMs: null,
       reconnect: vi.fn(),
+      connectStalled: false,
     });
 
     const { result } = renderHook(() => useLastServerContact(0));
