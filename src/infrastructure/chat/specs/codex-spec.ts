@@ -119,12 +119,20 @@ function buildImagePaths(images: readonly ChatImageAttachment[], scratchDir: str
 // 読み取り専用ビットだけ (CI 実測: expected 384 (0o600), received 438 (0o666))。ACL を直接
 // 触る API は Node コアに無い。
 //
-// 方針として、Windows では **ACL を明示設定せず、置き場所に依拠する**。ここに渡る scratchDir は
-// `os.tmpdir()` = `%TEMP%` で、既定ではユーザープロファイル配下 (`%LOCALAPPDATA%\Temp`) に
-// 解決され、そのディレクトリの ACL を継承する。つまり秘匿性は「このプロセスが設定した権限」では
-// なく「実行ユーザーの %TEMP% が他ユーザーから読めない構成になっていること」に依存する — 既定の
-// Windows ではそうなるが、TEMP を共有ディレクトリへ向けた環境では成り立たない。**コードが強制する
-// 保証ではなく、環境に対する前提**である点を明示しておく。
+// 方針として、Windows では **ACL を明示設定せず、置き場所に依拠する**。ユーザープロファイル配下の
+// Temp (`%SystemDrive%\Users\<username>\AppData\Local\Temp`) は、既定の ACL が SYSTEM /
+// Administrator / 当該ユーザーだけにアクセスを許す。これは Microsoft の一次情報に明記がある:
+//   https://learn.microsoft.com/windows/win32/shell/about-user-profiles
+//   「Because the access control list (ACL) of these Temp directories allows access to SYSTEM,
+//     Administrator, and the current user, applications need to elevate to access for other users.」
+//
+// ただしこれは **コードが強制する保証ではなく、環境に対する前提**である。ここに渡る scratchDir は
+// `os.tmpdir()` で、Windows での解決順は `TEMP` → `TMP` → `%SystemRoot%\temp` (Node の
+// lib/os.js 実装)。つまり前提が崩れる経路が2つある:
+//   - TEMP/TMP が共有ディレクトリへリダイレクトされている
+//   - TEMP も TMP も未設定で、`C:\Windows\temp` (全ユーザー書き込み可) へフォールバックする
+// どちらも既定の Windows では起きないが、「%TEMP% だから安全」と短絡せず、依存している前提を
+// ここに書き出しておく。
 //
 // icacls 相当を毎ファイル呼ぶ案は採らない: 画像1枚ごとに子プロセスを起こすことになり、失敗時の
 // 分岐 (icacls が無い/権限が足りない/パスにクォートが要る) がここで扱うには重すぎる。ローカル
