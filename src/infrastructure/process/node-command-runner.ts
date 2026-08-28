@@ -5,6 +5,7 @@ import type {
   CommandRunOptions,
   CommandRunner,
 } from '../../application/ports/command-runner.js';
+import { killProcessTree } from './kill-process-tree.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const MAX_BUFFER = 32 * 1024 * 1024;
@@ -34,20 +35,6 @@ function resultFrom(
   };
 }
 
-function killGroup(child: ChildProcess, signal: NodeJS.Signals): void {
-  const pid = child.pid;
-  if (pid === undefined) {
-    return;
-  }
-  try {
-    process.kill(-pid, signal);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') {
-      child.kill(signal);
-    }
-  }
-}
-
 export class NodeCommandRunner implements CommandRunner {
   run(
     command: string,
@@ -60,6 +47,7 @@ export class NodeCommandRunner implements CommandRunner {
         cwd: options?.cwd,
         detached: true,
         stdio: ['pipe', 'pipe', 'pipe'],
+        windowsHide: true,
         ...(options?.env !== undefined ? { env: { ...options.env } } : {}),
       });
     } catch {
@@ -131,7 +119,7 @@ export class NodeCommandRunner implements CommandRunner {
         if (failureKind === undefined) {
           failureKind = 'timeout';
         }
-        killGroup(child, 'SIGTERM');
+        killProcessTree(child, 'SIGTERM');
       }, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     });
   }
