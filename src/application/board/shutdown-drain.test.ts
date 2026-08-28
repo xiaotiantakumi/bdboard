@@ -309,4 +309,72 @@ describe('createShutdownDrain', () => {
 
     expect(interruptions.read()).toEqual(FIXED_NOW);
   });
+
+  it('closes every chat repository after cache.close when chatRepositories is provided (bdboard-9dm)', async () => {
+    const chatCloseCalls: string[] = [];
+    const chatRepositories = [
+      { close: vi.fn(() => chatCloseCalls.push('chat[0].close')) },
+      { close: vi.fn(() => chatCloseCalls.push('chat[1].close')) },
+    ];
+    const { watchHandle, tunnelService, cache, calls } = fakeDeps();
+    const drain = createShutdownDrain({
+      watchHandle,
+      tunnelService,
+      cache,
+      chatRepositories,
+    });
+
+    await drain();
+
+    expect(chatCloseCalls).toEqual(['chat[0].close', 'chat[1].close']);
+    expect(calls).toEqual([
+      'tunnelService.shutdown',
+      'watchHandle.stop',
+      'cache.close',
+    ]);
+  });
+
+  it('still closes remaining chat repositories when one close() throws, then rejects with AggregateError (bdboard-9dm)', async () => {
+    const chatError = new Error('chat repo 0 close failed');
+    const chatRepositories = [
+      { close: vi.fn(() => { throw chatError; }) },
+      { close: vi.fn() },
+    ];
+    const { watchHandle, tunnelService, cache } = fakeDeps();
+    const drain = createShutdownDrain({
+      watchHandle,
+      tunnelService,
+      cache,
+      chatRepositories,
+    });
+
+    try {
+      await drain();
+      expect.fail('drain() should reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AggregateError);
+      const aggregate = err as AggregateError;
+      expect(aggregate.errors).toHaveLength(1);
+      expect(aggregate.errors[0]).toBe(chatError);
+      expect(aggregate.message).toContain(
+        'chatRepositories[0].close: chat repo 0 close failed',
+      );
+    }
+
+    expect(chatRepositories[0].close).toHaveBeenCalledOnce();
+    expect(chatRepositories[1].close).toHaveBeenCalledOnce();
+  });
+
+  it('behaves as before when chatRepositories is omitted (bdboard-9dm)', async () => {
+    const { watchHandle, tunnelService, cache, calls } = fakeDeps();
+    const drain = createShutdownDrain({ watchHandle, tunnelService, cache });
+
+    await drain();
+
+    expect(calls).toEqual([
+      'tunnelService.shutdown',
+      'watchHandle.stop',
+      'cache.close',
+    ]);
+  });
 });
