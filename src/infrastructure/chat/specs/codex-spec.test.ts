@@ -114,11 +114,17 @@ describe('createCodexSpec image artifacts', () => {
         expect(capturedImagePaths.map((imagePath) => path.extname(imagePath))).toEqual(['.png', '.jpg']);
         for (const imagePath of capturedImagePaths) {
           expect(existsSync(imagePath)).toBe(true);
-          // Windows には POSIX モードが無く、fs は書き込み可能ファイルを常に 0o666 と報告する。
-          // 緩和は %TEMP% 配下 + 既定 ACL に依拠。0600 相当(ACL)の明示担保は bdboard-che。
-          if (process.platform === 'win32') {
-            expect(statSync(imagePath).mode & 0o200).not.toBe(0);
-          } else {
+          // 秘匿性の担保はプラットフォームで根拠が違うので、assert する不変条件も分ける
+          // (bdboard-che で方針確定。根拠は codex-spec.ts の writeImageFiles 上のコメント)。
+          //
+          // Windows には POSIX モードが無く、fs は書き込み可能ファイルを常に 0o666 と報告する
+          // ので、モードを assert しても何も守れない。あちらで秘匿性の根拠になっているのは
+          // 「渡された scratchDir の外にファイルを作らない」ことと、本番の scratchDir が
+          // os.tmpdir() であること。前者はここで、後者は codex-chat-agent 側のテストで固定する
+          // (このテストは scratchDir を自分で作って注入するので、ここで os.tmpdir() を
+          // assert しても検証しているのはテスト自身の組み立てであって製品の挙動ではない)。
+          expect(path.dirname(imagePath)).toBe(scratchDir);
+          if (process.platform !== 'win32') {
             expect(statSync(imagePath).mode & 0o777).toBe(0o600);
           }
         }
