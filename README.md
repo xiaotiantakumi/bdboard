@@ -184,6 +184,10 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_AUTH_USER` | Basic 認証のユーザー名。`BDBOARD_AUTH_PASSWORD` と両方に値がある場合のみ認証が有効化される | (未設定) |
 | `BDBOARD_AUTH_PASSWORD` | Basic 認証のパスワード。上記と同様 | (未設定) |
 | `BDBOARD_AUTH_DISABLED` | `1` または `true`(完全一致)で Basic 認証を明示的に無効化する。未設定かつ認証情報も未設定だと、リモートリクエストは `503` になる(フェイルクローズ)。ローカル直アクセスは下記条件で免除され、Basic 認証が有効でなければトンネル公開はできない | (未設定 = 無効化しない) |
+| `BDBOARD_UPDATE_CHECK_DISABLED` | `1` または `true` で新バージョン通知を無効化する。無効時は GitHub へ一切通信しない | (未設定 = 有効) |
+| `BDBOARD_UPDATE_CHECK_CACHE_MS` | 新バージョン確認のキャッシュ TTL(ミリ秒)。未認証の GitHub API は IP あたり 60 req/h なので短くしない | `21600000`(6時間) |
+| `BDBOARD_UPDATE_CHECK_TIMEOUT_MS` | 新バージョン確認のタイムアウト(ミリ秒)。超過・失敗は黙って無視される | `3000`(3秒) |
+| `BDBOARD_UPDATE_CHECK_REPO` | 新バージョンを確認する GitHub リポジトリ(`owner/repo`) | `xiaotiantakumi/bdboard` |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |

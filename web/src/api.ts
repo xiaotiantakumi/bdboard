@@ -1426,6 +1426,22 @@ export function fetchAiQuota(): Promise<AiQuotaDto> {
   return fetchJson<AiQuotaDto>('/api/ai-quota');
 }
 
+/** 新しいリリースの有無 (bdboard-70z.7)。`unknown` は「確認できなかった」で、
+ *  無効化されている場合もこれになる。UI 側は黙る。 */
+export type UpdateCheckDto =
+  | { state: 'up-to-date'; currentVersion: string }
+  | { state: 'unknown'; currentVersion: string }
+  | {
+      state: 'update-available';
+      currentVersion: string;
+      latestVersion: string;
+      releaseUrl: string;
+    };
+
+export function fetchUpdateCheck(): Promise<UpdateCheckDto> {
+  return fetchJson<UpdateCheckDto>('/api/update-check');
+}
+
 export interface HarnessPackSummaryDto {
   name: string;
   version: string;

@@ -1,7 +1,26 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HelpPanel } from './HelpPanel';
+
+vi.mock('../api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api')>()),
+  // HelpPanel は UpdateNotice 経由で /api/update-check を引く (bdboard-70z.7)。
+  // ここでの関心事はヘルプの表示なので、更新なしに固定してネットワークを断つ。
+  fetchUpdateCheck: vi.fn(async () => ({ state: 'up-to-date', currentVersion: '1.0.0' })),
+}));
+
+function renderHelpPanel(props: { onClose: () => void }) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <HelpPanel onClose={props.onClose} />
+    </QueryClientProvider>,
+  );
+}
 
 describe('HelpPanel', () => {
   afterEach(() => {
@@ -9,7 +28,7 @@ describe('HelpPanel', () => {
   });
 
   it('renders the help dialog and major feature sections', () => {
-    render(<HelpPanel onClose={vi.fn()} />);
+    renderHelpPanel({ onClose: vi.fn() });
 
     expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
     expect(screen.getByText('bdboard バージョン', { selector: '.sr-only' })).toBeInTheDocument();
@@ -25,7 +44,7 @@ describe('HelpPanel', () => {
   it('closes on Escape', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    render(<HelpPanel onClose={onClose} />);
+    renderHelpPanel({ onClose });
 
     await user.keyboard('{Escape}');
 
@@ -35,7 +54,7 @@ describe('HelpPanel', () => {
   it('closes when the overlay backdrop is clicked', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    const { container } = render(<HelpPanel onClose={onClose} />);
+    const { container } = renderHelpPanel({ onClose });
 
     const overlay = container.querySelector('.help-panel-overlay');
     expect(overlay).not.toBeNull();
@@ -47,7 +66,7 @@ describe('HelpPanel', () => {
   it('does not close when the panel content is clicked', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    render(<HelpPanel onClose={onClose} />);
+    renderHelpPanel({ onClose });
 
     await user.click(screen.getByRole('heading', { name: 'Kanban（看板）' }));
 
@@ -57,7 +76,7 @@ describe('HelpPanel', () => {
   it('closes via the close button', async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
-    render(<HelpPanel onClose={onClose} />);
+    renderHelpPanel({ onClose });
 
     await user.click(screen.getByRole('button', { name: '閉じる' }));
 

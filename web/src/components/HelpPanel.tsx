@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { HELP_SECTIONS } from '../helpContent';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
+import { UpdateNotice } from './UpdateNotice';
 
 export interface HelpPanelProps {
   onClose: () => void;
@@ -46,6 +47,7 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
             </h2>
           </div>
           <div className="detail-header-actions">
+            <UpdateNotice />
             <span className="help-panel-version">
               <span className="sr-only">bdboard バージョン </span>
               v{__BDBOARD_VERSION__}
