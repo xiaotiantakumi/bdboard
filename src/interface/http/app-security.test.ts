@@ -29,6 +29,11 @@ const REMOTE_ENV = {
   incoming: {
     socket: {
       remoteAddress: '203.0.113.5',
+      // 実際のリモート接続にも localPort はある。これを省くと
+      // isLocalBasicAuthRequest が readLocalPort の null 判定だけで
+      // fail-closed になり、送信元アドレスの判定が壊れても気付けない
+      // (bdboard-cpi, fable レビュー minor-1)。
+      localPort: 8787,
     },
   },
 };
@@ -334,6 +339,10 @@ describe('mountSecurityMiddleware', () => {
           kind: 'enabled',
           config: { username: USER, password: PASSWORD },
         },
+        // 本番の mount (src/main.ts) は access を渡す = トークン交換
+        // ミドルウェアも前段に載る。それを外したスタックで通してしまうと
+        // 「本番と違う構成でだけ通る」テストになるので揃える。
+        access: createTunnelAccessService({ now: () => new Date() }),
       });
       app.get('/', (c) => c.text('ok', 200));
       return app;
@@ -366,6 +375,41 @@ describe('mountSecurityMiddleware', () => {
         '/',
         { headers: { Authorization: basicAuthHeader(USER, 'wrong-password') } },
         REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(401);
+      // 401 なら再認証を促すヘッダが要る。これが無いとブラウザは
+      // 認証ダイアログを出さない。
+      expect(res.headers.get('WWW-Authenticate')).toContain('Basic');
+    });
+
+    it('does not exempt a remote request that spoofs Host: localhost:8787', async () => {
+      // ローカル免除は「TCP の送信元がループバック」で決まり、Host は
+      // 追加の絞り込みにしか使わない (local-request.ts の doc comment)。
+      // その不変条件を mount 済みスタックで固定する。isLoopbackAddress が
+      // 常に true を返すよう壊すと、REMOTE_ENV の localPort が 8787 で
+      // Host も一致するため免除が通り、このテストだけが 200 で落ちる。
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Host: 'localhost:8787' } },
+        REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(401);
+    });
+
+    it('does not exempt a loopback request whose listening port is unknown', async () => {
+      // localPort が読めないとき免除しない (fail-closed) ことを、
+      // ミドルウェアを通した経路で確認する。readLocalPort が実際の env に
+      // 関係なく 8787 を返すよう壊すと、ここだけが 200 で落ちる。
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Host: 'localhost:8787' } },
+        { incoming: { socket: { remoteAddress: '127.0.0.1' } } },
       );
 
       expect(res.status).toBe(401);
