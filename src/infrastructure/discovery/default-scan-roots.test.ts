@@ -77,7 +77,6 @@ describe('resolveDefaultScanRoots', () => {
   it('win32: falls back to os.homedir() when USERPROFILE is empty', async () => {
     process.env.USERPROFILE = '   ';
     const home = os.homedir();
-    const documents = path.join(home, 'Documents');
     const fs = createFakeFs(new Set());
 
     const roots = await resolveDefaultScanRoots(fs, { platform: 'win32' });

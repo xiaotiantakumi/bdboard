@@ -28,11 +28,6 @@ const REMOTE_ENV = {
   },
 };
 
-function basicAuthHeader(user: string, pass: string): string {
-  const encoded = Buffer.from(`${user}:${pass}`).toString('base64');
-  return `Basic ${encoded}`;
-}
-
 describe('mountSecurityMiddleware', () => {
   it('registers token exchange before basic auth', async () => {
     const handlers: MiddlewareHandler[] = [];

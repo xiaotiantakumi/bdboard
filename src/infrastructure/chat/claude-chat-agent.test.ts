@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  CHAT_FAILURE_MESSAGES,
-  ChatAgentError,
-} from '../../application/ports/chat-agent.js';
+import { CHAT_FAILURE_MESSAGES } from '../../application/ports/chat-agent.js';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import { BD_TOOL_DEFINITIONS } from './bd-tool-catalog.js';
 import { createClaudeChatAgent } from './claude-chat-agent.js';
@@ -373,7 +370,7 @@ describe('createClaudeChatAgent', () => {
 
   it('checkAvailability probes claude auth status instead of --version', async () => {
     const { runner, calls } = createFakeRunner({
-      handler: async (_command, args) => ({
+      handler: async (_command, _args) => ({
         stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai' }),
         stderr: '',
         exitCode: 0,

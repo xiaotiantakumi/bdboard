@@ -1,13 +1,22 @@
 {
+  // src/ (サーバー本体) の project。strict 系は tsconfig.base.json から継承する (bdboard-vcc)。
+  //
+  // bdboard-b4o の時点ではここだけ extends していなかった。base に寄せると src/ に
+  // noUnusedLocals/noUnusedParameters が効いて TS6133 が6件出たためで、その6件 (すべて
+  // *.test.ts の未使用 import/変数) を消したのが bdboard-vcc。これで5つの project すべてが
+  // 同じ strict 系の前提を共有する。
+  //
+  // ここに残しているのは src/ 固有の前提だけ:
+  //   - module / moduleResolution: NodeNext (web 側の bundler と意図的に非対称)。
+  //   - rootDir / outDir: この project だけが持つ出力レイアウトの前提 (noEmit は base 側)。
+  //   - esModuleInterop / forceConsistentCasingInFileNames: 他の4つには無い。揃えるかどうかは
+  //     別途の判断なので、等価リファクタの範囲では動かさない。
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "noEmit": true,
     "rootDir": "src",
     "outDir": "dist"
   },
