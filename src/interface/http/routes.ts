@@ -11,7 +11,6 @@ import { getPrBadges } from '../../application/board/get-pr-badges.js';
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
-import { getSyncHealth } from '../../application/board/get-sync-health.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import { getThroughputStats } from '../../application/board/get-throughput-stats.js';
 import { getModelStats } from '../../application/board/get-model-stats.js';
@@ -28,7 +27,6 @@ import type { CommentReader } from '../../application/ports/comment-reader.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import type { ProcessScanner } from '../../application/ports/process-scanner.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
-import type { SyncHealthReader } from '../../application/ports/sync-health-reader.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import type { DependencyWriterPort } from '../../application/ports/dependency-writer.js';
 import {
@@ -71,7 +69,6 @@ import {
   toLeaseHealthDto,
   toMergeSlotStatusDto,
   toPrBadgeDto,
-  toSyncHealthDto,
   toTicketDetailDto,
   toTicketSearchResultDto,
   toTicketSimilarResultDto,
@@ -107,7 +104,6 @@ export interface ApiDeps {
   readonly commentReader?: CommentReader;
   readonly processScanner?: ProcessScanner;
   readonly humanDecisions?: HumanDecisionsPort;
-  readonly syncHealthReader?: SyncHealthReader;
   readonly worktreeScanner?: WorktreeScanner;
   readonly issueWriter?: IssueWriterPort;
   readonly dependencyWriter?: DependencyWriterPort;
@@ -665,23 +661,6 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       projectIds !== undefined ? { projectIds } : undefined,
     );
     return c.json(badges.map(toPrBadgeDto));
-  });
-
-  app.get('/api/sync-health', async (c) => {
-    if (deps.syncHealthReader === undefined) {
-      return c.json({ error: 'sync health not available' }, 501);
-    }
-
-    const projectIds = parseProjectIds(c.req.query('projects'));
-    let entries = deps.cache.listProjects();
-    if (projectIds !== undefined) {
-      const filterSet = new Set(projectIds);
-      entries = entries.filter((entry) => filterSet.has(entry.project.id));
-    }
-
-    const projects = entries.map((entry) => entry.project);
-    const health = await getSyncHealth(projects, deps.syncHealthReader);
-    return c.json(health.map(toSyncHealthDto));
   });
 
   app.get('/api/merge-slot-status', async (c) => {

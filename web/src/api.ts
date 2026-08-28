@@ -900,37 +900,6 @@ export function fetchHygieneIssues(
   return getJson<HygieneIssueDto[]>(path);
 }
 
-export type SyncHealthStatusDto = 'ok' | 'attention' | 'unknown';
-
-export type SyncHealthReasonKindDto =
-  | 'diverged_from_remote'
-  | 'stale_export'
-  | 'uncommitted_interactions'
-  | 'no_dolt_ref';
-
-export interface SyncHealthReasonDto {
-  kind: SyncHealthReasonKindDto;
-  message: string;
-}
-
-export interface SyncHealthDto {
-  projectId: string;
-  status: SyncHealthStatusDto;
-  reasons: SyncHealthReasonDto[];
-}
-
-export function fetchSyncHealth(
-  projectIds: readonly string[] = [],
-): Promise<SyncHealthDto[]> {
-  const searchParams = new URLSearchParams();
-  if (projectIds.length > 0) {
-    searchParams.set('projects', projectIds.join(','));
-  }
-  const query = searchParams.toString();
-  const path = query.length > 0 ? `/api/sync-health?${query}` : '/api/sync-health';
-  return getJson<SyncHealthDto[]>(path);
-}
-
 export interface StaleLeaseDto {
   ticketId: string;
   projectId: string;
