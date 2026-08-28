@@ -57,6 +57,7 @@ import {
   createChokidarProjectWatcher,
   createClaudeSessionRegistry,
   createCloudflaredTunnel,
+  resolveDefaultTunnelLogFilePath,
   createFileTunnelInterruptionStore,
   createFileScanRootsConfigStore,
   createFileBoardThresholdsConfigStore,
@@ -732,7 +733,17 @@ async function main(): Promise<void> {
   const authUsername = envString('BDBOARD_AUTH_USER', 'bdboard');
 
   const tunnelLogMaxBytes = envInt('BDBOARD_TUNNEL_LOG_MAX_BYTES', 5 * 1024 * 1024);
-  const tunnelProcess = createCloudflaredTunnel({ port, logMaxBytes: tunnelLogMaxBytes });
+  // 既定は ~/.bdboard/logs/cloudflared-tunnel.log (bdboard-3b0)。cwd 基準では
+  // なくなったので、リポジトリ内にログを置きたい場合は明示的に指定してもらう。
+  const tunnelLogFilePath = envString(
+    'BDBOARD_TUNNEL_LOG_PATH',
+    resolveDefaultTunnelLogFilePath(),
+  );
+  const tunnelProcess = createCloudflaredTunnel({
+    port,
+    logFilePath: tunnelLogFilePath,
+    logMaxBytes: tunnelLogMaxBytes,
+  });
   const tunnelAccess = createTunnelAccessService({ now: () => new Date() });
   const tunnelInterruptions = createFileTunnelInterruptionStore(
     path.join(path.dirname(dbPath), 'tunnel-interruption.json'),

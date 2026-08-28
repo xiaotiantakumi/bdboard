@@ -179,6 +179,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_SESSION_INTERVAL_MS` | Claude Code セッション一覧の再取得間隔(ミリ秒) | `10000`(10秒) |
 | `BDBOARD_TRANSCRIPT_INTERVAL_MS` | セッション⇔チケットのトランスクリプト走査間隔(ミリ秒)。`0` 以下で無効化 | `30000`(30秒) |
 | `BDBOARD_CFD_SNAPSHOT_INTERVAL_MS` | 累積フロー図(CFD)スナップショットの記録間隔(ミリ秒)。`0` 以下で無効化 | `3600000`(1時間) |
+| `BDBOARD_TUNNEL_LOG_PATH` | `cloudflared` トンネルログの出力先ファイル。既定は cwd に依存しない(`npx bdboard` は任意のディレクトリから起動されるため) | `~/.bdboard/logs/cloudflared-tunnel.log` |
 | `BDBOARD_TUNNEL_LOG_MAX_BYTES` | `cloudflared` トンネルログのローテーション閾値(バイト) | `5242880`(5MB) |
 | `BDBOARD_AUTH_USER` | Basic 認証のユーザー名。`BDBOARD_AUTH_PASSWORD` と両方に値がある場合のみ認証が有効化される | (未設定) |
 | `BDBOARD_AUTH_PASSWORD` | Basic 認証のパスワード。上記と同様 | (未設定) |

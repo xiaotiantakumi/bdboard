@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   TunnelProcess,
@@ -11,7 +12,28 @@ const TRY_CLOUDFLARE_URL_PATTERN =
 
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 const DEFAULT_STOP_GRACE_MS = 5_000;
-const DEFAULT_LOG_FILE_PATH = path.join(process.cwd(), 'logs', 'cloudflared-tunnel.log');
+/**
+ * cloudflared のログ既定パスを解決する。
+ *
+ * 以前は `path.join(process.cwd(), 'logs', ...)` だった (bdboard-3b0)。配布形態
+ * (`npx bdboard`) は任意の cwd から起動されるので、cwd 基準だとトンネルを開いた
+ * 瞬間に「ユーザーがたまたま居たディレクトリ」へ `logs/` を掘ることになる。
+ * ホームディレクトリだろうが他人のリポジトリのルートだろうが掘る。
+ *
+ * 置き場はキャッシュ DB (`~/.bdboard/cache.db`, src/main.ts) と同じ `~/.bdboard/`
+ * に揃えた。設定ファイル (`~/.config/bdboard/config.json`, infrastructure/fs/
+ * config-path.ts) の側ではない — ログは人が編集する設定ではなく実行時生成物
+ * なので、既に実行時生成物が置かれている場所に寄せる方が一貫する。
+ *
+ * homedir を注入できるのはテスト用。os.homedir() は Windows でもユーザー
+ * プロファイルを返すので、プラットフォーム分岐は要らない。
+ */
+export function resolveDefaultTunnelLogFilePath(opts?: {
+  homedir?: string;
+}): string {
+  const home = opts?.homedir ?? os.homedir();
+  return path.join(home, '.bdboard', 'logs', 'cloudflared-tunnel.log');
+}
 /** ログファイルの既定サイズ上限(5MB)。超過すると .log -> .log.1 へ退避される。 */
 const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -176,7 +198,7 @@ export function createCloudflaredTunnel(
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
   const resolveExecutable =
     options.resolveExecutable ?? ((): string | null => resolveCloudflaredInPath(pathEnv, options));
-  const logFilePath = options.logFilePath ?? DEFAULT_LOG_FILE_PATH;
+  const logFilePath = options.logFilePath ?? resolveDefaultTunnelLogFilePath();
   const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const createLogSink = options.createLogSink ?? createFileLogSink;
 
