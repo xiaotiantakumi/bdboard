@@ -349,7 +349,7 @@ describe('refreshProjects', () => {
   it('fetches pending decisions on fingerprint change and stores them in cache', async () => {
     const p = project('/a', '/projects/a');
     const humanDecisions: HumanDecisionsPort = {
-      listPendingDecisions: async (rootPath: string) => {
+      listPendingDecisions: async (_rootPath: string) => {
         return [{ id: 'bdboard-human', question: 'Q?', allowFreeform: true }];
       },
       respond: async () => {},

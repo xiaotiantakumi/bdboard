@@ -4,7 +4,6 @@ import type { Project } from '../../domain/project.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import {
   createEmptyCfdCacheMethods,
-  createEmptyInteractionsCacheMethods,
   createEmptySessionLinksCacheMethods,
   createInMemoryInteractionsCacheMethods,
 } from '../../application/ports/board-cache-fakes.js';
