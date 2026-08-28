@@ -25,6 +25,7 @@ let refCount = 0;
 let eventSource: EventSource | null = null;
 const openListeners = new Set<OpenListener>();
 const errorListeners = new Set<ErrorListener>();
+const namedListeners = new Map<string, Set<EventListener>>();
 
 function dispatchOpen(): void {
   for (const listener of openListeners) {
@@ -38,9 +39,18 @@ function dispatchError(): void {
   }
 }
 
+function attachNamedListeners(es: EventSource): void {
+  for (const [type, listeners] of namedListeners) {
+    for (const listener of listeners) {
+      es.addEventListener(type, listener);
+    }
+  }
+}
+
 function attachEventSourceHandlers(es: EventSource): void {
   es.onopen = () => dispatchOpen();
   es.onerror = () => dispatchError();
+  attachNamedListeners(es);
 }
 
 function ensureEventSource(): EventSource {
@@ -57,19 +67,44 @@ function resetIfIdle(): void {
     eventSource = null;
     openListeners.clear();
     errorListeners.clear();
+    namedListeners.clear();
+  }
+}
+
+/**
+ * Replace the shared EventSource while keeping registered listeners.
+ * EventSource in readyState CLOSED (2) after a non-200 response never
+ * auto-reconnects; this is the only way to recover without a full reload.
+ */
+export function reconnectSharedEventSource(): void {
+  if (eventSource !== null) {
+    eventSource.close();
+    eventSource = null;
+  }
+  if (refCount > 0) {
+    eventSource = new EventSource(eventsUrl());
+    attachEventSourceHandlers(eventSource);
   }
 }
 
 export function acquireSharedEventSource(): SharedEventSourceHandle {
   refCount += 1;
-  const es = ensureEventSource();
+  ensureEventSource();
 
   return {
     addEventListener(type, listener) {
-      es.addEventListener(type, listener);
+      if (!namedListeners.has(type)) {
+        namedListeners.set(type, new Set());
+      }
+      namedListeners.get(type)!.add(listener);
+      eventSource?.addEventListener(type, listener);
     },
     removeEventListener(type, listener) {
-      es.removeEventListener(type, listener);
+      namedListeners.get(type)?.delete(listener);
+      if (namedListeners.get(type)?.size === 0) {
+        namedListeners.delete(type);
+      }
+      eventSource?.removeEventListener(type, listener);
     },
     addOpenListener(listener) {
       openListeners.add(listener);
@@ -102,4 +137,5 @@ export function __resetSharedEventSourceForTests(): void {
   }
   openListeners.clear();
   errorListeners.clear();
+  namedListeners.clear();
 }

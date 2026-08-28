@@ -5,11 +5,16 @@ import { useBoardStream, type StreamState } from '../useBoardStream';
 export function useLastServerContact(boardDataUpdatedAt: number | undefined): {
   streamState: StreamState;
   lastContactAtMs: number | undefined;
+  reconnect: () => void;
 } {
-  const { state: streamState, lastContactAtMs: streamContactAtMs } = useBoardStream();
+  const {
+    state: streamState,
+    lastContactAtMs: streamContactAtMs,
+    reconnect,
+  } = useBoardStream();
   const lastContactAtMs = useMemo(
     () => mergeLastServerContact(streamContactAtMs, boardDataUpdatedAt),
     [streamContactAtMs, boardDataUpdatedAt],
   );
-  return { streamState, lastContactAtMs };
+  return { streamState, lastContactAtMs, reconnect };
 }

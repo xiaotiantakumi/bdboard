@@ -5,6 +5,7 @@ import {
   formatGeneratedAtAge,
   mergeLastServerContact,
   shouldShowAlertBar,
+  STATUS_LABELS,
 } from './boardFreshness';
 
 describe('formatGeneratedAtAge (bdboard-3tw.125)', () => {
@@ -49,6 +50,15 @@ describe('computeStatusLevel (last server contact, bdboard-9qa)', () => {
   it('returns ok on cold load when react-query dataUpdatedAt is 0 and SSE has not contacted yet', () => {
     expect(computeStatusLevel('connecting', mergeLastServerContact(null, 0), nowMs)).toBe('ok');
   });
+
+  it('returns reconnecting when stream is reconnecting', () => {
+    expect(computeStatusLevel('reconnecting', recentContactAtMs, nowMs)).toBe('reconnecting');
+  });
+
+  it('prefers reconnecting over delayed when contact is stale', () => {
+    const tenMinutesAgoMs = new Date('2026-01-01T11:50:00.000Z').getTime();
+    expect(computeStatusLevel('reconnecting', tenMinutesAgoMs, nowMs)).toBe('reconnecting');
+  });
 });
 
 describe('mergeLastServerContact', () => {
@@ -74,10 +84,17 @@ describe('mergeLastServerContact', () => {
 });
 
 describe('shouldShowAlertBar', () => {
-  it('shows for delayed and disconnected states', () => {
+  it('shows for delayed, disconnected, and reconnecting states', () => {
     expect(shouldShowAlertBar('delayed')).toBe(true);
     expect(shouldShowAlertBar('disconnected')).toBe(true);
+    expect(shouldShowAlertBar('reconnecting')).toBe(true);
     expect(shouldShowAlertBar('ok')).toBe(false);
+  });
+});
+
+describe('STATUS_LABELS', () => {
+  it('includes reconnecting label', () => {
+    expect(STATUS_LABELS.reconnecting).toBe('再接続中');
   });
 });
 

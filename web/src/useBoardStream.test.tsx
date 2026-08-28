@@ -234,4 +234,104 @@ describe('useBoardStream', () => {
 
     expect(result.current.lastContactAtMs).toBe(new Date('2026-01-01T12:00:00.000Z').getTime());
   });
+
+  describe('reconnect grace period', () => {
+    const GRACE_MS = 12_000;
+
+    it('enters reconnecting on onError instead of error immediately', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      expect(result.current.state).toBe('reconnecting');
+    });
+
+    it('returns to open within the grace window without ever entering error', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS - 1));
+      act(() => es.onopen?.());
+
+      expect(result.current.state).toBe('open');
+    });
+
+    it('escalates to error after the grace window expires', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+
+      expect(result.current.state).toBe('error');
+    });
+
+    it('does not restart the grace timer on consecutive onError events', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(5000));
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(7000));
+
+      expect(result.current.state).toBe('error');
+    });
+
+    it('clears the grace timer when reconnect is invoked', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => result.current.reconnect());
+
+      expect(result.current.state).toBe('connecting');
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+
+      expect(result.current.state).toBe('connecting');
+    });
+
+    it('stays in error after escalation when EventSource keeps firing onError', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+
+      act(() => es.onerror?.());
+      expect(result.current.state).toBe('error');
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+    });
+
+    it('resets escalation on onopen so a later drop can use grace again', () => {
+      const { es, result } = renderBoardStream();
+
+      act(() => es.onopen?.());
+      act(() => es.onerror?.());
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+
+      act(() => es.onopen?.());
+      expect(result.current.state).toBe('open');
+
+      act(() => es.onerror?.());
+      expect(result.current.state).toBe('reconnecting');
+
+      act(() => vi.advanceTimersByTime(GRACE_MS));
+      expect(result.current.state).toBe('error');
+    });
+  });
 });

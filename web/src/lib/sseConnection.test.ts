@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   __resetSharedEventSourceForTests,
   acquireSharedEventSource,
+  reconnectSharedEventSource,
 } from './sseConnection';
 
 class MockEventSource {
@@ -153,6 +154,64 @@ describe('sseConnection', () => {
     conn.removeEventListener('notification', onNotification);
     es.dispatch('notification');
     expect(onNotification).toHaveBeenCalledOnce();
+
+    conn.release();
+  });
+
+  it('re-attaches named listeners to a new EventSource after reconnect', () => {
+    const conn = acquireSharedEventSource();
+    const oldEs = MockEventSource.instances[0]!;
+    const onBoardChanged = vi.fn();
+
+    conn.addEventListener('board.changed', onBoardChanged);
+    reconnectSharedEventSource();
+
+    expect(oldEs.close).toHaveBeenCalledOnce();
+    expect(MockEventSource.instances).toHaveLength(2);
+    const newEs = MockEventSource.instances[1]!;
+
+    newEs.dispatch('board.changed');
+    expect(onBoardChanged).toHaveBeenCalledOnce();
+
+    conn.release();
+  });
+
+  it('keeps open and error listeners alive after reconnect', () => {
+    const conn = acquireSharedEventSource();
+    const onOpen = vi.fn();
+    const onError = vi.fn();
+
+    conn.addOpenListener(onOpen);
+    conn.addErrorListener(onError);
+    reconnectSharedEventSource();
+
+    const newEs = MockEventSource.instances[1]!;
+    newEs.simulateOpen();
+    expect(onOpen).toHaveBeenCalledOnce();
+
+    newEs.simulateError();
+    expect(onError).toHaveBeenCalledOnce();
+
+    conn.release();
+  });
+
+  it('does not create a new EventSource on reconnect when refCount is zero', () => {
+    reconnectSharedEventSource();
+
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
+  it('does not re-attach removed named listeners after reconnect', () => {
+    const conn = acquireSharedEventSource();
+    const onBoardChanged = vi.fn();
+
+    conn.addEventListener('board.changed', onBoardChanged);
+    conn.removeEventListener('board.changed', onBoardChanged);
+    reconnectSharedEventSource();
+
+    const newEs = MockEventSource.instances[1]!;
+    newEs.dispatch('board.changed');
+    expect(onBoardChanged).not.toHaveBeenCalled();
 
     conn.release();
   });

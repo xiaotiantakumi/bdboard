@@ -272,6 +272,12 @@ body {
   border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
 }
 
+.status-pill-reconnecting {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  border-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+}
+
 .status-pill-popover {
   position: absolute;
   top: calc(100% + 6px);
@@ -319,6 +325,12 @@ body {
   background: var(--badge-stalled-bg);
   border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
   color: var(--badge-stalled-fg);
+}
+
+.alert-bar-quiet {
+  background: var(--badge-neutral-bg);
+  border-bottom-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+  color: var(--badge-neutral-fg);
 }
 
 .alert-bar-message {
