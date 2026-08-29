@@ -61,6 +61,7 @@ function describeUndoError(error: unknown): string {
 export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SnackbarState>({ kind: 'idle' });
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(false);
 
   const clearPendingTimeout = useCallback(() => {
     if (timeoutRef.current !== null) {
@@ -69,10 +70,23 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  useEffect(() => clearPendingTimeout, [clearPendingTimeout]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearPendingTimeout();
+    };
+  }, [clearPendingTimeout]);
 
   const showUndo = useCallback(
     ({ message, onUndo }: UndoSnackbarRequest) => {
+      // bdboard-ty72: 呼び出し元は4箇所とも mutation の onSuccess
+      // (HygienePanel / TicketDetailPanel / BoardDnDProvider / BulkActionBar) で、
+      // invalidateQueries を await した後に呼ぶ。プロバイダ自体がその間に
+      // アンマウントしていると、下の setTimeout がクリーンアップ後に仕掛けられる。
+      if (!mountedRef.current) {
+        return;
+      }
       clearPendingTimeout();
       setState({ kind: 'visible', message, onUndo });
       timeoutRef.current = setTimeout(() => {
@@ -99,10 +113,21 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
     setState({ kind: 'undoing', message });
     onUndo()
       .then(() => {
+        // bdboard-ty72: 逆操作の完了はアンマウント後に届きうる。ここで進むと
+        // 誰も片付けられない自動消去タイマーを仕掛けることになる (タイマーIDを
+        // ref に持っていても、クリーンアップはもう走り終わっている)。
+        if (!mountedRef.current) {
+          return;
+        }
         setState({ kind: 'undone' });
         scheduleAutoDismiss();
       })
       .catch((error: unknown) => {
+        // 失敗も同じ。表示先がもう無いので握り潰してよい (catch はしているので
+        // 未処理の rejection にはならない)。
+        if (!mountedRef.current) {
+          return;
+        }
         setState({ kind: 'undo-failed', detail: describeUndoError(error) });
         scheduleAutoDismiss();
       });

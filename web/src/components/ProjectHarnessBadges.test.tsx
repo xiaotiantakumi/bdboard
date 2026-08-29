@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api';
@@ -61,6 +61,61 @@ describe('ProjectHarnessBadges', () => {
 
     expect(await screen.findByText('未導入')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '注入' })).toBeInTheDocument();
+  });
+
+  it('does not arm a feedback timer when the inject settles after unmount', async () => {
+    // bdboard-ty72: showFeedback は useHarnessInject の onSuccess から呼ばれ、
+    // そこは invalidateQueries を2本 await した後なので、アンマウント後に走りうる。
+    // タイマーを ref に持ってアンマウント時に消していても、その**後**に仕掛けられた
+    // ぶんは誰も片付けられない。残ったタイマーは破棄済み jsdom で
+    // `window is not defined` を投げ、vitest はそれを「テスト環境破棄後の
+    // 未捕捉エラー」としてプロセスごと exit 1 にする (bdboard-ifff)。
+    const FEEDBACK_MS = 4000;
+    const user = userEvent.setup();
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: null,
+          drift: false,
+        },
+      ],
+    });
+
+    let settleInject: (() => void) | undefined;
+    postProjectHarnessInjectMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          settleInject = () => {
+            resolve({ packs: [] });
+          };
+        }),
+    );
+
+    const { unmount } = renderBadges();
+
+    await user.click(await screen.findByRole('button', { name: '注入' }));
+    await waitFor(() => {
+      expect(postProjectHarnessInjectMock).toHaveBeenCalledTimes(1);
+    });
+
+    // React 自身も setTimeout を使うので、この表示の遅延だけを見る。
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    unmount();
+    settleInject?.();
+    await act(async () => {
+      // invalidateQueries を2本挟むので、マイクロタスクを数回流す。
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const feedbackTimers = setTimeoutSpy.mock.calls.filter(
+      ([, delay]) => delay === FEEDBACK_MS,
+    );
+    expect(feedbackTimers).toHaveLength(0);
+    setTimeoutSpy.mockRestore();
   });
 
   it('shows drift label and update button for outdated pack', async () => {

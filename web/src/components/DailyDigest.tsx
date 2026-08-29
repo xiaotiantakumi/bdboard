@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   fetchActivity,
   fetchBoard,
@@ -7,6 +7,7 @@ import {
   fetchProjects,
 } from '../api';
 import { copyTextToClipboard } from '../bdCommands';
+import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import {
   ACTIVITY_WINDOW_DAYS,
   activityWindowLabel,
@@ -104,43 +105,27 @@ export function DailyDigest({
     projectIds,
   ]);
 
-  const [ariaLiveMessage, setAriaLiveMessage] = useState('');
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current !== null) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
-  }, []);
+  // bdboard-ty72: コピー結果の表示は await の継続から出るので、素の setTimeout だと
+  // アンマウント後にタイマーを仕掛けうる。useAutoClearedValue がマウント中でしか
+  // 表示せず、アンマウント時にタイマーも片付ける。
+  const { value: ariaLiveMessage, show: showCopyMessage } = useAutoClearedValue(
+    '',
+    COPY_FEEDBACK_MS,
+  );
 
   const handleCopy = useCallback(async () => {
     if (markdown === null) {
       return;
     }
 
-    if (copyTimeoutRef.current !== null) {
-      clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = null;
-    }
-
     try {
       await copyTextToClipboard(markdown);
-      setAriaLiveMessage('Markdown をコピーしました');
-      copyTimeoutRef.current = setTimeout(() => {
-        setAriaLiveMessage('');
-        copyTimeoutRef.current = null;
-      }, COPY_FEEDBACK_MS);
+      showCopyMessage('Markdown をコピーしました');
     } catch (copyError) {
       console.error('Failed to copy daily digest markdown', copyError);
-      setAriaLiveMessage('コピーできませんでした');
-      copyTimeoutRef.current = setTimeout(() => {
-        setAriaLiveMessage('');
-        copyTimeoutRef.current = null;
-      }, COPY_FEEDBACK_MS);
+      showCopyMessage('コピーできませんでした');
     }
-  }, [markdown]);
+  }, [markdown, showCopyMessage]);
 
   const isLoading =
     activityQuery.isLoading ||

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type {
   HygieneIssueDto,
   HygieneIssueKindDto,
@@ -26,6 +26,7 @@ import {
 } from '../bdCommands';
 import { formatActivityTime } from './activityFeedFormatting';
 import { buildHarnessDriftMessage, buildHarnessInjectSuccessMessage } from '../harnessDisplay';
+import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { describeWriteError } from '../writeAccessMessage';
 import { useUndoSnackbar } from './UndoSnackbar';
@@ -245,12 +246,18 @@ export function HygienePanel({
     queryFn: () => fetchMergeSlotStatus(projectIds),
   });
 
-  const [ariaLiveMessage, setAriaLiveMessage] = useState('');
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [repairStatusMessage, setRepairStatusMessage] = useState('');
-  const repairStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
+  // bdboard-ty72: どちらの表示も await の継続から出る (コピーは
+  // copyTextToClipboard、修復ステータスは invalidateQueries の後)。素の setTimeout
+  // だとアンマウント後にタイマーを仕掛けうるので、useAutoClearedValue に任せる。
+  const { value: ariaLiveMessage, show: showCopyMessage } = useAutoClearedValue(
+    '',
+    COPY_FEEDBACK_MS,
   );
+  const {
+    value: repairStatusMessage,
+    show: showRepairStatusMessage,
+    clear: clearRepairStatusMessage,
+  } = useAutoClearedValue('', REPAIR_FEEDBACK_MS);
   const [confirmingRepairKey, setConfirmingRepairKey] = useState<string | null>(
     null,
   );
@@ -260,37 +267,10 @@ export function HygienePanel({
     Record<string, number>
   >({});
 
-  useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current !== null) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-      if (repairStatusTimeoutRef.current !== null) {
-        clearTimeout(repairStatusTimeoutRef.current);
-      }
-    };
-  }, []);
-
   const clearRepairFeedback = useCallback(() => {
     setRepairError(null);
-    setRepairStatusMessage('');
-    if (repairStatusTimeoutRef.current !== null) {
-      clearTimeout(repairStatusTimeoutRef.current);
-      repairStatusTimeoutRef.current = null;
-    }
-  }, []);
-
-  const showRepairStatusMessage = useCallback((message: string) => {
-    if (repairStatusTimeoutRef.current !== null) {
-      clearTimeout(repairStatusTimeoutRef.current);
-      repairStatusTimeoutRef.current = null;
-    }
-    setRepairStatusMessage(message);
-    repairStatusTimeoutRef.current = setTimeout(() => {
-      setRepairStatusMessage('');
-      repairStatusTimeoutRef.current = null;
-    }, REPAIR_FEEDBACK_MS);
-  }, []);
+    clearRepairStatusMessage();
+  }, [clearRepairStatusMessage]);
 
   const beginRepairConfirm = useCallback(
     (rowKey: string) => {
@@ -416,28 +396,18 @@ export function HygienePanel({
     [harnessInjectMutation, repairMutation.isPending],
   );
 
-  const handleCopyCleanup = useCallback(async (script: string) => {
-    if (copyTimeoutRef.current !== null) {
-      clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = null;
-    }
-
-    try {
-      await copyTextToClipboard(script);
-      setAriaLiveMessage('掃除コマンドをコピーしました');
-      copyTimeoutRef.current = setTimeout(() => {
-        setAriaLiveMessage('');
-        copyTimeoutRef.current = null;
-      }, COPY_FEEDBACK_MS);
-    } catch (copyError) {
-      console.error('Failed to copy worktree cleanup commands', copyError);
-      setAriaLiveMessage('コピーできませんでした');
-      copyTimeoutRef.current = setTimeout(() => {
-        setAriaLiveMessage('');
-        copyTimeoutRef.current = null;
-      }, COPY_FEEDBACK_MS);
-    }
-  }, []);
+  const handleCopyCleanup = useCallback(
+    async (script: string) => {
+      try {
+        await copyTextToClipboard(script);
+        showCopyMessage('掃除コマンドをコピーしました');
+      } catch (copyError) {
+        console.error('Failed to copy worktree cleanup commands', copyError);
+        showCopyMessage('コピーできませんでした');
+      }
+    },
+    [showCopyMessage],
+  );
 
   const repairDisabled =
     repairMutation.isPending || harnessInjectMutation.isPending;
