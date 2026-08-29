@@ -280,6 +280,53 @@ describe('buildBoard liveness', () => {
     expect(board.cards[0].liveness).toBe('active');
   });
 
+  it('honors livenessThresholds when deriving card liveness', () => {
+    /*
+     * 閾値の受け渡しは「既定値と結果が一致しない入力」でしか観測できない
+     * (bdboard-3z5x)。2分アイドルのセッションは既定 (activeMs=5分) では
+     * 'active'、activeMs=1分に上書きすると 'idle' になる — この対比を取ることで
+     * livenessThresholds を渡し忘れた実装が必ず落ちる。
+     *
+     * 上の 'picks the most alive session' も閾値を渡しているが、あちらは2つの
+     * セッションを区別するために渡しているだけで、最終的な期待値 'active' は
+     * 既定でも一致してしまう。つまり閾値の受け渡し自体は検証できていない。
+     * buildBoard 側で input.livenessThresholds を落とす変異は、この専用テストが
+     * 無いとドメイン層・アプリケーション層のどちらでも捕まらず、遠く離れた
+     * routes.test.ts の1件だけが偶然拾う状態だった。
+     */
+    const ticket = makeTicket({ id: 'bdboard-liveness-threshold' });
+    const session = makeSession({
+      sessionId: 'session-2m-idle',
+      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
+      alive: true,
+    });
+    const links = [
+      makeSessionLink({
+        ticketId: 'bdboard-liveness-threshold',
+        sessionId: 'session-2m-idle',
+      }),
+    ];
+    const input = {
+      projectId: PROJECT,
+      tickets: [ticket],
+      now: NOW,
+      sessions: [session],
+      links,
+    };
+
+    expect(buildBoard(input).cards[0].liveness).toBe('active');
+    expect(
+      buildBoard({
+        ...input,
+        livenessThresholds: {
+          activeMs: 60_000,
+          idleMs: 10 * 60_000,
+          staleMs: 60 * 60_000,
+        },
+      }).cards[0].liveness,
+    ).toBe('idle');
+  });
+
   it('returns null liveness when no sessions are linked', () => {
     const ticket = makeTicket({ id: 'bdboard-no-session' });
     const board = buildBoard({
