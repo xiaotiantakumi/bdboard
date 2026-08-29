@@ -517,6 +517,10 @@ export function useNotificationEvents(
     for (const ticketId of watchedTicketIds) {
       const current = buildTicketWatchSnapshot(ticketId, boardCardsById, details);
       if (current === null) {
+        const previous = watchedSnapshotsRef.current.get(ticketId);
+        if (previous !== undefined) {
+          nextSnapshots.set(ticketId, previous);
+        }
         continue;
       }
 
@@ -531,12 +535,6 @@ export function useNotificationEvents(
         newItems.push(buildWatchedNotificationEventItem(transition, current, occurredAt));
       }
       nextSnapshots.set(ticketId, current);
-    }
-
-    for (const ticketId of watchedSnapshotsRef.current.keys()) {
-      if (!watchedTicketIds.has(ticketId)) {
-        nextSnapshots.delete(ticketId);
-      }
     }
 
     watchedSnapshotsRef.current = nextSnapshots;
