@@ -15,6 +15,7 @@ import {
   type PrBadgeDto,
   type ProjectDto,
 } from './api';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
@@ -76,7 +77,7 @@ import {
   collectBoardLabels,
   collectBoardTicketIds,
 } from './boardTicketIds';
-import { buildPaletteActions } from './paletteActions';
+import { buildPaletteActions, VIEW_LABELS } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
 
 export function App() {
@@ -652,6 +653,7 @@ export function App() {
     <UndoSnackbarProvider>
     <div className="app">
       <header className="header">
+        <ErrorBoundary label="ヘッダー">
         <GlobalBar
           view={view}
           onViewChange={setView}
@@ -676,7 +678,9 @@ export function App() {
           onOpenHelp={handleOpenHelp}
           onOpenShortcuts={handleOpenShortcuts}
         />
+        </ErrorBoundary>
 
+        <ErrorBoundary label="ツールバー">
         <ViewToolbar
           view={view}
           boardFilterPresets={boardFilterPresets}
@@ -695,6 +699,7 @@ export function App() {
           chatAvailable={chatAvailable}
           onOpenChat={() => setChatOpen(true)}
         />
+        </ErrorBoundary>
       </header>
 
       <AlertBar
@@ -722,8 +727,13 @@ export function App() {
       <TipsBanner onOpenHelp={handleOpenHelp} />
 
       <main className="main">
+        {/* プロバイダーは境界の外に置く。中に入れると key={view} の再マウントが
+            そのまま伝わり、ビューを往復しただけで一括選択が消える (PR#129 レビュー)。
+            context を配るだけの薄い描画なので、境界で守る価値もほぼ無い。 */}
         <BoardDnDProvider>
         <BulkSelectionProvider>
+        {/* view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。 */}
+        <ErrorBoundary key={view} label={VIEW_LABELS[view]}>
         {(view === 'merged' || view === 'split') && (
           <BoardFilterBar
             priorityCeiling={boardPriorityCeiling}
@@ -873,11 +883,19 @@ export function App() {
           boardQuery.data.merged === null && (
             <p className="empty-message">統合ビューのデータがありません</p>
           )}
+        </ErrorBoundary>
         </BulkSelectionProvider>
         </BoardDnDProvider>
       </main>
 
       {selectedTicketId !== null && (
+        <ErrorBoundary
+          key={selectedTicketId}
+          label="チケット詳細"
+          resetLabel="閉じる"
+          onReset={handleCloseDetail}
+          overlay
+        >
         <TicketDetailPanel
           ticketId={selectedTicketId}
           projectRootPaths={projectRootPaths}
@@ -899,36 +917,76 @@ export function App() {
           onTicketViewed={handleRecordRecentTicket}
           availableLabels={availableLabels}
         />
+        </ErrorBoundary>
       )}
 
       {sessionListOpen && (
-        <SessionListPanel
-          projectId={sessionListProjectId}
-          onClose={handleCloseSessionList}
-        />
+        <ErrorBoundary
+          label="セッション一覧"
+          resetLabel="閉じる"
+          onReset={handleCloseSessionList}
+          overlay
+        >
+          <SessionListPanel
+            projectId={sessionListProjectId}
+            onClose={handleCloseSessionList}
+          />
+        </ErrorBoundary>
       )}
 
       {shortcutsOpen && (
-        <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
+        <ErrorBoundary
+          label="ショートカット一覧"
+          resetLabel="閉じる"
+          onReset={handleCloseShortcuts}
+          overlay
+        >
+          <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
+        </ErrorBoundary>
       )}
 
-      {helpOpen && <HelpPanel onClose={handleCloseHelp} />}
+      {helpOpen && (
+        <ErrorBoundary label="ヘルプ" resetLabel="閉じる" onReset={handleCloseHelp} overlay>
+          <HelpPanel onClose={handleCloseHelp} />
+        </ErrorBoundary>
+      )}
 
       {searchOpen && (
+        <ErrorBoundary label="検索" resetLabel="閉じる" onReset={handleCloseSearch} overlay>
         <SearchPalette
           onClose={handleCloseSearch}
           onSelect={handleSelectTicket}
           actions={paletteActions}
           recentTickets={recentTickets}
         />
+        </ErrorBoundary>
       )}
 
-      <TunnelControl
-        open={tunnelModalOpen}
-        onClose={() => setTunnelModalOpen(false)}
-      />
+      {/* TunnelControl は閉じていても常時マウントされている (中で null を返す)。
+          閉じている間の throw まで overlay で覆うと、何も開いていないのに暗幕が
+          残って操作不能になるので、overlay は開いているときだけ。 */}
+      <ErrorBoundary
+        label="トンネル"
+        resetLabel="閉じる"
+        onReset={() => setTunnelModalOpen(false)}
+        overlay={tunnelModalOpen}
+      >
+        <TunnelControl
+          open={tunnelModalOpen}
+          onClose={() => setTunnelModalOpen(false)}
+        />
+      </ErrorBoundary>
 
       {chatOpen && (
+        <ErrorBoundary
+          label="チャット"
+          resetLabel="閉じる"
+          onReset={() => {
+            setChatOpen(false);
+            setChatContext(undefined);
+          }}
+          overlay
+        >
         <ChatPanel
           projects={chatProjects}
           initialProjectId={
@@ -953,6 +1011,7 @@ export function App() {
             setChatContext(undefined);
           }}
         />
+        </ErrorBoundary>
       )}
 
     </div>

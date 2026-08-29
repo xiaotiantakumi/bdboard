@@ -677,6 +677,47 @@ body {
   margin-bottom: 4px;
 }
 
+.error-boundary {
+  width: 100%;
+  background: var(--badge-p0-bg);
+  border: 1px solid var(--badge-p0-fg);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  color: var(--badge-p0-fg);
+}
+
+.error-boundary-title {
+  display: block;
+}
+
+.error-boundary-detail {
+  margin: 6px 0 0;
+  word-break: break-word;
+}
+
+.error-boundary-hint {
+  margin: 6px 0 0;
+  font-size: 0.85em;
+}
+
+.error-boundary-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* モーダル系パネルが throw したときの fallback。元のパネルと同じ位置に出す。 */
+.error-boundary-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 16px;
+}
+
+.error-boundary-overlay .error-boundary {
+  width: min(520px, 100%);
+}
+
 .main {
   flex: 1;
   padding: 20px calc(20px + env(safe-area-inset-right))
