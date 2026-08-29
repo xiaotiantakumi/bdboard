@@ -123,6 +123,19 @@ const CHAT_SESSION_MESSAGES_PATH_PATTERN = /^\/api\/chat\/sessions\/[^/]+\/messa
 const CHAT_THREADS_PATH_PATTERN = /^\/api\/chat\/threads$/;
 const CHAT_TURN_STATUS_PATH_PATTERN = /^\/api\/chat\/turn-status$/;
 
+/**
+ * 1プロジェクトが抱える未回収完了の上限 (bdboard-3tw.156)。ACK しないクライアント
+ * に備えた歯止めで、通常運用で複数溜まるのは「返信を待たずに別スレッドへ移った」
+ * 分だけなので、この数に届くことは想定していない。
+ */
+const CHAT_COMPLETED_TURNS_MAX = 20;
+
+interface CompletedChatTurn {
+  readonly sessionId: string;
+  readonly agentId: string;
+  readonly completedAt: string;
+}
+
 interface QueuedSseMessage {
   readonly event: string;
   readonly data: string;
@@ -173,14 +186,32 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     perDay: deps.rateLimit?.perDay,
   });
   const defaultWeight = deps.rateLimit?.defaultWeight ?? DEFAULT_CHAT_RATE_LIMIT_WEIGHT;
-  const completedTurns = new Map<
-    string,
-    {
-      readonly sessionId: string;
-      readonly agentId: string;
-      readonly completedAt: string;
+  // 未回収の完了ターン。クライアントが ACK するまでサーバーが持つ。
+  //
+  // プロジェクト1枠ではなく **キュー** なのは、1枠だと「スレッドAの返信を待たずに
+  // 別スレッドへ移り、そちらで送信した」時点でAの完了が黙って上書きされ、
+  // Aの返信が永久に回収されなくなるため (bdboard-3tw.155 で実測)。同じ
+  // sessionId の完了は最新で置き換え、古いものから順に配る。
+  //
+  // ACK しないクライアントに備えて上限を切る。溢れたら古い方から捨てる —
+  // 取りこぼしは「その1スレッドが再取得されるまで古いまま」で済むが、
+  // 無制限に積むとプロセスが太り続ける。
+  const completedTurns = new Map<string, readonly CompletedChatTurn[]>();
+  const recordCompletedTurn = (projectId: string, entry: CompletedChatTurn): void => {
+    const queued = completedTurns.get(projectId) ?? [];
+    const next = [...queued.filter((item) => item.sessionId !== entry.sessionId), entry];
+    completedTurns.set(projectId, next.slice(-CHAT_COMPLETED_TURNS_MAX));
+  };
+  const ackCompletedTurn = (projectId: string, sessionId: string): void => {
+    const queued = completedTurns.get(projectId);
+    if (queued === undefined) return;
+    const next = queued.filter((item) => item.sessionId !== sessionId);
+    if (next.length === 0) {
+      completedTurns.delete(projectId);
+      return;
     }
-  >();
+    completedTurns.set(projectId, next);
+  };
   const rateLimit = createChatRateLimitMiddleware(limiter, {
     // /api/chat/agents は免除しない: 1 リクエストで N 個の --version 子プロセスを
     // 起こしうる増幅があるため、ミドルウェアの per-request カウントで抑える。
@@ -403,7 +434,9 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       }
       return c.json({ state: 'processing' as const });
     }
-    const completed = completedTurns.get(parsed.data.projectId);
+    // 古い方から配る。クライアントは1件回収して ACK したらもう一度聞きに来るので、
+    // 溜まっていても順に掃ける。
+    const completed = completedTurns.get(parsed.data.projectId)?.[0];
     if (completed !== undefined) {
       return c.json({ state: 'completed' as const, ...completed });
     }
@@ -419,10 +452,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       sessionId: c.req.query('sessionId'),
     });
     if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
-    const completed = completedTurns.get(parsed.data.projectId);
-    if (completed?.sessionId === parsed.data.sessionId) {
-      completedTurns.delete(parsed.data.projectId);
-    }
+    ackCompletedTurn(parsed.data.projectId, parsed.data.sessionId);
     return c.body(null, 204);
   });
 
@@ -521,7 +551,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       // Publish before writing the response. The client explicitly ACKs only after it
       // incorporated the reply, closing the finalize-vs-disconnect race for both bulk
       // and streaming transports.
-      completedTurns.set(parsed.data.projectId, {
+      recordCompletedTurn(parsed.data.projectId, {
         sessionId: result.sessionId,
         agentId: result.agentId,
         completedAt: now().toISOString(),
@@ -633,10 +663,10 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       }
     }
 
-    // A rejected request must not erase a detached turn that is still waiting for its
-    // explicit ACK. Once resolution succeeds, isBusy() takes precedence while this new
-    // turn runs and the eventual completion replaces the previous metadata.
-    completedTurns.delete(parsed.data.projectId);
+    // 未回収の完了はここで消さない。以前は「新しいターンの完了が前のメタデータを
+    // 置き換える」前提で1枠を消していたが、それだと別スレッドで送信しただけで
+    // 先行スレッドの未回収返信が消え、二度と回収されなくなる (bdboard-3tw.155)。
+    // 完了はキューに積み、クライアントの ACK でだけ落とす。
 
     // bdboard-l1t.9 Opus レビュー N6: リバースプロキシ(nginx等)が SSE をバッファ
     // リングして届かない/遅延することがあるための明示無効化。トンネル実機での
@@ -698,7 +728,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           // run even after clientGone. Only SSE delivery is conditional on the subscriber;
           // the detached turn itself remains server-owned until this point.
           const success = finalizeChatTurnSuccess(deps, sendInput, turnResult);
-          completedTurns.set(parsed.data.projectId, {
+          recordCompletedTurn(parsed.data.projectId, {
             sessionId: success.sessionId,
             agentId: success.agentId,
             completedAt: now().toISOString(),
