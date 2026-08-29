@@ -450,12 +450,10 @@ function relayEventName(
 ): name is
   | 'board.changed'
   | 'session.changed'
-  | 'project.scanned'
   | 'notification' {
   return (
     name === 'board.changed' ||
     name === 'session.changed' ||
-    name === 'project.scanned' ||
     name === 'notification'
   );
 }
