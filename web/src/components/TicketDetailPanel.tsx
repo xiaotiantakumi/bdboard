@@ -1742,7 +1742,7 @@ export function TicketDetailPanel({
                             className="comment-date"
                             dateTime={comment.createdAt}
                           >
-                            {new Date(comment.createdAt).toLocaleString()}
+                            {formatAbsoluteTime(comment.createdAt)}
                           </time>
                         </div>
                         <MarkdownContent
