@@ -500,4 +500,33 @@ describe('getThroughputStats', () => {
     const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
     expect(stats.totals.weeklyCloses[0]?.count).toBe(1);
   });
+
+  it('counts a Sunday close during the America/New_York DST fall-back week', () => {
+    const cache = createFakeBoardCache();
+    const timeZone = 'America/New_York';
+    const now = new Date('2026-11-02T12:00:00.000Z');
+    const fallBackWeekStart = new Date('2026-10-26T04:00:00.000Z');
+    const sundayClose = new Date('2026-11-02T04:30:00.000Z');
+    const proj = project('/a', '/projects/a');
+
+    cache.putProject({
+      project: proj,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-fallback-sunday',
+          projectId: proj.id,
+          closedAt: sundayClose,
+        }),
+      ],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const stats = getThroughputStats(cache, now, { weeks: 2, timeZone });
+    const fallBackWeek = stats.totals.weeklyCloses.find(
+      (entry) => entry.weekStart.getTime() === fallBackWeekStart.getTime(),
+    );
+
+    expect(fallBackWeek?.count).toBe(1);
+  });
 });

@@ -76,6 +76,10 @@ export function subtractCalendarDaysFromDateKey(
   return key;
 }
 
+// 36h clears both a 23h spring-forward day and a 25h fall-back day (> longest
+// local calendar day, < two normal days) without landing on the day after next.
+const CALENDAR_DAY_ADVANCE_MS = 36 * 60 * 60 * 1000;
+
 export function addCalendarDaysToDateKey(
   dateKey: string,
   days: number,
@@ -84,7 +88,7 @@ export function addCalendarDaysToDateKey(
   let key = dateKey;
   for (let index = 0; index < days; index += 1) {
     const midnight = zonedMidnight(key, timeZone);
-    key = localDateKey(new Date(midnight.getTime() + MS_PER_DAY), timeZone);
+    key = localDateKey(new Date(midnight.getTime() + CALENDAR_DAY_ADVANCE_MS), timeZone);
   }
   return key;
 }
