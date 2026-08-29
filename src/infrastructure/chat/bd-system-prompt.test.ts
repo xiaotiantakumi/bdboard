@@ -35,6 +35,21 @@ describe('buildBdSystemPrompt', () => {
     expect(prompt).toContain('生JSONを丸ごと貼らず');
   });
 
+  it('guides historical ticket research across closed and related tickets', () => {
+    const prompt = buildBdSystemPrompt({
+      projectName: 'demo',
+      projectRootPath: '/tmp/demo',
+      capability: 'bd-only',
+    });
+
+    expect(prompt).toContain('顛末・経緯・過去の判断を問われたら、まず bd_search を使う。');
+    expect(prompt).toContain('bd_search は closed を含むため、履歴質問を open だけで探さない。');
+    expect(prompt).toContain('bd_list を使うときは status を明示する。open だけを見て「無い」と結論しない。');
+    expect(prompt).toContain('親チケットと「導入したチケット/撤回したチケット」のような');
+    expect(prompt).toContain('対になるチケットも bd_show / bd_search で辿る。');
+    expect(prompt).toContain('導入 bdboard-3tw.58 ↔ 削除 bdboard-3tw.151。');
+  });
+
   it('includes the shared bdboard feature guide for usage questions', () => {
     const prompt = buildBdSystemPrompt({
       projectName: 'demo',
