@@ -11,6 +11,7 @@ import { useExclusivePopover } from './PopoverCoordinator';
 
 export interface StatusPillProps {
   streamState: StreamState;
+  connectStalled?: boolean;
   lastContactAtMs: number | null | undefined;
   generatedAt: string | null | undefined;
   lastRefreshAt: string | null | undefined;
@@ -25,6 +26,8 @@ function statusPillClass(level: StatusLevel): string {
   switch (level) {
     case 'ok':
       return 'status-pill status-pill-ok';
+    case 'connecting':
+      return 'status-pill status-pill-connecting';
     case 'delayed':
       return 'status-pill status-pill-delayed';
     case 'disconnected':
@@ -36,6 +39,7 @@ function statusPillClass(level: StatusLevel): string {
 
 export function StatusPill({
   streamState,
+  connectStalled = false,
   lastContactAtMs,
   generatedAt,
   lastRefreshAt,
@@ -47,7 +51,7 @@ export function StatusPill({
 }: StatusPillProps) {
   const nowMs = useNow();
   const containerRef = useExclusivePopover('status-pill', open, onOpenChange);
-  const level = computeStatusLevel(streamState, lastContactAtMs, nowMs);
+  const level = computeStatusLevel(streamState, lastContactAtMs, nowMs, connectStalled);
 
   return (
     <div ref={containerRef} className="status-pill-widget header-group">
