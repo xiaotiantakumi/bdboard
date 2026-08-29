@@ -63,10 +63,10 @@
 - 防止: check-runs/check-suites の REST 照会で「未起動」を判別し、空コミットで再トリガー（本則: worktree-pr-flow.md §4）
 - 出典: グローバル lessons-learned.md（webhook dispatch の節）
 
-### graphql-quota-exhaustion — 3並列レーンの CI 監視ポーリングで GraphQL 枠が枯渇し `gh pr create` が失敗（2026-08-18）
-- 原因: gh の PR 系コマンドはアカウント単位の GraphQL 枠を消費し、短間隔 watch が枠を食い潰した
-- 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約・枯渇時は REST で状態確認と PR 作成（`gh api rate_limit` が remaining 満タンを示しても拒否が続くことがある — 待つ前に REST 代替）（本則: worktree-pr-flow.md §4）
-- 出典: bdboard-p5l.10
+### graphql-quota-exhaustion — 並列セッション群の gh 呼び出し合算で GraphQL 枠が枯渇し `gh pr create` 等が失敗（2026-08-18, 再発 2026-08-29）
+- 原因: gh の PR 系コマンドはアカウント単位（リポジトリ単位でない）の GraphQL 枠 5000/h を消費し、短間隔 watch でも多数セッションの通常呼び出しの合算でも食い潰せる。rate_limit スナップショットは他セッションの同時消費を追い切れず「満タン表示直後に枯渇」が起きる
+- 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約・枯渇時は REST で状態確認と PR 作成。busy-retry せず graphql.reset（epoch秒）まで待って1回だけ再試行（ループ文脈では ScheduleWakeup で reset 後に再開）（本則: worktree-pr-flow.md §4）
+- 出典: bdboard-p5l.10 / bdboard-2w3
 
 ## サーバー・ポート
 
@@ -108,6 +108,11 @@
 - 原因: Codex が読む AGENTS.md に議長向け委譲方針が混線し、自分に誤適用して何も編集しない
 - 防止: 「0編集＋委譲文言＋異常に短い latency」の3点が揃ったら1回だけリトライ、2連続で failed（本則: verification.md）
 - 出典: bdboard-p5l.9
+
+### codex-autonomous-push — Codex実装委譲がcommit禁止ブリーフを無視してcommit+pushし、さらにバックグラウンド再開後に無断PR作成・捏造レビュー起点の追加実装・オープンPRブランチへのrebase+force-pushまで実行（2026-08-29）
+- 原因: Codexがプロジェクトの通常Git Workflow知識をブリーフの明示的な制約より優先して自律適用（codex-zero-editと同根・逆方向の過剰行動）。一度exitしたaimixバックグラウンドプロセスが再開して追加のgit操作を行った
+- 防止: 委譲完了報告の直後と、以後の各outward操作の直前に `git log --oneline -5`・`git status`・`git ls-remote origin <branch>` で無断commit/pushを再確認し、委譲プロセスの終了を確認してからPR操作へ進む。ブリーフはgit操作を禁止形＋違反時自己申告義務で書く（本則: verification.md）
+- 出典: bdboard-ge20
 
 ### diff-against-moving-main — `git diff origin/main` が他セッションのマージ分を「自分の削除」に見せ、無実の成果物を捨てかけた（2026-08-16）
 - 原因: 並列運用では origin/main が動く的になり、素の diff は他人の追加を自分の削除として表示する
