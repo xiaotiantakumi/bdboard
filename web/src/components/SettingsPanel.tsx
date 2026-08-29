@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
+import { useSaveFeedback } from '../hooks/useSaveFeedback';
 
-const SAVE_FEEDBACK_MS = 2000;
 const ABSOLUTE_WINDOWS_PATH = /^[A-Za-z]:[\\/]/;
 
 /** サーバー(scan-roots-routes.ts)がこの 400 で使う error 文字列。 */
@@ -246,8 +246,7 @@ export function SettingsPanel() {
   const [version, setVersion] = useState('');
   const [newPath, setNewPath] = useState('');
   const [newExcludePath, setNewExcludePath] = useState('');
-  const [feedback, setFeedback] = useState<ReactNode>('');
-  const [feedbackIsError, setFeedbackIsError] = useState(false);
+  const scanRootsFeedback = useSaveFeedback();
   const [pathHint, setPathHint] = useState('');
   const [excludePathHint, setExcludePathHint] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -256,20 +255,17 @@ export function SettingsPanel() {
   const [idleMinutes, setIdleMinutes] = useState('');
   const [staleHours, setStaleHours] = useState('');
   const [thresholdsVersion, setThresholdsVersion] = useState('');
-  const [thresholdsFeedback, setThresholdsFeedback] = useState<ReactNode>('');
-  const [thresholdsFeedbackIsError, setThresholdsFeedbackIsError] = useState(false);
+  const thresholdsFeedback = useSaveFeedback();
   const [thresholdsDirty, setThresholdsDirty] = useState(false);
   const [globalWipLimit, setGlobalWipLimit] = useState('');
   const [projectWipOverrides, setProjectWipOverrides] = useState<ProjectWipOverrideRow[]>([]);
   const [newWipProjectId, setNewWipProjectId] = useState('');
   const [newWipProjectLimit, setNewWipProjectLimit] = useState('');
-  const [wipFeedback, setWipFeedback] = useState<ReactNode>('');
-  const [wipFeedbackIsError, setWipFeedbackIsError] = useState(false);
+  const wipFeedback = useSaveFeedback();
   const [wipDirty, setWipDirty] = useState(false);
   const [aiQuotaThresholdPercent, setAiQuotaThresholdPercent] = useState('');
   const [aiQuotaAlertVersion, setAiQuotaAlertVersion] = useState('');
-  const [aiQuotaAlertFeedback, setAiQuotaAlertFeedback] = useState<ReactNode>('');
-  const [aiQuotaAlertFeedbackIsError, setAiQuotaAlertFeedbackIsError] = useState(false);
+  const aiQuotaAlertFeedback = useSaveFeedback();
   const [aiQuotaAlertDirty, setAiQuotaAlertDirty] = useState(false);
 
   useEffect(() => {
@@ -348,13 +344,10 @@ export function SettingsPanel() {
         console.warn('Failed to refresh board after saving scan roots', error);
       }
       await queryClient.invalidateQueries({ queryKey: ['projects'] });
-      setFeedbackIsError(false);
-      setFeedback('設定を保存しました');
-      window.setTimeout(() => setFeedback(''), SAVE_FEEDBACK_MS);
+      scanRootsFeedback.showSuccess('設定を保存しました');
     },
     onError: (error) => {
-      setFeedbackIsError(true);
-      setFeedback(describeScanRootWriteError(error));
+      scanRootsFeedback.showError(describeScanRootWriteError(error));
       if (error instanceof ApiError && error.status === 409) {
         setDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['scan-roots-config'] });
@@ -393,13 +386,10 @@ export function SettingsPanel() {
       } catch (error) {
         console.warn('Failed to refresh board after saving board thresholds', error);
       }
-      setThresholdsFeedbackIsError(false);
-      setThresholdsFeedback('閾値設定を保存しました');
-      window.setTimeout(() => setThresholdsFeedback(''), SAVE_FEEDBACK_MS);
+      thresholdsFeedback.showSuccess('閾値設定を保存しました');
     },
     onError: (error) => {
-      setThresholdsFeedbackIsError(true);
-      setThresholdsFeedback(describeBoardThresholdWriteError(error));
+      thresholdsFeedback.showError(describeBoardThresholdWriteError(error));
       if (error instanceof ApiError && error.status === 409) {
         setThresholdsDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
@@ -430,13 +420,10 @@ export function SettingsPanel() {
       } catch (error) {
         console.warn('Failed to refresh board after saving wip limits', error);
       }
-      setWipFeedbackIsError(false);
-      setWipFeedback('WIP上限を保存しました');
-      window.setTimeout(() => setWipFeedback(''), SAVE_FEEDBACK_MS);
+      wipFeedback.showSuccess('WIP上限を保存しました');
     },
     onError: (error) => {
-      setWipFeedbackIsError(true);
-      setWipFeedback(describeBoardThresholdWriteError(error));
+      wipFeedback.showError(describeBoardThresholdWriteError(error));
       if (error instanceof ApiError && error.status === 409) {
         setWipDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
@@ -459,13 +446,10 @@ export function SettingsPanel() {
       setAiQuotaAlertVersion(data.version);
       await queryClient.invalidateQueries({ queryKey: ['ai-quota-alert-config'] });
       setAiQuotaAlertDirty(false);
-      setAiQuotaAlertFeedbackIsError(false);
-      setAiQuotaAlertFeedback('AIクォータ通知閾値を保存しました');
-      window.setTimeout(() => setAiQuotaAlertFeedback(''), SAVE_FEEDBACK_MS);
+      aiQuotaAlertFeedback.showSuccess('AIクォータ通知閾値を保存しました');
     },
     onError: (error) => {
-      setAiQuotaAlertFeedbackIsError(true);
-      setAiQuotaAlertFeedback(describeAiQuotaAlertWriteError(error));
+      aiQuotaAlertFeedback.showError(describeAiQuotaAlertWriteError(error));
       if (error instanceof ApiError && error.status === 409) {
         setAiQuotaAlertDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['ai-quota-alert-config'] });
@@ -765,9 +749,9 @@ export function SettingsPanel() {
             <div
               className="settings-panel-feedback"
               aria-live="polite"
-              role={thresholdsFeedbackIsError ? 'alert' : undefined}
+              role={thresholdsFeedback.isError ? 'alert' : undefined}
             >
-              {thresholdsFeedback}
+              {thresholdsFeedback.message}
             </div>
           </div>
         </form>
@@ -912,9 +896,9 @@ export function SettingsPanel() {
             <div
               className="settings-panel-feedback"
               aria-live="polite"
-              role={wipFeedbackIsError ? 'alert' : undefined}
+              role={wipFeedback.isError ? 'alert' : undefined}
             >
-              {wipFeedback}
+              {wipFeedback.message}
             </div>
           </div>
         </form>
@@ -958,9 +942,9 @@ export function SettingsPanel() {
             <div
               className="settings-panel-feedback"
               aria-live="polite"
-              role={aiQuotaAlertFeedbackIsError ? 'alert' : undefined}
+              role={aiQuotaAlertFeedback.isError ? 'alert' : undefined}
             >
-              {aiQuotaAlertFeedback}
+              {aiQuotaAlertFeedback.message}
             </div>
           </div>
         </form>
@@ -1008,9 +992,9 @@ export function SettingsPanel() {
         <p
           className="settings-panel-feedback"
           aria-live="polite"
-          role={feedbackIsError ? 'alert' : undefined}
+          role={scanRootsFeedback.isError ? 'alert' : undefined}
         >
-          {feedback}
+          {scanRootsFeedback.message}
         </p>
       </div>
     </section>
