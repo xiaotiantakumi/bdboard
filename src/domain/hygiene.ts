@@ -69,11 +69,31 @@ export interface HygieneThresholds {
    *
    * 測るのは updatedAt からの経過。bd human list が返す PendingDecision には
    * 「いつ質問が出たか」が無い(src/application/ports/human-decisions.ts)ので、
-   * 「質問が出てから何日」ではなく「このチケットに何も起きていない期間」を見る。
-   * コメントやメタデータ更新でリセットされるが、放置の検知としてはむしろ
-   * こちらが欲しい意味になる。
+   * 「質問が出てから何日」ではなく「チケット本体が最後に更新されてからの期間」を見る。
+   *
+   * 注意: bd の updated_at は **コメントでは動かない**(実データで確認: bdboard-36w は
+   * updated_at 2026-08-16 に対し 08-18 と 08-29 にコメントがある)。つまりコメントで
+   * 議論が続いているチケットも、フィールドが3日変わらなければここに出る。Ticket に
+   * 最終コメント日時が無い(commentCount しか無い)ため今は updatedAt が唯一の手掛かり。
    */
   readonly stalePendingDecisionAfterMs: number;
+}
+
+/**
+ * 確認待ち集合のキー。
+ *
+ * ticket.id だけで持つと、同じIDのチケットを持つ別プロジェクトが同時にスコープへ
+ * 入っているときに取り違える。bd のIDはプロジェクト内でしか一意ではなく、盤面側は
+ * humanLabeledIdsFromCache を **プロジェクト単位** で作っている
+ * (src/application/board/get-board.ts) ので、健全性だけ全プロジェクト混ぜた集合で
+ * 判定すると、盤面では通常レーンのチケットに「確認待ちが放置されている」が付く。
+ * 依存循環の辺キー(collectCycleEdges)と同じ \0 結合で projectId を前置する。
+ */
+export function pendingDecisionKey(
+  projectId: string,
+  ticketId: TicketId,
+): string {
+  return `${projectId}\0${ticketId}`;
 }
 
 export const DEFAULT_HYGIENE_THRESHOLDS: HygieneThresholds = {
@@ -172,8 +192,16 @@ function checkStaleInProgress(
   ticket: Ticket,
   now: Date,
   thresholds: HygieneThresholds,
+  isPendingDecision: boolean,
 ): HygieneIssue | null {
   if (ticket.status !== 'in_progress' && ticket.status !== 'hooked') {
+    return null;
+  }
+  // 確認待ちは stale_pending_decision の担当。deriveLane が human ラベルを
+  // in_progress より優先する(src/domain/readiness.ts)ので、盤面が確認待ちに
+  // 置いているカードに対して「長期 in_progress」と言うと、盤面に無いレーンの話に
+  // なるうえ、同じ放置を2行で叱ることになる。
+  if (isPendingDecision) {
     return null;
   }
 
@@ -251,7 +279,7 @@ function checkUnblockedHighPriorityIdle(
  *
  * awaiting_human は ticket.status ではなく bd の human ラベル由来の派生レーンで
  * (src/domain/readiness.ts の deriveLane)、Ticket 単体からは判定できない。呼び出し側が
- * 集めた pendingDecisionIds を渡してもらう前提で、渡されなければ何も出さない。
+ * 集めた pendingDecisionKeys を渡してもらう前提で、渡されなければ何も出さない。
  *
  * closed は除外する。deriveLane も closed を done で上書きしていて(human ラベルの
  * 外し忘れでチケットが再浮上しないための保険)、盤面で done のカードが健全性だけ
@@ -261,9 +289,9 @@ function checkStalePendingDecision(
   ticket: Ticket,
   now: Date,
   thresholds: HygieneThresholds,
-  pendingDecisionIds: ReadonlySet<TicketId> | undefined,
+  isPendingDecision: boolean,
 ): HygieneIssue | null {
-  if (pendingDecisionIds === undefined || !pendingDecisionIds.has(ticket.id)) {
+  if (!isPendingDecision) {
     return null;
   }
   if (ticket.status === 'closed') {
@@ -498,11 +526,11 @@ export function checkHygiene(
     readonly thresholds?: HygieneThresholds;
     readonly leftoverCandidates?: readonly LeftoverCandidate[];
     /**
-     * 確認待ち(awaiting_human)のチケットID。bd の human ラベル由来で Ticket からは
-     * 判定できないため、呼び出し側が集めて渡す。未指定なら
-     * stale_pending_decision は一切出ない。
+     * 確認待ち(awaiting_human)のチケット。bd の human ラベル由来で Ticket からは
+     * 判定できないため、呼び出し側が集めて渡す。キーは pendingDecisionKey() で
+     * projectId を前置したもの。未指定なら stale_pending_decision は一切出ない。
      */
-    readonly pendingDecisionIds?: ReadonlySet<TicketId>;
+    readonly pendingDecisionKeys?: ReadonlySet<string>;
   },
 ): readonly HygieneIssue[] {
   const thresholds = ctx.thresholds ?? DEFAULT_HYGIENE_THRESHOLDS;
@@ -522,7 +550,17 @@ export function checkHygiene(
       issues.push(staleEpic);
     }
 
-    const staleInProgress = checkStaleInProgress(ticket, ctx.now, thresholds);
+    const isPendingDecision =
+      ctx.pendingDecisionKeys?.has(
+        pendingDecisionKey(ticket.projectId, ticket.id),
+      ) ?? false;
+
+    const staleInProgress = checkStaleInProgress(
+      ticket,
+      ctx.now,
+      thresholds,
+      isPendingDecision,
+    );
     if (staleInProgress !== null) {
       issues.push(staleInProgress);
     }
@@ -531,7 +569,7 @@ export function checkHygiene(
       ticket,
       ctx.now,
       thresholds,
-      ctx.pendingDecisionIds,
+      isPendingDecision,
     );
     if (stalePendingDecision !== null) {
       issues.push(stalePendingDecision);

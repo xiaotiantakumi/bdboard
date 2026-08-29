@@ -4,6 +4,7 @@ import {
   checkHygiene,
   DEFAULT_HYGIENE_THRESHOLDS,
   formatLocalDateKey,
+  pendingDecisionKey,
 } from './hygiene.js';
 import type { LeftoverCandidate } from './git-worktree.js';
 import { makeTicket } from './test-support.js';
@@ -698,13 +699,20 @@ describe('checkHygiene merged_leftover', () => {
 describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
   const PENDING_MS = DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs;
 
+  /** makeTicket の既定 projectId。 */
+  const PROJECT = '/projects/bdboard';
+
+  function keys(...ids: readonly string[]): Set<string> {
+    return new Set(ids.map((id) => pendingDecisionKey(PROJECT, id)));
+  }
+
   function pendingIssues(
     tickets: readonly Ticket[],
     pendingIds: readonly string[],
   ) {
     return checkHygiene(tickets, {
       now: NOW,
-      pendingDecisionIds: new Set(pendingIds),
+      pendingDecisionKeys: keys(...pendingIds),
     }).filter((issue) => issue.kind === 'stale_pending_decision');
   }
 
@@ -790,7 +798,7 @@ describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
     expect(
       checkHygiene([ticket], {
         now: NOW,
-        pendingDecisionIds: new Set(['bdboard-waiting']),
+        pendingDecisionKeys: keys('bdboard-waiting'),
         thresholds: {
           ...DEFAULT_HYGIENE_THRESHOLDS,
           stalePendingDecisionAfterMs: 5 * 24 * 60 * 60_000,
@@ -801,7 +809,7 @@ describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
     expect(
       checkHygiene([ticket], {
         now: NOW,
-        pendingDecisionIds: new Set(['bdboard-waiting']),
+        pendingDecisionKeys: keys('bdboard-waiting'),
         thresholds: {
           ...DEFAULT_HYGIENE_THRESHOLDS,
           stalePendingDecisionAfterMs: 24 * 60 * 60_000,
@@ -833,7 +841,7 @@ describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
 
     const kinds = checkHygiene([idle, doneDep, waiting], {
       now: NOW,
-      pendingDecisionIds: new Set(['bdboard-waiting']),
+      pendingDecisionKeys: keys('bdboard-waiting'),
     })
       .map((issue) => issue.kind)
       .filter(
@@ -846,5 +854,100 @@ describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
       'unblocked_high_priority_idle',
       'stale_pending_decision',
     ]);
+  });
+
+  it('floors a fractional elapsed span instead of rounding it up', () => {
+    // 文言が「N 日以上」なので、切り上げ/四捨五入だと嘘になる (3.5日で「4日以上」)。
+    // 既存のテストが 3.000日 / 16.000日 ちょうどしか見ていないと、
+    // Math.floor -> Math.ceil の変異が生き残る (fable レビュー指摘)。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 3.5 * 24 * 60 * 60_000),
+    });
+
+    expect(pendingIssues([ticket], ['bdboard-waiting'])[0]?.message).toBe(
+      '確認待ちのまま 3 日以上動きがありません',
+    );
+  });
+
+  it('stays quiet when updatedAt is not a usable date', () => {
+    // 壊れた日付でガードを外すと NaN < threshold が false になって検知側へ抜け、
+    // 「確認待ちのまま NaN 日以上動きがありません」を出してしまう。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date('not a date'),
+    });
+
+    expect(pendingIssues([ticket], ['bdboard-waiting'])).toEqual([]);
+  });
+
+  it('does not borrow another project\'s pending decision for the same id', () => {
+    // bd のIDはプロジェクト内でしか一意でない。盤面は
+    // humanLabeledIdsFromCache を entry ごとに作る (get-board.ts) ので、
+    // 確認待ち判定は常にプロジェクト内で閉じている。ここが projectId を見ないと、
+    // 2プロジェクトが同時にスコープへ入った瞬間、盤面では通常レーンのカードに
+    // 「確認待ちが放置されている」が付く。
+    const stale = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000);
+    const inA = makeTicket({
+      id: 'bdboard-dup',
+      projectId: '/projects/a',
+      status: 'open',
+      updatedAt: stale,
+    });
+    const inB = makeTicket({
+      id: 'bdboard-dup',
+      projectId: '/projects/b',
+      status: 'open',
+      updatedAt: stale,
+    });
+
+    const issues = checkHygiene([inA, inB], {
+      now: NOW,
+      pendingDecisionKeys: new Set([
+        pendingDecisionKey('/projects/a', 'bdboard-dup'),
+      ]),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+
+    expect(issues.map((issue) => issue.projectId)).toEqual(['/projects/a']);
+  });
+
+  it('replaces stale_in_progress rather than doubling up on it', () => {
+    // deriveLane は human ラベルを in_progress より優先する
+    // (src/domain/readiness.ts)。盤面が確認待ちに置いているカードに対して
+    // 「長期 in_progress」も出すと、盤面に無いレーンの話をしたうえで
+    // 同じ放置を2行叱ることになる。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'in_progress',
+      startedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    const kinds = checkHygiene([ticket], {
+      now: NOW,
+      pendingDecisionKeys: keys('bdboard-waiting'),
+    }).map((issue) => issue.kind);
+
+    expect(kinds).toContain('stale_pending_decision');
+    expect(kinds).not.toContain('stale_in_progress');
+  });
+
+  it('still reports stale_in_progress when the ticket is not awaiting a human', () => {
+    // 上の除外が「in_progress の検知そのものを殺した」になっていないことの確認。
+    const ticket = makeTicket({
+      id: 'bdboard-working',
+      status: 'in_progress',
+      startedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    const kinds = checkHygiene([ticket], {
+      now: NOW,
+      pendingDecisionKeys: keys('bdboard-someone-else'),
+    }).map((issue) => issue.kind);
+
+    expect(kinds).toContain('stale_in_progress');
   });
 });
