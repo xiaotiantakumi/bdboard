@@ -52,6 +52,8 @@ export interface BuildBoardInput {
   readonly stalledThresholds?: StalledThresholds;
   /** bd の human ラベルが付いたチケットID集合。指定分は awaiting_human レーンへ振り分ける */
   readonly humanLabeledIds?: ReadonlySet<TicketId>;
+  /** IANA timezone for defer-day truncation. Omit to use the process timezone. */
+  readonly timeZone?: string;
 }
 
 function buildBlocksIndex(
@@ -399,11 +401,11 @@ export function buildBoard(input: BuildBoardInput): Board {
     const deferUntil = ticket.deferUntil;
     const deferDays =
       deferUntil !== undefined
-        ? daysUntilDefer(deferUntil, input.now)
+        ? daysUntilDefer(deferUntil, input.now, input.timeZone)
         : null;
     const deferUrgency =
       deferUntil !== undefined
-        ? deriveDeferUrgency(deferUntil, input.now)
+        ? deriveDeferUrgency(deferUntil, input.now, input.timeZone)
         : null;
 
     const effective = effectivePriorities.get(ticket.id)!;

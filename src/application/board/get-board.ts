@@ -6,6 +6,7 @@ import type { StalledThresholds } from '../../domain/stalled.js';
 import type { Project } from '../../domain/project.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { TicketId } from '../../domain/ticket-id.js';
+import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { BoardCache } from '../ports/board-cache.js';
 
 export type BoardViewMode = 'merged' | 'split';
@@ -68,6 +69,8 @@ export interface GetBoardOptions {
   readonly closedLimit?: number;
   /** 指定されたエピック自身と、親子関係にある全子孫のみ表示 */
   readonly epicId?: TicketId;
+  /** IANA timezone for defer-day truncation. Defaults to BDBOARD_TIMEZONE / host TZ. */
+  readonly timeZone?: string;
 }
 
 function closedAtTimestamp(card: BoardCard): number {
@@ -197,6 +200,7 @@ export async function getBoard(
       projectId: entry.project.id,
       tickets: entry.tickets,
       now: deps.now,
+      timeZone: options?.timeZone ?? getBoardTimeZone(),
       ...optionalBuildBoardInput,
       ...(humanLabeledIds.size > 0 ? { humanLabeledIds } : {}),
     });

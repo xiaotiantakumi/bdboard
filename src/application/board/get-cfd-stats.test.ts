@@ -182,4 +182,37 @@ describe('getCfdStats', () => {
       { date: '2026-08-15', counts: { open: 1 } },
     ]);
   });
+
+  it('uses the specified timezone for cutoff calculation', () => {
+    const cache = createFakeBoardCache();
+    const now = new Date('2026-08-15T20:00:00.000Z');
+    const a = project('/a', '/projects/a');
+
+    cache.putProject({
+      project: a,
+      tickets: [],
+      fingerprint: 'fp-a',
+      fetchedAt: now,
+    });
+
+    cache.putCfdSnapshot('2026-08-14', localDate(2026, 8, 14, 9), [
+      { projectId: a.id, status: 'open', count: 2 },
+    ]);
+    cache.putCfdSnapshot('2026-08-15', localDate(2026, 8, 15, 9), [
+      { projectId: a.id, status: 'open', count: 1 },
+    ]);
+    cache.putCfdSnapshot('2026-08-16', localDate(2026, 8, 16, 9), [
+      { projectId: a.id, status: 'open', count: 3 },
+    ]);
+
+    const utcStats = getCfdStats(cache, now, { days: 2, timeZone: 'UTC' });
+    const utcDates = utcStats.projects[0]?.days.map((entry) => entry.date) ?? [];
+    expect(utcDates).toContain('2026-08-14');
+    expect(utcDates).toContain('2026-08-16');
+
+    const tokyoStats = getCfdStats(cache, now, { days: 2, timeZone: 'Asia/Tokyo' });
+    const tokyoDates = tokyoStats.projects[0]?.days.map((entry) => entry.date) ?? [];
+    expect(tokyoDates).not.toContain('2026-08-14');
+    expect(tokyoDates).toContain('2026-08-16');
+  });
 });

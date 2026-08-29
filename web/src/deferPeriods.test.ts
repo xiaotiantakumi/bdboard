@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  resetBoardTimeZoneForTests,
+  setBoardTimeZoneOverride,
+} from './boardTimeZone';
+import {
   computeDeferUntilDate,
   isFutureLocalDate,
   todayLocalDateInputValue,
@@ -8,6 +12,7 @@ import {
 describe('computeDeferUntilDate', () => {
   afterEach(() => {
     vi.useRealTimers();
+    resetBoardTimeZoneForTests();
   });
 
   it('uses local calendar days, not UTC conversion', () => {
@@ -31,17 +36,40 @@ describe('computeDeferUntilDate', () => {
       '2027-01-15',
     );
   });
+
+  it('uses the board timezone override across UTC day boundaries', () => {
+    setBoardTimeZoneOverride('Asia/Tokyo');
+    const now = new Date('2026-08-16T01:00:00.000Z');
+
+    expect(computeDeferUntilDate('tomorrow', now)).toBe('2026-08-17');
+    expect(computeDeferUntilDate('1week', now)).toBe('2026-08-23');
+  });
 });
 
 describe('todayLocalDateInputValue', () => {
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
+  });
+
   it('returns the local calendar date as YYYY-MM-DD', () => {
     expect(todayLocalDateInputValue(new Date(2026, 7, 17, 23, 59, 59))).toBe(
       '2026-08-17',
     );
   });
+
+  it('uses the board timezone override across UTC day boundaries', () => {
+    setBoardTimeZoneOverride('Asia/Tokyo');
+    expect(todayLocalDateInputValue(new Date('2026-08-16T01:00:00.000Z'))).toBe(
+      '2026-08-16',
+    );
+  });
 });
 
 describe('isFutureLocalDate', () => {
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
+  });
+
   const now = new Date(2026, 7, 17, 15, 0, 0);
 
   it('returns false for today', () => {
@@ -56,5 +84,13 @@ describe('isFutureLocalDate', () => {
     expect(isFutureLocalDate('', now)).toBe(false);
     expect(isFutureLocalDate('2026/08/18', now)).toBe(false);
     expect(isFutureLocalDate('not-a-date', now)).toBe(false);
+  });
+
+  it('uses the board timezone override across UTC day boundaries', () => {
+    setBoardTimeZoneOverride('Asia/Tokyo');
+    const boundaryNow = new Date('2026-08-16T01:00:00.000Z');
+
+    expect(isFutureLocalDate('2026-08-16', boundaryNow)).toBe(false);
+    expect(isFutureLocalDate('2026-08-17', boundaryNow)).toBe(true);
   });
 });

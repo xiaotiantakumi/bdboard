@@ -544,4 +544,32 @@ describe('getBoard', () => {
       expect(view.mergedTruncatedClosedIds).toBeNull();
     });
   });
+
+  it('passes timeZone to buildBoard for defer-day truncation', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const now = new Date('2026-06-01T15:00:00.000Z');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-defer-tz',
+          projectId: a.id,
+          status: 'deferred',
+          deferUntil: new Date('2026-06-08T00:00:00.000Z'),
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: now,
+    });
+
+    const utcView = await getBoard({ cache, now }, { timeZone: 'UTC' });
+    const tokyoView = await getBoard({ cache, now }, { timeZone: 'Asia/Tokyo' });
+
+    const utcCard = utcView.projects[0]?.board.cards[0];
+    const tokyoCard = tokyoView.projects[0]?.board.cards[0];
+
+    expect(utcCard?.deferDays).toBe(7);
+    expect(tokyoCard?.deferDays).toBe(6);
+  });
 });

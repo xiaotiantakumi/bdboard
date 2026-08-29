@@ -172,6 +172,34 @@ describe('recordCfdSnapshot', () => {
       ]),
     );
   });
+
+  it('records using the specified timezone across UTC midnight boundaries', () => {
+    const cache = createFakeBoardCache();
+    const now = new Date('2026-08-15T20:00:00.000Z');
+    const proj = project('/a', '/projects/a');
+
+    cache.putProject({
+      project: proj,
+      tickets: [
+        makeTicket({ id: 'bdboard-1', projectId: proj.id, status: 'open' }),
+      ],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const utcResult = recordCfdSnapshot(cache, now, 'UTC');
+    expect(utcResult).toEqual({
+      recorded: true,
+      snapshotDate: '2026-08-15',
+    });
+
+    const tokyoResult = recordCfdSnapshot(cache, now, 'Asia/Tokyo');
+    expect(tokyoResult).toEqual({
+      recorded: true,
+      snapshotDate: '2026-08-16',
+    });
+    expect(cache.listCfdSnapshots()).toHaveLength(2);
+  });
 });
 
 describe('pruneOldCfdSnapshots', () => {
@@ -215,6 +243,30 @@ describe('pruneOldCfdSnapshots', () => {
     expect(cache.listCfdSnapshots().map((row) => row.snapshotDate)).toEqual([
       '2025-08-18',
       '2026-08-18',
+    ]);
+  });
+
+  it('prunes using the specified timezone for cutoff dates', () => {
+    const cache = createFakeBoardCache();
+    const now = new Date('2026-08-18T20:00:00.000Z');
+    const snapshottedAt = new Date('2026-08-18T03:00:00.000Z');
+
+    cache.putCfdSnapshot('2025-08-17', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 1 },
+    ]);
+    cache.putCfdSnapshot('2025-08-18', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 2 },
+    ]);
+    cache.putCfdSnapshot('2026-08-19', snapshottedAt, [
+      { projectId: 'proj-a', status: 'open', count: 3 },
+    ]);
+
+    const result = pruneOldCfdSnapshots(cache, now, 365, 'Asia/Tokyo');
+
+    expect(result.deletedCount).toBe(2);
+    expect(result.cutoffDate).toBe('2025-08-19');
+    expect(cache.listCfdSnapshots().map((row) => row.snapshotDate)).toEqual([
+      '2026-08-19',
     ]);
   });
 });
