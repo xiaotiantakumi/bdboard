@@ -83,6 +83,26 @@ export function resolveUnderClaudeDir(
   return absolute;
 }
 
+/**
+ * `childPath` が `parentPath` の内側 (同一パスを含む) かどうか。
+ *
+ * `path.relative` の結果が `..` で始まるかで判定するが、`startsWith('..')` だけ
+ * だと `..sibling` のような正当なディレクトリ名まで「外側」に倒れるので、
+ * 区切り文字までを見る。呼び出し側で realpath 済みの絶対パスを渡す前提。
+ */
+export function isPathInside(parentPath: string, childPath: string): boolean {
+  const parent = path.resolve(parentPath);
+  const child = path.resolve(childPath);
+  const relative = path.relative(parent, child);
+  if (relative === '') {
+    return true;
+  }
+  if (path.isAbsolute(relative)) {
+    return false;
+  }
+  return relative !== '..' && !relative.startsWith(`..${path.sep}`);
+}
+
 export function gitignoreManifestEntry(): string {
   return MANIFEST_RELATIVE_PATH;
 }

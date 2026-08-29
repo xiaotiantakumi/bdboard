@@ -11,6 +11,7 @@ import {
   normalizeProjectRelativePath,
   resolveUnderClaudeDir,
   skillInstallRelativePath,
+  isPathInside,
 } from './harness-path.js';
 
 describe('harness-path', () => {
@@ -94,5 +95,34 @@ describe('harness-path', () => {
     const existing = 'node_modules/';
     const updated = appendGitignoreEntries(existing, 'bdboard-harness');
     expect(updated.startsWith('node_modules/\n')).toBe(true);
+  });
+
+  describe('isPathInside (bdboard-x32)', () => {
+    it('treats an identical path as inside', () => {
+      expect(isPathInside('/repo', '/repo')).toBe(true);
+      expect(isPathInside('/repo', '/repo/')).toBe(true);
+    });
+
+    it('recognizes a nested path as inside', () => {
+      expect(isPathInside('/repo', '/repo/harness/packs')).toBe(true);
+    });
+
+    it('rejects a path outside the parent', () => {
+      expect(isPathInside('/repo', '/other/harness/packs')).toBe(false);
+      expect(isPathInside('/repo/project', '/repo')).toBe(false);
+    });
+
+    it('does not mistake a sibling whose name starts with dots for an escape', () => {
+      // path.relative('/repo/a', '/repo/..bak') === '../..bak' なので、
+      // startsWith('..') だけで見ると外側判定になる。ここは正しく外側。
+      expect(isPathInside('/repo/a', '/repo/..bak')).toBe(false);
+      // 逆に親の直下に `..bak` がある場合は内側。素朴な startsWith 実装だと
+      // relative が '..bak' になり誤って外側に倒れる。
+      expect(isPathInside('/repo', '/repo/..bak')).toBe(true);
+    });
+
+    it('is not fooled by a prefix-sharing sibling directory', () => {
+      expect(isPathInside('/repo', '/repository')).toBe(false);
+    });
   });
 });
