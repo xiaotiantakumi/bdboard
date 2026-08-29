@@ -2304,10 +2304,17 @@ export function ChatPanel({
     const next = openThreads.filter((id) => id !== sessionId);
     const selectedSessionId = selectedThreadIds[selectedProjectId];
     const wasSelected = selectedSessionId === sessionId;
-    const nextSelectedSessionId = wasSelected ? next[0] : selectedSessionId;
+    // フォールバック先は openThreadIds の挿入順(next[0] = 最古)ではなく、
+    // displayedOpenThreads と同じ表示順(新しい順)の先頭に合わせる。3tw.154 で
+    // 表示順を挿入順→新しい順に変えたことで、挿入順の先頭のままだと選択が
+    // 見た目の最下段へ飛ぶ不整合が生じていた (bdboard-3tw.157)。
+    const nextDisplayed = [...next].sort((a, b) =>
+      compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
+    );
+    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : selectedSessionId;
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     if (wasSelected) {
-      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: next[0] }));
+      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
     }
     writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: nextSelectedSessionId });
     if (confirmingDeleteSessionId === sessionId) {

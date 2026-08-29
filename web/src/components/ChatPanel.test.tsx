@@ -6379,6 +6379,36 @@ describe('ChatPanel', () => {
       ]);
     });
 
+    it('falls back to the newest remaining displayed thread when closing the selected one (bdboard-3tw.157)', async () => {
+      // 3tw.154 で表示順を挿入順(古い順)→新しい順に変えたことで、選択中スレッドを
+      // 閉じたときのフォールバック(旧実装: openThreadIds の挿入順の先頭 = 最古)が
+      // 表示との整合を失っていた。挿入順で古い順に開いた3スレッドのうち表示先頭
+      // (= 最新)を閉じたら、次に新しい表示中スレッドへ選択が移ることを確認する
+      // (挿入順の先頭である最古スレッドへは飛ばない)。
+      const user = userEvent.setup();
+      fetchChatThreadsMock.mockResolvedValue(threads);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-old', 'sess-mid', 'sess-new'],
+        selectedSessionId: 'sess-new',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      const menu = await openThreadDrawerItemMenu(container, user, 'newest thread');
+      await user.click(within(menu).getByRole('menuitem', { name: /タブから閉じる/ }));
+
+      openThreadDrawer(container);
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'middle thread' }),
+      ).toHaveAttribute('aria-current', 'true');
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'oldest thread' }),
+      ).not.toHaveAttribute('aria-current');
+    });
+
     it('lists closed threads newest first regardless of the order they arrive in', async () => {
       // サーバーは更新の新しい順で返す契約だが、送信直後にローカルで末尾へ
       // 差し込む経路があるので、表示側は受け取り順に依存してはいけない。
