@@ -334,6 +334,10 @@ describe('SettingsPanel', () => {
           expect.objectContaining({ version: 'thresholds-v1' }),
         );
       });
+      // onSuccess は invalidateQueries と postRefresh を await したあとに
+      // window.setTimeout を触る。PUT を観測した時点で終わると、その続きが
+      // 環境の teardown 後に走って `window is not defined` を投げる。
+      await screen.findByText('閾値設定を保存しました');
     });
 
     it('keeps sending the loaded version when the wip form is dirty', async () => {
@@ -359,6 +363,7 @@ describe('SettingsPanel', () => {
           expect.objectContaining({ version: 'thresholds-v1' }),
         );
       });
+      await screen.findByText('WIP上限を保存しました');
     });
 
     it('still picks up a newer version once neither form is dirty', async () => {
@@ -387,6 +392,54 @@ describe('SettingsPanel', () => {
           expect.objectContaining({ version: 'thresholds-v2' }),
         );
       });
+      await screen.findByText('閾値設定を保存しました');
+    });
+
+    it('recovers from a 409 by retrying with the refetched version', async () => {
+      const user = userEvent.setup();
+      const { queryClient } = renderSettings();
+
+      const stalledInput = await screen.findByLabelText('滞留判定 (時間)');
+      await user.clear(stalledInput);
+      await user.type(stalledInput, '48');
+
+      // 別セッションが先に保存し、こちらは編集中のまま refetch した。
+      fetchBoardThresholdsConfigMock.mockResolvedValue(
+        makeThresholdsConfig({ version: 'thresholds-v2' }),
+      );
+      await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
+      await waitFor(() => {
+        expect(fetchBoardThresholdsConfigMock).toHaveBeenCalledTimes(2);
+      });
+
+      putBoardThresholdsConfigMock.mockRejectedValueOnce(
+        new ApiError(409, 'board thresholds config changed since read', {
+          errorMessage: 'board thresholds config changed since read',
+        }),
+      );
+      await user.click(thresholdsSaveButton());
+      await screen.findByText(
+        '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。',
+      );
+
+      // 409 の onError は dirty をクリアして refetch する。ここで version が v2 へ
+      // 前進しないと、以後の保存が永久に 409 になり画面が詰む。
+      //
+      // このとき refetch が返す値は直前のキャッシュと構造的に等価なので、
+      // react-query の structural sharing で thresholdsQuery.data の参照は
+      // 変わらない。version 更新 effect の依存配列から dirty フラグを落とすと
+      // effect が再実行されず、まさにその詰みが起きる (PR#126 fable レビュー)。
+      const retryInput = screen.getByLabelText('滞留判定 (時間)');
+      await user.clear(retryInput);
+      await user.type(retryInput, '48');
+      await user.click(thresholdsSaveButton());
+
+      await waitFor(() => {
+        expect(putBoardThresholdsConfigMock).toHaveBeenLastCalledWith(
+          expect.objectContaining({ version: 'thresholds-v2' }),
+        );
+      });
+      await screen.findByText('閾値設定を保存しました');
     });
   });
 
