@@ -297,9 +297,10 @@ describe('NodeStreamingCommandRunner', () => {
       // (bdboard-dvt と同じ轍を踏まないための余裕)。
       expect(settleMs).toBeLessThan(7_000);
 
-      const [childPid, outsidePid, insidePid] = result.stdout.split(':').map(Number);
-      expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
-      expect(Number.isInteger(insidePid) && insidePid > 0).toBe(true);
+      const [childField, outsideField, insideField] = result.stdout.split(':');
+      const childPid = parsePid(childField ?? '', 'SIGKILL escalation / child');
+      const insidePid = parsePid(insideField ?? '', 'SIGKILL escalation / in-group grandchild');
+      const outsidePid = Number(outsideField);
 
       try {
         await expectProcessToBeGone(childPid);
