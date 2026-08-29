@@ -640,17 +640,33 @@ describe('createSqliteBoardCache', () => {
     cache.upsertSessionLinks(first);
     expect(cache.listSessionLinks()).toHaveLength(MAX_TRANSCRIPT_SESSION_LINKS);
 
-    // ちょうど cap の状態からさらに積む。溢れた分だけ古いものが落ちること。
+    // ちょうど cap の状態から、既存リンクの再観測と新規2件を同じバッチで積む。
+    // これは実際のスキャン1回分の形でもある。溢れた2件が落ちること、かつ
+    // 「落ちる2件」は挿入順ではなく observed_at で選ばれること。
+    //
+    // pfx-0 は最初に入った = rowid 最小だが、ここで再観測して最新にする。
+    // upsert の ON CONFLICT は observed_at だけ更新して rowid を動かさないので、
+    // trim が ORDER BY rowid だと「今まさに生きているセッション」を捨てて
+    // しまう。session_links にしか無い意味論 (interactions 側は
+    // INSERT OR IGNORE で再観測経路が存在しない) なので、双子のテストを
+    // 写しただけでは塞がらない (PR#123 fable レビュー)。
     cache.upsertSessionLinks([
+      makeSessionLinkRow({
+        ticketId: 'pfx-0',
+        sessionId: 'sess-0',
+        observedAt: new Date(2026, 0, 1, 0, 0, MAX_TRANSCRIPT_SESSION_LINKS + 2),
+      }),
       make(MAX_TRANSCRIPT_SESSION_LINKS),
       make(MAX_TRANSCRIPT_SESSION_LINKS + 1),
     ]);
     const links = cache.listSessionLinks();
 
     expect(links).toHaveLength(MAX_TRANSCRIPT_SESSION_LINKS);
-    expect(links.some((row) => row.link.ticketId === 'pfx-0')).toBe(false);
+    // 再観測したので生き残る。挿入順で捨てていると落ちる。
+    expect(links.some((row) => row.link.ticketId === 'pfx-0')).toBe(true);
     expect(links.some((row) => row.link.ticketId === 'pfx-1')).toBe(false);
-    expect(links.some((row) => row.link.ticketId === 'pfx-2')).toBe(true);
+    expect(links.some((row) => row.link.ticketId === 'pfx-2')).toBe(false);
+    expect(links.some((row) => row.link.ticketId === 'pfx-3')).toBe(true);
     expect(
       links.some(
         (row) => row.link.ticketId === `pfx-${MAX_TRANSCRIPT_SESSION_LINKS + 1}`,
