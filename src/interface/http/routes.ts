@@ -8,7 +8,7 @@ import { getSimilarTickets } from '../../application/board/find-similar-tickets.
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getPendingCommentAnchors } from '../../application/board/get-pending-comment-anchors.js';
-import { getPrBadges } from '../../application/board/get-pr-badges.js';
+import { getPrBadges, PrBadgeCommentCache } from '../../application/board/get-pr-badges.js';
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
@@ -493,6 +493,7 @@ async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
 
 export function createApiRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
+  const prBadgeCommentCache = new PrBadgeCommentCache();
   const applicationVersion = deps.applicationVersion.getVersion();
 
   // 書き込みガードはここ 1 箇所だけ。ルート個別のチェックは持たない(bdboard-9rz)。
@@ -737,7 +738,10 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       deps.cache,
       deps.commentReader,
       deps.prStatusReader,
-      projectIds !== undefined ? { projectIds } : undefined,
+      {
+        ...(projectIds !== undefined ? { projectIds } : {}),
+        commentCache: prBadgeCommentCache,
+      },
     );
     return c.json(badges.map(toPrBadgeDto));
   });
