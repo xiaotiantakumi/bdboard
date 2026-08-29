@@ -1,6 +1,6 @@
 ---
 name: bdboard-harness
-description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first排他とclaim規律、確認待ちのノンブロッキング化(bd human+human gate)、セッションクローズの4規律を定める。
+description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first排他とclaim規律、確認待ちのノンブロッキング化(bd human+human gate)、セッションクローズ、ハーネス失敗の学習ループ(failure-catalog照合とbrushup、多層ハーネスの層判定と還流)の5規律を定める。
 ---
 
 # bdboard-harness — bd 運用プロジェクトの自律作業規律
@@ -163,6 +163,44 @@ worktree 作成から PR・マージまでの全体フロー:
    なので、プロジェクトの git/sync ポリシーが自律実行を明示的に許可していない限り、実行前に
    ユーザーへ確認する。
 
+## 規律5: ハーネス失敗の学習ループ — 同じ失敗を二度踏まない
+
+なぜ: この skill 自体が過去の事故（worktree 競合による成果消失、merge-slot 誤 claim、
+生きた作業の reclaim 等）から生まれた規律の集積であり、規律の網羅は常に不完全。新しい
+失敗をその場の復旧だけで終えると、教訓はセッション終了とともに散逸し、別セッションが
+同じ失敗を再生産する。失敗を skill 本体へ還流させる回路そのものを規律として持つ。
+
+手順:
+
+1. **失敗の検知**: 次のいずれかに当てはまったら「ハーネス失敗」として扱う（プロダクトの
+   バグ・一過性の環境障害とは区別する。判定基準:
+   [references/brushup-protocol.md](references/brushup-protocol.md) §1）。
+   - 作業成果が失われた / 無駄になった（競合・上書き・誤削除・重複実装）
+   - skill / プロジェクト規約の手順どおりに動いたのに事故った（規律の誤り・穴）
+   - 手順が存在したのに想起されず・曖昧で、守られなかった（配置・書き方の問題）
+   - 既知パターン（[references/failure-catalog.md](references/failure-catalog.md)）の再発
+2. **即時の最小記録**: 復旧を始める前に、消えやすい証拠（エラー全文・直前のコマンド列・
+   worktree / プロセス / チケットの状態）を残す。作業中チケットがあれば `bd comment`、
+   無ければ scratchpad のファイルへ。
+3. **その場で直せないなら起票して現作業へ戻る**: ブラシュアップ用チケットを切り
+   （`bd create --type=task --priority=2` — 成果消失級の再発リスクなら 1）、
+   `bd label add <新id> harness` でラベルを付け、証拠と仮説をコメントに残す。
+   失敗対応のために現チケットを放置しない（規律3と同じノンブロッキング原則）。
+4. **編集する層を先に決める**: この skill は注入パックとして複数プロジェクトへ配布
+   される。注入先プロジェクトでは `.claude/skills/bdboard-harness/` は**編集禁止の
+   注入コピー**（git 管理外・再注入で無警告に上書き）— プロジェクト固有の教訓は
+   コンパニオン skill `project-harness` へ、汎用の教訓は `harness-upstream` チケットで
+   パック正本へ還流する。層の判定と編集先の決定:
+   [references/layering.md](references/layering.md)
+5. **ブラシュアップの検討は Fable で固める**: 根本原因の分類 → 教訓の配置先決定 →
+   skill / 規約への反映、を [references/brushup-protocol.md](references/brushup-protocol.md)
+   の手順で行う。ハーネス規律を変える PR は、マージ前に **Fable（最大熟考）の
+   独立レビュー**を通す。
+6. **確定した教訓は必ず failure-catalog にエントリを持つ**: 本則を他の場所（SKILL.md
+   本文・他 reference・CLAUDE.md 等）に書いた場合も、カタログにはポインタ付きの
+   エントリを置く。カタログは「二度目を防ぐ照合表」— 並列一括着手・マージ・worktree
+   掃除・サーバー操作など事故多発領域に入る前に、該当カテゴリを一瞥する。
+
 ## references
 
 | ファイル | 内容 |
@@ -172,3 +210,6 @@ worktree 作成から PR・マージまでの全体フロー:
 | [references/question-template.md](references/question-template.md) | 確認待ちコメントの書き方テンプレ |
 | [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ） |
 | [references/frontend-gotchas.md](references/frontend-gotchas.md) | bd/git 運用規律ではなく web/ 実装（React+Vite）自体で踏んだ非自明な罠。`<details>` の子要素に無条件 `display` を当てると閉じていても常時レンダリングされクリックを奪う問題、dev限定の現象かを本番ビルド(`vite build && vite preview`)で切り分ける手順 |
+| [references/failure-catalog.md](references/failure-catalog.md) | 既知ハーネス失敗の照合台帳。カテゴリ別（排他・worktree / マージ・PR / サーバー・ポート / 検証・ビルド / 委譲・検証 / 多層ハーネス・配布 / bd 操作・確認待ち）の圧縮エントリと本則へのポインタ |
+| [references/brushup-protocol.md](references/brushup-protocol.md) | 規律5の詳細手順。失敗の判定基準、証拠保全、根本原因の4分類、教訓の配置先決定表、Fable レビューゲート、肥大化防止（アンチエントロピー） |
+| [references/layering.md](references/layering.md) | 多層ハーネスの構成と協調規約。共通パック層/プロジェクト層/グローバル層の判定、注入コピー編集禁止、project-harness コンパニオン規約、harness-upstream 還流経路、パックのバージョン運用 |

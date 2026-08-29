@@ -2,10 +2,14 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.1.1",
-      "injectedAt": "2026-08-16T02:11:14.427Z",
+      "version": "0.2.0",
+      "injectedAt": "2026-08-29T07:32:27.000Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
+        ".claude/skills/bdboard-harness/references/brushup-protocol.md",
+        ".claude/skills/bdboard-harness/references/failure-catalog.md",
+        ".claude/skills/bdboard-harness/references/frontend-gotchas.md",
+        ".claude/skills/bdboard-harness/references/layering.md",
         ".claude/skills/bdboard-harness/references/lease-params.md",
         ".claude/skills/bdboard-harness/references/question-template.md",
         ".claude/skills/bdboard-harness/references/verification.md",

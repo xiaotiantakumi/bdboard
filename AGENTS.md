@@ -407,7 +407,10 @@ wanted, that is a separate, explicitly user-approved change.
   ended while a tunnel was active (bdboard-8v8), but that post-hoc notice is
   not a substitute for this advance warning. See bdboard-8v8.
 - **Never kill the server** except for that post-merge restart (or an explicit
-  user request).
+  user request). Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
+  worktree のテスト用プロセスを狙った `pkill -f 'tsx.*src/main.ts'` がこの常時稼働
+  サーバーにも当たった実例がある。必ず対象の PID を特定してから kill すること
+  （委譲ブリーフにも毎回この禁止を明記する）。
 - This rule is the guarantee behind three existing conventions: worktrees must
   not run `npm run dev` (the port belongs to the main checkout — see Git
   Workflow) and must not call `preview_start` (which runs `npm run start`
