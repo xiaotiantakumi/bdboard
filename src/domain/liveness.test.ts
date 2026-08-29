@@ -14,6 +14,14 @@ function atOffset(ms: number): Date {
   return new Date(BASE.getTime() + ms);
 }
 
+describe('DEFAULT_LIVENESS_THRESHOLDS', () => {
+  // Regression guard for bdboard-3tw.37: this is a product decision, not a
+  // structural invariant, so nothing else here would catch it reverting.
+  it('sets the active threshold to 5 minutes', () => {
+    expect(DEFAULT_LIVENESS_THRESHOLDS.activeMs).toBe(5 * 60_000);
+  });
+});
+
 describe('computeLiveness', () => {
   it('returns dormant when session is not alive regardless of age', () => {
     const session = makeSession({
