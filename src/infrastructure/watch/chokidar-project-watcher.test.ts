@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectWatchHandle } from '../../application/ports/project-watcher.js';
 import type { Project } from '../../domain/project.js';
 import { createChokidarProjectWatcher } from './chokidar-project-watcher.js';
@@ -172,6 +172,47 @@ describe('createChokidarProjectWatcher', () => {
 
       expect(alphaFired).toBe(true);
       expect(changes.seen).not.toContain('beta');
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  it(
+    'logs watcher errors without crashing and keeps handling changes',
+    async () => {
+      const alpha = await makeProject('alpha');
+      const embeddeddolt = join(alpha.project.rootPath, '.beads', 'embeddeddolt');
+      await mkdir(embeddeddolt, { recursive: true });
+
+      const changes = collectChanges();
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      handle = await createChokidarProjectWatcher({
+        debounceMs: DEBOUNCE_MS,
+      }).watch([], changes.onChange);
+
+      await chmod(embeddeddolt, 0o000);
+      try {
+        await handle.update([alpha.project]);
+
+        const errorLogged = await touchUntil(
+          [],
+          () =>
+            errorSpy.mock.calls.some(
+              (call) => call[0] === 'bdboard: project file watcher error',
+            ),
+          WAIT_TIMEOUT_MS,
+        );
+        expect(errorLogged).toBe(true);
+
+        changes.seen.length = 0;
+        const fired = await touchUntil([alpha.lastTouched], () =>
+          changes.seen.includes('alpha'),
+        );
+        expect(fired).toBe(true);
+      } finally {
+        await chmod(embeddeddolt, 0o755);
+        errorSpy.mockRestore();
+      }
     },
     TEST_TIMEOUT_MS,
   );

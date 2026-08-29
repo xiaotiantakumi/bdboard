@@ -79,6 +79,10 @@ export function createChokidarProjectWatcher(
         }
       });
 
+      watcher.on('error', (error: unknown) => {
+        console.error('bdboard: project file watcher error', error);
+      });
+
       const handle: ProjectWatchHandle = {
         async update(nextProjects: readonly Project[]): Promise<void> {
           const nextPathToProjectId = buildPathMap(nextProjects);
