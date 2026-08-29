@@ -147,6 +147,13 @@ function makeTicketDetail(ticket: TicketSummaryDto): TicketDetailDto {
   };
 }
 
+function makeBoardCardWithLane(ticket: TicketSummaryDto, lane: string): BoardCardDto {
+  return {
+    ...makeBoardCard(ticket),
+    lane,
+  };
+}
+
 describe('useNotificationEvents watched ticket snapshot continuity', () => {
   beforeEach(() => {
     MockEventSource.instances = [];
@@ -240,6 +247,60 @@ describe('useNotificationEvents watched ticket snapshot continuity', () => {
 
     expect(result.current.events).toHaveLength(0);
   });
+
+  it('does not duplicate watched lane transitions detected twice within the same time bucket', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-08-17T10:00:00.000Z'));
+
+      const ticketId = 'bdboard-abc';
+      const ticket = makeTicketSummary({ id: ticketId });
+      const watchedTicketIds = new Set([ticketId]);
+      const emptyDetails = new Map<string, TicketDetailDto>();
+
+      const { result, rerender } = renderHook((props) => useNotificationEvents(props), {
+        initialProps: {
+          watchedTicketIds,
+          boardCardsById: new Map([[ticketId, makeBoardCardWithLane(ticket, 'ready')]]),
+          watchedTicketDetails: emptyDetails,
+        },
+      });
+
+      expect(result.current.events).toHaveLength(0);
+
+      vi.setSystemTime(new Date('2026-08-17T10:00:01.000Z'));
+      rerender({
+        watchedTicketIds,
+        boardCardsById: new Map([[ticketId, makeBoardCardWithLane(ticket, 'in_progress')]]),
+        watchedTicketDetails: emptyDetails,
+      });
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.events[0]).toMatchObject({
+        kind: 'watched_lane_changed',
+        ticketId,
+        fromLane: 'ready',
+        toLane: 'in_progress',
+      });
+
+      vi.setSystemTime(new Date('2026-08-17T10:00:02.000Z'));
+      rerender({
+        watchedTicketIds,
+        boardCardsById: new Map([[ticketId, makeBoardCardWithLane(ticket, 'ready')]]),
+        watchedTicketDetails: emptyDetails,
+      });
+      expect(result.current.events).toHaveLength(2);
+
+      vi.setSystemTime(new Date('2026-08-17T10:00:03.000Z'));
+      rerender({
+        watchedTicketIds,
+        boardCardsById: new Map([[ticketId, makeBoardCardWithLane(ticket, 'in_progress')]]),
+        watchedTicketDetails: emptyDetails,
+      });
+      expect(result.current.events).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('useNotificationEvents', () => {
@@ -279,6 +340,38 @@ describe('useNotificationEvents', () => {
       title: 'Example ticket',
       id: 'ticket_ready:bdboard-abc:2026-08-17T10:00:00.000Z',
     });
+    expect(result.current.unreadCount).toBe(1);
+  });
+
+  it('does not duplicate events when the same notification SSE payload is dispatched twice', () => {
+    const { result, es } = renderNotificationEvents();
+
+    act(() => {
+      es.dispatch('notification', ticketReadyPayload());
+      es.dispatch('notification', ticketReadyPayload());
+    });
+
+    expect(result.current.events).toHaveLength(1);
+    expect(result.current.unreadCount).toBe(1);
+  });
+
+  it('does not duplicate when an event with the same id already exists in persisted state', () => {
+    const existingEvent = {
+      id: 'ticket_ready:bdboard-abc:2026-08-17T10:00:00.000Z',
+      kind: 'ticket_ready' as const,
+      ticketId: 'bdboard-abc',
+      title: 'Example ticket',
+      occurredAt: '2026-08-17T10:00:00.000Z',
+    };
+    localStorage.setItem(UI_STORAGE_KEYS.notificationEvents, JSON.stringify([existingEvent]));
+
+    const { result, es } = renderNotificationEvents();
+
+    act(() => {
+      es.dispatch('notification', ticketReadyPayload());
+    });
+
+    expect(result.current.events).toHaveLength(1);
     expect(result.current.unreadCount).toBe(1);
   });
 

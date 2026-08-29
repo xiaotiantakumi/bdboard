@@ -12,6 +12,45 @@ import { usePersistedState } from './usePersistedState';
 
 const MAX_EVENTS = 50;
 
+/**
+ * ウォッチ差分検知は各タブが独立に `new Date().toISOString()` で occurredAt を生成するため、
+ * 同一の意味的な遷移でもタブ間で厳密には異なるタイムスタンプになりうる。id生成時だけ粗い
+ * バケットに丸めることで、数秒程度のタブ間ジッターを吸収し、クロスタブの重複排除(id一致)が
+ * 機能するようにする。バケット幅を超えて離れた時刻の遷移(同じfrom/toの組み合わせが数分後に
+ * 再度起きた場合など)は別idとして扱われ、正しく別イベントとして残る。
+ */
+const WATCHED_EVENT_ID_TIME_BUCKET_MS = 5000;
+
+function watchedEventIdTimeBucket(occurredAt: string): string {
+  const time = Date.parse(occurredAt);
+  if (Number.isNaN(time)) {
+    return occurredAt;
+  }
+  return String(Math.floor(time / WATCHED_EVENT_ID_TIME_BUCKET_MS));
+}
+
+function mergeUniqueNotificationEvents(
+  prev: readonly NotificationEventItem[],
+  incoming: readonly NotificationEventItem[],
+): { merged: NotificationEventItem[]; added: NotificationEventItem[] } {
+  if (incoming.length === 0) {
+    return { merged: prev as NotificationEventItem[], added: [] };
+  }
+  const seenIds = new Set(prev.map((event) => event.id));
+  const added: NotificationEventItem[] = [];
+  for (const item of incoming) {
+    if (seenIds.has(item.id)) {
+      continue;
+    }
+    seenIds.add(item.id);
+    added.push(item);
+  }
+  if (added.length === 0) {
+    return { merged: prev as NotificationEventItem[], added };
+  }
+  return { merged: [...added, ...prev].slice(0, MAX_EVENTS), added };
+}
+
 /** Short window for coalescing burst browser notifications. */
 export const NOTIFICATION_BATCH_WINDOW_MS = 2500;
 
@@ -279,10 +318,12 @@ function buildWatchedNotificationEventItem(
     ...(snapshot.projectId !== undefined ? { projectId: snapshot.projectId } : {}),
   };
 
+  const idTimeBucket = watchedEventIdTimeBucket(occurredAt);
+
   switch (event.kind) {
     case 'lane_changed':
       return {
-        id: `watched_lane_changed:${event.ticketId}:${event.fromLane}:${event.toLane}:${occurredAt}`,
+        id: `watched_lane_changed:${event.ticketId}:${event.fromLane}:${event.toLane}:${idTimeBucket}`,
         kind: 'watched_lane_changed',
         fromLane: event.fromLane,
         toLane: event.toLane,
@@ -290,7 +331,7 @@ function buildWatchedNotificationEventItem(
       };
     case 'comment_count_changed':
       return {
-        id: `watched_comment_changed:${event.ticketId}:${event.fromCount}:${event.toCount}:${occurredAt}`,
+        id: `watched_comment_changed:${event.ticketId}:${event.fromCount}:${event.toCount}:${idTimeBucket}`,
         kind: 'watched_comment_changed',
         previousCommentCount: event.fromCount,
         commentCount: event.toCount,
@@ -298,7 +339,7 @@ function buildWatchedNotificationEventItem(
       };
     case 'session_links_changed':
       return {
-        id: `watched_session_changed:${event.ticketId}:${occurredAt}`,
+        id: `watched_session_changed:${event.ticketId}:${idTimeBucket}`,
         kind: 'watched_session_changed',
         addedSessionIds: event.addedSessionIds,
         removedSessionIds: event.removedSessionIds,
@@ -409,6 +450,12 @@ export function useNotificationEvents(
     [],
     validateNotificationEvents,
   );
+  const eventsRef = useRef<readonly NotificationEventItem[]>(events);
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
+
   const [lastReadAt, setLastReadAt] = usePersistedState<string | null>(
     UI_STORAGE_KEYS.notificationLastReadAt,
     null,
@@ -492,8 +539,13 @@ export function useNotificationEvents(
       if (items.length === 0) {
         return;
       }
-      setEvents((prev) => [...items, ...prev].slice(0, MAX_EVENTS));
-      for (const item of items) {
+      const { merged, added } = mergeUniqueNotificationEvents(eventsRef.current, items);
+      if (added.length === 0) {
+        return;
+      }
+      eventsRef.current = merged;
+      setEvents(merged);
+      for (const item of added) {
         enqueueBrowserNotification(item, notificationsEnabledRef.current);
       }
     },
@@ -557,8 +609,7 @@ export function useNotificationEvents(
       }
 
       const item = buildNotificationEventItem(payload);
-      setEvents((prev) => [item, ...prev].slice(0, MAX_EVENTS));
-      enqueueBrowserNotification(item, notificationsEnabledRef.current);
+      appendNotificationItems([item]);
     };
 
     conn.addEventListener('notification', onNotification as EventListener);
@@ -572,7 +623,7 @@ export function useNotificationEvents(
       }
       batchBufferRef.current = [];
     };
-  }, [setEvents, enqueueBrowserNotification]);
+  }, [appendNotificationItems]);
 
   const unreadCount = useMemo(() => {
     const boundary = lastReadAt ?? '';
