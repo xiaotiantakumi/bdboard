@@ -11,7 +11,7 @@ export interface LivenessThresholds {
 }
 
 export const DEFAULT_LIVENESS_THRESHOLDS: LivenessThresholds = {
-  activeMs: 2 * 60_000,
+  activeMs: 5 * 60_000,
   idleMs: 30 * 60_000,
   staleMs: 24 * 60 * 60_000,
 };
