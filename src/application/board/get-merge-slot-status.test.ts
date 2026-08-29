@@ -124,4 +124,38 @@ describe('getMergeSlotStatus', () => {
     expect(maxObserved).toBeLessThanOrEqual(3);
     expect(maxObserved).toBeGreaterThan(1);
   });
+
+  it('logs a warning when some projects fail but continues with the rest', async () => {
+    const reader: MergeSlotReader = {
+      readMergeSlotSignal: vi.fn(async (rootPath: string) => {
+        if (rootPath === '/projects/a') {
+          return {
+            status: 'in_progress',
+            holder: 'session-a',
+            updatedAt: '2026-08-17T10:47:14Z',
+          };
+        }
+        if (rootPath === '/projects/b') {
+          throw new Error('bd unavailable');
+        }
+        return null;
+      }),
+    };
+
+    const logWarn = vi.fn();
+    const statuses = await getMergeSlotStatus(
+      [project('proj-a', '/projects/a'), project('proj-b', '/projects/b')],
+      reader,
+      NOW,
+      { logWarn },
+    );
+
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]?.projectId).toBe('proj-a');
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const message = logWarn.mock.calls[0]?.[0] as string;
+    expect(message).toContain('1 of 2 failed');
+    expect(message).toContain('proj-b');
+    expect(message).toContain('bd unavailable');
+  });
 });

@@ -103,4 +103,40 @@ describe('getStaleLeaseIssues', () => {
     expect(maxObserved).toBeLessThanOrEqual(3);
     expect(maxObserved).toBeGreaterThan(1);
   });
+
+  it('logs a warning when some projects fail but continues with the rest', async () => {
+    const reader: LeaseReader = {
+      listInProgressWithLease: vi.fn(async (rootPath: string) => {
+        if (rootPath === '/projects/a') {
+          return [
+            {
+              id: 'bdboard-stale',
+              leaseExpiresAt: '2026-08-16T09:55:00.000Z',
+              heartbeatAt: '2026-08-16T09:50:00.000Z',
+            },
+          ];
+        }
+        if (rootPath === '/projects/b') {
+          throw new Error('bd unavailable');
+        }
+        return [];
+      }),
+    };
+
+    const logWarn = vi.fn();
+    const issues = await getStaleLeaseIssues(
+      [project('proj-a', '/projects/a'), project('proj-b', '/projects/b')],
+      reader,
+      NOW,
+      { logWarn },
+    );
+
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.projectId).toBe('proj-a');
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const message = logWarn.mock.calls[0]?.[0] as string;
+    expect(message).toContain('1 of 2 failed');
+    expect(message).toContain('proj-b');
+    expect(message).toContain('bd unavailable');
+  });
 });
