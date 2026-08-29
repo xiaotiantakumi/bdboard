@@ -29,7 +29,12 @@ const CACHE_TABLE_NAMES = [
   'interactions',
 ] as const;
 
-const MAX_INTERACTIONS = 5000;
+/**
+ * interactions の保持上限。双子の {@link MAX_TRANSCRIPT_SESSION_LINKS} と違って
+ * 非公開のままだったせいで、キャップの回帰テストがマジックナンバーを書かないと
+ * 書けず、結果として書かれていなかった (bdboard-80r)。
+ */
+export const MAX_INTERACTIONS = 5000;
 
 interface ProjectRow {
   readonly id: string;

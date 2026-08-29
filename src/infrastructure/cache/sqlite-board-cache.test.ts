@@ -7,7 +7,7 @@ import type { CachedProject, SessionLinkRow } from '../../application/ports/boar
 import { MAX_TRANSCRIPT_SESSION_LINKS } from '../../domain/session.js';
 import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
-import { createSqliteBoardCache } from './sqlite-board-cache.js';
+import { MAX_INTERACTIONS, createSqliteBoardCache } from './sqlite-board-cache.js';
 
 // bdboard-ma4: 一時ディレクトリに file-backed な sqlite DB を作るテストは、Windows の
 // CI runner で散発的に数秒のI/Oストールを食らう (新規作成される .db/-wal/-shm への
@@ -420,6 +420,66 @@ describe('createSqliteBoardCache', () => {
     expect(
       cache.listInteractions({ since: new Date('2026-08-14T11:00:00.000Z') }),
     ).toEqual([newer]);
+    cache.close();
+  });
+
+  // bdboard-80r: trimInteractionsToCap() の呼び出しを消した変異体が既存26テスト
+  // 全パスで生存していた。双子の session_links 側は既存テストが即検出しており、
+  // こちらだけ穴だったので対称のテストを足す。
+  it('trims interactions older by at once the cap is exceeded', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const overflow = 3;
+    const records = [];
+    for (let i = 0; i < MAX_INTERACTIONS + overflow; i += 1) {
+      records.push({
+        id: `int-fake-cap-${i}`,
+        at: new Date(Date.UTC(2026, 0, 1) + i * 1000),
+        actor: 'example-agent-cap',
+        ticketId: `bdboard-fake-${i}`,
+        field: 'status',
+      });
+    }
+
+    cache.appendInteractions(records);
+    const listed = cache.listInteractions();
+
+    expect(listed).toHaveLength(MAX_INTERACTIONS);
+    // 古い方から溢れる。境界の1件手前/1件後ろまで見ておかないと、
+    // 削除件数の off-by-one を見逃す。
+    for (let i = 0; i < overflow; i += 1) {
+      expect(listed.some((row) => row.id === `int-fake-cap-${i}`)).toBe(false);
+    }
+    expect(listed.some((row) => row.id === `int-fake-cap-${overflow}`)).toBe(true);
+    expect(listed[listed.length - 1]?.id).toBe(`int-fake-cap-${overflow}`);
+    cache.close();
+  });
+
+  it('keeps enforcing the interactions cap across separate append calls', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const make = (i: number) => ({
+      id: `int-fake-split-${i}`,
+      at: new Date(Date.UTC(2026, 0, 1) + i * 1000),
+      actor: 'example-agent-cap',
+      ticketId: `bdboard-fake-${i}`,
+      field: 'status',
+    });
+
+    const first = [];
+    for (let i = 0; i < MAX_INTERACTIONS; i += 1) {
+      first.push(make(i));
+    }
+    cache.appendInteractions(first);
+    expect(cache.listInteractions()).toHaveLength(MAX_INTERACTIONS);
+
+    // キャップ到達後の追記でも溢れた分だけ古いものが落ちること。
+    cache.appendInteractions([make(MAX_INTERACTIONS), make(MAX_INTERACTIONS + 1)]);
+    const listed = cache.listInteractions();
+
+    expect(listed).toHaveLength(MAX_INTERACTIONS);
+    expect(listed.some((row) => row.id === 'int-fake-split-0')).toBe(false);
+    expect(listed.some((row) => row.id === 'int-fake-split-1')).toBe(false);
+    expect(listed.some((row) => row.id === 'int-fake-split-2')).toBe(true);
+    expect(listed[0]?.id).toBe(`int-fake-split-${MAX_INTERACTIONS + 1}`);
     cache.close();
   });
 
