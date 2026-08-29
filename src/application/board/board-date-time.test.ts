@@ -1,5 +1,26 @@
 import { describe, expect, it } from 'vitest';
-import { addCalendarDaysToDateKey } from './board-date-time.js';
+import { addCalendarDaysToDateKey, localDateKey, zonedMidnight } from './board-date-time.js';
+
+describe('zonedMidnight', () => {
+  it('returns UTC midnight for UTC', () => {
+    expect(zonedMidnight('2026-08-15', 'UTC').toISOString()).toBe(
+      '2026-08-15T00:00:00.000Z',
+    );
+  });
+
+  it('returns JST midnight for Asia/Tokyo', () => {
+    expect(zonedMidnight('2026-08-15', 'Asia/Tokyo').toISOString()).toBe(
+      '2026-08-14T15:00:00.000Z',
+    );
+  });
+
+  it('returns local midnight on Pacific/Auckland DST spring-forward day', () => {
+    const timeZone = 'Pacific/Auckland';
+    const midnight = zonedMidnight('2026-09-27', timeZone);
+    expect(midnight.toISOString()).toBe('2026-09-26T12:00:00.000Z');
+    expect(localDateKey(midnight, timeZone)).toBe('2026-09-27');
+  });
+});
 
 describe('addCalendarDaysToDateKey', () => {
   const newYork = 'America/New_York';

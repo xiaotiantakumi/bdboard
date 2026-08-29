@@ -51,8 +51,11 @@ export function getTimeZoneOffsetMs(at: Date, timeZone: string): number {
 export function zonedMidnight(dateKey: string, timeZone: string): Date {
   const [year, month, day] = dateKey.split('-').map(Number);
   const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
-  const offset = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
-  return new Date(utcGuess - offset);
+  const offset1 = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
+  const candidate1 = utcGuess - offset1;
+  const offset2 = getTimeZoneOffsetMs(new Date(candidate1), timeZone);
+  const candidate2 = offset2 !== offset1 ? utcGuess - offset2 : candidate1;
+  return new Date(candidate2);
 }
 
 export function getWeekdayInTimeZone(date: Date, timeZone: string): number {
