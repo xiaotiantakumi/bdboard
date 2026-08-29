@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { parseJsonBody } from './request-body.js';
 import type { ScanRootsConfig, ScanRootsConfigPort } from '../../application/ports/scan-roots-config.js';
 import { stripTrailingSeparators, validateScanRoots } from '../../domain/scan-root-policy.js';
 import {
@@ -69,16 +70,10 @@ export function createScanRootsRoutes(deps: ScanRootsRoutesDeps): Hono {
   });
 
   app.put('/api/settings/scan-roots', async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-    const parsed = scanRootsBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body', details: parsed.error.flatten() }, 400);
-    }
+    const parsed = await parseJsonBody(c, scanRootsBodySchema, {
+      includeValidationDetails: true,
+    });
+    if (!parsed.ok) return parsed.response;
     return runExclusive(async () => {
       const currentConfig = await deps.store.read();
       const currentVersion = computeVersion(currentConfig);

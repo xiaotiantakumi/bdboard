@@ -44,6 +44,7 @@ import {
   CHAT_MESSAGE_BODY_MAX_BYTES,
   decodeChatImages,
 } from './chat-image-validation.js';
+import { parseJsonBody } from './request-body.js';
 
 export const CHAT_CSRF_DENIED = 'cross-site chat request blocked';
 export const CHAT_NOT_AUTHORIZED =
@@ -463,17 +464,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       return c.json({ error: 'invalid session id' }, 400);
     }
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
-
-    const parsed = threadPatchBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, threadPatchBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const { projectId, title, pinned } = parsed.data;
     if (deps.store.lookup(projectId, sessionId) === undefined) {
@@ -517,17 +509,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
   });
 
   app.post('/api/chat/message', async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
-
-    const parsed = messageBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, messageBodySchema);
+    if (!parsed.ok) return parsed.response;
     const images = decodeChatImages(parsed.data.images);
     if (images === undefined && parsed.data.images !== undefined) {
       return c.json({ error: 'invalid request body' }, 400);
@@ -627,14 +610,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
   });
 
   app.post('/api/chat/message/stream', async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
-    const parsed = messageBodySchema.safeParse(body);
-    if (!parsed.success) return c.json({ error: 'invalid request body' }, 400);
+    const parsed = await parseJsonBody(c, messageBodySchema);
+    if (!parsed.ok) return parsed.response;
     const images = decodeChatImages(parsed.data.images);
     if (images === undefined && parsed.data.images !== undefined) {
       return c.json({ error: 'invalid request body' }, 400);
@@ -822,17 +799,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       return c.json({ error: 'invalid project id' }, 400);
     }
 
-    let body: unknown = {};
-    const rawBody = await c.req.text();
-    if (rawBody.length > 0) {
-      try {
-        body = JSON.parse(rawBody);
-      } catch {
-        return c.json({ error: 'invalid request body' }, 400);
-      }
-    }
-    const parsed = adoptBodySchema.safeParse(body);
-    if (!parsed.success) return c.json({ error: 'invalid request body' }, 400);
+    const parsed = await parseJsonBody(c, adoptBodySchema, { optionalBody: true });
+    if (!parsed.ok) return parsed.response;
 
     const result = await adoptChatSession(
       { cache: deps.cache, discovery: deps.sessionDiscovery, store: deps.store, agents: deps.agents },

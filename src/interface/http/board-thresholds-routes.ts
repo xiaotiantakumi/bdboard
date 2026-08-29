@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { parseJsonBody } from './request-body.js';
 import type { BoardThresholdsConfigPort } from '../../application/ports/board-thresholds-config.js';
 import {
   DEFAULT_BOARD_THRESHOLDS_OVERRIDES,
@@ -127,17 +128,10 @@ export function createBoardThresholdsRoutes(deps: BoardThresholdsRoutesDeps): Ho
   });
 
   app.put('/api/settings/board-thresholds', async (c) => {
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = boardThresholdsBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body', details: parsed.error.flatten() }, 400);
-    }
+    const parsed = await parseJsonBody(c, boardThresholdsBodySchema, {
+      includeValidationDetails: true,
+    });
+    if (!parsed.ok) return parsed.response;
 
     return runExclusive(async () => {
       const currentConfig = await deps.store.read();
