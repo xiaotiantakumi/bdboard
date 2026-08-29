@@ -2044,6 +2044,187 @@ describe('ChatPanel', () => {
     expect(getChatMessagePostCalls(fetchMock)).toHaveLength(0);
   });
 
+  // bdboard-22k: jsdom にはレイアウトが無く scrollHeight/clientHeight は常に 0、
+  // scrollTop も書いた値がそのまま残るだけなので、素のままでは「追従した/しなかった」
+  // を区別できない。中身の文字数に比例して伸びるスクロール領域を差し込んで、
+  // 実ブラウザでの「テキストが増える → コンテナが伸びる」だけを模す。
+  function instrumentScrollArea(element: HTMLElement, clientHeight: number): void {
+    let scrollTop = 0;
+    Object.defineProperty(element, 'clientHeight', {
+      configurable: true,
+      get: () => clientHeight,
+    });
+    Object.defineProperty(element, 'scrollHeight', {
+      configurable: true,
+      get: () => clientHeight + (element.textContent ?? '').length * 10,
+    });
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (next: number) => {
+        scrollTop = next;
+      },
+    });
+  }
+
+  // delta1 → (gate1) → delta2 → (gate2) → done。ストリーミング途中の状態を
+  // 観測するには、done が来る前で止められる必要がある。done まで走らせると
+  // ストリーミング吹き出しが確定メッセージへ差し替わってしまう。
+  function gatedStreamFetch(fetchMock: ReturnType<typeof vi.fn>): {
+    releaseSecondDelta: () => void;
+    releaseDone: () => void;
+  } {
+    let releaseSecondDelta: () => void = () => {};
+    let releaseDone: () => void = () => {};
+    const secondDeltaGate = new Promise<void>((resolve) => {
+      releaseSecondDelta = resolve;
+    });
+    const doneGate = new Promise<void>((resolve) => {
+      releaseDone = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"streamed "}\n\n'),
+              );
+              await secondDeltaGate;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `event: delta\ndata: {"text":"${'reply '.repeat(40)}"}\n\n`,
+                ),
+              );
+              await doneGate;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: done\ndata: {"reply":"done reply","sessionId":"sess-stream","agentId":"claude"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+    return { releaseSecondDelta, releaseDone };
+  }
+
+  it('follows the streaming reply while pinned to the bottom (bdboard-22k)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+
+    releaseSecondDelta();
+
+    // 返信が伸びるたびに最下部へ追従する。deps に streaming テキストが無いと、
+    // ここで scrollTop が第1delta時点の高さのまま取り残される。
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+    });
+    expect(messages.scrollTop).toBe(messages.scrollHeight);
+
+    // ストリームを畳んでから終わる。開いたまま抜けると、残りの処理が
+    // 環境の teardown 後に走る。
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('stops following once the user scrolls up (bdboard-22k)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+
+    // 利用者が過去ログを読むために上へスクロールした。
+    messages.scrollTop = 0;
+    fireEvent.scroll(messages);
+
+    releaseSecondDelta();
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+    });
+    // 追従を止める配慮が無いと、トークンごとに最下部へ引き戻されて読めなくなる。
+    expect(messages.scrollTop).toBe(0);
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('re-pins to the bottom when the conversation changes (bdboard-22k)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    // 前の会話で上へスクロールしていた。
+    messages.scrollTop = 0;
+    fireEvent.scroll(messages);
+
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+    instrumentScrollArea(screen.getByRole('log'), 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    releaseSecondDelta();
+
+    const switched = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        switched.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+    });
+    // 別の会話を開いたのに前の会話のスクロール位置を引きずる理由は無い。
+    expect(switched.scrollTop).toBe(switched.scrollHeight);
+
+    releaseDone();
+    await waitFor(() => {
+      expect(switched.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
   it('posts to the non-streaming endpoint for a non-streaming agent', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);

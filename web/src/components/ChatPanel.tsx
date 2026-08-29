@@ -89,6 +89,10 @@ type ChatAttachment = ChatMessageImage & {
   mimeType: ChatImageMimeType;
 };
 
+// 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
+// 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
+const BOTTOM_STICK_THRESHOLD_PX = 48;
+
 const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
 const CHAT_IMAGE_MAX_COUNT = 4;
 const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -1410,12 +1414,41 @@ export function ChatPanel({
     };
   }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor]);
 
+  // 表示中の会話にだけ効くストリーミングテキスト。他の会話のストリームで
+  // この会話をスクロールしない。
+  const activeStreamingText =
+    streamingReply !== null && streamingReply.key === currentConversationKey
+      ? streamingReply.text
+      : '';
+
+  // 「最下部に貼り付いているときだけ追う」。ストリーミング中は
+  // activeStreamingText がトークンごとに伸びるので、無条件に最下部へ飛ばすと
+  // 利用者が過去ログを読み返せなくなる。逆に追わないと、伸びていく返信が画面
+  // 下に隠れたままになる (bdboard-22k の元バグ: deps に streaming が無かった)。
+  const pinnedToBottomRef = useRef(true);
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesRef.current;
+    if (container === null) {
+      return;
+    }
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    pinnedToBottomRef.current = distanceFromBottom <= BOTTOM_STICK_THRESHOLD_PX;
+  }, []);
+
+  // 会話を切り替えたら貼り付き状態に戻す。前の会話で上へスクロールしていた
+  // からといって、新しい会話を途中から表示する理由は無い。
+  useEffect(() => {
+    pinnedToBottomRef.current = true;
+  }, [currentConversationKey]);
+
   useEffect(() => {
     const container = messagesRef.current;
-    if (container !== null) {
+    if (container !== null && pinnedToBottomRef.current) {
       container.scrollTop = container.scrollHeight;
     }
-  }, [currentMessages, isSending]);
+  }, [currentMessages, isSending, activeStreamingText]);
 
   const showModelSelect = useMemo(
     () => selectedAgent !== undefined && hasSelectableModels(selectedAgent),
@@ -2713,6 +2746,7 @@ export function ChatPanel({
           className="chat-messages"
           role="log"
           aria-live="polite"
+          onScroll={handleMessagesScroll}
         >
           {currentMessages.length === 0 &&
             loadingHistoryFor !== currentConversationKey && (
@@ -2789,10 +2823,6 @@ export function ChatPanel({
             </div>
           ))}
           {(() => {
-            const activeStreamingText =
-              streamingReply !== null && streamingReply.key === currentConversationKey
-                ? streamingReply.text
-                : '';
             return (
               <>
                 {activeStreamingText !== '' && (
