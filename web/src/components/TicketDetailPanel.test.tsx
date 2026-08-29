@@ -22,6 +22,8 @@ import {
   fetchTicketComments,
   fetchTicketTimeline,
   fetchSimilarTickets,
+  patchTicketDescription,
+  patchTicketTitle,
   postTicketComment,
   postTicketDecision,
   postTicketAddLabel,
@@ -52,6 +54,8 @@ vi.mock('../api', async (importOriginal) => {
     postTicketQuickActionUndo: vi.fn(),
     postTicketComment: vi.fn(),
     postTicketAddLabel: vi.fn(),
+    patchTicketTitle: vi.fn(),
+    patchTicketDescription: vi.fn(),
     postTicketDependency: vi.fn(),
     deleteTicketDependency: vi.fn(),
     deleteTicketLabel: vi.fn(),
@@ -72,6 +76,8 @@ const mockPostTicketQuickAction = vi.mocked(postTicketQuickAction);
 const mockPostTicketQuickActionUndo = vi.mocked(postTicketQuickActionUndo);
 const mockPostTicketComment = vi.mocked(postTicketComment);
 const mockPostTicketAddLabel = vi.mocked(postTicketAddLabel);
+const mockPatchTicketTitle = vi.mocked(patchTicketTitle);
+const mockPatchTicketDescription = vi.mocked(patchTicketDescription);
 const mockPostTicketDependency = vi.mocked(postTicketDependency);
 const mockDeleteTicketDependency = vi.mocked(deleteTicketDependency);
 const mockDeleteTicketLabel = vi.mocked(deleteTicketLabel);
@@ -1550,6 +1556,176 @@ describe('TicketDetailPanel label editing', () => {
     expect(
       within(suggestionList as HTMLElement).queryByText('human'),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe('TicketDetailPanel title and description editing', () => {
+  let user: ReturnType<typeof userEvent.setup>;
+
+  const ticketWithDescription: TicketDetailDto = {
+    ...sampleTicket,
+    description: 'Original description',
+  };
+
+  beforeEach(() => {
+    mockFetchTicket.mockResolvedValue(ticketWithDescription);
+    mockFetchTicketComments.mockResolvedValue([]);
+    mockPatchTicketTitle.mockResolvedValue(undefined);
+    mockPatchTicketDescription.mockResolvedValue(undefined);
+    user = userEvent.setup();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('edits the title and calls patchTicketTitle with CAS snapshot', async () => {
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'タイトルを編集' }),
+    );
+
+    const input = screen.getByLabelText('タイトル');
+    await user.clear(input);
+    await user.type(input, 'Updated title');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(mockPatchTicketTitle).toHaveBeenCalledWith(
+        sampleTicket.id,
+        'Updated title',
+        sampleTicket.title,
+      );
+    });
+  });
+
+  it('invalidates ticket and board queries after title save', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderPanel(new Map(), undefined, undefined, queryClient);
+
+    await user.click(
+      await screen.findByRole('button', { name: 'タイトルを編集' }),
+    );
+    const input = screen.getByLabelText('タイトル');
+    await user.clear(input);
+    await user.type(input, 'Updated title');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['ticket', sampleTicket.id],
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['board'],
+      });
+    });
+  });
+
+  it('edits the description and calls patchTicketDescription with CAS snapshot', async () => {
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Description を編集' }),
+    );
+
+    const textarea = screen.getByLabelText('Description');
+    await user.clear(textarea);
+    await user.type(textarea, 'New description body');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(mockPatchTicketDescription).toHaveBeenCalledWith(
+        sampleTicket.id,
+        'New description body',
+        ticketWithDescription.description,
+      );
+    });
+  });
+
+  it('invalidates the ticket query after description save', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderPanel(new Map(), undefined, undefined, queryClient);
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Description を編集' }),
+    );
+    const textarea = screen.getByLabelText('Description');
+    await user.clear(textarea);
+    await user.type(textarea, 'New description body');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['ticket', sampleTicket.id],
+      });
+    });
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: ['board'],
+    });
+  });
+
+  it('starts description edit from empty when description is unset', async () => {
+    mockFetchTicket.mockResolvedValue(sampleTicket);
+
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Description を編集' }),
+    );
+
+    const textarea = screen.getByLabelText('Description');
+    await user.type(textarea, 'First description');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    await waitFor(() => {
+      expect(mockPatchTicketDescription).toHaveBeenCalledWith(
+        sampleTicket.id,
+        'First description',
+        '',
+      );
+    });
+  });
+
+  it('shows an error message when title update fails', async () => {
+    mockPatchTicketTitle.mockRejectedValue(new Error('network down'));
+
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'タイトルを編集' }),
+    );
+    const input = screen.getByLabelText('タイトル');
+    await user.clear(input);
+    await user.type(input, 'Updated title');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByText('network down')).toBeInTheDocument();
+  });
+
+  it('shows an error message when description update fails', async () => {
+    mockPatchTicketDescription.mockRejectedValue(new Error('network down'));
+
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'Description を編集' }),
+    );
+    const textarea = screen.getByLabelText('Description');
+    await user.clear(textarea);
+    await user.type(textarea, 'New description body');
+    await user.click(screen.getByRole('button', { name: '保存' }));
+
+    expect(await screen.findByText('network down')).toBeInTheDocument();
   });
 });
 

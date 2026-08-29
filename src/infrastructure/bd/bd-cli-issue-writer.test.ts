@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import {
+  ContentConflictError,
   PriorityConflictError,
   StatusConflictError,
 } from '../../application/ports/issue-writer.js';
@@ -533,5 +534,182 @@ describe('createBdCliIssueWriter', () => {
     await port.claim(ROOT, TICKET_ID);
 
     expect(calls[0]?.command).toBe('/usr/bin/bd');
+  });
+
+  it('updates title by reading the current value first and writing when it still matches (CAS success)', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([{ id: TICKET_ID, title: 'Old title' }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await port.updateTitle(ROOT, TICKET_ID, 'New title', 'Old title');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args).toEqual([
+      '--readonly',
+      '-C',
+      ROOT,
+      'show',
+      '--json',
+      `--id=${TICKET_ID}`,
+    ]);
+    expect(calls[1]?.args).toEqual([
+      '-C',
+      ROOT,
+      'update',
+      TICKET_ID,
+      '--title',
+      'New title',
+    ]);
+  });
+
+  it('rejects with ContentConflictError and does not write when the current title has drifted (CAS mismatch)', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([{ id: TICKET_ID, title: 'Changed title' }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await expect(
+      port.updateTitle(ROOT, TICKET_ID, 'New title', 'Old title'),
+    ).rejects.toMatchObject({
+      name: 'ContentConflictError',
+      field: 'title',
+      expectedValue: 'Old title',
+      actualValue: 'Changed title',
+    });
+    await expect(
+      port.updateTitle(ROOT, TICKET_ID, 'New title', 'Old title'),
+    ).rejects.toBeInstanceOf(ContentConflictError);
+
+    expect(calls.every((call) => !call.args.includes('--title'))).toBe(true);
+  });
+
+  it('updates description by reading the current value first and writing when it still matches (CAS success)', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              { id: TICKET_ID, description: 'Old description' },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await port.updateDescription(
+      ROOT,
+      TICKET_ID,
+      'New description',
+      'Old description',
+    );
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.args).toEqual([
+      '--readonly',
+      '-C',
+      ROOT,
+      'show',
+      '--json',
+      `--id=${TICKET_ID}`,
+    ]);
+    expect(calls[1]?.args).toEqual([
+      '-C',
+      ROOT,
+      'update',
+      TICKET_ID,
+      '--stdin',
+    ]);
+  });
+
+  it('treats missing description as empty string for CAS comparison', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([{ id: TICKET_ID }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await port.updateDescription(ROOT, TICKET_ID, 'New description', '');
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.args).toEqual([
+      '-C',
+      ROOT,
+      'update',
+      TICKET_ID,
+      '--stdin',
+    ]);
+  });
+
+  it('rejects with ContentConflictError and does not write when the current description has drifted (CAS mismatch)', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              { id: TICKET_ID, description: 'Changed description' },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await expect(
+      port.updateDescription(
+        ROOT,
+        TICKET_ID,
+        'New description',
+        'Old description',
+      ),
+    ).rejects.toMatchObject({
+      name: 'ContentConflictError',
+      field: 'description',
+      expectedValue: 'Old description',
+      actualValue: 'Changed description',
+    });
+    await expect(
+      port.updateDescription(
+        ROOT,
+        TICKET_ID,
+        'New description',
+        'Old description',
+      ),
+    ).rejects.toBeInstanceOf(ContentConflictError);
+
+    expect(calls.every((call) => !call.args.includes('--stdin'))).toBe(true);
   });
 });

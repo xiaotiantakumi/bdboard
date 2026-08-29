@@ -58,6 +58,30 @@ export interface IssueWriterPort {
     expectedCurrentPriority: number,
     previousPriority: number,
   ): Promise<void>;
+  /**
+   * タイトル更新。bd update には --if-title が無いため、undoPriority(bdboard-3tw.82)と
+   * 同じ read-then-write CAS で対処する: 実行直前に bd show で現在値を読み、UI が表示
+   * 開始時に保持していた expectedCurrentTitle と一致するときだけ書き込む。不一致なら
+   * ContentConflictError。
+   */
+  updateTitle(
+    rootPath: string,
+    ticketId: string,
+    title: string,
+    expectedCurrentTitle: string,
+  ): Promise<void>;
+  /**
+   * description 更新。bd update には --if-description が無いため、undoPriority と同じ
+   * read-then-write CAS で対処する: 実行直前に bd show で現在値を読み、UI が表示開始時に
+   * 保持していた expectedCurrentDescription と一致するときだけ書き込む。不一致なら
+   * ContentConflictError。
+   */
+  updateDescription(
+    rootPath: string,
+    ticketId: string,
+    description: string,
+    expectedCurrentDescription: string,
+  ): Promise<void>;
 }
 
 /**
@@ -108,5 +132,36 @@ export class StatusConflictError extends Error {
     this.expectedStatus = expectedStatus;
     this.actualStatus = actualStatus;
     Object.setPrototypeOf(this, StatusConflictError.prototype);
+  }
+}
+
+/**
+ * updateTitle/updateDescription の競合検知(read-then-write の read で不一致を見つけた場合)。
+ * ルーティング層(interface/http/routes.ts)がこの型を instanceof で見分けて 409 を返す
+ * (UI が「他のセッションが変更しました」と表示できるようにするため、PriorityConflictError
+ * と同じ形)。
+ */
+export class ContentConflictError extends Error {
+  readonly ticketId: string;
+  readonly field: 'title' | 'description';
+  readonly expectedValue: string;
+  readonly actualValue: string;
+
+  constructor(
+    ticketId: string,
+    field: 'title' | 'description',
+    expectedValue: string,
+    actualValue: string,
+  ) {
+    super(
+      `content for ${ticketId} field ${field} changed since it was loaded ` +
+        `(expected "${expectedValue}", current "${actualValue}")`,
+    );
+    this.name = 'ContentConflictError';
+    this.ticketId = ticketId;
+    this.field = field;
+    this.expectedValue = expectedValue;
+    this.actualValue = actualValue;
+    Object.setPrototypeOf(this, ContentConflictError.prototype);
   }
 }

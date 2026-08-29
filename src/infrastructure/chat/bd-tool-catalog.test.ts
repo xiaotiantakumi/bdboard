@@ -7,14 +7,17 @@ import {
 const PROJECT_ROOT = '/tmp/bdboard-test-project';
 
 describe('BD_TOOL_DEFINITIONS', () => {
-  it('exposes exactly 16 tools', () => {
-    expect(BD_TOOL_DEFINITIONS).toHaveLength(16);
+  it('exposes exactly 19 tools', () => {
+    expect(BD_TOOL_DEFINITIONS).toHaveLength(19);
     expect(BD_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
       'bd_list',
       'bd_ready',
       'bd_blocked',
       'bd_show',
       'bd_update_status',
+      'bd_update_title',
+      'bd_update_description',
+      'bd_append_notes',
       'bd_claim',
       'bd_close',
       'bd_comment',
@@ -120,6 +123,57 @@ describe('buildBdToolArgs', () => {
     expect(result).toEqual({
       ok: true,
       args: ['-C', PROJECT_ROOT, 'update', 'bdboard-3tw.13', '-s', 'in_progress'],
+    });
+  });
+
+  it('builds bd_update_title argv', () => {
+    const result = buildBdToolArgs(
+      'bd_update_title',
+      { id: 'bdboard-3tw.13', title: 'Revised title' },
+      PROJECT_ROOT,
+    );
+    expect(result).toEqual({
+      ok: true,
+      args: [
+        '-C',
+        PROJECT_ROOT,
+        'update',
+        'bdboard-3tw.13',
+        '--title',
+        'Revised title',
+      ],
+    });
+  });
+
+  it('builds bd_update_description argv with stdin', () => {
+    const result = buildBdToolArgs(
+      'bd_update_description',
+      { id: 'bdboard-3tw.13', description: 'line1\nline2' },
+      PROJECT_ROOT,
+    );
+    expect(result).toEqual({
+      ok: true,
+      args: ['-C', PROJECT_ROOT, 'update', 'bdboard-3tw.13', '--stdin'],
+      stdin: 'line1\nline2',
+    });
+  });
+
+  it('builds bd_append_notes argv with direct notes argument', () => {
+    const result = buildBdToolArgs(
+      'bd_append_notes',
+      { id: 'bdboard-3tw.13', notes: 'memo line1\nmemo line2' },
+      PROJECT_ROOT,
+    );
+    expect(result).toEqual({
+      ok: true,
+      args: [
+        '-C',
+        PROJECT_ROOT,
+        'update',
+        'bdboard-3tw.13',
+        '--append-notes',
+        'memo line1\nmemo line2',
+      ],
     });
   });
 
@@ -340,6 +394,18 @@ describe('buildBdToolArgs', () => {
       { tool: 'bd_blocked', rawArgs: {} },
       { tool: 'bd_show', rawArgs: { id: 'bdboard-3tw.13' } },
       { tool: 'bd_update_status', rawArgs: { id: 'bdboard-3tw.13', status: 'open' } },
+      {
+        tool: 'bd_update_title',
+        rawArgs: { id: 'bdboard-3tw.13', title: 'New title' },
+      },
+      {
+        tool: 'bd_update_description',
+        rawArgs: { id: 'bdboard-3tw.13', description: 'new body' },
+      },
+      {
+        tool: 'bd_append_notes',
+        rawArgs: { id: 'bdboard-3tw.13', notes: 'extra note' },
+      },
       { tool: 'bd_claim', rawArgs: { id: 'bdboard-3tw.13' } },
       { tool: 'bd_close', rawArgs: { id: 'bdboard-3tw.13' } },
       { tool: 'bd_comment', rawArgs: { id: 'bdboard-3tw.13', text: 'ok' } },
@@ -382,6 +448,9 @@ describe('buildBdToolArgs', () => {
     const readOnlyTools = ['bd_list', 'bd_ready', 'bd_blocked', 'bd_show', 'bd_search'] as const;
     const writeTools = [
       'bd_update_status',
+      'bd_update_title',
+      'bd_update_description',
+      'bd_append_notes',
       'bd_claim',
       'bd_close',
       'bd_comment',
@@ -414,7 +483,13 @@ describe('buildBdToolArgs', () => {
       const rawArgs =
         tool === 'bd_update_status'
           ? { id: 'bdboard-3tw.13', status: 'open' }
-          : tool === 'bd_comment'
+          : tool === 'bd_update_title'
+            ? { id: 'bdboard-3tw.13', title: 'New title' }
+            : tool === 'bd_update_description'
+              ? { id: 'bdboard-3tw.13', description: 'new body' }
+              : tool === 'bd_append_notes'
+                ? { id: 'bdboard-3tw.13', notes: 'extra note' }
+                : tool === 'bd_comment'
             ? { id: 'bdboard-3tw.13', text: 'ok' }
             : tool === 'bd_defer'
               ? { id: 'bdboard-3tw.13', untilDate: '2026-08-22' }
@@ -556,6 +631,75 @@ describe('buildBdToolArgs', () => {
     if (!result.ok) {
       expect(result.error).not.toContain('injected');
     }
+  });
+
+  it('rejects invalid bd_update_title arguments', () => {
+    const emptyTitle = buildBdToolArgs(
+      'bd_update_title',
+      { id: 'bdboard-3tw.13', title: '' },
+      PROJECT_ROOT,
+    );
+    expect(emptyTitle.ok).toBe(false);
+
+    const dashTitle = buildBdToolArgs(
+      'bd_update_title',
+      { id: 'bdboard-3tw.13', title: '-rf' },
+      PROJECT_ROOT,
+    );
+    expect(dashTitle.ok).toBe(false);
+
+    const badId = buildBdToolArgs(
+      'bd_update_title',
+      { id: '-rf', title: 'ok' },
+      PROJECT_ROOT,
+    );
+    expect(badId.ok).toBe(false);
+  });
+
+  it('rejects invalid bd_update_description arguments', () => {
+    const emptyDescription = buildBdToolArgs(
+      'bd_update_description',
+      { id: 'bdboard-3tw.13', description: '' },
+      PROJECT_ROOT,
+    );
+    expect(emptyDescription.ok).toBe(false);
+
+    const longDescription = buildBdToolArgs(
+      'bd_update_description',
+      { id: 'bdboard-3tw.13', description: 'x'.repeat(4001) },
+      PROJECT_ROOT,
+    );
+    expect(longDescription.ok).toBe(false);
+
+    const badId = buildBdToolArgs(
+      'bd_update_description',
+      { id: '-rf', description: 'ok' },
+      PROJECT_ROOT,
+    );
+    expect(badId.ok).toBe(false);
+  });
+
+  it('rejects invalid bd_append_notes arguments', () => {
+    const emptyNotes = buildBdToolArgs(
+      'bd_append_notes',
+      { id: 'bdboard-3tw.13', notes: '' },
+      PROJECT_ROOT,
+    );
+    expect(emptyNotes.ok).toBe(false);
+
+    const longNotes = buildBdToolArgs(
+      'bd_append_notes',
+      { id: 'bdboard-3tw.13', notes: 'x'.repeat(4001) },
+      PROJECT_ROOT,
+    );
+    expect(longNotes.ok).toBe(false);
+
+    const badId = buildBdToolArgs(
+      'bd_append_notes',
+      { id: '-rf', notes: 'ok' },
+      PROJECT_ROOT,
+    );
+    expect(badId.ok).toBe(false);
   });
 
   it('rejects invalid bd_create arguments', () => {
