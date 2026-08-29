@@ -448,4 +448,56 @@ describe('createClaudeSessionRegistry', () => {
 
     expect(realPathCalls).toBe(1);
   });
+
+  it('retries realPath after negative TTL expires on subsequent listSessions calls', async () => {
+    const rawCwd = '/tmp/worktree';
+    const resolvedCwd = '/private/tmp/worktree';
+    let now = 1_000;
+    let shouldThrow = true;
+    let realPathCalls = 0;
+
+    const fs = createFakeFs({
+      dirs: {
+        [sessionsDir]: [file('820.json')],
+      },
+      files: {
+        [path.join(sessionsDir, '820.json')]: JSON.stringify({
+          pid: 820,
+          sessionId: 'ttl-retry',
+          cwd: rawCwd,
+          startedAt: 1,
+        }),
+      },
+      realPathImpl: async (dirPath: string) => {
+        realPathCalls += 1;
+        if (shouldThrow) {
+          throw new Error('realPath failed');
+        }
+        return dirPath === rawCwd ? resolvedCwd : dirPath;
+      },
+    });
+    const registry = createClaudeSessionRegistry(fs, createFakeProbe(new Set([820])), {
+      sessionsDir,
+      projectsDir,
+      cwdResolverOptions: {
+        negativeTtlMs: 30_000,
+        now: () => now,
+      },
+    });
+
+    const first = await registry.listSessions();
+    expect(first[0]?.cwd).toBe(rawCwd);
+    expect(realPathCalls).toBe(1);
+
+    shouldThrow = false;
+    now += 10_000;
+    const second = await registry.listSessions();
+    expect(second[0]?.cwd).toBe(rawCwd);
+    expect(realPathCalls).toBe(1);
+
+    now += 30_001;
+    const third = await registry.listSessions();
+    expect(third[0]?.cwd).toBe(resolvedCwd);
+    expect(realPathCalls).toBe(2);
+  });
 });
