@@ -22,13 +22,19 @@ const bdShowPriorityItemSchema = z.object({
   priority: z.number().int().min(0).max(4),
 });
 
-async function readCurrentPriority(
+type CasReadContext = 'undo' | 'update';
+
+async function readTicketField<TSchema, TValue>(
   commandRunner: CommandRunner,
   bdPath: string,
   timeoutMs: number,
   rootPath: string,
   ticketId: string,
-): Promise<number> {
+  schema: z.ZodType<TSchema>,
+  fieldLabel: string,
+  casContext: CasReadContext,
+  extract: (data: TSchema) => TValue,
+): Promise<TValue> {
   const stdout = await runBdCommandForStdout(
     commandRunner,
     bdPath,
@@ -45,21 +51,41 @@ async function readCurrentPriority(
     throw new BdError(
       'unknown',
       ticketId,
-      'failed to parse bd show output while checking priority for undo',
+      `failed to parse bd show output while checking ${fieldLabel} for ${casContext}`,
     );
   }
 
   const item = Array.isArray(parsed) ? parsed[0] : parsed;
-  const result = bdShowPriorityItemSchema.safeParse(item);
+  const result = schema.safeParse(item);
   if (!result.success) {
     throw new BdError(
       'unknown',
       ticketId,
-      'bd show output missing priority while checking undo precondition',
+      `bd show output missing ${fieldLabel} while checking ${casContext} precondition`,
     );
   }
 
-  return result.data.priority;
+  return extract(result.data);
+}
+
+async function readCurrentPriority(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  timeoutMs: number,
+  rootPath: string,
+  ticketId: string,
+): Promise<number> {
+  return readTicketField(
+    commandRunner,
+    bdPath,
+    timeoutMs,
+    rootPath,
+    ticketId,
+    bdShowPriorityItemSchema,
+    'priority',
+    'undo',
+    (data) => data.priority,
+  );
 }
 
 // reopen/undefer の CAS チェック用。bd show --json の出力から status だけ読めればよい。
@@ -77,37 +103,17 @@ async function readCurrentStatus(
   rootPath: string,
   ticketId: string,
 ): Promise<string> {
-  const stdout = await runBdCommandForStdout(
+  return readTicketField(
     commandRunner,
     bdPath,
     timeoutMs,
     rootPath,
-    ['--readonly', '-C', rootPath, 'show', '--json', `--id=${ticketId}`],
     ticketId,
+    bdShowStatusItemSchema,
+    'status',
+    'undo',
+    (data) => data.status,
   );
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      'failed to parse bd show output while checking status for undo',
-    );
-  }
-
-  const item = Array.isArray(parsed) ? parsed[0] : parsed;
-  const result = bdShowStatusItemSchema.safeParse(item);
-  if (!result.success) {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      'bd show output missing status while checking undo precondition',
-    );
-  }
-
-  return result.data.status;
 }
 
 // updateTitle/updateDescription の CAS チェック用。bd show --json の出力から
@@ -129,37 +135,17 @@ async function readCurrentTitle(
   rootPath: string,
   ticketId: string,
 ): Promise<string> {
-  const stdout = await runBdCommandForStdout(
+  return readTicketField(
     commandRunner,
     bdPath,
     timeoutMs,
     rootPath,
-    ['--readonly', '-C', rootPath, 'show', '--json', `--id=${ticketId}`],
     ticketId,
+    bdShowTitleItemSchema,
+    'title',
+    'update',
+    (data) => data.title,
   );
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      'failed to parse bd show output while checking title for update',
-    );
-  }
-
-  const item = Array.isArray(parsed) ? parsed[0] : parsed;
-  const result = bdShowTitleItemSchema.safeParse(item);
-  if (!result.success) {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      'bd show output missing title while checking update precondition',
-    );
-  }
-
-  return result.data.title;
 }
 
 async function readCurrentDescription(
@@ -169,37 +155,17 @@ async function readCurrentDescription(
   rootPath: string,
   ticketId: string,
 ): Promise<string> {
-  const stdout = await runBdCommandForStdout(
+  return readTicketField(
     commandRunner,
     bdPath,
     timeoutMs,
     rootPath,
-    ['--readonly', '-C', rootPath, 'show', '--json', `--id=${ticketId}`],
     ticketId,
+    bdShowDescriptionItemSchema,
+    'description',
+    'update',
+    (data) => data.description ?? '',
   );
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      'failed to parse bd show output while checking description for update',
-    );
-  }
-
-  const item = Array.isArray(parsed) ? parsed[0] : parsed;
-  const result = bdShowDescriptionItemSchema.safeParse(item);
-  if (!result.success) {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      'bd show output missing description while checking update precondition',
-    );
-  }
-
-  return result.data.description ?? '';
 }
 
 export interface BdCliIssueWriterOptions {
