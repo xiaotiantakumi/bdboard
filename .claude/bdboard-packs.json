@@ -2,8 +2,8 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.2.0",
-      "injectedAt": "2026-08-29T07:32:27.000Z",
+      "version": "0.4.0",
+      "injectedAt": "2026-08-29T18:55:30.000Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
         ".claude/skills/bdboard-harness/references/brushup-protocol.md",

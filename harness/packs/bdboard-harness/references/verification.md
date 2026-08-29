@@ -17,6 +17,19 @@
   failure-catalog.md の verify-exit-masked）。判定は必ずログ内に記録した検証コマンド
   自身の exit（`EXIT=` 行）とログの失敗有無で行う。ラップするなら
   `npm run verify > log 2>&1; ec=$?; tail log; exit $ec` の形で exit を最後まで運ぶ。
+- **Bash tool の `run_in_background: true` に渡すコマンド文字列に、ジョブをバックグラウンド化
+  する単独の `&`（コマンド末尾・行末の `&`。`2>&1` や `&&` は該当しない）を含めない。**
+  `run_in_background` はホストが追跡する『渡したコマンド全体の完了』を検知して通知する
+  仕組みだが、コマンド内にさらに `nohup npm run verify > log 2>&1 &` のような末尾 `&` を
+  書くと二重に非同期化される。シェルは `&` の時点で即座に制御を返すため、ホストが検知する
+  『完了』はその直後に続くコマンド（例: 直後の `echo "pid $!"`）でしかなく、実際の長時間
+  処理は detached のまま動き続け、通知は来ない（実測: failure-catalog.md の
+  double-background-verify）。長時間コマンドを待つときは、コマンド自体を（末尾に `&` を
+  付けず）そのまま `run_in_background: true` へ渡すか、
+  `while kill -0 <pid> 2>/dev/null; do sleep 5; done` のような foreground な待ち合わせ
+  ループを同様に渡す（このループ自体は verify の成否を運ばないので、判定は上の
+  `EXIT=` 行規律と組み合わせる）。「数秒で完了通知が来た」のに長時間コマンドのはずなら、
+  まずこの二重バックグラウンド化を疑い、`pgrep`/`ps` で実プロセスの生死を確認する。
 - 委譲成果を受け取ったら、採用判定の前に**検証コマンド（ビルド・テスト・lint —
   具体名は注入先プロジェクトの CLAUDE.md / AGENTS.md）を自分で回す**。対象の worktree で、
   フルの検証チェーンを回す。

@@ -97,6 +97,11 @@
 - 防止: 検証の判定はラッパーの終了コードでなく、検証コマンド自身の exit（ログ内 EXIT= 行）とログの失敗有無で行う（本則: verification.md）
 - 出典: 本 skill 導入セッション（2026-08-29, PR #134 の CI で発覚）
 
+### double-background-verify — `run_in_background:true` 内に `&` を書き、harness の completed 通知が echo だけの完了を指した（2026-08-30）
+- 原因: `nohup npm run verify > log 2>&1 &\necho pid $!` を run_in_background:true で実行し、シェルの `&` が harness の追跡単位を『verify』ではなく直後の echo にすり替えた
+- 防止: run_in_background:true のコマンド文字列にバックグラウンド化の末尾 `&`（`2>&1`/`&&` は可）を書かない。長時間コマンドはそのまま渡すか `while kill -0 <pid> 2>/dev/null; do sleep 5; done` で待つ（本則: verification.md）
+- 出典: bdboard-j0us（同一セッション内で2回再発、pgrep で detached プロセス生存を確認して発覚）
+
 ### wrong-node-version — シェルスナップショットの nvm 不全で意図しない Node により npm install が lockfile を書き換えた
 - 原因: `NVM_DIR` 欠落で `.zshrc` の `nvm use` が無言で失敗し、古い Node が PATH に残る
 - 防止: 依存インストール前に `node --version` を engines.node と突き合わせる（本則: worktree-pr-flow.md §2）
