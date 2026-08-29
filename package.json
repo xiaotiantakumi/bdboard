@@ -31,6 +31,7 @@
     "mcp:config": "tsx src/infrastructure/chat/mcp-client-config-main.ts",
     "verify": "node scripts/verify.mjs",
     "verify:steps": "npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
+    "drift": "node scripts/check-drift.mjs",
     "test:e2e": "npm run build:web && playwright test --config test/e2e/playwright.config.ts",
     "prepack": "npm run build:web"
   },
