@@ -92,6 +92,24 @@ describe('useBoardStream', () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
+  it('invalidates projects when board.changed is dispatched', () => {
+    const { es, invalidateSpy } = renderBoardStream();
+
+    act(() => es.onopen?.());
+    invalidateSpy.mockClear();
+
+    act(() => es.dispatch('board.changed'));
+
+    const keys = invalidatedKeys(invalidateSpy);
+    expect(keys).toContain('projects');
+    expect(keys).toContain('board');
+    expect(keys).toContain('status');
+    expect(keys).toContain('ticket');
+    expect(keys).toContain('ticket-comments');
+    expect(keys).toContain('pending-decisions');
+    expect(keys).toContain('pr-links');
+  });
+
   it('revalidates board, session, and related queries after an onerror followed by onopen', () => {
     const { es, invalidateSpy } = renderBoardStream();
 

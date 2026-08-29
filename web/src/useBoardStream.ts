@@ -148,6 +148,7 @@ export function useBoardStream(): BoardStreamResult {
       void queryClient.invalidateQueries({ queryKey: ['ticket-comments'] });
       void queryClient.invalidateQueries({ queryKey: ['pending-decisions'] });
       void queryClient.invalidateQueries({ queryKey: ['pr-links'] });
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
     };
 
     const onSessionChanged = () => {
