@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import {
+  resetBoardTimeZoneForTests,
+  setBoardTimeZoneOverride,
+} from './boardTimeZone';
 import {
   buildBdCommand,
   buildDependencyCycleRemovalCommands,
@@ -34,6 +38,10 @@ describe('shellQuote', () => {
 });
 
 describe('formatDeferDate', () => {
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
+  });
+
   it('returns a date DEFER_DAYS ahead of the given day', () => {
     expect(formatDeferDate(new Date(2026, 7, 15, 3, 0, 0))).toBe('2026-08-22');
     expect(DEFER_DAYS).toBe(7);
@@ -41,6 +49,16 @@ describe('formatDeferDate', () => {
 
   it('rolls over month and year boundaries', () => {
     expect(formatDeferDate(new Date(2026, 11, 28, 23, 30, 0))).toBe('2027-01-04');
+  });
+
+  it('uses board timezone override rather than host timezone at day boundaries', () => {
+    const now = new Date('2026-08-09T23:00:00.000Z');
+
+    setBoardTimeZoneOverride('UTC');
+    expect(formatDeferDate(now)).toBe('2026-08-16');
+
+    setBoardTimeZoneOverride('Asia/Tokyo');
+    expect(formatDeferDate(now)).toBe('2026-08-17');
   });
 });
 

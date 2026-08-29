@@ -70,6 +70,12 @@ describe('formatLocalDateKey', () => {
       }
     }
   });
+
+  it('formats using the specified IANA timezone regardless of host TZ', () => {
+    const instant = new Date('2026-08-09T15:00:00Z');
+    expect(formatLocalDateKey(instant, 'UTC')).toBe('2026-08-09');
+    expect(formatLocalDateKey(instant, 'Asia/Tokyo')).toBe('2026-08-10');
+  });
 });
 
 describe('checkHygiene overdue_defer', () => {

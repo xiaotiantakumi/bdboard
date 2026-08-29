@@ -297,4 +297,35 @@ describe('getHygieneIssues', () => {
       getHygieneIssues(cache, NOW, { thresholds: relaxedThresholds }).map((issue) => issue.kind),
     ).toEqual([]);
   });
+
+  it('uses the specified timezone for overdue_defer deferUntil formatting', () => {
+    const cache = createFakeBoardCache();
+    const now = new Date('2026-08-10T00:00:00.000Z');
+    const a = project('/a', '/projects/a', 'Alpha');
+    const deferUntil = new Date('2026-08-09T15:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-boundary',
+          projectId: a.id,
+          status: 'deferred',
+          deferUntil,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: now,
+    });
+
+    const utcIssue = getHygieneIssues(cache, now, { timeZone: 'UTC' }).find(
+      (issue) => issue.kind === 'overdue_defer',
+    );
+    const tokyoIssue = getHygieneIssues(cache, now, { timeZone: 'Asia/Tokyo' }).find(
+      (issue) => issue.kind === 'overdue_defer',
+    );
+
+    expect(utcIssue?.deferUntil).toBe('2026-08-09');
+    expect(tokyoIssue?.deferUntil).toBe('2026-08-10');
+  });
 });
