@@ -220,7 +220,6 @@ export function createCloudflaredTunnel(
   const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const createLogSink = options.createLogSink ?? createFileLogSink;
 
-  let availableCache = false;
   let child: SpawnedProcess | null = null;
   let outputBuffer = '';
   const unexpectedExitListeners: Array<() => void> = [];
@@ -235,17 +234,13 @@ export function createCloudflaredTunnel(
     }
   };
 
-  const isAvailable = async (): Promise<boolean> => {
-    // positive のみキャッシュする。「見つかった」は覆らないが、「見つからない」は
-    // 後から入れれば覆るので、固定すると再起動まで拾えなくなる (bdboard-syr)。
-    // negative 側の再スキャン頻度は呼び出し元 (tunnel-service) の TTL が抑える。
-    if (availableCache) {
-      return true;
-    }
-
-    availableCache = resolveExecutable() !== null;
-    return availableCache;
-  };
+  // キャッシュは持たない。ここは「今 PATH に cloudflared があるか」を素直に答える。
+  // 以前は結果を恒久キャッシュしていたが、「見つからない」は brew install 一つで
+  // 覆るので、固定するとサーバー再起動まで拾えなかった (bdboard-syr)。
+  // キャッシュの責務は呼び出し元の tunnel-service に一元化してある (TTL 付き) —
+  // ここにも置くと、二層のどちらが効いているのか追えなくなる。
+  // 走査自体は PATH 46 エントリで実測 0.14ms 未満なので、素通しで問題ない。
+  const isAvailable = async (): Promise<boolean> => resolveExecutable() !== null;
 
   const stop = async (): Promise<void> => {
     const current = child;

@@ -505,6 +505,15 @@ describe('createTunnelService availability re-probing (bdboard-syr)', () => {
     const service = createService(tunnel, { now: () => new Date(nowMs) });
 
     expect(await service.probeAvailability()).toBe(false);
+    // 例外は「判定できなかった」だが、negative として扱う以上は negative と
+    // 同じ規律に従う必要がある: state を落とし、TTL 内は再プローブしない。
+    // ここを assert しないと catch 節の setAvailability(false) を消しても
+    // 誰も気付かない (PR#122 fable レビュー minor)。
+    expect(service.getState()).toEqual({ kind: 'unavailable' });
+    nowMs += 1_000;
+    expect(await service.probeAvailability()).toBe(false);
+    expect(tunnel.isAvailableMock).toHaveBeenCalledTimes(1);
+
     nowMs += TUNNEL_AVAILABILITY_RECHECK_MS;
     expect(await service.probeAvailability()).toBe(true);
   });

@@ -149,6 +149,30 @@ describe('createTunnelRoutes local-only guard', () => {
 });
 
 describe('createTunnelRoutes behavior', () => {
+  // bdboard-syr: GET が純粋なキャッシュ読みだと、後から cloudflared を入れても
+  // 画面が「利用不可」のままになる。UI が定期的に触るのはここだけ。
+  it('re-probes availability on GET so a later install shows up', async () => {
+    let installed = false;
+    const probeAvailability = vi.fn(async () => installed);
+    const service = createFakeTunnelService({
+      getState: () => ({ kind: 'unavailable' }),
+      probeAvailability,
+      getAvailability: () => false,
+    });
+    const app = createApp(service);
+    const get = async () =>
+      (await (
+        await app.request('/api/tunnel', { headers: { Host: 'localhost:8787' } }, LOCAL_ENV)
+      ).json()) as { readonly available: boolean };
+
+    expect((await get()).available).toBe(false);
+
+    installed = true;
+
+    expect((await get()).available).toBe(true);
+    expect(probeAvailability).toHaveBeenCalledTimes(2);
+  });
+
   it('does not return password when state is off', async () => {
     const service = createFakeTunnelService({
       getState: () => ({ kind: 'off' }),

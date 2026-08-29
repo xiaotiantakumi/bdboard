@@ -56,13 +56,17 @@ describe('createCloudflaredTunnel', () => {
     await expect(tunnel.isAvailable()).resolves.toBe(true);
   });
 
-  it('caches an available result instead of re-scanning PATH every time', async () => {
-    const resolveExecutable = vi.fn(() => '/usr/bin/cloudflared');
+  it('reflects a cloudflared that disappeared from PATH', async () => {
+    let resolved: string | null = '/usr/bin/cloudflared';
+    const resolveExecutable = vi.fn(() => resolved);
     const tunnel = createCloudflaredTunnel({ port: 8799, resolveExecutable });
 
     await expect(tunnel.isAvailable()).resolves.toBe(true);
-    await expect(tunnel.isAvailable()).resolves.toBe(true);
-    expect(resolveExecutable).toHaveBeenCalledTimes(1);
+
+    // キャッシュを持たない以上、消えたことも見えるのが正しい。
+    resolved = null;
+    await expect(tunnel.isAvailable()).resolves.toBe(false);
+    expect(resolveExecutable).toHaveBeenCalledTimes(2);
   });
 
   it('resolves cloudflared.exe from a semicolon-delimited win32 PATH', async () => {
