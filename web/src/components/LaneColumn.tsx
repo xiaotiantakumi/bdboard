@@ -226,6 +226,15 @@ export function CardItem({
       onDragStart={handleDragStart}
       onDragEnd={() => boardDnD?.onCardDragEnd()}
       onKeyDown={(event) => {
+        // カード内のコントロール(ウォッチ★・一括選択チェックボックス・PRリンク)に
+        // focus がある状態の Enter/Space まで奪わない。keydown は article まで
+        // バブルするので、target がカード自身のときだけ処理する。マウス経路は
+        // 各コントロール側の onClick={stopPropagation} で守られているが、keydown
+        // 側には同じガードが無く、キーボードだけの利用者は ★ や選択チェックボックスを
+        // 操作できず詳細パネルが開くだけだった (bdboard-4dl)。
+        if (event.target !== event.currentTarget) {
+          return;
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           handleClick();

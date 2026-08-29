@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto } from '../api';
@@ -334,6 +335,86 @@ describe('CardItem bulk selection checkbox', () => {
     ).toBeChecked();
     expect(card).toHaveAttribute('aria-selected', 'true');
     expect(card.className).toContain('card-bulk-selected');
+  });
+});
+
+describe('CardItem keyboard activation (bdboard-4dl)', () => {
+  function renderCard(id: string, onClick: () => void) {
+    return renderWithWatch(
+      <BulkSelectionProvider>
+        <CardItem
+          card={makeCard(id)}
+          lane="ready"
+          showProjectName={false}
+          projectName="Project One"
+          activeSessionCount={0}
+          hasPendingDecision={false}
+          onClick={onClick}
+        />
+      </BulkSelectionProvider>,
+    );
+  }
+
+  it('toggles watch with Enter on the star without opening the detail panel', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    renderCard('bdboard-key-watch', onClick);
+
+    const star = screen.getByRole('button', { name: 'ウォッチ' });
+    star.focus();
+    await user.keyboard('{Enter}');
+
+    // keydown は article までバブルする。article 側が target を見ずに
+    // preventDefault() すると、★ は反応せず詳細パネルだけが開いていた。
+    expect(screen.getByRole('button', { name: 'ウォッチ解除' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('toggles the bulk checkbox with Space without opening the detail panel', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    renderCard('bdboard-key-bulk', onClick);
+
+    const checkbox = screen.getByRole('checkbox', { name: 'bdboard-key-bulk を選択' });
+    checkbox.focus();
+    await user.keyboard('{ }');
+
+    expect(checkbox).toBeChecked();
+    expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it('still opens the detail panel with Enter and Space on the card itself', async () => {
+    const user = userEvent.setup();
+    const onClick = vi.fn();
+    renderCard('bdboard-key-card', onClick);
+
+    const card = screen.getByRole('button', { name: /Pending ticket/ });
+    card.focus();
+    await user.keyboard('{Enter}');
+    await user.keyboard('{ }');
+
+    expect(onClick).toHaveBeenCalledTimes(2);
+    expect(onClick).toHaveBeenCalledWith('bdboard-key-card');
+  });
+
+  it('suppresses the Space default only for the card, not for its controls', () => {
+    const onClick = vi.fn();
+    renderCard('bdboard-key-default', onClick);
+
+    // Space はページスクロールの既定動作を持つ。role="button" のカードでこれを
+    // 止めないと、選択を動かすたびにボードが飛ぶ。逆にチェックボックス上の
+    // Space を止めると、今度はチェックが入らなくなる (bdboard-4dl の元バグ)。
+    // fireEvent は preventDefault されたとき false を返す。
+    const card = screen.getByRole('button', { name: /Pending ticket/ });
+    expect(fireEvent.keyDown(card, { key: ' ' })).toBe(false);
+
+    const checkbox = screen.getByRole('checkbox', {
+      name: 'bdboard-key-default を選択',
+    });
+    expect(fireEvent.keyDown(checkbox, { key: ' ' })).toBe(true);
   });
 });
 
