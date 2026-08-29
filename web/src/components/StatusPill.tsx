@@ -113,9 +113,15 @@ export function StatusPill({
               最終通信: {formatRelativeAge(lastContactAtMs, nowMs)}
             </p>
           )}
+          {/* lastRefreshAt はサーバーが bd を読み直して自分のキャッシュへ取り込んだ
+              時刻 (main.ts の refreshProjects ループ)。上2行と並ぶと「最終更新」は
+              「最終変化」とほぼ同義に読め、主語がサーバーなのかクライアントなのかも
+              伝わらなかった。主語が分かる語に改め、表記も上2行と同じ相対時間 +
+              絶対値ツールチップに揃えて3行を並べて比較できるようにする
+              (bdboard-3dr / bdboard-d55 の積み残し)。 */}
           {lastRefreshAt !== null && lastRefreshAt !== undefined && (
-            <p className="status-pill-detail">
-              最終更新: {new Date(lastRefreshAt).toLocaleString()}
+            <p className="status-pill-detail" title={new Date(lastRefreshAt).toLocaleString()}>
+              サーバーのbd取込: {formatGeneratedAtAge(lastRefreshAt, nowMs)}
             </p>
           )}
           <button
