@@ -6,6 +6,7 @@ import {
   type DiscoveredChatSessionDto,
   type SessionTailMessageDto,
 } from '../api';
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 
 interface DiscoveredSessionsPanelProps {
   projectId: string;
@@ -25,11 +26,6 @@ function getErrorMessage(error: unknown): string {
     return error.message;
   }
   return 'CLIセッションの取得に失敗しました';
-}
-
-function formatActivityTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 export function DiscoveredSessionsPanel({
@@ -108,7 +104,7 @@ export function DiscoveredSessionsPanel({
                     <span className="chat-discovered-sessions-badge">登録済み</span>
                   )}
                   <time dateTime={session.lastActivityAt}>
-                    {formatActivityTime(session.lastActivityAt)}
+                    {formatAbsoluteTime(session.lastActivityAt)}
                   </time>
                   {preview !== undefined && preview !== '' && (
                     <span className="chat-discovered-sessions-preview">{preview}</span>

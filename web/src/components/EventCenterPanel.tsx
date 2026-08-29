@@ -1,3 +1,4 @@
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import type { NotificationEventItem, UseNotificationEventsResult } from '../hooks/useNotificationEvents';
 
 function kindLabel(kind: NotificationEventItem['kind']): string {
@@ -59,7 +60,7 @@ function eventPrimaryText(item: NotificationEventItem): string {
 }
 
 function formatOccurredAt(occurredAt: string): string {
-  return new Date(occurredAt).toLocaleString();
+  return formatAbsoluteTime(occurredAt);
 }
 
 export function EventCenterPanel({

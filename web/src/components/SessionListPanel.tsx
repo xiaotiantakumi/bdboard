@@ -12,6 +12,7 @@ import {
   type SessionHistoryEntryDto,
 } from '../api';
 import { compareStrings } from '../compare';
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import {
@@ -41,10 +42,6 @@ interface SessionRow {
   session: SessionDto;
   projectName: string;
   liveness: Liveness;
-}
-
-function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString();
 }
 
 function buildSessionProjectMap(
@@ -330,11 +327,11 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
                   </div>
                   <div className="session-row-field">
                     <div className="detail-field-label">開始時刻</div>
-                    <div>{formatDateTime(row.session.startedAt)}</div>
+                    <div>{formatAbsoluteTime(row.session.startedAt)}</div>
                   </div>
                   <div className="session-row-field">
                     <div className="detail-field-label">最終活動</div>
-                    <div>{formatDateTime(row.session.lastActivityAt)}</div>
+                    <div>{formatAbsoluteTime(row.session.lastActivityAt)}</div>
                   </div>
                   <div className="session-row-meta">
                     <span>pid: {row.session.pid}</span>
@@ -375,7 +372,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
                 <li key={entry.session.sessionId} className="session-row">
                   <div className="session-row-field">
                     <div className="detail-field-label">最終活動</div>
-                    <div>{formatDateTime(entry.session.lastActivityAt)}</div>
+                    <div>{formatAbsoluteTime(entry.session.lastActivityAt)}</div>
                   </div>
                   <div className="session-row-field">
                     <div className="detail-field-label">セッション</div>
@@ -445,7 +442,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
                   {process.startedAt !== undefined && (
                     <div className="session-row-field">
                       <div className="detail-field-label">起動時刻</div>
-                      <div>{formatDateTime(process.startedAt)}</div>
+                      <div>{formatAbsoluteTime(process.startedAt)}</div>
                     </div>
                   )}
                 </li>
