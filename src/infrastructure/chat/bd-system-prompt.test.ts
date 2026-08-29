@@ -291,3 +291,40 @@ describe('buildBdSystemPrompt 顛末回答のフォーマット規約 (bdboard-3
     expect(withoutTools).not.toContain('repo_ticket_landed');
   });
 });
+
+describe('buildBdSystemPrompt deploy status tool (bdboard-3tw.159.5)', () => {
+  const prompt = buildBdSystemPrompt({
+    projectName: 'demo',
+    projectRootPath: '/tmp/demo',
+    capability: 'bd-only',
+  });
+
+  it('names deploy_status and its commitsBehind field so the model knows it exists', () => {
+    expect(prompt).toContain('deploy_status');
+    expect(prompt).toContain('commitsBehind');
+  });
+
+  it('explains that npm run start does not pick up a merge without rebuild/restart', () => {
+    expect(prompt).toContain('npm run start');
+    expect(prompt).toContain('npm run build:web');
+    expect(prompt).toContain('再起動');
+  });
+
+  it('is honest that the tool itself cannot rebuild or restart anything', () => {
+    expect(prompt).toContain('再ビルド・再起動の手段は無い');
+  });
+
+  it('warns about commitsAheadOfMain (build not an ancestor of origin/main)', () => {
+    expect(prompt).toContain('commitsAheadOfMain');
+  });
+
+  it('is omitted when hasBdTools is false', () => {
+    const withoutBdTools = buildBdSystemPrompt({
+      projectName: 'demo',
+      projectRootPath: '/tmp/demo',
+      capability: 'unrestricted',
+      hasBdTools: false,
+    });
+    expect(withoutBdTools).not.toContain('deploy_status');
+  });
+});

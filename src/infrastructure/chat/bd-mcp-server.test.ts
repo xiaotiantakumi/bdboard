@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import { CHAT_TOOL_DEFINITIONS } from './chat-tool-catalog.js';
 import { createBdMcpServer } from './bd-mcp-server.js';
@@ -488,6 +491,96 @@ describe('createBdMcpServer / repo evidence tools (bdboard-3tw.159.4)', () => {
 
     expect(calls).toHaveLength(0);
     expect(response?.result).toMatchObject({ isError: true });
+  });
+
+  describe('deploy_status (bdboard-3tw.159.5)', () => {
+    let projectRoot: string;
+
+    beforeEach(() => {
+      projectRoot = mkdtempSync(path.join(os.tmpdir(), 'bdboard-mcp-deploy-status-'));
+    });
+
+    afterEach(() => {
+      rmSync(projectRoot, { recursive: true, force: true });
+    });
+
+    it('does not call CommandRunner when web/dist is missing', async () => {
+      const { runner, calls } = createFakeRunner();
+      const server = createBdMcpServer({
+        commandRunner: runner,
+        projectRootPath: projectRoot,
+      });
+
+      const response = await server.handleMessage({
+        jsonrpc: '2.0',
+        id: 30,
+        method: 'tools/call',
+        params: { name: 'deploy_status', arguments: {} },
+      });
+
+      expect(calls).toHaveLength(0);
+      const text = (response?.result as { content: Array<{ text: string }> }).content[0]?.text;
+      expect(text).toContain('web/dist not found');
+      expect(response?.result).toMatchObject({ isError: false });
+    });
+
+    it('runs git rev-parse / rev-list (not bd) and reports commitsBehind', async () => {
+      mkdirSync(path.join(projectRoot, 'web', 'dist'), { recursive: true });
+      writeFileSync(
+        path.join(projectRoot, 'web', 'dist', 'build-meta.json'),
+        JSON.stringify({ sha: 'b'.repeat(40), builtAt: '2026-08-20T00:00:00.000Z' }),
+      );
+
+      const { runner, calls } = createFakeRunner({
+        handler: async (command, args) => {
+          expect(command).toBe('git');
+          if (args.includes('rev-parse')) {
+            return { stdout: `${'a'.repeat(40)}\n`, stderr: '', exitCode: 0 };
+          }
+          return { stdout: '0\t2\n', stderr: '', exitCode: 0 };
+        },
+      });
+      const server = createBdMcpServer({
+        commandRunner: runner,
+        projectRootPath: projectRoot,
+      });
+
+      const response = await server.handleMessage({
+        jsonrpc: '2.0',
+        id: 31,
+        method: 'tools/call',
+        params: { name: 'deploy_status', arguments: {} },
+      });
+
+      expect(calls).toHaveLength(2);
+      expect(calls.every((call) => call.command === 'git')).toBe(true);
+      expect(calls[0]?.options?.cwd).toBe(projectRoot);
+      const text = (response?.result as { content: Array<{ text: string }> }).content[0]?.text;
+      expect(text).toContain(`buildSha=${'b'.repeat(40)}`);
+      expect(text).toContain('commitsBehind=2');
+      expect(response?.result).toMatchObject({ isError: false });
+    });
+
+    it('uses the configured git path for deploy_status too', async () => {
+      mkdirSync(path.join(projectRoot, 'web', 'dist'), { recursive: true });
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({ stdout: `${'a'.repeat(40)}\n`, stderr: '', exitCode: 0 }),
+      });
+      const server = createBdMcpServer({
+        commandRunner: runner,
+        projectRootPath: projectRoot,
+        gitPath: '/usr/local/bin/git',
+      });
+
+      await server.handleMessage({
+        jsonrpc: '2.0',
+        id: 32,
+        method: 'tools/call',
+        params: { name: 'deploy_status', arguments: {} },
+      });
+
+      expect(calls[0]?.command).toBe('/usr/local/bin/git');
+    });
   });
 
   it('never exposes a git write tool', async () => {

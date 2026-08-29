@@ -4,6 +4,7 @@ import {
   buildChatToolCommand,
 } from './chat-tool-catalog.js';
 import { applyRepoOutputFilter } from './repo-tool-catalog.js';
+import { isDeployStatusToolName, runDeployStatusTool } from './deploy-status-tool.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_GIT_PATH = 'git';
@@ -120,6 +121,18 @@ export function createBdMcpServer(deps: BdMcpServerDeps): BdMcpServer {
   async function handleToolsCall(params: unknown): Promise<Record<string, unknown>> {
     if (!isRecord(params) || typeof params.name !== 'string') {
       return createToolErrorResult('invalid params');
+    }
+
+    // deploy_status(bdboard-3tw.159.5)は fs読み取り+複数の git 呼び出しを
+    // 組み合わせる必要があり、他ツール共通の「単一コマンドを組み立てて1回だけ
+    // 実行する」モデル(buildChatToolCommand)に乗らないため、ここで先に分岐する。
+    if (isDeployStatusToolName(params.name)) {
+      return runDeployStatusTool({
+        commandRunner: deps.commandRunner,
+        projectRootPath: deps.projectRootPath,
+        gitPath,
+        timeoutMs,
+      });
     }
 
     const built = buildChatToolCommand(
