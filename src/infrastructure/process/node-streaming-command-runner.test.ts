@@ -221,4 +221,65 @@ describe('NodeStreamingCommandRunner', () => {
     const grandchildPid = parsePid(result.stdout.split(':')[0] ?? '', 'group kill / abort');
     await expectProcessToBeGone(grandchildPid);
   });
+  // bdboard-qrrj: SIGTERM を無視する子に対する forceStop 経路(timeout → SIGTERM →
+  // STOP_GRACE_MS の猶予 → SIGKILL)は、これまで一度も実行されていなかった。
+  // 既存テストの子はどれも SIGTERM で即死するので stop() の中だけで完結してしまい、
+  // 猶予タイマーも SIGKILL も踏まないまま全件グリーンになる。
+  //
+  // Windows では成立しないので回す意味が無い。killProcessTree は win32 だと
+  // SIGTERM 相当でも taskkill /F を撃つ(windowsHide のせいで WM_CLOSE が届かない
+  // ため。kill-process-tree.ts のコメント参照)ので、子はそもそも SIGTERM を
+  // 無視できず、SIGTERM → 猶予 → SIGKILL のエスカレーション自体が存在しない。
+  it.skipIf(process.platform === 'win32')(
+    'escalates to SIGKILL after the grace period when the child ignores SIGTERM',
+    async () => {
+      const childScript =
+        "process.on('SIGTERM', () => {});" +
+        "const { spawn } = require('node:child_process');" +
+        // 孫は detached にして親のプロセスグループから外す。グループへの SIGTERM で
+        // 巻き添えに死んでしまうと「パイプを握ったまま生き残る孫」を再現できない。
+        // グループ kill が届かない位置に置く以上、取り残しを防ぐのは自己終了だけなので
+        // setInterval ではなく setTimeout にする(bdboard-l1t.9 レビューと同じ理由)。
+        "const gc = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 8000)'], " +
+        "{ stdio: ['ignore', 'inherit', 'inherit'], detached: true });" +
+        'gc.unref();' +
+        "process.stdout.write(String(process.pid) + ':' + String(gc.pid));" +
+        'setTimeout(() => {}, 30_000);';
+
+      const start = Date.now();
+      const result = await runner.run(process.execPath, ['-e', childScript], {
+        timeoutMs: 500,
+        onChunk: () => {},
+      });
+      const elapsedMs = Date.now() - start;
+
+      expect(result.failureKind).toBe('timeout');
+      // SIGKILL された子の exit code は null なので -1 に潰れる。
+      expect(result.exitCode).toBe(-1);
+
+      // 猶予を実際に待ったことの証明。SIGTERM で子が死んでいれば 500ms 前後で
+      // settle するので、ここが「エスカレーションが起きた」の判定になる。
+      // タイマーは指定より早くは発火しないので下限側は原理的に安定している。
+      expect(elapsedMs).toBeGreaterThanOrEqual(3_400);
+      // 上限は「猶予をもう一周していない」ことだけを見る緩い枠。実測は 3.5 秒強
+      // (猶予明けから settle まで 5〜6ms)なので、負荷でイベントループが数秒
+      // 詰まっても揺れない(bdboard-dvt と同じ轍を踏まないための余裕)。
+      expect(elapsedMs).toBeLessThan(8_000);
+
+      const [childPid, grandchildPid] = result.stdout.split(':').map(Number);
+      expect(Number.isInteger(childPid) && childPid > 0).toBe(true);
+      await expectProcessToBeGone(childPid);
+
+      // 孫は意図的にグループ外なので生き残っている。8 秒で自分から終わるが、
+      // テストを跨いで居座らせる理由も無いのでベストエフォートで片付ける。
+      if (Number.isInteger(grandchildPid) && grandchildPid > 0) {
+        try {
+          process.kill(grandchildPid, 'SIGKILL');
+        } catch {
+          // すでに居なければ何もしない。
+        }
+      }
+    },
+    15_000,
+  );
 });

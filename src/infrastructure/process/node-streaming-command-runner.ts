@@ -108,6 +108,14 @@ export class NodeStreamingCommandRunner implements StreamingCommandRunner {
         // 明示的に破棄しておくことで、他プロセスが fd を保持していても
         // ChildProcess 自身の 'close' 判定(このプロセスの stdio が閉じたか)は
         // 満たされるようにする。
+        //
+        // bdboard-qrrj で実測: この destroyStdio() を消しても settle はする。下の
+        // 'exit' バックストップが同じことを 300ms 遅れでやるからで、SIGKILL を
+        // 撃った以上 'exit' は必ず来る。効くのは settle latency だけで、猶予明け
+        // から 5〜6ms(有り) vs 303〜307ms(無し)。つまりこれは「settle しない」を
+        // 防ぐ砦ではなく、バックストップ待ちを飛ばす近道。差が 300ms しか無いので
+        // テストで固定していない(その粒度の時間アサーションは bdboard-dvt で
+        // フレーキーの原因そのものだった)。消してもテストは通るが、消す理由も無い。
         destroyStdio();
         if (!killProcessTree(child, 'SIGKILL')) {
           return;
