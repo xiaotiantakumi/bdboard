@@ -539,6 +539,33 @@ describe('buildBoard defer fields and deferred lane sorting', () => {
     expect(board.cards[0].deferUrgency).toBe('later');
   });
 
+  it('uses timeZone for deferDays and deferUrgency when provided', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-defer-tz',
+      status: 'deferred',
+      deferUntil: new Date('2026-06-08T00:00:00.000Z'),
+    });
+    const now = new Date('2026-06-01T15:00:00.000Z');
+
+    const utcBoard = buildBoard({
+      projectId: PROJECT,
+      tickets: [ticket],
+      now,
+      timeZone: 'UTC',
+    });
+    const tokyoBoard = buildBoard({
+      projectId: PROJECT,
+      tickets: [ticket],
+      now,
+      timeZone: 'Asia/Tokyo',
+    });
+
+    expect(utcBoard.cards[0].deferDays).toBe(7);
+    expect(tokyoBoard.cards[0].deferDays).toBe(6);
+    expect(utcBoard.cards[0].deferUrgency).toBe('later');
+    expect(tokyoBoard.cards[0].deferUrgency).toBe('later');
+  });
+
   it('sets deferDays and deferUrgency to null when deferUntil is absent', () => {
     const ticket = makeTicket({
       id: 'bdboard-no-defer',

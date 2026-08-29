@@ -1,16 +1,15 @@
-import type { BoardCache } from '../ports/board-cache.js';
+import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { Status } from '../../domain/status.js';
+import type { BoardCache } from '../ports/board-cache.js';
+import { localDateKey } from './board-date-time.js';
 
 export interface RecordCfdSnapshotResult {
   readonly recorded: boolean;
   readonly snapshotDate: string;
 }
 
-export function formatLocalDate(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+export function formatLocalDate(date: Date, timeZone?: string): string {
+  return localDateKey(date, timeZone ?? getBoardTimeZone());
 }
 
 function countTicketsByStatus(
@@ -28,8 +27,9 @@ function countTicketsByStatus(
 export function recordCfdSnapshot(
   cache: BoardCache,
   now: Date,
+  timeZone: string = getBoardTimeZone(),
 ): RecordCfdSnapshotResult {
-  const snapshotDate = formatLocalDate(now);
+  const snapshotDate = formatLocalDate(now, timeZone);
   const latestDate = cache.getLatestCfdSnapshotDate();
 
   if (latestDate === snapshotDate) {
@@ -62,13 +62,15 @@ export function pruneOldCfdSnapshots(
   cache: BoardCache,
   now: Date,
   retentionDays: number,
+  timeZone: string = getBoardTimeZone(),
 ): PruneCfdSnapshotsResult {
   if (retentionDays <= 0) {
-    return { deletedCount: 0, cutoffDate: formatLocalDate(now) };
+    return { deletedCount: 0, cutoffDate: formatLocalDate(now, timeZone) };
   }
 
   const cutoffDate = formatLocalDate(
     new Date(now.getTime() - retentionDays * 86_400_000),
+    timeZone,
   );
   const deletedCount = cache.pruneCfdSnapshots(cutoffDate);
   return { deletedCount, cutoffDate };

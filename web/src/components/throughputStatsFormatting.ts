@@ -1,4 +1,5 @@
 import type { AgeDistributionDto } from '../api';
+import { localDateKey } from './activityFeedFormatting';
 
 export const AGE_BUCKET_KEYS = ['d0to1', 'd1to7', 'd7to30', 'd30plus'] as const;
 export type AgeBucketKey = (typeof AGE_BUCKET_KEYS)[number];
@@ -9,13 +10,6 @@ export const AGE_BUCKET_LABELS: Record<AgeBucketKey, string> = {
   d7to30: '7-30日',
   d30plus: '30日以上',
 };
-
-export function localDateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 export function formatWeekLabel(weekStartIso: string): string {
   const date = new Date(weekStartIso);

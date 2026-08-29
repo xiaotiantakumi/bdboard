@@ -1,7 +1,11 @@
+import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { Project } from '../../domain/project.js';
 import type { Status } from '../../domain/status.js';
 import type { BoardCache } from '../ports/board-cache.js';
-import { formatLocalDate } from './record-cfd-snapshot.js';
+import {
+  localDateKey,
+  subtractCalendarDaysFromDateKey,
+} from './board-date-time.js';
 
 export interface CfdDayEntry {
   readonly date: string;
@@ -21,15 +25,14 @@ export interface CfdStats {
 export interface GetCfdStatsOptions {
   readonly projectIds?: readonly string[];
   readonly days?: number;
+  readonly timeZone?: string;
 }
 
 const DEFAULT_DAYS = 30;
 
-function cutoffDate(now: Date, days: number): string {
-  const start = new Date(now);
-  start.setHours(0, 0, 0, 0);
-  start.setDate(start.getDate() - (days - 1));
-  return formatLocalDate(start);
+function cutoffDate(now: Date, days: number, timeZone: string): string {
+  const todayKey = localDateKey(now, timeZone);
+  return subtractCalendarDaysFromDateKey(todayKey, days - 1, timeZone);
 }
 
 function isOnOrAfter(date: string, cutoff: string): boolean {
@@ -53,7 +56,8 @@ export function getCfdStats(
   options?: GetCfdStatsOptions,
 ): CfdStats {
   const days = Math.max(1, options?.days ?? DEFAULT_DAYS);
-  const cutoff = cutoffDate(now, days);
+  const timeZone = options?.timeZone ?? getBoardTimeZone();
+  const cutoff = cutoffDate(now, days, timeZone);
   const projectIdFilter = options?.projectIds;
 
   let entries = cache.listProjects();

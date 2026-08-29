@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CfdStatsDto, ModelStatsDto, ThroughputStatsDto } from '../api';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import { ThroughputStats } from './ThroughputStats';
 import { formatWeekLabel } from './throughputStatsFormatting';
 
@@ -332,6 +333,10 @@ describe('ThroughputStats', () => {
 });
 
 describe('formatWeekLabel', () => {
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
+  });
+
   it('formats a week label from the local date of weekStart', () => {
     const weekStart = new Date(2026, 7, 11);
     const year = weekStart.getFullYear();
@@ -341,5 +346,12 @@ describe('formatWeekLabel', () => {
     expect(formatWeekLabel(weekStart.toISOString())).toBe(
       `${year}-${month}-${day}の週`,
     );
+  });
+
+  it('uses the board timezone override for week labels', () => {
+    setBoardTimeZoneOverride('Asia/Tokyo');
+    const weekStartUtc = '2026-08-11T20:00:00.000Z';
+
+    expect(formatWeekLabel(weekStartUtc)).toBe('2026-08-12の週');
   });
 });
