@@ -109,4 +109,35 @@ describe('scanGitLeftovers', () => {
     expect(maxObserved).toBeLessThanOrEqual(3);
     expect(maxObserved).toBeGreaterThan(1);
   });
+
+  it('logs a warning when some projects fail but continues with the rest', async () => {
+    const scanner: WorktreeScanner = {
+      scan: async (rootPath) => {
+        if (rootPath === '/projects/b') {
+          throw new Error('git read failed');
+        }
+        return {
+          worktrees: [
+            { path: '/projects/a', branch: 'main', isMain: true },
+          ],
+          bdBranches: ['bd/bdboard-a'],
+        };
+      },
+    };
+
+    const logWarn = vi.fn();
+    const results = await scanGitLeftovers(
+      [project('proj-a', '/projects/a'), project('proj-b', '/projects/b')],
+      scanner,
+      { logWarn },
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]?.ticketId).toBe('bdboard-a');
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const message = logWarn.mock.calls[0]?.[0] as string;
+    expect(message).toContain('1 of 2 failed');
+    expect(message).toContain('proj-b');
+    expect(message).toContain('git read failed');
+  });
 });
