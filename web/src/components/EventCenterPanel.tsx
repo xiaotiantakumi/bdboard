@@ -66,6 +66,7 @@ function formatOccurredAt(occurredAt: string): string {
 export function EventCenterPanel({
   events,
   unreadCount,
+  lastReadAt,
   markAllRead,
   notificationsEnabled,
   notificationsSupported,
@@ -126,8 +127,8 @@ export function EventCenterPanel({
           <p className="event-center-panel-empty">まだイベントはありません</p>
         ) : (
           <ul className="event-center-panel-list">
-            {events.map((item, index) => {
-              const isUnread = index < unreadCount;
+            {events.map((item) => {
+              const isUnread = item.occurredAt > (lastReadAt ?? '');
               return (
                 <li
                   key={item.id}
