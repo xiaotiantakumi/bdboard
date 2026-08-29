@@ -48,9 +48,9 @@ describe('createEventHub', () => {
       received.push(event.name);
     });
 
-    hub.publish({ name: 'project.scanned', data: {} });
+    hub.publish({ name: 'notification', data: {} });
 
-    expect(received).toEqual(['project.scanned']);
+    expect(received).toEqual(['notification']);
     expect(errorSpy).toHaveBeenCalled();
 
     errorSpy.mockRestore();
