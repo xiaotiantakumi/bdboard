@@ -4,6 +4,8 @@ import { LANES } from '../../domain/readiness.js';
 import { makeSession, makeTicket } from '../../domain/test-support.js';
 import type { BoardView } from '../../application/board/get-board.js';
 import {
+  countIncompleteTicketsFromBoard,
+  countIncompleteTicketsFromTickets,
   toBoardCardDto,
   toBoardDto,
   toBoardViewDto,
@@ -571,6 +573,7 @@ describe('dto', () => {
 
     expect(dto.sessionCount).toBe(0);
     expect(dto.activeSessionCount).toBe(0);
+    expect(dto.incompleteTicketCount).toBe(0);
     expect(dto.sessions).toEqual([]);
     expect(Object.keys(dto)).not.toContain('aliasPaths');
   });
@@ -683,8 +686,46 @@ describe('dto', () => {
 
     expect(dto.projects[0]?.project.activeSessionCount).toBe(1);
     expect(dto.projects[0]?.project.sessionCount).toBe(1);
+    expect(dto.projects[0]?.project.incompleteTicketCount).toBe(1);
     expect(dto.projects[0]?.project.sessions).toHaveLength(1);
     expect(dto.projects[0]?.project.sessions[0]?.liveness).toBe('active');
+  });
+
+  it('countIncompleteTicketsFromTickets excludes closed tickets', () => {
+    const tickets = [
+      makeTicket({ id: 'bdboard-open', status: 'open' }),
+      makeTicket({ id: 'bdboard-progress', status: 'in_progress' }),
+      makeTicket({ id: 'bdboard-closed', status: 'closed' }),
+    ];
+
+    expect(countIncompleteTicketsFromTickets(tickets)).toBe(2);
+  });
+
+  it('countIncompleteTicketsFromBoard sums non-done lanes', () => {
+    const board = buildBoard({
+      projectId: '/projects/a',
+      tickets: [
+        makeTicket({ id: 'bdboard-ready', status: 'open' }),
+        makeTicket({ id: 'bdboard-progress', status: 'in_progress' }),
+        makeTicket({ id: 'bdboard-closed', status: 'closed' }),
+      ],
+      now: NOW,
+    });
+
+    expect(countIncompleteTicketsFromBoard(board)).toBe(2);
+    expect(board.lanes.done).toHaveLength(1);
+  });
+
+  it('toProjectDto passes through incompleteTicketCount', () => {
+    const project = {
+      id: '/projects/a',
+      name: 'a',
+      rootPath: '/projects/a',
+      prefixes: ['bdboard'],
+      aliasPaths: [],
+    };
+
+    expect(toProjectDto(project, NOW, undefined, 7).incompleteTicketCount).toBe(7);
   });
 
   it('toActivityEventDto omits optional interaction fields when absent', () => {

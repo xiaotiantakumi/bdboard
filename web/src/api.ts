@@ -7,6 +7,7 @@ export interface ProjectDto {
   prefixes: string[];
   sessionCount: number;
   activeSessionCount: number;
+  incompleteTicketCount: number;
   sessions: SessionDto[];
 }
 

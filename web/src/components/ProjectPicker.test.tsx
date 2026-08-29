@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ProjectDto } from '../api';
 import { ProjectPicker, projectPickerLabel } from './ProjectPicker';
 
-function project(id: string, name: string): ProjectDto {
+function project(id: string, name: string, incompleteTicketCount = 0): ProjectDto {
   return {
     id,
     name,
@@ -12,6 +12,7 @@ function project(id: string, name: string): ProjectDto {
     prefixes: [id],
     sessionCount: 0,
     activeSessionCount: 0,
+    incompleteTicketCount,
     sessions: [],
   };
 }
@@ -166,5 +167,34 @@ describe('ProjectPicker', () => {
 
     expect(onSaveCombination).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog', { name: 'プロジェクトの絞り込み' })).not.toBeInTheDocument();
+  });
+
+  it('shows incomplete ticket counts right-aligned on each row', async () => {
+    const user = userEvent.setup();
+    renderPicker({
+      projects: [
+        project('alpha', 'alpha', 18),
+        project('beta', 'beta', 0),
+        project('gamma', 'gamma', 11),
+      ],
+    });
+
+    await user.click(
+      screen.getByRole('button', { name: 'プロジェクトの絞り込み: すべてのプロジェクト' }),
+    );
+
+    const alphaRow = screen.getByRole('checkbox', { name: 'alpha' });
+    const betaRow = screen.getByRole('checkbox', { name: 'beta' });
+    const gammaRow = screen.getByRole('checkbox', { name: 'gamma' });
+
+    expect(alphaRow.querySelector('.project-picker-ticket-count')).toHaveTextContent('18');
+    expect(betaRow.querySelector('.project-picker-ticket-count')).toHaveTextContent('0');
+    expect(gammaRow.querySelector('.project-picker-ticket-count')).toHaveTextContent('11');
+    expect(betaRow.querySelector('.project-picker-ticket-count')).toHaveClass(
+      'project-picker-ticket-count-zero',
+    );
+    expect(alphaRow.querySelector('.project-picker-ticket-count')).not.toHaveClass(
+      'project-picker-ticket-count-zero',
+    );
   });
 });

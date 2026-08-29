@@ -5856,6 +5856,17 @@ body {
   white-space: nowrap;
 }
 
+.project-picker-ticket-count {
+  flex: 0 0 auto;
+  min-width: 1.5em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.project-picker-ticket-count-zero {
+  color: var(--color-text-tertiary);
+}
+
 .project-picker-empty {
   margin: 10px 8px;
   font-size: 0.8125rem;

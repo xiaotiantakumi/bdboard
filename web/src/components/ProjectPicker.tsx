@@ -93,6 +93,14 @@ export function ProjectPicker({
           {checked ? '✓' : ''}
         </span>
         <span className="project-picker-name">{project.name}</span>
+        <span
+          className={`project-picker-ticket-count${
+            project.incompleteTicketCount === 0 ? ' project-picker-ticket-count-zero' : ''
+          }`}
+          aria-hidden="true"
+        >
+          {project.incompleteTicketCount}
+        </span>
       </button>
     );
   };

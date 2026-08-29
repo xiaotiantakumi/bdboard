@@ -214,6 +214,7 @@ export interface ProjectDto {
   prefixes: string[];
   sessionCount: number;
   activeSessionCount: number;
+  incompleteTicketCount: number;
   sessions: SessionDto[];
 }
 
@@ -545,10 +546,26 @@ export function toBoardDto(
   };
 }
 
+export function countIncompleteTicketsFromTickets(
+  tickets: readonly Ticket[],
+): number {
+  return tickets.filter((ticket) => ticket.status !== 'closed').length;
+}
+
+export function countIncompleteTicketsFromBoard(board: Board): number {
+  return (
+    board.lanes.ready.length +
+    board.lanes.in_progress.length +
+    board.lanes.awaiting_human.length +
+    board.lanes.blocked.length
+  );
+}
+
 export function toProjectDto(
   project: Project,
   now: Date,
   sessions?: readonly AgentSession[],
+  incompleteTicketCount = 0,
 ): ProjectDto {
   const sessionDtos =
     sessions !== undefined
@@ -565,6 +582,7 @@ export function toProjectDto(
       sessions !== undefined
         ? sessions.filter((s) => computeLiveness(now, s) === 'active').length
         : 0,
+    incompleteTicketCount,
     sessions: sessionDtos,
   };
 }
@@ -588,6 +606,7 @@ export function toBoardViewDto(
             projectBoard.project,
             now,
             sessionsByProject?.get(projectBoard.project.id),
+            countIncompleteTicketsFromBoard(projectBoard.board),
           ),
           board: toBoardDto(
             projectBoard.board,

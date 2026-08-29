@@ -54,6 +54,7 @@ import { compareStrings } from '../../domain/compare.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { EventHub } from '../sse/event-hub.js';
 import {
+  countIncompleteTicketsFromTickets,
   toActivityEventDto,
   toAgentProcessDto,
   toBoardViewDto,
@@ -486,20 +487,25 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
   app.get('/api/projects', (c) => {
     const now = deps.now();
-    const allProjects = deps.cache
+    const cachedProjects = deps.cache
       .listProjects()
-      .map((entry) => entry.project);
+      // Locale-independent, to match cache.listProjects()/getBoard ordering.
+      .slice()
+      .sort((a, b) => compareStrings(a.project.rootPath, b.project.rootPath));
+    const allProjects = cachedProjects.map((entry) => entry.project);
     const sessionsByProject = groupSessionsByProject(
       deps.sessions?.() ?? [],
       allProjects,
     );
 
-    const projects: ProjectDto[] = allProjects
-      // Locale-independent, to match cache.listProjects()/getBoard ordering.
-      .sort((a, b) => compareStrings(a.rootPath, b.rootPath))
-      .map((project) =>
-        toProjectDto(project, now, sessionsByProject.get(project.id)),
-      );
+    const projects: ProjectDto[] = cachedProjects.map((entry) =>
+      toProjectDto(
+        entry.project,
+        now,
+        sessionsByProject.get(entry.project.id),
+        countIncompleteTicketsFromTickets(entry.tickets),
+      ),
+    );
 
     return c.json(projects);
   });
