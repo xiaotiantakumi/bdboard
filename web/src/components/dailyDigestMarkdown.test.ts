@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
   ActivityEventDto,
   BoardCardDto,
@@ -7,10 +7,22 @@ import type {
   SessionDto,
 } from '../api';
 import { projectNameFallback } from '../api';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import {
   buildDailyDigestMarkdown,
   type DailyDigestInput,
 } from './dailyDigestMarkdown';
+
+// bdboard-i759: 出力の時刻表記はboard timezoneに依存する。CIはUTC前提
+// (Asia/Tokyo以外)なので、既存フィクスチャのJST前提の期待値を保つには
+// 明示的にAsia/Tokyoへ固定する必要がある。
+beforeEach(() => {
+  setBoardTimeZoneOverride('Asia/Tokyo');
+});
+
+afterEach(() => {
+  resetBoardTimeZoneForTests();
+});
 
 function makeEvent(
   overrides: Partial<ActivityEventDto> & Pick<ActivityEventDto, 'id' | 'kind' | 'at'>,

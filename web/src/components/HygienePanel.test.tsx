@@ -2,13 +2,25 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type HygieneIssueDto, type LeaseHealthDto, type MergeSlotStatusDto } from '../api';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import {
   CONFLICT_WRITE_HELP,
   TUNNEL_WRITE_HELP,
 } from '../writeAccessMessage';
 import { HygienePanel } from './HygienePanel';
+
+// bdboard-i759: 出力の時刻表記はboard timezoneに依存する。CIはUTC前提
+// (Asia/Tokyo以外)なので、既存フィクスチャのJST前提の期待値を保つには
+// 明示的にAsia/Tokyoへ固定する必要がある(ファイル内の全describeに適用)。
+beforeEach(() => {
+  setBoardTimeZoneOverride('Asia/Tokyo');
+});
+
+afterEach(() => {
+  resetBoardTimeZoneForTests();
+});
 
 const showUndoMock = vi.fn();
 
