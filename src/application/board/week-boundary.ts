@@ -1,5 +1,5 @@
 import {
-  MS_PER_DAY,
+  addCalendarDaysToDateKey,
   getWeekdayInTimeZone,
   localDateKey,
   subtractCalendarDaysFromDateKey,
@@ -31,14 +31,24 @@ export function buildWeekStarts(
   return weekStarts;
 }
 
-export function isInWeek(at: Date, weekStart: Date): boolean {
+function nextWeekStart(weekStart: Date, timeZone: string): Date {
+  const weekStartKey = localDateKey(weekStart, timeZone);
+  const nextWeekStartKey = addCalendarDaysToDateKey(weekStartKey, 7, timeZone);
+  return zonedMidnight(nextWeekStartKey, timeZone);
+}
+
+export function isInWeek(at: Date, weekStart: Date, timeZone: string): boolean {
   const timestamp = at.getTime();
   const start = weekStart.getTime();
-  const end = start + 7 * MS_PER_DAY;
+  const end = nextWeekStart(weekStart, timeZone).getTime();
   return timestamp >= start && timestamp < end;
 }
 
-export function isInWeekRange(at: Date, weekStarts: readonly Date[]): boolean {
+export function isInWeekRange(
+  at: Date,
+  weekStarts: readonly Date[],
+  timeZone: string,
+): boolean {
   if (weekStarts.length === 0) {
     return false;
   }
@@ -47,7 +57,7 @@ export function isInWeekRange(at: Date, weekStarts: readonly Date[]): boolean {
   const lastWeekStart = weekStarts[weekStarts.length - 1];
   const rangeEnd =
     lastWeekStart !== undefined
-      ? lastWeekStart.getTime() + 7 * MS_PER_DAY
+      ? nextWeekStart(lastWeekStart, timeZone).getTime()
       : rangeStart;
 
   const timestamp = at.getTime();
