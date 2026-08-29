@@ -119,6 +119,32 @@ const bdCreateTitleSchema = z
   .max(200, 'title too long')
   .refine(isSafeCliArgument, { message: 'unsafe title' });
 
+const bdUpdateTitleSchema = z
+  .object({
+    id: ticketIdSchema,
+    title: bdCreateTitleSchema,
+  })
+  .strict();
+
+const bdLongTextSchema = z
+  .string()
+  .min(1, 'text must not be empty')
+  .max(4000, 'text too long');
+
+const bdUpdateDescriptionSchema = z
+  .object({
+    id: ticketIdSchema,
+    description: bdLongTextSchema,
+  })
+  .strict();
+
+const bdAppendNotesSchema = z
+  .object({
+    id: ticketIdSchema,
+    notes: bdLongTextSchema,
+  })
+  .strict();
+
 const bdCreateTypeSchema = z.enum(BD_CREATE_TYPES);
 
 const bdCreateSchema = z
@@ -236,6 +262,66 @@ export const BD_TOOL_DEFINITIONS: readonly BdToolDefinition[] = [
         status: {
           type: 'string',
           enum: [...BD_STATUSES],
+        },
+      },
+    },
+  },
+  {
+    name: 'bd_update_title',
+    description: '既存bdチケットのタイトルを変更する',
+    writes: true,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'title'],
+      properties: {
+        id: {
+          type: 'string',
+          description: 'チケットID',
+        },
+        title: {
+          type: 'string',
+          description: '新しいタイトル(1..200文字)',
+        },
+      },
+    },
+  },
+  {
+    name: 'bd_update_description',
+    description: '既存bdチケットのdescriptionを置き換える',
+    writes: true,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'description'],
+      properties: {
+        id: {
+          type: 'string',
+          description: 'チケットID',
+        },
+        description: {
+          type: 'string',
+          description: '新しい説明(最大4000文字、複数行可)',
+        },
+      },
+    },
+  },
+  {
+    name: 'bd_append_notes',
+    description: '既存bdチケットのnotesに追記する',
+    writes: true,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['id', 'notes'],
+      properties: {
+        id: {
+          type: 'string',
+          description: 'チケットID',
+        },
+        notes: {
+          type: 'string',
+          description: '追記するメモ(最大4000文字、複数行可)',
         },
       },
     },
@@ -590,6 +676,50 @@ export function buildBdToolArgs(
         parsed.data.id,
         '-s',
         parsed.data.status,
+      ]);
+    }
+    case 'bd_update_title': {
+      const parsed = bdUpdateTitleSchema.safeParse(rawArgs);
+      if (!parsed.success) {
+        return reject(describeZodError(parsed.error));
+      }
+
+      return ok([
+        ...buildWritePrefix(projectRootPath),
+        'update',
+        parsed.data.id,
+        '--title',
+        parsed.data.title,
+      ]);
+    }
+    case 'bd_update_description': {
+      const parsed = bdUpdateDescriptionSchema.safeParse(rawArgs);
+      if (!parsed.success) {
+        return reject(describeZodError(parsed.error));
+      }
+
+      return ok(
+        [
+          ...buildWritePrefix(projectRootPath),
+          'update',
+          parsed.data.id,
+          '--stdin',
+        ],
+        parsed.data.description,
+      );
+    }
+    case 'bd_append_notes': {
+      const parsed = bdAppendNotesSchema.safeParse(rawArgs);
+      if (!parsed.success) {
+        return reject(describeZodError(parsed.error));
+      }
+
+      return ok([
+        ...buildWritePrefix(projectRootPath),
+        'update',
+        parsed.data.id,
+        '--append-notes',
+        parsed.data.notes,
       ]);
     }
     case 'bd_claim': {

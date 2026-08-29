@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import {
+  ContentConflictError,
   PriorityConflictError,
   StatusConflictError,
   type IssueWriterPort,
@@ -107,6 +108,98 @@ async function readCurrentStatus(
   }
 
   return result.data.status;
+}
+
+// updateTitle/updateDescription の CAS チェック用。bd show --json の出力から
+// title / description だけ読めればよい。
+const bdShowTitleItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+});
+
+const bdShowDescriptionItemSchema = z.object({
+  id: z.string(),
+  description: z.string().nullish(),
+});
+
+async function readCurrentTitle(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  timeoutMs: number,
+  rootPath: string,
+  ticketId: string,
+): Promise<string> {
+  const stdout = await runBdCommandForStdout(
+    commandRunner,
+    bdPath,
+    timeoutMs,
+    rootPath,
+    ['--readonly', '-C', rootPath, 'show', '--json', `--id=${ticketId}`],
+    ticketId,
+  );
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new BdError(
+      'unknown',
+      ticketId,
+      'failed to parse bd show output while checking title for update',
+    );
+  }
+
+  const item = Array.isArray(parsed) ? parsed[0] : parsed;
+  const result = bdShowTitleItemSchema.safeParse(item);
+  if (!result.success) {
+    throw new BdError(
+      'unknown',
+      ticketId,
+      'bd show output missing title while checking update precondition',
+    );
+  }
+
+  return result.data.title;
+}
+
+async function readCurrentDescription(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  timeoutMs: number,
+  rootPath: string,
+  ticketId: string,
+): Promise<string> {
+  const stdout = await runBdCommandForStdout(
+    commandRunner,
+    bdPath,
+    timeoutMs,
+    rootPath,
+    ['--readonly', '-C', rootPath, 'show', '--json', `--id=${ticketId}`],
+    ticketId,
+  );
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new BdError(
+      'unknown',
+      ticketId,
+      'failed to parse bd show output while checking description for update',
+    );
+  }
+
+  const item = Array.isArray(parsed) ? parsed[0] : parsed;
+  const result = bdShowDescriptionItemSchema.safeParse(item);
+  if (!result.success) {
+    throw new BdError(
+      'unknown',
+      ticketId,
+      'bd show output missing description while checking update precondition',
+    );
+  }
+
+  return result.data.description ?? '';
 }
 
 export interface BdCliIssueWriterOptions {
@@ -342,6 +435,89 @@ export function createBdCliIssueWriter(
         rootPath,
         'bd_priority',
         { id: ticketId, priority: previousPriority },
+        ticketId,
+      );
+    },
+
+    async updateTitle(
+      rootPath: string,
+      ticketId: string,
+      title: string,
+      expectedCurrentTitle: string,
+    ): Promise<void> {
+      const actualTitle = await readCurrentTitle(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        ticketId,
+      );
+
+      if (actualTitle !== expectedCurrentTitle) {
+        throw new ContentConflictError(
+          ticketId,
+          'title',
+          expectedCurrentTitle,
+          actualTitle,
+        );
+      }
+
+      await runBdTool(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        'bd_update_title',
+        { id: ticketId, title },
+        ticketId,
+      );
+    },
+
+    async updateDescription(
+      rootPath: string,
+      ticketId: string,
+      description: string,
+      expectedCurrentDescription: string,
+    ): Promise<void> {
+      const actualDescription = await readCurrentDescription(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        ticketId,
+      );
+
+      if (actualDescription !== expectedCurrentDescription) {
+        throw new ContentConflictError(
+          ticketId,
+          'description',
+          expectedCurrentDescription,
+          actualDescription,
+        );
+      }
+
+      if (description.length === 0) {
+        // bd-tool-catalog の bd_update_description は min(1) だが、REST API は
+        // description クリア(空文字)を許容する。--stdin に空文字を渡すと
+        // --allow-empty-description が必要になるため、インライン --description "" を使う。
+        await runBdCommand(
+          commandRunner,
+          bdPath,
+          timeoutMs,
+          rootPath,
+          ['-C', rootPath, 'update', ticketId, '--description', ''],
+          ticketId,
+        );
+        return;
+      }
+
+      await runBdTool(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        'bd_update_description',
+        { id: ticketId, description },
         ticketId,
       );
     },

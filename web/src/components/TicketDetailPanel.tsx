@@ -8,10 +8,13 @@ import {
 } from '../bdCommands';
 import {
   deleteTicketDependency,
+  ApiError,
   deleteTicketLabel,
   deleteTicketSessionLink,
   fetchSessions,
   fetchTicket,
+  patchTicketDescription,
+  patchTicketTitle,
   fetchTicketComments,
   fetchTicketTimeline,
   fetchSimilarTickets,
@@ -308,6 +311,13 @@ export function TicketDetailPanel({
     null,
   );
   const [labelInputQuery, setLabelInputQuery] = useState('');
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [expectedCurrentTitle, setExpectedCurrentTitle] = useState('');
+  const [descriptionEditing, setDescriptionEditing] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState('');
+  const [expectedCurrentDescription, setExpectedCurrentDescription] =
+    useState('');
   const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
@@ -342,6 +352,12 @@ export function TicketDetailPanel({
     setDependencySearchLoading(false);
     setDependencySearchError(null);
     setLabelInputQuery('');
+    setTitleEditing(false);
+    setTitleDraft('');
+    setExpectedCurrentTitle('');
+    setDescriptionEditing(false);
+    setDescriptionDraft('');
+    setExpectedCurrentDescription('');
     setSessionLinkPickerOpen(false);
     if (copyTimeoutRef.current !== null) {
       clearTimeout(copyTimeoutRef.current);
@@ -639,6 +655,59 @@ export function TicketDetailPanel({
     addLabelMutation.isPending || removeLabelMutation.isPending;
   const labelMutationError = addLabelMutation.error ?? removeLabelMutation.error;
 
+  const updateTitleMutation = useMutation({
+    mutationFn: async () => {
+      await patchTicketTitle(
+        ticketId,
+        titleDraft.trim(),
+        expectedCurrentTitle,
+      );
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      await queryClient.invalidateQueries({ queryKey: ['board'] });
+      setTitleEditing(false);
+      setTitleDraft('');
+      setExpectedCurrentTitle('');
+    },
+    onError: async (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+        setTitleEditing(false);
+        setTitleDraft('');
+        setExpectedCurrentTitle('');
+      }
+    },
+  });
+
+  const updateDescriptionMutation = useMutation({
+    mutationFn: async () => {
+      await patchTicketDescription(
+        ticketId,
+        descriptionDraft,
+        expectedCurrentDescription,
+      );
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+      setDescriptionEditing(false);
+      setDescriptionDraft('');
+      setExpectedCurrentDescription('');
+    },
+    onError: async (error) => {
+      if (error instanceof ApiError && error.status === 409) {
+        await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
+        setDescriptionEditing(false);
+        setDescriptionDraft('');
+        setExpectedCurrentDescription('');
+      }
+    },
+  });
+
+  const trimmedTitleDraft = titleDraft.trim();
+  const canSaveTitle =
+    trimmedTitleDraft.length > 0 && trimmedTitleDraft !== expectedCurrentTitle;
+
   const currentLabels = data?.labels ?? [];
   const trimmedLabelInput = labelInputQuery.trim();
   const labelSuggestions = availableLabels
@@ -662,6 +731,58 @@ export function TicketDetailPanel({
     },
     [addLabelMutation, currentLabels],
   );
+
+  const handleStartTitleEdit = useCallback(() => {
+    if (data === undefined) {
+      return;
+    }
+    setTitleDraft(data.title);
+    setExpectedCurrentTitle(data.title);
+    setTitleEditing(true);
+  }, [data]);
+
+  const handleCancelTitleEdit = useCallback(() => {
+    setTitleEditing(false);
+    setTitleDraft('');
+    setExpectedCurrentTitle('');
+  }, []);
+
+  const handleSaveTitle = useCallback(() => {
+    if (!canSaveTitle || updateTitleMutation.isPending) {
+      return;
+    }
+    updateTitleMutation.mutate();
+  }, [canSaveTitle, updateTitleMutation]);
+
+  const handleStartDescriptionEdit = useCallback(() => {
+    if (data === undefined) {
+      return;
+    }
+    const current = data.description ?? '';
+    setDescriptionDraft(current);
+    setExpectedCurrentDescription(current);
+    setDescriptionEditing(true);
+  }, [data]);
+
+  const handleCancelDescriptionEdit = useCallback(() => {
+    setDescriptionEditing(false);
+    setDescriptionDraft('');
+    setExpectedCurrentDescription('');
+  }, []);
+
+  const handleSaveDescription = useCallback(() => {
+    if (
+      descriptionDraft === expectedCurrentDescription ||
+      updateDescriptionMutation.isPending
+    ) {
+      return;
+    }
+    updateDescriptionMutation.mutate();
+  }, [
+    descriptionDraft,
+    expectedCurrentDescription,
+    updateDescriptionMutation,
+  ]);
 
   // 'sessions' クエリキーは SessionListPanel と共有している(同じアクティブ
   // セッション一覧なので、既存キャッシュがあれば流用できる)。
@@ -785,9 +906,78 @@ export function TicketDetailPanel({
           panel={detailPanel}
         />
         <div className="detail-header">
-          <h2 id="detail-title" className="detail-title">
-            {isLoading ? '読み込み中…' : data?.title ?? 'チケット詳細'}
-          </h2>
+          {titleEditing ? (
+            <>
+              <h2 id="detail-title" className="sr-only">
+                {data?.title ?? 'チケット詳細'}
+              </h2>
+              <div className="detail-title-edit">
+                <label
+                  className="detail-field-label"
+                  htmlFor="detail-title-input"
+                >
+                  タイトル
+                </label>
+                <input
+                  id="detail-title-input"
+                  type="text"
+                  className="detail-title-input"
+                  value={titleDraft}
+                  onChange={(event) => setTitleDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      handleSaveTitle();
+                    }
+                  }}
+                  disabled={updateTitleMutation.isPending}
+                  maxLength={200}
+                />
+              <div className="detail-inline-edit-actions">
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={!canSaveTitle || updateTitleMutation.isPending}
+                  onClick={handleSaveTitle}
+                >
+                  {updateTitleMutation.isPending ? '保存中…' : '保存'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-small"
+                  disabled={updateTitleMutation.isPending}
+                  onClick={handleCancelTitleEdit}
+                >
+                  キャンセル
+                </button>
+              </div>
+              {updateTitleMutation.error !== null && (
+                <p className="error-message">
+                  {describeWriteError(
+                    updateTitleMutation.error,
+                    'タイトルの更新に失敗しました',
+                  )}
+                </p>
+              )}
+              </div>
+            </>
+          ) : (
+            <div className="detail-title-row">
+              <h2 id="detail-title" className="detail-title">
+                {isLoading ? '読み込み中…' : data?.title ?? 'チケット詳細'}
+              </h2>
+              {data !== undefined && (
+                <button
+                  type="button"
+                  className="btn btn-small detail-inline-edit-btn"
+                  aria-label="タイトルを編集"
+                  onClick={handleStartTitleEdit}
+                >
+                  編集
+                </button>
+              )}
+            </div>
+          )}
           <div className="detail-header-actions">
             <WatchToggle ticketId={ticketId} className="detail-watch-toggle" />
             <button
@@ -1030,17 +1220,83 @@ export function TicketDetailPanel({
                 <div>{formatDateTime(data.deferUntil)}</div>
               </div>
             )}
-            {data.description !== undefined && (
-              <div className="detail-section">
+            <div className="detail-section">
+              <div className="detail-section-heading-row">
                 <h3>Description</h3>
+                {!descriptionEditing && (
+                  <button
+                    type="button"
+                    className="btn btn-small detail-inline-edit-btn"
+                    aria-label="Description を編集"
+                    onClick={handleStartDescriptionEdit}
+                  >
+                    編集
+                  </button>
+                )}
+              </div>
+              {descriptionEditing ? (
+                <>
+                  <label
+                    className="detail-field-label"
+                    htmlFor="detail-description-input"
+                  >
+                    Description
+                  </label>
+                  <textarea
+                    id="detail-description-input"
+                    className="detail-description-input"
+                    value={descriptionDraft}
+                    onChange={(event) =>
+                      setDescriptionDraft(event.target.value)
+                    }
+                    disabled={updateDescriptionMutation.isPending}
+                    rows={6}
+                    maxLength={4000}
+                    aria-label="Description"
+                  />
+                  <div className="detail-inline-edit-actions">
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={
+                        descriptionDraft === expectedCurrentDescription ||
+                        updateDescriptionMutation.isPending
+                      }
+                      onClick={handleSaveDescription}
+                    >
+                      {updateDescriptionMutation.isPending
+                        ? '保存中…'
+                        : '保存'}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-small"
+                      disabled={updateDescriptionMutation.isPending}
+                      onClick={handleCancelDescriptionEdit}
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                  {updateDescriptionMutation.error !== null && (
+                    <p className="error-message">
+                      {describeWriteError(
+                        updateDescriptionMutation.error,
+                        'Description の更新に失敗しました',
+                      )}
+                    </p>
+                  )}
+                </>
+              ) : data.description !== undefined ? (
                 <MarkdownContent
                   text={data.description}
                   isTicketOnBoard={isTicketOnBoard}
                   onOpenTicket={onOpenTicket}
                   className="markdown-detail"
                 />
-              </div>
-            )}
+              ) : (
+                <p className="detail-empty">（未設定）</p>
+              )}
+            </div>
             {data.notes !== undefined && (
               <div className="detail-section">
                 <h3>Notes</h3>

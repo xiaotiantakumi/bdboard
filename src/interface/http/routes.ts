@@ -32,6 +32,7 @@ import type { HumanDecisionsPort } from '../../application/ports/human-decisions
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import type { DependencyWriterPort } from '../../application/ports/dependency-writer.js';
 import {
+  ContentConflictError,
   PriorityConflictError,
   StatusConflictError,
   type IssueWriterPort,
@@ -183,6 +184,20 @@ const commentBodySchema = z.object({
 
 const dependencyBodySchema = z.object({
   dependsOnId: z.string().min(1).max(200),
+});
+
+const updateTitleBodySchema = z.object({
+  title: z
+    .string()
+    .min(1)
+    .max(200)
+    .refine(isSafeCliArgument, { message: 'unsafe title' }),
+  expectedCurrentTitle: z.string().max(200),
+});
+
+const updateDescriptionBodySchema = z.object({
+  description: z.string().max(4000),
+  expectedCurrentDescription: z.string().max(4000),
 });
 
 const sessionLinkBodySchema = z.object({
@@ -1127,6 +1142,120 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
       const detail = error instanceof Error ? error.message : String(error);
       return c.json({ error: 'failed to remove dependency', detail }, 502);
+    }
+  });
+
+  app.patch('/api/tickets/:id/title', async (c) => {
+    if (deps.issueWriter === undefined) {
+      return c.json({ error: 'ticket content editing not available' }, 501);
+    }
+
+    const id = c.req.param('id');
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const parsed = updateTitleBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
+
+    const rootPath = findProjectRootPathForTicket(deps.cache, id);
+    if (rootPath === undefined) {
+      return c.json({ error: 'ticket not found', id }, 404);
+    }
+
+    try {
+      await deps.issueWriter.updateTitle(
+        rootPath,
+        id,
+        parsed.data.title,
+        parsed.data.expectedCurrentTitle,
+      );
+      return c.json({ ok: true });
+    } catch (error: unknown) {
+      if (error instanceof ContentConflictError) {
+        return c.json(
+          {
+            error: 'title changed since loaded',
+            detail: error.message,
+            expectedTitle: error.expectedValue,
+            currentTitle: error.actualValue,
+          },
+          409,
+        );
+      }
+
+      if (error instanceof BdError) {
+        return c.json(
+          { error: 'failed to update title', detail: error.detail },
+          502,
+        );
+      }
+
+      const detail = error instanceof Error ? error.message : String(error);
+      return c.json({ error: 'failed to update title', detail }, 502);
+    }
+  });
+
+  app.patch('/api/tickets/:id/description', async (c) => {
+    if (deps.issueWriter === undefined) {
+      return c.json({ error: 'ticket content editing not available' }, 501);
+    }
+
+    const id = c.req.param('id');
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+
+    const parsed = updateDescriptionBodySchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid request body' }, 400);
+    }
+
+    const rootPath = findProjectRootPathForTicket(deps.cache, id);
+    if (rootPath === undefined) {
+      return c.json({ error: 'ticket not found', id }, 404);
+    }
+
+    try {
+      await deps.issueWriter.updateDescription(
+        rootPath,
+        id,
+        parsed.data.description,
+        parsed.data.expectedCurrentDescription,
+      );
+      return c.json({ ok: true });
+    } catch (error: unknown) {
+      if (error instanceof ContentConflictError) {
+        return c.json(
+          {
+            error: 'description changed since loaded',
+            detail: error.message,
+            expectedDescription: error.expectedValue,
+            currentDescription: error.actualValue,
+          },
+          409,
+        );
+      }
+
+      if (error instanceof BdError) {
+        return c.json(
+          { error: 'failed to update description', detail: error.detail },
+          502,
+        );
+      }
+
+      const detail = error instanceof Error ? error.message : String(error);
+      return c.json({ error: 'failed to update description', detail }, 502);
     }
   });
 

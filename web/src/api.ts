@@ -807,6 +807,36 @@ export function deleteTicketLabel(id: string, label: string): Promise<void> {
   ).then(() => undefined);
 }
 
+export function patchTicketTitle(
+  id: string,
+  title: string,
+  expectedCurrentTitle: string,
+): Promise<void> {
+  return fetchJson<{ ok: true }>(
+    `/api/tickets/${encodeURIComponent(id)}/title`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, expectedCurrentTitle }),
+    },
+  ).then(() => undefined);
+}
+
+export function patchTicketDescription(
+  id: string,
+  description: string,
+  expectedCurrentDescription: string,
+): Promise<void> {
+  return fetchJson<{ ok: true }>(
+    `/api/tickets/${encodeURIComponent(id)}/description`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description, expectedCurrentDescription }),
+    },
+  ).then(() => undefined);
+}
+
 export function postTicketSessionLink(
   id: string,
   sessionId: string,
