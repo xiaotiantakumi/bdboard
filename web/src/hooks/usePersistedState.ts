@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 function getStorage(): Storage | null {
   try {
@@ -35,6 +35,29 @@ function writeStorageItem(key: string, value: string): void {
   }
 }
 
+function readValidatedStorageValue<T>(
+  raw: string,
+  validate: PersistedValidator<T>,
+): T | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return validate(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function parseStoredValue<T>(
+  raw: string | null,
+  defaultValue: T,
+  validate: PersistedValidator<T>,
+): T {
+  if (raw === null) {
+    return defaultValue;
+  }
+  return readValidatedStorageValue(raw, validate) ?? defaultValue;
+}
+
 export type PersistedValidator<T> = (value: unknown) => T | null;
 
 export function usePersistedState<T>(
@@ -42,19 +65,44 @@ export function usePersistedState<T>(
   defaultValue: T,
   validate: PersistedValidator<T>,
 ): [T, (value: T | ((prev: T) => T)) => void] {
-  const [state, setState] = useState<T>(() => {
-    try {
-      const raw = readStorageItem(key);
-      if (raw === null) {
-        return defaultValue;
-      }
-      const parsed: unknown = JSON.parse(raw);
-      const validated = validate(parsed);
-      return validated ?? defaultValue;
-    } catch {
-      return defaultValue;
+  const defaultValueRef = useRef(defaultValue);
+  defaultValueRef.current = defaultValue;
+  const validateRef = useRef(validate);
+  validateRef.current = validate;
+
+  const [state, setState] = useState<T>(() =>
+    parseStoredValue(readStorageItem(key), defaultValue, validate),
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
     }
-  });
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.storageArea !== getStorage()) {
+        return;
+      }
+      if (event.key !== key) {
+        return;
+      }
+      if (event.newValue === null) {
+        const next = defaultValueRef.current;
+        setState((prev) => (Object.is(next, prev) ? prev : next));
+        return;
+      }
+      const next = readValidatedStorageValue(event.newValue, validateRef.current);
+      if (next === null) {
+        return;
+      }
+      setState((prev) => (Object.is(next, prev) ? prev : next));
+    };
+
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [key]);
 
   const setPersistedState = useCallback(
     (value: T | ((prev: T) => T)) => {
