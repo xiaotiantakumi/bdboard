@@ -105,6 +105,7 @@ describe('buildBdToolArgs', () => {
         PROJECT_ROOT,
         'show',
         '--json',
+        '--include-comments',
         '--id=bdboard-3tw.13',
       ],
     });

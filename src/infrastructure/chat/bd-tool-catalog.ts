@@ -206,7 +206,7 @@ export const BD_TOOL_DEFINITIONS: readonly BdToolDefinition[] = [
   },
   {
     name: 'bd_show',
-    description: 'bdチケットの詳細を取得する',
+    description: 'bdチケットの詳細とコメントを取得する',
     writes: false,
     inputSchema: {
       type: 'object',
@@ -574,6 +574,7 @@ export function buildBdToolArgs(
         ...buildReadonlyPrefix(projectRootPath),
         'show',
         '--json',
+        '--include-comments',
         `--id=${parsed.data.id}`,
       ]);
     }

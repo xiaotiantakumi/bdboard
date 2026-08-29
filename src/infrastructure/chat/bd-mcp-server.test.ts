@@ -169,6 +169,7 @@ describe('createBdMcpServer', () => {
         PROJECT_ROOT,
         'show',
         '--json',
+        '--include-comments',
         '--id=bdboard-1',
       ],
       options: {
