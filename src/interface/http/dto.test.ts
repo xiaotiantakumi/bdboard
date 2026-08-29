@@ -560,6 +560,73 @@ describe('dto', () => {
     expect(toSessionDto(dormant, NOW).liveness).toBe('dormant');
   });
 
+  it('toSessionDto honors the resolved liveness thresholds', () => {
+    /*
+     * bdboard-3tw.102.5: 引数を渡さないと常に既定値 (5分/30分/24時間) になり、
+     * Settings で閾値を変えてもボードのバッジだけが追随してセッション一覧は
+     * 古いまま、という食い違いが起きる。既定値では 'active' になる経過時間で、
+     * 上書き後は 'idle' に変わることを見る (逆向きも 1 件)。
+     */
+    const thresholds = {
+      activeMs: 60_000,
+      idleMs: 10 * 60_000,
+      staleMs: 60 * 60_000,
+    };
+    const twoMinutesIdle = makeSession({
+      alive: true,
+      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
+    });
+    const twoHoursOld = makeSession({
+      alive: true,
+      lastActivityAt: new Date(NOW.getTime() - 2 * 60 * 60_000),
+    });
+
+    expect(toSessionDto(twoMinutesIdle, NOW).liveness).toBe('active');
+    expect(toSessionDto(twoMinutesIdle, NOW, thresholds).liveness).toBe('idle');
+    // 既定では stale (24時間以内)、上書き後は dormant (1時間超)。
+    expect(toSessionDto(twoHoursOld, NOW).liveness).toBe('stale');
+    expect(toSessionDto(twoHoursOld, NOW, thresholds).liveness).toBe('dormant');
+  });
+
+  it('toProjectDto counts active sessions with the resolved thresholds', () => {
+    // ヘッダーの「稼働中 N」がここから出る。件数と各セッションの liveness が
+    // 同じ閾値を見ていないと、同じ画面の中で食い違う (bdboard-3tw.102.5)。
+    const project = {
+      id: '/projects/a',
+      name: 'a',
+      rootPath: '/projects/a',
+      prefixes: ['bdboard'],
+      aliasPaths: [],
+    };
+    const justNow = makeSession({
+      sessionId: 'session-now',
+      alive: true,
+      startedAt: NOW,
+      lastActivityAt: NOW,
+    });
+    const twoMinutesIdle = makeSession({
+      sessionId: 'session-2m',
+      alive: true,
+      startedAt: NOW,
+      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
+    });
+
+    const sessions = [justNow, twoMinutesIdle];
+    const withDefaults = toProjectDto(project, NOW, sessions, 0);
+    const withOverride = toProjectDto(project, NOW, sessions, 0, {
+      activeMs: 60_000,
+      idleMs: 10 * 60_000,
+      staleMs: 60 * 60_000,
+    });
+
+    expect(withDefaults.activeSessionCount).toBe(2);
+    expect(withOverride.activeSessionCount).toBe(1);
+    expect(withOverride.sessions.map((s) => s.liveness)).toEqual([
+      'active',
+      'idle',
+    ]);
+  });
+
   it('toProjectDto without sessions returns empty sessions and zero counts', () => {
     const project = {
       id: '/projects/a',

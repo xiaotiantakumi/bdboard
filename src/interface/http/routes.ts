@@ -505,8 +505,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     });
   });
 
-  app.get('/api/projects', (c) => {
+  app.get('/api/projects', async (c) => {
     const now = deps.now();
+    // ユーザー設定の liveness 閾値を反映する (bdboard-3tw.102.5)。渡さないと
+    // activeSessionCount = ヘッダーの「稼働中 N」だけが既定値のままになる。
+    const thresholds = await deps.getBoardThresholds?.();
     const cachedProjects = deps.cache
       .listProjects()
       // Locale-independent, to match cache.listProjects()/getBoard ordering.
@@ -524,6 +527,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         now,
         sessionsByProject.get(entry.project.id),
         countIncompleteTicketsFromTickets(entry.tickets),
+        thresholds?.livenessThresholds,
       ),
     );
 
@@ -543,8 +547,9 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
     }
 
+    const boardDeps = await buildGetBoardDeps(deps);
     const view = await getBoard(
-      await buildGetBoardDeps(deps),
+      boardDeps,
       {
         ...(projectIds !== undefined ? { projectIds } : {}),
         ...(epicId !== undefined && epicId.length > 0 ? { epicId } : {}),
@@ -558,7 +563,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       view.projects.map((entry) => entry.project),
     );
 
-    const dto = toBoardViewDto(view, sessionsByProject);
+    const dto = toBoardViewDto(
+      view,
+      sessionsByProject,
+      boardDeps.livenessThresholds,
+    );
     const etag = computeWeakEtag(boardViewDtoStableJson(dto));
 
     c.header('ETag', etag);
@@ -1512,8 +1521,9 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
   });
 
-  app.get('/api/sessions/history', (c) => {
+  app.get('/api/sessions/history', async (c) => {
     const now = deps.now();
+    const thresholds = await deps.getBoardThresholds?.();
     const limit = parseSessionHistoryLimit(c.req.query('limit'));
     const projectIds = parseProjectIds(c.req.query('projects'));
     const sessions = deps.sessions?.() ?? [];
@@ -1523,7 +1533,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       ...(projectIds !== undefined ? { projectIds } : {}),
     });
 
-    return c.json(history.map((entry) => toSessionHistoryEntryDto(entry, now)));
+    return c.json(
+      history.map((entry) =>
+        toSessionHistoryEntryDto(entry, now, thresholds?.livenessThresholds),
+      ),
+    );
   });
 
   app.get('/api/sessions/:id/tail', async (c) => {
@@ -1556,10 +1570,15 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     });
   });
 
-  app.get('/api/sessions', (c) => {
+  app.get('/api/sessions', async (c) => {
     const now = deps.now();
+    const thresholds = await deps.getBoardThresholds?.();
     const sessions = deps.sessions?.() ?? [];
-    return c.json(sessions.map((session) => toSessionDto(session, now)));
+    return c.json(
+      sessions.map((session) =>
+        toSessionDto(session, now, thresholds?.livenessThresholds),
+      ),
+    );
   });
 
   app.get('/api/processes', async (c) => {

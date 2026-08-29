@@ -719,6 +719,28 @@ describe('SettingsPanel', () => {
     );
   });
 
+  it('invalidates sessions and projects when liveness thresholds are saved', async () => {
+    /*
+     * bdboard-3tw.102.5: liveness 閾値はセッション系のDTOにも効くようになった。
+     * postRefresh が起こすのは board.changed で、useBoardStream はそれで
+     * ['sessions'] / ['projects'] を無効化しない。全エージェントが止まっている
+     * 間は session.changed も飛ばないので、ここで無効化しないとヘッダーの
+     * 「稼働中 N」だけが古い閾値のまま残る。
+     */
+    const user = userEvent.setup();
+    const { queryClient } = renderSettings();
+    const invalidateQueries = vi.spyOn(queryClient, 'invalidateQueries');
+
+    const section = await screen.findByRole('region', { name: '滞留・liveness 閾値' });
+    await user.clear(within(section).getByLabelText('liveness active (分)'));
+    await user.type(within(section).getByLabelText('liveness active (分)'), '5');
+    await user.click(within(section).getByRole('button', { name: '閾値を保存' }));
+
+    await screen.findByText('閾値設定を保存しました');
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['sessions'] });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['projects'] });
+  });
+
   it('shows the wip limits section and saves edited values', async () => {
     const user = userEvent.setup();
     renderSettings();

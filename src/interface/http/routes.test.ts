@@ -4455,6 +4455,103 @@ describe('createApiRoutes', () => {
     expect(body[0].liveness).toBe('active');
   });
 
+  it('applies the configured liveness thresholds to sessions, projects and board', async () => {
+    /*
+     * bdboard-3tw.102.5: dto.ts が computeLiveness を閾値なしで呼んでいたため、
+     * Settings で liveness 閾値を変えてもボードカードのバッジ (domain/board.ts
+     * 経由なので正しかった) だけが追随し、ヘッダーの「稼働中 N」・セッション
+     * 一覧・セッション詳細は既定値のまま、という食い違いが起きていた。
+     * 4つのエンドポイントが同じ解決済み閾値を見ることを1本で押さえる。
+     */
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: a.id })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    // 既定 (activeMs=5分) なら active、上書き (activeMs=1分) なら idle。
+    const session = makeSession({
+      sessionId: 'session-a',
+      cwd: '/projects/a',
+      alive: true,
+      startedAt: NOW,
+      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
+    });
+
+    const getBoardThresholds = vi.fn(async () => ({
+      stalledThresholds: { stalledAfterMs: 60 * 60_000 },
+      livenessThresholds: {
+        activeMs: 60_000,
+        idleMs: 10 * 60_000,
+        staleMs: 60 * 60_000,
+      },
+    }));
+
+    // カード内のセッション表示 (lanes[*].sessions[].liveness) も同じ閾値を見る。
+    // ここを外すと、カードのバッジ (domain 経由) だけが新しい閾値に従い、その
+    // 直下のセッション行が古い閾値のまま、というチケットそのものの症状に戻る。
+    const links = [
+      makeSessionLink({ sessionId: 'session-a', ticketId: 'bdboard-a' }),
+    ];
+
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        sessions: () => [session],
+        links: () => links,
+        getBoardThresholds,
+      }),
+    );
+
+    const sessionsBody = await (await app.request('/api/sessions')).json();
+    expect(sessionsBody[0].liveness).toBe('idle');
+
+    const projectsBody = await (await app.request('/api/projects')).json();
+    expect(projectsBody[0].activeSessionCount).toBe(0);
+    expect(projectsBody[0].sessions[0].liveness).toBe('idle');
+
+    /*
+     * /api/sessions/history にも同じ閾値を通してあるが、ここでは検証していない。
+     * getSessionHistory が返すのは alive === false のセッションだけで、
+     * computeLiveness は !alive を即 'dormant' にするため、閾値が何であっても
+     * 結果が変わらない (= 観測できない) ため。「ended だけ」の条件が将来外れた
+     * ときに配線漏れを作らないよう、引数だけは他と同じ形で通してある。
+     */
+
+    const boardBody = await (
+      await app.request('/api/board?view=split')
+    ).json();
+    expect(boardBody.projects[0].project.sessions[0].liveness).toBe('idle');
+    expect(boardBody.projects[0].project.activeSessionCount).toBe(0);
+
+    // カード側。バッジ (card.liveness、domain 由来) とカード内セッション行
+    // (sessions[].liveness、DTO 由来) が同じ閾値を見ていることを1枚のカードで見る。
+    const cards = Object.values(
+      boardBody.projects[0].board.lanes as Record<string, unknown[]>,
+    ).flat() as {
+      ticket: { id: string };
+      liveness: string;
+      sessions: { liveness: string }[];
+    }[];
+    const card = cards.find((entry) => entry.ticket.id === 'bdboard-a');
+    expect(card?.sessions).toHaveLength(1);
+    expect(card?.sessions[0]?.liveness).toBe('idle');
+    expect(card?.liveness).toBe('idle');
+
+    // merged ビューのカードも同じ経路 (toBoardDto) を通る。
+    const mergedBody = await (await app.request('/api/board')).json();
+    const mergedCards = Object.values(
+      mergedBody.merged.lanes as Record<string, unknown[]>,
+    ).flat() as { sessions: { liveness: string }[] }[];
+    expect(mergedCards[0]?.sessions[0]?.liveness).toBe('idle');
+
+    // 設定を読まない実装に戻ると、この呼び出し自体が消える。
+    expect(getBoardThresholds).toHaveBeenCalled();
+  });
+
   it('returns session history for ended sessions only', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');
