@@ -660,6 +660,162 @@ describe('TicketDetailPanel pending decisions', () => {
     vi.unstubAllGlobals();
   });
 
+  // bdboard-9hl: pendingDecision はポーリング由来で、利用者の操作と無関係に
+  // 出現/消滅する。それを合図にフォーム全体をリセットしていたため、書きかけの
+  // コメント等が警告なく消えていた。リセットしてよいのは decision の回答欄だけ。
+  it('keeps an in-progress comment draft when a pending decision appears', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision?: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(panel(undefined));
+
+    await screen.findByText('Sample ticket');
+    const textarea = screen.getByLabelText('コメントを追加');
+    await user.type(textarea, '書きかけのコメント');
+    expect(textarea).toHaveValue('書きかけのコメント');
+
+    // エージェントがこのチケットに bd human の質問を投稿した = 次のポーリングで
+    // pendingDecision が undefined から現れる。利用者は何も操作していない。
+    rerender(
+      panel({
+        id: sampleTicket.id,
+        projectId: sampleTicket.projectId,
+        question: 'どちらにしますか?',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(await screen.findByText('どちらにしますか?')).toBeInTheDocument();
+    expect(screen.getByLabelText('コメントを追加')).toHaveValue('書きかけのコメント');
+  });
+
+  it('still clears the decision answer when the pending decision is replaced', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const first: PendingDecisionDto = {
+      id: 'decision-1',
+      projectId: sampleTicket.projectId,
+      question: '最初の質問',
+      allowFreeform: true,
+    };
+    const { rerender } = render(panel(first));
+
+    const freeform = await screen.findByLabelText('自由記入');
+    await user.type(freeform, '最初の回答');
+    expect(freeform).toHaveValue('最初の回答');
+
+    // 別の質問に差し替わったら、前の質問への回答は持ち越してはいけない。
+    rerender(
+      panel({
+        id: 'decision-2',
+        projectId: sampleTicket.projectId,
+        question: '次の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(await screen.findByText('次の質問')).toBeInTheDocument();
+    expect(screen.getByLabelText('自由記入')).toHaveValue('');
+  });
+
+  it('still clears a selected choice when the pending decision is replaced', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const options = [
+      { label: 'A案', value: 'a' },
+      { label: 'B案', value: 'b' },
+    ];
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        options,
+        allowFreeform: true,
+      }),
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'A案' }));
+    expect(screen.getByRole('button', { name: 'A案' })).toHaveClass('active');
+    // 選択があるので送信できる状態。
+    expect(screen.getByRole('button', { name: '回答を送信' })).toBeEnabled();
+
+    rerender(
+      panel({
+        id: 'decision-2',
+        projectId: sampleTicket.projectId,
+        question: '次の質問',
+        options,
+        allowFreeform: true,
+      }),
+    );
+
+    // 前の質問で選んだ選択肢を持ち越さない。持ち越すと、別の質問に対して
+    // 身に覚えのない回答をワンクリックで送信できてしまう。
+    expect(await screen.findByText('次の質問')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'A案' })).not.toHaveClass('active');
+    expect(screen.getByRole('button', { name: '回答を送信' })).toBeDisabled();
+  });
+
   it('hides the pending decision section when pendingDecision is undefined', async () => {
     renderPanel(new Map());
 
