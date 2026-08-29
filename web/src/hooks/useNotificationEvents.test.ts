@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BoardCardDto, TicketDetailDto, TicketSummaryDto } from '../api';
 import { __resetSharedEventSourceForTests } from '../lib/sseConnection';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import {
@@ -98,6 +99,109 @@ function withFakeBatchTimers(run: () => void) {
     vi.useRealTimers();
   }
 }
+
+function makeTicketSummary(
+  overrides: Partial<TicketSummaryDto> & Pick<TicketSummaryDto, 'id'>,
+): TicketSummaryDto {
+  return {
+    projectId: 'proj-1',
+    title: 'Example ticket',
+    status: 'open',
+    priority: 2,
+    issueType: 'task',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    commentCount: 1,
+    ...overrides,
+  };
+}
+
+function makeBoardCard(ticket: TicketSummaryDto): BoardCardDto {
+  return {
+    ticket,
+    lane: 'ready',
+    projectId: ticket.projectId,
+    blockedBy: [],
+    blocks: [],
+    unblocksCount: 0,
+    liveness: null,
+    sessions: [],
+    stalled: false,
+    epicProgress: null,
+    deferDays: null,
+    deferUrgency: null,
+    effectivePriority: ticket.priority,
+    priorityInheritedFrom: null,
+  };
+}
+
+function makeTicketDetail(ticket: TicketSummaryDto): TicketDetailDto {
+  return {
+    ...ticket,
+    dependencies: [],
+    blockedBy: [],
+    blocks: [],
+    sessionLinks: [],
+    models: [],
+    children: [],
+  };
+}
+
+describe('useNotificationEvents watched ticket snapshot continuity', () => {
+  beforeEach(() => {
+    MockEventSource.instances = [];
+    __resetSharedEventSourceForTests();
+    localStorage.clear();
+    vi.stubGlobal('EventSource', MockEventSource);
+    vi.stubGlobal('Notification', MockNotification);
+  });
+
+  afterEach(() => {
+    __resetSharedEventSourceForTests();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('emits watched_comment_changed after a temporary board-card disappearance when detail fetch completes', () => {
+    const ticketId = 'bdboard-abc';
+    const ticketV1 = makeTicketSummary({ id: ticketId, commentCount: 1 });
+    const watchedTicketIds = new Set([ticketId]);
+    const emptyDetails = new Map<string, TicketDetailDto>();
+
+    const { result, rerender } = renderHook((props) => useNotificationEvents(props), {
+      initialProps: {
+        watchedTicketIds,
+        boardCardsById: new Map([[ticketId, makeBoardCard(ticketV1)]]),
+        watchedTicketDetails: emptyDetails,
+      },
+    });
+
+    expect(result.current.events).toHaveLength(0);
+
+    rerender({
+      watchedTicketIds,
+      boardCardsById: new Map<string, BoardCardDto>(),
+      watchedTicketDetails: emptyDetails,
+    });
+
+    expect(result.current.events).toHaveLength(0);
+
+    const ticketV2 = makeTicketSummary({ id: ticketId, commentCount: 2 });
+    rerender({
+      watchedTicketIds,
+      boardCardsById: new Map<string, BoardCardDto>(),
+      watchedTicketDetails: new Map([[ticketId, makeTicketDetail(ticketV2)]]),
+    });
+
+    expect(result.current.events).toHaveLength(1);
+    expect(result.current.events[0]).toMatchObject({
+      kind: 'watched_comment_changed',
+      ticketId,
+      previousCommentCount: 1,
+      commentCount: 2,
+    });
+  });
+});
 
 describe('useNotificationEvents', () => {
   let hasFocusMock: ReturnType<typeof vi.spyOn>;
