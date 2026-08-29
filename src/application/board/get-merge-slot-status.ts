@@ -4,7 +4,10 @@ import {
   type MergeSlotStatus,
   type MergeSlotThresholds,
 } from '../../domain/merge-slot.js';
+import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { MergeSlotReader } from '../ports/merge-slot-reader.js';
+
+const PROJECT_SCAN_CONCURRENCY = 3;
 
 export interface GetMergeSlotStatusOptions {
   readonly projectIds?: readonly string[];
@@ -23,24 +26,18 @@ export async function getMergeSlotStatus(
     targetProjects = projects.filter((project) => filterSet.has(project.id));
   }
 
-  const settled = await Promise.allSettled(
-    targetProjects.map(async (project) => {
-      const signal = await reader.readMergeSlotSignal(project.rootPath);
-      return evaluateMergeSlotStatus(
-        project.id,
-        signal,
-        now,
-        options?.thresholds,
-      );
-    }),
-  );
-
   const statuses: MergeSlotStatus[] = [];
-  for (const outcome of settled) {
-    if (outcome.status === 'fulfilled') {
-      statuses.push(outcome.value);
+
+  await runWithConcurrencyLimit(targetProjects, PROJECT_SCAN_CONCURRENCY, async (project) => {
+    try {
+      const signal = await reader.readMergeSlotSignal(project.rootPath);
+      statuses.push(
+        evaluateMergeSlotStatus(project.id, signal, now, options?.thresholds),
+      );
+    } catch {
+      // Skip projects whose reader rejects without failing the whole call.
     }
-  }
+  });
 
   statuses.sort((a, b) => a.projectId.localeCompare(b.projectId));
 

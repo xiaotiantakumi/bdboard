@@ -95,4 +95,33 @@ describe('getMergeSlotStatus', () => {
       isLongHeld: true,
     });
   });
+
+  it('limits project scan concurrency to the configured maximum', async () => {
+    const projects = Array.from({ length: 8 }, (_, index) =>
+      project(`proj-${index}`, `/projects/${index}`),
+    );
+
+    let activeCount = 0;
+    let maxObserved = 0;
+
+    const reader: MergeSlotReader = {
+      readMergeSlotSignal: vi.fn(async () => {
+        activeCount += 1;
+        maxObserved = Math.max(maxObserved, activeCount);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeCount -= 1;
+        return {
+          status: 'open',
+          holder: null,
+          updatedAt: '2026-08-17T10:48:26Z',
+        };
+      }),
+    };
+
+    const statuses = await getMergeSlotStatus(projects, reader, NOW);
+
+    expect(statuses).toHaveLength(8);
+    expect(maxObserved).toBeLessThanOrEqual(3);
+    expect(maxObserved).toBeGreaterThan(1);
+  });
 });

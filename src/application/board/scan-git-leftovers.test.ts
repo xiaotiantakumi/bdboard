@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../domain/project.js';
 import type { WorktreeScanner } from '../ports/worktree-scanner.js';
 import { scanGitLeftovers } from './scan-git-leftovers.js';
@@ -80,5 +80,33 @@ describe('scanGitLeftovers', () => {
 
     expect(results).toHaveLength(1);
     expect(results[0]?.ticketId).toBe('bdboard-a');
+  });
+
+  it('limits project scan concurrency to the configured maximum', async () => {
+    const projects = Array.from({ length: 8 }, (_, index) =>
+      project(`proj-${index}`, `/projects/${index}`),
+    );
+
+    let activeCount = 0;
+    let maxObserved = 0;
+
+    const scanner: WorktreeScanner = {
+      scan: vi.fn(async () => {
+        activeCount += 1;
+        maxObserved = Math.max(maxObserved, activeCount);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeCount -= 1;
+        return {
+          worktrees: [{ path: '/projects/x', branch: 'main', isMain: true }],
+          bdBranches: ['bd/bdboard-x'],
+        };
+      }),
+    };
+
+    const results = await scanGitLeftovers(projects, scanner);
+
+    expect(results).toHaveLength(8);
+    expect(maxObserved).toBeLessThanOrEqual(3);
+    expect(maxObserved).toBeGreaterThan(1);
   });
 });
