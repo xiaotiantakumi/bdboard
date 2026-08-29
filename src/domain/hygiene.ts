@@ -10,6 +10,14 @@ import {
 } from './readiness.js';
 import type { LeftoverCandidate } from './git-worktree.js';
 import { isOpenLike, isPriority } from './status.js';
+import {
+  resolveHygieneThresholds,
+  type HygieneThresholds,
+  type HygieneThresholdsOverrides,
+} from './hygiene-thresholds.js';
+
+export type { HygieneThresholds, HygieneThresholdsOverrides } from './hygiene-thresholds.js';
+export { DEFAULT_HYGIENE_THRESHOLDS } from './hygiene-thresholds.js';
 import type { Ticket } from './ticket.js';
 import type { TicketId } from './ticket-id.js';
 
@@ -50,37 +58,6 @@ export interface HygieneIssue {
   readonly cycleEdges?: readonly HygieneCycleEdge[];
 }
 
-export interface HygieneThresholds {
-  /**
-   * 既定 7日。
-   *
-   * stalled（24時間・セッション無し）とは別軸で、「in_progress のまま長期間経過」を
-   * 台帳の腐りとして拾う。startedAt があればそこから、無ければ updatedAt から測る。
-   */
-  readonly staleInProgressAfterMs: number;
-  /** P0/P1 を高優先とみなす上限（この値以下） */
-  readonly highPriorityMax: number;
-  /**
-   * 既定 3日。
-   *
-   * 確認待ち(awaiting_human)のまま動きが無いチケットを拾う。in_progress の 7日より
-   * 短いのは、待っているのが人間の返答1つで、待たせている側(エージェント)は
-   * その間ずっと止まっているため。
-   *
-   * 測るのは「最後に何かが起きてからの経過」。bd human list が返す PendingDecision には
-   * 「いつ質問が出たか」が無い(src/application/ports/human-decisions.ts)ので、
-   * 「質問が出てから何日」ではなく「このチケットに何も起きていない期間」を見る。
-   *
-   * アンカーは updatedAt と最終コメント日時の遅いほう(bdboard-19db)。bd の updated_at は
-   * コメントでは動かない(実データ: bdboard-36w は updated_at 2026-08-16 に対し 08-18 と
-   * 08-29 にコメントがある)ため、updatedAt だけを見ると、コメントで議論が続いている
-   * チケットまで「放置」として出てしまう。最終コメント日時は呼び出し側が
-   * pendingCommentAnchors で渡す(取得は確認待ちのチケットに限る = bd の呼び出し回数を
-   * 確認待ちの件数に抑える)。渡されなければ updatedAt だけを見る従来の動作。
-   */
-  readonly stalePendingDecisionAfterMs: number;
-}
-
 /**
  * 確認待ち集合のキー。
  *
@@ -97,12 +74,6 @@ export function pendingDecisionKey(
 ): string {
   return `${projectId}\0${ticketId}`;
 }
-
-export const DEFAULT_HYGIENE_THRESHOLDS: HygieneThresholds = {
-  staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
-  highPriorityMax: 1,
-  stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
-};
 
 function ticketPriority(ticket: Ticket): unknown {
   return (ticket as { readonly priority?: unknown }).priority;
@@ -533,7 +504,7 @@ export function checkHygiene(
   tickets: readonly Ticket[],
   ctx: {
     readonly now: Date;
-    readonly thresholds?: HygieneThresholds;
+    readonly thresholds?: HygieneThresholdsOverrides;
     readonly leftoverCandidates?: readonly LeftoverCandidate[];
     /**
      * 確認待ち(awaiting_human)のチケット。bd の human ラベル由来で Ticket からは
@@ -549,7 +520,7 @@ export function checkHygiene(
     readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
   },
 ): readonly HygieneIssue[] {
-  const thresholds = ctx.thresholds ?? DEFAULT_HYGIENE_THRESHOLDS;
+  const thresholds = resolveHygieneThresholds(ctx.thresholds);
   const readiness = createReadinessContext(tickets);
   const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket] as const));
   const childrenIndex = buildDirectChildrenIndex(tickets);

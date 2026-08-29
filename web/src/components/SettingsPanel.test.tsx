@@ -6,16 +6,19 @@ import {
   fetchAiQuotaAlertConfig,
   fetchBoardThresholdsConfig,
   fetchDbStats,
+  fetchHygieneThresholdsConfig,
   fetchProjects,
   fetchScanRootsConfig,
   postRefresh,
   putAiQuotaAlertConfig,
   putBoardThresholdsConfig,
+  putHygieneThresholdsConfig,
   putScanRootsConfig,
   ApiError,
   type AiQuotaAlertConfigDto,
   type BoardThresholdsConfigDto,
   type DbStatsDto,
+  type HygieneThresholdsConfigDto,
   type ScanRootsConfigDto,
 } from '../api';
 import { expectNoA11yViolations } from '../test/axe';
@@ -27,24 +30,28 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     fetchScanRootsConfig: vi.fn(),
     fetchBoardThresholdsConfig: vi.fn(),
+    fetchHygieneThresholdsConfig: vi.fn(),
     fetchDbStats: vi.fn(),
     fetchProjects: vi.fn(),
     fetchAiQuotaAlertConfig: vi.fn(),
     postRefresh: vi.fn(),
     putScanRootsConfig: vi.fn(),
     putBoardThresholdsConfig: vi.fn(),
+    putHygieneThresholdsConfig: vi.fn(),
     putAiQuotaAlertConfig: vi.fn(),
   };
 });
 
 const fetchScanRootsConfigMock = vi.mocked(fetchScanRootsConfig);
 const fetchBoardThresholdsConfigMock = vi.mocked(fetchBoardThresholdsConfig);
+const fetchHygieneThresholdsConfigMock = vi.mocked(fetchHygieneThresholdsConfig);
 const fetchDbStatsMock = vi.mocked(fetchDbStats);
 const fetchProjectsMock = vi.mocked(fetchProjects);
 const fetchAiQuotaAlertConfigMock = vi.mocked(fetchAiQuotaAlertConfig);
 const postRefreshMock = vi.mocked(postRefresh);
 const putScanRootsConfigMock = vi.mocked(putScanRootsConfig);
 const putBoardThresholdsConfigMock = vi.mocked(putBoardThresholdsConfig);
+const putHygieneThresholdsConfigMock = vi.mocked(putHygieneThresholdsConfig);
 const putAiQuotaAlertConfigMock = vi.mocked(putAiQuotaAlertConfig);
 function makeDbStats(overrides: Partial<DbStatsDto> = {}): DbStatsDto {
   return {
@@ -61,6 +68,22 @@ function makeAiQuotaAlertConfig(overrides: Partial<AiQuotaAlertConfigDto> = {}):
     thresholdPercent: 20,
     version: 'ai-quota-alert-v1',
     defaults: { thresholdPercent: 20 },
+    ...overrides,
+  };
+}
+function makeHygieneThresholdsConfig(
+  overrides: Partial<HygieneThresholdsConfigDto> = {},
+): HygieneThresholdsConfigDto {
+  return {
+    staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
+    highPriorityMax: 1,
+    stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+    version: 'hygiene-thresholds-v1',
+    defaults: {
+      staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
+      highPriorityMax: 1,
+      stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+    },
     ...overrides,
   };
 }
@@ -107,15 +130,18 @@ describe('SettingsPanel', () => {
   beforeEach(() => {
     fetchScanRootsConfigMock.mockReset();
     fetchBoardThresholdsConfigMock.mockReset();
+    fetchHygieneThresholdsConfigMock.mockReset();
     fetchDbStatsMock.mockReset();
     fetchProjectsMock.mockReset();
     fetchAiQuotaAlertConfigMock.mockReset();
     postRefreshMock.mockReset();
     putScanRootsConfigMock.mockReset();
     putBoardThresholdsConfigMock.mockReset();
+    putHygieneThresholdsConfigMock.mockReset();
     putAiQuotaAlertConfigMock.mockReset();
     fetchScanRootsConfigMock.mockResolvedValue(makeConfig());
     fetchBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig());
+    fetchHygieneThresholdsConfigMock.mockResolvedValue(makeHygieneThresholdsConfig());
     fetchDbStatsMock.mockResolvedValue(makeDbStats());
     fetchProjectsMock.mockResolvedValue([
       { id: 'proj-a', name: 'Project Alpha', rootPath: '/alpha', prefixes: [], sessionCount: 0, activeSessionCount: 0, incompleteTicketCount: 0, sessions: [] },
@@ -124,6 +150,9 @@ describe('SettingsPanel', () => {
     postRefreshMock.mockResolvedValue(undefined);
     putScanRootsConfigMock.mockResolvedValue({ scanRoots: ['/configured'], excludePaths: ['/excluded'], version: 'v2' });
     putBoardThresholdsConfigMock.mockResolvedValue(makeThresholdsConfig({ version: 'thresholds-v2' }));
+    putHygieneThresholdsConfigMock.mockResolvedValue(
+      makeHygieneThresholdsConfig({ version: 'hygiene-thresholds-v2' }),
+    );
     putAiQuotaAlertConfigMock.mockResolvedValue(makeAiQuotaAlertConfig({ version: 'ai-quota-alert-v2' }));
   });
   it('has no a11y violations in the default loaded state', async () => {
@@ -636,6 +665,58 @@ describe('SettingsPanel', () => {
     );
     await waitFor(() => expect(postRefreshMock).toHaveBeenCalled());
     expect(await screen.findByText('閾値設定を保存しました')).toBeInTheDocument();
+  });
+
+  it('shows the hygiene thresholds section with effective values', async () => {
+    renderSettings();
+    const section = await screen.findByRole('region', { name: '健全性 (Hygiene) 閾値' });
+    expect(within(section).getByLabelText('in_progress 放置 (日)')).toHaveValue(7);
+    expect(within(section).getByLabelText('高優先度上限 (P0=0)')).toHaveValue(1);
+    expect(within(section).getByLabelText('確認待ち放置 (日)')).toHaveValue(3);
+  });
+
+  it('saves edited hygiene thresholds and refreshes hygiene data', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = renderSettings();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const section = await screen.findByRole('region', { name: '健全性 (Hygiene) 閾値' });
+    const saveButton = within(section).getByRole('button', { name: '閾値を保存' });
+    expect(saveButton).toBeDisabled();
+
+    await user.clear(within(section).getByLabelText('in_progress 放置 (日)'));
+    await user.type(within(section).getByLabelText('in_progress 放置 (日)'), '10');
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(putHygieneThresholdsConfigMock).toHaveBeenCalledWith({
+        staleInProgressAfterMs: 10 * 24 * 60 * 60_000,
+        highPriorityMax: 1,
+        stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+        version: 'hygiene-thresholds-v1',
+      }),
+    );
+    await waitFor(() => expect(postRefreshMock).toHaveBeenCalled());
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['hygiene'] });
+    expect(await screen.findByText('健全性閾値を保存しました')).toBeInTheDocument();
+  });
+
+  it('shows server validation errors for hygiene thresholds', async () => {
+    const user = userEvent.setup();
+    putHygieneThresholdsConfigMock.mockRejectedValue(
+      new ApiError(400, 'invalid hygiene thresholds', {
+        errorMessage: 'invalid hygiene thresholds',
+        details: { errors: ['高優先度上限は4以下にしてください'] },
+      }),
+    );
+    renderSettings();
+    const section = await screen.findByRole('region', { name: '健全性 (Hygiene) 閾値' });
+    await user.clear(within(section).getByLabelText('高優先度上限 (P0=0)'));
+    await user.type(within(section).getByLabelText('高優先度上限 (P0=0)'), '5');
+    await user.click(within(section).getByRole('button', { name: '閾値を保存' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '高優先度上限は4以下にしてください',
+    );
   });
 
   it('shows the wip limits section and saves edited values', async () => {

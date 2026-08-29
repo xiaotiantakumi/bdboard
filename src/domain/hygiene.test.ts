@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { DependencyEdge } from './dependency.js';
 import {
   checkHygiene,
-  DEFAULT_HYGIENE_THRESHOLDS,
   formatLocalDateKey,
   pendingDecisionKey,
 } from './hygiene.js';
+import { DEFAULT_HYGIENE_THRESHOLDS } from './hygiene-thresholds.js';
 import type { LeftoverCandidate } from './git-worktree.js';
 import { makeTicket } from './test-support.js';
 import type { Ticket } from './ticket.js';
@@ -275,6 +275,12 @@ describe('checkHygiene stale_in_progress', () => {
   it('defaults to seven days', () => {
     expect(DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs).toBe(
       7 * 24 * 60 * 60_000,
+    );
+  });
+
+  it('defaults stale pending decision to three days', () => {
+    expect(DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs).toBe(
+      3 * 24 * 60 * 60_000,
     );
   });
 });

@@ -40,6 +40,7 @@ import {
 } from '../../application/ports/issue-writer.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
+import type { HygieneThresholds } from '../../domain/hygiene.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
@@ -125,6 +126,7 @@ export interface ApiDeps {
    */
   readonly writeAccess?: WriteGuardDeps;
   readonly getBoardThresholds?: () => Promise<ResolvedBoardThresholds>;
+  readonly getHygieneThresholds?: () => Promise<HygieneThresholds>;
 }
 
 interface QueuedSseMessage {
@@ -652,10 +654,13 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
     }
 
+    const thresholds = await deps.getHygieneThresholds?.();
+
     const issues = getHygieneIssues(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
+      ...(thresholds !== undefined ? { thresholds } : {}),
     });
     return c.json(issues.map(toHygieneIssueDto));
   });

@@ -37,6 +37,7 @@ import {
   type BoardSnapshotProjectInput,
 } from './domain/board-notifications.js';
 import { resolveBoardThresholds } from './domain/board-thresholds.js';
+import { resolveHygieneThresholds } from './domain/hygiene-thresholds.js';
 import { resolveAiQuotaAlertThresholdPercent } from './domain/ai-quota-alert-thresholds.js';
 import { compareStrings } from './domain/compare.js';
 import { generatePassphrase } from './domain/passphrase.js';
@@ -63,6 +64,7 @@ import {
   createFileTunnelInterruptionStore,
   createFileScanRootsConfigStore,
   createFileBoardThresholdsConfigStore,
+  createFileHygieneThresholdsConfigStore,
   createFileAiQuotaAlertConfigStore,
   createFsHarnessInjector,
   createFsPackRegistry,
@@ -112,6 +114,7 @@ import {
 import { createHarnessRoutes } from './interface/http/harness-routes.js';
 import { createScanRootsRoutes } from './interface/http/scan-roots-routes.js';
 import { createBoardThresholdsRoutes } from './interface/http/board-thresholds-routes.js';
+import { createHygieneThresholdsRoutes } from './interface/http/hygiene-thresholds-routes.js';
 import { createDbStatsRoutes } from './interface/http/db-stats-routes.js';
 import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
@@ -259,6 +262,9 @@ async function main(): Promise<void> {
   );
   const boardThresholdsConfigStore = createFileBoardThresholdsConfigStore(
     envString('BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH', configFilePath),
+  );
+  const hygieneThresholdsConfigStore = createFileHygieneThresholdsConfigStore(
+    envString('BDBOARD_HYGIENE_THRESHOLDS_CONFIG_PATH', configFilePath),
   );
   const aiQuotaAlertConfigStore = createFileAiQuotaAlertConfigStore(
     envString('BDBOARD_AI_QUOTA_ALERT_CONFIG_PATH', configFilePath),
@@ -849,6 +855,8 @@ async function main(): Promise<void> {
     reclaimScheduler,
     getBoardThresholds: async () =>
       resolveBoardThresholds(await boardThresholdsConfigStore.read()),
+    getHygieneThresholds: async () =>
+      resolveHygieneThresholds(await hygieneThresholdsConfigStore.read()),
   });
 
   const app = new Hono();
@@ -905,6 +913,14 @@ async function main(): Promise<void> {
     '/',
     createBoardThresholdsRoutes({
       store: boardThresholdsConfigStore,
+      writeAccess,
+    }),
+  );
+
+  app.route(
+    '/',
+    createHygieneThresholdsRoutes({
+      store: hygieneThresholdsConfigStore,
       writeAccess,
     }),
   );
