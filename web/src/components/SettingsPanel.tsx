@@ -286,7 +286,6 @@ export function SettingsPanel() {
       setActiveMinutes(msToMinutes(thresholdsQuery.data.livenessActiveMs));
       setIdleMinutes(msToMinutes(thresholdsQuery.data.livenessIdleMs));
       setStaleHours(msToHours(thresholdsQuery.data.livenessStaleMs));
-      setThresholdsVersion(thresholdsQuery.data.version);
     }
   }, [thresholdsDirty, thresholdsQuery.data]);
 
@@ -300,9 +299,26 @@ export function SettingsPanel() {
       setProjectWipOverrides(
         projectWipOverridesFromConfig(thresholdsQuery.data.inProgressWipLimitByProject),
       );
-      setThresholdsVersion(thresholdsQuery.data.version);
     }
   }, [wipDirty, thresholdsQuery.data]);
+
+  // 閾値フォームと WIP上限フォームは、サーバー側では1つの設定ドキュメント =
+  // 1つの version を共有している。そのため version の書き戻しは、**どちらの
+  // フォームにも未保存の編集が無いとき**に限る。
+  //
+  // 以前は上の2つの effect がそれぞれ自分の dirty フラグだけを見て version を
+  // 更新していた。片方だけを編集していると、もう片方の effect が refetch のたびに
+  // version を最新へ差し替えてしまい、保存時に 409 が出ず他セッションの変更を
+  // 黙って上書きしていた (bdboard-chp)。楽観ロックが効いていたのは「両方とも
+  // 編集中」のときだけだった。
+  //
+  // 逆に、どちらも未編集なら素直に進める必要がある。ここまで止めると、開いた
+  // ままのタブから保存すると必ず 409 になる。
+  useEffect(() => {
+    if (thresholdsQuery.data !== undefined && !thresholdsDirty && !wipDirty) {
+      setThresholdsVersion(thresholdsQuery.data.version);
+    }
+  }, [thresholdsDirty, wipDirty, thresholdsQuery.data]);
 
   useEffect(() => {
     if (aiQuotaAlertQuery.data !== undefined && !aiQuotaAlertDirty) {
