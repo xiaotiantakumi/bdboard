@@ -1,31 +1,6 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  BoardViewDto,
-  ChatAvailabilityDto,
-  CommentDto,
-  PendingDecisionDto,
-  ProjectDto,
-  SessionDto,
-  StatusDto,
-  TicketDetailDto,
-} from './api';
-import { App } from './App';
-import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
-
-class MockEventSource {
-  url: string;
-  onopen: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor(url: string) {
-    this.url = url;
-  }
-  addEventListener() {}
-  removeEventListener() {}
-  close = vi.fn();
-}
 
 vi.mock('./api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./api')>();
@@ -54,147 +29,12 @@ vi.mock('./components/TicketDetailPanel', () => ({
   },
 }));
 
-import {
-  fetchAiQuota,
-  fetchBoard,
-  fetchBoardThresholdsConfig,
-  fetchChatAvailability,
-  fetchPendingDecisions,
-  fetchProjects,
-  fetchSessions,
-  fetchStatus,
-  fetchTicket,
-  fetchTicketComments,
-  fetchTunnel,
-} from './api';
-
-const boardWithCard: BoardViewDto = {
-  mode: 'merged',
-  generatedAt: '2026-01-01T00:00:00.000Z',
-  projects: [],
-  merged: {
-    lanes: {
-      ready: [
-        {
-          ticket: {
-            id: 'bdboard-boom',
-            projectId: 'proj-1',
-            title: 'Board card stays alive',
-            status: 'open',
-            priority: 2,
-            issueType: 'task',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-02T00:00:00.000Z',
-            commentCount: 0,
-          },
-          lane: 'ready',
-          projectId: 'proj-1',
-          blockedBy: [],
-          blocks: [],
-          unblocksCount: 0,
-          liveness: null,
-          sessions: [],
-          stalled: false,
-          epicProgress: null,
-          deferDays: null,
-          deferUrgency: null,
-          effectivePriority: 2,
-          priorityInheritedFrom: null,
-        },
-      ],
-      in_progress: [],
-      blocked: [],
-      done: [],
-    },
-    cardCount: 1,
-    closedTotal: 0,
-    truncatedClosedIds: [],
-  },
-};
-
-const sampleTicket: TicketDetailDto = {
-  id: 'bdboard-boom',
-  projectId: 'proj-1',
-  title: 'Board card stays alive',
-  status: 'open',
-  priority: 2,
-  issueType: 'task',
-  createdAt: '2026-01-01T00:00:00.000Z',
-  updatedAt: '2026-01-02T00:00:00.000Z',
-  dependencies: [],
-  blockedBy: [],
-  blocks: [],
-  commentCount: 0,
-  sessionLinks: [],
-  models: [],
-  children: [],
-};
-
-function renderApp() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <WatchedTicketsProvider>
-        <App />
-      </WatchedTicketsProvider>
-    </QueryClientProvider>,
-  );
-}
+import { primeAppApiMocks, renderApp } from './test/appHarness';
 
 describe('App error boundaries (bdboard-yfq)', () => {
   beforeEach(() => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.stubGlobal('EventSource', MockEventSource);
-    window.history.replaceState(null, '', '/');
-    localStorage.clear();
-
-    vi.mocked(fetchProjects).mockResolvedValue([
-      {
-        id: 'proj-1',
-        name: 'Project One',
-        rootPath: '/projects/a',
-        prefixes: ['bdboard'],
-        sessionCount: 0,
-        activeSessionCount: 0,
-        sessions: [],
-      } satisfies ProjectDto,
-    ]);
-    vi.mocked(fetchSessions).mockResolvedValue([] satisfies SessionDto[]);
-    vi.mocked(fetchStatus).mockResolvedValue({
-      lastRefreshAt: '2026-01-01T00:00:00.000Z',
-      errors: [],
-      projectCount: 1,
-    } satisfies StatusDto);
-    vi.mocked(fetchBoard).mockResolvedValue(boardWithCard);
-    vi.mocked(fetchPendingDecisions).mockResolvedValue([] satisfies PendingDecisionDto[]);
-    vi.mocked(fetchChatAvailability).mockResolvedValue({
-      availability: 'unavailable',
-    } satisfies ChatAvailabilityDto);
-    vi.mocked(fetchTicket).mockResolvedValue(sampleTicket);
-    vi.mocked(fetchTicketComments).mockResolvedValue([] satisfies CommentDto[]);
-    vi.mocked(fetchTunnel).mockResolvedValue({
-      state: 'off',
-      available: true,
-      authEnabled: true,
-    });
-    vi.mocked(fetchAiQuota).mockRejectedValue(new Error('not configured'));
-    vi.mocked(fetchBoardThresholdsConfig).mockResolvedValue({
-      stalledAfterMs: 86_400_000,
-      livenessActiveMs: 120_000,
-      livenessIdleMs: 1_800_000,
-      livenessStaleMs: 86_400_000,
-      inProgressWipLimit: null,
-      inProgressWipLimitByProject: {},
-      version: 'thresholds-v1',
-      defaults: {
-        stalledAfterMs: 86_400_000,
-        livenessActiveMs: 120_000,
-        livenessIdleMs: 1_800_000,
-        livenessStaleMs: 86_400_000,
-        inProgressWipLimit: null,
-        inProgressWipLimitByProject: {},
-      },
-    });
+    primeAppApiMocks();
   });
 
   afterEach(() => {
@@ -232,5 +72,39 @@ describe('App error boundaries (bdboard-yfq)', () => {
 
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.getByTitle('Board card stays alive')).toBeInTheDocument();
+  });
+
+  it('shows the crashed panel fallback as an overlay, not at the end of the page', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await user.click(await screen.findByTitle('Board card stays alive'));
+    const alert = await screen.findByRole('alert');
+
+    // パネルは自前で暗幕 (.overlay) を張っているので、throw するとそれごと消える。
+    // fallback を通常フローに置くと、縦に長いボードでは画面外に落ちて
+    // 「クリックしても何も起きない」ようにしか見えない (PR#129 レビュー)。
+    expect(alert.parentElement).toHaveClass('overlay');
+  });
+
+  it('keeps the bulk selection when the view changes', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await screen.findByTitle('Board card stays alive');
+    const checkbox = screen.getByRole('checkbox', { name: 'bdboard-boom を選択' });
+    await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: '分割' }));
+    await user.click(screen.getByRole('button', { name: '統合' }));
+
+    // ビュー境界は key={view} で作り直される。選択プロバイダーをその内側に
+    // 置くと再マウントが伝わり、ビューを往復しただけで選択が消える
+    // (PR#129 レビュー minor-1)。
+    await screen.findByTitle('Board card stays alive');
+    expect(
+      screen.getByRole('checkbox', { name: 'bdboard-boom を選択' }),
+    ).toBeChecked();
   });
 });

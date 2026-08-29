@@ -727,10 +727,13 @@ export function App() {
       <TipsBanner onOpenHelp={handleOpenHelp} />
 
       <main className="main">
-        {/* view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。 */}
-        <ErrorBoundary key={view} label={VIEW_LABELS[view]}>
+        {/* プロバイダーは境界の外に置く。中に入れると key={view} の再マウントが
+            そのまま伝わり、ビューを往復しただけで一括選択が消える (PR#129 レビュー)。
+            context を配るだけの薄い描画なので、境界で守る価値もほぼ無い。 */}
         <BoardDnDProvider>
         <BulkSelectionProvider>
+        {/* view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。 */}
+        <ErrorBoundary key={view} label={VIEW_LABELS[view]}>
         {(view === 'merged' || view === 'split') && (
           <BoardFilterBar
             priorityCeiling={boardPriorityCeiling}
@@ -880,9 +883,9 @@ export function App() {
           boardQuery.data.merged === null && (
             <p className="empty-message">統合ビューのデータがありません</p>
           )}
+        </ErrorBoundary>
         </BulkSelectionProvider>
         </BoardDnDProvider>
-        </ErrorBoundary>
       </main>
 
       {selectedTicketId !== null && (
@@ -891,6 +894,7 @@ export function App() {
           label="チケット詳細"
           resetLabel="閉じる"
           onReset={handleCloseDetail}
+          overlay
         >
         <TicketDetailPanel
           ticketId={selectedTicketId}
@@ -917,7 +921,12 @@ export function App() {
       )}
 
       {sessionListOpen && (
-        <ErrorBoundary label="セッション一覧" resetLabel="閉じる" onReset={handleCloseSessionList}>
+        <ErrorBoundary
+          label="セッション一覧"
+          resetLabel="閉じる"
+          onReset={handleCloseSessionList}
+          overlay
+        >
           <SessionListPanel
             projectId={sessionListProjectId}
             onClose={handleCloseSessionList}
@@ -926,19 +935,24 @@ export function App() {
       )}
 
       {shortcutsOpen && (
-        <ErrorBoundary label="ショートカット一覧" resetLabel="閉じる" onReset={handleCloseShortcuts}>
+        <ErrorBoundary
+          label="ショートカット一覧"
+          resetLabel="閉じる"
+          onReset={handleCloseShortcuts}
+          overlay
+        >
           <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
         </ErrorBoundary>
       )}
 
       {helpOpen && (
-        <ErrorBoundary label="ヘルプ" resetLabel="閉じる" onReset={handleCloseHelp}>
+        <ErrorBoundary label="ヘルプ" resetLabel="閉じる" onReset={handleCloseHelp} overlay>
           <HelpPanel onClose={handleCloseHelp} />
         </ErrorBoundary>
       )}
 
       {searchOpen && (
-        <ErrorBoundary label="検索" resetLabel="閉じる" onReset={handleCloseSearch}>
+        <ErrorBoundary label="検索" resetLabel="閉じる" onReset={handleCloseSearch} overlay>
         <SearchPalette
           onClose={handleCloseSearch}
           onSelect={handleSelectTicket}
@@ -948,10 +962,20 @@ export function App() {
         </ErrorBoundary>
       )}
 
-      <TunnelControl
-        open={tunnelModalOpen}
-        onClose={() => setTunnelModalOpen(false)}
-      />
+      {/* TunnelControl は閉じていても常時マウントされている (中で null を返す)。
+          閉じている間の throw まで overlay で覆うと、何も開いていないのに暗幕が
+          残って操作不能になるので、overlay は開いているときだけ。 */}
+      <ErrorBoundary
+        label="トンネル"
+        resetLabel="閉じる"
+        onReset={() => setTunnelModalOpen(false)}
+        overlay={tunnelModalOpen}
+      >
+        <TunnelControl
+          open={tunnelModalOpen}
+          onClose={() => setTunnelModalOpen(false)}
+        />
+      </ErrorBoundary>
 
       {chatOpen && (
         <ErrorBoundary
@@ -961,6 +985,7 @@ export function App() {
             setChatOpen(false);
             setChatContext(undefined);
           }}
+          overlay
         >
         <ChatPanel
           projects={chatProjects}

@@ -707,6 +707,17 @@ body {
   flex-wrap: wrap;
 }
 
+/* モーダル系パネルが throw したときの fallback。元のパネルと同じ位置に出す。 */
+.error-boundary-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 16px;
+}
+
+.error-boundary-overlay .error-boundary {
+  width: min(520px, 100%);
+}
+
 .main {
   flex: 1;
   padding: 20px calc(20px + env(safe-area-inset-right))

@@ -12,6 +12,15 @@ interface ErrorBoundaryProps {
    */
   readonly resetLabel?: string;
   readonly onReset?: () => void;
+  /**
+   * 中身がモーダル (自前で `.overlay` を描画するパネル) のときに立てる。
+   *
+   * その手のパネルが throw すると暗幕ごと消えるので、既定の fallback は
+   * `.app` 末尾の通常フローに出てしまう。縦に長いボードだと画面外に落ちて
+   * 「クリックしても何も起きない」ようにしか見えない。ここを立てると
+   * fallback 自身が overlay を張り、元のパネルと同じ位置に出る (PR#129 レビュー)。
+   */
+  readonly overlay?: boolean;
   readonly children: ReactNode;
 }
 
@@ -54,7 +63,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     if (error === null) {
       return this.props.children;
     }
-    return (
+    const fallback = (
       <div className="error-boundary" role="alert">
         <strong className="error-boundary-title">
           {this.props.label}の表示に失敗しました
@@ -77,5 +86,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         </div>
       </div>
     );
+    if (this.props.overlay !== true) {
+      return fallback;
+    }
+    return <div className="overlay error-boundary-overlay">{fallback}</div>;
   }
 }
