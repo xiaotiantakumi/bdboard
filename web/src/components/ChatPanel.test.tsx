@@ -3066,6 +3066,80 @@ describe('ChatPanel', () => {
       expect(await screen.findByText('bulk reply nobody announced')).toBeInTheDocument();
     });
 
+    it('refetches on return even when the session hit the message cap and history length did not grow (bdboard-3tw.158)', async () => {
+      // PR#135 レビュー minor-2 の既知の限界: 保存件数が上限
+      // (CHAT_MESSAGES_MAX_PER_SESSION) に達したセッションでは、サーバーが
+      // 古い方から捨てて件数を保つため、取りこぼしたターンが載っても件数の
+      // 見た目は伸びない。件数比較だけに頼るとこの安全網が永久に効かない
+      // ((payload.messages.length <= localCount) のまま)。末尾メッセージの
+      // createdAt が伸びていれば、件数が同じでも適用されることを確認する。
+      const user = userEvent.setup();
+      const sentAt = new Date('2026-03-01T00:00:00.000Z').getTime();
+      const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(sentAt);
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ]);
+      fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+      let sess1HistoryCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages:
+              sess1HistoryCalls === 1
+                ? [{ role: 'assistant', content: 'old message dropped by the cap', createdAt: '2020-01-01T00:00:00.000Z' }]
+                : [
+                    // 上限到達により古い1件が捨てられ、件数は送信前後で 1 → 2 → 2
+                    // のまま伸びない(件数比較だけでは検知できない)。末尾の
+                    // createdAt は送信時刻(sentAt)より後なので、取りこぼしは
+                    // これで検知できる。
+                    { role: 'user', content: 'finish after switch', createdAt: '2026-03-01T00:00:05.000Z' },
+                    { role: 'assistant', content: 'reply nobody announced', createdAt: '2026-03-01T00:00:10.000Z' },
+                  ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'));
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
+      await screen.findByText('old message dropped by the cap');
+      await user.type(screen.getByLabelText('メッセージ'), 'finish after switch');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'first thread');
+
+      expect(await screen.findByText('reply nobody announced')).toBeInTheDocument();
+      expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2);
+      dateNowSpy.mockRestore();
+    });
+
     it('keeps the unresolved mark when a later send on the same thread succeeds (PR#135 レビュー minor-1)', async () => {
       // 見届けられなかったスレッドへ戻り、取り直しが当たる前に次を送信した場合。
       // 送信成功で印を外してしまうと、取りこぼした返信を二度と取りに行かなくなる。

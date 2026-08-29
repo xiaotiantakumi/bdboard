@@ -1508,14 +1508,27 @@ export function ChatPanel({
         // 完了後の履歴は「利用者の発言 + 返信」の2件分増えているので、
         // 増えているときだけ当てれば取りこぼしだけを拾える。
         //
-        // 既知の限界 (PR#135 レビュー minor-2): 保存件数が上限
+        // bdboard-3tw.158 (PR#135 レビュー minor-2 の対処): 保存件数が上限
         // (CHAT_MESSAGES_MAX_PER_SESSION) に達したセッションでは、サーバー側が
-        // 古い方から捨てて件数を保つため履歴が伸びず、この比較は永久に成立しない。
-        // そのスレッドではこの安全網が効かない (回収 effect 側は従来どおり効く)。
-        // 「上限到達 かつ 回収も取りこぼし」が重なったときだけの穴なので、
-        // 末尾比較などの重い判定は入れずに限界として記録するに留める。
-        const localCount = conversationsRef.current[sessionId]?.messages.length ?? 0;
-        if (payload.messages.length <= localCount) return;
+        // 古い方から捨てて件数を保つため取りこぼしたターンが載っても件数が
+        // 伸びず、件数比較だけでは永久にこの安全網が効かない。そこで末尾
+        // メッセージの createdAt 比較を併用する: send-chat-message.ts の
+        // finalizeChatTurnSuccess はユーザー発言とAI応答をターン完了時に
+        // まとめて1回で永続化するため、進行中のターンはサーバーに何も
+        // 書かれておらず、サーバー末尾の createdAt は必ず「今回の送信より前」
+        // のまま動かない。よって「サーバー末尾の createdAt が、ローカル末尾
+        // の at (楽観送信時刻、常にクライアント側 Date.now())より新しい」は
+        // 完了済みだけを正しく検知でき、進行中のケースを誤って壊さない。
+        const localMessages = conversationsRef.current[sessionId]?.messages ?? [];
+        const localCount = localMessages.length;
+        const grew = payload.messages.length > localCount;
+        const lastLocal = localMessages[localMessages.length - 1];
+        const lastServer = payload.messages[payload.messages.length - 1];
+        const serverTailIsNewer =
+          lastLocal !== undefined &&
+          lastServer !== undefined &&
+          Date.parse(lastServer.createdAt) > lastLocal.at;
+        if (!grew && !serverTailIsNewer) return;
         setConversations((prev) => ({
           ...prev,
           [sessionId]: {
