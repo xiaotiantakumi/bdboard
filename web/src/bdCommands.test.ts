@@ -104,8 +104,20 @@ describe('buildBdCommand', () => {
   });
 });
 
+function expectedWorktreeRemoveGuard(
+  repoRootPath: string,
+  worktreePath: string,
+): string {
+  const quotedRepoRoot = shellQuote(repoRootPath);
+  const quotedWorktreePath = shellQuote(worktreePath);
+  return (
+    `if [ -z "$(lsof -a -d cwd +D ${quotedWorktreePath})" ]; then git -C ${quotedRepoRoot} worktree remove ${quotedWorktreePath}; ` +
+    `else echo 'worktree still in use, skipping removal:' ${quotedWorktreePath} >&2; fi`
+  );
+}
+
 describe('buildWorktreeCleanupCommands', () => {
-  it('returns worktree remove then branch -d when both are present', () => {
+  it('returns lsof-guarded worktree remove then branch -d when both are present', () => {
     const commands = buildWorktreeCleanupCommands({
       repoRootPath: '/repo',
       worktreePath: '/repo/.claude/worktrees/bdboard-3tw.96',
@@ -113,29 +125,40 @@ describe('buildWorktreeCleanupCommands', () => {
     });
 
     expect(commands).toEqual([
-      "git -C '/repo' worktree remove '/repo/.claude/worktrees/bdboard-3tw.96'",
+      expectedWorktreeRemoveGuard(
+        '/repo',
+        '/repo/.claude/worktrees/bdboard-3tw.96',
+      ),
       "git -C '/repo' branch -d 'bd/bdboard-3tw.96'",
     ]);
+    expect(commands[0]).toContain('lsof -a -d cwd +D');
+    expect(commands[0]).toContain('git -C');
+    expect(commands[0]).toContain('worktree remove');
+    expect(commands[0]).toContain('else');
+    expect(commands[0]).toContain('worktree still in use, skipping removal:');
   });
 
-  it('returns only worktree remove when branchName is null', () => {
+  it('returns only lsof-guarded worktree remove when branchName is null', () => {
     expect(
       buildWorktreeCleanupCommands({
         repoRootPath: '/repo',
         worktreePath: '/repo/.claude/worktrees/wt',
         branchName: null,
       }),
-    ).toEqual(["git -C '/repo' worktree remove '/repo/.claude/worktrees/wt'"]);
+    ).toEqual([
+      expectedWorktreeRemoveGuard('/repo', '/repo/.claude/worktrees/wt'),
+    ]);
   });
 
-  it('returns only branch -d when worktreePath is null', () => {
-    expect(
-      buildWorktreeCleanupCommands({
-        repoRootPath: '/repo',
-        worktreePath: null,
-        branchName: 'bd/bdboard-3tw.96',
-      }),
-    ).toEqual(["git -C '/repo' branch -d 'bd/bdboard-3tw.96'"]);
+  it('returns only branch -d when worktreePath is null (no lsof guard)', () => {
+    const commands = buildWorktreeCleanupCommands({
+      repoRootPath: '/repo',
+      worktreePath: null,
+      branchName: 'bd/bdboard-3tw.96',
+    });
+
+    expect(commands).toEqual(["git -C '/repo' branch -d 'bd/bdboard-3tw.96'"]);
+    expect(commands[0]).not.toContain('lsof');
   });
 
   it('returns an empty array when both paths are null', () => {
@@ -156,7 +179,10 @@ describe('buildWorktreeCleanupCommands', () => {
     });
 
     expect(commands).toEqual([
-      "git -C '/Users/example/my repo' worktree remove '/Users/example/my repo/.claude/worktrees/bdboard-3tw.96'",
+      expectedWorktreeRemoveGuard(
+        '/Users/example/my repo',
+        '/Users/example/my repo/.claude/worktrees/bdboard-3tw.96',
+      ),
       "git -C '/Users/example/my repo' branch -d 'bd/bdboard-3tw.96'",
     ]);
   });
@@ -169,7 +195,10 @@ describe('buildWorktreeCleanupCommands', () => {
     });
 
     expect(commands).toEqual([
-      "git -C '/Users/example/it'\\''s a repo' worktree remove '/Users/example/it'\\''s a repo/wt'",
+      expectedWorktreeRemoveGuard(
+        "/Users/example/it's a repo",
+        "/Users/example/it's a repo/wt",
+      ),
       "git -C '/Users/example/it'\\''s a repo' branch -d 'bd/bdboard-3tw.96'",
     ]);
   });
@@ -183,12 +212,16 @@ describe('buildWorktreeCleanupCommands', () => {
 
     expect(commands).toHaveLength(2);
     expect(commands[0]).toBe(
-      "git -C '/tmp/a b;rm -rf $HOME/c' worktree remove '/tmp/a b;rm -rf $HOME/c/.claude/worktrees/wt'",
+      expectedWorktreeRemoveGuard(
+        '/tmp/a b;rm -rf $HOME/c',
+        '/tmp/a b;rm -rf $HOME/c/.claude/worktrees/wt',
+      ),
     );
     expect(commands[1]).toBe(
       "git -C '/tmp/a b;rm -rf $HOME/c' branch -d 'bd/bdboard-3tw.96'",
     );
   });
+
 });
 
 describe('formatWorktreeCleanupScript', () => {
@@ -200,7 +233,8 @@ describe('formatWorktreeCleanupScript', () => {
         branchName: 'bd/bdboard-3tw.96',
       }),
     ).toBe(
-      "git -C '/repo' worktree remove '/repo/.claude/worktrees/wt'\n" +
+      expectedWorktreeRemoveGuard('/repo', '/repo/.claude/worktrees/wt') +
+        "\n" +
         "git -C '/repo' branch -d 'bd/bdboard-3tw.96'",
     );
   });

@@ -76,7 +76,9 @@ export interface WorktreeCleanupTarget {
 /**
  * 残骸 worktree / ブランチの掃除コマンドを組み立てる。
  * **実行はしない。コピー用の文字列を返すだけ**(worktree 削除は破壊的操作であり、
- * 過去に削除後の新規シェルが CPU を専有し続ける事故があったため UI から自動実行させない)。
+ * 過去に削除後の新規シェルが CPU を専有し続ける事故 bdboard-3tw.61 があったため
+ * UI から自動実行させない)。worktree 削除行は lsof で cwd が残っていないことを
+ * 確認してから remove するガード付きワンライナーになる。
  */
 export function buildWorktreeCleanupCommands(
   target: WorktreeCleanupTarget,
@@ -85,8 +87,9 @@ export function buildWorktreeCleanupCommands(
   const quotedRepoRoot = shellQuote(target.repoRootPath);
 
   if (target.worktreePath !== null) {
+    const quotedWorktreePath = shellQuote(target.worktreePath);
     commands.push(
-      `git -C ${quotedRepoRoot} worktree remove ${shellQuote(target.worktreePath)}`,
+      `if [ -z "$(lsof -a -d cwd +D ${quotedWorktreePath})" ]; then git -C ${quotedRepoRoot} worktree remove ${quotedWorktreePath}; else echo 'worktree still in use, skipping removal:' ${quotedWorktreePath} >&2; fi`,
     );
   }
 
