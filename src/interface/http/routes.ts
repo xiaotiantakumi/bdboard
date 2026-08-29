@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
+import { parseJsonBody } from './request-body.js';
 import { isSafeCliArgument } from '../../domain/chat.js';
 import { getActivityFeed } from '../../application/board/get-activity-feed.js';
 import { getTicketTimeline } from '../../application/board/get-ticket-timeline.js';
@@ -875,17 +876,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = decisionBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, decisionBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const trimmedFreeform = parsed.data.freeform?.trim();
     const responseText =
@@ -925,17 +917,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = quickActionBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, quickActionBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
@@ -1006,17 +989,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = quickActionUndoBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, quickActionUndoBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
@@ -1103,17 +1077,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = dependencyBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, dependencyBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const { dependsOnId } = parsed.data;
 
@@ -1213,17 +1178,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = updateTitleBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, updateTitleBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
@@ -1270,17 +1226,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = updateDescriptionBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, updateDescriptionBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
@@ -1327,17 +1274,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = labelBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, labelBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
@@ -1408,17 +1346,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = sessionLinkBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, sessionLinkBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
@@ -1480,17 +1409,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const id = c.req.param('id');
 
-    let body: unknown;
-    try {
-      body = await c.req.json();
-    } catch {
-      return c.json({ error: 'invalid JSON body' }, 400);
-    }
-
-    const parsed = commentBodySchema.safeParse(body);
-    if (!parsed.success) {
-      return c.json({ error: 'invalid request body' }, 400);
-    }
+    const parsed = await parseJsonBody(c, commentBodySchema);
+    if (!parsed.ok) return parsed.response;
 
     const rootPath = findProjectRootPathForTicket(deps.cache, id);
     if (rootPath === undefined) {
