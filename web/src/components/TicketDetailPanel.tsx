@@ -45,6 +45,7 @@ import {
   filterDependencyCandidates,
 } from './dependencyEditing';
 import { MarkdownContent } from './MarkdownContent';
+import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
 import { useUndoSnackbar } from './UndoSnackbar';
@@ -1206,6 +1207,11 @@ export function TicketDetailPanel({
                   <p className="detail-help">
                     稼働中セッションから選択します(既存の手動リンクは上書きされます)
                   </p>
+                  {/* win32 ではセッション検出そのものが動かないため、ここは
+                      常に空になる。理由を出さないと「稼働中のセッションが
+                      ありません」が壊れているようにしか読めない
+                      (bdboard-70z.9, PR#115 fable レビュー minor)。 */}
+                  <PlatformLimitationNotice feature="session-discovery" />
                   {activeSessionsQuery.isLoading && (
                     <p className="loading">読み込み中…</p>
                   )}

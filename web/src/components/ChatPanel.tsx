@@ -36,6 +36,10 @@ import {
 } from '../chatThreadStorage';
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
 import { MarkdownContent } from './MarkdownContent';
+import {
+  PlatformLimitationNotice,
+  usePlatformLimitation,
+} from './PlatformLimitationNotice';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -374,6 +378,10 @@ export function ChatPanel({
   >({});
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
+  // 未対応プラットフォームでは入力自体を塞ぐ。案内を出したうえで送信でき、
+  // 送って初めて 501 に気付く、では「無効化」になっていない
+  // (bdboard-70z.9, PR#115 fable レビュー)。判定が付くまでは塞がない。
+  const chatUnsupported = usePlatformLimitation('chat') !== null;
   // Chat Redesign 改善点3: 「考え中…」表示に経過秒数を出す。isSending が false→true
   // に変わるたびに 0 から数え直し、1秒ごとに更新する。Date.now() は開始時点で
   // 1回だけ読んで setInterval のクロージャに閉じ込め、以後は差分計算にのみ使う。
@@ -2697,6 +2705,9 @@ export function ChatPanel({
           </div>
         </details>
 
+        {/* 送信して初めて 501 に気付く、では遅い (bdboard-70z.9)。 */}
+        <PlatformLimitationNotice feature="chat" />
+
         <div
           ref={messagesRef}
           className="chat-messages"
@@ -2875,7 +2886,7 @@ export function ChatPanel({
             aria-label="メッセージ"
             maxLength={4000}
             value={currentInput}
-            disabled={isSending}
+            disabled={isSending || chatUnsupported}
             onChange={(event) => {
               const value = event.target.value;
               setConversationInputs((prev) => ({ ...prev, [currentConversationKey]: value }));
@@ -2889,6 +2900,7 @@ export function ChatPanel({
             disabled={
               isSending ||
               isHistoryPending ||
+              chatUnsupported ||
               hasUnsupportedAttachments ||
               (currentInput.trim() === '' && currentAttachments.length === 0)
             }

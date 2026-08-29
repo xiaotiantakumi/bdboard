@@ -16,6 +16,7 @@ import {
   deleteTicketDependency,
   deleteTicketLabel,
   deleteTicketSessionLink,
+  fetchPlatformSupport,
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
@@ -30,6 +31,7 @@ import {
   postTicketSessionLink,
   searchTickets,
 } from '../api';
+import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import { TicketDetailPanel } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
@@ -55,6 +57,7 @@ vi.mock('../api', async (importOriginal) => {
     deleteTicketLabel: vi.fn(),
     searchTickets: vi.fn(),
     fetchSessions: vi.fn(),
+    fetchPlatformSupport: vi.fn(),
     postTicketSessionLink: vi.fn(),
     deleteTicketSessionLink: vi.fn(),
   };
@@ -74,11 +77,14 @@ const mockDeleteTicketDependency = vi.mocked(deleteTicketDependency);
 const mockDeleteTicketLabel = vi.mocked(deleteTicketLabel);
 const mockSearchTickets = vi.mocked(searchTickets);
 const mockFetchSessions = vi.mocked(fetchSessions);
+const mockFetchPlatformSupport = vi.mocked(fetchPlatformSupport);
 const mockPostTicketSessionLink = vi.mocked(postTicketSessionLink);
 const mockDeleteTicketSessionLink = vi.mocked(deleteTicketSessionLink);
 
 beforeEach(() => {
   mockFetchSimilarTickets.mockResolvedValue([]);
+  resetPlatformSupportCache();
+  mockFetchPlatformSupport.mockResolvedValue({ platform: 'darwin', limitations: [] });
 });
 
 const sampleTicket: TicketDetailDto = {
@@ -1442,6 +1448,33 @@ describe('TicketDetailPanel session link', () => {
     await waitFor(() => {
       expect(mockFetchSessions).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('explains why the picker is empty on a platform without session discovery', async () => {
+    // win32 ではセッション検出そのものが動かないため、ここは常に空になる。
+    // 理由が出ないと「稼働中のセッションがありません」が壊れているようにしか
+    // 読めない (bdboard-70z.9, PR#115 fable レビュー minor)。
+    mockFetchPlatformSupport.mockResolvedValue({
+      platform: 'win32',
+      limitations: [
+        {
+          feature: 'session-discovery',
+          reason: '稼働中のエージェントセッションの検出は Windows では利用できません。',
+          detail: 'セッション検出は ps と lsof に依存している。',
+        },
+      ],
+    });
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'セッションをリンク' }),
+    );
+
+    expect(
+      await screen.findByText(
+        '稼働中のエージェントセッションの検出は Windows では利用できません。',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('lists only alive sessions as link candidates', async () => {

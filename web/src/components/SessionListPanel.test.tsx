@@ -16,6 +16,9 @@ vi.mock('../api', () => ({
   fetchSessionHistory: vi.fn(),
   fetchAgentProcesses: vi.fn(),
   fetchSessionTail: vi.fn(),
+  // PlatformLimitationNotice がパネル内から呼ぶ (bdboard-70z.9)。
+  // 既定は「制限なし」= 何も描かないので、既存のアサーションには影響しない。
+  fetchPlatformSupport: vi.fn(async () => ({ platform: 'darwin', limitations: [] })),
   ApiError: class ApiError extends Error {
     readonly status: number;
 

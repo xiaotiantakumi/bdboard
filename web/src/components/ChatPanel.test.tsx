@@ -28,6 +28,7 @@ vi.mock('../api', async (importOriginal) => {
       }),
     ),
     fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
+    fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
 
@@ -38,8 +39,10 @@ import {
   fetchChatThreads,
   fetchChatTurnStatus,
   fetchDiscoveredChatSessions,
+  fetchPlatformSupport,
   updateChatThread,
 } from '../api';
+import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 
 const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
@@ -48,6 +51,7 @@ const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
 const updateChatThreadMock = vi.mocked(updateChatThread);
 const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
+const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 const defaultWindowInnerWidth = window.innerWidth;
 
 function makeProjectDto(
@@ -291,6 +295,8 @@ describe('ChatPanel', () => {
   beforeEach(() => {
     installFakeHistory({});
     localStorage.clear();
+    resetPlatformSupportCache();
+    fetchPlatformSupportMock.mockResolvedValue({ platform: 'darwin', limitations: [] });
     fetchChatAgentsMock.mockResolvedValue([]);
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
@@ -5465,6 +5471,45 @@ describe('ChatPanel', () => {
       expect(
         screen.getByRole('button', { name: 'ready一覧を入力欄に挿入' }),
       ).toBeDisabled();
+    });
+  });
+  describe('platform limitations (bdboard-70z.9)', () => {
+    const WIN32_CHAT = {
+      platform: 'win32',
+      limitations: [
+        {
+          feature: 'chat' as const,
+          reason: 'AI チャットは Windows では利用できません。',
+          detail: 'エージェント CLI が .cmd シムのため shell 無しでは起動できない。',
+        },
+      ],
+    };
+
+    it('disables the composer and explains why on an unsupported platform', async () => {
+      fetchPlatformSupportMock.mockResolvedValue(WIN32_CHAT);
+      renderChatPanel();
+
+      expect(
+        await screen.findByText('AI チャットは Windows では利用できません。'),
+      ).toBeInTheDocument();
+      // 案内を出したうえで送信でき、送って初めて 501 に気付く、では
+      // 「UI 上で無効化」になっていない (PR#115 fable レビュー minor)。
+      await waitFor(() => {
+        expect(screen.getByLabelText('メッセージ')).toBeDisabled();
+      });
+      expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+    });
+
+    it('leaves the composer usable on a supported platform', async () => {
+      renderChatPanel();
+
+      await waitFor(() => {
+        expect(fetchPlatformSupportMock).toHaveBeenCalled();
+      });
+      expect(
+        screen.queryByText('AI チャットは Windows では利用できません。'),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText('メッセージ')).toBeEnabled();
     });
   });
 });
