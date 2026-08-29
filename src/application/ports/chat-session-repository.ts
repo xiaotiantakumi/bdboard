@@ -25,8 +25,9 @@ export interface ChatSessionListRecord {
 export interface ChatSessionRepository {
   /**
    * projectId のもとで sessionId を記憶する。
-   * 既知のセッションIDへの remember は agentId も含めて no-op
-   * (発行時のエージェントを後から書き換えない。最終使用順の再計算もしない)。
+   * 既知のセッションIDへの remember は agentId の書き換えのみ禁止
+   * (発行時のエージェントを後から変えない)。最終使用時刻相当の内部状態は
+   * 実装によって更新してよい。
    */
   remember(projectId: string, sessionId: string, agentId: string): void;
 
