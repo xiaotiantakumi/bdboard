@@ -7,6 +7,7 @@ import { getTicketTimeline } from '../../application/board/get-ticket-timeline.j
 import { getSimilarTickets } from '../../application/board/find-similar-tickets.js';
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
+import { getPendingCommentAnchors } from '../../application/board/get-pending-comment-anchors.js';
 import { getPrBadges } from '../../application/board/get-pr-badges.js';
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
@@ -639,8 +640,21 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       leftoverCandidates = await scanGitLeftovers(projects, deps.worktreeScanner);
     }
 
+    // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は
+    // コメントで動かないので、これが無いとコメントで議論が続いているチケットまで
+    // 「放置」に出る。引くのは確認待ちのチケットだけなので件数はひと桁。
+    let pendingCommentAnchors: ReadonlyMap<string, Date> | undefined;
+    if (deps.commentReader !== undefined) {
+      pendingCommentAnchors = await getPendingCommentAnchors(
+        deps.cache,
+        deps.commentReader,
+        projectIds !== undefined ? { projectIds } : undefined,
+      );
+    }
+
     const issues = getHygieneIssues(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
+      ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
     });
     return c.json(issues.map(toHygieneIssueDto));

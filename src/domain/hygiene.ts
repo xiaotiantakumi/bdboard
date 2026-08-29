@@ -67,14 +67,16 @@ export interface HygieneThresholds {
    * 短いのは、待っているのが人間の返答1つで、待たせている側(エージェント)は
    * その間ずっと止まっているため。
    *
-   * 測るのは updatedAt からの経過。bd human list が返す PendingDecision には
+   * 測るのは「最後に何かが起きてからの経過」。bd human list が返す PendingDecision には
    * 「いつ質問が出たか」が無い(src/application/ports/human-decisions.ts)ので、
-   * 「質問が出てから何日」ではなく「チケット本体が最後に更新されてからの期間」を見る。
+   * 「質問が出てから何日」ではなく「このチケットに何も起きていない期間」を見る。
    *
-   * 注意: bd の updated_at は **コメントでは動かない**(実データで確認: bdboard-36w は
-   * updated_at 2026-08-16 に対し 08-18 と 08-29 にコメントがある)。つまりコメントで
-   * 議論が続いているチケットも、フィールドが3日変わらなければここに出る。Ticket に
-   * 最終コメント日時が無い(commentCount しか無い)ため今は updatedAt が唯一の手掛かり。
+   * アンカーは updatedAt と最終コメント日時の遅いほう(bdboard-19db)。bd の updated_at は
+   * コメントでは動かない(実データ: bdboard-36w は updated_at 2026-08-16 に対し 08-18 と
+   * 08-29 にコメントがある)ため、updatedAt だけを見ると、コメントで議論が続いている
+   * チケットまで「放置」として出てしまう。最終コメント日時は呼び出し側が
+   * pendingCommentAnchors で渡す(取得は確認待ちのチケットに限る = bd の呼び出し回数を
+   * 確認待ちの件数に抑える)。渡されなければ updatedAt だけを見る従来の動作。
    */
   readonly stalePendingDecisionAfterMs: number;
 }
@@ -290,6 +292,7 @@ function checkStalePendingDecision(
   now: Date,
   thresholds: HygieneThresholds,
   isPendingDecision: boolean,
+  lastCommentAt: Date | undefined,
 ): HygieneIssue | null {
   if (!isPendingDecision) {
     return null;
@@ -301,7 +304,14 @@ function checkStalePendingDecision(
     return null;
   }
 
-  const elapsedMs = now.getTime() - ticket.updatedAt.getTime();
+  // 遅いほうを取る。コメントのほうが古いこと自体は普通にある(コメント後に
+  // 優先度を変えた等)ので、どちらか一方に決め打ちはしない。
+  const anchor =
+    isValidDate(lastCommentAt) && lastCommentAt.getTime() > ticket.updatedAt.getTime()
+      ? lastCommentAt
+      : ticket.updatedAt;
+
+  const elapsedMs = now.getTime() - anchor.getTime();
   if (elapsedMs < thresholds.stalePendingDecisionAfterMs) {
     return null;
   }
@@ -531,6 +541,12 @@ export function checkHygiene(
      * projectId を前置したもの。未指定なら stale_pending_decision は一切出ない。
      */
     readonly pendingDecisionKeys?: ReadonlySet<string>;
+    /**
+     * 確認待ちチケットの最終コメント日時。キーは pendingDecisionKeys と同じ
+     * pendingDecisionKey()。stale_pending_decision のアンカーを
+     * max(updatedAt, ここの値) にするためだけに使う。未指定なら updatedAt のみ。
+     */
+    readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
   },
 ): readonly HygieneIssue[] {
   const thresholds = ctx.thresholds ?? DEFAULT_HYGIENE_THRESHOLDS;
@@ -550,10 +566,8 @@ export function checkHygiene(
       issues.push(staleEpic);
     }
 
-    const isPendingDecision =
-      ctx.pendingDecisionKeys?.has(
-        pendingDecisionKey(ticket.projectId, ticket.id),
-      ) ?? false;
+    const decisionKey = pendingDecisionKey(ticket.projectId, ticket.id);
+    const isPendingDecision = ctx.pendingDecisionKeys?.has(decisionKey) ?? false;
 
     const staleInProgress = checkStaleInProgress(
       ticket,
@@ -570,6 +584,7 @@ export function checkHygiene(
       ctx.now,
       thresholds,
       isPendingDecision,
+      ctx.pendingCommentAnchors?.get(decisionKey),
     );
     if (stalePendingDecision !== null) {
       issues.push(stalePendingDecision);

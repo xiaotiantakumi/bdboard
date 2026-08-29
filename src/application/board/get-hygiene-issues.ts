@@ -10,6 +10,11 @@ export interface GetHygieneIssuesOptions {
   /** 指定されたIDのみ。未指定なら全部 */
   readonly projectIds?: readonly string[];
   readonly leftoverCandidates?: readonly LeftoverCandidate[];
+  /**
+   * 確認待ちチケットの最終コメント日時 (getPendingCommentAnchors の戻り)。
+   * bd を叩く必要があるのでここでは組み立てず、呼び出し側から受け取る。
+   */
+  readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
 }
 
 export function getHygieneIssues(
@@ -47,6 +52,9 @@ export function getHygieneIssues(
   return checkHygiene(tickets, {
     now,
     pendingDecisionKeys,
+    ...(options?.pendingCommentAnchors !== undefined
+      ? { pendingCommentAnchors: options.pendingCommentAnchors }
+      : {}),
     ...(options?.leftoverCandidates !== undefined
       ? { leftoverCandidates: options.leftoverCandidates }
       : {}),

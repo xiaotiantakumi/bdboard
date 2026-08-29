@@ -1483,6 +1483,143 @@ describe('createApiRoutes', () => {
     assertNoDates(body);
   });
 
+  it('lets a recent comment keep a pending decision out of the hygiene list', async () => {
+    // bdboard-19db: bd の updated_at はコメントで動かないので、ルートが
+    // getPendingCommentAnchors を通していないと、コメントで議論が続いている
+    // チケットまで「放置された確認待ち」に出る。ここは配線の確認。
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const stale = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000);
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-chatty',
+          projectId: a.id,
+          updatedAt: stale,
+          commentCount: 2,
+        }),
+        makeTicket({
+          id: 'bdboard-silent',
+          projectId: a.id,
+          updatedAt: stale,
+          commentCount: 0,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+      pendingDecisions: [
+        { id: 'bdboard-chatty', allowFreeform: true },
+        { id: 'bdboard-silent', allowFreeform: true },
+      ],
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_root: string, issueId: string) => [
+        {
+          id: `${issueId}-1`,
+          issueId,
+          author: 'someone',
+          text: 'まだ話している',
+          createdAt: new Date(NOW.getTime() - 60_000),
+        },
+      ]),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const response = await app.request('/api/hygiene');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    const pending = body.filter(
+      (issue: { kind: string }) => issue.kind === 'stale_pending_decision',
+    );
+    // コメントの無いほうだけが残る。
+    expect(pending.map((issue: { ticketId: string }) => issue.ticketId)).toEqual([
+      'bdboard-silent',
+    ]);
+    // commentCount が 0 のチケットには bd を叩かない。
+    expect(commentReader.listComments).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not fetch comments for projects outside the requested filter', async () => {
+    // bdboard-19db: bd 呼び出しは1件あたり秒単位なので、絞り込み外のプロジェクトまで
+    // 引くと素通しの分だけ /api/hygiene が遅くなる。ルートが projectIds を
+    // getPendingCommentAnchors へ渡していることの確認。
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    const stale = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000);
+    for (const p of [a, b]) {
+      cache.putProject({
+        project: p,
+        tickets: [
+          makeTicket({
+            id: `bdboard-chatty-${p.id}`,
+            projectId: p.id,
+            updatedAt: stale,
+            commentCount: 1,
+          }),
+        ],
+        fingerprint: `fp${p.id}`,
+        fetchedAt: NOW,
+        pendingDecisions: [{ id: `bdboard-chatty-${p.id}`, allowFreeform: true }],
+      });
+    }
+
+    const roots: string[] = [];
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (rootPath: string, issueId: string) => {
+        roots.push(rootPath);
+        return [
+          {
+            id: `${issueId}-1`,
+            issueId,
+            author: 'someone',
+            text: 'まだ話している',
+            createdAt: new Date(NOW.getTime() - 60_000),
+          },
+        ];
+      }),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const response = await app.request(
+      `/api/hygiene?projects=${encodeURIComponent(a.id)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(roots).toEqual([a.rootPath]);
+  });
+
+  it('still reports stale pending decisions when no commentReader is wired', async () => {
+    // commentReader は任意依存。無い構成で検知ごと消えると、コメントを見る変更が
+    // 「検知を静かに殺す」変更になってしまう。
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-chatty',
+          projectId: a.id,
+          updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+          commentCount: 2,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+      pendingDecisions: [{ id: 'bdboard-chatty', allowFreeform: true }],
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(
+      body.map((issue: { kind: string }) => issue.kind),
+    ).toContain('stale_pending_decision');
+  });
+
   it('returns merged_leftover hygiene issues with cleanup when worktreeScanner is configured', async () => {
     const cache = createFakeBoardCache();
     const a = project('proj-a', '/projects/a');

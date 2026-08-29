@@ -934,6 +934,107 @@ describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
     expect(kinds).not.toContain('stale_in_progress');
   });
 
+  it('uses the last comment instead of updatedAt when the comment is newer', () => {
+    // bd の updated_at はコメントで動かない (bdboard-19db)。updatedAt だけを見ると、
+    // コメントで議論が続いているチケットまで「放置」として出る。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      pendingDecisionKeys: keys('bdboard-waiting'),
+      pendingCommentAnchors: new Map([
+        [pendingDecisionKey(PROJECT, 'bdboard-waiting'), new Date(NOW.getTime() - 60_000)],
+      ]),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+
+    expect(issues).toEqual([]);
+  });
+
+  it('keeps flagging when the last comment is itself old enough', () => {
+    // コメントを見るようにしたせいで検知が死んでいないことの確認。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      pendingDecisionKeys: keys('bdboard-waiting'),
+      pendingCommentAnchors: new Map([
+        [pendingDecisionKey(PROJECT, 'bdboard-waiting'), new Date(NOW.getTime() - 5 * 24 * 60 * 60_000)],
+      ]),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+
+    // 日数はコメント側から数える。30日ではなく5日。
+    expect(issues[0]?.message).toBe('確認待ちのまま 5 日以上動きがありません');
+  });
+
+  it('keeps updatedAt when it is the newer of the two', () => {
+    // コメントのほうが古いのは普通にある (コメント後に優先度を変えた等)。
+    // 決め打ちで置き換えると、逆に検知が早まる方向の誤りになる。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 4 * 24 * 60 * 60_000),
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      pendingDecisionKeys: keys('bdboard-waiting'),
+      pendingCommentAnchors: new Map([
+        [pendingDecisionKey(PROJECT, 'bdboard-waiting'), new Date(NOW.getTime() - 20 * 24 * 60 * 60_000)],
+      ]),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+
+    expect(issues[0]?.message).toBe('確認待ちのまま 4 日以上動きがありません');
+  });
+
+  it('falls back to updatedAt when the anchor is unusable or missing', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 9 * 24 * 60 * 60_000),
+    });
+
+    const withBadAnchor = checkHygiene([ticket], {
+      now: NOW,
+      pendingDecisionKeys: keys('bdboard-waiting'),
+      pendingCommentAnchors: new Map([
+        [pendingDecisionKey(PROJECT, 'bdboard-waiting'), new Date('not a date')],
+      ]),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+
+    expect(withBadAnchor[0]?.message).toBe('確認待ちのまま 9 日以上動きがありません');
+    expect(pendingIssues([ticket], ['bdboard-waiting'])[0]?.message).toBe(
+      '確認待ちのまま 9 日以上動きがありません',
+    );
+  });
+
+  it('does not let one project\'s comment anchor reach another project\'s ticket', () => {
+    const stale = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000);
+    const inA = makeTicket({ id: 'bdboard-dup', projectId: '/projects/a', updatedAt: stale });
+    const inB = makeTicket({ id: 'bdboard-dup', projectId: '/projects/b', updatedAt: stale });
+
+    const issues = checkHygiene([inA, inB], {
+      now: NOW,
+      pendingDecisionKeys: new Set([
+        pendingDecisionKey('/projects/a', 'bdboard-dup'),
+        pendingDecisionKey('/projects/b', 'bdboard-dup'),
+      ]),
+      // A にだけ新しいコメントがある。B は放置のまま出るべき。
+      pendingCommentAnchors: new Map([
+        [pendingDecisionKey('/projects/a', 'bdboard-dup'), new Date(NOW.getTime() - 60_000)],
+      ]),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+
+    expect(issues.map((issue) => issue.projectId)).toEqual(['/projects/b']);
+  });
+
   it('still reports stale_in_progress when the ticket is not awaiting a human', () => {
     // 上の除外が「in_progress の検知そのものを殺した」になっていないことの確認。
     const ticket = makeTicket({
