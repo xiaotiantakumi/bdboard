@@ -319,11 +319,16 @@ export function TicketDetailPanel({
   const projectRootPath =
     data === undefined ? undefined : projectRootPaths.get(data.projectId);
 
+  // 質問への回答欄だけを初期化する。resetFormState はこれを含む全体リセット。
+  const resetDecisionAnswer = useCallback(() => {
+    setSelectedChoice(undefined);
+    setFreeformText('');
+  }, []);
+
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
     setCopyFeedback(null);
     setAriaLiveMessage('');
-    setSelectedChoice(undefined);
-    setFreeformText('');
+    resetDecisionAnswer();
     if (options?.clearSubmittedDecision === true) {
       setSubmittedDecision(null);
     }
@@ -342,7 +347,7 @@ export function TicketDetailPanel({
       clearTimeout(copyTimeoutRef.current);
       copyTimeoutRef.current = null;
     }
-  }, []);
+  }, [resetDecisionAnswer]);
 
   useEffect(() => {
     resetFormState({ clearSubmittedDecision: true });
@@ -350,9 +355,15 @@ export function TicketDetailPanel({
 
   // submittedDecision は pendingDecision 切り替えでは消さない。回答直後に
   // 「送信した回答」セクションが消えると bdboard-50n の元バグに戻るため。
+  //
+  // ここで消すのは *この質問への回答欄だけ*。pendingDecision はポーリング由来で、
+  // 利用者が何もしていなくても出現/消滅する — フォーム全体を resetFormState() で
+  // 消していたため、エージェントが質問を投稿した瞬間に書きかけのコメントや
+  // クローズ理由が警告なく消えていた (bdboard-9hl)。チケット自体が変わったときの
+  // 全体リセットは上の effect が担当する。
   useEffect(() => {
-    resetFormState();
-  }, [pendingDecision?.id, resetFormState]);
+    resetDecisionAnswer();
+  }, [pendingDecision?.id, resetDecisionAnswer]);
 
   useFocusTrap({
     containerRef: panelRef,
