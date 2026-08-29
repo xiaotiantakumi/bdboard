@@ -14,6 +14,7 @@ import {
   type ActivityWindowDays,
 } from '../uiPersistedState';
 import { buildDailyDigestMarkdown } from './dailyDigestMarkdown';
+import { togglePressedProps } from './toggleGroupA11y';
 
 const COPY_FEEDBACK_MS = 2000;
 const DIGEST_ACTIVITY_LIMIT = 500;
@@ -160,6 +161,7 @@ export function DailyDigest({
                 key={option}
                 type="button"
                 className={`toggle-btn${windowDays === option ? ' active' : ''}`}
+                {...togglePressedProps(windowDays === option)}
                 onClick={() => onWindowDaysChange(option)}
               >
                 {activityWindowLabel(option)}

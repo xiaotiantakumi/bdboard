@@ -10,6 +10,7 @@ import {
   formatActivityTime,
   groupEventsByDate,
 } from './activityFeedFormatting';
+import { togglePressedProps } from './toggleGroupA11y';
 
 export interface ActivityFeedProps {
   readonly projectIds: readonly string[];
@@ -75,6 +76,7 @@ export function ActivityFeed({
                 key={option}
                 type="button"
                 className={`toggle-btn${windowDays === option ? ' active' : ''}`}
+                {...togglePressedProps(windowDays === option)}
                 onClick={() => onWindowDaysChange(option)}
               >
                 {activityWindowLabel(option)}

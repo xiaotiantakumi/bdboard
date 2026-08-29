@@ -1,5 +1,6 @@
 import { type BoardDto, type PrBadgeDto, projectNameFallback } from '../api';
 import { NEXT_UP_LIMITS, type NextUpLimit } from '../uiPersistedState';
+import { togglePressedProps } from './toggleGroupA11y';
 import { CardItem } from './LaneColumn';
 
 export interface NextUpViewProps {
@@ -101,6 +102,7 @@ export function NextUpView({
                   key={option}
                   type="button"
                   className={`toggle-btn${limit === option ? ' active' : ''}`}
+                  {...togglePressedProps(limit === option)}
                   onClick={() => onLimitChange(option)}
                 >
                   {option}
@@ -111,7 +113,7 @@ export function NextUpView({
           <button
             type="button"
             className={`toggle-btn next-up-epic-toggle${showEpics ? ' active' : ''}`}
-            aria-pressed={showEpics}
+            {...togglePressedProps(showEpics)}
             onClick={() => onShowEpicsChange(!showEpics)}
           >
             {epicToggleLabel}

@@ -15,6 +15,7 @@ import {
   statsWeeksLabel,
   type StatsWeeks,
 } from '../uiPersistedState';
+import { togglePressedProps } from './toggleGroupA11y';
 import {
   ageBucketEntries,
   formatWeekLabel,
@@ -587,6 +588,7 @@ export function ThroughputStats({
                 key={option}
                 type="button"
                 className={`toggle-btn${weeks === option ? ' active' : ''}`}
+                {...togglePressedProps(weeks === option)}
                 onClick={() => onWeeksChange(option)}
               >
                 {statsWeeksLabel(option)}
