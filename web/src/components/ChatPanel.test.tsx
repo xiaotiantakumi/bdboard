@@ -638,6 +638,52 @@ describe('ChatPanel', () => {
     });
   });
 
+  it('maximizes the chat panel to full width and restores the previous width (bdboard-3tw.153)', async () => {
+    // ドラッグリサイズは MAX_WIDTH (720px) で頭打ちになる。最大化はその上限を
+    // 意図的に越える表示モードで、解除したら直前の幅へ戻ること。
+    const user = userEvent.setup();
+    // 上限 720px が視野幅由来のクランプ (innerWidth - 320) より小さくなる幅に
+    // 固定しておく。ここを既定の 1024 のままにすると 704px で頭打ちになり、
+    // 「MAX_WIDTH を越える」という本題がぼやける。
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    const first = renderChatPanel([PROJECT_A]);
+    const panel = first.container.querySelector('.detail-panel.chat-panel');
+    const handle = screen.getByRole('separator', { name: 'チャットパネルの幅を変更' });
+
+    fireEvent.keyDown(handle, { key: 'End' });
+    expect(panel).toHaveStyle({ width: '720px' });
+    expect(localStorage.getItem('bdboard.ui.chatPanelWidth')).toBe('720');
+
+    const maximize = screen.getByRole('button', { name: '最大化' });
+    // 見出しの操作は .detail-header-actions にまとめる (レビュー major-2)。
+    expect(maximize.parentElement?.className).toContain('detail-header-actions');
+    // aria-pressed は付けない (レビュー minor-3)。状態はラベルが伝える。
+    expect(maximize).not.toHaveAttribute('aria-pressed');
+    await user.click(maximize);
+
+    expect(panel).toHaveStyle({ width: '100%' });
+    expect(panel?.className).toContain('is-maximized');
+    expect(screen.queryByRole('separator', { name: 'チャットパネルの幅を変更' })).not.toBeInTheDocument();
+    // 100% は一時的な表示状態であり、通常幅の保存値を書き換えない。
+    expect(localStorage.getItem('bdboard.ui.chatPanelWidth')).toBe('720');
+    const shrink = screen.getByRole('button', { name: '縮小' });
+    expect(shrink).not.toHaveAttribute('aria-pressed');
+
+    await user.click(shrink);
+    // 幅は最大化中も保持されているので、直前の 720px に戻る。
+    expect(panel).toHaveStyle({ width: '720px' });
+    expect(panel?.className).not.toContain('is-maximized');
+    expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'チャットパネルの幅を変更' })).toBeInTheDocument();
+
+    // 最大化はこの表示中だけの状態。次回開いたときも、保存済みの通常幅でリサイズできる。
+    first.unmount();
+    const second = renderChatPanel([PROJECT_A]);
+    expect(second.container.querySelector('.detail-panel.chat-panel')).toHaveStyle({ width: '720px' });
+    expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'チャットパネルの幅を変更' })).toBeInTheDocument();
+  });
+
   it('supports keyboard resizing on desktop', () => {
     const { container } = renderChatPanel([PROJECT_A]);
     const panel = container.querySelector('.detail-panel.chat-panel');
