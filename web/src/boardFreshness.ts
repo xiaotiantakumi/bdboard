@@ -2,8 +2,9 @@ import type { StreamState } from './useBoardStream';
 
 export type StatusLevel = 'ok' | 'delayed' | 'disconnected' | 'reconnecting';
 
-export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string {
-  const ageMinutes = Math.floor((nowMs - new Date(generatedAt).getTime()) / 60000);
+/** ある時刻からの経過を「たった今 / N分前 / N時間前」で表す。 */
+export function formatRelativeAge(timestampMs: number, nowMs: number): string {
+  const ageMinutes = Math.floor((nowMs - timestampMs) / 60000);
   if (ageMinutes < 1) {
     return 'たった今';
   }
@@ -12,6 +13,10 @@ export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string
   }
   const ageHours = Math.floor(ageMinutes / 60);
   return `${ageHours}時間前`;
+}
+
+export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string {
+  return formatRelativeAge(new Date(generatedAt).getTime(), nowMs);
 }
 
 export function contactAgeMinutes(lastContactAtMs: number, nowMs: number): number {

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import {
   computeStatusLevel,
   formatGeneratedAtAge,
+  formatRelativeAge,
   STATUS_LABELS,
   type StatusLevel,
 } from '../boardFreshness';
@@ -86,9 +87,23 @@ export function StatusPill({
 
       {open && (
         <div className="status-pill-popover" role="region" aria-label="接続状態の詳細">
+          {/* ピルの判定は bdboard-9qa 以降 lastContactAtMs 基準なのに、ここだけ
+              generatedAt を「盤面取得」と表示していた。静穏時 (ETag 304 が続いて
+              generatedAt が凍る) には「正常」ピルの中に「盤面取得: 10分前」が
+              同居し、通信が10分止まっているようにも読めてしまう。ラベルを内容の
+              鮮度だと分かる語に変え、通信の鮮度を並記して両者を1画面で
+              読み分けられるようにする (bdboard-d55)。 */}
           {generatedAt !== null && generatedAt !== undefined && (
             <p className="status-pill-detail" title={new Date(generatedAt).toLocaleString()}>
-              盤面取得: {formatGeneratedAtAge(generatedAt, nowMs)}
+              盤面内容の最終変化: {formatGeneratedAtAge(generatedAt, nowMs)}
+            </p>
+          )}
+          {lastContactAtMs !== null && lastContactAtMs !== undefined && (
+            <p
+              className="status-pill-detail"
+              title={new Date(lastContactAtMs).toLocaleString()}
+            >
+              最終通信: {formatRelativeAge(lastContactAtMs, nowMs)}
             </p>
           )}
           {lastRefreshAt !== null && lastRefreshAt !== undefined && (

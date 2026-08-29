@@ -3,6 +3,7 @@ import {
   computeStatusLevel,
   contactAgeMinutes,
   formatGeneratedAtAge,
+  formatRelativeAge,
   mergeLastServerContact,
   shouldShowAlertBar,
   STATUS_LABELS,
@@ -21,6 +22,27 @@ describe('formatGeneratedAtAge (bdboard-3tw.125)', () => {
 
   it('returns N時間前 for 60+ minutes', () => {
     expect(formatGeneratedAtAge('2026-01-01T10:00:00.000Z', nowMs)).toBe('2時間前');
+  });
+});
+
+describe('formatRelativeAge (bdboard-d55)', () => {
+  // 最終通信は number (lastContactAtMs) で持っているので、文字列を経由せずに
+  // 同じ表記へ落とせる入口が要る。
+  const nowMs = new Date('2026-01-01T12:00:00.000Z').getTime();
+
+  it.each([
+    ['たった今', 30_000],
+    ['5分前', 5 * 60_000],
+    ['2時間前', 2 * 60 * 60_000],
+  ])('formats %s', (expected, ageMs) => {
+    expect(formatRelativeAge(nowMs - ageMs, nowMs)).toBe(expected);
+  });
+
+  it('agrees with formatGeneratedAtAge for the same instant', () => {
+    const generatedAt = '2026-01-01T11:35:00.000Z';
+    expect(formatRelativeAge(new Date(generatedAt).getTime(), nowMs)).toBe(
+      formatGeneratedAtAge(generatedAt, nowMs),
+    );
   });
 });
 
