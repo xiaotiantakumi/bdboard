@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto, BoardDto } from '../api';
@@ -514,6 +514,75 @@ describe('BoardKeyboardNav', () => {
     expect(checkboxFor('ready-1')).toBeChecked();
     expect(checkboxFor('ready-2')).toBeChecked();
     expect(checkboxFor('ready-3')).toBeChecked();
+  });
+
+  it('restores default tab stop when the focused card disappears from the board', async () => {
+    const user = userEvent.setup();
+    const initialBoard = makeBoard();
+    const { rerender } = render(
+      <BulkSelectionProvider>
+        <WatchedTicketsProvider>
+        <BoardLanes
+          board={initialBoard}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+        </WatchedTicketsProvider>
+      </BulkSelectionProvider>,
+    );
+
+    await user.click(getCardById('ready-2'));
+    expect(getCardById('ready-2')).toHaveAttribute('tabindex', '0');
+    expect(getCardById('ready-1')).toHaveAttribute('tabindex', '-1');
+
+    const boardWithoutFocusedCard: BoardDto = {
+      ...initialBoard,
+      lanes: {
+        ...initialBoard.lanes,
+        ready: [
+          makeCard('ready-1', 'ready', 'Ready One'),
+          makeCard('ready-3', 'ready', 'Ready Three'),
+        ],
+      },
+      cardCount: initialBoard.cardCount - 1,
+    };
+
+    rerender(
+      <BulkSelectionProvider>
+        <WatchedTicketsProvider>
+        <BoardLanes
+          board={boardWithoutFocusedCard}
+          hideDone
+          stalledOnly={false}
+          filter={EMPTY_BOARD_FILTER}
+          showProjectName
+          projectNames={projectNames}
+          projectActiveSessions={projectActiveSessions}
+          pendingDecisionIds={new Set()}
+          prLinksById={new Map()}
+          sectionKey="test"
+          onCardClick={vi.fn()}
+        />
+        </WatchedTicketsProvider>
+      </BulkSelectionProvider>,
+    );
+
+    await waitFor(() => {
+      expect(getCardById('ready-1')).toHaveAttribute('tabindex', '0');
+    });
+    expect(getCardById('ready-3')).toHaveAttribute('tabindex', '-1');
+
+    getCardById('ready-1').focus();
+    await user.keyboard('j');
+    expect(getCardById('ready-3')).toHaveFocus();
   });
 
   it('clears bulk selection with Escape', async () => {
