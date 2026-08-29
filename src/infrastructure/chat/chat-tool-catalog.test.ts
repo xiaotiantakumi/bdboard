@@ -24,7 +24,7 @@ describe('buildChatToolCommand', () => {
     if (!result.ok) return;
     expect(result.executable).toBe('bd');
     expect(result.args).toContain('show');
-    expect(result.pathFilter).toBeUndefined();
+    expect(result.outputFilter).toBeUndefined();
   });
 
   it('carries stdin through for bd tools that use it', () => {
@@ -48,7 +48,11 @@ describe('buildChatToolCommand', () => {
     if (!result.ok) return;
     expect(result.executable).toBe('git');
     expect(result.args).toContain('ls-tree');
-    expect(result.pathFilter).toEqual({ needle: 'sync-health', maxMatches: 200 });
+    expect(result.outputFilter).toEqual({
+      kind: 'paths',
+      needle: 'sync-health',
+      maxMatches: 200,
+    });
     expect(result.stdin).toBeUndefined();
   });
 

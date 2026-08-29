@@ -116,18 +116,21 @@ export const REPO_TOOL_DEFINITIONS: readonly BdToolDefinition[] = [
   },
 ] as const;
 
-/** ls-tree の全パス列挙を呼び出し側で絞り込むための指示。 */
-export interface RepoPathFilter {
-  /** 小文字化済みの検索語。 */
-  readonly needle: string;
-  readonly maxMatches: number;
-}
+/**
+ * git の出力を呼び出し側で絞り込むための指示。どちらの絞り込みも git には
+ * 渡さず、こちら側で行う。
+ */
+export type RepoOutputFilter =
+  /** ls-tree の全パス列挙から検索語を含むものだけを残す。 */
+  | { readonly kind: 'paths'; readonly needle: string; readonly maxMatches: number }
+  /** git log の結果から、チケットIDが「そのIDとして」現れる行だけを残す。 */
+  | { readonly kind: 'commits'; readonly ticketId: string };
 
 export type RepoArgsBuildResult =
   | {
       readonly ok: true;
       readonly args: readonly string[];
-      readonly pathFilter?: RepoPathFilter;
+      readonly outputFilter: RepoOutputFilter;
     }
   | { readonly ok: false; readonly error: string };
 
@@ -162,6 +165,9 @@ export function buildRepoToolArgs(
 
       // --fixed-strings を必ず付ける。チケットIDには `.` が含まれ(bdboard-3tw.151)、
       // 既定の正規表現マッチだと `bdboard-3tw151` のような別IDまで拾ってしまう。
+      // ただし --grep は境界の無い部分一致なので、これだけでは足りない
+      // (`bdboard-x3` が `bdboard-x32` のコミットに当たる。PR#143 レビュー major-1
+      // で実測)。ID として現れているかの判定は outputFilter 側で行う。
       // 末尾の `--` は ref とパスの取り違えを防ぐため。
       return {
         ok: true,
@@ -176,6 +182,7 @@ export function buildRepoToolArgs(
           parsed.data.ref ?? REPO_DEFAULT_REF,
           '--',
         ],
+        outputFilter: { kind: 'commits', ticketId: parsed.data.ticketId },
       };
     }
     case 'repo_path_exists': {
@@ -194,7 +201,8 @@ export function buildRepoToolArgs(
           parsed.data.ref ?? REPO_DEFAULT_REF,
           '--',
         ],
-        pathFilter: {
+        outputFilter: {
+          kind: 'paths',
           needle: parsed.data.pattern.toLowerCase(),
           maxMatches: REPO_PATH_MAX_MATCHES,
         },
@@ -205,16 +213,91 @@ export function buildRepoToolArgs(
   }
 }
 
+/** bd のチケットIDに使われうる文字。ID の切れ目判定に使う。 */
+const ID_CHAR_PATTERN = /[A-Za-z0-9._-]/;
+
 /**
- * ls-tree の出力を検索語で絞り込む。「0件」がそのまま「本当に無い」の根拠に
- * なるツールなので、走査した総数と打ち切りの有無も添えて返す(0件が
- * 「絞り込む前から空だった」のか「全件見た上で無かった」のか区別できるように)。
+ * `line[index]` の文字が、隣接する ID の続きかどうか。`direction` は ID から
+ * 外へ向かう向き(後ろ側なら +1、前側なら -1)。
+ *
+ * `.` だけ特別扱いする。`.` は ID の区切り文字でもあり(`bdboard-3tw.159.4`)、
+ * 同時に文末のピリオドでもある(`Closes bdboard-x32.`)。ID の続きであれば
+ * `.` の先に必ず ID 構成文字が来るので、そこまで見て判定する。
  */
-export function filterRepoPaths(stdout: string, filter: RepoPathFilter): string {
+function extendsId(line: string, index: number, direction: 1 | -1): boolean {
+  const char = line.charAt(index);
+  if (char.length === 0) {
+    return false;
+  }
+  if (char === '.') {
+    return ID_CHAR_PATTERN.test(line.charAt(index + direction));
+  }
+  return ID_CHAR_PATTERN.test(char);
+}
+
+/**
+ * `line` の中に `id` が「そのIDとして」現れているか。前後が ID の続きなら、
+ * より長い別IDの一部なので当たりとしない(`bdboard-x3` は
+ * `fix(bdboard-x32): ...` に、`bdboard-3tw.159` は `bdboard-3tw.159.4` の
+ * コミットに当たってはいけない)。
+ */
+function containsIdAtBoundary(line: string, id: string): boolean {
+  for (let from = 0; ; ) {
+    const index = line.indexOf(id, from);
+    if (index < 0) {
+      return false;
+    }
+    if (
+      !extendsId(line, index - 1, -1) &&
+      !extendsId(line, index + id.length, 1)
+    ) {
+      return true;
+    }
+    from = index + 1;
+  }
+}
+
+/**
+ * git の出力を行単位に割る。
+ *
+ * 最終行が改行で終わっていなければ、出力がどこかで切られている
+ * (CommandRunner の stdout 上限。PR#143 レビュー minor-3)。git は各行を必ず
+ * 改行で終えるので、これは「途中で切れた」の確実な印になる。切れかけの最終行は
+ * 捨て、切られたこと自体は呼び出し元へ伝える — このツールの価値は「0件」が
+ * 根拠になることなので、部分的な走査を全件走査のように見せてはいけない。
+ */
+function splitGitLines(stdout: string): {
+  readonly lines: readonly string[];
+  readonly incomplete: boolean;
+} {
+  if (stdout.length === 0) {
+    return { lines: [], incomplete: false };
+  }
+  const incomplete = !stdout.endsWith('\n');
   const lines = stdout.split('\n').filter((line) => line.length > 0);
+  return {
+    lines: incomplete ? lines.slice(0, -1) : lines,
+    incomplete,
+  };
+}
+
+/**
+ * git の出力に絞り込みを当てる。「0件」がそのまま根拠になるツールなので、
+ * 走査した総数・打ち切り・出力の切れも添えて返す。
+ */
+export function applyRepoOutputFilter(stdout: string, filter: RepoOutputFilter): string {
+  const { lines, incomplete } = splitGitLines(stdout);
+  const suffix = incomplete ? ' incomplete=true' : '';
+
+  if (filter.kind === 'commits') {
+    const matched = lines.filter((line) => containsIdAtBoundary(line, filter.ticketId));
+    // grepped は git の部分一致が拾った数。matched との差が「別IDの巻き添え」。
+    const header = `commits=${matched.length} grepped=${lines.length}${suffix}`;
+    return matched.length === 0 ? header : [header, ...matched].join('\n');
+  }
+
   const matched: string[] = [];
   let matchCount = 0;
-
   for (const line of lines) {
     if (!line.toLowerCase().includes(filter.needle)) {
       continue;
@@ -226,6 +309,6 @@ export function filterRepoPaths(stdout: string, filter: RepoPathFilter): string 
   }
 
   const truncated = matchCount > matched.length;
-  const header = `matched=${matchCount} scanned=${lines.length}${truncated ? ` truncated=true shown=${matched.length}` : ''}`;
+  const header = `matched=${matchCount} scanned=${lines.length}${truncated ? ` truncated=true shown=${matched.length}` : ''}${suffix}`;
   return matched.length === 0 ? header : [header, ...matched].join('\n');
 }

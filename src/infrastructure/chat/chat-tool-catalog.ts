@@ -7,7 +7,7 @@ import {
   REPO_TOOL_DEFINITIONS,
   buildRepoToolArgs,
   isRepoToolName,
-  type RepoPathFilter,
+  type RepoOutputFilter,
 } from './repo-tool-catalog.js';
 
 /**
@@ -35,8 +35,8 @@ export type ChatToolCommand =
       readonly executable: ChatToolExecutable;
       readonly args: readonly string[];
       readonly stdin?: string;
-      /** git ls-tree の出力を絞り込む指示(repo_path_exists のみ)。 */
-      readonly pathFilter?: RepoPathFilter;
+      /** git の出力を呼び出し側で絞り込む指示(repo ツールのみ)。 */
+      readonly outputFilter?: RepoOutputFilter;
     }
   | { readonly ok: false; readonly error: string };
 
@@ -60,7 +60,7 @@ export function buildChatToolCommand(
       ok: true,
       executable: 'git',
       args: built.args,
-      ...(built.pathFilter !== undefined ? { pathFilter: built.pathFilter } : {}),
+      outputFilter: built.outputFilter,
     };
   }
 

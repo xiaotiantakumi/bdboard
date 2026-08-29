@@ -207,3 +207,32 @@ describe('buildBdSystemPrompt with hasBdTools: false (bdboard-l1t.5: cursor adap
     ).toThrow(/bd-only/);
   });
 });
+
+describe('buildBdSystemPrompt repo evidence tools (bdboard-3tw.159.4)', () => {
+  const prompt = buildBdSystemPrompt({
+    projectName: 'demo',
+    projectRootPath: '/tmp/demo',
+    capability: 'bd-only',
+  });
+
+  it('names both repo tools so the model knows they exist', () => {
+    expect(prompt).toContain('repo_ticket_landed');
+    expect(prompt).toContain('repo_path_exists');
+  });
+
+  it('is honest that origin/main can be stale and that output can be cut', () => {
+    expect(prompt).toContain('origin/main');
+    expect(prompt).toContain('fetch');
+    expect(prompt).toContain('incomplete=true');
+  });
+
+  it('warns that a commit does not prove the code is still there (revert)', () => {
+    expect(prompt).toContain('revert');
+  });
+
+  it('no longer claims bd tools are the only thing available', () => {
+    // repo ツールが増えた以上、「使えるのは bd ツールのみ」は事実と違う。
+    expect(prompt).not.toContain('使えるのは与えられた bd ツールのみです');
+    expect(prompt).toContain('読み取り専用のリポジトリ確認');
+  });
+});

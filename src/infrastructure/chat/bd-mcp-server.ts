@@ -3,7 +3,7 @@ import {
   CHAT_TOOL_DEFINITIONS,
   buildChatToolCommand,
 } from './chat-tool-catalog.js';
-import { filterRepoPaths } from './repo-tool-catalog.js';
+import { applyRepoOutputFilter } from './repo-tool-catalog.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_GIT_PATH = 'git';
@@ -14,6 +14,11 @@ export interface BdMcpServerDeps {
   readonly commandRunner: CommandRunner;
   readonly projectRootPath: string;
   readonly bdPath?: string;
+  /**
+   * git の実行パス。既定は PATH 上の `git`。CLI からは渡らない
+   * (bd-mcp-server-main.ts に --git-path は無い) が、テストが本物の git を
+   * 起動せずに配線を確かめられるようにここだけ差し替え可能にしてある。
+   */
   readonly gitPath?: string;
   readonly timeoutMs?: number;
 }
@@ -155,8 +160,8 @@ export function createBdMcpServer(deps: BdMcpServerDeps): BdMcpServer {
     // 絞り込みは切り詰めより先に行う。ls-tree の全件列挙を先に切ると、
     // 「本当に無い」と「上限で切れて見えていないだけ」が区別できなくなる。
     const stdout =
-      built.pathFilter !== undefined
-        ? filterRepoPaths(result.stdout, built.pathFilter)
+      built.outputFilter !== undefined
+        ? applyRepoOutputFilter(result.stdout, built.outputFilter)
         : result.stdout;
 
     return {

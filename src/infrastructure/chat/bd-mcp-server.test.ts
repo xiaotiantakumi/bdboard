@@ -388,7 +388,9 @@ describe('createBdMcpServer / repo evidence tools (bdboard-3tw.159.4)', () => {
   it('filters the ls-tree output instead of returning the whole tree', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
-        stdout: ['src/main.ts', 'web/src/SyncHealth.tsx', 'README.md'].join('\n'),
+        // git は各行を改行で終える。末尾の改行が無い出力は「途中で切れた」の合図
+        // として扱われるので、フェイクでも本物どおり終端しておく。
+        stdout: `${['src/main.ts', 'web/src/SyncHealth.tsx', 'README.md'].join('\n')}\n`,
         stderr: '',
         exitCode: 0,
       }),
@@ -417,7 +419,7 @@ describe('createBdMcpServer / repo evidence tools (bdboard-3tw.159.4)', () => {
   it('reports matched=0 for a path that is really gone', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
-        stdout: ['src/main.ts', 'README.md'].join('\n'),
+        stdout: `${['src/main.ts', 'README.md'].join('\n')}\n`,
         stderr: '',
         exitCode: 0,
       }),
@@ -444,7 +446,7 @@ describe('createBdMcpServer / repo evidence tools (bdboard-3tw.159.4)', () => {
     // 「当たりが上限の外にあった」のと「本当に無い」が区別できなくなるので、
     // 絞り込みが先であることを固定する。
     const filler = Array.from({ length: 4000 }, (_, index) => `src/filler-${index}.ts`);
-    const stdout = [...filler, 'web/src/SyncHealth.tsx'].join('\n');
+    const stdout = `${[...filler, 'web/src/SyncHealth.tsx'].join('\n')}\n`;
     expect(stdout.length).toBeGreaterThan(60_000);
 
     const { runner } = createFakeRunner({

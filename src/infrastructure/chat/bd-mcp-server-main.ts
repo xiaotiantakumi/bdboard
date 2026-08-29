@@ -6,11 +6,9 @@ import { createBdMcpServer } from './bd-mcp-server.js';
 function parseArgs(argv: readonly string[]): {
   readonly projectRootPath?: string;
   readonly bdPath: string;
-  readonly gitPath: string;
 } {
   let projectRootPath: string | undefined;
   let bdPath = 'bd';
-  let gitPath = 'git';
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -22,19 +20,18 @@ function parseArgs(argv: readonly string[]): {
     if (arg === '--bd-path' && index + 1 < argv.length) {
       bdPath = argv[index + 1] ?? bdPath;
       index += 1;
-      continue;
-    }
-    if (arg === '--git-path' && index + 1 < argv.length) {
-      gitPath = argv[index + 1] ?? gitPath;
-      index += 1;
     }
   }
 
-  return { projectRootPath, bdPath, gitPath };
+  // git のパスは受け取らない。bd は呼び出し側が解決した絶対パスを渡してくるが、
+  // git は PATH 上の 1 つで足りる。使われないフラグを置いておくと「設定できる」
+  // と誤解させるだけなので、必要になったときに --bd-path と同じ形で足す
+  // (PR#143 レビュー minor-4)。
+  return { projectRootPath, bdPath };
 }
 
 async function main(): Promise<void> {
-  const { projectRootPath, bdPath, gitPath } = parseArgs(process.argv);
+  const { projectRootPath, bdPath } = parseArgs(process.argv);
 
   if (projectRootPath === undefined || !path.isAbsolute(projectRootPath)) {
     process.stderr.write('--project-root must be an absolute path\n');
@@ -45,7 +42,6 @@ async function main(): Promise<void> {
     commandRunner: new NodeCommandRunner(),
     projectRootPath,
     bdPath,
-    gitPath,
   });
 
   const input = createInterface({

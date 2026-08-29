@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   REPO_TOOL_DEFINITIONS,
   buildRepoToolArgs,
-  filterRepoPaths,
+  applyRepoOutputFilter,
   isRepoToolName,
 } from './repo-tool-catalog.js';
 
@@ -51,7 +51,7 @@ describe('buildRepoToolArgs / repo_ticket_landed', () => {
       'origin/main',
       '--',
     ]);
-    expect(result.pathFilter).toBeUndefined();
+    expect(result.outputFilter).toEqual({ kind: 'commits', ticketId: 'bdboard-3tw.151' });
   });
 
   it('keeps --fixed-strings so a dotted id cannot match a different ticket', () => {
@@ -122,7 +122,11 @@ describe('buildRepoToolArgs / repo_path_exists', () => {
     ]);
     // パターンは git へ渡さない。渡すのは呼び出し側での絞り込み指示だけ。
     expect(result.args.join(' ')).not.toContain('Sync-Health');
-    expect(result.pathFilter).toEqual({ needle: 'sync-health', maxMatches: 200 });
+    expect(result.outputFilter).toEqual({
+      kind: 'paths',
+      needle: 'sync-health',
+      maxMatches: 200,
+    });
   });
 
   it('rejects an empty, over-long, or control-character pattern', () => {
@@ -165,31 +169,132 @@ describe('buildRepoToolArgs / allowlist', () => {
   });
 });
 
-describe('filterRepoPaths', () => {
+describe('applyRepoOutputFilter / commits (PR#143 レビュー major-1)', () => {
+  const log = [
+    '01d780b 2026-08-29 fix(bdboard-x32): 自己再注入では .gitignore へ追記しない (#138)',
+    '5a9b943 2026-08-29 feat(bdboard-3tw.156): 取りこぼした返信を拾う (#135)',
+    '',
+  ].join('\n');
+
+  it('drops a commit that only matched because the id is a prefix of a longer one', () => {
+    // git の --grep は境界の無い部分一致なので、bdboard-x3 は bdboard-x32 の
+    // コミットに当たってしまう(実測)。ここで落とすのがこのフィルタの本題。
+    expect(applyRepoOutputFilter(log, { kind: 'commits', ticketId: 'bdboard-x3' })).toBe(
+      'commits=0 grepped=2',
+    );
+  });
+
+  it('keeps the commit for the exact id', () => {
+    const output = applyRepoOutputFilter(log, {
+      kind: 'commits',
+      ticketId: 'bdboard-x32',
+    });
+    expect(output.split('\n')[0]).toBe('commits=1 grepped=2');
+    expect(output).toContain('fix(bdboard-x32)');
+  });
+
+  it('does not let a parent epic id claim its child ticket commit', () => {
+    expect(
+      applyRepoOutputFilter(log, { kind: 'commits', ticketId: 'bdboard-3tw.15' }),
+    ).toBe('commits=0 grepped=2');
+    expect(
+      applyRepoOutputFilter(log, { kind: 'commits', ticketId: 'bdboard-3tw.156' }),
+    ).toContain('commits=1');
+  });
+
+  it('accepts an id followed by punctuation that is not part of an id', () => {
+    for (const subject of [
+      'abc1234 2026-08-29 Closes bdboard-x32.',
+      'abc1234 2026-08-29 bdboard-x32: done',
+      'abc1234 2026-08-29 done (bdboard-x32)',
+    ]) {
+      expect(
+        applyRepoOutputFilter(`${subject}\n`, {
+          kind: 'commits',
+          ticketId: 'bdboard-x32',
+        }),
+      ).toContain('commits=1');
+    }
+  });
+});
+
+describe('applyRepoOutputFilter / paths', () => {
   const stdout = ['web/src/SyncHealth.tsx', 'src/main.ts', 'docs/sync-health.md', ''].join(
     '\n',
   );
 
   it('reports matches with the scanned total so 0 means "really gone"', () => {
-    expect(filterRepoPaths(stdout, { needle: 'sync-health', maxMatches: 200 })).toBe(
-      'matched=1 scanned=3\ndocs/sync-health.md',
-    );
-    expect(filterRepoPaths(stdout, { needle: 'nothing-here', maxMatches: 200 })).toBe(
-      'matched=0 scanned=3',
-    );
+    expect(
+      applyRepoOutputFilter(stdout, {
+        kind: 'paths',
+        needle: 'sync-health',
+        maxMatches: 200,
+      }),
+    ).toBe('matched=1 scanned=3\ndocs/sync-health.md');
+    expect(
+      applyRepoOutputFilter(stdout, {
+        kind: 'paths',
+        needle: 'nothing-here',
+        maxMatches: 200,
+      }),
+    ).toBe('matched=0 scanned=3');
   });
 
   it('matches case-insensitively', () => {
-    expect(filterRepoPaths(stdout, { needle: 'synchealth', maxMatches: 200 })).toContain(
-      'web/src/SyncHealth.tsx',
-    );
+    expect(
+      applyRepoOutputFilter(stdout, {
+        kind: 'paths',
+        needle: 'synchealth',
+        maxMatches: 200,
+      }),
+    ).toContain('web/src/SyncHealth.tsx');
   });
 
   it('says so when the match list is truncated', () => {
-    const many = Array.from({ length: 5 }, (_, index) => `src/a${index}.ts`).join('\n');
-    const output = filterRepoPaths(many, { needle: 'src/a', maxMatches: 2 });
+    const many = `${Array.from({ length: 5 }, (_, index) => `src/a${index}.ts`).join('\n')}\n`;
+    const output = applyRepoOutputFilter(many, {
+      kind: 'paths',
+      needle: 'src/a',
+      maxMatches: 2,
+    });
 
     expect(output.split('\n')[0]).toBe('matched=5 scanned=5 truncated=true shown=2');
     expect(output.split('\n')).toHaveLength(3);
+  });
+});
+
+describe('applyRepoOutputFilter / truncated stdout (PR#143 レビュー minor-3)', () => {
+  // CommandRunner の stdout 上限に当たると git の出力は行の途中で切れる。
+  // git は各行を必ず改行で終えるので、末尾に改行が無い = 切れた、と判定できる。
+  it('marks the result incomplete and drops the half-written last line', () => {
+    const output = applyRepoOutputFilter('src/a.ts\nsrc/b.ts\nsrc/b', {
+      kind: 'paths',
+      needle: 'src/b',
+      maxMatches: 200,
+    });
+
+    expect(output).toBe('matched=1 scanned=2 incomplete=true\nsrc/b.ts');
+  });
+
+  it('does not mark a properly terminated output incomplete', () => {
+    expect(
+      applyRepoOutputFilter('src/a.ts\n', {
+        kind: 'paths',
+        needle: 'src',
+        maxMatches: 200,
+      }),
+    ).not.toContain('incomplete');
+    expect(
+      applyRepoOutputFilter('', { kind: 'paths', needle: 'src', maxMatches: 200 }),
+    ).toBe('matched=0 scanned=0');
+  });
+
+  it('marks a truncated commit listing incomplete too', () => {
+    expect(
+      applyRepoOutputFilter('abc1234 2026-08-29 fix(bdboard-x32): a\ndef56', {
+        kind: 'commits',
+        ticketId: 'bdboard-x32',
+      }),
+    ).toBe('commits=1 grepped=1 incomplete=true\nabc1234 2026-08-29 fix(bdboard-x32): a');
   });
 });
