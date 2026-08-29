@@ -45,10 +45,24 @@ export function SearchPalette({
   const trimmedQuery = query.trim();
   const hasQuery = trimmedQuery.length > 0;
 
-  const filteredActions = useMemo(
-    () => filterPaletteActions(actions, trimmedQuery),
-    [actions, trimmedQuery],
-  );
+  // actions は呼び出し元 (App.tsx) の useMemo が毎レンダー新しい参照を返して
+  // しまう場合があっても選択行がリセットされないよう、内容(id列)が前回と
+  // 同じであれば直前の参照を再利用する保険的な対策 (bdboard-t43h)。
+  // 根本原因である呼び出し元側の参照churnは別途修正済みだが、こちらは
+  // 将来同種の回帰が起きても選択行リセットに波及させないための防御。
+  const previousFilteredActionsRef = useRef<PaletteAction[]>([]);
+  const filteredActions = useMemo(() => {
+    const next = filterPaletteActions(actions, trimmedQuery);
+    const previous = previousFilteredActionsRef.current;
+    const isSameContent =
+      previous.length === next.length &&
+      previous.every((action, index) => action.id === next[index]?.id);
+    if (isSameContent) {
+      return previous;
+    }
+    previousFilteredActionsRef.current = next;
+    return next;
+  }, [actions, trimmedQuery]);
 
   const rows = useMemo<PaletteRow[]>(() => {
     const actionRows: PaletteRow[] = filteredActions.map((action) => ({

@@ -497,11 +497,19 @@ export function App() {
 
   const isRefreshing = boardQuery.isFetching || statusQuery.isFetching;
 
+  // boardQuery/statusQuery は TanStack Query v5 の trackResult が毎レンダー
+  // 新しい Proxy を生成するため、オブジェクトそのものを依存配列に入れると
+  // useCallback が実質メモ化されない (bdboard-t43h)。refetch 自体は
+  // QueryObserver のコンストラクタで一度だけ bind される安定参照なので、
+  // それを分割代入して依存させる。
+  const { refetch: refetchBoard } = boardQuery;
+  const { refetch: refetchStatus } = statusQuery;
+
   const handleRefresh = useCallback(() => {
-    void boardQuery.refetch();
-    void statusQuery.refetch();
+    void refetchBoard();
+    void refetchStatus();
     reconnect();
-  }, [boardQuery, statusQuery, reconnect]);
+  }, [refetchBoard, refetchStatus, reconnect]);
 
   const handleToggleProject = useCallback((projectId: string, checked: boolean) => {
     setSelectedProjectIds((current) => {
