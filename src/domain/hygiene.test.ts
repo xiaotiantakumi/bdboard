@@ -253,14 +253,20 @@ describe('checkHygiene stale_in_progress', () => {
     expect(
       checkHygiene([ticket], {
         now: NOW,
-        thresholds: { staleInProgressAfterMs: 3 * 24 * 60 * 60_000, highPriorityMax: 1 },
+        thresholds: {
+          ...DEFAULT_HYGIENE_THRESHOLDS,
+          staleInProgressAfterMs: 3 * 24 * 60 * 60_000,
+        },
       }).map((issue) => issue.kind),
     ).toEqual([]);
 
     expect(
       checkHygiene([ticket], {
         now: NOW,
-        thresholds: { staleInProgressAfterMs: 24 * 60 * 60_000, highPriorityMax: 1 },
+        thresholds: {
+          ...DEFAULT_HYGIENE_THRESHOLDS,
+          staleInProgressAfterMs: 24 * 60 * 60_000,
+        },
       }).map((issue) => issue.kind),
     ).toEqual(['stale_in_progress']);
   });
@@ -686,5 +692,159 @@ describe('checkHygiene merged_leftover', () => {
       worktreePath,
       branchName: null,
     });
+  });
+});
+
+describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
+  const PENDING_MS = DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs;
+
+  function pendingIssues(
+    tickets: readonly Ticket[],
+    pendingIds: readonly string[],
+  ) {
+    return checkHygiene(tickets, {
+      now: NOW,
+      pendingDecisionIds: new Set(pendingIds),
+    }).filter((issue) => issue.kind === 'stale_pending_decision');
+  }
+
+  it('flags a pending ticket that has not moved for the threshold', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - PENDING_MS),
+    });
+
+    const issues = pendingIssues([ticket], ['bdboard-waiting']);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.message).toBe('確認待ちのまま 3 日以上動きがありません');
+    expect(issues[0]?.severity).toBe('warning');
+  });
+
+  it('stays quiet one millisecond before the threshold', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - PENDING_MS + 1),
+    });
+
+    expect(pendingIssues([ticket], ['bdboard-waiting'])).toEqual([]);
+  });
+
+  it('reports the elapsed days rather than the threshold', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 16 * 24 * 60 * 60_000),
+    });
+
+    expect(pendingIssues([ticket], ['bdboard-waiting'])[0]?.message).toBe(
+      '確認待ちのまま 16 日以上動きがありません',
+    );
+  });
+
+  it('ignores tickets that are not awaiting a human decision', () => {
+    // 同じだけ放置されていても、human ラベルが無ければ確認待ちではない。
+    const ticket = makeTicket({
+      id: 'bdboard-quiet',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    expect(pendingIssues([ticket], [])).toEqual([]);
+  });
+
+  it('emits nothing when the caller passes no pending set at all', () => {
+    // ドメインは Ticket からは確認待ちを判定できない。呼び出し側が集めて渡さない
+    // 限り、この検知は黙っていなければならない (誤検知の方が害が大きい)。
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    expect(
+      checkHygiene([ticket], { now: NOW }).map((issue) => issue.kind),
+    ).not.toContain('stale_pending_decision');
+  });
+
+  it('ignores closed tickets that still carry the human label', () => {
+    // deriveLane も closed を done で上書きする (ラベル外し忘れの保険)。盤面で
+    // done のカードを健全性だけが「確認待ちが放置」と言うのは矛盾になる。
+    const ticket = makeTicket({
+      id: 'bdboard-done',
+      status: 'closed',
+      updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+    });
+
+    expect(pendingIssues([ticket], ['bdboard-done'])).toEqual([]);
+  });
+
+  it('honours a custom threshold', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - 2 * 24 * 60 * 60_000),
+    });
+
+    expect(
+      checkHygiene([ticket], {
+        now: NOW,
+        pendingDecisionIds: new Set(['bdboard-waiting']),
+        thresholds: {
+          ...DEFAULT_HYGIENE_THRESHOLDS,
+          stalePendingDecisionAfterMs: 5 * 24 * 60 * 60_000,
+        },
+      }),
+    ).toEqual([]);
+
+    expect(
+      checkHygiene([ticket], {
+        now: NOW,
+        pendingDecisionIds: new Set(['bdboard-waiting']),
+        thresholds: {
+          ...DEFAULT_HYGIENE_THRESHOLDS,
+          stalePendingDecisionAfterMs: 24 * 60 * 60_000,
+        },
+      }).map((issue) => issue.kind),
+    ).toEqual(['stale_pending_decision']);
+  });
+
+  it('defaults to three days', () => {
+    expect(DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs).toBe(
+      3 * 24 * 60 * 60_000,
+    );
+  });
+
+  it('sorts after unblocked_high_priority_idle and before merged_leftover', () => {
+    // KIND_ORDER に足し忘れると indexOf が -1 になり、先頭へ回って並びが崩れる。
+    const idle = makeTicket({
+      id: 'bdboard-idle',
+      status: 'open',
+      priority: 0,
+      dependencies: [blocksEdge('bdboard-idle', 'bdboard-donedep')],
+    });
+    const doneDep = makeTicket({ id: 'bdboard-donedep', status: 'closed' });
+    const waiting = makeTicket({
+      id: 'bdboard-waiting',
+      status: 'open',
+      updatedAt: new Date(NOW.getTime() - PENDING_MS),
+    });
+
+    const kinds = checkHygiene([idle, doneDep, waiting], {
+      now: NOW,
+      pendingDecisionIds: new Set(['bdboard-waiting']),
+    })
+      .map((issue) => issue.kind)
+      .filter(
+        (kind) =>
+          kind === 'unblocked_high_priority_idle' ||
+          kind === 'stale_pending_decision',
+      );
+
+    expect(kinds).toEqual([
+      'unblocked_high_priority_idle',
+      'stale_pending_decision',
+    ]);
   });
 });

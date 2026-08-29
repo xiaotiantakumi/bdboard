@@ -151,4 +151,81 @@ describe('getHygieneIssues', () => {
 
     expect(getHygieneIssues(cache, NOW, { projectIds: [] })).toEqual([]);
   });
+  // bdboard-ijk1: 確認待ちは ticket.status ではなくキャッシュ上の
+  // pendingDecisions 由来なので、ドメインではなくここが唯一の受け渡し口になる。
+  it('feeds cached pending decisions into the stale_pending_decision check', () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+    const stale = new Date(NOW.getTime() - 10 * 24 * 60 * 60_000);
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-waiting', projectId: a.id, updatedAt: stale }),
+        makeTicket({ id: 'bdboard-quiet', projectId: a.id, updatedAt: stale }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+      pendingDecisions: [{ id: 'bdboard-waiting', allowFreeform: true }],
+    });
+
+    const issues = getHygieneIssues(cache, NOW).filter(
+      (issue) => issue.kind === 'stale_pending_decision',
+    );
+    // 同じだけ放置されていても、確認待ちなのは片方だけ。
+    expect(issues.map((issue) => issue.ticketId)).toEqual(['bdboard-waiting']);
+  });
+
+  it('emits no stale_pending_decision when the cache holds none', () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-waiting',
+          projectId: a.id,
+          updatedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60_000),
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    expect(
+      getHygieneIssues(cache, NOW).map((issue) => issue.kind),
+    ).not.toContain('stale_pending_decision');
+  });
+
+  it('does not treat an out-of-scope pending decision as this project\'s', () => {
+    // プロジェクトは prefix を共有しうる (どちらも 'bdboard')。同じIDのチケットが
+    // 両方に居ると、pendingDecisionIds を絞り込み前に集めた場合、A の確認待ちが
+    // B の同名チケットに化けて誤検知になる。集合を絞り込み後の entries から
+    // 作っているのはそのため。
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+    const b = project('/b', '/projects/b', 'Beta');
+    const stale = new Date(NOW.getTime() - 10 * 24 * 60 * 60_000);
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-dup', projectId: a.id, updatedAt: stale })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+      pendingDecisions: [{ id: 'bdboard-dup', allowFreeform: true }],
+    });
+    cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'bdboard-dup', projectId: b.id, updatedAt: stale })],
+      fingerprint: 'fp-b',
+      fetchedAt: NOW,
+      // B 側は確認待ちではない。
+    });
+
+    const issues = getHygieneIssues(cache, NOW, { projectIds: [b.id] }).filter(
+      (issue) => issue.kind === 'stale_pending_decision',
+    );
+    expect(issues).toEqual([]);
+  });
 });

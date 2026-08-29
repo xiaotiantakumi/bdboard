@@ -20,6 +20,7 @@ export type HygieneIssueKind =
   | 'stale_in_progress'
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
+  | 'stale_pending_decision'
   | 'merged_leftover';
 
 export interface HygieneCycleEdge {
@@ -59,11 +60,26 @@ export interface HygieneThresholds {
   readonly staleInProgressAfterMs: number;
   /** P0/P1 を高優先とみなす上限（この値以下） */
   readonly highPriorityMax: number;
+  /**
+   * 既定 3日。
+   *
+   * 確認待ち(awaiting_human)のまま動きが無いチケットを拾う。in_progress の 7日より
+   * 短いのは、待っているのが人間の返答1つで、待たせている側(エージェント)は
+   * その間ずっと止まっているため。
+   *
+   * 測るのは updatedAt からの経過。bd human list が返す PendingDecision には
+   * 「いつ質問が出たか」が無い(src/application/ports/human-decisions.ts)ので、
+   * 「質問が出てから何日」ではなく「このチケットに何も起きていない期間」を見る。
+   * コメントやメタデータ更新でリセットされるが、放置の検知としてはむしろ
+   * こちらが欲しい意味になる。
+   */
+  readonly stalePendingDecisionAfterMs: number;
 }
 
 export const DEFAULT_HYGIENE_THRESHOLDS: HygieneThresholds = {
   staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
   highPriorityMax: 1,
+  stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
 };
 
 function ticketPriority(ticket: Ticket): unknown {
@@ -226,6 +242,48 @@ function checkUnblockedHighPriorityIdle(
     ticketId: ticket.id,
     projectId: ticket.projectId,
     message: 'ブロックは解除済みですが、高優先チケットが未着手のままです',
+    severity: 'warning',
+  };
+}
+
+/**
+ * 確認待ち(awaiting_human)のまま放置されているチケットを拾う。
+ *
+ * awaiting_human は ticket.status ではなく bd の human ラベル由来の派生レーンで
+ * (src/domain/readiness.ts の deriveLane)、Ticket 単体からは判定できない。呼び出し側が
+ * 集めた pendingDecisionIds を渡してもらう前提で、渡されなければ何も出さない。
+ *
+ * closed は除外する。deriveLane も closed を done で上書きしていて(human ラベルの
+ * 外し忘れでチケットが再浮上しないための保険)、盤面で done のカードが健全性だけ
+ * 「確認待ちが放置されている」と言い出すのは矛盾になる。
+ */
+function checkStalePendingDecision(
+  ticket: Ticket,
+  now: Date,
+  thresholds: HygieneThresholds,
+  pendingDecisionIds: ReadonlySet<TicketId> | undefined,
+): HygieneIssue | null {
+  if (pendingDecisionIds === undefined || !pendingDecisionIds.has(ticket.id)) {
+    return null;
+  }
+  if (ticket.status === 'closed') {
+    return null;
+  }
+  if (!isValidDate(ticket.updatedAt)) {
+    return null;
+  }
+
+  const elapsedMs = now.getTime() - ticket.updatedAt.getTime();
+  if (elapsedMs < thresholds.stalePendingDecisionAfterMs) {
+    return null;
+  }
+
+  const days = Math.floor(elapsedMs / (24 * 60 * 60_000));
+  return {
+    kind: 'stale_pending_decision',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message: `確認待ちのまま ${days} 日以上動きがありません`,
     severity: 'warning',
   };
 }
@@ -417,6 +475,7 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'stale_in_progress',
   'missing_priority',
   'unblocked_high_priority_idle',
+  'stale_pending_decision',
   'merged_leftover',
 ];
 
@@ -438,6 +497,12 @@ export function checkHygiene(
     readonly now: Date;
     readonly thresholds?: HygieneThresholds;
     readonly leftoverCandidates?: readonly LeftoverCandidate[];
+    /**
+     * 確認待ち(awaiting_human)のチケットID。bd の human ラベル由来で Ticket からは
+     * 判定できないため、呼び出し側が集めて渡す。未指定なら
+     * stale_pending_decision は一切出ない。
+     */
+    readonly pendingDecisionIds?: ReadonlySet<TicketId>;
   },
 ): readonly HygieneIssue[] {
   const thresholds = ctx.thresholds ?? DEFAULT_HYGIENE_THRESHOLDS;
@@ -460,6 +525,16 @@ export function checkHygiene(
     const staleInProgress = checkStaleInProgress(ticket, ctx.now, thresholds);
     if (staleInProgress !== null) {
       issues.push(staleInProgress);
+    }
+
+    const stalePendingDecision = checkStalePendingDecision(
+      ticket,
+      ctx.now,
+      thresholds,
+      ctx.pendingDecisionIds,
+    );
+    if (stalePendingDecision !== null) {
+      issues.push(stalePendingDecision);
     }
 
     const missingPriority = checkMissingPriority(ticket);

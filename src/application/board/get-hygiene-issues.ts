@@ -1,5 +1,6 @@
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import { checkHygiene, type HygieneIssue } from '../../domain/hygiene.js';
+import type { TicketId } from '../../domain/ticket-id.js';
 import type { BoardCache } from '../ports/board-cache.js';
 
 export interface GetHygieneIssuesOptions {
@@ -22,8 +23,19 @@ export function getHygieneIssues(
   }
 
   const tickets = entries.flatMap((entry) => entry.tickets);
+
+  // 確認待ちレーンは bd の human ラベル由来で、refreshProjects がキャッシュに
+  // 載せた pendingDecisions がその原本 (get-board.ts の humanLabeledIdsFromCache と
+  // 同じ出所)。ドメイン側は Ticket しか見ないので、ここで集めて渡す。
+  const pendingDecisionIds = new Set<TicketId>(
+    entries.flatMap((entry) =>
+      (entry.pendingDecisions ?? []).map((decision) => decision.id),
+    ),
+  );
+
   return checkHygiene(tickets, {
     now,
+    pendingDecisionIds,
     ...(options?.leftoverCandidates !== undefined
       ? { leftoverCandidates: options.leftoverCandidates }
       : {}),

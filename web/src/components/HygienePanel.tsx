@@ -55,6 +55,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   stale_in_progress: '長期 in_progress',
   missing_priority: 'priority 未設定',
   unblocked_high_priority_idle: '着手待ち高優先',
+  stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
 };
 
