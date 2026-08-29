@@ -977,10 +977,17 @@ async function main(): Promise<void> {
     app.route('/', createAiQuotaRoutes({ aiQuotaService }));
 
     const aiQuotaThresholdPublisher = createAiQuotaThresholdPublisher();
+    // SSE購読者がいない間は`ai-quota`の実プローブ(pty経由、agy/codexを順に叩き最大50秒強)を
+    // 起動しない — 誰も見ていないヘッダウィジェットのために常時稼働サーバー上で永久に
+    // ptyプローブを回し続けていた問題(bdboard-uopj)。購読者がいる間だけ通常の
+    // getSnapshot()(必要ならfetchを起動)を使い、いない間はpeekSnapshot()でキャッシュ
+    // 参照のみに留める(キャッシュが無ければ何もしない)。
     const checkAiQuotaThresholds = async (): Promise<void> => {
       try {
-        const state = await aiQuotaService.getSnapshot();
-        if (state.kind !== 'ok') {
+        const state = events.subscriberCount() > 0
+          ? await aiQuotaService.getSnapshot()
+          : aiQuotaService.peekSnapshot();
+        if (state === null || state.kind !== 'ok') {
           return;
         }
         const config = await aiQuotaAlertConfigStore.read();

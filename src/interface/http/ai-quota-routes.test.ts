@@ -6,6 +6,7 @@ import { createAiQuotaRoutes } from './ai-quota-routes.js';
 function createApp(state: AiQuotaState): { app: Hono; service: AiQuotaService } {
   const service: AiQuotaService = {
     getSnapshot: vi.fn(async () => state),
+    peekSnapshot: vi.fn(() => state),
   };
   const app = new Hono();
   app.route('/', createAiQuotaRoutes({ aiQuotaService: service }));
