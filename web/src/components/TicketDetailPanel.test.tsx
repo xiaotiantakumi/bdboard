@@ -1000,16 +1000,20 @@ describe('TicketDetailPanel pending decisions', () => {
     // エージェントが質問1を取り下げて質問2を出した状況。ミューテーションの
     // エラーを捨てないと、質問2の送信ボタンの下に質問1の失敗メッセージが
     // 残り続ける (bdboard-uez)。
+    //
+    // 質問文はわざと同じにしてある。エージェントが同じ質問を取り下げて出し直す
+    // ことは実際にあり、そのとき別物と見分ける手掛かりは id しかない。文言まで
+    // 変えると、判定を id ではなく question に取り違える実装を通してしまう
+    // (PR#130 fable レビュー M4)。
     rerender(
       panel({
         id: 'decision-2',
         projectId: sampleTicket.projectId,
-        question: '次の質問',
+        question: '最初の質問',
         allowFreeform: true,
       }),
     );
 
-    expect(await screen.findByText('次の質問')).toBeInTheDocument();
     await waitFor(() => {
       expect(screen.queryByText(NETWORK_FETCH_HELP)).not.toBeInTheDocument();
     });
