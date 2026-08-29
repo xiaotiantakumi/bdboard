@@ -756,6 +756,54 @@ describe('detached bulk chat turn recovery', () => {
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionB }));
   });
 
+  it('drops the oldest completion once the queue is full (PR#135 レビュー nit-1)', async () => {
+    // ACK しないクライアントに備えた歯止め (CHAT_COMPLETED_TURNS_MAX = 20)。
+    // レビューで「上限の挙動だけテストが無く、slice(-MAX) を消しても全テストが
+    // 通る」と指摘された箇所。上限を超えたら古い方から落ち、落ちた分の ACK は
+    // エラーではなく no-op で済むことを固定する。
+    const MAX = 20;
+    const sessionIdFor = (index: number): string =>
+      `550e8400-e29b-41d4-a716-4466554${index.toString().padStart(5, '0')}`;
+
+    let call = 0;
+    const sendMessage = vi.fn(async () => {
+      const sessionId = sessionIdFor(call);
+      call += 1;
+      return { reply: `reply ${sessionId}`, sessionId, agentId: 'test-agent', failedTools: [] };
+    });
+    const store = createChatSessionStore();
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: createFakeAgent({ sendMessage }), cache, store, now: () => NOW });
+
+    // 一度も ACK しないまま MAX + 1 件完了させる。
+    for (let i = 0; i < MAX + 1; i += 1) {
+      const response = await app.request(
+        '/api/chat/message',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: `message ${i}` }),
+        },
+        LOCAL_ENV,
+      );
+      expect(response.status).toBe(200);
+    }
+
+    // 先頭 (最古) が押し出されているので、次に配られるのは2番目。
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionIdFor(1) }));
+
+    // 落ちた分を ACK しても壊れない (該当が無いので no-op)。
+    const ackDropped = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionIdFor(0)}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ackDropped.status).toBe(204);
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionIdFor(1) }));
+  });
+
   it('acknowledges only the named session and leaves the other completions queued', async () => {
     const sessionA = '550e8400-e29b-41d4-a716-4466554400aa';
     const sessionB = '550e8400-e29b-41d4-a716-4466554400bb';

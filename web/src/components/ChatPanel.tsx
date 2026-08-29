@@ -1506,6 +1506,13 @@ export function ChatPanel({
         // 当てると楽観表示している自分の発言(と添付)が画面から消える。
         // 完了後の履歴は「利用者の発言 + 返信」の2件分増えているので、
         // 増えているときだけ当てれば取りこぼしだけを拾える。
+        //
+        // 既知の限界 (PR#135 レビュー minor-2): 保存件数が上限
+        // (CHAT_MESSAGES_MAX_PER_SESSION) に達したセッションでは、サーバー側が
+        // 古い方から捨てて件数を保つため履歴が伸びず、この比較は永久に成立しない。
+        // そのスレッドではこの安全網が効かない (回収 effect 側は従来どおり効く)。
+        // 「上限到達 かつ 回収も取りこぼし」が重なったときだけの穴なので、
+        // 末尾比較などの重い判定は入れずに限界として記録するに留める。
         const localCount = conversationsRef.current[sessionId]?.messages.length ?? 0;
         if (payload.messages.length <= localCount) return;
         setConversations((prev) => ({
@@ -1527,6 +1534,11 @@ export function ChatPanel({
           },
         }));
         setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
+        // モデルの復元はここでは行わない (PR#135 レビュー nit-3)。回収経路や
+        // 履歴経路と非対称だが、この安全網が走るのは「このクライアント自身が
+        // 送信したスレッド」だけで、送信成功時点で threadModelIds は既に
+        // 書かれている。履歴側の「まだ値が無いキーにだけ書く」規律に従うと
+        // 常に書かない側へ落ちるので、足しても観測できる差が無い。
         // 取り込めたときだけ印を外す。捨てた/短くて当てなかった場合は残して
         // おいて、次にこのスレッドを開いたときにもう一度試す。
         clearUnresolvedSend(sessionId);
@@ -1537,7 +1549,19 @@ export function ChatPanel({
       .finally(() => {
         unresolvedRefetchRef.current.delete(sessionId);
       });
-  }, [selectedProjectId, currentSessionId, unresolvedSends, clearUnresolvedSend]);
+    // 表示中の会話の件数を依存に入れておく (PR#135 レビュー minor-1)。印が
+    // 立ったまま同じスレッドで次のターンが終わったとき、その場で取り直しへ
+    // 戻れる。ストリーミングの delta は conversations ではなく別の state へ
+    // 積まれるので、ここが配信ごとに揺れることはない。
+  }, [
+    selectedProjectId,
+    currentSessionId,
+    unresolvedSends,
+    clearUnresolvedSend,
+    currentSessionId === undefined
+      ? 0
+      : (conversations[currentSessionId]?.messages.length ?? 0),
+  ]);
 
   // 表示中の会話にだけ効くストリーミングテキスト。他の会話のストリームで
   // この会話をスクロールしない。
@@ -1776,12 +1800,17 @@ export function ChatPanel({
         [selectedProjectId]: [...(prev[selectedProjectId] ?? []).filter((id) => id !== result.sessionId), result.sessionId],
       }));
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
-      clearUnresolvedSend(result.sessionId);
+      // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
+      // 通常の成功では印はそもそも立っていない (印を立てるのは abort の catch だけ)
+      // ので、外して意味があるのは「見届けられなかったスレッドへ戻り、取り直しが
+      // 当たる前に次を送信した」場合だけ。その場合の取りこぼし返信はまだローカルに
+      // 入っておらず、ここで外すと二度と取りに行かなくなる。印は取り直しが実際に
+      // 当たったときにだけ外す。
       void acknowledgeChatTurn(selectedProjectId, result.sessionId).catch(() => {
         // The reply is already incorporated. A failed ACK only causes safe re-hydration later.
       });
     },
-    [effectiveModelId, selectedProjectId, showModelSelect, clearUnresolvedSend],
+    [effectiveModelId, selectedProjectId, showModelSelect],
   );
 
   const applyChatError = useCallback(
