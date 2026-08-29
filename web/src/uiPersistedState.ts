@@ -14,6 +14,27 @@ export type ViewMode =
 
 export const DEFAULT_VIEW: ViewMode = 'merged';
 
+/*
+  ビュー切替タブの並び順とラベルの単一原本。GlobalBar のタブ列と、プリセットの
+  保存対象サマリ(describeBoardFilterPresetState)の両方がここを参照する。
+*/
+export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
+  { view: 'merged', label: '統合' },
+  { view: 'split', label: '分割' },
+  { view: 'next', label: 'Next Up' },
+  { view: 'activity', label: 'アクティビティ' },
+  { view: 'digest', label: 'ダイジェスト' },
+  { view: 'stats', label: '統計' },
+  { view: 'hygiene', label: '健全性' },
+  { view: 'graph', label: '依存グラフ' },
+  { view: 'events', label: 'イベント' },
+  { view: 'settings', label: '設定' },
+];
+
+export function viewLabel(view: ViewMode): string {
+  return VIEW_ITEMS.find((item) => item.view === view)?.label ?? view;
+}
+
 export const NEXT_UP_LIMITS = [5, 10, 20] as const;
 export type NextUpLimit = (typeof NEXT_UP_LIMITS)[number];
 
@@ -263,6 +284,12 @@ export interface BoardFilterPreset {
   issueTypes: string[];
   labels: string[];
   filterText: string;
+  /*
+    「既定にする」で選ばれたプリセット。保存済みの絞り込み状態がまだ1つも無い
+    ブラウザ(= 初回起動)でだけ自動適用される。既に自分の絞り込みを持っている
+    利用者の状態を勝手に上書きしないため、それ以外の場面では適用しない。
+  */
+  isDefault?: boolean;
 }
 
 export interface BoardFilterPresetState {
@@ -313,7 +340,7 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
   if (filterText === null) {
     return null;
   }
-  return {
+  const preset: BoardFilterPreset = {
     id: record.id,
     name,
     view,
@@ -323,6 +350,11 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
     labels,
     filterText,
   };
+  // 既存の保存データには isDefault が無いので、true のときだけ持たせる(欠損は false 扱い)。
+  if (record.isDefault === true) {
+    preset.isDefault = true;
+  }
+  return preset;
 }
 
 function validateRecentTicketEntry(value: unknown): RecentTicketEntry | null {
@@ -437,6 +469,67 @@ export function findMatchingBoardFilterPreset(
   return presets.find((preset) => boardFilterPresetStatesEqual(preset, state)) ?? null;
 }
 
+/**
+ * プリセットが復元する絞り込み状態が、このブラウザに1つでも保存済みかどうか。
+ * 「既定」プリセットは、これが false のとき(= 実質的な初回起動)だけ自動適用する。
+ */
+export function hasStoredBoardFilterState(storage?: Pick<Storage, 'getItem'>): boolean {
+  const keys = [
+    UI_STORAGE_KEYS.view,
+    UI_STORAGE_KEYS.selectedProjectIds,
+    UI_STORAGE_KEYS.boardPriorityCeiling,
+    UI_STORAGE_KEYS.boardIssueTypes,
+    UI_STORAGE_KEYS.boardLabels,
+    UI_STORAGE_KEYS.boardFilterText,
+  ];
+  try {
+    const target = storage ?? (typeof localStorage === 'undefined' ? null : localStorage);
+    if (target === null) {
+      return true; // 判定できないときは「保存済み」に倒して自動適用しない。
+    }
+    return keys.some((key) => target.getItem(key) !== null);
+  } catch {
+    return true;
+  }
+}
+
+export function findDefaultBoardFilterPreset(
+  presets: readonly BoardFilterPreset[],
+): BoardFilterPreset | null {
+  return presets.find((preset) => preset.isDefault === true) ?? null;
+}
+
+/**
+ * プリセットの保存対象を1行で説明する。「現在の状態を保存」とだけ書いてあると何が
+ * 保存されるのか分からない、というのが Turn 4 の出発点なので、実際に
+ * BoardFilterPresetState が持っているものだけを、持っている粒度でそのまま並べる。
+ */
+export function describeBoardFilterPresetState(state: BoardFilterPresetState): string {
+  const parts: string[] = [`ビュー: ${viewLabel(state.view)}`];
+
+  parts.push(
+    state.selectedProjectIds.length > 0
+      ? `プロジェクト${state.selectedProjectIds.length}件`
+      : '全プロジェクト',
+  );
+
+  if (state.priorityCeiling !== 'all') {
+    parts.push(`P${state.priorityCeiling}以上`);
+  }
+  if (state.issueTypes.length > 0) {
+    parts.push(`種別${state.issueTypes.length}件`);
+  }
+  if (state.labels.length > 0) {
+    parts.push(`ラベル${state.labels.length}件`);
+  }
+  const filterText = state.filterText.trim();
+  if (filterText !== '') {
+    parts.push(`検索「${filterText}」`);
+  }
+
+  return parts.join(' / ');
+}
+
 export function sanitizeProjectFilter(
   selectedIds: string[],
   availableProjectIds: readonly string[],
@@ -452,5 +545,7 @@ export function sanitizeProjectFilter(
   if (filtered.length === 0) {
     return [];
   }
-  return filtered;
+  // 取り除くものが無いときは同じ参照を返す。呼び出し側(usePersistedState)が
+  // 「変わっていないなら書かない」で判定できるようにするため。
+  return filtered.length === selectedIds.length ? selectedIds : filtered;
 }

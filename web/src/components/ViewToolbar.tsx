@@ -1,7 +1,7 @@
 import type { BoardFilterPreset, BoardFilterPresetState } from '../uiPersistedState';
 import type { ViewMode } from '../uiPersistedState';
 import { AiQuotaWidget } from './AiQuotaWidget';
-import { BoardFilterPresets } from './BoardFilterPresets';
+import { PresetControl } from './PresetControl';
 
 export interface ViewToolbarProps {
   view: ViewMode;
@@ -20,6 +20,7 @@ export interface ViewToolbarProps {
   isRefreshing: boolean;
   chatAvailable: boolean;
   onOpenChat: () => void;
+  presetSaveIntentToken: number;
 }
 
 function FilterChip({
@@ -61,17 +62,19 @@ export function ViewToolbar({
   isRefreshing,
   chatAvailable,
   onOpenChat,
+  presetSaveIntentToken,
 }: ViewToolbarProps) {
   const showBoardFilters = view === 'merged' || view === 'split';
 
   return (
     <div className="view-toolbar">
       <div className="view-toolbar-left">
-        <BoardFilterPresets
+        <PresetControl
           presets={boardFilterPresets}
           onPresetsChange={onBoardFilterPresetsChange}
           currentState={boardFilterPresetState}
           onApplyPreset={onApplyBoardFilterPreset}
+          saveIntentToken={presetSaveIntentToken}
         />
 
         {showBoardFilters && (

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchBoard,
   fetchBoardThresholdsConfig,
@@ -22,6 +22,7 @@ import { BoardDnDProvider } from './components/BoardDnDProvider';
 import { BulkActionBar } from './components/BulkActionBar';
 import { BulkSelectionProvider } from './components/BulkSelectionProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
+import { PopoverCoordinatorProvider } from './components/PopoverCoordinator';
 import { ActivityFeed } from './components/ActivityFeed';
 import { DailyDigest } from './components/DailyDigest';
 import { AlertBar } from './components/AlertBar';
@@ -66,6 +67,8 @@ import {
   validateIssueTypeArray,
   validateLaneArray,
   validateBoardFilterPresets,
+  findDefaultBoardFilterPreset,
+  hasStoredBoardFilterState,
   validateRecentTickets,
   recordRecentTicket,
   type BoardFilterPreset,
@@ -181,6 +184,10 @@ export function App() {
   );
   const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
   const [statusDetailOpen, setStatusDetailOpen] = useState(false);
+  const [presetSaveIntentToken, setPresetSaveIntentToken] = useState(0);
+  // 初回起動判定は localStorage が書き戻される前(= 最初のレンダー中)に確定させる。
+  const [hadStoredFilterStateAtStartup] = useState(() => hasStoredBoardFilterState());
+  const defaultPresetHandledRef = useRef(false);
 
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
@@ -342,6 +349,25 @@ export function App() {
     setBoardLabels,
     setBoardFilterText,
   ]);
+
+  /*
+    「既定」プリセットは、この端末にまだ絞り込み状態が1つも保存されていないとき
+    (= 実質的な初回起動)にだけ自動適用する。既に自分の絞り込みを持っている利用者の
+    状態を、起動のたびに勝手に上書きしないため。
+  */
+  useEffect(() => {
+    if (defaultPresetHandledRef.current) {
+      return;
+    }
+    defaultPresetHandledRef.current = true;
+    if (hadStoredFilterStateAtStartup) {
+      return;
+    }
+    const defaultPreset = findDefaultBoardFilterPreset(boardFilterPresets);
+    if (defaultPreset !== null) {
+      handleApplyBoardFilterPreset(defaultPreset);
+    }
+  }, [boardFilterPresets, hadStoredFilterStateAtStartup, handleApplyBoardFilterPreset]);
 
   const projectNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -651,6 +677,7 @@ export function App() {
 
   return (
     <UndoSnackbarProvider>
+    <PopoverCoordinatorProvider>
     <div className="app">
       <header className="header">
         <ErrorBoundary label="ヘッダー">
@@ -673,6 +700,7 @@ export function App() {
           onToggleProject={handleToggleProject}
           onSelectAllProjects={handleSelectAll}
           onClearAllProjects={handleClearAll}
+          onSaveProjectCombination={() => setPresetSaveIntentToken((token) => token + 1)}
           onOpenSettings={() => setView('settings')}
           onOpenTunnel={() => setTunnelModalOpen(true)}
           onOpenHelp={handleOpenHelp}
@@ -698,6 +726,7 @@ export function App() {
           isRefreshing={isRefreshing}
           chatAvailable={chatAvailable}
           onOpenChat={() => setChatOpen(true)}
+          presetSaveIntentToken={presetSaveIntentToken}
         />
         </ErrorBoundary>
       </header>
@@ -1015,6 +1044,7 @@ export function App() {
       )}
 
     </div>
+    </PopoverCoordinatorProvider>
     </UndoSnackbarProvider>
   );
 }

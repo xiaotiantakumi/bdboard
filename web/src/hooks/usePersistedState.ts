@@ -60,6 +60,16 @@ export function usePersistedState<T>(
     (value: T | ((prev: T) => T)) => {
       setState((prev) => {
         const next = typeof value === 'function' ? (value as (prev: T) => T)(prev) : value;
+        /*
+          値が変わっていないときは書かない。起動のたびに走る正規化 effect
+          (App.tsx のプロジェクト絞り込みの sanitize など)が、実際には何も変えて
+          いないのに localStorage へ書き込んでしまうと、「この端末にはまだ絞り込みが
+          保存されていない」という判定 (hasStoredBoardFilterState) が初回起動でも
+          true になり、既定プリセットの自動適用が永久に発火しなくなる。
+        */
+        if (Object.is(next, prev)) {
+          return prev;
+        }
         try {
           writeStorageItem(key, JSON.stringify(next));
         } catch {

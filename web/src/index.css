@@ -590,50 +590,6 @@ body {
   height: 16px;
 }
 
-.project-filter details {
-  width: 100%;
-}
-
-.project-filter summary {
-  cursor: pointer;
-  color: var(--color-text);
-  font-size: 0.8125rem;
-  list-style: none;
-  padding: 6px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--badge-neutral-bg);
-  display: inline-flex;
-  align-items: center;
-  min-height: 30px;
-}
-
-.project-filter summary::-webkit-details-marker {
-  display: none;
-}
-
-.project-filter summary::before {
-  content: '▸';
-  margin-right: 6px;
-  font-size: 0.7em;
-  color: var(--color-text-secondary);
-}
-
-.project-filter details[open] summary::before {
-  content: '▾';
-}
-
-.project-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-top: 10px;
-  padding: 10px 12px;
-  max-height: 200px;
-  overflow-y: auto;
-  background: var(--color-bg-grouped);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-}
 
 .meta-text {
   color: var(--color-text-tertiary);
@@ -5696,63 +5652,442 @@ body {
   margin-left: auto;
 }
 
-.filter-presets {
-  align-items: center;
+
+/* =========================================================================
+   ヘッダーのポップオーバー (Header Redesign Turn 4)
+
+   崩れを止めるための規則:
+   1. 開く中身は行に足さない — position: absolute で重ね、ヘッダーの高さと
+      各ボタンの位置を開閉で動かさない。
+   2. 行は折り返さない — バー直下の子は flex: 0 0 auto; white-space: nowrap。
+   3. ボタン幅を内容で変えない — 選択が増えても「他N件」で吸収し、max-width と
+      省略記号を持たせる。
+   4. 縦に伸ばさずスクロール — max-height を決め、リスト部分だけスクロール。
+      ヘッダー(検索・全選択)とフッター(保存)は固定。
+   5. 同時に開かない — PopoverCoordinator が担当 (CSSではなくTS側)。
+   ========================================================================= */
+
+
+.popover-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
 }
 
-.filter-preset-group {
-  max-width: min(100%, 420px);
+.popover-foot {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
 }
 
-.filter-preset-manage summary {
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
   cursor: pointer;
-  color: var(--color-text);
-  font-size: 0.8125rem;
-  list-style: none;
-  padding: 6px 12px;
-  border-radius: var(--radius-pill);
-  background: var(--badge-neutral-bg);
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-accent);
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+/* --- 4a プロジェクト選択 ------------------------------------------------ */
+
+.project-picker {
+  position: relative;
+}
+
+/*
+  ボタン幅は選択内容によらず一定にする(規則3)。中のラベルだけが省略記号で潰れ、
+  ボタンの外形は動かない — これが「押すたびにヘッダーの見た目が変わる」のを止める。
+*/
+.project-picker-button {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  width: 210px;
+  max-width: 100%;
   min-height: 30px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
 }
 
-.filter-preset-manage summary::-webkit-details-marker {
-  display: none;
+.project-picker-button:hover {
+  background: var(--color-border-strong);
 }
 
-.filter-preset-manage summary::before {
-  content: '▸';
-  margin-right: 6px;
+.project-picker-button-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.project-picker-caret {
+  flex: 0 0 auto;
   font-size: 0.7em;
   color: var(--color-text-secondary);
 }
 
-.filter-preset-manage details[open] summary::before {
-  content: '▾';
-}
-
-.filter-preset-manage-panel {
-  margin-top: 10px;
-  padding: 10px 12px;
-  min-width: 240px;
+.project-picker-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* ヘッダー右寄りに置かれるコントロールなので、右端を揃えて画面外へはみ出させない。 */
+  right: 0;
+  left: auto;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  max-height: min(60vh, 420px);
+  background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+  overflow: hidden;
+}
+
+.project-picker-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  min-height: 30px;
+}
+
+.project-picker-search:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.project-picker-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.project-picker-bulk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-picker-bulk-sep {
+  color: var(--color-border-strong);
+}
+
+/* リストだけがスクロールする(規則4)。件数が9件でも50件でも高さは変わらない。 */
+.project-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.project-picker-group-label {
+  margin: 6px 6px 4px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.project-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-picker-row:hover {
   background: var(--color-bg-grouped);
 }
 
-.filter-preset-manage {
+.project-picker-row-selected {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.project-picker-row-selected:hover {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.project-picker-check {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--color-accent);
+}
+
+.project-picker-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-picker-empty {
+  margin: 10px 8px;
+  font-size: 0.8125rem;
+  color: var(--color-text-tertiary);
+}
+
+.project-picker-save {
+  width: 100%;
+}
+
+/* --- 4b プリセット ------------------------------------------------------ */
+
+.preset-control {
   position: relative;
 }
 
-.filter-preset-save-row {
-  display: flex;
-  gap: 8px;
+.preset-control-button {
+  display: inline-flex;
   align-items: center;
-  margin-top: 6px;
+  gap: 6px;
+  max-width: 260px;
+  min-height: 30px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
 }
 
-.filter-preset-name-input {
+.preset-control-button:hover {
+  background: var(--color-border-strong);
+}
+
+.preset-control-button-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-control-caret {
+  flex: 0 0 auto;
+  font-size: 0.7em;
+  color: var(--color-text-secondary);
+}
+
+.preset-control-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 320px;
+  max-width: calc(100vw - 32px);
+  max-height: min(60vh, 420px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+  overflow: hidden;
+}
+
+.preset-control-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.preset-control-empty {
+  margin: 10px 8px;
+  font-size: 0.8125rem;
+  color: var(--color-text-tertiary);
+}
+
+.preset-control-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.preset-control-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.preset-control-apply {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset-control-apply:hover {
+  background: var(--color-bg-grouped);
+}
+
+.preset-control-apply-active {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.preset-control-check {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--color-accent);
+}
+
+.preset-control-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preset-control-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  font-size: 0.6875rem;
+}
+
+.preset-control-badge-default {
+  background: var(--badge-neutral-bg);
+  color: var(--color-text-secondary);
+}
+
+.preset-control-badge-dirty {
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent);
+}
+
+.preset-control-row-menu-button {
+  flex: 0 0 auto;
+  width: 26px;
+  min-height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-secondary);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.preset-control-row-menu-button:hover {
+  background: var(--color-bg-grouped);
+  color: var(--color-text);
+}
+
+/*
+  行メニューはスクロールするリストの中に流し込む(浮かせない)。絶対配置にすると
+  .preset-control-list の overflow で下半分が切り取られてしまうため — 規則4(内側の
+  リストだけがスクロールする)を守ったままメニュー全体を見せられるのはこの形だけ。
+*/
+.preset-control-row-menu {
+  margin: 2px 0 6px 22px;
+  padding: 4px;
+  background: var(--color-bg-grouped);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.preset-control-row-menu-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset-control-row-menu-item:hover {
+  background: var(--color-bg-grouped);
+}
+
+.preset-control-row-menu-danger {
+  color: var(--color-danger);
+}
+
+.preset-control-rename {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.preset-control-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 「現在の状態を保存」ではなく、何が保存されるのかを1行で示す。 */
+.preset-control-target {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.preset-control-save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preset-control-save-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preset-control-name-input {
   flex: 1 1 auto;
   min-width: 0;
   padding: 6px 10px;
@@ -5765,31 +6100,16 @@ body {
   min-height: 30px;
 }
 
-.filter-preset-name-input:focus {
+.preset-control-name-input:focus {
   outline: none;
   border-color: var(--color-accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
-.filter-preset-error {
-  margin: 6px 0 0;
+.preset-control-error {
+  margin: 0;
   color: var(--color-danger);
   font-size: 0.75rem;
-}
-
-.filter-preset-list {
-  margin: 10px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.filter-preset-list-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 4px 0;
-  font-size: 0.8125rem;
 }
 
 /* 未対応機能の案内 (bdboard-70z.9)。エラーではなく仕様なので、

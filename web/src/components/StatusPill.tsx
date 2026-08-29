@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import {
   computeStatusLevel,
   formatIsoAge,
@@ -8,6 +7,7 @@ import {
 } from '../boardFreshness';
 import { useNow } from '../hooks/useNow';
 import type { StreamState } from '../useBoardStream';
+import { useExclusivePopover } from './PopoverCoordinator';
 
 export interface StatusPillProps {
   streamState: StreamState;
@@ -46,29 +46,8 @@ export function StatusPill({
   onOpenChange,
 }: StatusPillProps) {
   const nowMs = useNow();
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useExclusivePopover('status-pill', open, onOpenChange);
   const level = computeStatusLevel(streamState, lastContactAtMs, nowMs);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    const handleMouseDown = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Node)) {
-        return;
-      }
-      if (containerRef.current !== null && !containerRef.current.contains(target)) {
-        onOpenChange(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleMouseDown);
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown);
-    };
-  }, [open, onOpenChange]);
 
   return (
     <div ref={containerRef} className="status-pill-widget header-group">
