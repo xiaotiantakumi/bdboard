@@ -1542,6 +1542,56 @@ describe('createApiRoutes', () => {
     expect(commentReader.listComments).toHaveBeenCalledTimes(1);
   });
 
+  it('does not fetch comments for projects outside the requested filter', async () => {
+    // bdboard-19db: bd 呼び出しは1件あたり秒単位なので、絞り込み外のプロジェクトまで
+    // 引くと素通しの分だけ /api/hygiene が遅くなる。ルートが projectIds を
+    // getPendingCommentAnchors へ渡していることの確認。
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    const stale = new Date(NOW.getTime() - 30 * 24 * 60 * 60_000);
+    for (const p of [a, b]) {
+      cache.putProject({
+        project: p,
+        tickets: [
+          makeTicket({
+            id: `bdboard-chatty-${p.id}`,
+            projectId: p.id,
+            updatedAt: stale,
+            commentCount: 1,
+          }),
+        ],
+        fingerprint: `fp${p.id}`,
+        fetchedAt: NOW,
+        pendingDecisions: [{ id: `bdboard-chatty-${p.id}`, allowFreeform: true }],
+      });
+    }
+
+    const roots: string[] = [];
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (rootPath: string, issueId: string) => {
+        roots.push(rootPath);
+        return [
+          {
+            id: `${issueId}-1`,
+            issueId,
+            author: 'someone',
+            text: 'まだ話している',
+            createdAt: new Date(NOW.getTime() - 60_000),
+          },
+        ];
+      }),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const response = await app.request(
+      `/api/hygiene?projects=${encodeURIComponent(a.id)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(roots).toEqual([a.rootPath]);
+  });
+
   it('still reports stale pending decisions when no commentReader is wired', async () => {
     // commentReader は任意依存。無い構成で検知ごと消えると、コメントを見る変更が
     // 「検知を静かに殺す」変更になってしまう。

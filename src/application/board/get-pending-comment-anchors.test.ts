@@ -258,4 +258,44 @@ describe('getPendingCommentAnchors', () => {
 
     expect((await getPendingCommentAnchors(cache, reader)).size).toBe(0);
   });
+
+  /*
+   * 濃度制限はこの機能の設計の要。確認待ちは常時ひと桁なので今は効いていないが、
+   * 上限が黙って消えると bd のプロセス起動数が確認待ちの件数そのままになる
+   * (bd 呼び出しは1件あたり秒単位で、実測で30秒タイムアウトも観測されている)。
+   * 同型の get-pr-badges.test.ts にも同じテストがある (bdboard-3yf)。
+   */
+  it('limits comment fetch concurrency to the configured maximum', async () => {
+    const cache = createFakeBoardCache();
+    const p = project('/a', '/projects/a');
+    const ids = Array.from({ length: 8 }, (_, index) => `bdboard-${index}`);
+    cache.putProject({
+      project: p,
+      tickets: ids.map((id) =>
+        makeTicket({ id, projectId: p.id, commentCount: 1 }),
+      ),
+      fingerprint: 'fp',
+      fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
+      pendingDecisions: ids.map((id) => ({ id, allowFreeform: true })),
+    });
+
+    let activeCount = 0;
+    let maxObserved = 0;
+    const reader: CommentReader = {
+      listComments: vi.fn(async (_root: string, issueId: TicketId) => {
+        activeCount += 1;
+        maxObserved = Math.max(maxObserved, activeCount);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeCount -= 1;
+        return [comment(issueId, '2026-05-30T00:00:00.000Z')];
+      }),
+    };
+
+    const anchors = await getPendingCommentAnchors(cache, reader);
+
+    expect(anchors.size).toBe(ids.length);
+    expect(maxObserved).toBeLessThanOrEqual(3);
+    // 直列に落ちていないことも見る。上限だけ見ると濃度1への変異が生き残る。
+    expect(maxObserved).toBeGreaterThan(1);
+  });
 });
