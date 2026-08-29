@@ -3,6 +3,7 @@ import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { FileSystemPort } from '../../application/ports/file-system.js';
 import type { InteractionReader } from '../../application/ports/interaction-reader.js';
 import { parseInteractions } from '../../application/interaction/parse-interactions.js';
+import { extractCompleteLines } from '../../application/transcript/extract-complete-lines.js';
 import { planScan, type ScanTarget } from '../../application/transcript/scan-plan.js';
 import type { InteractionRecord } from '../../domain/interaction.js';
 
@@ -14,42 +15,6 @@ interface ReaderOptions {
 interface TargetMeta {
   readonly previousOffset: number | undefined;
   readonly size: number;
-}
-
-// 行の切り出しと committedOffset の算出は必ず生 Buffer 上のバイト境界で行う。
-// デコード済み文字列を再エンコードすると、チャンク先頭が多バイト文字の途中で切れたときに
-// U+FFFD 置換でバイト長が膨らみ、オフセットが実際より進む(bdboard-3tw.105)。
-function extractCompleteLines(
-  buffer: Buffer,
-  sliceStart: number,
-  isTailRestart: boolean,
-): { readonly text: string; readonly committedOffset: number } {
-  let startByteInChunk = 0;
-  if (isTailRestart && sliceStart > 0) {
-    const firstNewline = buffer.indexOf(0x0a);
-    if (firstNewline === -1) {
-      return { text: '', committedOffset: sliceStart };
-    }
-    startByteInChunk = firstNewline + 1;
-  }
-
-  if (startByteInChunk >= buffer.length) {
-    return { text: '', committedOffset: sliceStart + startByteInChunk };
-  }
-
-  let endByteInChunk = buffer.length;
-  if (buffer[buffer.length - 1] !== 0x0a) {
-    const lastNewline = buffer.lastIndexOf(0x0a);
-    if (lastNewline < startByteInChunk) {
-      return { text: '', committedOffset: sliceStart + startByteInChunk };
-    }
-    endByteInChunk = lastNewline + 1;
-  }
-
-  const completeBytes = buffer.subarray(startByteInChunk, endByteInChunk);
-  const text = completeBytes.toString('utf8');
-  const committedOffset = sliceStart + endByteInChunk;
-  return { text, committedOffset };
 }
 
 export function createJsonlInteractionReader(

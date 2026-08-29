@@ -96,22 +96,21 @@ function createFakeFs(options: FakeFsOptions): FakeFs {
       start: number,
       length: number,
     ): Promise<string | undefined> {
-      readRangeCalls.push({ path: filePath, start, length });
-      if (readRangeFails.has(filePath)) {
-        return undefined;
-      }
-      const content = contents[filePath];
-      if (content === undefined) {
-        return undefined;
-      }
-      return content.slice(start, start + length);
+      const bytes = await this.readRangeBytes(filePath, start, length);
+      return bytes?.toString('utf8');
     },
 
+    // start/length は文字数ではなくバイト数。文字列 slice で代用すると多バイト文字
+    // まわりで本物と挙動が変わり、フェイクの方が寛容になってしまう(bdboard-32u)。
     async readRangeBytes(
       filePath: string,
       start: number,
       length: number,
     ): Promise<Buffer | undefined> {
+      readRangeCalls.push({ path: filePath, start, length });
+      if (readRangeFails.has(filePath)) {
+        return undefined;
+      }
       const content = contents[filePath];
       if (content === undefined) {
         return undefined;
@@ -245,7 +244,7 @@ describe('createJsonlTranscriptScanner', () => {
     const matchedDir = encoded;
     const unmatchedDir = 'totally-unrelated-dir';
     const transcriptPath = path.join(projectsDir, matchedDir, 'sess.jsonl');
-    const content = 'hello bdboard-abc';
+    const content = 'hello bdboard-abc\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -279,7 +278,7 @@ describe('createJsonlTranscriptScanner', () => {
     const encoded = encodeCwdForTranscript(rootPath);
     const worktreeDir = `${encoded}--claude-worktrees-foo`;
     const transcriptPath = path.join(projectsDir, worktreeDir, 'sess.jsonl');
-    const content = 'ticket bdboard-abc';
+    const content = 'ticket bdboard-abc\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -324,7 +323,7 @@ describe('createJsonlTranscriptScanner', () => {
       'subagents',
       'agent-deadbeef.jsonl',
     );
-    const content = 'bdboard-abc';
+    const content = 'bdboard-abc\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -375,7 +374,7 @@ describe('createJsonlTranscriptScanner', () => {
     const rootPath = '/proj/a';
     const encoded = encodeCwdForTranscript(rootPath);
     const mainTranscriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
-    const mainContent = 'bdboard-main';
+    const mainContent = 'bdboard-main\n';
     const sessionWithoutSubagents = 'session-no-subagents';
 
     const fs = createFakeFs({
@@ -425,8 +424,8 @@ describe('createJsonlTranscriptScanner', () => {
       'subagents',
       'agent-cafebabe.jsonl',
     );
-    const mainContent = 'bdboard-shared';
-    const subagentContent = 'bdboard-shared again';
+    const mainContent = 'bdboard-shared\n';
+    const subagentContent = 'bdboard-shared again\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -472,7 +471,7 @@ describe('createJsonlTranscriptScanner', () => {
     const rootPath = '/proj/a';
     const encoded = encodeCwdForTranscript(rootPath);
     const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
-    const content = 'bdboard-abc';
+    const content = 'bdboard-abc\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -506,7 +505,7 @@ describe('createJsonlTranscriptScanner', () => {
     const rootPath = '/proj/a';
     const encoded = encodeCwdForTranscript(rootPath);
     const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
-    const content = 'bdboard-abc';
+    const content = 'bdboard-abc\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -537,7 +536,7 @@ describe('createJsonlTranscriptScanner', () => {
     const encoded = encodeCwdForTranscript(rootPath);
     const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
     const mutableContents: Record<string, string> = {
-      [transcriptPath]: 'bdboard-abc',
+      [transcriptPath]: 'bdboard-abc\n',
     };
     const mutableStats: Record<string, FileStat> = {
       [transcriptPath]: statForContent(mutableContents[transcriptPath]),
@@ -575,7 +574,9 @@ describe('createJsonlTranscriptScanner', () => {
       length: firstContent.length,
     });
 
-    mutableContents[transcriptPath] = `${firstContent} bdboard-def`;
+    // 追記は行単位。行の途中に足すと、その行は完結するまでコミットされない
+    // (bdboard-32u で入れた行境界コミットの仕様)。
+    mutableContents[transcriptPath] = `${firstContent}bdboard-def\n`;
     mutableStats[transcriptPath] = statForContent(mutableContents[transcriptPath]);
 
     const second = await scanner.scan({
@@ -598,7 +599,7 @@ describe('createJsonlTranscriptScanner', () => {
     expect(secondCall).toEqual({
       path: transcriptPath,
       start: firstContent.length,
-      length: ' bdboard-def'.length,
+      length: 'bdboard-def\n'.length,
     });
   });
 
@@ -606,7 +607,7 @@ describe('createJsonlTranscriptScanner', () => {
     const rootPath = '/proj/a';
     const encoded = encodeCwdForTranscript(rootPath);
     const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
-    const content = 'bdboard-abc bdboard-unknown';
+    const content = 'bdboard-abc bdboard-unknown\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -645,8 +646,8 @@ describe('createJsonlTranscriptScanner', () => {
     const encoded = encodeCwdForTranscript(rootPath);
     const transcriptA = path.join(projectsDir, encoded, 'aaa.jsonl');
     const transcriptB = path.join(projectsDir, encoded, 'bbb.jsonl');
-    const contentA = 'bdboard-abc bdboard-abc';
-    const contentB = 'bdboard-def';
+    const contentA = 'bdboard-abc bdboard-abc\n';
+    const contentB = 'bdboard-def\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -695,7 +696,7 @@ describe('createJsonlTranscriptScanner', () => {
     const rootPath = '/proj/a';
     const encoded = encodeCwdForTranscript(rootPath);
     const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
-    const content = 'bdboard-abc';
+    const content = 'bdboard-abc\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -730,7 +731,7 @@ describe('createJsonlTranscriptScanner', () => {
     const encodedLong = encodeCwdForTranscript(longRoot);
     const dirName = encodedLong;
     const transcriptPath = path.join(projectsDir, dirName, 'sess.jsonl');
-    const content = 'bdboard-short bdboard-long';
+    const content = 'bdboard-short bdboard-long\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -792,7 +793,7 @@ describe('createJsonlTranscriptScanner', () => {
     const repo2Root = '/Users/x/repo2';
     const encodedRepo2 = encodeCwdForTranscript(repo2Root);
     const transcriptPath = path.join(projectsDir, encodedRepo2, 'sess.jsonl');
-    const content = 'bdboard-repo2';
+    const content = 'bdboard-repo2\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -837,7 +838,7 @@ describe('createJsonlTranscriptScanner', () => {
     const repo2Root = '/Users/x/repo2';
     const encodedRepo2 = encodeCwdForTranscript(repo2Root);
     const transcriptPath = path.join(projectsDir, encodedRepo2, 'sess.jsonl');
-    const content = 'bdboard-repo2';
+    const content = 'bdboard-repo2\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -868,7 +869,7 @@ describe('createJsonlTranscriptScanner', () => {
     const aliasPath = '/w/foo';
     const encodedAlias = encodeCwdForTranscript(aliasPath);
     const transcriptPath = path.join(projectsDir, encodedAlias, 'sess.jsonl');
-    const content = 'bdboard-alias';
+    const content = 'bdboard-alias\n';
 
     const fs = createFakeFs({
       dirs: {
@@ -919,7 +920,7 @@ describe('createJsonlTranscriptScanner', () => {
         },
       },
     });
-    const content = `plain text bdboard-abc\n${assistantLine}`;
+    const content = `plain text bdboard-abc\n${assistantLine}\n`;
 
     const fs = createFakeFs({
       dirs: {
@@ -951,5 +952,171 @@ describe('createJsonlTranscriptScanner', () => {
         cacheReadInputTokens: 20,
       },
     ]);
+  });
+
+  // bdboard-32u: 予算(budgetBytes)でスライスが行の途中で切れたとき、旧実装は
+  // slice.newOffset をそのままコミットしていた。切れた行はJSONとして壊れているので
+  // 今回のスキャンでは解釈されず、次回はその行の途中から読み始めるため、
+  // 「一度も解釈されない行」が恒久的に生まれる。累積値である usage は取り返しがつかない。
+  it('does not lose a line that a byte budget cut in half', async () => {
+    const rootPath = '/proj/a';
+    const encoded = encodeCwdForTranscript(rootPath);
+    const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
+    const usageLine = (inputTokens: number, ticketId: string): string =>
+      `${JSON.stringify({
+        type: 'assistant',
+        message: {
+          model: 'claude-opus-5',
+          content: [{ type: 'text', text: `working on ${ticketId}` }],
+          usage: {
+            input_tokens: inputTokens,
+            output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
+          },
+        },
+      })}\n`;
+
+    const first = usageLine(100, 'bdboard-aaa');
+    const second = usageLine(200, 'bdboard-bbb');
+    const third = usageLine(300, 'bdboard-ccc');
+    const content = `${first}${second}${third}`;
+    // 1行目は丸ごと、2行目は途中まで、で予算が尽きる境界。
+    const budgetBytes =
+      Buffer.byteLength(first, 'utf8') + Math.floor(Buffer.byteLength(second, 'utf8') / 2);
+
+    const fs = createFakeFs({
+      dirs: {
+        [projectsDir]: [dir(encoded)],
+        [path.join(projectsDir, encoded)]: [file('sess.jsonl')],
+      },
+      contents: { [transcriptPath]: content },
+      stats: { [transcriptPath]: statForContent(content) },
+    });
+    const cache = createInMemoryBoardCache();
+    const scanner = createJsonlTranscriptScanner(fs, cache, {
+      projectsDir,
+      budgetBytes,
+    });
+    const input = {
+      projects: [project('a', rootPath, ['bdboard'])],
+      knownIdsByProject: new Map([
+        ['a', new Set(['bdboard-aaa', 'bdboard-bbb', 'bdboard-ccc'])],
+      ]),
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    await scanner.scan(input);
+    // 切れかけの2行目は次回に持ち越すので、コミットは1行目の末尾まで。
+    expect(cache.offsets.get(transcriptPath)).toBe(Buffer.byteLength(first, 'utf8'));
+
+    // 毎回1行分ずつしか予算が無いので、追いつくには複数ティック要る。
+    // 重要なのは回数ではなく「必ず追いつく」ことと「途中の行が飛ばない」こと。
+    const totalBytes = Buffer.byteLength(content, 'utf8');
+    const seen = new Set<string>();
+    for (let tick = 0; tick < 5; tick += 1) {
+      for (const link of await scanner.scan(input)) {
+        seen.add(link.ticketId);
+      }
+      if (cache.offsets.get(transcriptPath) === totalBytes) {
+        break;
+      }
+    }
+
+    expect(cache.offsets.get(transcriptPath)).toBe(totalBytes);
+    expect([...seen].sort()).toEqual(['bdboard-bbb', 'bdboard-ccc']);
+    expect(cache.getSessionUsage(['sess'])).toEqual([
+      {
+        model: 'claude-opus-5',
+        inputTokens: 600,
+        outputTokens: 0,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+      },
+    ]);
+  });
+
+  // bdboard-3tw.105 と同じ罠。行境界に揃えるだけでなく、生 Buffer 上で切ることまで
+  // 含めて初めて安全になる(デコード済み文字列を再エンコードすると U+FFFD で伸びる)。
+  it('keeps multibyte text intact when the budget cuts inside a character', async () => {
+    const rootPath = '/proj/a';
+    const encoded = encodeCwdForTranscript(rootPath);
+    const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
+    const first = 'これは日本語のログ行です bdboard-aaa\n';
+    const second = '二行目も日本語 bdboard-bbb\n';
+    const content = `${first}${second}`;
+    // 1行目の末尾 + 2行目の先頭の多バイト文字の途中、で切れる予算。
+    const budgetBytes = Buffer.byteLength(first, 'utf8') + 1;
+
+    const fs = createFakeFs({
+      dirs: {
+        [projectsDir]: [dir(encoded)],
+        [path.join(projectsDir, encoded)]: [file('sess.jsonl')],
+      },
+      contents: { [transcriptPath]: content },
+      stats: { [transcriptPath]: statForContent(content) },
+    });
+    const cache = createInMemoryBoardCache();
+    const scanner = createJsonlTranscriptScanner(fs, cache, {
+      projectsDir,
+      budgetBytes,
+    });
+    const input = {
+      projects: [project('a', rootPath, ['bdboard'])],
+      knownIdsByProject: new Map([['a', new Set(['bdboard-aaa', 'bdboard-bbb'])]]),
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    const firstLinks = await scanner.scan(input);
+    expect(firstLinks.map((link) => link.ticketId)).toEqual(['bdboard-aaa']);
+    expect(cache.offsets.get(transcriptPath)).toBe(Buffer.byteLength(first, 'utf8'));
+
+    const secondLinks = await scanner.scan(input);
+    expect(secondLinks.map((link) => link.ticketId)).toEqual(['bdboard-bbb']);
+    expect(cache.offsets.get(transcriptPath)).toBe(Buffer.byteLength(content, 'utf8'));
+  });
+
+  // 末尾からの読み直し(initialTailBytes)は行頭に揃わないので、開始バイトが多バイト
+  // 文字の途中に落ちうる。ここを文字列で読むと先頭の欠けたバイトが U+FFFD (3バイト)に
+  // 化けてチャンク長が伸び、committedOffset が実際より進む (bdboard-3tw.105)。
+  // 生 Buffer で数えている限りオフセットはファイル長ちょうどで止まる。
+  it('commits a byte-exact offset when the tail restart begins mid-character', async () => {
+    const rootPath = '/proj/a';
+    const encoded = encodeCwdForTranscript(rootPath);
+    const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
+    const first = 'いちぎょうめ bdboard-aaa\n';
+    const second = 'にぎょうめ bdboard-bbb\n';
+    const third = 'さんぎょうめ bdboard-ccc\n';
+    const content = `${first}${second}${third}`;
+    const totalBytes = Buffer.byteLength(content, 'utf8');
+    // start = totalBytes - initialTailBytes = 1 → 先頭の「い」(3バイト)の途中。
+    const initialTailBytes = totalBytes - 1;
+
+    const fs = createFakeFs({
+      dirs: {
+        [projectsDir]: [dir(encoded)],
+        [path.join(projectsDir, encoded)]: [file('sess.jsonl')],
+      },
+      contents: { [transcriptPath]: content },
+      stats: { [transcriptPath]: statForContent(content) },
+    });
+    const cache = createInMemoryBoardCache();
+    const scanner = createJsonlTranscriptScanner(fs, cache, {
+      projectsDir,
+      initialTailBytes,
+    });
+
+    const links = await scanner.scan({
+      projects: [project('a', rootPath, ['bdboard'])],
+      knownIdsByProject: new Map([
+        ['a', new Set(['bdboard-aaa', 'bdboard-bbb', 'bdboard-ccc'])],
+      ]),
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    });
+
+    // 頭の欠けた1行目は捨てる。2/3行目だけが読めていればよい。
+    expect(links.map((link) => link.ticketId)).toEqual(['bdboard-bbb', 'bdboard-ccc']);
+    // ファイル長を1バイトでも超えたら、次回は「巻き戻し」と誤認されて読み直しになる。
+    expect(cache.offsets.get(transcriptPath)).toBe(totalBytes);
   });
 });
