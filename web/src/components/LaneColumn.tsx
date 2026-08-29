@@ -13,6 +13,7 @@ import {
   type CardNavProps,
   useBoardKeyboardNav,
 } from './BoardKeyboardNavProvider';
+import { localDateKey } from './activityFeedFormatting';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
 import { useBulkSelection } from './BulkSelectionProvider';
@@ -39,7 +40,14 @@ function priorityBadgeClass(priority: number): string {
 }
 
 function formatDeferDate(deferUntil: string): string {
-  return deferUntil.slice(0, 10);
+  // ISO 文字列を slice(0, 10) すると UTC の日付になる。defer は UI 側が
+  // ローカル日付で送り、bd が「その日のローカル深夜」の UTC 瞬間として持つので
+  // (JST なら …T15:00:00Z)、素朴に切ると常に1日前を表示していた (bdboard-ol9)。
+  // 日付境界は host TZ ではなく Asia/Tokyo に固定して求める — CI は UTC で
+  // 走るので、ローカル TZ に頼ると環境で結果が変わる (bdboard-3tw.75)。
+  // 既存の localDateKey に寄せる。日本に DST が無い以上 +9h の手書きでも
+  // 結果は同じだが、オフセット算術を各所で手書きしないのがこのファイル群の方針。
+  return localDateKey(new Date(deferUntil));
 }
 
 function BlockedIcon() {
