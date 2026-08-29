@@ -383,6 +383,31 @@ describe('SearchPalette', () => {
     });
   });
 
+  it('keeps the highlighted row selected when actions re-render with a new array reference but same content (bdboard-t43h)', async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderPalette(vi.fn(), vi.fn(), sampleActions);
+
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+
+    let options = screen.getAllByRole('option');
+    expect(options[2]).toHaveAttribute('aria-selected', 'true');
+    expect(options[0]).toHaveAttribute('aria-selected', 'false');
+
+    // Simulate an unrelated parent re-render (e.g. App.tsx's boardQuery/
+    // statusQuery churn) that rebuilds the actions array with brand-new
+    // object references but identical content (same ids in the same order).
+    const rebuiltActions: PaletteAction[] = sampleActions.map((action) => ({
+      ...action,
+    }));
+    rerender(
+      <SearchPalette onClose={vi.fn()} onSelect={vi.fn()} actions={rebuiltActions} />,
+    );
+
+    options = screen.getAllByRole('option');
+    expect(options[2]).toHaveAttribute('aria-selected', 'true');
+    expect(options[0]).toHaveAttribute('aria-selected', 'false');
+  });
+
   it('hides recent tickets when query is entered', async () => {
     const user = userEvent.setup();
     const recentTickets: RecentTicketEntry[] = [
