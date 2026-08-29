@@ -1,5 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
-import { fetchUpdateCheck } from '../api';
+import { useUpdateCheckQuery } from '../hooks/useUpdateCheckStatus';
 
 /**
  * 新しいリリースがあるときだけ、控えめに知らせる (bdboard-70z.7)。
@@ -10,13 +9,7 @@ import { fetchUpdateCheck } from '../api';
  * 見せる理由が無い。
  */
 export function UpdateNotice() {
-  const query = useQuery({
-    queryKey: ['update-check'],
-    queryFn: fetchUpdateCheck,
-    // サーバー側が6時間キャッシュしているので、クライアントから急かしても意味が無い。
-    staleTime: 60 * 60 * 1000,
-    retry: false,
-  });
+  const query = useUpdateCheckQuery();
 
   const data = query.data;
   if (data === undefined || data.state !== 'update-available') {
