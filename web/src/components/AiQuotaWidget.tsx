@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchAiQuota, type AiQuotaMetricDto, type AiQuotaProviderDto } from '../api';
+import { getBoardTimeZone } from '../boardTimeZone';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 const AI_QUOTA_QUERY_KEY = ['ai-quota'] as const;
@@ -36,6 +37,7 @@ function formatResetAt(resetAt: string): string {
     return resetAt;
   }
   return date.toLocaleString([], {
+    timeZone: getBoardTimeZone(),
     month: 'numeric',
     day: 'numeric',
     hour: '2-digit',
