@@ -92,6 +92,11 @@
 - 防止: verify は機械式スロット（最大2並列）内蔵の `npm run verify` のみ使用。`verify:steps` 直叩き禁止（本則: CLAUDE.md「Verify slots」）
 - 出典: bdboard-d48（前提: bdboard-255, bdboard-kia）
 
+### verify-exit-masked — バックグラウンド verify の後続コマンドが exit code を潰し、失敗を「緑」と誤報告した（2026-08-29）
+- 原因: `npm run verify > log; echo EXIT=$?; tail log` の形で走らせ、タスク全体の終了コードが最後の `tail` の 0 になった。通知の exit 0 だけ見てログを読まなかった
+- 防止: 検証の判定はラッパーの終了コードでなく、検証コマンド自身の exit（ログ内 EXIT= 行）とログの失敗有無で行う（本則: verification.md）
+- 出典: 本 skill 導入セッション（2026-08-29, PR #134 の CI で発覚）
+
 ### wrong-node-version — シェルスナップショットの nvm 不全で意図しない Node により npm install が lockfile を書き換えた
 - 原因: `NVM_DIR` 欠落で `.zshrc` の `nvm use` が無言で失敗し、古い Node が PATH に残る
 - 防止: 依存インストール前に `node --version` を engines.node と突き合わせる（本則: worktree-pr-flow.md §2）
