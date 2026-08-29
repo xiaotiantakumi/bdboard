@@ -2047,7 +2047,17 @@ describe('ChatPanel', () => {
   // bdboard-22k: jsdom にはレイアウトが無く scrollHeight/clientHeight は常に 0、
   // scrollTop も書いた値がそのまま残るだけなので、素のままでは「追従した/しなかった」
   // を区別できない。中身の文字数に比例して伸びるスクロール領域を差し込んで、
-  // 実ブラウザでの「テキストが増える → コンテナが伸びる」だけを模す。
+  // 実ブラウザの挙動を模す。
+  //
+  // 模擬で外せないのが次の2点 (PR#128 fable レビュー)。素通しの setter にすると、
+  // 「最下部にいる状態で scroll ハンドラが動く」経路が一度もテストされず、実機なら
+  // 機能が死ぬ変更 (距離計算から clientHeight を落とす・ハンドラが常に unpin する)
+  // を通してしまう。逆に scrollTop === scrollHeight という模擬世界にしか無い状態を
+  // assert すると、実ブラウザでは等価な scrollTop = scrollHeight - clientHeight への
+  // 書き換えを誤って落とす。
+  //
+  //   1. 代入は 0..scrollHeight-clientHeight にクランプされる
+  //   2. 値が動いたら scroll イベントが出る (プログラム的スクロールでも出る)
   function instrumentScrollArea(element: HTMLElement, clientHeight: number): void {
     let scrollTop = 0;
     Object.defineProperty(element, 'clientHeight', {
@@ -2062,9 +2072,19 @@ describe('ChatPanel', () => {
       configurable: true,
       get: () => scrollTop,
       set: (next: number) => {
-        scrollTop = next;
+        const max = Math.max(0, element.scrollHeight - clientHeight);
+        const clamped = Math.max(0, Math.min(next, max));
+        if (clamped === scrollTop) {
+          return;
+        }
+        scrollTop = clamped;
+        element.dispatchEvent(new Event('scroll'));
       },
     });
+  }
+
+  function distanceFromBottom(element: HTMLElement): number {
+    return element.scrollHeight - element.scrollTop - element.clientHeight;
   }
 
   // delta1 → (gate1) → delta2 → (gate2) → done。ストリーミング途中の状態を
@@ -2140,7 +2160,7 @@ describe('ChatPanel', () => {
         messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
       ).toContain('reply');
     });
-    expect(messages.scrollTop).toBe(messages.scrollHeight);
+    expect(distanceFromBottom(messages)).toBe(0);
 
     // ストリームを畳んでから終わる。開いたまま抜けると、残りの処理が
     // 環境の teardown 後に走る。
@@ -2217,7 +2237,7 @@ describe('ChatPanel', () => {
       ).toContain('reply');
     });
     // 別の会話を開いたのに前の会話のスクロール位置を引きずる理由は無い。
-    expect(switched.scrollTop).toBe(switched.scrollHeight);
+    expect(distanceFromBottom(switched)).toBe(0);
 
     releaseDone();
     await waitFor(() => {

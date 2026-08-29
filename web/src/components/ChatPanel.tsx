@@ -2822,25 +2822,19 @@ export function ChatPanel({
                 )}
             </div>
           ))}
-          {(() => {
-            return (
-              <>
-                {activeStreamingText !== '' && (
-                  <div className="chat-message chat-message-assistant chat-message-streaming">
-                    <p className="chat-message-text">{activeStreamingText}</p>
-                  </div>
-                )}
-                {/* bdboard-l1t.9 Opus レビュー N5: streaming で部分テキストが
-                    表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
-                    テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
-                {isSending && activeStreamingText === '' && (
-                  <p className="chat-pending">
-                    考え中…{sendElapsedSeconds}秒（最大3分かかることがあります）
-                  </p>
-                )}
-              </>
-            );
-          })()}
+          {activeStreamingText !== '' && (
+            <div className="chat-message chat-message-assistant chat-message-streaming">
+              <p className="chat-message-text">{activeStreamingText}</p>
+            </div>
+          )}
+          {/* bdboard-l1t.9 Opus レビュー N5: streaming で部分テキストが
+              表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
+              テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
+          {isSending && activeStreamingText === '' && (
+            <p className="chat-pending">
+              考え中…{sendElapsedSeconds}秒（最大3分かかることがあります）
+            </p>
+          )}
         </div>
 
         <form
