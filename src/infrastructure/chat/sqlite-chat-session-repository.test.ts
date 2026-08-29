@@ -361,4 +361,101 @@ describe('createSqliteChatSessionRepository', () => {
       pinned: true,
     });
   });
+
+  describe('trim behavior', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('does not trim pinned sessions when the cap is exceeded', () => {
+      vi.useFakeTimers();
+      const path_ = makeTmpDbPath('bdboard-chat-sessions-trim-pinned-');
+      const repo = openRepo(path_, { maxSessionsPerProject: 2 });
+
+      vi.setSystemTime(new Date('2026-08-30T00:00:00.000Z'));
+      repo.remember('project-a', 'session-1', 'claude');
+      vi.setSystemTime(new Date('2026-08-30T00:01:00.000Z'));
+      repo.remember('project-a', 'session-2', 'claude');
+      repo.setPinned('project-a', 'session-1', true);
+      vi.setSystemTime(new Date('2026-08-30T00:02:00.000Z'));
+      repo.remember('project-a', 'session-3', 'claude');
+
+      expect(repo.lookup('project-a', 'session-1')).toEqual({ agentId: 'claude', pinned: true });
+      expect(repo.lookup('project-a', 'session-2')).toBeUndefined();
+      expect(repo.lookup('project-a', 'session-3')).toEqual({ agentId: 'claude' });
+    });
+
+    it('updates last_used_at on re-remember so recently used sessions survive trim', () => {
+      vi.useFakeTimers();
+      const path_ = makeTmpDbPath('bdboard-chat-sessions-trim-last-used-');
+      const repo = openRepo(path_, { maxSessionsPerProject: 2 });
+
+      vi.setSystemTime(new Date('2026-08-30T00:00:00.000Z'));
+      repo.remember('project-a', 'session-1', 'claude');
+      vi.setSystemTime(new Date('2026-08-30T00:01:00.000Z'));
+      repo.remember('project-a', 'session-2', 'claude');
+      vi.setSystemTime(new Date('2026-08-30T00:02:00.000Z'));
+      repo.remember('project-a', 'session-1', 'claude');
+      vi.setSystemTime(new Date('2026-08-30T00:03:00.000Z'));
+      repo.remember('project-a', 'session-3', 'claude');
+
+      expect(repo.lookup('project-a', 'session-1')).toEqual({ agentId: 'claude' });
+      expect(repo.lookup('project-a', 'session-2')).toBeUndefined();
+      expect(repo.lookup('project-a', 'session-3')).toEqual({ agentId: 'claude' });
+    });
+
+    it('deletes chat_messages rows for sessions removed by trim', () => {
+      vi.useFakeTimers();
+      const path_ = makeTmpDbPath('bdboard-chat-sessions-trim-messages-');
+      const repo = openRepo(path_, { maxSessionsPerProject: 2 });
+
+      vi.setSystemTime(new Date('2026-08-30T00:00:00.000Z'));
+      repo.remember('project-a', 'session-1', 'claude');
+      vi.setSystemTime(new Date('2026-08-30T00:01:00.000Z'));
+      repo.remember('project-a', 'session-2', 'claude');
+
+      const db = openCacheDb(path_);
+      db.prepare(
+        `INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`,
+      ).run('session-1', 'user', 'hello', '2026-08-30T00:00:00.000Z');
+      db.prepare(
+        `INSERT INTO chat_messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)`,
+      ).run('session-2', 'user', 'keep', '2026-08-30T00:01:00.000Z');
+
+      vi.setSystemTime(new Date('2026-08-30T00:02:00.000Z'));
+      repo.remember('project-a', 'session-3', 'claude');
+
+      const countSession1 = db
+        .prepare(`SELECT COUNT(*) AS count FROM chat_messages WHERE session_id = ?`)
+        .get('session-1') as { count: number };
+      const countSession2 = db
+        .prepare(`SELECT COUNT(*) AS count FROM chat_messages WHERE session_id = ?`)
+        .get('session-2') as { count: number };
+
+      expect(countSession1.count).toBe(0);
+      expect(countSession2.count).toBe(1);
+      expect(repo.lookup('project-a', 'session-1')).toBeUndefined();
+      expect(repo.lookup('project-a', 'session-2')).toEqual({ agentId: 'claude' });
+      expect(repo.lookup('project-a', 'session-3')).toEqual({ agentId: 'claude' });
+    });
+
+    it('keeps a newly remembered session when every existing session is pinned', () => {
+      vi.useFakeTimers();
+      const path_ = makeTmpDbPath('bdboard-chat-sessions-trim-all-pinned-');
+      const repo = openRepo(path_, { maxSessionsPerProject: 1 });
+
+      vi.setSystemTime(new Date('2026-08-30T00:00:00.000Z'));
+      repo.remember('project-a', 'session-1', 'claude');
+      repo.setPinned('project-a', 'session-1', true);
+      vi.setSystemTime(new Date('2026-08-30T00:01:00.000Z'));
+      repo.remember('project-a', 'session-2', 'claude');
+
+      expect(repo.lookup('project-a', 'session-1')).toEqual({
+        agentId: 'claude',
+        pinned: true,
+      });
+      expect(repo.lookup('project-a', 'session-2')).toEqual({ agentId: 'claude' });
+      expect(repo.listByProject('project-a')).toHaveLength(2);
+    });
+  });
 });

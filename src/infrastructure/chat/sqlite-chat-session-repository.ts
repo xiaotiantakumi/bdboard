@@ -66,15 +66,24 @@ export function createSqliteChatSessionRepository(
   const countForProjectStmt = db.prepare(
     `SELECT COUNT(*) AS count FROM chat_sessions WHERE project_id = ?`,
   );
-  const trimOldestForProjectStmt = db.prepare(`
-    DELETE FROM chat_sessions
-    WHERE rowid IN (
-      SELECT rowid FROM chat_sessions
-      WHERE project_id = ?
-      ORDER BY last_used_at ASC, rowid ASC
-      LIMIT ?
-    )
+  const updateLastUsedAtStmt = db.prepare(`
+    UPDATE chat_sessions SET last_used_at = ?
+    WHERE project_id = ? AND session_id = ?
   `);
+  const selectTrimCandidatesStmt = db.prepare(`
+    SELECT session_id AS sessionId FROM chat_sessions
+    WHERE project_id = ?
+      AND pinned = 0
+      AND session_id != ?
+    ORDER BY last_used_at ASC, rowid ASC
+    LIMIT ?
+  `);
+  const deleteMessagesBySessionStmt = db.prepare(
+    `DELETE FROM chat_messages WHERE session_id = ?`,
+  );
+  const deleteSessionStmt = db.prepare(
+    `DELETE FROM chat_sessions WHERE project_id = ? AND session_id = ?`,
+  );
   const listByProjectStmt = db.prepare(`
     SELECT session_id AS sessionId, agent_id AS agentId, last_used_at AS lastUsedAt,
            title, pinned
@@ -82,23 +91,56 @@ export function createSqliteChatSessionRepository(
   `);
   const forgetStmt = db.prepare(`DELETE FROM chat_sessions WHERE project_id = ? AND session_id = ?`);
 
+  interface TrimCandidateRow {
+    readonly sessionId: string;
+  }
+
+  /**
+   * cap 超過分の最古セッションを削除する。pinned 行と excludeSessionId は候補外。
+   * 既存セッションがすべて pinned のときは unpinned 候補が無く何も削除されず、
+   * cap を一時的に超過したままになる(意図した挙動)。
+   */
+  function trimOldestForProject(
+    projectId: string,
+    excludeSessionId: string,
+    excess: number,
+  ): void {
+    if (excess <= 0) {
+      return;
+    }
+
+    const candidates = selectTrimCandidatesStmt.all(
+      projectId,
+      excludeSessionId,
+      excess,
+    ) as TrimCandidateRow[];
+
+    db.transaction(() => {
+      for (const { sessionId: trimSessionId } of candidates) {
+        deleteMessagesBySessionStmt.run(trimSessionId);
+        deleteSessionStmt.run(projectId, trimSessionId);
+      }
+    })();
+  }
+
   return {
     remember(projectId: string, sessionId: string, agentId: string): void {
-      const result = rememberStmt.run(
-        projectId,
-        sessionId,
-        agentId,
-        new Date().toISOString(),
-      );
+      const now = new Date().toISOString();
+      const result = rememberStmt.run(projectId, sessionId, agentId, now);
       if (result.changes === 0) {
-        // 既知セッションIDへの remember は in-memory 実装と同じく no-op
-        // (最終使用順を更新しない = トリム対象の再計算もしない)。
+        // 既知セッションIDへの remember は agentId を書き換えないが、
+        // last_used_at は直近使用として更新する。
+        updateLastUsedAtStmt.run(now, projectId, sessionId);
         return;
       }
 
       const { count } = countForProjectStmt.get(projectId) as CountRow;
       if (count > maxSessionsPerProject) {
-        trimOldestForProjectStmt.run(projectId, count - maxSessionsPerProject);
+        trimOldestForProject(
+          projectId,
+          sessionId,
+          count - maxSessionsPerProject,
+        );
       }
     },
 
