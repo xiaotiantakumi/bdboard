@@ -333,6 +333,33 @@ describe('BulkActionBar', () => {
     expect(mockPostTicketQuickActionUndo).toHaveBeenCalledTimes(2);
   });
 
+  it('runs bulk label add only for tickets present on the board', async () => {
+    const cards = new Map([['bdboard-a', makeCard('bdboard-a')]]);
+
+    renderBulkBar(cards, ['bdboard-a', 'bdboard-gone']);
+
+    const labelInput = screen.getByRole('textbox', { name: '付与するラベル' });
+    await user.type(labelInput, 'human');
+    fireEvent.click(screen.getByRole('button', { name: 'ラベル付与' }));
+
+    expect(
+      screen.getByText(
+        '選択中の 1 件にラベル「human」を付与します。よろしいですか?',
+      ),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockPostTicketAddLabel).toHaveBeenCalledTimes(1);
+    });
+    expect(mockPostTicketAddLabel).toHaveBeenCalledWith('bdboard-a', 'human');
+    expect(mockPostTicketAddLabel).not.toHaveBeenCalledWith(
+      'bdboard-gone',
+      expect.anything(),
+    );
+  });
+
   it('runs bulk label add for all selected tickets', async () => {
     const cards = new Map([
       ['bdboard-a', makeCard('bdboard-a')],
