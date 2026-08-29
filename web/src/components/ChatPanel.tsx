@@ -247,6 +247,30 @@ function formatThreadUpdatedAt(iso: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
+// スレッド一覧の並び順(bdboard-3tw.154)。更新の新しい順。
+//
+// ピン留めはここでは見ない。ドロワーは「ピン留め」節と「開いている/閉じた」節に
+// pinned で振り分けてから描画しており、振り分けは filter なので相対順序を保つ。
+// つまりピン留め優先はこの比較関数を通さずに成立していて、ここに pinned を足すと
+// 表示に出ない分岐が増えるだけになる。
+//
+// 更新日時が読めないスレッドは 0 として最後尾に落とす。ここに来るのは
+// 「開いてはいるがスレッド一覧の再取得がまだ届いていない」極短い窓
+// (CLIセッションの再開直後など)だけで、次の再取得で正しい位置へ移る。
+// NaN をそのまま比較に流すと比較関数が非推移的になり、並びが入力順で変わる。
+function threadRecency(thread: ChatThreadDto | undefined): number {
+  if (thread === undefined) return 0;
+  const at = Date.parse(thread.updatedAt);
+  return Number.isNaN(at) ? 0 : at;
+}
+
+function compareThreadsNewestFirst(
+  a: ChatThreadDto | undefined,
+  b: ChatThreadDto | undefined,
+): number {
+  return threadRecency(b) - threadRecency(a);
+}
+
 export function ChatPanel({
   projects,
   initialProjectId,
@@ -2100,12 +2124,18 @@ export function ChatPanel({
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
   const threadById = new Map((threadLists[selectedProjectId] ?? []).map((thread) => [thread.sessionId, thread]));
-  const displayedOpenThreads = [...openThreads].sort(
-    (a, b) => Number(threadById.get(b)?.pinned ?? false) - Number(threadById.get(a)?.pinned ?? false),
+  // 開いているスレッドの並びは openThreadIds の挿入順(古いものが先)なので、
+  // ここで新しい順に並べ直す。openThreadIds 自体は並べ替えない — あれは
+  // 「どのスレッドを開いているか」の永続状態で、表示順とは別物 (bdboard-3tw.154)。
+  const displayedOpenThreads = [...openThreads].sort((a, b) =>
+    compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
   );
-  const closedThreads = (threadLists[selectedProjectId] ?? []).filter(
-    (thread) => !openThreads.includes(thread.sessionId),
-  );
+  // 閉じたスレッドはサーバーが更新の新しい順で返すが、送信直後にローカルで
+  // 末尾へ差し込む経路 (下の setThreadLists) があるので、表示側でも並べ直して
+  // 取得元の順序に依存しないようにしておく。
+  const closedThreads = (threadLists[selectedProjectId] ?? [])
+    .filter((thread) => !openThreads.includes(thread.sessionId))
+    .sort(compareThreadsNewestFirst);
   const hasClosedThreads = closedThreads.length > 0;
   const handleNewThread = () => {
     // SF5: pendingPrefillRef/pendingTicketDraftProjectRef の消化窓
@@ -2321,8 +2351,9 @@ export function ChatPanel({
 
   // Chat Redesign 1b: スレッド一覧ドロワーの行データ。ピン留めは開いている/
   // 閉じたスレッドのどちらに属していても「ピン留め」節へ寄せ、開いている/
-  // 閉じた節には残さない(mutual exclusion)。displayedOpenThreads は既に
-  // ピン留め優先ソート済みなので、その並びをそのまま踏襲する。
+  // 閉じた節には残さない(mutual exclusion)。displayedOpenThreads /
+  // closedThreads は既に「ピン留め優先 + 新しい順」にソート済みなので、
+  // その並びをそのまま踏襲する。
   const pinnedOpenSessionIds = displayedOpenThreads.filter(
     (sessionId) => threadById.get(sessionId)?.pinned === true,
   );

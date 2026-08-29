@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
 import { expectNoA11yViolations } from '../test/axe';
 import { installFakeHistory } from '../test/fakeHistory';
-import { writePersistedChatThread, readPersistedChatThreads } from '../chatThreadStorage';
+import {
+  writePersistedChatThread,
+  writePersistedChatThreadState,
+  readPersistedChatThreads,
+} from '../chatThreadStorage';
 import { CHAT_BUSY_HELP } from '../writeAccessMessage';
 import { ChatPanel } from './ChatPanel';
 
@@ -5891,4 +5895,129 @@ describe('ChatPanel', () => {
       expect(screen.getByLabelText('メッセージ')).toBeEnabled();
     });
   });
+
+  describe('thread list ordering (bdboard-3tw.154)', () => {
+    // 「開いているスレッド」の並びは openThreadIds の挿入順で、これは
+    // localStorage に永続化されている。前回のセッションで古い順に開いていれば、
+    // 一覧もその古い順のまま出てくる — それがこのチケットの症状。
+    // ここでは永続化状態を先に仕込んで、その経路を再現する。
+    function drawerSectionTitles(container: HTMLElement, sectionTitle: string): string[] {
+      const drawer = getThreadDrawer(container);
+      const heading = within(drawer)
+        .getByText(sectionTitle)
+        .closest('.chat-thread-drawer-section');
+      if (!(heading instanceof HTMLElement)) {
+        throw new Error(`section not found: ${sectionTitle}`);
+      }
+      return [...heading.querySelectorAll('.chat-thread-drawer-item')].map((item) => {
+        const title = item.querySelector('.chat-thread-drawer-item-title');
+        return (title ?? item).textContent ?? '';
+      });
+    }
+
+    const threads: ChatThreadDto[] = [
+      { sessionId: 'sess-new', agentId: 'claude', title: 'newest thread', pinned: false, updatedAt: '2026-01-03T00:00:00Z' },
+      { sessionId: 'sess-mid', agentId: 'claude', title: 'middle thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+      { sessionId: 'sess-old', agentId: 'claude', title: 'oldest thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+    ];
+
+    function mockThreadMessages() {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (url.includes('/api/chat/sessions/')) {
+          return jsonResponse({ sessionId: 'sess-new', agentId: 'claude', messages: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+    }
+
+    it('lists open threads newest first even when they were opened oldest first', async () => {
+      fetchChatThreadsMock.mockResolvedValue(threads);
+      mockThreadMessages();
+      // 前回のセッションで古い順に開いた状態。
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-old', 'sess-mid', 'sess-new'],
+        selectedSessionId: 'sess-old',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'middle thread',
+        'oldest thread',
+      ]);
+    });
+
+    it('lists closed threads newest first regardless of the order they arrive in', async () => {
+      // サーバーは更新の新しい順で返す契約だが、送信直後にローカルで末尾へ
+      // 差し込む経路があるので、表示側は受け取り順に依存してはいけない。
+      fetchChatThreadsMock.mockResolvedValue([threads[2], threads[0], threads[1]]);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-mid'],
+        selectedSessionId: 'sess-mid',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, '閉じたスレッド')).toEqual([
+        'newest thread',
+        'oldest thread',
+      ]);
+    });
+
+    it('keeps pinned threads at the top even when they are the oldest', async () => {
+      fetchChatThreadsMock.mockResolvedValue([
+        threads[0],
+        threads[1],
+        { ...threads[2], pinned: true },
+      ]);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-old', 'sess-mid', 'sess-new'],
+        selectedSessionId: 'sess-old',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, 'ピン留め')).toEqual(['oldest thread']);
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'middle thread',
+      ]);
+    });
+
+    it('pushes a thread with an unreadable timestamp to the bottom instead of scrambling the order', async () => {
+      // updatedAt が読めないスレッドを NaN のまま比較へ流すと、比較関数が
+      // 「a<b でも b<a でもない」を返して並びが入力順に依存する。読めないものは
+      // 0 (= 最古) に倒して、残りの並びは壊さない。
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-broken', agentId: 'claude', title: 'broken thread', pinned: false, updatedAt: 'not-a-date' },
+        threads[0],
+        threads[2],
+      ]);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-broken', 'sess-new', 'sess-old'],
+        selectedSessionId: 'sess-broken',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'oldest thread',
+        'broken thread',
+      ]);
+    });
+  });
+
 });
