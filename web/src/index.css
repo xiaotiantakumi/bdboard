@@ -362,6 +362,7 @@ body {
 }
 
 .overflow-menu-button {
+  position: relative;
   background: var(--badge-neutral-bg);
   border: none;
   border-radius: var(--radius-pill);
@@ -378,6 +379,16 @@ body {
 .overflow-menu-button:hover {
   background: var(--color-border-strong);
   color: var(--color-text);
+}
+
+.overflow-menu-update-dot {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent, #007aff);
 }
 
 .overflow-menu-popover {

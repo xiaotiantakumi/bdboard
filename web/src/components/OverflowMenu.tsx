@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useCachedUpdateCheck } from '../hooks/useUpdateCheckStatus';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 export interface OverflowMenuProps {
@@ -16,6 +17,9 @@ export function OverflowMenu({
 }: OverflowMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useExclusivePopover('overflow-menu', menuOpen, setMenuOpen);
+  const updateCheck = useCachedUpdateCheck();
+  const updateData =
+    updateCheck?.state === 'update-available' ? updateCheck : undefined;
 
   const handleItemClick = (action: () => void) => {
     setMenuOpen(false);
@@ -29,12 +33,13 @@ export function OverflowMenu({
         className="overflow-menu-button"
         aria-expanded={menuOpen}
         aria-haspopup="menu"
-        aria-label="その他のメニュー"
+        aria-label={updateData ? 'その他のメニュー (更新あり)' : 'その他のメニュー'}
         onClick={() => {
           setMenuOpen((open) => !open);
         }}
       >
         ⋯
+        {updateData && <span className="overflow-menu-update-dot" aria-hidden="true" />}
       </button>
 
       {menuOpen && (
@@ -71,6 +76,20 @@ export function OverflowMenu({
           >
             キーボードショートカット
           </button>
+          {updateData && (
+            <a
+              className="update-notice"
+              href={updateData.releaseUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false);
+              }}
+            >
+              新しいバージョン {updateData.latestVersion} が公開されています
+            </a>
+          )}
           <p className="overflow-menu-footnote">
             盤面の鮮度・セッション数などの詳細は、左のステータスピルを開いて確認できます。
           </p>
