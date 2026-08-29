@@ -155,6 +155,22 @@ const REPO_TOOL_USAGE_LINES: readonly string[] = [
   '- 顛末を断定するときは、どちらのツールで何が見えたかを根拠として一言添える。',
 ];
 
+const DEPLOY_TOOL_USAGE_LINES: readonly string[] = [
+  '配信中のUI/ビルドが最新かを確かめる作法(bdboard-3tw.159.5):',
+  '- deploy_status で、常時稼働サーバーが配信している web/dist ビルドの由来',
+  '  (ビルド時SHA/ビルド時刻)と、origin/main の現在値、その差(commitsBehind)を確認できる。',
+  '- npm run start は tsx を watch なしで動かし、静的な web/dist を配信するだけなので、',
+  '  origin/main へマージしただけでは server 側も UI 側も反映されない。',
+  '  commitsBehind が 0 でなければ「マージ済みだが配信中ビルドは N コミット前」と答え、',
+  '  再ビルド(npm run build:web)と再起動が必要な旨を伝える',
+  '  (このツール自身に再ビルド・再起動の手段は無い。実行はユーザーか運用者に委ねる)。',
+  '- buildSha=unknown のときは、build-meta.json 導入(bdboard-3tw.159.5)より前に',
+  '  作られたビルドの可能性がある。再ビルドしないと比較できない旨を伝える。',
+  '- commitsAheadOfMain が出たら、配信中ビルドが origin/main の祖先ではない',
+  '  (別ブランチ由来、または後から revert された等)ことを示すので、',
+  '  「Nコミット遅れ」と単純に言い切らず、その旨も併せて伝える。',
+];
+
 /**
  * 「結局どうなった?」への答え方の規約(bdboard-3tw.159.3)。
  *
@@ -227,6 +243,8 @@ export function buildBdSystemPrompt(input: {
     ...(hasBdTools ? BD_TOOL_USAGE_LINES : []),
     ...(hasBdTools ? [''] : []),
     ...(hasBdTools ? REPO_TOOL_USAGE_LINES : []),
+    ...(hasBdTools ? [''] : []),
+    ...(hasBdTools ? DEPLOY_TOOL_USAGE_LINES : []),
     ...(hasBdTools ? [''] : []),
     ...OUTCOME_ANSWER_FORMAT_LINES,
     '',

@@ -2,18 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { BD_TOOL_DEFINITIONS } from './bd-tool-catalog.js';
 import { CHAT_TOOL_DEFINITIONS, buildChatToolCommand } from './chat-tool-catalog.js';
 import { REPO_TOOL_DEFINITIONS } from './repo-tool-catalog.js';
+import { DEPLOY_STATUS_TOOL_DEFINITION } from './deploy-status-tool.js';
 
 const PROJECT_ROOT = '/tmp/bdboard-chat-tool-test';
 
 describe('CHAT_TOOL_DEFINITIONS', () => {
-  it('is exactly the bd tools followed by the repo tools, with no duplicates', () => {
+  it('is exactly the bd tools, then the repo tools, then deploy_status, with no duplicates', () => {
     expect(CHAT_TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual([
       ...BD_TOOL_DEFINITIONS.map((tool) => tool.name),
       ...REPO_TOOL_DEFINITIONS.map((tool) => tool.name),
+      DEPLOY_STATUS_TOOL_DEFINITION.name,
     ]);
 
     const names = CHAT_TOOL_DEFINITIONS.map((tool) => tool.name);
     expect(new Set(names).size).toBe(names.length);
+  });
+
+  it('lists deploy_status as readonly (bdboard-3tw.159.5)', () => {
+    expect(DEPLOY_STATUS_TOOL_DEFINITION.writes).toBe(false);
   });
 });
 
@@ -59,6 +65,15 @@ describe('buildChatToolCommand', () => {
   it('rejects unknown tools', () => {
     const result = buildChatToolCommand('git_push', {}, PROJECT_ROOT);
     expect(result).toEqual({ ok: false, error: 'unknown tool: git_push' });
+  });
+
+  it('does not route deploy_status (bdboard-3tw.159.5 runs it via bd-mcp-server.ts instead)', () => {
+    // deploy_status is listed in CHAT_TOOL_DEFINITIONS for tools/list, but its
+    // execution needs an fs read plus multiple git calls, so it deliberately
+    // does not fit this single-command router. bd-mcp-server.ts special-cases
+    // it via isDeployStatusToolName before ever calling buildChatToolCommand.
+    const result = buildChatToolCommand('deploy_status', {}, PROJECT_ROOT);
+    expect(result.ok).toBe(false);
   });
 
   it('never lets a bd tool name produce a git command, or vice versa', () => {
