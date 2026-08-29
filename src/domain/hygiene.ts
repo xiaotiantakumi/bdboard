@@ -103,8 +103,22 @@ function hasBlockingDependencies(ticket: Ticket): boolean {
   );
 }
 
-/** Date をローカルタイムゾーンの YYYY-MM-DD に整形する(UTC で切ると JST では 1 日ずれる) */
-export function formatLocalDateKey(date: Date): string {
+/**
+ * Date を YYYY-MM-DD に整形する。
+ *
+ * timeZone 未指定時は実行環境のローカルタイムゾーン(getFullYear/getMonth/getDate)。
+ * 指定時はその IANA タイムゾーンの暦日(UTC で slice すると JST では 1 日ずれる)。
+ */
+export function formatLocalDateKey(date: Date, timeZone?: string): string {
+  if (timeZone !== undefined) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  }
+
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -114,6 +128,7 @@ export function formatLocalDateKey(date: Date): string {
 function checkOverdueDefer(
   ticket: Ticket,
   now: Date,
+  timeZone?: string,
 ): HygieneIssue | null {
   if (ticket.status !== 'deferred') {
     return null;
@@ -134,7 +149,7 @@ function checkOverdueDefer(
     projectId: ticket.projectId,
     message: 'defer_until を過ぎていますが、まだ deferred のままです',
     severity: 'warning',
-    deferUntil: formatLocalDateKey(ticket.deferUntil),
+    deferUntil: formatLocalDateKey(ticket.deferUntil, timeZone),
   };
 }
 
@@ -518,6 +533,7 @@ export function checkHygiene(
      * max(updatedAt, ここの値) にするためだけに使う。未指定なら updatedAt のみ。
      */
     readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
+    readonly timeZone?: string;
   },
 ): readonly HygieneIssue[] {
   const thresholds = resolveHygieneThresholds(ctx.thresholds);
@@ -527,7 +543,7 @@ export function checkHygiene(
   const issues: HygieneIssue[] = [];
 
   for (const ticket of tickets) {
-    const overdueDefer = checkOverdueDefer(ticket, ctx.now);
+    const overdueDefer = checkOverdueDefer(ticket, ctx.now, ctx.timeZone);
     if (overdueDefer !== null) {
       issues.push(overdueDefer);
     }

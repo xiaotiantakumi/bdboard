@@ -1,3 +1,4 @@
+import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import {
   checkHygiene,
@@ -17,6 +18,7 @@ export interface GetHygieneIssuesOptions {
    */
   readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
   readonly thresholds?: HygieneThresholds;
+  readonly timeZone?: string;
 }
 
 export function getHygieneIssues(
@@ -51,8 +53,11 @@ export function getHygieneIssues(
     ),
   );
 
+  const timeZone = options?.timeZone ?? getBoardTimeZone();
+
   return checkHygiene(tickets, {
     now,
+    timeZone,
     pendingDecisionKeys,
     ...(options?.pendingCommentAnchors !== undefined
       ? { pendingCommentAnchors: options.pendingCommentAnchors }

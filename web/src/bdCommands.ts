@@ -1,3 +1,5 @@
+import { computeDeferUntilDate } from './deferPeriods';
+
 export type BdCommandKind =
   | 'claim'
   | 'close'
@@ -51,12 +53,7 @@ export function buildBdCommand(
 export const DEFER_DAYS = 7;
 
 export function formatDeferDate(now: Date = new Date()): string {
-  const target = new Date(now.getTime());
-  target.setDate(target.getDate() + DEFER_DAYS);
-  const year = target.getFullYear();
-  const month = String(target.getMonth() + 1).padStart(2, '0');
-  const day = String(target.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  return computeDeferUntilDate('1week', now);
 }
 
 export const BD_COMMAND_DEFINITIONS: readonly {
