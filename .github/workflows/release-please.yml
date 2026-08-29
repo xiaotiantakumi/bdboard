@@ -11,7 +11,7 @@ on:
 #   2. release-please が作るタグ / Release も、on: push: tags や on: release の
 #      ワークフローを起動しない。publish (bdboard-70z.4) を素朴に tag トリガーで書くと
 #      無音で何も起きない。同一ワークフロー内で action の outputs
-#      (releases_created / tag_name) を使って publish ジョブを連結するか、PAT を使うこと。
+#      (root component の release_created / tag_name) を使って publish ジョブを連結するか、PAT を使うこと。
 
 # upstream の release-please-action README が要求する3点セット。issues: write は
 # autorelease ラベルの付替え (pending -> tagged) とリリースコメント投稿に要る。
@@ -33,9 +33,76 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       # initial-version は初回リリース後は manifest に反映されるため、以降は config から削除してよい。
-      - uses: googleapis/release-please-action@v4
+      - id: release
+        uses: googleapis/release-please-action@v4
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-please の本文は CHANGELOG 由来なので、起動時に照合する bd の版もここで追記する。
+      # リリースタグを checkout して、公開対象ソース自身の EXPECTED_BD_VERSION から値を読む。
+      - name: Checkout released tag for compatibility metadata
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.release.outputs.tag_name }}
+
+      - name: Record bd CLI compatibility in GitHub Release
+        if: ${{ steps.release.outputs.release_created == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ steps.release.outputs.tag_name }}
+          RELEASE_BODY: ${{ steps.release.outputs.body }}
+        run: |
+          bd_version="$(sed -nE "s/^export const EXPECTED_BD_VERSION = '([^']+)';$/\1/p" src/domain/bd-version-check.ts)"
+          if [[ -z "$bd_version" ]]; then
+            echo "::error::EXPECTED_BD_VERSION could not be read from the released source."
+            exit 1
+          fi
+
+          printf '%s\n\n## Compatibility\n\nTested with `bd` CLI v%s (the version checked at startup).\n' \
+            "$RELEASE_BODY" "$bd_version" |
+            gh release edit "$TAG_NAME" --notes-file -
+
+  npm-publish-dry-run:
+    needs: release-please
+    if: >-
+      ${{ needs.release-please.result == 'success' &&
+          needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # この job は registry を変更しないため、Release 本文更新に必要な write 権限も渡さない。
+    permissions:
+      contents: read
+    steps:
+      # main の push 時点の SHA ではなく、release-please が作成したタグそのものを検証・pack する。
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            web/package-lock.json
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+      - run: npm --prefix web ci
+      - run: npm run verify
+      # web/dist は npm 同梱物なので、prepack にも依存せず明示的にビルドする。
+      - run: npm run build:web
+
+      # 現在は --dry-run なので npm registry へは公開しない。本番化は、NPM_TOKEN 登録・
+      # パッケージ名確保・公開 repository metadata の確認とユーザーの明示承認がそろった別変更で行う。
+      # その際はこの行を `npm publish --provenance --access public` に見直し、publish job にだけ
+      # NODE_AUTH_TOKEN と id-token: write を追加する。dry-run では provenance attestation は生成されない。
+      - name: Validate npm publication (dry run only)
+        run: npm publish --dry-run
