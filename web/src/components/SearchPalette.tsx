@@ -93,16 +93,19 @@ export function SearchPalette({
       return;
     }
 
+    let cancelled = false;
     setIsLoading(true);
     setError(null);
 
     const handle = window.setTimeout(() => {
       void searchTickets(trimmedQuery, SEARCH_LIMIT)
         .then((hits) => {
+          if (cancelled) return;
           setTicketResults(hits);
           setIsLoading(false);
         })
         .catch((caught: unknown) => {
+          if (cancelled) return;
           setError(
             caught instanceof Error ? caught : new Error('検索に失敗しました'),
           );
@@ -112,6 +115,7 @@ export function SearchPalette({
     }, DEBOUNCE_MS);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(handle);
     };
   }, [hasQuery, trimmedQuery]);
