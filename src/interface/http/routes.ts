@@ -32,7 +32,7 @@ import { searchTickets } from '../../application/board/search-tickets.js';
 import type { ApplicationVersionProvider } from '../../application/ports/application-version.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
-import { BdError } from '../../application/ports/issue-repository.js';
+import { respondBdError } from './bd-error-response.js';
 import type { ProcessScanner } from '../../application/ports/process-scanner.js';
 import type { HumanDecisionsPort } from '../../application/ports/human-decisions.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
@@ -898,15 +898,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       await deps.humanDecisions.respond(rootPath, id, responseText);
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to respond', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to respond', detail }, 502);
+      return respondBdError(c, 'failed to respond', error);
     }
   });
 
@@ -970,15 +962,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         );
       }
 
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to run quick action', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to run quick action', detail }, 502);
+      return respondBdError(c, 'failed to run quick action', error);
     }
   });
 
@@ -1058,15 +1042,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         );
       }
 
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to undo quick action', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to undo quick action', detail }, 502);
+      return respondBdError(c, 'failed to undo quick action', error);
     }
   });
 
@@ -1106,15 +1082,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       await deps.dependencyWriter.addDependency(rootPath, id, dependsOnId);
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to add dependency', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to add dependency', detail }, 502);
+      return respondBdError(c, 'failed to add dependency', error);
     }
   });
 
@@ -1159,15 +1127,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to remove dependency', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to remove dependency', detail }, 502);
+      return respondBdError(c, 'failed to remove dependency', error);
     }
   });
 
@@ -1207,15 +1167,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         );
       }
 
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to update title', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to update title', detail }, 502);
+      return respondBdError(c, 'failed to update title', error);
     }
   });
 
@@ -1255,15 +1207,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         );
       }
 
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to update description', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to update description', detail }, 502);
+      return respondBdError(c, 'failed to update description', error);
     }
   });
 
@@ -1286,15 +1230,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       await deps.issueWriter.addLabel(rootPath, id, parsed.data.label);
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to add label', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to add label', detail }, 502);
+      return respondBdError(c, 'failed to add label', error);
     }
   });
 
@@ -1327,15 +1263,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       await deps.issueWriter.removeLabel(cached.rootPath, id, label);
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to remove label', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to remove label', detail }, 502);
+      return respondBdError(c, 'failed to remove label', error);
     }
   });
 
@@ -1362,15 +1290,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to link session', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to link session', detail }, 502);
+      return respondBdError(c, 'failed to link session', error);
     }
   });
 
@@ -1390,15 +1310,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       await deps.sessionLinkWriter.unlinkSession(rootPath, id);
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to unlink session', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to unlink session', detail }, 502);
+      return respondBdError(c, 'failed to unlink session', error);
     }
   });
 
@@ -1422,15 +1334,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
       return c.json({ ok: true });
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to add comment', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json({ error: 'failed to add comment', detail }, 502);
+      return respondBdError(c, 'failed to add comment', error);
     }
   });
 
@@ -1459,18 +1363,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
       return c.json(comments.map(toCommentDto));
     } catch (error: unknown) {
-      if (error instanceof BdError) {
-        return c.json(
-          { error: 'failed to load comments', detail: error.detail },
-          502,
-        );
-      }
-
-      const detail = error instanceof Error ? error.message : String(error);
-      return c.json(
-        { error: 'failed to load comments', detail },
-        502,
-      );
+      return respondBdError(c, 'failed to load comments', error);
     }
   });
 
