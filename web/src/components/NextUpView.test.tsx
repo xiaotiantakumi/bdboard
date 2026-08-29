@@ -234,4 +234,12 @@ describe('NextUpView', () => {
 
     expect(screen.getByText('着手できるチケットはありません')).toBeInTheDocument();
   });
+
+  it('marks the selected display limit with aria-pressed', () => {
+    renderNextUpView(makeBoard([]), { limit: 5 });
+
+    expect(screen.getByRole('button', { name: '5' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '10' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByRole('button', { name: '20' })).toHaveAttribute('aria-pressed', 'false');
+  });
 });

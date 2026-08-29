@@ -2,6 +2,7 @@ import type { BoardFilterPreset, BoardFilterPresetState } from '../uiPersistedSt
 import type { ViewMode } from '../uiPersistedState';
 import { AiQuotaWidget } from './AiQuotaWidget';
 import { PresetControl } from './PresetControl';
+import { togglePressedProps } from './toggleGroupA11y';
 
 export interface ViewToolbarProps {
   view: ViewMode;
@@ -36,7 +37,7 @@ function FilterChip({
     <button
       type="button"
       className={`filter-chip${active ? ' filter-chip-active' : ''}`}
-      aria-pressed={active}
+      {...togglePressedProps(active)}
       onClick={onToggle}
     >
       {label}

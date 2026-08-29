@@ -1,6 +1,7 @@
 import type { ProjectDto } from '../api';
 import { VIEW_ITEMS, type ViewMode } from '../uiPersistedState';
 import type { StreamState } from '../useBoardStream';
+import { navCurrentProps } from './toggleGroupA11y';
 import { OverflowMenu } from './OverflowMenu';
 import { ProjectPicker } from './ProjectPicker';
 import { StatusPill } from './StatusPill';
@@ -70,6 +71,7 @@ export function GlobalBar({
               key={item.view}
               type="button"
               className={`toggle-btn${view === item.view ? ' active' : ''}`}
+              {...navCurrentProps(view === item.view)}
               onClick={() => onViewChange(item.view)}
             >
               {item.label}
