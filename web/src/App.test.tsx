@@ -826,7 +826,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
     await user.click(screen.getByRole('button', { name: /接続状態:/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('盤面取得: 5分前')).toBeInTheDocument();
+      expect(screen.getByText('盤面内容の最終変化: 5分前')).toBeInTheDocument();
     });
     expect(screen.getByText(/最終更新:/)).toBeInTheDocument();
   });
@@ -852,7 +852,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
     // これを待たずにピルだけ見ると boardQuery.data 未取得の一瞬を掴んでしまい、
     // 修正前のコードでも素通りする空振りテストになる。
     await waitFor(() => {
-      expect(screen.getByText('盤面取得: 5分前')).toBeInTheDocument();
+      expect(screen.getByText('盤面内容の最終変化: 5分前')).toBeInTheDocument();
     });
 
     // その状態でもピルは「正常」— 5分古いのは盤面の内容であって、通信ではない。
