@@ -476,10 +476,16 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
 
   It fetches `origin/main` first (a drift check against a stale remote is
   worthless); `npm run drift -- --no-fetch` skips that when offline. It
-  **always exits 0** and never blocks — overlapping files are an upper bound
-  on where a conflict could occur, not a prediction that one will (separate
-  hunks in the same file rebase cleanly). Making it a gate would produce
-  false stops and get it ignored.
+  **never exits non-zero for a finding** and never blocks — overlapping files
+  are an upper bound on where a conflict could occur, not a prediction that
+  one will (separate hunks in the same file rebase cleanly). Making it a gate
+  would produce false stops and get it ignored. It **does** exit 2 when the
+  check could not run at all (no `origin`, no merge-base): "nothing to report"
+  and "could not look" must not read the same to a caller that only reads
+  stdout.
+
+  It compares **committed** changes only, so run it after you commit, not
+  mid-edit — uncommitted work in your tree is invisible to it.
 
   There is deliberately **no hand-maintained "hot file" list**. Which files
   are hot changes week to week, and a list in this document would go stale;

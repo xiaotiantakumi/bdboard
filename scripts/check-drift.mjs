@@ -12,15 +12,19 @@
 // ここで見るのは「マージベース以降に main が触ったファイル」と「同じくブランチが
 // 触ったファイル」の積集合だけ。これは rebase したときに衝突しうるファイルの上界で、
 // 実際に衝突するかはハンク次第 (別関数を触っていれば衝突しない)。だから判定ではなく
-// 早期警告として扱い、常に exit 0 で返す — ゲートにすると「衝突しないのに止まる」
-// 誤検知でいずれ無視されるようになる。
+// 早期警告として扱い、**発見をゲートにしない** (重なりがあっても exit 0) — ゲートに
+// すると「衝突しないのに止まる」誤検知でいずれ無視されるようになる。
+// 逆に「チェック自体が実行できなかった」ときだけ exit 2 を返す。これを 0 と混ぜると、
+// stdout だけ拾う呼び出し側から見て「調べて問題なし」と区別が付かなくなる。
+//
+// 見るのは **コミット済みの変更だけ**。作業ツリーの未コミット編集は入らない。
 //
 // 「hot file の一覧を CLAUDE.md に載せる」案 (チケットの候補2) は採らなかった。
 // どのファイルが hot かは時期で変わり、手で書いた一覧は必ず腐る。マージベースから
 // 計算すれば常に現在の事実になる。
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -95,8 +99,28 @@ function git(args) {
   }).trim();
 }
 
+const EXIT_OK = 0;
+/** チェック自体が実行できなかった。発見あり (0) と区別する。 */
+const EXIT_UNAVAILABLE = 2;
+
 function changedFiles(from, to) {
-  const out = git(['diff', '--name-only', `${from}..${to}`]);
+  // --no-renames が要。既定の rename 検出だと、main 側が a.ts を b.ts へ改名して
+  // 中身も変えた場合に新パス b.ts しか出ず、旧パス a.ts を触っているブランチとの
+  // 重なりが消える。実際に rebase すると衝突するので、「重なりは上界」という
+  // このコマンドの前提そのものが破れる (fable レビューで再現あり)。--no-renames なら
+  // 削除+追加として両パスが出て、上界として正しくなる。改名だけで中身を変えていない
+  // ケースは rebase が通るので、これで増える誤検知はほぼ無い。
+  //
+  // core.quotepath=false は非ASCIIのパスが \346\227\245 のような8進エスケープで
+  // 出るのを止めるだけ (検出そのものには影響しない)。
+  const out = git([
+    '-c',
+    'core.quotepath=false',
+    'diff',
+    '--name-only',
+    '--no-renames',
+    `${from}..${to}`,
+  ]);
   return out === '' ? [] : out.split('\n');
 }
 
@@ -122,22 +146,26 @@ function main(argv) {
       `drift: ${upstream} と HEAD の merge-base が取れませんでした。` +
         ' origin remote があり、origin/main を fetch 済みかを確認してください。',
     );
-    return 0;
+    return EXIT_UNAVAILABLE;
   }
 
   if (mergeBase === git(['rev-parse', 'HEAD'])) {
     console.log('drift: HEAD が merge-base そのものです (このブランチにはまだコミットがありません)。');
-    return 0;
+    return EXIT_OK;
   }
 
   const aheadCount = Number.parseInt(git(['rev-list', '--count', `${mergeBase}..${upstream}`]), 10);
   const drift = computeDrift(changedFiles(mergeBase, upstream), changedFiles(mergeBase, 'HEAD'));
 
   console.log(formatDriftReport(drift, { mergeBase, upstream, aheadCount }));
-  return 0;
+  return EXIT_OK;
 }
 
-const isMain = process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+// pathToFileURL を使う。`file://${argv[1]}` だと、リポジトリのパスに空白や非ASCIIが
+// 含まれるときに import.meta.url 側だけがパーセントエンコードされて一致せず、
+// main() が走らないまま無言で exit 0 になる (fable レビューで再現あり)。
+const isMain =
+  process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (isMain) {
   process.exitCode = main(process.argv.slice(2));
 }
