@@ -494,6 +494,40 @@ describe('buildBoard stalled', () => {
     expect(board.cards[0].stalled).toBe(false);
   });
 
+  it('honors stalledThresholds when marking cards stalled', () => {
+    /*
+     * liveness と同じ理由の対比テスト (bdboard-3z5x)。30時間前更新のチケットは
+     * 既定 (stalledAfterMs=24時間) では stalled、48時間へ上書きすると stalled で
+     * なくなる。この対比が無いと buildBoard から input.stalledThresholds の
+     * 受け渡しを落としても board.test.ts は緑のまま通る (変異で確認済み)。
+     *
+     * 下の 'does not change compareCards order' も閾値を渡しているが、あちらが
+     * 見ているのは並び順が stalled フラグに影響されないことで、受け渡しが
+     * 壊れれば両方が既定値で揃うだけなので順序は一致したまま通ってしまう。
+     * つまり受け渡しの検証にはならない。
+     */
+    const thirtyHoursAgo = new Date(NOW.getTime() - 30 * 60 * 60_000);
+    const input = {
+      projectId: PROJECT,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-stalled-threshold',
+          status: 'in_progress' as const,
+          updatedAt: thirtyHoursAgo,
+        }),
+      ],
+      now: NOW,
+    };
+
+    expect(buildBoard(input).cards[0].stalled).toBe(true);
+    expect(
+      buildBoard({
+        ...input,
+        stalledThresholds: { stalledAfterMs: 48 * 60 * 60_000 },
+      }).cards[0].stalled,
+    ).toBe(false);
+  });
+
   it('does not change compareCards order when stalled flag differs', () => {
     const shared = {
       priority: 2 as const,
