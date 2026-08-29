@@ -5,6 +5,7 @@ import {
   deleteChatThread,
   fetchChatThreads,
   fetchChatTurnStatus,
+  fetchHarnessPacks,
   fetchSimilarTickets,
   LANE_EXPECTED_STATUS,
   LANE_LABELS,
@@ -209,6 +210,35 @@ describe('scan roots config error details (bdboard-mmb review S2)', () => {
   });
 });
 
+describe('fetchHarnessPacks', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('surfaces a non-2xx response as ApiError', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: 'harness packs unavailable' }),
+          { status: 503, statusText: 'Service Unavailable' },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    let caught: unknown;
+    try {
+      await fetchHarnessPacks();
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ApiError);
+    const apiError = caught as ApiError;
+    expect(apiError.status).toBe(503);
+    expect(apiError.errorMessage).toBe('harness packs unavailable');
+    expect(fetchMock).toHaveBeenCalledWith('/api/harness/packs', undefined);
+  });
+});
+
 describe('fetchSimilarTickets', () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -248,6 +278,7 @@ describe('fetchSimilarTickets', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/tickets/bdboard%2Ftarget/similar?limit=3',
+      undefined,
     );
   });
 });

@@ -462,14 +462,6 @@ async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) {
-    throw new Error(`HTTP ${res.status} ${res.statusText}: ${path}`);
-  }
-  return (await res.json()) as T;
-}
-
 export interface ScanRootsConfigDto {
   scanRoots: string[];
   excludePaths: string[];
@@ -597,11 +589,11 @@ export function postRefresh(): Promise<void> {
 }
 
 export function fetchProjects(): Promise<ProjectDto[]> {
-  return getJson<ProjectDto[]>('/api/projects');
+  return fetchJson<ProjectDto[]>('/api/projects');
 }
 
 export function fetchSessions(): Promise<SessionDto[]> {
-  return getJson<SessionDto[]>('/api/sessions');
+  return fetchJson<SessionDto[]>('/api/sessions');
 }
 
 export function fetchSessionHistory(
@@ -618,7 +610,7 @@ export function fetchSessionHistory(
   const query = searchParams.toString();
   const path =
     query.length > 0 ? `/api/sessions/history?${query}` : '/api/sessions/history';
-  return getJson<SessionHistoryEntryDto[]>(path);
+  return fetchJson<SessionHistoryEntryDto[]>(path);
 }
 
 export function fetchSessionTail(
@@ -673,11 +665,11 @@ export function fetchBoard(params: {
   if (params.epicId !== undefined) {
     searchParams.set('epicId', params.epicId);
   }
-  return getJson<BoardViewDto>(`/api/board?${searchParams.toString()}`);
+  return fetchJson<BoardViewDto>(`/api/board?${searchParams.toString()}`);
 }
 
 export function fetchStatus(): Promise<StatusDto> {
-  return getJson<StatusDto>('/api/status');
+  return fetchJson<StatusDto>('/api/status');
 }
 
 export function fetchTicket(id: string): Promise<TicketDetailDto> {
@@ -711,7 +703,7 @@ export function fetchPrLinks(
   }
   const query = searchParams.toString();
   const path = query.length > 0 ? `/api/pr-links?${query}` : '/api/pr-links';
-  return getJson<PrBadgeDto[]>(path);
+  return fetchJson<PrBadgeDto[]>(path);
 }
 
 export function postTicketDecision(
@@ -896,7 +888,7 @@ export function searchTickets(
   const searchParams = new URLSearchParams();
   searchParams.set('q', query);
   searchParams.set('limit', String(limit));
-  return getJson<TicketSearchResultDto[]>(`/api/search?${searchParams.toString()}`);
+  return fetchJson<TicketSearchResultDto[]>(`/api/search?${searchParams.toString()}`);
 }
 
 export function fetchActivity(
@@ -910,7 +902,7 @@ export function fetchActivity(
   if (projectIds.length > 0) {
     searchParams.set('projects', projectIds.join(','));
   }
-  return getJson<ActivityEventDto[]>(`/api/activity?${searchParams.toString()}`);
+  return fetchJson<ActivityEventDto[]>(`/api/activity?${searchParams.toString()}`);
 }
 
 export function fetchTicketTimeline(
@@ -919,7 +911,7 @@ export function fetchTicketTimeline(
 ): Promise<ActivityEventDto[]> {
   const searchParams = new URLSearchParams();
   searchParams.set('limit', String(limit));
-  return getJson<ActivityEventDto[]>(
+  return fetchJson<ActivityEventDto[]>(
     `/api/tickets/${encodeURIComponent(ticketId)}/timeline?${searchParams.toString()}`,
   );
 }
@@ -930,7 +922,7 @@ export function fetchSimilarTickets(
 ): Promise<TicketSimilarResultDto[]> {
   const searchParams = new URLSearchParams();
   searchParams.set('limit', String(limit));
-  return getJson<TicketSimilarResultDto[]>(
+  return fetchJson<TicketSimilarResultDto[]>(
     `/api/tickets/${encodeURIComponent(ticketId)}/similar?${searchParams.toString()}`,
   );
 }
@@ -944,7 +936,7 @@ export function fetchThroughputStats(
   if (projectIds.length > 0) {
     searchParams.set('projects', projectIds.join(','));
   }
-  return getJson<ThroughputStatsDto>(`/api/stats?${searchParams.toString()}`);
+  return fetchJson<ThroughputStatsDto>(`/api/stats?${searchParams.toString()}`);
 }
 
 export function fetchModelStats(
@@ -956,7 +948,7 @@ export function fetchModelStats(
   if (projectIds.length > 0) {
     searchParams.set('projects', projectIds.join(','));
   }
-  return getJson<ModelStatsDto>(`/api/model-stats?${searchParams.toString()}`);
+  return fetchJson<ModelStatsDto>(`/api/model-stats?${searchParams.toString()}`);
 }
 
 export function fetchCfdStats(
@@ -968,7 +960,7 @@ export function fetchCfdStats(
   if (projectIds.length > 0) {
     searchParams.set('projects', projectIds.join(','));
   }
-  return getJson<CfdStatsDto>(`/api/cfd?${searchParams.toString()}`);
+  return fetchJson<CfdStatsDto>(`/api/cfd?${searchParams.toString()}`);
 }
 
 export function fetchHygieneIssues(
@@ -980,7 +972,7 @@ export function fetchHygieneIssues(
   }
   const query = searchParams.toString();
   const path = query.length > 0 ? `/api/hygiene?${query}` : '/api/hygiene';
-  return getJson<HygieneIssueDto[]>(path);
+  return fetchJson<HygieneIssueDto[]>(path);
 }
 
 export interface StaleLeaseDto {
@@ -1020,7 +1012,7 @@ export function fetchLeaseHealth(
   }
   const query = searchParams.toString();
   const path = query.length > 0 ? `/api/lease-health?${query}` : '/api/lease-health';
-  return getJson<LeaseHealthDto>(path);
+  return fetchJson<LeaseHealthDto>(path);
 }
 
 export interface MergeSlotStatusDto {
@@ -1043,7 +1035,7 @@ export function fetchMergeSlotStatus(
   const query = searchParams.toString();
   const path =
     query.length > 0 ? `/api/merge-slot-status?${query}` : '/api/merge-slot-status';
-  return getJson<MergeSlotStatusDto[]>(path);
+  return fetchJson<MergeSlotStatusDto[]>(path);
 }
 
 export interface GraphNodeDto {
@@ -1076,7 +1068,7 @@ export function fetchDependencyGraph(
   }
   const query = searchParams.toString();
   const path = query.length > 0 ? `/api/graph?${query}` : '/api/graph';
-  return getJson<DependencyGraphDto>(path);
+  return fetchJson<DependencyGraphDto>(path);
 }
 
 export function isLaneStatusMismatch(lane: string, status: string): boolean {
@@ -1552,7 +1544,7 @@ export interface AllHarnessStatusDto {
 }
 
 export function fetchHarnessPacks(): Promise<HarnessPackSummaryDto[]> {
-  return getJson<HarnessPackSummaryDto[]>('/api/harness/packs');
+  return fetchJson<HarnessPackSummaryDto[]>('/api/harness/packs');
 }
 
 export function fetchAllHarnessStatus(): Promise<AllHarnessStatusDto> {
