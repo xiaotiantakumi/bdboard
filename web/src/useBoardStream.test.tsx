@@ -52,16 +52,29 @@ function renderBoardStream() {
   return { ...view, invalidateSpy, es };
 }
 
-const ALL_INVALIDATED_KEYS = [
+const BOARD_CHANGED_INVALIDATED_KEYS = [
   'board',
   'status',
   'ticket',
   'ticket-comments',
   'pending-decisions',
   'pr-links',
-  'sessions',
   'projects',
+  'hygiene',
+  'harness-drift',
+  'lease-health',
+  'merge-slot-status',
+  'activity',
+  'digest-activity',
+  'throughput-stats',
+  'cfd-stats',
+  'model-stats',
+  'dependency-graph',
+  'ticket-timeline',
+  'similar-tickets',
 ];
+
+const ALL_INVALIDATED_KEYS = [...BOARD_CHANGED_INVALIDATED_KEYS, 'sessions'];
 
 type InvalidateSpy = ReturnType<typeof renderBoardStream>['invalidateSpy'];
 
@@ -101,13 +114,9 @@ describe('useBoardStream', () => {
     act(() => es.dispatch('board.changed'));
 
     const keys = invalidatedKeys(invalidateSpy);
-    expect(keys).toContain('projects');
-    expect(keys).toContain('board');
-    expect(keys).toContain('status');
-    expect(keys).toContain('ticket');
-    expect(keys).toContain('ticket-comments');
-    expect(keys).toContain('pending-decisions');
-    expect(keys).toContain('pr-links');
+    for (const key of BOARD_CHANGED_INVALIDATED_KEYS) {
+      expect(keys).toContain(key);
+    }
   });
 
   it('revalidates board, session, and related queries after an onerror followed by onopen', () => {

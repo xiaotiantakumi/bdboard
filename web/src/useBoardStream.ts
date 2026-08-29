@@ -149,6 +149,19 @@ export function useBoardStream(): BoardStreamResult {
       void queryClient.invalidateQueries({ queryKey: ['pending-decisions'] });
       void queryClient.invalidateQueries({ queryKey: ['pr-links'] });
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // 集計系ビュー・詳細パネルのタイムライン（prefix マッチで全パラメータ版を一括 invalidate）
+      void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
+      void queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
+      void queryClient.invalidateQueries({ queryKey: ['lease-health'] });
+      void queryClient.invalidateQueries({ queryKey: ['merge-slot-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['activity'] });
+      void queryClient.invalidateQueries({ queryKey: ['digest-activity'] });
+      void queryClient.invalidateQueries({ queryKey: ['throughput-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['cfd-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['model-stats'] });
+      void queryClient.invalidateQueries({ queryKey: ['dependency-graph'] });
+      void queryClient.invalidateQueries({ queryKey: ['ticket-timeline'] });
+      void queryClient.invalidateQueries({ queryKey: ['similar-tickets'] });
     };
 
     const onSessionChanged = () => {
