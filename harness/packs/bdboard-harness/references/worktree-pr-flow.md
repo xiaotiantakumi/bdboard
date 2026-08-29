@@ -148,7 +148,18 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
 1. **`git push` は影響を受けていない**。`gh pr create` が枯渇で失敗しても、ブランチは
    既にリモートに存在している — 復旧は `gh pr create` のリトライだけでよく、worktree や
    ブランチの作り直しは不要。状態確認だけなら、上の 503 障害時の REST コマンド群も
-   core 枠なのでそのまま使える。
+   core 枠なのでそのまま使える。**PR 作成自体も REST で代替できる**（GraphQL を一切
+   使わない）:
+
+   ```bash
+   gh api repos/<owner>/<repo>/pulls -f title="..." -f head=<branch> -f base=main -f body="..." \
+     --jq '{number, html_url}'
+   ```
+
+   実測（2026-08-29, PR #134）: `gh api rate_limit` の graphql が **remaining=5000 を
+   示していても GraphQL 呼び出しが exceeded で拒否され続ける**ことがある（他セッションの
+   消費との競合か、rate_limit 表示が次窓の値を先取りしている可能性 — 原因未確定）。
+   rate_limit の表示を信じて sleep で待つ前に、まず REST 代替を試すほうが速い。
 2. 正確なリセット時刻を取る（`gh api rate_limit` 自体は REST(core) 枠なので、GraphQL が
    枯渇していても通る）:
 

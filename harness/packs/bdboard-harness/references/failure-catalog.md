@@ -65,7 +65,7 @@
 
 ### graphql-quota-exhaustion — 3並列レーンの CI 監視ポーリングで GraphQL 枠が枯渇し `gh pr create` が失敗（2026-08-18）
 - 原因: gh の PR 系コマンドはアカウント単位の GraphQL 枠を消費し、短間隔 watch が枠を食い潰した
-- 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約・枯渇時は REST で状態確認（本則: worktree-pr-flow.md §4）
+- 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約・枯渇時は REST で状態確認と PR 作成（`gh api rate_limit` が remaining 満タンを示しても拒否が続くことがある — 待つ前に REST 代替）（本則: worktree-pr-flow.md §4）
 - 出典: bdboard-p5l.10
 
 ## サーバー・ポート
