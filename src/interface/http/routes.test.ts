@@ -4455,6 +4455,70 @@ describe('createApiRoutes', () => {
     expect(body[0].liveness).toBe('active');
   });
 
+  it('applies the configured liveness thresholds to sessions, projects and board', async () => {
+    /*
+     * bdboard-3tw.102.5: dto.ts が computeLiveness を閾値なしで呼んでいたため、
+     * Settings で liveness 閾値を変えてもボードカードのバッジ (domain/board.ts
+     * 経由なので正しかった) だけが追随し、ヘッダーの「稼働中 N」・セッション
+     * 一覧・セッション詳細は既定値のまま、という食い違いが起きていた。
+     * 4つのエンドポイントが同じ解決済み閾値を見ることを1本で押さえる。
+     */
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: a.id })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    // 既定 (activeMs=5分) なら active、上書き (activeMs=1分) なら idle。
+    const session = makeSession({
+      sessionId: 'session-a',
+      cwd: '/projects/a',
+      alive: true,
+      startedAt: NOW,
+      lastActivityAt: new Date(NOW.getTime() - 2 * 60_000),
+    });
+
+    const getBoardThresholds = vi.fn(async () => ({
+      stalledThresholds: { stalledAfterMs: 60 * 60_000 },
+      livenessThresholds: {
+        activeMs: 60_000,
+        idleMs: 10 * 60_000,
+        staleMs: 60 * 60_000,
+      },
+    }));
+
+    const app = createApiRoutes(
+      createDeps({ cache, sessions: () => [session], getBoardThresholds }),
+    );
+
+    const sessionsBody = await (await app.request('/api/sessions')).json();
+    expect(sessionsBody[0].liveness).toBe('idle');
+
+    const projectsBody = await (await app.request('/api/projects')).json();
+    expect(projectsBody[0].activeSessionCount).toBe(0);
+    expect(projectsBody[0].sessions[0].liveness).toBe('idle');
+
+    /*
+     * /api/sessions/history にも同じ閾値を通してあるが、ここでは検証していない。
+     * getSessionHistory が返すのは alive === false のセッションだけで、
+     * computeLiveness は !alive を即 'dormant' にするため、閾値が何であっても
+     * 結果が変わらない (= 観測できない) ため。「ended だけ」の条件が将来外れた
+     * ときに配線漏れを作らないよう、引数だけは他と同じ形で通してある。
+     */
+
+    const boardBody = await (
+      await app.request('/api/board?view=split')
+    ).json();
+    expect(boardBody.projects[0].project.sessions[0].liveness).toBe('idle');
+    expect(boardBody.projects[0].project.activeSessionCount).toBe(0);
+
+    // 設定を読まない実装に戻ると、この呼び出し自体が消える。
+    expect(getBoardThresholds).toHaveBeenCalled();
+  });
+
   it('returns session history for ended sessions only', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');

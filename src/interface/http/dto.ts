@@ -1,5 +1,9 @@
 import type { Board, BoardCard } from '../../domain/board.js';
-import { computeLiveness, type Liveness } from '../../domain/liveness.js';
+import {
+  computeLiveness,
+  type Liveness,
+  type LivenessThresholds,
+} from '../../domain/liveness.js';
 import type { Project } from '../../domain/project.js';
 import { LANES } from '../../domain/readiness.js';
 import type { AgentSession } from '../../domain/session.js';
@@ -458,7 +462,17 @@ export function toTicketSummaryDto(ticket: Ticket): TicketSummaryDto {
   };
 }
 
-export function toSessionDto(session: AgentSession, now: Date): SessionDto {
+/*
+ * liveness を出す DTO 変換はすべて、解決済みの閾値 (ユーザー設定の上書きを
+ * 含む) を引数で受け取る (bdboard-3tw.102.5)。省略時は computeLiveness の
+ * デフォルトに落ちるので、渡し忘れると「ボードのバッジだけ新しい閾値、
+ * ヘッダーとセッション一覧は古い閾値」という食い違いが起きる。
+ */
+export function toSessionDto(
+  session: AgentSession,
+  now: Date,
+  livenessThresholds?: LivenessThresholds,
+): SessionDto {
   return {
     sessionId: session.sessionId,
     pid: session.pid,
@@ -466,7 +480,7 @@ export function toSessionDto(session: AgentSession, now: Date): SessionDto {
     alive: session.alive,
     startedAt: session.startedAt.toISOString(),
     lastActivityAt: session.lastActivityAt.toISOString(),
-    liveness: computeLiveness(now, session),
+    liveness: computeLiveness(now, session, livenessThresholds),
     ...(session.name !== undefined ? { name: session.name } : {}),
   };
 }
@@ -493,9 +507,10 @@ export function toSessionTailMessageDto(
 export function toSessionHistoryEntryDto(
   entry: SessionHistoryEntry,
   now: Date,
+  livenessThresholds?: LivenessThresholds,
 ): SessionHistoryEntryDto {
   return {
-    session: toSessionDto(entry.session, now),
+    session: toSessionDto(entry.session, now, livenessThresholds),
     ...(entry.project !== undefined
       ? {
           projectId: entry.project.id,
@@ -506,7 +521,11 @@ export function toSessionHistoryEntryDto(
   };
 }
 
-export function toBoardCardDto(card: BoardCard, now: Date): BoardCardDto {
+export function toBoardCardDto(
+  card: BoardCard,
+  now: Date,
+  livenessThresholds?: LivenessThresholds,
+): BoardCardDto {
   return {
     ticket: toTicketSummaryDto(card.ticket),
     lane: card.lane,
@@ -515,7 +534,9 @@ export function toBoardCardDto(card: BoardCard, now: Date): BoardCardDto {
     blocks: [...card.blocks],
     unblocksCount: card.unblocksCount,
     liveness: card.liveness,
-    sessions: card.sessions.map((session) => toSessionDto(session, now)),
+    sessions: card.sessions.map((session) =>
+      toSessionDto(session, now, livenessThresholds),
+    ),
     stalled: card.stalled,
     epicProgress:
       card.epicProgress === null
@@ -533,10 +554,13 @@ export function toBoardDto(
   now: Date,
   closedTotal?: number,
   truncatedClosedIds?: readonly string[],
+  livenessThresholds?: LivenessThresholds,
 ): BoardDto {
   const lanes: Record<string, BoardCardDto[]> = {};
   for (const lane of LANES) {
-    lanes[lane] = board.lanes[lane].map((card) => toBoardCardDto(card, now));
+    lanes[lane] = board.lanes[lane].map((card) =>
+      toBoardCardDto(card, now, livenessThresholds),
+    );
   }
 
   return {
@@ -567,10 +591,11 @@ export function toProjectDto(
   now: Date,
   sessions?: readonly AgentSession[],
   incompleteTicketCount = 0,
+  livenessThresholds?: LivenessThresholds,
 ): ProjectDto {
   const sessionDtos =
     sessions !== undefined
-      ? sessions.map((session) => toSessionDto(session, now))
+      ? sessions.map((session) => toSessionDto(session, now, livenessThresholds))
       : [];
 
   return {
@@ -581,7 +606,9 @@ export function toProjectDto(
     sessionCount: sessions !== undefined ? sessions.length : 0,
     activeSessionCount:
       sessions !== undefined
-        ? sessions.filter((s) => computeLiveness(now, s) === 'active').length
+        ? sessions.filter(
+            (s) => computeLiveness(now, s, livenessThresholds) === 'active',
+          ).length
         : 0,
     incompleteTicketCount,
     sessions: sessionDtos,
@@ -591,6 +618,7 @@ export function toProjectDto(
 export function toBoardViewDto(
   view: BoardView,
   sessionsByProject?: ReadonlyMap<string, readonly AgentSession[]>,
+  livenessThresholds?: LivenessThresholds,
 ): BoardViewDto {
   const now = view.generatedAt;
 
@@ -608,12 +636,14 @@ export function toBoardViewDto(
             now,
             sessionsByProject?.get(projectBoard.project.id),
             countIncompleteTicketsFromBoard(projectBoard.board),
+            livenessThresholds,
           ),
           board: toBoardDto(
             projectBoard.board,
             now,
             projectBoard.closedTotal,
             projectBoard.truncatedClosedIds,
+            livenessThresholds,
           ),
         }));
 
@@ -628,6 +658,7 @@ export function toBoardViewDto(
             now,
             view.mergedClosedTotal ?? undefined,
             view.mergedTruncatedClosedIds ?? undefined,
+            livenessThresholds,
           )
         : null,
   };
