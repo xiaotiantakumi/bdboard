@@ -445,6 +445,16 @@ export function SettingsPanel() {
     onSuccess: async (data) => {
       setThresholdsVersion(data.version);
       await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
+      // liveness 閾値はセッション系のDTOにも効く (bdboard-3tw.102.5)。下の
+      // postRefresh が起こすのは board.changed で、これは board 系しか
+      // 無効化しないため、ヘッダーの「稼働中 N」(['sessions']) とプロジェクト
+      // 一覧 (['projects']) だけが古い閾値のまま残る。全エージェントが
+      // 停止している間は session.changed も飛ばないので、放っておくと
+      // ウィンドウを再フォーカスするまで食い違ったままになる。
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['sessions'] }),
+        queryClient.invalidateQueries({ queryKey: ['projects'] }),
+      ]);
       setThresholdsDirty(false);
       try {
         await postRefresh();

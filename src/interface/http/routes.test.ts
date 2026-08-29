@@ -4490,8 +4490,20 @@ describe('createApiRoutes', () => {
       },
     }));
 
+    // カード内のセッション表示 (lanes[*].sessions[].liveness) も同じ閾値を見る。
+    // ここを外すと、カードのバッジ (domain 経由) だけが新しい閾値に従い、その
+    // 直下のセッション行が古い閾値のまま、というチケットそのものの症状に戻る。
+    const links = [
+      makeSessionLink({ sessionId: 'session-a', ticketId: 'bdboard-a' }),
+    ];
+
     const app = createApiRoutes(
-      createDeps({ cache, sessions: () => [session], getBoardThresholds }),
+      createDeps({
+        cache,
+        sessions: () => [session],
+        links: () => links,
+        getBoardThresholds,
+      }),
     );
 
     const sessionsBody = await (await app.request('/api/sessions')).json();
@@ -4514,6 +4526,27 @@ describe('createApiRoutes', () => {
     ).json();
     expect(boardBody.projects[0].project.sessions[0].liveness).toBe('idle');
     expect(boardBody.projects[0].project.activeSessionCount).toBe(0);
+
+    // カード側。バッジ (card.liveness、domain 由来) とカード内セッション行
+    // (sessions[].liveness、DTO 由来) が同じ閾値を見ていることを1枚のカードで見る。
+    const cards = Object.values(
+      boardBody.projects[0].board.lanes as Record<string, unknown[]>,
+    ).flat() as {
+      ticket: { id: string };
+      liveness: string;
+      sessions: { liveness: string }[];
+    }[];
+    const card = cards.find((entry) => entry.ticket.id === 'bdboard-a');
+    expect(card?.sessions).toHaveLength(1);
+    expect(card?.sessions[0]?.liveness).toBe('idle');
+    expect(card?.liveness).toBe('idle');
+
+    // merged ビューのカードも同じ経路 (toBoardDto) を通る。
+    const mergedBody = await (await app.request('/api/board')).json();
+    const mergedCards = Object.values(
+      mergedBody.merged.lanes as Record<string, unknown[]>,
+    ).flat() as { sessions: { liveness: string }[] }[];
+    expect(mergedCards[0]?.sessions[0]?.liveness).toBe('idle');
 
     // 設定を読まない実装に戻ると、この呼び出し自体が消える。
     expect(getBoardThresholds).toHaveBeenCalled();
