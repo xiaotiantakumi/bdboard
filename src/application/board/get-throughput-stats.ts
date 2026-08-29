@@ -58,6 +58,7 @@ function createEmptyWeeklyCloses(weekStarts: readonly Date[]): WeeklyCloseCount[
 function countWeeklyCloses(
   tickets: readonly Ticket[],
   weekStarts: readonly Date[],
+  timeZone: string,
 ): WeeklyCloseCount[] {
   const counts = createEmptyWeeklyCloses(weekStarts);
 
@@ -65,13 +66,13 @@ function countWeeklyCloses(
     if (ticket.closedAt === undefined) {
       continue;
     }
-    if (!isInWeekRange(ticket.closedAt, weekStarts)) {
+    if (!isInWeekRange(ticket.closedAt, weekStarts, timeZone)) {
       continue;
     }
 
     for (let index = 0; index < weekStarts.length; index += 1) {
       const weekStart = weekStarts[index];
-      if (weekStart !== undefined && isInWeek(ticket.closedAt, weekStart)) {
+      if (weekStart !== undefined && isInWeek(ticket.closedAt, weekStart, timeZone)) {
         const current = counts[index];
         if (current !== undefined) {
           counts[index] = { weekStart, count: current.count + 1 };
@@ -164,7 +165,7 @@ export function getThroughputStats(
   let totalsAge: AgeDistribution = { ...EMPTY_AGE_DISTRIBUTION };
 
   for (const entry of entries) {
-    const weeklyCloses = countWeeklyCloses(entry.tickets, weekStarts);
+    const weeklyCloses = countWeeklyCloses(entry.tickets, weekStarts, timeZone);
     const openTicketAge = countOpenTicketAge(entry.tickets, now);
 
     projects.push({

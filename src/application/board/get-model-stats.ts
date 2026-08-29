@@ -59,6 +59,7 @@ function uniqueModelsFromTicket(ticket: Ticket): readonly string[] {
 function countWeeklyModelCloses(
   tickets: readonly Ticket[],
   weekStarts: readonly Date[],
+  timeZone: string,
 ): WeeklyModelCloseCounts[] {
   const buckets = createEmptyWeeklyModelCloses(weekStarts);
 
@@ -66,7 +67,7 @@ function countWeeklyModelCloses(
     if (ticket.closedAt === undefined) {
       continue;
     }
-    if (!isInWeekRange(ticket.closedAt, weekStarts)) {
+    if (!isInWeekRange(ticket.closedAt, weekStarts, timeZone)) {
       continue;
     }
 
@@ -77,7 +78,7 @@ function countWeeklyModelCloses(
 
     for (let index = 0; index < weekStarts.length; index += 1) {
       const weekStart = weekStarts[index];
-      if (weekStart !== undefined && isInWeek(ticket.closedAt, weekStart)) {
+      if (weekStart !== undefined && isInWeek(ticket.closedAt, weekStart, timeZone)) {
         const bucket = buckets[index];
         if (bucket !== undefined) {
           const counts = { ...bucket.counts };
@@ -165,7 +166,7 @@ export function getModelStats(
   const tickets = collectTickets(cache, options?.projectIds);
 
   return {
-    weeklyCloses: countWeeklyModelCloses(tickets, weekStarts),
+    weeklyCloses: countWeeklyModelCloses(tickets, weekStarts, timeZone),
     stageModelDistribution: countStageModelDistribution(tickets),
   };
 }

@@ -75,3 +75,16 @@ export function subtractCalendarDaysFromDateKey(
   }
   return key;
 }
+
+export function addCalendarDaysToDateKey(
+  dateKey: string,
+  days: number,
+  timeZone: string,
+): string {
+  let key = dateKey;
+  for (let index = 0; index < days; index += 1) {
+    const midnight = zonedMidnight(key, timeZone);
+    key = localDateKey(new Date(midnight.getTime() + MS_PER_DAY), timeZone);
+  }
+  return key;
+}
