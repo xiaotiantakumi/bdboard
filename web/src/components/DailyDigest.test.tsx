@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ActivityEventDto,
   BoardCardDto,
@@ -11,6 +11,7 @@ import type {
   ProjectDto,
   SessionDto,
 } from '../api';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import { buildDailyDigestMarkdown } from './dailyDigestMarkdown';
 import { DailyDigest } from './DailyDigest';
 
@@ -251,12 +252,20 @@ function renderDailyDigest(
 
 describe('DailyDigest', () => {
   beforeEach(() => {
+    // bdboard-i759: 出力の時刻表記はboard timezoneに依存する。CIはUTC前提
+    // (Asia/Tokyo以外)なので、既存フィクスチャのJST前提の期待値を保つには
+    // 明示的にAsia/Tokyoへ固定する必要がある。
+    setBoardTimeZoneOverride('Asia/Tokyo');
     fetchActivityMock.mockReset();
     fetchBoardMock.mockReset();
     fetchPendingDecisionsMock.mockReset();
     fetchProjectsMock.mockReset();
     copyTextToClipboardMock.mockReset();
     copyTextToClipboardMock.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
   });
 
   it('renders markdown preview after all queries resolve', async () => {

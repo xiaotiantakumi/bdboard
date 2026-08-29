@@ -8,7 +8,7 @@ import { getThroughputStats } from './get-throughput-stats.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-function localDate(
+function utcInstant(
   year: number,
   month: number,
   day: number,
@@ -17,8 +17,10 @@ function localDate(
   second = 0,
   ms = 0,
 ): Date {
-  return new Date(year, month - 1, day, hour, minute, second, ms);
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms));
 }
+
+const UTC = 'UTC';
 
 function project(id: string, rootPath: string, name?: string): Project {
   return {
@@ -70,7 +72,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 describe('getThroughputStats', () => {
   it('defaults weeks to 8', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
 
     cache.putProject({
       project: project('/a', '/projects/a'),
@@ -79,15 +81,15 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now);
+    const stats = getThroughputStats(cache, now, { timeZone: UTC });
     expect(stats.totals.weeklyCloses).toHaveLength(8);
     expect(stats.projects[0]?.weeklyCloses).toHaveLength(8);
   });
 
   it('counts closedAt at Monday 00:00:00.000 local in that week', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 13, 12);
-    const mondayStart = localDate(2026, 8, 10, 0, 0, 0, 0);
+    const now = utcInstant(2026, 8, 13, 12);
+    const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -103,15 +105,15 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toEqual([{ weekStart: mondayStart, count: 1 }]);
   });
 
   it('counts closedAt at Sunday 23:59:59.999 local in the same week', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 13, 12);
-    const mondayStart = localDate(2026, 8, 10, 0, 0, 0, 0);
-    const sundayEnd = localDate(2026, 8, 16, 23, 59, 59, 999);
+    const now = utcInstant(2026, 8, 13, 12);
+    const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
+    const sundayEnd = utcInstant(2026, 8, 16, 23, 59, 59, 999);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -127,15 +129,15 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toEqual([{ weekStart: mondayStart, count: 1 }]);
   });
 
   it('fills zero-count weeks and returns weeks in ascending order', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
-    const currentWeekStart = localDate(2026, 8, 10, 0, 0, 0, 0);
-    const previousWeekStart = localDate(2026, 8, 3, 0, 0, 0, 0);
+    const now = utcInstant(2026, 8, 15, 12);
+    const currentWeekStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
+    const previousWeekStart = utcInstant(2026, 8, 3, 0, 0, 0, 0);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -144,14 +146,14 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-current-week',
           projectId: proj.id,
-          closedAt: localDate(2026, 8, 12, 10),
+          closedAt: utcInstant(2026, 8, 12, 10),
         }),
       ],
       fingerprint: 'fp',
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 2 });
+    const stats = getThroughputStats(cache, now, { weeks: 2, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toHaveLength(2);
     expect(stats.totals.weeklyCloses[0]).toEqual({
       weekStart: previousWeekStart,
@@ -165,8 +167,8 @@ describe('getThroughputStats', () => {
 
   it('ignores closedAt outside the requested week range', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
-    const currentWeekStart = localDate(2026, 8, 10, 0, 0, 0, 0);
+    const now = utcInstant(2026, 8, 15, 12);
+    const currentWeekStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -187,13 +189,13 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toEqual([{ weekStart: currentWeekStart, count: 0 }]);
   });
 
   it('does not count tickets without closedAt in weekly closes', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -202,20 +204,20 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-open',
           projectId: proj.id,
-          createdAt: localDate(2026, 8, 1),
+          createdAt: utcInstant(2026, 8, 1),
         }),
       ],
       fingerprint: 'fp',
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses[0]?.count).toBe(0);
   });
 
   it('places open tickets in age buckets using lower-inclusive upper-exclusive boundaries', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -251,7 +253,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.openTicketAge).toEqual({
       d0to1: 2,
       d1to7: 1,
@@ -262,7 +264,7 @@ describe('getThroughputStats', () => {
 
   it('does not include closed tickets in open ticket age distribution', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -272,14 +274,14 @@ describe('getThroughputStats', () => {
           id: 'bdboard-closed-old',
           projectId: proj.id,
           createdAt: new Date(now.getTime() - 60 * MS_PER_DAY),
-          closedAt: localDate(2026, 8, 14),
+          closedAt: utcInstant(2026, 8, 14),
         }),
       ],
       fingerprint: 'fp',
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.openTicketAge).toEqual({
       d0to1: 0,
       d1to7: 0,
@@ -290,7 +292,7 @@ describe('getThroughputStats', () => {
 
   it('aggregates totals across projects and preserves listProjects order', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
     const b = project('/b', '/projects/b', 'Beta');
 
@@ -312,7 +314,7 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-a-closed',
           projectId: a.id,
-          closedAt: localDate(2026, 8, 12),
+          closedAt: utcInstant(2026, 8, 12),
         }),
         makeTicket({
           id: 'bdboard-a-open',
@@ -324,7 +326,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
 
     expect(stats.projects.map((entry) => entry.project.id)).toEqual([a.id, b.id]);
     expect(stats.projects[0]?.weeklyCloses[0]?.count).toBe(1);
@@ -336,7 +338,7 @@ describe('getThroughputStats', () => {
 
   it('is deterministic for a fixed now', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -350,21 +352,21 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-2',
           projectId: proj.id,
-          closedAt: localDate(2026, 8, 12),
+          closedAt: utcInstant(2026, 8, 12),
         }),
       ],
       fingerprint: 'fp',
       fetchedAt: now,
     });
 
-    const first = getThroughputStats(cache, now, { weeks: 3 });
-    const second = getThroughputStats(cache, now, { weeks: 3 });
+    const first = getThroughputStats(cache, now, { weeks: 3, timeZone: UTC });
+    const second = getThroughputStats(cache, now, { weeks: 3, timeZone: UTC });
     expect(second).toEqual(first);
   });
 
   it('filters projects and recalculates totals when projectIds is specified', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
     const b = project('/b', '/projects/b', 'Beta');
 
@@ -379,7 +381,7 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-b-closed',
           projectId: b.id,
-          closedAt: localDate(2026, 8, 12),
+          closedAt: utcInstant(2026, 8, 12),
         }),
       ],
       fingerprint: 'fp-b',
@@ -391,7 +393,7 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-a-closed',
           projectId: a.id,
-          closedAt: localDate(2026, 8, 12),
+          closedAt: utcInstant(2026, 8, 12),
         }),
         makeTicket({
           id: 'bdboard-a-open',
@@ -403,8 +405,12 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const allStats = getThroughputStats(cache, now, { weeks: 1 });
-    const filteredStats = getThroughputStats(cache, now, { weeks: 1, projectIds: [a.id] });
+    const allStats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const filteredStats = getThroughputStats(cache, now, {
+      weeks: 1,
+      projectIds: [a.id],
+      timeZone: UTC,
+    });
 
     expect(allStats.projects).toHaveLength(2);
     expect(allStats.totals.weeklyCloses[0]?.count).toBe(2);
@@ -420,7 +426,7 @@ describe('getThroughputStats', () => {
 
   it('returns all projects when projectIds is not specified', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
     const b = project('/b', '/projects/b', 'Beta');
 
@@ -437,14 +443,14 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1 });
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
 
     expect(stats.projects).toHaveLength(2);
   });
 
   it('returns no projects and zero totals when projectIds is an empty array', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
 
     cache.putProject({
@@ -453,14 +459,14 @@ describe('getThroughputStats', () => {
         makeTicket({
           id: 'bdboard-a-closed',
           projectId: a.id,
-          closedAt: localDate(2026, 8, 12),
+          closedAt: utcInstant(2026, 8, 12),
         }),
       ],
       fingerprint: 'fp-a',
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, projectIds: [] });
+    const stats = getThroughputStats(cache, now, { weeks: 1, projectIds: [], timeZone: UTC });
 
     expect(stats.projects).toHaveLength(0);
     expect(stats.totals.weeklyCloses[0]?.count).toBe(0);
@@ -470,5 +476,28 @@ describe('getThroughputStats', () => {
       d7to30: 0,
       d30plus: 0,
     });
+  });
+
+  it('uses an explicit timezone for weekly boundaries', () => {
+    const cache = createFakeBoardCache();
+    const now = utcInstant(2026, 8, 15, 3);
+    const mondayStart = new Date('2026-08-09T15:00:00.000Z');
+    const proj = project('/a', '/projects/a');
+
+    cache.putProject({
+      project: proj,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-tz',
+          projectId: proj.id,
+          closedAt: mondayStart,
+        }),
+      ],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
+    expect(stats.totals.weeklyCloses[0]?.count).toBe(1);
   });
 });

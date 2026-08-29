@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import type { BoardCardDto } from '../api';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import { CardItem, LaneColumn } from './LaneColumn';
 import { BulkSelectionProvider } from './BulkSelectionProvider';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
@@ -100,12 +101,20 @@ describe('CardItem PR link badge', () => {
 });
 
 // bdboard-ol9: defer バッジの日付。ISO 文字列を slice(0, 10) すると UTC の
-// 日付になり、JST では常に1日前を表示していた。日付境界は Asia/Tokyo に固定して
-// 整形する (bdboard-3tw.75 と同じ理由)。ここは CI(UTC)/ローカル(JST) の
-// どちらで走っても同じ結果でなければならないので、host TZ に依存しないことを
+// 日付になり、タイムゾーンによっては常に1日前を表示していた。日付境界は board の
+// 設定タイムゾーンで整形する (bdboard-3tw.75 と同じ理由)。ここは CI(UTC)/ローカル
+// のどちらで走っても同じ結果でなければならないので、host TZ に依存しないことを
 // 併せて確かめている。
 describe('CardItem defer date badge (bdboard-ol9)', () => {
-  it('renders the defer date in JST, not UTC', () => {
+  beforeEach(() => {
+    setBoardTimeZoneOverride('Asia/Tokyo');
+  });
+
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
+  });
+
+  it('renders the defer date in the board timezone, not UTC', () => {
     // JST の 2027-08-29 00:00 ちょうど。UTC では前日の 15:00 になる。
     const card: BoardCardDto = {
       ...makeCard('bdboard-defer-tz'),
@@ -131,7 +140,7 @@ describe('CardItem defer date badge (bdboard-ol9)', () => {
     expect(screen.queryByText('2027-08-28')).not.toBeInTheDocument();
   });
 
-  it('renders a UTC-midnight defer value on its own JST date', () => {
+  it('renders a UTC-midnight defer value on its own board-timezone date', () => {
     // bd の defer は「ローカル深夜の UTC 瞬間」(…T15:00:00Z) で入ることが多いが、
     // 経路によっては UTC 深夜 (…T00:00:00Z) のものもある。両方の形が正しい日付で
     // 出ることを固定しておく。

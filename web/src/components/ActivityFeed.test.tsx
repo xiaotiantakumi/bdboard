@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActivityEventDto } from '../api';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import { ActivityFeed } from './ActivityFeed';
 import { formatActivityDateHeading } from './activityFeedFormatting';
 
@@ -189,13 +190,15 @@ describe('formatActivityDateHeading', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-15T12:00:00+09:00'));
+    setBoardTimeZoneOverride('Asia/Tokyo');
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    resetBoardTimeZoneForTests();
   });
 
-  it('uses relative labels for today and yesterday in local time', () => {
+  it('uses relative labels for today and yesterday in the board timezone', () => {
     const now = new Date();
     expect(formatActivityDateHeading(new Date('2026-08-15T03:00:00+09:00'), now)).toBe(
       '今日',

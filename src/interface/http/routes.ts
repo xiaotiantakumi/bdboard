@@ -15,6 +15,7 @@ import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import { getThroughputStats } from '../../application/board/get-throughput-stats.js';
 import { getModelStats } from '../../application/board/get-model-stats.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
+import { getBoardTimeZoneOverride } from '../../config/board-timezone.js';
 import { getBoard } from '../../application/board/get-board.js';
 import type { GetBoardDeps } from '../../application/board/get-board.js';
 import {
@@ -482,6 +483,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         detail: error.detail,
       })),
       projectCount: status.projectCount,
+      boardTimeZone: getBoardTimeZoneOverride() ?? null,
     });
   });
 

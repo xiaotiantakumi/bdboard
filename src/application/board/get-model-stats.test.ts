@@ -6,7 +6,7 @@ import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import { getModelStats } from './get-model-stats.js';
 
-function localDate(
+function utcInstant(
   year: number,
   month: number,
   day: number,
@@ -15,8 +15,10 @@ function localDate(
   second = 0,
   ms = 0,
 ): Date {
-  return new Date(year, month - 1, day, hour, minute, second, ms);
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms));
 }
+
+const UTC = 'UTC';
 
 function project(id: string, rootPath: string, name?: string): Project {
   return {
@@ -68,7 +70,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 describe('getModelStats', () => {
   it('defaults weeks to 8', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
 
     cache.putProject({
       project: project('/a', '/projects/a'),
@@ -77,13 +79,13 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now);
+    const stats = getModelStats(cache, now, { timeZone: UTC });
     expect(stats.weeklyCloses).toHaveLength(8);
   });
 
   it('respects weeks option', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
 
     cache.putProject({
       project: project('/a', '/projects/a'),
@@ -92,14 +94,14 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 2 });
+    const stats = getModelStats(cache, now, { weeks: 2, timeZone: UTC });
     expect(stats.weeklyCloses).toHaveLength(2);
   });
 
   it('filters by projectIds', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
-    const mondayStart = localDate(2026, 8, 10, 0, 0, 0, 0);
+    const now = utcInstant(2026, 8, 15, 12);
+    const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
     const projA = project('/a', '/projects/a');
     const projB = project('/b', '/projects/b');
 
@@ -133,6 +135,7 @@ describe('getModelStats', () => {
     const stats = getModelStats(cache, now, {
       weeks: 1,
       projectIds: [projA.id],
+      timeZone: UTC,
     });
 
     expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 1 });
@@ -143,8 +146,8 @@ describe('getModelStats', () => {
 
   it('deduplicates same model within one ticket for weeklyCloses', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 13, 12);
-    const mondayStart = localDate(2026, 8, 10, 0, 0, 0, 0);
+    const now = utcInstant(2026, 8, 13, 12);
+    const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -164,14 +167,14 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1 });
+    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 1 });
   });
 
   it('sorts stageModelDistribution by KNOWN_STAGE_ORDER then alphabetically', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
-    const closedAt = localDate(2026, 1, 1, 12);
+    const now = utcInstant(2026, 8, 15, 12);
+    const closedAt = utcInstant(2026, 1, 1, 12);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -200,7 +203,7 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1 });
+    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.stageModelDistribution.map((entry) => entry.stage)).toEqual([
       'implement',
       'review',
@@ -210,8 +213,8 @@ describe('getModelStats', () => {
 
   it('ignores tickets without models', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 13, 12);
-    const mondayStart = localDate(2026, 8, 10, 0, 0, 0, 0);
+    const now = utcInstant(2026, 8, 13, 12);
+    const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -227,15 +230,15 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1 });
+    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.weeklyCloses[0]?.counts).toEqual({});
     expect(stats.stageModelDistribution).toEqual([]);
   });
 
   it('includes all closed tickets in stageModelDistribution regardless of week range', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
-    const oldClosed = localDate(2020, 1, 6, 12);
+    const now = utcInstant(2026, 8, 15, 12);
+    const oldClosed = utcInstant(2020, 1, 6, 12);
     const proj = project('/a', '/projects/a');
 
     cache.putProject({
@@ -252,7 +255,7 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1 });
+    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.weeklyCloses[0]?.counts).toEqual({});
     expect(stats.stageModelDistribution).toEqual([
       { stage: 'test', counts: { 'legacy-model': 1 } },
@@ -261,7 +264,7 @@ describe('getModelStats', () => {
 
   it('creates empty counts for weeks with no data', () => {
     const cache = createFakeBoardCache();
-    const now = localDate(2026, 8, 15, 12);
+    const now = utcInstant(2026, 8, 15, 12);
 
     cache.putProject({
       project: project('/a', '/projects/a'),
@@ -270,10 +273,34 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 3 });
+    const stats = getModelStats(cache, now, { weeks: 3, timeZone: UTC });
     expect(stats.weeklyCloses).toHaveLength(3);
     for (const entry of stats.weeklyCloses) {
       expect(entry.counts).toEqual({});
     }
+  });
+
+  it('uses an explicit timezone for weekly boundaries', () => {
+    const cache = createFakeBoardCache();
+    const now = utcInstant(2026, 8, 15, 3);
+    const mondayStart = new Date('2026-08-09T15:00:00.000Z');
+    const proj = project('/a', '/projects/a');
+
+    cache.putProject({
+      project: proj,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-tz',
+          projectId: proj.id,
+          closedAt: mondayStart,
+          models: [{ stage: 'implement', model: 'composer-2.5' }],
+        }),
+      ],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const stats = getModelStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
+    expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 1 });
   });
 });

@@ -124,6 +124,7 @@ export function primeAppApiMocks(): void {
     lastRefreshAt: '2026-01-01T00:00:00.000Z',
     errors: [],
     projectCount: 1,
+    boardTimeZone: null,
   } satisfies StatusDto);
   vi.mocked(api.fetchBoard).mockResolvedValue(boardWithCard);
   vi.mocked(api.fetchPendingDecisions).mockResolvedValue(

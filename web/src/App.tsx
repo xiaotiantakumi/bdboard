@@ -15,6 +15,7 @@ import {
   type PrBadgeDto,
   type ProjectDto,
 } from './api';
+import { setBoardTimeZoneOverride } from './boardTimeZone';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
@@ -214,6 +215,10 @@ export function App() {
     queryKey: ['status'],
     queryFn: fetchStatus,
   });
+
+  useEffect(() => {
+    setBoardTimeZoneOverride(statusQuery.data?.boardTimeZone);
+  }, [statusQuery.data?.boardTimeZone]);
 
   const boardQuery = useQuery({
     queryKey: ['board', boardApiMode, selectedProjectIdsJoined, epicFilterId],
