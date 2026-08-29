@@ -451,8 +451,12 @@ export function App() {
     return map;
   }, [boardQuery.data]);
 
-  const { watchedSet } = useWatchedTickets();
-  const watchedTicketDetails = useWatchedTicketDetails(watchedSet, boardCardsById);
+  const { watchedSet, stopWatching } = useWatchedTickets();
+  const watchedTicketDetails = useWatchedTicketDetails(
+    watchedSet,
+    boardCardsById,
+    stopWatching,
+  );
 
   const notificationEvents = useNotificationEvents({
     watchedTicketIds: watchedSet,
