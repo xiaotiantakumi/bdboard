@@ -192,7 +192,10 @@ describe('getPrBadges', () => {
       ),
     };
 
-    const badges = await getPrBadges(cache, commentReader, prStatusReader);
+    const logWarn = vi.fn();
+    const badges = await getPrBadges(cache, commentReader, prStatusReader, {
+      logWarn,
+    });
 
     expect(badges).toEqual([
       {
@@ -202,6 +205,153 @@ describe('getPrBadges', () => {
         status: { state: 'merged', checkStatus: 'pass' },
       },
     ]);
+    // 黙って飛ばすと「バッジが出ない」理由を追う手掛かりがゼロになる
+    // (bdboard-fxxk)。件数・分母・代表の失敗が1行に入っていること。
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const message = logWarn.mock.calls[0]?.[0] as string;
+    expect(message).toContain('1 of 2 failed');
+    expect(message).toContain('bdboard-broken');
+    expect(message).toContain('bd failed');
+  });
+
+  it('warns separately when the PR status lookup throws', async () => {
+    // コメントは読めているのでバッジ自体は出る。状態だけが引けない (gh 未認証など) の
+    // は劣化であって失敗ではないが、原因は残す。
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-a', projectId: a.id, commentCount: 1 }),
+        // PR コメントの無いチケット。状態を引きにいく件数 (1) と、コメントを
+        // 引いた件数 (2) をずらして、分母の取り違えを検出できるようにする。
+        makeTicket({ id: 'bdboard-nopr', projectId: a.id, commentCount: 1 }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath: string, issueId: string) => [
+        {
+          id: 'c1',
+          issueId,
+          author: 'agent',
+          text: issueId === 'bdboard-a' ? `PR: ${PR_URL}` : 'ただのコメント',
+          createdAt: new Date('2026-06-01T12:00:00.000Z'),
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => {
+        throw new Error('gh not authenticated');
+      }),
+    };
+
+    const logWarn = vi.fn();
+    const badges = await getPrBadges(cache, commentReader, prStatusReader, {
+      logWarn,
+    });
+
+    expect(badges).toEqual([
+      { ticketId: 'bdboard-a', projectId: 'proj-a', url: PR_URL, status: null },
+    ]);
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const message = logWarn.mock.calls[0]?.[0] as string;
+    // コメント側の失敗と取り違えないこと。分母は「状態を引こうとした件数」。
+    expect(message).toContain('PR status');
+    expect(message).toContain('1 of 1 failed');
+    expect(message).toContain('gh not authenticated');
+  });
+
+  it('emits one line per category no matter how many tickets fail', async () => {
+    /*
+     * 集約はこの PR の設計そのもの。getPrBadges は commentCount>0 のチケットを
+     * 全部 (実測で 300 件超) 掃くので、失敗1件ごとにログを出す実装へ戻ると
+     * bd が落ちている間ずっと1リクエストあたり数百行を吐く。既存の失敗テストは
+     * どちらも「1カテゴリにつき失敗1件」なので、脱集約への変異を生かしてしまう
+     * (fable のレビュー指摘)。ここだけが集約を固定している。
+     */
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-bad1', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-bad2', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-bad3', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-pr1', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-pr2', projectId: a.id, commentCount: 1 }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath: string, issueId: string) => {
+        if (issueId.startsWith('bdboard-bad')) {
+          throw new BdError('unknown', issueId, 'bd failed');
+        }
+        return [
+          {
+            id: 'c1',
+            issueId,
+            author: 'agent',
+            text: `PR: ${PR_URL}`,
+            createdAt: new Date('2026-06-01T12:00:00.000Z'),
+          },
+        ];
+      }),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => {
+        throw new Error('gh not authenticated');
+      }),
+    };
+
+    const logWarn = vi.fn();
+    await getPrBadges(cache, commentReader, prStatusReader, { logWarn });
+
+    // 失敗は 3 + 2 = 5 件あるが、行は「コメント」「PR状態」の2本だけ。
+    expect(logWarn).toHaveBeenCalledTimes(2);
+    const messages = logWarn.mock.calls.map((call) => call[0] as string);
+    const commentLine = messages.find((line) => line.includes('could not load comments'));
+    const statusLine = messages.find((line) => line.includes('could not load PR status'));
+    // 分母はカテゴリごとに違う。コメントは掃いた5件、状態は引きにいった2件。
+    expect(commentLine).toContain('3 of 5 failed');
+    expect(statusLine).toContain('2 of 2 failed');
+  });
+
+  it('says nothing when every ticket loads', async () => {
+    // 常にログを出す実装だと、正常時のログが騒音になって異常時に気づけない。
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: a.id, commentCount: 1 })],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        {
+          id: 'c1',
+          issueId: 'bdboard-a',
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: new Date('2026-06-01T12:00:00.000Z'),
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => null),
+    };
+
+    const logWarn = vi.fn();
+    await getPrBadges(cache, commentReader, prStatusReader, { logWarn });
+
+    expect(logWarn).not.toHaveBeenCalled();
   });
 
   it('returns url-only badge when pr status lookup returns null', async () => {

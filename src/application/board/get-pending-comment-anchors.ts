@@ -3,10 +3,13 @@ import type { Ticket } from '../../domain/ticket.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { CommentReader } from '../ports/comment-reader.js';
+import { describeFetchFailures, type FetchFailure } from './fetch-failure-log.js';
 
 export interface GetPendingCommentAnchorsOptions {
   /** 指定されたIDのみ。未指定なら全部 */
   readonly projectIds?: readonly string[];
+  /** 取得失敗の警告ログ。未指定なら console.warn (discover-projects と同じ注入流儀)。 */
+  readonly logWarn?: (message: string) => void;
 }
 
 // get-pr-badges.ts と同じ。bd-cli-issue-repository.ts の DEFAULT_CONCURRENCY に合わせる。
@@ -32,7 +35,8 @@ interface FetchItem {
  *
  * 1件の失敗で全体を落とさない。取れなかったチケットはマップに載らず、hygiene 側は
  * updatedAt だけを見る従来の判定に落ちる — 誤検知が1件増えるだけで、画面が消えるより
- * ましという判断。
+ * ましという判断。ただし黙って落ちると誤検知の原因を追えないので、呼び出し1回に
+ * つき1行だけ警告を出す (bdboard-fxxk)。
  */
 export async function getPendingCommentAnchors(
   cache: BoardCache,
@@ -60,12 +64,14 @@ export async function getPendingCommentAnchors(
   });
 
   const anchors = new Map<string, Date>();
+  const failures: FetchFailure[] = [];
 
   await runWithConcurrencyLimit(items, COMMENT_FETCH_CONCURRENCY, async ({ entry, ticket }) => {
     let comments;
     try {
       comments = await commentReader.listComments(entry.project.rootPath, ticket.id);
-    } catch {
+    } catch (error) {
+      failures.push({ id: ticket.id, error });
       return;
     }
 
@@ -84,6 +90,15 @@ export async function getPendingCommentAnchors(
       anchors.set(pendingDecisionKey(entry.project.id, ticket.id), latest);
     }
   });
+
+  if (failures.length > 0) {
+    const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
+    logWarn(
+      '[hygiene] could not load comments for some pending decisions; ' +
+        'they fall back to updatedAt, so a ticket that is still being discussed ' +
+        `may be reported as a stale pending decision. ${describeFetchFailures(failures, items.length)}`,
+    );
+  }
 
   return anchors;
 }
