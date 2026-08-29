@@ -1427,9 +1427,28 @@ export function ChatPanel({
   // 下に隠れたままになる (bdboard-22k の元バグ: deps に streaming が無かった)。
   const pinnedToBottomRef = useRef(true);
 
+  // 直近に effect 自身が代入した scrollTop。プログラム的スクロールでも scroll
+  // イベントは飛ぶので、そのイベントを「利用者が動かした」と取り違えないための
+  // 目印にする (bdboard-dtr)。
+  //
+  // 一回限りの「プログラム的スクロール中」フラグにはしない。値が変わらず
+  // イベントが飛ばなかった場合にフラグが残り、次の *本物の* 利用者スクロールを
+  // 握り潰す — 上へスクロールしても引き戻される、という元バグより悪い症状に
+  // なる。現在値との一致で判定すれば冪等なので、取りこぼしても次の
+  // イベントで正しく判定し直せる。
+  const autoScrolledToRef = useRef<number | null>(null);
+
   const handleMessagesScroll = useCallback(() => {
     const container = messagesRef.current;
     if (container === null) {
+      return;
+    }
+    // effect が置いた位置から動いていないなら、これは自分で起こしたスクロールの
+    // 残響。ここで距離を測ると、イベントが遅れて届く間に次の delta で
+    // scrollHeight が伸びていた場合に「利用者が上へスクロールした」と誤判定し、
+    // 誰も触っていないのに追従が止まる (bdboard-dtr)。
+    if (container.scrollTop === autoScrolledToRef.current) {
+      pinnedToBottomRef.current = true;
       return;
     }
     const distanceFromBottom =
@@ -1441,12 +1460,16 @@ export function ChatPanel({
   // からといって、新しい会話を途中から表示する理由は無い。
   useEffect(() => {
     pinnedToBottomRef.current = true;
+    autoScrolledToRef.current = null;
   }, [currentConversationKey]);
 
   useEffect(() => {
     const container = messagesRef.current;
     if (container !== null && pinnedToBottomRef.current) {
       container.scrollTop = container.scrollHeight;
+      // ブラウザは範囲外の代入をクランプするので、書いた値ではなく
+      // 実際に落ち着いた値を覚える。
+      autoScrolledToRef.current = container.scrollTop;
     }
   }, [currentMessages, isSending, activeStreamingText]);
 
