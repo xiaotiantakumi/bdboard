@@ -41,11 +41,17 @@ export function useBoardKeyboardNav(): BoardKeyboardNavContextValue | null {
 }
 
 /**
- * カードのキーボード移動 (j/k/h/l・Shift+j/k の範囲選択) を束ねる。
+ * ボード上のカードをキーボードで操作するための状態を束ねる。
  *
- * Enter/Space での「活性化」(詳細パネルを開く) はここではなく CardItem 側の
- * onClick / onKeyDown が担当する。以前は使われない onActivate prop がここに
- * 生えていて、活性化の担当箇所を読み違える元になっていた (bdboard-cqj)。
+ * ここ (onContainerKeyDown) が担当するのは、レーン内/レーン間の移動
+ * (j/k/h/l と矢印キー・Home/End)、選択トグル (x)、Shift+j/k の範囲選択、
+ * Escape での選択解除。
+ *
+ * Enter/Space での「活性化」(詳細パネルを開く) だけはここではなく CardItem 側の
+ * onClick / onKeyDown が担当する。カード内の★ウォッチや一括選択チェックボックスの
+ * Enter/Space を奪わないためのガード (bdboard-4dl) が要素ローカルな判定を必要と
+ * するため。以前は使われない onActivate prop がここに生えていて、活性化の担当箇所を
+ * 読み違える元になっていた (bdboard-cqj)。
  */
 export function BoardKeyboardNavProvider({
   children,
