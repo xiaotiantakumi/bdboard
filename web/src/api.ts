@@ -681,7 +681,7 @@ export function fetchStatus(): Promise<StatusDto> {
 }
 
 export function fetchTicket(id: string): Promise<TicketDetailDto> {
-  return getJson<TicketDetailDto>(`/api/tickets/${encodeURIComponent(id)}`);
+  return fetchJson<TicketDetailDto>(`/api/tickets/${encodeURIComponent(id)}`);
 }
 
 export function fetchTicketComments(ticketId: string): Promise<CommentDto[]> {

@@ -16,6 +16,7 @@ export interface WatchedTicketsContextValue {
   readonly watchedSet: ReadonlySet<string>;
   readonly isWatched: (ticketId: string) => boolean;
   readonly toggleWatch: (ticketId: string) => void;
+  readonly stopWatching: (ticketId: string) => void;
 }
 
 const WatchedTicketsContext = createContext<WatchedTicketsContextValue | null>(null);
@@ -54,14 +55,22 @@ export function WatchedTicketsProvider({ children }: { children: ReactNode }) {
     [setWatchedIds],
   );
 
+  const stopWatching = useCallback(
+    (ticketId: string) => {
+      setWatchedIds((current) => current.filter((id) => id !== ticketId));
+    },
+    [setWatchedIds],
+  );
+
   const value = useMemo(
     (): WatchedTicketsContextValue => ({
       watchedIds,
       watchedSet,
       isWatched,
       toggleWatch,
+      stopWatching,
     }),
-    [watchedIds, watchedSet, isWatched, toggleWatch],
+    [watchedIds, watchedSet, isWatched, toggleWatch, stopWatching],
   );
 
   return (
