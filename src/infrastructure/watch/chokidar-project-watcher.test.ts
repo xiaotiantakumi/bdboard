@@ -176,7 +176,11 @@ describe('createChokidarProjectWatcher', () => {
     TEST_TIMEOUT_MS,
   );
 
-  it(
+  // chmod 0o000 で権限エラーを起こす手法は POSIX 専用: Windows は Unix 風の rwx ビットを
+  // 尊重しないため chokidar が実際にはエラーを検出できず、テストが意味を成さない
+  // (2026-08-29, bdboard-gbpv PR #214 の verify-windows で実測: errorLogged が false のまま
+  // タイムアウト)。
+  it.skipIf(process.platform === 'win32')(
     'logs watcher errors without crashing and keeps handling changes',
     async () => {
       const alpha = await makeProject('alpha');
