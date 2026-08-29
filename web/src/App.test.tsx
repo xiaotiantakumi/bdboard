@@ -141,6 +141,7 @@ const filterSampleProject: ProjectDto = {
   prefixes: ['bdboard'],
   sessionCount: 0,
   activeSessionCount: 0,
+  incompleteTicketCount: 0,
   sessions: [],
 };
 
@@ -375,6 +376,7 @@ describe('App ticket deep link', () => {
         prefixes: ['bdboard'],
         sessionCount: 0,
         activeSessionCount: 0,
+        incompleteTicketCount: 0,
         sessions: [],
       } satisfies ProjectDto,
     ]);
@@ -854,6 +856,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
         prefixes: ['bdboard'],
         sessionCount: 0,
         activeSessionCount: 0,
+        incompleteTicketCount: 0,
         sessions: [],
       } satisfies ProjectDto,
     ]);

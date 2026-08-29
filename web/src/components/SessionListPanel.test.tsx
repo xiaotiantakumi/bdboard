@@ -68,6 +68,7 @@ function makeProjectDto(
     prefixes: ['bdboard'],
     sessionCount: 0,
     activeSessionCount: 0,
+    incompleteTicketCount: 0,
     sessions: [],
     ...overrides,
   };

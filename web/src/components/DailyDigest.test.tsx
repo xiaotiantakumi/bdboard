@@ -77,6 +77,7 @@ const defaultProjects: ProjectDto[] = [
     prefixes: [],
     sessionCount: 0,
     activeSessionCount: 0,
+    incompleteTicketCount: 0,
     sessions: [],
   },
 ];

@@ -205,6 +205,36 @@ describe('createApiRoutes', () => {
     ]);
   });
 
+  it('returns incomplete ticket counts from cached tickets', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-open', projectId: a.id, status: 'open' }),
+        makeTicket({ id: 'bdboard-progress', projectId: a.id, status: 'in_progress' }),
+        makeTicket({ id: 'bdboard-closed', projectId: a.id, status: 'closed' }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+    cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'bdboard-done-only', projectId: b.id, status: 'closed' })],
+      fingerprint: 'fp-b',
+      fetchedAt: NOW,
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/projects');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.find((entry: { id: string }) => entry.id === a.id).incompleteTicketCount).toBe(2);
+    expect(body.find((entry: { id: string }) => entry.id === b.id).incompleteTicketCount).toBe(0);
+  });
+
   it('rejects invalid board view', async () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request('/api/board?view=bogus');
