@@ -16,6 +16,10 @@ export interface AiQuotaService {
   /** キャッシュがあれば再利用し、無ければ`ai-quota`を実行して取得する。例外は投げず、
    *  失敗時は`{ kind: 'error' }`を返す(呼び出し側=interface層はこれをそのままJSONにできる)。 */
   getSnapshot(): Promise<AiQuotaState>;
+  /** キャッシュがあればそれを返し、無ければ`null`を返す。`ai-quota`の実行(pty経由で
+   *  数十秒かかり得るprobe)は一切起動しない。SSE購読者がいない間の閾値チェックのように
+   *  「新鮮さより実プローブを起動しないこと」を優先したい呼び出し元向け。 */
+  peekSnapshot(): AiQuotaState | null;
 }
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
@@ -69,6 +73,10 @@ export function createAiQuotaService(deps: AiQuotaServiceDeps): AiQuotaService {
       });
 
       return inFlight;
+    },
+
+    peekSnapshot(): AiQuotaState | null {
+      return cached ? cached.state : null;
     },
   };
 }

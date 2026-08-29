@@ -58,6 +58,32 @@ describe('createAiQuotaService', () => {
     expect(source.fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('peekSnapshot returns null and never triggers a fetch when there is no cache yet', async () => {
+    const source = createFakeSource(async () => SAMPLE_RESULT);
+    const service = createAiQuotaService({ source, now: () => new Date() });
+
+    expect(service.peekSnapshot()).toBeNull();
+    expect(source.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('peekSnapshot returns the cached snapshot without triggering a fetch, even when stale', async () => {
+    let now = new Date('2026-08-15T00:00:00.000Z');
+    const source = createFakeSource(async () => SAMPLE_RESULT);
+    const service = createAiQuotaService({ source, now: () => now, ttlMs: 60_000 });
+
+    const fetched = await service.getSnapshot();
+    expect(source.fetchMock).toHaveBeenCalledTimes(1);
+
+    // still fresh: peek matches getSnapshot's cache
+    expect(service.peekSnapshot()).toBe(fetched);
+    expect(source.fetchMock).toHaveBeenCalledTimes(1);
+
+    // past TTL: getSnapshot() would re-fetch, but peekSnapshot() must not
+    now = new Date(now.getTime() + 61_000);
+    expect(service.peekSnapshot()).toBe(fetched);
+    expect(source.fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('returns an error state (never throws) when the source fails, and caches the failure too', async () => {
     let now = new Date('2026-08-15T00:00:00.000Z');
     const source = createFakeSource(async () => {
