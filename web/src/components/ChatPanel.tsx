@@ -1447,13 +1447,24 @@ export function ChatPanel({
     // 残響。ここで距離を測ると、イベントが遅れて届く間に次の delta で
     // scrollHeight が伸びていた場合に「利用者が上へスクロールした」と誤判定し、
     // 誰も触っていないのに追従が止まる (bdboard-dtr)。
+    //
+    // 判定を「触っていない」に倒すだけで、貼り付きを立て直しはしない。effect が
+    // 代入するのは貼り付いているときだけなので、正規の残響なら既に true。
+    // ここで true を書くと、後述のマーカーと利用者のスクロール位置が偶然
+    // 一致したときに勝手に貼り付きへ戻す効果しか持たない (PR#132 レビュー)。
     if (container.scrollTop === autoScrolledToRef.current) {
-      pinnedToBottomRef.current = true;
       return;
     }
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
-    pinnedToBottomRef.current = distanceFromBottom <= BOTTOM_STICK_THRESHOLD_PX;
+    const pinned = distanceFromBottom <= BOTTOM_STICK_THRESHOLD_PX;
+    pinnedToBottomRef.current = pinned;
+    if (!pinned) {
+      // 追うのをやめた時点でマーカーを捨てる。残したままにすると、利用者が
+      // 過去ログを読んでいる間ずっと「昔の最下部の座標」が生き続け、そこへ
+      // 偶然スクロールが止まったときに上のガードが誤って一致してしまう。
+      autoScrolledToRef.current = null;
+    }
   }, []);
 
   // 会話を切り替えたら貼り付き状態に戻す。前の会話で上へスクロールしていた
