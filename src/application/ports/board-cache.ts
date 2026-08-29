@@ -67,6 +67,10 @@ export interface BoardCache {
   upsertSessionLinks(rows: readonly SessionLinkRow[]): void;
   /** 全セッションリンクを ticketId→sessionId 昇順で返す */
   listSessionLinks(): readonly SessionLinkRow[];
+  /**
+   * 相互作用ログを追記する(id で一意)。
+   * MAX_INTERACTIONS を超えた分は at が古い順に削除される。
+   */
   appendInteractions(records: readonly InteractionRecord[]): void;
   listInteractions(options?: { readonly since?: Date }): readonly InteractionRecord[];
   close(): void;
