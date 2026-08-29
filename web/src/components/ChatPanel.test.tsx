@@ -10,8 +10,9 @@ import {
   writePersistedChatThreadState,
   readPersistedChatThreads,
 } from '../chatThreadStorage';
+import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import { CHAT_BUSY_HELP } from '../writeAccessMessage';
-import { ChatPanel } from './ChatPanel';
+import { ChatPanel, formatThreadUpdatedAt } from './ChatPanel';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -57,6 +58,26 @@ const updateChatThreadMock = vi.mocked(updateChatThread);
 const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
 const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 const defaultWindowInnerWidth = window.innerWidth;
+
+describe('formatThreadUpdatedAt', () => {
+  afterEach(() => {
+    resetBoardTimeZoneForTests();
+  });
+
+  it('uses board timezone override rather than host timezone at day boundaries', () => {
+    const iso = '2026-08-09T23:00:00.000Z';
+
+    setBoardTimeZoneOverride('UTC');
+    expect(formatThreadUpdatedAt(iso)).toBe('8/9');
+
+    setBoardTimeZoneOverride('Asia/Tokyo');
+    expect(formatThreadUpdatedAt(iso)).toBe('8/10');
+  });
+
+  it('returns empty string for invalid iso timestamps', () => {
+    expect(formatThreadUpdatedAt('not-a-date')).toBe('');
+  });
+});
 
 function makeProjectDto(
   overrides: Partial<ProjectDto> & Pick<ProjectDto, 'id'>,

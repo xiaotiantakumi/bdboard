@@ -51,6 +51,7 @@ import {
   SidePanelResizeHandle,
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
+import { getBoardTimeZone } from '../boardTimeZone';
 import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
 import { CHAT_BUSY_HELP, writeAccessErrorMessage } from '../writeAccessMessage';
 
@@ -238,13 +239,33 @@ function summarizeTitle(content: string): string {
   return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : chars.join('');
 }
 
+const threadUpdatedAtFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getThreadUpdatedAtFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = threadUpdatedAtFormatters.get(timeZone);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      month: 'numeric',
+      day: 'numeric',
+    });
+    threadUpdatedAtFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 // bdboard チャット改善(Chat Redesign 1b): スレッド一覧ドロワーの各行に出す
 // 更新日時の短縮表示。「N分前」のような相対表記は Date.now() 依存でテストが
 // 時刻に脆くなるため避け、月/日の絶対表記だけを返す決定的な実装にしている。
-function formatThreadUpdatedAt(iso: string): string {
+// 暦日はボード設定 TZ 基準(activityFeedFormatting と同様、see bdboard-3tw.75)。
+export function formatThreadUpdatedAt(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return '';
-  return `${date.getMonth() + 1}/${date.getDate()}`;
+  const parts = getThreadUpdatedAtFormatter(getBoardTimeZone()).formatToParts(date);
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  if (month === undefined || day === undefined) return '';
+  return `${month}/${day}`;
 }
 
 // スレッド一覧の並び順(bdboard-3tw.154)。更新の新しい順。
