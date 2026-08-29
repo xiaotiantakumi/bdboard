@@ -63,6 +63,36 @@ describe('UndoSnackbar', () => {
     expect(await screen.findByText('元に戻しました')).toBeInTheDocument();
   });
 
+  it('ignores a late showUndo after the provider unmounts', () => {
+    // bdboard-ty72: showUndo の呼び出し元は4箇所とも mutation の onSuccess
+    // (HygienePanel / TicketDetailPanel / BoardDnDProvider / BulkActionBar) で、
+    // invalidateQueries を await した後に呼ぶ。プロバイダがその間にアンマウント
+    // していると、表示タイマーがクリーンアップ後に仕掛けられる。
+    const captured: {
+      current: ReturnType<typeof useUndoSnackbar> | null;
+    } = { current: null };
+    function Capture() {
+      captured.current = useUndoSnackbar();
+      return null;
+    }
+
+    const { unmount } = render(
+      <UndoSnackbarProvider>
+        <Capture />
+      </UndoSnackbarProvider>,
+    );
+    unmount();
+
+    act(() => {
+      captured.current?.showUndo({
+        message: '遅れて届いた操作',
+        onUndo: async () => {},
+      });
+    });
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('does not arm an auto-dismiss timer when onUndo settles after unmount', async () => {
     // bdboard-ty72: onUndo の完了はアンマウント後に届きうる。タイマーIDは ref で
     // 持っていてクリーンアップでも消しているが、その**後**に継続が走って

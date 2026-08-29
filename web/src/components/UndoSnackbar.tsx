@@ -80,6 +80,13 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
 
   const showUndo = useCallback(
     ({ message, onUndo }: UndoSnackbarRequest) => {
+      // bdboard-ty72: 呼び出し元は4箇所とも mutation の onSuccess
+      // (HygienePanel / TicketDetailPanel / BoardDnDProvider / BulkActionBar) で、
+      // invalidateQueries を await した後に呼ぶ。プロバイダ自体がその間に
+      // アンマウントしていると、下の setTimeout がクリーンアップ後に仕掛けられる。
+      if (!mountedRef.current) {
+        return;
+      }
       clearPendingTimeout();
       setState({ kind: 'visible', message, onUndo });
       timeoutRef.current = setTimeout(() => {

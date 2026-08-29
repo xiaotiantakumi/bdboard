@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   postProjectHarnessInject,
   type ProjectHarnessPackStatusDto,
@@ -8,6 +7,7 @@ import {
   buildHarnessInjectSuccessMessage,
 } from '../harnessDisplay';
 import { describeWriteError } from '../writeAccessMessage';
+import { useAutoClearedValue } from './useAutoClearedValue';
 
 const FEEDBACK_MS = 4000;
 
@@ -42,29 +42,18 @@ export function useHarnessInject(options?: UseHarnessInjectOptions) {
   });
 }
 
+/**
+ * 注入結果の表示。
+ *
+ * bdboard-ty72: showFeedback は useHarnessInject の onSuccess から呼ばれ、そこは
+ * invalidateQueries を2本 await した**後**なので、アンマウント後に走りうる。
+ * タイマーIDを ref に持ってアンマウント時に消すだけでは足りない (クリーンアップの
+ * 後に新しいタイマーを仕掛けてしまう) ので、useAutoClearedValue に任せる。
+ */
 export function useHarnessFeedback() {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [message, setMessage] = useState('');
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current !== null) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  const showFeedback = useCallback((nextMessage: string) => {
-    if (timeoutRef.current !== null) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    setMessage(nextMessage);
-    timeoutRef.current = setTimeout(() => {
-      setMessage('');
-      timeoutRef.current = null;
-    }, FEEDBACK_MS);
-  }, []);
-
+  const { value: message, show: showFeedback } = useAutoClearedValue(
+    '',
+    FEEDBACK_MS,
+  );
   return { message, showFeedback };
 }

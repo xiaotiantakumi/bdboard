@@ -158,6 +158,16 @@ describe('useAutoClearedValue after unmount (bdboard-ty72)', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  // これは煙テストであって、hold / clear 側の mounted ガードを固定するものでは
+  // ない。実際に hold と clear からだけガードを外してもこのテストは通る
+  // (fable レビュー指摘)。hold も clear もタイマーを仕掛けないので
+  // getTimerCount はどちらも 0 だし、生きている jsdom でのアンマウント後
+  // setState は React が黙って捨てるので例外にもならない。本番の壊れ方は
+  // 「破棄済み jsdom で window に触る」ことで、それはテストの内側からは
+  // 再現できない (再現できたらそのテスト自身が落ちる)。
+  //
+  // それでもガードは残す。show と非対称にすると、後から「hold にも自動消去を
+  // 足す」変更が入った瞬間に穴が開く。
   it('does not throw when hold or clear arrive late', () => {
     const { captured, unmount } = renderCaptured();
     unmount();
