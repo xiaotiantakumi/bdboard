@@ -144,7 +144,7 @@ export function BoardKeyboardNavProvider({
     if (lane === null) {
       setFocusedCardId(null);
     }
-  }, [findLaneForCard, focusedCardId]);
+  }, [findLaneForCard, focusedCardId, laneRegistryVersion]);
 
   useEffect(() => {
     if (!pendingFocusRef.current || focusedCardId === null) {
