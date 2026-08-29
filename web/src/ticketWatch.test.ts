@@ -32,12 +32,14 @@ describe('ticketWatch', () => {
   it('diffs lane, comment count, and session link changes', () => {
     const prev = {
       ticketId: 'bdboard-abc',
+      source: 'board' as const,
       lane: 'ready',
       commentCount: 1,
       sessionIds: ['session-a'],
     };
     const next = {
       ticketId: 'bdboard-abc',
+      source: 'board' as const,
       lane: 'in_progress',
       commentCount: 2,
       sessionIds: ['session-a', 'session-b'],
@@ -94,6 +96,7 @@ describe('ticketWatch', () => {
 
     expect(ticketWatchSnapshotFromBoardCard(card)).toEqual({
       ticketId: 'bdboard-card',
+      source: 'board',
       lane: 'blocked',
       commentCount: 3,
       sessionIds: ['session-1'],
@@ -121,6 +124,7 @@ describe('ticketWatch', () => {
 
     expect(ticketWatchSnapshotFromTicketDetail(detail)).toEqual({
       ticketId: 'bdboard-detail',
+      source: 'detail',
       lane: null,
       commentCount: 0,
       sessionIds: ['session-x'],
@@ -170,5 +174,52 @@ describe('ticketWatch', () => {
     expect(buildTicketWatchSnapshot('bdboard-both', boardCardsById, ticketDetailsById)).toEqual(
       ticketWatchSnapshotFromBoardCard(card),
     );
+  });
+
+  it('does not emit session_links_changed when snapshot source switches between board and detail', () => {
+    const boardSnapshot = {
+      ticketId: 'bdboard-abc',
+      source: 'board' as const,
+      lane: 'ready',
+      commentCount: 1,
+      sessionIds: [] as const,
+    };
+    const detailSnapshot = {
+      ticketId: 'bdboard-abc',
+      source: 'detail' as const,
+      lane: null,
+      commentCount: 1,
+      sessionIds: ['ended-session'] as const,
+    };
+
+    expect(diffTicketWatchSnapshots(boardSnapshot, detailSnapshot)).toEqual([]);
+    expect(diffTicketWatchSnapshots(detailSnapshot, boardSnapshot)).toEqual([]);
+    expect(diffTicketWatchSnapshots(boardSnapshot, boardSnapshot)).toEqual([]);
+  });
+
+  it('emits session_links_changed when sessionIds change within the same board source', () => {
+    const prev = {
+      ticketId: 'bdboard-abc',
+      source: 'board' as const,
+      lane: 'ready',
+      commentCount: 1,
+      sessionIds: ['session-a'] as const,
+    };
+    const next = {
+      ticketId: 'bdboard-abc',
+      source: 'board' as const,
+      lane: 'ready',
+      commentCount: 1,
+      sessionIds: ['session-a', 'session-b'] as const,
+    };
+
+    expect(diffTicketWatchSnapshots(prev, next)).toEqual([
+      {
+        kind: 'session_links_changed',
+        ticketId: 'bdboard-abc',
+        addedSessionIds: ['session-b'],
+        removedSessionIds: [],
+      },
+    ]);
   });
 });
