@@ -334,9 +334,11 @@ describe('SettingsPanel', () => {
           expect.objectContaining({ version: 'thresholds-v1' }),
         );
       });
-      // onSuccess は invalidateQueries と postRefresh を await したあとに
-      // window.setTimeout を触る。PUT を観測した時点で終わると、その続きが
-      // 環境の teardown 後に走って `window is not defined` を投げる。
+      // onSuccess は invalidateQueries と postRefresh を await したあとに表示を
+      // 出すので、PUT を観測した時点で終わるとその続きが環境の teardown 後に走る。
+      // bdboard-ifff 以降 useSaveFeedback 側がアンマウント後の呼び出しを捨てるので
+      // これ自体は落ちなくなったが、保存が最後まで通ったことの確認としてこの
+      // 待ちは残す (PUT の観測だけでは onSuccess の完了を見ていない)。
       await screen.findByText('閾値設定を保存しました');
     });
 
