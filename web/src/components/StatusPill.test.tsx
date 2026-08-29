@@ -71,6 +71,49 @@ describe('StatusPill popover freshness (bdboard-d55)', () => {
     expect(screen.getByText(/最終通信/)).toBeInTheDocument();
   });
 
+  it('names the refresh line by its subject and shows it as a relative age', () => {
+    // 「最終更新」は「最終変化」とほぼ同義に読め、主語 (サーバー) も伝わらなかった
+    // (bdboard-3dr)。表記も上2行と揃えないと3行を並べて比較できない。
+    vi.setSystemTime(NOW);
+    renderPill({ lastRefreshAt: new Date(NOW.getTime() - 3 * 60_000).toISOString() });
+
+    expect(screen.getByText(/サーバーのbd取込: 3分前/)).toBeInTheDocument();
+    expect(screen.queryByText(/最終更新/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the exact refresh timestamp reachable as a tooltip', () => {
+    // 相対表示にした分、絶対値はツールチップで残す (上2行と同じ扱い)。
+    vi.setSystemTime(NOW);
+    const lastRefreshAt = new Date(NOW.getTime() - 3 * 60_000).toISOString();
+    renderPill({ lastRefreshAt });
+
+    expect(screen.getByText(/サーバーのbd取込: 3分前/)).toHaveAttribute(
+      'title',
+      new Date(lastRefreshAt).toLocaleString(),
+    );
+  });
+
+  it('omits the refresh line when the server has never refreshed', () => {
+    vi.setSystemTime(NOW);
+    renderPill({ lastRefreshAt: null });
+
+    expect(screen.queryByText(/サーバーのbd取込/)).not.toBeInTheDocument();
+  });
+
+  it('keeps the three freshness lines distinguishable from one another', () => {
+    // 3行が別々の時刻を指していることが読み取れなければ改名の意味が無い。
+    vi.setSystemTime(NOW);
+    renderPill({
+      generatedAt: new Date(NOW.getTime() - 10 * 60_000).toISOString(),
+      lastContactAtMs: NOW.getTime(),
+      lastRefreshAt: new Date(NOW.getTime() - 3 * 60_000).toISOString(),
+    });
+
+    expect(screen.getByText(/盤面内容の最終変化: 10分前/)).toBeInTheDocument();
+    expect(screen.getByText(/最終通信: たった今/)).toBeInTheDocument();
+    expect(screen.getByText(/サーバーのbd取込: 3分前/)).toBeInTheDocument();
+  });
+
   it('shows nothing from the popover while it is closed', () => {
     renderPill({ open: false });
 

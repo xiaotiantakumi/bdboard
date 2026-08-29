@@ -828,7 +828,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
     await waitFor(() => {
       expect(screen.getByText('盤面内容の最終変化: 5分前')).toBeInTheDocument();
     });
-    expect(screen.getByText(/最終更新:/)).toBeInTheDocument();
+    expect(screen.getByText(/サーバーのbd取込:/)).toBeInTheDocument();
   });
 
   // bdboard-9qa の本丸の回帰テスト。**修正前のコードでは失敗する**ことを確認済み
