@@ -117,4 +117,93 @@ describe('NodeCommandRunner', () => {
     expect(grandchildPid).toBeGreaterThan(0);
     await expectProcessToBeGone(grandchildPid);
   });
+  // bdboard-3x5: streaming 側 (bdboard-l1t.9 M1) が獲得した3点セットが、こちらの
+  // ランナーには入っていなかった。このランナーは main.ts の単一インスタンスで
+  // bd / gh / git / ps / ai-quota の全 CLI 呼び出しに使われるので、settle しない
+  // 経路が1つでも残ると影響が広い。以下2本はどちらも修正前のコードで失敗する
+  // ことを確認済み。
+  it('escalates to SIGKILL and settles when the child ignores SIGTERM', async () => {
+    // SIGTERM をトラップして無視する子。SIGTERM 一発だけの実装では 'close' が
+    // 永久に来ず run() が settle しない。SIGKILL はトラップできないので、
+    // エスカレーションがあれば必ず終わる。
+    const childScript =
+      "process.on('SIGTERM', () => {});" +
+      "process.stdout.write('ready');" +
+      'setInterval(() => {}, 10_000);';
+
+    const start = Date.now();
+    const result = await runner.run(process.execPath, ['-e', childScript], {
+      timeoutMs: 200,
+    });
+    const elapsedMs = Date.now() - start;
+
+    expect(result.failureKind).toBe('timeout');
+    // 猶予 3000ms + 余裕。8_000 だと vitest 既定の testTimeout 5000ms が先に効いて
+    // 死んだ閾値になるので、実効上限より内側に置く (PR#119 fable レビュー nit)。
+    expect(elapsedMs).toBeLessThan(4_000);
+  });
+
+  it('does not mislabel a successful exit as timeout when a grandchild holds the pipes', async () => {
+    // 子は exit 0 で正常終了するが、孫が stdio を継承したまま生きているので
+    // 'close' が遅延する。'exit' バックストップが無いと、その遅延中に
+    // タイムアウトが発火し、成功が failureKind:'timeout' と誤ラベルされる。
+    // reclaim-scheduler は failureKind の有無で失敗判定するため実害がある。
+    //
+    // 孫は PID 捕捉に失敗しても永久リークしないよう自己終了させる
+    // (streaming 側テストと同じ方針)。
+    const childScript =
+      "const { spawn } = require('node:child_process');" +
+      "const gc = spawn(process.execPath, ['-e', 'process.stdout.write(String(process.pid)); setTimeout(() => {}, 8000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true });" +
+      'gc.unref();' +
+      'process.exit(0);';
+
+    const start = Date.now();
+    const result = await runner.run(process.execPath, ['-e', childScript], {
+      timeoutMs: 1_000,
+    });
+    const elapsedMs = Date.now() - start;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.failureKind).toBeUndefined();
+    expect(elapsedMs).toBeLessThan(1_000);
+
+    const grandchildPid = Number(result.stdout.trim());
+    if (Number.isInteger(grandchildPid) && grandchildPid > 0) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL');
+      } catch {
+        // 既に終了していれば何もしなくてよい。
+      }
+    }
+  });
+  // 上2本の合成 = 現実的な最悪ケース。SIGTERM を無視する子が、さらに stdio を
+  // 継承した孫を残している。SIGKILL で子は死ぬが孫が fd を握り続けるので
+  // 'close' は来ない。ここを settle させられるのはパイプの明示破棄だけで、
+  // SIGKILL エスカレーションと destroyStdio の両方が要る (bdboard-3x5)。
+  it('settles when the child both ignores SIGTERM and leaves a pipe-holding grandchild', async () => {
+    const childScript =
+      "const { spawn } = require('node:child_process');" +
+      "const gc = spawn(process.execPath, ['-e', 'process.stdout.write(String(process.pid)); setTimeout(() => {}, 8000)'], { stdio: ['ignore', 'inherit', 'inherit'], detached: true });" +
+      'gc.unref();' +
+      "process.on('SIGTERM', () => {});" +
+      'setInterval(() => {}, 10_000);';
+
+    const start = Date.now();
+    const result = await runner.run(process.execPath, ['-e', childScript], {
+      timeoutMs: 200,
+    });
+    const elapsedMs = Date.now() - start;
+
+    expect(result.failureKind).toBe('timeout');
+    expect(elapsedMs).toBeLessThan(4_000);
+
+    const grandchildPid = Number(result.stdout.trim());
+    if (Number.isInteger(grandchildPid) && grandchildPid > 0) {
+      try {
+        process.kill(grandchildPid, 'SIGKILL');
+      } catch {
+        // 既に終了していれば何もしなくてよい。
+      }
+    }
+  });
 });
