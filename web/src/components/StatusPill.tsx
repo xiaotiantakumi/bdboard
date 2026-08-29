@@ -92,7 +92,14 @@ export function StatusPill({
               generatedAt が凍る) には「正常」ピルの中に「盤面取得: 10分前」が
               同居し、通信が10分止まっているようにも読めてしまう。ラベルを内容の
               鮮度だと分かる語に変え、通信の鮮度を並記して両者を1画面で
-              読み分けられるようにする (bdboard-d55)。 */}
+              読み分けられるようにする (bdboard-d55)。
+
+              厳密には generatedAt は「今クライアントが持っているペイロードの生成時刻」で、
+              サーバーは 200 のたびに now() を入れる。ETag が generatedAt を除外している
+              ので 304 が続く間は「内容が変わった時刻」と一致するが、初回ロードや
+              ブラウザキャッシュ消失後の 200 では、内容が何時間変わっていなくても
+              「たった今」と出る。セッション継続中は正確で、旧「取得」より実態には近い
+              ので現状はこの表記で受け入れる (PR#116 fable レビュー minor)。 */}
           {generatedAt !== null && generatedAt !== undefined && (
             <p className="status-pill-detail" title={new Date(generatedAt).toLocaleString()}>
               盤面内容の最終変化: {formatGeneratedAtAge(generatedAt, nowMs)}

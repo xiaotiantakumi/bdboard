@@ -34,6 +34,12 @@ describe('formatRelativeAge (bdboard-d55)', () => {
     ['たった今', 30_000],
     ['5分前', 5 * 60_000],
     ['2時間前', 2 * 60 * 60_000],
+    // 境界。ここを外すと `< 1` / `< 60` を `<=` に緩めても誰も気付かない
+    // (PR#116 fable レビュー minor)。
+    ['たった今', 59_000],
+    ['1分前', 60_000],
+    ['59分前', 59 * 60_000],
+    ['1時間前', 60 * 60_000],
   ])('formats %s', (expected, ageMs) => {
     expect(formatRelativeAge(nowMs - ageMs, nowMs)).toBe(expected);
   });
