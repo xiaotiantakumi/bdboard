@@ -12,7 +12,7 @@ import type { CommentReader } from '../ports/comment-reader.js';
 import { BdError } from '../ports/issue-repository.js';
 import type { PrStatus } from '../../domain/pr-link.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
-import { getPrBadges } from './get-pr-badges.js';
+import { getPrBadges, PrBadgeCommentCache } from './get-pr-badges.js';
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -596,5 +596,211 @@ describe('getPrBadges', () => {
       'proj-b:bdboard-a',
       'proj-b:bdboard-z',
     ]);
+  });
+
+  it('reuses commentCache on second call when commentCount and updatedAt are unchanged', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-pr1',
+          projectId: a.id,
+          commentCount: 1,
+          updatedAt,
+        }),
+        makeTicket({
+          id: 'bdboard-pr2',
+          projectId: a.id,
+          commentCount: 2,
+          updatedAt,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath, issueId) => [
+        {
+          id: 'c1',
+          issueId,
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: new Date('2026-06-01T12:00:00.000Z'),
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () =>
+        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+      ),
+    };
+
+    const commentCache = new PrBadgeCommentCache();
+    const options = { commentCache };
+
+    const firstBadges = await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(2);
+
+    const secondBadges = await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(2);
+    expect(secondBadges).toEqual(firstBadges);
+  });
+
+  it('refetches comments only for tickets whose commentCount or updatedAt changed', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const initialUpdatedAt = new Date('2026-06-01T12:00:00.000Z');
+    const refreshedUpdatedAt = new Date('2026-06-02T12:00:00.000Z');
+    const PR_URL_2 = 'https://github.com/xiaotiantakumi/bdboard/pull/100';
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-stable',
+          projectId: a.id,
+          commentCount: 1,
+          updatedAt: initialUpdatedAt,
+        }),
+        makeTicket({
+          id: 'bdboard-changed',
+          projectId: a.id,
+          commentCount: 1,
+          updatedAt: initialUpdatedAt,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath, issueId) => {
+        const changedTicket = cache
+          .getProject('proj-a')
+          ?.tickets.find((ticket) => ticket.id === 'bdboard-changed');
+        const url =
+          issueId === 'bdboard-changed' && changedTicket?.commentCount === 2
+            ? PR_URL_2
+            : PR_URL;
+        return [
+          {
+            id: 'c1',
+            issueId,
+            author: 'agent',
+            text: `PR: ${url}`,
+            createdAt: new Date('2026-06-01T12:00:00.000Z'),
+          },
+        ];
+      }),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () =>
+        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+      ),
+    };
+
+    const commentCache = new PrBadgeCommentCache();
+    const options = { commentCache };
+
+    const firstBadges = await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(2);
+    expect(firstBadges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ticketId: 'bdboard-stable', url: PR_URL }),
+        expect.objectContaining({ ticketId: 'bdboard-changed', url: PR_URL }),
+      ]),
+    );
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-stable',
+          projectId: a.id,
+          commentCount: 1,
+          updatedAt: initialUpdatedAt,
+        }),
+        makeTicket({
+          id: 'bdboard-changed',
+          projectId: a.id,
+          commentCount: 2,
+          updatedAt: refreshedUpdatedAt,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-02T12:00:00.000Z'),
+    });
+
+    const secondBadges = await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(3);
+    expect(secondBadges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ ticketId: 'bdboard-stable', url: PR_URL }),
+        expect.objectContaining({ ticketId: 'bdboard-changed', url: PR_URL_2 }),
+      ]),
+    );
+  });
+
+  it('does not evict cache entries for projects excluded by a projectIds filter', async () => {
+    // pruning を「フィルタ後の workItems」基準にすると、projectIds で1プロジェクトに
+    // 絞った呼び出しのたびに他プロジェクトのキャッシュエントリが間引かれ、
+    // 複数プロジェクトを行き来する通常利用 (Web UI のプロジェクト切り替え) で
+    // キャッシュがまったく定着しない (bdboard-fwse レビュー指摘)。
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const b = project('proj-b', '/projects/b');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+    cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'bdboard-b', projectId: b.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-b',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath, issueId) => [
+        {
+          id: 'c1',
+          issueId,
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: updatedAt,
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => null),
+    };
+
+    const commentCache = new PrBadgeCommentCache();
+
+    // 1回目: 全プロジェクトを取得してキャッシュを埋める。
+    await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
+    expect(commentReader.listComments).toHaveBeenCalledTimes(2);
+
+    // 2回目: proj-a だけにフィルタした呼び出し。proj-b の workItems は今回の
+    // スコープに含まれないが、それだけで proj-b のキャッシュを間引いてはいけない。
+    await getPrBadges(cache, commentReader, prStatusReader, {
+      commentCache,
+      projectIds: ['proj-a'],
+    });
+    expect(commentReader.listComments).toHaveBeenCalledTimes(2);
+
+    // 3回目: 全プロジェクトへ戻す。proj-b のキャッシュが生き残っていれば
+    // listComments は増えない。
+    await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
+    expect(commentReader.listComments).toHaveBeenCalledTimes(2);
   });
 });

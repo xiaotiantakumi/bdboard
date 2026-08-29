@@ -11,6 +11,46 @@ export interface GetPrBadgesOptions {
   readonly projectIds?: readonly string[];
   /** 取得失敗の警告ログ。未指定なら console.warn (discover-projects と同じ注入流儀)。 */
   readonly logWarn?: (message: string) => void;
+  /** コメントから抽出した PR URL のインメモリキャッシュ。未指定なら毎回フルフェッチ。 */
+  readonly commentCache?: PrBadgeCommentCache;
+}
+
+interface PrBadgeCommentCacheEntry {
+  readonly commentCount: number;
+  readonly updatedAt: number;
+  readonly url: string | null;
+}
+
+/** チケットごとのコメント由来 PR URL を commentCount/updatedAt で無効化する薄いキャッシュ。 */
+export class PrBadgeCommentCache {
+  private readonly entries = new Map<string, PrBadgeCommentCacheEntry>();
+
+  get(
+    ticketId: string,
+    commentCount: number,
+    updatedAt: number,
+  ): string | null | undefined {
+    const entry = this.entries.get(ticketId);
+    if (entry === undefined) {
+      return undefined;
+    }
+    if (entry.commentCount === commentCount && entry.updatedAt === updatedAt) {
+      return entry.url;
+    }
+    return undefined;
+  }
+
+  set(ticketId: string, commentCount: number, updatedAt: number, url: string | null): void {
+    this.entries.set(ticketId, { commentCount, updatedAt, url });
+  }
+
+  prune(validTicketIds: ReadonlySet<string>): void {
+    for (const ticketId of this.entries.keys()) {
+      if (!validTicketIds.has(ticketId)) {
+        this.entries.delete(ticketId);
+      }
+    }
+  }
 }
 
 // Matches DEFAULT_CONCURRENCY in bd-cli-issue-repository.ts.
@@ -28,7 +68,8 @@ export async function getPrBadges(
   options?: GetPrBadgesOptions,
 ): Promise<readonly PrBadge[]> {
   const projectIdFilter = options?.projectIds;
-  let entries = cache.listProjects();
+  const allEntries = cache.listProjects();
+  let entries = allEntries;
 
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
@@ -41,6 +82,21 @@ export async function getPrBadges(
       .map((ticket) => ({ entry, ticket })),
   );
 
+  const commentCache = options?.commentCache;
+  // フィルタ後の workItems ではなく盤面全体 (allEntries) の commentCount>0 集合で
+  // pruning する。フィルタ済みの集合を使うと、projectIds でプロジェクトを絞った
+  // 呼び出しのたびにフィルタ対象外プロジェクトのキャッシュエントリが間引かれ、
+  // 複数プロジェクトを行き来する通常利用でキャッシュが定着しない
+  // (bdboard-fwse レビュー指摘)。
+  if (commentCache !== undefined) {
+    const allTicketIds = new Set(
+      allEntries.flatMap((entry) =>
+        entry.tickets.filter((ticket) => ticket.commentCount > 0).map((ticket) => ticket.id),
+      ),
+    );
+    commentCache.prune(allTicketIds);
+  }
+
   const badges: PrBadge[] = [];
   // 握り潰しの理由と、1行にまとめる理由は fetch-failure-log.ts を参照 (bdboard-fxxk)。
   const commentFailures: FetchFailure[] = [];
@@ -48,33 +104,44 @@ export async function getPrBadges(
   let statusAttempts = 0;
 
   await runWithConcurrencyLimit(workItems, COMMENT_FETCH_CONCURRENCY, async ({ entry, ticket }) => {
-    try {
-      const comments = await commentReader.listComments(entry.project.rootPath, ticket.id);
-      const url = extractLatestPrUrl(comments);
-      if (url === null) {
+    const updatedAtMs = ticket.updatedAt.getTime();
+    let url: string | null;
+    const cachedUrl = commentCache?.get(ticket.id, ticket.commentCount, updatedAtMs);
+
+    if (cachedUrl !== undefined) {
+      url = cachedUrl;
+    } else {
+      try {
+        const comments = await commentReader.listComments(entry.project.rootPath, ticket.id);
+        url = extractLatestPrUrl(comments);
+        commentCache?.set(ticket.id, ticket.commentCount, updatedAtMs, url);
+      } catch (error) {
+        // コメントが読めないチケットは飛ばす。そのチケットのバッジは出ない。
+        commentFailures.push({ id: ticket.id, error });
         return;
       }
-
-      let status: PrBadge['status'] = null;
-      statusAttempts += 1;
-      try {
-        status = await prStatusReader.getPrStatus(url);
-      } catch (error) {
-        // バッジ自体は URL だけで出せるので、状態が引けないのは劣化であって失敗ではない。
-        status = null;
-        statusFailures.push({ id: url, error });
-      }
-
-      badges.push({
-        ticketId: ticket.id,
-        projectId: entry.project.id,
-        url,
-        status,
-      });
-    } catch (error) {
-      // コメントが読めないチケットは飛ばす。そのチケットのバッジは出ない。
-      commentFailures.push({ id: ticket.id, error });
     }
+
+    if (url === null) {
+      return;
+    }
+
+    let status: PrBadge['status'] = null;
+    statusAttempts += 1;
+    try {
+      status = await prStatusReader.getPrStatus(url);
+    } catch (error) {
+      // バッジ自体は URL だけで出せるので、状態が引けないのは劣化であって失敗ではない。
+      status = null;
+      statusFailures.push({ id: url, error });
+    }
+
+    badges.push({
+      ticketId: ticket.id,
+      projectId: entry.project.id,
+      url,
+      status,
+    });
   });
 
   const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
