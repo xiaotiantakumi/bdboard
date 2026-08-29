@@ -24,11 +24,14 @@ describe('resolveBoardThresholds', () => {
   });
 
   it('can override liveness fields independently', () => {
+    // Values intentionally differ from DEFAULT_LIVENESS_THRESHOLDS so this
+    // test still catches an override being silently ignored.
+    const overrideActiveMs = DEFAULT_LIVENESS_THRESHOLDS.activeMs + 60_000;
     const resolved = resolveBoardThresholds({
-      livenessActiveMs: 5 * 60_000,
+      livenessActiveMs: overrideActiveMs,
       livenessStaleMs: 48 * 60 * 60_000,
     });
-    expect(resolved.livenessThresholds.activeMs).toBe(5 * 60_000);
+    expect(resolved.livenessThresholds.activeMs).toBe(overrideActiveMs);
     expect(resolved.livenessThresholds.idleMs).toBe(DEFAULT_LIVENESS_THRESHOLDS.idleMs);
     expect(resolved.livenessThresholds.staleMs).toBe(48 * 60 * 60_000);
     expect(resolved.stalledThresholds).toEqual(DEFAULT_STALLED_THRESHOLDS);
