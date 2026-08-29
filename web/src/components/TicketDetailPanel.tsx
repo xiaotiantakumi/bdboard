@@ -564,12 +564,14 @@ export function TicketDetailPanel({
       return;
     }
 
+    let cancelled = false;
     setDependencySearchLoading(true);
     setDependencySearchError(null);
 
     const handle = window.setTimeout(() => {
       void searchTickets(trimmedDependencySearchQuery, DEPENDENCY_SEARCH_LIMIT)
         .then((hits) => {
+          if (cancelled) return;
           setDependencyCandidates(
             filterDependencyCandidates(hits, {
               ticketId: data.id,
@@ -582,6 +584,7 @@ export function TicketDetailPanel({
           setDependencySearchLoading(false);
         })
         .catch((caught: unknown) => {
+          if (cancelled) return;
           setDependencySearchError(
             caught instanceof Error ? caught : new Error('検索に失敗しました'),
           );
@@ -591,6 +594,7 @@ export function TicketDetailPanel({
     }, DEPENDENCY_SEARCH_DEBOUNCE_MS);
 
     return () => {
+      cancelled = true;
       window.clearTimeout(handle);
     };
   }, [
