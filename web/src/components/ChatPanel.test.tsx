@@ -6018,6 +6018,63 @@ describe('ChatPanel', () => {
         'broken thread',
       ]);
     });
+
+    it('puts a thread whose record has not arrived yet at the bottom (PR#133 レビュー minor-2)', async () => {
+      // CLIセッションを再開した直後は、openThreadIds に sessionId が入っている
+      // のにスレッド一覧の再取得がまだ返ってきていない窓がある。この窓では
+      // threadById に記録が無く、更新日時が読めない。最新扱いにすると、まだ
+      // 何も分かっていないスレッドが先頭に居座る。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      fetchChatThreadsMock.mockReset();
+      fetchChatThreadsMock
+        .mockResolvedValueOnce([threads[0], threads[2]])
+        // 再開後の再取得は返さない = 記録が届いていない窓を開けたままにする。
+        .mockImplementation(() => new Promise(() => {}));
+      fetchDiscoveredChatSessionsMock.mockResolvedValue({
+        sessions: [
+          { sessionId: 'discovered-1', lastActivityAt: '2026-08-16T12:00:00.000Z', alreadyAdopted: false },
+        ],
+      });
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (
+          url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' &&
+          init?.method === 'POST'
+        ) {
+          return jsonResponse({
+            sessionId: 'discovered-1',
+            agentId: 'claude',
+            seedMessages: [
+              { role: 'user', text: 'seeded question', timestamp: '2026-08-16T11:00:00.000Z' },
+            ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/')) {
+          return jsonResponse({ sessionId: 'sess-new', agentId: 'claude', messages: [] });
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-new', 'sess-old'],
+        selectedSessionId: 'sess-new',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+      await user.click(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }),
+      );
+      await user.click(await screen.findByRole('button', { name: 'セッション discovered-1 を再開' }));
+      await screen.findByText('seeded question');
+
+      openThreadDrawer(container);
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'oldest thread',
+        '(無題)',
+      ]);
+    });
   });
 
 });

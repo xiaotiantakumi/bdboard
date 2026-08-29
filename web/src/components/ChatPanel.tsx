@@ -2352,8 +2352,8 @@ export function ChatPanel({
   // Chat Redesign 1b: スレッド一覧ドロワーの行データ。ピン留めは開いている/
   // 閉じたスレッドのどちらに属していても「ピン留め」節へ寄せ、開いている/
   // 閉じた節には残さない(mutual exclusion)。displayedOpenThreads /
-  // closedThreads は既に「ピン留め優先 + 新しい順」にソート済みなので、
-  // その並びをそのまま踏襲する。
+  // closedThreads は既に新しい順にソート済みで、ピン留め優先はこの filter が
+  // 担う (filter は相対順序を保つので、節の中は新しい順のまま)。
   const pinnedOpenSessionIds = displayedOpenThreads.filter(
     (sessionId) => threadById.get(sessionId)?.pinned === true,
   );
