@@ -1,7 +1,12 @@
 import type { CommandRunner, CommandRunOptions } from '../../application/ports/command-runner.js';
-import { BD_TOOL_DEFINITIONS, buildBdToolArgs } from './bd-tool-catalog.js';
+import {
+  CHAT_TOOL_DEFINITIONS,
+  buildChatToolCommand,
+} from './chat-tool-catalog.js';
+import { applyRepoOutputFilter } from './repo-tool-catalog.js';
 
 const DEFAULT_BD_PATH = 'bd';
+const DEFAULT_GIT_PATH = 'git';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_SUCCESS_OUTPUT_CHARS = 60_000;
 
@@ -9,6 +14,12 @@ export interface BdMcpServerDeps {
   readonly commandRunner: CommandRunner;
   readonly projectRootPath: string;
   readonly bdPath?: string;
+  /**
+   * git の実行パス。既定は PATH 上の `git`。CLI からは渡らない
+   * (bd-mcp-server-main.ts に --git-path は無い) が、テストが本物の git を
+   * 起動せずに配線を確かめられるようにここだけ差し替え可能にしてある。
+   */
+  readonly gitPath?: string;
   readonly timeoutMs?: number;
 }
 
@@ -86,7 +97,7 @@ function handleInitialize(params: unknown): Record<string, unknown> {
 
 function handleToolsList(): Record<string, unknown> {
   return {
-    tools: BD_TOOL_DEFINITIONS.map((tool) => ({
+    tools: CHAT_TOOL_DEFINITIONS.map((tool) => ({
       name: tool.name,
       description: tool.description,
       inputSchema: tool.inputSchema,
@@ -103,6 +114,7 @@ function createToolErrorResult(error: string): Record<string, unknown> {
 
 export function createBdMcpServer(deps: BdMcpServerDeps): BdMcpServer {
   const bdPath = deps.bdPath ?? DEFAULT_BD_PATH;
+  const gitPath = deps.gitPath ?? DEFAULT_GIT_PATH;
   const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   async function handleToolsCall(params: unknown): Promise<Record<string, unknown>> {
@@ -110,7 +122,7 @@ export function createBdMcpServer(deps: BdMcpServerDeps): BdMcpServer {
       return createToolErrorResult('invalid params');
     }
 
-    const built = buildBdToolArgs(
+    const built = buildChatToolCommand(
       params.name,
       params.arguments ?? {},
       deps.projectRootPath,
@@ -126,7 +138,12 @@ export function createBdMcpServer(deps: BdMcpServerDeps): BdMcpServer {
       ...(built.stdin !== undefined ? { input: built.stdin } : {}),
     };
 
-    const result = await deps.commandRunner.run(bdPath, built.args, runOptions);
+    const executablePath = built.executable === 'git' ? gitPath : bdPath;
+    const result = await deps.commandRunner.run(
+      executablePath,
+      built.args,
+      runOptions,
+    );
 
     if (result.exitCode !== 0) {
       return {
@@ -140,11 +157,18 @@ export function createBdMcpServer(deps: BdMcpServerDeps): BdMcpServer {
       };
     }
 
+    // 絞り込みは切り詰めより先に行う。ls-tree の全件列挙を先に切ると、
+    // 「本当に無い」と「上限で切れて見えていないだけ」が区別できなくなる。
+    const stdout =
+      built.outputFilter !== undefined
+        ? applyRepoOutputFilter(result.stdout, built.outputFilter)
+        : result.stdout;
+
     return {
       content: [
         {
           type: 'text',
-          text: truncate(result.stdout, MAX_SUCCESS_OUTPUT_CHARS),
+          text: truncate(stdout, MAX_SUCCESS_OUTPUT_CHARS),
         },
       ],
       isError: false,

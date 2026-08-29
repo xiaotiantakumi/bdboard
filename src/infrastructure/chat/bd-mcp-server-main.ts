@@ -23,6 +23,10 @@ function parseArgs(argv: readonly string[]): {
     }
   }
 
+  // git のパスは受け取らない。bd は呼び出し側が解決した絶対パスを渡してくるが、
+  // git は PATH 上の 1 つで足りる。使われないフラグを置いておくと「設定できる」
+  // と誤解させるだけなので、必要になったときに --bd-path と同じ形で足す
+  // (PR#143 レビュー minor-4)。
   return { projectRootPath, bdPath };
 }
 

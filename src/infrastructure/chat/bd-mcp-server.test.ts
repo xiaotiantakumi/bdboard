@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
-import { BD_TOOL_DEFINITIONS } from './bd-tool-catalog.js';
+import { CHAT_TOOL_DEFINITIONS } from './chat-tool-catalog.js';
 import { createBdMcpServer } from './bd-mcp-server.js';
 
 const PROJECT_ROOT = '/tmp/bdboard-mcp-test';
@@ -130,7 +130,7 @@ describe('createBdMcpServer', () => {
 
     const tools = (response?.result as { tools: Array<{ name: string }> }).tools;
     expect(tools.map((tool) => tool.name)).toEqual(
-      BD_TOOL_DEFINITIONS.map((tool) => tool.name),
+      CHAT_TOOL_DEFINITIONS.map((tool) => tool.name),
     );
     expect(tools.some((tool) => tool.name === 'Bash')).toBe(false);
   });
@@ -332,5 +332,181 @@ describe('createBdMcpServer', () => {
         message: 'Method not found: resources/list',
       },
     });
+  });
+});
+
+describe('createBdMcpServer / repo evidence tools (bdboard-3tw.159.4)', () => {
+  it('runs git (not bd) for repo_ticket_landed', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async () => ({
+        stdout: 'be5f58e 2026-08-28 fix(bdboard-3tw.151): drop sync health\n',
+        stderr: '',
+        exitCode: 0,
+      }),
+    });
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+      bdPath: '/opt/bd',
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: '2.0',
+      id: 20,
+      method: 'tools/call',
+      params: {
+        name: 'repo_ticket_landed',
+        arguments: { ticketId: 'bdboard-3tw.151' },
+      },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.command).toBe('git');
+    expect(calls[0]?.args).toContain('--grep=bdboard-3tw.151');
+    expect(calls[0]?.options?.cwd).toBe(PROJECT_ROOT);
+    expect(response?.result).toMatchObject({ isError: false });
+  });
+
+  it('uses the configured git path', async () => {
+    const { runner, calls } = createFakeRunner();
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+      gitPath: '/usr/local/bin/git',
+    });
+
+    await server.handleMessage({
+      jsonrpc: '2.0',
+      id: 21,
+      method: 'tools/call',
+      params: { name: 'repo_ticket_landed', arguments: { ticketId: 'bdboard-x32' } },
+    });
+
+    expect(calls[0]?.command).toBe('/usr/local/bin/git');
+  });
+
+  it('filters the ls-tree output instead of returning the whole tree', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        // git は各行を改行で終える。末尾の改行が無い出力は「途中で切れた」の合図
+        // として扱われるので、フェイクでも本物どおり終端しておく。
+        stdout: `${['src/main.ts', 'web/src/SyncHealth.tsx', 'README.md'].join('\n')}\n`,
+        stderr: '',
+        exitCode: 0,
+      }),
+    });
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: '2.0',
+      id: 22,
+      method: 'tools/call',
+      params: { name: 'repo_path_exists', arguments: { pattern: 'syncHEALTH' } },
+    });
+
+    const text = (
+      response?.result as { content: Array<{ text: string }> }
+    ).content[0]?.text;
+
+    // 大文字小文字を無視して1件だけ当たり、無関係なパスは返らない。
+    expect(text).toBe('matched=1 scanned=3\nweb/src/SyncHealth.tsx');
+    expect(text).not.toContain('README.md');
+  });
+
+  it('reports matched=0 for a path that is really gone', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: `${['src/main.ts', 'README.md'].join('\n')}\n`,
+        stderr: '',
+        exitCode: 0,
+      }),
+    });
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: '2.0',
+      id: 23,
+      method: 'tools/call',
+      params: { name: 'repo_path_exists', arguments: { pattern: 'sync-health' } },
+    });
+
+    expect(
+      (response?.result as { content: Array<{ text: string }> }).content[0]?.text,
+    ).toBe('matched=0 scanned=2');
+  });
+
+  it('filters before truncating so a match past the 60k cap still shows', async () => {
+    // 大きなリポジトリでは ls-tree の全件列挙が出力上限を軽く超える。先に切ると
+    // 「当たりが上限の外にあった」のと「本当に無い」が区別できなくなるので、
+    // 絞り込みが先であることを固定する。
+    const filler = Array.from({ length: 4000 }, (_, index) => `src/filler-${index}.ts`);
+    const stdout = `${[...filler, 'web/src/SyncHealth.tsx'].join('\n')}\n`;
+    expect(stdout.length).toBeGreaterThan(60_000);
+
+    const { runner } = createFakeRunner({
+      handler: async () => ({ stdout, stderr: '', exitCode: 0 }),
+    });
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: '2.0',
+      id: 26,
+      method: 'tools/call',
+      params: { name: 'repo_path_exists', arguments: { pattern: 'synchealth' } },
+    });
+
+    expect(
+      (response?.result as { content: Array<{ text: string }> }).content[0]?.text,
+    ).toBe('matched=1 scanned=4001\nweb/src/SyncHealth.tsx');
+  });
+
+  it('rejects a repo tool with an invalid ref without running anything', async () => {
+    const { runner, calls } = createFakeRunner();
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: '2.0',
+      id: 24,
+      method: 'tools/call',
+      params: {
+        name: 'repo_ticket_landed',
+        arguments: { ticketId: 'bdboard-x32', ref: '--upload-pack=sh' },
+      },
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(response?.result).toMatchObject({ isError: true });
+  });
+
+  it('never exposes a git write tool', async () => {
+    const { runner, calls } = createFakeRunner();
+    const server = createBdMcpServer({
+      commandRunner: runner,
+      projectRootPath: PROJECT_ROOT,
+    });
+
+    for (const name of ['repo_push', 'repo_commit', 'git', 'repo_checkout']) {
+      const response = await server.handleMessage({
+        jsonrpc: '2.0',
+        id: 25,
+        method: 'tools/call',
+        params: { name, arguments: {} },
+      });
+      expect(response?.result).toMatchObject({ isError: true });
+    }
+
+    expect(calls).toHaveLength(0);
   });
 });
