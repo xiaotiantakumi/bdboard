@@ -264,6 +264,64 @@ describe('getPrBadges', () => {
     expect(message).toContain('gh not authenticated');
   });
 
+  it('emits one line per category no matter how many tickets fail', async () => {
+    /*
+     * 集約はこの PR の設計そのもの。getPrBadges は commentCount>0 のチケットを
+     * 全部 (実測で 300 件超) 掃くので、失敗1件ごとにログを出す実装へ戻ると
+     * bd が落ちている間ずっと1リクエストあたり数百行を吐く。既存の失敗テストは
+     * どちらも「1カテゴリにつき失敗1件」なので、脱集約への変異を生かしてしまう
+     * (fable のレビュー指摘)。ここだけが集約を固定している。
+     */
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-bad1', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-bad2', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-bad3', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-pr1', projectId: a.id, commentCount: 1 }),
+        makeTicket({ id: 'bdboard-pr2', projectId: a.id, commentCount: 1 }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath: string, issueId: string) => {
+        if (issueId.startsWith('bdboard-bad')) {
+          throw new BdError('unknown', issueId, 'bd failed');
+        }
+        return [
+          {
+            id: 'c1',
+            issueId,
+            author: 'agent',
+            text: `PR: ${PR_URL}`,
+            createdAt: new Date('2026-06-01T12:00:00.000Z'),
+          },
+        ];
+      }),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => {
+        throw new Error('gh not authenticated');
+      }),
+    };
+
+    const logWarn = vi.fn();
+    await getPrBadges(cache, commentReader, prStatusReader, { logWarn });
+
+    // 失敗は 3 + 2 = 5 件あるが、行は「コメント」「PR状態」の2本だけ。
+    expect(logWarn).toHaveBeenCalledTimes(2);
+    const messages = logWarn.mock.calls.map((call) => call[0] as string);
+    const commentLine = messages.find((line) => line.includes('could not load comments'));
+    const statusLine = messages.find((line) => line.includes('could not load PR status'));
+    // 分母はカテゴリごとに違う。コメントは掃いた5件、状態は引きにいった2件。
+    expect(commentLine).toContain('3 of 5 failed');
+    expect(statusLine).toContain('2 of 2 failed');
+  });
+
   it('says nothing when every ticket loads', async () => {
     // 常にログを出す実装だと、正常時のログが騒音になって異常時に気づけない。
     const cache = createFakeBoardCache();

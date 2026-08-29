@@ -77,20 +77,18 @@ export async function getPrBadges(
     }
   });
 
-  if (commentFailures.length > 0 || statusFailures.length > 0) {
-    const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
-    if (commentFailures.length > 0) {
-      logWarn(
-        '[pr-links] could not load comments for some tickets; their PR badges are missing. ' +
-          describeFetchFailures(commentFailures, workItems.length),
-      );
-    }
-    if (statusFailures.length > 0) {
-      logWarn(
-        '[pr-links] could not load PR status for some links; those badges show no status. ' +
-          describeFetchFailures(statusFailures, statusAttempts),
-      );
-    }
+  const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
+  if (commentFailures.length > 0) {
+    logWarn(
+      '[pr-links] could not load comments for some tickets; their PR badges are missing. ' +
+        describeFetchFailures(commentFailures, workItems.length),
+    );
+  }
+  if (statusFailures.length > 0) {
+    logWarn(
+      '[pr-links] could not load PR status for some links; those badges show no status. ' +
+        describeFetchFailures(statusFailures, statusAttempts),
+    );
   }
 
   badges.sort((a, b) => {
