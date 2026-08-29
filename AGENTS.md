@@ -396,6 +396,19 @@ wanted, that is a separate, explicitly user-approved change.
   restart the server → re-check with the status-code command above.
   `npm run start` runs tsx without watch and serves a static `web/dist`, so
   neither server nor UI changes are picked up without this rebuild+restart.
+  - **A `git pull --ff-only` here can be blocked by an uncommitted local
+    diff to `.claude/bdboard-packs.json`** (measured 2026-08-29, bdboard-8okb):
+    `Your local changes to the following files would be overwritten by
+    merge`. The always-on server appears to self-heal a stale injected-pack
+    version/timestamp in that file at runtime, without going through git —
+    the file's mtime lined up exactly with the server's own uptime, not with
+    any manual edit. Before discarding, run `git diff -- .claude/bdboard-packs.json`
+    and confirm the local diff really is only a `version`/`injectedAt`
+    value change consistent with the pack files already on disk (not
+    something else). If so, it's safe to `git checkout -- .claude/bdboard-packs.json`
+    and retry the pull — the incoming commit's value supersedes it. If the
+    diff looks like anything other than that, stop and investigate instead
+    of discarding.
 - **Before restarting the server**, check whether a tunnel is running with
   `pgrep -f cloudflared`. If it is, tell the user first that restarting will
   kill the tunnel child process and invalidate the current trycloudflare.com
