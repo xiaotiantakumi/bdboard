@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -44,6 +44,9 @@ const fetchProjectsMock = vi.mocked(fetchProjects);
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
 const FIXED_NOW = new Date('2026-08-15T09:30:00+09:00');
+
+/** DailyDigest.tsx の COPY_FEEDBACK_MS と同じ値。 */
+const COPY_FEEDBACK_MS = 2000;
 
 function makeEvent(
   overrides: Partial<ActivityEventDto> & Pick<ActivityEventDto, 'id' | 'kind' | 'at'>,
@@ -236,7 +239,7 @@ function renderDailyDigest(
 
   const onWindowDaysChange = options?.onWindowDaysChange ?? vi.fn();
 
-  render(
+  const view = render(
     <QueryClientProvider client={queryClient}>
       <DailyDigest
         projectIds={options?.projectIds ?? ['proj-a']}
@@ -247,7 +250,7 @@ function renderDailyDigest(
     </QueryClientProvider>,
   );
 
-  return { onWindowDaysChange };
+  return { onWindowDaysChange, ...view };
 }
 
 describe('DailyDigest', () => {
@@ -332,6 +335,50 @@ describe('DailyDigest', () => {
 
     expect(await screen.findByText('コピーできませんでした')).toBeInTheDocument();
     consoleErrorSpy.mockRestore();
+  });
+
+  it('does not arm a copy-feedback timer when the clipboard settles after unmount', async () => {
+    // bdboard-ty72: コピー結果の表示は copyTextToClipboard の継続から出るので、
+    // アンマウント後に解決すると、クリーンアップ済みのコンポーネントが新しい
+    // setTimeout を仕掛けてしまう。残ったタイマーは破棄済み jsdom で
+    // `window is not defined` を投げ、vitest はそれを「テスト環境破棄後の
+    // 未捕捉エラー」としてプロセスごと exit 1 にする — 個々のテストは全て
+    // pass したままなので、原因の分かりにくい壊れ方をする (bdboard-ifff)。
+    const user = userEvent.setup();
+    let settleCopy: (() => void) | undefined;
+    copyTextToClipboardMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settleCopy = () => {
+            resolve();
+          };
+        }),
+    );
+    mockAllQueries();
+
+    const { unmount } = renderDailyDigest();
+
+    await screen.findByText(/## 完了 \(1件\)/);
+    await user.click(screen.getByRole('button', { name: 'Markdown をコピー' }));
+    await waitFor(() => {
+      expect(copyTextToClipboardMock).toHaveBeenCalledTimes(1);
+    });
+
+    // 継続が解決する前にアンマウントする。ここから先で仕掛けられたタイマーは
+    // もう誰も片付けられない。
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    unmount();
+    settleCopy?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // React 自身も setTimeout を使うので、この表示の遅延だけを見る。
+    const feedbackTimers = setTimeoutSpy.mock.calls.filter(
+      ([, delay]) => delay === COPY_FEEDBACK_MS,
+    );
+    expect(feedbackTimers).toHaveLength(0);
+    setTimeoutSpy.mockRestore();
   });
 
   it('calls onWindowDaysChange when a window toggle is clicked', async () => {

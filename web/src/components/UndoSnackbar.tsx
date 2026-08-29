@@ -61,6 +61,7 @@ function describeUndoError(error: unknown): string {
 export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<SnackbarState>({ kind: 'idle' });
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedRef = useRef(false);
 
   const clearPendingTimeout = useCallback(() => {
     if (timeoutRef.current !== null) {
@@ -69,7 +70,13 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  useEffect(() => clearPendingTimeout, [clearPendingTimeout]);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearPendingTimeout();
+    };
+  }, [clearPendingTimeout]);
 
   const showUndo = useCallback(
     ({ message, onUndo }: UndoSnackbarRequest) => {
@@ -99,10 +106,21 @@ export function UndoSnackbarProvider({ children }: { children: ReactNode }) {
     setState({ kind: 'undoing', message });
     onUndo()
       .then(() => {
+        // bdboard-ty72: 逆操作の完了はアンマウント後に届きうる。ここで進むと
+        // 誰も片付けられない自動消去タイマーを仕掛けることになる (タイマーIDを
+        // ref に持っていても、クリーンアップはもう走り終わっている)。
+        if (!mountedRef.current) {
+          return;
+        }
         setState({ kind: 'undone' });
         scheduleAutoDismiss();
       })
       .catch((error: unknown) => {
+        // 失敗も同じ。表示先がもう無いので握り潰してよい (catch はしているので
+        // 未処理の rejection にはならない)。
+        if (!mountedRef.current) {
+          return;
+        }
         setState({ kind: 'undo-failed', detail: describeUndoError(error) });
         scheduleAutoDismiss();
       });

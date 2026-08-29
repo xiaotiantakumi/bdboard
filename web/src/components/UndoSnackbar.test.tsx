@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '../api';
@@ -61,6 +61,64 @@ describe('UndoSnackbar', () => {
 
     expect(onUndo).toHaveBeenCalledTimes(1);
     expect(await screen.findByText('元に戻しました')).toBeInTheDocument();
+  });
+
+  it('does not arm an auto-dismiss timer when onUndo settles after unmount', async () => {
+    // bdboard-ty72: onUndo の完了はアンマウント後に届きうる。タイマーIDは ref で
+    // 持っていてクリーンアップでも消しているが、その**後**に継続が走って
+    // scheduleAutoDismiss すると、もう誰も片付けられないタイマーが残る。
+    // 残ったタイマーは破棄済み jsdom で `window is not defined` を投げ、vitest は
+    // それを「テスト環境破棄後の未捕捉エラー」としてプロセスごと exit 1 にする
+    // (bdboard-ifff)。
+    let settleUndo: (() => void) | undefined;
+    const onUndo = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleUndo = () => {
+            resolve();
+          };
+        }),
+    );
+    const { unmount } = renderHarness(onUndo);
+
+    await user.click(screen.getByRole('button', { name: 'trigger' }));
+    await user.click(screen.getByRole('button', { name: '元に戻す' }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+    // 「元に戻す」を押した時点で表示タイマーは解除されている。
+    expect(vi.getTimerCount()).toBe(0);
+
+    unmount();
+    settleUndo?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects after unmount without leaving a timer behind', async () => {
+    // 失敗経路も同じ。catch はしているので未処理の rejection にはならない。
+    let rejectUndo: ((error: Error) => void) | undefined;
+    const onUndo = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectUndo = (error: Error) => {
+            reject(error);
+          };
+        }),
+    );
+    const { unmount } = renderHarness(onUndo);
+
+    await user.click(screen.getByRole('button', { name: 'trigger' }));
+    await user.click(screen.getByRole('button', { name: '元に戻す' }));
+
+    unmount();
+    rejectUndo?.(new Error('too late'));
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('shows a visible failure message instead of silently succeeding when onUndo rejects', async () => {

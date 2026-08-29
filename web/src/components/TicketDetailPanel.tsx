@@ -35,6 +35,7 @@ import {
   type TicketSimilarResultDto,
   LANE_LABELS,
 } from '../api';
+import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   SidePanelResizeHandle,
@@ -115,6 +116,18 @@ interface TicketDetailPanelProps {
 type CopyFeedback =
   | { kind: 'success'; command: BdCommandKind }
   | { kind: 'error' };
+
+/**
+ * コピー結果の表示。ボタン脇のバッジ (feedback) と読み上げ (aria) は必ず一緒に
+ * 出て一緒に消えるので、1つの値として useAutoClearedValue に持たせる
+ * (bdboard-ty72)。別々の state にすると自動消去タイマーも2本になる。
+ */
+interface CopyDisplay {
+  readonly feedback: CopyFeedback | null;
+  readonly aria: string;
+}
+
+const EMPTY_COPY_DISPLAY: CopyDisplay = { feedback: null, aria: '' };
 
 type ConfirmingQuickAction =
   | { kind: 'claim' }
@@ -289,8 +302,15 @@ export function TicketDetailPanel({
     queryKey: ['similar-tickets', ticketId],
     queryFn: () => fetchSimilarTickets(ticketId),
   });
-  const [copyFeedback, setCopyFeedback] = useState<CopyFeedback | null>(null);
-  const [ariaLiveMessage, setAriaLiveMessage] = useState('');
+  // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
+  // setTimeout だとアンマウント後にタイマーを仕掛けうる。
+  const {
+    value: copyDisplay,
+    show: showCopyDisplay,
+    clear: clearCopyDisplay,
+  } = useAutoClearedValue<CopyDisplay>(EMPTY_COPY_DISPLAY, COPY_FEEDBACK_MS);
+  const copyFeedback = copyDisplay.feedback;
+  const ariaLiveMessage = copyDisplay.aria;
   const [selectedChoice, setSelectedChoice] = useState<string | undefined>(
     undefined,
   );
@@ -319,7 +339,6 @@ export function TicketDetailPanel({
   const [expectedCurrentDescription, setExpectedCurrentDescription] =
     useState('');
   const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
-  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -336,8 +355,7 @@ export function TicketDetailPanel({
   }, []);
 
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
-    setCopyFeedback(null);
-    setAriaLiveMessage('');
+    clearCopyDisplay();
     resetDecisionAnswer();
     if (options?.clearSubmittedDecision === true) {
       setSubmittedDecision(null);
@@ -359,11 +377,7 @@ export function TicketDetailPanel({
     setDescriptionDraft('');
     setExpectedCurrentDescription('');
     setSessionLinkPickerOpen(false);
-    if (copyTimeoutRef.current !== null) {
-      clearTimeout(copyTimeoutRef.current);
-      copyTimeoutRef.current = null;
-    }
-  }, [resetDecisionAnswer]);
+  }, [clearCopyDisplay, resetDecisionAnswer]);
 
   useEffect(() => {
     resetFormState({ clearSubmittedDecision: true });
@@ -391,14 +405,6 @@ export function TicketDetailPanel({
   });
 
   useEffect(() => {
-    return () => {
-      if (copyTimeoutRef.current !== null) {
-        clearTimeout(copyTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     const commentCount = data?.commentCount;
     const prevCommentCount = prevCommentCountRef.current;
     prevCommentCountRef.current = commentCount;
@@ -416,37 +422,24 @@ export function TicketDetailPanel({
 
   const handleCopyCommand = useCallback(
     async (kind: BdCommandKind) => {
-      if (copyTimeoutRef.current !== null) {
-        clearTimeout(copyTimeoutRef.current);
-        copyTimeoutRef.current = null;
-      }
-
       const command = buildBdCommand(kind, ticketId, projectRootPath);
       const definition = BD_COMMAND_DEFINITIONS.find((entry) => entry.kind === kind);
 
       try {
         await copyTextToClipboard(command);
-        setCopyFeedback({ kind: 'success', command: kind });
-        setAriaLiveMessage(
-          `${definition?.label ?? 'コマンド'}をコピーしました`,
-        );
-        copyTimeoutRef.current = setTimeout(() => {
-          setCopyFeedback(null);
-          setAriaLiveMessage('');
-          copyTimeoutRef.current = null;
-        }, COPY_FEEDBACK_MS);
+        showCopyDisplay({
+          feedback: { kind: 'success', command: kind },
+          aria: `${definition?.label ?? 'コマンド'}をコピーしました`,
+        });
       } catch (copyError) {
         console.error('Failed to copy bd command', copyError);
-        setCopyFeedback({ kind: 'error' });
-        setAriaLiveMessage('コピーできませんでした');
-        copyTimeoutRef.current = setTimeout(() => {
-          setCopyFeedback(null);
-          setAriaLiveMessage('');
-          copyTimeoutRef.current = null;
-        }, COPY_FEEDBACK_MS);
+        showCopyDisplay({
+          feedback: { kind: 'error' },
+          aria: 'コピーできませんでした',
+        });
       }
     },
-    [projectRootPath, ticketId],
+    [projectRootPath, showCopyDisplay, ticketId],
   );
 
   const trimmedFreeform = freeformText.trim();

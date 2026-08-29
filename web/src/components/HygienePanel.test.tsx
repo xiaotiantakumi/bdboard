@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +23,21 @@ afterEach(() => {
 });
 
 const showUndoMock = vi.fn();
+
+/** HygienePanel.tsx の COPY_FEEDBACK_MS / REPAIR_FEEDBACK_MS と同じ値。 */
+const COPY_FEEDBACK_MS = 2000;
+const REPAIR_FEEDBACK_MS = 4000;
+
+/**
+ * spy 済みの window.setTimeout から、指定した遅延で仕掛けられたものだけ数える。
+ * React 自身も setTimeout を使うので、素の呼び出し回数では区別できない。
+ */
+function timersArmedWith(
+  spy: { mock: { calls: readonly unknown[][] } },
+  delayMs: number,
+): number {
+  return spy.mock.calls.filter((call) => call[1] === delayMs).length;
+}
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -139,7 +154,12 @@ function renderHygienePanel(
     </QueryClientProvider>,
   );
 
-  return { onSelectTicket, container: view.container, queryClient };
+  return {
+    onSelectTicket,
+    container: view.container,
+    queryClient,
+    unmount: view.unmount,
+  };
 }
 
 describe('HygienePanel', () => {
@@ -277,6 +297,55 @@ describe('HygienePanel', () => {
 
     expect(copyTextToClipboardMock).toHaveBeenCalledWith(cleanupScript);
     expect(await screen.findByText('掃除コマンドをコピーしました')).toBeInTheDocument();
+  });
+
+  it('does not arm a copy-feedback timer when the clipboard settles after unmount', async () => {
+    // bdboard-ty72: コピー結果の表示は copyTextToClipboard の継続から出るので、
+    // アンマウント後に解決すると、クリーンアップ済みのコンポーネントが新しい
+    // setTimeout を仕掛けてしまう。残ったタイマーは破棄済み jsdom で
+    // `window is not defined` を投げ、vitest はそれを「テスト環境破棄後の
+    // 未捕捉エラー」としてプロセスごと exit 1 にする (bdboard-ifff)。
+    const user = userEvent.setup();
+    let settleCopy: (() => void) | undefined;
+    copyTextToClipboardMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settleCopy = () => {
+            resolve();
+          };
+        }),
+    );
+
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-3tw.96',
+        kind: 'merged_leftover',
+        message: 'マージ済みだが worktree が残っています',
+        cleanup: {
+          repoRootPath: '/repo',
+          worktreePath: '/repo/.claude/worktrees/bdboard-3tw.96',
+          branchName: 'bd/bdboard-3tw.96',
+        },
+      }),
+    ]);
+
+    const { unmount } = renderHygienePanel();
+
+    await screen.findByText('残骸 worktree');
+    await user.click(screen.getByRole('button', { name: '掃除コマンドをコピー' }));
+    await waitFor(() => {
+      expect(copyTextToClipboardMock).toHaveBeenCalledTimes(1);
+    });
+
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    unmount();
+    settleCopy?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(timersArmedWith(setTimeoutSpy, COPY_FEEDBACK_MS)).toBe(0);
+    setTimeoutSpy.mockRestore();
   });
 
   it('does not render cleanup UI for issues without cleanup', async () => {
@@ -861,6 +930,51 @@ describe('HygienePanel repair actions', () => {
 
     const repairStatus = container.querySelector('.hygiene-panel-repair-status');
     expect(repairStatus).toHaveTextContent('保留を解除しました: bdboard-overdue');
+  });
+
+  it('does not arm a repair-status timer when the mutation settles after unmount', async () => {
+    // bdboard-ty72: 修復ステータスの表示は invalidateQueries を2本 await した
+    // 後に出るので、コピーと同じ経路でアンマウント後に走りうる。タイマーIDを
+    // ref に持っていても、クリーンアップはもう走り終わっている。
+    let settlePost: (() => void) | undefined;
+    postTicketQuickActionMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settlePost = () => {
+            resolve();
+          };
+        }),
+    );
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-overdue',
+        kind: 'overdue_defer',
+        message: 'overdue defer',
+        deferUntil: '2026-08-01',
+      }),
+    ]);
+
+    const { unmount } = renderHygienePanel();
+
+    await screen.findByRole('button', { name: '保留を解除' });
+    await user.click(screen.getByRole('button', { name: '保留を解除' }));
+    await user.click(screen.getByRole('button', { name: '確定: 保留を解除' }));
+    await waitFor(() => {
+      expect(postTicketQuickActionMock).toHaveBeenCalledTimes(1);
+    });
+
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    unmount();
+    settlePost?.();
+    await act(async () => {
+      // invalidateQueries を2本挟むので、マイクロタスクを数回流す。
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(timersArmedWith(setTimeoutSpy, REPAIR_FEEDBACK_MS)).toBe(0);
+    setTimeoutSpy.mockRestore();
   });
 
   it('does not show undo snackbar when deferUntil is missing on overdue_defer success', async () => {

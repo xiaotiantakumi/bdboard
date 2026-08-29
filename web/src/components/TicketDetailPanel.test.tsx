@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
+import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -311,6 +311,46 @@ describe('TicketDetailPanel bd commands', () => {
         "bd update 'bdboard-abc.1' --claim",
       );
     });
+  });
+
+  it('does not arm a copy-feedback timer when the clipboard settles after unmount', async () => {
+    // bdboard-ty72: コピー表示は writeText の継続から出るので、アンマウント後に
+    // 解決すると、クリーンアップ済みのコンポーネントが新しい setTimeout を
+    // 仕掛けてしまう。残ったタイマーは破棄済み jsdom で `window is not defined`
+    // を投げ、vitest はそれを「テスト環境破棄後の未捕捉エラー」として
+    // プロセスごと exit 1 にする (bdboard-ifff)。
+    const COPY_FEEDBACK_MS = 2000;
+    let settleCopy: (() => void) | undefined;
+    writeTextMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          settleCopy = () => {
+            resolve();
+          };
+        }),
+    );
+
+    const { unmount } = renderPanel(new Map());
+
+    await screen.findByRole('button', { name: /着手コマンドをコピー/ });
+    await user.click(screen.getByRole('button', { name: /着手コマンドをコピー/ }));
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledTimes(1);
+    });
+
+    // React 自身も setTimeout を使うので、この表示の遅延だけを見る。
+    const setTimeoutSpy = vi.spyOn(window, 'setTimeout');
+    unmount();
+    settleCopy?.();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const feedbackTimers = setTimeoutSpy.mock.calls.filter(
+      ([, delay]) => delay === COPY_FEEDBACK_MS,
+    );
+    expect(feedbackTimers).toHaveLength(0);
+    setTimeoutSpy.mockRestore();
   });
 
   it('shows an error message when clipboard copy fails', async () => {
