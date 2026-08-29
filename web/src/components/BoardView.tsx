@@ -185,7 +185,7 @@ export function BoardLanes({
         boardDnD.dndError !== '' && (
           <p className="error-message board-dnd-error">{boardDnD.dndError}</p>
         )}
-      <BoardKeyboardNavProvider onActivate={onCardClick}>
+      <BoardKeyboardNavProvider>
         <LanesRow
           lanes={lanes}
           board={board}

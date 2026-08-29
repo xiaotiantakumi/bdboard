@@ -40,11 +40,18 @@ export function useBoardKeyboardNav(): BoardKeyboardNavContextValue | null {
   return useContext(BoardKeyboardNavContext);
 }
 
-export function BoardKeyboardNavProvider(props: {
-  onActivate: (ticketId: string) => void;
+/**
+ * カードのキーボード移動 (j/k/h/l・Shift+j/k の範囲選択) を束ねる。
+ *
+ * Enter/Space での「活性化」(詳細パネルを開く) はここではなく CardItem 側の
+ * onClick / onKeyDown が担当する。以前は使われない onActivate prop がここに
+ * 生えていて、活性化の担当箇所を読み違える元になっていた (bdboard-cqj)。
+ */
+export function BoardKeyboardNavProvider({
+  children,
+}: {
   children: ReactNode;
 }): ReactElement {
-  const { children } = props;
   const laneCardsRef = useRef<Map<Lane, readonly string[]>>(new Map());
   const cardElementsRef = useRef<Map<string, HTMLElement>>(new Map());
   /** レーンごとに最後にフォーカスしていたカード ID（h/l で戻るときに復帰） */
