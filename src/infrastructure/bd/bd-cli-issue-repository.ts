@@ -2,12 +2,12 @@ import { runWithConcurrencyLimit } from '../../application/concurrency.js';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
 import {
   BdError,
-  type BdErrorKind,
   type IssueRepository,
   type ProjectTickets,
 } from '../../application/ports/issue-repository.js';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
+import { classifyBdError } from './classify-bd-error.js';
 import { withLockContentionRetry } from './bd-retry.js';
 import { collectPrefixes, mapBdListToTickets } from './bd-issue-mapper.js';
 
@@ -19,39 +19,6 @@ export interface BdCliOptions {
   readonly bdPath?: string;
   readonly timeoutMs?: number;
   readonly concurrency?: number;
-}
-
-function classifyBdError(
-  exitCode: number,
-  combinedOutput: string,
-): BdErrorKind {
-  // NOTE: "not a beads project" must be checked BEFORE the bd-not-found branch,
-  // because bd phrases that error as ".beads not found" and the generic
-  // 'not found' substring would otherwise swallow it.
-  if (
-    combinedOutput.includes('not a beads project') ||
-    combinedOutput.includes('no .beads') ||
-    combinedOutput.includes('.beads not found') ||
-    combinedOutput.includes('beads directory')
-  ) {
-    return 'not-a-beads-project';
-  }
-
-  if (
-    exitCode === 127 ||
-    exitCode === -1 ||
-    combinedOutput.includes('command not found') ||
-    combinedOutput.includes('enoent') ||
-    combinedOutput.includes('not found')
-  ) {
-    return 'bd-not-found';
-  }
-
-  if (combinedOutput.includes('lock')) {
-    return 'lock-contention';
-  }
-
-  return 'unknown';
 }
 
 function buildListArgs(rootPath: string): readonly string[] {

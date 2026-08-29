@@ -5,10 +5,8 @@ import type {
   PendingDecision,
   PendingDecisionOption,
 } from '../../application/ports/human-decisions.js';
-import {
-  BdError,
-  type BdErrorKind,
-} from '../../application/ports/issue-repository.js';
+import { BdError } from '../../application/ports/issue-repository.js';
+import { classifyBdError } from './classify-bd-error.js';
 import { withLockContentionRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
@@ -30,36 +28,6 @@ const bdHumanListItemSchema = z.object({
   id: z.string(),
   metadata: z.record(z.unknown()).optional(),
 });
-
-function classifyBdError(
-  exitCode: number,
-  combinedOutput: string,
-): BdErrorKind {
-  if (
-    combinedOutput.includes('not a beads project') ||
-    combinedOutput.includes('no .beads') ||
-    combinedOutput.includes('.beads not found') ||
-    combinedOutput.includes('beads directory')
-  ) {
-    return 'not-a-beads-project';
-  }
-
-  if (
-    exitCode === 127 ||
-    exitCode === -1 ||
-    combinedOutput.includes('command not found') ||
-    combinedOutput.includes('enoent') ||
-    combinedOutput.includes('not found')
-  ) {
-    return 'bd-not-found';
-  }
-
-  if (combinedOutput.includes('lock')) {
-    return 'lock-contention';
-  }
-
-  return 'unknown';
-}
 
 function buildListArgs(rootPath: string): readonly string[] {
   return [
