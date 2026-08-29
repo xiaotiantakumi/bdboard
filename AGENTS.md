@@ -440,7 +440,8 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
 - **Lifecycle**: `bd update <id> --claim` → create worktree+branch →
   implement → 機能追加/変更ならヘルプ原本 `docs/help-content.json` の追従を
   確認 (「Conventions & Patterns」の **ヘルプドキュメントの追従** 参照) →
-  `npm run verify` locally (must be clean before opening a PR) →
+  `npm run drift` (**Drift check** below) → `npm run verify` locally (must be
+  clean before opening a PR) →
   `gh pr create --fill --body "Closes: <ticket-id>\n\n<summary>"` →
   `bd comment <id> "PR: <url>"` → wait for CI green → merge per **Merge
   serialization** below (slot → CAS → `gh pr merge --squash --delete-branch`)
@@ -458,6 +459,31 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
   Tracked `.beads/` files (`.gitignore`, `README.md`, `config.yaml`,
   `hooks/*`, `interactions.jsonl`, `metadata.json`) only change via the
   `chore(beads)` main-direct exception above.
+- **Drift check** (`npm run drift`): prints the files that **both**
+  `origin/main` and your branch have touched since their merge-base, and
+  tells you to rebase now if there are any. Run it when you open the PR, and
+  again whenever the PR has been open for more than a few hours — including
+  right before you take the merge slot.
+
+  This exists because merge-slot and CAS do not cover it. Both guard the
+  *instant* of merging (did `main` move while CI ran?); neither sees the
+  changes that pile up on `main` during the hours a PR is open. bdboard-3tw.152
+  is the incident: [PR #86](https://github.com/xiaotiantakumi/bdboard/pull/86)
+  opened at 17:01 and merged the next day, and in one five-hour window that
+  morning five unrelated PRs landed on `main` touching the same
+  `StatusPill.tsx` and `index.css`. The final rebase hit real text conflicts.
+  Running `npm run drift` that morning would have named both files.
+
+  It fetches `origin/main` first (a drift check against a stale remote is
+  worthless); `npm run drift -- --no-fetch` skips that when offline. It
+  **always exits 0** and never blocks — overlapping files are an upper bound
+  on where a conflict could occur, not a prediction that one will (separate
+  hunks in the same file rebase cleanly). Making it a gate would produce
+  false stops and get it ignored.
+
+  There is deliberately **no hand-maintained "hot file" list**. Which files
+  are hot changes week to week, and a list in this document would go stale;
+  computing it from the merge-base is always current.
 - **Merge serialization**: merge one PR at a time. Whoever holds merge
   rights updates/rebases the next queued PR's branch and re-waits for CI
   before merging it — this is what catches semantic conflicts between two
@@ -467,6 +493,9 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
   spelled out rather than left to judgement. Run these in order for every
   merge:
 
+  0. **Check for drift** — `npm run drift`. If it names files, rebase and
+     re-run CI before taking the slot; taking it first just makes peers wait
+     while you rebase.
   1. **Take the slot** — `bd merge-slot acquire` (the `bdboard-merge-slot`
      bead already exists; `bd merge-slot create` is a one-time setup that has
      been done). Release it with `bd merge-slot release` when the merge is
@@ -488,7 +517,8 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
      revert.
 
   Steps 1 and 3 are conventions other sessions must also follow; step 2
-  protects you regardless of what they do.
+  protects you regardless of what they do. Step 0 protects only you, but it
+  is the only one that catches a conflict *before* it has cost you a CI run.
 - **Cleanup after merge** (the merging session's responsibility):
   `git worktree remove .claude/worktrees/<id>` → `git branch -d bd/<id>` →
   `git remote prune origin` → restart the always-on server per "Always-On
