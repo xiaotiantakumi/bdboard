@@ -1,11 +1,9 @@
 import type { CommandRunner } from '../../application/ports/command-runner.js';
-import {
-  BdError,
-  type BdErrorKind,
-} from '../../application/ports/issue-repository.js';
+import { BdError } from '../../application/ports/issue-repository.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import { isSafeCliArgument, isValidBdTicketId } from '../../domain/chat.js';
 import { SESSION_LINK_METADATA_KEY } from '../../domain/ticket-session-link.js';
+import { classifyBdError } from './classify-bd-error.js';
 import { withLockContentionRetry } from './bd-retry.js';
 
 export { SESSION_LINK_METADATA_KEY } from '../../domain/ticket-session-link.js';
@@ -16,36 +14,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export interface BdCliSessionLinkWriterOptions {
   readonly bdPath?: string;
   readonly timeoutMs?: number;
-}
-
-function classifyBdError(
-  exitCode: number,
-  combinedOutput: string,
-): BdErrorKind {
-  if (
-    combinedOutput.includes('not a beads project') ||
-    combinedOutput.includes('no .beads') ||
-    combinedOutput.includes('.beads not found') ||
-    combinedOutput.includes('beads directory')
-  ) {
-    return 'not-a-beads-project';
-  }
-
-  if (
-    exitCode === 127 ||
-    exitCode === -1 ||
-    combinedOutput.includes('command not found') ||
-    combinedOutput.includes('enoent') ||
-    combinedOutput.includes('not found')
-  ) {
-    return 'bd-not-found';
-  }
-
-  if (combinedOutput.includes('lock')) {
-    return 'lock-contention';
-  }
-
-  return 'unknown';
 }
 
 // NOTE(bdboard-3tj): `bd update --set-metadata k=v` / `--unset-metadata k` は

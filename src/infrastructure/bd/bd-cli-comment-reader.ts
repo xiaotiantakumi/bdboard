@@ -1,12 +1,10 @@
 import type { CommandRunner } from '../../application/ports/command-runner.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
-import {
-  BdError,
-  type BdErrorKind,
-} from '../../application/ports/issue-repository.js';
+import { BdError } from '../../application/ports/issue-repository.js';
 import type { IssueComment } from '../../domain/issue-comment.js';
 import type { TicketId } from '../../domain/ticket-id.js';
 import { bdCommentListSchema, type BdComment } from './bd-issue-schema.js';
+import { classifyBdError } from './classify-bd-error.js';
 import { withLockContentionRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
@@ -15,36 +13,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export interface BdCliCommentReaderOptions {
   readonly bdPath?: string;
   readonly timeoutMs?: number;
-}
-
-function classifyBdError(
-  exitCode: number,
-  combinedOutput: string,
-): BdErrorKind {
-  if (
-    combinedOutput.includes('not a beads project') ||
-    combinedOutput.includes('no .beads') ||
-    combinedOutput.includes('.beads not found') ||
-    combinedOutput.includes('beads directory')
-  ) {
-    return 'not-a-beads-project';
-  }
-
-  if (
-    exitCode === 127 ||
-    exitCode === -1 ||
-    combinedOutput.includes('command not found') ||
-    combinedOutput.includes('enoent') ||
-    combinedOutput.includes('not found')
-  ) {
-    return 'bd-not-found';
-  }
-
-  if (combinedOutput.includes('lock')) {
-    return 'lock-contention';
-  }
-
-  return 'unknown';
 }
 
 function buildCommentsArgs(
