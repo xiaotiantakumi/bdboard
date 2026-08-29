@@ -178,7 +178,12 @@ describe('NodeStreamingCommandRunner', () => {
         // すでに居なければ何もしない(ベストエフォートな後始末)。
       }
     }
-  });
+    // vitest の既定タイムアウト(5秒)より長く待てるようにしておく
+    // (bdboard-dvt)。バックストップが壊れると settle は孫の寿命(8秒)まで
+    // 延びるが、そこで「テストがタイムアウトした」と言われるより、
+    // 上の elapsedMs の assertion が「遅すぎる」と言って落ちるほうが原因に
+    // 直結する。
+  }, 15_000);
 
   it('kills grandchild processes in the same process group on timeout', async () => {
     const childScript =
