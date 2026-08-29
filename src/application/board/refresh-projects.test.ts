@@ -108,25 +108,53 @@ function createFakeDeps(options: {
     },
   };
 
+  async function listTickets(p: Project): Promise<ProjectTickets> {
+    listTicketsCalls.push(p.id);
+    if (options.listTicketsThrows?.[p.id] !== undefined) {
+      throw options.listTicketsThrows[p.id];
+    }
+    if (options.listTicketsImpl !== undefined) {
+      return options.listTicketsImpl(p);
+    }
+    return {
+      project: { ...p, prefixes: ['bdboard'] },
+      tickets: [makeTicket({ id: 'bdboard-1', projectId: p.id })],
+    };
+  }
+
   const repository: IssueRepository = {
-    async listTickets(p: Project): Promise<ProjectTickets> {
-      listTicketsCalls.push(p.id);
-      if (options.listTicketsThrows?.[p.id] !== undefined) {
-        throw options.listTicketsThrows[p.id];
-      }
-      if (options.listTicketsImpl !== undefined) {
-        return options.listTicketsImpl(p);
-      }
-      return {
-        project: { ...p, prefixes: ['bdboard'] },
-        tickets: [makeTicket({ id: 'bdboard-1', projectId: p.id })],
-      };
-    },
-    async listAll(): Promise<{
+    listTickets,
+
+    // 本番実装(bd-cli-issue-repository)と同じ契約: 失敗したプロジェクトは
+    // 例外を投げず errors に集め、成功した ProjectTickets.warnings も errors に
+    // まとめ込む。並列度は問わずテストでは単純に Promise.all で良い。
+    async listAll(projects: readonly Project[]): Promise<{
       readonly results: readonly ProjectTickets[];
       readonly errors: readonly BdError[];
     }> {
-      return { results: [], errors: [] };
+      const results: ProjectTickets[] = [];
+      const errors: BdError[] = [];
+
+      await Promise.all(
+        projects.map(async (p) => {
+          try {
+            const ticket = await listTickets(p);
+            results.push(ticket);
+            if (ticket.warnings !== undefined) {
+              errors.push(...ticket.warnings);
+            }
+          } catch (err) {
+            if (err instanceof BdError) {
+              errors.push(err);
+            } else {
+              const detail = err instanceof Error ? err.message : String(err);
+              errors.push(new BdError('unknown', p.id, detail));
+            }
+          }
+        }),
+      );
+
+      return { results, errors };
     },
   };
 

@@ -35,7 +35,13 @@ export interface IssueRepository {
   /** 1プロジェクトのチケット全件を取得 */
   listTickets(project: Project): Promise<ProjectTickets>;
 
-  /** 複数プロジェクトを並列度制限つきで取得。失敗したプロジェクトは errors に入れ、全体は落とさない */
+  /**
+   * 複数プロジェクトを並列度制限つきで取得。失敗したプロジェクトは例外を投げず
+   * errors に入れ、全体は落とさない。契約: 成功した ProjectTickets が
+   * warnings を持つ場合(壊れた行の読み飛ばし等の部分失敗)、実装はそれも
+   * errors にまとめ込むこと — 呼び出し元は results[].warnings を個別に
+   * 見る必要がない前提で組む (bd-cli-issue-repository の実装を参照)。
+   */
   listAll(projects: readonly Project[]): Promise<{
     readonly results: readonly ProjectTickets[];
     readonly errors: readonly BdError[];
