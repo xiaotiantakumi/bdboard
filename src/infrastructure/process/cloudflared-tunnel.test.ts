@@ -2,9 +2,12 @@ import fs, { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as tunnelModule from './cloudflared-tunnel.js';
 import {
+  appendStartupOutputBuffer,
   createCloudflaredTunnel,
   resolveDefaultTunnelLogFilePath,
+  STARTUP_OUTPUT_BUFFER_MAX_BYTES,
   type LogSink,
 } from './cloudflared-tunnel.js';
 import { createFakeSpawnedProcess } from './cloudflared-tunnel.test-support.js';
@@ -365,6 +368,50 @@ describe('createCloudflaredTunnel', () => {
     expect(unexpectedExit).not.toHaveBeenCalled();
   });
 
+  it('does not append to the startup output buffer after the tunnel URL is settled', async () => {
+    const fake = createFakeSpawnedProcess();
+    const appendSpy = vi.spyOn(tunnelModule, 'appendStartupOutputBuffer');
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/bin/cloudflared',
+      spawnFn: () => fake,
+      createLogSink: () => createFakeLogSink(),
+    });
+
+    const startPromise = tunnel.start();
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await startPromise;
+    appendSpy.mockClear();
+
+    fake.emitStdout('connection registered\n');
+    fake.emitStderr('reconnecting\n');
+
+    expect(appendSpy).not.toHaveBeenCalled();
+    appendSpy.mockRestore();
+  });
+
+  it('caps startup output buffer while waiting for the tunnel URL', async () => {
+    vi.useFakeTimers();
+    const fake = createFakeSpawnedProcess();
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/bin/cloudflared',
+      spawnFn: () => fake,
+      startTimeoutMs: 5000,
+      createLogSink: () => createFakeLogSink(),
+    });
+
+    const startPromise = tunnel.start();
+    const bigChunk = 'x'.repeat(100 * 1024);
+    for (let i = 0; i < 5; i += 1) {
+      fake.emitStdout(bigChunk);
+    }
+
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(startPromise).resolves.toEqual({ url: TUNNEL_URL });
+  });
+
   it('writes continuous output to the log sink and closes it when the process exits', async () => {
     const fake = createFakeSpawnedProcess();
     const sink = createFakeLogSink();
@@ -650,6 +697,25 @@ describe('default log path wiring', () => {
     await startPromise;
 
     expect(seen).toEqual([resolveDefaultTunnelLogFilePath()]);
+  });
+});
+
+describe('appendStartupOutputBuffer', () => {
+  it('keeps the tail when the combined buffer exceeds the limit', () => {
+    const maxBytes = 10;
+    const buffer = '0123456789';
+    const result = appendStartupOutputBuffer(buffer, 'abcdef', maxBytes);
+
+    expect(result).toBe('6789abcdef');
+    expect(result.length).toBeLessThanOrEqual(maxBytes);
+  });
+
+  it('defaults to STARTUP_OUTPUT_BUFFER_MAX_BYTES', () => {
+    const chunk = 'y'.repeat(STARTUP_OUTPUT_BUFFER_MAX_BYTES + 1);
+    const result = appendStartupOutputBuffer('', chunk);
+
+    expect(result.length).toBe(STARTUP_OUTPUT_BUFFER_MAX_BYTES);
+    expect(result).toBe(chunk.slice(-STARTUP_OUTPUT_BUFFER_MAX_BYTES));
   });
 });
 

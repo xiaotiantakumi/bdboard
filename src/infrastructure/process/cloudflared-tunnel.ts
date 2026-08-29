@@ -12,6 +12,8 @@ const TRY_CLOUDFLARE_URL_PATTERN =
 
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 const DEFAULT_STOP_GRACE_MS = 5_000;
+/** URL 待ち中の stdout/stderr 蓄積上限。超過分は末尾を残して切り詰める。 */
+export const STARTUP_OUTPUT_BUFFER_MAX_BYTES = 256 * 1024;
 /**
  * cloudflared のログ既定パスを解決する。
  *
@@ -177,9 +179,18 @@ function resolveCloudflaredInPath(
   return null;
 }
 
-function appendChunk(buffer: string, chunk: Buffer | string): string {
+export function appendStartupOutputBuffer(
+  buffer: string,
+  chunk: Buffer | string,
+  maxBytes: number = STARTUP_OUTPUT_BUFFER_MAX_BYTES,
+): string {
   const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-  return buffer + text;
+  const combined = buffer + text;
+  if (combined.length <= maxBytes) {
+    return combined;
+  }
+  // URL がチャンク境界で分割されるケースに備え、古い先頭を捨てて末尾を残す。
+  return combined.slice(combined.length - maxBytes);
 }
 
 function extractTunnelUrl(buffer: string): string | null {
@@ -359,9 +370,14 @@ export function createCloudflaredTunnel(
         const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
         logSink.write(maskSecrets(text));
 
-        outputBuffer = appendChunk(outputBuffer, chunk);
+        if (settled) {
+          return;
+        }
+
+        outputBuffer = appendStartupOutputBuffer(outputBuffer, chunk);
         const url = extractTunnelUrl(outputBuffer);
         if (url !== null) {
+          outputBuffer = '';
           succeed(url);
         }
       };
