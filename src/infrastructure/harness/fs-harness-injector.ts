@@ -9,6 +9,7 @@ import {
 import {
   appendGitignoreEntries,
   GITIGNORE_FILENAME,
+  isPathInside,
   MANIFEST_RELATIVE_PATH,
   resolveUnderClaudeDir,
   skillInstallRelativePath,
@@ -134,6 +135,36 @@ async function removeStaleFile(
   }
 }
 
+/** 実体パスに解決する。解決できない (未作成など) ときは正規化した元のパスを返す。 */
+async function resolveRealPath(target: string): Promise<string> {
+  try {
+    return await fs.promises.realpath(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
+/**
+ * 注入先がパック原本 (`packsRoot`) を抱えている repo 自身か。
+ *
+ * bdboard 自身は `.claude/bdboard-packs.json` と `.claude/skills/<pack>/` を git
+ * 追跡しているため (p5l.7 の裁定)、Hygiene パネルから自己再注入したときに
+ * `.gitignore` へ管理行が入ると、以後パックにファイルを足しても git add から
+ * 静かに漏れる。自己注入と判定できたときは .gitignore を触らない (bdboard-x32)。
+ *
+ * realpath まで見るのは macOS の `/var` -> `/private/var` のように、同じ場所を
+ * 指す別表記でプロジェクトが登録されていても取りこぼさないため。解決に失敗した
+ * 場合は正規化した元のパスで比べる — その場合の最悪は「自己注入を見逃して
+ * 従来どおり追記する」で、現状より悪くはならない。
+ */
+async function isSelfInjection(projectRootPath: string, packsRoot: string): Promise<boolean> {
+  const [projectReal, packsReal] = await Promise.all([
+    resolveRealPath(projectRootPath),
+    resolveRealPath(packsRoot),
+  ]);
+  return isPathInside(projectReal, packsReal);
+}
+
 export function createFsHarnessInjector(options: {
   readonly packsRoot: string;
 }): HarnessInjectorPort {
@@ -245,10 +276,12 @@ export function createFsHarnessInjector(options: {
         throw new HarnessInjectionError('failed to write harness manifest', error);
       }
 
-      try {
-        await updateGitignoreForPack(projectRootPath, pack.name);
-      } catch (error) {
-        throw new HarnessInjectionError('failed to update .gitignore for harness pack', error);
+      if (!(await isSelfInjection(projectRootPath, packsRoot))) {
+        try {
+          await updateGitignoreForPack(projectRootPath, pack.name);
+        } catch (error) {
+          throw new HarnessInjectionError('failed to update .gitignore for harness pack', error);
+        }
       }
 
       return manifest;

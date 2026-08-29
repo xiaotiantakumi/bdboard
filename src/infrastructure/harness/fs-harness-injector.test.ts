@@ -4,6 +4,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -32,6 +33,18 @@ describe('createFsHarnessInjector', () => {
     packsRoot = path.join(tmpDir, 'packs');
     projectRoot = path.join(tmpDir, 'project');
     mkdirSync(projectRoot, { recursive: true });
+    return createFsHarnessInjector({ packsRoot });
+  }
+
+  /**
+   * 注入先が「パック原本を抱えている repo 自身」になる配置 (bdboard-x32)。
+   * packsRoot を projectRoot の内側に置くことで自己再注入を再現する。
+   */
+  function setupSelfInjectionFixture(): ReturnType<typeof createFsHarnessInjector> {
+    tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-harness-self-'));
+    projectRoot = path.join(tmpDir, 'bdboard');
+    packsRoot = path.join(projectRoot, 'harness', 'packs');
+    mkdirSync(packsRoot, { recursive: true });
     return createFsHarnessInjector({ packsRoot });
   }
 
@@ -355,4 +368,92 @@ describe('createFsHarnessInjector', () => {
     expect(lines.filter((line) => line === '.claude/skills/alpha-pack/')).toHaveLength(1);
     expect(lines.filter((line) => line === '.claude/skills/beta-pack/')).toHaveLength(1);
   });
+
+  it('does not touch .gitignore when injecting into the repo that owns the packs (bdboard-x32)', async () => {
+    const injector = setupSelfInjectionFixture();
+    writePack('bdboard-harness', '0.1.0', {
+      'SKILL.md': '# harness',
+    });
+    writeFileSync(path.join(projectRoot, '.gitignore'), 'node_modules/\ndist/\n', 'utf8');
+
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'bdboard-harness',
+        version: '0.1.0',
+        description: 'harness',
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-08-29T09:00:00.000Z'),
+    );
+
+    // 注入自体は行われる — 抑止するのは .gitignore への追記だけ。
+    expect(
+      existsSync(path.join(projectRoot, '.claude', 'skills', 'bdboard-harness', 'SKILL.md')),
+    ).toBe(true);
+    expect(existsSync(path.join(projectRoot, MANIFEST_RELATIVE_PATH))).toBe(true);
+
+    const gitignore = readFileSync(path.join(projectRoot, '.gitignore'), 'utf8');
+    expect(gitignore).toBe('node_modules/\ndist/\n');
+    expect(gitignore).not.toContain(GITIGNORE_MANAGED_HEADER);
+    expect(gitignore).not.toContain(MANIFEST_RELATIVE_PATH);
+  });
+
+  it('does not create a .gitignore on self-injection when none exists (bdboard-x32)', async () => {
+    const injector = setupSelfInjectionFixture();
+    writePack('bdboard-harness', '0.1.0', {
+      'SKILL.md': '# harness',
+    });
+
+    await injector.injectPack(
+      projectRoot,
+      {
+        name: 'bdboard-harness',
+        version: '0.1.0',
+        description: 'harness',
+        files: [{ relativePath: 'SKILL.md' }],
+      },
+      new Date('2026-08-29T09:00:00.000Z'),
+    );
+
+    expect(existsSync(path.join(projectRoot, '.gitignore'))).toBe(false);
+  });
+
+
+  // Windows の symlink 作成には権限が要るので、そこでは走らせない。
+  it.skipIf(process.platform === 'win32')(
+    'detects self-injection through a symlinked project path (bdboard-x32)',
+    async () => {
+      tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-harness-symlink-'));
+      const realProjectRoot = path.join(tmpDir, 'real-bdboard');
+      packsRoot = path.join(realProjectRoot, 'harness', 'packs');
+      mkdirSync(packsRoot, { recursive: true });
+      // 同じ場所を指す別表記でプロジェクトが登録されている状況 (macOS の
+      // /var -> /private/var など) を symlink で再現する。
+      const linkedProjectRoot = path.join(tmpDir, 'linked-bdboard');
+      symlinkSync(realProjectRoot, linkedProjectRoot, 'dir');
+      projectRoot = linkedProjectRoot;
+
+      const injector = createFsHarnessInjector({ packsRoot });
+      writePack('bdboard-harness', '0.1.0', {
+        'SKILL.md': '# harness',
+      });
+      writeFileSync(path.join(realProjectRoot, '.gitignore'), 'node_modules/\n', 'utf8');
+
+      await injector.injectPack(
+        linkedProjectRoot,
+        {
+          name: 'bdboard-harness',
+          version: '0.1.0',
+          description: 'harness',
+          files: [{ relativePath: 'SKILL.md' }],
+        },
+        new Date('2026-08-29T09:00:00.000Z'),
+      );
+
+      const gitignore = readFileSync(path.join(realProjectRoot, '.gitignore'), 'utf8');
+      expect(gitignore).toBe('node_modules/\n');
+    },
+  );
+
 });
