@@ -183,6 +183,7 @@ describe('createApiRoutes', () => {
     expect(body.lastRefreshAt).toBe(NOW.toISOString());
     expect(body.projectCount).toBe(0);
     expect(body.errors).toEqual([]);
+    expect(body.boardTimeZone).toBeNull();
   });
 
   it('returns projects sorted by rootPath', async () => {

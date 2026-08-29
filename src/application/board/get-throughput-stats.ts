@@ -1,6 +1,13 @@
+import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { MS_PER_DAY } from './board-date-time.js';
+import {
+  buildWeekStarts,
+  isInWeek,
+  isInWeekRange,
+} from './week-boundary.js';
 
 export interface WeeklyCloseCount {
   readonly weekStart: Date;
@@ -32,10 +39,10 @@ export interface GetThroughputStatsOptions {
   /** 指定されたIDのみ。未指定なら全部 */
   readonly projectIds?: readonly string[];
   readonly weeks?: number;
+  readonly timeZone?: string;
 }
 
 const DEFAULT_WEEKS = 8;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const EMPTY_AGE_DISTRIBUTION: AgeDistribution = {
   d0to1: 0,
@@ -43,51 +50,6 @@ const EMPTY_AGE_DISTRIBUTION: AgeDistribution = {
   d7to30: 0,
   d30plus: 0,
 };
-
-function startOfWeekMonday(date: Date): Date {
-  const weekStart = new Date(date);
-  const day = weekStart.getDay();
-  const daysSinceMonday = day === 0 ? 6 : day - 1;
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
-  return weekStart;
-}
-
-function buildWeekStarts(now: Date, weeks: number): readonly Date[] {
-  const currentWeekStart = startOfWeekMonday(now);
-  const weekStarts: Date[] = [];
-
-  for (let index = weeks - 1; index >= 0; index -= 1) {
-    const weekStart = new Date(currentWeekStart);
-    weekStart.setDate(weekStart.getDate() - index * 7);
-    weekStarts.push(weekStart);
-  }
-
-  return weekStarts;
-}
-
-function isInWeek(at: Date, weekStart: Date): boolean {
-  const timestamp = at.getTime();
-  const start = weekStart.getTime();
-  const end = start + 7 * MS_PER_DAY;
-  return timestamp >= start && timestamp < end;
-}
-
-function isInWeekRange(at: Date, weekStarts: readonly Date[]): boolean {
-  if (weekStarts.length === 0) {
-    return false;
-  }
-
-  const rangeStart = weekStarts[0]?.getTime() ?? 0;
-  const lastWeekStart = weekStarts[weekStarts.length - 1];
-  const rangeEnd =
-    lastWeekStart !== undefined
-      ? lastWeekStart.getTime() + 7 * MS_PER_DAY
-      : rangeStart;
-
-  const timestamp = at.getTime();
-  return timestamp >= rangeStart && timestamp < rangeEnd;
-}
 
 function createEmptyWeeklyCloses(weekStarts: readonly Date[]): WeeklyCloseCount[] {
   return weekStarts.map((weekStart) => ({ weekStart, count: 0 }));
@@ -187,7 +149,8 @@ export function getThroughputStats(
   options?: GetThroughputStatsOptions,
 ): ThroughputStats {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
-  const weekStarts = buildWeekStarts(now, weeks);
+  const timeZone = options?.timeZone ?? getBoardTimeZone();
+  const weekStarts = buildWeekStarts(now, weeks, timeZone);
   const projectIdFilter = options?.projectIds;
 
   let entries = cache.listProjects();

@@ -1,37 +1,55 @@
-// This app is single-user (JST) and its date/time labels are meant to read
-// as JST regardless of the host process's own timezone — the host varies
-// between local dev (JST) and CI (UTC), so date-boundary math must be
-// pinned to Asia/Tokyo rather than using Date's local-timezone accessors
-// (getFullYear/getMonth/getDate/getHours/getMinutes), which silently follow
-// whatever TZ the process happens to run in (see bdboard-3tw.75).
-const JST_TIME_ZONE = 'Asia/Tokyo';
+// Date/time labels follow a configurable board timezone rather than the host
+// process timezone. The host varies between local dev and CI (UTC), so
+// date-boundary math must pin to an explicit IANA zone via Intl (see bdboard-3tw.75).
+import { getBoardTimeZone } from '../boardTimeZone';
+
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-// en-CA formats as YYYY-MM-DD, which is exactly the key format we want.
-const jstDateKeyFormatter = new Intl.DateTimeFormat('en-CA', {
-  timeZone: JST_TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-});
+const dateKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
 
-const jstTimeFormatter = new Intl.DateTimeFormat('ja-JP', {
-  timeZone: JST_TIME_ZONE,
-  hour: '2-digit',
-  minute: '2-digit',
-  hourCycle: 'h23',
-});
-
-export function localDateKey(date: Date): string {
-  return jstDateKeyFormatter.format(date);
+function getDateKeyFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = dateKeyFormatters.get(timeZone);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    dateKeyFormatters.set(timeZone, formatter);
+  }
+  return formatter;
 }
 
-export function formatActivityDateHeading(date: Date, now: Date): string {
-  const dateKey = localDateKey(date);
-  const todayKey = localDateKey(now);
-  // Shift by exactly 24h in absolute time rather than Date's local-TZ
-  // setDate/getDate, so this stays decoupled from the host's timezone too.
-  const yesterdayKey = localDateKey(new Date(now.getTime() - ONE_DAY_MS));
+function getTimeFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = timeFormatters.get(timeZone);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat('ja-JP', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    });
+    timeFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+export function localDateKey(date: Date, timeZone?: string): string {
+  const zone = timeZone ?? getBoardTimeZone();
+  return getDateKeyFormatter(zone).format(date);
+}
+
+export function formatActivityDateHeading(
+  date: Date,
+  now: Date,
+  timeZone?: string,
+): string {
+  const zone = timeZone ?? getBoardTimeZone();
+  const dateKey = localDateKey(date, zone);
+  const todayKey = localDateKey(now, zone);
+  const yesterdayKey = localDateKey(new Date(now.getTime() - ONE_DAY_MS), zone);
 
   if (dateKey === todayKey) {
     return '今日';
@@ -42,8 +60,9 @@ export function formatActivityDateHeading(date: Date, now: Date): string {
   return dateKey;
 }
 
-export function formatActivityTime(date: Date): string {
-  const parts = jstTimeFormatter.formatToParts(date);
+export function formatActivityTime(date: Date, timeZone?: string): string {
+  const zone = timeZone ?? getBoardTimeZone();
+  const parts = getTimeFormatter(zone).formatToParts(date);
   const hour = parts.find((part) => part.type === 'hour')?.value ?? '00';
   const minute = parts.find((part) => part.type === 'minute')?.value ?? '00';
   return `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
@@ -66,14 +85,16 @@ export interface ActivityDateGroup<T extends { at: string }> {
 export function groupEventsByDate<T extends { at: string }>(
   events: readonly T[],
   now: Date,
+  timeZone?: string,
 ): readonly ActivityDateGroup<T>[] {
+  const zone = timeZone ?? getBoardTimeZone();
   const groups = new Map<string, T[]>();
   const headings = new Map<string, string>();
 
   for (const event of events) {
     const at = new Date(event.at);
-    const key = localDateKey(at);
-    const heading = formatActivityDateHeading(at, now);
+    const key = localDateKey(at, zone);
+    const heading = formatActivityDateHeading(at, now, zone);
 
     if (!groups.has(key)) {
       groups.set(key, []);

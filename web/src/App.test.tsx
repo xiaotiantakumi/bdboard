@@ -383,6 +383,7 @@ describe('App ticket deep link', () => {
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
       projectCount: 1,
+      boardTimeZone: null,
     } satisfies StatusDto);
     fetchBoardMock.mockResolvedValue(emptyBoard);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
@@ -443,6 +444,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
       projectCount: 1,
+      boardTimeZone: null,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
@@ -581,6 +583,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
       projectCount: 1,
+      boardTimeZone: null,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
@@ -733,6 +736,7 @@ describe('header help overlays', () => {
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
       projectCount: 1,
+      boardTimeZone: null,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
@@ -862,6 +866,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
       lastRefreshAt: '2026-01-01T00:00:00.000Z',
       errors: [],
       projectCount: 1,
+      boardTimeZone: null,
     } satisfies StatusDto);
     fetchBoardMock.mockResolvedValue({
       ...emptyBoard,

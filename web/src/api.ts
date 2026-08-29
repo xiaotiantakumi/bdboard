@@ -14,6 +14,8 @@ export interface StatusDto {
   lastRefreshAt: string | null;
   errors: { kind: string; projectId: string; detail: string }[];
   projectCount: number;
+  /** Set only when BDBOARD_TIMEZONE overrides the host timezone. */
+  boardTimeZone: string | null;
 }
 
 export interface TicketSummaryDto {

@@ -1,6 +1,12 @@
+import { getBoardTimeZone } from '../../config/board-timezone.js';
 import { KNOWN_STAGE_ORDER } from '../../domain/ticket-model.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import {
+  buildWeekStarts,
+  isInWeek,
+  isInWeekRange,
+} from './week-boundary.js';
 
 export interface WeeklyModelCloseCounts {
   readonly weekStart: Date;
@@ -22,55 +28,10 @@ export interface ModelStats {
 export interface GetModelStatsOptions {
   readonly projectIds?: readonly string[];
   readonly weeks?: number;
+  readonly timeZone?: string;
 }
 
 const DEFAULT_WEEKS = 8;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-function startOfWeekMonday(date: Date): Date {
-  const weekStart = new Date(date);
-  const day = weekStart.getDay();
-  const daysSinceMonday = day === 0 ? 6 : day - 1;
-  weekStart.setHours(0, 0, 0, 0);
-  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
-  return weekStart;
-}
-
-function buildWeekStarts(now: Date, weeks: number): readonly Date[] {
-  const currentWeekStart = startOfWeekMonday(now);
-  const weekStarts: Date[] = [];
-
-  for (let index = weeks - 1; index >= 0; index -= 1) {
-    const weekStart = new Date(currentWeekStart);
-    weekStart.setDate(weekStart.getDate() - index * 7);
-    weekStarts.push(weekStart);
-  }
-
-  return weekStarts;
-}
-
-function isInWeek(at: Date, weekStart: Date): boolean {
-  const timestamp = at.getTime();
-  const start = weekStart.getTime();
-  const end = start + 7 * MS_PER_DAY;
-  return timestamp >= start && timestamp < end;
-}
-
-function isInWeekRange(at: Date, weekStarts: readonly Date[]): boolean {
-  if (weekStarts.length === 0) {
-    return false;
-  }
-
-  const rangeStart = weekStarts[0]?.getTime() ?? 0;
-  const lastWeekStart = weekStarts[weekStarts.length - 1];
-  const rangeEnd =
-    lastWeekStart !== undefined
-      ? lastWeekStart.getTime() + 7 * MS_PER_DAY
-      : rangeStart;
-
-  const timestamp = at.getTime();
-  return timestamp >= rangeStart && timestamp < rangeEnd;
-}
 
 function createEmptyWeeklyModelCloses(
   weekStarts: readonly Date[],
@@ -199,7 +160,8 @@ export function getModelStats(
   options?: GetModelStatsOptions,
 ): ModelStats {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
-  const weekStarts = buildWeekStarts(now, weeks);
+  const timeZone = options?.timeZone ?? getBoardTimeZone();
+  const weekStarts = buildWeekStarts(now, weeks, timeZone);
   const tickets = collectTickets(cache, options?.projectIds);
 
   return {
