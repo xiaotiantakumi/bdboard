@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  addCalendarDaysToDateKey,
-  localDateKey,
-  zonedMidnight,
-} from './board-date-time.js';
+import { localDateKey, zonedMidnight } from './board-date-time.js';
 import {
   buildWeekStarts,
   isInWeek,
@@ -11,17 +7,22 @@ import {
   startOfWeekMonday,
 } from './week-boundary.js';
 
+function addDaysToDateKeyCanonically(dateKey: string, days: number): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 function endOfLocalDay(dateKey: string, timeZone: string): Date {
-  const nextDayKey = addCalendarDaysToDateKey(dateKey, 1, timeZone);
+  const nextDayKey = addDaysToDateKeyCanonically(dateKey, 1);
   return new Date(zonedMidnight(nextDayKey, timeZone).getTime() - 1);
 }
 
 function weekSundayKey(weekStart: Date, timeZone: string): string {
-  return addCalendarDaysToDateKey(localDateKey(weekStart, timeZone), 6, timeZone);
+  return addDaysToDateKeyCanonically(localDateKey(weekStart, timeZone), 6);
 }
 
 function nextWeekMondayStart(weekStart: Date, timeZone: string): Date {
-  const nextMondayKey = addCalendarDaysToDateKey(localDateKey(weekStart, timeZone), 7, timeZone);
+  const nextMondayKey = addDaysToDateKeyCanonically(localDateKey(weekStart, timeZone), 7);
   return zonedMidnight(nextMondayKey, timeZone);
 }
 
