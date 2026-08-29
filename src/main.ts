@@ -10,6 +10,7 @@ import { refreshProjects } from './application/board/refresh-projects.js';
 import type { RefreshResult } from './application/board/refresh-projects.js';
 import { runBdVersionStartupCheck } from './application/bd/run-bd-version-startup-check.js';
 import { runInitialRefresh } from './application/board/run-initial-refresh.js';
+import { runUnattendedRefresh } from './application/board/run-unattended-refresh.js';
 import { recordCfdSnapshot, pruneOldCfdSnapshots } from './application/board/record-cfd-snapshot.js';
 import { createShutdownDrain } from './application/board/shutdown-drain.js';
 import {
@@ -714,7 +715,7 @@ async function main(): Promise<void> {
     .listProjects()
     .map((entry) => entry.project);
   const watchHandle = await watcher.watch(initialWatchedProjects, () => {
-    void runRefresh(false);
+    void runUnattendedRefresh({ refresh: () => runRefresh(false) });
   });
   watchedProjectsSync = createWatchedProjectsSync({
     cache,
@@ -723,7 +724,7 @@ async function main(): Promise<void> {
   });
 
   const intervalTimer = setInterval(() => {
-    void runRefresh(true);
+    void runUnattendedRefresh({ refresh: () => runRefresh(true) });
   }, refreshIntervalMs);
 
   const sessionIntervalTimer = sessionDiscoverySupported
