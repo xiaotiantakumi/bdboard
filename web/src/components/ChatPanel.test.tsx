@@ -2058,15 +2058,31 @@ describe('ChatPanel', () => {
   //
   //   1. 代入は 0..scrollHeight-clientHeight にクランプされる
   //   2. 値が動いたら scroll イベントが出る (プログラム的スクロールでも出る)
-  function instrumentScrollArea(element: HTMLElement, clientHeight: number): void {
+  //
+  // bdboard-dtr で growContent を足した。実ブラウザでは「DOM が伸びた」と
+  // 「effect が scrollTop を更新した」の間に隙間があり (useEffect は paint 後に
+  // 走る)、その隙間に遅れて届いた scroll イベントは *古い scrollTop × 新しい
+  // scrollHeight* で距離を測ってしまう。React の内部タイミングに割り込まずに
+  // その状態を作るための穴。
+  interface ScrollAreaHandle {
+    /** scrollTop を動かさずにスクロール領域だけ伸ばす (DOM だけ先に伸びた状態) */
+    growContent: (pixels: number) => void;
+  }
+
+  function instrumentScrollArea(
+    element: HTMLElement,
+    clientHeight: number,
+  ): ScrollAreaHandle {
     let scrollTop = 0;
+    let extraHeight = 0;
     Object.defineProperty(element, 'clientHeight', {
       configurable: true,
       get: () => clientHeight,
     });
     Object.defineProperty(element, 'scrollHeight', {
       configurable: true,
-      get: () => clientHeight + (element.textContent ?? '').length * 10,
+      get: () =>
+        clientHeight + (element.textContent ?? '').length * 10 + extraHeight,
     });
     Object.defineProperty(element, 'scrollTop', {
       configurable: true,
@@ -2081,6 +2097,11 @@ describe('ChatPanel', () => {
         element.dispatchEvent(new Event('scroll'));
       },
     });
+    return {
+      growContent: (pixels: number) => {
+        extraHeight += pixels;
+      },
+    };
   }
 
   function distanceFromBottom(element: HTMLElement): number {
@@ -2155,12 +2176,18 @@ describe('ChatPanel', () => {
 
     // 返信が伸びるたびに最下部へ追従する。deps に streaming テキストが無いと、
     // ここで scrollTop が第1delta時点の高さのまま取り残される。
+    //
+    // 追従の assert を waitFor の中に入れているのは、DOM の反映 (テキストが
+    // 伸びる) と useEffect の実行 (scrollTop を更新する) が同じタイミングでは
+    // ないため。テキストだけを待って外で assert すると、負荷の高い CI で
+    // 「DOM は伸びたが effect はまだ」の瞬間を踏んで落ちる。追従しない
+    // 変更ならここは永久に 0 にならないので、緩めたことにはならない。
     await waitFor(() => {
       expect(
         messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
       ).toContain('reply');
+      expect(distanceFromBottom(messages)).toBe(0);
     });
-    expect(distanceFromBottom(messages)).toBe(0);
 
     // ストリームを畳んでから終わる。開いたまま抜けると、残りの処理が
     // 環境の teardown 後に走る。
@@ -2209,6 +2236,157 @@ describe('ChatPanel', () => {
     });
   });
 
+  it('keeps following when a delayed scroll event lands after the area grew (bdboard-dtr)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    const scrollArea = instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+    // ここまでで effect が最下部へ動かしている。これも waitFor で待つ:
+    // テキストの反映と effect の実行は同じタイミングではないので、外で
+    // assert すると CI で「DOM は伸びたが effect はまだ」を踏む。同時に、
+    // 次の growContent が前提とする「マーカーが記録済み」の同期点も兼ねる。
+    await waitFor(() => {
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    // 実ブラウザでの競合を再現する。プログラム的スクロールでも scroll イベントは
+    // 飛ぶが、それが配送されるまでの間に次の delta で DOM が伸びる。useEffect は
+    // paint 後に走るので、「scrollHeight は伸びたが scrollTop はまだ古い」瞬間が
+    // 存在し、遅れて届いたイベントはそこで距離を測ってしまう。
+    // 貼り付き閾値 (48px) より十分大きく伸ばす。閾値そのものを import せず
+    // リテラルで書くのは、閾値の値をテストで固定してしまわないため。
+    scrollArea.growContent(200);
+    fireEvent.scroll(messages);
+
+    releaseSecondDelta();
+
+    // ここで貼り付きが外れていると、利用者が何も操作していないのに追従が止まる
+    // (bdboard-22k の元バグと同じ症状で、手で最下部へ戻すまで復旧しない)。
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('resumes following when the user scrolls back to the last auto-scrolled position (bdboard-dtr)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+    await waitFor(() => {
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+    const autoScrolledTop = messages.scrollTop;
+    expect(autoScrolledTop).toBeGreaterThan(0);
+
+    // 上へ読み返してから、また最下部まで戻ってきた。戻り先は effect が最後に
+    // 置いた座標と同じ値になる。
+    messages.scrollTop = 0;
+    messages.scrollTop = autoScrolledTop;
+
+    releaseSecondDelta();
+
+    // 追従を止めた時点でマーカーを捨てていないと、この復帰スクロールが
+    // 「自分で起こした残響」に見えて距離判定に落ちず、最下部へ戻ったのに
+    // 追従が再開しない (bdboard-dtr)。
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('does not re-pin when the user happens to stop on an old auto-scroll position (bdboard-dtr)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    const scrollArea = instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+    await waitFor(() => {
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+    // effect が最後に置いた位置。追従を止めたあとも同じ座標が残っていると、
+    // ここへ戻ってきただけで貼り付き扱いになってしまう。
+    const previousAutoScrollTop = messages.scrollTop;
+    expect(previousAutoScrollTop).toBeGreaterThan(0);
+
+    // 利用者が過去ログを読むために上へスクロールし、追従が止まる。
+    messages.scrollTop = 0;
+
+    // その間に別の要因で表示が伸び、さっきの座標はもう最下部ではなくなる。
+    scrollArea.growContent(1000);
+
+    // 読み進めた結果、たまたま昔の最下部と同じ座標で止まった。利用者は
+    // 依然として過去ログを読んでいるので、ここは貼り付きに戻る場面ではない。
+    messages.scrollTop = previousAutoScrollTop;
+
+    releaseSecondDelta();
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+    });
+    // 引き戻されていたら、読んでいた位置が返信が届くたびに奪われる。
+    expect(messages.scrollTop).toBe(previousAutoScrollTop);
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
   it('re-pins to the bottom when the conversation changes (bdboard-22k)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
@@ -2231,13 +2409,13 @@ describe('ChatPanel', () => {
     releaseSecondDelta();
 
     const switched = screen.getByRole('log');
+    // 別の会話を開いたのに前の会話のスクロール位置を引きずる理由は無い。
     await waitFor(() => {
       expect(
         switched.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
       ).toContain('reply');
+      expect(distanceFromBottom(switched)).toBe(0);
     });
-    // 別の会話を開いたのに前の会話のスクロール位置を引きずる理由は無い。
-    expect(distanceFromBottom(switched)).toBe(0);
 
     releaseDone();
     await waitFor(() => {
