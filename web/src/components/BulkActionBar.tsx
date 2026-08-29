@@ -82,6 +82,19 @@ function bulkSuccessMessage(action: BulkConfirmingAction, count: number): string
   }
 }
 
+function filterIdsPresentOnBoard(
+  selectedIds: ReadonlySet<string>,
+  cardsById: ReadonlyMap<string, BoardCardDto>,
+): string[] {
+  const ids: string[] = [];
+  for (const id of selectedIds) {
+    if (cardsById.has(id)) {
+      ids.push(id);
+    }
+  }
+  return ids;
+}
+
 function buildTargetsForAction(
   action: BulkConfirmingAction,
   selectedIds: ReadonlySet<string>,
@@ -144,7 +157,7 @@ function countEligibleForAction(
   cardsById: ReadonlyMap<string, BoardCardDto>,
 ): number {
   if (action.kind === 'add-label') {
-    return selectedIds.size;
+    return filterIdsPresentOnBoard(selectedIds, cardsById).length;
   }
   return buildTargetsForAction(action, selectedIds, cardsById, '').length;
 }
@@ -299,7 +312,7 @@ export function BulkActionBar({
       return;
     }
     if (confirmingAction.kind === 'add-label') {
-      const ids = [...selectedIds];
+      const ids = filterIdsPresentOnBoard(selectedIds, cardsById);
       if (ids.length === 0) {
         return;
       }
