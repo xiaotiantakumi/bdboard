@@ -15,8 +15,14 @@ export function formatRelativeAge(timestampMs: number, nowMs: number): string {
   return `${ageHours}時間前`;
 }
 
-export function formatGeneratedAtAge(generatedAt: string, nowMs: number): string {
-  return formatRelativeAge(new Date(generatedAt).getTime(), nowMs);
+/**
+ * ISO 8601 文字列で持っている時刻を {@link formatRelativeAge} と同じ表記に落とす。
+ *
+ * 元は generatedAt 専用だったが、lastRefreshAt (bdboard-3dr) が3つ目の用途に
+ * なった時点で名前と実態が離れたので汎用名にした (bdboard-bn6)。
+ */
+export function formatIsoAge(isoTimestamp: string, nowMs: number): string {
+  return formatRelativeAge(new Date(isoTimestamp).getTime(), nowMs);
 }
 
 export function contactAgeMinutes(lastContactAtMs: number, nowMs: number): number {

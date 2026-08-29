@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import {
   computeStatusLevel,
-  formatGeneratedAtAge,
+  formatIsoAge,
   formatRelativeAge,
   STATUS_LABELS,
   type StatusLevel,
@@ -102,7 +102,7 @@ export function StatusPill({
               ので現状はこの表記で受け入れる (PR#116 fable レビュー minor)。 */}
           {generatedAt !== null && generatedAt !== undefined && (
             <p className="status-pill-detail" title={new Date(generatedAt).toLocaleString()}>
-              盤面内容の最終変化: {formatGeneratedAtAge(generatedAt, nowMs)}
+              盤面内容の最終変化: {formatIsoAge(generatedAt, nowMs)}
             </p>
           )}
           {lastContactAtMs !== null && lastContactAtMs !== undefined && (
@@ -121,7 +121,7 @@ export function StatusPill({
               (bdboard-3dr / bdboard-d55 の積み残し)。 */}
           {lastRefreshAt !== null && lastRefreshAt !== undefined && (
             <p className="status-pill-detail" title={new Date(lastRefreshAt).toLocaleString()}>
-              サーバーのbd取込: {formatGeneratedAtAge(lastRefreshAt, nowMs)}
+              サーバーのbd取込: {formatIsoAge(lastRefreshAt, nowMs)}
             </p>
           )}
           <button
