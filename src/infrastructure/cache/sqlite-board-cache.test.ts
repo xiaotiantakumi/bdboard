@@ -622,6 +622,43 @@ describe('createSqliteBoardCache', () => {
     cache.close();
   });
 
+  // bdboard-wa9: 双子の interactions 側 (bdboard-80r) には「cap 到達後の追記」の
+  // テストがあるのに、session_links 側は1バッチ経路しか見ていなかった。
+  it('keeps enforcing the session link cap across separate upsert calls', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const make = (i: number): SessionLinkRow =>
+      makeSessionLinkRow({
+        ticketId: `pfx-${i}`,
+        sessionId: `sess-${i}`,
+        observedAt: new Date(2026, 0, 1, 0, 0, i),
+      });
+
+    const first: SessionLinkRow[] = [];
+    for (let i = 0; i < MAX_TRANSCRIPT_SESSION_LINKS; i += 1) {
+      first.push(make(i));
+    }
+    cache.upsertSessionLinks(first);
+    expect(cache.listSessionLinks()).toHaveLength(MAX_TRANSCRIPT_SESSION_LINKS);
+
+    // ちょうど cap の状態からさらに積む。溢れた分だけ古いものが落ちること。
+    cache.upsertSessionLinks([
+      make(MAX_TRANSCRIPT_SESSION_LINKS),
+      make(MAX_TRANSCRIPT_SESSION_LINKS + 1),
+    ]);
+    const links = cache.listSessionLinks();
+
+    expect(links).toHaveLength(MAX_TRANSCRIPT_SESSION_LINKS);
+    expect(links.some((row) => row.link.ticketId === 'pfx-0')).toBe(false);
+    expect(links.some((row) => row.link.ticketId === 'pfx-1')).toBe(false);
+    expect(links.some((row) => row.link.ticketId === 'pfx-2')).toBe(true);
+    expect(
+      links.some(
+        (row) => row.link.ticketId === `pfx-${MAX_TRANSCRIPT_SESSION_LINKS + 1}`,
+      ),
+    ).toBe(true);
+    cache.close();
+  });
+
   it('clear() removes session links along with the other rebuildable caches', () => {
     const cache = createSqliteBoardCache(':memory:');
 
