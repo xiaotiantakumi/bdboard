@@ -57,19 +57,42 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
     expect(screen.getByRole('button', { name: '全解除' })).toBeInTheDocument();
   });
 
-  it('keeps the bar out of views that do not render cards', async () => {
-    const user = userEvent.setup();
-    renderApp();
+  // ガードは「カードを並べる3ビュー」の列挙なので、1つ落としても他のテストは
+  // 通ってしまう。Next Up だけを見ていると、例えば 'split' を落とす変異が
+  // 生き残る (fable レビュー指摘)。3つとも個別に固定する。
+  it.each(['統合', '分割', 'Next Up'])(
+    'shows the bar in the %s view',
+    async (viewLabel) => {
+      const user = userEvent.setup();
+      renderApp();
 
-    const checkbox = await screen.findByRole('checkbox', {
-      name: 'bdboard-boom を選択',
-    });
-    await user.click(checkbox);
-    expect(await screen.findByText('1件選択中')).toBeInTheDocument();
+      const checkbox = await screen.findByRole('checkbox', {
+        name: 'bdboard-boom を選択',
+      });
+      await user.click(checkbox);
+      await user.click(screen.getByRole('button', { name: viewLabel }));
 
-    // 選択はビューを跨いで残る (PR#129) が、カードを並べないビューでは
-    // 操作バーは出ない。ガードを「常に出す」に緩めるとここが落ちる。
-    await user.click(screen.getByRole('button', { name: '統計' }));
-    expect(screen.queryByText('1件選択中')).toBeNull();
-  });
+      expect(await screen.findByText('1件選択中')).toBeInTheDocument();
+    },
+  );
+
+  // 逆向きも1ビューだけだと `view !== 'stats'` のような変異が生き残る。
+  it.each(['統計', '設定', '依存グラフ'])(
+    'keeps the bar out of the %s view, which renders no cards',
+    async (viewLabel) => {
+      const user = userEvent.setup();
+      renderApp();
+
+      const checkbox = await screen.findByRole('checkbox', {
+        name: 'bdboard-boom を選択',
+      });
+      await user.click(checkbox);
+      expect(await screen.findByText('1件選択中')).toBeInTheDocument();
+
+      // 選択はビューを跨いで残る (PR#129) が、カードを並べないビューでは
+      // 操作バーは出ない。
+      await user.click(screen.getByRole('button', { name: viewLabel }));
+      expect(screen.queryByText('1件選択中')).toBeNull();
+    },
+  );
 });
