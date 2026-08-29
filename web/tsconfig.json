@@ -1,23 +1,15 @@
 {
+  // strict 系は ../tsconfig.base.json に集約 (bdboard-b4o)。ここには前提が違う部分だけを書く。
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "useDefineForClassFields": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
-    "skipLibCheck": true,
     "moduleResolution": "bundler",
-    "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noEmit": true,
     "jsx": "react-jsx",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true,
     "types": ["vitest/globals", "@testing-library/jest-dom"]
   },
-  "include": ["src"]
+  // vitest.setup.ts は src/ 外だが DOM/jest-dom 前提のため Node 用 tsconfig.node ではなくこちらで検査する
+  "include": ["src", "vitest.setup.ts"]
 }

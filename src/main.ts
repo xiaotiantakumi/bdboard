@@ -24,6 +24,7 @@ import {
   DEFAULT_RECLAIM_OLDER_THAN,
 } from './application/lease/reclaim-scheduler.js';
 import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
+import { createUpdateCheckService } from './application/update/get-update-check.js';
 import { createAiQuotaThresholdPublisher } from './application/ai-quota/ai-quota-threshold-alerts.js';
 import { createChatSessionStore } from './application/chat/chat-session-store.js';
 import { buildChatAgentRegistry } from './infrastructure/chat/chat-agent-registry-builder.js';
@@ -57,6 +58,8 @@ import {
   createChokidarProjectWatcher,
   createClaudeSessionRegistry,
   createCloudflaredTunnel,
+  resolveDefaultTunnelLogFilePath,
+  createGithubReleaseSource,
   createFileTunnelInterruptionStore,
   createFileScanRootsConfigStore,
   createFileBoardThresholdsConfigStore,
@@ -65,7 +68,6 @@ import {
   createFsPackRegistry,
   createFsProjectDiscovery,
   createGhCliPrStatusReader,
-  createGitSyncHealthReader,
   createGitWorktreeScanner,
   createFsChatSessionDiscovery,
   createJsonlInteractionReader,
@@ -80,14 +82,25 @@ import {
   NodeStreamingCommandRunner,
   NodeFileSystem,
   NodeProcessProbe,
+  createPackageJsonVersionProvider,
   resolveConfigFilePath,
 } from './infrastructure/index.js';
 import {
   resolveAuthMode,
 } from './interface/http/basic-auth.js';
 import { mountSecurityMiddleware } from './interface/http/app-security.js';
+import {
+  describePlatformSupport,
+  isPlatformFeatureSupported,
+  unrestrictedPlatformSupport,
+} from './domain/platform-support.js';
+import {
+  createPlatformFeatureGuard,
+  createPlatformSupportRoutes,
+} from './interface/http/platform-support-routes.js';
 import { createSessionValidator } from './interface/http/tunnel-session.js';
 import { createAiQuotaRoutes } from './interface/http/ai-quota-routes.js';
+import { createUpdateCheckRoutes } from './interface/http/update-check-routes.js';
 import { createCompressionMiddleware } from './interface/http/compression.js';
 import { createApiRoutes, type ApiStatus } from './interface/http/routes.js';
 import { createChatRoutes } from './interface/http/chat-routes.js';
@@ -200,6 +213,7 @@ function updateStatusFromResult(
 }
 
 async function main(): Promise<void> {
+  const applicationVersion = createPackageJsonVersionProvider();
   const bdVersionCheckTimeoutMs = 3_000;
   const port = envInt('BDBOARD_PORT', 8787);
   const host = envString('BDBOARD_HOST', '127.0.0.1');
@@ -277,11 +291,21 @@ async function main(): Promise<void> {
   const commentReader = createBdCliCommentReader(commandRunner);
   const prStatusReader = createGhCliPrStatusReader(commandRunner, { ghPath });
   const humanDecisions = createBdCliHumanDecisions(commandRunner);
-  const syncHealthReader = createGitSyncHealthReader(commandRunner, fsPort);
   const worktreeScanner = createGitWorktreeScanner(commandRunner);
   const issueWriter = createBdCliIssueWriter(commandRunner);
   const dependencyWriter = createBdCliDependencyWriter(commandRunner);
   const sessionLinkWriter = createBdCliSessionLinkWriter(commandRunner);
+  // Windows は「全機能対応」ではなく「機能制限 + 正直な案内」で出す方針
+  // (bdboard-70z.9)。BDBOARD_IGNORE_PLATFORM_LIMITS は、独自に環境を整えた
+  // 利用者が制限を外して試せるようにするための逃げ道。
+  const platformSupport = envBool('BDBOARD_IGNORE_PLATFORM_LIMITS')
+    ? unrestrictedPlatformSupport(process.platform)
+    : describePlatformSupport(process.platform);
+  const sessionDiscoverySupported = isPlatformFeatureSupported(
+    platformSupport,
+    'session-discovery',
+  );
+
   const processScanner = createPsProcessScanner(commandRunner);
   const fingerprinter = createBeadsFingerprinter(fsPort);
   const events = createEventHub();
@@ -614,10 +638,18 @@ async function main(): Promise<void> {
     new Date(),
   );
 
-  await refreshSessions();
-  console.log(
-    `Initial sessions: total=${sessions.length} alive=${sessions.filter((session) => session.alive).length}`,
-  );
+  if (sessionDiscoverySupported) {
+    await refreshSessions();
+    console.log(
+      `Initial sessions: total=${sessions.length} alive=${sessions.filter((session) => session.alive).length}`,
+    );
+  } else {
+    // ps/lsof が無い環境で回しても毎周期失敗するだけなので、走らせない
+    // (bdboard-70z.9)。UI 側は /api/platform-support を見て理由を出す。
+    console.log(
+      `Sessions: disabled on ${platformSupport.platform} (session discovery needs ps/lsof)`,
+    );
+  }
 
   const initialCacheEntries = cache.listProjects();
   boardNotificationPublisher.seedSnapshot(
@@ -688,9 +720,11 @@ async function main(): Promise<void> {
     void runRefresh(true);
   }, refreshIntervalMs);
 
-  const sessionIntervalTimer = setInterval(() => {
-    void refreshSessions();
-  }, sessionIntervalMs);
+  const sessionIntervalTimer = sessionDiscoverySupported
+    ? setInterval(() => {
+        void refreshSessions();
+      }, sessionIntervalMs)
+    : null;
 
   if (cfdSnapshotIntervalMs > 0) {
     cfdSnapshotIntervalTimer = setInterval(() => {
@@ -732,7 +766,20 @@ async function main(): Promise<void> {
   const authUsername = envString('BDBOARD_AUTH_USER', 'bdboard');
 
   const tunnelLogMaxBytes = envInt('BDBOARD_TUNNEL_LOG_MAX_BYTES', 5 * 1024 * 1024);
-  const tunnelProcess = createCloudflaredTunnel({ port, logMaxBytes: tunnelLogMaxBytes });
+  // 既定は ~/.bdboard/logs/cloudflared-tunnel.log (bdboard-3b0)。cwd 基準では
+  // なくなったので、リポジトリ内にログを置きたい場合は明示的に指定してもらう。
+  // path.resolve で起動時の cwd に対して一度だけ固定する。相対パスを渡された
+  // まま createFileLogSink まで持っていくと、解決は start() 時点の cwd 基準に
+  // なる — このチケットが潰そうとしている cwd 依存が、明示指定の裏口から
+  // 戻ってくる (PR#111 fable レビュー minor-3)。
+  const tunnelLogFilePath = path.resolve(
+    envString('BDBOARD_TUNNEL_LOG_PATH', resolveDefaultTunnelLogFilePath()),
+  );
+  const tunnelProcess = createCloudflaredTunnel({
+    port,
+    logFilePath: tunnelLogFilePath,
+    logMaxBytes: tunnelLogMaxBytes,
+  });
   const tunnelAccess = createTunnelAccessService({ now: () => new Date() });
   const tunnelInterruptions = createFileTunnelInterruptionStore(
     path.join(path.dirname(dbPath), 'tunnel-interruption.json'),
@@ -780,6 +827,7 @@ async function main(): Promise<void> {
 
   const inner = createApiRoutes({
     cache,
+    applicationVersion,
     now: () => new Date(),
     getStatus: () => status,
     refresh: () => runRefresh(true),
@@ -790,7 +838,6 @@ async function main(): Promise<void> {
     prStatusReader,
     processScanner,
     humanDecisions,
-    syncHealthReader,
     worktreeScanner,
     issueWriter,
     dependencyWriter,
@@ -815,6 +862,19 @@ async function main(): Promise<void> {
     getExtraCredentials: () => tunnelService.getCredentials(),
   });
   app.use('*', createCompressionMiddleware());
+
+  // 未対応機能は inner へ届く前に 501 で止める。素通しすると ps/lsof や
+  // .cmd シムが無いことに由来する例外が 500 になり、「壊れている」のか
+  // 「そもそも動かない」のか区別が付かない (bdboard-70z.9)。
+  app.route('/', createPlatformSupportRoutes({ platformSupport }));
+  // コレクションとワイルドカードの両方を登録する。後からサブパス
+  // (/api/processes/:pid など) が足されたときの掛け忘れを防ぐ、という
+  // chat-routes.ts の既存の作法に合わせている (PR#115 fable レビュー nit)。
+  for (const pattern of ['/api/processes', '/api/processes/*']) {
+    app.use(pattern, createPlatformFeatureGuard(platformSupport, 'session-discovery'));
+  }
+  app.use('/api/chat/*', createPlatformFeatureGuard(platformSupport, 'chat'));
+
   app.route('/', inner);
 
   const harnessPacksRoot = path.join(repoRoot, 'harness', 'packs');
@@ -868,6 +928,25 @@ async function main(): Promise<void> {
     }),
   );
 
+  // 新しいリリースの通知 (bdboard-70z.7)。bdboard はローカル完結のツールなので、
+  // 外部への通信が増えるのは性質の変化にあたる。既定は有効だが
+  // BDBOARD_UPDATE_CHECK_DISABLED=1 で完全に無効化でき、無効時は
+  // createUpdateCheckService がネットワークへ一切出ない (ルート自体は残り、
+  // 常に state=unknown を返す — UI 側はそれを「黙る」として扱う)。
+  const updateCheckEnabled = !envBool('BDBOARD_UPDATE_CHECK_DISABLED');
+  const updateCheckService = createUpdateCheckService({
+    applicationVersion,
+    source: createGithubReleaseSource({
+      repository: envString('BDBOARD_UPDATE_CHECK_REPO', 'xiaotiantakumi/bdboard'),
+      timeoutMs: envInt('BDBOARD_UPDATE_CHECK_TIMEOUT_MS', 3_000),
+      userAgent: applicationVersion.getVersion(),
+    }),
+    now: () => new Date(),
+    ttlMs: envInt('BDBOARD_UPDATE_CHECK_CACHE_MS', 6 * 60 * 60_000),
+    enabled: updateCheckEnabled,
+  });
+  app.route('/', createUpdateCheckRoutes({ updateCheckService }));
+
   const aiQuotaDisabled = envBool('BDBOARD_AI_QUOTA_DISABLED');
   if (!aiQuotaDisabled) {
     const aiQuotaSource = createNodeAiQuotaSource(commandRunner, {
@@ -915,6 +994,7 @@ async function main(): Promise<void> {
   }
 
   const chatDisabled = envBool('BDBOARD_CHAT_DISABLED');
+  const chatCloseables: { readonly close: () => void }[] = [];
   if (!chatDisabled) {
     // 登録配線そのもの(claude 常時登録 / codex・cursor は opt-in 時のみ)は
     // chat-agent-registry-builder.ts に切り出してユニットテスト可能にしてある
@@ -939,6 +1019,7 @@ async function main(): Promise<void> {
     }
     const chatSessionRepository = createSqliteChatSessionRepository(dbPath);
     const chatMessageRepository = createSqliteChatMessageRepository(dbPath);
+    chatCloseables.push(chatSessionRepository, chatMessageRepository);
     const chatStore = createChatSessionStore({ repository: chatSessionRepository });
     const chatPerMinute = envInt(
       'BDBOARD_CHAT_TUNNEL_RATE_PER_MINUTE',
@@ -989,15 +1070,19 @@ async function main(): Promise<void> {
 
   const spaIndexPath = path.join(webDistDir, 'index.html');
   if (fs.existsSync(spaIndexPath)) {
-    const relative = path.relative(process.cwd(), webDistDir);
-    const staticRoot = (relative === '' ? '.' : relative)
-      .split(path.sep)
-      .join('/');
     const spaIndexHtml = fs.readFileSync(spaIndexPath, 'utf8');
 
     console.log(`Serving static web UI from ${webDistDir}`);
 
-    app.use('/*', serveStatic({ root: staticRoot }));
+    // root には絶対パスを渡す。以前は path.relative(process.cwd(), webDistDir) を
+    // 渡していて実際に動いていたが、それは @hono/node-server の serve-static が
+    // root を (存在チェックの警告ログを除いて) 検証も正規化もせず、join(root, filename)
+    // の結果をそのまま statSync に渡す (= cwd 基準で解決される) 実装詳細と、path.relative の
+    // 計算がちょうど相殺していただけだった。任意の cwd から起動すると root は
+    // ".." を含む相対パスになる。serve-static が将来 root を正規化・検証するように
+    // なれば黙って壊れる類の依存なので、cwd に依存しない絶対パスに寄せる
+    // (join は絶対パスの LHS を保持する)。bdboard-gki。
+    app.use('/*', serveStatic({ root: webDistDir }));
     app.get('*', (c) => {
       if (c.req.path.startsWith('/api/') || c.req.path === '/api') {
         return c.notFound();
@@ -1020,7 +1105,12 @@ async function main(): Promise<void> {
   // server.close() の解決を待たない後始末(タイマー類の停止)は即座に、SSE 等の張りっぱなし
   // 接続の drain 待ちが絡む後始末(watcher/tunnel/cache)は createGracefulShutdown の
   // drain に委ねてタイムアウト保護をかける (bdboard-3tw.91)。
-  const drain = createShutdownDrain({ watchHandle, tunnelService, cache });
+  const drain = createShutdownDrain({
+    watchHandle,
+    tunnelService,
+    cache,
+    chatRepositories: chatCloseables,
+  });
 
   const shutdown = createGracefulShutdown({
     drain,
@@ -1052,7 +1142,9 @@ async function main(): Promise<void> {
 
   const shutdownForSignal = (): void => {
     clearInterval(intervalTimer);
-    clearInterval(sessionIntervalTimer);
+    if (sessionIntervalTimer !== null) {
+      clearInterval(sessionIntervalTimer);
+    }
     if (transcriptIntervalTimer !== undefined) {
       clearInterval(transcriptIntervalTimer);
     }

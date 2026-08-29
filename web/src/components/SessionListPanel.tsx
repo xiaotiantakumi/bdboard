@@ -25,6 +25,7 @@ import {
   livenessLabel,
   type Liveness,
 } from '../liveness';
+import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { SessionTailViewer } from './SessionTailViewer';
 
 interface SessionListPanelProps {
@@ -270,6 +271,10 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
             </button>
           </div>
         </div>
+
+        {/* 空リストや 501 だけでは「壊れている」のか「そもそも動かない」のか
+            区別が付かないので、理由をここに出す (bdboard-70z.9)。 */}
+        <PlatformLimitationNotice feature="session-discovery" />
 
         {isProcessesTab && (
           <p className="session-processes-note">

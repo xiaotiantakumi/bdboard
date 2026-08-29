@@ -272,6 +272,12 @@ body {
   border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
 }
 
+.status-pill-reconnecting {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  border-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+}
+
 .status-pill-popover {
   position: absolute;
   top: calc(100% + 6px);
@@ -319,6 +325,12 @@ body {
   background: var(--badge-stalled-bg);
   border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
   color: var(--badge-stalled-fg);
+}
+
+.alert-bar-quiet {
+  background: var(--badge-neutral-bg);
+  border-bottom-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+  color: var(--badge-neutral-fg);
 }
 
 .alert-bar-message {
@@ -663,6 +675,47 @@ body {
 .error-banner li {
   word-break: break-word;
   margin-bottom: 4px;
+}
+
+.error-boundary {
+  width: 100%;
+  background: var(--badge-p0-bg);
+  border: 1px solid var(--badge-p0-fg);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  color: var(--badge-p0-fg);
+}
+
+.error-boundary-title {
+  display: block;
+}
+
+.error-boundary-detail {
+  margin: 6px 0 0;
+  word-break: break-word;
+}
+
+.error-boundary-hint {
+  margin: 6px 0 0;
+  font-size: 0.85em;
+}
+
+.error-boundary-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* モーダル系パネルが throw したときの fallback。元のパネルと同じ位置に出す。 */
+.error-boundary-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 16px;
+}
+
+.error-boundary-overlay .error-boundary {
+  width: min(520px, 100%);
 }
 
 .main {
@@ -2219,27 +2272,6 @@ body {
   margin-left: 6px;
 }
 
-.sync-health-badge {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 3px 8px;
-  border-radius: var(--radius-pill);
-  font-size: 0.6875rem;
-  font-weight: 600;
-  vertical-align: middle;
-}
-
-.sync-health-badge-attention {
-  background: var(--badge-stalled-bg);
-  color: var(--badge-stalled-fg);
-  border: 1px solid var(--badge-stalled-fg);
-}
-
-.sync-health-badge-unknown {
-  background: var(--badge-neutral-bg);
-  color: var(--badge-neutral-fg);
-}
-
 .project-harness-badges {
   display: inline-flex;
   flex-wrap: wrap;
@@ -3500,6 +3532,32 @@ body {
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.16em;
+}
+
+.help-panel-version {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* 新しいリリースの通知 (bdboard-70z.7)。バージョン表示の隣に置く控えめなリンク。
+   更新がある時だけ描画されるので、常時のノイズにはならない。 */
+.update-notice {
+  border: 1px solid var(--color-accent);
+  border-radius: 999px;
+  color: var(--color-accent);
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  padding: 2px 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.update-notice:hover,
+.update-notice:focus-visible {
+  text-decoration: underline;
 }
 
 .help-panel-body {
@@ -5718,4 +5776,29 @@ body {
   gap: 8px;
   padding: 4px 0;
   font-size: 0.8125rem;
+}
+
+/* 未対応機能の案内 (bdboard-70z.9)。エラーではなく仕様なので、
+   error-message の赤ではなく落ち着いた警告色にする。 */
+.platform-limitation-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: 6px;
+  background: var(--badge-stalled-bg);
+  font-size: 13px;
+}
+
+.platform-limitation-notice-reason {
+  font-weight: 600;
+}
+
+.platform-limitation-notice-detail {
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
 }

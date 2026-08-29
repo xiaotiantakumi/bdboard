@@ -217,17 +217,32 @@ Before committing any change (server or web), run the full verification chain �
 npm run verify   # build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
-`npm run build` only type-checks `src/` (the server). `web/` has its own `tsc --noEmit` step inside
-`npm run build:web`, ahead of the Vite build — a real type error there is invisible to `npm run build`
-and to `npm run test:web` (vitest doesn't full-type-check). `npm run verify` runs both, plus the web
-Vite build itself, so nothing in `web/` can silently drift broken (see bdboard-419 for the incident
-that prompted this).
+`npm run build` type-checks the **server side** — three separate tsc projects, run serially, because
+they have incompatible premises (`rootDir`, `lib`, `types`) and cannot share one config:
+
+| project | covers | why separate |
+|---|---|---|
+| `tsconfig.json` | `src/**/*` | server. `rootDir: src` |
+| `tsconfig.node.json` | `vitest.config.ts` | `lib: ["ES2023"]` + `types: ["node"]`, **no DOM** |
+| `test/e2e/tsconfig.json` | `test/e2e/**/*.ts` (recursive — `fixtures/` included) | needs `DOM` for `page.evaluate`, so it can't share the row above |
+
+`web/` has its own pair of `tsc --noEmit` steps inside `npm run build:web` (`tsconfig.json` for
+`web/src` + `web/vitest.setup.ts`, `tsconfig.node.json` for `web/vite.config.ts` +
+`web/vitest.config.ts`), ahead of the Vite
+build — a real type error there is invisible to `npm run build` and to `npm run test:web` (vitest
+doesn't full-type-check). `npm run verify` runs all of it, plus the web Vite build itself, so nothing
+can silently drift broken (see bdboard-419 for the incident that prompted this, bdboard-ruf for the
+`web/` config files, and bdboard-u97 for the root ones).
+
+The rule behind the table: **a config file that is never imported by anything still has to belong to
+some tsc project, or it is unchecked.** `include` is what puts a file in a project; being reachable
+by import is not enough, and neither is sitting next to files that are checked.
 
 Individual commands, if you need to run a subset:
 
 ```bash
-npm run build            # server tsc --noEmit
-npm run build:web        # web tsc --noEmit + vite build
+npm run build            # tsc --noEmit x3 (src/, vitest.config.ts, test/e2e/)
+npm run build:web        # web tsc --noEmit x2 + vite build
 npm run test:server      # vitest run (src/)
 npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
@@ -296,9 +311,11 @@ wanted, that is a separate, explicitly user-approved change.
   Do **not** use `curl -f`, because it hides the response body/status distinction.
 
   Only a **connection failure** means the server is down: curl prints `000`
-  and exits 7. In that case start it — prefer the Browser tool's
-  `preview_start` with the `start` config in `.claude/launch.json`; otherwise
-  run `npm run start` in the background.
+  and exits 7. In that case start it — **from a session whose cwd is the
+  main checkout**, prefer the Browser tool's `preview_start` with the `start`
+  config in `.claude/launch.json`; otherwise run `npm run start` in the
+  background. From a worktree session, neither: see the `preview_start`
+  entry below.
 
   Before starting anything, confirm with
 
@@ -313,6 +330,66 @@ wanted, that is a separate, explicitly user-approved change.
   stale serverId) → `preview_start`; starting a second server would just fail
   to bind. If `lsof` prints nothing, the port really is free and it is safe to
   start.
+- **Never call `preview_start` from a worktree session** (measured
+  2026-08-29). `preview_start {name: "start"}` resolves
+  `.claude/launch.json` relative to *the session's* cwd, and that file is
+  tracked, so every worktree has one. From a worktree it therefore runs
+  `npm run start` **in the worktree**, which binds port 8787 — the main
+  checkout's port. What gets served then depends on that worktree, because
+  `webDistDir` is derived from `import.meta.url` (`src/main.ts:990`), i.e.
+  from *which checkout's `src/main.ts` is executing* — cwd is the upstream
+  cause, not the direct one:
+
+  - **A worktree that has never run `npm run build:web`** (a fresh one, or
+    one whose `npm run verify` has not finished) has no `web/dist`, so the
+    server logs `web/dist not found; serving API only`. `/api/health`
+    answers **200** and `/` answers **404**.
+  - **A worktree that has run `npm run verify`** does have a `web/dist`
+    (`web/dist/` is gitignored but `build:web` writes it), so it serves
+    **that branch's stale UI**. Both `/api/health` and `/` answer **200**.
+    This is the common case, not the exception: verify is mandatory before
+    opening a PR, so most worktrees have a `web/dist` — measured 2026-08-29,
+    9 of 12.
+
+  So **status codes alone cannot detect this.** The 200/404 pair catches only
+  the first case; the second looks completely healthy while serving a board
+  built from someone else's branch. The reliable check is the startup log
+  line:
+
+  ```
+  Serving static web UI from <path>/web/dist
+  ```
+
+  If that path is not the main checkout, the wrong server is running
+  (`lsof -p <pid> -d cwd` answers the same question for an already-running
+  process).
+
+  From a worktree, start the server in the main checkout instead — the `cd`
+  is load-bearing beyond picking the right `src/main.ts`, because
+  `serveStatic`'s root is `path.relative(process.cwd(), webDistDir)`
+  (`src/main.ts:994-996`):
+
+  ```bash
+  cd /path/to/main/checkout && nohup npm run start > /tmp/bdboard-server.log 2>&1 &
+  ```
+
+  (That log path is truncated on every restart; use a distinct name if you
+  need to keep an earlier run's output.)
+
+  A separate, independently-possible failure was seen just before this one:
+  `preview_start` returned a serverId, but the port answered **connection
+  refused**, `lsof` showed no listener, and the entry had vanished from
+  `preview_list`. That is a different symptom — a listener that never came
+  up, versus one that is up and serving the wrong thing — and is best
+  explained as a startup race (the success reply arriving before the bind
+  completes). Retrying can plausibly help there; it cannot help with the
+  worktree-cwd case above, where every attempt reproduces (2/2).
+
+- **Do not trust the opened browser tab as proof the server is up.** A tab
+  left over from an earlier load can still render a fully populated board
+  (from cache/bfcache) with only a quiet "disconnected" badge as the tell,
+  which looks like a working app at a glance. Verify liveness by `curl`
+  status codes (and `lsof`), never by what the tab shows.
 - **After merging a PR into main** (right after the fast-forward in the Git
   Workflow cleanup): `git pull --ff-only` → `npm install` /
   `npm --prefix web install` if lockfiles changed → `npm run build:web` →
@@ -330,11 +407,16 @@ wanted, that is a separate, explicitly user-approved change.
   ended while a tunnel was active (bdboard-8v8), but that post-hoc notice is
   not a substitute for this advance warning. See bdboard-8v8.
 - **Never kill the server** except for that post-merge restart (or an explicit
-  user request).
-- This rule is the guarantee behind two existing conventions: worktrees must
+  user request). Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
+  worktree のテスト用プロセスを狙った `pkill -f 'tsx.*src/main.ts'` がこの常時稼働
+  サーバーにも当たった実例がある。必ず対象の PID を特定してから kill すること
+  （委譲ブリーフにも毎回この禁止を明記する）。
+- This rule is the guarantee behind three existing conventions: worktrees must
   not run `npm run dev` (the port belongs to the main checkout — see Git
-  Workflow), and `npm run dev:web` in a worktree works because its Vite proxy
-  targets this always-on server at `127.0.0.1:8787`. The mobile tunnel
+  Workflow) and must not call `preview_start` (which runs `npm run start`
+  there, taking the same port — see above), and `npm run dev:web` in a
+  worktree works because its Vite proxy targets this always-on server at
+  `127.0.0.1:8787`. The mobile tunnel
   (mobile-preview-tunnel skill) also points at this server, so tunneling
   needs no separate server-start step — just the health check.
 

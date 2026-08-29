@@ -607,6 +607,26 @@ export function fetchAgentProcesses(): Promise<AgentProcessDto[]> {
   return fetchJson<AgentProcessDto[]>('/api/processes');
 }
 
+/** サーバーの実行プラットフォームで使えない機能 (bdboard-70z.9)。 */
+export type PlatformFeature = 'session-discovery' | 'chat';
+
+export interface PlatformLimitationDto {
+  feature: PlatformFeature;
+  /** UI にそのまま出す一文。 */
+  reason: string;
+  /** 「なぜ直せないのか」の技術的な根拠。 */
+  detail: string;
+}
+
+export interface PlatformSupportDto {
+  platform: string;
+  limitations: PlatformLimitationDto[];
+}
+
+export function fetchPlatformSupport(): Promise<PlatformSupportDto> {
+  return fetchJson<PlatformSupportDto>('/api/platform-support');
+}
+
 export function fetchBoard(params: {
   projectIds: string[];
   view: BoardMode;
@@ -898,37 +918,6 @@ export function fetchHygieneIssues(
   const query = searchParams.toString();
   const path = query.length > 0 ? `/api/hygiene?${query}` : '/api/hygiene';
   return getJson<HygieneIssueDto[]>(path);
-}
-
-export type SyncHealthStatusDto = 'ok' | 'attention' | 'unknown';
-
-export type SyncHealthReasonKindDto =
-  | 'diverged_from_remote'
-  | 'stale_export'
-  | 'uncommitted_interactions'
-  | 'no_dolt_ref';
-
-export interface SyncHealthReasonDto {
-  kind: SyncHealthReasonKindDto;
-  message: string;
-}
-
-export interface SyncHealthDto {
-  projectId: string;
-  status: SyncHealthStatusDto;
-  reasons: SyncHealthReasonDto[];
-}
-
-export function fetchSyncHealth(
-  projectIds: readonly string[] = [],
-): Promise<SyncHealthDto[]> {
-  const searchParams = new URLSearchParams();
-  if (projectIds.length > 0) {
-    searchParams.set('projects', projectIds.join(','));
-  }
-  const query = searchParams.toString();
-  const path = query.length > 0 ? `/api/sync-health?${query}` : '/api/sync-health';
-  return getJson<SyncHealthDto[]>(path);
 }
 
 export interface StaleLeaseDto {
@@ -1455,6 +1444,22 @@ export type AiQuotaDto =
 
 export function fetchAiQuota(): Promise<AiQuotaDto> {
   return fetchJson<AiQuotaDto>('/api/ai-quota');
+}
+
+/** 新しいリリースの有無 (bdboard-70z.7)。`unknown` は「確認できなかった」で、
+ *  無効化されている場合もこれになる。UI 側は黙る。 */
+export type UpdateCheckDto =
+  | { state: 'up-to-date'; currentVersion: string }
+  | { state: 'unknown'; currentVersion: string }
+  | {
+      state: 'update-available';
+      currentVersion: string;
+      latestVersion: string;
+      releaseUrl: string;
+    };
+
+export function fetchUpdateCheck(): Promise<UpdateCheckDto> {
+  return fetchJson<UpdateCheckDto>('/api/update-check');
 }
 
 export interface HarnessPackSummaryDto {

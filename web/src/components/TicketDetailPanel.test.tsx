@@ -16,6 +16,7 @@ import {
   deleteTicketDependency,
   deleteTicketLabel,
   deleteTicketSessionLink,
+  fetchPlatformSupport,
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
@@ -30,6 +31,7 @@ import {
   postTicketSessionLink,
   searchTickets,
 } from '../api';
+import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import { TicketDetailPanel } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
@@ -55,6 +57,7 @@ vi.mock('../api', async (importOriginal) => {
     deleteTicketLabel: vi.fn(),
     searchTickets: vi.fn(),
     fetchSessions: vi.fn(),
+    fetchPlatformSupport: vi.fn(),
     postTicketSessionLink: vi.fn(),
     deleteTicketSessionLink: vi.fn(),
   };
@@ -74,11 +77,14 @@ const mockDeleteTicketDependency = vi.mocked(deleteTicketDependency);
 const mockDeleteTicketLabel = vi.mocked(deleteTicketLabel);
 const mockSearchTickets = vi.mocked(searchTickets);
 const mockFetchSessions = vi.mocked(fetchSessions);
+const mockFetchPlatformSupport = vi.mocked(fetchPlatformSupport);
 const mockPostTicketSessionLink = vi.mocked(postTicketSessionLink);
 const mockDeleteTicketSessionLink = vi.mocked(deleteTicketSessionLink);
 
 beforeEach(() => {
   mockFetchSimilarTickets.mockResolvedValue([]);
+  resetPlatformSupportCache();
+  mockFetchPlatformSupport.mockResolvedValue({ platform: 'darwin', limitations: [] });
 });
 
 const sampleTicket: TicketDetailDto = {
@@ -654,6 +660,162 @@ describe('TicketDetailPanel pending decisions', () => {
     vi.unstubAllGlobals();
   });
 
+  // bdboard-9hl: pendingDecision はポーリング由来で、利用者の操作と無関係に
+  // 出現/消滅する。それを合図にフォーム全体をリセットしていたため、書きかけの
+  // コメント等が警告なく消えていた。リセットしてよいのは decision の回答欄だけ。
+  it('keeps an in-progress comment draft when a pending decision appears', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision?: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(panel(undefined));
+
+    await screen.findByText('Sample ticket');
+    const textarea = screen.getByLabelText('コメントを追加');
+    await user.type(textarea, '書きかけのコメント');
+    expect(textarea).toHaveValue('書きかけのコメント');
+
+    // エージェントがこのチケットに bd human の質問を投稿した = 次のポーリングで
+    // pendingDecision が undefined から現れる。利用者は何も操作していない。
+    rerender(
+      panel({
+        id: sampleTicket.id,
+        projectId: sampleTicket.projectId,
+        question: 'どちらにしますか?',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(await screen.findByText('どちらにしますか?')).toBeInTheDocument();
+    expect(screen.getByLabelText('コメントを追加')).toHaveValue('書きかけのコメント');
+  });
+
+  it('still clears the decision answer when the pending decision is replaced', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const first: PendingDecisionDto = {
+      id: 'decision-1',
+      projectId: sampleTicket.projectId,
+      question: '最初の質問',
+      allowFreeform: true,
+    };
+    const { rerender } = render(panel(first));
+
+    const freeform = await screen.findByLabelText('自由記入');
+    await user.type(freeform, '最初の回答');
+    expect(freeform).toHaveValue('最初の回答');
+
+    // 別の質問に差し替わったら、前の質問への回答は持ち越してはいけない。
+    rerender(
+      panel({
+        id: 'decision-2',
+        projectId: sampleTicket.projectId,
+        question: '次の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(await screen.findByText('次の質問')).toBeInTheDocument();
+    expect(screen.getByLabelText('自由記入')).toHaveValue('');
+  });
+
+  it('still clears a selected choice when the pending decision is replaced', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const options = [
+      { label: 'A案', value: 'a' },
+      { label: 'B案', value: 'b' },
+    ];
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        options,
+        allowFreeform: true,
+      }),
+    );
+
+    await user.click(await screen.findByRole('button', { name: 'A案' }));
+    expect(screen.getByRole('button', { name: 'A案' })).toHaveClass('active');
+    // 選択があるので送信できる状態。
+    expect(screen.getByRole('button', { name: '回答を送信' })).toBeEnabled();
+
+    rerender(
+      panel({
+        id: 'decision-2',
+        projectId: sampleTicket.projectId,
+        question: '次の質問',
+        options,
+        allowFreeform: true,
+      }),
+    );
+
+    // 前の質問で選んだ選択肢を持ち越さない。持ち越すと、別の質問に対して
+    // 身に覚えのない回答をワンクリックで送信できてしまう。
+    expect(await screen.findByText('次の質問')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'A案' })).not.toHaveClass('active');
+    expect(screen.getByRole('button', { name: '回答を送信' })).toBeDisabled();
+  });
+
   it('hides the pending decision section when pendingDecision is undefined', async () => {
     renderPanel(new Map());
 
@@ -796,6 +958,117 @@ describe('TicketDetailPanel pending decisions', () => {
 
     expect(await screen.findByText(TUNNEL_WRITE_HELP)).toBeInTheDocument();
     expect(textarea).toHaveValue('トンネル経由の回答');
+  });
+
+  it('clears the send failure message when the pending decision is replaced', async () => {
+    mockPostTicketDecision.mockRejectedValue(new TypeError('Failed to fetch'));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    await user.type(await screen.findByLabelText('自由記入'), '最初の回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+    expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
+
+    // エージェントが質問1を取り下げて質問2を出した状況。ミューテーションの
+    // エラーを捨てないと、質問2の送信ボタンの下に質問1の失敗メッセージが
+    // 残り続ける (bdboard-uez)。
+    //
+    // 質問文はわざと同じにしてある。エージェントが同じ質問を取り下げて出し直す
+    // ことは実際にあり、そのとき別物と見分ける手掛かりは id しかない。文言まで
+    // 変えると、判定を id ではなく question に取り違える実装を通してしまう
+    // (PR#130 fable レビュー M4)。
+    rerender(
+      panel({
+        id: 'decision-2',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText(NETWORK_FETCH_HELP)).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps the send failure message while the same question is still pending', async () => {
+    mockPostTicketDecision.mockRejectedValue(new TypeError('Failed to fetch'));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    await user.type(await screen.findByLabelText('自由記入'), '最初の回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+    expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
+
+    // ポーリングは同じ質問を新しいオブジェクトとして返し続ける。id が同じ
+    // うちは失敗メッセージを消してはいけない — 消すと、送信が失敗したことに
+    // 気づけないまま画面が元通りになる。
+    rerender(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(screen.getByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
   });
 });
 
@@ -1442,6 +1715,33 @@ describe('TicketDetailPanel session link', () => {
     await waitFor(() => {
       expect(mockFetchSessions).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('explains why the picker is empty on a platform without session discovery', async () => {
+    // win32 ではセッション検出そのものが動かないため、ここは常に空になる。
+    // 理由が出ないと「稼働中のセッションがありません」が壊れているようにしか
+    // 読めない (bdboard-70z.9, PR#115 fable レビュー minor)。
+    mockFetchPlatformSupport.mockResolvedValue({
+      platform: 'win32',
+      limitations: [
+        {
+          feature: 'session-discovery',
+          reason: '稼働中のエージェントセッションの検出は Windows では利用できません。',
+          detail: 'セッション検出は ps と lsof に依存している。',
+        },
+      ],
+    });
+    renderPanel(new Map());
+
+    await user.click(
+      await screen.findByRole('button', { name: 'セッションをリンク' }),
+    );
+
+    expect(
+      await screen.findByText(
+        '稼働中のエージェントセッションの検出は Windows では利用できません。',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('lists only alive sessions as link candidates', async () => {

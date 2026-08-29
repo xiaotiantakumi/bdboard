@@ -11,6 +11,11 @@ import { TUNNEL_SESSION_COOKIE, TUNNEL_TOKEN_QUERY_PARAM } from './tunnel-sessio
 const USER = 'example-user';
 const PASSWORD = 'example-password';
 
+function basicAuthHeader(user: string, pass: string): string {
+  const encoded = Buffer.from(`${user}:${pass}`).toString('base64');
+  return `Basic ${encoded}`;
+}
+
 const LOCAL_ENV = {
   incoming: {
     socket: {
@@ -24,14 +29,14 @@ const REMOTE_ENV = {
   incoming: {
     socket: {
       remoteAddress: '203.0.113.5',
+      // 実際のリモート接続にも localPort はある。これを省くと
+      // isLocalBasicAuthRequest が readLocalPort の null 判定だけで
+      // fail-closed になり、送信元アドレスの判定が壊れても気付けない
+      // (bdboard-cpi, fable レビュー minor-1)。
+      localPort: 8787,
     },
   },
 };
-
-function basicAuthHeader(user: string, pass: string): string {
-  const encoded = Buffer.from(`${user}:${pass}`).toString('base64');
-  return `Basic ${encoded}`;
-}
 
 describe('mountSecurityMiddleware', () => {
   it('registers token exchange before basic auth', async () => {
@@ -319,6 +324,95 @@ describe('mountSecurityMiddleware', () => {
         LOCAL_ENV,
       );
       expect(wrongPort.status).toBe(503);
+    });
+  });
+
+  describe('remote requests carrying Basic credentials', () => {
+    // ここまでのテストはリモートからのアクセスがすべて 401/503 になることしか見て
+    // いない。「正しい資格情報なら通る」経路は basic-auth.test.ts の unit と
+    // 「マウント順が正しい」テストの組み合わせに依存していて、mountSecurityMiddleware
+    // を通した統合の成功パスがどこにも無かった (bdboard-cpi)。
+    function createSecuredApp() {
+      const app = new Hono();
+      mountSecurityMiddleware(app, {
+        authMode: {
+          kind: 'enabled',
+          config: { username: USER, password: PASSWORD },
+        },
+        // 本番の mount (src/main.ts) は access を渡す = トークン交換
+        // ミドルウェアも前段に載る。それを外したスタックで通してしまうと
+        // 「本番と違う構成でだけ通る」テストになるので揃える。
+        access: createTunnelAccessService({ now: () => new Date() }),
+      });
+      app.get('/', (c) => c.text('ok', 200));
+      return app;
+    }
+
+    it('lets a remote request with correct credentials reach the handler', async () => {
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Authorization: basicAuthHeader(USER, PASSWORD) } },
+        REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(200);
+      // ハンドラまで到達していること自体が主張の中身。ミドルウェアが 200 を
+      // 返しただけでは通過とは言えない。
+      expect(await res.text()).toBe('ok');
+      // 認証済みのレスポンスでもクリックジャッキング対策ヘッダは付く。
+      expect(res.headers.get('X-Frame-Options')).toBe('DENY');
+      expect(res.headers.get('Content-Security-Policy')).toBe("frame-ancestors 'none'");
+    });
+
+    it('still rejects a remote request whose password is wrong', async () => {
+      // 上のテストが「リモートは素通し」で通っているのではないことを、同じ
+      // マウント済みスタックで示す。
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Authorization: basicAuthHeader(USER, 'wrong-password') } },
+        REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(401);
+      // 401 なら再認証を促すヘッダが要る。これが無いとブラウザは
+      // 認証ダイアログを出さない。
+      expect(res.headers.get('WWW-Authenticate')).toContain('Basic');
+    });
+
+    it('does not exempt a remote request that spoofs Host: localhost:8787', async () => {
+      // ローカル免除は「TCP の送信元がループバック」で決まり、Host は
+      // 追加の絞り込みにしか使わない (local-request.ts の doc comment)。
+      // その不変条件を mount 済みスタックで固定する。isLoopbackAddress が
+      // 常に true を返すよう壊すと、REMOTE_ENV の localPort が 8787 で
+      // Host も一致するため免除が通り、このテストだけが 200 で落ちる。
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Host: 'localhost:8787' } },
+        REMOTE_ENV,
+      );
+
+      expect(res.status).toBe(401);
+    });
+
+    it('does not exempt a loopback request whose listening port is unknown', async () => {
+      // localPort が読めないとき免除しない (fail-closed) ことを、
+      // ミドルウェアを通した経路で確認する。readLocalPort が実際の env に
+      // 関係なく 8787 を返すよう壊すと、ここだけが 200 で落ちる。
+      const app = createSecuredApp();
+
+      const res = await app.request(
+        '/',
+        { headers: { Host: 'localhost:8787' } },
+        { incoming: { socket: { remoteAddress: '127.0.0.1' } } },
+      );
+
+      expect(res.status).toBe(401);
     });
   });
 });

@@ -27,6 +27,13 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
 - `origin/main` 起点で作る（ローカル main が古くても最新から始められる）。
 - 成功 = 排他獲得。失敗（ブランチ/パス既存）= 他セッションが着手中。別チケットへ。
 - 成功したら `bd update <id> --claim`。
+- **複数チケットを一括で並列着手するときも、2本目以降を毎回この `git -C
+  <メインチェックアウト>` 形式で実行する**（生シェルで cd している場合は `pwd` で
+  メインチェックアウトに居ることを確認してから）。cwd が既存 worktree の中のまま
+  相対パスで add すると、新しい worktree がその worktree の**内側にネストして**作られる
+  （実測: 2026-08-17、`.claude/worktrees/<A>/.claude/worktrees/<B>/`）。ネストを発見したら
+  **内側の worktree から先に** `git worktree remove` する — 外側から消すと内側の作業ごと
+  再帰的に破壊される（failure-catalog.md の nested-worktree）。
 
 ### 2. worktree 内でのセットアップと実装
 
@@ -111,8 +118,9 @@ git commit --allow-empty -m "chore: retrigger CI (Actions dispatch missed during
 git push
 ```
 
-実例・より詳しい教訓: グローバル orchestration skill の `reference/lessons-learned.md`
-「GitHub Actionsのwebhook dispatchが障害中に無言で失われる（bdboard, 2026-08-17）」。
+実例: [failure-catalog.md](failure-catalog.md) の ci-webhook-drop（さらに詳しい経緯は
+グローバル orchestration skill の `reference/lessons-learned.md`「GitHub Actionsの
+webhook dispatchが障害中に無言で失われる（bdboard, 2026-08-17）」— 参考。本則はこちら）。
 
 **CI待ちのポーリングで GraphQL rate limit を食い潰さない**: `gh pr create`・`gh pr merge`・
 `gh pr checks`・`gh pr view --json` は、gh CLI の内部実装がいずれも GraphQL API 経由で、
@@ -140,7 +148,18 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
 1. **`git push` は影響を受けていない**。`gh pr create` が枯渇で失敗しても、ブランチは
    既にリモートに存在している — 復旧は `gh pr create` のリトライだけでよく、worktree や
    ブランチの作り直しは不要。状態確認だけなら、上の 503 障害時の REST コマンド群も
-   core 枠なのでそのまま使える。
+   core 枠なのでそのまま使える。**PR 作成自体も REST で代替できる**（GraphQL を一切
+   使わない）:
+
+   ```bash
+   gh api repos/<owner>/<repo>/pulls -f title="..." -f head=<branch> -f base=main -f body="..." \
+     --jq '{number, html_url}'
+   ```
+
+   実測（2026-08-29, PR #134）: `gh api rate_limit` の graphql が **remaining=5000 を
+   示していても GraphQL 呼び出しが exceeded で拒否され続ける**ことがある（他セッションの
+   消費との競合か、rate_limit 表示が次窓の値を先取りしている可能性 — 原因未確定）。
+   rate_limit の表示を信じて sleep で待つ前に、まず REST 代替を試すほうが速い。
 2. 正確なリセット時刻を取る（`gh api rate_limit` 自体は REST(core) 枠なので、GraphQL が
    枯渇していても通る）:
 
@@ -170,7 +189,12 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
 
 並列セッションが同時に main へマージしてくること自体は（branch protection が無い環境では）
 止められない。独立に CI 緑だった2本の PR が組み合わさると壊れる「意味的衝突」も CI では
-捕まらない。3層で守る。層2は単独で機械的に効き、層1と層3は協調規律:
+捕まらない。3層で守る。層2は単独で機械的に効き、層1と層3は協調規律。
+
+マージ手順のコマンド列は **1行連結（`cmd1; cmd2; ...`）にしない** — `;` はエラーで
+止まらないため、途中の失敗（acquire の誤構文等）を素通りして後半の `bd close` まで
+無条件実行された実例がある（failure-catalog.md の merge-chain-semicolon）。1コマンド
+ずつ結果を確認して進めるか、スクリプト化するなら `set -euo pipefail` を付ける。
 
 **層1 — 協調ロック（bd merge-slot）**: マージ作業を一度に1セッションへ直列化する。
 

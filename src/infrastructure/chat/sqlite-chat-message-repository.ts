@@ -8,6 +8,10 @@ import type {
 import { CHAT_MESSAGES_MAX_PER_SESSION, CHAT_MESSAGE_MAX_LENGTH } from '../../domain/chat.js';
 import { openCacheDatabase } from '../cache/sqlite-board-cache.js';
 
+export type SqliteChatMessageRepository = ChatMessageRepository & {
+  readonly close: () => void;
+};
+
 interface CountRow {
   readonly count: number;
 }
@@ -40,7 +44,7 @@ function parseRole(raw: string): ChatMessageRole | undefined {
 export function createSqliteChatMessageRepository(
   dbPath: string,
   options?: { readonly maxMessagesPerSession?: number },
-): ChatMessageRepository {
+): SqliteChatMessageRepository {
   const maxMessagesPerSession =
     options?.maxMessagesPerSession ?? CHAT_MESSAGES_MAX_PER_SESSION;
 
@@ -168,6 +172,15 @@ export function createSqliteChatMessageRepository(
       db.transaction(() => {
         deleteBySessionStmt.run(sessionId);
       })();
+    },
+
+    close(): void {
+      // Windows ではオープン中の SQLite ファイルを unlink できない (EBUSY)。
+      // graceful shutdown 後も接続が残ると cache.db のロックと WAL 補助ファイルが
+      // 解放されない (bdboard-9dm)。POSIX では表面化しにくいが、close は必須。
+      if (db.open) {
+        db.close();
+      }
     },
   };
 }

@@ -5,6 +5,7 @@ import type { DirEntry, FileSystemPort } from '../../application/ports/file-syst
 import type { TranscriptScanner } from '../../application/ports/transcript-scanner.js';
 import { normalizeSessionId } from '../../application/session/parse-session-file.js';
 import { extractBeadIds } from '../../application/transcript/extract-bead-ids.js';
+import { extractCompleteLines } from '../../application/transcript/extract-complete-lines.js';
 import { extractUsageTotals } from '../../application/transcript/extract-usage.js';
 import { planScan, type ScanTarget } from '../../application/transcript/scan-plan.js';
 import { compareStrings } from '../../domain/compare.js';
@@ -16,6 +17,11 @@ interface ScannerOptions {
   readonly projectsDir?: string;
   readonly initialTailBytes?: number;
   readonly budgetBytes?: number;
+}
+
+interface TargetMeta {
+  readonly previousOffset: number | undefined;
+  readonly size: number;
 }
 
 interface TargetWithProject {
@@ -176,15 +182,23 @@ export function createJsonlTranscriptScanner(
       );
 
       const filePathToProject = new Map<string, Project>();
+      const targetMeta = new Map<string, TargetMeta>();
       for (const { target, project } of targetsWithProject) {
         filePathToProject.set(target.filePath, project);
+        targetMeta.set(target.filePath, {
+          previousOffset: target.previousOffset,
+          size: target.size,
+        });
       }
 
       const links: SessionLink[] = [];
 
       for (const slice of slices) {
-        const text = await fs.readRange(slice.filePath, slice.start, slice.length);
-        if (text === undefined) {
+        // 生 Buffer で読む。予算(budgetBytes)やファイル末尾でスライスが行の途中で
+        // 切れることがあり、そこを行境界に揃えてからでないと解釈もオフセットの
+        // コミットもできない(bdboard-32u / bdboard-3tw.105)。
+        const chunk = await fs.readRangeBytes(slice.filePath, slice.start, slice.length);
+        if (chunk === undefined) {
           continue;
         }
 
@@ -192,6 +206,25 @@ export function createJsonlTranscriptScanner(
         if (project === undefined) {
           continue;
         }
+
+        const meta = targetMeta.get(slice.filePath);
+        const previousOffset = meta?.previousOffset;
+        const isTailRestart =
+          previousOffset === undefined ||
+          (meta !== undefined && previousOffset > meta.size);
+
+        // 予算で切られた slice (EOF まで届いていない) だけは、完結した行が
+        // 取れなくても前進させる。さもないと窓より長い1行でこのファイルが
+        // 永久に止まり、planScan の予算切れ break で後続ファイルも飢える。
+        const sliceEnd = slice.start + slice.length;
+        const reachedEof = meta === undefined || sliceEnd >= meta.size;
+
+        const { text, committedOffset } = extractCompleteLines(
+          chunk,
+          slice.start,
+          isTailRestart,
+          reachedEof ? undefined : sliceEnd,
+        );
 
         const knownIds = knownIdsByProject.get(project.id) ?? new Set<string>();
         const ticketIds = extractBeadIds(text, project.prefixes, knownIds);
@@ -210,7 +243,9 @@ export function createJsonlTranscriptScanner(
           cache.addSessionUsage(slice.sessionId, usage);
         }
 
-        cache.setTranscriptOffset(slice.filePath, slice.newOffset);
+        // 切れた行を含む slice.newOffset ではなく、完結した行の末尾までをコミットする。
+        // ここを進めすぎると、その行は二度と読まれない(usage は累積値なので恒久的な欠損)。
+        cache.setTranscriptOffset(slice.filePath, committedOffset);
       }
 
       return dedupeAndSortLinks(links);

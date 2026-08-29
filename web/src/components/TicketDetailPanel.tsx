@@ -45,6 +45,7 @@ import {
   filterDependencyCandidates,
 } from './dependencyEditing';
 import { MarkdownContent } from './MarkdownContent';
+import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
 import { useUndoSnackbar } from './UndoSnackbar';
@@ -318,11 +319,16 @@ export function TicketDetailPanel({
   const projectRootPath =
     data === undefined ? undefined : projectRootPaths.get(data.projectId);
 
+  // 質問への回答欄だけを初期化する。resetFormState はこれを含む全体リセット。
+  const resetDecisionAnswer = useCallback(() => {
+    setSelectedChoice(undefined);
+    setFreeformText('');
+  }, []);
+
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
     setCopyFeedback(null);
     setAriaLiveMessage('');
-    setSelectedChoice(undefined);
-    setFreeformText('');
+    resetDecisionAnswer();
     if (options?.clearSubmittedDecision === true) {
       setSubmittedDecision(null);
     }
@@ -341,17 +347,11 @@ export function TicketDetailPanel({
       clearTimeout(copyTimeoutRef.current);
       copyTimeoutRef.current = null;
     }
-  }, []);
+  }, [resetDecisionAnswer]);
 
   useEffect(() => {
     resetFormState({ clearSubmittedDecision: true });
   }, [ticketId, projectRootPath, resetFormState]);
-
-  // submittedDecision は pendingDecision 切り替えでは消さない。回答直後に
-  // 「送信した回答」セクションが消えると bdboard-50n の元バグに戻るため。
-  useEffect(() => {
-    resetFormState();
-  }, [pendingDecision?.id, resetFormState]);
 
   useFocusTrap({
     containerRef: panelRef,
@@ -471,6 +471,28 @@ export function TicketDetailPanel({
       setFreeformText('');
     },
   });
+
+  // submittedDecision は pendingDecision 切り替えでは消さない。回答直後に
+  // 「送信した回答」セクションが消えると bdboard-50n の元バグに戻るため。
+  //
+  // ここで消すのは *この質問への回答欄だけ*。pendingDecision はポーリング由来で、
+  // 利用者が何もしていなくても出現/消滅する — フォーム全体を resetFormState() で
+  // 消していたため、エージェントが質問を投稿した瞬間に書きかけのコメントや
+  // クローズ理由が警告なく消えていた (bdboard-9hl)。チケット自体が変わったときの
+  // 全体リセットは上の effect が担当する。
+  //
+  // 送信ミューテーションの状態もここで捨てる。質問1の送信に失敗したあと
+  // エージェントが質問1を取り下げて質問2を出すと、質問2の送信ボタンの下に
+  // 質問1の失敗メッセージが残り続けていた (bdboard-uez)。id が変わったときだけ
+  // 消すので、「失敗したが質問は同じまま」ではメッセージは残る。
+  //
+  // この effect が decisionMutation の下にあるのは、deps 配列が描画中に
+  // 評価されるため。上に置くと decisionMutation が TDZ で ReferenceError になる。
+  const resetDecision = decisionMutation.reset;
+  useEffect(() => {
+    resetDecisionAnswer();
+    resetDecision();
+  }, [pendingDecision?.id, resetDecisionAnswer, resetDecision]);
 
   const quickActionMutation = useMutation({
     mutationFn: async (vars: {
@@ -1206,6 +1228,11 @@ export function TicketDetailPanel({
                   <p className="detail-help">
                     稼働中セッションから選択します(既存の手動リンクは上書きされます)
                   </p>
+                  {/* win32 ではセッション検出そのものが動かないため、ここは
+                      常に空になる。理由を出さないと「稼働中のセッションが
+                      ありません」が壊れているようにしか読めない
+                      (bdboard-70z.9, PR#115 fable レビュー minor)。 */}
+                  <PlatformLimitationNotice feature="session-discovery" />
                   {activeSessionsQuery.isLoading && (
                     <p className="loading">読み込み中…</p>
                   )}

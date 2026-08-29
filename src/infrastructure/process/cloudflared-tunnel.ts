@@ -1,5 +1,6 @@
 import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type {
   TunnelProcess,
@@ -11,7 +12,28 @@ const TRY_CLOUDFLARE_URL_PATTERN =
 
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 const DEFAULT_STOP_GRACE_MS = 5_000;
-const DEFAULT_LOG_FILE_PATH = path.join(process.cwd(), 'logs', 'cloudflared-tunnel.log');
+/**
+ * cloudflared のログ既定パスを解決する。
+ *
+ * 以前は `path.join(process.cwd(), 'logs', ...)` だった (bdboard-3b0)。配布形態
+ * (`npx bdboard`) は任意の cwd から起動されるので、cwd 基準だとトンネルを開いた
+ * 瞬間に「ユーザーがたまたま居たディレクトリ」へ `logs/` を掘ることになる。
+ * ホームディレクトリだろうが他人のリポジトリのルートだろうが掘る。
+ *
+ * 置き場はキャッシュ DB (`~/.bdboard/cache.db`, src/main.ts) と同じ `~/.bdboard/`
+ * に揃えた。設定ファイル (`~/.config/bdboard/config.json`, infrastructure/fs/
+ * config-path.ts) の側ではない — ログは人が編集する設定ではなく実行時生成物
+ * なので、既に実行時生成物が置かれている場所に寄せる方が一貫する。
+ *
+ * homedir を注入できるのはテスト用。os.homedir() は Windows でもユーザー
+ * プロファイルを返すので、プラットフォーム分岐は要らない。
+ */
+export function resolveDefaultTunnelLogFilePath(opts?: {
+  homedir?: string;
+}): string {
+  const home = opts?.homedir ?? os.homedir();
+  return path.join(home, '.bdboard', 'logs', 'cloudflared-tunnel.log');
+}
 /** ログファイルの既定サイズ上限(5MB)。超過すると .log -> .log.1 へ退避される。 */
 const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -26,7 +48,13 @@ function maskSecrets(text: string): string {
   });
 }
 
-/** cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する) */
+/**
+ * cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する)。
+ *
+ * 契約: write/close は例外を投げてはならない。呼び出し側 (onData / close ハンドラ)
+ * は無防備に呼ぶため、投げるとログの都合でトンネル動作が壊れる — この方針は
+ * 生成失敗にもフォールバックを入れて揃えた (bdboard-nte)。
+ */
 export interface LogSink {
   write(chunk: string): void;
   close(): void;
@@ -54,6 +82,17 @@ function rotateLogFileIfOversized(filePath: string, maxBytes: number): void {
   } catch {
     // ローテーション失敗時は既存ファイルへの追記を続ける(ベストエフォート)
   }
+}
+
+/**
+ * 何も書かないシンク。ログ出力先を用意できなかったときのフォールバック
+ * (bdboard-nte)。
+ */
+function createNoopLogSink(): LogSink {
+  return {
+    write: () => {},
+    close: () => {},
+  };
 }
 
 function createFileLogSink(filePath: string, maxBytes: number): LogSink {
@@ -100,9 +139,11 @@ export interface CloudflaredTunnelOptions {
   readonly spawnFn?: SpawnFn;
   readonly startTimeoutMs?: number;
   readonly stopGraceMs?: number;
+  readonly platform?: NodeJS.Platform;
   readonly pathEnv?: string;
   readonly resolveExecutable?: () => string | null;
-  /** cloudflared の継続的な出力ログの保存先(既定: <cwd>/logs/cloudflared-tunnel.log) */
+  /** cloudflared の継続的な出力ログの保存先
+   *  (既定: resolveDefaultTunnelLogFilePath() = ~/.bdboard/logs/cloudflared-tunnel.log) */
   readonly logFilePath?: string;
   /** ログファイルのサイズ上限(バイト、既定: 5MB)。超過時は起動時に .log.1 へ退避する */
   readonly logMaxBytes?: number;
@@ -110,15 +151,21 @@ export interface CloudflaredTunnelOptions {
   readonly createLogSink?: (filePath: string, maxBytes: number) => LogSink;
 }
 
-function resolveCloudflaredInPath(pathEnv: string): string | null {
-  const directories = pathEnv.split(path.delimiter);
+function resolveCloudflaredInPath(
+  pathEnv: string,
+  opts?: { platform?: NodeJS.Platform },
+): string | null {
+  const platform = opts?.platform ?? process.platform;
+  const platformPath = platform === 'win32' ? path.win32 : path.posix;
+  const executableName = platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
+  const directories = pathEnv.split(platformPath.delimiter);
 
   for (const directory of directories) {
     if (directory.length === 0) {
       continue;
     }
 
-    const candidate = path.join(directory, 'cloudflared');
+    const candidate = platformPath.join(directory, executableName);
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
       return candidate;
@@ -168,12 +215,11 @@ export function createCloudflaredTunnel(
   const stopGraceMs = options.stopGraceMs ?? DEFAULT_STOP_GRACE_MS;
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
   const resolveExecutable =
-    options.resolveExecutable ?? ((): string | null => resolveCloudflaredInPath(pathEnv));
-  const logFilePath = options.logFilePath ?? DEFAULT_LOG_FILE_PATH;
+    options.resolveExecutable ?? ((): string | null => resolveCloudflaredInPath(pathEnv, options));
+  const logFilePath = options.logFilePath ?? resolveDefaultTunnelLogFilePath();
   const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const createLogSink = options.createLogSink ?? createFileLogSink;
 
-  let availabilityCache: boolean | null = null;
   let child: SpawnedProcess | null = null;
   let outputBuffer = '';
   const unexpectedExitListeners: Array<() => void> = [];
@@ -188,14 +234,13 @@ export function createCloudflaredTunnel(
     }
   };
 
-  const isAvailable = async (): Promise<boolean> => {
-    if (availabilityCache !== null) {
-      return availabilityCache;
-    }
-
-    availabilityCache = resolveExecutable() !== null;
-    return availabilityCache;
-  };
+  // キャッシュは持たない。ここは「今 PATH に cloudflared があるか」を素直に答える。
+  // 以前は結果を恒久キャッシュしていたが、「見つからない」は brew install 一つで
+  // 覆るので、固定するとサーバー再起動まで拾えなかった (bdboard-syr)。
+  // キャッシュの責務は呼び出し元の tunnel-service に一元化してある (TTL 付き) —
+  // ここにも置くと、二層のどちらが効いているのか追えなくなる。
+  // 走査自体は PATH 46 エントリで実測 0.14ms 未満なので、素通しで問題ない。
+  const isAvailable = async (): Promise<boolean> => resolveExecutable() !== null;
 
   const stop = async (): Promise<void> => {
     const current = child;
@@ -265,7 +310,26 @@ export function createCloudflaredTunnel(
     ]);
     child = processHandle;
 
-    const logSink = createLogSink(logFilePath, logMaxBytes);
+    // シンクの生成失敗でトンネル起動を巻き込まない (bdboard-nte)。
+    // 出力先が通常ファイルとして存在する・権限が無い・read-only FS といった
+    // ケースで createFileLogSink の mkdirSync/openSync は throw する。書き込み
+    // 失敗自体は既に「トンネル動作を阻害しない」設計 (createFileLogSink の
+    // write/close、rotateLogFileIfOversized) なので、生成だけがその方針から
+    // 外れているのは一貫していない。
+    //
+    // なお、シンクを spawn より前に作る順序も検討したが採らなかった。先に
+    // 作ると spawnFn が throw した場合に開いた fd が閉じられずに漏れる。
+    // 「生成失敗を握り潰す」だけで目的は足りている。
+    let logSink: LogSink;
+    try {
+      logSink = createLogSink(logFilePath, logMaxBytes);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.error(
+        `cloudflared log sink unavailable (${logFilePath}): ${detail}. Continuing without a tunnel log.`,
+      );
+      logSink = createNoopLogSink();
+    }
     logSink.write(`\n[${new Date().toISOString()}] cloudflared starting (port ${options.port})\n`);
 
     return new Promise<TunnelStartResult>((resolve, reject) => {

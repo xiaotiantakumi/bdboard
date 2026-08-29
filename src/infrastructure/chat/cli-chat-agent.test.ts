@@ -896,6 +896,115 @@ describe('createCliChatAgent', () => {
       errorSpy.mockRestore();
     });
 
+    it('recursively deletes temporaryDirs inside scratchDir after a turn', async () => {
+      const scratchDir = makeTempDir();
+      const turnDir = mkdtempSync(path.join(scratchDir, 'bdboard-turn-artifact-'));
+      const nestedFile = path.join(turnDir, 'last-message.txt');
+      writeFileSync(nestedFile, 'reply-from-artifact', 'utf8');
+
+      const runner = createFakeRunner(async () => ({
+        stdout: 'ignored',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const agent = createCliChatAgent(
+        runner,
+        createDummySpec({
+          buildTurn(request) {
+            return {
+              args: ['run'],
+              stdin: request.message,
+              lastMessageFile: nestedFile,
+              temporaryDirs: [turnDir],
+            };
+          },
+          parseTurn(_result, readLastMessageFile) {
+            return {
+              reply: readLastMessageFile() ?? '',
+              sessionId: 'sess-dummy',
+              failedTools: [],
+            };
+          },
+        }),
+        {
+          buildContext: () => ({
+            systemPrompt: 'sys',
+            mcpServers: [],
+            toolNames: [],
+            scratchDir,
+          }),
+        },
+      );
+
+      const result = await agent.sendMessage({
+        projectRootPath: '/proj',
+        projectName: 'proj',
+        message: 'hello',
+      });
+
+      expect(result.reply).toBe('reply-from-artifact');
+      expect(existsSync(turnDir)).toBe(false);
+      expect(existsSync(nestedFile)).toBe(false);
+    });
+
+    it('refuses to delete and logs an error when temporaryDirs resolves outside scratchDir', async () => {
+      const scratchDir = makeTempDir();
+      const outsideDir = makeTempDir();
+      const outsideFile = path.join(outsideDir, 'not-mine.txt');
+      writeFileSync(outsideFile, 'do not delete me', 'utf8');
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const runner = createFakeRunner(async () => ({
+        stdout: 'reply-text',
+        stderr: '',
+        exitCode: 0,
+      }));
+
+      const agent = createCliChatAgent(
+        runner,
+        createDummySpec({
+          buildTurn(request) {
+            // spec のバグを模す: scratchDir 配下ではないディレクトリを返す。
+            return {
+              args: ['run'],
+              stdin: request.message,
+              lastMessageFile: outsideFile,
+              temporaryDirs: [outsideDir],
+            };
+          },
+        }),
+        {
+          buildContext: () => ({
+            systemPrompt: 'sys',
+            mcpServers: [],
+            toolNames: [],
+            scratchDir,
+          }),
+        },
+      );
+
+      await agent.sendMessage({
+        projectRootPath: '/proj',
+        projectName: 'proj',
+        message: 'hello',
+      });
+
+      expect(existsSync(outsideDir)).toBe(true);
+      expect(existsSync(outsideFile)).toBe(true);
+      expect(errorSpy).toHaveBeenCalled();
+      const dirRefusal = errorSpy.mock.calls.find((call) => {
+        const logged = String(call[0] ?? '');
+        return logged.includes('refusing to delete temporary directory outside scratchDir')
+          && logged.includes(`dir=${outsideDir}`);
+      });
+      expect(dirRefusal).toBeDefined();
+      const logged = String(dirRefusal![0] ?? '');
+      expect(logged).toContain(scratchDir);
+
+      errorSpy.mockRestore();
+    });
+
     it('does not attempt deletion when the spec omits lastMessageFile', async () => {
       const scratchDir = makeTempDir();
       const runner = createFakeRunner(async () => ({

@@ -43,6 +43,61 @@
 
 ## セットアップ / 起動
 
+### 必要なもの / 前提
+
+- **Node.js 22.9.0 以上** — `bdboard` の起動スクリプトが Node の
+  `--env-file-if-exists` フラグ(22.9.0 で追加)を常に渡すため。22.0〜22.8 では
+  このフラグ自体が未知なので、`.env` の有無に関係なく `bad option` で起動に失敗する。
+- **`bd`(Beads) CLI** — bdboard は `bd` が管理するチケットを見る UI であり、
+  `bd` 本体が別途インストールされていないと動かない(冒頭の説明も参照)。
+  前提バージョンは **v1.2.1**(詳細は後述の「bd CLI の前提バージョン」節)。
+  インストール方法は本体リポジトリ
+  [gastownhall/beads](https://github.com/gastownhall/beads) を参照。
+
+### 対応 OS
+
+- **macOS** — 全機能が動作する(開発・動作確認はここが中心)。
+- **Linux** — 全機能が動作する想定だが、実機での通し確認はしていない。セッション紐付けは
+  `lsof` の実体に依存するので、最小構成のディストリでは別途インストールが要る。
+- **Windows** — 動作は未検証。パス・設定ディレクトリ・スキャンルートには win32 分岐があり
+  一部は対応済みだが、次の機能は動かない見込みである。`npm install` が通っても
+  全機能が使えるわけではない点に注意すること。
+  - **セッション紐付け**(Claude Code セッション検出) — `ps` と `lsof` に依存しており、
+    Windows には無い。
+  - **トンネル公開**(`cloudflared`) — `cloudflared.exe` の解決は対応済みだが、
+    npm 経由で入る `cloudflared.cmd` は解決できず、実機での動作確認もできていない。
+  - **チャット** — CLI 起動に shell を使わない設計のため、npm 経由の
+    `claude` / `codex` / `cursor-agent` の `.cmd` シムを起動できない。
+  看板表示・統計・依存グラフ・チケット詳細までは動く見込み。裏付けとして、CI の
+  `verify-windows` ジョブ(型検査 + ユニットテスト + 依存境界)は windows-latest で
+  全て緑になっている(bdboard-9dm)。ただしこれが検証しているのは上記の3機能を**除いた**
+  範囲であり、`ps` / `lsof` / `cloudflared` / 各 CLI といった外部プロセスに依存する
+  部分は、そもそもユニットテストの対象外である点に注意すること。
+
+### インストールと起動(利用者向け)
+
+> **現状の注意**: npm への公開はまだ行っていない(パッケージ名 `bdboard` は npm 上で未使用 = 空いているが、こちらで確保もしていない)。
+> そのため下記の `npx bdboard` / `npm install -g bdboard` は**まだ動かない**。
+> 今すぐ動かしたい場合は次節「開発者向け」の clone 手順を使うこと。
+> 公開作業は bdboard-70z.4、この注意書きの削除は bdboard-3mz で追う。
+
+```bash
+npx bdboard
+```
+
+グローバルに入れて `bdboard` コマンドだけで起動したい場合:
+
+```bash
+npm install -g bdboard
+bdboard
+```
+
+起動時のカレントディレクトリに `.env` があれば読み込む(`--env-file-if-exists=.env`)。
+既定では `http://127.0.0.1:8787` で待ち受ける(ポートは環境変数 `BDBOARD_PORT` で変更可)。
+ブラウザでその URL を開く。
+
+### 開発者向け(リポジトリを clone して動かす場合)
+
 **Claude Code を使っている場合**: リポジトリ直下で `claude` を起動して `/setup` と入力すると、
 以下の手動手順に加えてスキャンルート等の基本設定までを対話的にセットアップできる
 (カスタムスラッシュコマンド `.claude/commands/setup.md`。依存インストール → スキャンルートの
@@ -79,7 +134,7 @@ npm run dev:web   # Vite の dev サーバー(HMR)。/api は上記サーバー�
 Vite は `127.0.0.1` のみに待ち受ける。`vite --host` などでこのプロキシを LAN に公開すると、
 loopback 接続をローカル直アクセスとみなす認証免除の前提が崩れるため使用しないこと。
 
-`.env` ファイル(git 管理外)を置くと `npm run dev` / `npm run start` が自動で読み込む
+`.env` ファイル(git 管理外)を置くと `npm run dev` / `npm run start` / `bdboard` が自動で読み込む
 (`tsx --env-file-if-exists=.env`)。雛形は `.env.example` を参照(認証用の2変数のみ)。
 
 ## Quick tour
@@ -89,7 +144,7 @@ loopback 接続をローカル直アクセスとみなす認証免除の前提�
 1. 普段 `bd` で運用しているプロジェクトを、`BDBOARD_SCAN_ROOTS`(既定は `~/Documents`)配下の
    共通の親ディレクトリにまとめておく。bdboard は起動時にこの配下を再帰的にスキャンして
    `.beads/` を持つプロジェクトを自動的に見つける。
-2. `npm run start` の後、ブラウザで `http://127.0.0.1:8787` を開く。見つかった全プロジェクトの
+2. 起動したら、ブラウザで `http://127.0.0.1:8787` を開く。見つかった全プロジェクトの
    チケットが Kanban ボードに並ぶ。
 3. 画面上部で merged(全プロジェクト統合の1枚のボード)と split(プロジェクトごとのカラムに
    分けた表示)を切り替えて、見やすい方を確認する。
@@ -124,15 +179,21 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_SESSION_INTERVAL_MS` | Claude Code セッション一覧の再取得間隔(ミリ秒) | `10000`(10秒) |
 | `BDBOARD_TRANSCRIPT_INTERVAL_MS` | セッション⇔チケットのトランスクリプト走査間隔(ミリ秒)。`0` 以下で無効化 | `30000`(30秒) |
 | `BDBOARD_CFD_SNAPSHOT_INTERVAL_MS` | 累積フロー図(CFD)スナップショットの記録間隔(ミリ秒)。`0` 以下で無効化 | `3600000`(1時間) |
+| `BDBOARD_TUNNEL_LOG_PATH` | `cloudflared` トンネルログの出力先ファイル。既定は cwd に依存しない(`npx bdboard` は任意のディレクトリから起動されるため)。相対パスを渡した場合は**起動ディレクトリ基準**で1度だけ解決される | `~/.bdboard/logs/cloudflared-tunnel.log` |
 | `BDBOARD_TUNNEL_LOG_MAX_BYTES` | `cloudflared` トンネルログのローテーション閾値(バイト) | `5242880`(5MB) |
 | `BDBOARD_AUTH_USER` | Basic 認証のユーザー名。`BDBOARD_AUTH_PASSWORD` と両方に値がある場合のみ認証が有効化される | (未設定) |
 | `BDBOARD_AUTH_PASSWORD` | Basic 認証のパスワード。上記と同様 | (未設定) |
 | `BDBOARD_AUTH_DISABLED` | `1` または `true`(完全一致)で Basic 認証を明示的に無効化する。未設定かつ認証情報も未設定だと、リモートリクエストは `503` になる(フェイルクローズ)。ローカル直アクセスは下記条件で免除され、Basic 認証が有効でなければトンネル公開はできない | (未設定 = 無効化しない) |
+| `BDBOARD_UPDATE_CHECK_DISABLED` | `1` または `true` で新バージョン通知を無効化する。無効時は GitHub へ一切通信しない | (未設定 = 有効) |
+| `BDBOARD_UPDATE_CHECK_CACHE_MS` | 新バージョン確認のキャッシュ TTL(ミリ秒)。未認証の GitHub API は IP あたり 60 req/h なので短くしない。負値や数値以外は既定に戻る(確認を止めるなら `BDBOARD_UPDATE_CHECK_DISABLED`) | `21600000`(6時間) |
+| `BDBOARD_UPDATE_CHECK_TIMEOUT_MS` | 新バージョン確認のタイムアウト(ミリ秒)。超過・失敗は黙って無視される | `3000`(3秒) |
+| `BDBOARD_UPDATE_CHECK_REPO` | 新バージョンを確認する GitHub リポジトリ(`owner/repo`) | `xiaotiantakumi/bdboard` |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |
 | `BDBOARD_AI_QUOTA_CACHE_MS` | AI クォータ結果のキャッシュ有効期間(ミリ秒) | `300000`(5分) |
 | `BDBOARD_CHAT_DISABLED` | `1` または `true`(大小無視)でチャット機能を無効化 | `false` |
+| `BDBOARD_IGNORE_PLATFORM_LIMITS` | `1` / `true` で、プラットフォーム未対応判定 (Windows のセッション検出・チャット) を無視して有効化する。独自に環境を整えた場合の逃げ道 | `false` |
 | `BDBOARD_CLAUDE_PATH` | チャット機能が呼び出す `claude` CLI のパス/名前 | `claude` |
 | `BDBOARD_CHAT_MODEL` | チャットで使うモデル(起動時の既定値1つ) | `sonnet` |
 | `BDBOARD_CHAT_MODELS` | チャットの claude エージェントで選択可能なモデル一覧(カンマ区切り) | `sonnet,opus,haiku` |

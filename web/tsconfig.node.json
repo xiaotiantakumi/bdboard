@@ -1,10 +1,13 @@
 {
+  // bdboard-ruf: vite/vitest の Node 向け設定ファイル用。web/tsconfig.json (DOM/src) とは前提が異なるため分離し、build で別 tsc を走らせる。
+  // strict 系は ../tsconfig.base.json に集約 (bdboard-b4o)。ここには前提が違う部分だけを書く。
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "lib": ["ES2023"],
     "module": "ESNext",
-    "skipLibCheck": true,
-    "moduleResolution": "bundler"
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts"]
 }

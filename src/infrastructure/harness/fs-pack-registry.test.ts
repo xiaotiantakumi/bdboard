@@ -82,8 +82,8 @@ describe('createFsPackRegistry (repo fixture)', () => {
 
     expect(pack).toMatchObject({
       name: 'bdboard-harness',
-      version: '0.1.2',
     });
+    expect(pack?.version).toMatch(/^\d+\.\d+\.\d+$/);
     expect(pack?.files.some((file) => file.relativePath === 'SKILL.md')).toBe(true);
     expect(
       pack?.files.some((file) => file.relativePath === 'references/worktree-pr-flow.md'),

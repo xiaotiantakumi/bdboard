@@ -13,7 +13,6 @@ import type {
   ProjectBoardDto,
   SessionDto,
   StatusDto,
-  SyncHealthDto,
   TicketDetailDto,
 } from './api';
 import { App } from './App';
@@ -43,7 +42,6 @@ vi.mock('./api', async (importOriginal) => {
     fetchStatus: vi.fn(),
     fetchBoard: vi.fn(),
     fetchPendingDecisions: vi.fn(),
-    fetchSyncHealth: vi.fn(),
     fetchChatAvailability: vi.fn(),
     fetchTicket: vi.fn(),
     fetchTicketComments: vi.fn(),
@@ -62,7 +60,6 @@ import {
   fetchProjects,
   fetchSessions,
   fetchStatus,
-  fetchSyncHealth,
   fetchTicket,
   fetchTicketComments,
   fetchTunnel,
@@ -74,7 +71,6 @@ const fetchSessionsMock = vi.mocked(fetchSessions);
 const fetchStatusMock = vi.mocked(fetchStatus);
 const fetchBoardMock = vi.mocked(fetchBoard);
 const fetchPendingDecisionsMock = vi.mocked(fetchPendingDecisions);
-const fetchSyncHealthMock = vi.mocked(fetchSyncHealth);
 const fetchChatAvailabilityMock = vi.mocked(fetchChatAvailability);
 const fetchTicketMock = vi.mocked(fetchTicket);
 const fetchTicketCommentsMock = vi.mocked(fetchTicketComments);
@@ -390,7 +386,6 @@ describe('App ticket deep link', () => {
     } satisfies StatusDto);
     fetchBoardMock.mockResolvedValue(emptyBoard);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -450,7 +445,6 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
       projectCount: 1,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -589,7 +583,6 @@ describe('board filter presets (bdboard-3tw.112)', () => {
       projectCount: 1,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -668,7 +661,6 @@ describe('header help overlays', () => {
       projectCount: 1,
     } satisfies StatusDto);
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -802,7 +794,6 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
       generatedAt: '2026-01-01T11:55:00.000Z',
     });
     fetchPendingDecisionsMock.mockResolvedValue([] satisfies PendingDecisionDto[]);
-    fetchSyncHealthMock.mockResolvedValue([] satisfies SyncHealthDto[]);
     fetchChatAvailabilityMock.mockResolvedValue({
       availability: 'unavailable',
     } satisfies ChatAvailabilityDto);
@@ -835,8 +826,40 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
     await user.click(screen.getByRole('button', { name: /接続状態:/ }));
 
     await waitFor(() => {
-      expect(screen.getByText('盤面取得: 5分前')).toBeInTheDocument();
+      expect(screen.getByText('盤面内容の最終変化: 5分前')).toBeInTheDocument();
     });
-    expect(screen.getByText(/最終更新:/)).toBeInTheDocument();
+    expect(screen.getByText(/サーバーのbd取込:/)).toBeInTheDocument();
+  });
+
+  // bdboard-9qa の本丸の回帰テスト。**修正前のコードでは失敗する**ことを確認済み
+  // (修正前はピルが「接続状態: 遅延」になり、バナーが描画された)。
+  //
+  // このスイートの前提がそのままバグの再現条件になっている: 盤面フェッチは成功して
+  // いる (fetchBoardMock は解決する = サーバーと通信できている) が、その generatedAt は
+  // 固定時刻の5分前で凍っている。静穏時に ETag が 304 を返し続ける実運用と同じ状況で、
+  // 修正前は凍った generatedAt を鮮度判定の基準にしていたため、通信が完全に生きている
+  // のに「盤面が約5分前から更新されていません」と警告していた (bdboard-9qa の実測バグ)。
+  it('keeps the status ok while the server is reachable but generatedAt is frozen (bdboard-9qa)', async () => {
+    const user = userEvent.setup();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /接続状態:/ })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole('button', { name: /接続状態:/ }));
+
+    // 先に「盤面が実際に読み込まれ、その generatedAt が5分古い」ことを固定する。
+    // これを待たずにピルだけ見ると boardQuery.data 未取得の一瞬を掴んでしまい、
+    // 修正前のコードでも素通りする空振りテストになる。
+    await waitFor(() => {
+      expect(screen.getByText('盤面内容の最終変化: 5分前')).toBeInTheDocument();
+    });
+
+    // その状態でもピルは「正常」— 5分古いのは盤面の内容であって、通信ではない。
+    expect(screen.getByRole('button', { name: '接続状態: 正常' })).toBeInTheDocument();
+    // バナー本体も出ていないこと (level が ok なので AlertBar は null を返す)。
+    expect(screen.queryByRole('button', { name: '再接続' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/通信できていません/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/更新されていません/)).not.toBeInTheDocument();
   });
 });

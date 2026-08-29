@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './index.css';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { WatchedTicketsProvider } from './components/WatchedTicketsProvider';
 import { resolveCredentialRedirect } from './stripUrlCredentials';
 
@@ -35,7 +36,12 @@ function mount(): void {
     <StrictMode>
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <App />
+          {/* 最後の砦。App 自身のフックや、境界を張れないルート側のラッパーが
+              throw したときに白画面まで落ちないようにする。個々のパネル/ビューは
+              App 内の境界が先に受け止めるので、ここまで来るのは例外的な経路だけ。 */}
+          <ErrorBoundary label="アプリ全体">
+            <App />
+          </ErrorBoundary>
         </WatchedTicketsProvider>
       </QueryClientProvider>
     </StrictMode>,

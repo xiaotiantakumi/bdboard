@@ -149,6 +149,41 @@ describe('createTunnelRoutes local-only guard', () => {
 });
 
 describe('createTunnelRoutes behavior', () => {
+  // bdboard-syr: GET が純粋なキャッシュ読みだと、後から cloudflared を入れても
+  // 画面が「利用不可」のままになる。UI が定期的に触るのはここだけ。
+  it('re-probes availability on GET so a later install shows up', async () => {
+    let installed = false;
+    // probe は state も書き換える (unavailable -> off) 実装なので、fake にも同じ
+    // 副作用を持たせる。getState を静的な fake にすると、ハンドラが getState() を
+    // probe より先に読む退行を観測できない — その退行は state:'unavailable' と
+    // available:true を同時に返す矛盾ペイロードになる (PR#122 fable レビュー)。
+    let state: TunnelState = { kind: 'unavailable' };
+    const probeAvailability = vi.fn(async () => {
+      if (installed && state.kind === 'unavailable') {
+        state = { kind: 'off' };
+      }
+      return installed;
+    });
+    const service = createFakeTunnelService({
+      getState: () => state,
+      probeAvailability,
+      getAvailability: () => false,
+    });
+    const app = createApp(service);
+    const get = async () =>
+      (await (
+        await app.request('/api/tunnel', { headers: { Host: 'localhost:8787' } }, LOCAL_ENV)
+      ).json()) as { readonly available: boolean; readonly state: string };
+
+    expect(await get()).toMatchObject({ available: false, state: 'unavailable' });
+
+    installed = true;
+
+    // probe の副作用が同じ応答に載る = getState() は probe より後に読まれている。
+    expect(await get()).toMatchObject({ available: true, state: 'off' });
+    expect(probeAvailability).toHaveBeenCalledTimes(2);
+  });
+
   it('does not return password when state is off', async () => {
     const service = createFakeTunnelService({
       getState: () => ({ kind: 'off' }),

@@ -36,6 +36,10 @@ import {
 } from '../chatThreadStorage';
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
 import { MarkdownContent } from './MarkdownContent';
+import {
+  PlatformLimitationNotice,
+  usePlatformLimitation,
+} from './PlatformLimitationNotice';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { usePersistedState } from '../hooks/usePersistedState';
@@ -84,6 +88,10 @@ type ChatAttachment = ChatMessageImage & {
   file: File;
   mimeType: ChatImageMimeType;
 };
+
+// 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
+// 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
+const BOTTOM_STICK_THRESHOLD_PX = 48;
 
 const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
 const CHAT_IMAGE_MAX_COUNT = 4;
@@ -239,6 +247,30 @@ function formatThreadUpdatedAt(iso: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
+// スレッド一覧の並び順(bdboard-3tw.154)。更新の新しい順。
+//
+// ピン留めはここでは見ない。ドロワーは「ピン留め」節と「開いている/閉じた」節に
+// pinned で振り分けてから描画しており、振り分けは filter なので相対順序を保つ。
+// つまりピン留め優先はこの比較関数を通さずに成立していて、ここに pinned を足すと
+// 表示に出ない分岐が増えるだけになる。
+//
+// 更新日時が読めないスレッドは 0 として最後尾に落とす。ここに来るのは
+// 「開いてはいるがスレッド一覧の再取得がまだ届いていない」極短い窓
+// (CLIセッションの再開直後など)だけで、次の再取得で正しい位置へ移る。
+// NaN をそのまま比較に流すと比較関数が非推移的になり、並びが入力順で変わる。
+function threadRecency(thread: ChatThreadDto | undefined): number {
+  if (thread === undefined) return 0;
+  const at = Date.parse(thread.updatedAt);
+  return Number.isNaN(at) ? 0 : at;
+}
+
+function compareThreadsNewestFirst(
+  a: ChatThreadDto | undefined,
+  b: ChatThreadDto | undefined,
+): number {
+  return threadRecency(b) - threadRecency(a);
+}
+
 export function ChatPanel({
   projects,
   initialProjectId,
@@ -374,6 +406,10 @@ export function ChatPanel({
   >({});
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
   const [isSending, setIsSending] = useState(false);
+  // 未対応プラットフォームでは入力自体を塞ぐ。案内を出したうえで送信でき、
+  // 送って初めて 501 に気付く、では「無効化」になっていない
+  // (bdboard-70z.9, PR#115 fable レビュー)。判定が付くまでは塞がない。
+  const chatUnsupported = usePlatformLimitation('chat') !== null;
   // Chat Redesign 改善点3: 「考え中…」表示に経過秒数を出す。isSending が false→true
   // に変わるたびに 0 から数え直し、1秒ごとに更新する。Date.now() は開始時点で
   // 1回だけ読んで setInterval のクロージャに閉じ込め、以後は差分計算にのみ使う。
@@ -1402,12 +1438,75 @@ export function ChatPanel({
     };
   }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor]);
 
+  // 表示中の会話にだけ効くストリーミングテキスト。他の会話のストリームで
+  // この会話をスクロールしない。
+  const activeStreamingText =
+    streamingReply !== null && streamingReply.key === currentConversationKey
+      ? streamingReply.text
+      : '';
+
+  // 「最下部に貼り付いているときだけ追う」。ストリーミング中は
+  // activeStreamingText がトークンごとに伸びるので、無条件に最下部へ飛ばすと
+  // 利用者が過去ログを読み返せなくなる。逆に追わないと、伸びていく返信が画面
+  // 下に隠れたままになる (bdboard-22k の元バグ: deps に streaming が無かった)。
+  const pinnedToBottomRef = useRef(true);
+
+  // 直近に effect 自身が代入した scrollTop。プログラム的スクロールでも scroll
+  // イベントは飛ぶので、そのイベントを「利用者が動かした」と取り違えないための
+  // 目印にする (bdboard-dtr)。
+  //
+  // 一回限りの「プログラム的スクロール中」フラグにはしない。値が変わらず
+  // イベントが飛ばなかった場合にフラグが残り、次の *本物の* 利用者スクロールを
+  // 握り潰す — 上へスクロールしても引き戻される、という元バグより悪い症状に
+  // なる。現在値との一致で判定すれば冪等なので、取りこぼしても次の
+  // イベントで正しく判定し直せる。
+  const autoScrolledToRef = useRef<number | null>(null);
+
+  const handleMessagesScroll = useCallback(() => {
+    const container = messagesRef.current;
+    if (container === null) {
+      return;
+    }
+    // effect が置いた位置から動いていないなら、これは自分で起こしたスクロールの
+    // 残響。ここで距離を測ると、イベントが遅れて届く間に次の delta で
+    // scrollHeight が伸びていた場合に「利用者が上へスクロールした」と誤判定し、
+    // 誰も触っていないのに追従が止まる (bdboard-dtr)。
+    //
+    // 判定を「触っていない」に倒すだけで、貼り付きを立て直しはしない。effect が
+    // 代入するのは貼り付いているときだけなので、正規の残響なら既に true。
+    // ここで true を書くと、後述のマーカーと利用者のスクロール位置が偶然
+    // 一致したときに勝手に貼り付きへ戻す効果しか持たない (PR#132 レビュー)。
+    if (container.scrollTop === autoScrolledToRef.current) {
+      return;
+    }
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    const pinned = distanceFromBottom <= BOTTOM_STICK_THRESHOLD_PX;
+    pinnedToBottomRef.current = pinned;
+    if (!pinned) {
+      // 追うのをやめた時点でマーカーを捨てる。残したままにすると、利用者が
+      // 過去ログを読んでいる間ずっと「昔の最下部の座標」が生き続け、そこへ
+      // 偶然スクロールが止まったときに上のガードが誤って一致してしまう。
+      autoScrolledToRef.current = null;
+    }
+  }, []);
+
+  // 会話を切り替えたら貼り付き状態に戻す。前の会話で上へスクロールしていた
+  // からといって、新しい会話を途中から表示する理由は無い。
+  useEffect(() => {
+    pinnedToBottomRef.current = true;
+    autoScrolledToRef.current = null;
+  }, [currentConversationKey]);
+
   useEffect(() => {
     const container = messagesRef.current;
-    if (container !== null) {
+    if (container !== null && pinnedToBottomRef.current) {
       container.scrollTop = container.scrollHeight;
+      // ブラウザは範囲外の代入をクランプするので、書いた値ではなく
+      // 実際に落ち着いた値を覚える。
+      autoScrolledToRef.current = container.scrollTop;
     }
-  }, [currentMessages, isSending]);
+  }, [currentMessages, isSending, activeStreamingText]);
 
   const showModelSelect = useMemo(
     () => selectedAgent !== undefined && hasSelectableModels(selectedAgent),
@@ -2025,12 +2124,18 @@ export function ChatPanel({
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
   const threadById = new Map((threadLists[selectedProjectId] ?? []).map((thread) => [thread.sessionId, thread]));
-  const displayedOpenThreads = [...openThreads].sort(
-    (a, b) => Number(threadById.get(b)?.pinned ?? false) - Number(threadById.get(a)?.pinned ?? false),
+  // 開いているスレッドの並びは openThreadIds の挿入順(古いものが先)なので、
+  // ここで新しい順に並べ直す。openThreadIds 自体は並べ替えない — あれは
+  // 「どのスレッドを開いているか」の永続状態で、表示順とは別物 (bdboard-3tw.154)。
+  const displayedOpenThreads = [...openThreads].sort((a, b) =>
+    compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
   );
-  const closedThreads = (threadLists[selectedProjectId] ?? []).filter(
-    (thread) => !openThreads.includes(thread.sessionId),
-  );
+  // 閉じたスレッドはサーバーが更新の新しい順で返すが、送信直後にローカルで
+  // 末尾へ差し込む経路 (下の setThreadLists) があるので、表示側でも並べ直して
+  // 取得元の順序に依存しないようにしておく。
+  const closedThreads = (threadLists[selectedProjectId] ?? [])
+    .filter((thread) => !openThreads.includes(thread.sessionId))
+    .sort(compareThreadsNewestFirst);
   const hasClosedThreads = closedThreads.length > 0;
   const handleNewThread = () => {
     // SF5: pendingPrefillRef/pendingTicketDraftProjectRef の消化窓
@@ -2246,8 +2351,9 @@ export function ChatPanel({
 
   // Chat Redesign 1b: スレッド一覧ドロワーの行データ。ピン留めは開いている/
   // 閉じたスレッドのどちらに属していても「ピン留め」節へ寄せ、開いている/
-  // 閉じた節には残さない(mutual exclusion)。displayedOpenThreads は既に
-  // ピン留め優先ソート済みなので、その並びをそのまま踏襲する。
+  // 閉じた節には残さない(mutual exclusion)。displayedOpenThreads /
+  // closedThreads は既に新しい順にソート済みで、ピン留め優先はこの filter が
+  // 担う (filter は相対順序を保つので、節の中は新しい順のまま)。
   const pinnedOpenSessionIds = displayedOpenThreads.filter(
     (sessionId) => threadById.get(sessionId)?.pinned === true,
   );
@@ -2697,11 +2803,15 @@ export function ChatPanel({
           </div>
         </details>
 
+        {/* 送信して初めて 501 に気付く、では遅い (bdboard-70z.9)。 */}
+        <PlatformLimitationNotice feature="chat" />
+
         <div
           ref={messagesRef}
           className="chat-messages"
           role="log"
           aria-live="polite"
+          onScroll={handleMessagesScroll}
         >
           {currentMessages.length === 0 &&
             loadingHistoryFor !== currentConversationKey && (
@@ -2777,29 +2887,19 @@ export function ChatPanel({
                 )}
             </div>
           ))}
-          {(() => {
-            const activeStreamingText =
-              streamingReply !== null && streamingReply.key === currentConversationKey
-                ? streamingReply.text
-                : '';
-            return (
-              <>
-                {activeStreamingText !== '' && (
-                  <div className="chat-message chat-message-assistant chat-message-streaming">
-                    <p className="chat-message-text">{activeStreamingText}</p>
-                  </div>
-                )}
-                {/* bdboard-l1t.9 Opus レビュー N5: streaming で部分テキストが
-                    表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
-                    テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
-                {isSending && activeStreamingText === '' && (
-                  <p className="chat-pending">
-                    考え中…{sendElapsedSeconds}秒（最大3分かかることがあります）
-                  </p>
-                )}
-              </>
-            );
-          })()}
+          {activeStreamingText !== '' && (
+            <div className="chat-message chat-message-assistant chat-message-streaming">
+              <p className="chat-message-text">{activeStreamingText}</p>
+            </div>
+          )}
+          {/* bdboard-l1t.9 Opus レビュー N5: streaming で部分テキストが
+              表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
+              テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
+          {isSending && activeStreamingText === '' && (
+            <p className="chat-pending">
+              考え中…{sendElapsedSeconds}秒（最大3分かかることがあります）
+            </p>
+          )}
         </div>
 
         <form
@@ -2875,7 +2975,7 @@ export function ChatPanel({
             aria-label="メッセージ"
             maxLength={4000}
             value={currentInput}
-            disabled={isSending}
+            disabled={isSending || chatUnsupported}
             onChange={(event) => {
               const value = event.target.value;
               setConversationInputs((prev) => ({ ...prev, [currentConversationKey]: value }));
@@ -2889,6 +2989,7 @@ export function ChatPanel({
             disabled={
               isSending ||
               isHistoryPending ||
+              chatUnsupported ||
               hasUnsupportedAttachments ||
               (currentInput.trim() === '' && currentAttachments.length === 0)
             }

@@ -2,12 +2,22 @@ import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CachedProject, SessionLinkRow } from '../../application/ports/board-cache.js';
 import { MAX_TRANSCRIPT_SESSION_LINKS } from '../../domain/session.js';
 import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
-import { createSqliteBoardCache } from './sqlite-board-cache.js';
+import { MAX_INTERACTIONS, createSqliteBoardCache } from './sqlite-board-cache.js';
+
+// bdboard-ma4: 一時ディレクトリに file-backed な sqlite DB を作るテストは、Windows の
+// CI runner で散発的に数秒のI/Oストールを食らう (新規作成される .db/-wal/-shm への
+// AV スキャンが有力)。同一 run で file-backed sqlite のテストファイルだけが 2〜9倍に
+// 膨らみ、非 sqlite のファイル (chokidar 1298→1302ms 等) は無風だったことを CI ログで
+// 確認している。テスト自体は軽い (ローカルでは1件あたり数十ms) ので、アサーションは
+// 変えずに待ち時間だけこのファイル単位で伸ばす。全体の testTimeout を上げないのは、
+// 173 のテストファイル全部で本物のハングの検知が遅くなるため。30s で必ず落ちるので
+// 「無限に待つ」方向には倒していない。
+vi.setConfig({ testTimeout: 30_000 });
 
 function makeSessionLinkRow(overrides: {
   ticketId: string;
@@ -413,6 +423,66 @@ describe('createSqliteBoardCache', () => {
     cache.close();
   });
 
+  // bdboard-80r: trimInteractionsToCap() の呼び出しを消した変異体が既存26テスト
+  // 全パスで生存していた。双子の session_links 側は既存テストが即検出しており、
+  // こちらだけ穴だったので対称のテストを足す。
+  it('trims interactions older by at once the cap is exceeded', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const overflow = 3;
+    const records = [];
+    for (let i = 0; i < MAX_INTERACTIONS + overflow; i += 1) {
+      records.push({
+        id: `int-fake-cap-${i}`,
+        at: new Date(Date.UTC(2026, 0, 1) + i * 1000),
+        actor: 'example-agent-cap',
+        ticketId: `bdboard-fake-${i}`,
+        field: 'status',
+      });
+    }
+
+    cache.appendInteractions(records);
+    const listed = cache.listInteractions();
+
+    expect(listed).toHaveLength(MAX_INTERACTIONS);
+    // 古い方から溢れる。境界の1件手前/1件後ろまで見ておかないと、
+    // 削除件数の off-by-one を見逃す。
+    for (let i = 0; i < overflow; i += 1) {
+      expect(listed.some((row) => row.id === `int-fake-cap-${i}`)).toBe(false);
+    }
+    expect(listed.some((row) => row.id === `int-fake-cap-${overflow}`)).toBe(true);
+    expect(listed[listed.length - 1]?.id).toBe(`int-fake-cap-${overflow}`);
+    cache.close();
+  });
+
+  it('keeps enforcing the interactions cap across separate append calls', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const make = (i: number) => ({
+      id: `int-fake-split-${i}`,
+      at: new Date(Date.UTC(2026, 0, 1) + i * 1000),
+      actor: 'example-agent-cap',
+      ticketId: `bdboard-fake-${i}`,
+      field: 'status',
+    });
+
+    const first = [];
+    for (let i = 0; i < MAX_INTERACTIONS; i += 1) {
+      first.push(make(i));
+    }
+    cache.appendInteractions(first);
+    expect(cache.listInteractions()).toHaveLength(MAX_INTERACTIONS);
+
+    // キャップ到達後の追記でも溢れた分だけ古いものが落ちること。
+    cache.appendInteractions([make(MAX_INTERACTIONS), make(MAX_INTERACTIONS + 1)]);
+    const listed = cache.listInteractions();
+
+    expect(listed).toHaveLength(MAX_INTERACTIONS);
+    expect(listed.some((row) => row.id === 'int-fake-split-0')).toBe(false);
+    expect(listed.some((row) => row.id === 'int-fake-split-1')).toBe(false);
+    expect(listed.some((row) => row.id === 'int-fake-split-2')).toBe(true);
+    expect(listed[0]?.id).toBe(`int-fake-split-${MAX_INTERACTIONS + 1}`);
+    cache.close();
+  });
+
   it('accumulates and aggregates session usage by model', () => {
     const cache = createSqliteBoardCache(':memory:');
 
@@ -549,6 +619,59 @@ describe('createSqliteBoardCache', () => {
       expect(links.some((row) => row.link.ticketId === `pfx-${i}`)).toBe(false);
     }
     expect(links.some((row) => row.link.ticketId === `pfx-${overflow}`)).toBe(true);
+    cache.close();
+  });
+
+  // bdboard-wa9: 双子の interactions 側 (bdboard-80r) には「cap 到達後の追記」の
+  // テストがあるのに、session_links 側は1バッチ経路しか見ていなかった。
+  it('keeps enforcing the session link cap across separate upsert calls', () => {
+    const cache = createSqliteBoardCache(':memory:');
+    const make = (i: number): SessionLinkRow =>
+      makeSessionLinkRow({
+        ticketId: `pfx-${i}`,
+        sessionId: `sess-${i}`,
+        observedAt: new Date(2026, 0, 1, 0, 0, i),
+      });
+
+    const first: SessionLinkRow[] = [];
+    for (let i = 0; i < MAX_TRANSCRIPT_SESSION_LINKS; i += 1) {
+      first.push(make(i));
+    }
+    cache.upsertSessionLinks(first);
+    expect(cache.listSessionLinks()).toHaveLength(MAX_TRANSCRIPT_SESSION_LINKS);
+
+    // ちょうど cap の状態から、既存リンクの再観測と新規2件を同じバッチで積む。
+    // これは実際のスキャン1回分の形でもある。溢れた2件が落ちること、かつ
+    // 「落ちる2件」は挿入順ではなく observed_at で選ばれること。
+    //
+    // pfx-0 は最初に入った = rowid 最小だが、ここで再観測して最新にする。
+    // upsert の ON CONFLICT は observed_at だけ更新して rowid を動かさないので、
+    // trim が ORDER BY rowid だと「今まさに生きているセッション」を捨てて
+    // しまう。session_links にしか無い意味論 (interactions 側は
+    // INSERT OR IGNORE で再観測経路が存在しない) なので、双子のテストを
+    // 写しただけでは塞がらない (PR#123 fable レビュー)。
+    cache.upsertSessionLinks([
+      makeSessionLinkRow({
+        ticketId: 'pfx-0',
+        sessionId: 'sess-0',
+        observedAt: new Date(2026, 0, 1, 0, 0, MAX_TRANSCRIPT_SESSION_LINKS + 2),
+      }),
+      make(MAX_TRANSCRIPT_SESSION_LINKS),
+      make(MAX_TRANSCRIPT_SESSION_LINKS + 1),
+    ]);
+    const links = cache.listSessionLinks();
+
+    expect(links).toHaveLength(MAX_TRANSCRIPT_SESSION_LINKS);
+    // 再観測したので生き残る。挿入順で捨てていると落ちる。
+    expect(links.some((row) => row.link.ticketId === 'pfx-0')).toBe(true);
+    expect(links.some((row) => row.link.ticketId === 'pfx-1')).toBe(false);
+    expect(links.some((row) => row.link.ticketId === 'pfx-2')).toBe(false);
+    expect(links.some((row) => row.link.ticketId === 'pfx-3')).toBe(true);
+    expect(
+      links.some(
+        (row) => row.link.ticketId === `pfx-${MAX_TRANSCRIPT_SESSION_LINKS + 1}`,
+      ),
+    ).toBe(true);
     cache.close();
   });
 

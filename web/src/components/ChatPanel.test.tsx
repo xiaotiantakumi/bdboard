@@ -5,7 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
 import { expectNoA11yViolations } from '../test/axe';
 import { installFakeHistory } from '../test/fakeHistory';
-import { writePersistedChatThread, readPersistedChatThreads } from '../chatThreadStorage';
+import {
+  writePersistedChatThread,
+  writePersistedChatThreadState,
+  readPersistedChatThreads,
+} from '../chatThreadStorage';
 import { CHAT_BUSY_HELP } from '../writeAccessMessage';
 import { ChatPanel } from './ChatPanel';
 
@@ -28,6 +32,7 @@ vi.mock('../api', async (importOriginal) => {
       }),
     ),
     fetchDiscoveredChatSessions: vi.fn(() => Promise.resolve({ sessions: [] })),
+    fetchPlatformSupport: vi.fn(() => Promise.resolve({ platform: 'darwin', limitations: [] })),
   };
 });
 
@@ -38,8 +43,10 @@ import {
   fetchChatThreads,
   fetchChatTurnStatus,
   fetchDiscoveredChatSessions,
+  fetchPlatformSupport,
   updateChatThread,
 } from '../api';
+import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 
 const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
@@ -48,6 +55,7 @@ const acknowledgeChatTurnMock = vi.mocked(acknowledgeChatTurn);
 const deleteChatThreadMock = vi.mocked(deleteChatThread);
 const updateChatThreadMock = vi.mocked(updateChatThread);
 const fetchDiscoveredChatSessionsMock = vi.mocked(fetchDiscoveredChatSessions);
+const fetchPlatformSupportMock = vi.mocked(fetchPlatformSupport);
 const defaultWindowInnerWidth = window.innerWidth;
 
 function makeProjectDto(
@@ -291,6 +299,8 @@ describe('ChatPanel', () => {
   beforeEach(() => {
     installFakeHistory({});
     localStorage.clear();
+    resetPlatformSupportCache();
+    fetchPlatformSupportMock.mockResolvedValue({ platform: 'darwin', limitations: [] });
     fetchChatAgentsMock.mockResolvedValue([]);
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
@@ -2036,6 +2046,385 @@ describe('ChatPanel', () => {
       ),
     ).toHaveLength(1);
     expect(getChatMessagePostCalls(fetchMock)).toHaveLength(0);
+  });
+
+  // bdboard-22k: jsdom にはレイアウトが無く scrollHeight/clientHeight は常に 0、
+  // scrollTop も書いた値がそのまま残るだけなので、素のままでは「追従した/しなかった」
+  // を区別できない。中身の文字数に比例して伸びるスクロール領域を差し込んで、
+  // 実ブラウザの挙動を模す。
+  //
+  // 模擬で外せないのが次の2点 (PR#128 fable レビュー)。素通しの setter にすると、
+  // 「最下部にいる状態で scroll ハンドラが動く」経路が一度もテストされず、実機なら
+  // 機能が死ぬ変更 (距離計算から clientHeight を落とす・ハンドラが常に unpin する)
+  // を通してしまう。逆に scrollTop === scrollHeight という模擬世界にしか無い状態を
+  // assert すると、実ブラウザでは等価な scrollTop = scrollHeight - clientHeight への
+  // 書き換えを誤って落とす。
+  //
+  //   1. 代入は 0..scrollHeight-clientHeight にクランプされる
+  //   2. 値が動いたら scroll イベントが出る (プログラム的スクロールでも出る)
+  //
+  // bdboard-dtr で growContent を足した。実ブラウザでは「DOM が伸びた」と
+  // 「effect が scrollTop を更新した」の間に隙間があり (useEffect は paint 後に
+  // 走る)、その隙間に遅れて届いた scroll イベントは *古い scrollTop × 新しい
+  // scrollHeight* で距離を測ってしまう。React の内部タイミングに割り込まずに
+  // その状態を作るための穴。
+  interface ScrollAreaHandle {
+    /** scrollTop を動かさずにスクロール領域だけ伸ばす (DOM だけ先に伸びた状態) */
+    growContent: (pixels: number) => void;
+  }
+
+  function instrumentScrollArea(
+    element: HTMLElement,
+    clientHeight: number,
+  ): ScrollAreaHandle {
+    let scrollTop = 0;
+    let extraHeight = 0;
+    Object.defineProperty(element, 'clientHeight', {
+      configurable: true,
+      get: () => clientHeight,
+    });
+    Object.defineProperty(element, 'scrollHeight', {
+      configurable: true,
+      get: () =>
+        clientHeight + (element.textContent ?? '').length * 10 + extraHeight,
+    });
+    Object.defineProperty(element, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (next: number) => {
+        const max = Math.max(0, element.scrollHeight - clientHeight);
+        const clamped = Math.max(0, Math.min(next, max));
+        if (clamped === scrollTop) {
+          return;
+        }
+        scrollTop = clamped;
+        element.dispatchEvent(new Event('scroll'));
+      },
+    });
+    return {
+      growContent: (pixels: number) => {
+        extraHeight += pixels;
+      },
+    };
+  }
+
+  function distanceFromBottom(element: HTMLElement): number {
+    return element.scrollHeight - element.scrollTop - element.clientHeight;
+  }
+
+  // delta1 → (gate1) → delta2 → (gate2) → done。ストリーミング途中の状態を
+  // 観測するには、done が来る前で止められる必要がある。done まで走らせると
+  // ストリーミング吹き出しが確定メッセージへ差し替わってしまう。
+  function gatedStreamFetch(fetchMock: ReturnType<typeof vi.fn>): {
+    releaseSecondDelta: () => void;
+    releaseDone: () => void;
+  } {
+    let releaseSecondDelta: () => void = () => {};
+    let releaseDone: () => void = () => {};
+    const secondDeltaGate = new Promise<void>((resolve) => {
+      releaseSecondDelta = resolve;
+    });
+    const doneGate = new Promise<void>((resolve) => {
+      releaseDone = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"streamed "}\n\n'),
+              );
+              await secondDeltaGate;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  `event: delta\ndata: {"text":"${'reply '.repeat(40)}"}\n\n`,
+                ),
+              );
+              await doneGate;
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: done\ndata: {"reply":"done reply","sessionId":"sess-stream","agentId":"claude"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+    return { releaseSecondDelta, releaseDone };
+  }
+
+  it('follows the streaming reply while pinned to the bottom (bdboard-22k)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+
+    releaseSecondDelta();
+
+    // 返信が伸びるたびに最下部へ追従する。deps に streaming テキストが無いと、
+    // ここで scrollTop が第1delta時点の高さのまま取り残される。
+    //
+    // 追従の assert を waitFor の中に入れているのは、DOM の反映 (テキストが
+    // 伸びる) と useEffect の実行 (scrollTop を更新する) が同じタイミングでは
+    // ないため。テキストだけを待って外で assert すると、負荷の高い CI で
+    // 「DOM は伸びたが effect はまだ」の瞬間を踏んで落ちる。追従しない
+    // 変更ならここは永久に 0 にならないので、緩めたことにはならない。
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    // ストリームを畳んでから終わる。開いたまま抜けると、残りの処理が
+    // 環境の teardown 後に走る。
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('stops following once the user scrolls up (bdboard-22k)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+
+    // 利用者が過去ログを読むために上へスクロールした。
+    messages.scrollTop = 0;
+    fireEvent.scroll(messages);
+
+    releaseSecondDelta();
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+    });
+    // 追従を止める配慮が無いと、トークンごとに最下部へ引き戻されて読めなくなる。
+    expect(messages.scrollTop).toBe(0);
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('keeps following when a delayed scroll event lands after the area grew (bdboard-dtr)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    const scrollArea = instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+    // ここまでで effect が最下部へ動かしている。これも waitFor で待つ:
+    // テキストの反映と effect の実行は同じタイミングではないので、外で
+    // assert すると CI で「DOM は伸びたが effect はまだ」を踏む。同時に、
+    // 次の growContent が前提とする「マーカーが記録済み」の同期点も兼ねる。
+    await waitFor(() => {
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    // 実ブラウザでの競合を再現する。プログラム的スクロールでも scroll イベントは
+    // 飛ぶが、それが配送されるまでの間に次の delta で DOM が伸びる。useEffect は
+    // paint 後に走るので、「scrollHeight は伸びたが scrollTop はまだ古い」瞬間が
+    // 存在し、遅れて届いたイベントはそこで距離を測ってしまう。
+    // 貼り付き閾値 (48px) より十分大きく伸ばす。閾値そのものを import せず
+    // リテラルで書くのは、閾値の値をテストで固定してしまわないため。
+    scrollArea.growContent(200);
+    fireEvent.scroll(messages);
+
+    releaseSecondDelta();
+
+    // ここで貼り付きが外れていると、利用者が何も操作していないのに追従が止まる
+    // (bdboard-22k の元バグと同じ症状で、手で最下部へ戻すまで復旧しない)。
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('resumes following when the user scrolls back to the last auto-scrolled position (bdboard-dtr)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+    await waitFor(() => {
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+    const autoScrolledTop = messages.scrollTop;
+    expect(autoScrolledTop).toBeGreaterThan(0);
+
+    // 上へ読み返してから、また最下部まで戻ってきた。戻り先は effect が最後に
+    // 置いた座標と同じ値になる。
+    messages.scrollTop = 0;
+    messages.scrollTop = autoScrolledTop;
+
+    releaseSecondDelta();
+
+    // 追従を止めた時点でマーカーを捨てていないと、この復帰スクロールが
+    // 「自分で起こした残響」に見えて距離判定に落ちず、最下部へ戻ったのに
+    // 追従が再開しない (bdboard-dtr)。
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('does not re-pin when the user happens to stop on an old auto-scroll position (bdboard-dtr)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    const scrollArea = instrumentScrollArea(messages, 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('streamed ');
+    });
+    await waitFor(() => {
+      expect(distanceFromBottom(messages)).toBe(0);
+    });
+    // effect が最後に置いた位置。追従を止めたあとも同じ座標が残っていると、
+    // ここへ戻ってきただけで貼り付き扱いになってしまう。
+    const previousAutoScrollTop = messages.scrollTop;
+    expect(previousAutoScrollTop).toBeGreaterThan(0);
+
+    // 利用者が過去ログを読むために上へスクロールし、追従が止まる。
+    messages.scrollTop = 0;
+
+    // その間に別の要因で表示が伸び、さっきの座標はもう最下部ではなくなる。
+    scrollArea.growContent(1000);
+
+    // 読み進めた結果、たまたま昔の最下部と同じ座標で止まった。利用者は
+    // 依然として過去ログを読んでいるので、ここは貼り付きに戻る場面ではない。
+    messages.scrollTop = previousAutoScrollTop;
+
+    releaseSecondDelta();
+
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+    });
+    // 引き戻されていたら、読んでいた位置が返信が届くたびに奪われる。
+    expect(messages.scrollTop).toBe(previousAutoScrollTop);
+
+    releaseDone();
+    await waitFor(() => {
+      expect(messages.querySelector('.chat-message-streaming')).toBeNull();
+    });
+  });
+
+  it('re-pins to the bottom when the conversation changes (bdboard-22k)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    const { releaseSecondDelta, releaseDone } = gatedStreamFetch(fetchMock);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    const messages = screen.getByRole('log');
+    instrumentScrollArea(messages, 300);
+
+    // 前の会話で上へスクロールしていた。
+    messages.scrollTop = 0;
+    fireEvent.scroll(messages);
+
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+    instrumentScrollArea(screen.getByRole('log'), 300);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'stream this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    releaseSecondDelta();
+
+    const switched = screen.getByRole('log');
+    // 別の会話を開いたのに前の会話のスクロール位置を引きずる理由は無い。
+    await waitFor(() => {
+      expect(
+        switched.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toContain('reply');
+      expect(distanceFromBottom(switched)).toBe(0);
+    });
+
+    releaseDone();
+    await waitFor(() => {
+      expect(switched.querySelector('.chat-message-streaming')).toBeNull();
+    });
   });
 
   it('posts to the non-streaming endpoint for a non-streaming agent', async () => {
@@ -5467,4 +5856,225 @@ describe('ChatPanel', () => {
       ).toBeDisabled();
     });
   });
+  describe('platform limitations (bdboard-70z.9)', () => {
+    const WIN32_CHAT = {
+      platform: 'win32',
+      limitations: [
+        {
+          feature: 'chat' as const,
+          reason: 'AI チャットは Windows では利用できません。',
+          detail: 'エージェント CLI が .cmd シムのため shell 無しでは起動できない。',
+        },
+      ],
+    };
+
+    it('disables the composer and explains why on an unsupported platform', async () => {
+      fetchPlatformSupportMock.mockResolvedValue(WIN32_CHAT);
+      renderChatPanel();
+
+      expect(
+        await screen.findByText('AI チャットは Windows では利用できません。'),
+      ).toBeInTheDocument();
+      // 案内を出したうえで送信でき、送って初めて 501 に気付く、では
+      // 「UI 上で無効化」になっていない (PR#115 fable レビュー minor)。
+      await waitFor(() => {
+        expect(screen.getByLabelText('メッセージ')).toBeDisabled();
+      });
+      expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+    });
+
+    it('leaves the composer usable on a supported platform', async () => {
+      renderChatPanel();
+
+      await waitFor(() => {
+        expect(fetchPlatformSupportMock).toHaveBeenCalled();
+      });
+      expect(
+        screen.queryByText('AI チャットは Windows では利用できません。'),
+      ).not.toBeInTheDocument();
+      expect(screen.getByLabelText('メッセージ')).toBeEnabled();
+    });
+  });
+
+  describe('thread list ordering (bdboard-3tw.154)', () => {
+    // 「開いているスレッド」の並びは openThreadIds の挿入順で、これは
+    // localStorage に永続化されている。前回のセッションで古い順に開いていれば、
+    // 一覧もその古い順のまま出てくる — それがこのチケットの症状。
+    // ここでは永続化状態を先に仕込んで、その経路を再現する。
+    function drawerSectionTitles(container: HTMLElement, sectionTitle: string): string[] {
+      const drawer = getThreadDrawer(container);
+      const heading = within(drawer)
+        .getByText(sectionTitle)
+        .closest('.chat-thread-drawer-section');
+      if (!(heading instanceof HTMLElement)) {
+        throw new Error(`section not found: ${sectionTitle}`);
+      }
+      return [...heading.querySelectorAll('.chat-thread-drawer-item')].map((item) => {
+        const title = item.querySelector('.chat-thread-drawer-item-title');
+        return (title ?? item).textContent ?? '';
+      });
+    }
+
+    const threads: ChatThreadDto[] = [
+      { sessionId: 'sess-new', agentId: 'claude', title: 'newest thread', pinned: false, updatedAt: '2026-01-03T00:00:00Z' },
+      { sessionId: 'sess-mid', agentId: 'claude', title: 'middle thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+      { sessionId: 'sess-old', agentId: 'claude', title: 'oldest thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+    ];
+
+    function mockThreadMessages() {
+      fetchMock.mockImplementation(async (url: string) => {
+        if (url.includes('/api/chat/sessions/')) {
+          return jsonResponse({ sessionId: 'sess-new', agentId: 'claude', messages: [] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+    }
+
+    it('lists open threads newest first even when they were opened oldest first', async () => {
+      fetchChatThreadsMock.mockResolvedValue(threads);
+      mockThreadMessages();
+      // 前回のセッションで古い順に開いた状態。
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-old', 'sess-mid', 'sess-new'],
+        selectedSessionId: 'sess-old',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'middle thread',
+        'oldest thread',
+      ]);
+    });
+
+    it('lists closed threads newest first regardless of the order they arrive in', async () => {
+      // サーバーは更新の新しい順で返す契約だが、送信直後にローカルで末尾へ
+      // 差し込む経路があるので、表示側は受け取り順に依存してはいけない。
+      fetchChatThreadsMock.mockResolvedValue([threads[2], threads[0], threads[1]]);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-mid'],
+        selectedSessionId: 'sess-mid',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, '閉じたスレッド')).toEqual([
+        'newest thread',
+        'oldest thread',
+      ]);
+    });
+
+    it('keeps pinned threads at the top even when they are the oldest', async () => {
+      fetchChatThreadsMock.mockResolvedValue([
+        threads[0],
+        threads[1],
+        { ...threads[2], pinned: true },
+      ]);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-old', 'sess-mid', 'sess-new'],
+        selectedSessionId: 'sess-old',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, 'ピン留め')).toEqual(['oldest thread']);
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'middle thread',
+      ]);
+    });
+
+    it('pushes a thread with an unreadable timestamp to the bottom instead of scrambling the order', async () => {
+      // updatedAt が読めないスレッドを NaN のまま比較へ流すと、比較関数が
+      // 「a<b でも b<a でもない」を返して並びが入力順に依存する。読めないものは
+      // 0 (= 最古) に倒して、残りの並びは壊さない。
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-broken', agentId: 'claude', title: 'broken thread', pinned: false, updatedAt: 'not-a-date' },
+        threads[0],
+        threads[2],
+      ]);
+      mockThreadMessages();
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-broken', 'sess-new', 'sess-old'],
+        selectedSessionId: 'sess-broken',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'oldest thread',
+        'broken thread',
+      ]);
+    });
+
+    it('puts a thread whose record has not arrived yet at the bottom (PR#133 レビュー minor-2)', async () => {
+      // CLIセッションを再開した直後は、openThreadIds に sessionId が入っている
+      // のにスレッド一覧の再取得がまだ返ってきていない窓がある。この窓では
+      // threadById に記録が無く、更新日時が読めない。最新扱いにすると、まだ
+      // 何も分かっていないスレッドが先頭に居座る。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      fetchChatThreadsMock.mockReset();
+      fetchChatThreadsMock
+        .mockResolvedValueOnce([threads[0], threads[2]])
+        // 再開後の再取得は返さない = 記録が届いていない窓を開けたままにする。
+        .mockImplementation(() => new Promise(() => {}));
+      fetchDiscoveredChatSessionsMock.mockResolvedValue({
+        sessions: [
+          { sessionId: 'discovered-1', lastActivityAt: '2026-08-16T12:00:00.000Z', alreadyAdopted: false },
+        ],
+      });
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (
+          url === '/api/chat/projects/proj-a/discovered-sessions/discovered-1/adopt' &&
+          init?.method === 'POST'
+        ) {
+          return jsonResponse({
+            sessionId: 'discovered-1',
+            agentId: 'claude',
+            seedMessages: [
+              { role: 'user', text: 'seeded question', timestamp: '2026-08-16T11:00:00.000Z' },
+            ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/')) {
+          return jsonResponse({ sessionId: 'sess-new', agentId: 'claude', messages: [] });
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-new', 'sess-old'],
+        selectedSessionId: 'sess-new',
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      await within(getThreadDrawer(container)).findByText('newest thread');
+      await user.click(
+        within(getThreadDrawer(container)).getByRole('button', { name: 'CLIセッションを再開' }),
+      );
+      await user.click(await screen.findByRole('button', { name: 'セッション discovered-1 を再開' }));
+      await screen.findByText('seeded question');
+
+      openThreadDrawer(container);
+      expect(drawerSectionTitles(container, '開いているスレッド')).toEqual([
+        'newest thread',
+        'oldest thread',
+        '(無題)',
+      ]);
+    });
+  });
+
 });

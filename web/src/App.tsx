@@ -9,14 +9,13 @@ import {
   fetchProjects,
   fetchSessions,
   fetchStatus,
-  fetchSyncHealth,
   type BoardCardDto,
   type Lane,
   type PendingDecisionDto,
   type PrBadgeDto,
   type ProjectDto,
-  type SyncHealthDto,
 } from './api';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
@@ -72,13 +71,13 @@ import {
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from './uiPersistedState';
-import { useBoardStream } from './useBoardStream';
+import { useLastServerContact } from './hooks/useLastServerContact';
 import {
   collectBoardCardsById,
   collectBoardLabels,
   collectBoardTicketIds,
 } from './boardTicketIds';
-import { buildPaletteActions } from './paletteActions';
+import { buildPaletteActions, VIEW_LABELS } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
 
 export function App() {
@@ -183,7 +182,6 @@ export function App() {
   const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
   const [statusDetailOpen, setStatusDetailOpen] = useState(false);
 
-  const streamState = useBoardStream();
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
 
@@ -220,6 +218,8 @@ export function App() {
       }),
   });
 
+  const { streamState, lastContactAtMs, reconnect, connectStalled } = useLastServerContact(boardQuery.dataUpdatedAt);
+
   const pendingDecisionsQuery = useQuery({
     queryKey: ['pending-decisions'],
     queryFn: fetchPendingDecisions,
@@ -232,12 +232,6 @@ export function App() {
   });
 
   useAppBadge(pendingDecisionsQuery.data?.length);
-
-  const syncHealthQuery = useQuery({
-    queryKey: ['sync-health', selectedProjectIdsJoined],
-    queryFn: () => fetchSyncHealth(selectedProjectIds),
-    retry: false,
-  });
 
   const chatAvailabilityQuery = useQuery({
     queryKey: ['chat-availability'],
@@ -365,14 +359,6 @@ export function App() {
     return map;
   }, [projectsQuery.data]);
 
-  const syncHealthByProject = useMemo(() => {
-    const map = new Map<string, SyncHealthDto>();
-    for (const health of syncHealthQuery.data ?? []) {
-      map.set(health.projectId, health);
-    }
-    return map;
-  }, [syncHealthQuery.data]);
-
   useEffect(() => {
     const projects = projectsQuery.data;
     if (projects === undefined) {
@@ -474,7 +460,8 @@ export function App() {
   const handleRefresh = useCallback(() => {
     void boardQuery.refetch();
     void statusQuery.refetch();
-  }, [boardQuery, statusQuery]);
+    reconnect();
+  }, [boardQuery, statusQuery, reconnect]);
 
   const handleToggleProject = useCallback((projectId: string, checked: boolean) => {
     setSelectedProjectIds((current) => {
@@ -666,12 +653,14 @@ export function App() {
     <UndoSnackbarProvider>
     <div className="app">
       <header className="header">
+        <ErrorBoundary label="ヘッダー">
         <GlobalBar
           view={view}
           onViewChange={setView}
           notificationUnreadCount={notificationEvents.unreadCount}
           onOpenSearch={handleOpenSearch}
           streamState={streamState}
+          lastContactAtMs={lastContactAtMs}
           generatedAt={boardQuery.data?.generatedAt}
           lastRefreshAt={lastRefreshAt}
           totalSessionCount={totalSessionCount}
@@ -689,7 +678,9 @@ export function App() {
           onOpenHelp={handleOpenHelp}
           onOpenShortcuts={handleOpenShortcuts}
         />
+        </ErrorBoundary>
 
+        <ErrorBoundary label="ツールバー">
         <ViewToolbar
           view={view}
           boardFilterPresets={boardFilterPresets}
@@ -708,11 +699,13 @@ export function App() {
           chatAvailable={chatAvailable}
           onOpenChat={() => setChatOpen(true)}
         />
+        </ErrorBoundary>
       </header>
 
       <AlertBar
         streamState={streamState}
-        generatedAt={boardQuery.data?.generatedAt}
+        lastContactAtMs={lastContactAtMs}
+        connectStalled={connectStalled}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onOpenDetails={() => setStatusDetailOpen(true)}
@@ -734,8 +727,13 @@ export function App() {
       <TipsBanner onOpenHelp={handleOpenHelp} />
 
       <main className="main">
+        {/* プロバイダーは境界の外に置く。中に入れると key={view} の再マウントが
+            そのまま伝わり、ビューを往復しただけで一括選択が消える (PR#129 レビュー)。
+            context を配るだけの薄い描画なので、境界で守る価値もほぼ無い。 */}
         <BoardDnDProvider>
         <BulkSelectionProvider>
+        {/* view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。 */}
+        <ErrorBoundary key={view} label={VIEW_LABELS[view]}>
         {(view === 'merged' || view === 'split') && (
           <BoardFilterBar
             priorityCeiling={boardPriorityCeiling}
@@ -825,7 +823,6 @@ export function App() {
             sectionKeyPrefix={selectedProjectIdsJoined}
             onCardClick={handleSelectTicket}
             onSessionBadgeClick={handleOpenSessionList}
-            syncHealthByProject={syncHealthByProject}
             collapsedLanes={collapsedLanesSet}
             onToggleLaneCollapse={handleToggleLaneCollapse}
             wipLimitsOverrides={wipLimitsOverrides}
@@ -886,11 +883,19 @@ export function App() {
           boardQuery.data.merged === null && (
             <p className="empty-message">統合ビューのデータがありません</p>
           )}
+        </ErrorBoundary>
         </BulkSelectionProvider>
         </BoardDnDProvider>
       </main>
 
       {selectedTicketId !== null && (
+        <ErrorBoundary
+          key={selectedTicketId}
+          label="チケット詳細"
+          resetLabel="閉じる"
+          onReset={handleCloseDetail}
+          overlay
+        >
         <TicketDetailPanel
           ticketId={selectedTicketId}
           projectRootPaths={projectRootPaths}
@@ -912,36 +917,76 @@ export function App() {
           onTicketViewed={handleRecordRecentTicket}
           availableLabels={availableLabels}
         />
+        </ErrorBoundary>
       )}
 
       {sessionListOpen && (
-        <SessionListPanel
-          projectId={sessionListProjectId}
-          onClose={handleCloseSessionList}
-        />
+        <ErrorBoundary
+          label="セッション一覧"
+          resetLabel="閉じる"
+          onReset={handleCloseSessionList}
+          overlay
+        >
+          <SessionListPanel
+            projectId={sessionListProjectId}
+            onClose={handleCloseSessionList}
+          />
+        </ErrorBoundary>
       )}
 
       {shortcutsOpen && (
-        <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
+        <ErrorBoundary
+          label="ショートカット一覧"
+          resetLabel="閉じる"
+          onReset={handleCloseShortcuts}
+          overlay
+        >
+          <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
+        </ErrorBoundary>
       )}
 
-      {helpOpen && <HelpPanel onClose={handleCloseHelp} />}
+      {helpOpen && (
+        <ErrorBoundary label="ヘルプ" resetLabel="閉じる" onReset={handleCloseHelp} overlay>
+          <HelpPanel onClose={handleCloseHelp} />
+        </ErrorBoundary>
+      )}
 
       {searchOpen && (
+        <ErrorBoundary label="検索" resetLabel="閉じる" onReset={handleCloseSearch} overlay>
         <SearchPalette
           onClose={handleCloseSearch}
           onSelect={handleSelectTicket}
           actions={paletteActions}
           recentTickets={recentTickets}
         />
+        </ErrorBoundary>
       )}
 
-      <TunnelControl
-        open={tunnelModalOpen}
-        onClose={() => setTunnelModalOpen(false)}
-      />
+      {/* TunnelControl は閉じていても常時マウントされている (中で null を返す)。
+          閉じている間の throw まで overlay で覆うと、何も開いていないのに暗幕が
+          残って操作不能になるので、overlay は開いているときだけ。 */}
+      <ErrorBoundary
+        label="トンネル"
+        resetLabel="閉じる"
+        onReset={() => setTunnelModalOpen(false)}
+        overlay={tunnelModalOpen}
+      >
+        <TunnelControl
+          open={tunnelModalOpen}
+          onClose={() => setTunnelModalOpen(false)}
+        />
+      </ErrorBoundary>
 
       {chatOpen && (
+        <ErrorBoundary
+          label="チャット"
+          resetLabel="閉じる"
+          onReset={() => {
+            setChatOpen(false);
+            setChatContext(undefined);
+          }}
+          overlay
+        >
         <ChatPanel
           projects={chatProjects}
           initialProjectId={
@@ -966,6 +1011,7 @@ export function App() {
             setChatContext(undefined);
           }}
         />
+        </ErrorBoundary>
       )}
 
     </div>
