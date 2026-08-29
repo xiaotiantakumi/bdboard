@@ -3,6 +3,7 @@ import { buildBoard } from '../../domain/board.js';
 import { LANES } from '../../domain/readiness.js';
 import { makeSession, makeTicket } from '../../domain/test-support.js';
 import type { BoardView } from '../../application/board/get-board.js';
+import { DEFAULT_LIVENESS_THRESHOLDS } from '../../domain/liveness.js';
 import {
   countIncompleteTicketsFromBoard,
   countIncompleteTicketsFromTickets,
@@ -86,7 +87,7 @@ describe('dto', () => {
       mergedTruncatedClosedIds: [],
     };
 
-    const dto = toBoardViewDto(view);
+    const dto = toBoardViewDto(view, DEFAULT_LIVENESS_THRESHOLDS);
     assertNoDates(dto);
     expect(dto.generatedAt).toBe(NOW.toISOString());
   });
@@ -104,7 +105,7 @@ describe('dto', () => {
     });
     const card = board.cards[0];
 
-    const dto = toBoardCardDto(card, NOW);
+    const dto = toBoardCardDto(card, NOW, DEFAULT_LIVENESS_THRESHOLDS);
 
     expect(dto.stalled).toBe(true);
   });
@@ -130,10 +131,12 @@ describe('dto', () => {
     const epicDto = toBoardCardDto(
       board.cards.find((c) => c.ticket.id === 'bdboard-epic-dto')!,
       NOW,
+      DEFAULT_LIVENESS_THRESHOLDS,
     );
     const deferDto = toBoardCardDto(
       board.cards.find((c) => c.ticket.id === 'bdboard-defer-dto')!,
       NOW,
+      DEFAULT_LIVENESS_THRESHOLDS,
     );
 
     expect(epicDto.epicProgress).toEqual({ total: 1, done: 1 });
@@ -169,7 +172,7 @@ describe('dto', () => {
       (c) => c.ticket.id === 'bdboard-dto-blocker',
     )!;
 
-    const dto = toBoardCardDto(blockerCard, NOW);
+    const dto = toBoardCardDto(blockerCard, NOW, DEFAULT_LIVENESS_THRESHOLDS);
 
     expect(dto.effectivePriority).toBe(0);
     expect(dto.priorityInheritedFrom).toBe('bdboard-dto-blocked');
@@ -182,7 +185,7 @@ describe('dto', () => {
       now: NOW,
     });
 
-    const dto = toBoardDto(board, NOW);
+    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS);
 
     for (const lane of LANES) {
       expect(lane in dto.lanes).toBe(true);
@@ -198,7 +201,7 @@ describe('dto', () => {
       now: NOW,
     });
 
-    const dto = toBoardDto(board, NOW);
+    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS);
 
     expect(dto.closedTotal).toBe(1);
   });
@@ -211,7 +214,7 @@ describe('dto', () => {
     });
 
     // 呼び出し元(getBoard)がclosedLimitで切った後、切る前の総件数を渡すケースを模す
-    const dto = toBoardDto(board, NOW, 42);
+    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS, { closedTotal: 42 });
 
     expect(dto.lanes.done).toHaveLength(1);
     expect(dto.closedTotal).toBe(42);
@@ -224,7 +227,7 @@ describe('dto', () => {
       now: NOW,
     });
 
-    const dto = toBoardDto(board, NOW);
+    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS);
 
     expect(dto.truncatedClosedIds).toEqual([]);
   });
@@ -237,7 +240,10 @@ describe('dto', () => {
     });
 
     // 呼び出し元(getBoard)がcloseLimitで切り捨てたIDを渡すケースを模す
-    const dto = toBoardDto(board, NOW, 42, ['bdboard-old-1', 'bdboard-old-2']);
+    const dto = toBoardDto(board, NOW, DEFAULT_LIVENESS_THRESHOLDS, {
+      closedTotal: 42,
+      truncatedClosedIds: ['bdboard-old-1', 'bdboard-old-2'],
+    });
 
     expect(dto.truncatedClosedIds).toEqual(['bdboard-old-1', 'bdboard-old-2']);
   });
@@ -269,7 +275,7 @@ describe('dto', () => {
     }
 
     it('empties projects in merged mode so tickets are not sent twice', () => {
-      const dto = toBoardViewDto(makeView('merged'));
+      const dto = toBoardViewDto(makeView('merged'), DEFAULT_LIVENESS_THRESHOLDS);
 
       expect(dto.projects).toEqual([]);
       expect(dto.merged?.lanes.ready.map((c) => c.ticket.id)).toEqual([
@@ -278,7 +284,7 @@ describe('dto', () => {
     });
 
     it('keeps projects populated in split mode', () => {
-      const dto = toBoardViewDto(makeView('split'));
+      const dto = toBoardViewDto(makeView('split'), DEFAULT_LIVENESS_THRESHOLDS);
 
       expect(dto.projects).toHaveLength(1);
       expect(
@@ -298,7 +304,7 @@ describe('dto', () => {
         mergedTruncatedClosedIds: ['bdboard-old-1', 'bdboard-old-2'],
       };
 
-      const dto = toBoardViewDto(viewWithTruncation);
+      const dto = toBoardViewDto(viewWithTruncation, DEFAULT_LIVENESS_THRESHOLDS);
 
       expect(dto.merged?.truncatedClosedIds).toEqual(['bdboard-old-1', 'bdboard-old-2']);
     });
@@ -313,7 +319,7 @@ describe('dto', () => {
         })),
       };
 
-      const dto = toBoardViewDto(viewWithTruncation);
+      const dto = toBoardViewDto(viewWithTruncation, DEFAULT_LIVENESS_THRESHOLDS);
 
       expect(dto.projects[0]?.board.truncatedClosedIds).toEqual(['bdboard-old-3']);
     });
@@ -356,8 +362,8 @@ describe('dto', () => {
     const beforeDto = {
       mode: 'merged',
       generatedAt: NOW.toISOString(),
-      projects: [{ project: projectDto, board: toBoardDto(fullBoard, NOW) }],
-      merged: toBoardDto(fullBoard, NOW),
+      projects: [{ project: projectDto, board: toBoardDto(fullBoard, NOW, DEFAULT_LIVENESS_THRESHOLDS) }],
+      merged: toBoardDto(fullBoard, NOW, DEFAULT_LIVENESS_THRESHOLDS),
     };
     const beforeSize = JSON.stringify(beforeDto).length;
 
@@ -392,7 +398,7 @@ describe('dto', () => {
       mergedClosedTotal: CLOSED_COUNT,
       mergedTruncatedClosedIds: truncatedClosedIds,
     };
-    const afterDto = toBoardViewDto(afterView);
+    const afterDto = toBoardViewDto(afterView, DEFAULT_LIVENESS_THRESHOLDS);
     const afterSize = JSON.stringify(afterDto).length;
 
     // 削減効果を数値でログに残す(議長のレビュー用。bdboard-3tw.86)。
@@ -442,7 +448,7 @@ describe('dto', () => {
     const summary = toTicketSummaryDto(ticket);
     expect(summary.labels).toEqual(['human', 'needs-review']);
 
-    const cardDto = toBoardCardDto(card, NOW);
+    const cardDto = toBoardCardDto(card, NOW, DEFAULT_LIVENESS_THRESHOLDS);
     expect(cardDto.ticket.labels).toEqual(['human', 'needs-review']);
   });
 
@@ -529,6 +535,7 @@ describe('dto', () => {
     const dto = toSessionDto(
       makeSession({ startedAt: NOW, lastActivityAt: NOW }),
       NOW,
+      DEFAULT_LIVENESS_THRESHOLDS,
     );
 
     expect('name' in dto).toBe(false);
@@ -554,10 +561,10 @@ describe('dto', () => {
       lastActivityAt: NOW,
     });
 
-    expect(toSessionDto(recent, NOW).liveness).toBe('active');
-    expect(toSessionDto(idle, NOW).liveness).toBe('idle');
-    expect(toSessionDto(stale, NOW).liveness).toBe('stale');
-    expect(toSessionDto(dormant, NOW).liveness).toBe('dormant');
+    expect(toSessionDto(recent, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('active');
+    expect(toSessionDto(idle, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('idle');
+    expect(toSessionDto(stale, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('stale');
+    expect(toSessionDto(dormant, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('dormant');
   });
 
   it('toSessionDto honors the resolved liveness thresholds', () => {
@@ -581,10 +588,10 @@ describe('dto', () => {
       lastActivityAt: new Date(NOW.getTime() - 2 * 60 * 60_000),
     });
 
-    expect(toSessionDto(twoMinutesIdle, NOW).liveness).toBe('active');
+    expect(toSessionDto(twoMinutesIdle, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('active');
     expect(toSessionDto(twoMinutesIdle, NOW, thresholds).liveness).toBe('idle');
     // 既定では stale (24時間以内)、上書き後は dormant (1時間超)。
-    expect(toSessionDto(twoHoursOld, NOW).liveness).toBe('stale');
+    expect(toSessionDto(twoHoursOld, NOW, DEFAULT_LIVENESS_THRESHOLDS).liveness).toBe('stale');
     expect(toSessionDto(twoHoursOld, NOW, thresholds).liveness).toBe('dormant');
   });
 
@@ -612,12 +619,13 @@ describe('dto', () => {
     });
 
     const sessions = [justNow, twoMinutesIdle];
-    const withDefaults = toProjectDto(project, NOW, sessions, 0);
-    const withOverride = toProjectDto(project, NOW, sessions, 0, {
-      activeMs: 60_000,
-      idleMs: 10 * 60_000,
-      staleMs: 60 * 60_000,
-    });
+    const withDefaults = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, { sessions });
+    const withOverride = toProjectDto(
+      project,
+      NOW,
+      { activeMs: 60_000, idleMs: 10 * 60_000, staleMs: 60 * 60_000 },
+      { sessions },
+    );
 
     expect(withDefaults.activeSessionCount).toBe(2);
     expect(withOverride.activeSessionCount).toBe(1);
@@ -636,7 +644,7 @@ describe('dto', () => {
       aliasPaths: [],
     };
 
-    const dto = toProjectDto(project, NOW);
+    const dto = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS);
 
     expect(dto.sessionCount).toBe(0);
     expect(dto.activeSessionCount).toBe(0);
@@ -678,11 +686,9 @@ describe('dto', () => {
       lastActivityAt: NOW,
     });
 
-    const dto = toProjectDto(
-      project,
-      NOW,
-      [activeSession, idleSession, staleSession, dormantSession],
-    );
+    const dto = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, {
+      sessions: [activeSession, idleSession, staleSession, dormantSession],
+    });
 
     expect(dto.sessionCount).toBe(4);
     expect(dto.activeSessionCount).toBe(1);
@@ -708,7 +714,7 @@ describe('dto', () => {
       lastActivityAt: new Date(NOW.getTime() - 60 * 60_000),
     });
 
-    const dto = toProjectDto(project, NOW, [staleButAlive]);
+    const dto = toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, { sessions: [staleButAlive] });
 
     expect(dto.sessionCount).toBe(1);
     expect(dto.activeSessionCount).toBe(0);
@@ -749,7 +755,7 @@ describe('dto', () => {
       [project.id, [aliveSession]],
     ]);
 
-    const dto = toBoardViewDto(view, sessionsByProject);
+    const dto = toBoardViewDto(view, DEFAULT_LIVENESS_THRESHOLDS, sessionsByProject);
 
     expect(dto.projects[0]?.project.activeSessionCount).toBe(1);
     expect(dto.projects[0]?.project.sessionCount).toBe(1);
@@ -792,7 +798,7 @@ describe('dto', () => {
       aliasPaths: [],
     };
 
-    expect(toProjectDto(project, NOW, undefined, 7).incompleteTicketCount).toBe(7);
+    expect(toProjectDto(project, NOW, DEFAULT_LIVENESS_THRESHOLDS, { incompleteTicketCount: 7 }).incompleteTicketCount).toBe(7);
   });
 
   it('toActivityEventDto omits optional interaction fields when absent', () => {
