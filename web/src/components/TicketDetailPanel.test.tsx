@@ -959,6 +959,113 @@ describe('TicketDetailPanel pending decisions', () => {
     expect(await screen.findByText(TUNNEL_WRITE_HELP)).toBeInTheDocument();
     expect(textarea).toHaveValue('トンネル経由の回答');
   });
+
+  it('clears the send failure message when the pending decision is replaced', async () => {
+    mockPostTicketDecision.mockRejectedValue(new TypeError('Failed to fetch'));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    await user.type(await screen.findByLabelText('自由記入'), '最初の回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+    expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
+
+    // エージェントが質問1を取り下げて質問2を出した状況。ミューテーションの
+    // エラーを捨てないと、質問2の送信ボタンの下に質問1の失敗メッセージが
+    // 残り続ける (bdboard-uez)。
+    rerender(
+      panel({
+        id: 'decision-2',
+        projectId: sampleTicket.projectId,
+        question: '次の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(await screen.findByText('次の質問')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText(NETWORK_FETCH_HELP)).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps the send failure message while the same question is still pending', async () => {
+    mockPostTicketDecision.mockRejectedValue(new TypeError('Failed to fetch'));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const panel = (pendingDecision: PendingDecisionDto) => (
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <TicketDetailPanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={pendingDecision}
+            prLink={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+            availableLabels={[]}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>
+    );
+
+    const { rerender } = render(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    await user.type(await screen.findByLabelText('自由記入'), '最初の回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+    expect(await screen.findByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
+
+    // ポーリングは同じ質問を新しいオブジェクトとして返し続ける。id が同じ
+    // うちは失敗メッセージを消してはいけない — 消すと、送信が失敗したことに
+    // 気づけないまま画面が元通りになる。
+    rerender(
+      panel({
+        id: 'decision-1',
+        projectId: sampleTicket.projectId,
+        question: '最初の質問',
+        allowFreeform: true,
+      }),
+    );
+
+    expect(screen.getByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
+  });
 });
 
 describe('TicketDetailPanel quick actions', () => {
