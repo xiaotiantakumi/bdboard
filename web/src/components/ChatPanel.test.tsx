@@ -646,10 +646,16 @@ describe('ChatPanel', () => {
 
     expect(panel).toHaveStyle({ width: '480px' });
 
+    // pointerdown はカーソル位置から幅を再計算しない(bdboard-p2ew): ハンドルと
+    // カーソル位置がずれていても、ドラッグ開始直後に幅が瞬間的に跳ばない。
     fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, clientX: 0 }));
-    expect(panel).toHaveStyle({ width: '680px' });
+    expect(panel).toHaveStyle({ width: '480px' });
+    // pointerdown からの移動量(差分)で幅を更新する。ここでは開始位置から
+    // 900px 移動しており、480 - 900 は MIN_WIDTH でクランプされて 360 になる。
     fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, clientX: 900 }));
     expect(panel).toHaveStyle({ width: '360px' });
+    // ドラッグ中の localStorage 書き込みはまだ発生しない。確定は pointerup 時のみ。
+    expect(localStorage.getItem('bdboard.ui.chatPanelWidth')).toBeNull();
     fireEvent(handle, new MouseEvent('pointerup', { bubbles: true }));
     expect(localStorage.getItem('bdboard.ui.chatPanelWidth')).toBe('360');
 
