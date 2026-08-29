@@ -58,6 +58,7 @@ export interface UseNotificationEventsOptions {
 export interface UseNotificationEventsResult {
   readonly events: readonly NotificationEventItem[];
   readonly unreadCount: number;
+  readonly lastReadAt: string | null;
   readonly markAllRead: () => void;
   readonly notificationsEnabled: boolean;
   readonly notificationsSupported: boolean;
@@ -609,6 +610,7 @@ export function useNotificationEvents(
   return {
     events,
     unreadCount,
+    lastReadAt,
     markAllRead,
     notificationsEnabled,
     notificationsSupported,
