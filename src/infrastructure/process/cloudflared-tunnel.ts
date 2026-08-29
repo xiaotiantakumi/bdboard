@@ -220,7 +220,7 @@ export function createCloudflaredTunnel(
   const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const createLogSink = options.createLogSink ?? createFileLogSink;
 
-  let availabilityCache: boolean | null = null;
+  let availableCache = false;
   let child: SpawnedProcess | null = null;
   let outputBuffer = '';
   const unexpectedExitListeners: Array<() => void> = [];
@@ -236,12 +236,15 @@ export function createCloudflaredTunnel(
   };
 
   const isAvailable = async (): Promise<boolean> => {
-    if (availabilityCache !== null) {
-      return availabilityCache;
+    // positive のみキャッシュする。「見つかった」は覆らないが、「見つからない」は
+    // 後から入れれば覆るので、固定すると再起動まで拾えなくなる (bdboard-syr)。
+    // negative 側の再スキャン頻度は呼び出し元 (tunnel-service) の TTL が抑える。
+    if (availableCache) {
+      return true;
     }
 
-    availabilityCache = resolveExecutable() !== null;
-    return availabilityCache;
+    availableCache = resolveExecutable() !== null;
+    return availableCache;
   };
 
   const stop = async (): Promise<void> => {

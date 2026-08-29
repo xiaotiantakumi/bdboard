@@ -41,6 +41,30 @@ describe('createCloudflaredTunnel', () => {
     await expect(tunnel.start()).rejects.toThrow('cloudflared executable not found');
   });
 
+  // bdboard-syr: 「未インストール」を恒久キャッシュしていたため、後から
+  // brew install しても再起動まで拾えなかった。false は毎回引き直す。
+  it('re-resolves after an unavailable result so a later install is picked up', async () => {
+    let resolved: string | null = null;
+    const resolveExecutable = vi.fn(() => resolved);
+    const tunnel = createCloudflaredTunnel({ port: 8799, resolveExecutable });
+
+    await expect(tunnel.isAvailable()).resolves.toBe(false);
+    await expect(tunnel.isAvailable()).resolves.toBe(false);
+    expect(resolveExecutable).toHaveBeenCalledTimes(2);
+
+    resolved = '/usr/bin/cloudflared';
+    await expect(tunnel.isAvailable()).resolves.toBe(true);
+  });
+
+  it('caches an available result instead of re-scanning PATH every time', async () => {
+    const resolveExecutable = vi.fn(() => '/usr/bin/cloudflared');
+    const tunnel = createCloudflaredTunnel({ port: 8799, resolveExecutable });
+
+    await expect(tunnel.isAvailable()).resolves.toBe(true);
+    await expect(tunnel.isAvailable()).resolves.toBe(true);
+    expect(resolveExecutable).toHaveBeenCalledTimes(1);
+  });
+
   it('resolves cloudflared.exe from a semicolon-delimited win32 PATH', async () => {
     const fake = createFakeSpawnedProcess();
     const accessSync = vi.spyOn(fs, 'accessSync').mockImplementation((candidate) => {
