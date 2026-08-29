@@ -1,6 +1,9 @@
 import type { Project } from '../../domain/project.js';
 import { detectStaleLeases, type StaleLeaseIssue } from '../../domain/lease.js';
+import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { LeaseReader } from '../ports/lease-reader.js';
+
+const PROJECT_SCAN_CONCURRENCY = 3;
 
 export interface GetStaleLeaseIssuesOptions {
   /** 指定されたIDのみ。未指定なら全部 */
@@ -19,27 +22,26 @@ export async function getStaleLeaseIssues(
     targetProjects = projects.filter((project) => filterSet.has(project.id));
   }
 
-  const settled = await Promise.allSettled(
-    targetProjects.map(async (project) => {
-      const tickets = await reader.listInProgressWithLease(project.rootPath);
-      return detectStaleLeases(
-        tickets.map((ticket) => ({
-          id: ticket.id,
-          leaseExpiresAt: ticket.leaseExpiresAt,
-          heartbeatAt: ticket.heartbeatAt,
-        })),
-        project.id,
-        now,
-      );
-    }),
-  );
-
   const issues: StaleLeaseIssue[] = [];
-  for (const outcome of settled) {
-    if (outcome.status === 'fulfilled') {
-      issues.push(...outcome.value);
+
+  await runWithConcurrencyLimit(targetProjects, PROJECT_SCAN_CONCURRENCY, async (project) => {
+    try {
+      const tickets = await reader.listInProgressWithLease(project.rootPath);
+      issues.push(
+        ...detectStaleLeases(
+          tickets.map((ticket) => ({
+            id: ticket.id,
+            leaseExpiresAt: ticket.leaseExpiresAt,
+            heartbeatAt: ticket.heartbeatAt,
+          })),
+          project.id,
+          now,
+        ),
+      );
+    } catch {
+      // Skip projects whose reader rejects without failing the whole call.
     }
-  }
+  });
 
   issues.sort((a, b) => {
     const projectDiff = a.projectId.localeCompare(b.projectId);

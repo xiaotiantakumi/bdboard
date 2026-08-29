@@ -72,4 +72,35 @@ describe('getStaleLeaseIssues', () => {
     expect(issues).toHaveLength(1);
     expect(issues[0]?.projectId).toBe('proj-b');
   });
+
+  it('limits project scan concurrency to the configured maximum', async () => {
+    const projects = Array.from({ length: 8 }, (_, index) =>
+      project(`proj-${index}`, `/projects/${index}`),
+    );
+
+    let activeCount = 0;
+    let maxObserved = 0;
+
+    const reader: LeaseReader = {
+      listInProgressWithLease: vi.fn(async () => {
+        activeCount += 1;
+        maxObserved = Math.max(maxObserved, activeCount);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        activeCount -= 1;
+        return [
+          {
+            id: 'bdboard-stale',
+            leaseExpiresAt: '2026-08-16T09:55:00.000Z',
+            heartbeatAt: '2026-08-16T09:50:00.000Z',
+          },
+        ];
+      }),
+    };
+
+    const issues = await getStaleLeaseIssues(projects, reader, NOW);
+
+    expect(issues).toHaveLength(8);
+    expect(maxObserved).toBeLessThanOrEqual(3);
+    expect(maxObserved).toBeGreaterThan(1);
+  });
 });
