@@ -98,6 +98,72 @@ describe('CardItem PR link badge', () => {
   });
 });
 
+// bdboard-ol9: defer バッジの日付。ISO 文字列を slice(0, 10) すると UTC の
+// 日付になり、JST では常に1日前を表示していた。日付境界は Asia/Tokyo に固定して
+// 整形する (bdboard-3tw.75 と同じ理由)。ここは CI(UTC)/ローカル(JST) の
+// どちらで走っても同じ結果でなければならないので、host TZ に依存しないことを
+// 併せて確かめている。
+describe('CardItem defer date badge (bdboard-ol9)', () => {
+  it('renders the defer date in JST, not UTC', () => {
+    // JST の 2027-08-29 00:00 ちょうど。UTC では前日の 15:00 になる。
+    const card: BoardCardDto = {
+      ...makeCard('bdboard-defer-tz'),
+      ticket: {
+        ...makeCard('bdboard-defer-tz').ticket,
+        deferUntil: '2027-08-28T15:00:00.000Z',
+      },
+    };
+
+    renderWithWatch(
+      <CardItem
+        card={card}
+        lane="blocked"
+        showProjectName={false}
+        projectName="Project One"
+        activeSessionCount={0}
+        hasPendingDecision={false}
+        onClick={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('2027-08-29')).toBeInTheDocument();
+    expect(screen.queryByText('2027-08-28')).not.toBeInTheDocument();
+  });
+
+  it('renders a UTC-midnight defer value on its own JST date', () => {
+    // bd の defer は「ローカル深夜の UTC 瞬間」(…T15:00:00Z) で入ることが多いが、
+    // 経路によっては UTC 深夜 (…T00:00:00Z) のものもある。両方の形が正しい日付で
+    // 出ることを固定しておく。
+    //
+    // 念のため: 手書きの +9h シフトでもこの2件は通る。ただしそれは「現代の
+    // 日付では一致する」だけで等価ではない — 1948-51 年の夏時間 (JDT, UTC+10)
+    // と 1888 年以前の LMT で食い違う (PR#124 fable レビューで counterexample
+    // 提示、実測で確認)。defer 日付がその範囲に入ることは無いので、ここで
+    // 歴史的な日付を fixture にしてまで +9h を殺すことはしない。
+    const card: BoardCardDto = {
+      ...makeCard('bdboard-defer-utc-midnight'),
+      ticket: {
+        ...makeCard('bdboard-defer-utc-midnight').ticket,
+        deferUntil: '2026-12-15T00:00:00.000Z',
+      },
+    };
+
+    renderWithWatch(
+      <CardItem
+        card={card}
+        lane="blocked"
+        showProjectName={false}
+        projectName="Project One"
+        activeSessionCount={0}
+        hasPendingDecision={false}
+        onClick={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('2026-12-15')).toBeInTheDocument();
+  });
+});
+
 // bdboard-662: 保留(deferred)はブロック(blocked)レーンへ表示統合された。その際に
 // deferDays/deferUrgency の「あと何日」表示を失わないことが受け入れ条件のひとつ。
 describe('CardItem defer countdown badge (bdboard-662 blocked/deferred merge)', () => {
