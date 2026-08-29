@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent, useState } from 'react';
+import { type KeyboardEvent, type PointerEvent, useRef, useState } from 'react';
 import { usePersistedState } from './usePersistedState';
 
 const MIN_WIDTH = 360;
@@ -22,27 +22,53 @@ export function validateSidePanelWidth(value: unknown): number | null {
     : null;
 }
 
-export function useResizableSidePanel(storageKey: string, defaultWidth = 480) {
-  const [width, setWidth] = usePersistedState(storageKey, defaultWidth, validateSidePanelWidth);
-  const [isResizing, setIsResizing] = useState(false);
-  const effectiveWidth = clampWidth(width);
+interface DragStart {
+  pointerX: number;
+  startWidth: number;
+}
 
-  const updateWidth = (nextWidth: number) => setWidth(clampWidth(nextWidth));
+export function useResizableSidePanel(storageKey: string, defaultWidth = 480) {
+  const [persistedWidth, setPersistedWidth] = usePersistedState(storageKey, defaultWidth, validateSidePanelWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  // ドラッグ中の見た目の幅。pointermoveのたびにここだけを更新し、
+  // localStorageへの書き込み(usePersistedStateのsetter)はpointerup/pointercancel
+  // 時に1回だけ行う。60Hz超で発火しうるpointermoveごとにsetItemすると
+  // クロスタブへのstorageイベント発火が同頻度で起き、他タブのパネルまで
+  // ドラッグ周波数で再レンダーされてしまうため。
+  const [draftWidth, setDraftWidth] = useState<number | null>(null);
+  const dragStartRef = useRef<DragStart | null>(null);
+
+  const width = draftWidth ?? persistedWidth;
+  const effectiveWidth = clampWidth(width);
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!canResize()) return;
     event.currentTarget.setPointerCapture?.(event.pointerId);
+    // ドラッグ開始位置と開始時点の実効幅を記録し、以降はカーソルの移動量(差分)
+    // だけを現在の幅に加算する。開始時点でカーソル位置から幅を再計算すると、
+    // ハンドルの位置とカーソル位置がわずかにずれているだけで幅が瞬間的に
+    // 跳んでしまう。
+    dragStartRef.current = { pointerX: event.clientX, startWidth: effectiveWidth };
     setIsResizing(true);
-    updateWidth(window.innerWidth - event.clientX);
+    setDraftWidth(effectiveWidth);
   };
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    if (isResizing) updateWidth(window.innerWidth - event.clientX);
+    if (!isResizing || dragStartRef.current === null) return;
+    const { pointerX, startWidth } = dragStartRef.current;
+    // パネルは右側にあるため、カーソルが左に動く(clientXが減る)ほど幅は増える。
+    const delta = pointerX - event.clientX;
+    setDraftWidth(clampWidth(startWidth + delta));
   };
   const handlePointerEnd = (event: PointerEvent<HTMLDivElement>) => {
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
     }
     setIsResizing(false);
+    dragStartRef.current = null;
+    if (draftWidth !== null) {
+      setPersistedWidth(draftWidth);
+    }
+    setDraftWidth(null);
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (!canResize()) return;
@@ -53,7 +79,8 @@ export function useResizableSidePanel(storageKey: string, defaultWidth = 480) {
       event.key === 'End' ? MAX_WIDTH : undefined;
     if (nextWidth !== undefined) {
       event.preventDefault();
-      updateWidth(nextWidth);
+      // キーボード操作は連打でも60Hzには達しないため、従来どおり操作ごとに即座に永続化する。
+      setPersistedWidth(clampWidth(nextWidth));
     }
   };
 
