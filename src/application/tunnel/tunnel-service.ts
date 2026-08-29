@@ -65,7 +65,11 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
   // そこに載せたくないため。stop / 異常終了 / start 失敗のいずれでも false へ戻す。
   let writeAllowed = false;
   let availability: { readonly value: boolean; readonly at: number } | null = null;
+  // start/stop が同時に来たとき、古い操作の完了結果で state を上書きしないための世代。
+  // start/stop/shutdown の先頭で加算し、各操作は開始時に captured して完了時に照合する。
+  let operationGeneration = 0;
   let startInFlight: Promise<TunnelState> | null = null;
+  let stopInFlight: Promise<TunnelState> | null = null;
 
   // 開発サーバー本体の再起動等でcloudflared子プロセスが道連れに終了した場合、
   // "off"のまま(ユーザーが能動的に止めたのか区別つかない)にせず、error状態にして
@@ -130,7 +134,9 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
     return { username: state.username, password: state.password };
   };
 
-  const stopInternal = async (): Promise<TunnelState> => {
+  const stopInternal = async (
+    capturedGeneration?: number,
+  ): Promise<TunnelState> => {
     if (state.kind === 'unavailable') {
       return state;
     }
@@ -141,6 +147,13 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
       // stop failures are non-fatal for state transition
     }
 
+    if (
+      capturedGeneration !== undefined &&
+      capturedGeneration !== operationGeneration
+    ) {
+      return state;
+    }
+
     deps.access?.endTunnelSession();
     writeAllowed = false;
     state = { kind: 'off' };
@@ -148,19 +161,46 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
   };
 
   const stop = async (): Promise<TunnelState> => {
-    deps.interruptions?.clear();
-    return stopInternal();
+    if (stopInFlight !== null) {
+      return stopInFlight;
+    }
+
+    operationGeneration += 1;
+    const capturedGeneration = operationGeneration;
+
+    stopInFlight = (async (): Promise<TunnelState> => {
+      deps.interruptions?.clear();
+      return stopInternal(capturedGeneration);
+    })().finally(() => {
+      stopInFlight = null;
+    });
+
+    return stopInFlight;
   };
 
   const shutdown = async (): Promise<TunnelState> => {
-    if (state.kind === 'on') {
-      deps.interruptions?.markInterrupted(deps.now());
+    if (stopInFlight !== null) {
+      return stopInFlight;
     }
-    return stopInternal();
+
+    operationGeneration += 1;
+    const capturedGeneration = operationGeneration;
+
+    stopInFlight = (async (): Promise<TunnelState> => {
+      if (state.kind === 'on') {
+        deps.interruptions?.markInterrupted(deps.now());
+      }
+      return stopInternal(capturedGeneration);
+    })().finally(() => {
+      stopInFlight = null;
+    });
+
+    return stopInFlight;
   };
 
   const startInternal = async (
-    options?: { readonly password?: string },
+    options: { readonly password?: string } | undefined,
+    capturedGeneration: number,
   ): Promise<TunnelState> => {
     const available = await probeAvailability();
     if (!available) {
@@ -168,8 +208,18 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
       return state;
     }
 
+    if (capturedGeneration !== operationGeneration) {
+      return state;
+    }
+
     if (state.kind === 'on') {
-      await stop();
+      // 再起動時の stop は世代を進めない。stop() 経由だと自分の start を無効化してしまう。
+      deps.interruptions?.clear();
+      await stopInternal();
+    }
+
+    if (capturedGeneration !== operationGeneration) {
+      return state;
     }
 
     const passwordSource: TunnelPasswordSource =
@@ -180,6 +230,15 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
 
     try {
       const result = await deps.tunnel.start();
+      if (capturedGeneration !== operationGeneration) {
+        try {
+          await deps.tunnel.stop();
+        } catch {
+          // ignore cleanup failures
+        }
+        return state;
+      }
+
       const startedAt = deps.now();
       state = {
         kind: 'on',
@@ -200,6 +259,10 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
 
       deps.access?.endTunnelSession();
       writeAllowed = false;
+      if (capturedGeneration !== operationGeneration) {
+        return state;
+      }
+
       const message = errorMessage(err);
       state = { kind: 'error', message };
       return state;
@@ -213,7 +276,15 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
       return startInFlight;
     }
 
-    startInFlight = startInternal(options).finally(() => {
+    operationGeneration += 1;
+    const capturedGeneration = operationGeneration;
+
+    startInFlight = (async (): Promise<TunnelState> => {
+      if (stopInFlight !== null) {
+        await stopInFlight;
+      }
+      return startInternal(options, capturedGeneration);
+    })().finally(() => {
       startInFlight = null;
     });
 
