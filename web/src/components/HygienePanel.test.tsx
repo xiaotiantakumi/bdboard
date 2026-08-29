@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type HygieneIssueDto, type LeaseHealthDto, type MergeSlotStatusDto } from '../api';
+import { formatWorktreeCleanupScript } from '../bdCommands';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import {
   CONFLICT_WRITE_HELP,
@@ -247,16 +248,18 @@ describe('HygienePanel', () => {
   });
 
   it('renders merged_leftover cleanup commands when cleanup is present', async () => {
+    const cleanup = {
+      repoRootPath: '/repo',
+      worktreePath: '/repo/.claude/worktrees/bdboard-3tw.96',
+      branchName: 'bd/bdboard-3tw.96',
+    };
+
     fetchHygieneIssuesMock.mockResolvedValue([
       makeIssue({
         ticketId: 'bdboard-3tw.96',
         kind: 'merged_leftover',
         message: 'マージ済みだが worktree が残っています',
-        cleanup: {
-          repoRootPath: '/repo',
-          worktreePath: '/repo/.claude/worktrees/bdboard-3tw.96',
-          branchName: 'bd/bdboard-3tw.96',
-        },
+        cleanup,
       }),
     ]);
 
@@ -265,28 +268,24 @@ describe('HygienePanel', () => {
     expect(await screen.findByText('残骸 worktree')).toBeInTheDocument();
     const cleanupCommand = container.querySelector('.hygiene-cleanup-command');
     expect(cleanupCommand).not.toBeNull();
-    expect(cleanupCommand!.textContent).toBe(
-      "git -C '/repo' worktree remove '/repo/.claude/worktrees/bdboard-3tw.96'\n" +
-        "git -C '/repo' branch -d 'bd/bdboard-3tw.96'",
-    );
+    expect(cleanupCommand!.textContent).toBe(formatWorktreeCleanupScript(cleanup));
   });
 
   it('copies cleanup commands and shows success feedback', async () => {
     const user = userEvent.setup();
-    const cleanupScript =
-      "git -C '/repo' worktree remove '/repo/.claude/worktrees/bdboard-3tw.96'\n" +
-      "git -C '/repo' branch -d 'bd/bdboard-3tw.96'";
+    const cleanup = {
+      repoRootPath: '/repo',
+      worktreePath: '/repo/.claude/worktrees/bdboard-3tw.96',
+      branchName: 'bd/bdboard-3tw.96',
+    };
+    const cleanupScript = formatWorktreeCleanupScript(cleanup);
 
     fetchHygieneIssuesMock.mockResolvedValue([
       makeIssue({
         ticketId: 'bdboard-3tw.96',
         kind: 'merged_leftover',
         message: 'マージ済みだが worktree が残っています',
-        cleanup: {
-          repoRootPath: '/repo',
-          worktreePath: '/repo/.claude/worktrees/bdboard-3tw.96',
-          branchName: 'bd/bdboard-3tw.96',
-        },
+        cleanup,
       }),
     ]);
 
