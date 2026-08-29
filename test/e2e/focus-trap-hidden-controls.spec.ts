@@ -31,8 +31,10 @@ test.describe('focus trap and CSS-hidden controls', () => {
     await expect(dialog).toBeVisible();
 
     // 前提の確認: ハンドルは DOM には居るが、この幅では表示されていない。
-    // getByRole は display:none の要素を拾わない(アクセシビリティツリーに
-    // 載らない)ので、ここは CSS セレクタで DOM に居ることを見る。
+    // getByRole は既定で display:none の要素を拾わない(アクセシビリティ
+    // ツリーに載らない)ので、ここは CSS セレクタで DOM に居ることを見る。
+    // `includeHidden` で拾わせることもできるが、クラス + 件数 + 不可視の
+    // 3点を直接見るほうが、この前提が崩れたときに黙って通らない。
     const handle = dialog.locator('.side-panel-resize-handle');
     await expect(handle).toHaveCount(1);
     await expect(handle).toBeHidden();

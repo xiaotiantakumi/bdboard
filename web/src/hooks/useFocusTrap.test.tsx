@@ -13,7 +13,12 @@ function FocusTrapFixture({
   useInitialFocusRef?: boolean;
   onEscape?: () => void;
   /** 「Last」の後ろに、指定の隠し方で隠したボタンを1つ足す(bdboard-77k)。 */
-  hidden?: 'display-none' | 'visibility-hidden' | 'hidden-attribute' | 'inside-hidden-parent';
+  hidden?:
+    | 'display-none'
+    | 'visibility-hidden'
+    | 'hidden-attribute'
+    | 'inside-hidden-parent'
+    | 'revealed-inside-hidden-parent';
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const initialFocusRef = useRef<HTMLButtonElement>(null);
@@ -52,6 +57,13 @@ function FocusTrapFixture({
         {hidden === 'inside-hidden-parent' && (
           <div style={{ display: 'none' }}>
             <button type="button">Hidden</button>
+          </div>
+        )}
+        {hidden === 'revealed-inside-hidden-parent' && (
+          <div style={{ visibility: 'hidden' }}>
+            <button type="button" style={{ visibility: 'visible' }}>
+              Revealed
+            </button>
           </div>
         )}
       </div>
@@ -147,7 +159,10 @@ describe('useFocusTrap', () => {
 
   describe('CSSで隠れた要素の除外 (bdboard-77k)', () => {
     // セレクタは disabled と tabindex="-1" しか見ないので、CSS で消しただけの
-    // ボタンが Tab の巡回に残る。実例はチャットパネルの「最大化」(幅700px以下)。
+    // 要素が巡回の端(first / last)として残る。実例は幅700px以下の
+    // `.side-panel-resize-handle` で、パネルの最初のフォーカス可能要素のまま
+    // 隠れるため、本当の先頭からの Shift+Tab がダイアログの外へ抜ける。
+    // ここでは末尾に隠し要素を置いて、折り返し先の判定を見る。
     it.each([
       ['display-none'],
       ['visibility-hidden'],
@@ -161,6 +176,21 @@ describe('useFocusTrap', () => {
       fireEvent.keyDown(last, { key: 'Tab' });
 
       // 隠しボタンが最後だと見なされていれば、Tab は折り返さずここで止まる。
+      expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
+    });
+
+    it('still counts a control that re-reveals itself inside a hidden parent', () => {
+      // visibility は継承するので、親で hidden にしても子で visible に戻せば
+      // 実際には見えていて、フォーカスも当たる。祖先まで遡って hidden を探すと
+      // これを巡回から外してしまい、同じ「端のズレ」を逆向きに作る
+      // (PR#146 レビュー minor-2)。
+      render(<FocusTrapFixture hidden="revealed-inside-hidden-parent" />);
+
+      const revealed = screen.getByRole('button', { name: 'Revealed' });
+      revealed.focus();
+      fireEvent.keyDown(revealed, { key: 'Tab' });
+
+      // 巡回に含まれていれば、これが last なので先頭へ折り返す。
       expect(screen.getByRole('button', { name: 'First' })).toHaveFocus();
     });
 
@@ -178,9 +208,14 @@ describe('useFocusTrap', () => {
       const container = screen.getByTestId('trap-container');
       // フォーカスがコンテナの外(初期フォーカス先が無いので body のまま)にある
       // 状態の Tab は「先頭へ引き戻す」経路に入る。巡回先が1つも無いまま
-      // そこへ進むと undefined を触って落ちる。
+      // そこへ進むと preventDefault してから undefined を触ることになる。
+      //
+      // `not.toThrow()` では検証にならない: リスナ内の例外は dispatchEvent の
+      // 呼び出し元へ伝播しないので、落ちていても素通りする(PR#146 レビュー
+      // minor-1)。かわりに「Tab を奪っていない」ことを直接見る。fireEvent は
+      // preventDefault されると false を返す。
       expect(document.activeElement).toBe(document.body);
-      expect(() => fireEvent.keyDown(container, { key: 'Tab' })).not.toThrow();
+      expect(fireEvent.keyDown(container, { key: 'Tab' })).toBe(true);
     });
   });
 });

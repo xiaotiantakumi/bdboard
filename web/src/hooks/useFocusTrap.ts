@@ -7,12 +7,22 @@ const FOCUSABLE_SELECTOR =
  * CSS で見えていない要素を Tab 巡回から外すための判定(bdboard-77k)。
  *
  * セレクタは `disabled` と `tabindex="-1"` しか見ないので、CSS で消しただけの
- * ボタンが巡回対象に残る。実例はチャットパネルの「最大化」で、幅 700px 以下では
- * 表示していないのに Tab では止まってしまう。
+ * 要素が巡回対象に残る。実害が出るのは端(first / last)に来たときで、幅 700px
+ * 以下では `.side-panel-resize-handle` が `display: none` になりつつ、パネルの
+ * 最初のフォーカス可能要素であり続ける。すると本当の先頭からの Shift+Tab で
+ * `active === first` が成立せず preventDefault されないので、フォーカスが
+ * ダイアログの外へ抜ける。末尾からの Tab も、隠れた first への `focus()` が
+ * ブラウザでは何も起きない呼び出しになるため、その場に留まってしまう。
  *
- * 祖先まで遡るのは `display: none` の子孫で `getComputedStyle` しても 'none' が
- * 返らない(その要素自身の指定値が返る)ため。`visibility` は継承するので本来は
- * 自分だけ見れば足りるが、同じループで拾えるのでまとめて判定している。
+ * `display` は継承しないので祖先まで遡る。`display: none` の子孫で
+ * `getComputedStyle` しても 'none' は返らず、その要素自身の指定値が返るため。
+ *
+ * `visibility` は逆に、要素自身の computed 値だけを見る。継承する性質上、
+ * 祖先の hidden はすでに反映されており、なおかつ子孫側の `visibility: visible`
+ * による打ち消しも反映されている。祖先まで遡って hidden を探すと、隠した親の
+ * 下で visible に戻した(= 実際には見えている)要素まで巡回から外してしまい、
+ * 今回直したのと同型の端のズレを逆向きに作ることになる
+ * (PR#146 レビュー minor-2)。
  *
  * `hidden` 属性は個別に見ていない。ブラウザも jsdom も UA スタイルシートの
  * `[hidden] { display: none }` として扱うので computed style 側で拾える。
@@ -20,16 +30,20 @@ const FOCUSABLE_SELECTOR =
  * 巡回から外してしまい、かえって仕様から外れる。
  */
 function isVisible(element: HTMLElement): boolean {
+  if (window.getComputedStyle(element).visibility === 'hidden') {
+    return false;
+  }
+
   for (
     let current: HTMLElement | null = element;
     current !== null;
     current = current.parentElement
   ) {
-    const style = window.getComputedStyle(current);
-    if (style.display === 'none' || style.visibility === 'hidden') {
+    if (window.getComputedStyle(current).display === 'none') {
       return false;
     }
   }
+
   return true;
 }
 
