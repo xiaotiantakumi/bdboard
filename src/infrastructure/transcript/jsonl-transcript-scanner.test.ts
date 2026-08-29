@@ -1120,3 +1120,132 @@ describe('createJsonlTranscriptScanner', () => {
     expect(cache.offsets.get(transcriptPath)).toBe(totalBytes);
   });
 });
+
+describe('scanner liveness (bdboard-32u review)', () => {
+  // fable レビュー minor: scanner 側の previousOffset > size (切り詰め/巻き戻し)
+  // 分岐が一度も発火していなかった。reader 側の同型テストは start=0 になるため
+  // 「先頭の欠けた行を捨てる」経路まで固定できていない。
+  it('drops the partial first line when the file shrank below the stored offset', async () => {
+    const rootPath = '/proj/a';
+    const encoded = encodeCwdForTranscript(rootPath);
+    const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
+    const content = 'stale bdboard-aaa\nfresh bdboard-bbb\n';
+    const mutableContents: Record<string, string> = { [transcriptPath]: content };
+
+    const fs = createFakeFs({
+      dirs: {
+        [projectsDir]: [dir(encoded)],
+        [path.join(projectsDir, encoded)]: [file('sess.jsonl')],
+      },
+      contents: mutableContents,
+      stats: { [transcriptPath]: statForContent(content) },
+    });
+    const cache = createInMemoryBoardCache();
+    // 記録済みオフセットがファイル長より先 = ログローテート等で縮んだ状態。
+    cache.setTranscriptOffset(transcriptPath, 10_000);
+    const scanner = createJsonlTranscriptScanner(fs, cache, {
+      projectsDir,
+      // 末尾から読み直す窓を、1行目の途中から始まるように取る。
+      initialTailBytes: Buffer.byteLength(content, 'utf8') - 3,
+    });
+
+    const links = await scanner.scan({
+      projects: [project('a', rootPath, ['bdboard'])],
+      knownIdsByProject: new Map([['a', new Set(['bdboard-aaa', 'bdboard-bbb'])]]),
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    });
+
+    // 頭が欠けた1行目は捨てる。捨てないと壊れた行を解釈することになる。
+    expect(links.map((link) => link.ticketId)).toEqual(['bdboard-bbb']);
+    expect(cache.offsets.get(transcriptPath)).toBe(Buffer.byteLength(content, 'utf8'));
+  });
+
+  // 強制前進のガード側。EOF まで読み切った chunk に完結した行が1つも無い
+  // ケース = 書き込み途中の行だけが新しく見えている状態。ここで前進させると、
+  // まさにこの PR が直したはずの「一度も解釈されない行」を作ってしまう。
+  it('waits instead of advancing past a half-written final line at EOF', async () => {
+    const rootPath = '/proj/a';
+    const encoded = encodeCwdForTranscript(rootPath);
+    const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
+    const settled = 'settled bdboard-aaa\n';
+    const mutableContents: Record<string, string> = { [transcriptPath]: settled };
+    const mutableStats: Record<string, FileStat> = {
+      [transcriptPath]: statForContent(settled),
+    };
+
+    const fs = createFakeFs({
+      dirs: {
+        [projectsDir]: [dir(encoded)],
+        [path.join(projectsDir, encoded)]: [file('sess.jsonl')],
+      },
+      contents: mutableContents,
+      stats: mutableStats,
+    });
+    const cache = createInMemoryBoardCache();
+    const scanner = createJsonlTranscriptScanner(fs, cache, { projectsDir });
+    const input = {
+      projects: [project('a', rootPath, ['bdboard'])],
+      knownIdsByProject: new Map([['a', new Set(['bdboard-aaa', 'bdboard-bbb'])]]),
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    await scanner.scan(input);
+    const settledBytes = Buffer.byteLength(settled, 'utf8');
+    expect(cache.offsets.get(transcriptPath)).toBe(settledBytes);
+
+    // 追記の途中。改行がまだ来ていない。
+    const partial = 'half-written bdboard-bbb';
+    mutableContents[transcriptPath] = `${settled}${partial}`;
+    mutableStats[transcriptPath] = statForContent(mutableContents[transcriptPath]);
+
+    expect(await scanner.scan(input)).toEqual([]);
+    // 進めてはいけない。進めるとこの行は完結しても二度と読まれない。
+    expect(cache.offsets.get(transcriptPath)).toBe(settledBytes);
+
+    // 書き込みが完了したら拾えること。
+    mutableContents[transcriptPath] = `${settled}${partial}\n`;
+    mutableStats[transcriptPath] = statForContent(mutableContents[transcriptPath]);
+
+    const links = await scanner.scan(input);
+    expect(links.map((link) => link.ticketId)).toEqual(['bdboard-bbb']);
+    expect(cache.offsets.get(transcriptPath)).toBe(
+      Buffer.byteLength(mutableContents[transcriptPath], 'utf8'),
+    );
+  });
+
+  it('makes progress on a line longer than the whole budget', async () => {
+    const rootPath = '/proj/a';
+    const encoded = encodeCwdForTranscript(rootPath);
+    const transcriptPath = path.join(projectsDir, encoded, 'sess.jsonl');
+    const huge = `${'x'.repeat(400)} bdboard-aaa\n`;
+    const after = 'bdboard-bbb\n';
+    const content = `${huge}${after}`;
+
+    const fs = createFakeFs({
+      dirs: {
+        [projectsDir]: [dir(encoded)],
+        [path.join(projectsDir, encoded)]: [file('sess.jsonl')],
+      },
+      contents: { [transcriptPath]: content },
+      stats: { [transcriptPath]: statForContent(content) },
+    });
+    const cache = createInMemoryBoardCache();
+    const scanner = createJsonlTranscriptScanner(fs, cache, {
+      projectsDir,
+      budgetBytes: 100,
+    });
+    const input = {
+      projects: [project('a', rootPath, ['bdboard'])],
+      knownIdsByProject: new Map([['a', new Set(['bdboard-aaa', 'bdboard-bbb'])]]),
+      now: new Date('2026-01-01T00:00:00.000Z'),
+    };
+
+    const offsets = [];
+    for (let tick = 0; tick < 20; tick += 1) {
+      await scanner.scan(input);
+      offsets.push(cache.offsets.get(transcriptPath) ?? 0);
+    }
+
+    expect(offsets[offsets.length - 1]).toBe(Buffer.byteLength(content, 'utf8'));
+  });
+});

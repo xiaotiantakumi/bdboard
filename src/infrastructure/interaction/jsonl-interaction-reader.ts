@@ -79,10 +79,16 @@ export function createJsonlInteractionReader(
           previousOffset === undefined ||
           (meta !== undefined && previousOffset > meta.size);
 
+        // scanner と同じ理由で、EOF まで届いていない slice だけ強制前進させる
+        // (bdboard-32u)。
+        const sliceEnd = slice.start + slice.length;
+        const reachedEof = meta === undefined || sliceEnd >= meta.size;
+
         const { text: completeText, committedOffset } = extractCompleteLines(
           chunk,
           slice.start,
           isTailRestart,
+          reachedEof ? undefined : sliceEnd,
         );
 
         const records = parseInteractions(completeText);

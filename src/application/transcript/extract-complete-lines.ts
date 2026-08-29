@@ -13,17 +13,24 @@
  * @param buffer チャンクの生バイト列
  * @param sliceStart このチャンクがファイル先頭から何バイト目で始まるか
  * @param isTailRestart 末尾からの読み直し。先頭の欠けた行を捨てる必要がある
+ * @param forceAdvanceTo 完結した行が1つも取れなかったときに、それでも進める先。
+ *   1行が読み取り窓 (budgetBytes) より長いと窓内に改行が現れず、保留し続けると
+ *   そのファイルは永久に前進しない。planScan は予算切れの slice で打ち切るので、
+ *   後ろに並ぶファイルも道連れで飢餓になる。**チャンクが EOF まで届いていない
+ *   ときに限り**この値を渡すこと。EOF 到達時の未終端行は「書き込み途中」なので
+ *   保留が正しく、ここで進めてはいけない (bdboard-32u)。
  */
 export function extractCompleteLines(
   buffer: Buffer,
   sliceStart: number,
   isTailRestart: boolean,
+  forceAdvanceTo?: number,
 ): { readonly text: string; readonly committedOffset: number } {
   let startByteInChunk = 0;
   if (isTailRestart && sliceStart > 0) {
     const firstNewline = buffer.indexOf(0x0a);
     if (firstNewline === -1) {
-      return { text: '', committedOffset: sliceStart };
+      return { text: '', committedOffset: forceAdvanceTo ?? sliceStart };
     }
     startByteInChunk = firstNewline + 1;
   }
@@ -36,7 +43,10 @@ export function extractCompleteLines(
   if (buffer[buffer.length - 1] !== 0x0a) {
     const lastNewline = buffer.lastIndexOf(0x0a);
     if (lastNewline < startByteInChunk) {
-      return { text: '', committedOffset: sliceStart + startByteInChunk };
+      return {
+        text: '',
+        committedOffset: forceAdvanceTo ?? sliceStart + startByteInChunk,
+      };
     }
     endByteInChunk = lastNewline + 1;
   }

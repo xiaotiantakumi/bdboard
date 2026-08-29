@@ -213,10 +213,17 @@ export function createJsonlTranscriptScanner(
           previousOffset === undefined ||
           (meta !== undefined && previousOffset > meta.size);
 
+        // 予算で切られた slice (EOF まで届いていない) だけは、完結した行が
+        // 取れなくても前進させる。さもないと窓より長い1行でこのファイルが
+        // 永久に止まり、planScan の予算切れ break で後続ファイルも飢える。
+        const sliceEnd = slice.start + slice.length;
+        const reachedEof = meta === undefined || sliceEnd >= meta.size;
+
         const { text, committedOffset } = extractCompleteLines(
           chunk,
           slice.start,
           isTailRestart,
+          reachedEof ? undefined : sliceEnd,
         );
 
         const knownIds = knownIdsByProject.get(project.id) ?? new Set<string>();
