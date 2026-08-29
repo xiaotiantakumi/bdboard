@@ -1,6 +1,6 @@
 {
   "name": "bdboard",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "bin": {
     "bdboard": "bin/bdboard.mjs"

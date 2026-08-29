@@ -221,4 +221,106 @@ describe('NodeStreamingCommandRunner', () => {
     const grandchildPid = parsePid(result.stdout.split(':')[0] ?? '', 'group kill / abort');
     await expectProcessToBeGone(grandchildPid);
   });
+  // bdboard-qrrj: SIGTERM を無視する子に対する forceStop 経路(SIGTERM →
+  // STOP_GRACE_MS の猶予 → SIGKILL)は、これまで一度も実行されていなかった。
+  // 既存テストの子はどれも SIGTERM で即死するので stop() の中で完結してしまい、
+  // 猶予タイマーも SIGKILL も踏まないまま全件グリーンになる。
+  //
+  // 起点に timeout ではなく abort を使う。stop() 以降の経路は両者で完全に同じ
+  // だが、timeoutMs は run() を呼んだ瞬間から測り始めるので、子が SIGTERM
+  // ハンドラを張り終える前(= node の起動中)に SIGTERM が届く競合が残る。
+  // そうなると子は既定動作で即死し、エスカレーションが起きないまま 500ms 前後で
+  // settle して下限アサーションが落ちる。abort なら「子が pid を書いた」= ハンドラ
+  // 設置後、という合図で撃てるので競合そのものが無くなる(PR#151 レビュー minor-1。
+  // 予算を広げて誤魔化すのではなく競合を消す、という bdboard-dvt と同じ直し方)。
+  //
+  // Windows では成立しないので回す意味が無い。killProcessTree は win32 だと
+  // SIGTERM 相当でも taskkill /F を撃つ(windowsHide のせいで WM_CLOSE が届かない
+  // ため。kill-process-tree.ts のコメント参照)ので、子はそもそも SIGTERM を
+  // 無視できず、SIGTERM → 猶予 → SIGKILL のエスカレーション自体が存在しない。
+  it.skipIf(process.platform === 'win32')(
+    'escalates to SIGKILL after the grace period when the child ignores SIGTERM',
+    async () => {
+      const childScript =
+        "process.on('SIGTERM', () => {});" +
+        "const { spawn } = require('node:child_process');" +
+        // 孫その1: detached にして親のプロセスグループから外す。グループへの SIGTERM で
+        // 巻き添えに死んでしまうと「パイプを握ったまま生き残る孫」を再現できない。
+        // グループ kill が届かない位置に置く以上、取り残しを防ぐのは自己終了だけなので
+        // setInterval ではなく setTimeout にする(bdboard-l1t.9 レビューと同じ理由)。
+        "const outside = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], " +
+        "{ stdio: ['ignore', 'inherit', 'inherit'], detached: true });" +
+        'outside.unref();' +
+        // 孫その2: グループ内に残し、こちらも SIGTERM を無視する。forceStop の
+        // SIGKILL が「子だけ」ではなく「グループごと」に飛んでいることを固定する。
+        // これが無いと killProcessTree(child,'SIGKILL') を child.kill('SIGKILL') に
+        // 差し替える変異が生き残る(PR#151 レビュー minor-2)。
+        "const inside = spawn(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); \" +" +
+        "\"process.stdout.write('ready'); setTimeout(() => {}, 10000)\"], " +
+        "{ stdio: ['ignore', 'pipe', 'ignore'] });" +
+        // 孫その2 の準備完了(SIGTERM ハンドラ設置)を待ってから pid 行を出す。
+        // これを待たずに出すと、abort → グループへの SIGTERM が孫のハンドラ設置より
+        // 先に届き、孫が既定動作で死ぬ。すると「グループごと SIGKILL したから
+        // 消えた」のか「SIGTERM で死んだ」のかが区別できず、minor-2 が狙った
+        // 変異(SIGKILL をグループではなく子だけに撃つ)を取り逃がす。実際、
+        // ハンドシェイク無しの版では取り逃がしていた。
+        "inside.stdout.once('data', () => {" +
+        "process.stdout.write([process.pid, outside.pid, inside.pid].join(':'));" +
+        '});' +
+        'setTimeout(() => {}, 10_000);';
+
+      const controller = new AbortController();
+      // 壁時計だと計測中の NTP ステップで偽陰性になり得るので単調時計を使う
+      // (PR#151 レビュー nit-1)。
+      let abortedAt = 0;
+      const result = await runner.run(process.execPath, ['-e', childScript], {
+        signal: controller.signal,
+        onChunk: () => {
+          if (abortedAt === 0) {
+            abortedAt = performance.now();
+            controller.abort();
+          }
+        },
+      });
+      const settleMs = performance.now() - abortedAt;
+
+      expect(result.failureKind).toBe('aborted');
+      // SIGKILL された子の exit code は null なので -1 に潰れる。
+      expect(result.exitCode).toBe(-1);
+
+      // 猶予を実際に待ったことの証明。SIGTERM で子が死んでいれば abort 直後に
+      // settle するので、ここが「エスカレーションが起きた」の判定になる。
+      // タイマーは指定より早くは発火しないので下限側は原理的に安定している。
+      expect(settleMs).toBeGreaterThanOrEqual(2_900);
+      // 上限は「猶予をもう一周していない」ことだけを見る緩い枠。実測は猶予明けから
+      // 5〜6ms なので、負荷でイベントループが数秒詰まっても揺れない
+      // (bdboard-dvt と同じ轍を踏まないための余裕)。
+      expect(settleMs).toBeLessThan(7_000);
+
+      const [childField, outsideField, insideField] = result.stdout.split(':');
+      const childPid = parsePid(childField ?? '', 'SIGKILL escalation / child');
+      const insidePid = parsePid(insideField ?? '', 'SIGKILL escalation / in-group grandchild');
+      const outsidePid = Number(outsideField);
+
+      try {
+        await expectProcessToBeGone(childPid);
+        // グループ内の孫も SIGTERM を無視しているので、消えていれば SIGKILL が
+        // グループに飛んだ証拠になる。
+        await expectProcessToBeGone(insidePid);
+      } finally {
+        // グループ外の孫は意図的に生き残っている。10 秒で自分から終わるが、
+        // テストを跨いで居座らせる理由も無いのでベストエフォートで片付ける。
+        // アサーションが落ちた場合でも走るよう finally に置く
+        // (PR#151 レビュー nit-2)。
+        if (Number.isInteger(outsidePid) && outsidePid > 0) {
+          try {
+            process.kill(outsidePid, 'SIGKILL');
+          } catch {
+            // すでに居なければ何もしない。
+          }
+        }
+      }
+    },
+    15_000,
+  );
 });
