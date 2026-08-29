@@ -183,6 +183,43 @@ describe('getCfdStats', () => {
     ]);
   });
 
+  it('excludes deleted-project snapshots from unfiltered totals', () => {
+    const cache = createFakeBoardCache();
+    const now = localDate(2026, 8, 15, 12);
+    const live = project('/live', '/projects/live', 'Live');
+    const removed = project('/removed', '/projects/removed', 'Removed');
+
+    cache.putProject({
+      project: live,
+      tickets: [],
+      fingerprint: 'fp-live',
+      fetchedAt: now,
+    });
+    cache.putProject({
+      project: removed,
+      tickets: [],
+      fingerprint: 'fp-removed',
+      fetchedAt: now,
+    });
+
+    cache.putCfdSnapshot('2026-08-15', localDate(2026, 8, 15, 9), [
+      { projectId: live.id, status: 'open', count: 2 },
+      { projectId: removed.id, status: 'open', count: 99 },
+    ]);
+
+    cache.deleteProject(removed.id);
+
+    const stats = getCfdStats(cache, now, { days: 7 });
+
+    expect(stats.projects.map((entry) => entry.project.id)).toEqual([live.id]);
+    expect(stats.projects[0]?.days).toEqual([
+      { date: '2026-08-15', counts: { open: 2 } },
+    ]);
+    expect(stats.totals).toEqual([
+      { date: '2026-08-15', counts: { open: 2 } },
+    ]);
+  });
+
   it('uses the specified timezone for cutoff calculation', () => {
     const cache = createFakeBoardCache();
     const now = new Date('2026-08-15T20:00:00.000Z');

@@ -66,6 +66,8 @@ export function getCfdStats(
     entries = entries.filter((entry) => filterSet.has(entry.project.id));
   }
 
+  const liveProjectIds = new Set(entries.map((entry) => entry.project.id));
+
   const snapshots = cache.listCfdSnapshots(
     projectIdFilter !== undefined ? projectIdFilter : undefined,
   ).filter((row) => isOnOrAfter(row.snapshotDate, cutoff));
@@ -87,12 +89,14 @@ export function getCfdStats(
     }
     dateCounts.set(row.status, row.count);
 
-    let totalDateCounts = totalsByDate.get(row.snapshotDate);
-    if (totalDateCounts === undefined) {
-      totalDateCounts = new Map();
-      totalsByDate.set(row.snapshotDate, totalDateCounts);
+    if (liveProjectIds.has(row.projectId)) {
+      let totalDateCounts = totalsByDate.get(row.snapshotDate);
+      if (totalDateCounts === undefined) {
+        totalDateCounts = new Map();
+        totalsByDate.set(row.snapshotDate, totalDateCounts);
+      }
+      totalDateCounts.set(row.status, (totalDateCounts.get(row.status) ?? 0) + row.count);
     }
-    totalDateCounts.set(row.status, (totalDateCounts.get(row.status) ?? 0) + row.count);
   }
 
   const projects: ProjectCfdStats[] = entries.map((entry) => {
