@@ -2,26 +2,26 @@ import { describe, expect, it } from 'vitest';
 import {
   computeStatusLevel,
   contactAgeMinutes,
-  formatGeneratedAtAge,
+  formatIsoAge,
   formatRelativeAge,
   mergeLastServerContact,
   shouldShowAlertBar,
   STATUS_LABELS,
 } from './boardFreshness';
 
-describe('formatGeneratedAtAge (bdboard-3tw.125)', () => {
+describe('formatIsoAge (bdboard-3tw.125, renamed in bdboard-bn6)', () => {
   const nowMs = new Date('2026-01-01T12:00:00.000Z').getTime();
 
   it('returns たった今 for less than 1 minute', () => {
-    expect(formatGeneratedAtAge('2026-01-01T11:59:30.000Z', nowMs)).toBe('たった今');
+    expect(formatIsoAge('2026-01-01T11:59:30.000Z', nowMs)).toBe('たった今');
   });
 
   it('returns N分前 for 1–59 minutes', () => {
-    expect(formatGeneratedAtAge('2026-01-01T11:55:00.000Z', nowMs)).toBe('5分前');
+    expect(formatIsoAge('2026-01-01T11:55:00.000Z', nowMs)).toBe('5分前');
   });
 
   it('returns N時間前 for 60+ minutes', () => {
-    expect(formatGeneratedAtAge('2026-01-01T10:00:00.000Z', nowMs)).toBe('2時間前');
+    expect(formatIsoAge('2026-01-01T10:00:00.000Z', nowMs)).toBe('2時間前');
   });
 });
 
@@ -44,10 +44,10 @@ describe('formatRelativeAge (bdboard-d55)', () => {
     expect(formatRelativeAge(nowMs - ageMs, nowMs)).toBe(expected);
   });
 
-  it('agrees with formatGeneratedAtAge for the same instant', () => {
+  it('agrees with formatIsoAge for the same instant', () => {
     const generatedAt = '2026-01-01T11:35:00.000Z';
     expect(formatRelativeAge(new Date(generatedAt).getTime(), nowMs)).toBe(
-      formatGeneratedAtAge(generatedAt, nowMs),
+      formatIsoAge(generatedAt, nowMs),
     );
   });
 });
