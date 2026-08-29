@@ -156,6 +156,13 @@ async function resolveRealPath(target: string): Promise<string> {
  * 指す別表記でプロジェクトが登録されていても取りこぼさないため。解決に失敗した
  * 場合は正規化した元のパスで比べる — その場合の最悪は「自己注入を見逃して
  * 従来どおり追記する」で、現状より悪くはならない。
+ *
+ * 判定は「packsRoot が注入先の内側か」なので、bdboard を内包する**祖先**
+ * ディレクトリへ注入した場合も self 側へ倒れる (PR#138 レビュー minor-1)。
+ * これは意図的: 誤って倒れたときの実害は「ignore 行が付かず注入物が untracked
+ * のまま残る」で、逆方向の「git add から静かに漏れる」より軽い。なお
+ * プロジェクト探索は `.beads` を見つけた時点で降下を止めるので、祖先と bdboard
+ * が同時に一覧へ並ぶ構成自体が例外的である。
  */
 async function isSelfInjection(projectRootPath: string, packsRoot: string): Promise<boolean> {
   const [projectReal, packsReal] = await Promise.all([

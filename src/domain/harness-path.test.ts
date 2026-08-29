@@ -125,5 +125,4 @@ describe('harness-path', () => {
       expect(isPathInside('/repo', '/repository')).toBe(false);
     });
   });
-
 });

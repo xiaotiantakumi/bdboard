@@ -455,5 +455,4 @@ describe('createFsHarnessInjector', () => {
       expect(gitignore).toBe('node_modules/\n');
     },
   );
-
 });
