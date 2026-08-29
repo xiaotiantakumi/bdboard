@@ -6,14 +6,19 @@ import type { DirEntry, FileSystemPort } from '../../application/ports/file-syst
 import type { ProcessProbe } from '../../application/ports/process-probe.js';
 import type { SessionRegistry } from '../../application/ports/session-registry.js';
 import {
-  encodeCwdForTranscript,
   normalizeSessionId,
   parseSessionFile,
 } from '../../application/session/parse-session-file.js';
+import {
+  createCwdResolver,
+  resolveTranscriptPath,
+  type CwdResolverOptions,
+} from '../fs/resolve-transcript-path.js';
 
 export interface ClaudeSessionRegistryOptions {
   readonly sessionsDir?: string;
   readonly projectsDir?: string;
+  readonly cwdResolverOptions?: CwdResolverOptions;
 }
 
 export function createClaudeSessionRegistry(
@@ -25,27 +30,7 @@ export function createClaudeSessionRegistry(
     options?.sessionsDir ?? path.join(os.homedir(), '.claude', 'sessions');
   const projectsDir =
     options?.projectsDir ?? path.join(os.homedir(), '.claude', 'projects');
-  const realPathMemo = new Map<string, string>();
-
-  async function resolveCwd(rawCwd: string): Promise<string> {
-    const cached = realPathMemo.get(rawCwd);
-    if (cached !== undefined) {
-      return cached;
-    }
-
-    let resolved = rawCwd;
-    try {
-      const real = await fs.realPath(rawCwd);
-      if (real !== undefined && real !== '') {
-        resolved = real;
-      }
-    } catch {
-      // fall back to raw cwd
-    }
-
-    realPathMemo.set(rawCwd, resolved);
-    return resolved;
-  }
+  const { resolveCwd } = createCwdResolver(fs, options?.cwdResolverOptions);
 
   return {
     async listSessions(): Promise<readonly AgentSession[]> {
@@ -98,23 +83,16 @@ export function createClaudeSessionRegistry(
         const rawCwd = sessionParsed.cwd;
         const resolvedCwd = await resolveCwd(rawCwd);
 
-        let transcriptPath = path.join(
+        const resolvedTranscript = await resolveTranscriptPath(
+          fs,
+          resolveCwd,
           projectsDir,
-          encodeCwdForTranscript(rawCwd),
-          `${normalizedId}.jsonl`,
+          rawCwd,
+          normalizedId,
         );
-        let transcriptStat = await fs.stat(transcriptPath);
-        if (transcriptStat === undefined && resolvedCwd !== rawCwd) {
-          transcriptPath = path.join(
-            projectsDir,
-            encodeCwdForTranscript(resolvedCwd),
-            `${normalizedId}.jsonl`,
-          );
-          transcriptStat = await fs.stat(transcriptPath);
-        }
         const lastActivityAt =
-          transcriptStat !== undefined
-            ? new Date(transcriptStat.mtimeMs)
+          resolvedTranscript !== undefined
+            ? new Date(resolvedTranscript.stat.mtimeMs)
             : sessionParsed.startedAt;
 
         sessions.push({
