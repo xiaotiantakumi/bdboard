@@ -15,6 +15,7 @@ import {
   type PrBadgeDto,
   type ProjectDto,
 } from './api';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
 import { BoardFilterBar } from './components/BoardFilterBar';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
@@ -76,7 +77,7 @@ import {
   collectBoardLabels,
   collectBoardTicketIds,
 } from './boardTicketIds';
-import { buildPaletteActions } from './paletteActions';
+import { buildPaletteActions, VIEW_LABELS } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
 
 export function App() {
@@ -652,6 +653,7 @@ export function App() {
     <UndoSnackbarProvider>
     <div className="app">
       <header className="header">
+        <ErrorBoundary label="ヘッダー">
         <GlobalBar
           view={view}
           onViewChange={setView}
@@ -676,7 +678,9 @@ export function App() {
           onOpenHelp={handleOpenHelp}
           onOpenShortcuts={handleOpenShortcuts}
         />
+        </ErrorBoundary>
 
+        <ErrorBoundary label="ツールバー">
         <ViewToolbar
           view={view}
           boardFilterPresets={boardFilterPresets}
@@ -695,6 +699,7 @@ export function App() {
           chatAvailable={chatAvailable}
           onOpenChat={() => setChatOpen(true)}
         />
+        </ErrorBoundary>
       </header>
 
       <AlertBar
@@ -722,6 +727,8 @@ export function App() {
       <TipsBanner onOpenHelp={handleOpenHelp} />
 
       <main className="main">
+        {/* view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。 */}
+        <ErrorBoundary key={view} label={VIEW_LABELS[view]}>
         <BoardDnDProvider>
         <BulkSelectionProvider>
         {(view === 'merged' || view === 'split') && (
@@ -875,9 +882,16 @@ export function App() {
           )}
         </BulkSelectionProvider>
         </BoardDnDProvider>
+        </ErrorBoundary>
       </main>
 
       {selectedTicketId !== null && (
+        <ErrorBoundary
+          key={selectedTicketId}
+          label="チケット詳細"
+          resetLabel="閉じる"
+          onReset={handleCloseDetail}
+        >
         <TicketDetailPanel
           ticketId={selectedTicketId}
           projectRootPaths={projectRootPaths}
@@ -899,28 +913,39 @@ export function App() {
           onTicketViewed={handleRecordRecentTicket}
           availableLabels={availableLabels}
         />
+        </ErrorBoundary>
       )}
 
       {sessionListOpen && (
-        <SessionListPanel
-          projectId={sessionListProjectId}
-          onClose={handleCloseSessionList}
-        />
+        <ErrorBoundary label="セッション一覧" resetLabel="閉じる" onReset={handleCloseSessionList}>
+          <SessionListPanel
+            projectId={sessionListProjectId}
+            onClose={handleCloseSessionList}
+          />
+        </ErrorBoundary>
       )}
 
       {shortcutsOpen && (
-        <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
+        <ErrorBoundary label="ショートカット一覧" resetLabel="閉じる" onReset={handleCloseShortcuts}>
+          <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
+        </ErrorBoundary>
       )}
 
-      {helpOpen && <HelpPanel onClose={handleCloseHelp} />}
+      {helpOpen && (
+        <ErrorBoundary label="ヘルプ" resetLabel="閉じる" onReset={handleCloseHelp}>
+          <HelpPanel onClose={handleCloseHelp} />
+        </ErrorBoundary>
+      )}
 
       {searchOpen && (
+        <ErrorBoundary label="検索" resetLabel="閉じる" onReset={handleCloseSearch}>
         <SearchPalette
           onClose={handleCloseSearch}
           onSelect={handleSelectTicket}
           actions={paletteActions}
           recentTickets={recentTickets}
         />
+        </ErrorBoundary>
       )}
 
       <TunnelControl
@@ -929,6 +954,14 @@ export function App() {
       />
 
       {chatOpen && (
+        <ErrorBoundary
+          label="チャット"
+          resetLabel="閉じる"
+          onReset={() => {
+            setChatOpen(false);
+            setChatContext(undefined);
+          }}
+        >
         <ChatPanel
           projects={chatProjects}
           initialProjectId={
@@ -953,6 +986,7 @@ export function App() {
             setChatContext(undefined);
           }}
         />
+        </ErrorBoundary>
       )}
 
     </div>

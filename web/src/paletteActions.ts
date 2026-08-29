@@ -10,7 +10,9 @@ export interface PaletteAction {
   onSelect: () => void;
 }
 
-const VIEW_LABELS: Record<ViewMode, string> = {
+// ビュー名の単一原本。コマンドパレットの「ビュー: 〜」と、ErrorBoundary の
+// 「〜の表示に失敗しました」で同じ名前を使う。
+export const VIEW_LABELS: Record<ViewMode, string> = {
   merged: '統合',
   split: '分割',
   next: 'Next Up',
