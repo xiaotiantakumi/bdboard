@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
+import { DEFAULT_HYGIENE_THRESHOLDS } from '../../domain/hygiene-thresholds.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
@@ -260,5 +261,40 @@ describe('getHygieneIssues', () => {
     );
 
     expect(issues.map((issue) => issue.projectId)).toEqual([a.id]);
+  });
+
+  it('respects configured thresholds instead of defaults', () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-stale',
+          projectId: a.id,
+          status: 'in_progress',
+          startedAt: new Date(NOW.getTime() - 2 * 24 * 60 * 60_000),
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const strictThresholds = {
+      ...DEFAULT_HYGIENE_THRESHOLDS,
+      staleInProgressAfterMs: 24 * 60 * 60_000,
+    };
+    const relaxedThresholds = {
+      ...DEFAULT_HYGIENE_THRESHOLDS,
+      staleInProgressAfterMs: 3 * 24 * 60 * 60_000,
+    };
+
+    expect(
+      getHygieneIssues(cache, NOW, { thresholds: strictThresholds }).map((issue) => issue.kind),
+    ).toEqual(['stale_in_progress']);
+    expect(
+      getHygieneIssues(cache, NOW, { thresholds: relaxedThresholds }).map((issue) => issue.kind),
+    ).toEqual([]);
   });
 });

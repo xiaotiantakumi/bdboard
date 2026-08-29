@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
 
@@ -27,6 +27,7 @@ const CONFLICT_WRITE_MESSAGE =
   '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。';
 
 const INVALID_BOARD_THRESHOLDS_ERROR = 'invalid board thresholds';
+const INVALID_HYGIENE_THRESHOLDS_ERROR = 'invalid hygiene thresholds';
 const INVALID_AI_QUOTA_ALERT_THRESHOLD_ERROR = 'invalid ai quota alert threshold';
 
 function msToHours(ms: number): string {
@@ -50,6 +51,18 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
 }
 
+function msToDays(ms: number): string {
+  return String(ms / (24 * 60 * 60 * 1000));
+}
+
+function parseDays(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
+  return parsed * 24 * 60 * 60 * 1000;
+}
+
 function parseHours(value: string): number | undefined {
   const trimmed = value.trim();
   if (trimmed.length === 0) return undefined;
@@ -64,6 +77,14 @@ function parseMinutes(value: string): number | undefined {
   const parsed = Number(trimmed);
   if (!Number.isInteger(parsed) || parsed <= 0) return undefined;
   return parsed * 60 * 1000;
+}
+
+function parsePriorityMax(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  const parsed = Number(trimmed);
+  if (!Number.isInteger(parsed) || parsed < 0) return undefined;
+  return parsed;
 }
 
 function parseWipLimit(value: string): number | undefined {
@@ -128,6 +149,27 @@ function describeBoardThresholdWriteError(error: unknown): ReactNode {
     return CONFLICT_WRITE_MESSAGE;
   }
   return describeWriteError(error, '閾値設定を保存できませんでした');
+}
+
+function describeHygieneThresholdWriteError(error: unknown): ReactNode {
+  if (
+    error instanceof ApiError &&
+    error.status === 400 &&
+    error.errorMessage === INVALID_HYGIENE_THRESHOLDS_ERROR &&
+    isBoardThresholdErrors(error.details)
+  ) {
+    return (
+      <ul className="settings-panel-error-list">
+        {error.details.errors.map((message) => (
+          <li key={message}>{message}</li>
+        ))}
+      </ul>
+    );
+  }
+  if (error instanceof ApiError && error.status === 409) {
+    return CONFLICT_WRITE_MESSAGE;
+  }
+  return describeWriteError(error, '健全性閾値を保存できませんでした');
 }
 
 function describeAiQuotaAlertWriteError(error: unknown): ReactNode {
@@ -229,6 +271,10 @@ export function SettingsPanel() {
     queryKey: ['board-thresholds-config'],
     queryFn: fetchBoardThresholdsConfig,
   });
+  const hygieneThresholdsQuery = useQuery({
+    queryKey: ['hygiene-thresholds-config'],
+    queryFn: fetchHygieneThresholdsConfig,
+  });
   const projectsQuery = useQuery({
     queryKey: ['projects'],
     queryFn: fetchProjects,
@@ -257,6 +303,12 @@ export function SettingsPanel() {
   const [thresholdsVersion, setThresholdsVersion] = useState('');
   const thresholdsFeedback = useSaveFeedback();
   const [thresholdsDirty, setThresholdsDirty] = useState(false);
+  const [hygieneStaleInProgressDays, setHygieneStaleInProgressDays] = useState('');
+  const [hygieneHighPriorityMax, setHygieneHighPriorityMax] = useState('');
+  const [hygieneStalePendingDecisionDays, setHygieneStalePendingDecisionDays] = useState('');
+  const [hygieneThresholdsVersion, setHygieneThresholdsVersion] = useState('');
+  const hygieneThresholdsFeedback = useSaveFeedback();
+  const [hygieneThresholdsDirty, setHygieneThresholdsDirty] = useState(false);
   const [globalWipLimit, setGlobalWipLimit] = useState('');
   const [projectWipOverrides, setProjectWipOverrides] = useState<ProjectWipOverrideRow[]>([]);
   const [newWipProjectId, setNewWipProjectId] = useState('');
@@ -284,6 +336,19 @@ export function SettingsPanel() {
       setStaleHours(msToHours(thresholdsQuery.data.livenessStaleMs));
     }
   }, [thresholdsDirty, thresholdsQuery.data]);
+
+  useEffect(() => {
+    if (hygieneThresholdsQuery.data !== undefined && !hygieneThresholdsDirty) {
+      setHygieneStaleInProgressDays(
+        msToDays(hygieneThresholdsQuery.data.staleInProgressAfterMs),
+      );
+      setHygieneHighPriorityMax(String(hygieneThresholdsQuery.data.highPriorityMax));
+      setHygieneStalePendingDecisionDays(
+        msToDays(hygieneThresholdsQuery.data.stalePendingDecisionAfterMs),
+      );
+      setHygieneThresholdsVersion(hygieneThresholdsQuery.data.version);
+    }
+  }, [hygieneThresholdsDirty, hygieneThresholdsQuery.data]);
 
   useEffect(() => {
     if (thresholdsQuery.data !== undefined && !wipDirty) {
@@ -397,6 +462,46 @@ export function SettingsPanel() {
     },
   });
 
+  const saveHygieneThresholdsMutation = useMutation({
+    mutationFn: () => {
+      const staleInProgressAfterMs = parseDays(hygieneStaleInProgressDays);
+      const highPriorityMax = parsePriorityMax(hygieneHighPriorityMax);
+      const stalePendingDecisionAfterMs = parseDays(hygieneStalePendingDecisionDays);
+      if (
+        staleInProgressAfterMs === undefined ||
+        highPriorityMax === undefined ||
+        stalePendingDecisionAfterMs === undefined
+      ) {
+        throw new Error('invalid local hygiene threshold input');
+      }
+      return putHygieneThresholdsConfig({
+        staleInProgressAfterMs,
+        highPriorityMax,
+        stalePendingDecisionAfterMs,
+        version: hygieneThresholdsVersion,
+      });
+    },
+    onSuccess: async (data) => {
+      setHygieneThresholdsVersion(data.version);
+      await queryClient.invalidateQueries({ queryKey: ['hygiene-thresholds-config'] });
+      setHygieneThresholdsDirty(false);
+      try {
+        await postRefresh();
+      } catch (error) {
+        console.warn('Failed to refresh board after saving hygiene thresholds', error);
+      }
+      await queryClient.invalidateQueries({ queryKey: ['hygiene'] });
+      hygieneThresholdsFeedback.showSuccess('健全性閾値を保存しました');
+    },
+    onError: (error) => {
+      hygieneThresholdsFeedback.showError(describeHygieneThresholdWriteError(error));
+      if (error instanceof ApiError && error.status === 409) {
+        setHygieneThresholdsDirty(false);
+        void queryClient.invalidateQueries({ queryKey: ['hygiene-thresholds-config'] });
+      }
+    },
+  });
+
   const saveWipLimitsMutation = useMutation({
     mutationFn: () => {
       const trimmedGlobal = globalWipLimit.trim();
@@ -457,7 +562,7 @@ export function SettingsPanel() {
     },
   });
 
-  if (query.isPending || thresholdsQuery.isPending || aiQuotaAlertQuery.isPending) {
+  if (query.isPending || thresholdsQuery.isPending || hygieneThresholdsQuery.isPending || aiQuotaAlertQuery.isPending) {
     return (
       <section className="settings-panel" aria-label="設定">
         読み込み中…
@@ -469,6 +574,8 @@ export function SettingsPanel() {
     query.data === undefined ||
     thresholdsQuery.isError ||
     thresholdsQuery.data === undefined ||
+    hygieneThresholdsQuery.isError ||
+    hygieneThresholdsQuery.data === undefined ||
     aiQuotaAlertQuery.isError ||
     aiQuotaAlertQuery.data === undefined
   ) {
@@ -752,6 +859,80 @@ export function SettingsPanel() {
               role={thresholdsFeedback.isError ? 'alert' : undefined}
             >
               {thresholdsFeedback.message}
+            </div>
+          </div>
+        </form>
+      </section>
+      <section className="settings-panel-section" aria-labelledby="hygiene-thresholds-title">
+        <h3 id="hygiene-thresholds-title">健全性 (Hygiene) 閾値</h3>
+        <p className="settings-panel-subtitle">
+          健全性ビューの検知に使う閾値を調整します。保存後、次回の健全性取得から反映されます。
+        </p>
+        <form
+          className="settings-panel-thresholds-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveHygieneThresholdsMutation.mutate();
+          }}
+        >
+          <label htmlFor="settings-hygiene-stale-in-progress-days">in_progress 放置 (日)</label>
+          <input
+            id="settings-hygiene-stale-in-progress-days"
+            type="number"
+            min={1}
+            step={1}
+            value={hygieneStaleInProgressDays}
+            placeholder={msToDays(hygieneThresholdsQuery.data.staleInProgressAfterMs)}
+            disabled={saveHygieneThresholdsMutation.isPending}
+            onChange={(event) => {
+              setHygieneStaleInProgressDays(event.target.value);
+              setHygieneThresholdsDirty(true);
+            }}
+          />
+          <label htmlFor="settings-hygiene-high-priority-max">高優先度上限 (P0=0)</label>
+          <input
+            id="settings-hygiene-high-priority-max"
+            type="number"
+            min={0}
+            max={4}
+            step={1}
+            value={hygieneHighPriorityMax}
+            placeholder={String(hygieneThresholdsQuery.data.highPriorityMax)}
+            disabled={saveHygieneThresholdsMutation.isPending}
+            onChange={(event) => {
+              setHygieneHighPriorityMax(event.target.value);
+              setHygieneThresholdsDirty(true);
+            }}
+          />
+          <label htmlFor="settings-hygiene-stale-pending-decision-days">確認待ち放置 (日)</label>
+          <input
+            id="settings-hygiene-stale-pending-decision-days"
+            type="number"
+            min={1}
+            step={1}
+            value={hygieneStalePendingDecisionDays}
+            placeholder={msToDays(hygieneThresholdsQuery.data.stalePendingDecisionAfterMs)}
+            disabled={saveHygieneThresholdsMutation.isPending}
+            onChange={(event) => {
+              setHygieneStalePendingDecisionDays(event.target.value);
+              setHygieneThresholdsDirty(true);
+            }}
+          />
+          <div className="settings-panel-footer">
+            <button
+              type="submit"
+              className="settings-panel-save"
+              disabled={!hygieneThresholdsDirty || saveHygieneThresholdsMutation.isPending}
+            >
+              {saveHygieneThresholdsMutation.isPending ? '保存中…' : '閾値を保存'}
+            </button>
+            <div
+              className="settings-panel-feedback"
+              aria-live="polite"
+              role={hygieneThresholdsFeedback.isError ? 'alert' : undefined}
+            >
+              {hygieneThresholdsFeedback.message}
             </div>
           </div>
         </form>

@@ -533,6 +533,35 @@ export function putBoardThresholdsConfig(config: {
   });
 }
 
+export interface HygieneThresholdsConfigDto {
+  staleInProgressAfterMs: number;
+  highPriorityMax: number;
+  stalePendingDecisionAfterMs: number;
+  version: string;
+  defaults: {
+    staleInProgressAfterMs: number;
+    highPriorityMax: number;
+    stalePendingDecisionAfterMs: number;
+  };
+}
+
+export function fetchHygieneThresholdsConfig(): Promise<HygieneThresholdsConfigDto> {
+  return fetchJson<HygieneThresholdsConfigDto>('/api/settings/hygiene-thresholds');
+}
+
+export function putHygieneThresholdsConfig(config: {
+  staleInProgressAfterMs?: number;
+  highPriorityMax?: number;
+  stalePendingDecisionAfterMs?: number;
+  version: string;
+}): Promise<HygieneThresholdsConfigDto> {
+  return fetchJson<HygieneThresholdsConfigDto>('/api/settings/hygiene-thresholds', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+}
+
 export interface DbStatsDto {
   sizeBytes: number;
   tables: { name: string; rowCount: number }[];

@@ -3,6 +3,7 @@ import {
   checkHygiene,
   pendingDecisionKey,
   type HygieneIssue,
+  type HygieneThresholds,
 } from '../../domain/hygiene.js';
 import type { BoardCache } from '../ports/board-cache.js';
 
@@ -15,6 +16,7 @@ export interface GetHygieneIssuesOptions {
    * bd を叩く必要があるのでここでは組み立てず、呼び出し側から受け取る。
    */
   readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
+  readonly thresholds?: HygieneThresholds;
 }
 
 export function getHygieneIssues(
@@ -55,6 +57,7 @@ export function getHygieneIssues(
     ...(options?.pendingCommentAnchors !== undefined
       ? { pendingCommentAnchors: options.pendingCommentAnchors }
       : {}),
+    ...(options?.thresholds !== undefined ? { thresholds: options.thresholds } : {}),
     ...(options?.leftoverCandidates !== undefined
       ? { leftoverCandidates: options.leftoverCandidates }
       : {}),
