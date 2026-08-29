@@ -639,6 +639,206 @@ describe('detached bulk chat turn recovery', () => {
     });
   });
 
+  it('keeps an earlier unacknowledged completion when a later turn completes', async () => {
+    // bdboard-3tw.155: 以前は完了がプロジェクト1枠で、後続の送信が先行スレッドの
+    // 未回収完了を黙って上書きしていた。返信を待たずに別スレッドへ移って会話すると
+    // 必ず踏み、先に送ったスレッドの返信が二度と回収されなくなる。
+    const sessionA = '550e8400-e29b-41d4-a716-4466554400aa';
+    const sessionB = '550e8400-e29b-41d4-a716-4466554400bb';
+    let resolveFirst: (result: ChatTurnResult) => void = () => {};
+    let call = 0;
+    const sendMessage = vi.fn(async () => {
+      call += 1;
+      if (call === 1) {
+        return await new Promise<ChatTurnResult>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return {
+        reply: 'reply for thread B',
+        sessionId: sessionB,
+        agentId: 'test-agent',
+        failedTools: [],
+      };
+    });
+    const store = createChatSessionStore();
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: createFakeAgent({ sendMessage }), cache, store, now: () => NOW });
+
+    const controller = new AbortController();
+    const first = app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'thread A' }),
+        signal: controller.signal,
+      },
+      LOCAL_ENV,
+    );
+    await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
+    controller.abort();
+    resolveFirst({ reply: 'reply for thread A', sessionId: sessionA, agentId: 'test-agent', failedTools: [] });
+    await first;
+
+    const second = await app.request(
+      '/api/chat/message',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'thread B' }),
+      },
+      LOCAL_ENV,
+    );
+    expect(second.status).toBe(200);
+
+    // 古い方から配る。Aを回収してACKすると、次にBが出てくる。
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionA }));
+    const ackA = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionA}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ackA.status).toBe(204);
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionB }));
+    const ackB = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionB}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ackB.status).toBe(204);
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual({ state: 'idle' });
+  });
+
+  it('does not erase an unacknowledged completion when a later streaming turn starts', async () => {
+    // ストリーミング経路には「新しいターンが始まったら未回収の完了を消す」処理が
+    // あった。UI の既定はストリーミングなので、実際に踏むのはこちら。
+    const sessionA = '550e8400-e29b-41d4-a716-4466554400aa';
+    const sessionB = '550e8400-e29b-41d4-a716-4466554400bb';
+    let call = 0;
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        call += 1;
+        const sessionId = call === 1 ? sessionA : sessionB;
+        onDelta({ text: 'chunk' });
+        return { reply: `reply ${call}`, sessionId, agentId: 'test-agent', failedTools: [] };
+      }),
+    });
+    const app = createApp({
+      agent: streamingAgent,
+      cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
+      now: () => NOW,
+    });
+
+    for (const message of ['thread A', 'thread B']) {
+      const res = await app.request(
+        '/api/chat/message/stream',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'p', message }) },
+        LOCAL_ENV,
+      );
+      expect(res.status).toBe(200);
+      await res.text();
+    }
+
+    // Aは未回収のまま残っていて、先に配られる。
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionA }));
+    await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionA}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionB }));
+  });
+
+  it('drops the oldest completion once the queue is full (PR#135 レビュー nit-1)', async () => {
+    // ACK しないクライアントに備えた歯止め (CHAT_COMPLETED_TURNS_MAX = 20)。
+    // レビューで「上限の挙動だけテストが無く、slice(-MAX) を消しても全テストが
+    // 通る」と指摘された箇所。上限を超えたら古い方から落ち、落ちた分の ACK は
+    // エラーではなく no-op で済むことを固定する。
+    const MAX = 20;
+    const sessionIdFor = (index: number): string =>
+      `550e8400-e29b-41d4-a716-4466554${index.toString().padStart(5, '0')}`;
+
+    let call = 0;
+    const sendMessage = vi.fn(async () => {
+      const sessionId = sessionIdFor(call);
+      call += 1;
+      return { reply: `reply ${sessionId}`, sessionId, agentId: 'test-agent', failedTools: [] };
+    });
+    const store = createChatSessionStore();
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: createFakeAgent({ sendMessage }), cache, store, now: () => NOW });
+
+    // 一度も ACK しないまま MAX + 1 件完了させる。
+    for (let i = 0; i < MAX + 1; i += 1) {
+      const response = await app.request(
+        '/api/chat/message',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: `message ${i}` }),
+        },
+        LOCAL_ENV,
+      );
+      expect(response.status).toBe(200);
+    }
+
+    // 先頭 (最古) が押し出されているので、次に配られるのは2番目。
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionIdFor(1) }));
+
+    // 落ちた分を ACK しても壊れない (該当が無いので no-op)。
+    const ackDropped = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionIdFor(0)}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ackDropped.status).toBe(204);
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionIdFor(1) }));
+  });
+
+  it('acknowledges only the named session and leaves the other completions queued', async () => {
+    const sessionA = '550e8400-e29b-41d4-a716-4466554400aa';
+    const sessionB = '550e8400-e29b-41d4-a716-4466554400bb';
+    let call = 0;
+    const sendMessage = vi.fn(async () => {
+      call += 1;
+      return {
+        reply: `reply ${call}`,
+        sessionId: call === 1 ? sessionA : sessionB,
+        agentId: 'test-agent',
+        failedTools: [],
+      };
+    });
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: createFakeAgent({ sendMessage }), cache, now: () => NOW });
+    for (const message of ['thread A', 'thread B']) {
+      const res = await app.request(
+        '/api/chat/message',
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'p', message }) },
+        LOCAL_ENV,
+      );
+      expect(res.status).toBe(200);
+    }
+
+    // 後ろの1件だけ ACK しても、先頭は残る。
+    const ackB = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionB}`,
+      { method: 'DELETE' },
+      LOCAL_ENV,
+    );
+    expect(ackB.status).toBe(204);
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+      .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionA }));
+  });
+
   it('includes sessionId in processing turn-status for an existing session turn', async () => {
     const sessionId = '550e8400-e29b-41d4-a716-446655440099';
     let resolveAgent: (result: ChatTurnResult) => void = () => {};

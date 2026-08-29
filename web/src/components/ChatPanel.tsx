@@ -432,6 +432,27 @@ export function ChatPanel({
   });
   const [backgroundTurnProjectId, setBackgroundTurnProjectId] = useState('');
   const [turnRecoveryGeneration, setTurnRecoveryGeneration] = useState(0);
+  // 送信したのに、このクライアントでは完了を見届けられなかったスレッド
+  // (返信を待たずに別スレッドへ移った等)。turn-status の回収が取りこぼした場合の
+  // 安全網で、そのスレッドを表示したときに履歴を取り直す起点になる
+  // (bdboard-3tw.156)。ref ではなく state なのは、まだ同じスレッドを見ている
+  // うちに abort が確定した場合にも取り直しを走らせたいため。
+  const [unresolvedSends, setUnresolvedSends] = useState<Record<string, true>>({});
+  // 取り直しが進行中のスレッド。state を使うと、印を外した瞬間に上の effect が
+  // 張り直されて自分の fetch を捨てるので、ここだけは ref で持つ。
+  const unresolvedRefetchRef = useRef<Set<string>>(new Set());
+  const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
+    if (sessionId === undefined) return;
+    setUnresolvedSends((prev) => (prev[sessionId] === true ? prev : { ...prev, [sessionId]: true }));
+  }, []);
+  const clearUnresolvedSend = useCallback((sessionId: string) => {
+    setUnresolvedSends((prev) => {
+      if (prev[sessionId] !== true) return prev;
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+  }, []);
   const [historyLoadedFor, setHistoryLoadedFor] = useState<
     Record<string, true>
   >({});
@@ -508,6 +529,10 @@ export function ChatPanel({
   // なしで読むための参照。draftNoncesRef 等と同じミラーパターン。
   const openThreadIdsRef = useRef(openThreadIds);
   openThreadIdsRef.current = openThreadIds;
+  // 取り直しの適用可否を判断するときに、現在の会話の長さを deps を増やさずに
+  // 読むための参照 (bdboard-3tw.156)。
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
   const requestAbortControllerRef = useRef<AbortController | null>(null);
@@ -883,6 +908,7 @@ export function ChatPanel({
     }
     setBackgroundTurnProjectId(selectedProjectId);
     setBackgroundTurnStatus({ state: 'idle' });
+    const recoveredSessionIds = new Set<string>();
 
     const checkTurnStatus = async (): Promise<void> => {
       try {
@@ -896,6 +922,10 @@ export function ChatPanel({
           return;
         }
         if (status.state !== 'completed') return;
+        // ACK が効かずサーバーが同じ1件を返し続けても、掃き出しループが
+        // 回り続けないようにする (bdboard-3tw.156)。
+        if (recoveredSessionIds.has(status.sessionId)) return;
+        recoveredSessionIds.add(status.sessionId);
 
         // A detached turn can create a session whose id was unknown when the tab closed.
         // Invalidate older history/thread-list requests before hydrating the server-owned
@@ -956,9 +986,17 @@ export function ChatPanel({
           activeSessionIds: nextOpen,
           selectedSessionId: nextSelected,
         });
-        void acknowledgeChatTurn(selectedProjectId, status.sessionId).catch(() => {
+        clearUnresolvedSend(status.sessionId);
+        try {
+          await acknowledgeChatTurn(selectedProjectId, status.sessionId);
+        } catch {
           // ACK is best-effort; a later mount can safely hydrate the same persisted turn.
-        });
+          return;
+        }
+        if (cancelled) return;
+        // 未回収の完了は1件ずつ配られる。別スレッドの返信がまだ積まれている
+        // ことがあるので、掃けるまで聞き直す (bdboard-3tw.156)。
+        await checkTurnStatus();
       } catch {
         // Status recovery is additive. Ordinary thread/history loading remains usable.
       }
@@ -969,7 +1007,7 @@ export function ChatPanel({
       cancelled = true;
       if (pollTimer !== undefined) clearTimeout(pollTimer);
     };
-  }, [selectedProjectId, turnRecoveryGeneration]);
+  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend]);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -1438,6 +1476,93 @@ export function ChatPanel({
     };
   }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor]);
 
+  // turn-status の回収が完了を取りこぼしたときの安全網 (bdboard-3tw.156)。
+  //
+  // 上の履歴 effect はこの用途に使えない。あちらは「メッセージが1件でもあれば
+  // 何もしない」「一度読んだキーは二度と読まない」という二重のガードを持って
+  // いて、送信済みスレッドには楽観表示した自分の発言が既に入っているため、
+  // historyLoadedFor を落としても素通りしてしまう。ここは意図的に取り直す。
+  //
+  // 走るのは「送信したのに完了を見届けられなかった」と分かっているスレッドを
+  // 表示したときだけなので、通常のスレッド切替に fetch は増えない。
+  useEffect(() => {
+    if (selectedProjectId === '') return;
+    const sessionId = currentSessionId;
+    if (sessionId === undefined || unresolvedSends[sessionId] !== true) return;
+    // 二重取得の抑止は ref で持つ。印を先に state から外すと、その更新でこの
+    // effect 自身が張り直され、走り出した fetch を自分で捨ててしまう。
+    if (unresolvedRefetchRef.current.has(sessionId)) return;
+    unresolvedRefetchRef.current.add(sessionId);
+
+    const requestId = historyRequestIdRef.current;
+    void fetchChatSessionMessages(sessionId, selectedProjectId)
+      .then((payload) => {
+        // 回収 effect が同じ窓でより新しい状態を書いていたら、そちらを優先する。
+        // historyRequestIdRef はこのファイル共通の「この履歴応答はもう古い」印で、
+        // スレッドを離れたときにも進むので、離脱後の適用もここで止まる。
+        if (requestId !== historyRequestIdRef.current) return;
+        // 短くなる置き換えはしない。ターンがまだ走っている最中に戻ってくると、
+        // サーバーの履歴にはまだ今回のやり取りが入っていないので、そのまま
+        // 当てると楽観表示している自分の発言(と添付)が画面から消える。
+        // 完了後の履歴は「利用者の発言 + 返信」の2件分増えているので、
+        // 増えているときだけ当てれば取りこぼしだけを拾える。
+        //
+        // 既知の限界 (PR#135 レビュー minor-2): 保存件数が上限
+        // (CHAT_MESSAGES_MAX_PER_SESSION) に達したセッションでは、サーバー側が
+        // 古い方から捨てて件数を保つため履歴が伸びず、この比較は永久に成立しない。
+        // そのスレッドではこの安全網が効かない (回収 effect 側は従来どおり効く)。
+        // 「上限到達 かつ 回収も取りこぼし」が重なったときだけの穴なので、
+        // 末尾比較などの重い判定は入れずに限界として記録するに留める。
+        const localCount = conversationsRef.current[sessionId]?.messages.length ?? 0;
+        if (payload.messages.length <= localCount) return;
+        setConversations((prev) => ({
+          ...prev,
+          [sessionId]: {
+            messages: payload.messages.map((message) => ({
+              role: message.role,
+              text: message.content,
+              at: Date.parse(message.createdAt),
+              ...(message.failedTools !== undefined && message.failedTools.length > 0
+                ? { failedTools: message.failedTools }
+                : {}),
+              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
+                ? { agentWarnings: message.agentWarnings }
+                : {}),
+            })),
+            sessionId: payload.sessionId,
+            agentId: payload.agentId,
+          },
+        }));
+        setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
+        // モデルの復元はここでは行わない (PR#135 レビュー nit-3)。回収経路や
+        // 履歴経路と非対称だが、この安全網が走るのは「このクライアント自身が
+        // 送信したスレッド」だけで、送信成功時点で threadModelIds は既に
+        // 書かれている。履歴側の「まだ値が無いキーにだけ書く」規律に従うと
+        // 常に書かない側へ落ちるので、足しても観測できる差が無い。
+        // 取り込めたときだけ印を外す。捨てた/短くて当てなかった場合は残して
+        // おいて、次にこのスレッドを開いたときにもう一度試す。
+        clearUnresolvedSend(sessionId);
+      })
+      .catch(() => {
+        // 取り直しは付加的。失敗しても通常の表示は壊さない。
+      })
+      .finally(() => {
+        unresolvedRefetchRef.current.delete(sessionId);
+      });
+    // 表示中の会話の件数を依存に入れておく (PR#135 レビュー minor-1)。印が
+    // 立ったまま同じスレッドで次のターンが終わったとき、その場で取り直しへ
+    // 戻れる。ストリーミングの delta は conversations ではなく別の state へ
+    // 積まれるので、ここが配信ごとに揺れることはない。
+  }, [
+    selectedProjectId,
+    currentSessionId,
+    unresolvedSends,
+    clearUnresolvedSend,
+    currentSessionId === undefined
+      ? 0
+      : (conversations[currentSessionId]?.messages.length ?? 0),
+  ]);
+
   // 表示中の会話にだけ効くストリーミングテキスト。他の会話のストリームで
   // この会話をスクロールしない。
   const activeStreamingText =
@@ -1675,6 +1800,12 @@ export function ChatPanel({
         [selectedProjectId]: [...(prev[selectedProjectId] ?? []).filter((id) => id !== result.sessionId), result.sessionId],
       }));
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
+      // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
+      // 通常の成功では印はそもそも立っていない (印を立てるのは abort の catch だけ)
+      // ので、外して意味があるのは「見届けられなかったスレッドへ戻り、取り直しが
+      // 当たる前に次を送信した」場合だけ。その場合の取りこぼし返信はまだローカルに
+      // 入っておらず、ここで外すと二度と取りに行かなくなる。印は取り直しが実際に
+      // 当たったときにだけ外す。
       void acknowledgeChatTurn(selectedProjectId, result.sessionId).catch(() => {
         // The reply is already incorporated. A failed ACK only causes safe re-hydration later.
       });
@@ -1935,6 +2066,8 @@ export function ChatPanel({
               // 切替では selectedProjectId が変わらないため、status 回収 effect を
               // generation で明示的に再起動する。
               setTurnRecoveryGeneration((generation) => generation + 1);
+              // 回収が取りこぼしたときの安全網 (bdboard-3tw.156)。
+              markUnresolvedSend(sessionId);
             } else {
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
@@ -1948,6 +2081,7 @@ export function ChatPanel({
           } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') {
               setTurnRecoveryGeneration((generation) => generation + 1);
+              markUnresolvedSend(sessionId);
             } else {
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
@@ -1979,6 +2113,7 @@ export function ChatPanel({
       applyChatSuccess,
       applyChatError,
       updateConversationAttachments,
+      markUnresolvedSend,
     ],
   );
 

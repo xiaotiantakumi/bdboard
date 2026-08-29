@@ -2903,6 +2903,389 @@ describe('ChatPanel', () => {
       expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2);
     });
 
+    it('refetches the thread on return when the recovery poll never saw its completion (bdboard-3tw.156)', async () => {
+      // 回収機構は「プロジェクト単位の未回収完了」を1件ずつ受け取る仕組みなので、
+      // サーバー再起動や回収の取りこぼしで完了を一度も観測できないことがありうる。
+      // その場合でも、送信したスレッドへ戻れば履歴を取り直して返信が出ること。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ]);
+      // 完了は一度も観測できない。
+      fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+      let sess1HistoryCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages:
+              sess1HistoryCalls === 1
+                ? []
+                : [
+                    { role: 'user', content: 'finish after switch', createdAt: '2026-08-18T11:59:00.000Z' },
+                    { role: 'assistant', content: 'reply nobody announced', createdAt: '2026-08-18T12:00:00.000Z' },
+                  ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'));
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
+      await user.type(screen.getByLabelText('メッセージ'), 'finish after switch');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'first thread');
+
+      expect(await screen.findByText('reply nobody announced')).toBeInTheDocument();
+      expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it('refetches on return after a bulk (non-streaming) send was abandoned (bdboard-3tw.156)', async () => {
+      // ストリーミング非対応エージェントの経路にも同じ安全網が要る。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ]);
+      fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+      let sess1HistoryCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages:
+              sess1HistoryCalls === 1
+                ? []
+                : [
+                    { role: 'user', content: 'bulk before switch', createdAt: '2026-08-18T11:59:00.000Z' },
+                    { role: 'assistant', content: 'bulk reply nobody announced', createdAt: '2026-08-18T12:00:00.000Z' },
+                  ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message' && init?.method === 'POST') {
+          return await new Promise<Response>((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          });
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
+      await user.type(screen.getByLabelText('メッセージ'), 'bulk before switch');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await screen.findByText('bulk before switch');
+
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'first thread');
+
+      expect(await screen.findByText('bulk reply nobody announced')).toBeInTheDocument();
+    });
+
+    it('keeps the unresolved mark when a later send on the same thread succeeds (PR#135 レビュー minor-1)', async () => {
+      // 見届けられなかったスレッドへ戻り、取り直しが当たる前に次を送信した場合。
+      // 送信成功で印を外してしまうと、取りこぼした返信を二度と取りに行かなくなる。
+      //
+      // サーバー履歴は「まだ追いついていない」状態に固定しておき、取り直しが
+      // 空振りし続けるようにする。印が残っていれば、履歴が追いついたあとに
+      // もう一度スレッドを開いた時点で拾える。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ]);
+      // 回収経路は最後まで完了を観測しない。
+      fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+      let sess1HistoryCalls = 0;
+      let serverCaughtUp = false;
+      let streamCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          if (sess1HistoryCalls === 1) {
+            return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+          }
+          if (!serverCaughtUp) {
+            // ローカル(楽観表示)より短いので、長さガードに弾かれて当たらない。
+            // = 印はここでは外れない。
+            return jsonResponse({
+              sessionId: 'sess-1',
+              agentId: 'claude',
+              messages: [
+                { role: 'user', content: 'abandoned send', createdAt: '2026-08-18T11:59:00.000Z' },
+              ],
+            });
+          }
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages: [
+              { role: 'user', content: 'abandoned send', createdAt: '2026-08-18T11:59:00.000Z' },
+              { role: 'assistant', content: 'reply nobody announced', createdAt: '2026-08-18T12:00:00.000Z' },
+              { role: 'user', content: 'second send', createdAt: '2026-08-18T12:01:00.000Z' },
+              { role: 'assistant', content: 'second reply', createdAt: '2026-08-18T12:02:00.000Z' },
+            ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          streamCalls += 1;
+          if (streamCalls === 1) {
+            // 1本目はスレッド切替で abort される = 印が立つ。
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'));
+                  init.signal?.addEventListener('abort', () => {
+                    controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+                  });
+                },
+              }),
+            );
+          }
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"second reply","sessionId":"sess-1","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
+      await user.type(screen.getByLabelText('メッセージ'), 'abandoned send');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      // 切替で abort → 戻る。戻った直後の取り直しは空振りする。
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'first thread');
+      await waitFor(() => expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2));
+      expect(screen.queryByText('reply nobody announced')).toBeNull();
+
+      // 同じスレッドで次を送って成功させる。ここで印を外す実装だと、以後
+      // 取りこぼした返信を取りに行かなくなる。
+      await user.type(screen.getByLabelText('メッセージ'), 'second send');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      expect(await screen.findByText('second reply')).toBeInTheDocument();
+      expect(screen.queryByText('reply nobody announced')).toBeNull();
+
+      // サーバー履歴が追いついた状態でもう一度開く。印が残っていれば拾える。
+      // 送信成功でスレッドのタイトルは送った本文に置き換わるので、戻るときの
+      // 見出しは 'second send'。
+      serverCaughtUp = true;
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'second send');
+
+      expect(await screen.findByText('reply nobody announced')).toBeInTheDocument();
+    });
+
+    it('recovers without leaving the thread once the next turn lands (PR#135 レビュー minor-1)', async () => {
+      // 上のテストの姉妹。印が残っているだけでは「次にスレッドを開くまで」
+      // 待たされる。同じスレッドに留まったまま次のターンが終わった時点で
+      // 取り直しへ戻れること (安全網 effect が会話の件数変化でも起きること)。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ]);
+      fetchChatTurnStatusMock.mockResolvedValue({ state: 'idle' });
+      let sess1HistoryCalls = 0;
+      let serverCaughtUp = false;
+      let streamCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          if (sess1HistoryCalls === 1) {
+            return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+          }
+          if (!serverCaughtUp) {
+            return jsonResponse({
+              sessionId: 'sess-1',
+              agentId: 'claude',
+              messages: [
+                { role: 'user', content: 'abandoned send', createdAt: '2026-08-18T11:59:00.000Z' },
+              ],
+            });
+          }
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages: [
+              { role: 'user', content: 'abandoned send', createdAt: '2026-08-18T11:59:00.000Z' },
+              { role: 'assistant', content: 'reply nobody announced', createdAt: '2026-08-18T12:00:00.000Z' },
+              { role: 'user', content: 'second send', createdAt: '2026-08-18T12:01:00.000Z' },
+              { role: 'assistant', content: 'second reply', createdAt: '2026-08-18T12:02:00.000Z' },
+            ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          streamCalls += 1;
+          if (streamCalls === 1) {
+            return new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'));
+                  init.signal?.addEventListener('abort', () => {
+                    controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+                  });
+                },
+              }),
+            );
+          }
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"second reply","sessionId":"sess-1","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
+      await user.type(screen.getByLabelText('メッセージ'), 'abandoned send');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      await selectThreadFromDrawer(container, user, 'second thread');
+      await selectThreadFromDrawer(container, user, 'first thread');
+      await waitFor(() => expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2));
+      expect(screen.queryByText('reply nobody announced')).toBeNull();
+
+      // ここでサーバーが追いつく。以降スレッドの切替はしない。
+      serverCaughtUp = true;
+      await user.type(screen.getByLabelText('メッセージ'), 'second send');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      expect(await screen.findByText('reply nobody announced')).toBeInTheDocument();
+    });
+
+    it('drains a second queued completion after acknowledging the first (bdboard-3tw.156)', async () => {
+      // 未回収の完了は1件ずつ配られる。1件 ACK したら聞き直して、積まれている
+      // 分を掃き切ること。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+        { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+      ]);
+      // サーバー側のキューを模す。ACK された sessionId を落とし、先頭を返す。
+      const queued: string[] = ['sess-1', 'sess-2'];
+      acknowledgeChatTurnMock.mockImplementation(async (_projectId: string, sessionId: string) => {
+        const at = queued.indexOf(sessionId);
+        if (at >= 0) queued.splice(at, 1);
+      });
+      fetchChatTurnStatusMock.mockImplementation(async () => {
+        const head = queued[0];
+        if (head === undefined) return { state: 'idle' as const };
+        return {
+          state: 'completed' as const,
+          sessionId: head,
+          agentId: 'claude',
+          completedAt: '2026-08-18T12:00:00.000Z',
+        };
+      });
+      fetchMock.mockImplementation(async (url: string) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages: [{ role: 'assistant', content: 'queued reply one', createdAt: '2026-08-18T12:00:00.000Z' }],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({
+            sessionId: 'sess-2',
+            agentId: 'claude',
+            messages: [{ role: 'assistant', content: 'queued reply two', createdAt: '2026-08-18T12:00:01.000Z' }],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+
+      // 2件とも ACK され、キューが空になるまで掃ける。
+      await waitFor(() => {
+        expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-1');
+        expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-2');
+      });
+      // 2件目の中身も取り込まれている。
+      await selectThreadFromDrawer(container, user, 'second thread');
+      expect(await screen.findByText('queued reply two')).toBeInTheDocument();
+    });
+
     it('aborts a bulk subscription, then restores its agent/model and resumes the same session', async () => {
       const user = userEvent.setup();
       const recoveryAgent: ChatAgentDto = {
