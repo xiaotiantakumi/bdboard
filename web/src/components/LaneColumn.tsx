@@ -45,8 +45,12 @@ function formatDeferDate(deferUntil: string): string {
   // (JST なら …T15:00:00Z)、素朴に切ると常に1日前を表示していた (bdboard-ol9)。
   // 日付境界は host TZ ではなく Asia/Tokyo に固定して求める — CI は UTC で
   // 走るので、ローカル TZ に頼ると環境で結果が変わる (bdboard-3tw.75)。
-  // 既存の localDateKey に寄せる。日本に DST が無い以上 +9h の手書きでも
-  // 結果は同じだが、オフセット算術を各所で手書きしないのがこのファイル群の方針。
+  // 既存の localDateKey に寄せる。手書きの +9h シフトは「現代の日付なら」同じ
+  // 結果になるが等価ではない — tzdata 上、日本には 1948-51 年に夏時間 (JDT,
+  // UTC+10) があり、1888 年以前は LMT (+9:18:59) で、ICU はどちらも適用する
+  // (実測: 1950-06-30T14:30:00Z は Intl で 1950-07-01, +9h で 1950-06-30)。
+  // defer 日付でその範囲に入ることは無いが、「日本に DST は無いから +9h でよい」
+  // を一般則として持ち出さないこと。オフセット算術は手書きしない。
   return localDateKey(new Date(deferUntil));
 }
 

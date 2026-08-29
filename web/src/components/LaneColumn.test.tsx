@@ -135,9 +135,11 @@ describe('CardItem defer date badge (bdboard-ol9)', () => {
     // 経路によっては UTC 深夜 (…T00:00:00Z) のものもある。両方の形が正しい日付で
     // 出ることを固定しておく。
     //
-    // 念のため: 手書きの +9h シフトでもこの2件は通る (日本に DST が無いので
-    // Asia/Tokyo は常に UTC+9 で、Intl と挙動が一致する — 実測で確認済み)。
-    // 共有ヘルパを使うのは挙動の差ではなく、オフセット算術を手書きしないため。
+    // 念のため: 手書きの +9h シフトでもこの2件は通る。ただしそれは「現代の
+    // 日付では一致する」だけで等価ではない — 1948-51 年の夏時間 (JDT, UTC+10)
+    // と 1888 年以前の LMT で食い違う (PR#124 fable レビューで counterexample
+    // 提示、実測で確認)。defer 日付がその範囲に入ることは無いので、ここで
+    // 歴史的な日付を fixture にしてまで +9h を殺すことはしない。
     const card: BoardCardDto = {
       ...makeCard('bdboard-defer-utc-midnight'),
       ticket: {
