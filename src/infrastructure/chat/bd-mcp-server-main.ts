@@ -6,9 +6,11 @@ import { createBdMcpServer } from './bd-mcp-server.js';
 function parseArgs(argv: readonly string[]): {
   readonly projectRootPath?: string;
   readonly bdPath: string;
+  readonly gitPath: string;
 } {
   let projectRootPath: string | undefined;
   let bdPath = 'bd';
+  let gitPath = 'git';
 
   for (let index = 2; index < argv.length; index += 1) {
     const arg = argv[index];
@@ -20,14 +22,19 @@ function parseArgs(argv: readonly string[]): {
     if (arg === '--bd-path' && index + 1 < argv.length) {
       bdPath = argv[index + 1] ?? bdPath;
       index += 1;
+      continue;
+    }
+    if (arg === '--git-path' && index + 1 < argv.length) {
+      gitPath = argv[index + 1] ?? gitPath;
+      index += 1;
     }
   }
 
-  return { projectRootPath, bdPath };
+  return { projectRootPath, bdPath, gitPath };
 }
 
 async function main(): Promise<void> {
-  const { projectRootPath, bdPath } = parseArgs(process.argv);
+  const { projectRootPath, bdPath, gitPath } = parseArgs(process.argv);
 
   if (projectRootPath === undefined || !path.isAbsolute(projectRootPath)) {
     process.stderr.write('--project-root must be an absolute path\n');
@@ -38,6 +45,7 @@ async function main(): Promise<void> {
     commandRunner: new NodeCommandRunner(),
     projectRootPath,
     bdPath,
+    gitPath,
   });
 
   const input = createInterface({

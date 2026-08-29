@@ -3,7 +3,7 @@ import os from 'node:os';
 import type { ChatAgentPort, ChatTurnRequest } from '../../application/ports/chat-agent.js';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
 import type { StreamingCommandRunner } from '../../application/ports/streaming-command-runner.js';
-import { BD_TOOL_DEFINITIONS } from './bd-tool-catalog.js';
+import { CHAT_TOOL_DEFINITIONS } from './chat-tool-catalog.js';
 import { buildBdSystemPrompt } from './bd-system-prompt.js';
 import { createCliChatAgent } from './cli-chat-agent.js';
 import { createClaudeSpec, type ClaudeModelWeights } from './specs/claude-spec.js';
@@ -96,7 +96,7 @@ export function createClaudeChatAgent(
             ],
           },
         ],
-        toolNames: BD_TOOL_DEFINITIONS.map((tool) => tool.name),
+        toolNames: CHAT_TOOL_DEFINITIONS.map((tool) => tool.name),
         scratchDir: os.tmpdir(),
       };
     },

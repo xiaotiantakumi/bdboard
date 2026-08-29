@@ -10,7 +10,7 @@ function buildCapabilityLines(
 ): readonly string[] {
   if (capability === 'bd-only') {
     return [
-      '使えるのは与えられた bd ツールのみです。',
+      '使えるのは与えられたツール(bd 操作と、読み取り専用のリポジトリ確認)のみです。',
       'シェル実行・ファイル編集・ネットワークアクセスの手段はありません。',
       'それらを求められたら「この画面からはできない」と答えてください。',
     ];
@@ -137,6 +137,18 @@ const BD_TOOL_USAGE_LINES: readonly string[] = [
   '  ブロック判定に使えるのは blocks だけ(parent-child は判定に使わない)',
 ];
 
+const REPO_TOOL_USAGE_LINES: readonly string[] = [
+  'チケットの顛末(本当にマージされたか)を確かめる作法:',
+  '- bd の status とコメントは「そう書かれている」だけで、実際に入ったかの根拠にはならない。',
+  '  closed だが未マージ、マージ済みだがコードが残っている、という食い違いは実際に起きている。',
+  '- そのIDを含むコミットが本流にあるか: repo_ticket_landed',
+  '- そのパスが本流に残っているか: repo_path_exists (matched=0 なら「本当に無い」)',
+  '- どちらも読み取り専用で、既定の対象は origin/main。',
+  '  origin/main はローカルのリモート追跡ブランチなので、最後に fetch した時点までしか',
+  '  反映されていない。ごく最近のマージが見えないことはあり得る。',
+  '- 顛末を断定するときは、どちらのツールで何が見えたかを根拠として一言添える。',
+];
+
 export function buildBdSystemPrompt(input: {
   readonly projectName: string;
   readonly projectRootPath: string;
@@ -179,6 +191,8 @@ export function buildBdSystemPrompt(input: {
     ...buildCapabilityLines(capability, hasBdTools, bdPath, projectRootPath, input.shellToolPolicy ?? 'cursor-sandbox'),
     '',
     ...(hasBdTools ? BD_TOOL_USAGE_LINES : []),
+    ...(hasBdTools ? [''] : []),
+    ...(hasBdTools ? REPO_TOOL_USAGE_LINES : []),
     ...(hasBdTools ? [''] : []),
     ...BDBOARD_HELP_PROMPT_LINES,
     '',

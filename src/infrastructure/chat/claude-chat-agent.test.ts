@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CHAT_FAILURE_MESSAGES } from '../../application/ports/chat-agent.js';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
-import { BD_TOOL_DEFINITIONS } from './bd-tool-catalog.js';
+import { CHAT_TOOL_DEFINITIONS } from './chat-tool-catalog.js';
 import { createClaudeChatAgent } from './claude-chat-agent.js';
 
 const PROJECT_ROOT = '/tmp/bdboard-chat-agent';
@@ -124,7 +124,7 @@ describe('createClaudeChatAgent', () => {
     const args = calls[0]?.args ?? [];
     const allowedToolsIndex = args.indexOf('--allowedTools');
     const allowedTools = args[allowedToolsIndex + 1];
-    const expected = BD_TOOL_DEFINITIONS.map((tool) => `mcp__bd__${tool.name}`).join(',');
+    const expected = CHAT_TOOL_DEFINITIONS.map((tool) => `mcp__bd__${tool.name}`).join(',');
 
     expect(allowedTools).toBe(expected);
     expect(allowedTools).not.toContain('Bash');

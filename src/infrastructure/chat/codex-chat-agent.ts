@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import type { ChatAgentPort, ChatTurnRequest } from '../../application/ports/chat-agent.js';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
-import { BD_TOOL_DEFINITIONS } from './bd-tool-catalog.js';
+import { CHAT_TOOL_DEFINITIONS } from './chat-tool-catalog.js';
 import { buildBdSystemPrompt } from './bd-system-prompt.js';
 import { createCliChatAgent } from './cli-chat-agent.js';
 import { createCodexSpec } from './specs/codex-spec.js';
@@ -93,7 +93,7 @@ export function createCodexChatAgent(
             ],
           },
         ],
-        toolNames: BD_TOOL_DEFINITIONS.map((tool) => tool.name),
+        toolNames: CHAT_TOOL_DEFINITIONS.map((tool) => tool.name),
         scratchDir: os.tmpdir(),
       };
     },
