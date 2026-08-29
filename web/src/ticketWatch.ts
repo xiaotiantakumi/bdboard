@@ -3,6 +3,7 @@ import type { BoardCardDto, TicketDetailDto } from './api';
 /** Mirrors src/domain/board-notifications TicketWatchSnapshot (web cannot import src/). */
 export interface TicketWatchSnapshot {
   readonly ticketId: string;
+  readonly source: 'board' | 'detail';
   readonly lane: string | null;
   readonly commentCount: number;
   readonly sessionIds: readonly string[];
@@ -33,6 +34,7 @@ export type TicketWatchEvent =
 export function ticketWatchSnapshotFromBoardCard(card: BoardCardDto): TicketWatchSnapshot {
   return {
     ticketId: card.ticket.id,
+    source: 'board',
     lane: card.lane,
     commentCount: card.ticket.commentCount,
     sessionIds: card.sessions.map((session) => session.sessionId).sort(),
@@ -44,6 +46,7 @@ export function ticketWatchSnapshotFromBoardCard(card: BoardCardDto): TicketWatc
 export function ticketWatchSnapshotFromTicketDetail(detail: TicketDetailDto): TicketWatchSnapshot {
   return {
     ticketId: detail.id,
+    source: 'detail',
     lane: null,
     commentCount: detail.commentCount,
     sessionIds: detail.sessionLinks.map((link) => link.sessionId).sort(),
@@ -108,17 +111,19 @@ export function diffTicketWatchSnapshots(
     });
   }
 
-  const { addedSessionIds, removedSessionIds } = diffSessionIdSets(
-    prev.sessionIds,
-    next.sessionIds,
-  );
-  if (addedSessionIds.length > 0 || removedSessionIds.length > 0) {
-    events.push({
-      kind: 'session_links_changed',
-      ticketId,
-      addedSessionIds,
-      removedSessionIds,
-    });
+  if (prev.source === next.source) {
+    const { addedSessionIds, removedSessionIds } = diffSessionIdSets(
+      prev.sessionIds,
+      next.sessionIds,
+    );
+    if (addedSessionIds.length > 0 || removedSessionIds.length > 0) {
+      events.push({
+        kind: 'session_links_changed',
+        ticketId,
+        addedSessionIds,
+        removedSessionIds,
+      });
+    }
   }
 
   return events;
