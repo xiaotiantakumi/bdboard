@@ -1,5 +1,6 @@
 import { compareStrings } from './compare.js';
 import { daysUntilDefer, deriveDeferUrgency, type DeferUrgency } from './defer.js';
+import { computeStronglyConnectedComponents } from './graph-scc.js';
 import {
   buildDirectChildrenIndex,
   epicProgressFromIndex,
@@ -124,48 +125,10 @@ function computeEffectivePriorities(
     return (blocksIndex.get(id) ?? []).filter(isEligibleSuccessor);
   }
 
-  let indexCounter = 0;
-  const indices = new Map<TicketId, number>();
-  const lowlink = new Map<TicketId, number>();
-  const onStack = new Set<TicketId>();
-  const tarjanStack: TicketId[] = [];
-  const sccOf = new Map<TicketId, number>();
-  const sccMembers: TicketId[][] = [];
-
-  function strongConnect(v: TicketId): void {
-    indices.set(v, indexCounter);
-    lowlink.set(v, indexCounter);
-    indexCounter += 1;
-    tarjanStack.push(v);
-    onStack.add(v);
-
-    for (const w of neighbors(v)) {
-      if (!indices.has(w)) {
-        strongConnect(w);
-        lowlink.set(v, Math.min(lowlink.get(v)!, lowlink.get(w)!));
-      } else if (onStack.has(w)) {
-        lowlink.set(v, Math.min(lowlink.get(v)!, indices.get(w)!));
-      }
-    }
-
-    if (lowlink.get(v) === indices.get(v)) {
-      const component: TicketId[] = [];
-      let w: TicketId;
-      do {
-        w = tarjanStack.pop()!;
-        onStack.delete(w);
-        component.push(w);
-        sccOf.set(w, sccMembers.length);
-      } while (w !== v);
-      sccMembers.push(component);
-    }
-  }
-
-  for (const ticket of tickets) {
-    if (!indices.has(ticket.id)) {
-      strongConnect(ticket.id);
-    }
-  }
+  const { sccMembers, sccOf } = computeStronglyConnectedComponents(
+    tickets.map((ticket) => ticket.id),
+    neighbors,
+  );
 
   const sccResultMemo = new Map<number, SuccessorMinResult>();
 
