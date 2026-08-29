@@ -3,8 +3,40 @@ import { type RefObject, useEffect, useRef } from 'react';
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/**
+ * CSS で見えていない要素を Tab 巡回から外すための判定(bdboard-77k)。
+ *
+ * セレクタは `disabled` と `tabindex="-1"` しか見ないので、CSS で消しただけの
+ * ボタンが巡回対象に残る。実例はチャットパネルの「最大化」で、幅 700px 以下では
+ * 表示していないのに Tab では止まってしまう。
+ *
+ * 祖先まで遡るのは `display: none` の子孫で `getComputedStyle` しても 'none' が
+ * 返らない(その要素自身の指定値が返る)ため。`visibility` は継承するので本来は
+ * 自分だけ見れば足りるが、同じループで拾えるのでまとめて判定している。
+ *
+ * `hidden` 属性は個別に見ていない。ブラウザも jsdom も UA スタイルシートの
+ * `[hidden] { display: none }` として扱うので computed style 側で拾える。
+ * 属性の有無を直接見ると、著者スタイルで打ち消して見せている要素まで
+ * 巡回から外してしまい、かえって仕様から外れる。
+ */
+function isVisible(element: HTMLElement): boolean {
+  for (
+    let current: HTMLElement | null = element;
+    current !== null;
+    current = current.parentElement
+  ) {
+    const style = window.getComputedStyle(current);
+    if (style.display === 'none' || style.visibility === 'hidden') {
+      return false;
+    }
+  }
+  return true;
+}
+
 function getFocusableElements(container: HTMLElement): HTMLElement[] {
-  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
+    isVisible,
+  );
 }
 
 export interface UseFocusTrapOptions {
