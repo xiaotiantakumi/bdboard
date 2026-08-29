@@ -167,6 +167,50 @@ describe('createReclaimScheduler', () => {
     expect(scheduler.getStatus().enabled).toBe(false);
   });
 
+  it('limits project reclaim concurrency to the configured maximum', async () => {
+    const projects = Array.from({ length: 8 }, (_, index) =>
+      project(`proj-${index}`, `/projects/${index}`),
+    );
+
+    let activeCount = 0;
+    let maxObserved = 0;
+    const resolvers: Array<() => void> = [];
+
+    const reclaim = vi.fn((_rootPath: string) => {
+      return new Promise<{ exitCode: number; stdout: string; stderr: string }>((resolve) => {
+        activeCount += 1;
+        maxObserved = Math.max(maxObserved, activeCount);
+        resolvers.push(() => {
+          activeCount -= 1;
+          resolve({ exitCode: 0, stdout: 'reclaimed 0 issues', stderr: '' });
+        });
+      });
+    });
+
+    const scheduler = createReclaimScheduler({
+      reclaimer: { reclaim },
+      listProjects: () => projects,
+      config: { enabled: true, intervalMs: 1_000, olderThan: '10m' },
+    });
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reclaim).toHaveBeenCalledTimes(3);
+    expect(maxObserved).toBeLessThanOrEqual(3);
+    expect(maxObserved).toBeGreaterThan(1);
+
+    while (resolvers.length > 0) {
+      resolvers.shift()?.();
+      await vi.advanceTimersByTimeAsync(0);
+    }
+
+    expect(reclaim).toHaveBeenCalledTimes(8);
+    expect(maxObserved).toBeLessThanOrEqual(3);
+
+    scheduler.stop();
+  });
+
   it('parses unknown reclaim output as count unknown', async () => {
     const reclaimer: LeaseReclaimer = {
       reclaim: vi.fn(async () => ({

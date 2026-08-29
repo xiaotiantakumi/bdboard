@@ -1,6 +1,9 @@
 import type { Project } from '../../domain/project.js';
+import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
 import { parseReclaimStdout } from './parse-reclaim-output.js';
+
+const PROJECT_SCAN_CONCURRENCY = 3;
 
 export const DEFAULT_RECLAIM_INTERVAL_MS = 5 * 60_000;
 export const DEFAULT_RECLAIM_OLDER_THAN = '10m';
@@ -137,7 +140,7 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
     running = true;
     try {
       const projects = listProjects();
-      await Promise.allSettled(projects.map((project) => runForProject(project)));
+      await runWithConcurrencyLimit(projects, PROJECT_SCAN_CONCURRENCY, runForProject);
     } finally {
       running = false;
     }
