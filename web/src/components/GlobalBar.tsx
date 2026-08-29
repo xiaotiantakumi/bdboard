@@ -11,6 +11,7 @@ export interface GlobalBarProps {
   notificationUnreadCount: number;
   onOpenSearch: () => void;
   streamState: StreamState;
+  connectStalled?: boolean;
   lastContactAtMs: number | null | undefined;
   generatedAt: string | null | undefined;
   lastRefreshAt: string | null | undefined;
@@ -37,6 +38,7 @@ export function GlobalBar({
   notificationUnreadCount,
   onOpenSearch,
   streamState,
+  connectStalled = false,
   lastContactAtMs,
   generatedAt,
   lastRefreshAt,
@@ -90,6 +92,7 @@ export function GlobalBar({
 
       <StatusPill
         streamState={streamState}
+        connectStalled={connectStalled}
         lastContactAtMs={lastContactAtMs}
         generatedAt={generatedAt}
         lastRefreshAt={lastRefreshAt}

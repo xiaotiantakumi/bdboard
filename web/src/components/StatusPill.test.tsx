@@ -129,3 +129,18 @@ describe('StatusPill popover freshness (bdboard-d55)', () => {
     expect(onOpenSessionList).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('StatusPill connect stall (bdboard-n66)', () => {
+  it('shows 接続待ち instead of 正常 when connectStalled is true', () => {
+    vi.setSystemTime(NOW);
+    renderPill({
+      streamState: 'connecting',
+      connectStalled: true,
+      lastContactAtMs: null,
+      open: false,
+    });
+
+    expect(screen.getByRole('button', { name: '接続状態: 接続待ち' })).toHaveTextContent('接続待ち');
+    expect(screen.queryByRole('button', { name: '接続状態: 正常' })).not.toBeInTheDocument();
+  });
+});

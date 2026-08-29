@@ -87,6 +87,20 @@ describe('computeStatusLevel (last server contact, bdboard-9qa)', () => {
     const tenMinutesAgoMs = new Date('2026-01-01T11:50:00.000Z').getTime();
     expect(computeStatusLevel('reconnecting', tenMinutesAgoMs, nowMs)).toBe('reconnecting');
   });
+
+  it('returns connecting when connectStalled is true', () => {
+    expect(
+      computeStatusLevel('connecting', mergeLastServerContact(null, 0), nowMs, true),
+    ).toBe('connecting');
+  });
+
+  it('prefers disconnected over connectStalled when stream is in error', () => {
+    expect(computeStatusLevel('error', recentContactAtMs, nowMs, true)).toBe('disconnected');
+  });
+
+  it('prefers connecting over reconnecting when connectStalled is true', () => {
+    expect(computeStatusLevel('reconnecting', recentContactAtMs, nowMs, true)).toBe('connecting');
+  });
 });
 
 describe('mergeLastServerContact', () => {
@@ -112,7 +126,8 @@ describe('mergeLastServerContact', () => {
 });
 
 describe('shouldShowAlertBar', () => {
-  it('shows for delayed, disconnected, and reconnecting states', () => {
+  it('shows for connecting, delayed, disconnected, and reconnecting states', () => {
+    expect(shouldShowAlertBar('connecting')).toBe(true);
     expect(shouldShowAlertBar('delayed')).toBe(true);
     expect(shouldShowAlertBar('disconnected')).toBe(true);
     expect(shouldShowAlertBar('reconnecting')).toBe(true);
@@ -121,8 +136,9 @@ describe('shouldShowAlertBar', () => {
 });
 
 describe('STATUS_LABELS', () => {
-  it('includes reconnecting label', () => {
+  it('includes reconnecting and connecting labels', () => {
     expect(STATUS_LABELS.reconnecting).toBe('再接続中');
+    expect(STATUS_LABELS.connecting).toBe('接続待ち');
   });
 });
 

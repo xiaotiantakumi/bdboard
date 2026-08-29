@@ -687,6 +687,7 @@ export function App() {
           notificationUnreadCount={notificationEvents.unreadCount}
           onOpenSearch={handleOpenSearch}
           streamState={streamState}
+          connectStalled={connectStalled}
           lastContactAtMs={lastContactAtMs}
           generatedAt={boardQuery.data?.generatedAt}
           lastRefreshAt={lastRefreshAt}
