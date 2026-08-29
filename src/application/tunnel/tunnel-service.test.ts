@@ -3,7 +3,10 @@ import { createInMemoryTunnelInterruptionStore } from '../ports/tunnel-interrupt
 import type { TunnelInterruptionStore } from '../ports/tunnel-interruption-store.js';
 import type { TunnelProcess, TunnelStartResult } from '../ports/tunnel.js';
 import type { TunnelAccessService } from './tunnel-access.js';
-import { createTunnelService } from './tunnel-service.js';
+import {
+  TUNNEL_AVAILABILITY_RECHECK_MS,
+  createTunnelService,
+} from './tunnel-service.js';
 
 // Placeholder-shaped on purpose: adjacent username/password fixture values
 // are what GitGuardian's Username Password detector fires on by pattern,
@@ -452,5 +455,66 @@ describe('createTunnelService write access gate', () => {
 
     expect(state.kind).toBe('error');
     expect(service.isWriteAllowed()).toBe(false);
+  });
+});
+
+describe('createTunnelService availability re-probing (bdboard-syr)', () => {
+  it('re-probes after the negative cache expires and leaves unavailable', async () => {
+    const tunnel = createFakeTunnel();
+    tunnel.isAvailableMock.mockResolvedValueOnce(false).mockResolvedValue(true);
+    let nowMs = Date.parse('2026-08-14T12:00:00.000Z');
+    const service = createService(tunnel, { now: () => new Date(nowMs) });
+
+    expect(await service.probeAvailability()).toBe(false);
+    // 「未判定」と「判定済みで使えない」を取り違えると、使えないのに
+    // 使える扱いになる。probe 済みでも false は false。
+    expect(service.getAvailability()).toBe(false);
+    expect(service.getState()).toEqual({ kind: 'unavailable' });
+
+    // TTL 内は再プローブしない (毎リクエストで PATH を舐めないための キャッシュ)。
+    nowMs += 1_000;
+    expect(await service.probeAvailability()).toBe(false);
+    expect(tunnel.isAvailableMock).toHaveBeenCalledTimes(1);
+
+    // TTL 経過後は再プローブし、後から入った cloudflared を拾う。
+    nowMs += TUNNEL_AVAILABILITY_RECHECK_MS;
+    expect(await service.probeAvailability()).toBe(true);
+    expect(tunnel.isAvailableMock).toHaveBeenCalledTimes(2);
+    expect(service.getAvailability()).toBe(true);
+    // unavailable に落とした state も戻さないと、UI は使えないままに見える。
+    expect(service.getState()).toEqual({ kind: 'off' });
+  });
+
+  it('keeps a positive availability result cached without re-probing', async () => {
+    const tunnel = createFakeTunnel();
+    let nowMs = Date.parse('2026-08-14T12:00:00.000Z');
+    const service = createService(tunnel, { now: () => new Date(nowMs) });
+
+    expect(await service.probeAvailability()).toBe(true);
+    nowMs += TUNNEL_AVAILABILITY_RECHECK_MS * 10;
+    expect(await service.probeAvailability()).toBe(true);
+    expect(tunnel.isAvailableMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-probes after a probe threw, instead of pinning unavailable forever', async () => {
+    const tunnel = createFakeTunnel();
+    tunnel.isAvailableMock
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue(true);
+    let nowMs = Date.parse('2026-08-14T12:00:00.000Z');
+    const service = createService(tunnel, { now: () => new Date(nowMs) });
+
+    expect(await service.probeAvailability()).toBe(false);
+    // 例外は「判定できなかった」だが、negative として扱う以上は negative と
+    // 同じ規律に従う必要がある: state を落とし、TTL 内は再プローブしない。
+    // ここを assert しないと catch 節の setAvailability(false) を消しても
+    // 誰も気付かない (PR#122 fable レビュー minor)。
+    expect(service.getState()).toEqual({ kind: 'unavailable' });
+    nowMs += 1_000;
+    expect(await service.probeAvailability()).toBe(false);
+    expect(tunnel.isAvailableMock).toHaveBeenCalledTimes(1);
+
+    nowMs += TUNNEL_AVAILABILITY_RECHECK_MS;
+    expect(await service.probeAvailability()).toBe(true);
   });
 });

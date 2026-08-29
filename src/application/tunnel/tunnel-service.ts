@@ -19,6 +19,13 @@ export type TunnelState =
     }
   | { readonly kind: 'error'; readonly message: string };
 
+/**
+ * cloudflared が「使えない」と判定されたあと、再度 probe するまでの間隔。
+ * 未インストールは後から解消しうるので恒久キャッシュにはできず、かといって
+ * 毎リクエスト PATH を舐めるのも無駄なので TTL で妥協する (bdboard-syr)。
+ */
+export const TUNNEL_AVAILABILITY_RECHECK_MS = 30_000;
+
 export interface TunnelServiceDeps {
   readonly tunnel: TunnelProcess;
   readonly now: () => Date;
@@ -57,7 +64,7 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
   // TunnelState が UI へそのまま渡る DTO の元になっており、判定材料(パスワード種別)を
   // そこに載せたくないため。stop / 異常終了 / start 失敗のいずれでも false へ戻す。
   let writeAllowed = false;
-  let availability: boolean | null = null;
+  let availability: { readonly value: boolean; readonly at: number } | null = null;
   let startInFlight: Promise<TunnelState> | null = null;
 
   // 開発サーバー本体の再起動等でcloudflared子プロセスが道連れに終了した場合、
@@ -77,15 +84,29 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
   });
 
   const setAvailability = (value: boolean): void => {
-    availability = value;
+    availability = { value, at: deps.now().getTime() };
     if (!value && state.kind !== 'unavailable') {
       state = { kind: 'unavailable' };
+      return;
+    }
+    // 後から cloudflared が入った場合。unavailable に落としたままだと UI からは
+    // 永久に使えないままに見えるので、通常の初期状態へ戻す (bdboard-syr)。
+    if (value && state.kind === 'unavailable') {
+      state = { kind: 'off' };
     }
   };
 
   const probeAvailability = async (): Promise<boolean> => {
     if (availability !== null) {
-      return availability;
+      // 「使える」は覆らないので恒久キャッシュでよい。「使えない」は brew install
+      // 一つで覆るので、TTL を過ぎたら probe し直す。ここを固定していたせいで、
+      // 後から入れた cloudflared がサーバー再起動まで見えなかった (bdboard-syr)。
+      if (availability.value) {
+        return true;
+      }
+      if (deps.now().getTime() - availability.at < TUNNEL_AVAILABILITY_RECHECK_MS) {
+        return false;
+      }
     }
 
     try {
@@ -98,7 +119,7 @@ export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
     }
   };
 
-  const getAvailability = (): boolean => availability === true;
+  const getAvailability = (): boolean => availability?.value === true;
 
   const isWriteAllowed = (): boolean => state.kind === 'on' && writeAllowed;
 

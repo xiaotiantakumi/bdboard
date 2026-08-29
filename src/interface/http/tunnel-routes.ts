@@ -63,8 +63,13 @@ export function createTunnelRoutes(deps: TunnelRoutesDeps): Hono {
   app.use('/api/tunnel', localOnlyGuard);
   app.use('/api/tunnel/*', localOnlyGuard);
 
-  app.get('/api/tunnel', (c) => {
-    const available = deps.tunnelService.getAvailability();
+  app.get('/api/tunnel', async (c) => {
+    // getAvailability() ではなく probe を通す。これが唯一 UI から定期的に叩かれる
+    // 経路で、ここがキャッシュ読みだけだと「後から cloudflared を入れた」が
+    // 画面に反映されない — unavailable の間は起動ボタンが disabled なので、
+    // もう一つの probe 経路である POST /api/tunnel/start にも到達できない
+    // (bdboard-syr)。probe 側に TTL があるので PATH 走査は最悪 30 秒に1回。
+    const available = await deps.tunnelService.probeAvailability();
     return c.json(
       toPublicState(
         deps.tunnelService.getState(),
