@@ -138,8 +138,9 @@ describe('NodeCommandRunner', () => {
     const elapsedMs = Date.now() - start;
 
     expect(result.failureKind).toBe('timeout');
-    // 猶予 3000ms + 余裕。修正前はここに到達せずテストがタイムアウトする。
-    expect(elapsedMs).toBeLessThan(8_000);
+    // 猶予 3000ms + 余裕。8_000 だと vitest 既定の testTimeout 5000ms が先に効いて
+    // 死んだ閾値になるので、実効上限より内側に置く (PR#119 fable レビュー nit)。
+    expect(elapsedMs).toBeLessThan(4_000);
   });
 
   it('does not mislabel a successful exit as timeout when a grandchild holds the pipes', async () => {
@@ -194,7 +195,7 @@ describe('NodeCommandRunner', () => {
     const elapsedMs = Date.now() - start;
 
     expect(result.failureKind).toBe('timeout');
-    expect(elapsedMs).toBeLessThan(8_000);
+    expect(elapsedMs).toBeLessThan(4_000);
 
     const grandchildPid = Number(result.stdout.trim());
     if (Number.isInteger(grandchildPid) && grandchildPid > 0) {
