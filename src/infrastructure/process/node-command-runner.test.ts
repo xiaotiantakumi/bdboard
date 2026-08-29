@@ -27,6 +27,24 @@ describe('NodeCommandRunner', () => {
     expect(result.stdout).toBe('hello-from-stdin');
   });
 
+  it('closes stdin immediately when input is omitted so stdin-waiting children do not hang', async () => {
+    const childScript =
+      "let data='';" +
+      "process.stdin.on('data', (chunk) => { data += chunk; });" +
+      "process.stdin.on('end', () => { process.stdout.write('done:' + data); });";
+
+    const start = Date.now();
+    const result = await runner.run(process.execPath, ['-e', childScript], {
+      timeoutMs: 2_000,
+    });
+    const elapsedMs = Date.now() - start;
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe('done:');
+    expect(result.failureKind).toBeUndefined();
+    expect(elapsedMs).toBeLessThan(1_000);
+  });
+
   it('does not crash when the child exits before draining stdin', async () => {
     const result = await runner.run(
       process.execPath,

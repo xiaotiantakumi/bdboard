@@ -11,7 +11,7 @@ export interface CommandResult {
 export interface CommandRunOptions {
   readonly cwd?: string;
   readonly timeoutMs?: number;
-  /** 与えたら子プロセスのstdinへ書いてcloseする。未指定なら従来どおり何もしない。 */
+  /** 与えたら子プロセスのstdinへ書いてcloseする。未指定ならstdinを即座にcloseする。 */
   readonly input?: string;
   /** 与えたら子プロセスの環境変数を「これだけ」に置き換える(継承しない)。 */
   readonly env?: Readonly<Record<string, string>>;

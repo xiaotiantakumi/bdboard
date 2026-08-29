@@ -152,11 +152,17 @@ export class NodeCommandRunner implements CommandRunner {
         }, EXIT_BACKSTOP_MS).unref?.();
       });
 
-      if (child.stdin !== null && options?.input !== undefined) {
+      if (child.stdin !== null) {
         // The child may exit before draining stdin. Ignore EPIPE so it cannot
         // become an uncaught exception in the server process.
         child.stdin.on('error', () => {});
-        child.stdin.end(options.input);
+        if (options?.input !== undefined) {
+          child.stdin.end(options.input);
+        } else {
+          // stdin パイプを開いたままにすると、非TTY入力を待つ子が EOF まで
+          // 処理を始められずタイムアウトまでハングしうる (bdboard-fmjl)。
+          child.stdin.end();
+        }
       }
 
       timeoutTimer = setTimeout(() => {
