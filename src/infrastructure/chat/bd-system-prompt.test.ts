@@ -236,3 +236,58 @@ describe('buildBdSystemPrompt repo evidence tools (bdboard-3tw.159.4)', () => {
     expect(prompt).toContain('読み取り専用のリポジトリ確認');
   });
 });
+
+describe('buildBdSystemPrompt 顛末回答のフォーマット規約 (bdboard-3tw.159.3)', () => {
+  const bdOnly = buildBdSystemPrompt({
+    projectName: 'demo',
+    projectRootPath: '/tmp/demo',
+    capability: 'bd-only',
+  });
+
+  it('orders the answer: conclusion, evidence, then the mismatch', () => {
+    const conclusion = bdOnly.indexOf('結論を先に一文で');
+    const evidence = bdOnly.indexOf('根拠を添える');
+    const mismatch = bdOnly.indexOf('食い違うなら');
+
+    expect(conclusion).toBeGreaterThan(-1);
+    expect(evidence).toBeGreaterThan(conclusion);
+    expect(mismatch).toBeGreaterThan(evidence);
+  });
+
+  it('names what counts as evidence and forbids unsourced history', () => {
+    expect(bdOnly).toContain('コミット/PR番号');
+    expect(bdOnly).toContain('出典の無い経緯は書かない');
+    expect(bdOnly).toContain('bd 上に記録が無い');
+  });
+
+  it('says outright that closed does not mean merged', () => {
+    expect(bdOnly).toContain('closed はマージされたことを意味しない');
+  });
+
+  it('explains why a merged change can still be missing from the screen', () => {
+    // 「マージしたのにまだ古い」の説明が付けられないと、3. の食い違いの
+    // 説明で詰まる。配信しているのがビルド済みの静的ファイルであることまで
+    // 書いておく。
+    expect(bdOnly).toContain('ビルド済みの静的ファイル');
+    expect(bdOnly).toContain('リビルドと再起動');
+  });
+
+  it('warns that a closed card stays on the done lane', () => {
+    expect(bdOnly).toContain('完了レーン');
+  });
+
+  it('keeps the convention even for agents without bd tools', () => {
+    // 根拠の集め方は変わるが、答えの形は変わらない。
+    const withoutTools = buildBdSystemPrompt({
+      projectName: 'demo',
+      projectRootPath: '/tmp/demo',
+      capability: 'reads-project',
+      hasBdTools: false,
+    });
+
+    expect(withoutTools).toContain('結論を先に一文で');
+    expect(withoutTools).toContain('closed はマージされたことを意味しない');
+    // bd ツール前提の案内までは出さない。
+    expect(withoutTools).not.toContain('repo_ticket_landed');
+  });
+});
