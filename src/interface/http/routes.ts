@@ -39,6 +39,10 @@ import {
   type IssueWriterPort,
 } from '../../application/ports/issue-writer.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
+import {
+  DEFAULT_LIVENESS_THRESHOLDS,
+  type LivenessThresholds,
+} from '../../domain/liveness.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
 import type { HygieneThresholds } from '../../domain/hygiene.js';
 import type { Ticket } from '../../domain/ticket.js';
@@ -456,6 +460,19 @@ function relayEventName(
   );
 }
 
+/*
+ * DTO 変換は liveness 閾値を必須で受け取る (bdboard-5kz2)。getBoardThresholds は
+ * 任意の依存なので、未注入のときにどの値へ落ちるかをここ1箇所で明示する。
+ * 各ハンドラで `?? DEFAULT_LIVENESS_THRESHOLDS` を書き散らすと、渡し忘れと
+ * 「既定でよい」の区別がまた付かなくなる。
+ */
+async function resolveLivenessThresholds(
+  deps: ApiDeps,
+): Promise<LivenessThresholds> {
+  const thresholds = await deps.getBoardThresholds?.();
+  return thresholds?.livenessThresholds ?? DEFAULT_LIVENESS_THRESHOLDS;
+}
+
 async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
   const thresholds = await deps.getBoardThresholds?.();
   const sessions = deps.sessions?.();
@@ -509,7 +526,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     const now = deps.now();
     // ユーザー設定の liveness 閾値を反映する (bdboard-3tw.102.5)。渡さないと
     // activeSessionCount = ヘッダーの「稼働中 N」だけが既定値のままになる。
-    const thresholds = await deps.getBoardThresholds?.();
+    const livenessThresholds = await resolveLivenessThresholds(deps);
     const cachedProjects = deps.cache
       .listProjects()
       // Locale-independent, to match cache.listProjects()/getBoard ordering.
@@ -522,13 +539,10 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     );
 
     const projects: ProjectDto[] = cachedProjects.map((entry) =>
-      toProjectDto(
-        entry.project,
-        now,
-        sessionsByProject.get(entry.project.id),
-        countIncompleteTicketsFromTickets(entry.tickets),
-        thresholds?.livenessThresholds,
-      ),
+      toProjectDto(entry.project, now, livenessThresholds, {
+        sessions: sessionsByProject.get(entry.project.id),
+        incompleteTicketCount: countIncompleteTicketsFromTickets(entry.tickets),
+      }),
     );
 
     return c.json(projects);
@@ -565,8 +579,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     const dto = toBoardViewDto(
       view,
+      boardDeps.livenessThresholds ?? DEFAULT_LIVENESS_THRESHOLDS,
       sessionsByProject,
-      boardDeps.livenessThresholds,
     );
     const etag = computeWeakEtag(boardViewDtoStableJson(dto));
 
@@ -1523,7 +1537,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
   app.get('/api/sessions/history', async (c) => {
     const now = deps.now();
-    const thresholds = await deps.getBoardThresholds?.();
+    const livenessThresholds = await resolveLivenessThresholds(deps);
     const limit = parseSessionHistoryLimit(c.req.query('limit'));
     const projectIds = parseProjectIds(c.req.query('projects'));
     const sessions = deps.sessions?.() ?? [];
@@ -1535,7 +1549,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     return c.json(
       history.map((entry) =>
-        toSessionHistoryEntryDto(entry, now, thresholds?.livenessThresholds),
+        toSessionHistoryEntryDto(entry, now, livenessThresholds),
       ),
     );
   });
@@ -1572,12 +1586,10 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
   app.get('/api/sessions', async (c) => {
     const now = deps.now();
-    const thresholds = await deps.getBoardThresholds?.();
+    const livenessThresholds = await resolveLivenessThresholds(deps);
     const sessions = deps.sessions?.() ?? [];
     return c.json(
-      sessions.map((session) =>
-        toSessionDto(session, now, thresholds?.livenessThresholds),
-      ),
+      sessions.map((session) => toSessionDto(session, now, livenessThresholds)),
     );
   });
 

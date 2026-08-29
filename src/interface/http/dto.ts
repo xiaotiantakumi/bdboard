@@ -464,14 +464,21 @@ export function toTicketSummaryDto(ticket: Ticket): TicketSummaryDto {
 
 /*
  * liveness を出す DTO 変換はすべて、解決済みの閾値 (ユーザー設定の上書きを
- * 含む) を引数で受け取る (bdboard-3tw.102.5)。省略時は computeLiveness の
- * デフォルトに落ちるので、渡し忘れると「ボードのバッジだけ新しい閾値、
- * ヘッダーとセッション一覧は古い閾値」という食い違いが起きる。
+ * 含む) を **必須の第3引数** で受け取る (bdboard-3tw.102.5 → bdboard-5kz2)。
+ *
+ * 当初は任意引数にして「省略時は computeLiveness のデフォルト」に落としていたが、
+ * それだと渡し忘れが型でも全テストでも検出できなかった。実際 bdboard-3tw.102.5 の
+ * 初版では、toBoardCardDto / toBoardDto / toBoardViewDto のどこで引数を落としても
+ * サーバー全2327テストが通ってしまう状態だった (渡し忘れの症状は「古い閾値のまま
+ * 表示される」で、例外にならないぶん気づけない)。必須にして tsc で落とす。
+ *
+ * 既定値でよい呼び出し元は DEFAULT_LIVENESS_THRESHOLDS を明示的に渡すこと。
+ * 「既定でよい」と「渡し忘れた」を、読んで区別できるようにするのが狙い。
  */
 export function toSessionDto(
   session: AgentSession,
   now: Date,
-  livenessThresholds?: LivenessThresholds,
+  livenessThresholds: LivenessThresholds,
 ): SessionDto {
   return {
     sessionId: session.sessionId,
@@ -504,10 +511,16 @@ export function toSessionTailMessageDto(
   };
 }
 
+/*
+ * 注意: ここで渡した閾値は結果に影響しない。getSessionHistory が返すのは
+ * alive === false のセッションだけで、computeLiveness は !alive を閾値より先に
+ * 見て dormant を返すため。「ended だけ」という条件が将来外れたときに配線漏れを
+ * 作らないよう、引数は他と同じ形で受け取っている (bdboard-3tw.102.5)。
+ */
 export function toSessionHistoryEntryDto(
   entry: SessionHistoryEntry,
   now: Date,
-  livenessThresholds?: LivenessThresholds,
+  livenessThresholds: LivenessThresholds,
 ): SessionHistoryEntryDto {
   return {
     session: toSessionDto(entry.session, now, livenessThresholds),
@@ -524,7 +537,7 @@ export function toSessionHistoryEntryDto(
 export function toBoardCardDto(
   card: BoardCard,
   now: Date,
-  livenessThresholds?: LivenessThresholds,
+  livenessThresholds: LivenessThresholds,
 ): BoardCardDto {
   return {
     ticket: toTicketSummaryDto(card.ticket),
@@ -549,13 +562,19 @@ export function toBoardCardDto(
   };
 }
 
+export interface ToBoardDtoOptions {
+  readonly closedTotal?: number;
+  readonly truncatedClosedIds?: readonly string[];
+}
+
 export function toBoardDto(
   board: Board,
   now: Date,
-  closedTotal?: number,
-  truncatedClosedIds?: readonly string[],
-  livenessThresholds?: LivenessThresholds,
+  livenessThresholds: LivenessThresholds,
+  options?: ToBoardDtoOptions,
 ): BoardDto {
+  const closedTotal = options?.closedTotal;
+  const truncatedClosedIds = options?.truncatedClosedIds;
   const lanes: Record<string, BoardCardDto[]> = {};
   for (const lane of LANES) {
     lanes[lane] = board.lanes[lane].map((card) =>
@@ -586,13 +605,19 @@ export function countIncompleteTicketsFromBoard(board: Board): number {
   );
 }
 
+export interface ToProjectDtoOptions {
+  readonly sessions?: readonly AgentSession[];
+  readonly incompleteTicketCount?: number;
+}
+
 export function toProjectDto(
   project: Project,
   now: Date,
-  sessions?: readonly AgentSession[],
-  incompleteTicketCount = 0,
-  livenessThresholds?: LivenessThresholds,
+  livenessThresholds: LivenessThresholds,
+  options?: ToProjectDtoOptions,
 ): ProjectDto {
+  const sessions = options?.sessions;
+  const incompleteTicketCount = options?.incompleteTicketCount ?? 0;
   const sessionDtos =
     sessions !== undefined
       ? sessions.map((session) => toSessionDto(session, now, livenessThresholds))
@@ -617,8 +642,8 @@ export function toProjectDto(
 
 export function toBoardViewDto(
   view: BoardView,
+  livenessThresholds: LivenessThresholds,
   sessionsByProject?: ReadonlyMap<string, readonly AgentSession[]>,
-  livenessThresholds?: LivenessThresholds,
 ): BoardViewDto {
   const now = view.generatedAt;
 
@@ -631,20 +656,16 @@ export function toBoardViewDto(
     view.mode === 'merged'
       ? []
       : view.projects.map((projectBoard) => ({
-          project: toProjectDto(
-            projectBoard.project,
-            now,
-            sessionsByProject?.get(projectBoard.project.id),
-            countIncompleteTicketsFromBoard(projectBoard.board),
-            livenessThresholds,
-          ),
-          board: toBoardDto(
-            projectBoard.board,
-            now,
-            projectBoard.closedTotal,
-            projectBoard.truncatedClosedIds,
-            livenessThresholds,
-          ),
+          project: toProjectDto(projectBoard.project, now, livenessThresholds, {
+            sessions: sessionsByProject?.get(projectBoard.project.id),
+            incompleteTicketCount: countIncompleteTicketsFromBoard(
+              projectBoard.board,
+            ),
+          }),
+          board: toBoardDto(projectBoard.board, now, livenessThresholds, {
+            closedTotal: projectBoard.closedTotal,
+            truncatedClosedIds: projectBoard.truncatedClosedIds,
+          }),
         }));
 
   return {
@@ -653,13 +674,10 @@ export function toBoardViewDto(
     projects,
     merged:
       view.merged !== null
-        ? toBoardDto(
-            view.merged,
-            now,
-            view.mergedClosedTotal ?? undefined,
-            view.mergedTruncatedClosedIds ?? undefined,
-            livenessThresholds,
-          )
+        ? toBoardDto(view.merged, now, livenessThresholds, {
+            closedTotal: view.mergedClosedTotal ?? undefined,
+            truncatedClosedIds: view.mergedTruncatedClosedIds ?? undefined,
+          })
         : null,
   };
 }
