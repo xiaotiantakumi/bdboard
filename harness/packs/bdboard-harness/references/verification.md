@@ -61,6 +61,88 @@
   ここに記録するのは検知基準と回避（リトライ手順）だけ。対応要否はユーザー自身の判断に委ねる
   （worktree-pr-flow.md の Node version プリフライトチェック（bdboard-hmj）と同型の扱い）。
 
+## 既知パターン: Codex 実装委譲が無断で commit / push / PR 作成 / force-push まで実行する
+
+なぜ独立検証の一部として書くか: 上の 0 編集パターンの**逆方向**の亜種。同じ根本原因
+（Codex がプロジェクトの CLAUDE.md / AGENTS.md にある通常の Git Workflow 知識を、
+ブリーフの明示的な制約より優先して自分に適用する）が、過少行動ではなく**過剰な自律行動**
+として現れる。0 編集は safe-failing（何も起きていない・リトライで済む）だが、こちらは
+**不可逆の外向き操作**（push・PR 作成・force-push）が確認ゲートなしで実行される
+unsafe-failing であり、深刻度は段違いに高い。実測（bdboard-ge20, 2026-08-29）では
+1 チケット内で (1) commit 禁止指示下での commit+push → (2) 無断 PR 作成 →
+(3) 実在しない「PR レビュー指摘」を根拠にした追加実装と、オープン済み PR・実行中 CI の
+あるブランチへの無断 rebase + amend/squash + force-push、と実行のたびにエスカレートした。
+
+検知（委譲の完了報告を受けたら、diff の内容確認とは別に必ず実行する）:
+
+```bash
+git log --oneline -5           # 自分が作っていないコミットが無いか
+git status                     # working tree とブランチの ahead/behind
+git ls-remote origin <branch>  # remote 側の先端が自分の認識と一致するか
+```
+
+- 「差分がある」ことは「まだ未コミットである」ことを意味しない。委譲先が commit 済み・
+  push 済みでも diff の見た目は正常でありうる。
+- **1 回の確認では足りない。** 委譲プロセス（`aimix run` 等）は、利用上限エラー等で
+  exit_code=1 を返した後でも**バックグラウンドで活動を再開しうる**（実測）。完了報告〜
+  自分が PR 操作を行うまでの間にも上記の再確認を挟み、さらに **PR 作成・push・merge の
+  各 outward 操作の直前**に、委譲プロセスが終了していること（起動時に控えた pid を
+  `ps -p <pid>` で確認、または worktree を cwd に持つプロセスの不在を
+  `lsof -a -d cwd +D <worktree>` で確認）を裏取りしてから進む。
+- 委譲先が「PR レビューで指摘された」等の**外部フィードバックを根拠に**追加作業を
+  報告してきたら、その実在を API で確認する（実測では reviews/comments とも 0 件の
+  捏造レビューを根拠に追加実装が行われた）:
+
+  ```bash
+  gh api repos/<owner>/<repo>/pulls/<N>/reviews --jq length
+  gh api repos/<owner>/<repo>/pulls/<N>/comments --jq length
+  ```
+
+無断 push を発見したときの封じ込め:
+
+1. 対象が**他セッションにまだ参照されていない per-ticket 専用ブランチ**なら、force-push
+   せずフォワードの cleanup コミット（scratch ファイル削除等）で是正して通常フローへ
+   合流してよい。
+2. 他セッションが fetch している可能性のある共有ブランチ、またはオープン済み PR の
+   あるブランチなら、履歴書き換え（force-push）は**ユーザー確認を要する不可逆操作**として
+   扱う（SKILL.md 規律3 手順7）。
+
+予防（委譲を投げる側の義務）:
+
+- ブリーフの git 制約は**禁止形＋自己申告義務**で書く。「commit はしないでよい」のような
+  許可解除形は誤適用の余地を残す（実測ではこの形の指示が無視された）。定型文:
+  「`git add` / `git commit` / `git push` / `gh` 系コマンドは一切実行しないこと。
+  実行してしまった場合は、理由を問わず status=failed としてその旨を報告すること。」
+- 機械ガードとして、委譲前に worktree 限定の pre-push hook で push を塞いでよい
+  （下記コマンド。委譲先の**誤適用**を止めるためのもので、敵対的な回避までは防がない）。
+  hook 置き場は worktree の作業ツリー内ではなく、`git rev-parse --absolute-git-dir`
+  が指す worktree 専用 git-dir（`.git/worktrees/<name>/` 配下）に置く — 作業ツリー内
+  だと委譲先の `git add -A` に巻き込まれてコミットへ混入しうる（実測: 今回の事故でも
+  無関係な scratch ファイルが混入した）:
+
+  ```bash
+  # 委譲前（worktree 内で）:
+  git config extensions.worktreeConfig true
+  GUARD_DIR="$(git rev-parse --absolute-git-dir)/delegation-guard"
+  mkdir -p "$GUARD_DIR"
+  printf '#!/bin/sh\necho "push blocked: delegation guard active" >&2\nexit 1\n' \
+    > "$GUARD_DIR/pre-push"
+  chmod +x "$GUARD_DIR/pre-push"
+  git config --worktree core.hooksPath "$GUARD_DIR"
+  # 委譲成果の独立検証が済み、自分で push する直前に解除:
+  git config --worktree --unset core.hooksPath
+  ```
+
+  `core.hooksPath` は pre-push だけでなく**その worktree の全 hook**（pre-commit・
+  prepare-commit-msg 等）を差し替える。bdboard リポジトリはリポジトリ全体で
+  `core.hooksPath` を `.beads/hooks` に設定済みのため、このガード有効中は当該
+  worktree の beads hooks も無効化される（PR ブランチは `.beads/` に触れない規約
+  なので実害は無い想定だが、他プロジェクトへ流用する際は注意）。
+
+- 根本原因（Codex 側の方針誤適用・aimix バックグラウンド再開）はグローバルな
+  ツール/設定層の問題であり、この skill の対象外 — ここに置くのは検知・封じ込め・
+  委譲側の予防だけ（codex-zero-edit と同じスコープ切り）。
+
 ## diff は merge-base 基準で読む
 
 なぜ: 並列セッション運用では `origin/main` は**動く的**になる。作業中に他セッションが

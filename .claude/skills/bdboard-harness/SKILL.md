@@ -208,7 +208,7 @@ worktree 作成から PR・マージまでの全体フロー:
 | [references/worktree-pr-flow.md](references/worktree-pr-flow.md) | per-ticket worktree+branch+PR フローの全手順とマージ排他3層 |
 | [references/lease-params.md](references/lease-params.md) | lease/heartbeat/reclaim の既定パラメータと失敗時の意味 |
 | [references/question-template.md](references/question-template.md) | 確認待ちコメントの書き方テンプレ |
-| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ） |
+| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ、無断 commit/push/PR作成/force-push の検知と封じ込め） |
 | [references/frontend-gotchas.md](references/frontend-gotchas.md) | bd/git 運用規律ではなく web/ 実装（React+Vite）自体で踏んだ非自明な罠。`<details>` の子要素に無条件 `display` を当てると閉じていても常時レンダリングされクリックを奪う問題、dev限定の現象かを本番ビルド(`vite build && vite preview`)で切り分ける手順 |
 | [references/failure-catalog.md](references/failure-catalog.md) | 既知ハーネス失敗の照合台帳。カテゴリ別（排他・worktree / マージ・PR / サーバー・ポート / 検証・ビルド / 委譲・検証 / 多層ハーネス・配布 / bd 操作・確認待ち）の圧縮エントリと本則へのポインタ |
 | [references/brushup-protocol.md](references/brushup-protocol.md) | 規律5の詳細手順。失敗の判定基準、証拠保全、根本原因の4分類、教訓の配置先決定表、Fable レビューゲート、肥大化防止（アンチエントロピー） |

@@ -156,10 +156,15 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
      --jq '{number, html_url}'
    ```
 
-   実測（2026-08-29, PR #134）: `gh api rate_limit` の graphql が **remaining=5000 を
-   示していても GraphQL 呼び出しが exceeded で拒否され続ける**ことがある（他セッションの
-   消費との競合か、rate_limit 表示が次窓の値を先取りしている可能性 — 原因未確定）。
-   rate_limit の表示を信じて sleep で待つ前に、まず REST 代替を試すほうが速い。
+   実測（2026-08-29, PR #134 / bdboard-2w3）: `gh api rate_limit` の graphql が
+   **remaining=5000 を示していても GraphQL 呼び出しが exceeded で拒否され続ける**
+   ことがある。bdboard-2w3 で `gh api graphql ... -i` の実レスポンスヘッダを直接
+   probe したところ `X-Ratelimit-Remaining: 0` が返っており、原因は「rate_limit
+   スナップショットの取得後、実際の呼び出しまでの間に他セッションの並行消費で枯渇した」
+   （スナップショットが実態より新しく見えるラグ）と確認できた — 表示自体が誤りなの
+   ではなく、アカウント単位で共有される枠を他セッションが同時に食う速さにスナップ
+   ショットが追いつかない。rate_limit の表示を信じて sleep で待つ前に、まず REST
+   代替を試すほうが速い。
 2. 正確なリセット時刻を取る（`gh api rate_limit` 自体は REST(core) 枠なので、GraphQL が
    枯渇していても通る）:
 
@@ -172,6 +177,8 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
    （`sleep N && gh pr create ...` の形はハーネスにブロックされる既知の制約がある）。
    リトライは sleep 完了後の**別の** Bash 呼び出しで行う。待ちが長いなら、その間に
    GraphQL を使わない作業（実装・検証・`git push` まで）を進めてから戻ってよい。
+   Monitor/loop 等の能動ポーリング文脈では、sleep で滞留せず ScheduleWakeup
+   （等のスケジュール手段）で reset 時刻以降の再開を予約してターンを返してよい。
 4. `gh pr merge` の途中で枯渇した場合は、リトライの前に**マージが実際どこまで進んだかを
    REST で確認する**（GitHub 側は成功していて、CLI のレスポンス取得だけが失敗した
    可能性がある。盲目リトライは二重マージ・状態不整合のもと）:
