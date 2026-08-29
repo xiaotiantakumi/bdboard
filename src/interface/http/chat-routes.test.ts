@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import { compareStrings } from '../../domain/compare.js';
 import { makeTicket } from '../../domain/test-support.js';
@@ -539,6 +539,107 @@ describe('POST /api/chat/message/stream', () => {
     });
     expect(text).not.toContain('event: done');
     expect(Object.keys(JSON.parse(errorEvents[0]![1]!)).sort()).toEqual(['code', 'detail', 'error']);
+  });
+
+  describe('SSE keepalive ping', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it('sends ping events every 15 seconds while the stream is open', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      let resolveTurn!: (result: ChatTurnResult) => void;
+      const turnPromise = new Promise<ChatTurnResult>((resolve) => {
+        resolveTurn = resolve;
+      });
+
+      const streamingAgent = createFakeAgent({
+        descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+        sendMessageStream: vi.fn(async () => turnPromise),
+      });
+      const app = createApp({
+        agent: streamingAgent,
+        cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
+        now: () => NOW,
+      });
+
+      const responsePromise = app.request(
+        '/api/chat/message/stream',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+        },
+        LOCAL_ENV,
+      );
+
+      await vi.waitFor(() => expect(streamingAgent.sendMessageStream).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      resolveTurn({
+        reply: 'reply',
+        sessionId: '550e8400-e29b-41d4-a716-446655440099',
+        agentId: 'test-agent',
+        failedTools: [],
+      });
+
+      const res = await responsePromise;
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text.match(/event: ping/g)).toHaveLength(1);
+      expect(text).toContain(`"now":"${NOW.toISOString()}"`);
+      expect(text).toContain('event: done');
+    });
+
+    it('clears the ping timer when the stream closes', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+      const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+
+      let resolveTurn!: (result: ChatTurnResult) => void;
+      const turnPromise = new Promise<ChatTurnResult>((resolve) => {
+        resolveTurn = resolve;
+      });
+
+      const streamingAgent = createFakeAgent({
+        descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+        sendMessageStream: vi.fn(async () => turnPromise),
+      });
+      const app = createApp({
+        agent: streamingAgent,
+        cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
+      });
+
+      const responsePromise = app.request(
+        '/api/chat/message/stream',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+        },
+        LOCAL_ENV,
+      );
+
+      await vi.waitFor(() => expect(streamingAgent.sendMessageStream).toHaveBeenCalled());
+      resolveTurn({
+        reply: 'reply',
+        sessionId: '550e8400-e29b-41d4-a716-446655440099',
+        agentId: 'test-agent',
+        failedTools: [],
+      });
+
+      const res = await responsePromise;
+      await res.text();
+
+      expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15_000);
+      const timerId = setIntervalSpy.mock.results[0]?.value;
+      expect(clearIntervalSpy).toHaveBeenCalledWith(timerId);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
   });
 
 });

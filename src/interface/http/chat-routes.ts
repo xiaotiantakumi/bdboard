@@ -129,6 +129,7 @@ const CHAT_TURN_STATUS_PATH_PATTERN = /^\/api\/chat\/turn-status$/;
  * 分だけなので、この数に届くことは想定していない。
  */
 const CHAT_COMPLETED_TURNS_MAX = 20;
+const CHAT_STREAM_PING_INTERVAL_MS = 15_000;
 
 interface CompletedChatTurn {
   readonly sessionId: string;
@@ -678,6 +679,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       let clientGone = false;
       let cleanedUp = false;
       let finished = false;
+      let pingTimer: ReturnType<typeof setInterval> | undefined;
       const signal = c.req.raw.signal;
       const waitForQueue = (): Promise<void> => new Promise((resolve) => {
         wake = resolve;
@@ -706,6 +708,10 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         clientGone = true;
         wakeUp();
         signal.removeEventListener('abort', cleanup);
+        if (pingTimer !== undefined) {
+          clearInterval(pingTimer);
+          pingTimer = undefined;
+        }
       };
       stream.onAbort(cleanup);
       if (signal.aborted) {
@@ -713,6 +719,13 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       } else {
         signal.addEventListener('abort', cleanup);
       }
+
+      pingTimer = setInterval(() => {
+        enqueue({
+          event: 'ping',
+          data: JSON.stringify({ now: now().toISOString() }),
+        });
+      }, CHAT_STREAM_PING_INTERVAL_MS);
 
       const runTurn = async (): Promise<void> => {
         try {
