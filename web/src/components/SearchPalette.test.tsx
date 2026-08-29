@@ -323,6 +323,66 @@ describe('SearchPalette', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('ignores stale search responses when an older request resolves after a newer one', async () => {
+    const oldResults: TicketSearchResultDto[] = [
+      {
+        id: 'bdboard-old',
+        projectId: 'proj-old',
+        projectName: 'Old Project',
+        title: 'Old stale result',
+        status: 'open',
+        priority: 3,
+        issueType: 'task',
+      },
+    ];
+    const newResults: TicketSearchResultDto[] = [
+      {
+        id: 'bdboard-new',
+        projectId: 'proj-new',
+        projectName: 'New Project',
+        title: 'New correct result',
+        status: 'open',
+        priority: 1,
+        issueType: 'task',
+      },
+    ];
+
+    let resolveOld: (value: TicketSearchResultDto[]) => void;
+    let resolveNew: (value: TicketSearchResultDto[]) => void;
+    const oldPromise = new Promise<TicketSearchResultDto[]>((resolve) => {
+      resolveOld = resolve;
+    });
+    const newPromise = new Promise<TicketSearchResultDto[]>((resolve) => {
+      resolveNew = resolve;
+    });
+
+    mockSearchTickets
+      .mockImplementationOnce(() => oldPromise)
+      .mockImplementationOnce(() => newPromise);
+
+    renderPalette();
+    const input = getSearchInput();
+
+    fireEvent.change(input, { target: { value: 'abc' } });
+    await waitFor(() => {
+      expect(mockSearchTickets).toHaveBeenCalledWith('abc', 30);
+    });
+
+    fireEvent.change(input, { target: { value: 'abcd' } });
+    await waitFor(() => {
+      expect(mockSearchTickets).toHaveBeenCalledWith('abcd', 30);
+    });
+
+    resolveNew!(newResults);
+    expect(await screen.findByText('New correct result')).toBeInTheDocument();
+
+    resolveOld!(oldResults);
+    await waitFor(() => {
+      expect(screen.getByText('New correct result')).toBeInTheDocument();
+      expect(screen.queryByText('Old stale result')).not.toBeInTheDocument();
+    });
+  });
+
   it('hides recent tickets when query is entered', async () => {
     const user = userEvent.setup();
     const recentTickets: RecentTicketEntry[] = [
