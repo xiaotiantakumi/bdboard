@@ -805,7 +805,14 @@ export function App() {
               : 'ボードの読み込みに失敗しました'}
           </p>
         )}
-        {(view === 'merged' || view === 'split') && (
+        {/* Next Up も対象に含める (bdboard-ml0k)。BulkSelectionProvider は
+            ErrorBoundary の外に置いてビュー横断で選択を保つ設計 (PR#129) で、
+            Next Up のカードも LaneColumn の CardItem を再利用しているため
+            チェックボックスは出るし選択も入る。ここで操作バーだけを出さないと
+            「選べるのに何もできない」状態になる。Next Up が並べるのは
+            board.lanes.ready のカードだけで、cardsById は merged と全
+            projects から集めているので、表示中のカードは必ず含まれる。 */}
+        {(view === 'merged' || view === 'split' || view === 'next') && (
           <BulkActionBar
             cardsById={boardCardsById}
             availableLabels={availableLabels}
