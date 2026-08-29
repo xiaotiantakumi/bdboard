@@ -145,6 +145,11 @@ export function App() {
     10,
     validateNextUpLimit,
   );
+  const [nextUpShowEpics, setNextUpShowEpics] = usePersistedState(
+    UI_STORAGE_KEYS.nextUpShowEpics,
+    false,
+    validateBoolean,
+  );
   const [activityWindowDays, setActivityWindowDays] = usePersistedState(
     UI_STORAGE_KEYS.activityWindowDays,
     1,
@@ -875,6 +880,8 @@ export function App() {
             board={boardQuery.data.merged}
             limit={nextUpLimit}
             onLimitChange={setNextUpLimit}
+            showEpics={nextUpShowEpics}
+            onShowEpicsChange={setNextUpShowEpics}
             projectNames={projectNames}
             projectActiveSessions={projectActiveSessions}
             pendingDecisionIds={pendingDecisionIds}

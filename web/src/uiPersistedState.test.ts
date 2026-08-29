@@ -8,6 +8,7 @@ import {
   priorityCeilingValue,
   recordRecentTicket,
   validateBoardFilterPresets,
+  validateBoolean,
   validateIssueTypeArray,
   validateLaneArray,
   validatePriorityCeiling,
@@ -76,6 +77,13 @@ describe('uiPersistedState', () => {
     expect(validateIssueTypeArray(['bug', 'unknown'])).toBeNull();
     expect(validateIssueTypeArray('bug')).toBeNull();
     expect(validateIssueTypeArray([1, 2])).toBeNull();
+  });
+
+  it('validates nextUpShowEpics persistence values', () => {
+    expect(UI_STORAGE_KEYS.nextUpShowEpics).toBe('bdboard.ui.nextUpShowEpics');
+    expect(validateBoolean(true)).toBe(true);
+    expect(validateBoolean(false)).toBe(false);
+    expect(validateBoolean('true')).toBeNull();
   });
 
   it('validates watched ticket id arrays', () => {
