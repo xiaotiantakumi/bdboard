@@ -4357,6 +4357,15 @@ body {
   user-select: none;
 }
 
+/* 通常パネルの 720px / viewport - 320px 上限を、チャットの最大化時だけ外す。
+   幅は React 側で 100% を設定し、解除時は保存済みの通常幅へ戻る。 */
+.detail-panel.resizable-side-panel.chat-panel.is-maximized {
+  min-width: 100%;
+  max-width: 100%;
+  border-left: none;
+  box-shadow: none;
+}
+
 .side-panel-resize-handle {
   position: absolute;
   z-index: 2;
@@ -5266,6 +5275,11 @@ body {
   }
 
   .side-panel-resize-handle {
+    display: none;
+  }
+
+  /* モバイルのパネルは既に 100vw なので、最大化操作は表示しない。 */
+  .chat-panel-maximize {
     display: none;
   }
 

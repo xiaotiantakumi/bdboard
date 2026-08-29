@@ -491,6 +491,7 @@ export function ChatPanel({
     Record<string, Record<string, string>>
   >(UI_STORAGE_KEYS.chatModelSelections, {}, validateChatModelSelections);
   const chatPanel = useResizableSidePanel(UI_STORAGE_KEYS.chatPanelWidth);
+  const [isChatPanelMaximized, setIsChatPanelMaximized] = useState(false);
   const threadModelIdsRef = useRef(threadModelIds);
   threadModelIdsRef.current = threadModelIds;
   const historyRequestIdRef = useRef(0);
@@ -2696,27 +2697,48 @@ export function ChatPanel({
     <div className="overlay" onClick={requestClose} role="presentation">
       <div
         ref={panelRef}
-        className={`detail-panel chat-panel resizable-side-panel${chatPanel.isResizing ? ' is-resizing' : ''}`}
-        style={{ width: `${chatPanel.width}px` }}
+        className={`detail-panel chat-panel resizable-side-panel${chatPanel.isResizing ? ' is-resizing' : ''}${isChatPanelMaximized ? ' is-maximized' : ''}`}
+        style={{ width: isChatPanelMaximized ? '100%' : `${chatPanel.width}px` }}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="chat-panel-title"
       >
-        <SidePanelResizeHandle label="チャットパネルの幅を変更" panel={chatPanel} />
+        {!isChatPanelMaximized && (
+          <SidePanelResizeHandle label="チャットパネルの幅を変更" panel={chatPanel} />
+        )}
         <div className="detail-header">
           <h2 id="chat-panel-title" className="detail-title">
             チャット
           </h2>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            className="btn detail-close"
-            onClick={requestClose}
-          >
-            閉じる
-          </button>
+          {/* 見出しの操作は他パネル(チケット詳細/ヘルプ)と同じく
+              .detail-header-actions にまとめる。.detail-header は
+              justify-content: space-between なので、直下に3つ並べると
+              「最大化」が見出しと「閉じる」の中間に浮いてしまう
+              (PR#139 レビュー major-2)。 */}
+          <div className="detail-header-actions">
+            <button
+              type="button"
+              className="btn chat-panel-maximize"
+              onClick={() => setIsChatPanelMaximized((maximized) => !maximized)}
+              title={isChatPanelMaximized ? '元の幅に戻す' : '画面幅いっぱいに広げる'}
+            >
+              {/* aria-pressed は付けない (PR#139 レビュー minor-3)。ラベル自体が
+                  「最大化」/「縮小」と入れ替わるので、押下状態も併せて伝えると
+                  「縮小、押されています」= 縮小が有効、と逆に読める。ラベルが
+                  次にどうなるかを示す通常のボタンとして扱う。 */}
+              {isChatPanelMaximized ? '縮小' : '最大化'}
+            </button>
+            <button
+              ref={closeButtonRef}
+              type="button"
+              className="btn detail-close"
+              onClick={requestClose}
+            >
+              閉じる
+            </button>
+          </div>
         </div>
 
         {/* Chat Redesign 1b: タブ帯を「現在のスレッド名+件数」ボタン1つに圧縮し、
