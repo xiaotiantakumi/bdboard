@@ -1,5 +1,5 @@
 import { compareStrings } from '../../domain/compare.js';
-import { extractLatestPrUrl, type PrBadge } from '../../domain/pr-link.js';
+import { extractLatestPrUrl, type PrBadge, type PrStatus } from '../../domain/pr-link.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { CommentReader } from '../ports/comment-reader.js';
@@ -13,6 +13,8 @@ export interface GetPrBadgesOptions {
   readonly logWarn?: (message: string) => void;
   /** コメントから抽出した PR URL のインメモリキャッシュ。未指定なら毎回フルフェッチ。 */
   readonly commentCache?: PrBadgeCommentCache;
+  /** gh pr view 由来の PR 状態インメモリキャッシュ。未指定なら毎回フルフェッチ。 */
+  readonly statusCache?: PrBadgeStatusCache;
 }
 
 interface PrBadgeCommentCacheEntry {
@@ -53,6 +55,63 @@ export class PrBadgeCommentCache {
   }
 }
 
+interface PrBadgeStatusCacheEntry {
+  readonly status: PrStatus | null;
+  readonly fetchedAt: number;
+  readonly permanent: boolean;
+}
+
+export interface PrBadgeStatusCacheOptions {
+  readonly now?: () => number;
+  readonly ttlMs?: number;
+}
+
+const DEFAULT_STATUS_TTL_MS = 60_000;
+
+function isTerminalPrStatus(status: PrStatus | null): boolean {
+  if (status === null) {
+    return false;
+  }
+  return (
+    (status.state === 'merged' || status.state === 'closed') && status.checkStatus !== 'pending'
+  );
+}
+
+/** PR URL ごとの gh pr view 結果を TTL/恒久で保持する薄いキャッシュ。 */
+export class PrBadgeStatusCache {
+  private readonly entries = new Map<string, PrBadgeStatusCacheEntry>();
+  private readonly now: () => number;
+  private readonly ttlMs: number;
+
+  constructor(options?: PrBadgeStatusCacheOptions) {
+    this.now = options?.now ?? (() => Date.now());
+    this.ttlMs = options?.ttlMs ?? DEFAULT_STATUS_TTL_MS;
+  }
+
+  get(url: string): PrStatus | null | undefined {
+    const entry = this.entries.get(url);
+    if (entry === undefined) {
+      return undefined;
+    }
+    if (entry.permanent) {
+      return entry.status;
+    }
+    if (this.now() - entry.fetchedAt < this.ttlMs) {
+      return entry.status;
+    }
+    this.entries.delete(url);
+    return undefined;
+  }
+
+  set(url: string, status: PrStatus | null): void {
+    this.entries.set(url, {
+      status,
+      fetchedAt: this.now(),
+      permanent: isTerminalPrStatus(status),
+    });
+  }
+}
+
 // Matches DEFAULT_CONCURRENCY in bd-cli-issue-repository.ts.
 const COMMENT_FETCH_CONCURRENCY = 3;
 
@@ -83,6 +142,7 @@ export async function getPrBadges(
   );
 
   const commentCache = options?.commentCache;
+  const statusCache = options?.statusCache;
   // フィルタ後の workItems ではなく盤面全体 (allEntries) の commentCount>0 集合で
   // pruning する。フィルタ済みの集合を使うと、projectIds でプロジェクトを絞った
   // 呼び出しのたびにフィルタ対象外プロジェクトのキャッシュエントリが間引かれ、
@@ -127,13 +187,19 @@ export async function getPrBadges(
     }
 
     let status: PrBadge['status'] = null;
-    statusAttempts += 1;
-    try {
-      status = await prStatusReader.getPrStatus(url);
-    } catch (error) {
-      // バッジ自体は URL だけで出せるので、状態が引けないのは劣化であって失敗ではない。
-      status = null;
-      statusFailures.push({ id: url, error });
+    const cachedStatus = statusCache?.get(url);
+    if (cachedStatus !== undefined) {
+      status = cachedStatus;
+    } else {
+      statusAttempts += 1;
+      try {
+        status = await prStatusReader.getPrStatus(url);
+        statusCache?.set(url, status);
+      } catch (error) {
+        // バッジ自体は URL だけで出せるので、状態が引けないのは劣化であって失敗ではない。
+        status = null;
+        statusFailures.push({ id: url, error });
+      }
     }
 
     badges.push({

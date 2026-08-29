@@ -12,7 +12,7 @@ import type { CommentReader } from '../ports/comment-reader.js';
 import { BdError } from '../ports/issue-repository.js';
 import type { PrStatus } from '../../domain/pr-link.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
-import { getPrBadges, PrBadgeCommentCache } from './get-pr-badges.js';
+import { getPrBadges, PrBadgeCommentCache, PrBadgeStatusCache } from './get-pr-badges.js';
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -802,5 +802,176 @@ describe('getPrBadges', () => {
     // listComments は増えない。
     await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
     expect(commentReader.listComments).toHaveBeenCalledTimes(2);
+  });
+
+  it('reuses statusCache on second call for terminal merged/closed PRs', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-pr', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        {
+          id: 'c1',
+          issueId: 'bdboard-pr',
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: updatedAt,
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () =>
+        ({ state: 'merged', checkStatus: 'pass' }) satisfies PrStatus,
+      ),
+    };
+
+    let fakeNow = 1_000;
+    const commentCache = new PrBadgeCommentCache();
+    const statusCache = new PrBadgeStatusCache({ now: () => fakeNow });
+    const options = { commentCache, statusCache };
+
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    fakeNow += 999_999_999;
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses statusCache within TTL for open PRs and refetches after expiry', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-pr', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        {
+          id: 'c1',
+          issueId: 'bdboard-pr',
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: updatedAt,
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () =>
+        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+      ),
+    };
+
+    let fakeNow = 1_000;
+    const commentCache = new PrBadgeCommentCache();
+    const statusCache = new PrBadgeStatusCache({ now: () => fakeNow, ttlMs: 60_000 });
+    const options = { commentCache, statusCache };
+
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    fakeNow += 30_000;
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    fakeNow += 31_000;
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not cache PR status when getPrStatus throws', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-pr', projectId: a.id, commentCount: 1 })],
+      fingerprint: 'fp-a',
+      fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        {
+          id: 'c1',
+          issueId: 'bdboard-pr',
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: new Date('2026-06-01T12:00:00.000Z'),
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('gh not authenticated'))
+        .mockResolvedValueOnce(({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus),
+    };
+
+    const commentCache = new PrBadgeCommentCache();
+    const statusCache = new PrBadgeStatusCache();
+    const logWarn = vi.fn();
+    const options = { commentCache, statusCache, logWarn };
+
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats merged PRs with pending checks as non-terminal and respects TTL', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-pr', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        {
+          id: 'c1',
+          issueId: 'bdboard-pr',
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: updatedAt,
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () =>
+        ({ state: 'merged', checkStatus: 'pending' }) satisfies PrStatus,
+      ),
+    };
+
+    let fakeNow = 1_000;
+    const commentCache = new PrBadgeCommentCache();
+    const statusCache = new PrBadgeStatusCache({ now: () => fakeNow, ttlMs: 60_000 });
+    const options = { commentCache, statusCache };
+
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    fakeNow += 999_999_999;
+    await getPrBadges(cache, commentReader, prStatusReader, options);
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
   });
 });
