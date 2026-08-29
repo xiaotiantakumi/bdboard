@@ -16,7 +16,14 @@ import {
 let platformSupportPromise: Promise<PlatformSupportDto> | null = null;
 
 function loadPlatformSupport(): Promise<PlatformSupportDto> {
-  platformSupportPromise ??= fetchPlatformSupport();
+  platformSupportPromise ??= fetchPlatformSupport().catch((err: unknown) => {
+    // 失敗した promise を持ち続けると、サーバー再起動中にたまたま初回取得が
+    // 失敗しただけで、そのページの寿命の間ずっと案内が出なくなる。
+    // 「正直な案内」が黙って消えるのが一番まずいので、失敗はキャッシュしない
+    // (PR#115 fable レビュー minor)。
+    platformSupportPromise = null;
+    throw err;
+  });
   return platformSupportPromise;
 }
 
@@ -25,18 +32,15 @@ export function resetPlatformSupportCache(): void {
   platformSupportPromise = null;
 }
 
-interface PlatformLimitationNoticeProps {
-  feature: PlatformFeature;
-}
-
 /**
- * その機能が実行プラットフォームで使えないとき、理由付きで知らせる
- * (bdboard-70z.9)。
+ * その機能の制限。使えるとき・まだ分からないときは null。
  *
- * 使える環境では何も描かない。黙って空リストを見せる/エラーだけ出すのが
- * 一番悪い体験なので、「動かない」ことと「なぜ動かないか」を同じ場所に出す。
+ * 通知の描画だけでなく、入力欄の無効化のような「機能そのものを塞ぐ」用途にも
+ * 使う (bdboard-70z.9)。
  */
-export function PlatformLimitationNotice({ feature }: PlatformLimitationNoticeProps) {
+export function usePlatformLimitation(
+  feature: PlatformFeature,
+): PlatformLimitationDto | null {
   const [limitation, setLimitation] = useState<PlatformLimitationDto | null>(null);
 
   useEffect(() => {
@@ -52,7 +56,7 @@ export function PlatformLimitationNotice({ feature }: PlatformLimitationNoticePr
         );
       })
       // 制限の問い合わせに失敗したからといって、画面を壊してはいけない。
-      // 分からないときは何も言わない。
+      // 分からないときは何も言わず、機能も塞がない。
       .catch(() => {
         if (!cancelled) {
           setLimitation(null);
@@ -63,6 +67,23 @@ export function PlatformLimitationNotice({ feature }: PlatformLimitationNoticePr
       cancelled = true;
     };
   }, [feature]);
+
+  return limitation;
+}
+
+interface PlatformLimitationNoticeProps {
+  feature: PlatformFeature;
+}
+
+/**
+ * その機能が実行プラットフォームで使えないとき、理由付きで知らせる
+ * (bdboard-70z.9)。
+ *
+ * 使える環境では何も描かない。黙って空リストを見せる/エラーだけ出すのが
+ * 一番悪い体験なので、「動かない」ことと「なぜ動かないか」を同じ場所に出す。
+ */
+export function PlatformLimitationNotice({ feature }: PlatformLimitationNoticeProps) {
+  const limitation = usePlatformLimitation(feature);
 
   if (limitation === null) {
     return null;

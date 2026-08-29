@@ -92,6 +92,7 @@ import { mountSecurityMiddleware } from './interface/http/app-security.js';
 import {
   describePlatformSupport,
   isPlatformFeatureSupported,
+  unrestrictedPlatformSupport,
 } from './domain/platform-support.js';
 import {
   createPlatformFeatureGuard,
@@ -298,7 +299,7 @@ async function main(): Promise<void> {
   // (bdboard-70z.9)。BDBOARD_IGNORE_PLATFORM_LIMITS は、独自に環境を整えた
   // 利用者が制限を外して試せるようにするための逃げ道。
   const platformSupport = envBool('BDBOARD_IGNORE_PLATFORM_LIMITS')
-    ? { platform: process.platform, limitations: [] }
+    ? unrestrictedPlatformSupport(process.platform)
     : describePlatformSupport(process.platform);
   const sessionDiscoverySupported = isPlatformFeatureSupported(
     platformSupport,
@@ -866,10 +867,12 @@ async function main(): Promise<void> {
   // .cmd シムが無いことに由来する例外が 500 になり、「壊れている」のか
   // 「そもそも動かない」のか区別が付かない (bdboard-70z.9)。
   app.route('/', createPlatformSupportRoutes({ platformSupport }));
-  app.use(
-    '/api/processes',
-    createPlatformFeatureGuard(platformSupport, 'session-discovery'),
-  );
+  // コレクションとワイルドカードの両方を登録する。後からサブパス
+  // (/api/processes/:pid など) が足されたときの掛け忘れを防ぐ、という
+  // chat-routes.ts の既存の作法に合わせている (PR#115 fable レビュー nit)。
+  for (const pattern of ['/api/processes', '/api/processes/*']) {
+    app.use(pattern, createPlatformFeatureGuard(platformSupport, 'session-discovery'));
+  }
   app.use('/api/chat/*', createPlatformFeatureGuard(platformSupport, 'chat'));
 
   app.route('/', inner);

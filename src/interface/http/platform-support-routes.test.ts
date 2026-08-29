@@ -103,4 +103,28 @@ describe('createPlatformFeatureGuard', () => {
     expect(res.status).toBe(501);
     await expect(res.json()).resolves.toMatchObject({ feature: 'session-discovery' });
   });
+
+  it('needs both the collection and the wildcard pattern to cover sub-paths', async () => {
+    // Hono の '/api/processes' はコレクション自身にしか当たらない。main.ts が
+    // 2 パターン登録しているのはこのためで、片方だけにすると
+    // /api/processes/<pid> が素通りして win32 で ps を叩きに行く
+    // (PR#115 fable レビュー nit)。
+    const support = describePlatformSupport('win32');
+    const handler = vi.fn(() => new Response('ok'));
+
+    const collectionOnly = new Hono();
+    collectionOnly.use('/api/processes', createPlatformFeatureGuard(support, 'session-discovery'));
+    collectionOnly.get('/api/processes/:pid', handler);
+    expect((await get(collectionOnly, '/api/processes/123')).status).toBe(200);
+
+    const both = new Hono();
+    for (const pattern of ['/api/processes', '/api/processes/*']) {
+      both.use(pattern, createPlatformFeatureGuard(support, 'session-discovery'));
+    }
+    both.get('/api/processes', handler);
+    both.get('/api/processes/:pid', handler);
+
+    expect((await get(both, '/api/processes')).status).toBe(501);
+    expect((await get(both, '/api/processes/123')).status).toBe(501);
+  });
 });

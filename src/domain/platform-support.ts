@@ -65,6 +65,14 @@ export function describePlatformSupport(platform: string): PlatformSupport {
   };
 }
 
+/**
+ * すべての制限を外した記述。BDBOARD_IGNORE_PLATFORM_LIMITS 用 —
+ * 形の組み立てを domain の外へ漏らさないための構築子 (PR#115 fable レビュー nit)。
+ */
+export function unrestrictedPlatformSupport(platform: string): PlatformSupport {
+  return { platform, limitations: [] };
+}
+
 /** 指定機能が使えるか。 */
 export function isPlatformFeatureSupported(
   support: PlatformSupport,

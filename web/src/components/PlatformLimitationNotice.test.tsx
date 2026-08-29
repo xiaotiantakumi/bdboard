@@ -88,6 +88,30 @@ describe('PlatformLimitationNotice', () => {
     expect(container).toBeEmptyDOMElement();
   });
 
+  it('retries after a failed load instead of caching the failure forever', async () => {
+    // 失敗をキャッシュし続けると、サーバー再起動中にたまたま初回取得が
+    // 失敗しただけで、そのページの寿命の間ずっと案内が出なくなる。
+    // 「正直な案内」が黙って消えるのが一番まずい。
+    fetchPlatformSupport.mockRejectedValueOnce(new Error('boom'));
+    fetchPlatformSupport.mockResolvedValue(WIN32);
+
+    const first = renderNotice('session-discovery');
+    await waitFor(() => {
+      expect(fetchPlatformSupport).toHaveBeenCalledTimes(1);
+    });
+    expect(first.container).toBeEmptyDOMElement();
+    first.unmount();
+
+    renderNotice('session-discovery');
+
+    expect(
+      await screen.findByText(
+        '稼働中のエージェントセッションの検出は Windows では利用できません。',
+      ),
+    ).toBeInTheDocument();
+    expect(fetchPlatformSupport).toHaveBeenCalledTimes(2);
+  });
+
   it('asks the server only once even when several notices are mounted', async () => {
     // 実行プラットフォームは動かない。パネルごとに問い合わせる理由が無い。
     fetchPlatformSupport.mockResolvedValue(WIN32);
