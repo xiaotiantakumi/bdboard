@@ -152,6 +152,7 @@ export function useBoardStream(): BoardStreamResult {
       // 集計系ビュー・詳細パネルのタイムライン（prefix マッチで全パラメータ版を一括 invalidate）
       void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
       void queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
+      void queryClient.invalidateQueries({ queryKey: ['project-harness'] });
       void queryClient.invalidateQueries({ queryKey: ['lease-health'] });
       void queryClient.invalidateQueries({ queryKey: ['merge-slot-status'] });
       void queryClient.invalidateQueries({ queryKey: ['activity'] });

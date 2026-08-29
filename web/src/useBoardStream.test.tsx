@@ -62,6 +62,7 @@ const BOARD_CHANGED_INVALIDATED_KEYS = [
   'projects',
   'hygiene',
   'harness-drift',
+  'project-harness',
   'lease-health',
   'merge-slot-status',
   'activity',
