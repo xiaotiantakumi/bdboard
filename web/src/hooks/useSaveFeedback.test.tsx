@@ -159,6 +159,15 @@ describe('useSaveFeedback after unmount (bdboard-ifff)', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  // これは煙テストであって、showError 側の mounted ガードを固定するものではない。
+  // 実際に showError からだけガードを外しても、このテストは通る (fable レビュー指摘)。
+  // showError はもともとタイマーを仕掛けないので getTimerCount は両方 0 だし、
+  // 生きている jsdom でのアンマウント後 setState は React が黙って捨てるので
+  // 例外にもならない。本番の壊れ方は「破棄済み jsdom で window に触る」ことで、
+  // それはテストの内側からは再現できない (再現できたらそのテスト自身が落ちる)。
+  //
+  // それでもガードは残す。showSuccess と非対称にすると、後から
+  // 「showError にも自動消去を足す」変更が入った瞬間に穴が開く。
   it('ignores a late showError too', () => {
     const { captured, unmount } = renderCaptured();
     unmount();
@@ -171,5 +180,15 @@ describe('useSaveFeedback after unmount (bdboard-ifff)', () => {
       });
     }).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('starts with isError false so an empty message never renders as an alert', () => {
+    // 呼び出し側は role={isError ? 'alert' : undefined} を組み立てる。初期値が
+    // true だと、まだ何も保存していない空の要素に alert が付く。
+    // これを固定しないと useState(false) -> useState(true) の変異が生き残る。
+    const { captured } = renderCaptured();
+
+    expect(captured.current?.isError).toBe(false);
+    expect(captured.current?.message).toBe('');
   });
 });
