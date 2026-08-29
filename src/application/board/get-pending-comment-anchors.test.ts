@@ -209,9 +209,69 @@ describe('getPendingCommentAnchors', () => {
       },
     };
 
-    const anchors = await getPendingCommentAnchors(cache, reader);
+    const logWarn = vi.fn();
+    const anchors = await getPendingCommentAnchors(cache, reader, { logWarn });
 
     expect([...anchors.keys()]).toEqual([pendingDecisionKey('/a', 'bdboard-good')]);
+    // 黙って落ちると、あとで出る誤検知の原因を追う手掛かりがゼロになる
+    // (bdboard-fxxk)。件数・分母・代表の失敗が1行に入っていること。
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    const message = logWarn.mock.calls[0]?.[0] as string;
+    expect(message).toContain('1 of 2 failed');
+    expect(message).toContain('bdboard-bad');
+    expect(message).toContain('bd exploded');
+  });
+
+  it('says nothing when every ticket loads', async () => {
+    // 常にログを出す実装だと、正常時のログが騒音になって異常時に気づけない。
+    const cache = createFakeBoardCache();
+    const p = project('/a', '/projects/a');
+    cache.putProject({
+      project: p,
+      tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 1 })],
+      fingerprint: 'fp',
+      fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
+      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+    });
+
+    const logWarn = vi.fn();
+    await getPendingCommentAnchors(
+      cache,
+      readerReturning({
+        'bdboard-wait': [comment('bdboard-wait', '2026-05-31T00:00:00.000Z')],
+      }),
+      { logWarn },
+    );
+
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
+  it('emits a single line even when every ticket fails', async () => {
+    // bd が丸ごと壊れているときは対象が全滅する。失敗ごとに1行出す実装だと
+    // 1リクエストでログが埋まるので、呼び出し1回につき1行にまとめてある。
+    const cache = createFakeBoardCache();
+    const p = project('/a', '/projects/a');
+    const ids = ['bdboard-1', 'bdboard-2', 'bdboard-3'];
+    cache.putProject({
+      project: p,
+      tickets: ids.map((id) => makeTicket({ id, projectId: p.id, commentCount: 1 })),
+      fingerprint: 'fp',
+      fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
+      pendingDecisions: ids.map((id) => ({ id, allowFreeform: true })),
+    });
+
+    const reader: CommentReader = {
+      listComments: async () => {
+        throw new Error('bd is down');
+      },
+    };
+
+    const logWarn = vi.fn();
+    const anchors = await getPendingCommentAnchors(cache, reader, { logWarn });
+
+    expect(anchors.size).toBe(0);
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0]?.[0]).toContain('3 of 3 failed');
   });
 
   it('ignores comments whose timestamp is unusable', async () => {
