@@ -37,8 +37,6 @@ import {
   diffSessionLiveness,
   type BoardSnapshotProjectInput,
 } from './domain/board-notifications.js';
-import { resolveBoardThresholds } from './domain/board-thresholds.js';
-import { resolveHygieneThresholds } from './domain/hygiene-thresholds.js';
 import { resolveAiQuotaAlertThresholdPercent } from './domain/ai-quota-alert-thresholds.js';
 import { compareStrings } from './domain/compare.js';
 import { generatePassphrase } from './domain/passphrase.js';
@@ -105,6 +103,7 @@ import { createSessionValidator } from './interface/http/tunnel-session.js';
 import { createAiQuotaRoutes } from './interface/http/ai-quota-routes.js';
 import { createUpdateCheckRoutes } from './interface/http/update-check-routes.js';
 import { createCompressionMiddleware } from './interface/http/compression.js';
+import { buildApiDeps } from './interface/http/build-api-deps.js';
 import { createApiRoutes, type ApiStatus } from './interface/http/routes.js';
 import { createChatRoutes } from './interface/http/chat-routes.js';
 import {
@@ -832,33 +831,33 @@ async function main(): Promise<void> {
     hasTunnelSession: createSessionValidator(tunnelAccess),
   };
 
-  const inner = createApiRoutes({
-    cache,
-    applicationVersion,
-    now: () => new Date(),
-    getStatus: () => status,
-    refresh: () => runRefresh(true),
-    events,
-    sessions: () => sessions,
-    links: () => listTranscriptLinks(),
-    commentReader,
-    prStatusReader,
-    processScanner,
-    humanDecisions,
-    worktreeScanner,
-    issueWriter,
-    dependencyWriter,
-    sessionLinkWriter,
-    sessionTail: sessionTailReader,
-    writeAccess,
-    leaseReader,
-    mergeSlotReader,
-    reclaimScheduler,
-    getBoardThresholds: async () =>
-      resolveBoardThresholds(await boardThresholdsConfigStore.read()),
-    getHygieneThresholds: async () =>
-      resolveHygieneThresholds(await hygieneThresholdsConfigStore.read()),
-  });
+  const inner = createApiRoutes(
+    buildApiDeps({
+      cache,
+      applicationVersion,
+      now: () => new Date(),
+      getStatus: () => status,
+      refresh: () => runRefresh(true),
+      events,
+      boardThresholdsConfigStore,
+      hygieneThresholdsConfigStore,
+      sessions: () => sessions,
+      links: () => listTranscriptLinks(),
+      commentReader,
+      prStatusReader,
+      processScanner,
+      humanDecisions,
+      worktreeScanner,
+      issueWriter,
+      dependencyWriter,
+      sessionLinkWriter,
+      sessionTail: sessionTailReader,
+      writeAccess,
+      leaseReader,
+      mergeSlotReader,
+      reclaimScheduler,
+    }),
+  );
 
   const app = new Hono();
   const repoRoot = path.resolve(
