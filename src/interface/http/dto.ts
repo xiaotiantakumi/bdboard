@@ -338,6 +338,7 @@ export type HygieneIssueKindDto =
   | 'stale_in_progress'
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
+  | 'stale_pending_decision'
   | 'merged_leftover';
 
 export interface HygieneCycleEdgeDto {

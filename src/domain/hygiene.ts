@@ -20,6 +20,7 @@ export type HygieneIssueKind =
   | 'stale_in_progress'
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
+  | 'stale_pending_decision'
   | 'merged_leftover';
 
 export interface HygieneCycleEdge {
@@ -59,11 +60,46 @@ export interface HygieneThresholds {
   readonly staleInProgressAfterMs: number;
   /** P0/P1 を高優先とみなす上限（この値以下） */
   readonly highPriorityMax: number;
+  /**
+   * 既定 3日。
+   *
+   * 確認待ち(awaiting_human)のまま動きが無いチケットを拾う。in_progress の 7日より
+   * 短いのは、待っているのが人間の返答1つで、待たせている側(エージェント)は
+   * その間ずっと止まっているため。
+   *
+   * 測るのは updatedAt からの経過。bd human list が返す PendingDecision には
+   * 「いつ質問が出たか」が無い(src/application/ports/human-decisions.ts)ので、
+   * 「質問が出てから何日」ではなく「チケット本体が最後に更新されてからの期間」を見る。
+   *
+   * 注意: bd の updated_at は **コメントでは動かない**(実データで確認: bdboard-36w は
+   * updated_at 2026-08-16 に対し 08-18 と 08-29 にコメントがある)。つまりコメントで
+   * 議論が続いているチケットも、フィールドが3日変わらなければここに出る。Ticket に
+   * 最終コメント日時が無い(commentCount しか無い)ため今は updatedAt が唯一の手掛かり。
+   */
+  readonly stalePendingDecisionAfterMs: number;
+}
+
+/**
+ * 確認待ち集合のキー。
+ *
+ * ticket.id だけで持つと、同じIDのチケットを持つ別プロジェクトが同時にスコープへ
+ * 入っているときに取り違える。bd のIDはプロジェクト内でしか一意ではなく、盤面側は
+ * humanLabeledIdsFromCache を **プロジェクト単位** で作っている
+ * (src/application/board/get-board.ts) ので、健全性だけ全プロジェクト混ぜた集合で
+ * 判定すると、盤面では通常レーンのチケットに「確認待ちが放置されている」が付く。
+ * 依存循環の辺キー(collectCycleEdges)と同じ \0 結合で projectId を前置する。
+ */
+export function pendingDecisionKey(
+  projectId: string,
+  ticketId: TicketId,
+): string {
+  return `${projectId}\0${ticketId}`;
 }
 
 export const DEFAULT_HYGIENE_THRESHOLDS: HygieneThresholds = {
   staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
   highPriorityMax: 1,
+  stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
 };
 
 function ticketPriority(ticket: Ticket): unknown {
@@ -156,8 +192,16 @@ function checkStaleInProgress(
   ticket: Ticket,
   now: Date,
   thresholds: HygieneThresholds,
+  isPendingDecision: boolean,
 ): HygieneIssue | null {
   if (ticket.status !== 'in_progress' && ticket.status !== 'hooked') {
+    return null;
+  }
+  // 確認待ちは stale_pending_decision の担当。deriveLane が human ラベルを
+  // in_progress より優先する(src/domain/readiness.ts)ので、盤面が確認待ちに
+  // 置いているカードに対して「長期 in_progress」と言うと、盤面に無いレーンの話に
+  // なるうえ、同じ放置を2行で叱ることになる。
+  if (isPendingDecision) {
     return null;
   }
 
@@ -226,6 +270,48 @@ function checkUnblockedHighPriorityIdle(
     ticketId: ticket.id,
     projectId: ticket.projectId,
     message: 'ブロックは解除済みですが、高優先チケットが未着手のままです',
+    severity: 'warning',
+  };
+}
+
+/**
+ * 確認待ち(awaiting_human)のまま放置されているチケットを拾う。
+ *
+ * awaiting_human は ticket.status ではなく bd の human ラベル由来の派生レーンで
+ * (src/domain/readiness.ts の deriveLane)、Ticket 単体からは判定できない。呼び出し側が
+ * 集めた pendingDecisionKeys を渡してもらう前提で、渡されなければ何も出さない。
+ *
+ * closed は除外する。deriveLane も closed を done で上書きしていて(human ラベルの
+ * 外し忘れでチケットが再浮上しないための保険)、盤面で done のカードが健全性だけ
+ * 「確認待ちが放置されている」と言い出すのは矛盾になる。
+ */
+function checkStalePendingDecision(
+  ticket: Ticket,
+  now: Date,
+  thresholds: HygieneThresholds,
+  isPendingDecision: boolean,
+): HygieneIssue | null {
+  if (!isPendingDecision) {
+    return null;
+  }
+  if (ticket.status === 'closed') {
+    return null;
+  }
+  if (!isValidDate(ticket.updatedAt)) {
+    return null;
+  }
+
+  const elapsedMs = now.getTime() - ticket.updatedAt.getTime();
+  if (elapsedMs < thresholds.stalePendingDecisionAfterMs) {
+    return null;
+  }
+
+  const days = Math.floor(elapsedMs / (24 * 60 * 60_000));
+  return {
+    kind: 'stale_pending_decision',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message: `確認待ちのまま ${days} 日以上動きがありません`,
     severity: 'warning',
   };
 }
@@ -417,6 +503,7 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'stale_in_progress',
   'missing_priority',
   'unblocked_high_priority_idle',
+  'stale_pending_decision',
   'merged_leftover',
 ];
 
@@ -438,6 +525,12 @@ export function checkHygiene(
     readonly now: Date;
     readonly thresholds?: HygieneThresholds;
     readonly leftoverCandidates?: readonly LeftoverCandidate[];
+    /**
+     * 確認待ち(awaiting_human)のチケット。bd の human ラベル由来で Ticket からは
+     * 判定できないため、呼び出し側が集めて渡す。キーは pendingDecisionKey() で
+     * projectId を前置したもの。未指定なら stale_pending_decision は一切出ない。
+     */
+    readonly pendingDecisionKeys?: ReadonlySet<string>;
   },
 ): readonly HygieneIssue[] {
   const thresholds = ctx.thresholds ?? DEFAULT_HYGIENE_THRESHOLDS;
@@ -457,9 +550,29 @@ export function checkHygiene(
       issues.push(staleEpic);
     }
 
-    const staleInProgress = checkStaleInProgress(ticket, ctx.now, thresholds);
+    const isPendingDecision =
+      ctx.pendingDecisionKeys?.has(
+        pendingDecisionKey(ticket.projectId, ticket.id),
+      ) ?? false;
+
+    const staleInProgress = checkStaleInProgress(
+      ticket,
+      ctx.now,
+      thresholds,
+      isPendingDecision,
+    );
     if (staleInProgress !== null) {
       issues.push(staleInProgress);
+    }
+
+    const stalePendingDecision = checkStalePendingDecision(
+      ticket,
+      ctx.now,
+      thresholds,
+      isPendingDecision,
+    );
+    if (stalePendingDecision !== null) {
+      issues.push(stalePendingDecision);
     }
 
     const missingPriority = checkMissingPriority(ticket);
