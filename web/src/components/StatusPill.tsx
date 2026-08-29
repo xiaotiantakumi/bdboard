@@ -5,6 +5,7 @@ import {
   STATUS_LABELS,
   type StatusLevel,
 } from '../boardFreshness';
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { useNow } from '../hooks/useNow';
 import type { StreamState } from '../useBoardStream';
 import { useExclusivePopover } from './PopoverCoordinator';
@@ -84,14 +85,14 @@ export function StatusPill({
               「たった今」と出る。セッション継続中は正確で、旧「取得」より実態には近い
               ので現状はこの表記で受け入れる (PR#116 fable レビュー minor)。 */}
           {generatedAt !== null && generatedAt !== undefined && (
-            <p className="status-pill-detail" title={new Date(generatedAt).toLocaleString()}>
+            <p className="status-pill-detail" title={formatAbsoluteTime(generatedAt)}>
               盤面内容の最終変化: {formatIsoAge(generatedAt, nowMs)}
             </p>
           )}
           {lastContactAtMs !== null && lastContactAtMs !== undefined && (
             <p
               className="status-pill-detail"
-              title={new Date(lastContactAtMs).toLocaleString()}
+              title={formatAbsoluteTime(lastContactAtMs)}
             >
               最終通信: {formatRelativeAge(lastContactAtMs, nowMs)}
             </p>
@@ -103,7 +104,7 @@ export function StatusPill({
               絶対値ツールチップに揃えて3行を並べて比較できるようにする
               (bdboard-3dr / bdboard-d55 の積み残し)。 */}
           {lastRefreshAt !== null && lastRefreshAt !== undefined && (
-            <p className="status-pill-detail" title={new Date(lastRefreshAt).toLocaleString()}>
+            <p className="status-pill-detail" title={formatAbsoluteTime(lastRefreshAt)}>
               サーバーのbd取込: {formatIsoAge(lastRefreshAt, nowMs)}
             </p>
           )}

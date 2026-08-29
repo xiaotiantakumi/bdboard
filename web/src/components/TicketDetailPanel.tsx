@@ -41,6 +41,7 @@ import {
   SidePanelResizeHandle,
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { describeWriteError } from '../writeAccessMessage';
 import { planQuickActionUndo } from '../quickActionUndo';
@@ -189,7 +190,7 @@ function toQuickActionRequest(action: ConfirmingQuickAction, closeReason: string
 
 function formatDateTime(value: string | undefined): string {
   if (value === undefined) return '—';
-  return new Date(value).toLocaleString();
+  return formatAbsoluteTime(value);
 }
 
 function formatTokenCount(value: number): string {

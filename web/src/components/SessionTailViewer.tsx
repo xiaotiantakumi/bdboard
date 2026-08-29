@@ -11,16 +11,13 @@ import {
   SidePanelResizeHandle,
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 
 interface SessionTailViewerProps {
   sessionId: string;
   sessionLabel?: string;
   onClose: () => void;
-}
-
-function formatDateTime(value: string): string {
-  return new Date(value).toLocaleString();
 }
 
 function roleLabel(role: SessionTailMessageDto['role']): string {
@@ -124,7 +121,7 @@ export function SessionTailViewer({
                   <span className="session-tail-role">{roleLabel(message.role)}</span>
                   {message.timestamp !== undefined && (
                     <span className="session-tail-timestamp">
-                      {formatDateTime(message.timestamp)}
+                      {formatAbsoluteTime(message.timestamp)}
                     </span>
                   )}
                 </div>

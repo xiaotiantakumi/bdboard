@@ -10,6 +10,7 @@ import {
   stopTunnel,
   type TunnelDto,
 } from '../api';
+import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { buildTunnelTokenUrl } from '../tunnelQr';
 import { TUNNEL_NOT_RUNNING_HELP } from '../writeAccessMessage';
@@ -269,7 +270,7 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
           <p className="tunnel-help">
             停止時刻:{' '}
             <time dateTime={interruptedAt}>
-              {new Date(interruptedAt).toLocaleString()}
+              {formatAbsoluteTime(interruptedAt)}
             </time>
           </p>
           <button
