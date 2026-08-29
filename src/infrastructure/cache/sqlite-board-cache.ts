@@ -12,6 +12,7 @@ import type { PendingDecision } from '../../application/ports/human-decisions.js
 import type { ModelUsageTotals } from '../../application/transcript/extract-usage.js';
 import type { InteractionRecord } from '../../domain/interaction.js';
 import type { Project } from '../../domain/project.js';
+import type { Ticket } from '../../domain/ticket.js';
 import { MAX_TRANSCRIPT_SESSION_LINKS, type SessionLinkSource } from '../../domain/session.js';
 import { deserializeTickets, serializeTickets } from './ticket-serialization.js';
 
@@ -117,6 +118,21 @@ function parseAliasPaths(raw: string | null | undefined): readonly string[] {
   }
 }
 
+function parsePrefixes(raw: string): readonly string[] | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return null;
+    }
+    if (!parsed.every((item): item is string => typeof item === 'string')) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
 function parsePendingDecisions(
   raw: string | null | undefined,
 ): readonly PendingDecision[] | undefined {
@@ -171,12 +187,30 @@ function parsePendingDecisions(
   }
 }
 
-function rowToCachedProject(row: ProjectRow): CachedProject {
+function rowToCachedProject(row: ProjectRow): CachedProject | null {
+  const prefixes = parsePrefixes(row.prefixes);
+  if (prefixes === null) {
+    console.warn(
+      `bdboard: skipping corrupt project cache row ${row.id}: invalid prefixes`,
+    );
+    return null;
+  }
+
+  let tickets: readonly Ticket[];
+  try {
+    tickets = deserializeTickets(row.tickets);
+  } catch {
+    console.warn(
+      `bdboard: skipping corrupt project cache row ${row.id}: invalid tickets`,
+    );
+    return null;
+  }
+
   const project: Project = {
     id: row.id,
     name: row.name,
     rootPath: row.root_path,
-    prefixes: JSON.parse(row.prefixes) as readonly string[],
+    prefixes,
     aliasPaths: parseAliasPaths(row.alias_paths),
   };
 
@@ -184,7 +218,7 @@ function rowToCachedProject(row: ProjectRow): CachedProject {
 
   return {
     project,
-    tickets: deserializeTickets(row.tickets),
+    tickets,
     fingerprint: row.fingerprint,
     fetchedAt: new Date(row.fetched_at),
     ...(pendingDecisions !== undefined ? { pendingDecisions } : {}),
@@ -599,7 +633,8 @@ export function createSqliteBoardCache(dbPath: string): BoardCache {
       if (row === undefined) {
         return undefined;
       }
-      return rowToCachedProject(row);
+      const entry = rowToCachedProject(row);
+      return entry ?? undefined;
     },
 
     putProject(entry: CachedProject): void {
@@ -620,7 +655,9 @@ export function createSqliteBoardCache(dbPath: string): BoardCache {
 
     listProjects(): readonly CachedProject[] {
       const rows = listProjectsStmt.all() as ProjectRow[];
-      return rows.map(rowToCachedProject);
+      return rows
+        .map(rowToCachedProject)
+        .filter((entry): entry is CachedProject => entry !== null);
     },
 
     deleteProject(projectId: string): void {
