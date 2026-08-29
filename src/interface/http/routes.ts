@@ -577,6 +577,17 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       view.projects.map((entry) => entry.project),
     );
 
+    /*
+     * ここは意図的に resolveLivenessThresholds を使わない (bdboard-5kz2)。
+     * buildGetBoardDeps が既に getBoardThresholds を1回引いており、その同じ値を
+     * getBoard (card.liveness をドメインで計算) とこの DTO 変換
+     * (sessions[].liveness) の両方が使うことで、1リクエスト内の2つの liveness が
+     * 必ず同じ閾値から出ることを保証している。ここで resolveLivenessThresholds を
+     * 呼ぶと getBoardThresholds を2回引くことになり、その間に設定が変わると
+     * バッジとセッション行が食い違う — bdboard-3tw.102.5 で潰したのと同じ不整合。
+     * 上の resolveLivenessThresholds のコメントに従ってここを「整理」しないこと。
+     * テストは getBoardThresholds に定数を注入するので、2回引きは緑のまま通る。
+     */
     const dto = toBoardViewDto(
       view,
       boardDeps.livenessThresholds ?? DEFAULT_LIVENESS_THRESHOLDS,
