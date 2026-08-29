@@ -539,6 +539,108 @@ describe('createSqliteBoardCache', () => {
     cache.close();
   });
 
+  it('skips corrupt project rows with invalid prefixes without failing listProjects', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-cache-corrupt-prefixes-'));
+    const dbPath = path.join(tmpDir, 'corrupt-prefixes.db');
+
+    try {
+      const cache = createSqliteBoardCache(dbPath);
+      cache.putProject(
+        makeEntry({
+          project: { id: 'good', rootPath: '/good', name: 'Good' },
+          fingerprint: 'fp-good',
+        }),
+      );
+      cache.close();
+
+      const rawDb = new Database(dbPath);
+      rawDb
+        .prepare(
+          `INSERT INTO projects (
+            id, name, root_path, prefixes, fingerprint, fetched_at, tickets, alias_paths
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'bad-prefixes',
+          'Bad Prefixes',
+          '/bad/prefixes',
+          '{not valid json',
+          'fp-bad',
+          '2026-08-14T10:00:00.000Z',
+          '[]',
+          '[]',
+        );
+      rawDb.close();
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const reopened = createSqliteBoardCache(dbPath);
+
+      expect(() => reopened.listProjects()).not.toThrow();
+      expect(reopened.listProjects()).toHaveLength(1);
+      expect(reopened.listProjects()[0]?.project.id).toBe('good');
+      expect(reopened.getProject('bad-prefixes')).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'bdboard: skipping corrupt project cache row bad-prefixes: invalid prefixes',
+      );
+
+      reopened.close();
+      warnSpy.mockRestore();
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips corrupt project rows with invalid tickets without failing listProjects', () => {
+    const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-cache-corrupt-tickets-'));
+    const dbPath = path.join(tmpDir, 'corrupt-tickets.db');
+
+    try {
+      const cache = createSqliteBoardCache(dbPath);
+      cache.putProject(
+        makeEntry({
+          project: { id: 'good', rootPath: '/good', name: 'Good' },
+          fingerprint: 'fp-good',
+        }),
+      );
+      cache.close();
+
+      const rawDb = new Database(dbPath);
+      rawDb
+        .prepare(
+          `INSERT INTO projects (
+            id, name, root_path, prefixes, fingerprint, fetched_at, tickets, alias_paths
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          'bad-tickets',
+          'Bad Tickets',
+          '/bad/tickets',
+          '["pfx"]',
+          'fp-bad',
+          '2026-08-14T10:00:00.000Z',
+          '{not valid json',
+          '[]',
+        );
+      rawDb.close();
+
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const reopened = createSqliteBoardCache(dbPath);
+
+      expect(() => reopened.listProjects()).not.toThrow();
+      expect(reopened.listProjects()).toHaveLength(1);
+      expect(reopened.listProjects()[0]?.project.id).toBe('good');
+      expect(reopened.getProject('bad-tickets')).toBeUndefined();
+      expect(warnSpy).toHaveBeenCalledWith(
+        'bdboard: skipping corrupt project cache row bad-tickets: invalid tickets',
+      );
+
+      reopened.close();
+      warnSpy.mockRestore();
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it('round-trips aliasPaths on put and get', () => {
     const cache = createSqliteBoardCache(':memory:');
     const entry = makeEntry({
