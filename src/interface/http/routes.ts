@@ -143,6 +143,9 @@ interface QueuedSseMessage {
   readonly data: string;
 }
 
+/** Max queued SSE messages per /api/events client before force-disconnect. */
+const SSE_EVENTS_QUEUE_MAX_SIZE = 500;
+
 const SEARCH_DEFAULT_LIMIT = 30;
 const SEARCH_MIN_LIMIT = 1;
 const SEARCH_MAX_LIMIT = 50;
@@ -1469,6 +1472,18 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       };
 
       const enqueue = (message: QueuedSseMessage): void => {
+        if (clientGone) {
+          return;
+        }
+
+        if (queue.length >= SSE_EVENTS_QUEUE_MAX_SIZE) {
+          console.warn(
+            `SSE /api/events: per-client queue limit (${SSE_EVENTS_QUEUE_MAX_SIZE}) reached; disconnecting slow client`,
+          );
+          cleanup();
+          return;
+        }
+
         queue.push(message);
         wakeUp();
       };
@@ -1530,7 +1545,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
       try {
         while (!clientGone && !stream.aborted && !stream.closed) {
-          while (queue.length > 0) {
+          while (!clientGone && queue.length > 0) {
             const message = queue.shift();
             if (message !== undefined) {
               await stream.writeSSE(message);

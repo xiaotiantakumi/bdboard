@@ -29,6 +29,39 @@ import { createEventHub } from '../sse/event-hub.js';
 import { createBasicAuthMiddleware } from './basic-auth.js';
 import { createApiRoutes, type ApiDeps, type ApiStatus } from './routes.js';
 
+const sseMockState = vi.hoisted(() => ({
+  hangAfterHello: false,
+}));
+
+vi.mock('hono/streaming', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('hono/streaming')>();
+  return {
+    ...actual,
+    streamSSE: (
+      c: Parameters<typeof actual.streamSSE>[0],
+      fn: Parameters<typeof actual.streamSSE>[1],
+    ) =>
+      actual.streamSSE(c, async (stream) => {
+        const originalWriteSSE = stream.writeSSE.bind(stream);
+        let pastHello = false;
+
+        stream.writeSSE = async (message) => {
+          if (sseMockState.hangAfterHello && pastHello) {
+            await new Promise<void>(() => {});
+          }
+
+          const result = await originalWriteSSE(message);
+          if (message.event === 'hello') {
+            pastHello = true;
+          }
+          return result;
+        };
+
+        return fn(stream);
+      }),
+  };
+});
+
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
 const LOCAL_ENV = {
@@ -4962,6 +4995,54 @@ describe('createApiRoutes', () => {
     expect(bodyText).toContain('event: notification');
     expect(bodyText).toContain('"kind":"ticket_ready"');
     expect(bodyText).toContain('"ticketId":"bdboard-ready"');
+  });
+
+  it('disconnects SSE when the per-client queue exceeds the limit', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      sseMockState.hangAfterHello = true;
+
+      const events = createEventHub();
+      const deps = createDeps({ events });
+      const app = createApiRoutes(deps);
+
+      expect(events.subscriberCount()).toBe(0);
+
+      const requestPromise = app.request('/api/events', {}, LOCAL_ENV);
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 30);
+      });
+
+      expect(events.subscriberCount()).toBe(1);
+
+      const boardChangedEvent = {
+        name: 'board.changed' as const,
+        data: { reason: 'queue-overflow-test' },
+      };
+
+      // hello 後の最初の dequeue で writeSSE がハングするため、queue には残り 500 件まで
+      // 積める。501 件目の publish で queue.length === 500 となり、502 件目で上限切断する。
+      for (let i = 0; i < 502; i++) {
+        events.publish(boardChangedEvent);
+      }
+
+      await new Promise((resolve) => {
+        setTimeout(resolve, 50);
+      });
+
+      expect(events.subscriberCount()).toBe(0);
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('per-client queue limit'),
+      );
+
+      const response = await requestPromise;
+      expect(response.status).toBe(200);
+    } finally {
+      sseMockState.hangAfterHello = false;
+      warnSpy.mockRestore();
+    }
   });
 
   it('returns 501 when session tail reader is not configured', async () => {
