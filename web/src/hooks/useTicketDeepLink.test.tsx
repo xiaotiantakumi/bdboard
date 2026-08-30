@@ -166,4 +166,139 @@ describe('useTicketDeepLink', () => {
         ?.bdboardPanelToken,
     ).toBe('tok');
   });
+
+  describe('パネル内の戻る (bdboard-4ql7)', () => {
+    it('最初は戻れない', () => {
+      const { result } = renderDeepLink();
+
+      expect(result.current.canGoBackTicket).toBe(false);
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+
+      // 盤面から最初の1枚を開いただけでは、パネル内の戻り先はまだ無い。
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('チケット→チケット遷移のあと1つ前のチケットへ戻る', () => {
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      act(() => {
+        result.current.selectTicket('b');
+      });
+
+      expect(result.current.selectedTicketId).toBe('b');
+      expect(result.current.canGoBackTicket).toBe(true);
+
+      act(() => {
+        result.current.goBackTicket();
+      });
+
+      expect(result.current.selectedTicketId).toBe('a');
+      expect(window.location.hash).toBe('#ticket=a');
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('多段に辿ってから1段ずつ戻れる', () => {
+      const { result } = renderDeepLink();
+
+      for (const id of ['a', 'b', 'c']) {
+        act(() => {
+          result.current.selectTicket(id);
+        });
+      }
+
+      act(() => {
+        result.current.goBackTicket();
+      });
+      expect(result.current.selectedTicketId).toBe('b');
+
+      act(() => {
+        result.current.goBackTicket();
+      });
+      expect(result.current.selectedTicketId).toBe('a');
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('同じチケットを選び直しても戻り先は増えない', () => {
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      act(() => {
+        result.current.selectTicket('a');
+      });
+
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('ブラウザ履歴の深さは変えない (戻る=閉じる の挙動を壊さない)', () => {
+      /*
+       * この設計の肝。チケット→チケットを pushState にすると closeDetail の
+       * history.back() が1つ前のチケットへ戻ってしまい「閉じる」が壊れる。
+       * パネル内スタックはアプリ内に持ち、ブラウザ履歴には触らない。
+       */
+      const pushSpy = vi.spyOn(window.history, 'pushState');
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        result.current.selectTicket('b');
+      });
+      act(() => {
+        result.current.goBackTicket();
+      });
+
+      expect(pushSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('詳細を閉じると戻り先は破棄される', () => {
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      act(() => {
+        result.current.selectTicket('b');
+      });
+      expect(result.current.canGoBackTicket).toBe(true);
+
+      act(() => {
+        result.current.closeDetail();
+      });
+
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('ブラウザ操作で表示チケットが変わったら戻り先は破棄される', () => {
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      act(() => {
+        result.current.selectTicket('b');
+      });
+      expect(result.current.canGoBackTicket).toBe(true);
+
+      // ブラウザの戻る/直リンク相当。パネル内スタックはブラウザ履歴と対応が
+      // 取れなくなるので捨てる。
+      act(() => {
+        window.history.replaceState(null, '', '/#ticket=z');
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+
+      expect(result.current.selectedTicketId).toBe('z');
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+  });
 });

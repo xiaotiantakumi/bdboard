@@ -11,6 +11,10 @@ export interface TicketDeepLink {
   selectedTicketId: string | null;
   selectTicket: (ticketId: string) => void;
   closeDetail: () => void;
+  /** 詳細パネル内で1つ前に見ていたチケットへ戻れるか (bdboard-4ql7) */
+  canGoBackTicket: boolean;
+  /** 詳細パネル内の履歴を1つ戻る。戻り先が無ければ何もしない */
+  goBackTicket: () => void;
 }
 
 function readHistoryState(): Record<string, unknown> {
@@ -36,6 +40,19 @@ export function useTicketDeepLink({
   const [selectedTicketId, setSelectedTicketId] = useState<string | null>(
     () => initialHash.ticketId,
   );
+  /*
+   * 詳細パネル内のチケット遷移履歴 (bdboard-4ql7)。
+   *
+   * ブラウザ履歴ではなくアプリ内スタックで持つ。selectTicket はチケット→チケット
+   * 遷移で replaceState する (履歴エントリを増やさない) 設計で、ブラウザの戻るは
+   * 「詳細パネルを閉じる」に割り当てられている。ここで pushState に変えると
+   * closeDetail の history.back() が1つ前のチケットへ戻ってしまい、閉じる操作が
+   * 壊れる — 深さを数える必要が出てブラウザ履歴との同期が複雑になる
+   * (bdboard-ge1 で popstate 周りの取り違えが実際にバグになっている)。
+   *
+   * よってブラウザ履歴の意味は一切変えず、パネル内の「戻る」だけを別に持つ。
+   */
+  const [backStack, setBackStack] = useState<readonly string[]>([]);
   const pendingHashViewRef = useRef<ViewMode | null>(initialHash.view);
   const detailPushedRef = useRef(false);
   const selectedTicketIdRef = useRef<string | null>(initialHash.ticketId);
@@ -78,13 +95,18 @@ export function useTicketDeepLink({
   }, [view, selectedTicketId]);
 
   const selectTicket = useCallback((ticketId: string) => {
+    const previous = selectedTicketIdRef.current;
+    if (previous !== null && previous !== ticketId) {
+      setBackStack((stack) => [...stack, previous]);
+    }
+
     const target = boardHashTarget(
       { ticketId, view: viewRef.current },
       window.location,
     );
     const state = { ...readHistoryState(), ticketId };
 
-    if (selectedTicketIdRef.current === null) {
+    if (previous === null) {
       window.history.pushState(state, '', target);
       detailPushedRef.current = true;
     } else {
@@ -93,7 +115,30 @@ export function useTicketDeepLink({
     setSelectedTicketId(ticketId);
   }, []);
 
+  const goBackTicket = useCallback(() => {
+    setBackStack((stack) => {
+      const previous = stack[stack.length - 1];
+      if (previous === undefined) {
+        return stack;
+      }
+      // selectTicket と違いスタックは積まない (戻る操作なので)。履歴エントリも
+      // 増やさず、今のエントリを戻り先のチケットで置き換える。
+      const target = boardHashTarget(
+        { ticketId: previous, view: viewRef.current },
+        window.location,
+      );
+      window.history.replaceState(
+        { ...readHistoryState(), ticketId: previous },
+        '',
+        target,
+      );
+      setSelectedTicketId(previous);
+      return stack.slice(0, -1);
+    });
+  }, []);
+
   const closeDetail = useCallback(() => {
+    setBackStack([]);
     if (detailPushedRef.current) {
       window.history.back();
     } else {
@@ -111,6 +156,11 @@ export function useTicketDeepLink({
       // which broke that case; the hash is now the source of truth.
       detailPushedRef.current =
         detailPushedRef.current && next.ticketId !== null;
+      // ブラウザ操作 (戻る/進む/直リンク) で表示チケットが変わったら、パネル内
+      // スタックはブラウザ履歴と対応が取れなくなるので捨てる (bdboard-4ql7)。
+      // selectTicket / goBackTicket は replaceState か pushState のみで popstate を
+      // 発火させないため、ここに来るのは必ず外部由来の遷移。
+      setBackStack([]);
       setSelectedTicketId(next.ticketId);
       if (next.view !== null && next.view !== viewRef.current) {
         onViewChangeRef.current(next.view);
@@ -129,5 +179,7 @@ export function useTicketDeepLink({
     selectedTicketId,
     selectTicket,
     closeDetail,
+    canGoBackTicket: backStack.length > 0,
+    goBackTicket,
   };
 }
