@@ -1,3 +1,5 @@
+import { truncate } from '../../domain/text.js';
+
 export interface TranscriptTailMessage {
   readonly role: 'user' | 'assistant';
   readonly text: string;
@@ -6,13 +8,6 @@ export interface TranscriptTailMessage {
 
 const MAX_MESSAGE_CHARS = 4000;
 const MAX_TOTAL_CHARS = 20000;
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return text.slice(0, maxLength);
-}
 
 function extractTextFromContent(content: unknown): string {
   if (typeof content === 'string') {

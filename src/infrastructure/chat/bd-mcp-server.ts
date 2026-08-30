@@ -1,4 +1,5 @@
 import type { CommandRunner, CommandRunOptions } from '../../application/ports/command-runner.js';
+import { truncate } from '../../domain/text.js';
 import {
   CHAT_TOOL_DEFINITIONS,
   buildChatToolCommand,
@@ -35,13 +36,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNotification(message: Record<string, unknown>): boolean {
   return !('id' in message);
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return text.slice(0, maxLength);
 }
 
 function summarizeCommandFailure(stdout: string, stderr: string): string {

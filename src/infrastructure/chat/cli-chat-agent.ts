@@ -12,6 +12,7 @@ import {
 } from '../../application/ports/chat-agent.js';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import type { StreamingCommandRunner } from '../../application/ports/streaming-command-runner.js';
+import { truncate } from '../../domain/text.js';
 import { classifyCommandFailure, logChatAgentFailure } from './cli-failure.js';
 
 const MAX_REPLY_CHARS = 20_000;
@@ -129,13 +130,6 @@ function buildAllowedEnv(
     }
   }
   return env;
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-  return text.slice(0, maxLength);
 }
 
 function readArtifactFile(filePath: string): string | undefined {
