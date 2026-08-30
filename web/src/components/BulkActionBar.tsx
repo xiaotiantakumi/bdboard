@@ -23,6 +23,7 @@ import {
   runBulkQuickAction,
 } from '../bulkQuickAction';
 import { planQuickActionUndo } from '../quickActionUndo';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { describeWriteError } from '../writeAccessMessage';
 import { useBulkSelection } from './BulkSelectionProvider';
 import { useUndoSnackbar } from './UndoSnackbar';
@@ -192,6 +193,7 @@ export function BulkActionBar({
     BulkQuickActionOutcome | BulkIdOutcome | null
   >(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const cancelConfirmRef = useRef<HTMLButtonElement>(null);
 
   const selectedIds = bulkSelection?.selectedIds ?? new Set<string>();
   const selectedCount = selectedIds.size;
@@ -306,6 +308,13 @@ export function BulkActionBar({
     setCustomDeferDate('');
     setCloseReason('');
   }, [bulkMutation.isPending, bulkLabelMutation.isPending]);
+
+  useFocusTrap({
+    containerRef: confirmPanelRef,
+    initialFocusRef: cancelConfirmRef,
+    enabled: confirmingAction !== null,
+    onEscape: handleCancelConfirm,
+  });
 
   const handleConfirm = useCallback(() => {
     if (confirmingAction === null) {
@@ -548,6 +557,7 @@ export function BulkActionBar({
           )}
           <div className="quick-action-confirm-actions">
             <button
+              ref={cancelConfirmRef}
               type="button"
               className="btn quick-action-confirm-cancel"
               onClick={handleCancelConfirm}
