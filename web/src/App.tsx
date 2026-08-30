@@ -178,6 +178,28 @@ export function App() {
     canGoBackTicket,
     goBackTicket,
   } = useTicketDeepLink({ view, onViewChange: setView });
+  /*
+   * 詳細パネルの最大化 (bdboard-0hcx)。TicketDetailPanel ではなくここで持つ。
+   *
+   * 下の ErrorBoundary が key={selectedTicketId} を持つため、パネル側で
+   * useState するとチケットを1つたどるたびに remount されて最大化が解除される
+   * (PR#242 opus レビュー major-1)。詳細パネルは「似ているチケット」や
+   * 「← 戻る」でチケットを渡り歩く使い方をするので、その都度リセットされると
+   * 使い物にならない。key の外に置いて、パネルを閉じたときだけ解除する。
+   *
+   * 幅 (ticketDetailPanelWidth) と違い永続化はしない。最大化は「今この一連の
+   * チケットを広げて読みたい」という一時的な操作なので、次回起動時は保存済みの
+   * 通常幅から始めるのが期待に近い。
+   */
+  const [detailMaximized, setDetailMaximized] = useState(false);
+  const handleToggleDetailMaximized = useCallback(() => {
+    setDetailMaximized((maximized) => !maximized);
+  }, []);
+  useEffect(() => {
+    if (selectedTicketId === null) {
+      setDetailMaximized(false);
+    }
+  }, [selectedTicketId]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -976,6 +998,8 @@ export function App() {
           }
           onOpenTicket={handleSelectTicket}
           onBackTicket={canGoBackTicket ? goBackTicket : undefined}
+          isMaximized={detailMaximized}
+          onToggleMaximized={handleToggleDetailMaximized}
           isTicketOnBoard={isTicketOnBoard}
           onFilterByEpic={handleFilterByEpic}
           onTicketViewed={handleRecordRecentTicket}

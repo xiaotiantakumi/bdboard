@@ -433,6 +433,50 @@ describe('App ticket deep link', () => {
       expect(window.location.hash).toBe('');
     });
   });
+
+  it('最大化はチケットを渡り歩いても解除されず、閉じると解除される (bdboard-0hcx)', async () => {
+    /*
+     * 最大化 state を TicketDetailPanel 側で持つと、詳細の ErrorBoundary が
+     * key={selectedTicketId} を持つためチケットを1つたどるだけで remount され、
+     * 毎回リセットされる (PR#242 opus レビュー major-1)。App 側 (key の外) に
+     * 置いていることの回帰ガード。パネル単体テストでは踏めない経路。
+     */
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    window.history.replaceState(null, '', `/#ticket=${ticketId}`);
+
+    renderApp();
+
+    const panelOf = (): Element | null => document.querySelector('.detail-panel');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument();
+    });
+    await userEvent.click(screen.getByRole('button', { name: '最大化' }));
+    expect(panelOf()?.className).toContain('is-maximized');
+
+    // 別チケットへ遷移 = ErrorBoundary の key が変わり、パネルは remount される。
+    fetchTicketMock.mockResolvedValue({ ...sampleTicket, id: 'bdboard-other', title: 'Other ticket' });
+    window.history.replaceState(null, '', '/#ticket=bdboard-other');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Other ticket' })).toBeInTheDocument();
+    });
+    expect(panelOf()?.className).toContain('is-maximized');
+    expect(screen.getByRole('button', { name: '縮小' })).toBeInTheDocument();
+
+    // 閉じたら解除される。次に開いたときは通常幅から。
+    await userEvent.click(screen.getByRole('button', { name: '閉じる' }));
+    await waitFor(() => {
+      expect(panelOf()).toBeNull();
+    });
+
+    window.history.replaceState(null, '', '/#ticket=bdboard-other');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument();
+    });
+    expect(panelOf()?.className).not.toContain('is-maximized');
+  });
 });
 
 describe('board filter acceptance criteria (bdboard-3tw.101)', () => {

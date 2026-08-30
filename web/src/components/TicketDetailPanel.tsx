@@ -94,7 +94,7 @@ function formatTimelineChangeDetail(
   return undefined;
 }
 
-interface TicketDetailPanelProps {
+export interface TicketDetailPanelProps {
   ticketId: string;
   /**
    * projectId -> project root path. The panel resolves the path from the loaded
@@ -108,6 +108,18 @@ interface TicketDetailPanelProps {
   onClose: () => void;
   onChatAboutTicket?: (ctx: { projectId: string; ticketId: string }) => void;
   onOpenTicket: (ticketId: string) => void;
+  /**
+   * 最大化中か (bdboard-0hcx)。state は App 側が持つ。
+   *
+   * このコンポーネントで useState すると、App の ErrorBoundary が
+   * key={selectedTicketId} を持つ (App.tsx) ためチケットを1つたどるたびに
+   * unmount/remount され、最大化が毎回解除される。ChatPanel 側の
+   * ErrorBoundary には key が無いので同じ書き方で問題にならないが、詳細パネルは
+   * 「盤面のカードを次々開く」使い方をするので寿命がまったく違う
+   * (PR#242 opus レビュー major-1)。
+   */
+  isMaximized: boolean;
+  onToggleMaximized: () => void;
   /**
    * 詳細パネル内で1つ前のチケットへ戻る (bdboard-4ql7)。
    * 戻り先が無いときは undefined — ボタン自体を出さない。
@@ -254,6 +266,8 @@ export function TicketDetailPanel({
   isTicketOnBoard,
   onFilterByEpic,
   onTicketViewed,
+  isMaximized,
+  onToggleMaximized,
   availableLabels = [],
 }: TicketDetailPanelProps) {
   const detailPanel = useResizableSidePanel(
@@ -862,8 +876,8 @@ export function TicketDetailPanel({
     >
       <div
         ref={panelRef}
-        className={`detail-panel resizable-side-panel${detailPanel.isResizing ? ' is-resizing' : ''}`}
-        style={{ width: `${detailPanel.width}px` }}
+        className={`detail-panel resizable-side-panel${detailPanel.isResizing ? ' is-resizing' : ''}${isMaximized ? ' is-maximized' : ''}`}
+        style={{ width: isMaximized ? '100%' : `${detailPanel.width}px` }}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.defaultPrevented) {
@@ -905,10 +919,13 @@ export function TicketDetailPanel({
         aria-labelledby="detail-title"
         tabIndex={-1}
       >
-        <SidePanelResizeHandle
-          label="チケット詳細パネルの幅を変更"
-          panel={detailPanel}
-        />
+        {/* 最大化中は幅が 100% 固定なのでハンドルは出さない (ChatPanel と同じ) */}
+        {!isMaximized && (
+          <SidePanelResizeHandle
+            label="チケット詳細パネルの幅を変更"
+            panel={detailPanel}
+          />
+        )}
         <div className="detail-header">
           {titleEditing ? (
             <>
@@ -997,6 +1014,30 @@ export function TicketDetailPanel({
               </button>
             )}
             <WatchToggle ticketId={ticketId} className="detail-watch-toggle" />
+            <button
+              type="button"
+              className="btn btn-small detail-maximize"
+              onClick={(event) => {
+                /*
+                 * 最大化するとリサイズハンドルが DOM から外れる。ハンドルに
+                 * フォーカスがあるままだと activeElement が body に落ち、
+                 * useFocusTrap がパネル要素に張った keydown を受け取れなくなって
+                 * Escape で閉じられなくなる (PR#242 opus レビュー minor-1)。
+                 * Chrome/Firefox は button クリックでフォーカスがボタンへ移るので
+                 * 踏まないが、Safari/macOS は button にフォーカスを与えない。
+                 */
+                if (!isMaximized) {
+                  event.currentTarget.focus();
+                }
+                onToggleMaximized();
+              }}
+              title={isMaximized ? '元の幅に戻す' : '画面幅いっぱいに広げる'}
+            >
+              {/* aria-pressed は付けない。ラベル自体が「最大化」/「縮小」と
+                  入れ替わるので、押下状態も併せて伝えると「縮小、押されています」
+                  = 縮小が有効、と逆に読める (ChatPanel と同じ判断)。 */}
+              {isMaximized ? '縮小' : '最大化'}
+            </button>
             <button
               ref={closeButtonRef}
               type="button"
