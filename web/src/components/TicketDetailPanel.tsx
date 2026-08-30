@@ -259,6 +259,13 @@ export function TicketDetailPanel({
   const detailPanel = useResizableSidePanel(
     UI_STORAGE_KEYS.ticketDetailPanelWidth,
   );
+  /*
+   * 最大化状態 (bdboard-0hcx)。ChatPanel の isChatPanelMaximized と同じく
+   * 永続化しない — 幅 (ticketDetailPanelWidth) は保存するが、最大化は
+   * 「今この1枚を広げて読みたい」という一時的な操作なので、次に開いたときは
+   * 保存済みの通常幅から始めるのが期待に近い。
+   */
+  const [isMaximized, setIsMaximized] = useState(false);
   const queryClient = useQueryClient();
   const undoSnackbar = useUndoSnackbar();
   const { data, isLoading, error } = useQuery({
@@ -862,8 +869,8 @@ export function TicketDetailPanel({
     >
       <div
         ref={panelRef}
-        className={`detail-panel resizable-side-panel${detailPanel.isResizing ? ' is-resizing' : ''}`}
-        style={{ width: `${detailPanel.width}px` }}
+        className={`detail-panel resizable-side-panel${detailPanel.isResizing ? ' is-resizing' : ''}${isMaximized ? ' is-maximized' : ''}`}
+        style={{ width: isMaximized ? '100%' : `${detailPanel.width}px` }}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => {
           if (event.defaultPrevented) {
@@ -905,10 +912,13 @@ export function TicketDetailPanel({
         aria-labelledby="detail-title"
         tabIndex={-1}
       >
-        <SidePanelResizeHandle
-          label="チケット詳細パネルの幅を変更"
-          panel={detailPanel}
-        />
+        {/* 最大化中は幅が 100% 固定なのでハンドルは出さない (ChatPanel と同じ) */}
+        {!isMaximized && (
+          <SidePanelResizeHandle
+            label="チケット詳細パネルの幅を変更"
+            panel={detailPanel}
+          />
+        )}
         <div className="detail-header">
           {titleEditing ? (
             <>
@@ -997,6 +1007,17 @@ export function TicketDetailPanel({
               </button>
             )}
             <WatchToggle ticketId={ticketId} className="detail-watch-toggle" />
+            <button
+              type="button"
+              className="btn btn-small detail-maximize"
+              onClick={() => setIsMaximized((maximized) => !maximized)}
+              title={isMaximized ? '元の幅に戻す' : '画面幅いっぱいに広げる'}
+            >
+              {/* aria-pressed は付けない。ラベル自体が「最大化」/「縮小」と
+                  入れ替わるので、押下状態も併せて伝えると「縮小、押されています」
+                  = 縮小が有効、と逆に読める (ChatPanel と同じ判断)。 */}
+              {isMaximized ? '縮小' : '最大化'}
+            </button>
             <button
               ref={closeButtonRef}
               type="button"

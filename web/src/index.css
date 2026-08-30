@@ -4364,9 +4364,10 @@ body {
   user-select: none;
 }
 
-/* 通常パネルの 720px / viewport - 320px 上限を、チャットの最大化時だけ外す。
-   幅は React 側で 100% を設定し、解除時は保存済みの通常幅へ戻る。 */
-.detail-panel.resizable-side-panel.chat-panel.is-maximized {
+/* 通常パネルの 720px / viewport - 320px 上限を、最大化時だけ外す。
+   幅は React 側で 100% を設定し、解除時は保存済みの通常幅へ戻る。
+   チャット専用だったのをチケット詳細でも使えるよう一般化した (bdboard-0hcx)。 */
+.detail-panel.resizable-side-panel.is-maximized {
   min-width: 100%;
   max-width: 100%;
   border-left: none;
@@ -5286,7 +5287,8 @@ body {
   }
 
   /* モバイルのパネルは既に 100vw なので、最大化操作は表示しない。 */
-  .chat-panel-maximize {
+  .chat-panel-maximize,
+  .detail-maximize {
     display: none;
   }
 

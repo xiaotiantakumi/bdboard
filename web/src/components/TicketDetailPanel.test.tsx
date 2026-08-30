@@ -2144,6 +2144,51 @@ describe('TicketDetailPanel resize', () => {
     fireEvent(handle, new MouseEvent('pointerup', { bubbles: true }));
     expect(localStorage.getItem('bdboard.ui.ticketDetailPanelWidth')).toBe('680');
   });
+
+  it('最大化で全幅にし、解除すると直前の幅へ戻る (bdboard-0hcx)', async () => {
+    // ドラッグ/キーボードのリサイズは MAX_WIDTH (720px) で頭打ちになる。最大化は
+    // その上限を意図的に越える表示モードで、解除したら直前の幅へ戻ること。
+    // 上限 720px が視野幅由来のクランプ (innerWidth - 320) より小さくなる幅に
+    // 固定する。既定の 1024 のままだと 704px で頭打ちになり本題がぼやける。
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    const user = userEvent.setup();
+    const first = renderPanel(new Map());
+    await screen.findByText(sampleTicket.title);
+    const panel = first.container.querySelector('.detail-panel');
+    const handleName = 'チケット詳細パネルの幅を変更';
+
+    fireEvent.keyDown(screen.getByRole('separator', { name: handleName }), { key: 'End' });
+    expect(panel).toHaveStyle({ width: '720px' });
+    expect(localStorage.getItem('bdboard.ui.ticketDetailPanelWidth')).toBe('720');
+
+    const maximize = screen.getByRole('button', { name: '最大化' });
+    // 見出しの操作は .detail-header-actions にまとめる (ChatPanel と同じ)。
+    expect(maximize.parentElement?.className).toContain('detail-header-actions');
+    // aria-pressed は付けない。状態はラベル自体が伝える。
+    expect(maximize).not.toHaveAttribute('aria-pressed');
+    await user.click(maximize);
+
+    expect(panel).toHaveStyle({ width: '100%' });
+    expect(panel?.className).toContain('is-maximized');
+    expect(screen.queryByRole('separator', { name: handleName })).not.toBeInTheDocument();
+    // 100% は一時的な表示状態であり、通常幅の保存値を書き換えない。
+    expect(localStorage.getItem('bdboard.ui.ticketDetailPanelWidth')).toBe('720');
+
+    const shrink = screen.getByRole('button', { name: '縮小' });
+    expect(shrink).not.toHaveAttribute('aria-pressed');
+    await user.click(shrink);
+
+    expect(panel).toHaveStyle({ width: '720px' });
+    expect(panel?.className).not.toContain('is-maximized');
+    expect(screen.getByRole('separator', { name: handleName })).toBeInTheDocument();
+
+    // 最大化はこの表示中だけの状態。次に開いたときは保存済みの通常幅から。
+    first.unmount();
+    const second = renderPanel(new Map());
+    await screen.findByText(sampleTicket.title);
+    expect(second.container.querySelector('.detail-panel')).toHaveStyle({ width: '720px' });
+    expect(screen.getByRole('button', { name: '最大化' })).toBeInTheDocument();
+  });
 });
 
 describe('変更履歴タイムライン', () => {
