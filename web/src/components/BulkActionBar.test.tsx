@@ -360,6 +360,29 @@ describe('BulkActionBar', () => {
     );
   });
 
+  it('focuses the cancel button when the bulk confirm dialog opens', () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
+
+    fireEvent.click(screen.getByRole('button', { name: '完了' }));
+
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'キャンセル' })).toHaveFocus();
+  });
+
+  it('closes the bulk confirm dialog when Escape is pressed', () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
+
+    fireEvent.click(screen.getByRole('button', { name: '完了' }));
+
+    const cancelButton = screen.getByRole('button', { name: 'キャンセル' });
+    expect(cancelButton).toHaveFocus();
+    fireEvent.keyDown(cancelButton, { key: 'Escape' });
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+  });
+
   it('runs bulk label add for all selected tickets', async () => {
     const cards = new Map([
       ['bdboard-a', makeCard('bdboard-a')],
