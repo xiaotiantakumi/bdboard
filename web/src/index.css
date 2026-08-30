@@ -2908,6 +2908,13 @@ body {
   flex-shrink: 0;
 }
 
+/* 「← 戻る」(bdboard-4ql7)。detail-header-actions は flex なので、幅が詰まった
+   ときに矢印とラベルで折り返さないようにする。 */
+.detail-back {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
 /* .detail-panel は display:flex; flex-direction:column なので、align-items の
    既定値(stretch)のままだとこのボタンだけ幅いっぱいに伸びてしまう。他の
    アクションボタン群(quick-action-buttons 等)は自前の flex コンテナで包んで
@@ -5422,6 +5429,12 @@ body {
   .btn.detail-close {
     min-height: 44px;
     min-width: 44px;
+  }
+
+  /* btn-small のままだと 26px でタップ標的として小さすぎるので、閉じるボタンと
+     同じ 44px へ揃える (bdboard-4ql7) */
+  .btn.detail-back {
+    min-height: 44px;
   }
 
   .tunnel-input {

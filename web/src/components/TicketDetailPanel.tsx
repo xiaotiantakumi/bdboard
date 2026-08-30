@@ -108,6 +108,11 @@ interface TicketDetailPanelProps {
   onClose: () => void;
   onChatAboutTicket?: (ctx: { projectId: string; ticketId: string }) => void;
   onOpenTicket: (ticketId: string) => void;
+  /**
+   * 詳細パネル内で1つ前のチケットへ戻る (bdboard-4ql7)。
+   * 戻り先が無いときは undefined — ボタン自体を出さない。
+   */
+  onBackTicket?: (() => void) | undefined;
   isTicketOnBoard: (ticketId: string) => boolean;
   onFilterByEpic: (ticketId: string) => void;
   onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
@@ -245,6 +250,7 @@ export function TicketDetailPanel({
   onClose,
   onChatAboutTicket,
   onOpenTicket,
+  onBackTicket,
   isTicketOnBoard,
   onFilterByEpic,
   onTicketViewed,
@@ -977,6 +983,19 @@ export function TicketDetailPanel({
             </div>
           )}
           <div className="detail-header-actions">
+            {onBackTicket !== undefined && (
+              <button
+                type="button"
+                className="btn btn-small detail-back"
+                /* 「←」をアクセシブルネームに含めると読み上げが「左向き矢印、
+                   戻る」になるので、同ヘッダーの「タイトルを編集」と同じく
+                   aria-label でラベルを与える (PR#241 レビュー minor-4)。 */
+                aria-label="前のチケットへ戻る"
+                onClick={onBackTicket}
+              >
+                ← 戻る
+              </button>
+            )}
             <WatchToggle ticketId={ticketId} className="detail-watch-toggle" />
             <button
               ref={closeButtonRef}

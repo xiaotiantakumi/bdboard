@@ -175,6 +175,8 @@ export function App() {
     selectedTicketId,
     selectTicket: handleSelectTicket,
     closeDetail: handleCloseDetail,
+    canGoBackTicket,
+    goBackTicket,
   } = useTicketDeepLink({ view, onViewChange: setView });
   const [searchOpen, setSearchOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
@@ -973,6 +975,7 @@ export function App() {
               : undefined
           }
           onOpenTicket={handleSelectTicket}
+          onBackTicket={canGoBackTicket ? goBackTicket : undefined}
           isTicketOnBoard={isTicketOnBoard}
           onFilterByEpic={handleFilterByEpic}
           onTicketViewed={handleRecordRecentTicket}
