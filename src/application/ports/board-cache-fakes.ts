@@ -71,7 +71,7 @@ export function createInMemoryCfdCacheMethods(): Pick<
         if (dateCmp !== 0) {
           return dateCmp;
         }
-        const projectCmp = a.projectId.localeCompare(b.projectId);
+        const projectCmp = compareStrings(a.projectId, b.projectId);
         if (projectCmp !== 0) {
           return projectCmp;
         }

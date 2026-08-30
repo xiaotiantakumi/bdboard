@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState, type ReactElement } from 'react';
 import type { DependencyGraphDto, GraphEdgeDto, GraphNodeDto } from '../api';
 import { fetchDependencyGraph } from '../api';
+import { compareStrings } from '../compare';
 
 export type FocusDepth = 1 | 2 | 'all';
 
@@ -102,7 +103,7 @@ function computeLayout(graph: DependencyGraphDto): {
 
   for (const [columnIndex, layer] of sortedLayerKeys.entries()) {
     const columnNodes = (layers.get(layer) ?? []).sort((left, right) =>
-      left.ticketId.localeCompare(right.ticketId),
+      compareStrings(left.ticketId, right.ticketId),
     );
     const columnHeight =
       columnNodes.length * NODE_HEIGHT + Math.max(0, columnNodes.length - 1) * NODE_GAP;

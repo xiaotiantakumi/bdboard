@@ -1,3 +1,4 @@
+import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import { detectStaleLeases, type StaleLeaseIssue } from '../../domain/lease.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
@@ -56,11 +57,11 @@ export async function getStaleLeaseIssues(
   }
 
   issues.sort((a, b) => {
-    const projectDiff = a.projectId.localeCompare(b.projectId);
+    const projectDiff = compareStrings(a.projectId, b.projectId);
     if (projectDiff !== 0) {
       return projectDiff;
     }
-    return a.ticketId.localeCompare(b.ticketId);
+    return compareStrings(a.ticketId, b.ticketId);
   });
 
   return issues;

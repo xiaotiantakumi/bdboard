@@ -1,5 +1,6 @@
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
+import { compareStrings } from '../../domain/compare.js';
 import {
   BD_BRANCH_PREFIX,
   type GitWorktreeEntry,
@@ -74,7 +75,7 @@ function parseBdBranches(output: string): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0 && line.startsWith(BD_BRANCH_PREFIX))
-    .sort((a, b) => a.localeCompare(b));
+    .sort(compareStrings);
 }
 
 export function createGitWorktreeScanner(

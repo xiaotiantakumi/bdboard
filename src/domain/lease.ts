@@ -1,3 +1,4 @@
+import { compareStrings } from './compare.js';
 import type { TicketId } from './ticket-id.js';
 
 /** bd list --status in_progress --json の lease 関連フィールド */
@@ -81,11 +82,11 @@ export function detectStaleLeases(
   }
 
   issues.sort((a, b) => {
-    const projectDiff = a.projectId.localeCompare(b.projectId);
+    const projectDiff = compareStrings(a.projectId, b.projectId);
     if (projectDiff !== 0) {
       return projectDiff;
     }
-    return a.ticketId.localeCompare(b.ticketId);
+    return compareStrings(a.ticketId, b.ticketId);
   });
 
   return issues;

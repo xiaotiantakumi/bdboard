@@ -1,3 +1,4 @@
+import { compareStrings } from './compare.js';
 import { isBlockingKind } from './dependency.js';
 import { computeStronglyConnectedComponents } from './graph-scc.js';
 import {
@@ -391,11 +392,11 @@ function compareCycleEdges(
   a: HygieneCycleEdge,
   b: HygieneCycleEdge,
 ): number {
-  const issueDiff = a.issueId.localeCompare(b.issueId);
+  const issueDiff = compareStrings(a.issueId, b.issueId);
   if (issueDiff !== 0) {
     return issueDiff;
   }
-  return a.dependsOnId.localeCompare(b.dependsOnId);
+  return compareStrings(a.dependsOnId, b.dependsOnId);
 }
 
 function collectCycleEdges(
@@ -448,13 +449,13 @@ export function findDependencyCycles(
       continue;
     }
 
-    const ticketIds = [...component].sort((a, b) => a.localeCompare(b));
+    const ticketIds = [...component].sort(compareStrings);
     const memberSet = new Set(ticketIds);
     const edges = collectCycleEdges(tickets, memberSet);
     cycles.push({ ticketIds, edges });
   }
 
-  return cycles.sort((a, b) => a.ticketIds[0]!.localeCompare(b.ticketIds[0]!));
+  return cycles.sort((a, b) => compareStrings(a.ticketIds[0]!, b.ticketIds[0]!));
 }
 
 const KIND_ORDER: readonly HygieneIssueKind[] = [
@@ -473,11 +474,11 @@ function compareIssues(a: HygieneIssue, b: HygieneIssue): number {
   if (kindDiff !== 0) {
     return kindDiff;
   }
-  const projectDiff = a.projectId.localeCompare(b.projectId);
+  const projectDiff = compareStrings(a.projectId, b.projectId);
   if (projectDiff !== 0) {
     return projectDiff;
   }
-  return a.ticketId.localeCompare(b.ticketId);
+  return compareStrings(a.ticketId, b.ticketId);
 }
 
 export function checkHygiene(
