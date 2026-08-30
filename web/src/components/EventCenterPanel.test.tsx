@@ -138,6 +138,22 @@ describe('EventCenterPanel', () => {
     expect(newerItem.classList.contains('event-center-panel-item-unread')).toBe(true);
   });
 
+  it('shows notificationDeliveryError when delivery fails', () => {
+    render(
+      <EventCenterPanel
+        {...makeProps({
+          notificationsEnabled: true,
+          permission: 'granted',
+          notificationDeliveryError: 'Illegal constructor',
+        })}
+      />,
+    );
+
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent('Illegal constructor');
+    expect(alert).toHaveClass('event-center-panel-warning');
+  });
+
   it('calls enableNotifications when the enable button is clicked', async () => {
     const user = userEvent.setup();
     const enableNotifications = vi.fn(async () => {});
