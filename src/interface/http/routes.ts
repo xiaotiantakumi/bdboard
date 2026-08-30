@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
+import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
 import { parseJsonBody } from './request-body.js';
 import { isSafeCliArgument } from '../../domain/chat.js';
 import { getActivityFeed } from '../../application/board/get-activity-feed.js';
@@ -259,126 +260,75 @@ const quickActionUndoBodySchema = z.discriminatedUnion('action', [
 ]);
 
 function parseSearchLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return SEARCH_DEFAULT_LIMIT;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return SEARCH_DEFAULT_LIMIT;
-  }
-
-  return Math.min(SEARCH_MAX_LIMIT, Math.max(SEARCH_MIN_LIMIT, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: SEARCH_MIN_LIMIT,
+    max: SEARCH_MAX_LIMIT,
+    defaultValue: SEARCH_DEFAULT_LIMIT,
+  });
 }
 
 function parseSimilarLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return SIMILAR_DEFAULT_LIMIT;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return SIMILAR_DEFAULT_LIMIT;
-  }
-
-  return Math.min(SIMILAR_MAX_LIMIT, Math.max(SIMILAR_MIN_LIMIT, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: SIMILAR_MIN_LIMIT,
+    max: SIMILAR_MAX_LIMIT,
+    defaultValue: SIMILAR_DEFAULT_LIMIT,
+  });
 }
 
 function parseActivityDays(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return ACTIVITY_DEFAULT_DAYS;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return ACTIVITY_DEFAULT_DAYS;
-  }
-
-  return Math.min(ACTIVITY_MAX_DAYS, Math.max(ACTIVITY_MIN_DAYS, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: ACTIVITY_MIN_DAYS,
+    max: ACTIVITY_MAX_DAYS,
+    defaultValue: ACTIVITY_DEFAULT_DAYS,
+  });
 }
 
 function parseActivityLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return ACTIVITY_DEFAULT_LIMIT;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return ACTIVITY_DEFAULT_LIMIT;
-  }
-
-  return Math.min(ACTIVITY_MAX_LIMIT, Math.max(ACTIVITY_MIN_LIMIT, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: ACTIVITY_MIN_LIMIT,
+    max: ACTIVITY_MAX_LIMIT,
+    defaultValue: ACTIVITY_DEFAULT_LIMIT,
+  });
 }
 
 function parseSessionHistoryLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return SESSION_HISTORY_DEFAULT_LIMIT;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return SESSION_HISTORY_DEFAULT_LIMIT;
-  }
-
-  return Math.min(
-    SESSION_HISTORY_MAX_LIMIT,
-    Math.max(SESSION_HISTORY_MIN_LIMIT, parsed),
-  );
+  return parseClampedIntQueryParam(raw, {
+    min: SESSION_HISTORY_MIN_LIMIT,
+    max: SESSION_HISTORY_MAX_LIMIT,
+    defaultValue: SESSION_HISTORY_DEFAULT_LIMIT,
+  });
 }
 
 function parseSessionTailLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return SESSION_TAIL_DEFAULT_LIMIT;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return SESSION_TAIL_DEFAULT_LIMIT;
-  }
-
-  return Math.min(
-    SESSION_TAIL_MAX_LIMIT,
-    Math.max(SESSION_TAIL_MIN_LIMIT, parsed),
-  );
+  return parseClampedIntQueryParam(raw, {
+    min: SESSION_TAIL_MIN_LIMIT,
+    max: SESSION_TAIL_MAX_LIMIT,
+    defaultValue: SESSION_TAIL_DEFAULT_LIMIT,
+  });
 }
 
 function parseStatsWeeks(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return STATS_DEFAULT_WEEKS;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return STATS_DEFAULT_WEEKS;
-  }
-
-  return Math.min(STATS_MAX_WEEKS, Math.max(STATS_MIN_WEEKS, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: STATS_MIN_WEEKS,
+    max: STATS_MAX_WEEKS,
+    defaultValue: STATS_DEFAULT_WEEKS,
+  });
 }
 
 function parseCfdDays(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return CFD_DEFAULT_DAYS;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return CFD_DEFAULT_DAYS;
-  }
-
-  return Math.min(CFD_MAX_DAYS, Math.max(CFD_MIN_DAYS, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: CFD_MIN_DAYS,
+    max: CFD_MAX_DAYS,
+    defaultValue: CFD_DEFAULT_DAYS,
+  });
 }
 
 function parseClosedLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return BOARD_DEFAULT_CLOSED_LIMIT;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (!Number.isFinite(parsed)) {
-    return BOARD_DEFAULT_CLOSED_LIMIT;
-  }
-
-  return Math.min(BOARD_MAX_CLOSED_LIMIT, Math.max(BOARD_MIN_CLOSED_LIMIT, parsed));
+  return parseClampedIntQueryParam(raw, {
+    min: BOARD_MIN_CLOSED_LIMIT,
+    max: BOARD_MAX_CLOSED_LIMIT,
+    defaultValue: BOARD_DEFAULT_CLOSED_LIMIT,
+  });
 }
 
 function parseProjectIds(raw: string | undefined): string[] | undefined {
