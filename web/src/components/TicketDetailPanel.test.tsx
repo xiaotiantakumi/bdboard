@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   ActivityEventDto,
@@ -34,7 +35,7 @@ import {
   searchTickets,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
-import { TicketDetailPanel } from './TicketDetailPanel';
+import { TicketDetailPanel, type TicketDetailPanelProps } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 import { computeDeferUntilDate } from '../deferPeriods';
@@ -111,6 +112,23 @@ const sampleTicket: TicketDetailDto = {
   children: [],
 };
 
+/*
+ * 最大化 state は App 側が持つ (bdboard-0hcx / PR#242 opus レビュー major-1)。
+ * パネル単体テストでは、その App の役割をこの薄いラッパで代行する。
+ */
+function MaximizablePanel(
+  props: Omit<TicketDetailPanelProps, 'isMaximized' | 'onToggleMaximized'>,
+) {
+  const [maximized, setMaximized] = useState(false);
+  return (
+    <TicketDetailPanel
+      {...props}
+      isMaximized={maximized}
+      onToggleMaximized={() => setMaximized((value) => !value)}
+    />
+  );
+}
+
 function renderPanel(
   projectRootPaths: ReadonlyMap<string, string>,
   pendingDecision?: PendingDecisionDto,
@@ -125,7 +143,7 @@ function renderPanel(
   const view = render(
     <QueryClientProvider client={queryClient}>
       <WatchedTicketsProvider>
-        <TicketDetailPanel
+        <MaximizablePanel
           ticketId={sampleTicket.id}
           projectRootPaths={projectRootPaths}
           pendingDecision={pendingDecision}
@@ -154,7 +172,7 @@ function rerenderPanel(
   rerender(
     <QueryClientProvider client={queryClient}>
       <WatchedTicketsProvider>
-        <TicketDetailPanel
+        <MaximizablePanel
           ticketId={sampleTicket.id}
           projectRootPaths={projectRootPaths}
           pendingDecision={pendingDecision}
@@ -182,7 +200,7 @@ function renderPanelWithUndoSnackbar(
     <UndoSnackbarProvider>
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={projectRootPaths}
             pendingDecision={undefined}
@@ -211,7 +229,7 @@ describe('TicketDetailPanel chat', () => {
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={undefined}
@@ -243,7 +261,7 @@ describe('TicketDetailPanel chat', () => {
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={undefined}
@@ -716,7 +734,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const panel = (pendingDecision?: PendingDecisionDto) => (
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={pendingDecision}
@@ -761,7 +779,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const panel = (pendingDecision: PendingDecisionDto) => (
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={pendingDecision}
@@ -814,7 +832,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const panel = (pendingDecision: PendingDecisionDto) => (
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={pendingDecision}
@@ -1014,7 +1032,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const panel = (pendingDecision: PendingDecisionDto) => (
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={pendingDecision}
@@ -1073,7 +1091,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const panel = (pendingDecision: PendingDecisionDto) => (
       <QueryClientProvider client={queryClient}>
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={pendingDecision}
@@ -2145,6 +2163,34 @@ describe('TicketDetailPanel resize', () => {
     expect(localStorage.getItem('bdboard.ui.ticketDetailPanelWidth')).toBe('680');
   });
 
+  it('ハンドルにフォーカスがある状態で最大化してもフォーカスがパネル外へ落ちない', async () => {
+    /*
+     * 最大化するとリサイズハンドルが DOM から外れる。フォーカスがそこに残ったまま
+     * だと activeElement が body に落ち、useFocusTrap がパネル要素に張った keydown
+     * を受け取れなくなって Escape で閉じられなくなる (opus レビュー minor-1)。
+     *
+     * fireEvent.click を使うのが肝。userEvent.click は自前でフォーカスをボタンへ
+     * 移すので、実装が何もしなくても通ってしまう (実測で確認: userEvent 版だと
+     * focus() を削る変異が生存した)。fireEvent.click はフォーカスを動かさないので、
+     * button クリックでフォーカスを与えない Safari/macOS と等価な経路になる。
+     */
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+    const { container } = renderPanel(new Map());
+    await screen.findByText(sampleTicket.title);
+
+    const handle = screen.getByRole('separator', { name: 'チケット詳細パネルの幅を変更' });
+    handle.focus();
+    expect(document.activeElement).toBe(handle);
+
+    fireEvent.click(screen.getByRole('button', { name: '最大化' }));
+
+    expect(document.activeElement).not.toBe(document.body);
+    expect(container.querySelector('.detail-panel')?.contains(document.activeElement)).toBe(true);
+
+    // フォーカストラップが生きている = Escape でちゃんと閉じられる。
+    fireEvent.keyDown(document.activeElement!, { key: 'Escape' });
+  });
+
   it('最大化で全幅にし、解除すると直前の幅へ戻る (bdboard-0hcx)', async () => {
     // ドラッグ/キーボードのリサイズは MAX_WIDTH (720px) で頭打ちになる。最大化は
     // その上限を意図的に越える表示モードで、解除したら直前の幅へ戻ること。
@@ -2262,7 +2308,7 @@ describe('パネル内の戻るボタン (bdboard-4ql7)', () => {
         client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
       >
         <WatchedTicketsProvider>
-          <TicketDetailPanel
+          <MaximizablePanel
             ticketId={sampleTicket.id}
             projectRootPaths={new Map()}
             pendingDecision={undefined}

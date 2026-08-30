@@ -94,7 +94,7 @@ function formatTimelineChangeDetail(
   return undefined;
 }
 
-interface TicketDetailPanelProps {
+export interface TicketDetailPanelProps {
   ticketId: string;
   /**
    * projectId -> project root path. The panel resolves the path from the loaded
@@ -108,6 +108,18 @@ interface TicketDetailPanelProps {
   onClose: () => void;
   onChatAboutTicket?: (ctx: { projectId: string; ticketId: string }) => void;
   onOpenTicket: (ticketId: string) => void;
+  /**
+   * 最大化中か (bdboard-0hcx)。state は App 側が持つ。
+   *
+   * このコンポーネントで useState すると、App の ErrorBoundary が
+   * key={selectedTicketId} を持つ (App.tsx) ためチケットを1つたどるたびに
+   * unmount/remount され、最大化が毎回解除される。ChatPanel 側の
+   * ErrorBoundary には key が無いので同じ書き方で問題にならないが、詳細パネルは
+   * 「盤面のカードを次々開く」使い方をするので寿命がまったく違う
+   * (PR#242 opus レビュー major-1)。
+   */
+  isMaximized: boolean;
+  onToggleMaximized: () => void;
   /**
    * 詳細パネル内で1つ前のチケットへ戻る (bdboard-4ql7)。
    * 戻り先が無いときは undefined — ボタン自体を出さない。
@@ -254,18 +266,13 @@ export function TicketDetailPanel({
   isTicketOnBoard,
   onFilterByEpic,
   onTicketViewed,
+  isMaximized,
+  onToggleMaximized,
   availableLabels = [],
 }: TicketDetailPanelProps) {
   const detailPanel = useResizableSidePanel(
     UI_STORAGE_KEYS.ticketDetailPanelWidth,
   );
-  /*
-   * 最大化状態 (bdboard-0hcx)。ChatPanel の isChatPanelMaximized と同じく
-   * 永続化しない — 幅 (ticketDetailPanelWidth) は保存するが、最大化は
-   * 「今この1枚を広げて読みたい」という一時的な操作なので、次に開いたときは
-   * 保存済みの通常幅から始めるのが期待に近い。
-   */
-  const [isMaximized, setIsMaximized] = useState(false);
   const queryClient = useQueryClient();
   const undoSnackbar = useUndoSnackbar();
   const { data, isLoading, error } = useQuery({
@@ -1010,7 +1017,20 @@ export function TicketDetailPanel({
             <button
               type="button"
               className="btn btn-small detail-maximize"
-              onClick={() => setIsMaximized((maximized) => !maximized)}
+              onClick={(event) => {
+                /*
+                 * 最大化するとリサイズハンドルが DOM から外れる。ハンドルに
+                 * フォーカスがあるままだと activeElement が body に落ち、
+                 * useFocusTrap がパネル要素に張った keydown を受け取れなくなって
+                 * Escape で閉じられなくなる (PR#242 opus レビュー minor-1)。
+                 * Chrome/Firefox は button クリックでフォーカスがボタンへ移るので
+                 * 踏まないが、Safari/macOS は button にフォーカスを与えない。
+                 */
+                if (!isMaximized) {
+                  event.currentTarget.focus();
+                }
+                onToggleMaximized();
+              }}
               title={isMaximized ? '元の幅に戻す' : '画面幅いっぱいに広げる'}
             >
               {/* aria-pressed は付けない。ラベル自体が「最大化」/「縮小」と
