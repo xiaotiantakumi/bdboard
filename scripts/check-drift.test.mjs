@@ -174,20 +174,28 @@ describe('check-drift CLI', () => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  it('names the file when both sides edited it', () => {
-    const { bare, work } = makeRepo('both');
-    advanceMain(bare, 'both', (dir) => {
-      fs.writeFileSync(path.join(dir, 'hot.ts'), BIG_FILE('2'));
-    });
-    sh(work, 'git', 'fetch', '-q', 'origin');
-    sh(work, 'git', 'checkout', '-qb', 'feature');
-    fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('3'));
-    sh(work, 'git', 'commit', '-qam', 'mine');
+  // bdboard-z4h0: Windows runner の git 操作は稀に既定の5000msタイムアウトを
+  // 超えることがある(bdboard-s0yv/PR#226, bdboard-f1c9/PR#236 で2回観測)。
+  // makeRepo/advanceMain が実ファイルシステム上でbareリポジトリの
+  // git init/commit/push を行うため、このテストだけI/Oが重い。
+  it(
+    'names the file when both sides edited it',
+    () => {
+      const { bare, work } = makeRepo('both');
+      advanceMain(bare, 'both', (dir) => {
+        fs.writeFileSync(path.join(dir, 'hot.ts'), BIG_FILE('2'));
+      });
+      sh(work, 'git', 'fetch', '-q', 'origin');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('3'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
 
-    const { status, stdout } = runDrift(work);
-    expect(stdout).toContain('hot.ts');
-    expect(status).toBe(0);
-  });
+      const { status, stdout } = runDrift(work);
+      expect(stdout).toContain('hot.ts');
+      expect(status).toBe(0);
+    },
+    15000,
+  );
 
   it('still names the file when the upstream renamed it', () => {
     // rename 検出が効いていると main 側は新パスしか出さず、旧パスを触っている
