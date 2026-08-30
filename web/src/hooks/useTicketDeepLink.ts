@@ -53,6 +53,17 @@ export function useTicketDeepLink({
    * よってブラウザ履歴の意味は一切変えず、パネル内の「戻る」だけを別に持つ。
    */
   const [backStack, setBackStack] = useState<readonly string[]>([]);
+  /*
+   * backStack のミラー。goBackTicket は「戻り先を読む」→「history と表示を
+   * 差し替える」→「スタックを1つ削る」の順で副作用を含むので、setBackStack の
+   * updater 内でそれをやると updater が純粋でなくなる。React は updater を
+   * 再実行しうる (StrictMode の development 二重実行、並行レンダリング) ため、
+   * 契約違反のまま置くと将来の React で壊れる。bdboard-ge1 が
+   * 「development の二重実行 × history API」で実際に刺さった前例なので、
+   * ref から読んでハンドラ本体で副作用を済ませ、updater は純粋に保つ。
+   */
+  const backStackRef = useRef<readonly string[]>(backStack);
+  backStackRef.current = backStack;
   const pendingHashViewRef = useRef<ViewMode | null>(initialHash.view);
   const detailPushedRef = useRef(false);
   const selectedTicketIdRef = useRef<string | null>(initialHash.ticketId);
@@ -116,29 +127,32 @@ export function useTicketDeepLink({
   }, []);
 
   const goBackTicket = useCallback(() => {
-    setBackStack((stack) => {
-      const previous = stack[stack.length - 1];
-      if (previous === undefined) {
-        return stack;
-      }
-      // selectTicket と違いスタックは積まない (戻る操作なので)。履歴エントリも
-      // 増やさず、今のエントリを戻り先のチケットで置き換える。
-      const target = boardHashTarget(
-        { ticketId: previous, view: viewRef.current },
-        window.location,
-      );
-      window.history.replaceState(
-        { ...readHistoryState(), ticketId: previous },
-        '',
-        target,
-      );
-      setSelectedTicketId(previous);
-      return stack.slice(0, -1);
-    });
+    const stack = backStackRef.current;
+    const previous = stack[stack.length - 1];
+    if (previous === undefined) {
+      return;
+    }
+    // selectTicket と違いスタックは積まない (戻る操作なので)。履歴エントリも
+    // 増やさず、今のエントリを戻り先のチケットで置き換える。
+    const target = boardHashTarget(
+      { ticketId: previous, view: viewRef.current },
+      window.location,
+    );
+    window.history.replaceState(
+      { ...readHistoryState(), ticketId: previous },
+      '',
+      target,
+    );
+    // 同一イベント内で goBackTicket が2回呼ばれても正しく2段戻れるように、
+    // ref も即座に進めておく (state 更新は次のレンダーまで反映されないため)。
+    backStackRef.current = stack.slice(0, -1);
+    setSelectedTicketId(previous);
+    setBackStack((current) => current.slice(0, -1));
   }, []);
 
   const closeDetail = useCallback(() => {
     setBackStack([]);
+    backStackRef.current = [];
     if (detailPushedRef.current) {
       window.history.back();
     } else {
@@ -156,11 +170,23 @@ export function useTicketDeepLink({
       // which broke that case; the hash is now the source of truth.
       detailPushedRef.current =
         detailPushedRef.current && next.ticketId !== null;
-      // ブラウザ操作 (戻る/進む/直リンク) で表示チケットが変わったら、パネル内
-      // スタックはブラウザ履歴と対応が取れなくなるので捨てる (bdboard-4ql7)。
-      // selectTicket / goBackTicket は replaceState か pushState のみで popstate を
-      // 発火させないため、ここに来るのは必ず外部由来の遷移。
-      setBackStack([]);
+      /*
+       * ブラウザ操作 (戻る/進む/直リンク) で表示チケットが「変わったとき」だけ、
+       * パネル内スタックを捨てる (bdboard-4ql7)。
+       *
+       * 無条件に捨ててはいけない。上の detailPushedRef のコメントのとおり、
+       * useHistoryBackClose を使う子パネル (ChatPanel / SessionListPanel /
+       * SessionTailViewer / HelpPanel / KeyboardShortcutsPanel) は自前の履歴
+       * エントリを push し、閉じるときに history.back() で pop する。このとき
+       * hash は #ticket=… のままで表示チケットも変わらないのに popstate は
+       * 発火する。無条件クリアだと「チケットBについてチャット → チャットを
+       * 閉じる」だけで戻る先を失う。表示が変わらないなら履歴との対応も
+       * 壊れていないので、スタックは保持してよい。
+       */
+      if (next.ticketId !== selectedTicketIdRef.current) {
+        setBackStack([]);
+        backStackRef.current = [];
+      }
       setSelectedTicketId(next.ticketId);
       if (next.view !== null && next.view !== viewRef.current) {
         onViewChangeRef.current(next.view);

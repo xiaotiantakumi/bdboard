@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useTicketDeepLink } from './useTicketDeepLink';
 
@@ -10,6 +11,13 @@ function renderDeepLink(
     ({ view }) => useTicketDeepLink({ view, onViewChange }),
     { initialProps: { view: initialView } },
   );
+}
+
+function renderDeepLinkStrict() {
+  return renderHook(({ view }) => useTicketDeepLink({ view, onViewChange: vi.fn() }), {
+    initialProps: { view: 'merged' as const },
+    wrapper: StrictMode,
+  });
 }
 
 describe('useTicketDeepLink', () => {
@@ -277,6 +285,87 @@ describe('useTicketDeepLink', () => {
       });
 
       expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('子パネルが自前の履歴エントリを閉じただけでは戻り先を捨てない', () => {
+      /*
+       * PR#241 レビュー major-1 の回帰ガード。useHistoryBackClose を使う子パネル
+       * (ChatPanel 等) は自前の履歴エントリを push し、閉じるときに
+       * history.back() で pop する。このとき hash は #ticket=… のままで表示
+       * チケットも変わらないのに popstate は発火するので、無条件クリアだと
+       * 「チケットBについてチャット → 閉じる」で戻り先が消えていた。
+       */
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      act(() => {
+        result.current.selectTicket('b');
+      });
+      expect(result.current.canGoBackTicket).toBe(true);
+
+      // hash は据え置き = 表示チケットは変わらない popstate。
+      act(() => {
+        window.dispatchEvent(new PopStateEvent('popstate'));
+      });
+
+      expect(result.current.selectedTicketId).toBe('b');
+      expect(result.current.canGoBackTicket).toBe(true);
+
+      act(() => {
+        result.current.goBackTicket();
+      });
+      expect(result.current.selectedTicketId).toBe('a');
+    });
+
+    it('1イベント内で2回押すと2段戻る', () => {
+      /*
+       * goBackTicket がハンドラ本体で backStackRef を即座に進める理由。state は
+       * 次のレンダーまで更新されないので、ref を進めないと同一イベント内の
+       * 2回目が同じ戻り先を読んでしまい、1段しか戻らない。
+       */
+      const { result } = renderDeepLink();
+
+      for (const id of ['a', 'b', 'c']) {
+        act(() => {
+          result.current.selectTicket(id);
+        });
+      }
+
+      act(() => {
+        result.current.goBackTicket();
+        result.current.goBackTicket();
+      });
+
+      expect(result.current.selectedTicketId).toBe('a');
+      expect(result.current.canGoBackTicket).toBe(false);
+    });
+
+    it('StrictMode 下でも goBackTicket が正しく動く', () => {
+      /*
+       * 挙動の回帰ガードであって、「副作用を updater 内に置かない」という
+       * 実装上の判断そのものを縛るテストではない — 実測したところ、副作用を
+       * updater 内に戻しても現行 React では観測可能な差が出ない (冪等なため)。
+       * それでも StrictMode で1本通しておくのは、bdboard-ge1 が
+       * 「development の二重実行 × history API」で刺さった前例があり、将来
+       * ここに冪等でない処理が足されたときに気付ける場所を作るため。
+       */
+      const { result } = renderDeepLinkStrict();
+
+      for (const id of ['a', 'b', 'c']) {
+        act(() => {
+          result.current.selectTicket(id);
+        });
+      }
+
+      act(() => {
+        result.current.goBackTicket();
+      });
+
+      expect(result.current.selectedTicketId).toBe('b');
+      expect(window.location.hash).toBe('#ticket=b');
+      expect(result.current.canGoBackTicket).toBe(true);
     });
 
     it('ブラウザ操作で表示チケットが変わったら戻り先は破棄される', () => {

@@ -2242,14 +2242,14 @@ describe('パネル内の戻るボタン (bdboard-4ql7)', () => {
     renderWithBack(undefined);
 
     expect(await screen.findByRole('button', { name: '閉じる' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '← 戻る' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '前のチケットへ戻る' })).not.toBeInTheDocument();
   });
 
   it('戻り先があるときはボタンを出し、押すとコールバックを呼ぶ', async () => {
     const onBackTicket = vi.fn();
     renderWithBack(onBackTicket);
 
-    const back = await screen.findByRole('button', { name: '← 戻る' });
+    const back = await screen.findByRole('button', { name: '前のチケットへ戻る' });
     fireEvent.click(back);
 
     expect(onBackTicket).toHaveBeenCalledTimes(1);
