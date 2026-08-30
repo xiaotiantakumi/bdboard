@@ -1,3 +1,4 @@
+import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import {
   evaluateMergeSlotStatus,
@@ -51,7 +52,7 @@ export async function getMergeSlotStatus(
     );
   }
 
-  statuses.sort((a, b) => a.projectId.localeCompare(b.projectId));
+  statuses.sort((a, b) => compareStrings(a.projectId, b.projectId));
 
   return statuses;
 }

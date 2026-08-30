@@ -1,3 +1,5 @@
+import { compareStrings } from './compare.js';
+
 export interface GitWorktreeEntry {
   /** worktree の絶対パス */
   readonly path: string;
@@ -121,5 +123,5 @@ export function collectLeftoverCandidates(
     });
   }
 
-  return [...byTicketId.values()].sort((a, b) => a.ticketId.localeCompare(b.ticketId));
+  return [...byTicketId.values()].sort((a, b) => compareStrings(a.ticketId, b.ticketId));
 }

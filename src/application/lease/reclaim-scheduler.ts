@@ -1,3 +1,4 @@
+import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
@@ -178,7 +179,7 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
       });
     }
 
-    projectStatuses.sort((a, b) => a.projectId.localeCompare(b.projectId));
+    projectStatuses.sort((a, b) => compareStrings(a.projectId, b.projectId));
 
     return {
       enabled: config.enabled,

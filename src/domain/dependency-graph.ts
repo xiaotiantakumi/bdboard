@@ -1,3 +1,4 @@
+import { compareStrings } from './compare.js';
 import type { DependencyEdge } from './dependency.js';
 import type { Priority, Status } from './status.js';
 import type { Ticket } from './ticket.js';
@@ -152,8 +153,8 @@ export function buildDependencyGraph(tickets: readonly Ticket[]): DependencyGrap
     };
   });
 
-  nodes.sort((left, right) => left.ticketId.localeCompare(right.ticketId));
-  edges.sort((left, right) => edgeKey(left).localeCompare(edgeKey(right)));
+  nodes.sort((left, right) => compareStrings(left.ticketId, right.ticketId));
+  edges.sort((left, right) => compareStrings(edgeKey(left), edgeKey(right)));
 
   return { nodes, edges };
 }
