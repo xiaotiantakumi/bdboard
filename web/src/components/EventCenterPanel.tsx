@@ -73,6 +73,7 @@ export function EventCenterPanel({
   permission,
   enableNotifications,
   disableNotifications,
+  notificationDeliveryError,
 }: UseNotificationEventsResult) {
   return (
     <section className="event-center-panel" aria-label="イベント">
@@ -108,6 +109,11 @@ export function EventCenterPanel({
           <button type="button" onClick={() => void enableNotifications()}>
             デスクトップ通知を有効にする
           </button>
+        )}
+        {notificationDeliveryError !== null && (
+          <p className="event-center-panel-warning" role="alert">
+            {notificationDeliveryError}
+          </p>
         )}
       </section>
 
