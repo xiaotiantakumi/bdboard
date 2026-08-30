@@ -12,7 +12,8 @@ export interface HygieneThresholds {
   readonly highPriorityMax: number;
   /**
    * 既定 3日。確認待ち (pending decision) がこの期間を超えて放置されたときの検知閾値。
-   * 検知ロジック自体は別チケットで追加予定だが、設定値はここで解決する。
+   * 検知は `src/domain/hygiene.ts` の `checkStalePendingDecision` が担い、
+   * この値を直接参照する。
    */
   readonly stalePendingDecisionAfterMs: number;
 }
