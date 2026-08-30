@@ -713,13 +713,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     const projectIds = parseProjectIds(c.req.query('projects'));
-    let entries = deps.cache.listProjects();
-    if (projectIds !== undefined) {
-      const filterSet = new Set(projectIds);
-      entries = entries.filter((entry) => filterSet.has(entry.project.id));
-    }
-
-    const projects = entries.map((entry) => entry.project);
+    const projects = deps.cache.listProjects().map((entry) => entry.project);
     const staleLeases = await getStaleLeaseIssues(
       projects,
       deps.leaseReader,
@@ -760,13 +754,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     const projectIds = parseProjectIds(c.req.query('projects'));
-    let entries = deps.cache.listProjects();
-    if (projectIds !== undefined) {
-      const filterSet = new Set(projectIds);
-      entries = entries.filter((entry) => filterSet.has(entry.project.id));
-    }
-
-    const projects = entries.map((entry) => entry.project);
+    const projects = deps.cache.listProjects().map((entry) => entry.project);
     const statuses = await getMergeSlotStatus(
       projects,
       deps.mergeSlotReader,
