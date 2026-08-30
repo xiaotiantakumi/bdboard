@@ -2,7 +2,17 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ScanRootsConfig, ScanRootsConfigPort } from '../../application/ports/scan-roots-config.js';
 import { computeVersion, createScanRootsRoutes } from './scan-roots-routes.js';
 
-const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1' } } };
+const LOCAL_HOST = 'localhost:8787';
+
+const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 const EMPTY_VERSION = computeVersion(undefined);
 const ONE_VERSION = computeVersion({ scanRoots: ['/one'], excludePaths: [] });
 const TRIMMED_VERSION = computeVersion({ scanRoots: ['/one'], excludePaths: ['/tmp'] });
@@ -82,11 +92,11 @@ describe('createScanRootsRoutes', () => {
     const store = makePersistedStore();
     const response = await createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scanRoots: [' /one '], excludePaths: [' /tmp '], version: EMPTY_VERSION }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -102,7 +112,7 @@ describe('createScanRootsRoutes', () => {
     const store = makePersistedStore();
     const response = await createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -110,7 +120,7 @@ describe('createScanRootsRoutes', () => {
           excludePaths: ['/path/to/exclude/', 'C:\\Users\\example\\', '/', 'C:\\\\'],
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -133,11 +143,11 @@ describe('createScanRootsRoutes', () => {
   ])('rejects invalid body %#', async (body) => {
     const response = await createScanRootsRoutes({ store: makeStore(), resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -155,11 +165,11 @@ describe('createScanRootsRoutes', () => {
     const store = makeStore();
     const response = await createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scanRoots, version: EMPTY_VERSION }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -172,11 +182,11 @@ describe('createScanRootsRoutes', () => {
   it('reports which roots were rejected', async () => {
     const response = await createScanRootsRoutes({ store: makeStore(), resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scanRoots: ['/Users/example', '/etc/../etc'], version: EMPTY_VERSION }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -190,11 +200,11 @@ describe('createScanRootsRoutes', () => {
     const store = makeStore();
     const response = await createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scanRoots: ['/usr/local/projects'], version: EMPTY_VERSION }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -204,17 +214,17 @@ describe('createScanRootsRoutes', () => {
   it('rejects a stale version without writing', async () => {
     const store = makePersistedStore();
     const app = createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) });
-    await app.request('/api/settings/scan-roots', {
+    await app.request('/api/settings/scan-roots', withLocalHost({
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ scanRoots: ['/one'], excludePaths: [], version: EMPTY_VERSION }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
 
-    const response = await app.request('/api/settings/scan-roots', {
+    const response = await app.request('/api/settings/scan-roots', withLocalHost({
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ scanRoots: ['/two'], excludePaths: [], version: EMPTY_VERSION }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
       error: 'scan roots config changed since read',
@@ -238,11 +248,11 @@ describe('createScanRootsRoutes', () => {
     const putOnce = (path: string) =>
       app.request(
         '/api/settings/scan-roots',
-        {
+        withLocalHost({
           method: 'PUT',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ scanRoots: [path], excludePaths: [], version: EMPTY_VERSION }),
-        },
+        }),
         LOCAL_ENV,
       );
 
@@ -259,11 +269,11 @@ describe('createScanRootsRoutes', () => {
     const read = await app.request('/api/settings/scan-roots');
     const { version } = (await read.json()) as { version: string };
     current = { scanRoots: ['/edited'], excludePaths: [] };
-    const response = await app.request('/api/settings/scan-roots', {
+    const response = await app.request('/api/settings/scan-roots', withLocalHost({
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ scanRoots: ['/two'], excludePaths: [], version }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     expect(response.status).toBe(409);
     expect(store.write).not.toHaveBeenCalled();
   });
@@ -313,11 +323,11 @@ describe('createScanRootsRoutes', () => {
     const postRestartApp = createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) });
     const response = await postRestartApp.request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scanRoots: ['/one', '/two'], excludePaths: [], version: preRestartVersion }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -333,11 +343,11 @@ describe('createScanRootsRoutes', () => {
         await Promise.resolve(config);
       });
     const app = createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) });
-    const putVersion1 = () => app.request('/api/settings/scan-roots', {
+    const putVersion1 = () => app.request('/api/settings/scan-roots', withLocalHost({
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ scanRoots: ['/one'], excludePaths: [], version: EMPTY_VERSION }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     const failed = await putVersion1();
     expect(failed.status).toBe(500);
     const retried = await putVersion1();
@@ -350,11 +360,11 @@ describe('createScanRootsRoutes', () => {
     const store = makeStore();
     const response = await createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) }).request(
       '/api/settings/scan-roots',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ scanRoots: ['/one'], excludePaths: [] }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -364,11 +374,11 @@ describe('createScanRootsRoutes', () => {
   it('returns the content version after a successful write and rejects reuse of it', async () => {
     const store = makePersistedStore();
     const app = createScanRootsRoutes({ store, resolveDefaultScanRoots: vi.fn(async () => []) });
-    const request = () => app.request('/api/settings/scan-roots', {
+    const request = () => app.request('/api/settings/scan-roots', withLocalHost({
       method: 'PUT',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ scanRoots: ['/one'], excludePaths: [], version: EMPTY_VERSION }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     const first = await request();
     expect(first.status).toBe(200);
     await expect(first.json()).resolves.toMatchObject({ version: ONE_VERSION });

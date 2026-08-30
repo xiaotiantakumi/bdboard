@@ -9,7 +9,17 @@ import {
   createHygieneThresholdsRoutes,
 } from './hygiene-thresholds-routes.js';
 
-const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1' } } };
+const LOCAL_HOST = 'localhost:8787';
+
+const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 const EMPTY_VERSION = computeHygieneThresholdsVersion(undefined);
 
 function makeStore(overrides: Partial<HygieneThresholdsConfigPort> = {}): HygieneThresholdsConfigPort {
@@ -53,7 +63,7 @@ describe('createHygieneThresholdsRoutes', () => {
     const store = makePersistedStore();
     const response = await createHygieneThresholdsRoutes({ store }).request(
       '/api/settings/hygiene-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -62,7 +72,7 @@ describe('createHygieneThresholdsRoutes', () => {
           stalePendingDecisionAfterMs: 1 * 24 * 60 * 60_000,
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -76,14 +86,14 @@ describe('createHygieneThresholdsRoutes', () => {
   it('rejects invalid priority with 400', async () => {
     const response = await createHygieneThresholdsRoutes({ store: makeStore() }).request(
       '/api/settings/hygiene-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           highPriorityMax: 9,
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -92,14 +102,14 @@ describe('createHygieneThresholdsRoutes', () => {
   it('returns 409 on version mismatch', async () => {
     const response = await createHygieneThresholdsRoutes({ store: makeStore() }).request(
       '/api/settings/hygiene-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           highPriorityMax: 2,
           version: 'stale-version',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(409);

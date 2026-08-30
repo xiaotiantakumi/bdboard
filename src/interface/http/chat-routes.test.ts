@@ -27,13 +27,24 @@ import {
 import { CHAT_RATE_LIMITED } from './chat-rate-limit.js';
 import type { WriteGuardDeps } from './write-guard.js';
 
+const LOCAL_HOST = 'localhost:8787';
+
 const LOCAL_ENV = {
   incoming: {
     socket: {
       remoteAddress: '127.0.0.1',
+      localPort: 8787,
     },
   },
 };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 
 const NOW = new Date('2026-08-15T12:00:00.000Z');
 const PNG_BYTES = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] as const;
@@ -168,7 +179,7 @@ describe('createChatRoutes local-only guard', () => {
   it('allows loopback without Cloudflare headers', async () => {
     const app = createApp();
 
-    const res = await app.request('/api/chat/availability', {}, LOCAL_ENV);
+    const res = await app.request('/api/chat/availability', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
   });
 
@@ -177,7 +188,18 @@ describe('createChatRoutes local-only guard', () => {
 
     const res = await app.request(
       '/api/chat/availability',
-      { headers: { 'CF-Ray': 'abc123' } },
+      withLocalHost({ headers: { 'CF-Ray': 'abc123' } }),
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('returns 403 for loopback with a non-local Host header', async () => {
+    const app = createApp();
+
+    const res = await app.request(
+      '/api/chat/availability',
+      { headers: { Host: 'attacker.example:8787' } },
       LOCAL_ENV,
     );
     expect(res.status).toBe(403);
@@ -271,7 +293,7 @@ describe('POST /api/chat/message/stream', () => {
       agent: streamingAgent,
       cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
     });
-    const res = await app.request('/api/chat/message/stream', {
+    const res = await app.request('/api/chat/message/stream', withLocalHost({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -279,7 +301,7 @@ describe('POST /api/chat/message/stream', () => {
         message: 'look',
         images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
       }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
 
     expect(res.status).toBe(200);
     await res.text();
@@ -298,34 +320,34 @@ describe('POST /api/chat/message/stream', () => {
       }),
     });
     const app = createApp({ agent: streamingAgent, cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]) });
-    const res = await app.request('/api/chat/message/stream', {
+    const res = await app.request('/api/chat/message/stream', withLocalHost({
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     expect(res.status).toBe(200);
     const text = await res.text();
     expect(text.match(/event: delta/g)).toHaveLength(2);
     expect(text.match(/event: done/g)).toHaveLength(1);
     expect(text).toContain('"reply":"ABCD"');
-    const status = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
     expect(await status.json()).toEqual(expect.objectContaining({
       state: 'completed',
       sessionId: '550e8400-e29b-41d4-a716-446655440099',
     }));
     const ack = await app.request(
       '/api/chat/turn-status?projectId=p&sessionId=550e8400-e29b-41d4-a716-446655440099',
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     expect(ack.status).toBe(204);
-    const idle = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const idle = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
     expect(await idle.json()).toEqual({ state: 'idle' });
   });
 
   it('returns JSON 400 without starting SSE for a non-streaming agent', async () => {
     const app = createApp({ cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]) });
-    const res = await app.request('/api/chat/message/stream', {
+    const res = await app.request('/api/chat/message/stream', withLocalHost({
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'chat agent does not support streaming' });
   });
@@ -347,12 +369,12 @@ describe('POST /api/chat/message/stream', () => {
     const controller = new AbortController();
     const responsePromise = app.request(
       '/api/chat/message/stream',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'hello' }),
         signal: controller.signal,
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -362,7 +384,7 @@ describe('POST /api/chat/message/stream', () => {
 
     const processing = await app.request(
       '/api/chat/turn-status?projectId=p',
-      {},
+      withLocalHost({}),
       LOCAL_ENV,
     );
     expect(await processing.json()).toEqual({
@@ -385,7 +407,7 @@ describe('POST /api/chat/message/stream', () => {
     );
     const completed = await app.request(
       '/api/chat/turn-status?projectId=p',
-      {},
+      withLocalHost({}),
       LOCAL_ENV,
     );
     expect(await completed.json()).toEqual({
@@ -397,11 +419,11 @@ describe('POST /api/chat/message/stream', () => {
 
     const followUp = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'follow-up' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(followUp.status).toBe(200);
@@ -428,12 +450,12 @@ describe('POST /api/chat/message/stream', () => {
     const controller = new AbortController();
     const responsePromise = app.request(
       '/api/chat/message/stream',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'hello' }),
         signal: controller.signal,
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -474,11 +496,11 @@ describe('POST /api/chat/message/stream', () => {
     const bulkApp = createApp({ agent: bulkAgent, cache });
     const bulkRes = await bulkApp.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(bulkRes.status).toBe(200);
@@ -491,11 +513,11 @@ describe('POST /api/chat/message/stream', () => {
     const streamApp = createApp({ agent: streamingAgent, cache });
     const streamRes = await streamApp.request(
       '/api/chat/message/stream',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(streamRes.status).toBe(200);
@@ -523,11 +545,11 @@ describe('POST /api/chat/message/stream', () => {
       cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
     });
 
-    const res = await app.request('/api/chat/message/stream', {
+    const res = await app.request('/api/chat/message/stream', withLocalHost({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     expect(res.status).toBe(200);
     const text = await res.text();
     const errorEvents = [...text.matchAll(/event: error\ndata: (.+)\n/g)];
@@ -567,11 +589,11 @@ describe('POST /api/chat/message/stream', () => {
 
       const responsePromise = app.request(
         '/api/chat/message/stream',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-        },
+        }),
         LOCAL_ENV,
       );
 
@@ -615,11 +637,11 @@ describe('POST /api/chat/message/stream', () => {
 
       const responsePromise = app.request(
         '/api/chat/message/stream',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-        },
+        }),
         LOCAL_ENV,
       );
 
@@ -651,15 +673,15 @@ describe('detached bulk chat turn recovery', () => {
 
     const response = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'hello' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
-    const status = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
     const completed = await status.json() as { state: string; sessionId: string };
     expect(completed).toEqual(expect.objectContaining({
       state: 'completed',
@@ -668,19 +690,19 @@ describe('detached bulk chat turn recovery', () => {
 
     await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=wrong-session`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed' }));
 
     const ack = await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${completed.sessionId}`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     expect(ack.status).toBe(204);
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual({ state: 'idle' });
   });
 
@@ -703,18 +725,18 @@ describe('detached bulk chat turn recovery', () => {
     const controller = new AbortController();
     const responsePromise = app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'hello' }),
         signal: controller.signal,
-      },
+      }),
       LOCAL_ENV,
     );
 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
     controller.abort();
-    const processing = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const processing = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
     expect(await processing.json()).toEqual({
       state: 'processing',
       message: 'hello',
@@ -731,7 +753,7 @@ describe('detached bulk chat turn recovery', () => {
     await vi.waitFor(() =>
       expect(store.lookup('p', 'bulk-detached-session')).toEqual({ agentId: 'test-agent' }),
     );
-    const completed = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const completed = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
     expect(await completed.json()).toEqual({
       state: 'completed',
       sessionId: 'bulk-detached-session',
@@ -769,12 +791,12 @@ describe('detached bulk chat turn recovery', () => {
     const controller = new AbortController();
     const first = app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'thread A' }),
         signal: controller.signal,
-      },
+      }),
       LOCAL_ENV,
     );
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
@@ -784,33 +806,33 @@ describe('detached bulk chat turn recovery', () => {
 
     const second = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', message: 'thread B' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(second.status).toBe(200);
 
     // 古い方から配る。Aを回収してACKすると、次にBが出てくる。
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionA }));
     const ackA = await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${sessionA}`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     expect(ackA.status).toBe(204);
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionB }));
     const ackB = await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${sessionB}`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     expect(ackB.status).toBe(204);
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual({ state: 'idle' });
   });
 
@@ -838,7 +860,11 @@ describe('detached bulk chat turn recovery', () => {
     for (const message of ['thread A', 'thread B']) {
       const res = await app.request(
         '/api/chat/message/stream',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'p', message }) },
+        withLocalHost({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message }),
+        }),
         LOCAL_ENV,
       );
       expect(res.status).toBe(200);
@@ -846,14 +872,14 @@ describe('detached bulk chat turn recovery', () => {
     }
 
     // Aは未回収のまま残っていて、先に配られる。
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionA }));
     await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${sessionA}`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionB }));
   });
 
@@ -880,28 +906,28 @@ describe('detached bulk chat turn recovery', () => {
     for (let i = 0; i < MAX + 1; i += 1) {
       const response = await app.request(
         '/api/chat/message',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'p', message: `message ${i}` }),
-        },
+        }),
         LOCAL_ENV,
       );
       expect(response.status).toBe(200);
     }
 
     // 先頭 (最古) が押し出されているので、次に配られるのは2番目。
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionIdFor(1) }));
 
     // 落ちた分を ACK しても壊れない (該当が無いので no-op)。
     const ackDropped = await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${sessionIdFor(0)}`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     expect(ackDropped.status).toBe(204);
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionIdFor(1) }));
   });
 
@@ -923,7 +949,11 @@ describe('detached bulk chat turn recovery', () => {
     for (const message of ['thread A', 'thread B']) {
       const res = await app.request(
         '/api/chat/message',
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: 'p', message }) },
+        withLocalHost({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message }),
+        }),
         LOCAL_ENV,
       );
       expect(res.status).toBe(200);
@@ -932,11 +962,11 @@ describe('detached bulk chat turn recovery', () => {
     // 後ろの1件だけ ACK しても、先頭は残る。
     const ackB = await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${sessionB}`,
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     expect(ackB.status).toBe(204);
-    expect(await (await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV)).json())
+    expect(await (await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV)).json())
       .toEqual(expect.objectContaining({ state: 'completed', sessionId: sessionA }));
   });
 
@@ -961,18 +991,18 @@ describe('detached bulk chat turn recovery', () => {
     const controller = new AbortController();
     const responsePromise = app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'p', sessionId, message: 'follow-up question' }),
         signal: controller.signal,
-      },
+      }),
       LOCAL_ENV,
     );
 
     await vi.waitFor(() => expect(sendMessage).toHaveBeenCalled());
     controller.abort();
-    const processing = await app.request('/api/chat/turn-status?projectId=p', {}, LOCAL_ENV);
+    const processing = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
     expect(await processing.json()).toEqual({
       state: 'processing',
       message: 'follow-up question',
@@ -995,7 +1025,7 @@ describe('createChatRoutes behavior', () => {
     const checkAvailability = vi.fn(async () => 'available' as const);
     const app = createApp({ agent: createFakeAgent({ checkAvailability }) });
 
-    const res = await app.request('/api/chat/availability', {}, LOCAL_ENV);
+    const res = await app.request('/api/chat/availability', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ availability: 'available' });
     expect(checkAvailability).toHaveBeenCalled();
@@ -1010,7 +1040,7 @@ describe('createChatRoutes behavior', () => {
       }),
     });
 
-    const res = await app.request('/api/chat/availability', {}, LOCAL_ENV);
+    const res = await app.request('/api/chat/availability', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ availability: 'unknown' });
   });
@@ -1020,11 +1050,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: '', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1046,11 +1076,11 @@ describe('createChatRoutes behavior', () => {
         descriptor: { ...createFakeAgent().descriptor, supportsImages: true },
       }),
     });
-    const res = await app.request('/api/chat/message', {
+    const res = await app.request('/api/chat/message', withLocalHost({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ projectId: 'proj-a', message: 'look', images: [image] }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: 'invalid request body' });
@@ -1058,14 +1088,14 @@ describe('createChatRoutes behavior', () => {
 
   it('returns JSON 413 before parsing a body over the 15 MiB transport limit', async () => {
     const app = createApp();
-    const res = await app.request('/api/chat/message', {
+    const res = await app.request('/api/chat/message', withLocalHost({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': String(15 * 1024 * 1024 + 1),
       },
       body: '{}',
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
 
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: 'request body too large' });
@@ -1079,7 +1109,7 @@ describe('createChatRoutes behavior', () => {
       descriptor: { ...createFakeAgent().descriptor, supportsImages: true },
     });
     const app = createApp({ cache, agent: imageAgent });
-    const res = await app.request('/api/chat/message', {
+    const res = await app.request('/api/chat/message', withLocalHost({
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1087,7 +1117,7 @@ describe('createChatRoutes behavior', () => {
         message: '',
         images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
       }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
 
     expect(res.status).toBe(200);
     const request = vi.mocked(imageAgent.sendMessage).mock.calls[0]?.[0];
@@ -1107,7 +1137,7 @@ describe('createChatRoutes behavior', () => {
         sendMessageStream: vi.fn(),
       });
       const app = createApp({ cache, agent: unsupportedAgent });
-      const res = await app.request(endpoint, {
+      const res = await app.request(endpoint, withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1115,7 +1145,7 @@ describe('createChatRoutes behavior', () => {
           message: 'look',
           images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
         }),
-      }, LOCAL_ENV);
+      }), LOCAL_ENV);
 
       expect(res.status).toBe(400);
       expect(await res.json()).toEqual({
@@ -1137,14 +1167,14 @@ describe('createChatRoutes behavior', () => {
         sendMessageStream: vi.fn(),
       });
       const app = createApp({ cache, agent: unsupportedAgent });
-      const completedResponse = await app.request('/api/chat/message', {
+      const completedResponse = await app.request('/api/chat/message', withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'first turn' }),
-      }, LOCAL_ENV);
+      }), LOCAL_ENV);
       const completedBody = await completedResponse.json() as { sessionId: string };
 
-      const rejected = await app.request(endpoint, {
+      const rejected = await app.request(endpoint, withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1152,12 +1182,12 @@ describe('createChatRoutes behavior', () => {
           message: 'look',
           images: [{ mimeType: 'image/png', data: PNG_BASE64 }],
         }),
-      }, LOCAL_ENV);
+      }), LOCAL_ENV);
       expect(rejected.status).toBe(400);
 
       const status = await app.request(
         '/api/chat/turn-status?projectId=proj-a',
-        {},
+        withLocalHost({}),
         LOCAL_ENV,
       );
       expect(await status.json()).toEqual(expect.objectContaining({
@@ -1172,11 +1202,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'missing', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1194,11 +1224,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1223,11 +1253,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1247,11 +1277,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1281,11 +1311,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1319,11 +1349,11 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1346,7 +1376,7 @@ describe('createChatRoutes behavior', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1354,7 +1384,7 @@ describe('createChatRoutes behavior', () => {
           message: 'hi',
           sessionId: '550e8400-e29b-41d4-a716-446655440000',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1421,11 +1451,11 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: TUNNEL_HEADERS,
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1444,11 +1474,11 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
     registry.register(nonBdOnlyAgent);
     const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
     const app = createApp({ agents: registry, cache, writeAccess: authorizedDeps() });
-    const res = await app.request('/api/chat/message', {
+    const res = await app.request('/api/chat/message', withLocalHost({
       method: 'POST',
       headers: TUNNEL_HEADERS,
       body: JSON.stringify({ projectId: 'proj-a', message: 'hi', agentId: 'codex' }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
     expect(res.status).toBe(200);
     expect(nonBdOnlyAgent.sendMessage).toHaveBeenCalled();
   });
@@ -1461,7 +1491,7 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/availability',
-      { headers: { 'CF-Ray': 'abc123-NRT', Cookie: TUNNEL_HEADERS.Cookie } },
+      withLocalHost({ headers: { 'CF-Ray': 'abc123-NRT', Cookie: TUNNEL_HEADERS.Cookie } }),
       LOCAL_ENV,
     );
 
@@ -1479,11 +1509,11 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: TUNNEL_HEADERS,
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1501,11 +1531,11 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'CF-Ray': 'abc123-NRT', 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1523,7 +1553,7 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/availability',
-      { headers: { 'CF-Ray': 'abc123-NRT', Cookie: TUNNEL_HEADERS.Cookie } },
+      withLocalHost({ headers: { 'CF-Ray': 'abc123-NRT', Cookie: TUNNEL_HEADERS.Cookie } }),
       LOCAL_ENV,
     );
 
@@ -1541,7 +1571,7 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/availability',
-      { headers: { 'CF-Ray': 'abc123-NRT' } },
+      withLocalHost({ headers: { 'CF-Ray': 'abc123-NRT' } }),
       LOCAL_ENV,
     );
 
@@ -1557,11 +1587,11 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { ...TUNNEL_HEADERS, 'Sec-Fetch-Site': 'cross-site' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -1588,7 +1618,7 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
           writeAccess: authorizedDeps({ isTunnelWriteAllowed: () => false }),
         });
 
-        const res = await app.request(requestPath, init, LOCAL_ENV);
+        const res = await app.request(requestPath, withLocalHost(init), LOCAL_ENV);
 
         // 404 ではなく 403 = ハンドラ解決より前にガードが効いている。
         expect(res.status, `${init.method} ${requestPath} must be guarded`).toBe(403);
@@ -1604,7 +1634,7 @@ describe('chat over the tunnel uses the same authorization as writes (bdboard-cu
 
     const res = await app.request(
       '/api/chat/not-implemented-yet',
-      { method: 'GET', headers: { 'CF-Ray': 'abc123-NRT' } },
+      withLocalHost({ method: 'GET', headers: { 'CF-Ray': 'abc123-NRT' } }),
       LOCAL_ENV,
     );
 
@@ -1658,11 +1688,11 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
   ): Promise<Response> {
     return await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: TUNNEL_HEADERS,
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       env,
     );
   }
@@ -1673,11 +1703,11 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
   ): Promise<Response> {
     return await app.request(
       '/api/chat/message/stream',
-      {
+      withLocalHost({
         method: 'POST',
         headers: TUNNEL_HEADERS,
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       env,
     );
   }
@@ -1694,11 +1724,11 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
     for (let i = 0; i < 5; i += 1) {
       const res = await app.request(
         '/api/chat/message',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-        },
+        }),
         LOCAL_ENV,
       );
       expect(res.status).toBe(200);
@@ -1764,14 +1794,14 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
     });
     const first = await app.request(
       '/api/chat/message',
-      { method: 'POST', headers: TUNNEL_HEADERS, body },
+      withLocalHost({ method: 'POST', headers: TUNNEL_HEADERS, body }),
       LOCAL_ENV,
     );
     expect(first.status).toBe(200);
 
     const second = await app.request(
       '/api/chat/message',
-      { method: 'POST', headers: TUNNEL_HEADERS, body },
+      withLocalHost({ method: 'POST', headers: TUNNEL_HEADERS, body }),
       LOCAL_ENV,
     );
     expect(second.status).toBe(429);
@@ -1865,7 +1895,7 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
 
     await app.request(
       '/api/chat/availability',
-      { headers: availabilityHeaders },
+      withLocalHost({ headers: availabilityHeaders }),
       LOCAL_ENV,
     );
     expect(agent.checkAvailability).toHaveBeenCalledTimes(1);
@@ -1873,7 +1903,7 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
     currentMs += 61_000;
     await app.request(
       '/api/chat/availability',
-      { headers: availabilityHeaders },
+      withLocalHost({ headers: availabilityHeaders }),
       LOCAL_ENV,
     );
     expect(agent.checkAvailability).toHaveBeenCalledTimes(2);
@@ -1943,7 +1973,7 @@ describe('GET /api/chat/agents (bdboard-l1t.2 step 2)', () => {
     registry.register(withoutModel);
     const app = createApp({ agents: registry });
 
-    const res = await app.request('/api/chat/agents', {}, LOCAL_ENV);
+    const res = await app.request('/api/chat/agents', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
 
     const body = await res.json();
@@ -1992,7 +2022,7 @@ describe('GET /api/chat/agents (bdboard-l1t.2 step 2)', () => {
     registry.register(loggedOut);
     const app = createApp({ agents: registry });
 
-    const res = await app.request('/api/chat/agents', {}, LOCAL_ENV);
+    const res = await app.request('/api/chat/agents', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
 
     const body = await res.json();
@@ -2027,11 +2057,11 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
   async function messageRequest(app: Hono): Promise<Response> {
     return await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { ...TUNNEL_HEADERS, 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
   }
@@ -2054,7 +2084,7 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
     for (let i = 0; i < 2; i += 1) {
       const res = await app.request(
         '/api/chat/agents',
-        { headers: TUNNEL_HEADERS },
+        withLocalHost({ headers: TUNNEL_HEADERS }),
         LOCAL_ENV,
       );
       expect(res.status).toBe(200);
@@ -2062,7 +2092,7 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
 
     const limited = await app.request(
       '/api/chat/agents',
-      { headers: TUNNEL_HEADERS },
+      withLocalHost({ headers: TUNNEL_HEADERS }),
       LOCAL_ENV,
     );
     expect(limited.status).toBe(429);
@@ -2071,7 +2101,7 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
     for (let i = 0; i < 3; i += 1) {
       const res = await app.request(
         '/api/chat/availability',
-        { headers: TUNNEL_HEADERS },
+        withLocalHost({ headers: TUNNEL_HEADERS }),
         LOCAL_ENV,
       );
       expect(res.status).toBe(200);
@@ -2099,28 +2129,28 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
     for (let i = 0; i < 5; i += 1) {
       const sessionMessages = await app.request(
         `/api/chat/sessions/${sessionId}/messages?projectId=proj-a`,
-        { headers: TUNNEL_HEADERS },
+        withLocalHost({ headers: TUNNEL_HEADERS }),
         LOCAL_ENV,
       );
       expect(sessionMessages.status).toBe(200);
 
       const threads = await app.request(
         '/api/chat/threads?projectId=proj-a',
-        { headers: TUNNEL_HEADERS },
+        withLocalHost({ headers: TUNNEL_HEADERS }),
         LOCAL_ENV,
       );
       expect(threads.status).toBe(200);
 
       const turnStatus = await app.request(
         '/api/chat/turn-status?projectId=proj-a',
-        { headers: TUNNEL_HEADERS },
+        withLocalHost({ headers: TUNNEL_HEADERS }),
         LOCAL_ENV,
       );
       expect(turnStatus.status).toBe(200);
 
       const ack = await app.request(
         `/api/chat/turn-status?projectId=proj-a&sessionId=${sessionId}`,
-        { method: 'DELETE', headers: TUNNEL_HEADERS },
+        withLocalHost({ method: 'DELETE', headers: TUNNEL_HEADERS }),
         LOCAL_ENV,
       );
       expect(ack.status).toBe(204);
@@ -2186,12 +2216,12 @@ describe('chat agents rate limit and per-agent availability cache (bdboard-l1t.2
     registry.register(beta);
     const app = createApp({ agents: registry, availabilityCacheMs: 60_000 });
 
-    await app.request('/api/chat/agents', {}, LOCAL_ENV);
-    await app.request('/api/chat/agents', {}, LOCAL_ENV);
+    await app.request('/api/chat/agents', withLocalHost({}), LOCAL_ENV);
+    await app.request('/api/chat/agents', withLocalHost({}), LOCAL_ENV);
     expect(alphaAvailable).toHaveBeenCalledTimes(1);
     expect(betaAvailable).toHaveBeenCalledTimes(1);
 
-    await app.request('/api/chat/availability', {}, LOCAL_ENV);
+    await app.request('/api/chat/availability', withLocalHost({}), LOCAL_ENV);
     expect(alphaAvailable).toHaveBeenCalledTimes(1);
   });
 });
@@ -2223,7 +2253,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2231,7 +2261,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           message: 'continue',
           sessionId: 'sess_not-a-uuid',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2253,7 +2283,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2261,7 +2291,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           message: 'hi',
           sessionId,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2309,7 +2339,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2317,7 +2347,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           message: 'hi',
           agentId: 'codex',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2338,7 +2368,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2346,7 +2376,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           message: 'hi',
           agentId: 'missing-agent',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2367,7 +2397,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2376,7 +2406,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           sessionId: 'sess-1',
           agentId: 'other',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2402,11 +2432,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2440,7 +2470,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2448,7 +2478,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           message: 'hi',
           model: 'haiku',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2490,7 +2520,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2498,7 +2528,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
           message: 'hi',
           model: 'opus',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2527,7 +2557,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     const app = createApp({ store, messages });
     const res = await app.request(
       `/api/chat/sessions/${sessionId}/messages?projectId=proj-a`,
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
 
@@ -2561,7 +2591,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     messages.append(sessionB, [{ role: 'user', content: 'project B title' }]);
 
     const app = createApp({ store, messages });
-    const res = await app.request('/api/chat/threads?projectId=proj-a', {}, LOCAL_ENV);
+    const res = await app.request('/api/chat/threads?projectId=proj-a', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual([
       expect.objectContaining({ sessionId: sessionA, agentId: 'claude', title: 'project A title', pinned: false }),
@@ -2578,11 +2608,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const renamed = await app.request(
       `/api/chat/sessions/${sessionId}/thread`,
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', title: '  運用相談  ' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(renamed.status).toBe(200);
@@ -2596,11 +2626,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const pinned = await app.request(
       `/api/chat/sessions/${sessionId}/thread`,
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', pinned: true }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(pinned.status).toBe(200);
@@ -2614,11 +2644,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const cleared = await app.request(
       `/api/chat/sessions/${sessionId}/thread`,
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', title: null }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(cleared.status).toBe(200);
@@ -2640,11 +2670,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const invalidSession = await app.request(
       '/api/chat/sessions/-rf/thread',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', title: 'x' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(invalidSession.status).toBe(400);
@@ -2652,11 +2682,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const unknown = await app.request(
       `/api/chat/sessions/550e8400-e29b-41d4-a716-446655440098/thread`,
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', title: 'x' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(unknown.status).toBe(404);
@@ -2664,11 +2694,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const emptyPatch = await app.request(
       `/api/chat/sessions/${sessionId}/thread`,
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(emptyPatch.status).toBe(400);
@@ -2676,11 +2706,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const blankTitle = await app.request(
       `/api/chat/sessions/${sessionId}/thread`,
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', title: '   ' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(blankTitle.status).toBe(400);
@@ -2689,8 +2719,8 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
   it('requires projectId and keeps thread listing behind the chat guard', async () => {
     const app = createApp();
-    expect((await app.request('/api/chat/threads', {}, LOCAL_ENV)).status).toBe(400);
-    expect((await app.request('/api/chat/threads?projectId=proj-a', { headers: { 'CF-Ray': 'remote' } }, LOCAL_ENV)).status).toBe(403);
+    expect((await app.request('/api/chat/threads', withLocalHost({}), LOCAL_ENV)).status).toBe(400);
+    expect((await app.request('/api/chat/threads?projectId=proj-a', withLocalHost({ headers: { 'CF-Ray': 'remote' } }), LOCAL_ENV)).status).toBe(403);
   });
 
   it('deletes both the session and its messages, rejects unknown and cross-project sessions', async () => {
@@ -2704,15 +2734,15 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     messages.append(sessionB, [{ role: 'user', content: 'keep' }]);
     const app = createApp({ store, messages });
 
-    const deleted = await app.request(`/api/chat/sessions/${sessionA}?projectId=proj-a`, { method: 'DELETE' }, LOCAL_ENV);
+    const deleted = await app.request(`/api/chat/sessions/${sessionA}?projectId=proj-a`, withLocalHost({ method: 'DELETE' }), LOCAL_ENV);
     expect(deleted.status).toBe(204);
-    expect((await app.request(`/api/chat/sessions/${sessionA}/messages?projectId=proj-a`, {}, LOCAL_ENV)).status).toBe(404);
+    expect((await app.request(`/api/chat/sessions/${sessionA}/messages?projectId=proj-a`, withLocalHost({}), LOCAL_ENV)).status).toBe(404);
     expect(messages.listBySession(sessionA)).toEqual([]);
     expect(messages.listBySession(sessionB)).toHaveLength(1);
 
-    const unknown = await app.request(`/api/chat/sessions/${sessionA}?projectId=proj-a`, { method: 'DELETE' }, LOCAL_ENV);
+    const unknown = await app.request(`/api/chat/sessions/${sessionA}?projectId=proj-a`, withLocalHost({ method: 'DELETE' }), LOCAL_ENV);
     expect(unknown.status).toBe(404);
-    const crossProject = await app.request(`/api/chat/sessions/${sessionB}?projectId=proj-a`, { method: 'DELETE' }, LOCAL_ENV);
+    const crossProject = await app.request(`/api/chat/sessions/${sessionB}?projectId=proj-a`, withLocalHost({ method: 'DELETE' }), LOCAL_ENV);
     expect(crossProject.status).toBe(404);
     expect(messages.listBySession(sessionB)).toHaveLength(1);
   });
@@ -2726,7 +2756,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     const app = createApp({ store });
     const res = await app.request(
       `/api/chat/sessions/${sessionId}/messages?projectId=proj-a`,
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
 
@@ -2744,7 +2774,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     const app = createApp({ store });
     const res = await app.request(
       `/api/chat/sessions/${sessionId}/messages?projectId=proj-a`,
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
 
@@ -2774,11 +2804,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const sendRes = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(sendRes.status).toBe(200);
@@ -2787,7 +2817,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const getRes = await app.request(
       `/api/chat/sessions/${sendBody.sessionId}/messages?projectId=proj-a`,
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
     expect(getRes.status).toBe(200);
@@ -2826,11 +2856,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const sendRes = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(sendRes.status).toBe(200);
@@ -2841,7 +2871,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const getRes = await app.request(
       `/api/chat/sessions/${sendBody.sessionId}/messages?projectId=proj-a`,
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
     expect(getRes.status).toBe(200);
@@ -2879,11 +2909,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const sendRes = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'hi' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(sendRes.status).toBe(200);
@@ -2892,7 +2922,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const getRes = await app.request(
       `/api/chat/sessions/${sendBody.sessionId}/messages?projectId=proj-a`,
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
     expect(getRes.status).toBe(200);
@@ -2908,7 +2938,7 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     const app = createApp();
     const res = await app.request(
       '/api/chat/sessions/550e8400-e29b-41d4-a716-446655440099/messages?projectId=proj-a',
-      { method: 'GET' },
+      withLocalHost({ method: 'GET' }),
       LOCAL_ENV,
     );
 
@@ -2925,11 +2955,11 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
 
     const res = await app.request(
       '/api/chat/message',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ projectId: 'proj-a', message: 'question' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2968,17 +2998,17 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
         descriptor: { id: 'claude', label: 'Claude', models: [{ id: 'sonnet', label: 'Sonnet' }], experimental: false, capability: 'bd-only' },
       }),
     });
-    const listed = await app.request('/api/chat/projects/proj-a/discovered-sessions', {}, LOCAL_ENV);
+    const listed = await app.request('/api/chat/projects/proj-a/discovered-sessions', withLocalHost({}), LOCAL_ENV);
     expect(listed.status).toBe(200);
     expect(await listed.json()).toEqual({ sessions: [{ sessionId: 'session-1', lastActivityAt: NOW.toISOString(), alreadyAdopted: false }] });
 
     const adopted = await app.request(
       '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId: 'claude' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(adopted.status).toBe(200);
@@ -3001,18 +3031,18 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     const app = createApp({ cache, sessionDiscovery: discovery });
     const adopted = await app.request(
       '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId: 'test-agent' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(adopted.status).toBe(400);
   });
 
   it('returns discovery availability and validation errors', async () => {
-    const missing = await createApp().request('/api/chat/projects/proj-a/discovered-sessions', {}, LOCAL_ENV);
+    const missing = await createApp().request('/api/chat/projects/proj-a/discovered-sessions', withLocalHost({}), LOCAL_ENV);
     expect(missing.status).toBe(501);
     const discovery: ChatSessionDiscoveryPort = {
       listDiscoveredSessions: vi.fn(async () => []),
@@ -3023,15 +3053,15 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
       cache: createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]),
       sessionDiscovery: discovery,
     });
-    const unknown = await app.request('/api/chat/projects/nope/discovered-sessions', {}, LOCAL_ENV);
+    const unknown = await app.request('/api/chat/projects/nope/discovered-sessions', withLocalHost({}), LOCAL_ENV);
     expect(unknown.status).toBe(404);
-    const invalid = await app.request('/api/chat/projects/proj-a/discovered-sessions/..s1/adopt', { method: 'POST' }, LOCAL_ENV);
+    const invalid = await app.request('/api/chat/projects/proj-a/discovered-sessions/..s1/adopt', withLocalHost({ method: 'POST' }), LOCAL_ENV);
     expect(invalid.status).toBe(400);
     // N6: URL エンコードされた traversal 形式(`..%2f` = `../`)も、Hono のパスパラメータ
     // デコード後に同じ `includes('..')` チェックへ落ちて 400 になることを固定する。
     const encodedTraversal = await app.request(
       '/api/chat/projects/proj-a/discovered-sessions/..%2fsecret/adopt',
-      { method: 'POST' },
+      withLocalHost({ method: 'POST' }),
       LOCAL_ENV,
     );
     expect(encodedTraversal.status).toBe(400);
@@ -3087,17 +3117,76 @@ describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
     expect(await adopted.json()).toEqual({ error: CHAT_SESSION_DISCOVERY_LOCAL_ONLY });
 
     // 対照実験: 同じ経路がローカルなら通る(200)。
-    const listedLocal = await app.request('/api/chat/projects/proj-a/discovered-sessions', {}, LOCAL_ENV);
+    const listedLocal = await app.request('/api/chat/projects/proj-a/discovered-sessions', withLocalHost({}), LOCAL_ENV);
     expect(listedLocal.status).toBe(200);
     const adoptedLocal = await app.request(
       '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agentId: 'claude' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(adoptedLocal.status).toBe(200);
+  });
+});
+
+describe('chat routes DNS rebinding resistance', () => {
+  // discoverySessionsLocalOnlyGuard はトンネル経由を一切許さずローカル直
+  // アクセスのみを要求する。ここでは外側の chatGuard をトンネル資格で通した
+  // 上で、CF-Ray ヘッダを付けないループバック+Host偽装リクエストが
+  // discoverySessionsLocalOnlyGuard 自身でも「ローカルではない」と判定される
+  // ことを固定する(修正前は isLocalControlRequest が Host を見ないため、
+  // ここが誤ってローカル扱いになり discovered-sessions が漏れていた)。
+  it('does not treat loopback with a spoofed Host as local for discovered-sessions even when a tunnel session would otherwise authorize the request', async () => {
+    const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
+    const discovery: ChatSessionDiscoveryPort = {
+      listDiscoveredSessions: vi.fn(async () => []),
+      verifySessionExists: vi.fn(async () => true),
+      readAdoptSeedMessages: vi.fn(async () => []),
+    };
+    const app = createApp({
+      cache,
+      sessionDiscovery: discovery,
+      writeAccess: { isTunnelWriteAllowed: () => true, hasTunnelSession: () => true },
+    });
+    const res = await app.request(
+      '/api/chat/projects/proj-a/discovered-sessions',
+      {
+        headers: {
+          Host: 'attacker.example:8787',
+          Cookie: 'bdboard_tunnel_session=example-session-value',
+        },
+      },
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: CHAT_SESSION_DISCOVERY_LOCAL_ONLY });
+    expect(discovery.listDiscoveredSessions).not.toHaveBeenCalled();
+  });
+
+  // availability のレート制限スキップ判定も同じ理由で狙われうる: CF-Ray無し・
+  // ループバック・Host偽装のリクエストをトンネル資格で通した場合、修正前の
+  // isLocalControlRequest ベースの判定だと「ローカル」と誤判定してレート制限を
+  // スキップしてしまう(= トンネル経路のはずのリクエストがレート制限を回避できる)。
+  // 修正後は Host 検証込みなので「ローカルではない」と正しく判定され、
+  // レート制限が効く。
+  it('does not let a spoofed-Host loopback request skip the availability rate limit via a tunnel session', async () => {
+    const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
+    const app = createApp({
+      cache,
+      rateLimit: { perMinute: 1 },
+      availabilityCacheMs: 0,
+      writeAccess: { isTunnelWriteAllowed: () => true, hasTunnelSession: () => true },
+    });
+    const headers = {
+      Host: 'attacker.example:8787',
+      Cookie: 'bdboard_tunnel_session=example-session-value',
+    };
+    const first = await app.request('/api/chat/availability', { headers }, LOCAL_ENV);
+    expect(first.status).toBe(200);
+    const second = await app.request('/api/chat/availability', { headers }, LOCAL_ENV);
+    expect(second.status).toBe(429);
   });
 });

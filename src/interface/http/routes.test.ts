@@ -64,13 +64,24 @@ vi.mock('hono/streaming', async (importOriginal) => {
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
 
+const LOCAL_HOST = 'localhost:8787';
+
 const LOCAL_ENV = {
   incoming: {
     socket: {
       remoteAddress: '127.0.0.1',
+      localPort: 8787,
     },
   },
 };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -2260,14 +2271,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, humanDecisions }));
     const response = await app.request(
       '/api/tickets/bdboard-a/decision',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           choice: 'yes',
           freeform: '  free text answer  ',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2295,11 +2306,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, humanDecisions }));
     const response = await app.request(
       '/api/tickets/bdboard-a/decision',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice: 'yes' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2316,11 +2327,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ humanDecisions }));
     const response = await app.request(
       '/api/tickets/bdboard-a/decision',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2338,14 +2349,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ humanDecisions }));
     const response = await app.request(
       '/api/tickets/bdboard-a/decision',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'CF-Ray': 'abc123',
         },
         body: JSON.stringify({ choice: 'yes' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2363,11 +2374,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ humanDecisions }));
     const response = await app.request(
       '/api/tickets/missing-ticket/decision',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ choice: 'yes' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2380,11 +2391,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2418,11 +2429,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2457,11 +2468,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'close', reason: 'shipped' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2499,11 +2510,11 @@ describe('createApiRoutes', () => {
 
     const deferResponse = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'defer', untilDate: '2026-08-22' }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(deferResponse.status).toBe(200);
@@ -2515,11 +2526,11 @@ describe('createApiRoutes', () => {
 
     const priorityResponse = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'priority', priority: 2 }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(priorityResponse.status).toBe(200);
@@ -2555,11 +2566,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'undefer' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2600,11 +2611,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'undefer' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2639,14 +2650,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'CF-Ray': 'abc123',
         },
         body: JSON.stringify({ action: 'undefer' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2676,11 +2687,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'bogus' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2707,14 +2718,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'CF-Ray': 'abc123',
         },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2743,11 +2754,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/missing-ticket/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2760,11 +2771,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2798,11 +2809,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -2838,11 +2849,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'close' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2875,11 +2886,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'defer' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2912,14 +2923,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'undefer',
           untilDate: '2026-08-10',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -2962,11 +2973,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'close' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3012,11 +3023,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'defer' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3056,7 +3067,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3064,7 +3075,7 @@ describe('createApiRoutes', () => {
           previousPriority: 3,
           expectedCurrentPriority: 1,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3114,7 +3125,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -3122,7 +3133,7 @@ describe('createApiRoutes', () => {
           previousPriority: 3,
           expectedCurrentPriority: 1,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3162,11 +3173,11 @@ describe('createApiRoutes', () => {
     // missing precondition.
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'priority' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -3199,11 +3210,11 @@ describe('createApiRoutes', () => {
     // rather than silently skipping the check.
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'priority', previousPriority: 3 }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -3232,11 +3243,11 @@ describe('createApiRoutes', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'undefer' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -3266,14 +3277,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'CF-Ray': 'abc123',
         },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3303,11 +3314,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/missing-ticket/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3347,11 +3358,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action/undo',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3367,11 +3378,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/comment',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: 'hello' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3405,11 +3416,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/comment',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: 'progress update' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3443,11 +3454,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/comment',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: '' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -3475,14 +3486,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/comment',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'CF-Ray': 'abc123',
         },
         body: JSON.stringify({ text: 'hello' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3519,11 +3530,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/comment',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: 'hello' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3539,11 +3550,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dependsOnId: 'bdboard-b' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3573,11 +3584,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dependsOnId: 'bdboard-b' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3622,7 +3633,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies/bdboard-b',
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3645,14 +3656,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'CF-Ray': 'abc123',
         },
         body: JSON.stringify({ dependsOnId: 'bdboard-b' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3671,12 +3682,12 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies/bdboard-b',
-      {
+      withLocalHost({
         method: 'DELETE',
         headers: {
           'CF-Ray': 'abc123',
         },
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3711,11 +3722,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dependsOnId: 'bdboard-b' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3752,11 +3763,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ dependsOnId: 'bdboard-b' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3799,7 +3810,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies/bdboard-parent',
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3835,7 +3846,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, dependencyWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/dependencies/bdboard-b',
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3853,14 +3864,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/title',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'New title',
           expectedCurrentTitle: 'Old title',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3873,14 +3884,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/description',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: 'New description',
           expectedCurrentDescription: 'Old description',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3918,14 +3929,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/title',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'New title',
           expectedCurrentTitle: 'Old title',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -3969,14 +3980,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/description',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: 'New description',
           expectedCurrentDescription: 'Old description',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4023,14 +4034,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/title',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'New title',
           expectedCurrentTitle: 'Old title',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4077,14 +4088,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/description',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: 'New description',
           expectedCurrentDescription: 'Old description',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4119,11 +4130,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/title',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: '', expectedCurrentTitle: 'Old title' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4153,14 +4164,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/description',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: 'x'.repeat(4001),
           expectedCurrentDescription: 'Old description',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4190,14 +4201,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-missing/title',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'New title',
           expectedCurrentTitle: 'Old title',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4227,14 +4238,14 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-missing/description',
-      {
+      withLocalHost({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           description: 'New description',
           expectedCurrentDescription: 'Old description',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4248,11 +4259,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps());
     const response = await app.request(
       '/api/tickets/bdboard-a/labels',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: 'human' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4290,11 +4301,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/labels',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: 'human' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4333,11 +4344,11 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/labels',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: '-rf' }),
-      },
+      }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4382,7 +4393,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/labels/human',
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4425,7 +4436,7 @@ describe('createApiRoutes', () => {
     const app = createApiRoutes(createDeps({ cache, issueWriter }));
     const response = await app.request(
       '/api/tickets/bdboard-a/labels/human',
-      { method: 'DELETE' },
+      withLocalHost({ method: 'DELETE' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4445,7 +4456,7 @@ describe('createApiRoutes', () => {
 
     const response = await app.request(
       '/api/refresh',
-      { method: 'POST' },
+      withLocalHost({ method: 'POST' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -4922,7 +4933,7 @@ describe('createApiRoutes', () => {
 
     const response = await app.request(
       '/api/refresh',
-      { method: 'POST' },
+      withLocalHost({ method: 'POST' }),
       LOCAL_ENV,
     );
     const body = await response.json();
@@ -5366,11 +5377,11 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps());
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId: 'sess-1' }),
-        },
+        }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5393,11 +5404,11 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ cache, sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId: 'sess-1' }),
-        },
+        }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5420,11 +5431,11 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId: '' }),
-        },
+        }),
         LOCAL_ENV,
       );
 
@@ -5441,11 +5452,11 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/missing-ticket/session-link',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId: 'sess-1' }),
-        },
+        }),
         LOCAL_ENV,
       );
 
@@ -5464,14 +5475,14 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        {
+        withLocalHost({
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'CF-Ray': 'abc123',
           },
           body: JSON.stringify({ sessionId: 'sess-1' }),
-        },
+        }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5497,11 +5508,11 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ cache, sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        {
+        withLocalHost({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sessionId: 'sess-1' }),
-        },
+        }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5519,7 +5530,7 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps());
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        { method: 'DELETE' },
+        withLocalHost({ method: 'DELETE' }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5542,7 +5553,7 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ cache, sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        { method: 'DELETE' },
+        withLocalHost({ method: 'DELETE' }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5564,7 +5575,7 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/missing-ticket/session-link',
-        { method: 'DELETE' },
+        withLocalHost({ method: 'DELETE' }),
         LOCAL_ENV,
       );
 
@@ -5583,10 +5594,10 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        {
+        withLocalHost({
           method: 'DELETE',
           headers: { 'CF-Ray': 'abc123' },
-        },
+        }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5612,7 +5623,7 @@ describe('createApiRoutes', () => {
       const app = createApiRoutes(createDeps({ cache, sessionLinkWriter }));
       const response = await app.request(
         '/api/tickets/bdboard-a/session-link',
-        { method: 'DELETE' },
+        withLocalHost({ method: 'DELETE' }),
         LOCAL_ENV,
       );
       const body = await response.json();
@@ -5690,11 +5701,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders(),
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5714,11 +5725,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders(),
         body: JSON.stringify({ action: 'undefer' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5741,11 +5752,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/decision',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders(),
         body: JSON.stringify({ choice: 'yes' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5769,11 +5780,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/comment',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders(),
         body: JSON.stringify({ text: 'from my phone' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5801,11 +5812,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders(),
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5829,11 +5840,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders(),
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5854,11 +5865,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: tunnelHeaders({ 'Sec-Fetch-Site': 'cross-site' }),
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5879,7 +5890,7 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a/quick-action',
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -5887,7 +5898,7 @@ describe('tunnel write access (bdboard-9rz)', () => {
           ...CF_HEADER,
         },
         body: JSON.stringify({ action: 'claim' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -5906,11 +5917,11 @@ describe('tunnel write access (bdboard-9rz)', () => {
     for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
       const response = await app.request(
         '/api/tickets/bdboard-a/not-implemented-yet',
-        {
+        withLocalHost({
           method,
           headers: { 'Content-Type': 'application/json', ...CF_HEADER },
           body: method === 'DELETE' ? undefined : '{}',
-        },
+        }),
         LOCAL_ENV,
       );
 
@@ -5924,7 +5935,7 @@ describe('tunnel write access (bdboard-9rz)', () => {
 
     const response = await app.request(
       '/api/tickets/bdboard-a',
-      { headers: CF_HEADER },
+      withLocalHost({ headers: CF_HEADER }),
       LOCAL_ENV,
     );
 

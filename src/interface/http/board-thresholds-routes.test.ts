@@ -10,7 +10,17 @@ import {
   createBoardThresholdsRoutes,
 } from './board-thresholds-routes.js';
 
-const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1' } } };
+const LOCAL_HOST = 'localhost:8787';
+
+const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 const EMPTY_VERSION = computeBoardThresholdsVersion(undefined);
 
 function makeStore(overrides: Partial<BoardThresholdsConfigPort> = {}): BoardThresholdsConfigPort {
@@ -60,7 +70,7 @@ describe('createBoardThresholdsRoutes', () => {
     const store = makePersistedStore();
     const response = await createBoardThresholdsRoutes({ store }).request(
       '/api/settings/board-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -70,7 +80,7 @@ describe('createBoardThresholdsRoutes', () => {
           livenessStaleMs: 48 * 60 * 60_000,
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -85,14 +95,14 @@ describe('createBoardThresholdsRoutes', () => {
   it('rejects invalid thresholds with 400', async () => {
     const response = await createBoardThresholdsRoutes({ store: makeStore() }).request(
       '/api/settings/board-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           livenessActiveMs: DEFAULT_LIVENESS_THRESHOLDS.idleMs,
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -106,14 +116,14 @@ describe('createBoardThresholdsRoutes', () => {
   it('returns 409 on version mismatch', async () => {
     const response = await createBoardThresholdsRoutes({ store: makeStore() }).request(
       '/api/settings/board-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           stalledAfterMs: 12 * 60 * 60_000,
           version: 'stale-version',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(409);
@@ -123,7 +133,7 @@ describe('createBoardThresholdsRoutes', () => {
     const store = makePersistedStore({ inProgressWipLimit: 5 });
     const setResponse = await createBoardThresholdsRoutes({ store }).request(
       '/api/settings/board-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -131,7 +141,7 @@ describe('createBoardThresholdsRoutes', () => {
           inProgressWipLimitByProject: { 'proj-a': 3 },
           version: computeBoardThresholdsVersion({ inProgressWipLimit: 5 }),
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(setResponse.status).toBe(200);
@@ -142,7 +152,7 @@ describe('createBoardThresholdsRoutes', () => {
 
     const clearResponse = await createBoardThresholdsRoutes({ store }).request(
       '/api/settings/board-thresholds',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -152,7 +162,7 @@ describe('createBoardThresholdsRoutes', () => {
             inProgressWipLimitByProject: { 'proj-a': 3 },
           }),
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(clearResponse.status).toBe(200);

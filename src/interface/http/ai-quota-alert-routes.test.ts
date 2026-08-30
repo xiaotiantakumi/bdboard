@@ -9,7 +9,17 @@ import {
   createAiQuotaAlertRoutes,
 } from './ai-quota-alert-routes.js';
 
-const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1' } } };
+const LOCAL_HOST = 'localhost:8787';
+
+const LOCAL_ENV = { incoming: { socket: { remoteAddress: '127.0.0.1', localPort: 8787 } } };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 const EMPTY_VERSION = computeAiQuotaAlertVersion(undefined);
 
 function makeStore(overrides: Partial<AiQuotaAlertConfigPort> = {}): AiQuotaAlertConfigPort {
@@ -47,14 +57,14 @@ describe('createAiQuotaAlertRoutes', () => {
     const store = makePersistedStore();
     const response = await createAiQuotaAlertRoutes({ store }).request(
       '/api/settings/ai-quota-alert',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           thresholdPercent: 15,
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(200);
@@ -64,14 +74,14 @@ describe('createAiQuotaAlertRoutes', () => {
   it('rejects invalid threshold with 400', async () => {
     const response = await createAiQuotaAlertRoutes({ store: makeStore() }).request(
       '/api/settings/ai-quota-alert',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           thresholdPercent: 100,
           version: EMPTY_VERSION,
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(400);
@@ -80,14 +90,14 @@ describe('createAiQuotaAlertRoutes', () => {
   it('returns 409 on version mismatch', async () => {
     const response = await createAiQuotaAlertRoutes({ store: makeStore() }).request(
       '/api/settings/ai-quota-alert',
-      {
+      withLocalHost({
         method: 'PUT',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           thresholdPercent: 15,
           version: 'stale-version',
         }),
-      },
+      }),
       LOCAL_ENV,
     );
     expect(response.status).toBe(409);
