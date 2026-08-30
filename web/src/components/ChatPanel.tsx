@@ -304,6 +304,8 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const threadDrawerRef = useRef<HTMLDivElement>(null);
+  const threadDrawerCloseButtonRef = useRef<HTMLButtonElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
@@ -650,10 +652,21 @@ export function ChatPanel({
     onClose,
   });
 
+  // bdboard-f1c9: ドロワー開閉と相互排他(TunnelControl/TicketDetailPanel と同型)。
+  // useFocusTrap の Tab 処理は defaultPrevented を見ないため、ネストした2トラップを
+  // 同時 enabled にすると境界判定が競合しうる。
   useFocusTrap({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: requestClose,
+    enabled: !threadDrawerOpen,
+  });
+
+  useFocusTrap({
+    containerRef: threadDrawerRef,
+    initialFocusRef: threadDrawerCloseButtonRef,
+    enabled: threadDrawerOpen,
+    onEscape: () => setThreadDrawerOpen(false),
   });
 
   const currentSessionId = selectedThreadIds[selectedProjectId];
@@ -2834,6 +2847,7 @@ export function ChatPanel({
             onClick={() => setThreadDrawerOpen(false)}
           >
             <div
+              ref={threadDrawerRef}
               id="chat-thread-drawer"
               className="chat-thread-drawer"
               role="dialog"
@@ -2843,6 +2857,7 @@ export function ChatPanel({
               <div className="chat-thread-drawer-header">
                 <span className="chat-thread-drawer-title">スレッド</span>
                 <button
+                  ref={threadDrawerCloseButtonRef}
                   type="button"
                   className="chat-thread-drawer-close"
                   onClick={() => setThreadDrawerOpen(false)}

@@ -2025,6 +2025,80 @@ describe('ChatPanel', () => {
     expect(fetchDiscoveredChatSessionsMock).toHaveBeenCalledWith('proj-a');
   });
 
+  it('focuses the drawer close button when the thread drawer opens', async () => {
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-first',
+        agentId: 'claude',
+        title: 'first thread',
+        pinned: false,
+        updatedAt: '2026-01-02T00:00:00Z',
+      },
+    ]);
+
+    const { container } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    const drawer = getThreadDrawer(container);
+    await within(drawer).findByRole('button', { name: 'first thread' });
+
+    expect(within(drawer).getByRole('button', { name: '閉じる' })).toHaveFocus();
+  });
+
+  it('traps Tab focus inside the thread drawer', async () => {
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-first',
+        agentId: 'claude',
+        title: 'first thread',
+        pinned: false,
+        updatedAt: '2026-01-02T00:00:00Z',
+      },
+      {
+        sessionId: 'sess-second',
+        agentId: 'claude',
+        title: 'second thread',
+        pinned: false,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]);
+
+    const { container } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    const drawer = getThreadDrawer(container);
+    await within(drawer).findByRole('button', { name: 'second thread' });
+
+    const lastFocusable = within(drawer).getByRole('button', { name: 'CLIセッションを再開' });
+    lastFocusable.focus();
+    fireEvent.keyDown(lastFocusable, { key: 'Tab' });
+
+    expect(within(drawer).getByRole('button', { name: '閉じる' })).toHaveFocus();
+    expect(screen.getByLabelText('メッセージ')).not.toHaveFocus();
+  });
+
+  it('closes the thread drawer on Escape without closing the chat panel', async () => {
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-first',
+        agentId: 'claude',
+        title: 'first thread',
+        pinned: false,
+        updatedAt: '2026-01-02T00:00:00Z',
+      },
+    ]);
+
+    const { container, onClose } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    const drawer = getThreadDrawer(container);
+    await within(drawer).findByRole('button', { name: 'first thread' });
+
+    const closeButton = within(drawer).getByRole('button', { name: '閉じる' });
+    expect(closeButton).toHaveFocus();
+    fireEvent.keyDown(closeButton, { key: 'Escape' });
+
+    expect(container.querySelector('#chat-thread-drawer')).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it('sends the first message without sessionId and shows the reply', async () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
