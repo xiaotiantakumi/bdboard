@@ -2,6 +2,7 @@
 // process timezone. The host varies between local dev and CI (UTC), so
 // date-boundary math must pin to an explicit IANA zone via Intl (see bdboard-3tw.75).
 import { getBoardTimeZone } from '../boardTimeZone';
+import { compareStrings } from '../compare';
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -104,7 +105,7 @@ export function groupEventsByDate<T extends { at: string }>(
   }
 
   return [...groups.entries()]
-    .sort(([left], [right]) => right.localeCompare(left))
+    .sort(([left], [right]) => compareStrings(right, left))
     .map(([key, groupedEvents]) => ({
       heading: headings.get(key) ?? key,
       events: groupedEvents,

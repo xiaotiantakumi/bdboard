@@ -67,7 +67,7 @@ export function createInMemoryCfdCacheMethods(): Pick<
         }
       }
       cfdSnapshots.sort((a, b) => {
-        const dateCmp = a.snapshotDate.localeCompare(b.snapshotDate);
+        const dateCmp = compareStrings(a.snapshotDate, b.snapshotDate);
         if (dateCmp !== 0) {
           return dateCmp;
         }
@@ -75,7 +75,7 @@ export function createInMemoryCfdCacheMethods(): Pick<
         if (projectCmp !== 0) {
           return projectCmp;
         }
-        return a.status.localeCompare(b.status);
+        return compareStrings(a.status, b.status);
       });
     },
     listCfdSnapshots(projectIds?: readonly string[]): readonly CfdSnapshotRow[] {
