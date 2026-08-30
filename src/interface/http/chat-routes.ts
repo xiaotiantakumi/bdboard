@@ -34,7 +34,7 @@ import {
   toChatAgentDto,
   toSessionTailMessageDto,
 } from './dto.js';
-import { isLocalControlRequest } from './local-request.js';
+import { isLocalBasicAuthRequest } from './local-request.js';
 import {
   createPrivilegedApiGuardMiddleware,
   type WriteGuardDeps,
@@ -288,7 +288,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
   // '/discovered-sessions' 単体は '/discovered-sessions/*' にマッチしない(前方一致は
   // サブパスのみ)ので、GET(一覧)と POST(adopt)の両方を掛け忘れなく覆うため両方登録する。
   const discoverySessionsLocalOnlyGuard: MiddlewareHandler = async (c, next) => {
-    if (!isLocalControlRequest(c)) {
+    if (!isLocalBasicAuthRequest(c)) {
       return c.json({ error: CHAT_SESSION_DISCOVERY_LOCAL_ONLY }, 403);
     }
     await next();
@@ -343,7 +343,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       return c.json({ availability: cached });
     }
 
-    if (!isLocalControlRequest(c)) {
+    if (!isLocalBasicAuthRequest(c)) {
       const decision = limiter.consume();
       if (decision.kind === 'deny') {
         return rateLimitedResponse(c, decision);

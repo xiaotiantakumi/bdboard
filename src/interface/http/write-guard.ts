@@ -1,10 +1,10 @@
 import type { Context, MiddlewareHandler } from 'hono';
-import { isLocalControlRequest } from './local-request.js';
+import { isLocalBasicAuthRequest } from './local-request.js';
 
 /**
  * 書き込み系リクエストの認可を 1 箇所に集約したガード(bdboard-9rz)。
  *
- * 以前は各ルートのハンドラ先頭で `if (!isLocalControlRequest(c))` を書いていた。
+ * 以前は各ルートのハンドラ先頭で `if (!isLocalBasicAuthRequest(c))` を書いていた。
  * その形だと「次に足されるエンドポイントがガードを書き忘れたまま無防備に出荷される」
  * のを止められない。ここではメソッド(POST/PUT/PATCH/DELETE)で前方に効くミドルウェアに
  * 変え、ルーティング解決より前に判定する。新しい書き込みルートは、登録しただけで
@@ -125,7 +125,7 @@ export function evaluateWriteAccess(
     return { kind: 'deny', reason: 'csrf' };
   }
 
-  if (isLocalControlRequest(c)) {
+  if (isLocalBasicAuthRequest(c)) {
     return { kind: 'allow' };
   }
 

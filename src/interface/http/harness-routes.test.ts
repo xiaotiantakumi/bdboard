@@ -8,13 +8,24 @@ import type { PackRegistryPort } from '../../application/ports/pack-registry.js'
 import type { Project } from '../../domain/project.js';
 import { createHarnessRoutes } from './harness-routes.js';
 
+const LOCAL_HOST = 'localhost:8787';
+
 const LOCAL_ENV = {
   incoming: {
     socket: {
       remoteAddress: '127.0.0.1',
+      localPort: 8787,
     },
   },
 };
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -274,13 +285,13 @@ describe('createHarnessRoutes', () => {
     const app = createHarnessApp({ cache, injector });
     const response = await app.request(
       `/api/projects/${encodeURIComponent(proj.id)}/harness/inject`,
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
         body: JSON.stringify({ pack: 'bdboard-harness' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -305,13 +316,13 @@ describe('createHarnessRoutes', () => {
     const app = createHarnessApp({ cache, registry });
     const response = await app.request(
       `/api/projects/${encodeURIComponent(proj.id)}/harness/inject`,
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
         body: JSON.stringify({ pack: 'missing-pack' }),
-      },
+      }),
       LOCAL_ENV,
     );
 
@@ -320,13 +331,13 @@ describe('createHarnessRoutes', () => {
 
   it('returns 404 when injecting into an unknown project', async () => {
     const app = createHarnessApp();
-    const response = await app.request('/api/projects/missing-project/harness/inject', {
+    const response = await app.request('/api/projects/missing-project/harness/inject', withLocalHost({
       method: 'POST',
       headers: {
         'content-type': 'application/json',
       },
       body: JSON.stringify({ pack: 'bdboard-harness' }),
-    }, LOCAL_ENV);
+    }), LOCAL_ENV);
 
     expect(response.status).toBe(404);
   });
@@ -346,13 +357,13 @@ describe('createHarnessRoutes', () => {
     const app = createHarnessApp({ cache, injector });
     const response = await app.request(
       `/api/projects/${encodeURIComponent(proj.id)}/harness/inject`,
-      {
+      withLocalHost({
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
         body: JSON.stringify({ pack: 'bdboard-harness' }),
-      },
+      }),
       LOCAL_ENV,
     );
 

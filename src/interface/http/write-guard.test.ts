@@ -8,10 +8,13 @@ import {
   type WriteGuardDeps,
 } from './write-guard.js';
 
+const LOCAL_HOST = 'localhost:8787';
+
 const LOCAL_ENV = {
   incoming: {
     socket: {
       remoteAddress: '127.0.0.1',
+      localPort: 8787,
     },
   },
 };
@@ -23,6 +26,14 @@ const TUNNEL_ENV = LOCAL_ENV;
 const CF_HEADER = { 'CF-Ray': 'abc123-NRT' } as const;
 const JSON_HEADER = { 'Content-Type': 'application/json' } as const;
 const SESSION_COOKIE = 'bdboard_tunnel_session=example-session-value';
+
+function withLocalHost(init: RequestInit = {}): RequestInit {
+  const headers = new Headers(init.headers);
+  if (!headers.has('Host')) {
+    headers.set('Host', LOCAL_HOST);
+  }
+  return { ...init, headers };
+}
 
 function createApp(deps: WriteGuardDeps = {}): Hono {
   const app = new Hono();
@@ -163,7 +174,7 @@ describe('createWriteGuardMiddleware', () => {
     const app = createApp();
     const res = await app.request(
       '/api/write',
-      { method: 'POST', headers: JSON_HEADER, body: '{}' },
+      withLocalHost({ method: 'POST', headers: JSON_HEADER, body: '{}' }),
       LOCAL_ENV,
     );
     expect(res.status).toBe(200);
@@ -173,11 +184,11 @@ describe('createWriteGuardMiddleware', () => {
     const app = createApp();
     const res = await app.request(
       '/api/write',
-      {
+      withLocalHost({
         method: 'POST',
         headers: { 'Sec-Fetch-Site': 'cross-site', ...JSON_HEADER },
         body: '{}',
-      },
+      }),
       LOCAL_ENV,
     );
     expect(res.status).toBe(403);
@@ -302,7 +313,7 @@ describe('createPrivilegedApiGuardMiddleware', () => {
   });
 
   it('still allows local reads', async () => {
-    const res = await createGuardedApp().request('/api/read', {}, LOCAL_ENV);
+    const res = await createGuardedApp().request('/api/read', withLocalHost({}), LOCAL_ENV);
     expect(res.status).toBe(200);
   });
 
@@ -348,5 +359,39 @@ describe('createPrivilegedApiGuardMiddleware', () => {
       { notAuthorized: 'chat needs a session' },
     ).request('/api/read', { headers: CF_HEADER }, TUNNEL_ENV);
     expect(await unauthorized.json()).toEqual({ error: 'chat needs a session' });
+  });
+});
+
+describe('write guard DNS rebinding resistance', () => {
+  it('does not treat loopback with a non-local Host as local write access', async () => {
+    const app = createApp();
+    const res = await app.request(
+      '/api/write',
+      {
+        method: 'POST',
+        headers: {
+          Host: 'attacker.example:8787',
+          ...JSON_HEADER,
+        },
+        body: '{}',
+      },
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'local access only' });
+  });
+
+  it('does not treat loopback with a wrong local port in Host as local privileged read access', async () => {
+    const app = new Hono();
+    app.use('*', createPrivilegedApiGuardMiddleware());
+    app.get('/api/read', (c) => c.json({ ok: true }));
+
+    const res = await app.request(
+      '/api/read',
+      { headers: { Host: 'localhost:5173' } },
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'local access only' });
   });
 });
