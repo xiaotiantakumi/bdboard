@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { ProjectDto } from '../api';
@@ -167,6 +167,52 @@ describe('ProjectPicker', () => {
 
     expect(onSaveCombination).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('dialog', { name: 'プロジェクトの絞り込み' })).not.toBeInTheDocument();
+  });
+
+  it('focuses the search input when the popover opens', async () => {
+    const user = userEvent.setup();
+    renderPicker();
+
+    await user.click(
+      screen.getByRole('button', { name: 'プロジェクトの絞り込み: すべてのプロジェクト' }),
+    );
+
+    expect(screen.getByLabelText('プロジェクトを検索')).toHaveFocus();
+  });
+
+  it('traps Tab focus within the popover (Shift+Tab wraps to the last focusable item)', async () => {
+    const user = userEvent.setup();
+    renderPicker();
+
+    await user.click(
+      screen.getByRole('button', { name: 'プロジェクトの絞り込み: すべてのプロジェクト' }),
+    );
+
+    const searchInput = screen.getByLabelText('プロジェクトを検索');
+    expect(searchInput).toHaveFocus();
+
+    const saveButton = screen.getByRole('button', { name: 'この組み合わせを保存' });
+    fireEvent.keyDown(searchInput, { key: 'Tab', shiftKey: true });
+    expect(saveButton).toHaveFocus();
+
+    fireEvent.keyDown(saveButton, { key: 'Tab' });
+    expect(searchInput).toHaveFocus();
+  });
+
+  it('closes the popover and returns focus to the toggle button on Escape', async () => {
+    const user = userEvent.setup();
+    renderPicker();
+
+    const toggleButton = screen.getByRole('button', {
+      name: 'プロジェクトの絞り込み: すべてのプロジェクト',
+    });
+    await user.click(toggleButton);
+    const dialog = screen.getByRole('dialog', { name: 'プロジェクトの絞り込み' });
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'プロジェクトの絞り込み' })).not.toBeInTheDocument();
+    expect(toggleButton).toHaveFocus();
   });
 
   it('shows incomplete ticket counts right-aligned on each row', async () => {
