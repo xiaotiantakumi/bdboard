@@ -254,6 +254,114 @@ describe('createTunnelService', () => {
     expect(startCallCount).toBe(1);
   });
 
+  it('keeps off when stop is called while start is in flight', async () => {
+    let resolveStart: ((value: TunnelStartResult) => void) | undefined;
+    const pendingStart = new Promise<TunnelStartResult>((resolve) => {
+      resolveStart = resolve;
+    });
+
+    const tunnel = createFakeTunnel({
+      start: async () => pendingStart,
+    });
+    const access = {
+      beginTunnelSession: vi.fn(),
+      endTunnelSession: vi.fn(),
+      issueToken: vi.fn(() => null),
+      consumeToken: vi.fn(() => null),
+      isValidSession: vi.fn(() => false),
+    } satisfies TunnelAccessService;
+    const service = createService(tunnel, { access });
+
+    const startPromise = service.start({ password: 'example-password' });
+    await vi.waitFor(() => expect(service.getState()).toEqual({ kind: 'starting' }));
+
+    const stopPromise = service.stop();
+    const stopResult = await stopPromise;
+
+    expect(stopResult).toEqual({ kind: 'off' });
+    expect(service.getState()).toEqual({ kind: 'off' });
+    expect(service.getCredentials()).toBeNull();
+    expect(service.isWriteAllowed()).toBe(false);
+    expect(access.beginTunnelSession).not.toHaveBeenCalled();
+    expect(access.endTunnelSession).toHaveBeenCalled();
+
+    resolveStart?.({ url: TUNNEL_URL });
+    const startResult = await startPromise;
+
+    expect(startResult).toEqual({ kind: 'off' });
+    expect(service.getState()).toEqual({ kind: 'off' });
+    expect(access.beginTunnelSession).not.toHaveBeenCalled();
+    expect(tunnel.stopMock).toHaveBeenCalled();
+  });
+
+  it('does not let a stale stop completion overwrite a later successful start', async () => {
+    let resolveStart: ((value: TunnelStartResult) => void) | undefined;
+    let resolveStop: (() => void) | undefined;
+    const pendingStart = new Promise<TunnelStartResult>((resolve) => {
+      resolveStart = resolve;
+    });
+    const pendingStop = new Promise<void>((resolve) => {
+      resolveStop = resolve;
+    });
+
+    const tunnel = createFakeTunnel({
+      start: async () => pendingStart,
+      stop: async () => {
+        await pendingStop;
+      },
+    });
+    const service = createService(tunnel, {
+      generatePassword: () => 'example-password',
+    });
+
+    const startPromise = service.start();
+    const stopPromise = service.stop();
+
+    resolveStart?.({ url: TUNNEL_URL });
+    await startPromise;
+
+    const restartPromise = service.start({ password: 'second-password' });
+    resolveStop?.();
+    await stopPromise;
+
+    const restartResult = await restartPromise;
+
+    expect(restartResult.kind).toBe('on');
+    if (restartResult.kind === 'on') {
+      expect(restartResult.password).toBe('second-password');
+    }
+    expect(service.getState().kind).toBe('on');
+    expect(service.getCredentials()?.password).toBe('second-password');
+  });
+
+  it('serializes concurrent stop calls', async () => {
+    let stopCallCount = 0;
+    let resolveStop: (() => void) | undefined;
+    const pendingStop = new Promise<void>((resolve) => {
+      resolveStop = resolve;
+    });
+
+    const tunnel = createFakeTunnel({
+      stop: async () => {
+        stopCallCount += 1;
+        await pendingStop;
+      },
+    });
+    const service = createService(tunnel);
+
+    await service.start({ password: 'example-password' });
+
+    const first = service.stop();
+    const second = service.stop();
+
+    resolveStop?.();
+
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toEqual(b);
+    expect(stopCallCount).toBe(1);
+    expect(service.getState()).toEqual({ kind: 'off' });
+  });
+
   describe('tunnel access integration', () => {
     function createAccessSpy() {
       return {
