@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectDto } from '../api';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 /*
@@ -47,6 +48,7 @@ export function ProjectPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const containerRef = useExclusivePopover('project-picker', open, setOpen);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   // 閉じたら検索文字列を捨てる。次に開いたときに前回の絞り込みが残っていると、
   // 空のリストがいきなり出てプロジェクトが消えたように見えるため。
@@ -55,6 +57,17 @@ export function ProjectPicker({
       setQuery('');
     }
   }, [open]);
+
+  // useExclusivePopover は document 単位で Escape/外側クリックの排他クローズを処理する。
+  // useFocusTrap の Escape ハンドラは event.preventDefault() してから閉じるので、
+  // ポップオーバー内(popoverRef の子孫)で発生した Escape はここで処理が完結し、
+  // document まで浮上した時点で useExclusivePopover 側は defaultPrevented を見て
+  // 二重発火せずに早期returnする(PopoverCoordinator.tsx の handleKeyDown 参照)。
+  useFocusTrap({
+    containerRef: popoverRef,
+    enabled: open,
+    onEscape: () => setOpen(false),
+  });
 
   const label = projectPickerLabel(projects, selectedProjectIds);
   const showSearch = projects.length >= PROJECT_PICKER_SEARCH_THRESHOLD;
@@ -122,7 +135,12 @@ export function ProjectPicker({
       </button>
 
       {open && (
-        <div className="project-picker-popover" role="dialog" aria-label="プロジェクトの絞り込み">
+        <div
+          ref={popoverRef}
+          className="project-picker-popover"
+          role="dialog"
+          aria-label="プロジェクトの絞り込み"
+        >
           <div className="popover-head">
             {showSearch && (
               <input

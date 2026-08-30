@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BOARD_FILTER_PRESET_NAME_MAX_LENGTH,
   createBoardFilterPresetId,
@@ -7,6 +7,7 @@ import {
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from '../uiPersistedState';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 /*
@@ -73,6 +74,7 @@ export function PresetControl({
   const [error, setError] = useState<string | null>(null);
 
   const containerRef = useExclusivePopover('preset-control', open, setOpen);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   const matchingPreset = useMemo(
     () => findMatchingBoardFilterPreset(presets, currentState),
@@ -105,6 +107,17 @@ export function PresetControl({
       resetTransientState();
     }
   };
+
+  // useExclusivePopover は document 単位で Escape/外側クリックの排他クローズを処理する。
+  // useFocusTrap の Escape ハンドラは event.preventDefault() してから閉じるので、
+  // ポップオーバー内(popoverRef の子孫)で発生した Escape はここで処理が完結し、
+  // document まで浮上した時点で useExclusivePopover 側は defaultPrevented を見て
+  // 二重発火せずに早期returnする(PopoverCoordinator.tsx の handleKeyDown 参照)。
+  useFocusTrap({
+    containerRef: popoverRef,
+    enabled: open,
+    onEscape: () => changeOpen(false),
+  });
 
   useEffect(() => {
     if (saveIntentToken > 0) {
@@ -227,7 +240,12 @@ export function PresetControl({
       </button>
 
       {open && (
-        <div className="preset-control-popover" role="dialog" aria-label="フィルタプリセット">
+        <div
+          ref={popoverRef}
+          className="preset-control-popover"
+          role="dialog"
+          aria-label="フィルタプリセット"
+        >
           <div className="preset-control-list">
             {presets.length === 0 && (
               <p className="preset-control-empty">

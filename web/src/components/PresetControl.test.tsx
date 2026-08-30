@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { BoardFilterPreset, BoardFilterPresetState } from '../uiPersistedState';
@@ -321,6 +321,46 @@ describe('PresetControl', () => {
     await user.click(screen.getByRole('menuitem', { name: '削除' }));
 
     expect(onPresetsChange).toHaveBeenCalledWith([samplePresets[0]]);
+  });
+
+  it('focuses the first preset button when the popover opens', async () => {
+    const user = userEvent.setup();
+    renderControl();
+
+    await openControl(user, 'P1バグだけ');
+
+    expect(screen.getByRole('button', { name: /^P1バグだけ/ })).toHaveFocus();
+  });
+
+  it('traps Tab focus within the popover (Shift+Tab wraps to the last focusable item)', async () => {
+    const user = userEvent.setup();
+    renderControl();
+
+    await openControl(user, 'P1バグだけ');
+
+    const firstButton = screen.getByRole('button', { name: /^P1バグだけ/ });
+    expect(firstButton).toHaveFocus();
+
+    const saveButton = screen.getByRole('button', { name: '新規保存…' });
+    fireEvent.keyDown(firstButton, { key: 'Tab', shiftKey: true });
+    expect(saveButton).toHaveFocus();
+
+    fireEvent.keyDown(saveButton, { key: 'Tab' });
+    expect(firstButton).toHaveFocus();
+  });
+
+  it('closes the popover and returns focus to the toggle button on Escape', async () => {
+    const user = userEvent.setup();
+    renderControl();
+
+    const toggleButton = screen.getByRole('button', { name: 'フィルタプリセット: P1バグだけ' });
+    await user.click(toggleButton);
+    const dialog = screen.getByRole('dialog', { name: 'フィルタプリセット' });
+
+    fireEvent.keyDown(dialog, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog', { name: 'フィルタプリセット' })).not.toBeInTheDocument();
+    expect(toggleButton).toHaveFocus();
   });
 
   it('invites saving when there are no presets yet', async () => {
