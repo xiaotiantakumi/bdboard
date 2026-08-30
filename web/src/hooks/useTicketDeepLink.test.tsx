@@ -342,14 +342,36 @@ describe('useTicketDeepLink', () => {
       expect(result.current.canGoBackTicket).toBe(false);
     });
 
-    it('StrictMode 下でも goBackTicket が正しく動く', () => {
+    it('同一イベント内で selectTicket してから goBackTicket しても1段だけ戻る', () => {
       /*
-       * 挙動の回帰ガードであって、「副作用を updater 内に置かない」という
-       * 実装上の判断そのものを縛るテストではない — 実測したところ、副作用を
-       * updater 内に戻しても現行 React では観測可能な差が出ない (冪等なため)。
-       * それでも StrictMode で1本通しておくのは、bdboard-ge1 が
-       * 「development の二重実行 × history API」で刺さった前例があり、将来
-       * ここに冪等でない処理が足されたときに気付ける場所を作るため。
+       * backStack の push は state 経由、pop は ref 経由 —— という非対称があると、
+       * goBackTicket が「まだ積まれていないスタック」を読んで黙って1段飛ばす
+       * (PR#241 opus レビュー minor)。selectTicket 側でも ref を即時更新する
+       * ことの回帰ガード。
+       */
+      const { result } = renderDeepLink();
+
+      act(() => {
+        result.current.selectTicket('a');
+      });
+      act(() => {
+        result.current.selectTicket('b');
+      });
+      act(() => {
+        result.current.selectTicket('c');
+        result.current.goBackTicket();
+      });
+
+      expect(result.current.selectedTicketId).toBe('b');
+    });
+
+    it('StrictMode 下でも goBackTicket は replaceState を1回しか呼ばない', () => {
+      /*
+       * updater は StrictMode の development 二重実行で再実行される。副作用を
+       * setBackStack の updater 内に置くと replaceState が2回叩かれる —— 状態は
+       * 冪等なので結果の state に差は出ないが、「updater は複数回走りうる」と
+       * いう React の純粋性契約そのものは、この呼び出し回数で直接縛れる。
+       * bdboard-ge1 が「development の二重実行 × history API」で刺さった前例。
        */
       const { result } = renderDeepLinkStrict();
 
@@ -359,6 +381,8 @@ describe('useTicketDeepLink', () => {
         });
       }
 
+      // selectTicket 自身の replaceState を数えないよう、ここで張る。
+      const replaceSpy = vi.spyOn(window.history, 'replaceState');
       act(() => {
         result.current.goBackTicket();
       });
@@ -366,6 +390,7 @@ describe('useTicketDeepLink', () => {
       expect(result.current.selectedTicketId).toBe('b');
       expect(window.location.hash).toBe('#ticket=b');
       expect(result.current.canGoBackTicket).toBe(true);
+      expect(replaceSpy).toHaveBeenCalledTimes(1);
     });
 
     it('ブラウザ操作で表示チケットが変わったら戻り先は破棄される', () => {

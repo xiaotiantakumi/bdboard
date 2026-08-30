@@ -108,6 +108,11 @@ export function useTicketDeepLink({
   const selectTicket = useCallback((ticketId: string) => {
     const previous = selectedTicketIdRef.current;
     if (previous !== null && previous !== ticketId) {
+      // goBackTicket と同じく ref も即座に進める。push を state 経由・pop を ref
+      // 経由にすると、同一イベント内で selectTicket → goBackTicket と呼んだとき
+      // goBackTicket が積む前のスタックを読んで黙って1段飛ばす (PR#241 opus
+      // レビュー minor)。片方だけ ref 対応にしない。
+      backStackRef.current = [...backStackRef.current, previous];
       setBackStack((stack) => [...stack, previous]);
     }
 

@@ -983,13 +983,13 @@ export function TicketDetailPanel({
             </div>
           )}
           <div className="detail-header-actions">
-            {/* 「←」をアクセシブルネームに含めると読み上げが「左向き矢印、戻る」に
-                なるので、同ヘッダーの「タイトルを編集」と同じく aria-label で
-                ラベルを与える (PR#241 レビュー minor-4)。 */}
             {onBackTicket !== undefined && (
               <button
                 type="button"
                 className="btn btn-small detail-back"
+                /* 「←」をアクセシブルネームに含めると読み上げが「左向き矢印、
+                   戻る」になるので、同ヘッダーの「タイトルを編集」と同じく
+                   aria-label でラベルを与える (PR#241 レビュー minor-4)。 */
                 aria-label="前のチケットへ戻る"
                 onClick={onBackTicket}
               >
