@@ -197,27 +197,33 @@ describe('check-drift CLI', () => {
     15000,
   );
 
-  it('still names the file when the upstream renamed it', () => {
-    // rename 検出が効いていると main 側は新パスしか出さず、旧パスを触っている
-    // ブランチとの重なりが消える。実際に rebase すると衝突するので、
-    // 「重なりは上界」という前提そのものが破れる。--no-renames を外すと落ちる。
-    const { bare, work } = makeRepo('rename');
-    advanceMain(bare, 'rename', (dir, run) => {
-      run('git', 'mv', 'hot.ts', 'renamed-hot.ts');
-      fs.writeFileSync(path.join(dir, 'renamed-hot.ts'), BIG_FILE('2'));
-    });
-    sh(work, 'git', 'fetch', '-q', 'origin');
-    sh(work, 'git', 'checkout', '-qb', 'feature');
-    fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('3'));
-    sh(work, 'git', 'commit', '-qam', 'mine');
+  // bdboard-8r5b: 上の「両側編集」と同じ makeRepo/advanceMain 負荷。観測は未だが
+  // 同等の flake リスクがあるため同じ per-test タイムアウトを付ける。
+  it(
+    'still names the file when the upstream renamed it',
+    () => {
+      // rename 検出が効いていると main 側は新パスしか出さず、旧パスを触っている
+      // ブランチとの重なりが消える。実際に rebase すると衝突するので、
+      // 「重なりは上界」という前提そのものが破れる。--no-renames を外すと落ちる。
+      const { bare, work } = makeRepo('rename');
+      advanceMain(bare, 'rename', (dir, run) => {
+        run('git', 'mv', 'hot.ts', 'renamed-hot.ts');
+        fs.writeFileSync(path.join(dir, 'renamed-hot.ts'), BIG_FILE('2'));
+      });
+      sh(work, 'git', 'fetch', '-q', 'origin');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('3'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
 
-    const { status, stdout } = runDrift(work);
-    // 旧パスで名指しされること。--no-renames を外すと renamed-hot.ts しか出ず、
-    // 「重なるファイルはありません」になる。
-    expect(stdout).toContain('  hot.ts');
-    expect(stdout).not.toContain('重なるファイルはありません');
-    expect(status).toBe(0);
-  });
+      const { status, stdout } = runDrift(work);
+      // 旧パスで名指しされること。--no-renames を外すと renamed-hot.ts しか出ず、
+      // 「重なるファイルはありません」になる。
+      expect(stdout).toContain('  hot.ts');
+      expect(stdout).not.toContain('重なるファイルはありません');
+      expect(status).toBe(0);
+    },
+    15000,
+  );
 
   it('exits 2 without a report when the check cannot run at all', () => {
     // merge-base が取れない = 調べられていない。0 で返すと、stdout だけ見ている
