@@ -7,6 +7,7 @@ import type {
 import { LANES, projectNameFallback } from '../api';
 import type { ActivityWindowDays } from '../uiPersistedState';
 import { activityWindowLabel } from '../uiPersistedState';
+import { compareStrings } from '../compare';
 import { formatActivityTime, localDateKey } from './activityFeedFormatting';
 
 export interface DailyDigestInput {
@@ -63,7 +64,7 @@ function sortClosedEvents(events: readonly ActivityEventDto[]): ActivityEventDto
     if (atCompare !== 0) {
       return atCompare;
     }
-    return left.id.localeCompare(right.id);
+    return compareStrings(left.id, right.id);
   });
 }
 
@@ -75,7 +76,7 @@ function filterPendingDecisions(
     selectedProjectIds.length > 0
       ? pendingDecisions.filter((decision) => selectedProjectIds.includes(decision.projectId))
       : [...pendingDecisions];
-  return filtered.sort((left, right) => left.id.localeCompare(right.id));
+  return filtered.sort((left, right) => compareStrings(left.id, right.id));
 }
 
 function formatCompletedLine(
@@ -97,7 +98,7 @@ function sortActivityEvents(events: readonly ActivityEventDto[]): ActivityEventD
     if (atCompare !== 0) {
       return atCompare;
     }
-    return left.id.localeCompare(right.id);
+    return compareStrings(left.id, right.id);
   });
 }
 
