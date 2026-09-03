@@ -69,16 +69,18 @@ jobs:
             "$RELEASE_BODY" "$bd_version" |
             gh release edit "$TAG_NAME" --notes-file -
 
-  npm-publish-dry-run:
+  npm-publish:
     needs: release-please
     if: >-
       ${{ needs.release-please.result == 'success' &&
           needs.release-please.outputs.release_created == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    # この job は registry を変更しないため、Release 本文更新に必要な write 権限も渡さない。
+    # contents は checkout にしか使わない (Release 本文の更新は release-please job の責務)。
+    # id-token: write は --provenance の attestation 署名に必須 (bdboard-d7n4)。
     permissions:
       contents: read
+      id-token: write
     steps:
       # main の push 時点の SHA ではなく、release-please が作成したタグそのものを検証・pack する。
       - uses: actions/checkout@v4
@@ -100,9 +102,11 @@ jobs:
       # web/dist は npm 同梱物なので、prepack にも依存せず明示的にビルドする。
       - run: npm run build:web
 
-      # 現在は --dry-run なので npm registry へは公開しない。本番化は、NPM_TOKEN 登録・
-      # パッケージ名確保・公開 repository metadata の確認とユーザーの明示承認がそろった別変更で行う。
-      # その際はこの行を `npm publish --provenance --access public` に見直し、publish job にだけ
-      # NODE_AUTH_TOKEN と id-token: write を追加する。dry-run では provenance attestation は生成されない。
-      - name: Validate npm publication (dry run only)
-        run: npm publish --dry-run
+      # 本番 publish (bdboard-d7n4 で --dry-run を解除。ユーザー承認: 2026-09-03)。
+      # --provenance は (a) 上の id-token: write、(b) package.json の repository フィールド、
+      # (c) 公開リポジトリからの実行、の3つを前提とする。
+      # --access public はスコープ無しパッケージでは既定だが、意図を明示するため残す。
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public

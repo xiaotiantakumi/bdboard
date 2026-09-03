@@ -1,6 +1,10 @@
 {
   "name": "bdboard",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xiaotiantakumi/bdboard.git"
+  },
   "type": "module",
   "bin": {
     "bdboard": "bin/bdboard.mjs"
