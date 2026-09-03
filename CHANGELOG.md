@@ -1,5 +1,75 @@
 # Changelog
 
+## [0.1.1](https://github.com/xiaotiantakumi/bdboard/compare/v0.1.0...v0.1.1) (2026-09-03)
+
+
+### Features
+
+* **bdboard-0hcx:** チケット詳細パネルに最大化ボタンを追加 ([#242](https://github.com/xiaotiantakumi/bdboard/issues/242)) ([7a24ae3](https://github.com/xiaotiantakumi/bdboard/commit/7a24ae3907cbb0aacccab70dd25cdfd4af970ae3))
+* **bdboard-19db:** 確認待ちの放置判定に最終コメント日時を入れる ([#167](https://github.com/xiaotiantakumi/bdboard/issues/167)) ([7276eef](https://github.com/xiaotiantakumi/bdboard/commit/7276eef5ce95d70b617d2e9d52b77a1a1b4f6573))
+* **bdboard-1ami:** チケット本文(title/description/notes)の編集手段をボードとチャットに足す ([#161](https://github.com/xiaotiantakumi/bdboard/issues/161)) ([a28814b](https://github.com/xiaotiantakumi/bdboard/commit/a28814b3c111d5f92d6bc34ba95be43e376993c3))
+* **bdboard-3tw.152:** Header Redesign Turn 4 — プロジェクト選択のポップオーバー化とプリセット統合 ([#86](https://github.com/xiaotiantakumi/bdboard/issues/86)) ([6af6c9a](https://github.com/xiaotiantakumi/bdboard/commit/6af6c9a6ca42454b5421b8f51e6945cbac437e01))
+* **bdboard-3tw.159.5:** チャットに deploy status ツールを足す ([#150](https://github.com/xiaotiantakumi/bdboard/issues/150)) ([0ba0e80](https://github.com/xiaotiantakumi/bdboard/commit/0ba0e809b07bc93b4a762060f75719dd8d34ab2f))
+* **bdboard-3tw.37:** liveness active閾値を2分→5分に変更 ([#162](https://github.com/xiaotiantakumi/bdboard/issues/162)) ([176793a](https://github.com/xiaotiantakumi/bdboard/commit/176793a75ce50a53addf789abec7accee56bf5b5))
+* **bdboard-4ql7:** 詳細パネル内に「← 戻る」を追加 ([#241](https://github.com/xiaotiantakumi/bdboard/issues/241)) ([4e01c28](https://github.com/xiaotiantakumi/bdboard/commit/4e01c28c13c112587c97234653f56237faa45fe3))
+* **bdboard-8baz:** Next Up で epic を通常チケットから分離表示する ([#165](https://github.com/xiaotiantakumi/bdboard/issues/165)) ([1818b1b](https://github.com/xiaotiantakumi/bdboard/commit/1818b1b092f8e418e2dfea0943ef2352d6b01c5c))
+* **bdboard-fvqr:** Hygiene の閾値3つを設定画面から変えられるようにする ([#166](https://github.com/xiaotiantakumi/bdboard/issues/166)) ([fd3828e](https://github.com/xiaotiantakumi/bdboard/commit/fd3828e55ef69f70eb58838dd58df39f778cf31e))
+* **bdboard-fxxk:** コメント/PR状態の取得失敗を1行だけ警告に出す ([#170](https://github.com/xiaotiantakumi/bdboard/issues/170)) ([140485b](https://github.com/xiaotiantakumi/bdboard/commit/140485bd02c85e48fa715042a13367df5caec830))
+* **bdboard-i759:** 日付整形のAsia/Tokyoハードコードを設定可能にする ([#156](https://github.com/xiaotiantakumi/bdboard/issues/156)) ([69d4776](https://github.com/xiaotiantakumi/bdboard/commit/69d4776a76c6e1d0d5d58f3bb09cdefc96c3be38))
+* **bdboard-icea:** usePersistedState にクロスタブ同期を追加 ([#199](https://github.com/xiaotiantakumi/bdboard/issues/199)) ([a0c37d6](https://github.com/xiaotiantakumi/bdboard/commit/a0c37d695c638b83d7c0b7ae10bcb5caf522c02b))
+* **bdboard-ijk1:** Hygiene に確認待ちの放置検知を足す ([#158](https://github.com/xiaotiantakumi/bdboard/issues/158)) ([d79f848](https://github.com/xiaotiantakumi/bdboard/commit/d79f848ce671142b62ff9a329e65ffe4ba32070c))
+* **bdboard-ky15:** 長時間オープンPRのファイル衝突を作業中に知らせる npm run drift ([#163](https://github.com/xiaotiantakumi/bdboard/issues/163)) ([a048864](https://github.com/xiaotiantakumi/bdboard/commit/a04886443acb9e57b2a9776f4f8f8c5747bf7df3))
+
+
+### Bug Fixes
+
+* **bdboard-2pi1:** キーボードナビ: フォーカス中カードが消えた後のroving tabindexを復旧する ([#192](https://github.com/xiaotiantakumi/bdboard/issues/192)) ([6e13900](https://github.com/xiaotiantakumi/bdboard/commit/6e13900e29db516ad0cb7e3616f3671fc35b19ab))
+* **bdboard-3tw.102.5:** dto.ts の liveness 計算にユーザー設定の閾値を通す ([#171](https://github.com/xiaotiantakumi/bdboard/issues/171)) ([4ee3fba](https://github.com/xiaotiantakumi/bdboard/commit/4ee3fba3b6adeb96aad6da8beae5a25153c6c2b0))
+* **bdboard-66sp:** watcher/interval起点のrunRefresh失敗でプロセスが落ちないようにする ([#173](https://github.com/xiaotiantakumi/bdboard/issues/173)) ([7aba2c7](https://github.com/xiaotiantakumi/bdboard/commit/7aba2c7a091ce49a1121c86471dde3c41bdcb144))
+* **bdboard-6a2c:** 一括ラベル付与を cardsById でフィルタし盤面外チケットへの誤投げを防ぐ ([#164](https://github.com/xiaotiantakumi/bdboard/issues/164)) ([396a7d5](https://github.com/xiaotiantakumi/bdboard/commit/396a7d51a724f30920074f481db8f8d849f87f81))
+* **bdboard-6s42:** zonedMidnightをDST境界での2段階オフセット解決に修正 ([#216](https://github.com/xiaotiantakumi/bdboard/issues/216)) ([874bb0d](https://github.com/xiaotiantakumi/bdboard/commit/874bb0dbe346bc091ef1a28cfe233e03440139ba))
+* **bdboard-6u29:** board.changed で projects キャッシュも invalidate する ([#177](https://github.com/xiaotiantakumi/bdboard/issues/177)) ([ecf7931](https://github.com/xiaotiantakumi/bdboard/commit/ecf7931ca70a9dc12421b72f61ed8b7cd4e596e6))
+* **bdboard-7io7:** 通知イベントがクロスタブ同期とSSE受信の二重パスで重複する問題を修正 ([#213](https://github.com/xiaotiantakumi/bdboard/issues/213)) ([57d9ac7](https://github.com/xiaotiantakumi/bdboard/commit/57d9ac71c27b9b67a99155dcf33f9d562e4c7893))
+* **bdboard-9s5k:** hygiene系3箇所の無言catch{}をdescribeFetchFailures経由の警告ログに変更 ([#218](https://github.com/xiaotiantakumi/bdboard/issues/218)) ([91a35c2](https://github.com/xiaotiantakumi/bdboard/commit/91a35c275022d2802c8d20667d096ca4017a0bbd))
+* **bdboard-aksr:** 週次統計の週境界計算をDST安全にする ([#191](https://github.com/xiaotiantakumi/bdboard/issues/191)) ([92b5502](https://github.com/xiaotiantakumi/bdboard/commit/92b5502282e375a8623e10bada464778b9685272))
+* **bdboard-anje:** イベントセンターの未読判定をoccurredAtベースに統一 ([#201](https://github.com/xiaotiantakumi/bdboard/issues/201)) ([54eb026](https://github.com/xiaotiantakumi/bdboard/commit/54eb026bd6bf1235315f91a3f4a3da7e09d38d07))
+* **bdboard-b9u0:** TicketDetailPanelの依存関係検索に競合状態ガードを追加 ([#219](https://github.com/xiaotiantakumi/bdboard/issues/219)) ([2c70eb9](https://github.com/xiaotiantakumi/bdboard/commit/2c70eb999ec8975c08e8f4f7ab97620f2c06d115))
+* **bdboard-bf24:** notificationDeliveryError をイベントセンターパネルに表示 ([#229](https://github.com/xiaotiantakumi/bdboard/issues/229)) ([f237e8a](https://github.com/xiaotiantakumi/bdboard/commit/f237e8a6cc47444b22706022270db5afd70aac5d))
+* **bdboard-c77z:** チャットセッションtrimがpinned無視・last_used_at未更新・chat_messages孤立を修正 ([#217](https://github.com/xiaotiantakumi/bdboard/issues/217)) ([3b230f5](https://github.com/xiaotiantakumi/bdboard/commit/3b230f512591023ff4007846bf9fa6c9fd614df8))
+* **bdboard-cgap:** BDBOARD_TIMEZONE をdefer日数・CFD日付境界・クイックデファーへ伝播する ([#176](https://github.com/xiaotiantakumi/bdboard/issues/176)) ([5bf0b4d](https://github.com/xiaotiantakumi/bdboard/commit/5bf0b4d0e5bd0ba73b5400f1ee9a81e6ee11b78c))
+* **bdboard-f1c9:** ChatPanel のスレッド一覧ドロワーに専用フォーカストラップを配線 ([#236](https://github.com/xiaotiantakumi/bdboard/issues/236)) ([9eddd6e](https://github.com/xiaotiantakumi/bdboard/commit/9eddd6ec6592937af21c6010d848118c566a2d26))
+* **bdboard-f5id:** TunnelService の start/stop 競合状態を世代カウンタで解消 ([#225](https://github.com/xiaotiantakumi/bdboard/issues/225)) ([d8243d6](https://github.com/xiaotiantakumi/bdboard/commit/d8243d6d0ea789f1f606d9d297913ace3952cf06))
+* **bdboard-fmjl:** CommandRunner が input未指定時も stdin を即座に閉じるよう修正 ([#222](https://github.com/xiaotiantakumi/bdboard/issues/222)) ([db35c2e](https://github.com/xiaotiantakumi/bdboard/commit/db35c2eb3fe8c7d6ec11b0d60ffe97fe14fbd827))
+* **bdboard-gbpv:** chokidar FSWatcherにerrorリスナーを追加しサーバークラッシュを防ぐ ([#214](https://github.com/xiaotiantakumi/bdboard/issues/214)) ([19b369d](https://github.com/xiaotiantakumi/bdboard/commit/19b369d2fd6ca7f0f2fd6bd147ad77d910c9b8b8))
+* **bdboard-i5w4:** write-guard / chat-routes のローカル判定を Host 検証付きに強化 ([#227](https://github.com/xiaotiantakumi/bdboard/issues/227)) ([1318438](https://github.com/xiaotiantakumi/bdboard/commit/1318438db6d0a1e5c9642a01238927dc654e5c89))
+* **bdboard-ifff:** 保存フィードバックのタイマーをフックに閉じ込めて漏れを止める ([#160](https://github.com/xiaotiantakumi/bdboard/issues/160)) ([5746c7c](https://github.com/xiaotiantakumi/bdboard/commit/5746c7c5ccb8f3f679fb09a00a2d2f2134e09266))
+* **bdboard-j0us:** run_in_background内の二重&によるハーネス誤通知をパックに記録 ([#193](https://github.com/xiaotiantakumi/bdboard/issues/193)) ([5ebe0e0](https://github.com/xiaotiantakumi/bdboard/commit/5ebe0e0fb484898d420a1bead403816570d7ad23))
+* **bdboard-kd1j:** write-build-meta.mjs の isMain 判定をpathToFileURLベースに直す ([#168](https://github.com/xiaotiantakumi/bdboard/issues/168)) ([9a3f29d](https://github.com/xiaotiantakumi/bdboard/commit/9a3f29d790f74a337ddada6a991bd5da8d0ca316))
+* **bdboard-l36e:** 削除済みウォッチ中チケットの404リフェッチループを解消 ([#203](https://github.com/xiaotiantakumi/bdboard/issues/203)) ([93ca7d2](https://github.com/xiaotiantakumi/bdboard/commit/93ca7d2d73a093da7da1dd62c52d46b3cb03be66))
+* **bdboard-m4s6:** PresetControl/ProjectPicker のポップオーバーに Tab フォーカストラップを配線 ([#234](https://github.com/xiaotiantakumi/bdboard/issues/234)) ([5230fa8](https://github.com/xiaotiantakumi/bdboard/commit/5230fa89e52e3fad547a6bce4d2985f6b25b74ff))
+* **bdboard-m50g:** board.changed で project-harness クエリも invalidate する ([#183](https://github.com/xiaotiantakumi/bdboard/issues/183)) ([9462725](https://github.com/xiaotiantakumi/bdboard/commit/9462725e7223e72ffd832f570c42290383e6ee60))
+* **bdboard-ml0k:** Next Up でも一括操作バーを出す ([#157](https://github.com/xiaotiantakumi/bdboard/issues/157)) ([c271bcf](https://github.com/xiaotiantakumi/bdboard/commit/c271bcf127a0462bc9241e12f6ceff0b8808d072))
+* **bdboard-n66:** 接続待ち(stall)時にステータスピルとバナーの矛盾を解消 ([#155](https://github.com/xiaotiantakumi/bdboard/issues/155)) ([b62c592](https://github.com/xiaotiantakumi/bdboard/commit/b62c592ffec6733f3a202852b3071608a88cbac3))
+* **bdboard-ndgf:** refresh-projects.ts を IssueRepository.listAll に配線し直す ([#223](https://github.com/xiaotiantakumi/bdboard/issues/223)) ([e11cb96](https://github.com/xiaotiantakumi/bdboard/commit/e11cb9644fc361b114450806d603f03fa1db11c2))
+* **bdboard-rqjj:** BulkActionBar の一括操作確認ダイアログにフォーカストラップを配線 ([#228](https://github.com/xiaotiantakumi/bdboard/issues/228)) ([bf5be5d](https://github.com/xiaotiantakumi/bdboard/commit/bf5be5d34bcbeec1f39967ab330f3e2049e3f731))
+* **bdboard-s0yv:** SSE /api/events のクライアント別 queue にサイズ上限を追加 ([#226](https://github.com/xiaotiantakumi/bdboard/issues/226)) ([aed0bcb](https://github.com/xiaotiantakumi/bdboard/commit/aed0bcb5ac3f21043b11e0f6091670ca92e2e49e))
+* **bdboard-srqk:** formatAbsoluteTimeがボードTZを無視しブラウザTZで表示する問題を修正 ([#209](https://github.com/xiaotiantakumi/bdboard/issues/209)) ([4a587c5](https://github.com/xiaotiantakumi/bdboard/commit/4a587c5cb7ca69e769ef49364372ade044b4367f))
+* **bdboard-t3bt:** cloudflared トンネル URL 確定後の onData バッファ追記を停止 ([#198](https://github.com/xiaotiantakumi/bdboard/issues/198)) ([0650bf3](https://github.com/xiaotiantakumi/bdboard/commit/0650bf39e88c7b9be8eef159a4ac1177174302cc))
+* **bdboard-t43h:** コマンドパレットの選択行が無関係な再レンダリングでリセットされる問題を修正 ([#220](https://github.com/xiaotiantakumi/bdboard/issues/220)) ([147fdef](https://github.com/xiaotiantakumi/bdboard/commit/147fdef865b41fdadbb0803c9a9b98bbd9ecb2b6))
+* **bdboard-ty72:** アンマウント後の継続がタイマーを再武装する5箇所を塞ぐ ([#169](https://github.com/xiaotiantakumi/bdboard/issues/169)) ([4e7f195](https://github.com/xiaotiantakumi/bdboard/commit/4e7f1957043de50c67c9973bd9efde3baf5e1ea8))
+* **bdboard-ubpi:** ソース切替による watched_session_changed の誤発火を防ぐ ([#181](https://github.com/xiaotiantakumi/bdboard/issues/181)) ([0eb0758](https://github.com/xiaotiantakumi/bdboard/commit/0eb0758e5296e7825fc11738710fb67057838867))
+* **bdboard-y2iu:** /api/chat/message/stream にSSE keepalive pingを追加 ([#188](https://github.com/xiaotiantakumi/bdboard/issues/188)) ([00e2f29](https://github.com/xiaotiantakumi/bdboard/commit/00e2f298eeba72b07db527cdbbc13b660cfa1e39))
+
+
+### Performance Improvements
+
+* **bdboard-fwse:** getPrBadges のコメント取得結果をキャッシュし全件 bd comments 再取得をやめる ([#174](https://github.com/xiaotiantakumi/bdboard/issues/174)) ([a9fa666](https://github.com/xiaotiantakumi/bdboard/commit/a9fa666c55cdd829ea37598706ff5a2859de1a27))
+
+
+### Continuous Integration
+
+* **bdboard-d7n4:** release-please の npm publish を本番化する ([#244](https://github.com/xiaotiantakumi/bdboard/issues/244)) ([c3f8944](https://github.com/xiaotiantakumi/bdboard/commit/c3f89441f4652d928111ff52c7358cb0fb747318))
+
 ## 0.1.0 (2026-08-29)
 
 
