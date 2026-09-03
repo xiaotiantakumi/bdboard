@@ -971,7 +971,7 @@ describe('ChatPanel', () => {
     });
   });
 
-  it('falls back to the first project when the ticket project is missing from the list (deadlock regression)', async () => {
+  it('leaves the project unselected when the ticket project is missing from the list (deadlock regression)', async () => {
     const rendered = renderChatPanel([], {
       initialProjectId: 'proj-missing',
       initialInput: 'proj-missing のチケットについて: ',
@@ -991,12 +991,13 @@ describe('ChatPanel', () => {
     );
 
     await waitFor(() => {
-      expect(fetchChatThreadsMock).toHaveBeenCalledWith(PROJECT_A.id);
+      expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('');
     });
+    expect(fetchChatThreadsMock).not.toHaveBeenCalledWith(PROJECT_A.id);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('proj-missing のチケットについて: ');
   });
 
-  it('shows a notice when the ticket project falls back to the first project', async () => {
+  it('shows a notice when the ticket project is missing and no project is selected', async () => {
     const rendered = renderChatPanel([], {
       initialProjectId: 'proj-missing',
       initialInput: 'proj-missing のチケットについて: ',
@@ -1020,11 +1021,9 @@ describe('ChatPanel', () => {
       expect(notice).not.toBeNull();
       expect(notice).toHaveAttribute('role', 'status');
       expect(notice).toHaveTextContent('proj-missing');
-      expect(notice).toHaveTextContent('見つからない');
-      expect(notice).toHaveTextContent('Project Alpha');
-      // S2: 送信先が fallback プロジェクトになる事実を明示する文言であることも
-      // 固定する(単に「表示しています」という受動的な文言に戻る退行を防ぐ)。
-      expect(notice).toHaveTextContent('送信されます');
+      expect(notice).toHaveTextContent('見つかりません');
+      expect(notice).toHaveTextContent('対象プロジェクト');
+      expect(notice).toHaveTextContent('送信先を選んでください');
     });
   });
 
@@ -1136,7 +1135,7 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(
         document.querySelector('.chat-ticket-project-fallback-notice'),
-      ).toHaveTextContent('見つからない');
+      ).toHaveTextContent('見つかりません');
     });
     fetchChatThreadsMock.mockClear();
 
@@ -1164,7 +1163,7 @@ describe('ChatPanel', () => {
     });
     // selectedProjectId は自動では切り替わらない(自動再解決/再fetchが起きない)。
     expect(fetchChatThreadsMock).not.toHaveBeenCalledWith('proj-missing');
-    expect(screen.getByLabelText('対象プロジェクト')).toHaveValue(PROJECT_A.id);
+    expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('');
   });
 
   it('opens a new draft when launched from a ticket with existing threads', async () => {
@@ -4382,7 +4381,7 @@ describe('ChatPanel', () => {
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
 
-    renderChatPanel();
+    renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: PROJECT_A.id });
 
     await user.type(screen.getByLabelText('メッセージ'), 'on project a');
     await user.click(screen.getByRole('button', { name: '送信' }));
@@ -4825,22 +4824,24 @@ describe('ChatPanel', () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
     const { container } = renderChatPanel([PROJECT_A, PROJECT_B], {
+      initialProjectId: PROJECT_A.id,
       leaveSettingsCollapsed: true,
     });
 
     const details = container.querySelector('.chat-panel-settings');
     expect(details).toBeInstanceOf(HTMLDetailsElement);
     expect((details as HTMLDetailsElement).open).toBe(false);
-    expect(screen.queryByLabelText('対象プロジェクト')).not.toBeVisible();
+    expect(screen.getByLabelText('対象プロジェクト')).toBeVisible();
+    expect(await screen.findByLabelText('チャットエージェント')).not.toBeVisible();
     expect(screen.getByText(/チャット設定 — Project Alpha/)).toBeInTheDocument();
 
     await user.click(screen.getByText(/チャット設定 — Project Alpha/));
     expect((details as HTMLDetailsElement).open).toBe(true);
-    expect(screen.getByLabelText('対象プロジェクト')).toBeInTheDocument();
+    expect(screen.getByLabelText('チャットエージェント')).toBeInTheDocument();
 
     await user.click(screen.getByText(/チャット設定 — Project Alpha/));
     expect((details as HTMLDetailsElement).open).toBe(false);
-    expect(screen.queryByLabelText('対象プロジェクト')).not.toBeVisible();
+    expect(screen.queryByLabelText('チャットエージェント')).not.toBeVisible();
   });
 
   it('selects initialProjectId when provided', async () => {
@@ -4852,7 +4853,10 @@ describe('ChatPanel', () => {
   it('calls onProjectIdChange when the project select changes', async () => {
     const user = userEvent.setup();
     const onProjectIdChange = vi.fn();
-    renderChatPanel([PROJECT_A, PROJECT_B], { onProjectIdChange });
+    renderChatPanel([PROJECT_A, PROJECT_B], {
+      initialProjectId: 'proj-a',
+      onProjectIdChange,
+    });
 
     await waitFor(() => {
       expect(onProjectIdChange).toHaveBeenCalledWith('proj-a');
@@ -4867,12 +4871,135 @@ describe('ChatPanel', () => {
     expect(onProjectIdChange).toHaveBeenCalledWith('proj-b');
   });
 
-  it('falls back to the first project when initialProjectId is unknown', async () => {
+  it('leaves the project unselected when initialProjectId is unknown', async () => {
     renderChatPanel([PROJECT_A, PROJECT_B], {
       initialProjectId: 'missing-project',
     });
 
-    expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('proj-a');
+    expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('');
+    expect(
+      screen.getByText('送信先のプロジェクトを選んでください。選ぶまで送信できません。'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+  });
+
+  it('shows unselected project state with disabled send when multiple projects and no initialProjectId', async () => {
+    const user = userEvent.setup();
+    renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
+
+    expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('');
+    expect(
+      screen.getByText('送信先のプロジェクトを選んでください。選ぶまで送信できません。'),
+    ).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('メッセージ'), 'draft while unselected');
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+  });
+
+  it('auto-selects the sole project without showing unselected hint', async () => {
+    renderChatPanel([PROJECT_A], { leaveSettingsCollapsed: true });
+
+    expect(screen.queryByLabelText('対象プロジェクト')).not.toBeInTheDocument();
+    expect(screen.getByText('Project Alpha')).toBeInTheDocument();
+    expect(
+      screen.queryByText('送信先のプロジェクトを選んでください。選ぶまで送信できません。'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('preserves draft text when selecting a project from unselected state', async () => {
+    const user = userEvent.setup();
+    renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
+
+    await user.type(screen.getByLabelText('メッセージ'), 'keep this draft');
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('proj-b');
+    });
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('keep this draft');
+  });
+
+  it('keeps the carried-over draft selected even when the chosen project has existing threads', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-existing',
+        agentId: 'claude',
+        title: '既存スレッド',
+        pinned: false,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-existing/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-existing',
+          agentId: 'claude',
+          messages: [],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
+
+    await user.type(screen.getByLabelText('メッセージ'), 'keep this draft');
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+
+    await waitFor(() => {
+      expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-b');
+    });
+    // 既存スレッドの自動選択に負けず、書きかけドラフトが表示されたままであること。
+    await waitFor(() => {
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('keep this draft');
+    });
+  });
+
+  it('still restores an existing thread when no draft was typed before choosing the project', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-existing',
+        agentId: 'claude',
+        title: '既存スレッド',
+        pinned: false,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-existing/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-existing',
+          agentId: 'claude',
+          messages: [],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
+
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+
+    await waitFor(() => {
+      expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-b');
+    });
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', { name: '既存スレッド' });
+    await waitFor(() => {
+      expect(
+        within(getThreadDrawer(container)).getByRole('button', { name: '既存スレッド' }),
+      ).toHaveAttribute('aria-current', 'true');
+    });
+  });
+
+  it('shows target project selector while chat settings remain collapsed', async () => {
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], {
+      leaveSettingsCollapsed: true,
+    });
+
+    const details = container.querySelector('.chat-panel-settings');
+    expect(details).toBeInstanceOf(HTMLDetailsElement);
+    expect((details as HTMLDetailsElement).open).toBe(false);
+    expect(screen.getByLabelText('対象プロジェクト')).toBeVisible();
   });
 
   it('works without agent select when fetchChatAgents fails', async () => {
@@ -6475,7 +6602,7 @@ describe('ChatPanel', () => {
 
     it('disables the composer and explains why on an unsupported platform', async () => {
       fetchPlatformSupportMock.mockResolvedValue(WIN32_CHAT);
-      renderChatPanel();
+      renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: PROJECT_A.id });
 
       expect(
         await screen.findByText('AI チャットは Windows では利用できません。'),
@@ -6489,7 +6616,7 @@ describe('ChatPanel', () => {
     });
 
     it('leaves the composer usable on a supported platform', async () => {
-      renderChatPanel();
+      renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: PROJECT_A.id });
 
       await waitFor(() => {
         expect(fetchPlatformSupportMock).toHaveBeenCalled();
