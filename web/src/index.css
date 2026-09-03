@@ -4477,6 +4477,26 @@ body {
   cursor: not-allowed;
 }
 
+/* bdboard-r5we: 対象プロジェクトはチャット設定の中ではなく常時表示の行に出す。 */
+.chat-project-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.chat-project-bar-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.chat-project-unselected-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
 /* Chat Redesign 1b: タブ帯を「現在のスレッド名+件数」ボタン1つ(chat-thread-switcher)
    と、押すと開く縦一覧ドロワー(chat-thread-drawer)へ置き換えた。個別のリネーム/
    ピン留め/タブから閉じる/削除は各行の「⋯」メニュー(chat-thread-drawer-item-menu)
@@ -5307,6 +5327,13 @@ body {
 
   .tunnel-field-row .btn {
     flex-shrink: 0;
+  }
+
+  /* レビュー minor-5: iOS Safari は 16px 未満のフォーム要素で自動ズームする。
+     対象プロジェクトは常時表示の主導線になったので .chat-input と同じ扱いにする。 */
+  .chat-project-select {
+    font-size: 16px;
+    min-height: 44px;
   }
 
   .chat-input {
