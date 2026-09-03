@@ -961,6 +961,58 @@ describe('TicketDetailPanel pending decisions', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows gate pre-submit notice when pendingDecision.kind is gate', async () => {
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'gate',
+      projectId: sampleTicket.projectId,
+      allowFreeform: true,
+    });
+
+    expect(await screen.findByText('Sample ticket')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'これは質問専用のゲートです。回答するとゲートはクローズされ、ブロックされていたチケットが着手可能になります。',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('hides gate pre-submit notice when pendingDecision.kind is ticket', async () => {
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'ticket',
+      projectId: sampleTicket.projectId,
+      allowFreeform: true,
+    });
+
+    expect(await screen.findByText('Sample ticket')).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        'これは質問専用のゲートです。回答するとゲートはクローズされ、ブロックされていたチケットが着手可能になります。',
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows unknown outcome message when the server could not resolve decision kind', async () => {
+    mockPostTicketDecision.mockResolvedValue({ kind: 'unknown', closed: false });
+
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'ticket',
+      projectId: sampleTicket.projectId,
+      allowFreeform: true,
+    });
+
+    await user.type(await screen.findByLabelText('自由記入'), '再試行前の回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+
+    expect(
+      await screen.findByText(
+        '種別(ゲート/作業チケット)を判定できませんでした。回答はコメントとして記録しましたが、確認待ちのまま残っています。しばらくしてからもう一度送信してください。',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('submits freeform text only', async () => {
     renderPanel(new Map(), {
       id: sampleTicket.id,

@@ -22,7 +22,20 @@ export interface BdCliOptions {
 }
 
 function buildListArgs(rootPath: string): readonly string[] {
-  return ['--readonly', '-C', rootPath, 'list', '--json', '--all', '--limit', '0', '--no-pager'];
+  // gate bead は既定の bd list では隠れる。カードとして載せないと確認待ちの回答 UI
+  // が開けない(bdboard-bh48)。
+  return [
+    '--readonly',
+    '-C',
+    rootPath,
+    'list',
+    '--json',
+    '--all',
+    '--limit',
+    '0',
+    '--no-pager',
+    '--include-gates',
+  ];
 }
 
 function buildSkippedWarning(

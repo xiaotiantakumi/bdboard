@@ -14,6 +14,7 @@ const expectedListArgs = (rootPath: string): readonly string[] => [
   '--limit',
   '0',
   '--no-pager',
+  '--include-gates',
 ];
 
 function minimalBdIssue(id: string) {
@@ -277,6 +278,7 @@ describe('createBdCliIssueRepository', () => {
       args: expectedListArgs('/my/root'),
     });
     expect(calls[0]?.args).toContain('--readonly');
+    expect(calls[0]?.args).toContain('--include-gates');
   });
 
   it('limits listAll concurrency to the configured maximum', async () => {

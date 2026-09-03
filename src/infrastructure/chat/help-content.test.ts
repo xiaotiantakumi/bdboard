@@ -8,7 +8,7 @@ import {
 describe('parseBdboardHelpSections', () => {
   it('loads the shared help source used by the web help panel', () => {
     expect(BDBOARD_HELP_PROMPT_LINES).toContain(
-      '- Kanban（看板）: 複数プロジェクトの Beads チケットを、Ready / In Progress / Blocked / Deferred / Done の流れで俯瞰します。',
+      '- Kanban（看板）: 複数プロジェクトの Beads チケットを、Ready / In Progress / 確認待ち / Blocked / Deferred / Done の流れで俯瞰します。',
     );
     expect(BDBOARD_HELP_PROMPT_LINES).toContain(
       '- PWA / ホーム画面への追加: 対応ブラウザでは bdboard をホーム画面やアプリ一覧へ追加し、独立したウィンドウで開けます。',

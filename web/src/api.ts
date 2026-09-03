@@ -336,7 +336,7 @@ export interface PendingDecisionDto {
 }
 
 export interface TicketDecisionOutcome {
-  kind: 'gate' | 'ticket';
+  kind: 'gate' | 'ticket' | 'unknown';
   closed: boolean;
 }
 
@@ -723,7 +723,7 @@ function mapTicketDecisionOutcome(raw: unknown): TicketDecisionOutcome {
   const kind = (outcome as { kind?: unknown }).kind;
   const closed = (outcome as { closed?: unknown }).closed;
   return {
-    kind: kind === 'gate' ? 'gate' : 'ticket',
+    kind: kind === 'gate' ? 'gate' : kind === 'unknown' ? 'unknown' : 'ticket',
     closed: closed === true,
   };
 }
