@@ -3,6 +3,7 @@
   "include-component-in-tag": false,
   "bump-minor-pre-major": true,
   "initial-version": "0.1.0",
+  "always-update": true,
   "packages": {
     ".": {
       "release-type": "node"
