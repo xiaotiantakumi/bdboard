@@ -190,9 +190,12 @@ export interface PendingDecisionDto {
   readonly allowFreeform: boolean;
 }
 
+// 上限は下の commentBodySchema と揃える。どちらの値も最終的に bd の argv に載るので、
+// 無制限だと spawn が E2BIG で落ち、exitCode:-1 が classifyBdError に bd-not-found と
+// 誤分類される (bdboard-xgvh レビュー指摘)。
 const decisionBodySchema = z.object({
-  choice: z.string().min(1).optional(),
-  freeform: z.string().min(1).optional(),
+  choice: z.string().min(1).max(2000).optional(),
+  freeform: z.string().min(1).max(2000).optional(),
 });
 
 const commentBodySchema = z.object({

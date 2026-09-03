@@ -6,6 +6,7 @@ import {
   buildResponseCommentBody,
   buildTicketResponseCommentBody,
   createBdCliHumanDecisions,
+  parseShowStdoutForKind,
 } from './bd-cli-human-decisions.js';
 
 const expectedListArgs = (rootPath: string): readonly string[] => [
@@ -522,5 +523,32 @@ describe('buildGateCloseReason', () => {
 
   it('falls back to Responded when the answer is only whitespace', () => {
     expect(buildGateCloseReason('   \n\t  ')).toBe('Responded');
+  });
+});
+
+// bdboard-xgvh: gate と判定できたときだけ close する、という fail-safe の中核。
+// respond() 経由の結合テストは「show が exit != 0」の経路しか押さえていなかったので、
+// 壊れた stdout の分岐をここで直接押さえる。どれか1つでも 'gate' に倒れると、
+// 実作業チケットを誤クローズする元のバグが復活する。
+describe('parseShowStdoutForKind', () => {
+  it('returns gate only for an exact issue_type match', () => {
+    expect(parseShowStdoutForKind('[{"issue_type":"gate"}]')).toBe('gate');
+  });
+
+  it.each([
+    ['empty stdout', ''],
+    ['whitespace only', '   \n\t '],
+    ['invalid JSON', '{not json'],
+    ['a bare object instead of an array', '{"issue_type":"gate"}'],
+    ['an empty array', '[]'],
+    ['a null first element', '[null]'],
+    ['a non-object first element', '["gate"]'],
+    ['a missing issue_type', '[{"id":"bdboard-1"}]'],
+    ['a null issue_type', '[{"issue_type":null}]'],
+    ['a non-string issue_type', '[{"issue_type":42}]'],
+    ['a different issue_type', '[{"issue_type":"task"}]'],
+    ['a case-mismatched issue_type', '[{"issue_type":"Gate"}]'],
+  ])('falls back to ticket for %s', (_label, stdout) => {
+    expect(parseShowStdoutForKind(stdout)).toBe('ticket');
   });
 });

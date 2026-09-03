@@ -428,9 +428,12 @@ export function createBdCliHumanDecisions(
   };
 }
 
-// Exported for unit tests.
+// Exported for unit tests. parseShowStdoutForKind は fail-safe の中核 (gate と判定
+// できたときだけ close する) なので、respond() 経由の結合テストだけでなく分岐を直接
+// 押さえる (bdboard-xgvh レビュー指摘)。
 export {
   buildGateCloseReason,
   buildResponseCommentBody,
   buildTicketResponseCommentBody,
+  parseShowStdoutForKind,
 };
