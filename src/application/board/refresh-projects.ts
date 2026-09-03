@@ -28,6 +28,12 @@ export interface RefreshResult {
 
 export interface RefreshProjectsOptions {
   readonly force?: boolean;
+  /**
+   * 指定した場合、bd を叩き直す対象をこのプロジェクトID群だけに限定する。
+   * 対象外のプロジェクトは fingerprint も計算せずキャッシュ据え置き(reused)になる。
+   * 未指定なら従来どおり全プロジェクトが対象。
+   */
+  readonly onlyProjectIds?: readonly string[];
 }
 
 function toBdError(err: unknown, projectId: string): BdError {
@@ -44,6 +50,10 @@ export async function refreshProjects(
   options?: RefreshProjectsOptions,
 ): Promise<RefreshResult> {
   const force = options?.force ?? false;
+  const onlyIds =
+    options?.onlyProjectIds !== undefined
+      ? new Set(options.onlyProjectIds)
+      : undefined;
   const discovered = await deps.discovery.discover();
   const discoveredIds = new Set(discovered.map((project) => project.id));
   const cacheSnapshot = deps.cache.listProjects();
@@ -60,6 +70,11 @@ export async function refreshProjects(
   // フィンガープリンタは各プロジェクトのローカルなgit状態を読むだけで安価なため、
   // ここは逐次のままでよい。高コストなのは bd list の shell-out (次段のlistAll) 側。
   for (const project of sortedProjects) {
+    if (onlyIds !== undefined && !onlyIds.has(project.id)) {
+      reused.push(project.id);
+      continue;
+    }
+
     try {
       const fingerprint = await deps.fingerprinter.fingerprint(project);
       const cached = deps.cache.getProject(project.id);

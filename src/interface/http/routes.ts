@@ -115,6 +115,13 @@ export interface ApiDeps {
   readonly now: () => Date;
   readonly getStatus: () => ApiStatus;
   readonly refresh: () => Promise<void>;
+  /**
+   * 指定した rootPath のプロジェクトだけを強制リフレッシュする(bdboard-6qs6)。
+   * 書き込みルートが応答を返す前にこれを await することで、UI が書き込み直後に
+   * 再取得しても陳腐化したキャッシュを掴まないようにする。省略された場合は
+   * 何もしない(従来どおり定期リフレッシュ/ファイル監視まかせ)。
+   */
+  readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
   readonly events: EventHub;
   readonly sessions?: () => readonly AgentSession[];
   readonly links?: () => readonly SessionLink[];
@@ -456,6 +463,23 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   const prBadgeCommentCache = new PrBadgeCommentCache();
   const prBadgeStatusCache = new PrBadgeStatusCache();
   const applicationVersion = deps.applicationVersion.getVersion();
+
+  // 書き込み成功後、そのプロジェクトだけを強制リフレッシュしてから応答する。
+  // これが無いと UI が応答直後に再取得しても書き込み前のキャッシュが返り、
+  // 「操作が効いていない」ように見える(bdboard-6qs6)。
+  // リフレッシュの失敗で書き込み自体を失敗扱いにはしない — bd への書き込みは
+  // 既に成功しているので、ここで 5xx を返すと利用者が二重に操作しかねない。
+  const refreshAfterWrite = async (rootPath: string): Promise<void> => {
+    if (deps.refreshProjectByRootPath === undefined) {
+      return;
+    }
+    try {
+      await deps.refreshProjectByRootPath(rootPath);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.error(`post-write refresh failed (rootPath=${rootPath}): ${detail}`);
+    }
+  };
 
   // 書き込みガードはここ 1 箇所だけ。ルート個別のチェックは持たない(bdboard-9rz)。
   // '*' でメソッド判定するので、この下に後から足された POST/PUT/PATCH/DELETE は
@@ -842,6 +866,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     try {
       const outcome = await deps.humanDecisions.respond(rootPath, id, responseText);
+      await refreshAfterWrite(rootPath);
       return c.json({
         ok: true,
         outcome: { kind: outcome.kind, closed: outcome.closed },
@@ -893,6 +918,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
           break;
       }
 
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       if (error instanceof StatusConflictError) {
@@ -957,6 +983,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
           break;
       }
 
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       if (error instanceof PriorityConflictError) {
@@ -1029,6 +1056,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     try {
       await deps.dependencyWriter.addDependency(rootPath, id, dependsOnId);
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to add dependency', error);
@@ -1074,6 +1102,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         id,
         dependsOnId,
       );
+      await refreshAfterWrite(cached.rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to remove dependency', error);
@@ -1102,6 +1131,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         parsed.data.title,
         parsed.data.expectedCurrentTitle,
       );
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       if (error instanceof ContentConflictError) {
@@ -1142,6 +1172,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         parsed.data.description,
         parsed.data.expectedCurrentDescription,
       );
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       if (error instanceof ContentConflictError) {
@@ -1177,6 +1208,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     try {
       await deps.issueWriter.addLabel(rootPath, id, parsed.data.label);
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to add label', error);
@@ -1210,6 +1242,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     try {
       await deps.issueWriter.removeLabel(cached.rootPath, id, label);
+      await refreshAfterWrite(cached.rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to remove label', error);
@@ -1237,6 +1270,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         id,
         parsed.data.sessionId,
       );
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to link session', error);
@@ -1257,6 +1291,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     try {
       await deps.sessionLinkWriter.unlinkSession(rootPath, id);
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to unlink session', error);
@@ -1281,6 +1316,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     try {
       await deps.issueWriter.addComment(rootPath, id, parsed.data.text);
 
+      await refreshAfterWrite(rootPath);
       return c.json({ ok: true });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to add comment', error);
