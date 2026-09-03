@@ -573,77 +573,83 @@ async function main(): Promise<void> {
     mergePendingRefresh(force, onlyProjectIds);
 
     try {
-      // 直前に mergePendingRefresh() を呼んでいるので初回は必ず1周する。2周目以降は
-      // 「この実行中に届いた要求」が残っているときだけ回る(合流)。
+      // pendingRefresh が空になるまで回す。通知発行 / watcher sync の await 中に
+      // 届いた要求もここで拾う — 拾わずに finally へ抜けると、その要求の待ち手が
+      // 「実行されないまま解決」され、書き込み直後の再取得が陳腐化キャッシュを掴む
+      // (bdboard-6qs6 のバグ本体の再演)。入口で mergePendingRefresh() を呼んでいるので
+      // 初回は必ず1周する。
       while (pendingRefresh !== undefined) {
-        const current = pendingRefresh;
-        // 実行中に届く要求を取りこぼさないよう、await に入る前にクリアする。
-        pendingRefresh = undefined;
+        // 内側は連続して届いた要求の合流。1周ごとに1回だけ refreshProjects を呼ぶ。
+        while (pendingRefresh !== undefined) {
+          const current = pendingRefresh;
+          // 実行中に届く要求を取りこぼさないよう、await に入る前にクリアする。
+          pendingRefresh = undefined;
 
-        const useOnlyProjectIds =
-          current.onlyProjectIds === undefined
-            ? undefined
-            : [...current.onlyProjectIds];
+          const useOnlyProjectIds =
+            current.onlyProjectIds === undefined
+              ? undefined
+              : [...current.onlyProjectIds];
 
-        const result = await refreshProjects(
-          {
-            discovery,
-            repository,
-            fingerprinter,
-            cache,
-            now: () => new Date(),
-            humanDecisions,
-          },
-          {
-            force: current.force,
-            ...(useOnlyProjectIds !== undefined
-              ? { onlyProjectIds: useOnlyProjectIds }
-              : {}),
-          },
-        );
-
-        status = updateStatusFromResult(cache, result, new Date());
-
-        // Only announce a change when something actually changed. `bd --readonly`
-        // still touches .beads/last-touched, so every refresh re-triggers the
-        // watcher; without this guard each real change would emit a second,
-        // empty board.changed event (refreshed=[] reused=all) to every client.
-        if (result.refreshed.length > 0 || result.removed.length > 0) {
-          events.publish({
-            name: 'board.changed',
-            data: {
-              refreshed: result.refreshed,
-              reused: result.reused,
-              removed: result.removed,
+          const result = await refreshProjects(
+            {
+              discovery,
+              repository,
+              fingerprinter,
+              cache,
+              now: () => new Date(),
+              humanDecisions,
             },
+            {
+              force: current.force,
+              ...(useOnlyProjectIds !== undefined
+                ? { onlyProjectIds: useOnlyProjectIds }
+                : {}),
+            },
+          );
+
+          status = updateStatusFromResult(cache, result, new Date());
+
+          // Only announce a change when something actually changed. `bd --readonly`
+          // still touches .beads/last-touched, so every refresh re-triggers the
+          // watcher; without this guard each real change would emit a second,
+          // empty board.changed event (refreshed=[] reused=all) to every client.
+          if (result.refreshed.length > 0 || result.removed.length > 0) {
+            events.publish({
+              name: 'board.changed',
+              data: {
+                refreshed: result.refreshed,
+                reused: result.reused,
+                removed: result.removed,
+              },
+            });
+          }
+        }
+
+        const cacheEntries = cache.listProjects();
+        const refreshAt = new Date();
+        const notificationSnapshot = computeBoardNotificationSnapshot(
+          boardSnapshotInputFromCache(cacheEntries),
+          refreshAt,
+        );
+        for (const payload of boardNotificationPublisher.collectTransitions(
+          cacheEntries,
+          notificationSnapshot,
+          refreshAt,
+        )) {
+          events.publish({
+            name: 'notification',
+            data: payload,
           });
         }
-      }
 
-      const cacheEntries = cache.listProjects();
-      const refreshAt = new Date();
-      const notificationSnapshot = computeBoardNotificationSnapshot(
-        boardSnapshotInputFromCache(cacheEntries),
-        refreshAt,
-      );
-      for (const payload of boardNotificationPublisher.collectTransitions(
-        cacheEntries,
-        notificationSnapshot,
-        refreshAt,
-      )) {
-        events.publish({
-          name: 'notification',
-          data: payload,
-        });
-      }
-
-      // discovery で増えた/消えたプロジェクトを監視対象に反映する。これが無いと
-      // 起動後に現れたプロジェクトは定期リフレッシュ間隔ぶん遅れてしか画面に出ない。
-      try {
-        await watchedProjectsSync?.sync();
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        console.error(`Project watcher update error: ${detail}`);
+        // discovery で増えた/消えたプロジェクトを監視対象に反映する。これが無いと
+        // 起動後に現れたプロジェクトは定期リフレッシュ間隔ぶん遅れてしか画面に出ない。
+        try {
+          await watchedProjectsSync?.sync();
+        } catch (err) {
+          const detail = err instanceof Error ? err.message : String(err);
+          console.error(`Project watcher update error: ${detail}`);
+        }
       }
     } finally {
       refreshRunning = false;
