@@ -1,4 +1,4 @@
-import type { RunOutcome, RunRequest } from '../ports/agent-runner.js';
+import type { RunOutcome, RunOutputSink, RunRequest } from '../ports/agent-runner.js';
 import type { AgentRunnerRegistry } from './runner-registry.js';
 import { validateRunRequest } from './validate-run-request.js';
 
@@ -55,6 +55,7 @@ export async function dispatchRun(
   registry: AgentRunnerRegistry,
   request: RunRequest,
   now: () => Date,
+  sink?: RunOutputSink,
 ): Promise<RunOutcome> {
   const validationError = validateRunRequest(request);
   if (validationError !== null) {
@@ -73,7 +74,7 @@ export async function dispatchRun(
 
   for (const runner of runners) {
     try {
-      const outcome = await runner.dispatch(request);
+      const outcome = await runner.dispatch(request, sink);
       if (outcome.ok) {
         return outcome;
       }

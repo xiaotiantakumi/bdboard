@@ -4,6 +4,7 @@ import type {
   ScanRootsConfig,
   ScanRootsConfigPort,
 } from '../../application/ports/scan-roots-config.js';
+import { withConfigFileLock } from './config-file-write-lock.js';
 
 function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
@@ -63,23 +64,25 @@ export function createFileScanRootsConfigStore(filePath: string): ScanRootsConfi
       return config;
     },
     async write(config: ScanRootsConfig): Promise<void> {
-      const dir = path.dirname(filePath);
-      fs.mkdirSync(dir, { recursive: true });
+      await withConfigFileLock(filePath, async () => {
+        const dir = path.dirname(filePath);
+        fs.mkdirSync(dir, { recursive: true });
 
-      // Merge onto whatever is already on disk so unrelated keys (future settings this store
-      // doesn't know about) survive a scan-roots-only write. A corrupt existing file is fine to
-      // fully replace (readRawObject returns undefined for it).
-      const existing = readRawObject(filePath);
-      const merged = { ...existing, ...config };
+        // Merge onto whatever is already on disk so unrelated keys (future settings this store
+        // doesn't know about) survive a scan-roots-only write. A corrupt existing file is fine to
+        // fully replace (readRawObject returns undefined for it).
+        const existing = readRawObject(filePath);
+        const merged = { ...existing, ...config };
 
-      // Write-then-rename so a crash or a concurrent read never observes a partially written
-      // file. The tmp file lives next to the target so the rename stays on one filesystem.
-      const tmpPath = path.join(
-        dir,
-        `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      );
-      fs.writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
-      fs.renameSync(tmpPath, filePath);
+        // Write-then-rename so a crash or a concurrent read never observes a partially written
+        // file. The tmp file lives next to the target so the rename stays on one filesystem.
+        const tmpPath = path.join(
+          dir,
+          `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        );
+        fs.writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+        fs.renameSync(tmpPath, filePath);
+      });
     },
   };
 }

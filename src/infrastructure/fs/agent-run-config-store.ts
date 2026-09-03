@@ -1,37 +1,37 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  AiQuotaAlertConfig,
-  AiQuotaAlertConfigPort,
-} from '../../application/ports/ai-quota-alert-config.js';
+  AgentRunConfig,
+  AgentRunConfigPort,
+} from '../../application/ports/agent-run-config.js';
 import { withConfigFileLock } from './config-file-write-lock.js';
 
-const THRESHOLD_KEYS = ['thresholdPercent'] as const satisfies readonly (keyof AiQuotaAlertConfig)[];
+const CONFIG_KEYS = ['allowRemoteAgentRuns'] as const satisfies readonly (keyof AgentRunConfig)[];
 
-function isValidThresholdValue(value: unknown): value is number {
-  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 99;
+function isValidBooleanValue(value: unknown): value is boolean {
+  return typeof value === 'boolean';
 }
 
-function parseConfig(value: unknown): AiQuotaAlertConfig | undefined {
+function parseConfig(value: unknown): AgentRunConfig | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const record = value as Record<string, unknown>;
-  const config: Partial<Record<keyof AiQuotaAlertConfig, number>> = {};
+  const config: Partial<Record<keyof AgentRunConfig, boolean>> = {};
   let hasAny = false;
 
-  for (const key of THRESHOLD_KEYS) {
+  for (const key of CONFIG_KEYS) {
     const raw = record[key];
     if (raw === undefined) {
       continue;
     }
-    if (!isValidThresholdValue(raw)) {
-      console.warn(`bdboard: ignoring invalid ai-quota-alert key ${key} in config`);
+    if (!isValidBooleanValue(raw)) {
+      console.warn(`bdboard: ignoring invalid agent-run key ${key} in config`);
       continue;
     }
     config[key] = raw;
     hasAny = true;
   }
 
-  return hasAny ? (config as AiQuotaAlertConfig) : undefined;
+  return hasAny ? (config as AgentRunConfig) : undefined;
 }
 
 function readRawObject(filePath: string): Record<string, unknown> | undefined {
@@ -46,11 +46,9 @@ function readRawObject(filePath: string): Record<string, unknown> | undefined {
   }
 }
 
-export function createFileAiQuotaAlertConfigStore(
-  filePath: string,
-): AiQuotaAlertConfigPort {
+export function createFileAgentRunConfigStore(filePath: string): AgentRunConfigPort {
   return {
-    async read(): Promise<AiQuotaAlertConfig | undefined> {
+    async read(): Promise<AgentRunConfig | undefined> {
       let raw: string;
       try {
         raw = fs.readFileSync(filePath, 'utf8');
@@ -58,7 +56,7 @@ export function createFileAiQuotaAlertConfigStore(
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
           return undefined;
         }
-        console.warn(`bdboard: ignoring unreadable ai-quota-alert config at ${filePath}`);
+        console.warn(`bdboard: ignoring unreadable agent-run config at ${filePath}`);
         return undefined;
       }
 
@@ -66,13 +64,13 @@ export function createFileAiQuotaAlertConfigStore(
       try {
         parsed = JSON.parse(raw);
       } catch {
-        console.warn(`bdboard: ignoring unreadable ai-quota-alert config at ${filePath}`);
+        console.warn(`bdboard: ignoring unreadable agent-run config at ${filePath}`);
         return undefined;
       }
 
       return parseConfig(parsed);
     },
-    async write(config: AiQuotaAlertConfig): Promise<void> {
+    async write(config: AgentRunConfig): Promise<void> {
       await withConfigFileLock(filePath, async () => {
         const dir = path.dirname(filePath);
         fs.mkdirSync(dir, { recursive: true });

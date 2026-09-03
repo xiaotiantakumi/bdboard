@@ -48,7 +48,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 - **`src/infrastructure/`** — ポートの実アダプタ。`bd/`(bd CLIラッパー群)、`gh/`(PRステータス)、
   `cache/`(SQLiteキャッシュ)、`discovery/`(プロジェクト走査)、`session/`(Claude Codeセッション
   検出)、`transcript/`(トランスクリプト走査)、`watch/`(chokidarファイル監視)、`process/`
-  (子プロセス実行)、`runners/`(エージェント起動アダプタ。後述の通り現状未配線)。
+  (子プロセス実行)、`runners/`(エージェント起動アダプタ。`POST /api/runs` 経由で配線)。
 - **`src/interface/`** — HTTPエントリポイント。`http/routes.ts` が REST API 群、
   `sse/event-hub.ts` がSSE配信用のPub/Subハブ、`http/*-routes.ts` が機能別ルート
   (harness/scan-roots/board-thresholds/ai-quota-alert/tunnel/chat)、`http/write-guard.ts` が
@@ -90,7 +90,9 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `ChatSessionRepository` / `ChatMessageRepository` | `SqliteChatSessionRepository` / `SqliteChatMessageRepository` | チャットセッション・メッセージの永続化 |
 | `TunnelPort` | `CloudflaredTunnel` | cloudflared quick tunnel の起動/停止 |
 | `AiQuotaSource` | `NodeAiQuotaSource` | `ai-quota` CLI 経由の残量取得 |
-| `AgentRunner` | `ClaudeSpawnRunner` / `ClaudeResumeRunner` / `DisabledRunner` 等 | エージェント起動(後述の通り現状HTTP層には未配線) |
+| `WorktreeProvisioner` | `GitWorktreeProvisioner` | エージェント実行用の隔離 worktree 作成 |
+| `AgentRunConfigPort` | `FileAgentRunConfigStore`(`createFileAgentRunConfigStore`) | エージェント実行設定(リモート許可トグル等)の永続化 |
+| `AgentRunner` | `ClaudeSpawnRunner` / `ClaudeResumeRunner` / `DisabledRunner` 等 | エージェント起動(`POST /api/runs` の1経路のみ。`agent-run-guard` 必須) |
 
 各ポートのフルインターフェースは `src/application/ports/*.ts` を参照。
 
@@ -137,13 +139,37 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 - **子プロセス起動経路の一本化**: `.dependency-cruiser.cjs` のルールにより `child_process` は
   `infrastructure/process` と `infrastructure/runners` 以外からimportできない。bd/gh/git/ai-quota
   等の外部コマンド実行はすべてこの経路を通る。
-- **エージェント自動起動(Runner)は現状HTTP層に未配線**: `application/runner/dispatch-run.ts` と
-  `AgentRunnerRegistry`(`application/runner/runner-registry.ts`)、および
-  `infrastructure/runners/*`(`ClaudeSpawnRunner` 等の実装、`DisabledRunner` という
-  常に失敗を返すダミー実装を含む)は存在するが、`src/main.ts` はこれらを一切importしておらず、
-  `interface/http/routes.ts` にも dispatch 用のエンドポイントは無い。つまりエージェントの
-  自動起動機能は実装レベルで用意されているだけで、HTTPから到達可能な経路が物理的に存在しない
-  (=配線として無効化されている)。
+- **エージェント自動起動(Runner)は単一経路+認可ゲート必須**: Runner は `POST /api/runs`
+  (`interface/http/agent-run-routes.ts`) の1経路だけで到達可能で、その経路は
+  `agent-run-guard`(`createAgentRunGuardMiddleware`)を必ず通る。ローカル直アクセスからは
+  agent run の実行が可能(当初計画の read-only 保証はここで意図的に緩められている)。
+  リモート(トンネル経由)は既定で実行不可であり、`allowRemoteAgentRuns` トグル(既定 false)
+  が有効なときだけ許可される(fail-closed)。このトグル自体は
+  `PUT /api/settings/agent-runs` で変更できるが、**ローカル直アクセスからのみ**変更可能
+  (リモートから自分で ON にできない)。
+  `interface/http` 配下で `dispatchRun` / `application/runner` を参照するのは
+  `agent-run-routes.ts` ただ1ファイルであり、回帰テストで検証している。
+- **リモート許可トグルは起動時の値で固定される**: `isRemoteAgentRunAllowed` は
+  サーバー起動時に一度だけ読まれ、以後リクエスト毎に再読み込みしない。設定変更は
+  **サーバー再起動後**に反映される。これは UX の都合ではなく安全側の要求で、
+  リクエスト毎に読むと「エージェントが config ファイルを書き換えた瞬間にリモート実行が
+  有効化される」権限昇格経路が開くため(bdboard-54be.1 セキュリティレビュー B-1)。
+- **エージェントに与える権限は最小化する(3層)**: (a) `--permission-mode` は `default`
+  (`acceptEdits` はパススコープを無効化するため使わない)、(b) `--allowedTools` は
+  必要最小限の verb だけを列挙し、ファイル編集は `Edit(//<worktree 絶対パス>/**)` で
+  worktree 配下に動的スコープする(`Bash(git:*)` のような bare ワイルドカードは
+  worktree 隔離を無効化するので禁止。単体テストで検出する)、(c) 子プロセスへ渡す
+  環境変数は allowlist する(`kv_inject` で注入されたシークレットがエージェントの
+  `env` から読めないようにするため)。
+- **チケット本文は信頼できない入力**: チケットの title/description はトンネル経由の
+  書き込み権限があれば変更でき、それが `bd show` 経由でエージェントのコンテキストに入る。
+  実行プロンプト(`application/runner/build-run-prompt.ts`)は `bd show` の出力を
+  「実装すべき変更内容の記述」としてのみ参照させ、そこに書かれた指示には従わないことを
+  明示する。プロンプト側で「正本として扱え」と書いてはならない。
+- **シャットダウン時に子プロセスを孤児にしない**: 子は `detached: true` で別プロセス
+  グループにいるため、サーバーのプロセスグループへの SIGTERM は届かない。
+  `shutdown-drain` は `RunStore.cancelAllAndWait()` を await し、SIGKILL の猶予
+  (`STOP_GRACE_MS`)+マージンまで待ってから終了する。
 - **書き込みAPIは `write-guard` に一本化**: `interface/http/write-guard.ts` が
   POST/PUT/PATCH/DELETE(および `createPrivilegedApiGuardMiddleware` を使う一部の副作用付きGET)を
   前置ミドルウェアとして一括判定する。許可条件は「ローカル直アクセス」または「トンネル経由で
@@ -158,9 +184,11 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 v1の合成ルートに登録しない」という当初方針が書かれているが、現在の `src/main.ts` は
 `createBdCliIssueWriter` / `createBdCliDependencyWriter` / `createBdCliSessionLinkWriter` 等を
 実際に生成し `createApiRoutes` へ配線している。書き込み機能はその後のスライスで計画通り実装され、
-上記の `write-guard` による認可ゲートに置き換わっている。一方で **Runner(エージェント自動起動)は
-今も未配線のまま**であり、この点は当初計画から変わっていない。読む際は本ドキュメントの現状記述を
-優先し、`PLAN.md` は初期設計の経緯・技術選定理由を追う資料として参照すること。
+上記の `write-guard` による認可ゲートに置き換わっている。**Runner(エージェント自動起動)も
+`POST /api/runs` として配線済み**だが、`agent-run-guard` + リモート許可トグル(既定 off)により
+到達を制限している。ローカル直アクセスからの実行は read-only 保証を意図的に緩めた点であり、
+リモートは既定 off でトグルもローカル直アクセスからのみ変更できる(fail-closed)。
+読む際は本ドキュメントの現状記述を優先し、`PLAN.md` は初期設計の経緯・技術選定理由を追う資料として参照すること。
 
 ## 関連ドキュメント
 

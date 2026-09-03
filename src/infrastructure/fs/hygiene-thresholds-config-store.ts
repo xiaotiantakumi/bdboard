@@ -10,6 +10,7 @@ import {
   HYGIENE_THRESHOLDS_MAX_MS,
   HYGIENE_THRESHOLDS_MIN_MS,
 } from '../../domain/hygiene-thresholds.js';
+import { withConfigFileLock } from './config-file-write-lock.js';
 
 const MS_KEYS = [
   'staleInProgressAfterMs',
@@ -110,18 +111,20 @@ export function createFileHygieneThresholdsConfigStore(
       return parseConfig(parsed);
     },
     async write(config: HygieneThresholdsConfig): Promise<void> {
-      const dir = path.dirname(filePath);
-      fs.mkdirSync(dir, { recursive: true });
+      await withConfigFileLock(filePath, async () => {
+        const dir = path.dirname(filePath);
+        fs.mkdirSync(dir, { recursive: true });
 
-      const existing = readRawObject(filePath);
-      const merged = { ...existing, ...config };
+        const existing = readRawObject(filePath);
+        const merged = { ...existing, ...config };
 
-      const tmpPath = path.join(
-        dir,
-        `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      );
-      fs.writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
-      fs.renameSync(tmpPath, filePath);
+        const tmpPath = path.join(
+          dir,
+          `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        );
+        fs.writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+        fs.renameSync(tmpPath, filePath);
+      });
     },
   };
 }

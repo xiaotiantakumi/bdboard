@@ -394,6 +394,12 @@ export class ApiError extends Error {
    * 常に undefined になり得る。
    */
   readonly code?: string;
+  /**
+   * 機械可読な失敗理由(例: 'worktree-dirty' / 'already-running')。
+   * `error` の人間向け文言はパスなどの可変部分を含むため、クライアントは
+   * こちらで分岐する。返さないエンドポイントでは undefined。
+   */
+  readonly reason?: string;
 
   constructor(
     status: number,
@@ -403,6 +409,7 @@ export class ApiError extends Error {
       errorMessage?: string;
       detail?: string;
       code?: string;
+      reason?: string;
       details?: unknown;
     },
   ) {
@@ -413,6 +420,7 @@ export class ApiError extends Error {
     this.errorMessage = options?.errorMessage;
     this.detail = options?.detail;
     this.code = options?.code;
+    this.reason = options?.reason;
     this.details = options?.details;
   }
 }
@@ -422,6 +430,7 @@ async function readErrorPayload(res: Response): Promise<{
   errorMessage?: string;
   detail?: string;
   code?: string;
+  reason?: string;
   details?: unknown;
 }> {
   const body = await res.text();
@@ -430,6 +439,7 @@ async function readErrorPayload(res: Response): Promise<{
       error?: unknown;
       detail?: unknown;
       code?: unknown;
+      reason?: unknown;
       details?: unknown;
     };
     const errorMessage =
@@ -437,14 +447,16 @@ async function readErrorPayload(res: Response): Promise<{
     const detail =
       typeof parsed.detail === 'string' ? parsed.detail : undefined;
     const code = typeof parsed.code === 'string' ? parsed.code : undefined;
+    const reason = typeof parsed.reason === 'string' ? parsed.reason : undefined;
     const details = parsed.details;
     if (
       errorMessage !== undefined ||
       detail !== undefined ||
       code !== undefined ||
+      reason !== undefined ||
       details !== undefined
     ) {
-      return { body, errorMessage, detail, code, details };
+      return { body, errorMessage, detail, code, reason, details };
     }
   } catch {
     // non-JSON error body
@@ -455,11 +467,12 @@ async function readErrorPayload(res: Response): Promise<{
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   if (!res.ok) {
-    const { body, errorMessage, detail, code, details } = await readErrorPayload(res);
+    const { body, errorMessage, detail, code, reason, details } =
+      await readErrorPayload(res);
     throw new ApiError(
       res.status,
       errorMessage ?? `HTTP ${res.status} ${res.statusText}: ${path}`,
-      { body, errorMessage, detail, code, details },
+      { body, errorMessage, detail, code, reason, details },
     );
   }
   if (res.status === 204) {
@@ -588,6 +601,99 @@ export function putAiQuotaAlertConfig(config: {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(config),
   });
+}
+
+export interface AgentRunConfigDto {
+  allowRemoteAgentRuns: boolean;
+  defaults: { allowRemoteAgentRuns: boolean };
+  version: string;
+}
+
+export type AgentRunStatusDto =
+  | 'pending'
+  | 'running'
+  | 'cancelling'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface AgentRunSummaryDto {
+  id: string;
+  ticketId: string;
+  runner: string;
+  mode: 'spawn' | 'resume';
+  status: AgentRunStatusDto;
+  startedAt: string;
+  finishedAt?: string;
+  exitCode?: number;
+  error?: string;
+}
+
+export interface AgentRunDetailDto extends AgentRunSummaryDto {
+  cwd: string;
+  log: string;
+}
+
+export interface StartAgentRunResponseDto {
+  runId: string;
+  ticketId: string;
+  status: 'pending';
+  worktreePath: string;
+  branchName: string;
+  /** 既存の worktree を再利用したか（false なら新規作成）。 */
+  reused: boolean;
+}
+
+export function fetchAgentRunConfig(): Promise<AgentRunConfigDto> {
+  return fetchJson<AgentRunConfigDto>('/api/settings/agent-runs');
+}
+
+export function saveAgentRunConfig(config: {
+  allowRemoteAgentRuns: boolean;
+  version: string;
+}): Promise<AgentRunConfigDto> {
+  return fetchJson<AgentRunConfigDto>('/api/settings/agent-runs', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+}
+
+export function startTicketRun(ticketId: string): Promise<StartAgentRunResponseDto> {
+  return fetchJson<StartAgentRunResponseDto>('/api/runs', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ ticketId }),
+  });
+}
+
+export function fetchTicketRuns(ticketId: string): Promise<{ runs: AgentRunSummaryDto[] }> {
+  const searchParams = new URLSearchParams({ ticketId });
+  return fetchJson<{ runs: AgentRunSummaryDto[] }>(`/api/runs?${searchParams.toString()}`);
+}
+
+export function fetchAgentRun(
+  runId: string,
+  tailBytes?: number,
+): Promise<AgentRunDetailDto> {
+  const searchParams = new URLSearchParams();
+  if (tailBytes !== undefined) {
+    searchParams.set('tailBytes', String(tailBytes));
+  }
+  const query = searchParams.toString();
+  const path = `/api/runs/${encodeURIComponent(runId)}${
+    query.length > 0 ? `?${query}` : ''
+  }`;
+  return fetchJson<AgentRunDetailDto>(path);
+}
+
+export function cancelAgentRun(
+  runId: string,
+): Promise<{ runId: string; status: AgentRunStatusDto }> {
+  return fetchJson<{ runId: string; status: AgentRunStatusDto }>(
+    `/api/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: 'POST' },
+  );
 }
 
 export function postRefresh(): Promise<void> {

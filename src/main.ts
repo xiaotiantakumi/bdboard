@@ -117,6 +117,14 @@ import { createBoardThresholdsRoutes } from './interface/http/board-thresholds-r
 import { createHygieneThresholdsRoutes } from './interface/http/hygiene-thresholds-routes.js';
 import { createDbStatsRoutes } from './interface/http/db-stats-routes.js';
 import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
+import { createAgentRunSettingsRoutes } from './interface/http/agent-run-settings-routes.js';
+import { createAgentRunRoutes } from './interface/http/agent-run-routes.js';
+import { createRunStore } from './application/runner/run-store.js';
+import { createAgentRunnerRegistry } from './application/runner/runner-registry.js';
+import { resolveAllowRemoteAgentRuns } from './domain/agent-run-policy.js';
+import { createFileAgentRunConfigStore } from './infrastructure/fs/agent-run-config-store.js';
+import { createGitWorktreeProvisioner } from './infrastructure/git/git-worktree-provisioner.js';
+import { createClaudeSpawnRunner } from './infrastructure/runners/claude-spawn-runner.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
 import { createEventHub } from './interface/sse/event-hub.js';
@@ -984,6 +992,61 @@ async function main(): Promise<void> {
     }),
   );
 
+  const agentRunConfigStore = createFileAgentRunConfigStore(
+    envString('BDBOARD_AGENT_RUN_CONFIG_PATH', configFilePath),
+  );
+  app.route(
+    '/',
+    createAgentRunSettingsRoutes({
+      store: agentRunConfigStore,
+      writeAccess,
+    }),
+  );
+
+  const agentRunRegistry = createAgentRunnerRegistry();
+  agentRunRegistry.register(
+    createClaudeSpawnRunner({
+      streamingRunner: streamingCommandRunner,
+    }),
+  );
+  const runStore = createRunStore({
+    // Keep in sync with run-store DEFAULT_MAX_CONCURRENT: verify uses two slots per
+    // machine, and each run prompt drives npm run verify.
+    maxConcurrent: envInt('BDBOARD_MAX_CONCURRENT_RUNS', 1),
+    now: () => new Date(),
+  });
+  const worktreeProvisioner = createGitWorktreeProvisioner({ commandRunner });
+
+  // bdboard-54be.1: allowRemoteAgentRuns は起動時に一度だけ読み、リクエスト毎に config を
+  // 再読み込みしない。実行中のエージェントが config ファイルを書き換えた瞬間にリモート実行が
+  // 有効化される権限昇格経路（confused deputy）になるため。変更を反映するにはサーバー再起動が
+  // 必要 — UX（即時反映）より安全側を取る裁定済みのトレードオフ。ここをリクエスト毎の再読み込み
+  // に戻さないこと。
+  const remoteAgentRunsAllowed = await (async (): Promise<boolean> => {
+    try {
+      return resolveAllowRemoteAgentRuns(await agentRunConfigStore.read());
+    } catch (err) {
+      console.warn('bdboard: failed to read agent run config for startup log', err);
+      return false;
+    }
+  })();
+  console.log(
+    `Agent runs: enabled (remote: ${remoteAgentRunsAllowed ? 'allowed' : 'denied'} by setting)`,
+  );
+
+  app.route(
+    '/',
+    createAgentRunRoutes({
+      cache,
+      registry: agentRunRegistry,
+      runStore,
+      worktreeProvisioner,
+      writeAccess,
+      isRemoteAgentRunAllowed: async () => remoteAgentRunsAllowed,
+      now: () => new Date(),
+    }),
+  );
+
   app.route(
     '/',
     createTunnelRoutes({
@@ -1178,6 +1241,7 @@ async function main(): Promise<void> {
   // 接続の drain 待ちが絡む後始末(watcher/tunnel/cache)は createGracefulShutdown の
   // drain に委ねてタイムアウト保護をかける (bdboard-3tw.91)。
   const drain = createShutdownDrain({
+    runStore,
     watchHandle,
     tunnelService,
     cache,

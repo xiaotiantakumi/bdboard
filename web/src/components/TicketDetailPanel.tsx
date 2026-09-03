@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BD_COMMAND_DEFINITIONS,
   buildBdCommand,
@@ -9,10 +9,13 @@ import {
 import {
   deleteTicketDependency,
   ApiError,
+  cancelAgentRun,
   deleteTicketLabel,
   deleteTicketSessionLink,
+  fetchAgentRun,
   fetchSessions,
   fetchTicket,
+  fetchTicketRuns,
   patchTicketDescription,
   patchTicketTitle,
   fetchTicketComments,
@@ -26,12 +29,16 @@ import {
   postTicketQuickActionUndo,
   postTicketSessionLink,
   searchTickets,
+  startTicketRun,
+  type AgentRunDetailDto,
+  type AgentRunSummaryDto,
   type PendingDecisionDto,
   type TicketDecisionOutcome,
   type PrBadgeDto,
   type QuickActionRequest,
   type SessionDto,
   type ActivityEventDto,
+  type TicketDetailDto,
   type TicketSearchResultDto,
   type TicketSimilarResultDto,
   LANE_LABELS,
@@ -230,6 +237,127 @@ function formatSessionPickerLabel(session: SessionDto): string {
     : `${session.sessionId} (${session.cwd})`;
 }
 
+const AGENT_RUN_POLL_INTERVAL_MS = 2000;
+const AGENT_RUN_POLL_MAX_FAILURES = 3;
+const WORKTREE_DIRTY_ERROR_SUFFIX = ': uncommitted changes prevent agent run';
+// git-worktree-provisioner.ts の formatWorktreeBranchMismatchMessage と同じ affix。
+const WORKTREE_BRANCH_MISMATCH_ON_BRANCH = ': on branch ';
+const WORKTREE_BRANCH_MISMATCH_EXPECTED = ', expected ';
+
+function extractWorktreeBranchMismatchBranch(errorMessage: string | undefined): string | undefined {
+  if (errorMessage === undefined) {
+    return undefined;
+  }
+
+  const onBranchIndex = errorMessage.indexOf(WORKTREE_BRANCH_MISMATCH_ON_BRANCH);
+  if (onBranchIndex === -1) {
+    return undefined;
+  }
+
+  const afterOnBranch = errorMessage.slice(
+    onBranchIndex + WORKTREE_BRANCH_MISMATCH_ON_BRANCH.length,
+  );
+  const expectedIndex = afterOnBranch.indexOf(WORKTREE_BRANCH_MISMATCH_EXPECTED);
+  if (expectedIndex === -1) {
+    return undefined;
+  }
+
+  const actualBranch = afterOnBranch.slice(0, expectedIndex).trim();
+  return actualBranch.length > 0 ? actualBranch : undefined;
+}
+
+function isAgentRunInProgress(
+  status: AgentRunSummaryDto['status'],
+): boolean {
+  return (
+    status === 'pending' || status === 'running' || status === 'cancelling'
+  );
+}
+
+function computeRunStartDisabled(
+  ticket: TicketDetailDto,
+  hasActiveRun: boolean,
+  nowMs: number = Date.now(),
+): { disabled: boolean; reason?: string } {
+  if (ticket.status === 'closed') {
+    return { disabled: true, reason: '完了済みのチケットは実行できません' };
+  }
+  if (
+    (ticket.status === 'open' || ticket.status === 'pinned') &&
+    ticket.blockedBy.length > 0
+  ) {
+    return { disabled: true, reason: 'ブロック中のチケットは実行できません' };
+  }
+  if (
+    ticket.deferUntil !== undefined &&
+    new Date(ticket.deferUntil).getTime() > nowMs
+  ) {
+    return { disabled: true, reason: '保留中のチケットは実行できません' };
+  }
+  if (hasActiveRun) {
+    return { disabled: true };
+  }
+  return { disabled: false };
+}
+
+function describeRunStartError(error: unknown): string {
+  if (error instanceof ApiError) {
+    // 分岐はサーバーが返す機械可読な `reason` で行う。`error` の文言は
+    // `<worktree path>: uncommitted changes prevent agent run` という可変の
+    // 形なので、表示用のパス抽出にだけ使い、判定には使わない。
+    if (error.status === 409 && error.reason === 'worktree-dirty') {
+      const path = error.errorMessage?.endsWith(WORKTREE_DIRTY_ERROR_SUFFIX)
+        ? error.errorMessage.slice(0, -WORKTREE_DIRTY_ERROR_SUFFIX.length)
+        : undefined;
+      const base =
+        '対象の worktree に未コミットの変更があるため実行できません。変更を整理してから再実行してください。';
+      return path !== undefined && path.length > 0 ? `${base}(${path})` : base;
+    }
+    if (error.status === 409 && error.reason === 'worktree-branch-mismatch') {
+      const actualBranch = extractWorktreeBranchMismatchBranch(error.errorMessage);
+      const base =
+        '対象の worktree が別のブランチにあるため実行できません。正しいブランチに切り替えてから再実行してください。';
+      return actualBranch !== undefined
+        ? `対象の worktree が別のブランチ（${actualBranch}）にあるため実行できません。正しいブランチに切り替えてから再実行してください。`
+        : base;
+    }
+    if (error.status === 409 || error.status === 429) {
+      switch (error.errorMessage) {
+        case 'ticket is closed':
+          return '完了済みのチケットは実行できません。';
+        case 'ticket is blocked':
+          return 'ブロック中のチケットは実行できません。';
+        case 'ticket is deferred':
+          return '保留中のチケットは実行できません。';
+        case 'run already in progress':
+          return 'このチケットは既に実行中です。';
+        case 'too many concurrent runs':
+          return '同時に実行できる上限に達しています。実行中のものが終わってからお試しください。';
+        default:
+          break;
+      }
+    }
+  }
+  return describeWriteError(error, 'エージェントの実行を開始できませんでした');
+}
+
+function formatAgentRunStatus(status: AgentRunSummaryDto['status']): string {
+  switch (status) {
+    case 'pending':
+      return '待機中';
+    case 'running':
+      return '実行中';
+    case 'cancelling':
+      return '中止中…';
+    case 'succeeded':
+      return '成功';
+    case 'failed':
+      return '失敗';
+    case 'cancelled':
+      return '中止';
+  }
+}
+
 interface TicketIdLinkProps {
   id: string;
   isTicketOnBoard: (ticketId: string) => boolean;
@@ -325,6 +453,28 @@ export function TicketDetailPanel({
     queryKey: ['similar-tickets', ticketId],
     queryFn: () => fetchSimilarTickets(ticketId),
   });
+  const {
+    data: ticketRunsData,
+    isLoading: ticketRunsLoading,
+    error: ticketRunsError,
+  } = useQuery({
+    queryKey: ['ticket-runs', ticketId],
+    queryFn: () => fetchTicketRuns(ticketId),
+  });
+  const [confirmingAgentRun, setConfirmingAgentRun] = useState(false);
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [activeRunMeta, setActiveRunMeta] = useState<{
+    worktreePath: string;
+    branchName: string;
+    reused: boolean;
+  } | null>(null);
+  const [polledRunDetail, setPolledRunDetail] = useState<AgentRunDetailDto | null>(
+    null,
+  );
+  const [runStatusUnavailable, setRunStatusUnavailable] = useState(false);
+  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string | null>(
+    null,
+  );
   // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
   // setTimeout だとアンマウント後にタイマーを仕掛けうる。
   const {
@@ -368,6 +518,8 @@ export function TicketDetailPanel({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const cancelQuickActionRef = useRef<HTMLButtonElement>(null);
   const quickActionConfirmRef = useRef<HTMLDivElement>(null);
+  const cancelAgentRunConfirmRef = useRef<HTMLButtonElement>(null);
+  const agentRunConfirmRef = useRef<HTMLDivElement>(null);
   const projectRootPath =
     data === undefined ? undefined : projectRootPaths.get(data.projectId);
 
@@ -400,6 +552,11 @@ export function TicketDetailPanel({
     setDescriptionDraft('');
     setExpectedCurrentDescription('');
     setSessionLinkPickerOpen(false);
+    setConfirmingAgentRun(false);
+    setActiveRunId(null);
+    setActiveRunMeta(null);
+    setPolledRunDetail(null);
+    setSelectedHistoryRunId(null);
   }, [clearCopyDisplay, resetDecisionAnswer]);
 
   useEffect(() => {
@@ -410,7 +567,7 @@ export function TicketDetailPanel({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    enabled: confirmingQuickAction === null,
+    enabled: confirmingQuickAction === null && !confirmingAgentRun,
   });
 
   const handleCancelQuickAction = useCallback(() => {
@@ -425,6 +582,171 @@ export function TicketDetailPanel({
     initialFocusRef: cancelQuickActionRef,
     enabled: confirmingQuickAction !== null,
     onEscape: handleCancelQuickAction,
+  });
+
+  const handleCancelAgentRun = useCallback(() => {
+    setConfirmingAgentRun(false);
+  }, []);
+
+  useFocusTrap({
+    containerRef: agentRunConfirmRef,
+    initialFocusRef: cancelAgentRunConfirmRef,
+    enabled: confirmingAgentRun,
+    onEscape: handleCancelAgentRun,
+  });
+
+  const activeRunFromList = useMemo(() => {
+    return ticketRunsData?.runs.find((run) => isAgentRunInProgress(run.status));
+  }, [ticketRunsData]);
+
+  const hasActiveRun = useMemo(() => {
+    if (runStatusUnavailable) {
+      return false;
+    }
+    if (
+      polledRunDetail !== null &&
+      isAgentRunInProgress(polledRunDetail.status)
+    ) {
+      return true;
+    }
+    if (activeRunFromList !== undefined) {
+      return true;
+    }
+    if (activeRunId !== null && polledRunDetail === null) {
+      return true;
+    }
+    return false;
+  }, [activeRunFromList, activeRunId, polledRunDetail, runStatusUnavailable]);
+
+  const runStartDisabled = useMemo(() => {
+    if (data === undefined) {
+      return { disabled: true };
+    }
+    return computeRunStartDisabled(data, hasActiveRun);
+  }, [data, hasActiveRun]);
+
+  useEffect(() => {
+    if (activeRunFromList === undefined) {
+      return;
+    }
+    setActiveRunId(activeRunFromList.id);
+  }, [activeRunFromList?.id, ticketId]);
+
+  const {
+    data: selectedHistoryRun,
+    isLoading: selectedHistoryRunLoading,
+    error: selectedHistoryRunError,
+  } = useQuery({
+    queryKey: ['agent-run', selectedHistoryRunId],
+    queryFn: () => fetchAgentRun(selectedHistoryRunId!),
+    enabled: selectedHistoryRunId !== null,
+  });
+
+  useEffect(() => {
+    if (activeRunId === null) {
+      setPolledRunDetail(null);
+      setRunStatusUnavailable(false);
+      return;
+    }
+
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    let consecutiveFailures = 0;
+
+    setRunStatusUnavailable(false);
+    consecutiveFailures = 0;
+
+    const poll = async (): Promise<AgentRunDetailDto | null> => {
+      try {
+        const detail = await fetchAgentRun(activeRunId);
+        if (cancelled) {
+          return null;
+        }
+        consecutiveFailures = 0;
+        setRunStatusUnavailable(false);
+        setPolledRunDetail(detail);
+        if (!isAgentRunInProgress(detail.status)) {
+          void queryClient.invalidateQueries({
+            queryKey: ['ticket-runs', ticketId],
+          });
+        }
+        return detail;
+      } catch (pollError) {
+        console.error('Failed to poll agent run', pollError);
+        if (cancelled) {
+          return null;
+        }
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
+          setRunStatusUnavailable(true);
+          if (intervalId !== undefined) {
+            clearInterval(intervalId);
+            intervalId = undefined;
+          }
+        }
+        return null;
+      }
+    };
+
+    void (async () => {
+      const initialDetail = await poll();
+      if (cancelled || consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
+        return;
+      }
+      if (
+        initialDetail !== null &&
+        !isAgentRunInProgress(initialDetail.status)
+      ) {
+        return;
+      }
+
+      intervalId = setInterval(() => {
+        void (async () => {
+          const detail = await poll();
+          if (cancelled || consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
+            return;
+          }
+          if (
+            detail !== null &&
+            !isAgentRunInProgress(detail.status) &&
+            intervalId !== undefined
+          ) {
+            clearInterval(intervalId);
+            intervalId = undefined;
+          }
+        })();
+      }, AGENT_RUN_POLL_INTERVAL_MS);
+    })();
+
+    return () => {
+      cancelled = true;
+      if (intervalId !== undefined) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activeRunId, queryClient, ticketId]);
+
+  const startRunMutation = useMutation({
+    mutationFn: () => startTicketRun(ticketId),
+    onSuccess: (response) => {
+      setConfirmingAgentRun(false);
+      setActiveRunId(response.runId);
+      setActiveRunMeta({
+        worktreePath: response.worktreePath,
+        branchName: response.branchName,
+        reused: response.reused,
+      });
+      void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
+    },
+  });
+
+  const cancelRunMutation = useMutation({
+    mutationFn: async () => {
+      if (activeRunId === null) {
+        throw new Error('active run is not available');
+      }
+      await cancelAgentRun(activeRunId);
+    },
   });
 
   useEffect(() => {
@@ -859,7 +1181,14 @@ export function TicketDetailPanel({
   const canRaisePriority = data !== undefined && data.priority > 0;
   const canLowerPriority = data !== undefined && data.priority < 4;
   const quickActionsDisabled =
-    quickActionMutation.isPending || confirmingQuickAction !== null;
+    quickActionMutation.isPending ||
+    confirmingQuickAction !== null ||
+    confirmingAgentRun ||
+    startRunMutation.isPending;
+  const agentRunActionsDisabled =
+    startRunMutation.isPending ||
+    confirmingQuickAction !== null ||
+    confirmingAgentRun;
   const deferSubmitDisabled =
     deferPeriodKind === 'custom' && !isFutureLocalDate(customDeferDate);
 
@@ -904,7 +1233,7 @@ export function TicketDetailPanel({
               return;
             }
           }
-          if (confirmingQuickAction !== null) {
+          if (confirmingQuickAction !== null || confirmingAgentRun) {
             return;
           }
           const textarea = commentTextareaRef.current;
@@ -1060,19 +1389,82 @@ export function TicketDetailPanel({
         )}
         {data !== undefined && (
           <>
-            {onChatAboutTicket !== undefined && (
+            <div className="ticket-action-buttons">
+              {onChatAboutTicket !== undefined && (
+                <button
+                  type="button"
+                  className="btn ticket-chat-btn"
+                  onClick={() =>
+                    onChatAboutTicket({
+                      projectId: data.projectId,
+                      ticketId: data.id,
+                    })
+                  }
+                >
+                  このチケットについてチャット
+                </button>
+              )}
               <button
                 type="button"
-                className="btn ticket-chat-btn"
-                onClick={() =>
-                  onChatAboutTicket({
-                    projectId: data.projectId,
-                    ticketId: data.id,
-                  })
-                }
+                className="btn ticket-run-btn"
+                disabled={agentRunActionsDisabled || runStartDisabled.disabled}
+                title={runStartDisabled.reason}
+                onClick={() => setConfirmingAgentRun(true)}
               >
-                このチケットについてチャット
+                ▶ 実行
               </button>
+              {hasActiveRun && (
+                <span className="agent-run-active-indicator">実行中</span>
+              )}
+            </div>
+            {confirmingAgentRun && (
+              <div
+                ref={agentRunConfirmRef}
+                className="quick-action-confirm-panel agent-run-confirm-panel"
+                role="alertdialog"
+                aria-labelledby="agent-run-confirm-title"
+                aria-describedby="agent-run-confirm-desc"
+              >
+                <p
+                  id="agent-run-confirm-title"
+                  className="quick-action-confirm-title"
+                >
+                  エージェント実行の確認
+                </p>
+                <p
+                  id="agent-run-confirm-desc"
+                  className="quick-action-confirm-desc"
+                >
+                  対象チケット用の worktree（.claude/worktrees/{ticketId}
+                  ）を新規作成するか、既に存在してクリーンならそれを再利用して、Claude
+                  CLI を起動します。対象 worktree
+                  に未コミットの変更がある場合は実行できません。よろしいですか?
+                </p>
+                <div className="quick-action-confirm-actions">
+                  <button
+                    ref={cancelAgentRunConfirmRef}
+                    type="button"
+                    className="btn quick-action-confirm-cancel"
+                    onClick={handleCancelAgentRun}
+                    disabled={startRunMutation.isPending}
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() => startRunMutation.mutate()}
+                    disabled={startRunMutation.isPending}
+                  >
+                    {startRunMutation.isPending ? '実行中…' : '実行する'}
+                  </button>
+                </div>
+              </div>
+            )}
+            {startRunMutation.error !== null && (
+              <p className="error-message">
+                {describeRunStartError(startRunMutation.error)}
+              </p>
             )}
             <div className="detail-field">
               <div className="detail-field-label">ID</div>
@@ -2027,6 +2419,149 @@ export function TicketDetailPanel({
                     'クイックアクションの実行に失敗しました',
                   )}
                 </p>
+              )}
+            </div>
+            <div className="detail-section">
+              <h3>エージェント実行</h3>
+              {(polledRunDetail !== null ||
+                activeRunMeta !== null ||
+                runStatusUnavailable) && (
+                <div className="agent-run-current">
+                  {runStatusUnavailable && (
+                    <p className="agent-run-status agent-run-status-unavailable">
+                      状態を取得できません（実行状況の取得に失敗したため監視を停止しました）
+                    </p>
+                  )}
+                  {polledRunDetail !== null && (
+                    <p className="agent-run-status">
+                      状態: {formatAgentRunStatus(polledRunDetail.status)}
+                      {polledRunDetail.exitCode !== undefined &&
+                        ` (終了コード: ${polledRunDetail.exitCode})`}
+                      {polledRunDetail.error !== undefined &&
+                        ` — ${polledRunDetail.error}`}
+                    </p>
+                  )}
+                  {(activeRunMeta !== null || polledRunDetail !== null) && (
+                    <dl className="agent-run-meta">
+                      <div>
+                        <dt>worktree</dt>
+                        <dd>
+                          {polledRunDetail?.cwd ??
+                            activeRunMeta?.worktreePath ??
+                            '—'}
+                        </dd>
+                      </div>
+                      {activeRunMeta !== null && (
+                        <div>
+                          <dt>branch</dt>
+                          <dd>{activeRunMeta.branchName}</dd>
+                        </div>
+                      )}
+                      {activeRunMeta !== null && (
+                        <div>
+                          <dt>worktree の扱い</dt>
+                          <dd>
+                            {activeRunMeta.reused ? '既存を再利用' : '新規作成'}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  )}
+                  {polledRunDetail !== null &&
+                    isAgentRunInProgress(polledRunDetail.status) && (
+                      <button
+                        type="button"
+                        className="btn btn-small agent-run-cancel-btn"
+                        disabled={
+                          cancelRunMutation.isPending ||
+                          polledRunDetail.status === 'cancelling'
+                        }
+                        onClick={() => cancelRunMutation.mutate()}
+                      >
+                        {cancelRunMutation.isPending ||
+                        polledRunDetail.status === 'cancelling'
+                          ? '中止中…'
+                          : '中止'}
+                      </button>
+                    )}
+                  {cancelRunMutation.error !== null && (
+                    <p className="error-message">
+                      {describeWriteError(
+                        cancelRunMutation.error,
+                        'エージェントの実行を中止できませんでした',
+                      )}
+                    </p>
+                  )}
+                  {polledRunDetail !== null && polledRunDetail.log.length > 0 && (
+                    <details className="agent-run-log-details">
+                      <summary>実行ログ</summary>
+                      <pre className="agent-run-log-pre">{polledRunDetail.log}</pre>
+                    </details>
+                  )}
+                </div>
+              )}
+              <h4 className="agent-run-history-heading">実行履歴</h4>
+              {ticketRunsLoading && <p className="loading">読み込み中…</p>}
+              {ticketRunsError !== null && (
+                <p className="error-message">
+                  {ticketRunsError instanceof Error
+                    ? ticketRunsError.message
+                    : '実行履歴の読み込みに失敗しました'}
+                </p>
+              )}
+              {ticketRunsData !== undefined &&
+                ticketRunsData.runs.length === 0 && (
+                  <p className="detail-help">実行履歴はありません</p>
+                )}
+              {ticketRunsData !== undefined && ticketRunsData.runs.length > 0 && (
+                <ul className="agent-run-history-list">
+                  {ticketRunsData.runs.map((run) => (
+                    <li key={run.id}>
+                      <button
+                        type="button"
+                        className={`agent-run-history-btn${
+                          selectedHistoryRunId === run.id ? ' is-selected' : ''
+                        }`}
+                        onClick={() => setSelectedHistoryRunId(run.id)}
+                      >
+                        <time dateTime={run.startedAt}>
+                          {formatAbsoluteTime(run.startedAt)}
+                        </time>
+                        <span className="agent-run-history-status">
+                          {formatAgentRunStatus(run.status)}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {selectedHistoryRunId !== null && selectedHistoryRunLoading && (
+                <p className="loading">ログを読み込み中…</p>
+              )}
+              {selectedHistoryRunError !== null && (
+                <p className="error-message">
+                  {selectedHistoryRunError instanceof Error
+                    ? selectedHistoryRunError.message
+                    : '実行ログの読み込みに失敗しました'}
+                </p>
+              )}
+              {selectedHistoryRun !== undefined && (
+                <div className="agent-run-history-detail">
+                  <dl className="agent-run-meta">
+                    <div>
+                      <dt>worktree</dt>
+                      <dd>{selectedHistoryRun.cwd}</dd>
+                    </div>
+                  </dl>
+                  <details className="agent-run-log-details" open>
+                    <summary>実行ログ</summary>
+                    <pre className="agent-run-log-pre">
+                      {selectedHistoryRun.log.length > 0
+                        ? selectedHistoryRun.log
+                        : '(ログなし)'}
+                    </pre>
+                  </details>
+                </div>
               )}
             </div>
             <div className="detail-section">

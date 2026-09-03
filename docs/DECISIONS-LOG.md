@@ -357,3 +357,122 @@ pidの生存判定で `alive: false` として列挙している。触ってい�
 つまりパネル直下ではなく App 層での配線という形で、当初「スコープ外」としていた適用は完了している。
 **理由でこの追記を残す**: 運用ルールにより既存エントリは書き換えないため、[.34]本文は変更せず
 この追記で現状を記録する。
+
+## [bdboard-54be.1 / 2026-09-03] read-only 保証の撤回と回帰テストの「置き換え」
+
+**状況**: v1 では「Runner を HTTP 層に配線しない」read-only 保証を
+`runners-are-disabled.test.ts` が `src/main.ts` の import 走査で守っていた。
+bdboard-54be.1 で `POST /api/runs` 経路を開通するため、この不変条件は実態と矛盾する。
+**決定**: read-only 保証は撤回する。回帰テストは削除せず
+`runner-reachability.test.ts` にリネームし、守る対象を
+「HTTP から到達できない」から「到達経路は1本(`agent-run-routes.ts`)だけで、
+そこは必ず `agent-run-guard` を通る」+「プロセス起動口の一本化」+「既定は保守側」へ差し替える。
+**理由**: 安全網を外すのではなく、配線後も破れてはいけない不変条件を明示的に固定するため。
+テストを消すと「配線したらテストも消した」に見え、将来の経路増殖を検知できなくなる。
+**ユーザーが後で見直す観点**: 複数の run エンドポイント(例: resume 専用)が正当化されたら、
+「単一経路」の定義を「単一ルータモジュール」から「単一 guard 配下のルート群」へ緩めるか。
+
+## [bdboard-54be.1 / 2026-09-03] リモート許容はトグル1つ(既定 off)で write-guard より緩くしない
+
+**状況**: トンネル経由で Runner に到達できるようにするかは、write-guard だけでは
+「書き込み可 = エージェント起動可」と区別できない。別フラグにすると判定順と fail-closed
+の合成が曖昧になりうる。
+**決定**: `allowRemoteAgentRuns` トグル1つ(既定 false)を `AgentRunConfigPort` に持つ。
+判定順は write-guard → ローカル直アクセスは許可 → それ以外(リモート)はトグルが true のときのみ許可。
+`resolveAllowRemoteAgentRuns(undefined)` は false。
+**理由**: write-guard を通過したリモートでも、明示 opt-in なしにエージェント起動を許さない。
+ローカル直は開発体験のため許可し、リモートだけ追加の絞り込みをかける合成にした。
+**追記(2026-09-04)**: 当初は「write-guard より緩くしない」とだけ書いていたが、
+`PUT /api/settings/agent-runs` が write-guard のみで守られていたため、トンネル経由の相手が
+トグルを ON にしてから実行する2リクエストで到達でき、トグルが境界として機能していなかった。
+`PUT` をローカル直アクセス限定(`isLocalBasicAuthRequest`)に変更し、リモートから自分で
+ON にできないように是正した。`GET` はリモートから状態を読める。
+**ユーザーが後で見直す観点**: プロジェクト単位・チケット単位の許可、監査ログ、
+レート制限が必要になったらトグル1つから拡張する。
+
+## [bdboard-54be.1 / 2026-09-03→09-04 改訂] Claude `--permission-mode` の既定値は default
+
+**状況**: worktree 上で Claude CLI を起動するとき、`--permission-mode` を何にすべきか。
+**当初の決定(2026-09-03、撤回)**: 既定 `acceptEdits`。理由として「実行は新規に切った
+隔離 worktree 内で起きるため、ファイル編集の自動許可は妥当」と書いていた。
+**撤回の理由**: この理由付けは**前提が二重に成立していなかった**。
+1. 当時の allowlist は `Bash(git:*)` / `Bash(npm:*)` / ベアな `Write`・`Edit` を許して
+   いたので、そもそも worktree に隔離されていなかった。`git -C <任意パス>` で他の
+   worktree やメインチェックアウトを破壊でき、`git config --global core.pager`,
+   `npm exec -- sh -c` は任意コマンド実行に化ける。
+2. さらに悪いことに、`acceptEdits` は**パススコープそのものを無効化する**。
+   実測 (claude CLI 2.1.233):
+   - `--permission-mode acceptEdits` + `Edit(./allowed/**)` → スコープ外の `./out.txt` も作成された
+   - `--permission-mode default` + `Edit(./allowed/**)` → スコープ外は権限拒否、
+     許可内は `-p` のまま確認を求めず作成された
+   つまり acceptEdits を選ぶことは、隔離のための対策を打ち消すことと同義だった。
+**改訂後の決定**: 既定は **`default`**。`BDBOARD_RUN_PERMISSION_MODE` で上書き可能。
+allowlist は必要最小限に絞り、ファイル編集は `Edit(//<worktree 絶対パス>/**)` で
+worktree 配下に動的スコープする。`bypassPermissions` は引き続き明示 opt-in。
+**副次的な実測**: パスルールは `Write(<path>)` ではなく `Edit(<path>)` で書く
+(CLI 自身が「Write(...) is not matched by file permission checks — only Edit(path)
+rules are」と診断する)。また絶対パスは**先頭スラッシュ2つ**が必要で、`Edit(/abs/**)`
+と1つだけ書くとプロジェクト相対と解釈されて何にも一致せず、エージェントが
+worktree 内のファイルすら編集できなくなる(fail-closed なので危険側には倒れないが、
+機能が無言で死ぬ)。
+**ユーザーが後で見直す観点**: `default` で確認待ちが頻発して実用に耐えないと感じたら、
+acceptEdits へ戻すのではなく **allowlist に必要な操作を足す**方向で解決すること。
+acceptEdits へ戻すとパススコープが失われる。
+
+## [bdboard-54be.1 / 2026-09-04] Claude CLI 起動引数はプロンプトの直前に `--` を必ず置く
+
+**状況**: `POST /api/runs` を実サーバー経路で1回通す実測(M4)で、run が
+`exitCode 1` / `Error: Input must be provided either through stdin or as a prompt
+argument when using --print` で失敗した。単体テストは全て緑だった。
+**原因**: `claude --help` が示すとおり `--allowedTools, --allowed-tools <tools...>`
+は**可変長**オプションで、後続の非オプション argv を貪欲に飲み込む。
+`--allowedTools Read ... Bash(git:*) <prompt>` の並びだと、プロンプトが
+「もう1つのツール名」として吸収され、位置引数のプロンプトが消える。
+**決定**: `buildClaudeCommand` はプロンプトがある場合、その直前に必ず `--` を出力する
+(可変長オプションの有無に関わらず無条件)。
+**理由**: `--` はオプション解析を打ち切る標準の終端記号で、どの可変長オプションを
+足しても壊れない。プロンプトを先頭に移す案もあるが、引数順序の暗黙の前提が増えるだけで
+将来同じ罠を踏む。
+**検証**: 修正後に同じ実測をやり直し、run は `succeeded` / `exitCode 0`。
+エージェント側で `bd show <id>` と `npm run verify` が実際に実行されたことを、
+フィクスチャの偽 `bd` / `verify` スクリプトが残したマーカーファイルで確認した。
+**教訓**: argv の組み立ては単体テストが「期待した配列と一致するか」しか見ないので、
+CLI 側の解析規則との噛み合わせは実プロセスを1回起動しないと検出できない。
+**ユーザーが後で見直す観点**: Claude CLI が `--allowedTools` の arity を変えたら、
+`--` は無害なまま残るので追従不要。プロンプトを stdin 経由に変える場合はこの決定ごと見直す。
+
+## [bdboard-54be.1 / 2026-09-04] リモート実行トグルは起動時に一度だけ読む（再起動を要求する）
+
+**状況**: `isRemoteAgentRunAllowed` がリクエスト毎に config を読み直していた。
+**問題**: これは confused deputy による権限昇格の最後の一段だった。トンネル経由の
+リモート利用者はチケット本文(`PATCH /api/tickets/:id/description`、write-guard のみ、
+4000文字)に注入文を書ける。ローカル運用者がそのチケットの「▶ 実行」を押すと、
+エージェントが `~/.config/bdboard/config.json` に `allowRemoteAgentRuns: true` を書き、
+**リクエスト毎の再読み込みによって再起動を待たず即座に有効化**され、以後リモートから
+`POST /api/runs` を直接叩けてしまう。「トンネル書き込み権限(低)→ 任意コード実行(高)」の
+昇格経路で、トグルを分けた意義そのものが失われていた。
+**決定**: 起動時に一度だけ読んだ値をキャッシュして使う。config ファイルの書き換えは
+**サーバー再起動を要求**する。UI(設定画面)とヘルプに「変更はサーバー再起動後に反映」と明記。
+**理由**: 即時反映は攻撃経路そのものなので、UX の低下と引き換えに切る。
+**多層防御**: これ単独では不十分なため、同時に (a) allowlist を絞って config を書く手段を
+消し、(b) プロンプトから「`bd show` の内容を正本として扱え」を外して untrusted 明示に
+変えた。3つで1つの対策。
+**ユーザーが後で見直す観点**: 「トグルが効かない」と思って即時反映へ戻さないこと。
+戻すとこの昇格経路が再び開く。
+
+## [bdboard-54be.1 / 2026-09-04] エージェントへ渡す環境変数は allowlist する
+
+**状況**: `claude-runner` が `streamingRunner.run` に `env` を渡しておらず、
+`NodeStreamingCommandRunner` が `process.env` を丸ごと継承していた。
+**問題**: この環境ではサーバーが `kv_inject.sh` 経由で起動されうる(実測: ラッパーが
+Key Vault から25個のシークレットを env に注入する)。エージェントの Bash から
+`env` 一発で読めてしまい、上の注入経路と組み合わせるとリモート起点のシークレット窃取になる。
+**決定**: `PATH/HOME/LANG/LC_ALL/TERM/TMPDIR/USER/SHELL` と `ANTHROPIC_`/`CLAUDE_`
+プレフィックスのみを通す allowlist を組んで渡す。denylist にしないのは、注入される
+シークレットが将来増えても自動的に落ちるようにするため。
+**例外**: プレフィックス許可の中でも `CLAUDE_CODE_MESSAGING_TOKEN` /
+`CLAUDE_CODE_MESSAGING_SOCKET` は落とす。これらは親セッションへの制御チャネルの
+資格情報であって CLI の設定ではなく、新しい独立セッションに渡す理由が無い。
+**検証**: 実サーバー経路で1回 run を流し、親に仕込んだ4つのセンチネル
+(`M4_FAKE_SECRET` / `WP_APP_PASSWORD` / `GITHUB_PERSONAL_ACCESS_TOKEN` /
+`OPENAI_API_KEY`) がエージェントの孫プロセスの `env` に**1件も現れない**ことを確認した。

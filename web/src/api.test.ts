@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,
   acknowledgeChatTurn,
+  cancelAgentRun,
   deleteChatThread,
+  fetchAgentRun,
+  fetchAgentRunConfig,
   fetchChatThreads,
   fetchChatTurnStatus,
   fetchHarnessPacks,
   fetchSimilarTickets,
+  fetchTicketRuns,
   LANE_EXPECTED_STATUS,
   LANE_LABELS,
   LANES,
@@ -15,7 +19,10 @@ import {
   postChatMessageStream,
   postTicketDecision,
   putScanRootsConfig,
+  saveAgentRunConfig,
+  startTicketRun,
 } from './api';
+
 
 describe('LANES column order (bdboard-662)', () => {
   it('orders columns as 着手可能 → 進行中 → 確認待ち → ブロック → 完了, with no separate deferred lane', () => {
@@ -344,6 +351,212 @@ describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
     await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
       kind: 'unknown',
       closed: false,
+    });
+  });
+});
+
+describe('agent run API', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('fetchAgentRunConfig requests the settings endpoint', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            allowRemoteAgentRuns: false,
+            defaults: { allowRemoteAgentRuns: false },
+            version: 'v1',
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAgentRunConfig()).resolves.toEqual({
+      allowRemoteAgentRuns: false,
+      defaults: { allowRemoteAgentRuns: false },
+      version: 'v1',
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/settings/agent-runs', undefined);
+  });
+
+  it('saveAgentRunConfig sends PUT with allowRemoteAgentRuns and version', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            allowRemoteAgentRuns: true,
+            defaults: { allowRemoteAgentRuns: false },
+            version: 'v2',
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      saveAgentRunConfig({ allowRemoteAgentRuns: true, version: 'v1' }),
+    ).resolves.toEqual({
+      allowRemoteAgentRuns: true,
+      defaults: { allowRemoteAgentRuns: false },
+      version: 'v2',
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/settings/agent-runs', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ allowRemoteAgentRuns: true, version: 'v1' }),
+    });
+  });
+
+  it('startTicketRun posts ticketId to /api/runs', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            runId: 'run-1',
+            ticketId: 'bdboard-54be.1',
+            status: 'pending',
+            worktreePath: '/tmp/wt',
+            branchName: 'bd/bdboard-54be.1',
+            reused: false,
+          }),
+          { status: 202 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    // POST /api/runs が実際に返す 202 のボディ（src/interface/http/agent-run-routes.ts）
+    // と同じ形。status は常に 'pending'、reused は worktree 再利用の有無。
+    await expect(startTicketRun('bdboard-54be.1')).resolves.toEqual({
+      runId: 'run-1',
+      ticketId: 'bdboard-54be.1',
+      status: 'pending',
+      worktreePath: '/tmp/wt',
+      branchName: 'bd/bdboard-54be.1',
+      reused: false,
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ ticketId: 'bdboard-54be.1' }),
+    });
+  });
+
+  it('startTicketRun surfaces the machine-readable reason from a 409 body', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: '/tmp/wt: uncommitted changes prevent agent run',
+              reason: 'worktree-dirty',
+            }),
+            { status: 409, statusText: 'Conflict' },
+          ),
+        ),
+      ),
+    );
+
+    await expect(startTicketRun('bdboard-54be.1')).rejects.toMatchObject({
+      status: 409,
+      errorMessage: '/tmp/wt: uncommitted changes prevent agent run',
+      reason: 'worktree-dirty',
+    });
+  });
+
+  it('fetchTicketRuns encodes ticketId in the query string', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            runs: [
+              {
+                id: 'run-1',
+                ticketId: 'bdboard/target',
+                runner: 'claude-spawn',
+                mode: 'spawn',
+                status: 'running',
+                startedAt: '2026-01-01T00:00:00.000Z',
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchTicketRuns('bdboard/target')).resolves.toEqual({
+      runs: [
+        {
+          id: 'run-1',
+          ticketId: 'bdboard/target',
+          runner: 'claude-spawn',
+          mode: 'spawn',
+          status: 'running',
+          startedAt: '2026-01-01T00:00:00.000Z',
+        },
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/runs?ticketId=bdboard%2Ftarget',
+      undefined,
+    );
+  });
+
+  it('fetchAgentRun encodes runId and optional tailBytes', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: 'run/1',
+            ticketId: 'bdboard-54be.1',
+            runner: 'claude-spawn',
+            mode: 'spawn',
+            status: 'running',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            cwd: '/tmp/wt',
+            log: 'hello',
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAgentRun('run/1', 4096)).resolves.toEqual({
+      id: 'run/1',
+      ticketId: 'bdboard-54be.1',
+      runner: 'claude-spawn',
+      mode: 'spawn',
+      status: 'running',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      cwd: '/tmp/wt',
+      log: 'hello',
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/runs/run%2F1?tailBytes=4096',
+      undefined,
+    );
+  });
+
+  it('cancelAgentRun posts to the cancel endpoint', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ runId: 'run-1', status: 'cancelled' }),
+          { status: 202 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(cancelAgentRun('run-1')).resolves.toEqual({
+      runId: 'run-1',
+      status: 'cancelled',
+    });
+    expect(fetchMock).toHaveBeenCalledWith('/api/runs/run-1/cancel', {
+      method: 'POST',
     });
   });
 });

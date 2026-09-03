@@ -1,4 +1,5 @@
-// v1 is read-only. Implementations of this port must not launch real processes.
+// Real dispatch is gated at the HTTP layer (agent-run-guard on POST /api/runs).
+// Implementations may launch processes only when wired with a StreamingCommandRunner.
 import type { Run, RunMode } from '../../domain/run.js';
 import type { TicketId } from '../../domain/ticket-id.js';
 
@@ -13,8 +14,13 @@ export interface RunRequest {
   readonly prompt?: string;
 }
 
+export interface RunOutputSink {
+  readonly onChunk: (chunk: { stream: 'stdout' | 'stderr'; text: string }) => void;
+  readonly signal?: AbortSignal;
+}
+
 export type RunFailureKind =
-  | 'dispatch-disabled' // v1: intentionally disabled
+  | 'dispatch-disabled' // runner not wired for real dispatch
   | 'unsupported' // this runner cannot handle the request
   | 'invalid-request' // malformed request (e.g. resume without sessionId)
   | 'runner-unavailable' // runner binary not found
@@ -32,5 +38,5 @@ export interface AgentRunner {
   /** True for adapters that depend on private APIs; used for UI/registration warnings. */
   readonly experimental: boolean;
   supports(request: RunRequest): boolean;
-  dispatch(request: RunRequest): Promise<RunOutcome>;
+  dispatch(request: RunRequest, sink?: RunOutputSink): Promise<RunOutcome>;
 }

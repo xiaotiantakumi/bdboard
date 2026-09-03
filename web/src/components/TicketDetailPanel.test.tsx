@@ -14,13 +14,16 @@ import type {
 } from '../api';
 import {
   ApiError,
+  cancelAgentRun,
   deleteTicketDependency,
   deleteTicketLabel,
   deleteTicketSessionLink,
+  fetchAgentRun,
   fetchPlatformSupport,
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
+  fetchTicketRuns,
   fetchTicketTimeline,
   fetchSimilarTickets,
   patchTicketDescription,
@@ -33,6 +36,8 @@ import {
   postTicketQuickActionUndo,
   postTicketSessionLink,
   searchTickets,
+  startTicketRun,
+  type AgentRunDetailDto,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import { TicketDetailPanel, type TicketDetailPanelProps } from './TicketDetailPanel';
@@ -40,7 +45,12 @@ import { UndoSnackbarProvider } from './UndoSnackbar';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 import { computeDeferUntilDate } from '../deferPeriods';
 import { expectNoA11yViolations } from '../test/axe';
-import { NETWORK_FETCH_HELP, TUNNEL_WRITE_HELP } from '../writeAccessMessage';
+import {
+  CONFLICT_WRITE_HELP,
+  NETWORK_FETCH_HELP,
+  REMOTE_AGENT_RUNS_DISABLED_HELP,
+  TUNNEL_WRITE_HELP,
+} from '../writeAccessMessage';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -65,6 +75,10 @@ vi.mock('../api', async (importOriginal) => {
     fetchPlatformSupport: vi.fn(),
     postTicketSessionLink: vi.fn(),
     deleteTicketSessionLink: vi.fn(),
+    startTicketRun: vi.fn(),
+    fetchTicketRuns: vi.fn(),
+    fetchAgentRun: vi.fn(),
+    cancelAgentRun: vi.fn(),
   };
 });
 
@@ -87,9 +101,14 @@ const mockFetchSessions = vi.mocked(fetchSessions);
 const mockFetchPlatformSupport = vi.mocked(fetchPlatformSupport);
 const mockPostTicketSessionLink = vi.mocked(postTicketSessionLink);
 const mockDeleteTicketSessionLink = vi.mocked(deleteTicketSessionLink);
+const mockStartTicketRun = vi.mocked(startTicketRun);
+const mockFetchTicketRuns = vi.mocked(fetchTicketRuns);
+const mockFetchAgentRun = vi.mocked(fetchAgentRun);
+const mockCancelAgentRun = vi.mocked(cancelAgentRun);
 
 beforeEach(() => {
   mockFetchSimilarTickets.mockResolvedValue([]);
+  mockFetchTicketRuns.mockResolvedValue({ runs: [] });
   resetPlatformSupportCache();
   mockFetchPlatformSupport.mockResolvedValue({ platform: 'darwin', limitations: [] });
 });
@@ -2442,5 +2461,398 @@ describe('パネル内の戻るボタン (bdboard-4ql7)', () => {
     fireEvent.click(back);
 
     expect(onBackTicket).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('TicketDetailPanel agent run', () => {
+  let user: ReturnType<typeof userEvent.setup>;
+
+  const runningRunDetail: AgentRunDetailDto = {
+    id: 'run-1',
+    ticketId: sampleTicket.id,
+    runner: 'claude',
+    mode: 'spawn',
+    status: 'running',
+    startedAt: '2026-01-01T00:00:00.000Z',
+    cwd: '/tmp/worktrees/bdboard-abc.1',
+    log: 'starting claude\n',
+  };
+
+  const succeededRunDetail: AgentRunDetailDto = {
+    ...runningRunDetail,
+    status: 'succeeded',
+    finishedAt: '2026-01-01T00:05:00.000Z',
+    exitCode: 0,
+    log: 'starting claude\ndone\n',
+  };
+
+  const cancellingRunDetail: AgentRunDetailDto = {
+    ...runningRunDetail,
+    status: 'cancelling',
+  };
+
+  const cancelledRunDetail: AgentRunDetailDto = {
+    ...runningRunDetail,
+    status: 'cancelled',
+    finishedAt: '2026-01-01T00:03:00.000Z',
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockFetchTicket.mockResolvedValue(sampleTicket);
+    mockFetchTicketComments.mockResolvedValue([]);
+    mockFetchTicketRuns.mockResolvedValue({ runs: [] });
+    mockStartTicketRun.mockResolvedValue({
+      runId: 'run-1',
+      ticketId: sampleTicket.id,
+      status: 'pending',
+      worktreePath: '/tmp/worktrees/bdboard-abc.1',
+      branchName: 'bd/bdboard-abc.1',
+      reused: false,
+    });
+    mockFetchAgentRun.mockResolvedValue(runningRunDetail);
+    mockCancelAgentRun.mockResolvedValue({ runId: 'run-1', status: 'cancelling' });
+    user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('disables the run button when the ticket is blocked', async () => {
+    mockFetchTicket.mockResolvedValue({
+      ...sampleTicket,
+      blockedBy: ['other'],
+    });
+
+    renderPanel(new Map());
+
+    const runButton = await screen.findByRole('button', { name: '▶ 実行' });
+    expect(runButton).toBeDisabled();
+    expect(runButton).toHaveAttribute('title', 'ブロック中のチケットは実行できません');
+  });
+
+  it('starts a run and shows worktree metadata after confirmation', async () => {
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledWith(sampleTicket.id);
+    });
+
+    expect(await screen.findByText('/tmp/worktrees/bdboard-abc.1')).toBeInTheDocument();
+    expect(screen.getByText('bd/bdboard-abc.1')).toBeInTheDocument();
+    expect(screen.getByText('新規作成')).toBeInTheDocument();
+  });
+
+  it('polls while running and stops after a terminal status', async () => {
+    mockFetchAgentRun
+      .mockResolvedValueOnce(runningRunDetail)
+      .mockResolvedValueOnce(runningRunDetail)
+      .mockResolvedValueOnce(succeededRunDetail);
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(3);
+    });
+
+    const callCountAfterTerminal = mockFetchAgentRun.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+
+    expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterTerminal);
+    expect(await screen.findByText(/状態: 成功/)).toBeInTheDocument();
+  });
+
+  it('shows remote-run disabled help on 403', async () => {
+    mockStartTicketRun.mockRejectedValue(
+      new ApiError(403, 'remote agent runs are disabled', {
+        errorMessage: 'remote agent runs are disabled',
+      }),
+    );
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(
+      await screen.findByText(REMOTE_AGENT_RUNS_DISABLED_HELP),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a dedicated message when worktree is dirty (409 reason=worktree-dirty)', async () => {
+    mockStartTicketRun.mockRejectedValue(
+      new ApiError(
+        409,
+        '/tmp/worktrees/bdboard-abc.1: uncommitted changes prevent agent run',
+        {
+          errorMessage:
+            '/tmp/worktrees/bdboard-abc.1: uncommitted changes prevent agent run',
+          reason: 'worktree-dirty',
+        },
+      ),
+    );
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(
+      await screen.findByText(/未コミットの変更があるため実行できません/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/\/tmp\/worktrees\/bdboard-abc\.1/)).toBeInTheDocument();
+  });
+
+  it('still renders the dirty-worktree message when the path is absent from the message', async () => {
+    mockStartTicketRun.mockRejectedValue(
+      new ApiError(409, 'worktree has uncommitted changes', {
+        errorMessage: 'worktree has uncommitted changes',
+        reason: 'worktree-dirty',
+      }),
+    );
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(
+      await screen.findByText(/未コミットの変更があるため実行できません/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a dedicated message when worktree is on a different branch (409 reason=worktree-branch-mismatch)', async () => {
+    mockStartTicketRun.mockRejectedValue(
+      new ApiError(
+        409,
+        '/tmp/worktrees/bdboard-abc.1: on branch main, expected bd/bdboard-abc.1',
+        {
+          errorMessage:
+            '/tmp/worktrees/bdboard-abc.1: on branch main, expected bd/bdboard-abc.1',
+          reason: 'worktree-branch-mismatch',
+        },
+      ),
+    );
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(
+      await screen.findByText(/別のブランチ（main）にあるため実行できません/),
+    ).toBeInTheDocument();
+  });
+
+  it('still renders the branch-mismatch message when the branch name is absent from the message', async () => {
+    mockStartTicketRun.mockRejectedValue(
+      new ApiError(409, 'worktree branch mismatch', {
+        errorMessage: 'worktree branch mismatch',
+        reason: 'worktree-branch-mismatch',
+      }),
+    );
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(
+      await screen.findByText(/別のブランチにあるため実行できません/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/別のブランチ（/)).not.toBeInTheDocument();
+  });
+
+  it('does not claim a dirty worktree for a 409 that carries no reason', async () => {
+    // 判定が `reason` ではなくメッセージの文字列一致に退行したら、この
+    // ケースが誤って dirty-worktree 扱いになるので落ちる。
+    mockStartTicketRun.mockRejectedValue(
+      new ApiError(
+        409,
+        '/tmp/worktrees/bdboard-abc.1: uncommitted changes prevent agent run',
+        {
+          errorMessage:
+            '/tmp/worktrees/bdboard-abc.1: uncommitted changes prevent agent run',
+        },
+      ),
+    );
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    // reason が無い 409 は describeWriteError の汎用 409 分岐に落ちる。
+    expect(await screen.findByText(CONFLICT_WRITE_HELP)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/未コミットの変更があるため実行できません/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('stops polling after three consecutive failures and re-enables the run button', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockFetchAgentRun.mockRejectedValue(new Error('boom'));
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(3);
+    });
+
+    const callCountAfterStop = mockFetchAgentRun.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterStop);
+    expect(screen.getByText(/状態を取得できません/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '▶ 実行' })).not.toBeDisabled();
+  });
+
+  it('keeps polling while cancelling and stops after cancelled', async () => {
+    mockFetchAgentRun
+      .mockResolvedValueOnce(runningRunDetail)
+      .mockResolvedValueOnce(cancellingRunDetail)
+      .mockResolvedValueOnce(cancellingRunDetail)
+      .mockResolvedValueOnce(cancelledRunDetail);
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: '中止中…' }),
+      ).toBeDisabled();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(3);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    await waitFor(() => {
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(4);
+    });
+
+    const callCountAfterTerminal = mockFetchAgentRun.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+
+    expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterTerminal);
+    expect(await screen.findByText(/状態: 中止/)).toBeInTheDocument();
+  });
+
+  it('shows reused worktree label when the server reuses an existing worktree', async () => {
+    mockStartTicketRun.mockResolvedValue({
+      runId: 'run-1',
+      ticketId: sampleTicket.id,
+      status: 'pending',
+      worktreePath: '/tmp/worktrees/bdboard-abc.1',
+      branchName: 'bd/bdboard-abc.1',
+      reused: true,
+    });
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(await screen.findByText('既存を再利用')).toBeInTheDocument();
   });
 });

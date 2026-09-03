@@ -3,6 +3,7 @@ import type { TicketId } from './ticket-id.js';
 export const RUN_STATUSES = [
   'pending',
   'running',
+  'cancelling',
   'succeeded',
   'failed',
   'cancelled',
