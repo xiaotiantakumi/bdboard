@@ -77,7 +77,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # contents は checkout にしか使わない (Release 本文の更新は release-please job の責務)。
-    # id-token: write は --provenance の attestation 署名に必須 (bdboard-d7n4)。
+    # id-token: write は trusted publishing (OIDC) の認証そのものに必須 (bdboard-cdqb)。
+    # これを外すと npm CLI が OIDC を使えず、NODE_AUTH_TOKEN も渡していないので publish が
+    # 認証エラーで落ちる。--provenance の署名用ではないので、フラグが無いことを理由に
+    # 消さないこと (もともとは bdboard-d7n4 で --provenance のために足したもので、
+    # trusted publishing への移行後は認証側が要求している)。
     permissions:
       contents: read
       id-token: write
@@ -96,17 +100,27 @@ jobs:
             web/package-lock.json
           registry-url: https://registry.npmjs.org
 
+      # trusted publishing (OIDC) の要件は npm CLI >= 11.5.1 / Node >= 22.14.0。
+      # 上の node-version: 22 が同梱する npm は 10.9.x 系なので、明示的に上げないと
+      # OIDC が使われず publish が認証エラーになる。
+      # npm@latest を使わない理由: latest は既に 12 系で、npm 12 は install 時の
+      # ライフサイクルスクリプトを既定で無効化する (allowScripts off)。better-sqlite3 の
+      # prebuild-install が走らずネイティブバイナリが用意されないため、verify が壊れる。
+      # npm 12 への追従は別途扱う (bdboard-cdqb の「別チケットに切り出す論点」)。
+      - name: Upgrade npm CLI for trusted publishing
+        run: npm install -g npm@11
+
       - run: npm ci
       - run: npm --prefix web ci
       - run: npm run verify
       # web/dist は npm 同梱物なので、prepack にも依存せず明示的にビルドする。
       - run: npm run build:web
 
-      # 本番 publish (bdboard-d7n4 で --dry-run を解除。ユーザー承認: 2026-09-03)。
-      # --provenance は (a) 上の id-token: write、(b) package.json の repository フィールド、
-      # (c) 公開リポジトリからの実行、の3つを前提とする。
+      # 本番 publish。認証は npmjs.com 側に登録した trusted publisher による OIDC
+      # (Publisher=GitHub Actions / xiaotiantakumi/bdboard / release-please.yml)。
+      # npm CLI は OIDC 環境を自動検出してトークンより優先するので、NODE_AUTH_TOKEN は渡さない
+      # (長命トークンを置かないこと自体がこの移行の目的 — bdboard-cdqb)。
+      # --provenance も付けない: trusted publishing では provenance が自動生成・自動添付される。
       # --access public はスコープ無しパッケージでは既定だが、意図を明示するため残す。
       - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: npm publish --access public
