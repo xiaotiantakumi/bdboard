@@ -430,6 +430,51 @@ describe('ChatPanel', () => {
       });
     });
 
+    it('keeps image-only cold draft when projects arrive via effect with existing threads (major-2 image regression)', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([
+        {
+          sessionId: 'sess-existing',
+          agentId: 'claude',
+          title: '既存スレッド',
+          pinned: false,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]);
+      fetchMock.mockImplementation(async (url: string) => {
+        if (url.includes('/api/chat/sessions/sess-existing/messages')) {
+          return jsonResponse({
+            sessionId: 'sess-existing',
+            agentId: 'claude',
+            messages: [],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+      const rendered = renderChatPanel([], { leaveSettingsCollapsed: true });
+      await screen.findByLabelText('チャットエージェント');
+
+      pasteFiles(screen.getByLabelText('メッセージ'), [makeImageFile('cold-image-only.png')]);
+      await screen.findByAltText('送信前の添付画像: cold-image-only.png');
+
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A]}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
+          onClose={rendered.onClose}
+        />,
+      );
+
+      openThreadDrawer(rendered.container);
+      await within(getThreadDrawer(rendered.container)).findByRole('button', {
+        name: '既存スレッド',
+      });
+      expect(
+        screen.getByAltText('送信前の添付画像: cold-image-only.png'),
+      ).toBeInTheDocument();
+    });
+
     it('keeps a pasted image when a ticket-context project resolves after a cold mount', async () => {
       fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
       const rendered = renderChatPanel([], {
@@ -997,6 +1042,36 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue('proj-missing のチケットについて: ');
   });
 
+  it('shows project select and hint when only one unrelated project arrives for a missing ticket project (major-1 regression)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+    const rendered = renderChatPanel([], {
+      initialProjectId: 'proj-missing',
+      initialInput: 'proj-missing のチケットについて: ',
+      ticketContextToken: 1,
+    });
+
+    rendered.rerender(
+      <ChatPanel
+        projects={[PROJECT_A]}
+        initialProjectId="proj-missing"
+        initialInput="proj-missing のチケットについて: "
+        ticketContextToken={1}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
+        onClose={rendered.onClose}
+      />,
+    );
+
+    expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('');
+    expect(
+      screen.getByText('送信先のプロジェクトを選んでください。選ぶまで送信できません。'),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), PROJECT_A.id);
+    expect(screen.getByRole('button', { name: '送信' })).toBeEnabled();
+  });
+
   it('shows a notice when the ticket project is missing and no project is selected', async () => {
     const rendered = renderChatPanel([], {
       initialProjectId: 'proj-missing',
@@ -1022,9 +1097,10 @@ describe('ChatPanel', () => {
       expect(notice).toHaveAttribute('role', 'status');
       expect(notice).toHaveTextContent('proj-missing');
       expect(notice).toHaveTextContent('見つかりません');
-      expect(notice).toHaveTextContent('対象プロジェクト');
-      expect(notice).toHaveTextContent('送信先を選んでください');
     });
+    expect(
+      screen.getByText('送信先のプロジェクトを選んでください。選ぶまで送信できません。'),
+    ).toBeInTheDocument();
   });
 
   it('does not show a fallback notice when the ticket project exists', async () => {
@@ -4906,7 +4982,20 @@ describe('ChatPanel', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows empty-projects hint and keeps send disabled when the projects list is empty (major-1 regression)', async () => {
+    renderChatPanel([], { leaveSettingsCollapsed: true });
+
+    expect(
+      screen.getByText(/プロジェクトを読み込めていません。/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+  });
+
   it('preserves draft text when selecting a project from unselected state', async () => {
+    // 補助テスト(回帰ガードではない): fetchChatThreads が既定の [] を返すため、
+    // ドラフト保護(nonce bump)が無くても通る。実際の回帰ガードは
+    // 'keeps the carried-over draft selected even when the chosen project has
+    // existing threads' の方。
     const user = userEvent.setup();
     renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
 
@@ -4940,7 +5029,7 @@ describe('ChatPanel', () => {
       }
       throw new Error(`Unexpected fetch: ${url}`);
     });
-    renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
+    const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
 
     await user.type(screen.getByLabelText('メッセージ'), 'keep this draft');
     await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
@@ -4948,10 +5037,53 @@ describe('ChatPanel', () => {
     await waitFor(() => {
       expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-b');
     });
-    // 既存スレッドの自動選択に負けず、書きかけドラフトが表示されたままであること。
-    await waitFor(() => {
-      expect(screen.getByLabelText('メッセージ')).toHaveValue('keep this draft');
+    openThreadDrawer(container);
+    await within(getThreadDrawer(container)).findByRole('button', {
+      name: '既存スレッド',
     });
+    // 既存スレッドの自動選択に負けず、書きかけドラフトが表示されたままであること。
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('keep this draft');
+  });
+
+  it('keeps typed draft when projects arrive via effect with existing threads (major-2 regression)', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      {
+        sessionId: 'sess-existing',
+        agentId: 'claude',
+        title: '既存スレッド',
+        pinned: false,
+        updatedAt: '2026-01-01T00:00:00Z',
+      },
+    ]);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-existing/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-existing',
+          agentId: 'claude',
+          messages: [],
+        });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+    const rendered = renderChatPanel([], { leaveSettingsCollapsed: true });
+
+    await user.type(screen.getByLabelText('メッセージ'), 'keep this cold draft');
+
+    rendered.rerender(
+      <ChatPanel
+        projects={[PROJECT_A]}
+        isTicketOnBoard={rendered.isTicketOnBoard}
+        onOpenTicket={rendered.onOpenTicket}
+        onClose={rendered.onClose}
+      />,
+    );
+
+    openThreadDrawer(rendered.container);
+    await within(getThreadDrawer(rendered.container)).findByRole('button', {
+      name: '既存スレッド',
+    });
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('keep this cold draft');
   });
 
   it('still restores an existing thread when no draft was typed before choosing the project', async () => {
@@ -5076,6 +5208,34 @@ describe('ChatPanel', () => {
     expect(
       screen.getByLabelText('チャットエージェント'),
     ).not.toHaveTextContent('(sonnet)');
+  });
+
+  it('keeps model selection when choosing project from unselected state (minor-7 regression)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([
+      {
+        ...CLAUDE_AGENT,
+        model: 'sonnet',
+        models: [
+          { id: 'sonnet', label: 'Sonnet' },
+          { id: 'opus', label: 'Opus' },
+        ],
+      },
+    ]);
+
+    renderChatPanel([PROJECT_A, PROJECT_B], { leaveSettingsCollapsed: true });
+
+    const modelSelect = await screen.findByLabelText('モデル');
+    expect(modelSelect).toHaveValue('sonnet');
+    await user.selectOptions(modelSelect, 'opus');
+    expect(modelSelect).toHaveValue('opus');
+
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('proj-a');
+    });
+    expect(screen.getByLabelText('モデル')).toHaveValue('opus');
   });
 
   it('hides model select when the agent exposes fewer than two models', async () => {

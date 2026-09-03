@@ -697,6 +697,21 @@ export function ChatPanel({
   const selectedProject = projects.find(
     (project) => project.id === selectedProjectId,
   );
+  // レビュー major-1: select を出す条件は「選ぶ余地があるか」。複数あるとき、
+  // および1件しか無くてもまだ選ばれていないとき(チケットのプロジェクトが
+  // 一覧に無く未選択で固定される経路)は必ず選べるようにする。
+  const showProjectSelect =
+    projects.length > 1 || (projects.length === 1 && selectedProjectId === '');
+  // レビュー major-1: ヒントの条件は送信可否と同じ selectedProjectId === '' 単独。
+  // projects が空のときだけ「選べ」ではなく状況の説明に差し替える。
+  const projectSelectionHint =
+    selectedProjectId !== ''
+      ? null
+      : projects.length === 0
+        ? 'プロジェクトを読み込めていません。一覧が表示されない場合はスキャンルートの設定を確認してください。'
+        : '送信先のプロジェクトを選んでください。選ぶまで送信できません。';
+  const projectSelectionHintId =
+    projectSelectionHint === null ? null : 'chat-project-unselected-hint';
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
   const hasUnsupportedAttachments =
     currentAttachments.length > 0 && selectedAgent?.supportsImages !== true;
@@ -732,7 +747,7 @@ export function ChatPanel({
   // select で初めてプロジェクトを選ぶ」経路でも同じ移行が必要になったため、
   // 両者で共有する。ロジックは移動のみで変更していない。
   const adoptProjectFromColdKeyspace = useCallback(
-    (resolved: string, options?: { forceTargetNonceBump?: boolean }) => {
+    (resolved: string) => {
       // projects 未解決中(selectedProjectId==='')でも draftNonces[''] は進み得る:
       // 「新規スレッド」ボタン(handleNewThread、selectedProjectId!=='' でゲート
       // されていない)や、エージェント select の変更(handleAgentChange、agents の
@@ -743,6 +758,16 @@ export function ChatPanel({
       // (無ければ 0)を都度読んで、実際に今使われているキーを特定する。
       const coldNonce = draftNoncesRef.current[''] ?? 0;
       const staleKey = makeDraftKey('', coldNonce);
+      // レビュー major-2: 「持ち込むドラフトに中身があるか」の判定は呼び出し側では
+      // なくここで行う。オプション引数にすると、渡し忘れた呼び出し元(projects
+      // 到着 effect)にだけドラフト消失が残る。中身があるなら、直後に再走する
+      // スレッド一覧 fetch の自動選択(isExplicitDraftStillSelected が false だと
+      // 既存スレッドを選んでドラフトを画面から追い出す)に負けないよう必ず bump
+      // する。trim はしない — 移送側の破棄条件も `=== ''` なので、片方だけ trim
+      // すると空白だけのドラフトで移送と保護がちぐはぐになる。
+      const coldHasContent =
+        (conversationInputsRef.current[staleKey] ?? '') !== '' ||
+        (conversationAttachmentsRef.current[staleKey]?.length ?? 0) > 0;
       // bdboard-ysu(Opus レビュー SF2): coldNonce > 0 は「projects 未解決の
       // コールドウィンドウ中に、ユーザーが '' キースペースで明示的に新規ドラフト
       // 操作(新規スレッド/エージェント切替)を行った」ことを意味する。この事実を
@@ -758,14 +783,12 @@ export function ChatPanel({
       // (currentConversationKey が別の nonce を指してしまう)。'' キースペース
       // の nonce 残骸は二度と読まれないので、bump と同じ setDraftNonces 呼び出し
       // でまとめて掃除する。
-      // bdboard-r5we: 手動でプロジェクトを選んだ経路(handleProjectSelectChange)で
-      // 書きかけドラフトを持ち込む場合も同じ保護が要る。coldNonce が 0(ユーザーは
-      // 本文を打っただけで、新規スレッド/エージェント切替はしていない)でも、
-      // 直後に再走するスレッド一覧 fetch が既存スレッドを自動選択してドラフトを
-      // 画面から追い出してしまうため、呼び出し側から明示的に bump を要求できる
-      // ようにしている。
+      // bdboard-r5we: coldNonce が 0(ユーザーは本文を打っただけで、新規スレッド
+      // /エージェント切替はしていない)でも、中身のあるドラフトを持ち込むなら
+      // 同じ保護が要る。手動でプロジェクトを選んだ経路(handleProjectSelectChange)
+      // と projects 到着 effect の両方が同じ判定を通る。
       let targetNonce = draftNoncesRef.current[resolved] ?? 0;
-      if (coldNonce > 0 || options?.forceTargetNonceBump === true) {
+      if (coldNonce > 0 || coldHasContent) {
         targetNonce += 1;
         const bumpedTargetNonce = targetNonce;
         setDraftNonces((prev) => {
@@ -796,6 +819,14 @@ export function ChatPanel({
         if (staleError === undefined || rest[targetKey] !== undefined) return rest;
         return { ...rest, [targetKey]: staleError };
       });
+      // レビュー minor-7: モデル選択も同じ会話キーで持つので一緒に移送する。
+      // ticket-context 側は coldModelId で拾っているが、こちらには無かった。
+      setThreadModelIds((prev) => {
+        if (!(staleKey in prev)) return prev;
+        const { [staleKey]: staleModelId, ...rest } = prev;
+        if (staleModelId === undefined || rest[targetKey] !== undefined) return rest;
+        return { ...rest, [targetKey]: staleModelId };
+      });
       // N5/N6(bdboard-r5we で更新): この処理は元々 ticketContextToken===undefined
       // 限定の effect からしか呼ばれず、'' キーにシード記録が残ること自体が到達
       // 不能だった。いまは手動のプロジェクト選択(handleProjectSelectChange)からも
@@ -825,15 +856,7 @@ export function ChatPanel({
       if (selectedProjectId === '') {
         // 未選択状態で書きかけた本文/添付を、選んだプロジェクトのキースペースへ
         // 引き継ぐ(引き継がないと選択した瞬間にドラフトが消える)。
-        // 中身のあるドラフトを持ち込むときは、直後に再走するスレッド一覧 fetch の
-        // 自動選択に負けないよう nonce を進めて「明示的なドラフト」として保護する。
-        const coldKey = makeDraftKey('', draftNoncesRef.current[''] ?? 0);
-        const hasColdDraft =
-          (conversationInputsRef.current[coldKey] ?? '') !== '' ||
-          (conversationAttachmentsRef.current[coldKey]?.length ?? 0) > 0;
-        adoptProjectFromColdKeyspace(nextProjectId, {
-          forceTargetNonceBump: hasColdDraft,
-        });
+        adoptProjectFromColdKeyspace(nextProjectId);
         return;
       }
       setSelectedProjectId(nextProjectId);
@@ -1146,10 +1169,23 @@ export function ChatPanel({
     // する(以後は select の手動選択が対象を決める)。
     if (targetProjectId === '') {
       setTicketProjectFallbackNotice(
-        `チケットのプロジェクト(id: ${requestedProjectId ?? '不明'})が見つかりません。上の「対象プロジェクト」から送信先を選んでください。`,
+        `チケットのプロジェクト(id: ${requestedProjectId ?? '不明'})が見つかりません。`,
       );
       appliedTicketContextTokenRef.current = ticketContextToken;
-      return;
+      // レビュー minor-2: この経路だけ下の focus 処理より前に return するため、
+      // 入力欄にフォーカスが当たらなかった。プロジェクトを跨がない(選択は ''
+      // のまま)ので、textarea には既にコールドキースペースの文言が出ている。
+      // キャレットはその現在値の末尾へ置く。
+      const rafId = requestAnimationFrame(() => {
+        const textarea = inputRef.current;
+        if (textarea === null) {
+          return;
+        }
+        textarea.focus();
+        const caret = textarea.value.length;
+        textarea.setSelectionRange(caret, caret);
+      });
+      return () => cancelAnimationFrame(rafId);
     }
     if (!requestedProjectFound && requestedProjectId !== undefined) {
       const fallbackName =
@@ -2852,17 +2888,28 @@ export function ChatPanel({
 
         {/* bdboard-r5we: 対象プロジェクトはチャット設定(details)の中に畳まれていて
             既定では見えなかった。送信先はチャットの最重要文脈なので、details の外の
-            常時表示行へ出す。 */}
+            常時表示行へ出す。
+            レビュー major-1: 描画条件を projects.length ではなく「選択が必要か」で
+            決める。送信可否(selectedProjectId === '')と条件を揃えないと、
+            「1件だけ到着したがチケットのプロジェクトと違う」経路で select が出ない
+            まま送信が永久 disabled になり、脱出手段が無くなる。 */}
         <div className="chat-project-bar">
-          <span className="chat-project-bar-label">対象プロジェクト</span>
-          {projects.length <= 1 ? (
-            <p className="chat-project-name">{selectedProject?.name ?? '—'}</p>
+          {showProjectSelect ? (
+            <label className="chat-project-bar-label" htmlFor="chat-project-select">
+              対象プロジェクト
+            </label>
           ) : (
+            <span className="chat-project-bar-label">対象プロジェクト</span>
+          )}
+          {showProjectSelect ? (
             <select
+              id="chat-project-select"
               className="chat-project-select"
-              aria-label="対象プロジェクト"
               value={selectedProjectId}
               disabled={isSending}
+              aria-describedby={
+                projectSelectionHintId === null ? undefined : projectSelectionHintId
+              }
               onChange={(event) => handleProjectSelectChange(event.target.value)}
             >
               {selectedProjectId === '' && (
@@ -2874,10 +2921,16 @@ export function ChatPanel({
                 </option>
               ))}
             </select>
+          ) : (
+            <p className="chat-project-name">{selectedProject?.name ?? '—'}</p>
           )}
-          {selectedProjectId === '' && projects.length > 1 && (
-            <p className="chat-project-unselected-hint" role="status">
-              送信先のプロジェクトを選んでください。選ぶまで送信できません。
+          {projectSelectionHint !== null && (
+            <p
+              className="chat-project-unselected-hint"
+              id="chat-project-unselected-hint"
+              role="status"
+            >
+              {projectSelectionHint}
             </p>
           )}
           {ticketProjectFallbackNotice !== null && (
@@ -3271,6 +3324,9 @@ export function ChatPanel({
               chatUnsupported ||
               hasUnsupportedAttachments ||
               (currentInput.trim() === '' && currentAttachments.length === 0)
+            }
+            aria-describedby={
+              projectSelectionHintId === null ? undefined : projectSelectionHintId
             }
           >
             送信
