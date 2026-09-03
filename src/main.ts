@@ -522,18 +522,47 @@ async function main(): Promise<void> {
   };
 
   let refreshRunning = false;
-  let refreshPending = false;
-  let refreshPendingForce = false;
+  interface PendingRefresh {
+    force: boolean;
+    /** undefined = 全プロジェクト対象 */
+    onlyProjectIds: Set<string> | undefined;
+  }
+  let pendingRefresh: PendingRefresh | undefined;
   const refreshWaiters: Array<() => void> = [];
   // watcher はこの下の初期リフレッシュのあとに作るので、それまでは undefined。
   let watchedProjectsSync: WatchedProjectsSync | undefined;
 
-  const runRefresh = async (force = false): Promise<void> => {
-    if (refreshRunning) {
-      refreshPending = true;
-      if (force) {
-        refreshPendingForce = true;
+  const mergePendingRefresh = (
+    force: boolean,
+    onlyProjectIds: readonly string[] | undefined,
+  ): void => {
+    if (pendingRefresh === undefined) {
+      pendingRefresh = {
+        force,
+        onlyProjectIds:
+          onlyProjectIds === undefined ? undefined : new Set(onlyProjectIds),
+      };
+      return;
+    }
+    if (force) {
+      pendingRefresh.force = true;
+    }
+    if (onlyProjectIds === undefined) {
+      // 「全プロジェクト対象」の要求が来たら、絞り込みは解除される(広い方が勝つ)
+      pendingRefresh.onlyProjectIds = undefined;
+    } else if (pendingRefresh.onlyProjectIds !== undefined) {
+      for (const id of onlyProjectIds) {
+        pendingRefresh.onlyProjectIds.add(id);
       }
+    }
+  };
+
+  const runRefresh = async (
+    force = false,
+    onlyProjectIds?: readonly string[],
+  ): Promise<void> => {
+    if (refreshRunning) {
+      mergePendingRefresh(force, onlyProjectIds);
 
       return new Promise<void>((resolve) => {
         refreshWaiters.push(resolve);
@@ -541,14 +570,20 @@ async function main(): Promise<void> {
     }
 
     refreshRunning = true;
+    mergePendingRefresh(force, onlyProjectIds);
 
     try {
-      let nextForce = force;
+      // 直前に mergePendingRefresh() を呼んでいるので初回は必ず1周する。2周目以降は
+      // 「この実行中に届いた要求」が残っているときだけ回る(合流)。
+      while (pendingRefresh !== undefined) {
+        const current = pendingRefresh;
+        // 実行中に届く要求を取りこぼさないよう、await に入る前にクリアする。
+        pendingRefresh = undefined;
 
-      do {
-        refreshPending = false;
-        const useForce = nextForce;
-        nextForce = false;
+        const useOnlyProjectIds =
+          current.onlyProjectIds === undefined
+            ? undefined
+            : [...current.onlyProjectIds];
 
         const result = await refreshProjects(
           {
@@ -559,7 +594,12 @@ async function main(): Promise<void> {
             now: () => new Date(),
             humanDecisions,
           },
-          { force: useForce },
+          {
+            force: current.force,
+            ...(useOnlyProjectIds !== undefined
+              ? { onlyProjectIds: useOnlyProjectIds }
+              : {}),
+          },
         );
 
         status = updateStatusFromResult(cache, result, new Date());
@@ -578,12 +618,7 @@ async function main(): Promise<void> {
             },
           });
         }
-
-        if (refreshPending) {
-          nextForce = refreshPendingForce;
-          refreshPendingForce = false;
-        }
-      } while (refreshPending);
+      }
 
       const cacheEntries = cache.listProjects();
       const refreshAt = new Date();
@@ -838,6 +873,14 @@ async function main(): Promise<void> {
       now: () => new Date(),
       getStatus: () => status,
       refresh: () => runRefresh(true),
+      refreshProjectByRootPath: async (rootPath: string) => {
+        const projectId = cache
+          .listProjects()
+          .find((entry) => entry.project.rootPath === rootPath)?.project.id;
+        // キャッシュに無い rootPath は絞り込みようがないので、安全側に倒して
+        // 従来どおり全体を強制リフレッシュする。
+        await runRefresh(true, projectId === undefined ? undefined : [projectId]);
+      },
       events,
       boardThresholdsConfigStore,
       hygieneThresholdsConfigStore,

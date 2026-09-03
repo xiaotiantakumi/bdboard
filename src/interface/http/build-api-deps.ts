@@ -27,6 +27,7 @@ export interface BuildApiDepsParams {
   readonly now: () => Date;
   readonly getStatus: () => ApiStatus;
   readonly refresh: () => Promise<void>;
+  readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
   readonly events: EventHub;
   readonly boardThresholdsConfigStore: BoardThresholdsConfigPort;
   readonly hygieneThresholdsConfigStore: HygieneThresholdsConfigPort;

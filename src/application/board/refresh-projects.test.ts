@@ -87,9 +87,11 @@ function createFakeDeps(options: {
 }): FakeRefreshDeps & {
   readonly listTicketsCalls: string[];
   readonly listPendingDecisionsCalls: string[];
+  readonly fingerprintCalls: string[];
 } {
   const listTicketsCalls: string[] = [];
   const listPendingDecisionsCalls: string[] = [];
+  const fingerprintCalls: string[] = [];
   const fingerprints = options.fingerprints ?? {};
   const now = options.now ?? new Date('2026-06-01T12:00:00.000Z');
 
@@ -101,6 +103,7 @@ function createFakeDeps(options: {
 
   const fingerprinter: ProjectFingerprinter = {
     async fingerprint(p: Project): Promise<string> {
+      fingerprintCalls.push(p.id);
       if (options.fingerprintThrows?.[p.id] !== undefined) {
         throw options.fingerprintThrows[p.id];
       }
@@ -178,6 +181,7 @@ function createFakeDeps(options: {
     ...(humanDecisions !== undefined ? { humanDecisions } : {}),
     listTicketsCalls,
     listPendingDecisionsCalls,
+    fingerprintCalls,
   };
 }
 
@@ -487,5 +491,83 @@ describe('refreshProjects', () => {
     expect(deps.cache.getProject(p.id)?.pendingDecisions).toEqual([
       { id: 'bdboard-cached', kind: 'ticket', allowFreeform: true },
     ]);
+  });
+
+  it('onlyProjectIds limits listAll to the specified project and reuses others', async () => {
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    const deps = createFakeDeps({
+      projects: [a, b],
+      fingerprints: {
+        [a.id]: 'fp-new',
+        [b.id]: 'fp-b',
+      },
+    });
+
+    deps.cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-a', projectId: a.id })],
+      fingerprint: 'fp-old',
+      fetchedAt: deps.now(),
+    });
+    deps.cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'bdboard-b', projectId: b.id })],
+      fingerprint: 'fp-b',
+      fetchedAt: deps.now(),
+    });
+
+    const result = await refreshProjects(deps, { onlyProjectIds: [a.id] });
+
+    expect(deps.listTicketsCalls).toEqual([a.id]);
+    expect(result.refreshed).toEqual([a.id]);
+    expect(result.reused).toEqual([b.id]);
+  });
+
+  it('onlyProjectIds skips fingerprint for excluded projects', async () => {
+    const a = project('/a', '/projects/a');
+    const b = project('/b', '/projects/b');
+    const deps = createFakeDeps({
+      projects: [a, b],
+      fingerprints: {
+        [a.id]: 'fp-a',
+        [b.id]: 'fp-b',
+      },
+    });
+
+    deps.cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'bdboard-b', projectId: b.id })],
+      fingerprint: 'fp-b',
+      fetchedAt: deps.now(),
+    });
+
+    await refreshProjects(deps, { onlyProjectIds: [a.id] });
+
+    expect(deps.fingerprintCalls).toEqual([a.id]);
+  });
+
+  it('onlyProjectIds with force refreshes matching fingerprints on targeted projects', async () => {
+    const p = project('/a', '/projects/a');
+    const deps = createFakeDeps({
+      projects: [p],
+      fingerprints: { [p.id]: 'fp-stable' },
+    });
+
+    deps.cache.putProject({
+      project: p,
+      tickets: [makeTicket({ id: 'bdboard-old', projectId: p.id })],
+      fingerprint: 'fp-stable',
+      fetchedAt: deps.now(),
+    });
+
+    const result = await refreshProjects(deps, {
+      onlyProjectIds: [p.id],
+      force: true,
+    });
+
+    expect(deps.listTicketsCalls).toEqual([p.id]);
+    expect(result.refreshed).toEqual([p.id]);
+    expect(result.reused).toEqual([]);
   });
 });

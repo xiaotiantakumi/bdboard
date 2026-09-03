@@ -5952,3 +5952,195 @@ describe('tunnel write access (bdboard-9rz)', () => {
     expect(response.status).toBe(200);
   });
 });
+
+describe('post-write project refresh (bdboard-6qs6)', () => {
+  function seedProjectA() {
+    const cache = createFakeBoardCache();
+    const projectA = project('proj-a', '/projects/a');
+    seedCache(cache, [{ project: projectA, ticketId: 'bdboard-a' }]);
+    return { cache, projectA };
+  }
+
+  function makeIssueWriter(): IssueWriterPort {
+    return {
+      claim: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      defer: vi.fn(async () => {}),
+      setPriority: vi.fn(async () => {}),
+      addComment: vi.fn(async () => {}),
+      reopen: vi.fn(async () => {}),
+      unclaim: vi.fn(async () => {}),
+      undefer: vi.fn(async () => {}),
+      undoPriority: vi.fn(async () => {}),
+      updateTitle: vi.fn(async () => {}),
+      updateDescription: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
+    };
+  }
+
+  it('calls refreshProjectByRootPath after successful decision POST', async () => {
+    const { cache } = seedProjectA();
+    const refreshProjectByRootPath = vi.fn(async () => {});
+    const humanDecisions: HumanDecisionsPort = {
+      listPendingDecisions: vi.fn(async () => []),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
+    };
+
+    const app = createApiRoutes(
+      createDeps({ cache, humanDecisions, refreshProjectByRootPath }),
+    );
+    const response = await app.request(
+      '/api/tickets/bdboard-a/decision',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice: 'yes' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith('/projects/a');
+  });
+
+  it('calls refreshProjectByRootPath after successful quick-action POST', async () => {
+    const { cache } = seedProjectA();
+    const refreshProjectByRootPath = vi.fn(async () => {});
+    const issueWriter = makeIssueWriter();
+
+    const app = createApiRoutes(
+      createDeps({ cache, issueWriter, refreshProjectByRootPath }),
+    );
+    const response = await app.request(
+      '/api/tickets/bdboard-a/quick-action',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'claim' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith('/projects/a');
+  });
+
+  it('calls refreshProjectByRootPath after successful comment POST', async () => {
+    const { cache } = seedProjectA();
+    const refreshProjectByRootPath = vi.fn(async () => {});
+    const issueWriter = makeIssueWriter();
+
+    const app = createApiRoutes(
+      createDeps({ cache, issueWriter, refreshProjectByRootPath }),
+    );
+    const response = await app.request(
+      '/api/tickets/bdboard-a/comment',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'done' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith('/projects/a');
+  });
+
+  it('still returns 200 when refreshProjectByRootPath rejects after a successful write', async () => {
+    const { cache } = seedProjectA();
+    const refreshProjectByRootPath = vi.fn(async () => {
+      throw new Error('refresh exploded');
+    });
+    const issueWriter = makeIssueWriter();
+
+    const app = createApiRoutes(
+      createDeps({ cache, issueWriter, refreshProjectByRootPath }),
+    );
+    const response = await app.request(
+      '/api/tickets/bdboard-a/comment',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'done' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith('/projects/a');
+  });
+
+  // このテストがバグ本体の回帰ガード。refreshProjectByRootPath を「呼ぶ」だけでは
+  // 不十分で、応答を返す前に await していないと、UI が応答直後に再取得したときに
+  // まだ書き込み前のキャッシュが返る(bdboard-6qs6)。fire-and-forget 実装は
+  // 上の toHaveBeenCalledWith 系テストを素通りするので、ここで順序を固定する。
+  it('does not respond until refreshProjectByRootPath settles', async () => {
+    const { cache } = seedProjectA();
+    let releaseRefresh: (() => void) | undefined;
+    const refreshGate = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const refreshProjectByRootPath = vi.fn(async () => {
+      await refreshGate;
+    });
+    const issueWriter = makeIssueWriter();
+
+    const app = createApiRoutes(
+      createDeps({ cache, issueWriter, refreshProjectByRootPath }),
+    );
+
+    let responded = false;
+    const pending = Promise.resolve(
+      app.request(
+        '/api/tickets/bdboard-a/comment',
+        withLocalHost({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'done' }),
+        }),
+        LOCAL_ENV,
+      ),
+    ).then((response) => {
+      responded = true;
+      return response;
+    });
+
+    // マクロタスクを1回挟むと、保留中のマイクロタスクは全て流れる。それでも
+    // 応答が返っていない = リフレッシュの完了を待っている。
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith('/projects/a');
+    expect(responded).toBe(false);
+
+    releaseRefresh?.();
+    const response = await pending;
+
+    expect(response.status).toBe(200);
+  });
+
+  it('does not call refreshProjectByRootPath when comment write fails', async () => {
+    const { cache } = seedProjectA();
+    const refreshProjectByRootPath = vi.fn(async () => {});
+    const issueWriter = makeIssueWriter();
+    issueWriter.addComment = vi.fn(async () => {
+      throw new BdError('unknown', 'proj-a', 'bd failed');
+    });
+
+    const app = createApiRoutes(
+      createDeps({ cache, issueWriter, refreshProjectByRootPath }),
+    );
+    const response = await app.request(
+      '/api/tickets/bdboard-a/comment',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'done' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(502);
+    expect(refreshProjectByRootPath).not.toHaveBeenCalled();
+  });
+});
