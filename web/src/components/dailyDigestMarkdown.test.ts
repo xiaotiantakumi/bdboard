@@ -184,6 +184,7 @@ describe('buildDailyDigestMarkdown', () => {
     const pendingDecisions: PendingDecisionDto[] = [
       {
         id: 'bdboard-e',
+        kind: 'ticket',
         projectId: 'proj-1',
         question: 'A と B どっち?',
         allowFreeform: false,
@@ -396,12 +397,14 @@ describe('buildDailyDigestMarkdown', () => {
     const pendingDecisions: PendingDecisionDto[] = [
       {
         id: 'bdboard-one',
+        kind: 'ticket',
         projectId: 'proj-1',
         question: 'Q1',
         allowFreeform: false,
       },
       {
         id: 'bdboard-two',
+        kind: 'ticket',
         projectId: 'proj-2',
         question: 'Q2',
         allowFreeform: false,
@@ -505,6 +508,7 @@ describe('buildDailyDigestMarkdown', () => {
         pendingDecisions: [
           {
             id: 'bdboard-multiline-question',
+            kind: 'ticket',
             projectId: 'proj-1',
             question: 'ask\n  this',
             allowFreeform: false,
@@ -526,6 +530,7 @@ describe('buildDailyDigestMarkdown', () => {
         pendingDecisions: [
           {
             id: 'bdboard-no-question',
+            kind: 'ticket',
             projectId: 'proj-1',
             allowFreeform: false,
           },

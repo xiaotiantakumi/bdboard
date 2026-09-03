@@ -159,6 +159,7 @@ function parsePendingDecisions(
 
       const decision: PendingDecision = {
         id: record.id,
+        kind: record.kind === 'gate' ? 'gate' : 'ticket',
         allowFreeform: record.allowFreeform === true,
         ...(typeof record.question === 'string' ? { question: record.question } : {}),
         ...(Array.isArray(record.options)

@@ -76,7 +76,7 @@ describe('getPendingCommentAnchors', () => {
       tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 3 })],
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
     });
 
     const reader = readerReturning({
@@ -109,7 +109,7 @@ describe('getPendingCommentAnchors', () => {
       ],
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
     });
 
     const reader = readerReturning({
@@ -131,7 +131,7 @@ describe('getPendingCommentAnchors', () => {
       tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 0 })],
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
     });
 
     const reader = readerReturning({});
@@ -166,7 +166,7 @@ describe('getPendingCommentAnchors', () => {
         tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 1 })],
         fingerprint: `fp-${p.id}`,
         fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-        pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+        pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
       });
     }
 
@@ -195,8 +195,8 @@ describe('getPendingCommentAnchors', () => {
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
       pendingDecisions: [
-        { id: 'bdboard-bad', allowFreeform: true },
-        { id: 'bdboard-good', allowFreeform: true },
+        { id: 'bdboard-bad', kind: 'ticket', allowFreeform: true },
+        { id: 'bdboard-good', kind: 'ticket', allowFreeform: true },
       ],
     });
 
@@ -231,7 +231,7 @@ describe('getPendingCommentAnchors', () => {
       tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 1 })],
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
     });
 
     const logWarn = vi.fn();
@@ -257,7 +257,7 @@ describe('getPendingCommentAnchors', () => {
       tickets: ids.map((id) => makeTicket({ id, projectId: p.id, commentCount: 1 })),
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: ids.map((id) => ({ id, allowFreeform: true })),
+      pendingDecisions: ids.map((id) => ({ id, kind: 'ticket' as const, allowFreeform: true })),
     });
 
     const reader: CommentReader = {
@@ -284,7 +284,7 @@ describe('getPendingCommentAnchors', () => {
       tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 2 })],
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
     });
 
     const reader = readerReturning({
@@ -309,7 +309,7 @@ describe('getPendingCommentAnchors', () => {
       tickets: [makeTicket({ id: 'bdboard-wait', projectId: p.id, commentCount: 1 })],
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: [{ id: 'bdboard-wait', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-wait', kind: 'ticket', allowFreeform: true }],
     });
 
     const reader = readerReturning({
@@ -336,7 +336,7 @@ describe('getPendingCommentAnchors', () => {
       ),
       fingerprint: 'fp',
       fetchedAt: new Date('2026-06-01T00:00:00.000Z'),
-      pendingDecisions: ids.map((id) => ({ id, allowFreeform: true })),
+      pendingDecisions: ids.map((id) => ({ id, kind: 'ticket' as const, allowFreeform: true })),
     });
 
     let activeCount = 0;

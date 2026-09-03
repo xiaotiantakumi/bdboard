@@ -184,6 +184,7 @@ const BOARD_MAX_CLOSED_LIMIT = 1000;
 export interface PendingDecisionDto {
   readonly id: string;
   readonly projectId: string;
+  readonly kind: 'gate' | 'ticket';
   readonly question?: string;
   readonly options?: readonly { readonly label: string; readonly value: string }[];
   readonly allowFreeform: boolean;
@@ -736,6 +737,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         result.push({
           id: decision.id,
           projectId: entry.project.id,
+          kind: decision.kind,
           ...(decision.question !== undefined ? { question: decision.question } : {}),
           ...(decision.options !== undefined
             ? {
@@ -836,8 +838,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     try {
-      await deps.humanDecisions.respond(rootPath, id, responseText);
-      return c.json({ ok: true });
+      const outcome = await deps.humanDecisions.respond(rootPath, id, responseText);
+      return c.json({
+        ok: true,
+        outcome: { kind: outcome.kind, closed: outcome.closed },
+      });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to respond', error);
     }
