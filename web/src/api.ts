@@ -712,18 +712,23 @@ export function fetchPrLinks(
   return fetchJson<PrBadgeDto[]>(path);
 }
 
+// 応答が読めなかったときの既定は 'unknown'。'ticket' に倒すと UI が
+// 「確認待ちから外れ、次の更新で通常のレーンに戻ります」と、クライアントには
+// 裏付けられない状態を断言してしまう。サーバー側の respond() が判定不能を
+// close も label 剥がしもせず 'unknown' で返すのと同じ fail-safe を、
+// 応答が壊れている場合にも通す (bdboard-bh48 レビュー指摘)。
 function mapTicketDecisionOutcome(raw: unknown): TicketDecisionOutcome {
   if (typeof raw !== 'object' || raw === null) {
-    return { kind: 'ticket', closed: false };
+    return { kind: 'unknown', closed: false };
   }
   const outcome = (raw as { outcome?: unknown }).outcome;
   if (typeof outcome !== 'object' || outcome === null) {
-    return { kind: 'ticket', closed: false };
+    return { kind: 'unknown', closed: false };
   }
   const kind = (outcome as { kind?: unknown }).kind;
   const closed = (outcome as { closed?: unknown }).closed;
   return {
-    kind: kind === 'gate' ? 'gate' : kind === 'unknown' ? 'unknown' : 'ticket',
+    kind: kind === 'gate' ? 'gate' : kind === 'ticket' ? 'ticket' : 'unknown',
     closed: closed === true,
   };
 }

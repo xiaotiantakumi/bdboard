@@ -319,7 +319,7 @@ describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
     });
   });
 
-  it('falls unknown outcome kind values back to ticket', async () => {
+  it('falls unrecognized outcome kind values back to unknown', async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(
         new Response(
@@ -330,7 +330,19 @@ describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
-      kind: 'ticket',
+      kind: 'unknown',
+      closed: false,
+    });
+  });
+
+  it('falls a missing outcome object back to unknown', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ ok: true }))),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'unknown',
       closed: false,
     });
   });
