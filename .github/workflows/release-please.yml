@@ -77,7 +77,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # contents は checkout にしか使わない (Release 本文の更新は release-please job の責務)。
-    # id-token: write は --provenance の attestation 署名に必須 (bdboard-d7n4)。
+    # id-token: write は trusted publishing (OIDC) の認証そのものに必須 (bdboard-cdqb)。
+    # これを外すと npm CLI が OIDC を使えず、NODE_AUTH_TOKEN も渡していないので publish が
+    # 認証エラーで落ちる。--provenance の署名用ではないので、フラグが無いことを理由に
+    # 消さないこと (もともとは bdboard-d7n4 で --provenance のために足したもので、
+    # trusted publishing への移行後は認証側が要求している)。
     permissions:
       contents: read
       id-token: write
