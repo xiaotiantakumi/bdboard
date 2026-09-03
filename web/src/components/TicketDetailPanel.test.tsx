@@ -112,6 +112,11 @@ const sampleTicket: TicketDetailDto = {
   children: [],
 };
 
+const defaultTicketDecisionOutcome = {
+  kind: 'ticket',
+  closed: false,
+} as const;
+
 /*
  * 最大化 state は App 側が持つ (bdboard-0hcx / PR#242 opus レビュー major-1)。
  * パネル単体テストでは、その App の役割をこの薄いラッパで代行する。
@@ -715,7 +720,7 @@ describe('TicketDetailPanel pending decisions', () => {
   beforeEach(() => {
     mockFetchTicket.mockResolvedValue(sampleTicket);
     mockFetchTicketComments.mockResolvedValue([]);
-    mockPostTicketDecision.mockResolvedValue(undefined);
+    mockPostTicketDecision.mockResolvedValue(defaultTicketDecisionOutcome);
     user = userEvent.setup();
   });
 
@@ -762,6 +767,7 @@ describe('TicketDetailPanel pending decisions', () => {
     rerender(
       panel({
         id: sampleTicket.id,
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: 'どちらにしますか?',
         allowFreeform: true,
@@ -797,6 +803,7 @@ describe('TicketDetailPanel pending decisions', () => {
 
     const first: PendingDecisionDto = {
       id: 'decision-1',
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       question: '最初の質問',
       allowFreeform: true,
@@ -811,6 +818,7 @@ describe('TicketDetailPanel pending decisions', () => {
     rerender(
       panel({
         id: 'decision-2',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '次の質問',
         allowFreeform: true,
@@ -851,6 +859,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const { rerender } = render(
       panel({
         id: 'decision-1',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '最初の質問',
         options,
@@ -866,6 +875,7 @@ describe('TicketDetailPanel pending decisions', () => {
     rerender(
       panel({
         id: 'decision-2',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '次の質問',
         options,
@@ -890,6 +900,7 @@ describe('TicketDetailPanel pending decisions', () => {
   it('shows only freeform when question exists without options', async () => {
     renderPanel(new Map(), {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       question: 'どちらにしますか?',
       allowFreeform: true,
@@ -903,6 +914,7 @@ describe('TicketDetailPanel pending decisions', () => {
   it('submits selected choice via postTicketDecision', async () => {
     renderPanel(new Map(), {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       options: [
         { label: 'A案', value: 'a' },
@@ -922,11 +934,37 @@ describe('TicketDetailPanel pending decisions', () => {
     expect(await screen.findByText('送信した回答')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '送信した回答' }).parentElement).toHaveTextContent('A案');
     expect(screen.getByText('回答を送信しました')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows gate outcome message when the decision closes a gate', async () => {
+    mockPostTicketDecision.mockResolvedValue({ kind: 'gate', closed: true });
+
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'gate',
+      projectId: sampleTicket.projectId,
+      allowFreeform: true,
+    });
+
+    await user.type(await screen.findByLabelText('自由記入'), 'ゲート回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+
+    expect(
+      await screen.findByText(
+        '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('submits freeform text only', async () => {
     renderPanel(new Map(), {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       allowFreeform: true,
     });
@@ -944,6 +982,7 @@ describe('TicketDetailPanel pending decisions', () => {
   it('keeps submitted freeform visible after pendingDecision disappears', async () => {
     const pendingDecision: PendingDecisionDto = {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       allowFreeform: true,
     };
@@ -970,6 +1009,7 @@ describe('TicketDetailPanel pending decisions', () => {
 
     renderPanel(new Map(), {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       allowFreeform: true,
     });
@@ -990,6 +1030,7 @@ describe('TicketDetailPanel pending decisions', () => {
 
     renderPanel(new Map(), {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       allowFreeform: true,
     });
@@ -1012,6 +1053,7 @@ describe('TicketDetailPanel pending decisions', () => {
 
     renderPanel(new Map(), {
       id: sampleTicket.id,
+      kind: 'ticket',
       projectId: sampleTicket.projectId,
       allowFreeform: true,
     });
@@ -1051,6 +1093,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const { rerender } = render(
       panel({
         id: 'decision-1',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '最初の質問',
         allowFreeform: true,
@@ -1072,6 +1115,7 @@ describe('TicketDetailPanel pending decisions', () => {
     rerender(
       panel({
         id: 'decision-2',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '最初の質問',
         allowFreeform: true,
@@ -1110,6 +1154,7 @@ describe('TicketDetailPanel pending decisions', () => {
     const { rerender } = render(
       panel({
         id: 'decision-1',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '最初の質問',
         allowFreeform: true,
@@ -1126,6 +1171,7 @@ describe('TicketDetailPanel pending decisions', () => {
     rerender(
       panel({
         id: 'decision-1',
+        kind: 'ticket',
         projectId: sampleTicket.projectId,
         question: '最初の質問',
         allowFreeform: true,

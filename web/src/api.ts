@@ -328,10 +328,16 @@ export interface HygieneIssueDto {
 
 export interface PendingDecisionDto {
   id: string;
+  kind: 'gate' | 'ticket';
   projectId: string;
   question?: string;
   options?: { label: string; value: string }[];
   allowFreeform: boolean;
+}
+
+export interface TicketDecisionOutcome {
+  kind: 'gate' | 'ticket';
+  closed: boolean;
 }
 
 export type BoardMode = 'merged' | 'split';
@@ -706,18 +712,34 @@ export function fetchPrLinks(
   return fetchJson<PrBadgeDto[]>(path);
 }
 
+function mapTicketDecisionOutcome(raw: unknown): TicketDecisionOutcome {
+  if (typeof raw !== 'object' || raw === null) {
+    return { kind: 'ticket', closed: false };
+  }
+  const outcome = (raw as { outcome?: unknown }).outcome;
+  if (typeof outcome !== 'object' || outcome === null) {
+    return { kind: 'ticket', closed: false };
+  }
+  const kind = (outcome as { kind?: unknown }).kind;
+  const closed = (outcome as { closed?: unknown }).closed;
+  return {
+    kind: kind === 'gate' ? 'gate' : 'ticket',
+    closed: closed === true,
+  };
+}
+
 export function postTicketDecision(
   id: string,
   body: { choice?: string; freeform?: string },
-): Promise<void> {
-  return fetchJson<{ ok: true }>(
+): Promise<TicketDecisionOutcome> {
+  return fetchJson<{ ok: true; outcome?: { kind?: string; closed?: boolean } }>(
     `/api/tickets/${encodeURIComponent(id)}/decision`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     },
-  ).then(() => undefined);
+  ).then((data) => mapTicketDecisionOutcome(data));
 }
 
 export type QuickActionRequest =

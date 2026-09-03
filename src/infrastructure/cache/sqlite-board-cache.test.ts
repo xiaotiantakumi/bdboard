@@ -127,6 +127,7 @@ describe('createSqliteBoardCache', () => {
       pendingDecisions: [
         {
           id: 'bdboard-human',
+          kind: 'ticket',
           question: 'Approve?',
           options: [{ label: 'Yes', value: 'yes' }],
           allowFreeform: true,

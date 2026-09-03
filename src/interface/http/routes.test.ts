@@ -320,12 +320,12 @@ describe('createApiRoutes', () => {
       ],
       fingerprint: 'fp-a',
       fetchedAt: NOW,
-      pendingDecisions: [{ id: 'bdboard-waiting', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-waiting', kind: 'ticket', allowFreeform: true }],
     });
 
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
-      respond: vi.fn(async () => {}),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
     };
 
     const app = createApiRoutes(createDeps({ cache, humanDecisions }));
@@ -1553,8 +1553,8 @@ describe('createApiRoutes', () => {
       fingerprint: 'fp-a',
       fetchedAt: NOW,
       pendingDecisions: [
-        { id: 'bdboard-chatty', allowFreeform: true },
-        { id: 'bdboard-silent', allowFreeform: true },
+        { id: 'bdboard-chatty', kind: 'ticket', allowFreeform: true },
+        { id: 'bdboard-silent', kind: 'ticket', allowFreeform: true },
       ],
     });
 
@@ -1607,7 +1607,7 @@ describe('createApiRoutes', () => {
         ],
         fingerprint: `fp${p.id}`,
         fetchedAt: NOW,
-        pendingDecisions: [{ id: `bdboard-chatty-${p.id}`, allowFreeform: true }],
+        pendingDecisions: [{ id: `bdboard-chatty-${p.id}`, kind: 'ticket', allowFreeform: true }],
       });
     }
 
@@ -1653,7 +1653,7 @@ describe('createApiRoutes', () => {
       ],
       fingerprint: 'fp-a',
       fetchedAt: NOW,
-      pendingDecisions: [{ id: 'bdboard-chatty', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-chatty', kind: 'ticket', allowFreeform: true }],
     });
 
     const app = createApiRoutes(createDeps({ cache }));
@@ -2220,6 +2220,7 @@ describe('createApiRoutes', () => {
       pendingDecisions: [
         {
           id: 'bdboard-a',
+          kind: 'gate',
           question: 'Q1?',
           options: [{ label: 'Yes', value: 'yes' }],
           allowFreeform: true,
@@ -2237,7 +2238,7 @@ describe('createApiRoutes', () => {
       listPendingDecisions: vi.fn(async () => {
         throw new Error('should not be called');
       }),
-      respond: vi.fn(async () => {}),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
     };
 
     const app = createApiRoutes(createDeps({ cache, humanDecisions }));
@@ -2250,6 +2251,7 @@ describe('createApiRoutes', () => {
       {
         id: 'bdboard-a',
         projectId: 'proj-a',
+        kind: 'gate',
         question: 'Q1?',
         options: [{ label: 'Yes', value: 'yes' }],
         allowFreeform: true,
@@ -2262,7 +2264,7 @@ describe('createApiRoutes', () => {
     const projectA = project('proj-a', '/projects/a');
     seedCache(cache, [{ project: projectA, ticketId: 'bdboard-a' }]);
 
-    const respond = vi.fn(async () => {});
+    const respond = vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false }));
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
       respond,
@@ -2284,7 +2286,10 @@ describe('createApiRoutes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toEqual({ ok: true });
+    expect(body).toEqual({
+      ok: true,
+      outcome: { kind: 'ticket', closed: false },
+    });
     expect(respond).toHaveBeenCalledWith(
       '/projects/a',
       'bdboard-a',
@@ -2297,7 +2302,7 @@ describe('createApiRoutes', () => {
     const projectA = project('proj-a', '/projects/a');
     seedCache(cache, [{ project: projectA, ticketId: 'bdboard-a' }]);
 
-    const respond = vi.fn(async () => {});
+    const respond = vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false }));
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
       respond,
@@ -2315,13 +2320,18 @@ describe('createApiRoutes', () => {
     );
 
     expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toEqual({
+      ok: true,
+      outcome: { kind: 'ticket', closed: false },
+    });
     expect(respond).toHaveBeenCalledWith('/projects/a', 'bdboard-a', 'yes');
   });
 
   it('returns 400 when decision body has neither choice nor freeform', async () => {
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
-      respond: vi.fn(async () => {}),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
     };
 
     const app = createApiRoutes(createDeps({ humanDecisions }));
@@ -2343,7 +2353,7 @@ describe('createApiRoutes', () => {
   it('returns 403 for decision POST through tunnel headers', async () => {
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
-      respond: vi.fn(async () => {}),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
     };
 
     const app = createApiRoutes(createDeps({ humanDecisions }));
@@ -2368,7 +2378,7 @@ describe('createApiRoutes', () => {
   it('returns 404 for decision POST when ticket is not in cache', async () => {
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
-      respond: vi.fn(async () => {}),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
     };
 
     const app = createApiRoutes(createDeps({ humanDecisions }));
@@ -5740,7 +5750,7 @@ describe('tunnel write access (bdboard-9rz)', () => {
   it('allows a pending-decision response through the tunnel', async () => {
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
-      respond: vi.fn(async () => {}),
+      respond: vi.fn<HumanDecisionsPort['respond']>(async () => ({ kind: 'ticket', closed: false })),
     };
     const app = createApiRoutes(
       createDeps({

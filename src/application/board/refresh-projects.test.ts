@@ -378,9 +378,9 @@ describe('refreshProjects', () => {
     const p = project('/a', '/projects/a');
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: async (_rootPath: string) => {
-        return [{ id: 'bdboard-human', question: 'Q?', allowFreeform: true }];
+        return [{ id: 'bdboard-human', kind: 'ticket', question: 'Q?', allowFreeform: true }];
       },
-      respond: async () => {},
+      respond: async () => ({ kind: 'ticket', closed: false }),
     };
 
     const deps = createFakeDeps({
@@ -401,15 +401,15 @@ describe('refreshProjects', () => {
     expect(deps.listPendingDecisionsCalls).toEqual(['/projects/a']);
     expect(result.refreshed).toEqual([p.id]);
     expect(deps.cache.getProject(p.id)?.pendingDecisions).toEqual([
-      { id: 'bdboard-human', question: 'Q?', allowFreeform: true },
+      { id: 'bdboard-human', kind: 'ticket', question: 'Q?', allowFreeform: true },
     ]);
   });
 
   it('does not fetch pending decisions when fingerprint is unchanged (reused)', async () => {
     const p = project('/a', '/projects/a');
     const humanDecisions: HumanDecisionsPort = {
-      listPendingDecisions: async () => [{ id: 'bdboard-human', allowFreeform: true }],
-      respond: async () => {},
+      listPendingDecisions: async () => [{ id: 'bdboard-human', kind: 'ticket', allowFreeform: true }],
+      respond: async () => ({ kind: 'ticket', closed: false }),
     };
     const deps = createFakeDeps({
       projects: [p],
@@ -422,7 +422,7 @@ describe('refreshProjects', () => {
       tickets: [makeTicket({ id: 'bdboard-old', projectId: p.id })],
       fingerprint: 'fp-stable',
       fetchedAt: deps.now(),
-      pendingDecisions: [{ id: 'bdboard-cached', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-cached', kind: 'ticket', allowFreeform: true }],
     });
 
     const result = await refreshProjects(deps);
@@ -430,7 +430,7 @@ describe('refreshProjects', () => {
     expect(deps.listPendingDecisionsCalls).toHaveLength(0);
     expect(result.reused).toEqual([p.id]);
     expect(deps.cache.getProject(p.id)?.pendingDecisions).toEqual([
-      { id: 'bdboard-cached', allowFreeform: true },
+      { id: 'bdboard-cached', kind: 'ticket', allowFreeform: true },
     ]);
   });
 
@@ -440,7 +440,7 @@ describe('refreshProjects', () => {
       listPendingDecisions: async () => {
         throw new BdError('unknown', p.id, 'boom');
       },
-      respond: async () => {},
+      respond: async () => ({ kind: 'ticket', closed: false }),
     };
     const deps = createFakeDeps({
       projects: [p],
@@ -453,7 +453,7 @@ describe('refreshProjects', () => {
       tickets: [makeTicket({ id: 'bdboard-old', projectId: p.id })],
       fingerprint: 'fp-old',
       fetchedAt: deps.now(),
-      pendingDecisions: [{ id: 'bdboard-cached', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-cached', kind: 'ticket', allowFreeform: true }],
     });
 
     const result = await refreshProjects(deps);
@@ -462,7 +462,7 @@ describe('refreshProjects', () => {
     expect(result.errors[0]?.projectId).toBe(p.id);
     expect(result.refreshed).toEqual([p.id]);
     expect(deps.cache.getProject(p.id)?.pendingDecisions).toEqual([
-      { id: 'bdboard-cached', allowFreeform: true },
+      { id: 'bdboard-cached', kind: 'ticket', allowFreeform: true },
     ]);
   });
 
@@ -478,14 +478,14 @@ describe('refreshProjects', () => {
       tickets: [makeTicket({ id: 'bdboard-old', projectId: p.id })],
       fingerprint: 'fp-old',
       fetchedAt: deps.now(),
-      pendingDecisions: [{ id: 'bdboard-cached', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-cached', kind: 'ticket', allowFreeform: true }],
     });
 
     const result = await refreshProjects(deps);
 
     expect(result.refreshed).toEqual([p.id]);
     expect(deps.cache.getProject(p.id)?.pendingDecisions).toEqual([
-      { id: 'bdboard-cached', allowFreeform: true },
+      { id: 'bdboard-cached', kind: 'ticket', allowFreeform: true },
     ]);
   });
 });

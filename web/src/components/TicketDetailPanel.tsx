@@ -27,6 +27,7 @@ import {
   postTicketSessionLink,
   searchTickets,
   type PendingDecisionDto,
+  type TicketDecisionOutcome,
   type PrBadgeDto,
   type QuickActionRequest,
   type SessionDto,
@@ -157,6 +158,7 @@ type SubmittedDecision = {
   decisionId: string;
   choiceLabel?: string;
   freeform?: string;
+  outcome: TicketDecisionOutcome;
 };
 
 function formatQuickActionConfirmTitle(action: ConfirmingQuickAction): string {
@@ -473,12 +475,12 @@ export function TicketDetailPanel({
         throw new Error('pending decision is not available');
       }
 
-      await postTicketDecision(pendingDecision.id, {
+      return postTicketDecision(pendingDecision.id, {
         ...(selectedChoice !== undefined ? { choice: selectedChoice } : {}),
         ...(trimmedFreeform.length > 0 ? { freeform: trimmedFreeform } : {}),
       });
     },
-    onSuccess: async () => {
+    onSuccess: async (outcome) => {
       if (pendingDecision !== undefined) {
         const choiceLabel =
           selectedChoice !== undefined
@@ -488,6 +490,7 @@ export function TicketDetailPanel({
             : undefined;
         setSubmittedDecision({
           decisionId: pendingDecision.id,
+          outcome,
           ...(choiceLabel !== undefined ? { choiceLabel } : {}),
           ...(trimmedFreeform.length > 0 ? { freeform: trimmedFreeform } : {}),
         });
@@ -1691,6 +1694,11 @@ export function TicketDetailPanel({
                   <p className="detail-pre">{submittedDecision.freeform}</p>
                 )}
                 <p className="detail-help">回答を送信しました</p>
+                <p className="detail-help">
+                  {submittedDecision.outcome.closed
+                    ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
+                    : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
+                </p>
               </div>
             )}
             <div className="detail-section">

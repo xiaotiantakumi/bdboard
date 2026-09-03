@@ -184,14 +184,18 @@ const BOARD_MAX_CLOSED_LIMIT = 1000;
 export interface PendingDecisionDto {
   readonly id: string;
   readonly projectId: string;
+  readonly kind: 'gate' | 'ticket';
   readonly question?: string;
   readonly options?: readonly { readonly label: string; readonly value: string }[];
   readonly allowFreeform: boolean;
 }
 
+// 上限は下の commentBodySchema と揃える。どちらの値も最終的に bd の argv に載るので、
+// 無制限だと spawn が E2BIG で落ち、exitCode:-1 が classifyBdError に bd-not-found と
+// 誤分類される (bdboard-xgvh レビュー指摘)。
 const decisionBodySchema = z.object({
-  choice: z.string().min(1).optional(),
-  freeform: z.string().min(1).optional(),
+  choice: z.string().min(1).max(2000).optional(),
+  freeform: z.string().min(1).max(2000).optional(),
 });
 
 const commentBodySchema = z.object({
@@ -736,6 +740,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         result.push({
           id: decision.id,
           projectId: entry.project.id,
+          kind: decision.kind,
           ...(decision.question !== undefined ? { question: decision.question } : {}),
           ...(decision.options !== undefined
             ? {
@@ -836,8 +841,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     try {
-      await deps.humanDecisions.respond(rootPath, id, responseText);
-      return c.json({ ok: true });
+      const outcome = await deps.humanDecisions.respond(rootPath, id, responseText);
+      return c.json({
+        ok: true,
+        outcome: { kind: outcome.kind, closed: outcome.closed },
+      });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to respond', error);
     }

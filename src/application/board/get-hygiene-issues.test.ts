@@ -167,7 +167,7 @@ describe('getHygieneIssues', () => {
       ],
       fingerprint: 'fp-a',
       fetchedAt: NOW,
-      pendingDecisions: [{ id: 'bdboard-waiting', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-waiting', kind: 'ticket', allowFreeform: true }],
     });
 
     const issues = getHygieneIssues(cache, NOW).filter(
@@ -214,7 +214,7 @@ describe('getHygieneIssues', () => {
       tickets: [makeTicket({ id: 'bdboard-dup', projectId: a.id, updatedAt: stale })],
       fingerprint: 'fp-a',
       fetchedAt: NOW,
-      pendingDecisions: [{ id: 'bdboard-dup', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-dup', kind: 'ticket', allowFreeform: true }],
     });
     cache.putProject({
       project: b,
@@ -246,7 +246,7 @@ describe('getHygieneIssues', () => {
       tickets: [makeTicket({ id: 'bdboard-dup', projectId: a.id, updatedAt: stale })],
       fingerprint: 'fp-a',
       fetchedAt: NOW,
-      pendingDecisions: [{ id: 'bdboard-dup', allowFreeform: true }],
+      pendingDecisions: [{ id: 'bdboard-dup', kind: 'ticket', allowFreeform: true }],
     });
     cache.putProject({
       project: b,

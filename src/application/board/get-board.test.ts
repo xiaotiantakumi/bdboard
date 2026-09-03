@@ -7,6 +7,7 @@ import {
 } from '../../domain/test-support.js';
 import type { Project } from '../../domain/project.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
+import type { PendingDecision } from '../ports/human-decisions.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
 import { getBoard } from './get-board.js';
 
@@ -64,7 +65,7 @@ function seedCache(
   items: readonly {
     readonly project: Project;
     readonly ticketId: string;
-    readonly pendingDecisions?: readonly { readonly id: string; readonly allowFreeform: boolean }[];
+    readonly pendingDecisions?: readonly PendingDecision[];
   }[],
 ): void {
   for (const item of items) {
@@ -384,7 +385,7 @@ describe('getBoard', () => {
         {
           project: a,
           ticketId: 'bdboard-waiting',
-          pendingDecisions: [{ id: 'bdboard-waiting', allowFreeform: true }],
+          pendingDecisions: [{ id: 'bdboard-waiting', kind: 'ticket', allowFreeform: true }],
         },
       ]);
 

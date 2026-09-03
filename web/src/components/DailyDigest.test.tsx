@@ -169,6 +169,7 @@ const defaultBoardResponse: BoardViewDto = {
 const defaultPendingDecisions: PendingDecisionDto[] = [
   {
     id: 'bdboard-pending',
+    kind: 'ticket',
     projectId: 'proj-a',
     question: 'Which option?',
     allowFreeform: false,
