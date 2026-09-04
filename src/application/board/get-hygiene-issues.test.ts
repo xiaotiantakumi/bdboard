@@ -343,6 +343,33 @@ describe('getHygieneIssues', () => {
     expect(withKeys.map((issue) => issue.ticketId)).toEqual(['bdboard-no-evidence']);
   });
 
+  it('passes closeEvidenceUnknownKeys through to checkHygiene', () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+    const closedAt = new Date(NOW.getTime() - 60_000);
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-unknown',
+          projectId: a.id,
+          status: 'closed',
+          closedAt,
+          commentCount: 1,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const unknownKeys = new Set<string>([pendingDecisionKey(a.id, 'bdboard-unknown')]);
+    const issues = getHygieneIssues(cache, NOW, { closeEvidenceUnknownKeys: unknownKeys }).filter(
+      (issue) => issue.kind === 'closed_without_evidence',
+    );
+    expect(issues).toEqual([]);
+  });
+
   it('uses the specified timezone for overdue_defer deferUntil formatting', () => {
     const cache = createFakeBoardCache();
     const now = new Date('2026-08-10T00:00:00.000Z');

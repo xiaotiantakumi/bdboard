@@ -358,7 +358,7 @@ function hasPrWordMention(text: string): boolean {
   return false;
 }
 
-function hasCloseEvidenceInReason(closeReason: string): boolean {
+export function hasCloseReasonEvidence(closeReason: string): boolean {
   if (hasPrWordMention(closeReason)) {
     return true;
   }
@@ -374,6 +374,40 @@ function hasCloseEvidenceInReason(closeReason: string): boolean {
   return false;
 }
 
+/**
+ * closed_without_evidence の判定でコメント本文を引く必要があるチケットか。
+ *
+ * アプリ層 (get-close-evidence.ts) がフェッチ対象を絞るために使う。ここに集約
+ * しないと、除外条件がドメインとアプリ層で二重管理になり、片方だけ直したときに
+ * 「UI には出ないのに bd だけ叩かれる」ような無駄が静かに発生する。
+ */
+export function needsCloseEvidenceLookup(
+  ticket: Ticket,
+  now: Date,
+  windowMs: number,
+): boolean {
+  if (ticket.status !== 'closed') {
+    return false;
+  }
+  if (!isValidDate(ticket.closedAt)) {
+    return false;
+  }
+  const elapsedMs = now.getTime() - ticket.closedAt.getTime();
+  if (elapsedMs < 0 || elapsedMs > windowMs) {
+    return false;
+  }
+  if (ticket.commentCount <= 0) {
+    return false;
+  }
+  if (isExcludedFromClosedWithoutEvidence(ticket)) {
+    return false;
+  }
+  if (ticket.closeReason !== undefined && hasCloseReasonEvidence(ticket.closeReason)) {
+    return false;
+  }
+  return true;
+}
+
 function hasCloseEvidence(
   ticket: Ticket,
   closeEvidenceKeys: ReadonlySet<string> | undefined,
@@ -382,7 +416,7 @@ function hasCloseEvidence(
   if (closeEvidenceKeys?.has(key) ?? false) {
     return true;
   }
-  if (ticket.closeReason !== undefined && hasCloseEvidenceInReason(ticket.closeReason)) {
+  if (ticket.closeReason !== undefined && hasCloseReasonEvidence(ticket.closeReason)) {
     return true;
   }
   return false;
@@ -399,6 +433,7 @@ function checkClosedWithoutEvidence(
   now: Date,
   thresholds: HygieneThresholds,
   closeEvidenceKeys: ReadonlySet<string> | undefined,
+  closeEvidenceUnknownKeys: ReadonlySet<string> | undefined,
 ): HygieneIssue | null {
   if (ticket.status !== 'closed') {
     return null;
@@ -412,6 +447,11 @@ function checkClosedWithoutEvidence(
 
   const elapsedMs = now.getTime() - ticket.closedAt.getTime();
   if (elapsedMs < 0 || elapsedMs > thresholds.closedWithoutEvidenceWindowMs) {
+    return null;
+  }
+
+  const key = pendingDecisionKey(ticket.projectId, ticket.id);
+  if (closeEvidenceUnknownKeys?.has(key) ?? false) {
     return null;
   }
 
@@ -680,6 +720,19 @@ export function checkHygiene(
      * コメントは見ず closeReason だけで判定する。
      */
     readonly closeEvidenceKeys?: ReadonlySet<string>;
+    /**
+     * コメント本文をまだ確認できていないチケットのキー集合
+     * (`pendingDecisionKey` と同じ \0 結合キー)。
+     *
+     * bd comments は1件 0.8〜2.8s かかるので、アプリ層は1リクエストあたりの
+     * フェッチ件数に上限を設ける。上限に達して未確認のまま残ったチケットは
+     * 「証拠なし」ではなく **未確認** であり、ここに載る。
+     *
+     * 未確認は検出しない。証拠なしと同一視すると、キャッシュが冷えている間だけ
+     * 100件規模の誤検知が並び、しばらくして勝手に消えることになる — hygiene は
+     * 「まだ調べていない」を「問題あり」と言ってはいけない。
+     */
+    readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
     readonly timeZone?: string;
   },
 ): readonly HygieneIssue[] {
@@ -744,6 +797,7 @@ export function checkHygiene(
       ctx.now,
       thresholds,
       ctx.closeEvidenceKeys,
+      ctx.closeEvidenceUnknownKeys,
     );
     if (closedWithoutEvidence !== null) {
       issues.push(closedWithoutEvidence);

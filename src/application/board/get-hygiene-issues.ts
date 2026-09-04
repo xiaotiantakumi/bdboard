@@ -21,10 +21,14 @@ export interface GetHygieneIssuesOptions {
    */
   readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
   /**
-   * close 済みチケットで PR/検証コメントがあるキー集合 (getCloseEvidenceKeys の戻り)。
+   * close 済みチケットで PR/検証コメントがあるキー集合 (getCloseEvidence の evidenceKeys)。
    * bd を叩く必要があるのでここでは組み立てず、呼び出し側から受け取る。
    */
   readonly closeEvidenceKeys?: ReadonlySet<string>;
+  /**
+   * コメント本文をまだ確認できていないチケット (getCloseEvidence の unknownKeys)。
+   */
+  readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
   readonly thresholds?: HygieneThresholds;
   readonly timeZone?: string;
 }
@@ -72,6 +76,9 @@ export function getHygieneIssues(
       : {}),
     ...(options?.closeEvidenceKeys !== undefined
       ? { closeEvidenceKeys: options.closeEvidenceKeys }
+      : {}),
+    ...(options?.closeEvidenceUnknownKeys !== undefined
+      ? { closeEvidenceUnknownKeys: options.closeEvidenceUnknownKeys }
       : {}),
     ...(options?.thresholds !== undefined ? { thresholds: options.thresholds } : {}),
     ...(options?.leftoverCandidates !== undefined

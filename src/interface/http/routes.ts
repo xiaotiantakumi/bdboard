@@ -10,7 +10,10 @@ import { getSimilarTickets } from '../../application/board/find-similar-tickets.
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getPendingCommentAnchors } from '../../application/board/get-pending-comment-anchors.js';
-import { getCloseEvidenceKeys } from '../../application/board/get-close-evidence.js';
+import {
+  CloseEvidenceCache,
+  getCloseEvidence,
+} from '../../application/board/get-close-evidence.js';
 import {
   getPrBadges,
   PrBadgeCommentCache,
@@ -495,6 +498,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
   const prBadgeCommentCache = new PrBadgeCommentCache();
   const prBadgeStatusCache = new PrBadgeStatusCache();
+  const closeEvidenceCache = new CloseEvidenceCache();
   const applicationVersion = deps.applicationVersion.getVersion();
   const inFlightOverlapMemo = new Map<string, InFlightOverlapMemoEntry>();
 
@@ -775,27 +779,37 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     let pendingCommentAnchors: ReadonlyMap<string, Date> | undefined;
     let closeEvidenceKeys: ReadonlySet<string> | undefined;
+    let closeEvidenceUnknownKeys: ReadonlySet<string> | undefined;
     if (deps.commentReader !== undefined) {
       pendingCommentAnchors = await getPendingCommentAnchors(
         deps.cache,
         deps.commentReader,
         projectIds !== undefined ? { projectIds } : undefined,
       );
-      // close 証拠チェックもコメント本文が必要 (bdboard-pkr6.8)。直近 close かつ
-      // commentCount > 0 のチケットだけに絞るので、台帳全件ぶんの bd 起動にはならない。
-      closeEvidenceKeys = await getCloseEvidenceKeys(
+      // close 証拠チェックもコメント本文が要る (bdboard-pkr6.8)。bd comments は高いので、
+      // 真偽値だけを closeEvidenceCache に貯め、1リクエストで新規に引くのは時間予算内だけ。
+      // 引き切れなかったぶんは unknownKeys として返り、未確認は検出しない。
+      const closeEvidence = await getCloseEvidence(
         deps.cache,
         deps.commentReader,
         now,
         closedWithoutEvidenceWindowMs,
-        projectIds !== undefined ? { projectIds } : undefined,
+        {
+          ...(projectIds !== undefined ? { projectIds } : {}),
+          cache: closeEvidenceCache,
+        },
       );
+      closeEvidenceKeys = closeEvidence.evidenceKeys;
+      closeEvidenceUnknownKeys = closeEvidence.unknownKeys;
     }
 
     const issues = getHygieneIssues(deps.cache, now, {
       ...(projectIds !== undefined ? { projectIds } : {}),
       ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
       ...(closeEvidenceKeys !== undefined ? { closeEvidenceKeys } : {}),
+      ...(closeEvidenceUnknownKeys !== undefined && closeEvidenceUnknownKeys.size > 0
+        ? { closeEvidenceUnknownKeys }
+        : {}),
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
       ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),

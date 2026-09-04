@@ -1742,6 +1742,48 @@ describe('createApiRoutes', () => {
     ).toContain('stale_pending_decision');
   });
 
+  it('reuses close evidence cache on the second /api/hygiene request', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const closedAt = new Date(NOW.getTime() - 60_000);
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-closed',
+          projectId: a.id,
+          status: 'closed',
+          closedAt,
+          commentCount: 1,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_root: string, issueId: string) => [
+        {
+          id: `${issueId}-1`,
+          issueId,
+          author: 'someone',
+          text: 'PR: https://github.com/x/y/pull/99',
+          createdAt: new Date(NOW.getTime() - 30_000),
+        },
+      ]),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, commentReader }));
+
+    const first = await app.request('/api/hygiene');
+    expect(first.status).toBe(200);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(1);
+
+    const second = await app.request('/api/hygiene');
+    expect(second.status).toBe(200);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(1);
+  });
+
   it('returns merged_leftover hygiene issues with cleanup when worktreeScanner is configured', async () => {
     const cache = createFakeBoardCache();
     const a = project('proj-a', '/projects/a');

@@ -3,6 +3,7 @@ import type { DependencyEdge } from './dependency.js';
 import {
   checkHygiene,
   formatLocalDateKey,
+  needsCloseEvidenceLookup,
   pendingDecisionKey,
 } from './hygiene.js';
 import { DEFAULT_HYGIENE_THRESHOLDS } from './hygiene-thresholds.js';
@@ -1235,12 +1236,14 @@ describe('checkHygiene closed_without_evidence', () => {
     tickets: readonly Ticket[],
     options: {
       readonly closeEvidenceKeys?: ReadonlySet<string>;
+      readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
       readonly thresholds?: typeof DEFAULT_HYGIENE_THRESHOLDS;
     } = {},
   ) {
     return checkHygiene(tickets, {
       now: NOW,
       closeEvidenceKeys: options.closeEvidenceKeys,
+      closeEvidenceUnknownKeys: options.closeEvidenceUnknownKeys,
       thresholds: options.thresholds,
     }).filter((issue) => issue.kind === 'closed_without_evidence');
   }
@@ -1397,5 +1400,133 @@ describe('checkHygiene closed_without_evidence', () => {
     });
 
     expect(closedWithoutEvidenceIssues([ticket])).toEqual([]);
+  });
+
+  it('does not flag when closeEvidenceUnknownKeys contains the ticket', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-unknown',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+    });
+
+    expect(
+      closedWithoutEvidenceIssues([ticket], {
+        closeEvidenceUnknownKeys: evidenceKeys('bdboard-unknown'),
+      }),
+    ).toEqual([]);
+  });
+
+  it('does not flag when both unknown and evidence keys contain the ticket', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-both',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+    });
+
+    const keys = evidenceKeys('bdboard-both');
+    expect(
+      closedWithoutEvidenceIssues([ticket], {
+        closeEvidenceKeys: keys,
+        closeEvidenceUnknownKeys: keys,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe('needsCloseEvidenceLookup', () => {
+  const WINDOW_MS = DEFAULT_HYGIENE_THRESHOLDS.closedWithoutEvidenceWindowMs;
+
+  function lookup(
+    ticket: Ticket,
+    now: Date = NOW,
+    windowMs: number = WINDOW_MS,
+  ): boolean {
+    return needsCloseEvidenceLookup(ticket, now, windowMs);
+  }
+
+  it('returns true for a closed ticket within window with comments and no closeReason evidence', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-lookup',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+    });
+
+    expect(lookup(ticket)).toBe(true);
+  });
+
+  it('returns false when status is not closed', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-open',
+      status: 'open',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+    });
+
+    expect(lookup(ticket)).toBe(false);
+  });
+
+  it('returns false when closedAt is outside the window', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-old',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - WINDOW_MS - 1),
+      commentCount: 1,
+    });
+
+    expect(lookup(ticket)).toBe(false);
+  });
+
+  it('returns false when commentCount is zero', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-no-comments',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 0,
+    });
+
+    expect(lookup(ticket)).toBe(false);
+  });
+
+  it('returns false for epic, gate, or gt:slot tickets', () => {
+    const epic = makeTicket({
+      id: 'bdboard-epic',
+      issueType: 'epic',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+    });
+    const gate = makeTicket({
+      id: 'bdboard-gate',
+      issueType: 'gate',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+    });
+    const slot = makeTicket({
+      id: 'bdboard-slot',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+      labels: ['gt:slot'],
+    });
+
+    expect(lookup(epic)).toBe(false);
+    expect(lookup(gate)).toBe(false);
+    expect(lookup(slot)).toBe(false);
+  });
+
+  it('returns false when closeReason contains a PR number reference', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-reason',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+      commentCount: 1,
+      closeReason: 'Merged via #123',
+    });
+
+    expect(lookup(ticket)).toBe(false);
   });
 });
