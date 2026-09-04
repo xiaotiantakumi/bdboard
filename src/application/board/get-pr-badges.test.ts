@@ -974,4 +974,85 @@ describe('getPrBadges', () => {
     await getPrBadges(cache, commentReader, prStatusReader, options);
     expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
   });
+
+  describe('close-evidence derivation from the PR-badge comment scan (bdboard-pkr6.16, M2)', () => {
+    it('derives hasCloseEvidence=true when any comment matches the PR/検証 marker', async () => {
+      const cache = createFakeBoardCache();
+      const a = project('proj-a', '/projects/a');
+      const ticket = makeTicket({
+        id: 'bdboard-mixed-comments',
+        projectId: a.id,
+        commentCount: 2,
+      });
+      cache.putProject({
+        project: a,
+        tickets: [ticket],
+        fingerprint: 'fp-a',
+        fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+      });
+
+      const commentReader: CommentReader = {
+        listComments: vi.fn(async () => [
+          {
+            id: 'c1',
+            issueId: 'bdboard-mixed-comments',
+            author: 'agent',
+            text: 'まだレビュー中です',
+            createdAt: new Date('2026-06-01T12:00:00.000Z'),
+          },
+          {
+            id: 'c2',
+            issueId: 'bdboard-mixed-comments',
+            author: 'agent',
+            text: `PR: ${PR_URL}`,
+            createdAt: new Date('2026-06-01T12:00:01.000Z'),
+          },
+        ]),
+      };
+      const prStatusReader: PrStatusReader = { getPrStatus: vi.fn(async () => null) };
+      const commentCache = new PrBadgeCommentCache();
+
+      await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
+
+      expect(
+        commentCache.getCloseEvidence(ticket.id, ticket.commentCount, ticket.updatedAt.getTime()),
+      ).toBe(true);
+    });
+
+    it('derives hasCloseEvidence=false when no comment matches the marker', async () => {
+      const cache = createFakeBoardCache();
+      const a = project('proj-a', '/projects/a');
+      const ticket = makeTicket({
+        id: 'bdboard-no-marker-comments',
+        projectId: a.id,
+        commentCount: 1,
+      });
+      cache.putProject({
+        project: a,
+        tickets: [ticket],
+        fingerprint: 'fp-a',
+        fetchedAt: new Date('2026-06-01T12:00:00.000Z'),
+      });
+
+      const commentReader: CommentReader = {
+        listComments: vi.fn(async () => [
+          {
+            id: 'c1',
+            issueId: 'bdboard-no-marker-comments',
+            author: 'agent',
+            text: 'まだレビュー中です',
+            createdAt: new Date('2026-06-01T12:00:00.000Z'),
+          },
+        ]),
+      };
+      const prStatusReader: PrStatusReader = { getPrStatus: vi.fn(async () => null) };
+      const commentCache = new PrBadgeCommentCache();
+
+      await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
+
+      expect(
+        commentCache.getCloseEvidence(ticket.id, ticket.commentCount, ticket.updatedAt.getTime()),
+      ).toBe(false);
+    });
+  });
 });

@@ -1744,7 +1744,7 @@ describe('createApiRoutes', () => {
     expect(body.closeEvidence).toBeNull();
   });
 
-  it('reuses close evidence cache on the second /api/hygiene request', async () => {
+  it('reuses the PR-badge comment scan for /api/hygiene and does not call listComments again', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');
     const closedAt = new Date(NOW.getTime() - 60_000);
@@ -1774,19 +1774,28 @@ describe('createApiRoutes', () => {
         },
       ]),
     };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => null),
+    };
 
-    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const app = createApiRoutes(
+      createDeps({ cache, commentReader, prStatusReader }),
+    );
 
-    const first = await app.request('/api/hygiene');
-    expect(first.status).toBe(200);
+    const prLinks = await app.request('/api/pr-links');
+    expect(prLinks.status).toBe(200);
     expect(commentReader.listComments).toHaveBeenCalledTimes(1);
 
-    const second = await app.request('/api/hygiene');
-    expect(second.status).toBe(200);
+    const hygiene = await app.request('/api/hygiene');
+    expect(hygiene.status).toBe(200);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(1);
+
+    const hygieneAgain = await app.request('/api/hygiene');
+    expect(hygieneAgain.status).toBe(200);
     expect(commentReader.listComments).toHaveBeenCalledTimes(1);
   });
 
-  it('includes closeEvidence.unknownCount on /api/hygiene when commentReader is wired', async () => {
+  it('flags closed_without_evidence once the PR-badge scan has covered the ticket, with unknownCount 0', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');
     cache.putProject({
@@ -1822,12 +1831,27 @@ describe('createApiRoutes', () => {
         },
       ]),
     };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => null),
+    };
 
-    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const app = createApiRoutes(
+      createDeps({ cache, commentReader, prStatusReader }),
+    );
+
+    // PR バッジ用スキャン (/api/pr-links) で両チケットとも「証拠なし」を
+    // 確定させておく。これが無いと hygiene 側は unknown のままになる
+    // (bdboard-pkr6.16, M3: この配線が抜けても検知できるようにするテスト)。
+    const prLinks = await app.request('/api/pr-links');
+    expect(prLinks.status).toBe(200);
+
     const body = await (await app.request('/api/hygiene')).json();
 
-    expect(body.closeEvidence).toEqual({ unknownCount: expect.any(Number) });
-    expect(body.closeEvidence.unknownCount).toBeGreaterThanOrEqual(0);
+    expect(body.closeEvidence).toEqual({ unknownCount: 0 });
+    const closedWithoutEvidenceTicketIds = body.issues
+      .filter((issue: { kind: string }) => issue.kind === 'closed_without_evidence')
+      .map((issue: { ticketId: string }) => issue.ticketId);
+    expect(closedWithoutEvidenceTicketIds.sort()).toEqual(['bdboard-a', 'bdboard-b']);
   });
 
   it('does not flag closed_without_evidence without commentReader and returns closeEvidence null', async () => {
