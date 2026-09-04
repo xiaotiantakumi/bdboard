@@ -162,6 +162,40 @@ export const DEFAULT_SETTING_SOURCES = 'project,local';
  * 「DEFAULT_ALLOWED_TOOLS ∪ CLI 組み込みの読み取り専用集合」であり、
  * 後者は我々が列挙も固定もできない。
  *
+ * その組み込み集合に書き込み系・ネットワーク系が入っていないかを実測した
+ * (bdboard-ky0j、2026-09-04、claude CLI 2.1.233)。判定できるのは DENIED_TOOLS に
+ * 載っていない verb だけ (載っていれば deny が勝つので、拒否されても組み込み集合の
+ * 話にならない)。該当する 6 件は全滅した:
+ *
+ *   書き込み系   touch / mkdir / echo リダイレクト -> 拒否
+ *   ネットワーク ping / nc / git ls-remote         -> 拒否
+ *
+ * 対照群 (date/whoami/df が実行、rsync/sw_vers が拒否) も再現した。
+ * よって 2.1.233 時点では、組み込み集合は無害な読み取り専用コマンドに留まる。
+ *
+ * 一次測定は cwd を /tmp 配下に置いており、macOS の /tmp は /private/tmp への
+ * シンボリックリンクなので「許可ディレクトリとパスが食い違っただけ」の可能性が
+ * 残っていた。**本番では run の cwd は worktree 自身なのでその食い違いは起きない**
+ * =その読み筋なら本番では touch が通る、ということになる。そこでシンボリックリンクを
+ * 含まない実パスで再測定した: 対象が許可ディレクトリの内側にあっても拒否され、かつ
+ * permission_denials に記録が残った。つまり拒否しているのは permission 層である。
+ * CLI のメッセージは "may only create or modify files in the allowed working
+ * directories for this session: '<まさにそのディレクトリ>'" と出るので誤解を招く。
+ * この文言を根拠に「別レイヤーが弾いている」と読まないこと。
+ *
+ * 追加の deny は入れない。実測で兆候が無く、足すべき対象をデータから導けないため
+ * (根拠のない deny は天井を強くしたように見えて何も変えない)。代わりに残すのは
+ * 再測定の手順である。**CLI を上げたらここを測り直すこと**:
+ *
+ *   1. 使い捨ての空ディレクトリを cwd にする (シンボリックリンクを含まない実パス)。
+ *   2. DENIED_TOOLS はそのまま、--allowedTools だけを Glob 等へ絞って spawn する。
+ *   3. DENIED_TOOLS に載っていない書き込み/ネットワーク verb を試す。
+ *      上記 6 件が最低ライン (未測定: sftp / telnet / dd / tee / install など)。
+ *   4. 対照群も併せて流し、測定条件そのものが壊れていないことを確かめる。
+ *
+ * 上の分類は 2.1.233 での観測であって契約ではない。DEFAULT_ALLOWED_TOOLS を
+ * 読んだだけでは「この run に何ができるか」は答えられない。
+ *
  * ベアな `Bash` は入れない。実測 (2026-09-04): `--disallowedTools Bash` は
  * 権限拒否ではなく **Bash ツールごとモデルの tool set から消える**
  * (「I don't have a Bash tool available」と返し tool_use が一件も出ない)。
