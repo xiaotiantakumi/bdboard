@@ -62,7 +62,15 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 3. **成功して初めて claim**: `bd update <id> --claim`。claim は「誰が何をやっているか」の
    台帳記録であって排他ではない。worktree より先に claim を打たない（claim だけ通って
    worktree で負けると、台帳だけ汚れる）。
-4. **作業中は heartbeat を打ち続ける**: `bd heartbeat <id>` を lease TTL より十分速い間隔で
+4. **実装に入る前に既存実装を1回探す**（重複実装の予防）: 変更予定の領域名・関数名で
+   `git grep -n <キーワード>` と `bd search "<キーワード>" --status in_progress`（title/ID しか
+   検索しない。説明文まで見るなら `bd list --status in_progress --desc-contains "<キーワード>"`
+   を併用する）を各1回。既存ヘルパー・同目的の実装が見つかったら再利用し、
+   `bd comment <id> "再利用: <path>"` を残す（見つからなければコメント不要）。同じ領域を触って
+   いる in_progress チケットがあれば双方にコメントし、`bd dep add <自分> <相手> --type related`
+   を張る。根拠: 2026-08 に並列実装由来の重複ヘルパー解消チケットが10件超
+   （failure-catalog.md の duplicate-helper-parallel）。
+5. **作業中は heartbeat を打ち続ける**: `bd heartbeat <id>` を lease TTL より十分速い間隔で
    （目安 TTL/3 以下、かつどれだけ TTL が長くても 5 分以下。長いビルド/テストの前後にも1回）。
    heartbeat が**失敗したら自分はもう所有者ではない** — 直ちに手を止めて `bd show <id>` で
    状況を確認する（[references/lease-params.md](references/lease-params.md)）。
@@ -78,10 +86,10 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
      reclaim の誤発火（生きている並行作業の回収）を招く（実測: 8並列運用で発生 —
      bdboard-3tw.99 / bdboard-l1t.4）。詳細:
      [references/lease-params.md](references/lease-params.md)
-5. **負けたときの振る舞い**: 相手の in_progress を open に戻さない（先行セッションが実作業中
+6. **負けたときの振る舞い**: 相手の in_progress を open に戻さない（先行セッションが実作業中
    である以上 in_progress は事実として正しい）。相手のプロセスも kill しない。誤って作業して
    しまっていたら成果を patch に退避して撤退する。
-6. **worktree の存在だけで「放棄」と断定しない**: 空の worktree は「作成直後・エージェント
+7. **worktree の存在だけで「放棄」と断定しない**: 空の worktree は「作成直後・エージェント
    起動直前」でもありうる。放棄の裏取りは lease 失効＋猶予経過に加えて、`git status` が
    空・`lsof` でプロセス無し・チケット `updated_at` が古い、を揃えてから
    （詳細: [references/lease-params.md](references/lease-params.md)）。
@@ -129,7 +137,7 @@ worktree 作成から PR・マージまでの全体フロー:
 4. **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。
    ブロックしたチケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
    ただしブロック中もそのチケットは in_progress のまま自分の保持下にある —
-   規律2 手順4の**一括 heartbeat の対象に含め続ける**（外すと reclaim に回収される）。
+   規律2 手順5の**一括 heartbeat の対象に含め続ける**（外すと reclaim に回収される）。
 5. 回答が来たら（gate resolve + コメント）、`bd label remove <id> human` してから作業を
    再開する。
 6. **特定チケットに紐づかない横断的な確認だけ**、質問専用チケットを別に切って human ラベルを
@@ -149,16 +157,21 @@ worktree 作成から PR・マージまでの全体フロー:
 
 手順:
 
-1. 検証（プロジェクト規約の検証コマンド）→ PR → CI → マージ、まで完走する
-   （マージ排他3層を含む詳細: [references/worktree-pr-flow.md](references/worktree-pr-flow.md)。
-   委譲成果の検証規律: [references/verification.md](references/verification.md)）。
-2. **マージが成功してから** `bd close <id>`。マージ前に close しない。マージまで到達せずに
-   セッションを終えるなら、チケットは in_progress のまま現状をコメントに残す
-   （lease が切れれば reclaim が拾う — それが正常系）。
-3. `bd comment <id> "PR: <url> / <一行サマリ>"` — 後続セッションが経緯を辿れるようにする。
+1. 検証 → PR → CI → マージ、まで完走する。**検証コマンドは (1) 検証コントラクト
+   `.claude/bdboard-harness.json` の `verify` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md
+   → (3) どちらにも無ければ検証せずに進めない**、の順で決める（3キーの意味・(3) の
+   エスカレーション文言・マージ排他3層: [worktree-pr-flow.md](references/worktree-pr-flow.md)）。
+2. **マージが成功したら、`bd close` の前に証拠コメントを残す**:
+   [references/close-template.md](references/close-template.md) の書式で `bd comment <id>`
+   （**`PR:` 行を必ず含める** — 人だけでなく Stop hook と Hygiene がこれを「証拠あり」の
+   検索キーにする）。
+3. **その上で `bd close <id>`。マージ前に close しない。** マージまで到達せずにセッションを
+   終えるなら、チケットは in_progress のまま現状をコメントに残す（lease が切れれば reclaim が
+   拾う — それが正常系）。
 4. worktree を掃除する: `git worktree remove <path>` → ブランチ削除 → `git remote prune origin`
    （マージした本人の責務。放置すると規律2の空き確認を全セッションで狂わせる）。
-5. 残作業・気づきはチケット化してから終える（頭の中に残して終えない）。
+5. 残作業・気づきはチケット化してから終える（頭の中に残して終えない）。作業中に見つけた
+   派生チケットは `bd create ... --deps discovered-from:<元チケット>` で来歴を辺として残す。
 6. `bd dolt push` は**チケットごとではなくセッション末に1回**。外向きのネットワーク操作
    なので、プロジェクトの git/sync ポリシーが自律実行を明示的に許可していない限り、実行前に
    ユーザーへ確認する。
@@ -183,7 +196,8 @@ worktree 作成から PR・マージまでの全体フロー:
    worktree / プロセス / チケットの状態）を残す。作業中チケットがあれば `bd comment`、
    無ければ scratchpad のファイルへ。
 3. **その場で直せないなら起票して現作業へ戻る**: ブラシュアップ用チケットを切り
-   （`bd create --type=task --priority=2` — 成果消失級の再発リスクなら 1）、
+   （`bd create --type=task --priority=2 --deps discovered-from:<元チケット>` —
+   成果消失級の再発リスクなら priority 1。`--deps` で来歴を辺として残す）、
    `bd label add <新id> harness` でラベルを付け、証拠と仮説をコメントに残す。
    失敗対応のために現チケットを放置しない（規律3と同じノンブロッキング原則）。
 4. **編集する層を先に決める**: この skill は注入パックとして複数プロジェクトへ配布
@@ -201,6 +215,18 @@ worktree 作成から PR・マージまでの全体フロー:
    エントリを置く。カタログは「二度目を防ぐ照合表」— 並列一括着手・マージ・worktree
    掃除・サーバー操作など事故多発領域に入る前に、該当カテゴリを一瞥する。
 
+## 機械ガード（hooks）— 文章で防げない操作は hook が止める
+
+- パックは `hooks/` に PreToolUse（Bash / Edit 系）と Stop の3スクリプトを同梱し、注入時に
+  注入先の `.claude/settings.json` へ登録される。
+- 止めるもの: `pkill`/`killall`、`--remote` 無しの `bd dolt push`/`pull`、bare な `git stash`/
+  `pop`、`run_in_background` と末尾 `&` の併用、注入コピー `.claude/skills/bdboard-harness/**`
+  の編集、`bd/` ブランチでの `.beads/**` 編集、検証コントラクトの `hooks.denyBashPatterns`。
+  Stop hook は「in_progress のまま PR も直近コメントも無く終わろうとした」を差し戻す。
+- **hook に止められたら回避策を探さない。** stderr に出る代替手順に従う。hook 自体の不具合は
+  `harness-upstream` チケットで起票する（[references/layering.md](references/layering.md)）。
+- 各 hook の deny 条件と回避手段の一覧: `hooks/README.md`。
+
 ## references
 
 | ファイル | 内容 |
@@ -208,6 +234,7 @@ worktree 作成から PR・マージまでの全体フロー:
 | [references/worktree-pr-flow.md](references/worktree-pr-flow.md) | per-ticket worktree+branch+PR フローの全手順とマージ排他3層 |
 | [references/lease-params.md](references/lease-params.md) | lease/heartbeat/reclaim の既定パラメータと失敗時の意味 |
 | [references/question-template.md](references/question-template.md) | 確認待ちコメントの書き方テンプレ |
+| [references/close-template.md](references/close-template.md) | close 直前コメントの定型（検証コマンドと exit / PR / CI / レビュー指摘と採用 / 未了） |
 | [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ、無断 commit/push/PR作成/force-push の検知と封じ込め） |
 | [references/frontend-gotchas.md](references/frontend-gotchas.md) | bd/git 運用規律ではなく web/ 実装（React+Vite）自体で踏んだ非自明な罠。`<details>` の子要素に無条件 `display` を当てると閉じていても常時レンダリングされクリックを奪う問題、dev限定の現象かを本番ビルド(`vite build && vite preview`)で切り分ける手順 |
 | [references/failure-catalog.md](references/failure-catalog.md) | 既知ハーネス失敗の照合台帳。カテゴリ別（排他・worktree / マージ・PR / サーバー・ポート / 検証・ビルド / 委譲・検証 / 多層ハーネス・配布 / bd 操作・確認待ち）の圧縮エントリと本則へのポインタ |
