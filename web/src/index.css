@@ -1742,6 +1742,11 @@ body {
   font-size: 0.75rem;
   line-height: 1.45;
   color: var(--color-text-secondary);
+  /* projectId / lastError は空白無しの長トークン。幅は .hygiene-panel 由来で
+     確定しているので折り返し許可だけで足りる (min-width: 0 は実測で無効果)。
+     anywhere は .card-title と同判断 — min-content にも効くので将来 auto 幅へ
+     移っても壊れない。 */
+  overflow-wrap: anywhere;
 }
 
 .hygiene-reclaim-status-error {
