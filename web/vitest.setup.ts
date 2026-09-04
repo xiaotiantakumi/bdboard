@@ -14,3 +14,44 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
     disconnect(): void {}
   };
 }
+
+// jsdom does not implement matchMedia. Production layout code (useResizableSidePanel,
+// useMatchMedia, BoardView lane indicator) reads the same breakpoint as CSS
+// @media (max-width: 700px). Evaluating against documentElement.clientWidth (with
+// innerWidth fallback when clientWidth is 0) keeps JS aligned with CSS media queries
+// and lets unit tests inject overflow (inflated innerWidth + narrow clientWidth).
+if (typeof globalThis.matchMedia === 'undefined') {
+  globalThis.matchMedia = (query: string): MediaQueryList => {
+    const parseMaxWidthPx = (mediaQuery: string): number | null => {
+      const match = mediaQuery.match(/^\(max-width:\s*(\d+(?:\.\d+)?)px\)$/);
+      return match ? Number(match[1]) : null;
+    };
+
+    const layoutViewportWidth = (): number => {
+      const clientWidth = document.documentElement.clientWidth;
+      return clientWidth || window.innerWidth;
+    };
+
+    const evaluateMatches = (): boolean => {
+      const maxWidth = parseMaxWidthPx(query);
+      if (maxWidth === null) return false;
+      return layoutViewportWidth() <= maxWidth;
+    };
+
+    return {
+      media: query,
+      get matches() {
+        return evaluateMatches();
+      },
+      onchange: null,
+      addEventListener(): void {},
+      removeEventListener(): void {},
+      // lib.dom still requires these deprecated members on MediaQueryList.
+      addListener(): void {},
+      removeListener(): void {},
+      dispatchEvent(): boolean {
+        return true;
+      },
+    };
+  };
+}

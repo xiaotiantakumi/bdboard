@@ -27,10 +27,18 @@ function getPanelWidth() {
   return panel.style.width;
 }
 
+function setViewportDimensions(clientWidth: number, innerWidth: number) {
+  Object.defineProperty(document.documentElement, 'clientWidth', {
+    configurable: true,
+    value: clientWidth,
+  });
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: innerWidth });
+}
+
 describe('useResizableSidePanel', () => {
   beforeEach(() => {
     localStorage.clear();
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1000 });
+    setViewportDimensions(0, 1000);
   });
 
   afterEach(() => {
@@ -119,7 +127,7 @@ describe('useResizableSidePanel', () => {
   });
 
   it('does nothing when the viewport is too narrow to resize', () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 });
+    setViewportDimensions(0, 600);
     render(<TestPanel />);
     const handle = getHandle();
 
@@ -160,7 +168,7 @@ describe('useResizableSidePanel', () => {
   });
 
   it('ignores keyboard resizing when the viewport is too narrow', () => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 600 });
+    setViewportDimensions(0, 600);
     render(<TestPanel />);
     const handle = getHandle();
 
@@ -173,6 +181,34 @@ describe('useResizableSidePanel', () => {
     localStorage.setItem(STORAGE_KEY, '600');
     render(<TestPanel />);
     expect(getPanelWidth()).toBe('600px');
+  });
+
+  it('disables resize when innerWidth is inflated by overflow but clientWidth matches the mobile CSS breakpoint', () => {
+    // bdboard-wdwa: 375px device reported innerWidth=1312 with horizontal overflow.
+    // CSS @media (max-width: 700px) uses clientWidth (=375); old JS used innerWidth (>700).
+    setViewportDimensions(375, 1312);
+    render(<TestPanel />);
+    const handle = getHandle();
+
+    fireEvent(handle, new MouseEvent('pointerdown', { bubbles: true, clientX: 500 }));
+    fireEvent(handle, new MouseEvent('pointermove', { bubbles: true, clientX: 100 }));
+    expect(getPanelWidth()).toBe('480px');
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(getPanelWidth()).toBe('480px');
+    expect(localStorage.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('clamps width using clientWidth when innerWidth is inflated by horizontal overflow', () => {
+    setViewportDimensions(1000, 1312);
+    render(<TestPanel />);
+    const handle = getHandle();
+
+    fireEvent.keyDown(handle, { key: 'End' });
+    // Old impl: 1312 - 320 = 992 cap -> 720. New impl: 1000 - 320 = 680 cap.
+    expect(getPanelWidth()).toBe('680px');
+    expect(localStorage.getItem(STORAGE_KEY)).toBe('680');
   });
 
   it('reacts to storage events from another tab without writing back', () => {
