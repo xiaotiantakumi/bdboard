@@ -5946,9 +5946,12 @@ body {
   /* 210px 固定のままだと grid の可変トラックからはみ出す。ラベル側に
      text-overflow: ellipsis が既にあるので、幅だけトラックに合わせる。
      同詳細度 (0,1,0) だと後ろにある素の .project-picker-button { min-height:30px;
-     width:210px } (6131行付近) が勝つため、.header プレフィックスで (0,2,0) に底上げする。 */
+     width:210px } (6240行付近) が勝つため、.header プレフィックスで (0,2,0) に底上げする。
+     max-width:210px は 481〜700px 帯で 1fr トラック全幅へ広がるのを防ぐ (375px では 1fr が
+     210px より狭いので既存の圧縮挙動は変わらない)。 */
   .header .project-picker-button {
     width: 100%;
+    max-width: 210px;
     min-height: 44px;
   }
 
