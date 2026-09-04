@@ -141,7 +141,16 @@ test.describe('mobile input font-size', () => {
       timeout: 15_000,
     });
 
-    // 実測7（ボード2 + 詳細パネル内 text/search/textarea/select 5）。下限5は約71%で丸ごと消え検知用。
+    // 実測7。内訳: ボード2 (select#board-priority-ceiling / input[type=search].board-filter-input) +
+    // 詳細パネル5 (#label-add-input / #dependency-search / #decision-freeform / #comment-text /
+    // aria-label="延期期間" の select)。
+    // #decision-freeform は #comment-text 待機では保証されない — 上記5のうち4つ
+    // (#label-add-input / #dependency-search / #comment-text / 延期期間 select) は同一
+    // {data !== undefined} ブロックだが、#decision-freeform は ['pending-decisions'] 由来で
+    // 同一コミット描画の保証が無い。この時点で確実に居るのは6、実測は7。
+    // 下限5は確実な6より下なので #decision-freeform の到着タイミングに依存してフレークしない。
+    // 5/7≒71% (確実な6で見ても83%) で「フォーム群が丸ごと消えた」検知用。
+    // 静的読解で6と数えて食い違った過去があるため内訳を明示 (bdboard-72wo)。
     await expectAllFormElementsAtLeast16px(page, 'ticket detail open', 5);
 
     const closeBtn = dialog.getByRole('button', { name: '閉じる' });

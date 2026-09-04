@@ -55,9 +55,13 @@ wanted, that is a separate, explicitly user-approved change.
 tracked, so every worktree has one. From a worktree it therefore runs
 `npm run start` **in the worktree**, which binds port 8787 — the main
 checkout's port. What gets served then depends on that worktree, because
-`webDistDir` is derived from `import.meta.url` (`src/main.ts:990`), i.e.
-from *which checkout's `src/main.ts` is executing* — cwd is the upstream
-cause, not the direct one:
+`webDistDir` is resolved by `resolveWebDistDir()` from the executing
+`src/main.ts`'s `repoRoot` (derived from `import.meta.url`) — i.e. from
+*which checkout's `src/main.ts` is executing*. Session cwd is the upstream
+cause (it picks which `src/main.ts` runs via `npm run start` resolving
+`package.json`), not a direct input to static file resolution; `serveStatic`
+receives an absolute path. `BDBOARD_WEB_DIST`, if set, overrides the default
+`<repoRoot>/web/dist`.
 
 - **A worktree that has never run `npm run build:web`** (a fresh one, or
   one whose `npm run verify` has not finished) has no `web/dist`, so the
@@ -84,9 +88,8 @@ If that path is not the main checkout, the wrong server is running
 process).
 
 From a worktree, start the server in the main checkout instead — the `cd`
-is load-bearing beyond picking the right `src/main.ts`, because
-`serveStatic`'s root is `path.relative(process.cwd(), webDistDir)`
-(`src/main.ts:994-996`):
+is load-bearing precisely because it selects which checkout's `src/main.ts`
+runs (and therefore which `web/dist` is served):
 
 ```bash
 cd /path/to/main/checkout && nohup npm run start > /tmp/bdboard-server.log 2>&1 &
