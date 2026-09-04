@@ -1260,7 +1260,9 @@ export function TicketDetailPanel({
             panel={detailPanel}
           />
         )}
-        <div className="detail-header">
+        {/* .detail-header は7パネル共有のため、モバイル向け縦積みは ticket-detail-header
+            修飾クラスで詳細パネルだけに限定する (bdboard-h4xs.2)。 */}
+        <div className="detail-header ticket-detail-header">
           {titleEditing ? (
             <>
               <h2 id="detail-title" className="sr-only">

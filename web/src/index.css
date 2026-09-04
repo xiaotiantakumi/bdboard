@@ -5373,7 +5373,51 @@ body {
 
   .detail-panel {
     width: 100vw;
-    padding: 16px;
+    padding-top: 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  .detail-header {
+    padding-top: max(20px, env(safe-area-inset-top));
+  }
+
+  /* 481–700px 帯も含め、モバイル幅では 44px タップ領域を確保 (bdboard-h4xs.2) */
+  .btn.detail-close {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* btn-small のままだと 26px でタップ標的として小さすぎるので、閉じるボタンと
+     同じ 44px へ揃える (bdboard-4ql7) */
+  .btn.detail-back {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* スマホ幅ではヘッダーを縦積みにして、アクション群（戻る / ウォッチ / 閉じる）を
+     タイトルの下の独立した行へ下ろす。全画面パネルの右上は片手操作で親指が最も
+     届きにくい位置で、そこに 44px の閉じるボタンを置いても押しにくさは解消しない
+     (bdboard-h4xs.2 受け入れ条件2「配置し直す」)。
+     .detail-header は7つのパネルで共有しているので、詳細パネル専用の
+     .ticket-detail-header に限定する。
+     ヘッダーはスティッキーなので縦に伸びる分だけ本文の可視領域は減る — 意図した取引。 */
+  .ticket-detail-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .ticket-detail-header .detail-header-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 
   .overlay {
@@ -5552,17 +5596,6 @@ body {
     min-height: 44px;
     display: inline-flex;
     align-items: center;
-  }
-
-  .btn.detail-close {
-    min-height: 44px;
-    min-width: 44px;
-  }
-
-  /* btn-small のままだと 26px でタップ標的として小さすぎるので、閉じるボタンと
-     同じ 44px へ揃える (bdboard-4ql7) */
-  .btn.detail-back {
-    min-height: 44px;
   }
 
   .tunnel-input {
