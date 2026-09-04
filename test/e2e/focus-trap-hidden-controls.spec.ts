@@ -23,6 +23,7 @@ test.describe('focus trap and CSS-hidden controls', () => {
     page,
   }) => {
     await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 5_000 });
     const chatButton = page.getByRole('button', { name: 'チャット' });
     await expect(chatButton).toBeVisible({ timeout: 15_000 });
     await chatButton.click();

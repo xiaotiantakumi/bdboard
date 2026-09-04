@@ -214,6 +214,9 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_CURSOR_MODEL` | (同上)Cursor チャットで使うモデル。未設定時は `cursor-agent` 側のアカウント既定モデルに委ねる(`--model` を付けない) | (未設定) |
 | `BDBOARD_AGY_PATH` | (`BDBOARD_CHAT_AGENTS` に `agy` を含めた場合のみ有効)呼び出す Antigravity CLI のパス/名前 | `agy` |
 | `BDBOARD_AGY_MODEL` | (同上)agy のモデル。未設定時はアカウント既定。`agy models` の id (例: `gemini-3.7-flash-medium`) を指定 | (未設定) |
+| `BDBOARD_WEB_DIST` | ビルド済み Web UI(`web/dist`)の配信元ディレクトリ。主用途は e2e で、`test/e2e/global-setup.ts` が使い捨てディレクトリへコピーしたスナップショットを指すために使う。`npm run test:e2e` と `npm run verify` が同じ `web/dist` を同時に作り直すレースから e2e を守るためのもの。相対パスは起動時に一度だけ起動ディレクトリ基準で解決される | `<リポジトリルート>/web/dist` |
+
+CLAUDE.md は起動ログの `Serving static web UI from <path>` がメインチェックアウトを指していなければ別チェックアウトのサーバーが動いていると疑う判定に使っている。`BDBOARD_WEB_DIST` を設定するとこのログには tmp のパスが出るが、判定は「メインチェックアウト以外なら疑う」という向きなので安全側に外れるだけで誤検出は生じない。
 
 チャットの画像添付対応は次のとおり。
 
