@@ -192,6 +192,15 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       BDBOARD_CLAUDE_PATH: claudeStub,
       BDBOARD_AI_QUOTA_DISABLED: '1',
       BDBOARD_E2E_BD_LIST_FIXTURE: listFixture,
+      // 確認待ちレーンにも同じゴールデン一覧を流す。旧スタブは `list` を含む全形状に
+      // これを返していたため、`bd list -l human` 由来の pendingDecisions が暗黙に
+      // 埋まり、健全性パネルの stale_pending_decision 行 —
+      // mobile-activity-hygiene-truncation.spec.ts の `.hygiene-issue-project` —
+      // がそれに依存していた。形状別ディスパッチ化(bdboard-sp5q)で human 一覧が
+      // 既定 `[]` になると、その行ごと消えてテストが落ちる。ここで明示的に配線し、
+      // 「たまたま通っていた」状態を「意図して覆っている」状態に置き換える。
+      // lease / merge-slot / gate の3形状は `[]` のままで、覆い直しは bdboard-vr71。
+      BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE: listFixture,
       BDBOARD_WEB_DIST: webDistSnapshot,
     },
     stdio: debug ? 'inherit' : 'ignore',
