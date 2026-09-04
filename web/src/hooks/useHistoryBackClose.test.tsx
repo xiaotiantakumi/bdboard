@@ -153,4 +153,75 @@ describe('useHistoryBackClose', () => {
     expect(fakeHistory.back).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
   });
+
+  it('releaseHistoryEntry prevents history.back on unmount', async () => {
+    const onClose = vi.fn();
+
+    const { result, unmount } = renderHook(() =>
+      useHistoryBackClose({
+        panelId: 'ticket-detail',
+        onClose,
+        enabled: true,
+      }),
+    );
+
+    act(() => {
+      result.current.releaseHistoryEntry();
+    });
+
+    unmount();
+
+    expect(fakeHistory.back).not.toHaveBeenCalled();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(fakeHistory.back).not.toHaveBeenCalled();
+  });
+
+  it('releaseHistoryEntry prevents onClose on subsequent popstate', () => {
+    const onClose = vi.fn();
+
+    const { result } = renderHook(() =>
+      useHistoryBackClose({
+        panelId: 'ticket-detail',
+        onClose,
+        enabled: true,
+      }),
+    );
+
+    act(() => {
+      result.current.releaseHistoryEntry();
+    });
+
+    act(() => {
+      fakeHistory.back();
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('releaseHistoryEntry strips panel markers from the current history entry', () => {
+    const onClose = vi.fn();
+
+    const { result } = renderHook(() =>
+      useHistoryBackClose({
+        panelId: 'search',
+        onClose,
+        enabled: true,
+      }),
+    );
+
+    expect(fakeHistory.getCurrentState()).toMatchObject({
+      bdboardPanel: 'search',
+      bdboardPanelToken: expect.any(String),
+    });
+
+    act(() => {
+      result.current.releaseHistoryEntry();
+    });
+
+    expect(fakeHistory.replaceState).toHaveBeenCalledTimes(1);
+    expect(fakeHistory.getCurrentState()).not.toHaveProperty('bdboardPanel');
+    expect(fakeHistory.getCurrentState()).not.toHaveProperty('bdboardPanelToken');
+  });
 });

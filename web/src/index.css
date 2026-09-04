@@ -3507,6 +3507,13 @@ body {
   padding: 12vh 16px 16px;
 }
 
+.search-palette-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .search-palette {
   width: min(640px, 100%);
   max-height: min(70vh, 560px);
@@ -5821,14 +5828,28 @@ body {
     align-items: stretch;
   }
 
+  .search-palette-header {
+    padding-top: max(0px, env(safe-area-inset-top));
+  }
+
   .search-palette {
     width: 100vw;
     max-width: 100vw;
     height: 100vh;
     max-height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
     border-radius: 0;
     border: none;
     padding: 16px 12px;
+  }
+
+  .search-palette-close {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 
   .search-palette-input {

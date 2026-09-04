@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { searchTickets, type TicketSearchResultDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { filterPaletteActions, type PaletteAction } from '../paletteActions';
 import type { RecentTicketEntry } from '../uiPersistedState';
 
@@ -36,6 +37,11 @@ export function SearchPalette({
 }: SearchPaletteProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { requestClose, releaseHistoryEntry } = useHistoryBackClose({
+    panelId: 'search',
+    onClose,
+  });
   const [query, setQuery] = useState('');
   const [ticketResults, setTicketResults] = useState<TicketSearchResultDto[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -88,7 +94,7 @@ export function SearchPalette({
   useFocusTrap({
     containerRef: panelRef,
     initialFocusRef: inputRef,
-    onEscape: onClose,
+    onEscape: requestClose,
   });
 
   useLayoutEffect(() => {
@@ -134,8 +140,15 @@ export function SearchPalette({
     };
   }, [hasQuery, trimmedQuery]);
 
+  // 行の実行は selectTicket やパネル open など、自前の history エントリを push しうる。
+  // requestClose() は back() で積んだエントリを消費するが、実行後に呼ぶと「たった今積まれた
+  // 遷移先のエントリ」を pop してしまう (実測で確認済み)。実行経路では back() せず
+  // releaseHistoryEntry() でパレットのエントリだけ手放し、遷移先の pushState より前に呼ぶ。
+  // トレードオフ: パレットのエントリはスタックに1つ埋まったまま残るため、戻る操作が
+  // 1回だけ無反応になるが、遷移先のエントリを壊すよりはるかにまし。
   const handleActivateRow = useCallback(
     (row: PaletteRow) => {
+      releaseHistoryEntry();
       if (row.kind === 'action') {
         row.action.onSelect();
       } else {
@@ -143,7 +156,7 @@ export function SearchPalette({
       }
       onClose();
     },
-    [onClose, onSelect],
+    [releaseHistoryEntry, onSelect, onClose],
   );
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -178,7 +191,7 @@ export function SearchPalette({
   const showRecentHeading = !hasQuery && recentTickets.length > 0;
 
   return (
-    <div className="overlay search-overlay" onClick={onClose} role="presentation">
+    <div className="overlay search-overlay" onClick={requestClose} role="presentation">
       <div
         ref={panelRef}
         className="search-palette"
@@ -187,9 +200,18 @@ export function SearchPalette({
         aria-modal="true"
         aria-labelledby="search-palette-title"
       >
-        <h2 id="search-palette-title" className="sr-only">
-          コマンドパレット
-        </h2>
+        <div className="search-palette-header">
+          <h2 id="search-palette-title" className="sr-only">
+            コマンドパレット
+          </h2>
+          <button
+            type="button"
+            className="btn detail-close search-palette-close"
+            onClick={requestClose}
+          >
+            閉じる
+          </button>
+        </div>
         <input
           ref={inputRef}
           type="search"

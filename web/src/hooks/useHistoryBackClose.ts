@@ -31,7 +31,10 @@ export function useHistoryBackClose({
   panelId,
   onClose,
   enabled = true,
-}: UseHistoryBackCloseOptions): { requestClose: () => void } {
+}: UseHistoryBackCloseOptions): {
+  requestClose: () => void;
+  releaseHistoryEntry: () => void;
+} {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -128,5 +131,33 @@ export function useHistoryBackClose({
     }
   }, []);
 
-  return { requestClose };
+  /**
+   * 履歴エントリを back() せずに手放す。onClose は呼ばない (呼び出し側が制御する)。
+   *
+   * パレットのように閉じると同時に別の履歴エントリを積む遷移を起こすパネル向け。
+   * requestClose() の back() だと、遷移先が pushState した直後のエントリを pop して
+   * しまうため、行の実行経路ではこちらを使う。
+   */
+  const releaseHistoryEntry = useCallback(() => {
+    closedRef.current = true;
+
+    if (!pushedRef.current) {
+      return;
+    }
+
+    pushedRef.current = false;
+
+    const currentState = readHistoryState();
+    if (
+      PANEL_STATE_KEY in currentState ||
+      PANEL_TOKEN_KEY in currentState
+    ) {
+      const cleaned = { ...currentState };
+      delete cleaned[PANEL_STATE_KEY];
+      delete cleaned[PANEL_TOKEN_KEY];
+      window.history.replaceState(cleaned, '');
+    }
+  }, []);
+
+  return { requestClose, releaseHistoryEntry };
 }

@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TicketSearchResultDto } from '../api';
 import { searchTickets } from '../api';
 import type { PaletteAction } from '../paletteActions';
+import { installFakeHistory, type FakeHistory } from '../test/fakeHistory';
 import type { RecentTicketEntry } from '../uiPersistedState';
 import { SearchPalette } from './SearchPalette';
 
@@ -426,5 +427,87 @@ describe('SearchPalette', () => {
     expect(screen.queryByText('Recent ticket one')).not.toBeInTheDocument();
     expect(screen.queryByText('最近開いたチケット')).not.toBeInTheDocument();
     expect(await screen.findByText('First result')).toBeInTheDocument();
+  });
+
+  describe('close controls and history back', () => {
+    let fakeHistory: FakeHistory;
+
+    beforeEach(() => {
+      fakeHistory = installFakeHistory({});
+    });
+
+    it('closes via the close button and consumes the pushed history entry', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      renderPalette(vi.fn(), onClose);
+
+      await user.click(screen.getByRole('button', { name: '閉じる' }));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes on popstate (device back gesture)', () => {
+      const onClose = vi.fn();
+      renderPalette(vi.fn(), onClose);
+
+      act(() => {
+        fakeHistory.back();
+      });
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('consumes the pushed history entry when the overlay backdrop is clicked', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      const { container } = renderPalette(vi.fn(), onClose);
+
+      const overlay = container.querySelector('.search-overlay');
+      expect(overlay).not.toBeNull();
+      await user.click(overlay!);
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+    });
+
+    it('closes on palette action activation without consuming history via back', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      renderPalette(vi.fn(), onClose);
+
+      await user.click(screen.getByText('チャットを開く'));
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(fakeHistory.back).not.toHaveBeenCalled();
+    });
+
+    it('preserves the destination history entry when a recent ticket row is activated', async () => {
+      const user = userEvent.setup();
+      const onClose = vi.fn();
+      const onSelect = vi.fn((id: string) => {
+        // useTicketDeepLink.selectTicket が previous === null のときにやることと同じ
+        window.history.pushState(
+          { ...(window.history.state as object), ticketId: id },
+          '',
+          `#ticket=${id}`,
+        );
+      });
+      const recentTickets: RecentTicketEntry[] = [
+        {
+          id: 'bdboard-zzz',
+          title: 'Z ticket',
+          projectName: 'Proj',
+        },
+      ];
+      renderPalette(onSelect, onClose, sampleActions, recentTickets);
+
+      await user.click(screen.getByText('Z ticket'));
+
+      expect(onSelect).toHaveBeenCalledWith('bdboard-zzz');
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(fakeHistory.back).not.toHaveBeenCalled();
+      expect(fakeHistory.getCurrentState()).toMatchObject({ ticketId: 'bdboard-zzz' });
+    });
   });
 });

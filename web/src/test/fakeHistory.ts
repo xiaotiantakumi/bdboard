@@ -2,6 +2,7 @@ import { vi } from 'vitest';
 
 export interface FakeHistory {
   pushState: ReturnType<typeof vi.fn>;
+  replaceState: ReturnType<typeof vi.fn>;
   back: ReturnType<typeof vi.fn>;
   getCurrentState: () => unknown;
 }
@@ -14,6 +15,10 @@ export function installFakeHistory(initialState: unknown = {}): FakeHistory {
     entries.splice(index + 1);
     entries.push(state);
     index = entries.length - 1;
+  });
+
+  const replaceState = vi.fn((state: unknown) => {
+    entries[index] = state;
   });
 
   const back = vi.fn(() => {
@@ -29,6 +34,9 @@ export function installFakeHistory(initialState: unknown = {}): FakeHistory {
   vi.spyOn(window.history, 'pushState').mockImplementation((state) => {
     pushState(state);
   });
+  vi.spyOn(window.history, 'replaceState').mockImplementation((state) => {
+    replaceState(state);
+  });
   vi.spyOn(window.history, 'back').mockImplementation(() => {
     back();
   });
@@ -40,6 +48,7 @@ export function installFakeHistory(initialState: unknown = {}): FakeHistory {
 
   return {
     pushState,
+    replaceState,
     back,
     getCurrentState: () => entries[index],
   };
