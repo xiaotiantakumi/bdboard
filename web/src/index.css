@@ -5497,20 +5497,42 @@ body {
   .lane {
     min-width: min(86vw, 320px);
     max-width: min(86vw, 320px);
+    /* 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸び横スワイプ時に
+       空白へ飛ぶのを防ぐ (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。 */
+    max-height: calc(100vh - 260px);
+    max-height: calc(100dvh - 260px);
   }
 
   .board-section .lane {
     max-height: calc(100vh - 260px);
+    max-height: calc(100dvh - 260px);
   }
 
   .lanes-scroll-region {
     margin: 0 -14px;
   }
 
+  /*
+   * position: sticky は bdboard-wdwa の影響で現状発火しない。
+   * body { overflow-x: hidden } が祖先 overflow コンテキストを作り、
+   * .header の sticky もここも無効。375×812 実測: 最大 scrollY=553 時 headerTop=-553。
+   * overflow-x を visible にすると headerTop=0 / stripTop=402 で sticky が効く。
+   *
+   * strip が常時画面内に見えるのは sticky の効果ではなく、上の .lane max-height
+   * (calc(100dvh - 260px)) でページ高が ~1365px に縮み、最大 scrollY でも strip の
+   * 自然位置 (~737px) が viewport 内 (top≈184) に留まるため。
+   *
+   * bdboard-wdwa 解消後に初めてこの sticky が有効になり、その時点で
+   * top: var(--lane-indicator-sticky-top) が可変高ヘッダー直下を指す。
+   */
   .lane-indicator-strip {
     display: block;
     margin: 0 0 10px;
-    padding: 0 14px;
+    padding: 0 14px 8px;
+    position: sticky;
+    top: var(--lane-indicator-sticky-top, 0px);
+    z-index: 5;
+    background: var(--color-bg);
   }
 
   .lanes-row {
