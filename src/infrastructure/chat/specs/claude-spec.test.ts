@@ -519,6 +519,13 @@ describe('createClaudeSpec', () => {
 });
 
 describe('createClaudeSpec authProbe (bdboard-15v)', () => {
+  // 2026-09-05 実測 (claude-code 2026.09.02-c22c1a3, bdboard-6ids) でフィクスチャが実態と
+  // 一致していることを確認済み。ログイン済み = exit 0 / 未ログイン = exit 1、どちらも stdout
+  // に JSON を書き stderr は空 (codex が stderr に書くのと対照的)。未ログインの実物は
+  // {"loggedIn": false, "authMethod": "none", "apiProvider": "firstParty"} でフィクスチャと
+  // 同一。実物は pretty-print (複数行) だが JSON.parse(result.stdout) はそのまま解析できるので
+  // 影響なし。未ログイン状態は空の一時ディレクトリを CLAUDE_CONFIG_DIR に指定して再現した
+  // (ログアウトはしていない)。
   const spec = createClaudeSpec({
     claudePath: CLAUDE_PATH,
     model: MODEL,

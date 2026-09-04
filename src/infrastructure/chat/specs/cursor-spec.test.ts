@@ -76,11 +76,28 @@ describe('createCursorSpec parseTurn and authProbe', () => {
   });
 
   it('interprets auth status from status --format json', () => {
+    // 2026-09-05 実測 (cursor-agent 1.1.26, bdboard-6ids)。ログイン済み・未ログインとも
+    // stdout に pretty-print JSON、stderr は空。未ログインでも exitCode は 0 で、codex や
+    // claude と違い終了コードでは認証状態を区別できない。そのため判定は isAuthenticated
+    // (boolean) だけを見る必要がある。未ログイン状態は HOME を空の一時ディレクトリに向けて
+    // 再現した (ログアウトはしていない)。
     expect(spec.authProbe?.args).toEqual(['status', '--format', 'json']);
     expect(spec.authProbe!.interpret({ stdout: JSON.stringify({ isAuthenticated: true }), stderr: '', exitCode: 0 })).toBe('available');
     expect(spec.authProbe!.interpret({ stdout: JSON.stringify({ isAuthenticated: false }), stderr: '', exitCode: 1 })).toBe('unavailable');
     expect(spec.authProbe!.interpret({ stdout: 'not json', stderr: '', exitCode: 1 })).toBe('unknown');
     expect(spec.authProbe!.interpret({ stdout: '', stderr: '', exitCode: 1, failureKind: 'timeout' })).toBe('unknown');
+    // 実測形 (ログイン済み)
+    expect(spec.authProbe!.interpret({
+      stdout: JSON.stringify({ status: 'authenticated', isAuthenticated: true, hasAccessToken: true, hasRefreshToken: true, userInfo: { email: 'example-user@example.com' } }, null, 2),
+      stderr: '',
+      exitCode: 0,
+    })).toBe('available');
+    // 実測形 (未ログイン)。exitCode が 0 である点が肝。
+    expect(spec.authProbe!.interpret({
+      stdout: JSON.stringify({ status: 'unauthenticated', isAuthenticated: false, hasAccessToken: false, hasRefreshToken: false, message: 'Not logged in' }, null, 2),
+      stderr: '',
+      exitCode: 0,
+    })).toBe('unavailable');
   });
 
   // bdboard-l1t.5 Opus 再レビュー DF6: shape 自体は正常(session_id/result とも
