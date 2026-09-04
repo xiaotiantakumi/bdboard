@@ -198,7 +198,7 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
 
   interface FakeState {
     headSha: string;
-    indexMtimeMs: number | undefined;
+    mergeBase: string;
     diff: string;
     status: string;
     mergeBaseOkRefs: readonly string[];
@@ -207,7 +207,7 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
   function createScannerHarness(overrides: Partial<FakeState> = {}) {
     const state: FakeState = {
       headSha: HEAD_SHA,
-      indexMtimeMs: 1000,
+      mergeBase: MERGE_BASE,
       diff: '',
       status: '',
       mergeBaseOkRefs: ['origin/main'],
@@ -221,16 +221,12 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
         expect(args[1]).toBe('-C');
         const sub = args[3];
         if (sub === 'rev-parse') {
-          return {
-            stdout: `${state.headSha}\n/git/worktrees/wt/index\n`,
-            stderr: '',
-            exitCode: 0,
-          };
+          return { stdout: `${state.headSha}\n`, stderr: '', exitCode: 0 };
         }
         if (sub === 'merge-base') {
           const ref = args[4]!;
           return state.mergeBaseOkRefs.includes(ref)
-            ? { stdout: `${MERGE_BASE}\n`, stderr: '', exitCode: 0 }
+            ? { stdout: `${state.mergeBase}\n`, stderr: '', exitCode: 0 }
             : { stdout: '', stderr: 'fatal: Not a valid object name', exitCode: 128 };
         }
         if (sub === 'diff') {
@@ -243,20 +239,11 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
       },
     });
 
-    const fs = {
-      readDir: async () => [],
-      isDirectory: async () => true,
-      realPath: async (path: string) => path,
-      stat: async () =>
-        state.indexMtimeMs === undefined
-          ? undefined
-          : { mtimeMs: state.indexMtimeMs, size: 0 },
-      readFile: async () => undefined,
-      readRange: async () => undefined,
-      readRangeBytes: async () => undefined,
-    };
+    return { state, calls, scanner: createGitWorktreeScanner(runner) };
+  }
 
-    return { state, calls, scanner: createGitWorktreeScanner(runner, { fs }) };
+  function subcommandsOf(calls: readonly { args: readonly string[] }[]): string[] {
+    return calls.map((call) => call.args[3]!);
   }
 
   it('merges committed diff, uncommitted changes and untracked files', async () => {
@@ -280,23 +267,47 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
     expect(files).toEqual(['src/new-name.ts', 'src/old-name.ts', 'src/other.ts']);
   });
 
-  it('reuses the cache while HEAD sha and index mtime are unchanged', async () => {
+  it('asks git for every untracked file, not the folded directory form', async () => {
+    const { scanner, calls } = createScannerHarness({});
+
+    await scanner.listChangedFiles('/wt');
+
+    const statusCall = calls.find((call) => call.args[3] === 'status')!;
+    // 既定 (normal) だと未追跡ディレクトリが '?? newdir/' に畳まれ、中のファイルが
+    // 重複判定に載らない
+    expect(statusCall.args).toContain('--untracked-files=all');
+  });
+
+  it('caches the committed diff while HEAD and merge-base are unchanged', async () => {
     const { scanner, calls, state } = createScannerHarness({ diff: 'src/a.ts\0' });
 
     expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts']);
-    const afterFirst = calls.length;
+    calls.length = 0;
 
     expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts']);
-    // 2 回目は rev-parse だけ。merge-base / diff / status は走らない
-    expect(calls.length).toBe(afterFirst + 1);
-
-    state.indexMtimeMs = 2000;
-    state.diff = 'src/a.ts\0src/b.ts\0';
-    expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts', 'src/b.ts']);
-    expect(calls.length).toBeGreaterThan(afterFirst + 2);
+    // 2 回目に diff は走らない (rev-parse / merge-base / status だけ)
+    expect(subcommandsOf(calls)).not.toContain('diff');
+    expect(state.diff).toBe('src/a.ts\0');
   });
 
-  it('invalidates the cache when HEAD moves even if the index is untouched', async () => {
+  it('still sees working-tree edits on a repeat call with no commit in between', async () => {
+    // 退行の再現: キャッシュを「HEAD + index の mtime」で持っていたときは、
+    // --no-optional-locks で index が書き戻されないせいで編集も未追跡追加も
+    // 検出できなくなっていた。作業ツリー側は毎回読むこと。
+    const { scanner, calls, state } = createScannerHarness({ diff: 'src/a.ts\0' });
+
+    expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts']);
+
+    state.status = ' M src/edited.ts\0?? src/brand-new.ts\0';
+    expect(await scanner.listChangedFiles('/wt')).toEqual([
+      'src/a.ts',
+      'src/brand-new.ts',
+      'src/edited.ts',
+    ]);
+    expect(subcommandsOf(calls).filter((sub) => sub === 'status')).toHaveLength(2);
+  });
+
+  it('invalidates the committed diff when HEAD moves', async () => {
     const { scanner, state } = createScannerHarness({ diff: 'src/a.ts\0' });
 
     expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts']);
@@ -306,17 +317,15 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
     expect(await scanner.listChangedFiles('/wt')).toEqual(['src/c.ts']);
   });
 
-  it('does not cache when the index mtime cannot be read', async () => {
-    const { scanner, calls } = createScannerHarness({
-      indexMtimeMs: undefined,
-      diff: 'src/a.ts\0',
-    });
+  it('invalidates the committed diff when the merge-base moves', async () => {
+    // 他セッションの fetch で origin/main が進むと、HEAD が同じでも差分は変わる
+    const { scanner, state } = createScannerHarness({ diff: 'src/a.ts\0' });
 
-    await scanner.listChangedFiles('/wt');
-    const afterFirst = calls.length;
-    await scanner.listChangedFiles('/wt');
+    expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts']);
 
-    expect(calls.length).toBe(afterFirst * 2);
+    state.mergeBase = 'dddddddddddddddddddddddddddddddddddddddd';
+    state.diff = 'src/a.ts\0src/b.ts\0';
+    expect(await scanner.listChangedFiles('/wt')).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
   it('falls back to the next merge-base ref when origin/main is absent', async () => {

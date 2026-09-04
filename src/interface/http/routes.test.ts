@@ -1855,11 +1855,11 @@ describe('createApiRoutes', () => {
       ticketId: 'bdboard-x',
       projectId,
       severity: 'info',
-      overlap: { otherTicketId: 'bdboard-y', files: ['src/domain/hygiene.ts'] },
+      overlaps: [{ otherTicketId: 'bdboard-y', files: ['src/domain/hygiene.ts'] }],
     });
     expect(overlaps[1]).toMatchObject({
       ticketId: 'bdboard-y',
-      overlap: { otherTicketId: 'bdboard-x', files: ['src/domain/hygiene.ts'] },
+      overlaps: [{ otherTicketId: 'bdboard-x', files: ['src/domain/hygiene.ts'] }],
     });
     assertNoDates(body);
   });
@@ -1911,6 +1911,51 @@ describe('createApiRoutes', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([]);
     expect(listChangedFiles).not.toHaveBeenCalled();
+  });
+
+  it('reuses one scan for /api/hygiene and the detail panel', async () => {
+    const { cache } = inFlightCache();
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const listChangedFiles = vi.fn(base.listChangedFiles);
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: { ...base, listChangedFiles } }),
+    );
+
+    await app.request('/api/hygiene?projects=proj-a');
+    const afterHygiene = listChangedFiles.mock.calls.length;
+    expect(afterHygiene).toBeGreaterThan(0);
+
+    // 同じプロジェクト集合なので、詳細パネルは 30 秒メモを引く
+    const body = await (
+      await app.request('/api/tickets/bdboard-x/in-flight-overlaps')
+    ).json();
+
+    expect(body).toEqual([{ ticketId: 'bdboard-y', files: ['src/domain/hygiene.ts'] }]);
+    expect(listChangedFiles.mock.calls.length).toBe(afterHygiene);
+  });
+
+  it('returns an empty in-flight overlap list for a closed ticket without touching git', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-x', projectId: a.id, status: 'closed' })],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+    const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [] }));
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        worktreeScanner: { scan, listChangedFiles: async () => [] },
+      }),
+    );
+
+    const response = await app.request('/api/tickets/bdboard-x/in-flight-overlaps');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect(scan).not.toHaveBeenCalled();
   });
 
   it('returns an empty in-flight overlap list for an unknown ticket', async () => {

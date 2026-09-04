@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { LeftoverCandidate } from './git-worktree.js';
 import {
+  collectOverlapPeersByTicket,
   computeInFlightOverlaps,
   formatOverlapFiles,
+  formatOverlapPeers,
   overlapPeersForTicket,
   selectInFlightWorktrees,
   type InFlightFileEntry,
@@ -218,5 +220,70 @@ describe('selectInFlightWorktrees', () => {
     expect(selected).toEqual([
       { projectId: 'p1', ticketId: 'same', worktreePath: '/wt/p1' },
     ]);
+  });
+});
+
+describe('collectOverlapPeersByTicket', () => {
+  const overlap = (
+    projectId: string,
+    ticketIds: readonly [string, string],
+    files: readonly string[],
+  ) => ({ projectId, ticketIds, files }) as const;
+
+  it('folds every pair a ticket appears in into one group', () => {
+    const groups = collectOverlapPeersByTicket([
+      overlap('p1', ['a', 'b'], ['x.ts']),
+      overlap('p1', ['a', 'c'], ['y.ts', 'z.ts']),
+    ]);
+
+    // 2 ペア -> 3 グループ。a は 1 つにまとまり、相手は ID 昇順
+    expect(groups).toEqual([
+      {
+        projectId: 'p1',
+        ticketId: 'a',
+        peers: [
+          { ticketId: 'b', files: ['x.ts'] },
+          { ticketId: 'c', files: ['y.ts', 'z.ts'] },
+        ],
+      },
+      { projectId: 'p1', ticketId: 'b', peers: [{ ticketId: 'a', files: ['x.ts'] }] },
+      {
+        projectId: 'p1',
+        ticketId: 'c',
+        peers: [{ ticketId: 'a', files: ['y.ts', 'z.ts'] }],
+      },
+    ]);
+  });
+
+  it('keeps same-id tickets of different projects apart', () => {
+    const groups = collectOverlapPeersByTicket([
+      overlap('p2', ['same', 'other'], ['x.ts']),
+      overlap('p1', ['same', 'peer'], ['y.ts']),
+    ]);
+
+    expect(groups.map((group) => [group.projectId, group.ticketId])).toEqual([
+      ['p1', 'peer'],
+      ['p1', 'same'],
+      ['p2', 'other'],
+      ['p2', 'same'],
+    ]);
+  });
+
+  it('returns nothing for no overlaps', () => {
+    expect(collectOverlapPeersByTicket([])).toEqual([]);
+  });
+});
+
+describe('formatOverlapPeers', () => {
+  it('lists each peer with its own capped file list', () => {
+    expect(
+      formatOverlapPeers(
+        [
+          { ticketId: 'bdboard-a', files: ['a.ts', 'b.ts', 'c.ts'] },
+          { ticketId: 'bdboard-b', files: ['d.ts'] },
+        ],
+        2,
+      ),
+    ).toBe('bdboard-a: a.ts, b.ts (+1); bdboard-b: d.ts');
   });
 });

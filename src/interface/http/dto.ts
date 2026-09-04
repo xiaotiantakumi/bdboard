@@ -421,7 +421,7 @@ export interface HygieneIssueDto {
   deferUntil?: string;
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
-  overlap?: HygieneOverlapPeerDto;
+  overlaps?: HygieneOverlapPeerDto[];
 }
 
 /** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */
@@ -978,12 +978,12 @@ export function toHygieneIssueDto(issue: HygieneIssue): HygieneIssueDto {
           })),
         }
       : {}),
-    ...(issue.overlap !== undefined
+    ...(issue.overlaps !== undefined
       ? {
-          overlap: {
-            otherTicketId: issue.overlap.otherTicketId,
-            files: [...issue.overlap.files],
-          },
+          overlaps: issue.overlaps.map((peer) => ({
+            otherTicketId: peer.otherTicketId,
+            files: [...peer.files],
+          })),
         }
       : {}),
   };

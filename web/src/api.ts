@@ -375,7 +375,7 @@ export interface HygieneIssueDto {
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
   /** in_flight_file_overlap のときだけ入る。相手チケットと重複しているファイル */
-  overlap?: HygieneOverlapPeerDto;
+  overlaps?: HygieneOverlapPeerDto[];
 }
 
 /** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */

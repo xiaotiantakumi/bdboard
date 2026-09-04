@@ -87,6 +87,13 @@ import {
 const DEPENDENCY_SEARCH_DEBOUNCE_MS = 200;
 const DEPENDENCY_SEARCH_LIMIT = 20;
 
+/**
+ * 「衝突しうる着手中チケット」で相手 1 件あたりに並べるファイル数の上限。
+ * 大きく育ったブランチだと 100 件を超えることがあり、詳細パネルがファイル一覧で
+ * 埋まって他の情報が押し出される。残りは件数だけ出す。
+ */
+const OVERLAP_FILE_DISPLAY_LIMIT = 20;
+
 const COPY_FEEDBACK_MS = 2000;
 
 function timelineKindBadgeClass(
@@ -389,11 +396,9 @@ export function TicketDetailPanel({
   // 着手中チケット同士のファイル重複 (npm run drift の「着手中版」)。worktree で git を
   // 叩くので、closed のチケットでは最初から引かない (サーバー側も closed は返さない)。
   const inFlightOverlapsEnabled = data !== undefined && data.status !== 'closed';
-  const {
-    data: inFlightOverlaps,
-    isLoading: inFlightOverlapsLoading,
-    error: inFlightOverlapsError,
-  } = useQuery({
+  // 読み込み中フラグは使わない。到着するまで節ごと描かないので (見出しが一瞬出て
+  // 消えるのを避ける)、data === undefined がそのまま「まだ出さない」を意味する。
+  const { data: inFlightOverlaps, error: inFlightOverlapsError } = useQuery({
     queryKey: ['ticket-in-flight-overlaps', ticketId],
     queryFn: () => fetchTicketInFlightOverlaps(ticketId),
     enabled: inFlightOverlapsEnabled,
@@ -1562,45 +1567,55 @@ export function TicketDetailPanel({
                 </button>
               </div>
             )}
+            {inFlightOverlapsEnabled && inFlightOverlapsError !== null && (
+              <div className="detail-section">
+                <h3>衝突しうる着手中チケット</h3>
+                <p className="detail-help">重複チェックを実行できませんでした。</p>
+              </div>
+            )}
+            {/*
+              読み込み中は何も出さない。見出しだけ先に出して直後に消える
+              (重複が無ければ節ごと消える) と、開くたびに画面が跳ねる。
+            */}
             {inFlightOverlapsEnabled &&
               inFlightOverlapsError === null &&
-              (inFlightOverlapsLoading ||
-                (inFlightOverlaps !== undefined && inFlightOverlaps.length > 0)) && (
+              inFlightOverlaps !== undefined &&
+              inFlightOverlaps.length > 0 && (
                 <div className="detail-section">
                   <h3>衝突しうる着手中チケット</h3>
-                  {inFlightOverlapsLoading ? (
-                    <p className="detail-help">読み込み中…</p>
-                  ) : (
-                    <>
-                      <p className="detail-help">
-                        同じファイルを編集中の着手中チケットです。どちらかへ寄せるか、
-                        マージの順番を先に決めてください。
-                      </p>
-                      <ul className="detail-list">
-                        {(inFlightOverlaps ?? []).map(
-                          (overlap: TicketInFlightOverlapDto) => (
-                            <li key={overlap.ticketId}>
-                              <TicketIdLink
-                                id={overlap.ticketId}
-                                isTicketOnBoard={isTicketOnBoard}
-                                onOpenTicket={onOpenTicket}
-                              />{' '}
-                              <span className="badge">
-                                {overlap.files.length} ファイル
-                              </span>
-                              <ul className="detail-list">
-                                {overlap.files.map((file) => (
-                                  <li key={file}>
-                                    <code>{file}</code>
-                                  </li>
-                                ))}
-                              </ul>
-                            </li>
-                          ),
-                        )}
-                      </ul>
-                    </>
-                  )}
+                  <p className="detail-help">
+                    同じファイルを編集中の着手中チケットです。どちらかへ寄せるか、
+                    マージの順番を先に決めてください。
+                  </p>
+                  <ul className="detail-list">
+                    {inFlightOverlaps.map((overlap: TicketInFlightOverlapDto) => {
+                      const shownFiles = overlap.files.slice(
+                        0,
+                        OVERLAP_FILE_DISPLAY_LIMIT,
+                      );
+                      const hiddenFileCount = overlap.files.length - shownFiles.length;
+                      return (
+                        <li key={overlap.ticketId}>
+                          <TicketIdLink
+                            id={overlap.ticketId}
+                            isTicketOnBoard={isTicketOnBoard}
+                            onOpenTicket={onOpenTicket}
+                          />{' '}
+                          <span className="badge">{overlap.files.length} ファイル</span>
+                          <ul className="detail-list">
+                            {shownFiles.map((file) => (
+                              <li key={file}>
+                                <code>{file}</code>
+                              </li>
+                            ))}
+                            {hiddenFileCount > 0 && (
+                              <li className="detail-help">ほか {hiddenFileCount} 件</li>
+                            )}
+                          </ul>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
               )}
             <div className="detail-section">

@@ -473,11 +473,65 @@ async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
   };
 }
 
+/**
+ * 着手中重複の再計算を抑えるメモの寿命。
+ *
+ * /api/hygiene と詳細パネルの /api/tickets/:id/in-flight-overlaps は同じ計算をする。
+ * 盤面を開いたままチケットを次々に開くと、その都度 worktree ぶんの git が走るので、
+ * プロジェクト集合が同じ呼び出しは短時間だけ結果を使い回す。30 秒あれば
+ * 「Hygiene を見る → 気になったチケットを開く」がまとめて 1 回で済み、それを超えれば
+ * 作業中の編集が反映される程度には短い。
+ */
+const IN_FLIGHT_OVERLAP_MEMO_MS = 30_000;
+
+interface InFlightOverlapMemoEntry {
+  readonly expiresAt: number;
+  readonly result: Promise<readonly InFlightOverlap[]>;
+}
+
 export function createApiRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
   const prBadgeCommentCache = new PrBadgeCommentCache();
   const prBadgeStatusCache = new PrBadgeStatusCache();
   const applicationVersion = deps.applicationVersion.getVersion();
+  const inFlightOverlapMemo = new Map<string, InFlightOverlapMemoEntry>();
+
+  /**
+   * 同じプロジェクト集合に対する着手中重複の計算を、IN_FLIGHT_OVERLAP_MEMO_MS だけ
+   * 共有する。失敗した Promise は残さない (次の呼び出しでやり直す)。
+   */
+  const inFlightOverlapMemoKey = (projectIds: readonly string[]): string =>
+    [...projectIds].sort().join('\u0000');
+
+  /** 生きているメモがあれば返す。無ければ undefined (計算はしない) */
+  const peekInFlightOverlaps = (
+    projectIds: readonly string[],
+  ): Promise<readonly InFlightOverlap[]> | undefined => {
+    const cached = inFlightOverlapMemo.get(inFlightOverlapMemoKey(projectIds));
+    return cached !== undefined && cached.expiresAt > Date.now() ? cached.result : undefined;
+  };
+
+  const memoizedInFlightOverlaps = (
+    projectIds: readonly string[],
+    compute: () => Promise<readonly InFlightOverlap[]>,
+  ): Promise<readonly InFlightOverlap[]> => {
+    const key = inFlightOverlapMemoKey(projectIds);
+    const now = Date.now();
+    const cached = inFlightOverlapMemo.get(key);
+    if (cached !== undefined && cached.expiresAt > now) {
+      return cached.result;
+    }
+
+    const result = compute();
+    inFlightOverlapMemo.set(key, { expiresAt: now + IN_FLIGHT_OVERLAP_MEMO_MS, result });
+    result.catch(() => {
+      const current = inFlightOverlapMemo.get(key);
+      if (current?.result === result) {
+        inFlightOverlapMemo.delete(key);
+      }
+    });
+    return result;
+  };
 
   // 書き込み成功後、そのプロジェクトだけを強制リフレッシュしてから応答する。
   // これが無いと UI が応答直後に再取得しても書き込み前のキャッシュが返り、
@@ -697,12 +751,14 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
       // merged_leftover と同じ worktree 一覧を使い回す。closed のものはあちらが、
       // まだ closed でないものはこちらが見る (git worktree list は 1 回で済む)。
-      inFlightOverlaps = await scanInFlightOverlaps(
-        selectInFlightWorktrees(
-          leftoverCandidates,
-          entries.flatMap((entry) => entry.tickets),
-        ),
-        deps.worktreeScanner,
+      const inFlight = selectInFlightWorktrees(
+        leftoverCandidates,
+        entries.flatMap((entry) => entry.tickets),
+      );
+      const scanner = deps.worktreeScanner;
+      inFlightOverlaps = await memoizedInFlightOverlaps(
+        projects.map((project) => project.id),
+        () => scanInFlightOverlaps(inFlight, scanner),
       );
     }
 
@@ -856,16 +912,33 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       return c.json([]);
     }
 
-    const leftovers = await scanGitLeftovers([entry.project], deps.worktreeScanner);
-    const inFlight = selectInFlightWorktrees(leftovers, entry.tickets);
-
-    // このチケット自身に worktree が無ければ、どのペアにも入りようがない。
-    // 変更ファイルを読む前に打ち切る (詳細パネルは worktree の無いチケットでも開く)。
-    if (!inFlight.some((worktree) => worktree.ticketId === id)) {
+    // git を 1 本も叩く前に打ち切れるケースを先に落とす。詳細パネルは着手中でない
+    // チケットでも開くので、ここが効く割合は高い。
+    const ticket = entry.tickets.find((candidate) => candidate.id === id);
+    if (ticket === undefined || ticket.status === 'closed') {
       return c.json([]);
     }
 
-    const overlaps = await scanInFlightOverlaps(inFlight, deps.worktreeScanner);
+    const scanner = deps.worktreeScanner;
+    const projectKey = [entry.project.id];
+
+    const memoized = peekInFlightOverlaps(projectKey);
+    let overlaps: readonly InFlightOverlap[];
+    if (memoized !== undefined) {
+      overlaps = await memoized;
+    } else {
+      // git worktree list までは走らせる (1 回で済む安い呼び出し) が、変更ファイルを
+      // 読むのはこのチケット自身に worktree があるときだけ。詳細パネルは worktree の
+      // 無いチケットでも開くので、ここで大半が落ちる。
+      const leftovers = await scanGitLeftovers([entry.project], scanner);
+      const inFlight = selectInFlightWorktrees(leftovers, entry.tickets);
+      if (!inFlight.some((worktree) => worktree.ticketId === id)) {
+        return c.json([]);
+      }
+      overlaps = await memoizedInFlightOverlaps(projectKey, () =>
+        scanInFlightOverlaps(inFlight, scanner),
+      );
+    }
 
     return c.json(
       overlapPeersForTicket(overlaps, entry.project.id, id).map(

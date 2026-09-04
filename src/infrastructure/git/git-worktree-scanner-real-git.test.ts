@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { NodeFileSystem } from '../fs/node-file-system.js';
 import { NodeCommandRunner } from '../process/node-command-runner.js';
 import { createGitWorktreeScanner } from './git-worktree-scanner.js';
 
@@ -16,8 +15,17 @@ import { createGitWorktreeScanner } from './git-worktree-scanner.js';
 const runner = new NodeCommandRunner();
 const tmpDirs: string[] = [];
 
+/**
+ * テスト用の git 実行。利用者の設定に引きずられないようにする:
+ * gpg 署名 (commit.gpgsign) が有効な環境では commit がハングまたは失敗し、
+ * core.hooksPath にグローバルなフックが刺さっていると勝手に走る。
+ */
 async function git(args: readonly string[]): Promise<void> {
-  const result = await runner.run('git', args, { timeoutMs: 20_000 });
+  const result = await runner.run(
+    'git',
+    ['-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', ...args],
+    { timeoutMs: 20_000 },
+  );
   if (result.exitCode !== 0) {
     throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
   }
@@ -26,7 +34,8 @@ async function git(args: readonly string[]): Promise<void> {
 afterEach(() => {
   while (tmpDirs.length > 0) {
     const dir = tmpDirs.pop()!;
-    fs.rmSync(dir, { recursive: true, force: true });
+    // 走り終えた git のプロセスがまだファイルを掴んでいることがある
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
   }
 });
 
@@ -66,7 +75,7 @@ describe('createGitWorktreeScanner.listChangedFiles against a real repository', 
     // B: shared.ts を未コミットのまま変更 (index にも載せない)
     fs.writeFileSync(path.join(worktreeB, 'shared.ts'), 'export const shared = 3;\n');
 
-    const scanner = createGitWorktreeScanner(runner, { fs: new NodeFileSystem() });
+    const scanner = createGitWorktreeScanner(runner);
 
     const filesA = await scanner.listChangedFiles(worktreeA);
     const filesB = await scanner.listChangedFiles(worktreeB);
@@ -81,5 +90,20 @@ describe('createGitWorktreeScanner.listChangedFiles against a real repository', 
     });
     expect(statusA.stdout).toContain('own-a.ts');
     expect(statusA.stdout).not.toContain('shared.ts');
+
+    // 2 回目でも作業ツリーの変更が見えること。コミットも `git add` もしないので
+    // index の mtime は動かず、そこをキャッシュキーにしていると取りこぼす。
+    fs.writeFileSync(path.join(worktreeB, 'late-edit.ts'), 'export const late = 1;\n');
+    fs.mkdirSync(path.join(worktreeB, 'newdir'), { recursive: true });
+    fs.writeFileSync(
+      path.join(worktreeB, 'newdir', 'inside.ts'),
+      'export const inside = 1;\n',
+    );
+
+    const filesBAgain = await scanner.listChangedFiles(worktreeB);
+    expect(filesBAgain).toContain('late-edit.ts');
+    // --untracked-files=all を付けないと 'newdir/' の 1 件に畳まれる
+    expect(filesBAgain).toContain('newdir/inside.ts');
+    expect(filesBAgain).toContain('shared.ts');
   }, 60_000);
 });

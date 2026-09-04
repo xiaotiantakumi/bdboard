@@ -2450,6 +2450,34 @@ describe('変更履歴タイムライン', () => {
     expect(screen.queryByText('衝突しうる着手中チケット')).not.toBeInTheDocument();
   });
 
+  it('caps the file list and counts the rest', async () => {
+    const files = Array.from({ length: 23 }, (_, index) => `src/file-${index}.ts`);
+    mockFetchTicket.mockResolvedValue({ ...sampleTicket, status: 'in_progress' });
+    mockFetchTicketInFlightOverlaps.mockResolvedValue([
+      { ticketId: 'bdboard-peer', files },
+    ]);
+
+    renderPanel(new Map());
+
+    expect(await screen.findByText('衝突しうる着手中チケット')).toBeInTheDocument();
+    // バッジは全件、一覧は 20 件 + 残りの件数
+    expect(screen.getByText('23 ファイル')).toBeInTheDocument();
+    expect(screen.getByText('src/file-19.ts')).toBeInTheDocument();
+    expect(screen.queryByText('src/file-20.ts')).not.toBeInTheDocument();
+    expect(screen.getByText('ほか 3 件')).toBeInTheDocument();
+  });
+
+  it('shows a single line when the overlap check fails', async () => {
+    mockFetchTicket.mockResolvedValue({ ...sampleTicket, status: 'in_progress' });
+    mockFetchTicketInFlightOverlaps.mockRejectedValue(new Error('git exploded'));
+
+    renderPanel(new Map());
+
+    expect(
+      await screen.findByText('重複チェックを実行できませんでした。'),
+    ).toBeInTheDocument();
+  });
+
   it('does not query overlaps for a closed ticket', async () => {
     mockFetchTicket.mockResolvedValue({ ...sampleTicket, status: 'closed' });
     // 呼び出し履歴はファイル内で共有されるので、この test 内の呼び出しだけを見る

@@ -1,6 +1,4 @@
-import { isAbsolute, join } from 'node:path';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
-import type { FileSystemPort } from '../../application/ports/file-system.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import { compareStrings } from '../../domain/compare.js';
 import {
@@ -32,11 +30,6 @@ const MERGE_BASE_CANDIDATE_REFS: readonly string[] = [
 export interface GitWorktreeScannerOptions {
   readonly gitPath?: string;
   readonly timeoutMs?: number;
-  /**
-   * 変更ファイルのキャッシュ無効化に使う index の mtime を読む用。省略すると
-   * キャッシュが効かなくなるだけで、結果は変わらない。
-   */
-  readonly fs?: FileSystemPort;
 }
 
 /**
@@ -46,10 +39,22 @@ export interface GitWorktreeScannerOptions {
  */
 const CHANGED_FILES_CACHE_MAX = 200;
 
-/** キャッシュのキー: HEAD の SHA と index の mtime。どちらも変わらなければ再利用する */
-interface ChangedFilesCacheEntry {
+/**
+ * キャッシュするのは **コミット済み差分 (`mergeBase...HEAD`) だけ**。
+ *
+ * 作業ツリー側 (`git status`) は毎回読み直す。当初は「HEAD の SHA + index の mtime」を
+ * キーに全体をキャッシュしていたが、`--no-optional-locks` を付けた結果 git が index を
+ * 書き戻さなくなり、**ファイルを編集しても未追跡ファイルを足しても index の mtime が
+ * 動かない** (`git add` するまで動かない) ため、作業ツリーの変更が盤面に出なくなって
+ * いた (実測で再現)。コミット済み差分のほうは HEAD と merge-base が動かない限り
+ * 変わらないので、この 2 つをキーにするのは安全。
+ *
+ * merge-base をキーに含めるのは、他セッションの `git fetch` で origin/main が進むと
+ * HEAD が同じままでも差分が変わるため。
+ */
+interface CommittedFilesCacheEntry {
   readonly headSha: string;
-  readonly indexMtimeMs: number;
+  readonly mergeBase: string;
   readonly files: readonly string[];
 }
 
@@ -72,9 +77,11 @@ async function runGit(
  *    `git diff` は stat キャッシュを更新して index を書き戻すため、盤面を開くたびに
  *    「別のエージェントが作業中の worktree」でロックを取りに行くことになる。読むだけの
  *    約束を、実装レベルでも守る。
- * 2. **キャッシュが実際に効く。** index を書き戻されると mtime が毎回変わり、
- *    HEAD SHA + index mtime のキャッシュが常に外れる (実測: warm でも毎回フル
- *    スキャンになり /api/hygiene が +2.5 秒)。
+ * 2. **速い。** index の書き戻し自体が盤面更新のたびに全 worktree ぶん走ると
+ *    無視できない (実測で /api/hygiene が +2.5 秒)。
+ *
+ * 代償として index の mtime が「作業ツリーが変わった印」にならなくなるので、
+ * キャッシュのキーには使えない (CommittedFilesCacheEntry のコメント参照)。
  */
 async function runGitReadOnly(
   commandRunner: CommandRunner,
@@ -157,6 +164,9 @@ function splitNulRecords(output: string): string[] {
  * 含むパスを `"..."` でエスケープして返すので、日本語ファイル名やスペース入りの
  * パスを素朴に slice すると壊れる。rename / copy のときは次のレコードが元パスに
  * なるので、両方を「触ったファイル」として拾う。
+ *
+ * 呼び出し側は `--untracked-files=all` を付ける。既定の `normal` は未追跡ディレクトリを
+ * `?? newdir/` の 1 行に畳んでしまい、その中のファイルが重複判定に載らない。
  */
 function parseStatusPorcelainZ(output: string): string[] {
   const records = splitNulRecords(output);
@@ -201,44 +211,23 @@ export function createGitWorktreeScanner(
 ): WorktreeScanner {
   const gitPath = options?.gitPath ?? DEFAULT_GIT_PATH;
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const fs = options?.fs;
-  const changedFilesCache = new Map<string, ChangedFilesCacheEntry>();
+  const committedFilesCache = new Map<string, CommittedFilesCacheEntry>();
 
-  /** HEAD の SHA と index の mtime。index が読めなければ mtime は null (= キャッシュしない) */
-  async function readCacheKey(
-    worktreePath: string,
-  ): Promise<{ headSha: string; indexMtimeMs: number | null }> {
-    // rev-parse は 1 回で 2 行返せる。probe のために git を 2 回叩かない
+  async function readHeadSha(worktreePath: string): Promise<string> {
     const result = await runGitReadOnly(
       commandRunner,
       gitPath,
       worktreePath,
-      ['rev-parse', 'HEAD', '--git-path', 'index'],
+      ['rev-parse', 'HEAD'],
       timeoutMs,
     );
-    if (result.exitCode !== 0) {
+    const headSha = result.stdout.trim();
+    if (result.exitCode !== 0 || headSha.length === 0) {
       throw new Error(
         `git rev-parse failed in ${worktreePath} (exit ${result.exitCode}): ${result.stderr.trim()}`,
       );
     }
-
-    const lines = result.stdout.split('\n').map((line) => line.trim());
-    const headSha = lines[0] ?? '';
-    const rawIndexPath = lines[1] ?? '';
-    if (headSha.length === 0) {
-      throw new Error(`git rev-parse returned no HEAD for ${worktreePath}`);
-    }
-
-    if (fs === undefined || rawIndexPath.length === 0) {
-      return { headSha, indexMtimeMs: null };
-    }
-
-    // `--git-path` は cwd 相対で返ることがある (メインチェックアウトでは '.git/index')。
-    const indexPath = isAbsolute(rawIndexPath)
-      ? rawIndexPath
-      : join(worktreePath, rawIndexPath);
-    const stat = await fs.stat(indexPath);
-    return { headSha, indexMtimeMs: stat?.mtimeMs ?? null };
+    return headSha;
   }
 
   async function resolveMergeBase(worktreePath: string): Promise<string> {
@@ -283,65 +272,56 @@ export function createGitWorktreeScanner(
     },
 
     async listChangedFiles(worktreePath: string): Promise<readonly string[]> {
-      const { headSha, indexMtimeMs } = await readCacheKey(worktreePath);
+      const [headSha, mergeBase] = await Promise.all([
+        readHeadSha(worktreePath),
+        resolveMergeBase(worktreePath),
+      ]);
 
-      const cached = changedFilesCache.get(worktreePath);
-      if (
-        cached !== undefined &&
-        indexMtimeMs !== null &&
-        cached.headSha === headSha &&
-        cached.indexMtimeMs === indexMtimeMs
-      ) {
-        return cached.files;
-      }
+      // 作業ツリー側は毎回読む。キャッシュできるのはコミット済み差分だけ
+      // (CommittedFilesCacheEntry のコメント参照)。
+      const statusPromise = runGitReadOnly(
+        commandRunner,
+        gitPath,
+        worktreePath,
+        ['status', '--porcelain', '-z', '--untracked-files=all'],
+        timeoutMs,
+      );
 
-      const mergeBase = await resolveMergeBase(worktreePath);
-
-      const [diffResult, statusResult] = await Promise.all([
-        runGitReadOnly(
+      const cached = committedFilesCache.get(worktreePath);
+      let committedFiles: readonly string[];
+      if (cached !== undefined && cached.headSha === headSha && cached.mergeBase === mergeBase) {
+        committedFiles = cached.files;
+      } else {
+        const diffResult = await runGitReadOnly(
           commandRunner,
           gitPath,
           worktreePath,
           ['diff', '--name-only', '--no-renames', '-z', `${mergeBase}...HEAD`],
           timeoutMs,
-        ),
-        runGitReadOnly(
-          commandRunner,
-          gitPath,
-          worktreePath,
-          ['status', '--porcelain', '-z'],
-          timeoutMs,
-        ),
-      ]);
-
-      if (diffResult.exitCode !== 0) {
-        throw new Error(
-          `git diff failed in ${worktreePath} (exit ${diffResult.exitCode}): ${diffResult.stderr.trim()}`,
         );
+        if (diffResult.exitCode !== 0) {
+          throw new Error(
+            `git diff failed in ${worktreePath} (exit ${diffResult.exitCode}): ${diffResult.stderr.trim()}`,
+          );
+        }
+        committedFiles = splitNulRecords(diffResult.stdout);
+        if (committedFilesCache.size >= CHANGED_FILES_CACHE_MAX) {
+          committedFilesCache.clear();
+        }
+        committedFilesCache.set(worktreePath, { headSha, mergeBase, files: committedFiles });
       }
+
+      const statusResult = await statusPromise;
       if (statusResult.exitCode !== 0) {
         throw new Error(
           `git status failed in ${worktreePath} (exit ${statusResult.exitCode}): ${statusResult.stderr.trim()}`,
         );
       }
 
-      const files = normalizeFiles([
-        ...splitNulRecords(diffResult.stdout),
+      return normalizeFiles([
+        ...committedFiles,
         ...parseStatusPorcelainZ(statusResult.stdout),
       ]);
-
-      if (indexMtimeMs !== null) {
-        if (changedFilesCache.size >= CHANGED_FILES_CACHE_MAX) {
-          changedFilesCache.clear();
-        }
-        changedFilesCache.set(worktreePath, { headSha, indexMtimeMs, files });
-      } else {
-        // mtime が読めない間はキャッシュを持たない。古い結果を返し続けるより
-        // 毎回 git を叩くほうがまし (worktree は同時に十数本しかない)。
-        changedFilesCache.delete(worktreePath);
-      }
-
-      return files;
     },
   };
 }

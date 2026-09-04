@@ -105,4 +105,32 @@ describe('scanInFlightOverlaps', () => {
 
     expect(peak).toBeLessThanOrEqual(3);
   });
+
+  it('drops a worktree that blows the per-worktree deadline and keeps the rest', async () => {
+    const logWarn = vi.fn();
+    const scanner: WorktreeScanner = {
+      scan: async () => ({ worktrees: [], bdBranches: [] }),
+      listChangedFiles: async (worktreePath) => {
+        if (worktreePath === '/wt/p1/slow') {
+          // 締め切りより十分に遅いが、テストは待たずに戻る
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return ['src/shared.ts'];
+        }
+        return ['src/shared.ts'];
+      },
+    };
+
+    const overlaps = await scanInFlightOverlaps(
+      [worktree('slow'), worktree('a'), worktree('b')],
+      scanner,
+      { logWarn, worktreeDeadlineMs: 20 },
+    );
+
+    // slow が落ちても a/b の重複は出る
+    expect(overlaps).toEqual([
+      { projectId: 'p1', ticketIds: ['a', 'b'], files: ['src/shared.ts'] },
+    ]);
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn.mock.calls[0]![0]).toContain('1 of 3');
+  });
 });
