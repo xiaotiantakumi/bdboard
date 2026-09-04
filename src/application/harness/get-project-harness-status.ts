@@ -1,14 +1,23 @@
+import path from 'node:path';
 import { compareStrings } from '../../domain/compare.js';
+import {
+  evaluateContractState,
+  parseHarnessContract,
+  resolveVerifyScriptRequirement,
+  type ContractState,
+} from '../../domain/harness-contract.js';
 import type {
   HarnessManifest,
   PackSummary,
   ProjectHarnessStatus,
 } from '../../domain/harness-pack.js';
+import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
 
 export function computeProjectHarnessStatus(
   availablePacks: readonly PackSummary[],
   manifest: HarnessManifest,
+  contract: ContractState,
 ): ProjectHarnessStatus {
   const installedByName = new Map(manifest.packs.map((entry) => [entry.name, entry]));
 
@@ -28,13 +37,56 @@ export function computeProjectHarnessStatus(
     })
     .sort((a, b) => compareStrings(a.name, b.name));
 
-  return { packs };
+  return { packs, contract };
+}
+
+/**
+ * 注入先の検証コントラクトを読んで状態にする。
+ *
+ * **注入済み (manifest に pack がある) プロジェクトだけ**を対象にする。未注入の
+ * プロジェクトは `not-applicable` で、ファイルすら読みに行かない — bd 運用
+ * プロジェクトの多くは未注入なので、そこへ一斉に「検証ループ未定義」を出すと
+ * Hygiene が無視される警告で埋まる (bdboard-pkr6.3)。
+ */
+export async function resolveProjectContractState(
+  reader: HarnessContractReaderPort,
+  projectRootPath: string,
+  manifest: HarnessManifest,
+): Promise<ContractState> {
+  if (manifest.packs.length === 0) {
+    return { state: 'not-applicable' };
+  }
+
+  const text = await reader.readContract(projectRootPath);
+  if (text === null) {
+    return evaluateContractState(null, { verifyPackageScripts: null });
+  }
+
+  const parsed = parseHarnessContract(text);
+
+  // verify が npm 系の run 形のときだけ、その package.json を読んで実体を確かめる。
+  // `npm --prefix web run x` は web/ 側の package.json が正なので、そのディレクトリを
+  // ポートに渡す (ポートは「渡された場所の package.json」しか見ない)。
+  let verifyPackageScripts: readonly string[] | null = null;
+  if (parsed.ok) {
+    const requirement = resolveVerifyScriptRequirement(parsed.contract.verify);
+    if (requirement !== null) {
+      const packageRootPath =
+        requirement.packageDir === '.'
+          ? projectRootPath
+          : path.join(projectRootPath, requirement.packageDir);
+      verifyPackageScripts = await reader.readPackageScripts(packageRootPath);
+    }
+  }
+
+  return evaluateContractState(parsed, { verifyPackageScripts });
 }
 
 export async function getProjectHarnessStatus(
   registry: PackRegistryPort,
   manifest: HarnessManifest,
+  contract: ContractState,
 ): Promise<ProjectHarnessStatus> {
   const availablePacks = await registry.listPacks();
-  return computeProjectHarnessStatus(availablePacks, manifest);
+  return computeProjectHarnessStatus(availablePacks, manifest, contract);
 }

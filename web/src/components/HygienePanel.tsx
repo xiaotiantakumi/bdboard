@@ -4,6 +4,7 @@ import type {
   HygieneIssueDto,
   HygieneIssueKindDto,
   LeaseHealthDto,
+  ProjectHarnessContractDto,
   ProjectHarnessPackStatusDto,
   QuickActionRequest,
   ReclaimProjectStatusDto,
@@ -25,7 +26,13 @@ import {
   formatWorktreeCleanupScript,
 } from '../bdCommands';
 import { formatActivityTime } from './activityFeedFormatting';
-import { buildHarnessDriftMessage, buildHarnessInjectSuccessMessage } from '../harnessDisplay';
+import {
+  buildHarnessDriftMessage,
+  buildHarnessInjectSuccessMessage,
+  formatHarnessContractDetail,
+  formatHarnessContractLabel,
+  harnessContractNeedsAttention,
+} from '../harnessDisplay';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { describeWriteError } from '../writeAccessMessage';
@@ -42,10 +49,21 @@ interface HarnessDriftItem {
   readonly pack: ProjectHarnessPackStatusDto;
 }
 
+interface HarnessContractItem {
+  readonly projectId: string;
+  readonly contract: ProjectHarnessContractDto;
+}
+
+interface HarnessHygieneItems {
+  readonly driftItems: readonly HarnessDriftItem[];
+  readonly contractItems: readonly HarnessContractItem[];
+}
+
 const COPY_FEEDBACK_MS = 2000;
 const REPAIR_FEEDBACK_MS = 4000;
 const DEFAULT_REPAIR_PRIORITY = 2;
 const HARNESS_DRIFT_KIND_LABEL = 'ハーネス要更新';
+const HARNESS_CONTRACT_KIND_LABEL = '検証コントラクト';
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
 
@@ -75,19 +93,35 @@ function harnessDriftRowKey(item: HarnessDriftItem): string {
   return `harness-drift-${item.projectId}-${item.pack.name}`;
 }
 
-async function fetchHarnessDriftItems(
+function harnessContractRowKey(item: HarnessContractItem): string {
+  return `harness-contract-${item.projectId}`;
+}
+
+/**
+ * ハーネス由来の警告を1回のリクエストからまとめて作る。
+ *
+ * 検証コントラクトは**注入済みプロジェクトだけ**が対象で、未注入は
+ * サーバー側で `not-applicable` になっている。ここでフィルタし直さないのは、
+ * 「どこまでを問題扱いにするか」の判断をサーバーの1か所に集めるため
+ * (bdboard-pkr6.3)。
+ */
+async function fetchHarnessHygieneItems(
   projectIds: readonly string[],
-): Promise<HarnessDriftItem[]> {
+): Promise<HarnessHygieneItems> {
   const batch = await fetchAllHarnessStatus();
   const filterSet = projectIds.length > 0 ? new Set(projectIds) : null;
+  const entries = batch.projects.filter(
+    (entry) => filterSet === null || filterSet.has(entry.projectId),
+  );
 
-  return batch.projects
-    .filter((entry) => filterSet === null || filterSet.has(entry.projectId))
-    .flatMap(({ projectId, packs }) =>
-      packs
-        .filter((pack) => pack.drift)
-        .map((pack) => ({ projectId, pack })),
-    );
+  return {
+    driftItems: entries.flatMap(({ projectId, packs }) =>
+      packs.filter((pack) => pack.drift).map((pack) => ({ projectId, pack })),
+    ),
+    contractItems: entries
+      .filter((entry) => harnessContractNeedsAttention(entry.contract))
+      .map(({ projectId, contract }) => ({ projectId, contract })),
+  };
 }
 
 function getRepairableKind(kind: HygieneIssueKindDto): RepairableKind | null {
@@ -235,7 +269,7 @@ export function HygienePanel({
   });
   const harnessDriftQuery = useQuery({
     queryKey: ['harness-drift', projectIdsKey],
-    queryFn: () => fetchHarnessDriftItems(projectIds),
+    queryFn: () => fetchHarnessHygieneItems(projectIds),
   });
   const leaseHealthQuery = useQuery({
     queryKey: ['lease-health', projectIdsKey],
@@ -411,7 +445,8 @@ export function HygienePanel({
 
   const repairDisabled =
     repairMutation.isPending || harnessInjectMutation.isPending;
-  const harnessDriftItems = harnessDriftQuery.data ?? [];
+  const harnessDriftItems = harnessDriftQuery.data?.driftItems ?? [];
+  const harnessContractItems = harnessDriftQuery.data?.contractItems ?? [];
   const hygieneIssues = query.data ?? [];
   const staleLeases = leaseHealthQuery.data?.staleLeases ?? [];
   const heldMergeSlots = (mergeSlotQuery.data ?? []).filter(
@@ -444,6 +479,7 @@ export function HygienePanel({
   const hasAnyIssues =
     hygieneIssues.length > 0 ||
     harnessDriftItems.length > 0 ||
+    harnessContractItems.length > 0 ||
     staleLeases.length > 0 ||
     heldMergeSlots.length > 0;
 
@@ -606,6 +642,30 @@ export function HygienePanel({
                       {rowError}
                     </p>
                   )}
+                </div>
+              </li>
+            );
+          })}
+          {harnessContractItems.map((item) => {
+            const rowKey = harnessContractRowKey(item);
+            const label = formatHarnessContractLabel(item.contract);
+            const detail = formatHarnessContractDetail(item.contract);
+
+            return (
+              <li key={rowKey}>
+                <div className="hygiene-issue-row hygiene-issue-row-static">
+                  <span className="hygiene-kind-badge hygiene-kind-harness_contract">
+                    {HARNESS_CONTRACT_KIND_LABEL}
+                  </span>
+                  <span className="badge badge-stalled">警告</span>
+                  <span className="hygiene-issue-project">{item.projectId}</span>
+                  <span className="hygiene-issue-id">{label}</span>
+                  <span
+                    className="hygiene-issue-message"
+                    title={detail ?? undefined}
+                  >
+                    {detail}
+                  </span>
                 </div>
               </li>
             );

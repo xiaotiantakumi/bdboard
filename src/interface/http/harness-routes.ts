@@ -2,11 +2,16 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { parseJsonBody } from './request-body.js';
 import { getAllProjectsHarnessStatus } from '../../application/harness/get-all-projects-harness-status.js';
-import { getProjectHarnessStatus } from '../../application/harness/get-project-harness-status.js';
+import {
+  getProjectHarnessStatus,
+  resolveProjectContractState,
+} from '../../application/harness/get-project-harness-status.js';
 import { injectHarnessPack } from '../../application/harness/inject-harness-pack.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
+import type { HarnessContractReaderPort } from '../../application/ports/harness-contract-reader.js';
 import type { HarnessInjectorPort } from '../../application/ports/harness-injector.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
+import type { ContractState } from '../../domain/harness-contract.js';
 import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
 import {
   createWriteGuardMiddleware,
@@ -17,6 +22,7 @@ export interface HarnessRoutesDeps {
   readonly cache: BoardCache;
   readonly registry: PackRegistryPort;
   readonly injector: HarnessInjectorPort;
+  readonly contractReader: HarnessContractReaderPort;
   readonly now?: () => Date;
   readonly writeAccess?: WriteGuardDeps;
 }
@@ -51,6 +57,33 @@ function extractProjectIdFromHarnessPath(reqPath: string): string | undefined {
   return undefined;
 }
 
+/**
+ * ContractState をそのまま JSON に落とす。状態ごとに明示的に書き出すのは、
+ * ドメイン側に内部向けフィールドが増えたときに黙って API へ漏れないようにするため。
+ */
+function toContractJson(contract: ContractState): Record<string, unknown> {
+  switch (contract.state) {
+    case 'ok':
+      return {
+        state: 'ok',
+        verify: contract.verify,
+        prFlow: contract.prFlow,
+        mainBranch: contract.mainBranch,
+      };
+    case 'invalid':
+      return { state: 'invalid', message: contract.message };
+    case 'command-missing':
+      return {
+        state: 'command-missing',
+        script: contract.script,
+        verify: contract.verify,
+      };
+    case 'missing':
+    case 'not-applicable':
+      return { state: contract.state };
+  }
+}
+
 function toHarnessStatusJson(status: ProjectHarnessStatus): Record<string, unknown> {
   return {
     packs: status.packs.map((entry) => ({
@@ -59,6 +92,7 @@ function toHarnessStatusJson(status: ProjectHarnessStatus): Record<string, unkno
       installedVersion: entry.installedVersion,
       drift: entry.drift,
     })),
+    contract: toContractJson(status.contract),
   };
 }
 
@@ -72,7 +106,12 @@ async function resolveProjectHarnessStatus(
   }
 
   const manifest = await deps.injector.readManifest(cached.project.rootPath);
-  return getProjectHarnessStatus(deps.registry, manifest);
+  const contract = await resolveProjectContractState(
+    deps.contractReader,
+    cached.project.rootPath,
+    manifest,
+  );
+  return getProjectHarnessStatus(deps.registry, manifest, contract);
 }
 
 export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
@@ -97,6 +136,7 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
     const statuses = await getAllProjectsHarnessStatus({
       registry: deps.registry,
       injector: deps.injector,
+      contractReader: deps.contractReader,
       projects,
     });
 
@@ -155,7 +195,19 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
       return c.json({ error: 'injection failed', detail: result.failure.detail }, 500);
     }
 
-    const status = await getProjectHarnessStatus(deps.registry, result.manifest);
+    // 注入は成功しているので、コントラクト評価の結果でレスポンスを止めない。
+    // 「注入したがこのプロジェクトには検証ループが宣言されていない」を、注入直後に
+    // その場で返すのがここの狙い (bdboard-pkr6.3)。
+    const contract = await resolveProjectContractState(
+      deps.contractReader,
+      cached.project.rootPath,
+      result.manifest,
+    );
+    const status = await getProjectHarnessStatus(
+      deps.registry,
+      result.manifest,
+      contract,
+    );
     return c.json(toHarnessStatusJson(status));
   });
 

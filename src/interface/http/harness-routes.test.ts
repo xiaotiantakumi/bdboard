@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { compareStrings } from '../../domain/compare.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
+import type { HarnessContractReaderPort } from '../../application/ports/harness-contract-reader.js';
 import type { HarnessInjectorPort } from '../../application/ports/harness-injector.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
 import type { Project } from '../../domain/project.js';
@@ -74,10 +75,21 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
   };
 }
 
+function createFakeContractReader(options?: {
+  readonly contract?: string | null;
+  readonly scripts?: readonly string[] | null;
+}): HarnessContractReaderPort {
+  return {
+    readContract: vi.fn(async () => options?.contract ?? null),
+    readPackageScripts: vi.fn(async () => options?.scripts ?? null),
+  };
+}
+
 function createHarnessApp(options?: {
   readonly registry?: PackRegistryPort;
   readonly injector?: HarnessInjectorPort;
   readonly cache?: BoardCache;
+  readonly contractReader?: HarnessContractReaderPort;
 }): Hono {
   const cache = options?.cache ?? createFakeBoardCache();
   const registry: PackRegistryPort =
@@ -122,6 +134,7 @@ function createHarnessApp(options?: {
     cache,
     registry,
     injector,
+    contractReader: options?.contractReader ?? createFakeContractReader(),
     now: () => new Date('2026-08-16T10:00:00.000Z'),
   });
 }
@@ -191,6 +204,7 @@ describe('createHarnessRoutes', () => {
               drift: true,
             },
           ],
+          contract: { state: 'missing' },
         },
         {
           projectId: projB.id,
@@ -202,6 +216,7 @@ describe('createHarnessRoutes', () => {
               drift: false,
             },
           ],
+          contract: { state: 'missing' },
         },
       ],
     });
@@ -254,6 +269,7 @@ describe('createHarnessRoutes', () => {
           drift: false,
         },
       ],
+      contract: { state: 'missing' },
     });
   });
 
@@ -301,6 +317,147 @@ describe('createHarnessRoutes', () => {
       expect.objectContaining({ name: 'bdboard-harness' }),
       new Date('2026-08-16T10:00:00.000Z'),
     );
+  });
+
+  it('reports contract not-applicable for a project with no injected pack', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const contractReader = createFakeContractReader();
+    const app = createHarnessApp({ cache, contractReader });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness`,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { contract: unknown };
+    expect(body.contract).toEqual({ state: 'not-applicable' });
+    expect(contractReader.readContract).not.toHaveBeenCalled();
+  });
+
+  it('reports the declared verify command for an injected project', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const injector: HarnessInjectorPort = {
+      readManifest: vi.fn(async () => ({
+        packs: [
+          {
+            name: 'bdboard-harness',
+            version: '0.1.0',
+            injectedAt: '2026-08-16T00:00:00.000Z',
+            files: [],
+          },
+        ],
+      })),
+      injectPack: vi.fn(),
+    };
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({
+        contract: JSON.stringify({
+          version: 1,
+          verify: 'npm run verify',
+          prFlow: 'pr',
+          mainBranch: 'main',
+        }),
+        scripts: ['verify'],
+      }),
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness`,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { contract: unknown };
+    expect(body.contract).toEqual({
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'main',
+    });
+  });
+
+  it('reports an invalid contract without failing the request', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const injector: HarnessInjectorPort = {
+      readManifest: vi.fn(async () => ({
+        packs: [
+          {
+            name: 'bdboard-harness',
+            version: '0.1.0',
+            injectedAt: '2026-08-16T00:00:00.000Z',
+            files: [],
+          },
+        ],
+      })),
+      injectPack: vi.fn(),
+    };
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: '{ broken' }),
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness`,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      contract: { state: string; message: string };
+    };
+    expect(body.contract.state).toBe('invalid');
+    expect(body.contract.message).toContain('JSON');
+  });
+
+  it('includes the contract state in the inject response without blocking the injection', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const injector: HarnessInjectorPort = {
+      readManifest: vi.fn(async () => ({ packs: [] })),
+      injectPack: vi.fn(async () => ({
+        packs: [
+          {
+            name: 'bdboard-harness',
+            version: '0.1.0',
+            injectedAt: '2026-08-16T10:00:00.000Z',
+            files: ['.claude/skills/bdboard-harness/SKILL.md'],
+          },
+        ],
+      })),
+    };
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/inject`,
+      withLocalHost({
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ pack: 'bdboard-harness' }),
+      }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(injector.injectPack).toHaveBeenCalledTimes(1);
+    const body = (await response.json()) as { contract: unknown };
+    expect(body.contract).toEqual({ state: 'missing' });
   });
 
   it('returns 404 when injecting an unknown pack', async () => {

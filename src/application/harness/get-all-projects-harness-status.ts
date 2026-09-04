@@ -1,8 +1,12 @@
 import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
 import type { Project } from '../../domain/project.js';
+import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
 import type { HarnessInjectorPort } from '../ports/harness-injector.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
-import { computeProjectHarnessStatus } from './get-project-harness-status.js';
+import {
+  computeProjectHarnessStatus,
+  resolveProjectContractState,
+} from './get-project-harness-status.js';
 
 export interface ProjectHarnessStatusEntry {
   readonly projectId: string;
@@ -12,6 +16,7 @@ export interface ProjectHarnessStatusEntry {
 export interface GetAllProjectsHarnessStatusInput {
   readonly registry: PackRegistryPort;
   readonly injector: HarnessInjectorPort;
+  readonly contractReader: HarnessContractReaderPort;
   readonly projects: readonly Project[];
 }
 
@@ -23,9 +28,14 @@ export async function getAllProjectsHarnessStatus(
   return Promise.all(
     input.projects.map(async (project) => {
       const manifest = await input.injector.readManifest(project.rootPath);
+      const contract = await resolveProjectContractState(
+        input.contractReader,
+        project.rootPath,
+        manifest,
+      );
       return {
         projectId: project.id,
-        status: computeProjectHarnessStatus(availablePacks, manifest),
+        status: computeProjectHarnessStatus(availablePacks, manifest, contract),
       };
     }),
   );

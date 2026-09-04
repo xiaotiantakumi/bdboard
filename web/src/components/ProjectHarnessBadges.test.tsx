@@ -23,6 +23,8 @@ import {
 const fetchProjectHarnessStatusMock = vi.mocked(fetchProjectHarnessStatus);
 const postProjectHarnessInjectMock = vi.mocked(postProjectHarnessInject);
 
+const NOT_APPLICABLE_CONTRACT = { state: 'not-applicable' } as const;
+
 function renderBadges(projectId = '/tmp/example-project') {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -47,6 +49,7 @@ describe('ProjectHarnessBadges', () => {
 
   it('shows 未導入 label and inject button for missing pack', async () => {
     fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -73,6 +76,7 @@ describe('ProjectHarnessBadges', () => {
     const FEEDBACK_MS = 4000;
     const user = userEvent.setup();
     fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -88,7 +92,7 @@ describe('ProjectHarnessBadges', () => {
       () =>
         new Promise((resolve) => {
           settleInject = () => {
-            resolve({ packs: [] });
+            resolve({ packs: [], contract: NOT_APPLICABLE_CONTRACT });
           };
         }),
     );
@@ -120,6 +124,7 @@ describe('ProjectHarnessBadges', () => {
 
   it('shows drift label and update button for outdated pack', async () => {
     fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -138,6 +143,7 @@ describe('ProjectHarnessBadges', () => {
 
   it('shows installed version without action button when up to date', async () => {
     fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -158,6 +164,7 @@ describe('ProjectHarnessBadges', () => {
   it('shows success feedback after inject succeeds', async () => {
     const user = userEvent.setup();
     fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -168,6 +175,7 @@ describe('ProjectHarnessBadges', () => {
       ],
     });
     postProjectHarnessInjectMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -196,6 +204,7 @@ describe('ProjectHarnessBadges', () => {
   it('shows write-access error feedback when inject fails with 403', async () => {
     const user = userEvent.setup();
     fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -214,5 +223,62 @@ describe('ProjectHarnessBadges', () => {
     await user.click(await screen.findByRole('button', { name: '注入' }));
 
     expect(await screen.findByText(TUNNEL_WRITE_HELP)).toBeInTheDocument();
+  });
+  it('shows the declared verify command when the contract is ok', async () => {
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: {
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+      },
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: '0.2.0',
+          drift: false,
+        },
+      ],
+    });
+
+    renderBadges();
+
+    expect(await screen.findByText('検証: npm run verify')).toBeInTheDocument();
+  });
+
+  it('warns when an injected project declares no verification loop', async () => {
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: { state: 'missing' },
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: '0.2.0',
+          drift: false,
+        },
+      ],
+    });
+
+    renderBadges();
+
+    expect(await screen.findByText('検証ループ未定義')).toBeInTheDocument();
+  });
+
+  it('shows nothing for an uninjected project', async () => {
+    // 未注入プロジェクトに「検証ループ未定義」を出さないことが、この機能の
+    // 最重要の UX 条件 (bdboard-pkr6.3)。
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: { state: 'not-applicable' },
+      packs: [],
+    });
+
+    const { container } = renderBadges();
+
+    await waitFor(() => {
+      expect(fetchProjectHarnessStatusMock).toHaveBeenCalled();
+    });
+    expect(screen.queryByText('検証ループ未定義')).not.toBeInTheDocument();
+    expect(container.querySelector('.project-harness-badges')).toBeNull();
   });
 });

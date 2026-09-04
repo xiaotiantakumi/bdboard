@@ -1,7 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchProjectHarnessStatus } from '../api';
 import {
+  formatHarnessContractDetail,
+  formatHarnessContractLabel,
   formatHarnessPackStatusLabel,
+  harnessContractNeedsAttention,
   harnessInjectButtonLabel,
   harnessPackNeedsAction,
 } from '../harnessDisplay';
@@ -26,7 +29,10 @@ export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
     return null;
   }
 
-  if (query.data.packs.length === 0) {
+  const contract = query.data.contract;
+  const contractLabel = formatHarnessContractLabel(contract);
+
+  if (query.data.packs.length === 0 && contractLabel === null) {
     return null;
   }
 
@@ -63,6 +69,18 @@ export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
           </span>
         );
       })}
+      {contractLabel !== null && (
+        <span
+          className={
+            harnessContractNeedsAttention(contract)
+              ? 'project-harness-contract project-harness-contract-warn'
+              : 'project-harness-contract'
+          }
+          title={formatHarnessContractDetail(contract) ?? undefined}
+        >
+          {contractLabel}
+        </span>
+      )}
       {message !== '' && (
         <span className="project-harness-feedback" role="status" aria-live="polite">
           {message}

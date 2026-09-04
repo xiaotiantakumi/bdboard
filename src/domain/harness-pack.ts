@@ -1,3 +1,5 @@
+import type { ContractState } from './harness-contract.js';
+
 export interface PackSummary {
   readonly name: string;
   readonly version: string;
@@ -34,6 +36,12 @@ export interface ProjectHarnessPackStatus {
 
 export interface ProjectHarnessStatus {
   readonly packs: readonly ProjectHarnessPackStatus[];
+  /**
+   * 検証コントラクト (`.claude/bdboard-harness.json`) の状態。パック単位ではなく
+   * プロジェクト単位なので、`packs` の外に置く。未注入プロジェクトでは
+   * `not-applicable` になり、UI には何も出さない (bdboard-pkr6.3)。
+   */
+  readonly contract: ContractState;
 }
 
 export const EMPTY_HARNESS_MANIFEST: HarnessManifest = { packs: [] };

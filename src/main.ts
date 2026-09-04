@@ -65,6 +65,7 @@ import {
   createFileBoardThresholdsConfigStore,
   createFileHygieneThresholdsConfigStore,
   createFileAiQuotaAlertConfigStore,
+  createFsHarnessContractReader,
   createFsHarnessInjector,
   createFsPackRegistry,
   createFsProjectDiscovery,
@@ -948,12 +949,14 @@ async function main(): Promise<void> {
   const harnessPacksRoot = path.join(repoRoot, 'harness', 'packs');
   const packRegistry = createFsPackRegistry(harnessPacksRoot);
   const harnessInjector = createFsHarnessInjector({ packsRoot: harnessPacksRoot });
+  const harnessContractReader = createFsHarnessContractReader();
   app.route(
     '/',
     createHarnessRoutes({
       cache,
       registry: packRegistry,
       injector: harnessInjector,
+      contractReader: harnessContractReader,
       writeAccess,
     }),
   );
