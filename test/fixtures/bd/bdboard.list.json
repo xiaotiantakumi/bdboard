@@ -35,7 +35,8 @@
     "dependency_count": 1,
     "dependent_count": 4,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["housekeeping", "investigation-followup"]
   },
   {
     "id": "bdboard-3tw",
@@ -50,7 +51,8 @@
     "updated_at": "2026-08-14T08:47:36Z",
     "dependency_count": 0,
     "dependent_count": 0,
-    "comment_count": 0
+    "comment_count": 0,
+    "labels": ["process"]
   },
   {
     "id": "bdboard-3tw.1",
@@ -81,7 +83,8 @@
     "dependency_count": 0,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["quality"]
   },
   {
     "id": "bdboard-3tw.8",
@@ -115,7 +118,8 @@
     "dependency_count": 1,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["review"]
   },
   {
     "id": "bdboard-3tw.7",
@@ -149,7 +153,8 @@
     "dependency_count": 1,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["tooling"]
   },
   {
     "id": "bdboard-3tw.6",
@@ -183,7 +188,8 @@
     "dependency_count": 1,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["verification"]
   },
   {
     "id": "bdboard-3tw.5",
@@ -225,7 +231,8 @@
     "dependency_count": 2,
     "dependent_count": 2,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["workflow", "docs"]
   },
   {
     "id": "bdboard-3tw.4",
@@ -259,7 +266,8 @@
     "dependency_count": 1,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["infra"]
   },
   {
     "id": "bdboard-3tw.3",
@@ -295,7 +303,8 @@
     "dependency_count": 1,
     "dependent_count": 1,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["ui"]
   },
   {
     "id": "bdboard-3tw.10",
@@ -329,7 +338,8 @@
     "dependency_count": 1,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["testing", "refactor"]
   },
   {
     "id": "bdboard-3tw.9",
@@ -371,6 +381,7 @@
     "dependency_count": 2,
     "dependent_count": 0,
     "comment_count": 0,
-    "parent": "bdboard-3tw"
+    "parent": "bdboard-3tw",
+    "labels": ["performance", "accessibility"]
   }
 ]

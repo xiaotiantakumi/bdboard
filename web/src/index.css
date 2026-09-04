@@ -6108,6 +6108,21 @@ body {
   align-items: center;
   gap: 8px;
   flex: 0 1 auto;
+  /*
+    flex アイテムの既定 min-width:auto は子の min-content 幅まで膨らむ。
+    .toggle-group の overflow-x:auto は「親が収まる幅」に対してしか効かないので、
+    親 .board-filter-group が縮まないと max-width:100% が膨らんだ親基準になり
+    横スクロールが一度も発火しない (375px でラベルチップ到達不能、bdboard-h4xs.4)。
+  */
+  min-width: 0;
+}
+
+.board-filter-group > .header-label {
+  flex: 0 0 auto;
+}
+
+.board-filter-group > .toggle-group {
+  min-width: 0;
 }
 
 .board-filter-type-group {
