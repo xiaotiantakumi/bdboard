@@ -17,6 +17,7 @@ const SERVER_CSRF_BLOCKED = 'cross-site write blocked';
 const SERVER_CHAT_NOT_AUTHORIZED =
   'chat requires local access or an authorized tunnel session';
 const SERVER_CHAT_CSRF_BLOCKED = 'cross-site chat request blocked';
+const SERVER_REMOTE_RUNS_DISABLED = 'remote agent runs are disabled';
 
 /**
  * 409 を返すが「他セッションによる変更」ではないサーバーエラー文字列(bdboard-o2o)。
@@ -36,6 +37,12 @@ const SERVER_CHAT_BUSY = 'chat is busy for this project';
 /** トンネル経由で書き込めないときの説明。理由が 2 つあるので両方を出す。 */
 export const TUNNEL_WRITE_HELP =
   'この画面からは変更できません。スマホから操作するには、PCの「スマホ公開」パネルで発行するQRコードから開き直してください。トンネルのパスワードが12文字未満のときも読み取り専用になります。';
+
+// リモートからの実行可否を切り替える PUT /api/settings/agent-runs は local-only なので、
+// この画面の利用者に「設定を変えてください」と案内してはいけない (403 になる)。
+// 切り替えは PC のローカル画面でしか行えない、と正確に伝える。
+export const REMOTE_AGENT_RUNS_DISABLED_HELP =
+  'この画面（トンネル経由）からはエージェントを実行できません。PCのローカル画面で実行してください。リモートからの実行を許可したい場合も、PCのローカル画面の「設定」→「エージェント実行」から切り替える必要があります。';
 
 export const RATE_LIMITED_HELP =
   '利用上限に達しました。しばらく時間をおいてからお試しください。';
@@ -112,6 +119,8 @@ export function writeAccessErrorMessage(error: unknown): string | null {
     case SERVER_CSRF_BLOCKED:
     case SERVER_CHAT_CSRF_BLOCKED:
       return CROSS_SITE_HELP;
+    case SERVER_REMOTE_RUNS_DISABLED:
+      return REMOTE_AGENT_RUNS_DISABLED_HELP;
     default:
       return null;
   }

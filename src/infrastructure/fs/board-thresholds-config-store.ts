@@ -4,6 +4,7 @@ import type {
   BoardThresholdsConfig,
   BoardThresholdsConfigPort,
 } from '../../application/ports/board-thresholds-config.js';
+import { withConfigFileLock } from './config-file-write-lock.js';
 
 type MutableBoardThresholdsConfig = {
   -readonly [K in keyof BoardThresholdsConfig]?: BoardThresholdsConfig[K];
@@ -112,18 +113,20 @@ export function createFileBoardThresholdsConfigStore(
       return parseConfig(parsed);
     },
     async write(config: BoardThresholdsConfig): Promise<void> {
-      const dir = path.dirname(filePath);
-      fs.mkdirSync(dir, { recursive: true });
+      await withConfigFileLock(filePath, async () => {
+        const dir = path.dirname(filePath);
+        fs.mkdirSync(dir, { recursive: true });
 
-      const existing = readRawObject(filePath);
-      const merged = { ...existing, ...config };
+        const existing = readRawObject(filePath);
+        const merged = { ...existing, ...config };
 
-      const tmpPath = path.join(
-        dir,
-        `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      );
-      fs.writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
-      fs.renameSync(tmpPath, filePath);
+        const tmpPath = path.join(
+          dir,
+          `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        );
+        fs.writeFileSync(tmpPath, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+        fs.renameSync(tmpPath, filePath);
+      });
     },
   };
 }

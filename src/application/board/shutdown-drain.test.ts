@@ -5,7 +5,7 @@ import { createInMemoryTunnelInterruptionStore } from '../ports/tunnel-interrupt
 import type { TunnelProcess, TunnelStartResult } from '../ports/tunnel.js';
 import type { TunnelService, TunnelState } from '../tunnel/tunnel-service.js';
 import { createTunnelService } from '../tunnel/tunnel-service.js';
-import { createShutdownDrain } from './shutdown-drain.js';
+import { createShutdownDrain, RUN_CANCEL_DRAIN_TIMEOUT_MS } from './shutdown-drain.js';
 
 const TUNNEL_URL = 'https://abc.trycloudflare.com';
 const FIXED_NOW = new Date('2026-08-15T03:00:00.000Z');
@@ -41,10 +41,12 @@ function fakeDeps(overrides?: {
   tunnelShutdown?: () => Promise<TunnelState>;
   tunnelStop?: () => Promise<TunnelState>;
   cacheClose?: () => void;
+  runStoreCancelAllAndWait?: () => Promise<void>;
 }): {
   watchHandle: Pick<ProjectWatchHandle, 'stop'>;
   tunnelService: Pick<TunnelService, 'shutdown' | 'stop'>;
   cache: Pick<BoardCache, 'close'>;
+  runStore?: { cancelAllAndWait: (timeoutMs: number) => Promise<void> };
   calls: string[];
 } {
   const calls: string[] = [];
@@ -82,16 +84,120 @@ function fakeDeps(overrides?: {
       : vi.fn(() => {
           calls.push('cache.close');
         });
+  const runStore =
+    overrides?.runStoreCancelAllAndWait != null
+      ? {
+          cancelAllAndWait: vi.fn(async (_timeoutMs: number) => {
+            calls.push('runStore.cancelAllAndWait');
+            return await overrides.runStoreCancelAllAndWait!();
+          }),
+        }
+      : undefined;
 
   return {
     calls,
     watchHandle: { stop: watchStop },
     tunnelService: { shutdown: tunnelShutdown, stop: tunnelStop },
     cache: { close: cacheClose },
+    runStore,
   };
 }
 
 describe('createShutdownDrain', () => {
+  it('calls runStore.cancelAllAndWait before tunnel shutdown when runStore is provided', async () => {
+    const { watchHandle, tunnelService, cache, runStore, calls } = fakeDeps({
+      runStoreCancelAllAndWait: async () => {},
+    });
+    const drain = createShutdownDrain({
+      runStore,
+      watchHandle,
+      tunnelService,
+      cache,
+    });
+
+    await drain();
+
+    expect(runStore?.cancelAllAndWait).toHaveBeenCalledOnce();
+    expect(runStore?.cancelAllAndWait).toHaveBeenCalledWith(RUN_CANCEL_DRAIN_TIMEOUT_MS);
+    expect(calls).toEqual([
+      'runStore.cancelAllAndWait',
+      'tunnelService.shutdown',
+      'watchHandle.stop',
+      'cache.close',
+    ]);
+  });
+
+  it('still runs remaining steps when runStore.cancelAllAndWait throws, then rejects with AggregateError', async () => {
+    const runStoreError = new Error('cancel all failed');
+    const { watchHandle, tunnelService, cache, runStore, calls } = fakeDeps({
+      runStoreCancelAllAndWait: async () => {
+        throw runStoreError;
+      },
+    });
+    const drain = createShutdownDrain({
+      runStore,
+      watchHandle,
+      tunnelService,
+      cache,
+    });
+
+    try {
+      await drain();
+      expect.fail('drain() should reject');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AggregateError);
+      const aggregate = err as AggregateError;
+      expect(aggregate.errors).toHaveLength(1);
+      expect(aggregate.errors[0]).toBe(runStoreError);
+      expect(aggregate.message).toContain(
+        'runStore.cancelAllAndWait: cancel all failed',
+      );
+    }
+
+    expect(tunnelService.shutdown).toHaveBeenCalledOnce();
+    expect(calls).toEqual([
+      'runStore.cancelAllAndWait',
+      'tunnelService.shutdown',
+      'watchHandle.stop',
+      'cache.close',
+    ]);
+  });
+
+  it('awaits runStore.cancelAllAndWait before proceeding to tunnel shutdown', async () => {
+    let resolveCancelAllAndWait: (() => void) | undefined;
+    const cancelAllAndWaitPending = new Promise<void>((resolve) => {
+      resolveCancelAllAndWait = resolve;
+    });
+
+    const { watchHandle, tunnelService, cache, runStore, calls } = fakeDeps({
+      runStoreCancelAllAndWait: async () => cancelAllAndWaitPending,
+    });
+    const drain = createShutdownDrain({
+      runStore,
+      watchHandle,
+      tunnelService,
+      cache,
+    });
+
+    const drainPromise = drain();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(runStore?.cancelAllAndWait).toHaveBeenCalledOnce();
+    expect(tunnelService.shutdown).not.toHaveBeenCalled();
+    expect(calls).toEqual(['runStore.cancelAllAndWait']);
+
+    resolveCancelAllAndWait!();
+    await drainPromise;
+
+    expect(calls).toEqual([
+      'runStore.cancelAllAndWait',
+      'tunnelService.shutdown',
+      'watchHandle.stop',
+      'cache.close',
+    ]);
+  });
+
   it('calls tunnelService.shutdown() not stop() when draining with an active tunnel', async () => {
     const { watchHandle, tunnelService, cache, calls } = fakeDeps();
     const drain = createShutdownDrain({ watchHandle, tunnelService, cache });

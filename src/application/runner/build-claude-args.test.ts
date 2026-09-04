@@ -25,7 +25,7 @@ describe('buildClaudeCommand', () => {
       buildClaudeCommand(makeRequest({ mode: 'spawn', prompt: 'do the thing' })),
     ).toEqual({
       command: 'claude',
-      args: ['do the thing'],
+      args: ['-p', '--', 'do the thing'],
     });
   });
 
@@ -51,7 +51,7 @@ describe('buildClaudeCommand', () => {
       ),
     ).toEqual({
       command: 'claude',
-      args: ['--resume', 'sess-1', 'do the thing'],
+      args: ['--resume', 'sess-1', '--', 'do the thing'],
     });
   });
 
@@ -72,7 +72,152 @@ describe('buildClaudeCommand', () => {
       buildClaudeCommand(makeRequest({ mode: 'spawn', prompt })),
     ).toEqual({
       command: 'claude',
-      args: [prompt],
+      args: ['-p', '--', prompt],
+    });
+  });
+
+  it('adds permission-mode after -p when configured', () => {
+    expect(
+      buildClaudeCommand(makeRequest({ mode: 'spawn', prompt: 'go' }), {
+        permissionMode: 'acceptEdits',
+      }),
+    ).toEqual({
+      command: 'claude',
+      args: ['-p', '--permission-mode', 'acceptEdits', '--', 'go'],
+    });
+  });
+
+  it('adds disallowedTools immediately after allowedTools', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      {
+        allowedTools: ['Read'],
+        disallowedTools: ['WebFetch', 'Bash(npm:*)'],
+      },
+    );
+
+    expect(result).toEqual({
+      command: 'claude',
+      args: [
+        '-p',
+        '--allowedTools',
+        'Read',
+        '--disallowedTools',
+        'WebFetch',
+        'Bash(npm:*)',
+        '--',
+        'go',
+      ],
+    });
+  });
+
+  it('adds disallowedTools even when allowedTools is omitted', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      {
+        disallowedTools: ['WebFetch'],
+      },
+    );
+
+    expect(result.args).toEqual([
+      '-p',
+      '--disallowedTools',
+      'WebFetch',
+      '--',
+      'go',
+    ]);
+  });
+
+  it('adds allowedTools before prompt with each tool as its own argv element', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      {
+        permissionMode: 'acceptEdits',
+        allowedTools: ['Read', 'Bash(bd:*)'],
+      },
+    );
+
+    expect(result).toEqual({
+      command: 'claude',
+      args: [
+        '-p',
+        '--permission-mode',
+        'acceptEdits',
+        '--allowedTools',
+        'Read',
+        'Bash(bd:*)',
+        '--',
+        'go',
+      ],
+    });
+
+    const promptIndex = result.args.indexOf('go');
+    const allowedToolsIndex = result.args.indexOf('--allowedTools');
+    expect(allowedToolsIndex).toBeGreaterThanOrEqual(0);
+    expect(allowedToolsIndex).toBeLessThan(promptIndex);
+
+    // `--allowedTools <tools...>` is variadic in the Claude CLI, so the prompt
+    // must be shielded by a `--` terminator; without it the CLI absorbs the
+    // prompt as one more tool name and exits 1 with "Input must be provided...".
+    expect(result.args[promptIndex - 1]).toBe('--');
+  });
+
+  it('emits the `--` terminator immediately before the prompt for every option combination', () => {
+    const cases: Array<Parameters<typeof buildClaudeCommand>[1]> = [
+      undefined,
+      { permissionMode: 'acceptEdits' },
+      { allowedTools: ['Read'] },
+      { permissionMode: 'acceptEdits', allowedTools: ['Read', 'Bash(npm:*)'] },
+    ];
+
+    for (const options of cases) {
+      const { args } = buildClaudeCommand(
+        makeRequest({ mode: 'spawn', prompt: 'the prompt' }),
+        options,
+      );
+      expect(args.at(-1)).toBe('the prompt');
+      expect(args.at(-2)).toBe('--');
+    }
+  });
+
+  it('omits the `--` terminator when there is no prompt to shield', () => {
+    const { args } = buildClaudeCommand(makeRequest({ mode: 'spawn' }), {
+      allowedTools: ['Read'],
+    });
+    expect(args).not.toContain('--');
+  });
+
+  it('omits allowedTools when the list is empty', () => {
+    expect(
+      buildClaudeCommand(makeRequest({ mode: 'spawn', prompt: 'go' }), {
+        allowedTools: [],
+      }),
+    ).toEqual({
+      command: 'claude',
+      args: ['-p', '--', 'go'],
+    });
+  });
+
+  it('does not add -p for resume mode even when prompt is present', () => {
+    expect(
+      buildClaudeCommand(
+        makeRequest({
+          mode: 'resume',
+          sessionId: 'sess-1',
+          prompt: 'continue',
+        }),
+        { permissionMode: 'acceptEdits' },
+      ),
+    ).toEqual({
+      command: 'claude',
+      args: [
+        '--resume',
+        'sess-1',
+        '--permission-mode',
+        'acceptEdits',
+        '--',
+        'continue',
+      ],
     });
   });
 

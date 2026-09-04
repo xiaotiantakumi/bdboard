@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
-import { ApiError, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchAgentRunConfig, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig, saveAgentRunConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
 
@@ -193,6 +193,13 @@ function describeAiQuotaAlertWriteError(error: unknown): ReactNode {
   return describeWriteError(error, 'AIクォータ通知閾値を保存できませんでした');
 }
 
+function describeAgentRunWriteError(error: unknown): ReactNode {
+  if (error instanceof ApiError && error.status === 409) {
+    return CONFLICT_WRITE_MESSAGE;
+  }
+  return describeWriteError(error, 'エージェント実行設定を保存できませんでした');
+}
+
 function isRejectedScanRootDetails(
   details: unknown,
 ): details is { rejected: string[] } {
@@ -283,6 +290,10 @@ export function SettingsPanel() {
     queryKey: ['ai-quota-alert-config'],
     queryFn: fetchAiQuotaAlertConfig,
   });
+  const agentRunsQuery = useQuery({
+    queryKey: ['agent-runs-config'],
+    queryFn: fetchAgentRunConfig,
+  });
   const dbStatsQuery = useQuery({
     queryKey: ['db-stats'],
     queryFn: fetchDbStats,
@@ -319,6 +330,10 @@ export function SettingsPanel() {
   const [aiQuotaAlertVersion, setAiQuotaAlertVersion] = useState('');
   const aiQuotaAlertFeedback = useSaveFeedback();
   const [aiQuotaAlertDirty, setAiQuotaAlertDirty] = useState(false);
+  const [allowRemoteAgentRuns, setAllowRemoteAgentRuns] = useState(false);
+  const [agentRunsVersion, setAgentRunsVersion] = useState('');
+  const agentRunsFeedback = useSaveFeedback();
+  const [agentRunsDirty, setAgentRunsDirty] = useState(false);
 
   useEffect(() => {
     if (query.data !== undefined && !dirty) {
@@ -387,6 +402,13 @@ export function SettingsPanel() {
       setAiQuotaAlertVersion(aiQuotaAlertQuery.data.version);
     }
   }, [aiQuotaAlertDirty, aiQuotaAlertQuery.data]);
+
+  useEffect(() => {
+    if (agentRunsQuery.data !== undefined && !agentRunsDirty) {
+      setAllowRemoteAgentRuns(agentRunsQuery.data.allowRemoteAgentRuns);
+      setAgentRunsVersion(agentRunsQuery.data.version);
+    }
+  }, [agentRunsDirty, agentRunsQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -572,7 +594,34 @@ export function SettingsPanel() {
     },
   });
 
-  if (query.isPending || thresholdsQuery.isPending || hygieneThresholdsQuery.isPending || aiQuotaAlertQuery.isPending) {
+  const saveAgentRunsMutation = useMutation({
+    mutationFn: () =>
+      saveAgentRunConfig({
+        allowRemoteAgentRuns,
+        version: agentRunsVersion,
+      }),
+    onSuccess: async (data) => {
+      setAgentRunsVersion(data.version);
+      await queryClient.invalidateQueries({ queryKey: ['agent-runs-config'] });
+      setAgentRunsDirty(false);
+      agentRunsFeedback.showSuccess('エージェント実行設定を保存しました');
+    },
+    onError: (error) => {
+      agentRunsFeedback.showError(describeAgentRunWriteError(error));
+      if (error instanceof ApiError && error.status === 409) {
+        setAgentRunsDirty(false);
+        void queryClient.invalidateQueries({ queryKey: ['agent-runs-config'] });
+      }
+    },
+  });
+
+  if (
+    query.isPending ||
+    thresholdsQuery.isPending ||
+    hygieneThresholdsQuery.isPending ||
+    aiQuotaAlertQuery.isPending ||
+    agentRunsQuery.isPending
+  ) {
     return (
       <section className="settings-panel" aria-label="設定">
         読み込み中…
@@ -587,7 +636,9 @@ export function SettingsPanel() {
     hygieneThresholdsQuery.isError ||
     hygieneThresholdsQuery.data === undefined ||
     aiQuotaAlertQuery.isError ||
-    aiQuotaAlertQuery.data === undefined
+    aiQuotaAlertQuery.data === undefined ||
+    agentRunsQuery.isError ||
+    agentRunsQuery.data === undefined
   ) {
     return (
       <section className="settings-panel" aria-label="設定">
@@ -1136,6 +1187,53 @@ export function SettingsPanel() {
               role={aiQuotaAlertFeedback.isError ? 'alert' : undefined}
             >
               {aiQuotaAlertFeedback.message}
+            </div>
+          </div>
+        </form>
+      </section>
+      <section className="settings-panel-section" aria-labelledby="agent-runs-title">
+        <h3 id="agent-runs-title">エージェント実行</h3>
+        <p className="settings-panel-subtitle">
+          チケットの実行ボタンから Claude CLI を起動する機能の、リモートからの利用可否です。既定はオフで、オフのままでもPCのローカル画面からは実行できます。オンにするとトンネル経由の端末からもエージェントを起動できるようになります。
+        </p>
+        <p className="settings-panel-subtitle">
+          保存した内容は次回のサーバー再起動から有効になります。稼働中のサーバーには反映されません（実行中のエージェントが設定を書き換えて即座に権限を広げられないようにするため）。
+        </p>
+        <form
+          className="settings-panel-thresholds-form"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            saveAgentRunsMutation.mutate();
+          }}
+        >
+          <label htmlFor="settings-allow-remote-agent-runs">
+            リモート(トンネル経由)からのエージェント実行を許可する
+          </label>
+          <input
+            id="settings-allow-remote-agent-runs"
+            type="checkbox"
+            checked={allowRemoteAgentRuns}
+            disabled={saveAgentRunsMutation.isPending}
+            onChange={(event) => {
+              setAllowRemoteAgentRuns(event.target.checked);
+              setAgentRunsDirty(true);
+            }}
+          />
+          <div className="settings-panel-footer">
+            <button
+              type="submit"
+              className="settings-panel-save"
+              disabled={!agentRunsDirty || saveAgentRunsMutation.isPending}
+            >
+              {saveAgentRunsMutation.isPending ? '保存中…' : '設定を保存'}
+            </button>
+            <div
+              className="settings-panel-feedback"
+              aria-live="polite"
+              role={agentRunsFeedback.isError ? 'alert' : undefined}
+            >
+              {agentRunsFeedback.message}
             </div>
           </div>
         </form>

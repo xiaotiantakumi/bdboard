@@ -6,6 +6,7 @@ import {
   CROSS_SITE_HELP,
   NETWORK_FETCH_HELP,
   RATE_LIMITED_HELP,
+  REMOTE_AGENT_RUNS_DISABLED_HELP,
   TUNNEL_NOT_RUNNING_HELP,
   TUNNEL_WRITE_HELP,
   describeWriteError,
@@ -44,6 +45,12 @@ describe('writeAccessErrorMessage', () => {
     expect(
       writeAccessErrorMessage(apiError(403, 'cross-site chat request blocked')),
     ).toBe(CROSS_SITE_HELP);
+  });
+
+  it('explains the remote agent runs disabled 403', () => {
+    expect(
+      writeAccessErrorMessage(apiError(403, 'remote agent runs are disabled')),
+    ).toBe(REMOTE_AGENT_RUNS_DISABLED_HELP);
   });
 
   it('leaves other errors to the caller', () => {

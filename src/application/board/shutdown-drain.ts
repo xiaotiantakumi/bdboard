@@ -1,6 +1,15 @@
 import type { BoardCache } from '../ports/board-cache.js';
 import type { ProjectWatchHandle } from '../ports/project-watcher.js';
+import type { RunStore } from '../runner/run-store.js';
 import type { TunnelService } from '../tunnel/tunnel-service.js';
+
+/**
+ * node-streaming-command-runner.ts の STOP_GRACE_MS(3s) + 1s のマージン。
+ * createGracefulShutdown の DEFAULT_SHUTDOWN_TIMEOUT_MS(5s、graceful-shutdown.ts)
+ * より短くしてあるので、通常はこちらが先に切り上がり、graceful shutdown 側の
+ * 強制終了タイマーが先に発火することはない (bdboard-54be.1)。
+ */
+export const RUN_CANCEL_DRAIN_TIMEOUT_MS = 4_000;
 
 /** close() だけを要求する構造的型。infra への import を持ち込まないための最小面。 */
 export interface Closeable {
@@ -8,6 +17,7 @@ export interface Closeable {
 }
 
 export interface ShutdownDrainDeps {
+  readonly runStore?: Pick<RunStore, 'cancelAllAndWait'>;
   readonly watchHandle: Pick<ProjectWatchHandle, 'stop'>;
   readonly tunnelService: Pick<TunnelService, 'shutdown'>;
   readonly cache: Pick<BoardCache, 'close'>;
@@ -37,8 +47,8 @@ export interface ShutdownDrainDeps {
  * ここを stop() に戻すと SIGTERM 時の中断通知が無言で壊れる。
  * deps の型が Pick<TunnelService, 'shutdown'> なので stop() へ戻すと型エラーにもなる(二重防御)。
  *
- * 実行順序は tunnelService.shutdown → watchHandle.stop → cache.close →
- * chatRepositories[].close (任意) とする (bdboard-bch, bdboard-9dm)。
+ * 実行順序は runStore.cancelAllAndWait (任意) → tunnelService.shutdown → watchHandle.stop →
+ * cache.close → chatRepositories[].close (任意) とする (bdboard-bch, bdboard-9dm)。
  * preview_stop 等でプロセスグループ全体に SIGTERM が届くと、cloudflared 子プロセスが
  * tunnelService.shutdown() より先に終了し onUnexpectedExit で state が 'on' から 'error' へ
  * 化けることがある。旧順序 (watchHandle.stop を先に await) だと chokidar の watcher.close()
@@ -67,6 +77,14 @@ export function createShutdownDrain(deps: ShutdownDrainDeps): () => Promise<void
       errors.push(error);
       failures.push(`${step}: ${error.message}`);
     };
+
+    if (deps.runStore !== undefined) {
+      try {
+        await deps.runStore.cancelAllAndWait(RUN_CANCEL_DRAIN_TIMEOUT_MS);
+      } catch (err: unknown) {
+        record('runStore.cancelAllAndWait', err);
+      }
+    }
 
     try {
       await deps.tunnelService.shutdown();

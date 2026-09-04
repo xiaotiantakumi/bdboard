@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RunRequest } from '../../application/ports/agent-runner.js';
+import { DEFAULT_ALLOWED_TOOLS, DENIED_TOOLS } from './claude-runner.js';
 import { createClaudeSpawnRunner } from './claude-spawn-runner.js';
 
 function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
@@ -11,6 +12,14 @@ function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
     ...overrides,
   };
 }
+
+const DEFAULT_WOULD_RUN_TOOLS = [
+  ...DEFAULT_ALLOWED_TOOLS,
+  'Read(//tmp/project/**)',
+  'Edit(//tmp/project/**)',
+  '--disallowedTools',
+  ...DENIED_TOOLS,
+].join(' ');
 
 describe('createClaudeSpawnRunner', () => {
   it('supports spawn mode only', () => {
@@ -31,7 +40,9 @@ describe('createClaudeSpawnRunner', () => {
     expect(outcome.failureKind).toBe('dispatch-disabled');
     expect(outcome.run.status).toBe('failed');
     expect(outcome.run.runner).toBe('claude-spawn');
-    expect(outcome.error).toContain('would run: claude hello');
+    expect(outcome.error).toContain(
+      `would run: claude -p --permission-mode default --allowedTools ${DEFAULT_WOULD_RUN_TOOLS} -- hello`,
+    );
   });
 
   it('includes custom claudePath in the would-run message', async () => {
@@ -40,6 +51,8 @@ describe('createClaudeSpawnRunner', () => {
     });
     const outcome = await runner.dispatch(makeRequest({ mode: 'spawn' }));
 
-    expect(outcome.error).toContain('would run: /opt/wrappers/claude');
+    expect(outcome.error).toContain(
+      `would run: /opt/wrappers/claude --permission-mode default --allowedTools ${DEFAULT_WOULD_RUN_TOOLS}`,
+    );
   });
 });
