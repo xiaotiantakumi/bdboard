@@ -5514,7 +5514,7 @@ body {
 
   /*
    * position: sticky は bdboard-wdwa の影響で現状発火しない。
-   * body { overflow-x: hidden } (L130) が祖先 overflow コンテキストを作り、
+   * body { overflow-x: hidden } が祖先 overflow コンテキストを作り、
    * .header の sticky もここも無効。375×812 実測: 最大 scrollY=553 時 headerTop=-553。
    * overflow-x を visible にすると headerTop=0 / stripTop=402 で sticky が効く。
    *
