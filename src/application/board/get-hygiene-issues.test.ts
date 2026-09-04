@@ -80,9 +80,12 @@ describe('getHygieneIssues', () => {
       project: b,
       tickets: [
         makeTicket({
-          id: 'bdboard-missing',
+          id: 'bdboard-stale',
           projectId: b.id,
-          priority: undefined as never,
+          status: 'in_progress',
+          updatedAt: new Date(
+            NOW.getTime() - DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs - 1,
+          ),
         }),
       ],
       fingerprint: 'fp-b',
@@ -91,8 +94,8 @@ describe('getHygieneIssues', () => {
 
     const issues = getHygieneIssues(cache, NOW);
     expect(issues.map((issue) => issue.kind).sort()).toEqual([
-      'missing_priority',
       'overdue_defer',
+      'stale_in_progress',
     ]);
   });
 
@@ -117,10 +120,15 @@ describe('getHygieneIssues', () => {
     cache.putProject({
       project: b,
       tickets: [
+        // b 側も issue を出す ticket にしておく。出さない ticket だと
+        // フィルタ無しでも 1 件になり、下の toHaveLength(1) が素通りする。
         makeTicket({
-          id: 'bdboard-missing',
+          id: 'bdboard-other-stale',
           projectId: b.id,
-          priority: undefined as never,
+          status: 'in_progress',
+          updatedAt: new Date(
+            NOW.getTime() - DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs - 1,
+          ),
         }),
       ],
       fingerprint: 'fp-b',

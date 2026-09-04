@@ -1648,11 +1648,6 @@ body {
   color: var(--badge-stalled-fg);
 }
 
-.hygiene-kind-missing_priority {
-  background: rgba(90, 200, 250, 0.14);
-  color: #007aff;
-}
-
 .hygiene-kind-dependency_cycle {
   background: rgba(255, 45, 85, 0.14);
   color: #c41e3a;
@@ -1808,26 +1803,6 @@ body {
   padding: 0 12px 4px;
 }
 
-.hygiene-repair-priority {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.hygiene-repair-priority-label {
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary);
-}
-
-.hygiene-repair-priority select {
-  padding: 4px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  font-size: 0.8125rem;
-}
-
 .hygiene-repair-confirm {
   display: flex;
   flex-wrap: wrap;
@@ -1855,8 +1830,7 @@ body {
 
 .hygiene-repair-action:disabled,
 .hygiene-repair-confirm-btn:disabled,
-.hygiene-repair-cancel:disabled,
-.hygiene-repair-priority select:disabled {
+.hygiene-repair-cancel:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -6838,19 +6812,24 @@ body {
    iOS Safari は select も含む 16px 未満のフォーム要素でフォーカス時に自動ズームする
    （index.css:5638 の .chat-project-select が同じ判断の先行例）。
    maximum-scale / user-scalable=no はピンチズームを殺すので使わない。
-   このブロックは index.css の末尾に置くこと。同詳細度(0,1,1)の既存ルールに
-   ソース順で勝つ必要があるため、後ろに規則を追加しないこと。
+   このブロックは index.css の末尾に置くこと。下のセレクタは (0,1,1) なので、
+   同詳細度 (0,1,1) の font-size ルールが後ろに追加されるとソース順で負ける。
+   （現時点でそのような既存ルールは無い。予防としての位置指定。）
    受入基準は <=480px 相当だったが、横向き landscape でも効くよう
    (hover: none) and (pointer: coarse) に変更（議長裁定）。
    @media (max-width: 700px) 内の .chat-project-select / .chat-input の 16px 指定は
    これと冗長になるが、別 PR で触らない。 */
 @media (hover: none) and (pointer: coarse) {
-  /* :root プレフィックスは詳細度を 0,1,0 分だけ底上げするためのもの（選択対象は変わらない）。
-     これが無いと .comment-form-input（0,1,0）や .hygiene-repair-priority select（0,1,1）など
-     既存ルールに要素セレクタ（0,0,1）が負けて font-size が効かない。
-     以前は textarea[class] / select[class] で凌いでいたが、.hygiene-repair-priority select のように
-     クラス無しの要素がクラス付き祖先の子孫セレクタで小さくされているケースを取りこぼしたため
-     :root 方式に変更した（実測で 13px のまま残っていた）。 */
+  /* :root プレフィックスは詳細度を (0,1,0) 分だけ底上げするためのもの（選択対象は変わらない）。
+     これが無いと要素セレクタ（0,0,1）が .comment-form-input（0,1,0・font: inherit）のような
+     既存のクラスルールに負けて font-size が効かない。
+     以前は textarea[class] / select[class] で凌いでいたが、[class] は
+     .settings-panel-add-row 直下の select のようなクラス無しの要素をそもそも選べず、
+     UA デフォルト（Chrome で約 13px）のまま取りこぼしていたため :root 方式に変更した。
+     ここで効いているのは (0,1,0) のクラスルールに勝つことと、クラス有無に関わらず
+     選べることの2点で、同詳細度 (0,1,1) の font-size ルールとの争いではない
+     （bdboard-2czx で .hygiene-repair-priority select を削除した結果、
+     フォーム要素に font-size を当てている (0,1,1) の既存ルールは残っていない）。 */
   :root input[type='text'],
   :root input[type='search'],
   :root input[type='number'],

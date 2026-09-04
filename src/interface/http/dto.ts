@@ -389,7 +389,6 @@ export type HygieneIssueKindDto =
   | 'overdue_defer'
   | 'stale_epic'
   | 'stale_in_progress'
-  | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'

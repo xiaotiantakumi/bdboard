@@ -142,12 +142,7 @@ describe('checkHygiene deferUntil field', () => {
       status: 'closed',
       closedAt: NOW,
     });
-    const missingPriority = makeTicket({
-      id: 'bdboard-missing',
-      priority: undefined as unknown as Ticket['priority'],
-    });
-
-    const issues = checkHygiene([epic, child, missingPriority], { now: NOW });
+    const issues = checkHygiene([epic, child], { now: NOW });
     for (const issue of issues) {
       expect(issue.deferUntil).toBeUndefined();
     }
@@ -293,32 +288,6 @@ describe('checkHygiene stale_in_progress', () => {
     expect(DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs).toBe(
       3 * 24 * 60 * 60_000,
     );
-  });
-});
-
-describe('checkHygiene missing_priority', () => {
-  it('flags tickets with undefined priority at runtime', () => {
-    const ticket = {
-      ...makeTicket({ id: 'bdboard-missing' }),
-      priority: undefined as unknown as Ticket['priority'],
-    } satisfies Ticket;
-
-    expect(issueKinds([ticket])).toEqual(['missing_priority']);
-  });
-
-  it('flags tickets with invalid priority values', () => {
-    const ticket = {
-      ...makeTicket({ id: 'bdboard-invalid' }),
-      priority: 9 as Ticket['priority'],
-    } satisfies Ticket;
-
-    expect(issueKinds([ticket])).toEqual(['missing_priority']);
-  });
-
-  it('does not flag valid priorities', () => {
-    const ticket = makeTicket({ id: 'bdboard-ok', priority: 2 });
-
-    expect(issueKinds([ticket])).toEqual([]);
   });
 });
 
@@ -1207,7 +1176,6 @@ describe('checkHygiene in_flight_file_overlap', () => {
         id: 'bdboard-b',
         projectId,
         status: 'in_progress',
-        priority: undefined as unknown as Ticket['priority'],
       }),
     ];
 
@@ -1217,7 +1185,7 @@ describe('checkHygiene in_flight_file_overlap', () => {
     }).map((issue) => issue.kind);
 
     expect(kinds.indexOf('in_flight_file_overlap')).toBeGreaterThan(
-      kinds.indexOf('missing_priority'),
+      kinds.indexOf('stale_in_progress'),
     );
   });
 });

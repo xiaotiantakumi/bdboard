@@ -70,7 +70,6 @@ interface HarnessHygieneItems {
 
 const COPY_FEEDBACK_MS = 2000;
 const REPAIR_FEEDBACK_MS = 4000;
-const DEFAULT_REPAIR_PRIORITY = 2;
 const HARNESS_DRIFT_KIND_LABEL = 'ハーネス要更新';
 const HARNESS_CONTRACT_KIND_LABEL = '検証コントラクト';
 const HARNESS_HOOKS_KIND_LABEL = 'hook 未登録';
@@ -82,7 +81,6 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   overdue_defer: '期限超過の保留',
   stale_epic: '完了済みエピック',
   stale_in_progress: '長期 in_progress',
-  missing_priority: 'priority 未設定',
   unblocked_high_priority_idle: '着手待ち高優先',
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
@@ -90,7 +88,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   closed_without_evidence: 'close 証拠なし',
 };
 
-type RepairableKind = 'undefer' | 'close' | 'priority';
+type RepairableKind = 'undefer' | 'close';
 
 type RepairFeedback = {
   readonly rowKey: string;
@@ -156,8 +154,6 @@ function getRepairableKind(kind: HygieneIssueKindDto): RepairableKind | null {
       return 'undefer';
     case 'stale_epic':
       return 'close';
-    case 'missing_priority':
-      return 'priority';
     default:
       return null;
   }
@@ -184,7 +180,6 @@ function resolveCleanupScript(issue: HygieneIssueDto): string | null {
 
 function buildRepairRequest(
   issue: HygieneIssueDto,
-  priority: number,
 ): { request: QuickActionRequest; previousDeferUntil?: string } | null {
   const repairable = getRepairableKind(issue.kind);
   if (repairable === null) {
@@ -199,8 +194,6 @@ function buildRepairRequest(
       };
     case 'close':
       return { request: { action: 'close' } };
-    case 'priority':
-      return { request: { action: 'priority', priority } };
   }
 }
 
@@ -210,8 +203,6 @@ function repairActionLabel(repairable: RepairableKind): string {
       return '保留を解除';
     case 'close':
       return 'エピックを完了';
-    case 'priority':
-      return '優先度を設定';
   }
 }
 
@@ -228,8 +219,6 @@ function buildRepairSuccessMessage(
       return `保留を解除しました: ${ticketId}`;
     case 'close':
       return `エピックを完了しました: ${ticketId}`;
-    case 'priority':
-      return `優先度を P${request.priority} に設定しました: ${ticketId}`;
     default:
       return '';
   }
@@ -323,9 +312,6 @@ export function HygienePanel({
   );
   const [pendingRepairKey, setPendingRepairKey] = useState<string | null>(null);
   const [repairError, setRepairError] = useState<RepairFeedback | null>(null);
-  const [priorityByRowKey, setPriorityByRowKey] = useState<
-    Record<string, number>
-  >({});
 
   const clearRepairFeedback = useCallback(() => {
     setRepairError(null);
@@ -427,8 +413,7 @@ export function HygienePanel({
       if (repairMutation.isPending) {
         return;
       }
-      const priority = priorityByRowKey[rowKey] ?? DEFAULT_REPAIR_PRIORITY;
-      const built = buildRepairRequest(issue, priority);
+      const built = buildRepairRequest(issue);
       if (built === null) {
         return;
       }
@@ -439,7 +424,7 @@ export function HygienePanel({
         previousDeferUntil: built.previousDeferUntil,
       });
     },
-    [priorityByRowKey, repairMutation],
+    [repairMutation],
   );
 
   // drift 行と hook 未登録行はどちらも「再注入で直す」なので同じハンドラを使う。
@@ -840,8 +825,6 @@ export function HygienePanel({
               repairDisabled && pendingRepairKey === rowKey;
             const rowError =
               repairError?.rowKey === rowKey ? repairError.message : null;
-            const selectedPriority =
-              priorityByRowKey[rowKey] ?? DEFAULT_REPAIR_PRIORITY;
 
             return (
               <li key={rowKey}>
@@ -877,27 +860,6 @@ export function HygienePanel({
                 )}
                 {repairable !== null && (
                   <div className="hygiene-repair">
-                    {repairable === 'priority' && (
-                      <label className="hygiene-repair-priority">
-                        <span className="hygiene-repair-priority-label">優先度</span>
-                        <select
-                          value={selectedPriority}
-                          disabled={repairDisabled}
-                          onChange={(event) => {
-                            setPriorityByRowKey((current) => ({
-                              ...current,
-                              [rowKey]: Number(event.target.value),
-                            }));
-                          }}
-                        >
-                          {[0, 1, 2, 3, 4].map((priority) => (
-                            <option key={priority} value={priority}>
-                              P{priority}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    )}
                     {isConfirming ? (
                       <div className="hygiene-repair-confirm">
                         <button

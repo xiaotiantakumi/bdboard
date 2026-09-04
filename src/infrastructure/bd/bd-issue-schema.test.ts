@@ -92,9 +92,17 @@ describe('bdIssueSchema', () => {
     expect(bdIssueSchema.safeParse({ ...minimalIssue(), status: '' }).success).toBe(false);
   });
 
-  it('rejects priority outside 0-4', () => {
+  // この不変条件が hygiene に missing_priority チェックが存在しない根拠 (bdboard-2czx)。
+  // ここを緩めるなら hygiene 側の再検討が要る。
+  it('constrains priority to integers 0-4', () => {
+    const { priority: _priority, ...withoutPriority } = minimalIssue();
+
+    expect(bdIssueSchema.safeParse(withoutPriority).success).toBe(false);
     expect(bdIssueSchema.safeParse({ ...minimalIssue(), priority: 5 }).success).toBe(false);
+    expect(bdIssueSchema.safeParse({ ...minimalIssue(), priority: -1 }).success).toBe(false);
     expect(bdIssueSchema.safeParse({ ...minimalIssue(), priority: 1.5 }).success).toBe(false);
+    expect(bdIssueSchema.safeParse({ ...minimalIssue(), priority: 0 }).success).toBe(true);
+    expect(bdIssueSchema.safeParse({ ...minimalIssue(), priority: 4 }).success).toBe(true);
   });
 
   it('accepts arbitrary issue_type strings', () => {
