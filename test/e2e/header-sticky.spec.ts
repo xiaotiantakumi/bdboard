@@ -63,9 +63,8 @@ async function dispatchTouchDrag(
 }
 
 async function injectHorizontalOverflowStandIn(page: Page): Promise<void> {
-  // Fixture bdboard.list.json has 11 issues and 0 labels, so .board-filter-label-group
-  // (~1240px in prod), the only page-level horizontal bleed source, is absent.
-  // Inject a 1312px stand-in so regressions of body { overflow-x: clip } are detectable.
+  // Fixture bdboard.list.json now includes ~15 labels, but body { overflow-x: clip }
+  // regressions are still tested with a deterministic 1312px stand-in (not layout-dependent).
   await page.evaluate(() => {
     const app = document.querySelector('.app');
     if (!app) throw new Error('.app not found');
