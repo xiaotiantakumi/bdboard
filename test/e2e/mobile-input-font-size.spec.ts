@@ -117,6 +117,13 @@ test.describe('mobile input font-size', () => {
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
 
+    // role="dialog" は fetch 完了前から visible になる。data 到着後にしか描画されない要素を待つ
+    // （bdboard-fk1y: フルスイート時に fetch 遅延で minInspected ガードが found 2 で落ちるのを防ぐ）。
+    await expect(dialog.locator('#comment-text')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(dialog.locator('.loading')).toHaveCount(0);
+
     // 実測7（ボード2 + 詳細パネル内 text/search/textarea/select 5）。下限5は約71%で丸ごと消え検知用。
     await expectAllFormElementsAtLeast16px(page, 'ticket detail open', 5);
 
