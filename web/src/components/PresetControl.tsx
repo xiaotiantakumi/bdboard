@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BOARD_FILTER_PRESET_NAME_MAX_LENGTH,
   createBoardFilterPresetId,
@@ -78,10 +78,13 @@ export function PresetControl({
   const containerRef = useExclusivePopover('preset-control', open, setOpen);
   const popoverRef = useRef<HTMLDivElement>(null);
   const clampRef = usePopoverViewportClamp<HTMLDivElement>(open);
-  const setPopoverRef = (node: HTMLDivElement | null) => {
-    popoverRef.current = node;
-    clampRef(node);
-  };
+  const setPopoverRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      popoverRef.current = node;
+      clampRef(node);
+    },
+    [clampRef],
+  );
 
   const matchingPreset = useMemo(
     () => findMatchingBoardFilterPreset(presets, currentState),

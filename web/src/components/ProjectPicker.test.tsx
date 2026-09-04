@@ -2,6 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectDto } from '../api';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { ProjectPicker, projectPickerLabel } from './ProjectPicker';
 
 function project(id: string, name: string, incompleteTicketCount = 0): ProjectDto {
@@ -245,32 +250,6 @@ describe('ProjectPicker', () => {
   });
 });
 
-const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
-const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
-
-function gutterForViewport(viewportWidth: number): number {
-  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
-}
-
-function stubClientWidth(width: number) {
-  return vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
-}
-
-function stubBoundingRect(rect: Pick<DOMRect, 'left' | 'right'>) {
-  const width = rect.right - rect.left;
-  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-    x: rect.left,
-    y: 0,
-    width,
-    height: 0,
-    top: 0,
-    right: rect.right,
-    bottom: 0,
-    left: rect.left,
-    toJSON: () => ({}),
-  });
-}
-
 async function openPickerPopover() {
   const user = userEvent.setup();
   const view = render(
@@ -300,11 +279,11 @@ describe('ProjectPicker popover viewport clamp (bdboard-oeh5)', () => {
     rectSpy = undefined;
   });
 
-  it('shifts left when the right-aligned popover overflows the right edge at 320px', async () => {
+  it('shifts right when the right-aligned popover overflows the left edge at 320px (real bdboard-oeh5 bug)', async () => {
     const viewportWidth = 320;
     clientWidthSpy = stubClientWidth(viewportWidth);
-    // right:0 起点。実測に近いが右端はみ出しを確実にする値。
-    rectSpy = stubBoundingRect({ left: 30, right: 315 });
+    // 320px 実測（2026-09-05, レビュアー計測, PR #330）: project-picker-popover は左へ32pxはみ出す。
+    rectSpy = stubBoundingRect({ left: -32, right: 256 });
 
     const { container } = await openPickerPopover();
     const popover = container.querySelector('.project-picker-popover');
@@ -315,8 +294,10 @@ describe('ProjectPicker popover viewport clamp (bdboard-oeh5)', () => {
     );
     const gutter = gutterForViewport(viewportWidth);
 
-    expect(shiftPx).toBeLessThan(0);
-    expect(311 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
+    expect(shiftPx).toBeGreaterThan(0);
+    expect(shiftPx).toBeCloseTo(44, 5);
+    expect(-32 + shiftPx).toBeGreaterThanOrEqual(gutter);
+    expect(256 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
   });
 
   it('keeps --popover-shift-x at 0px when the popover already fits', async () => {

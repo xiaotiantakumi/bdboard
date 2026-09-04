@@ -2,6 +2,11 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BoardFilterPreset, BoardFilterPresetState } from '../uiPersistedState';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { PresetControl } from './PresetControl';
 
 const currentState: BoardFilterPresetState = {
@@ -381,32 +386,6 @@ describe('PresetControl', () => {
   });
 });
 
-const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
-const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
-
-function gutterForViewport(viewportWidth: number): number {
-  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
-}
-
-function stubClientWidth(width: number) {
-  return vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
-}
-
-function stubBoundingRect(rect: Pick<DOMRect, 'left' | 'right'>) {
-  const width = rect.right - rect.left;
-  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-    x: rect.left,
-    y: 0,
-    width,
-    height: 0,
-    top: 0,
-    right: rect.right,
-    bottom: 0,
-    left: rect.left,
-    toJSON: () => ({}),
-  });
-}
-
 async function openPresetPopover() {
   const user = userEvent.setup();
   const view = renderControl();
@@ -428,6 +407,8 @@ describe('PresetControl popover viewport clamp (bdboard-oeh5)', () => {
   it('shifts left when the left-aligned popover overflows the right edge at 320px', async () => {
     const viewportWidth = 320;
     clientWidthSpy = stubClientWidth(viewportWidth);
+    // 実際の320px実測は left=12,right=300 で shift=0 になるため、右端超過パスを
+    // exercise する合成値 {left:30, right:315} を使う。
     rectSpy = stubBoundingRect({ left: 30, right: 315 });
 
     const { container } = await openPresetPopover();

@@ -3,6 +3,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { UpdateCheckDto } from '../api';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { OverflowMenu } from './OverflowMenu';
 
 const STORAGE_KEY = 'bdboard.updateCheck.v1';
@@ -108,32 +113,6 @@ describe('OverflowMenu tips banner recovery (bdboard-h4xs.17)', () => {
   });
 });
 
-const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
-const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
-
-function gutterForViewport(viewportWidth: number): number {
-  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
-}
-
-function stubClientWidth(width: number) {
-  return vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
-}
-
-function stubBoundingRect(rect: Pick<DOMRect, 'left' | 'right'>) {
-  const width = rect.right - rect.left;
-  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-    x: rect.left,
-    y: 0,
-    width,
-    height: 0,
-    top: 0,
-    right: rect.right,
-    bottom: 0,
-    left: rect.left,
-    toJSON: () => ({}),
-  });
-}
-
 async function openOverflowMenu() {
   const user = userEvent.setup();
   const view = renderMenu();
@@ -159,6 +138,8 @@ describe('OverflowMenu popover viewport clamp (bdboard-oeh5)', () => {
   it('shifts left when the right-aligned popover overflows the right edge at 320px', async () => {
     const viewportWidth = 320;
     clientWidthSpy = stubClientWidth(viewportWidth);
+    // {left:83, right:363} は 375px 実測値の流用。実際の320px実測は left=28,right=308 で
+    // shift=0 になり、右端超過パスを exercise できないため、合成値でクランプの計算式自体を検証する。
     rectSpy = stubBoundingRect({ left: 83, right: 363 });
 
     const { container } = await openOverflowMenu();
