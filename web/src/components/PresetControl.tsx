@@ -9,6 +9,7 @@ import {
 } from '../uiPersistedState';
 import { isImeComposingKeyEvent } from '../imeGuard';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { usePopoverViewportClamp } from '../hooks/usePopoverViewportClamp';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 /*
@@ -76,6 +77,11 @@ export function PresetControl({
 
   const containerRef = useExclusivePopover('preset-control', open, setOpen);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const clampRef = usePopoverViewportClamp<HTMLDivElement>(open);
+  const setPopoverRef = (node: HTMLDivElement | null) => {
+    popoverRef.current = node;
+    clampRef(node);
+  };
 
   const matchingPreset = useMemo(
     () => findMatchingBoardFilterPreset(presets, currentState),
@@ -242,7 +248,7 @@ export function PresetControl({
 
       {open && (
         <div
-          ref={popoverRef}
+          ref={setPopoverRef}
           className="preset-control-popover"
           role="dialog"
           aria-label="フィルタプリセット"

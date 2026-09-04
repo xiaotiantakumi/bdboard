@@ -474,6 +474,7 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px var(--color-shadow);
+  transform: translateX(var(--popover-shift-x, 0px));
 }
 
 .overflow-menu-item {
@@ -6369,6 +6370,7 @@ body {
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px var(--color-shadow);
   overflow: hidden;
+  transform: translateX(var(--popover-shift-x, 0px));
 }
 
 .project-picker-search {
@@ -6541,6 +6543,7 @@ body {
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px var(--color-shadow);
   overflow: hidden;
+  transform: translateX(var(--popover-shift-x, 0px));
 }
 
 .preset-control-list {

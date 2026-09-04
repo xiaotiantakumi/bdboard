@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { usePopoverViewportClamp } from '../hooks/usePopoverViewportClamp';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 /*
@@ -49,6 +50,11 @@ export function ProjectPicker({
   const [query, setQuery] = useState('');
   const containerRef = useExclusivePopover('project-picker', open, setOpen);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const clampRef = usePopoverViewportClamp<HTMLDivElement>(open);
+  const setPopoverRef = (node: HTMLDivElement | null) => {
+    popoverRef.current = node;
+    clampRef(node);
+  };
 
   // 閉じたら検索文字列を捨てる。次に開いたときに前回の絞り込みが残っていると、
   // 空のリストがいきなり出てプロジェクトが消えたように見えるため。
@@ -136,7 +142,7 @@ export function ProjectPicker({
 
       {open && (
         <div
-          ref={popoverRef}
+          ref={setPopoverRef}
           className="project-picker-popover"
           role="dialog"
           aria-label="プロジェクトの絞り込み"

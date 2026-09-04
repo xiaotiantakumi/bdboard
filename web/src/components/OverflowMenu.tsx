@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useCachedUpdateCheck } from '../hooks/useUpdateCheckStatus';
+import { usePopoverViewportClamp } from '../hooks/usePopoverViewportClamp';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 export interface OverflowMenuProps {
@@ -23,6 +24,7 @@ export function OverflowMenu({
 }: OverflowMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useExclusivePopover('overflow-menu', menuOpen, setMenuOpen);
+  const popoverRef = usePopoverViewportClamp<HTMLDivElement>(menuOpen);
   const updateCheck = useCachedUpdateCheck();
   const updateData =
     updateCheck?.state === 'update-available' ? updateCheck : undefined;
@@ -49,7 +51,7 @@ export function OverflowMenu({
       </button>
 
       {menuOpen && (
-        <div className="overflow-menu-popover" role="menu">
+        <div ref={popoverRef} className="overflow-menu-popover" role="menu">
           <button
             type="button"
             className="overflow-menu-item"

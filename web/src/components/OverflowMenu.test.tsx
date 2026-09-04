@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { UpdateCheckDto } from '../api';
 import { OverflowMenu } from './OverflowMenu';
 
@@ -105,5 +105,82 @@ describe('OverflowMenu tips banner recovery (bdboard-h4xs.17)', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Tips バナーを表示' }));
 
     expect(onShowTipsBanner).toHaveBeenCalledOnce();
+  });
+});
+
+const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
+const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
+
+function gutterForViewport(viewportWidth: number): number {
+  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
+}
+
+function stubClientWidth(width: number) {
+  return vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
+}
+
+function stubBoundingRect(rect: Pick<DOMRect, 'left' | 'right'>) {
+  const width = rect.right - rect.left;
+  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+    x: rect.left,
+    y: 0,
+    width,
+    height: 0,
+    top: 0,
+    right: rect.right,
+    bottom: 0,
+    left: rect.left,
+    toJSON: () => ({}),
+  });
+}
+
+async function openOverflowMenu() {
+  const user = userEvent.setup();
+  const view = renderMenu();
+  await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+  return view;
+}
+
+describe('OverflowMenu popover viewport clamp (bdboard-oeh5)', () => {
+  let clientWidthSpy: ReturnType<typeof stubClientWidth> | undefined;
+  let rectSpy: ReturnType<typeof stubBoundingRect> | undefined;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    clientWidthSpy?.mockRestore();
+    rectSpy?.mockRestore();
+    clientWidthSpy = undefined;
+    rectSpy = undefined;
+  });
+
+  it('shifts left when the right-aligned popover overflows the right edge at 320px', async () => {
+    const viewportWidth = 320;
+    clientWidthSpy = stubClientWidth(viewportWidth);
+    rectSpy = stubBoundingRect({ left: 83, right: 363 });
+
+    const { container } = await openOverflowMenu();
+    const popover = container.querySelector('.overflow-menu-popover');
+    expect(popover).not.toBeNull();
+
+    const shiftPx = Number.parseFloat(
+      (popover as HTMLElement).style.getPropertyValue('--popover-shift-x'),
+    );
+    const gutter = gutterForViewport(viewportWidth);
+
+    expect(shiftPx).toBeLessThan(0);
+    expect(363 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
+  });
+
+  it('keeps --popover-shift-x at 0px when the popover already fits', async () => {
+    clientWidthSpy = stubClientWidth(1280);
+    rectSpy = stubBoundingRect({ left: 900, right: 1180 });
+
+    const { container } = await openOverflowMenu();
+    const popover = container.querySelector('.overflow-menu-popover');
+    expect(popover).not.toBeNull();
+    expect((popover as HTMLElement).style.getPropertyValue('--popover-shift-x')).toBe('0px');
   });
 });
