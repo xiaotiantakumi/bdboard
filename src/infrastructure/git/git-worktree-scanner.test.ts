@@ -341,6 +341,41 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
     expect(mergeBaseRefs).toEqual(['origin/main', 'origin/master', 'main']);
   });
 
+  it('does not leave the status promise unhandled when diff rejects', async () => {
+    // diff を await している間に status が reject すると、誰も待たない Promise が
+    // 残って unhandled rejection になる (Node v15 以降は既定でプロセスが落ちる)。
+    // status は diff より後に落ちるようにして、その順序を再現する。
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        const sub = args[3];
+        if (sub === 'rev-parse') {
+          return { stdout: `${HEAD_SHA}\n`, stderr: '', exitCode: 0 };
+        }
+        if (sub === 'merge-base') {
+          return args[4] === 'origin/main'
+            ? { stdout: `${MERGE_BASE}\n`, stderr: '', exitCode: 0 }
+            : { stdout: '', stderr: '', exitCode: 128 };
+        }
+        if (sub === 'diff') {
+          throw new Error('diff exploded');
+        }
+        if (sub === 'status') {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          throw new Error('status exploded');
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+    const scanner = createGitWorktreeScanner(runner);
+
+    // 呼び出し側には diff の失敗が伝わる
+    await expect(scanner.listChangedFiles('/wt')).rejects.toThrow('diff exploded');
+
+    // status が落ちきるまで待つ。ハンドラが無ければここで unhandled rejection になり、
+    // vitest がこのテストを失敗させる。
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+
   it('throws when no merge-base candidate resolves', async () => {
     const { scanner } = createScannerHarness({ mergeBaseOkRefs: [] });
 

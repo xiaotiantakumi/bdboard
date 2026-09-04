@@ -286,6 +286,11 @@ export function createGitWorktreeScanner(
         ['status', '--porcelain', '-z', '--untracked-files=all'],
         timeoutMs,
       );
+      // この後の diff が throw すると status の Promise を誰も待たないまま関数を抜け、
+      // Node の unhandled rejection になる (v15 以降は既定でプロセスが落ちる)。
+      // ここでハンドラを 1 つ足しておく。下の `await statusPromise` は影響を受けない
+      // ので、status 自身の失敗はこれまでどおり throw する。
+      statusPromise.catch(() => {});
 
       const cached = committedFilesCache.get(worktreePath);
       let committedFiles: readonly string[];
