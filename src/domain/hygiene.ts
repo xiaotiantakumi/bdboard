@@ -11,6 +11,12 @@ import {
   type ReadinessContext,
 } from './readiness.js';
 import type { LeftoverCandidate } from './git-worktree.js';
+import {
+  collectOverlapPeersByTicket,
+  formatOverlapPeers,
+  type InFlightOverlap,
+  type InFlightOverlapPeer,
+} from './in-flight-overlap.js';
 import { isOpenLike, isPriority } from './status.js';
 import {
   resolveHygieneThresholds,
@@ -31,11 +37,18 @@ export type HygieneIssueKind =
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
-  | 'merged_leftover';
+  | 'merged_leftover'
+  | 'in_flight_file_overlap';
 
 export interface HygieneCycleEdge {
   readonly issueId: TicketId;
   readonly dependsOnId: TicketId;
+}
+
+/** in_flight_file_overlap の相手側。UI が「衝突しうる着手中チケット」を組み立てる材料 */
+export interface HygieneOverlapPeer {
+  readonly otherTicketId: TicketId;
+  readonly files: readonly string[];
 }
 
 export interface HygieneCleanupTarget {
@@ -58,6 +71,11 @@ export interface HygieneIssue {
   readonly cycleTicketIds?: readonly TicketId[];
   /** dependency_cycle のときだけ入る */
   readonly cycleEdges?: readonly HygieneCycleEdge[];
+  /**
+   * in_flight_file_overlap のときだけ入る。相手が複数でも 1 行に畳むので **配列**。
+   * 相手 ID 昇順で、必ず 1 件以上。
+   */
+  readonly overlaps?: readonly HygieneOverlapPeer[];
 }
 
 /**
@@ -356,6 +374,54 @@ function checkMergedLeftover(
   };
 }
 
+/**
+ * 着手中チケット同士のファイル重複を、**1 チケット 1 行** に畳んで出す。
+ *
+ * 相手が複数いてもチケットあたり 1 行にする。ペアごとに 1 行だと、3 件と重なって
+ * いるチケットが 3 行に散って読みにくいうえ、UI 側の行キー (kind + ticketId) が
+ * 一意でなくなる。相手は message と `overlaps` に並べる。
+ *
+ * 一方で **対称性は保つ**: 片側だけに出すと相手のチケットを開いている人には何も
+ * 見えないので、ペアの両側それぞれに 1 行ずつ出す。
+ *
+ * severity は info。重複していること自体はまだ失敗ではなく「今のうちに片方へ寄せるか
+ * 順番を決めろ」という合図で、warning にすると本当に直すべき行に埋もれる。
+ */
+function checkInFlightOverlaps(
+  overlaps: readonly InFlightOverlap[],
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): readonly HygieneIssue[] {
+  const issues: HygieneIssue[] = [];
+
+  for (const group of collectOverlapPeersByTicket(overlaps)) {
+    const ticket = ticketById.get(group.ticketId);
+    if (ticket === undefined) {
+      continue;
+    }
+    if (ticket.projectId !== group.projectId) {
+      continue;
+    }
+
+    const peers: readonly HygieneOverlapPeer[] = group.peers.map(
+      (peer: InFlightOverlapPeer) => ({
+        otherTicketId: peer.ticketId,
+        files: peer.files,
+      }),
+    );
+
+    issues.push({
+      kind: 'in_flight_file_overlap',
+      ticketId: group.ticketId,
+      projectId: group.projectId,
+      message: `着手中の ${peers.length} 件と同じファイルを編集中: ${formatOverlapPeers(group.peers)}`,
+      severity: 'info',
+      overlaps: peers,
+    });
+  }
+
+  return issues;
+}
+
 export interface DependencyCycle {
   readonly ticketIds: readonly TicketId[];
   readonly edges: readonly HygieneCycleEdge[];
@@ -467,6 +533,7 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'unblocked_high_priority_idle',
   'stale_pending_decision',
   'merged_leftover',
+  'in_flight_file_overlap',
 ];
 
 function compareIssues(a: HygieneIssue, b: HygieneIssue): number {
@@ -487,6 +554,12 @@ export function checkHygiene(
     readonly now: Date;
     readonly thresholds?: HygieneThresholdsOverrides;
     readonly leftoverCandidates?: readonly LeftoverCandidate[];
+    /**
+     * 着手中 worktree 同士のファイル重複 (scanInFlightOverlaps の戻り)。git を叩く
+     * 必要があるのでドメインでは組み立てず、呼び出し側から受け取る。未指定なら
+     * in_flight_file_overlap は一切出ない。
+     */
+    readonly inFlightOverlaps?: readonly InFlightOverlap[];
     /**
      * 確認待ち(awaiting_human)のチケット。bd の human ラベル由来で Ticket からは
      * 判定できないため、呼び出し側が集めて渡す。キーは pendingDecisionKey() で
@@ -566,6 +639,10 @@ export function checkHygiene(
         issues.push(mergedLeftover);
       }
     }
+  }
+
+  if (ctx.inFlightOverlaps !== undefined) {
+    issues.push(...checkInFlightOverlaps(ctx.inFlightOverlaps, ticketById));
   }
 
   for (const cycle of findDependencyCycles(tickets)) {

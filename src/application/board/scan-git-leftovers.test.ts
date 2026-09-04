@@ -16,6 +16,7 @@ function project(id: string, rootPath: string): Project {
 describe('scanGitLeftovers', () => {
   it('collects leftover candidates from multiple projects', async () => {
     const scanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
       scan: async (rootPath) => {
         if (rootPath === '/projects/a') {
           return {
@@ -60,6 +61,7 @@ describe('scanGitLeftovers', () => {
 
   it('skips projects whose scan rejects without failing the whole call', async () => {
     const scanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
       scan: async (rootPath) => {
         if (rootPath === '/projects/b') {
           throw new Error('git read failed');
@@ -91,6 +93,7 @@ describe('scanGitLeftovers', () => {
     let maxObserved = 0;
 
     const scanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
       scan: vi.fn(async () => {
         activeCount += 1;
         maxObserved = Math.max(maxObserved, activeCount);
@@ -112,6 +115,7 @@ describe('scanGitLeftovers', () => {
 
   it('logs a warning when some projects fail but continues with the rest', async () => {
     const scanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
       scan: async (rootPath) => {
         if (rootPath === '/projects/b') {
           throw new Error('git read failed');

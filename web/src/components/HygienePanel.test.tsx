@@ -273,6 +273,65 @@ describe('HygienePanel', () => {
     expect(cleanupCommand!.textContent).toBe(formatWorktreeCleanupScript(cleanup));
   });
 
+  it('renders an in_flight_file_overlap row with its own kind badge', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-pkr6.10',
+        kind: 'in_flight_file_overlap',
+        severity: 'info',
+        message:
+          '着手中の 1 件と同じファイルを編集中: bdboard-pkr6.8: src/domain/hygiene.ts',
+        overlaps: [
+          { otherTicketId: 'bdboard-pkr6.8', files: ['src/domain/hygiene.ts'] },
+        ],
+      }),
+    ]);
+
+    const { container } = renderHygienePanel();
+
+    expect(await screen.findByText('着手中の重複')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '着手中の 1 件と同じファイルを編集中: bdboard-pkr6.8: src/domain/hygiene.ts',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('.hygiene-kind-in_flight_file_overlap'),
+    ).not.toBeNull();
+  });
+
+  it('renders one row for a ticket that overlaps with two others', async () => {
+    // 1 チケット複数相手でも行は 1 本。ペアごとに行を出していた頃は
+    // React の key (kind + ticketId) が重複していた。
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-pkr6.10',
+        kind: 'in_flight_file_overlap',
+        severity: 'info',
+        message:
+          '着手中の 2 件と同じファイルを編集中: bdboard-pkr6.3: src/main.ts; bdboard-pkr6.9: src/interface/http/routes.ts',
+        overlaps: [
+          { otherTicketId: 'bdboard-pkr6.3', files: ['src/main.ts'] },
+          {
+            otherTicketId: 'bdboard-pkr6.9',
+            files: ['src/interface/http/routes.ts'],
+          },
+        ],
+      }),
+    ]);
+
+    const { container } = renderHygienePanel();
+
+    expect(
+      await screen.findByText(
+        '着手中の 2 件と同じファイルを編集中: bdboard-pkr6.3: src/main.ts; bdboard-pkr6.9: src/interface/http/routes.ts',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelectorAll('.hygiene-kind-in_flight_file_overlap'),
+    ).toHaveLength(1);
+  });
+
   it('copies cleanup commands and shows success feedback', async () => {
     const user = userEvent.setup();
     const cleanup = {

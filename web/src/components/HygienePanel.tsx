@@ -76,6 +76,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   unblocked_high_priority_idle: '着手待ち高優先',
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
+  in_flight_file_overlap: '着手中の重複',
 };
 
 type RepairableKind = 'undefer' | 'close' | 'priority';
@@ -85,8 +86,15 @@ type RepairFeedback = {
   readonly message: string;
 };
 
+/**
+ * 行キー。**projectId を含める**。
+ *
+ * bd のチケット ID はプロジェクト内でしか一意でないので、複数プロジェクトを同時に
+ * 見ているとき kind + ticketId だけでは衝突しうる。kind ごとに 1 チケット 1 行と
+ * いう前提 (in_flight_file_overlap も相手をまとめて 1 行に畳んでいる) は保つ。
+ */
 function issueRowKey(issue: HygieneIssueDto): string {
-  return `${issue.kind}-${issue.ticketId}`;
+  return `${issue.kind}-${issue.projectId}-${issue.ticketId}`;
 }
 
 function harnessDriftRowKey(item: HarnessDriftItem): string {
