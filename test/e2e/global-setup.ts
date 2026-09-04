@@ -195,6 +195,17 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // Chat stays enabled for chat-mobile e2e; smoke scenarios never open the panel.
       BDBOARD_CLAUDE_PATH: claudeStub,
       BDBOARD_AI_QUOTA_DISABLED: '1',
+      // src/main.ts:254 の envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED') を落として、
+      // 自動 reclaim ループを e2e では止める。止めないと
+      // web/src/components/HygienePanel.tsx:583-586 の分岐が「自動 reclaim は無効です」
+      // ではなく reclaim 実行状況の行を描画し、そこに tmp のフルパス + bd スタブの
+      // エラー文字列が折り返し指定無しで入る。375x812 で document.body.scrollWidth が
+      // 375 → 437 に膨らみ、html{overflow-x:hidden} / body{overflow-x:clip} により
+      // 62px が到達不能な切り取られ領域になる (実測: 修正前 437 / 修正後 375)。
+      // 同時に起動のたびに出る
+      // `Reclaim failed for project=...: bd stub: unsupported subcommand` のログノイズも消える。
+      // 製品側の折り返し不足そのものは bdboard-z5tv に分離済み。
+      BDBOARD_RECLAIM_ENABLED: '0',
       BDBOARD_E2E_BD_LIST_FIXTURE: listFixture,
       // 確認待ちレーンにも同じゴールデン一覧を流す。旧スタブは `list` を含む全形状に
       // これを返していたため、`bd list -l human` 由来の pendingDecisions が暗黙に
@@ -205,6 +216,31 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // 「たまたま通っていた」状態を「意図して覆っている」状態に置き換える。
       BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE: listFixture,
       // gate / lease / merge-slot は e2e 専用の最小 fixture (bdboard-vr71)。
+      // global-setup で渡すので全 e2e spec に一律で効く — 特定の spec だけに
+      // 効くものではない。
+      //
+      // lease fixture が健全性パネルに増やす行の kind バッジ
+      // `stale lease（heartbeat 途絶）` は 182px・white-space: nowrap でパネル中
+      // 最長。`.hygiene-issue-row` は grid-template-columns: auto auto 1fr
+      // (web/src/index.css:1648) なので、この行だけ project 列 (1fr) が潰れる。
+      // 結果として mobile-activity-hygiene-truncation.spec.ts:185-189 が全
+      // `.hygiene-issue-project` に課している「省略されていない
+      // (scrollWidth <= clientWidth)」の安全余白が 66px から 8px に縮んだ。
+      // macOS Chromium 実測: 既存の `放置された確認待ち` 行は 145px 列に 78.75px で
+      // 余白 66.25px、新しい stale lease 行は 87px 列に 78.75px で余白 8.25px。
+      // truncation 系 spec が落ちたらまずここを疑うこと。
+      //
+      // (m4) lease.in-progress.json は bdboard-3tw.8 を
+      // `bd list --status in_progress` の結果として返すが、ゴールデン一覧
+      // test/fixtures/bd/bdboard.list.json ではこのチケットは "status": "open"。
+      // 実物の bd では起こりえない組み合わせ。ゴールデン一覧に in_progress の
+      // チケットが1件も無いため、lease fixture は open チケットの ID を借りている。
+      // 盤面とは意図的に不整合であり、レーン件数を変えると他 spec に波及するため
+      // 直していない (JSON にコメントが書けないのでここに書く)。
+      //
+      // (m6) lease.in-progress.json の heartbeat_at は、
+      // src/domain/lease.ts:64-82 の detectStaleLeases が leaseExpiresAt しか見ないため
+      // 完全に飾り。実物の出力形に寄せるためだけに置いてある。
       BDBOARD_E2E_BD_GATE_LIST_FIXTURE: gateListFixture,
       BDBOARD_E2E_BD_LEASE_FIXTURE: leaseFixture,
       BDBOARD_E2E_BD_MERGE_SLOT_FIXTURE: mergeSlotFixture,
