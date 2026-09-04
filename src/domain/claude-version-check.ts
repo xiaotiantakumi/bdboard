@@ -179,7 +179,13 @@ export function evaluateClaudeVersion(
  * spawn 失敗や非ゼロ終了時の stderr から、古い CLI が --setting-sources を拒否した
  * 兆候を読み取る二次の保険。事前の `claude --version` チェックが一次。
  *
- * 文字列マッチは脆いので、これ単独をバージョン検出の手段にはしない。
+ * 文字列マッチは脆いので、**実行を止めるゲートとしては**これ単独を使わない
+ * (agent-run は起動前の evaluateClaudeVersion が一次で、本関数は二次)。
+ *
+ * 一方、**既に失敗した実行のメッセージを分類する用途では単独で使ってよい**
+ * (bdboard-ndky の chat 経路)。ゲートと違い、外した場合の劣化先が
+ * 「従来どおりの汎用メッセージ」であって実行の可否ではないため、
+ * 偽陰性は現状維持にしかならず、退行を作らないから。
  */
 export function describeClaudeSettingSourcesFailure(
   stderr: string | null | undefined,
