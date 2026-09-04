@@ -137,6 +137,10 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     'bd',
     'bdboard.list.json',
   );
+  const e2eBdFixturesDir = path.join(here, 'fixtures', 'bd');
+  const gateListFixture = path.join(e2eBdFixturesDir, 'gate.list.json');
+  const leaseFixture = path.join(e2eBdFixturesDir, 'lease.in-progress.json');
+  const mergeSlotFixture = path.join(e2eBdFixturesDir, 'merge-slot.list.json');
   const tsxBin = path.join(repoRoot, 'node_modules', '.bin', 'tsx');
   const mainTs = path.join(repoRoot, 'src', 'main.ts');
 
@@ -199,8 +203,11 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // がそれに依存していた。形状別ディスパッチ化(bdboard-sp5q)で human 一覧が
       // 既定 `[]` になると、その行ごと消えてテストが落ちる。ここで明示的に配線し、
       // 「たまたま通っていた」状態を「意図して覆っている」状態に置き換える。
-      // lease / merge-slot / gate の3形状は `[]` のままで、覆い直しは bdboard-vr71。
       BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE: listFixture,
+      // gate / lease / merge-slot は e2e 専用の最小 fixture (bdboard-vr71)。
+      BDBOARD_E2E_BD_GATE_LIST_FIXTURE: gateListFixture,
+      BDBOARD_E2E_BD_LEASE_FIXTURE: leaseFixture,
+      BDBOARD_E2E_BD_MERGE_SLOT_FIXTURE: mergeSlotFixture,
       BDBOARD_WEB_DIST: webDistSnapshot,
     },
     stdio: debug ? 'inherit' : 'ignore',

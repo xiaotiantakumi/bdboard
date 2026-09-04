@@ -1,0 +1,8 @@
+[
+  {
+    "id": "bdboard-3tw.8",
+    "issue_type": "gate",
+    "await_type": "human",
+    "description": "E2E fixture gate for bdboard-vr71"
+  }
+]
