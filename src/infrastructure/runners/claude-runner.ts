@@ -11,9 +11,57 @@ import type {
 } from '../../application/ports/agent-runner.js';
 import type { StreamingCommandRunner } from '../../application/ports/streaming-command-runner.js';
 import { buildClaudeCommand } from '../../application/runner/build-claude-args.js';
+import {
+  describeClaudeSettingSourcesFailure,
+  evaluateClaudeVersion,
+  type ClaudeVersionCheck,
+} from '../../domain/claude-version-check.js';
 import type { RunMode } from '../../domain/run.js';
 
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
+const CLAUDE_VERSION_PROBE_TIMEOUT_MS = 10_000;
+
+const claudeVersionCache = new Map<string, Promise<ClaudeVersionCheck>>();
+
+async function probeClaudeVersion(
+  streamingRunner: StreamingCommandRunner,
+  claudePath: string,
+): Promise<ClaudeVersionCheck> {
+  try {
+    const result = await streamingRunner.run(claudePath, ['--version'], {
+      env: buildRunnerEnv(),
+      timeoutMs: CLAUDE_VERSION_PROBE_TIMEOUT_MS,
+      onChunk: () => {},
+    });
+
+    if (result.failureKind !== undefined || result.exitCode !== 0) {
+      return evaluateClaudeVersion(null);
+    }
+
+    return evaluateClaudeVersion(result.stdout);
+  } catch {
+    return evaluateClaudeVersion(null);
+  }
+}
+
+function resolveClaudeVersionCheck(
+  streamingRunner: StreamingCommandRunner,
+  claudePath: string,
+): Promise<ClaudeVersionCheck> {
+  const cached = claudeVersionCache.get(claudePath);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const pending = probeClaudeVersion(streamingRunner, claudePath);
+  claudeVersionCache.set(claudePath, pending);
+  return pending;
+}
+
+/** テスト専用。プロセス寿命キャッシュを捨てる。 */
+export function resetClaudeVersionCacheForTests(): void {
+  claudeVersionCache.clear();
+}
 
 const VALID_PERMISSION_MODES = [
   'default',
@@ -506,6 +554,26 @@ export function createClaudeRunner(
         );
       }
 
+      // dispatch-disabled の既存挙動を変えないため、streamingRunner 有無の判定の後に置く。
+      // too-old で弾く run では worktree の settings.local.json を消さないため、
+      // clearWorktreeLocalClaudeSettings() より前に置く。
+      const versionCheck = await resolveClaudeVersionCheck(
+        streamingRunner,
+        claudePath,
+      );
+      if (versionCheck.status === 'too-old') {
+        return buildOutcome(
+          id,
+          request,
+          startedAt,
+          'runner-unavailable',
+          versionCheck.message,
+        );
+      }
+      if (versionCheck.status === 'unknown') {
+        console.warn(versionCheck.message);
+      }
+
       // cwd の形が buildWorktreeScopedTools を通過し、実際に起動する直前まで来てから
       // 消す。ここより前だと (a) 壊れた cwd でも削除が走り、(b) dispatch-disabled で
       // 起動しないのにファイルだけ消える。
@@ -525,10 +593,19 @@ export function createClaudeRunner(
       const runId = buildRunId(request, startedAt);
 
       if (result.failureKind === 'spawn-failed') {
+        const settingSourcesHint = describeClaudeSettingSourcesFailure(
+          result.stderr,
+        );
+        const translated =
+          settingSourcesHint === null
+            ? null
+            : result.stderr
+              ? `${settingSourcesHint}\n${result.stderr}`
+              : settingSourcesHint;
         return {
           ok: false,
           failureKind: 'runner-unavailable',
-          error: result.stderr || 'failed to spawn claude',
+          error: translated ?? (result.stderr || 'failed to spawn claude'),
           run: {
             id: runId,
             ticketId: request.ticketId,
@@ -539,7 +616,7 @@ export function createClaudeRunner(
             finishedAt,
             sessionId: request.sessionId,
             exitCode: result.exitCode,
-            error: result.stderr || undefined,
+            error: translated ?? (result.stderr || undefined),
           },
         };
       }
@@ -581,10 +658,22 @@ export function createClaudeRunner(
         };
       }
 
+      const settingSourcesHint = describeClaudeSettingSourcesFailure(
+        result.stderr,
+      );
+      const translated =
+        settingSourcesHint === null
+          ? null
+          : result.stderr
+            ? `${settingSourcesHint}\n${result.stderr}`
+            : settingSourcesHint;
+
       return {
         ok: false,
         failureKind: 'failed',
-        error: result.stderr || `claude exited with code ${result.exitCode}`,
+        error:
+          translated ??
+          (result.stderr || `claude exited with code ${result.exitCode}`),
         run: {
           id: runId,
           ticketId: request.ticketId,
@@ -595,7 +684,7 @@ export function createClaudeRunner(
           finishedAt,
           sessionId: request.sessionId,
           exitCode: result.exitCode,
-          error: result.stderr || undefined,
+          error: translated ?? (result.stderr || undefined),
         },
       };
     },
