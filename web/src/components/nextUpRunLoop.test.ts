@@ -281,6 +281,44 @@ describe('nextUpRunLoop', () => {
       expect(result.completedCount).toBe(2);
       expect(result.currentTicketId).toBeNull();
     });
+
+    it('never hands the same progress object to two emissions', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'succeeded');
+      });
+
+      const emissions: NextUpLoopProgress[] = [];
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: (progress) => {
+          emissions.push(progress);
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      // Identity, not value. A subscriber that stores what it receives (React
+      // state does exactly that) must not have its stored value rewritten by a
+      // later iteration, so no two emissions may be the same object.
+      expect(new Set(emissions).size).toBe(emissions.length);
+      expect(emissions).not.toContain(result);
+
+      // The first emission described an empty batch. If the loop leaked its
+      // mutable accumulator, this snapshot would now read 2 completed instead
+      // of 0 — which is precisely the silent corruption being guarded against.
+      expect(emissions[0]).toEqual({
+        currentTicketId: null,
+        completedCount: 0,
+        failedCount: 0,
+        cancelledCount: 0,
+        unknownCount: 0,
+        totalCount: 2,
+        lastFailureReason: null,
+      });
+    });
   });
 
   /**
