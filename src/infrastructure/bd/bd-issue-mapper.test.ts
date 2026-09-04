@@ -124,6 +124,31 @@ describe('mapBdIssueToTicket', () => {
     expect(ticket.manualSessionId).toBe('sess-manual');
   });
 
+  it('maps close_reason to closeReason', () => {
+    const ticket = mapBdIssueToTicket(
+      { ...fullIssue(), close_reason: 'Merged via PR #42' },
+      'my-project',
+    );
+
+    expect(ticket.closeReason).toBe('Merged via PR #42');
+  });
+
+  it('leaves closeReason undefined when close_reason is absent', () => {
+    const issue = fullIssue();
+    const { close_reason: _removed, ...withoutCloseReason } = issue as BdIssue & {
+      close_reason?: string;
+    };
+    const ticket = mapBdIssueToTicket(withoutCloseReason, 'my-project');
+
+    expect(ticket.closeReason).toBeUndefined();
+  });
+
+  it('treats empty close_reason as undefined', () => {
+    const ticket = mapBdIssueToTicket({ ...fullIssue(), close_reason: '' }, 'my-project');
+
+    expect(ticket.closeReason).toBeUndefined();
+  });
+
   it('omits models when metadata is absent or yields no records', () => {
     const withoutMetadata = mapBdIssueToTicket(fullIssue(), 'my-project');
     expect(withoutMetadata.models).toBeUndefined();

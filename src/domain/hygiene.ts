@@ -38,7 +38,8 @@ export type HygieneIssueKind =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
-  | 'in_flight_file_overlap';
+  | 'in_flight_file_overlap'
+  | 'closed_without_evidence';
 
 export interface HygieneCycleEdge {
   readonly issueId: TicketId;
@@ -332,6 +333,136 @@ function checkStalePendingDecision(
   };
 }
 
+const MERGE_SLOT_LABEL = 'gt:slot';
+
+function isExcludedFromClosedWithoutEvidence(ticket: Ticket): boolean {
+  if (ticket.issueType === 'epic' || ticket.issueType === 'gate') {
+    return true;
+  }
+  return ticket.labels?.includes(MERGE_SLOT_LABEL) ?? false;
+}
+
+const PR_WORD_PATTERN = /(?:^|[^a-zA-Z0-9])PR(?:[^a-zA-Z0-9]|$)/i;
+
+function hasPrWordMention(text: string): boolean {
+  return PR_WORD_PATTERN.test(text);
+}
+
+export function hasCloseReasonEvidence(closeReason: string): boolean {
+  if (hasPrWordMention(closeReason)) {
+    return true;
+  }
+  if (/#\d+/.test(closeReason)) {
+    return true;
+  }
+  if (/merge/i.test(closeReason)) {
+    return true;
+  }
+  if (closeReason.includes('マージ')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * closed_without_evidence の判定でコメント本文を引く必要があるチケットか。
+ *
+ * アプリ層 (get-close-evidence.ts) がフェッチ対象を絞るために使う。ここに集約
+ * しないと、除外条件がドメインとアプリ層で二重管理になり、片方だけ直したときに
+ * 「UI には出ないのに bd だけ叩かれる」ような無駄が静かに発生する。
+ */
+export function needsCloseEvidenceLookup(
+  ticket: Ticket,
+  now: Date,
+  windowMs: number,
+): boolean {
+  if (ticket.status !== 'closed') {
+    return false;
+  }
+  if (!isValidDate(ticket.closedAt)) {
+    return false;
+  }
+  const elapsedMs = now.getTime() - ticket.closedAt.getTime();
+  if (elapsedMs < 0 || elapsedMs > windowMs) {
+    return false;
+  }
+  if (ticket.commentCount <= 0) {
+    return false;
+  }
+  if (isExcludedFromClosedWithoutEvidence(ticket)) {
+    return false;
+  }
+  if (ticket.closeReason !== undefined && hasCloseReasonEvidence(ticket.closeReason)) {
+    return false;
+  }
+  return true;
+}
+
+function hasCloseEvidence(
+  ticket: Ticket,
+  closeEvidenceKeys: ReadonlySet<string> | undefined,
+): boolean {
+  const key = pendingDecisionKey(ticket.projectId, ticket.id);
+  if (closeEvidenceKeys?.has(key) ?? false) {
+    return true;
+  }
+  if (ticket.closeReason !== undefined && hasCloseReasonEvidence(ticket.closeReason)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * close 済みだが PR/検証の記録がないチケットを拾う。
+ *
+ * closeReason は bd の close 理由文。コメント由来の証拠は closeEvidenceKeys で
+ * 渡す (pendingCommentAnchors と同じ流儀)。未指定なら closeReason のみで判定する。
+ */
+function checkClosedWithoutEvidence(
+  ticket: Ticket,
+  now: Date,
+  thresholds: HygieneThresholds,
+  closeEvidenceKeys: ReadonlySet<string> | undefined,
+  closeEvidenceUnknownKeys: ReadonlySet<string> | undefined,
+  closeEvidenceAvailable: boolean,
+): HygieneIssue | null {
+  if (!closeEvidenceAvailable) {
+    return null;
+  }
+  if (ticket.status !== 'closed') {
+    return null;
+  }
+  if (isExcludedFromClosedWithoutEvidence(ticket)) {
+    return null;
+  }
+  if (!isValidDate(ticket.closedAt)) {
+    return null;
+  }
+
+  const elapsedMs = now.getTime() - ticket.closedAt.getTime();
+  if (elapsedMs < 0 || elapsedMs > thresholds.closedWithoutEvidenceWindowMs) {
+    return null;
+  }
+
+  const key = pendingDecisionKey(ticket.projectId, ticket.id);
+  if (closeEvidenceUnknownKeys?.has(key) ?? false) {
+    return null;
+  }
+
+  if (hasCloseEvidence(ticket, closeEvidenceKeys)) {
+    return null;
+  }
+
+  return {
+    kind: 'closed_without_evidence',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message:
+      'close 済みだが PR/検証の記録がない（close-template.md の書式でコメントを残す）',
+    severity: 'info',
+  };
+}
+
 function checkMergedLeftover(
   candidate: LeftoverCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
@@ -532,6 +663,7 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'missing_priority',
   'unblocked_high_priority_idle',
   'stale_pending_decision',
+  'closed_without_evidence',
   'merged_leftover',
   'in_flight_file_overlap',
 ];
@@ -572,10 +704,43 @@ export function checkHygiene(
      * max(updatedAt, ここの値) にするためだけに使う。未指定なら updatedAt のみ。
      */
     readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
+    /**
+     * PR/検証の記録が **コメント本文** にあるチケットのキー集合
+     * (`pendingDecisionKey(projectId, ticketId)` と同じ \0 結合キー)。
+     *
+     * コメント本文は bd を1件ずつ叩かないと取れず、全文をキャッシュに積むとメモリを
+     * 食うので、アプリ層で「PR: / 検証: を含むコメントがあるか」という真偽値まで
+     * 潰してから集合として渡す (pendingCommentAnchors と同じ設計)。未指定なら
+     * コメントは見ず closeReason だけで判定する。
+     */
+    readonly closeEvidenceKeys?: ReadonlySet<string>;
+    /**
+     * コメント本文をまだ確認できていないチケットのキー集合
+     * (`pendingDecisionKey` と同じ \0 結合キー)。
+     *
+     * bd comments は1件 0.8〜2.8s かかるので、アプリ層は1リクエストあたりの
+     * フェッチ件数に上限を設ける。上限に達して未確認のまま残ったチケットは
+     * 「証拠なし」ではなく **未確認** であり、ここに載る。
+     *
+     * 未確認は検出しない。証拠なしと同一視すると、キャッシュが冷えている間だけ
+     * 100件規模の誤検知が並び、しばらくして勝手に消えることになる — hygiene は
+     * 「まだ調べていない」を「問題あり」と言ってはいけない。
+     */
+    readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
+    /**
+     * コメント本文を読む手段があるか。false なら closed_without_evidence の判定自体を
+     * 行わない。
+     *
+     * 一部が未確認のときは非検出にしているのに、コメントを1件も読めない環境で
+     * だけ全件検出するのは逆立ちしている (未確認を「証拠なし」と断定することになる)。
+     * 既定 true。
+     */
+    readonly closeEvidenceAvailable?: boolean;
     readonly timeZone?: string;
   },
 ): readonly HygieneIssue[] {
   const thresholds = resolveHygieneThresholds(ctx.thresholds);
+  const closeEvidenceAvailable = ctx.closeEvidenceAvailable ?? true;
   const readiness = createReadinessContext(tickets);
   const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket] as const));
   const childrenIndex = buildDirectChildrenIndex(tickets);
@@ -629,6 +794,18 @@ export function checkHygiene(
     );
     if (unblockedIdle !== null) {
       issues.push(unblockedIdle);
+    }
+
+    const closedWithoutEvidence = checkClosedWithoutEvidence(
+      ticket,
+      ctx.now,
+      thresholds,
+      ctx.closeEvidenceKeys,
+      ctx.closeEvidenceUnknownKeys,
+      closeEvidenceAvailable,
+    );
+    if (closedWithoutEvidence !== null) {
+      issues.push(closedWithoutEvidence);
     }
   }
 

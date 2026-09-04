@@ -1531,6 +1531,12 @@ body {
   color: var(--color-text-secondary);
 }
 
+.hygiene-panel-close-evidence-note {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
 .hygiene-issue-list {
   list-style: none;
   margin: 0;
@@ -1615,6 +1621,12 @@ body {
 .hygiene-kind-in_flight_file_overlap {
   background: rgba(0, 199, 190, 0.16);
   color: #0b7285;
+}
+
+/* close 証拠なしも severity=info。ティール(着手中の重複)と紛れないよう淡い青にする */
+.hygiene-kind-closed_without_evidence {
+  background: rgba(90, 200, 250, 0.1);
+  color: #5a8fa8;
 }
 
 .hygiene-stale-lease-group,

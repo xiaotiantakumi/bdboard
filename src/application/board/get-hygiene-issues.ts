@@ -20,6 +20,20 @@ export interface GetHygieneIssuesOptions {
    * bd を叩く必要があるのでここでは組み立てず、呼び出し側から受け取る。
    */
   readonly pendingCommentAnchors?: ReadonlyMap<string, Date>;
+  /**
+   * close 済みチケットで PR/検証コメントがあるキー集合 (getCloseEvidence の evidenceKeys)。
+   * bd を叩く必要があるのでここでは組み立てず、呼び出し側から受け取る。
+   */
+  readonly closeEvidenceKeys?: ReadonlySet<string>;
+  /**
+   * コメント本文をまだ確認できていないチケット (getCloseEvidence の unknownKeys)。
+   */
+  readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
+  /**
+   * コメント本文を読む手段があるか。false なら closed_without_evidence の判定自体を
+   * 行わない。getCloseEvidence を呼ばない構成 (commentReader 未設定) 向け。
+   */
+  readonly closeEvidenceAvailable?: boolean;
   readonly thresholds?: HygieneThresholds;
   readonly timeZone?: string;
 }
@@ -64,6 +78,15 @@ export function getHygieneIssues(
     pendingDecisionKeys,
     ...(options?.pendingCommentAnchors !== undefined
       ? { pendingCommentAnchors: options.pendingCommentAnchors }
+      : {}),
+    ...(options?.closeEvidenceKeys !== undefined
+      ? { closeEvidenceKeys: options.closeEvidenceKeys }
+      : {}),
+    ...(options?.closeEvidenceUnknownKeys !== undefined
+      ? { closeEvidenceUnknownKeys: options.closeEvidenceUnknownKeys }
+      : {}),
+    ...(options?.closeEvidenceAvailable !== undefined
+      ? { closeEvidenceAvailable: options.closeEvidenceAvailable }
       : {}),
     ...(options?.thresholds !== undefined ? { thresholds: options.thresholds } : {}),
     ...(options?.leftoverCandidates !== undefined

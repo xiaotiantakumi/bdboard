@@ -93,11 +93,13 @@ function makeHygieneThresholdsConfig(
     staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
     highPriorityMax: 1,
     stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+    closedWithoutEvidenceWindowMs: 7 * 24 * 60 * 60_000,
     version: 'hygiene-thresholds-v1',
     defaults: {
       staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
       highPriorityMax: 1,
       stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+      closedWithoutEvidenceWindowMs: 7 * 24 * 60 * 60_000,
     },
     ...overrides,
   };
@@ -692,6 +694,7 @@ describe('SettingsPanel', () => {
     expect(within(section).getByLabelText('in_progress 放置 (日)')).toHaveValue(7);
     expect(within(section).getByLabelText('高優先度上限 (P0=0)')).toHaveValue(1);
     expect(within(section).getByLabelText('確認待ち放置 (日)')).toHaveValue(3);
+    expect(within(section).getByLabelText('close 証拠チェック期間 (日)')).toHaveValue(7);
   });
 
   it('saves edited hygiene thresholds and refreshes hygiene data', async () => {
@@ -712,11 +715,36 @@ describe('SettingsPanel', () => {
         staleInProgressAfterMs: 10 * 24 * 60 * 60_000,
         highPriorityMax: 1,
         stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+        closedWithoutEvidenceWindowMs: 7 * 24 * 60 * 60_000,
         version: 'hygiene-thresholds-v1',
       }),
     );
     await waitFor(() => expect(postRefreshMock).toHaveBeenCalled());
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['hygiene'] });
+    expect(await screen.findByText('健全性閾値を保存しました')).toBeInTheDocument();
+  });
+
+  it('saves edited closed without evidence window days in hygiene thresholds payload', async () => {
+    const user = userEvent.setup();
+    renderSettings();
+    const section = await screen.findByRole('region', { name: '健全性 (Hygiene) 閾値' });
+    const saveButton = within(section).getByRole('button', { name: '閾値を保存' });
+    expect(saveButton).toBeDisabled();
+
+    await user.clear(within(section).getByLabelText('close 証拠チェック期間 (日)'));
+    await user.type(within(section).getByLabelText('close 証拠チェック期間 (日)'), '5');
+    expect(saveButton).toBeEnabled();
+    await user.click(saveButton);
+
+    await waitFor(() =>
+      expect(putHygieneThresholdsConfigMock).toHaveBeenCalledWith({
+        staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
+        highPriorityMax: 1,
+        stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+        closedWithoutEvidenceWindowMs: 5 * 24 * 60 * 60_000,
+        version: 'hygiene-thresholds-v1',
+      }),
+    );
     expect(await screen.findByText('健全性閾値を保存しました')).toBeInTheDocument();
   });
 

@@ -30,6 +30,7 @@ type OptionalTicketFields = {
     | 'parentId'
     | 'description'
     | 'notes'
+    | 'closeReason'
     | 'labels'
     | 'manualSessionId'
     | 'models']?: Ticket[K];
@@ -121,6 +122,9 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   }
   if (raw.notes !== undefined) {
     optionalFields.notes = raw.notes;
+  }
+  if (raw.close_reason !== undefined && raw.close_reason !== '') {
+    optionalFields.closeReason = raw.close_reason;
   }
   if (raw.labels !== undefined) {
     optionalFields.labels = raw.labels;

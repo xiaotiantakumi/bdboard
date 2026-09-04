@@ -393,7 +393,8 @@ export type HygieneIssueKindDto =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
-  | 'in_flight_file_overlap';
+  | 'in_flight_file_overlap'
+  | 'closed_without_evidence';
 
 export interface HygieneCycleEdgeDto {
   issueId: string;
@@ -422,6 +423,24 @@ export interface HygieneIssueDto {
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
   overlaps?: HygieneOverlapPeerDto[];
+}
+
+/** close 証拠チェックの確認状況 (bdboard-pkr6.8)。 */
+export interface HygieneCloseEvidenceStatusDto {
+  /**
+   * コメント本文をまだ確認できていないチケット数。
+   *
+   * bd comments が高いので1リクエストあたりの新規フェッチには時間予算があり、
+   * 溢れたぶんは未確認として検出を見送っている。0 でないレスポンスは
+   * 「問題が無い」ではなく「まだ全部見ていない」なので、UI とログに出す。
+   */
+  unknownCount: number;
+}
+
+export interface HygieneResponseDto {
+  issues: HygieneIssueDto[];
+  /** commentReader が無く検査自体を行っていないときは null。 */
+  closeEvidence: HygieneCloseEvidenceStatusDto | null;
 }
 
 /** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */

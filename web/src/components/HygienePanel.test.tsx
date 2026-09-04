@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, type HygieneIssueDto, type LeaseHealthDto, type MergeSlotStatusDto } from '../api';
+import { ApiError, type HygieneIssueDto, type HygieneResponseDto, type LeaseHealthDto, type MergeSlotStatusDto } from '../api';
 import { formatWorktreeCleanupScript } from '../bdCommands';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import {
@@ -44,7 +44,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
   return {
     ...actual,
-    fetchHygieneIssues: vi.fn(),
+    fetchHygiene: vi.fn(),
     fetchLeaseHealth: vi.fn(),
     fetchMergeSlotStatus: vi.fn(),
     fetchAllHarnessStatus: vi.fn(),
@@ -69,7 +69,7 @@ vi.mock('./UndoSnackbar', () => ({
 
 import {
   fetchAllHarnessStatus,
-  fetchHygieneIssues,
+  fetchHygiene,
   fetchLeaseHealth,
   fetchMergeSlotStatus,
   postProjectHarnessInject,
@@ -78,7 +78,7 @@ import {
 } from '../api';
 import { copyTextToClipboard } from '../bdCommands';
 
-const fetchHygieneIssuesMock = vi.mocked(fetchHygieneIssues);
+const fetchHygieneMock = vi.mocked(fetchHygiene);
 const fetchLeaseHealthMock = vi.mocked(fetchLeaseHealth);
 const fetchMergeSlotStatusMock = vi.mocked(fetchMergeSlotStatus);
 const fetchAllHarnessStatusMock = vi.mocked(fetchAllHarnessStatus);
@@ -88,6 +88,13 @@ const postTicketQuickActionUndoMock = vi.mocked(postTicketQuickActionUndo);
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
 const NOT_APPLICABLE_CONTRACT = { state: 'not-applicable' } as const;
+
+function makeHygieneResponse(
+  issues: HygieneIssueDto[] = [],
+  closeEvidence: HygieneResponseDto['closeEvidence'] = null,
+): HygieneResponseDto {
+  return { issues, closeEvidence };
+}
 
 function makeIssue(
   overrides: Partial<HygieneIssueDto> & Pick<HygieneIssueDto, 'ticketId' | 'kind'>,
@@ -167,12 +174,12 @@ function renderHygienePanel(
 
 describe('HygienePanel', () => {
   beforeEach(() => {
-    fetchHygieneIssuesMock.mockReset();
+    fetchHygieneMock.mockReset();
     fetchLeaseHealthMock.mockReset();
     fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
     postProjectHarnessInjectMock.mockReset();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
     fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
@@ -186,7 +193,7 @@ describe('HygienePanel', () => {
   });
 
   it('renders hygiene issues with kind badges', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
@@ -198,7 +205,7 @@ describe('HygienePanel', () => {
         severity: 'info',
         message: 'priority が未設定または不正です',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -209,8 +216,27 @@ describe('HygienePanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders closed_without_evidence label without a repair button', async () => {
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
+      makeIssue({
+        ticketId: 'bdboard-closed',
+        kind: 'closed_without_evidence',
+        severity: 'info',
+        message:
+          'close 済みだが PR/検証の記録がない（close-template.md の書式でコメントを残す）',
+      }),
+    ]));
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('close 証拠なし')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /保留を解除|エピックを完了|優先度を設定/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows an empty state when there are no issues', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
 
     renderHygienePanel();
 
@@ -219,13 +245,13 @@ describe('HygienePanel', () => {
 
   it('calls onSelectTicket with the clicked ticket id', async () => {
     const user = userEvent.setup();
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-click-me',
         kind: 'stale_epic',
         message: '子チケットはすべて完了していますが、エピックが open のままです',
       }),
-    ]);
+    ]));
 
     const { onSelectTicket } = renderHygienePanel();
 
@@ -239,14 +265,14 @@ describe('HygienePanel', () => {
     expect(onSelectTicket).toHaveBeenCalledWith('bdboard-click-me');
   });
 
-  it('passes projectIds to fetchHygieneIssues when provided', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+  it('passes projectIds to fetchHygiene when provided', async () => {
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
 
     renderHygienePanel({ projectIds: ['proj-a', 'proj-b'] });
 
     await screen.findByText('警告はありません');
 
-    expect(fetchHygieneIssuesMock).toHaveBeenCalledWith(['proj-a', 'proj-b']);
+    expect(fetchHygieneMock).toHaveBeenCalledWith(['proj-a', 'proj-b']);
   });
 
   it('renders merged_leftover cleanup commands when cleanup is present', async () => {
@@ -256,14 +282,14 @@ describe('HygienePanel', () => {
       branchName: 'bd/bdboard-3tw.96',
     };
 
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-3tw.96',
         kind: 'merged_leftover',
         message: 'マージ済みだが worktree が残っています',
         cleanup,
       }),
-    ]);
+    ]));
 
     const { container } = renderHygienePanel();
 
@@ -274,7 +300,7 @@ describe('HygienePanel', () => {
   });
 
   it('renders an in_flight_file_overlap row with its own kind badge', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-pkr6.10',
         kind: 'in_flight_file_overlap',
@@ -285,7 +311,7 @@ describe('HygienePanel', () => {
           { otherTicketId: 'bdboard-pkr6.8', files: ['src/domain/hygiene.ts'] },
         ],
       }),
-    ]);
+    ]));
 
     const { container } = renderHygienePanel();
 
@@ -303,7 +329,7 @@ describe('HygienePanel', () => {
   it('renders one row for a ticket that overlaps with two others', async () => {
     // 1 チケット複数相手でも行は 1 本。ペアごとに行を出していた頃は
     // React の key (kind + ticketId) が重複していた。
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-pkr6.10',
         kind: 'in_flight_file_overlap',
@@ -318,7 +344,7 @@ describe('HygienePanel', () => {
           },
         ],
       }),
-    ]);
+    ]));
 
     const { container } = renderHygienePanel();
 
@@ -341,14 +367,14 @@ describe('HygienePanel', () => {
     };
     const cleanupScript = formatWorktreeCleanupScript(cleanup);
 
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-3tw.96',
         kind: 'merged_leftover',
         message: 'マージ済みだが worktree が残っています',
         cleanup,
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -376,7 +402,7 @@ describe('HygienePanel', () => {
         }),
     );
 
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-3tw.96',
         kind: 'merged_leftover',
@@ -387,7 +413,7 @@ describe('HygienePanel', () => {
           branchName: 'bd/bdboard-3tw.96',
         },
       }),
-    ]);
+    ]));
 
     const { unmount } = renderHygienePanel();
 
@@ -409,13 +435,13 @@ describe('HygienePanel', () => {
   });
 
   it('does not render cleanup UI for issues without cleanup', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
         message: 'defer_until を過ぎていますが、まだ deferred のままです',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -425,7 +451,7 @@ describe('HygienePanel', () => {
 
   it('still calls onSelectTicket when a merged_leftover row is clicked', async () => {
     const user = userEvent.setup();
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-merged-leftover',
         kind: 'merged_leftover',
@@ -436,7 +462,7 @@ describe('HygienePanel', () => {
           branchName: 'bd/bdboard-3tw.96',
         },
       }),
-    ]);
+    ]));
 
     const { onSelectTicket } = renderHygienePanel();
 
@@ -456,7 +482,7 @@ describe('HygienePanel', () => {
       "bd dep remove 'bdboard-a' 'bdboard-b'\n" +
       "bd dep remove 'bdboard-b' 'bdboard-a'";
 
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-a',
         kind: 'dependency_cycle',
@@ -467,7 +493,7 @@ describe('HygienePanel', () => {
           { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
         ],
       }),
-    ]);
+    ]));
 
     const { onSelectTicket, container } = renderHygienePanel();
 
@@ -492,7 +518,7 @@ describe('HygienePanel', () => {
       "bd dep remove 'bdboard-a' 'bdboard-b'\n" +
       "bd dep remove 'bdboard-b' 'bdboard-a'";
 
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-a',
         kind: 'dependency_cycle',
@@ -503,7 +529,7 @@ describe('HygienePanel', () => {
           { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
         ],
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -515,7 +541,7 @@ describe('HygienePanel', () => {
   });
 
   it('includes -C in dependency_cycle removal commands when projectRootPaths is provided', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-a',
         projectId: 'proj-a',
@@ -527,7 +553,7 @@ describe('HygienePanel', () => {
           { issueId: 'bdboard-b', dependsOnId: 'bdboard-a' },
         ],
       }),
-    ]);
+    ]));
 
     const projectRootPaths = new Map<string, string>([['proj-a', '/repo/root']]);
     const { container } = renderHygienePanel({ projectRootPaths });
@@ -542,13 +568,103 @@ describe('HygienePanel', () => {
   });
 });
 
-describe('HygienePanel stale lease display', () => {
+describe('HygienePanel close evidence note', () => {
   beforeEach(() => {
-    fetchHygieneIssuesMock.mockReset();
+    fetchHygieneMock.mockReset();
     fetchLeaseHealthMock.mockReset();
     fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+    fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
+    fetchMergeSlotStatusMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
+  });
+
+  it('shows close evidence note when unknownCount is greater than zero', async () => {
+    fetchHygieneMock.mockResolvedValue(
+      makeHygieneResponse(
+        [
+          makeIssue({
+            ticketId: 'bdboard-closed-a',
+            kind: 'closed_without_evidence',
+            severity: 'info',
+            message: 'close 済みだが PR/検証の記録がない',
+          }),
+          makeIssue({
+            ticketId: 'bdboard-closed-b',
+            kind: 'closed_without_evidence',
+            severity: 'info',
+            message: 'close 済みだが PR/検証の記録がない',
+          }),
+        ],
+        { unknownCount: 5 },
+      ),
+    );
+
+    renderHygienePanel();
+
+    expect(
+      await screen.findByText(/close 証拠なし: 2件（5件は未確認）/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/未確認のぶんは判定を見送っています（時間をおくと確定します）/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows close evidence note even when there are no other hygiene issues', async () => {
+    fetchHygieneMock.mockResolvedValue(
+      makeHygieneResponse([], { unknownCount: 3 }),
+    );
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('警告はありません')).toBeInTheDocument();
+    expect(
+      screen.getByText(/close 証拠なし: 0件（3件は未確認）/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/未確認のぶんは判定を見送っています（時間をおくと確定します）/),
+    ).toBeInTheDocument();
+  });
+
+  it('does not show close evidence note when closeEvidence is null', async () => {
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([], null));
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('警告はありません')).toBeInTheDocument();
+    expect(screen.queryByText(/close 証拠なし: \d+件（\d+件は未確認）/)).not.toBeInTheDocument();
+  });
+
+  it('does not show close evidence note when unknownCount is zero', async () => {
+    fetchHygieneMock.mockResolvedValue(
+      makeHygieneResponse(
+        [
+          makeIssue({
+            ticketId: 'bdboard-closed',
+            kind: 'closed_without_evidence',
+            severity: 'info',
+            message: 'close 済みだが PR/検証の記録がない',
+          }),
+        ],
+        { unknownCount: 0 },
+      ),
+    );
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('close 証拠なし')).toBeInTheDocument();
+    expect(screen.queryByText(/件は未確認/)).not.toBeInTheDocument();
+  });
+});
+
+describe('HygienePanel stale lease display', () => {
+  beforeEach(() => {
+    fetchHygieneMock.mockReset();
+    fetchLeaseHealthMock.mockReset();
+    fetchMergeSlotStatusMock.mockReset();
+    fetchAllHarnessStatusMock.mockReset();
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
     fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
@@ -746,11 +862,11 @@ describe('HygienePanel stale lease display', () => {
 
 describe('HygienePanel merge slot display', () => {
   beforeEach(() => {
-    fetchHygieneIssuesMock.mockReset();
+    fetchHygieneMock.mockReset();
     fetchLeaseHealthMock.mockReset();
     fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
     fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
@@ -837,12 +953,12 @@ describe('HygienePanel repair actions', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
   beforeEach(() => {
-    fetchHygieneIssuesMock.mockReset();
+    fetchHygieneMock.mockReset();
     fetchLeaseHealthMock.mockReset();
     fetchMergeSlotStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockReset();
     postProjectHarnessInjectMock.mockReset();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
     fetchMergeSlotStatusMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
@@ -855,7 +971,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('shows repair buttons only for repairable kinds', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
@@ -886,7 +1002,7 @@ describe('HygienePanel repair actions', () => {
         kind: 'merged_leftover',
         message: 'merged leftover',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -898,14 +1014,14 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('requires confirmation before posting undefer quick action', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
         message: 'overdue defer',
         deferUntil: '2026-08-01',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -926,13 +1042,13 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('cancels undefer confirmation without posting', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
         message: 'overdue defer',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -957,9 +1073,9 @@ describe('HygienePanel repair actions', () => {
       deferUntil: '2026-08-01',
     });
 
-    fetchHygieneIssuesMock
-      .mockResolvedValueOnce([overdueIssue])
-      .mockResolvedValue([]);
+    fetchHygieneMock
+      .mockResolvedValueOnce(makeHygieneResponse([overdueIssue]))
+      .mockResolvedValue(makeHygieneResponse());
 
     const { container } = renderHygienePanel({ queryClient });
 
@@ -1005,14 +1121,14 @@ describe('HygienePanel repair actions', () => {
           };
         }),
     );
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
         message: 'overdue defer',
         deferUntil: '2026-08-01',
       }),
-    ]);
+    ]));
 
     const { unmount } = renderHygienePanel();
 
@@ -1044,9 +1160,9 @@ describe('HygienePanel repair actions', () => {
       message: 'overdue defer without deferUntil',
     });
 
-    fetchHygieneIssuesMock
-      .mockResolvedValueOnce([overdueIssue])
-      .mockResolvedValue([]);
+    fetchHygieneMock
+      .mockResolvedValueOnce(makeHygieneResponse([overdueIssue]))
+      .mockResolvedValue(makeHygieneResponse());
 
     const { container } = renderHygienePanel();
 
@@ -1072,14 +1188,14 @@ describe('HygienePanel repair actions', () => {
         errorMessage: 'local access only',
       }),
     );
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
         message: 'overdue defer',
         deferUntil: '2026-08-01',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -1099,13 +1215,13 @@ describe('HygienePanel repair actions', () => {
     postTicketQuickActionMock.mockRejectedValue(
       new ApiError(409, 'conflict', { errorMessage: 'conflict' }),
     );
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
         message: 'overdue defer',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -1128,7 +1244,7 @@ describe('HygienePanel repair actions', () => {
           resolveAction = resolve;
         }),
     );
-    fetchHygieneIssuesMock.mockResolvedValue([
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
       makeIssue({
         ticketId: 'bdboard-overdue',
         kind: 'overdue_defer',
@@ -1139,7 +1255,7 @@ describe('HygienePanel repair actions', () => {
         kind: 'stale_epic',
         message: 'stale epic',
       }),
-    ]);
+    ]));
 
     renderHygienePanel();
 
@@ -1167,9 +1283,9 @@ describe('HygienePanel repair actions', () => {
       message: 'missing priority',
     });
 
-    fetchHygieneIssuesMock
-      .mockResolvedValueOnce([missingIssue])
-      .mockResolvedValue([]);
+    fetchHygieneMock
+      .mockResolvedValueOnce(makeHygieneResponse([missingIssue]))
+      .mockResolvedValue(makeHygieneResponse());
 
     const { container } = renderHygienePanel();
 
@@ -1207,9 +1323,9 @@ describe('HygienePanel repair actions', () => {
       message: 'stale epic',
     });
 
-    fetchHygieneIssuesMock
-      .mockResolvedValueOnce([epicIssue])
-      .mockResolvedValue([]);
+    fetchHygieneMock
+      .mockResolvedValueOnce(makeHygieneResponse([epicIssue]))
+      .mockResolvedValue(makeHygieneResponse());
 
     const { container } = renderHygienePanel();
 
@@ -1239,7 +1355,7 @@ describe('HygienePanel repair actions', () => {
 
   it('shows harness version drift items with update repair flow', async () => {
     const user = userEvent.setup();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1292,7 +1408,7 @@ describe('HygienePanel repair actions', () => {
 
   it('shows a hook 未登録 row and re-injects to fix it', async () => {
     const user = userEvent.setup();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1349,7 +1465,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('does not warn about hooks for a pack that is not installed yet', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1376,7 +1492,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('shows empty message only when hygiene and harness drift are both clear', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1403,7 +1519,7 @@ describe('HygienePanel repair actions', () => {
 
   it('shows inject failure on harness drift repair', async () => {
     const user = userEvent.setup();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1439,7 +1555,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('shows drift only for selected projects', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1482,7 +1598,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('shows drift for all projects when no project is selected', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1526,7 +1642,7 @@ describe('HygienePanel repair actions', () => {
     ).toBeInTheDocument();
   });
   it('shows 検証ループ未定義 for an injected project with no contract file', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1556,7 +1672,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('spells out an invalid contract and a missing npm script', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1583,7 +1699,7 @@ describe('HygienePanel repair actions', () => {
 
   it('does not warn about the contract for uninjected projects', async () => {
     // 未注入 9 プロジェクトが一斉に警告になるのを避ける (bdboard-pkr6.3)。
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {

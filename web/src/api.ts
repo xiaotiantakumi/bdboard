@@ -345,7 +345,8 @@ export type HygieneIssueKindDto =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
-  | 'in_flight_file_overlap';
+  | 'in_flight_file_overlap'
+  | 'closed_without_evidence';
 
 export interface HygieneCycleEdgeDto {
   issueId: string;
@@ -376,6 +377,24 @@ export interface HygieneIssueDto {
   cycleEdges?: HygieneCycleEdgeDto[];
   /** in_flight_file_overlap のときだけ入る。相手チケットと重複しているファイル */
   overlaps?: HygieneOverlapPeerDto[];
+}
+
+/** close 証拠チェックの確認状況 (bdboard-pkr6.8)。 */
+export interface HygieneCloseEvidenceStatusDto {
+  /**
+   * コメント本文をまだ確認できていないチケット数。
+   *
+   * bd comments が高いので1リクエストあたりの新規フェッチには時間予算があり、
+   * 溢れたぶんは未確認として検出を見送っている。0 でないレスポンスは
+   * 「問題が無い」ではなく「まだ全部見ていない」なので、UI とログに出す。
+   */
+  unknownCount: number;
+}
+
+export interface HygieneResponseDto {
+  issues: HygieneIssueDto[];
+  /** commentReader が無く検査自体を行っていないときは null。 */
+  closeEvidence: HygieneCloseEvidenceStatusDto | null;
 }
 
 /** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */
@@ -606,11 +625,13 @@ export interface HygieneThresholdsConfigDto {
   staleInProgressAfterMs: number;
   highPriorityMax: number;
   stalePendingDecisionAfterMs: number;
+  closedWithoutEvidenceWindowMs: number;
   version: string;
   defaults: {
     staleInProgressAfterMs: number;
     highPriorityMax: number;
     stalePendingDecisionAfterMs: number;
+    closedWithoutEvidenceWindowMs: number;
   };
 }
 
@@ -622,6 +643,7 @@ export function putHygieneThresholdsConfig(config: {
   staleInProgressAfterMs?: number;
   highPriorityMax?: number;
   stalePendingDecisionAfterMs?: number;
+  closedWithoutEvidenceWindowMs?: number;
   version: string;
 }): Promise<HygieneThresholdsConfigDto> {
   return fetchJson<HygieneThresholdsConfigDto>('/api/settings/hygiene-thresholds', {
@@ -1176,16 +1198,16 @@ export function fetchCfdStats(
   return fetchJson<CfdStatsDto>(`/api/cfd?${searchParams.toString()}`);
 }
 
-export function fetchHygieneIssues(
+export function fetchHygiene(
   projectIds: readonly string[] = [],
-): Promise<HygieneIssueDto[]> {
+): Promise<HygieneResponseDto> {
   const searchParams = new URLSearchParams();
   if (projectIds.length > 0) {
     searchParams.set('projects', projectIds.join(','));
   }
   const query = searchParams.toString();
   const path = query.length > 0 ? `/api/hygiene?${query}` : '/api/hygiene';
-  return fetchJson<HygieneIssueDto[]>(path);
+  return fetchJson<HygieneResponseDto>(path);
 }
 
 export interface StaleLeaseDto {

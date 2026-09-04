@@ -15,6 +15,7 @@ import { withConfigFileLock } from './config-file-write-lock.js';
 const MS_KEYS = [
   'staleInProgressAfterMs',
   'stalePendingDecisionAfterMs',
+  'closedWithoutEvidenceWindowMs',
 ] as const satisfies readonly (keyof HygieneThresholdsConfig)[];
 
 const PRIORITY_KEYS = ['highPriorityMax'] as const satisfies readonly (keyof HygieneThresholdsConfig)[];

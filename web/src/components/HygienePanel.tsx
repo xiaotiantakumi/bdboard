@@ -12,7 +12,7 @@ import type {
 } from '../api';
 import {
   fetchAllHarnessStatus,
-  fetchHygieneIssues,
+  fetchHygiene,
   fetchLeaseHealth,
   fetchMergeSlotStatus,
   postProjectHarnessInject,
@@ -87,6 +87,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
   in_flight_file_overlap: '着手中の重複',
+  closed_without_evidence: 'close 証拠なし',
 };
 
 type RepairableKind = 'undefer' | 'close' | 'priority';
@@ -290,7 +291,7 @@ export function HygienePanel({
   const undoSnackbar = useUndoSnackbar();
   const query = useQuery({
     queryKey: ['hygiene', projectIdsKey],
-    queryFn: () => fetchHygieneIssues(projectIds),
+    queryFn: () => fetchHygiene(projectIds),
   });
   const harnessDriftQuery = useQuery({
     queryKey: ['harness-drift', projectIdsKey],
@@ -474,7 +475,13 @@ export function HygienePanel({
   const harnessDriftItems = harnessDriftQuery.data?.driftItems ?? [];
   const harnessContractItems = harnessDriftQuery.data?.contractItems ?? [];
   const harnessHooksItems = harnessDriftQuery.data?.hooksItems ?? [];
-  const hygieneIssues = query.data ?? [];
+  const hygieneIssues = query.data?.issues ?? [];
+  const closeEvidence = query.data?.closeEvidence;
+  const closedWithoutEvidenceCount = hygieneIssues.filter(
+    (issue) => issue.kind === 'closed_without_evidence',
+  ).length;
+  const showCloseEvidenceNote =
+    closeEvidence != null && closeEvidence.unknownCount > 0;
   const staleLeases = leaseHealthQuery.data?.staleLeases ?? [];
   const heldMergeSlots = (mergeSlotQuery.data ?? []).filter(
     (status) => status.held,
@@ -518,6 +525,14 @@ export function HygienePanel({
         <p className="hygiene-panel-subtitle">
           台帳の腐りを検知した警告一覧です
         </p>
+        {!isLoading && !isError && showCloseEvidenceNote && (
+          <p className="hygiene-panel-close-evidence-note" role="status">
+            close 証拠なし: {closedWithoutEvidenceCount}件（
+            {closeEvidence.unknownCount}件は未確認）
+            {' '}
+            未確認のぶんは判定を見送っています（時間をおくと確定します）
+          </p>
+        )}
         <span className="hygiene-panel-feedback" role="status" aria-live="polite">
           {ariaLiveMessage}
         </span>

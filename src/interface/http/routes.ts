@@ -11,6 +11,10 @@ import { getDependencyGraph } from '../../application/board/get-dependency-graph
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getPendingCommentAnchors } from '../../application/board/get-pending-comment-anchors.js';
 import {
+  CloseEvidenceCache,
+  getCloseEvidence,
+} from '../../application/board/get-close-evidence.js';
+import {
   getPrBadges,
   PrBadgeCommentCache,
   PrBadgeStatusCache,
@@ -58,6 +62,7 @@ import {
 } from '../../domain/liveness.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
 import type { HygieneThresholds } from '../../domain/hygiene.js';
+import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
@@ -493,6 +498,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
   const prBadgeCommentCache = new PrBadgeCommentCache();
   const prBadgeStatusCache = new PrBadgeStatusCache();
+  const closeEvidenceCache = new CloseEvidenceCache();
   const applicationVersion = deps.applicationVersion.getVersion();
   const inFlightOverlapMemo = new Map<string, InFlightOverlapMemoEntry>();
 
@@ -765,25 +771,57 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は
     // コメントで動かないので、これが無いとコメントで議論が続いているチケットまで
     // 「放置」に出る。引くのは確認待ちのチケットだけなので件数はひと桁。
+    const thresholds = await deps.getHygieneThresholds?.();
+    const now = deps.now();
+    const closedWithoutEvidenceWindowMs =
+      thresholds?.closedWithoutEvidenceWindowMs ??
+      resolveHygieneThresholds().closedWithoutEvidenceWindowMs;
+
     let pendingCommentAnchors: ReadonlyMap<string, Date> | undefined;
+    let closeEvidenceKeys: ReadonlySet<string> | undefined;
+    let closeEvidenceUnknownKeys: ReadonlySet<string> | undefined;
+    let closeEvidenceStatus: { unknownCount: number } | null = null;
+    const closeEvidenceAvailable = deps.commentReader !== undefined;
     if (deps.commentReader !== undefined) {
       pendingCommentAnchors = await getPendingCommentAnchors(
         deps.cache,
         deps.commentReader,
         projectIds !== undefined ? { projectIds } : undefined,
       );
+      // close 証拠チェックもコメント本文が要る (bdboard-pkr6.8)。bd comments は高いので、
+      // 真偽値だけを closeEvidenceCache に貯め、1リクエストで新規に引くのは時間予算内だけ。
+      // 引き切れなかったぶんは unknownKeys として返り、未確認は検出しない。
+      const closeEvidence = await getCloseEvidence(
+        deps.cache,
+        deps.commentReader,
+        now,
+        closedWithoutEvidenceWindowMs,
+        {
+          ...(projectIds !== undefined ? { projectIds } : {}),
+          cache: closeEvidenceCache,
+        },
+      );
+      closeEvidenceKeys = closeEvidence.evidenceKeys;
+      closeEvidenceUnknownKeys = closeEvidence.unknownKeys;
+      closeEvidenceStatus = { unknownCount: closeEvidence.unknownKeys.size };
     }
 
-    const thresholds = await deps.getHygieneThresholds?.();
-
-    const issues = getHygieneIssues(deps.cache, deps.now(), {
+    const issues = getHygieneIssues(deps.cache, now, {
       ...(projectIds !== undefined ? { projectIds } : {}),
       ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
+      ...(closeEvidenceKeys !== undefined ? { closeEvidenceKeys } : {}),
+      ...(closeEvidenceUnknownKeys !== undefined && closeEvidenceUnknownKeys.size > 0
+        ? { closeEvidenceUnknownKeys }
+        : {}),
+      closeEvidenceAvailable,
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
       ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),
     });
-    return c.json(issues.map(toHygieneIssueDto));
+    return c.json({
+      issues: issues.map(toHygieneIssueDto),
+      closeEvidence: closeEvidenceStatus,
+    });
   });
 
   app.get('/api/lease-health', async (c) => {

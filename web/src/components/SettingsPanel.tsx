@@ -317,6 +317,7 @@ export function SettingsPanel() {
   const [hygieneStaleInProgressDays, setHygieneStaleInProgressDays] = useState('');
   const [hygieneHighPriorityMax, setHygieneHighPriorityMax] = useState('');
   const [hygieneStalePendingDecisionDays, setHygieneStalePendingDecisionDays] = useState('');
+  const [hygieneClosedWithoutEvidenceDays, setHygieneClosedWithoutEvidenceDays] = useState('');
   const [hygieneThresholdsVersion, setHygieneThresholdsVersion] = useState('');
   const hygieneThresholdsFeedback = useSaveFeedback();
   const [hygieneThresholdsDirty, setHygieneThresholdsDirty] = useState(false);
@@ -360,6 +361,9 @@ export function SettingsPanel() {
       setHygieneHighPriorityMax(String(hygieneThresholdsQuery.data.highPriorityMax));
       setHygieneStalePendingDecisionDays(
         msToDays(hygieneThresholdsQuery.data.stalePendingDecisionAfterMs),
+      );
+      setHygieneClosedWithoutEvidenceDays(
+        msToDays(hygieneThresholdsQuery.data.closedWithoutEvidenceWindowMs),
       );
       setHygieneThresholdsVersion(hygieneThresholdsQuery.data.version);
     }
@@ -499,10 +503,12 @@ export function SettingsPanel() {
       const staleInProgressAfterMs = parseDays(hygieneStaleInProgressDays);
       const highPriorityMax = parsePriorityMax(hygieneHighPriorityMax);
       const stalePendingDecisionAfterMs = parseDays(hygieneStalePendingDecisionDays);
+      const closedWithoutEvidenceWindowMs = parseDays(hygieneClosedWithoutEvidenceDays);
       if (
         staleInProgressAfterMs === undefined ||
         highPriorityMax === undefined ||
-        stalePendingDecisionAfterMs === undefined
+        stalePendingDecisionAfterMs === undefined ||
+        closedWithoutEvidenceWindowMs === undefined
       ) {
         throw new Error('invalid local hygiene threshold input');
       }
@@ -510,6 +516,7 @@ export function SettingsPanel() {
         staleInProgressAfterMs,
         highPriorityMax,
         stalePendingDecisionAfterMs,
+        closedWithoutEvidenceWindowMs,
         version: hygieneThresholdsVersion,
       });
     },
@@ -977,6 +984,22 @@ export function SettingsPanel() {
             disabled={saveHygieneThresholdsMutation.isPending}
             onChange={(event) => {
               setHygieneStalePendingDecisionDays(event.target.value);
+              setHygieneThresholdsDirty(true);
+            }}
+          />
+          <label htmlFor="settings-hygiene-closed-without-evidence-days">
+            close 証拠チェック期間 (日)
+          </label>
+          <input
+            id="settings-hygiene-closed-without-evidence-days"
+            type="number"
+            min={1}
+            step={1}
+            value={hygieneClosedWithoutEvidenceDays}
+            placeholder={msToDays(hygieneThresholdsQuery.data.closedWithoutEvidenceWindowMs)}
+            disabled={saveHygieneThresholdsMutation.isPending}
+            onChange={(event) => {
+              setHygieneClosedWithoutEvidenceDays(event.target.value);
               setHygieneThresholdsDirty(true);
             }}
           />
