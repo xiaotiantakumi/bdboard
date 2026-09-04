@@ -3,8 +3,11 @@ import { fetchProjectHarnessStatus } from '../api';
 import {
   formatHarnessContractDetail,
   formatHarnessContractLabel,
+  formatHarnessHooksDetail,
+  formatHarnessHooksLabel,
   formatHarnessPackStatusLabel,
   harnessContractNeedsAttention,
+  harnessHooksNeedAttention,
   harnessInjectButtonLabel,
   harnessPackNeedsAction,
 } from '../harnessDisplay';
@@ -52,6 +55,14 @@ export function ProjectHarnessBadges({ projectId }: ProjectHarnessBadgesProps) {
             <span className={statusClassName}>
               {formatHarnessPackStatusLabel(pack)}
             </span>
+            {harnessHooksNeedAttention(pack) && (
+              <span
+                className="project-harness-status project-harness-status-hooks"
+                title={formatHarnessHooksDetail(pack)}
+              >
+                {formatHarnessHooksLabel(pack)}
+              </span>
+            )}
             {needsAction && (
               <button
                 type="button"

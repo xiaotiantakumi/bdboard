@@ -1251,6 +1251,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1264,6 +1266,8 @@ describe('HygienePanel repair actions', () => {
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -1286,6 +1290,91 @@ describe('HygienePanel repair actions', () => {
     });
   });
 
+  it('shows a hook 未登録 row and re-injects to fix it', async () => {
+    const user = userEvent.setup();
+    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
+          packs: [
+            {
+              name: 'bdboard-harness',
+              availableVersion: '0.2.0',
+              installedVersion: '0.2.0',
+              drift: false,
+              hooksState: 'missing',
+              missingHooks: [
+                'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh"',
+                'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"',
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    postProjectHarnessInjectMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: '0.2.0',
+          drift: false,
+          hooksState: 'ok',
+          missingHooks: [],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('hook 未登録')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'bdboard-harness: hook 2 件が .claude/settings.json に未登録です (再注入で解消)',
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'hook を登録' }));
+    await user.click(screen.getByRole('button', { name: '確定: hook を登録' }));
+
+    await waitFor(() => {
+      expect(postProjectHarnessInjectMock).toHaveBeenCalledWith(
+        '/tmp/proj-a',
+        'bdboard-harness',
+      );
+    });
+  });
+
+  it('does not warn about hooks for a pack that is not installed yet', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
+          packs: [
+            {
+              name: 'bdboard-harness',
+              availableVersion: '0.2.0',
+              installedVersion: null,
+              drift: false,
+              hooksState: 'missing',
+              missingHooks: ['bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/a.sh"'],
+            },
+          ],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('警告はありません')).toBeInTheDocument();
+    expect(screen.queryByText('hook 未登録')).toBeNull();
+  });
+
   it('shows empty message only when hygiene and harness drift are both clear', async () => {
     fetchHygieneIssuesMock.mockResolvedValue([]);
     fetchAllHarnessStatusMock.mockResolvedValue({
@@ -1299,6 +1388,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.2.0',
               drift: false,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1324,6 +1415,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1358,6 +1451,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1370,6 +1465,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.3.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1397,6 +1494,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1409,6 +1508,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.3.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1437,6 +1538,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.2.0',
               drift: false,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
@@ -1492,6 +1595,8 @@ describe('HygienePanel repair actions', () => {
               availableVersion: '0.2.0',
               installedVersion: null,
               drift: false,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
         },
