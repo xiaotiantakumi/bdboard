@@ -8,8 +8,9 @@ import { expect, test, type Page } from '@playwright/test';
  * documentElement.scrollWidth <= innerWidth is not used — when overflow widens the layout
  * viewport both sides grow together (e.g. 1312), so that comparison cannot detect bleed.
  *
- * html { scroll-padding-top: var(--header-height, 0px) } keeps keyboard-focused cards below
- * the sticky header when scrollIntoView({ block: 'nearest' }) runs.
+ * html { scroll-padding-top: calc(var(--header-height) + var(--lane-strip-height)) }
+ * keeps keyboard-focused cards below the sticky header and mobile lane strip when
+ * scrollIntoView({ block: 'nearest' }) runs.
  *
  * scroll-padding-top test setup: lanes are max-height capped and scroll internally, so the
  * board fits in the viewport. A top spacer alone lets j reach scrollY > 0, but at max scroll
@@ -19,6 +20,10 @@ import { expect, test, type Page } from '@playwright/test';
  * bdboard-h4xs.5). A bottom spacer plus explicit scrollTo(maxScrollY) before phase 2 pushes
  * the board above the viewport so k must scroll the document up, exercising scroll-padding-top
  * regardless of --header-height.
+ *
+ * Lane strip sticky (375×812 measured): phase 1 (j) caps at scrollY≈1348; strip sticks at
+ * scrollY≥≈1362 (strip document top ≈1555 − header 193). Strip sticky is never observed in
+ * phase 1 — the vacuity guard for sawStripSticky runs after phase 2 (scrollTo maxScrollY, k).
  */
 
 const SCROLL_PROBE_Y = 400;
@@ -189,10 +194,37 @@ test.describe('scroll-padding-top', () => {
     hasTouch: true,
   });
 
-  test('375x812: keyboard focus keeps cards below sticky header', async ({ page }) => {
+  test('375x812: keyboard focus keeps cards below sticky header and lane strip', async ({
+    page,
+  }) => {
     await page.goto('/');
     await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.card').first()).toBeVisible({ timeout: 15_000 });
+
+    const stripProbe = await page.evaluate(() => {
+      const strip = document.querySelector<HTMLElement>('.lane-indicator-strip');
+      if (strip === null) {
+        return { exists: false, display: null as string | null, height: 0 };
+      }
+      const style = window.getComputedStyle(strip);
+      return {
+        exists: true,
+        display: style.display,
+        height: strip.getBoundingClientRect().height,
+      };
+    });
+    expect(
+      stripProbe.exists,
+      'mobile fixture must render .lane-indicator-strip for scroll-padding coverage',
+    ).toBe(true);
+    expect(
+      stripProbe.display,
+      `.lane-indicator-strip must be display:block on mobile (display=${stripProbe.display})`,
+    ).toBe('block');
+    expect(
+      stripProbe.height,
+      `.lane-indicator-strip must have non-zero height (height=${stripProbe.height})`,
+    ).toBeGreaterThan(0);
 
     // Fixture lanes are height-capped on mobile; page scroll may never occur during j/k
     // navigation alone. Top spacer: board starts below the fold so j can reach scrollY > 0.
@@ -242,6 +274,8 @@ test.describe('scroll-padding-top', () => {
     type FocusMetrics = {
       scrollY: number;
       headerBottom: number | null;
+      stripTop: number | null;
+      stripBottom: number | null;
       activeTop: number | null;
       isCard: boolean;
     };
@@ -249,10 +283,13 @@ test.describe('scroll-padding-top', () => {
     async function collectFocusMetrics(): Promise<FocusMetrics> {
       return page.evaluate(() => {
         const header = document.querySelector('.header');
+        const strip = document.querySelector<HTMLElement>('.lane-indicator-strip');
         const active = document.activeElement;
         return {
           scrollY: window.scrollY,
           headerBottom: header ? header.getBoundingClientRect().bottom : null,
+          stripTop: strip ? strip.getBoundingClientRect().top : null,
+          stripBottom: strip ? strip.getBoundingClientRect().bottom : null,
           activeTop:
             active instanceof HTMLElement ? active.getBoundingClientRect().top : null,
           isCard: active instanceof HTMLElement && active.classList.contains('card'),
@@ -260,7 +297,20 @@ test.describe('scroll-padding-top', () => {
       });
     }
 
-    function assertCardBelowHeader(
+    function stickyBottomFor(metrics: FocusMetrics): number {
+      expect(metrics.headerBottom).not.toBeNull();
+      let stickyBottom = metrics.headerBottom!;
+      if (
+        metrics.stripBottom !== null &&
+        metrics.stripTop !== null &&
+        metrics.stripTop <= metrics.headerBottom! + 1
+      ) {
+        stickyBottom = Math.max(stickyBottom, metrics.stripBottom);
+      }
+      return stickyBottom;
+    }
+
+    function assertCardBelowStickyChrome(
       metrics: FocusMetrics,
       direction: 'down' | 'up',
       move: number,
@@ -273,23 +323,29 @@ test.describe('scroll-padding-top', () => {
       expect(
         metrics.activeTop,
         `focused card must exist after ${key} press #${move} (${direction}) ` +
-          `(scrollY=${metrics.scrollY}, headerBottom=${metrics.headerBottom})`,
+          `(scrollY=${metrics.scrollY}, headerBottom=${metrics.headerBottom}, ` +
+          `stripTop=${metrics.stripTop}, stripBottom=${metrics.stripBottom})`,
       ).not.toBeNull();
       expect(
         metrics.headerBottom,
         `header must exist after ${key} press #${move} (${direction}) ` +
           `(scrollY=${metrics.scrollY})`,
       ).not.toBeNull();
+      const stickyBottom = stickyBottomFor(metrics);
       expect(
         metrics.activeTop!,
-        `focused card top must be at or below header bottom after ${key} press #${move} (${direction}) ` +
+        `focused card top must be at or below sticky chrome bottom after ${key} press #${move} (${direction}) ` +
           `(scrollY=${metrics.scrollY}, activeTop=${metrics.activeTop}, ` +
-          `headerBottom=${metrics.headerBottom})`,
-      ).toBeGreaterThanOrEqual(metrics.headerBottom! - 1);
+          `headerBottom=${metrics.headerBottom}, stripTop=${metrics.stripTop}, ` +
+          `stripBottom=${metrics.stripBottom}, stickyBottom=${stickyBottom})`,
+      ).toBeGreaterThanOrEqual(stickyBottom - 1);
     }
 
     // Phase 1: move down until the page has scrolled (scrollY > 0).
+    // Measured 375×812: j caps at scrollY≈1348; strip sticks at scrollY≥≈1362, so strip
+    // sticky is never observed here — sawStripSticky is asserted after phase 2 only.
     let sawPageScroll = false;
+    let sawStripSticky = false;
     const downMoveCount = 10;
     for (let move = 1; move <= downMoveCount; move += 1) {
       await page.keyboard.press('j');
@@ -297,7 +353,14 @@ test.describe('scroll-padding-top', () => {
       if (metrics.scrollY > 0) {
         sawPageScroll = true;
       }
-      assertCardBelowHeader(metrics, 'down', move, 'j');
+      if (
+        metrics.headerBottom !== null &&
+        metrics.stripTop !== null &&
+        metrics.stripTop <= metrics.headerBottom + 1
+      ) {
+        sawStripSticky = true;
+      }
+      assertCardBelowStickyChrome(metrics, 'down', move, 'j');
     }
 
     expect(
@@ -310,6 +373,8 @@ test.describe('scroll-padding-top', () => {
     // scroll the document up (scrollIntoView + scroll-padding-top), independent of header height.
     await page.evaluate((y) => window.scrollTo(0, y), maxScrollY);
     let upwardScrollCount = 0;
+    let lastPhase2HeaderBottom: number | null = null;
+    let lastPhase2StripTop: number | null = null;
     let previousScrollY = await page.evaluate(() => window.scrollY);
     const upMoveCount = 10;
     for (let move = 1; move <= upMoveCount; move += 1) {
@@ -318,8 +383,17 @@ test.describe('scroll-padding-top', () => {
       if (metrics.scrollY < previousScrollY) {
         upwardScrollCount += 1;
       }
+      if (
+        metrics.headerBottom !== null &&
+        metrics.stripTop !== null &&
+        metrics.stripTop <= metrics.headerBottom + 1
+      ) {
+        sawStripSticky = true;
+      }
+      lastPhase2HeaderBottom = metrics.headerBottom;
+      lastPhase2StripTop = metrics.stripTop;
       previousScrollY = metrics.scrollY;
-      assertCardBelowHeader(metrics, 'up', move, 'k');
+      assertCardBelowStickyChrome(metrics, 'up', move, 'k');
     }
 
     expect(
@@ -328,5 +402,13 @@ test.describe('scroll-padding-top', () => {
         `(upwardScrollCount=${upwardScrollCount}, finalScrollY=${previousScrollY}) ` +
         '— otherwise scroll-padding-top is not exercised',
     ).toBeGreaterThanOrEqual(1);
+
+    expect(
+      sawStripSticky,
+      'upward navigation after scrollTo(maxScrollY) must observe lane strip stuck below header ' +
+        '(otherwise strip scroll-padding coverage is vacuous — card overlap checks never ' +
+        'include stripBottom). Measured phase 2: stripTop=193, headerBottom=193 at scrollY≈1402; ' +
+        `last observed headerBottom=${lastPhase2HeaderBottom}, stripTop=${lastPhase2StripTop}`,
+    ).toBe(true);
   });
 });

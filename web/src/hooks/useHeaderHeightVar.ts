@@ -2,8 +2,8 @@ import { useLayoutEffect } from 'react';
 
 /**
  * Writes .header height to documentElement as --header-height (ResizeObserver when
- * available, otherwise window resize). Drives sticky lane strip `top` and html
- * scroll-padding-top for keyboard focus.
+ * available, otherwise window resize). Drives sticky lane strip `top`; header portion
+ * of html scroll-padding-top (strip height is useLaneStripHeightVar).
  */
 export function useHeaderHeightVar(): void {
   useLayoutEffect(() => {

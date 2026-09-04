@@ -134,8 +134,10 @@ html {
   overflow-x: hidden;
   /* scroll-padding on the root scrollport (not scroll-margin on each target):
    * scrollIntoView({ block: 'nearest' }) respects it so focus is not hidden
-   * under the sticky header. --header-height is live-set (useHeaderHeightVar). */
-  scroll-padding-top: var(--header-height, 0px);
+   * under sticky chrome. --header-height (useHeaderHeightVar) plus
+   * --lane-strip-height (useLaneStripHeightVar) cover the header and the mobile
+   * lane strip that sticks directly below it. */
+  scroll-padding-top: calc(var(--header-height, 0px) + var(--lane-strip-height, 0px));
 }
 
 body {
