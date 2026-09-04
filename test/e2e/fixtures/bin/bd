@@ -32,9 +32,12 @@
 #   bd --readonly -C <root> gate list --json ...
 #     → BDBOARD_E2E_BD_GATE_LIST_FIXTURE, or `[]` when unset
 #
-# The four optional fixture env vars above are extension points only: global-setup
-# sets BDBOARD_E2E_BD_LIST_FIXTURE alone (test/e2e/global-setup.ts). The stub
-# branches that read the other four are dead code until a future test wires them.
+# global-setup (test/e2e/global-setup.ts) sets two of these: the required
+# BDBOARD_E2E_BD_LIST_FIXTURE, and BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE pointed at
+# the same golden file — the health panel's stale_pending_decision rows come from
+# `bd list -l human`, and the old catch-all stub fed them implicitly. The three
+# remaining optional vars (gate / lease / merge-slot) are extension points; the
+# branches reading them are dead code until a test wires them (bdboard-vr71).
 #
 # Why empty `[]` is the default for human / gate / lease / merge-slot lists:
 # BdCliHumanDecisions.listPendingDecisions, BdCliLeaseReader.listInProgressWithLease,
