@@ -106,6 +106,15 @@ on each main push, CI scans
 release-please uses. If a commit body opens `(` on one line and closes `)` on
 the next, the parser fails and release-please silently drops that commit from
 CHANGELOG — permanently once the release tag is cut. Fix or hand-restore before
-tagging. `scripts/check-commit-parse.mjs` has a temporary allowlist for
-`15651d3` (already restored on the 0.1.2 release branch); remove that entry
-after the `v0.1.2` tag lands. Not part of `npm run verify` (needs git tags).
+tagging.
+
+`scripts/check-commit-parse.mjs` exposes a `KNOWN_UNPARSABLE` allowlist for
+this, and it is **empty by design**. The check scans `v<last-release>..HEAD`,
+so an unparsable commit leaves the range by itself once the next tag is cut —
+the list is only for the temporary window where such a commit sits on `main`
+and turns every push red. Before adding an entry you must hand-restore the
+CHANGELOG line first; excluding without restoring causes the exact silent drop
+this guard exists to catch. (The original `15651d3` entry was removed once the
+`v0.1.2` tag put it out of range — bdboard-r5we, bdboard-tbgj.)
+
+Not part of `npm run verify` (needs git tags).
