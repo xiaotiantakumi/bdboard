@@ -71,7 +71,14 @@ jobs:
       - run: npm run verify
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # verify と同じ 15 分。ジョブ時間の支配要因は npm install で、同じコマンドが
+    # run ごとに 4s〜421s まで振れる (実測 2026-09-04, bdboard-ey35)。テスト本体
+    # (build:web + playwright) は毎回 17 秒、Playwright のブラウザキャッシュも
+    # 3〜4 秒でヒットしており、install 以外に削れる余地は無い。10 分だと install が
+    # 遅い回にそのまま cancelled になるため、同じ変動を抱えたまま運用できている
+    # verify に揃える。テスト本体が 17 秒である以上、15 分でも本物のハングは十分
+    # 早く検知できる。install 時間の不安定さ自体は別チケットで追う。
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
