@@ -95,13 +95,24 @@ export const DEFAULT_SETTING_SOURCES = 'project,local';
  *
  * DEFAULT_SETTING_SOURCES が入った今、一次の天井は allowlist
  * (DEFAULT_ALLOWED_TOOLS) 側にある。それでもこの名指し deny を残すのは、
- * 残った project/local 層が worktree の中にあり、エージェント自身が
- * Edit(<worktree>/**) で `.claude/settings.json` を書けてしまうため。
- * deny は allow に勝つ (実測: グローバル allow に Bash(mv:*) があっても
- * --disallowedTools の有無だけで mv の実行有無が変わった) ので、自分で書いた
- * allow による昇格はここで止まる。M-2 の `.claude/settings.local.json` は
- * clearWorktreeLocalClaudeSettings() が起動直前に消す。
+ * 残った project/local 層が worktree の中にあるため。deny は allow に勝つ
+ * (実測: グローバル allow に Bash(mv:*) があっても --disallowedTools の有無
+ * だけで mv の実行有無が変わった)。M-2 の `.claude/settings.local.json` は
+ * clearWorktreeLocalClaudeSettings() が起動直前に消し、project 層の
+ * `.claude/**` への書き込みは buildWorktreeScopedDenials() が塞ぐ。
  * CLAUDE_CONFIG_DIR 固定は認証を壊すため撤回した (2026-09-04)。
+ *
+ * このリストは「permission 層で表現できる天井」でしかない点に注意
+ * (bdboard-f4kn)。project 層 settings.json の hooks は permission 層を通らずに
+ * 実行されるので、ここに何を足しても防げない。あの経路は
+ * buildWorktreeScopedDenials() の deny で「書かせない」ことでしか止まらない。
+ *
+ * allowlist 外の verb がすべて落ちるわけでもない。CLI には無害な読み取り専用
+ * コマンドの組み込み自動承認があり、実測 (2026-09-04) で `date` / `whoami` /
+ * `df` は allowlist に無くても実行された (一方 `rsync` / `sw_vers` は
+ * "This command requires approval" で拒否)。実効天井は
+ * 「DEFAULT_ALLOWED_TOOLS ∪ CLI 組み込みの読み取り専用集合」であり、
+ * 後者は我々が列挙も固定もできない。
  *
  * ベアな `Bash` は入れない。実測 (2026-09-04): `--disallowedTools Bash` は
  * 権限拒否ではなく **Bash ツールごとモデルの tool set から消える**
@@ -168,6 +179,12 @@ export interface ClaudeRunnerOptions {
  * clean 判定に映らない。前の run がここへ権限やフックを仕込み、worktree は clean の
  * まま次の run が昇格した権限で始まる経路が成立していた (bdboard-54be.1 M-2)。
  * これが M-2 (worktree ローカル設定の持ち越し) の唯一のカバー。存在しなければ何もしない。
+ *
+ * 兄弟の `.claude/settings.json` (project 層) は **意図的に消さない**
+ * (bdboard-f4kn)。このリポジトリでは git 追跡下にあり、`bd prime` を回す
+ * SessionStart hook という正当な中身を持っているので、消せば毎 run ごとに
+ * 偽の差分が出たうえで意図した挙動まで失われる。あちらは「消す」ではなく
+ * 「書かせない」で守る — buildWorktreeScopedDenials() を参照。
  */
 export function clearWorktreeLocalClaudeSettings(worktreePath: string): void {
   try {
@@ -308,7 +325,12 @@ export function buildRunnerEnv(
   return env;
 }
 
-function buildWorktreeScopedTools(worktreePath: string): readonly string[] {
+/**
+ * worktree パスを permission ルールに埋め込める形へ正規化する。
+ * allow 側 (buildWorktreeScopedTools) と deny 側 (buildWorktreeScopedDenials) で
+ * 同じ正規化を使わないと、deny だけがパスに一致せず無言で効かなくなる。
+ */
+function assertRuleSafeWorktreePath(worktreePath: string): string {
   // 多層防御。provisioner 側で ticket id を allowlist 検証しているが、cwd は
   // RunRequest 経由で来るのでここでも壊れた形を弾く。fail-closed。
   if (/[)(*\n\r]/.test(worktreePath)) {
@@ -317,6 +339,10 @@ function buildWorktreeScopedTools(worktreePath: string): readonly string[] {
     );
   }
 
+  return worktreePath.startsWith('/') ? worktreePath : `/${worktreePath}`;
+}
+
+function buildWorktreeScopedTools(worktreePath: string): readonly string[] {
   // Write(<path>) は CLI 自身が「file permission checks に使われない」と診断する。
   // Edit(<glob>) が Write を含む全ファイル編集ツールを覆う（claude CLI 2.1.233 実測）。
   //
@@ -328,8 +354,52 @@ function buildWorktreeScopedTools(worktreePath: string): readonly string[] {
   // fail-closed なので危険側には倒れないが、エージェントが一切ファイルを
   // 編集できず機能が無言で死ぬ。`--` 終端と同じく、単体テストでは
   // 「期待した文字列と一致するか」しか見えないので実プロセスでしか気づけない。
-  const absolute = worktreePath.startsWith('/') ? worktreePath : `/${worktreePath}`;
+  const absolute = assertRuleSafeWorktreePath(worktreePath);
   return [`Read(/${absolute}/**)`, `Edit(/${absolute}/**)`];
+}
+
+/**
+ * run 対象 worktree の `.claude/**` への書き込みを名指しで deny する (bdboard-f4kn)。
+ *
+ * 狙いは「エージェントが自分の worktree の `.claude/settings.json` を書き換えて
+ * 権限天井を自分で上げる」経路を塞ぐこと。allowlist には `Edit(<worktree>/**)` が
+ * 入っており、`.claude/` はその配下にあるので allow だけを見ると届いてしまう。
+ *
+ * ## なぜ「permissions.allow の追記」より深刻か (実測 2026-09-04, claude CLI 2.1.233)
+ * このファイルの本当の危険は `permissions.allow` ではなく **hooks** である。
+ * project 層の `.claude/settings.json` に置いた hooks は、permission 層を一切
+ * 通らずにそのままシェルコマンドとして実行される:
+ *   settings.json に SessionStart / PreToolUse hook (`touch <marker>`) を置いて run
+ *     -> 両方の marker ファイルが生成され、permission_denials は空
+ * つまり書き換えが成立した瞬間に allowlist の広さとは無関係な任意コード実行になる。
+ * DENIED_TOOLS は permission 層の仕組みなので、この経路は原理的に止められない。
+ *
+ * ## 反映は「次回 run から」ではなく「その場で」(実測)
+ * run の最中に外部から `.claude/settings.json` を差し替える実測を行った:
+ *   1回目の `df -h /tmp` -> 実行された
+ *   ここで settings.json を deny + hook 入りに差し替え
+ *   2回目の `df -h /tmp` -> "Permission to use Bash ... has been denied." で拒否、
+ *                           かつ差し替えで入れた PreToolUse hook の marker が生成
+ * CLI は起動時スナップショットではなく都度読み直している。よって仮に書き込みが
+ * 通れば昇格は同一セッション内で即座に効く。「次の run までは安全」ではない。
+ *
+ * ## 一次の防壁は CLI 側にあるが、それに依存しきらない
+ * 実測では、現状この deny が無くても書き込みは CLI 自身に拒否される。CLI は
+ * `.claude/` 配下を "sensitive file" として扱い、`Edit(<worktree>/**)` のような
+ * 広い allow では許可されない:
+ *   Write `.claude/notes.txt`        -> "which is a sensitive file."
+ *   Write `.claude/settings.json`    -> "you haven't granted it yet"
+ *   Bash `echo ... > .claude/settings.json` / `sed -i` も同じ書き込みチェックで拒否
+ *   一方 `.hidden/x.txt` は書けたので、dot ディレクトリ一般ではなく `.claude/` 固有
+ * ただしこれは CLI の内部仕様であって我々の契約ではない。将来のバージョンで
+ * 緩んでも気づけないので、意図を自分の側で明示しておく。deny は allow に勝ち、
+ * パススコープ付き deny が Write ツールと Bash のリダイレクトの両方を覆うことは
+ * 実測済み (allow 配下の `open/` には書けるまま `secret/` だけが
+ * "File is in a directory that is denied by your permission settings." で落ちた)。
+ */
+function buildWorktreeScopedDenials(worktreePath: string): readonly string[] {
+  const absolute = assertRuleSafeWorktreePath(worktreePath);
+  return [`Edit(/${absolute}/.claude/**)`];
 }
 
 function resolveAllowedTools(
@@ -407,12 +477,19 @@ export function createClaudeRunner(
                 ...allowedTools,
                 ...buildWorktreeScopedTools(request.cwd),
               ];
+        // deny 側は allowedTools の有無に関わらず必ず付ける。
+        // BDBOARD_RUN_ALLOWED_TOOLS='' で allowlist を降ろした運用では
+        // `.claude/**` を覆う allow すら無い代わりに天井そのものが緩むので、
+        // 自己昇格の経路を塞ぐ必要はむしろ強くなる。
         ({ command, args } = buildClaudeCommand(request, {
           claudePath,
           permissionMode,
           settingSources: DEFAULT_SETTING_SOURCES,
           allowedTools: effectiveAllowedTools,
-          disallowedTools: DENIED_TOOLS,
+          disallowedTools: [
+            ...DENIED_TOOLS,
+            ...buildWorktreeScopedDenials(request.cwd),
+          ],
         }));
       } catch (error: unknown) {
         const detail = error instanceof Error ? error.message : String(error);

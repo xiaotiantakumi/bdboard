@@ -65,10 +65,30 @@ function expectedDefaultArgs(cwd = '/tmp/project'): readonly string[] {
     `Edit(/${cwd}/**)`,
     '--disallowedTools',
     ...DENIED_TOOLS,
+    `Edit(/${cwd}/.claude/**)`,
     // `--` shields the prompt from the variadic `--allowedTools`.
     '--',
     'hello',
   ];
+}
+
+/**
+ * argv を --allowedTools 節 / --disallowedTools 節に割る。
+ * `.claude/**` ルールが deny 側ではなく allow 側に紛れ込むと、塞ぐつもりの穴を
+ * 逆に開けることになる。`toContain` だけではその取り違えを検出できない。
+ */
+function splitPermissionSections(args: readonly string[]): {
+  allowed: readonly string[];
+  denied: readonly string[];
+} {
+  const allowAt = args.indexOf('--allowedTools');
+  const denyAt = args.indexOf('--disallowedTools');
+  expect(denyAt).toBeGreaterThanOrEqual(0);
+  const end = args.indexOf('--', denyAt);
+  return {
+    allowed: allowAt < 0 ? [] : args.slice(allowAt + 1, denyAt),
+    denied: args.slice(denyAt + 1, end < 0 ? args.length : end),
+  };
 }
 
 describe('DEFAULT_ALLOWED_TOOLS', () => {
@@ -339,6 +359,57 @@ describe('createClaudeRunner', () => {
     for (const tool of DENIED_TOOLS) {
       expect(args).toContain(tool);
     }
+  });
+
+  it('denies writes to the worktree .claude directory so the run cannot raise its own ceiling', async () => {
+    const { streamingRunner, runMock } = createFakeStreamingRunner(() => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+    }));
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    await runner.dispatch(makeRequest({ cwd: '/tmp/worktree-f4kn' }));
+
+    const args = runMock.mock.calls[0]?.[1] as readonly string[];
+    const { allowed, denied } = splitPermissionSections(args);
+
+    // bdboard-f4kn 実測: project 層 `.claude/settings.json` の hooks は permission
+    // 層を通らずに実行され、しかも run の最中の差し替えがその場で効く。DENIED_TOOLS
+    // をいくら足しても止まらないので、書き込み自体を deny する。
+    expect(denied).toContain('Edit(//tmp/worktree-f4kn/.claude/**)');
+    // 先頭スラッシュ2つ。1つだと CLI がプロジェクト相対と解釈して何にも一致せず、
+    // deny が無言で効かなくなる (allow 側と同じ罠)。
+    expect(denied).not.toContain('Edit(/tmp/worktree-f4kn/.claude/**)');
+    // deny 節に入っていること。allow 節へ紛れ込めば逆に穴を開ける。
+    expect(allowed).not.toContain('Edit(//tmp/worktree-f4kn/.claude/**)');
+    // 広い方の allow は残っている (worktree 本体は編集できないと機能が死ぬ)。
+    expect(allowed).toContain('Edit(//tmp/worktree-f4kn/**)');
+  });
+
+  it('keeps denying the worktree .claude directory when the allowlist is opted out', async () => {
+    // BDBOARD_RUN_ALLOWED_TOOLS='' は allowlist ごと降ろす運用。天井が緩む分、
+    // 自己昇格を塞ぐ必要はむしろ強い。allow が無いと deny も出ない実装だと
+    // ここで落ちる。
+    process.env.BDBOARD_RUN_ALLOWED_TOOLS = '';
+
+    const { streamingRunner, runMock } = createFakeStreamingRunner(() => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+    }));
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    await runner.dispatch(makeRequest({ cwd: '/tmp/worktree-f4kn' }));
+
+    const args = runMock.mock.calls[0]?.[1] as readonly string[];
+    expect(args).not.toContain('--allowedTools');
+    const { denied } = splitPermissionSections(args);
+    expect(denied).toContain('Edit(//tmp/worktree-f4kn/.claude/**)');
   });
 
   it('removes worktree-local settings.local.json but keeps settings.json', async () => {
