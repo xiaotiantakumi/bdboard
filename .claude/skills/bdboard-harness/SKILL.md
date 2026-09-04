@@ -1,242 +1,120 @@
 ---
 name: bdboard-harness
-description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first排他とclaim規律、確認待ちのノンブロッキング化(bd human+human gate)、セッションクローズ、ハーネス失敗の学習ループ(failure-catalog照合とbrushup、多層ハーネスの層判定と還流)の5規律を定める。
+description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first 排他と claim、確認待ちのノンブロッキング化(bd human + human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ(failure-catalog 照合・brushup・層判定と還流)の5規律を定める。
 ---
 
 # bdboard-harness — bd 運用プロジェクトの自律作業規律
 
 ## 前提
 
-- 対象は `.beads/` を持つ（= bd で作業台帳を管理している）プロジェクト。ユーザーが同じ
-  プロジェクトで**複数のエージェントセッションを同時に**走らせている前提で書かれている。
-  単独セッションでも同じ規律を守る（いつ並列になるか自分からは分からない）。
-- **プロジェクト固有の値はこの文書に書かない。** 検証コマンド（ビルド・テスト・lint）、
-  ブランチ命名、マージ方式、サーバー/ポートの取り扱いは、注入先プロジェクトの
-  CLAUDE.md / AGENTS.md に従う。この skill はそれらの「回し方の規律」だけを定める。
-- 本文は要点のみ。手順の詳細は references/ にあり、本文から参照する。この skill 単体で
-  成立するように書かれている（グローバル skill の有無に依存しない）。
+- 対象は `.beads/` を持つプロジェクト。**複数セッションが同時に走る**前提で書かれている
+  （単独でも同じ規律を守る — いつ並列になるか自分からは分からない）。
+- **プロジェクト固有の値はここに書かない。** 検証コマンド・ブランチ命名・マージ方式・
+  サーバー/ポートは注入先の CLAUDE.md / AGENTS.md（と検証コントラクト）に従う。
+- **本文は骨格。詳細は `references/` にあり、着手前に開く。**
 
 ## 規律1: セッション開始 — prime → stale lease 確認 → ready
 
-なぜ: 死んだセッションの取り残し（stale lease・worktree 残骸）を見ないまま着手すると、
-「in_progress だが誰も作業していない」チケットを永久に避け続けるか、逆に生きている作業を
-横取りするかのどちらかの事故になる。
+なぜ: 死んだセッションの残骸（stale lease・worktree）を見ないまま着手すると、誰も作業して
+いないチケットを永久に避け続けるか、生きている作業を横取りするかの事故になる。
 
 手順:
 
 1. `bd prime` — 台帳のコンテキストとプロジェクトメモリを読み込む。
-2. stale lease の確認。`bd list --status in_progress` で in_progress を眺め、lease が
-   切れて久しいものが無いか見る（`bd show <id>` に lease の残りが表示される）。
-   - **回収（`bd reclaim`）の正はスーパーバイザーの定期実行**（bdboard 併用プロジェクト
-     では bdboard サーバーが担う）。自分で `bd reclaim` を打つのは、(a) スーパーバイザーが
-     動いていない、かつ (b) lease 失効から猶予窓（≈ TTL×2）を十分過ぎている、かつ
-     (c) worktree 側の証拠（後述の放棄裏取り）も揃った場合だけ。**欲しいチケットを空ける
-     目的で reclaim しない。**
-   - 詳細と既定パラメータ: [references/lease-params.md](references/lease-params.md)
-3. マージ済み worktree の残骸があれば掃除する（`git worktree list` を一覧し、対応ブランチが
-   既に main へ取り込まれているものだけ remove。判断がつかないものは触らない）。
-4. `bd ready --exclude-label gt:slot` — 着手可能なチケットを取得する。選び方は規律2へ。
-   - `--exclude-label gt:slot` は必須。`bd merge-slot` の slot bead は「空き = status=open・
-     priority=0」で状態を表すため、素の `bd ready` では**先頭に**載る。これを「最優先の
-     着手可能チケット」として claim すると、slot を保持したことになり**他セッションの
-     マージを止める**副作用が出る（実測: bdboard-9k3）。
+2. `bd list --status in_progress` で lease 切れを把握する（残りは `bd show <id>`）。
+3. **`bd reclaim` は原則打たない** — 正はスーパーバイザーの定期実行（例外3条件は詳細）。
+4. マージ済み worktree の残骸**だけ**掃除する（判断がつかないものは触らない）。
+5. `bd ready --exclude-label gt:slot` で候補を取る（**除外必須** — slot bead の claim は他
+   セッションのマージを止める）。
+
+詳細: `lease-params.md` / `worktree-pr-flow.md` / `failure-catalog.md`
 
 ## 規律2: 排他と claim — 排他の正本は worktree、claim は台帳記録
 
-なぜ: 並列セッションは全て**同じユーザー（同じ assignee）**で動くため、`bd update --claim`
-のアトミック性（CAS）は先行 claim を検出できず、**両方成功しうる**（さらに `--claim` は
-`--if-status` / `--if-assignee` と併用不可で、ガード付きの1コマンドは書けない）。一方
-`git worktree add -b <branch>` は、既存ブランチ/worktree があれば git が拒否するので、
-先着1名だけが成功する。よって**排他はチケット台帳ではなく git が裁く**。
+なぜ: 並列セッションは全て同じ assignee で動くため `bd update --claim` は先行 claim を検出
+できず両方成功しうる。`git worktree add -b` は先着1名しか成功しない。**排他は git が裁く**。
 
 手順（この順序を厳守）:
 
-1. **着手前の空き確認（両方見る）**: 候補チケットについて
-   `ls <worktree置き場>/<id>` と `git rev-parse --verify <ブランチ名>` の両方が
-   「存在しない」ことを確認する（ブランチだけ先に存在するケースがあり、片方だけでは
-   取りこぼす）。worktree の置き場・ブランチ命名はプロジェクト規約に従う
-   （既定の推奨: `.claude/worktrees/<id>/` と `bd/<id>`）。
-2. **worktree 作成 = 排他獲得**: `git worktree add <path> -b <branch>` を実行する。
-   **成功したら勝ち。失敗（既存）なら負け** — そのチケットは別セッションが着手中とみなし、
-   次の候補へ回る。
-3. **成功して初めて claim**: `bd update <id> --claim`。claim は「誰が何をやっているか」の
-   台帳記録であって排他ではない。worktree より先に claim を打たない（claim だけ通って
-   worktree で負けると、台帳だけ汚れる）。
-4. **実装に入る前に既存実装を1回探す**（重複実装の予防）: 変更予定の領域名・関数名で
-   `git grep -n <キーワード>` と `bd search "<キーワード>" --status in_progress`（title/ID しか
-   検索しない。説明文まで見るなら `bd list --status in_progress --desc-contains "<キーワード>"`
-   を併用する）を各1回。既存ヘルパー・同目的の実装が見つかったら再利用し、
-   `bd comment <id> "再利用: <path>"` を残す（見つからなければコメント不要）。同じ領域を触って
-   いる in_progress チケットがあれば双方にコメントし、`bd dep add <自分> <相手> --type related`
-   を張る。根拠: 2026-08 に並列実装由来の重複ヘルパー解消チケットが10件超
-   （failure-catalog.md の duplicate-helper-parallel）。
-5. **作業中は heartbeat を打ち続ける**: `bd heartbeat <id>` を lease TTL より十分速い間隔で
-   （目安 TTL/3 以下、かつどれだけ TTL が長くても 5 分以下。長いビルド/テストの前後にも1回）。
-   heartbeat が**失敗したら自分はもう所有者ではない** — 直ちに手を止めて `bd show <id>` で
-   状況を確認する（[references/lease-params.md](references/lease-params.md)）。
-   - **複数チケットを並行して in_progress で保持しているとき**（gate 待ちに載せて次へ進んだ、
-     委譲を投げて別チケットへ移った等）は、「いま触っているチケットだけ」ではなく
-     **全 in-flight チケットへ同じ周期で一括して打つ**:
+1. 空き確認は worktree とブランチの**両方**が「無い」こと。
+2. **`git worktree add <path> -b <branch>` の成否が排他** — 失敗（既存）なら次の候補へ。
+3. **成功して初めて `bd update <id> --claim`。** claim を worktree より先に打たない。
+4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
+5. **`bd heartbeat` は保持中の全チケットへ一括で**（TTL/3 以下かつ 5 分以下）。失敗＝所有権
+   喪失、直ちに停止。
+6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」
+   と断定しない。
 
-     ```bash
-     for id in <id1> <id2> <id3>; do bd heartbeat "$id"; done
-     ```
-
-     アクティブな1枚だけ延命する癖は、残りの保持チケットの lease を静かに失効させ、
-     reclaim の誤発火（生きている並行作業の回収）を招く（実測: 8並列運用で発生 —
-     bdboard-3tw.99 / bdboard-l1t.4）。詳細:
-     [references/lease-params.md](references/lease-params.md)
-6. **負けたときの振る舞い**: 相手の in_progress を open に戻さない（先行セッションが実作業中
-   である以上 in_progress は事実として正しい）。相手のプロセスも kill しない。誤って作業して
-   しまっていたら成果を patch に退避して撤退する。
-7. **worktree の存在だけで「放棄」と断定しない**: 空の worktree は「作成直後・エージェント
-   起動直前」でもありうる。放棄の裏取りは lease 失効＋猶予経過に加えて、`git status` が
-   空・`lsof` でプロセス無し・チケット `updated_at` が古い、を揃えてから
-   （詳細: [references/lease-params.md](references/lease-params.md)）。
-
-worktree 作成から PR・マージまでの全体フロー:
-[references/worktree-pr-flow.md](references/worktree-pr-flow.md)
+詳細: `worktree-pr-flow.md` / `lease-params.md`
 
 ## 規律3: 確認待ち — 質問はチケットに載せ、回答を待たずに次へ進む
 
-なぜ: ユーザーへの質問をチャットで投げて回答を待つと、回答が来るまでセッション全体が
-止まる（実際に起きた事故）。質問を台帳に載せれば、ユーザーは自分のペースで回答でき、
-エージェントは他のチケットを進められる。
+なぜ: 質問をチャットで投げて待つと、回答が来るまでセッション全体が止まる（実際に起きた
+事故）。台帳に載せればユーザーは自分のペースで回答でき、他のチケットを進められる。
 
 手順:
 
-1. ユーザー判断が必要になったら、**自分のチケットに質問コメントを書く**:
-   `bd comment <id> "<質問本文>"`。本文は後から単体で判断できる粒度で書く
-   （何を決めてほしいか・選択肢と帰結・推奨。テンプレ:
-   [references/question-template.md](references/question-template.md)）。
-2. `bd label add <id> human` — 確認待ちレーン（bdboard の awaiting_human）に載せる。
-3. `bd gate create --type=human --blocks <id> --reason="<一行要約>"` — human gate で
-   チケットを blocked 化し、`bd ready` から外す（回答が来るまで誰も誤って着手しない）。
+1. `bd comment <id> "<質問>"` — 選択肢と帰結・推奨・回答後の再開手順まで書く。
+2. `bd label add <id> human` で確認待ちレーンへ（`bd update --label` は存在しない）。
+3. `bd gate create --type=human --blocks <id> --reason="<一行>"` で `bd ready` から外す
+   （**`bd dep add` で代用しない**）。
+4. **回答を待たず次のチケットへ。** worktree は残し、規律2 手順5の一括 heartbeat の対象に
+   含め続ける。
+5. 回答が来たら `bd label remove <id> human` して再開（作業チケットは close しない）。
+6. 横断的な確認だけ質問専用チケットを切る（回答は comment+close。`bd human respond` 不可）。
+7. **例外**: 破壊的・不可逆・外向きの操作（デプロイ・削除・push/送信・課金）はその場で確認する。
 
-   **`bd dep add` で代用しないこと。** 「回答が来るまで親チケットにぶら下げて
-   おけばいい」と `bd dep add <id> <親id>` を張ろうとすると、その2者間に既に
-   別タイプの辺（典型的には、親の作業中に発見して起票したときの
-   `discovered-from`）があると
-   `dependency ... already exists with type "discovered-from" (requested "blocks")`
-   で**失敗する**（bd 1.2.1 で実測、bdboard-axl）。bd は同じ向きの2者間に複数
-   タイプの辺を持てず、通すには `bd dep remove` が要る = 発見元の来歴を消す
-   ことになる。一方 `bd gate` は **`Gate: human` という新しいノードを作って
-   そこへ `blocks` 辺を張る**ので、辺の相手が親チケットではなく別ノードになり、
-   既存の来歴と衝突しない。これが step 3 が `bd dep` ではなく `bd gate` である
-   理由。（gate が依存グラフの外にあるわけではない点に注意 — gate ノードは
-   `bd dep tree <id>` に `[blocks]` の辺として現れる。）
-
-   なお gate は「別チケットの完了待ち」を表現する道具ではない。`bd gate create
-   --type` は human / timer / gh:run / gh:pr のみで、bead の close を待つ gate は
-   作れない（bd 1.2.1）。human gate は親が close しても自動解除されず
-   `bd gate resolve` が要るので、ここで使うのは**ユーザーの回答待ち**に限る。
-
-   なお `bd label add <id> human`（step 2）を `bd update <id> --label human` と
-   書くと `unknown flag: --label` で落ちる（bd 1.2.1）。`bd update` 側のラベル
-   操作は `--add-label` / `--remove-label`。
-4. **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。
-   ブロックしたチケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
-   ただしブロック中もそのチケットは in_progress のまま自分の保持下にある —
-   規律2 手順5の**一括 heartbeat の対象に含め続ける**（外すと reclaim に回収される）。
-5. 回答が来たら（gate resolve + コメント）、`bd label remove <id> human` してから作業を
-   再開する。
-6. **特定チケットに紐づかない横断的な確認だけ**、質問専用チケットを別に切って human ラベルを
-   付ける（この場合の回答は `bd comment <id> "<回答>"` → `bd close <id>` でチケットごと
-   閉じる。**`bd human respond` は使わない** — upstream の "storage is nil" regression を
-   確定的に踏むため、comment+close へ置換済み。詳細:
-   [references/question-template.md](references/question-template.md)）。
-7. **例外 — その場で確認するもの**: 破壊的・不可逆・外向きの操作（本番デプロイ、データ削除、
-   push/publish/送信、課金）は、レーンに載せて先へ進む方式にしない。実行前にその場で
-   ユーザーに確認する。確認待ちの間、**その操作に依存しない別チケット**を進めるのは構わない。
+詳細: `question-template.md`
 
 ## 規律4: セッションクローズ — close はマージ成功後だけ
 
-なぜ: PR を開いた時点で close すると、`bd ready` や進捗表示が「landed していない作業を
-完了」と偽り、並列セッションと後続作業の判断を狂わせる。close = 「main に入った」の
-不変条件を守る。
+なぜ: PR を開いた時点で close すると `bd ready` と進捗表示が「landed していない作業を完了」
+と偽り、並列セッションの判断を狂わせる。close =「main に入った」の不変条件を守る。
 
 手順:
 
-1. 検証 → PR → CI → マージ、まで完走する。**検証コマンドは (1) 検証コントラクト
-   `.claude/bdboard-harness.json` の `verify` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md
-   → (3) どちらにも無ければ検証せずに進めない**、の順で決める（3キーの意味・(3) の
-   エスカレーション文言・マージ排他3層: [worktree-pr-flow.md](references/worktree-pr-flow.md)）。
-2. **マージが成功したら、`bd close` の前に証拠コメントを残す**:
-   [references/close-template.md](references/close-template.md) の書式で `bd comment <id>`
-   （**`PR:` 行を必ず含める** — 人だけでなく Stop hook と Hygiene がこれを「証拠あり」の
-   検索キーにする）。
-3. **その上で `bd close <id>`。マージ前に close しない。** マージまで到達せずにセッションを
-   終えるなら、チケットは in_progress のまま現状をコメントに残す（lease が切れれば reclaim が
-   拾う — それが正常系）。
-4. worktree を掃除する: `git worktree remove <path>` → ブランチ削除 → `git remote prune origin`
-   （マージした本人の責務。放置すると規律2の空き確認を全セッションで狂わせる）。
-5. 残作業・気づきはチケット化してから終える（頭の中に残して終えない）。作業中に見つけた
-   派生チケットは `bd create ... --deps discovered-from:<元チケット>` で来歴を辺として残す。
-6. `bd dolt push` は**チケットごとではなくセッション末に1回**。外向きのネットワーク操作
-   なので、プロジェクトの git/sync ポリシーが自律実行を明示的に許可していない限り、実行前に
-   ユーザーへ確認する。
+1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **検証コントラクト → CLAUDE.md /
+   AGENTS.md → 無ければ検証せず進めない**の順で決める。
+2. **マージ成功後、`bd close` の前に証拠コメント**（`close-template.md` の書式。**`PR:` 行必須**）。
+3. **その上で `bd close <id>`。マージ前に close しない**（未到達なら in_progress のまま現状
+   をコメントに残す）。
+4. worktree を掃除する（remove → ブランチ削除 → `git remote prune origin`）。
+5. 残作業・気づきはチケット化する（`--deps discovered-from:<元>` で来歴を辺に残す）。
+6. `bd dolt push` はセッション末に1回。外向き操作なので、許可が無ければ実行前に確認する。
+
+詳細: `worktree-pr-flow.md` / `close-template.md` / `verification.md`
 
 ## 規律5: ハーネス失敗の学習ループ — 同じ失敗を二度踏まない
 
-なぜ: この skill 自体が過去の事故（worktree 競合による成果消失、merge-slot 誤 claim、
-生きた作業の reclaim 等）から生まれた規律の集積であり、規律の網羅は常に不完全。新しい
-失敗をその場の復旧だけで終えると、教訓はセッション終了とともに散逸し、別セッションが
-同じ失敗を再生産する。失敗を skill 本体へ還流させる回路そのものを規律として持つ。
+なぜ: 規律は過去の事故の集積であり、網羅は常に不完全。新しい失敗をその場の復旧だけで終えると
+教訓は散逸し、別セッションが同じ失敗を再生産する。
 
 手順:
 
-1. **失敗の検知**: 次のいずれかに当てはまったら「ハーネス失敗」として扱う（プロダクトの
-   バグ・一過性の環境障害とは区別する。判定基準:
-   [references/brushup-protocol.md](references/brushup-protocol.md) §1）。
-   - 作業成果が失われた / 無駄になった（競合・上書き・誤削除・重複実装）
-   - skill / プロジェクト規約の手順どおりに動いたのに事故った（規律の誤り・穴）
-   - 手順が存在したのに想起されず・曖昧で、守られなかった（配置・書き方の問題）
-   - 既知パターン（[references/failure-catalog.md](references/failure-catalog.md)）の再発
-2. **即時の最小記録**: 復旧を始める前に、消えやすい証拠（エラー全文・直前のコマンド列・
-   worktree / プロセス / チケットの状態）を残す。作業中チケットがあれば `bd comment`、
-   無ければ scratchpad のファイルへ。
-3. **その場で直せないなら起票して現作業へ戻る**: ブラシュアップ用チケットを切り
-   （`bd create --type=task --priority=2 --deps discovered-from:<元チケット>` —
-   成果消失級の再発リスクなら priority 1。`--deps` で来歴を辺として残す）、
-   `bd label add <新id> harness` でラベルを付け、証拠と仮説をコメントに残す。
-   失敗対応のために現チケットを放置しない（規律3と同じノンブロッキング原則）。
-4. **編集する層を先に決める**: この skill は注入パックとして複数プロジェクトへ配布
-   される。注入先プロジェクトでは `.claude/skills/bdboard-harness/` は**編集禁止の
-   注入コピー**（git 管理外・再注入で無警告に上書き）— プロジェクト固有の教訓は
-   コンパニオン skill `project-harness` へ、汎用の教訓は `harness-upstream` チケットで
-   パック正本へ還流する。層の判定と編集先の決定:
-   [references/layering.md](references/layering.md)
-5. **ブラシュアップの検討は Fable で固める**: 根本原因の分類 → 教訓の配置先決定 →
-   skill / 規約への反映、を [references/brushup-protocol.md](references/brushup-protocol.md)
-   の手順で行う。ハーネス規律を変える PR は、マージ前に **Fable（最大熟考）の
-   独立レビュー**を通す。
-6. **確定した教訓は必ず failure-catalog にエントリを持つ**: 本則を他の場所（SKILL.md
-   本文・他 reference・CLAUDE.md 等）に書いた場合も、カタログにはポインタ付きの
-   エントリを置く。カタログは「二度目を防ぐ照合表」— 並列一括着手・マージ・worktree
-   掃除・サーバー操作など事故多発領域に入る前に、該当カテゴリを一瞥する。
+1. **検知**: 成果の消失／規律どおりでの事故／手順の不遵守／既知パターンの再発 =「ハーネス失敗」。
+2. **即時の最小記録**: 復旧前に証拠（エラー全文・コマンド列・worktree とチケットの状態）を残す。
+3. **直せないなら起票して現作業へ戻る**（`--deps discovered-from:<元>` ＋ `harness` ラベル。
+   成果消失級の再発リスクなら priority 1）。
+4. **編集する層を先に決める**: 注入コピー `.claude/skills/bdboard-harness/` は**編集禁止**。
+   固有の教訓は `project-harness`、汎用は `harness-upstream` チケットで正本へ還流する。
+5. **検討は Fable の最大熟考で固める**。規律を変える PR はマージ前に Fable の独立レビューへ。
+6. **確定した教訓は必ず failure-catalog にエントリを持つ**（本則が他所ならポインタ付きで）。
+
+詳細: `brushup-protocol.md` / `layering.md` / `failure-catalog.md`
 
 ## 機械ガード（hooks）— 文章で防げない操作は hook が止める
 
-- パックは `hooks/` に PreToolUse（Bash / Edit 系）と Stop の3スクリプトを同梱し、注入時に
-  注入先の `.claude/settings.json` へ登録される。
-- 止めるもの: `pkill`/`killall`、`--remote` 無しの `bd dolt push`/`pull`、bare な `git stash`/
-  `pop`、`run_in_background` と末尾 `&` の併用、注入コピー `.claude/skills/bdboard-harness/**`
-  の編集、`bd/` ブランチでの `.beads/**` 編集、検証コントラクトの `hooks.denyBashPatterns`。
-  Stop hook は「in_progress のまま PR も直近コメントも無く終わろうとした」を差し戻す。
-- **hook に止められたら回避策を探さない。** stderr に出る代替手順に従う。hook 自体の不具合は
-  `harness-upstream` チケットで起票する（[references/layering.md](references/layering.md)）。
-- 各 hook の deny 条件と回避手段の一覧: `hooks/README.md`。
+- `hooks/` の3スクリプト（PreToolUse: Bash / Edit 系、Stop）は、注入時に注入先の
+  `.claude/settings.json` へ登録される。
+- 止めるもの: `pkill`/`killall`、bare な `bd dolt push`/`git stash`、二重バックグラウンド化、
+  注入コピーの編集、`bd/` ブランチでの `.beads/**` 編集、コントラクトの
+  `hooks.denyBashPatterns`、痕跡を残さないセッション終了。
+- **hook に止められたら回避策を探さない。** stderr の代替手順に従う。hook 自体の不具合は
+  `harness-upstream` チケットで起票する。
+- deny 条件・fail-open 方針・settings.json 登録契約: `hooks/README.md`。
 
 ## references
 
-| ファイル | 内容 |
-|---|---|
-| [references/worktree-pr-flow.md](references/worktree-pr-flow.md) | per-ticket worktree+branch+PR フローの全手順とマージ排他3層 |
-| [references/lease-params.md](references/lease-params.md) | lease/heartbeat/reclaim の既定パラメータと失敗時の意味 |
-| [references/question-template.md](references/question-template.md) | 確認待ちコメントの書き方テンプレ |
-| [references/close-template.md](references/close-template.md) | close 直前コメントの定型（検証コマンドと exit / PR / CI / レビュー指摘と採用 / 未了） |
-| [references/verification.md](references/verification.md) | 委譲結果の独立検証と rebase 規律、委譲失敗の既知パターン（0 編集「委譲しました」誤申告の検知とリトライ、無断 commit/push/PR作成/force-push の検知と封じ込め） |
-| [references/frontend-gotchas.md](references/frontend-gotchas.md) | bd/git 運用規律ではなく web/ 実装（React+Vite）自体で踏んだ非自明な罠。`<details>` の子要素に無条件 `display` を当てると閉じていても常時レンダリングされクリックを奪う問題、dev限定の現象かを本番ビルド(`vite build && vite preview`)で切り分ける手順 |
-| [references/failure-catalog.md](references/failure-catalog.md) | 既知ハーネス失敗の照合台帳。カテゴリ別（排他・worktree / マージ・PR / サーバー・ポート / 検証・ビルド / 委譲・検証 / 多層ハーネス・配布 / bd 操作・確認待ち）の圧縮エントリと本則へのポインタ |
-| [references/brushup-protocol.md](references/brushup-protocol.md) | 規律5の詳細手順。失敗の判定基準、証拠保全、根本原因の4分類、教訓の配置先決定表、Fable レビューゲート、肥大化防止（アンチエントロピー） |
-| [references/layering.md](references/layering.md) | 多層ハーネスの構成と協調規約。共通パック層/プロジェクト層/グローバル層の判定、注入コピー編集禁止、project-harness コンパニオン規約、harness-upstream 還流経路、パックのバージョン運用 |
+詳細はすべて `references/` に置く: worktree-pr-flow / lease-params / question-template /
+close-template / verification（委譲の独立検証と rebase）/ failure-catalog（既知失敗の照合
+台帳）/ brushup-protocol / layering / frontend-gotchas（web 実装の罠）。

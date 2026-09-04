@@ -16,6 +16,43 @@ bd gate create --type=human --blocks <id> --reason="<一行要約>"
 回答が来たら: gate が resolve されているのを確認 → 回答コメントを読む →
 `bd label remove <id> human` → 「回答後の再開手順」に書いた地点から作業を再開する。
 
+## ノンブロッキングの規律（SKILL.md 規律3 手順4〜7 の実体）
+
+- **回答をチャットで待たない。** そのまま `bd ready` の次のチケットへ進む。ブロックした
+  チケットの worktree は残してよい（撤退不要。gate 解除後に再開する）。
+- ただしブロック中もそのチケットは in_progress のまま自分の保持下にある —
+  規律2 手順5の**一括 heartbeat の対象に含め続ける**（外すと reclaim に回収される）。
+- 回答が来たら（gate resolve + コメント）、`bd label remove <id> human` してから作業を
+  再開する。作業チケット直付けの質問では、回答が来ても作業チケットを close しない
+  （close はマージ成功後だけ — SKILL.md 規律4）。
+- **例外 — その場で確認するもの**: 破壊的・不可逆・外向きの操作（本番デプロイ、データ削除、
+  push/publish/送信、課金）は、レーンに載せて先へ進む方式にしない。実行前にその場で
+  ユーザーに確認する。確認待ちの間、**その操作に依存しない別チケット**を進めるのは構わない。
+
+## なぜ `bd gate` なのか — `bd dep add` で代用できない理由
+
+**`bd dep add` で代用しないこと。** 「回答が来るまで親チケットにぶら下げておけばいい」と
+`bd dep add <id> <親id>` を張ろうとすると、その2者間に既に別タイプの辺（典型的には、親の
+作業中に発見して起票したときの `discovered-from`）があると
+`dependency ... already exists with type "discovered-from" (requested "blocks")` で**失敗する**
+（bd 1.2.1 で実測、bdboard-axl）。bd は同じ向きの2者間に複数タイプの辺を持てず、通すには
+`bd dep remove` が要る = 発見元の来歴を消すことになる。一方 `bd gate` は **`Gate: human`
+という新しいノードを作ってそこへ `blocks` 辺を張る**ので、辺の相手が親チケットではなく別の
+ノードになり、既存の来歴と衝突しない。これが手順3が `bd dep` ではなく `bd gate` である理由。
+（gate が依存グラフの外にあるわけではない点に注意 — gate ノードは `bd dep tree <id>` に
+`[blocks]` の辺として現れる。）
+
+なお gate は「別チケットの完了待ち」を表現する道具ではない。`bd gate create --type` は
+human / timer / gh:run / gh:pr のみで、bead の close を待つ gate は作れない（bd 1.2.1）。
+human gate は親が close しても自動解除されず `bd gate resolve` が要るので、ここで使うのは
+**ユーザーの回答待ち**に限る。
+
+## bd 1.2.1 のフラグの落とし穴
+
+`bd label add <id> human`（手順2）を `bd update <id> --label human` と書くと
+`unknown flag: --label` で落ちる。`bd update` 側のラベル操作は `--add-label` /
+`--remove-label`。
+
 ## テンプレ
 
 ```markdown
