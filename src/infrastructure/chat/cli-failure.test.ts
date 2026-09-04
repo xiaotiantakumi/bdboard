@@ -66,8 +66,39 @@ describe('logChatAgentFailure', () => {
     const stdoutPart = logged.slice(logged.indexOf('stdout=') + 'stdout='.length);
     expect(stderrPart.length).toBeLessThanOrEqual(MAX_FAILURE_LOG_CHARS);
     expect(stdoutPart.length).toBeLessThanOrEqual(MAX_FAILURE_LOG_CHARS);
-    expect(stderrPart).toBe('z'.repeat(MAX_FAILURE_LOG_CHARS));
-    expect(stdoutPart).toBe('z'.repeat(MAX_FAILURE_LOG_CHARS));
+    expect(stderrPart).toContain('…');
+    expect(stderrPart).toContain('chars omitted…');
+    expect(stdoutPart).toContain('…');
+    expect(stdoutPart).toContain('chars omitted…');
+
+    errorSpy.mockRestore();
+  });
+
+  it('preserves trailing error line when stdout starts with a long init JSON', () => {
+    const errorMarker =
+      'Failed to authenticate: OAuth session expired and could not be refreshed';
+    const initJson =
+      '{"type":"system","subtype":"init","tools":[' +
+      '"tool-name",'.repeat(400) +
+      '"last-tool"]}';
+    expect(initJson.length).toBeGreaterThan(MAX_FAILURE_LOG_CHARS);
+    const stdout =
+      initJson +
+      '\n{"is_error":true,"terminal_reason":"api_error","result":"' +
+      errorMarker +
+      '"}';
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    logChatAgentFailure({
+      agentId: 'claude',
+      code: 'agent-exit-nonzero',
+      exitCode: 1,
+      stdout,
+      stderr: '',
+    });
+
+    const logged = String(errorSpy.mock.calls[0]?.[0] ?? '');
+    expect(logged).toContain(errorMarker);
 
     errorSpy.mockRestore();
   });
