@@ -28,14 +28,18 @@ export async function getAllProjectsHarnessStatus(
   return Promise.all(
     input.projects.map(async (project) => {
       const manifest = await input.injector.readManifest(project.rootPath);
-      const contract = await resolveProjectContractState(
-        input.contractReader,
-        project.rootPath,
-        manifest,
-      );
+      const [contract, settingsJson] = await Promise.all([
+        resolveProjectContractState(input.contractReader, project.rootPath, manifest),
+        input.injector.readSettings(project.rootPath),
+      ]);
       return {
         projectId: project.id,
-        status: computeProjectHarnessStatus(availablePacks, manifest, contract),
+        status: computeProjectHarnessStatus(
+          availablePacks,
+          manifest,
+          contract,
+          settingsJson,
+        ),
       };
     }),
   );

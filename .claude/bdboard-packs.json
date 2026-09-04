@@ -3,9 +3,13 @@
     {
       "name": "bdboard-harness",
       "version": "0.6.0",
-      "injectedAt": "2026-09-04T08:37:01.000Z",
+      "injectedAt": "2026-09-04T09:11:06.026Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
+        ".claude/skills/bdboard-harness/hooks/README.md",
+        ".claude/skills/bdboard-harness/hooks/pre-bash-guard.sh",
+        ".claude/skills/bdboard-harness/hooks/pre-edit-guard.sh",
+        ".claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh",
         ".claude/skills/bdboard-harness/references/brushup-protocol.md",
         ".claude/skills/bdboard-harness/references/close-template.md",
         ".claude/skills/bdboard-harness/references/failure-catalog.md",
@@ -15,6 +19,11 @@
         ".claude/skills/bdboard-harness/references/question-template.md",
         ".claude/skills/bdboard-harness/references/verification.md",
         ".claude/skills/bdboard-harness/references/worktree-pr-flow.md"
+      ],
+      "hooks": [
+        "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh\"",
+        "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-edit-guard.sh\"",
+        "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh\""
       ]
     }
   ]

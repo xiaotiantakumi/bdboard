@@ -100,6 +100,7 @@ function createHarnessApp(options?: {
           name: 'bdboard-harness',
           version: '0.1.0',
           description: 'test pack',
+          hooks: [],
         },
       ]),
       getPack: vi.fn(async (name: string) =>
@@ -108,6 +109,7 @@ function createHarnessApp(options?: {
               name: 'bdboard-harness',
               version: '0.1.0',
               description: 'test pack',
+              hooks: [],
               files: [{ relativePath: 'SKILL.md' }],
             }
           : undefined,
@@ -117,6 +119,7 @@ function createHarnessApp(options?: {
   const injector: HarnessInjectorPort =
     options?.injector ??
     ({
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => ({
         packs: [
@@ -152,6 +155,7 @@ describe('createHarnessRoutes', () => {
         name: 'bdboard-harness',
         version: '0.2.0',
         description: 'test pack',
+        hooks: [],
       },
     ]);
     const registry: PackRegistryPort = {
@@ -160,6 +164,7 @@ describe('createHarnessRoutes', () => {
     };
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async (rootPath: string) => {
         if (rootPath === projA.rootPath) {
           return {
@@ -202,6 +207,8 @@ describe('createHarnessRoutes', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.1.0',
               drift: true,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
           contract: { state: 'missing' },
@@ -214,6 +221,8 @@ describe('createHarnessRoutes', () => {
               availableVersion: '0.2.0',
               installedVersion: '0.2.0',
               drift: false,
+              hooksState: 'none-declared',
+              missingHooks: [],
             },
           ],
           contract: { state: 'missing' },
@@ -241,6 +250,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -267,6 +277,8 @@ describe('createHarnessRoutes', () => {
           availableVersion: '0.1.0',
           installedVersion: '0.1.0',
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
       contract: { state: 'missing' },
@@ -285,6 +297,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => ({
         packs: [
@@ -342,6 +355,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -388,6 +402,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({
         packs: [
           {
@@ -424,6 +439,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => ({
         packs: [
@@ -505,6 +521,7 @@ describe('createHarnessRoutes', () => {
     cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
 
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => {
         throw new Error('disk full');

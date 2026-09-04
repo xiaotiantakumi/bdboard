@@ -1,9 +1,18 @@
 import type { ContractState } from './harness-contract.js';
+import type { HarnessHooksState, PackHookDeclaration } from './harness-hooks.js';
+
+export type { PackHookDeclaration };
 
 export interface PackSummary {
   readonly name: string;
   readonly version: string;
   readonly description: string;
+  /**
+   * hook 宣言。`files` と違いディレクトリ走査が要らず、Hygiene の hooksState
+   * 算出 (= パック一覧しか持たない経路) でも必要になるので、`PackDefinition`
+   * ではなく `PackSummary` 側に置く。
+   */
+  readonly hooks: readonly PackHookDeclaration[];
 }
 
 export interface PackFileEntry {
@@ -21,6 +30,8 @@ export interface InstalledPackRecord {
   readonly injectedAt: string;
   /** プロジェクトルートからの相対パス */
   readonly files: readonly string[];
+  /** `.claude/settings.json` に登録した hook のコマンド文字列。 */
+  readonly hooks?: readonly string[];
 }
 
 export interface HarnessManifest {
@@ -32,6 +43,10 @@ export interface ProjectHarnessPackStatus {
   readonly availableVersion: string;
   readonly installedVersion: string | null;
   readonly drift: boolean;
+  /** `.claude/settings.json` への hook 登録状況。drift とは独立に出す。 */
+  readonly hooksState: HarnessHooksState;
+  /** 未登録の hook コマンド文字列。`hooksState` が `ok` / `none-declared` なら空。 */
+  readonly missingHooks: readonly string[];
 }
 
 export interface ProjectHarnessStatus {

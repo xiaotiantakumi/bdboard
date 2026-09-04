@@ -91,6 +91,8 @@ function toHarnessStatusJson(status: ProjectHarnessStatus): Record<string, unkno
       availableVersion: entry.availableVersion,
       installedVersion: entry.installedVersion,
       drift: entry.drift,
+      hooksState: entry.hooksState,
+      missingHooks: entry.missingHooks,
     })),
     contract: toContractJson(status.contract),
   };
@@ -106,12 +108,11 @@ async function resolveProjectHarnessStatus(
   }
 
   const manifest = await deps.injector.readManifest(cached.project.rootPath);
-  const contract = await resolveProjectContractState(
-    deps.contractReader,
-    cached.project.rootPath,
-    manifest,
-  );
-  return getProjectHarnessStatus(deps.registry, manifest, contract);
+  const [contract, settingsJson] = await Promise.all([
+    resolveProjectContractState(deps.contractReader, cached.project.rootPath, manifest),
+    deps.injector.readSettings(cached.project.rootPath),
+  ]);
+  return getProjectHarnessStatus(deps.registry, manifest, contract, settingsJson);
 }
 
 export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
@@ -198,15 +199,19 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
     // 注入は成功しているので、コントラクト評価の結果でレスポンスを止めない。
     // 「注入したがこのプロジェクトには検証ループが宣言されていない」を、注入直後に
     // その場で返すのがここの狙い (bdboard-pkr6.3)。
-    const contract = await resolveProjectContractState(
-      deps.contractReader,
-      cached.project.rootPath,
-      result.manifest,
-    );
+    const [contract, settingsJson] = await Promise.all([
+      resolveProjectContractState(
+        deps.contractReader,
+        cached.project.rootPath,
+        result.manifest,
+      ),
+      deps.injector.readSettings(cached.project.rootPath),
+    ]);
     const status = await getProjectHarnessStatus(
       deps.registry,
       result.manifest,
       contract,
+      settingsJson,
     );
     return c.json(toHarnessStatusJson(status));
   });

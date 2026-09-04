@@ -56,6 +56,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -83,6 +85,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -131,6 +135,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: '0.1.0',
           drift: true,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -139,6 +145,50 @@ describe('ProjectHarnessBadges', () => {
 
     expect(await screen.findByText('要更新 (0.1.0→0.2.0)')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '更新' })).toBeInTheDocument();
+  });
+
+  it('shows a hook 未登録 badge with a 再注入 button', async () => {
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: '0.2.0',
+          drift: false,
+          hooksState: 'partial',
+          missingHooks: [
+            'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"',
+          ],
+        },
+      ],
+    });
+
+    renderBadges();
+
+    expect(await screen.findByText('hook 未登録 (1)')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '再注入' })).toBeInTheDocument();
+  });
+
+  it('hides the hook badge for a pack that is not installed', async () => {
+    fetchProjectHarnessStatusMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: null,
+          drift: false,
+          hooksState: 'missing',
+          missingHooks: ['bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/a.sh"'],
+        },
+      ],
+    });
+
+    renderBadges();
+
+    expect(await screen.findByText('未導入')).toBeInTheDocument();
+    expect(screen.queryByText(/hook 未登録/)).toBeNull();
   });
 
   it('shows installed version without action button when up to date', async () => {
@@ -150,6 +200,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -171,6 +223,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -182,6 +236,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -211,6 +267,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: null,
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -238,6 +296,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });
@@ -256,6 +316,8 @@ describe('ProjectHarnessBadges', () => {
           availableVersion: '0.2.0',
           installedVersion: '0.2.0',
           drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
         },
       ],
     });

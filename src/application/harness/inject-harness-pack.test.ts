@@ -10,6 +10,7 @@ describe('injectHarnessPack', () => {
       getPack: vi.fn(async () => undefined),
     };
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(),
     };
@@ -42,10 +43,12 @@ describe('injectHarnessPack', () => {
         name: 'bdboard-harness',
         version: '0.1.0',
         description: 'test',
+        hooks: [],
         files: [{ relativePath: 'SKILL.md' }],
       })),
     };
     const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
       readManifest: vi.fn(async () => ({ packs: [] })),
       injectPack: vi.fn(async () => manifest),
     };

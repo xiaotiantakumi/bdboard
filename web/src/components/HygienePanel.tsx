@@ -28,10 +28,13 @@ import {
 import { formatActivityTime } from './activityFeedFormatting';
 import {
   buildHarnessDriftMessage,
+  buildHarnessHooksMessage,
   buildHarnessInjectSuccessMessage,
   formatHarnessContractDetail,
   formatHarnessContractLabel,
+  formatHarnessHooksDetail,
   harnessContractNeedsAttention,
+  harnessHooksNeedAttention,
 } from '../harnessDisplay';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
@@ -44,7 +47,12 @@ export interface HygienePanelProps {
   readonly projectRootPaths?: ReadonlyMap<string, string>;
 }
 
-interface HarnessDriftItem {
+/**
+ * プロジェクト × パックの警告行。drift (要更新) と hook 未登録は、行の中身も
+ * 直し方 (再注入) も同じなので 1 つの型にまとめる。どちらのリストに入っているかが
+ * 種別を決める。
+ */
+interface HarnessPackItem {
   readonly projectId: string;
   readonly pack: ProjectHarnessPackStatusDto;
 }
@@ -55,8 +63,9 @@ interface HarnessContractItem {
 }
 
 interface HarnessHygieneItems {
-  readonly driftItems: readonly HarnessDriftItem[];
+  readonly driftItems: readonly HarnessPackItem[];
   readonly contractItems: readonly HarnessContractItem[];
+  readonly hooksItems: readonly HarnessPackItem[];
 }
 
 const COPY_FEEDBACK_MS = 2000;
@@ -64,6 +73,7 @@ const REPAIR_FEEDBACK_MS = 4000;
 const DEFAULT_REPAIR_PRIORITY = 2;
 const HARNESS_DRIFT_KIND_LABEL = 'ハーネス要更新';
 const HARNESS_CONTRACT_KIND_LABEL = '検証コントラクト';
+const HARNESS_HOOKS_KIND_LABEL = 'hook 未登録';
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
 
@@ -97,12 +107,16 @@ function issueRowKey(issue: HygieneIssueDto): string {
   return `${issue.kind}-${issue.projectId}-${issue.ticketId}`;
 }
 
-function harnessDriftRowKey(item: HarnessDriftItem): string {
+function harnessDriftRowKey(item: HarnessPackItem): string {
   return `harness-drift-${item.projectId}-${item.pack.name}`;
 }
 
 function harnessContractRowKey(item: HarnessContractItem): string {
   return `harness-contract-${item.projectId}`;
+}
+
+function harnessHooksRowKey(item: HarnessPackItem): string {
+  return `harness-hooks-${item.projectId}-${item.pack.name}`;
 }
 
 /**
@@ -129,6 +143,9 @@ async function fetchHarnessHygieneItems(
     contractItems: entries
       .filter((entry) => harnessContractNeedsAttention(entry.contract))
       .map(({ projectId, contract }) => ({ projectId, contract })),
+    hooksItems: entries.flatMap(({ projectId, packs }) =>
+      packs.filter(harnessHooksNeedAttention).map((pack) => ({ projectId, pack })),
+    ),
   };
 }
 
@@ -424,8 +441,9 @@ export function HygienePanel({
     [priorityByRowKey, repairMutation],
   );
 
+  // drift 行と hook 未登録行はどちらも「再注入で直す」なので同じハンドラを使う。
   const handleConfirmHarnessUpdate = useCallback(
-    (item: HarnessDriftItem, rowKey: string) => {
+    (item: HarnessPackItem, rowKey: string) => {
       if (repairMutation.isPending || harnessInjectMutation.isPending) {
         return;
       }
@@ -455,6 +473,7 @@ export function HygienePanel({
     repairMutation.isPending || harnessInjectMutation.isPending;
   const harnessDriftItems = harnessDriftQuery.data?.driftItems ?? [];
   const harnessContractItems = harnessDriftQuery.data?.contractItems ?? [];
+  const harnessHooksItems = harnessDriftQuery.data?.hooksItems ?? [];
   const hygieneIssues = query.data ?? [];
   const staleLeases = leaseHealthQuery.data?.staleLeases ?? [];
   const heldMergeSlots = (mergeSlotQuery.data ?? []).filter(
@@ -488,6 +507,7 @@ export function HygienePanel({
     hygieneIssues.length > 0 ||
     harnessDriftItems.length > 0 ||
     harnessContractItems.length > 0 ||
+    harnessHooksItems.length > 0 ||
     staleLeases.length > 0 ||
     heldMergeSlots.length > 0;
 
@@ -643,6 +663,68 @@ export function HygienePanel({
                       onClick={() => beginRepairConfirm(rowKey)}
                     >
                       ハーネスを更新
+                    </button>
+                  )}
+                  {rowError !== null && (
+                    <p className="hygiene-repair-error" role="alert">
+                      {rowError}
+                    </p>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+          {harnessHooksItems.map((item) => {
+            const rowKey = harnessHooksRowKey(item);
+            const isConfirming = confirmingRepairKey === rowKey;
+            const isExecuting = repairDisabled && pendingRepairKey === rowKey;
+            const rowError =
+              repairError?.rowKey === rowKey ? repairError.message : null;
+
+            return (
+              <li key={rowKey}>
+                <div className="hygiene-issue-row hygiene-issue-row-static">
+                  <span className="hygiene-kind-badge hygiene-kind-harness_hooks">
+                    {HARNESS_HOOKS_KIND_LABEL}
+                  </span>
+                  <span className="badge badge-stalled">警告</span>
+                  <span className="hygiene-issue-project">{item.projectId}</span>
+                  <span className="hygiene-issue-id">{item.pack.name}</span>
+                  <span
+                    className="hygiene-issue-message"
+                    title={formatHarnessHooksDetail(item.pack)}
+                  >
+                    {buildHarnessHooksMessage(item.pack)}
+                  </span>
+                </div>
+                <div className="hygiene-repair">
+                  {isConfirming ? (
+                    <div className="hygiene-repair-confirm">
+                      <button
+                        type="button"
+                        className="hygiene-repair-confirm-btn"
+                        disabled={repairDisabled}
+                        onClick={() => handleConfirmHarnessUpdate(item, rowKey)}
+                      >
+                        {isExecuting ? '実行中…' : '確定: hook を登録'}
+                      </button>
+                      <button
+                        type="button"
+                        className="hygiene-repair-cancel"
+                        disabled={repairDisabled}
+                        onClick={() => setConfirmingRepairKey(null)}
+                      >
+                        キャンセル
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="hygiene-repair-action"
+                      disabled={repairDisabled}
+                      onClick={() => beginRepairConfirm(rowKey)}
+                    >
+                      hook を登録
                     </button>
                   )}
                   {rowError !== null && (

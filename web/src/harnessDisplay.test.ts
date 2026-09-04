@@ -5,11 +5,15 @@ import type {
 } from './api';
 import {
   buildHarnessDriftMessage,
+  buildHarnessHooksMessage,
   buildHarnessInjectSuccessMessage,
   formatHarnessContractDetail,
   formatHarnessContractLabel,
+  formatHarnessHooksDetail,
+  formatHarnessHooksLabel,
   formatHarnessPackStatusLabel,
   harnessContractNeedsAttention,
+  harnessHooksNeedAttention,
   harnessInjectButtonLabel,
   harnessPackNeedsAction,
 } from './harnessDisplay';
@@ -22,6 +26,8 @@ function makePack(
     availableVersion: '0.2.0',
     installedVersion: null,
     drift: false,
+    hooksState: 'none-declared',
+    missingHooks: [],
     ...overrides,
   };
 }
@@ -126,6 +132,64 @@ describe('harness contract display', () => {
     expect(formatHarnessContractLabel(contracts.ok!)).toBe('検証: npm run verify');
     expect(formatHarnessContractDetail(contracts.ok!)).toBe(
       '検証: npm run verify / PR 必須 / main: main',
+    );
+  });
+});
+
+describe('harnessDisplay hooks state', () => {
+  const MISSING = ['bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/a.sh"'];
+
+  it('ignores none-declared and ok', () => {
+    expect(
+      harnessHooksNeedAttention(
+        makePack({ installedVersion: '0.2.0', hooksState: 'none-declared' }),
+      ),
+    ).toBe(false);
+    expect(
+      harnessHooksNeedAttention(makePack({ installedVersion: '0.2.0', hooksState: 'ok' })),
+    ).toBe(false);
+  });
+
+  it('warns for missing and partial on an installed pack', () => {
+    for (const hooksState of ['missing', 'partial'] as const) {
+      expect(
+        harnessHooksNeedAttention(
+          makePack({ installedVersion: '0.2.0', hooksState, missingHooks: MISSING }),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it('stays quiet for a pack that is not installed', () => {
+    expect(
+      harnessHooksNeedAttention(
+        makePack({ installedVersion: null, hooksState: 'missing', missingHooks: MISSING }),
+      ),
+    ).toBe(false);
+  });
+
+  it('offers 再注入 for an up-to-date pack whose hooks are gone', () => {
+    const pack = makePack({
+      installedVersion: '0.2.0',
+      drift: false,
+      hooksState: 'missing',
+      missingHooks: MISSING,
+    });
+    expect(harnessPackNeedsAction(pack)).toBe(true);
+    expect(harnessInjectButtonLabel(pack)).toBe('再注入');
+  });
+
+  it('labels the badge with the missing count and explains the fix', () => {
+    const pack = makePack({
+      installedVersion: '0.2.0',
+      hooksState: 'missing',
+      missingHooks: MISSING,
+    });
+    expect(formatHarnessHooksLabel(pack)).toBe('hook 未登録 (1)');
+    expect(formatHarnessHooksDetail(pack)).toContain('再注入');
+    expect(formatHarnessHooksDetail(pack)).toContain('.claude/settings.json');
+    expect(buildHarnessHooksMessage(pack)).toBe(
+      'bdboard-harness: hook 1 件が .claude/settings.json に未登録です (再注入で解消)',
     );
   });
 });

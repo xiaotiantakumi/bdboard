@@ -8,6 +8,8 @@ import type {
   ContractState,
   VerifyPackageScripts,
 } from '../../domain/harness-contract.js';
+import { mergeHarnessHooks } from '../../domain/harness-hooks.js';
+import type { PackHookDeclaration } from '../../domain/harness-hooks.js';
 import type { HarnessManifest } from '../../domain/harness-pack.js';
 import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
@@ -41,7 +43,12 @@ function fakeContractReader(options: {
 }
 
 function fakeRegistry(
-  packs: readonly { name: string; version: string; description?: string }[],
+  packs: readonly {
+    name: string;
+    version: string;
+    description?: string;
+    hooks?: readonly PackHookDeclaration[];
+  }[],
 ): PackRegistryPort {
   return {
     async listPacks() {
@@ -49,6 +56,7 @@ function fakeRegistry(
         name: pack.name,
         version: pack.version,
         description: pack.description ?? '',
+        hooks: pack.hooks ?? [],
       }));
     },
     async getPack(name) {
@@ -60,6 +68,7 @@ function fakeRegistry(
         name: pack.name,
         version: pack.version,
         description: pack.description ?? '',
+        hooks: pack.hooks ?? [],
         files: [],
       };
     },
@@ -81,6 +90,7 @@ describe('getProjectHarnessStatus', () => {
         ],
       },
       NOT_APPLICABLE,
+      null,
     );
 
     expect(status.packs).toEqual([
@@ -89,6 +99,8 @@ describe('getProjectHarnessStatus', () => {
         availableVersion: '0.2.0',
         installedVersion: '0.1.0',
         drift: true,
+        hooksState: 'none-declared',
+        missingHooks: [],
       },
     ]);
   });
@@ -107,6 +119,7 @@ describe('getProjectHarnessStatus', () => {
         ],
       },
       NOT_APPLICABLE,
+      null,
     );
 
     expect(status.packs[0]?.drift).toBe(false);
@@ -127,6 +140,7 @@ describe('getProjectHarnessStatus', () => {
         ],
       },
       NOT_APPLICABLE,
+      null,
     );
 
     expect(status.packs).toEqual([
@@ -135,6 +149,8 @@ describe('getProjectHarnessStatus', () => {
         availableVersion: '0.1.0',
         installedVersion: null,
         drift: false,
+        hooksState: 'none-declared',
+        missingHooks: [],
       },
     ]);
   });
@@ -156,6 +172,7 @@ describe('getProjectHarnessStatus', () => {
         ],
       },
       NOT_APPLICABLE,
+      null,
     );
 
     expect(status.packs).toEqual([
@@ -164,12 +181,16 @@ describe('getProjectHarnessStatus', () => {
         availableVersion: '1.0.0',
         installedVersion: null,
         drift: false,
+        hooksState: 'none-declared',
+        missingHooks: [],
       },
       {
         name: 'beta-pack',
         availableVersion: '2.0.0',
         installedVersion: '1.0.0',
         drift: true,
+        hooksState: 'none-declared',
+        missingHooks: [],
       },
     ]);
   });
@@ -325,5 +346,74 @@ describe('resolveProjectContractState', () => {
 
     expect(state.state).toBe('ok');
     expect(reader.readPackageScripts).not.toHaveBeenCalled();
+  });
+});
+
+describe('getProjectHarnessStatus hooksState', () => {
+  const HOOKS: readonly PackHookDeclaration[] = [
+    { event: 'PreToolUse', matcher: 'Bash', script: 'hooks/pre-bash-guard.sh', timeout: 10 },
+    { event: 'Stop', matcher: '', script: 'hooks/stop-ticket-gate.sh', timeout: 20 },
+  ];
+
+  const REGISTRY = fakeRegistry([
+    { name: 'bdboard-harness', version: '0.1.0', hooks: HOOKS },
+  ]);
+
+  function settingsWithAllHooks(): string {
+    const merged = mergeHarnessHooks(null, { name: 'bdboard-harness', hooks: HOOKS });
+    if (!merged.ok) throw new Error(merged.error);
+    return merged.settingsJson;
+  }
+
+  it('reports missing when settings.json has no entries', async () => {
+    const status = await getProjectHarnessStatus(
+      REGISTRY,
+      INJECTED_MANIFEST,
+      NOT_APPLICABLE,
+      null,
+    );
+
+    expect(status.packs[0]?.hooksState).toBe('missing');
+    expect(status.packs[0]?.missingHooks).toHaveLength(2);
+  });
+
+  it('reports ok once the hooks are registered', async () => {
+    const status = await getProjectHarnessStatus(
+      REGISTRY,
+      INJECTED_MANIFEST,
+      NOT_APPLICABLE,
+      settingsWithAllHooks(),
+    );
+
+    expect(status.packs[0]?.hooksState).toBe('ok');
+    expect(status.packs[0]?.missingHooks).toEqual([]);
+  });
+
+  it('reports partial when only some entries survive', async () => {
+    const parsed = JSON.parse(settingsWithAllHooks());
+    delete parsed.hooks.Stop;
+
+    const status = await getProjectHarnessStatus(
+      REGISTRY,
+      INJECTED_MANIFEST,
+      NOT_APPLICABLE,
+      JSON.stringify(parsed),
+    );
+
+    expect(status.packs[0]?.hooksState).toBe('partial');
+    expect(status.packs[0]?.missingHooks).toEqual([
+      `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"`,
+    ]);
+  });
+
+  it('is independent of drift', async () => {
+    const status = await getProjectHarnessStatus(
+      fakeRegistry([{ name: 'bdboard-harness', version: '0.2.0', hooks: HOOKS }]),
+      INJECTED_MANIFEST,
+      NOT_APPLICABLE,
+      settingsWithAllHooks(),
+    );
+
+    expect(status.packs[0]).toMatchObject({ drift: true, hooksState: 'ok' });
   });
 });

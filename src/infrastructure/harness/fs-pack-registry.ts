@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { compareStrings } from '../../domain/compare.js';
+import {
+  DEFAULT_PACK_HOOK_TIMEOUT_SECONDS,
+  PACK_HOOKS_DIR,
+  type PackHookDeclaration,
+} from '../../domain/harness-hooks.js';
 import type { PackDefinition, PackFileEntry, PackSummary } from '../../domain/harness-pack.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
 
@@ -10,6 +15,74 @@ interface PackJson {
   readonly name?: unknown;
   readonly version?: unknown;
   readonly description?: unknown;
+  readonly hooks?: unknown;
+}
+
+/**
+ * pack.json の `hooks` を読む。壊れた宣言はパックごと弾く (undefined) — この
+ * ファイルは bdboard 自身が配布する原本で、typo で機械ガードが黙って無効になる
+ * ほうが「パックが見えない」より悪い。`timeout` は省略可 (既定 10 秒)。
+ *
+ * `script` は `hooks/` 配下に限る。settings.json 側で「我々の entry」を識別する
+ * マーカーが `/.claude/skills/<pack>/hooks/` なので、その外を指す宣言は登録して
+ * も再注入で消せなくなる。
+ */
+function parsePackHooks(value: unknown): readonly PackHookDeclaration[] | undefined {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const hooks: PackHookDeclaration[] = [];
+  for (const raw of value) {
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      return undefined;
+    }
+
+    const entry = raw as {
+      readonly event?: unknown;
+      readonly matcher?: unknown;
+      readonly script?: unknown;
+      readonly timeout?: unknown;
+    };
+
+    if (typeof entry.event !== 'string' || entry.event.length === 0) {
+      return undefined;
+    }
+    if (entry.matcher !== undefined && typeof entry.matcher !== 'string') {
+      return undefined;
+    }
+    if (
+      typeof entry.script !== 'string' ||
+      !entry.script.startsWith(`${PACK_HOOKS_DIR}/`) ||
+      entry.script.includes('..')
+    ) {
+      return undefined;
+    }
+
+    let timeout = DEFAULT_PACK_HOOK_TIMEOUT_SECONDS;
+    if (entry.timeout !== undefined) {
+      if (
+        typeof entry.timeout !== 'number' ||
+        !Number.isInteger(entry.timeout) ||
+        entry.timeout <= 0
+      ) {
+        return undefined;
+      }
+      timeout = entry.timeout;
+    }
+
+    hooks.push({
+      event: entry.event,
+      matcher: entry.matcher ?? '',
+      script: entry.script,
+      timeout,
+    });
+  }
+
+  return hooks;
 }
 
 function parsePackJson(content: string): PackSummary | undefined {
@@ -30,10 +103,16 @@ function parsePackJson(content: string): PackSummary | undefined {
     return undefined;
   }
 
+  const hooks = parsePackHooks(parsed.hooks);
+  if (hooks === undefined) {
+    return undefined;
+  }
+
   return {
     name: parsed.name,
     version: parsed.version,
     description: parsed.description,
+    hooks,
   };
 }
 

@@ -1600,6 +1600,11 @@ body {
   color: #007aff;
 }
 
+.hygiene-kind-harness_hooks {
+  background: rgba(88, 86, 214, 0.16);
+  color: #3f3ea8;
+}
+
 .hygiene-kind-stale_lease {
   background: rgba(255, 59, 48, 0.12);
   color: #d70015;
@@ -2375,6 +2380,11 @@ body {
 
 .project-harness-status-ok {
   color: var(--color-text-secondary);
+}
+
+.project-harness-status-hooks {
+  color: var(--badge-stalled-fg);
+  font-weight: 600;
 }
 
 .project-harness-contract {

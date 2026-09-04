@@ -7,6 +7,7 @@ import {
   type ContractState,
   type VerifyPackageScripts,
 } from '../../domain/harness-contract.js';
+import { evaluateHooksState } from '../../domain/harness-hooks.js';
 import type {
   HarnessManifest,
   PackSummary,
@@ -15,10 +16,16 @@ import type {
 import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
 
+/**
+ * @param settingsJson 注入先の `.claude/settings.json` 本文 (無ければ null)。
+ *   hook 登録状況はここからしか分からない — マニフェストの `hooks` は「注入時に
+ *   何を書いたか」の記録で、その後に人が消した場合を検知できない。
+ */
 export function computeProjectHarnessStatus(
   availablePacks: readonly PackSummary[],
   manifest: HarnessManifest,
   contract: ContractState,
+  settingsJson: string | null,
 ): ProjectHarnessStatus {
   const installedByName = new Map(manifest.packs.map((entry) => [entry.name, entry]));
 
@@ -28,12 +35,15 @@ export function computeProjectHarnessStatus(
       const installedVersion = installed?.version ?? null;
       const drift =
         installedVersion !== null && installedVersion !== available.version;
+      const hooks = evaluateHooksState(settingsJson, available);
 
       return {
         name: available.name,
         availableVersion: available.version,
         installedVersion,
         drift,
+        hooksState: hooks.state,
+        missingHooks: hooks.missingHooks,
       };
     })
     .sort((a, b) => compareStrings(a.name, b.name));
@@ -87,7 +97,8 @@ export async function getProjectHarnessStatus(
   registry: PackRegistryPort,
   manifest: HarnessManifest,
   contract: ContractState,
+  settingsJson: string | null,
 ): Promise<ProjectHarnessStatus> {
   const availablePacks = await registry.listPacks();
-  return computeProjectHarnessStatus(availablePacks, manifest, contract);
+  return computeProjectHarnessStatus(availablePacks, manifest, contract, settingsJson);
 }

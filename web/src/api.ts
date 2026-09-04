@@ -1736,11 +1736,19 @@ export interface HarnessPackSummaryDto {
   description: string;
 }
 
+/**
+ * `.claude/settings.json` への hook 登録状況。`none-declared` は「そのパックが
+ * hook を宣言していない」で、警告の対象外 (bdboard-pkr6.2)。
+ */
+export type HarnessHooksStateDto = 'ok' | 'missing' | 'partial' | 'none-declared';
+
 export interface ProjectHarnessPackStatusDto {
   name: string;
   availableVersion: string;
   installedVersion: string | null;
   drift: boolean;
+  hooksState: HarnessHooksStateDto;
+  missingHooks: string[];
 }
 
 export type HarnessPrFlowDto = 'pr' | 'direct' | 'none';

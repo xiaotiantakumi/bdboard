@@ -7,6 +7,9 @@ import type {
 /** 注入先が検証コントラクトを置くパス。文言に埋め込むのでここに固定する。 */
 export const HARNESS_CONTRACT_PATH = '.claude/bdboard-harness.json';
 
+/** 注入先で hook を登録するファイル。文言に埋め込むのでここに固定する。 */
+export const HARNESS_SETTINGS_PATH = '.claude/settings.json';
+
 export function formatHarnessPackStatusLabel(
   pack: ProjectHarnessPackStatusDto,
 ): string {
@@ -20,7 +23,9 @@ export function formatHarnessPackStatusLabel(
 }
 
 export function harnessPackNeedsAction(pack: ProjectHarnessPackStatusDto): boolean {
-  return pack.installedVersion === null || pack.drift;
+  return (
+    pack.installedVersion === null || pack.drift || harnessHooksNeedAttention(pack)
+  );
 }
 
 export function harnessInjectButtonLabel(
@@ -103,4 +108,47 @@ export function formatHarnessContractDetail(
     case 'not-applicable':
       return null;
   }
+}
+
+/**
+ * hook 未登録を警告として出すか。
+ *
+ * 未導入のパック (`installedVersion === null`) は対象外 — 「まだ入れていない」
+ * ことは「未導入」バッジが既に言っており、そこへ hook 未登録まで重ねると、
+ * bd 運用しているだけの未注入プロジェクトが警告で埋まる (検証コントラクトを
+ * `not-applicable` にしたのと同じ理由 / bdboard-pkr6.3)。宣言 0 件の
+ * `none-declared` も当然対象外。
+ */
+export function harnessHooksNeedAttention(
+  pack: ProjectHarnessPackStatusDto,
+): boolean {
+  if (pack.installedVersion === null) {
+    return false;
+  }
+  return pack.hooksState === 'missing' || pack.hooksState === 'partial';
+}
+
+/** バッジ本体。drift バッジと同じ短さに保つ。 */
+export function formatHarnessHooksLabel(
+  pack: ProjectHarnessPackStatusDto,
+): string {
+  return `hook 未登録 (${pack.missingHooks.length})`;
+}
+
+/** ツールチップ用。何をすれば直るかまで書く。 */
+export function formatHarnessHooksDetail(
+  pack: ProjectHarnessPackStatusDto,
+): string {
+  const suffix =
+    pack.hooksState === 'partial'
+      ? `一部の hook が ${HARNESS_SETTINGS_PATH} にありません`
+      : `hook が ${HARNESS_SETTINGS_PATH} に登録されていません`;
+  return `${pack.name}: ${suffix}。「再注入」で登録されます (既存の設定は保持されます)。未登録: ${pack.missingHooks.join(', ')}`;
+}
+
+/** Hygiene 行の本文。 */
+export function buildHarnessHooksMessage(
+  pack: ProjectHarnessPackStatusDto,
+): string {
+  return `${pack.name}: hook ${pack.missingHooks.length} 件が ${HARNESS_SETTINGS_PATH} に未登録です (再注入で解消)`;
 }
