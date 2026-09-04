@@ -59,8 +59,7 @@ export const NEXT_UP_LOOP_POLL_MAX_FAILURES = 15;
 
 /** 連続失敗の上限。これに達した時点でバッチを止める（verification.md の
  * 「2回連続で失敗したら記録して手を止める」と揃える）。
- * チケット単位の自動リトライは行わないため、同一チケットの2連続失敗ではなく
- * バッチ内で2件連続失敗した時点で停止する。 */
+ * cancelled はカウンタを増減しないので、厳密には「直近2件が失敗」である。 */
 export const NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES = 2;
 
 export function describeConsecutiveFailureStop(
@@ -70,7 +69,7 @@ export function describeConsecutiveFailureStop(
     lastFailureReason !== null && lastFailureReason.length > 0
       ? `（最後の失敗: ${lastFailureReason}）`
       : '';
-  return `2件連続で失敗したためバッチを停止しました${suffix}`;
+  return `直近2件が失敗したためバッチを停止しました${suffix}`;
 }
 
 export function buildConsecutiveFailureComment(
@@ -81,8 +80,9 @@ export function buildConsecutiveFailureComment(
   const reasonLine =
     lastFailureReason !== null && lastFailureReason.length > 0
       ? `最後の失敗理由: ${lastFailureReason}`
-      : '最後の失敗理由: （不明）';
-  return `[harness] bdboard の一括実行（Next Up）が2件連続で失敗したためバッチを停止しました。\n連続で失敗したチケット: ${ids}\n${reasonLine}`;
+      : // Loop callers always pass a non-empty lastFailureReason; fallback for standalone use.
+        '最後の失敗理由: （不明）';
+  return `[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ${ids}\n${reasonLine}`;
 }
 
 export const NEXT_UP_LOOP_POLL_MAX_DELAY_MS = 30_000;
@@ -210,6 +210,11 @@ export async function runNextUpTicketLoop(options: {
 
     progress.lastFailureReason = describeConsecutiveFailureStop(failureReason);
     progress.currentTicketId = null;
+    endReason = 'consecutive_failures';
+    // Emit before posting the comment: postTicketComment/fetchJson has no timeout and no
+    // AbortSignal, so a hung POST would otherwise swallow the final emission and leave
+    // loopActiveRef stuck at true until a page reload.
+    onProgress({ ...progress });
     try {
       await postComment(
         ticketId,
@@ -219,11 +224,12 @@ export async function runNextUpTicketLoop(options: {
         ),
       );
     } catch (commentError) {
-      // Batch stop must not depend on comment delivery — progress/endReason is the contract.
+      // Batch stop must not depend on comment delivery — progress/endReason is the contract,
+      // and the stop was already emitted above. Surface the delivery failure in
+      // lastFailureReason so the final emission tells the user the ticket has no comment.
       console.error('Failed to post consecutive-failure comment', commentError);
+      progress.lastFailureReason = `${progress.lastFailureReason ?? ''}（チケットへのコメント投稿に失敗しました）`;
     }
-    endReason = 'consecutive_failures';
-    onProgress({ ...progress });
     return true;
   };
 
@@ -286,7 +292,7 @@ export async function runNextUpTicketLoop(options: {
       onProgress({ ...progress });
     } else {
       progress.failedCount += 1;
-      const failureReason = 'エージェント実行が失敗しました';
+      const failureReason = `エージェント実行が失敗しました（${ticketId}）`;
       if (await tryStopOnConsecutiveFailures(ticketId, failureReason)) {
         break;
       }

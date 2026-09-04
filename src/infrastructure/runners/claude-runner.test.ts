@@ -588,9 +588,9 @@ describe('createClaudeRunner', () => {
 
     const args = runMock.mock.calls[0]?.[1] as readonly string[];
     expect(args).toContain('--disallowedTools');
-    for (const tool of DENIED_TOOLS) {
-      expect(args).toContain(tool);
-    }
+    const { allowed, denied } = splitPermissionSections(args);
+    expect(denied).toEqual([...DENIED_TOOLS, 'Edit(//tmp/project/.claude/**)']);
+    expect(allowed).toEqual([]);
   });
 
   it('parses BDBOARD_RUN_ALLOWED_TOOLS as a JSON array', async () => {

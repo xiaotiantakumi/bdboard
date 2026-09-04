@@ -79,6 +79,7 @@ describe('validateProvisionedRunCwd', () => {
         '/repo/.claude/worktrees/bdboard-1',
         '/repo/.claude/worktrees/bdboard-1',
         'bdboard-1',
+        '/repo',
       ),
     ).toBeNull();
   });
@@ -89,6 +90,7 @@ describe('validateProvisionedRunCwd', () => {
         '/repo/.claude/worktrees/bdboard-3tw.65',
         '/repo/.claude/worktrees/bdboard-3tw.65',
         'bdboard-3tw.65',
+        '/repo',
       ),
     ).toBeNull();
   });
@@ -99,13 +101,14 @@ describe('validateProvisionedRunCwd', () => {
         '/repo/.claude/worktrees/bdboard-1/',
         '/repo/.claude/worktrees/bdboard-1',
         'bdboard-1',
+        '/repo',
       ),
     ).toBeNull();
   });
 
   it('returns invalid-request when worktreePath is not under .claude/worktrees', () => {
     expect(
-      validateProvisionedRunCwd('/tmp/project', '/tmp/project', 'bdboard-1'),
+      validateProvisionedRunCwd('/tmp/project', '/tmp/project', 'bdboard-1', '/repo'),
     ).toBe('invalid-request');
   });
 
@@ -115,6 +118,7 @@ describe('validateProvisionedRunCwd', () => {
         '/repo/.claude/worktrees/other-ticket',
         '/repo/.claude/worktrees/other-ticket',
         'bdboard-1',
+        '/repo',
       ),
     ).toBe('invalid-request');
   });
@@ -125,6 +129,7 @@ describe('validateProvisionedRunCwd', () => {
         '/repo/.claude/other/bdboard-1',
         '/repo/.claude/other/bdboard-1',
         'bdboard-1',
+        '/repo',
       ),
     ).toBe('invalid-request');
   });
@@ -135,13 +140,14 @@ describe('validateProvisionedRunCwd', () => {
         '/repo/.claude/worktrees/bdboard-1',
         '/repo/.claude/worktrees/bdboard-2',
         'bdboard-1',
+        '/repo',
       ),
     ).toBe('invalid-request');
   });
 
   it('returns invalid-request when worktreePath is empty', () => {
     expect(
-      validateProvisionedRunCwd('/repo/.claude/worktrees/bdboard-1', '', 'bdboard-1'),
+      validateProvisionedRunCwd('/repo/.claude/worktrees/bdboard-1', '', 'bdboard-1', '/repo'),
     ).toBe('invalid-request');
   });
 
@@ -150,6 +156,37 @@ describe('validateProvisionedRunCwd', () => {
       validateProvisionedRunCwd(
         '/repo/.claude/worktrees/bdboard-1',
         '/repo/.claude/worktrees/bdboard-1',
+        '',
+        '/repo',
+      ),
+    ).toBe('invalid-request');
+  });
+
+  it('rejects a worktree path under a different repository root', () => {
+    expect(
+      validateProvisionedRunCwd(
+        '/other/repo/.claude/worktrees/bdboard-1',
+        '/other/repo/.claude/worktrees/bdboard-1',
+        'bdboard-1',
+        '/repo',
+      ),
+    ).toBe('invalid-request');
+  });
+
+  it('returns invalid-request when ticketId traverses out of the worktrees directory', () => {
+    // path.join(repoRoot, '.claude', 'worktrees', '..') normalizes to '<repoRoot>/.claude',
+    // so without the basename-drift guard this path would be accepted.
+    expect(
+      validateProvisionedRunCwd('/repo/.claude', '/repo/.claude', '..', '/repo'),
+    ).toBe('invalid-request');
+  });
+
+  it('returns invalid-request when repoRoot is empty', () => {
+    expect(
+      validateProvisionedRunCwd(
+        '/repo/.claude/worktrees/bdboard-1',
+        '/repo/.claude/worktrees/bdboard-1',
+        'bdboard-1',
         '',
       ),
     ).toBe('invalid-request');
