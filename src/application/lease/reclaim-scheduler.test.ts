@@ -237,4 +237,97 @@ describe('createReclaimScheduler', () => {
 
     scheduler.stop();
   });
+
+  it('notifies the observer with the parsed count and ticket ids of each run', async () => {
+    const reclaimer: LeaseReclaimer = {
+      reclaim: vi.fn(async () => ({
+        exitCode: 0,
+        stdout: 'Reclaimed 1 issue:\n  bdboard-a',
+        stderr: '',
+      })),
+    };
+    const observer = vi.fn();
+
+    const scheduler = createReclaimScheduler({
+      reclaimer,
+      listProjects: () => [project('proj-a', '/projects/a')],
+      config: { enabled: true, intervalMs: 100, olderThan: '10m' },
+      observer,
+    });
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(observer).toHaveBeenCalledTimes(1);
+    expect(observer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: 'proj-a',
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-a'],
+      }),
+    );
+    expect(observer.mock.calls[0]?.[0]?.at).toBeInstanceOf(Date);
+
+    scheduler.stop();
+  });
+
+  it('does not notify the observer when the reclaim run fails', async () => {
+    const reclaimer: LeaseReclaimer = {
+      reclaim: vi.fn(async () => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'boom',
+      })),
+    };
+    const observer = vi.fn();
+
+    const scheduler = createReclaimScheduler({
+      reclaimer,
+      listProjects: () => [project('proj-a', '/projects/a')],
+      config: { enabled: true, intervalMs: 100, olderThan: '10m' },
+      logError: () => {},
+      observer,
+    });
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(observer).not.toHaveBeenCalled();
+
+    scheduler.stop();
+  });
+
+  it('keeps scanning when the observer throws', async () => {
+    const reclaim = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: 'reclaimed 1 issue',
+      stderr: '',
+    }));
+    const logError = vi.fn();
+
+    const scheduler = createReclaimScheduler({
+      reclaimer: { reclaim },
+      listProjects: () => [project('proj-a', '/projects/a'), project('proj-b', '/projects/b')],
+      config: { enabled: true, intervalMs: 100, olderThan: '10m' },
+      logError,
+      observer: () => {
+        throw new Error('observer exploded');
+      },
+    });
+
+    scheduler.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reclaim).toHaveBeenCalledTimes(2);
+    expect(logError).toHaveBeenCalledWith(
+      expect.stringContaining('Reclaim observer failed'),
+    );
+    // 観測の失敗は per-project の状態に影響しない
+    expect(scheduler.getStatus().projects[0]).toMatchObject({
+      reclaimedCount: 1,
+      lastError: null,
+    });
+
+    scheduler.stop();
+  });
 });

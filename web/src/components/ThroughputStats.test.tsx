@@ -2,7 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CfdStatsDto, ModelStatsDto, ThroughputStatsDto } from '../api';
+import type {
+  CfdStatsDto,
+  HarnessKpiDto,
+  ModelStatsDto,
+  ThroughputStatsDto,
+} from '../api';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import { ThroughputStats } from './ThroughputStats';
 import { formatWeekLabel } from './throughputStatsFormatting';
@@ -11,13 +16,52 @@ vi.mock('../api', () => ({
   fetchThroughputStats: vi.fn(),
   fetchCfdStats: vi.fn(),
   fetchModelStats: vi.fn(),
+  fetchHarnessKpi: vi.fn(),
 }));
 
-import { fetchCfdStats, fetchModelStats, fetchThroughputStats } from '../api';
+import {
+  fetchCfdStats,
+  fetchHarnessKpi,
+  fetchModelStats,
+  fetchThroughputStats,
+} from '../api';
 
 const fetchThroughputStatsMock = vi.mocked(fetchThroughputStats);
 const fetchCfdStatsMock = vi.mocked(fetchCfdStats);
 const fetchModelStatsMock = vi.mocked(fetchModelStats);
+const fetchHarnessKpiMock = vi.mocked(fetchHarnessKpi);
+
+function makeHarnessKpi(overrides?: Partial<HarnessKpiDto>): HarnessKpiDto {
+  return {
+    rangeStart: '2026-08-04T15:00:00.000Z',
+    rangeEnd: '2026-08-18T15:00:00.000Z',
+    pendingDecisionDwell: {
+      closedCount: 4,
+      closedGateCount: 3,
+      closedWorkCount: 1,
+      openCount: 2,
+      openGateCount: 1,
+      openWorkCount: 1,
+      medianMs: 2 * 60 * 60_000,
+      p90Ms: 30 * 60 * 60_000,
+      anchor: 'created',
+    },
+    reclaim: {
+      runCount: 4,
+      reclaimedCountTotal: 5,
+      unknownCountRunCount: 0,
+      identifiedTicketCount: 4,
+      reclaimedThenInProgressCount: 1,
+      reclaimedThenInProgressRate: 0.25,
+      windowMs: 30 * 60_000,
+      since: '2026-08-18T00:00:00.000Z',
+      unparsedRunCount: 0,
+    },
+    harnessLabeled: { matchedCount: 3, totalCount: 8, rate: 0.375 },
+    duplicateMention: { matchedCount: 2, totalCount: 8, rate: 0.25 },
+    ...overrides,
+  };
+}
 
 function makeCfdStats(overrides?: Partial<CfdStatsDto>): CfdStatsDto {
   return {
@@ -126,8 +170,125 @@ describe('ThroughputStats', () => {
     fetchThroughputStatsMock.mockReset();
     fetchCfdStatsMock.mockReset();
     fetchModelStatsMock.mockReset();
+    fetchHarnessKpiMock.mockReset();
     fetchCfdStatsMock.mockResolvedValue(makeCfdStats());
     fetchModelStatsMock.mockResolvedValue(makeModelStats());
+    fetchHarnessKpiMock.mockResolvedValue(makeHarnessKpi());
+  });
+
+  it('renders the harness KPI panel with all four metrics', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(
+      within(panel).getByText('確認待ちのままクローズしたチケットの滞留 (中央値 / p90)'),
+    ).toBeInTheDocument();
+    expect(within(panel).getByText('2.0時間 / 1.3日')).toBeInTheDocument();
+    expect(within(panel).getByText('4回 / 25.0%')).toBeInTheDocument();
+    expect(within(panel).getByText('3件 / 8件 (37.5%)')).toBeInTheDocument();
+    expect(within(panel).getByText('2件 / 8件 (25.0%)')).toBeInTheDocument();
+  });
+
+  it('notes the created-time fallback and that reclaim records are not persisted', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(panel).toHaveTextContent('作成時刻を起点');
+    expect(panel).toHaveTextContent('保存されません');
+    expect(panel).toHaveTextContent('粗い指標');
+    expect(panel).toHaveTextContent('代理指標');
+  });
+
+  it('breaks the pending-decision counts down into gate and work tickets', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(panel).toHaveTextContent('クローズ 4件 (gate 3 / 作業 1)');
+    expect(panel).toHaveTextContent('未回答 2件 (gate 1 / 作業 1、期間によらず現在値)');
+    // 回答時に human ラベルだけ外した作業チケットが母数に入らないことを明記する。
+    expect(panel).toHaveTextContent('human ラベルだけを外した作業チケット');
+  });
+
+  it('notes reclaim runs that were dropped because the output was unreadable', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockResolvedValue(
+      makeHarnessKpi({
+        reclaim: {
+          runCount: 1,
+          reclaimedCountTotal: 1,
+          unknownCountRunCount: 0,
+          identifiedTicketCount: 1,
+          reclaimedThenInProgressCount: 0,
+          reclaimedThenInProgressRate: 0,
+          windowMs: 30 * 60_000,
+          since: '2026-08-18T00:00:00.000Z',
+          unparsedRunCount: 3,
+        },
+      }),
+    );
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(panel).toHaveTextContent('出力を読めず除外した実行 3回');
+  });
+
+  it('degrades only the harness KPI block when its request fails', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockRejectedValue(new Error('KPI ダウン'));
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(await within(panel).findByText('KPI ダウン')).toBeInTheDocument();
+    // 統計タブの他のブロックは生き残る。
+    expect(await screen.findByLabelText('モデル別実績')).toBeInTheDocument();
+    expect(screen.getByText('全体')).toBeInTheDocument();
+  });
+
+  it('shows a dash instead of a rate when the harness KPI has no samples', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockResolvedValue(
+      makeHarnessKpi({
+        pendingDecisionDwell: {
+          closedCount: 0,
+          closedGateCount: 0,
+          closedWorkCount: 0,
+          openCount: 0,
+          openGateCount: 0,
+          openWorkCount: 0,
+          medianMs: null,
+          p90Ms: null,
+          anchor: 'created',
+        },
+        reclaim: {
+          runCount: 0,
+          reclaimedCountTotal: 0,
+          unknownCountRunCount: 0,
+          identifiedTicketCount: 0,
+          reclaimedThenInProgressCount: 0,
+          reclaimedThenInProgressRate: null,
+          windowMs: 30 * 60_000,
+          since: null,
+          unparsedRunCount: 0,
+        },
+        harnessLabeled: { matchedCount: 0, totalCount: 0, rate: null },
+        duplicateMention: { matchedCount: 0, totalCount: 0, rate: null },
+      }),
+    );
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(within(panel).getByText('— / —')).toBeInTheDocument();
+    expect(within(panel).getByText('0回 / —')).toBeInTheDocument();
+    expect(within(panel).getAllByText('0件 / 0件 (—)')).toHaveLength(2);
   });
 
   it('shows weekly close counts and age bucket counts', async () => {

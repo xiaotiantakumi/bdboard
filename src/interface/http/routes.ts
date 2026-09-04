@@ -22,6 +22,7 @@ import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import { getThroughputStats } from '../../application/board/get-throughput-stats.js';
 import { getModelStats } from '../../application/board/get-model-stats.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
+import { getHarnessKpi } from '../../application/board/get-harness-kpi.js';
 import { getBoardTimeZoneOverride } from '../../config/board-timezone.js';
 import { getBoard } from '../../application/board/get-board.js';
 import type { GetBoardDeps } from '../../application/board/get-board.js';
@@ -58,6 +59,7 @@ import type { LeaseReader } from '../../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
+import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { getSessionHistory } from '../../application/session/get-session-history.js';
 import { listAgentProcesses } from '../../application/session/list-agent-processes.js';
 import {
@@ -81,6 +83,7 @@ import {
   toThroughputStatsDto,
   toModelStatsDto,
   toCfdStatsDto,
+  toHarnessKpiDto,
   toHygieneIssueDto,
   toLeaseHealthDto,
   toMergeSlotStatusDto,
@@ -137,6 +140,11 @@ export interface ApiDeps {
   readonly mergeSlotReader?: MergeSlotReader;
   readonly prStatusReader?: PrStatusReader;
   readonly reclaimScheduler?: ReclaimScheduler;
+  /**
+   * ハーネス KPI の reclaim 指標用。サーバー起動からの累積で永続化しない
+   * (bdboard-pkr6.9)。省略時は reclaim 指標が空になるだけで、他の指標は出る。
+   */
+  readonly reclaimHistory?: ReclaimHistory;
   /**
    * トンネル経由の書き込みを開放するための依存(bdboard-9rz)。
    * 省略された場合、書き込みは従来どおり localhost 直アクセス限定になる(fail-closed)。
@@ -636,6 +644,24 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       weeks,
     });
     return c.json(toModelStatsDto(stats));
+  });
+
+  app.get('/api/harness-kpi', (c) => {
+    const projectIds = parseProjectIds(c.req.query('projects'));
+    const weeks = parseStatsWeeks(c.req.query('weeks'));
+    const history = deps.reclaimHistory;
+    const stats = getHarnessKpi(deps.cache, deps.now(), {
+      ...(projectIds !== undefined ? { projectIds } : {}),
+      weeks,
+      ...(history !== undefined
+        ? {
+            reclaimRuns: history.list(),
+            reclaimSince: history.since(),
+            reclaimUnparsedRunCount: history.unparsedRunCount(),
+          }
+        : {}),
+    });
+    return c.json(toHarnessKpiDto(stats));
   });
 
   app.get('/api/cfd', (c) => {

@@ -24,6 +24,7 @@ import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.
 import type { PrStatus } from '../../domain/pr-link.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
+import { createReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import { createEventHub } from '../sse/event-hub.js';
 import { createBasicAuthMiddleware } from './basic-auth.js';
@@ -1477,6 +1478,83 @@ describe('createApiRoutes', () => {
     expect(body.stageModelDistribution).toEqual([
       { stage: 'implement', counts: { 'composer-2.5': 1 } },
     ]);
+    assertNoDates(body);
+  });
+
+  it('returns harness KPI with the reclaim record start time', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    const reclaimAt = new Date('2026-06-01T09:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-kpi-gate',
+          projectId: a.id,
+          labels: ['human', 'harness'],
+          title: '重複の統合',
+          createdAt: new Date('2026-06-01T06:00:00.000Z'),
+          closedAt: new Date('2026-06-01T08:00:00.000Z'),
+          startedAt: new Date('2026-06-01T09:10:00.000Z'),
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const reclaimHistory = createReclaimHistory({
+      startedAt: new Date('2026-06-01T00:00:00.000Z'),
+    });
+    reclaimHistory.record({
+      projectId: a.id,
+      at: reclaimAt,
+      reclaimedCount: 1,
+      ticketIds: ['bdboard-kpi-gate'],
+    });
+
+    const app = createApiRoutes(createDeps({ cache, reclaimHistory }));
+    const response = await app.request('/api/harness-kpi?weeks=1');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(typeof body.rangeStart).toBe('string');
+    expect(body.pendingDecisionDwell).toEqual({
+      closedCount: 1,
+      closedGateCount: 0,
+      closedWorkCount: 1,
+      openCount: 0,
+      openGateCount: 0,
+      openWorkCount: 0,
+      medianMs: 2 * 60 * 60_000,
+      p90Ms: 2 * 60 * 60_000,
+      anchor: 'created',
+    });
+    expect(body.reclaim).toMatchObject({
+      runCount: 1,
+      identifiedTicketCount: 1,
+      reclaimedThenInProgressCount: 1,
+      reclaimedThenInProgressRate: 1,
+      since: '2026-06-01T00:00:00.000Z',
+      unparsedRunCount: 0,
+    });
+    expect(body.harnessLabeled).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
+    expect(body.duplicateMention).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
+    assertNoDates(body);
+  });
+
+  it('returns harness KPI without reclaim data when no history is wired', async () => {
+    const cache = createFakeBoardCache();
+    const app = createApiRoutes(createDeps({ cache }));
+    const response = await app.request('/api/harness-kpi');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reclaim).toMatchObject({
+      runCount: 0,
+      since: null,
+      unparsedRunCount: 0,
+    });
     assertNoDates(body);
   });
 

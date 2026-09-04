@@ -3,13 +3,19 @@ import { useQuery } from '@tanstack/react-query';
 import type {
   AgeDistributionDto,
   CfdDayEntryDto,
+  HarnessKpiDto,
   ModelStatsDto,
   ProjectCfdStatsDto,
   ProjectThroughputStatsDto,
   ThroughputStatsDto,
   WeeklyCloseCountDto,
 } from '../api';
-import { fetchCfdStats, fetchModelStats, fetchThroughputStats } from '../api';
+import {
+  fetchCfdStats,
+  fetchHarnessKpi,
+  fetchModelStats,
+  fetchThroughputStats,
+} from '../api';
 import {
   STATS_WEEKS,
   statsWeeksLabel,
@@ -18,6 +24,10 @@ import {
 import { togglePressedProps } from './toggleGroupA11y';
 import {
   ageBucketEntries,
+  formatDurationMs,
+  formatKpiTimestamp,
+  formatRatePercent,
+  formatShare,
   formatWeekLabel,
   hasAnyOpenTickets,
   hasAnyWeeklyCloses,
@@ -75,6 +85,8 @@ const SECTION_DESCRIPTIONS = {
     '日々のステータス別件数の推移からボトルネックを読み取る',
   modelStats:
     'bdメタデータ(bdboard.model.<工程>)から集計した、工程ごとのAIモデル使用実績',
+  harnessKpi:
+    'エージェント作業の進め方(ハーネス)自体が効いているかを見る4指標',
 } as const;
 
 function ChartBlockHeader({
@@ -547,6 +559,87 @@ function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
   );
 }
 
+function HarnessKpiTable({ kpi }: { kpi: HarnessKpiDto }) {
+  const dwell = kpi.pendingDecisionDwell;
+  const reclaim = kpi.reclaim;
+
+  const rows: readonly {
+    key: string;
+    label: string;
+    value: string;
+    note: string;
+  }[] = [
+    {
+      key: 'pending-decision-dwell',
+      label: '確認待ちのままクローズしたチケットの滞留 (中央値 / p90)',
+      value: `${formatDurationMs(dwell.medianMs)} / ${formatDurationMs(dwell.p90Ms)}`,
+      note:
+        `期間内にクローズ ${dwell.closedCount}件 (gate ${dwell.closedGateCount} / 作業 ` +
+        `${dwell.closedWorkCount})、未回答 ${dwell.openCount}件 (gate ${dwell.openGateCount} / 作業 ` +
+        `${dwell.openWorkCount}、期間によらず現在値)。gate は回答＝クローズなので入りますが、` +
+        '回答時に human ラベルだけを外した作業チケットはクローズされないため含まれません。' +
+        'ラベル付与時刻は bd から取れないため作成時刻を起点にしています。',
+    },
+    {
+      key: 'reclaim',
+      label: 'reclaim 発火 / 直後の再 claim 率',
+      value: `${reclaim.runCount}回 / ${formatRatePercent(reclaim.reclaimedThenInProgressRate)}`,
+      note:
+        `回収 ${reclaim.reclaimedCountTotal}件のうち ID を追えた ${reclaim.identifiedTicketCount}件中 ` +
+        `${reclaim.reclaimedThenInProgressCount}件が ${Math.round(reclaim.windowMs / 60_000)}分以内に` +
+        `再び作業中になりました。判定に使えるのは現在の作業開始時刻だけなので、` +
+        `厳密な再 claim 検出ではなく誤回収の代理指標です。記録は ` +
+        `${formatKpiTimestamp(reclaim.since)} 以降のみで、保存されません` +
+        `${reclaim.unparsedRunCount > 0 ? ` (出力を読めず除外した実行 ${reclaim.unparsedRunCount}回)` : ''}。`,
+    },
+    {
+      key: 'harness-labeled',
+      label: 'ハーネス起票率',
+      value: formatShare(
+        kpi.harnessLabeled.matchedCount,
+        kpi.harnessLabeled.totalCount,
+        kpi.harnessLabeled.rate,
+      ),
+      note: '期間内に作成されたチケットのうち harness / harness-upstream ラベルが付いた割合。',
+    },
+    {
+      key: 'duplicate-mention',
+      label: '重複 / 再発チケット比率',
+      value: formatShare(
+        kpi.duplicateMention.matchedCount,
+        kpi.duplicateMention.totalCount,
+        kpi.duplicateMention.rate,
+      ),
+      note:
+        'タイトルまたは本文に「重複 / duplicate / 再発 / 二重 / 統合」を含む割合。' +
+        '単語の一致だけを見る粗い指標なので、傾向の増減として読んでください。',
+    },
+  ];
+
+  return (
+    <div className="throughput-chart-block">
+      <table className="model-stats-table">
+        <thead>
+          <tr>
+            <th>指標</th>
+            <th>値</th>
+            <th>読み方</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.key}>
+              <td>{row.label}</td>
+              <td>{row.value}</td>
+              <td>{row.note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function ThroughputStats({
   projectIds,
   weeks,
@@ -566,15 +659,24 @@ export function ThroughputStats({
     queryKey: ['model-stats', weeks, projectIdsKey],
     queryFn: () => fetchModelStats(weeks, projectIds),
   });
+  const harnessKpiQuery = useQuery({
+    queryKey: ['harness-kpi', weeks, projectIdsKey],
+    queryFn: () => fetchHarnessKpi(weeks, projectIds),
+  });
 
-  const isLoading =
-    query.isLoading || cfdQuery.isLoading || modelStatsQuery.isLoading;
+  // ハーネスKPI は統計タブの中では付加的なブロックなので、ここが落ちても
+  // スループット/CFD/モデル別実績まで巻き添えにしない (ブロック内だけで degrade する)。
+  const isLoading = query.isLoading || cfdQuery.isLoading || modelStatsQuery.isLoading;
   const isError = query.isError || cfdQuery.isError || modelStatsQuery.isError;
   const errorMessage =
     (query.error instanceof Error ? query.error.message : undefined) ??
     (cfdQuery.error instanceof Error ? cfdQuery.error.message : undefined) ??
     (modelStatsQuery.error instanceof Error ? modelStatsQuery.error.message : undefined) ??
     '統計の読み込みに失敗しました';
+  const harnessKpiErrorMessage =
+    harnessKpiQuery.error instanceof Error
+      ? harnessKpiQuery.error.message
+      : 'ハーネスKPIの読み込みに失敗しました';
 
   return (
     <section className="throughput-stats" aria-label="統計">
@@ -640,6 +742,25 @@ export function ThroughputStats({
             <ModelStatsTables stats={modelStatsQuery.data} />
           </section>
         )}
+      {!isLoading && !isError && (
+        <section className="model-stats-block" aria-label="ハーネスKPI">
+          <div className="throughput-stats-section-header">
+            <h3 className="throughput-stats-section-heading">ハーネスKPI</h3>
+            <p className="throughput-stats-section-description">
+              {SECTION_DESCRIPTIONS.harnessKpi}
+            </p>
+          </div>
+          {harnessKpiQuery.isLoading && <p className="loading">読み込み中…</p>}
+          {!harnessKpiQuery.isLoading && harnessKpiQuery.isError && (
+            <p className="error-message">{harnessKpiErrorMessage}</p>
+          )}
+          {!harnessKpiQuery.isLoading &&
+            !harnessKpiQuery.isError &&
+            harnessKpiQuery.data !== undefined && (
+              <HarnessKpiTable kpi={harnessKpiQuery.data} />
+            )}
+        </section>
+      )}
     </section>
   );
 }

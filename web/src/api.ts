@@ -292,6 +292,50 @@ export interface CfdStatsDto {
   totals: CfdDayEntryDto[];
 }
 
+export interface PendingDecisionDwellKpiDto {
+  /** 確認待ちのまま close された件数 (期間内) */
+  closedCount: number;
+  closedGateCount: number;
+  closedWorkCount: number;
+  /** 未クローズの確認待ち件数。期間によらない現在値 */
+  openCount: number;
+  openGateCount: number;
+  openWorkCount: number;
+  medianMs: number | null;
+  p90Ms: number | null;
+  /** 'created' = ラベル付与時刻が取れないので作成時刻で代替している */
+  anchor: 'created';
+}
+
+export interface ReclaimKpiDto {
+  runCount: number;
+  reclaimedCountTotal: number;
+  unknownCountRunCount: number;
+  identifiedTicketCount: number;
+  reclaimedThenInProgressCount: number;
+  reclaimedThenInProgressRate: number | null;
+  windowMs: number;
+  /** この統計が「いつ以降」のものか。永続化していない */
+  since: string | null;
+  /** 出力を読めず履歴に積めなかった実行の累積回数 */
+  unparsedRunCount: number;
+}
+
+export interface HarnessShareKpiDto {
+  matchedCount: number;
+  totalCount: number;
+  rate: number | null;
+}
+
+export interface HarnessKpiDto {
+  rangeStart: string;
+  rangeEnd: string;
+  pendingDecisionDwell: PendingDecisionDwellKpiDto;
+  reclaim: ReclaimKpiDto;
+  harnessLabeled: HarnessShareKpiDto;
+  duplicateMention: HarnessShareKpiDto;
+}
+
 export type HygieneIssueKindDto =
   | 'dependency_cycle'
   | 'overdue_defer'
@@ -1084,6 +1128,18 @@ export function fetchModelStats(
     searchParams.set('projects', projectIds.join(','));
   }
   return fetchJson<ModelStatsDto>(`/api/model-stats?${searchParams.toString()}`);
+}
+
+export function fetchHarnessKpi(
+  weeks = 8,
+  projectIds: readonly string[] = [],
+): Promise<HarnessKpiDto> {
+  const searchParams = new URLSearchParams();
+  searchParams.set('weeks', String(weeks));
+  if (projectIds.length > 0) {
+    searchParams.set('projects', projectIds.join(','));
+  }
+  return fetchJson<HarnessKpiDto>(`/api/harness-kpi?${searchParams.toString()}`);
 }
 
 export function fetchCfdStats(

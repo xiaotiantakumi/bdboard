@@ -14,6 +14,7 @@ import type { SessionLinkWriterPort } from '../../application/ports/session-link
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
+import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import { resolveBoardThresholds } from '../../domain/board-thresholds.js';
 import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
@@ -46,6 +47,7 @@ export interface BuildApiDepsParams {
   readonly leaseReader?: LeaseReader;
   readonly mergeSlotReader?: MergeSlotReader;
   readonly reclaimScheduler?: ReclaimScheduler;
+  readonly reclaimHistory?: ReclaimHistory;
 }
 
 export function buildApiDeps(params: BuildApiDepsParams): ApiDeps {
