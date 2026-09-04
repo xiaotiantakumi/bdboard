@@ -2,8 +2,8 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.6.0",
-      "injectedAt": "2026-09-04T09:11:06.026Z",
+      "version": "0.7.0",
+      "injectedAt": "2026-09-04T10:01:27.166Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
         ".claude/skills/bdboard-harness/hooks/README.md",

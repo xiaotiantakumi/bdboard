@@ -38,7 +38,22 @@ CLAUDE.md / AGENTS.md が正。以下では既定の推奨としてブランチ 
 
 ### 1. 空き確認と worktree 作成（排他獲得）
 
-SKILL.md 規律2 のとおり。worktree とブランチの**両方**の不存在を確認してから:
+**なぜ排他が git なのか**: 並列セッションは全て**同じユーザー（同じ assignee）**で動くため、
+`bd update --claim` のアトミック性（CAS）は先行 claim を検出できず、**両方成功しうる**
+（さらに `--claim` は `--if-status` / `--if-assignee` と併用不可で、ガード付きの1コマンドは
+書けない）。一方 `git worktree add -b <branch>` は、既存ブランチ/worktree があれば git が
+拒否するので、先着1名だけが成功する。よって**排他はチケット台帳ではなく git が裁く**
+（SKILL.md 規律2）。
+
+**着手前の空き確認は worktree とブランチの両方を見る。** ブランチだけが先に存在する
+ケースがあり、片方だけでは取りこぼす:
+
+```bash
+ls .claude/worktrees/<id>          # 「存在しない」ことを確認
+git rev-parse --verify bd/<id>     # 「存在しない」ことを確認
+```
+
+両方の不存在を確認してから:
 
 ```bash
 git -C <メインチェックアウト> fetch origin
@@ -77,6 +92,14 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
   欠落そのもの）の修正はこの skill の対象外 — 該当ハーネスの開発元へ別途報告する。
 - 依存インストール（`node_modules` 等は worktree 間で共有されない）。コマンドは
   プロジェクトの CLAUDE.md に従う。
+- **実装に入る前に既存実装を1回探す**（重複実装の予防。SKILL.md 規律2 手順4 の実体）:
+  変更予定の領域名・関数名で `git grep -n <キーワード>` と
+  `bd search "<キーワード>" --status in_progress`（title/ID しか検索しない。説明文まで見るなら
+  `bd list --status in_progress --desc-contains "<キーワード>"` を併用する）を各1回。既存
+  ヘルパー・同目的の実装が見つかったら再利用し、`bd comment <id> "再利用: <path>"` を残す
+  （見つからなければコメント不要）。同じ領域を触っている in_progress チケットがあれば双方に
+  コメントし、`bd dep add <自分> <相手> --type related` を張る。根拠: 2026-08 に並列実装
+  由来の重複ヘルパー解消チケットが10件超（failure-catalog.md の duplicate-helper-parallel）。
 - **worktree からポートを掴む常駐プロセス（dev サーバー等）を起動しない。** ポートは
   メインチェックアウトの常設サーバーのものというプロジェクトが多く、衝突すると本体側を
   巻き込む。テスト・型チェック・lint はポートを掴まないので並列 worktree で問題なく走る。
@@ -303,6 +326,15 @@ gh pr view <N> --json state,mergedAt,mergeCommit   # state が MERGED ならマ�
   main が常にメインチェックアウト側で使用中のため worktree 競合で失敗し、後続の remote 側
   削除まで巻き込まれて実行されない、と考えられる。実測: bdboard-3tw.104.24（PR #62）・
   bdboard-p5l.10（PR #63）、2026-08-18（記録: bdboard-p5l.11）。
+
+## セッション開始時の残骸掃除（SKILL.md 規律1 手順4）
+
+マージ済み worktree の残骸があれば掃除する — `git worktree list` を一覧し、対応ブランチが
+**既に main へ取り込まれているものだけ** `git worktree remove` する。**判断がつかないものは
+触らない。** 残骸を放置すると規律2 の空き確認が「着手中」と誤読し続け、逆に生きている
+worktree を消すと実行中の作業を壊す（failure-catalog.md の live-worktree-removal /
+empty-worktree-misjudge）。remove の前に、他セッションがその中に居ないかを
+`lsof -a -d cwd +D <worktree>` で確認する。
 
 ## 例外・補足
 

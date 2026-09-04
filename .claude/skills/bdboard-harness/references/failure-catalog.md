@@ -38,7 +38,7 @@
 
 ### empty-worktree-misjudge — 空 worktree を「放棄」と断定して着手し、起動直前の別セッションと衝突（2026-08-16）
 - 原因: git status 空・lsof 空・open のままの3条件でも「作成直後・起動前」の瞬間と区別できない
-- 防止: lease 失効＋猶予経過＋updated_at の鮮度まで揃え、触る直前に lsof を取り直す（本則: SKILL.md 規律2 手順7, lease-params.md）
+- 防止: lease 失効＋猶予経過＋updated_at の鮮度まで揃え、触る直前に lsof を取り直す（本則: SKILL.md 規律2 手順6, lease-params.md）
 - 出典: bd memory `bdboard-worktree-not-abandoned`
 
 ### heartbeat-partial — アクティブな1枚だけ heartbeat し、保持中の他チケットが reclaim された（8並列運用中に実測）
@@ -55,7 +55,7 @@
 
 ### merge-slot-misclaim — merge-slot bead を「最優先の着手可能チケット」として claim し、他セッションのマージを停止（実測）
 - 原因: slot bead は「空き = open・priority 0」で状態表現するため素の `bd ready` の先頭に載る
-- 防止: `bd ready --exclude-label gt:slot` を常用（本則: SKILL.md 規律1 手順4）
+- 防止: `bd ready --exclude-label gt:slot` を常用（本則: SKILL.md 規律1 手順5）
 - 出典: bdboard-9k3
 
 ### merge-chain-semicolon — マージ手順の1行連結で acquire 失敗後も `;` 区切りの後半（bd close 含む）が無条件実行された（2026-08-16）
