@@ -1,8 +1,9 @@
 import { useLayoutEffect } from 'react';
 
 /**
- * Writes .header height to documentElement as --header-height (ResizeObserver).
- * Drives sticky lane strip `top` and html scroll-padding-top for keyboard focus.
+ * Writes .header height to documentElement as --header-height (ResizeObserver when
+ * available, otherwise window resize). Drives sticky lane strip `top` and html
+ * scroll-padding-top for keyboard focus.
  */
 export function useHeaderHeightVar(): void {
   useLayoutEffect(() => {
@@ -18,11 +19,14 @@ export function useHeaderHeightVar(): void {
       document.documentElement.style.setProperty('--header-height', `${height}px`);
     };
     syncHeaderHeight();
-    const resizeObserver = new ResizeObserver(syncHeaderHeight);
-    resizeObserver.observe(header);
+    let resizeObserver: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(syncHeaderHeight);
+      resizeObserver.observe(header);
+    }
     window.addEventListener('resize', syncHeaderHeight);
     return () => {
-      resizeObserver.disconnect();
+      resizeObserver?.disconnect();
       window.removeEventListener('resize', syncHeaderHeight);
       document.documentElement.style.removeProperty('--header-height');
     };
