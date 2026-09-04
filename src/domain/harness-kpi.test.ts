@@ -106,7 +106,11 @@ describe('computePendingDecisionDwell', () => {
   it('returns an empty result for no tickets', () => {
     expect(computePendingDecisionDwell([], RANGE)).toEqual({
       closedCount: 0,
+      closedGateCount: 0,
+      closedWorkCount: 0,
       openCount: 0,
+      openGateCount: 0,
+      openWorkCount: 0,
       medianMs: null,
       p90Ms: null,
       anchor: 'created',
@@ -137,10 +141,45 @@ describe('computePendingDecisionDwell', () => {
 
     expect(computePendingDecisionDwell(tickets, RANGE)).toEqual({
       closedCount: 2,
+      closedGateCount: 1,
+      closedWorkCount: 1,
       openCount: 0,
+      openGateCount: 0,
+      openWorkCount: 0,
       medianMs: 2 * HOUR_MS,
       p90Ms: Math.round(1 * HOUR_MS + 2 * HOUR_MS * 0.9),
       anchor: 'created',
+    });
+  });
+
+  it('splits open counts into gate and human-labeled work tickets', () => {
+    const tickets = [
+      makeTicket({ id: 'g1', issueType: 'gate', createdAt: at('2026-08-10T00:00:00.000Z') }),
+      makeTicket({ id: 'g2', issueType: 'gate', createdAt: at('2026-08-10T00:00:00.000Z') }),
+      makeTicket({ id: 'w1', labels: ['human'], createdAt: at('2026-08-10T00:00:00.000Z') }),
+    ];
+
+    expect(computePendingDecisionDwell(tickets, RANGE)).toMatchObject({
+      openCount: 3,
+      openGateCount: 2,
+      openWorkCount: 1,
+    });
+  });
+
+  it('does not count a work ticket whose human label was released without closing', () => {
+    // bdboard-xgvh 以降、作業チケットへの回答は human ラベルを外すだけでクローズしない。
+    // その結果このチケットは確認待ちとして扱われず、closed 側にも open 側にも入らない。
+    const answered = makeTicket({
+      id: 'w1',
+      labels: [],
+      createdAt: at('2026-08-10T00:00:00.000Z'),
+    });
+
+    expect(computePendingDecisionDwell([answered], RANGE)).toMatchObject({
+      closedCount: 0,
+      closedWorkCount: 0,
+      openCount: 0,
+      openWorkCount: 0,
     });
   });
 
@@ -400,7 +439,11 @@ describe('computeHarnessKpi', () => {
       rangeEnd: RANGE.end,
       pendingDecisionDwell: {
         closedCount: 0,
+        closedGateCount: 0,
+        closedWorkCount: 0,
         openCount: 0,
+        openGateCount: 0,
+        openWorkCount: 0,
         medianMs: null,
         p90Ms: null,
         anchor: 'created',

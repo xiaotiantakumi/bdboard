@@ -293,8 +293,14 @@ export interface CfdStatsDto {
 }
 
 export interface PendingDecisionDwellKpiDto {
+  /** 確認待ちのまま close された件数 (期間内) */
   closedCount: number;
+  closedGateCount: number;
+  closedWorkCount: number;
+  /** 未クローズの確認待ち件数。期間によらない現在値 */
   openCount: number;
+  openGateCount: number;
+  openWorkCount: number;
   medianMs: number | null;
   p90Ms: number | null;
   /** 'created' = ラベル付与時刻が取れないので作成時刻で代替している */
@@ -309,8 +315,10 @@ export interface ReclaimKpiDto {
   reclaimedThenInProgressCount: number;
   reclaimedThenInProgressRate: number | null;
   windowMs: number;
-  /** 記録を始めた時刻 (= サーバー起動時刻)。永続化していない */
+  /** この統計が「いつ以降」のものか。永続化していない */
   since: string | null;
+  /** 出力を読めず履歴に積めなかった実行の累積回数 */
+  unparsedRunCount: number;
 }
 
 export interface HarnessShareKpiDto {

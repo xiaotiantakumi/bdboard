@@ -81,7 +81,11 @@ describe('getHarnessKpi', () => {
     expect(reclaimSince).toBeNull();
     expect(kpi.pendingDecisionDwell).toEqual({
       closedCount: 0,
+      closedGateCount: 0,
+      closedWorkCount: 0,
       openCount: 0,
+      openGateCount: 0,
+      openWorkCount: 0,
       medianMs: null,
       p90Ms: null,
       anchor: 'created',
@@ -187,6 +191,77 @@ describe('getHarnessKpi', () => {
       reclaimedThenInProgressCount: 1,
       reclaimedThenInProgressRate: 1,
     });
+  });
+
+  it('applies the project filter to reclaim runs as well as tickets', () => {
+    const cache = createFakeBoardCache();
+    cache.putProject({
+      project: project('/a', '/projects/a'),
+      tickets: [
+        makeTicket({
+          id: 'bdboard-a1',
+          projectId: '/a',
+          createdAt: utcInstant(2026, 8, 11),
+          startedAt: utcInstant(2026, 8, 12, 0, 10),
+        }),
+      ],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+    cache.putProject({
+      project: project('/b', '/projects/b'),
+      tickets: [
+        makeTicket({
+          id: 'bdboard-b1',
+          projectId: '/b',
+          createdAt: utcInstant(2026, 8, 11),
+          startedAt: utcInstant(2026, 8, 12, 0, 10),
+        }),
+      ],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const reclaimRuns: ReclaimRunRecord[] = [
+      {
+        projectId: '/a',
+        at: utcInstant(2026, 8, 12),
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-a1'],
+      },
+      {
+        projectId: '/b',
+        at: utcInstant(2026, 8, 12),
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-b1'],
+      },
+    ];
+
+    const options = { weeks: 2, timeZone: UTC, reclaimRuns } as const;
+
+    expect(getHarnessKpi(cache, now, options).kpi.reclaim).toMatchObject({
+      runCount: 2,
+      identifiedTicketCount: 2,
+    });
+
+    // /a だけを選んだら /b の発火は発火回数にも母数にも入らない。
+    expect(
+      getHarnessKpi(cache, now, { ...options, projectIds: ['/a'] }).kpi.reclaim,
+    ).toMatchObject({
+      runCount: 1,
+      reclaimedCountTotal: 1,
+      identifiedTicketCount: 1,
+    });
+  });
+
+  it('passes the unparsed run count through untouched', () => {
+    const cache = createFakeBoardCache();
+
+    expect(getHarnessKpi(cache, now, { timeZone: UTC }).reclaimUnparsedRunCount).toBe(0);
+    expect(
+      getHarnessKpi(cache, now, { timeZone: UTC, reclaimUnparsedRunCount: 4 })
+        .reclaimUnparsedRunCount,
+    ).toBe(4);
   });
 
   it('clamps weeks to at least one', () => {

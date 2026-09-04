@@ -1521,7 +1521,11 @@ describe('createApiRoutes', () => {
     expect(typeof body.rangeStart).toBe('string');
     expect(body.pendingDecisionDwell).toEqual({
       closedCount: 1,
+      closedGateCount: 0,
+      closedWorkCount: 1,
       openCount: 0,
+      openGateCount: 0,
+      openWorkCount: 0,
       medianMs: 2 * 60 * 60_000,
       p90Ms: 2 * 60 * 60_000,
       anchor: 'created',
@@ -1532,6 +1536,7 @@ describe('createApiRoutes', () => {
       reclaimedThenInProgressCount: 1,
       reclaimedThenInProgressRate: 1,
       since: '2026-06-01T00:00:00.000Z',
+      unparsedRunCount: 0,
     });
     expect(body.harnessLabeled).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
     expect(body.duplicateMention).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
@@ -1545,7 +1550,11 @@ describe('createApiRoutes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.reclaim).toMatchObject({ runCount: 0, since: null });
+    expect(body.reclaim).toMatchObject({
+      runCount: 0,
+      since: null,
+      unparsedRunCount: 0,
+    });
     assertNoDates(body);
   });
 

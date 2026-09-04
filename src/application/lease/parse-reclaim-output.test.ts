@@ -46,8 +46,35 @@ describe('parseReclaimStdout', () => {
   });
 
   it('deduplicates repeated ids and keeps first-seen order', () => {
-    const parsed = parseReclaimStdout('bdboard-a bdboard-b bdboard-a');
+    const parsed = parseReclaimStdout(['bdboard-a', 'bdboard-b', 'bdboard-a'].join('\n'));
     expect(parsed.ticketIds).toEqual(['bdboard-a', 'bdboard-b']);
+  });
+
+  it('parses the real bd 1.2.1 reclaim output without picking up noise', () => {
+    // 実出力そのまま。見出し行の `stale-lease` と括弧内の担当者名を拾わないこと。
+    const stdout = [
+      '✓ Reclaimed 2 stale-lease issue(s):',
+      '  bd-reclaim-probe-37y (was held by Takumi Oda)',
+      '  bd-reclaim-probe-slm (was held by Takumi Oda)',
+    ].join('\n');
+
+    const parsed = parseReclaimStdout(stdout);
+    expect(parsed.count).toBe(2);
+    expect(parsed.ticketIds).toEqual(['bd-reclaim-probe-37y', 'bd-reclaim-probe-slm']);
+  });
+
+  it('keeps a hyphenated-prefix id and ignores the holder name after it', () => {
+    const parsed = parseReclaimStdout('  bdboard-merge-slot (was held by agent-x)');
+    expect(parsed.ticketIds).toEqual(['bdboard-merge-slot']);
+  });
+
+  it('reads the real bd 1.2.1 idle output as zero, not as unparseable', () => {
+    // count=null にすると 5 分ごとの空振りが「件数不明の発火」として履歴に積まれる。
+    expect(parseReclaimStdout('✓ No stale leases to reclaim')).toEqual({
+      count: 0,
+      summary: '✓ No stale leases to reclaim',
+      ticketIds: [],
+    });
   });
 
   it('does not pick up command flags as ids', () => {

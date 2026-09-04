@@ -337,8 +337,14 @@ export interface CfdStatsDto {
 }
 
 export interface PendingDecisionDwellKpiDto {
+  /** 確認待ちのまま close されたチケット数 (期間内) */
   closedCount: number;
+  closedGateCount: number;
+  closedWorkCount: number;
+  /** 未クローズの確認待ち件数。期間によらない現在値 */
   openCount: number;
+  openGateCount: number;
+  openWorkCount: number;
   medianMs: number | null;
   p90Ms: number | null;
   /** 'created' = ラベル付与時刻が取れないので作成時刻で代替している */
@@ -353,8 +359,13 @@ export interface ReclaimKpiDto {
   reclaimedThenInProgressCount: number;
   reclaimedThenInProgressRate: number | null;
   windowMs: number;
-  /** 記録を始めた時刻 (= サーバー起動時刻)。永続化していないので UI に注記する */
+  /**
+   * この統計が「いつ以降」のものか (= サーバー起動時刻、バッファが溢れた後は
+   * 残っている最古の実行時刻)。永続化していないので UI に注記する
+   */
   since: string | null;
+  /** 出力を読めず履歴に積めなかった実行の累積回数 */
+  unparsedRunCount: number;
 }
 
 export interface HarnessShareKpiDto {
@@ -900,7 +911,11 @@ export function toHarnessKpiDto(stats: HarnessKpiStats): HarnessKpiDto {
     rangeEnd: kpi.rangeEnd.toISOString(),
     pendingDecisionDwell: {
       closedCount: kpi.pendingDecisionDwell.closedCount,
+      closedGateCount: kpi.pendingDecisionDwell.closedGateCount,
+      closedWorkCount: kpi.pendingDecisionDwell.closedWorkCount,
       openCount: kpi.pendingDecisionDwell.openCount,
+      openGateCount: kpi.pendingDecisionDwell.openGateCount,
+      openWorkCount: kpi.pendingDecisionDwell.openWorkCount,
       medianMs: kpi.pendingDecisionDwell.medianMs,
       p90Ms: kpi.pendingDecisionDwell.p90Ms,
       anchor: kpi.pendingDecisionDwell.anchor,
@@ -914,6 +929,7 @@ export function toHarnessKpiDto(stats: HarnessKpiStats): HarnessKpiDto {
       reclaimedThenInProgressRate: kpi.reclaim.reclaimedThenInProgressRate,
       windowMs: kpi.reclaim.windowMs,
       since: stats.reclaimSince?.toISOString() ?? null,
+      unparsedRunCount: stats.reclaimUnparsedRunCount,
     },
     harnessLabeled: { ...kpi.harnessLabeled },
     duplicateMention: { ...kpi.duplicateMention },

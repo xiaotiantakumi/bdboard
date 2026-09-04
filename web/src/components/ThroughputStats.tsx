@@ -571,12 +571,14 @@ function HarnessKpiTable({ kpi }: { kpi: HarnessKpiDto }) {
   }[] = [
     {
       key: 'pending-decision-dwell',
-      label: '確認待ちの滞留 (中央値 / p90)',
+      label: '確認待ちのままクローズしたチケットの滞留 (中央値 / p90)',
       value: `${formatDurationMs(dwell.medianMs)} / ${formatDurationMs(dwell.p90Ms)}`,
       note:
-        `期間内にクローズ ${dwell.closedCount}件・未回答 ${dwell.openCount}件。` +
-        'human ラベル付きまたは gate タイプが対象で、ラベル付与時刻は bd から' +
-        '取れないため作成時刻を起点にしています。',
+        `期間内にクローズ ${dwell.closedCount}件 (gate ${dwell.closedGateCount} / 作業 ` +
+        `${dwell.closedWorkCount})、未回答 ${dwell.openCount}件 (gate ${dwell.openGateCount} / 作業 ` +
+        `${dwell.openWorkCount}、期間によらず現在値)。gate は回答＝クローズなので入りますが、` +
+        '回答時に human ラベルだけを外した作業チケットはクローズされないため含まれません。' +
+        'ラベル付与時刻は bd から取れないため作成時刻を起点にしています。',
     },
     {
       key: 'reclaim',
@@ -585,8 +587,10 @@ function HarnessKpiTable({ kpi }: { kpi: HarnessKpiDto }) {
       note:
         `回収 ${reclaim.reclaimedCountTotal}件のうち ID を追えた ${reclaim.identifiedTicketCount}件中 ` +
         `${reclaim.reclaimedThenInProgressCount}件が ${Math.round(reclaim.windowMs / 60_000)}分以内に` +
-        `再び作業中になりました (誤回収の代理指標)。記録はサーバー起動 ` +
-        `${formatKpiTimestamp(reclaim.since)} 以降のみで、保存されません。`,
+        `再び作業中になりました。判定に使えるのは現在の作業開始時刻だけなので、` +
+        `厳密な再 claim 検出ではなく誤回収の代理指標です。記録は ` +
+        `${formatKpiTimestamp(reclaim.since)} 以降のみで、保存されません` +
+        `${reclaim.unparsedRunCount > 0 ? ` (出力を読めず除外した実行 ${reclaim.unparsedRunCount}回)` : ''}。`,
     },
     {
       key: 'harness-labeled',
@@ -660,19 +664,19 @@ export function ThroughputStats({
     queryFn: () => fetchHarnessKpi(weeks, projectIds),
   });
 
-  const isLoading =
-    query.isLoading ||
-    cfdQuery.isLoading ||
-    modelStatsQuery.isLoading ||
-    harnessKpiQuery.isLoading;
-  const isError =
-    query.isError || cfdQuery.isError || modelStatsQuery.isError || harnessKpiQuery.isError;
+  // ハーネスKPI は統計タブの中では付加的なブロックなので、ここが落ちても
+  // スループット/CFD/モデル別実績まで巻き添えにしない (ブロック内だけで degrade する)。
+  const isLoading = query.isLoading || cfdQuery.isLoading || modelStatsQuery.isLoading;
+  const isError = query.isError || cfdQuery.isError || modelStatsQuery.isError;
   const errorMessage =
     (query.error instanceof Error ? query.error.message : undefined) ??
     (cfdQuery.error instanceof Error ? cfdQuery.error.message : undefined) ??
     (modelStatsQuery.error instanceof Error ? modelStatsQuery.error.message : undefined) ??
-    (harnessKpiQuery.error instanceof Error ? harnessKpiQuery.error.message : undefined) ??
     '統計の読み込みに失敗しました';
+  const harnessKpiErrorMessage =
+    harnessKpiQuery.error instanceof Error
+      ? harnessKpiQuery.error.message
+      : 'ハーネスKPIの読み込みに失敗しました';
 
   return (
     <section className="throughput-stats" aria-label="統計">
@@ -738,19 +742,25 @@ export function ThroughputStats({
             <ModelStatsTables stats={modelStatsQuery.data} />
           </section>
         )}
-      {!isLoading &&
-        !isError &&
-        harnessKpiQuery.data !== undefined && (
-          <section className="model-stats-block" aria-label="ハーネスKPI">
-            <div className="throughput-stats-section-header">
-              <h3 className="throughput-stats-section-heading">ハーネスKPI</h3>
-              <p className="throughput-stats-section-description">
-                {SECTION_DESCRIPTIONS.harnessKpi}
-              </p>
-            </div>
-            <HarnessKpiTable kpi={harnessKpiQuery.data} />
-          </section>
-        )}
+      {!isLoading && !isError && (
+        <section className="model-stats-block" aria-label="ハーネスKPI">
+          <div className="throughput-stats-section-header">
+            <h3 className="throughput-stats-section-heading">ハーネスKPI</h3>
+            <p className="throughput-stats-section-description">
+              {SECTION_DESCRIPTIONS.harnessKpi}
+            </p>
+          </div>
+          {harnessKpiQuery.isLoading && <p className="loading">読み込み中…</p>}
+          {!harnessKpiQuery.isLoading && harnessKpiQuery.isError && (
+            <p className="error-message">{harnessKpiErrorMessage}</p>
+          )}
+          {!harnessKpiQuery.isLoading &&
+            !harnessKpiQuery.isError &&
+            harnessKpiQuery.data !== undefined && (
+              <HarnessKpiTable kpi={harnessKpiQuery.data} />
+            )}
+        </section>
+      )}
     </section>
   );
 }

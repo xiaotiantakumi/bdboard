@@ -9,9 +9,8 @@ export interface ParsedReclaimOutput {
    * stdout から拾えた回収チケットID。bd reclaim の出力形式に保証は無いので
    * 「取れたら取る」扱い(拾えなければ空配列)。
    *
-   * 形の似た普通の単語(`older-than` 等)も拾いうるが、これを使う側
-   * (domain/harness-kpi.ts の computeReclaimKpi) が板面のチケットと突き合わせて
-   * 一致した ID だけを指標の母数にするので、誤検出は率を歪めない。
+   * 誤検出が残っても、これを使う側 (domain/harness-kpi.ts の computeReclaimKpi) が
+   * 板面のチケットと突き合わせて一致した ID だけを指標の母数にするので、率は歪まない。
    */
   readonly ticketIds: readonly TicketId[];
 }
@@ -23,21 +22,41 @@ const RECLAIM_COUNT_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
- * `prefix-shortId` 形。直前が `-` の候補は除く(`--older-than` のようなフラグを
- * 拾わないため)。
+ * 「回収 0 件」を明示する出力。bd 1.2.1 の空振りは `✓ No stale leases to reclaim` で
+ * 数字を含まないため、これが無いと count=null (パース不能) に落ちる。5 分ごとの
+ * 空振りが「件数不明の発火」として履歴に積まれてしまうので、0 として扱う。
  */
-const TICKET_ID_CANDIDATE =
-  /(?<![\w./-])([A-Za-z][A-Za-z0-9_]*-[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)*)(?![\w-])/g;
+const RECLAIM_ZERO_PATTERNS: readonly RegExp[] = [
+  /no\s+stale\s+leases/i,
+  /nothing\s+to\s+reclaim/i,
+];
 
+/** 行頭の装飾 (`✓` / `-` / `*` / `•` など) と、トークン前後の記号 */
+const LEADING_DECORATION = /^[^\p{L}\p{N}_]+/u;
+const SURROUNDING_PUNCTUATION = /^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu;
+
+/**
+ * 回収されたチケットIDを行ごとに拾う。
+ *
+ * 実出力はこの形:
+ * ```
+ * ✓ Reclaimed 2 stale-lease issue(s):
+ *   bd-reclaim-probe-37y (was held by Takumi Oda)
+ * ```
+ * ID は必ず**行頭の最初のトークン**に来る。行全体を舐めると見出し行の
+ * `stale-lease` や `(was held by agent-x)` の担当者名まで `isTicketId` を通って
+ * しまうので、正規表現で ID の形を作るのではなく「行頭トークンだけを候補にする」
+ * 方式にしている。
+ */
 function extractTicketIds(text: string): readonly TicketId[] {
-  const pattern = new RegExp(TICKET_ID_CANDIDATE.source, TICKET_ID_CANDIDATE.flags);
   const seen = new Set<TicketId>();
   const ids: TicketId[] = [];
 
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text)) !== null) {
-    const candidate = match[1];
-    if (candidate === undefined || seen.has(candidate) || !isTicketId(candidate)) {
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim().replace(LEADING_DECORATION, '');
+    const head = line.split(/[\s()]+/)[0] ?? '';
+    const candidate = head.replace(SURROUNDING_PUNCTUATION, '');
+    if (candidate.length === 0 || seen.has(candidate) || !isTicketId(candidate)) {
       continue;
     }
     seen.add(candidate);
@@ -67,6 +86,10 @@ export function parseReclaimStdout(stdout: string): ParsedReclaimOutput {
         return { count: parsed, summary, ticketIds };
       }
     }
+  }
+
+  if (RECLAIM_ZERO_PATTERNS.some((pattern) => pattern.test(summary))) {
+    return { count: 0, summary, ticketIds };
   }
 
   return { count: null, summary, ticketIds };

@@ -654,7 +654,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       ...(projectIds !== undefined ? { projectIds } : {}),
       weeks,
       ...(history !== undefined
-        ? { reclaimRuns: history.list(), reclaimSince: history.startedAt }
+        ? {
+            reclaimRuns: history.list(),
+            reclaimSince: history.since(),
+            reclaimUnparsedRunCount: history.unparsedRunCount(),
+          }
         : {}),
     });
     return c.json(toHarnessKpiDto(stats));

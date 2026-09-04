@@ -37,7 +37,11 @@ function makeHarnessKpi(overrides?: Partial<HarnessKpiDto>): HarnessKpiDto {
     rangeEnd: '2026-08-18T15:00:00.000Z',
     pendingDecisionDwell: {
       closedCount: 4,
+      closedGateCount: 3,
+      closedWorkCount: 1,
       openCount: 2,
+      openGateCount: 1,
+      openWorkCount: 1,
       medianMs: 2 * 60 * 60_000,
       p90Ms: 30 * 60 * 60_000,
       anchor: 'created',
@@ -51,6 +55,7 @@ function makeHarnessKpi(overrides?: Partial<HarnessKpiDto>): HarnessKpiDto {
       reclaimedThenInProgressRate: 0.25,
       windowMs: 30 * 60_000,
       since: '2026-08-18T00:00:00.000Z',
+      unparsedRunCount: 0,
     },
     harnessLabeled: { matchedCount: 3, totalCount: 8, rate: 0.375 },
     duplicateMention: { matchedCount: 2, totalCount: 8, rate: 0.25 },
@@ -177,7 +182,9 @@ describe('ThroughputStats', () => {
     renderThroughputStats();
 
     const panel = await screen.findByLabelText('ハーネスKPI');
-    expect(within(panel).getByText('確認待ちの滞留 (中央値 / p90)')).toBeInTheDocument();
+    expect(
+      within(panel).getByText('確認待ちのままクローズしたチケットの滞留 (中央値 / p90)'),
+    ).toBeInTheDocument();
     expect(within(panel).getByText('2.0時間 / 1.3日')).toBeInTheDocument();
     expect(within(panel).getByText('4回 / 25.0%')).toBeInTheDocument();
     expect(within(panel).getByText('3件 / 8件 (37.5%)')).toBeInTheDocument();
@@ -193,6 +200,56 @@ describe('ThroughputStats', () => {
     expect(panel).toHaveTextContent('作成時刻を起点');
     expect(panel).toHaveTextContent('保存されません');
     expect(panel).toHaveTextContent('粗い指標');
+    expect(panel).toHaveTextContent('代理指標');
+  });
+
+  it('breaks the pending-decision counts down into gate and work tickets', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(panel).toHaveTextContent('クローズ 4件 (gate 3 / 作業 1)');
+    expect(panel).toHaveTextContent('未回答 2件 (gate 1 / 作業 1、期間によらず現在値)');
+    // 回答時に human ラベルだけ外した作業チケットが母数に入らないことを明記する。
+    expect(panel).toHaveTextContent('human ラベルだけを外した作業チケット');
+  });
+
+  it('notes reclaim runs that were dropped because the output was unreadable', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockResolvedValue(
+      makeHarnessKpi({
+        reclaim: {
+          runCount: 1,
+          reclaimedCountTotal: 1,
+          unknownCountRunCount: 0,
+          identifiedTicketCount: 1,
+          reclaimedThenInProgressCount: 0,
+          reclaimedThenInProgressRate: 0,
+          windowMs: 30 * 60_000,
+          since: '2026-08-18T00:00:00.000Z',
+          unparsedRunCount: 3,
+        },
+      }),
+    );
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(panel).toHaveTextContent('出力を読めず除外した実行 3回');
+  });
+
+  it('degrades only the harness KPI block when its request fails', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockRejectedValue(new Error('KPI ダウン'));
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(await within(panel).findByText('KPI ダウン')).toBeInTheDocument();
+    // 統計タブの他のブロックは生き残る。
+    expect(await screen.findByLabelText('モデル別実績')).toBeInTheDocument();
+    expect(screen.getByText('全体')).toBeInTheDocument();
   });
 
   it('shows a dash instead of a rate when the harness KPI has no samples', async () => {
@@ -201,7 +258,11 @@ describe('ThroughputStats', () => {
       makeHarnessKpi({
         pendingDecisionDwell: {
           closedCount: 0,
+          closedGateCount: 0,
+          closedWorkCount: 0,
           openCount: 0,
+          openGateCount: 0,
+          openWorkCount: 0,
           medianMs: null,
           p90Ms: null,
           anchor: 'created',
@@ -215,6 +276,7 @@ describe('ThroughputStats', () => {
           reclaimedThenInProgressRate: null,
           windowMs: 30 * 60_000,
           since: null,
+          unparsedRunCount: 0,
         },
         harnessLabeled: { matchedCount: 0, totalCount: 0, rate: null },
         duplicateMention: { matchedCount: 0, totalCount: 0, rate: null },

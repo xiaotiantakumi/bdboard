@@ -17,23 +17,25 @@ export interface GetHarnessKpiOptions {
   readonly reclaimRuns?: readonly ReclaimRunRecord[];
   /** reclaim 記録を始めた時刻 (= サーバー起動時刻)。永続化しないので UI に注記する */
   readonly reclaimSince?: Date;
+  /** 出力を読めず履歴に積めなかった reclaim 実行の回数 */
+  readonly reclaimUnparsedRunCount?: number;
 }
 
 export interface HarnessKpiStats {
   readonly kpi: HarnessKpi;
   readonly reclaimSince: Date | null;
+  readonly reclaimUnparsedRunCount: number;
 }
 
 const DEFAULT_WEEKS = 8;
 
 function collectTickets(
   cache: BoardCache,
-  projectIdFilter?: readonly string[],
+  projectIdFilter?: ReadonlySet<string>,
 ): readonly Ticket[] {
   let entries = cache.listProjects();
   if (projectIdFilter !== undefined) {
-    const filterSet = new Set(projectIdFilter);
-    entries = entries.filter((entry) => filterSet.has(entry.project.id));
+    entries = entries.filter((entry) => projectIdFilter.has(entry.project.id));
   }
 
   const tickets: Ticket[] = [];
@@ -41,6 +43,21 @@ function collectTickets(
     tickets.push(...entry.tickets);
   }
   return tickets;
+}
+
+/**
+ * reclaim 実行にもチケットと同じプロジェクト絞り込みを掛ける。ここを通さないと、
+ * 「プロジェクト A だけ」を選んでいるのに B の reclaim 発火が発火回数に混ざり、
+ * しかも ID 突き合わせは A のチケットとしか行われないので率まで狂う。
+ */
+function filterReclaimRuns(
+  runs: readonly ReclaimRunRecord[],
+  projectIdFilter?: ReadonlySet<string>,
+): readonly ReclaimRunRecord[] {
+  if (projectIdFilter === undefined) {
+    return runs;
+  }
+  return runs.filter((run) => projectIdFilter.has(run.projectId));
 }
 
 /**
@@ -60,15 +77,20 @@ export function getHarnessKpi(
   const timeZone = options?.timeZone ?? getBoardTimeZone();
   const weekStarts = buildWeekStarts(now, weeks, timeZone);
   const rangeStart = weekStarts[0] ?? now;
+  const projectIdFilter =
+    options?.projectIds !== undefined ? new Set(options.projectIds) : undefined;
 
   const kpi = computeHarnessKpi({
-    tickets: collectTickets(cache, options?.projectIds),
+    tickets: collectTickets(cache, projectIdFilter),
     range: { start: rangeStart, end: now },
-    ...(options?.reclaimRuns !== undefined ? { reclaimRuns: options.reclaimRuns } : {}),
+    ...(options?.reclaimRuns !== undefined
+      ? { reclaimRuns: filterReclaimRuns(options.reclaimRuns, projectIdFilter) }
+      : {}),
   });
 
   return {
     kpi,
     reclaimSince: options?.reclaimSince ?? null,
+    reclaimUnparsedRunCount: options?.reclaimUnparsedRunCount ?? 0,
   };
 }
