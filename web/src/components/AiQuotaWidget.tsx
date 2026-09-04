@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { fetchAiQuota, type AiQuotaMetricDto, type AiQuotaProviderDto } from '../api';
 import { getBoardTimeZone } from '../boardTimeZone';
+import { usePopoverViewportClamp } from '../hooks/usePopoverViewportClamp';
 import { useExclusivePopover } from './PopoverCoordinator';
 
 const AI_QUOTA_QUERY_KEY = ['ai-quota'] as const;
@@ -165,6 +166,7 @@ function badgeClassName(maxUsagePercent: number, isExhausted: boolean): string {
 export function AiQuotaWidget() {
   const [popoverOpen, setPopoverOpen] = useState(false);
   const containerRef = useExclusivePopover('ai-quota', popoverOpen, setPopoverOpen);
+  const popoverRef = usePopoverViewportClamp<HTMLDivElement>(popoverOpen);
 
   const query = useQuery({
     queryKey: AI_QUOTA_QUERY_KEY,
@@ -210,7 +212,12 @@ export function AiQuotaWidget() {
       </button>
 
       {popoverOpen && (
-        <div className="ai-quota-popover" role="region" aria-label="AIクォータ詳細">
+        <div
+          ref={popoverRef}
+          className="ai-quota-popover"
+          role="region"
+          aria-label="AIクォータ詳細"
+        >
           {liveProviders.map((provider) => (
             <ProviderChips key={provider.id} provider={provider} />
           ))}
