@@ -258,12 +258,17 @@ export function createCodexSpec(options: CodexSpecOptions): CliChatAgentSpec {
     envAllowlist: CODEX_ENV_ALLOWLIST,
     versionArgs: ['--version'],
     authProbe: {
+      // 2026-09-05 実測 (codex-cli 0.153.2): `codex login status` は stdout ではなく stderr
+      // に結果を書く。ログイン済みは exit 0 + stderr `Logged in using ChatGPT`、未ログインは
+      // exit 1 + stderr `Not logged in` — どちらも stdout は空。判定は stdout/stderr を連結して
+      // 行う (agy-spec.ts の authProbe と同型)。また `'not logged in'` は `'logged in'` を部分文字列
+      // として含むため、否定形を先に評価しないと未ログインが available と誤判定される。
       args: ['login', 'status'],
       interpret(result: CommandResult): ChatAgentAvailability {
         if (result.failureKind === 'timeout') return 'unknown';
-        const text = result.stdout.toLowerCase();
-        if (text.includes('logged in')) return 'available';
+        const text = `${result.stdout}\n${result.stderr}`.toLowerCase();
         if (text.includes('not logged in') || text.includes('logged out') || text.includes('no credentials')) return 'unavailable';
+        if (text.includes('logged in')) return 'available';
         return 'unknown';
       },
     },

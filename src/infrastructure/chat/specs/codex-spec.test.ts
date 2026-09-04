@@ -242,5 +242,8 @@ describe('createCodexSpec parseTurn and authProbe', () => {
     expect(spec.authProbe!.interpret({ stdout: 'Logged in using ChatGPT', stderr: '', exitCode: 0 })).toBe('available');
     expect(spec.authProbe!.interpret({ stdout: '', stderr: '', exitCode: 1, failureKind: 'timeout' })).toBe('unknown');
     expect(spec.authProbe!.interpret({ stdout: 'maybe', stderr: '', exitCode: 1 })).toBe('unknown');
+    // 2026-09-05 実測形: codex はメッセージを stderr に書き、stdout は空。
+    expect(spec.authProbe!.interpret({ stdout: '', stderr: 'Not logged in', exitCode: 1 })).toBe('unavailable');
+    expect(spec.authProbe!.interpret({ stdout: '', stderr: 'Logged in using ChatGPT', exitCode: 0 })).toBe('available');
   });
 });
