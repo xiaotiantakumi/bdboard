@@ -17,9 +17,21 @@ import { parser } from '@conventional-commits/parser';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-/** 0.1.2 のリリースブランチへ手で 1 行足して回復済み (c8a94d4)。最終タグ v0.1.1 時点では
- *  15651d3 は v0.1.1..main に居る。v0.1.2 タグ後は範囲外になるのでエントリ削除可。 */
-export const KNOWN_UNPARSABLE = ['15651d3fe4e3f99e9caf4d39a805ad6fd1e35a40'];
+/**
+ * 解析不能と分かっているコミットの除外リスト。**既定は空にしておく。**
+ *
+ * 検査範囲は `v<last>..HEAD` なので、解析不能コミットは次のリリースタグを切った時点で
+ * 自動的に範囲外になる。つまりこのリストが要るのは「解析不能コミットが main に載って
+ * しまい、次のタグを切るまでの間、毎回の main push が赤くなる」という一時的な状況だけ。
+ *
+ * 発端の 15651d3 (bdboard-r5we) は v0.1.2 のタグ (f2662b6) が切られて範囲外になったため
+ * 削除した。CHANGELOG の行はリリースブランチへ手で足して回復済み (c8a94d4)。
+ *
+ * **エントリを足すときの条件**: 先に CHANGELOG へ該当行を手で復元すること。復元せずに
+ * 除外だけすると、このガードが検知しようとしている「CHANGELOG から黙って消える」事象を
+ * 自分で起こすことになる。足す場合は理由と、いつ消せるようになるかをコメントで残す。
+ */
+export const KNOWN_UNPARSABLE = [];
 
 const CHANGELOG_TYPES = new Set(['feat', 'fix', 'perf', 'revert', 'deps']);
 const CONVENTIONAL_SUBJECT =

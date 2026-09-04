@@ -102,8 +102,11 @@ describe('findUnparsableCommits', () => {
       message: unparsableMessageWithSubject('fix(bdboard-r5we): summary'),
     };
 
+    // 除外の仕組みそのものを見るテストなので、本番の KNOWN_UNPARSABLE ではなく
+    // リテラルを渡す。本番リストの中身に結び付けると、リストを空にした瞬間に
+    // 仕組みのテストまで落ちてしまう。
     const result = findUnparsableCommits([unparsableFix, unparsableChore, allowlisted], {
-      allowlist: KNOWN_UNPARSABLE,
+      allowlist: [allowlisted.sha],
     });
 
     expect(result.failures).toHaveLength(1);
@@ -118,6 +121,14 @@ describe('findUnparsableCommits', () => {
     });
     expect(shortAllowlist.excluded).toHaveLength(1);
     expect(shortAllowlist.failures).toHaveLength(0);
+  });
+
+  it('keeps the production allowlist empty', () => {
+    // このガードは「CHANGELOG から黙って消える」ことを検知するためのもので、
+    // 除外リストはその検知を無効化する唯一の手段。既定で空であることを固定して、
+    // エントリの追加が必ず意図的な変更(とレビュー)を伴うようにする。
+    // 足す前に CHANGELOG へ該当行を復元すること — 詳細は KNOWN_UNPARSABLE のコメント。
+    expect(KNOWN_UNPARSABLE).toEqual([]);
   });
 
   it('ignores allowlist entries shorter than 7 characters', () => {
