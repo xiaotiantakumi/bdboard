@@ -1665,13 +1665,33 @@ export interface ProjectHarnessPackStatusDto {
   drift: boolean;
 }
 
+export type HarnessPrFlowDto = 'pr' | 'direct' | 'none';
+
+/**
+ * 注入先プロジェクトの検証コントラクト (`.claude/bdboard-harness.json`) の状態。
+ * `not-applicable` はパック未注入のプロジェクト — UI には何も出さない。
+ */
+export type ProjectHarnessContractDto =
+  | {
+      state: 'ok';
+      verify: string;
+      prFlow: HarnessPrFlowDto;
+      mainBranch: string;
+    }
+  | { state: 'missing' }
+  | { state: 'invalid'; message: string }
+  | { state: 'command-missing'; script: string; verify: string }
+  | { state: 'not-applicable' };
+
 export interface ProjectHarnessStatusDto {
   packs: ProjectHarnessPackStatusDto[];
+  contract: ProjectHarnessContractDto;
 }
 
 export interface ProjectHarnessStatusEntryDto {
   projectId: string;
   packs: ProjectHarnessPackStatusDto[];
+  contract: ProjectHarnessContractDto;
 }
 
 export interface AllHarnessStatusDto {

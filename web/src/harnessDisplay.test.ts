@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import type { ProjectHarnessPackStatusDto } from './api';
+import type {
+  ProjectHarnessContractDto,
+  ProjectHarnessPackStatusDto,
+} from './api';
 import {
   buildHarnessDriftMessage,
   buildHarnessInjectSuccessMessage,
+  formatHarnessContractDetail,
+  formatHarnessContractLabel,
   formatHarnessPackStatusLabel,
+  harnessContractNeedsAttention,
   harnessInjectButtonLabel,
   harnessPackNeedsAction,
 } from './harnessDisplay';
@@ -60,5 +66,66 @@ describe('harnessDisplay', () => {
         makePack({ installedVersion: '0.1.0', drift: true }),
       ),
     ).toBe('ハーネス bdboard-harness を v0.2.0 に更新しました');
+  });
+});
+
+describe('harness contract display', () => {
+  const contracts: Record<string, ProjectHarnessContractDto> = {
+    ok: {
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'main',
+    },
+    missing: { state: 'missing' },
+    invalid: { state: 'invalid', message: 'verify は空でない文字列である必要があります' },
+    commandMissing: {
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    },
+    notApplicable: { state: 'not-applicable' },
+  };
+
+  it('treats missing / invalid / command-missing as problems', () => {
+    expect(harnessContractNeedsAttention(contracts.missing!)).toBe(true);
+    expect(harnessContractNeedsAttention(contracts.invalid!)).toBe(true);
+    expect(harnessContractNeedsAttention(contracts.commandMissing!)).toBe(true);
+  });
+
+  it('does not warn for ok or for uninjected projects', () => {
+    expect(harnessContractNeedsAttention(contracts.ok!)).toBe(false);
+    expect(harnessContractNeedsAttention(contracts.notApplicable!)).toBe(false);
+  });
+
+  it('renders nothing at all for uninjected projects', () => {
+    expect(formatHarnessContractLabel(contracts.notApplicable!)).toBeNull();
+    expect(formatHarnessContractDetail(contracts.notApplicable!)).toBeNull();
+  });
+
+  it('keeps badge labels short and puts the detail in the tooltip', () => {
+    expect(formatHarnessContractLabel(contracts.missing!)).toBe('検証ループ未定義');
+    expect(formatHarnessContractDetail(contracts.missing!)).toContain(
+      '.claude/bdboard-harness.json',
+    );
+
+    expect(formatHarnessContractLabel(contracts.invalid!)).toBe('検証コントラクト不正');
+    expect(formatHarnessContractDetail(contracts.invalid!)).toContain(
+      'verify は空でない文字列である必要があります',
+    );
+
+    expect(formatHarnessContractLabel(contracts.commandMissing!)).toBe(
+      '検証コマンド未定義',
+    );
+    expect(formatHarnessContractDetail(contracts.commandMissing!)).toContain(
+      'npm script verify が無い',
+    );
+  });
+
+  it('shows what actually runs when the contract is ok', () => {
+    expect(formatHarnessContractLabel(contracts.ok!)).toBe('検証: npm run verify');
+    expect(formatHarnessContractDetail(contracts.ok!)).toBe(
+      '検証: npm run verify / PR 必須 / main: main',
+    );
   });
 });

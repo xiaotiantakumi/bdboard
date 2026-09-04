@@ -93,8 +93,22 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `WorktreeProvisioner` | `GitWorktreeProvisioner` | エージェント実行用 worktree の作成と、マージ済み生成物の安全な回収 |
 | `AgentRunConfigPort` | `FileAgentRunConfigStore`(`createFileAgentRunConfigStore`) | エージェント実行設定(リモート許可トグル等)の永続化 |
 | `AgentRunner` | `ClaudeSpawnRunner` / `ClaudeResumeRunner` / `DisabledRunner` 等 | エージェント起動(`POST /api/runs` の1経路のみ。`agent-run-guard` 必須) |
+| `PackRegistryPort` / `HarnessInjectorPort` | `FsPackRegistry` / `FsHarnessInjector` | ハーネスパックの一覧と、注入先 `.claude/` への書き込み |
+| `HarnessContractReaderPort` | `FsHarnessContractReader` | 注入先の検証コントラクトと `package.json` の scripts 読み取り |
 
 各ポートのフルインターフェースは `src/application/ports/*.ts` を参照。
+
+### ハーネスの検証コントラクト
+
+注入先プロジェクトは `.claude/bdboard-harness.json` に「フル検証コマンド(`verify`)・
+git 運用(`prFlow`)・メインブランチ(`mainBranch`)」を宣言する。`.claude/` 配下に置くのは
+注入 API のパストラバーサルガード `resolveUnderClaudeDir` の内側に収めるため。パースと
+判定は `src/domain/harness-contract.ts`(純粋関数。`parseHarnessContract` /
+`evaluateContractState`)、fs アクセスは `HarnessContractReaderPort` の実装に閉じてあり、
+`ProjectHarnessStatus.contract` としてパックの導入状況と同じ経路で UI まで運ばれる。
+**判定対象はパックを注入済みのプロジェクトだけ**で、未注入は `not-applicable` になり
+一切表示しない — bd 運用プロジェクトの多くは未注入なので、そこへ一斉に警告を出すと
+ボード健全性が無視される警告で埋まる(bdboard-pkr6.3)。
 
 ## データフロー: bd CLI → キャッシュ → SSE → UI
 

@@ -87,6 +87,8 @@ const postTicketQuickActionMock = vi.mocked(postTicketQuickAction);
 const postTicketQuickActionUndoMock = vi.mocked(postTicketQuickActionUndo);
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
 
+const NOT_APPLICABLE_CONTRACT = { state: 'not-applicable' } as const;
+
 function makeIssue(
   overrides: Partial<HygieneIssueDto> & Pick<HygieneIssueDto, 'ticketId' | 'kind'>,
 ): HygieneIssueDto {
@@ -1183,6 +1185,7 @@ describe('HygienePanel repair actions', () => {
       projects: [
         {
           projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'bdboard-harness',
@@ -1195,6 +1198,7 @@ describe('HygienePanel repair actions', () => {
       ],
     });
     postProjectHarnessInjectMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
       packs: [
         {
           name: 'bdboard-harness',
@@ -1229,6 +1233,7 @@ describe('HygienePanel repair actions', () => {
       projects: [
         {
           projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'bdboard-harness',
@@ -1253,6 +1258,7 @@ describe('HygienePanel repair actions', () => {
       projects: [
         {
           projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'bdboard-harness',
@@ -1286,6 +1292,7 @@ describe('HygienePanel repair actions', () => {
       projects: [
         {
           projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'bdboard-harness',
@@ -1297,6 +1304,7 @@ describe('HygienePanel repair actions', () => {
         },
         {
           projectId: '/tmp/proj-b',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'other-pack',
@@ -1323,6 +1331,7 @@ describe('HygienePanel repair actions', () => {
       projects: [
         {
           projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'bdboard-harness',
@@ -1334,6 +1343,7 @@ describe('HygienePanel repair actions', () => {
         },
         {
           projectId: '/tmp/proj-b',
+          contract: NOT_APPLICABLE_CONTRACT,
           packs: [
             {
               name: 'other-pack',
@@ -1354,5 +1364,84 @@ describe('HygienePanel repair actions', () => {
     expect(
       screen.getByText('other-pack: v0.1.0 → v0.3.0 に更新が必要です'),
     ).toBeInTheDocument();
+  });
+  it('shows 検証ループ未定義 for an injected project with no contract file', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: { state: 'missing' },
+          packs: [
+            {
+              name: 'bdboard-harness',
+              availableVersion: '0.2.0',
+              installedVersion: '0.2.0',
+              drift: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('検証コントラクト')).toBeInTheDocument();
+    expect(screen.getByText('検証ループ未定義')).toBeInTheDocument();
+    expect(
+      screen.getByText(/\.claude\/bdboard-harness\.json/),
+    ).toBeInTheDocument();
+  });
+
+  it('spells out an invalid contract and a missing npm script', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: { state: 'invalid', message: 'prFlow は pr / direct / none のいずれかである必要があります' },
+          packs: [],
+        },
+        {
+          projectId: '/tmp/proj-b',
+          contract: { state: 'command-missing', script: 'verify', verify: 'npm run verify' },
+          packs: [],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: [] });
+
+    expect(await screen.findByText('検証コントラクト不正')).toBeInTheDocument();
+    expect(screen.getByText('検証コマンド未定義')).toBeInTheDocument();
+    expect(
+      screen.getByText(/npm script verify が無い/),
+    ).toBeInTheDocument();
+  });
+
+  it('does not warn about the contract for uninjected projects', async () => {
+    // 未注入 9 プロジェクトが一斉に警告になるのを避ける (bdboard-pkr6.3)。
+    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: NOT_APPLICABLE_CONTRACT,
+          packs: [
+            {
+              name: 'bdboard-harness',
+              availableVersion: '0.2.0',
+              installedVersion: null,
+              drift: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('警告はありません')).toBeInTheDocument();
+    expect(screen.queryByText('検証コントラクト')).not.toBeInTheDocument();
   });
 });

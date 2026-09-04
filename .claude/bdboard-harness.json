@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "verify": "npm run verify",
+  "prFlow": "pr",
+  "mainBranch": "main",
+  "hooks": {
+    "denyBashPatterns": ["\\bnpm run verify:steps\\b"],
+    "denyBashMessages": [
+      "verify:steps はラッパー内部の入口です。npm run verify を使ってください（スロットとプロセスグループ kill を素通りします）"
+    ]
+  }
+}

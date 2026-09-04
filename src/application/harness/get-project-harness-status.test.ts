@@ -1,6 +1,38 @@
-import { describe, expect, it } from 'vitest';
-import { getProjectHarnessStatus } from './get-project-harness-status.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  getProjectHarnessStatus,
+  resolveProjectContractState,
+} from './get-project-harness-status.js';
+import type { ContractState } from '../../domain/harness-contract.js';
+import type { HarnessManifest } from '../../domain/harness-pack.js';
+import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
+
+const NOT_APPLICABLE: ContractState = { state: 'not-applicable' };
+
+const INJECTED_MANIFEST: HarnessManifest = {
+  packs: [
+    {
+      name: 'bdboard-harness',
+      version: '0.1.0',
+      injectedAt: '2026-09-04T00:00:00.000Z',
+      files: [],
+    },
+  ],
+};
+
+function fakeContractReader(options: {
+  readonly contract?: string | null;
+  readonly scriptsByPath?: Readonly<Record<string, readonly string[] | null>>;
+}): HarnessContractReaderPort {
+  return {
+    readContract: vi.fn(async () => options.contract ?? null),
+    readPackageScripts: vi.fn(
+      async (packageRootPath: string) =>
+        options.scriptsByPath?.[packageRootPath] ?? null,
+    ),
+  };
+}
 
 function fakeRegistry(
   packs: readonly { name: string; version: string; description?: string }[],
@@ -42,6 +74,7 @@ describe('getProjectHarnessStatus', () => {
           },
         ],
       },
+      NOT_APPLICABLE,
     );
 
     expect(status.packs).toEqual([
@@ -67,6 +100,7 @@ describe('getProjectHarnessStatus', () => {
           },
         ],
       },
+      NOT_APPLICABLE,
     );
 
     expect(status.packs[0]?.drift).toBe(false);
@@ -86,6 +120,7 @@ describe('getProjectHarnessStatus', () => {
           },
         ],
       },
+      NOT_APPLICABLE,
     );
 
     expect(status.packs).toEqual([
@@ -114,6 +149,7 @@ describe('getProjectHarnessStatus', () => {
           },
         ],
       },
+      NOT_APPLICABLE,
     );
 
     expect(status.packs).toEqual([
@@ -130,5 +166,119 @@ describe('getProjectHarnessStatus', () => {
         drift: true,
       },
     ]);
+  });
+});
+
+describe('resolveProjectContractState', () => {
+  it('returns not-applicable for a project with no injected pack, without touching the disk', async () => {
+    const reader = fakeContractReader({ contract: '{"version":1}' });
+
+    const state = await resolveProjectContractState(reader, '/tmp/proj', {
+      packs: [],
+    });
+
+    expect(state).toEqual({ state: 'not-applicable' });
+    expect(reader.readContract).not.toHaveBeenCalled();
+    expect(reader.readPackageScripts).not.toHaveBeenCalled();
+  });
+
+  it('returns missing when an injected project has no contract file', async () => {
+    const reader = fakeContractReader({ contract: null });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state).toEqual({ state: 'missing' });
+    expect(reader.readPackageScripts).not.toHaveBeenCalled();
+  });
+
+  it('returns invalid for a broken contract file', async () => {
+    const reader = fakeContractReader({ contract: '{ broken' });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state.state).toBe('invalid');
+  });
+
+  it('returns ok when the declared npm script exists in the project package.json', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({ version: 1, verify: 'npm run verify', prFlow: 'pr' }),
+      scriptsByPath: { '/tmp/proj': ['verify'] },
+    });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state).toEqual({
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'main',
+    });
+    expect(reader.readPackageScripts).toHaveBeenCalledWith('/tmp/proj');
+  });
+
+  it('reads the package.json of the --prefix directory', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({
+        version: 1,
+        verify: 'npm --prefix web run build:web',
+        prFlow: 'pr',
+      }),
+      scriptsByPath: { '/tmp/proj/web': ['build:web'] },
+    });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(reader.readPackageScripts).toHaveBeenCalledWith('/tmp/proj/web');
+    expect(state.state).toBe('ok');
+  });
+
+  it('returns command-missing when the declared npm script is absent', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({ version: 1, verify: 'npm run verify', prFlow: 'pr' }),
+      scriptsByPath: { '/tmp/proj': ['build'] },
+    });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state).toEqual({
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    });
+  });
+
+  it('does not read a package.json for a non-npm verify command', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({ version: 1, verify: 'make verify', prFlow: 'direct' }),
+    });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state.state).toBe('ok');
+    expect(reader.readPackageScripts).not.toHaveBeenCalled();
   });
 });

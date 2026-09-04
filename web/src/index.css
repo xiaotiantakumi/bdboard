@@ -1595,6 +1595,11 @@ body {
   color: #8944ab;
 }
 
+.hygiene-kind-harness_contract {
+  background: rgba(0, 122, 255, 0.14);
+  color: #0a4fa0;
+}
+
 .hygiene-kind-stale_lease {
   background: rgba(255, 59, 48, 0.12);
   color: #d70015;
@@ -2363,6 +2368,21 @@ body {
 
 .project-harness-status-ok {
   color: var(--color-text-secondary);
+}
+
+.project-harness-contract {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  font-size: 0.6875rem;
+  color: var(--color-text-secondary);
+}
+
+.project-harness-contract-warn {
+  color: var(--badge-stalled-fg);
+  font-weight: 600;
 }
 
 .project-harness-action {

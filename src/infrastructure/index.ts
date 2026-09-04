@@ -29,6 +29,7 @@ export * from './fs/ai-quota-alert-config-store.js';
 export * from './fs/node-file-system.js';
 export * from './harness/fs-pack-registry.js';
 export * from './harness/fs-harness-injector.js';
+export * from './harness/fs-harness-contract-reader.js';
 export * from './process/cloudflared-tunnel.js';
 export * from './net/github-release-source.js';
 export * from './process/node-command-runner.js';
