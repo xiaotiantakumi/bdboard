@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { RunRequest } from '../../application/ports/agent-runner.js';
-import { DEFAULT_ALLOWED_TOOLS, DENIED_TOOLS } from './claude-runner.js';
+import {
+  DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_SETTING_SOURCES,
+  DENIED_TOOLS,
+} from './claude-runner.js';
 import { createClaudeSpawnRunner } from './claude-spawn-runner.js';
 
 function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
@@ -41,7 +45,7 @@ describe('createClaudeSpawnRunner', () => {
     expect(outcome.run.status).toBe('failed');
     expect(outcome.run.runner).toBe('claude-spawn');
     expect(outcome.error).toContain(
-      `would run: claude -p --permission-mode default --allowedTools ${DEFAULT_WOULD_RUN_TOOLS} -- hello`,
+      `would run: claude -p --permission-mode default --setting-sources ${DEFAULT_SETTING_SOURCES} --allowedTools ${DEFAULT_WOULD_RUN_TOOLS} -- hello`,
     );
   });
 
@@ -52,7 +56,7 @@ describe('createClaudeSpawnRunner', () => {
     const outcome = await runner.dispatch(makeRequest({ mode: 'spawn' }));
 
     expect(outcome.error).toContain(
-      `would run: /opt/wrappers/claude --permission-mode default --allowedTools ${DEFAULT_WOULD_RUN_TOOLS}`,
+      `would run: /opt/wrappers/claude --permission-mode default --setting-sources ${DEFAULT_SETTING_SOURCES} --allowedTools ${DEFAULT_WOULD_RUN_TOOLS}`,
     );
   });
 });

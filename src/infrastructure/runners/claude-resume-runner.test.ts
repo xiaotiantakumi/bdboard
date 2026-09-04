@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { RunRequest } from '../../application/ports/agent-runner.js';
-import { DEFAULT_ALLOWED_TOOLS, DENIED_TOOLS } from './claude-runner.js';
+import {
+  DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_SETTING_SOURCES,
+  DENIED_TOOLS,
+} from './claude-runner.js';
 import { createClaudeResumeRunner } from './claude-resume-runner.js';
 
 function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
@@ -43,7 +47,7 @@ describe('createClaudeResumeRunner', () => {
     expect(outcome.run.runner).toBe('claude-resume');
     expect(outcome.run.sessionId).toBe('sess-1');
     expect(outcome.error).toContain(
-      `would run: claude --resume sess-1 --permission-mode default --allowedTools ${DEFAULT_WOULD_RUN_TOOLS} -- continue`,
+      `would run: claude --resume sess-1 --permission-mode default --setting-sources ${DEFAULT_SETTING_SOURCES} --allowedTools ${DEFAULT_WOULD_RUN_TOOLS} -- continue`,
     );
   });
 
@@ -68,7 +72,7 @@ describe('createClaudeResumeRunner', () => {
     );
 
     expect(outcome.error).toContain(
-      `would run: /opt/wrappers/claude --resume sess-1 --permission-mode default --allowedTools ${DEFAULT_WOULD_RUN_TOOLS}`,
+      `would run: /opt/wrappers/claude --resume sess-1 --permission-mode default --setting-sources ${DEFAULT_SETTING_SOURCES} --allowedTools ${DEFAULT_WOULD_RUN_TOOLS}`,
     );
   });
 });
