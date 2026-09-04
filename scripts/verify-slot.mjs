@@ -5,7 +5,7 @@
 // vitest ワーカーキャップ (bdboard-255) だけでは投入本数が増えると同じ状態に戻るため、
 // 同時実行本数そのものに上限 (既定2) を設ける。
 //
-// 設計 (bd merge-slot との対比。詳細は AGENTS.md「Verify slots」と bdboard-d48 notes):
+// 設計 (bd merge-slot との対比。詳細は docs/VERIFY.md「Verify slots」と bdboard-d48 notes):
 // - merge-slot は「別コマンドを手順どおり叩く」純協調ロックで、実際に効くのは協力
 //   不要のマージ直前 CAS だった。verify は全セッションの正規入口が `npm run verify`
 //   (scripts/verify.mjs) の一本なので、ロックを入口自体に内蔵する。手順を覚える
@@ -47,7 +47,7 @@ function parseIntegerEnv(value) {
 }
 
 // env からの上書き。テストと緊急脱出ハッチ用であり、並列本数を増やす目的での常用は
-// しない (AGENTS.md「Verify slots」参照)。
+// しない (docs/VERIFY.md「Verify slots」参照)。
 export function envSlotOptions(env = process.env) {
   const options = {};
   const slots = parseIntegerEnv(env.BDBOARD_VERIFY_SLOTS);

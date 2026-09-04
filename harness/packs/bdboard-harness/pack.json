@@ -1,6 +1,6 @@
 {
   "name": "bdboard-harness",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "bd(Beads)運用プロジェクト向けの自律作業規律パック。並列セッションの排他(worktree-first)、lease/heartbeatによる放棄検知、確認待ちのノンブロッキング化(bd human レーン + human gate)、per-ticket worktree+PRフローとマージ排他、そしてハーネス失敗の学習ループ(failure-catalog照合・brushupプロトコル・多層ハーネスの層判定と harness-upstream 還流)の規律を skill として配布する。",
   "hooks": [
     {
