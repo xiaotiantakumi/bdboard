@@ -123,7 +123,10 @@ import { createRunStore } from './application/runner/run-store.js';
 import { createAgentRunnerRegistry } from './application/runner/runner-registry.js';
 import { resolveAllowRemoteAgentRuns } from './domain/agent-run-policy.js';
 import { createFileAgentRunConfigStore } from './infrastructure/fs/agent-run-config-store.js';
-import { createGitWorktreeProvisioner } from './infrastructure/git/git-worktree-provisioner.js';
+import {
+  createGitWorktreeProvisioner,
+  DEFAULT_MAX_MANAGED_WORKTREES,
+} from './infrastructure/git/git-worktree-provisioner.js';
 import { createClaudeSpawnRunner } from './infrastructure/runners/claude-spawn-runner.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
@@ -1015,7 +1018,14 @@ async function main(): Promise<void> {
     maxConcurrent: envInt('BDBOARD_MAX_CONCURRENT_RUNS', 1),
     now: () => new Date(),
   });
-  const worktreeProvisioner = createGitWorktreeProvisioner({ commandRunner });
+  const worktreeProvisioner = createGitWorktreeProvisioner({
+    commandRunner,
+    ghPath,
+    maxManagedWorktrees: envInt(
+      'BDBOARD_MAX_MANAGED_WORKTREES',
+      DEFAULT_MAX_MANAGED_WORKTREES,
+    ),
+  });
 
   // bdboard-54be.1: allowRemoteAgentRuns は起動時に一度だけ読み、リクエスト毎に config を
   // 再読み込みしない。実行中のエージェントが config ファイルを書き換えた瞬間にリモート実行が

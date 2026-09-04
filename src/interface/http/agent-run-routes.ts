@@ -68,6 +68,7 @@ export interface RunSummaryDto {
 interface ResolvedTicket {
   readonly project: CachedProject['project'];
   readonly ticket: Ticket;
+  readonly cleanupEligibleTicketIds: readonly string[];
 }
 
 let runIdSequence = 0;
@@ -118,7 +119,13 @@ function findTicket(cache: BoardCache, ticketId: string): ResolvedTicket | undef
   for (const entry of cache.listProjects()) {
     const ticket = entry.tickets.find((candidate) => candidate.id === ticketId);
     if (ticket !== undefined) {
-      return { project: entry.project, ticket };
+      return {
+        project: entry.project,
+        ticket,
+        cleanupEligibleTicketIds: entry.tickets
+          .filter((candidate) => candidate.status === 'closed')
+          .map((candidate) => candidate.id),
+      };
     }
   }
   return undefined;
@@ -200,7 +207,7 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       return c.json({ error: 'ticket not found' }, 404);
     }
 
-    const { project, ticket } = resolved;
+    const { project, ticket, cleanupEligibleTicketIds } = resolved;
 
     const canStart = deps.runStore.canStart(ticketId);
     if (!canStart.ok) {
@@ -246,6 +253,13 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       provision = await deps.worktreeProvisioner.provision({
         repoRootPath: project.rootPath,
         ticketId,
+        cleanupEligibleTicketIds,
+        isTicketProtected: (candidateTicketId) =>
+          deps.runStore.list().some(
+            (record) =>
+              record.ticketId === candidateTicketId
+              && (record.status === 'running' || record.status === 'cancelling'),
+          ),
       });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -290,6 +304,9 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       }
       if (provision.reason === 'worktree-branch-mismatch') {
         return c.json({ error: provisionError, reason: 'worktree-branch-mismatch' }, 409);
+      }
+      if (provision.reason === 'worktree-limit-reached') {
+        return c.json({ error: provisionError, reason: 'worktree-limit-reached' }, 409);
       }
       return c.json({ error: provisionError }, 500);
     }

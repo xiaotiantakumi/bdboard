@@ -623,6 +623,36 @@ describe('createAgentRunRoutes', () => {
     expect(runs[0]?.status).toBe('failed');
   });
 
+  it('returns 409 when the retained agent-run worktree limit is reached', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-cap');
+
+    const runStore = createRunStore({ now: () => NOW });
+    const limitMessage =
+      'agent-run worktree limit reached (20); finish, merge, or manually remove an existing worktree before retrying';
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: false as const,
+        reason: 'worktree-limit-reached' as const,
+        message: limitMessage,
+      })),
+    });
+
+    const { app } = makeRoutes({ cache, runStore, worktreeProvisioner });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-cap')),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: limitMessage,
+      reason: 'worktree-limit-reached',
+    });
+    expect(runStore.list({ ticketId: 'bdboard-cap' })[0]?.status).toBe('failed');
+  });
+
   it('returns 500 and releases the run slot when provisioning throws', async () => {
     const cache = createFakeBoardCache();
     seedOpenTicket(cache, 'bdboard-throw');
