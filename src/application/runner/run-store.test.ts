@@ -301,26 +301,59 @@ describe('createRunStore', () => {
   });
 
   it('cancelAllAndWait resolves after timeoutMs when finish never arrives', async () => {
-    const store = createRunStore();
-    store.start(makeStartEntry('run-1', 'bdboard-1'));
+    // 実時間の上限 (elapsed < 100ms) で「ハングしない」を代弁させていたが、verify 並走時の
+    // スケジューラ遅延でそこだけが落ちていた (bdboard-oscf: 実測 196ms / 108ms)。fake timer
+    // なら本来の性質「timeoutMs を跨いで初めて解決する」を負荷非依存に、かつ元の上限より
+    // 厳密に検査できる (timeoutMs 手前で未解決であることまで見る)。
+    vi.useFakeTimers();
+    try {
+      const store = createRunStore();
+      store.start(makeStartEntry('run-1', 'bdboard-1'));
 
-    const started = Date.now();
-    await store.cancelAllAndWait(10);
-    const elapsed = Date.now() - started;
+      let settled = false;
+      const pending = store.cancelAllAndWait(10).then(() => {
+        settled = true;
+      });
 
-    expect(elapsed).toBeLessThan(100);
-    expect(store.get('run-1')?.status).toBe('cancelling');
+      // finish が来ない以上、解決経路は race の timeout 側しか無い。
+      await vi.advanceTimersByTimeAsync(9);
+      expect(settled).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(1);
+      await pending;
+      expect(settled).toBe(true);
+      expect(store.get('run-1')?.status).toBe('cancelling');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('cancelAllAndWait resolves immediately when no active runs exist', async () => {
-    const store = createRunStore();
-    store.start(makeStartEntry('run-1', 'bdboard-1'));
-    store.finish('run-1', makeOutcome('run-1', 'bdboard-1', 'succeeded'));
+    // 同上。実時間 (elapsed < 50ms) の代わりに「タイマーを1msも進めずに解決するか」で
+    // 検査する。timeout 経路を通っていれば fake timer 下では解決しないので、「1_000ms
+    // 待たない」という元の意図をより直接に表す。
+    //
+    // 検査対象は早期 return そのものではなく「待たない」という性質である点に注意。
+    // 早期 return を消しても completionPromises が空なら Promise.allSettled([]) が
+    // 即解決するので、このテストは落ちない (変異検査で確認済み)。早期 return は冗長な
+    // 最適化であって、性質を担保している唯一の経路ではない。
+    vi.useFakeTimers();
+    try {
+      const store = createRunStore();
+      store.start(makeStartEntry('run-1', 'bdboard-1'));
+      store.finish('run-1', makeOutcome('run-1', 'bdboard-1', 'succeeded'));
 
-    const started = Date.now();
-    await store.cancelAllAndWait(1_000);
-    const elapsed = Date.now() - started;
+      let settled = false;
+      const pending = store.cancelAllAndWait(1_000).then(() => {
+        settled = true;
+      });
 
-    expect(elapsed).toBeLessThan(50);
+      // 0ms 進める = マイクロタスクだけ流す。timeout(1_000ms) は発火しない。
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      await pending;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
