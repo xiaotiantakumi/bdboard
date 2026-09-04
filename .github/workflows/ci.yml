@@ -35,8 +35,41 @@ jobs:
             package-lock.json
             web/package-lock.json
 
-      - run: npm ci
-      - run: npm --prefix web ci
+      # npm ci (root) の所要時間が run ごとに 4s〜422s まで振れる不安定さが実測されている
+      # (bdboard-gofm。verify/e2e 各10run・40点を計測)。setup-node の npm パッケージ
+      # キャッシュは 20/20 run でヒットしているにもかかわらずこの振れ幅が消えないため、
+      # キャッシュのヒット/ミスでは説明がつかない (レジストリ/ネットワーク側の変動、
+      # または better-sqlite3 が prebuild-install 経由で行うネイティブバイナリ取得が
+      # 疑わしいが、既存ログの粒度では確定できない)。node_modules 自体をキャッシュし、
+      # lockfile 未変更時は npm ci をスキップすることで、原因を特定しないままこの層の
+      # 変動ごと迂回する。install 時スクリプトは prepack のみで、これは npm pack/publish
+      # でしか走らないため、スキップしても未実行のまま残る副作用は無い (確認済み)。
+      #
+      # キーに runner.arch と ImageOS を含めるのは、node_modules が better-sqlite3 の
+      # **ネイティブバイナリ** を抱えているため。setup-node 内蔵のキャッシュが安全なのは
+      # tarball しか持たないからで、ビルド済み成果物をキャッシュするこちらは同じ前提に
+      # 乗れない。ubuntu-latest が 22.04 から 24.04 へ移った瞬間に、別の glibc 向けの
+      # .node を復元して不可解に落ちる — それを防ぐために実行環境の同一性まで鍵に含める。
+      # ImageOS が空になる環境 (self-hosted 等) では鍵の1区画が消えるだけで、
+      # 従来の粒度に劣化するだけで壊れはしない。
+      - uses: actions/cache@v4
+        id: node-modules-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('package-lock.json') }}
+
+      - if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - uses: actions/cache@v4
+        id: web-node-modules-cache
+        with:
+          path: web/node_modules
+          key: web-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('web/package-lock.json') }}
+
+      - if: steps.web-node-modules-cache.outputs.cache-hit != 'true'
+        run: npm --prefix web ci
+
       - run: npm run verify
 
   # Kept separate from `verify` rather than using a matrix so the existing
@@ -72,8 +105,22 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             web/package-lock.json
-      - run: npm ci
-      - run: npm --prefix web ci
+      # ubuntu 側 (verify job) と同じ npm ci 所要時間の不安定さ対策。詳細は verify
+      # job のコメント参照 (bdboard-gofm)。
+      - uses: actions/cache@v4
+        id: node-modules-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('package-lock.json') }}
+      - if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci
+      - uses: actions/cache@v4
+        id: web-node-modules-cache
+        with:
+          path: web/node_modules
+          key: web-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('web/package-lock.json') }}
+      - if: steps.web-node-modules-cache.outputs.cache-hit != 'true'
+        run: npm --prefix web ci
       # bdboard-2yp で scripts/verify.mjs が Windows 対応になったので、ubuntu 側と
       # 同じ 1 行に戻した (bdboard-pax)。以前はステップ列として複製していたが、
       # verify のチェーンが変わるたびに手で追随が要る二重管理になっていた。
@@ -89,7 +136,8 @@ jobs:
     # 3〜4 秒でヒットしており、install 以外に削れる余地は無い。10 分だと install が
     # 遅い回にそのまま cancelled になるため、同じ変動を抱えたまま運用できている
     # verify に揃える。テスト本体が 17 秒である以上、15 分でも本物のハングは十分
-    # 早く検知できる。install 時間の不安定さ自体は別チケットで追う。
+    # 早く検知できる。install 時間の不安定さ自体への対策 (node_modules キャッシュ)
+    # は bdboard-gofm で下の npm ci ステップに追加済み。
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -102,8 +150,25 @@ jobs:
             package-lock.json
             web/package-lock.json
 
-      - run: npm ci
-      - run: npm --prefix web ci
+      # verify job と同じ npm ci 所要時間の不安定さ対策。詳細は verify job の
+      # コメント参照 (bdboard-gofm)。
+      - uses: actions/cache@v4
+        id: node-modules-cache
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('package-lock.json') }}
+
+      - if: steps.node-modules-cache.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - uses: actions/cache@v4
+        id: web-node-modules-cache
+        with:
+          path: web/node_modules
+          key: web-node-modules-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-node22-${{ hashFiles('web/package-lock.json') }}
+
+      - if: steps.web-node-modules-cache.outputs.cache-hit != 'true'
+        run: npm --prefix web ci
 
       - name: Resolve installed Playwright version
         id: playwright-version
