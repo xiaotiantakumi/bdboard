@@ -77,22 +77,25 @@ function findExistingWorktreePath(
   return undefined;
 }
 
+/**
+ * ticket id は worktree パス・ブランチ名だけでなく、claude CLI の
+ * `Edit(//<worktree>/**)` パーミッションルールへ無エスケープで補間される
+ * (claude-runner.ts の buildWorktreeEditTool)。')' を含む id はルールの形を変え、
+ * '**' を含む id は他チケットの worktree にマッチしうる。denylist では
+ * 「まだ気づいていないメタ文字」を取りこぼすので allowlist で通す (bdboard-54be.1 M-5)。
+ */
+const TICKET_ID_FOR_WORKTREE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 function validateTicketIdForWorktree(ticketId: string): boolean {
   if (!isTicketId(ticketId)) {
     return false;
   }
 
-  if (ticketId.includes('/') || ticketId.includes('\\') || ticketId.includes('..')) {
+  if (ticketId.includes('..')) {
     return false;
   }
 
-  // CommandRunner はシェルを介さないが、先頭 `-` は git のオプション解釈に紛れうる形、
-  // 先頭 `.` は隠しディレクトリ/相対パス的な形なので意図を明確にするため弾く。
-  if (ticketId.startsWith('-') || ticketId.startsWith('.')) {
-    return false;
-  }
-
-  return true;
+  return TICKET_ID_FOR_WORKTREE.test(ticketId);
 }
 
 function buildPaths(repoRootPath: string, ticketId: string): {

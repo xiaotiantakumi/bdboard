@@ -27,6 +27,7 @@ export function buildClaudeCommand(
     readonly claudePath?: string;
     readonly permissionMode?: string;
     readonly allowedTools?: readonly string[];
+    readonly disallowedTools?: readonly string[];
   },
 ): ClaudeCommand {
   const command = options?.claudePath ?? 'claude';
@@ -58,6 +59,11 @@ export function buildClaudeCommand(
   const allowedTools = options?.allowedTools;
   if (allowedTools !== undefined && allowedTools.length > 0) {
     args.push('--allowedTools', ...allowedTools);
+  }
+
+  const disallowedTools = options?.disallowedTools;
+  if (disallowedTools !== undefined && disallowedTools.length > 0) {
+    args.push('--disallowedTools', ...disallowedTools);
   }
 
   if (hasPrompt) {

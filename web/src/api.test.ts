@@ -540,6 +540,37 @@ describe('agent run API', () => {
     );
   });
 
+  it('fetchAgentRun passes through logRestricted from the server', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id: 'run-1',
+            ticketId: 'bdboard-54be.1',
+            runner: 'claude-spawn',
+            mode: 'spawn',
+            status: 'running',
+            startedAt: '2026-01-01T00:00:00.000Z',
+            log: '',
+            logRestricted: true,
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(fetchAgentRun('run-1')).resolves.toEqual({
+      id: 'run-1',
+      ticketId: 'bdboard-54be.1',
+      runner: 'claude-spawn',
+      mode: 'spawn',
+      status: 'running',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      log: '',
+      logRestricted: true,
+    });
+  });
+
   it('cancelAgentRun posts to the cancel endpoint', async () => {
     const fetchMock = vi.fn(() =>
       Promise.resolve(

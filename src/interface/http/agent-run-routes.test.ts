@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Hono } from 'hono';
+import { Hono } from 'hono';
 import type { AgentRunner, RunOutcome } from '../../application/ports/agent-runner.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
 import type { WorktreeProvisioner } from '../../application/ports/worktree-provisioner.js';
@@ -868,6 +868,50 @@ describe('createAgentRunRoutes', () => {
     expect(missingResponse.status).toBe(404);
   });
 
+  it('returns run detail log and cwd only for local access', async () => {
+    const runStore = createRunStore({ now: () => NOW });
+    runStore.start({
+      id: 'run-restricted',
+      ticketId: 'bdboard-restricted',
+      runner: 'claude-spawn',
+      mode: 'spawn',
+      cwd: '/tmp/restricted',
+      startedAt: NOW,
+    });
+    runStore.appendChunk('run-restricted', { stream: 'stdout', text: 'secret-log-line' });
+
+    const { app } = makeRoutes({
+      runStore,
+      writeAccess: allowingWriteAccess(),
+      isRemoteAgentRunAllowed: async () => true,
+    });
+
+    const remoteResponse = await app.request(
+      '/api/runs/run-restricted',
+      withRemoteTunnel(),
+      LOCAL_ENV,
+    );
+    expect(remoteResponse.status).toBe(200);
+    const remoteBody = await remoteResponse.json();
+    expect(remoteBody).toMatchObject({
+      id: 'run-restricted',
+      log: '',
+      logRestricted: true,
+    });
+    expect(remoteBody).not.toHaveProperty('cwd');
+
+    const localResponse = await app.request(
+      '/api/runs/run-restricted',
+      withLocalHost(),
+      LOCAL_ENV,
+    );
+    expect(localResponse.status).toBe(200);
+    const localBody = await localResponse.json();
+    expect(localBody.log).toContain('secret-log-line');
+    expect(localBody.cwd).toBe('/tmp/restricted');
+    expect(localBody).not.toHaveProperty('logRestricted');
+  });
+
   it('cancels a running run and rejects unknown or finished runs', async () => {
     const runStore = createRunStore({ now: () => NOW });
     runStore.start({
@@ -1165,5 +1209,37 @@ describe('createAgentRunRoutes', () => {
 
     expect(rejectingListProjectsCalls).toBeLessThan(successListProjectsCalls);
     expect(successListProjectsCalls - rejectingListProjectsCalls).toBe(1);
+  });
+});
+
+describe('createAgentRunRoutes guard mount scope', () => {
+  it('does not leak the agent-run guard onto routes registered after the mount', async () => {
+    const parent = new Hono();
+    parent.route(
+      '/',
+      createAgentRunRoutes({
+        cache: createFakeBoardCache(),
+        registry: createAgentRunnerRegistry(),
+        runStore: createRunStore({ now: () => NOW }),
+        worktreeProvisioner: makeProvisioner(),
+        writeAccess: allowingWriteAccess(),
+        isRemoteAgentRunAllowed: async () => false,
+        now: () => NOW,
+      }),
+    );
+    // main.ts の serveStatic / SPA フォールバックと同じ「後から登録される '*' ハンドラ」
+    parent.get('/api/tunnel/status', (c) => c.json({ running: false }));
+    parent.get('*', (c) => c.html('<html>spa</html>'));
+
+    for (const path of ['/', '/assets/index.js', '/api/tunnel/status']) {
+      const response = await parent.request(path, withRemoteTunnel());
+      expect(response.status).toBe(200);
+    }
+
+    const guarded = await parent.request(
+      '/api/runs',
+      withRemoteTunnel(postRunsInit('bdboard-x')),
+    );
+    expect(guarded.status).toBe(403);
   });
 });

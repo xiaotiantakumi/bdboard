@@ -40,7 +40,7 @@ import {
   type AgentRunDetailDto,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
-import { TicketDetailPanel, type TicketDetailPanelProps } from './TicketDetailPanel';
+import { TicketDetailPanel, AGENT_RUN_LOG_LOCAL_ONLY_HELP, type TicketDetailPanelProps } from './TicketDetailPanel';
 import { UndoSnackbarProvider } from './UndoSnackbar';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 import { computeDeferUntilDate } from '../deferPeriods';
@@ -2592,6 +2592,28 @@ describe('TicketDetailPanel agent run', () => {
 
     expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterTerminal);
     expect(await screen.findByText(/状態: 成功/)).toBeInTheDocument();
+  });
+
+  it('shows local-only guidance when run log is restricted', async () => {
+    mockFetchAgentRun.mockResolvedValue({
+      ...runningRunDetail,
+      cwd: undefined,
+      log: '',
+      logRestricted: true,
+    });
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    expect(
+      await screen.findByText(AGENT_RUN_LOG_LOCAL_ONLY_HELP),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('starting claude')).not.toBeInTheDocument();
   });
 
   it('shows remote-run disabled help on 403', async () => {

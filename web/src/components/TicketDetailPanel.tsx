@@ -239,6 +239,8 @@ function formatSessionPickerLabel(session: SessionDto): string {
 
 const AGENT_RUN_POLL_INTERVAL_MS = 2000;
 const AGENT_RUN_POLL_MAX_FAILURES = 3;
+export const AGENT_RUN_LOG_LOCAL_ONLY_HELP =
+  'ログはこのPCのローカル画面からのみ表示できます。';
 const WORKTREE_DIRTY_ERROR_SUFFIX = ': uncommitted changes prevent agent run';
 // git-worktree-provisioner.ts の formatWorktreeBranchMismatchMessage と同じ affix。
 const WORKTREE_BRANCH_MISMATCH_ON_BRANCH = ': on branch ';
@@ -2492,12 +2494,18 @@ export function TicketDetailPanel({
                       )}
                     </p>
                   )}
-                  {polledRunDetail !== null && polledRunDetail.log.length > 0 && (
-                    <details className="agent-run-log-details">
-                      <summary>実行ログ</summary>
-                      <pre className="agent-run-log-pre">{polledRunDetail.log}</pre>
-                    </details>
-                  )}
+                  {polledRunDetail !== null &&
+                    polledRunDetail.logRestricted === true && (
+                      <p className="detail-help">{AGENT_RUN_LOG_LOCAL_ONLY_HELP}</p>
+                    )}
+                  {polledRunDetail !== null &&
+                    polledRunDetail.logRestricted !== true &&
+                    polledRunDetail.log.length > 0 && (
+                      <details className="agent-run-log-details">
+                        <summary>実行ログ</summary>
+                        <pre className="agent-run-log-pre">{polledRunDetail.log}</pre>
+                      </details>
+                    )}
                 </div>
               )}
               <h4 className="agent-run-history-heading">実行履歴</h4>
@@ -2550,16 +2558,20 @@ export function TicketDetailPanel({
                   <dl className="agent-run-meta">
                     <div>
                       <dt>worktree</dt>
-                      <dd>{selectedHistoryRun.cwd}</dd>
+                      <dd>{selectedHistoryRun.cwd ?? '—'}</dd>
                     </div>
                   </dl>
                   <details className="agent-run-log-details" open>
                     <summary>実行ログ</summary>
-                    <pre className="agent-run-log-pre">
-                      {selectedHistoryRun.log.length > 0
-                        ? selectedHistoryRun.log
-                        : '(ログなし)'}
-                    </pre>
+                    {selectedHistoryRun.logRestricted === true ? (
+                      <p className="detail-help">{AGENT_RUN_LOG_LOCAL_ONLY_HELP}</p>
+                    ) : (
+                      <pre className="agent-run-log-pre">
+                        {selectedHistoryRun.log.length > 0
+                          ? selectedHistoryRun.log
+                          : '(ログなし)'}
+                      </pre>
+                    )}
                   </details>
                 </div>
               )}

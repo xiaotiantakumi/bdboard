@@ -22,6 +22,7 @@ import {
   DEFAULT_AGENT_RUN_RATE_LIMIT_PER_MINUTE,
 } from './agent-run-rate-limit.js';
 import { createAgentRunGuardMiddleware } from './agent-run-guard.js';
+import { isLocalBasicAuthRequest } from './local-request.js';
 import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
 import { parseJsonBody } from './request-body.js';
 import type { WriteGuardDeps } from './write-guard.js';
@@ -150,13 +151,19 @@ function buildDispatchFailureOutcome(
 export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
   const app = new Hono();
 
-  app.use(
-    '*',
-    createAgentRunGuardMiddleware({
-      writeAccess: deps.writeAccess,
-      isRemoteAgentRunAllowed: deps.isRemoteAgentRunAllowed,
-    }),
-  );
+  // Hono の app.route('/', sub) はサブアプリの '*' を親の '/*' として再登録するため、
+  // '*' で登録すると main.ts でこのマウントより後に登録される全ハンドラ
+  // (tunnel / update-check / ai-quota / chat / serveStatic / SPA フォールバック) に
+  // ガードが漏れる。実測でリモートからボードが全損した。自分の持ちパスにだけ
+  // スコープすること。コレクションとワイルドカードの両方を登録するのは
+  // main.ts / chat-routes.ts と同じ作法 (掛け忘れ防止)。
+  const agentRunGuard = createAgentRunGuardMiddleware({
+    writeAccess: deps.writeAccess,
+    isRemoteAgentRunAllowed: deps.isRemoteAgentRunAllowed,
+  });
+  for (const pattern of ['/api/runs', '/api/runs/*']) {
+    app.use(pattern, agentRunGuard);
+  }
 
   const limiter = createChatRateLimiter({
     now: deps.now,
@@ -366,10 +373,15 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       defaultValue: DEFAULT_TAIL_BYTES,
     });
 
+    // Read/Glob/Grep はログに任意ファイルの内容を載せうる。ログをリモートへ返すと
+    // それが exfiltration チャネルになるので、ログ本文と cwd はローカルアクセス限定にする
+    // (bdboard-54be.1 M-1)。リモートからは状態 (running/succeeded/failed) は見える。
+    const local = isLocalBasicAuthRequest(c);
     return c.json({
       ...toRunSummaryDto(record),
-      cwd: record.cwd,
-      log: tailLogByBytes(record.log, tailBytes),
+      cwd: local ? record.cwd : undefined,
+      log: local ? tailLogByBytes(record.log, tailBytes) : '',
+      logRestricted: local ? undefined : true,
     });
   });
 

@@ -9,6 +9,10 @@ export interface BuildRunPromptInput {
  * Ticket body is intentionally omitted: the agent must read `bd show` so beads
  * stays the single source of truth and prompt text cannot drift from the issue.
  *
+ * npm install / npm run verify は allowlist に載せない (package.json / scripts/ が
+ * エージェント書き換え可能なため、allowlist 内側を通って worktree 外へ任意コード実行
+ * できた実測あり)。依存インストールと検証は run の外で人間/CI が行う。
+ *
  * Trust assumption (prompt injection): ticket titles and `bd show` output are
  * untrusted. POST /api/runs is reachable from remote clients when agent runs are
  * enabled, and PATCH /api/tickets/:id/description allows writing issue bodies.
@@ -31,9 +35,9 @@ export function buildRunPrompt(input: BuildRunPromptInput): string {
     'commit / push / PR 作成 / マージは行わないでください。',
     '',
     // git worktree add copies tracked files only — node_modules is absent in a
-    // fresh worktree. We do not auto-install in the provisioner because failure
-    // modes and duration are opaque; the agent must run install explicitly first.
-    '検証前に依存関係を入れてください: `npm install && npm --prefix web install`。',
-    'その後 `npm run verify` を通してください。',
+    // fresh worktree. install/verify はエージェントに許可しない (B-2) ので、
+    // ここでも指示しない。依存インストールと検証は run の外で行う。
+    '依存関係のインストール (npm install 等) と検証コマンドの実行は許可されていません。実行しようとしても拒否されます。',
+    'コードの編集までを行い、ビルド・テストによる検証は run の外で人間が行います。',
   ].join('\n');
 }

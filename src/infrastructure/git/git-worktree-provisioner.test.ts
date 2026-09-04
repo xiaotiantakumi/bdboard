@@ -414,6 +414,60 @@ describe('createGitWorktreeProvisioner', () => {
     expect(calls).toHaveLength(0);
   });
 
+  it('rejects ticket ids that fail the worktree allowlist without throwing', async () => {
+    const { runner, calls } = createFakeRunner();
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+
+    for (const ticketId of [
+      'bdboard-a)b',
+      'bdboard-a*b',
+      'bdboard-a b',
+      'bdboard-a/b',
+      '.hidden',
+      '-dash',
+    ]) {
+      const outcome = await provisioner.provision({
+        repoRootPath: ROOT,
+        ticketId,
+      });
+      expect(outcome).toEqual({ ok: false, reason: 'invalid-ticket-id' });
+    }
+
+    expect(calls).toHaveLength(0);
+  });
+
+  it('accepts ticket ids that pass the worktree allowlist', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (isWorktreeList(args)) {
+          return { stdout: `worktree ${ROOT}\n`, stderr: '', exitCode: 0 };
+        }
+        if (isFetchOriginMain(args)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+
+    for (const ticketId of ['bdboard-54be.1', 'bdboard-abc']) {
+      const outcome = await provisioner.provision({
+        repoRootPath: ROOT,
+        ticketId,
+      });
+      expect(outcome.ok).toBe(true);
+    }
+
+    expect(calls.length).toBeGreaterThan(0);
+  });
+
   it('detects existing worktrees through symlink-normalized paths', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-wt-'));
     const linkPath = path.join(tmpDir, 'linked-worktree');

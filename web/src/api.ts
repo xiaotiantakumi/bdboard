@@ -629,9 +629,11 @@ export interface AgentRunSummaryDto {
   error?: string;
 }
 
+/** ログと cwd はローカル画面からのみ返る (M-1)。リモートでは logRestricted が true。 */
 export interface AgentRunDetailDto extends AgentRunSummaryDto {
-  cwd: string;
+  cwd?: string;
   log: string;
+  logRestricted?: boolean;
 }
 
 export interface StartAgentRunResponseDto {

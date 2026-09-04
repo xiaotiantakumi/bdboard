@@ -27,15 +27,16 @@ describe('buildRunPrompt', () => {
     expect(prompt).toContain('bdboard-harness skill');
   });
 
-  it('forbids git publish actions and requires install then verify', () => {
+  it('forbids git publish actions and does not instruct install/verify', () => {
     const prompt = buildRunPrompt({
       ticketId: 'bdboard-54be.1',
       ticketTitle: 'Example',
     });
 
     expect(prompt).toContain('commit / push / PR 作成 / マージは行わない');
-    expect(prompt).toContain('npm install && npm --prefix web install');
-    expect(prompt).toContain('npm run verify');
+    expect(prompt).not.toContain('npm install && npm --prefix web install');
+    expect(prompt).not.toContain('npm run verify');
+    expect(prompt).toMatch(/許可されていません/);
     expect(prompt).toContain('worktree 内で完結');
   });
 });

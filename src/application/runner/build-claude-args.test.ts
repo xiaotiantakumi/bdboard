@@ -87,6 +87,47 @@ describe('buildClaudeCommand', () => {
     });
   });
 
+  it('adds disallowedTools immediately after allowedTools', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      {
+        allowedTools: ['Read'],
+        disallowedTools: ['WebFetch', 'Bash(npm:*)'],
+      },
+    );
+
+    expect(result).toEqual({
+      command: 'claude',
+      args: [
+        '-p',
+        '--allowedTools',
+        'Read',
+        '--disallowedTools',
+        'WebFetch',
+        'Bash(npm:*)',
+        '--',
+        'go',
+      ],
+    });
+  });
+
+  it('adds disallowedTools even when allowedTools is omitted', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      {
+        disallowedTools: ['WebFetch'],
+      },
+    );
+
+    expect(result.args).toEqual([
+      '-p',
+      '--disallowedTools',
+      'WebFetch',
+      '--',
+      'go',
+    ]);
+  });
+
   it('adds allowedTools before prompt with each tool as its own argv element', () => {
     const result = buildClaudeCommand(
       makeRequest({ mode: 'spawn', prompt: 'go' }),
