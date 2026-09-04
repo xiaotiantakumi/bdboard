@@ -1,10 +1,24 @@
-import { render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import type { BoardCardDto, BoardDto } from '../api';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentRunDetailDto, BoardCardDto, BoardDto } from '../api';
+import { ApiError, fetchAgentRun, startTicketRun } from '../api';
+import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
 import { NextUpView } from './NextUpView';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
+
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>();
+  return {
+    ...actual,
+    startTicketRun: vi.fn(),
+    fetchAgentRun: vi.fn(),
+  };
+});
+
+const mockStartTicketRun = vi.mocked(startTicketRun);
+const mockFetchAgentRun = vi.mocked(fetchAgentRun);
 
 function renderWithWatch(ui: ReactElement) {
   return render(<WatchedTicketsProvider>{ui}</WatchedTicketsProvider>);
@@ -89,6 +103,37 @@ function renderNextUpView(
     />,
   );
   return { onLimitChange, onShowEpicsChange };
+}
+
+function makeRunDetail(
+  runId: string,
+  ticketId: string,
+  status: AgentRunDetailDto['status'],
+): AgentRunDetailDto {
+  return {
+    id: runId,
+    ticketId,
+    runner: 'claude',
+    mode: 'spawn',
+    status,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    cwd: `/tmp/worktrees/${ticketId}`,
+    log: '',
+  };
+}
+
+async function openBatchRunConfirm(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: '▶ 一括実行' }));
+}
+
+async function confirmBatchRun(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = screen.getByRole('alertdialog', { name: '一括実行の確認' });
+  await user.click(within(dialog).getByRole('button', { name: '実行する' }));
+}
+
+async function startBatchRun(user: ReturnType<typeof userEvent.setup>) {
+  await openBatchRunConfirm(user);
+  await confirmBatchRun(user);
 }
 
 describe('NextUpView', () => {
@@ -241,5 +286,529 @@ describe('NextUpView', () => {
     expect(screen.getByRole('button', { name: '5' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: '10' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByRole('button', { name: '20' })).toHaveAttribute('aria-pressed', 'false');
+  });
+});
+
+describe('NextUpView batch run loop', () => {
+  let user: ReturnType<typeof userEvent.setup>;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockStartTicketRun.mockImplementation(async (ticketId) => ({
+      runId: `run-${ticketId}`,
+      ticketId,
+      status: 'pending',
+      worktreePath: `/tmp/worktrees/${ticketId}`,
+      branchName: `bd/${ticketId}`,
+      reused: false,
+    }));
+    user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it('continues to the next ticket when the first run ends in failed', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      if (runId === 'run-ticket-1') {
+        return makeRunDetail(runId, 'ticket-1', 'failed');
+      }
+      if (runId === 'run-ticket-2') {
+        return makeRunDetail(runId, 'ticket-2', 'succeeded');
+      }
+      throw new Error(`unexpected runId: ${runId}`);
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(1, 'ticket-1');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+    });
+  });
+
+  it('does not start the next ticket after stop is requested', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      if (runId === 'run-ticket-1') {
+        return makeRunDetail(runId, 'ticket-1', 'running');
+      }
+      if (runId === 'run-ticket-2') {
+        return makeRunDetail(runId, 'ticket-2', 'succeeded');
+      }
+      throw new Error(`unexpected runId: ${runId}`);
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: '■ 停止' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 3);
+    });
+
+    expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the last run summary visible after the batch loop finishes', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      if (runId === 'run-ticket-1') {
+        return makeRunDetail(runId, 'ticket-1', 'failed');
+      }
+      if (runId === 'run-ticket-2') {
+        return makeRunDetail(runId, 'ticket-2', 'succeeded');
+      }
+      throw new Error(`unexpected runId: ${runId}`);
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(1, 'ticket-1');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/前回の実行: 完了 1\/2 \| 失敗 1/)).toBeInTheDocument();
+  });
+
+  it('returns to idle and stops polling when stop is pressed while a run never reaches terminal', async () => {
+    const cards = [makeCard('ticket-1', 'Task One')];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) =>
+      makeRunDetail(runId, 'ticket-1', 'running'),
+    );
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: '■ 停止' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    const fetchCountAfterStop = mockFetchAgentRun.mock.calls.length;
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 10);
+    });
+
+    expect(mockFetchAgentRun.mock.calls.length).toBe(fetchCountAfterStop);
+  });
+
+  it('stops polling after unmount', async () => {
+    const cards = [makeCard('ticket-1', 'Task One')];
+    const board = makeBoard(cards);
+    const onLimitChange = vi.fn();
+    const onShowEpicsChange = vi.fn();
+
+    const { unmount } = renderWithWatch(
+      <NextUpView
+        board={board}
+        limit={5}
+        onLimitChange={onLimitChange}
+        showEpics={false}
+        onShowEpicsChange={onShowEpicsChange}
+        projectNames={projectNames}
+        projectActiveSessions={projectActiveSessions}
+        pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
+        onCardClick={() => {}}
+      />,
+    );
+
+    mockFetchAgentRun.mockImplementation(async (runId) =>
+      makeRunDetail(runId, 'ticket-1', 'running'),
+    );
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    const fetchCountAtUnmount = mockFetchAgentRun.mock.calls.length;
+    unmount();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 20);
+    });
+
+    expect(mockFetchAgentRun.mock.calls.length).toBe(fetchCountAtUnmount);
+  });
+
+  it('shows describeRunStartError text when startTicketRun fails', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockStartTicketRun.mockRejectedValueOnce(
+      new ApiError(
+        409,
+        '/tmp/worktrees/ticket-1: uncommitted changes prevent agent run',
+        {
+          errorMessage:
+            '/tmp/worktrees/ticket-1: uncommitted changes prevent agent run',
+          reason: 'worktree-dirty',
+        },
+      ),
+    );
+
+    await startBatchRun(user);
+
+    expect(
+      await screen.findByText(/未コミットの変更があるため実行できません/),
+    ).toBeInTheDocument();
+  });
+
+  it('waits AGENT_RUN_POLL_INTERVAL_MS before starting the next ticket after start failure', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockStartTicketRun
+      .mockRejectedValueOnce(
+        new ApiError(429, 'too many concurrent runs', {
+          errorMessage: 'too many concurrent runs',
+        }),
+      )
+      .mockResolvedValueOnce({
+        runId: 'run-ticket-2',
+        ticketId: 'ticket-2',
+        status: 'pending',
+        worktreePath: '/tmp/worktrees/ticket-2',
+        branchName: 'bd/ticket-2',
+        reused: false,
+      });
+
+    mockFetchAgentRun.mockImplementation(async (runId) =>
+      makeRunDetail(runId, 'ticket-2', 'succeeded'),
+    );
+
+    await startBatchRun(user);
+
+    // タイマーを1msも進めずに microtask だけ流す。
+    // start 失敗後の delay を削るミューテーションを入れると、ここで2件目が走るので落ちる。
+    // waitFor は fake timers 検知時にコールバック評価前へ advanceTimersByTime(50) を挟むため、
+    // 境界の検証には使えない（それが以前この検証を壊していた原因）。
+    await act(async () => {
+      for (let i = 0; i < 20; i += 1) {
+        await Promise.resolve();
+      }
+    });
+
+    expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-2');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+    });
+  });
+
+  it('opens a confirmation dialog instead of starting immediately', async () => {
+    const cards = [makeCard('ticket-1', 'Task One')];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    await openBatchRunConfirm(user);
+
+    expect(
+      screen.getByRole('alertdialog', { name: '一括実行の確認' }),
+    ).toBeInTheDocument();
+    expect(mockStartTicketRun).not.toHaveBeenCalled();
+  });
+
+  it('does not start when the confirmation dialog is cancelled', async () => {
+    const cards = [makeCard('ticket-1', 'Task One')];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    await openBatchRunConfirm(user);
+    const dialog = screen.getByRole('alertdialog', { name: '一括実行の確認' });
+    await user.click(within(dialog).getByRole('button', { name: 'キャンセル' }));
+
+    expect(
+      screen.queryByRole('alertdialog', { name: '一括実行の確認' }),
+    ).not.toBeInTheDocument();
+    expect(mockStartTicketRun).not.toHaveBeenCalled();
+  });
+
+  // 他の alertdialog と同じ useFocusTrap 経路に乗っていることの確認。
+  // 初期フォーカスがキャンセル側にあること (= Enter の空打ちで実行されない)
+  // と、Escape で閉じても実行が始まらないことの2点を押さえる。
+  it('focuses cancel first and closes on Escape without starting', async () => {
+    const cards = [makeCard('ticket-1', 'Task One')];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    await openBatchRunConfirm(user);
+    const dialog = screen.getByRole('alertdialog', { name: '一括実行の確認' });
+
+    await waitFor(() => {
+      expect(within(dialog).getByRole('button', { name: 'キャンセル' })).toHaveFocus();
+    });
+
+    await user.keyboard('{Escape}');
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('alertdialog', { name: '一括実行の確認' }),
+      ).not.toBeInTheDocument();
+    });
+    expect(mockStartTicketRun).not.toHaveBeenCalled();
+  });
+
+  it('starts the batch run when the confirmation dialog is accepted', async () => {
+    const cards = [makeCard('ticket-1', 'Task One')];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) =>
+      makeRunDetail(runId, 'ticket-1', 'succeeded'),
+    );
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledWith('ticket-1');
+    });
+  });
+
+  it('shows cancelled count separately from failed count', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      if (runId === 'run-ticket-1') {
+        return makeRunDetail(runId, 'ticket-1', 'cancelled');
+      }
+      if (runId === 'run-ticket-2') {
+        return makeRunDetail(runId, 'ticket-2', 'succeeded');
+      }
+      throw new Error(`unexpected runId: ${runId}`);
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText(/前回の実行: 完了 1\/2 \| 失敗 0 \| 中止 1/)).toBeInTheDocument();
+  });
+
+  // このテストが固定しているのは「アンマウント→再マウント後に1回目の進捗が2回目に混ざらない」
+  // という振る舞い。現状は loopRunIdRef の世代ガードに加え、React 18 のアンマウント時
+  // setState 無言 no-op と再マウント後の別インスタンス分離からも同振る舞いが保証されるため、
+  // 世代ガードを消してもこのテストは落ちない（ミューテーション実測）。世代ガードは多重防御として残す。
+  it('does not let an unmounted loop generation overwrite progress after remount', async () => {
+    let resolveFirstPoll: ((detail: AgentRunDetailDto) => void) | undefined;
+    const firstPollDeferred = new Promise<AgentRunDetailDto>((resolve) => {
+      resolveFirstPoll = resolve;
+    });
+
+    const cardsGen1 = [makeCard('ticket-1', 'Task One')];
+    const onLimitChangeGen1 = vi.fn();
+    const onShowEpicsChangeGen1 = vi.fn();
+
+    const { unmount } = renderWithWatch(
+      <NextUpView
+        board={makeBoard(cardsGen1)}
+        limit={5}
+        onLimitChange={onLimitChangeGen1}
+        showEpics={false}
+        onShowEpicsChange={onShowEpicsChangeGen1}
+        projectNames={projectNames}
+        projectActiveSessions={projectActiveSessions}
+        pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
+        onCardClick={() => {}}
+      />,
+    );
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      if (runId === 'run-ticket-1') {
+        return firstPollDeferred;
+      }
+      throw new Error(`unexpected runId: ${runId}`);
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(screen.getByText(/現在: ticket-1/)).toBeInTheDocument();
+    });
+
+    unmount();
+
+    mockFetchAgentRun.mockReset();
+    mockStartTicketRun.mockImplementation(async (ticketId) => ({
+      runId: `run-${ticketId}`,
+      ticketId,
+      status: 'pending',
+      worktreePath: `/tmp/worktrees/${ticketId}`,
+      branchName: `bd/${ticketId}`,
+      reused: false,
+    }));
+
+    renderNextUpView(makeBoard([makeCard('ticket-2', 'Task Two')]), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) =>
+      makeRunDetail(runId, 'ticket-2', 'running'),
+    );
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(screen.getByText(/現在: ticket-2/)).toBeInTheDocument();
+    });
+
+    resolveFirstPoll!(makeRunDetail('run-ticket-1', 'ticket-1', 'succeeded'));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 5);
+    });
+
+    expect(screen.getByText(/現在: ticket-2/)).toBeInTheDocument();
+    expect(screen.queryByText(/現在: ticket-1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/完了 1\/1/)).not.toBeInTheDocument();
+    expect(screen.getByText(/完了 0\/1/)).toBeInTheDocument();
+  });
+
+  it('does not get stuck in stopping when stop is clicked as the loop finishes', async () => {
+    let resolveFirstPoll: ((detail: AgentRunDetailDto) => void) | undefined;
+    const firstPollDeferred = new Promise<AgentRunDetailDto>((resolve) => {
+      resolveFirstPoll = resolve;
+    });
+
+    const cards = [makeCard('ticket-1', 'Task One')];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      if (runId === 'run-ticket-1') {
+        return firstPollDeferred;
+      }
+      throw new Error(`unexpected runId: ${runId}`);
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '■ 停止' })).toBeInTheDocument();
+    });
+
+    const stopButton = screen.getByRole('button', { name: '■ 停止' });
+
+    await act(async () => {
+      resolveFirstPoll!(makeRunDetail('run-ticket-1', 'ticket-1', 'succeeded'));
+      for (let i = 0; i < 20; i += 1) {
+        await Promise.resolve();
+      }
+      await vi.advanceTimersByTimeAsync(0);
+      fireEvent.click(stopButton);
+    });
+
+    expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '■ 停止中…' })).not.toBeInTheDocument();
+    expect(screen.getByText(/前回の実行: 完了 1\/1 \| 失敗 0/)).toBeInTheDocument();
+  });
+
+  it('runs only visibleRegularCards up to the display limit', async () => {
+    const cards = Array.from({ length: 8 }, (_, index) =>
+      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+    );
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      const ticketId = runId.replace(/^run-/, '');
+      return makeRunDetail(runId, ticketId, 'succeeded');
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(5);
+    });
+
+    expect(mockStartTicketRun).toHaveBeenNthCalledWith(1, 'ticket-1');
+    expect(mockStartTicketRun).toHaveBeenNthCalledWith(5, 'ticket-5');
+    expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-6');
+    expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-7');
+    expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-8');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 6);
+    });
+
+    expect(mockStartTicketRun).toHaveBeenCalledTimes(5);
+    expect(screen.getByText(/完了 5\/5/)).toBeInTheDocument();
   });
 });

@@ -795,6 +795,44 @@ body {
   gap: 10px;
 }
 
+.next-up-run-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.next-up-run-btn {
+  align-self: flex-start;
+}
+
+.next-up-run-btn-stop:not(:disabled) {
+  color: var(--color-danger);
+}
+
+.next-up-run-progress {
+  margin: 0;
+  font-size: 0.8125rem;
+  /* --color-text-muted はこのスタイルシートのどこにも定義が無く、書くと必ず
+     フォールバック側が効く。フォールバックに固定色を置くとダークモードで
+     背景に沈むので、light/dark 両方で定義されている --color-text-secondary を使う。 */
+  color: var(--color-text-secondary);
+}
+
+.next-up-run-failure-reason {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.next-up-run-server-active-hint {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+/* Scope to both classes so max-width wins over .quick-action-confirm-panel later in file. */
+.quick-action-confirm-panel.next-up-run-confirm-panel {
+  max-width: 36rem;
+}
+
 .next-up-limit-group {
   display: flex;
   flex-wrap: wrap;
