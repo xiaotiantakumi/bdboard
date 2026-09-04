@@ -416,6 +416,7 @@ export interface HygieneHeartbeatLoopTargetDto {
   pid: number;
   ticketIds: string[];
   sessionPid?: number;
+  startedAt?: string;
   reason: 'all_closed' | 'session_gone';
 }
 
@@ -1001,6 +1002,9 @@ export function toHygieneIssueDto(issue: HygieneIssue): HygieneIssueDto {
             reason: issue.heartbeatLoop.reason,
             ...(issue.heartbeatLoop.sessionPid !== undefined
               ? { sessionPid: issue.heartbeatLoop.sessionPid }
+              : {}),
+            ...(issue.heartbeatLoop.startedAt !== undefined
+              ? { startedAt: issue.heartbeatLoop.startedAt }
               : {}),
           },
         }

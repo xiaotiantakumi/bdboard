@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
@@ -332,14 +332,51 @@ describe('createPsProcessScanner listHeartbeatLoops', () => {
         commandLine:
           'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
         startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+        lstart: 'Thu Aug 14 09:12:33 2026',
+        sessionPid: 4242,
+        sessionAlive: false,
       },
       {
         pid: 23_456,
         commandLine:
           'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done',
         startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+        lstart: 'Thu Aug 14 09:13:33 2026',
       },
     ]);
+  });
+
+  const PS_LINE_CURSOR_MENTIONS_HEARTBEAT =
+    '55555 Thu Aug 14 09:15:33 2026 cursor-agent -p "bd-heartbeat.sh を直して"';
+  const PS_LINE_GREP_FOR_HEARTBEAT =
+    '66666 Thu Aug 14 09:16:33 2026 /bin/bash -lc grep -rn "bd heartbeat" /some/repo';
+
+  it('does not flag agent tasks or grep-for-heartbeat lines as heartbeat loops', async () => {
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return {
+            stdout: [
+              PS_LINE_BUNDLED,
+              PS_LINE_CURSOR_MENTIONS_HEARTBEAT,
+              PS_LINE_GREP_FOR_HEARTBEAT,
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner);
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops?.map((loop) => loop.pid)).toEqual([12_345]);
+    expect(loops?.[0]).toMatchObject({
+      pid: 12_345,
+      lstart: 'Thu Aug 14 09:12:33 2026',
+    });
   });
 
   it('marks sessionAlive true when pidfile session pid is still running', async () => {
@@ -368,8 +405,36 @@ describe('createPsProcessScanner listHeartbeatLoops', () => {
         commandLine:
           'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
         startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+        lstart: 'Thu Aug 14 09:12:33 2026',
         sessionPid: 4242,
         sessionAlive: true,
+      },
+    ]);
+  });
+
+  it('leaves sessionPid and sessionAlive undefined when pidfile lstart mismatches', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'bd-heartbeat-test-'));
+    await writeFile(join(stateDir, '9999.pid'), '23456\tThu Aug 14 09:00:00 2026\n');
+
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return { stdout: PS_LINE_HANDWRITTEN, stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, { heartbeatStateDir: stateDir });
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 23_456,
+        commandLine:
+          'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done',
+        startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+        lstart: 'Thu Aug 14 09:13:33 2026',
       },
     ]);
   });
@@ -396,6 +461,70 @@ describe('createPsProcessScanner listHeartbeatLoops', () => {
         commandLine:
           'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
         startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+        lstart: 'Thu Aug 14 09:12:33 2026',
+        sessionPid: 4242,
+        sessionAlive: false,
+      },
+    ]);
+  });
+
+  const PS_LINE_HANDWRITTEN_WITH_SESSION =
+    '23456 Thu Aug 14 09:13:33 2026 bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done --session-pid 4242';
+
+  it('derives sessionAlive true from --session-pid when pidfile is absent', async () => {
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return {
+            stdout: [PS_LINE_HANDWRITTEN_WITH_SESSION, PS_LINE_SESSION].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, {
+      heartbeatStateDir: join(tmpdir(), 'missing-bd-heartbeat-dir'),
+    });
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 23_456,
+        commandLine:
+          'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done --session-pid 4242',
+        startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+        lstart: 'Thu Aug 14 09:13:33 2026',
+        sessionPid: 4242,
+        sessionAlive: true,
+      },
+    ]);
+  });
+
+  it('derives sessionAlive false from --session-pid when session process is gone', async () => {
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return { stdout: PS_LINE_HANDWRITTEN_WITH_SESSION, stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, {
+      heartbeatStateDir: join(tmpdir(), 'missing-bd-heartbeat-dir'),
+    });
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 23_456,
+        commandLine:
+          'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done --session-pid 4242',
+        startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+        lstart: 'Thu Aug 14 09:13:33 2026',
         sessionPid: 4242,
         sessionAlive: false,
       },
@@ -423,8 +552,46 @@ describe('createPsProcessScanner listHeartbeatLoops', () => {
         commandLine:
           'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done',
         startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+        lstart: 'Thu Aug 14 09:13:33 2026',
       },
     ]);
+  });
+
+  it('uses /tmp when TMPDIR is empty and heartbeatStateDir is omitted', async () => {
+    const previousTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = '';
+
+    try {
+      const uid = process.getuid?.();
+      const uidToken = uid === undefined ? 'unknown' : String(uid);
+      const stateDir = `/tmp/bd-heartbeat.${uidToken}`;
+      await mkdir(stateDir, { recursive: true });
+
+      try {
+        await writeFile(join(stateDir, '4242.pid'), '12345\tThu Aug 14 09:12:33 2026\n');
+
+        const { runner } = createFakeRunner({
+          handler(command) {
+            if (command === 'ps') {
+              return { stdout: PS_LINE_BUNDLED, stderr: '', exitCode: 0 };
+            }
+            return { stdout: '', stderr: '', exitCode: 1 };
+          },
+        });
+
+        const scanner = createPsProcessScanner(runner);
+        const loops = await scanner.listHeartbeatLoops?.();
+        expect(loops?.[0]?.sessionPid).toBe(4242);
+      } finally {
+        await rm(stateDir, { recursive: true, force: true });
+      }
+    } finally {
+      if (previousTmpdir === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = previousTmpdir;
+      }
+    }
   });
 
   it('does not throw when the heartbeat state directory is missing', async () => {
@@ -447,6 +614,9 @@ describe('createPsProcessScanner listHeartbeatLoops', () => {
         commandLine:
           'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
         startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+        lstart: 'Thu Aug 14 09:12:33 2026',
+        sessionPid: 4242,
+        sessionAlive: false,
       },
     ]);
   });

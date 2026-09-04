@@ -811,6 +811,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
           commandLine: loop.commandLine,
           ...(loop.sessionPid !== undefined ? { sessionPid: loop.sessionPid } : {}),
           ...(loop.sessionAlive !== undefined ? { sessionAlive: loop.sessionAlive } : {}),
+          ...(loop.lstart !== undefined ? { startedAt: loop.lstart } : {}),
         }));
       } catch {
         heartbeatLoops = undefined;

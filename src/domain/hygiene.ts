@@ -67,6 +67,7 @@ export interface HeartbeatLoopCandidate {
   readonly commandLine: string;
   readonly sessionPid?: number;
   readonly sessionAlive?: boolean;
+  readonly startedAt?: string;
 }
 
 /** orphan_heartbeat_loop のときだけ入る。UI が kill コマンドを組み立てる材料 */
@@ -75,6 +76,8 @@ export interface HygieneHeartbeatLoopTarget {
   /** 台帳で実在が確認できたチケットIDのみ。昇順 */
   readonly ticketIds: readonly TicketId[];
   readonly sessionPid?: number;
+  /** ps の lstart 生文字列。kill コマンドの pid-reuse ガードに使う */
+  readonly startedAt?: string;
   /** どちらの条件で警告したか。両方成立したら 'all_closed' を優先 */
   readonly reason: 'all_closed' | 'session_gone';
 }
@@ -512,6 +515,10 @@ function checkOrphanHeartbeatLoop(
     return null;
   }
 
+  if (parsed.ticketIdCandidates.length !== knownTickets.length) {
+    return null;
+  }
+
   const sortedKnownTickets = [...knownTickets].sort((a, b) =>
     compareStrings(a.id, b.id),
   );
@@ -546,6 +553,7 @@ function checkOrphanHeartbeatLoop(
       ticketIds,
       reason,
       ...(candidate.sessionPid !== undefined ? { sessionPid: candidate.sessionPid } : {}),
+      ...(candidate.startedAt !== undefined ? { startedAt: candidate.startedAt } : {}),
     },
   };
 }

@@ -1,6 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CommandRunner } from '../../application/ports/command-runner.js';
+import { parseHeartbeatLoopCommand } from '../../domain/heartbeat-loop.js';
 import type {
   ProcessScanner,
   ScannedHeartbeatLoop,
@@ -69,14 +70,20 @@ function matchesAgentCommand(commandLine: string): string | undefined {
   return undefined;
 }
 
+const SHELL_BASENAMES = new Set(['bash', 'sh', 'zsh']);
+
 function isHeartbeatLoopCommand(commandLine: string): boolean {
   const trimmed = commandLine.trim();
   if (trimmed.length === 0) {
     return false;
   }
 
+  if (matchesAgentCommand(commandLine) !== undefined) {
+    return false;
+  }
+
   const firstBasename = tokenBasename(trimmed.split(/\s+/)[0] ?? '');
-  if (firstBasename === 'grep' || firstBasename === 'rg' || firstBasename === 'ps') {
+  if (!SHELL_BASENAMES.has(firstBasename)) {
     return false;
   }
 
@@ -84,7 +91,13 @@ function isHeartbeatLoopCommand(commandLine: string): boolean {
     return false;
   }
 
-  return commandLine.includes('bd-heartbeat') || commandLine.includes('bd heartbeat');
+  if (/bd-heartbeat(?:\.sh)?\s+start\b/.test(commandLine)) {
+    return true;
+  }
+
+  const hasLoopKeyword = /\b(?:while|for|until)\b/.test(commandLine);
+  const hasBdHeartbeat = /\bbd(?:\s+\S+)*\s+heartbeat\b/.test(commandLine);
+  return hasLoopKeyword && hasBdHeartbeat;
 }
 
 function parseLstart(value: string): Date | undefined {
@@ -165,16 +178,21 @@ function parseLsofOutput(stdout: string): Map<number, string> {
 }
 
 function defaultHeartbeatStateDir(): string {
-  const tmpdir = process.env.TMPDIR ?? '/tmp';
+  const tmpdir = process.env.TMPDIR || '/tmp';
   const uid = process.getuid?.();
   const uidToken = uid === undefined ? 'unknown' : String(uid);
   return `${tmpdir}/bd-heartbeat.${uidToken}`;
 }
 
+interface HeartbeatPidfileRecord {
+  readonly sessionPid: number;
+  readonly lstart: string | undefined;
+}
+
 async function readHeartbeatPidfileMap(
   stateDir: string,
-): Promise<Map<number, number>> {
-  const map = new Map<number, number>();
+): Promise<Map<number, HeartbeatPidfileRecord>> {
+  const map = new Map<number, HeartbeatPidfileRecord>();
 
   try {
     const entries = await readdir(stateDir);
@@ -196,13 +214,18 @@ async function readHeartbeatPidfileMap(
       }
 
       const firstLine = content.split('\n')[0] ?? '';
-      const loopPidToken = firstLine.split('\t')[0]?.trim() ?? '';
+      const tabParts = firstLine.split('\t');
+      const loopPidToken = tabParts[0]?.trim() ?? '';
       const loopPid = Number.parseInt(loopPidToken, 10);
       if (!Number.isFinite(loopPid) || loopPid <= 1) {
         continue;
       }
 
-      map.set(loopPid, sessionPid);
+      const lstartRaw = tabParts.slice(1).join('\t').trim();
+      map.set(loopPid, {
+        sessionPid,
+        lstart: lstartRaw.length > 0 ? lstartRaw : undefined,
+      });
     }
   } catch {
     return map;
@@ -284,17 +307,34 @@ export function createPsProcessScanner(
           continue;
         }
 
-        const sessionPid = pidfileMap.get(row.pid);
+        const pidfileRecord = pidfileMap.get(row.pid);
+        let sessionPid: number | undefined;
+        let sessionAlive: boolean | undefined;
+
+        if (
+          pidfileRecord !== undefined
+          && pidfileRecord.lstart !== undefined
+          && pidfileRecord.lstart === row.lstart
+        ) {
+          sessionPid = pidfileRecord.sessionPid;
+          sessionAlive = alivePids.has(sessionPid);
+        } else {
+          const parsed = parseHeartbeatLoopCommand(row.commandLine);
+          if (parsed.sessionPidArg !== undefined) {
+            sessionPid = parsed.sessionPidArg;
+            sessionAlive = alivePids.has(sessionPid);
+          }
+        }
+
         const startedAt = parseLstart(row.lstart);
 
         results.push({
           pid: row.pid,
           commandLine: row.commandLine,
           ...(startedAt !== undefined ? { startedAt } : {}),
+          lstart: row.lstart,
           ...(sessionPid !== undefined ? { sessionPid } : {}),
-          ...(sessionPid !== undefined
-            ? { sessionAlive: alivePids.has(sessionPid) }
-            : {}),
+          ...(sessionAlive !== undefined ? { sessionAlive } : {}),
         });
       }
 

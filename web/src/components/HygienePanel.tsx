@@ -106,7 +106,9 @@ type RepairFeedback = {
  * いう前提 (in_flight_file_overlap も相手をまとめて 1 行に畳んでいる) は保つ。
  */
 function issueRowKey(issue: HygieneIssueDto): string {
-  return `${issue.kind}-${issue.projectId}-${issue.ticketId}`;
+  const pidSuffix =
+    issue.heartbeatLoop !== undefined ? `-${issue.heartbeatLoop.pid}` : '';
+  return `${issue.kind}-${issue.projectId}-${issue.ticketId}${pidSuffix}`;
 }
 
 function harnessDriftRowKey(item: HarnessPackItem): string {
@@ -172,7 +174,12 @@ function severityBadgeClass(severity: HygieneIssueDto['severity']): string {
 
 function resolveCleanupScript(issue: HygieneIssueDto): string | null {
   if (issue.heartbeatLoop !== undefined) {
-    const script = formatHeartbeatLoopKillScript({ pid: issue.heartbeatLoop.pid });
+    const script = formatHeartbeatLoopKillScript({
+      pid: issue.heartbeatLoop.pid,
+      ...(issue.heartbeatLoop.startedAt !== undefined
+        ? { startedAt: issue.heartbeatLoop.startedAt }
+        : {}),
+    });
     return script.length > 0 ? script : null;
   }
   if (issue.cleanup === undefined) {

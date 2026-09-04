@@ -12,6 +12,8 @@ export interface ScannedHeartbeatLoop {
   /** ps から取れたコマンドライン全文（引数込み）。チケットID抽出の材料 */
   readonly commandLine: string;
   readonly startedAt?: Date;
+  /** ps の lstart 生文字列。kill コマンドの pid-reuse ガードに使う */
+  readonly lstart?: string;
   /**
    * bdboard-0kql の pidfile から解決した起動元セッションの PID。
    * pidfile が無い / 読めない / このループに対応する行が無いときは undefined。

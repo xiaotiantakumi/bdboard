@@ -368,6 +368,7 @@ export interface HygieneHeartbeatLoopTargetDto {
   pid: number;
   ticketIds: string[];
   sessionPid?: number;
+  startedAt?: string;
   reason: 'all_closed' | 'session_gone';
 }
 

@@ -42,6 +42,15 @@ export function parseHeartbeatLoopCommand(
       continue;
     }
 
+    if (token.startsWith('--session-pid=')) {
+      const value = token.slice('--session-pid='.length);
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed)) {
+        sessionPidArg = parsed;
+      }
+      continue;
+    }
+
     if (FLAG_VALUE_FLAGS.has(token)) {
       index += 1;
       continue;

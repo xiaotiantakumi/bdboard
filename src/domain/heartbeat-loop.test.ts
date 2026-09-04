@@ -44,4 +44,11 @@ describe('parseHeartbeatLoopCommand', () => {
 
     expect(parsed.ticketIdCandidates).toEqual(['bdboard-bbb', 'bdboard-aaa']);
   });
+
+  it('accepts --session-pid=<value> equals form', () => {
+    const parsed = parseHeartbeatLoopCommand(
+      'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done --session-pid=4242',
+    );
+    expect(parsed.sessionPidArg).toBe(4242);
+  });
 });

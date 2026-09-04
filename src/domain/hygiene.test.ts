@@ -868,6 +868,49 @@ describe('checkHygiene orphan_heartbeat_loop', () => {
     expect(issues).toEqual([]);
   });
 
+  it('does not flag when a candidate ticket id is unknown to the ledger, even if known ones are all closed', () => {
+    const tickets = [
+      makeTicket({
+        id: 'bdboard-aaa',
+        projectId: repoRoot,
+        status: 'closed',
+        closedAt: NOW,
+      }),
+    ];
+    const issues = checkHygiene(tickets, {
+      now: NOW,
+      heartbeatLoops: [
+        heartbeatLoop({
+          commandLine: 'bd heartbeat bdboard-aaa bdboard-unknown',
+        }),
+      ],
+    });
+    expect(issues.filter((issue) => issue.kind === 'orphan_heartbeat_loop')).toEqual([]);
+  });
+
+  it('copies startedAt from candidate to heartbeatLoop target', () => {
+    const tickets = [
+      makeTicket({
+        id: 'bdboard-aaa',
+        projectId: repoRoot,
+        status: 'closed',
+        closedAt: NOW,
+      }),
+    ];
+    const issues = checkHygiene(tickets, {
+      now: NOW,
+      heartbeatLoops: [
+        heartbeatLoop({
+          commandLine: 'bd heartbeat bdboard-aaa',
+          startedAt: 'Thu Aug 14 09:12:33 2026',
+        }),
+      ],
+    });
+    const orphans = issues.filter((issue) => issue.kind === 'orphan_heartbeat_loop');
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0]?.heartbeatLoop?.startedAt).toBe('Thu Aug 14 09:12:33 2026');
+  });
+
   it('emits no orphan_heartbeat_loop when heartbeatLoops is omitted', () => {
     const ticket = makeTicket({
       id: 'bdboard-aaa',
