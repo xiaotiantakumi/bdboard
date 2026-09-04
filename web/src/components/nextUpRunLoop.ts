@@ -62,6 +62,12 @@ export const NEXT_UP_LOOP_POLL_MAX_FAILURES = 15;
  * cancelled はカウンタを増減しないので、厳密には「直近2件が失敗」である。 */
 export const NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES = 2;
 
+/** 停止コメント投稿の待ち上限。これを超えたら投稿を諦めてループを畳む。
+ * 上限が無いと、ハングした POST が runNextUpTicketLoop を resolve させず、
+ * useNextUpRunLoopController の finally に到達しないため loopActiveRef が
+ * true のまま張り付き、一括実行ボタンがリロードするまで復帰しない。 */
+export const NEXT_UP_LOOP_COMMENT_POST_TIMEOUT_MS = 10_000;
+
 export function describeConsecutiveFailureStop(
   lastFailureReason: string | null,
 ): string {
@@ -216,17 +222,38 @@ export async function runNextUpTicketLoop(options: {
     // loopActiveRef stuck at true until a page reload.
     onProgress({ ...progress });
     try {
-      await postComment(
-        ticketId,
-        buildConsecutiveFailureComment(
-          consecutiveFailedTicketIds,
-          failureReason,
-        ),
-      );
+      // Bound the wait with Promise.race rather than an AbortSignal: postComment is an
+      // injected (ticketId, text) => Promise<void>, and threading a signal would mean
+      // changing that contract plus postTicketComment/fetchJson, neither of which takes one.
+      let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(
+            new Error(
+              `comment post timed out after ${NEXT_UP_LOOP_COMMENT_POST_TIMEOUT_MS}ms`,
+            ),
+          );
+        }, NEXT_UP_LOOP_COMMENT_POST_TIMEOUT_MS);
+      });
+      try {
+        await Promise.race([
+          postComment(
+            ticketId,
+            buildConsecutiveFailureComment(
+              consecutiveFailedTicketIds,
+              failureReason,
+            ),
+          ),
+          timeout,
+        ]);
+      } finally {
+        clearTimeout(timeoutHandle);
+      }
     } catch (commentError) {
       // Batch stop must not depend on comment delivery — progress/endReason is the contract,
       // and the stop was already emitted above. Surface the delivery failure in
       // lastFailureReason so the final emission tells the user the ticket has no comment.
+      // Timeouts merge here too — same user-visible outcome as a rejected post.
       console.error('Failed to post consecutive-failure comment', commentError);
       progress.lastFailureReason = `${progress.lastFailureReason ?? ''}（チケットへのコメント投稿に失敗しました）`;
     }

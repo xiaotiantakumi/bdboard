@@ -3,6 +3,7 @@ import type { AgentRunDetailDto } from '../api';
 import { fetchAgentRun, startTicketRun } from '../api';
 import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
 import {
+  NEXT_UP_LOOP_COMMENT_POST_TIMEOUT_MS,
   NEXT_UP_LOOP_POLL_MAX_DELAY_MS,
   NEXT_UP_LOOP_POLL_MAX_FAILURES,
   buildConsecutiveFailureComment,
@@ -592,6 +593,39 @@ describe('nextUpRunLoop', () => {
       });
 
       await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(result.failedCount).toBe(2);
+      expect(result.lastFailureReason).toBe(
+        `${describeConsecutiveFailureStop('エージェント実行が失敗しました（ticket-2）')}（チケットへのコメント投稿に失敗しました）`,
+      );
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Failed to post consecutive-failure comment',
+        expect.any(Error),
+      );
+    });
+
+    it('stops the batch even when postComment never settles', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'failed');
+      });
+
+      const postComment = vi.fn(
+        () => new Promise<void>(() => {}),
+      );
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(
+        AGENT_RUN_POLL_INTERVAL_MS * 2 +
+          NEXT_UP_LOOP_COMMENT_POST_TIMEOUT_MS,
+      );
       const result = await loopPromise;
 
       expect(result.endReason).toBe('consecutive_failures');
