@@ -3,8 +3,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { resolveE2EPort } from './e2e-port.js';
-
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
 
@@ -116,7 +114,14 @@ async function killAndWait(child: ChildProcess): Promise<void> {
  * is outside any git working tree, so that rewrite never triggers.
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
-  const port = resolveE2EPort();
+  // playwright.config.ts が先に resolve して env へ書き戻しているはず。ここで自前採番すると
+  // ワーカーの baseURL とサーバ bind が食い違い全 spec が接続拒否になるうえメッセージも無い。
+  const port = process.env.BDBOARD_E2E_PORT;
+  if (port === undefined || port === '') {
+    throw new Error(
+      'e2e global-setup: BDBOARD_E2E_PORT is unset — playwright.config.ts should resolve the port and write it to process.env before globalSetup runs; this path means that write-back is broken',
+    );
+  }
   const host = '127.0.0.1';
 
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-e2e-'));

@@ -7,13 +7,13 @@
 // の別プロセス同士の同時実行は防がない。verify には machine-local な FIFO スロット
 // (scripts/verify-slot.mjs) があるが e2e は verify に含まれない。
 //
-// BDBOARD_E2E_PORT が非空で設定されていればその値をそのまま返す (CI と既存の明示指定運用)。
-// 未設定時は OS に ephemeral ポート (listen 127.0.0.1:0) を払い出させる。port 0 払い出しと
-// 実際の bind の間に TOCTOU 窓は残るが、固定 8799 より桁違いに衝突しにくいので許容する。
+// BDBOARD_E2E_PORT が非空で設定されていれば parsePortNumber で検証してから返す (CI も
+// 自動採番経路を通す)。未設定時は OS に ephemeral ポート (listen 127.0.0.1:0) を払い出させる。
+// port 0 払い出しと実際の bind の間に TOCTOU 窓は残るが、固定 8799 より桁違いに衝突しにくい。
 //
 // 8787 は常時稼働の開発サーバー (CLAUDE.md "Always-On Local Hosting") のポート。
-// 自動採番結果が 8787 になった場合は再試行し、それでも 8787 しか出ないなら例外で落とす。
-// 黙って 8787 を使うのが最悪の失敗なので、固定値へのフォールバックも禁止。
+// env 指定で 8787 を拒否する。自動採番側にも sanity check があるが ephemeral 範囲外なので
+// 実際には発火しない — 実効的な 8787 防御は env 分岐側。
 //
 // playwright.config.ts は同期的に評価されるため、listen(0) 自体は子プロセス
 // (execFileSync + node -e) に任せて同期 API を保つ。
@@ -25,7 +25,6 @@ export const ALWAYS_ON_DEV_PORT = 8787;
 
 const MIN_TCP_PORT = 1;
 const MAX_TCP_PORT = 65_535;
-const MAX_ALLOCATION_ATTEMPTS = 5;
 const ALLOCATE_TIMEOUT_MS = 10_000;
 
 const ALLOCATE_PORT_SCRIPT = `
@@ -42,17 +41,17 @@ server.listen(0, '127.0.0.1', () => {
 server.on('error', () => process.exit(1));
 `;
 
-function parsePortNumber(raw: string): number {
+function parsePortNumber(raw: string, source: string): number {
   const trimmed = raw.trim();
   const parsed = Number.parseInt(trimmed, 10);
   if (!Number.isFinite(parsed) || String(parsed) !== trimmed) {
     throw new Error(
-      `resolveE2EPort: OS port allocation returned non-numeric output: ${JSON.stringify(raw)}`,
+      `resolveE2EPort: ${source} returned non-numeric output: ${JSON.stringify(raw)}`,
     );
   }
   if (parsed < MIN_TCP_PORT || parsed > MAX_TCP_PORT) {
     throw new Error(
-      `resolveE2EPort: allocated port ${parsed} is outside valid range ${MIN_TCP_PORT}-${MAX_TCP_PORT}`,
+      `resolveE2EPort: port ${parsed} from ${source} is outside valid range ${MIN_TCP_PORT}-${MAX_TCP_PORT}`,
     );
   }
   return parsed;
@@ -61,38 +60,50 @@ function parsePortNumber(raw: string): number {
 function allocateEphemeralPortOnce(): number {
   let stdout: string;
   try {
-    stdout = execFileSync(process.execPath, ['-e', ALLOCATE_PORT_SCRIPT], {
-      encoding: 'utf8',
-      timeout: ALLOCATE_TIMEOUT_MS,
-    });
+    // NODE_OPTIONS=--input-type=module が効いている環境でも require が使えるよう CJS を明示
+    stdout = execFileSync(
+      process.execPath,
+      ['--input-type=commonjs', '-e', ALLOCATE_PORT_SCRIPT],
+      {
+        encoding: 'utf8',
+        timeout: ALLOCATE_TIMEOUT_MS,
+      },
+    );
   } catch (err) {
     throw new Error(
       `resolveE2EPort: failed to allocate ephemeral port via child process: ${String(err)}`,
     );
   }
-  return parsePortNumber(stdout);
+  return parsePortNumber(stdout, 'OS port allocation');
 }
 
 function allocateEphemeralPort(): number {
-  for (let attempt = 1; attempt <= MAX_ALLOCATION_ATTEMPTS; attempt += 1) {
-    const port = allocateEphemeralPortOnce();
-    if (port !== ALWAYS_ON_DEV_PORT) {
-      return port;
-    }
+  const port = allocateEphemeralPortOnce();
+  // ephemeral 範囲 (macOS/Windows 49152–65535, Linux 32768–60999) に 8787 は含まれないので
+  // 実際には発火しない。実効的な 8787 防御は env 分岐側 (resolveE2EPort) にある。
+  // ここは前提が崩れたときに黙って通さないための保険。
+  if (port === ALWAYS_ON_DEV_PORT) {
+    throw new Error(
+      `resolveE2EPort: OS allocated port ${ALWAYS_ON_DEV_PORT} (always-on dev server)`,
+    );
   }
-  throw new Error(
-    `resolveE2EPort: OS kept allocating port ${ALWAYS_ON_DEV_PORT} (always-on dev server) after ${MAX_ALLOCATION_ATTEMPTS} attempts`,
-  );
+  return port;
 }
 
 /**
  * E2E throwaway サーバーが bind する TCP ポート番号を文字列で返す。
- * playwright.config.ts (同期) と global-setup.ts の両方から呼ぶ単一の正本。
+ * playwright.config.ts (同期) から呼ぶ単一の正本。global-setup.ts は env 経由で同じ値を読む。
  */
 export function resolveE2EPort(): string {
   const fromEnv = process.env.BDBOARD_E2E_PORT;
   if (fromEnv !== undefined && fromEnv !== '') {
-    return fromEnv;
+    const parsed = parsePortNumber(fromEnv, 'BDBOARD_E2E_PORT');
+    if (parsed === ALWAYS_ON_DEV_PORT) {
+      throw new Error(
+        `resolveE2EPort: BDBOARD_E2E_PORT=${ALWAYS_ON_DEV_PORT} is the always-on dev server port; running e2e against it would execute tests against live developer data`,
+      );
+    }
+    return String(parsed);
   }
   return String(allocateEphemeralPort());
 }

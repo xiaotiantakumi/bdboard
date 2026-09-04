@@ -24,9 +24,36 @@ describe('resolveE2EPort', () => {
     fn();
   }
 
-  it('returns BDBOARD_E2E_PORT verbatim when set (no auto-allocation)', () => {
+  it('returns validated BDBOARD_E2E_PORT when set (no auto-allocation)', () => {
     withEnv('8799', () => {
       expect(resolveE2EPort()).toBe('8799');
+    });
+  });
+
+  it('throws when BDBOARD_E2E_PORT is the always-on dev port 8787', () => {
+    withEnv(String(ALWAYS_ON_DEV_PORT), () => {
+      expect(() => resolveE2EPort()).toThrow(/8787/);
+      expect(() => resolveE2EPort()).toThrow(/always-on dev server port/);
+      expect(() => resolveE2EPort()).toThrow(/live developer data/);
+    });
+  });
+
+  it('throws when BDBOARD_E2E_PORT is non-numeric', () => {
+    withEnv('abc', () => {
+      expect(() => resolveE2EPort()).toThrow(/BDBOARD_E2E_PORT/);
+      expect(() => resolveE2EPort()).toThrow(/non-numeric/);
+    });
+  });
+
+  it('throws when BDBOARD_E2E_PORT is above the valid range', () => {
+    withEnv('99999', () => {
+      expect(() => resolveE2EPort()).toThrow(/outside valid range/);
+    });
+  });
+
+  it('throws when BDBOARD_E2E_PORT is below the valid range', () => {
+    withEnv('0', () => {
+      expect(() => resolveE2EPort()).toThrow(/outside valid range/);
     });
   });
 
@@ -39,22 +66,14 @@ describe('resolveE2EPort', () => {
     });
   });
 
-  it('does not auto-allocate the always-on dev port 8787', () => {
+  it('does not return a known fixed port when auto-allocating', () => {
     withEnv(undefined, () => {
-      expect(Number.parseInt(resolveE2EPort(), 10)).not.toBe(ALWAYS_ON_DEV_PORT);
-    });
-  });
-
-  it('auto-allocates a non-fixed port (not hard-coded 8799)', () => {
-    withEnv(undefined, () => {
-      const first = resolveE2EPort();
-      const second = resolveE2EPort();
-      for (const value of [first, second]) {
-        const port = Number.parseInt(value, 10);
-        expect(Number.isFinite(port)).toBe(true);
-        expect(port).not.toBe(8799);
-        expect(port).not.toBe(ALWAYS_ON_DEV_PORT);
-      }
+      const port = Number.parseInt(resolveE2EPort(), 10);
+      // 自動採番の結果が既知の固定ポート (8799/8787) ではないことだけを確認する。
+      // ephemeral 範囲外なのでこの 2 値は構造的に出得ず、これは回帰の網であって非決定性の証明ではない。
+      expect(Number.isFinite(port)).toBe(true);
+      expect(port).not.toBe(8799);
+      expect(port).not.toBe(ALWAYS_ON_DEV_PORT);
     });
   });
 });
