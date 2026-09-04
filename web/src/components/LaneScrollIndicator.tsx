@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState, type RefObject } from 'react';
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { LANE_LABELS, type Lane } from '../api';
+import { useLaneStripHeightVar } from '../hooks/useLaneStripHeightVar';
 import { navCurrentProps } from './toggleGroupA11y';
 import { selectMostVisibleLane } from './laneScrollTracking';
 
@@ -21,6 +22,10 @@ export function LaneScrollIndicator({
   scrollContainerRef,
   enabled,
 }: LaneScrollIndicatorProps) {
+  const stripRef = useRef<HTMLElement>(null);
+  const stripVisible = enabled && items.length > 0;
+  useLaneStripHeightVar(stripRef, stripVisible);
+
   const [activeLane, setActiveLane] = useState<Lane | null>(() => lanes[0] ?? null);
 
   useEffect(() => {
@@ -82,12 +87,12 @@ export function LaneScrollIndicator({
     [scrollContainerRef],
   );
 
-  if (!enabled || items.length === 0) {
+  if (!stripVisible) {
     return null;
   }
 
   return (
-    <nav className="lane-indicator-strip" aria-label="レーン切り替え">
+    <nav ref={stripRef} className="lane-indicator-strip" aria-label="レーン切り替え">
       <ul className="lane-indicator-list">
         {items.map((item) => {
           const isCurrent = item.lane === activeLane;
