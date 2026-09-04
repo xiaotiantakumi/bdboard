@@ -322,45 +322,56 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
    *
    * 壁時計デッドラインだけで待つと、マシンが遅いだけの状況と「ループが止まった」
    * 退行とを区別できず、高負荷時に偽陽性で落ちる。ここでは判定基準を時間ではなく
-   * 「progress() が伸び続けているか」に置く: 遅いだけならいくらでも待ち、
-   * stallMs の間まったく進捗が無いときにだけ失敗する。maxMs はテストが永久に
-   * ぶら下がらないための最後の歯止めであって、通常の合否判定には使われない。
+   * 「監視対象 id ごとの counts() の最小値が伸び続けているか」に置く: 遅いだけなら
+   * いくらでも待ち、stallMs の間まったく進捗が無いときにだけ失敗する。maxMs は
+   * テストが永久にぶら下がらないための最後の歯止めであって、通常の合否判定には
+   * 使われない。stallMs は intervalSec から導出する (明示指定があればそれを優先)。
    */
   async function pollUntilProgressing(
     predicate: () => boolean | Promise<boolean>,
     options: {
-      readonly progress: () => number;
+      readonly counts: () => Record<string, number>;
       readonly what: string;
       readonly stallMs?: number;
       readonly maxMs?: number;
       readonly intervalMs?: number;
+      readonly intervalSec?: number;
     },
   ): Promise<void> {
-    const stallMs = options.stallMs ?? 10_000;
+    const progressFromCounts = (counts: Record<string, number>): number => {
+      const values = Object.values(counts);
+      return values.length === 0 ? 0 : Math.min(...values);
+    };
+    const formatCountsBreakdown = (counts: Record<string, number>): string =>
+      Object.entries(counts).map(([id, n]) => `${id}=${n}`).join(', ');
+
+    const stallMs = options.stallMs ?? Math.max(10_000, (options.intervalSec ?? 0) * 1000 * 5);
     const maxMs = options.maxMs ?? 60_000;
     const intervalMs = options.intervalMs ?? 100;
     const startedAt = Date.now();
-    let lastProgress = options.progress();
+    let lastProgress = progressFromCounts(options.counts());
     let lastProgressAt = startedAt;
 
     for (;;) {
       if (await predicate()) {
         return;
       }
-      const current = options.progress();
+      const currentCounts = options.counts();
+      const current = progressFromCounts(currentCounts);
+      const breakdown = formatCountsBreakdown(currentCounts);
       const now = Date.now();
       if (current > lastProgress) {
         lastProgress = current;
         lastProgressAt = now;
       } else if (now - lastProgressAt >= stallMs) {
         throw new Error(
-          `${options.what}: no progress for ${stallMs}ms (progress stuck at ${lastProgress}); `
+          `${options.what}: no progress for ${stallMs}ms (progress stuck at ${lastProgress}; ${breakdown}); `
           + 'the heartbeat loop appears to have stopped beating',
         );
       }
       if (now - startedAt >= maxMs) {
         throw new Error(
-          `${options.what}: hard cap ${maxMs}ms reached while still progressing (progress=${lastProgress})`,
+          `${options.what}: hard cap ${maxMs}ms reached while still progressing (progress=${lastProgress}; ${breakdown})`,
         );
       }
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
@@ -416,6 +427,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
   // 待機は壁時計デッドラインではなく「heartbeat が増え続けているか」で判定する。
   // 高負荷でも遅いだけなら待ち、ループが実際に止まったときだけ落ちる (bdboard-rg8o)。
   it('keeps beating ids on interval (multiple heartbeat calls)', async () => {
+    const HEARTBEAT_INTERVAL_SEC = 0.2;
     const hbEnv = setupEnv();
     writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok', 'HEARTBEAT_a-2=ok']);
 
@@ -428,7 +440,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         '--session-pid',
         String(session.pid),
         '--interval',
-        '0.2',
+        String(HEARTBEAT_INTERVAL_SEC),
         '--max-hours',
         '1',
         '--repo',
@@ -448,9 +460,12 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         heartbeatCallCount(hbEnv.argsLog, 'a-1') >= 3
         && heartbeatCallCount(hbEnv.argsLog, 'a-2') >= 3,
       {
-        progress: () =>
-          heartbeatCallCount(hbEnv.argsLog, 'a-1') + heartbeatCallCount(hbEnv.argsLog, 'a-2'),
+        counts: () => ({
+          'a-1': heartbeatCallCount(hbEnv.argsLog, 'a-1'),
+          'a-2': heartbeatCallCount(hbEnv.argsLog, 'a-2'),
+        }),
         what: 'waiting for 3 heartbeats per id',
+        intervalSec: HEARTBEAT_INTERVAL_SEC,
       },
     );
 
@@ -462,6 +477,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
   }, 90_000);
 
   it('drops an id when heartbeat fails and show reports non-in_progress', async () => {
+    const HEARTBEAT_INTERVAL_SEC = 0.2;
     const hbEnv = setupEnv();
     writeFixture(hbEnv.fixturePath, [
       'HEARTBEAT_drop-me=fail',
@@ -478,7 +494,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         '--session-pid',
         String(session.pid),
         '--interval',
-        '0.2',
+        String(HEARTBEAT_INTERVAL_SEC),
         '--repo',
         tmpRoot,
         'drop-me',
@@ -492,8 +508,13 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         heartbeatCallCount(hbEnv.argsLog, 'drop-me') >= 1
         && heartbeatCallCount(hbEnv.argsLog, 'keep-me') >= 2,
       {
-        progress: () => heartbeatCallCount(hbEnv.argsLog, 'keep-me'),
+        counts: () => ({
+          'drop-me': heartbeatCallCount(hbEnv.argsLog, 'drop-me'),
+          'keep-me': heartbeatCallCount(hbEnv.argsLog, 'keep-me'),
+        }),
         what: 'waiting for the first beats',
+        intervalSec: HEARTBEAT_INTERVAL_SEC,
+        maxMs: 30_000,
       },
     );
 
@@ -501,8 +522,12 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     await pollUntilProgressing(
       () => heartbeatCallCount(hbEnv.argsLog, 'keep-me') >= dropCallsAfterWait + 2,
       {
-        progress: () => heartbeatCallCount(hbEnv.argsLog, 'keep-me'),
+        counts: () => ({
+          'keep-me': heartbeatCallCount(hbEnv.argsLog, 'keep-me'),
+        }),
         what: 'waiting for keep-me to keep beating after drop-me was dropped',
+        intervalSec: HEARTBEAT_INTERVAL_SEC,
+        maxMs: 30_000,
       },
     );
 
