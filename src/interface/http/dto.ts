@@ -24,6 +24,7 @@ import type {
 } from '../../application/board/get-model-stats.js';
 import type { HarnessKpiStats } from '../../application/board/get-harness-kpi.js';
 import type { HygieneIssue } from '../../domain/hygiene.js';
+import type { InFlightOverlapPeer } from '../../domain/in-flight-overlap.js';
 import type { StaleLeaseIssue } from '../../domain/lease.js';
 import type { MergeSlotStatus } from '../../domain/merge-slot.js';
 import type { PrBadge } from '../../domain/pr-link.js';
@@ -391,11 +392,17 @@ export type HygieneIssueKindDto =
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
-  | 'merged_leftover';
+  | 'merged_leftover'
+  | 'in_flight_file_overlap';
 
 export interface HygieneCycleEdgeDto {
   issueId: string;
   dependsOnId: string;
+}
+
+export interface HygieneOverlapPeerDto {
+  otherTicketId: string;
+  files: string[];
 }
 
 export interface HygieneCleanupTargetDto {
@@ -414,6 +421,13 @@ export interface HygieneIssueDto {
   deferUntil?: string;
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
+  overlap?: HygieneOverlapPeerDto;
+}
+
+/** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */
+export interface TicketInFlightOverlapDto {
+  ticketId: string;
+  files: string[];
 }
 
 export interface StaleLeaseDto {
@@ -964,7 +978,21 @@ export function toHygieneIssueDto(issue: HygieneIssue): HygieneIssueDto {
           })),
         }
       : {}),
+    ...(issue.overlap !== undefined
+      ? {
+          overlap: {
+            otherTicketId: issue.overlap.otherTicketId,
+            files: [...issue.overlap.files],
+          },
+        }
+      : {}),
   };
+}
+
+export function toTicketInFlightOverlapDto(
+  peer: InFlightOverlapPeer,
+): TicketInFlightOverlapDto {
+  return { ticketId: peer.ticketId, files: [...peer.files] };
 }
 
 export function toStaleLeaseDto(issue: StaleLeaseIssue): StaleLeaseDto {

@@ -344,11 +344,17 @@ export type HygieneIssueKindDto =
   | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
-  | 'merged_leftover';
+  | 'merged_leftover'
+  | 'in_flight_file_overlap';
 
 export interface HygieneCycleEdgeDto {
   issueId: string;
   dependsOnId: string;
+}
+
+export interface HygieneOverlapPeerDto {
+  otherTicketId: string;
+  files: string[];
 }
 
 export interface HygieneCleanupTargetDto {
@@ -368,6 +374,14 @@ export interface HygieneIssueDto {
   deferUntil?: string;
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
+  /** in_flight_file_overlap のときだけ入る。相手チケットと重複しているファイル */
+  overlap?: HygieneOverlapPeerDto;
+}
+
+/** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */
+export interface TicketInFlightOverlapDto {
+  ticketId: string;
+  files: string[];
 }
 
 export interface PendingDecisionDto {
@@ -1103,6 +1117,14 @@ export function fetchSimilarTickets(
   searchParams.set('limit', String(limit));
   return fetchJson<TicketSimilarResultDto[]>(
     `/api/tickets/${encodeURIComponent(ticketId)}/similar?${searchParams.toString()}`,
+  );
+}
+
+export function fetchTicketInFlightOverlaps(
+  ticketId: string,
+): Promise<TicketInFlightOverlapDto[]> {
+  return fetchJson<TicketInFlightOverlapDto[]>(
+    `/api/tickets/${encodeURIComponent(ticketId)}/in-flight-overlaps`,
   );
 }
 

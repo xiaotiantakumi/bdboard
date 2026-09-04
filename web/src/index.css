@@ -1605,6 +1605,13 @@ body {
   color: #d70015;
 }
 
+/* 着手中同士のファイル重複は severity=info。まだ失敗ではなく「順番を決めろ」の合図。
+   緑は「問題なし」に読めるので、他の kind と衝突しないティールを使う */
+.hygiene-kind-in_flight_file_overlap {
+  background: rgba(0, 199, 190, 0.16);
+  color: #0b7285;
+}
+
 .hygiene-stale-lease-group,
 .hygiene-merge-slot-group {
   display: flex;

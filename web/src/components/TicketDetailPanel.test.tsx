@@ -23,6 +23,7 @@ import {
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
+  fetchTicketInFlightOverlaps,
   fetchTicketRuns,
   fetchTicketTimeline,
   fetchSimilarTickets,
@@ -77,6 +78,7 @@ vi.mock('../api', async (importOriginal) => {
     deleteTicketSessionLink: vi.fn(),
     startTicketRun: vi.fn(),
     fetchTicketRuns: vi.fn(),
+    fetchTicketInFlightOverlaps: vi.fn(),
     fetchAgentRun: vi.fn(),
     cancelAgentRun: vi.fn(),
   };
@@ -103,12 +105,14 @@ const mockPostTicketSessionLink = vi.mocked(postTicketSessionLink);
 const mockDeleteTicketSessionLink = vi.mocked(deleteTicketSessionLink);
 const mockStartTicketRun = vi.mocked(startTicketRun);
 const mockFetchTicketRuns = vi.mocked(fetchTicketRuns);
+const mockFetchTicketInFlightOverlaps = vi.mocked(fetchTicketInFlightOverlaps);
 const mockFetchAgentRun = vi.mocked(fetchAgentRun);
 const mockCancelAgentRun = vi.mocked(cancelAgentRun);
 
 beforeEach(() => {
   mockFetchSimilarTickets.mockResolvedValue([]);
   mockFetchTicketRuns.mockResolvedValue({ runs: [] });
+  mockFetchTicketInFlightOverlaps.mockResolvedValue([]);
   resetPlatformSupportCache();
   mockFetchPlatformSupport.mockResolvedValue({ platform: 'darwin', limitations: [] });
 });
@@ -2415,6 +2419,46 @@ describe('変更履歴タイムライン', () => {
     expect(await screen.findByText('似ているチケット')).toBeInTheDocument();
     expect(screen.getByText('Similar ticket detection')).toBeInTheDocument();
     expect(screen.getByText('82%')).toBeInTheDocument();
+  });
+
+  it('shows in-flight file overlaps with the conflicting ticket and files', async () => {
+    mockFetchTicket.mockResolvedValue({ ...sampleTicket, status: 'in_progress' });
+    mockFetchTicketInFlightOverlaps.mockResolvedValue([
+      { ticketId: 'bdboard-peer', files: ['src/domain/hygiene.ts', 'web/src/api.ts'] },
+    ]);
+
+    renderPanel(new Map());
+
+    await waitFor(() => {
+      expect(mockFetchTicketInFlightOverlaps).toHaveBeenCalledWith(sampleTicket.id);
+    });
+
+    expect(await screen.findByText('衝突しうる着手中チケット')).toBeInTheDocument();
+    expect(screen.getByText('bdboard-peer')).toBeInTheDocument();
+    expect(screen.getByText('src/domain/hygiene.ts')).toBeInTheDocument();
+    expect(screen.getByText('web/src/api.ts')).toBeInTheDocument();
+    expect(screen.getByText('2 ファイル')).toBeInTheDocument();
+  });
+
+  it('hides the overlap section when there is nothing to warn about', async () => {
+    mockFetchTicket.mockResolvedValue({ ...sampleTicket, status: 'in_progress' });
+    mockFetchTicketInFlightOverlaps.mockResolvedValue([]);
+
+    renderPanel(new Map());
+
+    expect(await screen.findByText('似ているチケット')).toBeInTheDocument();
+    expect(screen.queryByText('衝突しうる着手中チケット')).not.toBeInTheDocument();
+  });
+
+  it('does not query overlaps for a closed ticket', async () => {
+    mockFetchTicket.mockResolvedValue({ ...sampleTicket, status: 'closed' });
+    // 呼び出し履歴はファイル内で共有されるので、この test 内の呼び出しだけを見る
+    mockFetchTicketInFlightOverlaps.mockClear();
+
+    renderPanel(new Map());
+
+    expect(await screen.findByText('似ているチケット')).toBeInTheDocument();
+    expect(mockFetchTicketInFlightOverlaps).not.toHaveBeenCalled();
   });
 });
 

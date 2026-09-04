@@ -310,7 +310,8 @@ async function main(): Promise<void> {
   const commentReader = createBdCliCommentReader(commandRunner);
   const prStatusReader = createGhCliPrStatusReader(commandRunner, { ghPath });
   const humanDecisions = createBdCliHumanDecisions(commandRunner);
-  const worktreeScanner = createGitWorktreeScanner(commandRunner);
+  // fsPort は index の mtime を読んで変更ファイルのキャッシュを無効化するためだけに使う
+  const worktreeScanner = createGitWorktreeScanner(commandRunner, { fs: fsPort });
   const issueWriter = createBdCliIssueWriter(commandRunner);
   const dependencyWriter = createBdCliDependencyWriter(commandRunner);
   const sessionLinkWriter = createBdCliSessionLinkWriter(commandRunner);

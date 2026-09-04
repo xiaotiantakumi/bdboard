@@ -21,6 +21,7 @@ import {
   fetchTicketComments,
   fetchTicketTimeline,
   fetchSimilarTickets,
+  fetchTicketInFlightOverlaps,
   postTicketComment,
   postTicketDecision,
   postTicketAddLabel,
@@ -40,6 +41,7 @@ import {
   type ActivityEventDto,
   type TicketDetailDto,
   type TicketSearchResultDto,
+  type TicketInFlightOverlapDto,
   type TicketSimilarResultDto,
   LANE_LABELS,
 } from '../api';
@@ -383,6 +385,18 @@ export function TicketDetailPanel({
   } = useQuery({
     queryKey: ['similar-tickets', ticketId],
     queryFn: () => fetchSimilarTickets(ticketId),
+  });
+  // 着手中チケット同士のファイル重複 (npm run drift の「着手中版」)。worktree で git を
+  // 叩くので、closed のチケットでは最初から引かない (サーバー側も closed は返さない)。
+  const inFlightOverlapsEnabled = data !== undefined && data.status !== 'closed';
+  const {
+    data: inFlightOverlaps,
+    isLoading: inFlightOverlapsLoading,
+    error: inFlightOverlapsError,
+  } = useQuery({
+    queryKey: ['ticket-in-flight-overlaps', ticketId],
+    queryFn: () => fetchTicketInFlightOverlaps(ticketId),
+    enabled: inFlightOverlapsEnabled,
   });
   const {
     data: ticketRunsData,
@@ -1548,6 +1562,47 @@ export function TicketDetailPanel({
                 </button>
               </div>
             )}
+            {inFlightOverlapsEnabled &&
+              inFlightOverlapsError === null &&
+              (inFlightOverlapsLoading ||
+                (inFlightOverlaps !== undefined && inFlightOverlaps.length > 0)) && (
+                <div className="detail-section">
+                  <h3>衝突しうる着手中チケット</h3>
+                  {inFlightOverlapsLoading ? (
+                    <p className="detail-help">読み込み中…</p>
+                  ) : (
+                    <>
+                      <p className="detail-help">
+                        同じファイルを編集中の着手中チケットです。どちらかへ寄せるか、
+                        マージの順番を先に決めてください。
+                      </p>
+                      <ul className="detail-list">
+                        {(inFlightOverlaps ?? []).map(
+                          (overlap: TicketInFlightOverlapDto) => (
+                            <li key={overlap.ticketId}>
+                              <TicketIdLink
+                                id={overlap.ticketId}
+                                isTicketOnBoard={isTicketOnBoard}
+                                onOpenTicket={onOpenTicket}
+                              />{' '}
+                              <span className="badge">
+                                {overlap.files.length} ファイル
+                              </span>
+                              <ul className="detail-list">
+                                {overlap.files.map((file) => (
+                                  <li key={file}>
+                                    <code>{file}</code>
+                                  </li>
+                                ))}
+                              </ul>
+                            </li>
+                          ),
+                        )}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
             <div className="detail-section">
               <h3>似ているチケット</h3>
               {similarTicketsLoading && (

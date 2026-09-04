@@ -1,5 +1,6 @@
 import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
+import type { InFlightOverlap } from '../../domain/in-flight-overlap.js';
 import {
   checkHygiene,
   pendingDecisionKey,
@@ -12,6 +13,8 @@ export interface GetHygieneIssuesOptions {
   /** 指定されたIDのみ。未指定なら全部 */
   readonly projectIds?: readonly string[];
   readonly leftoverCandidates?: readonly LeftoverCandidate[];
+  /** 着手中 worktree 同士のファイル重複 (scanInFlightOverlaps の戻り)。 */
+  readonly inFlightOverlaps?: readonly InFlightOverlap[];
   /**
    * 確認待ちチケットの最終コメント日時 (getPendingCommentAnchors の戻り)。
    * bd を叩く必要があるのでここでは組み立てず、呼び出し側から受け取る。
@@ -65,6 +68,9 @@ export function getHygieneIssues(
     ...(options?.thresholds !== undefined ? { thresholds: options.thresholds } : {}),
     ...(options?.leftoverCandidates !== undefined
       ? { leftoverCandidates: options.leftoverCandidates }
+      : {}),
+    ...(options?.inFlightOverlaps !== undefined
+      ? { inFlightOverlaps: options.inFlightOverlaps }
       : {}),
   });
 }

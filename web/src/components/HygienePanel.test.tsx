@@ -273,6 +273,34 @@ describe('HygienePanel', () => {
     expect(cleanupCommand!.textContent).toBe(formatWorktreeCleanupScript(cleanup));
   });
 
+  it('renders an in_flight_file_overlap row with its own kind badge', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-pkr6.10',
+        kind: 'in_flight_file_overlap',
+        severity: 'info',
+        message:
+          '着手中の bdboard-pkr6.8 と同じファイルを編集中: src/domain/hygiene.ts',
+        overlap: {
+          otherTicketId: 'bdboard-pkr6.8',
+          files: ['src/domain/hygiene.ts'],
+        },
+      }),
+    ]);
+
+    const { container } = renderHygienePanel();
+
+    expect(await screen.findByText('着手中の重複')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '着手中の bdboard-pkr6.8 と同じファイルを編集中: src/domain/hygiene.ts',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('.hygiene-kind-in_flight_file_overlap'),
+    ).not.toBeNull();
+  });
+
   it('copies cleanup commands and shows success feedback', async () => {
     const user = userEvent.setup();
     const cleanup = {

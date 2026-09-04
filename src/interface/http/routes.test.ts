@@ -1760,6 +1760,7 @@ describe('createApiRoutes', () => {
     });
 
     const worktreeScanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
       scan: vi.fn(async () => ({
         worktrees: [
           { path: '/projects/a', branch: 'main', isMain: true },
@@ -1791,6 +1792,137 @@ describe('createApiRoutes', () => {
       },
     });
     assertNoDates(body);
+  });
+
+  function inFlightScanner(
+    filesByWorktree: Readonly<Record<string, readonly string[]>>,
+  ): WorktreeScanner {
+    return {
+      scan: async () => ({
+        worktrees: [
+          { path: '/projects/a', branch: 'main', isMain: true },
+          ...Object.keys(filesByWorktree).map((path) => ({
+            path,
+            branch: `bd/${path.slice(path.lastIndexOf('/') + 1)}`,
+            isMain: false,
+          })),
+        ],
+        bdBranches: Object.keys(filesByWorktree).map(
+          (path) => `bd/${path.slice(path.lastIndexOf('/') + 1)}`,
+        ),
+      }),
+      listChangedFiles: async (worktreePath) => filesByWorktree[worktreePath] ?? [],
+    };
+  }
+
+  function inFlightCache() {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-x', projectId: a.id, status: 'in_progress' }),
+        makeTicket({ id: 'bdboard-y', projectId: a.id, status: 'in_progress' }),
+        makeTicket({ id: 'bdboard-z', projectId: a.id, status: 'in_progress' }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+    return { cache, projectId: a.id };
+  }
+
+  const IN_FLIGHT_FILES = {
+    '/projects/a/.claude/worktrees/bdboard-x': ['src/domain/hygiene.ts', 'src/x.ts'],
+    '/projects/a/.claude/worktrees/bdboard-y': ['src/domain/hygiene.ts', 'src/y.ts'],
+    '/projects/a/.claude/worktrees/bdboard-z': ['src/z.ts'],
+  } as const;
+
+  it('returns in_flight_file_overlap hygiene issues for both sides of a pair', async () => {
+    const { cache, projectId } = inFlightCache();
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: inFlightScanner(IN_FLIGHT_FILES) }),
+    );
+
+    const response = await app.request('/api/hygiene');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    const overlaps = body.filter(
+      (issue: { kind: string }) => issue.kind === 'in_flight_file_overlap',
+    );
+    expect(overlaps).toHaveLength(2);
+    expect(overlaps[0]).toMatchObject({
+      ticketId: 'bdboard-x',
+      projectId,
+      severity: 'info',
+      overlap: { otherTicketId: 'bdboard-y', files: ['src/domain/hygiene.ts'] },
+    });
+    expect(overlaps[1]).toMatchObject({
+      ticketId: 'bdboard-y',
+      overlap: { otherTicketId: 'bdboard-x', files: ['src/domain/hygiene.ts'] },
+    });
+    assertNoDates(body);
+  });
+
+  it('returns the in-flight overlaps of a single ticket for the detail panel', async () => {
+    const { cache } = inFlightCache();
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: inFlightScanner(IN_FLIGHT_FILES) }),
+    );
+
+    const response = await app.request('/api/tickets/bdboard-x/in-flight-overlaps');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual([
+      { ticketId: 'bdboard-y', files: ['src/domain/hygiene.ts'] },
+    ]);
+
+    const noOverlap = await (
+      await app.request('/api/tickets/bdboard-z/in-flight-overlaps')
+    ).json();
+    expect(noOverlap).toEqual([]);
+  });
+
+  it('returns an empty in-flight overlap list without a worktreeScanner', async () => {
+    const { cache } = inFlightCache();
+    const app = createApiRoutes(createDeps({ cache }));
+
+    const response = await app.request('/api/tickets/bdboard-x/in-flight-overlaps');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+  });
+
+  it('returns an empty in-flight overlap list when the ticket has no worktree', async () => {
+    const { cache } = inFlightCache();
+    const listChangedFiles = vi.fn(async () => ['src/domain/hygiene.ts']);
+    const scanner: WorktreeScanner = {
+      scan: async () => ({
+        worktrees: [{ path: '/projects/a', branch: 'main', isMain: true }],
+        bdBranches: [],
+      }),
+      listChangedFiles,
+    };
+    const app = createApiRoutes(createDeps({ cache, worktreeScanner: scanner }));
+
+    const response = await app.request('/api/tickets/bdboard-x/in-flight-overlaps');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect(listChangedFiles).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty in-flight overlap list for an unknown ticket', async () => {
+    const { cache } = inFlightCache();
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: inFlightScanner(IN_FLIGHT_FILES) }),
+    );
+
+    const response = await app.request('/api/tickets/bdboard-nope/in-flight-overlaps');
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
   });
 
   it('returns 501 when lease health dependencies are not configured', async () => {

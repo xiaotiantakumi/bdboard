@@ -76,6 +76,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   unblocked_high_priority_idle: '着手待ち高優先',
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
+  in_flight_file_overlap: '着手中の重複',
 };
 
 type RepairableKind = 'undefer' | 'close' | 'priority';

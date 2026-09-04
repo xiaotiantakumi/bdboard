@@ -18,7 +18,13 @@ import {
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
+import { scanInFlightOverlaps } from '../../application/board/scan-in-flight-overlaps.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
+import {
+  overlapPeersForTicket,
+  selectInFlightWorktrees,
+  type InFlightOverlap,
+} from '../../domain/in-flight-overlap.js';
 import { getThroughputStats } from '../../application/board/get-throughput-stats.js';
 import { getModelStats } from '../../application/board/get-model-stats.js';
 import { getCfdStats } from '../../application/board/get-cfd-stats.js';
@@ -89,6 +95,7 @@ import {
   toMergeSlotStatusDto,
   toPrBadgeDto,
   toTicketDetailDto,
+  toTicketInFlightOverlapDto,
   toTicketSearchResultDto,
   toTicketSimilarResultDto,
   toTicketTokenUsageDto,
@@ -678,6 +685,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     const projectIds = parseProjectIds(c.req.query('projects'));
 
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
+    let inFlightOverlaps: readonly InFlightOverlap[] | undefined;
     if (deps.worktreeScanner !== undefined) {
       let entries = deps.cache.listProjects();
       if (projectIds !== undefined) {
@@ -686,6 +694,16 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       }
       const projects = entries.map((entry) => entry.project);
       leftoverCandidates = await scanGitLeftovers(projects, deps.worktreeScanner);
+
+      // merged_leftover と同じ worktree 一覧を使い回す。closed のものはあちらが、
+      // まだ closed でないものはこちらが見る (git worktree list は 1 回で済む)。
+      inFlightOverlaps = await scanInFlightOverlaps(
+        selectInFlightWorktrees(
+          leftoverCandidates,
+          entries.flatMap((entry) => entry.tickets),
+        ),
+        deps.worktreeScanner,
+      );
     }
 
     // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は
@@ -706,6 +724,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       ...(projectIds !== undefined ? { projectIds } : {}),
       ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
+      ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),
     });
     return c.json(issues.map(toHygieneIssueDto));
@@ -820,6 +839,39 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     const limit = parseSimilarLimit(c.req.query('limit'));
     const hits = getSimilarTickets(deps.cache, id, { limit });
     return c.json(hits.map(toTicketSimilarResultDto));
+  });
+
+  // 着手中チケット同士のファイル重複の、1 チケットぶん (詳細パネル用)。
+  // 対象チケットが属するプロジェクトの worktree だけを読む。
+  app.get('/api/tickets/:id/in-flight-overlaps', async (c) => {
+    const id = c.req.param('id');
+    if (deps.worktreeScanner === undefined) {
+      return c.json([]);
+    }
+
+    const entry = deps.cache
+      .listProjects()
+      .find((candidate) => candidate.tickets.some((ticket) => ticket.id === id));
+    if (entry === undefined) {
+      return c.json([]);
+    }
+
+    const leftovers = await scanGitLeftovers([entry.project], deps.worktreeScanner);
+    const inFlight = selectInFlightWorktrees(leftovers, entry.tickets);
+
+    // このチケット自身に worktree が無ければ、どのペアにも入りようがない。
+    // 変更ファイルを読む前に打ち切る (詳細パネルは worktree の無いチケットでも開く)。
+    if (!inFlight.some((worktree) => worktree.ticketId === id)) {
+      return c.json([]);
+    }
+
+    const overlaps = await scanInFlightOverlaps(inFlight, deps.worktreeScanner);
+
+    return c.json(
+      overlapPeersForTicket(overlaps, entry.project.id, id).map(
+        toTicketInFlightOverlapDto,
+      ),
+    );
   });
 
   app.get('/api/tickets/:id{.+}', async (c) => {
