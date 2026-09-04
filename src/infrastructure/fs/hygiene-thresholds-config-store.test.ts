@@ -33,6 +33,7 @@ describe('createFileHygieneThresholdsConfigStore', () => {
       staleInProgressAfterMs: 5 * 24 * 60 * 60_000,
       highPriorityMax: 2,
       stalePendingDecisionAfterMs: 2 * 24 * 60 * 60_000,
+      closedWithoutEvidenceWindowMs: 4 * 24 * 60 * 60_000,
     } as const;
     await store.write(config);
     expect(await store.read()).toEqual(config);

@@ -87,6 +87,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
   in_flight_file_overlap: '着手中の重複',
+  closed_without_evidence: 'close 証拠なし',
 };
 
 type RepairableKind = 'undefer' | 'close' | 'priority';

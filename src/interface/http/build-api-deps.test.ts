@@ -98,6 +98,8 @@ describe('buildApiDeps', () => {
       highPriorityMax: DEFAULT_HYGIENE_THRESHOLDS.highPriorityMax,
       stalePendingDecisionAfterMs:
         DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs,
+      closedWithoutEvidenceWindowMs:
+        DEFAULT_HYGIENE_THRESHOLDS.closedWithoutEvidenceWindowMs,
     });
   });
 

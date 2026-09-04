@@ -10,6 +10,7 @@ import { getSimilarTickets } from '../../application/board/find-similar-tickets.
 import { getDependencyGraph } from '../../application/board/get-dependency-graph.js';
 import { getHygieneIssues } from '../../application/board/get-hygiene-issues.js';
 import { getPendingCommentAnchors } from '../../application/board/get-pending-comment-anchors.js';
+import { getCloseEvidenceKeys } from '../../application/board/get-close-evidence.js';
 import {
   getPrBadges,
   PrBadgeCommentCache,
@@ -58,6 +59,7 @@ import {
 } from '../../domain/liveness.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
 import type { HygieneThresholds } from '../../domain/hygiene.js';
+import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
@@ -765,20 +767,35 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は
     // コメントで動かないので、これが無いとコメントで議論が続いているチケットまで
     // 「放置」に出る。引くのは確認待ちのチケットだけなので件数はひと桁。
+    const thresholds = await deps.getHygieneThresholds?.();
+    const now = deps.now();
+    const closedWithoutEvidenceWindowMs =
+      thresholds?.closedWithoutEvidenceWindowMs ??
+      resolveHygieneThresholds().closedWithoutEvidenceWindowMs;
+
     let pendingCommentAnchors: ReadonlyMap<string, Date> | undefined;
+    let closeEvidenceKeys: ReadonlySet<string> | undefined;
     if (deps.commentReader !== undefined) {
       pendingCommentAnchors = await getPendingCommentAnchors(
         deps.cache,
         deps.commentReader,
         projectIds !== undefined ? { projectIds } : undefined,
       );
+      // close 証拠チェックもコメント本文が必要 (bdboard-pkr6.8)。直近 close かつ
+      // commentCount > 0 のチケットだけに絞るので、台帳全件ぶんの bd 起動にはならない。
+      closeEvidenceKeys = await getCloseEvidenceKeys(
+        deps.cache,
+        deps.commentReader,
+        now,
+        closedWithoutEvidenceWindowMs,
+        projectIds !== undefined ? { projectIds } : undefined,
+      );
     }
 
-    const thresholds = await deps.getHygieneThresholds?.();
-
-    const issues = getHygieneIssues(deps.cache, deps.now(), {
+    const issues = getHygieneIssues(deps.cache, now, {
       ...(projectIds !== undefined ? { projectIds } : {}),
       ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
+      ...(closeEvidenceKeys !== undefined ? { closeEvidenceKeys } : {}),
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
       ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),

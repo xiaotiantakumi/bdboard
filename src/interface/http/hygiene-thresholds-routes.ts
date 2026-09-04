@@ -25,6 +25,7 @@ const hygieneThresholdsBodySchema = z.object({
   staleInProgressAfterMs: msFieldSchema,
   highPriorityMax: priorityFieldSchema,
   stalePendingDecisionAfterMs: msFieldSchema,
+  closedWithoutEvidenceWindowMs: msFieldSchema,
   version: z.string().min(1).max(256),
 });
 
@@ -38,6 +39,7 @@ export function computeHygieneThresholdsVersion(
         staleInProgressAfterMs: normalized.staleInProgressAfterMs,
         highPriorityMax: normalized.highPriorityMax,
         stalePendingDecisionAfterMs: normalized.stalePendingDecisionAfterMs,
+        closedWithoutEvidenceWindowMs: normalized.closedWithoutEvidenceWindowMs,
       }),
     )
     .digest('hex');
@@ -49,6 +51,7 @@ function toEffectiveDto(config: Awaited<ReturnType<HygieneThresholdsConfigPort['
     staleInProgressAfterMs: resolved.staleInProgressAfterMs,
     highPriorityMax: resolved.highPriorityMax,
     stalePendingDecisionAfterMs: resolved.stalePendingDecisionAfterMs,
+    closedWithoutEvidenceWindowMs: resolved.closedWithoutEvidenceWindowMs,
     defaults: DEFAULT_HYGIENE_THRESHOLDS_OVERRIDES,
   };
 }
@@ -63,6 +66,7 @@ function mergeHygieneThresholdsConfig(
     staleInProgressAfterMs: body.staleInProgressAfterMs,
     highPriorityMax: body.highPriorityMax,
     stalePendingDecisionAfterMs: body.stalePendingDecisionAfterMs,
+    closedWithoutEvidenceWindowMs: body.closedWithoutEvidenceWindowMs,
   } as const;
 
   for (const [key, value] of Object.entries(fields)) {
@@ -119,6 +123,7 @@ export function createHygieneThresholdsRoutes(deps: HygieneThresholdsRoutesDeps)
         staleInProgressAfterMs: nextConfig.staleInProgressAfterMs,
         highPriorityMax: nextConfig.highPriorityMax,
         stalePendingDecisionAfterMs: nextConfig.stalePendingDecisionAfterMs,
+        closedWithoutEvidenceWindowMs: nextConfig.closedWithoutEvidenceWindowMs,
       });
       if (!validation.ok) {
         return c.json(

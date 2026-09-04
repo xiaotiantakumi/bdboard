@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import { DEFAULT_HYGIENE_THRESHOLDS } from '../../domain/hygiene-thresholds.js';
+import { pendingDecisionKey } from '../../domain/hygiene.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
@@ -296,6 +297,50 @@ describe('getHygieneIssues', () => {
     expect(
       getHygieneIssues(cache, NOW, { thresholds: relaxedThresholds }).map((issue) => issue.kind),
     ).toEqual([]);
+  });
+
+  it('passes closeEvidenceKeys through to checkHygiene', () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+    const closedAt = new Date(NOW.getTime() - 60_000);
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-no-evidence',
+          projectId: a.id,
+          status: 'closed',
+          closedAt,
+          commentCount: 1,
+        }),
+        makeTicket({
+          id: 'bdboard-with-evidence',
+          projectId: a.id,
+          status: 'closed',
+          closedAt,
+          commentCount: 2,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const withoutKeys = getHygieneIssues(cache, NOW).filter(
+      (issue) => issue.kind === 'closed_without_evidence',
+    );
+    expect(withoutKeys.map((issue) => issue.ticketId).sort()).toEqual([
+      'bdboard-no-evidence',
+      'bdboard-with-evidence',
+    ]);
+
+    const evidenceKeys = new Set<string>([
+      pendingDecisionKey(a.id, 'bdboard-with-evidence'),
+    ]);
+    const withKeys = getHygieneIssues(cache, NOW, { closeEvidenceKeys: evidenceKeys }).filter(
+      (issue) => issue.kind === 'closed_without_evidence',
+    );
+    expect(withKeys.map((issue) => issue.ticketId)).toEqual(['bdboard-no-evidence']);
   });
 
   it('uses the specified timezone for overdue_defer deferUntil formatting', () => {

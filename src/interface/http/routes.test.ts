@@ -1779,8 +1779,11 @@ describe('createApiRoutes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body).toHaveLength(1);
-    expect(body[0]).toMatchObject({
+    const leftovers = body.filter(
+      (issue: { kind: string }) => issue.kind === 'merged_leftover',
+    );
+    expect(leftovers).toHaveLength(1);
+    expect(leftovers[0]).toMatchObject({
       kind: 'merged_leftover',
       ticketId: 'bdboard-merged',
       projectId: a.id,

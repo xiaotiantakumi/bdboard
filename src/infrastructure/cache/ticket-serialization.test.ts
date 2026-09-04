@@ -32,6 +32,7 @@ function fullTicket(): Ticket {
     parentId: 'proj-parent',
     description: 'desc',
     notes: 'notes',
+    closeReason: 'Merged via PR #42',
     labels: ['human', 'needs-review'],
     commentCount: 3,
   };
@@ -58,6 +59,13 @@ describe('ticket serialization', () => {
     const restored = deserializeTickets(serializeTickets([original]))[0];
 
     expect(restored).toEqual(original);
+  });
+
+  it('round-trips closeReason', () => {
+    const original = { ...fullTicket(), closeReason: 'PR merged' };
+    const restored = deserializeTickets(serializeTickets([original]))[0];
+
+    expect(restored.closeReason).toBe('PR merged');
   });
 
   it('round-trips a ticket without optional fields and omits undefined keys', () => {

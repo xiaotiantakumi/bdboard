@@ -209,6 +209,25 @@ describe('HygienePanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('renders closed_without_evidence label without a repair button', async () => {
+    fetchHygieneIssuesMock.mockResolvedValue([
+      makeIssue({
+        ticketId: 'bdboard-closed',
+        kind: 'closed_without_evidence',
+        severity: 'info',
+        message:
+          'close 済みだが PR/検証の記録がない（close-template.md の書式でコメントを残す）',
+      }),
+    ]);
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('close 証拠なし')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /保留を解除|エピックを完了|優先度を設定/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows an empty state when there are no issues', async () => {
     fetchHygieneIssuesMock.mockResolvedValue([]);
 

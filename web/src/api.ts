@@ -345,7 +345,8 @@ export type HygieneIssueKindDto =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
-  | 'in_flight_file_overlap';
+  | 'in_flight_file_overlap'
+  | 'closed_without_evidence';
 
 export interface HygieneCycleEdgeDto {
   issueId: string;
@@ -606,11 +607,13 @@ export interface HygieneThresholdsConfigDto {
   staleInProgressAfterMs: number;
   highPriorityMax: number;
   stalePendingDecisionAfterMs: number;
+  closedWithoutEvidenceWindowMs: number;
   version: string;
   defaults: {
     staleInProgressAfterMs: number;
     highPriorityMax: number;
     stalePendingDecisionAfterMs: number;
+    closedWithoutEvidenceWindowMs: number;
   };
 }
 
@@ -622,6 +625,7 @@ export function putHygieneThresholdsConfig(config: {
   staleInProgressAfterMs?: number;
   highPriorityMax?: number;
   stalePendingDecisionAfterMs?: number;
+  closedWithoutEvidenceWindowMs?: number;
   version: string;
 }): Promise<HygieneThresholdsConfigDto> {
   return fetchJson<HygieneThresholdsConfigDto>('/api/settings/hygiene-thresholds', {

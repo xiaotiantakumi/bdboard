@@ -50,11 +50,15 @@ describe('createHygieneThresholdsRoutes', () => {
       staleInProgressAfterMs: DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs,
       highPriorityMax: DEFAULT_HYGIENE_THRESHOLDS.highPriorityMax,
       stalePendingDecisionAfterMs: DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs,
+      closedWithoutEvidenceWindowMs:
+        DEFAULT_HYGIENE_THRESHOLDS.closedWithoutEvidenceWindowMs,
       version: EMPTY_VERSION,
       defaults: {
         staleInProgressAfterMs: DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs,
         highPriorityMax: DEFAULT_HYGIENE_THRESHOLDS.highPriorityMax,
         stalePendingDecisionAfterMs: DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs,
+        closedWithoutEvidenceWindowMs:
+          DEFAULT_HYGIENE_THRESHOLDS.closedWithoutEvidenceWindowMs,
       },
     });
   });
@@ -80,6 +84,26 @@ describe('createHygieneThresholdsRoutes', () => {
       staleInProgressAfterMs: 3 * 24 * 60 * 60_000,
       highPriorityMax: 2,
       stalePendingDecisionAfterMs: 1 * 24 * 60 * 60_000,
+    });
+  });
+
+  it('writes closedWithoutEvidenceWindowMs', async () => {
+    const store = makePersistedStore();
+    const response = await createHygieneThresholdsRoutes({ store }).request(
+      '/api/settings/hygiene-thresholds',
+      withLocalHost({
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          closedWithoutEvidenceWindowMs: 5 * 24 * 60 * 60_000,
+          version: EMPTY_VERSION,
+        }),
+      }),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(200);
+    expect(store.write).toHaveBeenCalledWith({
+      closedWithoutEvidenceWindowMs: 5 * 24 * 60 * 60_000,
     });
   });
 

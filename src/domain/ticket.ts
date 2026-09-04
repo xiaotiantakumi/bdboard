@@ -18,6 +18,8 @@ export interface Ticket {
   readonly owner?: string;
   readonly startedAt?: Date;
   readonly closedAt?: Date;
+  /** bd の close_reason。close 時の理由文（PR 番号や検証メモが書かれることがある）。 */
+  readonly closeReason?: string;
   readonly deferUntil?: Date;
   readonly parentId?: TicketId;
   readonly description?: string;

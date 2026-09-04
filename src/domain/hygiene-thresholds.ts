@@ -16,18 +16,26 @@ export interface HygieneThresholds {
    * この値を直接参照する。
    */
   readonly stalePendingDecisionAfterMs: number;
+  /**
+   * 既定 7日。close 済みチケットのうち、この期間内に close されたものだけを
+   * PR/検証の記録有無のチェック対象にする。古い close まで遡ると台帳全体が
+   * 警告で埋まるため、直近だけを見る。
+   */
+  readonly closedWithoutEvidenceWindowMs: number;
 }
 
 export const DEFAULT_HYGIENE_THRESHOLDS: HygieneThresholds = {
   staleInProgressAfterMs: 7 * 24 * 60 * 60_000,
   highPriorityMax: 1,
   stalePendingDecisionAfterMs: 3 * 24 * 60 * 60_000,
+  closedWithoutEvidenceWindowMs: 7 * 24 * 60 * 60_000,
 };
 
 export interface HygieneThresholdsOverrides {
   readonly staleInProgressAfterMs?: number;
   readonly highPriorityMax?: number;
   readonly stalePendingDecisionAfterMs?: number;
+  readonly closedWithoutEvidenceWindowMs?: number;
 }
 
 /** 1秒未満は実用上意味がないため下限とする。 */
@@ -55,6 +63,12 @@ const FIELD_LIMITS: Record<
     label: '確認待ち放置',
     kind: 'ms',
   },
+  closedWithoutEvidenceWindowMs: {
+    min: HYGIENE_THRESHOLDS_MIN_MS,
+    max: HYGIENE_THRESHOLDS_MAX_MS,
+    label: 'close 証拠チェック期間',
+    kind: 'ms',
+  },
   highPriorityMax: {
     min: HYGIENE_HIGH_PRIORITY_MIN,
     max: HYGIENE_HIGH_PRIORITY_MAX,
@@ -79,6 +93,9 @@ export function resolveHygieneThresholds(
     stalePendingDecisionAfterMs:
       overrides?.stalePendingDecisionAfterMs ??
       DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs,
+    closedWithoutEvidenceWindowMs:
+      overrides?.closedWithoutEvidenceWindowMs ??
+      DEFAULT_HYGIENE_THRESHOLDS.closedWithoutEvidenceWindowMs,
   };
 }
 
@@ -119,4 +136,5 @@ export const DEFAULT_HYGIENE_THRESHOLDS_OVERRIDES: HygieneThresholdsOverrides = 
   staleInProgressAfterMs: DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs,
   highPriorityMax: DEFAULT_HYGIENE_THRESHOLDS.highPriorityMax,
   stalePendingDecisionAfterMs: DEFAULT_HYGIENE_THRESHOLDS.stalePendingDecisionAfterMs,
+  closedWithoutEvidenceWindowMs: DEFAULT_HYGIENE_THRESHOLDS.closedWithoutEvidenceWindowMs,
 };
