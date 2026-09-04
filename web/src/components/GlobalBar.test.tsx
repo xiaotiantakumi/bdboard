@@ -40,7 +40,7 @@ function renderGlobalBar(overrides?: Partial<React.ComponentProps<typeof GlobalB
       <GlobalBar {...props} />
     </QueryClientProvider>,
   );
-  return { ...props, onViewChange, container: result.container };
+  return { ...props, onViewChange, container: result.container, unmount: result.unmount };
 }
 
 describe('GlobalBar view switcher a11y', () => {
@@ -219,5 +219,37 @@ describe('GlobalBar view switcher scroll hints', () => {
     const scroller = getScroller(container);
     expect(scroller).toHaveClass('can-scroll-start');
     expect(scroller).toHaveClass('can-scroll-end');
+  });
+
+  it('updates scroll hint classes via window resize when ResizeObserver is unavailable', () => {
+    expect(typeof ResizeObserver).toBe('undefined');
+
+    const { container } = renderGlobalBar();
+    const toggleGroup = getToggleGroup(container);
+    const scroller = getScroller(container);
+
+    mockScrollMetrics(toggleGroup, { scrollWidth: 200, clientWidth: 200, scrollLeft: 0 });
+    fireEvent(window, new Event('resize'));
+    expect(scroller).not.toHaveClass('can-scroll-start');
+    expect(scroller).not.toHaveClass('can-scroll-end');
+
+    mockScrollMetrics(toggleGroup, { scrollWidth: 300, clientWidth: 200, scrollLeft: 0 });
+    fireEvent(window, new Event('resize'));
+    expect(scroller).not.toHaveClass('can-scroll-start');
+    expect(scroller).toHaveClass('can-scroll-end');
+  });
+
+  it('does not throw when window resize fires after unmount (resize listener removed)', () => {
+    expect(typeof ResizeObserver).toBe('undefined');
+
+    const { container, unmount } = renderGlobalBar();
+    const toggleGroup = getToggleGroup(container);
+    mockScrollMetrics(toggleGroup, { scrollWidth: 300, clientWidth: 200, scrollLeft: 0 });
+
+    unmount();
+
+    expect(() => {
+      fireEvent(window, new Event('resize'));
+    }).not.toThrow();
   });
 });
