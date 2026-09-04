@@ -5524,8 +5524,9 @@ body {
    * (ResizeObserver in useHeaderHeightVar.ts). Requires html=hidden / body=clip
    * so the viewport remains the scrollport (bdboard-wdwa).
    *
-   * kanban-mobile-lanes e2e also asserts strip stays in viewport at all scroll
-   * positions; with sticky active that holds because top tracks header height.
+   * kanban-mobile-lanes e2e verifies strip sticks below the header via
+   * --header-height once sticky is active and stays in viewport at that scroll
+   * depth; scrollY=0 before activation is not asserted.
    */
   .lane-indicator-strip {
     display: block;

@@ -6,13 +6,14 @@ import { expect, test, type Page } from '@playwright/test';
  * 証明している:
  * - 統合ビューの .lane 高さ上限 (CSS を戻すと実際に落ちる: height > viewport)
  * - 分割ビューでも同じ上限が効き、既存挙動を壊さない (AC3)
- * - sticky 発火後の全縦スクロール位置で .lane-indicator-strip が viewport 内に収まる (AC2)
+ * - sticky 発火後、strip が --header-height (可変高ヘッダー直下) に張り付き viewport 内に収まる (AC2)
+ * - ページ最下部までスクロールした状態でも strip が header 直下に張り付き viewport 内に収まる
  * - 全縦スクロール位置で strip が .header の背面に潜らない
- *   (--header-height が可変高ヘッダー直下を指している; 書き込み元は useHeaderHeightVar.ts)
+ *   (書き込み元は useHeaderHeightVar.ts)
  *
  * 証明していない:
  * - scrollY=0 等、sticky 未発火時に strip が viewport 内にあること
- *   (未発火時は通常フローで strip はヘッダー・バナー等の下にあり viewport 外に居るのが正しい)
+ *   (初期表示での可視性は保証しない。sticky で追随するため)
  * - position: sticky の発火そのもの (header-sticky.spec.ts が担当)
  */
 test.describe('kanban mobile lanes', () => {
@@ -58,16 +59,23 @@ test.describe('kanban mobile lanes', () => {
    * ページが strip の自然位置を超えてスクロールされるまで viewport 内に留まらない。
    * 旧実装は scrollY=0 も含め全位置で「strip bottom <= viewport」を要求していたが、
    * それは sticky とは無関係で strip より上の要素高さ (ヘッダー+バナー等) だけで決まる。
-   * 実測: ヘッダー402px版では scrollY=0 の strip bottom=785px で 812 まで余裕26.5px、
-   * PR#304 でヘッダー193pxに圧縮されて 576px になりたまたま通るようになっただけ。
-   * 942px 失敗は web/dist 再ビルド無しの単独実行で古い dist (高ヘッダー) が残っていたため。
    *
-   * activationScrollY による事前アサーション (maxScrollY >= activationScrollY) は採用しない。
-   * 実測 margin (= maxScrollY - activationScrollY) はわずか 8.5px で、ヘッダー高が 9px
-   * 縮むだけで maxScrollY が同量減り落ちる (ヘッダーはテキスト含みでフォント/OS 依存)。
-   * 代わりにページ最下部までスクロールした状態で strip が viewport 内にあることを検証する。
-   * 最下部では stuck 時 stripTop ≈ headerBottom、bottom ≈ headerBottom + stripHeight で
-   * viewport 812 に対し約 575px の余裕があり、レイアウト微小変動に強い。
+   * 942px 失敗報告 (strip bottom) の内訳は未確認 — 「古い dist = ヘッダー402px版」なら
+   * bottom=785.47 のはずで差 157.47px の出所は不明 (報告者環境に strip より上の追加要素が
+   * あったと推定されるが再現していない)。再現手順: npx playwright test は web/dist を
+   * 再ビルドしないので、計測前に npm run build:web が必要。
+   *
+   * activationScrollY (= stripDocTop - headerHeight) はヘッダー高 H に依存しないが、
+   * maxScrollY (= pageHeight - innerHeight) は H に比例する。ヘッダーが 9px 縮むだけで
+   * maxScrollY < activationScrollY となり strip が一度も stuck せずテストが空振りする。
+   * header-sticky.spec.ts の ensurePageScrollable と同型で、.lanes-scroll-region 末尾に
+   * flex-shrink:0 の spacer を足して縦スクロール余裕を確保してから検証する (.app ではなく
+   * region — .app に足すと strip ごと画面外へ流れる)。
+   *
+   * 2026-09-05 実測 (npm run build:web 後、viewport 375x812):
+   *   spacer 前: headerH=193 activationScrollY=387.48 maxScrollY=396 margin=8.52
+   *   spacer 後: headerH=193 activationScrollY=387.48 maxScrollY=2020 margin=1632.52
+   *   stuck 時 |stripTop - headerBottom|=0.00、laneHeights=[552,552,552,552] (spacer 前後不変)
    */
   async function expectStripVisibleAtAllScrollPositions(page: Page) {
     const indicator = page.locator('.lane-indicator-strip');
@@ -77,9 +85,41 @@ test.describe('kanban mobile lanes', () => {
 
     const viewportHeight = await page.evaluate(() => window.innerHeight);
 
-    const maxScrollY = await page.evaluate(() =>
-      Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
-    );
+    const measureScrollMetrics = () =>
+      page.evaluate(() => {
+        const strip = document.querySelector('.lane-indicator-strip');
+        const headerEl = document.querySelector('.header');
+        if (!strip || !headerEl) {
+          throw new Error('.lane-indicator-strip or .header not found');
+        }
+        const stripRect = strip.getBoundingClientRect();
+        const headerRect = headerEl.getBoundingClientRect();
+        const stripDocTop = stripRect.top + window.scrollY;
+        const headerHeight = headerRect.height;
+        const activationScrollY = stripDocTop - headerHeight;
+        const maxScrollY = Math.max(
+          0,
+          document.documentElement.scrollHeight - window.innerHeight,
+        );
+        return { activationScrollY, maxScrollY };
+      });
+
+    await page.evaluate(() => {
+      const region = document.querySelector('.lanes-scroll-region');
+      if (!region) throw new Error('.lanes-scroll-region not found');
+      const spacer = document.createElement('div');
+      spacer.dataset.testid = 'e2e-strip-sticky-spacer';
+      spacer.style.height = '200vh';
+      spacer.style.flexShrink = '0';
+      region.appendChild(spacer);
+    });
+
+    const { activationScrollY, maxScrollY } = await measureScrollMetrics();
+
+    expect(
+      maxScrollY - activationScrollY,
+      'strip sticky を発火させるだけの縦スクロール量が必要（レイアウト変更で満たせなくなったらここで気付く）',
+    ).toBeGreaterThan(100);
 
     for (let step = 0; step <= SCROLL_CHECK_STEPS; step += 1) {
       const targetScrollY = Math.round((maxScrollY * step) / SCROLL_CHECK_STEPS);
@@ -101,39 +141,29 @@ test.describe('kanban mobile lanes', () => {
       ).not.toBeNull();
 
       const headerBottom = headerBox!.y + headerBox!.height;
+      const isLastStep = step === SCROLL_CHECK_STEPS;
+      // +1: expectStripNotBehindHeader の headerBottom - 1 と対でサブピクセル丸めを吸収
       const isStuck = indicatorBox!.y <= headerBottom + 1;
 
       if (isStuck) {
+        expect(
+          Math.abs(indicatorBox!.y - headerBottom),
+          `strip should stick flush to header bottom at scrollY=${scrollY} ` +
+            `(stripTop=${indicatorBox!.y}, headerBottom=${headerBottom})`,
+        ).toBeLessThanOrEqual(1);
         expectBoxInsideViewport(indicatorBox!, viewportHeight, scrollY);
-        expectStripNotBehindHeader(indicatorBox!, headerBox!, scrollY);
-      } else {
-        // sticky 未発火: viewport 内包は要求しない (通常フローで viewport 外に居るのが正しい)
-        expectStripNotBehindHeader(indicatorBox!, headerBox!, scrollY);
+      }
+      expectStripNotBehindHeader(indicatorBox!, headerBox!, scrollY);
+
+      if (isLastStep) {
+        expect(
+          Math.abs(indicatorBox!.y - headerBottom),
+          `strip should stick flush to header bottom at max scroll scrollY=${scrollY} ` +
+            `(stripTop=${indicatorBox!.y}, headerBottom=${headerBottom})`,
+        ).toBeLessThanOrEqual(1);
+        expectBoxInsideViewport(indicatorBox!, viewportHeight, scrollY);
       }
     }
-
-    // AC2 本体: 最下部までスクロールした状態で strip が viewport 内に完全に収まること
-    await page.evaluate((y) => window.scrollTo(0, y), maxScrollY);
-    const bottomScrollY = await page.evaluate(() => window.scrollY);
-    await expect(
-      indicator,
-      `strip should be visible at page bottom scrollY=${bottomScrollY}`,
-    ).toBeVisible();
-
-    const bottomIndicatorBox = await indicator.boundingBox();
-    expect(
-      bottomIndicatorBox,
-      `strip should have a bounding box at bottom scrollY=${bottomScrollY}`,
-    ).not.toBeNull();
-
-    const bottomHeaderBox = await header.boundingBox();
-    expect(
-      bottomHeaderBox,
-      `header should have a bounding box at bottom scrollY=${bottomScrollY}`,
-    ).not.toBeNull();
-
-    expectBoxInsideViewport(bottomIndicatorBox!, viewportHeight, bottomScrollY);
-    expectStripNotBehindHeader(bottomIndicatorBox!, bottomHeaderBox!, bottomScrollY);
   }
 
   test('merged view caps lane height and keeps the lane indicator visible after in-lane scroll', async ({
