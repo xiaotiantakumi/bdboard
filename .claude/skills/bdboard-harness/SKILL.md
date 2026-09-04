@@ -11,7 +11,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
   （単独でも同じ規律を守る — いつ並列になるか自分からは分からない）。
 - **プロジェクト固有の値はここに書かない。** 検証コマンド・ブランチ命名・マージ方式・
   サーバー/ポートは注入先の CLAUDE.md / AGENTS.md（と検証コントラクト）に従う。
-- **本文は骨格。詳細は `references/` にあり、着手前に開く。**
+- **本文は骨格。各規律の `詳細:` が挙げるファイルはすべて `references/` 配下**。着手前に開く。
 
 ## 規律1: セッション開始 — prime → stale lease 確認 → ready
 
@@ -21,7 +21,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 手順:
 
 1. `bd prime` — 台帳のコンテキストとプロジェクトメモリを読み込む。
-2. `bd list --status in_progress` で lease 切れを把握する（残りは `bd show <id>`）。
+2. `bd list --status in_progress` で lease 切れを把握する（lease の残りは `bd show <id>`）。
 3. **`bd reclaim` は原則打たない** — 正はスーパーバイザーの定期実行（例外3条件は詳細）。
 4. マージ済み worktree の残骸**だけ**掃除する（判断がつかないものは触らない）。
 5. `bd ready --exclude-label gt:slot` で候補を取る（**除外必須** — slot bead の claim は他
@@ -61,8 +61,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 4. **回答を待たず次のチケットへ。** worktree は残し、規律2 手順5の一括 heartbeat の対象に
    含め続ける。
 5. 回答が来たら `bd label remove <id> human` して再開（作業チケットは close しない）。
-6. 横断的な確認だけ質問専用チケットを切る（回答は comment+close。`bd human respond` 不可）。
-7. **例外**: 破壊的・不可逆・外向きの操作（デプロイ・削除・push/送信・課金）はその場で確認する。
+6. **例外**: 破壊的・不可逆・外向きの操作（デプロイ・削除・push/送信・課金）はその場で確認する。
 
 詳細: `question-template.md`
 
@@ -73,8 +72,8 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 手順:
 
-1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **検証コントラクト → CLAUDE.md /
-   AGENTS.md → 無ければ検証せず進めない**の順で決める。
+1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **`.claude/bdboard-harness.json`
+   の `verify` → CLAUDE.md / AGENTS.md → 無ければ検証せず進めない**の順で決める。
 2. **マージ成功後、`bd close` の前に証拠コメント**（`close-template.md` の書式。**`PR:` 行必須**）。
 3. **その上で `bd close <id>`。マージ前に close しない**（未到達なら in_progress のまま現状
    をコメントに残す）。
@@ -92,9 +91,10 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 手順:
 
 1. **検知**: 成果の消失／規律どおりでの事故／手順の不遵守／既知パターンの再発 =「ハーネス失敗」。
-2. **即時の最小記録**: 復旧前に証拠（エラー全文・コマンド列・worktree とチケットの状態）を残す。
-3. **直せないなら起票して現作業へ戻る**（`--deps discovered-from:<元>` ＋ `harness` ラベル。
-   成果消失級の再発リスクなら priority 1）。
+2. **即時の最小記録**: 復旧前に証拠（エラー全文・コマンド列・worktree とチケットの状態）を、
+   作業中チケットがあれば `bd comment`、無ければ scratchpad のファイルへ残す。
+3. **直せないなら起票して現作業へ戻る**（`bd create --type=task --priority=2 --deps
+   discovered-from:<元>` ＋ `harness` ラベル。成果消失級の再発リスクなら priority 1）。
 4. **編集する層を先に決める**: 注入コピー `.claude/skills/bdboard-harness/` は**編集禁止**。
    固有の教訓は `project-harness`、汎用は `harness-upstream` チケットで正本へ還流する。
 5. **検討は Fable の最大熟考で固める**。規律を変える PR はマージ前に Fable の独立レビューへ。
@@ -104,17 +104,16 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 ## 機械ガード（hooks）— 文章で防げない操作は hook が止める
 
-- `hooks/` の3スクリプト（PreToolUse: Bash / Edit 系、Stop）は、注入時に注入先の
-  `.claude/settings.json` へ登録される。
-- 止めるもの: `pkill`/`killall`、bare な `bd dolt push`/`git stash`、二重バックグラウンド化、
-  注入コピーの編集、`bd/` ブランチでの `.beads/**` 編集、コントラクトの
-  `hooks.denyBashPatterns`、痕跡を残さないセッション終了。
+- `hooks/` の3スクリプトは、注入時に注入先の `.claude/settings.json` へ登録される。
+- 止めるもの: `pkill`/`killall`、`--remote` 無しの `bd dolt push`/`pull`、`git stash`（`push -m` /
+  `apply <sha>` / `list` / `drop` / `show` 以外）、二重バックグラウンド化、注入コピーの編集、
+  `bd/` ブランチでの `.beads/**` 編集、コントラクトの `hooks.denyBashPatterns`、痕跡を残さない
+  セッション終了。
 - **hook に止められたら回避策を探さない。** stderr の代替手順に従う。hook 自体の不具合は
   `harness-upstream` チケットで起票する。
 - deny 条件・fail-open 方針・settings.json 登録契約: `hooks/README.md`。
 
 ## references
 
-詳細はすべて `references/` に置く: worktree-pr-flow / lease-params / question-template /
-close-template / verification（委譲の独立検証と rebase）/ failure-catalog（既知失敗の照合
-台帳）/ brushup-protocol / layering / frontend-gotchas（web 実装の罠）。
+`references/` の全量: worktree-pr-flow / lease-params / question-template / close-template /
+verification / failure-catalog / brushup-protocol / layering / frontend-gotchas（web 実装の罠）。
