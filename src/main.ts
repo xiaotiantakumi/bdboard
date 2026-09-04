@@ -128,6 +128,7 @@ import { createFileAgentRunConfigStore } from './infrastructure/fs/agent-run-con
 import {
   createGitWorktreeProvisioner,
   DEFAULT_MAX_MANAGED_WORKTREES,
+  normalizePathForComparison,
 } from './infrastructure/git/git-worktree-provisioner.js';
 import { createClaudeSpawnRunner } from './infrastructure/runners/claude-spawn-runner.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
@@ -1062,6 +1063,10 @@ async function main(): Promise<void> {
       registry: agentRunRegistry,
       runStore,
       worktreeProvisioner,
+      // provisioner が返す worktree パスは `git worktree list --porcelain` の realpath
+      // なので、repoRoot から組み立てた期待値と揃えるにはガード側も realpath 正規化が要る
+      // (/tmp と /private/tmp など)。infrastructure の実装をここで注入する。
+      normalizePath: normalizePathForComparison,
       writeAccess,
       isRemoteAgentRunAllowed: async () => remoteAgentRunsAllowed,
       now: () => new Date(),

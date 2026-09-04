@@ -6,7 +6,7 @@ import type {
   WorktreeProvisionRequest,
   WorktreeProvisioner,
 } from '../../application/ports/worktree-provisioner.js';
-import { BD_BRANCH_PREFIX } from '../../domain/git-worktree.js';
+import { BD_BRANCH_PREFIX, WORKTREES_DIR } from '../../domain/git-worktree.js';
 import { isTicketId } from '../../domain/ticket-id.js';
 
 const DEFAULT_GIT_PATH = 'git';
@@ -14,7 +14,6 @@ const DEFAULT_GH_PATH = 'gh';
 const DEFAULT_LSOF_PATH = 'lsof';
 const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_MANAGED_WORKTREES = 20;
-const WORKTREES_DIR = '.claude/worktrees';
 
 /** Stable affixes for worktree-branch-mismatch messages (Web UI extracts branch names from these). */
 export const WORKTREE_BRANCH_MISMATCH_ON_BRANCH = ': on branch ';

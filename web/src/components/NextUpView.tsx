@@ -3,6 +3,8 @@ import { type BoardDto, type PrBadgeDto, projectNameFallback } from '../api';
 import { NEXT_UP_LIMITS, type NextUpLimit } from '../uiPersistedState';
 import { CardItem } from './LaneColumn';
 import {
+  NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES,
+  type NextUpLoopEndReason,
   type NextUpRunLoopController,
   type NextUpLoopProgress,
 } from './nextUpRunLoop';
@@ -36,6 +38,14 @@ function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
   return { regularCards, epicCards };
 }
 
+/** endReason ごとの表示ラベル。Record なので endReason が増えたら型エラーで気づける。 */
+const NEXT_UP_LOOP_END_REASON_LABELS: Record<NextUpLoopEndReason, string> = {
+  completed: '完走',
+  stopped: '中断',
+  poll_failed: '中断(状況を確認できず)',
+  consecutive_failures: '中断(連続失敗)',
+};
+
 function renderLoopProgressSummary(
   progress: NextUpLoopProgress,
   options?: { prefix?: string; showEndReason?: boolean },
@@ -46,15 +56,7 @@ function renderLoopProgressSummary(
   if (options?.prefix !== undefined && options.prefix.length > 0) {
     let header = options.prefix;
     if (options.showEndReason && progress.endReason !== null) {
-      const endLabel =
-        progress.endReason === 'completed'
-          ? '完走'
-          : progress.endReason === 'poll_failed'
-            ? '中断(状況を確認できず)'
-            : progress.endReason === 'consecutive_failures'
-              ? '中断(連続失敗)'
-              : '中断';
-      header = `${header} ${endLabel}`;
+      header = `${header} ${NEXT_UP_LOOP_END_REASON_LABELS[progress.endReason]}`;
     }
     parts.push(`${header} | ${completedPart}`);
   } else {
@@ -247,8 +249,9 @@ export function NextUpView({
                   件を、上から1件ずつ直列でエージェント実行します。Epic
                   セクションのチケットは対象に含まれません。各チケットごとに
                   worktree の作成（またはクリーンな既存 worktree の再利用）と Claude
-                  CLI の起動が走ります。1件失敗しても次へ進みますが、直近2件が失敗した場合は
-                  バッチを停止し、最後に失敗したチケットへ停止理由のコメントを残します。よろしいですか?
+                  CLI の起動が走ります。1件失敗しても次へ進みますが、直近
+                  {NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES}
+                  件が失敗した場合はバッチを停止し、最後に失敗したチケットへ停止理由のコメントを残します。よろしいですか?
                 </p>
                 <div className="quick-action-confirm-actions">
                   <button

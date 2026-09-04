@@ -20,6 +20,9 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     startTicketRun: vi.fn(),
     fetchAgentRun: vi.fn(),
+    // runNextUpTicketLoop の postComment 既定値は本物の postTicketComment。
+    // モックしないと postComment 未指定のテストが実 fetch を飛ばす (minor-3)。
+    postTicketComment: vi.fn(),
   };
 });
 
@@ -446,6 +449,51 @@ describe('nextUpRunLoop', () => {
         [1, 'ticket-2', null],
         [2, null, null],
         [2, null, 'consecutive_failures'],
+      ]);
+    });
+
+    it('keeps lastFailureReason after a success breaks the failure streak', async () => {
+      // pkr6.12 の m6.2 却下 / pkr6.17 の議長裁定を固定する。失敗文言にはチケット ID が
+      // 入っているので、fail -> success で完走したバッチでも「どのチケットがなぜ失敗したか」
+      // が読めること。クリアする実装に戻すとこのテストが落ちる。
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(
+          runId,
+          ticketId,
+          ticketId === 'ticket-1' ? 'failed' : 'succeeded',
+        );
+      });
+
+      const postComment = vi.fn().mockResolvedValue(undefined);
+      const emissions: NextUpLoopProgress[] = [];
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: (progress) => {
+          emissions.push(progress);
+        },
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('completed');
+      expect(result.failedCount).toBe(1);
+      expect(result.completedCount).toBe(1);
+      expect(result.lastFailureReason).toBe(
+        'エージェント実行が失敗しました（ticket-1）',
+      );
+      expect(postComment).not.toHaveBeenCalled();
+      // 失敗以降の emission では、完走後の最終 emission まで理由が残り続ける。
+      expect(emissions.map((e) => e.lastFailureReason)).toEqual([
+        null,
+        null,
+        'エージェント実行が失敗しました（ticket-1）',
+        'エージェント実行が失敗しました（ticket-1）',
+        'エージェント実行が失敗しました（ticket-1）',
+        'エージェント実行が失敗しました（ticket-1）',
       ]);
     });
 
