@@ -12,6 +12,8 @@ const emptyPresetState: BoardFilterPresetState = {
   issueTypes: [],
   labels: [],
   filterText: '',
+  hideDone: true,
+  stalledOnly: false,
 };
 
 function renderToolbar(overrides?: Partial<React.ComponentProps<typeof ViewToolbar>>) {

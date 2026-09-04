@@ -11,6 +11,8 @@ const currentState: BoardFilterPresetState = {
   issueTypes: ['bug'],
   labels: [],
   filterText: 'alpha',
+  hideDone: true,
+  stalledOnly: false,
 };
 
 const samplePresets: BoardFilterPreset[] = [
@@ -23,6 +25,8 @@ const samplePresets: BoardFilterPreset[] = [
     issueTypes: ['bug'],
     labels: [],
     filterText: 'alpha',
+    hideDone: true,
+    stalledOnly: false,
   },
   {
     id: 'preset-2',
@@ -33,6 +37,8 @@ const samplePresets: BoardFilterPreset[] = [
     issueTypes: [],
     labels: [],
     filterText: '',
+    hideDone: true,
+    stalledOnly: false,
   },
 ];
 

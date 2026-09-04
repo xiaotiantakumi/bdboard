@@ -21,6 +21,8 @@ import {
   viewLabel,
   UI_STORAGE_KEYS,
   VIEW_ITEMS,
+  DEFAULT_HIDE_DONE,
+  DEFAULT_STALLED_ONLY,
   type BoardFilterPreset,
   type BoardFilterPresetState,
   type RecentTicketEntry,
@@ -122,12 +124,63 @@ describe('uiPersistedState', () => {
         issueTypes: ['bug'],
         labels: [],
         filterText: '',
+        hideDone: DEFAULT_HIDE_DONE,
+        stalledOnly: DEFAULT_STALLED_ONLY,
       },
     ];
     expect(validateBoardFilterPresets(presets)).toEqual(presets);
     expect(validateBoardFilterPresets([{ ...presets[0], id: '' }])).toBeNull();
     expect(validateBoardFilterPresets([{ ...presets[0], view: 'invalid' }])).toBeNull();
     expect(validateBoardFilterPresets('bad')).toBeNull();
+  });
+
+  it('backfills legacy presets missing hideDone / stalledOnly with toggle defaults', () => {
+    const legacy = {
+      id: 'preset-legacy',
+      name: '旧スキーマ',
+      view: 'merged',
+      selectedProjectIds: ['proj-1'],
+      priorityCeiling: 'all',
+      issueTypes: [],
+      labels: [],
+      filterText: '',
+    };
+    const [validated] = validateBoardFilterPresets([legacy]) ?? [];
+    expect(validated.hideDone).toBe(true);
+    expect(validated.stalledOnly).toBe(false);
+  });
+
+  it('preserves explicit hideDone / stalledOnly in new-schema presets', () => {
+    const modern = {
+      id: 'preset-modern',
+      name: '新スキーマ',
+      view: 'merged',
+      selectedProjectIds: [],
+      priorityCeiling: 'all',
+      issueTypes: [],
+      labels: [],
+      filterText: '',
+      hideDone: false,
+      stalledOnly: true,
+    };
+    const [validated] = validateBoardFilterPresets([modern]) ?? [];
+    expect(validated.hideDone).toBe(false);
+    expect(validated.stalledOnly).toBe(true);
+  });
+
+  it('rejects presets when hideDone / stalledOnly are non-boolean', () => {
+    const base = {
+      id: 'preset-1',
+      name: 'Test',
+      view: 'merged',
+      selectedProjectIds: [],
+      priorityCeiling: 'all',
+      issueTypes: [],
+      labels: [],
+      filterText: '',
+    };
+    expect(validateBoardFilterPresets([{ ...base, hideDone: 'yes' }])).toBeNull();
+    expect(validateBoardFilterPresets([{ ...base, stalledOnly: 1 }])).toBeNull();
   });
 
   it('matches board filter preset state', () => {
@@ -138,6 +191,8 @@ describe('uiPersistedState', () => {
       issueTypes: ['bug', 'task'],
       labels: ['human'],
       filterText: 'alpha',
+      hideDone: DEFAULT_HIDE_DONE,
+      stalledOnly: DEFAULT_STALLED_ONLY,
     };
     const presets: BoardFilterPreset[] = [
       {
@@ -154,6 +209,8 @@ describe('uiPersistedState', () => {
         issueTypes: [],
         labels: [],
         filterText: '',
+        hideDone: DEFAULT_HIDE_DONE,
+        stalledOnly: DEFAULT_STALLED_ONLY,
       },
     ];
 
@@ -180,6 +237,18 @@ describe('uiPersistedState', () => {
       boardFilterPresetStatesEqual(state, {
         ...state,
         labels: [],
+      }),
+    ).toBe(false);
+    expect(
+      boardFilterPresetStatesEqual(state, {
+        ...state,
+        hideDone: false,
+      }),
+    ).toBe(false);
+    expect(
+      boardFilterPresetStatesEqual(state, {
+        ...state,
+        stalledOnly: true,
       }),
     ).toBe(false);
     expect(findMatchingBoardFilterPreset(presets, state)?.id).toBe('preset-1');
@@ -259,6 +328,8 @@ describe('preset defaults (Header Redesign Turn 4 / 4b)', () => {
     issueTypes: ['bug'],
     labels: [],
     filterText: 'alpha',
+    hideDone: DEFAULT_HIDE_DONE,
+    stalledOnly: DEFAULT_STALLED_ONLY,
   };
 
   it('keeps isDefault absent for legacy records and true when stored', () => {
@@ -285,13 +356,19 @@ describe('hasStoredBoardFilterState', () => {
     return { getItem: (key: string) => entries[key] ?? null };
   }
 
-  it('is false only when no filter-shaped key was ever written', () => {
+  it('is false only when no preset-restorable filter key was ever written', () => {
     expect(hasStoredBoardFilterState(fakeStorage({}))).toBe(false);
     expect(hasStoredBoardFilterState(fakeStorage({ [UI_STORAGE_KEYS.view]: '"merged"' }))).toBe(
       true,
     );
     expect(
       hasStoredBoardFilterState(fakeStorage({ [UI_STORAGE_KEYS.boardFilterText]: '""' })),
+    ).toBe(true);
+    expect(hasStoredBoardFilterState(fakeStorage({ [UI_STORAGE_KEYS.hideDone]: 'false' }))).toBe(
+      true,
+    );
+    expect(
+      hasStoredBoardFilterState(fakeStorage({ [UI_STORAGE_KEYS.stalledOnly]: 'true' })),
     ).toBe(true);
   });
 
@@ -313,6 +390,8 @@ describe('describeBoardFilterPresetState', () => {
     issueTypes: [],
     labels: [],
     filterText: '',
+    hideDone: DEFAULT_HIDE_DONE,
+    stalledOnly: DEFAULT_STALLED_ONLY,
   };
 
   it('always names the view and the project scope', () => {
@@ -339,6 +418,28 @@ describe('describeBoardFilterPresetState', () => {
 
   it('ignores whitespace-only search text', () => {
     expect(describeBoardFilterPresetState({ ...state, filterText: '   ' })).toBe(
+      'ビュー: 統合 / 全プロジェクト',
+    );
+  });
+
+  it('includes stalledOnly and hideDone only when they differ from defaults', () => {
+    expect(
+      describeBoardFilterPresetState({
+        ...state,
+        selectedProjectIds: ['a', 'b', 'c'],
+        stalledOnly: true,
+      }),
+    ).toBe('ビュー: 統合 / プロジェクト3件 / 滞留のみ');
+
+    expect(describeBoardFilterPresetState({ ...state, stalledOnly: false })).toBe(
+      'ビュー: 統合 / 全プロジェクト',
+    );
+
+    expect(describeBoardFilterPresetState({ ...state, hideDone: false })).toBe(
+      'ビュー: 統合 / 全プロジェクト / 完了も表示',
+    );
+
+    expect(describeBoardFilterPresetState({ ...state, hideDone: true })).toBe(
       'ビュー: 統合 / 全プロジェクト',
     );
   });
