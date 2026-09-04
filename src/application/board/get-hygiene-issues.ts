@@ -1,5 +1,6 @@
 import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
+import type { HeartbeatLoopCandidate } from '../../domain/hygiene.js';
 import type { InFlightOverlap } from '../../domain/in-flight-overlap.js';
 import {
   checkHygiene,
@@ -13,6 +14,8 @@ export interface GetHygieneIssuesOptions {
   /** 指定されたIDのみ。未指定なら全部 */
   readonly projectIds?: readonly string[];
   readonly leftoverCandidates?: readonly LeftoverCandidate[];
+  /** 走査した bd heartbeat ループ (processScanner.listHeartbeatLoops の戻り)。 */
+  readonly heartbeatLoops?: readonly HeartbeatLoopCandidate[];
   /** 着手中 worktree 同士のファイル重複 (scanInFlightOverlaps の戻り)。 */
   readonly inFlightOverlaps?: readonly InFlightOverlap[];
   /**
@@ -91,6 +94,9 @@ export function getHygieneIssues(
     ...(options?.thresholds !== undefined ? { thresholds: options.thresholds } : {}),
     ...(options?.leftoverCandidates !== undefined
       ? { leftoverCandidates: options.leftoverCandidates }
+      : {}),
+    ...(options?.heartbeatLoops !== undefined
+      ? { heartbeatLoops: options.heartbeatLoops }
       : {}),
     ...(options?.inFlightOverlaps !== undefined
       ? { inFlightOverlaps: options.inFlightOverlaps }

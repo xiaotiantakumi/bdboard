@@ -344,6 +344,7 @@ export type HygieneIssueKindDto =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
+  | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
   | 'closed_without_evidence';
 
@@ -363,6 +364,13 @@ export interface HygieneCleanupTargetDto {
   branchName: string | null;
 }
 
+export interface HygieneHeartbeatLoopTargetDto {
+  pid: number;
+  ticketIds: string[];
+  sessionPid?: number;
+  reason: 'all_closed' | 'session_gone';
+}
+
 export interface HygieneIssueDto {
   kind: HygieneIssueKindDto;
   ticketId: string;
@@ -370,6 +378,7 @@ export interface HygieneIssueDto {
   message: string;
   severity: 'warning' | 'info';
   cleanup?: HygieneCleanupTargetDto;
+  heartbeatLoop?: HygieneHeartbeatLoopTargetDto;
   /** overdue_defer のときだけ入る。Undo で元の日付へ再 defer するための材料。サーバーがローカルタイムゾーンで `YYYY-MM-DD` に整形済み */
   deferUntil?: string;
   cycleTicketIds?: string[];

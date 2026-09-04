@@ -109,6 +109,40 @@ export function formatWorktreeCleanupScript(
   return buildWorktreeCleanupCommands(target).join('\n');
 }
 
+export interface HeartbeatLoopKillTarget {
+  readonly pid: number;
+}
+
+/**
+ * 残骸 heartbeat ループを止めるコマンドを組み立てる。
+ * **PID 指定の kill のみ**。`pkill` / `killall` のようなパターンマッチ kill は絶対に出さない
+ * (failure-catalog の pkill-collateral: worktree のテストプロセスを狙った
+ * `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーを巻き添えにした)。
+ *
+ * ボードが ps を見てから人間がコピーして実行するまでには時間差があり、その間に
+ * PID が再利用されうる。そこで kill の直前に `ps -p <pid> -o command=` で
+ * 「まだ heartbeat ループである」ことを確認するガードを付ける。ガードが外れたときは
+ * 何も殺さずメッセージだけ出す (bd-heartbeat.sh の verify_loop_identity と同じ考え方)。
+ */
+export function buildHeartbeatLoopKillCommands(
+  target: HeartbeatLoopKillTarget,
+): readonly string[] {
+  const { pid } = target;
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return [];
+  }
+  return [
+    `if ps -p ${pid} -o command= | grep -q -e 'bd heartbeat' -e 'bd-heartbeat'; then kill ${pid}; else echo 'pid ${pid} is no longer a bd heartbeat loop; skipping' >&2; fi`,
+  ];
+}
+
+/** buildHeartbeatLoopKillCommands の結果を改行で連結した、そのまま貼れる文字列 */
+export function formatHeartbeatLoopKillScript(
+  target: HeartbeatLoopKillTarget,
+): string {
+  return buildHeartbeatLoopKillCommands(target).join('\n');
+}
+
 export interface DependencyCycleEdgeTarget {
   readonly issueId: string;
   readonly dependsOnId: string;

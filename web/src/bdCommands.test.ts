@@ -10,6 +10,8 @@ import {
   DEFER_DAYS,
   formatDeferDate,
   formatDependencyCycleRemovalScript,
+  buildHeartbeatLoopKillCommands,
+  formatHeartbeatLoopKillScript,
   formatWorktreeCleanupScript,
   shellQuote,
 } from './bdCommands';
@@ -247,6 +249,38 @@ describe('formatWorktreeCleanupScript', () => {
         branchName: null,
       }),
     ).toBe('');
+  });
+});
+
+describe('buildHeartbeatLoopKillCommands', () => {
+  it('returns a guarded PID-specific kill command for a valid pid', () => {
+    const commands = buildHeartbeatLoopKillCommands({ pid: 12345 });
+
+    expect(commands).toEqual([
+      "if ps -p 12345 -o command= | grep -q -e 'bd heartbeat' -e 'bd-heartbeat'; then kill 12345; else echo 'pid 12345 is no longer a bd heartbeat loop; skipping' >&2; fi",
+    ]);
+    expect(commands[0]).toContain('kill 12345');
+    expect(commands[0]).not.toContain('pkill');
+    expect(commands[0]).not.toContain('killall');
+  });
+
+  it('returns an empty array when pid is zero, negative, or non-integer', () => {
+    expect(buildHeartbeatLoopKillCommands({ pid: 0 })).toEqual([]);
+    expect(buildHeartbeatLoopKillCommands({ pid: -1 })).toEqual([]);
+    expect(buildHeartbeatLoopKillCommands({ pid: 1.5 })).toEqual([]);
+  });
+});
+
+describe('formatHeartbeatLoopKillScript', () => {
+  it('joins commands with newlines', () => {
+    expect(formatHeartbeatLoopKillScript({ pid: 12345 })).toBe(
+      "if ps -p 12345 -o command= | grep -q -e 'bd heartbeat' -e 'bd-heartbeat'; then kill 12345; else echo 'pid 12345 is no longer a bd heartbeat loop; skipping' >&2; fi",
+    );
+  });
+
+  it('returns an empty string when pid is invalid', () => {
+    expect(formatHeartbeatLoopKillScript({ pid: 0 })).toBe('');
+    expect(formatHeartbeatLoopKillScript({ pid: -99 })).toBe('');
   });
 });
 

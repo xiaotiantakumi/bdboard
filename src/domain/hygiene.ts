@@ -11,6 +11,7 @@ import {
   type ReadinessContext,
 } from './readiness.js';
 import type { LeftoverCandidate } from './git-worktree.js';
+import { parseHeartbeatLoopCommand } from './heartbeat-loop.js';
 import {
   collectOverlapPeersByTicket,
   formatOverlapPeers,
@@ -39,6 +40,7 @@ export type HygieneIssueKind =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
+  | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
   | 'closed_without_evidence';
 
@@ -59,6 +61,24 @@ export interface HygieneCleanupTarget {
   readonly branchName: string | null;
 }
 
+/** orphan_heartbeat_loop の入力。infra/app 層が組み立てて渡す */
+export interface HeartbeatLoopCandidate {
+  readonly pid: number;
+  readonly commandLine: string;
+  readonly sessionPid?: number;
+  readonly sessionAlive?: boolean;
+}
+
+/** orphan_heartbeat_loop のときだけ入る。UI が kill コマンドを組み立てる材料 */
+export interface HygieneHeartbeatLoopTarget {
+  readonly pid: number;
+  /** 台帳で実在が確認できたチケットIDのみ。昇順 */
+  readonly ticketIds: readonly TicketId[];
+  readonly sessionPid?: number;
+  /** どちらの条件で警告したか。両方成立したら 'all_closed' を優先 */
+  readonly reason: 'all_closed' | 'session_gone';
+}
+
 export interface HygieneIssue {
   readonly kind: HygieneIssueKind;
   readonly ticketId: TicketId;
@@ -67,6 +87,8 @@ export interface HygieneIssue {
   readonly severity: 'warning' | 'info';
   /** merged_leftover のときだけ入る。UI が掃除コマンド文字列を組み立てる材料 */
   readonly cleanup?: HygieneCleanupTarget;
+  /** orphan_heartbeat_loop のときだけ入る。UI が kill コマンドを組み立てる材料 */
+  readonly heartbeatLoop?: HygieneHeartbeatLoopTarget;
   /** overdue_defer のときだけ入る。Undo で元の日付へ戻すための材料 */
   readonly deferUntil?: string;
   /** dependency_cycle のときだけ入る */
@@ -477,6 +499,57 @@ function checkMergedLeftover(
   };
 }
 
+function checkOrphanHeartbeatLoop(
+  candidate: HeartbeatLoopCandidate,
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): HygieneIssue | null {
+  const parsed = parseHeartbeatLoopCommand(candidate.commandLine);
+  const knownTickets = parsed.ticketIdCandidates
+    .map((ticketId) => ticketById.get(ticketId))
+    .filter((ticket): ticket is Ticket => ticket !== undefined);
+
+  if (knownTickets.length === 0) {
+    return null;
+  }
+
+  const sortedKnownTickets = [...knownTickets].sort((a, b) =>
+    compareStrings(a.id, b.id),
+  );
+  const ticketIds = sortedKnownTickets.map((ticket) => ticket.id);
+  const representative = sortedKnownTickets[0]!;
+
+  const allClosed = sortedKnownTickets.every((ticket) => ticket.status === 'closed');
+  const sessionGone = candidate.sessionAlive === false;
+
+  if (!allClosed && !sessionGone) {
+    return null;
+  }
+
+  const reason: HygieneHeartbeatLoopTarget['reason'] = allClosed
+    ? 'all_closed'
+    : 'session_gone';
+
+  const ticketList = ticketIds.join(', ');
+  const message =
+    reason === 'all_closed'
+      ? `対象チケットがすべて closed なのに heartbeat ループ (pid ${candidate.pid}) が残っています: ${ticketList}`
+      : `起動元セッション (pid ${candidate.sessionPid}) は終了していますが heartbeat ループ (pid ${candidate.pid}) が残っています: ${ticketList}`;
+
+  return {
+    kind: 'orphan_heartbeat_loop',
+    ticketId: representative.id,
+    projectId: representative.projectId,
+    message,
+    severity: 'warning',
+    heartbeatLoop: {
+      pid: candidate.pid,
+      ticketIds,
+      reason,
+      ...(candidate.sessionPid !== undefined ? { sessionPid: candidate.sessionPid } : {}),
+    },
+  };
+}
+
 /**
  * 着手中チケット同士のファイル重複を、**1 チケット 1 行** に畳んで出す。
  *
@@ -636,6 +709,7 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'stale_pending_decision',
   'closed_without_evidence',
   'merged_leftover',
+  'orphan_heartbeat_loop',
   'in_flight_file_overlap',
 ];
 
@@ -657,6 +731,11 @@ export function checkHygiene(
     readonly now: Date;
     readonly thresholds?: HygieneThresholdsOverrides;
     readonly leftoverCandidates?: readonly LeftoverCandidate[];
+    /**
+     * 走査した bd heartbeat ループ。ps を叩く必要があるのでドメインでは組み立てず、
+     * 呼び出し側から受け取る。未指定なら orphan_heartbeat_loop は一切出ない。
+     */
+    readonly heartbeatLoops?: readonly HeartbeatLoopCandidate[];
     /**
      * 着手中 worktree 同士のファイル重複 (scanInFlightOverlaps の戻り)。git を叩く
      * 必要があるのでドメインでは組み立てず、呼び出し側から受け取る。未指定なら
@@ -780,6 +859,15 @@ export function checkHygiene(
       const mergedLeftover = checkMergedLeftover(candidate, ticketById);
       if (mergedLeftover !== null) {
         issues.push(mergedLeftover);
+      }
+    }
+  }
+
+  if (ctx.heartbeatLoops !== undefined) {
+    for (const candidate of ctx.heartbeatLoops) {
+      const orphanHeartbeatLoop = checkOrphanHeartbeatLoop(candidate, ticketById);
+      if (orphanHeartbeatLoop !== null) {
+        issues.push(orphanHeartbeatLoop);
       }
     }
   }

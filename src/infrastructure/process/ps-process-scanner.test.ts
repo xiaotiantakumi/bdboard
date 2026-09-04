@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import { createPsProcessScanner } from './ps-process-scanner.js';
@@ -288,5 +291,163 @@ describe('createPsProcessScanner', () => {
     const scanner = createPsProcessScanner(runner);
     await expect(scanner.listAgentProcesses()).resolves.toEqual([]);
     expect(calls.some((call) => call.command === 'lsof')).toBe(false);
+  });
+});
+
+describe('createPsProcessScanner listHeartbeatLoops', () => {
+  const PS_LINE_BUNDLED =
+    '12345 Thu Aug 14 09:12:33 2026 bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb';
+  const PS_LINE_HANDWRITTEN =
+    '23456 Thu Aug 14 09:13:33 2026 bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done';
+  const PS_LINE_STOP =
+    '34567 Thu Aug 14 09:14:33 2026 bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh stop --session-pid 4242';
+  const PS_LINE_SESSION =
+    ' 4242 Thu Aug 14 09:00:00 2026 /usr/local/bin/claude --dangerously-skip-permissions';
+
+  it('collects bundled script and hand-written heartbeat loops', async () => {
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return {
+            stdout: [
+              PS_LINE_BUNDLED,
+              PS_LINE_HANDWRITTEN,
+              PS_LINE_STOP,
+              PS_LINE_CLAUDE,
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner);
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 12_345,
+        commandLine:
+          'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
+        startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+      },
+      {
+        pid: 23_456,
+        commandLine:
+          'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done',
+        startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+      },
+    ]);
+  });
+
+  it('marks sessionAlive true when pidfile session pid is still running', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'bd-heartbeat-test-'));
+    await writeFile(join(stateDir, '4242.pid'), '12345\tThu Aug 14 09:12:33 2026\n');
+
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return {
+            stdout: [PS_LINE_BUNDLED, PS_LINE_SESSION].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, { heartbeatStateDir: stateDir });
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 12_345,
+        commandLine:
+          'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
+        startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+        sessionPid: 4242,
+        sessionAlive: true,
+      },
+    ]);
+  });
+
+  it('marks sessionAlive false when pidfile session pid is gone', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'bd-heartbeat-test-'));
+    await writeFile(join(stateDir, '4242.pid'), '12345\tThu Aug 14 09:12:33 2026\n');
+
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return { stdout: PS_LINE_BUNDLED, stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, { heartbeatStateDir: stateDir });
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 12_345,
+        commandLine:
+          'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
+        startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+        sessionPid: 4242,
+        sessionAlive: false,
+      },
+    ]);
+  });
+
+  it('leaves sessionPid and sessionAlive undefined without pidfiles', async () => {
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return { stdout: PS_LINE_HANDWRITTEN, stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, {
+      heartbeatStateDir: join(tmpdir(), 'missing-bd-heartbeat-dir'),
+    });
+    const loops = await scanner.listHeartbeatLoops?.();
+
+    expect(loops).toEqual([
+      {
+        pid: 23_456,
+        commandLine:
+          'bash -c while true; do bd heartbeat bdboard-ccc; sleep 90; done',
+        startedAt: new Date('Thu Aug 14 09:13:33 2026'),
+      },
+    ]);
+  });
+
+  it('does not throw when the heartbeat state directory is missing', async () => {
+    const { runner } = createFakeRunner({
+      handler(command) {
+        if (command === 'ps') {
+          return { stdout: PS_LINE_BUNDLED, stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: '', exitCode: 1 };
+      },
+    });
+
+    const scanner = createPsProcessScanner(runner, {
+      heartbeatStateDir: join(tmpdir(), 'definitely-missing-bd-heartbeat-dir'),
+    });
+
+    await expect(scanner.listHeartbeatLoops?.()).resolves.toEqual([
+      {
+        pid: 12_345,
+        commandLine:
+          'bash /repo/harness/packs/bdboard-harness/scripts/bd-heartbeat.sh start --session-pid 4242 --interval 90 --max-hours 12 --repo /repo bdboard-aaa bdboard-bbb',
+        startedAt: new Date('Thu Aug 14 09:12:33 2026'),
+      },
+    ]);
   });
 });
