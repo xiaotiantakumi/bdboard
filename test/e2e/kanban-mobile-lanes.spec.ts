@@ -8,7 +8,7 @@ import { expect, test, type Page } from '@playwright/test';
  * - 分割ビューでも同じ上限が効き、既存挙動を壊さない (AC3)
  * - 全縦スクロール位置で .lane-indicator-strip が viewport (0–812) 内に収まる (AC2)
  * - 全縦スクロール位置で strip が .header の背面に潜らない
- *   (--lane-indicator-sticky-top が可変高ヘッダー直下を指している)
+ *   (--header-height が可変高ヘッダー直下を指している; 書き込み元は useHeaderHeightVar.ts)
  *
  * 証明していない:
  * - position: sticky の発火そのもの (header-sticky.spec.ts が担当)

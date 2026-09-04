@@ -116,9 +116,26 @@ body {
 }
 
 html {
-  /* Propagates to the viewport (CSS2.1 overflow propagation); clips horizontal
-   * bleed without making body a scroll container. */
+  /* CSS Overflow 3 §3.1.4 (Overflow Viewport Propagation): overflow on html
+   * propagates to the viewport, and html's own used value then becomes
+   * visible — so this line alone can never break position:sticky. hidden
+   * (§3.1 scrollable value) suppresses horizontal paint/scroll overflow but
+   * does not shrink scrollWidth — e.g. with body overflow visible,
+   * documentElement.scrollWidth stays at the pre-clip content width.
+   *
+   * This is kept as the fallback for browsers without overflow:clip
+   * (Safari <16.2): there the `overflow-x: clip` on body below is dropped,
+   * and this line is what still suppresses the horizontal scrollbar. On
+   * clip-capable browsers body is what actually stops the pan — measured:
+   * removing this line changes neither innerWidth nor
+   * visualViewport.offsetLeft — so it is deliberately redundant, not
+   * load-bearing. Do NOT pair it with a non-visible overflow-x on body:
+   * that combination is precisely what breaks sticky (bdboard-wdwa). */
   overflow-x: hidden;
+  /* scroll-padding on the root scrollport (not scroll-margin on each target):
+   * scrollIntoView({ block: 'nearest' }) respects it so focus is not hidden
+   * under the sticky header. --header-height is live-set (useHeaderHeightVar). */
+  scroll-padding-top: var(--header-height, 0px);
 }
 
 body {
@@ -129,10 +146,14 @@ body {
   line-height: 1.47;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  /* overflow-x must stay visible (initial): a non-visible overflow-x on body
-   * computes overflow-y to auto, turning body into a non-scrolling scroll
-   * container that breaks position: sticky on .header and .lane-indicator-strip
-   * (bdboard-wdwa). Horizontal clip is handled by html above. */
+  /* overflow-x: clip (§3.1 non-scrollable): clips horizontal bleed without
+   * widening the layout viewport or coercing overflow-y to auto (unlike hidden),
+   * so sticky .header / .lane-indicator-strip keep the viewport as scrollport.
+   * Sticky breaks only when BOTH html and body are non-visible (html=hidden alone
+   * or body=hidden alone is fine; both together is the failure mode). Current pair:
+   * html=hidden, body=clip. Unsupported browsers ignore clip → visible; horizontal
+   * pan may return but sticky still works (Safari 16+, Chrome 90+, Firefox 81+). */
+  overflow-x: clip;
 }
 
 #root {
@@ -5525,9 +5546,9 @@ body {
   }
 
   /*
-   * Sticks below the variable-height .header via --lane-indicator-sticky-top
-   * (ResizeObserver in LaneScrollIndicator.tsx). Requires body overflow-x to
-   * stay visible so the viewport remains the scrollport (bdboard-wdwa).
+   * Sticks below the variable-height .header via --header-height
+   * (ResizeObserver in useHeaderHeightVar.ts). Requires html=hidden / body=clip
+   * so the viewport remains the scrollport (bdboard-wdwa).
    *
    * kanban-mobile-lanes e2e also asserts strip stays in viewport at all scroll
    * positions; with sticky active that holds because top tracks header height.
@@ -5537,7 +5558,7 @@ body {
     margin: 0 0 10px;
     padding: 0 14px 8px;
     position: sticky;
-    top: var(--lane-indicator-sticky-top, 0px);
+    top: var(--header-height, 0px);
     z-index: 5;
     background: var(--color-bg);
   }

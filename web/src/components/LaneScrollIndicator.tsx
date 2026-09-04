@@ -32,37 +32,6 @@ export function LaneScrollIndicator({
     });
   }, [lanes]);
 
-  /*
-   * --lane-indicator-sticky-top: .header の高さを documentElement に書き込む。
-   * 375×812 実測 ~402px。position: sticky 時の top 値。ヘッダー高は Tips/バナー
-   * 等で可変なため CSS だけでは「sticky ヘッダー直下」を表現できない。
-   */
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    const header = document.querySelector<HTMLElement>('.header');
-    if (header === null) {
-      return;
-    }
-    const syncStickyTop = () => {
-      const height = Math.ceil(header.getBoundingClientRect().height);
-      document.documentElement.style.setProperty(
-        '--lane-indicator-sticky-top',
-        `${height}px`,
-      );
-    };
-    syncStickyTop();
-    const resizeObserver = new ResizeObserver(syncStickyTop);
-    resizeObserver.observe(header);
-    window.addEventListener('resize', syncStickyTop);
-    return () => {
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', syncStickyTop);
-      document.documentElement.style.removeProperty('--lane-indicator-sticky-top');
-    };
-  }, [enabled]);
-
   useEffect(() => {
     if (!enabled) {
       return;

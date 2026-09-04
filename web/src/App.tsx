@@ -50,6 +50,7 @@ import { useWatchedTickets } from './components/WatchedTicketsProvider';
 import { isBoardFilterActive } from './boardFilter';
 import type { WipLimitsOverrides } from './wip-limits';
 import { useAppBadge } from './hooks/useAppBadge';
+import { useHeaderHeightVar } from './hooks/useHeaderHeightVar';
 import { useNotificationEvents } from './hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from './hooks/useWatchedTicketDetails';
 import { usePersistedState } from './hooks/usePersistedState';
@@ -90,6 +91,8 @@ import { buildPaletteActions, VIEW_LABELS } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
 
 export function App() {
+  useHeaderHeightVar();
+
   const [view, setView] = usePersistedState(
     UI_STORAGE_KEYS.view,
     DEFAULT_VIEW,
