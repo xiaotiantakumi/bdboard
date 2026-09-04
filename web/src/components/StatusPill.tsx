@@ -7,6 +7,7 @@ import {
 } from '../boardFreshness';
 import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { useNow } from '../hooks/useNow';
+import { usePopoverViewportClamp } from '../hooks/usePopoverViewportClamp';
 import type { StreamState } from '../useBoardStream';
 import { useExclusivePopover } from './PopoverCoordinator';
 
@@ -52,6 +53,7 @@ export function StatusPill({
 }: StatusPillProps) {
   const nowMs = useNow();
   const containerRef = useExclusivePopover('status-pill', open, onOpenChange);
+  const popoverRef = usePopoverViewportClamp<HTMLDivElement>(open);
   const level = computeStatusLevel(streamState, lastContactAtMs, nowMs, connectStalled);
 
   return (
@@ -70,7 +72,12 @@ export function StatusPill({
       </button>
 
       {open && (
-        <div className="status-pill-popover" role="region" aria-label="接続状態の詳細">
+        <div
+          ref={popoverRef}
+          className="status-pill-popover"
+          role="region"
+          aria-label="接続状態の詳細"
+        >
           {/* ピルの判定は bdboard-9qa 以降 lastContactAtMs 基準なのに、ここだけ
               generatedAt を「盤面取得」と表示していた。静穏時 (ETag 304 が続いて
               generatedAt が凍る) には「正常」ピルの中に「盤面取得: 10分前」が

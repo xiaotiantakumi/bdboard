@@ -364,3 +364,50 @@ test.describe('mobile header compact — AC4 desktop unchanged', () => {
     ).toBeLessThan(metrics.innerHeight);
   });
 });
+
+const BOUNDS_EPSILON_PX = 0.5;
+
+test.describe('mobile header compact — status pill popover fits 320px (bdboard-h4xs.13)', () => {
+  test.use({
+    viewport: { width: 320, height: 568 },
+    isMobile: true,
+    hasTouch: true,
+  });
+
+  test('320x568: status pill popover stays within viewport', async ({ page }) => {
+    // 修正前の実測: left=149.84, right=369.84, innerWidth=320 → 右へ 49.84px はみ出し。
+    // body { overflow-x: clip } のためスクロールバーは出ず無言で切り落とされる。
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+
+    await page.locator('.status-pill').click();
+    await expect(page.locator('.status-pill-popover')).toBeVisible();
+
+    const sessionBtn = page.locator('.status-pill-popover .status-pill-session-btn');
+    await expect(sessionBtn).toBeVisible();
+
+    const metrics = await page.evaluate((epsilon) => {
+      const popover = document.querySelector('.status-pill-popover');
+      if (!popover) {
+        return { found: false, left: 0, right: 0, width: 0, innerWidth: window.innerWidth, epsilon };
+      }
+      const rect = popover.getBoundingClientRect();
+      return {
+        found: true,
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        innerWidth: window.innerWidth,
+        epsilon,
+      };
+    }, BOUNDS_EPSILON_PX);
+
+    expect(metrics.found, 'status pill popover must be present after opening').toBe(true);
+    expect(
+      metrics.left >= -metrics.epsilon && metrics.right <= metrics.innerWidth + metrics.epsilon,
+      `status pill popover must fit within viewport ` +
+        `(left=${metrics.left}, right=${metrics.right}, width=${metrics.width}, ` +
+        `innerWidth=${metrics.innerWidth})`,
+    ).toBe(true);
+  });
+});
