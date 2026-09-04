@@ -76,14 +76,14 @@ describe('createCursorSpec parseTurn and authProbe', () => {
   });
 
   it('interprets auth status from status --format json', () => {
-    // 2026-09-05 実測 (cursor-agent 1.1.26, bdboard-6ids)。ログイン済み・未ログインとも
+    // 2026-09-05 実測 (cursor-agent 2026.09.02-c22c1a3, bdboard-6ids)。ログイン済み・未ログインとも
     // stdout に pretty-print JSON、stderr は空。未ログインでも exitCode は 0 で、codex や
     // claude と違い終了コードでは認証状態を区別できない。そのため判定は isAuthenticated
     // (boolean) だけを見る必要がある。未ログイン状態は HOME を空の一時ディレクトリに向けて
     // 再現した (ログアウトはしていない)。
     expect(spec.authProbe?.args).toEqual(['status', '--format', 'json']);
     expect(spec.authProbe!.interpret({ stdout: JSON.stringify({ isAuthenticated: true }), stderr: '', exitCode: 0 })).toBe('available');
-    expect(spec.authProbe!.interpret({ stdout: JSON.stringify({ isAuthenticated: false }), stderr: '', exitCode: 1 })).toBe('unavailable');
+    expect(spec.authProbe!.interpret({ stdout: JSON.stringify({ isAuthenticated: false }), stderr: '', exitCode: 0 })).toBe('unavailable');
     expect(spec.authProbe!.interpret({ stdout: 'not json', stderr: '', exitCode: 1 })).toBe('unknown');
     expect(spec.authProbe!.interpret({ stdout: '', stderr: '', exitCode: 1, failureKind: 'timeout' })).toBe('unknown');
     // 実測形 (ログイン済み)

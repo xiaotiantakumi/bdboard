@@ -87,7 +87,7 @@ describe('createAgySpec (bdboard-l1t.6)', () => {
     const spec = createAgySpec({ agyPath: 'agy', model: '', timeoutMs: 1000 });
     expect(spec.parseTurn({ stdout: `noise\n${success()}`, stderr: '', exitCode: 0 }, () => undefined).reply).toBe('PONG\n');
     expect(spec.parseTurn({ stdout: `noise\n${JSON.stringify(JSON.parse(success()), null, 2)}\nnoise`, stderr: '', exitCode: 0 }, () => undefined).reply).toBe('PONG\n');
-    // 2026-09-05 実測 (agy 1.1.13, bdboard-6ids)。agy models は認証済み・未認証のいずれでも
+    // 2026-09-05 実測 (agy 1.1.26, bdboard-6ids)。agy models は認証済み・未認証のいずれでも
     // stderr に進捗行 "Fetching available models..." を書くので、stderr が空であることを
     // 認証済みの判定材料にはできない。認証済みは exit 0 + stdout にタブ区切り一覧、
     // 未認証は exit 1 + stdout 空 + stderr にエラー行。未認証は HOME を空の一時ディレクトリに
