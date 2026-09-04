@@ -1,0 +1,90 @@
+fix(bdboard-r5we): チャットの対象プロジェクトを常時表示し明示選択制にする (#247)
+
+* fix(bdboard-r5we): チャットの対象プロジェクトを常時表示し明示選択制にする
+
+複数プロジェクトを同時に開いてチャットを使うと、今どのプロジェクトを
+文脈にしているか分かりにくく、意図しないプロジェクトへ送信しうる。
+
+調査すると、対象プロジェクトの select は既に存在していたが、既定で
+折りたたまれた <details class="chat-panel-settings"> の中に埋まっていた。
+加えて resolveInitialProjectId とチケット文脈 effect の2箇所に
+`projects[0]` への暗黙フォールバックがあり、解決できないときは一覧の
+先頭が黙って選ばれていた。
+
+- 対象プロジェクト行 .chat-project-bar を <details> の外・パネル見出し
+  直下の常時表示へ移設した(複製ではなく移設)。
+- `projects[0]` 暗黙フォールバックを2箇所とも廃止。プロジェクトが1件
+  だけなら自動選択し、2件以上で解決できなければ未選択にして明示選択を
+  促す。
+- 未選択のあいだは送信ボタンを disabled にし、理由を画面に出す。
+- コールドキースペース移行ロジックを adoptProjectFromColdKeyspace に
+  抽出し、手動選択経路と共有した。
+
+「直前に選んだプロジェクトを記憶」と「チケット詳細から開いたらその
+チケットのプロジェクト」は既に実装済みだったため変更していない。
+プロジェクト非依存の全体チャットという概念はコード上に存在しないため
+(chat API が projectId 必須、エージェントの cwd が project.rootPath 由来)
+対象外とした。
+
+未選択状態で本文を打ってからプロジェクトを選ぶとドラフトが消えるバグを
+併せて修正した。本文は new:<proj>:0 へ移送されるが draftNonces が 0 の
+ままで、スレッド一覧 effect の isExplicitDraftStillSelected() ガードを
+通過できず既存スレッドが自動選択されていた。中身のあるドラフトを持ち
+込むときだけ nonce を bump する forceTargetNonceBump で対処している
+(空ドラフト時は bump しないので、開き直すと前回スレッドが復元される
+既存挙動は保たれる)。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(bdboard-r5we): 未選択時に select が出ない経路とドラフト消失の残存経路を直す
+
+レビュー指摘の反映。
+
+major-1: select の描画条件とヒントの表示条件が `projects.length` 依存
+だったのに対し、送信可否は `selectedProjectId === ''` の1条件で、3つが
+食い違っていた。projects が1件だけ到着してチケットのプロジェクトと違う
+場合、未選択で固定されるのに select が描画されず(`<p>—</p>` になる)、
+ヒントも出ず、送信が永久に disabled になっていた。しかも notice は存在
+しない select を指していた。描画条件を「選ぶ余地があるか」基準に揃え、
+`showProjectSelect = projects.length > 1 || (projects.length === 1 &&
+selectedProjectId === '')`、ヒントは `selectedProjectId === ''` 単独に
+した。projects が空のときは断定を避け「読み込めていません」の説明に
+差し替える(読み込み中と真に0件を ChatPanel は区別できないため)。
+
+major-2: `forceTargetNonceBump` オプションは呼び出し元2つのうち effect
+側に渡されておらず、同じドラフト消失が残っていた。オプションを廃止し、
+中身の有無の判定を adoptProjectFromColdKeyspace 内部に移して
+`coldNonce > 0 || coldHasContent` にした。両方の呼び出し元が構造的に
+正しくなり、渡し忘れが即バグになる足場も消えた。
+
+- minor-2: チケットのプロジェクトが一覧に無い経路にも focus + キャレット
+  末尾配置を入れた(この分岐だけ入力欄にフォーカスが当たらなかった)。
+- minor-5: `.chat-project-select` に `@media (max-width: 700px)` で
+  `font-size: 16px; min-height: 44px` を追加。16px 未満だと iOS Safari が
+  タップ時にページを自動ズームする。常時表示の主導線になったので、
+  .chat-input と同じ扱いに揃える。
+- minor-7: threadModelIds も staleKey から targetKey へ移送する。未選択の
+  ままモデルを変えてからプロジェクトを選ぶと選択が黙って戻っていた。
+- nit-1: aria-label をやめて label htmlFor + id に。ヒントに id を振り、
+  select と送信ボタンの両方に aria-describedby を張った。
+- nit-4/nit-5: .chat-project-bar の余分な margin を削除し、notice は事実
+  提示だけにして指示文言をヒント側へ一本化した。
+
+ヘルプ原本の事実誤り2件も訂正した。「選んだプロジェクトが次回の既定に
+なる」は常には成り立たず(ボードの絞り込みがちょうど1件のときはそちらが
+優先される)、未選択時の表示も実際は「プロジェクトを選択…」だった。
+
+回帰テストは5本とも製品コード未修正の状態で赤になることを実測した
+(major-1 の2経路、major-2 の本文・画像、minor-7)。既存の本命テストは
+waitFor の即時ポーリングに依存して偽グリーンになりうる形だったので、
+ドロワーを開いて解決後を待つ形に変更し、補助テストには回帰ガードでは
+ない旨を明記した。
+
+npm run verify に加えて npm run test:e2e も実行(9 passed)。縦レイアウト
+変更に対する chat-mobile.spec.ts の 375x400 検証は追加対応なしで通過した。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>

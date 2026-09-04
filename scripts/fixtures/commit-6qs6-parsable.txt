@@ -1,0 +1,35 @@
+fix(bdboard-6qs6): 書き込みAPI後に対象プロジェクトのキャッシュを強制リフレッシュする (#250)
+
+* fix(bdboard-6qs6): 書き込みAPI後に対象プロジェクトのキャッシュを強制リフレッシュする
+
+書き込み系ルートはサーバー側キャッシュを一切無効化していなかったため、Web 側が
+書き込み直後に invalidateQueries() で再取得しても、サーバーが書き込み前のキャッシュを
+返していた。確認待ちへの回答が「効いていない」ように見え、二重回答を招きうる。
+
+対象プロジェクト1件だけを強制リフレッシュし、それを await してから応答を返すように
+する。全プロジェクトの強制リフレッシュだと、書き込み1回ごとにプロジェクト数ぶんの
+bd list シェルアウトが走ってレイテンシと負荷が跳ねるため、対象を絞っている。
+
+- refreshProjects に onlyProjectIds を追加。対象外は fingerprint も計算せず reused。
+- main.ts の runRefresh に対象プロジェクトを通し、合流(coalescing)状態を
+  pendingRefresh 1つへ集約。「広い方が勝つ」規則でマージする。
+- 全12書き込みルートで、成功パスのみ refreshAfterWrite() を await。
+  リフレッシュ失敗で書き込みを失敗扱いにはしない(bdは既に成功しているため)。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+* fix(bdboard-6qs6): post-processing 中に届いたリフレッシュ要求も同じ実行で拾う
+
+合流ループの脱出後、通知発行と watchedProjectsSync.sync() の await 中に届いた
+要求は、finally で待ち手だけが解決され「実行されないまま解決」されていた。
+書き込みルートがこのリフレッシュを await するようになった今、この窓は
+「書き込み直後の再取得が陳腐化キャッシュを掴む」という本チケットのバグ本体を
+そのまま再演する (sync() は chokidar の監視対象同期なので、窓はサブミリ秒では
+ない)。post-processing まで含めて外側ループで囲み、pendingRefresh が空のときだけ
+待ち手を解決するようにする。
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 <noreply@anthropic.com>

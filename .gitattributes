@@ -1,0 +1,8 @@
+# release-please のパーサが落ちる位置 (行:列) を byte 単位で再現する fixture。
+# Windows の core.autocrlf=true でチェックアウトされると各行末に \r が付き、
+# 74 行目の桁数が 1 ずれて scripts/check-commit-parse.test.mjs の
+# 「74:37」「行末 (改行) で落ちている」アサーションが両方落ちる
+# (verify-windows で実測。2026-09-04, bdboard-84hu)。
+# fixture は「実際のコミットメッセージの byte 列」そのものが検証対象なので、
+# 改行コードの正規化を明示的に禁止する。
+scripts/fixtures/*.txt text eol=lf
