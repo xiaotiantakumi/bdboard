@@ -80,9 +80,12 @@ describe('getHygieneIssues', () => {
       project: b,
       tickets: [
         makeTicket({
-          id: 'bdboard-missing',
+          id: 'bdboard-stale',
           projectId: b.id,
-          priority: undefined as never,
+          status: 'in_progress',
+          updatedAt: new Date(
+            NOW.getTime() - DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs - 1,
+          ),
         }),
       ],
       fingerprint: 'fp-b',
@@ -91,8 +94,8 @@ describe('getHygieneIssues', () => {
 
     const issues = getHygieneIssues(cache, NOW);
     expect(issues.map((issue) => issue.kind).sort()).toEqual([
-      'missing_priority',
       'overdue_defer',
+      'stale_in_progress',
     ]);
   });
 
@@ -118,9 +121,8 @@ describe('getHygieneIssues', () => {
       project: b,
       tickets: [
         makeTicket({
-          id: 'bdboard-missing',
+          id: 'bdboard-other',
           projectId: b.id,
-          priority: undefined as never,
         }),
       ],
       fingerprint: 'fp-b',

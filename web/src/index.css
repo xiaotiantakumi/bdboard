@@ -1648,11 +1648,6 @@ body {
   color: var(--badge-stalled-fg);
 }
 
-.hygiene-kind-missing_priority {
-  background: rgba(90, 200, 250, 0.14);
-  color: #007aff;
-}
-
 .hygiene-kind-dependency_cycle {
   background: rgba(255, 45, 85, 0.14);
   color: #c41e3a;
@@ -1808,26 +1803,6 @@ body {
   padding: 0 12px 4px;
 }
 
-.hygiene-repair-priority {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.hygiene-repair-priority-label {
-  font-size: 0.8125rem;
-  color: var(--color-text-secondary);
-}
-
-.hygiene-repair-priority select {
-  padding: 4px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text);
-  font-size: 0.8125rem;
-}
-
 .hygiene-repair-confirm {
   display: flex;
   flex-wrap: wrap;
@@ -1855,8 +1830,7 @@ body {
 
 .hygiene-repair-action:disabled,
 .hygiene-repair-confirm-btn:disabled,
-.hygiene-repair-cancel:disabled,
-.hygiene-repair-priority select:disabled {
+.hygiene-repair-cancel:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }
@@ -6846,9 +6820,9 @@ body {
    これと冗長になるが、別 PR で触らない。 */
 @media (hover: none) and (pointer: coarse) {
   /* :root プレフィックスは詳細度を 0,1,0 分だけ底上げするためのもの（選択対象は変わらない）。
-     これが無いと .comment-form-input（0,1,0）や .hygiene-repair-priority select（0,1,1）など
+     これが無いと .comment-form-input（0,1,0）や .settings-panel-add-row select（0,1,1）など
      既存ルールに要素セレクタ（0,0,1）が負けて font-size が効かない。
-     以前は textarea[class] / select[class] で凌いでいたが、.hygiene-repair-priority select のように
+     以前は textarea[class] / select[class] で凌いでいたが、.settings-panel-add-row select のように
      クラス無しの要素がクラス付き祖先の子孫セレクタで小さくされているケースを取りこぼしたため
      :root 方式に変更した（実測で 13px のまま残っていた）。 */
   :root input[type='text'],

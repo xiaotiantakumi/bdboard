@@ -296,32 +296,6 @@ describe('checkHygiene stale_in_progress', () => {
   });
 });
 
-describe('checkHygiene missing_priority', () => {
-  it('flags tickets with undefined priority at runtime', () => {
-    const ticket = {
-      ...makeTicket({ id: 'bdboard-missing' }),
-      priority: undefined as unknown as Ticket['priority'],
-    } satisfies Ticket;
-
-    expect(issueKinds([ticket])).toEqual(['missing_priority']);
-  });
-
-  it('flags tickets with invalid priority values', () => {
-    const ticket = {
-      ...makeTicket({ id: 'bdboard-invalid' }),
-      priority: 9 as Ticket['priority'],
-    } satisfies Ticket;
-
-    expect(issueKinds([ticket])).toEqual(['missing_priority']);
-  });
-
-  it('does not flag valid priorities', () => {
-    const ticket = makeTicket({ id: 'bdboard-ok', priority: 2 });
-
-    expect(issueKinds([ticket])).toEqual([]);
-  });
-});
-
 describe('checkHygiene unblocked_high_priority_idle', () => {
   it('flags ready high-priority tickets whose blockers are all closed', () => {
     const blocker = makeTicket({
@@ -1207,7 +1181,6 @@ describe('checkHygiene in_flight_file_overlap', () => {
         id: 'bdboard-b',
         projectId,
         status: 'in_progress',
-        priority: undefined as unknown as Ticket['priority'],
       }),
     ];
 
@@ -1217,7 +1190,7 @@ describe('checkHygiene in_flight_file_overlap', () => {
     }).map((issue) => issue.kind);
 
     expect(kinds.indexOf('in_flight_file_overlap')).toBeGreaterThan(
-      kinds.indexOf('missing_priority'),
+      kinds.indexOf('stale_in_progress'),
     );
   });
 });

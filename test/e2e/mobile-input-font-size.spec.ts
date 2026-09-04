@@ -102,32 +102,6 @@ test.describe('mobile input font-size', () => {
   test('visible form controls use at least 16px font-size on touch devices', async ({
     page,
   }) => {
-    // missing_priority は bd-issue-schema.ts が priority を必須かつ 0..4 に制限しているため、
-    // bd CLI 経由の実データでは発火し得ず、フィクスチャでは再現できない。
-    // それでも `.hygiene-repair-priority select` を font-size の安全網に載せたいのは、
-    // この要素が `:root select` (0,1,1) と `.hygiene-repair-priority select` (0,1,1) の
-    // 同詳細度でソース順にのみ依存する唯一のケースだから（web/src/index.css:1796-1803 と末尾ブロック）。
-    // ルールの順序が壊れたらこのテストが落ちる — モックの目的はその安全網。
-    // モックしているのはサーバー応答だけで、描画される DOM と当たる CSS は本物。
-    await page.route('**/api/hygiene*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({
-          issues: [
-            {
-              kind: 'missing_priority',
-              ticketId: 'bdboard-e2e-mock-noprio',
-              projectId: 'fixture-project',
-              message: 'priority が未設定または不正です',
-              severity: 'info',
-            },
-          ],
-          closeEvidence: null,
-        }),
-      });
-    });
-
     await page.goto('/');
 
     const card = page.locator('article').first();
@@ -160,19 +134,9 @@ test.describe('mobile input font-size', () => {
     // 実測14（checkbox 等は EXCLUDED_INPUT_TYPES で除外されるため SettingsPanel の input 総数とは一致しない）。
     // 下限11は約8割で設定フォーム群が丸ごと消えたら落ちる程度。
     await expectAllFormElementsAtLeast16px(page, 'settings view', 11);
-
-    await page.getByRole('button', { name: '健全性', exact: true }).click();
-    const hygieneSection = page.locator('section[aria-label="ボード健全性"]');
-    await expect(hygieneSection).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('.hygiene-issue-list')).toBeVisible({
-      timeout: 15_000,
-    });
-    await expect(page.getByText('警告はありません')).toHaveCount(0);
-    await expect(page.locator('.hygiene-repair-priority select')).toBeVisible({
-      timeout: 15_000,
-    });
-    // 実測1（`.hygiene-repair-priority select` のみ）。件数が1なので下限も1。
-    await expectAllFormElementsAtLeast16px(page, 'hygiene view', 1);
+    // 健全性ビューにはフォーム要素が無くなった（bdboard-2czx で priority 修復 select を削除）ため
+    // このビューは検査対象外。同じ (0,1,1) 同詳細度リスクは settings view の
+    // .settings-panel-add-row select が引き続きカバーする。
 
     await page.getByRole('button', { name: '統合', exact: true }).click();
     await expect(card).toBeVisible({ timeout: 15_000 });

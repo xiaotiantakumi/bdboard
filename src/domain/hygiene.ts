@@ -17,7 +17,7 @@ import {
   type InFlightOverlap,
   type InFlightOverlapPeer,
 } from './in-flight-overlap.js';
-import { isOpenLike, isPriority } from './status.js';
+import { isOpenLike } from './status.js';
 import {
   resolveHygieneThresholds,
   type HygieneThresholds,
@@ -29,12 +29,13 @@ export { DEFAULT_HYGIENE_THRESHOLDS } from './hygiene-thresholds.js';
 import type { Ticket } from './ticket.js';
 import type { TicketId } from './ticket-id.js';
 
+// missing_priority は削除済み: bd が priority を 0..4 に強制し、
+// bd-issue-schema.ts も同じ範囲に制限するため『priority 未設定』は表現不可能 (bdboard-2czx)。
 export type HygieneIssueKind =
   | 'dependency_cycle'
   | 'overdue_defer'
   | 'stale_epic'
   | 'stale_in_progress'
-  | 'missing_priority'
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
@@ -94,14 +95,6 @@ export function pendingDecisionKey(
   ticketId: TicketId,
 ): string {
   return `${projectId}\0${ticketId}`;
-}
-
-function ticketPriority(ticket: Ticket): unknown {
-  return (ticket as { readonly priority?: unknown }).priority;
-}
-
-function isMissingPriority(ticket: Ticket): boolean {
-  return !isPriority(ticketPriority(ticket));
 }
 
 function isValidDate(value: unknown): value is Date {
@@ -234,20 +227,6 @@ function checkStaleInProgress(
   };
 }
 
-function checkMissingPriority(ticket: Ticket): HygieneIssue | null {
-  if (!isMissingPriority(ticket)) {
-    return null;
-  }
-
-  return {
-    kind: 'missing_priority',
-    ticketId: ticket.id,
-    projectId: ticket.projectId,
-    message: 'priority が未設定または不正です',
-    severity: 'info',
-  };
-}
-
 function checkUnblockedHighPriorityIdle(
   ticket: Ticket,
   ctx: ReadinessContext,
@@ -257,14 +236,7 @@ function checkUnblockedHighPriorityIdle(
   if (!isOpenLike(ticket.status)) {
     return null;
   }
-  if (isMissingPriority(ticket)) {
-    return null;
-  }
-  const priority = ticketPriority(ticket);
-  if (
-    typeof priority !== 'number' ||
-    priority > thresholds.highPriorityMax
-  ) {
+  if (ticket.priority > thresholds.highPriorityMax) {
     return null;
   }
   if (!hasBlockingDependencies(ticket)) {
@@ -660,7 +632,6 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'overdue_defer',
   'stale_epic',
   'stale_in_progress',
-  'missing_priority',
   'unblocked_high_priority_idle',
   'stale_pending_decision',
   'closed_without_evidence',
@@ -779,11 +750,6 @@ export function checkHygiene(
     );
     if (stalePendingDecision !== null) {
       issues.push(stalePendingDecision);
-    }
-
-    const missingPriority = checkMissingPriority(ticket);
-    if (missingPriority !== null) {
-      issues.push(missingPriority);
     }
 
     const unblockedIdle = checkUnblockedHighPriorityIdle(

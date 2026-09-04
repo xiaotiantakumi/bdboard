@@ -200,17 +200,17 @@ describe('HygienePanel', () => {
         message: 'defer_until を過ぎていますが、まだ deferred のままです',
       }),
       makeIssue({
-        ticketId: 'bdboard-missing',
-        kind: 'missing_priority',
-        severity: 'info',
-        message: 'priority が未設定または不正です',
+        ticketId: 'bdboard-stale',
+        kind: 'stale_in_progress',
+        severity: 'warning',
+        message: 'in_progress のまま 30 日以上経過しています',
       }),
     ]));
 
     renderHygienePanel();
 
     expect(await screen.findByText('期限超過の保留')).toBeInTheDocument();
-    expect(screen.getByText('priority 未設定')).toBeInTheDocument();
+    expect(screen.getByText('長期 in_progress')).toBeInTheDocument();
     expect(
       screen.getByText('defer_until を過ぎていますが、まだ deferred のままです'),
     ).toBeInTheDocument();
@@ -231,7 +231,7 @@ describe('HygienePanel', () => {
 
     expect(await screen.findByText('close 証拠なし')).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /保留を解除|エピックを完了|優先度を設定/ }),
+      screen.queryByRole('button', { name: /保留を解除|エピックを完了/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -983,11 +983,6 @@ describe('HygienePanel repair actions', () => {
         message: 'stale epic',
       }),
       makeIssue({
-        ticketId: 'bdboard-missing',
-        kind: 'missing_priority',
-        message: 'missing priority',
-      }),
-      makeIssue({
         ticketId: 'bdboard-stale',
         kind: 'stale_in_progress',
         message: 'stale in progress',
@@ -1008,9 +1003,8 @@ describe('HygienePanel repair actions', () => {
 
     expect(await screen.findByRole('button', { name: '保留を解除' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'エピックを完了' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '優先度を設定' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '掃除コマンドをコピー' })).not.toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /保留を解除|エピックを完了|優先度を設定/ })).toHaveLength(3);
+    expect(screen.getAllByRole('button', { name: /保留を解除|エピックを完了/ })).toHaveLength(2);
   });
 
   it('requires confirmation before posting undefer quick action', async () => {
@@ -1274,46 +1268,6 @@ describe('HygienePanel repair actions', () => {
     await waitFor(() => {
       expect(postTicketQuickActionMock).toHaveBeenCalled();
     });
-  });
-
-  it('posts selected priority for missing_priority and shows header success without undo', async () => {
-    const missingIssue = makeIssue({
-      ticketId: 'bdboard-missing',
-      kind: 'missing_priority',
-      message: 'missing priority',
-    });
-
-    fetchHygieneMock
-      .mockResolvedValueOnce(makeHygieneResponse([missingIssue]))
-      .mockResolvedValue(makeHygieneResponse());
-
-    const { container } = renderHygienePanel();
-
-    await screen.findByRole('button', { name: '優先度を設定' });
-    await user.selectOptions(screen.getByRole('combobox'), '0');
-    await user.click(screen.getByRole('button', { name: '優先度を設定' }));
-    await user.click(
-      screen.getByRole('button', { name: '確定: 優先度を設定' }),
-    );
-
-    await waitFor(() => {
-      expect(postTicketQuickActionMock).toHaveBeenCalledWith('bdboard-missing', {
-        action: 'priority',
-        priority: 0,
-      });
-    });
-
-    await waitFor(() => {
-      expect(
-        screen.queryByRole('button', { name: '優先度を設定' }),
-      ).not.toBeInTheDocument();
-    });
-
-    const repairStatus = container.querySelector('.hygiene-panel-repair-status');
-    expect(repairStatus).toHaveTextContent(
-      '優先度を P0 に設定しました: bdboard-missing',
-    );
-    expect(showUndoMock).not.toHaveBeenCalled();
   });
 
   it('closes stale epic and shows header success message when row disappears', async () => {
