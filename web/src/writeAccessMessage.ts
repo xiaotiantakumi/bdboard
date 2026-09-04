@@ -76,6 +76,42 @@ export const TUNNEL_NOT_RUNNING_HELP =
 export const CHAT_BUSY_HELP =
   'このプロジェクトで別のメッセージを処理中です。少し待ってから再送してください。';
 
+/** 選択中エージェントが availability=unavailable のとき、入力欄付近に出す警告 (bdboard-nzul)。 */
+export const CHAT_AGENT_UNAVAILABLE_WARNING =
+  '選択中のエージェントは利用できません（CLI がインストールされていないか、認証が通っていません）。「チャット設定」で別のエージェントを選ぶか、ターミナルで CLI の認証をやり直してください。';
+
+/**
+ * チャット送信が CLI 未導入・認証切れ等で失敗したときの説明 (bdboard-nzul)。
+ * サーバーは生の stderr/stdout を返さないため、利用者が取れる行動を示す。
+ */
+export const CHAT_AGENT_AUTH_FAILURE_HELP =
+  'エージェントが応答しませんでした。CLI がインストールされていないか、認証が切れている可能性があります。ターミナルで CLI の認証状態を確認し、必要なら再ログインしてからもう一度送信してください。';
+
+const SERVER_CHAT_AGENT_UNAVAILABLE = 'chat agent unavailable';
+
+/**
+ * チャットのエージェント失敗 (502/503) を日本語に変換する。
+ * マップできない場合は null — 呼び出し側の既存フォールバックに委ねる。
+ */
+export function chatAgentErrorMessage(error: ApiError): string | null {
+  if (
+    error.status === 503 &&
+    error.errorMessage === SERVER_CHAT_AGENT_UNAVAILABLE
+  ) {
+    return CHAT_AGENT_AUTH_FAILURE_HELP;
+  }
+  if (error.status === 502) {
+    switch (error.code) {
+      case 'agent-exit-nonzero':
+      case 'agent-not-found':
+        return CHAT_AGENT_AUTH_FAILURE_HELP;
+      default:
+        return null;
+    }
+  }
+  return null;
+}
+
 const NETWORK_FETCH_MESSAGES = [
   'Failed to fetch',
   'Load failed',

@@ -130,7 +130,8 @@ export type ChatFailureCode = (typeof CHAT_FAILURE_CODES)[number];
 export const CHAT_FAILURE_MESSAGES: Readonly<Record<ChatFailureCode, string>> = {
   'agent-not-found': 'the chat agent CLI could not be started',
   'agent-timeout': 'the chat agent timed out',
-  'agent-exit-nonzero': 'the chat agent exited with an error',
+  'agent-exit-nonzero':
+    'the chat agent exited with an error; the CLI may be missing or not authenticated',
   'agent-bad-output': 'the chat agent returned output that is not valid JSON',
   'agent-unexpected-output': 'the chat agent returned JSON in an unexpected shape',
   'agent-workspace-untrusted':

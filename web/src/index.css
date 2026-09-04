@@ -5137,10 +5137,10 @@ body {
   color: var(--color-warning);
 }
 
-.chat-agent-availability-note {
+.chat-agent-unavailable-banner {
   margin: 0;
   font-size: 0.8125rem;
-  color: var(--color-text-secondary);
+  color: var(--color-warning);
   line-height: 1.45;
 }
 

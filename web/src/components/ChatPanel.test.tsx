@@ -11,7 +11,11 @@ import {
   readPersistedChatThreads,
 } from '../chatThreadStorage';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
-import { CHAT_BUSY_HELP } from '../writeAccessMessage';
+import {
+  CHAT_AGENT_AUTH_FAILURE_HELP,
+  CHAT_AGENT_UNAVAILABLE_WARNING,
+  CHAT_BUSY_HELP,
+} from '../writeAccessMessage';
 import { ChatPanel, formatThreadUpdatedAt } from './ChatPanel';
 
 vi.mock('../api', async (importOriginal) => {
@@ -4894,7 +4898,28 @@ describe('ChatPanel', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows unavailable label and note when the selected agent is unavailable', async () => {
+  it('shows unavailable warning near the input without opening chat settings (bdboard-nzul)', async () => {
+    fetchChatAgentsMock.mockResolvedValue([
+      { ...CLAUDE_AGENT, availability: 'unavailable' },
+    ]);
+
+    const { container } = renderChatPanel([PROJECT_A], {
+      leaveSettingsCollapsed: true,
+    });
+    const details = container.querySelector('.chat-panel-settings');
+    expect(details).toBeInstanceOf(HTMLDetailsElement);
+    expect((details as HTMLDetailsElement).open).toBe(false);
+    expect(screen.queryByLabelText('チャットエージェント')).toBeNull();
+
+    const warning = await screen.findByText(CHAT_AGENT_UNAVAILABLE_WARNING);
+    expect(warning).toBeVisible();
+    expect(details!.contains(warning)).toBe(false);
+    expect(warning).toHaveClass('chat-agent-unavailable-banner');
+    expect(warning).toHaveAttribute('role', 'alert');
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+  });
+
+  it('shows unavailable label in chat settings when expanded', async () => {
     fetchChatAgentsMock.mockResolvedValue([
       { ...CLAUDE_AGENT, availability: 'unavailable' },
     ]);
@@ -4903,11 +4928,56 @@ describe('ChatPanel', () => {
     const agentSelect = await screen.findByLabelText('チャットエージェント');
 
     expect(agentSelect).toHaveTextContent('Claude [画像非対応]（利用不可）');
-    expect(
-      screen.getByText(
-        'このエージェントは利用できません（CLI が無いか、認証が通っていません）。',
-      ),
-    ).toBeInTheDocument();
+    const warning = await screen.findByText(CHAT_AGENT_UNAVAILABLE_WARNING);
+    expect(warning).toHaveAttribute('role', 'alert');
+  });
+
+  it('maps agent-exit-nonzero failures to an auth-oriented message (bdboard-nzul)', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse(
+          {
+            error: 'chat failed',
+            code: 'agent-exit-nonzero',
+            detail:
+              'the chat agent exited with an error; the CLI may be missing or not authenticated',
+          },
+          502,
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await user.type(screen.getByLabelText('メッセージ'), 'auth expired test');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    expect(await screen.findByText(CHAT_AGENT_AUTH_FAILURE_HELP)).toBeInTheDocument();
+    expect(screen.queryByText('chat failed')).not.toBeInTheDocument();
+  });
+
+  it('maps chat agent unavailable (503) to an auth-oriented message (bdboard-nzul)', async () => {
+    const user = userEvent.setup();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message' && init?.method === 'POST') {
+        return jsonResponse(
+          {
+            error: 'chat agent unavailable',
+            detail: 'the chat agent CLI could not be started',
+          },
+          503,
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await user.type(screen.getByLabelText('メッセージ'), 'unavailable agent test');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    expect(await screen.findByText(CHAT_AGENT_AUTH_FAILURE_HELP)).toBeInTheDocument();
+    expect(screen.queryByText('chat agent unavailable')).not.toBeInTheDocument();
   });
 
   it('shows unknown label but no availability note when auth is unverified', async () => {
