@@ -123,11 +123,14 @@ test.describe('chat panel mobile layout', () => {
 
     await expect(page.locator('.chat-messages')).toBeVisible();
 
-    await page.waitForFunction(() => {
-      const panel = document.querySelector('.chat-panel');
-      if (!panel) return false;
-      return panel.scrollHeight <= panel.clientHeight;
-    });
+    // Poll timeout is below the test timeout (30s) so failures surface measured overflow values.
+    await expect
+      .poll(
+        async () =>
+          page.locator('.chat-panel').evaluate((el) => el.scrollHeight - el.clientHeight),
+        { timeout: 10_000 },
+      )
+      .toBeLessThanOrEqual(0);
 
     const panelMetrics = await page.locator('.chat-panel').evaluate((el) => ({
       clientHeight: el.clientHeight,
@@ -150,7 +153,54 @@ test.describe('chat panel mobile layout', () => {
         messagesHeight,
       }),
     );
-    expect(messagesHeight).toBeGreaterThan(0);
+    expect(messagesHeight).toBeGreaterThanOrEqual(40);
+  });
+
+  test('375px width shows privacy hint when image is attached via paste', async ({
+    page,
+  }) => {
+    await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    const textarea = page.locator('.chat-input');
+    await expect(textarea).toBeVisible();
+
+    await textarea.evaluate((el) => {
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const binary = atob(pngBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const file = new File([bytes], 'test.png', { type: 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      el.dispatchEvent(
+        new ClipboardEvent('paste', {
+          clipboardData: dt,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    await expect(page.locator('.chat-attachments')).toBeVisible();
+
+    // Blur so :focus-within does not unclip the hint — paste via evaluate does not focus
+    // today, but a future paste flow that focuses the textarea would mask sr-only clip.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+    const hint = page.locator('.chat-image-privacy-hint');
+    await expect(hint).toBeVisible();
+
+    const hintMetrics = await hint.evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      position: getComputedStyle(el).position,
+    }));
+    console.log(JSON.stringify(hintMetrics));
+    expect(hintMetrics.height).toBeGreaterThan(10);
+    expect(hintMetrics.position).toBe('static');
   });
 
   test('overlay z-index stacks above undo snackbar', async ({ page }) => {
