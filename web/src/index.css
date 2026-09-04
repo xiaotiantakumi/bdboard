@@ -6491,6 +6491,35 @@ body {
   color: var(--color-text-secondary);
 }
 
+/* エージェント実行の前提 (ハーネス) が揃っていない理由。ボタン脇に 1 行 */
+.agent-run-blocked-reason,
+.next-up-run-blocked-reason {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.next-up-run-blocked-reason {
+  margin: 0;
+}
+
+/* run 完了後に run の外で回す検証コマンドの導線 */
+.agent-run-next-step {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.8125rem;
+}
+
+.agent-run-next-step-label {
+  color: var(--color-text-secondary);
+}
+
+.agent-run-next-step-command {
+  word-break: break-all;
+}
+
 .agent-run-confirm-panel {
   align-self: stretch;
 }

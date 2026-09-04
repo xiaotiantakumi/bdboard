@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  fetchAllHarnessStatus,
   fetchBoard,
   fetchBoardThresholdsConfig,
   fetchChatAvailability,
@@ -14,6 +15,7 @@ import {
   type PendingDecisionDto,
   type PrBadgeDto,
   type ProjectDto,
+  type ProjectHarnessStatusDto,
 } from './api';
 import { setBoardTimeZoneOverride } from './boardTimeZone';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -297,6 +299,27 @@ export function App() {
     queryFn: fetchBoardThresholdsConfig,
     retry: false,
   });
+
+  /*
+   * 一括実行の前提判定 (bdboard-pkr6.11) 用。Next Up を見ているときだけ引く
+   * — 判定に使うのはそのビューのボタンだけで、他のビューでは注入先の
+   * `.claude/` を読ませる理由が無い。取得できなくても「不明」として扱い、
+   * ボタンは殺さない (最終判定はサーバーの preflight)。
+   */
+  const harnessStatusQuery = useQuery({
+    queryKey: ['harness-status-all'],
+    queryFn: fetchAllHarnessStatus,
+    enabled: view === 'next',
+    retry: false,
+  });
+
+  const harnessStatuses = useMemo(() => {
+    const map = new Map<string, ProjectHarnessStatusDto>();
+    for (const entry of harnessStatusQuery.data?.projects ?? []) {
+      map.set(entry.projectId, { packs: entry.packs, contract: entry.contract });
+    }
+    return map;
+  }, [harnessStatusQuery.data]);
 
   const wipLimitsOverrides = useMemo((): WipLimitsOverrides => {
     const config = boardThresholdsQuery.data;
@@ -944,6 +967,9 @@ export function App() {
             prLinksById={prLinksById}
             onCardClick={handleSelectTicket}
             batchRun={nextUpBatchRun}
+            harnessStatuses={
+              harnessStatusQuery.data !== undefined ? harnessStatuses : undefined
+            }
           />
         )}
         {view === 'activity' && (

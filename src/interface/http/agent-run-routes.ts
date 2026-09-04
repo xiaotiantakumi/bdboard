@@ -9,6 +9,12 @@ import { dispatchRun } from '../../application/runner/dispatch-run.js';
 import { validateProvisionedRunCwd } from '../../application/runner/validate-run-request.js';
 import type { AgentRunnerRegistry } from '../../application/runner/runner-registry.js';
 import type { RunStore, RunStoreRecord } from '../../application/runner/run-store.js';
+import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
+import {
+  evaluateRunPreflight,
+  type RunPreflightFailureReason,
+  type RunPreflightOutcome,
+} from '../../domain/harness-run-preflight.js';
 import type { RunMode } from '../../domain/run.js';
 import {
   createReadinessContext,
@@ -55,6 +61,13 @@ export interface AgentRunRoutesDeps {
    * 恒等関数を明示的に渡すこと。
    */
   readonly normalizePath: (pathValue: string) => string;
+  /**
+   * リポジトリ根のハーネス状態を読む application 層の use case
+   * (`readProjectHarnessStatus`)。preflight (bdboard-pkr6.11) の入力で、
+   * interface 層から infrastructure を直接触らないために注入で受ける。
+   * 判定に使うのは **worktree ではなくリポジトリ根**の `.claude/`。
+   */
+  readonly getHarnessStatus: (repoRootPath: string) => Promise<ProjectHarnessStatus>;
   readonly writeAccess?: WriteGuardDeps;
   readonly isRemoteAgentRunAllowed: () => Promise<boolean>;
   readonly now: () => Date;
@@ -166,6 +179,50 @@ function buildDispatchFailureOutcome(
   };
 }
 
+/** preflight 失敗の英語ラベル。`reason` が機械可読側で、こちらは既存 409 と同じ体裁の `error`。 */
+const PREFLIGHT_ERROR_MESSAGES: Record<RunPreflightFailureReason, string> = {
+  'harness-not-injected': 'harness pack is not injected',
+  'harness-hooks-missing': 'harness hooks are not registered',
+  'harness-contract-missing': 'harness verification contract is missing',
+  'harness-contract-invalid': 'harness verification contract is invalid',
+};
+
+/**
+ * run 完了後に人が回す検証コマンドの提示 (bdboard-pkr6.11 仕様4)。
+ *
+ * 出すのは `succeeded` のときだけ。実行中は意味が無く (毎回のポーリングで
+ * `.claude/` を読み直す理由も無い)、`failed` / `cancelled` で「次に実行:
+ * npm run verify」を出すのは、編集が中断・破棄されているかもしれない状態で
+ * 検証を促す誤った導線になる。ハーネス状態が読めない/前提を満たさなく
+ * なっている場合も黙って省く: ここは導線であって、ログ表示を巻き添えに
+ * 失敗させる価値は無い。
+ */
+async function resolveRunNextStep(
+  deps: AgentRunRoutesDeps,
+  record: RunStoreRecord,
+): Promise<{ verify: string; worktreePath: string } | undefined> {
+  if (record.status !== 'succeeded' || record.cwd === '') {
+    return undefined;
+  }
+
+  const resolved = findTicket(deps.cache, record.ticketId);
+  if (resolved === undefined) {
+    return undefined;
+  }
+
+  try {
+    const preflight = evaluateRunPreflight(
+      await deps.getHarnessStatus(resolved.project.rootPath),
+    );
+    if (!preflight.ok) {
+      return undefined;
+    }
+    return { verify: preflight.verify, worktreePath: record.cwd };
+  } catch {
+    return undefined;
+  }
+}
+
 export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
   const app = new Hono();
 
@@ -219,6 +276,37 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
     }
 
     const { project, ticket, cleanupEligibleTicketIds } = resolved;
+
+    // Preflight (bdboard-pkr6.11). run のプロンプトは「ハーネスの手順に従え」と
+    // 言うだけなので、skill が無い / hook が未登録 / 検証コントラクトが無い
+    // プロジェクトでは、従う手順も効くガードも合否の基準も存在しないまま
+    // Claude CLI が走る。ここで止める。
+    //
+    // 位置は canStart より前 — 前提不足は設定の問題で、実行スロットを消費させる
+    // 理由も、失敗 run を履歴に積む理由も無い。したがって拒否理由の優先順位は
+    // ハーネス > too-many-runs > closed/blocked/deferred になる。
+    // provision より前でもあるので、worktree は作られない。
+    let preflight: RunPreflightOutcome;
+    try {
+      preflight = evaluateRunPreflight(await deps.getHarnessStatus(project.rootPath));
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: `harness preflight failed: ${message}` }, 500);
+    }
+
+    if (!preflight.ok) {
+      return c.json(
+        {
+          error: PREFLIGHT_ERROR_MESSAGES[preflight.reason],
+          reason: preflight.reason,
+          detail: preflight.detail,
+          ...(preflight.reason === 'harness-hooks-missing'
+            ? { missingHooks: preflight.missingHooks }
+            : {}),
+        },
+        409,
+      );
+    }
 
     const canStart = deps.runStore.canStart(ticketId);
     if (!canStart.ok) {
@@ -361,7 +449,12 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       return c.json({ error: message }, 500);
     }
 
-    const prompt = buildRunPrompt({ ticketId, ticketTitle: ticket.title });
+    const prompt = buildRunPrompt({
+      ticketId,
+      ticketTitle: ticket.title,
+      verify: preflight.verify,
+      prFlow: preflight.prFlow,
+    });
     const sink = {
       onChunk: (chunk: { stream: 'stdout' | 'stderr'; text: string }) => {
         deps.runStore.appendChunk(runId, chunk);
@@ -407,6 +500,8 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
         worktreePath: provision.worktreePath,
         branchName: provision.branchName,
         reused: provision.reused,
+        // drift は止めない。更新が要ることだけ伝える (仕様1)。
+        warnings: preflight.warnings,
       },
       202,
     );
@@ -425,7 +520,7 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
     return c.json({ runs });
   });
 
-  app.get('/api/runs/:runId', (c) => {
+  app.get('/api/runs/:runId', async (c) => {
     const runId = c.req.param('runId');
     const record = deps.runStore.get(runId);
     if (record === undefined) {
@@ -442,11 +537,14 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
     // それが exfiltration チャネルになるので、ログ本文と cwd はローカルアクセス限定にする
     // (bdboard-54be.1 M-1)。リモートからは状態 (running/succeeded/failed) は見える。
     const local = isLocalBasicAuthRequest(c);
+    // nextStep は worktree の絶対パスを含むので、cwd と同じくローカル限定にする。
+    const nextStep = local ? await resolveRunNextStep(deps, record) : undefined;
     return c.json({
       ...toRunSummaryDto(record),
       cwd: local ? record.cwd : undefined,
       log: local ? tailLogByBytes(record.log, tailBytes) : '',
       logRestricted: local ? undefined : true,
+      nextStep,
     });
   });
 

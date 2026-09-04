@@ -20,6 +20,7 @@ import {
   deleteTicketSessionLink,
   fetchAgentRun,
   fetchPlatformSupport,
+  fetchProjectHarnessStatus,
   fetchSessions,
   fetchTicket,
   fetchTicketComments,
@@ -39,6 +40,9 @@ import {
   searchTickets,
   startTicketRun,
   type AgentRunDetailDto,
+  type ProjectHarnessContractDto,
+  type ProjectHarnessPackStatusDto,
+  type ProjectHarnessStatusDto,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import { TicketDetailPanel, AGENT_RUN_LOG_LOCAL_ONLY_HELP, type TicketDetailPanelProps } from './TicketDetailPanel';
@@ -81,6 +85,7 @@ vi.mock('../api', async (importOriginal) => {
     fetchTicketInFlightOverlaps: vi.fn(),
     fetchAgentRun: vi.fn(),
     cancelAgentRun: vi.fn(),
+    fetchProjectHarnessStatus: vi.fn(),
   };
 });
 
@@ -108,6 +113,35 @@ const mockFetchTicketRuns = vi.mocked(fetchTicketRuns);
 const mockFetchTicketInFlightOverlaps = vi.mocked(fetchTicketInFlightOverlaps);
 const mockFetchAgentRun = vi.mocked(fetchAgentRun);
 const mockCancelAgentRun = vi.mocked(cancelAgentRun);
+const mockFetchProjectHarnessStatus = vi.mocked(fetchProjectHarnessStatus);
+
+const OK_HARNESS_CONTRACT: ProjectHarnessContractDto = {
+  state: 'ok',
+  verify: 'npm run verify',
+  prFlow: 'pr',
+  mainBranch: 'main',
+};
+
+/** エージェント実行の前提を満たしたハーネス状態 (bdboard-pkr6.11)。 */
+function harnessStatus(
+  packOverrides: Partial<ProjectHarnessPackStatusDto> = {},
+  contract: ProjectHarnessContractDto = OK_HARNESS_CONTRACT,
+): ProjectHarnessStatusDto {
+  return {
+    packs: [
+      {
+        name: 'bdboard-harness',
+        availableVersion: '1.0.0',
+        installedVersion: '1.0.0',
+        drift: false,
+        hooksState: 'ok',
+        missingHooks: [],
+        ...packOverrides,
+      },
+    ],
+    contract,
+  };
+}
 
 beforeEach(() => {
   mockFetchSimilarTickets.mockResolvedValue([]);
@@ -115,6 +149,7 @@ beforeEach(() => {
   mockFetchTicketInFlightOverlaps.mockResolvedValue([]);
   resetPlatformSupportCache();
   mockFetchPlatformSupport.mockResolvedValue({ platform: 'darwin', limitations: [] });
+  mockFetchProjectHarnessStatus.mockResolvedValue(harnessStatus());
 });
 
 const sampleTicket: TicketDetailDto = {
@@ -2674,6 +2709,95 @@ describe('TicketDetailPanel agent run', () => {
     const runButton = await screen.findByRole('button', { name: '▶ 実行' });
     expect(runButton).toBeDisabled();
     expect(runButton).toHaveAttribute('title', 'ブロック中のチケットは実行できません');
+  });
+
+  /*
+   * エージェント実行の前提 (bdboard-pkr6.11)。サーバー側 preflight と同じ 3 条件を
+   * ボタンの手前で出す。文言はチケットの仕様どおり「何をすれば直るか」まで含める。
+   */
+  it('disables the run button and explains an uninjected harness', async () => {
+    mockFetchProjectHarnessStatus.mockResolvedValue({
+      packs: [],
+      contract: { state: 'not-applicable' },
+    });
+
+    renderPanel(new Map());
+
+    expect(
+      await screen.findByText('ハーネス未注入 — Hygiene から注入'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '▶ 実行' })).toBeDisabled();
+  });
+
+  it('disables the run button when harness hooks are not registered', async () => {
+    mockFetchProjectHarnessStatus.mockResolvedValue(
+      harnessStatus({ hooksState: 'missing', missingHooks: ['guard.sh'] }),
+    );
+
+    renderPanel(new Map());
+
+    expect(await screen.findByText('hook 未登録 — 再注入')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '▶ 実行' })).toBeDisabled();
+  });
+
+  it('disables the run button when the verification contract is missing', async () => {
+    mockFetchProjectHarnessStatus.mockResolvedValue(
+      harnessStatus({}, { state: 'missing' }),
+    );
+
+    renderPanel(new Map());
+
+    expect(
+      await screen.findByText('検証ループ未定義 — .claude/bdboard-harness.json を作成'),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '▶ 実行' })).toBeDisabled();
+  });
+
+  it('keeps the run button enabled when the harness is only drifting', async () => {
+    mockFetchProjectHarnessStatus.mockResolvedValue(
+      harnessStatus({ installedVersion: '0.9.0', drift: true }),
+    );
+
+    renderPanel(new Map());
+
+    await waitFor(() => {
+      expect(mockFetchProjectHarnessStatus).toHaveBeenCalled();
+    });
+    expect(screen.getByRole('button', { name: '▶ 実行' })).toBeEnabled();
+  });
+
+  it('shows the verify command to run outside the run once it finishes', async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextMock },
+    });
+    mockFetchAgentRun.mockResolvedValue({
+      ...succeededRunDetail,
+      nextStep: {
+        verify: 'npm run verify',
+        worktreePath: '/tmp/worktrees/bdboard-abc.1',
+      },
+    });
+
+    renderPanel(new Map());
+
+    await user.click(await screen.findByRole('button', { name: '▶ 実行' }));
+    const confirmPanel = screen.getByRole('alertdialog', {
+      name: 'エージェント実行の確認',
+    });
+    await user.click(within(confirmPanel).getByRole('button', { name: '実行する' }));
+
+    const command = 'cd /tmp/worktrees/bdboard-abc.1 && npm run verify';
+    expect(await screen.findByText(command)).toBeInTheDocument();
+    expect(screen.getByText('次に実行:')).toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole('button', { name: `次に実行するコマンドをコピー: ${command}` }),
+    );
+    await waitFor(() => {
+      expect(writeTextMock).toHaveBeenCalledWith(command);
+    });
   });
 
   it('starts a run and shows worktree metadata after confirmation', async () => {

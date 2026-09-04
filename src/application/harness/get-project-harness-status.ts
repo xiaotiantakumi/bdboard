@@ -14,6 +14,7 @@ import type {
   ProjectHarnessStatus,
 } from '../../domain/harness-pack.js';
 import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
+import type { HarnessInjectorPort } from '../ports/harness-injector.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
 
 /**
@@ -101,4 +102,32 @@ export async function getProjectHarnessStatus(
 ): Promise<ProjectHarnessStatus> {
   const availablePacks = await registry.listPacks();
   return computeProjectHarnessStatus(availablePacks, manifest, contract, settingsJson);
+}
+
+/** ハーネス状態を 1 プロジェクト分そろえるのに要るポート一式。 */
+export interface HarnessStatusSources {
+  readonly registry: PackRegistryPort;
+  readonly injector: HarnessInjectorPort;
+  readonly contractReader: HarnessContractReaderPort;
+}
+
+/**
+ * リポジトリ根のパスだけからハーネス状態を作る。
+ *
+ * 単一プロジェクトをパスだけから読む経路 (プロジェクト単体の GET と、
+ * エージェント実行の preflight) はここに集約する。判定の入力がバラつくと
+ * 「バッジは緑なのに run は 409」のような食い違いが出るため。
+ * 注入直後のレスポンスと Hygiene の一括取得は、入力 (既に読んだ manifest を
+ * 持っている / 複数プロジェクトをまとめて読む) と最適化が違うので別のまま。
+ */
+export async function readProjectHarnessStatus(
+  sources: HarnessStatusSources,
+  projectRootPath: string,
+): Promise<ProjectHarnessStatus> {
+  const manifest = await sources.injector.readManifest(projectRootPath);
+  const [contract, settingsJson] = await Promise.all([
+    resolveProjectContractState(sources.contractReader, projectRootPath, manifest),
+    sources.injector.readSettings(projectRootPath),
+  ]);
+  return getProjectHarnessStatus(sources.registry, manifest, contract, settingsJson);
 }

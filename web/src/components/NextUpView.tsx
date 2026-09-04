@@ -1,6 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
-import { type BoardDto, type PrBadgeDto, projectNameFallback } from '../api';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  type BoardDto,
+  type PrBadgeDto,
+  type ProjectHarnessStatusDto,
+  projectNameFallback,
+} from '../api';
 import { NEXT_UP_LIMITS, type NextUpLimit } from '../uiPersistedState';
+import { describeHarnessRunBlock } from './agentRunShared';
 import { CardItem } from './LaneColumn';
 import {
   NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES,
@@ -23,6 +29,12 @@ export interface NextUpViewProps {
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   onCardClick: (ticketId: string) => void;
   batchRun: NextUpRunLoopController;
+  /**
+   * 一括実行の前提 (ハーネス注入・hook 登録・検証コントラクト) を見るための
+   * プロジェクト別ハーネス状態 (bdboard-pkr6.11)。未取得のプロジェクトは
+   * 「不明」であって「不備」ではないので、載っていなければ止めない。
+   */
+  harnessStatuses?: ReadonlyMap<string, ProjectHarnessStatusDto>;
 }
 
 function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
@@ -136,6 +148,7 @@ export function NextUpView({
   prLinksById,
   onCardClick,
   batchRun,
+  harnessStatuses,
 }: NextUpViewProps) {
   const readyCards = board.lanes.ready ?? [];
   const { regularCards, epicCards } = splitReadyCards(readyCards);
@@ -149,14 +162,39 @@ export function NextUpView({
   const loopPhase = batchRun.phase;
   const loopProgress = batchRun.progress;
 
+  /**
+   * 一括実行は複数プロジェクトにまたがりうるので、対象カードのプロジェクトを
+   * 1 つでも前提未達なら止める — そのチケットに来た時点でサーバーが 409 を返し、
+   * 連続失敗でバッチ自体が停止するため、走らせても最後まで行かない。
+   * どのプロジェクトかが分からないと直せないので、理由には名前を添える。
+   */
+  const harnessBlockReason = useMemo(() => {
+    if (harnessStatuses === undefined) {
+      return null;
+    }
+    for (const card of visibleRegularCards) {
+      const reason = describeHarnessRunBlock(harnessStatuses.get(card.projectId));
+      if (reason !== null) {
+        const name =
+          projectNames.get(card.projectId) ?? projectNameFallback(card.projectId);
+        return `${name}: ${reason}`;
+      }
+    }
+    return null;
+  }, [harnessStatuses, projectNames, visibleRegularCards]);
+
   const handleOpenBatchRunConfirm = useCallback(() => {
-    if (loopPhase !== 'idle' || visibleRegularCards.length === 0) {
+    if (
+      loopPhase !== 'idle' ||
+      visibleRegularCards.length === 0 ||
+      harnessBlockReason !== null
+    ) {
       return;
     }
     setPendingBatchTicketIds(
       visibleRegularCards.map((card) => card.ticket.id),
     );
-  }, [loopPhase, visibleRegularCards]);
+  }, [harnessBlockReason, loopPhase, visibleRegularCards]);
 
   const handleCancelBatchRunConfirm = useCallback(() => {
     setPendingBatchTicketIds(null);
@@ -212,7 +250,10 @@ export function NextUpView({
               <button
                 type="button"
                 className="toggle-btn next-up-run-btn"
-                disabled={visibleRegularCards.length === 0}
+                disabled={
+                  visibleRegularCards.length === 0 || harnessBlockReason !== null
+                }
+                title={harnessBlockReason ?? undefined}
                 onClick={handleOpenBatchRunConfirm}
               >
                 ▶ 一括実行
@@ -226,6 +267,9 @@ export function NextUpView({
               >
                 {loopPhase === 'stopping' ? '■ 停止中…' : '■ 停止'}
               </button>
+            )}
+            {harnessBlockReason !== null && !isLoopActive && (
+              <p className="next-up-run-blocked-reason">{harnessBlockReason}</p>
             )}
             {pendingBatchTicketIds !== null && !isLoopActive && (
               <div
