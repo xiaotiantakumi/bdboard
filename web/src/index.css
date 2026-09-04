@@ -1689,6 +1689,11 @@ body {
   color: #c93400;
 }
 
+.hygiene-kind-orphan_heartbeat_loop {
+  background: rgba(255, 105, 0, 0.16);
+  color: #b34700;
+}
+
 .hygiene-kind-harness_drift {
   background: rgba(175, 82, 222, 0.14);
   color: #8944ab;

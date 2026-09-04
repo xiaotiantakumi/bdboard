@@ -109,6 +109,54 @@ export function formatWorktreeCleanupScript(
   return buildWorktreeCleanupCommands(target).join('\n');
 }
 
+export interface HeartbeatLoopKillTarget {
+  readonly pid: number;
+  readonly startedAt?: string;
+}
+
+/** ps -o command= の出力が heartbeat ループかどうかを grep -E で判定するパターン */
+const HEARTBEAT_CMD_GREP_PATTERN =
+  'bd-heartbeat(\\.sh)?[[:space:]]+start|(.*\\b(while|for|until)\\b.*\\bbd([[:space:]]+[^[:space:]]+)*[[:space:]]+heartbeat\\b)';
+
+/** 先頭トークンの basename が bash/sh/zsh であること */
+const HEARTBEAT_SHELL_GREP_PATTERN = '^([^[:space:]]+/)*(bash|sh|zsh)([[:space:]]|$)';
+
+/**
+ * 残骸 heartbeat ループを止めるコマンドを組み立てる。
+ * **PID 指定の kill のみ**。`pkill` / `killall` のようなパターンマッチ kill は絶対に出さない
+ * (failure-catalog の pkill-collateral: worktree のテストプロセスを狙った
+ * `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーを巻き添えにした)。
+ *
+ * ボードが ps を見てから人間がコピーして実行するまでには時間差があり、その間に
+ * PID が再利用されうる。そこで kill の直前に `ps -p <pid> -o command=` で
+ * 「まだ heartbeat ループである」ことと、可能なら lstart の一致を確認するガードを付ける。
+ * ガードが外れたときは何も殺さずメッセージだけ出す (bd-heartbeat.sh の verify_loop_identity と同じ考え方)。
+ */
+export function buildHeartbeatLoopKillCommands(
+  target: HeartbeatLoopKillTarget,
+): readonly string[] {
+  const { pid, startedAt } = target;
+  if (!Number.isInteger(pid) || pid <= 1) {
+    return [];
+  }
+
+  const lstartGuard =
+    startedAt !== undefined
+      ? ` && [ "$(ps -p ${pid} -o lstart=)" = ${shellQuote(startedAt)} ]`
+      : '';
+
+  return [
+    `cmd=$(ps -p ${pid} -o command=); if echo "$cmd" | grep -Eq '${HEARTBEAT_SHELL_GREP_PATTERN}' && echo "$cmd" | grep -Eq '${HEARTBEAT_CMD_GREP_PATTERN}'${lstartGuard}; then kill ${pid}; else echo 'pid ${pid} is no longer a bd heartbeat loop; skipping' >&2; fi`,
+  ];
+}
+
+/** buildHeartbeatLoopKillCommands の結果を改行で連結した、そのまま貼れる文字列 */
+export function formatHeartbeatLoopKillScript(
+  target: HeartbeatLoopKillTarget,
+): string {
+  return buildHeartbeatLoopKillCommands(target).join('\n');
+}
+
 export interface DependencyCycleEdgeTarget {
   readonly issueId: string;
   readonly dependsOnId: string;

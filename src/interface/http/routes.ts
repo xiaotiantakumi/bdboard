@@ -58,7 +58,7 @@ import {
   type LivenessThresholds,
 } from '../../domain/liveness.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
-import type { HygieneThresholds } from '../../domain/hygiene.js';
+import type { HygieneThresholds, HeartbeatLoopCandidate } from '../../domain/hygiene.js';
 import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
@@ -742,6 +742,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
     let inFlightOverlaps: readonly InFlightOverlap[] | undefined;
+    let heartbeatLoops: readonly HeartbeatLoopCandidate[] | undefined;
     if (deps.worktreeScanner !== undefined) {
       let entries = deps.cache.listProjects();
       if (projectIds !== undefined) {
@@ -802,6 +803,21 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       closeEvidenceStatus = { unknownCount: closeEvidence.unknownKeys.size };
     }
 
+    const listLoops = deps.processScanner?.listHeartbeatLoops;
+    if (deps.processScanner !== undefined && listLoops !== undefined) {
+      try {
+        heartbeatLoops = (await listLoops.call(deps.processScanner)).map((loop) => ({
+          pid: loop.pid,
+          commandLine: loop.commandLine,
+          ...(loop.sessionPid !== undefined ? { sessionPid: loop.sessionPid } : {}),
+          ...(loop.sessionAlive !== undefined ? { sessionAlive: loop.sessionAlive } : {}),
+          ...(loop.lstart !== undefined ? { startedAt: loop.lstart } : {}),
+        }));
+      } catch {
+        heartbeatLoops = undefined;
+      }
+    }
+
     const issues = getHygieneIssues(deps.cache, now, {
       ...(projectIds !== undefined ? { projectIds } : {}),
       ...(pendingCommentAnchors !== undefined ? { pendingCommentAnchors } : {}),
@@ -811,6 +827,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         : {}),
       closeEvidenceAvailable,
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
+      ...(heartbeatLoops !== undefined ? { heartbeatLoops } : {}),
       ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),
     });

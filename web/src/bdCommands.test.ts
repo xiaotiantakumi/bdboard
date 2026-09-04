@@ -10,6 +10,8 @@ import {
   DEFER_DAYS,
   formatDeferDate,
   formatDependencyCycleRemovalScript,
+  buildHeartbeatLoopKillCommands,
+  formatHeartbeatLoopKillScript,
   formatWorktreeCleanupScript,
   shellQuote,
 } from './bdCommands';
@@ -247,6 +249,51 @@ describe('formatWorktreeCleanupScript', () => {
         branchName: null,
       }),
     ).toBe('');
+  });
+});
+
+describe('buildHeartbeatLoopKillCommands', () => {
+  it('returns a guarded PID-specific kill command for a valid pid', () => {
+    const commands = buildHeartbeatLoopKillCommands({ pid: 12345 });
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0]).toContain('cmd=$(ps -p 12345 -o command=)');
+    expect(commands[0]).toContain('grep -Eq');
+    expect(commands[0]).toContain('kill 12345');
+    expect(commands[0]).not.toContain('pkill');
+    expect(commands[0]).not.toContain('killall');
+    expect(commands[0]).not.toContain('-o lstart=');
+  });
+
+  it('includes lstart guard when startedAt is provided', () => {
+    const commands = buildHeartbeatLoopKillCommands({
+      pid: 123,
+      startedAt: 'Thu Aug 14 09:12:33 2026',
+    });
+
+    expect(commands[0]).toContain('ps -p 123 -o lstart=');
+    expect(commands[0]).toContain("'Thu Aug 14 09:12:33 2026'");
+  });
+
+  it('returns an empty array when pid is zero, one, negative, or non-integer', () => {
+    expect(buildHeartbeatLoopKillCommands({ pid: 0 })).toEqual([]);
+    expect(buildHeartbeatLoopKillCommands({ pid: 1 })).toEqual([]);
+    expect(buildHeartbeatLoopKillCommands({ pid: -1 })).toEqual([]);
+    expect(buildHeartbeatLoopKillCommands({ pid: 1.5 })).toEqual([]);
+  });
+});
+
+describe('formatHeartbeatLoopKillScript', () => {
+  it('joins commands with newlines', () => {
+    const script = formatHeartbeatLoopKillScript({ pid: 12345 });
+    expect(script).toContain('kill 12345');
+    expect(script).toContain('grep -Eq');
+  });
+
+  it('returns an empty string when pid is invalid', () => {
+    expect(formatHeartbeatLoopKillScript({ pid: 0 })).toBe('');
+    expect(formatHeartbeatLoopKillScript({ pid: 1 })).toBe('');
+    expect(formatHeartbeatLoopKillScript({ pid: -99 })).toBe('');
   });
 });
 

@@ -392,6 +392,7 @@ export type HygieneIssueKindDto =
   | 'unblocked_high_priority_idle'
   | 'stale_pending_decision'
   | 'merged_leftover'
+  | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
   | 'closed_without_evidence';
 
@@ -411,6 +412,14 @@ export interface HygieneCleanupTargetDto {
   branchName: string | null;
 }
 
+export interface HygieneHeartbeatLoopTargetDto {
+  pid: number;
+  ticketIds: string[];
+  sessionPid?: number;
+  startedAt?: string;
+  reason: 'all_closed' | 'session_gone';
+}
+
 export interface HygieneIssueDto {
   kind: HygieneIssueKindDto;
   ticketId: string;
@@ -418,6 +427,7 @@ export interface HygieneIssueDto {
   message: string;
   severity: 'warning' | 'info';
   cleanup?: HygieneCleanupTargetDto;
+  heartbeatLoop?: HygieneHeartbeatLoopTargetDto;
   deferUntil?: string;
   cycleTicketIds?: string[];
   cycleEdges?: HygieneCycleEdgeDto[];
@@ -981,6 +991,21 @@ export function toHygieneIssueDto(issue: HygieneIssue): HygieneIssueDto {
             repoRootPath: issue.cleanup.repoRootPath,
             worktreePath: issue.cleanup.worktreePath,
             branchName: issue.cleanup.branchName,
+          },
+        }
+      : {}),
+    ...(issue.heartbeatLoop !== undefined
+      ? {
+          heartbeatLoop: {
+            pid: issue.heartbeatLoop.pid,
+            ticketIds: [...issue.heartbeatLoop.ticketIds],
+            reason: issue.heartbeatLoop.reason,
+            ...(issue.heartbeatLoop.sessionPid !== undefined
+              ? { sessionPid: issue.heartbeatLoop.sessionPid }
+              : {}),
+            ...(issue.heartbeatLoop.startedAt !== undefined
+              ? { startedAt: issue.heartbeatLoop.startedAt }
+              : {}),
           },
         }
       : {}),

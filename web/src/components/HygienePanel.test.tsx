@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type HygieneIssueDto, type HygieneResponseDto, type LeaseHealthDto, type MergeSlotStatusDto } from '../api';
-import { formatWorktreeCleanupScript } from '../bdCommands';
+import { formatWorktreeCleanupScript, formatHeartbeatLoopKillScript } from '../bdCommands';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
 import {
   CONFLICT_WRITE_HELP,
@@ -320,6 +320,87 @@ describe('HygienePanel', () => {
     const cleanupCommand = container.querySelector('.hygiene-cleanup-command');
     expect(cleanupCommand).not.toBeNull();
     expect(cleanupCommand!.textContent).toBe(formatWorktreeCleanupScript(cleanup));
+  });
+
+  it('renders orphan_heartbeat_loop cleanup commands without repair buttons', async () => {
+    const heartbeatLoop = {
+      pid: 54321,
+      ticketIds: ['bdboard-64lx', 'bdboard-64lx.1'],
+      sessionPid: 11111,
+      reason: 'all_closed' as const,
+    };
+    const killScript = formatHeartbeatLoopKillScript({ pid: heartbeatLoop.pid });
+
+    fetchHygieneMock.mockResolvedValue(
+      makeHygieneResponse(
+        [
+          makeIssue({
+            ticketId: 'bdboard-64lx',
+            kind: 'orphan_heartbeat_loop',
+            message:
+              '対象チケットはすべて closed だが bd heartbeat ループ (pid 54321) が残っています',
+            heartbeatLoop,
+          }),
+        ],
+        { unknownCount: 0 },
+      ),
+    );
+
+    const { container } = renderHygienePanel();
+
+    expect(await screen.findByText('残骸 heartbeat ループ')).toBeInTheDocument();
+    const cleanupCommand = container.querySelector('.hygiene-cleanup-command');
+    expect(cleanupCommand).not.toBeNull();
+    expect(cleanupCommand!.textContent).toBe(killScript);
+    expect(cleanupCommand!.textContent).toContain('kill 54321');
+    expect(cleanupCommand!.textContent).not.toContain('pkill');
+    expect(cleanupCommand!.textContent).not.toContain('killall');
+    expect(
+      screen.getByRole('button', { name: '掃除コマンドをコピー' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /保留を解除|エピックを完了/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders two orphan_heartbeat_loop rows when the same ticket has loops with different pids', async () => {
+    const heartbeatLoopA = {
+      pid: 54321,
+      ticketIds: ['bdboard-64lx'],
+      reason: 'all_closed' as const,
+    };
+    const heartbeatLoopB = {
+      pid: 54322,
+      ticketIds: ['bdboard-64lx'],
+      reason: 'all_closed' as const,
+    };
+
+    fetchHygieneMock.mockResolvedValue(
+      makeHygieneResponse(
+        [
+          makeIssue({
+            ticketId: 'bdboard-64lx',
+            kind: 'orphan_heartbeat_loop',
+            message: 'loop A',
+            heartbeatLoop: heartbeatLoopA,
+          }),
+          makeIssue({
+            ticketId: 'bdboard-64lx',
+            kind: 'orphan_heartbeat_loop',
+            message: 'loop B',
+            heartbeatLoop: heartbeatLoopB,
+          }),
+        ],
+        { unknownCount: 0 },
+      ),
+    );
+
+    const { container } = renderHygienePanel();
+
+    await screen.findByText('loop A');
+    expect(container.querySelectorAll('.hygiene-cleanup-command')).toHaveLength(2);
+    expect(screen.getByText(formatHeartbeatLoopKillScript({ pid: 54321 }))).toBeInTheDocument();
+    expect(screen.getByText(formatHeartbeatLoopKillScript({ pid: 54322 }))).toBeInTheDocument();
   });
 
   it('renders an in_flight_file_overlap row with its own kind badge', async () => {

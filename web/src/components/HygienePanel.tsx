@@ -24,6 +24,7 @@ import {
   buildWorktreeCleanupCommands,
   copyTextToClipboard,
   formatDependencyCycleRemovalScript,
+  formatHeartbeatLoopKillScript,
   formatWorktreeCleanupScript,
 } from '../bdCommands';
 import { formatActivityTime } from './activityFeedFormatting';
@@ -85,6 +86,7 @@ const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   unblocked_high_priority_idle: '着手待ち高優先',
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
+  orphan_heartbeat_loop: '残骸 heartbeat ループ',
   in_flight_file_overlap: '着手中の重複',
   closed_without_evidence: 'close 証拠なし',
 };
@@ -104,7 +106,9 @@ type RepairFeedback = {
  * いう前提 (in_flight_file_overlap も相手をまとめて 1 行に畳んでいる) は保つ。
  */
 function issueRowKey(issue: HygieneIssueDto): string {
-  return `${issue.kind}-${issue.projectId}-${issue.ticketId}`;
+  const pidSuffix =
+    issue.heartbeatLoop !== undefined ? `-${issue.heartbeatLoop.pid}` : '';
+  return `${issue.kind}-${issue.projectId}-${issue.ticketId}${pidSuffix}`;
 }
 
 function harnessDriftRowKey(item: HarnessPackItem): string {
@@ -169,6 +173,15 @@ function severityBadgeClass(severity: HygieneIssueDto['severity']): string {
 }
 
 function resolveCleanupScript(issue: HygieneIssueDto): string | null {
+  if (issue.heartbeatLoop !== undefined) {
+    const script = formatHeartbeatLoopKillScript({
+      pid: issue.heartbeatLoop.pid,
+      ...(issue.heartbeatLoop.startedAt !== undefined
+        ? { startedAt: issue.heartbeatLoop.startedAt }
+        : {}),
+    });
+    return script.length > 0 ? script : null;
+  }
   if (issue.cleanup === undefined) {
     return null;
   }
