@@ -15,7 +15,6 @@ import {
 import type { CommentReader } from '../ports/comment-reader.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
 import {
-  CLOSE_EVIDENCE_NEGATIVE_TTL_MS,
   getCloseEvidence,
 } from './get-close-evidence.js';
 import { getPrBadges, PrBadgeCommentCache } from './get-pr-badges.js';
@@ -272,54 +271,6 @@ describe('getCloseEvidence', () => {
     expect([...result.unknownKeys]).toEqual([pendingDecisionKey('/a', 'bdboard-stale')]);
   });
 
-  it('expires false cache entries after negative TTL but keeps true entries', async () => {
-    const cache = createFakeBoardCache();
-    const p = project('/a', '/projects/a');
-    const falseTicket = closedTicket('bdboard-false', p.id, { closedAtOffsetMs: withinWindow });
-    const trueTicket = closedTicket('bdboard-true', p.id, {
-      closedAtOffsetMs: withinWindow,
-      commentCount: 2,
-    });
-    cache.putProject({
-      project: p,
-      tickets: [falseTicket, trueTicket],
-      fingerprint: 'fp',
-      fetchedAt: now,
-    });
-
-    let nowMs = 0;
-    const sharedCache = new PrBadgeCommentCache({ now: () => nowMs });
-    sharedCache.set(
-      falseTicket.id,
-      falseTicket.commentCount,
-      falseTicket.updatedAt.getTime(),
-      null,
-      false,
-    );
-    sharedCache.set(
-      trueTicket.id,
-      trueTicket.commentCount,
-      trueTicket.updatedAt.getTime(),
-      null,
-      true,
-    );
-
-    const noExpiry = await getCloseEvidence(cache, now, WINDOW_MS, {
-      sharedCommentCache: sharedCache,
-      negativeTtlMs: 1000,
-    });
-    expect(noExpiry.evidenceKeys.has(pendingDecisionKey('/a', 'bdboard-true'))).toBe(true);
-    expect(noExpiry.unknownKeys.has(pendingDecisionKey('/a', 'bdboard-false'))).toBe(false);
-
-    nowMs = 1000;
-    const afterExpiry = await getCloseEvidence(cache, now, WINDOW_MS, {
-      sharedCommentCache: sharedCache,
-      negativeTtlMs: 1000,
-    });
-    expect(afterExpiry.evidenceKeys.has(pendingDecisionKey('/a', 'bdboard-true'))).toBe(true);
-    expect(afterExpiry.unknownKeys.has(pendingDecisionKey('/a', 'bdboard-false'))).toBe(true);
-  });
-
   it('logs when unknownKeys remain and stays silent when all targets are confirmed', async () => {
     const cache = createFakeBoardCache();
     const p = project('/a', '/projects/a');
@@ -404,12 +355,7 @@ describe('getCloseEvidence', () => {
         ticketB.id,
         ticketB.commentCount,
         ticketB.updatedAt.getTime(),
-        CLOSE_EVIDENCE_NEGATIVE_TTL_MS,
       ),
     ).toBe(true);
-  });
-
-  it('exports CLOSE_EVIDENCE_NEGATIVE_TTL_MS as five minutes', () => {
-    expect(CLOSE_EVIDENCE_NEGATIVE_TTL_MS).toBe(5 * 60_000);
   });
 });

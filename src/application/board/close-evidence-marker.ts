@@ -4,7 +4,8 @@
  * getPrBadges (PR バッジ) と getCloseEvidence (closed_without_evidence 判定) の
  * 両方から使われる。1回の bd comments 走査から両方の値を導出できるように
  * (bdboard-pkr6.16)、判定ロジックだけをここに独立させ、get-pr-badges.ts と
- * get-close-evidence.ts のどちらにも依存方向を作らない。
+ * get-close-evidence.ts のどちらか一方が他方に依存する形にはならない
+ * （両方がこのファイルに依存するだけ）。
  */
 export function hasCloseEvidenceMarker(text: string): boolean {
   if (text.includes('PR:') || text.includes('PR：')) {

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchAllHarnessStatus,
@@ -236,6 +236,8 @@ export function App() {
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
 
+  const queryClient = useQueryClient();
+
   const projectsQuery = useQuery({
     queryKey: ['projects'],
     queryFn: fetchProjects,
@@ -285,6 +287,15 @@ export function App() {
     queryFn: () => fetchPrLinks(selectedProjectIds),
     retry: false,
   });
+
+  // PR バッジ用スキャンが close 証拠の唯一の走査元になったため、これが完了しても
+  // hygiene 側からは分からない。手動で invalidate しないと、静かなボードでは初回表示が
+  // 全件 unknown のまま SSE イベントまで解消しない (bdboard-pkr6.16 レビュー対応, m3)。
+  useEffect(() => {
+    if (prLinksQuery.dataUpdatedAt > 0) {
+      void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
+    }
+  }, [prLinksQuery.dataUpdatedAt, queryClient]);
 
   useAppBadge(pendingDecisionsQuery.data?.length);
 

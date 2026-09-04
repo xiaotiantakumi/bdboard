@@ -777,7 +777,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     let closeEvidenceKeys: ReadonlySet<string> | undefined;
     let closeEvidenceUnknownKeys: ReadonlySet<string> | undefined;
     let closeEvidenceStatus: { unknownCount: number } | null = null;
-    const closeEvidenceAvailable = deps.commentReader !== undefined;
+    const closeEvidenceAvailable =
+      deps.commentReader !== undefined && deps.prStatusReader !== undefined;
     if (deps.commentReader !== undefined) {
       pendingCommentAnchors = await getPendingCommentAnchors(
         deps.cache,
