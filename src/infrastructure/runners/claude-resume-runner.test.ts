@@ -24,6 +24,9 @@ const DEFAULT_WOULD_RUN_TOOLS = [
   'Edit(//tmp/project/**)',
   '--disallowedTools',
   ...DENIED_TOOLS,
+  // worktree スコープの `.claude/**` deny (bdboard-f4kn)。DENIED_TOOLS と違い
+  // cwd から組み立てるので、この固定 argv 側にも現れる。
+  'Edit(//tmp/project/.claude/**)',
 ].join(' ');
 
 describe('createClaudeResumeRunner', () => {
