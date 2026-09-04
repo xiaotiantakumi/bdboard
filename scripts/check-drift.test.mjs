@@ -225,38 +225,55 @@ describe('check-drift CLI', () => {
     15000,
   );
 
-  it('exits 2 without a report when the check cannot run at all', () => {
-    // merge-base が取れない = 調べられていない。0 で返すと、stdout だけ見ている
-    // 呼び出し側から「調べて問題なし」と区別が付かない。
-    const { work } = makeRepo('orphan');
-    sh(work, 'git', 'remote', 'remove', 'origin');
+  // bdboard-pqhe: Windows で実測 10108ms かかって既定の5000msを超えた
+  // (2026-09-04, PR#257 の verify-windows)。同一ブランチ・同一内容の別 run では
+  // pass しており、product ではなくランナー上の実行時間のばらつき。
+  // makeRepo + runDrift でサブプロセスから更に git を呼ぶため、Windows の
+  // 遅いプロセス生成がそのまま効く。上2件と同じ 15000 に揃える。
+  it(
+    'exits 2 without a report when the check cannot run at all',
+    () => {
+      // merge-base が取れない = 調べられていない。0 で返すと、stdout だけ見ている
+      // 呼び出し側から「調べて問題なし」と区別が付かない。
+      const { work } = makeRepo('orphan');
+      sh(work, 'git', 'remote', 'remove', 'origin');
 
-    const { status, stdout } = runDrift(work);
-    expect(status).toBe(2);
-    expect(stdout).toBe('');
-  });
+      const { status, stdout } = runDrift(work);
+      expect(status).toBe(2);
+      expect(stdout).toBe('');
+    },
+    15000,
+  );
 
-  it('runs even when the repository path contains a space', () => {
-    // `file://${argv[1]}` 比較だと import.meta.url 側だけ %20 になって一致せず、
-    // main() が走らないまま無言で exit 0 になる。いちばん質の悪い黙り方。
-    const spaced = path.join(tmpRoot, 'has space');
-    fs.mkdirSync(spaced, { recursive: true });
-    const bare = path.join(spaced, 'r.git');
-    const work = path.join(spaced, 'r');
-    sh(spaced, 'git', 'init', '--bare', '-b', 'main', bare);
-    sh(spaced, 'git', 'clone', '-q', bare, work);
-    fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
-    fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
-    fs.writeFileSync(path.join(work, 'hot.ts'), 'x\n');
-    sh(work, 'git', 'add', '-A');
-    sh(work, 'git', 'commit', '-qm', 'base');
-    sh(work, 'git', 'push', '-q', 'origin', 'main');
-    sh(work, 'git', 'checkout', '-qb', 'feature');
-    fs.writeFileSync(path.join(work, 'hot.ts'), 'y\n');
-    sh(work, 'git', 'commit', '-qam', 'mine');
+  // bdboard-pqhe: この describe 内で唯一 per-test タイムアウトが無いまま残る
+  // ケースだったので予防的に付ける (bdboard-8r5b と同じ判断)。git init --bare /
+  // clone / commit x2 / push に runDrift を足しており、git 呼び出し回数は
+  // 実際に落ちた orphan ケースより多い。
+  it(
+    'runs even when the repository path contains a space',
+    () => {
+      // `file://${argv[1]}` 比較だと import.meta.url 側だけ %20 になって一致せず、
+      // main() が走らないまま無言で exit 0 になる。いちばん質の悪い黙り方。
+      const spaced = path.join(tmpRoot, 'has space');
+      fs.mkdirSync(spaced, { recursive: true });
+      const bare = path.join(spaced, 'r.git');
+      const work = path.join(spaced, 'r');
+      sh(spaced, 'git', 'init', '--bare', '-b', 'main', bare);
+      sh(spaced, 'git', 'clone', '-q', bare, work);
+      fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
+      fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
+      fs.writeFileSync(path.join(work, 'hot.ts'), 'x\n');
+      sh(work, 'git', 'add', '-A');
+      sh(work, 'git', 'commit', '-qm', 'base');
+      sh(work, 'git', 'push', '-q', 'origin', 'main');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), 'y\n');
+      sh(work, 'git', 'commit', '-qam', 'mine');
 
-    const { stdout } = runDrift(work);
-    expect(stdout).not.toBe('');
-    expect(stdout).toContain('drift:');
-  });
+      const { stdout } = runDrift(work);
+      expect(stdout).not.toBe('');
+      expect(stdout).toContain('drift:');
+    },
+    15000,
+  );
 });
