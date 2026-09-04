@@ -21,41 +21,13 @@ elif command -v python3 >/dev/null 2>&1; then
   JSON_TOOL='python3'
 fi
 
-hook_field() {
-  case "$JSON_TOOL" in
-    jq)
-      printf '%s' "$INPUT" | jq -r --arg p "$1" '
-        reduce ($p | split("."))[] as $k (.; if type == "object" then .[$k] else null end)
-        | if . == null then empty elif type == "string" then . else tojson end
-      ' 2>/dev/null
-      ;;
-    python3)
-      printf '%s' "$INPUT" | python3 -c '
-import json, sys
-try:
-    cur = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-for key in sys.argv[1].split("."):
-    if isinstance(cur, dict) and key in cur:
-        cur = cur[key]
-    else:
-        sys.exit(0)
-if cur is None:
-    sys.exit(0)
-if isinstance(cur, bool):
-    sys.stdout.write("true" if cur else "false")
-elif isinstance(cur, str):
-    sys.stdout.write(cur)
-else:
-    sys.stdout.write(json.dumps(cur))
-' "$1" 2>/dev/null
-      ;;
-    *)
-      return 0
-      ;;
-  esac
-}
+if [ -z "$JSON_TOOL" ]; then
+  # 縮退モード: 入力 JSON を構造として読めない。生の JSON 文字列への部分一致で判定すると
+  # 編集対象ではない箇所に現れた文字列で誤 deny するので、この hook は丸ごと通過させる
+  # (fail-open)。stderr は警告 1 行だけ (deny 時の 3 行制約と同じ理由で短く保つ)。
+  printf '%s\n' 'bdboard-harness hook: jq/python3 not found; skipping all checks (fail-open)' >&2
+  exit 0
+fi
 
 deny() {
   for deny_line in "$@"; do
@@ -64,25 +36,63 @@ deny() {
   exit 2
 }
 
-if [ -n "$JSON_TOOL" ]; then
-  HOOK_CWD="$(hook_field cwd)"
-  TARGET_PATH="$(hook_field tool_input.file_path)"
-  [ -n "$TARGET_PATH" ] || TARGET_PATH="$(hook_field tool_input.notebook_path)"
-else
-  # JSON を読めないので、生の stdin に対する部分一致だけで判定する。
-  printf '%s\n' 'bdboard-harness hook: jq/python3 not found; contract patterns skipped' >&2
-  HOOK_CWD=''
-  TARGET_PATH=''
-  case "$INPUT" in
-    *'/.claude/skills/bdboard-harness/'*)
-      deny \
-        'bdboard-harness: .claude/skills/bdboard-harness/ は注入コピーなので直接編集できません (layering.md)。' \
-        '原本 harness/packs/bdboard-harness/ を直して再注入してください。' \
-        '注入先固有の内容なら .claude/skills/project-harness/ に置いてください。'
+# 必要なフィールドを 1 回の呼び出しでまとめて取り出す (フィールドごとに JSON ツールを
+# 起動すると python3 経路で数百 ms かかる)。区切りは US(0x1f) — パスには TAB や改行も
+# 入りうるので、それらは区切りに使えない。
+US_SEPARATOR=$'\037'
+
+hook_fields() {
+  case "$JSON_TOOL" in
+    jq)
+      printf '%s' "$INPUT" | jq -j '
+        def scalar:
+          if . == null then ""
+          elif type == "string" then .
+          else tojson end;
+        . as $d
+        | [ (try ($d.cwd) catch null | scalar),
+            (try ($d.tool_input.file_path) catch null | scalar),
+            (try ($d.tool_input.notebook_path) catch null | scalar) ]
+        | join("\u001f")
+      ' 2>/dev/null
+      ;;
+    python3)
+      printf '%s' "$INPUT" | python3 -c '
+import json, sys
+
+
+def scalar(document, dotted_path):
+    cur = document
+    for key in dotted_path.split("."):
+        if isinstance(cur, dict) and key in cur:
+            cur = cur[key]
+        else:
+            return ""
+    if cur is None:
+        return ""
+    if isinstance(cur, bool):
+        return "true" if cur else "false"
+    if isinstance(cur, str):
+        return cur
+    return json.dumps(cur)
+
+
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+sys.stdout.write("\x1f".join(scalar(doc, p) for p in sys.argv[1:]))
+' cwd tool_input.file_path tool_input.notebook_path 2>/dev/null
       ;;
   esac
-  exit 0
-fi
+}
+
+HOOK_FIELDS="$(hook_fields)"
+HOOK_CWD="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
+HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+TARGET_PATH="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
+NOTEBOOK_PATH="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+[ -n "$TARGET_PATH" ] || TARGET_PATH="$NOTEBOOK_PATH"
 
 [ -n "$TARGET_PATH" ] || exit 0
 [ -n "$HOOK_CWD" ] || HOOK_CWD="$PWD"

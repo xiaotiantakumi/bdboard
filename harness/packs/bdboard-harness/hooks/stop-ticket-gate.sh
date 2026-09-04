@@ -23,8 +23,9 @@ elif command -v python3 >/dev/null 2>&1; then
 fi
 
 if [ -z "$JSON_TOOL" ]; then
-  # 状態判定 (status/コメント時刻) がすべて JSON 依存なので、この hook は丸ごと通過。
-  printf '%s\n' 'bdboard-harness hook: jq/python3 not found; contract patterns skipped' >&2
+  # 縮退モード: 状態判定 (status / コメント時刻) がすべて JSON 依存なので、この hook は
+  # 丸ごと通過させる (fail-open)。stderr は警告 1 行だけ。
+  printf '%s\n' 'bdboard-harness hook: jq/python3 not found; skipping all checks (fail-open)' >&2
   exit 0
 fi
 
@@ -115,11 +116,61 @@ sys.stdout.write("%d\t%d\n" % (pr_count, latest))
   esac
 }
 
-HOOK_CWD="$(json_field "$INPUT" cwd)"
+# 入力 JSON から使うフィールドは 1 回の呼び出しでまとめて取り出す (フィールドごとに
+# JSON ツールを起動すると python3 経路で数百 ms かかる)。区切りは US(0x1f)。
+US_SEPARATOR=$'\037'
+
+input_fields() {
+  case "$JSON_TOOL" in
+    jq)
+      printf '%s' "$INPUT" | jq -j '
+        def scalar:
+          if . == null then ""
+          elif type == "string" then .
+          else tojson end;
+        . as $d
+        | [ (try ($d.cwd) catch null | scalar),
+            (try ($d.stop_hook_active) catch null | scalar) ]
+        | join("\u001f")
+      ' 2>/dev/null
+      ;;
+    python3)
+      printf '%s' "$INPUT" | python3 -c '
+import json, sys
+
+
+def scalar(document, dotted_path):
+    cur = document
+    for key in dotted_path.split("."):
+        if isinstance(cur, dict) and key in cur:
+            cur = cur[key]
+        else:
+            return ""
+    if cur is None:
+        return ""
+    if isinstance(cur, bool):
+        return "true" if cur else "false"
+    if isinstance(cur, str):
+        return cur
+    return json.dumps(cur)
+
+
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+sys.stdout.write("\x1f".join(scalar(doc, p) for p in sys.argv[1:]))
+' cwd stop_hook_active 2>/dev/null
+      ;;
+  esac
+}
+
+INPUT_FIELDS="$(input_fields)"
+HOOK_CWD="${INPUT_FIELDS%%"$US_SEPARATOR"*}"
+STOP_HOOK_ACTIVE="${INPUT_FIELDS#*"$US_SEPARATOR"}"
 [ -n "$HOOK_CWD" ] || HOOK_CWD="$PWD"
 
 # 1. 無限ループ防止: この hook 起因で再開されたセッションでは何もしない。
-STOP_HOOK_ACTIVE="$(json_field "$INPUT" stop_hook_active)"
 case "$STOP_HOOK_ACTIVE" in
   true | True | TRUE) exit 0 ;;
 esac
@@ -140,7 +191,8 @@ if [ -z "$TICKET_ID" ]; then
     *'/.claude/worktrees/'*)
       WORKTREE_NAME="${HOOK_CWD#*/.claude/worktrees/}"
       WORKTREE_NAME="${WORKTREE_NAME%%/*}"
-      if [ -n "$WORKTREE_NAME" ] && bd show "$WORKTREE_NAME" --json >/dev/null 2>&1; then
+      if [ -n "$WORKTREE_NAME" ] &&
+        bd -C "$HOOK_CWD" show "$WORKTREE_NAME" --json >/dev/null 2>&1; then
         TICKET_ID="$WORKTREE_NAME"
       fi
       ;;
@@ -150,15 +202,17 @@ fi
 # per-ticket worktree ではないので判定材料が無い。
 [ -n "$TICKET_ID" ] || exit 0
 
-# 3. in_progress のチケットだけが対象。
-TICKET_JSON="$(bd show "$TICKET_ID" --json 2>/dev/null)"
+# 3. in_progress のチケットだけが対象。bd は必ず -C で hook の cwd を渡す
+#    (Stop hook のプロセス cwd は Claude Code 側の都合で決まり、対象 worktree とは
+#    限らないため。渡さないと別チェックアウトの .beads/ を読みかねない)。
+TICKET_JSON="$(bd -C "$HOOK_CWD" show "$TICKET_ID" --json 2>/dev/null)"
 [ -n "$TICKET_JSON" ] || exit 0
 
 TICKET_STATUS="$(json_field "$TICKET_JSON" status)"
 [ "$TICKET_STATUS" = 'in_progress' ] || exit 0
 
 # 4. 痕跡 (PR コメント / 直近 15 分のコメント) があれば通過。
-COMMENTS_JSON="$(bd comments "$TICKET_ID" --json 2>/dev/null)"
+COMMENTS_JSON="$(bd -C "$HOOK_CWD" comments "$TICKET_ID" --json 2>/dev/null)"
 PR_COUNT=0
 LATEST_EPOCH=0
 if [ -n "$COMMENTS_JSON" ]; then

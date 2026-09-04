@@ -1,4 +1,15 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -74,6 +85,36 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         ]),
       );
     });
+
+    /**
+     * pack.json の hooks[] は P1b (bdboard-pkr6.2) が settings.json へ書き写す契約。
+     * script が実在しない・注入ファイルに含まれない・timeout が抜けている、といった
+     * 破れは P1b 側では気付けない (注入した後で hook が動かないだけ) のでここで守る。
+     */
+    it('declares hooks that point at injectable scripts with an event and a timeout', async () => {
+      const manifest = JSON.parse(
+        readFileSync(path.join(PACKS_ROOT, 'bdboard-harness', 'pack.json'), 'utf8'),
+      ) as { readonly hooks?: ReadonlyArray<Record<string, unknown>> };
+
+      const registry = createFsPackRegistry(PACKS_ROOT);
+      const pack = await registry.getPack('bdboard-harness');
+      const packFiles = (pack?.files ?? []).map((file) => file.relativePath);
+
+      const hooks = manifest.hooks ?? [];
+      expect(hooks.length).toBeGreaterThan(0);
+
+      for (const hook of hooks) {
+        expect(['PreToolUse', 'Stop']).toContain(hook.event);
+        expect(typeof hook.script).toBe('string');
+
+        const script = hook.script as string;
+        expect(existsSync(path.join(PACKS_ROOT, 'bdboard-harness', script))).toBe(true);
+        expect(packFiles).toContain(script);
+
+        expect(Number.isInteger(hook.timeout)).toBe(true);
+        expect(hook.timeout as number).toBeGreaterThan(0);
+      }
+    });
   });
 
   describe('pre-bash-guard.sh', () => {
@@ -98,6 +139,42 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         name: 'git stash pop',
         payload: { tool_name: 'Bash', tool_input: { command: 'git stash pop' } },
         stderrIncludes: 'git stash push -u -m',
+      },
+      {
+        // 先頭が許可される形でも、後ろのコマンドは独立に見る。
+        name: 'git stash pop after an allowed git stash list',
+        payload: { tool_name: 'Bash', tool_input: { command: 'git stash list; git stash pop' } },
+        stderrIncludes: 'git stash push -u -m',
+      },
+      {
+        name: 'git stash pop on a later line of a multi-line command',
+        payload: {
+          tool_name: 'Bash',
+          tool_input: { command: 'set -e\ngit stash list\ngit stash pop\n' },
+        },
+        stderrIncludes: 'git stash push -u -m',
+      },
+      {
+        name: 'git stash push without a message',
+        payload: { tool_name: 'Bash', tool_input: { command: 'git stash push -u' } },
+        stderrIncludes: 'git stash push -u -m',
+      },
+      {
+        name: 'bare bd dolt push after one with --remote',
+        payload: {
+          tool_name: 'Bash',
+          tool_input: { command: 'bd dolt push --remote legacy; bd dolt push' },
+        },
+        stderrIncludes: '--remote',
+      },
+      {
+        // --remote が別コマンド (git push) の引数でも、bd dolt push は素通しにしない。
+        name: 'bare bd dolt push after an unrelated --remote',
+        payload: {
+          tool_name: 'Bash',
+          tool_input: { command: 'git push --remote x; bd dolt push' },
+        },
+        stderrIncludes: '--remote',
       },
       {
         name: 'trailing & together with run_in_background',
@@ -130,6 +207,19 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       {
         name: 'git stash push -u -m',
         payload: { tool_name: 'Bash', tool_input: { command: 'git stash push -u -m "wip"' } },
+      },
+      {
+        // 短オプションの束 (-um) も「メッセージ指定あり」として扱う。
+        name: 'git stash push -um',
+        payload: { tool_name: 'Bash', tool_input: { command: 'git stash push -um tag' } },
+      },
+      {
+        name: 'git stash push --message=',
+        payload: { tool_name: 'Bash', tool_input: { command: 'git stash push --message="tag"' } },
+      },
+      {
+        name: 'git stash list',
+        payload: { tool_name: 'Bash', tool_input: { command: 'git stash list' } },
       },
       {
         name: 'bd dolt push --remote legacy',
@@ -189,6 +279,72 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       );
       expect(allowed.exitCode).toBe(0);
       expect(allowed.stderr).toBe('');
+    });
+
+    it('flattens a multi-line contract message into one attributed stderr line', async () => {
+      const projectRoot = path.join(tmpRoot, 'project');
+      mkdirSync(path.join(projectRoot, '.claude'), { recursive: true });
+      const env = isolatedEnv();
+      await initGitRepo(projectRoot, 'main', env);
+      writeFileSync(
+        path.join(projectRoot, '.claude', 'bdboard-harness.json'),
+        `${JSON.stringify({
+          hooks: {
+            denyBashPatterns: ['npm run verify:steps'],
+            denyBashMessages: ['一行目\n二行目\n三行目\n四行目'],
+          },
+        })}\n`,
+        'utf8',
+      );
+
+      const denied = await runHook(
+        PRE_BASH_GUARD,
+        { tool_name: 'Bash', cwd: projectRoot, tool_input: { command: 'npm run verify:steps' } },
+        { cwd: projectRoot, env },
+      );
+
+      expect(denied.exitCode).toBe(2);
+      expect(denied.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+      expect(denied.stderr).toContain('(project contract)');
+      expect(denied.stderr).toContain('一行目 二行目 三行目 四行目');
+    });
+  });
+
+  describe('degraded mode (no jq, no python3)', () => {
+    /**
+     * jq も python3 も無い環境では、生の JSON へ正規表現を当てる縮退判定はせず、
+     * 警告 1 行だけを出して素通しする (fail-open)。判定材料が無いのに deny すると
+     * `git stash list` のような無害なコマンドまで止まってしまうため。
+     */
+    const WARNING = 'jq/python3 not found';
+
+    it('lets pre-bash-guard.sh pass with a single warning line', async () => {
+      const env = minimalEnv();
+
+      const result = await runHook(
+        PRE_BASH_GUARD,
+        { tool_name: 'Bash', cwd: tmpRoot, tool_input: { command: 'git stash list' } },
+        { cwd: tmpRoot, env },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain(WARNING);
+      expect(result.stderr.trim().split('\n')).toHaveLength(1);
+    });
+
+    it('lets pre-edit-guard.sh pass with a single warning line', async () => {
+      const env = minimalEnv();
+      const target = path.join(tmpRoot, '.claude', 'skills', 'bdboard-harness', 'SKILL.md');
+
+      const result = await runHook(
+        PRE_EDIT_GUARD,
+        { tool_name: 'Edit', cwd: tmpRoot, tool_input: { file_path: target } },
+        { cwd: tmpRoot, env },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain(WARNING);
+      expect(result.stderr.trim().split('\n')).toHaveLength(1);
     });
   });
 
@@ -275,15 +431,21 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       readonly branch: string;
       readonly comments: string;
       readonly dirty: boolean;
-    }): Promise<{ repo: string; env: Record<string, string> }> {
+    }): Promise<{ repo: string; env: Record<string, string>; argsLog: string }> {
       const binDir = path.join(tmpRoot, 'bin');
       mkdirSync(binDir, { recursive: true });
+      const argsLog = path.join(tmpRoot, 'bd-args.log');
       const fakeBd = path.join(binDir, 'bd');
       writeFileSync(
         fakeBd,
         [
           '#!/bin/sh',
-          'case "$1" in',
+          `echo "$*" >> '${argsLog}'`,
+          '# hook は必ず -C <cwd> を先頭に付けて呼ぶ。本物と同じくそれを取り除いて解釈する。',
+          'if [ "${1:-}" = "-C" ]; then',
+          '  shift 2',
+          'fi',
+          'case "${1:-}" in',
           `  show) cat <<'BD_SHOW_EOF'`,
           JSON.stringify([{ id: 'test-1', status: 'in_progress' }]),
           'BD_SHOW_EOF',
@@ -307,7 +469,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         writeFileSync(path.join(repo, 'dirty.txt'), 'wip\n', 'utf8');
       }
 
-      return { repo, env };
+      return { repo, env, argsLog };
     }
 
     it('passes when the branch is not a per-ticket branch', async () => {
@@ -364,7 +526,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     });
 
     it('blocks an in_progress ticket with uncommitted work and no trace', async () => {
-      const { repo, env } = await setupTicketWorktree({
+      const { repo, env, argsLog } = await setupTicketWorktree({
         branch: 'bd/test-1',
         comments: '[]',
         dirty: true,
@@ -380,6 +542,13 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       expect(result.stderr).toContain('test-1');
       expect(result.stderr).toContain('in_progress');
       expect(result.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+
+      // bd は hook の cwd を明示して呼ぶ (別チェックアウトの .beads/ を読まないため)。
+      const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
+      expect(bdCalls.length).toBeGreaterThan(0);
+      for (const call of bdCalls) {
+        expect(call.startsWith(`-C ${repo} `)).toBe(true);
+      }
     });
 
     it('passes when the working tree is clean', async () => {
@@ -432,6 +601,34 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       PATH: pathPrefix === undefined ? basePath : `${pathPrefix}${path.delimiter}${basePath}`,
       HOME: home,
     };
+  }
+
+  /**
+   * jq も python3 も引けない PATH を作る。hook が必要とする最低限のコマンドだけを
+   * symlink した専用ディレクトリを PATH 全体にする (`jq`/`python3` は張らない)。
+   * PATH から名前で消す方式にしないのは、消し漏れた別の場所から拾われうるため。
+   */
+  function minimalEnv(): Record<string, string> {
+    const binDir = path.join(tmpRoot, 'minimal-bin');
+    mkdirSync(binDir, { recursive: true });
+    const searchDirs = (process.env.PATH ?? '/usr/bin:/bin').split(path.delimiter);
+
+    for (const name of ['bash', 'cat', 'grep', 'sed', 'tr', 'git']) {
+      for (const dir of searchDirs) {
+        const candidate = path.join(dir, name);
+        try {
+          accessSync(candidate, fsConstants.X_OK);
+        } catch {
+          continue;
+        }
+        symlinkSync(candidate, path.join(binDir, name));
+        break;
+      }
+    }
+
+    const home = path.join(tmpRoot, 'home');
+    mkdirSync(home, { recursive: true });
+    return { PATH: binDir, HOME: home };
   }
 
   async function initGitRepo(
