@@ -23,6 +23,12 @@
 # Default actor for audit trails (overridden by BEADS_ACTOR or --actor)
 # actor: ""
 
+# Optional JSONL sidecar for explicit agent/tool interaction audit records.
+# Issue history is always recorded in the database and is visible with
+# bd history <id> --events; this only controls .beads/interactions.jsonl.
+# audit:
+#   enabled: false
+
 # Export events (audit trail) to .beads/events.jsonl on each flush/sync
 # When enabled, new events are appended incrementally using a high-water mark.
 # Use 'bd export --events' to trigger manually regardless of this setting.
@@ -72,4 +78,8 @@
 # Full private issue history remains synced at xiaotiantakumi/bdboard-legacy-private
 # (fetch via: git fetch legacy refs/dolt/data) until/unless a new private Dolt
 # remote is set up.
+# NOTE 2026-09-05 (bdboard-62u): `bd init --server` re-registered a Dolt-layer
+# remote `origin` pointing at the PUBLIC repo. It was removed immediately with
+# `bd dolt remote remove origin`. Always use `--remote legacy`; never a bare
+# `bd dolt push` / `bd dolt pull` on this repo.
 # sync.remote: "git+https://github.com/xiaotiantakumi/bdboard.git"
