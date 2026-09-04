@@ -5753,6 +5753,165 @@ body {
   .session-tail-message {
     max-width: 90%;
   }
+
+  /* bdboard-h4xs.15: モバイル幅で固定チャンクを圧縮し、会話領域 (.chat-messages) を確保する。
+     デスクトップ (>=701px) の見た目は触らない。 */
+  .detail-panel.chat-panel {
+    gap: 8px;
+  }
+
+  .detail-panel.chat-panel .detail-header {
+    padding-bottom: 8px;
+  }
+
+  .chat-thread-switcher {
+    margin: 4px 0;
+  }
+
+  .chat-thread-empty-hint {
+    margin-bottom: 4px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    line-height: 1.35;
+  }
+
+  .chat-input-form {
+    padding-top: 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  /* 入力ヒントはキーボード操作の視覚的リマインダ。非フォーカス時は display:none で隠す。
+     AT からも消えるが、視覚的リマインダなので許容。 */
+  .chat-input-form:not(:focus-within) .chat-input-hint {
+    display: none;
+  }
+
+  /* 画像プライバシー説明: 添付なし・非フォーカス時は視覚のみ隠し (AT には残す)。
+     .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+  .chat-input-form:not(.has-attachments):not(:focus-within) .chat-image-privacy-hint {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* 添付があるときはフォーカス外でもプライバシー説明を表示する */
+  .chat-input-form.has-attachments .chat-image-privacy-hint {
+    font-size: 0.6875rem;
+    line-height: 1.3;
+  }
+
+  .chat-input-form:focus-within .chat-input-hint,
+  .chat-input-form:focus-within .chat-image-privacy-hint {
+    font-size: 0.6875rem;
+    line-height: 1.3;
+  }
+
+  /* 静止時 48px。resize ハンドルのドラッグはインライン style で height を書くため
+     スタイルシートの height に勝つ。auto-grow JS は無い (rows={3}) ので、
+     縦拡張手段はこの resize のみ。ユーザーは最大 30vh まで伸ばせる。 */
+  .chat-input {
+    height: 48px;
+    min-height: 48px;
+    max-height: 30vh;
+    overflow-y: auto;
+  }
+}
+
+/* 短いビューポート (分割画面・小型端末): 固定チャンクをさらに圧縮し、
+   .chat-panel の overflow:hidden で切れた領域が出ないようにする (bdboard-h4xs.15 AC2)。
+   576px = :focus-within で戻るヒント2行 (実測 +54.9px) を織り込んだカットオフ。 */
+@media (max-width: 700px) and (max-height: 576px) {
+  .detail-panel.chat-panel {
+    gap: 4px;
+    padding-top: 8px;
+  }
+
+  .detail-panel.chat-panel .detail-header {
+    padding-top: 8px;
+    padding-bottom: 4px;
+  }
+
+  .chat-project-bar {
+    gap: 0;
+  }
+
+  /* .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+  .chat-project-bar-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .chat-thread-switcher {
+    margin: 2px 0;
+  }
+
+  .chat-thread-empty-hint {
+    margin-bottom: 2px;
+    padding: 4px 8px;
+    font-size: 0.6875rem;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .chat-panel-settings-summary {
+    min-height: 44px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+  }
+
+  .chat-input-form {
+    padding-top: 4px;
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+    gap: 4px;
+  }
+
+  /* border-box 46px = padding 10+10 + line-height 23.2 + border 1+1 = 45.2 切り上げ。
+     44px だと content box 22px に対し 1 行 23.2px で 1.2px 欠ける (375×430 実測済み)。
+     46px は index.css:5647 のモバイル 44px タップ領域規約も満たす。
+     resize: vertical (ベース :5517-5529) で縦に伸ばせるので静止 1 行でも操作性は損なわれない。 */
+  .chat-input {
+    height: 46px;
+    min-height: 46px;
+    max-height: 25vh;
+    overflow-y: auto;
+  }
+
+  /* 縦が足りないときは focus-within でもキーボード案内を出さない (再び溢れるのを防ぐ)。
+     プライバシー説明は添付があるときだけ表示を維持する。 */
+  .chat-input-form:focus-within .chat-input-hint {
+    display: none;
+  }
+
+  /* .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+  .chat-input-form:not(.has-attachments) .chat-image-privacy-hint {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
 }
 
 /* iPhone portrait */

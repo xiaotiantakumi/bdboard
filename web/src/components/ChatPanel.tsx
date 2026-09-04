@@ -3361,7 +3361,7 @@ export function ChatPanel({
 
         <form
           ref={formRef}
-          className="chat-input-form"
+          className={`chat-input-form${currentAttachments.length > 0 ? ' has-attachments' : ''}`}
           onSubmit={(event) => {
             void handleSubmit(event);
           }}

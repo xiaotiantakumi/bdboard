@@ -26,6 +26,29 @@ test.describe('chat panel mobile layout', () => {
     return dialog;
   }
 
+  async function ensureProjectSelected(page: import('@playwright/test').Page) {
+    // e2e フィクスチャはプロジェクト1件で自動選択されるため select は描画されない
+    // (ChatPanel.tsx の showProjectSelect)。AC1 が言う「プロジェクト選択済み」は
+    // この既定状態そのもの。
+    const projectSelect = page.locator('#chat-project-select');
+    if ((await projectSelect.count()) > 0) {
+      await expect(projectSelect).toBeVisible({ timeout: 15_000 });
+      await projectSelect.selectOption({ label: 'fixture-project' });
+      await expect(projectSelect).not.toHaveValue('');
+    } else {
+      await expect(page.locator('.chat-project-name')).toHaveText('fixture-project', {
+        timeout: 15_000,
+      });
+    }
+
+    await expect(page.locator('.chat-project-unselected-hint')).toHaveCount(0);
+
+    const sendBtn = page.getByRole('button', { name: '送信' });
+    await expect(sendBtn).toBeVisible({ timeout: 15_000 });
+    const describedBy = (await sendBtn.getAttribute('aria-describedby')) ?? '';
+    expect(describedBy).not.toContain('chat-project-unselected-hint');
+  }
+
   function expectBoxInsideViewport(
     box: { x: number; y: number; width: number; height: number },
     viewportHeight: number,
@@ -70,6 +93,114 @@ test.describe('chat panel mobile layout', () => {
 
     await closeBtn.click();
     await expect(dialog).not.toBeVisible();
+  });
+
+  test('chat messages area is readable with a project selected at 375x812', async ({
+    page,
+  }) => {
+    await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    const messagesHeight = await page.locator('.chat-messages').evaluate((el) => {
+      return el.getBoundingClientRect().height;
+    });
+
+    console.log(
+      JSON.stringify({
+        case: '375x812-project-selected',
+        messagesHeight,
+      }),
+    );
+    expect(messagesHeight).toBeGreaterThanOrEqual(240);
+  });
+
+  test('short viewport chat panel has no unreachable clipped region at 375x430', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 430 });
+    await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    await expect(page.locator('.chat-messages')).toBeVisible();
+
+    // Poll timeout is below the test timeout (30s) so failures surface measured overflow values.
+    await expect
+      .poll(
+        async () =>
+          page.locator('.chat-panel').evaluate((el) => el.scrollHeight - el.clientHeight),
+        { timeout: 10_000 },
+      )
+      .toBeLessThanOrEqual(0);
+
+    const panelMetrics = await page.locator('.chat-panel').evaluate((el) => ({
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+    }));
+    console.log(
+      JSON.stringify({
+        case: '375x430-panel',
+        panelMetrics,
+      }),
+    );
+    expect(panelMetrics.scrollHeight).toBeLessThanOrEqual(panelMetrics.clientHeight);
+
+    const messagesHeight = await page.locator('.chat-messages').evaluate((el) => {
+      return el.getBoundingClientRect().height;
+    });
+    console.log(
+      JSON.stringify({
+        case: '375x430-messages',
+        messagesHeight,
+      }),
+    );
+    expect(messagesHeight).toBeGreaterThanOrEqual(40);
+  });
+
+  test('375px width shows privacy hint when image is attached via paste', async ({
+    page,
+  }) => {
+    await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    const textarea = page.locator('.chat-input');
+    await expect(textarea).toBeVisible();
+
+    await textarea.evaluate((el) => {
+      const pngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      const binary = atob(pngBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const file = new File([bytes], 'test.png', { type: 'image/png' });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      el.dispatchEvent(
+        new ClipboardEvent('paste', {
+          clipboardData: dt,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    await expect(page.locator('.chat-attachments')).toBeVisible();
+
+    // Blur so :focus-within does not unclip the hint — paste via evaluate does not focus
+    // today, but a future paste flow that focuses the textarea would mask sr-only clip.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+    const hint = page.locator('.chat-image-privacy-hint');
+    await expect(hint).toBeVisible();
+
+    const hintMetrics = await hint.evaluate((el) => ({
+      height: el.getBoundingClientRect().height,
+      position: getComputedStyle(el).position,
+    }));
+    console.log(JSON.stringify(hintMetrics));
+    expect(hintMetrics.height).toBeGreaterThan(10);
+    expect(hintMetrics.position).toBe('static');
   });
 
   test('overlay z-index stacks above undo snackbar', async ({ page }) => {
