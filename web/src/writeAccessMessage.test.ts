@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ApiError } from './api';
 import {
+  CHAT_AGENT_AUTH_FAILURE_HELP,
   CHAT_BUSY_HELP,
   CONFLICT_WRITE_HELP,
   CROSS_SITE_HELP,
@@ -9,14 +10,20 @@ import {
   REMOTE_AGENT_RUNS_DISABLED_HELP,
   TUNNEL_NOT_RUNNING_HELP,
   TUNNEL_WRITE_HELP,
+  chatAgentErrorMessage,
   describeWriteError,
   isNetworkFetchError,
   writeAccessErrorMessage,
 } from './writeAccessMessage';
 
-function apiError(status: number, errorMessage?: string): ApiError {
+function apiError(
+  status: number,
+  errorMessage?: string,
+  options?: { code?: string },
+): ApiError {
   return new ApiError(status, errorMessage ?? `HTTP ${status}`, {
     ...(errorMessage !== undefined ? { errorMessage } : {}),
+    ...options,
   });
 }
 
@@ -138,6 +145,29 @@ describe('describeWriteError', () => {
     expect(
       describeWriteError(apiError(429, 'chat rate limit exceeded'), 'fallback'),
     ).toBe(RATE_LIMITED_HELP);
+  });
+});
+
+describe('chatAgentErrorMessage', () => {
+  it('maps chat agent unavailable and CLI exit failures to auth-oriented help', () => {
+    expect(
+      chatAgentErrorMessage(apiError(503, 'chat agent unavailable')),
+    ).toBe(CHAT_AGENT_AUTH_FAILURE_HELP);
+    expect(
+      chatAgentErrorMessage(
+        apiError(502, 'chat failed', { code: 'agent-exit-nonzero' }),
+      ),
+    ).toBe(CHAT_AGENT_AUTH_FAILURE_HELP);
+    expect(
+      chatAgentErrorMessage(
+        apiError(502, 'chat failed', { code: 'agent-not-found' }),
+      ),
+    ).toBe(CHAT_AGENT_AUTH_FAILURE_HELP);
+    expect(
+      chatAgentErrorMessage(
+        apiError(502, 'chat failed', { code: 'agent-workspace-untrusted' }),
+      ),
+    ).toBeNull();
   });
 });
 

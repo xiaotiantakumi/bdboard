@@ -66,7 +66,12 @@ import {
 import { getBoardTimeZone } from '../boardTimeZone';
 import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
 import { isImeComposingKeyEvent } from '../imeGuard';
-import { CHAT_BUSY_HELP, writeAccessErrorMessage } from '../writeAccessMessage';
+import {
+  CHAT_AGENT_UNAVAILABLE_WARNING,
+  CHAT_BUSY_HELP,
+  chatAgentErrorMessage,
+  writeAccessErrorMessage,
+} from '../writeAccessMessage';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -865,6 +870,10 @@ export function ChatPanel({
   const projectSelectionHintId =
     projectSelectionHint === null ? null : 'chat-project-unselected-hint';
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
+  const selectedAgentUnavailable = selectedAgent?.availability === 'unavailable';
+  const agentUnavailableHintId = selectedAgentUnavailable
+    ? 'chat-agent-unavailable-hint'
+    : null;
   const hasUnsupportedAttachments =
     currentAttachments.length > 0 && selectedAgent?.supportsImages !== true;
 
@@ -2078,7 +2087,11 @@ export function ChatPanel({
           // ツール呼び出しを自動拒否して空応答になったケース。汎用文言では利用者に
           // 「運用者側の許可設定が要る」ことが伝わらないため、code をマップして案内する。
           errorText = 'エージェントの headless モードがツール呼び出しを自動拒否したため、応答を得られませんでした。bdboard の外で agy 側の設定 (~/.gemini/antigravity-cli/settings.json) の permissions.allow に bd コマンドの許可ルール(例: "command(bd)")を追加してから、もう一度送信してください。';
-        } else errorText = error.errorMessage ?? error.message;
+        } else {
+          const agentMessage = chatAgentErrorMessage(error);
+          errorText =
+            agentMessage ?? error.errorMessage ?? error.message;
+        }
       } else if (error instanceof Error) errorText = error.message;
       else errorText = '送信に失敗しました';
 
@@ -2172,6 +2185,26 @@ export function ChatPanel({
       sentRawText: string,
       sentAttachments: readonly ChatAttachment[],
     ) => {
+      if (selectedAgentUnavailable) {
+        if (text !== '' || sentAttachments.length > 0) {
+          const blockedAt = Date.now();
+          setConversations((prev) => ({
+            ...prev,
+            [currentConversationKey]: {
+              ...prev[currentConversationKey],
+              messages: [
+                ...(prev[currentConversationKey]?.messages ?? []),
+                {
+                  role: 'error',
+                  text: CHAT_AGENT_UNAVAILABLE_WARNING,
+                  at: blockedAt,
+                },
+              ],
+            },
+          }));
+        }
+        return;
+      }
       if (
         (text === '' && sentAttachments.length === 0) ||
         isSending ||
@@ -2335,6 +2368,7 @@ export function ChatPanel({
       isHistoryPending,
       showModelSelect,
       selectedAgent,
+      selectedAgentUnavailable,
       applyChatSuccess,
       applyChatError,
       updateConversationAttachments,
@@ -3210,13 +3244,6 @@ export function ChatPanel({
         )}
 
         {selectedAgent !== undefined &&
-          selectedAgent.availability === 'unavailable' && (
-            <p className="chat-agent-availability-note" role="status">
-              このエージェントは利用できません（CLI が無いか、認証が通っていません）。
-            </p>
-          )}
-
-        {selectedAgent !== undefined &&
           selectedAgent.capability !== 'bd-only' && (
             <p className="chat-agent-capability-warning" role="note">
               このエージェントは bd チケット操作以外の権限を持ちます（
@@ -3397,6 +3424,15 @@ export function ChatPanel({
               このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。
             </p>
           )}
+          {selectedAgentUnavailable && (
+            <p
+              id={agentUnavailableHintId ?? undefined}
+              className="chat-agent-unavailable-banner"
+              role="alert"
+            >
+              {CHAT_AGENT_UNAVAILABLE_WARNING}
+            </p>
+          )}
           <textarea
             ref={inputRef}
             className="chat-input"
@@ -3421,11 +3457,17 @@ export function ChatPanel({
               isSending ||
               isHistoryPending ||
               chatUnsupported ||
+              selectedAgentUnavailable ||
               hasUnsupportedAttachments ||
               (currentInput.trim() === '' && currentAttachments.length === 0)
             }
             aria-describedby={
-              projectSelectionHintId === null ? undefined : projectSelectionHintId
+              [
+                projectSelectionHintId,
+                agentUnavailableHintId,
+              ]
+                .filter((id): id is string => id !== null)
+                .join(' ') || undefined
             }
           >
             送信
