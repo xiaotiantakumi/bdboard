@@ -133,6 +133,7 @@ import {
 } from './infrastructure/git/git-worktree-provisioner.js';
 import { createClaudeSpawnRunner } from './infrastructure/runners/claude-spawn-runner.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
+import { resolveWebDistDir } from './infrastructure/web/resolve-web-dist-dir.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
 import { createEventHub } from './interface/sse/event-hub.js';
 import {
@@ -1239,7 +1240,7 @@ async function main(): Promise<void> {
     console.log('Chat: disabled');
   }
 
-  const webDistDir = path.join(repoRoot, 'web', 'dist');
+  const webDistDir = resolveWebDistDir(repoRoot, process.env);
 
   const spaIndexPath = path.join(webDistDir, 'index.html');
   if (fs.existsSync(spaIndexPath)) {

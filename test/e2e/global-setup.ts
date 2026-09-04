@@ -10,6 +10,51 @@ const repoRoot = path.resolve(here, '..', '..');
 const HEALTH_TIMEOUT_MS = 30_000;
 const HEALTH_POLL_INTERVAL_MS = 200;
 
+/** index.html が参照する /assets/... がコピー先に揃っているか検証する */
+function assertSpaBundleComplete(webDistDir: string): void {
+  const indexPath = path.join(webDistDir, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    throw new Error(
+      `e2e setup: SPA bundle missing at ${indexPath}. ` +
+        'Run "npm run build:web" (or "npm run test:e2e") before starting e2e.',
+    );
+  }
+
+  const indexHtml = fs.readFileSync(indexPath, 'utf8');
+  const assetRefs = [
+    ...indexHtml.matchAll(/(?:src|href)=["'](\/assets\/[^"']+)["']/g),
+  ].map((match) => match[1]!);
+
+  if (assetRefs.length === 0) {
+    throw new Error(
+      `e2e setup: index.html at ${indexPath} references no /assets/* — ` +
+        'このチェックが機能していないか、バンドルが壊れています。',
+    );
+  }
+
+  const missing = assetRefs.filter(
+    (ref) => !fs.existsSync(path.join(webDistDir, ref.slice(1))),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `e2e setup: SPA bundle incomplete — index.html references missing asset(s): ` +
+        `${missing.join(', ')}. web/dist may have been empty or mid-rebuild when copied.`,
+    );
+  }
+}
+
+/** リポジトリの web/dist を tmpRoot 配下の不変スナップショットへコピーする */
+function snapshotWebDist(repoRoot: string, tmpRoot: string): string {
+  const sourceWebDist = path.join(repoRoot, 'web', 'dist');
+  assertSpaBundleComplete(sourceWebDist);
+
+  const snapshotDir = path.join(tmpRoot, 'web-dist');
+  fs.cpSync(sourceWebDist, snapshotDir, { recursive: true });
+  assertSpaBundleComplete(snapshotDir);
+
+  return snapshotDir;
+}
+
 async function waitForHealth(url: string, child: ChildProcess): Promise<void> {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   let lastError: unknown;
@@ -113,6 +158,18 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const serverCwd = path.join(tmpRoot, 'server-cwd');
   fs.mkdirSync(serverCwd, { recursive: true });
 
+  // test:e2e と verify が同時に web/dist を書き換えると、並走ビルドが web/dist を
+  // 空にしたあと /assets/*.js のリクエストにも SPA フォールバックが index.html を
+  // 200 text/html で返し、module script の MIME 不一致で React がマウントしない。
+  // 配信元を tmp へ固定する。
+  let webDistSnapshot: string;
+  try {
+    webDistSnapshot = snapshotWebDist(repoRoot, tmpRoot);
+  } catch (err) {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    throw err;
+  }
+
   const child = spawn(tsxBin, [mainTs], {
     cwd: serverCwd,
     env: {
@@ -135,6 +192,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       BDBOARD_CLAUDE_PATH: claudeStub,
       BDBOARD_AI_QUOTA_DISABLED: '1',
       BDBOARD_E2E_BD_LIST_FIXTURE: listFixture,
+      BDBOARD_WEB_DIST: webDistSnapshot,
     },
     stdio: debug ? 'inherit' : 'ignore',
   });

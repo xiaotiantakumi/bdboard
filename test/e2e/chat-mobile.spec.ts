@@ -17,6 +17,7 @@ test.describe('chat panel mobile layout', () => {
 
   async function openChatPanel(page: import('@playwright/test').Page) {
     await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 5_000 });
     const chatButton = page.getByRole('button', { name: 'チャット' });
     await expect(chatButton).toBeVisible({ timeout: 15_000 });
     await chatButton.click();
