@@ -283,6 +283,28 @@ describe('nextUpRunLoop', () => {
     });
   });
 
+  /**
+   * useNextUpRunLoopController onProgress generation guard (bdboard-54be.4 M3 / 54be.2 R10)
+   *
+   * No test here fails when the guard in beginBatchRun's onProgress
+   * (`if (loopRunIdRef.current !== runId) return`) is removed. That is intentional,
+   * not a coverage gap to paper over:
+   *
+   * - loopRunIdRef advances mid-flight only via useEffect cleanup on controller unmount.
+   * - App-scoped ownership means view switches do not unmount the controller; only
+   *   leaving the app does.
+   * - When cleanup invalidates a generation, the stale onProgress closure still holds
+   *   the unmounted instance's setProgress; React 18 silently ignores it, so the guard
+   *   and its removal produce the same observable progress.
+   * - A second batch cannot start until loopActiveRef is false; the only way to get
+   *   loopActiveRef false while fetchAgentRun is still pending is that same unmount
+   *   cleanup path — same dead-setState situation.
+   *
+   * NextUpView.test.tsx "does not let an unmounted loop generation overwrite progress
+   * after remount" exercises the remount UX but does not kill M3 for the reason above.
+   * The guard remains documented at the call site in nextUpRunLoop.ts.
+   */
+
   describe('nextUpLoopPollDelayMs', () => {
     it('is monotonically non-decreasing from 0 through N', () => {
       for (let i = 0; i < NEXT_UP_LOOP_POLL_MAX_FAILURES; i += 1) {

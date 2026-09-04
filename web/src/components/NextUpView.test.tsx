@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ReactElement } from 'react';
+import { useState, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunDetailDto, BoardCardDto, BoardDto } from '../api';
 import { ApiError, fetchAgentRun, startTicketRun } from '../api';
 import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
-import { NextUpView } from './NextUpView';
+import { NextUpView, type NextUpViewProps } from './NextUpView';
+import { useNextUpRunLoopController } from './nextUpRunLoop';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
 vi.mock('../api', async (importOriginal) => {
@@ -77,6 +78,27 @@ function makeBoard(readyCards: BoardCardDto[]): BoardDto {
 const projectNames = new Map([['proj-1', 'Project One']]);
 const projectActiveSessions = new Map([['proj-1', 0]]);
 
+type OwnedNextUpViewProps = Omit<NextUpViewProps, 'batchRun'>;
+
+function NextUpViewWithRunOwner(props: OwnedNextUpViewProps) {
+  const batchRun = useNextUpRunLoopController();
+  return <NextUpView {...props} batchRun={batchRun} />;
+}
+
+function ViewSwitchHarness(props: OwnedNextUpViewProps) {
+  const [showNextUp, setShowNextUp] = useState(true);
+  const batchRun = useNextUpRunLoopController();
+
+  return (
+    <>
+      <button type="button" onClick={() => setShowNextUp((visible) => !visible)}>
+        {showNextUp ? 'Kanban へ' : 'Next Up へ'}
+      </button>
+      {showNextUp && <NextUpView {...props} batchRun={batchRun} />}
+    </>
+  );
+}
+
 function renderNextUpView(
   board: BoardDto,
   options?: {
@@ -89,7 +111,7 @@ function renderNextUpView(
   const onLimitChange = options?.onLimitChange ?? vi.fn();
   const onShowEpicsChange = options?.onShowEpicsChange ?? vi.fn();
   renderWithWatch(
-    <NextUpView
+    <NextUpViewWithRunOwner
       board={board}
       limit={options?.limit ?? 10}
       onLimitChange={onLimitChange}
@@ -236,7 +258,7 @@ describe('NextUpView', () => {
     const onShowEpicsChange = vi.fn();
 
     const { rerender } = renderWithWatch(
-      <NextUpView
+      <NextUpViewWithRunOwner
         board={board}
         limit={5}
         onLimitChange={onLimitChange}
@@ -255,7 +277,7 @@ describe('NextUpView', () => {
 
     rerender(
       <WatchedTicketsProvider>
-        <NextUpView
+        <NextUpViewWithRunOwner
           board={board}
           limit={10}
           onLimitChange={onLimitChange}
@@ -449,14 +471,74 @@ describe('NextUpView batch run loop', () => {
     expect(mockFetchAgentRun.mock.calls.length).toBe(fetchCountAfterStop);
   });
 
-  it('stops polling after unmount', async () => {
+  it('continues through every ticket while NextUpView is unmounted for a view switch', async () => {
+    let resolveFirstPoll: ((detail: AgentRunDetailDto) => void) | undefined;
+    const firstPollDeferred = new Promise<AgentRunDetailDto>((resolve) => {
+      resolveFirstPoll = resolve;
+    });
+    const board = makeBoard([
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+      makeCard('ticket-3', 'Task Three'),
+    ]);
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      const ticketId = runId.replace(/^run-/, '');
+      if (ticketId === 'ticket-1') {
+        return firstPollDeferred;
+      }
+      return makeRunDetail(runId, ticketId, 'succeeded');
+    });
+
+    renderWithWatch(
+      <ViewSwitchHarness
+        board={board}
+        limit={5}
+        onLimitChange={vi.fn()}
+        showEpics={false}
+        onShowEpicsChange={vi.fn()}
+        projectNames={projectNames}
+        projectActiveSessions={projectActiveSessions}
+        pendingDecisionIds={new Set()}
+        prLinksById={new Map()}
+        onCardClick={() => {}}
+      />,
+    );
+
+    await startBatchRun(user);
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Kanban へ' }));
+    expect(screen.queryByRole('region', { name: 'Next Up' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Next Up へ' }));
+    expect(screen.getByText(/現在: ticket-1/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Kanban へ' }));
+
+    resolveFirstPoll!(makeRunDetail('run-ticket-1', 'ticket-1', 'succeeded'));
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(3);
+    });
+    expect(mockStartTicketRun).toHaveBeenNthCalledWith(1, 'ticket-1');
+    expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+    expect(mockStartTicketRun).toHaveBeenNthCalledWith(3, 'ticket-3');
+
+    await user.click(screen.getByRole('button', { name: 'Next Up へ' }));
+    await waitFor(() => {
+      expect(screen.getByText(/前回の実行: 完了 3\/3 \| 失敗 0/)).toBeInTheDocument();
+    });
+  });
+
+  it('stops polling after the controller owner unmounts', async () => {
     const cards = [makeCard('ticket-1', 'Task One')];
     const board = makeBoard(cards);
     const onLimitChange = vi.fn();
     const onShowEpicsChange = vi.fn();
 
     const { unmount } = renderWithWatch(
-      <NextUpView
+      <NextUpViewWithRunOwner
         board={board}
         limit={5}
         onLimitChange={onLimitChange}
@@ -665,10 +747,11 @@ describe('NextUpView batch run loop', () => {
     expect(screen.getByText(/前回の実行: 完了 1\/2 \| 失敗 0 \| 中止 1/)).toBeInTheDocument();
   });
 
-  // このテストが固定しているのは「アンマウント→再マウント後に1回目の進捗が2回目に混ざらない」
-  // という振る舞い。現状は loopRunIdRef の世代ガードに加え、React 18 のアンマウント時
-  // setState 無言 no-op と再マウント後の別インスタンス分離からも同振る舞いが保証されるため、
-  // 世代ガードを消してもこのテストは落ちない（ミューテーション実測）。世代ガードは多重防御として残す。
+  // App 相当の controller owner 自体をアンマウントして世代を切り替えた場合の remount UX。
+  // 旧世代の遅延 poll 解決後も新 owner の進捗表示が ticket-2 のままであること。
+  // 注: onProgress の世代ガード (M3) を削除しても本テストは通る — 旧 setProgress は
+  // アンマウント済み hook 向けで React 18 は無言 no-op のため。理由は nextUpRunLoop.ts
+  // のガードコメントおよび nextUpRunLoop.test.ts の M3/R10 ブロックを参照。
   it('does not let an unmounted loop generation overwrite progress after remount', async () => {
     let resolveFirstPoll: ((detail: AgentRunDetailDto) => void) | undefined;
     const firstPollDeferred = new Promise<AgentRunDetailDto>((resolve) => {
@@ -680,7 +763,7 @@ describe('NextUpView batch run loop', () => {
     const onShowEpicsChangeGen1 = vi.fn();
 
     const { unmount } = renderWithWatch(
-      <NextUpView
+      <NextUpViewWithRunOwner
         board={makeBoard(cardsGen1)}
         limit={5}
         onLimitChange={onLimitChangeGen1}

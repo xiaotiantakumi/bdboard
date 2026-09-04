@@ -35,6 +35,7 @@ import { HygienePanel } from './components/HygienePanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { EventCenterPanel } from './components/EventCenterPanel';
 import { NextUpView } from './components/NextUpView';
+import { useNextUpRunLoopController } from './components/nextUpRunLoop';
 import { ThroughputStats } from './components/ThroughputStats';
 import { KeyboardShortcutsPanel } from './components/KeyboardShortcutsPanel';
 import { HelpPanel } from './components/HelpPanel';
@@ -152,6 +153,15 @@ export function App() {
     false,
     validateBoolean,
   );
+  /*
+   * The batch controller deliberately lives in App, above both the
+   * `key={view}` ErrorBoundary and the conditionally rendered NextUpView.
+   * App already owns view-spanning UI state here, so lifting it is smaller
+   * than adding a global store or Context. Switching to Kanban can unmount
+   * the presentation while the app-scoped loop keeps running; returning to
+   * Next Up reuses this state and shows whether it is active or completed.
+   */
+  const nextUpBatchRun = useNextUpRunLoopController();
   const [activityWindowDays, setActivityWindowDays] = usePersistedState(
     UI_STORAGE_KEYS.activityWindowDays,
     1,
@@ -933,6 +943,7 @@ export function App() {
             pendingDecisionIds={pendingDecisionIds}
             prLinksById={prLinksById}
             onCardClick={handleSelectTicket}
+            batchRun={nextUpBatchRun}
           />
         )}
         {view === 'activity' && (

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { type BoardDto, type PrBadgeDto, projectNameFallback } from '../api';
 import { NEXT_UP_LIMITS, type NextUpLimit } from '../uiPersistedState';
 import { CardItem } from './LaneColumn';
 import {
-  runNextUpTicketLoop,
-  type NextUpLoopPhase,
+  type NextUpRunLoopController,
   type NextUpLoopProgress,
 } from './nextUpRunLoop';
 import { togglePressedProps } from './toggleGroupA11y';
@@ -21,6 +20,7 @@ export interface NextUpViewProps {
   pendingDecisionIds: ReadonlySet<string>;
   prLinksById: ReadonlyMap<string, PrBadgeDto>;
   onCardClick: (ticketId: string) => void;
+  batchRun: NextUpRunLoopController;
 }
 
 function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
@@ -35,16 +35,6 @@ function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
   }
   return { regularCards, epicCards };
 }
-
-const INITIAL_LOOP_PROGRESS: NextUpLoopProgress = {
-  currentTicketId: null,
-  completedCount: 0,
-  failedCount: 0,
-  cancelledCount: 0,
-  unknownCount: 0,
-  totalCount: 0,
-  lastFailureReason: null,
-};
 
 function renderLoopProgressSummary(
   progress: NextUpLoopProgress,
@@ -110,64 +100,19 @@ export function NextUpView({
   pendingDecisionIds,
   prLinksById,
   onCardClick,
+  batchRun,
 }: NextUpViewProps) {
   const readyCards = board.lanes.ready ?? [];
   const { regularCards, epicCards } = splitReadyCards(readyCards);
   const visibleRegularCards = regularCards.slice(0, limit);
   const visibleEpicCards = epicCards.slice(0, limit);
-  const [loopPhase, setLoopPhase] = useState<NextUpLoopPhase>('idle');
-  const [loopProgress, setLoopProgress] =
-    useState<NextUpLoopProgress>(INITIAL_LOOP_PROGRESS);
   const [pendingBatchTicketIds, setPendingBatchTicketIds] = useState<
     readonly string[] | null
   >(null);
-  const stopRequestedRef = useRef(false);
-  const loopActiveRef = useRef(false);
-  const loopRunIdRef = useRef(0);
   const batchRunConfirmRef = useRef<HTMLDivElement>(null);
   const cancelBatchRunConfirmRef = useRef<HTMLButtonElement>(null);
-
-  const beginBatchRun = useCallback((ticketIds: readonly string[]) => {
-    if (ticketIds.length === 0 || loopActiveRef.current) {
-      return;
-    }
-
-    const runId = loopRunIdRef.current + 1;
-    loopRunIdRef.current = runId;
-    stopRequestedRef.current = false;
-    loopActiveRef.current = true;
-    setLoopPhase('running');
-    setLoopProgress({
-      currentTicketId: null,
-      completedCount: 0,
-      failedCount: 0,
-      cancelledCount: 0,
-      unknownCount: 0,
-      totalCount: ticketIds.length,
-      lastFailureReason: null,
-    });
-
-    void (async () => {
-      try {
-        await runNextUpTicketLoop({
-          ticketIds,
-          isStopRequested: () => stopRequestedRef.current,
-          onProgress: (progress) => {
-            if (loopRunIdRef.current !== runId) {
-              return;
-            }
-            setLoopProgress(progress);
-          },
-        });
-      } finally {
-        if (loopRunIdRef.current === runId) {
-          stopRequestedRef.current = false;
-          loopActiveRef.current = false;
-          setLoopPhase('idle');
-        }
-      }
-    })();
-  }, []);
+  const loopPhase = batchRun.phase;
+  const loopProgress = batchRun.progress;
 
   const handleOpenBatchRunConfirm = useCallback(() => {
     if (loopPhase !== 'idle' || visibleRegularCards.length === 0) {
@@ -198,29 +143,17 @@ export function NextUpView({
     const ticketIds = pendingBatchTicketIds;
     setPendingBatchTicketIds(null);
     if (ticketIds !== null) {
-      beginBatchRun(ticketIds);
+      batchRun.beginBatchRun(ticketIds);
     }
-  }, [beginBatchRun, pendingBatchTicketIds]);
+  }, [batchRun, pendingBatchTicketIds]);
 
   const handleStopLoop = useCallback(() => {
-    if (!loopActiveRef.current) {
-      return;
-    }
     // Do not call cancelAgentRun here: the server-side run keeps going.
     // Stopping means the batch loop will not advance to the next ticket and
     // will stop polling progress, returning to idle immediately. To actually
     // cancel the in-flight run, use TicketDetailPanel's per-run cancel button.
-    stopRequestedRef.current = true;
-    setLoopPhase('stopping');
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      stopRequestedRef.current = true;
-      loopRunIdRef.current += 1;
-      loopActiveRef.current = false;
-    };
-  }, []);
+    batchRun.stopBatchRun();
+  }, [batchRun]);
 
   const isLoopActive = loopPhase !== 'idle';
   const hasLastRunSummary = !isLoopActive && loopProgress.totalCount > 0;
