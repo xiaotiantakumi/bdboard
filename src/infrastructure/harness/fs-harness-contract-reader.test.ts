@@ -88,15 +88,26 @@ describe('createFsHarnessContractReader', () => {
       expect(await reader.readPackageScripts(projectRoot)).toEqual([]);
     });
 
-    it('returns null when package.json is missing', async () => {
+    it("returns 'absent' when package.json does not exist", async () => {
       setupFixture();
 
       const reader = createFsHarnessContractReader();
 
-      expect(await reader.readPackageScripts(projectRoot)).toBeNull();
+      expect(await reader.readPackageScripts(projectRoot)).toBe('absent');
     });
 
-    it('returns null when package.json is not valid JSON', async () => {
+    it("returns 'absent' when the package directory does not exist", async () => {
+      setupFixture();
+
+      const reader = createFsHarnessContractReader();
+
+      expect(await reader.readPackageScripts(path.join(projectRoot, 'nope'))).toBe(
+        'absent',
+      );
+    });
+
+    it('returns null when package.json exists but is not valid JSON', async () => {
+      // 「無い」ではなく「読めない」= 判定不能。呼び出し側はこれで警告しない。
       setupFixture();
       writeProjectFile('package.json', '{ broken');
 

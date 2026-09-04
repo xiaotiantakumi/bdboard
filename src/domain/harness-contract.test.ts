@@ -146,20 +146,84 @@ describe('parseHarnessContract', () => {
     expect(result.contract.hooks).toBeNull();
   });
 
-  it('fills missing hook arrays with empty lists', () => {
+  it('allows denyBashMessages to be omitted entirely', () => {
+    // メッセージ側は「全部省略して既定文言に任せる」が正当な使い方なので、
+    // 0 件はパターン数と一致しなくても通す。
     const result = parse({
       version: 1,
       verify: 'npm run verify',
       prFlow: 'pr',
-      hooks: { denyBashPatterns: ['x'] },
+      hooks: { denyBashPatterns: ['x', 'y'] },
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.contract.hooks).toEqual({
-      denyBashPatterns: ['x'],
+      denyBashPatterns: ['x', 'y'],
       denyBashMessages: [],
     });
+  });
+
+  it('accepts denyBashMessages that pairs one-to-one with the patterns', () => {
+    const result = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      hooks: {
+        denyBashPatterns: ['x', 'y'],
+        denyBashMessages: ['no x', 'no y'],
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.contract.hooks?.denyBashMessages).toEqual(['no x', 'no y']);
+  });
+
+  it('rejects denyBashMessages whose length matches neither 0 nor the pattern count', () => {
+    const result = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      hooks: {
+        denyBashPatterns: ['x', 'y'],
+        denyBashMessages: ['only one'],
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.message).toContain('denyBashMessages');
+  });
+
+  it('rejects a denyBashPattern that is not a usable regular expression', () => {
+    const result = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      hooks: { denyBashPatterns: ['[unclosed'] },
+    });
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe('schema');
+    expect(result.message).toContain('denyBashPatterns[0]');
+  });
+
+  it("accepts bdboard's own verify:steps guard pattern", () => {
+    // .claude/bdboard-harness.json が実際に積んでいる値。JS の RegExp としても
+    // 通ることをここで固定しておく。
+    const pattern = '\\bnpm run verify:steps\\b';
+    const result = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      hooks: { denyBashPatterns: [pattern] },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(new RegExp(pattern).test('npm run verify:steps')).toBe(true);
+    expect(new RegExp(pattern).test('npm run verify')).toBe(false);
   });
 
   it('rejects hook arrays that are not string arrays', () => {
@@ -307,10 +371,32 @@ describe('evaluateContractState', () => {
     });
   });
 
-  it('stays ok when the package.json could not be read', () => {
+  it('stays ok when the package.json exists but could not be read', () => {
+    // 壊れた JSON / 権限エラーは「判定不能」。ここで警告すると、直しようのない
+    // 警告を出すことになる。
     expect(evaluateContractState(okParsed, { verifyPackageScripts: null }).state).toBe(
       'ok',
     );
+  });
+
+  it('reports command-missing when the package.json does not exist at all', () => {
+    // 「無い」と「読めない」は別物: package.json が無ければ npm run verify は
+    // 確実に失敗するので、警告に倒してよい (PR#282 レビュー minor-1)。
+    expect(
+      evaluateContractState(okParsed, { verifyPackageScripts: 'absent' }),
+    ).toEqual({
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    });
+  });
+
+  it('does not report command-missing for a non-npm verify even when package.json is absent', () => {
+    const parsed = parse({ version: 1, verify: 'make verify', prFlow: 'direct' });
+
+    expect(
+      evaluateContractState(parsed, { verifyPackageScripts: 'absent' }).state,
+    ).toBe('ok');
   });
 
   it('resolves npm --prefix web run x against the scripts handed in for that directory', () => {

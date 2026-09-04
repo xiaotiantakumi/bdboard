@@ -1597,7 +1597,7 @@ body {
 
 .hygiene-kind-harness_contract {
   background: rgba(0, 122, 255, 0.14);
-  color: #0a4fa0;
+  color: #007aff;
 }
 
 .hygiene-kind-stale_lease {
@@ -2378,6 +2378,11 @@ body {
   background: var(--badge-neutral-bg);
   font-size: 0.6875rem;
   color: var(--color-text-secondary);
+  /* verify コマンドは任意長になりうるので、行を押し広げず省略表示にする (全文は title 属性側にある) */
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .project-harness-contract-warn {
