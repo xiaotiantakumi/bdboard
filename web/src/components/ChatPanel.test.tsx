@@ -430,6 +430,36 @@ describe('ChatPanel', () => {
       });
     });
 
+    it('keeps a cold-window attachment error visible after the project resolves (bdboard-c1pw: attachmentErrors also migrates)', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const rendered = renderChatPanel([], { initialProjectId: 'proj-b' });
+      await screen.findByLabelText('チャットエージェント');
+
+      pasteFiles(screen.getByLabelText('メッセージ'), [
+        makeImageFile('animated.gif', 'image/gif'),
+      ]);
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'PNG・JPEG・WebP 形式の画像だけ貼り付けられます。',
+      );
+
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A, PROJECT_B]}
+          initialProjectId="proj-b"
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
+          onClose={rendered.onClose}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-b');
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'PNG・JPEG・WebP 形式の画像だけ貼り付けられます。',
+        );
+      });
+    });
+
     it('keeps image-only cold draft when projects arrive via effect with existing threads (major-2 image regression)', async () => {
       fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
       fetchChatThreadsMock.mockResolvedValue([
