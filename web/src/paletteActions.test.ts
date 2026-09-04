@@ -14,6 +14,7 @@ function sampleActions(): PaletteAction[] {
     onToggleStalledOnly: vi.fn(),
     stalledOnly: false,
     onOpenSessionList: vi.fn(),
+    onOpenHelp: vi.fn(),
     onRefresh: vi.fn(),
     chatAvailable: true,
   });
@@ -37,6 +38,18 @@ describe('filterPaletteActions', () => {
     expect(hits.some((action) => action.id === 'panel:chat')).toBe(true);
   });
 
+  it('matches help action by Japanese query', () => {
+    const actions = sampleActions();
+    const hits = filterPaletteActions(actions, 'ヘルプ');
+    expect(hits.some((action) => action.id === 'panel:help')).toBe(true);
+  });
+
+  it('matches help action by English query', () => {
+    const actions = sampleActions();
+    const hits = filterPaletteActions(actions, 'help');
+    expect(hits.some((action) => action.id === 'panel:help')).toBe(true);
+  });
+
   it('omits chat action when chat is unavailable', () => {
     const actions = buildPaletteActions({
       onViewChange: vi.fn(),
@@ -46,6 +59,7 @@ describe('filterPaletteActions', () => {
       onToggleStalledOnly: vi.fn(),
       stalledOnly: false,
       onOpenSessionList: vi.fn(),
+      onOpenHelp: vi.fn(),
       onRefresh: vi.fn(),
       chatAvailable: false,
     });
@@ -63,6 +77,7 @@ describe('buildPaletteActions', () => {
       onToggleStalledOnly: vi.fn(),
       stalledOnly: true,
       onOpenSessionList: vi.fn(),
+      onOpenHelp: vi.fn(),
       onRefresh: vi.fn(),
       chatAvailable: true,
     });
@@ -72,5 +87,29 @@ describe('buildPaletteActions', () => {
 
     const stalled = actions.find((action) => action.id === 'board:toggle-stalled-only');
     expect(stalled?.detail).toBe('現在: オン');
+  });
+
+  it('includes help panel action in パネル group', () => {
+    const onOpenHelp = vi.fn();
+    const actions = buildPaletteActions({
+      onViewChange: vi.fn(),
+      onOpenChat: vi.fn(),
+      onToggleHideDone: vi.fn(),
+      hideDone: true,
+      onToggleStalledOnly: vi.fn(),
+      stalledOnly: false,
+      onOpenSessionList: vi.fn(),
+      onOpenHelp,
+      onRefresh: vi.fn(),
+      chatAvailable: true,
+    });
+
+    const help = actions.find((action) => action.id === 'panel:help');
+    expect(help).toBeDefined();
+    expect(help?.label).toBe('ヘルプを開く');
+    expect(help?.group).toBe('パネル');
+
+    help?.onSelect();
+    expect(onOpenHelp).toHaveBeenCalledOnce();
   });
 });

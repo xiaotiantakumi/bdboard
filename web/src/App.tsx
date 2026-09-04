@@ -655,11 +655,13 @@ export function App() {
         onToggleStalledOnly: () => setStalledOnly((current) => !current),
         stalledOnly,
         onOpenSessionList: () => handleOpenSessionList(),
+        onOpenHelp: handleOpenHelp,
         onRefresh: handleRefresh,
         chatAvailable,
       }),
     [
       chatAvailable,
+      handleOpenHelp,
       handleOpenSessionList,
       handleRefresh,
       hideDone,
