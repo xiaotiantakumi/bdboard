@@ -154,7 +154,9 @@ describe('useHistoryBackClose', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('requestCloseThen runs the callback after popstate lands', () => {
+  // installFakeHistory は back() 時に popstate を同期 dispatch するため、非同期順序の
+  // 実証は SearchPalette.historyIntegration.test.tsx (実 jsdom history) 側で行う。
+  it('requestCloseThen runs the callback when the popstate for its own entry arrives', () => {
     const onClose = vi.fn();
     const run = vi.fn();
 
@@ -230,6 +232,45 @@ describe('useHistoryBackClose', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('requestCloseThen runs the callback under StrictMode without waiting for fallback (bdboard-h4xs.7 regression)', async () => {
+    const onClose = vi.fn();
+    const run = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useHistoryBackClose({
+          panelId: 'search',
+          onClose,
+          enabled: true,
+        }),
+      { wrapper: StrictMode },
+    );
+
+    // StrictMode の「マウント→クリーンアップ→再マウント」で同一トークンのエントリが
+    // 2つ積まれる。requestCloseThen の back() 着地先が重複エントリになると、
+    // トークン照合付き一発リスナでは finish() に到達できず run() が500ms待ちになる。
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(fakeHistory.pushState).toHaveBeenCalledTimes(2);
+    const token0 = (
+      fakeHistory.pushState.mock.calls[0]?.[0] as Record<string, unknown> | undefined
+    )?.bdboardPanelToken;
+    const token1 = (
+      fakeHistory.pushState.mock.calls[1]?.[0] as Record<string, unknown> | undefined
+    )?.bdboardPanelToken;
+    expect(token0).toBe(token1);
+
+    act(() => {
+      result.current.requestCloseThen(run);
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 
   it('requestCloseThen calls onClose even when run throws, and does not propagate', () => {

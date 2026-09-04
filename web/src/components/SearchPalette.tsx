@@ -203,6 +203,8 @@ export function SearchPalette({
           <h2 id="search-palette-title" className="sr-only">
             コマンドパレット
           </h2>
+          {/* 44px タップ領域は @media (max-width:700px) の .btn.detail-close が与える。
+              search-palette-close は将来のスタイリング/テスト用 hook で、対応 CSS は意図的に無い。 */}
           <button
             type="button"
             className="btn detail-close search-palette-close"
