@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchAgentRun, startTicketRun } from '../api';
+import { fetchAgentRun, postTicketComment, startTicketRun } from '../api';
 import {
   AGENT_RUN_POLL_INTERVAL_MS,
   describeRunStartError,
@@ -7,7 +7,11 @@ import {
 
 export type NextUpLoopPhase = 'idle' | 'running' | 'stopping';
 
-export type NextUpLoopEndReason = 'completed' | 'stopped' | 'poll_failed';
+export type NextUpLoopEndReason =
+  | 'completed'
+  | 'stopped'
+  | 'poll_failed'
+  | 'consecutive_failures';
 
 export interface NextUpLoopProgress {
   currentTicketId: string | null;
@@ -52,6 +56,34 @@ export interface AgentRunTerminalResult {
 
 /** Loop-side poll threshold — separate from TicketDetailPanel's AGENT_RUN_POLL_MAX_FAILURES. */
 export const NEXT_UP_LOOP_POLL_MAX_FAILURES = 15;
+
+/** 連続失敗の上限。これに達した時点でバッチを止める（verification.md の
+ * 「2回連続で失敗したら記録して手を止める」と揃える）。
+ * チケット単位の自動リトライは行わないため、同一チケットの2連続失敗ではなく
+ * バッチ内で2件連続失敗した時点で停止する。 */
+export const NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES = 2;
+
+export function describeConsecutiveFailureStop(
+  lastFailureReason: string | null,
+): string {
+  const suffix =
+    lastFailureReason !== null && lastFailureReason.length > 0
+      ? `（最後の失敗: ${lastFailureReason}）`
+      : '';
+  return `2件連続で失敗したためバッチを停止しました${suffix}`;
+}
+
+export function buildConsecutiveFailureComment(
+  failedTicketIds: readonly string[],
+  lastFailureReason: string | null,
+): string {
+  const ids = failedTicketIds.join(', ');
+  const reasonLine =
+    lastFailureReason !== null && lastFailureReason.length > 0
+      ? `最後の失敗理由: ${lastFailureReason}`
+      : '最後の失敗理由: （不明）';
+  return `[harness] bdboard の一括実行（Next Up）が2件連続で失敗したためバッチを停止しました。\n連続で失敗したチケット: ${ids}\n${reasonLine}`;
+}
 
 export const NEXT_UP_LOOP_POLL_MAX_DELAY_MS = 30_000;
 
@@ -130,8 +162,14 @@ export async function runNextUpTicketLoop(options: {
   ticketIds: readonly string[];
   isStopRequested: () => boolean;
   onProgress: (progress: NextUpLoopProgress) => void;
+  postComment?: (ticketId: string, text: string) => Promise<void>;
 }): Promise<NextUpLoopProgress> {
-  const { ticketIds, isStopRequested, onProgress } = options;
+  const {
+    ticketIds,
+    isStopRequested,
+    onProgress,
+    postComment = postTicketComment,
+  } = options;
   const progress: NextUpLoopProgress = {
     currentTicketId: null,
     completedCount: 0,
@@ -150,6 +188,44 @@ export async function runNextUpTicketLoop(options: {
 
   let preserveCurrentTicketId = false;
   let endReason: NextUpLoopEndReason = 'completed';
+  let consecutiveFailureCount = 0;
+  const consecutiveFailedTicketIds: string[] = [];
+
+  const resetConsecutiveFailures = (): void => {
+    consecutiveFailureCount = 0;
+    consecutiveFailedTicketIds.length = 0;
+  };
+
+  const tryStopOnConsecutiveFailures = async (
+    ticketId: string,
+    failureReason: string,
+  ): Promise<boolean> => {
+    consecutiveFailureCount += 1;
+    consecutiveFailedTicketIds.push(ticketId);
+
+    if (consecutiveFailureCount < NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES) {
+      progress.lastFailureReason = failureReason;
+      return false;
+    }
+
+    progress.lastFailureReason = describeConsecutiveFailureStop(failureReason);
+    progress.currentTicketId = null;
+    try {
+      await postComment(
+        ticketId,
+        buildConsecutiveFailureComment(
+          consecutiveFailedTicketIds,
+          failureReason,
+        ),
+      );
+    } catch (commentError) {
+      // Batch stop must not depend on comment delivery — progress/endReason is the contract.
+      console.error('Failed to post consecutive-failure comment', commentError);
+    }
+    endReason = 'consecutive_failures';
+    onProgress({ ...progress });
+    return true;
+  };
 
   for (const ticketId of ticketIds) {
     if (isStopRequested()) {
@@ -166,8 +242,11 @@ export async function runNextUpTicketLoop(options: {
       runId = response.runId;
     } catch (error) {
       progress.failedCount += 1;
-      progress.lastFailureReason = describeRunStartError(error);
+      const failureReason = describeRunStartError(error);
       progress.currentTicketId = null;
+      if (await tryStopOnConsecutiveFailures(ticketId, failureReason)) {
+        break;
+      }
       onProgress({ ...progress });
       if (await delayUnlessStopped(AGENT_RUN_POLL_INTERVAL_MS, isStopRequested)) {
         endReason = 'stopped';
@@ -199,12 +278,20 @@ export async function runNextUpTicketLoop(options: {
     progress.currentTicketId = null;
     if (outcome === 'succeeded') {
       progress.completedCount += 1;
+      resetConsecutiveFailures();
+      onProgress({ ...progress });
     } else if (outcome === 'cancelled') {
       progress.cancelledCount += 1;
+      // Manual cancellation is not a harness failure signal — leave the streak counter unchanged.
+      onProgress({ ...progress });
     } else {
       progress.failedCount += 1;
+      const failureReason = 'エージェント実行が失敗しました';
+      if (await tryStopOnConsecutiveFailures(ticketId, failureReason)) {
+        break;
+      }
+      onProgress({ ...progress });
     }
-    onProgress({ ...progress });
   }
 
   if (!preserveCurrentTicketId) {

@@ -6,6 +6,7 @@ import type { RunOutcome } from '../../application/ports/agent-runner.js';
 import type { WorktreeProvisioner } from '../../application/ports/worktree-provisioner.js';
 import { buildRunPrompt } from '../../application/runner/build-run-prompt.js';
 import { dispatchRun } from '../../application/runner/dispatch-run.js';
+import { validateProvisionedRunCwd } from '../../application/runner/validate-run-request.js';
 import type { AgentRunnerRegistry } from '../../application/runner/runner-registry.js';
 import type { RunStore, RunStoreRecord } from '../../application/runner/run-store.js';
 import type { RunMode } from '../../domain/run.js';
@@ -312,6 +313,30 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
     }
 
     deps.runStore.updateCwd(runId, provision.worktreePath);
+
+    // Defensive check at the provision→dispatch boundary. Under normal operation
+    // this does not fire; it stops spawn when the provisioner returns a path
+    // outside the managed `.claude/worktrees/<ticketId>` layout.
+    const cwdValidationError = validateProvisionedRunCwd(
+      provision.worktreePath,
+      provision.worktreePath,
+      ticketId,
+    );
+    if (cwdValidationError !== null) {
+      const message = 'run cwd must be the managed worktree for this ticket';
+      deps.runStore.finish(
+        runId,
+        buildDispatchFailureOutcome(
+          runId,
+          ticketId,
+          mode,
+          startedAt,
+          message,
+          deps.now(),
+        ),
+      );
+      return c.json({ error: message }, 500);
+    }
 
     const prompt = buildRunPrompt({ ticketId, ticketTitle: ticket.title });
     const sink = {

@@ -51,7 +51,9 @@ function renderLoopProgressSummary(
           ? '完走'
           : progress.endReason === 'poll_failed'
             ? '中断(状況を確認できず)'
-            : '中断';
+            : progress.endReason === 'consecutive_failures'
+              ? '中断(連続失敗)'
+              : '中断';
       header = `${header} ${endLabel}`;
     }
     parts.push(`${header} | ${completedPart}`);
@@ -245,7 +247,8 @@ export function NextUpView({
                   件を、上から1件ずつ直列でエージェント実行します。Epic
                   セクションのチケットは対象に含まれません。各チケットごとに
                   worktree の作成（またはクリーンな既存 worktree の再利用）と Claude
-                  CLI の起動が走ります。1件が失敗してもループは止まらず次へ進みます。よろしいですか?
+                  CLI の起動が走ります。1件失敗しても次へ進みますが、2件連続で失敗した場合は
+                  バッチを停止し、最後に失敗したチケットへ停止理由のコメントを残します。よろしいですか?
                 </p>
                 <div className="quick-action-confirm-actions">
                   <button

@@ -399,6 +399,190 @@ describe('nextUpRunLoop', () => {
         endReason: null,
       });
     });
+
+    it('stops the batch after two consecutive failures and posts a harness comment', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'failed');
+      });
+
+      const postComment = vi.fn().mockResolvedValue(undefined);
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2', 'ticket-3'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(result.failedCount).toBe(2);
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
+      expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-3');
+      expect(postComment).toHaveBeenCalledTimes(1);
+      expect(postComment).toHaveBeenCalledWith(
+        'ticket-2',
+        expect.stringContaining('[harness]'),
+      );
+      const commentText = postComment.mock.calls[0]?.[1] as string;
+      expect(commentText).toContain('ticket-1');
+      expect(commentText).toContain('ticket-2');
+    });
+
+    it('resets the consecutive failure counter when a success is sandwiched', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        if (ticketId === 'ticket-2') {
+          return makeRunDetail(runId, ticketId, 'succeeded');
+        }
+        return makeRunDetail(runId, ticketId, 'failed');
+      });
+
+      const postComment = vi.fn().mockResolvedValue(undefined);
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2', 'ticket-3'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 3);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('completed');
+      expect(result.failedCount).toBe(2);
+      expect(result.completedCount).toBe(1);
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(3);
+      expect(postComment).not.toHaveBeenCalled();
+    });
+
+    it('counts two consecutive start failures toward the stop threshold', async () => {
+      mockStartTicketRun
+        .mockRejectedValueOnce(new Error('start failed 1'))
+        .mockRejectedValueOnce(new Error('start failed 2'));
+
+      const postComment = vi.fn().mockResolvedValue(undefined);
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2', 'ticket-3'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(result.failedCount).toBe(2);
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
+      expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-3');
+      expect(postComment).toHaveBeenCalledTimes(1);
+    });
+
+    it('counts mixed start failure and terminal failed as consecutive failures', async () => {
+      mockStartTicketRun.mockRejectedValueOnce(new Error('start failed'));
+      mockFetchAgentRun.mockImplementation(async (runId) =>
+        makeRunDetail(runId, 'ticket-2', 'failed'),
+      );
+
+      const postComment = vi.fn().mockResolvedValue(undefined);
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2', 'ticket-3'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(result.failedCount).toBe(2);
+      expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-3');
+    });
+
+    it('does not reset the consecutive failure counter on cancelled outcomes', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        if (ticketId === 'ticket-2') {
+          return makeRunDetail(runId, ticketId, 'cancelled');
+        }
+        return makeRunDetail(runId, ticketId, 'failed');
+      });
+
+      const postComment = vi.fn().mockResolvedValue(undefined);
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2', 'ticket-3'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 3);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(result.failedCount).toBe(2);
+      expect(result.cancelledCount).toBe(1);
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(3);
+      expect(postComment).toHaveBeenCalledTimes(1);
+    });
+
+    it('still stops with consecutive_failures when postComment rejects', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'failed');
+      });
+
+      const postComment = vi.fn().mockRejectedValue(new Error('comment failed'));
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        postComment,
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(result.failedCount).toBe(2);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Failed to post consecutive-failure comment',
+        expect.any(Error),
+      );
+    });
+
+    it('emits independent progress copies on the consecutive_failures path', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'failed');
+      });
+
+      const emissions: NextUpLoopProgress[] = [];
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: (progress) => {
+          emissions.push(progress);
+        },
+        postComment: vi.fn().mockResolvedValue(undefined),
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('consecutive_failures');
+      expect(new Set(emissions).size).toBe(emissions.length);
+      expect(emissions).not.toContain(result);
+
+      const firstEmission = emissions[0]!;
+      firstEmission.failedCount = 999;
+      expect(emissions[1]!.failedCount).not.toBe(999);
+      expect(result.failedCount).toBe(2);
+    });
   });
 
   /**
