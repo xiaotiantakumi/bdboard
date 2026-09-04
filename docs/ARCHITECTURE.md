@@ -161,6 +161,15 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
   worktree 隔離を無効化するので禁止。単体テストで検出する)、(c) 子プロセスへ渡す
   環境変数は allowlist する(`kv_inject` で注入されたシークレットがエージェントの
   `env` から読めないようにするため)。
+  **ただし `--allowedTools` は実効天井の完全な記述ではない**(bdboard-ky0j)。CLI には
+  無害な読み取り専用コマンドの組み込み自動承認があり、実効天井は
+  「`DEFAULT_ALLOWED_TOOLS` ∪ CLI 組み込み集合」になる。後者は非公開でバージョン依存
+  なので、我々の側から列挙も固定もできない。実測(2026-09-04・claude CLI 2.1.233)では
+  組み込み集合に書き込み系・ネットワーク系は含まれなかった(`touch`/`mkdir`/リダイレクト/
+  `ping`/`nc`/`git ls-remote` がいずれも拒否)が、これは観測であって契約ではない。
+  **CLI を上げたら測り直す**。手順と測定上の落とし穴(macOS の `/tmp` が
+  `/private/tmp` へのシンボリックリンクである件を含む)は
+  `src/infrastructure/runners/claude-runner.ts` の `DENIED_TOOLS` 上のコメントにある。
 - **チケット本文は信頼できない入力**: チケットの title/description はトンネル経由の
   書き込み権限があれば変更でき、それが `bd show` 経由でエージェントのコンテキストに入る。
   実行プロンプト(`application/runner/build-run-prompt.ts`)は `bd show` の出力を
