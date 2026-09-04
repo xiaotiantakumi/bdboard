@@ -137,7 +137,11 @@ export async function runNextUpTicketLoop(options: {
     totalCount: ticketIds.length,
     lastFailureReason: null,
   };
-  onProgress(progress);
+  // Every emission is a fresh copy. `progress` below is a single mutable
+  // accumulator that the loop keeps writing to, so handing the object itself to
+  // a subscriber would put a live pointer into React state and let later
+  // iterations rewrite a value the caller already received (bdboard-54be.6).
+  onProgress({ ...progress });
 
   let preserveCurrentTicketId = false;
 
@@ -197,7 +201,10 @@ export async function runNextUpTicketLoop(options: {
     progress.currentTicketId = null;
   }
   onProgress({ ...progress });
-  return progress;
+  // Copy for the same reason as the emissions above. No current caller stores
+  // this value, but it is the exported return type, so leaking the accumulator
+  // here would reintroduce the hazard the moment one does.
+  return { ...progress };
 }
 
 export function useNextUpRunLoopController(): NextUpRunLoopController {
