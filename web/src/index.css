@@ -116,6 +116,8 @@ body {
 }
 
 html {
+  /* Propagates to the viewport (CSS2.1 overflow propagation); clips horizontal
+   * bleed without making body a scroll container. */
   overflow-x: hidden;
 }
 
@@ -127,7 +129,10 @@ body {
   line-height: 1.47;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
-  overflow-x: hidden;
+  /* overflow-x must stay visible (initial): a non-visible overflow-x on body
+   * computes overflow-y to auto, turning body into a non-scrolling scroll
+   * container that breaks position: sticky on .header and .lane-indicator-strip
+   * (bdboard-wdwa). Horizontal clip is handled by html above. */
 }
 
 #root {
@@ -5520,17 +5525,12 @@ body {
   }
 
   /*
-   * position: sticky は bdboard-wdwa の影響で現状発火しない。
-   * body { overflow-x: hidden } が祖先 overflow コンテキストを作り、
-   * .header の sticky もここも無効。375×812 実測: 最大 scrollY=553 時 headerTop=-553。
-   * overflow-x を visible にすると headerTop=0 / stripTop=402 で sticky が効く。
+   * Sticks below the variable-height .header via --lane-indicator-sticky-top
+   * (ResizeObserver in LaneScrollIndicator.tsx). Requires body overflow-x to
+   * stay visible so the viewport remains the scrollport (bdboard-wdwa).
    *
-   * strip が常時画面内に見えるのは sticky の効果ではなく、上の .lane max-height
-   * (calc(100dvh - 260px)) でページ高が ~1365px に縮み、最大 scrollY でも strip の
-   * 自然位置 (~737px) が viewport 内 (top≈184) に留まるため。
-   *
-   * bdboard-wdwa 解消後に初めてこの sticky が有効になり、その時点で
-   * top: var(--lane-indicator-sticky-top) が可変高ヘッダー直下を指す。
+   * kanban-mobile-lanes e2e also asserts strip stays in viewport at all scroll
+   * positions; with sticky active that holds because top tracks header height.
    */
   .lane-indicator-strip {
     display: block;

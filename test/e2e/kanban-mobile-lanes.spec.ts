@@ -7,11 +7,11 @@ import { expect, test, type Page } from '@playwright/test';
  * - 統合ビューの .lane 高さ上限 (CSS を戻すと実際に落ちる: height > 812)
  * - 分割ビューでも同じ上限が効き、既存挙動を壊さない (AC3)
  * - 全縦スクロール位置で .lane-indicator-strip が viewport (0–812) 内に収まる (AC2)
+ * - 全縦スクロール位置で strip が .header の背面に潜らない
+ *   (--lane-indicator-sticky-top が可変高ヘッダー直下を指している)
  *
  * 証明していない:
- * - position: sticky の発火そのもの。bdboard-wdwa により body { overflow-x: hidden }
- *   で sticky は現状無効。このテストは sticky 宣言を消しても通る。strip 可視は
- *   .lane max-height によるページ短縮の副作用で満たされている。
+ * - position: sticky の発火そのもの (header-sticky.spec.ts が担当)
  */
 test.describe('kanban mobile lanes', () => {
   test.use({
@@ -38,12 +38,26 @@ test.describe('kanban mobile lanes', () => {
     ).toBeLessThanOrEqual(viewportHeight);
   }
 
+  function expectStripNotBehindHeader(
+    stripBox: { x: number; y: number; width: number; height: number },
+    headerBox: { x: number; y: number; width: number; height: number },
+    scrollY: number,
+  ) {
+    const headerBottom = headerBox.y + headerBox.height;
+    expect(
+      stripBox.y,
+      `strip top should be at or below header bottom at scrollY=${scrollY} ` +
+        `(stripTop=${stripBox.y}, headerTop=${headerBox.y}, headerBottom=${headerBottom})`,
+    ).toBeGreaterThanOrEqual(headerBottom - 1);
+  }
+
   async function expectStripVisibleAtAllScrollPositions(page: Page) {
     const maxScrollY = await page.evaluate(() =>
       Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
     );
 
     const indicator = page.locator('.lane-indicator-strip');
+    const header = page.locator('.header');
 
     for (let step = 0; step <= SCROLL_CHECK_STEPS; step += 1) {
       const targetScrollY = Math.round((maxScrollY * step) / SCROLL_CHECK_STEPS);
@@ -58,6 +72,13 @@ test.describe('kanban mobile lanes', () => {
         `strip should have a bounding box at scrollY=${scrollY}`,
       ).not.toBeNull();
       expectBoxInsideViewport(indicatorBox!, VIEWPORT_HEIGHT, scrollY);
+
+      const headerBox = await header.boundingBox();
+      expect(
+        headerBox,
+        `header should have a bounding box at scrollY=${scrollY}`,
+      ).not.toBeNull();
+      expectStripNotBehindHeader(indicatorBox!, headerBox!, scrollY);
     }
   }
 

@@ -34,12 +34,8 @@ export function LaneScrollIndicator({
 
   /*
    * --lane-indicator-sticky-top: .header の高さを documentElement に書き込む。
-   * 375×812 実測 ~402px。position: sticky 時の top 値。
-   *
-   * 現状 bdboard-wdwa により body { overflow-x: hidden } で sticky は無効なので
-   * この CSS 変数は表示に一切影響しない。それでも入れてある理由: ヘッダー高は
-   * Tips/バナー等で可変なため CSS だけでは「sticky ヘッダー直下」を表現できず、
-   * wdwa 解消後に strip がヘッダー背面へ潜り込むのを防ぐ保険。
+   * 375×812 実測 ~402px。position: sticky 時の top 値。ヘッダー高は Tips/バナー
+   * 等で可変なため CSS だけでは「sticky ヘッダー直下」を表現できない。
    */
   useEffect(() => {
     if (!enabled) {
