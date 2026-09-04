@@ -90,7 +90,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `ChatSessionRepository` / `ChatMessageRepository` | `SqliteChatSessionRepository` / `SqliteChatMessageRepository` | チャットセッション・メッセージの永続化 |
 | `TunnelPort` | `CloudflaredTunnel` | cloudflared quick tunnel の起動/停止 |
 | `AiQuotaSource` | `NodeAiQuotaSource` | `ai-quota` CLI 経由の残量取得 |
-| `WorktreeProvisioner` | `GitWorktreeProvisioner` | エージェント実行用の隔離 worktree 作成 |
+| `WorktreeProvisioner` | `GitWorktreeProvisioner` | エージェント実行用 worktree の作成と、マージ済み生成物の安全な回収 |
 | `AgentRunConfigPort` | `FileAgentRunConfigStore`(`createFileAgentRunConfigStore`) | エージェント実行設定(リモート許可トグル等)の永続化 |
 | `AgentRunner` | `ClaudeSpawnRunner` / `ClaudeResumeRunner` / `DisabledRunner` 等 | エージェント起動(`POST /api/runs` の1経路のみ。`agent-run-guard` 必須) |
 

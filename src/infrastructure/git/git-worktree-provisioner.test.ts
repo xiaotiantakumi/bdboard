@@ -4,6 +4,11 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
 import {
+  startLiveCwdProcess,
+  type LiveCwdProcess,
+} from '../process/live-cwd-process.test-support.js';
+import { NodeCommandRunner } from '../process/node-command-runner.js';
+import {
   createGitWorktreeProvisioner,
   formatWorktreeBranchMismatchMessage,
   normalizePathForComparison,
@@ -15,6 +20,7 @@ const WORKTREE_PATH = path.join(ROOT, '.claude/worktrees', TICKET_ID);
 const BRANCH_NAME = `bd/${TICKET_ID}`;
 
 interface FakeRunnerOptions {
+  readonly branchListResult?: CommandResult;
   readonly handler?: (
     command: string,
     args: readonly string[],
@@ -30,6 +36,9 @@ function createFakeRunner(options: FakeRunnerOptions = {}): {
   const runner: CommandRunner = {
     async run(command, args) {
       calls.push({ command, args });
+      if (isBranchList(args) && options.branchListResult !== undefined) {
+        return options.branchListResult;
+      }
       if (options.handler) {
         return await options.handler(command, args);
       }
@@ -42,6 +51,10 @@ function createFakeRunner(options: FakeRunnerOptions = {}): {
 
 function isWorktreeList(args: readonly string[]): boolean {
   return args[2] === 'worktree' && args[3] === 'list';
+}
+
+function isBranchList(args: readonly string[]): boolean {
+  return args[2] === 'for-each-ref';
 }
 
 function isFetchOriginMain(args: readonly string[]): boolean {
@@ -65,10 +78,53 @@ function isWorktreeHeadBranch(worktreePath: string, args: readonly string[]): bo
   );
 }
 
+function worktreeListWithManaged(
+  ticketId: string,
+  worktreePath = path.join(ROOT, '.claude/worktrees', ticketId),
+): string {
+  return [
+    `worktree ${ROOT}`,
+    'HEAD abc123',
+    'branch refs/heads/main',
+    '',
+    `worktree ${worktreePath}`,
+    'HEAD abc123',
+    `branch refs/heads/bd/${ticketId}`,
+    '',
+  ].join('\n');
+}
+
+function isMergeCheck(args: readonly string[], branchName: string): boolean {
+  return (
+    args[2] === 'merge-base'
+    && args[3] === '--is-ancestor'
+    && args[4] === `refs/heads/${branchName}`
+    && args[5] === 'origin/main'
+  );
+}
+
+function isWorktreeRemove(args: readonly string[], worktreePath: string): boolean {
+  return args[2] === 'worktree' && args[3] === 'remove' && args[4] === worktreePath;
+}
+
+async function runChecked(
+  runner: NodeCommandRunner,
+  command: string,
+  args: readonly string[],
+): Promise<void> {
+  const result = await runner.run(command, args, { timeoutMs: 10_000 });
+  if (result.exitCode !== 0) {
+    throw new Error(`${command} ${args.join(' ')} failed: ${result.stderr}`);
+  }
+}
+
 describe('createGitWorktreeProvisioner', () => {
   it('creates a new worktree from origin/main when available', async () => {
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
         if (isWorktreeList(args)) {
           return { stdout: `worktree ${ROOT}\n`, stderr: '', exitCode: 0 };
         }
@@ -110,6 +166,441 @@ describe('createGitWorktreeProvisioner', () => {
           && call.args[6] === WORKTREE_PATH,
       ),
     ).toBe(true);
+  });
+
+  it('removes a clean, idle, merged managed worktree and its branch before creating another', async () => {
+    const oldTicketId = 'bdboard-old';
+    const oldWorktreePath = path.join(ROOT, '.claude/worktrees', oldTicketId);
+    const oldBranchName = `bd/${oldTicketId}`;
+    const { runner, calls } = createFakeRunner({
+      handler: async (command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: worktreeListWithManaged(oldTicketId),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (isWorktreeStatus(oldWorktreePath, args) || isMergeCheck(args, oldBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command === 'lsof') {
+          return { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (
+          isWorktreeRemove(args, oldWorktreePath)
+          || (args[2] === 'branch' && args[3] === '-d' && args[4] === oldBranchName)
+          || (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b')
+        ) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      // 本番 (agent-run-routes) は必ず closed チケットの集合を渡す。省略すると
+      // fail-closed で何も消えないので、掃除の経路を踏むテストは本番と同じ形で
+      // 明示的に渡す。
+      cleanupEligibleTicketIds: [oldTicketId],
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.some((call) => isWorktreeRemove(call.args, oldWorktreePath))).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[2] === 'branch'
+          && call.args[3] === '-d'
+          && call.args[4] === oldBranchName,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not remove a merged worktree when lsof reports a process using it', async () => {
+    const oldTicketId = 'bdboard-busy';
+    const oldWorktreePath = path.join(ROOT, '.claude/worktrees', oldTicketId);
+    const oldBranchName = `bd/${oldTicketId}`;
+    const { runner, calls } = createFakeRunner({
+      handler: async (command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: worktreeListWithManaged(oldTicketId),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (isWorktreeStatus(oldWorktreePath, args) || isMergeCheck(args, oldBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command === 'lsof') {
+          return {
+            stdout: `node 123 user cwd DIR 1,1 0 1 ${oldWorktreePath}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    await provisioner.provision({ repoRootPath: ROOT, ticketId: TICKET_ID });
+
+    expect(calls.some((call) => isWorktreeRemove(call.args, oldWorktreePath))).toBe(false);
+  });
+
+  // bdboard-54be.3 の掃除は「merged かつ clean かつ idle」だけでは足りず、
+  // 「そのチケットが closed である」ことも条件にしている。open のチケットの
+  // worktree は、人がまだ作業している可能性があるので消してはいけない。
+  //
+  // この性質は eligibility の集合でしか表現されていないので、集合を渡さない
+  // 場合の既定が「全部対象」だと静かに失われる。実際そうなっていた:
+  // `cleanupEligibleTicketIds` は optional で、undefined は「フィルタ無し」=
+  // 全チケットが削除候補、という fail-open な既定だった。省略した呼び出し側は
+  // 「どの worktree を消してよいか」を考えなかった側なので、そこが一番広い
+  // 権限を得るのは逆である。既定を fail-closed に変えたうえで、ここで固定する。
+  it('does not remove a merged, clean, idle worktree whose ticket is not eligible', async () => {
+    const openTicketId = 'bdboard-open';
+    const openWorktreePath = path.join(ROOT, '.claude/worktrees', openTicketId);
+    const openBranchName = `bd/${openTicketId}`;
+    const { runner, calls } = createFakeRunner({
+      handler: async (command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: worktreeListWithManaged(openTicketId),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        // clean かつ merged かつ idle。つまり eligibility 以外の条件はすべて
+        // 削除side に揃っており、残る唯一の歯止めが eligibility である。
+        if (isWorktreeStatus(openWorktreePath, args) || isMergeCheck(args, openBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command === 'lsof') {
+          return { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (
+          isWorktreeRemove(args, openWorktreePath)
+          || (args[2] === 'branch' && args[3] === '-d' && args[4] === openBranchName)
+          || (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b')
+        ) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    // closed チケットは別に1件あるが、open の方は含まれていない。
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      cleanupEligibleTicketIds: ['bdboard-some-other-closed'],
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.some((call) => isWorktreeRemove(call.args, openWorktreePath))).toBe(false);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[2] === 'branch'
+          && call.args[3] === '-d'
+          && call.args[4] === openBranchName,
+      ),
+    ).toBe(false);
+  });
+
+  // 集合そのものを渡し忘れたときも同じく守られること (fail-closed の既定)。
+  it('protects every managed worktree when no eligibility filter is supplied', async () => {
+    const openTicketId = 'bdboard-unfiltered';
+    const openWorktreePath = path.join(ROOT, '.claude/worktrees', openTicketId);
+    const openBranchName = `bd/${openTicketId}`;
+    const { runner, calls } = createFakeRunner({
+      handler: async (command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: worktreeListWithManaged(openTicketId),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (isWorktreeStatus(openWorktreePath, args) || isMergeCheck(args, openBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command === 'lsof') {
+          return { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (
+          isWorktreeRemove(args, openWorktreePath)
+          || (args[2] === 'branch' && args[3] === '-d' && args[4] === openBranchName)
+          || (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b')
+        ) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.some((call) => isWorktreeRemove(call.args, openWorktreePath))).toBe(false);
+  });
+
+  it('fails closed and does not remove a merged worktree when lsof fails', async () => {
+    const oldTicketId = 'bdboard-lsof-failure';
+    const oldWorktreePath = path.join(ROOT, '.claude/worktrees', oldTicketId);
+    const oldBranchName = `bd/${oldTicketId}`;
+    const warnings: string[] = [];
+    const { runner, calls } = createFakeRunner({
+      handler: async (command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: worktreeListWithManaged(oldTicketId),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (isWorktreeStatus(oldWorktreePath, args) || isMergeCheck(args, oldBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command === 'lsof') {
+          return {
+            stdout: '',
+            stderr: 'spawn lsof ENOENT',
+            exitCode: -1,
+            failureKind: 'spawn-failed',
+          };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({
+      commandRunner: runner,
+      logWarn: (message) => warnings.push(message),
+    });
+    await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      cleanupEligibleTicketIds: [oldTicketId],
+    });
+
+    expect(calls.some((call) => isWorktreeRemove(call.args, oldWorktreePath))).toBe(false);
+    expect(warnings).toEqual([
+      `[agent-run cleanup] lsof failed for ${oldWorktreePath}; leaving it untouched`,
+    ]);
+  });
+
+  it('refuses to create beyond the managed worktree cap when retained work cannot be cleaned', async () => {
+    const oldTicketId = 'bdboard-unmerged';
+    const oldWorktreePath = path.join(ROOT, '.claude/worktrees', oldTicketId);
+    const oldBranchName = `bd/${oldTicketId}`;
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: worktreeListWithManaged(oldTicketId),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (isWorktreeStatus(oldWorktreePath, args)) {
+          return { stdout: ' M src/investigation.ts\n', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: oldBranchName, stderr: '', exitCode: 0 };
+        }
+        if (isMergeCheck(args, oldBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 1 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({
+      commandRunner: runner,
+      maxManagedWorktrees: 1,
+    });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+    });
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'worktree-limit-reached',
+      message:
+        'agent-run worktree limit reached (1); finish, merge, or manually remove an existing worktree before retrying',
+    });
+    expect(calls.some((call) => call.args[2] === 'worktree' && call.args[3] === 'add')).toBe(
+      false,
+    );
+  });
+
+  it('counts an unmerged branch-only leftover toward the managed worktree cap', async () => {
+    const oldBranchName = 'bd/bdboard-branch-only';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (isWorktreeList(args)) {
+          return {
+            stdout: [
+              `worktree ${ROOT}`,
+              'HEAD abc123',
+              'branch refs/heads/main',
+              '',
+            ].join('\n'),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (isFetchOriginMain(args) || isRevParseOriginMain(args)) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (args[2] === 'for-each-ref') {
+          return { stdout: `${oldBranchName}\n`, stderr: '', exitCode: 0 };
+        }
+        if (isMergeCheck(args, oldBranchName)) {
+          return { stdout: '', stderr: '', exitCode: 1 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({
+      commandRunner: runner,
+      maxManagedWorktrees: 1,
+    });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+    });
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'worktree-limit-reached',
+      message:
+        'agent-run worktree limit reached (1); finish, merge, or manually remove an existing worktree before retrying',
+    });
+    expect(calls.some((call) => call.args[2] === 'worktree' && call.args[3] === 'add')).toBe(
+      false,
+    );
+  });
+
+  it('preserves a disposable merged worktree when a real process has that cwd', async () => {
+    const runner = new NodeCommandRunner();
+    const lsofProbe = await runner.run('lsof', ['-v'], { timeoutMs: 5_000 });
+    if (lsofProbe.failureKind === 'spawn-failed') {
+      return;
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-lifecycle-'));
+    const repoRoot = path.join(tmpDir, 'repo');
+    const originPath = path.join(tmpDir, 'origin.git');
+    const oldTicketId = 'bdboard-live';
+    const oldWorktreePath = path.join(repoRoot, '.claude', 'worktrees', oldTicketId);
+    const newTicketId = 'bdboard-next';
+    let child: LiveCwdProcess | undefined;
+
+    try {
+      fs.mkdirSync(repoRoot, { recursive: true });
+      await runChecked(runner, 'git', ['init', '--initial-branch=main', repoRoot]);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'config', 'user.name', 'bdboard-test']);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+      fs.writeFileSync(path.join(repoRoot, 'README.md'), 'fixture\n');
+      await runChecked(runner, 'git', ['-C', repoRoot, 'add', 'README.md']);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'commit', '-m', 'fixture']);
+      await runChecked(runner, 'git', ['init', '--bare', originPath]);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'remote', 'add', 'origin', originPath]);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'push', '-u', 'origin', 'main']);
+      await runChecked(runner, 'git', [
+        '-C',
+        repoRoot,
+        'worktree',
+        'add',
+        '-b',
+        `bd/${oldTicketId}`,
+        oldWorktreePath,
+        'origin/main',
+      ]);
+
+      child = await startLiveCwdProcess(oldWorktreePath);
+
+      const busyProbe = await runner.run(
+        'lsof',
+        ['-a', '-d', 'cwd', '+D', oldWorktreePath],
+        { timeoutMs: 5_000 },
+      );
+      expect(busyProbe.stdout).toContain(String(child.pid));
+
+      const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+      const outcome = await provisioner.provision({
+        repoRootPath: repoRoot,
+        ticketId: newTicketId,
+      });
+
+      expect(outcome.ok).toBe(true);
+      expect(fs.existsSync(oldWorktreePath)).toBe(true);
+      const oldBranch = await runner.run(
+        'git',
+        ['-C', repoRoot, 'rev-parse', '--verify', `bd/${oldTicketId}`],
+        { timeoutMs: 5_000 },
+      );
+      expect(oldBranch.exitCode).toBe(0);
+    } finally {
+      if (child !== undefined) {
+        await child.stop();
+      }
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 
   it('reuses a clean existing worktree at the expected path', async () => {
@@ -260,6 +751,9 @@ describe('createGitWorktreeProvisioner', () => {
   it('falls back to worktree add without -b when branch already exists', async () => {
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
         if (isWorktreeList(args)) {
           return { stdout: `worktree ${ROOT}\n`, stderr: '', exitCode: 0 };
         }
@@ -367,6 +861,9 @@ describe('createGitWorktreeProvisioner', () => {
   it('continues worktree creation when fetch fails', async () => {
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
         if (isWorktreeList(args)) {
           return { stdout: `worktree ${ROOT}\n`, stderr: '', exitCode: 0 };
         }
@@ -439,6 +936,9 @@ describe('createGitWorktreeProvisioner', () => {
   it('accepts ticket ids that pass the worktree allowlist', async () => {
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {
+        if (args[2] === 'for-each-ref') {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
         if (isWorktreeList(args)) {
           return { stdout: `worktree ${ROOT}\n`, stderr: '', exitCode: 0 };
         }
