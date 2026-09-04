@@ -1,0 +1,305 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentRunDetailDto } from '../api';
+import { fetchAgentRun, startTicketRun } from '../api';
+import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
+import {
+  NEXT_UP_LOOP_POLL_MAX_DELAY_MS,
+  NEXT_UP_LOOP_POLL_MAX_FAILURES,
+  nextUpLoopPollDelayMs,
+  runNextUpTicketLoop,
+  type NextUpLoopProgress,
+  waitForAgentRunTerminal,
+} from './nextUpRunLoop';
+
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>();
+  return {
+    ...actual,
+    startTicketRun: vi.fn(),
+    fetchAgentRun: vi.fn(),
+  };
+});
+
+const mockFetchAgentRun = vi.mocked(fetchAgentRun);
+const mockStartTicketRun = vi.mocked(startTicketRun);
+
+function makeRunDetail(
+  runId: string,
+  ticketId: string,
+  status: AgentRunDetailDto['status'],
+): AgentRunDetailDto {
+  return {
+    id: runId,
+    ticketId,
+    runner: 'claude',
+    mode: 'spawn',
+    status,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    cwd: `/tmp/worktrees/${ticketId}`,
+    log: '',
+  };
+}
+
+async function advanceAfterPollFailure(
+  consecutiveFailures: number,
+): Promise<void> {
+  await Promise.resolve();
+  await vi.advanceTimersByTimeAsync(nextUpLoopPollDelayMs(consecutiveFailures));
+}
+
+async function advanceThroughPollFailures(
+  failureCount: number,
+): Promise<void> {
+  for (let failures = 1; failures <= failureCount; failures += 1) {
+    await advanceAfterPollFailure(failures);
+  }
+}
+
+async function finishLoopWithTimers(
+  loopPromise: Promise<unknown>,
+  maxTicks = NEXT_UP_LOOP_POLL_MAX_FAILURES * 4,
+): Promise<void> {
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    const raced = await Promise.race([
+      loopPromise.then(() => 'done' as const),
+      vi
+        .advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS)
+        .then(() => 'tick' as const),
+    ]);
+    if (raced === 'done') {
+      return;
+    }
+  }
+  throw new Error('loop did not finish within timer budget');
+}
+
+describe('nextUpRunLoop', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    mockStartTicketRun.mockImplementation(async (ticketId) => ({
+      runId: `run-${ticketId}`,
+      ticketId,
+      status: 'pending',
+      worktreePath: `/tmp/worktrees/${ticketId}`,
+      branchName: `bd/${ticketId}`,
+      reused: false,
+    }));
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  describe('waitForAgentRunTerminal', () => {
+    it('resets the failure counter after N-1 failures then a successful poll', async () => {
+      const pollError = new Error('transient poll error');
+      let callCount = 0;
+      const maxFailures = NEXT_UP_LOOP_POLL_MAX_FAILURES;
+
+      mockFetchAgentRun.mockImplementation(async () => {
+        callCount += 1;
+        if (callCount <= maxFailures - 1) {
+          throw pollError;
+        }
+        if (callCount === maxFailures) {
+          return makeRunDetail('run-1', 'ticket-1', 'running');
+        }
+        if (callCount <= maxFailures + (maxFailures - 1)) {
+          throw pollError;
+        }
+        return makeRunDetail('run-1', 'ticket-1', 'succeeded');
+      });
+
+      const resultPromise = waitForAgentRunTerminal('run-1', () => false);
+      await Promise.resolve();
+      await advanceThroughPollFailures(maxFailures - 1);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(nextUpLoopPollDelayMs(0));
+      await advanceThroughPollFailures(maxFailures - 1);
+      await Promise.resolve();
+
+      const result = await resultPromise;
+      expect(result.outcome).toBe('succeeded');
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(
+        maxFailures + (maxFailures - 1) + 1,
+      );
+    });
+
+    it('returns poll_failed after N consecutive failures and not before', async () => {
+      const pollError = new Error('persistent poll error');
+      let callCount = 0;
+      let reachedNMinus1: (() => void) | undefined;
+      const atNMinus1 = new Promise<void>((resolve) => {
+        reachedNMinus1 = resolve;
+      });
+
+      mockFetchAgentRun.mockImplementation(async () => {
+        callCount += 1;
+        if (callCount === NEXT_UP_LOOP_POLL_MAX_FAILURES - 1) {
+          reachedNMinus1!();
+        }
+        throw pollError;
+      });
+
+      const resultPromise = waitForAgentRunTerminal('run-1', () => false);
+
+      while (callCount < NEXT_UP_LOOP_POLL_MAX_FAILURES - 1) {
+        await vi.advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS);
+        await Promise.resolve();
+      }
+
+      await atNMinus1;
+      let settled = false;
+      void resultPromise.then(() => {
+        settled = true;
+      });
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(callCount).toBe(NEXT_UP_LOOP_POLL_MAX_FAILURES - 1);
+
+      await vi.advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS);
+      await Promise.resolve();
+
+      const result = await resultPromise;
+      expect(result.outcome).toBe('poll_failed');
+      expect(result.lastPollError).toBe(pollError);
+      expect(callCount).toBe(NEXT_UP_LOOP_POLL_MAX_FAILURES);
+    });
+
+    it('returns stopped when stop is requested during the poll delay', async () => {
+      let stopRequested = false;
+      mockFetchAgentRun.mockResolvedValue(
+        makeRunDetail('run-1', 'ticket-1', 'running'),
+      );
+
+      const resultPromise = waitForAgentRunTerminal('run-1', () => stopRequested);
+      await Promise.resolve();
+      expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
+
+      stopRequested = true;
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+
+      const result = await resultPromise;
+      expect(result.outcome).toBe('stopped');
+    });
+  });
+
+  describe('runNextUpTicketLoop', () => {
+    it('does not start the next ticket when polling fails', async () => {
+      const pollError = new Error('persistent poll error');
+      mockFetchAgentRun.mockRejectedValue(pollError);
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+      });
+
+      await finishLoopWithTimers(loopPromise);
+      const result = (await loopPromise) as NextUpLoopProgress;
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+      expect(result.unknownCount).toBe(1);
+      expect(result.lastFailureReason).toMatch(
+        /実行状況を確認できませんでした/,
+      );
+      expect(result.lastFailureReason).toContain('persistent poll error');
+    });
+
+    it('keeps currentTicketId on poll_failed', async () => {
+      mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+      const progressSnapshots: Array<{
+        currentTicketId: string | null;
+      }> = [];
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: (progress) => {
+          progressSnapshots.push({
+            currentTicketId: progress.currentTicketId,
+          });
+        },
+      });
+
+      await finishLoopWithTimers(loopPromise);
+      await loopPromise;
+      const lastProgress = progressSnapshots.at(-1);
+      expect(lastProgress?.currentTicketId).toBe('ticket-1');
+    });
+
+    it('keeps currentTicketId on stopped', async () => {
+      let stopRequested = false;
+      mockFetchAgentRun.mockResolvedValue(
+        makeRunDetail('run-ticket-1', 'ticket-1', 'running'),
+      );
+
+      const progressSnapshots: Array<{
+        currentTicketId: string | null;
+      }> = [];
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => stopRequested,
+        onProgress: (progress) => {
+          progressSnapshots.push({
+            currentTicketId: progress.currentTicketId,
+          });
+        },
+      });
+
+      await Promise.resolve();
+      stopRequested = true;
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+
+      await loopPromise;
+      const lastProgress = progressSnapshots.at(-1);
+      expect(lastProgress?.currentTicketId).toBe('ticket-1');
+    });
+
+    it('clears currentTicketId after a fully successful batch', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'succeeded');
+      });
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
+      expect(result.completedCount).toBe(2);
+      expect(result.currentTicketId).toBeNull();
+    });
+  });
+
+  describe('nextUpLoopPollDelayMs', () => {
+    it('is monotonically non-decreasing from 0 through N', () => {
+      for (let i = 0; i < NEXT_UP_LOOP_POLL_MAX_FAILURES; i += 1) {
+        expect(nextUpLoopPollDelayMs(i)).toBeLessThanOrEqual(
+          nextUpLoopPollDelayMs(i + 1),
+        );
+      }
+    });
+
+    it('caps at NEXT_UP_LOOP_POLL_MAX_DELAY_MS for large inputs', () => {
+      expect(
+        nextUpLoopPollDelayMs(NEXT_UP_LOOP_POLL_MAX_FAILURES + 100),
+      ).toBe(NEXT_UP_LOOP_POLL_MAX_DELAY_MS);
+    });
+
+    it('returns AGENT_RUN_POLL_INTERVAL_MS at zero consecutive failures', () => {
+      expect(nextUpLoopPollDelayMs(0)).toBe(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+  });
+});
