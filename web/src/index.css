@@ -2232,6 +2232,11 @@ body {
   min-height: auto;
 }
 
+.board-section .lanes-scroll-region {
+  flex: none;
+  min-height: auto;
+}
+
 .board-section .lane {
   max-height: calc(100vh - 220px);
 }
@@ -2335,6 +2340,78 @@ body {
   color: var(--color-text-secondary);
 }
 
+.lanes-scroll-region {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.lane-indicator-strip {
+  display: none;
+}
+
+.lane-indicator-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lane-indicator-item-wrap {
+  flex-shrink: 0;
+}
+
+.lane-indicator-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lane-indicator-item:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
+}
+
+.lane-indicator-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lane-indicator-item-current {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-elevated));
+  color: var(--color-accent);
+}
+
+.lane-indicator-count {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  background: var(--badge-neutral-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.lane-indicator-item-current .lane-indicator-count {
+  color: inherit;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
 .lanes-row {
   display: flex;
   gap: 14px;
@@ -2342,6 +2419,11 @@ body {
   padding-bottom: 10px;
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
+  flex: 1;
+  min-height: 0;
+}
+
+.main > .lanes-scroll-region {
   flex: 1;
   min-height: 0;
 }
@@ -5265,18 +5347,28 @@ body {
   }
 
   .lane {
-    min-width: 82vw;
-    max-width: 82vw;
+    min-width: min(86vw, 320px);
+    max-width: min(86vw, 320px);
   }
 
   .board-section .lane {
     max-height: calc(100vh - 260px);
   }
 
+  .lanes-scroll-region {
+    margin: 0 -14px;
+  }
+
+  .lane-indicator-strip {
+    display: block;
+    margin: 0 0 10px;
+    padding: 0 14px;
+  }
+
   .lanes-row {
     gap: 10px;
-    margin: 0 -14px;
     padding: 0 14px 10px;
+    scroll-snap-type: x mandatory;
   }
 
   .detail-panel {
@@ -5386,9 +5478,16 @@ body {
     padding: 12px;
   }
 
-  .lane {
-    min-width: 86vw;
-    max-width: 86vw;
+  .lanes-scroll-region {
+    margin: 0 -12px;
+  }
+
+  .lane-indicator-strip {
+    padding: 0 12px;
+  }
+
+  .lanes-row {
+    padding: 0 12px 10px;
   }
 
   .card {
