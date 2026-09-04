@@ -5878,6 +5878,115 @@ body {
   }
 }
 
+/* --- bdboard-h4xs.5: モバイルのヘッダー圧縮 ---
+   375px 幅では @media (max-width: 480px) の .header-group{width:100%} が
+   StatusPill / ProjectPicker / OverflowMenu / view-switcher など全ヘッダーコントロールを
+   1個ずつ専用行に積み、header が 402px を占有していた。sticky が効くようになった
+   (bdboard-wdwa) ので、初期表示だけでなくスクロール中も恒久占有 (446px = 55%) になる。
+   flex の折り返しに任せず grid で行を決め打ちするのは、折り返しだと最後の子 (⋯メニュー)
+   だけが孤立行の左端に落ち、絶対配置のポップオーバーが画面外に描画されて開けなくなる
+   既知の失敗 (上記 .global-bar 1行固定コメント参照) を再発させうるため。grid なら配置が
+   決定的。.tsx を変えないのは PC 幅 (>=701px) を定義上不変に保つため。 */
+@media (max-width: 700px) {
+  .header {
+    /* 行間の gap を 10px -> 8px。行数が減るので体感は変わらない。 */
+    gap: 8px;
+  }
+
+  /* GlobalBar を 2 行の grid に固定する。
+     1行目: タイトル / 検索 / 状態ピル / プロジェクト選択(可変幅) / ⋯
+     2行目: ビュー切替 (既存の横スクロール可能な .toggle-group がはみ出しを吸収) */
+  .global-bar {
+    display: grid;
+    grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .global-bar > .header-title {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .global-bar > .btn-search {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .global-bar > .status-pill-widget {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  .global-bar > .project-picker {
+    grid-row: 1;
+    grid-column: 4;
+    min-width: 0;
+  }
+
+  .global-bar > .overflow-menu {
+    grid-row: 1;
+    grid-column: 5;
+  }
+
+  .global-bar > .view-switcher {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  /* <=480px の .header-group{width:100%} を打ち消す。これが残ると grid トラックを
+     はみ出し、ツールバー側でも各コントロールが専用行に戻ってしまう。
+     view-switcher は grid-column: 1 / -1 + justify-self:stretch で全幅になるので
+     width:100% は不要。詳細度 (0,2,0) > (0,1,0) なのでソース順に依存せず勝つ。 */
+  .global-bar > .header-group,
+  .view-toolbar .header-group {
+    width: auto;
+  }
+
+  /* 210px 固定のままだと grid の可変トラックからはみ出す。ラベル側に
+     text-overflow: ellipsis が既にあるので、幅だけトラックに合わせる。
+     同詳細度 (0,1,0) だと後ろにある素の .project-picker-button { min-height:30px;
+     width:210px } (6131行付近) が勝つため、.header プレフィックスで (0,2,0) に底上げする。 */
+  .header .project-picker-button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  /* 1行目の高さは .btn-search の min-height:44px で決まるので、他のコントロールを
+     44px にしても行は伸びない。タップ領域が実質ただで 44px に揃う (AC3)。 */
+  .status-pill,
+  .overflow-menu-button {
+    min-height: 44px;
+  }
+
+  /* 素の .overflow-menu-button { min-width:36px } (431行) は本ブロックより前なので
+     詳細度 (0,1,0) のまま min-width:44px が勝つ。AC3 の幅 44px 要件を満たす。 */
+  .overflow-menu-button {
+    min-width: 44px;
+  }
+
+  /* ツールバーは左右グループの箱を畳んで、6個のコントロールを1つの折り返し列に流す。
+     箱のまま (左グループ2行 + 右グループ1行) だと 124px 使うが、1列に流すと2行に収まる。
+     display: contents は箱だけ消して子は残すので、DOM も role も変わらない。 */
+  .view-toolbar {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .view-toolbar-left,
+  .view-toolbar-right {
+    display: contents;
+  }
+
+  /* セッション件数は状態ピルのポップオーバー内の
+     `.status-pill-session-btn` (同じ onOpenSessionList / 同じラベル) と完全な重複。
+     縦幅が最も貴重な画面では常設せず、状態ピル経由に一本化する
+     (AC2「畳んだ先からでよい」)。docs/help-content.json の sessions 節も追従済み。 */
+  .view-toolbar .meta-text-btn {
+    display: none;
+  }
+}
+
 /* --- bdboard-3tw.68: board keyboard navigation --- */
 .card:focus-visible {
   outline: 2px solid var(--color-accent);

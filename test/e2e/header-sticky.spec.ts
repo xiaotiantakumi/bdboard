@@ -10,6 +10,15 @@ import { expect, test, type Page } from '@playwright/test';
  *
  * html { scroll-padding-top: var(--header-height, 0px) } keeps keyboard-focused cards below
  * the sticky header when scrollIntoView({ block: 'nearest' }) runs.
+ *
+ * scroll-padding-top test setup: lanes are max-height capped and scroll internally, so the
+ * board fits in the viewport. A top spacer alone lets j reach scrollY > 0, but at max scroll
+ * the whole board can sit on-screen — then upward k only moves focus and never scrolls the
+ * document unless the focused card's top falls below scroll-padding-top (--header-height).
+ * That made upwardScrollCount depend on header height (failed when header shrank 402→193px,
+ * bdboard-h4xs.5). A bottom spacer plus explicit scrollTo(maxScrollY) before phase 2 pushes
+ * the board above the viewport so k must scroll the document up, exercising scroll-padding-top
+ * regardless of --header-height.
  */
 
 const SCROLL_PROBE_Y = 400;
@@ -187,17 +196,26 @@ test.describe('scroll-padding-top', () => {
     await expect(page.locator('.card').first()).toBeVisible({ timeout: 15_000 });
 
     // Fixture lanes are height-capped on mobile; page scroll may never occur during j/k
-    // navigation alone. Insert a top spacer so the board starts below the fold and
-    // scrollIntoView must scroll the document (exercising html scroll-padding-top).
+    // navigation alone. Top spacer: board starts below the fold so j can reach scrollY > 0.
+    // Bottom spacer: room to scroll past the board so we can push it above the viewport
+    // before phase 2 — otherwise upward k may never scroll the document (depends on
+    // --header-height vs focused card top; see file JSDoc).
     await page.evaluate(() => {
       const app = document.querySelector('.app');
       if (!app) throw new Error('.app not found');
-      const spacer = document.createElement('div');
-      spacer.setAttribute('data-testid', 'e2e-scroll-padding-spacer');
-      spacer.style.height = '120vh';
-      spacer.style.width = '100%';
-      spacer.style.flexShrink = '0';
-      app.insertBefore(spacer, app.firstChild);
+      const topSpacer = document.createElement('div');
+      topSpacer.setAttribute('data-testid', 'e2e-scroll-padding-spacer');
+      topSpacer.style.height = '120vh';
+      topSpacer.style.width = '100%';
+      topSpacer.style.flexShrink = '0';
+      app.insertBefore(topSpacer, app.firstChild);
+
+      const bottomSpacer = document.createElement('div');
+      bottomSpacer.setAttribute('data-testid', 'e2e-scroll-padding-bottom-spacer');
+      bottomSpacer.style.height = '120vh';
+      bottomSpacer.style.width = '100%';
+      bottomSpacer.style.flexShrink = '0';
+      app.appendChild(bottomSpacer);
     });
 
     const maxScrollY = await page.evaluate(() =>
@@ -289,7 +307,9 @@ test.describe('scroll-padding-top', () => {
         '(otherwise sticky-header overlap cannot be exercised)',
     ).toBe(true);
 
-    // Phase 2: move up — scroll-padding-top matters when scrollIntoView aligns to the top edge.
+    // Phase 2: scroll to maxScrollY first so the board sits above the viewport; then k must
+    // scroll the document up (scrollIntoView + scroll-padding-top), independent of header height.
+    await page.evaluate((y) => window.scrollTo(0, y), maxScrollY);
     let upwardScrollCount = 0;
     let previousScrollY = await page.evaluate(() => window.scrollY);
     const upMoveCount = 10;
