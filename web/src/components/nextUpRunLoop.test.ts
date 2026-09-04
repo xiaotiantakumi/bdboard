@@ -284,6 +284,26 @@ describe('nextUpRunLoop', () => {
       expect(result.currentTicketId).toBeNull();
     });
 
+    it('sets endReason to stopped when stop is requested during delay after start failure', async () => {
+      let stopRequested = false;
+      mockStartTicketRun.mockRejectedValueOnce(new Error('start failed'));
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => stopRequested,
+        onProgress: () => {},
+      });
+
+      await Promise.resolve();
+      stopRequested = true;
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+
+      const result = await loopPromise;
+      expect(result.failedCount).toBe(1);
+      expect(result.endReason).toBe('stopped');
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
     it('sets endReason to stopped when stop is requested', async () => {
       let stopRequested = false;
       mockFetchAgentRun.mockImplementation(async (runId) => {

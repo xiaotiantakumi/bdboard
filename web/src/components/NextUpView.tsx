@@ -67,12 +67,18 @@ function renderLoopProgressSummary(
     parts.push(`不明 ${progress.unknownCount}`);
   }
   if (options?.showEndReason) {
+    let runningCount = 0;
+    if (progress.endReason === 'stopped' && progress.currentTicketId !== null) {
+      runningCount = 1;
+      parts.push(`実行中 ${runningCount}`);
+    }
     const remaining =
       progress.totalCount -
       (progress.completedCount +
         progress.failedCount +
         progress.cancelledCount +
-        progress.unknownCount);
+        progress.unknownCount +
+        runningCount);
     if (remaining > 0) {
       parts.push(`未実行 ${remaining}`);
     }

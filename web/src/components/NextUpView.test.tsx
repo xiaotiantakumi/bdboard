@@ -6,7 +6,11 @@ import type { AgentRunDetailDto, BoardCardDto, BoardDto } from '../api';
 import { ApiError, fetchAgentRun, startTicketRun } from '../api';
 import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
 import { NextUpView, type NextUpViewProps } from './NextUpView';
-import { useNextUpRunLoopController } from './nextUpRunLoop';
+import {
+  NEXT_UP_LOOP_POLL_MAX_DELAY_MS,
+  NEXT_UP_LOOP_POLL_MAX_FAILURES,
+  useNextUpRunLoopController,
+} from './nextUpRunLoop';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
 vi.mock('../api', async (importOriginal) => {
@@ -311,6 +315,18 @@ describe('NextUpView', () => {
   });
 });
 
+async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
+  for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS);
+    });
+    if (screen.queryByRole('button', { name: '▶ 一括実行' })) {
+      return;
+    }
+  }
+  throw new Error('batch run did not finish within timer budget');
+}
+
 describe('NextUpView batch run loop', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
@@ -435,7 +451,10 @@ describe('NextUpView batch run loop', () => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/前回の実行: 完走 \| 完了 1\/2 \| 失敗 1/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/前回の実行: 完走 \| 完了 1\/2 \| 失敗 1$/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/未実行/)).toBeNull();
   });
 
   it('returns to idle and stops polling when stop is pressed while a run never reaches terminal', async () => {
@@ -744,7 +763,10 @@ describe('NextUpView batch run loop', () => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/前回の実行: 完走 \| 完了 1\/2 \| 失敗 0 \| 中止 1/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/前回の実行: 完走 \| 完了 1\/2 \| 失敗 0 \| 中止 1$/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/未実行/)).toBeNull();
   });
 
   // App 相当の controller owner 自体をアンマウントして世代を切り替えた場合の remount UX。
@@ -926,7 +948,36 @@ describe('NextUpView batch run loop', () => {
     });
 
     expect(
-      screen.getByText(/前回の実行: 中断 \| 完了 1\/20 \| 失敗 0 \| 未実行 19/),
+      screen.getByText(
+        /前回の実行: 中断 \| 完了 1\/20 \| 失敗 0 \| 実行中 1 \| 未実行 18/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows poll_failed summary with unknown count and remaining when polling fails persistently', async () => {
+    const cards = Array.from({ length: 20 }, (_, index) =>
+      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+    );
+    renderNextUpView(makeBoard(cards), { limit: 20 });
+
+    mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    await finishBatchRunAfterPersistentPollFailures();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(
+        /前回の実行: 中断\(状況を確認できず\) \| 完了 0\/20 \| 失敗 0 \| 不明 1 \| 未実行 19/,
+      ),
     ).toBeInTheDocument();
   });
 
