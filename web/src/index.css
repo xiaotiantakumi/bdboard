@@ -6721,3 +6721,39 @@ body {
 .agent-run-history-detail {
   margin-top: 8px;
 }
+
+/* タッチデバイス向けフォーム要素の font-size 下限（iOS Safari オートズーム対策）。
+   iOS Safari は select も含む 16px 未満のフォーム要素でフォーカス時に自動ズームする
+   （index.css:5638 の .chat-project-select が同じ判断の先行例）。
+   maximum-scale / user-scalable=no はピンチズームを殺すので使わない。
+   このブロックは index.css の末尾に置くこと。同詳細度(0,1,1)の既存ルールに
+   ソース順で勝つ必要があるため、後ろに規則を追加しないこと。
+   受入基準は <=480px 相当だったが、横向き landscape でも効くよう
+   (hover: none) and (pointer: coarse) に変更（議長裁定）。
+   @media (max-width: 700px) 内の .chat-project-select / .chat-input の 16px 指定は
+   これと冗長になるが、別 PR で触らない。 */
+@media (hover: none) and (pointer: coarse) {
+  /* :root プレフィックスは詳細度を 0,1,0 分だけ底上げするためのもの（選択対象は変わらない）。
+     これが無いと .comment-form-input（0,1,0）や .hygiene-repair-priority select（0,1,1）など
+     既存ルールに要素セレクタ（0,0,1）が負けて font-size が効かない。
+     以前は textarea[class] / select[class] で凌いでいたが、.hygiene-repair-priority select のように
+     クラス無しの要素がクラス付き祖先の子孫セレクタで小さくされているケースを取りこぼしたため
+     :root 方式に変更した（実測で 13px のまま残っていた）。 */
+  :root input[type='text'],
+  :root input[type='search'],
+  :root input[type='number'],
+  :root input[type='password'],
+  :root input[type='email'],
+  :root input[type='url'],
+  :root input[type='tel'],
+  :root input[type='date'],
+  :root input[type='datetime-local'],
+  :root input[type='time'],
+  :root input[type='month'],
+  :root input[type='week'],
+  :root input:not([type]),
+  :root textarea,
+  :root select {
+    font-size: 16px;
+  }
+}
