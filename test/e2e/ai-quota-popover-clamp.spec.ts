@@ -24,6 +24,13 @@ interface AiQuotaFixture {
   providers: AiQuotaFixtureProvider[];
 }
 
+interface AiQuotaErrorFixture {
+  state: 'error';
+  message: string;
+}
+
+type AiQuotaRouteResponse = AiQuotaFixture | AiQuotaErrorFixture;
+
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const BOUNDS_EPSILON_PX = 0.5;
@@ -100,6 +107,11 @@ const AI_QUOTA_FIXTURE: AiQuotaFixture = {
   ],
 };
 
+const AI_QUOTA_ERROR_FIXTURE: AiQuotaErrorFixture = {
+  state: 'error',
+  message: 'quota fetch failed',
+};
+
 async function installAiQuotaRoute(page: Page): Promise<void> {
   await page.route('**/api/ai-quota', async (route) => {
     await route.fulfill({
@@ -108,6 +120,27 @@ async function installAiQuotaRoute(page: Page): Promise<void> {
       body: JSON.stringify(AI_QUOTA_FIXTURE),
     });
   });
+}
+
+async function installSwitchableAiQuotaRoute(
+  page: Page,
+  getResponse: () => AiQuotaRouteResponse,
+): Promise<void> {
+  await page.route('**/api/ai-quota', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(getResponse()),
+    });
+  });
+}
+
+// AiQuotaWidget の refetchInterval は5分。offline→online トグルでは再取得できない:
+// QueryClient が staleTime: 30_000 を持つ (web/src/main.tsx) ため refetchOnReconnect が
+// fresh なクエリを再取得しないから。refetchInterval は staleTime と無関係に発火するので、
+// 時計を1周期ぶん進めるのが唯一の確実な再フェッチ手段。
+async function advanceToNextQuotaPoll(page: Page): Promise<void> {
+  await page.clock.fastForward('05:10');
 }
 
 async function openAiQuotaPopover(page: Page): Promise<void> {
@@ -182,11 +215,96 @@ test.describe('ai quota popover viewport clamp — mobile', () => {
       ).toBe(true);
     }
 
+    // bodyScrollWidth only grows for rightward overflow; negative left (off-screen left) does not increase it — left-edge clamp is covered by popover/label asserts above.
     expect(
       metrics.bodyScrollWidth <= metrics.innerWidth + metrics.epsilon,
       `page must not overflow horizontally ` +
         `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.innerWidth})`,
     ).toBe(true);
+  });
+
+  // 修正前は復帰後 left=-89.48 / --popover-shift-x 未設定 に戻っていた
+  // （依存配列が [open] だけで、新しい DOM ノードに layout effect が再実行されないため）。
+  test('375x812: popover stays clamped after fetch error recovery while open', async ({ page }) => {
+    let response: AiQuotaRouteResponse = AI_QUOTA_FIXTURE;
+    // clock.install() は必ず goto の前。install 後でないと refetchInterval のタイマーを掴めない。
+    await page.clock.install();
+    await installSwitchableAiQuotaRoute(page, () => response);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    await openAiQuotaPopover(page);
+
+    const initialMetrics = await page.evaluate((epsilon) => {
+      const popover = document.querySelector('.ai-quota-popover');
+      const popoverRect = popover?.getBoundingClientRect();
+      return {
+        left: popoverRect?.left ?? Number.NaN,
+        epsilon,
+      };
+    }, BOUNDS_EPSILON_PX);
+    expect(
+      initialMetrics.left >= -initialMetrics.epsilon,
+      `popover must be clamped before error (left=${initialMetrics.left})`,
+    ).toBe(true);
+
+    response = AI_QUOTA_ERROR_FIXTURE;
+    await advanceToNextQuotaPoll(page);
+    await expect(page.locator('.ai-quota-badge')).toBeHidden({ timeout: 15_000 });
+
+    response = AI_QUOTA_FIXTURE;
+    await advanceToNextQuotaPoll(page);
+    await expect(
+      page.locator('[role="region"][aria-label="AIクォータ詳細"]'),
+    ).toBeVisible({ timeout: 15_000 });
+
+    const metrics = await page.evaluate((epsilon) => {
+      const innerWidth = window.innerWidth;
+      const popover = document.querySelector('.ai-quota-popover');
+      const labels = Array.from(document.querySelectorAll('.ai-quota-provider-label'));
+      const popoverRect = popover?.getBoundingClientRect();
+      const shift = popover
+        ? getComputedStyle(popover).getPropertyValue('--popover-shift-x').trim()
+        : '';
+      const labelRects = labels.map((label) => {
+        const rect = label.getBoundingClientRect();
+        return { id: label.textContent ?? '', left: rect.left, right: rect.right };
+      });
+
+      return {
+        innerWidth,
+        shift,
+        popover: popoverRect
+          ? { left: popoverRect.left, right: popoverRect.right }
+          : null,
+        labelRects,
+        labelCount: labels.length,
+        epsilon,
+      };
+    }, BOUNDS_EPSILON_PX);
+
+    expect(metrics.popover, 'popover must reappear after recovery').not.toBeNull();
+    expect(metrics.labelCount, 'fixture must render five live provider labels').toBe(5);
+
+    const shiftPx = Number.parseFloat(metrics.shift);
+    expect(
+      metrics.shift !== '' && metrics.shift !== '0px' && shiftPx > 0,
+      `popover must apply a positive horizontal shift after recovery (shift=${metrics.shift})`,
+    ).toBe(true);
+
+    const popover = metrics.popover!;
+    expect(
+      popover.left >= -metrics.epsilon && popover.right <= metrics.innerWidth + metrics.epsilon,
+      `popover must fit within viewport after recovery ` +
+        `(left=${popover.left}, right=${popover.right}, innerWidth=${metrics.innerWidth}, shift=${metrics.shift})`,
+    ).toBe(true);
+
+    for (const label of metrics.labelRects) {
+      expect(
+        label.left >= -metrics.epsilon && label.right <= metrics.innerWidth + metrics.epsilon,
+        `provider label "${label.id}" must fit within viewport after recovery ` +
+          `(left=${label.left}, right=${label.right}, innerWidth=${metrics.innerWidth})`,
+      ).toBe(true);
+    }
   });
 });
 
@@ -218,13 +336,11 @@ test.describe('ai quota popover viewport clamp — desktop', () => {
       };
     }, BOUNDS_EPSILON_PX);
 
-    // 広い幅では右揃えが保たれること自体が不変条件。クランプ実装前は --popover-shift-x が
-    // 未設定 ('') のままでも右端揃えは成立するため、shift の有無ではなく「未設定または 0px」
-    // を許容する。右端揃えの assert が本体の退行検知。
+    // When the clamp hook is attached it always writes 0px on wide viewports; '' means the hook never ran (e.g. ref detached on remount).
     expect(
-      metrics.shift === '' || metrics.shift === '0px',
-      `デスクトップでは水平クランプが効いてはならない (shift=${metrics.shift})`,
-    ).toBe(true);
+      metrics.shift,
+      `デスクトップではクランプ装着時に 0px が書き込まれる (shift=${metrics.shift})`,
+    ).toBe('0px');
     expect(
       Math.abs(metrics.popoverRight - metrics.badgeRight) <= metrics.epsilon,
       `popover right edge must align with badge right edge ` +

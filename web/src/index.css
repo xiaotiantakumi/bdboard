@@ -4432,6 +4432,7 @@ body {
   border-radius: var(--radius-md);
   background: var(--color-bg-elevated);
   box-shadow: 0 3px 10px var(--color-shadow);
+  /* transform creates a containing block: position:fixed descendants would anchor here, not the viewport. Safe today (only <span> and <details> inside). */
   transform: translateX(var(--popover-shift-x, 0px));
 }
 
