@@ -1056,3 +1056,21 @@ describe('getPrBadges', () => {
     });
   });
 });
+
+describe('PrBadgeCommentCache.prune', () => {
+  it('removes entries for ticket ids not in validTicketIds and keeps valid ones', () => {
+    const cache = new PrBadgeCommentCache();
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z').getTime();
+    const validId = 'bdboard-valid';
+    const staleId = 'bdboard-stale';
+    const staleUrl = 'https://github.com/xiaotiantakumi/bdboard/pull/100';
+
+    cache.set(validId, 1, updatedAt, PR_URL, false);
+    cache.set(staleId, 2, updatedAt, staleUrl, true);
+
+    cache.prune(new Set([validId]));
+
+    expect(cache.get(validId, 1, updatedAt)).toBe(PR_URL);
+    expect(cache.get(staleId, 2, updatedAt)).toBeUndefined();
+  });
+});
