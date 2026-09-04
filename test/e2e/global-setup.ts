@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveE2EPort } from './e2e-port.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -115,7 +116,7 @@ async function killAndWait(child: ChildProcess): Promise<void> {
  * is outside any git working tree, so that rewrite never triggers.
  */
 export default async function globalSetup(): Promise<() => Promise<void>> {
-  const port = process.env.BDBOARD_E2E_PORT ?? '8799';
+  const port = resolveE2EPort();
   const host = '127.0.0.1';
 
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-e2e-'));
