@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { RunRequest } from '../ports/agent-runner.js';
 import {
@@ -190,5 +191,117 @@ describe('validateProvisionedRunCwd', () => {
         '',
       ),
     ).toBe('invalid-request');
+  });
+
+  // nit-3 (bdboard-pkr6.17): path.join が ticketId の区切り文字を畳むと basename が
+  // ticketId から乖離する。'/' は全プラットフォームで、'\\' は win32 でだけ区切り。
+  it('returns invalid-request when ticketId contains a POSIX path separator', () => {
+    expect(
+      validateProvisionedRunCwd(
+        '/repo/.claude/worktrees/a/b',
+        '/repo/.claude/worktrees/a/b',
+        'a/b',
+        '/repo',
+      ),
+    ).toBe('invalid-request');
+  });
+
+  it.runIf(process.platform === 'win32')(
+    'returns invalid-request when ticketId contains a win32 path separator',
+    () => {
+      expect(
+        validateProvisionedRunCwd(
+          'C:\\repo\\.claude\\worktrees\\a\\b',
+          'C:\\repo\\.claude\\worktrees\\a\\b',
+          'a\\b',
+          'C:\\repo',
+        ),
+      ).toBe('invalid-request');
+    },
+  );
+
+  describe('normalizePath injection (major-1, bdboard-pkr6.17)', () => {
+    // provisioner の findExistingWorktreePath() は `git worktree list --porcelain` の
+    // realpath 文字列を返す。scan root が symlink を通るプロジェクト (macOS の
+    // /tmp -> /private/tmp など) では、再利用時の worktreePath が realpath になり、
+    // repoRoot から組み立てた expected と文字列としては一致しない。
+    // フィクスチャは path.resolve/join で組み立てる。POSIX 絶対パスのリテラルだと
+    // win32 で path.resolve('/tmp/repo') が 'C:\\tmp\\repo' になり、'/tmp/' で
+    // 前方一致する realpath スタブが素通しになって検証にならない。
+    const SYMLINK_ROOT = path.resolve('/tmp/repo');
+    const REALPATH_ROOT = path.resolve('/private/tmp/repo');
+    const reusedWorktreePath = path.join(
+      REALPATH_ROOT,
+      '.claude',
+      'worktrees',
+      'bdboard-1',
+    );
+    /** realpath(3) のスタブ: SYMLINK_ROOT 配下だけを REALPATH_ROOT 配下へ読み替える。 */
+    const realpath = (pathValue: string): string =>
+      pathValue === SYMLINK_ROOT ||
+      pathValue.startsWith(`${SYMLINK_ROOT}${path.sep}`)
+        ? `${REALPATH_ROOT}${pathValue.slice(SYMLINK_ROOT.length)}`
+        : pathValue;
+
+    it('accepts a reused worktree path that git returned as a realpath', () => {
+      expect(
+        validateProvisionedRunCwd(
+          reusedWorktreePath,
+          reusedWorktreePath,
+          'bdboard-1',
+          SYMLINK_ROOT,
+          realpath,
+        ),
+      ).toBeNull();
+    });
+
+    it('rejects the same reused path without normalization (the bug being fixed)', () => {
+      expect(
+        validateProvisionedRunCwd(
+          reusedWorktreePath,
+          reusedWorktreePath,
+          'bdboard-1',
+          SYMLINK_ROOT,
+        ),
+      ).toBe('invalid-request');
+    });
+
+    it('still rejects another repository root after normalization', () => {
+      const foreign = path.join(
+        path.resolve('/private/tmp/other-repo'),
+        '.claude',
+        'worktrees',
+        'bdboard-1',
+      );
+      expect(
+        validateProvisionedRunCwd(foreign, foreign, 'bdboard-1', SYMLINK_ROOT, realpath),
+      ).toBe('invalid-request');
+    });
+
+    it('still rejects a cwd that differs from worktreePath after normalization', () => {
+      expect(
+        validateProvisionedRunCwd(
+          path.join(REALPATH_ROOT, '.claude', 'worktrees', 'bdboard-2'),
+          reusedWorktreePath,
+          'bdboard-1',
+          SYMLINK_ROOT,
+          realpath,
+        ),
+      ).toBe('invalid-request');
+    });
+
+    it('still rejects ticketId drift when normalizePath is the identity fallback', () => {
+      // realpath は存在しないパスで throw するので、実装は入力をそのまま返す
+      // フォールバックを持つ。basename ドリフト検査はその影響を受けてはならない。
+      expect(
+        validateProvisionedRunCwd(
+          '/repo/.claude',
+          '/repo/.claude',
+          '..',
+          '/repo',
+          (pathValue) => pathValue,
+        ),
+      ).toBe('invalid-request');
+    });
   });
 });

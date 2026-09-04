@@ -17,6 +17,14 @@ export interface GitWorktreeSnapshot {
 
 export const BD_BRANCH_PREFIX = 'bd/';
 
+/**
+ * 管理下 worktree のレイアウト: `<repoRoot>/.claude/worktrees/<ticketId>`。
+ * provisioner (worktree を作る側) と validateProvisionedRunCwd (spawn 直前に
+ * 形を検証する側) が同じ形を二重定義していたので domain に集約した。
+ * `path.join` は win32 でも '/' を区切りとして正規化するので、この 1 本で両対応。
+ */
+export const WORKTREES_DIR = '.claude/worktrees';
+
 /** 'bd/foo' -> 'foo' / それ以外 -> null */
 export function bdBranchTicketId(branch: string): string | null {
   if (branch.startsWith(BD_BRANCH_PREFIX)) {

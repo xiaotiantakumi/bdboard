@@ -45,6 +45,16 @@ export interface AgentRunRoutesDeps {
   readonly registry: AgentRunnerRegistry;
   readonly runStore: RunStore;
   readonly worktreeProvisioner: WorktreeProvisioner;
+  /**
+   * spawn 直前の cwd ガードで使うパス正規化。composition root (src/main.ts) が
+   * infrastructure の `normalizePathForComparison` (realpath) を注入する。
+   * interface 層から infrastructure を直 import できない (check:boundaries の
+   * `interface-no-infrastructure`) ので依存として受け取る。
+   * 必須依存にしてあるのは、省略できると symlink 越しのプロジェクトで再利用 worktree が
+   * 弾かれる不具合 (major-1) に黙って戻れてしまうため。正規化不要な呼び出し元は
+   * 恒等関数を明示的に渡すこと。
+   */
+  readonly normalizePath: (pathValue: string) => string;
   readonly writeAccess?: WriteGuardDeps;
   readonly isRemoteAgentRunAllowed: () => Promise<boolean>;
   readonly now: () => Date;
@@ -312,7 +322,15 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       return c.json({ error: provisionError }, 500);
     }
 
-    deps.runStore.updateCwd(runId, provision.worktreePath);
+    // Single source for the cwd this run uses: recorded on the run, checked by the
+    // guard below, and handed to dispatchRun. Do not re-read provision.worktreePath
+    // at those sites — routing all three through one variable is what makes the
+    // guard's equality half meaningful: if a future change sources runCwd from the
+    // request instead, the guard still compares it against provision.worktreePath
+    // and stops the spawn, which is precisely the regression this guard exists for.
+    const runCwd = provision.worktreePath;
+
+    deps.runStore.updateCwd(runId, runCwd);
 
     // Defensive check at the provision→dispatch boundary. Under normal operation
     // this does not fire; it stops spawn when the provisioner returns a path
@@ -320,17 +338,12 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
     // recorded just above *before* this check on purpose: if the guard ever does
     // fire, the rejected path is the single most useful thing to have kept, and
     // the run is finished as failed anyway.
-    //
-    // The first two arguments are deliberately the same value today: cwd is
-    // currently *derived* from provision.worktreePath, so the equality half of
-    // the check is trivially true here. Do not collapse the signature — the
-    // equality check is what catches a future change that sources cwd from the
-    // request instead, which is precisely the regression this guard exists for.
     const cwdValidationError = validateProvisionedRunCwd(
-      provision.worktreePath,
+      runCwd,
       provision.worktreePath,
       ticketId,
       project.rootPath,
+      deps.normalizePath,
     );
     if (cwdValidationError !== null) {
       const message = 'run cwd must be the managed worktree for this ticket';
@@ -361,7 +374,7 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       {
         ticketId,
         projectId: project.id,
-        cwd: provision.worktreePath,
+        cwd: runCwd,
         mode,
         prompt,
       },

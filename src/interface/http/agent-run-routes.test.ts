@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { AgentRunner, RunOutcome } from '../../application/ports/agent-runner.js';
@@ -155,6 +156,8 @@ function makeRoutes(deps: Partial<Parameters<typeof createAgentRunRoutes>[0]> = 
     registry,
     runStore,
     worktreeProvisioner,
+    // normalizePath は必須依存。正規化を要らないテストは恒等関数を明示的に渡す。
+    normalizePath: deps.normalizePath ?? ((pathValue: string) => pathValue),
     writeAccess: deps.writeAccess,
     isRemoteAgentRunAllowed: deps.isRemoteAgentRunAllowed ?? (async () => true),
     now: deps.now ?? (() => NOW),
@@ -900,6 +903,152 @@ describe('createAgentRunRoutes', () => {
     expect(runs[0]?.error).toBe('run cwd must be the managed worktree for this ticket');
   });
 
+  describe('symlinked repo roots (major-1, bdboard-pkr6.17)', () => {
+    // provisioner の findExistingWorktreePath() は `git worktree list --porcelain` の
+    // realpath 文字列を返すので、scan root が symlink を通るプロジェクト
+    // (macOS の /tmp -> /private/tmp など) では再利用時の worktreePath が
+    // project.rootPath から組み立てた期待値と文字列一致しない。
+    // フィクスチャは path.resolve/join で組み立てる。POSIX 絶対パスのリテラルだと
+    // win32 で path.resolve('/tmp/repo') が 'C:\\tmp\\repo' になり、'/tmp/' で前方一致する
+    // normalizePath スタブが素通しになって検証にならない。
+    const SYMLINK_ROOT = path.resolve('/tmp/repo');
+    const REALPATH_ROOT = path.resolve('/private/tmp/repo');
+    const TICKET_ID = 'bdboard-symlink';
+    const REUSED_WORKTREE_PATH = path.join(
+      REALPATH_ROOT,
+      '.claude',
+      'worktrees',
+      TICKET_ID,
+    );
+    /** realpath(3) のスタブ: SYMLINK_ROOT 配下だけを REALPATH_ROOT 配下へ読み替える。 */
+    const normalizePath = (pathValue: string): string =>
+      pathValue === SYMLINK_ROOT ||
+      pathValue.startsWith(`${SYMLINK_ROOT}${path.sep}`)
+        ? `${REALPATH_ROOT}${pathValue.slice(SYMLINK_ROOT.length)}`
+        : pathValue;
+
+    function makeReuseSetup() {
+      const cache = createFakeBoardCache();
+      seedOpenTicket(cache, TICKET_ID, SYMLINK_ROOT);
+
+      let resolveDispatch!: () => void;
+      const dispatchCalled = new Promise<void>((resolve) => {
+        resolveDispatch = resolve;
+      });
+      const dispatch = vi.fn(async (): Promise<RunOutcome> => {
+        resolveDispatch();
+        return {
+          ok: true,
+          run: {
+            id: 'ignored',
+            ticketId: TICKET_ID,
+            runner: 'claude-spawn',
+            mode: 'spawn',
+            status: 'succeeded',
+            startedAt: NOW,
+            finishedAt: NOW,
+          },
+        };
+      });
+      const registry = createAgentRunnerRegistry();
+      registry.register(makeRunner(dispatch));
+
+      const worktreeProvisioner = makeProvisioner({
+        provision: vi.fn(async () => ({
+          ok: true as const,
+          worktreePath: REUSED_WORKTREE_PATH,
+          branchName: `bd/${TICKET_ID}`,
+          reused: true,
+        })),
+      });
+
+      return { cache, registry, dispatch, dispatchCalled, worktreeProvisioner };
+    }
+
+    it('dispatches a reused worktree whose git-reported path is a realpath', async () => {
+      const { cache, registry, dispatch, dispatchCalled, worktreeProvisioner } =
+        makeReuseSetup();
+      const runStore = createRunStore({ now: () => NOW });
+
+      const { app } = makeRoutes({
+        cache,
+        registry,
+        runStore,
+        worktreeProvisioner,
+        normalizePath,
+      });
+      const response = await app.request(
+        '/api/runs',
+        withLocalHost(postRunsInit(TICKET_ID)),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(202);
+      await dispatchCalled;
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ ticketId: TICKET_ID, cwd: REUSED_WORKTREE_PATH }),
+        expect.anything(),
+      );
+      // major-2: 記録された cwd・ガードに通した値・spawn の cwd はすべて同じ runCwd。
+      expect(runStore.list({ ticketId: TICKET_ID })[0]?.cwd).toBe(REUSED_WORKTREE_PATH);
+    });
+
+    it('fails the same reused run when normalizePath is the identity (the bug being fixed)', async () => {
+      const { cache, registry, dispatch, worktreeProvisioner } = makeReuseSetup();
+      const runStore = createRunStore({ now: () => NOW });
+
+      const { app } = makeRoutes({
+        cache,
+        registry,
+        runStore,
+        worktreeProvisioner,
+        normalizePath: (pathValue: string) => pathValue,
+      });
+      const response = await app.request(
+        '/api/runs',
+        withLocalHost(postRunsInit(TICKET_ID)),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(500);
+      expect(await response.json()).toEqual({
+        error: 'run cwd must be the managed worktree for this ticket',
+      });
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it('still rejects an unmanaged path when normalizePath is injected', async () => {
+      const cache = createFakeBoardCache();
+      seedOpenTicket(cache, TICKET_ID, SYMLINK_ROOT);
+      const dispatch = vi.fn();
+      const registry = createAgentRunnerRegistry();
+      registry.register(makeRunner(dispatch));
+      const worktreeProvisioner = makeProvisioner({
+        provision: vi.fn(async () => ({
+          ok: true as const,
+          worktreePath: path.join(
+            path.resolve('/private/tmp/other-repo'),
+            '.claude',
+            'worktrees',
+            TICKET_ID,
+          ),
+          branchName: `bd/${TICKET_ID}`,
+          reused: true,
+        })),
+      });
+
+      const { app } = makeRoutes({ cache, registry, worktreeProvisioner, normalizePath });
+      const response = await app.request(
+        '/api/runs',
+        withLocalHost(postRunsInit(TICKET_ID)),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(500);
+      expect(dispatch).not.toHaveBeenCalled();
+    });
+  });
+
   it('returns reused true when an existing clean worktree is provisioned', async () => {
     const cache = createFakeBoardCache();
     seedOpenTicket(cache, 'bdboard-reuse');
@@ -1355,6 +1504,7 @@ describe('createAgentRunRoutes guard mount scope', () => {
         registry: createAgentRunnerRegistry(),
         runStore: createRunStore({ now: () => NOW }),
         worktreeProvisioner: makeProvisioner(),
+        normalizePath: (pathValue: string) => pathValue,
         writeAccess: allowingWriteAccess(),
         isRemoteAgentRunAllowed: async () => false,
         now: () => NOW,
