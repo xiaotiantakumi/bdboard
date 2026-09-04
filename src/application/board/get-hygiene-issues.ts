@@ -29,6 +29,11 @@ export interface GetHygieneIssuesOptions {
    * コメント本文をまだ確認できていないチケット (getCloseEvidence の unknownKeys)。
    */
   readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
+  /**
+   * コメント本文を読む手段があるか。false なら closed_without_evidence の判定自体を
+   * 行わない。getCloseEvidence を呼ばない構成 (commentReader 未設定) 向け。
+   */
+  readonly closeEvidenceAvailable?: boolean;
   readonly thresholds?: HygieneThresholds;
   readonly timeZone?: string;
 }
@@ -79,6 +84,9 @@ export function getHygieneIssues(
       : {}),
     ...(options?.closeEvidenceUnknownKeys !== undefined
       ? { closeEvidenceUnknownKeys: options.closeEvidenceUnknownKeys }
+      : {}),
+    ...(options?.closeEvidenceAvailable !== undefined
+      ? { closeEvidenceAvailable: options.closeEvidenceAvailable }
       : {}),
     ...(options?.thresholds !== undefined ? { thresholds: options.thresholds } : {}),
     ...(options?.leftoverCandidates !== undefined

@@ -1237,6 +1237,7 @@ describe('checkHygiene closed_without_evidence', () => {
     options: {
       readonly closeEvidenceKeys?: ReadonlySet<string>;
       readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
+      readonly closeEvidenceAvailable?: boolean;
       readonly thresholds?: typeof DEFAULT_HYGIENE_THRESHOLDS;
     } = {},
   ) {
@@ -1244,6 +1245,7 @@ describe('checkHygiene closed_without_evidence', () => {
       now: NOW,
       closeEvidenceKeys: options.closeEvidenceKeys,
       closeEvidenceUnknownKeys: options.closeEvidenceUnknownKeys,
+      closeEvidenceAvailable: options.closeEvidenceAvailable,
       thresholds: options.thresholds,
     }).filter((issue) => issue.kind === 'closed_without_evidence');
   }
@@ -1357,7 +1359,7 @@ describe('checkHygiene closed_without_evidence', () => {
     expect(closedWithoutEvidenceIssues([ticket])).toEqual([]);
   });
 
-  it('does not flag preparation-like text without a standalone PR mention', () => {
+  it('flags when closeReason only mentions PR inside another word', () => {
     const ticket = makeTicket({
       id: 'bdboard-prep',
       status: 'closed',
@@ -1431,6 +1433,18 @@ describe('checkHygiene closed_without_evidence', () => {
         closeEvidenceKeys: keys,
         closeEvidenceUnknownKeys: keys,
       }),
+    ).toEqual([]);
+  });
+
+  it('does not flag when closeEvidenceAvailable is false (m6)', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-unavailable',
+      status: 'closed',
+      closedAt: new Date(NOW.getTime() - 2 * 86_400_000),
+    });
+
+    expect(
+      closedWithoutEvidenceIssues([ticket], { closeEvidenceAvailable: false }),
     ).toEqual([]);
   });
 });

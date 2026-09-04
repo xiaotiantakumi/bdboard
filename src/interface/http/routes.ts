@@ -780,6 +780,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     let pendingCommentAnchors: ReadonlyMap<string, Date> | undefined;
     let closeEvidenceKeys: ReadonlySet<string> | undefined;
     let closeEvidenceUnknownKeys: ReadonlySet<string> | undefined;
+    let closeEvidenceStatus: { unknownCount: number } | null = null;
+    const closeEvidenceAvailable = deps.commentReader !== undefined;
     if (deps.commentReader !== undefined) {
       pendingCommentAnchors = await getPendingCommentAnchors(
         deps.cache,
@@ -801,6 +803,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
       closeEvidenceKeys = closeEvidence.evidenceKeys;
       closeEvidenceUnknownKeys = closeEvidence.unknownKeys;
+      closeEvidenceStatus = { unknownCount: closeEvidence.unknownKeys.size };
     }
 
     const issues = getHygieneIssues(deps.cache, now, {
@@ -810,11 +813,15 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       ...(closeEvidenceUnknownKeys !== undefined && closeEvidenceUnknownKeys.size > 0
         ? { closeEvidenceUnknownKeys }
         : {}),
+      closeEvidenceAvailable,
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
       ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),
     });
-    return c.json(issues.map(toHygieneIssueDto));
+    return c.json({
+      issues: issues.map(toHygieneIssueDto),
+      closeEvidence: closeEvidenceStatus,
+    });
   });
 
   app.get('/api/lease-health', async (c) => {

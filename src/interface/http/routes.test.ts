@@ -1595,13 +1595,14 @@ describe('createApiRoutes', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('ETag')).toBeNull();
-    expect(body).toHaveLength(1);
-    expect(body[0]).toMatchObject({
+    expect(body.issues).toHaveLength(1);
+    expect(body.issues[0]).toMatchObject({
       kind: 'overdue_defer',
       ticketId: 'bdboard-overdue',
       projectId: a.id,
       severity: 'warning',
     });
+    expect(body.closeEvidence).toBeNull();
     assertNoDates(body);
   });
 
@@ -1653,7 +1654,7 @@ describe('createApiRoutes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    const pending = body.filter(
+    const pending = body.issues.filter(
       (issue: { kind: string }) => issue.kind === 'stale_pending_decision',
     );
     // コメントの無いほうだけが残る。
@@ -1738,8 +1739,9 @@ describe('createApiRoutes', () => {
     const body = await (await app.request('/api/hygiene')).json();
 
     expect(
-      body.map((issue: { kind: string }) => issue.kind),
+      body.issues.map((issue: { kind: string }) => issue.kind),
     ).toContain('stale_pending_decision');
+    expect(body.closeEvidence).toBeNull();
   });
 
   it('reuses close evidence cache on the second /api/hygiene request', async () => {
@@ -1784,6 +1786,79 @@ describe('createApiRoutes', () => {
     expect(commentReader.listComments).toHaveBeenCalledTimes(1);
   });
 
+  it('includes closeEvidence.unknownCount on /api/hygiene when commentReader is wired', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-a',
+          projectId: a.id,
+          status: 'closed',
+          closedAt: new Date(NOW.getTime() - 60_000),
+          commentCount: 1,
+        }),
+        makeTicket({
+          id: 'bdboard-b',
+          projectId: a.id,
+          status: 'closed',
+          closedAt: new Date(NOW.getTime() - 120_000),
+          commentCount: 1,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_root: string, issueId: string) => [
+        {
+          id: `${issueId}-1`,
+          issueId,
+          author: 'someone',
+          text: 'close しました',
+          createdAt: new Date(NOW.getTime() - 30_000),
+        },
+      ]),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(body.closeEvidence).toEqual({ unknownCount: expect.any(Number) });
+    expect(body.closeEvidence.unknownCount).toBeGreaterThanOrEqual(0);
+  });
+
+  it('does not flag closed_without_evidence without commentReader and returns closeEvidence null', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-no-evidence',
+          projectId: a.id,
+          status: 'closed',
+          closedAt: new Date(NOW.getTime() - 60_000),
+          commentCount: 1,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const app = createApiRoutes(createDeps({ cache }));
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(body.closeEvidence).toBeNull();
+    expect(
+      body.issues.filter(
+        (issue: { kind: string }) => issue.kind === 'closed_without_evidence',
+      ),
+    ).toEqual([]);
+  });
+
   it('returns merged_leftover hygiene issues with cleanup when worktreeScanner is configured', async () => {
     const cache = createFakeBoardCache();
     const a = project('proj-a', '/projects/a');
@@ -1821,7 +1896,7 @@ describe('createApiRoutes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    const leftovers = body.filter(
+    const leftovers = body.issues.filter(
       (issue: { kind: string }) => issue.kind === 'merged_leftover',
     );
     expect(leftovers).toHaveLength(1);
@@ -1892,7 +1967,7 @@ describe('createApiRoutes', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    const overlaps = body.filter(
+    const overlaps = body.issues.filter(
       (issue: { kind: string }) => issue.kind === 'in_flight_file_overlap',
     );
     expect(overlaps).toHaveLength(2);

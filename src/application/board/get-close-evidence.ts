@@ -9,25 +9,63 @@ interface CloseEvidenceCacheEntry {
   readonly commentCount: number;
   readonly updatedAt: number;
   readonly hasEvidence: boolean;
+  readonly storedAtMs: number;
 }
+
+/**
+ * 新規フェッチのバッチを始めてよい最短間隔。
+ *
+ * useBoardStream が board 更新のたびに ['hygiene'] を invalidate するので、
+ * 健全性パネルを開いたままだと **他セッションが bd に書き込むたび** に
+ * ウォームアップのバッチが走る。bd は single writer なので、それは常時稼働の
+ * bd を食い続けることを意味する。1バッチ = 最大 CLOSE_EVIDENCE_FETCH_BUDGET_MS
+ * なので、15秒に1バッチなら bd の占有は最悪でも 2.5/15 ≒ 17% に収まる。
+ * ウォーム完了に必要なのは実測で 15〜20 バッチなので、上限でも数分で温まる。
+ */
+export const CLOSE_EVIDENCE_FETCH_MIN_INTERVAL_MS = 15_000;
+
+/**
+ * 「証拠なし」と判定した結果だけを保持する時間。
+ *
+ * bd の updated_at はコメントの追加・編集で動かないので、無効化に使えるのは
+ * 実質 commentCount だけ。既存コメントを編集して PR: を足しても件数は変わらず、
+ * 否定の結果を無期限にキャッシュすると警告がサーバ再起動まで消えない。
+ * 肯定 (証拠あり) は消えないので TTL を付けない (PrBadgeStatusCache が
+ * terminal な状態だけ permanent にしているのと同じ考え方)。
+ */
+export const CLOSE_EVIDENCE_NEGATIVE_TTL_MS = 5 * 60_000;
 
 /** チケットごとの「コメントに PR:/検証: があるか」を commentCount/updatedAt で無効化する薄いキャッシュ。 */
 export class CloseEvidenceCache {
   private readonly entries = new Map<string, CloseEvidenceCacheEntry>();
+  /**
+   * ウォームアップのバースト間隔ガード (M3)。プロセス内で1インスタンスだけ持つ。
+   */
+  private lastFetchBatchStartedAtMs: number | undefined;
+  private readonly negativeTtlMs: number;
+
+  constructor(options?: { readonly negativeTtlMs?: number }) {
+    this.negativeTtlMs = options?.negativeTtlMs ?? CLOSE_EVIDENCE_NEGATIVE_TTL_MS;
+  }
 
   get(
     ticketId: string,
     commentCount: number,
     updatedAt: number,
+    nowMs: number,
   ): boolean | undefined {
     const entry = this.entries.get(ticketId);
     if (entry === undefined) {
       return undefined;
     }
-    if (entry.commentCount === commentCount && entry.updatedAt === updatedAt) {
-      return entry.hasEvidence;
+    if (entry.commentCount !== commentCount || entry.updatedAt !== updatedAt) {
+      return undefined;
     }
-    return undefined;
+    if (entry.hasEvidence === false && nowMs - entry.storedAtMs >= this.negativeTtlMs) {
+      this.entries.delete(ticketId);
+      return undefined;
+    }
+    return entry.hasEvidence;
   }
 
   set(
@@ -35,8 +73,21 @@ export class CloseEvidenceCache {
     commentCount: number,
     updatedAt: number,
     hasEvidence: boolean,
+    storedAtMs: number,
   ): void {
-    this.entries.set(ticketId, { commentCount, updatedAt, hasEvidence });
+    this.entries.set(ticketId, { commentCount, updatedAt, hasEvidence, storedAtMs });
+  }
+
+  /** 前回バッチから minIntervalMs 以上経っていれば true を返し、開始時刻を記録する。 */
+  tryStartFetchBatch(nowMs: number, minIntervalMs: number): boolean {
+    if (
+      this.lastFetchBatchStartedAtMs !== undefined &&
+      nowMs - this.lastFetchBatchStartedAtMs < minIntervalMs
+    ) {
+      return false;
+    }
+    this.lastFetchBatchStartedAtMs = nowMs;
+    return true;
   }
 
   prune(validTicketIds: ReadonlySet<string>): void {
@@ -63,7 +114,9 @@ export interface GetCloseEvidenceOptions {
   readonly cache?: CloseEvidenceCache;
   /** 1リクエストで新規に bd を叩き続ける時間上限 (ms)。既定 CLOSE_EVIDENCE_FETCH_BUDGET_MS。 */
   readonly fetchBudgetMs?: number;
-  /** 締め切り判定に使う時刻源。テスト用。未指定なら () => Date.now()。 */
+  /** 新規フェッチバッチの最短間隔 (ms)。既定 CLOSE_EVIDENCE_FETCH_MIN_INTERVAL_MS。cache 未指定時は無視。 */
+  readonly minFetchIntervalMs?: number;
+  /** 締め切り判定に使う時刻源。テスト用。未指定なら performance.now() (壁時計は NTP 巻き戻しで締め切りが永久成立しうる)。 */
   readonly monotonicNow?: () => number;
 }
 
@@ -138,6 +191,10 @@ export async function getCloseEvidence(
   }
 
   const evidenceCache = options?.cache;
+  // フィルタ後の entries ではなく盤面全体 (allEntries) の ticket 集合で pruning する。
+  // フィルタ済みの集合を使うと、projectIds でプロジェクトを絞った呼び出しのたびに
+  // フィルタ対象外プロジェクトのキャッシュエントリが間引かれ、複数プロジェクトを
+  // 行き来する通常利用でキャッシュが定着しない (get-pr-badges.ts / bdboard-fwse)。
   if (evidenceCache !== undefined) {
     const allTicketIds = new Set(
       allEntries.flatMap((entry) => entry.tickets.map((ticket) => ticket.id)),
@@ -155,12 +212,16 @@ export async function getCloseEvidence(
   const unknownKeys = new Set<string>();
   const fetchCandidates: FetchItem[] = [];
   const fetchBudgetMs = options?.fetchBudgetMs ?? CLOSE_EVIDENCE_FETCH_BUDGET_MS;
-  const monotonicNow = options?.monotonicNow ?? (() => Date.now());
+  const monotonicNow = options?.monotonicNow ?? (() => performance.now());
+
+  // 1リクエストの中では TTL 判定の基準時刻を1つに固定する。チケットごとに
+  // 取り直すと、同じリクエストなのに前半と後半で期限判定がずれる。
+  const lookupNowMs = monotonicNow();
 
   for (const item of items) {
     const { entry, ticket } = item;
     const updatedAtMs = ticket.updatedAt.getTime();
-    const cached = evidenceCache?.get(ticket.id, ticket.commentCount, updatedAtMs);
+    const cached = evidenceCache?.get(ticket.id, ticket.commentCount, updatedAtMs, lookupNowMs);
 
     if (cached === true) {
       evidenceKeys.add(pendingDecisionKey(entry.project.id, ticket.id));
@@ -175,11 +236,23 @@ export async function getCloseEvidence(
     (a, b) => b.ticket.closedAt!.getTime() - a.ticket.closedAt!.getTime(),
   );
 
+  let itemsToFetch = fetchCandidates;
+  if (fetchCandidates.length > 0 && evidenceCache !== undefined) {
+    const minIntervalMs =
+      options?.minFetchIntervalMs ?? CLOSE_EVIDENCE_FETCH_MIN_INTERVAL_MS;
+    if (!evidenceCache.tryStartFetchBatch(monotonicNow(), minIntervalMs)) {
+      for (const { entry, ticket } of fetchCandidates) {
+        unknownKeys.add(pendingDecisionKey(entry.project.id, ticket.id));
+      }
+      itemsToFetch = [];
+    }
+  }
+
   const deadline = monotonicNow() + fetchBudgetMs;
   const failures: FetchFailure[] = [];
   let fetchAttempts = 0;
 
-  await runWithConcurrencyLimit(fetchCandidates, COMMENT_FETCH_CONCURRENCY, async ({ entry, ticket }) => {
+  await runWithConcurrencyLimit(itemsToFetch, COMMENT_FETCH_CONCURRENCY, async ({ entry, ticket }) => {
     const key = pendingDecisionKey(entry.project.id, ticket.id);
     if (monotonicNow() >= deadline) {
       unknownKeys.add(key);
@@ -205,7 +278,8 @@ export async function getCloseEvidence(
       }
     }
 
-    evidenceCache?.set(ticket.id, ticket.commentCount, updatedAtMs, hasEvidence);
+    const storedAtMs = monotonicNow();
+    evidenceCache?.set(ticket.id, ticket.commentCount, updatedAtMs, hasEvidence, storedAtMs);
     if (hasEvidence) {
       evidenceKeys.add(key);
     }
@@ -218,6 +292,14 @@ export async function getCloseEvidence(
         'they are treated as unknown (not flagged as closed_without_evidence) until ' +
         'a later request confirms them. ' +
         describeFetchFailures(failures, fetchAttempts),
+    );
+  }
+
+  if (unknownKeys.size > 0) {
+    const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
+    logWarn(
+      `[close-evidence] ${unknownKeys.size} of ${items.length} recently closed tickets are still unchecked; ` +
+        'closed_without_evidence may be under-reported until a later request confirms them.',
     );
   }
 

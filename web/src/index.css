@@ -1531,6 +1531,12 @@ body {
   color: var(--color-text-secondary);
 }
 
+.hygiene-panel-close-evidence-note {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--color-text-secondary);
+}
+
 .hygiene-issue-list {
   list-style: none;
   margin: 0;

@@ -370,6 +370,37 @@ describe('getHygieneIssues', () => {
     expect(issues).toEqual([]);
   });
 
+  it('passes closeEvidenceAvailable through to checkHygiene (m6)', () => {
+    const cache = createFakeBoardCache();
+    const a = project('/a', '/projects/a', 'Alpha');
+    const closedAt = new Date(NOW.getTime() - 60_000);
+
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-no-evidence',
+          projectId: a.id,
+          status: 'closed',
+          closedAt,
+          commentCount: 1,
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const flagged = getHygieneIssues(cache, NOW).filter(
+      (issue) => issue.kind === 'closed_without_evidence',
+    );
+    expect(flagged).toHaveLength(1);
+
+    const suppressed = getHygieneIssues(cache, NOW, { closeEvidenceAvailable: false }).filter(
+      (issue) => issue.kind === 'closed_without_evidence',
+    );
+    expect(suppressed).toEqual([]);
+  });
+
   it('uses the specified timezone for overdue_defer deferUntil formatting', () => {
     const cache = createFakeBoardCache();
     const now = new Date('2026-08-10T00:00:00.000Z');

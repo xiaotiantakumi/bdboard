@@ -342,20 +342,10 @@ function isExcludedFromClosedWithoutEvidence(ticket: Ticket): boolean {
   return ticket.labels?.includes(MERGE_SLOT_LABEL) ?? false;
 }
 
+const PR_WORD_PATTERN = /(?:^|[^a-zA-Z0-9])PR(?:[^a-zA-Z0-9]|$)/i;
+
 function hasPrWordMention(text: string): boolean {
-  const upper = text.toUpperCase();
-  let index = 0;
-  while ((index = upper.indexOf('PR', index)) !== -1) {
-    const before = index > 0 ? text[index - 1]! : '';
-    const after = index + 2 < text.length ? text[index + 2]! : '';
-    const beforeIsAlnum = before !== '' && /[a-zA-Z0-9]/.test(before);
-    const afterIsAlnum = after !== '' && /[a-zA-Z0-9]/.test(after);
-    if (!beforeIsAlnum && !afterIsAlnum) {
-      return true;
-    }
-    index += 2;
-  }
-  return false;
+  return PR_WORD_PATTERN.test(text);
 }
 
 export function hasCloseReasonEvidence(closeReason: string): boolean {
@@ -434,7 +424,11 @@ function checkClosedWithoutEvidence(
   thresholds: HygieneThresholds,
   closeEvidenceKeys: ReadonlySet<string> | undefined,
   closeEvidenceUnknownKeys: ReadonlySet<string> | undefined,
+  closeEvidenceAvailable: boolean,
 ): HygieneIssue | null {
+  if (!closeEvidenceAvailable) {
+    return null;
+  }
   if (ticket.status !== 'closed') {
     return null;
   }
@@ -733,10 +727,20 @@ export function checkHygiene(
      * 「まだ調べていない」を「問題あり」と言ってはいけない。
      */
     readonly closeEvidenceUnknownKeys?: ReadonlySet<string>;
+    /**
+     * コメント本文を読む手段があるか。false なら closed_without_evidence の判定自体を
+     * 行わない。
+     *
+     * 一部が未確認のときは非検出にしているのに、コメントを1件も読めない環境で
+     * だけ全件検出するのは逆立ちしている (未確認を「証拠なし」と断定することになる)。
+     * 既定 true。
+     */
+    readonly closeEvidenceAvailable?: boolean;
     readonly timeZone?: string;
   },
 ): readonly HygieneIssue[] {
   const thresholds = resolveHygieneThresholds(ctx.thresholds);
+  const closeEvidenceAvailable = ctx.closeEvidenceAvailable ?? true;
   const readiness = createReadinessContext(tickets);
   const ticketById = new Map(tickets.map((ticket) => [ticket.id, ticket] as const));
   const childrenIndex = buildDirectChildrenIndex(tickets);
@@ -798,6 +802,7 @@ export function checkHygiene(
       thresholds,
       ctx.closeEvidenceKeys,
       ctx.closeEvidenceUnknownKeys,
+      closeEvidenceAvailable,
     );
     if (closedWithoutEvidence !== null) {
       issues.push(closedWithoutEvidence);
