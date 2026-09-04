@@ -1,10 +1,10 @@
 import { useLayoutEffect, useState } from 'react';
 
 // Viewport-relative gutter avoids hard-coded px that diverge across breakpoints.
-const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
+export const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
 // Ratio-only gutters shrink on narrow viewports (320px→6.4px) where margin matters most;
 // align with repo conventions (.undo-snackbar uses calc(100vw - 32px), etc.).
-const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
+export const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
 
 function clampPopoverToViewport(el: HTMLElement): void {
   el.style.setProperty('--popover-shift-x', '0px');
@@ -30,6 +30,10 @@ function clampPopoverToViewport(el: HTMLElement): void {
 /**
  * Horizontally shifts a popover via --popover-shift-x so it stays within the
  * viewport. Pair with `transform: translateX(var(--popover-shift-x, 0px))`.
+ *
+ * --popover-shift-x is inherited by descendants; the CSS fallback `0px` only
+ * applies when unset, so a nested popover could inherit a parent's shift and
+ * double-apply translateX until its own clampPopoverToViewport run sets `0px`.
  *
  * Returns a callback ref (not RefObject) so layout effect re-runs when the DOM
  * node is replaced while `open` stays true — e.g. AiQuotaWidget keeps

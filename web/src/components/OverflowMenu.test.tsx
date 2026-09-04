@@ -1,8 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { UpdateCheckDto } from '../api';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { OverflowMenu } from './OverflowMenu';
 
 const STORAGE_KEY = 'bdboard.updateCheck.v1';
@@ -105,5 +110,58 @@ describe('OverflowMenu tips banner recovery (bdboard-h4xs.17)', () => {
     await user.click(screen.getByRole('menuitem', { name: 'Tips バナーを表示' }));
 
     expect(onShowTipsBanner).toHaveBeenCalledOnce();
+  });
+});
+
+async function openOverflowMenu() {
+  const user = userEvent.setup();
+  const view = renderMenu();
+  await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+  return view;
+}
+
+describe('OverflowMenu popover viewport clamp (bdboard-oeh5)', () => {
+  let clientWidthSpy: ReturnType<typeof stubClientWidth> | undefined;
+  let rectSpy: ReturnType<typeof stubBoundingRect> | undefined;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    clientWidthSpy?.mockRestore();
+    rectSpy?.mockRestore();
+    clientWidthSpy = undefined;
+    rectSpy = undefined;
+  });
+
+  it('shifts left when the right-aligned popover overflows the right edge at 320px', async () => {
+    const viewportWidth = 320;
+    clientWidthSpy = stubClientWidth(viewportWidth);
+    // {left:83, right:363} は 375px 実測値の流用。実際の320px実測は left=28,right=308 で
+    // shift=0 になり、右端超過パスを exercise できないため、合成値でクランプの計算式自体を検証する。
+    rectSpy = stubBoundingRect({ left: 83, right: 363 });
+
+    const { container } = await openOverflowMenu();
+    const popover = container.querySelector('.overflow-menu-popover');
+    expect(popover).not.toBeNull();
+
+    const shiftPx = Number.parseFloat(
+      (popover as HTMLElement).style.getPropertyValue('--popover-shift-x'),
+    );
+    const gutter = gutterForViewport(viewportWidth);
+
+    expect(shiftPx).toBeLessThan(0);
+    expect(363 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
+  });
+
+  it('keeps --popover-shift-x at 0px when the popover already fits', async () => {
+    clientWidthSpy = stubClientWidth(1280);
+    rectSpy = stubBoundingRect({ left: 900, right: 1180 });
+
+    const { container } = await openOverflowMenu();
+    const popover = container.querySelector('.overflow-menu-popover');
+    expect(popover).not.toBeNull();
+    expect((popover as HTMLElement).style.getPropertyValue('--popover-shift-x')).toBe('0px');
   });
 });

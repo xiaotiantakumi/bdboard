@@ -1,7 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { BoardFilterPreset, BoardFilterPresetState } from '../uiPersistedState';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { PresetControl } from './PresetControl';
 
 const currentState: BoardFilterPresetState = {
@@ -378,5 +383,54 @@ describe('PresetControl', () => {
       screen.getByText('プリセットはまだありません。いまの絞り込みを保存できます。'),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /を上書き$/ })).not.toBeInTheDocument();
+  });
+});
+
+async function openPresetPopover() {
+  const user = userEvent.setup();
+  const view = renderControl();
+  await openControl(user, 'P1バグだけ');
+  return view;
+}
+
+describe('PresetControl popover viewport clamp (bdboard-oeh5)', () => {
+  let clientWidthSpy: ReturnType<typeof stubClientWidth> | undefined;
+  let rectSpy: ReturnType<typeof stubBoundingRect> | undefined;
+
+  afterEach(() => {
+    clientWidthSpy?.mockRestore();
+    rectSpy?.mockRestore();
+    clientWidthSpy = undefined;
+    rectSpy = undefined;
+  });
+
+  it('shifts left when the left-aligned popover overflows the right edge at 320px', async () => {
+    const viewportWidth = 320;
+    clientWidthSpy = stubClientWidth(viewportWidth);
+    // 実際の320px実測は left=12,right=300 で shift=0 になるため、右端超過パスを
+    // exercise する合成値 {left:30, right:315} を使う。
+    rectSpy = stubBoundingRect({ left: 30, right: 315 });
+
+    const { container } = await openPresetPopover();
+    const popover = container.querySelector('.preset-control-popover');
+    expect(popover).not.toBeNull();
+
+    const shiftPx = Number.parseFloat(
+      (popover as HTMLElement).style.getPropertyValue('--popover-shift-x'),
+    );
+    const gutter = gutterForViewport(viewportWidth);
+
+    expect(shiftPx).toBeLessThan(0);
+    expect(315 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
+  });
+
+  it('keeps --popover-shift-x at 0px when the popover already fits', async () => {
+    clientWidthSpy = stubClientWidth(1280);
+    rectSpy = stubBoundingRect({ left: 100, right: 420 });
+
+    const { container } = await openPresetPopover();
+    const popover = container.querySelector('.preset-control-popover');
+    expect(popover).not.toBeNull();
+    expect((popover as HTMLElement).style.getPropertyValue('--popover-shift-x')).toBe('0px');
   });
 });

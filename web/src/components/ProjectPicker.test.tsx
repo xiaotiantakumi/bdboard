@@ -1,7 +1,12 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectDto } from '../api';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { ProjectPicker, projectPickerLabel } from './ProjectPicker';
 
 function project(id: string, name: string, incompleteTicketCount = 0): ProjectDto {
@@ -242,5 +247,66 @@ describe('ProjectPicker', () => {
     expect(alphaRow.querySelector('.project-picker-ticket-count')).not.toHaveClass(
       'project-picker-ticket-count-zero',
     );
+  });
+});
+
+async function openPickerPopover() {
+  const user = userEvent.setup();
+  const view = render(
+    <ProjectPicker
+      projects={projects}
+      selectedProjectIds={[]}
+      onToggleProject={vi.fn()}
+      onSelectAllProjects={vi.fn()}
+      onClearAllProjects={vi.fn()}
+      onSaveCombination={vi.fn()}
+    />,
+  );
+  await user.click(
+    screen.getByRole('button', { name: 'プロジェクトの絞り込み: すべてのプロジェクト' }),
+  );
+  return view;
+}
+
+describe('ProjectPicker popover viewport clamp (bdboard-oeh5)', () => {
+  let clientWidthSpy: ReturnType<typeof stubClientWidth> | undefined;
+  let rectSpy: ReturnType<typeof stubBoundingRect> | undefined;
+
+  afterEach(() => {
+    clientWidthSpy?.mockRestore();
+    rectSpy?.mockRestore();
+    clientWidthSpy = undefined;
+    rectSpy = undefined;
+  });
+
+  it('shifts right when the right-aligned popover overflows the left edge at 320px (real bdboard-oeh5 bug)', async () => {
+    const viewportWidth = 320;
+    clientWidthSpy = stubClientWidth(viewportWidth);
+    // 320px 実測（2026-09-05, レビュアー計測, PR #330）: project-picker-popover は左へ32pxはみ出す。
+    rectSpy = stubBoundingRect({ left: -32, right: 256 });
+
+    const { container } = await openPickerPopover();
+    const popover = container.querySelector('.project-picker-popover');
+    expect(popover).not.toBeNull();
+
+    const shiftPx = Number.parseFloat(
+      (popover as HTMLElement).style.getPropertyValue('--popover-shift-x'),
+    );
+    const gutter = gutterForViewport(viewportWidth);
+
+    expect(shiftPx).toBeGreaterThan(0);
+    expect(shiftPx).toBeCloseTo(44, 5);
+    expect(-32 + shiftPx).toBeGreaterThanOrEqual(gutter);
+    expect(256 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
+  });
+
+  it('keeps --popover-shift-x at 0px when the popover already fits', async () => {
+    clientWidthSpy = stubClientWidth(1280);
+    rectSpy = stubBoundingRect({ left: 900, right: 1200 });
+
+    const { container } = await openPickerPopover();
+    const popover = container.querySelector('.project-picker-popover');
+    expect(popover).not.toBeNull();
+    expect((popover as HTMLElement).style.getPropertyValue('--popover-shift-x')).toBe('0px');
   });
 });
