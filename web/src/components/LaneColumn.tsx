@@ -467,6 +467,7 @@ export function LaneColumn({
   return (
     <section
       className={`lane${collapsed ? ' lane-collapsed' : ''}${dropHoverClass}`}
+      data-lane={lane}
       onDragOver={(event) => boardDnD?.onLaneDragOver(lane, event)}
       onDrop={(event) => boardDnD?.onLaneDrop(lane, event)}
     >
