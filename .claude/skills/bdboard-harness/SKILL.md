@@ -40,8 +40,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 2. **`git worktree add <path> -b <branch>` の成否が排他** — 失敗（既存）なら次の候補へ。
 3. **成功して初めて `bd update <id> --claim`。** claim を worktree より先に打たない。
 4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
-5. **`bd heartbeat` は保持中の全チケットへ一括で**（TTL/3 以下かつ 5 分以下）。失敗＝所有権
-   喪失、直ちに停止。
+5. **heartbeat は scripts/bd-heartbeat.sh で**（保持中の全チケット・寿命はセッション束縛）。失敗＝所有権喪失、直ちに停止。
 6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」
    と断定しない。
 
