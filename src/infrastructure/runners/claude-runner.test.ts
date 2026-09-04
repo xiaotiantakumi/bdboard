@@ -15,7 +15,9 @@ import {
   DEFAULT_ALLOWED_TOOLS,
   DEFAULT_SETTING_SOURCES,
   DENIED_TOOLS,
+  resetClaudeVersionCacheForTests,
 } from './claude-runner.js';
+import { MINIMUM_CLAUDE_VERSION } from '../../domain/claude-version-check.js';
 
 const tempWorktreeDirs: string[] = [];
 
@@ -35,6 +37,11 @@ function createFakeStreamingRunner(
     command: string,
     args: readonly string[],
   ) => Promise<StreamingCommandResult> | StreamingCommandResult,
+  versionResult: StreamingCommandResult = {
+    stdout: '2.1.233 (Claude Code)',
+    stderr: '',
+    exitCode: 0,
+  },
 ): {
   streamingRunner: StreamingCommandRunner;
   runMock: Mock<
@@ -44,11 +51,38 @@ function createFakeStreamingRunner(
       options: StreamingCommandRunOptions,
     ) => Promise<StreamingCommandResult>
   >;
+  versionRunMock: Mock<
+    (
+      command: string,
+      args: readonly string[],
+      options?: StreamingCommandRunOptions,
+    ) => Promise<StreamingCommandResult>
+  >;
 } {
-  const runMock = vi.fn(async (command, args) => handler(command, args));
+  const runMock = vi.fn(async (command, args, _options) =>
+    handler(command, args),
+  );
+  const versionRunMock = vi.fn(
+    async (
+      _command: string,
+      _args: readonly string[],
+      _options?: StreamingCommandRunOptions,
+    ): Promise<StreamingCommandResult> => versionResult,
+  );
+  const run = async (
+    command: string,
+    args: readonly string[],
+    options?: StreamingCommandRunOptions,
+  ) => {
+    if (args.length === 1 && args[0] === '--version') {
+      return versionRunMock(command, args, options);
+    }
+    return runMock(command, args, options as StreamingCommandRunOptions);
+  };
   return {
-    streamingRunner: { run: runMock },
+    streamingRunner: { run },
     runMock,
+    versionRunMock,
   };
 }
 
@@ -266,6 +300,7 @@ describe('createClaudeRunner', () => {
     delete process.env.BDBOARD_RUN_PERMISSION_MODE;
     delete process.env.BDBOARD_RUN_ALLOWED_TOOLS;
     delete process.env.BDBOARD_TEST_SECRET_ENV;
+    resetClaudeVersionCacheForTests();
     for (const dir of tempWorktreeDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -681,5 +716,153 @@ describe('createClaudeRunner', () => {
         process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
       }
     }
+  });
+
+  it('rejects dispatch when claude CLI is too old', async () => {
+    const { streamingRunner, runMock } = createFakeStreamingRunner(
+      () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }),
+      { stdout: '2.0.10 (Claude Code)', stderr: '', exitCode: 0 },
+    );
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    const outcome = await runner.dispatch(makeRequest());
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.failureKind).toBe('runner-unavailable');
+    expect(outcome.error).toContain('2.0.10');
+    expect(outcome.error).toContain(MINIMUM_CLAUDE_VERSION);
+    expect(outcome.error).toContain('--setting-sources');
+    expect(runMock).not.toHaveBeenCalled();
+  });
+
+  it('does not remove worktree-local settings when the version gate rejects dispatch', async () => {
+    const tmpWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-worktree-'));
+    tempWorktreeDirs.push(tmpWorktree);
+
+    const claudeDir = path.join(tmpWorktree, '.claude');
+    fs.mkdirSync(claudeDir, { recursive: true });
+    fs.writeFileSync(path.join(claudeDir, 'settings.local.json'), '{"permissions":{}}');
+
+    const { streamingRunner } = createFakeStreamingRunner(
+      () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }),
+      { stdout: '2.0.10 (Claude Code)', stderr: '', exitCode: 0 },
+    );
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    await runner.dispatch(makeRequest({ cwd: tmpWorktree }));
+
+    expect(fs.existsSync(path.join(claudeDir, 'settings.local.json'))).toBe(true);
+  });
+
+  it.each(['2.1.233 (Claude Code)', '3.0.0 (Claude Code)'])(
+    'starts runs when claude CLI version %s meets the minimum',
+    async (stdout) => {
+      const { streamingRunner, runMock } = createFakeStreamingRunner(
+        () => ({
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+        }),
+        { stdout, stderr: '', exitCode: 0 },
+      );
+
+      const runner = createClaudeRunner('claude-spawn', 'spawn', {
+        streamingRunner,
+      });
+      const outcome = await runner.dispatch(makeRequest());
+
+      expect(outcome.ok).toBe(true);
+      expect(runMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('continues dispatch when the version probe is inconclusive', async () => {
+    const { streamingRunner, runMock } = createFakeStreamingRunner(
+      () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }),
+      { stdout: '', stderr: 'probe failed', exitCode: 1 },
+    );
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    const outcome = await runner.dispatch(makeRequest());
+
+    expect(outcome.ok).toBe(true);
+    expect(runMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('caches the claude --version probe for the process lifetime', async () => {
+    const { streamingRunner, runMock, versionRunMock } = createFakeStreamingRunner(
+      () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      }),
+    );
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+
+    await runner.dispatch(makeRequest());
+    await runner.dispatch(makeRequest());
+
+    expect(runMock).toHaveBeenCalledTimes(2);
+    expect(versionRunMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves outcome.run.error undefined for non-zero exit with empty stderr and no translation', async () => {
+    const { streamingRunner } = createFakeStreamingRunner(() => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 2,
+    }));
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    const outcome = await runner.dispatch(makeRequest());
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.failureKind).toBe('failed');
+    expect(outcome.error).toBe('claude exited with code 2');
+    expect(outcome.run.error).toBeUndefined();
+  });
+
+  it('translates stderr when an old CLI rejects --setting-sources at runtime', async () => {
+    const stderr = "error: unknown option '--setting-sources'";
+    const { streamingRunner } = createFakeStreamingRunner(() => ({
+      stdout: '',
+      stderr,
+      exitCode: 1,
+    }));
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    const outcome = await runner.dispatch(makeRequest());
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.failureKind).toBe('failed');
+    expect(outcome.error).toContain(MINIMUM_CLAUDE_VERSION);
+    expect(outcome.error).toContain('--setting-sources');
+    expect(outcome.error).toContain(stderr);
+    expect(outcome.run.error).toContain(MINIMUM_CLAUDE_VERSION);
   });
 });
