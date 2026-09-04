@@ -1,5 +1,6 @@
 import { compareStrings } from '../../domain/compare.js';
 import { extractLatestPrUrl, type PrBadge, type PrStatus } from '../../domain/pr-link.js';
+import { hasCloseEvidenceMarker } from './close-evidence-marker.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { CommentReader } from '../ports/comment-reader.js';
@@ -21,11 +22,22 @@ interface PrBadgeCommentCacheEntry {
   readonly commentCount: number;
   readonly updatedAt: number;
   readonly url: string | null;
+  readonly hasCloseEvidence: boolean;
+  readonly closeEvidenceStoredAtMs: number;
+}
+
+export interface PrBadgeCommentCacheOptions {
+  readonly now?: () => number;
 }
 
 /** チケットごとのコメント由来 PR URL を commentCount/updatedAt で無効化する薄いキャッシュ。 */
 export class PrBadgeCommentCache {
   private readonly entries = new Map<string, PrBadgeCommentCacheEntry>();
+  private readonly now: () => number;
+
+  constructor(options?: PrBadgeCommentCacheOptions) {
+    this.now = options?.now ?? (() => performance.now());
+  }
 
   get(
     ticketId: string,
@@ -42,8 +54,42 @@ export class PrBadgeCommentCache {
     return undefined;
   }
 
-  set(ticketId: string, commentCount: number, updatedAt: number, url: string | null): void {
-    this.entries.set(ticketId, { commentCount, updatedAt, url });
+  set(
+    ticketId: string,
+    commentCount: number,
+    updatedAt: number,
+    url: string | null,
+    hasCloseEvidence: boolean,
+  ): void {
+    this.entries.set(ticketId, {
+      commentCount,
+      updatedAt,
+      url,
+      hasCloseEvidence,
+      closeEvidenceStoredAtMs: this.now(),
+    });
+  }
+
+  getCloseEvidence(
+    ticketId: string,
+    commentCount: number,
+    updatedAt: number,
+    negativeTtlMs: number,
+  ): boolean | undefined {
+    const entry = this.entries.get(ticketId);
+    if (entry === undefined) {
+      return undefined;
+    }
+    if (entry.commentCount !== commentCount || entry.updatedAt !== updatedAt) {
+      return undefined;
+    }
+    if (
+      entry.hasCloseEvidence === false &&
+      this.now() - entry.closeEvidenceStoredAtMs >= negativeTtlMs
+    ) {
+      return undefined;
+    }
+    return entry.hasCloseEvidence;
   }
 
   prune(validTicketIds: ReadonlySet<string>): void {
@@ -174,7 +220,8 @@ export async function getPrBadges(
       try {
         const comments = await commentReader.listComments(entry.project.rootPath, ticket.id);
         url = extractLatestPrUrl(comments);
-        commentCache?.set(ticket.id, ticket.commentCount, updatedAtMs, url);
+        const hasCloseEvidence = comments.some((c) => hasCloseEvidenceMarker(c.text));
+        commentCache?.set(ticket.id, ticket.commentCount, updatedAtMs, url, hasCloseEvidence);
       } catch (error) {
         // コメントが読めないチケットは飛ばす。そのチケットのバッジは出ない。
         commentFailures.push({ id: ticket.id, error });

@@ -1744,7 +1744,7 @@ describe('createApiRoutes', () => {
     expect(body.closeEvidence).toBeNull();
   });
 
-  it('reuses close evidence cache on the second /api/hygiene request', async () => {
+  it('reuses the PR-badge comment scan for /api/hygiene and does not call listComments again', async () => {
     const cache = createFakeBoardCache();
     const a = project('/a', '/projects/a');
     const closedAt = new Date(NOW.getTime() - 60_000);
@@ -1774,15 +1774,24 @@ describe('createApiRoutes', () => {
         },
       ]),
     };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => null),
+    };
 
-    const app = createApiRoutes(createDeps({ cache, commentReader }));
+    const app = createApiRoutes(
+      createDeps({ cache, commentReader, prStatusReader }),
+    );
 
-    const first = await app.request('/api/hygiene');
-    expect(first.status).toBe(200);
+    const prLinks = await app.request('/api/pr-links');
+    expect(prLinks.status).toBe(200);
     expect(commentReader.listComments).toHaveBeenCalledTimes(1);
 
-    const second = await app.request('/api/hygiene');
-    expect(second.status).toBe(200);
+    const hygiene = await app.request('/api/hygiene');
+    expect(hygiene.status).toBe(200);
+    expect(commentReader.listComments).toHaveBeenCalledTimes(1);
+
+    const hygieneAgain = await app.request('/api/hygiene');
+    expect(hygieneAgain.status).toBe(200);
     expect(commentReader.listComments).toHaveBeenCalledTimes(1);
   });
 
