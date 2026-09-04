@@ -856,7 +856,11 @@ body {
   margin: 0;
   font-size: 0.8125rem;
   font-weight: 600;
-  color: var(--color-text-muted, #6b7280);
+  /* 元は var(--color-text-muted, #6b7280) だった。この変数は定義が無いので必ず
+     フォールバックの固定色が効き、ダークモードでもライト用のグレーのままだった。
+     #6b7280 は --color-text-secondary のライト値 #6c6c70 とほぼ同色なので、
+     secondary へ寄せると見た目を保ったままテーマ追従だけが増える。 */
+  color: var(--color-text-secondary);
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
@@ -2724,7 +2728,12 @@ body {
   flex-shrink: 0;
   border: none;
   background: transparent;
-  color: var(--color-text-muted);
+  /* 元は var(--color-text-muted) でフォールバックも無かった。未定義の var() を含む
+     宣言は計算値の時点で無効になるため color は継承値に落ち、カードのタイトルと
+     同じ濃さで出ていた = 「muted にする」意図がまったく効いていなかった。
+     :hover が --color-text なので、静止時はそれより明確に暗い段が要る。同じカード内の
+     .card-id と同じ tertiary に揃える。 */
+  color: var(--color-text-tertiary);
   cursor: pointer;
   padding: 2px 4px;
   line-height: 1;
