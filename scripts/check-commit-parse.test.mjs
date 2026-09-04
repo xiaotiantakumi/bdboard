@@ -21,8 +21,12 @@ import {
   parseCommitsFromGitLog,
 } from './check-commit-parse.mjs';
 
+// fixture は行:列を byte 単位で再現する検証対象なので、CRLF に変換されていると
+// 桁がずれてアサーションが落ちる。.gitattributes で eol=lf を固定しているが、
+// それ以前に CRLF でチェックアウト済みの作業ツリーは再正規化されるまで直らないため、
+// 読み込み側でも正規化して git の設定に依存しないようにする (bdboard-84hu)。
 function readFixture(filePath) {
-  return fs.readFileSync(filePath, 'utf8');
+  return fs.readFileSync(filePath, 'utf8').replace(/\r\n/g, '\n');
 }
 
 // 素の括弧改行だけの短いメッセージ (例: "fix(x): broken body\n\nopen (\nclose)") は
