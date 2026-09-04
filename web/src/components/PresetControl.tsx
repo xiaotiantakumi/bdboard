@@ -7,6 +7,7 @@ import {
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from '../uiPersistedState';
+import { isImeComposingKeyEvent } from '../imeGuard';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useExclusivePopover } from './PopoverCoordinator';
 
@@ -271,6 +272,9 @@ export function PresetControl({
                       }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter') {
+                          if (isImeComposingKeyEvent(event)) {
+                            return;
+                          }
                           event.preventDefault();
                           handleRenameCommit(preset);
                         }
@@ -404,6 +408,9 @@ export function PresetControl({
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
+                      if (isImeComposingKeyEvent(event)) {
+                        return;
+                      }
                       event.preventDefault();
                       handleNewSave();
                     }

@@ -151,6 +151,40 @@ describe('SearchPalette', () => {
     expect(mockSearchTickets).not.toHaveBeenCalled();
   });
 
+  it('does not activate a row when Enter is pressed during IME composition', () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    renderPalette(onSelect, onClose);
+
+    const input = getSearchInput();
+    fireEvent.keyDown(input, {
+      key: 'Enter',
+      isComposing: true,
+      keyCode: 229,
+    });
+
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    for (const action of sampleActions) {
+      expect(action.onSelect).not.toHaveBeenCalled();
+    }
+  });
+
+  it('activates the highlighted row on plain Enter keydown', async () => {
+    const onSelect = vi.fn();
+    const onClose = vi.fn();
+    renderPalette(onSelect, onClose);
+
+    const input = getSearchInput();
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(sampleActions[0].onSelect).toHaveBeenCalledTimes(1);
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
   it('filters palette actions locally by query', async () => {
     const user = userEvent.setup();
     renderPalette();
