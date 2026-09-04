@@ -1664,6 +1664,15 @@ export function TicketDetailPanel({
                   onChange={(event) => setFreeformText(event.target.value)}
                   rows={4}
                 />
+                {/*
+                 * pendingDecision.kind はキャッシュ由来で 'ticket' に倒れうる。
+                 * 'gate' と判定されたときだけ予告を出す片側運用。'ticket' 側には出さない。
+                 */}
+                {pendingDecision.kind === 'gate' && (
+                  <p className="detail-help">
+                    これは質問専用のゲートです。回答するとゲートはクローズされ、ブロックされていたチケットが着手可能になります。
+                  </p>
+                )}
                 <button
                   type="button"
                   className="btn"
@@ -1695,9 +1704,11 @@ export function TicketDetailPanel({
                 )}
                 <p className="detail-help">回答を送信しました</p>
                 <p className="detail-help">
-                  {submittedDecision.outcome.closed
-                    ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
-                    : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
+                  {submittedDecision.outcome.kind === 'unknown'
+                    ? '種別(ゲート/作業チケット)を判定できませんでした。回答はコメントとして記録しましたが、確認待ちのまま残っています。しばらくしてからもう一度送信してください。'
+                    : submittedDecision.outcome.closed
+                      ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
+                      : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
                 </p>
               </div>
             )}

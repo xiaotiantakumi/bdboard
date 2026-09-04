@@ -13,6 +13,7 @@ import {
   isLaneStatusMismatch,
   postChatMessage,
   postChatMessageStream,
+  postTicketDecision,
   putScanRootsConfig,
 } from './api';
 
@@ -280,5 +281,69 @@ describe('fetchSimilarTickets', () => {
       '/api/tickets/bdboard%2Ftarget/similar?limit=3',
       undefined,
     );
+  });
+});
+
+describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('preserves unknown kind from the server response', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ ok: true, outcome: { kind: 'unknown', closed: false } }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'retry later' })).resolves.toEqual({
+      kind: 'unknown',
+      closed: false,
+    });
+  });
+
+  it('preserves gate kind from the server response', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ ok: true, outcome: { kind: 'gate', closed: true } }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { choice: 'yes' })).resolves.toEqual({
+      kind: 'gate',
+      closed: true,
+    });
+  });
+
+  it('falls unrecognized outcome kind values back to unknown', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ ok: true, outcome: { kind: 'mystery', closed: false } }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'unknown',
+      closed: false,
+    });
+  });
+
+  it('falls a missing outcome object back to unknown', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(new Response(JSON.stringify({ ok: true }))),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'unknown',
+      closed: false,
+    });
   });
 });

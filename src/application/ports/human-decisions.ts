@@ -1,7 +1,13 @@
 export type PendingDecisionKind = 'gate' | 'ticket';
 
+/**
+ * respond() が実際に到達した種別。'unknown' は「bd show で種別を判定できなかった」
+ * を表し、この場合は close も label remove も行わない(fail-safe)。
+ */
+export type ResolvedDecisionKind = PendingDecisionKind | 'unknown';
+
 export interface RespondOutcome {
-  readonly kind: PendingDecisionKind;
+  readonly kind: ResolvedDecisionKind;
   readonly closed: boolean;
 }
 
