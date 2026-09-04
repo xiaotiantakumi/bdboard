@@ -13,6 +13,7 @@ import {
   buildRunnerEnv,
   createClaudeRunner,
   DEFAULT_ALLOWED_TOOLS,
+  DEFAULT_SETTING_SOURCES,
   DENIED_TOOLS,
 } from './claude-runner.js';
 
@@ -56,6 +57,8 @@ function expectedDefaultArgs(cwd = '/tmp/project'): readonly string[] {
     '-p',
     '--permission-mode',
     'default',
+    '--setting-sources',
+    DEFAULT_SETTING_SOURCES,
     '--allowedTools',
     ...DEFAULT_ALLOWED_TOOLS,
     `Read(/${cwd}/**)`,
@@ -117,6 +120,29 @@ describe('DEFAULT_ALLOWED_TOOLS', () => {
       'Bash(git add:*)',
       'Bash(git commit:*)',
     ]);
+  });
+});
+
+describe('DEFAULT_SETTING_SOURCES', () => {
+  // これが allowlist 主体を成立させている唯一の仕掛け (bdboard-jgx5)。値を変えると
+  // 天井の性質が変わるので、明示的なテスト更新を強制する。
+  it('pins the setting sources so the ceiling cannot be weakened silently', () => {
+    expect(DEFAULT_SETTING_SOURCES).toBe('project,local');
+  });
+
+  it('excludes the user source, which is what makes the allowlist a real ceiling', () => {
+    // user を読み込むと --allowedTools がユーザーのグローバル permissions.allow との
+    // 和集合になり、上限として機能しなくなる (実測: グローバル allow にのみ載っている
+    // `docker --version` が、このフラグ無しでは実行され、有りでは拒否された)。
+    const sources = DEFAULT_SETTING_SOURCES.split(',');
+    expect(sources).not.toContain('user');
+  });
+
+  it('keeps project and local so CLAUDE.md and the injected harness skills still load', () => {
+    // '' (全ソース除外) にすると CLAUDE.md と worktree の .claude/skills/ まで
+    // 落ちる (実測)。user 層だけを落とすのが目的。
+    expect(DEFAULT_SETTING_SOURCES).not.toBe('');
+    expect(DEFAULT_SETTING_SOURCES.split(',')).toEqual(['project', 'local']);
   });
 });
 

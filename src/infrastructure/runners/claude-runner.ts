@@ -22,6 +22,13 @@ const VALID_PERMISSION_MODES = [
   'plan',
 ] as const;
 
+// run が使える能力の一次の天井 (allowlist 主体)。DEFAULT_SETTING_SOURCES が
+// user 層を落とすので、このリストは実測上そのまま上限として機能する
+// (bdboard-jgx5)。実測: --setting-sources project,local の下では、ここに無く
+// ユーザーのグローバル allow にだけ載っている `docker --version` は拒否され、
+// ここに在る `git status --short` は実行された。列挙外の verb (rsync/perl/tar
+// など) も同じ理由で通らない。リストを広げることがそのまま権限の拡大になる。
+//
 // 封じ込め: Bash(git:*) は任意パス破壊・任意コマンド実行・公開 push へ化ける。
 // Bash(npm:*) は npm exec 等で任意コード実行。Bash(bd:*) は bare dolt push で
 // private issue 履歴漏洩。Write/Edit のベア指定はパス制約なし。
@@ -57,15 +64,50 @@ export const ALLOWED_BASH_WILDCARD_VERBS = [
 ] as const;
 
 /**
- * run に対して絶対に許さない能力の唯一の天井 (--disallowedTools)。
- * --allowedTools はユーザーのグローバル permissions.allow との和集合になるため
- * 上限として機能しないが、--disallowedTools はグローバル allow に勝つ (実測: グローバル
- * allow に Bash(mv:*) があっても --disallowedTools の有無だけで mv の実行有無が変わった)。
+ * 読み込む設定ソースを user 抜きに固定する (--setting-sources)。
+ * これが「allowlist 主体」を成立させている唯一の仕掛け (bdboard-jgx5)。
+ *
+ * 実測 (claude CLI 2.1.233, 2026-09-04)。差分は本フラグの有無だけ、
+ * `--allowedTools` は Glob/Grep/Bash(git status:*) のみ:
+ *   フラグ無し                        -> `docker --version` が実行された
+ *                                        (出力 "Docker version 29.5.2")、denials 空
+ *   --setting-sources project,local   -> `docker --version` は
+ *                                        "This command requires approval" で拒否、
+ *                                        permission_denials に記録
+ * `Bash(docker:*)` はユーザーのグローバル ~/.claude/settings.json の
+ * permissions.allow にのみ載っている。つまり本フラグは B-1 の
+ * 「--allowedTools がグローバル allow との和集合になり上限として機能しない」
+ * を根元で断つ。CLAUDE_CONFIG_DIR 固定と違い認証は壊れない (実測: 同 run が
+ * 正常完了。認証は $HOME/.claude.json と keychain 側にあり設定ソースではない)。
+ *
+ * `''` (全ソース除外) にはしない。実測で CLAUDE.md と worktree の
+ * `.claude/skills/` (= inject 済み bdboard-harness パック) まで落ちるため:
+ *   --setting-sources ''              -> CLAUDE.md のルール不適用、slash_commands 54、
+ *                                        プロジェクト skill 不可視
+ *   --setting-sources project,local   -> CLAUDE.md のルール適用、slash_commands 55、
+ *                                        プロジェクト skill 可視
+ * user 層だけを落とすのが目的なので project,local を残すのが正しい。
+ */
+export const DEFAULT_SETTING_SOURCES = 'project,local';
+
+/**
+ * allowlist を貫通されたときの第二の天井 (--disallowedTools)。
+ *
+ * DEFAULT_SETTING_SOURCES が入った今、一次の天井は allowlist
+ * (DEFAULT_ALLOWED_TOOLS) 側にある。それでもこの名指し deny を残すのは、
+ * 残った project/local 層が worktree の中にあり、エージェント自身が
+ * Edit(<worktree>/**) で `.claude/settings.json` を書けてしまうため。
+ * deny は allow に勝つ (実測: グローバル allow に Bash(mv:*) があっても
+ * --disallowedTools の有無だけで mv の実行有無が変わった) ので、自分で書いた
+ * allow による昇格はここで止まる。M-2 の `.claude/settings.local.json` は
+ * clearWorktreeLocalClaudeSettings() が起動直前に消す。
  * CLAUDE_CONFIG_DIR 固定は認証を壊すため撤回した (2026-09-04)。
  *
- * ベアな `Bash` は入れない: DEFAULT_ALLOWED_TOOLS の Bash(bd show:*) 等まで塞いで
- * プロンプトが成立しなくなる。代わりに allowlist に無く、任意コード実行・任意パス操作・
- * ネットワーク送出に化ける verb を名指しで塞ぐ。
+ * ベアな `Bash` は入れない。実測 (2026-09-04): `--disallowedTools Bash` は
+ * 権限拒否ではなく **Bash ツールごとモデルの tool set から消える**
+ * (「I don't have a Bash tool available」と返し tool_use が一件も出ない)。
+ * 明示した `--allowedTools Bash(git status:*)` も道連れになるため、
+ * 「ベア deny + 粒度 allow」という構成は CLI の意味論として成立しない。
  */
 export const DENIED_TOOLS = [
   'WebFetch',
@@ -368,6 +410,7 @@ export function createClaudeRunner(
         ({ command, args } = buildClaudeCommand(request, {
           claudePath,
           permissionMode,
+          settingSources: DEFAULT_SETTING_SOURCES,
           allowedTools: effectiveAllowedTools,
           disallowedTools: DENIED_TOOLS,
         }));

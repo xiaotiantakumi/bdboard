@@ -87,6 +87,56 @@ describe('buildClaudeCommand', () => {
     });
   });
 
+  it('adds setting-sources before allowedTools as a single argv value', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      {
+        permissionMode: 'default',
+        settingSources: 'project,local',
+        allowedTools: ['Read'],
+        disallowedTools: ['WebFetch'],
+      },
+    );
+
+    expect(result).toEqual({
+      command: 'claude',
+      args: [
+        '-p',
+        '--permission-mode',
+        'default',
+        '--setting-sources',
+        // 1 argv トークンのまま渡す。カンマ区切りは CLI 側が解釈する。
+        'project,local',
+        '--allowedTools',
+        'Read',
+        '--disallowedTools',
+        'WebFetch',
+        '--',
+        'go',
+      ],
+    });
+  });
+
+  it('omits setting-sources when not requested', () => {
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      { allowedTools: ['Read'] },
+    );
+
+    expect(result.args).not.toContain('--setting-sources');
+  });
+
+  it('omits setting-sources when the value is empty', () => {
+    // 空文字は「全ソース除外」を意味する別の設定なので、うっかり '' を渡したときに
+    // それを CLI へ流さない。落とすなら明示的にそう書くこと。
+    const result = buildClaudeCommand(
+      makeRequest({ mode: 'spawn', prompt: 'go' }),
+      { settingSources: '', allowedTools: ['Read'] },
+    );
+
+    expect(result.args).not.toContain('--setting-sources');
+  });
+
   it('adds disallowedTools immediately after allowedTools', () => {
     const result = buildClaudeCommand(
       makeRequest({ mode: 'spawn', prompt: 'go' }),

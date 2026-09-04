@@ -26,6 +26,7 @@ export function buildClaudeCommand(
   options?: {
     readonly claudePath?: string;
     readonly permissionMode?: string;
+    readonly settingSources?: string;
     readonly allowedTools?: readonly string[];
     readonly disallowedTools?: readonly string[];
   },
@@ -54,6 +55,16 @@ export function buildClaudeCommand(
 
   if (options?.permissionMode !== undefined && options.permissionMode !== '') {
     args.push('--permission-mode', options.permissionMode);
+  }
+
+  // `--setting-sources` は allowedTools より前に置く。`--allowedTools` は変長
+  // (variadic) なので、後ろに置くと `--setting-sources` 自体は独立オプションとして
+  // 解釈されるものの、引数順が読みにくくなる。permission 系のフラグを固めておく。
+  if (
+    options?.settingSources !== undefined &&
+    options.settingSources !== ''
+  ) {
+    args.push('--setting-sources', options.settingSources);
   }
 
   const allowedTools = options?.allowedTools;
