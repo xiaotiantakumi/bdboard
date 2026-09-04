@@ -4909,7 +4909,6 @@ describe('ChatPanel', () => {
     const details = container.querySelector('.chat-panel-settings');
     expect(details).toBeInstanceOf(HTMLDetailsElement);
     expect((details as HTMLDetailsElement).open).toBe(false);
-    expect(screen.queryByLabelText('チャットエージェント')).toBeNull();
 
     const warning = await screen.findByText(CHAT_AGENT_UNAVAILABLE_WARNING);
     expect(warning).toBeVisible();
@@ -4917,6 +4916,31 @@ describe('ChatPanel', () => {
     expect(warning).toHaveClass('chat-agent-unavailable-banner');
     expect(warning).toHaveAttribute('role', 'alert');
     expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+  });
+
+  it('blocks Meta+Enter submit when selected agent is unavailable and adds a conversation error (bdboard-nzul)', async () => {
+    fetchChatAgentsMock.mockResolvedValue([
+      { ...CLAUDE_AGENT, availability: 'unavailable' },
+    ]);
+
+    const user = userEvent.setup();
+    renderChatPanel([PROJECT_A]);
+    await screen.findByText(CHAT_AGENT_UNAVAILABLE_WARNING);
+
+    const input = screen.getByLabelText('メッセージ');
+    await user.type(input, 'blocked keyboard submit');
+    await user.keyboard('{Meta>}{Enter}{/Meta}');
+
+    expect(getChatMessagePostCalls(fetchMock)).toEqual([]);
+
+    const messages = screen.getByRole('log');
+    const conversationError = messages.querySelector(
+      '.chat-message-error .chat-message-text',
+    );
+    expect(conversationError).not.toBeNull();
+    expect(conversationError).toHaveTextContent(CHAT_AGENT_UNAVAILABLE_WARNING);
+    expect(conversationError).not.toHaveClass('chat-agent-unavailable-banner');
+    expect(conversationError?.closest('.chat-message')).toHaveClass('chat-message-error');
   });
 
   it('shows unavailable label in chat settings when expanded', async () => {

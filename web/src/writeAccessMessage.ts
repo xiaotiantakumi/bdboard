@@ -81,11 +81,13 @@ export const CHAT_AGENT_UNAVAILABLE_WARNING =
   '選択中のエージェントは利用できません（CLI がインストールされていないか、認証が通っていません）。「チャット設定」で別のエージェントを選ぶか、ターミナルで CLI の認証をやり直してください。';
 
 /**
- * チャット送信が CLI 未導入・認証切れ等で失敗したときの説明 (bdboard-nzul)。
+ * チャット送信が CLI 実行失敗で落ちたときの説明 (bdboard-nzul)。
  * サーバーは生の stderr/stdout を返さないため、利用者が取れる行動を示す。
+ * agent-exit-nonzero は引数不正・CLI 内部エラー・利用上限など広いバケツのため、
+ * 原因を断定せず列挙している。
  */
 export const CHAT_AGENT_AUTH_FAILURE_HELP =
-  'エージェントが応答しませんでした。CLI がインストールされていないか、認証が切れている可能性があります。ターミナルで CLI の認証状態を確認し、必要なら再ログインしてからもう一度送信してください。';
+  'エージェントの実行が失敗しました。CLI が未インストール、認証切れ、利用上限、引数やモデル指定の誤り、CLI 内部エラーなど、さまざまな原因が考えられます。ターミナルで CLI の認証状態を確認する、別のエージェントやモデルを試す、しばらく待ってから再送するなどをお試しください。';
 
 const SERVER_CHAT_AGENT_UNAVAILABLE = 'chat agent unavailable';
 
@@ -104,6 +106,8 @@ export function chatAgentErrorMessage(error: ApiError): string | null {
     switch (error.code) {
       case 'agent-exit-nonzero':
       case 'agent-not-found':
+        // mapChatAgentErrorToFailure は現状 agent-not-found を 503 に寄せるため、
+        // 502 側のこの分岐は到達しない。将来サーバー側のマッピングが変わったときの保険として残している。
         return CHAT_AGENT_AUTH_FAILURE_HELP;
       default:
         return null;
