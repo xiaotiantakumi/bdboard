@@ -955,6 +955,48 @@ describe('header help overlays', () => {
 
     expect(screen.getByRole('dialog', { name: 'ヘルプ' })).toBeInTheDocument();
   });
+
+  it('persists dismissing the tips banner so it does not reappear on reload (bdboard-h4xs.17)', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('使い方のヒント')).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Tipsを閉じる' }));
+
+    expect(screen.queryByLabelText('使い方のヒント')).not.toBeInTheDocument();
+    expect(localStorage.getItem(UI_STORAGE_KEYS.tipsBannerDismissed)).toBe('true');
+
+    // 「リロード」を、いったんアンマウントしてから再マウントすることで模擬する。
+    // usePersistedState は初期値を localStorage から読むため、実際のページ
+    // リロードと同じ経路(mount 時の初期化)を通る。
+    unmount();
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText('使い方のヒント')).not.toBeInTheDocument();
+  });
+
+  it('shows the tips banner again from the overflow menu after it was dismissed (bdboard-h4xs.17)', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(UI_STORAGE_KEYS.tipsBannerDismissed, JSON.stringify(true));
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText('使い方のヒント')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Tips バナーを表示' }));
+
+    expect(screen.getByLabelText('使い方のヒント')).toBeInTheDocument();
+    expect(localStorage.getItem(UI_STORAGE_KEYS.tipsBannerDismissed)).toBe('false');
+  });
 });
 
 describe('board generatedAt freshness (bdboard-3tw.125)', () => {

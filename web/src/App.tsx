@@ -78,6 +78,7 @@ import {
   recordRecentTicket,
   DEFAULT_HIDE_DONE,
   DEFAULT_STALLED_ONLY,
+  DEFAULT_TIPS_BANNER_DISMISSED,
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from './uiPersistedState';
@@ -186,6 +187,11 @@ export function App() {
     UI_STORAGE_KEYS.recentTickets,
     [],
     validateRecentTickets,
+  );
+  const [tipsBannerDismissed, setTipsBannerDismissed] = usePersistedState(
+    UI_STORAGE_KEYS.tipsBannerDismissed,
+    DEFAULT_TIPS_BANNER_DISMISSED,
+    validateBoolean,
   );
   const [epicFilterId, setEpicFilterId] = useState<string | undefined>(undefined);
   const {
@@ -811,6 +817,8 @@ export function App() {
           onOpenTunnel={() => setTunnelModalOpen(true)}
           onOpenHelp={handleOpenHelp}
           onOpenShortcuts={handleOpenShortcuts}
+          tipsBannerDismissed={tipsBannerDismissed}
+          onShowTipsBanner={() => setTipsBannerDismissed(false)}
         />
         </ErrorBoundary>
 
@@ -859,7 +867,12 @@ export function App() {
         </div>
       )}
 
-      <TipsBanner onOpenHelp={handleOpenHelp} />
+      {!tipsBannerDismissed && (
+        <TipsBanner
+          onOpenHelp={handleOpenHelp}
+          onDismiss={() => setTipsBannerDismissed(true)}
+        />
+      )}
 
       <main className="main">
         {/* プロバイダーは境界の外に置く。中に入れると key={view} の再マウントが

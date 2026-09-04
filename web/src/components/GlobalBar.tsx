@@ -32,6 +32,8 @@ export interface GlobalBarProps {
   onOpenTunnel: () => void;
   onOpenHelp: () => void;
   onOpenShortcuts: () => void;
+  tipsBannerDismissed: boolean;
+  onShowTipsBanner: () => void;
 }
 
 export function GlobalBar({
@@ -59,6 +61,8 @@ export function GlobalBar({
   onOpenTunnel,
   onOpenHelp,
   onOpenShortcuts,
+  tipsBannerDismissed,
+  onShowTipsBanner,
 }: GlobalBarProps) {
   const toggleGroupRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<HTMLButtonElement | null>(null);
@@ -186,6 +190,8 @@ export function GlobalBar({
         onOpenTunnel={onOpenTunnel}
         onOpenHelp={onOpenHelp}
         onOpenShortcuts={onOpenShortcuts}
+        tipsBannerDismissed={tipsBannerDismissed}
+        onShowTipsBanner={onShowTipsBanner}
       />
     </div>
   );

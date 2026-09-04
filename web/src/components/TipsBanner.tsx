@@ -3,6 +3,13 @@ import { TIPS } from '../tipsContent';
 
 export interface TipsBannerProps {
   onOpenHelp: () => void;
+  /**
+   * 閉じるボタンが押されたときに呼ばれる。表示可否そのもの(永続化された
+   * dismissed フラグ)は呼び出し側の App.tsx が持つ(bdboard-h4xs.17) —
+   * 保存先・キー名・復帰手段は web/src/uiPersistedState.ts の
+   * UI_STORAGE_KEYS.tipsBannerDismissed のコメントを参照。
+   */
+  onDismiss: () => void;
 }
 
 function randomTipIndex(excluding?: number): number {
@@ -14,11 +21,10 @@ function randomTipIndex(excluding?: number): number {
   return (excluding + offset) % TIPS.length;
 }
 
-export function TipsBanner({ onOpenHelp }: TipsBannerProps) {
-  const [isVisible, setIsVisible] = useState(true);
+export function TipsBanner({ onOpenHelp, onDismiss }: TipsBannerProps) {
   const [tipIndex, setTipIndex] = useState(() => randomTipIndex());
 
-  if (!isVisible || TIPS.length === 0) {
+  if (TIPS.length === 0) {
     return null;
   }
 
@@ -48,7 +54,7 @@ export function TipsBanner({ onOpenHelp }: TipsBannerProps) {
           type="button"
           className="btn"
           aria-label="Tipsを閉じる"
-          onClick={() => setIsVisible(false)}
+          onClick={onDismiss}
         >
           閉じる
         </button>
