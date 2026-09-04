@@ -14,7 +14,7 @@ describe('TipsBanner', () => {
     const onOpenHelp = vi.fn();
     vi.spyOn(Math, 'random').mockReturnValue(0);
 
-    render(<TipsBanner onOpenHelp={onOpenHelp} />);
+    render(<TipsBanner onOpenHelp={onOpenHelp} onDismiss={vi.fn()} />);
 
     expect(screen.getByText(TIPS[0].title)).toBeInTheDocument();
     expect(screen.getByText(TIPS[0].text)).toBeInTheDocument();
@@ -23,16 +23,23 @@ describe('TipsBanner', () => {
     expect(onOpenHelp).toHaveBeenCalledOnce();
   });
 
-  it('shows a different tip and can be dismissed', async () => {
+  it('shows a different tip and calls onDismiss when closed (bdboard-h4xs.17)', async () => {
     const user = userEvent.setup();
+    const onDismiss = vi.fn();
     vi.spyOn(Math, 'random').mockReturnValue(0);
 
-    render(<TipsBanner onOpenHelp={vi.fn()} />);
+    render(<TipsBanner onOpenHelp={vi.fn()} onDismiss={onDismiss} />);
 
     await user.click(screen.getByRole('button', { name: '次のTipsを見る' }));
     expect(screen.getByText(TIPS[1].title)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Tipsを閉じる' }));
-    expect(screen.queryByLabelText('使い方のヒント')).not.toBeInTheDocument();
+    /*
+     * bdboard-h4xs.17: 表示可否(永続化)は App.tsx 側が持つため、この
+     * コンポーネント自身は閉じるボタンで onDismiss を呼ぶだけで、
+     * 自分の DOM を消しはしない (isVisible state を削除済み)。
+     */
+    expect(onDismiss).toHaveBeenCalledOnce();
+    expect(screen.getByLabelText('使い方のヒント')).toBeInTheDocument();
   });
 });

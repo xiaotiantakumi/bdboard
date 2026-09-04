@@ -7,6 +7,10 @@ export interface OverflowMenuProps {
   onOpenTunnel: () => void;
   onOpenHelp: () => void;
   onOpenShortcuts: () => void;
+  /** bdboard-h4xs.17: Tips バナーが閉じられ、永続化により非表示になっている状態か。 */
+  tipsBannerDismissed: boolean;
+  /** bdboard-h4xs.17: Tips バナーを再表示する(dismissed フラグを解除する)。 */
+  onShowTipsBanner: () => void;
 }
 
 export function OverflowMenu({
@@ -14,6 +18,8 @@ export function OverflowMenu({
   onOpenTunnel,
   onOpenHelp,
   onOpenShortcuts,
+  tipsBannerDismissed,
+  onShowTipsBanner,
 }: OverflowMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const containerRef = useExclusivePopover('overflow-menu', menuOpen, setMenuOpen);
@@ -76,6 +82,16 @@ export function OverflowMenu({
           >
             キーボードショートカット
           </button>
+          {tipsBannerDismissed && (
+            <button
+              type="button"
+              className="overflow-menu-item"
+              role="menuitem"
+              onClick={() => handleItemClick(onShowTipsBanner)}
+            >
+              Tips バナーを表示
+            </button>
+          )}
           {updateData && (
             <a
               className="update-notice"

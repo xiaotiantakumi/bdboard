@@ -12,15 +12,17 @@ const defaultProps = {
   onOpenTunnel: vi.fn(),
   onOpenHelp: vi.fn(),
   onOpenShortcuts: vi.fn(),
+  tipsBannerDismissed: false,
+  onShowTipsBanner: vi.fn(),
 };
 
-function renderMenu() {
+function renderMenu(overrides?: Partial<React.ComponentProps<typeof OverflowMenu>>) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <OverflowMenu {...defaultProps} />
+      <OverflowMenu {...defaultProps} {...overrides} />
     </QueryClientProvider>,
   );
 }
@@ -74,5 +76,34 @@ describe('OverflowMenu update indicator', () => {
     expect(screen.getByRole('button', { name: 'その他のメニュー' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'その他のメニュー (更新あり)' })).toBeNull();
     expect(screen.queryByRole('link', { name: /新しいバージョン/ })).toBeNull();
+  });
+});
+
+describe('OverflowMenu tips banner recovery (bdboard-h4xs.17)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+  });
+
+  it('hides the "Tips バナーを表示" item when the banner is not dismissed', async () => {
+    const user = userEvent.setup();
+    renderMenu({ tipsBannerDismissed: false });
+
+    await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+
+    expect(
+      screen.queryByRole('menuitem', { name: 'Tips バナーを表示' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the item and calls onShowTipsBanner when the banner is dismissed', async () => {
+    const user = userEvent.setup();
+    const onShowTipsBanner = vi.fn();
+    renderMenu({ tipsBannerDismissed: true, onShowTipsBanner });
+
+    await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Tips バナーを表示' }));
+
+    expect(onShowTipsBanner).toHaveBeenCalledOnce();
   });
 });

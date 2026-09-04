@@ -71,6 +71,15 @@ export const UI_STORAGE_KEYS = {
   notificationsEnabled: 'bdboard.ui.notificationsEnabled',
   watchedTicketIds: 'bdboard.ui.watchedTicketIds',
   recentTickets: 'bdboard.ui.recentTickets',
+  /*
+   * bdboard-h4xs.17: Tips バナー(TipsBanner)を閉じた状態の永続化。
+   * 保存先は localStorage、キーは 'bdboard.ui.tipsBannerDismissed'。
+   * 未設定/読み取り失敗時は false (=表示する) にフォールバックする
+   * (usePersistedState の既定値挙動)。再表示したい場合はヘッダー右上の
+   * 「⋯」(その他のメニュー) から「Tips バナーを表示」を選ぶ
+   * (OverflowMenu.tsx / App.tsx 参照)。
+   */
+  tipsBannerDismissed: 'bdboard.ui.tipsBannerDismissed',
 } as const;
 
 export const RECENT_TICKETS_MAX = 10;
@@ -278,6 +287,7 @@ export const BOARD_FILTER_PRESET_NAME_MAX_LENGTH = 40;
 
 export const DEFAULT_HIDE_DONE = true;
 export const DEFAULT_STALLED_ONLY = false;
+export const DEFAULT_TIPS_BANNER_DISMISSED = false;
 
 export interface BoardFilterPreset {
   id: string;

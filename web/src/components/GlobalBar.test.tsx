@@ -33,6 +33,8 @@ function renderGlobalBar(overrides?: Partial<React.ComponentProps<typeof GlobalB
     onOpenTunnel: vi.fn(),
     onOpenHelp: vi.fn(),
     onOpenShortcuts: vi.fn(),
+    tipsBannerDismissed: false,
+    onShowTipsBanner: vi.fn(),
     ...overrides,
   };
   const result = render(
@@ -132,6 +134,8 @@ describe('GlobalBar view switcher scroll', () => {
       onOpenTunnel: vi.fn(),
       onOpenHelp: vi.fn(),
       onOpenShortcuts: vi.fn(),
+      tipsBannerDismissed: false,
+      onShowTipsBanner: vi.fn(),
     };
 
     const { rerender } = render(
