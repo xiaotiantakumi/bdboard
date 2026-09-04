@@ -34,6 +34,13 @@ import {
   writePersistedChatThread,
   writePersistedChatThreadState,
 } from '../chatThreadStorage';
+import {
+  isEmptyList,
+  isEmptyText,
+  isNeverEmpty,
+  migrateKeyInRecord,
+  purgeKeysInRecord,
+} from './conversationKeyspace';
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
 import { MarkdownContent } from './MarkdownContent';
 import {
@@ -547,6 +554,49 @@ export function ChatPanel({
     },
     [],
   );
+  // bdboard-c1pw: 会話キーで索かれる「ドラフト積載物」ストアの単一の登録簿。
+  // 会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペースの一括破棄
+  // (purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。従来は同じ
+  // 5ストアぶんの移送コードが呼び出しサイトごとに手書きで重複しており、1つ書き
+  // 忘れると「入力欄だけ旧キーに取り残される」「モデル選択だけ引き継がれない」
+  // という形の desync 事故になっていた(bdboard-3tw.104.18 / dpq / 2n8 ほか)。
+  // 新しい会話キー付きストアを足すときは、ここに1行足せば両方の操作が追従する。
+  //
+  // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
+  // これらは「サーバーのセッション状態」側であり、下の2つの呼び出しサイト
+  // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
+  // 移送されていない。ここに含めると挙動が変わる。
+  const applyToDraftPayloadStores = useCallback(
+    (
+      transform: <T>(
+        record: Record<string, T>,
+        isEmpty: (value: T) => boolean,
+      ) => Record<string, T>,
+    ) => {
+      setConversationInputs((prev) => transform(prev, isEmptyText));
+      updateConversationAttachments((prev) => transform(prev, isEmptyList));
+      setAttachmentErrors((prev) => transform(prev, isNeverEmpty));
+      setThreadModelIds((prev) => transform(prev, isNeverEmpty));
+      draftSeedTextRef.current = transform(draftSeedTextRef.current, isNeverEmpty);
+    },
+    [updateConversationAttachments],
+  );
+
+  const migrateDraftPayloadKey = useCallback(
+    (from: string, to: string) => {
+      applyToDraftPayloadStores((record, isEmpty) =>
+        migrateKeyInRecord(record, from, to, isEmpty),
+      );
+    },
+    [applyToDraftPayloadStores],
+  );
+
+  const purgeDraftPayloadKeys = useCallback(
+    (matches: (key: string) => boolean) => {
+      applyToDraftPayloadStores((record) => purgeKeysInRecord(record, matches));
+    },
+    [applyToDraftPayloadStores],
+  );
   // bdboard-ysu: 下の project-sync effect が、非同期に解決する
   // fetchChatThreads().then/.catch の中から「今まさにどのスレッドが選択
   // されているか」を stale closure を経由せず読むための参照。draftNoncesRef /
@@ -573,6 +623,13 @@ export function ChatPanel({
   // 奪い合う。呼び出し側(下の各 useEffect)は必ず「1回のトリガーにつき
   // startNewDraftThread は高々1回」を守ること。
   const startNewDraftThread = useCallback((projectId: string) => {
+    // bdboard-c1pw: ここも会話キーの再割り当てサイトだが、上の
+    // migrateDraftPayloadKey(全ストア一律移送)には意図的に載せていない。この
+    // 経路が旧キーから引き継ぐのは「pendingPrefillRef を消化するときだけ、かつ
+    // 計算した値(textToApply)」であり、一律移送とは意味が違う(通常の「新規
+    // スレッド」は何も引き継がず空のドラフトで始まるのが仕様)。会話キー付き
+    // ストアを新設するときは、登録簿に足すのとは別に、この経路で引き継ぐべきか
+    // を個別に判断すること。
     const previousDraftNonce = draftNoncesRef.current[projectId] ?? 0;
     const previousDraftKey = makeDraftKey(projectId, previousDraftNonce);
     const nextDraftNonce = previousDraftNonce + 1;
@@ -799,54 +856,19 @@ export function ChatPanel({
       }
       const targetKey = makeDraftKey(resolved, targetNonce);
 
-      setConversationInputs((prev) => {
-        if (!(staleKey in prev)) return prev;
-        const { [staleKey]: staleValue, ...rest } = prev;
-        if (staleValue === undefined || staleValue === '') return rest;
-        if (rest[targetKey] !== undefined && rest[targetKey] !== '') return rest;
-        return { ...rest, [targetKey]: staleValue };
-      });
-      updateConversationAttachments((prev) => {
-        if (!(staleKey in prev)) return prev;
-        const { [staleKey]: staleAttachments, ...rest } = prev;
-        if (staleAttachments === undefined || staleAttachments.length === 0) return rest;
-        if ((rest[targetKey]?.length ?? 0) > 0) return rest;
-        return { ...rest, [targetKey]: staleAttachments };
-      });
-      setAttachmentErrors((prev) => {
-        if (!(staleKey in prev)) return prev;
-        const { [staleKey]: staleError, ...rest } = prev;
-        if (staleError === undefined || rest[targetKey] !== undefined) return rest;
-        return { ...rest, [targetKey]: staleError };
-      });
-      // レビュー minor-7: モデル選択も同じ会話キーで持つので一緒に移送する。
-      // ticket-context 側は coldModelId で拾っているが、こちらには無かった。
-      setThreadModelIds((prev) => {
-        if (!(staleKey in prev)) return prev;
-        const { [staleKey]: staleModelId, ...rest } = prev;
-        if (staleModelId === undefined || rest[targetKey] !== undefined) return rest;
-        return { ...rest, [targetKey]: staleModelId };
-      });
-      // N5/N6(bdboard-r5we で更新): この処理は元々 ticketContextToken===undefined
-      // 限定の effect からしか呼ばれず、'' キーにシード記録が残ること自体が到達
-      // 不能だった。いまは手動のプロジェクト選択(handleProjectSelectChange)からも
-      // 呼ばれ、チケット起点で対象が未解決のまま選び直された場合は '' キーに
-      // initialInput のシード記録が実在しうる。下の引き継ぎ処理はその場合も正しく
-      // 動く(記録を targetKey へ移し、'' 側を消す)。引き継げなかった場合に
-      // 「記録が無い」= 常に「ユーザーが編集した」扱いへ倒れるのも従来どおり安全側。
-      // updater 内で setConversationInputs のような setState 経由にしていない
-      // のは、draftSeedTextRef が ref(state ではない)であり、更新の純粋性を
-      // React の setState updater に持ち込む必要が無いため。
-      if (staleKey in draftSeedTextRef.current) {
-        if (!(targetKey in draftSeedTextRef.current)) {
-          draftSeedTextRef.current[targetKey] = draftSeedTextRef.current[staleKey];
-        }
-        delete draftSeedTextRef.current[staleKey];
-      }
+      // レビュー minor-7 / N5・N6(bdboard-r5we): 本文・添付・添付エラー・モデル選択・
+      // シード記録は同じ会話キーで持つので、必ず全部まとめて移送する。移送規則は
+      // 「移送元が空なら捨てるだけ」「移送先に既に中身があれば上書きしない」
+      // 「いずれにせよ移送元キーは必ず消す」で全ストア共通。ストアごとの
+      // 「空」の定義(空文字を空とみなすか等)だけが違い、それは登録簿側
+      // (applyToDraftPayloadStores)が各ストアに紐付けて1箇所で宣言している。
+      // シード記録を引き継げなかった場合に「記録が無い」=常に「ユーザーが編集した」
+      // 扱いへ倒れるのも従来どおり安全側。
+      migrateDraftPayloadKey(staleKey, targetKey);
 
       setSelectedProjectId(resolved);
     },
-    [updateConversationAttachments],
+    [migrateDraftPayloadKey],
   );
 
   const handleProjectSelectChange = useCallback(
@@ -1259,47 +1281,12 @@ export function ChatPanel({
       // 同じ安全側パターン(値の有無に関わらず無条件で削除)に揃え、'' キー
       // スペース(`new::` prefix)にマッチする全キーをここで一括して掃除する。
       const coldKeyPattern = /^new::/;
-      setConversationInputs((prev) => {
-        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
-        if (staleKeys.length === 0) return prev;
-        const next = { ...prev };
-        for (const key of staleKeys) {
-          delete next[key];
-        }
-        return next;
-      });
-      for (const key of Object.keys(draftSeedTextRef.current)) {
-        if (coldKeyPattern.test(key)) {
-          delete draftSeedTextRef.current[key];
-        }
-      }
-      setThreadModelIds((prev) => {
-        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
-        if (staleKeys.length === 0) return prev;
-        const next = { ...prev };
-        for (const key of staleKeys) {
-          delete next[key];
-        }
-        return next;
-      });
-      updateConversationAttachments((prev) => {
-        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
-        if (staleKeys.length === 0) return prev;
-        const next = { ...prev };
-        for (const key of staleKeys) {
-          delete next[key];
-        }
-        return next;
-      });
-      setAttachmentErrors((prev) => {
-        const staleKeys = Object.keys(prev).filter((key) => coldKeyPattern.test(key));
-        if (staleKeys.length === 0) return prev;
-        const next = { ...prev };
-        for (const key of staleKeys) {
-          delete next[key];
-        }
-        return next;
-      });
+      // 104.17 nit2/nit5: 対象は「今ライブな nonce のキー」1個に限らないので、
+      // '' キースペース(`new::` prefix)に該当する全キーを、値の有無に関わらず
+      // 無条件で一括削除する(104.10 の stale-key migration effect と同じ安全側
+      // パターン)。対象ストアの列挙は登録簿(applyToDraftPayloadStores)に一本化
+      // されているので、ここでストアを1つ書き漏らすことは構造的に起こらない。
+      purgeDraftPayloadKeys((key) => coldKeyPattern.test(key));
     }
 
     // S2/S4-b(MF1/SF1/SF2 一括解消): プリフィルは「対象プロジェクト+文言」だけを
@@ -1382,7 +1369,7 @@ export function ChatPanel({
     // initialInput / ticketProjectFallbackNotice はトリガー時点の最新値を
     // 都度読みたいだけであり、それら自体の変化で再実行したくない。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketContextToken, projects]);
+  }, [ticketContextToken, projects, purgeDraftPayloadKeys]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1886,6 +1873,12 @@ export function ChatPanel({
 
   const applyChatSuccess = useCallback(
     (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
+      // bdboard-c1pw: ここも会話キーの再割り当て(ドラフトキー → 確定した
+      // sessionId)だが、migrateDraftPayloadKey には載せていない。移すのは
+      // conversations(しかも返信を追記した計算済みの値)であり、ドラフト積載物
+      // 5ストアは送信時点で既にクリア済みなので一律移送の対象ではない。会話キー
+      // 付きストアを新設するときは、この経路で新キーへ引き継ぐ必要があるかを
+      // 個別に判断すること。
       setConversations((prev) => {
         const next = {
           ...prev,
@@ -2334,6 +2327,13 @@ export function ChatPanel({
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
       const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);
+      // bdboard-c1pw: ここも会話キーの再割り当てだが、migrateDraftPayloadKey の
+      // 一律移送には意図的に載せていない。引き継ぐのは本文・添付・シード記録の
+      // 3つだけで、attachmentErrors と threadModelIds は引き継がない ——
+      // エージェントを切り替えた以上、旧エージェント向けのモデル選択を新キーへ
+      // 持ち込むのは誤り(モデル漏れを防いでいるのは復元 effect のメンバーシップ
+      // チェックと、nonce でキーが分離されることの両方)。会話キー付きストアを
+      // 新設するときは、この経路で引き継ぐべきかを個別に判断すること。
       setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
       // MF1(N1: startNewDraftThread の SF1 引き継ぎと同じ family ——
       // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という
