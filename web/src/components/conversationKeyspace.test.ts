@@ -1,10 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  applyDraftPayloadStoreCarryPlan,
+  applyTransformToAllDraftPayloadStores,
+  defineDraftPayloadStoreCarryPlan,
   isEmptyList,
   isEmptyText,
   isNeverEmpty,
   migrateKeyInRecord,
   purgeKeysInRecord,
+  referenceDraftPayloadStoreCarryPlan,
 } from './conversationKeyspace';
 
 describe('migrateKeyInRecord', () => {
@@ -87,3 +91,101 @@ describe('purgeKeysInRecord', () => {
     expect(record).toEqual(snapshot);
   });
 });
+
+describe('defineDraftPayloadStoreCarryPlan (bdboard-ru4d)', () => {
+  it('requires all draft payload store names in the carry plan', () => {
+    const plan = defineDraftPayloadStoreCarryPlan({
+      conversationInputs: { carry: true },
+      conversationAttachments: { carry: false, reason: 'test' },
+      attachmentErrors: { carry: false, reason: 'test' },
+      threadModelIds: { carry: false, reason: 'test' },
+      draftSeedText: { carry: false, reason: 'test' },
+    });
+    expect(plan.conversationInputs.carry).toBe(true);
+    expect(plan.threadModelIds.carry).toBe(false);
+  });
+
+  it('applyDraftPayloadStoreCarryPlan runs only carry:true stores', () => {
+    const plan = defineDraftPayloadStoreCarryPlan({
+      conversationInputs: { carry: true },
+      conversationAttachments: { carry: true },
+      attachmentErrors: { carry: false, reason: 'skip' },
+      threadModelIds: { carry: false, reason: 'skip' },
+      draftSeedText: { carry: false, reason: 'skip' },
+    });
+    const conversationInputs = vi.fn();
+    const conversationAttachments = vi.fn();
+    applyDraftPayloadStoreCarryPlan(plan, {
+      conversationInputs,
+      conversationAttachments,
+    });
+    expect(conversationInputs).toHaveBeenCalledOnce();
+    expect(conversationAttachments).toHaveBeenCalledOnce();
+  });
+
+  it('referenceDraftPayloadStoreCarryPlan preserves all-false plans', () => {
+    const plan = defineDraftPayloadStoreCarryPlan({
+      conversationInputs: { carry: false, reason: 'cleared on send' },
+      conversationAttachments: { carry: false, reason: 'cleared on send' },
+      attachmentErrors: { carry: false, reason: 'cleared on send' },
+      threadModelIds: { carry: false, reason: 'cleared on send' },
+      draftSeedText: { carry: false, reason: 'cleared on send' },
+    });
+    expect(referenceDraftPayloadStoreCarryPlan(plan)).toBe(plan);
+  });
+
+  it('applyTransformToAllDraftPayloadStores visits every store applicator', () => {
+    const calls: string[] = [];
+    applyTransformToAllDraftPayloadStores(
+      {
+        conversationInputs: () => {
+          calls.push('conversationInputs');
+        },
+        conversationAttachments: () => {
+          calls.push('conversationAttachments');
+        },
+        attachmentErrors: () => {
+          calls.push('attachmentErrors');
+        },
+        threadModelIds: () => {
+          calls.push('threadModelIds');
+        },
+        draftSeedText: () => {
+          calls.push('draftSeedText');
+        },
+      },
+      (record) => record,
+    );
+    expect(calls).toEqual([
+      'conversationInputs',
+      'conversationAttachments',
+      'attachmentErrors',
+      'threadModelIds',
+      'draftSeedText',
+    ]);
+  });
+});
+
+/** compile-time checks: missing/extra apply fns must be tsc errors (bdboard-ru4d). */
+function typecheckDraftPayloadStoreCarryPlanApplyFns() {
+  const planMissingApply = defineDraftPayloadStoreCarryPlan({
+    conversationInputs: { carry: true },
+    conversationAttachments: { carry: true },
+    attachmentErrors: { carry: false, reason: 'x' },
+    threadModelIds: { carry: false, reason: 'x' },
+    draftSeedText: { carry: false, reason: 'x' },
+  });
+  // @ts-expect-error conversationAttachments is carry:true but apply fn is missing
+  applyDraftPayloadStoreCarryPlan(planMissingApply, { conversationInputs: () => {} });
+
+  const planAllFalse = defineDraftPayloadStoreCarryPlan({
+    conversationInputs: { carry: false, reason: 'x' },
+    conversationAttachments: { carry: false, reason: 'x' },
+    attachmentErrors: { carry: false, reason: 'x' },
+    threadModelIds: { carry: false, reason: 'x' },
+    draftSeedText: { carry: false, reason: 'x' },
+  });
+  // @ts-expect-error carry:false stores must not receive apply fns
+  applyDraftPayloadStoreCarryPlan(planAllFalse, { conversationInputs: () => {} });
+}
+void typecheckDraftPayloadStoreCarryPlanApplyFns;

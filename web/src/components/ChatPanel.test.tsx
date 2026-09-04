@@ -5283,6 +5283,69 @@ describe('ChatPanel', () => {
     expect(screen.queryByLabelText('モデル')).not.toBeInTheDocument();
   });
 
+  it('carries draft body but not threadModelIds when switching agents — shared model would stick if threadModelIds were carried (bdboard-ru4d)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([
+      {
+        ...CLAUDE_AGENT,
+        model: 'sonnet',
+        models: [
+          { id: 'sonnet', label: 'Sonnet' },
+          { id: 'shared-model', label: 'Shared' },
+        ],
+      },
+      {
+        ...EXAMPLE_AGENT,
+        model: 'fast',
+        models: [
+          { id: 'shared-model', label: 'Shared' },
+          { id: 'fast', label: 'Fast' },
+        ],
+      },
+    ]);
+    fetchChatThreadsMock.mockResolvedValue([]);
+
+    renderChatPanel([PROJECT_A]);
+    const modelSelect = await screen.findByLabelText('モデル');
+    await user.selectOptions(modelSelect, 'shared-model');
+    expect(modelSelect).toHaveValue('shared-model');
+
+    await user.type(screen.getByLabelText('メッセージ'), '書きかけの本文');
+
+    await user.selectOptions(
+      screen.getByLabelText('チャットエージェント'),
+      'example-agent',
+    );
+
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('書きかけの本文');
+    // threadModelIds を引き継ぐと shared-model がメンバーシップチェックを通過して残る。
+    // 引き継がない場合のみ B のデフォルト fast になる。
+    expect(await screen.findByLabelText('モデル')).toHaveValue('fast');
+  });
+
+  it('starts a fresh empty draft without carrying draft payload on explicit new thread (bdboard-ru4d)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([
+      {
+        ...CLAUDE_AGENT,
+        model: 'sonnet',
+        models: [
+          { id: 'sonnet', label: 'Sonnet' },
+          { id: 'opus', label: 'Opus' },
+        ],
+      },
+    ]);
+    fetchChatThreadsMock.mockResolvedValue([]);
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+
+    await user.type(screen.getByLabelText('メッセージ'), '旧ドラフトの本文');
+    await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+  });
+
   it('resets model selection to the new agent default when switching agents', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([
