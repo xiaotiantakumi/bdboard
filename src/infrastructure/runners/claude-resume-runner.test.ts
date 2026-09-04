@@ -1,18 +1,7 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { RunRequest } from '../../application/ports/agent-runner.js';
 import { DEFAULT_ALLOWED_TOOLS, DENIED_TOOLS } from './claude-runner.js';
 import { createClaudeResumeRunner } from './claude-resume-runner.js';
-
-const tempConfigDirs: string[] = [];
-
-function makeTempClaudeConfigDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-claude-config-'));
-  tempConfigDirs.push(dir);
-  return dir;
-}
 
 function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
   return {
@@ -34,14 +23,8 @@ const DEFAULT_WOULD_RUN_TOOLS = [
 ].join(' ');
 
 describe('createClaudeResumeRunner', () => {
-  afterEach(() => {
-    for (const dir of tempConfigDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('supports resume mode only', () => {
-    const runner = createClaudeResumeRunner({ claudeConfigDir: makeTempClaudeConfigDir() });
+    const runner = createClaudeResumeRunner();
     expect(runner.supports(makeRequest({ mode: 'resume', sessionId: 's' }))).toBe(
       true,
     );
@@ -49,7 +32,7 @@ describe('createClaudeResumeRunner', () => {
   });
 
   it('returns dispatch-disabled without executing', async () => {
-    const runner = createClaudeResumeRunner({ claudeConfigDir: makeTempClaudeConfigDir() });
+    const runner = createClaudeResumeRunner();
     const outcome = await runner.dispatch(
       makeRequest({ mode: 'resume', sessionId: 'sess-1', prompt: 'continue' }),
     );
@@ -65,7 +48,7 @@ describe('createClaudeResumeRunner', () => {
   });
 
   it('reports invalid-request instead of throwing when resume has no sessionId', async () => {
-    const runner = createClaudeResumeRunner({ claudeConfigDir: makeTempClaudeConfigDir() });
+    const runner = createClaudeResumeRunner();
     const outcome = await runner.dispatch(
       makeRequest({ mode: 'resume', sessionId: undefined }),
     );
@@ -79,7 +62,6 @@ describe('createClaudeResumeRunner', () => {
   it('includes custom claudePath in the would-run message', async () => {
     const runner = createClaudeResumeRunner({
       claudePath: '/opt/wrappers/claude',
-      claudeConfigDir: makeTempClaudeConfigDir(),
     });
     const outcome = await runner.dispatch(
       makeRequest({ mode: 'resume', sessionId: 'sess-1' }),

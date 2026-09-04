@@ -14,29 +14,9 @@ import {
   createClaudeRunner,
   DEFAULT_ALLOWED_TOOLS,
   DENIED_TOOLS,
-  ensureManagedClaudeConfig,
 } from './claude-runner.js';
 
-const tempConfigDirs: string[] = [];
-
-function makeTempClaudeConfigDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-claude-config-'));
-  tempConfigDirs.push(dir);
-  return dir;
-}
-
-function runnerOptions(
-  overrides: {
-    readonly claudeConfigDir?: string;
-    readonly streamingRunner?: StreamingCommandRunner;
-    readonly allowedTools?: readonly string[];
-  } = {},
-) {
-  return {
-    claudeConfigDir: overrides.claudeConfigDir ?? makeTempClaudeConfigDir(),
-    ...overrides,
-  };
-}
+const tempWorktreeDirs: string[] = [];
 
 function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
   return {
@@ -140,6 +120,59 @@ describe('DEFAULT_ALLOWED_TOOLS', () => {
   });
 });
 
+describe('DENIED_TOOLS', () => {
+  it('pins the exact deny list contents so weakening the ceiling requires an explicit test update', () => {
+    expect(DENIED_TOOLS).toEqual([
+      'WebFetch',
+      'WebSearch',
+      'Task',
+      'Bash(sudo:*)',
+      'Bash(npm:*)',
+      'Bash(npx:*)',
+      'Bash(pnpm:*)',
+      'Bash(yarn:*)',
+      'Bash(git push:*)',
+      'Bash(bd dolt:*)',
+      'Bash(mv:*)',
+      'Bash(cp:*)',
+      'Bash(rm:*)',
+      'Bash(ln:*)',
+      'Bash(chmod:*)',
+      'Bash(chown:*)',
+      'Bash(curl:*)',
+      'Bash(wget:*)',
+      'Bash(ssh:*)',
+      'Bash(scp:*)',
+      'Bash(docker:*)',
+      'Bash(find:*)',
+      'Bash(bash:*)',
+      'Bash(sh:*)',
+      'Bash(zsh:*)',
+      'Bash(node:*)',
+      'Bash(python:*)',
+      'Bash(python3:*)',
+      'Bash(eval:*)',
+      'Bash(env:*)',
+      'Bash(open:*)',
+    ]);
+  });
+
+  it('does not deny bare Bash or conflict with DEFAULT_ALLOWED_TOOLS bash verbs', () => {
+    expect(DENIED_TOOLS).not.toContain('Bash');
+
+    const deniedBashVerbs = DENIED_TOOLS.filter((entry) => entry.startsWith('Bash('))
+      .map((entry) => entry.slice('Bash('.length, -1).replace(/:\*$/, ''));
+
+    for (const allowed of DEFAULT_ALLOWED_TOOLS) {
+      if (!allowed.startsWith('Bash(')) {
+        continue;
+      }
+      const verb = allowed.slice('Bash('.length, -1).replace(/:\*$/, '');
+      expect(deniedBashVerbs).not.toContain(verb);
+    }
+  });
+});
+
 describe('buildRunnerEnv', () => {
   it('drops the nested-session control credentials even though they match the CLAUDE_ prefix', () => {
     const env = buildRunnerEnv({
@@ -154,32 +187,11 @@ describe('buildRunnerEnv', () => {
     // プレフィックス一致でも、親セッションへの制御チャネルの資格情報は渡さない。
     expect(env).not.toHaveProperty('CLAUDE_CODE_MESSAGING_TOKEN');
     expect(env).not.toHaveProperty('CLAUDE_CODE_MESSAGING_SOCKET');
-    // 親の CLAUDE_CONFIG_DIR も素通ししない (B-1)。
-    expect(env).not.toHaveProperty('CLAUDE_CONFIG_DIR');
+    // 親の CLAUDE_CONFIG_DIR は素通しする (落とすと認証が壊れる)。
+    expect(env.CLAUDE_CONFIG_DIR).toBe('/home/u/.claude');
     // 正当な CLAUDE_*/ANTHROPIC_* 設定は引き続き通る。
     expect(env.ANTHROPIC_BASE_URL).toBe('https://example.invalid');
     expect(env.CLAUDE_CODE_ENTRYPOINT).toBe('claude');
-  });
-
-  it('sets CLAUDE_CONFIG_DIR when claudeConfigDir option is provided', () => {
-    const env = buildRunnerEnv(
-      { PATH: '/usr/bin' },
-      { claudeConfigDir: '/managed/claude-config' },
-    );
-
-    expect(env.CLAUDE_CONFIG_DIR).toBe('/managed/claude-config');
-  });
-
-  it('prefers claudeConfigDir option over parent CLAUDE_CONFIG_DIR', () => {
-    const env = buildRunnerEnv(
-      {
-        PATH: '/usr/bin',
-        CLAUDE_CONFIG_DIR: '/home/u/.claude',
-      },
-      { claudeConfigDir: '/managed/claude-config' },
-    );
-
-    expect(env.CLAUDE_CONFIG_DIR).toBe('/managed/claude-config');
   });
 
   it('passes allowlisted vars and drops secrets', () => {
@@ -203,89 +215,19 @@ describe('buildRunnerEnv', () => {
   });
 });
 
-describe('ensureManagedClaudeConfig', () => {
-  afterEach(() => {
-    for (const dir of tempConfigDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('writes settings.json with empty allow and full deny list', () => {
-    const dir = makeTempClaudeConfigDir();
-    const result = ensureManagedClaudeConfig(dir);
-
-    expect(result).toEqual({ ok: true });
-
-    const settings = JSON.parse(
-      fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'),
-    ) as {
-      permissions: { allow: string[]; deny: string[] };
-    };
-
-    expect(settings.permissions.allow).toEqual([]);
-    for (const tool of DENIED_TOOLS) {
-      expect(settings.permissions.deny).toContain(tool);
-    }
-  });
-
-  it('overwrites tampered settings.json on each call', () => {
-    const dir = makeTempClaudeConfigDir();
-    fs.writeFileSync(
-      path.join(dir, 'settings.json'),
-      JSON.stringify({ permissions: { allow: ['Bash(mv:*)'], deny: [] } }),
-    );
-
-    const result = ensureManagedClaudeConfig(dir);
-
-    expect(result).toEqual({ ok: true });
-    const settings = JSON.parse(
-      fs.readFileSync(path.join(dir, 'settings.json'), 'utf8'),
-    ) as {
-      permissions: { allow: string[]; deny: string[] };
-    };
-    expect(settings.permissions.allow).toEqual([]);
-    for (const tool of DENIED_TOOLS) {
-      expect(settings.permissions.deny).toContain(tool);
-    }
-  });
-
-  it('rejects settings.local.json in the managed directory', () => {
-    const dir = makeTempClaudeConfigDir();
-    fs.writeFileSync(path.join(dir, 'settings.local.json'), '{}');
-
-    const result = ensureManagedClaudeConfig(dir);
-
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain('settings.local.json');
-  });
-
-  it('rejects .claude.json in the managed directory', () => {
-    const dir = makeTempClaudeConfigDir();
-    fs.writeFileSync(path.join(dir, '.claude.json'), '{}');
-
-    const result = ensureManagedClaudeConfig(dir);
-
-    expect(result.ok).toBe(false);
-    expect(result.error).toContain('.claude.json');
-  });
-});
-
 describe('createClaudeRunner', () => {
   afterEach(() => {
     delete process.env.BDBOARD_RUN_PERMISSION_MODE;
     delete process.env.BDBOARD_RUN_ALLOWED_TOOLS;
     delete process.env.BDBOARD_TEST_SECRET_ENV;
-    for (const dir of tempConfigDirs.splice(0)) {
+    for (const dir of tempWorktreeDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
     vi.restoreAllMocks();
   });
 
   it('returns dispatch-disabled when streamingRunner is not wired', async () => {
-    const claudeConfigDir = makeTempClaudeConfigDir();
-    const runner = createClaudeRunner('claude-spawn', 'spawn', {
-      claudeConfigDir,
-    });
+    const runner = createClaudeRunner('claude-spawn', 'spawn');
     const outcome = await runner.dispatch(makeRequest());
 
     expect(outcome.ok).toBe(false);
@@ -293,28 +235,6 @@ describe('createClaudeRunner', () => {
     expect(outcome.error).toContain(
       `would run: claude ${expectedDefaultArgs().join(' ')}`,
     );
-  });
-
-  it('returns invalid-request when managed claude config is unusable', async () => {
-    const claudeConfigDir = makeTempClaudeConfigDir();
-    fs.writeFileSync(path.join(claudeConfigDir, 'settings.local.json'), '{}');
-
-    const { streamingRunner, runMock } = createFakeStreamingRunner(() => ({
-      stdout: '',
-      stderr: '',
-      exitCode: 0,
-    }));
-
-    const runner = createClaudeRunner('claude-spawn', 'spawn', {
-      streamingRunner,
-      claudeConfigDir,
-    });
-    const outcome = await runner.dispatch(makeRequest());
-
-    expect(outcome.ok).toBe(false);
-    expect(outcome.failureKind).toBe('invalid-request');
-    expect(outcome.error).toContain('managed claude config is not usable');
-    expect(runMock).not.toHaveBeenCalled();
   });
 
   it('returns invalid-request when cwd contains characters that break the permission rule', async () => {
@@ -326,7 +246,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
 
     for (const cwd of ['/tmp/worktree-bad)', '/tmp/worktree-bad*']) {
@@ -347,10 +266,8 @@ describe('createClaudeRunner', () => {
       exitCode: 0,
     }));
 
-    const claudeConfigDir = makeTempClaudeConfigDir();
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      claudeConfigDir,
     });
 
     const chunks: string[] = [];
@@ -368,9 +285,6 @@ describe('createClaudeRunner', () => {
       expectedDefaultArgs(),
       expect.objectContaining({
         cwd: '/tmp/project',
-        env: expect.objectContaining({
-          CLAUDE_CONFIG_DIR: claudeConfigDir,
-        }),
       }),
     );
   });
@@ -384,7 +298,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest({ cwd: '/tmp/worktree-54be' }));
 
@@ -395,6 +308,7 @@ describe('createClaudeRunner', () => {
     expect(args).toContain('Edit(//tmp/worktree-54be/**)');
     expect(args).toContain('--permission-mode');
     expect(args[args.indexOf('--permission-mode') + 1]).toBe('default');
+    // B-1: --disallowedTools がグローバル permissions.allow に勝つ唯一の天井。
     expect(args).toContain('--disallowedTools');
     for (const tool of DENIED_TOOLS) {
       expect(args).toContain(tool);
@@ -403,7 +317,7 @@ describe('createClaudeRunner', () => {
 
   it('removes worktree-local settings.local.json but keeps settings.json', async () => {
     const tmpWorktree = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-worktree-'));
-    tempConfigDirs.push(tmpWorktree);
+    tempWorktreeDirs.push(tmpWorktree);
 
     const claudeDir = path.join(tmpWorktree, '.claude');
     fs.mkdirSync(claudeDir, { recursive: true });
@@ -418,7 +332,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest({ cwd: tmpWorktree }));
 
@@ -435,7 +348,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     const outcome = await runner.dispatch(makeRequest());
 
@@ -455,7 +367,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     const outcome = await runner.dispatch(makeRequest());
 
@@ -474,7 +385,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     const outcome = await runner.dispatch(makeRequest());
 
@@ -495,7 +405,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest());
 
@@ -520,7 +429,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest());
 
@@ -544,7 +452,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest());
 
@@ -573,7 +480,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest());
 
@@ -599,7 +505,6 @@ describe('createClaudeRunner', () => {
 
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest());
 
@@ -625,7 +530,6 @@ describe('createClaudeRunner', () => {
     const runner = createClaudeRunner('claude-spawn', 'spawn', {
       streamingRunner,
       allowedTools: ['Glob'],
-      ...runnerOptions(),
     });
     await runner.dispatch(makeRequest());
 
@@ -650,7 +554,6 @@ describe('createClaudeRunner', () => {
     process.env.ANTHROPIC_API_KEY = 'example-anthropic-key';
 
     try {
-      const claudeConfigDir = makeTempClaudeConfigDir();
       const { streamingRunner, runMock } = createFakeStreamingRunner(() => ({
         stdout: '',
         stderr: '',
@@ -659,7 +562,6 @@ describe('createClaudeRunner', () => {
 
       const runner = createClaudeRunner('claude-spawn', 'spawn', {
         streamingRunner,
-        claudeConfigDir,
       });
       await runner.dispatch(makeRequest());
 
@@ -670,7 +572,6 @@ describe('createClaudeRunner', () => {
         expect(options.env?.PATH).toBe(process.env.PATH);
       }
       expect(options.env?.ANTHROPIC_API_KEY).toBe('example-anthropic-key');
-      expect(options.env?.CLAUDE_CONFIG_DIR).toBe(claudeConfigDir);
     } finally {
       if (previousSecretEnv === undefined) {
         delete process.env.BDBOARD_TEST_SECRET_ENV;

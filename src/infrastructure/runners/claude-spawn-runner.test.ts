@@ -1,18 +1,7 @@
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { RunRequest } from '../../application/ports/agent-runner.js';
 import { DEFAULT_ALLOWED_TOOLS, DENIED_TOOLS } from './claude-runner.js';
 import { createClaudeSpawnRunner } from './claude-spawn-runner.js';
-
-const tempConfigDirs: string[] = [];
-
-function makeTempClaudeConfigDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-claude-config-'));
-  tempConfigDirs.push(dir);
-  return dir;
-}
 
 function makeRequest(overrides: Partial<RunRequest> = {}): RunRequest {
   return {
@@ -33,14 +22,8 @@ const DEFAULT_WOULD_RUN_TOOLS = [
 ].join(' ');
 
 describe('createClaudeSpawnRunner', () => {
-  afterEach(() => {
-    for (const dir of tempConfigDirs.splice(0)) {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
   it('supports spawn mode only', () => {
-    const runner = createClaudeSpawnRunner({ claudeConfigDir: makeTempClaudeConfigDir() });
+    const runner = createClaudeSpawnRunner();
     expect(runner.supports(makeRequest({ mode: 'spawn' }))).toBe(true);
     expect(
       runner.supports(makeRequest({ mode: 'resume', sessionId: 's' })),
@@ -48,7 +31,7 @@ describe('createClaudeSpawnRunner', () => {
   });
 
   it('returns dispatch-disabled without executing', async () => {
-    const runner = createClaudeSpawnRunner({ claudeConfigDir: makeTempClaudeConfigDir() });
+    const runner = createClaudeSpawnRunner();
     const outcome = await runner.dispatch(
       makeRequest({ mode: 'spawn', prompt: 'hello' }),
     );
@@ -65,7 +48,6 @@ describe('createClaudeSpawnRunner', () => {
   it('includes custom claudePath in the would-run message', async () => {
     const runner = createClaudeSpawnRunner({
       claudePath: '/opt/wrappers/claude',
-      claudeConfigDir: makeTempClaudeConfigDir(),
     });
     const outcome = await runner.dispatch(makeRequest({ mode: 'spawn' }));
 

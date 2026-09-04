@@ -2,7 +2,6 @@
 // dispatch-disabled so the composition root can keep agent runners unwired until
 // POST /api/runs is enabled.
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type {
   AgentRunner,
@@ -58,12 +57,15 @@ export const ALLOWED_BASH_WILDCARD_VERBS = [
 ] as const;
 
 /**
- * run に対して絶対に許さない能力の天井。permissions.deny は allow より優先されるので、
- * ユーザーのグローバル設定・worktree 内のプロジェクト設定のどちらが allow していても塞がる。
+ * run に対して絶対に許さない能力の唯一の天井 (--disallowedTools)。
+ * --allowedTools はユーザーのグローバル permissions.allow との和集合になるため
+ * 上限として機能しないが、--disallowedTools はグローバル allow に勝つ (実測: グローバル
+ * allow に Bash(mv:*) があっても --disallowedTools の有無だけで mv の実行有無が変わった)。
+ * CLAUDE_CONFIG_DIR 固定は認証を壊すため撤回した (2026-09-04)。
  *
- * ベアな `Bash` は入れない: DEFAULT_ALLOWED_TOOLS が許している Bash(git status:*) 等まで
- * 一緒に塞いでしまい、機能が死ぬ。allow していない能力と、allow の内側をすり抜けうる
- * 危険な verb だけを名指しする。
+ * ベアな `Bash` は入れない: DEFAULT_ALLOWED_TOOLS の Bash(bd show:*) 等まで塞いで
+ * プロンプトが成立しなくなる。代わりに allowlist に無く、任意コード実行・任意パス操作・
+ * ネットワーク送出に化ける verb を名指しで塞ぐ。
  */
 export const DENIED_TOOLS = [
   'WebFetch',
@@ -76,6 +78,27 @@ export const DENIED_TOOLS = [
   'Bash(yarn:*)',
   'Bash(git push:*)',
   'Bash(bd dolt:*)',
+  'Bash(mv:*)',
+  'Bash(cp:*)',
+  'Bash(rm:*)',
+  'Bash(ln:*)',
+  'Bash(chmod:*)',
+  'Bash(chown:*)',
+  'Bash(curl:*)',
+  'Bash(wget:*)',
+  'Bash(ssh:*)',
+  'Bash(scp:*)',
+  'Bash(docker:*)',
+  'Bash(find:*)',
+  'Bash(bash:*)',
+  'Bash(sh:*)',
+  'Bash(zsh:*)',
+  'Bash(node:*)',
+  'Bash(python:*)',
+  'Bash(python3:*)',
+  'Bash(eval:*)',
+  'Bash(env:*)',
+  'Bash(open:*)',
 ] as const;
 
 const RUNNER_ENV_ALLOWLIST = [
@@ -94,83 +117,7 @@ export interface ClaudeRunnerOptions {
   readonly streamingRunner?: StreamingCommandRunner;
   readonly permissionMode?: string;
   readonly allowedTools?: readonly string[];
-  readonly claudeConfigDir?: string;
   readonly timeoutMs?: number;
-}
-
-export interface ManagedClaudeConfigCheck {
-  readonly ok: boolean;
-  readonly error?: string;
-}
-
-/**
- * run 用の claude 設定ディレクトリ。ユーザーの ~/.claude を読ませないための天井。
- * --allowedTools はユーザーのグローバル permissions.allow との「和集合」になるため
- * 上限として機能しない (実測: allowlist に無い Bash(mv:*) がグローバル allow 経由で通った)。
- * CLAUDE_CONFIG_DIR を bdboard 管理下に固定して、そもそもユーザー設定を読ませない。
- */
-export function resolveManagedClaudeConfigDir(): string {
-  const fromEnv = process.env.BDBOARD_AGENT_RUN_CLAUDE_CONFIG_DIR;
-  if (fromEnv !== undefined && fromEnv.trim() !== '') {
-    return fromEnv.trim();
-  }
-  return path.join(os.homedir(), '.bdboard', 'agent-run-claude-config');
-}
-
-/**
- * 管理ディレクトリを毎 dispatch 前に作り直し、bdboard が書いた settings.json 以外の
- * 設定が permissions に寄与していないことを検査する。
- * 「起動時に一度」ではなく毎回にしているのは、run 中/run 間にエージェント自身が
- * この設定を書き換えて次の run を昇格させる経路 (M-2 と同型) を塞ぐため。
- * 検査に落ちたら run を拒否する (fail-closed)。
- */
-export function ensureManagedClaudeConfig(dir: string): ManagedClaudeConfigCheck {
-  try {
-    fs.mkdirSync(dir, { recursive: true });
-
-    const expectedSettings = {
-      permissions: {
-        defaultMode: 'default',
-        allow: [] as string[],
-        deny: [...DENIED_TOOLS],
-      },
-    };
-
-    const settingsPath = path.join(dir, 'settings.json');
-    const tempPath = path.join(dir, '.settings.json.tmp');
-    fs.writeFileSync(tempPath, `${JSON.stringify(expectedSettings, null, 2)}\n`);
-    fs.renameSync(tempPath, settingsPath);
-
-    const written = JSON.parse(fs.readFileSync(settingsPath, 'utf8')) as unknown;
-    if (JSON.stringify(written) !== JSON.stringify(expectedSettings)) {
-      return {
-        ok: false,
-        error: 'settings.json content does not match expected permissions after write',
-      };
-    }
-
-    const unmanagedNames = new Set([
-      'settings.local.json',
-      '.claude.json',
-      'CLAUDE.md',
-    ]);
-    for (const name of fs.readdirSync(dir)) {
-      if (name === 'settings.json') {
-        continue;
-      }
-      if (unmanagedNames.has(name)) {
-        return {
-          ok: false,
-          error: `unmanaged claude config file found in ${dir}: ${name}`,
-        };
-      }
-    }
-
-    return { ok: true };
-  } catch (error: unknown) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: detail };
-  }
 }
 
 /**
@@ -178,8 +125,7 @@ export function ensureManagedClaudeConfig(dir: string): ManagedClaudeConfigCheck
  * このファイルはグローバル gitignore で ignored なので git status --porcelain の
  * clean 判定に映らない。前の run がここへ権限やフックを仕込み、worktree は clean の
  * まま次の run が昇格した権限で始まる経路が成立していた (bdboard-54be.1 M-2)。
- * CLAUDE_CONFIG_DIR の固定はユーザーレベル設定にしか効かないので、プロジェクト
- * レベルはここで個別に潰す。存在しなければ何もしない。
+ * これが M-2 (worktree ローカル設定の持ち越し) の唯一のカバー。存在しなければ何もしない。
  */
 export function clearWorktreeLocalClaudeSettings(worktreePath: string): void {
   try {
@@ -274,12 +220,9 @@ function resolvePermissionMode(options?: ClaudeRunnerOptions): string {
   return mode;
 }
 
-const RUNNER_ENV_CLAUDE_PREFIX_DENYLIST = new Set([
+const RUNNER_ENV_NESTED_SESSION_DENYLIST = new Set([
   'CLAUDE_CODE_MESSAGING_TOKEN',
   'CLAUDE_CODE_MESSAGING_SOCKET',
-  // 親から継承した CLAUDE_CONFIG_DIR が素通しすると B-1 の managed config 天井が
-  // 無効化され、ユーザーの ~/.claude permissions.allow と --allowedTools が和集合になる。
-  'CLAUDE_CONFIG_DIR',
 ]);
 
 /**
@@ -289,7 +232,6 @@ const RUNNER_ENV_CLAUDE_PREFIX_DENYLIST = new Set([
  */
 export function buildRunnerEnv(
   source: NodeJS.ProcessEnv = process.env,
-  options?: { readonly claudeConfigDir?: string },
 ): Readonly<Record<string, string>> {
   const env: Record<string, string> = {};
 
@@ -309,19 +251,16 @@ export function buildRunnerEnv(
       // CLAUDE_CODE_MESSAGING_TOKEN / _SOCKET が届いていた。これらは「親セッション
       // への制御チャネル」の資格情報であって claude CLI の設定ではないので、
       // 新しい独立セッションである run に渡す理由が無い（渡すと子が入れ子
-      // セッションだと誤認する副作用もある）。CLAUDE_CONFIG_DIR も同様に、親の
-      // ~/.claude を子に見せないため denylist に載せる。allowlist の中の denylist
-      // という形は歪だが、プレフィックス許可を捨てると正当な ANTHROPIC_*/CLAUDE_*
-      // 設定まで落ちるので、例外を明示する方を選んでいる。
-      if (RUNNER_ENV_CLAUDE_PREFIX_DENYLIST.has(key)) {
+      // セッションだと誤認する副作用もある）。allowlist の中の denylist という形は
+      // 歪だが、プレフィックス許可を捨てると正当な ANTHROPIC_*/CLAUDE_* 設定まで
+      // 落ちるので、例外を明示する方を選んでいる。
+      // CLAUDE_CONFIG_DIR は落とさない。親が正当に設定している環境ではそこに認証情報があり、
+      // 子で落とすと既定の $HOME/.claude.json を見に行って "Not logged in" になる (実測)。
+      if (RUNNER_ENV_NESTED_SESSION_DENYLIST.has(key)) {
         continue;
       }
       env[key] = value;
     }
-  }
-
-  if (options?.claudeConfigDir !== undefined && options.claudeConfigDir !== '') {
-    env.CLAUDE_CONFIG_DIR = options.claudeConfigDir;
   }
 
   return env;
@@ -405,8 +344,6 @@ export function createClaudeRunner(
   const permissionMode = resolvePermissionMode(options);
   const allowedTools = resolveAllowedTools(options);
   const timeoutMs = resolveTimeoutMs(options);
-  const claudeConfigDir =
-    options?.claudeConfigDir ?? resolveManagedClaudeConfigDir();
 
   return {
     id,
@@ -417,17 +354,6 @@ export function createClaudeRunner(
       sink?: RunOutputSink,
     ): Promise<RunOutcome> {
       const startedAt = new Date();
-
-      const configCheck = ensureManagedClaudeConfig(claudeConfigDir);
-      if (!configCheck.ok) {
-        return buildOutcome(
-          id,
-          request,
-          startedAt,
-          'invalid-request',
-          `managed claude config is not usable: ${configCheck.error ?? 'unknown'}`,
-        );
-      }
 
       let command: string;
       let args: readonly string[];
@@ -469,7 +395,7 @@ export function createClaudeRunner(
 
       const result = await streamingRunner.run(command, args, {
         cwd: request.cwd,
-        env: buildRunnerEnv(process.env, { claudeConfigDir }),
+        env: buildRunnerEnv(),
         timeoutMs,
         onChunk,
         signal: sink?.signal,

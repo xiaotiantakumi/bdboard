@@ -1,11 +1,10 @@
 // Regression test: agent runs are reachable only through a single HTTP path that always
 // passes agent-run-guard. The v1 read-only guarantee (no runner wiring) was withdrawn;
 // this file replaces runners-are-disabled.test.ts with single-path + mandatory-gate checks.
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { resolveAllowRemoteAgentRuns } from '../../domain/agent-run-policy.js';
 import { createClaudeResumeRunner } from './claude-resume-runner.js';
 import { createClaudeSpawnRunner } from './claude-spawn-runner.js';
@@ -97,20 +96,6 @@ function isRunnerReferenceAllowlisted(relativePath: string): boolean {
 }
 
 describe('runner reachability (single guarded path)', () => {
-  const tempConfigDirs: string[] = [];
-
-  afterEach(() => {
-    for (const dir of tempConfigDirs.splice(0)) {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  function makeTempClaudeConfigDir(): string {
-    const dir = mkdtempSync(path.join(tmpdir(), 'bdboard-claude-config-'));
-    tempConfigDirs.push(dir);
-    return dir;
-  }
-
   it('only allowlisted src files may reference runner dispatch paths (interface/http entry is agent-run-routes.ts)', () => {
     const violations: Array<{ file: string; tokens: readonly string[] }> = [];
 
@@ -173,15 +158,14 @@ describe('runner reachability (single guarded path)', () => {
   });
 
   it('createDisabledRunner and claude runner without streamingRunner return dispatch-disabled', async () => {
-    const claudeConfigDir = makeTempClaudeConfigDir();
     const cases = [
       { runner: createDisabledRunner('disabled-test'), request: makeRequest() },
       {
-        runner: createClaudeSpawnRunner({ claudeConfigDir }),
+        runner: createClaudeSpawnRunner(),
         request: makeRequest(),
       },
       {
-        runner: createClaudeResumeRunner({ claudeConfigDir }),
+        runner: createClaudeResumeRunner(),
         request: makeRequest({ mode: 'resume', sessionId: 'sess-1' }),
       },
       {
