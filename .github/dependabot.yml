@@ -1,0 +1,15 @@
+# GitHub Actions を commit SHA にピン留めしている (bdboard-ukmc) ので、そのピンが
+# 陳腐化しないよう dependabot に追従させる。npm 側は意図的に対象外: 依存の更新は
+# lockfile 経由で人手 (bd チケット) で行い、release age を置かない自動 PR で
+# 汚染直後の版を拾わないようにする (2026-08-29 の npm マルウェア事案の教訓)。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # release-please.yml の publish ジョブは Trusted Publishing に紐づくので、
+    # アクション更新 PR も他と同じく CI green + 人手マージを経る。
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(ci)"
