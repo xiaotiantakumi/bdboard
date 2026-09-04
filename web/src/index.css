@@ -2095,6 +2095,61 @@ body {
   gap: 16px;
 }
 
+/*
+  Horizontal scroll for wide model stats tables (bdboard-83tc AC3).
+  macOS headless Chromium uses overlay scrollbars: styled ::-webkit-scrollbar
+  does not reserve layout space (offsetHeight - clientHeight stays 0), so e2e
+  must not assert scrollbar occupancy — edge fade hints on the outer wrapper
+  are the platform-independent affordance instead.
+*/
+.model-stats-table-scroller {
+  position: relative;
+  min-width: 0;
+}
+
+.model-stats-table-scroller.can-scroll-start::before,
+.model-stats-table-scroller.can-scroll-end::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.model-stats-table-scroller.can-scroll-start::before {
+  left: 0;
+  background: linear-gradient(to right, var(--color-bg-elevated), transparent);
+}
+
+.model-stats-table-scroller.can-scroll-end::after {
+  right: 0;
+  background: linear-gradient(to left, var(--color-bg-elevated), transparent);
+}
+
+.model-stats-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  /* insurance if an ancestor becomes row flex */
+  min-width: 0;
+  scrollbar-width: thin;
+}
+
+.model-stats-table-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.model-stats-table-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-text-tertiary);
+  border-radius: 4px;
+}
+
+.model-stats-table-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .model-stats-table {
   width: 100%;
   border-collapse: collapse;
