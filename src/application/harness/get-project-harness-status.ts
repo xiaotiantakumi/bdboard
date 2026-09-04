@@ -5,6 +5,7 @@ import {
   parseHarnessContract,
   resolveVerifyScriptRequirement,
   type ContractState,
+  type VerifyPackageScripts,
 } from '../../domain/harness-contract.js';
 import type {
   HarnessManifest,
@@ -67,7 +68,7 @@ export async function resolveProjectContractState(
   // verify が npm 系の run 形のときだけ、その package.json を読んで実体を確かめる。
   // `npm --prefix web run x` は web/ 側の package.json が正なので、そのディレクトリを
   // ポートに渡す (ポートは「渡された場所の package.json」しか見ない)。
-  let verifyPackageScripts: readonly string[] | null = null;
+  let verifyPackageScripts: VerifyPackageScripts = null;
   if (parsed.ok) {
     const requirement = resolveVerifyScriptRequirement(parsed.contract.verify);
     if (requirement !== null) {

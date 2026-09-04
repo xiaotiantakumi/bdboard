@@ -75,12 +75,22 @@ export type ContractState =
     }
   | { readonly state: 'not-applicable' };
 
+/**
+ * `verify` が指す package.json の scripts の状態。
+ *
+ * - `readonly string[]` — 読めた。中身がそのまま script 名の一覧 (`scripts` キーが
+ *   無い package.json は空配列 = 「その script は無い」と判定できる)。
+ * - `'absent'` — package.json 自体が存在しない。`npm run <script>` は確実に失敗するので
+ *   `command-missing` に倒す。
+ * - `null` — 存在はするが読めない/壊れている。**判定不能**なので警告しない。
+ *
+ * 「無い」と「読めない」を分けるのがこの型の全部で、両方 null にすると
+ * package.json ごと存在しないプロジェクトの誤宣言を見逃す (PR#282 レビュー minor-1)。
+ */
+export type VerifyPackageScripts = readonly string[] | 'absent' | null;
+
 export interface HarnessProjectFacts {
-  /**
-   * `verify` が指す package.json の scripts キー一覧。
-   * package.json を読めない (= 判定できない) ときは null で、そのときは検査しない。
-   */
-  readonly verifyPackageScripts: readonly string[] | null;
+  readonly verifyPackageScripts: VerifyPackageScripts;
 }
 
 function schemaFailure(message: string): ParseHarnessContractResult {
@@ -104,6 +114,25 @@ function parseStringArray(
   return { ok: true, value: value as readonly string[] };
 }
 
+/**
+ * 各パターンが JS の正規表現として成立するかを確かめる。
+ *
+ * これを通しておかないと、壊れたパターンは hook スクリプト (P1a) が読み込んだ
+ * 実行時にしか露見しない — つまり「ガードが黙って効いていない」状態になる。
+ * コントラクトを読んだ時点で `invalid` として出すほうが早く気付ける。
+ */
+function findInvalidRegexMessage(patterns: readonly string[]): string | null {
+  for (const [index, pattern] of patterns.entries()) {
+    try {
+      new RegExp(pattern);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return `hooks.denyBashPatterns[${index}] が正規表現として不正です: ${detail}`;
+    }
+  }
+  return null;
+}
+
 function parseHooks(
   value: unknown,
 ): { readonly ok: true; readonly hooks: HarnessContractHooks | null } | { readonly ok: false; readonly message: string } {
@@ -118,9 +147,30 @@ function parseHooks(
   if (!patterns.ok) {
     return { ok: false, message: patterns.message };
   }
+
+  const invalidRegex = findInvalidRegexMessage(patterns.value);
+  if (invalidRegex !== null) {
+    return { ok: false, message: invalidRegex };
+  }
+
   const messages = parseStringArray(value.denyBashMessages, 'hooks.denyBashMessages');
   if (!messages.ok) {
     return { ok: false, message: messages.message };
+  }
+
+  // メッセージはパターンと1対1で対応させる (省略して既定文言に任せるなら空)。
+  // 本数がずれた配列は、どのパターンにどのメッセージが付くのかが決まらない
+  // ため、hook 側で黙って取り違えるより読み込み時点で弾く。
+  if (
+    messages.value.length !== 0 &&
+    messages.value.length !== patterns.value.length
+  ) {
+    return {
+      ok: false,
+      message:
+        `hooks.denyBashMessages は空か、denyBashPatterns と同数 (${patterns.value.length} 件) である必要があります ` +
+        `(受領: ${messages.value.length} 件)`,
+    };
   }
 
   return {
@@ -292,12 +342,16 @@ export function evaluateContractState(
   const requirement = resolveVerifyScriptRequirement(contract.verify);
   const scripts = projectFacts.verifyPackageScripts;
 
-  if (requirement !== null && scripts !== null && !scripts.includes(requirement.script)) {
-    return {
-      state: 'command-missing',
-      script: requirement.script,
-      verify: contract.verify,
-    };
+  if (requirement !== null && scripts !== null) {
+    const commandMissing =
+      scripts === 'absent' || !scripts.includes(requirement.script);
+    if (commandMissing) {
+      return {
+        state: 'command-missing',
+        script: requirement.script,
+        verify: contract.verify,
+      };
+    }
   }
 
   return {

@@ -4,7 +4,10 @@ import {
   getProjectHarnessStatus,
   resolveProjectContractState,
 } from './get-project-harness-status.js';
-import type { ContractState } from '../../domain/harness-contract.js';
+import type {
+  ContractState,
+  VerifyPackageScripts,
+} from '../../domain/harness-contract.js';
 import type { HarnessManifest } from '../../domain/harness-pack.js';
 import type { HarnessContractReaderPort } from '../ports/harness-contract-reader.js';
 import type { PackRegistryPort } from '../ports/pack-registry.js';
@@ -24,13 +27,15 @@ const INJECTED_MANIFEST: HarnessManifest = {
 
 function fakeContractReader(options: {
   readonly contract?: string | null;
-  readonly scriptsByPath?: Readonly<Record<string, readonly string[] | null>>;
+  readonly scriptsByPath?: Readonly<Record<string, VerifyPackageScripts>>;
+  /** scriptsByPath に無いパスを返す既定値。実装の「package.json が無い」に相当。 */
+  readonly defaultScripts?: VerifyPackageScripts;
 }): HarnessContractReaderPort {
   return {
     readContract: vi.fn(async () => options.contract ?? null),
     readPackageScripts: vi.fn(
       async (packageRootPath: string) =>
-        options.scriptsByPath?.[packageRootPath] ?? null,
+        options.scriptsByPath?.[packageRootPath] ?? options.defaultScripts ?? null,
     ),
   };
 }
@@ -271,6 +276,40 @@ describe('resolveProjectContractState', () => {
       script: 'verify',
       verify: 'npm run verify',
     });
+  });
+
+  it('returns command-missing when the project has no package.json at all', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({ version: 1, verify: 'npm run verify', prFlow: 'pr' }),
+      defaultScripts: 'absent',
+    });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state).toEqual({
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    });
+  });
+
+  it('stays ok when the package.json exists but is unreadable', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({ version: 1, verify: 'npm run verify', prFlow: 'pr' }),
+      defaultScripts: null,
+    });
+
+    const state = await resolveProjectContractState(
+      reader,
+      '/tmp/proj',
+      INJECTED_MANIFEST,
+    );
+
+    expect(state.state).toBe('ok');
   });
 
   it('does not read a package.json for a non-npm verify command', async () => {
