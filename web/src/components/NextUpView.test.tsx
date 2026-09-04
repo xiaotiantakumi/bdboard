@@ -2,7 +2,13 @@ import { act, fireEvent, render, screen, waitFor, within } from '@testing-librar
 import userEvent from '@testing-library/user-event';
 import { useState, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { AgentRunDetailDto, BoardCardDto, BoardDto } from '../api';
+import type {
+  AgentRunDetailDto,
+  BoardCardDto,
+  BoardDto,
+  ProjectHarnessContractDto,
+  ProjectHarnessStatusDto,
+} from '../api';
 import { ApiError, fetchAgentRun, postTicketComment, startTicketRun } from '../api';
 import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
 import { NextUpView, type NextUpViewProps } from './NextUpView';
@@ -105,6 +111,33 @@ function ViewSwitchHarness(props: OwnedNextUpViewProps) {
   );
 }
 
+const OK_HARNESS_CONTRACT: ProjectHarnessContractDto = {
+  state: 'ok',
+  verify: 'npm run verify',
+  prFlow: 'pr',
+  mainBranch: 'main',
+};
+
+/** エージェント実行の前提を満たしたハーネス状態 (bdboard-pkr6.11)。 */
+function harnessStatus(
+  contract: ProjectHarnessContractDto = OK_HARNESS_CONTRACT,
+  installedVersion: string | null = '1.0.0',
+): ProjectHarnessStatusDto {
+  return {
+    packs: [
+      {
+        name: 'bdboard-harness',
+        availableVersion: '1.0.0',
+        installedVersion,
+        drift: false,
+        hooksState: 'ok',
+        missingHooks: [],
+      },
+    ],
+    contract,
+  };
+}
+
 function renderNextUpView(
   board: BoardDto,
   options?: {
@@ -112,6 +145,7 @@ function renderNextUpView(
     onLimitChange?: (limit: 5 | 10 | 20) => void;
     showEpics?: boolean;
     onShowEpicsChange?: (show: boolean) => void;
+    harnessStatuses?: ReadonlyMap<string, ProjectHarnessStatusDto>;
   },
 ) {
   const onLimitChange = options?.onLimitChange ?? vi.fn();
@@ -128,6 +162,7 @@ function renderNextUpView(
       pendingDecisionIds={new Set()}
       prLinksById={new Map()}
       onCardClick={() => {}}
+      harnessStatuses={options?.harnessStatuses}
     />,
   );
   return { onLimitChange, onShowEpicsChange };
@@ -1061,5 +1096,61 @@ describe('NextUpView batch run loop', () => {
     expect(
       screen.getByText('Epic は「▶ 一括実行」の対象外です'),
     ).toBeInTheDocument();
+  });
+});
+
+
+describe('NextUpView harness preflight', () => {
+  const board = makeBoard([makeCard('bdboard-1', 'First')]);
+
+  it('keeps the batch run button enabled while harness status is unknown', () => {
+    renderNextUpView(board);
+
+    expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeEnabled();
+  });
+
+  it('keeps the batch run button enabled when every project satisfies the preflight', () => {
+    renderNextUpView(board, {
+      harnessStatuses: new Map([['proj-1', harnessStatus()]]),
+    });
+
+    expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeEnabled();
+  });
+
+  it('disables the batch run button and names the project that needs fixing', () => {
+    renderNextUpView(board, {
+      harnessStatuses: new Map([['proj-1', harnessStatus({ state: 'missing' })]]),
+    });
+
+    expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeDisabled();
+    expect(
+      screen.getByText(
+        'Project One: 検証ループ未定義 — .claude/bdboard-harness.json を作成',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('disables the batch run button when the harness is not injected', () => {
+    renderNextUpView(board, {
+      harnessStatuses: new Map([
+        ['proj-1', harnessStatus(OK_HARNESS_CONTRACT, null)],
+      ]),
+    });
+
+    expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeDisabled();
+    expect(
+      screen.getByText('Project One: ハーネス未注入 — Hygiene から注入'),
+    ).toBeInTheDocument();
+  });
+
+  it('ignores projects that are not among the visible cards', () => {
+    renderNextUpView(board, {
+      harnessStatuses: new Map([
+        ['proj-1', harnessStatus()],
+        ['proj-2', harnessStatus({ state: 'missing' })],
+      ]),
+    });
+
+    expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeEnabled();
   });
 });

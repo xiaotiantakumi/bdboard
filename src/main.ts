@@ -121,6 +121,7 @@ import { createDbStatsRoutes } from './interface/http/db-stats-routes.js';
 import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
 import { createAgentRunSettingsRoutes } from './interface/http/agent-run-settings-routes.js';
 import { createAgentRunRoutes } from './interface/http/agent-run-routes.js';
+import { readProjectHarnessStatus } from './application/harness/get-project-harness-status.js';
 import { createRunStore } from './application/runner/run-store.js';
 import { createAgentRunnerRegistry } from './application/runner/runner-registry.js';
 import { resolveAllowRemoteAgentRuns } from './domain/agent-run-policy.js';
@@ -1069,6 +1070,17 @@ async function main(): Promise<void> {
       normalizePath: normalizePathForComparison,
       writeAccess,
       isRemoteAgentRunAllowed: async () => remoteAgentRunsAllowed,
+      // preflight (bdboard-pkr6.11) はハーネス表示と同じ組み立てを使う。
+      // 「バッジは緑なのに run は 409」を避けるため、入力を 1 関数に寄せている。
+      getHarnessStatus: (repoRootPath: string) =>
+        readProjectHarnessStatus(
+          {
+            registry: packRegistry,
+            injector: harnessInjector,
+            contractReader: harnessContractReader,
+          },
+          repoRootPath,
+        ),
       now: () => new Date(),
     }),
   );

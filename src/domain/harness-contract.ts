@@ -179,6 +179,25 @@ function parseHooks(
   };
 }
 
+const CONTRACT_TEXT_MAX_LENGTH = 200;
+
+/**
+ * 制御文字を含まず 200 文字以内か。
+ *
+ * `verify` / `mainBranch` は注入先のプロジェクトが書くファイル由来の**信頼できない
+ * 入力**でありながら、run プロンプト (`buildRunPrompt`) と UI のコピー用シェル行
+ * (`cd <worktree> && <verify>`) にそのまま埋まる。改行を通すとプロンプトへ任意の
+ * 行を注入できてしまうため、ここで弾いて preflight に `harness-contract-invalid`
+ * として止めさせる (bdboard-pkr6.11 レビュー指摘)。
+ */
+function isSafeSingleLineValue(value: string): boolean {
+  if (value.length > CONTRACT_TEXT_MAX_LENGTH) {
+    return false;
+  }
+  // eslint-disable-next-line no-control-regex
+  return !/[\u0000-\u001f\u007f]/.test(value);
+}
+
 /**
  * `.claude/bdboard-harness.json` の本文を検証コントラクトへ変換する。
  *
@@ -208,6 +227,10 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
     return schemaFailure('verify は空でない文字列である必要があります');
   }
 
+  if (!isSafeSingleLineValue(parsed.verify)) {
+    return schemaFailure('verify に改行・制御文字は使えません (200 文字以内)');
+  }
+
   const prFlow = parsed.prFlow;
   if (
     typeof prFlow !== 'string' ||
@@ -220,6 +243,9 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
   if (parsed.mainBranch !== undefined) {
     if (typeof parsed.mainBranch !== 'string' || parsed.mainBranch.trim().length === 0) {
       return schemaFailure('mainBranch は空でない文字列である必要があります');
+    }
+    if (!isSafeSingleLineValue(parsed.mainBranch)) {
+      return schemaFailure('mainBranch に改行・制御文字は使えません (200 文字以内)');
     }
     mainBranch = parsed.mainBranch.trim();
   }

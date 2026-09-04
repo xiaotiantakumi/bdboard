@@ -709,11 +709,22 @@ export interface AgentRunSummaryDto {
   error?: string;
 }
 
+/**
+ * run 完了後に人が run の外で回す検証コマンド (bdboard-pkr6.11)。
+ * 実行中の run と、前提が崩れているプロジェクトでは返らない。
+ */
+export interface AgentRunNextStepDto {
+  verify: string;
+  worktreePath: string;
+}
+
 /** ログと cwd はローカル画面からのみ返る (M-1)。リモートでは logRestricted が true。 */
 export interface AgentRunDetailDto extends AgentRunSummaryDto {
   cwd?: string;
   log: string;
   logRestricted?: boolean;
+  /** worktree の絶対パスを含むので cwd と同じくローカル限定。 */
+  nextStep?: AgentRunNextStepDto;
 }
 
 export interface StartAgentRunResponseDto {
@@ -724,6 +735,13 @@ export interface StartAgentRunResponseDto {
   branchName: string;
   /** 既存の worktree を再利用したか（false なら新規作成）。 */
   reused: boolean;
+  /**
+   * 実行は止めなかったが伝えるべきこと。現状は `harness-drift`
+   * (ハーネスパックが古い) のみ (bdboard-pkr6.11)。
+   *
+   * 現状 UI では未使用（drift はバッジ側で可視）。
+   */
+  warnings?: string[];
 }
 
 export function fetchAgentRunConfig(): Promise<AgentRunConfigDto> {

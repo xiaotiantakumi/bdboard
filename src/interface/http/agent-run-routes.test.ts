@@ -8,6 +8,12 @@ import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, create
 import { createRunStore, type RunStoreRecord } from '../../application/runner/run-store.js';
 import { createAgentRunnerRegistry } from '../../application/runner/runner-registry.js';
 import { compareStrings } from '../../domain/compare.js';
+import type { ContractState } from '../../domain/harness-contract.js';
+import type {
+  ProjectHarnessPackStatus,
+  ProjectHarnessStatus,
+} from '../../domain/harness-pack.js';
+import { RUN_REQUIRED_PACK_NAME } from '../../domain/harness-run-preflight.js';
 import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
 import { createAgentRunRoutes, AGENT_RUN_BODY_MAX_BYTES } from './agent-run-routes.js';
@@ -145,6 +151,39 @@ function makeRunner(dispatch: AgentRunner['dispatch']): AgentRunner {
   };
 }
 
+const READY_CONTRACT: ContractState = {
+  state: 'ok',
+  verify: 'npm run verify',
+  prFlow: 'pr',
+  mainBranch: 'main',
+};
+
+function harnessPack(
+  overrides: Partial<ProjectHarnessPackStatus> = {},
+): ProjectHarnessPackStatus {
+  return {
+    name: RUN_REQUIRED_PACK_NAME,
+    availableVersion: '1.0.0',
+    installedVersion: '1.0.0',
+    drift: false,
+    hooksState: 'ok',
+    missingHooks: [],
+    ...overrides,
+  };
+}
+
+/**
+ * preflight を満たすハーネス状態 (bdboard-pkr6.11)。既定でこれを返すのは、
+ * preflight 以外のテストが「前提は揃っている」前提で書かれているため。
+ * preflight そのものを見るテストだけが `getHarnessStatus` を差し替える。
+ */
+function readyHarnessStatus(
+  packOverrides: Partial<ProjectHarnessPackStatus> = {},
+  contract: ContractState = READY_CONTRACT,
+): ProjectHarnessStatus {
+  return { packs: [harnessPack(packOverrides)], contract };
+}
+
 function makeRoutes(deps: Partial<Parameters<typeof createAgentRunRoutes>[0]> = {}) {
   const cache = deps.cache ?? createFakeBoardCache();
   const registry = deps.registry ?? createAgentRunnerRegistry();
@@ -159,6 +198,7 @@ function makeRoutes(deps: Partial<Parameters<typeof createAgentRunRoutes>[0]> = 
     // normalizePath は必須依存。正規化を要らないテストは恒等関数を明示的に渡す。
     normalizePath: deps.normalizePath ?? ((pathValue: string) => pathValue),
     writeAccess: deps.writeAccess,
+    getHarnessStatus: deps.getHarnessStatus ?? (async () => readyHarnessStatus()),
     isRemoteAgentRunAllowed: deps.isRemoteAgentRunAllowed ?? (async () => true),
     now: deps.now ?? (() => NOW),
     ...deps,
@@ -1506,6 +1546,7 @@ describe('createAgentRunRoutes guard mount scope', () => {
         worktreeProvisioner: makeProvisioner(),
         normalizePath: (pathValue: string) => pathValue,
         writeAccess: allowingWriteAccess(),
+        getHarnessStatus: async () => readyHarnessStatus(),
         isRemoteAgentRunAllowed: async () => false,
         now: () => NOW,
       }),
@@ -1524,5 +1565,324 @@ describe('createAgentRunRoutes guard mount scope', () => {
       withRemoteTunnel(postRunsInit('bdboard-x')),
     );
     expect(guarded.status).toBe(403);
+  });
+});
+
+
+describe('createAgentRunRoutes harness preflight', () => {
+  async function postRun(
+    getHarnessStatus: () => Promise<ProjectHarnessStatus>,
+    ticketId = 'bdboard-pre',
+  ) {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, ticketId);
+    const dispatch = vi.fn();
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+    const worktreeProvisioner = makeProvisioner();
+    const runStore = createRunStore({ now: () => NOW });
+
+    const { app } = makeRoutes({
+      cache,
+      registry,
+      runStore,
+      worktreeProvisioner,
+      getHarnessStatus,
+    });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit(ticketId)),
+      LOCAL_ENV,
+    );
+
+    return { response, dispatch, worktreeProvisioner, runStore, ticketId };
+  }
+
+  it('returns 409 harness-not-injected and provisions nothing', async () => {
+    const { response, dispatch, worktreeProvisioner, runStore } = await postRun(
+      async () => ({ packs: [], contract: { state: 'not-applicable' } }),
+    );
+
+    expect(response.status).toBe(409);
+    const body = await response.json();
+    expect(body.reason).toBe('harness-not-injected');
+    expect(typeof body.detail).toBe('string');
+    expect(worktreeProvisioner.provision).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    // 前提不足は実行スロットも履歴も消費しない。
+    expect(runStore.list()).toHaveLength(0);
+  });
+
+  it('returns 409 harness-hooks-missing with the unregistered hook commands', async () => {
+    const { response, worktreeProvisioner } = await postRun(async () =>
+      readyHarnessStatus({
+        hooksState: 'missing',
+        missingHooks: ['bash .claude/hooks/bd-pre-bash-guard.sh'],
+      }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      reason: 'harness-hooks-missing',
+      missingHooks: ['bash .claude/hooks/bd-pre-bash-guard.sh'],
+    });
+    expect(worktreeProvisioner.provision).not.toHaveBeenCalled();
+  });
+
+  it('returns 409 harness-contract-missing when the contract file is absent', async () => {
+    const { response, worktreeProvisioner } = await postRun(async () =>
+      readyHarnessStatus({}, { state: 'missing' }),
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      reason: 'harness-contract-missing',
+    });
+    expect(worktreeProvisioner.provision).not.toHaveBeenCalled();
+  });
+
+  it('starts the run with a drift warning instead of blocking', async () => {
+    const { response, worktreeProvisioner } = await postRun(async () =>
+      readyHarnessStatus({
+        installedVersion: '0.9.0',
+        availableVersion: '1.0.0',
+        drift: true,
+      }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({
+      status: 'pending',
+      warnings: ['harness-drift'],
+    });
+    expect(worktreeProvisioner.provision).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns an empty warnings array on a clean preflight', async () => {
+    const { response } = await postRun(async () => readyHarnessStatus());
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ warnings: [] });
+  });
+
+  it('passes the contract verify command into the run prompt', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-prompt');
+
+    let resolveDispatch!: () => void;
+    const dispatched = new Promise<void>((resolve) => {
+      resolveDispatch = resolve;
+    });
+    let dispatchedPrompt = '';
+    const dispatch = vi.fn(async (request: { prompt?: string }): Promise<RunOutcome> => {
+      dispatchedPrompt = request.prompt ?? '';
+      resolveDispatch();
+      return {
+        ok: true,
+        run: {
+          id: 'ignored',
+          ticketId: 'bdboard-prompt',
+          runner: 'claude-spawn',
+          mode: 'spawn',
+          status: 'succeeded',
+          startedAt: NOW,
+          finishedAt: NOW,
+        },
+      };
+    });
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const { app } = makeRoutes({
+      cache,
+      registry,
+      getHarnessStatus: async () =>
+        readyHarnessStatus({}, {
+          state: 'ok',
+          verify: 'npm run check',
+          prFlow: 'direct',
+          mainBranch: 'trunk',
+        }),
+    });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-prompt')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+    await dispatched;
+
+    expect(dispatchedPrompt).toContain('npm run check');
+    expect(dispatchedPrompt).toContain('run 内では実行できません');
+  });
+
+  it('returns 500 without provisioning when the harness status cannot be read', async () => {
+    const { response, worktreeProvisioner, runStore } = await postRun(async () => {
+      throw new Error('settings.json is unreadable');
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: 'harness preflight failed: settings.json is unreadable',
+    });
+    expect(worktreeProvisioner.provision).not.toHaveBeenCalled();
+    expect(runStore.list()).toHaveLength(0);
+  });
+
+  it('reads the harness status from the repository root, not the worktree', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-root', '/projects/other-repo');
+    const getHarnessStatus = vi.fn(async () => readyHarnessStatus());
+
+    const { app } = makeRoutes({ cache, getHarnessStatus });
+    await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-root')),
+      LOCAL_ENV,
+    );
+
+    expect(getHarnessStatus).toHaveBeenCalledWith('/projects/other-repo');
+  });
+});
+
+describe('createAgentRunRoutes next step', () => {
+  function finishedRunStore(
+    ticketId: string,
+    cwd: string,
+    status: 'succeeded' | 'failed' = 'succeeded',
+  ) {
+    const runStore = createRunStore({ now: () => NOW });
+    runStore.start({
+      id: 'run-done',
+      ticketId,
+      runner: 'claude-spawn',
+      mode: 'spawn',
+      cwd,
+      startedAt: NOW,
+    });
+    runStore.finish('run-done', {
+      ok: status === 'succeeded',
+      run: {
+        id: 'run-done',
+        ticketId,
+        runner: 'claude-spawn',
+        mode: 'spawn',
+        status,
+        startedAt: NOW,
+        finishedAt: NOW,
+      },
+    });
+    return runStore;
+  }
+
+  it('returns the verify command and worktree path for a finished run', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-next');
+    const worktreePath = managedWorktreePath('bdboard-next');
+    const runStore = finishedRunStore('bdboard-next', worktreePath);
+
+    const { app } = makeRoutes({ cache, runStore });
+    const response = await app.request(
+      '/api/runs/run-done',
+      withLocalHost(),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      nextStep: { verify: 'npm run verify', worktreePath },
+    });
+  });
+
+  it('omits nextStep while the run is still in progress', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-running');
+    const runStore = createRunStore({ now: () => NOW });
+    runStore.start({
+      id: 'run-live',
+      ticketId: 'bdboard-running',
+      runner: 'claude-spawn',
+      mode: 'spawn',
+      cwd: managedWorktreePath('bdboard-running'),
+      startedAt: NOW,
+    });
+
+    const { app } = makeRoutes({ cache, runStore });
+    const response = await app.request(
+      '/api/runs/run-live',
+      withLocalHost(),
+      LOCAL_ENV,
+    );
+
+    expect(await response.json()).not.toHaveProperty('nextStep');
+  });
+
+  it('omits nextStep when the contract is no longer satisfied', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-nocontract');
+    const runStore = finishedRunStore(
+      'bdboard-nocontract',
+      managedWorktreePath('bdboard-nocontract'),
+    );
+
+    const { app } = makeRoutes({
+      cache,
+      runStore,
+      getHarnessStatus: async () => readyHarnessStatus({}, { state: 'missing' }),
+    });
+    const response = await app.request(
+      '/api/runs/run-done',
+      withLocalHost(),
+      LOCAL_ENV,
+    );
+
+    expect(await response.json()).not.toHaveProperty('nextStep');
+  });
+
+  // 失敗/中断した run で検証を促すのは誤った導線 (編集が中断・破棄されている
+  // 可能性がある)。出すのは succeeded のときだけ。
+  it('omits nextStep for a failed run', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-failed');
+    const runStore = finishedRunStore(
+      'bdboard-failed',
+      managedWorktreePath('bdboard-failed'),
+      'failed',
+    );
+
+    const { app } = makeRoutes({ cache, runStore });
+    const response = await app.request(
+      '/api/runs/run-done',
+      withLocalHost(),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body).toMatchObject({ status: 'failed' });
+    expect(body).not.toHaveProperty('nextStep');
+  });
+
+  it('does not expose nextStep to remote clients', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-remote');
+    const runStore = finishedRunStore(
+      'bdboard-remote',
+      managedWorktreePath('bdboard-remote'),
+    );
+
+    const { app } = makeRoutes({
+      cache,
+      runStore,
+      writeAccess: allowingWriteAccess(),
+    });
+    const response = await app.request(
+      '/api/runs/run-done',
+      withRemoteTunnel(),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).not.toHaveProperty('nextStep');
   });
 });

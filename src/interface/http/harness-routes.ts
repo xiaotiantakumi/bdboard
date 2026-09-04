@@ -4,6 +4,7 @@ import { parseJsonBody } from './request-body.js';
 import { getAllProjectsHarnessStatus } from '../../application/harness/get-all-projects-harness-status.js';
 import {
   getProjectHarnessStatus,
+  readProjectHarnessStatus,
   resolveProjectContractState,
 } from '../../application/harness/get-project-harness-status.js';
 import { injectHarnessPack } from '../../application/harness/inject-harness-pack.js';
@@ -107,12 +108,7 @@ async function resolveProjectHarnessStatus(
     return 'project-not-found';
   }
 
-  const manifest = await deps.injector.readManifest(cached.project.rootPath);
-  const [contract, settingsJson] = await Promise.all([
-    resolveProjectContractState(deps.contractReader, cached.project.rootPath, manifest),
-    deps.injector.readSettings(cached.project.rootPath),
-  ]);
-  return getProjectHarnessStatus(deps.registry, manifest, contract, settingsJson);
+  return readProjectHarnessStatus(deps, cached.project.rootPath);
 }
 
 export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {

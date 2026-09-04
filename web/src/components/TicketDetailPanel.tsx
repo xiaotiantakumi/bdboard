@@ -13,6 +13,7 @@ import {
   deleteTicketLabel,
   deleteTicketSessionLink,
   fetchAgentRun,
+  fetchProjectHarnessStatus,
   fetchSessions,
   fetchTicket,
   fetchTicketRuns,
@@ -32,6 +33,7 @@ import {
   searchTickets,
   startTicketRun,
   type AgentRunDetailDto,
+  type AgentRunNextStepDto,
   type AgentRunSummaryDto,
   type PendingDecisionDto,
   type TicketDecisionOutcome,
@@ -50,6 +52,8 @@ import { useFocusTrap } from '../hooks/useFocusTrap';
 import {
   AGENT_RUN_POLL_INTERVAL_MS,
   AGENT_RUN_POLL_MAX_FAILURES,
+  buildRunNextStepCommand,
+  describeHarnessRunBlock,
   describeRunStartError,
   isAgentRunInProgress,
 } from './agentRunShared';
@@ -154,8 +158,14 @@ export interface TicketDetailPanelProps {
   availableLabels?: readonly string[];
 }
 
+/**
+ * 「次に実行」のコピーは現在の run と履歴の run で別々に出るので、コピー完了
+ * バッジもその 2 箇所を区別する (bdboard-pkr6.11)。
+ */
+type NextStepCopyTarget = 'next-step-current' | 'next-step-history';
+
 type CopyFeedback =
-  | { kind: 'success'; command: BdCommandKind }
+  | { kind: 'success'; command: BdCommandKind | NextStepCopyTarget }
   | { kind: 'error' };
 
 /**
@@ -281,6 +291,41 @@ function computeRunStartDisabled(
   return { disabled: false };
 }
 
+export const AGENT_RUN_NEXT_STEP_LABEL = '次に実行';
+
+/**
+ * run 完了後に人が run の外で回す検証コマンド (bdboard-pkr6.11 仕様4)。
+ * run 内では検証できないので、終わったあとの導線をここに置く。
+ */
+function AgentRunNextStep({
+  nextStep,
+  target,
+  copied,
+  onCopy,
+}: {
+  nextStep: AgentRunNextStepDto;
+  target: NextStepCopyTarget;
+  copied: boolean;
+  onCopy: (target: NextStepCopyTarget, nextStep: AgentRunNextStepDto) => void;
+}) {
+  const command = buildRunNextStepCommand(nextStep);
+
+  return (
+    <div className="agent-run-next-step">
+      <span className="agent-run-next-step-label">{AGENT_RUN_NEXT_STEP_LABEL}:</span>
+      <code className="agent-run-next-step-command">{command}</code>
+      <button
+        type="button"
+        className="btn btn-small agent-run-next-step-copy"
+        aria-label={`次に実行するコマンドをコピー: ${command}`}
+        onClick={() => onCopy(target, nextStep)}
+      >
+        {copied ? 'コピーしました' : 'コピー'}
+      </button>
+    </div>
+  );
+}
+
 function formatAgentRunStatus(status: AgentRunSummaryDto['status']): string {
   switch (status) {
     case 'pending':
@@ -403,6 +448,23 @@ export function TicketDetailPanel({
     queryFn: () => fetchTicketInFlightOverlaps(ticketId),
     enabled: inFlightOverlapsEnabled,
   });
+  // エージェント実行の前提 (bdboard-pkr6.11)。ProjectHarnessBadges と同じ
+  // queryKey なので、同じプロジェクトを表示中なら取得は 1 回に畳まれる。
+  const harnessProjectId = data?.projectId;
+  const { data: harnessStatus } = useQuery({
+    queryKey: ['project-harness', harnessProjectId],
+    queryFn: () => {
+      if (harnessProjectId === undefined) {
+        throw new Error('project id is required');
+      }
+      return fetchProjectHarnessStatus(harnessProjectId);
+    },
+    enabled: harnessProjectId !== undefined,
+    // 前提の可視化が目的なので、落ちたら黙って未取得のまま (= ブロックしない)。
+    // リトライで詳細パネルを開くたびに 3 回叩く価値は無い。
+    retry: false,
+  });
+  const harnessRunBlockReason = describeHarnessRunBlock(harnessStatus);
   const {
     data: ticketRunsData,
     isLoading: ticketRunsLoading,
@@ -735,6 +797,26 @@ export function TicketDetailPanel({
       }
     },
     [projectRootPath, showCopyDisplay, ticketId],
+  );
+
+  const handleCopyNextStep = useCallback(
+    async (target: NextStepCopyTarget, nextStep: AgentRunNextStepDto) => {
+      const command = buildRunNextStepCommand(nextStep);
+      try {
+        await copyTextToClipboard(command);
+        showCopyDisplay({
+          feedback: { kind: 'success', command: target },
+          aria: '次に実行するコマンドをコピーしました',
+        });
+      } catch (copyError) {
+        console.error('Failed to copy next step command', copyError);
+        showCopyDisplay({
+          feedback: { kind: 'error' },
+          aria: 'コピーできませんでした',
+        });
+      }
+    },
+    [showCopyDisplay],
   );
 
   const trimmedFreeform = freeformText.trim();
@@ -1359,12 +1441,21 @@ export function TicketDetailPanel({
               <button
                 type="button"
                 className="btn ticket-run-btn"
-                disabled={agentRunActionsDisabled || runStartDisabled.disabled}
-                title={runStartDisabled.reason}
+                disabled={
+                  agentRunActionsDisabled ||
+                  runStartDisabled.disabled ||
+                  harnessRunBlockReason !== null
+                }
+                title={runStartDisabled.reason ?? harnessRunBlockReason ?? undefined}
                 onClick={() => setConfirmingAgentRun(true)}
               >
                 ▶ 実行
               </button>
+              {harnessRunBlockReason !== null && (
+                <span className="agent-run-blocked-reason">
+                  {harnessRunBlockReason}
+                </span>
+              )}
               {hasActiveRun && (
                 <span className="agent-run-active-indicator">実行中</span>
               )}
@@ -2470,6 +2561,19 @@ export function TicketDetailPanel({
                       )}
                     </dl>
                   )}
+                  {polledRunDetail?.nextStep !== undefined && (
+                    <AgentRunNextStep
+                      nextStep={polledRunDetail.nextStep}
+                      target="next-step-current"
+                      copied={
+                        copyFeedback?.kind === 'success' &&
+                        copyFeedback.command === 'next-step-current'
+                      }
+                      onCopy={(target, nextStep) =>
+                        void handleCopyNextStep(target, nextStep)
+                      }
+                    />
+                  )}
                   {polledRunDetail !== null &&
                     isAgentRunInProgress(polledRunDetail.status) && (
                       <button
@@ -2562,6 +2666,19 @@ export function TicketDetailPanel({
                       <dd>{selectedHistoryRun.cwd ?? '—'}</dd>
                     </div>
                   </dl>
+                  {selectedHistoryRun.nextStep !== undefined && (
+                    <AgentRunNextStep
+                      nextStep={selectedHistoryRun.nextStep}
+                      target="next-step-history"
+                      copied={
+                        copyFeedback?.kind === 'success' &&
+                        copyFeedback.command === 'next-step-history'
+                      }
+                      onCopy={(target, nextStep) =>
+                        void handleCopyNextStep(target, nextStep)
+                      }
+                    />
+                  )}
                   <details className="agent-run-log-details" open>
                     <summary>実行ログ</summary>
                     {selectedHistoryRun.logRestricted === true ? (

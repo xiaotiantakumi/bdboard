@@ -153,6 +153,7 @@ export function useBoardStream(): BoardStreamResult {
       void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
       void queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
       void queryClient.invalidateQueries({ queryKey: ['project-harness'] });
+      void queryClient.invalidateQueries({ queryKey: ['harness-status-all'] });
       void queryClient.invalidateQueries({ queryKey: ['lease-health'] });
       void queryClient.invalidateQueries({ queryKey: ['merge-slot-status'] });
       void queryClient.invalidateQueries({ queryKey: ['activity'] });
