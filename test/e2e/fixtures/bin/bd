@@ -1,33 +1,159 @@
 #!/usr/bin/env bash
 # Stub `bd` CLI used only by the E2E smoke suite (test/e2e). CI does not
 # install the real bd binary (bdboard-3tw.88): this script sits ahead of the
-# real `bd` on PATH (see test/e2e/global-setup.ts) and answers the one
-# subcommand the smoke scenarios actually exercise on the request path —
-# `bd --readonly -C <rootPath> list --json --all --limit 0 --no-pager`
-# (see src/infrastructure/bd/bd-cli-issue-repository.ts) — with a canned
-# golden fixture from test/fixtures/bd/*.json.
+# real `bd` on PATH (see test/e2e/global-setup.ts) and answers the bd list
+# shapes the server actually invokes on the request path.
 #
-# Every other bd subcommand (session-link reads, human-decisions, etc.) exits
-# non-zero on purpose. Each of those call sites already tolerates a failing
-# bd call (try/catch or Promise.allSettled) because that is also how a real
-# bd failure behaves in production, so an unimplemented stub subcommand is a
-# safe, deliberate no-op rather than a gap.
+# Dispatch is position-based. Before `--`, skip flags (and the values of
+# value-taking flags). After `--`, stop flag parsing and treat every token as
+# positional. The first positional token is the subcommand; for `gate`, the
+# next positional is the gate sub-subcommand.
+#
+# Supported shapes (see src/infrastructure/bd/bd-cli-*.ts):
+#
+#   bd --readonly -C <root> list --json --all ... [--include-gates]
+#     → BDBOARD_E2E_BD_LIST_FIXTURE (required; golden issue list for the board)
+#
+#   bd --readonly -C <root> list -l human --json ...
+#     → BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE, or `[]` when unset
+#
+#   bd --readonly -C <root> list --label gt:slot --json ...
+#     → BDBOARD_E2E_BD_MERGE_SLOT_FIXTURE, or `[]` when unset
+#
+#   bd --readonly -C <root> list --status in_progress --json ...
+#     → BDBOARD_E2E_BD_LEASE_FIXTURE, or `[]` when unset
+#
+#   bd --readonly -C <root> gate list --json ...
+#     → BDBOARD_E2E_BD_GATE_LIST_FIXTURE, or `[]` when unset
+#
+# Why empty `[]` is the default for human / gate / lease / merge-slot lists:
+# BdCliHumanDecisions.listPendingDecisions uses runBdCommandOrThrow — a failing
+# bd call throws BdError and the UI falls back to the errors path, not a clean
+# "zero pending decisions" state. Returning `[]` models "nothing pending"
+# without tripping that failure mode. The golden issue list fixture remains
+# required because the smoke scenarios have no board to render without it.
+#
+# Every other bd subcommand (show, session-link reads, writes, etc.) exits
+# non-zero on purpose. Those call sites are not exercised by the smoke suite.
 set -euo pipefail
 
-for arg in "$@"; do
-  if [[ "$arg" == "list" ]]; then
-    if [[ -z "${BDBOARD_E2E_BD_LIST_FIXTURE:-}" ]]; then
-      echo "bd stub: BDBOARD_E2E_BD_LIST_FIXTURE is not set" >&2
-      exit 1
+# Return 0 when `$flag` is immediately followed by `$value` before `--`.
+arg_has_pair() {
+  local flag="$1"
+  local value="$2"
+  shift 2
+  local prev=""
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      return 1
     fi
-    if [[ ! -f "$BDBOARD_E2E_BD_LIST_FIXTURE" ]]; then
-      echo "bd stub: fixture not found: $BDBOARD_E2E_BD_LIST_FIXTURE" >&2
-      exit 1
+    if [[ "$prev" == "$flag" && "$arg" == "$value" ]]; then
+      return 0
     fi
-    cat "$BDBOARD_E2E_BD_LIST_FIXTURE"
-    exit 0
-  fi
-done
+    prev="$arg"
+  done
+  return 1
+}
 
-echo "bd stub: unsupported subcommand (not needed by the smoke scenarios): $*" >&2
+emit_optional_fixture() {
+  local var_name="$1"
+  local fixture_path="${!var_name:-}"
+  if [[ -n "$fixture_path" ]]; then
+    if [[ ! -f "$fixture_path" ]]; then
+      echo "bd stub: fixture not found: $fixture_path" >&2
+      exit 1
+    fi
+    cat "$fixture_path"
+  else
+    printf '[]\n'
+  fi
+  exit 0
+}
+
+emit_required_fixture() {
+  local var_name="$1"
+  local fixture_path="${!var_name:-}"
+  if [[ -z "$fixture_path" ]]; then
+    echo "bd stub: ${var_name} is not set" >&2
+    exit 1
+  fi
+  if [[ ! -f "$fixture_path" ]]; then
+    echo "bd stub: fixture not found: $fixture_path" >&2
+    exit 1
+  fi
+  cat "$fixture_path"
+  exit 0
+}
+
+# Sets globals: subcommand, sub_subcommand
+parse_subcommands() {
+  subcommand=""
+  sub_subcommand=""
+  local -a args=("$@")
+  local i=0
+  local in_opts=true
+  local arg=""
+
+  while [[ $i -lt ${#args[@]} ]]; do
+    arg="${args[$i]}"
+    if [[ "$in_opts" == true && "$arg" == "--" ]]; then
+      in_opts=false
+      i=$((i + 1))
+      continue
+    fi
+
+    if [[ "$in_opts" == true ]]; then
+      case "$arg" in
+        --readonly | --json | --all | --no-pager | --include-gates)
+          i=$((i + 1))
+          continue
+          ;;
+        -C | --limit | -l | --label | --status)
+          i=$((i + 2))
+          continue
+          ;;
+        --*)
+          i=$((i + 1))
+          continue
+          ;;
+        -*)
+          if [[ "$arg" == "-C" || "$arg" == "-l" ]]; then
+            i=$((i + 2))
+          else
+            i=$((i + 1))
+          fi
+          continue
+          ;;
+      esac
+    fi
+
+    if [[ -z "$subcommand" ]]; then
+      subcommand="$arg"
+    elif [[ -z "$sub_subcommand" ]]; then
+      sub_subcommand="$arg"
+    fi
+    i=$((i + 1))
+  done
+}
+
+parse_subcommands "$@"
+
+if [[ "$subcommand" == "gate" && "$sub_subcommand" == "list" ]]; then
+  emit_optional_fixture BDBOARD_E2E_BD_GATE_LIST_FIXTURE
+fi
+
+if [[ "$subcommand" == "list" ]]; then
+  if arg_has_pair -l human "$@" || arg_has_pair --label human "$@"; then
+    emit_optional_fixture BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE
+  fi
+  if arg_has_pair --label gt:slot "$@"; then
+    emit_optional_fixture BDBOARD_E2E_BD_MERGE_SLOT_FIXTURE
+  fi
+  if arg_has_pair --status in_progress "$@"; then
+    emit_optional_fixture BDBOARD_E2E_BD_LEASE_FIXTURE
+  fi
+  emit_required_fixture BDBOARD_E2E_BD_LIST_FIXTURE
+fi
+
+echo "bd stub: unsupported subcommand (not implemented for e2e): $*" >&2
 exit 1
