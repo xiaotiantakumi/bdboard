@@ -133,9 +133,12 @@ function parseCursorResult(stdout: string): CursorResult {
 // `cursor-agent status --format json` の実測出力(認証済み):
 // {"status":"authenticated","isAuthenticated":true,"hasAccessToken":true,
 //  "hasRefreshToken":true,"userInfo":{...}}
-// 未認証時の出力形は、この開発機の実ログイン状態を壊さずに検証する手段が無く
-// (`cursor-agent logout` は運用者の実セッションを破壊する副作用のある操作のため
-// 実測を避けた)未確認。schema にマッチしない場合は 'unknown' に倒す。
+// 未認証時の実測出力 (2026-09-05, bdboard-6ids。HOME を空の一時ディレクトリに向けて再現。
+// `cursor-agent logout` は運用者の実セッションを破壊するので使っていない):
+// {"status":"unauthenticated","isAuthenticated":false,"hasAccessToken":false,
+//  "hasRefreshToken":false,"message":"Not logged in"}
+// 未認証でも exitCode は 0 なので、終了コードで認証状態を判定してはいけない。
+// schema にマッチしない場合は 'unknown' に倒す。
 const cursorStatusSchema = z
   .object({
     isAuthenticated: z.boolean(),

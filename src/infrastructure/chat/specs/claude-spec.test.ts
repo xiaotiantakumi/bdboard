@@ -519,6 +519,15 @@ describe('createClaudeSpec', () => {
 });
 
 describe('createClaudeSpec authProbe (bdboard-15v)', () => {
+  // 2026-09-05 実測 (claude-code 2.1.233, bdboard-6ids) でフィクスチャが実態と
+  // 一致していることを確認済み。ログイン済み = exit 0 / 未ログイン = exit 1、どちらも stdout
+  // に JSON を書き stderr は空 (codex が stderr に書くのと対照的)。未ログインの実物は
+  // {"loggedIn": false, "authMethod": "none", "apiProvider": "firstParty"} でフィクスチャと
+  // 同一。実物は pretty-print (複数行) なので、複数行そのままのフィクスチャを下に1本置く
+  // — 1行 JSON だけだと stdout.split('\n')[0] のような「先頭行だけ読む」実装に退化しても
+  // 検出できず、本番で 'unknown' に落ちる (codex の bdboard-m37z と同じ失敗モード)。
+  // 未ログイン状態は空の一時ディレクトリを CLAUDE_CONFIG_DIR に指定して再現した
+  // (ログアウトはしていない)。
   const spec = createClaudeSpec({
     claudePath: CLAUDE_PATH,
     model: MODEL,
@@ -555,6 +564,24 @@ describe('createClaudeSpec authProbe (bdboard-15v)', () => {
       exitCode: 0,
     });
     expect(result).toBe('available');
+  });
+
+  it('authProbe parses the real multi-line pretty-printed payload', () => {
+    // 実物は pretty-print。1行目は "{" しかないので、先頭行だけを読む実装だとここで落ちる。
+    expect(
+      spec.authProbe!.interpret({
+        stdout: JSON.stringify({ loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty' }, null, 2),
+        stderr: '',
+        exitCode: 0,
+      }),
+    ).toBe('available');
+    expect(
+      spec.authProbe!.interpret({
+        stdout: JSON.stringify({ loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' }, null, 2),
+        stderr: '',
+        exitCode: 1,
+      }),
+    ).toBe('unavailable');
   });
 
   it("authProbe reports 'unknown' when the output is not JSON", () => {

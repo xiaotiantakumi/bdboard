@@ -139,6 +139,9 @@ export function createAgySpec(options: AgySpecOptions): CliChatAgentSpec {
       // 発生しない(bdboard-15v)。2026-08-16 実測: 認証済みだと exit 0 で stdout に
       // タブ区切りの一覧(1〜2秒)、未認証だと exit 1 で stderr に
       // "Error: Please sign in to view available models. ..." を書く。
+      // 2026-09-05 追測(bdboard-6ids): stderr には認証済み・未認証のどちらでも進捗行
+      // "Fetching available models..." が出る。stderr が空であることを available の
+      // 判定材料にしてはいけない。
       args: ['models'],
       interpret(result: CommandResult): ChatAgentAvailability {
         if (result.failureKind === 'timeout') return 'unknown';

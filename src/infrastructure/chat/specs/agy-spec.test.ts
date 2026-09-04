@@ -87,9 +87,26 @@ describe('createAgySpec (bdboard-l1t.6)', () => {
     const spec = createAgySpec({ agyPath: 'agy', model: '', timeoutMs: 1000 });
     expect(spec.parseTurn({ stdout: `noise\n${success()}`, stderr: '', exitCode: 0 }, () => undefined).reply).toBe('PONG\n');
     expect(spec.parseTurn({ stdout: `noise\n${JSON.stringify(JSON.parse(success()), null, 2)}\nnoise`, stderr: '', exitCode: 0 }, () => undefined).reply).toBe('PONG\n');
+    // 2026-09-05 実測 (agy 1.1.26, bdboard-6ids)。agy models は認証済み・未認証のいずれでも
+    // stderr に進捗行 "Fetching available models..." を書くので、stderr が空であることを
+    // 認証済みの判定材料にはできない。認証済みは exit 0 + stdout にタブ区切り一覧、
+    // 未認証は exit 1 + stdout 空 + stderr にエラー行。未認証は HOME を空の一時ディレクトリに
+    // 向けて再現した (ログアウトはしていない)。
     expect(spec.authProbe?.args).toEqual(['models']);
     expect(spec.authProbe!.interpret({ stdout: 'model\tversion', stderr: '', exitCode: 0 })).toBe('available');
     expect(spec.authProbe!.interpret({ stdout: '', stderr: 'Please sign in to view available models.', exitCode: 1 })).toBe('unavailable');
     expect(spec.authProbe!.interpret({ stdout: '', stderr: '', exitCode: 1, failureKind: 'timeout' })).toBe('unknown');
+    // 実測形 (認証済み)。stderr に進捗行が出るので stderr は空ではない。
+    expect(spec.authProbe!.interpret({
+      stdout: 'gemini-3.8-flash-high\tGemini 3.8 Flash (High)\ngemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)\n',
+      stderr: 'Fetching available models...\n',
+      exitCode: 0,
+    })).toBe('available');
+    // 実測形 (未認証)。進捗行とエラー行が両方 stderr に出る。
+    expect(spec.authProbe!.interpret({
+      stdout: '',
+      stderr: 'Fetching available models...\nError: Please sign in to view available models. Launch the CLI without arguments to sign in.\n',
+      exitCode: 1,
+    })).toBe('unavailable');
   });
 });
