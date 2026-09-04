@@ -4,10 +4,16 @@
 # real `bd` on PATH (see test/e2e/global-setup.ts) and answers the bd list
 # shapes the server actually invokes on the request path.
 #
-# Dispatch is position-based. Before `--`, skip flags (and the values of
-# value-taking flags). After `--`, stop flag parsing and treat every token as
-# positional. The first positional token is the subcommand; for `gate`, the
-# next positional is the gate sub-subcommand.
+# Each call site that hits an unimplemented subcommand already tolerates a
+# failing bd call via try/catch — the same way a real bd failure behaves in
+# production — so exiting non-zero for unsupported shapes is intentional.
+#
+# Dispatch is position-based. Before `--`, skip flags. Only five flags consume
+# a following token as their value: `-C`, `--limit`, `-l`, `--label`, and
+# `--status`. Every other flag before `--` advances by one token only (enough
+# for the shapes this stub answers). After `--`, stop flag parsing and treat
+# every token as positional. The first positional token is the subcommand; for
+# `gate`, the next positional is the gate sub-subcommand.
 #
 # Supported shapes (see src/infrastructure/bd/bd-cli-*.ts):
 #
@@ -26,15 +32,24 @@
 #   bd --readonly -C <root> gate list --json ...
 #     → BDBOARD_E2E_BD_GATE_LIST_FIXTURE, or `[]` when unset
 #
-# Why empty `[]` is the default for human / gate / lease / merge-slot lists:
-# BdCliHumanDecisions.listPendingDecisions uses runBdCommandOrThrow — a failing
-# bd call throws BdError and the UI falls back to the errors path, not a clean
-# "zero pending decisions" state. Returning `[]` models "nothing pending"
-# without tripping that failure mode. The golden issue list fixture remains
-# required because the smoke scenarios have no board to render without it.
+# The four optional fixture env vars above are extension points only: global-setup
+# sets BDBOARD_E2E_BD_LIST_FIXTURE alone (test/e2e/global-setup.ts). The stub
+# branches that read the other four are dead code until a future test wires them.
 #
-# Every other bd subcommand (show, session-link reads, writes, etc.) exits
-# non-zero on purpose. Those call sites are not exercised by the smoke suite.
+# Why empty `[]` is the default for human / gate / lease / merge-slot lists:
+# BdCliHumanDecisions.listPendingDecisions, BdCliLeaseReader.listInProgressWithLease,
+# and BdCliMergeSlotReader.readMergeSlotSignal all throw BdError on a non-zero bd
+# exit — none fail-soft. Returning `[]` (or null-equivalent parsing) models
+# "nothing pending" without tripping that failure mode. The golden issue list
+# fixture remains required because the smoke scenarios have no board to render
+# without it.
+#
+# Every other bd subcommand (show, comments, session-link writes, other writes,
+# etc.) exits non-zero on purpose. Those call sites are not exercised by the
+# smoke suite, or are reached only when fixture data changes (e.g.
+# comment_count > 0). Note that session-link *reads* are not in this group at
+# all: they are parsed out of the golden list output's metadata by
+# bd-issue-mapper.ts and never shell out to bd.
 set -euo pipefail
 
 # Return 0 when `$flag` is immediately followed by `$value` before `--`.
@@ -51,6 +66,21 @@ arg_has_pair() {
       return 0
     fi
     prev="$arg"
+  done
+  return 1
+}
+
+# Return 0 when `$flag` appears as an exact token before `--`.
+arg_has_flag() {
+  local flag="$1"
+  shift
+  for arg in "$@"; do
+    if [[ "$arg" == "--" ]]; then
+      return 1
+    fi
+    if [[ "$arg" == "$flag" ]]; then
+      return 0
+    fi
   done
   return 1
 }
@@ -117,11 +147,7 @@ parse_subcommands() {
           continue
           ;;
         -*)
-          if [[ "$arg" == "-C" || "$arg" == "-l" ]]; then
-            i=$((i + 2))
-          else
-            i=$((i + 1))
-          fi
+          i=$((i + 1))
           continue
           ;;
       esac
@@ -152,7 +178,11 @@ if [[ "$subcommand" == "list" ]]; then
   if arg_has_pair --status in_progress "$@"; then
     emit_optional_fixture BDBOARD_E2E_BD_LEASE_FIXTURE
   fi
-  emit_required_fixture BDBOARD_E2E_BD_LIST_FIXTURE
+  if arg_has_flag --all "$@"; then
+    emit_required_fixture BDBOARD_E2E_BD_LIST_FIXTURE
+  fi
+  echo "bd stub: unsupported list shape: $*" >&2
+  exit 1
 fi
 
 echo "bd stub: unsupported subcommand (not implemented for e2e): $*" >&2
