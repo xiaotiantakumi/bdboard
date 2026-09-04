@@ -1408,7 +1408,7 @@ describe('HygienePanel repair actions', () => {
 
   it('shows a hook 未登録 row and re-injects to fix it', async () => {
     const user = userEvent.setup();
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
@@ -1465,7 +1465,7 @@ describe('HygienePanel repair actions', () => {
   });
 
   it('does not warn about hooks for a pack that is not installed yet', async () => {
-    fetchHygieneIssuesMock.mockResolvedValue([]);
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
     fetchAllHarnessStatusMock.mockResolvedValue({
       projects: [
         {
