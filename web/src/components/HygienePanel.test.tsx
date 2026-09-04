@@ -275,6 +275,29 @@ describe('HygienePanel', () => {
     expect(fetchHygieneMock).toHaveBeenCalledWith(['proj-a', 'proj-b']);
   });
 
+  it('shows project basename with full path in title attribute for long projectId paths', async () => {
+    const fullPath =
+      '/private/var/folders/dw/_p3b_71d/T/bdboard-e2e-abc123/fixture-project';
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse([
+      makeIssue({
+        ticketId: 'bdboard-path-test',
+        kind: 'overdue_defer',
+        projectId: fullPath,
+        message: 'defer_until を過ぎていますが、まだ deferred のままです',
+      }),
+    ]));
+
+    const { container } = renderHygienePanel();
+
+    await screen.findByText('期限超過の保留');
+    const projectSpan = container.querySelector('.hygiene-issue-project');
+    expect(projectSpan).not.toBeNull();
+    // 部分一致 (toHaveTextContent) だとフルパスのままでも "fixture-project" を含むので通ってしまう。
+    // basename 化そのものを検出するために完全一致で見る。
+    expect(projectSpan?.textContent?.trim()).toBe('fixture-project');
+    expect(projectSpan).toHaveAttribute('title', fullPath);
+  });
+
   it('renders merged_leftover cleanup commands when cleanup is present', async () => {
     const cleanup = {
       repoRootPath: '/repo',

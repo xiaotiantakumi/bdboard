@@ -18,6 +18,7 @@ import {
   postProjectHarnessInject,
   postTicketQuickAction,
   postTicketQuickActionUndo,
+  projectNameFallback,
 } from '../api';
 import {
   buildWorktreeCleanupCommands,
@@ -557,8 +558,8 @@ export function HygienePanel({
                       {STALE_LEASE_KIND_LABEL}
                     </span>
                     <span className="badge badge-stalled">警告</span>
-                    <span className="hygiene-issue-project">
-                      {staleLease.projectId}
+                    <span className="hygiene-issue-project" title={staleLease.projectId}>
+                      {projectNameFallback(staleLease.projectId)}
                     </span>
                     <span className="hygiene-issue-id">{staleLease.ticketId}</span>
                     <span className="hygiene-issue-message">
@@ -601,8 +602,8 @@ export function HygienePanel({
                     {status.isLongHeld && (
                       <span className="badge badge-stalled">警告</span>
                     )}
-                    <span className="hygiene-issue-project">
-                      {status.projectId}
+                    <span className="hygiene-issue-project" title={status.projectId}>
+                      {projectNameFallback(status.projectId)}
                     </span>
                     <span className="hygiene-issue-id">
                       {status.holder ?? '(不明)'}
@@ -629,7 +630,9 @@ export function HygienePanel({
                     {HARNESS_DRIFT_KIND_LABEL}
                   </span>
                   <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-project">{item.projectId}</span>
+                  <span className="hygiene-issue-project" title={item.projectId}>
+                    {projectNameFallback(item.projectId)}
+                  </span>
                   <span className="hygiene-issue-id">{item.pack.name}</span>
                   <span className="hygiene-issue-message">
                     {buildHarnessDriftMessage(item.pack)}
@@ -688,7 +691,9 @@ export function HygienePanel({
                     {HARNESS_HOOKS_KIND_LABEL}
                   </span>
                   <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-project">{item.projectId}</span>
+                  <span className="hygiene-issue-project" title={item.projectId}>
+                    {projectNameFallback(item.projectId)}
+                  </span>
                   <span className="hygiene-issue-id">{item.pack.name}</span>
                   <span
                     className="hygiene-issue-message"
@@ -748,7 +753,9 @@ export function HygienePanel({
                     {HARNESS_CONTRACT_KIND_LABEL}
                   </span>
                   <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-project">{item.projectId}</span>
+                  <span className="hygiene-issue-project" title={item.projectId}>
+                    {projectNameFallback(item.projectId)}
+                  </span>
                   <span className="hygiene-issue-id">{label}</span>
                   <span
                     className="hygiene-issue-message"
@@ -781,7 +788,9 @@ export function HygienePanel({
                     <span className={severityBadgeClass(issue.severity)}>
                       {issue.severity === 'warning' ? '警告' : '情報'}
                     </span>
-                    <span className="hygiene-issue-project">{issue.projectId}</span>
+                    <span className="hygiene-issue-project" title={issue.projectId}>
+                      {projectNameFallback(issue.projectId)}
+                    </span>
                     <span className="hygiene-issue-message">{issue.message}</span>
                   </div>
                   <div
@@ -839,7 +848,9 @@ export function HygienePanel({
                   <span className={severityBadgeClass(issue.severity)}>
                     {issue.severity === 'warning' ? '警告' : '情報'}
                   </span>
-                  <span className="hygiene-issue-project">{issue.projectId}</span>
+                  <span className="hygiene-issue-project" title={issue.projectId}>
+                    {projectNameFallback(issue.projectId)}
+                  </span>
                   <span className="hygiene-issue-id">{issue.ticketId}</span>
                   <span className="hygiene-issue-message">{issue.message}</span>
                 </button>

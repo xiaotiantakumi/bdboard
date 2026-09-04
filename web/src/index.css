@@ -1125,6 +1125,33 @@ body {
   justify-self: start;
 }
 
+/* モバイル(<=480px)では時刻列(32.5px)とID列(100.8px)が横幅を食い、行幅 351px に対して
+   .activity-event-title の clientWidth が 176px しか残らず scrollWidth 565px まで
+   切り詰められる (bdboard-h4xs.8, 375x812 実測)。タイトルを行全幅の独立行に落とし、
+   さらに折り返しを許して 3 行までの line-clamp にする。行の高さは 118px あるので
+   縦方向には余裕がある。 */
+@media (max-width: 480px) {
+  .activity-event-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      'time kind'
+      'id project'
+      'title title'
+      'priority priority'
+      'secondary secondary';
+  }
+
+  .activity-event-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+  }
+}
+
 .activity-feed .empty-message {
   padding: 32px 16px;
 }
