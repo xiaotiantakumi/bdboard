@@ -39,7 +39,7 @@ interface ManifestPackEntry {
 }
 
 /** hook スクリプトとして実行ビットを立てる対象か (pack 根からの相対パス)。 */
-function isHookScript(packFileRelative: string): boolean {
+export function isHookScript(packFileRelative: string): boolean {
   return (
     packFileRelative.startsWith(`${PACK_HOOKS_DIR}/`) && packFileRelative.endsWith('.sh')
   );
