@@ -26,6 +26,29 @@ test.describe('chat panel mobile layout', () => {
     return dialog;
   }
 
+  async function ensureProjectSelected(page: import('@playwright/test').Page) {
+    // e2e フィクスチャはプロジェクト1件で自動選択されるため select は描画されない
+    // (ChatPanel.tsx の showProjectSelect)。AC1 が言う「プロジェクト選択済み」は
+    // この既定状態そのもの。
+    const projectSelect = page.locator('#chat-project-select');
+    if ((await projectSelect.count()) > 0) {
+      await expect(projectSelect).toBeVisible({ timeout: 15_000 });
+      await projectSelect.selectOption({ label: 'fixture-project' });
+      await expect(projectSelect).not.toHaveValue('');
+    } else {
+      await expect(page.locator('.chat-project-name')).toHaveText('fixture-project', {
+        timeout: 15_000,
+      });
+    }
+
+    await expect(page.locator('.chat-project-unselected-hint')).toHaveCount(0);
+
+    const sendBtn = page.getByRole('button', { name: '送信' });
+    await expect(sendBtn).toBeVisible({ timeout: 15_000 });
+    const describedBy = (await sendBtn.getAttribute('aria-describedby')) ?? '';
+    expect(describedBy).not.toContain('chat-project-unselected-hint');
+  }
+
   function expectBoxInsideViewport(
     box: { x: number; y: number; width: number; height: number },
     viewportHeight: number,
@@ -70,6 +93,64 @@ test.describe('chat panel mobile layout', () => {
 
     await closeBtn.click();
     await expect(dialog).not.toBeVisible();
+  });
+
+  test('chat messages area is readable with a project selected at 375x812', async ({
+    page,
+  }) => {
+    await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    const messagesHeight = await page.locator('.chat-messages').evaluate((el) => {
+      return el.getBoundingClientRect().height;
+    });
+
+    console.log(
+      JSON.stringify({
+        case: '375x812-project-selected',
+        messagesHeight,
+      }),
+    );
+    expect(messagesHeight).toBeGreaterThanOrEqual(240);
+  });
+
+  test('short viewport chat panel has no unreachable clipped region at 375x430', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 430 });
+    await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    await expect(page.locator('.chat-messages')).toBeVisible();
+
+    await page.waitForFunction(() => {
+      const panel = document.querySelector('.chat-panel');
+      if (!panel) return false;
+      return panel.scrollHeight <= panel.clientHeight;
+    });
+
+    const panelMetrics = await page.locator('.chat-panel').evaluate((el) => ({
+      clientHeight: el.clientHeight,
+      scrollHeight: el.scrollHeight,
+    }));
+    console.log(
+      JSON.stringify({
+        case: '375x430-panel',
+        panelMetrics,
+      }),
+    );
+    expect(panelMetrics.scrollHeight).toBeLessThanOrEqual(panelMetrics.clientHeight);
+
+    const messagesHeight = await page.locator('.chat-messages').evaluate((el) => {
+      return el.getBoundingClientRect().height;
+    });
+    console.log(
+      JSON.stringify({
+        case: '375x430-messages',
+        messagesHeight,
+      }),
+    );
+    expect(messagesHeight).toBeGreaterThan(0);
   });
 
   test('overlay z-index stacks above undo snackbar', async ({ page }) => {
