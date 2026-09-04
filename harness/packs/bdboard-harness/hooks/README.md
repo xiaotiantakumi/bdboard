@@ -10,9 +10,15 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 - **allow は exit 0 で無出力**。
 - **判定不能はすべて allow (fail-open)**。`set -e` は使わない。hook が壊れて作業が
   止まるより、従来どおり文章ルールへ戻るほうが安全という判断。
-- 入力は stdin の Claude Code hook JSON。抽出は `jq` → `python3` の順に使い、どちらも
-  無ければ正規表現で判定できる規則だけに縮退し、stderr へ 1 行
-  `bdboard-harness hook: jq/python3 not found; contract patterns skipped` を出す。
+- 入力は stdin の Claude Code hook JSON。抽出は `jq` → `python3` の順に使い、必要な
+  フィールドは 1 回の呼び出しでまとめて取り出す (US=0x1f 区切り。TAB も改行もコマンド
+  文字列やパスに普通に含まれるので区切りには使えず、TAB は IFS 空白扱いで空フィールド
+  も消える)。
+- **どちらの JSON ツールも無い環境では、3 本とも何も判定せず exit 0 で通す
+  (fail-open)**。stderr は警告 1 行だけ
+  `bdboard-harness hook: jq/python3 not found; skipping all checks (fail-open)`。
+  生の JSON 文字列へ正規表現/部分一致を当てる縮退判定はしない — `git stash list` の
+  ような無害なコマンドが JSON 全体との一致で deny されるうえ、案内も長くなるため。
 - 依存は bash (3.2 互換) / coreutils / git / bd と、任意で jq・python3 のみ。**node に
   依存しない** (注入先が npm プロジェクトとは限らない)。
 - 実行ビットは注入時に付ける。手で叩くときは `bash <script>` で呼ぶ。
@@ -25,9 +31,20 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 |---|---|---|
 | 1 | `pkill` / `killall` (単語境界。コメント内も含む) | `lsof -nP -iTCP:<port> -sTCP:LISTEN` や `pgrep -x <name>` で PID を特定し `kill <pid>` |
 | 2 | `--remote` の無い `bd dolt push` / `bd dolt pull` | `bd dolt push --remote <name>` (bdboard では `legacy`)。事前に `bd dolt remote list` で `origin` が無いことを確認 |
-| 3 | `git stash` のうち `push … -m …` / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
-| 4 | `tool_input.run_in_background` が true で、コマンド末尾 (行末・`;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
+| 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
+| 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
+
+2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
+判定する。列全体をまとめて見ると `bd dolt push --remote legacy; bd dolt push` や
+`git stash list; git stash pop` のように「先頭だけ行儀の良い」列が素通りする。
+
+3 のメッセージ指定は `-m` / `-um` のような短オプションの束・`-m"x"`・`--message`・
+`--message="x"` のいずれでもよい (` -m ` のリテラル一致ではない)。
+
+4 は `grep` の行単位マッチなので `$` は行末を指す。**途中行の末尾にある `&` も deny
+する** — 複数行コマンドの 2 行目以降でバックグラウンド化しても二重非同期化は同じに
+起きるため。
 
 ### 5 の検証コントラクト
 
@@ -46,6 +63,10 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 - `denyBashPatterns` の各要素は ERE。`denyBashMessages` は同じ index で対応させる
   (対応が要るので、パターン自体に改行を含めないこと)。
 - ファイルが無い・読めない・JSON が壊れている場合はこの規則ごと skip する。
+- **`denyBashMessages` の文言は注入先プロジェクトが書いたテキストとして扱う**。改行/CR/
+  TAB は空白へ潰し、200 文字で切り、`bdboard-harness: (project contract) <文言>` の形で
+  必ず 1 行だけ出す。そのまま流すと「stderr は 3 行以内」の不変条件が壊れ、エージェント
+  への指示文を紛れ込ませるプロンプト注入面にもなるため。
 - worktree でも `rev-parse --show-toplevel` は worktree の根を返すので、tracked
   ファイルであればそのまま読める。
 
@@ -76,17 +97,33 @@ git が無い・パスが取れない・ブランチが判らない場合は all
 
 1. `stop_hook_active` が true なら通過 (無限ループ防止)。
 2. チケット ID: ブランチが `bd/<id>` ならその `<id>`。そうでなければ cwd の
-   `.claude/worktrees/<name>` の `<name>` を候補にし、`bd show <name> --json` が成功
-   したら採用。どちらも駄目なら通過 (per-ticket worktree ではない)。
-3. `bd show <id> --json` の status が `in_progress` でなければ通過。
-4. `bd comments <id> --json` に `PR:` を含むコメントがある、または最新コメントが
+   `.claude/worktrees/<name>` の `<name>` を候補にし、`bd -C <cwd> show <name> --json` が
+   成功したら採用。どちらも駄目なら通過 (per-ticket worktree ではない)。
+3. `bd -C <cwd> show <id> --json` の status が `in_progress` でなければ通過。
+4. `bd -C <cwd> comments <id> --json` に `PR:` を含むコメントがある、または最新コメントが
    15 分以内なら通過 (痕跡は残っている)。
 5. それ以外で `git status --porcelain` が非空、または `origin/<mainBranch>..HEAD` に
    未 push コミットがあれば **exit 2** で差し戻す。`mainBranch` は検証コントラクトの
    同名フィールド、無ければ `main`。`origin/<mainBranch>` が無ければこの条件は skip。
 6. それ以外は通過。
 
-`bd` が PATH に無い場合・JSON ツールが無い場合はいずれも通過する。
+`bd` が PATH に無い場合・JSON ツールが無い場合はいずれも通過する。`bd` はすべて
+`-C <hook の cwd>` 付きで呼ぶ — Stop hook のプロセス cwd は Claude Code 側の都合で
+決まり、対象 worktree とは限らないので、渡さないと別チェックアウトの `.beads/` を
+読みかねない。
+
+## pack.json の `hooks[]` 宣言 (P1b への契約)
+
+各エントリは `event` / `matcher` / `script` / `timeout` を持つ。P1b (bdboard-pkr6.2) が
+`.claude/settings.json` へ登録するときは、**この 4 つをそのまま書き写す**。
+
+- **`timeout` は秒。契約値として `10` を宣言してある** — P1b は自分で決めずこの値を
+  settings.json に書く。Claude Code の command hook の既定 timeout は 600 秒で、Stop
+  イベントにはそれを短くする既定が無い。`bd` が刺さると 10 分セッションが止まりうるので、
+  「fail-open のガードが原因で作業が止まる」ことのないよう明示的に縮める。
+- **Stop エントリの `matcher` は Claude Code 側が無視する**。空文字は「matcher 無し」の
+  意味で置いてあるだけなので、**P1b は settings.json に `matcher` キーを書かない**
+  (PreToolUse の 2 本は書く)。
 
 ## 手で試す
 

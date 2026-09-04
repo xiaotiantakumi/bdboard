@@ -22,56 +22,76 @@ elif command -v python3 >/dev/null 2>&1; then
   JSON_TOOL='python3'
 fi
 
-# stdin JSON からドット区切りパスのスカラーを取り出す。取れなければ空文字。
-hook_field() {
+if [ -z "$JSON_TOOL" ]; then
+  # 縮退モード: 入力 JSON を構造として読めない。生の JSON 文字列へ正規表現を当てると
+  # 「JSON のどこかに現れただけの語」で誤 deny する (例: git stash list すら止まる) ので、
+  # この hook は丸ごと通過させる (fail-open)。stderr は警告 1 行だけ。
+  printf '%s\n' 'bdboard-harness hook: jq/python3 not found; skipping all checks (fail-open)' >&2
+  exit 0
+fi
+
+# 必要なフィールドを 1 回の呼び出しでまとめて取り出す (フィールドごとに JSON ツールを
+# 起動すると python3 経路で数百 ms かかる)。区切りは US(0x1f)。TAB でも改行でもないのは、
+# コマンド文字列にはどちらも普通に含まれるから — 特に改行を空白へ潰すと「複数行コマンドの
+# 2 行目以降」を行として見られなくなり、規則 3・4 が素通りする。
+US_SEPARATOR=$'\037'
+
+hook_fields() {
   case "$JSON_TOOL" in
     jq)
-      printf '%s' "$INPUT" | jq -r --arg p "$1" '
-        reduce ($p | split("."))[] as $k (.; if type == "object" then .[$k] else null end)
-        | if . == null then empty elif type == "string" then . else tojson end
+      printf '%s' "$INPUT" | jq -j '
+        def scalar:
+          if . == null then ""
+          elif type == "string" then .
+          else tojson end;
+        . as $d
+        | [ (try ($d.tool_name) catch null | scalar),
+            (try ($d.tool_input.command) catch null | scalar),
+            (try ($d.tool_input.run_in_background) catch null | scalar),
+            (try ($d.cwd) catch null | scalar) ]
+        | join("\u001f")
       ' 2>/dev/null
       ;;
     python3)
       printf '%s' "$INPUT" | python3 -c '
 import json, sys
+
+
+def scalar(document, dotted_path):
+    cur = document
+    for key in dotted_path.split("."):
+        if isinstance(cur, dict) and key in cur:
+            cur = cur[key]
+        else:
+            return ""
+    if cur is None:
+        return ""
+    if isinstance(cur, bool):
+        return "true" if cur else "false"
+    if isinstance(cur, str):
+        return cur
+    return json.dumps(cur)
+
+
 try:
-    cur = json.load(sys.stdin)
+    doc = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-for key in sys.argv[1].split("."):
-    if isinstance(cur, dict) and key in cur:
-        cur = cur[key]
-    else:
-        sys.exit(0)
-if cur is None:
-    sys.exit(0)
-if isinstance(cur, bool):
-    sys.stdout.write("true" if cur else "false")
-elif isinstance(cur, str):
-    sys.stdout.write(cur)
-else:
-    sys.stdout.write(json.dumps(cur))
-' "$1" 2>/dev/null
-      ;;
-    *)
-      return 0
+sys.stdout.write("\x1f".join(scalar(doc, p) for p in sys.argv[1:]))
+' tool_name tool_input.command tool_input.run_in_background cwd 2>/dev/null
       ;;
   esac
 }
 
-if [ -n "$JSON_TOOL" ]; then
-  TOOL_NAME="$(hook_field tool_name)"
-  COMMAND="$(hook_field tool_input.command)"
-  RUN_IN_BACKGROUND="$(hook_field tool_input.run_in_background)"
-  HOOK_CWD="$(hook_field cwd)"
-else
-  # JSON を読めないので、生の stdin に対する正規表現だけで判定できる規則に限定する。
-  printf '%s\n' 'bdboard-harness hook: jq/python3 not found; contract patterns skipped' >&2
-  TOOL_NAME=''
-  COMMAND="$INPUT"
-  RUN_IN_BACKGROUND=''
-  HOOK_CWD=''
-fi
+# 値に改行が入りうるので read では切れない。US で前から順に剥がす。取り出せなかった
+# (JSON が壊れている等) 場合はすべて空になり、そのまま fail-open へ落ちる。
+HOOK_FIELDS="$(hook_fields)"
+TOOL_NAME="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
+HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+COMMAND="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
+HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+RUN_IN_BACKGROUND="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
+HOOK_CWD="${HOOK_FIELDS#*"$US_SEPARATOR"}"
 
 [ -n "$HOOK_CWD" ] || HOOK_CWD="$PWD"
 
@@ -84,6 +104,14 @@ esac
 
 matches() {
   printf '%s\n' "$COMMAND" | grep -Eq -- "$1" 2>/dev/null
+}
+
+# コマンド列を「シェルのコマンド 1 個」単位へ割る。; & | を改行へ潰すだけの粗い分割
+# だが、`A; B` の B や `A && B` の B を独立に見るにはこれで足りる。列全体を 1 つとして
+# 見ると `bd dolt push --remote legacy; bd dolt push` のように「先頭だけ行儀の良い」
+# 列が素通りしてしまう。
+command_segments() {
+  printf '%s\n' "$COMMAND" | tr ';&|' '\n\n\n'
 }
 
 deny() {
@@ -101,46 +129,61 @@ if matches '(^|[^[:alnum:]_-])(pkill|killall)([^[:alnum:]_-]|$)'; then
     'そのうえで kill <pid> のように PID を指定して終了させてください。'
 fi
 
-# 2. bare な bd dolt push/pull: git origin 由来の remote を採用して私的な履歴を公開先へ流しうる。
-if matches '(^|[^[:alnum:]_-])bd[[:space:]]+dolt[[:space:]]+(push|pull)([[:space:]]|$)' &&
-  ! matches '(^|[[:space:]])--remote([[:space:]=]|$)'; then
-  deny \
-    'bdboard-harness: --remote 無しの bd dolt push/pull は git origin 由来の remote を採用し、私的な issue 履歴を公開 remote へ流す恐れがあります。' \
-    'remote を必ず明示してください: bd dolt push --remote <name> (bdboard では legacy)。' \
-    '事前に bd dolt remote list で origin が登録されていないことも確認してください。'
+# 2. bare な bd dolt push/pull: git origin 由来の remote を採用して私的な履歴を公開先へ
+#    流しうる。--remote の有無はコマンド 1 個ごとに見る。
+DOLT_SEGMENTS="$(command_segments |
+  grep -E '(^|[^[:alnum:]_-])bd[[:space:]]+dolt[[:space:]]+(push|pull)([[:space:]]|$)' 2>/dev/null)"
+if [ -n "$DOLT_SEGMENTS" ]; then
+  while IFS= read -r dolt_segment; do
+    [ -n "$dolt_segment" ] || continue
+    if printf '%s\n' "$dolt_segment" |
+      grep -Eq -- '(^|[[:space:]])--remote([[:space:]=]|$)' 2>/dev/null; then
+      continue
+    fi
+    deny \
+      'bdboard-harness: --remote 無しの bd dolt push/pull は git origin 由来の remote を採用し、私的な issue 履歴を公開 remote へ流す恐れがあります。' \
+      'remote を必ず明示してください: bd dolt push --remote <name> (bdboard では legacy)。' \
+      '事前に bd dolt remote list で origin が登録されていないことも確認してください。'
+  done <<DOLT_SEGMENTS_EOF
+$DOLT_SEGMENTS
+DOLT_SEGMENTS_EOF
 fi
 
-# 3. git stash: bare / pop / save は他セッションの退避を奪う。
-if matches '(^|[^[:alnum:]_-])git[[:space:]]+stash'; then
-  STASH_REST="$(printf '%s\n' "$COMMAND" |
-    grep -Eo 'git[[:space:]]+stash[^;&|]*' |
-    head -1 |
-    sed -E 's/^git[[:space:]]+stash//')"
-  set -f
-  # shellcheck disable=SC2086
-  set -- $STASH_REST
-  set +f
-  STASH_SUB="${1:-}"
-  STASH_DENY=''
-  case "$STASH_SUB" in
-    list | drop | show) ;;
-    apply)
-      [ -n "${2:-}" ] || STASH_DENY='yes'
-      ;;
-    push)
-      case " $STASH_REST " in
-        *' -m '* | *' --message '*) ;;
-        *) STASH_DENY='yes' ;;
-      esac
-      ;;
-    *) STASH_DENY='yes' ;;
-  esac
-  if [ -n "$STASH_DENY" ]; then
-    deny \
-      'bdboard-harness: bare git stash / git stash pop / git stash save は他セッションの退避を奪うため禁止です。' \
-      '退避は WIP コミット (git commit -m "wip: ...") で行ってください。' \
-      'どうしても stash が要るなら git stash push -u -m "<tag>" で作り、取り出しは git stash apply <sha> を使ってください。'
-  fi
+# 3. git stash: bare / pop / save は他セッションの退避を奪う。こちらもコマンド 1 個
+#    ごとに見る (`git stash list; git stash pop` の後半を見逃さないため)。
+STASH_SEGMENTS="$(command_segments |
+  grep -E '(^|[^[:alnum:]_-])git[[:space:]]+stash([[:space:]]|$)' 2>/dev/null)"
+if [ -n "$STASH_SEGMENTS" ]; then
+  while IFS= read -r stash_segment; do
+    [ -n "$stash_segment" ] || continue
+    stash_rest="$(printf '%s' "$stash_segment" | sed -E 's/^.*git[[:space:]]+stash//')"
+    set -f
+    # shellcheck disable=SC2086
+    set -- $stash_rest
+    set +f
+    stash_sub="${1:-}"
+    stash_deny=''
+    case "$stash_sub" in
+      list | drop | show) ;;
+      apply)
+        [ -n "${2:-}" ] || stash_deny='yes'
+        ;;
+      push)
+        # メッセージ指定 (-m / -um / -m"x" / --message / --message="x") が要る。
+        printf '%s\n' "$stash_rest" |
+          grep -Eq -- '(^|[[:space:]])(-[A-Za-z]*m|--message)' 2>/dev/null || stash_deny='yes'
+        ;;
+      *) stash_deny='yes' ;;
+    esac
+    if [ -n "$stash_deny" ]; then
+      deny \
+        'bdboard-harness: bare git stash / git stash pop / git stash save は他セッションの退避を奪うため禁止です。' \
+        '退避は WIP コミット (git commit -m "wip: ...") で行ってください。' \
+        'どうしても stash が要るなら git stash push -u -m "<tag>" で作り、取り出しは git stash apply <sha> を使ってください。'
+    fi
+  done <<STASH_SEGMENTS_EOF
+$STASH_SEGMENTS
+STASH_SEGMENTS_EOF
 fi
 
 # 4. run_in_background:true + 末尾 &: 二重に非同期化され完了通知が届かない。
@@ -156,8 +199,6 @@ case "$RUN_IN_BACKGROUND" in
 esac
 
 # 5. プロジェクト固有パターン: 注入先の検証コントラクト (.claude/bdboard-harness.json)。
-[ -n "$JSON_TOOL" ] || exit 0
-
 REPO_ROOT="$(git -C "$HOOK_CWD" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$REPO_ROOT" ] || exit 0
 
@@ -226,8 +267,12 @@ while IFS= read -r contract_pattern; do
   if [ -n "$contract_pattern" ] && matches "$contract_pattern"; then
     CONTRACT_MESSAGE="$(contract_message "$PATTERN_INDEX")"
     [ -n "$CONTRACT_MESSAGE" ] ||
-      CONTRACT_MESSAGE="プロジェクトの検証コントラクトで禁止されています: $contract_pattern"
-    deny "bdboard-harness: $CONTRACT_MESSAGE"
+      CONTRACT_MESSAGE="このコマンドはプロジェクトの検証コントラクトで禁止されています: $contract_pattern"
+    # 文言は注入先プロジェクトが書いたテキスト。改行が入ると「stderr は 3 行以内」の
+    # 不変条件が壊れ、そのまま出せばプロンプト注入の足場にもなる。改行/CR/TAB を空白へ
+    # 潰し、長さを切り、出所が分かる前置きを付けて必ず 1 行で出す。
+    CONTRACT_MESSAGE="$(printf '%s' "$CONTRACT_MESSAGE" | tr '\n\r\t' '   ')"
+    deny "bdboard-harness: (project contract) ${CONTRACT_MESSAGE:0:200}"
   fi
   PATTERN_INDEX=$((PATTERN_INDEX + 1))
 done <<CONTRACT_PATTERNS

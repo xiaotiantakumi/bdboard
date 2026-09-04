@@ -6,17 +6,20 @@
     {
       "event": "PreToolUse",
       "matcher": "Bash",
-      "script": "hooks/pre-bash-guard.sh"
+      "script": "hooks/pre-bash-guard.sh",
+      "timeout": 10
     },
     {
       "event": "PreToolUse",
       "matcher": "Edit|Write|MultiEdit|NotebookEdit",
-      "script": "hooks/pre-edit-guard.sh"
+      "script": "hooks/pre-edit-guard.sh",
+      "timeout": 10
     },
     {
       "event": "Stop",
       "matcher": "",
-      "script": "hooks/stop-ticket-gate.sh"
+      "script": "hooks/stop-ticket-gate.sh",
+      "timeout": 10
     }
   ]
 }
