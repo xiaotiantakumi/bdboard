@@ -154,54 +154,9 @@ describe('useHistoryBackClose', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('releaseHistoryEntry prevents history.back on unmount', async () => {
+  it('requestCloseThen runs the callback after popstate lands', () => {
     const onClose = vi.fn();
-
-    const { result, unmount } = renderHook(() =>
-      useHistoryBackClose({
-        panelId: 'ticket-detail',
-        onClose,
-        enabled: true,
-      }),
-    );
-
-    act(() => {
-      result.current.releaseHistoryEntry();
-    });
-
-    unmount();
-
-    expect(fakeHistory.back).not.toHaveBeenCalled();
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expect(fakeHistory.back).not.toHaveBeenCalled();
-  });
-
-  it('releaseHistoryEntry prevents onClose on subsequent popstate', () => {
-    const onClose = vi.fn();
-
-    const { result } = renderHook(() =>
-      useHistoryBackClose({
-        panelId: 'ticket-detail',
-        onClose,
-        enabled: true,
-      }),
-    );
-
-    act(() => {
-      result.current.releaseHistoryEntry();
-    });
-
-    act(() => {
-      fakeHistory.back();
-    });
-
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('releaseHistoryEntry strips panel markers from the current history entry', () => {
-    const onClose = vi.fn();
+    const run = vi.fn();
 
     const { result } = renderHook(() =>
       useHistoryBackClose({
@@ -211,17 +166,108 @@ describe('useHistoryBackClose', () => {
       }),
     );
 
-    expect(fakeHistory.getCurrentState()).toMatchObject({
-      bdboardPanel: 'search',
-      bdboardPanelToken: expect.any(String),
+    act(() => {
+      result.current.requestCloseThen(run);
     });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('requestCloseThen calls onClose before run', () => {
+    const order: string[] = [];
+    const onClose = vi.fn(() => {
+      order.push('onClose');
+    });
+    const run = vi.fn(() => {
+      order.push('run');
+    });
+
+    const { result } = renderHook(() =>
+      useHistoryBackClose({
+        panelId: 'search',
+        onClose,
+        enabled: true,
+      }),
+    );
 
     act(() => {
-      result.current.releaseHistoryEntry();
+      result.current.requestCloseThen(run);
     });
 
-    expect(fakeHistory.replaceState).toHaveBeenCalledTimes(1);
-    expect(fakeHistory.getCurrentState()).not.toHaveProperty('bdboardPanel');
-    expect(fakeHistory.getCurrentState()).not.toHaveProperty('bdboardPanelToken');
+    expect(order).toEqual(['onClose', 'run']);
+  });
+
+  it('requestCloseThen runs the callback via fallback when popstate never arrives', () => {
+    vi.useFakeTimers();
+    try {
+      const onClose = vi.fn();
+      const run = vi.fn();
+
+      vi.spyOn(window.history, 'back').mockImplementation(() => {});
+
+      const { result } = renderHook(() =>
+        useHistoryBackClose({
+          panelId: 'search',
+          onClose,
+          enabled: true,
+        }),
+      );
+
+      act(() => {
+        result.current.requestCloseThen(run);
+      });
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(run).not.toHaveBeenCalled();
+
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requestCloseThen calls onClose even when run throws, and does not propagate', () => {
+    const onClose = vi.fn();
+    const run = vi.fn(() => {
+      throw new Error('action failed');
+    });
+
+    const { result } = renderHook(() =>
+      useHistoryBackClose({
+        panelId: 'search',
+        onClose,
+        enabled: true,
+      }),
+    );
+
+    // run() は popstate リスナ内で実行される。jsdom / 実ブラウザとも listener 内の
+    // 例外は uncaught error として報告され、dispatchEvent の呼び出し元へは伝播しない。
+    // だからこそ onClose() を history.back() より前に呼んでおく必要がある — 呼び出し元の
+    // クリックハンドラが run の throw に巻き添えにならないよう、閉じ処理は先に確定させる。
+    const suppressExpectedUncaughtError = (event: ErrorEvent) => {
+      if (event.message.includes('action failed')) {
+        // 意図的に発生させた例外の stderr ノイズを抑えるだけ。エラーを握り潰す意図はない。
+        event.preventDefault();
+      }
+    };
+    window.addEventListener('error', suppressExpectedUncaughtError);
+    try {
+      expect(() => {
+        act(() => {
+          result.current.requestCloseThen(run);
+        });
+      }).not.toThrow();
+
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      window.removeEventListener('error', suppressExpectedUncaughtError);
+    }
   });
 });

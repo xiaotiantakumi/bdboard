@@ -38,7 +38,7 @@ export function SearchPalette({
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const { requestClose, releaseHistoryEntry } = useHistoryBackClose({
+  const { requestClose, requestCloseThen } = useHistoryBackClose({
     panelId: 'search',
     onClose,
   });
@@ -140,23 +140,22 @@ export function SearchPalette({
     };
   }, [hasQuery, trimmedQuery]);
 
-  // 行の実行は selectTicket やパネル open など、自前の history エントリを push しうる。
-  // requestClose() は back() で積んだエントリを消費するが、実行後に呼ぶと「たった今積まれた
-  // 遷移先のエントリ」を pop してしまう (実測で確認済み)。実行経路では back() せず
-  // releaseHistoryEntry() でパレットのエントリだけ手放し、遷移先の pushState より前に呼ぶ。
-  // トレードオフ: パレットのエントリはスタックに1つ埋まったまま残るため、戻る操作が
-  // 1回だけ無反応になるが、遷移先のエントリを壊すよりはるかにまし。
+  // 行の実行は selectTicket やパネル open など、自前の history エントリを push/replace しうる。
+  // 先に実行してから back() すると「たった今積まれた遷移先のエントリ」を pop してしまい、
+  // 逆に back() せずエントリを手放すと死にエントリが積み上がって
+  // useTicketDeepLink.closeDetail() の「1回 back すれば詳細が閉じる」前提を壊す (PR#303 レビュー)。
+  // そこで back() でパレットのエントリを確実に消費し、popstate の着地後に実行する。
   const handleActivateRow = useCallback(
     (row: PaletteRow) => {
-      releaseHistoryEntry();
-      if (row.kind === 'action') {
-        row.action.onSelect();
-      } else {
-        onSelect(row.ticket.id);
-      }
-      onClose();
+      requestCloseThen(() => {
+        if (row.kind === 'action') {
+          row.action.onSelect();
+        } else {
+          onSelect(row.ticket.id);
+        }
+      });
     },
-    [releaseHistoryEntry, onSelect, onClose],
+    [requestCloseThen, onSelect],
   );
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {

@@ -131,7 +131,9 @@ describe('SearchPalette', () => {
 
     await user.click(screen.getByText('チャットを開く'));
 
-    expect(actions[0].onSelect).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(actions[0].onSelect).toHaveBeenCalledTimes(1);
+    });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -142,7 +144,9 @@ describe('SearchPalette', () => {
 
     await user.keyboard('{ArrowDown}{Enter}');
 
-    expect(sampleActions[1].onSelect).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(sampleActions[1].onSelect).toHaveBeenCalledTimes(1);
+    });
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(mockSearchTickets).not.toHaveBeenCalled();
   });
@@ -216,7 +220,9 @@ describe('SearchPalette', () => {
 
     await user.keyboard('{ArrowDown}{Enter}');
 
-    expect(onSelect).toHaveBeenCalledWith('bdboard-beta');
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('bdboard-beta');
+    });
   });
 
   it('moves the highlight back up with ArrowUp', async () => {
@@ -229,7 +235,9 @@ describe('SearchPalette', () => {
 
     await user.keyboard('{ArrowDown}{ArrowUp}{Enter}');
 
-    expect(onSelect).toHaveBeenCalledWith('bdboard-alpha');
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('bdboard-alpha');
+    });
   });
 
   it('closes on Escape', async () => {
@@ -296,7 +304,9 @@ describe('SearchPalette', () => {
 
     await user.click(screen.getByText('Recent ticket one'));
 
-    expect(onSelect).toHaveBeenCalledWith('bdboard-recent-1');
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('bdboard-recent-1');
+    });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -320,7 +330,9 @@ describe('SearchPalette', () => {
 
     await user.keyboard('{ArrowDown}{Enter}');
 
-    expect(onSelect).toHaveBeenCalledWith('bdboard-recent-2');
+    await waitFor(() => {
+      expect(onSelect).toHaveBeenCalledWith('bdboard-recent-2');
+    });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -471,7 +483,7 @@ describe('SearchPalette', () => {
       expect(fakeHistory.back).toHaveBeenCalledTimes(1);
     });
 
-    it('closes on palette action activation without consuming history via back', async () => {
+    it('closes on palette action activation and consumes the palette history entry via back', async () => {
       const user = userEvent.setup();
       const onClose = vi.fn();
       renderPalette(vi.fn(), onClose);
@@ -479,35 +491,10 @@ describe('SearchPalette', () => {
       await user.click(screen.getByText('チャットを開く'));
 
       expect(onClose).toHaveBeenCalledTimes(1);
-      expect(fakeHistory.back).not.toHaveBeenCalled();
-    });
-
-    it('preserves the destination history entry when a recent ticket row is activated', async () => {
-      const user = userEvent.setup();
-      const onClose = vi.fn();
-      const onSelect = vi.fn((id: string) => {
-        // useTicketDeepLink.selectTicket が previous === null のときにやることと同じ
-        window.history.pushState(
-          { ...(window.history.state as object), ticketId: id },
-          '',
-          `#ticket=${id}`,
-        );
+      expect(fakeHistory.back).toHaveBeenCalledTimes(1);
+      await waitFor(() => {
+        expect(sampleActions[1].onSelect).toHaveBeenCalledTimes(1);
       });
-      const recentTickets: RecentTicketEntry[] = [
-        {
-          id: 'bdboard-zzz',
-          title: 'Z ticket',
-          projectName: 'Proj',
-        },
-      ];
-      renderPalette(onSelect, onClose, sampleActions, recentTickets);
-
-      await user.click(screen.getByText('Z ticket'));
-
-      expect(onSelect).toHaveBeenCalledWith('bdboard-zzz');
-      expect(onClose).toHaveBeenCalledTimes(1);
-      expect(fakeHistory.back).not.toHaveBeenCalled();
-      expect(fakeHistory.getCurrentState()).toMatchObject({ ticketId: 'bdboard-zzz' });
     });
   });
 });

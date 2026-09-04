@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef } from 'react';
 const PANEL_STATE_KEY = 'bdboardPanel';
 const PANEL_TOKEN_KEY = 'bdboardPanelToken';
 
+/** popstate が来ない異常系でもアクションを必ず実行するためのフォールバック */
+const POPSTATE_FALLBACK_MS = 500;
+
 /** history.state に載せる bdboard パネル識別子 */
 export type BdboardPanelHistoryState = Record<string, unknown> & {
   bdboardPanel?: string;
@@ -33,7 +36,7 @@ export function useHistoryBackClose({
   enabled = true,
 }: UseHistoryBackCloseOptions): {
   requestClose: () => void;
-  releaseHistoryEntry: () => void;
+  requestCloseThen: (run: () => void) => void;
 } {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
@@ -131,33 +134,57 @@ export function useHistoryBackClose({
     }
   }, []);
 
-  /**
-   * 履歴エントリを back() せずに手放す。onClose は呼ばない (呼び出し側が制御する)。
-   *
-   * パレットのように閉じると同時に別の履歴エントリを積む遷移を起こすパネル向け。
-   * requestClose() の back() だと、遷移先が pushState した直後のエントリを pop して
-   * しまうため、行の実行経路ではこちらを使う。
-   */
-  const releaseHistoryEntry = useCallback(() => {
-    closedRef.current = true;
-
-    if (!pushedRef.current) {
+  const requestCloseThen = useCallback((run: () => void) => {
+    if (closedRef.current) {
       return;
     }
+    closedRef.current = true;
 
+    // onClose を back() より前・run() より前に呼ぶ。run() が throw しても
+    // パレットは必ず閉じるため、全画面パレットから脱出不能になる事故を構造的に防げる。
+    onCloseRef.current();
+
+    if (!pushedRef.current) {
+      run();
+      return;
+    }
     pushedRef.current = false;
 
-    const currentState = readHistoryState();
-    if (
-      PANEL_STATE_KEY in currentState ||
-      PANEL_TOKEN_KEY in currentState
-    ) {
-      const cleaned = { ...currentState };
-      delete cleaned[PANEL_STATE_KEY];
-      delete cleaned[PANEL_TOKEN_KEY];
-      window.history.replaceState(cleaned, '');
+    let done = false;
+    let timer = 0;
+
+    // 相互参照するので関数宣言 (巻き上げ) を使う
+    function finish() {
+      if (done) return;
+      done = true;
+      window.removeEventListener('popstate', onPopOnce);
+      window.clearTimeout(timer);
+      run();
     }
+
+    function onPopOnce() {
+      const state = window.history.state;
+      const stillOurs =
+        state !== null &&
+        typeof state === 'object' &&
+        (state as Record<string, unknown>)[PANEL_TOKEN_KEY] === tokenRef.current;
+      if (stillOurs) {
+        // まだ我々のエントリが現在地 = 別のエントリが pop されただけ
+        return;
+      }
+      finish();
+    }
+
+    // onClose() でパレットは即アンマウントされるが、アクションは popstate 着地後に
+    // 実行される必要がある。React effect のクリーンアップでは間に合わないため、
+    // リスナとタイマーは window に直接付け、finish() で明示的に外す。
+    window.addEventListener('popstate', onPopOnce);
+    // 実測で jsdom の back() は約4ms で popstate を発火する (実ブラウザも同オーダーの
+    // 1タスク遅延)。フォールバックが正常系より先に発火すると元の回帰
+    // (遷移先のエントリを pop) が再発するため、正常系より十分長く取ってある。
+    timer = window.setTimeout(finish, POPSTATE_FALLBACK_MS);
+    window.history.back();
   }, []);
 
-  return { requestClose, releaseHistoryEntry };
+  return { requestClose, requestCloseThen };
 }
