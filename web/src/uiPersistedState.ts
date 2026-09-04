@@ -78,6 +78,12 @@ export const UI_STORAGE_KEYS = {
    * (usePersistedState の既定値挙動)。再表示したい場合はヘッダー右上の
    * 「⋯」(その他のメニュー) から「Tips バナーを表示」を選ぶ
    * (OverflowMenu.tsx / App.tsx 参照)。
+   *
+   * 注意 (UI_STORAGE_KEYS 全体に共通する制約): localStorage は origin 単位なので、
+   * cloudflared の quick tunnel 経由でスマホから見る場合、トンネルを張り直すたびに
+   * サブドメインが変わり = 別 origin になり、閉じた状態はリセットされる。
+   * サーバー再起動のたびにトンネルも張り直しになるため、スマホでは「閉じたのに
+   * また出た」が起こりうる。これは本キー固有の不具合ではなく永続化方式の性質。
    */
   tipsBannerDismissed: 'bdboard.ui.tipsBannerDismissed',
 } as const;
