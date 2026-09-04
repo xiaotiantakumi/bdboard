@@ -410,7 +410,29 @@ wanted, that is a separate, explicitly user-approved change.
     diff looks like anything other than that, stop and investigate instead
     of discarding.
 - **Before restarting the server**, check whether a tunnel is running with
-  `pgrep -f cloudflared`. If it is, tell the user first that restarting will
+
+  ```bash
+  pgrep -x cloudflared
+  ```
+
+  **`-x` (exact match on the process name), not `-f`.** `-f` matches the whole
+  command line, so it also fires on any process that merely *mentions*
+  cloudflared — and this document requires every delegation brief to carry the
+  "do not start a cloudflared tunnel" prohibition, so a brief sitting in a
+  child agent's argv matches. That makes `-f` misfire precisely while parallel
+  delegation is running, which is most of the time (measured 2026-09-04,
+  bdboard-e761: it reported a tunnel when none existed; the match was a
+  delegated agent's own brief. Reproduced deliberately the same day — a
+  `python3` process carrying that text in its argv is matched by `-f` and not
+  by `-x`).
+
+  The misfire is safe-side (it claims a tunnel might exist when none does), but
+  it is not harmless: it produces a false "restarting will kill your tunnel"
+  warning, and skipping the restart on that basis leaves the always-on server
+  serving a stale post-merge build. Worse, once the check is known to cry wolf
+  it starts getting ignored, which fails in the *unsafe* direction.
+
+  If it is running, tell the user first that restarting will
   kill the tunnel child process and invalidate the current trycloudflare.com
   URL — quick tunnels get a new subdomain each time, so a phone-side reload
   will not recover access and the QR code must be scanned again. After
