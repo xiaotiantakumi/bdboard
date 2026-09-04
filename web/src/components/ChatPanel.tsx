@@ -35,11 +35,16 @@ import {
   writePersistedChatThreadState,
 } from '../chatThreadStorage';
 import {
+  applyDraftPayloadStoreCarryPlan,
+  applyTransformToAllDraftPayloadStores,
+  defineDraftPayloadStoreCarryPlan,
   isEmptyList,
   isEmptyText,
   isNeverEmpty,
   migrateKeyInRecord,
   purgeKeysInRecord,
+  referenceDraftPayloadStoreCarryPlan,
+  type DraftPayloadStoreTransform,
 } from './conversationKeyspace';
 import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
 import { MarkdownContent } from './MarkdownContent';
@@ -280,6 +285,85 @@ export function formatThreadUpdatedAt(iso: string): string {
   if (month === undefined || day === undefined) return '';
   return `${month}/${day}`;
 }
+
+// bdboard-ru4d: 会話キー再割り当てサイトごとのドラフト積載物引き継ぎ選択。
+// ストアを1つ増やすと、ここと3サイト(handleAgentChange / startNewDraftThread /
+// applyChatSuccess)すべてで選択を書かない限り tsc が落ちる。
+
+/** handleAgentChange: 本文・添付・シード記録のみ引き継ぐ。 */
+const HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
+  conversationInputs: { carry: true },
+  conversationAttachments: { carry: true },
+  draftSeedText: { carry: true },
+  attachmentErrors: {
+    carry: false,
+    reason: 'エージェント切替では添付エラー状態を引き継がない',
+  },
+  threadModelIds: {
+    carry: false,
+    reason: '旧エージェント向けモデル選択を新キーへ持ち込むとモデル漏れになる',
+  },
+});
+
+/** startNewDraftThread: 通常の「新規スレッド」は何も引き継がない。 */
+const START_NEW_DRAFT_THREAD_CARRY = defineDraftPayloadStoreCarryPlan({
+  conversationInputs: {
+    carry: false,
+    reason: '明示的な新規スレッドは空のドラフトで始まる',
+  },
+  conversationAttachments: {
+    carry: false,
+    reason: '明示的な新規スレッドは空のドラフトで始まる',
+  },
+  attachmentErrors: {
+    carry: false,
+    reason: '明示的な新規スレッドは空のドラフトで始まる',
+  },
+  threadModelIds: {
+    carry: false,
+    reason: '明示的な新規スレッドは空のドラフトで始まる',
+  },
+  draftSeedText: {
+    carry: false,
+    reason: '明示的な新規スレッドは空のドラフトで始まる',
+  },
+});
+
+/** startNewDraftThread: pendingPrefill 消化時は計算値を引き継ぐ。 */
+const START_NEW_DRAFT_THREAD_PREFILL_CARRY = defineDraftPayloadStoreCarryPlan({
+  conversationInputs: { carry: true },
+  conversationAttachments: { carry: true },
+  draftSeedText: { carry: true },
+  threadModelIds: { carry: true },
+  attachmentErrors: {
+    carry: false,
+    reason: 'pendingPrefill 消化では添付エラー状態を引き継がない',
+  },
+});
+
+/** applyChatSuccess: ドラフト積載物は送信時点でクリア済み。conversations のみ移送。 */
+const APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
+  conversationInputs: {
+    carry: false,
+    reason: '送信時点でドラフト積載物はクリア済み',
+  },
+  conversationAttachments: {
+    carry: false,
+    reason: '送信時点でドラフト積載物はクリア済み',
+  },
+  attachmentErrors: {
+    carry: false,
+    reason: '送信時点でドラフト積載物はクリア済み',
+  },
+  threadModelIds: {
+    carry: false,
+    reason: '送信時点でドラフト積載物はクリア済み(sessionId 確定後は別経路でモデルを設定)',
+  },
+  draftSeedText: {
+    carry: false,
+    reason: '送信時点でドラフト積載物はクリア済み',
+  },
+});
 
 // スレッド一覧の並び順(bdboard-3tw.154)。更新の新しい順。
 //
@@ -554,30 +638,33 @@ export function ChatPanel({
     },
     [],
   );
-  // bdboard-c1pw: 会話キーで索かれる「ドラフト積載物」ストアの単一の登録簿。
-  // 会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペースの一括破棄
-  // (purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。従来は同じ
-  // 5ストアぶんの移送コードが呼び出しサイトごとに手書きで重複しており、1つ書き
-  // 忘れると「入力欄だけ旧キーに取り残される」「モデル選択だけ引き継がれない」
-  // という形の desync 事故になっていた(bdboard-3tw.104.18 / dpq / 2n8 ほか)。
-  // 新しい会話キー付きストアを足すときは、ここに1行足せば両方の操作が追従する。
+  // bdboard-c1pw / bdboard-ru4d: 会話キーで索かれる「ドラフト積載物」ストアの
+  // 単一の登録簿。会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペース
+  // の一括破棄(purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。
+  // DRAFT_PAYLOAD_STORE_NAMES 型により applicators の網羅性も tsc で強制される。
+  // 新しい会話キー付きストアを足すときは conversationKeyspace.ts の正本に追加し、
+  // ここと3再割り当てサイト(handleAgentChange / startNewDraftThread /
+  // applyChatSuccess)の引き継ぎ選択も更新すること。
   //
   // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
   // これらは「サーバーのセッション状態」側であり、下の2つの呼び出しサイト
   // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
   // 移送されていない。ここに含めると挙動が変わる。
   const applyToDraftPayloadStores = useCallback(
-    (
-      transform: <T>(
-        record: Record<string, T>,
-        isEmpty: (value: T) => boolean,
-      ) => Record<string, T>,
-    ) => {
-      setConversationInputs((prev) => transform(prev, isEmptyText));
-      updateConversationAttachments((prev) => transform(prev, isEmptyList));
-      setAttachmentErrors((prev) => transform(prev, isNeverEmpty));
-      setThreadModelIds((prev) => transform(prev, isNeverEmpty));
-      draftSeedTextRef.current = transform(draftSeedTextRef.current, isNeverEmpty);
+    (transform: DraftPayloadStoreTransform) => {
+      applyTransformToAllDraftPayloadStores(
+        {
+          conversationInputs: (t) => setConversationInputs((prev) => t(prev, isEmptyText)),
+          conversationAttachments: (t) =>
+            updateConversationAttachments((prev) => t(prev, isEmptyList)),
+          attachmentErrors: (t) => setAttachmentErrors((prev) => t(prev, isNeverEmpty)),
+          threadModelIds: (t) => setThreadModelIds((prev) => t(prev, isNeverEmpty)),
+          draftSeedText: (t) => {
+            draftSeedTextRef.current = t(draftSeedTextRef.current, isNeverEmpty);
+          },
+        },
+        transform,
+      );
     },
     [updateConversationAttachments],
   );
@@ -623,13 +710,8 @@ export function ChatPanel({
   // 奪い合う。呼び出し側(下の各 useEffect)は必ず「1回のトリガーにつき
   // startNewDraftThread は高々1回」を守ること。
   const startNewDraftThread = useCallback((projectId: string) => {
-    // bdboard-c1pw: ここも会話キーの再割り当てサイトだが、上の
-    // migrateDraftPayloadKey(全ストア一律移送)には意図的に載せていない。この
-    // 経路が旧キーから引き継ぐのは「pendingPrefillRef を消化するときだけ、かつ
-    // 計算した値(textToApply)」であり、一律移送とは意味が違う(通常の「新規
-    // スレッド」は何も引き継がず空のドラフトで始まるのが仕様)。会話キー付き
-    // ストアを新設するときは、登録簿に足すのとは別に、この経路で引き継ぐべきか
-    // を個別に判断すること。
+    // bdboard-ru4d: ここも会話キーの再割り当てサイト。引き継ぎ選択は
+    // START_NEW_DRAFT_THREAD_*_CARRY で型網羅を強制している。
     const previousDraftNonce = draftNoncesRef.current[projectId] ?? 0;
     const previousDraftKey = makeDraftKey(projectId, previousDraftNonce);
     const nextDraftNonce = previousDraftNonce + 1;
@@ -682,27 +764,39 @@ export function ChatPanel({
       const previousValueIsUneditedSeed =
         previousValue === '' || previousValue === previousSeedText;
       const textToApply = previousValueIsUneditedSeed ? prefillText : previousValue;
-      if (textToApply === prefillText && !prefillIsUserEdit) {
-        draftSeedTextRef.current[nextDraftKey] = prefillText;
-      } else {
-        delete draftSeedTextRef.current[nextDraftKey];
-      }
-      setConversationInputs((prev) => ({ ...prev, [nextDraftKey]: textToApply }));
-      if (prefillModelId !== undefined) {
-        setThreadModelIds((prev) => ({ ...prev, [nextDraftKey]: prefillModelId }));
-      }
       const liveAttachments = conversationAttachmentsRef.current[previousDraftKey] ?? [];
       const attachmentsToCarry = liveAttachments.length > 0
         ? liveAttachments
         : prefillAttachments;
-      if (attachmentsToCarry.length > 0) {
-        updateConversationAttachments((prev) => ({
-          ...Object.fromEntries(
-            Object.entries(prev).filter(([key]) => key !== previousDraftKey),
-          ),
-          [nextDraftKey]: [...attachmentsToCarry],
-        }));
-      }
+      applyDraftPayloadStoreCarryPlan(START_NEW_DRAFT_THREAD_PREFILL_CARRY, {
+        conversationInputs: () => {
+          setConversationInputs((prev) => ({ ...prev, [nextDraftKey]: textToApply }));
+        },
+        conversationAttachments: () => {
+          if (attachmentsToCarry.length > 0) {
+            updateConversationAttachments((prev) => ({
+              ...Object.fromEntries(
+                Object.entries(prev).filter(([key]) => key !== previousDraftKey),
+              ),
+              [nextDraftKey]: [...attachmentsToCarry],
+            }));
+          }
+        },
+        draftSeedText: () => {
+          if (textToApply === prefillText && !prefillIsUserEdit) {
+            draftSeedTextRef.current[nextDraftKey] = prefillText;
+          } else {
+            delete draftSeedTextRef.current[nextDraftKey];
+          }
+        },
+        threadModelIds: () => {
+          if (prefillModelId !== undefined) {
+            setThreadModelIds((prev) => ({ ...prev, [nextDraftKey]: prefillModelId }));
+          }
+        },
+      });
+    } else {
+      referenceDraftPayloadStoreCarryPlan(START_NEW_DRAFT_THREAD_CARRY);
     }
     // N2: ドラフトへの切り替えは意図的に writePersistedChatThreadState を呼ばない。
     // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
@@ -1873,12 +1967,10 @@ export function ChatPanel({
 
   const applyChatSuccess = useCallback(
     (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
-      // bdboard-c1pw: ここも会話キーの再割り当て(ドラフトキー → 確定した
-      // sessionId)だが、migrateDraftPayloadKey には載せていない。移すのは
-      // conversations(しかも返信を追記した計算済みの値)であり、ドラフト積載物
-      // 5ストアは送信時点で既にクリア済みなので一律移送の対象ではない。会話キー
-      // 付きストアを新設するときは、この経路で新キーへ引き継ぐ必要があるかを
-      // 個別に判断すること。
+      // bdboard-ru4d: 会話キーの再割り当て(ドラフトキー → 確定 sessionId)だが、
+      // ドラフト積載物は引き継がない(選択は APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY)。
+      // 移すのは conversations(返信を追記した計算済みの値)のみ。
+      referenceDraftPayloadStoreCarryPlan(APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY);
       setConversations((prev) => {
         const next = {
           ...prev,
@@ -2327,13 +2419,8 @@ export function ChatPanel({
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
       const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);
-      // bdboard-c1pw: ここも会話キーの再割り当てだが、migrateDraftPayloadKey の
-      // 一律移送には意図的に載せていない。引き継ぐのは本文・添付・シード記録の
-      // 3つだけで、attachmentErrors と threadModelIds は引き継がない ——
-      // エージェントを切り替えた以上、旧エージェント向けのモデル選択を新キーへ
-      // 持ち込むのは誤り(モデル漏れを防いでいるのは復元 effect のメンバーシップ
-      // チェックと、nonce でキーが分離されることの両方)。会話キー付きストアを
-      // 新設するときは、この経路で引き継ぐべきかを個別に判断すること。
+      // bdboard-ru4d: 会話キーの再割り当て。引き継ぎ選択は
+      // HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY で型網羅を強制している。
       setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
       // MF1(N1: startNewDraftThread の SF1 引き継ぎと同じ family ——
       // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という
@@ -2343,30 +2430,35 @@ export function ChatPanel({
       // 新しいドラフトキーへ引き継ぐ。「新規スレッド」ボタン
       // (handleNewThread→startNewDraftThread)は明示的な新規作成の意図なので、
       // こちらは従来どおり引き継がず空のドラフトのままにする。
-      setConversationInputs((prev) => ({
-        ...prev,
-        [nextDraftKey]: prev[currentConversationKey] ?? '',
-      }));
-      updateConversationAttachments((prev) => {
-        const moved = [...(prev[currentConversationKey] ?? [])];
-        const next = { ...prev };
-        delete next[currentConversationKey];
-        return { ...next, [nextDraftKey]: moved };
+      applyDraftPayloadStoreCarryPlan(HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY, {
+        conversationInputs: () => {
+          setConversationInputs((prev) => ({
+            ...prev,
+            [nextDraftKey]: prev[currentConversationKey] ?? '',
+          }));
+        },
+        conversationAttachments: () => {
+          updateConversationAttachments((prev) => {
+            const moved = [...(prev[currentConversationKey] ?? [])];
+            const next = { ...prev };
+            delete next[currentConversationKey];
+            return { ...next, [nextDraftKey]: moved };
+          });
+        },
+        draftSeedText: () => {
+          // SFX: 値と一緒に draftSeedTextRef のシード記録も無条件でコピーする。
+          // 値だけコピーしてシード記録を移し忘れると、新キーでは
+          // draftSeedTextRef.current[nextDraftKey] が undefined のままになり、後で
+          // startNewDraftThread がこの新キーを previousDraftKey として比較する際
+          // 「シード記録が無い」→無条件で「編集済み」と誤判定してしまう。
+          if (currentConversationKey in draftSeedTextRef.current) {
+            draftSeedTextRef.current[nextDraftKey] =
+              draftSeedTextRef.current[currentConversationKey];
+          } else {
+            delete draftSeedTextRef.current[nextDraftKey];
+          }
+        },
       });
-      // SFX: 値と一緒に draftSeedTextRef のシード記録も無条件でコピーする。値だけ
-      // コピーしてシード記録を移し忘れると、新キーでは
-      // draftSeedTextRef.current[nextDraftKey] が undefined のままになり、後で
-      // startNewDraftThread がこの新キーを previousDraftKey として比較する際
-      // 「シード記録が無い」→無条件で「編集済み」と誤判定してしまう(旧キーが
-      // 実際には未編集のプリフィルそのままだった場合でも、次のチケット起動で
-      // その旧文言が居座ってプリフィルが適用されない)。値とシードを同時に
-      // コピーしておけば、新キーでの「value === seed」判定結果が旧キーでの
-      // 判定結果と完全に一致するので、条件分岐は不要。
-      if (currentConversationKey in draftSeedTextRef.current) {
-        draftSeedTextRef.current[nextDraftKey] = draftSeedTextRef.current[currentConversationKey];
-      } else {
-        delete draftSeedTextRef.current[nextDraftKey];
-      }
       setSelectedAgentId(nextId);
       setConversations((prev) => {
         const current = prev[currentConversationKey];
