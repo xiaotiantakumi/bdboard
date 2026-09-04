@@ -87,7 +87,7 @@
 
 ### worktree-preview-start — worktree から `preview_start` を実行し、本体ポート 8787 で別ブランチの stale UI が配信された（2026-08-29, 再現 2/2）
 - 原因: launch.json は全 worktree に存在し、cwd 側の `src/main.ts` と `web/dist` が使われる。ステータスコードでは検出不能
-- 防止: worktree から preview_start 禁止。起動はメインチェックアウトへ cd してから（本則: `.claude/skills/bdboard-server-ops/SKILL.md`「Never call `preview_start` from a worktree session」）
+- 防止: worktree から preview_start 禁止。起動はメインチェックアウトへ cd してから（本則: bdboard の `.claude/skills/bdboard-server-ops/SKILL.md`「Never call `preview_start` from a worktree session」）
 - 出典: `.claude/skills/bdboard-server-ops/SKILL.md` 該当節（実測記録つき）
 
 ## 検証・ビルド
@@ -155,5 +155,5 @@
 
 ### bare-dolt-push — Dolt レイヤーに残っていた public 向け remote により、bare push が私的チケット履歴を公開リポジトリへ漏らす寸前だった（2026-08-17）
 - 原因: config.yaml の sync.remote 無効化では、既に登録済みの Dolt レイヤー remote は消えない
-- 防止: 常に `bd dolt push --remote legacy`。bare push 前は `bd dolt remote list` で origin 不在を確認（本則: `docs/GIT-WORKFLOW.md`「.beads/ Dolt sync」）
+- 防止: 常に `bd dolt push --remote legacy`。bare push 前は `bd dolt remote list` で origin 不在を確認（本則: bdboard の `docs/GIT-WORKFLOW.md`「.beads/ Dolt sync」）
 - 出典: bdboard-jb1（背景: bdboard-23v）
