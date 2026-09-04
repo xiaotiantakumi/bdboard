@@ -42,12 +42,24 @@ jobs:
   # Kept separate from `verify` rather than using a matrix so the existing
   # check name `verify` stays unchanged — our merge convention waits on that
   # name, and we do not want to break a future required Windows gate either.
-  # `continue-on-error` keeps this advisory while bdboard-70z.8 records current
-  # Windows failures; bdboard-70z.9 will decide when it can become required.
   verify-windows:
-    # Windows は現時点で test:server が落ちる (bdboard-9dm)。落ちても PR を
-    # ブロックしないよう job 全体を continue-on-error にしている。state は
-    # unstable になるだけで、マージは可能。必須化の判断は bdboard-70z.9。
+    # 落ちても PR をブロックしないよう job 全体を continue-on-error にしている。
+    # state は unstable になるだけで、マージは可能。
+    #
+    # このジョブを必須ゲートにするかどうかの判断は bdboard-51qb が持つ。
+    # (以前ここは bdboard-70z.9 を指していたが、70z.9 は「Windows 未対応機能を
+    #  UI で明示する」という別件で、しかも既に closed。判断の持ち主が消えていた。)
+    #
+    # 現況 (実測 2026-09-04): このジョブを入れた当初の前提だった
+    # 「Windows で test:server が 65 件落ちる」(bdboard-9dm) は解消済みで、
+    # 9dm も closed。直近の main / PR の run では verify-windows は概ね success。
+    # 残っている赤は bdboard-pqhe の flake (scripts/check-drift.test.mjs が
+    # Windows の遅いプロセス生成で per-test 5s を超える) 1系統のみ。
+    # つまり必須化を妨げている具体的な要因は pqhe だけまで絞れている。
+    #
+    # なぜ今このPRで必須化しないか: pqhe が未 land の状態で必須にすると、
+    # 既知の flake がそのまま全PRのマージブロッカーになる。必須化の発火条件は
+    # bdboard-51qb 側に書いてある。
     continue-on-error: true
     runs-on: windows-latest
     timeout-minutes: 30
