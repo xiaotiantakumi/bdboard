@@ -120,9 +120,15 @@ describe('getHygieneIssues', () => {
     cache.putProject({
       project: b,
       tickets: [
+        // b 側も issue を出す ticket にしておく。出さない ticket だと
+        // フィルタ無しでも 1 件になり、下の toHaveLength(1) が素通りする。
         makeTicket({
-          id: 'bdboard-other',
+          id: 'bdboard-other-stale',
           projectId: b.id,
+          status: 'in_progress',
+          updatedAt: new Date(
+            NOW.getTime() - DEFAULT_HYGIENE_THRESHOLDS.staleInProgressAfterMs - 1,
+          ),
         }),
       ],
       fingerprint: 'fp-b',

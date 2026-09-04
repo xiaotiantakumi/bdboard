@@ -142,12 +142,7 @@ describe('checkHygiene deferUntil field', () => {
       status: 'closed',
       closedAt: NOW,
     });
-    const missingPriority = makeTicket({
-      id: 'bdboard-missing',
-      priority: undefined as unknown as Ticket['priority'],
-    });
-
-    const issues = checkHygiene([epic, child, missingPriority], { now: NOW });
+    const issues = checkHygiene([epic, child], { now: NOW });
     for (const issue of issues) {
       expect(issue.deferUntil).toBeUndefined();
     }

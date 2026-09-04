@@ -135,8 +135,9 @@ test.describe('mobile input font-size', () => {
     // 下限11は約8割で設定フォーム群が丸ごと消えたら落ちる程度。
     await expectAllFormElementsAtLeast16px(page, 'settings view', 11);
     // 健全性ビューにはフォーム要素が無くなった（bdboard-2czx で priority 修復 select を削除）ため
-    // このビューは検査対象外。同じ (0,1,1) 同詳細度リスクは settings view の
-    // .settings-panel-add-row select が引き続きカバーする。
+    // このビューは検査対象外。この対策が本当に守りたいケース（クラス無しの select
+    // = textarea[class] / select[class] 方式で取りこぼしていた形）は、settings view の
+    // .settings-panel-add-row 直下の select が引き続きカバーする。
 
     await page.getByRole('button', { name: '統合', exact: true }).click();
     await expect(card).toBeVisible({ timeout: 15_000 });
