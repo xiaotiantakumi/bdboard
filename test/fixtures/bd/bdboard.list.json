@@ -36,7 +36,14 @@
     "dependent_count": 4,
     "comment_count": 0,
     "parent": "bdboard-3tw",
-    "labels": ["housekeeping", "investigation-followup"]
+    "labels": ["housekeeping", "investigation-followup"],
+    "metadata": {
+      "bdboard.model.implement": "fixture-model-epsilon",
+      "bdboard.model.test": "fixture-model-zeta",
+      "bdboard.model.review": "fixture-model-eta",
+      "bdboard.model.check": "fixture-model-theta",
+      "bdboard.model.docs": "fixture-model-iota"
+    }
   },
   {
     "id": "bdboard-3tw",
@@ -84,7 +91,13 @@
     "dependent_count": 1,
     "comment_count": 0,
     "parent": "bdboard-3tw",
-    "labels": ["quality"]
+    "labels": ["quality"],
+    "metadata": {
+      "bdboard.model.implement": "fixture-model-alpha",
+      "bdboard.model.test": "fixture-model-beta",
+      "bdboard.model.review": "fixture-model-gamma",
+      "bdboard.model.check": "fixture-model-delta"
+    }
   },
   {
     "id": "bdboard-3tw.8",
@@ -304,7 +317,15 @@
     "dependent_count": 1,
     "comment_count": 0,
     "parent": "bdboard-3tw",
-    "labels": ["ui"]
+    "labels": ["ui"],
+    "metadata": {
+      "bdboard.model.implement": "fixture-model-kappa",
+      "bdboard.model.test": "fixture-model-lambda",
+      "bdboard.model.review": "fixture-model-mu",
+      "bdboard.model.check": "fixture-model-nu",
+      "bdboard.model.deploy": "fixture-model-xi",
+      "bdboard.model.analysis": "fixture-model-omicron"
+    }
   },
   {
     "id": "bdboard-3tw.10",

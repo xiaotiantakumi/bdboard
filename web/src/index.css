@@ -2095,6 +2095,54 @@ body {
   gap: 16px;
 }
 
+/*
+  Horizontal scroll for wide model stats tables (bdboard-83tc AC3).
+  AC3 edge fades on .model-stats-table-scroller provide the platform-independent
+  scroll affordance. Scrollbar visibility is platform-dependent (macOS overlay
+  bars do not occupy layout) so neither affordance nor tests rely on scrollbar
+  styling.
+*/
+.model-stats-table-scroller {
+  position: relative;
+  /* insurance if an ancestor becomes row flex */
+  min-width: 0;
+  /* Fade must match the surface behind the table; stats view ancestors are
+     transparent so body (--color-bg) is the painted background (measured). */
+  --model-stats-fade-color: var(--color-bg);
+}
+
+.settings-panel-section .model-stats-table-scroller {
+  --model-stats-fade-color: var(--color-bg-elevated);
+}
+
+.model-stats-table-scroller.can-scroll-start::before,
+.model-stats-table-scroller.can-scroll-end::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.model-stats-table-scroller.can-scroll-start::before {
+  left: 0;
+  background: linear-gradient(to right, var(--model-stats-fade-color), transparent);
+}
+
+.model-stats-table-scroller.can-scroll-end::after {
+  right: 0;
+  background: linear-gradient(to left, var(--model-stats-fade-color), transparent);
+}
+
+.model-stats-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+  scrollbar-width: thin;
+}
+
 .model-stats-table {
   width: 100%;
   border-collapse: collapse;

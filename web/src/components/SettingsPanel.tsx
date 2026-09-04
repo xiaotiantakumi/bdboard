@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { ApiError, fetchAgentRunConfig, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig, saveAgentRunConfig } from '../api';
 import { describeWriteError } from '../writeAccessMessage';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
+import { ModelStatsTableScroll } from './ModelStatsTableScroll';
 
 const ABSOLUTE_WINDOWS_PATH = /^[A-Za-z]:[\\/]/;
 
@@ -1273,22 +1274,24 @@ export function SettingsPanel() {
         ) : (
           <>
             <p>DBサイズ: {formatBytes(dbStatsQuery.data.sizeBytes)}</p>
-            <table className="model-stats-table">
-              <thead>
-                <tr>
-                  <th scope="col">テーブル</th>
-                  <th scope="col">件数</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dbStatsQuery.data.tables.map((table) => (
-                  <tr key={table.name}>
-                    <td>{table.name}</td>
-                    <td>{table.rowCount}</td>
+            <ModelStatsTableScroll ariaLabel="ローカルDB統計（横スクロール可能）">
+              <table className="model-stats-table">
+                <thead>
+                  <tr>
+                    <th scope="col">テーブル</th>
+                    <th scope="col">件数</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {dbStatsQuery.data.tables.map((table) => (
+                    <tr key={table.name}>
+                      <td>{table.name}</td>
+                      <td>{table.rowCount}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ModelStatsTableScroll>
           </>
         )}
       </section>

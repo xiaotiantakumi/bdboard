@@ -21,6 +21,7 @@ import {
   statsWeeksLabel,
   type StatsWeeks,
 } from '../uiPersistedState';
+import { ModelStatsTableScroll } from './ModelStatsTableScroll';
 import { togglePressedProps } from './toggleGroupA11y';
 import {
   ageBucketEntries,
@@ -507,26 +508,28 @@ function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
           description={CHART_DESCRIPTIONS.modelWeeklyCloses}
           level={4}
         />
-        <table className="model-stats-table">
-          <thead>
-            <tr>
-              <th>週</th>
-              {modelNames.map((model) => (
-                <th key={model}>{model}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {stats.weeklyCloses.map((entry) => (
-              <tr key={entry.weekStart}>
-                <td>{formatWeekLabel(entry.weekStart)}</td>
+        <ModelStatsTableScroll ariaLabel="モデル別クローズ件数(週次)（横スクロール可能）">
+          <table className="model-stats-table">
+            <thead>
+              <tr>
+                <th>週</th>
                 {modelNames.map((model) => (
-                  <td key={model}>{entry.counts[model] ?? 0}</td>
+                  <th key={model}>{model}</th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {stats.weeklyCloses.map((entry) => (
+                <tr key={entry.weekStart}>
+                  <td>{formatWeekLabel(entry.weekStart)}</td>
+                  {modelNames.map((model) => (
+                    <td key={model}>{entry.counts[model] ?? 0}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ModelStatsTableScroll>
       </div>
       <div className="throughput-chart-block">
         <ChartBlockHeader
@@ -534,26 +537,28 @@ function ModelStatsTables({ stats }: { stats: ModelStatsDto }) {
           description={CHART_DESCRIPTIONS.modelStageDistribution}
           level={4}
         />
-        <table className="model-stats-table">
-          <thead>
-            <tr>
-              <th>工程</th>
-              {modelNames.map((model) => (
-                <th key={model}>{model}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {stats.stageModelDistribution.map((entry) => (
-              <tr key={entry.stage}>
-                <td>{entry.stage}</td>
+        <ModelStatsTableScroll ariaLabel="工程×モデルの分布（横スクロール可能）">
+          <table className="model-stats-table">
+            <thead>
+              <tr>
+                <th>工程</th>
                 {modelNames.map((model) => (
-                  <td key={model}>{entry.counts[model] ?? 0}</td>
+                  <th key={model}>{model}</th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {stats.stageModelDistribution.map((entry) => (
+                <tr key={entry.stage}>
+                  <td>{entry.stage}</td>
+                  {modelNames.map((model) => (
+                    <td key={model}>{entry.counts[model] ?? 0}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </ModelStatsTableScroll>
       </div>
     </>
   );
@@ -618,24 +623,26 @@ function HarnessKpiTable({ kpi }: { kpi: HarnessKpiDto }) {
 
   return (
     <div className="throughput-chart-block">
-      <table className="model-stats-table">
-        <thead>
-          <tr>
-            <th>指標</th>
-            <th>値</th>
-            <th>読み方</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.key}>
-              <td>{row.label}</td>
-              <td>{row.value}</td>
-              <td>{row.note}</td>
+      <ModelStatsTableScroll ariaLabel="ハーネスKPI（横スクロール可能）">
+        <table className="model-stats-table">
+          <thead>
+            <tr>
+              <th>指標</th>
+              <th>値</th>
+              <th>読み方</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <td>{row.label}</td>
+                <td>{row.value}</td>
+                <td>{row.note}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </ModelStatsTableScroll>
     </div>
   );
 }
