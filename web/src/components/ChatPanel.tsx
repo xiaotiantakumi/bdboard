@@ -65,6 +65,7 @@ import {
 } from '../hooks/useResizableSidePanel';
 import { getBoardTimeZone } from '../boardTimeZone';
 import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
+import { isImeComposingKeyEvent } from '../imeGuard';
 import { CHAT_BUSY_HELP, writeAccessErrorMessage } from '../writeAccessMessage';
 
 interface ChatPanelProps {
@@ -2481,6 +2482,9 @@ export function ChatPanel({
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+        if (isImeComposingKeyEvent(event)) {
+          return;
+        }
         event.preventDefault();
         formRef.current?.requestSubmit();
       }
@@ -2766,6 +2770,9 @@ export function ChatPanel({
             onChange={(event) => setRenameDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
+                if (isImeComposingKeyEvent(event)) {
+                  return;
+                }
                 event.preventDefault();
                 void handleRenameConfirm(sessionId);
               } else if (event.key === 'Escape') {

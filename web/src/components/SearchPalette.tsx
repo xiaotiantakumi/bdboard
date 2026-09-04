@@ -10,6 +10,7 @@ import {
 import { searchTickets, type TicketSearchResultDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
+import { isImeComposingKeyEvent } from '../imeGuard';
 import { filterPaletteActions, type PaletteAction } from '../paletteActions';
 import type { RecentTicketEntry } from '../uiPersistedState';
 
@@ -159,6 +160,10 @@ export function SearchPalette({
   );
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (isImeComposingKeyEvent(event)) {
+      return;
+    }
+
     if (event.key === 'ArrowDown' && rows.length > 0) {
       event.preventDefault();
       setSelectedIndex((current) => Math.min(current + 1, rows.length - 1));

@@ -409,4 +409,36 @@ describe('BulkActionBar', () => {
     expect(mockPostTicketAddLabel).toHaveBeenCalledWith('bdboard-a', 'human');
     expect(mockPostTicketAddLabel).toHaveBeenCalledWith('bdboard-b', 'human');
   });
+
+  it('does not open bulk label confirm when Enter is pressed during IME composition', async () => {
+    const cards = new Map([['bdboard-a', makeCard('bdboard-a')]]);
+    renderBulkBar(cards, ['bdboard-a']);
+
+    const labelInput = screen.getByRole('textbox', { name: '付与するラベル' });
+    await user.type(labelInput, 'human');
+    fireEvent.keyDown(labelInput, {
+      key: 'Enter',
+      isComposing: true,
+      keyCode: 229,
+    });
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(mockPostTicketAddLabel).not.toHaveBeenCalled();
+  });
+
+  it('opens bulk label confirm on plain Enter in the label input', async () => {
+    const cards = new Map([['bdboard-a', makeCard('bdboard-a')]]);
+    renderBulkBar(cards, ['bdboard-a']);
+
+    const labelInput = screen.getByRole('textbox', { name: '付与するラベル' });
+    await user.type(labelInput, 'human');
+    fireEvent.keyDown(labelInput, { key: 'Enter' });
+
+    expect(
+      screen.getByText(
+        '選択中の 1 件にラベル「human」を付与します。よろしいですか?',
+      ),
+    ).toBeInTheDocument();
+    expect(mockPostTicketAddLabel).not.toHaveBeenCalled();
+  });
 });

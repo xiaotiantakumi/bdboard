@@ -62,6 +62,7 @@ import {
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
 import { formatAbsoluteTime } from '../formatAbsoluteTime';
+import { isImeComposingKeyEvent } from '../imeGuard';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { describeWriteError } from '../writeAccessMessage';
 import { planQuickActionUndo } from '../quickActionUndo';
@@ -1313,6 +1314,9 @@ export function TicketDetailPanel({
                   onChange={(event) => setTitleDraft(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
+                      if (isImeComposingKeyEvent(event)) {
+                        return;
+                      }
                       event.preventDefault();
                       handleSaveTitle();
                     }
@@ -1576,6 +1580,9 @@ export function TicketDetailPanel({
                 onChange={(event) => setLabelInputQuery(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter') {
+                    if (isImeComposingKeyEvent(event)) {
+                      return;
+                    }
                     event.preventDefault();
                     if (canSubmitLabel && !labelMutationPending) {
                       handleAddLabel(trimmedLabelInput);

@@ -23,6 +23,7 @@ import {
   runBulkQuickAction,
 } from '../bulkQuickAction';
 import { planQuickActionUndo } from '../quickActionUndo';
+import { isImeComposingKeyEvent } from '../imeGuard';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { describeWriteError } from '../writeAccessMessage';
 import { useBulkSelection } from './BulkSelectionProvider';
@@ -460,6 +461,9 @@ export function BulkActionBar({
             onChange={(event) => setBulkLabelInput(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
+                if (isImeComposingKeyEvent(event)) {
+                  return;
+                }
                 event.preventDefault();
                 if (canSubmitBulkLabel && !actionsDisabled) {
                   handleBulkLabelAction();
