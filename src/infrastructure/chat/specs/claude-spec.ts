@@ -2,10 +2,12 @@ import { z } from 'zod';
 import {
   ChatAgentError,
   type ChatAgentAvailability,
+  type ChatFailureCode,
   type ChatModelOption,
   type ChatTurnRequest,
   type ChatTurnResult,
 } from '../../../application/ports/chat-agent.js';
+import { describeClaudeSettingSourcesFailure } from '../../../domain/claude-version-check.js';
 import type { CommandResult } from '../../../application/ports/command-runner.js';
 import type {
   CliChatAgentSpec,
@@ -362,6 +364,18 @@ export function createClaudeSpec(options: ClaudeSpecOptions): CliChatAgentSpec {
       },
     },
     timeoutMs: options.timeoutMs,
+    // bdboard-ndky: 古い claude CLI が --setting-sources を未知オプションとして拒否した
+    // stderr だけを describeClaudeSettingSourcesFailure() で読み取り、固定コードに翻訳する。
+    // stderr の生テキストは返さない(bdboard-pvl)。failureKind がある場合は spawn/timeout 分類を優先。
+    classifyFailure(result: CommandResult): ChatFailureCode | undefined {
+      if (result.failureKind !== undefined) {
+        return undefined;
+      }
+      if (describeClaudeSettingSourcesFailure(result.stderr) !== null) {
+        return 'agent-claude-cli-too-old';
+      }
+      return undefined;
+    },
     buildTurn(request, ctx): CliTurnPlan {
       return {
         args: buildClaudeArgs(request, ctx, request.model ?? options.model),

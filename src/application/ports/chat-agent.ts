@@ -1,3 +1,5 @@
+import { MINIMUM_CLAUDE_VERSION } from '../../domain/claude-version-check.js';
+
 export type ChatImageMimeType = 'image/png' | 'image/jpeg' | 'image/webp';
 
 export interface ChatImageAttachment {
@@ -113,6 +115,13 @@ export const CHAT_FAILURE_CODES = [
   'agent-reported-error',
   /** agy headless mode auto-denied an approval-required tool call (bdboard-l1t.6). */
   'agent-headless-denied',
+  /**
+   * claude アダプタ専用(bdboard-ndky)。claude CLI が --setting-sources を未知オプションとして
+   * 拒否して非ゼロ終了した場合に立つ。検出は src/infrastructure/chat/specs/claude-spec.ts の
+   * classifyFailure が describeClaudeSettingSourcesFailure(stderr) で行う。
+   * 生の stderr は含めず、定型文だけを返す(bdboard-pvl)。
+   */
+  'agent-claude-cli-too-old',
 ] as const;
 
 export type ChatFailureCode = (typeof CHAT_FAILURE_CODES)[number];
@@ -128,6 +137,8 @@ export const CHAT_FAILURE_MESSAGES: Readonly<Record<ChatFailureCode, string>> = 
     'the chat agent requires this project directory to be trusted outside bdboard before it can run non-interactively',
   'agent-reported-error': 'the chat agent reported an internal error for this turn',
   'agent-headless-denied': 'the chat agent auto-denied a tool call that its headless mode cannot approve; the agy CLI needs an operator-side permissions.allow rule for the bd command (see README)',
+  'agent-claude-cli-too-old':
+    `the chat agent requires claude CLI ${MINIMUM_CLAUDE_VERSION} or newer (this version passes --setting-sources, which older CLIs reject); upgrade the CLI or point BDBOARD_CLAUDE_PATH at a newer one`,
 };
 
 /**

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CHAT_FAILURE_MESSAGES } from '../../application/ports/chat-agent.js';
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
+import type { StreamingCommandRunner } from '../../application/ports/streaming-command-runner.js';
 import { CHAT_TOOL_DEFINITIONS } from './chat-tool-catalog.js';
 import { createClaudeChatAgent } from './claude-chat-agent.js';
 
@@ -322,6 +323,74 @@ describe('createClaudeChatAgent', () => {
       code: 'agent-exit-nonzero',
       detail: CHAT_FAILURE_MESSAGES['agent-exit-nonzero'],
     });
+  });
+
+  it('classifies an old claude CLI that rejects --setting-sources on the non-streaming path (bdboard-ndky)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: "error: unknown option '--setting-sources'",
+        exitCode: 1,
+      }),
+    });
+    const agent = createAgent(runner);
+
+    await expect(
+      agent.sendMessage({
+        projectRootPath: PROJECT_ROOT,
+        projectName: PROJECT_NAME,
+        message: USER_MESSAGE,
+      }),
+    ).rejects.toMatchObject({
+      code: 'agent-claude-cli-too-old',
+      detail: CHAT_FAILURE_MESSAGES['agent-claude-cli-too-old'],
+    });
+  });
+
+  it('classifies an old claude CLI that rejects --setting-sources on the streaming path (bdboard-ndky)', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const streamingRunner: StreamingCommandRunner = {
+      async run() {
+        return {
+          stdout: '',
+          stderr: "error: unknown option '--setting-sources'",
+          exitCode: 1,
+        };
+      },
+    };
+    const agent = createClaudeChatAgent(
+      {
+        run: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+      },
+      {
+        claudePath: '/opt/claude',
+        bdPath: 'bd-custom',
+        model: 'sonnet',
+        mcpServerEntryPath: MCP_ENTRY,
+        nodeExecPath: NODE_EXEC,
+        nodeExecArgv: NODE_EXEC_ARGV,
+        env: {
+          PATH: '/bin:/usr/bin',
+          HOME: '/home/test',
+        },
+      },
+      streamingRunner,
+    );
+
+    await expect(
+      agent.sendMessageStream!(
+        {
+          projectRootPath: PROJECT_ROOT,
+          projectName: PROJECT_NAME,
+          message: USER_MESSAGE,
+        },
+        () => {},
+      ),
+    ).rejects.toMatchObject({
+      code: 'agent-claude-cli-too-old',
+      detail: CHAT_FAILURE_MESSAGES['agent-claude-cli-too-old'],
+    });
+    errorSpy.mockRestore();
   });
 
   it('throws ChatAgentError on invalid JSON output', async () => {

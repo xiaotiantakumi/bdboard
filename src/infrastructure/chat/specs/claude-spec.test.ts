@@ -3,6 +3,7 @@ import {
   CHAT_FAILURE_MESSAGES,
   type ChatTurnRequest,
 } from '../../../application/ports/chat-agent.js';
+import { MINIMUM_CLAUDE_VERSION } from '../../../domain/claude-version-check.js';
 import { BD_TOOL_DEFINITIONS } from '../bd-tool-catalog.js';
 import { buildBdSystemPrompt } from '../bd-system-prompt.js';
 import type { CliTurnContext } from '../cli-chat-agent.js';
@@ -582,5 +583,53 @@ describe('createClaudeSpec authProbe (bdboard-15v)', () => {
       failureKind: 'timeout',
     });
     expect(result).toBe('unknown');
+  });
+});
+
+describe('createClaudeSpec classifyFailure (bdboard-ndky)', () => {
+  const spec = createClaudeSpec({
+    claudePath: CLAUDE_PATH,
+    model: MODEL,
+    timeoutMs: 180_000,
+  });
+
+  it('classifies stderr when an old CLI rejects --setting-sources (empty value)', () => {
+    expect(
+      spec.classifyFailure?.({
+        stdout: '',
+        stderr: "error: unknown option '--setting-sources'",
+        exitCode: 1,
+      }),
+    ).toBe('agent-claude-cli-too-old');
+  });
+
+  it('returns undefined for unrelated stderr so the generic classifier takes over', () => {
+    expect(
+      spec.classifyFailure?.({ stdout: '', stderr: 'some other error', exitCode: 1 }),
+    ).toBeUndefined();
+  });
+
+  it('defers to the generic failureKind classifier when the process never started or timed out', () => {
+    expect(
+      spec.classifyFailure?.({
+        stdout: '',
+        stderr: "error: unknown option '--setting-sources'",
+        exitCode: -1,
+        failureKind: 'spawn-failed',
+      }),
+    ).toBeUndefined();
+    expect(
+      spec.classifyFailure?.({
+        stdout: '',
+        stderr: "error: unknown option '--setting-sources'",
+        exitCode: -1,
+        failureKind: 'timeout',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('maps the classified code to a user-facing message that names the minimum version', () => {
+    expect(CHAT_FAILURE_MESSAGES['agent-claude-cli-too-old']).toContain(MINIMUM_CLAUDE_VERSION);
+    expect(CHAT_FAILURE_MESSAGES['agent-claude-cli-too-old']).toContain('--setting-sources');
   });
 });
