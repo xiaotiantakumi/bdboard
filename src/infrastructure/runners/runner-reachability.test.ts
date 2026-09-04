@@ -77,6 +77,18 @@ function collectSourceFiles(dir: string): string[] {
   return files;
 }
 
+/**
+ * リポジトリ相対パスを常に `/` 区切りで返す。
+ *
+ * `path.relative` は Windows で `src\application\runner\dispatch-run.ts` のように
+ * `\` 区切りを返すため、`/` 区切りで書かれた allowlist と一致せず、正常な
+ * ソースが丸ごと違反として報告される (verify-windows で実測。2026-09-04,
+ * bdboard-54be.1)。allowlist の照合も違反メッセージも POSIX 形に揃える。
+ */
+function toPosixRelative(absolutePath: string): string {
+  return path.relative(REPO_ROOT, absolutePath).split(path.sep).join('/');
+}
+
 function matchingRunnerReferenceTokens(source: string): string[] {
   return RUNNER_REFERENCE_TOKENS.filter((token) => source.includes(token));
 }
@@ -100,7 +112,7 @@ describe('runner reachability (single guarded path)', () => {
     const violations: Array<{ file: string; tokens: readonly string[] }> = [];
 
     for (const file of collectSourceFiles(SRC_DIR)) {
-      const relativePath = path.relative(REPO_ROOT, file);
+      const relativePath = toPosixRelative(file);
       if (isRunnerReferenceAllowlisted(relativePath)) {
         continue;
       }
@@ -141,7 +153,7 @@ describe('runner reachability (single guarded path)', () => {
         const source = readFileSync(file, 'utf8');
         for (const pattern of FORBIDDEN_SOURCE_PATTERNS) {
           if (source.includes(pattern)) {
-            violations.push(`${path.relative(REPO_ROOT, file)}: ${pattern}`);
+            violations.push(`${toPosixRelative(file)}: ${pattern}`);
           }
         }
       }
