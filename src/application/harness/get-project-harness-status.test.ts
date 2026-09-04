@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   getProjectHarnessStatus,
@@ -229,13 +230,18 @@ describe('resolveProjectContractState', () => {
   });
 
   it('reads the package.json of the --prefix directory', async () => {
+    // 実装は path.join で解決するので、期待値も同じ関数で組み立てる。
+    // リテラルの '/tmp/proj/web' は Windows で '\\tmp\\proj\\web' と食い違う
+    // (しかもキー側が外れると「読めなかった = 判定不能 = ok」に倒れて、
+    // state だけ見るアサーションは通ってしまう)。
+    const prefixedRoot = path.join('/tmp/proj', 'web');
     const reader = fakeContractReader({
       contract: JSON.stringify({
         version: 1,
         verify: 'npm --prefix web run build:web',
         prFlow: 'pr',
       }),
-      scriptsByPath: { '/tmp/proj/web': ['build:web'] },
+      scriptsByPath: { [prefixedRoot]: ['build:web'] },
     });
 
     const state = await resolveProjectContractState(
@@ -244,7 +250,7 @@ describe('resolveProjectContractState', () => {
       INJECTED_MANIFEST,
     );
 
-    expect(reader.readPackageScripts).toHaveBeenCalledWith('/tmp/proj/web');
+    expect(reader.readPackageScripts).toHaveBeenCalledWith(prefixedRoot);
     expect(state.state).toBe('ok');
   });
 
