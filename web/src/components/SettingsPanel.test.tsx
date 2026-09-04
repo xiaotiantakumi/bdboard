@@ -593,38 +593,45 @@ describe('SettingsPanel', () => {
     expect(within(effectiveSection).queryByText('/default')).not.toBeInTheDocument();
     expect(screen.getByText('保存済み設定(現在は無効)')).toBeInTheDocument();
   });
-  it('rejects relative and home-relative paths and accepts Unix and Windows absolute paths', async () => {
-    const user = userEvent.setup();
-    renderSettings();
-    await screen.findByText('/configured');
-    const input = screen.getByLabelText('パスを追加');
-    const addButton = within(input.closest('form')!).getByRole('button', { name: '追加' });
+  // bdboard-gwgy: 高負荷時に userEvent.type の複数回呼び出しが5000msの既定
+  // testTimeoutを超えて落ちた実測 (5036ms) があるため、per-test timeoutを
+  // 明示的に伸ばす。
+  it(
+    'rejects relative and home-relative paths and accepts Unix and Windows absolute paths',
+    async () => {
+      const user = userEvent.setup();
+      renderSettings();
+      await screen.findByText('/configured');
+      const input = screen.getByLabelText('パスを追加');
+      const addButton = within(input.closest('form')!).getByRole('button', { name: '追加' });
 
-    await user.type(input, 'relative/path');
-    await user.click(addButton);
-    expect(screen.queryByText('relative/path')).not.toBeInTheDocument();
-    expect(screen.getByText(/絶対パスを入力してください/)).toBeInTheDocument();
+      await user.type(input, 'relative/path');
+      await user.click(addButton);
+      expect(screen.queryByText('relative/path')).not.toBeInTheDocument();
+      expect(screen.getByText(/絶対パスを入力してください/)).toBeInTheDocument();
 
-    await user.clear(input);
-    await user.type(input, '~/projects');
-    await user.click(addButton);
-    expect(screen.queryByText('~/projects')).not.toBeInTheDocument();
+      await user.clear(input);
+      await user.type(input, '~/projects');
+      await user.click(addButton);
+      expect(screen.queryByText('~/projects')).not.toBeInTheDocument();
 
-    await user.clear(input);
-    await user.type(input, '/Users/you/projects');
-    await user.click(addButton);
-    expect(screen.getByText('/Users/you/projects')).toBeInTheDocument();
-    expect(screen.queryByText(/絶対パスを入力してください/)).not.toBeInTheDocument();
+      await user.clear(input);
+      await user.type(input, '/Users/you/projects');
+      await user.click(addButton);
+      expect(screen.getByText('/Users/you/projects')).toBeInTheDocument();
+      expect(screen.queryByText(/絶対パスを入力してください/)).not.toBeInTheDocument();
 
-    await user.clear(input);
-    await user.type(input, 'C:/Users/you/projects');
-    await user.click(addButton);
-    expect(screen.getByText('C:/Users/you/projects')).toBeInTheDocument();
+      await user.clear(input);
+      await user.type(input, 'C:/Users/you/projects');
+      await user.click(addButton);
+      expect(screen.getByText('C:/Users/you/projects')).toBeInTheDocument();
 
-    await user.type(input, '/Users/you/projects');
-    await user.click(addButton);
-    expect(screen.getByText('既に追加されています')).toBeInTheDocument();
-  });
+      await user.type(input, '/Users/you/projects');
+      await user.click(addButton);
+      expect(screen.getByText('既に追加されています')).toBeInTheDocument();
+    },
+    20000,
+  );
   it('disables save until edited and disables it again after a successful save', async () => {
     const user = userEvent.setup();
     renderSettings();

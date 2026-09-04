@@ -352,6 +352,11 @@ describe('NextUpView', () => {
   });
 });
 
+// bdboard-gwgy: poll_failed テストが testTimeout で落ちたとき、本関数内の
+// vi.advanceTimersByTimeAsync ループは vitest により中断されずバックグラウンドで
+// 動き続け、後続テストの beforeEach/afterEach で張り直した fake タイマー/モックを
+// 壊しうる (タイムアウトではなく即座のアサーション失敗として連鎖する既知挙動)。
+// per-test timeout でタイムアウト自体を防げばこの連鎖は発火しない。
 async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
   for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
     await act(async () => {
@@ -955,101 +960,116 @@ describe('NextUpView batch run loop', () => {
     expect(screen.getByText(/完了 5\/5/)).toBeInTheDocument();
   });
 
-  it('shows interrupted summary with remaining count when a 20-ticket batch stops on the second ticket', async () => {
-    const cards = Array.from({ length: 20 }, (_, index) =>
-      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
-    );
-    renderNextUpView(makeBoard(cards), { limit: 20 });
+  // bdboard-gwgy: 'shows poll_failed summary ...' が高負荷時に5195msで落ちた実測があり、
+  // 同じ20枚カード+バッチループの重いパターンを共有するこのdescribe内の他の20枚カード
+  // テストにも予防的に同じper-test timeoutを揃える。
+  it(
+    'shows interrupted summary with remaining count when a 20-ticket batch stops on the second ticket',
+    async () => {
+      const cards = Array.from({ length: 20 }, (_, index) =>
+        makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+      );
+      renderNextUpView(makeBoard(cards), { limit: 20 });
 
-    mockFetchAgentRun.mockImplementation(async (runId) => {
-      const ticketId = runId.replace(/^run-/, '');
-      if (ticketId === 'ticket-1') {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        if (ticketId === 'ticket-1') {
+          return makeRunDetail(runId, ticketId, 'succeeded');
+        }
+        return makeRunDetail(runId, ticketId, 'running');
+      });
+
+      await startBatchRun(user);
+
+      await waitFor(() => {
+        expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+      });
+
+      await user.click(screen.getByRole('button', { name: '■ 停止' }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByText(
+          /前回の実行: 中断 \| 完了 1\/20 \| 失敗 0 \| 実行中 1 \| 未実行 18/,
+        ),
+      ).toBeInTheDocument();
+    },
+    20000,
+  );
+
+  it(
+    'shows poll_failed summary with unknown count and remaining when polling fails persistently',
+    async () => {
+      const cards = Array.from({ length: 20 }, (_, index) =>
+        makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+      );
+      renderNextUpView(makeBoard(cards), { limit: 20 });
+
+      mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+      await startBatchRun(user);
+
+      await waitFor(() => {
+        expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+      });
+
+      await finishBatchRunAfterPersistentPollFailures();
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+      });
+
+      expect(
+        screen.getByText(
+          /前回の実行: 中断\(状況を確認できず\) \| 完了 0\/20 \| 失敗 0 \| 不明 1 \| 未実行 19/,
+        ),
+      ).toBeInTheDocument();
+    },
+    20000,
+  );
+
+  it(
+    'shows completed summary without interrupted wording when a 20-ticket batch finishes',
+    async () => {
+      const cards = Array.from({ length: 20 }, (_, index) =>
+        makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+      );
+      renderNextUpView(makeBoard(cards), { limit: 20 });
+
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
         return makeRunDetail(runId, ticketId, 'succeeded');
-      }
-      return makeRunDetail(runId, ticketId, 'running');
-    });
+      });
 
-    await startBatchRun(user);
+      await startBatchRun(user);
 
-    await waitFor(() => {
-      expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
-    });
+      await waitFor(() => {
+        expect(mockStartTicketRun).toHaveBeenCalledTimes(20);
+      });
 
-    await user.click(screen.getByRole('button', { name: '■ 停止' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 25);
+      });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+      });
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
-    });
-
-    expect(
-      screen.getByText(
-        /前回の実行: 中断 \| 完了 1\/20 \| 失敗 0 \| 実行中 1 \| 未実行 18/,
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it('shows poll_failed summary with unknown count and remaining when polling fails persistently', async () => {
-    const cards = Array.from({ length: 20 }, (_, index) =>
-      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
-    );
-    renderNextUpView(makeBoard(cards), { limit: 20 });
-
-    mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
-
-    await startBatchRun(user);
-
-    await waitFor(() => {
-      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
-    });
-
-    await finishBatchRunAfterPersistentPollFailures();
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
-    });
-
-    expect(
-      screen.getByText(
-        /前回の実行: 中断\(状況を確認できず\) \| 完了 0\/20 \| 失敗 0 \| 不明 1 \| 未実行 19/,
-      ),
-    ).toBeInTheDocument();
-  });
-
-  it('shows completed summary without interrupted wording when a 20-ticket batch finishes', async () => {
-    const cards = Array.from({ length: 20 }, (_, index) =>
-      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
-    );
-    renderNextUpView(makeBoard(cards), { limit: 20 });
-
-    mockFetchAgentRun.mockImplementation(async (runId) => {
-      const ticketId = runId.replace(/^run-/, '');
-      return makeRunDetail(runId, ticketId, 'succeeded');
-    });
-
-    await startBatchRun(user);
-
-    await waitFor(() => {
-      expect(mockStartTicketRun).toHaveBeenCalledTimes(20);
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 25);
-    });
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
-    });
-
-    expect(
-      screen.getByText(/前回の実行: 完走 \| 完了 20\/20 \| 失敗 0/),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/中断/)).toBeNull();
-    expect(screen.queryByText(/未実行/)).toBeNull();
-  });
+      expect(
+        screen.getByText(/前回の実行: 完走 \| 完了 20\/20 \| 失敗 0/),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/中断/)).toBeNull();
+      expect(screen.queryByText(/未実行/)).toBeNull();
+    },
+    20000,
+  );
 
   it('shows consecutive-failure summary when two tickets fail in a row', async () => {
     const cards = [
