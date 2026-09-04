@@ -195,9 +195,9 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
+      # BDBOARD_E2E_PORT を pin しない — 自動採番と config→worker への env 伝播を CI でも必ず通す。
+      # pin すると本番経路 (playwright.config.ts の書き戻し) が一度も検証されず、壊れても CI が緑のままになる。
       - run: npm run test:e2e
-        env:
-          BDBOARD_E2E_PORT: '8799'
 
   # release-please が作る release PR には pull_request トリガーの ci が走らない
   # (GITHUB_TOKEN 仕様 — release-please.yml 先頭コメント参照)。squash 後の最終メッセージも

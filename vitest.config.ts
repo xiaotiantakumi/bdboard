@@ -13,7 +13,10 @@ const maxTestWorkers = Math.max(2, Math.ceil(availableParallelism() / 4));
 export default defineConfig({
   test: {
     // scripts/ 側は運用スクリプト (verify 実行スロット等, bdboard-d48) のテスト。
-    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs'],
+    // test/e2e/*.test.ts は Playwright 補助 (ポート採番等) の vitest 単体テスト (bdboard-2ob0)。
+    // ** を使わないのは fixtures/ 等の下位ディレクトリを構造的に除外するため — 将来そこに
+    // *.test.ts が増えると @playwright/test import で test:server が落ちるトラップになる。
+    include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs', 'test/e2e/*.test.ts'],
     // maxWorkers はプール非依存のフォールバック(vitest 3.2.7 実装:
     // `poolOptions.maxForks ?? vitest.config.maxWorkers ?? threadsCount`)。
     // poolOptions.<pool>.* は現在の既定プールにのみ効き、将来既定プールが
