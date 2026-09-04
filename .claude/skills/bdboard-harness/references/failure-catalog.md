@@ -38,13 +38,18 @@
 
 ### empty-worktree-misjudge — 空 worktree を「放棄」と断定して着手し、起動直前の別セッションと衝突（2026-08-16）
 - 原因: git status 空・lsof 空・open のままの3条件でも「作成直後・起動前」の瞬間と区別できない
-- 防止: lease 失効＋猶予経過＋updated_at の鮮度まで揃え、触る直前に lsof を取り直す（本則: SKILL.md 規律2 手順6, lease-params.md）
+- 防止: lease 失効＋猶予経過＋updated_at の鮮度まで揃え、触る直前に lsof を取り直す（本則: SKILL.md 規律2 手順7, lease-params.md）
 - 出典: bd memory `bdboard-worktree-not-abandoned`
 
 ### heartbeat-partial — アクティブな1枚だけ heartbeat し、保持中の他チケットが reclaim された（8並列運用中に実測）
 - 原因: gate 待ち・委譲待ちで並行保持しているチケットを延命対象から外した
-- 防止: 全 in-flight チケットへ同周期で一括 heartbeat（本則: SKILL.md 規律2 手順4）
+- 防止: 全 in-flight チケットへ同周期で一括 heartbeat（本則: SKILL.md 規律2 手順5）
 - 出典: bdboard-3tw.99 / bdboard-l1t.4
+
+### duplicate-helper-parallel — 並列実装で同目的のヘルパーが別々に生まれ、後から統合チケットが10件超発生（2026-08）
+- 原因: 着手前に既存実装を探す手順が規律に無く、`npm run drift` 相当の衝突検知は PR 直前にしか働かない（ルール不在 = brushup-protocol.md §2 の分類 A）
+- 防止: claim 直後・実装前に `git grep` と `bd search --status in_progress` を各1回、見つかれば再利用（本則: SKILL.md 規律2 手順4）。レビュー依頼の観点にも「同 PR 内・直近 main の重複実装」を入れる（verification.md）
+- 出典: bdboard-dh7c / 3zpw / x4ky / yd3g / a1g5 / nrw0 / os16 / h3wg / 3tw.79 / sm7r / b4o、docs/HARNESS-EVALUATION.md §3.2(b)
 
 ## マージ・PR
 

@@ -4,9 +4,12 @@
 この対応を崩すと、並列セッション間で「どの変更がどの作業か」が追えなくなり、
 排他（SKILL.md 規律2）の前提も壊れる。
 
-プロジェクト固有の値（ブランチ命名・worktree 置き場・検証コマンド・マージ方式・
-main ブランチ名）は注入先プロジェクトの CLAUDE.md / AGENTS.md が正。以下では既定の推奨として
-ブランチ `bd/<id>`、worktree `.claude/worktrees/<id>/`、main ブランチ `main` と書く。
+検証コマンド・PR の要否・main ブランチ名は、**(1) 注入先の検証コントラクト
+`.claude/bdboard-harness.json`（`verify` / `prFlow` / `mainBranch`）→ (2) 無い/壊れていれば
+CLAUDE.md / AGENTS.md → (3) どちらにも無ければ検証せずに進めない**（SKILL.md 規律4 手順1）の順
+で決める。コントラクトが持たない値（ブランチ命名・worktree 置き場・マージ方式）は従来どおり
+CLAUDE.md / AGENTS.md が正。以下では既定の推奨としてブランチ `bd/<id>`、worktree
+`.claude/worktrees/<id>/`、main ブランチ `main` と書く。
 
 ## ライフサイクル
 
@@ -65,8 +68,9 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
 
 ### 3. 検証 → rebase → 再検証
 
-プロジェクト規約の検証コマンド（フルの検証チェーンがあるならそれ）をローカルで緑にして
-から PR を開く。その直前に:
+検証コマンド（上の参照順で決めたもの。コントラクトの `verify`、無ければプロジェクト規約の
+フルの検証チェーン）をローカルで緑にしてから PR を開く。`prFlow` が `direct` / `none` の
+プロジェクトでは以降の PR 手順を省いてよいが、**検証を省いてよいわけではない**。その直前に:
 
 ```bash
 git fetch origin
@@ -231,7 +235,7 @@ git ls-remote origin main   # ← 手順3で控えた base SHA と比較
 ```bash
 gh pr merge --squash --delete-branch
 git -C <メインチェックアウト> pull --ff-only
-# → main 上でプロジェクト規約の検証コマンドを実行し、緑を確認
+# → main 上で検証コマンド（コントラクトの verify）を実行し、緑を確認
 ```
 
 独立に緑だった2本の意味的衝突は**ここでしか**捕まらない。squash マージなら壊れていても
@@ -239,9 +243,11 @@ revert 1発で戻せる。緑を確認するまで次の PR をマージしな�
 
 ### 6. close と掃除
 
-マージ成功後（層3の検証まで済んでから）:
+マージ成功後（層3の検証まで済んでから）。**`bd close` の前に
+[close-template.md](close-template.md) の書式で証拠コメントを残す**:
 
 ```bash
+bd comment <id> "<close-template.md の4行: 検証 / PR・CI / レビュー / 未了>"
 bd close <id>
 git worktree remove .claude/worktrees/<id>
 git branch -d bd/<id>          # squash マージ後は -D が必要なことがある
@@ -285,5 +291,6 @@ gh pr view <N> --json state,mergedAt,mergeCommit   # state が MERGED ならマ�
 - マージは常に**一度に1本**。複数 PR が溜まっていても、1本ごとに層2→マージ→層3を回す。
 - チケットに紐づかない探索作業は worktree/PR フローに載せず、プロジェクト規約の
   探索ブランチ（例: `spike/`）で行い、PR にしない。
-- CI 復旧などプロジェクトが明示的に許す main 直コミット例外があるかは CLAUDE.md に従う。
+- main 直コミットの可否は検証コントラクトの `prFlow`（`pr` = PR 必須 / `direct` = 直コミット可 /
+  `none` = git 運用なし）が第一の根拠。CI 復旧などの個別例外があるかは CLAUDE.md に従う。
   この skill から新しい例外を作らない。
