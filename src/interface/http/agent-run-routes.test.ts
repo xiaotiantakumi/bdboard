@@ -14,6 +14,7 @@ import { AGENT_RUN_RATE_LIMITED } from './agent-run-rate-limit.js';
 import type { WriteGuardDeps } from './write-guard.js';
 
 const NOW = new Date('2026-06-01T12:00:00.000Z');
+const DEFAULT_REPO_ROOT = '/projects/bdboard';
 const LOCAL_HOST = 'localhost:8787';
 const LOCAL_ENV = {
   incoming: {
@@ -56,6 +57,13 @@ function postRunsInit(
     headers,
     body: JSON.stringify({ ticketId }),
   };
+}
+
+function managedWorktreePath(
+  ticketId: string,
+  repoRoot = DEFAULT_REPO_ROOT,
+): string {
+  return `${repoRoot}/.claude/worktrees/${ticketId}`;
 }
 
 function project(id: string, rootPath: string): Project {
@@ -117,10 +125,10 @@ function makeProvisioner(
   overrides: Partial<WorktreeProvisioner> = {},
 ): WorktreeProvisioner {
   return {
-    provision: vi.fn(async () => ({
+    provision: vi.fn(async ({ repoRootPath, ticketId }) => ({
       ok: true as const,
-      worktreePath: '/tmp/worktrees/bdboard-test',
-      branchName: 'bd/bdboard-test',
+      worktreePath: `${repoRootPath}/.claude/worktrees/${ticketId}`,
+      branchName: `bd/${ticketId}`,
       reused: false,
     })),
     ...overrides,
@@ -159,7 +167,7 @@ function makeRoutes(deps: Partial<Parameters<typeof createAgentRunRoutes>[0]> = 
 function seedOpenTicket(
   cache: BoardCache,
   ticketId: string,
-  rootPath = '/projects/bdboard',
+  rootPath = DEFAULT_REPO_ROOT,
 ): void {
   const proj = project('proj-1', rootPath);
   const existing = cache.getProject(proj.id);
@@ -425,7 +433,7 @@ describe('createAgentRunRoutes', () => {
 
     resolveProvision({
       ok: true,
-      worktreePath: '/tmp/worktrees/bdboard-race',
+      worktreePath: managedWorktreePath('bdboard-race'),
       branchName: 'bd/bdboard-race',
       reused: false,
     });
@@ -480,7 +488,7 @@ describe('createAgentRunRoutes', () => {
 
     resolveProvision({
       ok: true,
-      worktreePath: '/tmp/worktrees/bdboard-a',
+      worktreePath: managedWorktreePath('bdboard-a'),
       branchName: 'bd/bdboard-a',
       reused: false,
     });
@@ -560,7 +568,7 @@ describe('createAgentRunRoutes', () => {
       provision: vi.fn(async () => ({
         ok: false as const,
         reason: 'worktree-dirty' as const,
-        message: '/tmp/worktrees/bdboard-dirty: uncommitted changes prevent agent run',
+        message: `${managedWorktreePath('bdboard-dirty')}: uncommitted changes prevent agent run`,
       })),
     });
 
@@ -577,7 +585,7 @@ describe('createAgentRunRoutes', () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toEqual({
-      error: '/tmp/worktrees/bdboard-dirty: uncommitted changes prevent agent run',
+      error: `${managedWorktreePath('bdboard-dirty')}: uncommitted changes prevent agent run`,
       // 兄弟の 409 と同じく機械可読な `reason` を返す。UI は可変長のメッセージ
       // ではなくこのトークンで分岐する。
       reason: 'worktree-dirty',
@@ -593,7 +601,7 @@ describe('createAgentRunRoutes', () => {
 
     const runStore = createRunStore({ now: () => NOW });
     const mismatchMessage =
-      '/tmp/worktrees/bdboard-branch: on branch main, expected bd/bdboard-branch';
+      `${managedWorktreePath('bdboard-branch')}: on branch main, expected bd/bdboard-branch`;
     const worktreeProvisioner = makeProvisioner({
       provision: vi.fn(async () => ({
         ok: false as const,
@@ -664,7 +672,7 @@ describe('createAgentRunRoutes', () => {
         .mockRejectedValueOnce(new Error('provisioner exploded'))
         .mockResolvedValueOnce({
           ok: true as const,
-          worktreePath: '/tmp/worktrees/bdboard-throw',
+          worktreePath: managedWorktreePath('bdboard-throw'),
           branchName: 'bd/bdboard-throw',
           reused: false,
         }),
@@ -768,7 +776,7 @@ describe('createAgentRunRoutes', () => {
     const worktreeProvisioner = makeProvisioner({
       provision: vi.fn(async () => ({
         ok: true as const,
-        worktreePath: '/tmp/worktrees/bdboard-ok',
+        worktreePath: managedWorktreePath('bdboard-ok'),
         branchName: 'bd/bdboard-ok',
         reused: false,
       })),
@@ -790,11 +798,106 @@ describe('createAgentRunRoutes', () => {
     expect(body).toMatchObject({
       ticketId: 'bdboard-ok',
       status: 'pending',
-      worktreePath: '/tmp/worktrees/bdboard-ok',
+      worktreePath: managedWorktreePath('bdboard-ok'),
       branchName: 'bd/bdboard-ok',
       reused: false,
     });
     expect(typeof body.runId).toBe('string');
+  });
+
+  it('passes the provisioned worktree path as cwd to the runner', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-cwd');
+
+    const worktreePath = managedWorktreePath('bdboard-cwd');
+    let resolveDispatch!: () => void;
+    const dispatchCalled = new Promise<void>((resolve) => {
+      resolveDispatch = resolve;
+    });
+
+    const dispatch = vi.fn(async (): Promise<RunOutcome> => {
+      resolveDispatch();
+      return {
+        ok: true,
+        run: {
+          id: 'ignored',
+          ticketId: 'bdboard-cwd',
+          runner: 'claude-spawn',
+          mode: 'spawn',
+          status: 'succeeded',
+          startedAt: NOW,
+          finishedAt: NOW,
+        },
+      };
+    });
+
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath,
+        branchName: 'bd/bdboard-cwd',
+        reused: false,
+      })),
+    });
+
+    const { app } = makeRoutes({ cache, registry, worktreeProvisioner });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-cwd')),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(202);
+    await dispatchCalled;
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ticketId: 'bdboard-cwd',
+        cwd: worktreePath,
+      }),
+      expect.objectContaining({
+        onChunk: expect.any(Function),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it('returns 500 and does not dispatch when provisioner returns an unmanaged worktree path', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-evil');
+
+    const dispatch = vi.fn();
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const runStore = createRunStore({ now: () => NOW });
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: '/tmp/evil',
+        branchName: 'bd/bdboard-evil',
+        reused: false,
+      })),
+    });
+
+    const { app } = makeRoutes({ cache, registry, runStore, worktreeProvisioner });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-evil')),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: 'run cwd must be the managed worktree for this ticket',
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    const runs = runStore.list({ ticketId: 'bdboard-evil' });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('failed');
+    expect(runs[0]?.error).toBe('run cwd must be the managed worktree for this ticket');
   });
 
   it('returns reused true when an existing clean worktree is provisioned', async () => {
@@ -820,7 +923,7 @@ describe('createAgentRunRoutes', () => {
     const worktreeProvisioner = makeProvisioner({
       provision: vi.fn(async () => ({
         ok: true as const,
-        worktreePath: '/tmp/worktrees/bdboard-reuse',
+        worktreePath: managedWorktreePath('bdboard-reuse'),
         branchName: 'bd/bdboard-reuse',
         reused: true,
       })),

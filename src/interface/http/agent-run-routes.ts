@@ -6,6 +6,7 @@ import type { RunOutcome } from '../../application/ports/agent-runner.js';
 import type { WorktreeProvisioner } from '../../application/ports/worktree-provisioner.js';
 import { buildRunPrompt } from '../../application/runner/build-run-prompt.js';
 import { dispatchRun } from '../../application/runner/dispatch-run.js';
+import { validateProvisionedRunCwd } from '../../application/runner/validate-run-request.js';
 import type { AgentRunnerRegistry } from '../../application/runner/runner-registry.js';
 import type { RunStore, RunStoreRecord } from '../../application/runner/run-store.js';
 import type { RunMode } from '../../domain/run.js';
@@ -312,6 +313,40 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
     }
 
     deps.runStore.updateCwd(runId, provision.worktreePath);
+
+    // Defensive check at the provision→dispatch boundary. Under normal operation
+    // this does not fire; it stops spawn when the provisioner returns a path
+    // outside the managed `.claude/worktrees/<ticketId>` layout. The cwd is
+    // recorded just above *before* this check on purpose: if the guard ever does
+    // fire, the rejected path is the single most useful thing to have kept, and
+    // the run is finished as failed anyway.
+    //
+    // The first two arguments are deliberately the same value today: cwd is
+    // currently *derived* from provision.worktreePath, so the equality half of
+    // the check is trivially true here. Do not collapse the signature — the
+    // equality check is what catches a future change that sources cwd from the
+    // request instead, which is precisely the regression this guard exists for.
+    const cwdValidationError = validateProvisionedRunCwd(
+      provision.worktreePath,
+      provision.worktreePath,
+      ticketId,
+      project.rootPath,
+    );
+    if (cwdValidationError !== null) {
+      const message = 'run cwd must be the managed worktree for this ticket';
+      deps.runStore.finish(
+        runId,
+        buildDispatchFailureOutcome(
+          runId,
+          ticketId,
+          mode,
+          startedAt,
+          message,
+          deps.now(),
+        ),
+      );
+      return c.json({ error: message }, 500);
+    }
 
     const prompt = buildRunPrompt({ ticketId, ticketTitle: ticket.title });
     const sink = {

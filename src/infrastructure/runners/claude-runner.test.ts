@@ -570,6 +570,29 @@ describe('createClaudeRunner', () => {
     expect(args).not.toContain('Edit(//tmp/project/**)');
   });
 
+  it('still attaches --disallowedTools and DENIED_TOOLS when the allowlist is opted out', async () => {
+    // deny 側は allowedTools の有無に関わらず必ず付ける (claude-runner.ts)。
+    // allowlist を降ろした運用でも DENIED_TOOLS 天井は維持される。
+    process.env.BDBOARD_RUN_ALLOWED_TOOLS = '';
+
+    const { streamingRunner, runMock } = createFakeStreamingRunner(() => ({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+    }));
+
+    const runner = createClaudeRunner('claude-spawn', 'spawn', {
+      streamingRunner,
+    });
+    await runner.dispatch(makeRequest());
+
+    const args = runMock.mock.calls[0]?.[1] as readonly string[];
+    expect(args).toContain('--disallowedTools');
+    const { allowed, denied } = splitPermissionSections(args);
+    expect(denied).toEqual([...DENIED_TOOLS, 'Edit(//tmp/project/.claude/**)']);
+    expect(allowed).toEqual([]);
+  });
+
   it('parses BDBOARD_RUN_ALLOWED_TOOLS as a JSON array', async () => {
     process.env.BDBOARD_RUN_ALLOWED_TOOLS = JSON.stringify([
       'Glob',

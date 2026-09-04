@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { useState, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunDetailDto, BoardCardDto, BoardDto } from '../api';
-import { ApiError, fetchAgentRun, startTicketRun } from '../api';
+import { ApiError, fetchAgentRun, postTicketComment, startTicketRun } from '../api';
 import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
 import { NextUpView, type NextUpViewProps } from './NextUpView';
 import {
@@ -19,11 +19,13 @@ vi.mock('../api', async (importOriginal) => {
     ...actual,
     startTicketRun: vi.fn(),
     fetchAgentRun: vi.fn(),
+    postTicketComment: vi.fn(),
   };
 });
 
 const mockStartTicketRun = vi.mocked(startTicketRun);
 const mockFetchAgentRun = vi.mocked(fetchAgentRun);
+const mockPostTicketComment = vi.mocked(postTicketComment);
 
 function renderWithWatch(ui: ReactElement) {
   return render(<WatchedTicketsProvider>{ui}</WatchedTicketsProvider>);
@@ -332,6 +334,7 @@ describe('NextUpView batch run loop', () => {
 
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
+    mockPostTicketComment.mockResolvedValue(undefined);
     mockStartTicketRun.mockImplementation(async (ticketId) => ({
       runId: `run-${ticketId}`,
       ticketId,
@@ -1011,6 +1014,41 @@ describe('NextUpView batch run loop', () => {
     ).toBeInTheDocument();
     expect(screen.queryByText(/中断/)).toBeNull();
     expect(screen.queryByText(/未実行/)).toBeNull();
+  });
+
+  it('shows consecutive-failure summary when two tickets fail in a row', async () => {
+    const cards = [
+      makeCard('ticket-1', 'Task One'),
+      makeCard('ticket-2', 'Task Two'),
+      makeCard('ticket-3', 'Task Three'),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      const ticketId = runId.replace(/^run-/, '');
+      return makeRunDetail(runId, ticketId, 'failed');
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(
+        /前回の実行: 中断\(連続失敗\) \| 完了 0\/3 \| 失敗 2 \| 未実行 1/,
+      ),
+    ).toBeInTheDocument();
+    expect(mockPostTicketComment).toHaveBeenCalledTimes(1);
   });
 
   it('shows that epics are excluded from batch run in the Epic section', () => {
