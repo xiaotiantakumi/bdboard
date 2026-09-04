@@ -155,7 +155,8 @@ describe('createCliChatAgent', () => {
     const stdoutPart = logged.slice(logged.indexOf('stdout=') + 'stdout='.length);
     expect(stderrPart.length).toBeLessThanOrEqual(MAX_FAILURE_LOG_CHARS);
     expect(stdoutPart.length).toBeLessThanOrEqual(MAX_FAILURE_LOG_CHARS);
-    expect(stderrPart).toBe('e'.repeat(MAX_FAILURE_LOG_CHARS));
+    expect(stderrPart).toContain('…');
+    expect(stderrPart).toContain('chars omitted…');
     expect(stdoutPart).toBe('');
 
     errorSpy.mockRestore();
