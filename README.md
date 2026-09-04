@@ -124,7 +124,7 @@ npm run start
 `npm run build:web` からやり直して再起動しない限り反映されない。
 
 ローカル開発でコード変更を即座に確認したい場合は、`npm run start` の代わりに以下を使う
-(挙動の違いは `CLAUDE.md` の「Build & Test」節を参照):
+(挙動の違いは `CLAUDE.md` の「Build & Test」節と [docs/VERIFY.md](docs/VERIFY.md) を参照):
 
 ```bash
 npm run dev       # サーバーを watch モードで起動(コード変更で自動再起動)
@@ -474,7 +474,14 @@ Vite ビルドを行う。`npm run build` はサーバー側 `src/` の型チェ
 ## 開発フローの詳細
 
 ビルド/テストコマンドの一覧、常時ローカルホスティング運用、git ワークフロー(worktree +
-ブランチ + PR)の詳細は `CLAUDE.md` を参照(このファイルの守備範囲外)。
+ブランチ + PR)の要点は `CLAUDE.md`(= `AGENTS.md`)を参照(このファイルの守備範囲外)。
+詳細はそこから分割した各文書にある:
+
+- 検証チェーン・tsc プロジェクト構成・verify スロット: [docs/VERIFY.md](docs/VERIFY.md)
+- git ワークフロー(drift / マージ直列化 / cleanup / Dolt sync): [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md)
+- ヘルプ原本 `docs/help-content.json` の追従ルール: [docs/HELP-CONTENT.md](docs/HELP-CONTENT.md)
+- 常時稼働ローカルサーバーの運用: skill `.claude/skills/bdboard-server-ops/SKILL.md`
+- `bd init` 再実行時のレビュー手順: `.claude/rules/bd-init-agents-md.md`
 
 ## 当初計画(歴史的文書)
 
