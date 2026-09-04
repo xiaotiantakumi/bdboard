@@ -8,6 +8,7 @@
 * **bdboard-2tch:** release PR を main に追随させる (always-update) ([#252](https://github.com/xiaotiantakumi/bdboard/issues/252)) ([049c899](https://github.com/xiaotiantakumi/bdboard/commit/049c8995eb46b3f2baa82f966cd6687e5b0cfef8))
 * **bdboard-6qs6:** 書き込みAPI後に対象プロジェクトのキャッシュを強制リフレッシュする ([#250](https://github.com/xiaotiantakumi/bdboard/issues/250)) ([62f8e76](https://github.com/xiaotiantakumi/bdboard/commit/62f8e76a28758b83da15aeae741f3ca847e48bd9))
 * **bdboard-bh48:** human gate を確認待ちに表示し回答可能にする ([#251](https://github.com/xiaotiantakumi/bdboard/issues/251)) ([c4372f9](https://github.com/xiaotiantakumi/bdboard/commit/c4372f9e20231c6e857383fd54499ebbf502b8d8))
+* **bdboard-r5we:** チャットの対象プロジェクトを常時表示し明示選択制にする ([#247](https://github.com/xiaotiantakumi/bdboard/issues/247)) ([15651d3](https://github.com/xiaotiantakumi/bdboard/commit/15651d3fe4e3f99e9caf4d39a805ad6fd1e35a40))
 * **bdboard-xgvh:** 確認待ちへの回答で作業チケットをクローズしない ([#246](https://github.com/xiaotiantakumi/bdboard/issues/246)) ([1b0a551](https://github.com/xiaotiantakumi/bdboard/commit/1b0a551e1d020413a10add370ca8417d6498a82e))
 
 ## [0.1.1](https://github.com/xiaotiantakumi/bdboard/compare/v0.1.0...v0.1.1) (2026-09-03)
