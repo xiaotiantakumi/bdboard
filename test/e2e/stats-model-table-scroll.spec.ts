@@ -8,7 +8,6 @@ import { expect, test, type Page } from '@playwright/test';
 
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
-const VIEWPORT_OFFSET_TOLERANCE_PX = 1;
 
 interface HeaderReachResult {
   label: string;
@@ -141,36 +140,67 @@ async function assertScrollFadeHints(page: Page): Promise<void> {
   await expect(scroller).toHaveClass(/can-scroll-end/);
   await expect(scroller).not.toHaveClass(/can-scroll-start/);
 
+  const endFade = await scroller.evaluate((el) => {
+    const bodyBg = getComputedStyle(document.body).backgroundColor;
+    return {
+      afterContent: getComputedStyle(el, '::after').content,
+      afterBgImage: getComputedStyle(el, '::after').backgroundImage,
+      bodyBg,
+    };
+  });
+  expect(
+    endFade.afterContent,
+    'right-edge fade pseudo-element must exist when can-scroll-end is active',
+  ).not.toBe('none');
+  expect(
+    endFade.afterBgImage.includes(endFade.bodyBg),
+    `fade gradient must start from the painted background ` +
+      `(bodyBg=${endFade.bodyBg}, afterBgImage=${endFade.afterBgImage})`,
+  ).toBe(true);
+
   await scrollContainer.evaluate((el) => {
     el.scrollLeft = el.scrollWidth - el.clientWidth;
   });
 
   await expect(scroller).toHaveClass(/can-scroll-start/);
   await expect(scroller).not.toHaveClass(/can-scroll-end/);
+
+  const startFade = await scroller.evaluate((el) => {
+    const bodyBg = getComputedStyle(document.body).backgroundColor;
+    return {
+      beforeContent: getComputedStyle(el, '::before').content,
+      beforeBgImage: getComputedStyle(el, '::before').backgroundImage,
+      bodyBg,
+    };
+  });
+  expect(
+    startFade.beforeContent,
+    'left-edge fade pseudo-element must exist when can-scroll-start is active',
+  ).not.toBe('none');
+  expect(
+    startFade.beforeBgImage.includes(startFade.bodyBg),
+    `fade gradient must start from the painted background ` +
+      `(bodyBg=${startFade.bodyBg}, beforeBgImage=${startFade.beforeBgImage})`,
+  ).toBe(true);
 }
 
-async function assertNoPageHorizontalPan(page: Page): Promise<void> {
-  const wrapper = stageDistributionWrapper(page);
-  await wrapper.evaluate((el) => {
-    el.scrollLeft = el.scrollWidth - el.clientWidth;
-  });
-
-  const panMetrics = await page.evaluate(() => ({
-    offsetLeft: window.visualViewport?.offsetLeft ?? 0,
-    scrollX: window.scrollX,
+async function assertNoBodyHorizontalOverflow(page: Page): Promise<void> {
+  // Pre-fix builds overflowed at 375px (body.scrollWidth=1067 > innerWidth=375) but not at
+  // 1280px (table width ~1030 < viewport). documentElement.scrollWidth is clamped to the
+  // viewport and must not be used — only body.scrollWidth reflects the true overflow.
+  const metrics = await page.evaluate(() => ({
+    bodyScrollWidth: document.body.scrollWidth,
+    innerWidth: window.innerWidth,
   }));
 
   expect(
-    Math.abs(panMetrics.offsetLeft),
-    `page must not pan horizontally when table wrapper is scrolled ` +
-      `(visualViewport.offsetLeft=${panMetrics.offsetLeft}, scrollX=${panMetrics.scrollX})`,
-  ).toBeLessThanOrEqual(VIEWPORT_OFFSET_TOLERANCE_PX);
+    metrics.bodyScrollWidth,
+    `body must not overflow viewport horizontally ` +
+      `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.innerWidth})`,
+  ).toBeLessThanOrEqual(metrics.innerWidth);
 }
 
-async function assertModelTableScrollBehavior(
-  page: Page,
-  options: { checkPagePan: boolean },
-): Promise<void> {
+async function assertModelTableScrollBehavior(page: Page): Promise<void> {
   const emptyMessage = modelStatsSection(page).getByText(
     'モデル別の実績データはまだありません',
   );
@@ -200,10 +230,7 @@ async function assertModelTableScrollBehavior(
   ).toBeLessThanOrEqual(scrollMetrics.innerWidth);
 
   await assertScrollFadeHints(page);
-
-  if (options.checkPagePan) {
-    await assertNoPageHorizontalPan(page);
-  }
+  await assertNoBodyHorizontalOverflow(page);
 }
 
 test.describe('stats model table scroll — mobile', () => {
@@ -217,7 +244,7 @@ test.describe('stats model table scroll — mobile', () => {
     page,
   }) => {
     await openStatsView(page);
-    await assertModelTableScrollBehavior(page, { checkPagePan: true });
+    await assertModelTableScrollBehavior(page);
   });
 });
 
@@ -230,6 +257,6 @@ test.describe('stats model table scroll — desktop', () => {
     page,
   }) => {
     await openStatsView(page);
-    await assertModelTableScrollBehavior(page, { checkPagePan: false });
+    await assertModelTableScrollBehavior(page);
   });
 });

@@ -7,10 +7,12 @@ import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
  */
 export function useScrollHints<T extends HTMLElement>(): {
   ref: RefObject<T | null>;
+  canScroll: boolean;
   canScrollStart: boolean;
   canScrollEnd: boolean;
 } {
   const ref = useRef<T | null>(null);
+  const [canScroll, setCanScroll] = useState(false);
   const [canScrollStart, setCanScrollStart] = useState(false);
   const [canScrollEnd, setCanScrollEnd] = useState(false);
 
@@ -22,10 +24,12 @@ export function useScrollHints<T extends HTMLElement>(): {
     const { scrollLeft, scrollWidth, clientWidth } = el;
     const overflow = scrollWidth - clientWidth;
     if (overflow <= 1) {
+      setCanScroll(false);
       setCanScrollStart(false);
       setCanScrollEnd(false);
       return;
     }
+    setCanScroll(true);
     setCanScrollStart(scrollLeft > 1);
     setCanScrollEnd(scrollLeft + clientWidth < scrollWidth - 1);
   }, []);
@@ -44,6 +48,11 @@ export function useScrollHints<T extends HTMLElement>(): {
     if (typeof ResizeObserver !== 'undefined') {
       resizeObserver = new ResizeObserver(updateScrollHints);
       resizeObserver.observe(el);
+      // The container box may stay fixed while inner content (e.g. <table>) grows wider;
+      // observing only the container misses scrollWidth changes and stale fade hints.
+      for (const child of Array.from(el.children)) {
+        resizeObserver.observe(child);
+      }
     } else {
       window.addEventListener('resize', updateScrollHints);
     }
@@ -57,5 +66,5 @@ export function useScrollHints<T extends HTMLElement>(): {
     };
   }, [updateScrollHints]);
 
-  return { ref, canScrollStart, canScrollEnd };
+  return { ref, canScroll, canScrollStart, canScrollEnd };
 }
