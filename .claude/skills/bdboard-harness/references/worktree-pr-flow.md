@@ -5,9 +5,27 @@
 排他（SKILL.md 規律2）の前提も壊れる。
 
 検証コマンド・PR の要否・main ブランチ名は、**(1) 注入先の検証コントラクト
-`.claude/bdboard-harness.json`（`verify` / `prFlow` / `mainBranch`）→ (2) 無い/壊れていれば
-CLAUDE.md / AGENTS.md → (3) どちらにも無ければ検証せずに進めない**（SKILL.md 規律4 手順1）の順
-で決める。コントラクトが持たない値（ブランチ命名・worktree 置き場・マージ方式）は従来どおり
+`.claude/bdboard-harness.json` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md → (3) どちらにも
+無ければ検証せずに進めない**（SKILL.md 規律4 手順1）の順で決める。
+
+コントラクトの3キーの意味（この節が正本。SKILL.md 側はここへのポインタ）:
+
+| キー | 意味 |
+|---|---|
+| `verify` | 回して **exit 0 が合格**の検証コマンド |
+| `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く |
+| `mainBranch` | rebase と、マージ直前 CAS（層2）の基準ブランチ名 |
+
+**(3) に落ちたときのエスカレーション**（この文言をそのまま使う）:
+
+```bash
+bd comment <id> "検証ループ未定義: このプロジェクトに検証コマンドの宣言がありません (.claude/bdboard-harness.json を作成してください)"
+```
+
+そのうえで **human ラベル＋human gate（SKILL.md 規律3 手順2–3）**を付け、回答を待たずに次の
+チケットへ回る。検証コマンドが無いまま「たぶん通る」で PR を開かない。
+
+コントラクトが持たない値（ブランチ命名・worktree 置き場・マージ方式）は従来どおり
 CLAUDE.md / AGENTS.md が正。以下では既定の推奨としてブランチ `bd/<id>`、worktree
 `.claude/worktrees/<id>/`、main ブランチ `main` と書く。
 
@@ -291,6 +309,5 @@ gh pr view <N> --json state,mergedAt,mergeCommit   # state が MERGED ならマ�
 - マージは常に**一度に1本**。複数 PR が溜まっていても、1本ごとに層2→マージ→層3を回す。
 - チケットに紐づかない探索作業は worktree/PR フローに載せず、プロジェクト規約の
   探索ブランチ（例: `spike/`）で行い、PR にしない。
-- main 直コミットの可否は検証コントラクトの `prFlow`（`pr` = PR 必須 / `direct` = 直コミット可 /
-  `none` = git 運用なし）が第一の根拠。CI 復旧などの個別例外があるかは CLAUDE.md に従う。
-  この skill から新しい例外を作らない。
+- main 直コミットの可否は検証コントラクトの `prFlow`（3値の意味は冒頭の表）が第一の根拠。
+  CI 復旧などの個別例外があるかは CLAUDE.md に従う。この skill から新しい例外を作らない。

@@ -63,11 +63,13 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
    台帳記録であって排他ではない。worktree より先に claim を打たない（claim だけ通って
    worktree で負けると、台帳だけ汚れる）。
 4. **実装に入る前に既存実装を1回探す**（重複実装の予防）: 変更予定の領域名・関数名で
-   `git grep -n <キーワード>` と `bd search "<キーワード>" --status in_progress` を各1回。
-   既存ヘルパー・同目的の実装が見つかったら再利用し、`bd comment <id> "再利用: <path>"` を
-   残す（見つからなければコメント不要）。同じ領域を触っている in_progress チケットがあれば
-   双方にコメントし、`bd dep add <自分> <相手> --type related` を張る。根拠: 2026-08 に並列
-   実装由来の重複ヘルパー解消チケットが10件超（failure-catalog.md の duplicate-helper-parallel）。
+   `git grep -n <キーワード>` と `bd search "<キーワード>" --status in_progress`（title/ID しか
+   検索しない。説明文まで見るなら `bd list --status in_progress --desc-contains "<キーワード>"`
+   を併用する）を各1回。既存ヘルパー・同目的の実装が見つかったら再利用し、
+   `bd comment <id> "再利用: <path>"` を残す（見つからなければコメント不要）。同じ領域を触って
+   いる in_progress チケットがあれば双方にコメントし、`bd dep add <自分> <相手> --type related`
+   を張る。根拠: 2026-08 に並列実装由来の重複ヘルパー解消チケットが10件超
+   （failure-catalog.md の duplicate-helper-parallel）。
 5. **作業中は heartbeat を打ち続ける**: `bd heartbeat <id>` を lease TTL より十分速い間隔で
    （目安 TTL/3 以下、かつどれだけ TTL が長くても 5 分以下。長いビルド/テストの前後にも1回）。
    heartbeat が**失敗したら自分はもう所有者ではない** — 直ちに手を止めて `bd show <id>` で
@@ -156,21 +158,16 @@ worktree 作成から PR・マージまでの全体フロー:
 手順:
 
 1. 検証 → PR → CI → マージ、まで完走する。**検証コマンドは (1) 検証コントラクト
-   `.claude/bdboard-harness.json` の `verify` を回す（exit 0 が合格。`prFlow` が `pr` なら
-   PR 必須・`direct` なら main 直コミット可・`none` なら git 手順を省く。`mainBranch` は
-   rebase とマージ直前 CAS の基準）→ (2) 無い/壊れていれば CLAUDE.md / AGENTS.md を探す
-   （従来どおり）、の順で決める。(3) どちらにも無ければ検証せずに進めない** —
-   `bd comment <id> "検証ループ未定義: このプロジェクトに検証コマンドの宣言がありません
-   (.claude/bdboard-harness.json を作成してください)"` を残し human ラベルを付けて次の
-   チケットへ（規律3 の型）。マージ排他3層を含む詳細:
-   [references/worktree-pr-flow.md](references/worktree-pr-flow.md)。委譲成果の検証規律:
-   [references/verification.md](references/verification.md)。
-2. **マージが成功してから** `bd close <id>`。マージ前に close しない。マージまで到達せずに
-   セッションを終えるなら、チケットは in_progress のまま現状をコメントに残す
-   （lease が切れれば reclaim が拾う — それが正常系）。
-3. close 直前に [references/close-template.md](references/close-template.md) の書式で
-   `bd comment <id>` を残す（**`PR:` 行を必ず含める** — 人だけでなく Stop hook と Hygiene が
-   これを「証拠あり」の検索キーにする）。
+   `.claude/bdboard-harness.json` の `verify` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md
+   → (3) どちらにも無ければ検証せずに進めない**、の順で決める（3キーの意味・(3) の
+   エスカレーション文言・マージ排他3層: [worktree-pr-flow.md](references/worktree-pr-flow.md)）。
+2. **マージが成功したら、`bd close` の前に証拠コメントを残す**:
+   [references/close-template.md](references/close-template.md) の書式で `bd comment <id>`
+   （**`PR:` 行を必ず含める** — 人だけでなく Stop hook と Hygiene がこれを「証拠あり」の
+   検索キーにする）。
+3. **その上で `bd close <id>`。マージ前に close しない。** マージまで到達せずにセッションを
+   終えるなら、チケットは in_progress のまま現状をコメントに残す（lease が切れれば reclaim が
+   拾う — それが正常系）。
 4. worktree を掃除する: `git worktree remove <path>` → ブランチ削除 → `git remote prune origin`
    （マージした本人の責務。放置すると規律2の空き確認を全セッションで狂わせる）。
 5. 残作業・気づきはチケット化してから終える（頭の中に残して終えない）。作業中に見つけた
