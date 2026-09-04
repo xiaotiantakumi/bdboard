@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef } from 'react';
 const PANEL_STATE_KEY = 'bdboardPanel';
 const PANEL_TOKEN_KEY = 'bdboardPanelToken';
 
+/** popstate が来ない異常系でもアクションを必ず実行するためのフォールバック */
+const POPSTATE_FALLBACK_MS = 500;
+
 /** history.state に載せる bdboard パネル識別子 */
 export type BdboardPanelHistoryState = Record<string, unknown> & {
   bdboardPanel?: string;
@@ -31,7 +34,10 @@ export function useHistoryBackClose({
   panelId,
   onClose,
   enabled = true,
-}: UseHistoryBackCloseOptions): { requestClose: () => void } {
+}: UseHistoryBackCloseOptions): {
+  requestClose: () => void;
+  requestCloseThen: (run: () => void) => void;
+} {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
@@ -128,5 +134,61 @@ export function useHistoryBackClose({
     }
   }, []);
 
-  return { requestClose };
+  /**
+   * パネルを閉じたあと `run` を実行する。`onClose()` は常に `run()` より先に呼ばれる。
+   *
+   * `run()` が throw したときの現れ方は hadEntry の有無で非対称:
+   * - エントリ有り → popstate リスナ内で `run()` が走るので uncaught error として報告され、
+   *   呼び出し元へは伝播しない。
+   * - エントリ無し → `run()` は同期実行なのでクリックハンドラへそのまま伝播する。
+   * どちらの場合も `onClose()` は先に呼ばれている。
+   */
+  const requestCloseThen = useCallback((run: () => void) => {
+    if (closedRef.current) {
+      return;
+    }
+    closedRef.current = true;
+
+    // onClose() が同期アンマウントを起こす環境でも判定がぶれないよう、
+    // エントリの有無は onClose() より前に控える。
+    const hadEntry = pushedRef.current;
+
+    // onClose を back() より前・run() より前に呼ぶ。run() が throw しても
+    // パレットは必ず閉じるため、全画面パレットから脱出不能になる事故を構造的に防げる。
+    onCloseRef.current();
+
+    if (!hadEntry) {
+      run();
+      return;
+    }
+    pushedRef.current = false;
+
+    let done = false;
+    let timer = 0;
+
+    function finish() {
+      if (done) return;
+      done = true;
+      window.removeEventListener('popstate', finish);
+      window.clearTimeout(timer);
+      run();
+    }
+
+    // requestCloseThen は back() を厳密に1回しか撃たず、リスナ寿命は最大500ms。
+    // 主 effect 側 onPopState の stillOurs 判定とは別: ここではトークンを見ない。
+    // prod では着地先が別トークン (または state なし) なので stillOurs は元々 false で挙動不変。
+    // 入れ子パネル (Chat/Help 等) もトークンが別インスタンスなので必ず不一致。
+    // stillOurs が真になるのは dev StrictMode の同一トークン重複エントリのみ = 潰したいケース。
+    // onClose() でパレットは即アンマウントされるが、アクションは popstate 着地後に
+    // 実行される必要がある。React effect のクリーンアップでは間に合わないため、
+    // リスナとタイマーは window に直接付け、finish() で明示的に外す。
+    window.addEventListener('popstate', finish);
+    // 実測で jsdom の back() は約4ms で popstate を発火する (実ブラウザも同オーダーの
+    // 1タスク遅延)。フォールバックが正常系より先に発火すると元の回帰
+    // (遷移先のエントリを pop) が再発するため、正常系より十分長く取ってある。
+    timer = window.setTimeout(finish, POPSTATE_FALLBACK_MS);
+    window.history.back();
+  }, []);
+
+  return { requestClose, requestCloseThen };
 }

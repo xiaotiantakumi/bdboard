@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { searchTickets, type TicketSearchResultDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import { filterPaletteActions, type PaletteAction } from '../paletteActions';
 import type { RecentTicketEntry } from '../uiPersistedState';
 
@@ -36,6 +37,11 @@ export function SearchPalette({
 }: SearchPaletteProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { requestClose, requestCloseThen } = useHistoryBackClose({
+    panelId: 'search',
+    onClose,
+  });
   const [query, setQuery] = useState('');
   const [ticketResults, setTicketResults] = useState<TicketSearchResultDto[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -88,7 +94,7 @@ export function SearchPalette({
   useFocusTrap({
     containerRef: panelRef,
     initialFocusRef: inputRef,
-    onEscape: onClose,
+    onEscape: requestClose,
   });
 
   useLayoutEffect(() => {
@@ -134,16 +140,22 @@ export function SearchPalette({
     };
   }, [hasQuery, trimmedQuery]);
 
+  // 行の実行は selectTicket やパネル open など、自前の history エントリを push/replace しうる。
+  // 先に実行してから back() すると「たった今積まれた遷移先のエントリ」を pop してしまい、
+  // 逆に back() せずエントリを手放すと死にエントリが積み上がって
+  // useTicketDeepLink.closeDetail() の「1回 back すれば詳細が閉じる」前提を壊す (PR#303 レビュー)。
+  // そこで back() でパレットのエントリを確実に消費し、popstate の着地後に実行する。
   const handleActivateRow = useCallback(
     (row: PaletteRow) => {
-      if (row.kind === 'action') {
-        row.action.onSelect();
-      } else {
-        onSelect(row.ticket.id);
-      }
-      onClose();
+      requestCloseThen(() => {
+        if (row.kind === 'action') {
+          row.action.onSelect();
+        } else {
+          onSelect(row.ticket.id);
+        }
+      });
     },
-    [onClose, onSelect],
+    [requestCloseThen, onSelect],
   );
 
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -178,7 +190,7 @@ export function SearchPalette({
   const showRecentHeading = !hasQuery && recentTickets.length > 0;
 
   return (
-    <div className="overlay search-overlay" onClick={onClose} role="presentation">
+    <div className="overlay search-overlay" onClick={requestClose} role="presentation">
       <div
         ref={panelRef}
         className="search-palette"
@@ -187,9 +199,20 @@ export function SearchPalette({
         aria-modal="true"
         aria-labelledby="search-palette-title"
       >
-        <h2 id="search-palette-title" className="sr-only">
-          コマンドパレット
-        </h2>
+        <div className="search-palette-header">
+          <h2 id="search-palette-title" className="sr-only">
+            コマンドパレット
+          </h2>
+          {/* 44px タップ領域は @media (max-width:700px) の .btn.detail-close が与える。
+              search-palette-close は将来のスタイリング/テスト用 hook で、対応 CSS は意図的に無い。 */}
+          <button
+            type="button"
+            className="btn detail-close search-palette-close"
+            onClick={requestClose}
+          >
+            閉じる
+          </button>
+        </div>
         <input
           ref={inputRef}
           type="search"
