@@ -36,6 +36,7 @@
     "verify": "node scripts/verify.mjs",
     "verify:steps": "npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
     "drift": "node scripts/check-drift.mjs",
+    "check:commits": "node scripts/check-commit-parse.mjs",
     "test:e2e": "npm run build:web && playwright test --config test/e2e/playwright.config.ts",
     "prepack": "npm run build:web"
   },
@@ -48,6 +49,7 @@
     "zod": "^3.25.28"
   },
   "devDependencies": {
+    "@conventional-commits/parser": "^0.4.1",
     "@playwright/test": "^1.62.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.21",

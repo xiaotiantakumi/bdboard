@@ -503,6 +503,14 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
   There is deliberately **no hand-maintained "hot file" list**. Which files
   are hot changes week to week, and a list in this document would go stale;
   computing it from the merge-base is always current.
+- **Commit parse check** (`npm run check:commits`): on each main push, CI scans
+  `v<last-release>..HEAD` with the same `@conventional-commits/parser` that
+  release-please uses. If a commit body opens `(` on one line and closes `)` on
+  the next, the parser fails and release-please silently drops that commit from
+  CHANGELOG — permanently once the release tag is cut. Fix or hand-restore before
+  tagging. `scripts/check-commit-parse.mjs` has a temporary allowlist for
+  `15651d3` (already restored on the 0.1.2 release branch); remove that entry
+  after the `v0.1.2` tag lands. Not part of `npm run verify` (needs git tags).
 - **Merge serialization**: merge one PR at a time. Whoever holds merge
   rights updates/rebases the next queued PR's branch and re-waits for CI
   before merging it — this is what catches semantic conflicts between two

@@ -114,3 +114,26 @@ jobs:
       - run: npm run test:e2e
         env:
           BDBOARD_E2E_PORT: '8799'
+
+  # release-please が作る release PR には pull_request トリガーの ci が走らない
+  # (GITHUB_TOKEN 仕様 — release-please.yml 先頭コメント参照)。squash 後の最終メッセージも
+  # PR 時点では未確定なので pull_request では検査しない。main push 時に v<last>..HEAD を
+  # 見ればタグを切る前に間に合う。concurrency で前 run がキャンセルされても範囲全体を
+  # 見るので後続 run が取りこぼしを拾い直せる。
+  commit-parse:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+      - run: npm run check:commits
