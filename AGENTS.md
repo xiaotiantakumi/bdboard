@@ -1,53 +1,15 @@
 # Project Instructions for AI Agents
 
-This file provides instructions and context for AI coding agents working on this project.
-
-This project uses **bd** (beads) for issue tracking. Run `bd prime` for full workflow context.
-
-> **Architecture in one line:** Issues live in a local Dolt database
-> (`.beads/dolt/`); cross-machine sync uses `bd dolt push/pull` (a
-> git-compatible protocol), stored under `refs/dolt/data` on your git
-> remote — separate from `refs/heads/*` where your code lives.
-> `.beads/issues.jsonl` is a passive export, not the wire protocol.
->
-> See [SYNC_CONCEPTS.md](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md)
-> for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
-
-## Quick Reference
-
-```bash
-bd ready --exclude-label gt:slot   # Find available work (merge-slot bead除外)
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work atomically
-bd close <id>         # Complete work
-bd dolt push --remote legacy  # Push beads data to the PRIVATE remote (never bare — see "Dolt sync" below)
-```
+AI コーディングエージェント向けの常時ロードされる指示 (`CLAUDE.md` はこのファイルへの
+シンボリックリンク)。**200 行以下に保つ** — 詳細は各節が指す skill / `.claude/rules/` / `docs/`
+に置き、ここには「常に必要なこと」と「いつそれを読むか」だけ書く。課題管理は **bd** (beads):
+全体像は `bd prime`。
 
 ## Non-Interactive Shell Commands
 
-**ALWAYS use non-interactive flags** with file operations to avoid hanging on confirmation prompts.
-
-Shell commands like `cp`, `mv`, and `rm` may be aliased to include `-i` (interactive) mode on some systems, causing the agent to hang indefinitely waiting for y/n input.
-
-**Use these forms instead:**
-```bash
-# Force overwrite without prompting
-cp -f source dest           # NOT: cp source dest
-mv -f source dest           # NOT: mv source dest
-rm -f file                  # NOT: rm file
-
-# For recursive operations
-rm -rf directory            # NOT: rm -r directory
-cp -rf source dest          # NOT: cp -r source dest
-```
-
-**Other commands that may prompt:**
-- `scp` - use `-o BatchMode=yes` for non-interactive
-- `ssh` - use `-o BatchMode=yes` to fail instead of prompting
-- `apt-get` - use `-y` flag
-- `brew` - use `HOMEBREW_NO_AUTO_UPDATE=1` env var
+**ALWAYS use non-interactive flags.** `cp` / `mv` / `rm` は `-i` に alias されていることがあり、
+y/n 待ちでエージェントが無限にハングする。`cp -f` / `mv -f` / `rm -f` / `rm -rf` / `cp -rf`、
+`apt-get -y`、`scp` / `ssh` は `-o BatchMode=yes`、`brew` は `HOMEBREW_NO_AUTO_UPDATE=1`。
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:6cd5cc61 -->
 ## Beads Issue Tracker
@@ -130,487 +92,84 @@ bd prime                # Refresh Beads context
 
 ## `bd init` Re-runs: Reviewing the Managed AGENTS.md Block
 
-`bd init` (and `bd setup <tool>`) regenerates the content **inside** the
-`<!-- BEGIN BEADS INTEGRATION --> … <!-- END BEADS INTEGRATION -->` markers
-(and the sibling `<!-- BEGIN BEADS CODEX SETUP --> … <!-- END BEADS CODEX
-SETUP -->` block above) on every run; content outside the markers is left
-alone. This bit this repo on 2026-08-17 (bdboard-ejz): a `bd init` run on a
-separate machine silently dropped two project-specific customizations from
-inside the block — `bd ready --exclude-label gt:slot` (the fix for the
-merge-slot mis-claim incident, bdboard-9k3) reverted to plain `bd ready`, and
-an unconfirmed `bd dolt push` line was added to the Session Completion
-command list, contradicting this doc's "outward-facing/network operations
-need confirmation first" stance elsewhere.
-
-**Investigated:** `bd init --help` (bd 1.2.1, Homebrew) exposes flags that
-target this regeneration directly: `--skip-agents` (skip AGENTS.md/tool-setup
-generation entirely), `--agents-file <name>` (custom filename, default
-`AGENTS.md`), `--agents-profile minimal|full`, and `--agents-template <path>`
-(use a custom template instead of the embedded default for what gets written
-inside the markers). `--agents-template` is the closest thing to an official
-"keep my customizations" mechanism — point it at a repo-maintained template
-file that already contains the `--exclude-label gt:slot` Quick Reference line
-and no unconfirmed push command, and that becomes the regenerated block
-content:
-
-```bash
-bd init --agents-template path/to/our-agents-template.md ...
-```
-
-**Caveat that keeps the manual review mandatory anyway:** `bd config --help`
-enumerates every persisted config namespace (`export.*`, `import.*`,
-`jira.*`, `linear.*`, `github.*`, `gitlab.*`, `ado.*`, `notion.*`,
-`custom.*`, `status.*`, `claim.*`, `doctor.suppress.*`) — there is no
-`agents.*` / `agents-template`-style key, so `.beads/config.yaml` cannot make
-`--agents-template` "sticky." It only takes effect on the exact invocation
-that passes it. Any other `bd init` (a different machine, a teammate, a CI
-recovery script, a future `bd` upgrade, or simply forgetting the flag) falls
-back to the embedded upstream default and can silently re-drop these
-customizations again. Treat `--agents-template` as a nice-to-have that
-reduces how often the checklist below finds a diff, not as a substitute for
-running the checklist.
-
-**Required procedure — every time `bd init` or `bd setup <tool>` runs against
-this repo** (fresh clone, `bd` version upgrade, or any manual re-run),
-**before** staging or committing:
-
-```bash
-git diff -- AGENTS.md   # and the --agents-file target, if different from AGENTS.md
-```
-
-Check specifically for:
-1. **`bd ready --exclude-label gt:slot`** is still present in both Quick
-   Reference blocks (top-of-file and inside the managed block) — losing it
-   reopens the bdboard-9k3 merge-slot mis-claim failure mode.
-2. **No unconfirmed push/sync command** (`bd dolt push`, `bd dolt push
-   --remote legacy`, etc.) was added to the Session Completion / git-handling
-   steps without a confirmation gate.
-
-If either check fails, hand-restore the customized wording before
-committing. Do not `git add`/commit an unreviewed `bd init` diff.
-
-**Alignment with the direct-to-main ban:** `bd init` can autocommit straight
-to whatever branch happens to be checked out — on 2026-08-17 it produced two
-commits directly on `main` on a separate machine (bdboard-ejz), one
-rewriting AGENTS.md and one adjusting `.beads/config.yaml`. The Git Workflow
-section above bans direct-to-main commits except `chore(beads): ...` commits
-that touch **only** `.beads/`. A `bd init` commit that touches AGENTS.md (or
-any other non-`.beads/` file) does not qualify for that exception even when a
-sibling commit from the same `bd init` run is `.beads/`-only — each commit is
-judged on its own diff. Practically:
-- Never let `bd init` run with `main` checked out. Run it on a feature
-  branch or inside a per-ticket worktree first, review the diff per the
-  checklist above, then land it through the normal PR flow.
-- If it already ran directly on `main` (as happened here) before push: keep
-  or cherry-pick any commit that touches only `.beads/` through the existing
-  `chore(beads)` exception, but re-route any commit touching AGENTS.md (or
-  other non-`.beads/` files) through a normal `bd/<ticket-id>` branch + PR
-  instead of pushing it straight — e.g. extract the diff with `git show
-  <sha> -- AGENTS.md` and apply it on a fresh branch, or reset/revert the
-  non-`.beads/` commit off `main` before it is ever pushed.
+`bd init` / `bd setup <tool>` は上のマーカー**内側**を毎回再生成する。2026-08-17 に別マシンの
+`bd init` がカスタマイズ 2 件を黙って戻し、`main` へ直接コミットした (bdboard-ejz)。
+**走らせたら staging/commit の前に `git diff -- AGENTS.md` を必ず確認する。** チェック項目・
+`--agents-template` の限界・main 直コミット時の復旧手順は
+[.claude/rules/bd-init-agents-md.md](.claude/rules/bd-init-agents-md.md)
+(`AGENTS.md` / `CLAUDE.md` / `.beads/**` を触ると読み込まれる path-scoped rule)。
 
 ## Build & Test
 
 Before committing any change (server or web), run the full verification chain — it must be clean:
 
 ```bash
-npm run verify   # build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
+npm run verify   # build + build:web + test:server + test:web + check:boundaries
 ```
 
-`npm run build` type-checks the **server side** — three separate tsc projects, run serially, because
-they have incompatible premises (`rootDir`, `lib`, `types`) and cannot share one config:
-
-| project | covers | why separate |
-|---|---|---|
-| `tsconfig.json` | `src/**/*` | server. `rootDir: src` |
-| `tsconfig.node.json` | `vitest.config.ts` | `lib: ["ES2023"]` + `types: ["node"]`, **no DOM** |
-| `test/e2e/tsconfig.json` | `test/e2e/**/*.ts` (recursive — `fixtures/` included) | needs `DOM` for `page.evaluate`, so it can't share the row above |
-
-`web/` has its own pair of `tsc --noEmit` steps inside `npm run build:web` (`tsconfig.json` for
-`web/src` + `web/vitest.setup.ts`, `tsconfig.node.json` for `web/vite.config.ts` +
-`web/vitest.config.ts`), ahead of the Vite
-build — a real type error there is invisible to `npm run build` and to `npm run test:web` (vitest
-doesn't full-type-check). `npm run verify` runs all of it, plus the web Vite build itself, so nothing
-can silently drift broken (see bdboard-419 for the incident that prompted this, bdboard-ruf for the
-`web/` config files, and bdboard-u97 for the root ones).
-
-The rule behind the table: **a config file that is never imported by anything still has to belong to
-some tsc project, or it is unchecked.** `include` is what puts a file in a project; being reachable
-by import is not enough, and neither is sitting next to files that are checked.
-
-Individual commands, if you need to run a subset:
-
-```bash
-npm run build            # tsc --noEmit x3 (src/, vitest.config.ts, test/e2e/)
-npm run build:web        # web tsc --noEmit x2 + vite build
-npm run test:server      # vitest run (src/)
-npm run test:web         # vitest run (web/src/)
-npm run check:boundaries # dependency-cruiser (architecture layering)
-```
-
-### Verify slots (max 2 concurrent `npm run verify` per machine)
-
-`npm run verify` throttles itself: before running anything, `scripts/verify.mjs`
-takes a slot in a machine-local FIFO ticket queue (holder files under
-`$TMPDIR/bdboard-verify-slots/`, logic in `scripts/verify-slot.mjs`), and at
-most **2** verifies run at once per machine. This is the fix for the
-2026-08-18 incident where 6 concurrent verifies self-amplified into load
-average 190–258 for hours (bdboard-d48) — the per-run vitest worker caps
-(bdboard-255) cannot prevent that alone, because more *submissions* still
-pile up. Unlike `bd merge-slot`, this is not a cooperative convention you
-must remember to follow: the lock lives inside the only sanctioned entry
-point, so every `npm run verify` is throttled automatically, and there is no
-bead behind it (nothing new to exclude from `bd ready`).
-
-What this means operationally:
-
-- **Always run the full chain via `npm run verify`.** Never run
-  `npm run verify:steps` directly — it is the wrapper's internal entry point
-  and bypasses both the process-group kill (bdboard-kia) and the slot.
-  Running individual steps (`npm run build`, `npm run test:server`, …) while
-  iterating is still fine; the slot only guards the full chain.
-- **Queue waits are normal, not hangs.** While waiting, verify prints
-  `verify: waiting for a verify slot (queue position N/M, holders: pid …)`
-  every 10s on stderr. Leave it queued — the queue is FIFO, so the wait is
-  bounded, and killing + re-running re-enters the queue at the back. Give
-  the command a generous timeout instead of assuming it wedged.
-- **Stale handling is automatic.** A holder whose pid is dead is reclaimed
-  immediately (covers SIGKILLed verifies); a live holder in the queue for
-  >30 min stops counting toward the limit (logged, file left alone). If a
-  wait exceeds 15 min, verify exits non-zero naming the holder pids —
-  investigate those pids (hung verify?) rather than disabling the slot.
-- **Env knobs are for tests and emergencies only**: `BDBOARD_VERIFY_SLOTS`
-  (default 2; `0` disables gating), `BDBOARD_VERIFY_SLOT_DIR`,
-  `BDBOARD_VERIFY_SLOT_WAIT_MS`. Do not raise or disable them just to run
-  more verifies in parallel — that recreates the incident. CI needs no
-  special casing (one verify per runner; the slot is acquired instantly).
-
-`npm run start` serves the backend + built `web/dist` together on `BDBOARD_PORT` (default `8787` —
-`.claude/launch.json`'s preview port must match this, not 3000). `npm run dev` / `npm run dev:web` are
-for local iteration (server watch mode / Vite dev server, respectively).
+- **フルチェーンは必ず `npm run verify` で回す。`npm run verify:steps` の直叩きは禁止** —
+  プロセスグループ kill (bdboard-kia) とスロットの両方を迂回する。反復中の個別ステップは可。
+- **Verify slots**: verify は 1 マシン最大 2 並列に自分でスロット制限する (2026-08-18 に 6 並列が
+  load average 190–258 を数時間続けた事故 bdboard-d48 の対策)。`verify: waiting for a verify
+  slot (queue position N/M …)` が 10 秒ごとに出るのは**ハングではなく FIFO 待ち**。kill して
+  再実行すると列の最後尾に戻るだけなので、長めのタイムアウトで待つ。
+- ポートは `BDBOARD_PORT` (既定 8787)。**worktree で `npm run dev` を回さない** (メインチェック
+  アウトのポートと衝突)。`vitest` / `tsc` / `depcruise` は並列 worktree で問題ない。
+- tsc 3 プロジェクトの表とその理由、slot の stale 処理と env ノブ、`npm run check:commits`:
+  [docs/VERIFY.md](docs/VERIFY.md)。
 
 ## Always-On Local Hosting (main checkout)
 
-The main checkout (this directory, not worktrees) must be serving the board on
-localhost whenever an agent session is active. Default port: `BDBOARD_PORT`
-(8787). This is an agent operational rule, not an OS daemon — do NOT create a
-launchd plist or any persistent daemon for this; if true 24/7 hosting is ever
-wanted, that is a separate, explicitly user-approved change.
+メインチェックアウト (worktree ではない) は、エージェントセッション中つねにボードを serve して
+いること。セッション開始時に確認する:
 
-- **At session start**: check the server with
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
+```
 
-  ```bash
-  curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
-  ```
-
-  **Judge by the status code, not by curl's exit status.** Local direct
-  requests bypass Basic auth, so a healthy server answers **200** regardless
-  of whether auth is configured. A **401/503** still proves an HTTP server is
-  listening but means the request was not classified as local direct access;
-  investigate Host/proxy configuration instead of starting a second server.
-  Do **not** use `curl -f`, because it hides the response body/status distinction.
-
-  Only a **connection failure** means the server is down: curl prints `000`
-  and exits 7. In that case start it — **from a session whose cwd is the
-  main checkout**, prefer the Browser tool's `preview_start` with the `start`
-  config in `.claude/launch.json`; otherwise run `npm run start` in the
-  background. From a worktree session, neither: see the `preview_start`
-  entry below.
-
-  Before starting anything, confirm with
-
-  ```bash
-  lsof -nP -iTCP:8787 -sTCP:LISTEN
-  ```
-
-  A **listening socket that still answers nothing** is the known SIGTERM
-  quirk, not a dead server: with an SSE client attached, `server.close()`
-  never drains, so the listener closes while the process keeps running and
-  holds the port. Recovery there is `kill -9` → `preview_stop` (to clear the
-  stale serverId) → `preview_start`; starting a second server would just fail
-  to bind. If `lsof` prints nothing, the port really is free and it is safe to
-  start.
-- **Never call `preview_start` from a worktree session** (measured
-  2026-08-29). `preview_start {name: "start"}` resolves
-  `.claude/launch.json` relative to *the session's* cwd, and that file is
-  tracked, so every worktree has one. From a worktree it therefore runs
-  `npm run start` **in the worktree**, which binds port 8787 — the main
-  checkout's port. What gets served then depends on that worktree, because
-  `webDistDir` is derived from `import.meta.url` (`src/main.ts:990`), i.e.
-  from *which checkout's `src/main.ts` is executing* — cwd is the upstream
-  cause, not the direct one:
-
-  - **A worktree that has never run `npm run build:web`** (a fresh one, or
-    one whose `npm run verify` has not finished) has no `web/dist`, so the
-    server logs `web/dist not found; serving API only`. `/api/health`
-    answers **200** and `/` answers **404**.
-  - **A worktree that has run `npm run verify`** does have a `web/dist`
-    (`web/dist/` is gitignored but `build:web` writes it), so it serves
-    **that branch's stale UI**. Both `/api/health` and `/` answer **200**.
-    This is the common case, not the exception: verify is mandatory before
-    opening a PR, so most worktrees have a `web/dist` — measured 2026-08-29,
-    9 of 12.
-
-  So **status codes alone cannot detect this.** The 200/404 pair catches only
-  the first case; the second looks completely healthy while serving a board
-  built from someone else's branch. The reliable check is the startup log
-  line:
-
-  ```
-  Serving static web UI from <path>/web/dist
-  ```
-
-  If that path is not the main checkout, the wrong server is running
-  (`lsof -p <pid> -d cwd` answers the same question for an already-running
-  process).
-
-  From a worktree, start the server in the main checkout instead — the `cd`
-  is load-bearing beyond picking the right `src/main.ts`, because
-  `serveStatic`'s root is `path.relative(process.cwd(), webDistDir)`
-  (`src/main.ts:994-996`):
-
-  ```bash
-  cd /path/to/main/checkout && nohup npm run start > /tmp/bdboard-server.log 2>&1 &
-  ```
-
-  (That log path is truncated on every restart; use a distinct name if you
-  need to keep an earlier run's output.)
-
-  A separate, independently-possible failure was seen just before this one:
-  `preview_start` returned a serverId, but the port answered **connection
-  refused**, `lsof` showed no listener, and the entry had vanished from
-  `preview_list`. That is a different symptom — a listener that never came
-  up, versus one that is up and serving the wrong thing — and is best
-  explained as a startup race (the success reply arriving before the bind
-  completes). Retrying can plausibly help there; it cannot help with the
-  worktree-cwd case above, where every attempt reproduces (2/2).
-
-- **Do not trust the opened browser tab as proof the server is up.** A tab
-  left over from an earlier load can still render a fully populated board
-  (from cache/bfcache) with only a quiet "disconnected" badge as the tell,
-  which looks like a working app at a glance. Verify liveness by `curl`
-  status codes (and `lsof`), never by what the tab shows.
-- **After merging a PR into main** (right after the fast-forward in the Git
-  Workflow cleanup): `git pull --ff-only` → `npm install` /
-  `npm --prefix web install` if lockfiles changed → `npm run build:web` →
-  restart the server → re-check with the status-code command above.
-  `npm run start` runs tsx without watch and serves a static `web/dist`, so
-  neither server nor UI changes are picked up without this rebuild+restart.
-  - **A `git pull --ff-only` here can be blocked by an uncommitted local
-    diff to `.claude/bdboard-packs.json`** (measured 2026-08-29, bdboard-8okb):
-    `Your local changes to the following files would be overwritten by
-    merge`. The always-on server appears to self-heal a stale injected-pack
-    version/timestamp in that file at runtime, without going through git —
-    the file's mtime lined up exactly with the server's own uptime, not with
-    any manual edit. Before discarding, run `git diff -- .claude/bdboard-packs.json`
-    and confirm the local diff really is only a `version`/`injectedAt`
-    value change consistent with the pack files already on disk (not
-    something else). If so, it's safe to `git checkout -- .claude/bdboard-packs.json`
-    and retry the pull — the incoming commit's value supersedes it. If the
-    diff looks like anything other than that, stop and investigate instead
-    of discarding.
-- **Before restarting the server**, check whether a tunnel is running with
-
-  ```bash
-  pgrep -x cloudflared
-  ```
-
-  **`-x` (exact match on the process name), not `-f`.** `-f` matches the whole
-  command line, so it also fires on any process that merely *mentions*
-  cloudflared — and this document requires every delegation brief to carry the
-  "do not start a cloudflared tunnel" prohibition, so a brief sitting in a
-  child agent's argv matches. That makes `-f` misfire precisely while parallel
-  delegation is running, which is most of the time (measured 2026-09-04,
-  bdboard-e761: it reported a tunnel when none existed; the match was a
-  delegated agent's own brief. Reproduced deliberately the same day — a
-  `python3` process carrying that text in its argv is matched by `-f` and not
-  by `-x`).
-
-  The misfire is safe-side (it claims a tunnel might exist when none does), but
-  it is not harmless: it produces a false "restarting will kill your tunnel"
-  warning, and skipping the restart on that basis leaves the always-on server
-  serving a stale post-merge build. Worse, once the check is known to cry wolf
-  it starts getting ignored, which fails in the *unsafe* direction.
-
-  If it is running, tell the user first that restarting will
-  kill the tunnel child process and invalidate the current trycloudflare.com
-  URL — quick tunnels get a new subdomain each time, so a phone-side reload
-  will not recover access and the QR code must be scanned again. After
-  restart, offer to start a new tunnel only if the user wants one (starting a
-  tunnel is an explicit public-exposure action; agents must not start one
-  unilaterally). On the next boot the board shows that the previous session
-  ended while a tunnel was active (bdboard-8v8), but that post-hoc notice is
-  not a substitute for this advance warning. See bdboard-8v8.
-- **Never kill the server** except for that post-merge restart (or an explicit
-  user request). Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
-  worktree のテスト用プロセスを狙った `pkill -f 'tsx.*src/main.ts'` がこの常時稼働
-  サーバーにも当たった実例がある。必ず対象の PID を特定してから kill すること
-  （委譲ブリーフにも毎回この禁止を明記する）。
-- This rule is the guarantee behind three existing conventions: worktrees must
-  not run `npm run dev` (the port belongs to the main checkout — see Git
-  Workflow) and must not call `preview_start` (which runs `npm run start`
-  there, taking the same port — see above), and `npm run dev:web` in a
-  worktree works because its Vite proxy targets this always-on server at
-  `127.0.0.1:8787`. The mobile tunnel
-  (mobile-preview-tunnel skill) also points at this server, so tunneling
-  needs no separate server-start step — just the health check.
+- **curl の exit status ではなくステータスコードで判定する。** 200 が正常 (ローカル直アクセスは
+  Basic 認証を迂回する)。401/503 はリスナーは居るので二重起動しない。**`000` (exit 7) だけが停止**。
+- `000` だった / リスナーは居るのに応答しない / マージ後に作り直す / トンネルが同居している —
+  いずれも **skill `bdboard-server-ops` を読んでから**動く
+  (`.claude/skills/bdboard-server-ops/SKILL.md`)。ブラウザのタブが描画されていることは生存証明に
+  ならない (キャッシュで動いて見える)。
+- **worktree からは `preview_start` 禁止** — `.claude/launch.json` は各 worktree にもあるため
+  8787 を奪い、そのブランチの古い UI を配ってしまう (実測 2026-08-29、12 worktree 中 9 が該当)。
+  起動はメインチェックアウトへ `cd` してから。
+- **サーバーを kill しない** (マージ後の再起動とユーザーの明示要求を除く)。その場合も
+  **pkill / killall 等のパターンマッチ kill を使わない** — worktree のテスト用プロセスを狙った
+  `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーを巻き込んだ実例がある。PID を特定して kill する
+  (委譲ブリーフにも毎回この禁止を明記する)。
+- launchd plist 等の常駐デーモン化はしない (別途ユーザー承認が要る変更)。
 
 ## Git Workflow (multi-session: per-ticket worktree + branch + PR)
 
-Since 2026-08-15 this repo is pushed to GitHub (private:
-https://github.com/xiaotiantakumi/bdboard) and uses a per-ticket worktree +
-branch + PR flow instead of direct-to-main commits, specifically to avoid
-silent conflicts when multiple sessions/agents work on the project
-concurrently. Design rationale and full detail: bdboard-3tw.74.
+2026-08-15 以降、direct-to-main ではなく **1 チケット = 1 worktree = 1 ブランチ = 1 PR**
+(bdboard-3tw.74)。手順の詳細・根拠・事故記録は [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md)。
 
-- **Branch**: `bd/<ticket-id>` (ticket ID used verbatim, e.g.
-  `bd/bdboard-3tw.65` — dots are legal in git ref names). Non-ticket
-  exploratory branches use `spike/` and never get a PR.
-- **Worktree**: `.claude/worktrees/<ticket-id>/`, created at claim time from
-  `origin/main`, removed after merge. Each worktree needs its own
-  `npm install && npm --prefix web install` (`node_modules` isn't shared
-  across worktrees). Don't run `npm run dev` inside a worktree — it collides
-  on the port with the main checkout. `vitest`/`tsc`/`depcruise` don't bind a
-  port, so those run fine in parallel worktrees.
-- **Lifecycle**: `bd update <id> --claim` → create worktree+branch →
-  implement → 機能追加/変更ならヘルプ原本 `docs/help-content.json` の追従を
-  確認 (「Conventions & Patterns」の **ヘルプドキュメントの追従** 参照) →
-  `npm run drift` (**Drift check** below) → `npm run verify` locally (must be
-  clean before opening a PR) →
-  `gh pr create --fill --body "Closes: <ticket-id>\n\n<summary>"` →
-  `bd comment <id> "PR: <url>"` → wait for CI green → merge per **Merge
-  serialization** below (slot → CAS → `gh pr merge --squash --delete-branch`)
-  → **`bd close <id>` only after the merge succeeds** (not at PR-open time —
-  closing early would make `bd ready` lie to other sessions about what's
-  actually landed).
-- **Direct-to-main commits are banned**, with exactly two exceptions:
-  `chore(beads): ...` commits that touch only `.beads/` (routine
-  `interactions.jsonl` sync), and CI-recovery commits touching only
-  `.github/workflows/`. Even a one-line fix goes through a PR — the
-  consistency is what makes "main is always PR-gated" a reliable invariant
-  for concurrent sessions.
-- **`.beads/` is never touched inside a PR branch.** CI has a guard step
-  that fails any PR whose diff against `origin/main` touches `.beads/`.
-  Tracked `.beads/` files (`.gitignore`, `README.md`, `config.yaml`,
-  `hooks/*`, `interactions.jsonl`, `metadata.json`) only change via the
-  `chore(beads)` main-direct exception above.
-- **Drift check** (`npm run drift`): prints the files that **both**
-  `origin/main` and your branch have touched since their merge-base, and
-  tells you to rebase now if there are any. Run it when you open the PR, and
-  again whenever the PR has been open for more than a few hours — including
-  right before you take the merge slot.
-
-  This exists because merge-slot and CAS do not cover it. Both guard the
-  *instant* of merging (did `main` move while CI ran?); neither sees the
-  changes that pile up on `main` during the hours a PR is open. bdboard-3tw.152
-  is the incident: [PR #86](https://github.com/xiaotiantakumi/bdboard/pull/86)
-  opened at 17:01 and merged the next day, and in one five-hour window that
-  morning five unrelated PRs landed on `main` touching the same
-  `StatusPill.tsx` and `index.css`. The final rebase hit real text conflicts.
-  Running `npm run drift` that morning would have named both files.
-
-  It fetches `origin/main` first (a drift check against a stale remote is
-  worthless); `npm run drift -- --no-fetch` skips that when offline. It
-  **never exits non-zero for a finding** and never blocks — overlapping files
-  are an upper bound on where a conflict could occur, not a prediction that
-  one will (separate hunks in the same file rebase cleanly). Making it a gate
-  would produce false stops and get it ignored. It **does** exit 2 when the
-  check could not run at all (no `origin`, no merge-base): "nothing to report"
-  and "could not look" must not read the same to a caller that only reads
-  stdout.
-
-  It compares **committed** changes only, so run it after you commit, not
-  mid-edit — uncommitted work in your tree is invisible to it.
-
-  There is deliberately **no hand-maintained "hot file" list**. Which files
-  are hot changes week to week, and a list in this document would go stale;
-  computing it from the merge-base is always current.
-- **Commit parse check** (`npm run check:commits`): on each main push, CI scans
-  `v<last-release>..HEAD` with the same `@conventional-commits/parser` that
-  release-please uses. If a commit body opens `(` on one line and closes `)` on
-  the next, the parser fails and release-please silently drops that commit from
-  CHANGELOG — permanently once the release tag is cut. Fix or hand-restore before
-  tagging. `scripts/check-commit-parse.mjs` has a temporary allowlist for
-  `15651d3` (already restored on the 0.1.2 release branch); remove that entry
-  after the `v0.1.2` tag lands. Not part of `npm run verify` (needs git tags).
-- **Merge serialization**: merge one PR at a time. Whoever holds merge
-  rights updates/rebases the next queued PR's branch and re-waits for CI
-  before merging it — this is what catches semantic conflicts between two
-  PRs that each pass CI independently but break when combined.
-
-  Concurrent sessions have made this concrete, so the procedure is now
-  spelled out rather than left to judgement. Run these in order for every
-  merge:
-
-  0. **Check for drift** — `npm run drift`. If it names files, rebase and
-     re-run CI before taking the slot; taking it first just makes peers wait
-     while you rebase.
-  1. **Take the slot** — `bd merge-slot acquire` (the `bdboard-merge-slot`
-     bead already exists; `bd merge-slot create` is a one-time setup that has
-     been done). Release it with `bd merge-slot release` when the merge is
-     finished, including when you abandon the attempt. This is a
-     *cooperative* lock: it coordinates every session that reads bd, and
-     nothing else.
-  2. **Compare-and-swap immediately before merging** — after CI is green and
-     right before `gh pr merge`, run `git ls-remote origin main` and compare
-     it with the SHA the branch was rebased onto. If it moved, a peer merged
-     while CI was running: update the branch and wait for CI again. **This
-     step needs no cooperation from anyone, so it is the one that actually
-     holds** — it shrinks the race window from "the length of a CI run" to a
-     couple of seconds.
-  3. **Verify on main, and treat that as the gate for the next merge** —
-     `git pull --ff-only`, then run `npm run verify` on `main` itself. Two
-     branches that were independently green can still break in combination,
-     and this is the only place that shows up. Do not merge the next queued
-     PR until main is green. Merges are squashed, so recovery is a single
-     revert.
-
-  Steps 1 and 3 are conventions other sessions must also follow; step 2
-  protects you regardless of what they do. Step 0 protects only you, but it
-  is the only one that catches a conflict *before* it has cost you a CI run.
-- **Cleanup after merge** (the merging session's responsibility):
-  `git worktree remove .claude/worktrees/<id>` → `git branch -d bd/<id>` →
-  `git remote prune origin` → restart the always-on server per "Always-On
-  Local Hosting" (pull --ff-only / build:web / restart). At session start,
-  sweep `git worktree list` for merged leftovers left behind by a prior
-  session.
-
-  Two things to expect here, so they are not mistaken for failures:
-  - **`--delete-branch` always fails on the local branch**, with
-    `cannot delete branch 'bd/<id>' used by worktree at …`. The remote
-    branch *is* deleted; the local one can only go after the worktree does.
-    This is the normal path, not an error — remove the worktree, then
-    `git branch -D bd/<id>`.
-  - **Check for live processes before removing a worktree**:
-    `lsof -a -d cwd +D "$(pwd)/.claude/worktrees/<id>"`. A concurrent session
-    may be sitting in it; if anything is listed, leave the worktree alone.
-    Removing a worktree out from under a running shell is what caused
-    bdboard-3tw.61 (a shell whose `$PWD` fell back to `"."` spun a CPU core
-    for 102 minutes).
-- **`.beads/` Dolt sync** (separate from the above): `bd dolt push`/`bd dolt
-  pull` sync issue history to `refs/dolt/data` on a git remote — fully
-  independent of code branches/PRs, invisible in any diff. **This repo has
-  two git remotes**: `origin` (public, `xiaotiantakumi/bdboard`) and
-  `legacy` (private, `xiaotiantakumi/bdboard-legacy-private`). Issue
-  history is private and must go to `legacy` only — see bdboard-23v for why.
-  **Always run `bd dolt push --remote legacy` / `bd dolt pull --remote
-  legacy`. Never run a bare `bd dolt push` or `bd dolt pull` on this repo.**
-  A bare push can silently push to (or adopt) a Dolt-layer remote derived
-  from `git origin` — i.e. the public repo — leaking private issue history;
-  `bd dolt push --help` documents this remote-adoption behavior. This is not
-  hypothetical: on 2026-08-17 (bdboard-jb1) the main checkout itself still
-  had a Dolt-layer `origin` remote pointing at the public repo, even though
-  `.beads/config.yaml`'s `sync.remote` had already been commented out
-  (bdboard-23v) — disabling that app-level default did not remove the
-  Dolt-layer remote already registered underneath it. Before ever running a
-  bare `bd dolt push`/`bd dolt pull` on **any** checkout of this repo
-  (including a freshly-cloned one right after `bd init`), run `bd dolt
-  remote list` and confirm it shows no `origin` entry — if it does, remove
-  it with `bd dolt remote remove origin` first. Push periodically at
-  session end, not per-ticket.
-- GitHub Free private repos can't enforce branch protection rules; this is
-  covered by convention + CI + always merging through `gh pr merge` instead.
-  Revisit if the repo goes public or moves to a paid plan.
+- **Branch** `bd/<ticket-id>` (ID をそのまま使う。非チケットの探索は `spike/` で PR にしない) /
+  **worktree** `.claude/worktrees/<ticket-id>/` (`origin/main` から作成、マージ後に削除。
+  worktree ごとに `npm install && npm --prefix web install` が要る)。
+- **Lifecycle**: `bd update <id> --claim` → worktree+branch 作成 → 実装 → 機能追加/変更なら
+  ヘルプ原本 `docs/help-content.json` の追従を確認 → `npm run drift` (PR が数時間開いていたら
+  再実行) → `npm run verify` (PR を開く前にクリーンであること) →
+  `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
+  CI green → マージ (drift → `bd merge-slot acquire` → 直前に `git ls-remote origin main` で
+  CAS → `gh pr merge --squash --delete-branch` → `git pull --ff-only` して main で
+  `npm run verify` → `bd merge-slot release`) → **`bd close <id>` はマージ成功後だけ**
+  (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
+- **Direct-to-main commits are banned.** 例外は 2 つだけ: `.beads/` のみを触る
+  `chore(beads): ...` と、`.github/workflows/` のみを触る CI 復旧コミット。
+- **`.beads/` は PR ブランチで一切触らない。** CI が `origin/main` との diff に `.beads/` を
+  含む PR を落とす。
+- **`bd dolt push --remote legacy` / `bd dolt pull --remote legacy` 固定。素の `bd dolt push` /
+  `bd dolt pull` はこの repo で禁止** — public remote (`origin`) を Dolt 層が黙って採用し、
+  private な issue 履歴が漏れうる (bdboard-23v / bdboard-jb1)。push はチケット毎ではなく
+  セッション終わりに定期的に。
+- **Cleanup after merge** (マージしたセッションの責任): `git worktree remove` →
+  `git branch -D bd/<id>` → `git remote prune origin` → 常時稼働サーバーを再起動
+  (skill `bdboard-server-ops`)。remove 前に `lsof -a -d cwd +D <worktree>` で他セッションが
+  居ないか確認する (bdboard-3tw.61)。
 
 ## Architecture Overview
 
@@ -622,45 +181,20 @@ middleware, and why the agent Runner is currently unwired). See
 
 ## Conventions & Patterns
 
-- **Test fixtures for username/password pairs must use an obviously-fake
-  placeholder shape** — `example-user` / `example-password` (or a
-  disambiguated variant like `example-tunnel-user` when a test needs a
-  second, distinct credential pair), never a realistic-looking value. This
-  applies to adjacent `username`/`password` object-literal fields, adjacent
-  `USER`/`PASSWORD`-style constants, and `scheme://user:pass@host` URL
-  literals. GitGuardian's "Username Password" detector fires on this shape
-  by pattern, not by the actual value — a fake credential in a test fixture
-  still trips it and costs a human triage on every PR that touches the file.
-  Do not just delete the values to dodge the scanner; that weakens the test.
-  See bdboard-3tw.81 and the earlier bdboard-1qm PR#3 precedent
-  (`web/src/components/TunnelControl.test.tsx`).
-- **ヘルプドキュメントの追従 — 機能追加/変更のPRは `docs/help-content.json`
-  の更新確認を完了条件に含める** (bdboard-3tw.138.4)。ヘルプ系の表示は
-  すべて `docs/help-content.json` を単一原本とする: Webヘルプ画面
-  (`web/src/helpContent.ts` → `web/src/components/HelpPanel.tsx`)、チャットの
-  system prompt (`src/infrastructure/chat/help-content.ts` →
-  `src/infrastructure/chat/bd-system-prompt.ts`)、ボード上部のTips
-  (`web/src/tipsContent.ts` → `web/src/components/TipsBanner.tsx`) は
-  いずれもここから派生する (bdboard-3tw.138.1〜138.3)。運用ルール:
-  - ユーザーから見える機能・操作・画面/ビュー名を追加・変更・削除するPRでは、
-    PRを開く前に `docs/help-content.json` の該当セクション
-    (title/description/steps) が変更後の実態と一致しているか確認し、ズレて
-    いれば**同じPR内で**原本を更新する。後追いの別チケットに回さない —
-    分離した瞬間に陳腐化が始まるのがこのルールの動機 (bdboard-3tw.138.4)。
-  - 確認の結果「更新不要」も正当な結論 (内部リファクタ、ヘルプに記載の
-    ない細部の変更等)。その場合は何も書き換えずに進めてよいが、確認自体は
-    省略しない。
-  - ヘルプ文言の修正は必ず原本 `docs/help-content.json` だけを編集する。
-    派生ファイル側に文言をハードコードして原本と二重管理にしない。
-  - schema の破れ (空文字・id重複・steps欠落等) は
-    `parseBdboardHelpSections` がサーバー起動時とテストで検証し、派生
-    ファイルの型は `npm run verify` が守る。機械的に守れないのは
-    「内容の陳腐化」だけで、それがこの運用ルールの対象。
-- 工程ごとの使用モデルは bd のメタデータに記録する:
+- **テストの username/password ペアは明らかに偽の形にする** — `example-user` /
+  `example-password` (2 組目が要るなら `example-tunnel-user` のような区別付き)。隣接する
+  `username`/`password` フィールド、`USER`/`PASSWORD` 定数、`scheme://user:pass@host` の URL
+  リテラルが対象。GitGuardian の "Username Password" 検出器は値ではなく**形**で発火するので、
+  偽の値でも触れた PR ごとに人手のトリアージを発生させる。値を消して回避するのは不可 (テストが
+  弱くなる)。bdboard-3tw.81、先例 bdboard-1qm PR#3 `web/src/components/TunnelControl.test.tsx`。
+- **ヘルプドキュメントの追従**: ユーザーから見える機能・操作・画面/ビュー名を追加・変更・削除する
+  PR は、単一原本 `docs/help-content.json` の該当セクションを**同じ PR 内で**更新する
+  (「更新不要」も正当な結論だが、確認自体は省略しない)。Web ヘルプ・チャット system prompt・
+  ボード上部の Tips はすべてここから派生する。詳細: [docs/HELP-CONTENT.md](docs/HELP-CONTENT.md)
+  (bdboard-3tw.138.4)。
+- **工程ごとの使用モデルを bd に記録する**:
   `bd update <id> --set-metadata bdboard.model.<工程>=<モデル名>`
-  (例: `bd update bdboard-aeg --set-metadata bdboard.model.implement=composer-2.5`)。
-  削除は `bd update <id> --unset-metadata bdboard.model.<工程>`。
-  工程名は自由文字列。慣用: `implement` / `test` / `review` / `check`
-  (この順で詳細パネルに表示され、未知の工程はその後にアルファベット順で並ぶ)。
-  bdboard 側は表示専用。入力 UI は無く、記録は作業したエージェント自身が
-  上記コマンドで行う (bdboard-aeg)。
+  (例 `bdboard.model.implement=composer-2.5`、解除は `--unset-metadata bdboard.model.<工程>`)。
+  工程名は自由文字列で、慣用は `implement` / `test` / `review` / `check` (この順で詳細パネルに
+  表示され、未知の工程はその後にアルファベット順)。bdboard 側は表示専用で入力 UI は無く、記録は
+  作業したエージェント自身が行う (bdboard-aeg)。
