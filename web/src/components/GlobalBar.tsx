@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ProjectDto } from '../api';
 import { VIEW_ITEMS, type ViewMode } from '../uiPersistedState';
 import type { StreamState } from '../useBoardStream';
@@ -59,27 +60,93 @@ export function GlobalBar({
   onOpenHelp,
   onOpenShortcuts,
 }: GlobalBarProps) {
+  const toggleGroupRef = useRef<HTMLDivElement | null>(null);
+  const activeTabRef = useRef<HTMLButtonElement | null>(null);
+  const [canScrollStart, setCanScrollStart] = useState(false);
+  const [canScrollEnd, setCanScrollEnd] = useState(false);
+
+  const updateScrollHints = useCallback(() => {
+    const el = toggleGroupRef.current;
+    if (el === null) {
+      return;
+    }
+    const { scrollLeft, scrollWidth, clientWidth } = el;
+    const overflow = scrollWidth - clientWidth;
+    if (overflow <= 1) {
+      setCanScrollStart(false);
+      setCanScrollEnd(false);
+      return;
+    }
+    setCanScrollStart(scrollLeft > 1);
+    setCanScrollEnd(scrollLeft + clientWidth < scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    const el = activeTabRef.current;
+    if (el !== null && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest', inline: 'center' });
+    }
+  }, [view]);
+
+  useEffect(() => {
+    const el = toggleGroupRef.current;
+    if (el === null) {
+      return;
+    }
+
+    updateScrollHints();
+
+    el.addEventListener('scroll', updateScrollHints, { passive: true });
+
+    let resizeObserver: ResizeObserver | undefined;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(updateScrollHints);
+      resizeObserver.observe(el);
+    } else {
+      window.addEventListener('resize', updateScrollHints);
+    }
+
+    return () => {
+      el.removeEventListener('scroll', updateScrollHints);
+      resizeObserver?.disconnect();
+      if (resizeObserver === undefined) {
+        window.removeEventListener('resize', updateScrollHints);
+      }
+    };
+  }, [updateScrollHints, view, notificationUnreadCount]);
+
+  const scrollerClassName = [
+    'view-switcher-scroller',
+    canScrollStart ? 'can-scroll-start' : '',
+    canScrollEnd ? 'can-scroll-end' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <div className="global-bar">
       <h1 className="header-title">bdboard</h1>
 
       <div className="header-group view-switcher">
         <span className="header-label">ビュー</span>
-        <div className="toggle-group">
-          {VIEW_ITEMS.map((item) => (
-            <button
-              key={item.view}
-              type="button"
-              className={`toggle-btn${view === item.view ? ' active' : ''}`}
-              {...navCurrentProps(view === item.view)}
-              onClick={() => onViewChange(item.view)}
-            >
-              {item.label}
-              {item.view === 'events' && notificationUnreadCount > 0
-                ? ` (${notificationUnreadCount})`
-                : ''}
-            </button>
-          ))}
+        <div className={scrollerClassName}>
+          <div ref={toggleGroupRef} className="toggle-group">
+            {VIEW_ITEMS.map((item) => (
+              <button
+                key={item.view}
+                ref={view === item.view ? activeTabRef : undefined}
+                type="button"
+                className={`toggle-btn${view === item.view ? ' active' : ''}`}
+                {...navCurrentProps(view === item.view)}
+                onClick={() => onViewChange(item.view)}
+              >
+                {item.label}
+                {item.view === 'events' && notificationUnreadCount > 0
+                  ? ` (${notificationUnreadCount})`
+                  : ''}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 

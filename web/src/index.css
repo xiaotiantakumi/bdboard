@@ -192,9 +192,50 @@ body {
   min-width: 0;
 }
 
-.global-bar > .view-switcher .toggle-group {
+.global-bar > .view-switcher .view-switcher-scroller {
+  display: flex;
   flex: 1 1 auto;
   min-width: 0;
+  position: relative;
+}
+
+/*
+  ピルはラッパーの中でも従来どおり余白いっぱいに伸ばす。ラッパー導入前は
+  .toggle-group 自身がこの flex: 1 1 auto を持っており、これが無いと既定の
+  flex: 0 1 auto に戻ってPC幅でピルがコンテンツ幅まで縮む(見た目の退行)。
+*/
+.global-bar > .view-switcher .view-switcher-scroller > .toggle-group {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+  フェードはスクロールコンテナ(.toggle-group)の外側ラッパー(.view-switcher-scroller)に置く。
+  .toggle-group は overflow-x: auto のスクロールコンテナなので、その中の position:absolute
+  の包含ブロックはスクロールされるコンテンツ側になる。擬似要素を .toggle-group 直下に置くと
+  コンテンツと一緒に流れて可視端から外れ、スクロール済みのとき左フェードが見えなくなる。
+*/
+.view-switcher-scroller.can-scroll-start::before,
+.view-switcher-scroller.can-scroll-end::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.view-switcher-scroller.can-scroll-start::before {
+  left: 0;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  background: linear-gradient(to right, var(--badge-neutral-bg), transparent);
+}
+
+.view-switcher-scroller.can-scroll-end::after {
+  right: 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: linear-gradient(to left, var(--badge-neutral-bg), transparent);
 }
 
 /*
