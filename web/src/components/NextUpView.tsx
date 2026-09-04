@@ -38,19 +38,50 @@ function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
 
 function renderLoopProgressSummary(
   progress: NextUpLoopProgress,
-  options?: { prefix?: string },
+  options?: { prefix?: string; showEndReason?: boolean },
 ): string {
   const completedPart = `完了 ${progress.completedCount}/${progress.totalCount}`;
-  const parts =
-    options?.prefix !== undefined && options.prefix.length > 0
-      ? [`${options.prefix} ${completedPart}`]
-      : [completedPart];
+  const parts: string[] = [];
+
+  if (options?.prefix !== undefined && options.prefix.length > 0) {
+    let header = options.prefix;
+    if (options.showEndReason && progress.endReason !== null) {
+      const endLabel =
+        progress.endReason === 'completed'
+          ? '完走'
+          : progress.endReason === 'poll_failed'
+            ? '中断(状況を確認できず)'
+            : '中断';
+      header = `${header} ${endLabel}`;
+    }
+    parts.push(`${header} | ${completedPart}`);
+  } else {
+    parts.push(completedPart);
+  }
+
   parts.push(`失敗 ${progress.failedCount}`);
   if (progress.cancelledCount > 0) {
     parts.push(`中止 ${progress.cancelledCount}`);
   }
   if (progress.unknownCount > 0) {
     parts.push(`不明 ${progress.unknownCount}`);
+  }
+  if (options?.showEndReason) {
+    let runningCount = 0;
+    if (progress.endReason === 'stopped' && progress.currentTicketId !== null) {
+      runningCount = 1;
+      parts.push(`実行中 ${runningCount}`);
+    }
+    const remaining =
+      progress.totalCount -
+      (progress.completedCount +
+        progress.failedCount +
+        progress.cancelledCount +
+        progress.unknownCount +
+        runningCount);
+    if (remaining > 0) {
+      parts.push(`未実行 ${remaining}`);
+    }
   }
   return parts.join(' | ');
 }
@@ -211,7 +242,8 @@ export function NextUpView({
                   className="quick-action-confirm-desc"
                 >
                   表示中の着手可能チケット {pendingBatchTicketIds.length}{' '}
-                  件を、上から1件ずつ直列でエージェント実行します。各チケットごとに
+                  件を、上から1件ずつ直列でエージェント実行します。Epic
+                  セクションのチケットは対象に含まれません。各チケットごとに
                   worktree の作成（またはクリーンな既存 worktree の再利用）と Claude
                   CLI の起動が走ります。1件が失敗してもループは止まらず次へ進みます。よろしいですか?
                 </p>
@@ -249,7 +281,10 @@ export function NextUpView({
                       {renderLoopProgressSummary(loopProgress)}
                     </>
                   ) : (
-                    renderLoopProgressSummary(loopProgress, { prefix: '前回の実行:' })
+                    renderLoopProgressSummary(loopProgress, {
+                      prefix: '前回の実行:',
+                      showEndReason: true,
+                    })
                   )}
                 </p>
                 {loopProgress.lastFailureReason !== null && (
@@ -304,6 +339,9 @@ export function NextUpView({
       {showEpics && visibleEpicCards.length > 0 && (
         <div className="next-up-epic-section">
           <h3 className="next-up-epic-title">Epic</h3>
+          <p className="next-up-epic-note">
+            Epic は「▶ 一括実行」の対象外です
+          </p>
           <div className="next-up-cards next-up-epic-cards">
             {renderCardList(visibleEpicCards, cardListProps)}
           </div>

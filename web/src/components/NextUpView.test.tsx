@@ -6,7 +6,11 @@ import type { AgentRunDetailDto, BoardCardDto, BoardDto } from '../api';
 import { ApiError, fetchAgentRun, startTicketRun } from '../api';
 import { AGENT_RUN_POLL_INTERVAL_MS } from './agentRunShared';
 import { NextUpView, type NextUpViewProps } from './NextUpView';
-import { useNextUpRunLoopController } from './nextUpRunLoop';
+import {
+  NEXT_UP_LOOP_POLL_MAX_DELAY_MS,
+  NEXT_UP_LOOP_POLL_MAX_FAILURES,
+  useNextUpRunLoopController,
+} from './nextUpRunLoop';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
 vi.mock('../api', async (importOriginal) => {
@@ -311,6 +315,18 @@ describe('NextUpView', () => {
   });
 });
 
+async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
+  for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS);
+    });
+    if (screen.queryByRole('button', { name: '▶ 一括実行' })) {
+      return;
+    }
+  }
+  throw new Error('batch run did not finish within timer budget');
+}
+
 describe('NextUpView batch run loop', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
@@ -435,7 +451,10 @@ describe('NextUpView batch run loop', () => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/前回の実行: 完了 1\/2 \| 失敗 1/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/前回の実行: 完走 \| 完了 1\/2 \| 失敗 1$/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/未実行/)).toBeNull();
   });
 
   it('returns to idle and stops polling when stop is pressed while a run never reaches terminal', async () => {
@@ -527,7 +546,7 @@ describe('NextUpView batch run loop', () => {
 
     await user.click(screen.getByRole('button', { name: 'Next Up へ' }));
     await waitFor(() => {
-      expect(screen.getByText(/前回の実行: 完了 3\/3 \| 失敗 0/)).toBeInTheDocument();
+      expect(screen.getByText(/前回の実行: 完走 \| 完了 3\/3 \| 失敗 0/)).toBeInTheDocument();
     });
   });
 
@@ -744,7 +763,10 @@ describe('NextUpView batch run loop', () => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
     });
 
-    expect(screen.getByText(/前回の実行: 完了 1\/2 \| 失敗 0 \| 中止 1/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/前回の実行: 完走 \| 完了 1\/2 \| 失敗 0 \| 中止 1$/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/未実行/)).toBeNull();
   });
 
   // App 相当の controller owner 自体をアンマウントして世代を切り替えた場合の remount UX。
@@ -861,7 +883,7 @@ describe('NextUpView batch run loop', () => {
 
     expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '■ 停止中…' })).not.toBeInTheDocument();
-    expect(screen.getByText(/前回の実行: 完了 1\/1 \| 失敗 0/)).toBeInTheDocument();
+    expect(screen.getByText(/前回の実行: 完走 \| 完了 1\/1 \| 失敗 0/)).toBeInTheDocument();
   });
 
   it('runs only visibleRegularCards up to the display limit', async () => {
@@ -893,5 +915,113 @@ describe('NextUpView batch run loop', () => {
 
     expect(mockStartTicketRun).toHaveBeenCalledTimes(5);
     expect(screen.getByText(/完了 5\/5/)).toBeInTheDocument();
+  });
+
+  it('shows interrupted summary with remaining count when a 20-ticket batch stops on the second ticket', async () => {
+    const cards = Array.from({ length: 20 }, (_, index) =>
+      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+    );
+    renderNextUpView(makeBoard(cards), { limit: 20 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      const ticketId = runId.replace(/^run-/, '');
+      if (ticketId === 'ticket-1') {
+        return makeRunDetail(runId, ticketId, 'succeeded');
+      }
+      return makeRunDetail(runId, ticketId, 'running');
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
+    });
+
+    await user.click(screen.getByRole('button', { name: '■ 停止' }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(
+        /前回の実行: 中断 \| 完了 1\/20 \| 失敗 0 \| 実行中 1 \| 未実行 18/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows poll_failed summary with unknown count and remaining when polling fails persistently', async () => {
+    const cards = Array.from({ length: 20 }, (_, index) =>
+      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+    );
+    renderNextUpView(makeBoard(cards), { limit: 20 });
+
+    mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    await finishBatchRunAfterPersistentPollFailures();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(
+        /前回の実行: 中断\(状況を確認できず\) \| 完了 0\/20 \| 失敗 0 \| 不明 1 \| 未実行 19/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows completed summary without interrupted wording when a 20-ticket batch finishes', async () => {
+    const cards = Array.from({ length: 20 }, (_, index) =>
+      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+    );
+    renderNextUpView(makeBoard(cards), { limit: 20 });
+
+    mockFetchAgentRun.mockImplementation(async (runId) => {
+      const ticketId = runId.replace(/^run-/, '');
+      return makeRunDetail(runId, ticketId, 'succeeded');
+    });
+
+    await startBatchRun(user);
+
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(20);
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 25);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(/前回の実行: 完走 \| 完了 20\/20 \| 失敗 0/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/中断/)).toBeNull();
+    expect(screen.queryByText(/未実行/)).toBeNull();
+  });
+
+  it('shows that epics are excluded from batch run in the Epic section', () => {
+    const cards = [
+      makeCard('task-1', 'Task One'),
+      makeCard('epic-1', 'Epic Alpha', 'proj-1', { issueType: 'epic', priority: 0 }),
+    ];
+    renderNextUpView(makeBoard(cards), { limit: 5, showEpics: true });
+
+    expect(
+      screen.getByText('Epic は「▶ 一括実行」の対象外です'),
+    ).toBeInTheDocument();
   });
 });

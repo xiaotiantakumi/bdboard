@@ -7,6 +7,8 @@ import {
 
 export type NextUpLoopPhase = 'idle' | 'running' | 'stopping';
 
+export type NextUpLoopEndReason = 'completed' | 'stopped' | 'poll_failed';
+
 export interface NextUpLoopProgress {
   currentTicketId: string | null;
   completedCount: number;
@@ -15,6 +17,7 @@ export interface NextUpLoopProgress {
   unknownCount: number;
   totalCount: number;
   lastFailureReason: string | null;
+  endReason: NextUpLoopEndReason | null;
 }
 
 export interface NextUpRunLoopController {
@@ -32,6 +35,7 @@ export const INITIAL_NEXT_UP_LOOP_PROGRESS: NextUpLoopProgress = {
   unknownCount: 0,
   totalCount: 0,
   lastFailureReason: null,
+  endReason: null,
 };
 
 export type AgentRunTerminalOutcome =
@@ -136,6 +140,7 @@ export async function runNextUpTicketLoop(options: {
     unknownCount: 0,
     totalCount: ticketIds.length,
     lastFailureReason: null,
+    endReason: null,
   };
   // Every emission is a fresh copy. `progress` below is a single mutable
   // accumulator that the loop keeps writing to, so handing the object itself to
@@ -144,9 +149,11 @@ export async function runNextUpTicketLoop(options: {
   onProgress({ ...progress });
 
   let preserveCurrentTicketId = false;
+  let endReason: NextUpLoopEndReason = 'completed';
 
   for (const ticketId of ticketIds) {
     if (isStopRequested()) {
+      endReason = 'stopped';
       break;
     }
 
@@ -163,6 +170,7 @@ export async function runNextUpTicketLoop(options: {
       progress.currentTicketId = null;
       onProgress({ ...progress });
       if (await delayUnlessStopped(AGENT_RUN_POLL_INTERVAL_MS, isStopRequested)) {
+        endReason = 'stopped';
         break;
       }
       continue;
@@ -174,11 +182,13 @@ export async function runNextUpTicketLoop(options: {
     );
 
     if (outcome === 'stopped') {
+      endReason = 'stopped';
       preserveCurrentTicketId = true;
       onProgress({ ...progress });
       break;
     }
     if (outcome === 'poll_failed') {
+      endReason = 'poll_failed';
       progress.unknownCount += 1;
       progress.lastFailureReason = describePollFailureError(lastPollError);
       preserveCurrentTicketId = true;
@@ -200,6 +210,7 @@ export async function runNextUpTicketLoop(options: {
   if (!preserveCurrentTicketId) {
     progress.currentTicketId = null;
   }
+  progress.endReason = endReason;
   onProgress({ ...progress });
   // Copy for the same reason as the emissions above. No current caller stores
   // this value, but it is the exported return type, so leaking the accumulator
