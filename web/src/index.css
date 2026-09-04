@@ -1742,10 +1742,17 @@ body {
   font-size: 0.75rem;
   line-height: 1.45;
   color: var(--color-text-secondary);
+  /* flex 子の min-width: auto (= min-content) では projectId / lastError の
+     空白無し長トークンが列幅を押し広げる。anywhere は min-content にも効く
+     (.card-title と同理由。break-word だけでは flex 内ではみ出しが残る)。 */
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .hygiene-reclaim-status-error {
   color: var(--color-danger, #c62828);
+  /* 親から overflow-wrap は継承されるが、エラー行も同じ折り返しを明示する */
+  overflow-wrap: anywhere;
 }
 
 .hygiene-issue-row-static {
