@@ -6,14 +6,40 @@ const MAX_WIDTH = 720;
 const MIN_REMAINING_WIDTH = 320;
 const RESIZE_STEP = 20;
 
+/** Matches index.css @media (max-width: 700px) where .side-panel-resize-handle { display: none }. */
+const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 700px)';
+
+/**
+ * Layout viewport width — the same value CSS media queries use
+ * (document.documentElement.clientWidth). Falls back to innerWidth when
+ * clientWidth is 0 (jsdom without layout; existing unit tests only stub innerWidth).
+ *
+ * grep audit (bdboard-d2u6): production code had innerWidth only in clampWidth/canResize;
+ * both now use clientWidth/matchMedia. E2E header-sticky / mobile-header-compact
+ * intentionally keep innerWidth to assert overflow does not inflate the layout viewport.
+ */
+function getLayoutViewportWidth(): number {
+  if (typeof window === 'undefined') return 0;
+  const clientWidth = document.documentElement.clientWidth;
+  return clientWidth || window.innerWidth;
+}
+
 function clampWidth(width: number): number {
-  const viewportWidth = typeof window === 'undefined' ? 0 : window.innerWidth;
+  const viewportWidth = getLayoutViewportWidth();
   const viewportMaximum = Math.max(MIN_WIDTH, viewportWidth - MIN_REMAINING_WIDTH);
   return Math.round(Math.min(Math.max(width, MIN_WIDTH), MAX_WIDTH, viewportMaximum));
 }
 
+/**
+ * Resize is allowed only above the mobile breakpoint. Uses matchMedia so JS agrees
+ * with CSS even when horizontal overflow inflates window.innerWidth.
+ */
 function canResize(): boolean {
-  return typeof window !== 'undefined' && window.innerWidth > 700;
+  if (typeof window === 'undefined') return false;
+  if (typeof window.matchMedia === 'function') {
+    return !window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
+  }
+  return getLayoutViewportWidth() > 700;
 }
 
 export function validateSidePanelWidth(value: unknown): number | null {
