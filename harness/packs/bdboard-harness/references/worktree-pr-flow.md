@@ -103,7 +103,7 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
 - **worktree からポートを掴む常駐プロセス（dev サーバー等）を起動しない。** ポートは
   メインチェックアウトの常設サーバーのものというプロジェクトが多く、衝突すると本体側を
   巻き込む。テスト・型チェック・lint はポートを掴まないので並列 worktree で問題なく走る。
-- 実装中は `bd heartbeat <id>` を打ち続ける（lease-params.md）。
+- 実装中は `bd heartbeat <id>` を打ち続ける（`scripts/bd-heartbeat.sh`。lease-params.md）。
 - **`.beads/` 配下を PR ブランチ内で変更しない。** 台帳の同期は Dolt 側
   （`bd dolt push/pull`）が担い、コード PR の diff に混ぜない。
 

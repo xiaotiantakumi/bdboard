@@ -40,7 +40,8 @@ heartbeat 途絶で reclaim が誤発火 — bdboard-3tw.99 / bdboard-l1t.4）�
 
 - **保持している全 in-flight チケットへ、同じ周期でまとめて打つ**。周期は TTL/3 以下、
   かつどれだけ TTL が長くても **5 分以下**。heartbeat はコミットを生まないため、全チケットへ
-  打っても台帳コストはゼロ — 打ちすぎる方向に倒す。
+  打っても台帳コストはゼロ — 倒してよいのは**頻度と対象範囲**であって**寿命ではない**。
+  寿命は下の「heartbeat ループの寿命」が本則。
 - **gate 待ち・委譲待ちのチケットも in-flight に数える**（in_progress で保持している限り対象。
   対象から外してよいのは close したか、負けて撤退したチケットだけ）。
 - 一括の実務はループ1本でよい。定周期に加えて、長時間かかる操作の直前にも全チケット分を打つ:
@@ -55,6 +56,50 @@ heartbeat 途絶で reclaim が誤発火 — bdboard-3tw.99 / bdboard-l1t.4）�
   assignee で動くため、そこに載る全部が自分の保持分とは限らない点に注意。
 - 1枚でも失敗したら、そのチケットについて「失敗の意味」（下）に従い直ちに手を止めて
   状況を確認する。残りのチケットの heartbeat は続けてよい。
+
+## heartbeat ループの寿命
+
+生ループを手書きしない。**同梱スクリプト `scripts/bd-heartbeat.sh` を使う**こと。
+呼び出し形（実行ビットは注入時に hooks にしか付かないので `bash` 経由）:
+
+```bash
+bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh start \
+  --session-pid $$ --interval 90 --repo . <id>...
+bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh stop   --session-pid $$
+bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh status --session-pid $$
+```
+
+`start` は**自分でデタッチする**ので、呼び出し側に `&` や `(nohup … &)` を書かせない
+（hooks の「二重バックグラウンド化」deny と衝突させないための設計）。
+claim / close のたびに `start` を**再実行するだけ**で ID リストが更新される
+（同一 session-pid の旧ループは PID 指定で停止されて置き換わる。reclaim → open → 再 claim の
+往復もこれで吸収される）。
+
+寿命は3重に束縛される（どれか1つでも成立したらループは自分で終了する）:
+
+1. **対象 ID がすべて脱落したら終了。**
+2. **起動元セッションが消えたら終了**（`kill -0` に加え、起動時に控えた
+   `ps -o lstart=` と毎周比較して **PID 再利用を弾く**）。
+3. **`--max-hours`（既定 12）の上限で終了**。第三のベルト。
+
+ID の脱落条件（打ちすぎ／打ち足りないの両方を避ける倒し方）:
+
+- heartbeat の**終了コードそのものを所有権の問い合わせとして使う**。bd の仕様は
+  「所有者のみ heartbeat でき、lease が reclaim 済みかチケットが closed なら失敗」。
+  よって**正常系では bd の追加呼び出しはゼロ**。`bd show` の定期ポーリングはしない。
+- heartbeat が失敗した ID についてのみ `bd show <id> --json` を1回。
+  `status != in_progress` なら**確定で脱落**。
+- `bd show` **自体**が失敗（Dolt ロック等の一時障害）したら**脱落させない＝打ち続ける**
+  （**fail-open**）。一時障害で生きたチケットを外すと `heartbeat-partial` を再現するため。
+  ただし**同一 ID で連続3回**失敗したら脱落させる（3 × 90s > TTL 5分 なので、その時点で
+  lease はどのみち死んでいる）。
+- セッション生存の判定が**不能**なときは**止める方向に倒す（fail-close）**。
+  孤児が残る害のほうが早く止まる害より大きい — セッションが生きているなら `start` を
+  再実行すれば済む。
+
+ID 脱落・セッション束縛は**打ち足りない**方向の失敗（`heartbeat-partial`）と鏡像の関係にある
+（鏡像: `heartbeat-orphan-loop`）。failure-catalog の `heartbeat-partial` /
+`heartbeat-orphan-loop` の両方を参照。
 
 ## bd heartbeat の使い方と失敗の意味
 

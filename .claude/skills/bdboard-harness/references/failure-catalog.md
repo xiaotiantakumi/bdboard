@@ -44,7 +44,12 @@
 ### heartbeat-partial — アクティブな1枚だけ heartbeat し、保持中の他チケットが reclaim された（8並列運用中に実測）
 - 原因: gate 待ち・委譲待ちで並行保持しているチケットを延命対象から外した
 - 防止: 全 in-flight チケットへ同周期で一括 heartbeat（本則: SKILL.md 規律2 手順5）
-- 出典: bdboard-3tw.99 / bdboard-l1t.4
+- 出典: bdboard-3tw.99 / bdboard-l1t.4（鏡像: heartbeat-orphan-loop）
+
+### heartbeat-orphan-loop — デタッチした heartbeat ループが close 後・セッション終了後も残り in_progress の lease を延命し続けた（2026-09-04、同日5本）
+- 原因: lease-params.md が heartbeat の頻度・対象範囲は規定していたが**寿命を規定していなかった**ため、静的 ID リスト＋時間上限だけの生ループが書かれた
+- 防止: 生ループを書かず `scripts/bd-heartbeat.sh` を使う（寿命は ID リスト・セッション・`--max-hours` の3重に束縛）。本則: `lease-params.md`「heartbeat ループの寿命」。フック deny は現時点では作らない（スクリプト＋規律で足りる）。同じ失敗が再発して D 化したら pre-bash-guard 規則の追加を起票する
+- 出典: bdboard-0kql（実測 bdboard-cdqb）（鏡像: heartbeat-partial）
 
 ### duplicate-helper-parallel — 並列実装で同目的のヘルパーが別々に生まれ、後から統合チケットが10件超発生（2026-08）
 - 原因: 着手前に既存実装を探す手順が規律に無く、`npm run drift` 相当の衝突検知は PR 直前にしか働かない（ルール不在 = brushup-protocol.md §2 の分類 A）
