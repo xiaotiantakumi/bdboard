@@ -865,6 +865,12 @@ body {
   text-transform: uppercase;
 }
 
+.next-up-epic-note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
 .next-up-cards {
   display: flex;
   flex-direction: column;

@@ -204,6 +204,7 @@ describe('nextUpRunLoop', () => {
       const result = (await loopPromise) as NextUpLoopProgress;
       expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
       expect(result.unknownCount).toBe(1);
+      expect(result.endReason).toBe('poll_failed');
       expect(result.lastFailureReason).toMatch(
         /実行状況を確認できませんでした/,
       );
@@ -279,7 +280,65 @@ describe('nextUpRunLoop', () => {
 
       expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
       expect(result.completedCount).toBe(2);
+      expect(result.endReason).toBe('completed');
       expect(result.currentTicketId).toBeNull();
+    });
+
+    it('sets endReason to stopped when stop is requested', async () => {
+      let stopRequested = false;
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        if (ticketId === 'ticket-1') {
+          return makeRunDetail(runId, ticketId, 'succeeded');
+        }
+        return makeRunDetail(runId, ticketId, 'running');
+      });
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2', 'ticket-3'],
+        isStopRequested: () => stopRequested,
+        onProgress: () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+      stopRequested = true;
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+
+      const result = await loopPromise;
+      expect(result.completedCount).toBe(1);
+      expect(result.endReason).toBe('stopped');
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
+    });
+
+    it('sets endReason to poll_failed when polling fails', async () => {
+      mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+      });
+
+      await finishLoopWithTimers(loopPromise);
+      const result = await loopPromise;
+      expect(result.endReason).toBe('poll_failed');
+    });
+
+    it('sets endReason to completed when every ticket finishes', async () => {
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        const ticketId = runId.replace(/^run-/, '');
+        return makeRunDetail(runId, ticketId, 'succeeded');
+      });
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+      });
+
+      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
+      const result = await loopPromise;
+      expect(result.endReason).toBe('completed');
     });
 
     it('never hands the same progress object to two emissions', async () => {
@@ -317,6 +376,7 @@ describe('nextUpRunLoop', () => {
         unknownCount: 0,
         totalCount: 2,
         lastFailureReason: null,
+        endReason: null,
       });
     });
   });
