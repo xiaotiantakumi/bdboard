@@ -276,6 +276,9 @@ export function validateString(value: unknown): string | null {
 
 export const BOARD_FILTER_PRESET_NAME_MAX_LENGTH = 40;
 
+export const DEFAULT_HIDE_DONE = true;
+export const DEFAULT_STALLED_ONLY = false;
+
 export interface BoardFilterPreset {
   id: string;
   name: string;
@@ -285,6 +288,8 @@ export interface BoardFilterPreset {
   issueTypes: string[];
   labels: string[];
   filterText: string;
+  hideDone: boolean;
+  stalledOnly: boolean;
   /*
     「既定にする」で選ばれたプリセット。保存済みの絞り込み状態がまだ1つも無い
     ブラウザ(= 初回起動)でだけ自動適用される。既に自分の絞り込みを持っている
@@ -300,6 +305,8 @@ export interface BoardFilterPresetState {
   issueTypes: string[];
   labels: string[];
   filterText: string;
+  hideDone: boolean;
+  stalledOnly: boolean;
 }
 
 function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
@@ -341,6 +348,26 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
   if (filterText === null) {
     return null;
   }
+  let hideDone: boolean;
+  if (record.hideDone === undefined) {
+    hideDone = DEFAULT_HIDE_DONE;
+  } else {
+    const validatedHideDone = validateBoolean(record.hideDone);
+    if (validatedHideDone === null) {
+      return null;
+    }
+    hideDone = validatedHideDone;
+  }
+  let stalledOnly: boolean;
+  if (record.stalledOnly === undefined) {
+    stalledOnly = DEFAULT_STALLED_ONLY;
+  } else {
+    const validatedStalledOnly = validateBoolean(record.stalledOnly);
+    if (validatedStalledOnly === null) {
+      return null;
+    }
+    stalledOnly = validatedStalledOnly;
+  }
   const preset: BoardFilterPreset = {
     id: record.id,
     name,
@@ -350,6 +377,8 @@ function validateBoardFilterPreset(value: unknown): BoardFilterPreset | null {
     issueTypes,
     labels,
     filterText,
+    hideDone,
+    stalledOnly,
   };
   // 既存の保存データには isDefault が無いので、true のときだけ持たせる(欠損は false 扱い)。
   if (record.isDefault === true) {
@@ -457,6 +486,8 @@ export function boardFilterPresetStatesEqual(
     left.view === right.view &&
     left.priorityCeiling === right.priorityCeiling &&
     left.filterText === right.filterText &&
+    left.hideDone === right.hideDone &&
+    left.stalledOnly === right.stalledOnly &&
     stringArraysEqualUnordered(left.issueTypes, right.issueTypes) &&
     stringArraysEqualUnordered(left.labels, right.labels) &&
     stringArraysEqualUnordered(left.selectedProjectIds, right.selectedProjectIds)
@@ -482,6 +513,8 @@ export function hasStoredBoardFilterState(storage?: Pick<Storage, 'getItem'>): b
     UI_STORAGE_KEYS.boardIssueTypes,
     UI_STORAGE_KEYS.boardLabels,
     UI_STORAGE_KEYS.boardFilterText,
+    UI_STORAGE_KEYS.hideDone,
+    UI_STORAGE_KEYS.stalledOnly,
   ];
   try {
     const target = storage ?? (typeof localStorage === 'undefined' ? null : localStorage);
@@ -522,6 +555,12 @@ export function describeBoardFilterPresetState(state: BoardFilterPresetState): s
   }
   if (state.labels.length > 0) {
     parts.push(`ラベル${state.labels.length}件`);
+  }
+  if (state.stalledOnly) {
+    parts.push('滞留のみ');
+  }
+  if (!state.hideDone) {
+    parts.push('完了も表示');
   }
   const filterText = state.filterText.trim();
   if (filterText !== '') {

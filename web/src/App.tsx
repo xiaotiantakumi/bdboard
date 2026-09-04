@@ -72,6 +72,8 @@ import {
   hasStoredBoardFilterState,
   validateRecentTickets,
   recordRecentTicket,
+  DEFAULT_HIDE_DONE,
+  DEFAULT_STALLED_ONLY,
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from './uiPersistedState';
@@ -102,12 +104,12 @@ export function App() {
   );
   const [hideDone, setHideDone] = usePersistedState(
     UI_STORAGE_KEYS.hideDone,
-    true,
+    DEFAULT_HIDE_DONE,
     validateBoolean,
   );
   const [stalledOnly, setStalledOnly] = usePersistedState(
     UI_STORAGE_KEYS.stalledOnly,
-    false,
+    DEFAULT_STALLED_ONLY,
     validateBoolean,
   );
   const [collapsedLanes, setCollapsedLanes] = usePersistedState(
@@ -357,6 +359,8 @@ export function App() {
       issueTypes: boardIssueTypes,
       labels: boardLabels,
       filterText: boardFilterText,
+      hideDone,
+      stalledOnly,
     }),
     [
       view,
@@ -365,6 +369,8 @@ export function App() {
       boardIssueTypes,
       boardLabels,
       boardFilterText,
+      hideDone,
+      stalledOnly,
     ],
   );
 
@@ -375,6 +381,8 @@ export function App() {
     setBoardIssueTypes(preset.issueTypes);
     setBoardLabels(preset.labels);
     setBoardFilterText(preset.filterText);
+    setHideDone(preset.hideDone);
+    setStalledOnly(preset.stalledOnly);
   }, [
     setView,
     setSelectedProjectIds,
@@ -382,6 +390,8 @@ export function App() {
     setBoardIssueTypes,
     setBoardLabels,
     setBoardFilterText,
+    setHideDone,
+    setStalledOnly,
   ]);
 
   /*

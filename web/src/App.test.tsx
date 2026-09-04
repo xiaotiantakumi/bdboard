@@ -769,6 +769,75 @@ describe('board filter presets (bdboard-3tw.112)', () => {
     expect(screen.getByLabelText('優先度上限')).toHaveValue('all');
     expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('');
   });
+
+  it('applies hideDone and stalledOnly from a new-schema preset', async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      UI_STORAGE_KEYS.boardFilterPresets,
+      JSON.stringify([
+        {
+          id: 'preset-toggle-filter',
+          name: '完了表示+滞留のみ',
+          view: 'merged',
+          selectedProjectIds: ['proj-1'],
+          priorityCeiling: 'all',
+          issueTypes: [],
+          labels: [],
+          filterText: '',
+          hideDone: false,
+          stalledOnly: true,
+        },
+      ]),
+    );
+    localStorage.setItem(UI_STORAGE_KEYS.boardPriorityCeiling, JSON.stringify('all'));
+    localStorage.setItem(UI_STORAGE_KEYS.boardIssueTypes, JSON.stringify([]));
+    localStorage.setItem(UI_STORAGE_KEYS.boardFilterText, JSON.stringify(''));
+
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'done レーンを隠す' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: '滞留のみ表示' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'フィルタプリセット: 未選択' }));
+    await user.click(screen.getByRole('button', { name: '完了表示+滞留のみ' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'done レーンを隠す' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+      expect(screen.getByRole('button', { name: '滞留のみ表示' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+    });
+  });
+
+  it('does not auto-apply the default preset when only hideDone was stored', async () => {
+    seedDefaultPreset();
+    localStorage.setItem(UI_STORAGE_KEYS.hideDone, JSON.stringify(false));
+
+    renderApp();
+
+    await waitFor(() => {
+      expect(screen.getByText('Persist Match UniqueText')).toBeInTheDocument();
+    });
+    expect(screen.getByLabelText('優先度上限')).toHaveValue('all');
+    expect(screen.getByLabelText('チケットの絞り込み')).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'done レーンを隠す' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+  });
 });
 
 describe('header help overlays', () => {
