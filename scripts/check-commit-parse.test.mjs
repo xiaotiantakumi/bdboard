@@ -127,6 +127,26 @@ describe('findUnparsableCommits', () => {
     expect(shortAllowlist.failures).toHaveLength(0);
   });
 
+  // bdboard-qhsb: PR でもこのガードを走らせるようにした。検査範囲はそのPRが足す
+  // コミットだけだが、ブランチが main を merge で取り込んでいればそこに
+  // "Merge X into Y" が普通に混ざる。これが failure に分類されると、CHANGELOG とは
+  // 何の関係も無い理由で PR が赤くなる。conventional な type を持たないので
+  // CHANGELOG 対象外 = warning 止まり、という前提の上に ci.yml のコメントが
+  // 乗っているので、ここで固定しておく。
+  it('treats a GitHub merge commit as a warning, never a failure', () => {
+    const mergeCommit = {
+      sha: '1111111111111111111111111111111111111111',
+      subject: 'Merge 2222222 into 3333333',
+      message: 'Merge 2222222 into 3333333\n',
+    };
+
+    const result = findUnparsableCommits([mergeCommit], { allowlist: [] });
+
+    expect(result.failures).toHaveLength(0);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0].sha).toBe(mergeCommit.sha);
+  });
+
   it('keeps the production allowlist empty', () => {
     // このガードは「CHANGELOG から黙って消える」ことを検知するためのもので、
     // 除外リストはその検知を無効化する唯一の手段。既定で空であることを固定して、

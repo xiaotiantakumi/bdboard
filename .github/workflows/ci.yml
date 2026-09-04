@@ -140,7 +140,6 @@ jobs:
   # 見ればタグを切る前に間に合う。concurrency で前 run がキャンセルされても範囲全体を
   # 見るので後続 run が取りこぼしを拾い直せる。
   commit-parse:
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -155,4 +154,36 @@ jobs:
           cache-dependency-path: package-lock.json
 
       - run: npm ci
-      - run: npm run check:commits
+
+      # main への push: 直近のリリースタグ以降を全部見る (既定の範囲)。
+      # ここが最終的な砦で、タグを切る前に取りこぼしが無いことを保証する。
+      - if: github.event_name == 'push'
+        run: npm run check:commits
+
+      # PR: そのPRが足すコミットだけを見る (bdboard-qhsb)。
+      #
+      # なぜ PR でも見る必要があるのか: GitHub の squash マージは、コミットが1件なら
+      # **そのコミットのメッセージをそのまま** squash メッセージにする。このリポジトリは
+      # 1PR=1コミットが常態なので、main に載るメッセージはマージ前からブランチ上に実在する。
+      # つまり PR 時点で検査できる。push だけで見ていた頃は、#260 のように壊れた
+      # メッセージがマージされて初めて main が赤くなり、その時点では履歴書き換えか
+      # CHANGELOG 手追記しか復旧手段が無かった (bdboard-ym9r)。
+      #
+      # なぜ既定の範囲を使わないのか: 既定は `v<直近リリース>..HEAD` で、main 上の
+      # 既存コミットまで巻き込む。main に未解決の解析不能コミットが1件でもあると、
+      # 無関係な PR が全部赤くなって道連れになる。PR が足した分だけを見る。
+      #
+      # 終端に HEAD ではなく head.sha を使う理由: pull_request の HEAD は GitHub が
+      # 生成したマージ ref (refs/pull/N/merge) で、base の *現在の* 先端に対して作られる。
+      # イベント発火からチェックアウトまでの間に main が動くと、base.sha..HEAD に
+      # 無関係な main のコミットが紛れ込み、避けたかった道連れがそのまま起きる。
+      # base.sha..head.sha なら main がどう動いてもこの PR のコミットだけになる。
+      #
+      # なお範囲にマージコミット ("Merge X into Y") が入ること自体は許容できる。
+      # ブランチが main を merge で取り込んでいれば普通に混ざるが、conventional な
+      # type を持たないので CHANGELOG 対象外に分類され warning 止まり (実測 2026-09-04)。
+      # この前提は scripts/check-commit-parse.test.mjs で固定してある。
+      - if: github.event_name == 'pull_request'
+        run: |
+          npm run check:commits -- --range \
+            ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
