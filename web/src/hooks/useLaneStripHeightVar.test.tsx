@@ -117,10 +117,62 @@ describe('useLaneStripHeightVar', () => {
     const { unmount } = render(<LaneStripProbe />);
     const strip = document.querySelector('.lane-indicator-strip');
     expect(strip).not.toBeNull();
-    expect(observe).toHaveBeenCalledWith(strip);
+    expect(observe).toHaveBeenCalledWith(strip, { box: 'border-box' });
 
     unmount();
     expect(disconnect).toHaveBeenCalled();
+  });
+
+  it('keeps --lane-strip-height when one of multiple strips unmounts', () => {
+    delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    rectSpy = stubElementHeight(44);
+
+    const first = render(<LaneStripProbe />);
+    const second = render(<LaneStripProbe />);
+    expect(document.documentElement.style.getPropertyValue('--lane-strip-height')).toBe('44px');
+    expect(document.querySelectorAll('.lane-indicator-strip').length).toBe(2);
+
+    second.unmount();
+
+    expect(document.querySelectorAll('.lane-indicator-strip').length).toBe(1);
+    expect(document.documentElement.style.getPropertyValue('--lane-strip-height')).toBe('44px');
+
+    first.unmount();
+    expect(document.querySelectorAll('.lane-indicator-strip').length).toBe(0);
+    expect(document.documentElement.style.getPropertyValue('--lane-strip-height')).toBe('');
+  });
+
+  it('keeps updating on window resize after a sibling strip unmounts', () => {
+    delete (globalThis as { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    rectSpy = stubElementHeight(44);
+
+    const first = render(<LaneStripProbe />);
+    const second = render(<LaneStripProbe />);
+    expect(document.documentElement.style.getPropertyValue('--lane-strip-height')).toBe('44px');
+
+    second.unmount();
+    expect(document.querySelectorAll('.lane-indicator-strip').length).toBe(1);
+
+    // The surviving strip must still track window resizes: addEventListener de-duplicates
+    // identical listener references, so a shared module-level handler would have been
+    // removed for everyone by the unmount above.
+    rectSpy.mockReturnValue({
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 64,
+      top: 0,
+      right: 0,
+      bottom: 64,
+      left: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent(window, new Event('resize'));
+
+    expect(document.documentElement.style.getPropertyValue('--lane-strip-height')).toBe('64px');
+
+    first.unmount();
+    expect(document.documentElement.style.getPropertyValue('--lane-strip-height')).toBe('');
   });
 
   it('clears --lane-strip-height when active is false', () => {

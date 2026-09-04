@@ -280,6 +280,15 @@ test.describe('scroll-padding-top', () => {
       isCard: boolean;
     };
 
+    function isStripStuck(m: FocusMetrics): boolean {
+      return (
+        m.headerBottom !== null &&
+        m.stripTop !== null &&
+        m.stripBottom !== null &&
+        m.stripTop <= m.headerBottom + 1
+      );
+    }
+
     async function collectFocusMetrics(): Promise<FocusMetrics> {
       return page.evaluate(() => {
         const header = document.querySelector('.header');
@@ -300,12 +309,8 @@ test.describe('scroll-padding-top', () => {
     function stickyBottomFor(metrics: FocusMetrics): number {
       expect(metrics.headerBottom).not.toBeNull();
       let stickyBottom = metrics.headerBottom!;
-      if (
-        metrics.stripBottom !== null &&
-        metrics.stripTop !== null &&
-        metrics.stripTop <= metrics.headerBottom! + 1
-      ) {
-        stickyBottom = Math.max(stickyBottom, metrics.stripBottom);
+      if (isStripStuck(metrics)) {
+        stickyBottom = Math.max(stickyBottom, metrics.stripBottom!);
       }
       return stickyBottom;
     }
@@ -353,11 +358,7 @@ test.describe('scroll-padding-top', () => {
       if (metrics.scrollY > 0) {
         sawPageScroll = true;
       }
-      if (
-        metrics.headerBottom !== null &&
-        metrics.stripTop !== null &&
-        metrics.stripTop <= metrics.headerBottom + 1
-      ) {
+      if (isStripStuck(metrics)) {
         sawStripSticky = true;
       }
       assertCardBelowStickyChrome(metrics, 'down', move, 'j');
@@ -371,7 +372,50 @@ test.describe('scroll-padding-top', () => {
 
     // Phase 2: scroll to maxScrollY first so the board sits above the viewport; then k must
     // scroll the document up (scrollIntoView + scroll-padding-top), independent of header height.
-    await page.evaluate((y) => window.scrollTo(0, y), maxScrollY);
+    // Widen the mutation-detection margin from ~3px to >150px, and exercise the production
+    // ResizeObserver path in a real browser: min-height changes the content box, so
+    // useLaneStripHeightVar's RO actually fires and --lane-strip-height becomes ~200px
+    // through the production code path (not by test-side stubbing).
+    await page.addStyleTag({ content: '.lane-indicator-strip { min-height: 200px; }' });
+    await page.waitForFunction(
+      () =>
+        Number.parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue('--lane-strip-height'),
+        ) >= 200,
+      undefined,
+      { timeout: 5_000 },
+    );
+
+    // Complements (does not replace) the geometric card-overlap assertions below: this one
+    // is independent of fixture card geometry. Both hooks write Math.ceil()'d px, so the
+    // computed calc() must equal the sum of the two ceil'd measured heights exactly.
+    const paddingProbe = await page.evaluate(() => {
+      const header = document.querySelector<HTMLElement>('.header');
+      const strip = document.querySelector<HTMLElement>('.lane-indicator-strip');
+      return {
+        headerHeight: header ? header.getBoundingClientRect().height : null,
+        stripHeight: strip ? strip.getBoundingClientRect().height : null,
+        scrollPaddingTop: getComputedStyle(document.documentElement).scrollPaddingTop,
+      };
+    });
+    expect(paddingProbe.headerHeight, '.header must exist for scroll-padding probe').not.toBeNull();
+    expect(paddingProbe.stripHeight, '.lane-indicator-strip must exist for scroll-padding probe').not.toBeNull();
+    expect(
+      paddingProbe.stripHeight!,
+      `strip must be force-grown for phase 2 (stripHeight=${paddingProbe.stripHeight})`,
+    ).toBeGreaterThanOrEqual(200);
+    expect(
+      Number.parseFloat(paddingProbe.scrollPaddingTop),
+      'html scroll-padding-top must equal header height + lane strip height ' +
+        `(headerHeight=${paddingProbe.headerHeight}, stripHeight=${paddingProbe.stripHeight}, ` +
+        `scrollPaddingTop=${paddingProbe.scrollPaddingTop}) — if this equals only the header ` +
+        'height, index.css lost the + var(--lane-strip-height) term',
+    ).toBe(Math.ceil(paddingProbe.headerHeight!) + Math.ceil(paddingProbe.stripHeight!));
+
+    const phase2MaxScrollY = await page.evaluate(() =>
+      Math.max(0, document.documentElement.scrollHeight - window.innerHeight),
+    );
+    await page.evaluate((y) => window.scrollTo(0, y), phase2MaxScrollY);
     let upwardScrollCount = 0;
     let lastPhase2HeaderBottom: number | null = null;
     let lastPhase2StripTop: number | null = null;
@@ -383,11 +427,7 @@ test.describe('scroll-padding-top', () => {
       if (metrics.scrollY < previousScrollY) {
         upwardScrollCount += 1;
       }
-      if (
-        metrics.headerBottom !== null &&
-        metrics.stripTop !== null &&
-        metrics.stripTop <= metrics.headerBottom + 1
-      ) {
+      if (isStripStuck(metrics)) {
         sawStripSticky = true;
       }
       lastPhase2HeaderBottom = metrics.headerBottom;
@@ -407,8 +447,9 @@ test.describe('scroll-padding-top', () => {
       sawStripSticky,
       'upward navigation after scrollTo(maxScrollY) must observe lane strip stuck below header ' +
         '(otherwise strip scroll-padding coverage is vacuous — card overlap checks never ' +
-        'include stripBottom). Measured phase 2: stripTop=193, headerBottom=193 at scrollY≈1402; ' +
-        `last observed headerBottom=${lastPhase2HeaderBottom}, stripTop=${lastPhase2StripTop}`,
+        'include stripBottom). Phase 2 force-grows the strip to min-height:200px so the strip ' +
+        'covers ≥200px below the header; last observed ' +
+        `headerBottom=${lastPhase2HeaderBottom}, stripTop=${lastPhase2StripTop}`,
     ).toBe(true);
   });
 });
