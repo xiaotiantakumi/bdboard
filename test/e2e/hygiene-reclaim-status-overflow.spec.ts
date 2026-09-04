@@ -54,6 +54,13 @@ async function installLeaseHealthReclaimRoute(page: Page): Promise<void> {
     const response = await route.fetch();
     const body = (await response.json()) as LeaseHealthFixture;
 
+    expect(
+      body.staleLeases.length,
+      'この spec は BDBOARD_E2E_BD_LEASE_FIXTURE (test/e2e/global-setup.ts で設定) に依存している。' +
+        'staleLeases が空だと HygienePanel.tsx:559 のガードで reclaim ブロック自体が描画されず、' +
+        'reclaim の不具合に見える形でタイムアウトする。',
+    ).toBeGreaterThan(0);
+
     const requestUrl = new URL(route.request().url());
     const projectsParam = requestUrl.searchParams.get('projects') ?? '';
     const projectIdFromQuery = projectsParam.split(',').filter(Boolean)[0] ?? null;
@@ -138,6 +145,10 @@ test.describe('hygiene reclaim status overflow', () => {
 
     const metrics = await readReclaimStatusMetrics(page);
 
+    // potency ガードは .hygiene-reclaim-status-error (lastError 側) だけを測る。
+    // projectId 側はコンテナの scrollWidth <= clientWidth による間接検証にとどまり、
+    // e2e の tmp パス長に依存する (tmp root が短くなると projectId 側は静かに検証されなくなる)。
+    // バグ再現には lastError 側だけで足りる、という判断でこうしている。
     expect(
       metrics.naturalSingleLineWidth,
       `fixture lastError is too short to exercise wrap: natural single-line width ${metrics.naturalSingleLineWidth} must exceed clientWidth ${metrics.clientWidth}`,
