@@ -1,4 +1,5 @@
 import { compareStrings } from '../../domain/compare.js';
+import type { ReclaimRunRecord } from '../../domain/harness-kpi.js';
 import type { Project } from '../../domain/project.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
@@ -31,11 +32,19 @@ export interface ReclaimSchedulerConfig {
   readonly olderThan: string;
 }
 
+/**
+ * reclaim が 1 回成功するたびに呼ばれる観測フック。ハーネス KPI 用のリングバッファ
+ * (reclaim-history.ts) を積むために使う。**スケジューラ本体の挙動は変えない** —
+ * observer が投げても reclaim の巡回は続く。
+ */
+export type ReclaimRunObserver = (run: ReclaimRunRecord) => void;
+
 export interface ReclaimSchedulerDeps {
   readonly reclaimer: LeaseReclaimer;
   readonly listProjects: () => readonly Project[];
   readonly config: ReclaimSchedulerConfig;
   readonly logError?: (message: string) => void;
+  readonly observer?: ReclaimRunObserver;
 }
 
 export interface ReclaimScheduler {
@@ -96,11 +105,25 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
     return entry;
   };
 
+  const notifyObserver = (run: ReclaimRunRecord): void => {
+    const observer = deps.observer;
+    if (observer === undefined) {
+      return;
+    }
+    try {
+      observer(run);
+    } catch (err) {
+      // 観測は付随機能。ここで巡回を止めない。
+      logError(`Reclaim observer failed for project=${run.projectId}: ${errorMessage(err)}`);
+    }
+  };
+
   const runForProject = async (project: Project): Promise<void> => {
     const entry = ensureProjectStatus(project.id);
     try {
       const result = await reclaimer.reclaim(project.rootPath, config.olderThan);
-      entry.lastRunAt = new Date();
+      const runAt = new Date();
+      entry.lastRunAt = runAt;
 
       if (result.exitCode !== 0 || result.failureKind !== undefined) {
         entry.reclaimedCount = null;
@@ -123,6 +146,13 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
       entry.reclaimedCountUnknown = parsed.count === null;
       entry.rawSummary = parsed.summary.length > 0 ? parsed.summary : null;
       entry.lastError = null;
+
+      notifyObserver({
+        projectId: project.id,
+        at: runAt,
+        reclaimedCount: parsed.count,
+        ticketIds: parsed.ticketIds,
+      });
     } catch (err) {
       entry.lastRunAt = new Date();
       entry.reclaimedCount = null;

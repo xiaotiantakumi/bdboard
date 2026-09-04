@@ -24,6 +24,7 @@ import {
   DEFAULT_RECLAIM_INTERVAL_MS,
   DEFAULT_RECLAIM_OLDER_THAN,
 } from './application/lease/reclaim-scheduler.js';
+import { createReclaimHistory } from './application/lease/reclaim-history.js';
 import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
 import { createUpdateCheckService } from './application/update/get-update-check.js';
 import { createAiQuotaThresholdPublisher } from './application/ai-quota/ai-quota-threshold-alerts.js';
@@ -800,6 +801,9 @@ async function main(): Promise<void> {
     }, cfdSnapshotIntervalMs);
   }
 
+  // ハーネス KPI 用の reclaim 記録 (bdboard-pkr6.9)。サーバー起動からの累積で
+  // 永続化しない — 起動時刻を UI に注記して読ませる。
+  const reclaimHistory = createReclaimHistory();
   const reclaimScheduler = createReclaimScheduler({
     reclaimer: leaseReclaimer,
     listProjects: () => cache.listProjects().map((entry) => entry.project),
@@ -810,6 +814,9 @@ async function main(): Promise<void> {
     },
     logError: (message) => {
       console.error(message);
+    },
+    observer: (run) => {
+      reclaimHistory.record(run);
     },
   });
   reclaimScheduler.start();
@@ -917,6 +924,7 @@ async function main(): Promise<void> {
       leaseReader,
       mergeSlotReader,
       reclaimScheduler,
+      reclaimHistory,
     }),
   );
 
