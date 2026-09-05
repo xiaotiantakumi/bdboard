@@ -218,6 +218,27 @@ describe('createApiRoutes', () => {
     expect(body).toEqual({ ok: true, now: NOW.toISOString(), version: '1.2.3' });
   });
 
+  it('includes instanceNonce in health payload when deps provide it', async () => {
+    const deps = createDeps({
+      applicationVersion: {
+        getVersion: () => '1.2.3',
+      },
+      instanceNonce: 'run-nonce-abc',
+    });
+    const app = createApiRoutes(deps);
+
+    const response = await app.request('/api/health');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      now: NOW.toISOString(),
+      version: '1.2.3',
+      instanceNonce: 'run-nonce-abc',
+    });
+  });
+
   it('returns status with ISO lastRefreshAt', async () => {
     const deps = createDeps();
     const app = createApiRoutes(deps);

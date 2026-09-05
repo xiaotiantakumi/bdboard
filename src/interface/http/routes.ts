@@ -124,6 +124,8 @@ export interface ApiStatus {
 export interface ApiDeps {
   readonly cache: BoardCache;
   readonly applicationVersion: ApplicationVersionProvider;
+  /** e2e 等 per-run 識別子。未設定時は /api/health に含めない (通常運用の応答形を維持)。 */
+  readonly instanceNonce?: string;
   readonly now: () => Date;
   readonly getStatus: () => ApiStatus;
   readonly refresh: () => Promise<void>;
@@ -559,7 +561,12 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   app.use('*', createWriteGuardMiddleware(deps.writeAccess ?? {}));
 
   app.get('/api/health', (c) => {
-    return c.json({ ok: true, now: deps.now().toISOString(), version: applicationVersion });
+    return c.json({
+      ok: true,
+      now: deps.now().toISOString(),
+      version: applicationVersion,
+      ...(deps.instanceNonce !== undefined ? { instanceNonce: deps.instanceNonce } : {}),
+    });
   });
 
   app.get('/api/status', (c) => {

@@ -1,13 +1,12 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fetchHealthViaFetch, waitForHealth } from './wait-for-health.js';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
-
-const HEALTH_TIMEOUT_MS = 30_000;
-const HEALTH_POLL_INTERVAL_MS = 200;
 
 /** index.html が参照する /assets/... がコピー先に揃っているか検証する */
 function assertSpaBundleComplete(webDistDir: string): void {
@@ -52,35 +51,6 @@ function snapshotWebDist(repoRoot: string, tmpRoot: string): string {
   assertSpaBundleComplete(snapshotDir);
 
   return snapshotDir;
-}
-
-async function waitForHealth(url: string, child: ChildProcess): Promise<void> {
-  const deadline = Date.now() + HEALTH_TIMEOUT_MS;
-  let lastError: unknown;
-
-  while (Date.now() < deadline) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(
-        `bdboard e2e server exited before becoming healthy (code=${String(child.exitCode)}, signal=${String(child.signalCode)})`,
-      );
-    }
-
-    try {
-      const res = await fetch(url);
-      if (res.ok) {
-        return;
-      }
-      lastError = new Error(`unexpected status ${res.status}`);
-    } catch (err) {
-      lastError = err;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_INTERVAL_MS));
-  }
-
-  throw new Error(
-    `bdboard e2e server did not become healthy within ${HEALTH_TIMEOUT_MS}ms: ${String(lastError)}`,
-  );
 }
 
 async function killAndWait(child: ChildProcess): Promise<void> {
@@ -173,6 +143,9 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const mainTs = path.join(repoRoot, 'src', 'main.ts');
 
   const debug = process.env.BDBOARD_E2E_DEBUG === '1';
+  const instanceNonce = randomUUID();
+  const healthUrl = `http://${host}:${port}/api/health`;
+  const parsedPort = Number.parseInt(port, 10);
 
   // cwd はリポジトリルートではなく使い捨てディレクトリにする (bdboard-gki)。
   // 配布形態 (npx bdboard) では任意の cwd から起動されるので、そちらに寄せた方が
@@ -273,6 +246,8 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       BDBOARD_E2E_BD_LEASE_FIXTURE: leaseFixture,
       BDBOARD_E2E_BD_MERGE_SLOT_FIXTURE: mergeSlotFixture,
       BDBOARD_WEB_DIST: webDistSnapshot,
+      // per-run nonce: waitForHealth が同一ポートの他人サーバーと自分の子を区別する (bdboard-aokz)
+      BDBOARD_INSTANCE_NONCE: instanceNonce,
     },
     stdio: debug ? 'inherit' : 'ignore',
   });
@@ -283,7 +258,17 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   });
 
   try {
-    await waitForHealth(`http://${host}:${port}/api/health`, child);
+    await waitForHealth({
+      url: healthUrl,
+      port: parsedPort,
+      expectedNonce: instanceNonce,
+      isChildAlive: () => child.exitCode === null && child.signalCode === null,
+      onChildNotAlive: () =>
+        new Error(
+          `bdboard e2e server exited before becoming healthy (code=${String(child.exitCode)}, signal=${String(child.signalCode)})`,
+        ),
+      fetchHealth: fetchHealthViaFetch,
+    });
   } catch (err) {
     await killAndWait(child);
     fs.rmSync(tmpRoot, { recursive: true, force: true });

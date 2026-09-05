@@ -25,6 +25,7 @@ import type { WriteGuardDeps } from './write-guard.js';
 export interface BuildApiDepsParams {
   readonly cache: BoardCache;
   readonly applicationVersion: ApplicationVersionProvider;
+  readonly instanceNonce?: string;
   readonly now: () => Date;
   readonly getStatus: () => ApiStatus;
   readonly refresh: () => Promise<void>;
