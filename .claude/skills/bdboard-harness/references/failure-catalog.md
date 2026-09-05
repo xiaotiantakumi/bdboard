@@ -51,6 +51,11 @@
 - 防止: 生ループを書かず `scripts/bd-heartbeat.sh` を使う（寿命は ID リスト・セッション・`--max-hours` の3重に束縛）。本則: `lease-params.md`「heartbeat ループの寿命」。フック deny は現時点では作らない（スクリプト＋規律で足りる）。同じ失敗が再発して D 化したら pre-bash-guard 規則の追加を起票する
 - 出典: bdboard-0kql（実測 bdboard-cdqb）（鏡像: heartbeat-partial）
 
+### reclaimed-live-ticket — 生存セッションのチケット4件が作業中に自動 reclaim され、`bd ready` が「PR が飛んでいるチケット」を空きとして提示した（2026-09-05）
+- 原因: reclaim スーパーバイザー（常時稼働 bdboard サーバー自身）が **lease しか見ず worktree もブランチも PR も見ない**うえ、猶予窓の既定が lease TTL 由来の 10m と短かった。heartbeat は打たれていなかった（`scripts/bd-heartbeat.sh` は `--session-pid $$` を使うが、Claude Code の Bash ツールは呼び出しごとに別シェルを起こすため自壊する）。claim の 15〜19 分後に open へ戻された。**回収は `bd show` に出ない**ので台帳を眺めても気付けない（`bd history <id> --events` には `lease_reclaimed` として残る）
+- 防止: 回収前に worktree/ブランチの生存を見る（bdboard-6aci。保護は作業開始から 12 時間で打ち切る）。猶予窓の既定は 2h（bdboard-hybu）。`bd ready` の一覧だけで着手を決めず、規律2 の worktree/ブランチ不存在確認を必ず通す。すり抜けた誤回収は Hygiene の `reclaimed_live_worktree` が事後に出す（bdboard-rkde）（本則: SKILL.md 規律1 手順2, lease-params.md）
+- 出典: bdboard-okdh / 53my / s0o7 / s1vj（対策 bdboard-hybu / rkde / 6aci）（鏡像: heartbeat-orphan-loop）
+
 ### duplicate-helper-parallel — 並列実装で同目的のヘルパーが別々に生まれ、後から統合チケットが10件超発生（2026-08）
 - 原因: 着手前に既存実装を探す手順が規律に無く、`npm run drift` 相当の衝突検知は PR 直前にしか働かない（ルール不在 = brushup-protocol.md §2 の分類 A）
 - 防止: claim 直後・実装前に `git grep` と `bd search --status in_progress` を各1回、見つかれば再利用（本則: SKILL.md 規律2 手順4）。レビュー依頼の観点にも「同 PR 内・直近 main の重複実装」を入れる（verification.md）
@@ -140,6 +145,11 @@
 - 原因: bdboard repo には正本と注入コピーの両方が存在し、Claude Code が読むのはコピー側なので、編集対象として自然にコピーを選んでしまう
 - 防止: 編集前に層を判定（`harness/packs/` の有無 → bdboard repo なら正本を編集し同 PR でコピーへ反映。注入先ならコピー編集禁止）（本則: layering.md）
 - 出典: 本 skill 導入セッション（2026-08-29）。マージ前レビューの過程で検出
+
+### stale-harness-worktree — main から大きく遅れた worktree で走り続けたセッションが、自分がマージしたハーネス改善を自分には適用しないまま動き続けた（2026-09-05）
+- 原因: 注入コピー（`.claude/skills/` と `.claude/settings.json`）は**チェックアウト単位**で、worktree は作成時点の main で凍る。長命の worktree に居るセッションは、hooks もスクリプトも規律本文も古いまま。本人からは「ハーネスが入っている」ようにしか見えない
+- 防止: `bd/<id>` worktree のハーネス差分（`git rev-list --count HEAD..origin/main -- .claude harness`）が 3 以上で、チケットが in_progress なら Hygiene の `stale_harness_worktree` が出す。**プロセス生存は見ておらず、`feature/*` 等の非チケット worktree も対象外**（実測ではそちらのほうが深く凍っていた。対応は bdboard-wadg）。自分の worktree は上のコマンドで自分で測ること。1チケット=1worktree を守り、長命化したら PR を分割するか `git rebase origin/main` でハーネスごと追従する（本則: SKILL.md 規律1 手順2, CLAUDE.md「Git Workflow」）
+- 出典: bdboard-tdua（実測: ハーネス差分 17 コミットの worktree で稼働中のセッションが、同じ日にハーネス改善 PR をマージしていた）
 
 ## bd 操作・確認待ち
 

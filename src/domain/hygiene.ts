@@ -43,7 +43,8 @@ export type HygieneIssueKind =
   | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
   | 'closed_without_evidence'
-  | 'reclaimed_live_worktree';
+  | 'reclaimed_live_worktree'
+  | 'stale_harness_worktree';
 
 export interface HygieneCycleEdge {
   readonly issueId: TicketId;
@@ -577,6 +578,94 @@ function checkReclaimedLiveWorktree(
   };
 }
 
+/**
+ * worktree が既定ブランチからどれだけ遅れているか (bdboard-tdua)。git を叩く必要が
+ * あるのでドメインでは組み立てず、呼び出し側から受け取る。
+ */
+/**
+ * 1 worktree ぶんの計測結果。**この一覧に載っていない worktree は「遅れていない」ではなく
+ * 「測っていない / 測れなかった」**。scanHarnessWorktreeLags のコメントを参照。
+ */
+export interface HarnessWorktreeLag {
+  readonly projectId: string;
+  readonly ticketId: TicketId;
+  readonly worktreePath: string;
+  /** `git rev-list --count HEAD..<既定ブランチ>` の値 */
+  readonly commitsBehind: number;
+}
+
+/**
+ * ハーネスがこの数だけ遅れていたら「凍っている」とみなす。
+ *
+ * **数えているのは総コミット数ではなく、`.claude` と `harness` を触ったコミットだけ**
+ * (countHarnessCommitsBehindDefaultBranch)。総数で測ると意味がリポジトリの速度に
+ * 振り回される — この repo は実測 (2026-09-05) で 1 日 92 / 7 日 239 / 30 日 372 動くので、
+ * 同じ閾値が日によって半日にも 4 日にも化ける。
+ *
+ * 3 の根拠: 同じ日の実測で、ハーネス差分は「生存プロセスを抱えた長命 worktree」が
+ * 17 / 4、「その日のうちに作られた worktree」が 1 / 1 だった。3 はこの 2 つの帯の間に
+ * ある。1 にすると、作った直後にハーネス PR が 1 本入っただけの正常な worktree まで
+ * 鳴り、盤面が無視されるようになる。
+ *
+ * ここは意図的に **hygiene-thresholds の設定項目にしていない** — あちらは時間 (ms) と
+ * 優先度の閾値だけを扱っており、UI もそれ前提。コミット数という別次元の単位を
+ * 混ぜるより、事故が再発したときにこの定数を動かすほうが安い。
+ */
+export const STALE_HARNESS_WORKTREE_MIN_COMMITS_BEHIND = 3;
+
+/**
+ * 「稼働中のセッションが、main から大きく遅れた worktree に居る」を拾う (bdboard-tdua)。
+ *
+ * 注入コピー (`.claude/skills/` と `.claude/settings.json`) は**チェックアウト単位**で、
+ * worktree は作成時点の main で凍る。長命の worktree に居るセッションは、hooks も
+ * スクリプトも規律本文も古いまま動き続ける。本人からは「ハーネスが入っている」ように
+ * しか見えないので、**外から測らないと気付けない**。
+ *
+ * 実測 (2026-09-05): ハーネス差分 17 コミットの worktree で稼働していたセッションが、
+ * 同じ日にハーネス改善 PR をマージしていた。自分がマージした改善が自分には効いていない。
+ *
+ * in_progress のチケットだけを見る。誰も作業していない worktree が古いのは当たり前で、
+ * それは merged_leftover / reclaimed_live_worktree の担当。
+ *
+ * **見えている範囲は `bd/<id>` worktree に限る。** Claude Code の `isolation: "worktree"`
+ * が作る `feature/<slug>` のような非チケット worktree は、紐づくチケットが無いため
+ * Hygiene issue の形に載らない (HygieneIssue.ticketId は必須)。実測ではそちらのほうが
+ * 深く凍っていたので、対応は bdboard-wadg。
+ */
+function checkStaleHarnessWorktree(
+  lag: HarnessWorktreeLag,
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): HygieneIssue | null {
+  if (lag.commitsBehind < STALE_HARNESS_WORKTREE_MIN_COMMITS_BEHIND) {
+    return null;
+  }
+
+  const ticket = ticketById.get(lag.ticketId);
+  if (ticket === undefined) {
+    return null;
+  }
+  if (ticket.status !== 'in_progress') {
+    return null;
+  }
+  if (ticket.projectId !== lag.projectId) {
+    return null;
+  }
+
+  return {
+    kind: 'stale_harness_worktree',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message:
+      `この worktree のハーネスは origin/main より ${lag.commitsBehind} コミットぶん古いままです。` +
+      'ハーネス (.claude/skills と .claude/settings.json) はチェックアウト単位なので、' +
+      'このセッションは worktree 作成時点の古い規律・hooks のまま動いています。' +
+      `git -C ${lag.worktreePath} rebase origin/main で追従してください`,
+    severity: 'warning',
+    // cleanup は付けない。rebase は掃除ではないうえ、未コミットの成果を抱えた
+    // worktree に対してワンクリック相当のコマンドを出すのは危険。
+  };
+}
+
 function checkOrphanHeartbeatLoop(
   candidate: HeartbeatLoopCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
@@ -808,8 +897,9 @@ const KIND_ORDER: Record<HygieneIssueKind, number> = {
   closed_without_evidence: 6,
   merged_leftover: 7,
   reclaimed_live_worktree: 8,
-  orphan_heartbeat_loop: 9,
-  in_flight_file_overlap: 10,
+  stale_harness_worktree: 9,
+  orphan_heartbeat_loop: 10,
+  in_flight_file_overlap: 11,
 };
 
 function compareIssues(a: HygieneIssue, b: HygieneIssue): number {
@@ -841,6 +931,12 @@ export function checkHygiene(
      * in_flight_file_overlap は一切出ない。
      */
     readonly inFlightOverlaps?: readonly InFlightOverlap[];
+    /**
+     * 着手中 worktree が既定ブランチから何コミット遅れているか (scanHarnessWorktreeLags
+     * の戻り)。git を叩く必要があるのでドメインでは組み立てず、呼び出し側から受け取る。
+     * 未指定なら stale_harness_worktree は一切出ない。
+     */
+    readonly harnessWorktreeLags?: readonly HarnessWorktreeLag[];
     /**
      * 確認待ち(awaiting_human)のチケット。bd の human ラベル由来で Ticket からは
      * 判定できないため、呼び出し側が集めて渡す。キーは pendingDecisionKey() で
@@ -964,6 +1060,15 @@ export function checkHygiene(
       const reclaimedLive = checkReclaimedLiveWorktree(candidate, ticketById);
       if (reclaimedLive !== null) {
         issues.push(reclaimedLive);
+      }
+    }
+  }
+
+  if (ctx.harnessWorktreeLags !== undefined) {
+    for (const lag of ctx.harnessWorktreeLags) {
+      const staleHarness = checkStaleHarnessWorktree(lag, ticketById);
+      if (staleHarness !== null) {
+        issues.push(staleHarness);
       }
     }
   }

@@ -449,3 +449,71 @@ describe('createGitWorktreeScanner.listChangedFiles', () => {
     }
   });
 });
+
+describe('countHarnessCommitsBehindDefaultBranch', () => {
+  function revListRunner(
+    byRef: Readonly<Record<string, { stdout: string; exitCode: number }>>,
+  ) {
+    return createFakeRunner({
+      handler: async (_command, args) => {
+        const range = args.find((arg) => arg.includes('..'));
+        const canned = range === undefined ? undefined : byRef[range];
+        return canned === undefined
+          ? { stdout: '', stderr: 'fatal: bad revision', exitCode: 128 }
+          : { stdout: canned.stdout, stderr: '', exitCode: canned.exitCode };
+      },
+    });
+  }
+
+  // **総コミット数ではなくハーネスのパスだけを数える**のがこの関数の存在理由。
+  // pathspec が落ちると閾値の意味がリポジトリの速度に戻ってしまう。
+  it('counts only commits touching the harness paths', async () => {
+    const { runner, calls } = revListRunner({
+      'HEAD..origin/main': { stdout: '17\n', exitCode: 0 },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toBe(17);
+
+    const args = calls[0]?.args ?? [];
+    expect(args).toContain('--');
+    expect(args.slice(args.indexOf('--') + 1)).toEqual(['.claude', 'harness']);
+  });
+
+  it('falls through to the next ref when one is missing', async () => {
+    const { runner } = revListRunner({
+      'HEAD..main': { stdout: '4\n', exitCode: 0 },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toBe(4);
+  });
+
+  // **「読めなかった」を 0 として返さない。** 0 は「遅れていない」を意味してしまい、
+  // 凍った worktree が健全に見える。呼び出し側 (scanHarnessWorktreeLags) は throw を
+  // 受けてその worktree だけ落とす。
+  it('throws instead of reporting 0 when every candidate ref fails', async () => {
+    const { runner } = revListRunner({});
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).rejects.toThrow(/could not count harness commits/);
+  });
+
+  it('skips a ref whose output is not a number', async () => {
+    const { runner } = revListRunner({
+      'HEAD..origin/main': { stdout: 'not-a-number\n', exitCode: 0 },
+      'HEAD..origin/master': { stdout: '2\n', exitCode: 0 },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toBe(2);
+  });
+});

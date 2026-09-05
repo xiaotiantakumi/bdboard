@@ -20,6 +20,7 @@ import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-iss
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
 import { scanInFlightOverlaps } from '../../application/board/scan-in-flight-overlaps.js';
+import { scanHarnessWorktreeLags } from '../../application/board/scan-harness-worktree-lags.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import {
   overlapPeersForTicket,
@@ -58,7 +59,11 @@ import {
   type LivenessThresholds,
 } from '../../domain/liveness.js';
 import type { ResolvedBoardThresholds } from '../../domain/board-thresholds.js';
-import type { HygieneThresholds, HeartbeatLoopCandidate } from '../../domain/hygiene.js';
+import type {
+  HarnessWorktreeLag,
+  HygieneThresholds,
+  HeartbeatLoopCandidate,
+} from '../../domain/hygiene.js';
 import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { Ticket } from '../../domain/ticket.js';
 import { buildDirectChildrenIndex } from '../../domain/epic-progress.js';
@@ -749,6 +754,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
     let inFlightOverlaps: readonly InFlightOverlap[] | undefined;
+    let harnessWorktreeLags: readonly HarnessWorktreeLag[] | undefined;
     let heartbeatLoops: readonly HeartbeatLoopCandidate[] | undefined;
     if (deps.worktreeScanner !== undefined) {
       let entries = deps.cache.listProjects();
@@ -770,6 +776,19 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         projects.map((project) => project.id),
         () => scanInFlightOverlaps(inFlight, scanner),
       );
+      // 同じ inFlight 一覧を使い回して「ハーネスが凍っている worktree」も測る
+      // (bdboard-tdua)。scanner が遅れを測れない構成なら空配列が返る。
+      const inProgressWorktreeKeys = new Set(
+        entries.flatMap((entry) =>
+          entry.tickets
+            .filter((ticket) => ticket.status === 'in_progress')
+            .map((ticket) => `${entry.project.id}\0${ticket.id}`),
+        ),
+      );
+      harnessWorktreeLags = await scanHarnessWorktreeLags(inFlight, scanner, {
+        shouldMeasure: (worktree) =>
+          inProgressWorktreeKeys.has(`${worktree.projectId}\0${worktree.ticketId}`),
+      });
     }
 
     // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は
@@ -836,6 +855,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
       ...(heartbeatLoops !== undefined ? { heartbeatLoops } : {}),
       ...(inFlightOverlaps !== undefined ? { inFlightOverlaps } : {}),
+      ...(harnessWorktreeLags !== undefined ? { harnessWorktreeLags } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),
     });
     return c.json({

@@ -1724,6 +1724,13 @@ body {
   color: #7014a0;
 }
 
+/* 誤回収 (紫) の隣。こちらは「古いまま動いている」なので、危険さの色ではなく
+   停滞を示す青灰にする (bdboard-tdua)。 */
+.hygiene-kind-stale_harness_worktree {
+  background: rgba(0, 122, 255, 0.14);
+  color: #0b5cad;
+}
+
 .hygiene-kind-orphan_heartbeat_loop {
   background: rgba(255, 105, 0, 0.16);
   color: #93401a;
@@ -1790,6 +1797,11 @@ body {
   :root:not([data-theme='light']) .hygiene-kind-reclaimed_live_worktree {
     background: rgba(175, 82, 222, 0.24);
     color: #e0a6f5;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-stale_harness_worktree {
+    background: rgba(0, 122, 255, 0.24);
+    color: #8ec5ff;
   }
 
   :root:not([data-theme='light']) .hygiene-kind-orphan_heartbeat_loop {

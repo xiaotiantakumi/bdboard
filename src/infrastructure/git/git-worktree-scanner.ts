@@ -27,6 +27,18 @@ const MERGE_BASE_CANDIDATE_REFS: readonly string[] = [
   'master',
 ];
 
+/**
+ * ハーネスの実体があるパス。`countHarnessCommitsBehindDefaultBranch` の pathspec。
+ *
+ * 総コミット数で「凍っている」を測ると意味がリポジトリの速度に振り回される (この repo は
+ * 1 日 90 前後動くので、同じ 50 が日によって半日にも 4 日にもなる)。**知りたいのは
+ * 「ハーネスが何コミットぶん古いか」**なので、それを直接数える。
+ *
+ * `.claude` は注入コピー (skills / settings.json / hooks)、`harness` は正本パック。
+ * どちらかが動いていれば、その worktree のセッションは古い規律で走っている。
+ */
+const HARNESS_PATHS: readonly string[] = ['.claude', 'harness'];
+
 export interface GitWorktreeScannerOptions {
   readonly gitPath?: string;
   readonly timeoutMs?: number;
@@ -250,7 +262,34 @@ export function createGitWorktreeScanner(
     );
   }
 
+  async function countHarnessCommitsBehindDefaultBranch(worktreePath: string): Promise<number> {
+    for (const ref of MERGE_BASE_CANDIDATE_REFS) {
+      const result = await runGitReadOnly(
+        commandRunner,
+        gitPath,
+        worktreePath,
+        ['rev-list', '--count', `HEAD..${ref}`, '--', ...HARNESS_PATHS],
+        timeoutMs,
+      );
+      if (result.exitCode !== 0) {
+        // その ref が無いだけかもしれないので次の候補へ。全部落ちたら下で throw する。
+        continue;
+      }
+      const parsed = Number.parseInt(result.stdout.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    throw new Error(
+      `could not count harness commits behind ${MERGE_BASE_CANDIDATE_REFS.join(' / ')} ` +
+        `in ${worktreePath}`,
+    );
+  }
+
   return {
+    countHarnessCommitsBehindDefaultBranch,
+
     async scan(rootPath: string): Promise<GitWorktreeSnapshot> {
       const [worktreeResult, branchResult] = await Promise.all([
         runGit(commandRunner, gitPath, rootPath, ['worktree', 'list', '--porcelain'], timeoutMs),
