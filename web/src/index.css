@@ -33,7 +33,15 @@
   --badge-p1-bg: rgba(255, 149, 0, 0.14);
   --badge-p1-fg: #c25400;
   --badge-neutral-bg: rgba(120, 120, 128, 0.12);
-  --badge-neutral-fg: #6c6c70;
+  /* bdboard-tlus: 旧値 #6c6c70 (= --color-text-secondary と同値) は #ffffff 面でこそ
+     4.54:1 (余白 +0.04) だが、実効背景が少しでも暗くなる面 — `.header`
+     (color-mix 88% over body、4.49:1)・`.lane-header:hover` (color-mix 4% over #fff、
+     4.22:1)・body 直下の #f2f2f7 (4.10:1、`.alert-bar-quiet` が実際にここに載る) — では
+     いずれも AA (4.5:1) 未満だった。R/G を 108→101、B を R+4 に保って再計算し、上記 4 面
+     すべてで 4.5:1 以上になる最小の変更幅 (グレー 101 = #656569、最悪値は #f2f2f7 面で
+     4.55:1) を採用。これで --color-text-secondary (#6c6c70) と分岐し、バッジ専用の
+     派生値になった (light 側は skde が新設した --color-accent-text と同じ形)。 */
+  --badge-neutral-fg: #656569;
   --badge-mismatch-bg: rgba(175, 82, 222, 0.13);
   --badge-mismatch-fg: #8944ab;
   --badge-blocked-bg: rgba(255, 59, 48, 0.1);
@@ -92,7 +100,13 @@
     --badge-p1-bg: rgba(255, 159, 10, 0.2);
     --badge-p1-fg: #ffb340;
     --badge-neutral-bg: rgba(120, 120, 128, 0.24);
-    --badge-neutral-fg: #a1a1a6;
+    /* bdboard-tlus: 旧値 #a1a1a6 は代表面 (#1c1c1e) では 4.96:1 と余裕があるが、
+       `.lane-header:hover` (color-mix 4% over #1c1c1e) だけは 4.5002:1 で実質マージン 0
+       だった。light 側と対で動かす方針のもと、R/G を 161→162、B を R+5 に保って
+       再計算し、4 面 (#000000 body / .header / #1c1c1e 代表面 / hover) すべてで
+       4.5:1 以上になる最小の変更幅 (グレー 162 = #a2a2a7、最悪値は hover 面で 4.55:1、
+       light の 4.55:1 と同水準) を採用。 */
+    --badge-neutral-fg: #a2a2a7;
     --badge-mismatch-bg: rgba(191, 90, 242, 0.2);
     --badge-mismatch-fg: #d391f0;
     --badge-blocked-bg: rgba(255, 69, 58, 0.18);
@@ -2946,16 +2960,15 @@ body {
 
 .lane-count {
   /* --badge-neutral-bg では、他の9箇所と同じく --badge-neutral-fg を対にする。 */
-  /* --color-text-tertiary はこの背景上で light 2.83:1 / dark 3.91:1 と AA (4.5:1) に届かない。 */
-  /* **AA を満たすのは静止状態だけ。** light 4.542:1 の余白 0.042 は、.lane-header:hover の
-     rgba(28,28,30,.04) や .lane-drop-allowed / .lane-drop-rejected が --badge-neutral-bg の
-     下に潜り込むと 4.13〜4.22:1 まで落ちる (dark の hover は 4.5002:1)。そもそも 4.542:1 は
-     .card / .lane の #ffffff 面に載ったときの値で、.header 上では 4.49:1、body の #f2f2f7 上では
-     4.10:1 と、静止状態でも既に AA を割っている面がある (--badge-neutral-fg を使う
-     .alert-bar-quiet / .status-pill-reconnecting が該当)。トークン側で余白を広げる話は
-     bdboard-tlus。WIP 超過時は下の .lane-header-wip-exceeded .lane-count が
+  /* bdboard-tlus: --badge-neutral-fg を light #6c6c70→#656569 / dark #a1a1a6→#a2a2a7 に
+     広げたことで、静止状態 (#ffffff/#1c1c1e 面 4.54:1) だけでなく `.header` (4.98/5.21:1)・
+     `.lane-header:hover` (4.69/4.55:1)・body 直下の #f2f2f7 (4.55:1、`.alert-bar-quiet` /
+     `.status-pill-reconnecting` が載る面)・`.lane-drop-allowed` (4.58:1)・
+     `.lane-drop-rejected` (4.68:1) のいずれでも 4.5:1 以上になった (旧値はこれらの面で
+     4.10〜4.22:1 と AA 未満)。WIP 超過時は下の .lane-header-wip-exceeded .lane-count が
      color も background も warning 系で上書きするため、この対は効かない (light 1.66:1、
-     bdboard-bdsd)。掃引は hover もドラッグも WIP 超過も踏まないので、いずれも自動検出されない。 */
+     bdboard-bdsd。この対とは無関係の別トークンなので本チェンジのスコープ外)。掃引は
+     ドラッグ中も WIP 超過も踏まないので、いずれも自動検出されない。 */
   color: var(--badge-neutral-fg);
   font-weight: 500;
   font-size: 0.75rem;
