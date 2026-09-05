@@ -52,26 +52,116 @@ interface ChipStyle {
   height: number;
 }
 
+interface MissingStyleStability {
+  classAppliedAfterMs: number;
+  stableAfterMs: number;
+  samples: number;
+}
+
 /**
- * 実装の内部詳細 (class 名・title 属性) ではなくラベル文字列でチップを掴んでから
- * 計算後スタイルを読む。掴み方を fix 側の目印に寄せると、目印を消す変異が
- * 「要素が無い」ではなく「テストの前提が消えた」形になって読みにくい。
+ * missing の印が付いたことを確認したうえで、rAF をまたぐ計算後スタイルの連続
+ * 2 サンプルが一致するまで待つ。期待する色や影をここで見ないので、見た目の退行は
+ * 下の個別アサーションとして明瞭に失敗する。
  */
-async function chipStyle(chip: Locator): Promise<ChipStyle> {
-  return chip.evaluate((el) => {
-    const style = getComputedStyle(el);
-    return {
-      textDecorationLine: style.textDecorationLine,
-      boxShadow: style.boxShadow,
-      color: style.color,
-      paddingLeft: style.paddingLeft,
-      paddingRight: style.paddingRight,
-      borderLeftWidth: style.borderLeftWidth,
-      borderRightWidth: style.borderRightWidth,
-      minHeight: style.minHeight,
-      height: el.getBoundingClientRect().height,
+async function waitForMissingStyleStability(chip: Locator): Promise<MissingStyleStability> {
+  return chip.evaluate(async (el) => {
+    const startedAt = performance.now();
+    const timeoutMs = 10_000;
+    const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const hasTimedOut = () => performance.now() - startedAt >= timeoutMs;
+    const snapshot = () => {
+      const style = getComputedStyle(el);
+      return JSON.stringify({
+        textDecorationLine: style.textDecorationLine,
+        boxShadow: style.boxShadow,
+        color: style.color,
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        borderLeftWidth: style.borderLeftWidth,
+        borderRightWidth: style.borderRightWidth,
+        minHeight: style.minHeight,
+        height: el.getBoundingClientRect().height,
+      });
     };
+
+    while (!el.classList.contains('board-filter-label-missing')) {
+      if (hasTimedOut()) {
+        throw new Error('timed out waiting for the missing-label marker class');
+      }
+      await nextFrame();
+    }
+
+    const classAppliedAfterMs = performance.now() - startedAt;
+    // class を見付けたフレームと transition がスタートするフレームを分ける。
+    await nextFrame();
+    let samples = 1;
+    let previous = snapshot();
+
+    while (!hasTimedOut()) {
+      await nextFrame();
+      samples += 1;
+      const current = snapshot();
+      if (current === previous) {
+        return { classAppliedAfterMs, stableAfterMs: performance.now() - startedAt, samples };
+      }
+      previous = current;
+    }
+
+    throw new Error('timed out waiting for missing-label computed styles to stabilize');
   });
+}
+
+/** 必要な対照チップを同じ browser-side evaluation で一括採取する。 */
+type ChipNames = { missing: string; pressed?: string; live?: string };
+type ChipStyles<T extends ChipNames> = { [Name in keyof T]: ChipStyle };
+
+async function chipStyles<T extends ChipNames>(
+  page: Page,
+  names: T,
+): Promise<ChipStyles<T>> {
+  return page.evaluate((chipNames) => {
+    const labelGroup = document.querySelector('.board-filter-label-group');
+    if (!labelGroup) {
+      throw new Error('could not snapshot label chips: .board-filter-label-group was not found');
+    }
+
+    const findChip = (group: Element, name: string, groupName: string) => {
+      const chip = Array.from(group.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === name,
+      );
+      if (!chip) {
+        throw new Error(`could not snapshot chip ${name} in ${groupName}`);
+      }
+      const style = getComputedStyle(chip);
+      return {
+        textDecorationLine: style.textDecorationLine,
+        boxShadow: style.boxShadow,
+        color: style.color,
+        paddingLeft: style.paddingLeft,
+        paddingRight: style.paddingRight,
+        borderLeftWidth: style.borderLeftWidth,
+        borderRightWidth: style.borderRightWidth,
+        minHeight: style.minHeight,
+        height: chip.getBoundingClientRect().height,
+      };
+    };
+
+    const styles: Partial<Record<keyof ChipNames, ChipStyle>> = {
+      missing: findChip(labelGroup, chipNames.missing, '.board-filter-label-group'),
+    };
+    if (chipNames.live) {
+      styles.live = findChip(labelGroup, chipNames.live, '.board-filter-label-group');
+    }
+    if (chipNames.pressed) {
+      const typeGroup = document.querySelector('.board-filter-type-group');
+      if (!typeGroup) {
+        throw new Error('could not snapshot type chip: .board-filter-type-group was not found');
+      }
+      styles.pressed = findChip(typeGroup, chipNames.pressed, '.board-filter-type-group');
+    }
+
+    return styles;
+  }, names) as Promise<ChipStyles<T>>;
 }
 
 /** 幅方向の箱の寸法。ここが対照と一致していれば横並びを動かしていない。 */
@@ -93,7 +183,7 @@ function liveLabelChip(page: Page): Locator {
 }
 
 test.describe('board filter chip for a label that left the board', () => {
-  test('looks different from a live pressed chip without shrinking it', async ({ page }) => {
+  test('looks different from a live pressed chip without shrinking it', async ({ page }, testInfo) => {
     await installAiQuotaRoute(page);
     // 「盤面に無い」の印が付くのは盤面データが届いた後で、.toggle-btn は color と
     // box-shadow に 0.15s の transition を持つ。素で測ると補間中の値を掴む
@@ -115,9 +205,15 @@ test.describe('board filter chip for a label that left the board', () => {
     await expect(pressedControl).toHaveAttribute('aria-pressed', 'true');
     await expect(liveControl).toHaveAttribute('aria-pressed', 'false');
 
-    const missingStyle = await chipStyle(missing);
-    const pressedStyle = await chipStyle(pressedControl);
-    const liveStyle = await chipStyle(liveControl);
+    const stability = await waitForMissingStyleStability(missing);
+    testInfo.annotations.push({
+      type: 'missing-label-style-stability',
+      description: `${stability.samples} samples; class=${stability.classAppliedAfterMs.toFixed(1)}ms; stable=${stability.stableAfterMs.toFixed(1)}ms`,
+    });
+    const { missing: missingStyle, pressed: pressedStyle, live: liveStyle } = await chipStyles(
+      page,
+      { missing: MISSING_LABEL, pressed: CONTROL_ISSUE_TYPE, live: CONTROL_LIVE_LABEL },
+    );
 
     expect(
       missingStyle.textDecorationLine,
@@ -177,7 +273,7 @@ test.describe('board filter chip for a label that left the board', () => {
     ).toBeCloseTo(pressedStyle.height, 1);
   });
 
-  test('keeps the 44px tap target on mobile', async ({ browser }) => {
+  test('keeps the 44px tap target on mobile', async ({ browser }, testInfo) => {
     // viewport だけ絞ると (hover: none) and (pointer: coarse) のブロックが効かず、
     // モバイル固有の寸法を測り損ねる (bdboard-rccf)。
     const context = await browser.newContext({
@@ -199,8 +295,15 @@ test.describe('board filter chip for a label that left the board', () => {
       const liveControl = liveLabelChip(page);
       await expect(missing).toBeVisible();
       await expect(liveControl).toBeVisible();
-      const style = await chipStyle(missing);
-      const liveStyle = await chipStyle(liveControl);
+      const stability = await waitForMissingStyleStability(missing);
+      testInfo.annotations.push({
+        type: 'missing-label-style-stability',
+        description: `mobile: ${stability.samples} samples; class=${stability.classAppliedAfterMs.toFixed(1)}ms; stable=${stability.stableAfterMs.toFixed(1)}ms`,
+      });
+      const { missing: style, live: liveStyle } = await chipStyles(page, {
+        missing: MISSING_LABEL,
+        live: CONTROL_LIVE_LABEL,
+      });
 
       // 描画高さを見てはいけない。.toggle-group は align-items:stretch なので、
       // 44px の兄弟チップが 1 つでもあれば潰した指定を書いても実測は 44px のまま
