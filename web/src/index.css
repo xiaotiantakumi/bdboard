@@ -28,6 +28,23 @@
   --color-danger: #ff3b30;
   --color-purple: #af52de;
 
+  /* bdboard-7g0a: 累積フロー図 (CFD) の凡例/バー用の系列色。ThroughputStats.tsx の
+     CFD_STATUS_COLORS が参照する。7 系列のうち open/in_progress/blocked/closed/deferred は
+     既存の意味的トークン (accent/purple/danger/success/warning) を流用し、既存のどの
+     トークンとも被らない残り 2 系列 (pinned/hooked) だけをここで新設する。
+     要件は「7 系列が互いに判別できる」ことであり、これは色相・明度・彩度の知覚的な
+     分離で担保する — WCAG のコントラスト比 (輝度ベース) は同程度の明度を持つ有彩色どうし
+     の識別性には unsuited (実測: 本ブロックの 7 色を総当たりで比較すると 21 組すべてが
+     3:1 未満になる。人間の目には明確に別の色として見える純色どうしでもこうなるので、
+     このコントラスト比を「系列間の判別性」の指標として使わないこと)。
+     背景 (--color-bg-elevated) に対する非テキストコントラスト (WCAG SC 1.4.11、3:1) は
+     妥当な適用対象なので個別に検証済み: light は pinned 3.68:1 / hooked 4.60:1
+     (このアプリは --color-success 等の意味的トークンを背景直上の塗り/ドットとして
+     直接使う既存慣習があり、そちらは 2.2〜4.1:1 で 3:1 に届かない場合もある —
+     .pr-check-pass 等参照。新設 2 色はその最悪値より高い水準に置いた)。 */
+  --throughput-cfd-pinned: #0891b2;
+  --throughput-cfd-hooked: #db2777;
+
   --badge-p0-bg: rgba(255, 59, 48, 0.12);
   --badge-p0-fg: #d70015;
   --badge-p1-bg: rgba(255, 149, 0, 0.14);
@@ -94,6 +111,11 @@
     --color-warning: #ff9f0a;
     --color-danger: #ff453a;
     --color-purple: #bf5af2;
+
+    /* bdboard-7g0a: 上の light 定義と対。dark は #1c1c1e 背景に対して
+       pinned 9.42:1 / hooked 6.42:1 (どちらも 3:1 を大きく超える)。 */
+    --throughput-cfd-pinned: #22d3ee;
+    --throughput-cfd-hooked: #f472b6;
 
     --badge-p0-bg: rgba(255, 69, 58, 0.18);
     --badge-p0-fg: #ff6961;
