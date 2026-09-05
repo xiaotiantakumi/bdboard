@@ -61,14 +61,19 @@ const CFD_STATUS_LABELS: Record<string, string> = {
   hooked: 'フック',
 };
 
+// bdboard-7g0a: 7 色すべてがテーマ追従のトークンで定義されている
+// (web/src/index.css の :root / prefers-color-scheme:dark ブロック)。
+// open/in_progress/blocked/closed/deferred は既存の意味的トークンを流用し、
+// pinned/hooked だけ本チケットで新設した専用トークンを参照する。定義済みなので
+// フォールバック値は不要 (未定義参照時に固定色が両テーマへ焼き付く問題を避ける)。
 const CFD_STATUS_COLORS: Record<string, string> = {
-  open: 'var(--throughput-cfd-open, #60a5fa)',
-  in_progress: 'var(--throughput-cfd-in-progress, #34d399)',
-  blocked: 'var(--throughput-cfd-blocked, #f87171)',
-  closed: 'var(--throughput-cfd-closed, #94a3b8)',
-  deferred: 'var(--throughput-cfd-deferred, #fbbf24)',
-  pinned: 'var(--throughput-cfd-pinned, #c084fc)',
-  hooked: 'var(--throughput-cfd-hooked, #fb7185)',
+  open: 'var(--color-accent)',
+  in_progress: 'var(--color-purple)',
+  blocked: 'var(--color-danger)',
+  closed: 'var(--color-success)',
+  deferred: 'var(--color-warning)',
+  pinned: 'var(--throughput-cfd-pinned)',
+  hooked: 'var(--throughput-cfd-hooked)',
 };
 
 const CHART_DESCRIPTIONS = {
