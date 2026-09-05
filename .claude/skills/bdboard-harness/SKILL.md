@@ -21,6 +21,10 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 手順:
 
 1. `bd prime` — 台帳のコンテキストとプロジェクトメモリを読み込む。
+   - **メモリ本文（全文）が読めるのは `bd prime` の出力・`bd recall <key>`・`bd memories --json`
+     の3つ**。`bd memories <kw>` は1行に切り詰めたプレビューしか出さず、`--full` フラグも
+     `bd remember --list` も存在しない。`bd memories --json` は配列ではなく**オブジェクト**
+     （key → 本文全文の文字列。`.[0]` 添字は落ち、`schema_version` の数値エントリが混ざる）(bd v1.2.1 実測)。
 2. `bd list --status in_progress` で lease 切れを把握する（lease の残りは `bd show <id>`）。
 3. **`bd reclaim` は原則打たない** — 正はスーパーバイザーの定期実行（例外3条件は詳細）。
 4. マージ済み worktree の残骸**だけ**掃除する（判断がつかないものは触らない）。
