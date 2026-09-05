@@ -188,7 +188,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_CFD_SNAPSHOT_RETENTION_DAYS` | 累積フロー図(CFD)スナップショットの保持日数 | `365` |
 | `BDBOARD_RECLAIM_ENABLED` | 期限切れの agent lease を定期回収する処理を有効化する。`0` / `false` で無効化 | `true` |
 | `BDBOARD_RECLAIM_INTERVAL_MS` | agent lease 回収の実行間隔(ミリ秒) | `300000`(5分) |
-| `BDBOARD_RECLAIM_OLDER_THAN` | agent lease を回収対象とみなす経過時間。`bd` の duration 形式 | `10m` |
+| `BDBOARD_RECLAIM_OLDER_THAN` | agent lease を回収対象とみなす経過時間。`bd` の duration 形式。作業中のチケットを回収しないよう 1 時間以上を保つこと (bdboard-hybu) | `2h` |
 | `BDBOARD_TUNNEL_LOG_PATH` | `cloudflared` トンネルログの出力先ファイル。既定は cwd に依存しない(`npx bdboard` は任意のディレクトリから起動されるため)。相対パスを渡した場合は**起動ディレクトリ基準**で1度だけ解決される | `~/.bdboard/logs/cloudflared-tunnel.log` |
 | `BDBOARD_TUNNEL_LOG_MAX_BYTES` | `cloudflared` トンネルログのローテーション閾値(バイト) | `5242880`(5MB) |
 | `BDBOARD_AUTH_USER` | Basic 認証のユーザー名。`BDBOARD_AUTH_PASSWORD` と両方に値がある場合のみ認証が有効化される | (未設定) |

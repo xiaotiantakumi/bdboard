@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../domain/project.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
@@ -5,6 +7,8 @@ import {
   createReclaimScheduler,
   DEFAULT_RECLAIM_INTERVAL_MS,
   DEFAULT_RECLAIM_OLDER_THAN,
+  MIN_SAFE_RECLAIM_OLDER_THAN_MS,
+  parseReclaimDurationMs,
 } from './reclaim-scheduler.js';
 
 function project(id: string, rootPath: string): Project {
@@ -329,5 +333,54 @@ describe('createReclaimScheduler', () => {
     });
 
     scheduler.stop();
+  });
+});
+
+describe('parseReclaimDurationMs', () => {
+  it('parses the bd duration forms the scheduler can be configured with', () => {
+    expect(parseReclaimDurationMs('10m')).toBe(600_000);
+    expect(parseReclaimDurationMs('2h')).toBe(7_200_000);
+    expect(parseReclaimDurationMs('1h30m')).toBe(5_400_000);
+    expect(parseReclaimDurationMs('90s')).toBe(90_000);
+    // 前後の空白は env 由来でよく混ざるので許容する (値としては同じ)。
+    expect(parseReclaimDurationMs('10m ')).toBe(600_000);
+  });
+
+  it('returns undefined for input it cannot fully account for', () => {
+    // 部分一致で「検査できた」ことにすると、下の下限テストが黙って素通りする。
+    expect(parseReclaimDurationMs('')).toBeUndefined();
+    expect(parseReclaimDurationMs('2 hours')).toBeUndefined();
+    expect(parseReclaimDurationMs('2d')).toBeUndefined();
+    expect(parseReclaimDurationMs('abc')).toBeUndefined();
+    expect(parseReclaimDurationMs('2h extra')).toBeUndefined();
+    expect(parseReclaimDurationMs('x2h')).toBeUndefined();
+  });
+});
+
+describe('DEFAULT_RECLAIM_OLDER_THAN の下限', () => {
+  // bdboard-hybu の回帰ガード。DEFAULT_RECLAIM_OLDER_THAN を '10m' に戻すと落ちる。
+  //
+  // 2026-09-05 に生存セッションのチケット4件が作業中に回収された (claim から 15〜19 分後)。
+  // 猶予窓は lease TTL の倍数ではなく「1チケットの実作業時間」を上回っている必要がある。
+  // ここを緩めるのは、回収対象を生存証拠で絞る仕組み (bdboard-6aci) が入ってからにすること。
+  it('は実作業時間を上回る (10m 相当へ戻すと落ちる)', () => {
+    const ms = parseReclaimDurationMs(DEFAULT_RECLAIM_OLDER_THAN);
+    expect(ms).toBeDefined();
+    expect(ms as number).toBeGreaterThanOrEqual(MIN_SAFE_RECLAIM_OLDER_THAN_MS);
+  });
+
+  it('の下限そのものが、実測された被害時間 (19 分) より十分大きい', () => {
+    const observedWorstCaseMs = 19 * 60_000;
+    expect(MIN_SAFE_RECLAIM_OLDER_THAN_MS).toBeGreaterThan(observedWorstCaseMs * 2);
+  });
+
+  it('は README の env 表に載っている既定値と一致する', () => {
+    // 既定を変えたのに README が 10m のまま、という乖離をここで落とす。
+    const readmePath = fileURLToPath(new URL('../../../README.md', import.meta.url));
+    const row = readFileSync(readmePath, 'utf8')
+      .split('\n')
+      .find((line) => line.includes('BDBOARD_RECLAIM_OLDER_THAN'));
+    expect(row).toBeDefined();
+    expect(row as string).toContain(`\`${DEFAULT_RECLAIM_OLDER_THAN}\``);
   });
 });
