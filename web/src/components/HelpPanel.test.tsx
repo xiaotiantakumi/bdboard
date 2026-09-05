@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { HELP_SECTIONS } from '../helpContent';
 import { HelpPanel } from './HelpPanel';
 
 vi.mock('../api', async (importOriginal) => ({
@@ -81,5 +82,82 @@ describe('HelpPanel', () => {
     await user.click(screen.getByRole('button', { name: '閉じる' }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders a table of contents aligned with HELP_SECTIONS', () => {
+    renderHelpPanel({ onClose: vi.fn() });
+
+    const toc = screen.getByRole('navigation', { name: '目次' });
+    const tocItems = within(toc).getAllByRole('button');
+
+    expect(tocItems).toHaveLength(HELP_SECTIONS.length);
+    expect(tocItems.map((item) => item.textContent)).toEqual(
+      HELP_SECTIONS.map((section) => section.title),
+    );
+  });
+
+  it('keeps all sections collapsed by default', () => {
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const sections = container.querySelectorAll('details.help-panel-section');
+    expect(sections.length).toBe(HELP_SECTIONS.length);
+    for (const section of sections) {
+      expect(section).not.toHaveAttribute('open');
+    }
+  });
+
+  it('opens a section when its table-of-contents item is clicked', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const targetSection = HELP_SECTIONS[0]!;
+    await user.click(
+      screen.getByRole('button', { name: targetSection.title }),
+    );
+
+    const section = container.querySelector(
+      `#help-section-${targetSection.id}`,
+    )?.closest('details');
+    expect(section).not.toBeNull();
+    expect(section).toHaveAttribute('open');
+  });
+
+  it('filters sections by keyword', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const uniqueSection = HELP_SECTIONS.find((section) =>
+      section.steps.some((step) => step.includes('ホーム画面に追加')),
+    );
+    expect(uniqueSection).toBeDefined();
+
+    await user.type(
+      screen.getByRole('searchbox', { name: '絞り込み' }),
+      'ホーム画面に追加',
+    );
+
+    expect(screen.getByRole('navigation', { name: '目次' }).children).toHaveLength(
+      1,
+    );
+    expect(
+      screen.getByRole('heading', { name: uniqueSection!.title }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(`${HELP_SECTIONS.length}件中 1件`)).toBeInTheDocument();
+    expect(
+      container.querySelectorAll('details.help-panel-section'),
+    ).toHaveLength(1);
+  });
+
+  it('expands all sections via the toggle button', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    await user.click(screen.getByRole('button', { name: 'すべて開く' }));
+
+    const sections = container.querySelectorAll('details.help-panel-section');
+    expect(sections.length).toBe(HELP_SECTIONS.length);
+    for (const section of sections) {
+      expect(section).toHaveAttribute('open');
+    }
   });
 });
