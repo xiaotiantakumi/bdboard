@@ -55,6 +55,32 @@ export function computeDrift(mainFiles, branchFiles) {
 }
 
 /**
+ * `git merge-tree --write-tree --name-only` の stdout から衝突ファイルだけを取る。
+ *
+ * `git merge-tree --help` の OUTPUT > "Informational messages" が契約を明記している:
+ * - 非 -z 出力では情報セクションの先頭に必ず空行が入り、前のセクションと区切られる。
+ * - 情報行は非安定であり、スクリプトでパースしてはいけない。
+ * - conflict-message 自体が埋め込み改行を持つ場合もある。
+ * したがって OID の次から最初の空行までだけをパスとして扱う。英語接頭辞の
+ * ブラックリストでは de_DE.UTF-8 の翻訳済みメッセージを除外できない。
+ */
+export function parseMergeTreeConflictFiles(output) {
+  const lines = output.split('\n').map((line) => line.replace(/\r$/, ''));
+  if (lines.length <= 1) {
+    return [];
+  }
+
+  const informationBoundary = lines.indexOf('', 1);
+  if (informationBoundary === -1) {
+    // 衝突出力なら仕様上は必ず境界がある。未知の出力で空を返すと実パスを黙って
+    // 取りこぼすため、OID 以降を上界として残す。後段では自分の変更パスとの積集合を
+    // 取るので、余計な行を拾うリスクより衝突を見逃すリスクを優先する。
+    return lines.slice(1);
+  }
+  return lines.slice(1, informationBoundary);
+}
+
+/**
  * 人間 (とエージェント) 向けの本文。exit code は持たせない。
  *
  * upstream が動いていない / ブランチが何も触っていないケースを先に畳むのは、
@@ -91,11 +117,12 @@ export function formatDriftReport(drift, ctx) {
   );
 }
 
-function git(args) {
+function git(args, options = {}) {
   return execFileSync('git', args, {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
+    ...options,
   }).trim();
 }
 
@@ -124,6 +151,431 @@ function changedFiles(from, to) {
   return out === '' ? [] : out.split('\n');
 }
 
+/**
+ * gh の実行対象を決める。既定は PATH 上の `gh` そのもの。
+ *
+ * bdboard-b0yd R2-1: 以前のテストは `PATH: ${bin}:${process.env.PATH}` で偽の
+ * `gh` を注入していたが、区切り文字 `:` が Windows (`;`) で無効なうえ、拡張子
+ * なしの `#!/bin/sh` スクリプトは Windows の PATHEXT 解決に載らない。どちらも
+ * 直しても「シェルに実行可能ファイルとして解決させる」という前提自体が
+ * プラットフォーム依存。ここでは PATH 解決を経由せず、`BDBOARD_DRIFT_GH`
+ * (既定 `gh`) を execFileSync の実行ファイルそのものとして渡し、
+ * `BDBOARD_DRIFT_GH_ARGS` (JSON 配列) をその前に差し込めるようにする。
+ * テストは `BDBOARD_DRIFT_GH=process.execPath` と
+ * `BDBOARD_DRIFT_GH_ARGS=["<fake-gh.mjsの絶対パス>"]` を渡し、
+ * `node fake-gh.mjs pr list ...` を直接起動する。シェルにも PATH にも
+ * PATHEXT にも依存しないため全プラットフォームで同じ経路を通る。
+ */
+function ghInvocation() {
+  const bin = process.env.BDBOARD_DRIFT_GH || 'gh';
+  let prefixArgs = [];
+  const rawPrefixArgs = process.env.BDBOARD_DRIFT_GH_ARGS;
+  if (rawPrefixArgs) {
+    // bdboard-b0yd R4-F1: 以前はここで JSON.parse の失敗も Array.isArray の
+    // false も黙って握り潰し、既定の gh 呼び出しに倒していた。壊れた注入を
+    // 無かったことにすると、テストが意図せず本物の gh を呼びに行くなど原因の
+    // 分かりにくい失敗になる。ここは listOpenPullRequests() の try の中からしか
+    // 呼ばれない (モジュールロード時には呼ばれない) ので、throw しても
+    // 30行の Node スタックトレースにはならず、呼び出し側の catch で
+    // stdout/stderr 向けの名前付き理由に変わる。
+    let parsed;
+    try {
+      parsed = JSON.parse(rawPrefixArgs);
+    } catch {
+      throw new Error('BDBOARD_DRIFT_GH_ARGS is not a JSON array');
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error('BDBOARD_DRIFT_GH_ARGS is not a JSON array');
+    }
+    prefixArgs = parsed;
+  }
+  return { bin, prefixArgs };
+}
+
+function listOpenPullRequests() {
+  try {
+    // drift は必須ゲートなので、GitHub API の障害で止めない。execFileSync は gh の
+    // 非ゼロ終了でも throw するため、timeout・認証/API エラー・JSON 壊れをすべてここで
+    // 非致命として扱う。shell を通さないので branch 名もコマンドとして解釈されない。
+    // gh の既定30件では、並列 worktree が増えたときに件数と検出結果が黙って欠ける。
+    const { bin, prefixArgs } = ghInvocation();
+    const output = execFileSync(
+      bin,
+      [
+        ...prefixArgs,
+        'pr',
+        'list',
+        '--state',
+        'open',
+        '--limit',
+        '100',
+        '--json',
+        'number,headRefName,isCrossRepository',
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 20_000,
+      },
+    );
+    const pullRequests = JSON.parse(output);
+    if (
+      !Array.isArray(pullRequests) ||
+      pullRequests.some(
+        (pr) =>
+          !Number.isInteger(pr.number) ||
+          typeof pr.headRefName !== 'string' ||
+          typeof pr.isCrossRepository !== 'boolean',
+      )
+    ) {
+      throw new Error('unexpected gh JSON');
+    }
+    return { pullRequests };
+  } catch (error) {
+    // 冒頭の規範どおり、stdout だけを見る呼び出し側にも「問題なし」と
+    // 「調べられなかった」の違いを残す。原因ごとに対処が違うため一行に畳んで添える。
+    const reason = String(error?.message ?? error).replace(/\s+/g, ' ').trim();
+    return {
+      error: `drift: open PR を取得できなかったため、他 PR との比較を省略しました (${reason})`,
+    };
+  }
+}
+
+/**
+ * `ancestor` が `ref` の祖先かどうかを判定する。
+ *
+ * bdboard-b0yd R2-2/R2-3: `git merge-base --is-ancestor` 1本で両方の判定が
+ * 賄える。exit 0 = ancestor である、exit 1 = ない。それ以外 (無関係な commit-ish
+ * 等) は呼び出し側の catch に判断を委ねるため再 throw する。
+ */
+function isAncestor(ancestor, ref) {
+  try {
+    git(['merge-base', '--is-ancestor', ancestor, ref]);
+    return true;
+  } catch (error) {
+    if (error.status === 1) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+function mergeTree(ref, { mergeBase } = {}) {
+  try {
+    // changedFiles() と表記を揃えないと、非ASCIIパスが8進エスケープされて積集合から
+    // 消える。引用符・バックスラッシュ・制御文字を含むパスでも C クオートが起こる。
+    // LC_ALL=C も固定し、構造パースに加えて情報メッセージのロケール軸を二重に塞ぐ。
+    const args = ['-c', 'core.quotepath=false', 'merge-tree', '--write-tree', '--name-only'];
+    if (mergeBase) {
+      // bdboard-b0yd R2-2: peer が origin/main を既に取り込み済み (呼び出し側が
+      // 確認済み) のときだけ渡される。3-way base を明示的に現在の main に固定し、
+      // peer 側の古い自然な merge-base に起因する「main と peer の衝突」が
+      // 「自分と peer の衝突」に化けるのを防ぐ。
+      args.push(`--merge-base=${mergeBase}`);
+    }
+    args.push('HEAD', ref);
+    git(args, { env: { ...process.env, LC_ALL: 'C' } });
+    return { status: 'clean' };
+  } catch (error) {
+    // merge-tree はテキスト衝突を exit 1 で知らせる。execFileSync は非ゼロを
+    // throw するので、ここでだけ正常な「衝突あり」として stdout を読む。
+    if (error.status === 1) {
+      return {
+        status: 'conflict',
+        files: parseMergeTreeConflictFiles(String(error.stdout ?? '')),
+      };
+    }
+    // bdboard-b0yd R2-5: 古い git の未知オプション、unrelated histories などは
+    // 階層1を諦めるが、以前はここで理由を握り潰していた。呼び出し側が
+    // 「ファイル単位でのみ比較した」と明示できるよう理由を残す。
+    const reason = String(error?.stderr || error?.message || error)
+      .replace(/\s+/g, ' ')
+      .trim();
+    return { status: 'unavailable', reason };
+  }
+}
+
+function reportOpenPullRequestOverlap(currentBranch, branchFiles, shouldFetch, upstream) {
+  // bdboard-b0yd R2-7: このブランチがまだ何も変更していないとき (worktree 作成
+  // 直後など) は branchFiles が空集合であり、階層1の交差は定義上つねに空になる。
+  // その結果、stale な peer が1本でもあれば毎回バケットC (「ファイルの外」) が
+  // 100% 発火してノイズになる。比較そのものに材料が無いので、gh を呼ぶ前に畳む。
+  if (branchFiles.length === 0) {
+    console.log('drift: このブランチはまだ何も変更していないため、open PR との比較は省略しました。');
+    return;
+  }
+
+  const listed = listOpenPullRequests();
+  if (listed.error) {
+    console.log(listed.error);
+    console.error(listed.error);
+    return;
+  }
+
+  const skippedAutomatic = [];
+  const skippedCrossRepository = [];
+  const skippedMissingRef = [];
+  const skippedComparison = [];
+  const conflicts = [];
+  const conflictsOutsideBranchFiles = [];
+  const sharedFileOverlaps = [];
+  const unavailableMergeTree = [];
+  let comparedCount = 0;
+  let fetchDegraded = false;
+
+  const comparisonCandidates = [];
+  for (const pr of listed.pullRequests) {
+    if (pr.headRefName === currentBranch) {
+      continue;
+    }
+    // release-please は package version/changelog を main の内容から自動生成する。
+    // 作業中の機能ブランチとのマージ順を人が決める対象ではないのでノイズを避けて除外する。
+    if (pr.headRefName.startsWith('release-please--')) {
+      skippedAutomatic.push(pr);
+      continue;
+    }
+    // fork の headRefName は fork 側の名前にすぎず、origin/<headRefName> はこの
+    // リポジトリの同名ブランチへ解決される。fork の main を origin/main と比較して
+    // 階層0の drift を peer 衝突と誤報しないよう、専用区分で除外する。
+    if (pr.isCrossRepository) {
+      skippedCrossRepository.push(pr);
+      continue;
+    }
+    comparisonCandidates.push(pr);
+  }
+
+  if (shouldFetch && comparisonCandidates.length > 0) {
+    // bdboard-b0yd R2-4: 以前はここで対象ブランチだけを列挙した
+    // `git fetch origin <b1> <b2> …` を叩いていたが、gh がリストしたブランチが
+    // 1本でも削除済みだと fetch 全体が exit 128 で失敗し、**残りの peer も
+    // 1本も更新されない**。この repo の手順は `gh pr merge --squash
+    // --delete-branch` で drift はマージ直前に走るため、`gh pr list` と
+    // この fetch の間 (約1秒) に並列セッションがマージ+ブランチ削除を終える
+    // ことは現実に起きる。refspec を並べず既定の fetch にすれば、消えた
+    // ブランチがあっても残りは正常に更新される。
+    try {
+      // bdboard-b0yd R4-F4: --prune を足す。gh pr list と fetch の間に peer
+      // ブランチが削除された場合、--prune がないと消えた peer の古い
+      // origin/<peer> がローカルに残り続け、次回以降も「生きている」ものとして
+      // 比較され続ける (実体は既に消えている)。timeout は足さない (議長裁定:
+      // 遅い回線での大きな fetch を壊しうるため)。
+      git(['fetch', 'origin', '--prune', '--quiet']);
+    } catch (error) {
+      fetchDegraded = true;
+      const reason = String(error?.message ?? error).replace(/\s+/g, ' ').trim();
+      const message = `drift: open PR のブランチを fetch できませんでした。手元のリモート追跡 ref で続けます (${reason})`;
+      console.log(message);
+      console.error(message);
+    }
+  }
+
+  // bdboard-b0yd R2-2/R2-3: 自分自身が origin/main を取り込み済みかどうかは
+  // peer によらず不変なので、ループの外で一度だけ判定する。判定できなければ
+  // (通常起こらないが) 安全側 (= 明示的な base への切り替えをしない) に倒す。
+  let weAreCurrentWithUpstream = false;
+  if (comparisonCandidates.length > 0) {
+    try {
+      weAreCurrentWithUpstream = isAncestor(upstream, 'HEAD');
+    } catch {
+      weAreCurrentWithUpstream = false;
+    }
+  }
+
+  for (const pr of comparisonCandidates) {
+    const ref = `origin/${pr.headRefName}`;
+    try {
+      git(['rev-parse', '--verify', '--quiet', ref]);
+    } catch {
+      skippedMissingRef.push(pr);
+      continue;
+    }
+
+    try {
+      // bdboard-b0yd R2-2/R2-3: merge-tree の既定の3-way baseは
+      // merge-base(HEAD, peer) であり、peer が origin/main に対して古いと
+      // 「peer 対 main」の衝突が「peer 対 自分」の衝突に化ける。peer が
+      // origin/main を既に取り込んでいて (= is-ancestor)、かつ自分も
+      // 取り込み済みなら、base を明示的に origin/main に固定してよい —
+      // このとき初めて「衝突します」という断定が安全になる。
+      //
+      // bdboard-b0yd R4-A/B: 象限は4つある (自分/peer それぞれ current か
+      // stale か)。`weAreCurrentWithUpstream` (以下 W) が false ⟺
+      // `aheadCount > 0` ⟺ origin/main が HEAD の祖先でない ⟺ drift が
+      // 本来報告したい「自分が rebase していない」状況そのもの。W が false
+      // なら peer が current だろうと stale だろうと、衝突の原因を peer 側に
+      // 決め打ちしてはいけない — 自分の drift が混ざっている可能性を
+      // 消せないため。よって出し分けは W を最優先で見る:
+      //   W && P (peerIsCurrentWithUpstream) → 断定 (現行の文言のまま)
+      //   !W     → 自分が stale。P の値に関わらずこちらを優先し、
+      //            「rebase してから再実行してください」に倒す
+      //   W && !P → 現行の「peer が古いため」の文言を維持
+      const peerIsCurrentWithUpstream = isAncestor(upstream, ref);
+      const canUseUpstreamBase = weAreCurrentWithUpstream && peerIsCurrentWithUpstream;
+      const mergeResult = mergeTree(ref, canUseUpstreamBase ? { mergeBase: upstream } : undefined);
+      const mergeTreeUnavailable = mergeResult.status === 'unavailable';
+
+      if (mergeTreeUnavailable) {
+        // bdboard-b0yd R2-5: 古い git 等で merge-tree 自体が使えないケース。
+        // 以前は完全に無言でファイル単位の比較へフォールバックしていた。
+        unavailableMergeTree.push({ pr, reason: mergeResult.reason });
+      }
+
+      if (mergeResult.status === 'conflict') {
+        const files = computeDrift(mergeResult.files, branchFiles).overlap;
+        if (files.length > 0) {
+          conflicts.push({
+            pr,
+            files,
+            weCurrent: weAreCurrentWithUpstream,
+            peerCurrent: peerIsCurrentWithUpstream,
+          });
+          comparedCount += 1;
+          continue;
+        }
+      }
+
+      const peerMergeBase = git(['merge-base', upstream, ref]);
+      const peerFiles = changedFiles(peerMergeBase, ref);
+      const files = computeDrift(peerFiles, branchFiles).overlap;
+      // bdboard-b0yd R4-C: merge-tree が使えなかった peer は「テキスト衝突を
+      // 判定できた」わけではないので、comparedCount (= 衝突判定まで到達できた
+      // peer の数) には数えない。数えないことで全 peer が unavailable なら
+      // 自然に「比較できた open PR がありません。」に落ちる。
+      if (!mergeTreeUnavailable) {
+        comparedCount += 1;
+      }
+      if (mergeResult.status === 'conflict') {
+        // peer が a.txt→b.txt に rename して編集し、こちらが旧名 a.txt を編集すると、
+        // merge-tree は解決後の新名 b.txt にだけ衝突を付ける。branchFiles との交差は
+        // 空でも実 git merge は衝突するため、「衝突しません」とは断定できない。
+        //
+        // bdboard-b0yd R4-B: is-ancestor で原因が一意に決まるのは自分が
+        // origin/main に対して current (W) のときだけ。自分が stale なまま
+        // だと、この衝突が「peer 側の rename」なのか「origin/main 側の
+        // rename を最新の peer がただ継承しただけ」なのかを peer 側の情報
+        // だけでは切り分けられない (後者は無実の peer を rename 犯人扱いする
+        // 誤報になる — レビューが実測済み)。よって:
+        //   !W      → 自分が stale。原因を切り分けられない旨を出す
+        //   W && !P → peer 自身が origin/main に対して stale
+        //   W && P  → peer は最新なのに衝突が自分のファイル外 → rename しかありえない
+        conflictsOutsideBranchFiles.push({
+          pr,
+          conflictFiles: mergeResult.files,
+          sharedFiles: files,
+          weCurrent: weAreCurrentWithUpstream,
+          peerCurrent: peerIsCurrentWithUpstream,
+        });
+      } else if (files.length > 0) {
+        sharedFileOverlaps.push({ pr, files, mergeTreeUnavailable });
+      }
+    } catch (error) {
+      // ref の存在確認とは分ける。unrelated histories 等を「追跡ブランチがない」と
+      // 誤案内せず、比較そのものの失敗として原因を一行で残す。
+      skippedComparison.push({
+        pr,
+        reason: String(error?.message ?? error).replace(/\s+/g, ' ').trim(),
+      });
+    }
+  }
+
+  const hasFindings =
+    conflicts.length > 0 ||
+    conflictsOutsideBranchFiles.length > 0 ||
+    sharedFileOverlaps.length > 0;
+  // bdboard-b0yd R2-4: fetch が劣化したまま比較した結論は、古い ref に基づく
+  // ものだと結論行自体に残す。個別行を全部辿らないと分からない扱いにしない。
+  const degradedSuffix = fetchDegraded ? ' (古い ref で比較)' : '';
+  if (comparedCount === 0) {
+    // all-clear と行の形を変え、stdout の行一致しか見ない呼び出し側にも未比較を伝える。
+    // bdboard-b0yd R4-D: fetch が劣化し、かつ全 peer が missing-ref 等に落ちて
+    // 比較できた peer が0件になる場合もある。ここだけ degradedSuffix が
+    // 付いていなかったので付ける。
+    console.log(`drift: 比較できた open PR がありません。${degradedSuffix}`);
+  } else if (!hasFindings) {
+    console.log(`drift: open PR ${comparedCount} 件との重なりはありません。${degradedSuffix}`);
+  } else {
+    for (const { pr, files, weCurrent, peerCurrent } of conflicts) {
+      // bdboard-b0yd R4-A: W (weCurrent) を最優先で見る。自分が stale なら
+      // peer の新旧に関わらず「自分の drift が混ざっている可能性」を消せない
+      // ため、peer を犯人扱いする文言には倒さない。
+      if (!weCurrent) {
+        console.log(
+          `drift: open PR #${pr.number} (${pr.headRefName}) と衝突する可能性があります (このブランチが origin/main に対して古いため、main との drift が混ざっている可能性があります。まず rebase してから再実行してください):`,
+        );
+      } else if (peerCurrent) {
+        console.log(`drift: open PR #${pr.number} (${pr.headRefName}) と衝突します (rebase でテキスト衝突):`);
+      } else {
+        console.log(
+          `drift: open PR #${pr.number} (${pr.headRefName}) と衝突する可能性があります (peer が origin/main に対して古いため、peer 側の rebase で解消するかもしれません):`,
+        );
+      }
+      for (const file of files) {
+        console.log(`  ${file}`);
+      }
+    }
+    for (const { pr, conflictFiles, sharedFiles, weCurrent, peerCurrent } of conflictsOutsideBranchFiles) {
+      console.log(
+        `drift: open PR #${pr.number} (${pr.headRefName}) は衝突していますが、衝突パスはこのブランチが触ったファイルの外です:`,
+      );
+      if (conflictFiles.length === 0) {
+        console.log('  (merge-tree は衝突パスを返しませんでした)');
+      } else {
+        for (const file of conflictFiles) {
+          console.log(`  ${file}`);
+        }
+      }
+      // bdboard-b0yd R4-B: !weCurrent を最優先で見る。自分が stale だと、
+      // origin/main 側の rename を最新の peer がただ継承しただけのケースと
+      // peer 自身の rename を区別できない (前者で peer を犯人扱いすると誤報)。
+      if (!weCurrent) {
+        console.log('drift:   このブランチが origin/main に対して古いため、この衝突の原因を peer 側と切り分けられません。まず rebase してから再実行してください。');
+      } else if (!peerCurrent) {
+        console.log('drift:   peer 自身が origin/main に対して古いため、この衝突は peer 側の rebase で解消する可能性が高いです。');
+      } else {
+        console.log('drift:   peer 側の rename によるパス名のずれによる衝突の可能性があります。実物を確認してください。');
+      }
+      if (sharedFiles.length > 0) {
+        console.log('drift: この PR と同じファイルも触っています (意味的な整合も要確認):');
+        for (const file of sharedFiles) {
+          console.log(`  ${file}`);
+        }
+      }
+    }
+    for (const { pr, files, mergeTreeUnavailable } of sharedFileOverlaps) {
+      // bdboard-b0yd R4-C: merge-tree が使えなかった peer について「衝突は
+      // しません」と断定しない。判定できていないだけなので、その旨を伝える。
+      const caveat = mergeTreeUnavailable
+        ? '(テキスト衝突は判定できませんでした。意味的な整合とあわせて実物を確認してください)'
+        : '(衝突はしませんが意味的な整合は要確認)';
+      console.log(`drift: open PR #${pr.number} (${pr.headRefName}) と同じファイルを触っています ${caveat}:`);
+      for (const file of files) {
+        console.log(`  ${file}`);
+      }
+    }
+    console.log(`drift: マージ順は議長が決めてください (これは報告であり、終了コードには影響しません)。${degradedSuffix}`);
+  }
+  if (skippedMissingRef.length > 0) {
+    console.log(`drift: リモート追跡ブランチがないため比較を省略しました (${skippedMissingRef.map((pr) => `PR #${pr.number}`).join(', ')})。`);
+  }
+  if (skippedComparison.length > 0) {
+    for (const { pr, reason } of skippedComparison) {
+      console.log(`drift: 比較に失敗したため省略しました (PR #${pr.number}: ${reason})。`);
+    }
+  }
+  if (unavailableMergeTree.length > 0) {
+    for (const { pr, reason } of unavailableMergeTree) {
+      console.log(`drift: merge-tree が使えないため PR #${pr.number} (${pr.headRefName}) はファイル単位でのみ比較しました (${reason})。`);
+    }
+  }
+  if (skippedAutomatic.length > 0) {
+    console.log(`drift: release-please の自動生成 PR は比較から除外しました (${skippedAutomatic.map((pr) => `PR #${pr.number}`).join(', ')})。`);
+  }
+  if (skippedCrossRepository.length > 0) {
+    console.log(`drift: fork 由来の PR は比較から除外しました (${skippedCrossRepository.map((pr) => `PR #${pr.number}`).join(', ')})。`);
+  }
+}
+
 function main(argv) {
   const upstream = 'origin/main';
   const shouldFetch = !argv.includes('--no-fetch');
@@ -132,7 +584,9 @@ function main(argv) {
     // 古い origin/main と比べた drift は意味が無い (それが検知したいものそのもの)。
     // ネットワークが無い環境向けに --no-fetch を残す。
     try {
-      git(['fetch', 'origin', 'main', '--quiet']);
+      // bdboard-b0yd R4-F4: --prune を足す (理由は reportOpenPullRequestOverlap
+      // 側の fetch と同じ)。
+      git(['fetch', 'origin', 'main', '--prune', '--quiet']);
     } catch (error) {
       console.error(`drift: git fetch に失敗しました。手元の ${upstream} で続けます (${error.message.trim()})`);
     }
@@ -151,6 +605,12 @@ function main(argv) {
 
   if (mergeBase === git(['rev-parse', 'HEAD'])) {
     console.log('drift: HEAD が merge-base そのものです (このブランチにはまだコミットがありません)。');
+    reportOpenPullRequestOverlap(
+      git(['rev-parse', '--abbrev-ref', 'HEAD']),
+      [],
+      shouldFetch,
+      upstream,
+    );
     return EXIT_OK;
   }
 
@@ -158,6 +618,12 @@ function main(argv) {
   const drift = computeDrift(changedFiles(mergeBase, upstream), changedFiles(mergeBase, 'HEAD'));
 
   console.log(formatDriftReport(drift, { mergeBase, upstream, aheadCount }));
+  reportOpenPullRequestOverlap(
+    git(['rev-parse', '--abbrev-ref', 'HEAD']),
+    changedFiles(mergeBase, 'HEAD'),
+    shouldFetch,
+    upstream,
+  );
   return EXIT_OK;
 }
 
