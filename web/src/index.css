@@ -35,9 +35,19 @@
      (--color-accent-text / --badge-neutral-fg と同じ形)。同色相のまま明度だけ振って
      4.5:1 を超える最小限の変更幅を採用: light は元の 56% の明度 (#8f5300、上記実効
      背景で 4.665:1)、dark は白へ 25% 寄せた明度 (後方の prefers-color-scheme: dark
-     ブロックの --lane-count-wip-fg 参照、同 4.685:1)。使用箇所は
-     `.lane-header.lane-header-wip-exceeded .lane-count` の 1 箇所のみ。 */
-  --lane-count-wip-fg: #8f5300;
+     ブロックの --lane-header-wip-fg 参照、同 4.685:1)。
+     bdboard-hodh: `.lane-header-wip-exceeded` 自身の `color` (レーン名などヘッダ内の全
+     子孫が継承) にも同じ問題があった (16% tint だけの単層背景 = light rgb(255, 238, 214) /
+     dark rgb(64, 49, 27) 上で light 1.932:1 / dark 6.104:1、light のみ未達)。この単層背景は
+     .lane-count の二重合成背景より light では白に近く (dark ではベースに近く)、同じ前景色
+     #8f5300 / #ffb747 でどちらの向きでも二重合成側より輝度差が広がる (light 5.42:1 /
+     dark 7.24:1、いずれも .lane-count 側の 4.665:1 / 4.685:1 より余裕がある) ため、新しい
+     値を作らずこのトークンをそのまま流用できる。「count 専用」の意味を超えて
+     `.lane-header-wip-exceeded` と `.lane-count` 双方の前景になったため、トークン名を
+     --lane-count-wip-fg から --lane-header-wip-fg へ改名した (参照箇所は下の dark ブロックと
+     `.lane-header.lane-header-wip-exceeded` / `.lane-header.lane-header-wip-exceeded
+     .lane-count` の 2 箇所)。 */
+  --lane-header-wip-fg: #8f5300;
   --color-danger: #ff3b30;
   --color-purple: #af52de;
 
@@ -122,9 +132,11 @@
 
     --color-success: #30d158;
     --color-warning: #ff9f0a;
-    /* bdboard-bdsd: light 側の --lane-count-wip-fg と対。dark の実効背景
-       rgb(106, 73, 23) に対して 4.685:1 (詳細は light 側のコメント参照)。 */
-    --lane-count-wip-fg: #ffb747;
+    /* bdboard-bdsd: light 側の --lane-header-wip-fg と対。dark の実効背景
+       rgb(106, 73, 23) (.lane-count) に対して 4.685:1、rgb(64, 49, 27)
+       (.lane-header-wip-exceeded 自身、bdboard-hodh) に対して 7.24:1
+       (詳細は light 側のコメント参照)。 */
+    --lane-header-wip-fg: #ffb747;
     --color-danger: #ff453a;
     --color-purple: #bf5af2;
 
@@ -2969,14 +2981,18 @@ body {
 
 .lane-header.lane-header-wip-exceeded {
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
-  color: var(--color-warning);
+  /* bdboard-hodh: 前景を --lane-header-wip-fg に分ける (旧 --color-warning は同色相の
+     着色背景の上で light 1.932:1 と AA 未達だった)。この color はレーンヘッダ内の全子孫
+     (レーン名の span.lane-header-label-text を含む) に継承される。理由は :root の
+     --lane-header-wip-fg 定義コメント参照。 */
+  color: var(--lane-header-wip-fg);
 }
 
 .lane-header.lane-header-wip-exceeded .lane-count {
-  /* bdboard-bdsd: 前景だけ --lane-count-wip-fg に分ける。理由は :root の
-     --lane-count-wip-fg 定義コメント参照。背景 (22%) はそのまま。 */
+  /* bdboard-bdsd: 前景だけ --lane-header-wip-fg に分ける。理由は :root の
+     --lane-header-wip-fg 定義コメント参照。背景 (22%) はそのまま。 */
   background: color-mix(in srgb, var(--color-warning) 22%, transparent);
-  color: var(--lane-count-wip-fg);
+  color: var(--lane-header-wip-fg);
 }
 
 .lane-header-label {
@@ -3010,7 +3026,7 @@ body {
      `.lane-drop-rejected` (4.68:1) のいずれでも 4.5:1 以上になった (旧値はこれらの面で
      4.10〜4.22:1 と AA 未満)。WIP 超過時は下の .lane-header-wip-exceeded .lane-count が
      color も background も warning 系で上書きしていたためこの対が効かず light 1.66:1
-     だったが、bdboard-bdsd で前景を --lane-count-wip-fg に分けて解消済み (定義は :root
+     だったが、bdboard-bdsd で前景を --lane-header-wip-fg に分けて解消済み (定義は :root
      参照)。ドラッグ中の状態は未確認のまま残っている。 */
   color: var(--badge-neutral-fg);
   font-weight: 500;
