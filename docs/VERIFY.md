@@ -140,3 +140,45 @@ entry was removed once the `v0.1.2` tag put it out of range — bdboard-r5we,
 bdboard-tbgj.)
 
 Not part of `npm run verify` (needs git tags).
+
+### 書いた瞬間に弾く: `scripts/commit-message-guard.mjs` (bdboard-ekj3)
+
+The two CI arms above both find the problem *after* the commit exists. The
+`PreToolUse(Bash)` hook registered in `.claude/settings.json` finds it before
+`git commit` runs: it pulls the message out of the command line, runs it
+through the same `checkCommitMessage()` from `scripts/check-commit-parse.mjs`,
+and exits 2 with the offending line, column and caret if the parser rejects it.
+
+Why this third layer exists at all: the `pull_request` arm only *fails* on
+CHANGELOG-relevant types (`feat` / `fix` / `perf` / `revert` / `deps`). `59498fa`
+was a `test(...)` commit, so it was reported as a warning and merged anyway.
+The hook does not care about the type.
+
+Why the real parser instead of a regex: a lexical "line ends with an unclosed
+`(`" rule was measured against all 383 commits on `main` and flagged **198 of
+them (52%)** — Japanese bodies wrap parenthetical asides across lines all the
+time. The parser rejects 40 (10.4%), of which 38 are the paren-across-lines
+case. Only the real parser separates the harmful from the ordinary.
+
+Why not a `commit-msg` git hook: `core.hooksPath` already points at
+`.beads/hooks` (beads installs five hooks there). Adding one would mean writing
+into a directory `bd init` regenerates and PRs may not touch, or repointing
+`core.hooksPath` — which would silently disable all five beads hooks for the
+main checkout and every worktree at once, since that config lives in the shared
+`.git`. It would also need a per-clone install step.
+
+**Fail-open by design.** The hook allows the command whenever it cannot be sure:
+the message comes from a variable or an unrelated substitution; an unquoted
+heredoc delimiter means the body still expands; a heredoc is unterminated or a
+quote unclosed; `-F` points at a file it cannot read; there is no `-m` / `-F` at
+all (editor, `--amend --no-edit`, `git commit -C <sha>`, `cherry-pick`, `rebase`
+— which is also why replaying an already-unparsable historical commit never
+trips it); `@conventional-commits/parser` is not installed yet; stdin is not
+valid hook JSON; or anything throws. A guard that blocks commits because it
+could not read its own input is worse than no guard.
+
+Escape hatch: `BDBOARD_COMMIT_GUARD_OVERRIDE="<reason>"` placed **before** `git`
+on the same command. An empty reason does not count. It is only honoured from
+the environment or from an inline assignment preceding `git` — never from
+anywhere inside the message body, or the denial text itself (which names the
+variable) could be pasted into a commit body to disarm the guard.

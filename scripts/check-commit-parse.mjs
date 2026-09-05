@@ -165,11 +165,14 @@ export function findUnparsableCommits(commits, options = {}) {
   return { failures, warnings, excluded, unused };
 }
 
-function escapeControlChars(text) {
+// bdboard-ekj3: scripts/commit-message-guard.mjs (PreToolUse フック) が同じ体裁で
+// 診断を出せるように export する。表示の重複実装を作らないための共有であって、判定側の
+// 挙動は変えない。
+export function escapeControlChars(text) {
   return text.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
 }
 
-function caretLine(lineText, column) {
+export function caretLine(lineText, column) {
   if (column == null || column < 1) {
     return '';
   }
