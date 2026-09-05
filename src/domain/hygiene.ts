@@ -42,7 +42,8 @@ export type HygieneIssueKind =
   | 'merged_leftover'
   | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
-  | 'closed_without_evidence';
+  | 'closed_without_evidence'
+  | 'reclaimed_live_worktree';
 
 export interface HygieneCycleEdge {
   readonly issueId: TicketId;
@@ -502,6 +503,71 @@ function checkMergedLeftover(
   };
 }
 
+/**
+ * merged_leftover の鏡像 (bdboard-rkde)。
+ *
+ * merged_leftover は「チケットは closed なのに worktree/ブランチが残っている」を見る。
+ * こちらは **「チケットは open (＝ bd ready が空きとして提示する) なのに worktree か
+ * ブランチが存在する」** を見る。
+ *
+ * この盤面は 2026-09-05 に 4 件同時に発生した。常時稼働サーバーの reclaim スケジューラが
+ * lease だけを見て回収するため、heartbeat を打っていない生存セッションのチケットが
+ * 作業中に open へ戻される。当人はそのまま PR を出すので、台帳だけが「空き」と言い続ける。
+ * bd reclaim は理由を残さないので `bd show` からは手動の `bd update -s open` と区別できず、
+ * **盤面から再計算できるこの述語が唯一の事後検知**になる。
+ *
+ * worktree/ブランチの存在を生存の代理指標に使えるのは、ワークフロー上それらが
+ * claim からマージ後の掃除までの間しか存在しないため (docs/GIT-WORKFLOW.md)。
+ * 掃除漏れとの区別は付かないが、掃除漏れもまた対処すべき盤面なので実害はない。
+ *
+ * in_progress は対象外。そちらは lease が生きている正常な状態か、さもなくば
+ * stale_in_progress が拾う。
+ */
+function checkReclaimedLiveWorktree(
+  candidate: LeftoverCandidate,
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): HygieneIssue | null {
+  if (candidate.worktreePath === null && candidate.branchName === null) {
+    return null;
+  }
+
+  const ticket = ticketById.get(candidate.ticketId);
+  if (ticket === undefined) {
+    return null;
+  }
+  if (ticket.status !== 'open') {
+    return null;
+  }
+  if (ticket.projectId !== candidate.projectId) {
+    return null;
+  }
+
+  let evidence: string;
+  if (candidate.worktreePath !== null && candidate.branchName !== null) {
+    evidence = 'worktree とブランチ';
+  } else if (candidate.worktreePath !== null) {
+    evidence = 'worktree';
+  } else {
+    evidence = 'ブランチ';
+  }
+
+  return {
+    kind: 'reclaimed_live_worktree',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message:
+      `チケットは open ですが ${evidence} が残っています。` +
+      '作業中に自動 reclaim された可能性があります。' +
+      `bd ready が空きとして提示するので、作業が生きているなら bd update ${ticket.id} --claim で claim し直してください`,
+    severity: 'warning',
+    // **cleanup は意図的に付けない (bdboard-rkde)。** merged_leftover と同じ候補を使うが、
+    // 提案すべき対処は正反対である。UI の cleanup は lsof ガード付きとはいえ
+    // `git worktree remove` + `branch -d` を出す (web/src/bdCommands.ts)。この kind が
+    // 見ているのは「まだ生きているかもしれない作業」なので、そこに削除コマンドを
+    // 添えるのは最悪の誤誘導になる。対処は claim し直すことで、message に書いてある。
+  };
+}
+
 function checkOrphanHeartbeatLoop(
   candidate: HeartbeatLoopCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
@@ -728,6 +794,7 @@ const KIND_ORDER: readonly HygieneIssueKind[] = [
   'stale_pending_decision',
   'closed_without_evidence',
   'merged_leftover',
+  'reclaimed_live_worktree',
   'orphan_heartbeat_loop',
   'in_flight_file_overlap',
 ];
@@ -878,6 +945,12 @@ export function checkHygiene(
       const mergedLeftover = checkMergedLeftover(candidate, ticketById);
       if (mergedLeftover !== null) {
         issues.push(mergedLeftover);
+      }
+      // 同じ候補列を鏡像の述語でもう一度見る。両者は status で排他 (closed / open) なので
+      // 1つの候補が両方に載ることはない。
+      const reclaimedLive = checkReclaimedLiveWorktree(candidate, ticketById);
+      if (reclaimedLive !== null) {
+        issues.push(reclaimedLive);
       }
     }
   }

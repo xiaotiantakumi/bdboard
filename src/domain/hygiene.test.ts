@@ -1808,3 +1808,127 @@ describe('needsCloseEvidenceLookup', () => {
     expect(lookup(ticket)).toBe(false);
   });
 });
+
+describe('checkHygiene reclaimed_live_worktree', () => {
+  const repoRoot = '/projects/bdboard';
+  const worktreePath = `${repoRoot}/.claude/worktrees/bdboard-live`;
+  const branchName = 'bd/bdboard-live';
+
+  function liveCandidate(overrides: Partial<LeftoverCandidate> = {}): LeftoverCandidate {
+    return {
+      projectId: repoRoot,
+      repoRootPath: repoRoot,
+      ticketId: 'bdboard-live',
+      worktreePath,
+      branchName,
+      ...overrides,
+    };
+  }
+
+  // 2026-09-05 の実事象の再現 (bdboard-okdh / 53my / s0o7 / s1vj)。
+  // 生存セッションのチケットが reclaim で open へ戻され、worktree だけが残った盤面。
+  it('flags open tickets that still have a worktree and branch', () => {
+    const ticket = makeTicket({ id: 'bdboard-live', projectId: repoRoot, status: 'open' });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate()],
+    });
+
+    const found = issues.filter((issue) => issue.kind === 'reclaimed_live_worktree');
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({
+      kind: 'reclaimed_live_worktree',
+      ticketId: 'bdboard-live',
+      projectId: repoRoot,
+      severity: 'warning',
+    });
+    expect(found[0]?.message).toContain('bd update bdboard-live --claim');
+  });
+
+  // 生きているかもしれない作業に削除コマンドを添えてはいけない (本文のコメント参照)。
+  // cleanup を足すと UI が lsof ガード付きの `git worktree remove` を提案してしまう。
+  it('never attaches a cleanup script, because the work may still be alive', () => {
+    const ticket = makeTicket({ id: 'bdboard-live', projectId: repoRoot, status: 'open' });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate()],
+    });
+
+    const found = issues.find((issue) => issue.kind === 'reclaimed_live_worktree');
+    expect(found).toBeDefined();
+    expect(found?.cleanup).toBeUndefined();
+  });
+
+  it('reports which of worktree / branch survives', () => {
+    const ticket = makeTicket({ id: 'bdboard-live', projectId: repoRoot, status: 'open' });
+
+    const worktreeOnly = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate({ branchName: null })],
+    }).find((issue) => issue.kind === 'reclaimed_live_worktree');
+    expect(worktreeOnly?.message).toContain('worktree が残っています');
+
+    const branchOnly = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate({ worktreePath: null })],
+    }).find((issue) => issue.kind === 'reclaimed_live_worktree');
+    expect(branchOnly?.message).toContain('ブランチ が残っています');
+  });
+
+  it('does not flag in_progress tickets (lease is alive, or stale_in_progress covers it)', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-live',
+      projectId: repoRoot,
+      status: 'in_progress',
+      startedAt: NOW,
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate()],
+    });
+
+    expect(issues.filter((issue) => issue.kind === 'reclaimed_live_worktree')).toEqual([]);
+  });
+
+  it('does not flag closed tickets (merged_leftover owns that side)', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-live',
+      projectId: repoRoot,
+      status: 'closed',
+      closedAt: NOW,
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate()],
+    });
+
+    expect(issues.filter((issue) => issue.kind === 'reclaimed_live_worktree')).toEqual([]);
+    expect(issues.filter((issue) => issue.kind === 'merged_leftover')).toHaveLength(1);
+  });
+
+  it('does not flag when neither worktree nor branch exists', () => {
+    const ticket = makeTicket({ id: 'bdboard-live', projectId: repoRoot, status: 'open' });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate({ worktreePath: null, branchName: null })],
+    });
+
+    expect(issues.filter((issue) => issue.kind === 'reclaimed_live_worktree')).toEqual([]);
+  });
+
+  it('does not flag when the candidate belongs to a different project', () => {
+    const ticket = makeTicket({ id: 'bdboard-live', projectId: '/projects/other', status: 'open' });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      leftoverCandidates: [liveCandidate()],
+    });
+
+    expect(issues.filter((issue) => issue.kind === 'reclaimed_live_worktree')).toEqual([]);
+  });
+});
