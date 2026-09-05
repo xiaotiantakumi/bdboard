@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { HELP_SECTIONS } from '../helpContent';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
@@ -8,9 +8,39 @@ export interface HelpPanelProps {
   onClose: () => void;
 }
 
+// NFKC folds full-width alphanumerics (e.g. ＰＷＡ → PWA). Hiragana/katakana
+// folding is out of scope — NFKC does not map カナ to かな.
+function normalizeForSearch(text: string): string {
+  return text.normalize('NFKC').toLowerCase();
+}
+
+function sectionMatchesQuery(
+  section: (typeof HELP_SECTIONS)[number],
+  normalizedQuery: string,
+): boolean {
+  if (normalizedQuery.length === 0) {
+    return true;
+  }
+  if (normalizeForSearch(section.title).includes(normalizedQuery)) {
+    return true;
+  }
+  if (normalizeForSearch(section.description).includes(normalizedQuery)) {
+    return true;
+  }
+  return section.steps.some((step) =>
+    normalizeForSearch(step).includes(normalizedQuery),
+  );
+}
+
 export function HelpPanel({ onClose }: HelpPanelProps) {
   const panelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const sectionRefs = useRef(new Map<string, HTMLDetailsElement>());
+
+  const [filterQuery, setFilterQuery] = useState('');
+  const [openSectionIds, setOpenSectionIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const { requestClose } = useHistoryBackClose({
     panelId: 'help',
@@ -22,6 +52,78 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
     initialFocusRef: closeButtonRef,
     onEscape: requestClose,
   });
+
+  const normalizedFilterQuery = normalizeForSearch(filterQuery.trim());
+
+  const filteredSections = useMemo(
+    () =>
+      HELP_SECTIONS.filter((section) =>
+        sectionMatchesQuery(section, normalizedFilterQuery),
+      ),
+    [normalizedFilterQuery],
+  );
+
+  const allFilteredOpen =
+    filteredSections.length > 0 &&
+    filteredSections.every((section) => openSectionIds.has(section.id));
+
+  const setSectionRef = useCallback(
+    (sectionId: string, element: HTMLDetailsElement | null) => {
+      if (element === null) {
+        sectionRefs.current.delete(sectionId);
+        return;
+      }
+      sectionRefs.current.set(sectionId, element);
+    },
+    [],
+  );
+
+  const handleSectionToggle = useCallback(
+    (sectionId: string, isOpen: boolean) => {
+      setOpenSectionIds((previous) => {
+        const next = new Set(previous);
+        if (isOpen) {
+          next.add(sectionId);
+        } else {
+          next.delete(sectionId);
+        }
+        return next;
+      });
+    },
+    [],
+  );
+
+  const handleToggleAll = useCallback(() => {
+    setOpenSectionIds((previous) => {
+      const next = new Set(previous);
+      if (allFilteredOpen) {
+        for (const section of filteredSections) {
+          next.delete(section.id);
+        }
+      } else {
+        for (const section of filteredSections) {
+          next.add(section.id);
+        }
+      }
+      return next;
+    });
+  }, [allFilteredOpen, filteredSections]);
+
+  const handleJumpToSection = useCallback((sectionId: string) => {
+    setOpenSectionIds((previous) => {
+      const next = new Set(previous);
+      next.add(sectionId);
+      return next;
+    });
+
+    // jsdom has no Element.prototype.scrollIntoView — mirror HelpPanel.test.tsx stub if
+    // adding palette→help→TOC navigation tests elsewhere (e.g. App.test.tsx).
+    requestAnimationFrame(() => {
+      const sectionElement = sectionRefs.current.get(sectionId);
+      sectionElement?.scrollIntoView({ block: 'start' });
+      sectionElement?.querySelector('summary')?.focus();
+    });
+  }, []);
 
   return (
     <div
@@ -69,26 +171,85 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
             目的の機能名から、できることと基本操作を確認してください。
           </p>
 
-          <div className="help-panel-grid">
-            {HELP_SECTIONS.map((section, index) => {
-              const headingId = `help-section-${section.id}`;
-              return (
-                <section
+          <div className="help-panel-controls">
+            <label className="help-panel-filter-label">
+              <span className="help-panel-filter-label-text">絞り込み</span>
+              <input
+                type="search"
+                className="help-panel-filter-input"
+                value={filterQuery}
+                onChange={(event) => setFilterQuery(event.target.value)}
+                placeholder="キーワードでセクションを絞り込む"
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </label>
+            <div className="help-panel-controls-meta">
+              <p className="help-panel-filter-count" aria-live="polite">
+                {HELP_SECTIONS.length}件中 {filteredSections.length}件
+              </p>
+              <button
+                type="button"
+                className="btn help-panel-toggle-all"
+                onClick={handleToggleAll}
+                disabled={filteredSections.length === 0}
+              >
+                {allFilteredOpen ? 'すべて閉じる' : 'すべて開く'}
+              </button>
+            </div>
+          </div>
+
+          {filteredSections.length > 0 ? (
+            <nav className="help-panel-toc" aria-label="目次">
+              {filteredSections.map((section) => (
+                <button
                   key={section.id}
-                  className="help-panel-section"
-                  aria-labelledby={headingId}
+                  type="button"
+                  className="help-panel-toc-item"
+                  onClick={() => handleJumpToSection(section.id)}
                 >
-                  <span className="help-panel-section-number" aria-hidden="true">
-                    {String(index + 1).padStart(2, '0')}
-                  </span>
-                  <h3 id={headingId}>{section.title}</h3>
-                  <p>{section.description}</p>
-                  <ul>
-                    {section.steps.map((step) => (
-                      <li key={step}>{step}</li>
-                    ))}
-                  </ul>
-                </section>
+                  {section.title}
+                </button>
+              ))}
+            </nav>
+          ) : (
+            <p className="help-panel-empty">該当するセクションがありません</p>
+          )}
+
+          <div className="help-panel-grid">
+            {filteredSections.map((section) => {
+              const sectionIndex = HELP_SECTIONS.findIndex(
+                (candidate) => candidate.id === section.id,
+              );
+              const headingId = `help-section-${section.id}`;
+              const isOpen = openSectionIds.has(section.id);
+
+              return (
+                <details
+                  key={section.id}
+                  ref={(element) => setSectionRef(section.id, element)}
+                  className="help-panel-section"
+                  open={isOpen}
+                  aria-labelledby={headingId}
+                  onToggle={(event) => {
+                    handleSectionToggle(section.id, event.currentTarget.open);
+                  }}
+                >
+                  <summary className="help-panel-section-summary" tabIndex={0}>
+                    <span className="help-panel-section-number" aria-hidden="true">
+                      {String(sectionIndex + 1).padStart(2, '0')}
+                    </span>
+                    <h3 id={headingId}>{section.title}</h3>
+                  </summary>
+                  <div className="help-panel-section-content">
+                    <p>{section.description}</p>
+                    <ul>
+                      {section.steps.map((step) => (
+                        <li key={step}>{step}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </details>
               );
             })}
           </div>
