@@ -44,8 +44,12 @@
  *
  * ズレは `documentElement.scrollHeight` が整数へ丸まるぶんだけ。5 点目は「再現しない
  * 異常値」として bdboard-ij7g に投げられた header=203 / maxScrollY=288 の初回プローブで、
- * モデルは 203 + 198.81 + 58 - 172 = 287.81 → 288。**異常値ではなく、ai-quota 枠が
- * 描画される前 (245 - 42 = 203) の同じレイアウト**にすぎない。
+ * モデルは 203 + 198.81 + 58 - 172 = 287.81 → 288。**異常値ではなく、`.view-toolbar` が
+ * まだ 2 行に折り返していない状態 (ヘッダー 203) の同じレイアウト**にすぎない。
+ * bdboard-ij7g で決着済み: 折り返しの引き金は ai-quota 枠ではなく、そのとき最後に届いた
+ * 非同期コントロール (実測ではチャットボタン)。フレーム単位のトレースと、旧待ちで 203 を
+ * 決定論的に再現させるミューテーション手順は
+ * `fixtures/mobile-chrome-helpers.ts` の `waitForHeaderHeightConvergence` に書いてある。
  *
  * したがって **Tips も絞り込みバーも畳んだあとに残る残差 = header - 168** (= header + 4 - 172)。
  * 正体は固定パディングではなく**ヘッダーそのもの**で、`kanban-mobile-lanes.spec.ts:69-70`
@@ -57,10 +61,18 @@
  * いる。足りない 73 と、畳んだ絞り込みバーの箱 58 の合計 131 が「Tips 閉 + バー畳」の残差
  * そのもの (73 + 58 = 131、上表 3 行目に一致)。よって残差はヘッダー由来であり、
  * **ヘッダーを縮めればカード面積 (= 100dvh - 260) を 1px も削らずに残差が減る**。
- * 実際、ai-quota 枠が無いだけでヘッダーが 42px 低い上記 5 点目では lane は 552 のまま
+ * 実際、ツールバーが 1 行に収まってヘッダーが 42px 低い上記 5 点目では lane は 552 のまま
  * maxScrollY だけが 330 → 288 に落ちている。ヘッダーは 812 の 30% を占めており、
  * その圧縮は bdboard-qxt1 / bdboard-knrx の担当。260 を実チェーン (~337) に合わせる
  * 選択肢も bdboard-knrx が引き取っている。
+ *
+ * ## 測定値は成功時にも CI ログに残る (bdboard-ij7g)
+ *
+ * 予算アサーションのメッセージは失敗時にしか出ないので、Linux CI の実測が一度も記録されない
+ * まま余裕を厚めに取るしかなかった。`reportResidualMeasurement` が成功時にも 1 行 JSON を
+ * `MOBILE_SCROLL_RESIDUAL_MEASUREMENT=` 付きで出すので、CI ログを
+ * `grep -o 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=.*'` で拾って macOS 実測と突き合わせられる。
+ * 下の 2 つの予算を Linux 実測込みで締め直すのは bdboard-ij7g のラウンド 2。
  *
  * ## このガードが構造的に見ていないもの
  *
@@ -80,7 +92,9 @@ import {
   HELP_TIPS,
   installAiQuotaRoute,
   measureResidual,
+  nonDismissibleResidualPx,
   pinTipsBannerRandom,
+  reportResidualMeasurement,
   TIP_COUNT,
   waitForHeaderHeightConvergence,
 } from './fixtures/mobile-chrome-helpers.js';
@@ -142,7 +156,7 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
     await expect(page.locator('.card').first()).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.tips-banner')).toBeVisible();
     await assertAiQuotaBadgeVisible(page);
-    await waitForHeaderHeightConvergence(page);
+    const beforeConvergence = await waitForHeaderHeightConvergence(page);
     // 本文 (span) まで一致を見る。タイトルだけだと、pin が効いていても description が
     // 別の tip のままという壊れ方 (= バナー高さが worst-case にならない) を見逃す。
     await expect(page.locator('.tips-banner-text strong')).toHaveText(selectedTip.title);
@@ -152,6 +166,29 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
     // (= bdboard-qxt1 の巻き戻し) それはヘルパーのエラーではなく残差の膨張として
     // 下の予算アサートに落としたい。
     const before = await measureResidual(page);
+    const nonDismissibleResidual = nonDismissibleResidualPx(before);
+
+    // 成功時にも実測値を残す (bdboard-ij7g)。CI ログを grep して Linux 実測を読み、
+    // ラウンド 2 で予算を macOS/Linux 双方の実測を上回る最小値へ締め直すための材料。
+    await reportResidualMeasurement('worst-case-tip', before, {
+      tipId: selectedTip.id,
+      budgetMaxScrollY: MAX_PAGE_SCROLL_RESIDUAL_PX,
+      maxScrollYHeadroom: Math.round((MAX_PAGE_SCROLL_RESIDUAL_PX - before.maxScrollY) * 100) / 100,
+      budgetNonDismissibleResidual: MAX_NON_DISMISSIBLE_RESIDUAL_PX,
+      nonDismissibleHeadroom:
+        Math.round((MAX_NON_DISMISSIBLE_RESIDUAL_PX - nonDismissibleResidual) * 100) / 100,
+      headerConvergedAfterMs: beforeConvergence.stableAfterMs,
+      headerConvergenceQuietMs: beforeConvergence.quietMs,
+      headerConvergenceSamples: beforeConvergence.samples,
+      headerHeightVar: beforeConvergence.headerHeightVar,
+      // `changes` は収束待ちを開始した後の変化履歴である。203 → 245 の折り返しは
+      // `assertViewToolbarSettled` 完了時点で既に終わっているため、ここには現れない。
+      // 初回サンプルと `--header-height` の 1 フレーム遅れにより、正常時も `245@0 245@16.7` の
+      // ように同じ高さのエントリが 1〜2 個出る。異なる高さが並ぶときだけ待ち中に動いた証拠である。
+      // ヘッダーを低く読んだ回 (203 のまま測った回) は、このフィールドではなくペイロードの
+      // `header` フィールドで検知する (Linux CI ログで 203 と出れば一目で分かる)。
+      headerHeightChanges: beforeConvergence.changes.join(' '),
+    });
 
     expect(
       before.maxScrollY,
@@ -162,8 +199,6 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
         `増えたときはまずヘッダー高と .lane の 260px リテラルを疑う。`,
     ).toBeLessThanOrEqual(MAX_PAGE_SCROLL_RESIDUAL_PX);
 
-    const nonDismissibleResidual =
-      before.maxScrollY - before.tipsBanner - before.boardFilterBar;
     expect(
       nonDismissibleResidual,
       `375x812: residual that the user cannot dismiss must stay within ` +
@@ -177,10 +212,27 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
     // 帰属している証明。バナーが fixed 化したり跡地にプレースホルダが残ればここで落ちる。
     await page.getByRole('button', { name: 'Tipsを閉じる' }).click();
     await expect(page.locator('.tips-banner')).toHaveCount(0);
-    await waitForHeaderHeightConvergence(page);
+    const afterConvergence = await waitForHeaderHeightConvergence(page);
     const after = await measureResidual(page);
 
     const shrinkPx = before.maxScrollY - after.maxScrollY;
+    await reportResidualMeasurement('tips-dismissed', after, {
+      tipId: selectedTip.id,
+      shrinkPx: Math.round(shrinkPx * 100) / 100,
+      dismissedTipsHeight: before.tipsBanner,
+      headerConvergedAfterMs: afterConvergence.stableAfterMs,
+      headerConvergenceQuietMs: afterConvergence.quietMs,
+      headerConvergenceSamples: afterConvergence.samples,
+      headerHeightVar: afterConvergence.headerHeightVar,
+      // `changes` は収束待ちを開始した後の変化履歴である。203 → 245 の折り返しは
+      // `assertViewToolbarSettled` 完了時点で既に終わっているため、ここには現れない。
+      // 初回サンプルと `--header-height` の 1 フレーム遅れにより、正常時も `245@0 245@16.7` の
+      // ように同じ高さのエントリが 1〜2 個出る。異なる高さが並ぶときだけ待ち中に動いた証拠である。
+      // ヘッダーを低く読んだ回 (203 のまま測った回) は、このフィールドではなくペイロードの
+      // `header` フィールドで検知する (Linux CI ログで 203 と出れば一目で分かる)。
+      headerHeightChanges: afterConvergence.changes.join(' '),
+    });
+
     expect(
       shrinkPx,
       `375x812: dismissing the tips banner must remove its full height from the page ` +

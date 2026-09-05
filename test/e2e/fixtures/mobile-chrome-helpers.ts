@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { expect, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 /**
  * `/api/ai-quota` のレスポンス形。正本は web/src/api.ts の AiQuotaDto 系で、ここはその
@@ -69,6 +69,35 @@ export async function assertAiQuotaBadgeVisible(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 15_000 });
 }
 
+/**
+ * `.view-toolbar` の非同期コントロールが出揃ったことを確定する (bdboard-ij7g)。
+ *
+ * 375px 幅では `.view-toolbar-left` / `.view-toolbar-right` が `display: contents` で箱を
+ * 潰され、コントロールは `.view-toolbar` という 1 本の折り返し列に流れる。折り返すのは
+ * 「右グループ」ではなくこの 1 本の列であり、ヘッダーが 42px 伸びて 203 → 245 になる。
+ * セッション数ボタン (`.meta-text-btn`) は同じメディアクエリで `display: none` なのでこの
+ * 帯では折り返しに寄与しない。折り返しに効く非同期コントロールは ai-quota 枠 / 手動更新 /
+ * チャットボタンである。
+ * それぞれ別々の非同期クエリに依存しているので、**最後に届いた 1 つ**が折り返しの引き金になる。
+ * `waitForHeaderHeightConvergence` の解説にあるフレーム単位トレースでは、ai-quota 枠が出た
+ * あとも 48ms のあいだヘッダーは 203 のままで、チャットボタン (`chatAvailable` =
+ * `/api/chat/availability`) が着いて初めて 245 になった。
+ *
+ * ここで待つのは**存在**であって高さの期待値ではない。ヘッダーが太る/縮む退行は
+ * `mobile-header-compact.spec.ts` の `MAX_HEADER_HEIGHT_PX` など名前の付いたアサーションに
+ * 落ちる。逆にコントロール自体が消える退行は、無名のタイムアウトではなくここで落ちる。
+ */
+export async function assertViewToolbarSettled(page: Page): Promise<void> {
+  await assertAiQuotaBadgeVisible(page);
+  await expect(
+    page.locator('.view-toolbar-right').getByRole('button', { name: 'チャット', exact: true }),
+    'ツールバーのチャットボタンが描画されていない。/api/chat/availability が unavailable を' +
+      '返しているか (e2e では global-setup の BDBOARD_CLAUDE_PATH スタブで available になる)、' +
+      'ViewToolbar の描画条件が変わった。このボタンが無い fixture のヘッダーはツールバーが' +
+      '1 行に収まって実機より 42px 軽く、予算/可視性アサーションは空振りになる。',
+  ).toBeVisible({ timeout: 15_000 });
+}
+
 /** モバイルの縦方向を測る前に、フィルタバーが既定どおり折りたたまれていることを確定する。 */
 export async function assertBoardFilterBarCollapsed(page: Page): Promise<void> {
   const toggle = page.getByRole('button', { name: /^絞り込み/ });
@@ -77,39 +106,179 @@ export async function assertBoardFilterBarCollapsed(page: Page): Promise<void> {
   await expect(page.locator('.board-filter-panel')).toBeHidden();
 }
 
-/** --header-height が .header 実測に追いつくまで待つ (AiQuotaWidget 描画後 1 フレーム遅延)。 */
+export interface HeaderHeightConvergence {
+  /** 収束時点の `.header` 実測高 (getBoundingClientRect、小数のまま)。 */
+  headerHeight: number;
+  /** 収束時点の `--header-height` (px 値)。 */
+  headerHeightVar: number;
+  /** 待ち始めてから収束を確認するまでの実測ミリ秒。 */
+  stableAfterMs: number;
+  /** 最後に高さが動いてから収束判定までの静止時間 (ミリ秒)。 */
+  quietMs: number;
+  /** 収束判定までに読んだサンプル数 (フレーム数)。 */
+  samples: number;
+  /** 収束待ちを開始した後に観測した高さの遷移。CI ログ用の証拠。 */
+  changes: string[];
+}
+
+/** 静止判定の窓 (ミリ秒)。 */
+const HEADER_QUIET_WINDOW_MS = 250;
+/** 静止判定に必要な最小サンプル数。rAF が絞られて 1〜2 サンプルで窓を跨ぐのを防ぐ。 */
+const HEADER_QUIET_MIN_SAMPLES = 4;
+
+/**
+ * ヘッダー高が動かなくなるまで静止時間で待つ。
+ *
+ * ## 旧実装が取りこぼしていたもの (bdboard-ij7g)
+ *
+ * 旧実装は `--header-height` と `.header` 実測の**一致**だけを見ていた。`--header-height` は
+ * `useHeaderHeightVar` が `ceil(.header の実測高)` を ResizeObserver 経由で書き戻す値なので、
+ * 一致はレイアウトが静止していればどの高さでも成立する。つまり「ヘッダーがまだ最終形でない
+ * 状態」を収束と判定できてしまう。bdboard-4ij6 の実装中に一度だけ出た
+ * `header=203 / maxScrollY=288` はこれで、実際 bdboard-ij7g の作業中にも再現した。
+ *
+ * ## 203 の正体 (実測トレースで確定させた。チケット記載の推定とは違う)
+ *
+ * `.view-toolbar` は折り返す。375px 幅では `.view-toolbar-left` / `.view-toolbar-right` が
+ * `display: contents` で箱を潰され、コントロールは `.view-toolbar` という 1 本の折り返し列に
+ * 流れる。折り返すのは「右グループ」ではなくこの 1 本の列である。セッション数ボタン
+ * (`.meta-text-btn`) は同じメディアクエリで `display: none` なのでこの帯では折り返しに寄与せず、
+ * 折り返しに効く非同期コントロールは ai-quota 枠 / 手動更新 / チャットボタンである。最後に
+ * 届いた 1 つが 42px (203 → 245) の引き金になる。
+ * ページ読み込み直後のフレーム単位トレース (macOS Chromium 375x812) は
+ *
+ *     t=129.6ms  header=203  ツールバー右 = [セッション, 更新中…]
+ *     t=145.3ms  header=203  ai-quota 枠が出現 — **まだ 1 行のままで高さは変わらない**
+ *     t=179.1ms  header=203  更新中… → 手動更新
+ *     t=193.4ms  header=245  チャットボタンが出現 → ここで初めて 2 行に折り返す
+ *
+ * この列挙は DOM 上の存在であって可視要素ではない (セッション数ボタンは 375px では
+ * `display: none` なので折り返しには寄与しない)。
+ *
+ * つまり 203 は「ai-quota 枠の描画前」ではなく「**ツールバーがまだ 2 行に折り返していない**」
+ * 状態。枠の描画は 42px を動かす**必要**条件ではあるが引き金ではなく、引き金は最後に届いた
+ * 非同期コントロール (この回は `chatAvailable` に依存するチャットボタン) だった。
+ * `mobile-header-compact.spec.ts:67-77` の「枠の有無で 42px」は定常状態どうしの比較としては
+ * 正しく、この観察と矛盾しない (枠が無ければチャットボタンが来ても 1 行に収まる)。
+ *
+ * ## 2 段構えにする理由
+ *
+ * ヘッダーの最終高は「ヘッダー内の非同期コントロールが**全部**出揃ったか」で決まる。
+ * 静止時間だけで待つ案は実際に穴が空くことを実験で確認した: `/api/chat/availability` を
+ * 800ms 遅らせると、ヘッダーは 203 のまま静止し続けるので、どんな静止窓もその手前で
+ * 「収束した」と答えてしまう (窓を伸ばしても遅延を伸ばせば同じ)。よって静止時間は単独では
+ * 判定に使えない。逆に目印の列挙だけでは、次に非同期コントロールが増えたときに穴が空く。
+ * そこで両方を重ねる:
+ *
+ * 1. `assertViewToolbarSettled` — 折り返しに効く既知の非同期コントロール (ai-quota 枠と
+ *    チャットボタン) が出揃ったことを**名前の付いたアサーション**で確定させる。ここが
+ *    決定論を担う。コントロールが出ない退行は、この待ちの無名タイムアウトではなく
+ *    そのアサーションのメッセージとして落ちる。
+ * 2. その後 rAF ごとに `.header` 実測と `--header-height` を読み、両者が一致したうえで
+ *    `HEADER_QUIET_WINDOW_MS` のあいだ 1 度も動かないこと。1 で列挙していない将来の
+ *    非同期コントロールに対する保険で、bdboard-huvu
+ *    (`board-filter-missing-label.spec.ts` の `waitForMissingStyleStability`) と同じ
+ *    「フレーム間の同一性だけを見る」形。上のトレースで最後の 2 つの変化は 14ms 差、
+ *    枠とチャットボタンは 48ms 差なので、250ms は実測の 5 倍以上の余裕がある。
+ *
+ * **期待するヘッダー高の数値 (245 等) は待ち条件に一切書かない。** 書くと本物の退行が
+ * 「タイムアウト」として出てしまい、`mobile-header-compact.spec.ts` の `MAX_HEADER_HEIGHT_PX`
+ * のような名前付きアサーションで落ちなくなる。
+ */
 export async function waitForHeaderHeightConvergence(
   page: Page,
   message =
-    '--header-height が .header の実測高に追いつかない。' +
+    'ヘッダー高が静止しない (--header-height と .header 実測高が一致したまま動かなくならない)。' +
     'レーンストリップ sticky top / scroll-padding-top のずれ原因。',
-): Promise<void> {
-  await expect
-    .poll(
-      async () =>
-        page.evaluate(() => {
-          const header = document.querySelector('.header');
-          if (!header) {
-            return Number.POSITIVE_INFINITY;
+): Promise<HeaderHeightConvergence> {
+  await assertViewToolbarSettled(page);
+
+  return page.evaluate(
+    async ({ timeoutMs, quietWindowMs, minQuietSamples, failureMessage }) => {
+      const startedAt = performance.now();
+      const nextFrame = () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve());
+        });
+      const sample = (): { headerHeight: number; headerHeightVar: number } | null => {
+        const header = document.querySelector('.header');
+        if (!header) {
+          return null;
+        }
+        const headerHeightVarStr = getComputedStyle(document.documentElement)
+          .getPropertyValue('--header-height')
+          .trim();
+        const headerHeightVar = headerHeightVarStr.endsWith('px')
+          ? Number.parseFloat(headerHeightVarStr)
+          : Number.NaN;
+        if (!Number.isFinite(headerHeightVar)) {
+          return null;
+        }
+        return { headerHeight: header.getBoundingClientRect().height, headerHeightVar };
+      };
+
+      const since = () => Math.round((performance.now() - startedAt) * 100) / 100;
+      const changes: string[] = [];
+      let previous: { headerHeight: number; headerHeightVar: number } | null = null;
+      let lastChangeAt = performance.now();
+      let samples = 0;
+      let quietSamples = 0;
+
+      while (performance.now() - startedAt < timeoutMs) {
+        const current = sample();
+        samples += 1;
+
+        const changed =
+          current === null ||
+          previous === null ||
+          current.headerHeight !== previous.headerHeight ||
+          current.headerHeightVar !== previous.headerHeightVar;
+        if (changed) {
+          lastChangeAt = performance.now();
+          quietSamples = 0;
+          if (current !== null) {
+            changes.push(`${current.headerHeight}@${since()}`);
           }
-          const headerHeight = header.getBoundingClientRect().height;
-          const headerHeightVarStr = getComputedStyle(document.documentElement)
-            .getPropertyValue('--header-height')
-            .trim();
-          const headerHeightVar = headerHeightVarStr.endsWith('px')
-            ? Number.parseFloat(headerHeightVarStr)
-            : Number.NaN;
-          if (!Number.isFinite(headerHeightVar)) {
-            return Number.POSITIVE_INFINITY;
-          }
-          return Math.abs(headerHeightVar - Math.ceil(headerHeight));
-        }),
-      {
-        message,
-        timeout: 10_000,
-      },
-    )
-    .toBeLessThanOrEqual(1);
+        } else {
+          quietSamples += 1;
+        }
+        previous = current;
+
+        const quietMs = performance.now() - lastChangeAt;
+        if (
+          current !== null &&
+          Math.abs(current.headerHeightVar - Math.ceil(current.headerHeight)) <= 1 &&
+          quietMs >= quietWindowMs &&
+          quietSamples >= minQuietSamples
+        ) {
+          return {
+            headerHeight: current.headerHeight,
+            headerHeightVar: current.headerHeightVar,
+            stableAfterMs: since(),
+            quietMs: Math.round(quietMs * 100) / 100,
+            samples,
+            changes,
+          };
+        }
+
+        await nextFrame();
+      }
+
+      const lastSeen =
+        previous === null
+          ? '.header または --header-height が読めなかった'
+          : `headerHeight=${previous.headerHeight}, --header-height=${previous.headerHeightVar}`;
+      throw new Error(
+        `${failureMessage} (samples=${samples}, ${lastSeen}, changes=[${changes.join(', ')}])`,
+      );
+    },
+    {
+      timeoutMs: 10_000,
+      quietWindowMs: HEADER_QUIET_WINDOW_MS,
+      minQuietSamples: HEADER_QUIET_MIN_SAMPLES,
+      failureMessage: message,
+    },
+  );
 }
 
 /** Tips の原本。web/src/tipsContent.ts と同じ docs/help-content.json を直接読む。 */
@@ -255,4 +424,79 @@ export function describeResidualMetrics(m: ResidualMetrics): string {
     `filterBar=${m.boardFilterBar}(+${m.boardFilterBarMarginBottom} margin), ` +
     `laneStrip=${m.laneIndicatorStrip}, lane=${m.lane}`
   );
+}
+
+/**
+ * CI ログから測定値を grep で拾うための固定プレフィクス (bdboard-ij7g)。
+ *
+ * 予算アサーションのメッセージは**失敗時にしか**出ないので、Linux CI の実測値が
+ * 一度も記録されないまま「余裕を厚めに取る」しかない状態が続いていた。成功時にも
+ * 1 行 JSON で出しておけば、ジョブのログを
+ *
+ *     grep -o 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=.*' <log>
+ *
+ * で拾って macOS 実測と突き合わせ、予算を両プラットフォームの実測を上回る最小値へ
+ * 締め直せる (bdboard-ij7g ラウンド 2)。1 行 JSON なのは GitHub Actions のログが
+ * 行単位でしか畳めないため。
+ */
+export const RESIDUAL_MEASUREMENT_LOG_PREFIX = 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=';
+
+/**
+ * 「ユーザーが消せない」残差 = maxScrollY から Tips と絞り込みバーの実測高を引いた残り。
+ * モデル上は `header + filterBarMarginBottom - 172` になる。
+ * mobile-page-scroll-residual.spec.ts の 2 つ目の予算と同じ量。
+ * アサーション対象は生値であり、丸めは表示側だけで行う。
+ */
+export function nonDismissibleResidualPx(m: ResidualMetrics): number {
+  return m.maxScrollY - m.tipsBanner - m.boardFilterBar;
+}
+
+/**
+ * 残差モデル `maxScrollY = header + tips + filterBarBox - 172` の予測値。
+ * 実測と並べて出しておくと、Linux でモデルのどの項がずれたのかがログだけで分かる。
+ */
+export function modelMaxScrollYPx(m: ResidualMetrics): number {
+  return (
+    Math.round(
+      (m.header + m.tipsBanner + m.boardFilterBar + m.boardFilterBarMarginBottom - 172) * 100,
+    ) / 100
+  );
+}
+
+/**
+ * 測定値を**成功時にも**残す。`console.log` の 1 行 JSON (CI ログ用) と
+ * `testInfo.attach` の整形 JSON (HTML レポート用) の両方に出す。
+ *
+ * `label` は 1 つの spec が複数回測るときの区別 (例: tips を閉じる前/後)。
+ * `extra` にはその spec 固有の量 (予算、カード位置など) を足せる。
+ */
+export async function reportResidualMeasurement(
+  label: string,
+  m: ResidualMetrics,
+  extra: Record<string, number | string | boolean | null> = {},
+): Promise<void> {
+  const info = test.info();
+  const payload = {
+    spec: path.basename(info.file),
+    test: info.title,
+    project: info.project.name,
+    platform: process.platform,
+    label,
+    header: m.header,
+    tips: m.tipsBanner,
+    filterBar: m.boardFilterBar,
+    filterBarMarginBottom: m.boardFilterBarMarginBottom,
+    maxScrollY: m.maxScrollY,
+    nonDismissibleResidual: Math.round(nonDismissibleResidualPx(m) * 100) / 100,
+    modelMaxScrollY: modelMaxScrollYPx(m),
+    viewportHeight: m.viewportHeight,
+    laneIndicatorStrip: m.laneIndicatorStrip,
+    lane: m.lane,
+    ...extra,
+  };
+  console.log(`${RESIDUAL_MEASUREMENT_LOG_PREFIX}${JSON.stringify(payload)}`);
+  await info.attach(`residual-measurement-${label}`, {
+    body: JSON.stringify(payload, null, 2),
+    contentType: 'application/json',
+  });
 }

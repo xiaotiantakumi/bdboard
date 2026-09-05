@@ -296,8 +296,9 @@ test.describe('mobile header compact — header height budget (bdboard-k21o)', (
     // hygiene-reclaim-status-overflow.spec.ts の staleLeases 前提と同じ役割。
     await assertAiQuotaBadgeVisible(page);
 
-    // --header-height は useHeaderHeightVar の ResizeObserver 経由で 1 フレーム遅れて追いつく
-    // (実測: バッジ描画直後は 203px のまま → 収束後 245px)。収束を待ってから比較する。
+    // 203 の正体は変数の遅れではなく、`.view-toolbar` がまだ折り返していない状態である。
+    // 詳細は waitForHeaderHeightConvergence (test/e2e/fixtures/mobile-chrome-helpers.ts) の JSDoc を参照。
+    // それとは別に、--header-height が ResizeObserver 経由で 1 フレーム遅れることもあるため、収束を待ってから比較する。
     await waitForHeaderHeightConvergence(
       page,
       '--header-height が .header の実測高に追いつかない。この変数は ' +

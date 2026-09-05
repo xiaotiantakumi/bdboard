@@ -6,7 +6,9 @@ import {
   findWorstCaseTipIndex,
   HELP_TIPS,
   installAiQuotaRoute,
+  measureResidual,
   pinTipsBannerRandom,
+  reportResidualMeasurement,
   TIP_COUNT,
   waitForHeaderHeightConvergence,
 } from './fixtures/mobile-chrome-helpers.js';
@@ -78,7 +80,7 @@ test.describe('mobile first card visibility (bdboard-qxt1)', () => {
     await expect(firstCard).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('.tips-banner')).toBeVisible();
     await assertAiQuotaBadgeVisible(page);
-    await waitForHeaderHeightConvergence(page);
+    const convergence = await waitForHeaderHeightConvergence(page);
 
     await expect(page.locator('.tips-banner-text strong')).toHaveText(selectedTip.title);
     await expect(page.locator('.tips-banner-text span')).toHaveText(selectedTip.description);
@@ -105,6 +107,32 @@ test.describe('mobile first card visibility (bdboard-qxt1)', () => {
           laneHeader: heightOf('.lane-header'),
         },
       };
+    });
+
+    // 成功時にも実測値を残す (bdboard-ij7g)。この spec は mobile-page-scroll-residual と
+    // 同じ worst-case 構成で測っているので、同じプレフィクスで出しておくと
+    // 「ヘッダーが最終形になる前の高さを読んでいた」問題の再発を CI ログだけで追える
+    // (`.view-toolbar` が 2 行に折り返す前の header=203 をここだけ読んでいれば、
+    // 実測が 42px 低いこととして即分かる)。
+    const residual = await measureResidual(page);
+    await reportResidualMeasurement('first-card-worst-case-tip', residual, {
+      tipId: selectedTip.id,
+      firstCardTop: m.firstCardTop,
+      firstCardHeight: m.firstCardHeight,
+      foldMarginPx: Math.round((m.viewportHeight - m.firstCardTop) * 100) / 100,
+      minFoldMarginPx: MIN_FOLD_MARGIN_PX,
+      laneHeader: m.breakdown.laneHeader,
+      headerConvergedAfterMs: convergence.stableAfterMs,
+      headerConvergenceQuietMs: convergence.quietMs,
+      headerConvergenceSamples: convergence.samples,
+      headerHeightVar: convergence.headerHeightVar,
+      // `changes` は収束待ちを開始した後の変化履歴である。203 → 245 の折り返しは
+      // `assertViewToolbarSettled` 完了時点で既に終わっているため、ここには現れない。
+      // 初回サンプルと `--header-height` の 1 フレーム遅れにより、正常時も `245@0 245@16.7` の
+      // ように同じ高さのエントリが 1〜2 個出る。異なる高さが並ぶときだけ待ち中に動いた証拠である。
+      // ヘッダーを低く読んだ回 (203 のまま測った回) は、このフィールドではなくペイロードの
+      // `header` フィールドで検知する (Linux CI ログで 203 と出れば一目で分かる)。
+      headerHeightChanges: convergence.changes.join(' '),
     });
 
     // 「半分見える」= カード上端がビューポート下端よりカード高さの半分ぶん以上上にある。
