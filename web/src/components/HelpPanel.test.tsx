@@ -1,5 +1,13 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  act,
+  createEvent,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HELP_SECTIONS } from '../helpContent';
@@ -541,6 +549,35 @@ describe('HelpPanel', () => {
     const filteredCount = container.querySelectorAll('details.help-panel-section').length;
     expect(filteredCount).toBeGreaterThan(0);
     expect(filteredCount).toBeLessThan(HELP_SECTIONS.length);
+  });
+
+  // isComposingRef を降ろす経路は onBlur と nativeEvent.isComposing === false の 2 本あり、
+  // 上のテストが覆うのは onBlur 側だけ。この 2 本は別々の環境を担当している —
+  // blur が起きないまま compositionend だけ落ちる環境では isComposing === false 側しか
+  // 復帰できない。片方だけをテストすると、もう片方は「onBlur と重複」に見えて
+  // 将来のクリーンアップで黙って消される (bdboard-okdh 議長裁定 2026-09-05)。
+  it('recovers filtering from a stuck composition flag without blur', () => {
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+    const { keyword } = findUniqueFilterKeyword();
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    fireEvent.compositionStart(searchbox);
+    fireEvent.change(searchbox, { target: { value: keyword.slice(0, -1) } });
+
+    expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
+      HELP_SECTIONS.length,
+    );
+
+    // jsdom の change イベントは isComposing を持たないため、実ブラウザが
+    // 合成終了後の input で false を載せてくる状況を defineProperty で再現する。
+    // blur は起こさない — ここで復帰したなら、それは isComposing === false 側の経路。
+    const changeEvent = createEvent.change(searchbox, { target: { value: keyword } });
+    Object.defineProperty(changeEvent, 'isComposing', { value: false });
+    fireEvent(searchbox, changeEvent);
+
+    const recoveredCount = container.querySelectorAll('details.help-panel-section').length;
+    expect(recoveredCount).toBeGreaterThan(0);
+    expect(recoveredCount).toBeLessThan(HELP_SECTIONS.length);
   });
 
   it('recovers filtering when compositionend is missed', () => {
