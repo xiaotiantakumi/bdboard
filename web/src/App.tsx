@@ -509,11 +509,16 @@ export function App() {
     return ids;
   }, [boardQuery.data]);
 
-  const availableLabels = useMemo(() => {
+  // undefined = 「盤面をまだ知らない」(初回描画・クエリキー変更直後・取得失敗で
+  // data が undefined のまま)。空配列 = 「盤面は分かっていてラベルが 1 つも無い」。
+  // ここを [] に潰すと、選択中ラベルが localStorage から復元されている初回描画や
+  // 取得失敗中に「選んだラベルは全部盤面に無い」という嘘を BoardFilterBar が
+  // 出してしまう (bdboard-gxq5)。区別できる形のまま渡し、判定は受け手に任せる。
+  const availableLabels = useMemo<string[] | undefined>(() => {
     const labels = new Set<string>();
     const data = boardQuery.data;
     if (data === undefined) {
-      return [];
+      return undefined;
     }
     if (data.merged !== null) {
       collectBoardLabels(data.merged, labels);
@@ -932,7 +937,7 @@ export function App() {
         {(view === 'merged' || view === 'split' || view === 'next') && (
           <BulkActionBar
             cardsById={boardCardsById}
-            availableLabels={availableLabels}
+            availableLabels={availableLabels ?? []}
           />
         )}
         {boardQuery.data !== undefined && view === 'merged' && boardQuery.data.merged !== null && (
@@ -1083,7 +1088,7 @@ export function App() {
           isTicketOnBoard={isTicketOnBoard}
           onFilterByEpic={handleFilterByEpic}
           onTicketViewed={handleRecordRecentTicket}
-          availableLabels={availableLabels}
+          availableLabels={availableLabels ?? []}
         />
         </ErrorBoundary>
       )}
