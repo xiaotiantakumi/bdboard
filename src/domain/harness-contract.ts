@@ -44,6 +44,11 @@ export interface HarnessContractHooks {
  */
 export type HarnessModelComplexity = 'low' | 'med' | 'high';
 
+/** parseModelCandidates が検証した member:model。未検証の文字列とは区別する。 */
+export type HarnessModelCandidate = string & {
+  readonly __harnessModelCandidate: unique symbol;
+};
+
 export const HARNESS_MODEL_COMPLEXITIES: readonly HarnessModelComplexity[] = [
   'low',
   'med',
@@ -70,9 +75,9 @@ export interface HarnessModelStageRoute {
   readonly stage: string;
   /** 宣言に現れた複雑度キー。UI に出す宣言段数で、`*` 一本は共通扱いになる。 */
   readonly declaredKeys: readonly HarnessModelComplexityKey[];
-  readonly low: readonly string[];
-  readonly med: readonly string[];
-  readonly high: readonly string[];
+  readonly low: readonly HarnessModelCandidate[];
+  readonly med: readonly HarnessModelCandidate[];
+  readonly high: readonly HarnessModelCandidate[];
 }
 
 export interface HarnessContractModels {
@@ -297,7 +302,7 @@ function isModelComplexityKey(key: string): key is HarnessModelComplexityKey {
 }
 
 type CandidatesParseResult =
-  | { readonly ok: true; readonly value: readonly string[] }
+  | { readonly ok: true; readonly value: readonly HarnessModelCandidate[] }
   | { readonly ok: false; readonly message: string };
 
 function parseModelCandidates(value: unknown, fieldName: string): CandidatesParseResult {
@@ -319,6 +324,7 @@ function parseModelCandidates(value: unknown, fieldName: string): CandidatesPars
   }
 
   const seen = new Set<string>();
+  const validated: HarnessModelCandidate[] = [];
   for (const [index, candidate] of candidates.entries()) {
     if (!MODEL_CANDIDATE_PATTERN.test(candidate)) {
       return {
@@ -349,9 +355,11 @@ function parseModelCandidates(value: unknown, fieldName: string): CandidatesPars
       };
     }
     seen.add(candidate);
+    // ブランド生成はこの検証境界だけ。後段で未検証の文字列をキャストしない。
+    validated.push(candidate as HarnessModelCandidate);
   }
 
-  return { ok: true, value: candidates };
+  return { ok: true, value: validated };
 }
 
 type StageRouteParseResult =
@@ -364,7 +372,7 @@ function parseModelStageRoute(stage: string, value: unknown): StageRouteParseRes
     return { ok: false, message: `${field} はオブジェクトである必要があります` };
   }
 
-  const cells = new Map<HarnessModelComplexityKey, readonly string[]>();
+  const cells = new Map<HarnessModelComplexityKey, readonly HarnessModelCandidate[]>();
   const declaredKeys: HarnessModelComplexityKey[] = [];
 
   for (const key of Object.keys(value)) {
