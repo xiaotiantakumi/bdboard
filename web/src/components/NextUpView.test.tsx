@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState, type ReactElement } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -359,16 +359,7 @@ interface ActiveTimerLoop {
 
 let activeTimerLoop: ActiveTimerLoop | null = null;
 
-// bdboard-ujnd: poll_failed テストが testTimeout で落ちたとき、本関数内の
-// vi.advanceTimersByTimeAsync ループは vitest により中断されずバックグラウンドで
-// 動き続ける。afterEach の vi.useRealTimers() が、act() スコープ内で pending の
-// advanceTimersByTimeAsync が待つ fake clock を外すため act コールバックが return
-// できず、React 19 のグローバル actQueue が非 null のまま次テストへ漏れる。
-// 後続の render() は flush されず DOM が空 (<body><div /></body>) になり、
-// 「role が見つからない」系の即時失敗として連鎖する (bdboard-gwgy の per-test
-// timeout は予防策。本チケットではループを abort 可能にし afterEach で act スコープ
-// 終了を待ってから useRealTimers() するので連鎖しない)。
-async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
+async function advanceInAct(ms: number): Promise<'advanced' | 'aborted'> {
   let abort!: () => void;
   const aborted = new Promise<'aborted'>((resolve) => {
     abort = () => resolve('aborted');
@@ -378,31 +369,45 @@ async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
     markSettled = resolve;
   });
   const token: ActiveTimerLoop = { abort, settled };
+  // Promise の executor は同期実行されるので、act() を呼ぶ前に必ず登録が完了している。
+  // これが afterEach 側で「開いている act スコープが常に見つかる」ことの根拠。
   activeTimerLoop = token;
   try {
-    for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
-      const outcome = await act(async () =>
-        Promise.race([
-          vi
-            .advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS)
-            .then((): 'advanced' => 'advanced'),
-          aborted,
-        ]),
-      );
-      if (outcome === 'aborted') {
-        return;
-      }
-      if (screen.queryByRole('button', { name: '▶ 一括実行' })) {
-        return;
-      }
-    }
-    throw new Error('batch run did not finish within timer budget');
+    return await act(async () =>
+      Promise.race([
+        vi.advanceTimersByTimeAsync(ms).then((): 'advanced' => 'advanced'),
+        aborted,
+      ]),
+    );
   } finally {
     if (activeTimerLoop === token) {
       activeTimerLoop = null;
     }
     markSettled();
   }
+}
+
+// bdboard-ujnd: poll_failed テストが testTimeout で落ちたとき、本関数内の
+// vi.advanceTimersByTimeAsync ループは vitest により中断されずバックグラウンドで
+// 動き続ける。漏洩が確定するのは afterEach ではなくタイムアウトの瞬間である。
+// act スコープが開いたままになると actQueue だけでなく actScopeDepth も 1 のまま漏れ、
+// 以降の top-level act() は nested 分岐に落ちて漏れた配列を再利用する (flush も null 化もしない)。
+// これが後続 render() が flush されず DOM が空になる連鎖の原因 (bdboard-gwgy の per-test
+// timeout は予防策)。「useRealTimers() を後ろにずらせば漏れない」は誤りで、効くのは abort であって
+// useRealTimers() との順序ではない。本チケットでは advanceInAct で abort 可能にし afterEach が
+// act スコープ終了を待ってから useRealTimers() するので連鎖しない。
+async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
+  for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
+    // abort は戻り値で伝播する。'aborted' を受けたら必ず return すること。return せずに次の反復へ進むと、
+    // 新しい `aborted` promise が作られて abort が失われる。
+    if ((await advanceInAct(NEXT_UP_LOOP_POLL_MAX_DELAY_MS)) === 'aborted') {
+      return;
+    }
+    if (screen.queryByRole('button', { name: '▶ 一括実行' })) {
+      return;
+    }
+  }
+  throw new Error('batch run did not finish within timer budget');
 }
 
 describe('NextUpView batch run loop', () => {
@@ -423,17 +428,19 @@ describe('NextUpView batch run loop', () => {
   });
 
   afterEach(async () => {
-    // タイムアウトしたテストが残したタイマーループを止め、その act() スコープが
-    // 完全に閉じるまで待つ。ここで待たずに useRealTimers() すると、act の内側で
-    // 止まっている advanceTimersByTimeAsync が待つ fake clock が消え、act スコープが
-    // 永久に閉じない = React のグローバル actQueue が次のテストへ漏れる (bdboard-ujnd)。
-    const loop = activeTimerLoop;
-    if (loop) {
-      loop.abort();
-      await loop.settled;
+    // vitest は suite 内の afterEach を RTL の root afterEach (import 時の自動 cleanup) より先に実行する。
+    try {
+      const loop = activeTimerLoop;
+      if (loop) {
+        loop.abort();
+        await loop.settled;
+      }
+    } finally {
+      // 塞いだのは act スコープの漏洩。abort が race に勝っても advanceTimersByTimeAsync は
+      // デタッチされた clock 上で無害に走り続けることがある (タイマー/Promise を残さない、とは限らない)。
+      vi.useRealTimers();
+      vi.clearAllMocks();
     }
-    vi.useRealTimers();
-    vi.clearAllMocks();
   });
 
   it('continues to the next ticket when the first run ends in failed', async () => {
@@ -459,9 +466,7 @@ describe('NextUpView batch run loop', () => {
       expect(mockStartTicketRun).toHaveBeenNthCalledWith(1, 'ticket-1');
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
     await waitFor(() => {
       expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
@@ -493,9 +498,7 @@ describe('NextUpView batch run loop', () => {
 
     await user.click(screen.getByRole('button', { name: '■ 停止' }));
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 3);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 3);
 
     expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
   });
@@ -523,17 +526,13 @@ describe('NextUpView batch run loop', () => {
       expect(mockStartTicketRun).toHaveBeenNthCalledWith(1, 'ticket-1');
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
     await waitFor(() => {
       expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
@@ -561,9 +560,7 @@ describe('NextUpView batch run loop', () => {
 
     await user.click(screen.getByRole('button', { name: '■ 停止' }));
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
@@ -571,9 +568,7 @@ describe('NextUpView batch run loop', () => {
 
     const fetchCountAfterStop = mockFetchAgentRun.mock.calls.length;
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 10);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 10);
 
     expect(mockFetchAgentRun.mock.calls.length).toBe(fetchCountAfterStop);
   });
@@ -672,9 +667,7 @@ describe('NextUpView batch run loop', () => {
     const fetchCountAtUnmount = mockFetchAgentRun.mock.calls.length;
     unmount();
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 20);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 20);
 
     expect(mockFetchAgentRun.mock.calls.length).toBe(fetchCountAtUnmount);
   });
@@ -737,6 +730,7 @@ describe('NextUpView batch run loop', () => {
     // start 失敗後の delay を削るミューテーションを入れると、ここで2件目が走るので落ちる。
     // waitFor は fake timers 検知時にコールバック評価前へ advanceTimersByTime(50) を挟むため、
     // 境界の検証には使えない（それが以前この検証を壊していた原因）。
+    // advanceInAct に置き換えない: timer を進めない。マイクロタスクのみなので fake clock に依存せず、この経路では宙吊りにならない。
     await act(async () => {
       for (let i = 0; i < 20; i += 1) {
         await Promise.resolve();
@@ -746,9 +740,7 @@ describe('NextUpView batch run loop', () => {
     expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
     expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-2');
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
     await waitFor(() => {
       expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
@@ -843,9 +835,7 @@ describe('NextUpView batch run loop', () => {
       expect(mockStartTicketRun).toHaveBeenNthCalledWith(2, 'ticket-2');
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
@@ -926,9 +916,7 @@ describe('NextUpView batch run loop', () => {
 
     resolveFirstPoll!(makeRunDetail('run-ticket-1', 'ticket-1', 'succeeded'));
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 5);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 5);
 
     expect(screen.getByText(/現在: ticket-2/)).toBeInTheDocument();
     expect(screen.queryByText(/現在: ticket-1/)).not.toBeInTheDocument();
@@ -960,6 +948,7 @@ describe('NextUpView batch run loop', () => {
 
     const stopButton = screen.getByRole('button', { name: '■ 停止' });
 
+    // advanceInAct に置き換えない: 複合 body。race に負けると fireEvent が act の外で発火してしまう。
     await act(async () => {
       resolveFirstPoll!(makeRunDetail('run-ticket-1', 'ticket-1', 'succeeded'));
       for (let i = 0; i < 20; i += 1) {
@@ -997,9 +986,7 @@ describe('NextUpView batch run loop', () => {
     expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-7');
     expect(mockStartTicketRun).not.toHaveBeenCalledWith('ticket-8');
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 6);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 6);
 
     expect(mockStartTicketRun).toHaveBeenCalledTimes(5);
     expect(screen.getByText(/完了 5\/5/)).toBeInTheDocument();
@@ -1032,9 +1019,7 @@ describe('NextUpView batch run loop', () => {
 
       await user.click(screen.getByRole('button', { name: '■ 停止' }));
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
-      });
+      await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS);
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
@@ -1080,6 +1065,37 @@ describe('NextUpView batch run loop', () => {
     20000,
   );
 
+  // 回帰ガード(bdboard-ujnd) その1/2: タイムアウトで放置されたループを再現する。
+  // この2件は対でひとつのガード。順序を変えたり間に別テストを挟んだりしないこと。
+  // afterEach の abort 配線を外すと、開いたままの act スコープが次のテストへ漏れ、
+  // 2件目の render が flush されずに落ちる。
+  it('leaves a timer loop open when the batch run is abandoned (pairs with the next test)', async () => {
+    const cards = Array.from({ length: 20 }, (_, index) =>
+      makeCard(`ticket-${index + 1}`, `Task ${index + 1}`),
+    );
+    renderNextUpView(makeBoard(cards), { limit: 20 });
+    mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+    await startBatchRun(user);
+    await waitFor(() => {
+      expect(mockStartTicketRun).toHaveBeenCalledTimes(1);
+    });
+
+    // 意図的に await しない = テストがタイムアウトで見捨てられた状態の再現。
+    void finishBatchRunAfterPersistentPollFailures().catch(() => undefined);
+    await Promise.resolve();
+
+    expect(activeTimerLoop).not.toBeNull();
+  });
+
+  // 回帰ガード(bdboard-ujnd) その2/2: 直前のテストが放置したループを afterEach が
+  // 確実に閉じたことを、素の render が flush されるかどうかで観測する。
+  it('renders normally after the previous test abandoned its timer loop', async () => {
+    cleanup();
+    render(<div>flushed</div>);
+    expect(screen.getByText('flushed')).toBeInTheDocument();
+  });
+
   it(
     'shows completed summary without interrupted wording when a 20-ticket batch finishes',
     async () => {
@@ -1099,9 +1115,7 @@ describe('NextUpView batch run loop', () => {
         expect(mockStartTicketRun).toHaveBeenCalledTimes(20);
       });
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 25);
-      });
+      await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 25);
 
       await waitFor(() => {
         expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
@@ -1135,9 +1149,7 @@ describe('NextUpView batch run loop', () => {
       expect(mockStartTicketRun).toHaveBeenCalledTimes(2);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS * 2);
-    });
+    await advanceInAct(AGENT_RUN_POLL_INTERVAL_MS * 2);
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '▶ 一括実行' })).toBeInTheDocument();
