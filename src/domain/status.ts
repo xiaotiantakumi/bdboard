@@ -19,10 +19,6 @@ export function isKnownStatus(value: unknown): value is KnownStatus {
   );
 }
 
-export function isStatus(value: unknown): value is Status {
-  return isKnownStatus(value);
-}
-
 export function isOpenLike(status: Status): boolean {
   return status === 'open' || status === 'pinned';
 }
@@ -30,11 +26,3 @@ export function isOpenLike(status: Status): boolean {
 export const PRIORITIES = [0, 1, 2, 3, 4] as const;
 
 export type Priority = (typeof PRIORITIES)[number];
-
-export function isPriority(value: unknown): value is Priority {
-  return typeof value === 'number' && (PRIORITIES as readonly number[]).includes(value);
-}
-
-export function comparePriority(a: Priority, b: Priority): number {
-  return a - b;
-}
