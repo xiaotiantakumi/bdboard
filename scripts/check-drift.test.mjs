@@ -998,6 +998,121 @@ describe('check-drift CLI', () => {
     15000,
   );
 
+  // bdboard-b0yd R4-C(2): 上の R4-C は peer が1本しかないため comparedCount が0に
+  // 落ち、階層2の行そのものが印字されない。つまり「テキスト衝突は判定できませんでした」
+  // という**文言側**の修正は上のテストでは一度も実行されず、文言を元の
+  // 「衝突はしませんが」に戻しても緑のままだった (議長が実測)。
+  //
+  // これは「到達不能だから構わない」ではない。`unavailable` は peer 単位で起こりうる:
+  // `git merge-tree --write-tree --name-only` は git 2.38 から、`--merge-base=` は
+  // **2.40** から入った。2.38/2.39 では、`canUseUpstreamBase` が真になる peer
+  // (自分も peer も origin/main 取り込み済み) にだけ `--merge-base=` が渡って失敗し、
+  // stale な peer は成功する。つまり同一実行の中で unavailable な peer と比較できた
+  // peer が混在し、comparedCount > 0 のまま階層2の行が実際に印字される。
+  //
+  // その版の git を再現するため、シムは `--merge-base=` が付いたときだけ失敗させる。
+  it(
+    'does not claim a clean merge for the peer whose merge-tree failed while another peer was compared (C)',
+    () => {
+      const { bare, work } = makeRepo('mergetree-unavailable-mixed');
+
+      // 1) stale peer: main が進む**前**に分岐して hot.ts を編集する。
+      const stalePeer = path.join(tmpRoot, 'mergetree-unavailable-mixed-stale');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, stalePeer);
+      sh(stalePeer, 'git', 'checkout', '-qb', 'stalepeer');
+      fs.writeFileSync(path.join(stalePeer, 'hot.ts'), BIG_FILE('stale-peer'));
+      sh(stalePeer, 'git', 'commit', '-qam', 'stale peer');
+      sh(stalePeer, 'git', 'push', '-q', 'origin', 'stalepeer');
+
+      // 2) main を hot.ts とは別のファイルで進める (stale peer だけが取り残される)。
+      advanceMain(bare, 'mergetree-unavailable-mixed-advance', (dir) => {
+        fs.writeFileSync(path.join(dir, 'marker.ts'), BIG_FILE('advanced'));
+      });
+
+      // 3) 自分は**新しい** origin/main から分岐する = weAreCurrentWithUpstream。
+      sh(work, 'git', 'fetch', '-q', 'origin');
+      sh(work, 'git', 'checkout', '-qb', 'feature', 'origin/main');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('mine'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
+
+      // 4) fresh peer: 新しい origin/main から分岐 = peerIsCurrentWithUpstream。
+      //    この peer にだけ `--merge-base=` が渡る。
+      const freshPeer = path.join(tmpRoot, 'mergetree-unavailable-mixed-fresh');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, freshPeer);
+      sh(freshPeer, 'git', 'checkout', '-qb', 'freshpeer', 'origin/main');
+      fs.writeFileSync(path.join(freshPeer, 'hot.ts'), BIG_FILE('fresh-peer'));
+      sh(freshPeer, 'git', 'commit', '-qam', 'fresh peer');
+      sh(freshPeer, 'git', 'push', '-q', 'origin', 'freshpeer');
+
+      sh(work, 'git', 'fetch', '-q', 'origin');
+
+      // git 2.38/2.39 のシム: `--merge-base=` が付いた merge-tree だけを未知
+      // オプションとして落とし、それ以外は本物の git に委譲する。
+      const shimDir = path.join(tmpRoot, 'mergetree-unavailable-mixed-shim');
+      fs.mkdirSync(shimDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(shimDir, 'git-shim.mjs'),
+        [
+          "import { spawnSync } from 'node:child_process';",
+          'const args = process.argv.slice(2);',
+          "const isOldMergeTree =",
+          "  args.includes('merge-tree') && args.some((a) => a.startsWith('--merge-base='));",
+          'if (isOldMergeTree) {',
+          '  process.stderr.write("fatal: unknown option `merge-base\' (test shim: git 2.39)\\n");',
+          '  process.exitCode = 129;',
+          '} else {',
+          '  const result = spawnSync(process.env.BDBOARD_TEST_REAL_GIT, args, { stdio: "inherit" });',
+          '  process.exitCode = result.status === null ? 1 : result.status;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      fs.writeFileSync(
+        path.join(shimDir, 'git'),
+        ['#!/bin/sh', 'DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)', 'exec node "$DIR/git-shim.mjs" "$@"', ''].join(
+          '\n',
+        ),
+      );
+      fs.chmodSync(path.join(shimDir, 'git'), 0o755);
+      fs.writeFileSync(
+        path.join(shimDir, 'git.cmd'),
+        ['@echo off', 'node "%~dp0git-shim.mjs" %*', 'exit /b %errorlevel%', ''].join('\r\n'),
+      );
+
+      const { status, stdout } = runDrift(
+        work,
+        {
+          status: 0,
+          output: JSON.stringify([
+            { number: 81, headRefName: 'freshpeer', isCrossRepository: false },
+            { number: 82, headRefName: 'stalepeer', isCrossRepository: false },
+          ]),
+        },
+        {
+          extraEnv: {
+            PATH: `${shimDir}${path.delimiter}${process.env.PATH}`,
+            BDBOARD_TEST_REAL_GIT: REAL_GIT,
+          },
+        },
+      );
+
+      expect(status).toBe(0);
+      // stale peer は比較できているので、0件に落ちる上の R4-C とは違い
+      // 階層2の行が実際に印字される = 文言側の分岐が実行される。
+      expect(stdout).not.toContain('比較できた open PR がありません');
+      // 判定していない peer に対して「衝突しない」と断定してはいけない。
+      expect(stdout).not.toContain('衝突はしませんが');
+      expect(stdout).toContain('テキスト衝突は判定できませんでした');
+      expect(stdout).toContain('merge-tree が使えないため PR #81 (freshpeer)');
+      // 比較できた peer が居るので、階層1の行も同時に出る (これが「混在」の実体)。
+      expect(stdout).toContain('open PR #82 (stalepeer) と衝突する可能性があります');
+      // comparedCount そのものは、findings があるとき all-clear 行が出ないので
+      // この経路では観測できない。件数の除外は上の R4-C (peer 1本 → 0件) が見る。
+    },
+    15000,
+  );
+
+
   // bdboard-b0yd R4-D: fetch が劣化 (degradedSuffix) した状態で、全 peer が
   // missing-ref に落ちて comparedCount が0件になっても、「比較できた open PR が
   // ありません。」にだけ degradedSuffix が付いていなかった。
