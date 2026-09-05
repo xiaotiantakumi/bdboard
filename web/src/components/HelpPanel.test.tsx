@@ -32,6 +32,43 @@ function renderHelpPanel(props: { onClose: () => void }) {
   );
 }
 
+function normalizeForSearch(text: string): string {
+  return text.normalize('NFKC').toLowerCase();
+}
+
+/** HELP_SECTIONS から、他の節の title/description/steps に現れない語を1つ選ぶ。 */
+function findUniqueFilterKeyword(): { keyword: string; sectionId: string } {
+  const sectionParts = HELP_SECTIONS.map((section) => ({
+    id: section.id,
+    parts: [section.title, section.description, ...section.steps],
+  }));
+
+  for (const { id, parts } of sectionParts) {
+    for (const part of parts) {
+      const normalizedPart = normalizeForSearch(part);
+      if (normalizedPart.length < 3) {
+        continue;
+      }
+
+      const matchingSectionIds = sectionParts
+        .filter(({ parts: candidateParts }) =>
+          candidateParts.some((candidate) =>
+            normalizeForSearch(candidate).includes(normalizedPart),
+          ),
+        )
+        .map(({ id: candidateId }) => candidateId);
+
+      if (matchingSectionIds.length === 1 && matchingSectionIds[0] === id) {
+        return { keyword: part, sectionId: id };
+      }
+    }
+  }
+
+  expect.fail(
+    'Could not derive a filter keyword unique to a single HELP_SECTIONS entry',
+  );
+}
+
 describe('HelpPanel', () => {
   beforeEach(() => {
     Object.defineProperty(Element.prototype, 'scrollIntoView', {
@@ -144,20 +181,25 @@ describe('HelpPanel', () => {
     });
     expect(scrollIntoViewMock.mock.contexts[0]).toBe(section);
     expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'start' });
+
+    const summary = section?.querySelector('summary');
+    expect(summary).not.toBeNull();
+    await waitFor(() => {
+      expect(summary).toHaveFocus();
+    });
   });
 
   it('filters sections by keyword', async () => {
     const user = userEvent.setup();
     const { container } = renderHelpPanel({ onClose: vi.fn() });
 
-    const uniqueSection = HELP_SECTIONS.find((section) =>
-      section.steps.some((step) => step.includes('ホーム画面に追加')),
-    );
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    const uniqueSection = HELP_SECTIONS.find((section) => section.id === sectionId);
     expect(uniqueSection).toBeDefined();
 
     await user.type(
       screen.getByRole('searchbox', { name: '絞り込み' }),
-      'ホーム画面に追加',
+      keyword,
     );
 
     expect(screen.getByRole('navigation', { name: '目次' }).children).toHaveLength(
@@ -170,6 +212,78 @@ describe('HelpPanel', () => {
     expect(
       container.querySelectorAll('details.help-panel-section'),
     ).toHaveLength(1);
+  });
+
+  it('closes all filtered sections after expanding all via the toggle button', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    await user.click(screen.getByRole('button', { name: 'すべて開く' }));
+    expect(screen.getByRole('button', { name: 'すべて閉じる' })).toBeInTheDocument();
+
+    const openSections = container.querySelectorAll('details.help-panel-section[open]');
+    expect(openSections.length).toBe(HELP_SECTIONS.length);
+
+    await user.click(screen.getByRole('button', { name: 'すべて閉じる' }));
+    expect(screen.getByRole('button', { name: 'すべて開く' })).toBeInTheDocument();
+
+    const sections = container.querySelectorAll('details.help-panel-section');
+    for (const section of sections) {
+      expect(section).not.toHaveAttribute('open');
+    }
+  });
+
+  it('shows empty state and disables toggle when filter matches nothing', async () => {
+    const user = userEvent.setup();
+    renderHelpPanel({ onClose: vi.fn() });
+
+    await user.type(
+      screen.getByRole('searchbox', { name: '絞り込み' }),
+      'zzzznonexistentkeyword12345',
+    );
+
+    expect(screen.getByText('該当するセクションがありません')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: '目次' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'すべて開く' })).toBeDisabled();
+    expect(screen.getByText(`${HELP_SECTIONS.length}件中 0件`)).toBeInTheDocument();
+  });
+
+  it('restores all sections after clearing the filter', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+    const { keyword } = findUniqueFilterKeyword();
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    await user.type(searchbox, keyword);
+    expect(screen.getByRole('navigation', { name: '目次' }).children).toHaveLength(1);
+    expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(1);
+
+    await user.clear(searchbox);
+
+    expect(screen.getByRole('navigation', { name: '目次' }).children).toHaveLength(
+      HELP_SECTIONS.length,
+    );
+    expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
+      HELP_SECTIONS.length,
+    );
+    expect(screen.getByText(`${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`)).toBeInTheDocument();
+  });
+
+  it('matches section tokens when filter uses full-width alphanumerics', async () => {
+    const user = userEvent.setup();
+    renderHelpPanel({ onClose: vi.fn() });
+
+    const pwaSection = HELP_SECTIONS.find((section) =>
+      normalizeForSearch(section.title).includes('pwa'),
+    );
+    expect(pwaSection).toBeDefined();
+
+    await user.type(screen.getByRole('searchbox', { name: '絞り込み' }), 'ＰＷＡ');
+
+    expect(screen.getByRole('navigation', { name: '目次' }).children).toHaveLength(1);
+    expect(
+      screen.getByRole('heading', { name: pwaSection!.title }),
+    ).toBeInTheDocument();
   });
 
   it('expands all sections via the toggle button', async () => {

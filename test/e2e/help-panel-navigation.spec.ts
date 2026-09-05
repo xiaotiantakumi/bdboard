@@ -111,4 +111,27 @@ test.describe('help panel navigation', () => {
       )
       .toBe(true);
   });
+
+  test('keeps focus inside the help dialog when tabbing from the last section summary', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    const card = page.locator('article').first();
+    await expect(card).toBeVisible({ timeout: 15_000 });
+
+    const helpDialog = await openHelpFromPalette(page);
+
+    const lastSummary = helpDialog.locator('.help-panel-section-summary').last();
+    await lastSummary.click();
+    await expect(lastSummary).toBeFocused();
+
+    await page.keyboard.press('Tab');
+
+    const focusStayedInside = await page.evaluate(() => {
+      const panel = document.querySelector('.help-panel[role="dialog"]');
+      return panel !== null && panel.contains(document.activeElement);
+    });
+    expect(focusStayedInside).toBe(true);
+  });
 });

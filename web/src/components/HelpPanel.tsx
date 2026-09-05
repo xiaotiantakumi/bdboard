@@ -8,6 +8,12 @@ export interface HelpPanelProps {
   onClose: () => void;
 }
 
+// NFKC folds full-width alphanumerics (e.g. ＰＷＡ → PWA). Hiragana/katakana
+// folding is out of scope — NFKC does not map カナ to かな.
+function normalizeForSearch(text: string): string {
+  return text.normalize('NFKC').toLowerCase();
+}
+
 function sectionMatchesQuery(
   section: (typeof HELP_SECTIONS)[number],
   normalizedQuery: string,
@@ -15,13 +21,15 @@ function sectionMatchesQuery(
   if (normalizedQuery.length === 0) {
     return true;
   }
-  if (section.title.toLowerCase().includes(normalizedQuery)) {
+  if (normalizeForSearch(section.title).includes(normalizedQuery)) {
     return true;
   }
-  if (section.description.toLowerCase().includes(normalizedQuery)) {
+  if (normalizeForSearch(section.description).includes(normalizedQuery)) {
     return true;
   }
-  return section.steps.some((step) => step.toLowerCase().includes(normalizedQuery));
+  return section.steps.some((step) =>
+    normalizeForSearch(step).includes(normalizedQuery),
+  );
 }
 
 export function HelpPanel({ onClose }: HelpPanelProps) {
@@ -45,7 +53,7 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
     onEscape: requestClose,
   });
 
-  const normalizedFilterQuery = filterQuery.trim().toLowerCase();
+  const normalizedFilterQuery = normalizeForSearch(filterQuery.trim());
 
   const filteredSections = useMemo(
     () =>
@@ -108,8 +116,12 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
       return next;
     });
 
+    // jsdom has no Element.prototype.scrollIntoView — mirror HelpPanel.test.tsx stub if
+    // adding palette→help→TOC navigation tests elsewhere (e.g. App.test.tsx).
     requestAnimationFrame(() => {
-      sectionRefs.current.get(sectionId)?.scrollIntoView({ block: 'start' });
+      const sectionElement = sectionRefs.current.get(sectionId);
+      sectionElement?.scrollIntoView({ block: 'start' });
+      sectionElement?.querySelector('summary')?.focus();
     });
   }, []);
 
@@ -218,11 +230,12 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
                   ref={(element) => setSectionRef(section.id, element)}
                   className="help-panel-section"
                   open={isOpen}
+                  aria-labelledby={headingId}
                   onToggle={(event) => {
                     handleSectionToggle(section.id, event.currentTarget.open);
                   }}
                 >
-                  <summary className="help-panel-section-summary">
+                  <summary className="help-panel-section-summary" tabIndex={0}>
                     <span className="help-panel-section-number" aria-hidden="true">
                       {String(sectionIndex + 1).padStart(2, '0')}
                     </span>

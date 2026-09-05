@@ -4051,11 +4051,16 @@ body {
   text-align: left;
 }
 
-.help-panel-toc-item:hover,
+.help-panel-toc-item:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
 .help-panel-toc-item:focus-visible {
   border-color: var(--color-accent);
   color: var(--color-accent);
   outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
 }
 
 .help-panel-empty {
@@ -4095,6 +4100,23 @@ body {
 
 .help-panel-section-summary::marker {
   content: '';
+}
+
+.help-panel-section-summary::after {
+  content: '';
+  flex-shrink: 0;
+  align-self: center;
+  width: 0.45em;
+  height: 0.45em;
+  margin-left: auto;
+  border-right: 2px solid var(--color-text-tertiary);
+  border-bottom: 2px solid var(--color-text-tertiary);
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+
+.help-panel-section[open] > .help-panel-section-summary::after {
+  transform: rotate(45deg);
 }
 
 .help-panel-section-number {
