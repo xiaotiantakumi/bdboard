@@ -1892,7 +1892,12 @@ body {
 }
 
 .hygiene-issue-row-static:hover {
-  background: var(--color-bg);
+  /* このルールは「static な行は hover しても見た目が変わらない」を明示するためのもので、
+     .hygiene-issue-row の平常時の背景 (--color-bg-elevated) をそのまま置き直すのが意図。
+     元は未定義の --color-surface だったので宣言ごと無効になり、たまたま意図どおりの
+     no-op になっていた。--color-bg を置くと light は #ffffff -> #f2f2f7、dark は
+     #1c1c1e -> #000000 と、非対話的なはずの行が hover で目に見えて変わってしまう。 */
+  background: var(--color-bg-elevated);
 }
 
 .hygiene-panel-feedback {
