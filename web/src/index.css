@@ -34,7 +34,7 @@
   --badge-defer-bg: rgba(0, 122, 255, 0.1);
   --badge-defer-fg: #0064d1;
   --badge-stalled-bg: rgba(255, 149, 0, 0.14);
-  --badge-stalled-fg: #c25400;
+  --badge-stalled-fg: #a85000;
   --badge-defer-soon-bg: rgba(255, 149, 0, 0.14);
   --badge-defer-soon-fg: #c25400;
   --badge-defer-overdue-bg: rgba(255, 59, 48, 0.12);
@@ -1693,7 +1693,7 @@ body {
 
 .hygiene-kind-orphan_heartbeat_loop {
   background: rgba(255, 105, 0, 0.16);
-  color: #b34700;
+  color: #93401a;
 }
 
 .hygiene-kind-harness_drift {
@@ -1703,7 +1703,7 @@ body {
 
 .hygiene-kind-harness_contract {
   background: rgba(0, 122, 255, 0.14);
-  color: #007aff;
+  color: #0062cc;
 }
 
 .hygiene-kind-harness_hooks {
@@ -1726,19 +1726,69 @@ body {
 /* close 証拠なしも severity=info。ティール(着手中の重複)と紛れないよう淡い青にする */
 .hygiene-kind-closed_without_evidence {
   background: rgba(90, 200, 250, 0.1);
-  color: #5a8fa8;
+  color: #487286;
 }
 
 /* merge_slot はマージ枠の保持状況。成功/失敗ではなく「順番待ちの機構」なので、
    赤系(失敗)・緑系(問題なし)を避け、他 kind が使っていないブラウン系にする。
-   他の kind はライト前提の固定色だが、ここは受け入れ条件(ライト/ダーク両方で
-   読めること)を満たすため明示的にダークを上書きする (bdboard-vpdn) */
+   ダークの上書きは下の統合ブロックにある (bdboard-vpdn, bdboard-i874) */
 .hygiene-kind-merge_slot {
   background: rgba(162, 132, 94, 0.16);
   color: #6b4f2a;
 }
 
+/* kind バッジの per-kind 配色はライト前提の固定色なので、ダークでは前景/背景を
+   個別に上書きしないと WCAG 2.1 の 4.5:1 を満たせない (実測で9件すべて未達、
+   最悪 harness_hooks が 1.74:1 だった)。トークン化せず merge_slot (bdboard-vpdn) と
+   同じ「個別上書き」に揃え、@media を kind ごとに増やさないよう1ブロックへまとめている。
+   値の根拠と再測定手段は HygienePanel.badge-colors.test.ts のコントラストガード。
+   (bdboard-i874) */
 @media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hygiene-kind-dependency_cycle {
+    background: rgba(255, 55, 95, 0.2);
+    color: #ff8fa3;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-merged_leftover {
+    background: rgba(255, 149, 0, 0.2);
+    color: #ff9f5a;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-orphan_heartbeat_loop {
+    background: rgba(255, 105, 0, 0.22);
+    color: #f0956a;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-harness_drift {
+    background: rgba(191, 90, 242, 0.2);
+    color: #d391f0;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-harness_contract {
+    background: rgba(10, 132, 255, 0.2);
+    color: #6cb4ff;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-harness_hooks {
+    background: rgba(94, 92, 230, 0.22);
+    color: #a9a7ff;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-stale_lease {
+    background: rgba(255, 69, 58, 0.18);
+    color: #ff8a80;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-in_flight_file_overlap {
+    background: rgba(0, 199, 190, 0.2);
+    color: #5fd9d0;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-closed_without_evidence {
+    background: rgba(100, 210, 255, 0.16);
+    color: #7fc8e8;
+  }
+
   :root:not([data-theme='light']) .hygiene-kind-merge_slot {
     background: rgba(172, 142, 104, 0.22);
     color: #d9b98c;
