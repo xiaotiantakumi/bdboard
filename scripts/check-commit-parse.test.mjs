@@ -18,6 +18,7 @@ import {
   findUnparsableCommits,
   formatFindings,
   isChangelogRelevant,
+  isValidAllowlistEntry,
   parseCommitsFromGitLog,
 } from './check-commit-parse.mjs';
 
@@ -110,7 +111,7 @@ describe('findUnparsableCommits', () => {
     // リテラルを渡す。本番リストの中身に結び付けると、リストを空にした瞬間に
     // 仕組みのテストまで落ちてしまう。
     const result = findUnparsableCommits([unparsableFix, unparsableChore, allowlisted], {
-      allowlist: [allowlisted.sha],
+      allowlist: [{ sha: allowlisted.sha, recovery: 'restore the CHANGELOG line' }],
     });
 
     expect(result.failures).toHaveLength(1);
@@ -119,12 +120,51 @@ describe('findUnparsableCommits', () => {
     expect(result.warnings[0].sha).toBe(unparsableChore.sha);
     expect(result.excluded).toHaveLength(1);
     expect(result.excluded[0].sha).toBe(allowlisted.sha);
+    expect(result.unused).toHaveLength(0);
 
     const shortAllowlist = findUnparsableCommits([allowlisted], {
-      allowlist: ['15651d3'],
+      allowlist: [{ sha: '15651d3', recovery: 'restore the CHANGELOG line' }],
     });
     expect(shortAllowlist.excluded).toHaveLength(1);
     expect(shortAllowlist.failures).toHaveLength(0);
+  });
+
+  // bdboard-721p: allowlist は exit 1 を消す唯一の手段なので、手当てを書き残していない
+  // エントリでは黙らせない (fail-closed)。ここが緩むと、このガードが検知したい
+  // 「CHANGELOG から黙って消える」事象を allowlist 自身が起こす。
+  it('refuses to exclude allowlist entries without a recovery note', () => {
+    const unparsableFix = {
+      sha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+      subject: 'fix(x): broken body',
+      message: unparsableMessageWithSubject('fix(x): broken body'),
+    };
+
+    for (const allowlist of [
+      [{ sha: unparsableFix.sha }],
+      [{ sha: unparsableFix.sha, recovery: '' }],
+      [{ sha: unparsableFix.sha, recovery: '   ' }],
+      [unparsableFix.sha], // 旧仕様の文字列エントリ
+    ]) {
+      const result = findUnparsableCommits([unparsableFix], { allowlist });
+      expect(result.excluded).toHaveLength(0);
+      expect(result.failures).toHaveLength(1);
+    }
+  });
+
+  // bdboard-721p: タグを切ると対象コミットは v<last>..HEAD の範囲から外れる。そのとき
+  // エントリは死んだ状態で残るので、掃除できることを呼び出し側に伝えられるようにする。
+  it('reports allowlist entries that match no commit in range as unused', () => {
+    const parsable = {
+      sha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      subject: 'fix(x): fine',
+      message: 'fix(x): fine\n',
+    };
+    const entry = { sha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', recovery: 'restore it' };
+
+    const result = findUnparsableCommits([parsable], { allowlist: [entry] });
+
+    expect(result.excluded).toHaveLength(0);
+    expect(result.unused).toEqual([entry]);
   });
 
   // bdboard-qhsb: PR でもこのガードを走らせるようにした。検査範囲はそのPRが足す
@@ -147,15 +187,20 @@ describe('findUnparsableCommits', () => {
     expect(result.warnings[0].sha).toBe(mergeCommit.sha);
   });
 
-  it('keeps the production allowlist empty', () => {
+  it('keeps every production allowlist entry usable and documented', () => {
     // このガードは「CHANGELOG から黙って消える」ことを検知するためのもので、
-    // 除外リストはその検知を無効化する唯一の手段。既定で空であることを固定して、
-    // エントリの追加が必ず意図的な変更(とレビュー)を伴うようにする。
-    // 足す前に CHANGELOG へ該当行を復元すること — 詳細は KNOWN_UNPARSABLE のコメント。
-    expect(KNOWN_UNPARSABLE).toEqual([]);
+    // 除外リストはその検知を無効化する唯一の手段。エントリの追加が必ず意図的な変更
+    // (とレビュー) を伴うよう、本番リストの各エントリに sha・subject・ticket・recovery を要求する。
+    // recovery が無いエントリは isValidAllowlistEntry に弾かれて除外として働かない (bdboard-721p)。
+    for (const entry of KNOWN_UNPARSABLE) {
+      expect(isValidAllowlistEntry(entry)).toBe(true);
+      expect(entry.sha).toMatch(/^[0-9a-f]{40}$/);
+      expect(entry.subject).toBeTruthy();
+      expect(entry.ticket).toMatch(/^bdboard-/);
+    }
   });
 
-  it('ignores allowlist entries shorter than 7 characters', () => {
+  it('ignores allowlist entries whose sha is shorter than 7 characters', () => {
     const unparsableFix = {
       sha: 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
       subject: 'fix(x): broken body',
@@ -163,7 +208,11 @@ describe('findUnparsableCommits', () => {
     };
 
     const result = findUnparsableCommits([unparsableFix], {
-      allowlist: ['', 'abc', 'dead'],
+      allowlist: [
+        { sha: '', recovery: 'r' },
+        { sha: 'abc', recovery: 'r' },
+        { sha: 'dead', recovery: 'r' },
+      ],
     });
 
     expect(result.failures).toHaveLength(1);
@@ -193,17 +242,71 @@ describe('formatFindings', () => {
   });
 
   it('reports allowlist exclusions even when failures and warnings are empty', () => {
+    const entry = {
+      sha: '15651d3fe4e3f99e9caf4d39a805ad6fd1e35a40',
+      subject: 'fix: x',
+      ticket: 'bdboard-r5we',
+      recovery: 'CHANGELOG の 0.1.2 に該当行を手で足す\n二行目の手順',
+    };
     const report = formatFindings(
       {
         failures: [],
         warnings: [],
-        excluded: [{ sha: '15651d3fe4e3f99e9caf4d39a805ad6fd1e35a40', subject: 'fix: x' }],
+        excluded: [{ sha: entry.sha, subject: entry.subject, entry }],
+        unused: [],
       },
       { range: 'v0.1.1..HEAD', commitCount: 8 },
     );
 
     expect(report).toContain('CHANGELOG 対象の解析不能コミットはありません');
     expect(report).toContain('allowlist により 1 件を除外しました (既知の取りこぼし)');
+  });
+
+  // bdboard-721p: allowlist は赤を消すだけで、やるべき手当ては消えていない。赤の代わりに
+  // このブロックが恒久的なリマインダになるので、毎回の出力に全文が出ることを固定する。
+  it('re-prints the recovery steps of every excluded entry on each run', () => {
+    const entry = {
+      sha: '5d3be460e19479cfe2fb8e06249bb096a6fcbf7f',
+      subject: 'feat(x): summary',
+      ticket: 'bdboard-ym9r',
+      recovery: 'リリースPR の CHANGELOG に 1 行足す\nタグ後は回復できない',
+    };
+    const report = formatFindings(
+      {
+        failures: [],
+        warnings: [],
+        excluded: [{ sha: entry.sha, subject: entry.subject, entry }],
+        unused: [],
+      },
+      { range: 'v0.1.2..HEAD', commitCount: 3 },
+    );
+
+    expect(report).toContain('リリース (タグ生成) の前にやること 1 件');
+    expect(report).toContain('bdboard-ym9r');
+    expect(report).toContain('リリースPR の CHANGELOG に 1 行足す');
+    expect(report).toContain('タグ後は回復できない');
+  });
+
+  it('flags unused allowlist entries only when asked (default range)', () => {
+    const entry = {
+      sha: '5d3be460e19479cfe2fb8e06249bb096a6fcbf7f',
+      subject: 'feat(x): summary',
+      ticket: 'bdboard-ym9r',
+      recovery: 'restore it',
+    };
+    const result = { failures: [], warnings: [], excluded: [], unused: [entry] };
+
+    const withReport = formatFindings(result, {
+      range: 'v0.2.0..HEAD',
+      commitCount: 2,
+      reportUnused: true,
+    });
+    expect(withReport).toContain('KNOWN_UNPARSABLE から削除してください');
+    expect(withReport).toContain('5d3be46');
+
+    // PR の base..head では allowlist のエントリが範囲外なのは当たり前なので出さない。
+    const withoutReport = formatFindings(result, { range: 'aaa..bbb', commitCount: 2 });
+    expect(withoutReport).not.toContain('KNOWN_UNPARSABLE から削除してください');
   });
 });
 
