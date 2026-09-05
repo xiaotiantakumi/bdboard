@@ -103,7 +103,7 @@ describe('BoardFilterBar', () => {
       expect(screen.getByLabelText('優先度上限')).toBeInTheDocument();
     });
 
-    it('shows active filter count badge on the toggle', () => {
+    it('keeps the toggle text concise while exposing active filter count to assistive tech', () => {
       renderBar({
         priorityCeiling: '1',
         issueTypes: ['bug'],
@@ -112,7 +112,14 @@ describe('BoardFilterBar', () => {
       });
 
       expect(screen.getByRole('button', { name: '絞り込み (4件適用中)' })).toBeInTheDocument();
-      expect(document.querySelector('.board-filter-active-badge')).toHaveTextContent('4');
+      expect(document.querySelector('.board-filter-toggle-label')).toHaveTextContent(
+        /^絞り込み$/,
+      );
+      expect(document.querySelector('.board-filter-active-badge')).toHaveAttribute(
+        'aria-hidden',
+        'true',
+      );
+      expect(document.querySelector('.board-filter-active-badge')).toHaveTextContent(/^4$/);
     });
   });
 

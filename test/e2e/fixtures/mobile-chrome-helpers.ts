@@ -69,6 +69,14 @@ export async function assertAiQuotaBadgeVisible(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 15_000 });
 }
 
+/** モバイルの縦方向を測る前に、フィルタバーが既定どおり折りたたまれていることを確定する。 */
+export async function assertBoardFilterBarCollapsed(page: Page): Promise<void> {
+  const toggle = page.getByRole('button', { name: /^絞り込み/ });
+  await expect(toggle).toBeVisible({ timeout: 15_000 });
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.board-filter-panel')).toBeHidden();
+}
+
 /** --header-height が .header 実測に追いつくまで待つ (AiQuotaWidget 描画後 1 フレーム遅延)。 */
 export async function waitForHeaderHeightConvergence(
   page: Page,

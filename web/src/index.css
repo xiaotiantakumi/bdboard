@@ -7044,6 +7044,10 @@ body {
 }
 
 .board-filter-panel {
+  /* デスクトップ幅では折りたたみ UI を使わないため、このラッパーの箱を消して子要素を
+     .board-filter-bar の flex 直下に流し、bdboard-qxt1 以前のレイアウトを保つ。
+     ここには箱がないので padding / margin / background / border を指定しても無言で無視される。
+     間隔を変えるときは .board-filter-bar 側か子要素側で調整すること。 */
   display: contents;
 }
 

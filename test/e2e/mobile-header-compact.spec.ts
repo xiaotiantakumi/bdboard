@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import {
   assertAiQuotaBadgeVisible,
+  assertBoardFilterBarCollapsed,
   findWorstCaseTipIndex,
   HELP_TIPS,
   installAiQuotaRoute,
@@ -122,6 +123,14 @@ const MIN_TAP_TARGET_PX = 44;
 //   contentStartExcludingTips=426.625, tipsBannerHeight=198.8125, firstCardTop=625.4375,
 //   headerBottom=245, tipId=next-up, foldMarginPx=186.5625
 // → ceil(426.625)+16 = 443
+// Linux CI 実測（ubuntu-latest, run 33952190457, 2026-09-05、折りたたみ導入後）でも裏が取れた:
+//   contentStartExcludingTips=424.625（443 に対する残余裕 18.375）, tipsBannerHeight=198.8125
+//   （223 に対する残余裕 24.1875）, firstCardTop=623.4375（642 に対する残余裕 18.5625）。
+//   headerBottom=243, innerHeight=812, foldMarginPx=188.5625, tipId=next-up。
+// macOS 実測との差は 2px で Linux のほうが小さい。よって +16px の Linux フォント差予算は
+// 実測で裏付けられており、content-start 系の残余裕は 18px 台ある。tipsBannerHeight は macOS と
+// 1px の差もなく同値 (198.8125) で、MAX_TIPS_BANNER_HEIGHT_PX の +24px は未使用の緩みという
+// 観察も折りたたみ後にそのまま成立している。
 // 旧値 649 は bdboard-qxt1 の折りたたみ導入前 (展開済み filter ~256px 前提) の実測だった。
 const MAX_CONTENT_START_EXCLUDING_TIPS_PX = 443;
 //
@@ -143,8 +152,8 @@ const MAX_TIPS_BANNER_HEIGHT_PX = 223;
 // 先例として AC4 の header 実測が Linux CI 99px / macOS 103px で Linux のほうが小さいため、
 // この非対称な予算配分が CI を赤くするリスクは低いと判断した。
 //
-// Linux CI 実測で裏が取れた (ubuntu-latest, run 33947408853, 2026-09-05) —
-// これは bdboard-qxt1 の折りたたみ導入前の実測:
+// Linux CI 実測（ubuntu-latest, run 33947408853, 2026-09-05）は bdboard-qxt1 の
+// 折りたたみ導入前の実測として残す:
 //   contentStartExcludingTips=629.625 (残余裕 19.375), tipsBannerHeight=198.8125 (残余裕 24.1875),
 //   firstCardTop=828.4375 (残余裕 19.5625), headerBottom=243
 // → Linux は macOS より 3px 小さく、当時の 848 の残余裕は macOS の 16.56px より広い 19.56px。
@@ -153,6 +162,11 @@ const MAX_TIPS_BANNER_HEIGHT_PX = 223;
 //   実際にはその折り返しは起きておらず、24px は丸ごと未使用のまま残っている。
 //   つまりバナー側予算の上側は現状ほぼ純粋な緩みで、先に binding になるのは常に MAX_CONTENT_START_PX のほう。
 //   バナー予算を締めたくなったらこの実測を根拠にできるが、締めなくても劣化は MAX_CONTENT_START_PX が捕まえる。
+//
+// 上の run 33952190457 は折りたたみ導入後の同一構成を測ったもので、macOS との差は 2px
+// （Linux のほうが小さい）。bd の notes にあった「macOS と Linux で約 96px ずれる」という説は、
+// ai-quota 枠なしの暫定計測と枠ありの CI 計測を fixture を揃えずに突き合わせた結果であり、
+// この同一構成の実測で完全に否定された。
 //
 // 折りたたみ導入後の実測 firstCardTop=625.4375 → ceil(625.4375)+16 = 642
 // 旧値 848 は展開済み filter ~256px 前提だった。
@@ -195,6 +209,7 @@ test.describe('mobile header compact — AC1 content start budget', () => {
     const cardCount = await page.locator('.card').count();
     expect(cardCount, 'fixture must expose at least one card').toBeGreaterThan(0);
 
+    await assertBoardFilterBarCollapsed(page);
     const metrics = await collectContentStartMetrics(page);
 
     const contentStartExcludingTips = metrics.firstCardTop - metrics.tipsBannerHeight;
@@ -391,7 +406,7 @@ test.describe('mobile header compact — AC3 tap targets', () => {
     hasTouch: true,
   });
 
-  test('375x812: status pill, project picker, overflow menu and search meet 44px tap targets', async ({
+  test('375x812: status pill, project picker, overflow menu, search and filter toggle meet 44px tap targets', async ({
     page,
   }) => {
     await page.goto('/');
@@ -402,6 +417,7 @@ test.describe('mobile header compact — AC3 tap targets', () => {
       '.status-pill',
       '.project-picker-button',
       '.overflow-menu-button',
+      '.board-filter-toggle',
     ];
 
     const results = await page.evaluate(

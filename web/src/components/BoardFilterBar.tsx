@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMatchMedia } from '../hooks/useMatchMedia';
+import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import {
   BOARD_ISSUE_TYPES,
   type PriorityCeilingChoice,
@@ -25,9 +26,6 @@ const PRIORITY_CEILING_OPTIONS: { value: PriorityCeilingChoice; label: string }[
   { value: '3', label: 'P0-P3' },
   { value: '4', label: 'P0-P4' },
 ];
-
-/** Matches index.css @media (max-width: 700px). */
-const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 700px)';
 
 export function isFilterActive(
   priorityCeiling: PriorityCeilingChoice,
@@ -68,6 +66,9 @@ export function BoardFilterBar({
   onFilterTextChange,
 }: BoardFilterBarProps) {
   const isMobile = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
+  // モバイル幅の展開状態は意図してローカルに保つ。App.tsx のビュー境界は `key={view}`
+  // なので、ビュー切替時には再マウントされて折りたたみへ戻る。移動先の初回描画では
+  // 縦の余白を最優先で取り戻すためであり、永続化やリフトアップはしない。
   const [expanded, setExpanded] = useState(false);
   const activeFilterCount = countActiveFilters(
     priorityCeiling,
@@ -78,7 +79,7 @@ export function BoardFilterBar({
   const filterActive = activeFilterCount > 0;
   const showFilterPanel = !isMobile || expanded;
 
-  const toggleLabel =
+  const toggleAriaLabel =
     activeFilterCount > 0
       ? `絞り込み (${activeFilterCount}件適用中)`
       : '絞り込み';
@@ -112,11 +113,12 @@ export function BoardFilterBar({
         <button
           type="button"
           className="board-filter-toggle"
+          aria-label={toggleAriaLabel}
           aria-expanded={expanded}
           aria-controls={expanded ? 'board-filter-panel' : undefined}
           onClick={() => setExpanded((value) => !value)}
         >
-          <span className="board-filter-toggle-label">{toggleLabel}</span>
+          <span className="board-filter-toggle-label">絞り込み</span>
           {activeFilterCount > 0 && (
             <span className="board-filter-active-badge" aria-hidden="true">
               {activeFilterCount}

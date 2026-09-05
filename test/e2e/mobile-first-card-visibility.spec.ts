@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 
 import {
   assertAiQuotaBadgeVisible,
+  assertBoardFilterBarCollapsed,
   findWorstCaseTipIndex,
   HELP_TIPS,
   installAiQuotaRoute,
@@ -17,8 +18,9 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
  *
  * 予算の決め方: ヘッダー下に積み上がるクローム (tips / 折りたたみ済みフィルタバー /
  * レーンインジケータ / レーンヘッダー) がどれだけ縦を食っても、先頭カードの上端が
- * ビューポート下端からカード高さの半分ぶん以上は上にいること。さらに fold 余裕
- * MIN_FOLD_MARGIN_PX 以上を確保し、Linux CI のフォント差でも反転しないようにする。
+ * ビューポート下端からカード高さの半分ぶん以上は上にいること。カード全高可視は直接
+ * アサートし、さらに Linux CI のフォント差に対する下駄として fold 余裕
+ * MIN_FOLD_MARGIN_PX 以上も確保する。
  *
  * worst-case 構成 (pin 済み tip + installAiQuotaRoute + header 収束待ち) で測る。
  * global-setup の BDBOARD_AI_QUOTA_DISABLED=1 だけでは header が実機より 42px 軽く、
@@ -33,10 +35,13 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
  *   フィルタバー折りたたみ、2026-09-05）:
  *   firstCardTop=625.4375, innerHeight=812 → foldMarginPx=186.5625。閾値 160 に対し
  *   26.56px の余裕。
- * - なぜ 160 か: 先頭カードの実測高さは 152.48px なので、160px 確保できればカードは全高が
- *   折り返しより上に入る。AC1 の元の要求（半分見える = firstCardTop <= 735.76）だけだと
- *   余裕が薄いときに「半分だけ見える」で緑になってしまい、体験として「そこにカードがある」と
- *   分からない状態を通してしまう。全高可視を要求するほうが不変条件として明快。
+ * - 3 つの expect の関係: 「半分可視」は AC1 原文どおりの下限として残す。次の「全高可視」は
+ *   firstCardTop + firstCardHeight <= viewportHeight を直接見る、実際に守りたい不変条件。
+ *   最後の foldMargin >= 160 は Linux CI のフォント差に対する下駄であり、全高可視の代理ではない。
+ *   後ろほど強い。現在のカード高さは 152.48px のため 160 が全高可視より強く実質 binding だが、
+ *   カード高さが 160px を超えれば全高可視のほうが binding に入れ替わる。AC1 の元の要求
+ *   （半分見える = firstCardTop <= 735.76）だけだと余裕が薄いときに「半分だけ見える」で緑になり、
+ *   体験として「そこにカードがある」と分からない状態を通してしまう。
  * - 効果（bdboard-qxt1 の前後差）: 同じ worst-case 構成での firstCardTop は
  *   修正前 831.4375（macOS）/ 828.4375（Linux CI, run 33947408853）→ 修正後 625.4375（macOS）。
  *   約 206px の削減で、.board-filter-bar（展開時 約 256px）をモバイル幅で既定折りたたみに
@@ -77,6 +82,7 @@ test.describe('mobile first card visibility (bdboard-qxt1)', () => {
 
     await expect(page.locator('.tips-banner-text strong')).toHaveText(selectedTip.title);
     await expect(page.locator('.tips-banner-text span')).toHaveText(selectedTip.description);
+    await assertBoardFilterBarCollapsed(page);
 
     const m = await page.evaluate(() => {
       const px = (n: number) => Math.round(n * 100) / 100;
@@ -117,6 +123,18 @@ test.describe('mobile first card visibility (bdboard-qxt1)', () => {
         `filterBar=${m.breakdown.boardFilterBar}, laneStrip=${m.breakdown.laneIndicatorStrip}, ` +
         `laneHeader=${m.breakdown.laneHeader}, maxScrollY=${m.maxScrollY}`,
     ).toBeLessThanOrEqual(budget);
+
+    const firstCardBottom = m.firstCardTop + m.firstCardHeight;
+    const fullVisibilityOverflowPx = firstCardBottom - m.viewportHeight;
+    expect(
+      firstCardBottom,
+      `375x812: first card must be fully visible above the fold — ` +
+        `firstCardTop=${m.firstCardTop}, firstCardHeight=${m.firstCardHeight}, ` +
+        `viewportHeight=${m.viewportHeight}, over by ${fullVisibilityOverflowPx.toFixed(2)}px. ` +
+        `Chrome breakdown: header=${m.breakdown.header}, tips=${m.breakdown.tipsBanner}, ` +
+        `filterBar=${m.breakdown.boardFilterBar}, laneStrip=${m.breakdown.laneIndicatorStrip}, ` +
+        `laneHeader=${m.breakdown.laneHeader}, maxScrollY=${m.maxScrollY}`,
+    ).toBeLessThanOrEqual(m.viewportHeight);
 
     expect(
       foldMarginPx,
