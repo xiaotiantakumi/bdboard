@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 
 /**
  * Mobile header compaction (bdboard-h4xs.5): grid-based GlobalBar, collapsed toolbar,
@@ -7,7 +7,87 @@ import { expect, test } from '@playwright/test';
 
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
-const MAX_HEADER_HEIGHT_PX = 220;
+
+/**
+ * `/api/ai-quota` のレスポンス形。正本は web/src/api.ts の AiQuotaDto 系で、ここはその
+ * wire 形だけを写したローカル定義 (e2e は独立 tsc プロジェクトなので web/src から import しない)。
+ * ai-quota-popover-clamp.spec.ts と同じ写し方。
+ */
+interface AiQuotaFixtureMetric {
+  label: string;
+  percentRemaining?: number;
+  resetAt?: string;
+  status?: 'available' | 'exhausted';
+}
+interface AiQuotaFixtureProvider {
+  id: string;
+  label: string;
+  availability: 'live' | 'manual' | 'unavailable';
+  metrics: AiQuotaFixtureMetric[];
+}
+interface AiQuotaFixture {
+  state: 'ok';
+  fetchedAt: string;
+  providers: AiQuotaFixtureProvider[];
+}
+
+// live プロバイダーが 1 つでもあれば .ai-quota-badge は描画される (AiQuotaWidget.tsx)。
+// バッジのラベルは `AIクォータ NN%使用` 固定長なので、プロバイダー数を増やしても
+// ヘッダー高さは変わらない (増えるのはポップオーバー内だけ)。
+const AI_QUOTA_FIXTURE: AiQuotaFixture = {
+  state: 'ok',
+  fetchedAt: '2026-09-11T00:00:00.000Z',
+  providers: [
+    {
+      id: 'cursor',
+      label: 'Cursor',
+      availability: 'live',
+      metrics: [
+        {
+          label: 'CURSOR Weekly Limit Remaining',
+          percentRemaining: 99,
+          resetAt: '2026-09-11T06:10:00.000Z',
+        },
+        { label: 'CURSOR Five Hour Limit Remaining', status: 'available' },
+      ],
+    },
+  ],
+};
+
+async function installAiQuotaRoute(page: Page): Promise<void> {
+  await page.route('**/api/ai-quota', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(AI_QUOTA_FIXTURE),
+    });
+  });
+}
+
+// 実機相当の header 高さラチェット。設計上の予算ではなく「現状より増やさない」ための固定値。
+//
+// 旧値 220 は fixture のヘッダーが実機より 42px 軽かったせいで通っていただけだった
+// (bdboard-k21o)。global-setup.ts が BDBOARD_AI_QUOTA_DISABLED=1 を渡すので fixture には
+// AiQuotaWidget (.ai-quota-badge, .view-toolbar 内) が描画されず、375x812 実測で
+// header=203px にしかならない。同じ幅の実ボードは 245px なので、旧閾値は実機の状態を
+// 一度も見ないまま緑を出し続けていた。
+//
+// 下の budget テストは page.route で /api/ai-quota を live 応答に差し替えて枠を描画させる。
+// その状態の実測は 245px (macOS Chromium, 2026-09-05, 3回とも同値) で、同日に実ボード
+// (localhost:8787, main) を同じ 375x812 で測った 245px と 0px 差で一致する。バッジ有無の
+// 差 42px がそのまま埋まった形。250 はそこへ約 5px だけ足した値 (Linux CI とのフォント差ぶん。
+// 同ファイル AC4 の 99px(CI Linux) vs 103px(macOS) が前例)。
+//
+// 235px → 245px の +10px は、PR #346 (bdboard-h4xs.9) が .view-switcher を WCAG 2.5.8 の
+// 最小タップ領域 44px に合わせて底上げした結果であって、レイアウトの劣化やヘッダーの肥大では
+// ない。アクセシビリティ上必要な product 変更を1回だけ閾値に通した、という意味の +10px。
+// (ヘッダーが 812px ビューポートの約 30% を占めていること自体は別問題として bdboard-qxt1。
+// このラチェットはヘッダーを縮める役ではなく、これ以上太らせない役。)
+//
+// これを超える変更を入れるときは、数字を黙って上げるのではなく、上の +10px と同じように
+// 「なぜヘッダー予算を増やしてよいか」を根拠付きで書いてから上げること。前回より大きいから
+// 上げた、という形にすると次に本当の肥大が来たとき誰も気付けない。
+const MAX_HEADER_HEIGHT_PX = 250;
 // PC 幅の .global-bar は align-items:center で高さの違うコントロール (view-switcher 36px /
 // btn-search 34px / status-pill 30px 等) を中央揃えするため、同じ1行でも rect.top は
 // 実測 4.03px ばらつく (改修前後で一致)。20px はこのベースラインと、モバイル用 grid が
@@ -44,9 +124,6 @@ test.describe('mobile header compact — AC1 initial card visibility', () => {
       const headerHeightVar = getComputedStyle(document.documentElement)
         .getPropertyValue('--header-height')
         .trim();
-      const headerHeightPx = headerHeightVar.endsWith('px')
-        ? Number.parseFloat(headerHeightVar)
-        : Number.NaN;
 
       const header = document.querySelector('.header');
       const headerRect = header?.getBoundingClientRect();
@@ -86,7 +163,6 @@ test.describe('mobile header compact — AC1 initial card visibility', () => {
 
       return {
         innerHeight,
-        headerHeightPx,
         headerHeightVar,
         headerBottom,
         visibleCardCount,
@@ -111,11 +187,98 @@ test.describe('mobile header compact — AC1 initial card visibility', () => {
         `cardsInspected=${metrics.cardsInspected})`,
     ).toBeGreaterThanOrEqual(1);
 
+    // header 高さ予算のアサーションは下の「header height budget」テストへ移した (bdboard-k21o)。
+    // ここに残すと 193px の軽い fixture に対する空振りアサーションになり、このチケットが
+    // 直そうとしている失敗形そのものを再生産する。AC1 はカード可視性だけを見る。
+  });
+});
+
+test.describe('mobile header compact — header height budget (bdboard-k21o)', () => {
+  test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });
+
+  test('375x812: header stays within budget with the real board control set', async ({ page }) => {
+    await installAiQuotaRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+
+    // fixture 前提条件のアサーション: このバッジが出ていないと header は実機より 42px 軽くなり、
+    // 予算アサーションは何も見ていないのと同じになる (bdboard-k21o の元の不具合)。
+    // board-filter-mobile-reach.spec.ts の `labelCount >= 10`、
+    // hygiene-reclaim-status-overflow.spec.ts の staleLeases 前提と同じ役割。
+    await expect(
+      page.locator('.ai-quota-badge'),
+      'AI クォータ枠が描画されていない。/api/ai-quota の route 差し替えが効いていないか、' +
+        'AiQuotaWidget の描画条件が変わった。この枠が無い fixture の header は実機より 42px 軽く、' +
+        '下の予算アサーションは空振りになる。',
+    ).toBeVisible({ timeout: 15_000 });
+
+    // --header-height は useHeaderHeightVar の ResizeObserver 経由で 1 フレーム遅れて追いつく
+    // (実測: バッジ描画直後は 203px のまま → 収束後 245px)。収束を待ってから比較する。
+    await expect
+      .poll(
+        async () =>
+          page.evaluate(() => {
+            const header = document.querySelector('.header');
+            if (!header) {
+              return Number.POSITIVE_INFINITY;
+            }
+            const headerHeight = header.getBoundingClientRect().height;
+            const headerHeightVarStr = getComputedStyle(document.documentElement)
+              .getPropertyValue('--header-height')
+              .trim();
+            const headerHeightVar = headerHeightVarStr.endsWith('px')
+              ? Number.parseFloat(headerHeightVarStr)
+              : Number.NaN;
+            if (!Number.isFinite(headerHeightVar)) {
+              return Number.POSITIVE_INFINITY;
+            }
+            return Math.abs(headerHeightVar - Math.ceil(headerHeight));
+          }),
+        {
+          message:
+            '--header-height が .header の実測高に追いつかない。この変数は ' +
+            '.lane-indicator-strip の sticky top と html の scroll-padding-top を駆動するので、' +
+            'ずれるとレーンストリップがヘッダーの下に潜る。' +
+            '(#346 マージ後の 2026-09-05 に実ボードを測り直した時点では var=245px / 実測 245px で ' +
+            '一致しており、以前記録された 37.5px のずれは再現しなかった。追跡は bdboard-s61q)',
+          timeout: 10_000,
+        },
+      )
+      .toBeLessThanOrEqual(1);
+
+    const metrics = await page.evaluate(() => {
+      const innerHeight = window.innerHeight;
+      const header = document.querySelector('.header');
+      const headerRect = header?.getBoundingClientRect();
+      const headerHeight = headerRect?.height ?? Number.NaN;
+      const headerHeightVarStr = getComputedStyle(document.documentElement)
+        .getPropertyValue('--header-height')
+        .trim();
+      const headerHeightVar = headerHeightVarStr.endsWith('px')
+        ? Number.parseFloat(headerHeightVarStr)
+        : Number.NaN;
+      const globalBar = document.querySelector('.global-bar');
+      const viewToolbar = document.querySelector('.view-toolbar');
+      const aiQuotaBadge = document.querySelector('.ai-quota-badge');
+
+      return {
+        innerHeight,
+        headerHeight,
+        headerHeightVar,
+        globalBarHeight: globalBar?.getBoundingClientRect().height ?? Number.NaN,
+        viewToolbarHeight: viewToolbar?.getBoundingClientRect().height ?? Number.NaN,
+        aiQuotaBadgeHeight: aiQuotaBadge?.getBoundingClientRect().height ?? Number.NaN,
+        aiQuotaBadgeWidth: aiQuotaBadge?.getBoundingClientRect().width ?? Number.NaN,
+      };
+    });
+
     expect(
-      metrics.headerHeightPx,
-      `--header-height must be <= ${MAX_HEADER_HEIGHT_PX}px ` +
-        `(actual=${metrics.headerHeightVar}, headerBottom=${metrics.headerBottom}, ` +
-        `innerHeight=${metrics.innerHeight}, cardsInspected=${metrics.cardsInspected})`,
+      metrics.headerHeight,
+      `header must stay within ${MAX_HEADER_HEIGHT_PX}px budget ` +
+        `(actual=${metrics.headerHeight}, --header-height=${metrics.headerHeightVar}, ` +
+        `global-bar=${metrics.globalBarHeight}, view-toolbar=${metrics.viewToolbarHeight}, ` +
+        `ai-quota-badge=${metrics.aiQuotaBadgeWidth}x${metrics.aiQuotaBadgeHeight}, ` +
+        `innerHeight=${metrics.innerHeight})`,
     ).toBeLessThanOrEqual(MAX_HEADER_HEIGHT_PX);
   });
 });
