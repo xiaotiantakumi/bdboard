@@ -17,6 +17,22 @@ export default defineConfig({
     // ** を使わないのは fixtures/ 等の下位ディレクトリを構造的に除外するため — 将来そこに
     // *.test.ts が増えると @playwright/test import で test:server が落ちるトラップになる。
     include: ['src/**/*.test.ts', 'scripts/**/*.test.mjs', 'test/e2e/*.test.ts'],
+    // bdboard-npf9: Windows は Linux/macOS よりプロセス生成が大幅に遅く、サブプロセスを
+    // 起こすテストが既定の5000msを食い潰す。scripts/check-drift.test.mjs (bdboard-pqhe) と
+    // src/infrastructure/process/node-streaming-command-runner.test.ts の別ファイル2件で同じ
+    // flake が起き、落ちるたびに第3引数で個別に足す whack-a-mole が破綻したため一律化する。
+    // 後者の `terminates the child on timeout and waits for it to exit` は Windows の正常時12 run
+    // 連続で1100〜1196msに収まる一方、遅い run では5000msを超えて落ちる二峰性がある。失敗した
+    // attempt では5019msで打ち切られ、同じ attempt の runner 全体も check-drift が14047ms
+    // (正常時5673〜6368ms)、sqlite-chat-message-repository が18157ms (正常時1374ms) と遅かったが、
+    // job は最後まで走りきっておりハングではない。
+    // このテストの構造的な最悪ケースは timeoutMs: 1000 + STOP_GRACE_MS = 3000 + プロセス消滅
+    // ポーリング20×10ms = 200ms、計約4200ms。既定5000msの余裕は16%しかなく構造的に足りないため、
+    // 15000msは約3.5倍の余裕を取る。固定タイマー部分は負荷でスケールしないので十分である。
+    // macOS/Linux は本当に遅くなったときに素早く落ちるシグナルを保ちたいので据え置く。既存の
+    // gitサブプロセスを起こすテストの個別15000ms指定は、macOS/Linuxを5000msから守るため残す。
+    // Windowsでは同じ15000msに一致して冗長になるだけで無害である。
+    testTimeout: process.platform === 'win32' ? 15_000 : 5_000,
     // maxWorkers はプール非依存のフォールバック(vitest 3.2.7 実装:
     // `poolOptions.maxForks ?? vitest.config.maxWorkers ?? threadsCount`)。
     // poolOptions.<pool>.* は現在の既定プールにのみ効き、将来既定プールが
