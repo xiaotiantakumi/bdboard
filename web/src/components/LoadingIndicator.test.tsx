@@ -60,4 +60,35 @@ describe('LoadingIndicator', () => {
 
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('shows elapsed seconds with the default threshold (no prop passed)', () => {
+    render(<LoadingIndicator />);
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(screen.getByText('(2秒経過)')).toBeInTheDocument();
+  });
+
+  it('shows elapsed seconds exactly at the threshold boundary', () => {
+    render(<LoadingIndicator showElapsedAfterMs={2000} />);
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(screen.getByText('(2秒経過)')).toBeInTheDocument();
+  });
+
+  it('hides elapsed seconds from assistive technology while keeping status role', () => {
+    render(<LoadingIndicator showElapsedAfterMs={2000} />);
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(screen.getByText('(2秒経過)')).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByRole('status')).toBeInTheDocument();
+  });
 });

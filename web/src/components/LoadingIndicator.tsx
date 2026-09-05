@@ -15,7 +15,7 @@ export function LoadingIndicator({
     const startedAt = Date.now();
     const intervalId = setInterval(() => {
       const elapsedMs = Date.now() - startedAt;
-      if (elapsedMs > showElapsedAfterMs) {
+      if (elapsedMs >= showElapsedAfterMs) {
         setElapsedSeconds(Math.floor(elapsedMs / 1000));
       }
     }, 1000);
@@ -28,7 +28,9 @@ export function LoadingIndicator({
   return (
     <p className="loading" role="status" aria-live="polite">
       <span>{label}</span>
-      {elapsedSeconds !== null && <span>{` (${elapsedSeconds}秒経過)`}</span>}
+      {elapsedSeconds !== null && (
+        <span aria-hidden="true">{` (${elapsedSeconds}秒経過)`}</span>
+      )}
     </p>
   );
 }
