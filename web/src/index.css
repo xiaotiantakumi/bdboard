@@ -1729,6 +1729,22 @@ body {
   color: #5a8fa8;
 }
 
+/* merge_slot はマージ枠の保持状況。成功/失敗ではなく「順番待ちの機構」なので、
+   赤系(失敗)・緑系(問題なし)を避け、他 kind が使っていないブラウン系にする。
+   他の kind はライト前提の固定色だが、ここは受け入れ条件(ライト/ダーク両方で
+   読めること)を満たすため明示的にダークを上書きする (bdboard-vpdn) */
+.hygiene-kind-merge_slot {
+  background: rgba(162, 132, 94, 0.16);
+  color: #6b4f2a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hygiene-kind-merge_slot {
+    background: rgba(172, 142, 104, 0.22);
+    color: #d9b98c;
+  }
+}
+
 .hygiene-stale-lease-group,
 .hygiene-merge-slot-group {
   display: flex;
