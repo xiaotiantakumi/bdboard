@@ -1,9 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HELP_SECTIONS } from '../helpContent';
 import { HelpPanel } from './HelpPanel';
+
+// jsdom は Element.prototype.scrollIntoView を実装していない (存在しないので vi.spyOn 不可)。
+// HelpPanel.handleJumpToSection は requestAnimationFrame の中でこれを呼ぶため、
+// 未定義のままだとテスト本体の終了後に TypeError が投げられ、全テスト pass でも
+// vitest が非ゼロ終了する (PR #361 の CI 失敗)。
+// グローバル (web/vitest.setup.ts) に置かないのは bdboard-vn1x の教訓 —
+// no-op スタブが本番フォールバックをテストから到達不能にした。ここだけに閉じ込め、
+// afterEach で必ず消す。
+const scrollIntoViewMock = vi.fn();
 
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
@@ -24,7 +33,17 @@ function renderHelpPanel(props: { onClose: () => void }) {
 }
 
 describe('HelpPanel', () => {
+  beforeEach(() => {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      writable: true,
+      value: scrollIntoViewMock,
+    });
+  });
+
   afterEach(() => {
+    delete (Element.prototype as Partial<Pick<Element, 'scrollIntoView'>>).scrollIntoView;
+    scrollIntoViewMock.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -106,20 +125,25 @@ describe('HelpPanel', () => {
     }
   });
 
-  it('opens a section when its table-of-contents item is clicked', async () => {
+  it('opens a section and scrolls to it when its table-of-contents item is clicked', async () => {
     const user = userEvent.setup();
     const { container } = renderHelpPanel({ onClose: vi.fn() });
 
     const targetSection = HELP_SECTIONS[0]!;
-    await user.click(
-      screen.getByRole('button', { name: targetSection.title }),
-    );
+    await user.click(screen.getByRole('button', { name: targetSection.title }));
 
-    const section = container.querySelector(
-      `#help-section-${targetSection.id}`,
-    )?.closest('details');
+    const section = container
+      .querySelector(`#help-section-${targetSection.id}`)
+      ?.closest('details');
     expect(section).not.toBeNull();
     expect(section).toHaveAttribute('open');
+
+    // handleJumpToSection は requestAnimationFrame 越しに scrollIntoView を呼ぶ。
+    await waitFor(() => {
+      expect(scrollIntoViewMock).toHaveBeenCalledTimes(1);
+    });
+    expect(scrollIntoViewMock.mock.contexts[0]).toBe(section);
+    expect(scrollIntoViewMock).toHaveBeenCalledWith({ block: 'start' });
   });
 
   it('filters sections by keyword', async () => {
