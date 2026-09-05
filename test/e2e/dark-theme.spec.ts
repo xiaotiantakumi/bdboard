@@ -1,4 +1,5 @@
 import { expect, test, type JSHandle, type Page } from '@playwright/test';
+import { DECORATIVE_GLYPH_PATTERN } from './decorative-glyph-pattern.js';
 
 /*
  * ダークテーマ e2e。方針の全文は test/e2e/README.md「テーマ (light / dark) の見かた」。
@@ -170,6 +171,12 @@ type Sample = {
    * `<span aria-hidden="true">{` (${elapsedSeconds}秒経過)`}</span>` のように**可読な文章**へ
    * 付けている (読み上げは別の live region が担うため)。字数・字種の条件を外すと、この種の
    * 「見える文章」が 4.5:1 の網から静かに落ちて、掃引が緩んだことに誰も気付けなくなる。
+   *
+   * 判定に使う正規表現パターンの単一の正本は `./decorative-glyph-pattern.ts` の
+   * `DECORATIVE_GLYPH_PATTERN`。このハードニングが退行していないことは
+   * `decorative-glyph-pattern.test.ts` が unit test として直接固定している
+   * (bdboard-dh07 — 元々このハードニングは掃引の実行対象 DOM に一度も現れず、
+   * `aria-hidden` 単独へ緩めても全 e2e が緑のまま通っていた)。
    */
   decorative: boolean;
   /**
@@ -197,9 +204,18 @@ type Sample = {
  * (実測: 445 件中 299 件しか一致しなくなった)。
  *
  * ページ側で完結させる必要があるので (page.evaluate はクロージャを転送しない)
- * ヘルパもこの関数の中に閉じ込めてある。
+ * ヘルパもこの関数の中に閉じ込めてある。同じ理由で `decorative` の判定に使う正規表現も
+ * 関数値ではなく**パターン文字列**として `pattern` 引数で受け取り、ここで
+ * `new RegExp(pattern, 'u')` に組み立てる (`DECORATIVE_GLYPH_PATTERN` の doc コメント参照)。
  */
-function readSamples(elements: Element[]): (Sample | null)[] {
+function readSamples({
+  elements,
+  pattern,
+}: {
+  elements: Element[];
+  pattern: string;
+}): (Sample | null)[] {
+  const decorativePattern = new RegExp(pattern, 'u');
   // parseCssColor と同じ規則。page.evaluate はクロージャを転送しないので複製している。
   const parse = (c: string): [number, number, number, number] | null => {
     const rgb = c.match(/^rgba?\(([^)]+)\)$/);
@@ -298,7 +314,7 @@ function readSamples(elements: Element[]): (Sample | null)[] {
       effectiveBg: effectiveBg(el),
       decorative:
         el.getAttribute('aria-hidden') === 'true'
-        && /^[^\p{L}\p{N}]{1,2}$/u.test((el.textContent ?? '').trim()),
+        && decorativePattern.test((el.textContent ?? '').trim()),
       opacity: cumulativeOpacity(el),
       borderColors: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
       borderWidths: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(
@@ -606,7 +622,7 @@ async function runContrastSweep(
       '`.lane-header-wip-exceeded` の付与条件が変わった可能性が高い。',
   ).toBeVisible();
   const handle = await pinElements(page);
-  const samples = await page.evaluate(readSamples, handle);
+  const samples = await page.evaluate(readSamples, { elements: handle, pattern: DECORATIVE_GLYPH_PATTERN });
   await handle.dispose();
 
   // 許可リストのキーがタグ名だけだと、そのタグの**すべての無クラス要素**が 1 つの floor で
@@ -793,10 +809,10 @@ test.describe('dark theme', () => {
     const handle = await pinElements(page);
     await page.emulateMedia({ colorScheme: 'light' });
     const lightSettledNeutralFg = await settledTokenColor(page, '--badge-neutral-fg');
-    const light = await page.evaluate(readSamples, handle);
+    const light = await page.evaluate(readSamples, { elements: handle, pattern: DECORATIVE_GLYPH_PATTERN });
     await page.emulateMedia({ colorScheme: 'dark' });
     const darkSettledNeutralFg = await settledTokenColor(page, '--badge-neutral-fg');
-    const dark = await page.evaluate(readSamples, handle);
+    const dark = await page.evaluate(readSamples, { elements: handle, pattern: DECORATIVE_GLYPH_PATTERN });
     await handle.dispose();
     expect(light.length).toBe(dark.length);
 
