@@ -5989,6 +5989,31 @@ body {
     background: var(--color-bg);
   }
 
+  /*
+   * bdboard-h4xs.19: BulkActionBar is rendered before .lanes-scroll-region in the DOM.
+   * bottom:0 sticky only pulls the element up when its natural position is below the
+   * viewport; it does not push the bar down when it scrolls off the top. order:1 moves
+   * the bar to the visual end of .main's flex column so its natural position is at the
+   * document bottom and bottom:0 keeps it glued to the viewport while scrolling.
+   *
+   * order here is intentional and unlike bdboard-53my (which rejected order on
+   * .bulk-action-bar-buttons because it would break WCAG 1.3.2 focus order): moving the
+   * bar after the lanes makes visual order match focus order (filters → lane cards → bar).
+   *
+   * 700px band (not 480px) matches the lane max-height scrollport; desktop (>=701px)
+   * stays position:static with order:0. z-index:6 sits above .card (auto) and
+   * .lane-indicator-strip (5); .header (10) is at the top.
+   */
+  .bulk-action-bar {
+    order: 1;
+    position: sticky;
+    bottom: 0;
+    z-index: 6;
+    margin: 12px 0 0;
+    /* --color-bg-elevated is opaque; .main mobile padding has no safe-area inset */
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
   .lanes-row {
     gap: 10px;
     padding: 0 14px 10px;
