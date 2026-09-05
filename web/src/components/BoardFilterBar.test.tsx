@@ -378,6 +378,43 @@ describe('BoardFilterBar', () => {
     expect(screen.queryByRole('button', { name: 'archived' })).not.toBeInTheDocument();
   });
 
+  it('distinguishes a selected label that is no longer on the board', () => {
+    renderBar({ availableLabels: ['human'], labels: ['archived', 'human'] });
+
+    const missing = screen.getByRole('button', { name: 'archived' });
+    const live = screen.getByRole('button', { name: 'human' });
+
+    // bdboard-gxq5: どちらも aria-pressed=true なので、aria-pressed だけを見ても
+    // 「盤面から消えたラベル」は区別できない。区別を担うのは modifier class と説明。
+    expect(missing).toHaveAttribute('aria-pressed', 'true');
+    expect(live).toHaveAttribute('aria-pressed', 'true');
+    expect(missing).toHaveClass('board-filter-label-missing');
+    expect(live).not.toHaveClass('board-filter-label-missing');
+    expect(missing).toHaveAccessibleDescription('現在の盤面には無いラベルです');
+    expect(live).toHaveAccessibleDescription('');
+    // 説明の出どころまで固定する。toHaveAccessibleDescription は title でも通るので、
+    // これが無いと「aria-describedby を消して title だけにする」変異が素通りする
+    // (実際に素通りした)。title はタッチでは出ないので sr-only 側が本命。
+    expect(missing).toHaveAttribute('aria-describedby', 'board-filter-missing-label-hint');
+    const hint = document.getElementById('board-filter-missing-label-hint');
+    expect(hint).toHaveClass('sr-only');
+    expect(hint).toHaveTextContent('現在の盤面には無いラベルです');
+    // アクセシブル名は素のラベルのまま。ここが変わると bdboard-we44 が入れた
+    // getByRole({ name: 'archived' }) 系と下の並び順テストが芋づるで壊れる。
+    expect(missing).toHaveAccessibleName('archived');
+  });
+
+  it('omits the missing-label hint when every selected label is on the board', () => {
+    renderBar({ availableLabels: ['human'], labels: ['human'] });
+
+    // 説明要素を無条件に描くと、生きたチップだけの盤面にも「盤面には無い」という
+    // 読み上げ用テキストが残る。描画自体を条件付きにしてあることを固定する。
+    expect(document.getElementById('board-filter-missing-label-hint')).toBeNull();
+    expect(screen.getByRole('button', { name: 'human' })).not.toHaveClass(
+      'board-filter-label-missing',
+    );
+  });
+
   it('sorts the label union with compareStrings order', () => {
     const availableLabels = ['a'];
     const labels = ['Z'];

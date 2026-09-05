@@ -7081,6 +7081,24 @@ body {
   flex-wrap: wrap;
 }
 
+/* bdboard-gxq5: 盤面から消えたのに選択だけ残っているラベルのチップ。生きたチップと
+   同じ「押された」見た目のままだと、0 件になっている理由が読み取れない。
+   ・箱のサイズを変えない指定だけを使う (inset box-shadow / 取り消し線)。border や
+     padding を足すと 480px 以下で効く .board-filter-bar .toggle-btn の
+     min-height:44px と合わせても幅方向のタップ領域が動くため (WCAG 2.5.8)。
+   ・outline は使わない。ここは .toggle-btn.active より詳細度が高いので、outline を
+     書くと UA の :focus-visible リングを上書きしてフォーカスが見えなくなる。
+   ・--color-text-muted は存在しないので --color-text-secondary を使う (index.css の
+     同名注意書き参照)。 */
+.board-filter-label-group .toggle-btn.board-filter-label-missing {
+  color: var(--color-text-secondary);
+  box-shadow:
+    inset 0 0 0 1px var(--color-border-strong),
+    0 1px 3px var(--color-shadow);
+  text-decoration: line-through;
+  text-decoration-color: var(--color-text-secondary);
+}
+
 .board-filter-text-group {
   flex: 1 1 180px;
   min-width: 160px;

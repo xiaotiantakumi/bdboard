@@ -19,6 +19,15 @@ export interface BoardFilterBarProps {
   onFilterTextChange: (text: string) => void;
 }
 
+/**
+ * 盤面から消えたのに選択だけ残っているラベル (availableLabels に無いが labels にある)
+ * のチップに付ける補足。id は sr-only な説明要素と aria-describedby の両側で共有する。
+ * bdboard-we44 でチップ自体は描かれるようになったが、押された見た目が生きたチップと
+ * 同じままだったので「0 件になっている理由」が読み取れなかった (bdboard-gxq5)。
+ */
+const MISSING_LABEL_HINT_ID = 'board-filter-missing-label-hint';
+const MISSING_LABEL_HINT_TEXT = '現在の盤面には無いラベルです';
+
 const PRIORITY_CEILING_OPTIONS: { value: PriorityCeilingChoice; label: string }[] = [
   { value: 'all', label: 'すべて' },
   { value: '0', label: 'P0' },
@@ -81,6 +90,8 @@ export function BoardFilterBar({
   const toggleRef = useRef<HTMLButtonElement>(null);
   const showFilterPanel = !isMobile || expanded;
   const labelOptions = [...new Set([...availableLabels, ...labels])].sort(compareStrings);
+  const availableLabelSet = new Set(availableLabels);
+  const hasMissingLabel = labels.some((label) => !availableLabelSet.has(label));
 
   const toggleAriaLabel =
     activeFilterCount > 0
@@ -210,12 +221,25 @@ export function BoardFilterBar({
               <div className="toggle-group board-filter-label-group">
                 {labelOptions.map((label) => {
                   const selected = labels.includes(label);
+                  // labelOptions は availableLabels と labels の和集合なので、
+                  // availableLabels に無い = 選択が残っているだけの「盤面に無いラベル」。
+                  // aria-pressed は「選択中」しか伝えないため、区別は modifier class
+                  // (視覚) と aria-describedby (読み上げ) の両方で担う。
+                  const missing = !availableLabelSet.has(label);
                   return (
                     <button
                       key={label}
                       type="button"
-                      className={`toggle-btn${selected ? ' active' : ''}`}
+                      className={`toggle-btn${selected ? ' active' : ''}${
+                        missing ? ' board-filter-label-missing' : ''
+                      }`}
                       aria-pressed={selected}
+                      // アクセシブル名は素のラベルのままにする。名前に接尾辞を足すと
+                      // bdboard-we44 が入れた getByRole({ name: 'archived' }) 系や
+                      // 並び順テストが芋づるで壊れ、WCAG 2.5.3 の検討も要る。
+                      // 説明は aria-describedby に寄せる (title だけだとタッチで出ない)。
+                      aria-describedby={missing ? MISSING_LABEL_HINT_ID : undefined}
+                      title={missing ? MISSING_LABEL_HINT_TEXT : undefined}
                       onClick={() => handleLabelToggle(label)}
                     >
                       {label}
@@ -223,6 +247,11 @@ export function BoardFilterBar({
                   );
                 })}
               </div>
+              {hasMissingLabel && (
+                <span id={MISSING_LABEL_HINT_ID} className="sr-only">
+                  {MISSING_LABEL_HINT_TEXT}
+                </span>
+              )}
             </div>
           )}
 
