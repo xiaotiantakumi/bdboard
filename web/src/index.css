@@ -6035,13 +6035,6 @@ body {
     line-height: 1.3;
   }
 
-  /* bdboard-h4xs.9: 高さ 576px 以下では 44px のチップが固定チャンクを押し広げ、
-     .chat-messages が 46.3px → 38.6px まで潰れて chat-mobile の
-     「切れた領域が出ない」検証が落ちる。高さが足りない端末ではタップ領域より
-     会話領域の確保を優先する (bdboard-h4xs.15 の予算を壊さない)。 */
-  .chat-quick-command-chip {
-    min-height: 34px;
-  }
 }
 
 /* iPhone portrait */
@@ -6230,8 +6223,9 @@ body {
   }
 
   /* --- bdboard-h4xs.9: モバイル(<=480px)タップ領域底上げ ---
-     44px はヒット領域の要件。見た目は padding / ::before で拡張し、
-     .btn/.toggle-btn の既定 min-height:34px は一括変更しない (ヘッダー予算 bdboard-h4xs.5)。 */
+     44px はヒット領域の要件。見た目は padding / ::before で拡張する。
+     .btn/.toggle-btn の既定 min-height:34px は一括変更しないが、.view-switcher .toggle-btn は
+     ヘッダー内なのでヘッダー高は 234.5px → 244.5px (+10px) 増える。これは本チケットのコストとして受け入れる。 */
 
   /* Tier 1: 副作用のある操作 */
   .hygiene-repair-action,
@@ -6251,31 +6245,26 @@ body {
   .comment-form-submit {
     min-height: 44px;
     min-width: 44px;
-    display: inline-flex;
-    align-items: center;
   }
 
   .detail-inline-edit-btn {
     min-height: 44px;
     min-width: 44px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
   }
 
   /* Tier 2: ウォッチ切替 — ::before で行高を押し上げず 44px ヒット領域を確保。
-     .card-watch-toggle は .card-bulk-checkbox (44x44, top:4px right:4px) と近接するため
-     中心を左へ 18px ずらす。バルクモードでは padding-right:40px により
-     トグル中心 = カード右端 R - 53、チェックボックス左端 = R - 49 なので
-     ::before 右端 = (R - 53) - shift + 22 = R - 49 に一致させると shift = 18px。
-     カード右端 R 基準のため min(86vw, 320px) が変わっても成立する。
-     左寄せの副作用: タイトル末尾への被りが 12px → 22px に増える (意図した取引)。 */
+     バルクモードではカード右端 R に対しトグル右端 = R - 41、
+     .card-bulk-checkbox の左端 = R - 49。right:8px; width:44px なら帯は
+     [トグル右端 - 52, トグル右端 - 8] となり、右端がチェックボックス左端に接する。
+     現行 shift 18 と同じ帯位置を、フォント差でボタン幅が変わっても保てる。
+     375px の主要カードではトグル rect = [244, 268]、帯 = [216, 260]、
+     チェックボックス左端 = 260。gap 30px でタイトル右端 = 214 となり 2px 空く。 */
   .card-watch-toggle::before {
     content: '';
     position: absolute;
     top: 50%;
-    left: 50%;
-    transform: translate(calc(-50% - 18px), -50%);
+    right: 8px;
+    transform: translateY(-50%);
     width: 44px;
     height: 44px;
   }
@@ -6290,11 +6279,15 @@ body {
     height: 44px;
   }
 
+  /* ::before が 44px 幅なので隣接ボタンとの間隔を 8px → 12px にして重なりを解消
+     (bdboard-h4xs.9 レビュー major#4)。 */
+  .detail-header-actions {
+    gap: 12px;
+  }
+
   /* Tier 3: 期間切替・ビュータブ・チャット以外の toggle-btn */
   .view-switcher .toggle-btn {
     min-height: 44px;
-    display: inline-flex;
-    align-items: center;
   }
 
   .activity-window-group .toggle-btn,
@@ -6304,14 +6297,13 @@ body {
   .next-up-epic-toggle,
   .board-filter-bar .toggle-btn {
     min-height: 44px;
-    display: inline-flex;
-    align-items: center;
   }
 }
 
-/* bdboard-h4xs.9: 480px ブロックの .chat-quick-command-chip {44px} より後に置き、
-   短いビューポート (max-height:576px) だけ 34px に戻す。本体は上の
-   @media (max-width:700px) and (max-height:576px) ブロック内。 */
+/* bdboard-h4xs.9: 480px ブロックの .chat-quick-command-chip {44px} より後に置くことで
+   このブロックが勝つ。高さ 576px 以下では 44px のチップが固定チャンクを押し広げ、
+   .chat-messages が 46.3px → 38.6px まで潰れるため、タップ領域より会話領域を優先して
+   34px に戻す (bdboard-h4xs.15 の chat-mobile 可視領域予算)。ここが本体。 */
 @media (max-width: 700px) and (max-height: 576px) {
   .chat-quick-command-chip {
     min-height: 34px;
@@ -6413,7 +6405,6 @@ body {
     min-height: 44px;
     display: flex;
     align-items: center;
-    box-sizing: border-box;
   }
 
   /* ツールバーは左右グループの箱を畳んで、6個のコントロールを1つの折り返し列に流す。

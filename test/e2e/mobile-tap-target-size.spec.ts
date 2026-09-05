@@ -9,19 +9,31 @@ import { expect, test } from '@playwright/test';
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const MIN_TAP_TARGET_PX = 44;
 const TICKET_TITLE = 'Fixture ticket bdboard-3tw.8';
-/** Matches index.css .card-watch-toggle::before translate(calc(-50% - 18px), -50%). */
-const CARD_WATCH_TOGGLE_PSEUDO_SHIFT_X_PX = 18;
-const HIT_TEST_INSET_PX = 2;
+const HIT_TEST_STEP_PX = 0.25;
+const HIT_TEST_MAX_DISTANCE_PX = 120;
 
-type HitTest = { label: string; ok: boolean; hitClass: string };
-
-type WatchToggleEvaluateResult = {
+type HitAreaMeasurement = {
   found: boolean;
-  width: number;
-  height: number;
-  hitTests: HitTest[];
-  rightEdgeOk: boolean;
-  rightEdgeHitClass: string;
+  measuredLeft: number;
+  measuredRight: number;
+  measuredTop: number;
+  measuredBottom: number;
+  hitTestCapped: boolean;
+};
+
+type CardHitAreaMeasurement = HitAreaMeasurement & {
+  checkboxFound: boolean;
+  titleFound: boolean;
+  checkboxLeft: number;
+  titleRight: number;
+  leftOfCheckboxHit: boolean;
+  checkboxHit: boolean;
+};
+
+type DetailHitAreaMeasurement = HitAreaMeasurement & {
+  closeFound: boolean;
+  closeLeft: number;
+  closeHit: boolean;
 };
 
 test.describe('mobile tap target size — bdboard-h4xs.9', () => {
@@ -31,108 +43,236 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
     hasTouch: true,
   });
 
-  test('375x812: card watch toggle exposes 44px pseudo hit area', async ({ page }) => {
+  test('375x812: card watch toggle exposes a measured 44px hit area without overlapping title or bulk checkbox', async ({
+    page,
+  }) => {
     await page.goto('/');
-    await expect(page.locator('.card').first()).toBeVisible({ timeout: 15_000 });
 
-    const watchToggle = page.locator('.card-watch-toggle').first();
-    await watchToggle.scrollIntoViewIfNeeded();
+    const card = page.locator('article', { hasText: TICKET_TITLE });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await card.evaluate((element) =>
+      element.scrollIntoView({ block: 'center', inline: 'center' }),
+    );
+    await expect(
+      card.locator('.card-bulk-checkbox'),
+      'bulk checkbox must be rendered; this positioning test has no meaning without it',
+    ).toBeVisible();
 
-    const result = await page.evaluate<
-      WatchToggleEvaluateResult,
-      { selector: string; shiftX: number; inset: number }
-    >(({ selector, shiftX, inset }) => {
-        const element = document.querySelector(selector);
-        if (!(element instanceof HTMLElement)) {
-          return {
-            found: false,
-            width: 0,
-            height: 0,
-            hitTests: [] as HitTest[],
-            rightEdgeOk: false,
-            rightEdgeHitClass: 'null',
-          };
-        }
+    const result: CardHitAreaMeasurement = await card.evaluate((cardElement, { step, max }) => {
+      const button = cardElement.querySelector('.card-watch-toggle');
+      const checkbox = cardElement.querySelector('.card-bulk-checkbox');
+      const title = cardElement.querySelector('.card-title');
+      if (
+        !(button instanceof HTMLElement) ||
+        !(checkbox instanceof HTMLElement) ||
+        !(title instanceof HTMLElement)
+      ) {
+        return {
+          found: false,
+          measuredLeft: 0,
+          measuredRight: 0,
+          measuredTop: 0,
+          measuredBottom: 0,
+          hitTestCapped: false,
+          checkboxFound: checkbox !== null,
+          titleFound: title !== null,
+          checkboxLeft: 0,
+          titleRight: 0,
+          leftOfCheckboxHit: false,
+          checkboxHit: false,
+        };
+      }
 
-        const before = getComputedStyle(element, '::before');
-        const width = Number.parseFloat(before.width);
-        const height = Number.parseFloat(before.height);
-        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-          return {
-            found: true,
-            width: element.getBoundingClientRect().width,
-            height: element.getBoundingClientRect().height,
-            hitTests: [] as HitTest[],
-            rightEdgeOk: false,
-            rightEdgeHitClass: 'null',
-          };
-        }
-
-        const rect = element.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2 - shiftX;
-        const centerY = rect.top + rect.height / 2;
-        const halfW = width / 2 - inset;
-        const halfH = height / 2 - inset;
-
-        const points: Array<{ label: string; x: number; y: number }> = [
-          { label: 'center', x: centerX, y: centerY },
-          { label: 'left', x: centerX - halfW, y: centerY },
-          { label: 'right', x: centerX + halfW, y: centerY },
-          { label: 'top', x: centerX, y: centerY - halfH },
-          { label: 'bottom', x: centerX, y: centerY + halfH },
-        ];
-
-        const hitTests = points.map(({ label, x, y }) => {
+      // The final hit in each direction is the measured boundary. Exhausting
+      // the 120px guard is a failure, not a plausible 44px target.
+      const measureHitArea = (toggle: HTMLElement) => {
+        const rect = toggle.getBoundingClientRect();
+        const isToggleHit = (x: number, y: number) => {
           const hit = document.elementFromPoint(x, y);
-          const ok = hit !== null && (hit === element || element.contains(hit));
-          const hitClass =
-            hit instanceof Element ? hit.className || hit.tagName.toLowerCase() : 'null';
-          return { label, ok, hitClass };
-        });
-
-        const rightEdgeInnerX = centerX + halfW;
-        const rightEdgeHit = document.elementFromPoint(rightEdgeInnerX, centerY);
-        const rightEdgeOk =
-          rightEdgeHit !== null &&
-          (rightEdgeHit === element || element.contains(rightEdgeHit)) &&
-          !(rightEdgeHit instanceof Element && rightEdgeHit.classList.contains('card-bulk-checkbox'));
-
+          return hit !== null && (hit === toggle || toggle.contains(hit));
+        };
+        const scan = (
+          origin: number,
+          direction: 1 | -1,
+          hitAt: (coordinate: number) => boolean,
+        ) => {
+          let lastHit = origin;
+          for (let distance = step; distance <= max; distance += step) {
+            const coordinate = origin + direction * distance;
+            if (!hitAt(coordinate)) return { boundary: lastHit, capped: false };
+            lastHit = coordinate;
+          }
+          return { boundary: lastHit, capped: true };
+        };
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const left = scan(centerX, -1, (x) => isToggleHit(x, centerY));
+        // The card bulk checkbox overlays the lower-right part of this band's x range.
+        const top = scan(centerY, -1, (y) => isToggleHit(left.boundary + 1, y));
+        const bottom = scan(centerY, 1, (y) => isToggleHit(left.boundary + 1, y));
+        // measuredTop + 1 is above the checkbox top edge, finding the true right edge.
+        const right = scan(centerX, 1, (x) => isToggleHit(x, top.boundary + 1));
         return {
           found: true,
-          width,
-          height,
-          hitTests,
-          rightEdgeOk,
-          rightEdgeHitClass:
-            rightEdgeHit instanceof Element
-              ? rightEdgeHit.className || rightEdgeHit.tagName.toLowerCase()
-              : 'null',
+          measuredLeft: left.boundary,
+          measuredRight: right.boundary,
+          measuredTop: top.boundary,
+          measuredBottom: bottom.boundary,
+          hitTestCapped: left.capped || right.capped || top.capped || bottom.capped,
         };
-      },
-      {
-        selector: '.card-watch-toggle',
-        shiftX: CARD_WATCH_TOGGLE_PSEUDO_SHIFT_X_PX,
-        inset: HIT_TEST_INSET_PX,
-      },
+      };
+
+      const measurement = measureHitArea(button);
+      const checkboxRect = checkbox.getBoundingClientRect();
+      const titleRect = title.getBoundingClientRect();
+      const isToggleHit = (x: number, y: number) => {
+        const hit = document.elementFromPoint(x, y);
+        return hit !== null && (hit === button || button.contains(hit));
+      };
+      const isCheckboxHit = (x: number, y: number) => {
+        const hit = document.elementFromPoint(x, y);
+        return hit instanceof Element && (hit === checkbox || checkbox.contains(hit));
+      };
+
+      return {
+        ...measurement,
+        checkboxFound: true,
+        titleFound: true,
+        checkboxLeft: checkboxRect.left,
+        titleRight: titleRect.right,
+        leftOfCheckboxHit: isToggleHit(
+          checkboxRect.left - 1,
+          (measurement.measuredTop + measurement.measuredBottom) / 2,
+        ),
+        checkboxHit: isCheckboxHit(
+          checkboxRect.left + 1,
+          checkboxRect.top + checkboxRect.height / 2,
+        ),
+      };
+    }, { step: HIT_TEST_STEP_PX, max: HIT_TEST_MAX_DISTANCE_PX });
+
+    expect(result.found, 'card watch toggle, bulk checkbox, and title must exist').toBe(true);
+    expect(
+      result.checkboxFound,
+      'bulk checkbox is required for this positioning assertion',
+    ).toBe(true);
+    expect(result.titleFound, 'card title is required for this overlap assertion').toBe(true);
+    expect(result.hitTestCapped, 'hit-test scan must stop within its 120px guard').toBe(false);
+
+    const measuredWidth = result.measuredRight - result.measuredLeft;
+    const measuredHeight = result.measuredBottom - result.measuredTop;
+    // 375×812 実測: left=215.25, right=259.75, top=481.58, bottom=526.08
+    // (44.5×44.5; elementFromPoint rounding may extend an edge by about 0.5px).
+    // A 43px mutation measures 43.5px and must fail; do not add a 1px tolerance.
+    expect(measuredWidth, `card watch measured width=${measuredWidth}px`).toBeGreaterThanOrEqual(
+      MIN_TAP_TARGET_PX,
+    );
+    expect(measuredHeight, `card watch measured height=${measuredHeight}px`).toBeGreaterThanOrEqual(
+      MIN_TAP_TARGET_PX,
     );
 
-    expect(result.found, 'card watch toggle must exist').toBe(true);
+    // Same 375px measurement: checkboxLeft=260. The 0.5px allowance only
+    // accounts for hit-test rounding; right:6px measures 261.75px.
+    expect(result.measuredRight).toBeLessThanOrEqual(result.checkboxLeft + 0.5);
     expect(
-      result.width >= MIN_TAP_TARGET_PX && result.height >= MIN_TAP_TARGET_PX,
-      `card watch toggle pseudo hit area too small (${result.width}x${result.height})`,
+      result.leftOfCheckboxHit,
+      'one pixel left of checkbox must hit the watch band',
     ).toBe(true);
+    expect(result.checkboxHit, 'one pixel inside checkbox must hit the checkbox').toBe(true);
+  });
 
-    for (const hitTest of result.hitTests) {
-      expect(
-        hitTest.ok,
-        `elementFromPoint at ${hitTest.label} must hit the watch toggle button (got ${hitTest.hitClass})`,
-      ).toBe(true);
-    }
+  test('375x812: detail watch toggle exposes a measured 44px hit area without overlapping close', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const card = page.locator('article', { hasText: TICKET_TITLE });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await card.tap();
 
-    expect(
-      result.rightEdgeOk,
-      `::before right edge must hit watch toggle, not bulk checkbox (got ${result.rightEdgeHitClass})`,
-    ).toBe(true);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    const result: DetailHitAreaMeasurement = await dialog.evaluate((dialogElement, { step, max }) => {
+      const button = dialogElement.querySelector('.detail-watch-toggle');
+      const close = dialogElement.querySelector('.btn.detail-close');
+      if (!(button instanceof HTMLElement) || !(close instanceof HTMLElement)) {
+        return {
+          found: false,
+          measuredLeft: 0,
+          measuredRight: 0,
+          measuredTop: 0,
+          measuredBottom: 0,
+          hitTestCapped: false,
+          closeFound: close !== null,
+          closeLeft: 0,
+          closeHit: false,
+        };
+      }
+
+      const measureHitArea = (toggle: HTMLElement) => {
+        const rect = toggle.getBoundingClientRect();
+        const isToggleHit = (x: number, y: number) => {
+          const hit = document.elementFromPoint(x, y);
+          return hit !== null && (hit === toggle || toggle.contains(hit));
+        };
+        const scan = (
+          origin: number,
+          direction: 1 | -1,
+          hitAt: (coordinate: number) => boolean,
+        ) => {
+          let lastHit = origin;
+          for (let distance = step; distance <= max; distance += step) {
+            const coordinate = origin + direction * distance;
+            if (!hitAt(coordinate)) return { boundary: lastHit, capped: false };
+            lastHit = coordinate;
+          }
+          return { boundary: lastHit, capped: true };
+        };
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const left = scan(centerX, -1, (x) => isToggleHit(x, centerY));
+        const top = scan(centerY, -1, (y) => isToggleHit(left.boundary + 1, y));
+        const bottom = scan(centerY, 1, (y) => isToggleHit(left.boundary + 1, y));
+        const right = scan(centerX, 1, (x) => isToggleHit(x, top.boundary + 1));
+        return {
+          found: true,
+          measuredLeft: left.boundary,
+          measuredRight: right.boundary,
+          measuredTop: top.boundary,
+          measuredBottom: bottom.boundary,
+          hitTestCapped: left.capped || right.capped || top.capped || bottom.capped,
+        };
+      };
+
+      const measurement = measureHitArea(button);
+      const closeRect = close.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        closeRect.left + 1,
+        closeRect.top + closeRect.height / 2,
+      );
+      return {
+        ...measurement,
+        closeFound: true,
+        closeLeft: closeRect.left,
+        closeHit: hit instanceof Element && (hit === close || close.contains(hit)),
+      };
+    }, { step: HIT_TEST_STEP_PX, max: HIT_TEST_MAX_DISTANCE_PX });
+
+    expect(result.found, 'detail watch toggle and close button must exist').toBe(true);
+    expect(result.closeFound, 'detail close button must exist').toBe(true);
+    expect(result.hitTestCapped, 'hit-test scan must stop within its 120px guard').toBe(false);
+
+    const measuredWidth = result.measuredRight - result.measuredLeft;
+    const measuredHeight = result.measuredBottom - result.measuredTop;
+    // 375×812 実測: detail band=[246,290], close left=292, leaving 2px.
+    expect(measuredWidth, `detail watch measured width=${measuredWidth}px`).toBeGreaterThanOrEqual(
+      MIN_TAP_TARGET_PX,
+    );
+    expect(measuredHeight, `detail watch measured height=${measuredHeight}px`).toBeGreaterThanOrEqual(
+      MIN_TAP_TARGET_PX,
+    );
+    expect(result.measuredRight).toBeLessThanOrEqual(result.closeLeft + 0.5);
+    // Before the gap fix, elementFromPoint(293, cy) returned the watch toggle.
+    expect(result.closeHit, 'one pixel inside close must hit close, not watch toggle').toBe(true);
   });
 
   test('375x812: comment submit in detail panel meets 44px', async ({ page }) => {
@@ -147,17 +287,11 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
 
     const submit = dialog.locator('.comment-form-submit');
     await expect(submit).toBeVisible();
-
-    const result = await page.evaluate((selector) => {
-      const element = document.querySelector(selector);
-      if (!element) {
-        return { found: false, width: 0, height: 0 };
-      }
+    const result = await submit.evaluate((element) => {
       const rect = element.getBoundingClientRect();
-      return { found: true, width: rect.width, height: rect.height };
-    }, '.comment-form-submit');
+      return { width: rect.width, height: rect.height };
+    });
 
-    expect(result.found, 'comment submit button must exist').toBe(true);
     expect(
       result.width >= MIN_TAP_TARGET_PX && result.height >= MIN_TAP_TARGET_PX,
       `comment submit tap target too small (${result.width}x${result.height})`,
@@ -175,11 +309,7 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
       const items = Array.from(document.querySelectorAll('.overflow-menu-item'));
       return items.map((item, index) => {
         const rect = item.getBoundingClientRect();
-        return {
-          index,
-          height: rect.height,
-          ok: rect.height >= minSize,
-        };
+        return { index, height: rect.height, ok: rect.height >= minSize };
       });
     }, MIN_TAP_TARGET_PX);
 
@@ -190,5 +320,44 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
         `overflow-menu-item[${item.index}] height=${item.height}px (min=${MIN_TAP_TARGET_PX}px)`,
       ).toBe(true);
     }
+  });
+});
+
+test.describe('mobile tap target size — mobile rules must not leak to desktop', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test('1280x800: card and detail mobile overrides do not leak', async ({ page }) => {
+    await page.goto('/');
+    const card = page.locator('article', { hasText: TICKET_TITLE });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+
+    const cardMetrics = await card.evaluate((cardElement) => {
+      const titleRow = cardElement.querySelector('.card-title-row');
+      const watchToggle = cardElement.querySelector('.card-watch-toggle');
+      return {
+        titleRowColumnGap: titleRow ? getComputedStyle(titleRow).columnGap : null,
+        watchBeforeContent: watchToggle
+          ? getComputedStyle(watchToggle, '::before').content
+          : null,
+      };
+    });
+    expect(
+      cardMetrics.titleRowColumnGap,
+      'mobile 30px title gap must not leak to desktop',
+    ).toBe('6px');
+    expect(
+      cardMetrics.watchBeforeContent,
+      'mobile card watch hit band must not exist at desktop',
+    ).toBe('none');
+
+    await card.click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    const detailActionsGap = await dialog.locator('.detail-header-actions').evaluate((element) =>
+      getComputedStyle(element).gap,
+    );
+    expect(detailActionsGap, 'mobile 12px detail action gap must not leak to desktop').toBe(
+      '8px',
+    );
   });
 });
