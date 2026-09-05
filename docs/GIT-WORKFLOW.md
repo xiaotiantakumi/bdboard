@@ -67,17 +67,54 @@ morning five unrelated PRs landed on `main` touching the same
 Running `npm run drift` that morning would have named both files.
 
 It fetches `origin/main` and eligible peer branches first (a drift check
-against stale remotes is worthless); `npm run drift -- --no-fetch` skips both
-fetches when offline. For each peer, level 1 reports actual merge-tree text
-conflicts in files you changed; when merge-tree reports a conflict outside those
-files, the report does not assume a cause: the path may have shifted because of
-a peer-side rename (a real conflict with this branch), or the peer may itself be
-stale relative to `origin/main` (unrelated to this branch), so inspect the
-reported paths. Level 2 reports shared files when there is no text conflict,
-because semantic conflicts still need human
-judgement. This was the gap exposed by PR #393 and PR #396: both changed the
-same line in `web/src/index.css`, while neither overlapped changes already on
+against stale remotes is worthless, and both fetches use `--prune` so a peer
+branch deleted between `gh pr list` and the fetch does not leave a stale
+`origin/<peer>` behind that keeps getting compared as if it were still alive);
+`npm run drift -- --no-fetch` skips both fetches when offline. The peer-branch
+fetch is a single refspec-less `git fetch origin`, not a fetch of the specific
+branches it plans to compare: an earlier version listed the target branches
+explicitly, and a single deleted branch in that list failed the whole fetch
+(exit 128), so **no** peer got updated, not just the deleted one.
+
+For each peer it also checks, with `git merge-base --is-ancestor`, whether
+this branch and the peer are themselves each caught up with `origin/main`.
+Only when **both** are caught up does level 1 assert a merge-tree text
+conflict outright ("… と衝突します"); the same is true for a conflict outside
+the files you changed (the peer-rename-vs-stale-peer case below). Otherwise
+it softens to "… と衝突する可能性があります" and names a cause instead of
+asserting one:
+
+- If **this branch** is the one that is behind `origin/main`, the report
+  cannot rule out that the conflict is really this branch's own unrebased
+  drift showing up against a peer that has nothing to do with it, so it says
+  so and tells you to rebase and rerun rather than pointing at the peer —
+  even if the peer also happens to be behind.
+- If this branch is caught up but the **peer** is behind, the conflict is
+  attributed to the peer's own stale base, which is expected to clear once
+  the peer rebases.
+
+When merge-tree reports a conflict outside the files you changed, the same
+priority applies: if this branch is behind, the cause is left unresolved
+(cannot isolate it to the peer); otherwise the path may have shifted because
+of a peer-side rename (a real conflict with this branch) or the peer itself
+may be stale relative to `origin/main` (unrelated to this branch) — inspect
+the reported paths either way. Level 2 reports shared files when there is no
+text conflict, because semantic conflicts still need human judgement. This
+was the gap exposed by PR #393 and PR #396: both changed the same line in
+`web/src/index.css`, while neither overlapped changes already on
 `origin/main`, so the old check was green for both.
+
+Two more qualifiers can show up in the output. `(古い ref で比較)` is appended
+to the conclusion line when the peer-branch fetch above failed and the
+comparison fell back to whatever remote-tracking refs were already on disk —
+including the "no comparable open PR" line, so a stale-ref comparison is
+never reported the same way as a genuinely clean one. And when `git
+merge-tree` itself cannot run for a peer (an old git, unrelated histories,
+etc.), the check falls back to comparing changed file lists alone for that
+peer and says so ("merge-tree が使えないため … はファイル単位でのみ比較しました")
+rather than silently asserting no conflict — that peer is also excluded from
+the "N 件との重なりはありません" count, since a file-list-only comparison
+never actually reached a text-conflict verdict.
 
 It **never exits non-zero for a finding** and never blocks — overlapping files
 are an upper bound on where a conflict could occur, not a prediction that one

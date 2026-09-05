@@ -20,6 +20,11 @@ if (argsFile) {
   fs.writeFileSync(argsFile, args.length > 0 ? `${args.join('\n')}\n` : '');
 }
 
+// bdboard-b0yd R4-F2: process.exit() を stdout.write() の直後に呼ぶと、
+// Windows ではパイプへの stdout 書き込みが非同期なため、書き込みが完了する
+// 前にプロセスが終了して出力が切れうる。process.exitCode を設定して自然
+// 終了させれば、Node が stdio のフラッシュを待ってから終了する。現状 CI は
+// green だが (潜在的)、この PR は Windows 限定の壊れ方を既に1度出している。
 process.stdout.write(process.env.BDBOARD_DRIFT_FAKE_GH_STDOUT ?? '');
 process.stderr.write(process.env.BDBOARD_DRIFT_FAKE_GH_STDERR ?? '');
-process.exit(Number.parseInt(process.env.BDBOARD_DRIFT_FAKE_GH_EXIT_CODE ?? '0', 10));
+process.exitCode = Number.parseInt(process.env.BDBOARD_DRIFT_FAKE_GH_EXIT_CODE ?? '0', 10);
