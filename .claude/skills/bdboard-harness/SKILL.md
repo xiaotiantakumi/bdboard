@@ -33,9 +33,10 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
      痕跡）。`bd ready` の一覧だけで着手を決めず、手順どおり規律2 の worktree/ブランチ不存在確認
      まで通す。詳細と実測は failure-catalog.md `reclaimed-live-ticket`。
    - **自分が長命の worktree に居るなら、そのハーネスは作成時点で凍っている**（注入コピーは
-     チェックアウト単位）。`git log --oneline HEAD..origin/main | wc -l` が大きければ rebase する
-     （50 を超えると Hygiene が `stale_harness_worktree` で出す）。
-     詳細は failure-catalog.md `stale-harness-worktree`。
+     チェックアウト単位）。`git rev-list --count HEAD..origin/main -- .claude harness` が
+     0 でなければ rebase する（3 以上で、かつ `bd/<id>` worktree なら Hygiene が
+     `stale_harness_worktree` で出す。**`feature/*` 等の非チケット worktree は出ない**
+     ので自分で測ること）。詳細は failure-catalog.md `stale-harness-worktree`。
 3. **`bd reclaim` は原則打たない** — 正はスーパーバイザーの定期実行（例外3条件は詳細）。
 4. マージ済み worktree の残骸**だけ**掃除する（判断がつかないものは触らない）。
 5. `bd ready --exclude-label gt:slot` で候補を取る（**除外必須** — slot bead の claim は他

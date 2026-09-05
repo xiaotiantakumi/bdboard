@@ -1991,14 +1991,14 @@ describe('checkHygiene stale_harness_worktree', () => {
       projectId: repoRoot,
       ticketId: 'bdboard-frozen',
       worktreePath: '/repo/.claude/worktrees/bdboard-frozen',
-      commitsBehind: 124,
+      commitsBehind: 17,
       ...overrides,
     };
   }
 
-  // 2026-09-05 実測: 124 コミット遅れの worktree で稼働していたセッションが、
+  // 2026-09-05 実測: ハーネス差分 17 コミットの worktree で稼働していたセッションが、
   // 同じ日にハーネス改善 PR を自分でマージしていた。
-  it('flags an in_progress ticket whose worktree lags far behind main', () => {
+  it('flags an in_progress ticket whose harness lags behind main', () => {
     const ticket = makeTicket({
       id: 'bdboard-frozen',
       projectId: repoRoot,
@@ -2018,7 +2018,7 @@ describe('checkHygiene stale_harness_worktree', () => {
       severity: 'warning',
     });
     expect(found[0]?.message).toBe(
-      'worktree が main から 124 コミット遅れています。' +
+      'この worktree のハーネスは origin/main より 17 コミットぶん古いままです。' +
         'ハーネス (.claude/skills と .claude/settings.json) はチェックアウト単位なので、' +
         'このセッションは worktree 作成時点の古い規律・hooks のまま動いています。' +
         'git -C /repo/.claude/worktrees/bdboard-frozen rebase origin/main で追従してください',

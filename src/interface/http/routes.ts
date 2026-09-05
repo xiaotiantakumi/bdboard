@@ -778,7 +778,17 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       );
       // 同じ inFlight 一覧を使い回して「ハーネスが凍っている worktree」も測る
       // (bdboard-tdua)。scanner が遅れを測れない構成なら空配列が返る。
-      harnessWorktreeLags = await scanHarnessWorktreeLags(inFlight, scanner);
+      const inProgressWorktreeKeys = new Set(
+        entries.flatMap((entry) =>
+          entry.tickets
+            .filter((ticket) => ticket.status === 'in_progress')
+            .map((ticket) => `${entry.project.id}\0${ticket.id}`),
+        ),
+      );
+      harnessWorktreeLags = await scanHarnessWorktreeLags(inFlight, scanner, {
+        shouldMeasure: (worktree) =>
+          inProgressWorktreeKeys.has(`${worktree.projectId}\0${worktree.ticketId}`),
+      });
     }
 
     // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は

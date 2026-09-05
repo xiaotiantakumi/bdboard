@@ -148,8 +148,8 @@
 
 ### stale-harness-worktree — main から大きく遅れた worktree で走り続けたセッションが、自分がマージしたハーネス改善を自分には適用しないまま動き続けた（2026-09-05）
 - 原因: 注入コピー（`.claude/skills/` と `.claude/settings.json`）は**チェックアウト単位**で、worktree は作成時点の main で凍る。長命の worktree に居るセッションは、hooks もスクリプトも規律本文も古いまま。本人からは「ハーネスが入っている」ようにしか見えない
-- 防止: worktree が `origin/main` から大きく遅れたまま生存プロセスを抱えている状態を Hygiene の `stale_harness_worktree` が出す。1チケット=1worktree を守り、長命化したら PR を分割するか `git rebase origin/main` でハーネスごと追従する（本則: SKILL.md 規律1 手順2, CLAUDE.md「Git Workflow」）
-- 出典: bdboard-tdua（実測: 124 コミット遅れの worktree で稼働中のセッションが、同じ日にハーネス改善 PR をマージしていた）
+- 防止: `bd/<id>` worktree のハーネス差分（`git rev-list --count HEAD..origin/main -- .claude harness`）が 3 以上で、チケットが in_progress なら Hygiene の `stale_harness_worktree` が出す。**プロセス生存は見ておらず、`feature/*` 等の非チケット worktree も対象外**（実測ではそちらのほうが深く凍っていた。対応は bdboard-wadg）。自分の worktree は上のコマンドで自分で測ること。1チケット=1worktree を守り、長命化したら PR を分割するか `git rebase origin/main` でハーネスごと追従する（本則: SKILL.md 規律1 手順2, CLAUDE.md「Git Workflow」）
+- 出典: bdboard-tdua（実測: ハーネス差分 17 コミットの worktree で稼働中のセッションが、同じ日にハーネス改善 PR をマージしていた）
 
 ## bd 操作・確認待ち
 

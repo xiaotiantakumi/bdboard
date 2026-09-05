@@ -25,5 +25,5 @@ export interface WorktreeScanner {
    * 「測れなかった」を「遅れていない」と取り違えないよう、呼び出し側は未実装と
    * 0 コミット遅れを区別すること。
    */
-  countCommitsBehindDefaultBranch?(worktreePath: string): Promise<number>;
+  countHarnessCommitsBehindDefaultBranch?(worktreePath: string): Promise<number>;
 }

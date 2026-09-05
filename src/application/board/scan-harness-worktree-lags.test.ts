@@ -3,6 +3,10 @@ import type { InFlightWorktree } from '../../domain/in-flight-overlap.js';
 import type { WorktreeScanner } from '../ports/worktree-scanner.js';
 import { scanHarnessWorktreeLags } from './scan-harness-worktree-lags.js';
 
+function worktree(ticketId: string, worktreePath: string): InFlightWorktree {
+  return { projectId: '/repo', ticketId, worktreePath };
+}
+
 const worktrees: readonly InFlightWorktree[] = [
   { projectId: '/repo', ticketId: 'bdboard-a', worktreePath: '/repo/wt/a' },
   { projectId: '/repo', ticketId: 'bdboard-b', worktreePath: '/repo/wt/b' },
@@ -10,7 +14,7 @@ const worktrees: readonly InFlightWorktree[] = [
 
 function scanner(overrides: Partial<WorktreeScanner> = {}): WorktreeScanner {
   return {
-    scan: async () => ({ worktrees: [], bdBranches: [] }),
+    scan: async () => ({ worktrees: [], bdBranches: [], complete: true }),
     listChangedFiles: async () => [],
     ...overrides,
   };
@@ -21,7 +25,7 @@ describe('scanHarnessWorktreeLags', () => {
     const lags = await scanHarnessWorktreeLags(
       worktrees,
       scanner({
-        countCommitsBehindDefaultBranch: async (path) => (path === '/repo/wt/a' ? 124 : 3),
+        countHarnessCommitsBehindDefaultBranch: async (path) => (path === '/repo/wt/a' ? 124 : 3),
       }),
     );
 
@@ -55,7 +59,7 @@ describe('scanHarnessWorktreeLags', () => {
     const lags = await scanHarnessWorktreeLags(
       worktrees,
       scanner({
-        countCommitsBehindDefaultBranch: async (path) => {
+        countHarnessCommitsBehindDefaultBranch: async (path) => {
           if (path === '/repo/wt/a') {
             throw new Error('no origin/main');
           }
@@ -75,7 +79,7 @@ describe('scanHarnessWorktreeLags', () => {
     const lags = await scanHarnessWorktreeLags(
       [worktrees[0]!],
       scanner({
-        countCommitsBehindDefaultBranch: () => new Promise<number>(() => {}),
+        countHarnessCommitsBehindDefaultBranch: () => new Promise<number>(() => {}),
       }),
       { logWarn, worktreeDeadlineMs: 5 },
     );
@@ -84,15 +88,45 @@ describe('scanHarnessWorktreeLags', () => {
     expect(logWarn).toHaveBeenCalledOnce();
   });
 
-  it('does not call the scanner when there are no in-flight worktrees', async () => {
-    const countCommitsBehindDefaultBranch = vi.fn(async () => 0);
+  // このガードを消すと `undefined(...)` の TypeError が worktree ごとの try/catch に
+  // 吸われて failures 扱いになり、**やはり空配列が返る**。戻り値だけを見ていると
+  // ガードの有無を区別できないので、警告が出ていないことまで見る。
+  it('measures nothing (and warns about nothing) when the scanner cannot measure lag', async () => {
+    const logWarn = vi.fn();
 
     const lags = await scanHarnessWorktreeLags(
-      [],
-      scanner({ countCommitsBehindDefaultBranch }),
+      [worktree('bdboard-a', '/repo/wt/a')],
+      scanner({}),
+      { logWarn },
     );
 
     expect(lags).toEqual([]);
-    expect(countCommitsBehindDefaultBranch).not.toHaveBeenCalled();
+    expect(logWarn).not.toHaveBeenCalled();
+  });
+
+  it('only measures the worktrees shouldMeasure selects', async () => {
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => 9);
+
+    const lags = await scanHarnessWorktreeLags(
+      [worktree('bdboard-a', '/repo/wt/a'), worktree('bdboard-b', '/repo/wt/b')],
+      scanner({ countHarnessCommitsBehindDefaultBranch }),
+      { shouldMeasure: (w) => w.ticketId === 'bdboard-b' },
+    );
+
+    expect(lags.map((l) => l.ticketId)).toEqual(['bdboard-b']);
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledTimes(1);
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith('/repo/wt/b');
+  });
+
+  it('does not call the scanner when there are no in-flight worktrees', async () => {
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => 0);
+
+    const lags = await scanHarnessWorktreeLags(
+      [],
+      scanner({ countHarnessCommitsBehindDefaultBranch }),
+    );
+
+    expect(lags).toEqual([]);
+    expect(countHarnessCommitsBehindDefaultBranch).not.toHaveBeenCalled();
   });
 });
