@@ -23,7 +23,7 @@ function renderBar(
     priorityCeiling: 'all' | '0' | '1' | '2' | '3' | '4';
     issueTypes: string[];
     labels: string[];
-    availableLabels: string[];
+    availableLabels: string[] | undefined;
     filterText: string;
     onPriorityCeilingChange: (choice: 'all' | '0' | '1' | '2' | '3' | '4') => void;
     onIssueTypesChange: (types: string[]) => void;
@@ -44,7 +44,14 @@ function renderBar(
       onIssueTypesChange={onIssueTypesChange}
       labels={overrides.labels ?? []}
       onLabelsChange={onLabelsChange}
-      availableLabels={overrides.availableLabels ?? ['human', 'needs-review']}
+      // `??` は使えない。availableLabels は undefined 自体が「盤面をまだ知らない」
+      // という意味を持つ値なので (bdboard-gxq5)、既定値へ潰すとその状態を
+      // テストから作れなくなる。キーの有無で分岐する。
+      availableLabels={
+        'availableLabels' in overrides
+          ? overrides.availableLabels
+          : ['human', 'needs-review']
+      }
       filterText={overrides.filterText ?? ''}
       onFilterTextChange={onFilterTextChange}
     />,
@@ -399,8 +406,19 @@ describe('BoardFilterBar', () => {
     const hint = document.getElementById('board-filter-missing-label-hint');
     expect(hint).toHaveClass('sr-only');
     expect(hint).toHaveTextContent('現在の盤面には無いラベルです');
-    // アクセシブル名は素のラベルのまま。ここが変わると bdboard-we44 が入れた
-    // getByRole({ name: 'archived' }) 系と下の並び順テストが芋づるで壊れる。
+  });
+
+  it('keeps the plain label as the accessible name of a missing chip', () => {
+    renderBar({ availableLabels: ['human'], labels: ['archived', 'human'] });
+
+    // 表示テキストで掴み直すのが要点。getByRole({ name: 'archived' }) で掴んだ要素に
+    // 対して名前を主張しても、名前を変える変異では掴む側が先に落ちるので、その
+    // アサーション自体は永久に緑になる (この spec で 4 件目の恒真アサーションだった)。
+    // アクセシブル名を素のラベルのままにするのは bdboard-gxq5 の明示の決定
+    // (接尾辞を足すと bdboard-we44 のテストと WCAG 2.5.3 の検討が要る) なので、
+    // 落ちうる形で独立に固定する。
+    const missing = screen.getByText('archived');
+    expect(missing).toHaveClass('board-filter-label-missing');
     expect(missing).toHaveAccessibleName('archived');
   });
 
@@ -410,9 +428,24 @@ describe('BoardFilterBar', () => {
     // 説明要素を無条件に描くと、生きたチップだけの盤面にも「盤面には無い」という
     // 読み上げ用テキストが残る。描画自体を条件付きにしてあることを固定する。
     expect(document.getElementById('board-filter-missing-label-hint')).toBeNull();
-    expect(screen.getByRole('button', { name: 'human' })).not.toHaveClass(
-      'board-filter-label-missing',
-    );
+    const live = screen.getByRole('button', { name: 'human' });
+    expect(live).not.toHaveClass('board-filter-label-missing');
+    // 説明要素の不在だけを見ると、チップ側の aria-describedby を無条件にする変異が
+    // 素通りする (参照先が無い = 宙ぶらりんの describedby)。参照側も固定する。
+    expect(live).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('claims nothing while the board labels are still unknown', () => {
+    // 読み込み中・取得失敗のあいだ App は availableLabels を undefined で渡す。
+    // ここを空配列と同一視すると、localStorage から復元された選択ラベルが
+    // 初回描画のたびに全部「盤面には無い」と主張してしまう (bdboard-gxq5)。
+    renderBar({ availableLabels: undefined, labels: ['archived'] });
+
+    const chip = screen.getByRole('button', { name: 'archived' });
+    expect(chip).toHaveAttribute('aria-pressed', 'true');
+    expect(chip).not.toHaveClass('board-filter-label-missing');
+    expect(chip).not.toHaveAttribute('aria-describedby');
+    expect(document.getElementById('board-filter-missing-label-hint')).toBeNull();
   });
 
   it('sorts the label union with compareStrings order', () => {
