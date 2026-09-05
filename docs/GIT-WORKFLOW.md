@@ -50,11 +50,12 @@ Tracked `.beads/` files (`.gitignore`, `README.md`, `config.yaml`,
 
 ## Drift check (`npm run drift`)
 
-prints the files that **both**
-`origin/main` and your branch have touched since their merge-base, and
-tells you to rebase now if there are any. Run it when you open the PR, and
-again whenever the PR has been open for more than a few hours — including
-right before you take the merge slot.
+`npm run drift` has two comparisons. Its main comparison prints the files that **both**
+`origin/main` and your branch have touched since their merge-base, and tells
+you to rebase now if there are any. It also lists overlap with each eligible
+open peer PR so that a human can choose the merge order. Run it when you open
+the PR, and again whenever the PR has been open for more than a few hours —
+including right before you take the merge slot.
 
 This exists because merge-slot and CAS do not cover it. Both guard the
 *instant* of merging (did `main` move while CI ran?); neither sees the
@@ -65,15 +66,28 @@ morning five unrelated PRs landed on `main` touching the same
 `StatusPill.tsx` and `index.css`. The final rebase hit real text conflicts.
 Running `npm run drift` that morning would have named both files.
 
-It fetches `origin/main` first (a drift check against a stale remote is
-worthless); `npm run drift -- --no-fetch` skips that when offline. It
-**never exits non-zero for a finding** and never blocks — overlapping files
-are an upper bound on where a conflict could occur, not a prediction that
-one will (separate hunks in the same file rebase cleanly). Making it a gate
-would produce false stops and get it ignored. It **does** exit 2 when the
-check could not run at all (no `origin`, no merge-base): "nothing to report"
-and "could not look" must not read the same to a caller that only reads
-stdout.
+It fetches `origin/main` and eligible peer branches first (a drift check
+against stale remotes is worthless); `npm run drift -- --no-fetch` skips both
+fetches when offline. For each peer, level 1 reports actual merge-tree text
+conflicts in files you changed; when merge-tree reports a conflict outside those
+files, the report does not assume a cause: the path may have shifted because of
+a peer-side rename (a real conflict with this branch), or the peer may itself be
+stale relative to `origin/main` (unrelated to this branch), so inspect the
+reported paths. Level 2 reports shared files when there is no text conflict,
+because semantic conflicts still need human
+judgement. This was the gap exposed by PR #393 and PR #396: both changed the
+same line in `web/src/index.css`, while neither overlapped changes already on
+`origin/main`, so the old check was green for both.
+
+It **never exits non-zero for a finding** and never blocks — overlapping files
+are an upper bound on where a conflict could occur, not a prediction that one
+will (separate hunks in the same file rebase cleanly). Making it a gate would
+produce false stops and get it ignored. It **does** exit 2 when the main check
+could not run at all (no `origin`, no merge-base). Peer discovery and fetch
+failures are non-fatal, but are reported with their reason on stdout too, so
+"nothing to report" and "could not look" never read the same to a caller that
+only reads stdout. If no peer can be compared, it says so rather than claiming
+there are no overlaps.
 
 It compares **committed** changes only, so run it after you commit, not
 mid-edit — uncommitted work in your tree is invisible to it.
@@ -93,9 +107,9 @@ Concurrent sessions have made this concrete, so the procedure is now
 spelled out rather than left to judgement. Run these in order for every
 merge:
 
-0. **Check for drift** — `npm run drift`. If it names files, rebase and
-   re-run CI before taking the slot; taking it first just makes peers wait
-   while you rebase.
+0. **Check for drift** — `npm run drift`. Rebase for main-branch drift; use
+   peer-overlap reports to choose a merge order, then re-run CI before taking
+   the slot. Taking it first just makes peers wait while you rebase.
 1. **Take the slot** — `bd merge-slot acquire` (the `bdboard-merge-slot`
    bead already exists; `bd merge-slot create` is a one-time setup that has
    been done). Release it with `bd merge-slot release` when the merge is

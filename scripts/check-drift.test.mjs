@@ -119,20 +119,60 @@ describe('merge-tree conflict output parser', () => {
     expect(parseMergeTreeConflictFiles('0123456789abcdef0123456789abcdef01234567\n')).toEqual([]);
   });
 
-  it('keeps only the filename among merge-tree conflict messages', () => {
+  it('keeps only paths from a real conflict output shape', () => {
     expect(
       parseMergeTreeConflictFiles(
-        '0123456789abcdef0123456789abcdef01234567\nweb/src/index.css\nAuto-merging web/src/index.css\nCONFLICT (content): Merge conflict in web/src/index.css\n',
+        [
+          '44dc16ff519b690e19ded163060aae876c0de157',
+          'a.txt',
+          'b.bin',
+          'docs/日本語.md',
+          'f.txt',
+          '',
+          'CONFLICT (modify/delete): a.txt deleted in p1 and modified in main.  Version main of a.txt left in tree.',
+          'warning: Cannot merge binary files: b.bin (main vs. p1)',
+          'Auto-merging b.bin',
+          'CONFLICT (content): Merge conflict in b.bin',
+          'Auto-merging docs/日本語.md',
+          'CONFLICT (content): Merge conflict in docs/日本語.md',
+          'Auto-merging f.txt',
+          'CONFLICT (content): Merge conflict in f.txt',
+          '',
+        ].join('\n'),
       ),
-    ).toEqual(['web/src/index.css']);
+    ).toEqual(['a.txt', 'b.bin', 'docs/日本語.md', 'f.txt']);
   });
 
-  it('returns every conflict filename', () => {
+  it('passes a C-quoted path through as one path line', () => {
     expect(
       parseMergeTreeConflictFiles(
-        '0123456789abcdef0123456789abcdef01234567\nserver/src/main.ts\nweb/src/index.css\nAuto-merging server/src/main.ts\nCONFLICT (content): Merge conflict in server/src/main.ts\nAuto-merging web/src/index.css\nCONFLICT (content): Merge conflict in web/src/index.css\n',
+        '0123456789abcdef0123456789abcdef01234567\n"docs/\\346\\227\\245\\346\\234\\254\\350\\252\\236.md"\n\nCONFLICT (content): Merge conflict\n',
       ),
-    ).toEqual(['server/src/main.ts', 'web/src/index.css']);
+    ).toEqual(['"docs/\\346\\227\\245\\346\\234\\254\\350\\252\\236.md"']);
+  });
+
+  it('ignores localized informational messages after the structural boundary', () => {
+    expect(
+      parseMergeTreeConflictFiles(
+        '0123456789abcdef0123456789abcdef01234567\nb.bin\n\nautomatischer Merge von b.bin\nKONFLIKT (Inhalt): Merge-Konflikt in b.bin\n',
+      ),
+    ).toEqual(['b.bin']);
+  });
+
+  it('uses only the first blank line even when an informational message contains blank lines', () => {
+    expect(
+      parseMergeTreeConflictFiles(
+        '0123456789abcdef0123456789abcdef01234567\nf.txt\n\nCONFLICT (content): first line\n\nembedded continuation\n',
+      ),
+    ).toEqual(['f.txt']);
+  });
+
+  it('preserves leading and trailing spaces in paths', () => {
+    expect(
+      parseMergeTreeConflictFiles(
+        '0123456789abcdef0123456789abcdef01234567\n leading.txt\ntrailing.txt \r\n\nCONFLICT\n',
+      ),
+    ).toEqual([' leading.txt', 'trailing.txt ']);
   });
 });
 
@@ -145,6 +185,10 @@ describe('merge-tree conflict output parser', () => {
  * 実際に走らせる層を足す。verify-slot.test.mjs が subprocess を起こす前例。
  */
 describe('check-drift CLI', () => {
+  const outsideBranchConflictExplanation =
+    'peer 側の rename によるパス名のずれ（こちらとの衝突）か、peer 自身が\n' +
+    'drift:   origin/main に対して古い（こちらとは無関係）可能性があります。実物を確認してください。';
+
   let tmpRoot;
 
   function sh(cwd, ...args) {
@@ -184,22 +228,34 @@ describe('check-drift CLI', () => {
     sh(other, 'git', 'fetch', '-q', 'origin');
   }
 
-  function runDrift(work, gh = { status: 0, output: '[]' }) {
+  function runDrift(
+    work,
+    gh = { status: 0, output: '[]', stderr: '' },
+    { noFetch = true } = {},
+  ) {
     // 実 gh は呼ばない。CLI 配線テストはネットワーク状態に依存させず、gh の成功・
     // 非ゼロ終了・壊れた JSON をこの小さな代役で再現する。
     const bin = path.join(work, 'fake-bin');
+    const argsFile = path.join(bin, 'gh-args.txt');
     fs.mkdirSync(bin, { recursive: true });
     fs.writeFileSync(
       path.join(bin, 'gh'),
-      `#!/bin/sh\nprintf '%s' '${gh.output.replaceAll("'", "'\\\"'\\\"'")}'\nexit ${gh.status}\n`,
+      `#!/bin/sh\nprintf '%s\n' "$@" > '${argsFile.replaceAll("'", "'\\\"'\\\"'")}'\nprintf '%s' '${gh.output.replaceAll("'", "'\\\"'\\\"'")}'\nprintf '%s' '${(gh.stderr ?? '').replaceAll("'", "'\\\"'\\\"'")}' >&2\nexit ${gh.status}\n`,
     );
     fs.chmodSync(path.join(bin, 'gh'), 0o755);
-    const result = spawnSync(process.execPath, ['scripts/check-drift.mjs', '--no-fetch'], {
+    const args = ['scripts/check-drift.mjs'];
+    if (noFetch) {
+      args.push('--no-fetch');
+    }
+    const result = spawnSync(process.execPath, args, {
       cwd: work,
       encoding: 'utf8',
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
     });
-    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+    const ghArgs = fs.existsSync(argsFile)
+      ? fs.readFileSync(argsFile, 'utf8').trimEnd().split('\n')
+      : [];
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, ghArgs };
   }
 
   beforeEach(() => {
@@ -234,7 +290,7 @@ describe('check-drift CLI', () => {
   );
 
   it(
-    'reports a broken gh invocation once but preserves the successful drift exit code',
+    'reports a broken gh invocation on both streams and preserves the successful drift exit code',
     () => {
       const { bare, work } = makeRepo('gh-failure');
       advanceMain(bare, 'gh-failure', (dir) => {
@@ -245,9 +301,16 @@ describe('check-drift CLI', () => {
       fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('3'));
       sh(work, 'git', 'commit', '-qam', 'mine');
 
-      const { status, stderr } = runDrift(work, { status: 1, output: 'not authenticated' });
+      const { status, stdout, stderr } = runDrift(work, {
+        status: 1,
+        output: '',
+        stderr: 'not authenticated\ntry gh auth login',
+      });
       expect(status).toBe(0);
-      expect(stderr.trim()).toBe('drift: open PR を取得できなかったため、他 PR との比較を省略しました。');
+      expect(stdout).toContain('open PR を取得できなかったため');
+      expect(stdout).toContain('not authenticated try gh auth login');
+      expect(stderr).toContain('open PR を取得できなかったため');
+      expect(stderr).toContain('not authenticated try gh auth login');
     },
     15000,
   );
@@ -260,17 +323,139 @@ describe('check-drift CLI', () => {
       fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('2'));
       sh(work, 'git', 'commit', '-qam', 'mine');
 
-      const { status, stdout } = runDrift(work, {
+      const { status, stdout, ghArgs } = runDrift(work, {
         status: 0,
         output: JSON.stringify([
-          { number: 10, headRefName: 'feature' },
-          { number: 11, headRefName: 'not-fetched' },
+          { number: 10, headRefName: 'feature', isCrossRepository: false },
+          { number: 11, headRefName: 'not-fetched', isCrossRepository: false },
         ]),
       });
       expect(status).toBe(0);
-      expect(stdout).toContain('open PR 0 件との重なりはありません');
+      expect(stdout).toContain('比較できた open PR がありません');
+      expect(stdout).not.toContain('open PR 0 件との重なりはありません');
       expect(stdout).toContain('PR #11');
       expect(stdout).not.toContain('PR #10');
+      expect(ghArgs).toContain('--limit');
+      expect(ghArgs[ghArgs.indexOf('--limit') + 1]).toBe('100');
+      expect(ghArgs).toContain('number,headRefName,isCrossRepository');
+    },
+    15000,
+  );
+
+  it(
+    'rejects gh JSON that omits the cross-repository flag',
+    () => {
+      const { work } = makeRepo('gh-json-shape');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'mine.ts'), 'mine\n');
+      sh(work, 'git', 'add', 'mine.ts');
+      sh(work, 'git', 'commit', '-qm', 'mine');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([{ number: 20, headRefName: 'peer' }]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR を取得できなかったため');
+      expect(stdout).toContain('unexpected gh JSON');
+    },
+    15000,
+  );
+
+  it(
+    'skips fork pull requests instead of resolving their branch name on origin',
+    () => {
+      const { work } = makeRepo('fork-pr');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'mine.ts'), 'mine\n');
+      sh(work, 'git', 'add', 'mine.ts');
+      sh(work, 'git', 'commit', '-qm', 'mine');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 21, headRefName: 'main', isCrossRepository: true },
+        ]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('比較できた open PR がありません');
+      expect(stdout).toContain('fork 由来の PR は比較から除外しました (PR #21)');
+      expect(stdout).not.toContain('open PR #21 (main) と衝突します');
+    },
+    15000,
+  );
+
+  it(
+    'fetches peer branches before comparing so a newly grown peer is not missed',
+    () => {
+      const { bare, work } = makeRepo('fresh-peer-ref');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'shared.ts'), 'mine\n');
+      sh(work, 'git', 'add', 'shared.ts');
+      sh(work, 'git', 'commit', '-qm', 'mine');
+
+      const peer = path.join(tmpRoot, 'fresh-peer-ref-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      fs.writeFileSync(path.join(peer, 'first.ts'), 'first\n');
+      sh(peer, 'git', 'add', 'first.ts');
+      sh(peer, 'git', 'commit', '-qm', 'first peer commit');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+      sh(work, 'git', 'fetch', '-q', 'origin', 'peer');
+
+      fs.writeFileSync(path.join(peer, 'shared.ts'), 'peer\n');
+      sh(peer, 'git', 'add', 'shared.ts');
+      sh(peer, 'git', 'commit', '-qm', 'peer grew');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+
+      const { status, stdout } = runDrift(
+        work,
+        {
+          status: 0,
+          output: JSON.stringify([
+            { number: 22, headRefName: 'peer', isCrossRepository: false },
+          ]),
+        },
+        { noFetch: false },
+      );
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR #22 (peer) と衝突します');
+      expect(stdout).toContain('  shared.ts');
+    },
+    15000,
+  );
+
+  it(
+    'reports a peer fetch failure on stdout and continues with an existing tracking ref',
+    () => {
+      const { bare, work } = makeRepo('peer-fetch-failure');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('mine'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
+
+      const peer = path.join(tmpRoot, 'peer-fetch-failure-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      fs.writeFileSync(path.join(peer, 'hot.ts'), BIG_FILE('peer'));
+      sh(peer, 'git', 'commit', '-qam', 'peer');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+      sh(work, 'git', 'fetch', '-q', 'origin', 'peer');
+      sh(work, 'git', 'remote', 'set-url', 'origin', path.join(tmpRoot, 'missing.git'));
+
+      const { status, stdout } = runDrift(
+        work,
+        {
+          status: 0,
+          output: JSON.stringify([
+            { number: 25, headRefName: 'peer', isCrossRepository: false },
+          ]),
+        },
+        { noFetch: false },
+      );
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR のブランチを fetch できませんでした');
+      expect(stdout).toContain('open PR #25 (peer) と衝突します');
+      expect(stdout).toContain('  hot.ts');
     },
     15000,
   );
@@ -293,7 +478,9 @@ describe('check-drift CLI', () => {
 
       const { status, stdout } = runDrift(work, {
         status: 0,
-        output: JSON.stringify([{ number: 12, headRefName: 'peer' }]),
+        output: JSON.stringify([
+          { number: 12, headRefName: 'peer', isCrossRepository: false },
+        ]),
       });
       expect(status).toBe(0);
       expect(stdout).toContain('open PR #12 (peer) と衝突します');
@@ -304,7 +491,41 @@ describe('check-drift CLI', () => {
   );
 
   it(
-    'does not report a peer branch’s stale-main conflict on a file this branch did not touch',
+    'reports a rename conflict even when merge-tree names only the new path',
+    () => {
+      const { bare, work } = makeRepo('peer-rename-conflict');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('mine'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
+
+      const peer = path.join(tmpRoot, 'peer-rename-conflict-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      sh(peer, 'git', 'mv', 'hot.ts', 'renamed-hot.ts');
+      fs.writeFileSync(path.join(peer, 'renamed-hot.ts'), BIG_FILE('peer'));
+      sh(peer, 'git', 'commit', '-qam', 'rename and edit');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+      sh(work, 'git', 'fetch', '-q', 'origin', 'peer');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 23, headRefName: 'peer', isCrossRepository: false },
+        ]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR #23 (peer) は衝突していますが');
+      expect(stdout).toContain(outsideBranchConflictExplanation);
+      expect(stdout).toContain('  renamed-hot.ts');
+      expect(stdout).toContain('この PR と同じファイルも触っています');
+      expect(stdout).toContain('  hot.ts');
+      expect(stdout).not.toContain('衝突はしませんが');
+    },
+    15000,
+  );
+
+  it(
+    'does not promote a peer branch’s stale-main conflict outside this branch to a direct conflict',
     () => {
       const { bare, work } = makeRepo('peer-stale-main-conflict');
 
@@ -322,17 +543,56 @@ describe('check-drift CLI', () => {
       });
       sh(work, 'git', 'fetch', '-q', 'origin');
       sh(work, 'git', 'checkout', '-qb', 'feature', 'origin/main');
+      fs.writeFileSync(path.join(work, 'mine.ts'), 'mine\n');
+      sh(work, 'git', 'add', 'mine.ts');
+      sh(work, 'git', 'commit', '-qm', 'mine');
 
       const { status, stdout } = runDrift(work, {
         status: 0,
-        output: JSON.stringify([{ number: 13, headRefName: 'peer' }]),
+        output: JSON.stringify([
+          { number: 13, headRefName: 'peer', isCrossRepository: false },
+        ]),
       });
       expect(status).toBe(0);
-      expect(stdout).toContain('HEAD が merge-base そのものです');
-      expect(stdout).toContain('open PR 1 件との重なりはありません');
+      expect(stdout).not.toContain('HEAD が merge-base そのものです');
+      expect(stdout).toContain('衝突パスはこのブランチが触ったファイルの外です');
+      expect(stdout).toContain(outsideBranchConflictExplanation);
       expect(stdout).not.toContain('open PR #13 (peer) と衝突します');
       expect(stdout).not.toContain('open PR #13 (peer) と同じファイルを触っています');
-      expect(stdout).not.toContain('  hot.ts');
+      expect(stdout).toContain('  hot.ts');
+    },
+    15000,
+  );
+
+  it(
+    'reports an unrelated peer as a comparison failure rather than a missing ref',
+    () => {
+      const { bare, work } = makeRepo('unrelated-peer');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'mine.ts'), 'mine\n');
+      sh(work, 'git', 'add', 'mine.ts');
+      sh(work, 'git', 'commit', '-qm', 'mine');
+
+      const peer = path.join(tmpRoot, 'unrelated-peer-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '--orphan', 'peer');
+      fs.rmSync(path.join(peer, 'hot.ts'));
+      fs.writeFileSync(path.join(peer, 'orphan.ts'), 'orphan\n');
+      sh(peer, 'git', 'add', '-A');
+      sh(peer, 'git', 'commit', '-qm', 'orphan peer');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+      sh(work, 'git', 'fetch', '-q', 'origin', 'peer');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 24, headRefName: 'peer', isCrossRepository: false },
+        ]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('比較できた open PR がありません');
+      expect(stdout).toContain('比較に失敗したため省略しました (PR #24:');
+      expect(stdout).not.toContain('リモート追跡ブランチがないため比較を省略しました');
     },
     15000,
   );
