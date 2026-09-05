@@ -116,6 +116,7 @@ const OK_HARNESS_CONTRACT: ProjectHarnessContractDto = {
   verify: 'npm run verify',
   prFlow: 'pr',
   mainBranch: 'main',
+  models: null,
 };
 
 /** エージェント実行の前提を満たしたハーネス状態 (bdboard-pkr6.11)。 */

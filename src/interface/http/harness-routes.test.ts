@@ -393,7 +393,70 @@ describe('createHarnessRoutes', () => {
       verify: 'npm run verify',
       prFlow: 'pr',
       mainBranch: 'main',
+      models: null,
     });
+  });
+
+  it('summarises the models table in the contract DTO', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-models', '/tmp/proj-models');
+    cache.putProject({ project: proj, tickets: [], fingerprint: 'fp', pendingDecisions: [], fetchedAt: new Date('2026-08-16T00:00:00Z') });
+
+    const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
+      readManifest: vi.fn(async () => ({
+        packs: [
+          {
+            name: 'bdboard-harness',
+            version: '0.1.0',
+            injectedAt: '2026-08-16T00:00:00.000Z',
+            files: [],
+          },
+        ],
+      })),
+      injectPack: vi.fn(),
+    };
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({
+        contract: JSON.stringify({
+          version: 1,
+          verify: 'npm run verify',
+          prFlow: 'pr',
+          models: {
+            routes: {
+              implement: {
+                low: ['codex:gpt-5.6-luna'],
+                med: ['codex:gpt-5.6-terra'],
+                high: ['claude:opus'],
+              },
+              review: { '*': ['claude:opus'] },
+            },
+          },
+        }),
+        scripts: ['verify'],
+      }),
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness`,
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { contract: unknown };
+    // 候補のモデル名は DTO に出さない。段数だけで UI は足りる。
+    expect(body.contract).toEqual({
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'main',
+      models: [
+        { stage: 'implement', tiers: 3 },
+        { stage: 'review', tiers: 1 },
+      ],
+    });
+    expect(JSON.stringify(body.contract)).not.toContain('gpt-5.6-luna');
   });
 
   it('reports an invalid contract without failing the request', async () => {

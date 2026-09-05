@@ -48,6 +48,7 @@ const OK_CONTRACT: ProjectHarnessContractDto = {
   verify: 'npm run verify',
   prFlow: 'pr',
   mainBranch: 'main',
+  models: null,
 };
 
 function harnessPack(

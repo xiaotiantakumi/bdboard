@@ -34,6 +34,61 @@ export interface HarnessContractHooks {
   readonly denyBashMessages: readonly string[];
 }
 
+/**
+ * モデル振り分け表の複雑度。**`low` / `med` / `high` の 3 段で固定**し、
+ * 注入先プロジェクトに増やさせない。
+ *
+ * 委譲先の aimix が受け取る `--complexity` が 1 次元の enum (既定 `med`) なので、
+ * ここを可変にすると「bdboard 側では宣言できるが渡す先が無い」複雑度が作れて
+ * しまう。両側の対応が取れる範囲に閉じておく (bdboard-p5l.13)。
+ */
+export type HarnessModelComplexity = 'low' | 'med' | 'high';
+
+export const HARNESS_MODEL_COMPLEXITIES: readonly HarnessModelComplexity[] = [
+  'low',
+  'med',
+  'high',
+];
+
+/** 3 段まとめて 1 本の候補列にするワイルドカードキー。 */
+export const HARNESS_MODEL_WILDCARD = '*';
+
+/** 1 つの stage に書ける複雑度キー。 */
+export type HarnessModelComplexityKey =
+  | HarnessModelComplexity
+  | typeof HARNESS_MODEL_WILDCARD;
+
+/**
+ * 1 工程 (stage) の振り分け。
+ *
+ * `*` は「3 段まとめて同じ候補列」の宣言で、個別キーが並んでいればそちらが勝つ。
+ * パースの時点で 3 段すべてを解決済みにしておくのは、参照側 (後続チケット) に
+ * 「まず個別キーを見て、無ければ `*` に落ちる」フォールバックを再実装させない
+ * ため。`*` が無い stage は 3 段すべての宣言を必須にしているので、穴は開かない。
+ */
+export interface HarnessModelStageRoute {
+  readonly stage: string;
+  /** 宣言に現れた複雑度キー。UI に出す「段数」はこの長さ。 */
+  readonly declaredKeys: readonly HarnessModelComplexityKey[];
+  readonly low: readonly string[];
+  readonly med: readonly string[];
+  readonly high: readonly string[];
+}
+
+export interface HarnessContractModels {
+  readonly routes: readonly HarnessModelStageRoute[];
+}
+
+/**
+ * UI へ出す要約。**生の候補列は載せない** — 表示に要らないうえ、注入先由来の
+ * 文字列を DTO へ広げる理由が無い (`models` の値は run プロンプトにも載せない)。
+ */
+export interface HarnessModelStageSummary {
+  readonly stage: string;
+  /** 宣言された複雑度キーの数。`*` 一本なら 1、low/med/high なら 3。 */
+  readonly tiers: number;
+}
+
 export interface HarnessContract {
   readonly version: typeof HARNESS_CONTRACT_VERSION;
   /** そのプロジェクトのフル検証コマンド。exit 0 が合格、以上の意味は持たせない。 */
@@ -41,6 +96,8 @@ export interface HarnessContract {
   readonly prFlow: HarnessPrFlow;
   readonly mainBranch: string;
   readonly hooks: HarnessContractHooks | null;
+  /** 工程 × 複雑度のモデル振り分け表。未宣言なら null (従来どおりの挙動)。 */
+  readonly models: HarnessContractModels | null;
 }
 
 export type HarnessContractParseFailureReason = 'invalid-json' | 'schema';
@@ -65,6 +122,8 @@ export type ContractState =
       readonly verify: string;
       readonly prFlow: HarnessPrFlow;
       readonly mainBranch: string;
+      /** `models` の要約。未宣言なら null。生の候補列はここに出さない。 */
+      readonly models: readonly HarnessModelStageSummary[] | null;
     }
   | { readonly state: 'missing' }
   | { readonly state: 'invalid'; readonly message: string }
@@ -179,6 +238,251 @@ function parseHooks(
   };
 }
 
+const MODEL_STAGE_KEY_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+const MODEL_STAGE_MAX_COUNT = 16;
+const MODEL_CANDIDATES_MIN = 1;
+const MODEL_CANDIDATES_MAX = 6;
+
+/**
+ * 候補 (`member:model`) の文字集合。**この正規表現が唯一かつ十分な注入防御**。
+ *
+ * 空白・引用符・`$`・バッククォート・`(`・改行が構造的に入らないので、通過した
+ * 文字列をそのままコマンドラインへ渡してもシェルのメタ文字は発生しない。
+ * 後段でサニタイズやクォート処理を重ねないこと — 二重防御にすると「どちらが
+ * 本当のガードか」が曖昧になり、片方を緩めたときに気付けなくなる。
+ * 長さも member 16 + `:` + model 64 = 最大 81 文字に閉じており、`verify` /
+ * `mainBranch` に掛けている `isSafeSingleLineValue` (制御文字禁止・200 文字)
+ * より厳しい。
+ */
+const MODEL_CANDIDATE_PATTERN =
+  /^(claude|[a-z][a-z0-9-]{0,15}):[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/**
+ * `claude:` の model 部だけは閉集合で見る。bdboard 自身が起動するモデルなので
+ * 存在を知っているし、typo をここで落とせる。**他の member は構文しか見ない** —
+ * モデルの存在の正本は実行する CLI 自身であり、bdboard が端末固有の設定
+ * (`~/.agent/skills/ai-mix/council.json` 等) を読みに行くのは層の逆依存になる。
+ */
+const CLAUDE_MODEL_NAMES: ReadonlySet<string> = new Set([
+  'haiku',
+  'sonnet',
+  'opus',
+  'fable',
+]);
+
+const CONTRACT_ECHO_MAX_LENGTH = 40;
+
+/**
+ * 不正値をエラーメッセージへ引用するときの整形。
+ *
+ * コントラクトは信頼できない入力なので、生のまま連結しない。`JSON.stringify` は
+ * 制御文字と引用符をエスケープするため、改行入りの値でもメッセージは 1 行に
+ * 収まる (このメッセージは Hygiene のツールチップと preflight の detail に出る)。
+ */
+function describeContractValue(value: string): string {
+  const clipped =
+    value.length > CONTRACT_ECHO_MAX_LENGTH
+      ? `${value.slice(0, CONTRACT_ECHO_MAX_LENGTH)}…`
+      : value;
+  return JSON.stringify(clipped);
+}
+
+function isModelComplexityKey(key: string): key is HarnessModelComplexityKey {
+  return (
+    key === HARNESS_MODEL_WILDCARD ||
+    (HARNESS_MODEL_COMPLEXITIES as readonly string[]).includes(key)
+  );
+}
+
+type CandidatesParseResult =
+  | { readonly ok: true; readonly value: readonly string[] }
+  | { readonly ok: false; readonly message: string };
+
+function parseModelCandidates(value: unknown, fieldName: string): CandidatesParseResult {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    return { ok: false, message: `${fieldName} は文字列の配列である必要があります` };
+  }
+
+  const candidates = value as readonly string[];
+  if (
+    candidates.length < MODEL_CANDIDATES_MIN ||
+    candidates.length > MODEL_CANDIDATES_MAX
+  ) {
+    return {
+      ok: false,
+      message:
+        `${fieldName} の候補は ${MODEL_CANDIDATES_MIN}〜${MODEL_CANDIDATES_MAX} 個である必要があります ` +
+        `(受領: ${candidates.length} 個)`,
+    };
+  }
+
+  const seen = new Set<string>();
+  for (const [index, candidate] of candidates.entries()) {
+    if (!MODEL_CANDIDATE_PATTERN.test(candidate)) {
+      return {
+        ok: false,
+        message:
+          `${fieldName}[${index}] は member:model 形式 (member は英小文字始まり 16 文字以内、` +
+          `model は英数字始まりで . _ - のみ 64 文字以内) である必要があります ` +
+          `(受領: ${describeContractValue(candidate)})`,
+      };
+    }
+
+    const separator = candidate.indexOf(':');
+    const member = candidate.slice(0, separator);
+    const model = candidate.slice(separator + 1);
+    if (member === 'claude' && !CLAUDE_MODEL_NAMES.has(model)) {
+      return {
+        ok: false,
+        message:
+          `${fieldName}[${index}] の claude: のモデルは haiku / sonnet / opus / fable のいずれかである必要があります ` +
+          `(受領: ${describeContractValue(candidate)})`,
+      };
+    }
+
+    if (seen.has(candidate)) {
+      return {
+        ok: false,
+        message: `${fieldName} に同じ候補が 2 回あります: ${describeContractValue(candidate)}`,
+      };
+    }
+    seen.add(candidate);
+  }
+
+  return { ok: true, value: candidates };
+}
+
+type StageRouteParseResult =
+  | { readonly ok: true; readonly route: HarnessModelStageRoute }
+  | { readonly ok: false; readonly message: string };
+
+function parseModelStageRoute(stage: string, value: unknown): StageRouteParseResult {
+  const field = `models.routes.${stage}`;
+  if (!isPlainObject(value)) {
+    return { ok: false, message: `${field} はオブジェクトである必要があります` };
+  }
+
+  const cells = new Map<HarnessModelComplexityKey, readonly string[]>();
+  const declaredKeys: HarnessModelComplexityKey[] = [];
+
+  for (const key of Object.keys(value)) {
+    if (!isModelComplexityKey(key)) {
+      return {
+        ok: false,
+        message:
+          `${field} のキー ${describeContractValue(key)} は low / med / high / * のいずれかである必要があります ` +
+          '(複雑度は 3 段固定で、増やせません)',
+      };
+    }
+
+    const cell = parseModelCandidates(value[key], `${field}.${key}`);
+    if (!cell.ok) {
+      return { ok: false, message: cell.message };
+    }
+    cells.set(key, cell.value);
+    declaredKeys.push(key);
+  }
+
+  if (declaredKeys.length === 0) {
+    return {
+      ok: false,
+      message: `${field} は low / med / high / * のいずれかを 1 つ以上宣言する必要があります`,
+    };
+  }
+
+  // `*` はあくまで既定値で、個別キーがあればそちらが勝つ。`*` が無いなら
+  // 3 段すべてを要求する — 片段だけ宣言された表は、参照側が黙って何も選べない
+  // 穴になる。
+  const fallback = cells.get(HARNESS_MODEL_WILDCARD);
+  const low = cells.get('low') ?? fallback;
+  const med = cells.get('med') ?? fallback;
+  const high = cells.get('high') ?? fallback;
+  if (low === undefined || med === undefined || high === undefined) {
+    const missing = HARNESS_MODEL_COMPLEXITIES.filter(
+      (complexity) => cells.get(complexity) === undefined,
+    );
+    return {
+      ok: false,
+      message:
+        `${field} は * を宣言しない場合 low / med / high をすべて宣言する必要があります ` +
+        `(不足: ${missing.join(' / ')})`,
+    };
+  }
+
+  return { ok: true, route: { stage, declaredKeys, low, med, high } };
+}
+
+type ModelsParseResult =
+  | { readonly ok: true; readonly models: HarnessContractModels | null }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * `models` 節。**省略可**で、無ければ `null` = 従来とまったく同じ挙動。
+ *
+ * この節を足しても `version` は 1 のまま上げない。パーサが未知キーを無視する
+ * 前方互換方針なので、新しい契約を旧 bdboard が読んでも Hygiene は赤くならず、
+ * 逆に `models` の無い既存プロジェクトも新 bdboard でそのまま ok になる。
+ */
+function parseModels(value: unknown): ModelsParseResult {
+  if (value === undefined) {
+    return { ok: true, models: null };
+  }
+  if (!isPlainObject(value)) {
+    return { ok: false, message: 'models はオブジェクトである必要があります' };
+  }
+
+  const routesValue = value.routes;
+  if (routesValue === undefined) {
+    return { ok: false, message: 'models には routes が必要です' };
+  }
+  if (!isPlainObject(routesValue)) {
+    return { ok: false, message: 'models.routes はオブジェクトである必要があります' };
+  }
+
+  const stages = Object.keys(routesValue);
+  if (stages.length === 0 || stages.length > MODEL_STAGE_MAX_COUNT) {
+    return {
+      ok: false,
+      message:
+        `models.routes の工程は 1〜${MODEL_STAGE_MAX_COUNT} 個である必要があります ` +
+        `(受領: ${stages.length} 個)`,
+    };
+  }
+
+  const routes: HarnessModelStageRoute[] = [];
+  for (const stage of stages) {
+    if (!MODEL_STAGE_KEY_PATTERN.test(stage)) {
+      return {
+        ok: false,
+        message:
+          `models.routes のキー ${describeContractValue(stage)} は工程名の形式 ` +
+          '(英小文字で始まる 32 文字以内の英小文字・数字・ハイフン) である必要があります',
+      };
+    }
+
+    const route = parseModelStageRoute(stage, routesValue[stage]);
+    if (!route.ok) {
+      return { ok: false, message: route.message };
+    }
+    routes.push(route.route);
+  }
+
+  return { ok: true, models: { routes } };
+}
+
+/** 表示用の要約へ落とす。候補そのものは UI へ流さない。 */
+export function summarizeHarnessModels(
+  models: HarnessContractModels | null,
+): readonly HarnessModelStageSummary[] | null {
+  if (models === null) {
+    return null;
+  }
+  return models.routes.map((route) => ({
+    stage: route.stage,
+    tiers: route.declaredKeys.length,
+  }));
+}
+
 const CONTRACT_TEXT_MAX_LENGTH = 200;
 
 /**
@@ -255,6 +559,11 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
     return schemaFailure(hooks.message);
   }
 
+  const models = parseModels(parsed.models);
+  if (!models.ok) {
+    return schemaFailure(models.message);
+  }
+
   return {
     ok: true,
     contract: {
@@ -263,6 +572,7 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
       prFlow: prFlow as HarnessPrFlow,
       mainBranch,
       hooks: hooks.hooks,
+      models: models.models,
     },
   };
 }
@@ -385,5 +695,6 @@ export function evaluateContractState(
     verify: contract.verify,
     prFlow: contract.prFlow,
     mainBranch: contract.mainBranch,
+    models: summarizeHarnessModels(contract.models),
   };
 }

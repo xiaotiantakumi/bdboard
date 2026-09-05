@@ -70,6 +70,15 @@ function toContractJson(contract: ContractState): Record<string, unknown> {
         verify: contract.verify,
         prFlow: contract.prFlow,
         mainBranch: contract.mainBranch,
+        // 候補列そのものではなく要約 (工程名と段数) だけ。UI は段数しか使わず、
+        // 注入先由来の文字列を API へ広げる理由が無い。
+        models:
+          contract.models === null
+            ? null
+            : contract.models.map((stage) => ({
+                stage: stage.stage,
+                tiers: stage.tiers,
+              })),
       };
     case 'invalid':
       return { state: 'invalid', message: contract.message };

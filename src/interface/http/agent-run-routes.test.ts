@@ -156,6 +156,7 @@ const READY_CONTRACT: ContractState = {
   verify: 'npm run verify',
   prFlow: 'pr',
   mainBranch: 'main',
+  models: null,
 };
 
 function harnessPack(
@@ -1702,6 +1703,7 @@ describe('createAgentRunRoutes harness preflight', () => {
           verify: 'npm run check',
           prFlow: 'direct',
           mainBranch: 'trunk',
+          models: null,
         }),
     });
     const response = await app.request(
