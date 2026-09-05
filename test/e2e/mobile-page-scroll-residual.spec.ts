@@ -1,0 +1,191 @@
+/**
+ * bdboard-4ij6: モバイルの「ページスクロールとレーン内スクロールの二重構造」を、
+ * ページ側の残差 maxScrollY として上限で縛る回帰ガード。
+ *
+ * ## このチケットの結論 (2026-09-05)
+ *
+ * bd の裁定どおり「二重構造そのものを潰す設計変更 (= .lane-indicator-strip の sticky を
+ * ページスクロール非依存に作り替える)」は**やらない**。ただし理由は「割に合わないから」では
+ * なく **sticky が残差の原因ではないから**で、strip を作り替えても残差は 1px も減らない。
+ *
+ * 代わりに bd が定義した客観量 (maxScrollY at 375x812) をそのまま実行可能な予算に落として、
+ * 二度と黙って膨らまないようにする。残差が 478px まで育ったのを誰も測っていなかったのが
+ * このチケットの発生原因なので、守るべきはその「測り続ける」ほう。
+ *
+ * ## 残差のモデル (CSS から導出し、実測 5 点で検算した)
+ *
+ * モバイル (`max-width: 700px`) の `web/src/index.css` で効いているのは 2 か所:
+ *
+ *   `.lane` / `.board-section .lane` (5967-5973)
+ *       max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px))
+ *   `.header` (172-174)
+ *       position: sticky
+ *
+ * `.lane` の **260 は `--header-height` を参照しないリテラル**で、`.header` は sticky =
+ * 通常フローに残るため高さがそのまま document 高に加算される。ドキュメント高は
+ *
+ *   header + tips + filterBarBox
+ *     + `.main` padding 12+12 + strip 44 + strip margin-bottom 10
+ *     + `.lanes-row` padding-bottom 10 + lane (= 100dvh - 260 = 552)
+ *
+ * なので viewport 812 を引くと、可変項がきれいに残って
+ *
+ *   **maxScrollY = header + tips + filterBarBox - 172**   (172 = 260 - 44 - (12 + 12 + 10 + 10))
+ *
+ * `filterBarBox` は `.board-filter-bar` の border-box 高 + margin-bottom (畳んで 4px /
+ * 展開して 8px)。実測 (macOS Chromium, 375x812, isMobile, ai-quota 枠あり, 2026-09-05):
+ *
+ * | 構成                  | header | tips   | filterBar | maxScrollY | モデル |
+ * |-----------------------|-------:|-------:|----------:|-----------:|-------:|
+ * | 最長 tip + バー畳     |    245 | 198.81 |   54 (+4) |        330 | 329.81 |
+ * | 最長 tip + バー展開   |    245 | 198.81 |  308 (+8) |        588 | 587.81 |
+ * | Tips 閉 + バー畳      |    245 |      0 |   54 (+4) |        131 | 131.00 |
+ * | Tips 閉 + バー展開    |    245 |      0 |  308 (+8) |        389 | 389.00 |
+ *
+ * ズレは `documentElement.scrollHeight` が整数へ丸まるぶんだけ。5 点目は「再現しない
+ * 異常値」として bdboard-ij7g に投げられた header=203 / maxScrollY=288 の初回プローブで、
+ * モデルは 203 + 198.81 + 58 - 172 = 287.81 → 288。**異常値ではなく、ai-quota 枠が
+ * 描画される前 (245 - 42 = 203) の同じレイアウト**にすぎない。
+ *
+ * したがって **Tips も絞り込みバーも畳んだあとに残る残差 = header - 168** (= header + 4 - 172)。
+ * 正体は固定パディングではなく**ヘッダーそのもの**で、`kanban-mobile-lanes.spec.ts:69-70`
+ * の「maxScrollY はヘッダー高 H に比例する」と一致する。
+ *
+ * ## 「残差を消すとカード面積が減る」というトレードオフは無い
+ *
+ * 260 のリテラルは strip 44 + 固定パディング 44 + **ヘッダー 245 のうち 172 だけ**を賄って
+ * いる。足りない 73 と、畳んだ絞り込みバーの箱 58 の合計 131 が「Tips 閉 + バー畳」の残差
+ * そのもの (73 + 58 = 131、上表 3 行目に一致)。よって残差はヘッダー由来であり、
+ * **ヘッダーを縮めればカード面積 (= 100dvh - 260) を 1px も削らずに残差が減る**。
+ * 実際、ai-quota 枠が無いだけでヘッダーが 42px 低い上記 5 点目では lane は 552 のまま
+ * maxScrollY だけが 330 → 288 に落ちている。ヘッダーは 812 の 30% を占めており、
+ * その圧縮は bdboard-qxt1 / bdboard-knrx の担当。260 を実チェーン (~337) に合わせる
+ * 選択肢も bdboard-knrx が引き取っている。
+ *
+ * ## このガードが構造的に見ていないもの
+ *
+ * `body` / `#root` / `.app` の `min-height: 100vh` (index.css 149 / 162 / 166)。`vh` は
+ * large viewport にマップされるので、実機のモバイルブラウザではアドレスバーが出ている間
+ * `lvh - dvh` ぶんの残差の床が常に乗る。Playwright の固定 viewport では
+ * `lvh === dvh` で常に 0 になるため、この予算には一度も現れない。カード面積ゼロコストで
+ * 消せる話なので bdboard-rhv0 に切り出した。
+ */
+
+import { expect, test } from '@playwright/test';
+
+import {
+  assertAiQuotaBadgeVisible,
+  describeResidualMetrics,
+  findWorstCaseTipIndex,
+  HELP_TIPS,
+  installAiQuotaRoute,
+  measureResidual,
+  pinTipsBannerRandom,
+  TIP_COUNT,
+  waitForHeaderHeightConvergence,
+} from './fixtures/mobile-chrome-helpers.js';
+
+const MOBILE_VIEWPORT = { width: 375, height: 812 };
+
+/**
+ * ページスクロール残差の上限。
+ *
+ * 根拠: worst-case 実測 330px (macOS Chromium) に対して 30px の余裕。Linux CI の
+ * フォントメトリクスでも上振れしないことは `mobile-header-compact.spec.ts:126-131` の
+ * 2026-09-05 ubuntu-latest 実測 (同一 fixture・同一 pin) で裏が取れている:
+ * headerBottom は Linux 243 / macOS 245 で **Linux のほうが 2px 小さく**、
+ * tipsBannerHeight は 198.8125 で 1px の差もなく同値。上のモデル
+ * (maxScrollY = header + tips + filterBarBox - 172) に入れると Linux の worst-case は
+ * 328px 相当なので、実質の余裕は 32px。リポジトリの慣行 (+16px) の 2 倍取ってある。
+ *
+ * 400 では緩すぎた: `.lane` の高さ上限を 60px 劣化させるミューテーション (maxScrollY=390)
+ * が素通りしていた。360 なら捕まる。同時に bd 記載の起点 478px と qxt1 着手時の 436.48px
+ * のどちらも下回るので、ラチェットとして本物。
+ */
+const MAX_PAGE_SCROLL_RESIDUAL_PX = 360;
+
+/**
+ * 「ユーザーが消せない」残差の上限 = maxScrollY から Tips と絞り込みバーの実測高を
+ * 引いた残り。モデル上これは `header + filterBarMarginBottom - 172`、つまり
+ * **ヘッダー高そのもの**を別角度から縛る。
+ *
+ * 上の予算だけだと、ヘッダーや `.lane` 上限が育っても Tips が短い日は吸収されて気付けない。
+ * こちらは Tips/絞り込みバーの高さを両辺から落とすので、Tips の折り返し行数に鈍い。
+ *
+ * 根拠: 実測 77.19px (worst-case) / 76.52 / 77.00 / 81.00 に対して 104px。
+ * ヘッダーに換算すると 272px までで、`mobile-header-compact.spec.ts` の
+ * MAX_HEADER_HEIGHT_PX = 250 より緩い = こちらが先に赤くなることはない。
+ */
+const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 104;
+
+test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
+  test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });
+
+  test('375x812: page scroll residual stays within budget and is attributable to dismissible chrome', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+
+    await installAiQuotaRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.card').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.tips-banner')).toBeVisible();
+    await waitForHeaderHeightConvergence(page);
+
+    const worstCase = await findWorstCaseTipIndex(page);
+    const selectedTip = HELP_TIPS[worstCase.index];
+
+    await pinTipsBannerRandom(page, worstCase.index, TIP_COUNT);
+    await page.reload();
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.card').first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('.tips-banner')).toBeVisible();
+    await assertAiQuotaBadgeVisible(page);
+    await waitForHeaderHeightConvergence(page);
+    // 本文 (span) まで一致を見る。タイトルだけだと、pin が効いていても description が
+    // 別の tip のままという壊れ方 (= バナー高さが worst-case にならない) を見逃す。
+    await expect(page.locator('.tips-banner-text strong')).toHaveText(selectedTip.title);
+    await expect(page.locator('.tips-banner-text span')).toHaveText(selectedTip.description);
+
+    // 絞り込みバーの折りたたみは**あえて assert しない**。既定が展開へ戻ったら
+    // (= bdboard-qxt1 の巻き戻し) それはヘルパーのエラーではなく残差の膨張として
+    // 下の予算アサートに落としたい。
+    const before = await measureResidual(page);
+
+    expect(
+      before.maxScrollY,
+      `375x812: page scroll residual must stay within ${MAX_PAGE_SCROLL_RESIDUAL_PX}px — ` +
+        `${describeResidualMetrics(before)}. ` +
+        `ページ側に残るスクロール量が増えるほど「指を置いた位置でページとレーンのどちらが動くか」が` +
+        `変わる帯が広がる。モデルは maxScrollY = header + tips + filterBarBox - 172 なので、` +
+        `増えたときはまずヘッダー高と .lane の 260px リテラルを疑う。`,
+    ).toBeLessThanOrEqual(MAX_PAGE_SCROLL_RESIDUAL_PX);
+
+    const nonDismissibleResidual =
+      before.maxScrollY - before.tipsBanner - before.boardFilterBar;
+    expect(
+      nonDismissibleResidual,
+      `375x812: residual that the user cannot dismiss must stay within ` +
+        `${MAX_NON_DISMISSIBLE_RESIDUAL_PX}px — actual=${nonDismissibleResidual.toFixed(2)} ` +
+        `(${describeResidualMetrics(before)}). ` +
+        `モデル上これは header + filterBar margin - 172 なので、ヘッダーが太ったか ` +
+        `.lane の 260px 上限が削られたときにここへ出る。`,
+    ).toBeLessThanOrEqual(MAX_NON_DISMISSIBLE_RESIDUAL_PX);
+
+    // Tips を閉じると残差がその高さぶん実際に減ること = 残差が「消せるクローム」に
+    // 帰属している証明。バナーが fixed 化したり跡地にプレースホルダが残ればここで落ちる。
+    await page.getByRole('button', { name: 'Tipsを閉じる' }).click();
+    await expect(page.locator('.tips-banner')).toHaveCount(0);
+    await waitForHeaderHeightConvergence(page);
+    const after = await measureResidual(page);
+
+    const shrinkPx = before.maxScrollY - after.maxScrollY;
+    expect(
+      shrinkPx,
+      `375x812: dismissing the tips banner must remove its full height from the page ` +
+        `scroll residual — shrink=${shrinkPx.toFixed(2)} but tipsHeight=${before.tipsBanner}. ` +
+        `before: ${describeResidualMetrics(before)} / after: ${describeResidualMetrics(after)}`,
+    ).toBeGreaterThanOrEqual(before.tipsBanner - 4);
+  });
+});
