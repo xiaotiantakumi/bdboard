@@ -319,6 +319,16 @@ const MAX_TIPS_BANNER_HEIGHT_PX = 223;
 // 意味が消えるため。バナーの折り返しは MAX_TIPS_BANNER_HEIGHT_PX 側が専用に見る。
 // 先例として AC4 の header 実測が Linux CI 99px / macOS 103px で Linux のほうが小さいため、
 // この非対称な予算配分が CI を赤くするリスクは低いと判断した。
+//
+// Linux CI 実測で裏が取れた (ubuntu-latest, run 33947408853, 2026-09-05):
+//   contentStartExcludingTips=629.625 (残余裕 19.375), tipsBannerHeight=198.8125 (残余裕 24.1875),
+//   firstCardTop=828.4375 (残余裕 19.5625), headerBottom=243
+// → Linux は macOS より 3px 小さく、848 の残余裕は macOS の 16.56px より広い 19.56px。
+//   さらに重要なのは tipsBannerHeight が macOS と 1px の差もなく同値 (198.8125) だったこと —
+//   MAX_TIPS_BANNER_HEIGHT_PX の +24px は「Linux でバナーが 1 行折り返す」ために確保した予算だが、
+//   実際にはその折り返しは起きておらず、24px は丸ごと未使用のまま残っている。
+//   つまりバナー側予算の上側は現状ほぼ純粋な緩みで、先に binding になるのは常にこの 848 のほう。
+//   バナー予算を締めたくなったらこの実測を根拠にできるが、締めなくても劣化は 848 が捕まえる。
 const MAX_CONTENT_START_PX = 848;
 
 // これを超える変更を入れるときは、数字を黙って上げるのではなく、なぜ予算を増やしてよいかを
