@@ -14,8 +14,10 @@ import { describe, expect, it } from 'vitest';
  *
  * ## 何を不変条件にするか
  *
- * 「正本の内容から一意に導ける文字列とミラーが byte 一致すること」。各ペアの `deriveMirror` が
- * その全域変換で、許される差分 (出所ヘッダー・import 指定子) はそこに**列挙されたものだけ**。
+ * 「正本の内容から一意に導ける文字列とミラーが byte 一致すること」。導出は共有の
+ * `deriveMirror()` 1 本で、ペアごとに変えられるのは `headerNotes` (出所ヘッダーに足す説明行) と
+ * `rewrites` (`replaceExactlyOnce` で順に当てる文字列置換) だけ。許される差分は**そこに
+ * データとして列挙されたものだけ**で、ペアが任意のコードを差し込む余地は無い (bdboard-8x2e)。
  * ticket の当初案にあった「`export function compareStrings` 以降だけ比較する」は採らない —
  * それだと JSDoc のドリフトを素通しし、このチケットの発端 (#386 の JSDoc 修正) をまさに
  * 検出できない。
@@ -55,7 +57,11 @@ const MIRROR_MARKER_LINE_PREFIX = `// ${MIRROR_MARKER} `;
 /**
  * 未登録ミラー走査で、どの深さでも降下しないディレクトリ名。
  *
- * 依存物・生成物・テスト成果物を除く。ここにないディレクトリはリポジトリ全体で走査する。
+ * 依存物・生成物・テスト成果物を除く。走査から外れるのはここと `SCAN_EXCLUDED_REPO_PATHS`、
+ * そして**ディレクトリの symlink** の 3 つ。`readdirSync(..., { withFileTypes: true })` の
+ * dirent は lstat 相当なので、ディレクトリ symlink は `isDirectory()` が false になり降下しない。
+ * これは荷重のかかった挙動で、`.claude/worktrees` の除外を symlink 経由で迂回できないことを
+ * 保証している — 「symlink も辿るべきでは」と親切心で直すと、そこに静かな穴が開く。
  */
 const SCAN_EXCLUDED_DIRECTORY_NAMES = new Set([
   'node_modules',
@@ -72,10 +78,20 @@ const SCAN_EXCLUDED_DIRECTORY_NAMES = new Set([
 /**
  * 未登録ミラー走査で降下しないリポジトリ相対パス。
  *
- * `.claude/worktrees` は他ブランチの worktree を含むため、`.beads/proxieddb` は Beads の
- * プロキシ DB を含むため除外する。
+ * `.claude/worktrees` の除外はコストではなく**正しさ**に効く。メインチェックアウトから走ると
+ * 兄弟 worktree 側の `web/src/compare.ts` が未登録ミラーとして拾われ、main が赤くなる
+ * (実測: worktree 12 本で偽ヒット 24 件)。`.gitignore` 済みなので CI のランナーには存在せず、
+ * そちらでは no-op。
+ *
+ * `.beads` は丸ごと除外する。ここにコードファイルは 1 件も無い一方、`.beads/dolt` は 171 MB の
+ * Dolt 作業ディレクトリで、**別セッションの `bd` が随時書き換えている**。降下すると
+ * `readdirSync` と再帰の間にサブディレクトリが消えて `ENOENT: scandir` で落ちうる
+ * (マージ後にメインチェックアウトで `npm run verify` を回している最中が一番踏みやすい)。
+ * その赤はミラーと無関係な scandir エラーとして出るので、読んだ人は間違った場所を調べ始める。
+ * `.beads/.gitignore` が `dolt/` `embeddeddolt/` `proxieddb/` を並べて無視していることからも、
+ * 個別に列挙するのではなく親ごと落とすのが素直。
  */
-const SCAN_EXCLUDED_REPO_PATHS = new Set(['.claude/worktrees', '.beads/proxieddb']);
+const SCAN_EXCLUDED_REPO_PATHS = new Set(['.claude/worktrees', '.beads']);
 
 /**
  * 未登録ミラー走査の対象となるコードファイルの拡張子。Markdown は出所ヘッダーを引用しただけの
@@ -96,7 +112,7 @@ interface MirrorPair {
   readonly mirrorPath: string;
   /** 出所ヘッダーのマーカー行に続く補足行 (各行は `// ` を付けて出力される)。 */
   readonly headerNotes: readonly string[];
-  /** ミラーで許される唯一の書き換え。順に replaceExactlyOnce される。 */
+  /** ミラーで許される書き換えの全体 (これ以外の差分は許されない)。順に replaceExactlyOnce される。 */
   readonly rewrites: readonly { readonly from: string; readonly to: string }[];
 }
 
@@ -256,7 +272,10 @@ describe('mirrored files are in sync with their canonical source', () => {
       markedMirrors.sort(),
       `code files containing a line that starts with ${JSON.stringify(MIRROR_MARKER_LINE_PREFIX)} must match ` +
         `MIRROR_PAIRS of ${toRepoRelativePosix(SELF_ABSOLUTE_PATH)} exactly (both directions): a new mirror ` +
-        'must be registered there, and a registered mirror must keep its header line. The repository-wide scan includes only ' +
+        'must be registered there, and a registered mirror must keep its header line. ' +
+        'If the unexpected file is NOT a mirror (a generator template or a fixture that merely quotes the header ' +
+        'line at column 0), do not register it: either move it out of the scanned extensions or add its path to ' +
+        'SCAN_EXCLUDED_REPO_PATHS with a comment saying why. The repository-wide scan includes only ' +
         `${[...SCAN_FILE_EXTENSIONS].join(', ')} ` +
         `files and excludes directories named ${[...SCAN_EXCLUDED_DIRECTORY_NAMES].join(', ')} plus ` +
         `repository paths ${[...SCAN_EXCLUDED_REPO_PATHS].join(', ')}.`,
