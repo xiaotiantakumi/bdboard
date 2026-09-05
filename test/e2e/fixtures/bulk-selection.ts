@@ -9,27 +9,12 @@ import { expect, type Locator, type Page } from '@playwright/test';
  * このモジュールがその欠落を埋める。
  */
 
-/** test/fixtures/bd/bdboard.list.json の open チケット（hideDone=true 既定で表示される）。 */
-export const OPEN_FIXTURE_TICKET_IDS = [
-  'bdboard-3tw',
-  'bdboard-3tw.8',
-  'bdboard-3tw.7',
-  'bdboard-3tw.6',
-  'bdboard-3tw.5',
-  'bdboard-3tw.4',
-  'bdboard-3tw.10',
-  'bdboard-3tw.9',
-] as const;
-
 /** 既定の複数選択用ペア（smoke.spec.ts 等と同じフィクスチャ由来）。 */
 export const DEFAULT_BULK_SELECTION_IDS = ['bdboard-3tw.8', 'bdboard-3tw.7'] as const;
 
 function bulkCheckboxForTicket(page: Page, ticketId: string): Locator {
-  // merged ビューでは各 ID は1枚。split ではレーンごとに重複しうるので article 内に限定する。
-  return page
-    .locator('article', { has: page.locator('.card-id', { hasText: ticketId }) })
-    .locator('.card-bulk-checkbox input[type="checkbox"]')
-    .first();
+  // getByLabel は strict mode: 同一 ID が split ビューで複数あれば strict mode violation で落ちる。
+  return page.getByLabel(`${ticketId} を選択`);
 }
 
 /**

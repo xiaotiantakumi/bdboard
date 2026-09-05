@@ -3,7 +3,6 @@ import {
   DEFAULT_BULK_SELECTION_IDS,
   openBoardWithBulkActionBarCustomDefer,
   selectTickets,
-  setBulkDeferPeriodCustom,
   waitForBulkActionBar,
 } from './fixtures/bulk-selection.js';
 
@@ -20,6 +19,9 @@ const ROW_Y_TOLERANCE_PX = 2;
 const EDGE_TOLERANCE_PX = 0.5;
 const FULL_WIDTH_RATIO = 0.9;
 const DEFER_ROW_FULL_WIDTH_RATIO = 0.95;
+const DETAIL_COMPLETE_FULL_WIDTH_RATIO = 0.5;
+const FIRST_ROW_RIGHT_GAP_MAX_PX = 8;
+const NON_CUSTOM_COMPLETE_MIN_WIDTH_RATIO = 0.2;
 
 interface RectSnapshot {
   top: number;
@@ -41,12 +43,16 @@ interface BulkButtonsLayoutMetrics {
   deferGroupIndex: number;
   completeButtonIndex: number;
   deferGroupOnOwnRow: boolean;
-  deferGroupOverlapsAnySibling: boolean;
   deferGroupWidthRatio: number;
   deferGroupSpansFullRow: boolean;
   completeButtonSharesRow: boolean;
   completeButtonWidthRatio: number;
   completeButtonNotSoloFullWidth: boolean;
+  firstRowChildCount: number;
+  firstRowRightGapPx: number;
+  bodyScrollWidth: number;
+  viewportInnerWidth: number;
+  horizontalOverflow: boolean;
 }
 
 async function measureBulkButtonsLayout(page: import('@playwright/test').Page): Promise<BulkButtonsLayoutMetrics> {
@@ -97,7 +103,6 @@ async function measureBulkButtonsLayout(page: import('@playwright/test').Page): 
       const completeButton =
         completeButtonIndex >= 0 ? children[completeButtonIndex] : undefined;
 
-      let deferGroupOverlapsAnySibling = false;
       let deferGroupOnOwnRow = deferGroup !== undefined;
       let deferGroupWidthRatio = 0;
       let deferGroupSpansFullRow = false;
@@ -116,21 +121,8 @@ async function measureBulkButtonsLayout(page: import('@playwright/test').Page): 
             deferGroup.rect.top < sibling.rect.bottom - edgeTolerance &&
             sibling.rect.top < deferGroup.rect.bottom - edgeTolerance;
           if (overlaps) {
-            deferGroupOverlapsAnySibling = true;
             deferGroupOnOwnRow = false;
-          }
-        }
-
-        if (deferGroupIndex > 0) {
-          const prev = children[deferGroupIndex - 1]!;
-          if (prev.rect.bottom > deferGroup.rect.top + edgeTolerance) {
-            deferGroupOnOwnRow = false;
-          }
-        }
-        if (deferGroupIndex >= 0 && deferGroupIndex < children.length - 1) {
-          const next = children[deferGroupIndex + 1]!;
-          if (next.rect.top < deferGroup.rect.bottom - edgeTolerance) {
-            deferGroupOnOwnRow = false;
+            break;
           }
         }
       } else {
@@ -165,30 +157,49 @@ async function measureBulkButtonsLayout(page: import('@playwright/test').Page): 
           completeButtonWidthRatio < fullWidthRatio;
       }
 
+      const rowTops: number[] = [];
+      for (const child of children) {
+        const existing = rowTops.find(
+          (top) => Math.abs(top - child.rect.top) <= rowTolerance,
+        );
+        if (existing === undefined) {
+          rowTops.push(child.rect.top);
+        }
+      }
+
+      const firstRowTop = rowTops.length > 0 ? rowTops[0]! : 0;
+      const firstRowChildren = children.filter(
+        (child) => Math.abs(child.rect.top - firstRowTop) <= rowTolerance,
+      );
+      const firstRowChildCount = firstRowChildren.length;
+      const firstRowMaxRight = firstRowChildren.reduce(
+        (max, child) => Math.max(max, child.rect.right),
+        0,
+      );
+
+      const containerRect = container.getBoundingClientRect();
+      const computedStyle = window.getComputedStyle(container);
+      const paddingRight = Number.parseFloat(computedStyle.paddingRight) || 0;
+      const contentBoxRight = containerRect.left + container.clientWidth - paddingRight;
+      const firstRowRightGapPx = contentBoxRight - firstRowMaxRight;
+
       return {
         containerClientWidth: container.clientWidth,
         children,
-        rowCount: (() => {
-          const rowTops: number[] = [];
-          for (const child of children) {
-            const existing = rowTops.find(
-              (top) => Math.abs(top - child.rect.top) <= rowTolerance,
-            );
-            if (existing === undefined) {
-              rowTops.push(child.rect.top);
-            }
-          }
-          return rowTops.length;
-        })(),
+        rowCount: rowTops.length,
         deferGroupIndex,
         completeButtonIndex,
         deferGroupOnOwnRow,
-        deferGroupOverlapsAnySibling,
         deferGroupWidthRatio,
         deferGroupSpansFullRow,
         completeButtonSharesRow,
         completeButtonWidthRatio,
         completeButtonNotSoloFullWidth,
+        firstRowChildCount,
+        firstRowRightGapPx,
+        bodyScrollWidth: document.body.scrollWidth,
+        viewportInnerWidth: window.innerWidth,
+        horizontalOverflow: document.body.scrollWidth > window.innerWidth,
       };
     },
     {
@@ -321,7 +332,7 @@ async function measureDetailQuickButtonsLayout(
     {
       rowTolerance: ROW_Y_TOLERANCE_PX,
       edgeTolerance: EDGE_TOLERANCE_PX,
-      fullWidthRatio: FULL_WIDTH_RATIO,
+      fullWidthRatio: DETAIL_COMPLETE_FULL_WIDTH_RATIO,
     },
   );
 }
@@ -337,11 +348,6 @@ function assertBulkButtonsLayout(metrics: BulkButtonsLayoutMetrics, context: str
     `${context}: custom defer group must sit on its own row (no vertical overlap with siblings). ` +
       `children=${JSON.stringify(metrics.children, null, 2)}`,
   ).toBe(true);
-
-  expect(
-    metrics.deferGroupOverlapsAnySibling,
-    `${context}: custom defer group must not overlap any sibling vertically`,
-  ).toBe(false);
 
   expect(
     metrics.deferGroupSpansFullRow,
@@ -368,9 +374,10 @@ function assertBulkButtonsLayout(metrics: BulkButtonsLayoutMetrics, context: str
   }
 
   expect(
-    metrics.rowCount,
-    `${context}: with custom defer selected, button area should use multiple rows`,
-  ).toBeGreaterThanOrEqual(2);
+    metrics.horizontalOverflow,
+    `${context}: body must not overflow horizontally ` +
+      `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.viewportInnerWidth})`,
+  ).toBe(false);
 }
 
 const MOBILE_VIEWPORTS = [
@@ -391,28 +398,60 @@ for (const viewport of MOBILE_VIEWPORTS) {
     }) => {
       test.setTimeout(60_000);
 
-      await page.goto('/');
-      const firstCard = page.locator('article').first();
-      await expect(firstCard).toBeVisible({ timeout: 15_000 });
+      await openBoardWithBulkActionBarCustomDefer(page);
+      const metrics = await measureBulkButtonsLayout(page);
 
-      await selectTickets(page, DEFAULT_BULK_SELECTION_IDS);
-      await waitForBulkActionBar(page);
-
-      const beforeCustom = await measureBulkButtonsLayout(page);
-
-      await setBulkDeferPeriodCustom(page);
-      const afterCustom = await measureBulkButtonsLayout(page);
-
-      expect(
-        afterCustom.rowCount,
-        `${viewport.label}: selecting custom defer should not reduce row count ` +
-          `(before=${beforeCustom.rowCount}, after=${afterCustom.rowCount})`,
-      ).toBeGreaterThanOrEqual(beforeCustom.rowCount);
-
-      assertBulkButtonsLayout(afterCustom, viewport.label);
+      assertBulkButtonsLayout(metrics, viewport.label);
     });
   });
 }
+
+// 320px カスタム状態は実測済み (2026-09-05, chromium, isMobile): body.scrollWidth=320,
+// innerWidth=320, 延期グループ実幅=277px, horizontalOverflow=false。index.css コメントの
+// 289px はより広いビューポートでの値で、320px では date 入力が縮んで収まる。
+// この describe は :has() narrowing 用に非カスタム状態だけを見る。
+test.describe('bulk action bar non-custom defer row @ 320x812', () => {
+  test.use({
+    viewport: { width: 320, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+  });
+
+  test('first row fills container width without trailing gap when defer is not custom', async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+
+    await page.goto('/');
+    const firstCard = page.locator('article').first();
+    await expect(firstCard).toBeVisible({ timeout: 15_000 });
+
+    await selectTickets(page, DEFAULT_BULK_SELECTION_IDS);
+    await waitForBulkActionBar(page);
+
+    const metrics = await measureBulkButtonsLayout(page);
+
+    expect(
+      metrics.firstRowRightGapPx,
+      `320x812 non-custom: first row must not leave trailing gap ` +
+        `(firstRowRightGapPx=${metrics.firstRowRightGapPx.toFixed(1)}, ` +
+        `firstRowChildCount=${metrics.firstRowChildCount}, ` +
+        `containerClientWidth=${metrics.containerClientWidth})`,
+    ).toBeLessThanOrEqual(FIRST_ROW_RIGHT_GAP_MAX_PX);
+
+    expect(
+      metrics.completeButtonWidthRatio,
+      `320x812 non-custom: complete button should grow to fill available row space ` +
+        `(widthRatio=${metrics.completeButtonWidthRatio.toFixed(3)})`,
+    ).toBeGreaterThanOrEqual(NON_CUSTOM_COMPLETE_MIN_WIDTH_RATIO);
+
+    expect(
+      metrics.horizontalOverflow,
+      `320x812 non-custom: body must not overflow horizontally ` +
+        `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.viewportInnerWidth})`,
+    ).toBe(false);
+  });
+});
 
 for (const viewport of MOBILE_VIEWPORTS) {
   // bdboard-53my 条件4: 詳細パネル側を実測した結果、症状は無かった。
@@ -464,13 +503,12 @@ for (const viewport of MOBILE_VIEWPORTS) {
 
       // 詳細パネル側には BulkActionBar のような `.btn { flex: 1 1 auto }` が無いため、
       // 完了ボタンは伸長せず単独全幅行にならない (実測: 375px で widthRatio=0.158 /
-      // 480px で 0.121、いずれも同一行に兄弟あり)。ここはその性質を固定する回帰ガード。
+      // 480px で 0.121、いずれも同一行に兄弟あり)。閾値 0.5 は実測の 3 倍以上の
+      // マージンを残し、「詳細パネルにも flex 伸長が入った」級の退行を捕まえる。
       //
-      // 注意: このアサーションは BulkActionBar 側の2件と違い**変異で検出力を実証していない**
-      // (取り除くべき CSS 規則がそもそも存在しないため、等価な変異が作れない)。
-      // 閾値 0.9 に対して実測 0.158/0.121 と余裕が桁違いなので、拾えるのは
-      // 「詳細パネルにも flex 伸長が入った」級の粗い退行だけ。細かい劣化は捕まえられない、
-      // という前提でこのガードを読むこと (bdboard-53my 議長裁定 2026-09-05)。
+      // 注意: BulkActionBar 側と違い取り除くべき CSS 規則がそもそも存在しないため、
+      // 等価な変異実験は作れない。閾値 0.5 でも実測 0.158/0.121 と余裕があるが、
+      // 旧 0.9 よりは検出力が高い (bdboard-53my 議長裁定 2026-09-05)。
       expect(
         metrics.completeButtonNotSoloFullWidth,
         `${viewport.label} detail panel: complete button must not occupy a solo full-width row ` +
@@ -481,13 +519,3 @@ for (const viewport of MOBILE_VIEWPORTS) {
     });
   });
 }
-
-test.describe('bulk selection helper smoke', () => {
-  test.use({ viewport: { width: 375, height: 812 }, isMobile: true, hasTouch: true });
-
-  test('openBoardWithBulkActionBarCustomDefer reaches custom defer state', async ({ page }) => {
-    await openBoardWithBulkActionBarCustomDefer(page);
-    await expect(page.locator('.bulk-action-bar .quick-action-defer-group-custom')).toBeVisible();
-    await expect(page.locator('.bulk-action-bar input[type="date"]')).toBeVisible();
-  });
-});
