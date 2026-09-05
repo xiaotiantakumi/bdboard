@@ -6504,6 +6504,21 @@ body {
      他のボタンの並びを乱さない (bdboard-h4xs.11) */
   .bulk-action-bar-buttons .quick-action-defer-group-custom {
     flex: 1 1 100%;
+    /* min-width: auto (flex item の既定) だと自動最小サイズが min-content で
+       止まり、flex-basis 100% を割り込めない。320px では中身の実寸が
+       86 + 6 + 147 + 6 + 32 = 277px で、コンテナの内容領域 270px を 7px はみ出す。
+       バーは左右 25px インセットされているのでビューポート端には届かず、
+       body.scrollWidth 基準の overflow 判定では検出できない (bdboard-rccf)。 */
+    min-width: 0;
+  }
+
+  /* 上の min-width:0 だけではグループ自身が縮めるようになるだけで、中の select と
+     date 入力が min-width:auto のままだと結局縮まない。この2つは font-size:16px
+     (iOS のズーム抑止) で実寸が決まっており、date 入力が 147px を占める。
+     縮小を許可して 7px を吸わせる。完了ボタンは flex:1 1 auto で元から縮む。 */
+  .bulk-action-bar-buttons .quick-action-defer-group-custom > select,
+  .bulk-action-bar-buttons .quick-action-defer-group-custom > input[type='date'] {
+    min-width: 0;
   }
 
   /* flex: 1 1 100% で延期グループだけ次行へ落ちると、完了ボタンが1行に単独で残り

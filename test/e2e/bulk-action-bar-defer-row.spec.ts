@@ -406,16 +406,22 @@ for (const viewport of MOBILE_VIEWPORTS) {
   });
 }
 
-// 320px カスタム状態の実測 (2026-09-05, chromium, isMobile):
-// 延期グループ実幅=277px、コンテナ .bulk-action-bar-buttons の clientWidth=270 /
-// scrollWidth=277 で、グループ右端 302 はコンテナ右端 295 を 7px はみ出す。
-// 一方 body.scrollWidth=320 = innerWidth なので horizontalOverflow は false —
-// バー自体が左右 25px インセットされており、はみ出した 7px がバーの右パディングに
-// 収まってビューポート端に届かないため。**body 基準の overflow 判定では
-// このはみ出しは検出できない**ので、「horizontalOverflow=false だから問題なし」と
-// 読まないこと (bdboard-53my 議長裁定 2026-09-05。コンテナ基準の 7px は
-// 別チケット bdboard-rccf)。index.css コメントの 289px はより広いビューポートでの値。
-// この describe は :has() narrowing 用に非カスタム状態だけを見る。
+// 320px カスタム状態について (履歴と現状):
+// bdboard-53my の時点で 延期グループ実幅=277px / コンテナ .bulk-action-bar-buttons の
+// clientWidth=270 となり、グループ右端 302 がコンテナの内容領域右端 295 を 7px
+// はみ出していた (別チケット bdboard-rccf として切り出し)。bdboard-rccf で修正。
+// 下の "custom defer group must not overflow" がその回帰ガード。
+//
+// 計測時の注意: isMobile: true を付けないと別のレイアウトになり、はみ出しが
+// 再現しない。必ず test.use({ viewport, isMobile: true, hasTouch: true }) で測ること
+// (議長が isMobile 無しの probe で「解消済み」と誤判定した。2026-09-05)。
+//
+// 重要: body.scrollWidth=320 = innerWidth なので horizontalOverflow は false のまま。
+// バー自体が左右 25px インセットされており、はみ出しがバーの右パディングに収まって
+// ビューポート端に届かないため。**body 基準の overflow 判定ではこのはみ出しは
+// 検出できない**ので、「horizontalOverflow=false だから問題なし」と読まないこと。
+// コンテナ基準で測る必要がある。index.css コメントの 289px はより広いビューポートでの値。
+// この直下の describe は :has() narrowing 用に非カスタム状態だけを見る。
 test.describe('bulk action bar non-custom defer row @ 320x812', () => {
   test.use({
     viewport: { width: 320, height: 812 },
@@ -525,3 +531,79 @@ for (const viewport of MOBILE_VIEWPORTS) {
     });
   });
 }
+
+// bdboard-rccf: カスタム延期状態でのコンテナ基準はみ出し回帰ガード。
+// 上のコメントのとおり body 基準では検出できないので、コンテナの
+// scrollWidth/clientWidth と、グループ右端とコンテナ内容領域右端の差で測る。
+const CONTAINER_OVERFLOW_TOLERANCE_PX = 0.5;
+
+test.describe('bulk action bar custom defer group @ 320x812', () => {
+  test.use({
+    viewport: { width: 320, height: 812 },
+    isMobile: true,
+    hasTouch: true,
+  });
+
+  test('custom defer group must not overflow its container', async ({ page }) => {
+    test.setTimeout(60_000);
+
+    const bar = await openBoardWithBulkActionBarCustomDefer(page);
+    // 空のままだと date 入力の実寸が短く、はみ出しを過小評価する。
+    // 実際に日付が入った状態が最も横幅を要求する。
+    await bar.locator('input[type="date"]').fill('2026-12-31');
+
+    const metrics = await page.evaluate(() => {
+      const container = document.querySelector('.bulk-action-bar-buttons');
+      const group = document.querySelector(
+        '.quick-action-defer-group.quick-action-defer-group-custom',
+      );
+      if (container === null || group === null) {
+        return null;
+      }
+      const containerRect = container.getBoundingClientRect();
+      const groupRect = group.getBoundingClientRect();
+      const style = window.getComputedStyle(container);
+      const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+      const contentBoxRight = containerRect.left + container.clientWidth - paddingRight;
+      const date = container.querySelector('input[type="date"]');
+      return {
+        containerClientWidth: container.clientWidth,
+        containerScrollWidth: container.scrollWidth,
+        contentBoxRight,
+        groupRight: groupRect.right,
+        groupWidth: groupRect.width,
+        overflowPx: groupRect.right - contentBoxRight,
+        bodyScrollWidth: document.body.scrollWidth,
+        viewportInnerWidth: window.innerWidth,
+        dateClientWidth: date === null ? null : date.clientWidth,
+        dateScrollWidth: date === null ? null : date.scrollWidth,
+      };
+    });
+
+    expect(metrics, 'custom defer group and its container must both be present').not.toBeNull();
+    const m = metrics as NonNullable<typeof metrics>;
+
+    expect(
+      m.overflowPx,
+      `320x812 custom: defer group must not overflow the container content box ` +
+        `(groupRight=${m.groupRight.toFixed(2)}, contentBoxRight=${m.contentBoxRight.toFixed(2)}, ` +
+        `overflowPx=${m.overflowPx.toFixed(2)}, groupWidth=${m.groupWidth.toFixed(2)})`,
+    ).toBeLessThanOrEqual(CONTAINER_OVERFLOW_TOLERANCE_PX);
+
+    expect(
+      m.containerScrollWidth,
+      `320x812 custom: container must not scroll horizontally ` +
+        `(scrollWidth=${m.containerScrollWidth}, clientWidth=${m.containerClientWidth}). ` +
+        `body.scrollWidth=${m.bodyScrollWidth} innerWidth=${m.viewportInnerWidth} ` +
+        `— body 基準では検出できないので、この2つで測ること。`,
+    ).toBeLessThanOrEqual(m.containerClientWidth);
+
+    // はみ出しを date 入力の潰し過ぎで解決していないことを確かめる。
+    // min-width: 0 を入れた以上、際限なく縮む方向の退行がありうる。
+    expect(
+      m.dateScrollWidth,
+      `320x812 custom: date input must not clip its own value ` +
+        `(scrollWidth=${String(m.dateScrollWidth)}, clientWidth=${String(m.dateClientWidth)})`,
+    ).toBeLessThanOrEqual(m.dateClientWidth as number);
+  });
+});
