@@ -26,9 +26,12 @@ const RUNTIME_CUSTOM_PROPERTIES = new Set([
   '--lane-strip-height',
   '--bulk-bar-height',
   // usePopoverViewportClamp.ts が開いている各ポップオーバー要素の inline style に書く値。
-  // index.css:4870 の .ai-quota-note[open] にも --popover-shift-x: 0px があるが、あれは
-  // 祖先からの継承を打ち消すための防御的な再宣言であって値の出所ではない (直上のコメント
-  // 参照)。仮にあれを bare :root へ動かすと全ポップオーバーのシフトが 0 に固定される。
+  // index.css の .ai-quota-note-detail にも --popover-shift-x: 0px があるが、あれは
+  // 祖先 (.ai-quota-popover) からの継承を打ち消すための防御的な再宣言であって値の出所では
+  // ない (直上のコメント参照)。仮にあれを bare :root へ動かすと、:root は
+  // .ai-quota-popover より継承チェーンの上流なので打ち消しが効かなくなり、親の inline
+  // シフトが子に漏れて二重適用される。各ポップオーバー自身のシフトは inline 宣言が同一要素
+  // で継承値に勝つので消えない。
   '--popover-shift-x',
 ]);
 
@@ -40,19 +43,35 @@ const SCOPED_CUSTOM_PROPERTIES = new Set([
 ]);
 
 /**
- * 文字列リテラルの中に波かっこが無いこと。
+ * 波かっこがブロックの区切り以外の場所に現れていないこと。
  *
- * collectDefinedCustomProperties は `{` / `}` を数えてブロックの深さを追うだけで、文字列
- * リテラルを認識しない。`content: '{'` のような宣言が 1 つ入るだけで深さがずれ、以降の
- * bare :root ブロックが「入れ子」と誤認されて定義集合から落ちる。落ちた結果は
- * 「未定義参照あり」の赤なので気付けはするが、原因がまったく別の場所に見えるので
- * ここで名指しで落とす。今日の index.css には該当が無いので、これは前提の明文化。
+ * collectDefinedCustomProperties は `{` / `}` を数えてブロックの深さを追うだけで、
+ * 文字列リテラルも url() トークンも認識しない。`content: '{'` のような宣言が 1 つ入るだけで
+ * 深さがずれ、以降の bare :root ブロックが「入れ子」と誤認されて定義集合から落ちる。落ちた
+ * 結果は「未定義参照あり」の赤なので気付けはするが、原因がまったく別の場所に見えるので
+ * ここで名指しで落とす。
+ *
+ * **url() を別扱いするのは、引用符なしで書けるから。** CSS Syntax L3 の url-token が禁じるのは
+ * `"` `'` `(` `)` `\` と空白だけで、`{` `}` は通る。つまり `url(a}b)` は合法だが深さを 1 ずらし、
+ * `@media (prefers-color-scheme: dark) { :root { … } }` が bare :root に昇格して**このファイルの
+ * 検査が緑のまま素通りする**（PR #400 のレビューで実証された唯一の偽陰性経路）。文字列リテラル
+ * 側は逆に赤へ倒れるので危険度が違う。
+ *
+ * 今日の index.css には引用符付き・url() とも該当が無いので、現状は前提の明文化。
  */
-function stringLiteralsWithBraces(css: string): string[] {
-  const literals = css.match(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g) ?? [];
-  return literals.filter((literal) => literal.includes('{') || literal.includes('}'));
+function bracesOutsideBlockDelimiters(css: string): string[] {
+  const stringLiterals = css.match(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g) ?? [];
+  const urlTokens = css.match(/url\([^)]*\)/gi) ?? [];
+  return [...stringLiterals, ...urlTokens].filter(
+    (token) => token.includes('{') || token.includes('}'),
+  );
 }
 
+/**
+ * `:root { --a: 1px; }` の `--a` を集める。深さ追跡なので、値そのものが `{}` ブロックの
+ * カスタムプロパティ (`--a: { color: red };` — css-variables 的には合法) は取りこぼす。
+ * 取りこぼしは「未定義参照あり」の赤になる安全側の失敗で、かつ index.css に前例が無い。
+ */
 function collectDefinedCustomProperties(css: string): Set<string> {
   const defined = new Set<string>();
   let blockDepth = 0;
@@ -75,6 +94,12 @@ function collectDefinedCustomProperties(css: string): Set<string> {
       if (blockDepth === 0) {
         // `:root, .foo` は :root にも適用されるが、全体トークンの定義場所としては曖昧なので
         // 数えない。ここでは条件なし・単独の bare `:root` だけを定義の正本にする。
+        // 同じ理由で at-rule の中の `:root` も数えない。`@media` / `@supports` /
+        // `@container` は条件付きなので当然だが、**無条件の `@layer` も弾いている** —
+        // テーマ差は生まないので厳密には過剰だが、定義の provenance を「トップレベルの
+        // bare :root だけ」に単純化しておくほうが読み手に優しい。`@property --x { … }` も
+        // 同じ理由で定義には数えない (初期値の宣言であって値の出所ではない)。
+        // いずれも今日の index.css には 1 件も無いので、現状は不活性。
         isBareRootBlock = topLevelHeader.trim() === ':root';
         directDeclaration = '';
         topLevelHeader = '';
@@ -152,7 +177,7 @@ describe('index.css custom properties', () => {
 
     expect(
       undefinedProperties,
-      `index.css に bare :root で未定義のカスタムプロパティ参照があります: ${undefinedProperties.join(', ')}。全テーマ・全スコープで使う値は条件なしの :root に定義し、要素スコープまたは実行時書き込みが意図的なら理由付きで許可リストに追加してください。`,
+      `index.css に bare :root で未定義のカスタムプロパティ参照があります: ${undefinedProperties.join(', ')}。全テーマ・全スコープで使う値は条件なしの単独 :root ブロックに定義し、要素スコープまたは実行時書き込みが意図的なら理由付きで許可リストに追加してください。":root, .foo { … }" のようなセレクタリストと at-rule (@media / @supports / @container / @layer) の中の :root は、意図的に定義として数えていません。`,
     ).toEqual([]);
     expect(
       staleAllowedProperties,
@@ -160,11 +185,11 @@ describe('index.css custom properties', () => {
     ).toEqual([]);
   });
 
-  it('keeps the brace-counting walker honest: no braces inside string literals', () => {
-    const offenders = stringLiteralsWithBraces(stripCssComments(cssSource));
+  it('keeps the brace-counting walker honest: no braces in string or url tokens', () => {
+    const offenders = bracesOutsideBlockDelimiters(stripCssComments(cssSource));
     expect(
       offenders,
-      `index.css の文字列リテラルに波かっこが入っています: ${offenders.join(', ')}。collectDefinedCustomProperties は文字列リテラルを認識せず波かっこを数えるだけなので、ブロックの深さがずれて bare :root の定義を取りこぼします。リテラル側を書き換えるか、walker に文字列リテラルの読み飛ばしを実装してください。`,
+      `index.css の文字列リテラルまたは url() トークンに波かっこが入っています: ${offenders.join(', ')}。collectDefinedCustomProperties はどちらも認識せず波かっこを数えるだけなので、ブロックの深さがずれます。url() 側は深さが浅くなる向きにずれ、条件付き :root が bare :root に昇格してこのファイルの検査ごと緑で素通りします。トークン側を書き換えるか、walker に文字列リテラルと url() の読み飛ばしを実装してください。`,
     ).toEqual([]);
   });
 });
