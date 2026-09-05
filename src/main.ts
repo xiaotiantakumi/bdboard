@@ -27,6 +27,7 @@ import {
   parseReclaimDurationMs,
 } from './application/lease/reclaim-scheduler.js';
 import { createReclaimHistory } from './application/lease/reclaim-history.js';
+import { planProjectReclaim } from './application/lease/plan-project-reclaim.js';
 import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
 import { createUpdateCheckService } from './application/update/get-update-check.js';
 import { createAiQuotaThresholdPublisher } from './application/ai-quota/ai-quota-threshold-alerts.js';
@@ -833,6 +834,15 @@ async function main(): Promise<void> {
     observer: (run) => {
       reclaimHistory.record(run);
     },
+    // 生存証拠 (worktree/ブランチ) のあるチケットを回収対象から外す (bdboard-6aci)。
+    planner: (project) =>
+      planProjectReclaim(project, {
+        listTickets: (target) => cache.getProject(target.id)?.tickets,
+        scanner: worktreeScanner,
+        logWarn: (message) => {
+          console.warn(message);
+        },
+      }),
   });
   reclaimScheduler.start();
   if (reclaimEnabled) {

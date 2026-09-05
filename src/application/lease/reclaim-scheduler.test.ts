@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../domain/project.js';
+import type { ReclaimPlan } from '../../domain/reclaim-plan.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
 import {
   createReclaimScheduler,
@@ -333,6 +334,99 @@ describe('createReclaimScheduler', () => {
     });
 
     scheduler.stop();
+  });
+});
+
+describe('createReclaimScheduler の planner (bdboard-6aci)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function scheduler(
+    reclaim: ReturnType<typeof vi.fn>,
+    planner: (project: Project) => Promise<ReclaimPlan | null>,
+  ) {
+    return createReclaimScheduler({
+      reclaimer: { reclaim } as unknown as LeaseReclaimer,
+      listProjects: () => [project('proj-a', '/projects/a')],
+      config: { enabled: true, intervalMs: 1_000, olderThan: '2h' },
+      planner,
+    });
+  }
+
+  it('narrows the reclaim to the planned ids', async () => {
+    const reclaim = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: 'reclaimed 1 issue',
+      stderr: '',
+    }));
+
+    const s = scheduler(reclaim, async () => ({
+      reclaimTicketIds: ['bdboard-dead'],
+      protectedTicketIds: ['bdboard-live'],
+    }));
+    s.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reclaim).toHaveBeenCalledWith('/projects/a', '2h', ['bdboard-dead']);
+    expect(s.getStatus().projects[0]?.rawSummary).toContain('protected 1');
+    s.stop();
+  });
+
+  // **これが 6aci の本体。** `--id` を1つも付けない reclaim は全件対象なので、
+  // 「回収してよいものが無い」を bd 呼び出しで表現することはできない。
+  it('does NOT call bd at all when every candidate is protected', async () => {
+    const reclaim = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+
+    const s = scheduler(reclaim, async () => ({
+      reclaimTicketIds: [],
+      protectedTicketIds: ['bdboard-live'],
+    }));
+    s.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reclaim).not.toHaveBeenCalled();
+    const status = s.getStatus().projects[0];
+    expect(status?.reclaimedCount).toBe(0);
+    expect(status?.rawSummary).toContain('protected 1');
+    expect(status?.lastError).toBeNull();
+    s.stop();
+  });
+
+  // 判断材料が無いときに全件回収へ落ちないこと。落ちると 2026-09-05 の事故に戻る。
+  it('skips the project entirely when the planner returns null', async () => {
+    const reclaim = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
+
+    const s = scheduler(reclaim, async () => null);
+    s.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reclaim).not.toHaveBeenCalled();
+    expect(s.getStatus().projects[0]?.rawSummary).toContain('skipped');
+    s.stop();
+  });
+
+  it('keeps the old whole-project behaviour when no planner is wired', async () => {
+    const reclaim = vi.fn(async () => ({
+      exitCode: 0,
+      stdout: 'reclaimed 0 issues',
+      stderr: '',
+    }));
+
+    const s = createReclaimScheduler({
+      reclaimer: { reclaim } as unknown as LeaseReclaimer,
+      listProjects: () => [project('proj-a', '/projects/a')],
+      config: { enabled: true, intervalMs: 1_000, olderThan: '2h' },
+    });
+    s.start();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(reclaim).toHaveBeenCalledWith('/projects/a', '2h');
+    s.stop();
   });
 });
 
