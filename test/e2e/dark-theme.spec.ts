@@ -105,7 +105,22 @@ type KnownSubAA = {
  * わずかに変わる」程度しか見込んでいない。AA (4.5) までの隔たりより十分狭くして、実際の悪化を
  * 取り逃さないこと。
  */
-const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map();
+const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([
+  [
+    'span.lane-chevron',
+    {
+      measured: 3.85,
+      floor: 3.80,
+      note:
+        'bdboard-97ib.1: --color-text-tertiary (#8e8e93、ライト/ダーク両テーマ同値) on ' +
+        'rgb(64, 49, 27) — bdboard-bdsd が掃引フィクスチャに WIP 超過レーンを足すまでダークでは ' +
+        '一度も掃引されていなかった occurrence。.lane-header-wip-exceeded 自身の着色背景 ' +
+        '(color-mix(--color-warning 16%)) の上に乗る .lane-chevron (色は変更していない) で、' +
+        'bdboard-bdsd のスコープ (.lane-header-wip-exceeded .lane-count の fg/bg) 外。' +
+        '棚卸しは bdboard-97ib.1 へ',
+    },
+  ],
+]);
 
 /**
  * ライトで WCAG AA (4.5:1) を満たさない既知の箇所。bdboard-97ib で初めて実測
@@ -117,14 +132,46 @@ const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map();
  * ものにクラスを付与して初めて拾えるようになった) を計上して、正味 18 件。
  * 棚卸しチケット: bdboard-97ib.1 (このリストを空にするのが受け入れ条件)。
  *
+ * さらに bdboard-bdsd (WIP 超過レーンの `.lane-count` 修正) が掃引フィクスチャに WIP 超過
+ * レーンを初めて足したことで `span.lane-header-label-text` (レーン名文字列。無クラス `span`
+ * だったので `.tips-banner-text-body` と同じ理由でクラスを付与) が新規検出され、正味 19 件。
+ * bdboard-bdsd のスコープは `.lane-header-wip-exceeded .lane-count` の前景/背景だけで、
+ * `.lane-header-wip-exceeded` 自身の文字色 (`color: var(--color-warning)`、レーン名は
+ * これを継承する) は対象外。同じ「同色相の前景/背景」構図の別インスタンスなので直すこと
+ * 自体は同じ手法で可能だが、本チケットの受け入れ条件には含まれない。
+ *
  * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
  */
 const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([
   [
+    'span.lane-header-label-text',
+    {
+      measured: 1.93,
+      floor: 1.88,
+      note:
+        'bdboard-97ib.1: --color-warning (#ff9500) on .lane-header-wip-exceeded の着色背景。' +
+        'bdboard-bdsd の対で直した .lane-count と同じ構図だが、bdboard-bdsd のスコープ外 ' +
+        '(.lane-header-wip-exceeded 自身の color は対象に含まれない)。棚卸しは bdboard-97ib.1 へ',
+    },
+  ],
+  [
     'button.meta-text.meta-text-btn',
     { measured: 3.22, floor: 3.17, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
   ],
-  ['span.lane-chevron', { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' }],
+  [
+    'span.lane-chevron',
+    {
+      measured: 2.87,
+      floor: 2.82,
+      note:
+        'bdboard-97ib.1: --color-text-tertiary (#8e8e93)。bdboard-bdsd が掃引フィクスチャに ' +
+        'WIP 超過レーンを足すまでは 3.26:1 (登録時) だったが、.lane-header-wip-exceeded 自身の ' +
+        '着色背景 (color-mix(--color-warning 16%)) の上に乗る occurrence が新たに掃引され、そちらが ' +
+        '最悪値 2.87:1 になった。.lane-chevron 自身の color は変更しておらず (--color-text-tertiary の ' +
+        'まま)、bdboard-bdsd のスコープ (.lane-header-wip-exceeded .lane-count の fg/bg) 外。棚卸しは ' +
+        'bdboard-97ib.1 へ',
+    },
+  ],
   [
     'span.watch-toggle-icon',
     { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
@@ -483,6 +530,100 @@ async function settledTextSecondary(page: Page): Promise<string> {
   });
 }
 
+/**
+ * bdboard-bdsd: `/api/board` と `/api/settings/board-thresholds` の wire 形の
+ * うち触る部分だけを写したローカル定義。e2e は独立した tsc プロジェクト
+ * (test/e2e/tsconfig.json) なので web/src からは import しない
+ * (test/e2e/ai-quota-popover-clamp.spec.ts と同じ方針)。
+ */
+interface WipSweepBoardLike {
+  lanes: Record<string, unknown[]>;
+}
+interface WipSweepBoardViewLike {
+  projects: { board: WipSweepBoardLike }[];
+  merged: WipSweepBoardLike | null;
+}
+
+/**
+ * `in_progress`/`done` 以外のレーンから先頭 2 件 (中身は本物のまま) を `in_progress` へ動かす。
+ *
+ * bdboard-bdsd: 当初は `ready` レーン固定だった。`deriveLane()` を机上でシミュレートして
+ * `test/fixtures/bd/bdboard.list.json` は ready に 4 件と見積もったが、実際にサーバーが返す
+ * 値は pending-decision 等の判定を経て ready 0 件・awaiting_human 8 件で、机上シミュレートは
+ * 誤りだった (Playwright の実測: page snapshot で「着手可能 (0件)」「進行中 (0件)」
+ * 「確認待ち (8件)」)。結果として `ready` は常に空で `splice` が何も動かさず、WIP 超過状態が
+ * 一度も描画されないまま掃引が「素通り」していた。以後はレーンの中身を仮定せず、候補レーンを
+ * 順に見て最初に 2 件以上あるものから動かす方式にする。
+ */
+const IN_PROGRESS_SOURCE_LANE_CANDIDATES = ['ready', 'awaiting_human', 'blocked'] as const;
+
+function boostIntoInProgress(board: WipSweepBoardLike): void {
+  const inProgress = board.lanes.in_progress ?? [];
+  for (const laneName of IN_PROGRESS_SOURCE_LANE_CANDIDATES) {
+    const source = board.lanes[laneName] ?? [];
+    if (source.length >= 2) {
+      const moved = source.splice(0, 2);
+      for (const card of moved) {
+        if (card !== null && typeof card === 'object') {
+          (card as Record<string, unknown>).lane = 'in_progress';
+        }
+      }
+      board.lanes.in_progress = [...inProgress, ...moved];
+      return;
+    }
+  }
+  throw new Error(
+    'bdboard-bdsd: WIP 超過レーンのモック元にできる候補レーン ' +
+      `(${IN_PROGRESS_SOURCE_LANE_CANDIDATES.join('/')}) のいずれにも 2 件以上のカードが無かった。` +
+      'フィクスチャ (test/fixtures/bd/bdboard.list.json) の構成が変わった可能性が高いので、' +
+      'このモックの前提を見直すこと。',
+  );
+}
+
+/**
+ * 掃引対象に WIP 超過レーン (`.lane-header-wip-exceeded`) を含めるため、この 2 エンドポイント
+ * のレスポンスをこのテスト内だけ横取りして書き換える (bdboard-bdsd)。
+ *
+ * 掃引が依存する共有ゴールデン `test/fixtures/bd/bdboard.list.json` は smoke.spec.ts 等が
+ * カード件数を厳密一致で見ているので直接は変更しない。かわりにネットワーク層でだけ
+ * 「いずれかのレーンの先頭 2 件を `in_progress` へ動かし (= in_progress が 2 件、
+ * 詳細は boostIntoInProgress 参照)、WIP 上限を 1 に落として超過させる」ことで
+ * WIP 超過状態を作る。
+ *
+ * board-thresholds の PUT は一切行わない (GET レスポンスをその場で差し替えるだけ):
+ * この設定はサーバー側で `~/.config/bdboard/config.json` (常時稼働サーバーと共有される
+ * 実ファイル) に永続化される (`BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH` 未設定時の既定パス)。
+ * e2e サーバー自体は使い捨てだが設定ファイルの既定パスはホームディレクトリなので、
+ * 実際に PUT すると開発機の実ファイルを汚しかねない。
+ */
+async function mockWipExceededLane(page: Page): Promise<void> {
+  await page.route('**/api/settings/board-thresholds', async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Record<string, unknown>;
+    await route.fulfill({
+      status: response.status(),
+      contentType: 'application/json',
+      body: JSON.stringify({ ...body, inProgressWipLimit: 1 }),
+    });
+  });
+
+  await page.route('**/api/board?*', async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as WipSweepBoardViewLike;
+    for (const entry of body.projects) {
+      boostIntoInProgress(entry.board);
+    }
+    if (body.merged !== null) {
+      boostIntoInProgress(body.merged);
+    }
+    await route.fulfill({
+      status: response.status(),
+      contentType: 'application/json',
+      body: JSON.stringify(body),
+    });
+  });
+}
+
 /** ボードを開き、先頭カードの詳細パネルまで出す (= 実画面を 2 面ぶん描画する)。 */
 async function openBoardAndDetail(page: Page): Promise<void> {
   await page.goto('/');
@@ -514,7 +655,22 @@ async function runContrastSweep(
   themeLabel: string,
   knownSubAA: ReadonlyMap<string, KnownSubAA>,
 ): Promise<void> {
+  // bdboard-bdsd: 掃引が WIP 超過レーン (`.lane-header-wip-exceeded`) も踏むように、
+  // ナビゲーション前にルートを仕込む。詳細は mockWipExceededLane 参照。
+  await mockWipExceededLane(page);
   await openBoardAndDetail(page);
+  // bdboard-bdsd: 掃引が WIP 超過レーンを本当に描画したことを直接アサートする。
+  // このチケットで最初に踏んだ失敗は「モックが黙って何もせず、WIP 超過状態を一度も
+  // 描画しないまま掃引が green になっていた」ことなので、静かに空振りする余地を残さない。
+  // 許可リスト経由の間接的な保護 (`span.lane-header-label-text` /
+  // `span.lane-chevron` の stale 判定) は今は効いているが、棚卸し (bdboard-97ib.1) で
+  // 許可リストが空になった瞬間に消えるため、それとは独立にここへ置く。
+  await expect(
+    page.locator('.lane-header-wip-exceeded').first(),
+    `${themeLabel}の掃引に WIP 超過レーンが描画されなかった。mockWipExceededLane の ` +
+      'ルート横取り (/api/board, /api/settings/board-thresholds) が効いていないか、' +
+      '`.lane-header-wip-exceeded` の付与条件が変わった可能性が高い。',
+  ).toBeVisible();
   const handle = await pinElements(page);
   const samples = await page.evaluate(readSamples, handle);
   await handle.dispose();
@@ -537,8 +693,10 @@ async function runContrastSweep(
 
   // 掃引が「開いてはいるが中身が痩せた」状態を、件数の下限は捉えられない
   // (ボードとヘッダーだけで 150 は超え続ける)。許可リストのキーは結果的にアンカーとして
-  // 働くが、ダーク側は許可リストが空なのでその保護が無く、また**空にするのが目標**である
-  // 以上ライト側もいずれ失う。そこで許可リストから独立したアンカーを置く。
+  // 働くが、ダーク側は bdboard-bdsd 以前は許可リストが空でその保護が無く、また
+  // **空にするのが目標**である以上ライト側もいずれ失う (bdboard-bdsd で
+  // `span.lane-chevron` が 1 件入ったのも WIP 超過レーンを初めて掃引した副作用であって、
+  // 目標が変わったわけではない)。そこで許可リストから独立したアンカーを置く。
   // ボード / 詳細パネル / ヘッダーから 1 つずつ選んである。
   const observedSelectors = new Set(textSamples.map((sample) => selectorOf(sample.key)));
   const missingAnchors = SWEEP_ANCHORS.filter(
