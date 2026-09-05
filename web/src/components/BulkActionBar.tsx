@@ -24,6 +24,7 @@ import {
 } from '../bulkQuickAction';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { isImeComposingKeyEvent } from '../imeGuard';
+import { useBulkBarHeightVar } from '../hooks/useBulkBarHeightVar';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { describeWriteError } from '../writeAccessMessage';
 import { useBulkSelection } from './BulkSelectionProvider';
@@ -193,11 +194,13 @@ export function BulkActionBar({
   const [lastOutcome, setLastOutcome] = useState<
     BulkQuickActionOutcome | BulkIdOutcome | null
   >(null);
+  const barRef = useRef<HTMLDivElement>(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
   const cancelConfirmRef = useRef<HTMLButtonElement>(null);
 
   const selectedIds = bulkSelection?.selectedIds ?? new Set<string>();
   const selectedCount = selectedIds.size;
+  useBulkBarHeightVar(barRef, selectedCount > 0);
 
   const trimmedBulkLabelInput = bulkLabelInput.trim();
   const bulkLabelSuggestions = availableLabels
@@ -382,7 +385,7 @@ export function BulkActionBar({
   const mutationError = bulkMutation.error ?? bulkLabelMutation.error;
 
   return (
-    <div className="bulk-action-bar">
+    <div ref={barRef} className="bulk-action-bar">
       <div className="bulk-action-bar-summary">
         <span className="bulk-action-bar-count">{selectedCount}件選択中</span>
         <button

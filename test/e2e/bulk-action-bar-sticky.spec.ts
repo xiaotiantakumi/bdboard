@@ -6,23 +6,37 @@ import {
 } from './fixtures/bulk-selection.js';
 
 /**
- * BulkActionBar のモバイル bottom sticky (bdboard-h4xs.19)。
+ * BulkActionBar のモバイル固定配置と、カードを操作できる余白の不変条件
+ * (bdboard-h4xs.19)。
  *
- * 375px でカードを複数選択したあとページを縦スクロールしても、一括操作バーが
- * ビューポート内に留まり (position: sticky; bottom: 0)、横あふれや上側 sticky
- * 要素との重なりが無いことを getBoundingClientRect / elementFromPoint で検証する。
+ * 以前の spec はバー自身の viewport 内配置とボタンの hit test だけを測り、
+ * カードやレーンとの重なりを測っていなかった。そのため、1件を選択してバーが
+ * 現れた瞬間に次のカードのチェックボックスを塞ぐ BLOCKER-1 を検出できなかった。
+ * この spec はカードを36点で hit test し、レーンの下端補償、候補リスト、確認パネル、
+ * デスクトップへの CSS 漏れまでを INV-1〜INV-7 として直接検証する。
  *
- * bottom:0 sticky は要素を下方向へ押し下げない。DOM 上バーはレーンより前にあるため
- * order:1 で flex 視覚順を最後尾に回し、自然位置をドキュメント末尾に置いてから
- * bottom:0 を効かせる。order を外すと scrollTop=0 でバーは画面上部に居り、
- * barRect.bottom >= innerHeight のアサートが落ちる (変異検出)。
+ * INV-1 は意図的に条件付きである。scrollTop=0 ではヘッダーとフィルタ類により
+ * .lanes-scroll-region の上端が 620.48px、カード帯の上端が約 664.48px に来る。
+ * したがってカード用の画面内余白は 375x812 でも 147.5px、375x667 では 2.5px しかない。
+ * 後者は高さ178pxのバーを外しても2.5pxなので、無条件の「先頭でカードが1枚見える」は
+ * 成立しない。バーの上に48px以上のカード帯を置ける測定点だけ、実際の可視カードを要求する。
+ * クローム肥大は別チケット bdboard-qxt1 の対象であり、縮小後はこの条件が発火する点が増える。
  *
- * デスクトップ 1280x800: position=static, order=0 (モバイル限定変更の回帰ガード)
+ * 修正前は maxScroll=626px。修正後はバーをフローから外しレーンを縮めた結果 436pxで、
+ * maxScroll 時の lanes-scroll-region.bottom は 375x812 で 622.48px (bar.top=634px)、
+ * 375x667 で 477.48px (bar.top=489px)、可視カードはそれぞれ2枚 / 1枚だった。
+ * 修正後も先頭では両 viewport とも可視カード0枚であり、上記の条件付き判定と整合する。
  */
 
-const EDGE_TOLERANCE_PX = 0.5;
-const BOTTOM_STICK_TOLERANCE_PX = 2;
-const STICK_TOLERANCE_PX = 2;
+const TOLERANCE_PX = 1;
+const MIN_CARD_BAND_PX = 48;
+
+const MOBILE_VIEWPORTS = [
+  { width: 375, height: 812, label: '375x812' },
+  { width: 375, height: 667, label: '375x667' },
+] as const;
+
+type ScrollPoint = 'top' | 'middle' | 'bottom';
 
 interface RectSnapshot {
   top: number;
@@ -33,438 +47,553 @@ interface RectSnapshot {
   height: number;
 }
 
-interface ButtonHitTestSnapshot {
-  label: string;
-  rect: RectSnapshot;
+interface HitSnapshot {
   centerX: number;
   centerY: number;
   hitElementTag: string;
   hitElementClass: string;
-  hitIsButtonOrDescendant: boolean;
+  reachable: boolean;
 }
 
-interface BulkActionBarStickyMetrics {
+interface CardSnapshot {
+  index: number;
+  id: string | null;
+  rect: RectSnapshot;
+  inViewportSampleCount: number;
+  cardHitSampleCount: number;
+  visibleNotCovered: boolean;
+  checkbox: (HitSnapshot & { rect: RectSnapshot }) | null;
+}
+
+interface MobileGeometryMetrics {
   viewportLabel: string;
-  scrollTop: number;
-  documentScrollHeight: number;
+  point: ScrollPoint;
   innerWidth: number;
   innerHeight: number;
+  scrollTop: number;
+  scrollHeight: number;
+  maxScroll: number;
   bodyScrollWidth: number;
+  bulkBarHeightVar: string;
   barPosition: string;
-  barOrder: string;
   barRect: RectSnapshot;
-  headerRect: RectSnapshot | null;
+  lanesRegionRect: RectSnapshot;
+  headerRect: RectSnapshot;
   stripRect: RectSnapshot | null;
-  stripVisible: boolean;
-  buttonHitTests: ButtonHitTestSnapshot[];
+  laneCardsRect: RectSnapshot;
+  visibleLaneCardsRects: RectSnapshot[];
+  cards: CardSnapshot[];
+  visibleNotCovered: number;
 }
 
-async function measureBulkActionBarSticky(
-  page: Page,
-  viewportLabel: string,
-): Promise<BulkActionBarStickyMetrics> {
-  return page.evaluate(
-    ({ label }) => {
-      const bar = document.querySelector('.bulk-action-bar');
-      if (!(bar instanceof HTMLElement)) {
-        throw new Error('bulk-action-bar not found');
-      }
-
-      const header = document.querySelector('.header');
-      const strip = document.querySelector('.lane-indicator-strip');
-
-      const barRect = bar.getBoundingClientRect();
-      const headerRect =
-        header instanceof HTMLElement ? header.getBoundingClientRect() : null;
-      const stripRect =
-        strip instanceof HTMLElement ? strip.getBoundingClientRect() : null;
-
-      const stripVisible =
-        stripRect !== null &&
-        stripRect.height > 0 &&
-        stripRect.bottom > stripRect.top &&
-        window.getComputedStyle(strip!).display !== 'none';
-
-      const buttons = Array.from(bar.querySelectorAll('button'));
-      const buttonHitTests: ButtonHitTestSnapshot[] = buttons.map((button) => {
-        const rect = button.getBoundingClientRect();
-        const centerX = rect.left + rect.width / 2;
-        const centerY = rect.top + rect.height / 2;
-        const hit = document.elementFromPoint(centerX, centerY);
-        const hitIsButtonOrDescendant =
-          hit !== null && (hit === button || button.contains(hit));
-
-        return {
-          label: (button.textContent ?? '').trim() || button.getAttribute('aria-label') || 'button',
-          rect: {
-            top: rect.top,
-            bottom: rect.bottom,
-            left: rect.left,
-            right: rect.right,
-            width: rect.width,
-            height: rect.height,
-          },
-          centerX,
-          centerY,
-          hitElementTag: hit?.tagName.toLowerCase() ?? 'null',
-          hitElementClass:
-            hit instanceof HTMLElement && typeof hit.className === 'string'
-              ? hit.className
-              : '',
-          hitIsButtonOrDescendant,
-        };
-      });
-
-      const barStyle = window.getComputedStyle(bar);
-
-      return {
-        viewportLabel: label,
-        scrollTop: document.documentElement.scrollTop,
-        documentScrollHeight: document.documentElement.scrollHeight,
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        bodyScrollWidth: document.body.scrollWidth,
-        barPosition: barStyle.position,
-        barOrder: barStyle.order,
-        barRect: {
-          top: barRect.top,
-          bottom: barRect.bottom,
-          left: barRect.left,
-          right: barRect.right,
-          width: barRect.width,
-          height: barRect.height,
-        },
-        headerRect: headerRect
-          ? {
-              top: headerRect.top,
-              bottom: headerRect.bottom,
-              left: headerRect.left,
-              right: headerRect.right,
-              width: headerRect.width,
-              height: headerRect.height,
-            }
-          : null,
-        stripRect: stripRect
-          ? {
-              top: stripRect.top,
-              bottom: stripRect.bottom,
-              left: stripRect.left,
-              right: stripRect.right,
-              width: stripRect.width,
-              height: stripRect.height,
-            }
-          : null,
-        stripVisible,
-        buttonHitTests,
-      };
-    },
-    { label: viewportLabel },
+async function settleLayout(page: Page): Promise<void> {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
   );
-}
-
-function assertBarInsideViewport(
-  metrics: BulkActionBarStickyMetrics,
-  context: string,
-): void {
-  expect(
-    metrics.barRect.top,
-    `${context}: bar top must be >= 0 (top=${metrics.barRect.top}, scrollTop=${metrics.scrollTop})`,
-  ).toBeGreaterThanOrEqual(-EDGE_TOLERANCE_PX);
-  expect(
-    metrics.barRect.bottom,
-    `${context}: bar bottom must be <= innerHeight ` +
-      `(bottom=${metrics.barRect.bottom}, innerHeight=${metrics.innerHeight}, scrollTop=${metrics.scrollTop})`,
-  ).toBeLessThanOrEqual(metrics.innerHeight + 1);
-}
-
-function assertBarStuckToBottom(
-  metrics: BulkActionBarStickyMetrics,
-  context: string,
-): void {
-  expect(
-    metrics.documentScrollHeight,
-    `${context}: page must be vertically scrollable ` +
-      `(scrollHeight=${metrics.documentScrollHeight}, innerHeight=${metrics.innerHeight})`,
-  ).toBeGreaterThan(metrics.innerHeight);
-
-  expect(
-    metrics.barRect.bottom,
-    `${context}: bar bottom must be glued to viewport bottom ` +
-      `(bottom=${metrics.barRect.bottom}, innerHeight=${metrics.innerHeight}, scrollTop=${metrics.scrollTop})`,
-  ).toBeGreaterThanOrEqual(metrics.innerHeight - BOTTOM_STICK_TOLERANCE_PX);
-}
-
-function assertNoHorizontalOverflow(metrics: BulkActionBarStickyMetrics, context: string): void {
-  expect(
-    metrics.bodyScrollWidth,
-    `${context}: body.scrollWidth must not exceed innerWidth ` +
-      `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.innerWidth})`,
-  ).toBeLessThanOrEqual(metrics.innerWidth);
-
-  expect(
-    metrics.barRect.left,
-    `${context}: bar left must not clip past viewport ` +
-      `(left=${metrics.barRect.left})`,
-  ).toBeGreaterThanOrEqual(-EDGE_TOLERANCE_PX);
-  expect(
-    metrics.barRect.right,
-    `${context}: bar right must not exceed viewport ` +
-      `(right=${metrics.barRect.right}, innerWidth=${metrics.innerWidth})`,
-  ).toBeLessThanOrEqual(metrics.innerWidth + EDGE_TOLERANCE_PX);
-}
-
-/** ストリップ貼り付き状態が mid/bottom 測定のいずれかで観測されたかを追跡する。 */
-interface StripStuckTracker {
-  observed: boolean;
-}
-
-function computeStripIsStuck(metrics: BulkActionBarStickyMetrics): boolean {
-  const headerBottom = metrics.headerRect?.bottom ?? 0;
-  return (
-    metrics.stripVisible &&
-    metrics.stripRect !== null &&
-    Math.abs(metrics.stripRect.top - headerBottom) <= STICK_TOLERANCE_PX
-  );
-}
-
-// .lane-indicator-strip は top: var(--header-height) の sticky。
-// scrollTop=0 ではまだ貼り付いておらず自然位置 620.48〜664.48px に居る
-// (実測 2026-09-05, 375x812 / 375x667)。
-// そのため最上部ではバー (375x812: 634-812 / 375x667: 489-667) がストリップ下部と
-// 重なる。これは「バーを下端に貼る」以上避けられない前景/背景の重なりで、
-// バー側 z-index:6 > ストリップ 5 によりボタンは常に手前 (assertButtonHitTests が担保)。
-// 少し下へスクロールすればストリップはヘッダー直下に貼り付き、画面下端のバーとは分離する。
-// よってストリップ非重なりは「貼り付いている状態」に限定する。
-// モバイル最上部でレーン可視領域が狭い件は別チケット bdboard-qxt1 の領分。
-function assertBarBelowTopStickyChrome(
-  metrics: BulkActionBarStickyMetrics,
-  context: string,
-  stripStuckTracker?: StripStuckTracker,
-): void {
-  if (metrics.headerRect !== null) {
-    expect(
-      metrics.barRect.top,
-      `${context}: bar must not overlap header ` +
-        `(barTop=${metrics.barRect.top}, headerBottom=${metrics.headerRect.bottom})`,
-    ).toBeGreaterThanOrEqual(metrics.headerRect.bottom - EDGE_TOLERANCE_PX);
-  }
-
-  const stripIsStuck = computeStripIsStuck(metrics);
-  if (stripIsStuck && stripStuckTracker !== undefined) {
-    stripStuckTracker.observed = true;
-  }
-
-  if (stripIsStuck && metrics.stripRect !== null) {
-    expect(
-      metrics.barRect.top,
-      `${context}: bar must not overlap stuck lane-indicator-strip ` +
-        `(barTop=${metrics.barRect.top}, stripBottom=${metrics.stripRect.bottom}, ` +
-        `stripTop=${metrics.stripRect.top})`,
-    ).toBeGreaterThanOrEqual(metrics.stripRect.bottom - EDGE_TOLERANCE_PX);
-  }
-}
-
-function assertStripStuckObservedWhenVisible(
-  metrics: BulkActionBarStickyMetrics,
-  stripStuckTracker: StripStuckTracker,
-  viewportLabel: string,
-): void {
-  if (!metrics.stripVisible) {
-    return;
-  }
-
-  expect(
-    stripStuckTracker.observed,
-    `${viewportLabel}: lane-indicator-strip must stick under header at least once ` +
-      `(mid scroll or at bottom) so stuck-state non-overlap is exercised`,
-  ).toBe(true);
-}
-
-function assertButtonHitTests(metrics: BulkActionBarStickyMetrics, context: string): void {
-  for (const hit of metrics.buttonHitTests) {
-    expect(
-      hit.centerY,
-      `${context}: button "${hit.label}" center must be inside viewport ` +
-        `(centerY=${hit.centerY}, innerHeight=${metrics.innerHeight})`,
-    ).toBeGreaterThanOrEqual(0);
-    expect(
-      hit.centerY,
-      `${context}: button "${hit.label}" center must be inside viewport ` +
-        `(centerY=${hit.centerY}, innerHeight=${metrics.innerHeight})`,
-    ).toBeLessThanOrEqual(metrics.innerHeight);
-
-    expect(
-      hit.hitIsButtonOrDescendant,
-      `${context}: button "${hit.label}" must not be covered ` +
-        `(center=(${hit.centerX}, ${hit.centerY}), hit=${hit.hitElementTag}.${hit.hitElementClass})`,
-    ).toBe(true);
-  }
 }
 
 async function openBoardWithBulkSelection(page: Page): Promise<void> {
   await page.goto('/');
-  const firstCard = page.locator('article').first();
-  await expect(firstCard).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('article').first()).toBeVisible({ timeout: 15_000 });
   await selectTickets(page, DEFAULT_BULK_SELECTION_IDS);
   await waitForBulkActionBar(page);
+  await settleLayout(page);
 }
 
-async function scrollToTop(page: Page): Promise<void> {
-  await page.evaluate(() => window.scrollTo(0, 0));
-  const scrollTop = await page.evaluate(() => document.documentElement.scrollTop);
-  expect(scrollTop, 'page must be at scrollTop=0 before top-of-page measurement').toBe(0);
+async function prepareMeasurement(page: Page, targetScrollTop: number): Promise<number> {
+  await page.evaluate((target) => {
+    window.scrollTo(0, target);
+    // selectTickets().check() が scrollIntoView して変えたレーン内スクロールを毎回除去する。
+    for (const laneCards of Array.from(
+      document.querySelectorAll<HTMLElement>('.lane-cards'),
+    )) {
+      laneCards.scrollTop = 0;
+    }
+  }, targetScrollTop);
+  await settleLayout(page);
+  return page.evaluate(() => document.documentElement.scrollTop);
 }
 
-async function assertMobileStickyBehavior(
+async function measureMobileGeometry(
   page: Page,
   viewportLabel: string,
-): Promise<void> {
-  const stripStuckTracker: StripStuckTracker = { observed: false };
+  point: ScrollPoint,
+): Promise<MobileGeometryMetrics> {
+  return page.evaluate(
+    ({ label, scrollPoint }) => {
+      const rectSnapshot = (rect: DOMRect): RectSnapshot => ({
+        top: rect.top,
+        bottom: rect.bottom,
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        height: rect.height,
+      });
+      const hitIdentity = (hit: Element | null) => ({
+        hitElementTag: hit?.tagName.toLowerCase() ?? 'null',
+        hitElementClass:
+          hit instanceof HTMLElement && typeof hit.className === 'string' ? hit.className : '',
+      });
 
-  await scrollToTop(page);
+      const bar = document.querySelector('.bulk-action-bar');
+      const lanesRegion = document.querySelector('.lanes-scroll-region');
+      const header = document.querySelector('.header');
+      if (!(bar instanceof HTMLElement)) throw new Error('bulk-action-bar not found');
+      if (!(lanesRegion instanceof HTMLElement)) throw new Error('lanes-scroll-region not found');
+      if (!(header instanceof HTMLElement)) throw new Error('header not found');
 
-  const metricsAtTop = await measureBulkActionBarSticky(page, viewportLabel);
+      const strip = document.querySelector('.lane-indicator-strip');
+      const visibleLaneCards = Array.from(
+        document.querySelectorAll<HTMLElement>('.lane-cards'),
+      ).filter((laneCards) => {
+        const rect = laneCards.getBoundingClientRect();
+        const style = getComputedStyle(laneCards);
+        // 375x667 の top では rect.top≈674 で縦方向には完全に画面外だが、
+        // INV-1 の available band を算出するためその top 自体が必要。
+        // ここでの「可視中」は横スクロール上で見ているレーンを指す。
+        return (
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          rect.right > 0 &&
+          rect.left < window.innerWidth
+        );
+      });
+      if (visibleLaneCards.length === 0) throw new Error('visible lane-cards not found');
 
-  expect(
-    metricsAtTop.barPosition,
-    `${viewportLabel}: bar must use position sticky on mobile`,
-  ).toBe('sticky');
-  expect(
-    metricsAtTop.barOrder,
-    `${viewportLabel}: bar must use order:1 on mobile`,
-  ).toBe('1');
+      const cards: CardSnapshot[] = Array.from(document.querySelectorAll('article')).map(
+        (article, index) => {
+          const rect = article.getBoundingClientRect();
+          const sampledPoints = [0.2, 0.4, 0.6, 0.8].flatMap((xFraction) =>
+            Array.from({ length: 9 }, (_, sampleIndex) => (sampleIndex + 1) / 10).map(
+              (yFraction) => {
+                const x = rect.left + rect.width * xFraction;
+                const y = rect.top + rect.height * yFraction;
+                if (x < 0 || x >= window.innerWidth || y < 0 || y >= window.innerHeight) {
+                  return { inViewport: false, hitsCard: false };
+                }
+                const hit = document.elementFromPoint(x, y);
+                return {
+                  inViewport: true,
+                  hitsCard: hit !== null && (hit === article || article.contains(hit)),
+                };
+              },
+            ),
+          );
+          const checkboxLabel = article.querySelector('label.card-bulk-checkbox');
+          const checkboxInput = checkboxLabel?.querySelector('input[type="checkbox"]');
+          const checkbox =
+            checkboxLabel instanceof HTMLElement && checkboxInput instanceof HTMLInputElement
+              ? (() => {
+                  const checkboxRect = checkboxLabel.getBoundingClientRect();
+                  const centerX = checkboxRect.left + checkboxRect.width / 2;
+                  const centerY = checkboxRect.top + checkboxRect.height / 2;
+                  const hit = document.elementFromPoint(centerX, centerY);
+                  return {
+                    rect: rectSnapshot(checkboxRect),
+                    centerX,
+                    centerY,
+                    ...hitIdentity(hit),
+                    reachable:
+                      hit !== null &&
+                      (hit === checkboxLabel || checkboxLabel.contains(hit) || hit === checkboxInput),
+                  };
+                })()
+              : null;
 
-  // AC1 (sticky works): bar glued to viewport bottom while page is scrollable
-  assertBarStuckToBottom(metricsAtTop, `${viewportLabel} at top of page`);
-  assertBarInsideViewport(metricsAtTop, `${viewportLabel} at top of page`);
-  // AC2 (no horizontal overflow)
-  assertNoHorizontalOverflow(metricsAtTop, `${viewportLabel} at top of page`);
-  assertBarBelowTopStickyChrome(
-    metricsAtTop,
-    `${viewportLabel} at top of page`,
-    stripStuckTracker,
-  );
-
-  const midScrollTarget = await page.evaluate(() => {
-    const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-    const target = Math.round(maxScroll / 2);
-    window.scrollTo(0, target);
-    return { maxScroll, target, actual: document.documentElement.scrollTop };
-  });
-
-  expect(
-    midScrollTarget.maxScroll,
-    `${viewportLabel} mid scroll setup: page must be vertically scrollable`,
-  ).toBeGreaterThan(0);
-  expect(
-    midScrollTarget.actual,
-    `${viewportLabel} mid scroll setup: must not be at top`,
-  ).toBeGreaterThan(0);
-  expect(
-    midScrollTarget.actual,
-    `${viewportLabel} mid scroll setup: must not clamp to bottom ` +
-      `(actual=${midScrollTarget.actual}, maxScroll=${midScrollTarget.maxScroll})`,
-  ).toBeLessThan(midScrollTarget.maxScroll);
-
-  const metricsMidScroll = await measureBulkActionBarSticky(page, viewportLabel);
-
-  expect(metricsMidScroll.barPosition, `${viewportLabel} mid scroll`).toBe('sticky');
-  // AC1: bar stays in viewport while lanes are scrolled
-  assertBarInsideViewport(metricsMidScroll, `${viewportLabel} mid scroll`);
-  assertBarBelowTopStickyChrome(
-    metricsMidScroll,
-    `${viewportLabel} mid scroll`,
-    stripStuckTracker,
-  );
-  assertButtonHitTests(metricsMidScroll, `${viewportLabel} mid scroll`);
-
-  await page.evaluate(() => {
-    window.scrollTo(0, document.documentElement.scrollHeight);
-  });
-
-  const scrollTop = await page.evaluate(() => document.documentElement.scrollTop);
-  expect(
-    scrollTop,
-    `${viewportLabel}: page must scroll vertically (scrollTop=${scrollTop}, ` +
-      `scrollHeight=${metricsAtTop.documentScrollHeight})`,
-  ).toBeGreaterThan(0);
-
-  const metricsAtBottom = await measureBulkActionBarSticky(page, viewportLabel);
-
-  await test.info().attach(`bulk-action-bar-sticky-metrics-${viewportLabel}`, {
-    body: JSON.stringify(
-      {
-        atTop: metricsAtTop,
-        midScroll: {
-          ...metricsMidScroll,
-          maxScroll: midScrollTarget.maxScroll,
-          midScrollTarget: {
-            target: midScrollTarget.target,
-            actual: midScrollTarget.actual,
-          },
+          return {
+            index,
+            id: article.querySelector('.card-id')?.textContent?.trim() ?? null,
+            rect: rectSnapshot(rect),
+            inViewportSampleCount: sampledPoints.filter((sample) => sample.inViewport).length,
+            cardHitSampleCount: sampledPoints.filter((sample) => sample.hitsCard).length,
+            visibleNotCovered: sampledPoints.some((sample) => sample.hitsCard),
+            checkbox,
+          };
         },
-        atBottom: metricsAtBottom,
-      },
-      null,
-      2,
-    ),
-    contentType: 'application/json',
-  });
+      );
 
-  expect(metricsAtBottom.barPosition, `${viewportLabel} at bottom`).toBe('sticky');
-  assertBarInsideViewport(metricsAtBottom, `${viewportLabel} at bottom`);
-  assertNoHorizontalOverflow(metricsAtBottom, `${viewportLabel} at bottom`);
-  assertBarBelowTopStickyChrome(
-    metricsAtBottom,
-    `${viewportLabel} at bottom`,
-    stripStuckTracker,
+      const barRect = bar.getBoundingClientRect();
+      const barStyle = getComputedStyle(bar);
+      const visibleLaneCardsRects = visibleLaneCards.map((laneCards) =>
+        rectSnapshot(laneCards.getBoundingClientRect()),
+      );
+
+      return {
+        viewportLabel: label,
+        point: scrollPoint,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        scrollTop: document.documentElement.scrollTop,
+        scrollHeight: document.documentElement.scrollHeight,
+        maxScroll: document.documentElement.scrollHeight - window.innerHeight,
+        bodyScrollWidth: document.body.scrollWidth,
+        bulkBarHeightVar: getComputedStyle(document.documentElement)
+          .getPropertyValue('--bulk-bar-height')
+          .trim(),
+        barPosition: barStyle.position,
+        barRect: rectSnapshot(barRect),
+        lanesRegionRect: rectSnapshot(lanesRegion.getBoundingClientRect()),
+        headerRect: rectSnapshot(header.getBoundingClientRect()),
+        stripRect: strip instanceof HTMLElement ? rectSnapshot(strip.getBoundingClientRect()) : null,
+        laneCardsRect: visibleLaneCardsRects[0]!,
+        visibleLaneCardsRects,
+        cards,
+        visibleNotCovered: cards.filter((card) => card.visibleNotCovered).length,
+      };
+    },
+    { label: viewportLabel, scrollPoint: point },
   );
-  assertStripStuckObservedWhenVisible(metricsAtBottom, stripStuckTracker, viewportLabel);
-  assertButtonHitTests(metricsAtBottom, `${viewportLabel} at bottom`);
 }
 
-const MOBILE_VIEWPORTS = [
-  { width: 375, height: 812, label: '375x812' },
-  { width: 375, height: 667, label: '375x667' },
-] as const;
+function availableBandAboveBar(metrics: MobileGeometryMetrics): number {
+  const bandTop = Math.max(
+    0,
+    metrics.headerRect.bottom,
+    metrics.stripRect?.bottom ?? 0,
+    metrics.laneCardsRect.top,
+  );
+  const bandBottom = Math.min(
+    metrics.innerHeight,
+    metrics.barRect.top,
+    metrics.lanesRegionRect.bottom,
+  );
+  return bandBottom - bandTop;
+}
+
+function assertMobilePoint(metrics: MobileGeometryMetrics, context: string): void {
+  // INV-4: fixed bar は全スクロール点で viewport 下端に貼り付く。
+  expect(metrics.barPosition, `${context}: mobile bar position`).toBe('fixed');
+  expect(metrics.barRect.bottom, `${context}: bar bottom must match viewport bottom`).toBeGreaterThanOrEqual(
+    metrics.innerHeight - TOLERANCE_PX,
+  );
+  expect(metrics.barRect.bottom, `${context}: bar bottom must match viewport bottom`).toBeLessThanOrEqual(
+    metrics.innerHeight + TOLERANCE_PX,
+  );
+  expect(metrics.barRect.top, `${context}: bar top must remain in viewport`).toBeGreaterThanOrEqual(
+    -TOLERANCE_PX,
+  );
+
+  // INV-5: bar も body も横方向へ viewport をはみ出さない。
+  expect(metrics.bodyScrollWidth, `${context}: body must not overflow horizontally`).toBeLessThanOrEqual(
+    metrics.innerWidth,
+  );
+  expect(metrics.barRect.left, `${context}: bar left edge`).toBeGreaterThanOrEqual(-TOLERANCE_PX);
+  expect(metrics.barRect.right, `${context}: bar right edge`).toBeLessThanOrEqual(
+    metrics.innerWidth + TOLERANCE_PX,
+  );
+
+  // INV-1: カード帯を置ける測定点だけ、ヒットテスト上の可視カードを要求する。
+  const availableBand = availableBandAboveBar(metrics);
+  if (availableBand >= MIN_CARD_BAND_PX) {
+    expect(
+      metrics.visibleNotCovered,
+      `${context}: ${availableBand.toFixed(2)}px is available above bar, so a card must be visible`,
+    ).toBeGreaterThan(0);
+  }
+
+  // INV-2: 見えている最初のカードは、次の一括選択へ進めるチェックボックスを持つ。
+  if (metrics.visibleNotCovered >= 1) {
+    const firstVisibleCard = metrics.cards.find((card) => card.visibleNotCovered);
+    expect(firstVisibleCard, `${context}: first visible card snapshot`).toBeDefined();
+    expect(
+      firstVisibleCard?.checkbox,
+      `${context}: visible card ${firstVisibleCard?.id ?? '(unknown)'} must have a bulk checkbox`,
+    ).not.toBeNull();
+    expect(
+      firstVisibleCard?.checkbox?.reachable,
+      `${context}: checkbox for visible card ${firstVisibleCard?.id ?? '(unknown)'} must be hit-testable ` +
+        `(hit=${firstVisibleCard?.checkbox?.hitElementTag}.${firstVisibleCard?.checkbox?.hitElementClass})`,
+    ).toBe(true);
+  }
+}
+
+async function attachJson(name: string, value: unknown): Promise<void> {
+  await test.info().attach(name, {
+    body: JSON.stringify(value, null, 2),
+    contentType: 'application/json',
+  });
+}
+
+async function measureLabelSuggestions(page: Page, viewportLabel: string) {
+  const input = page.locator('.bulk-action-label-input');
+  await input.fill('house');
+  const suggestion = page
+    .locator('ul.bulk-label-suggestions')
+    .getByRole('button', { name: 'housekeeping', exact: true });
+  await expect(suggestion).toBeVisible();
+
+  return page.evaluate((label) => {
+    const list = document.querySelector('ul.bulk-label-suggestions');
+    const candidate = Array.from(list?.querySelectorAll('button') ?? []).find(
+      (button) => button.textContent?.trim() === 'housekeeping',
+    );
+    if (!(list instanceof HTMLElement)) throw new Error('bulk-label-suggestions not found');
+    if (!(candidate instanceof HTMLButtonElement)) throw new Error('housekeeping suggestion not found');
+    const listRect = list.getBoundingClientRect();
+    const buttonRect = candidate.getBoundingClientRect();
+    const centerX = buttonRect.left + buttonRect.width / 2;
+    const centerY = buttonRect.top + buttonRect.height / 2;
+    const hit = document.elementFromPoint(centerX, centerY);
+    return {
+      viewportLabel: label,
+      innerHeight: window.innerHeight,
+      suggestionsRect: {
+        top: listRect.top,
+        bottom: listRect.bottom,
+        left: listRect.left,
+        right: listRect.right,
+        width: listRect.width,
+        height: listRect.height,
+      },
+      candidate: {
+        centerX,
+        centerY,
+        hitElementTag: hit?.tagName.toLowerCase() ?? 'null',
+        hitElementClass:
+          hit instanceof HTMLElement && typeof hit.className === 'string' ? hit.className : '',
+        reachable: hit !== null && (hit === candidate || candidate.contains(hit)),
+      },
+    };
+  }, viewportLabel);
+}
+
+async function assertConfirmPanel(page: Page): Promise<void> {
+  await page.locator('.bulk-action-label-input').fill('');
+  await expect(page.locator('ul.bulk-label-suggestions')).toHaveCount(0);
+  await page
+    .locator('.bulk-action-bar')
+    .getByRole('button', { name: '完了', exact: true })
+    .click();
+
+  const panel = page.locator('.bulk-action-confirm-panel');
+  await expect(panel).toBeVisible();
+  await settleLayout(page);
+
+  const metrics = await page.evaluate(() => {
+    const bar = document.querySelector('.bulk-action-bar');
+    const confirmPanel = document.querySelector('.bulk-action-confirm-panel');
+    if (!(bar instanceof HTMLElement)) throw new Error('bulk-action-bar not found');
+    if (!(confirmPanel instanceof HTMLElement)) throw new Error('bulk-action-confirm-panel not found');
+
+    const buttonHit = (text: string) => {
+      const button = Array.from(confirmPanel.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent?.trim() === text,
+      );
+      if (!(button instanceof HTMLButtonElement)) throw new Error(`${text} button not found`);
+      const rect = button.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const hit = document.elementFromPoint(centerX, centerY);
+      return {
+        text,
+        centerX,
+        centerY,
+        hitElementTag: hit?.tagName.toLowerCase() ?? 'null',
+        hitElementClass:
+          hit instanceof HTMLElement && typeof hit.className === 'string' ? hit.className : '',
+        reachable: hit !== null && (hit === button || button.contains(hit)),
+      };
+    };
+
+    const barRect = bar.getBoundingClientRect();
+    return {
+      innerHeight: window.innerHeight,
+      barRect: {
+        top: barRect.top,
+        bottom: barRect.bottom,
+        left: barRect.left,
+        right: barRect.right,
+        width: barRect.width,
+        height: barRect.height,
+      },
+      barMaxHeight: getComputedStyle(bar).maxHeight,
+      buttons: [buttonHit('キャンセル'), buttonHit('実行する')],
+    };
+  });
+
+  await attachJson('inv-7-confirm-panel-375x812', metrics);
+  expect(metrics.barRect.top, 'INV-7: expanded bar top must remain in viewport').toBeGreaterThanOrEqual(
+    -TOLERANCE_PX,
+  );
+  expect(metrics.barRect.height, 'INV-7: max-height:70dvh must cap expanded bar').toBeLessThanOrEqual(
+    metrics.innerHeight * 0.7 + TOLERANCE_PX,
+  );
+  for (const button of metrics.buttons) {
+    expect(
+      button.reachable,
+      `INV-7: ${button.text} must be hit-testable ` +
+        `(hit=${button.hitElementTag}.${button.hitElementClass})`,
+    ).toBe(true);
+  }
+
+  // 一括操作は実行せず、測定後に確認パネルを閉じる。
+  await panel.getByRole('button', { name: 'キャンセル', exact: true }).click();
+  await expect(panel).toHaveCount(0);
+}
 
 for (const viewport of MOBILE_VIEWPORTS) {
-  test.describe(`bulk action bar sticky @ ${viewport.label}`, () => {
+  test.describe(`bulk action bar invariants @ ${viewport.label}`, () => {
     test.use({
       viewport: { width: viewport.width, height: viewport.height },
       isMobile: true,
       hasTouch: true,
     });
 
-    test('bar stays in viewport after vertical scroll without horizontal overflow', async ({
-      page,
-    }) => {
+    test('keeps cards reachable and compensated around the fixed bar', async ({ page }) => {
       test.setTimeout(60_000);
       await openBoardWithBulkSelection(page);
-      await assertMobileStickyBehavior(page, viewport.label);
+
+      const initialMaxScroll = await page.evaluate(
+        () => document.documentElement.scrollHeight - window.innerHeight,
+      );
+      expect(initialMaxScroll, `${viewport.label}: page must be vertically scrollable`).toBeGreaterThan(0);
+      const targets: Array<{ point: ScrollPoint; scrollTop: number }> = [
+        { point: 'top', scrollTop: 0 },
+        { point: 'middle', scrollTop: Math.round(initialMaxScroll / 2) },
+        { point: 'bottom', scrollTop: initialMaxScroll },
+      ];
+
+      for (const target of targets) {
+        const actual = await prepareMeasurement(page, target.scrollTop);
+        const metrics = await measureMobileGeometry(page, viewport.label, target.point);
+        await attachJson(
+          `bulk-action-bar-${viewport.label}-${target.point}`,
+          {
+            targetScrollTop: target.scrollTop,
+            availableBandAboveBar: availableBandAboveBar(metrics),
+            inv1Fires: availableBandAboveBar(metrics) >= MIN_CARD_BAND_PX,
+            metrics,
+          },
+        );
+
+        if (target.point === 'top') {
+          expect(actual, `${viewport.label}: top measurement scrollTop`).toBe(0);
+        }
+        if (target.point === 'middle') {
+          expect(actual, `${viewport.label}: middle must be below top`).toBeGreaterThan(0);
+          expect(
+            actual,
+            `${viewport.label}: middle must not clamp to maxScroll ` +
+              `(actual=${actual}, maxScroll=${metrics.maxScroll})`,
+          ).toBeLessThan(metrics.maxScroll);
+        }
+        if (target.point === 'bottom') {
+          expect(
+            actual,
+            `${viewport.label}: bottom measurement must reach maxScroll ` +
+              `(actual=${actual}, maxScroll=${metrics.maxScroll})`,
+          ).toBeGreaterThanOrEqual(metrics.maxScroll - TOLERANCE_PX);
+        }
+
+        assertMobilePoint(metrics, `${viewport.label} ${target.point}`);
+
+        if (target.point === 'bottom') {
+          // INV-3: 最下部ではレーン領域全体がバーの上に出て、カードを覆われない位置へ運べる。
+          expect(
+            metrics.lanesRegionRect.bottom,
+            `${viewport.label}: compensated lanes region must end above bar at maxScroll`,
+          ).toBeLessThanOrEqual(metrics.barRect.top + TOLERANCE_PX);
+          expect(
+            metrics.visibleNotCovered,
+            `${viewport.label}: at least one card must be visible at maxScroll`,
+          ).toBeGreaterThanOrEqual(1);
+        }
+      }
+
+      // INV-6: 修正前の 375x812 は ul=809..847.58px / innerHeight=812px で、
+      // 候補中心の elementFromPoint が null だった。上向き反転後は全体と候補中心が画面内にある。
+      await prepareMeasurement(page, 0);
+      const suggestions = await measureLabelSuggestions(page, viewport.label);
+      await attachJson(`inv-6-label-suggestions-${viewport.label}`, suggestions);
+      expect(suggestions.suggestionsRect.top, `${viewport.label}: suggestion top`).toBeGreaterThanOrEqual(
+        -TOLERANCE_PX,
+      );
+      expect(
+        suggestions.suggestionsRect.bottom,
+        `${viewport.label}: suggestion bottom must stay in viewport`,
+      ).toBeLessThanOrEqual(suggestions.innerHeight + TOLERANCE_PX);
+      expect(
+        suggestions.candidate.reachable,
+        `${viewport.label}: housekeeping suggestion must be hit-testable ` +
+          `(hit=${suggestions.candidate.hitElementTag}.${suggestions.candidate.hitElementClass})`,
+      ).toBe(true);
+
+      if (viewport.label === '375x812') {
+        await assertConfirmPanel(page);
+      }
     });
   });
 }
 
-test.describe('bulk action bar sticky desktop regression', () => {
-  test.use({
-    viewport: { width: 1280, height: 800 },
-  });
+test.describe('bulk action bar desktop regression', () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
 
-  test('desktop keeps position static', async ({ page }) => {
+  test('keeps static placement and downward label suggestions', async ({ page }) => {
     test.setTimeout(60_000);
     await openBoardWithBulkSelection(page);
 
-    const styles = await page.evaluate(() => {
+    await page.locator('.bulk-action-label-input').fill('house');
+    await expect(
+      page
+        .locator('ul.bulk-label-suggestions')
+        .getByRole('button', { name: 'housekeeping', exact: true }),
+    ).toBeVisible();
+
+    const metrics = await page.evaluate(() => {
       const bar = document.querySelector('.bulk-action-bar');
-      if (!(bar instanceof HTMLElement)) {
-        throw new Error('bulk-action-bar not found');
-      }
-      const computed = window.getComputedStyle(bar);
-      return { position: computed.position, order: computed.order };
+      const lanesRegion = document.querySelector('.lanes-scroll-region');
+      const labelGroup = document.querySelector('.bulk-action-label-group');
+      const suggestions = document.querySelector('ul.bulk-label-suggestions');
+      if (!(bar instanceof HTMLElement)) throw new Error('bulk-action-bar not found');
+      if (!(lanesRegion instanceof HTMLElement)) throw new Error('lanes-scroll-region not found');
+      if (!(labelGroup instanceof HTMLElement)) throw new Error('bulk-action-label-group not found');
+      if (!(suggestions instanceof HTMLElement)) throw new Error('bulk-label-suggestions not found');
+      const barRect = bar.getBoundingClientRect();
+      const lanesRect = lanesRegion.getBoundingClientRect();
+      const groupRect = labelGroup.getBoundingClientRect();
+      const suggestionsRect = suggestions.getBoundingClientRect();
+      const suggestionsStyle = getComputedStyle(suggestions);
+      return {
+        barPosition: getComputedStyle(bar).position,
+        barBottom: barRect.bottom,
+        lanesTop: lanesRect.top,
+        labelGroupBottom: groupRect.bottom,
+        suggestionsTop: suggestionsRect.top,
+        suggestionsComputedTop: suggestionsStyle.top,
+        suggestionsComputedBottom: suggestionsStyle.bottom,
+      };
     });
 
-    expect(styles.position, 'desktop bulk-action-bar must remain position static').toBe('static');
-    expect(styles.order, 'desktop bulk-action-bar must not inherit mobile order:1').toBe('0');
+    await attachJson('desktop-bulk-action-bar-regression', metrics);
+    expect(metrics.barPosition, 'desktop bar must remain in normal flow').toBe('static');
+    expect(metrics.barBottom, 'desktop bar must stay above card lanes').toBeLessThanOrEqual(
+      metrics.lanesTop + TOLERANCE_PX,
+    );
+    // 絶対配置要素の getComputedStyle は used value を返すため、CSS の
+    // bottom: auto は "auto" として観測できない（実測: -48.0469px）。
+    // モバイルの上方向反転がデスクトップへ漏れていないことは幾何で確認する。
+    // ul.bulk-label-suggestions は .label-suggestions 系の既存スタイルで上 margin
+    // 8px を持つため、position:absolute; top:100%（= 親 .bulk-action-label-group の
+    // 高さぶんの computed top、実測 29.1094px）でも矩形上端は親の下端より 8px 下になる。
+    // |suggestionsTop - labelGroupBottom| <= 1px の完全一致要求は誤り（実測: 差 8px）。
+    const resolvedTopPx = parseFloat(metrics.suggestionsComputedTop);
+    expect(
+      Number.isFinite(resolvedTopPx),
+      `desktop suggestions must have resolved top (not auto; got ${metrics.suggestionsComputedTop})`,
+    ).toBe(true);
+    expect(
+      metrics.suggestionsTop,
+      `desktop suggestions must not flip above their group ` +
+        `(computed top=${metrics.suggestionsComputedTop}, ` +
+        `computed bottom=${metrics.suggestionsComputedBottom})`,
+    ).toBeGreaterThanOrEqual(metrics.labelGroupBottom - TOLERANCE_PX);
+
+    // この fixture には一括操作を実行せず undo snackbar を出す導線が無い。
+    // 破壊的操作を追加してまでモバイル用 snackbar offset の漏れは測定しない。
   });
 });
