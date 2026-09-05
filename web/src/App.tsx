@@ -90,6 +90,7 @@ import {
 } from './boardTicketIds';
 import { buildPaletteActions, VIEW_LABELS } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
+import { compareStrings } from './compare';
 
 export function App() {
   useHeaderHeightVar();
@@ -520,7 +521,10 @@ export function App() {
     for (const entry of data.projects) {
       collectBoardLabels(entry.board, labels);
     }
-    return [...labels].sort();
+    // BoardFilterBar が同じ集合を compareStrings で並べ直すので、ここも明示的に
+    // 同じコンパレータを使って desync のクラスごと消す。素の .sort() と
+    // compareStrings は同じ < 意味論なので、これは挙動として no-op (bdboard-254q)。
+    return [...labels].sort(compareStrings);
   }, [boardQuery.data]);
 
   const boardCardsById = useMemo(() => {
