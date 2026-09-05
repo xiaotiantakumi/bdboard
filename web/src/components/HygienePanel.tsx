@@ -78,7 +78,7 @@ const HARNESS_HOOKS_KIND_LABEL = 'hook 未登録';
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
 
-const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
+export const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   dependency_cycle: '循環依存',
   overdue_defer: '期限超過の保留',
   stale_epic: '完了済みエピック',
