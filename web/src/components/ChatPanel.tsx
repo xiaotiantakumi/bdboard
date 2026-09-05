@@ -3002,7 +3002,7 @@ export function ChatPanel({
     <div className="overlay" onClick={requestClose} role="presentation">
       <div
         ref={panelRef}
-        className={`detail-panel chat-panel resizable-side-panel${chatPanel.isResizing ? ' is-resizing' : ''}${isChatPanelMaximized ? ' is-maximized' : ''}${currentAttachments.length > 0 ? ' has-attachments' : ''}`}
+        className={`detail-panel chat-panel resizable-side-panel${chatPanel.isResizing ? ' is-resizing' : ''}${isChatPanelMaximized ? ' is-maximized' : ''}`}
         style={{ width: isChatPanelMaximized ? '100%' : `${chatPanel.width}px` }}
         tabIndex={-1}
         onClick={(event) => event.stopPropagation()}

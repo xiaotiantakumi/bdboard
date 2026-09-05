@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 export async function openChatPanel(page: Page) {
   await page.goto('/');
@@ -35,10 +35,25 @@ export async function ensureProjectSelected(page: Page) {
   expect(describedBy).not.toContain('chat-project-unselected-hint');
 }
 
-export async function pastePngAttachment(
-  textarea: import('@playwright/test').Locator,
-  fileName: string,
-) {
+/**
+ * `/api/chat/agents` の応答を実サーバーから取得したうえで availability だけ 'unavailable' に
+ * 差し替える。ラベル・model・supportsImages 等は実応答のまま残すので、フィクスチャが実ボードから
+ * 乖離しない。`openChatPanel` (page.goto) より**前**に呼ぶこと。
+ */
+export async function stubAgentsUnavailable(page: Page) {
+  await page.route('**/api/chat/agents', async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as Array<Record<string, unknown>>;
+    const patched = body.map((agent) => ({ ...agent, availability: 'unavailable' }));
+    await route.fulfill({
+      status: response.status(),
+      contentType: 'application/json',
+      body: JSON.stringify(patched),
+    });
+  });
+}
+
+export async function pastePngAttachment(textarea: Locator, fileName: string) {
   await textarea.evaluate((el, name) => {
     const pngBase64 =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -60,10 +75,7 @@ export async function pastePngAttachment(
   }, fileName);
 }
 
-export async function pastePngAttachments(
-  textarea: import('@playwright/test').Locator,
-  count: number,
-) {
+export async function pastePngAttachments(textarea: Locator, count: number) {
   for (let i = 0; i < count; i++) {
     await pastePngAttachment(textarea, `test-${i + 1}.png`);
   }
@@ -71,8 +83,8 @@ export async function pastePngAttachments(
 
 /**
  * `.chat-messages` は `.chat-panel` 内で唯一の `flex: 1 1 auto; min-height: 0` なので、
- * 固定チャンクが増えるとこれが先に潰れる。clientHeight がそのまま「会話領域の実測高さ」。
- * つまり clientHeight がそのまま「あと何 px 増やせるか」の実測値になる。
+ * 固定チャンクが増えるとこれが先に潰れる。clientHeight がそのまま「会話領域の実測高さ」
+ * (= あと何 px 増やせるかの実測値)。
  * `scrollHeight <= clientHeight` は溢れの有無しか言わないので、余裕の観測にはこちらを見る
  * (bdboard-iglk レビュー: 余裕 7.9px で破綻した件)。
  * bdboard-7fsw 以降、375×430 で添付時も 40px 以上を CSS で確保する。
@@ -135,10 +147,25 @@ export async function readMessagesHeight(page: Page): Promise<number> {
   return page.locator('.chat-messages').evaluate((el) => el.getBoundingClientRect().height);
 }
 
-export async function readPreviewSize(page: Page): Promise<{ width: number; height: number }> {
+export async function readNoticesHeight(page: Page): Promise<number> {
+  return page.locator('.chat-input-notices').evaluate((el) => el.getBoundingClientRect().height);
+}
+
+export async function readNoticesScrollHeight(page: Page): Promise<number> {
+  return page.locator('.chat-input-notices').evaluate((el) => el.scrollHeight);
+}
+
+export async function waitForFirstAttachmentPreview(page: Page): Promise<Locator> {
   const preview = page.locator('.chat-attachment-preview').first();
   await expect(preview).toBeVisible();
+  return preview;
+}
+
+export async function readPreviewSize(page: Page): Promise<{ width: number; height: number }> {
+  const preview = page.locator('.chat-attachment-preview').first();
   const box = await preview.boundingBox();
-  expect(box).not.toBeNull();
-  return { width: box!.width, height: box!.height };
+  if (!box) {
+    throw new Error('.chat-attachment-preview boundingBox() returned null');
+  }
+  return { width: box.width, height: box.height };
 }
