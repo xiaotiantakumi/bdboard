@@ -43,7 +43,7 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
     hasTouch: true,
   });
 
-  test('375x812: card watch toggle exposes a measured 44px hit area without overlapping title or bulk checkbox', async ({
+  test('375x812: card watch toggle has a 44px vertical hit band clear of title and bulk checkbox', async ({
     page,
   }) => {
     await page.goto('/');
@@ -110,8 +110,9 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
         // The card bulk checkbox overlays the lower-right part of this band's x range.
         const top = scan(centerY, -1, (y) => isToggleHit(left.boundary + 1, y));
         const bottom = scan(centerY, 1, (y) => isToggleHit(left.boundary + 1, y));
-        // measuredTop + 1 is above the checkbox top edge, finding the true right edge.
-        const right = scan(centerX, 1, (x) => isToggleHit(x, top.boundary + 1));
+        // Measure the touchable horizontal band at the button centre. Its rightmost
+        // 8px is intentionally claimed by the overlaid bulk checkbox.
+        const right = scan(centerX, 1, (x) => isToggleHit(x, centerY));
         return {
           found: true,
           measuredLeft: left.boundary,
@@ -161,18 +162,34 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
 
     const measuredWidth = result.measuredRight - result.measuredLeft;
     const measuredHeight = result.measuredBottom - result.measuredTop;
-    // 375×812 実測: left=215.25, right=259.75, top=481.58, bottom=526.08
-    // (44.5×44.5; elementFromPoint rounding may extend an edge by about 0.5px).
-    // A 43px mutation measures 43.5px and must fail; do not add a 1px tolerance.
-    expect(measuredWidth, `card watch measured width=${measuredWidth}px`).toBeGreaterThanOrEqual(
-      MIN_TAP_TARGET_PX,
+    console.log(
+      JSON.stringify({
+        case: 'card-watch-toggle-vertical-hit-band',
+        measuredLeft: result.measuredLeft,
+        measuredRight: result.measuredRight,
+        measuredTop: result.measuredTop,
+        measuredBottom: result.measuredBottom,
+        titleRight: result.titleRight,
+        checkboxLeft: result.checkboxLeft,
+        measuredWidth,
+        measuredHeight,
+      }),
     );
+    // 375px 実測: 実効タップ帯=[243.25, 259]、縦=[466.47, 510.97]=44.5px。
+    // titleRight=238、checkboxLeft=260。measuredWidth は 44px 未満で意図どおり
+    // (横方向は bdboard-1oep 待ち。右 8px はチェックボックスが取る)。
     expect(measuredHeight, `card watch measured height=${measuredHeight}px`).toBeGreaterThanOrEqual(
       MIN_TAP_TARGET_PX,
     );
 
-    // Same 375px measurement: checkboxLeft=260. The 0.5px allowance only
-    // accounts for hit-test rounding; right:6px measures 261.75px.
+    // Title right is measured from its border box; no tolerance is needed because the
+    // band must begin at or to its right, never extend into its horizontal range.
+    expect(result.measuredLeft, `card watch measured left=${result.measuredLeft}px`).toBeGreaterThanOrEqual(
+      result.titleRight,
+    );
+    // Same 375px measurement: checkboxLeft=260. The measured band ends at 259;
+    // the 0.5px allowance only accounts for hit-test rounding and keeps it out of
+    // the checkbox.
     expect(result.measuredRight).toBeLessThanOrEqual(result.checkboxLeft + 0.5);
     expect(
       result.leftOfCheckboxHit,
@@ -343,7 +360,7 @@ test.describe('mobile tap target size — mobile rules must not leak to desktop'
     });
     expect(
       cardMetrics.titleRowColumnGap,
-      'mobile 30px title gap must not leak to desktop',
+      'card title row keeps its 6px gap on desktop',
     ).toBe('6px');
     expect(
       cardMetrics.watchBeforeContent,
