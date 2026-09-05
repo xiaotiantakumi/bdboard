@@ -310,6 +310,257 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     });
   });
 
+  /**
+   * 規則 6 (bdboard-p5l.15): aimix run のモデル指定を、検証コントラクトの
+   * models 表のセル所属で照合する。候補の抽出は scripts/route.sh に一本化されて
+   * いるので、ここでは「hook が route.sh をどう使い、どこで fail-open するか」を固定する。
+   */
+  describe('pre-bash-guard.sh rule 6 (model routing)', () => {
+    const ROUTES = {
+      implement: {
+        low: ['codex:gpt-5.6-luna'],
+        med: ['codex:gpt-5.6-terra', 'cursor:composer-2.5'],
+        high: ['codex:gpt-5.6-sol'],
+      },
+    };
+
+    let projectRoot: string;
+    let env: Record<string, string>;
+
+    beforeEach(async () => {
+      projectRoot = path.join(tmpRoot, 'project');
+      mkdirSync(path.join(projectRoot, '.claude'), { recursive: true });
+      env = isolatedEnv();
+      await initGitRepo(projectRoot, 'main', env);
+    });
+
+    function writeContract(contract: Record<string, unknown>): void {
+      writeFileSync(
+        path.join(projectRoot, '.claude', 'bdboard-harness.json'),
+        `${JSON.stringify(contract)}\n`,
+        'utf8',
+      );
+    }
+
+    async function guard(
+      command: string,
+      extraEnv?: Record<string, string>,
+    ): Promise<CommandResult> {
+      return runHook(
+        PRE_BASH_GUARD,
+        { tool_name: 'Bash', cwd: projectRoot, tool_input: { command } },
+        { cwd: projectRoot, env: { ...env, ...extraEnv } },
+      );
+    }
+
+    for (const mode of ['implement', 'refactor']) {
+      it(`denies --mode ${mode} without --model`, async () => {
+        writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+        const result = await guard(
+          `aimix run --mode ${mode} --member codex --complexity high`,
+        );
+
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('--model の明示が必須');
+        expect(result.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+      });
+    }
+
+    it('denies a model that is not in the cell', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('codex:gpt-5.6-luna');
+      expect(result.stderr).toContain('implement/high');
+      expect(result.stderr).toContain('codex:gpt-5.6-sol');
+      expect(result.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+    });
+
+    /**
+     * セルの 2 番手が通ることを固定する回帰テスト。vendor 名 (codex/cursor/claude) で
+     * 弾く実装にすると、正当な 2 番手である cursor:... が道連れで死ぬ。
+     */
+    it('allows the runner-up candidate of the same cell', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member cursor --model composer-2.5 --complexity med',
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    it('accepts --flag=value as well as --flag value', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode=implement --member=codex --model=gpt-5.6-sol --complexity=high',
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    it('allows an off-cell model when BDBOARD_ROUTE_OVERRIDE carries a reason', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+      const offCell =
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high';
+
+      const inline = await guard(`BDBOARD_ROUTE_OVERRIDE="枠逼迫" ${offCell}`);
+      expect(inline.exitCode).toBe(0);
+      expect(inline.stderr).toBe('');
+
+      const fromEnv = await guard(offCell, { BDBOARD_ROUTE_OVERRIDE: '枠逼迫' });
+      expect(fromEnv.exitCode).toBe(0);
+      expect(fromEnv.stderr).toBe('');
+    });
+
+    for (const empty of ['BDBOARD_ROUTE_OVERRIDE=', 'BDBOARD_ROUTE_OVERRIDE=""']) {
+      it(`still denies when the override reason is empty (${empty})`, async () => {
+        writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+        const result = await guard(
+          `${empty} aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high`,
+        );
+
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('候補');
+      });
+    }
+
+    for (const mode of ['consult', 'review', 'debate']) {
+      it(`ignores --mode ${mode}`, async () => {
+        writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+        const result = await guard(`aimix run --mode ${mode} --member codex`);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe('');
+      });
+    }
+
+    /**
+     * deny してよいのは「セルの候補を実際に取れて、そこに無かった」ときだけ。
+     * 判定材料が欠けているケースはすべて素通りさせる (fail-open)。
+     */
+    const failOpenCases: ReadonlyArray<{
+      readonly name: string;
+      readonly contract?: Record<string, unknown>;
+      readonly command: string;
+    }> = [
+      {
+        name: 'no contract file at all',
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a contract without a models section',
+        contract: { mainBranch: 'main' },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a contract whose models table lacks the stage',
+        contract: { mainBranch: 'main', models: { routes: { review: ROUTES.implement } } },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a contract whose stage lacks the cell',
+        contract: {
+          mainBranch: 'main',
+          models: { routes: { implement: { low: ROUTES.implement.low } } },
+        },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a models table that route.sh rejects as invalid',
+        contract: { mainBranch: 'main', models: { routes: { implement: { high: [] } } } },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a call without --complexity',
+        contract: { mainBranch: 'main', models: { routes: ROUTES } },
+        command: 'aimix run --mode implement --member codex --model gpt-5.6-luna',
+      },
+      {
+        name: 'a call without --member',
+        contract: { mainBranch: 'main', models: { routes: ROUTES } },
+        command: 'aimix run --mode implement --model gpt-5.6-luna --complexity high',
+      },
+    ];
+
+    for (const failOpen of failOpenCases) {
+      it(`does not deny with ${failOpen.name}`, async () => {
+        if (failOpen.contract !== undefined) {
+          writeContract(failOpen.contract);
+        }
+
+        const result = await guard(failOpen.command);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe('');
+      });
+    }
+
+    it('does not deny when neither jq nor python3 is available', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await runHook(
+        PRE_BASH_GUARD,
+        {
+          tool_name: 'Bash',
+          cwd: projectRoot,
+          tool_input: {
+            command:
+              'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+          },
+        },
+        { cwd: projectRoot, env: minimalEnv() },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain('jq/python3 not found');
+    });
+
+    /**
+     * 規則 6 の位置の回帰テスト。規則 5 の後ろに置くと、その直前の
+     * 「denyBashPatterns が 1 件も無ければ exit 0」に食われて規則 6 が丸ごと死ぬ。
+     */
+    it('still runs when the contract declares no denyBashPatterns', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      );
+
+      expect(result.exitCode).toBe(2);
+    });
+
+    /**
+     * 規則 2・3 と同じく、コマンド列は「コマンド 1 個」へ割ってから判定する。
+     * 列全体を 1 つとして見ると「先頭だけ行儀の良い」列が素通りする。
+     */
+    it('judges each command of a sequence separately', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high; ' +
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      );
+
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   describe('degraded mode (no jq, no python3)', () => {
     /**
      * jq も python3 も無い環境では、生の JSON へ正規表現を当てる縮退判定はせず、
