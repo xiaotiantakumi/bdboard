@@ -29,33 +29,61 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
  * Math.random 由来の tip 長さも毎回変わるため、実機より甘い方向に空振りする (bdboard-k21o
  * と同型の罠)。
  *
- * MIN_FOLD_MARGIN_PX=160 の根拠:
+ * MIN_FOLD_MARGIN_PX=170 の根拠 (bdboard-xn9p, 2026-09-06):
  * - 定義: foldMarginPx = innerHeight - firstCardTop。折り返しより上にカード用の縦スペースが
  *   何 px 残っているか。mobile-header-compact.spec.ts の [ac1] ログと同じ定義に揃えてある
  *   （同じ名前で違う量を指すと読み違えるため）。
  * - 実測（macOS Chromium 375x812、build:web 後、worst-case tip pin + ai-quota 枠あり、
- *   フィルタバー折りたたみ、2026-09-05）:
- *   firstCardTop=625.4375, innerHeight=812 → foldMarginPx=186.5625。閾値 160 に対し
- *   26.56px の余裕。
+ *   フィルタバー折りたたみ）: 本チケットで 2026-09-06 に再測定 (2 回連続実行で完全一致):
+ *   firstCardTop=625.4375, innerHeight=812 → foldMarginPx=186.5625。
+ * - Linux CI 実測 (ubuntu-latest。mobile-header-compact.spec.ts の MAX_CONTENT_START_PX
+ *   コメントが引用する run 33952190457, 2026-09-05。同じ worst-case 構成で同じ firstCardTop
+ *   を計測しているのでそのまま流用できる): firstCardTop=623.4375 →
+ *   foldMarginPx=188.5625。macOS のほうが 2px 狭く、これは同ファイル群で繰り返し観測されている
+ *   ヘッダー高のプラットフォーム差と同じ向き・同じ大きさ。よって両プラットフォームの
+ *   実測最小値は macOS の 186.5625。
+ * - 閾値の決め方 (独立な 2 通りの導出が一致する):
+ *   1. 実測最小値からの単純な下駄: floor(186.5625) - 16 = 170。この -16px は
+ *      mobile-header-compact.spec.ts の MAX_CONTENT_START_PX 等が使っている
+ *      「Linux CI フォント差用の +16px」慣行と同じ値・同じ根拠。
+ *   2. 兄弟予算との整合 (このチケットの主眼): このガードが縛る firstCardTop は
+ *      mobile-header-compact.spec.ts の `MAX_CONTENT_START_PX = 642`
+ *      (「first card top must stay within budget」) が**上限側からすでに**縛っている量と
+ *      同一の値である。foldMarginPx = innerHeight - firstCardTop なので、
+ *      MAX_CONTENT_START_PX を下回ってはならない閾値は
+ *      innerHeight - MAX_CONTENT_START_PX = 812 - 642 = **170**。
+ *      これを超えて (例えば 172 などへ) 締めると、firstCardTop が 640〜642px の範囲に
+ *      育ったとき、名前の付いた MAX_CONTENT_START_PX のアサーションは緑のまま
+ *      このガードだけが先に赤くなる窓ができる (bdboard-ij7g で
+ *      MAX_NON_DISMISSIBLE_RESIDUAL_PX と MAX_HEADER_HEIGHT_PX/MAX_TIPS_BANNER_HEIGHT_PX の
+ *      間に見つかったのと同型の問題)。170 ちょうどならこの窓は生じない —
+ *      firstCardTop=642 ではどちらも境界で緑、642 を 1px でも超えればどちらも同時に赤くなる。
+ *   両方の導出が同じ 170 に一致するのは偶然ではない。MAX_CONTENT_START_PX 自体が
+ *   「macOS 実測 625.4375 の切り上げ (626) + 16px」で決められているため、①と②は同じ量を
+ *   逆方向から見ているだけである。
+ * - ヘッドルーム: macOS 186.5625 - 170 = 16.5625px、Linux 188.5625 - 170 = 18.5625px。
+ *   MAX_CONTENT_START_PX 側のヘッドルーム (642 - firstCardTop、macOS 16.5625 /
+ *   Linux 18.5625) と完全に一致する。定義上同じ量の裏表なので当然だが、方向の異なる
+ *   2 本のアサーションが同じ余裕を報告していることは閾値の整合性の検算になる。
  * - 3 つの expect の関係: 「半分可視」は AC1 原文どおりの下限として残す。次の「全高可視」は
  *   firstCardTop + firstCardHeight <= viewportHeight を直接見る、実際に守りたい不変条件。
- *   最後の foldMargin >= 160 は Linux CI のフォント差に対する下駄であり、全高可視の代理ではない。
- *   後ろほど強い。現在のカード高さは 152.48px のため 160 が全高可視より強く実質 binding だが、
- *   カード高さが 160px を超えれば全高可視のほうが binding に入れ替わる。AC1 の元の要求
+ *   最後の foldMargin >= 170 は Linux CI のフォント差に対する下駄であり、全高可視の代理ではない。
+ *   後ろほど強い。現在のカード高さは 152.48px のため 170 が全高可視より強く実質 binding だが、
+ *   カード高さが 170px を超えれば全高可視のほうが binding に入れ替わる。AC1 の元の要求
  *   （半分見える = firstCardTop <= 735.76）だけだと余裕が薄いときに「半分だけ見える」で緑になり、
  *   体験として「そこにカードがある」と分からない状態を通してしまう。
- * - 効果（bdboard-qxt1 の前後差）: 同じ worst-case 構成での firstCardTop は
+ * - 効果（bdboard-qxt1 の前後差、参考）: 同じ worst-case 構成での firstCardTop は
  *   修正前 831.4375（macOS）/ 828.4375（Linux CI, run 33947408853）→ 修正後 625.4375（macOS）。
  *   約 206px の削減で、.board-filter-bar（展開時 約 256px）をモバイル幅で既定折りたたみに
  *   したぶんが主。bd の要求「必須 92.68px / 目標 160px 以上の削減」をどちらも満たす。
  * - プラットフォーム差について: bd の notes にある「macOS と Linux で約 96px ずれる」は、
  *   ai-quota 枠なしの暫定計測（macOS 732.11）と ai-quota 枠ありの Linux CI 計測（828.44）を
- *   突き合わせた値で、fixture が揃っていない。同一構成どうしの実測差は 3px
- *   （macOS 831.4375 / Linux 828.4375、しかも Linux のほうが小さい）。よって 26.56px の余裕は
- *   Linux CI のフォント差に対して十分で、同ファイル群が Linux フォント差用に使っている +16px の
- *   慣行よりも広い。
+ *   突き合わせた値で、fixture が揃っていない。同一構成どうしの実測差は一貫して 2〜3px
+ *   （直近の firstCardTop では macOS 625.4375 / Linux 623.4375 で Linux のほうが 2px 小さい）。
+ * - これ以上締めたい場合は、先に mobile-header-compact.spec.ts の MAX_CONTENT_START_PX を
+ *   締めてから、同じ差分だけこちらも動かすこと。逆順にすると上記の窓が復活する。
  */
-const MIN_FOLD_MARGIN_PX = 160;
+const MIN_FOLD_MARGIN_PX = 170;
 
 test.describe('mobile first card visibility (bdboard-qxt1)', () => {
   test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });
