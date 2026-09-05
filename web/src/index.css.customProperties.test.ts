@@ -162,20 +162,32 @@ function collectReferencedCustomProperties(css: string): Set<string> {
 }
 
 /**
- * web/src 配下の *.ts / *.tsx を再帰的に列挙する（*.test.ts(x) は除外）。
+ * web/src 配下の *.ts / *.tsx を再帰的に列挙する。**テストコードは除外する** —
+ * 拡張子で判る *.test.ts(x) と、共有ヘルパーが住む web/src/test/ ディレクトリの両方。
  *
- * 除外理由: 現状どの *.test.ts(x) も `.style.setProperty(` を呼んでいない
- * (`.style.removeProperty(` の後始末呼び出しはあるが対象外)。テストファイルは
- * assert 対象のプロダクションコードそのものではないので、走査対象から外して
- * ノイズを減らす。将来テストが setProperty を呼ぶようになったら、このテストが
- * 検出漏れではなく「対象を広げる必要がある」というシグナルとして機能するよう、
- * 除外は拡張子パターンではなくここに明文化しておく。
+ * **この除外は意図的な設計であり、広げてはならない。** 下の「向き 2」は
+ * 「RUNTIME_CUSTOM_PROPERTIES にあるのに誰も setProperty していない」を検出することで
+ * フックの削除・リネームを捕まえるが、走査対象にテストコードが入っていると、
+ * **テスト側のフィクスチャ書き込み 1 行がプロダクションのフック削除を丸ごと覆い隠す**。
+ * 「テストも setProperty を呼ぶようになったら対象を広げよう」という判断は、
+ * このチケット (bdboard-hzpw) が塞ごうとしている当の穴を開け直すことになる。
+ * 逆に「向き 1」(書き込まれているのに許可リストに無い) をテストコードへ適用したい
+ * 動機も無い — テストが一時的に書く値は index.css の定義とは無関係だからである。
+ *
+ * web/src/test/ を明示的に外す必要があるのは、そこの共有ヘルパー
+ * (appHarness.tsx / axe.ts / fakeHistory.ts / popoverViewportClampTestHelpers.ts /
+ * tunnelFetchMock.ts) がファイル名に .test. を含まないため。2026-09-05 時点で
+ * どれも setProperty を呼んでいないので今は無風だが、上記の理由により
+ * フィクスチャが書き始めた「後」に足したのでは手遅れになる。
  */
 function listRuntimeSourceFiles(dir: string): string[] {
   const files: string[] = [];
   for (const entryName of readdirSync(dir)) {
     const fullPath = join(dir, entryName);
     if (statSync(fullPath).isDirectory()) {
+      if (entryName === 'test') {
+        continue;
+      }
       files.push(...listRuntimeSourceFiles(fullPath));
       continue;
     }
@@ -185,6 +197,73 @@ function listRuntimeSourceFiles(dir: string): string[] {
     files.push(fullPath);
   }
   return files;
+}
+
+/**
+ * JS/TS ソースからコメントを取り除く（文字列リテラルとテンプレートリテラルの中身は残す）。
+ *
+ * 必要な理由: コメントアウトされた `.style.setProperty('--x', …)` を実際の書き込みと
+ * 数えてしまうと、フックを消してコメントとして残した瞬間に「向き 2」が黙って緑になる。
+ * それはこのテストが塞ぐはずの穴そのものである。
+ *
+ * 正規表現一発で消さないのは、`'https://…'` のような文字列の中の `//` を行コメントの
+ * 開始と誤認して以降を丸ごと捨てるため。状態機械で文字列を跨がないようにしている。
+ *
+ * **正規表現リテラルは追跡していない**（`/['"]/` のようにクォートを含むものがあると
+ * 状態がずれうる）。ただしこの取りこぼしの向きは安全側である: ずれて本物の
+ * setProperty 呼び出しを飲み込んだ場合、その値は「向き 2」で allowedButNotWritten に
+ * 落ちてテストが**赤くなる**。黙って緑になる方向には壊れない。
+ */
+function stripJsComments(source: string): string {
+  let out = '';
+  let state: 'code' | 'line' | 'block' | "'" | '"' | '`' = 'code';
+  for (let i = 0; i < source.length; i += 1) {
+    const character = source[i];
+    const next = source[i + 1];
+    if (state === 'code') {
+      if (character === '/' && next === '/') {
+        state = 'line';
+        i += 1;
+      } else if (character === '/' && next === '*') {
+        state = 'block';
+        i += 1;
+      } else {
+        if (character === "'" || character === '"' || character === '`') {
+          state = character;
+        }
+        out += character;
+      }
+      continue;
+    }
+    if (state === 'line') {
+      if (character === '\n') {
+        state = 'code';
+        out += character;
+      }
+      continue;
+    }
+    if (state === 'block') {
+      if (character === '*' && next === '/') {
+        state = 'code';
+        i += 1;
+      }
+      continue;
+    }
+    // 文字列/テンプレートリテラルの中。エスケープを跨いで閉じ判定を誤らない。
+    out += character;
+    if (character === '\\') {
+      out += next ?? '';
+      i += 1;
+    } else if (character === state) {
+      state = 'code';
+    }
+  }
+  return out;
+}
+
+/** 識別子を正規表現へ素で埋め込めるようにエスケープする（`$` が終端アンカーになるのを防ぐ）。 */
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 const SET_PROPERTY_CALL_PATTERN = /\.style\.setProperty\(\s*([^,)]+)\s*,/g;
@@ -204,9 +283,18 @@ const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
  * 第 1 引数が `'--foo'` のような文字列リテラルならそのまま採用する。
  * useLaneStripHeightVar.ts / useBulkBarHeightVar.ts のように `const CSS_VAR = '--foo'`
  * を経由する場合は、同じファイル内でその定数の宣言を逆引きする。
- * どちらの形にも当てはまらない呼び出しは見逃さず `unresolved` に積む —
- * ここで黙って読み飛ばすと、将来 3 つ目の書き方が増えたときに検出そのものが
- * 静かに無効化されてしまう。
+ *
+ * **検出できる範囲は SET_PROPERTY_CALL_PATTERN の形に限られる。** そこに引っかかった
+ * 呼び出しのうち上の 2 形に当てはまらないものだけが `unresolved` に積まれ、
+ * パターン自体に引っかからない書き方は**そもそも見えない**。具体的には
+ * `el.style?.setProperty(…)`、`const { style } = el; style.setProperty(…)`、
+ * 第 1 引数に `)` を含む式 (`setProperty(fn(x), …)`)、`cssText` や
+ * `setAttribute('style', …)` による一括書き込みは検出されない。
+ *
+ * その帰結は向きによって違う。向き 1 (書き込まれているのに許可リストに無い) は
+ * 単に見逃す。向き 2 (許可リストにあるのに誰も書いていない) は逆に**誤検出で赤くなる** —
+ * 実際には書いているのに走査から漏れるためで、黙って緑になるよりは望ましい。
+ * 見えない書き方が増えたら、パターンを広げるか呼び出し側を上の 2 形へ寄せること。
  */
 function collectSetPropertyTargets(
   filePath: string,
@@ -214,7 +302,10 @@ function collectSetPropertyTargets(
   unresolved: string[],
 ): Set<string> {
   const targets = new Set<string>();
-  for (const match of fileSource.matchAll(SET_PROPERTY_CALL_PATTERN)) {
+  // 呼び出しの検出も const 宣言の逆引きも、同じコメント除去済みソースを見る。
+  // 片方だけ生ソースにすると、コメントアウトされた宣言で解決できてしまう。
+  const source = stripJsComments(fileSource);
+  for (const match of source.matchAll(SET_PROPERTY_CALL_PATTERN)) {
     const rawArgument = match[1].trim();
 
     const literalMatch = rawArgument.match(STRING_LITERAL_CUSTOM_PROPERTY);
@@ -231,9 +322,9 @@ function collectSetPropertyTargets(
     }
 
     const constDeclarationPattern = new RegExp(
-      `const\\s+${rawArgument}\\s*(?::[^=]+)?=\\s*(['"])(--[\\w-]+)\\1`,
+      `const\\s+${escapeForRegExp(rawArgument)}\\s*(?::[^=]+)?=\\s*(['"])(--[\\w-]+)\\1`,
     );
-    const constMatch = fileSource.match(constDeclarationPattern);
+    const constMatch = source.match(constDeclarationPattern);
     if (!constMatch) {
       unresolved.push(
         `${filePath}: 識別子 ${rawArgument} を --で始まる文字列リテラルの const 宣言に解決できません`,
@@ -331,6 +422,12 @@ describe('index.css custom properties', () => {
     // たとえば --color-accent を実行時に上書きするコンポーネントが 1 つ増えただけで
     // --color-accent が許可リストに載り、**上のテストがその :root 定義の消失を
     // 検出しなくなる** — 免除を塞ぐはずのこのテストが、逆向きの免除窓口を開けてしまう。
+    //
+    // この除外の代償: bare :root に定義があり、かつ実行時にも書かれる値は、許可リストに
+    // 載らないので「向き 2」の書き手削除検出からも外れる。ただし劣化は軽い — 書き手が
+    // 消えても :root の既定値に固定されるだけで、var() のフォールバック値に落ちるわけでは
+    // ない。そもそも上の staleAllowedProperties が「bare :root に定義された値は許可リスト
+    // から外せ」と要求しているので、両立させようとすると解消不能なデッドロックになる。
     const definedInBareRoot = collectDefinedCustomProperties(
       stripCssComments(cssSource),
     );
@@ -355,7 +452,7 @@ describe('index.css custom properties', () => {
     ).toEqual([]);
     expect(
       allowedButNotWritten,
-      `RUNTIME_CUSTOM_PROPERTIES にあるのに web/src のどこからも setProperty されていないカスタムプロパティがあります: ${allowedButNotWritten.join(', ')}。値を書き込むフックが削除・リネームされた可能性があります (index.css 側の var() フォールバック値に固定される実害があります)。setProperty 呼び出しを復元するか、意図的な削除なら RUNTIME_CUSTOM_PROPERTIES からも削除してください。`,
+      `RUNTIME_CUSTOM_PROPERTIES にあるのに web/src のどこからも setProperty されていないカスタムプロパティがあります: ${allowedButNotWritten.join(', ')}。考えられる原因は 2 つあります: (a) 値を書き込むフックが削除・リネームされた (index.css 側の var() フォールバック値に固定される実害があります)、(b) フックは生きているが書き方が変わり、この走査が見る形 (collectSetPropertyTargets の JSDoc 参照) から外れた — 分割代入やオプショナルチェーン経由の setProperty、cssText / setAttribute('style', …) への置き換えなど。(a) なら setProperty 呼び出しを復元するか、意図的な削除なら RUNTIME_CUSTOM_PROPERTIES からも削除してください。(b) なら走査ロジックを広げるか、呼び出しを検出可能な形へ戻してください。`,
     ).toEqual([]);
   });
 });
