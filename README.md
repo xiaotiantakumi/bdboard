@@ -168,19 +168,27 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 
 ## 主要な環境変数
 
-`src/main.ts` が読む `BDBOARD_*` 環境変数の一覧(既定値は同ファイルの実装から)。
+`src/` 配下のサーバー実装が読む `BDBOARD_*` 環境変数の完全な一覧。網羅性には「ここに無い =
+そんな変数は無い」と判断できる価値があるため、[`src/readme-env-vars.test.ts`](src/readme-env-vars.test.ts)
+が実際の読み取りとこの表を機械的に突き合わせる。変数を追加・削除したら、この表も更新すること。
 
 | 変数名 | 意味 | 既定値 |
 |---|---|---|
 | `BDBOARD_PORT` | 待ち受けポート | `8787` |
 | `BDBOARD_HOST` | 待ち受けホスト | `127.0.0.1` |
 | `BDBOARD_DB` | ローカルキャッシュ用 SQLite ファイルのパス | `~/.bdboard/cache.db` |
+| `BDBOARD_INSTANCE_NONCE` | health API の応答に含めるインスタンス識別子。ローリング再起動等で応答元を識別する用途 | (未設定 = フィールドを返さない) |
+| `BDBOARD_SHUTDOWN_TIMEOUT_MS` | graceful shutdown で接続を drain する最大時間(ミリ秒)。超過時は既存接続を閉じる | `5000`(5秒) |
 | `BDBOARD_SCAN_ROOTS` | `.beads/` を探索するルートディレクトリ(カンマ区切りで複数指定可) | `~/Documents`(存在しない場合は `~`。Windows は `%USERPROFILE%\Documents`、`%USERPROFILE%` 未設定時は `os.homedir()` 起点)。未設定時はユーザー設定(`~/.config/bdboard/config.json`、Windows は `%APPDATA%\bdboard\config.json`)、その後 OS 検出デフォルトを使用 |
 | `BDBOARD_SCAN_DIR_LIMIT` | 1 スキャンで訪問するディレクトリ数の上限(正の整数のみ有効。読み込みは `src/infrastructure/discovery/fs-project-discovery.ts`)。超過すると走査を打ち切って部分結果を返し、`console.warn` に警告を出す。上限は全 scanRoots で共有されソート順に消費されるため、超過時はソート順で後ろの root のプロジェクトがまとめて欠けうる(警告に走査しきれなかった root を列挙する) | `50000` |
 | `BDBOARD_REFRESH_INTERVAL_MS` | 全プロジェクトの定期リフレッシュ間隔(ミリ秒) | `300000`(5分) |
 | `BDBOARD_SESSION_INTERVAL_MS` | Claude Code セッション一覧の再取得間隔(ミリ秒) | `10000`(10秒) |
 | `BDBOARD_TRANSCRIPT_INTERVAL_MS` | セッション⇔チケットのトランスクリプト走査間隔(ミリ秒)。`0` 以下で無効化 | `30000`(30秒) |
 | `BDBOARD_CFD_SNAPSHOT_INTERVAL_MS` | 累積フロー図(CFD)スナップショットの記録間隔(ミリ秒)。`0` 以下で無効化 | `3600000`(1時間) |
+| `BDBOARD_CFD_SNAPSHOT_RETENTION_DAYS` | 累積フロー図(CFD)スナップショットの保持日数 | `365` |
+| `BDBOARD_RECLAIM_ENABLED` | 期限切れの agent lease を定期回収する処理を有効化する。`0` / `false` で無効化 | `true` |
+| `BDBOARD_RECLAIM_INTERVAL_MS` | agent lease 回収の実行間隔(ミリ秒) | `300000`(5分) |
+| `BDBOARD_RECLAIM_OLDER_THAN` | agent lease を回収対象とみなす経過時間。`bd` の duration 形式 | `10m` |
 | `BDBOARD_TUNNEL_LOG_PATH` | `cloudflared` トンネルログの出力先ファイル。既定は cwd に依存しない(`npx bdboard` は任意のディレクトリから起動されるため)。相対パスを渡した場合は**起動ディレクトリ基準**で1度だけ解決される | `~/.bdboard/logs/cloudflared-tunnel.log` |
 | `BDBOARD_TUNNEL_LOG_MAX_BYTES` | `cloudflared` トンネルログのローテーション閾値(バイト) | `5242880`(5MB) |
 | `BDBOARD_AUTH_USER` | Basic 認証のユーザー名。`BDBOARD_AUTH_PASSWORD` と両方に値がある場合のみ認証が有効化される | (未設定) |
@@ -190,10 +198,13 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_UPDATE_CHECK_CACHE_MS` | 新バージョン確認のキャッシュ TTL(ミリ秒)。未認証の GitHub API は IP あたり 60 req/h なので短くしない。負値や数値以外は既定に戻る(確認を止めるなら `BDBOARD_UPDATE_CHECK_DISABLED`) | `21600000`(6時間) |
 | `BDBOARD_UPDATE_CHECK_TIMEOUT_MS` | 新バージョン確認のタイムアウト(ミリ秒)。超過・失敗は黙って無視される | `3000`(3秒) |
 | `BDBOARD_UPDATE_CHECK_REPO` | 新バージョンを確認する GitHub リポジトリ(`owner/repo`) | `xiaotiantakumi/bdboard` |
+| `BDBOARD_GH_PATH` | GitHub CLI (`gh`) のパス/名前。PR 状態取得と worktree 作成に使う | `gh` |
 | `BDBOARD_AI_QUOTA_DISABLED` | `1` または `true`(大小無視)で AI クォータウィジェットを無効化 | `false` |
 | `BDBOARD_AI_QUOTA_PATH` | AI クォータ取得コマンドのパス/名前 | `ai-quota` |
 | `BDBOARD_AI_QUOTA_TIMEOUT_MS` | 上記コマンドのタイムアウト(ミリ秒) | `70000`(70秒。`ai-quota all` の agy/Codex probe を順次待つ) |
 | `BDBOARD_AI_QUOTA_CACHE_MS` | AI クォータ結果のキャッシュ有効期間(ミリ秒) | `300000`(5分) |
+| `BDBOARD_AI_QUOTA_ALERT_CONFIG_PATH` | AI クォータ通知しきい値の設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
+| `BDBOARD_AI_QUOTA_ALERT_INTERVAL_MS` | AI クォータ通知しきい値の確認間隔(ミリ秒) | `60000`(1分) |
 | `BDBOARD_CHAT_DISABLED` | `1` または `true`(大小無視)でチャット機能を無効化 | `false` |
 | `BDBOARD_IGNORE_PLATFORM_LIMITS` | `1` / `true` で、プラットフォーム未対応判定 (Windows のセッション検出・チャット) を無視して有効化する。独自に環境を整えた場合の逃げ道 | `false` |
 | `BDBOARD_CLAUDE_PATH` | チャット機能が呼び出す `claude` CLI のパス/名前 | `claude` |
@@ -214,6 +225,16 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_CURSOR_MODEL` | (同上)Cursor チャットで使うモデル。未設定時は `cursor-agent` 側のアカウント既定モデルに委ねる(`--model` を付けない) | (未設定) |
 | `BDBOARD_AGY_PATH` | (`BDBOARD_CHAT_AGENTS` に `agy` を含めた場合のみ有効)呼び出す Antigravity CLI のパス/名前 | `agy` |
 | `BDBOARD_AGY_MODEL` | (同上)agy のモデル。未設定時はアカウント既定。`agy models` の id (例: `gemini-3.7-flash-medium`) を指定 | (未設定) |
+| `BDBOARD_SCAN_ROOTS_CONFIG_PATH` | scan roots のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
+| `BDBOARD_BOARD_THRESHOLDS_CONFIG_PATH` | ボードしきい値のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
+| `BDBOARD_HYGIENE_THRESHOLDS_CONFIG_PATH` | hygiene しきい値のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
+| `BDBOARD_AGENT_RUN_CONFIG_PATH` | agent run 設定のユーザー設定ファイル | `~/.config/bdboard/config.json` (Windows: `%APPDATA%\bdboard\config.json`) |
+| `BDBOARD_MAX_CONCURRENT_RUNS` | 同時に実行できる agent run の上限。増やすと verify スロットを圧迫する | `1` |
+| `BDBOARD_MAX_MANAGED_WORKTREES` | bdboard が管理できる Git worktree 数の上限 | `20` |
+| `BDBOARD_RUN_ALLOWED_TOOLS` | Claude agent run のツール allowlist を JSON 文字列配列で上書きする。空文字は allowlist 指定を外す | `Glob`, `Grep`, `Bash(bd show:*)`, `Bash(bd list:*)`, `Bash(bd comment:*)`, `Bash(git status:*)`, `Bash(git diff:*)`, `Bash(git add:*)`, `Bash(git commit:*)` |
+| `BDBOARD_RUN_PERMISSION_MODE` | Claude agent run の permission mode。`default` / `acceptEdits` / `bypassPermissions` / `plan` のみ | `default` |
+| `BDBOARD_RUN_TIMEOUT_MS` | Claude agent run のタイムアウト(ミリ秒)。正の有限数のみ有効 | `3600000`(1時間) |
+| `BDBOARD_TIMEZONE` | ボードで defer 日付を扱う IANA タイムゾーン | ホスト OS のタイムゾーン |
 | `BDBOARD_WEB_DIST` | ビルド済み Web UI(`web/dist`)の配信元ディレクトリ。主用途は e2e で、`test/e2e/global-setup.ts` が使い捨てディレクトリへコピーしたスナップショットを指すために使う。`npm run test:e2e` と `npm run verify` が同じ `web/dist` を同時に作り直すレースから e2e を守るためのもの。相対パスは起動時に一度だけ起動ディレクトリ基準で解決される | `<リポジトリルート>/web/dist` |
 
 CLAUDE.md は起動ログの `Serving static web UI from <path>` がメインチェックアウトを指していなければ別チェックアウトのサーバーが動いていると疑う判定に使っている。`BDBOARD_WEB_DIST` を設定するとこのログには tmp のパスが出るが、判定は「メインチェックアウト以外なら疑う」という向きなので安全側に外れるだけで誤検出は生じない。
