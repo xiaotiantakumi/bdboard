@@ -22,6 +22,13 @@ const DEFER_ROW_FULL_WIDTH_RATIO = 0.95;
 const DETAIL_COMPLETE_FULL_WIDTH_RATIO = 0.5;
 const FIRST_ROW_RIGHT_GAP_MAX_PX = 8;
 const NON_CUSTOM_COMPLETE_MIN_WIDTH_RATIO = 0.2;
+// bdboard-rccf: コンテナ基準のはみ出し許容。clientWidth の整数丸めと
+// getBoundingClientRect() の小数を混ぜるので最大 0.5px の誤差が入る。
+// 対象バグは 7px なので、この許容で見逃さない。
+const CONTAINER_OVERFLOW_TOLERANCE_PX = 0.5;
+// bdboard-rccf: date 入力が「制約を外したときの自分の幅」の何割を保てば
+// 潰れていないとみなすか。実測比 0.927 (136.203125 / 147, chromium/macOS)。
+const DATE_INPUT_MIN_SHRINK_RATIO = 0.85;
 
 interface RectSnapshot {
   top: number;
@@ -415,13 +422,26 @@ for (const viewport of MOBILE_VIEWPORTS) {
 // 計測時の注意: isMobile: true を付けないと別のレイアウトになり、はみ出しが
 // 再現しない。必ず test.use({ viewport, isMobile: true, hasTouch: true }) で測ること
 // (議長が isMobile 無しの probe で「解消済み」と誤判定した。2026-09-05)。
+// 機構: web/src/index.css:7904 の @media (hover: none) and (pointer: coarse) が
+// select / input[type=date] を font-size:16px に上げ、これが date 入力を 147px へ
+// 押し上げている。**幅のメディアクエリではないので、isMobile 無しでは 320px でも
+// 発火しない。**
 //
 // 重要: body.scrollWidth=320 = innerWidth なので horizontalOverflow は false のまま。
-// バー自体が左右 25px インセットされており、はみ出しがバーの右パディングに収まって
-// ビューポート端に届かないため。**body 基準の overflow 判定ではこのはみ出しは
-// 検出できない**ので、「horizontalOverflow=false だから問題なし」と読まないこと。
-// コンテナ基準で測る必要がある。index.css コメントの 289px はより広いビューポートでの値。
+// 理由は2つあり、決定的なのは後者:
+//   1. バー自体が左右 25px インセットされており、この 7px はバーの右パディング
+//      (12px) に収まってビューポート端に届かない。
+//   2. web/src/index.css:158 の body { overflow-x: clip }。body は非スクロールの
+//      クリップコンテナなので、**はみ出しがどれだけ大きくても body.scrollWidth は
+//      body 幅を超えない**。つまり「もっと大きくはみ出せば horizontalOverflow で
+//      捕まる」わけではなく、原理的に捕まらない。
+// したがって本ファイルの既存 horizontalOverflow アサーションは、この種のはみ出しに
+// 対しては構造的にほぼ vacuous である。「horizontalOverflow=false だから問題なし」と
+// 読まないこと。コンテナ基準で測る必要がある。
+// index.css コメントの 289px はより広いビューポートでの値。
 // この直下の describe は :has() narrowing 用に非カスタム状態だけを見る。
+// カスタム状態の回帰ガードはファイル末尾の
+// 'bulk action bar custom defer group @ 320x812' describe。
 test.describe('bulk action bar non-custom defer row @ 320x812', () => {
   test.use({
     viewport: { width: 320, height: 812 },
@@ -534,8 +554,8 @@ for (const viewport of MOBILE_VIEWPORTS) {
 
 // bdboard-rccf: カスタム延期状態でのコンテナ基準はみ出し回帰ガード。
 // 上のコメントのとおり body 基準では検出できないので、コンテナの
-// scrollWidth/clientWidth と、グループ右端とコンテナ内容領域右端の差で測る。
-const CONTAINER_OVERFLOW_TOLERANCE_PX = 0.5;
+// scrollWidth/clientWidth と、グループおよびその各子の右端とコンテナ内容領域右端の
+// 差で測る。
 
 test.describe('bulk action bar custom defer group @ 320x812', () => {
   test.use({
@@ -548,24 +568,69 @@ test.describe('bulk action bar custom defer group @ 320x812', () => {
     test.setTimeout(60_000);
 
     const bar = await openBoardWithBulkActionBarCustomDefer(page);
-    // 空のままだと date 入力の実寸が短く、はみ出しを過小評価する。
-    // 実際に日付が入った状態が最も横幅を要求する。
-    await bar.locator('input[type="date"]').fill('2026-12-31');
+    // 実利用に近い状態で測るために日付を入れる。**幅は値の有無で変わらない**
+    // (実測 2026-09-05: 空でも入力後でも 136.203125px)。Chromium の date 入力は
+    // 年4桁/月2桁/日2桁 + ピッカーアイコンのフィールドテンプレートで固有幅が
+    // 決まるため。min 属性 (todayLocalDateInputValue) を下回ると :invalid になる
+    // ので、固定日ではなく当日基準で作る。
+    const deferDate = await page.evaluate(() => {
+      const d = new Date();
+      d.setDate(d.getDate() + 30);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    });
+    await bar.locator('input[type="date"]').fill(deferDate);
 
     const metrics = await page.evaluate(() => {
-      const container = document.querySelector('.bulk-action-bar-buttons');
-      const group = document.querySelector(
+      const container = document.querySelector('.bulk-action-bar .bulk-action-bar-buttons');
+      if (container === null) {
+        throw new Error('.bulk-action-bar .bulk-action-bar-buttons not found');
+      }
+      const group = container.querySelector(
         '.quick-action-defer-group.quick-action-defer-group-custom',
       );
-      if (container === null || group === null) {
-        return null;
+      if (group === null) {
+        throw new Error('.quick-action-defer-group-custom not found');
       }
       const containerRect = container.getBoundingClientRect();
       const groupRect = group.getBoundingClientRect();
       const style = window.getComputedStyle(container);
-      const paddingRight = Number.parseFloat(style.paddingRight) || 0;
-      const contentBoxRight = containerRect.left + container.clientWidth - paddingRight;
-      const date = container.querySelector('input[type="date"]');
+      // getBoundingClientRect() は border box、clientWidth は padding box なので
+      // left + clientWidth は border-left の分だけずれる。右端から border-right と
+      // padding-right を引くほうが border の有無に依らず正しく、小数のまま扱える
+      // (clientWidth は整数丸め)。現状このコンテナは border も padding も 0。
+      const contentBoxRight =
+        containerRect.right -
+        (Number.parseFloat(style.borderRightWidth) || 0) -
+        (Number.parseFloat(style.paddingRight) || 0);
+
+      const date = group.querySelector('input[type="date"]') as HTMLElement | null;
+      if (date === null) {
+        throw new Error('custom defer date input not found');
+      }
+
+      // date 入力が「縮み過ぎていない」ことを、固定の px 閾値ではなく
+      // 素の date 入力の自然幅との比で測る。CI (Linux) とローカル (macOS) で
+      // フォントが違い実寸が動くため、絶対値の閾値は脆い。
+      //
+      // 参照値はコンテナを広げて測り直すのでは**不十分**。max-width / width の
+      // ような幅を直接止めるルールは広げた側にも効くので比が 1.0 のままになり、
+      // 潰れを検出できない (実測 2026-09-05: max-width:90px を入れても
+      // この方式では通ってしまった)。そこでグループの外に素の date 入力を
+      // 一時的に置いて自然幅を採る。position:absolute + visibility:hidden で
+      // 本体のレイアウトを乱さず、font-size は同じ
+      // @media (hover:none) and (pointer:coarse) を受ける。
+      const constrainedDateWidth = date.getBoundingClientRect().width;
+      const probe = document.createElement('input');
+      probe.type = 'date';
+      probe.style.position = 'absolute';
+      probe.style.left = '0';
+      probe.style.top = '0';
+      probe.style.visibility = 'hidden';
+      document.body.append(probe);
+      const unconstrainedDateWidth = probe.getBoundingClientRect().width;
+      probe.remove();
+
       return {
         containerClientWidth: container.clientWidth,
         containerScrollWidth: container.scrollWidth,
@@ -573,37 +638,71 @@ test.describe('bulk action bar custom defer group @ 320x812', () => {
         groupRight: groupRect.right,
         groupWidth: groupRect.width,
         overflowPx: groupRect.right - contentBoxRight,
+        // グループ自身が収まっていても、子だけがはみ出す退行がありうる
+        // (実測 2026-09-05: 子側の min-width:0 だけを外すと overflowPx は 0 のまま
+        //  で、container の scrollWidth 側だけが 277 になって落ちた)。犯人を
+        //  失敗メッセージで名指しできるよう子ごとに測る。
+        childOverflow: Array.from(group.children).map((el) => ({
+          tag: el.tagName.toLowerCase(),
+          overflowPx: el.getBoundingClientRect().right - contentBoxRight,
+        })),
+        constrainedDateWidth,
+        unconstrainedDateWidth,
+        dateShrinkRatio: constrainedDateWidth / unconstrainedDateWidth,
         bodyScrollWidth: document.body.scrollWidth,
         viewportInnerWidth: window.innerWidth,
-        dateClientWidth: date === null ? null : date.clientWidth,
-        dateScrollWidth: date === null ? null : date.scrollWidth,
       };
     });
 
-    expect(metrics, 'custom defer group and its container must both be present').not.toBeNull();
-    const m = metrics as NonNullable<typeof metrics>;
+    await test.info().attach('custom-defer-group-metrics', {
+      body: JSON.stringify(metrics, null, 2),
+      contentType: 'application/json',
+    });
 
     expect(
-      m.overflowPx,
+      metrics.overflowPx,
       `320x812 custom: defer group must not overflow the container content box ` +
-        `(groupRight=${m.groupRight.toFixed(2)}, contentBoxRight=${m.contentBoxRight.toFixed(2)}, ` +
-        `overflowPx=${m.overflowPx.toFixed(2)}, groupWidth=${m.groupWidth.toFixed(2)})`,
+        `(groupRight=${metrics.groupRight.toFixed(2)}, ` +
+        `contentBoxRight=${metrics.contentBoxRight.toFixed(2)}, ` +
+        `overflowPx=${metrics.overflowPx.toFixed(2)}, ` +
+        `groupWidth=${metrics.groupWidth.toFixed(2)})`,
+    ).toBeLessThanOrEqual(CONTAINER_OVERFLOW_TOLERANCE_PX);
+
+    const worstChild = metrics.childOverflow.reduce((worst, c) =>
+      c.overflowPx > worst.overflowPx ? c : worst,
+    );
+    expect(
+      worstChild.overflowPx,
+      `320x812 custom: no child of the defer group may overflow the container ` +
+        `content box (worst=<${worstChild.tag}> ${worstChild.overflowPx.toFixed(2)}px; ` +
+        `all=${JSON.stringify(metrics.childOverflow)})`,
     ).toBeLessThanOrEqual(CONTAINER_OVERFLOW_TOLERANCE_PX);
 
     expect(
-      m.containerScrollWidth,
+      metrics.containerScrollWidth,
       `320x812 custom: container must not scroll horizontally ` +
-        `(scrollWidth=${m.containerScrollWidth}, clientWidth=${m.containerClientWidth}). ` +
-        `body.scrollWidth=${m.bodyScrollWidth} innerWidth=${m.viewportInnerWidth} ` +
+        `(scrollWidth=${metrics.containerScrollWidth}, ` +
+        `clientWidth=${metrics.containerClientWidth}). ` +
+        `body.scrollWidth=${metrics.bodyScrollWidth} innerWidth=${metrics.viewportInnerWidth} ` +
         `— body 基準では検出できないので、この2つで測ること。`,
-    ).toBeLessThanOrEqual(m.containerClientWidth);
+    ).toBeLessThanOrEqual(metrics.containerClientWidth);
 
-    // はみ出しを date 入力の潰し過ぎで解決していないことを確かめる。
-    // min-width: 0 を入れた以上、際限なく縮む方向の退行がありうる。
+    // min-width: 0 を入れた以上、date 入力が際限なく縮む方向の退行がありうる。
+    // **input[type=date].scrollWidth で測ってはいけない** — Chromium の date 入力は
+    // shadow DOM の ::-webkit-datetime-edit に overflow:hidden を持つため、
+    // 幅をいくら縮めても scrollWidth は clientWidth と等しいままで、
+    // scrollWidth <= clientWidth のアサーションは常に真になる (実測 2026-09-05:
+    // 幅を 30px に潰しても clientWidth=26 / scrollWidth=26)。
+    // 代わりにグループ外に置いた素の date 入力の自然幅との比で測る。実測の比は
+    // 0.927 (136.203125 / 147) なので、0.85 はフォント差を吸収しつつ実際の潰れを
+    // 捕まえる。max-width:90px を入れるミューテーションで赤くなることを確認済み。
     expect(
-      m.dateScrollWidth,
-      `320x812 custom: date input must not clip its own value ` +
-        `(scrollWidth=${String(m.dateScrollWidth)}, clientWidth=${String(m.dateClientWidth)})`,
-    ).toBeLessThanOrEqual(m.dateClientWidth as number);
+      metrics.dateShrinkRatio,
+      `320x812 custom: date input must keep most of the natural width of a bare ` +
+        `date input ` +
+        `(constrained=${metrics.constrainedDateWidth.toFixed(2)}, ` +
+        `unconstrained=${metrics.unconstrainedDateWidth.toFixed(2)}, ` +
+        `ratio=${metrics.dateShrinkRatio.toFixed(3)})`,
+    ).toBeGreaterThanOrEqual(DATE_INPUT_MIN_SHRINK_RATIO);
   });
 });

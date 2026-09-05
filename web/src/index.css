@@ -6501,21 +6501,29 @@ body {
 
   /* カスタム日付を選ぶと date 入力(16px化で147px)が入って延期グループが 289px まで伸び、
      .bulk-action-bar-buttons の折り返しが1行増える。カスタムのときだけ独立行にして
-     他のボタンの並びを乱さない (bdboard-h4xs.11) */
+     他のボタンの並びを乱さない (bdboard-h4xs.11)
+     (289px は h4xs.11 時点のより広いビューポートでの値。320px での実寸は下記の 277px。) */
   .bulk-action-bar-buttons .quick-action-defer-group-custom {
     flex: 1 1 100%;
     /* min-width: auto (flex item の既定) だと自動最小サイズが min-content で
        止まり、flex-basis 100% を割り込めない。320px では中身の実寸が
        86 + 6 + 147 + 6 + 32 = 277px で、コンテナの内容領域 270px を 7px はみ出す。
-       バーは左右 25px インセットされているのでビューポート端には届かず、
-       body.scrollWidth 基準の overflow 判定では検出できない (bdboard-rccf)。 */
+       バーは左右 25px インセットされているのでビューポート端には届かない。
+       加えて body に overflow-x: clip (本ファイル 158 行) があり body は
+       非スクロールのクリップコンテナなので、はみ出しの大小に関わらず
+       body.scrollWidth は増えない。よって body 基準の overflow 判定では
+       このはみ出しは原理的に検出できない (bdboard-rccf)。 */
     min-width: 0;
   }
 
   /* 上の min-width:0 だけではグループ自身が縮めるようになるだけで、中の select と
      date 入力が min-width:auto のままだと結局縮まない。この2つは font-size:16px
-     (iOS のズーム抑止) で実寸が決まっており、date 入力が 147px を占める。
-     縮小を許可して 7px を吸わせる。完了ボタンは flex:1 1 auto で元から縮む。 */
+     (iOS のズーム抑止。本ファイル 7904 行の
+     @media (hover: none) and (pointer: coarse)) で実寸が決まっており、
+     date 入力が 147px を占める。縮小を許可して 7px を吸わせる。
+     グループ3番目の子である「延期」ボタンは上の .bulk-action-bar-buttons .btn
+     { flex: 1 1 auto } を受けており、かつ既に min-content 幅なので追加指定は不要。
+     (「完了」ボタンはこのグループの子ではなくコンテナ直下の兄弟。) */
   .bulk-action-bar-buttons .quick-action-defer-group-custom > select,
   .bulk-action-bar-buttons .quick-action-defer-group-custom > input[type='date'] {
     min-width: 0;
