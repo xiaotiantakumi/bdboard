@@ -1,8 +1,14 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
 import { expect, test, type Page } from '@playwright/test';
+
+import {
+  assertAiQuotaBadgeVisible,
+  findWorstCaseTipIndex,
+  HELP_TIPS,
+  installAiQuotaRoute,
+  pinTipsBannerRandom,
+  TIP_COUNT,
+  waitForHeaderHeightConvergence,
+} from './fixtures/mobile-chrome-helpers.js';
 
 /**
  * Mobile header compaction (bdboard-h4xs.5): grid-based GlobalBar, collapsed toolbar,
@@ -11,192 +17,6 @@ import { expect, test, type Page } from '@playwright/test';
 
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
-
-/**
- * `/api/ai-quota` のレスポンス形。正本は web/src/api.ts の AiQuotaDto 系で、ここはその
- * wire 形だけを写したローカル定義 (e2e は独立 tsc プロジェクトなので web/src から import しない)。
- * ai-quota-popover-clamp.spec.ts と同じ写し方。
- */
-interface AiQuotaFixtureMetric {
-  label: string;
-  percentRemaining?: number;
-  resetAt?: string;
-  status?: 'available' | 'exhausted';
-}
-interface AiQuotaFixtureProvider {
-  id: string;
-  label: string;
-  availability: 'live' | 'manual' | 'unavailable';
-  metrics: AiQuotaFixtureMetric[];
-}
-interface AiQuotaFixture {
-  state: 'ok';
-  fetchedAt: string;
-  providers: AiQuotaFixtureProvider[];
-}
-
-// live プロバイダーが 1 つでもあれば .ai-quota-badge は描画される (AiQuotaWidget.tsx)。
-// バッジのラベルは `AIクォータ NN%使用` 固定長なので、プロバイダー数を増やしても
-// ヘッダー高さは変わらない (増えるのはポップオーバー内だけ)。
-const AI_QUOTA_FIXTURE: AiQuotaFixture = {
-  state: 'ok',
-  fetchedAt: '2026-09-11T00:00:00.000Z',
-  providers: [
-    {
-      id: 'cursor',
-      label: 'Cursor',
-      availability: 'live',
-      metrics: [
-        {
-          label: 'CURSOR Weekly Limit Remaining',
-          percentRemaining: 99,
-          resetAt: '2026-09-11T06:10:00.000Z',
-        },
-        { label: 'CURSOR Five Hour Limit Remaining', status: 'available' },
-      ],
-    },
-  ],
-};
-
-async function installAiQuotaRoute(page: Page): Promise<void> {
-  await page.route('**/api/ai-quota', async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify(AI_QUOTA_FIXTURE),
-    });
-  });
-}
-
-async function assertAiQuotaBadgeVisible(page: Page): Promise<void> {
-  await expect(
-    page.locator('.ai-quota-badge'),
-    'AI クォータ枠が描画されていない。/api/ai-quota の route 差し替えが効いていないか、' +
-      'AiQuotaWidget の描画条件が変わった。この枠が無い fixture の header は実機より 42px 軽く、' +
-      '予算/可視性アサーションは空振りになる。',
-  ).toBeVisible({ timeout: 15_000 });
-}
-
-/** --header-height が .header 実測に追いつくまで待つ (AiQuotaWidget 描画後 1 フレーム遅延)。 */
-async function waitForHeaderHeightConvergence(
-  page: Page,
-  message =
-    '--header-height が .header の実測高に追いつかない。' +
-    'レーンストリップ sticky top / scroll-padding-top のずれ原因。',
-): Promise<void> {
-  await expect
-    .poll(
-      async () =>
-        page.evaluate(() => {
-          const header = document.querySelector('.header');
-          if (!header) {
-            return Number.POSITIVE_INFINITY;
-          }
-          const headerHeight = header.getBoundingClientRect().height;
-          const headerHeightVarStr = getComputedStyle(document.documentElement)
-            .getPropertyValue('--header-height')
-            .trim();
-          const headerHeightVar = headerHeightVarStr.endsWith('px')
-            ? Number.parseFloat(headerHeightVarStr)
-            : Number.NaN;
-          if (!Number.isFinite(headerHeightVar)) {
-            return Number.POSITIVE_INFINITY;
-          }
-          return Math.abs(headerHeightVar - Math.ceil(headerHeight));
-        }),
-      {
-        message,
-        timeout: 10_000,
-      },
-    )
-    .toBeLessThanOrEqual(1);
-}
-
-/** Tips の原本。web/src/tipsContent.ts と同じ docs/help-content.json を直接読む。 */
-interface HelpTipFixture {
-  id: string;
-  title: string;
-  description: string;
-}
-
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const HELP_TIPS: HelpTipFixture[] = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, 'docs/help-content.json'), 'utf8'),
-) as HelpTipFixture[];
-const TIP_COUNT = HELP_TIPS.length;
-
-interface WorstCaseTipMeasurement {
-  index: number;
-  bannerHeight: number;
-  heights: number[];
-}
-
-interface TipTextFixture {
-  title: string;
-  description: string;
-}
-
-/** ブラウザ上で各 Tips 文言を差し替え、バナー高さが最大になる index を返す。 */
-async function findWorstCaseTipIndex(page: Page): Promise<WorstCaseTipMeasurement> {
-  const tipTexts: TipTextFixture[] = HELP_TIPS.map(({ title, description }) => ({
-    title,
-    description,
-  }));
-  return page.evaluate((tipsData) => {
-    const banner = document.querySelector('.tips-banner');
-    if (!banner) {
-      throw new Error('.tips-banner not found');
-    }
-
-    const sourceRect = banner.getBoundingClientRect();
-    const clone = banner.cloneNode(true) as HTMLElement;
-    clone.style.position = 'absolute';
-    clone.style.visibility = 'hidden';
-    clone.style.left = '0';
-    clone.style.top = '0';
-    clone.style.width = `${sourceRect.width}px`;
-    banner.parentElement?.insertBefore(clone, banner.nextSibling);
-
-    const strong = clone.querySelector('.tips-banner-text strong');
-    const span = clone.querySelector('.tips-banner-text span');
-    if (!strong || !span) {
-      clone.remove();
-      throw new Error('.tips-banner-text strong/span not found');
-    }
-
-    const heights: number[] = [];
-    let maxIndex = 0;
-    let maxHeight = Number.NEGATIVE_INFINITY;
-
-    for (let i = 0; i < tipsData.length; i += 1) {
-      strong.textContent = tipsData[i].title;
-      span.textContent = tipsData[i].description;
-      const height = clone.getBoundingClientRect().height;
-      heights.push(height);
-      if (height > maxHeight) {
-        maxHeight = height;
-        maxIndex = i;
-      }
-    }
-
-    clone.remove();
-    return { index: maxIndex, bannerHeight: maxHeight, heights };
-  }, tipTexts);
-}
-
-/**
- * TipsBanner の初期 index を決定論的に固定する。
- * Math.floor(Math.random() * tipCount) === index になるよう (index + 0.5) / tipCount を返す。
- *
- * この spec では preset 生成やパネル履歴トークン生成が走らないため、Math.random を定数化しても
- * 他機能への副作用はない (global-setup へ波及させないのは addInitScript をテスト内に閉じるため)。
- * この前提が崩れたら pin を TipsBanner 専用の注入に切り替えること。
- */
-async function pinTipsBannerRandom(page: Page, index: number, tipCount: number): Promise<void> {
-  await page.addInitScript(({ pinnedIndex, tipCount }) => {
-    Math.random = () => (pinnedIndex + 0.5) / tipCount;
-  }, { pinnedIndex: index, tipCount });
-}
 
 interface ContentStartMetrics {
   innerHeight: number;
@@ -281,15 +101,16 @@ const MIN_TAP_TARGET_PX = 44;
 // top > innerHeight で可視量 0 のため実質「先頭カード1枚の半分以上可視」しか判定できず、
 // TipsBanner の Math.random 由来の1行/2行差 (~19px) とタイトル折り返し (~20px) の knife-edge
 // (余裕 3.65px / 7.36px) で 12 回中 5 回 fail していた (2026-09-05 実測)。50% 可視カードは
-// 実データでは 0 枚で不変条件は既に成立しており、product 側の問題は bdboard-qxt1。
+// 実データでは 0 枚で不変条件は既に成立しており、可視性そのものは bdboard-qxt1 で解決済み。
+// 可視性の専用ガードは test/e2e/mobile-first-card-visibility.spec.ts が担う。
 //
 // firstCardTop 一本のラチェットは Tips バナー (~199px) の折り返し行数が Linux CI フォント差で
 // 1 行増えるだけ (≒ +19px) で閾値を越えて赤くなるため廃止。Tips 以外 (ヘッダー + ツールバー +
 // ボード上部クローム) と Tips バナー高さを分離して ratchet する。
 //
-// worst-case Tips + 実機相当ヘッダーでは先頭カード上端が 831.44px で innerHeight=812 を超える
-// (foldMargin=-19.44px)。カードが折り返し上に見えないのは product 側の問題で bdboard-qxt1 で
-// 追跡。ここで緑にするために閾値を動かさない。
+// bdboard-qxt1: モバイル幅では .board-filter-bar を既定折りたたみにし、展開時だけ
+// フィルタ UI を描画する。折りたたみ時はトグル行 (~62px) だけが残り、旧実装の
+// 展開済みバー (~256px) ぶんを初回描画から回収する。
 //
 // MAX_CONTENT_START_EXCLUDING_TIPS_PX: contentStartExcludingTips = firstCardTop - tipsBannerHeight。
 // Tips 折り返しに影響されない、ヘッダー + ツールバー + ボード上部クロームぶん (AC1 本体)。
@@ -297,39 +118,45 @@ const MIN_TAP_TARGET_PX = 44;
 // AC4 の 99px vs 103px と同種。ここに含まれるのは単行要素ばかりなので 1 要素あたり数 px しか
 // ぶれない)。
 //
-// 3 回実測 (pin 済み + installAiQuotaRoute, macOS Chromium 375x812, build:web 後, 2026-09-05):
-//   run1/2/3: contentStartExcludingTips=632.625, tipsBannerHeight=198.8125
-//   (firstCardTop=831.4375, headerBottom=245, tipId=next-up, 3/3 同値)
-// → ceil(632.625)+16 = 649
-const MAX_CONTENT_START_EXCLUDING_TIPS_PX = 649;
+// 実測 (pin 済み + installAiQuotaRoute, macOS Chromium 375x812, filter collapsed, 2026-09-05):
+//   contentStartExcludingTips=426.625, tipsBannerHeight=198.8125, firstCardTop=625.4375,
+//   headerBottom=245, tipId=next-up, foldMarginPx=186.5625
+// → ceil(426.625)+16 = 443
+// 旧値 649 は bdboard-qxt1 の折りたたみ導入前 (展開済み filter ~256px 前提) の実測だった。
+const MAX_CONTENT_START_EXCLUDING_TIPS_PX = 443;
 //
 // MAX_TIPS_BANNER_HEIGHT_PX: .tips-banner の実測高さ。折り返し行数がフォント環境で動く唯一の
 // 要素なので +24px (≒ 折り返し 1 行ぶん) の余裕。1 行増えても赤くならないが 2 行以上ぶん
 // 肥大したら捕まえる。この 24px は Linux フォント差専用の予算であり、padding / font-size を
 // 増やす変更でこれを食うのは禁止。
 //
-// 上記 3 回実測 tipsBannerHeight=198.8125 (3/3 同値) → ceil(198.8125)+24 = 223
+// 上記実測 tipsBannerHeight=198.8125 → ceil(198.8125)+24 = 223
+// (bdboard-qxt1 の折りたたみは .tips-banner を触っていないので、このラチェットは据え置き)
 const MAX_TIPS_BANNER_HEIGHT_PX = 223;
 //
 // MAX_CONTENT_START_PX: firstCardTop 本体のラチェット (Tips バナー内部の肥大を検知する)。
-// 3 回実測 firstCardTop=831.4375 の切り上げ 832 に Linux CI フォント差ぶん +16px のみを足した
+// 実測 firstCardTop=625.4375 の切り上げ 626 に Linux CI フォント差ぶん +16px のみを足した
 // 値 (MAX_CONTENT_START_EXCLUDING_TIPS_PX と同じ許容幅)。MAX_TIPS_BANNER_HEIGHT_PX の +24px
-// (Tips の折り返し 1 行ぶん) をここに二重計上しないのは意図的 — 二重計上して 872 にすると、
+// (Tips の折り返し 1 行ぶん) をここに二重計上しないのは意図的 — 二重計上して 666 にすると、
 // バナー padding を 20px 増やす程度の実劣化をこの上限が素通りしてしまい、このアサートを足す
 // 意味が消えるため。バナーの折り返しは MAX_TIPS_BANNER_HEIGHT_PX 側が専用に見る。
 // 先例として AC4 の header 実測が Linux CI 99px / macOS 103px で Linux のほうが小さいため、
 // この非対称な予算配分が CI を赤くするリスクは低いと判断した。
 //
-// Linux CI 実測で裏が取れた (ubuntu-latest, run 33947408853, 2026-09-05):
+// Linux CI 実測で裏が取れた (ubuntu-latest, run 33947408853, 2026-09-05) —
+// これは bdboard-qxt1 の折りたたみ導入前の実測:
 //   contentStartExcludingTips=629.625 (残余裕 19.375), tipsBannerHeight=198.8125 (残余裕 24.1875),
 //   firstCardTop=828.4375 (残余裕 19.5625), headerBottom=243
-// → Linux は macOS より 3px 小さく、848 の残余裕は macOS の 16.56px より広い 19.56px。
+// → Linux は macOS より 3px 小さく、当時の 848 の残余裕は macOS の 16.56px より広い 19.56px。
 //   さらに重要なのは tipsBannerHeight が macOS と 1px の差もなく同値 (198.8125) だったこと —
 //   MAX_TIPS_BANNER_HEIGHT_PX の +24px は「Linux でバナーが 1 行折り返す」ために確保した予算だが、
 //   実際にはその折り返しは起きておらず、24px は丸ごと未使用のまま残っている。
-//   つまりバナー側予算の上側は現状ほぼ純粋な緩みで、先に binding になるのは常にこの 848 のほう。
-//   バナー予算を締めたくなったらこの実測を根拠にできるが、締めなくても劣化は 848 が捕まえる。
-const MAX_CONTENT_START_PX = 848;
+//   つまりバナー側予算の上側は現状ほぼ純粋な緩みで、先に binding になるのは常に MAX_CONTENT_START_PX のほう。
+//   バナー予算を締めたくなったらこの実測を根拠にできるが、締めなくても劣化は MAX_CONTENT_START_PX が捕まえる。
+//
+// 折りたたみ導入後の実測 firstCardTop=625.4375 → ceil(625.4375)+16 = 642
+// 旧値 848 は展開済み filter ~256px 前提だった。
+const MAX_CONTENT_START_PX = 642;
 
 // これを超える変更を入れるときは、数字を黙って上げるのではなく、なぜ予算を増やしてよいかを
 // 根拠付きで書いてから上げること。前回より大きいから上げた、という形にすると次に本当の肥大が
