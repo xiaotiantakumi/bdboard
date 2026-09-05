@@ -3934,9 +3934,16 @@ body {
   justify-content: center;
   align-items: flex-start;
   /* オーバーレイの padding とパネルの max-height は**必ずセットで** dvh にする。
-     .overlay は fixed inset:0 なので高さの基準は可視ビューポート。パネルだけ dvh に
-     しても、上下の padding が lvh のままなら合計 (10lvh + 85lvh + 16px) は縮まず、
-     アドレスバーが出ている間はパネル下端がフォールドの下に潜ったままになる。
+     高さの基準は帯で違う: 縦持ちスマホ (<=700px) は下の `@media (max-width: 700px)` の
+     `.overlay { height: 100dvh }`、それより広い帯はベースの `.overlay` の fixed inset:0。
+     後者が small / dynamic どちらの viewport に敷かれるかは iOS Safari で未実測
+     (bdboard-h4xs.21 待ち) なので、以下の検算は 100dvh 基準の <=700px 帯の話。
+     パネルだけ dvh にすると収まる条件は `10lvh + 85dvh + 16px <= 100dvh`、つまり
+     `10lvh + 16 <= 15dvh` で、**縮みはするが余裕が chrome の高さに依存する**。
+     iPhone SE (lvh 667) なら chrome 116px で 82.7 vs 82.65 と 0.05px 超過、
+     chrome 100px なら 82.7 <= 85.05 で収まる、という綱渡りになる。
+     padding も dvh にすれば条件は `16 <= 5dvh`、すなわち可視高 320px 以上で常に成立し、
+     端末とアドレスバーの出入りに依存しなくなる。これがセットで直す理由。
      デスクトップでは lvh === dvh なので、この併記は完全に no-op (bdboard-68ub)。 */
   padding: 10vh 16px 16px;
   padding: 10dvh 16px 16px;
