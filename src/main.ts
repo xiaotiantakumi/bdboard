@@ -23,6 +23,8 @@ import {
   createReclaimScheduler,
   DEFAULT_RECLAIM_INTERVAL_MS,
   DEFAULT_RECLAIM_OLDER_THAN,
+  MIN_SAFE_RECLAIM_OLDER_THAN_MS,
+  parseReclaimDurationMs,
 } from './application/lease/reclaim-scheduler.js';
 import { createReclaimHistory } from './application/lease/reclaim-history.js';
 import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
@@ -837,6 +839,22 @@ async function main(): Promise<void> {
     console.log(
       `Lease reclaim: enabled (interval=${reclaimIntervalMs}ms older-than=${reclaimOlderThan})`,
     );
+    // 既定値はテストで下限に固定してあるが、env で上書きされた値は誰も検査しない。
+    // 猶予窓を短くする設定は「作業中のチケットを回収する」既定へ逆戻りさせるので、
+    // 起動時に一度だけ警告する (bdboard-hybu)。
+    const reclaimOlderThanMs = parseReclaimDurationMs(reclaimOlderThan);
+    if (reclaimOlderThanMs === undefined) {
+      console.warn(
+        `Lease reclaim: BDBOARD_RECLAIM_OLDER_THAN=${reclaimOlderThan} を duration として` +
+          '解釈できませんでした。値の妥当性は検査していません (bd 側の解釈に委ねます)',
+      );
+    } else if (reclaimOlderThanMs < MIN_SAFE_RECLAIM_OLDER_THAN_MS) {
+      console.warn(
+        `Lease reclaim: 猶予窓 ${reclaimOlderThan} は推奨下限 ` +
+          `${MIN_SAFE_RECLAIM_OLDER_THAN_MS / 60_000}m を下回っています。heartbeat が一時的に` +
+          '途切れただけの作業中チケットが回収されるおそれがあります (bdboard-hybu)',
+      );
+    }
   } else {
     console.log('Lease reclaim: disabled');
   }

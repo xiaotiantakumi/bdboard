@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../domain/project.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
@@ -340,6 +342,8 @@ describe('parseReclaimDurationMs', () => {
     expect(parseReclaimDurationMs('2h')).toBe(7_200_000);
     expect(parseReclaimDurationMs('1h30m')).toBe(5_400_000);
     expect(parseReclaimDurationMs('90s')).toBe(90_000);
+    // 前後の空白は env 由来でよく混ざるので許容する (値としては同じ)。
+    expect(parseReclaimDurationMs('10m ')).toBe(600_000);
   });
 
   it('returns undefined for input it cannot fully account for', () => {
@@ -348,7 +352,8 @@ describe('parseReclaimDurationMs', () => {
     expect(parseReclaimDurationMs('2 hours')).toBeUndefined();
     expect(parseReclaimDurationMs('2d')).toBeUndefined();
     expect(parseReclaimDurationMs('abc')).toBeUndefined();
-    expect(parseReclaimDurationMs('10m ')).toBe(600_000);
+    expect(parseReclaimDurationMs('2h extra')).toBeUndefined();
+    expect(parseReclaimDurationMs('x2h')).toBeUndefined();
   });
 });
 
@@ -367,5 +372,15 @@ describe('DEFAULT_RECLAIM_OLDER_THAN の下限', () => {
   it('の下限そのものが、実測された被害時間 (19 分) より十分大きい', () => {
     const observedWorstCaseMs = 19 * 60_000;
     expect(MIN_SAFE_RECLAIM_OLDER_THAN_MS).toBeGreaterThan(observedWorstCaseMs * 2);
+  });
+
+  it('は README の env 表に載っている既定値と一致する', () => {
+    // 既定を変えたのに README が 10m のまま、という乖離をここで落とす。
+    const readmePath = fileURLToPath(new URL('../../../README.md', import.meta.url));
+    const row = readFileSync(readmePath, 'utf8')
+      .split('\n')
+      .find((line) => line.includes('BDBOARD_RECLAIM_OLDER_THAN'));
+    expect(row).toBeDefined();
+    expect(row as string).toContain(`\`${DEFAULT_RECLAIM_OLDER_THAN}\``);
   });
 });

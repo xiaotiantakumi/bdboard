@@ -22,8 +22,11 @@ export const DEFAULT_RECLAIM_INTERVAL_MS = 5 * 60_000;
  *
  * 猶予窓が守るべきなのは TTL の倍数ではなく **1チケットの実作業時間** である。実測の
  * 15〜19 分はごく短い部類で、レビュー往復や verify 待ちを含む通常のチケットは数時間
- * かかる。2h はその帯をカバーしつつ、本来の目的 (死んだセッションのチケットが永久に
- * in_progress で塩漬けになるのを防ぐ) を最大 2h15m の遅延で維持する妥協点。
+ * かかる。**2h でもその全部は覆えない** — 覆えるのは実測された被害帯に 6 倍以上の余裕を
+ * 持たせるところまでで、数時間かかるチケットは heartbeat が生きていることに依存し続ける。
+ * それでも 2h を採るのは、本来の目的 (死んだセッションのチケットが永久に in_progress で
+ * 塩漬けになるのを防ぐ) を最大 2h10m の遅延 (猶予窓 2h + 巡回間隔 5m + lease TTL 5m) で
+ * 維持したまま、実測の事故を確実に外せる最小の値だから。
  *
  * これは**対症療法**である。恒久対策は「生存証拠を見てから回収する」(bdboard-6aci) で、
  * そちらが入れば猶予窓は本来の役割 (死活判定の遅延吸収) に戻せる。
@@ -42,18 +45,16 @@ export const MIN_SAFE_RECLAIM_OLDER_THAN_MS = 60 * 60_000;
  * 「安全だった」と取り違えないようにするため、既定値へのフォールバックはしない。
  */
 export function parseReclaimDurationMs(value: string): number | undefined {
-  const matches = value.matchAll(/(\d+)([hms])/g);
+  const trimmed = value.trim();
+  // 先に全体形を固定してから足し上げる。部分一致で「検査できた」ことにすると、
+  // `2 hours` のような入力が 2h として通り、下限チェックが黙って素通りする。
+  if (!/^(\d+[hms])+$/.test(trimmed)) {
+    return undefined;
+  }
   const unitMs: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000 };
   let total = 0;
-  let matched = 0;
-  let consumed = 0;
-  for (const match of matches) {
+  for (const match of trimmed.matchAll(/(\d+)([hms])/g)) {
     total += Number(match[1]) * (unitMs[match[2] as string] as number);
-    matched += 1;
-    consumed += match[0].length;
-  }
-  if (matched === 0 || consumed !== value.trim().length) {
-    return undefined;
   }
   return total;
 }
