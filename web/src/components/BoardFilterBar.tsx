@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { compareStrings } from '../compare';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import {
@@ -78,6 +79,7 @@ export function BoardFilterBar({
   );
   const filterActive = activeFilterCount > 0;
   const showFilterPanel = !isMobile || expanded;
+  const labelOptions = [...new Set([...availableLabels, ...labels])].sort(compareStrings);
 
   const toggleAriaLabel =
     activeFilterCount > 0
@@ -170,11 +172,11 @@ export function BoardFilterBar({
             </div>
           </div>
 
-          {availableLabels.length > 0 && (
+          {labelOptions.length > 0 && (
             <div className="board-filter-group">
               <span className="header-label">ラベル</span>
               <div className="toggle-group board-filter-label-group">
-                {availableLabels.map((label) => {
+                {labelOptions.map((label) => {
                   const selected = labels.includes(label);
                   return (
                     <button

@@ -211,10 +211,79 @@ describe('BoardFilterBar', () => {
     expect(onLabelsChange).toHaveBeenLastCalledWith([]);
   });
 
-  it('hides label section when availableLabels is empty', () => {
+  it('hides label section when the label union is empty', () => {
     renderBar({ availableLabels: [] });
 
     expect(screen.queryByRole('button', { name: 'human' })).not.toBeInTheDocument();
+  });
+
+  it('renders the label section when only a selected-but-unavailable label remains', () => {
+    // Pins the `labelOptions.length > 0` guard itself: with availableLabels empty,
+    // reverting the guard to availableLabels.length hides the whole group, which is
+    // exactly the bdboard-we44 repro (badge counts 1, no chip to unpress).
+    renderBar({ availableLabels: [], labels: ['archived'] });
+
+    expect(screen.getByRole('button', { name: 'archived' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('keeps selected labels visible when they are no longer available', async () => {
+    const user = userEvent.setup();
+    const onLabelsChange = vi.fn();
+    const { rerender } = render(
+      <BoardFilterBar
+        priorityCeiling="all"
+        onPriorityCeilingChange={vi.fn()}
+        issueTypes={[]}
+        onIssueTypesChange={vi.fn()}
+        labels={['archived']}
+        onLabelsChange={onLabelsChange}
+        availableLabels={['human']}
+        filterText=""
+        onFilterTextChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'archived' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'archived' }));
+    expect(onLabelsChange).toHaveBeenCalledWith([]);
+
+    rerender(
+      <BoardFilterBar
+        priorityCeiling="all"
+        onPriorityCeilingChange={vi.fn()}
+        issueTypes={[]}
+        onIssueTypesChange={vi.fn()}
+        labels={[]}
+        onLabelsChange={onLabelsChange}
+        availableLabels={['human']}
+        filterText=""
+        onFilterTextChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'archived' })).not.toBeInTheDocument();
+  });
+
+  it('sorts the label union with compareStrings order', () => {
+    const availableLabels = ['a'];
+    const labels = ['Z'];
+    renderBar({ availableLabels, labels });
+
+    const renderedLabels = screen
+      .getAllByRole('button', { name: /^(Z|a)$/ })
+      .map((button) => button.textContent);
+
+    // Literal, not recomputed with compareStrings: this must fail if compareStrings
+    // itself regresses. 'Z' (U+005A) sorts before 'a' (U+0061) in code-unit order,
+    // whereas localeCompare would give ['a', 'Z'].
+    expect(renderedLabels).toEqual(['Z', 'a']);
   });
 
   it('marks selected issue type chips as pressed', () => {
