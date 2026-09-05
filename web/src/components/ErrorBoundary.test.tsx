@@ -57,6 +57,9 @@ describe('ErrorBoundary', () => {
 
     expect(body).not.toBeNull();
     expect(actions).not.toBeNull();
+    // title を null のまま not.toContainElement に渡すと、jest-dom は null を素通しし
+    // Node.contains(null) が false になるので**要素が消えていても緑になる**。
+    expect(title).not.toBeNull();
     // detail/hint はスクロール対象の本文コンテナの中。
     expect(body).toContainElement(screen.getByText('stack trace level message'));
     expect(body).toContainElement(
