@@ -4937,6 +4937,11 @@ body {
 .detail-panel.chat-panel {
   overflow: hidden;
   padding-bottom: 0;
+  /* 添付プレビュー辺長の base トークン。子孫 (.chat-attachment 等) ではなくここで定義する —
+     576px 帯の clamp が同じ要素で上書きできる。.chat-attachment 側に置くと近い定義が勝ち
+     clamp が効かなくなる。var(..., fallback) は custom property 未定義時のみ効き、dvh 非対応では
+     トークン列としてパース通過後 invalid-at-computed-value-time → auto 落ちで fallback も守らない。 */
+  --chat-attachment-preview-size: 44px;
 }
 
 .resizable-side-panel.is-resizing {
@@ -5717,7 +5722,7 @@ body {
 
 .chat-attachment {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 28px;
+  grid-template-columns: var(--chat-attachment-preview-size) minmax(0, 1fr) 28px;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -5734,8 +5739,8 @@ body {
 }
 
 .chat-attachment-preview {
-  width: 44px;
-  height: 44px;
+  width: var(--chat-attachment-preview-size);
+  height: var(--chat-attachment-preview-size);
   object-fit: cover;
   border-radius: calc(var(--radius-md) - 3px);
   background: var(--color-bg-elevated);
@@ -6159,6 +6164,17 @@ body {
   .detail-panel.chat-panel {
     gap: 4px;
     padding-top: 8px;
+    /* 375×430 実測: preview 28×28px、行高=preview 28px + padding 4+4 + border 1+1 = 38px。
+       375×576 実測: preview 44×44px。e2e で先頭1枚がコンテナに収まることを確認済み。
+       notices cap=44px なので 1 行だけぎりぎり収まる。preview 44px だと行高≒52px で
+       先頭 1 枚すらコンテナに収まらない (e2e isInsideScrollContainer が落ちる)。
+       529dvh で preview=44px、notices cap=60px なので 52px 行が収まる。
+       485 = 529-44 (529dvh が preview 44px に到達し cap も 52px 行を許容する起点)。
+       469 / 485 とも 375×430 の固定チャンク合計 421px (.chat-messages 以外) から導出
+       (messages = 100dvh - 421)。ヘッダ / gap / .chat-input 46px 等の高さ・個数・gap を
+       変えたら両方再導出すること — 片方だけ直すと crossover 帯 (431〜575px) だけ壊れる。
+       calc 項が動く帯: 469 側 513〜565dvh / 485 側 513〜529dvh。 */
+    --chat-attachment-preview-size: clamp(28px, calc(100dvh - 485px), 44px);
   }
 
   .detail-panel.chat-panel .detail-header {
@@ -6227,19 +6243,30 @@ body {
     display: none;
   }
 
-  /* 375×430 e2e (.chat-panel clientHeight=430) 実測 (bdboard-iglk):
+  /* 375×430 e2e (.chat-panel clientHeight=430) 実測 (bdboard-iglk → bdboard-7fsw で再計測):
      e2e フィクスチャは2プロジェクト構成なので .chat-project-select (44px) が出て実ボードと同条件。
-     可変領域を .chat-input-notices に集約し max-height 44px で固定した。
-     添付0枚: panel 430/430、余裕 (.chat-messages) 46px。
-     添付1枚 / 4枚 / 5枚目拒否 (エラー+非対応警告 同時): いずれも panel 430/430、余裕 9px で不変。
-     .chat-input-notices の中身 (scrollHeight) は 79 → 121 → 147px と増えるが max-height 44px で吸収。
-     余裕が内容によらず一定であることがこの設計の要点 (旧実装は余裕 7.9px でバナー1つで破綻した)。 */
-  /* 可変バナー領域はここで高さを固定する。中に何個バナーが増えても
+     可変領域を .chat-input-notices に集約。添付0枚: 余裕 (.chat-messages) 46.30px。
+     添付1枚 / 4枚 / 5枚目拒否 (エラー+非対応警告 同時): 旧実装は 9px まで潰れたが、
+     bdboard-7fsw で .chat-quick-commands 隠し (31.125px 回収) + gap 2px (9.25px 回収) で
+     49.375px に回収 (46.30→9→40.125→49.375 実測)。
+     .chat-input-notices の中身 (scrollHeight) は 79 → 121 → 147px と増えるが cap で吸収。
+     余裕が内容によらず一定であることが「1つ増えても破綻しない」の根拠 (旧実装は 7.9px で破綻)。 */
+  /* max-height: 44px を 576px 帯全体に固定すると 375×576 でも 1 行 (2 枚) しか見えない
+     (ticket 指摘1)。44px を超えて伸ばすと伸びた分だけ .chat-messages から 1:1 で引かれる。
+     messages に 40px を残せるのは高さ 461px 以上 (430 固定チャンク合計 421px → 461-421=40)。
+     余裕をみて 513px から伸ばし始める (513-44=469)。576dvh では cap=96px / notices 94.59px (1枚) /
+     messages 82.88px (1枚では cap に当たらない)。576dvh で4枚だと .chat-attachments が
+     repeat(2, minmax(0,1fr)) の2列×2行 ≒ 115px になり cap 96px が実際に効き、残りは
+     notices 内スクロールに回る (e2e 375×576-attachments-4)。
+     430dvh では calc(100dvh-469px)=-39 → clamp 下限 44px (現状維持)。
+     469 も 421px 固定チャンク合計からの導出 (485 と同根)。固定チャンクを変えたら 469 も
+     485 も再導出。calc 項が動くのは 513〜565dvh。 */
+  /* 可変バナー領域はここで高さを固定する。中身が何個バナーが増えても
      フォームへの寄与は max-height のまま変わらない — これが「1つ増えても破綻しない」の根拠。
      スクロールコンテナを .chat-attachments ではなくラッパーに置くのは、入れ子スクロールを
      作らないため (削除ボタンへの scrollIntoView が単一コンテナで完結する)。 */
   .chat-input-notices {
-    max-height: 44px;
+    max-height: clamp(44px, calc(100dvh - 469px), 96px);
     overflow-y: auto;
     overscroll-behavior: contain;
     gap: 4px;
@@ -6280,18 +6307,19 @@ body {
   .chat-attachment {
     padding: 4px;
     gap: 4px;
-    grid-template-columns: 28px minmax(0, 1fr) 28px;
+    grid-template-columns: var(--chat-attachment-preview-size) minmax(0, 1fr) 28px;
   }
 
   .chat-attachment-preview {
-    width: 28px;
-    height: 28px;
+    width: var(--chat-attachment-preview-size);
+    height: var(--chat-attachment-preview-size);
   }
 
   .chat-attachment-name {
     font-size: 0.6875rem;
   }
 
+  /* 430px 帯で display を戻すと行高が増え会話領域を削るので触らない (bdboard-7fsw)。 */
   .chat-attachment-size {
     display: none;
   }
@@ -6607,6 +6635,32 @@ body {
 @media (max-width: 700px) and (max-height: 576px) {
   .chat-quick-command-chip {
     min-height: 34px;
+  }
+}
+
+/* bdboard-7fsw: 添付時に固定チャンク .chat-quick-commands (実測回収 31.125px) と
+   .chat-panel gap 4px→2px (5 本 = 実測 9.25px 回収) を回収し .chat-messages を 40px 以上確保。
+   messages=高さ-421px なので 40px 割当は 461px 未満 → max-height:460px でカット。
+   576px 帯全体には効かせない (指摘1 と同型の過剰適用)。
+   375×430 実測: 添付0枚 46.30px → 添付1枚 9px (旧) → 40.125px (quick-commands 隠し) →
+   49.375px (gap 2px 追加、閾値 40px に対し 9.375px = 約23% の余裕)。
+   460px と 461px の境界で .chat-messages が約 40px 不連続にジャンプし、チップ行も出入りする。
+   1px リサイズで見た目が跳ねるが messages = 高さ - 421px で 40px を割るのが 461px 未満のため
+   導出上意図どおり (対処不要、記録のみ)。
+   圧縮のトリガは添付そのものではなく .chat-input-notices が空でないこと。チップ列を隠す方だけでなく
+   パネルの行 gap も同じ述語で揃える。揃えないと添付0枚でバナーだけの経路が 40.125px (余裕 0.125px) の
+   knife-edge になる。揃えると 49.375px (余裕 9.375px ≒ 23%)。いずれも 375×430 の e2e 実測値。 */
+@media (max-width: 700px) and (max-height: 460px) {
+  .detail-panel.chat-panel:has(.chat-input-notices:not(:empty)) {
+    gap: 2px;
+  }
+
+  /* .chat-messages を潰すのは添付そのものではなく .chat-input-notices が cap いっぱいを
+     占めること (添付は一因)。selectedAgentUnavailable は添付0でも常時バナー、
+     currentAttachmentError も非対応1枚目でエラーだけ残り添付0になりうる。
+     :has(... :not(:empty)) は index.css:5624 の :empty 方針と一致。:has() 下限は dvh と同水準。 */
+  .chat-input-form:has(.chat-input-notices:not(:empty)) .chat-quick-commands {
+    display: none;
   }
 }
 
