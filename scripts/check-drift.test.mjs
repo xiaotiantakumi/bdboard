@@ -6,10 +6,22 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-drift.mjs');
+const FAKE_GH_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-gh.mjs');
 
 /** 改名前後で git の類似度検出が効く程度に大きいファイル。 */
 const BIG_FILE = (marker) =>
   `${Array.from({ length: 40 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\nexport const marker = ${marker};\n`;
+
+/**
+ * bdboard-b0yd R2-2 用: 先頭行 (hot line) と末尾行 (marker) を独立に変えられる
+ * ファイル。二つの変更行の間に十分な行数を挟むことで、git の (ort ベースの)
+ * マージが両者を別ハンクとして扱い、片方だけの衝突を再現できるようにする。
+ */
+const HOT_LINE_FILE = (hotLine, marker) =>
+  `export const hot = ${JSON.stringify(hotLine)};\n${Array.from(
+    { length: 10 },
+    (_, i) => `export const filler${i} = ${i};`,
+  ).join('\n')}\nexport const marker = ${JSON.stringify(marker)};\n`;
 import {
   computeDrift,
   formatDriftReport,
@@ -185,9 +197,14 @@ describe('merge-tree conflict output parser', () => {
  * 実際に走らせる層を足す。verify-slot.test.mjs が subprocess を起こす前例。
  */
 describe('check-drift CLI', () => {
-  const outsideBranchConflictExplanation =
-    'peer 側の rename によるパス名のずれ（こちらとの衝突）か、peer 自身が\n' +
-    'drift:   origin/main に対して古い（こちらとは無関係）可能性があります。実物を確認してください。';
+  // bdboard-b0yd R2-3: `git merge-base --is-ancestor` で peer の新旧が分かるので、
+  // バケットC (衝突パスが自分のファイル外) はもう両論併記しない。peer が
+  // origin/main を取り込み済みなら rename、そうでなければ peer 自身の
+  // stale-main 衝突と断定できる。
+  const renameConflictExplanation =
+    'peer 側の rename によるパス名のずれによる衝突の可能性があります。実物を確認してください。';
+  const staleMainConflictExplanation =
+    'peer 自身が origin/main に対して古いため、この衝突は peer 側の rebase で解消する可能性が高いです。';
 
   let tmpRoot;
 
@@ -234,15 +251,15 @@ describe('check-drift CLI', () => {
     { noFetch = true } = {},
   ) {
     // 実 gh は呼ばない。CLI 配線テストはネットワーク状態に依存させず、gh の成功・
-    // 非ゼロ終了・壊れた JSON をこの小さな代役で再現する。
-    const bin = path.join(work, 'fake-bin');
-    const argsFile = path.join(bin, 'gh-args.txt');
-    fs.mkdirSync(bin, { recursive: true });
-    fs.writeFileSync(
-      path.join(bin, 'gh'),
-      `#!/bin/sh\nprintf '%s\n' "$@" > '${argsFile.replaceAll("'", "'\\\"'\\\"'")}'\nprintf '%s' '${gh.output.replaceAll("'", "'\\\"'\\\"'")}'\nprintf '%s' '${(gh.stderr ?? '').replaceAll("'", "'\\\"'\\\"'")}' >&2\nexit ${gh.status}\n`,
-    );
-    fs.chmodSync(path.join(bin, 'gh'), 0o755);
+    // 非ゼロ終了・壊れた JSON を scripts/fake-gh.mjs で再現する。
+    //
+    // bdboard-b0yd R2-1: 以前は PATH の先頭に偽の `gh` シェルスクリプトを置く
+    // 方式で、`PATH: `${bin}:${process.env.PATH}`` の区切り文字 `:` が
+    // Windows (`;`) で機能せず本物の gh.exe が実行されていた。ここでは PATH
+    // 解決を経由せず、check-drift.mjs 側の `BDBOARD_DRIFT_GH` /
+    // `BDBOARD_DRIFT_GH_ARGS` フックを使って `node fake-gh.mjs ...` を直接
+    // 指定する。全プラットフォームで同じ経路を通る。
+    const argsFile = path.join(work, 'gh-args.txt');
     const args = ['scripts/check-drift.mjs'];
     if (noFetch) {
       args.push('--no-fetch');
@@ -250,10 +267,18 @@ describe('check-drift CLI', () => {
     const result = spawnSync(process.execPath, args, {
       cwd: work,
       encoding: 'utf8',
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      env: {
+        ...process.env,
+        BDBOARD_DRIFT_GH: process.execPath,
+        BDBOARD_DRIFT_GH_ARGS: JSON.stringify([FAKE_GH_PATH]),
+        BDBOARD_DRIFT_FAKE_GH_ARGS_FILE: argsFile,
+        BDBOARD_DRIFT_FAKE_GH_STDOUT: gh.output,
+        BDBOARD_DRIFT_FAKE_GH_STDERR: gh.stderr ?? '',
+        BDBOARD_DRIFT_FAKE_GH_EXIT_CODE: String(gh.status),
+      },
     });
     const ghArgs = fs.existsSync(argsFile)
-      ? fs.readFileSync(argsFile, 'utf8').trimEnd().split('\n')
+      ? fs.readFileSync(argsFile, 'utf8').trimEnd().split('\n').filter((line) => line !== '')
       : [];
     return { status: result.status, stdout: result.stdout, stderr: result.stderr, ghArgs };
   }
@@ -311,6 +336,31 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('not authenticated try gh auth login');
       expect(stderr).toContain('open PR を取得できなかったため');
       expect(stderr).toContain('not authenticated try gh auth login');
+    },
+    15000,
+  );
+
+  // bdboard-b0yd R2-7: このブランチがまだ何も変更していない (worktree 作成直後)
+  // ときは branchFiles=[] で階層1の交差が定義上つねに空になり、stale な peer が
+  // 1本でもあればバケットC (「ファイルの外」) が100%発火してノイズになる。
+  // 比較そのものに材料が無いので、gh すら呼ばずに畳む。
+  it(
+    'does not compare open PRs when this branch has not changed any files yet',
+    () => {
+      const { work } = makeRepo('no-commits-yet');
+      // main のまま何もコミットしない = branchFiles は空のまま
+      // (main() の「HEAD が merge-base そのものです」分岐に入る)。
+
+      const { status, stdout, ghArgs } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 30, headRefName: 'whatever', isCrossRepository: false },
+        ]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR との比較は省略しました');
+      // gh 自体を呼んでいないことを、代役に渡された引数の不在で確認する。
+      expect(ghArgs).toEqual([]);
     },
     15000,
   );
@@ -460,6 +510,65 @@ describe('check-drift CLI', () => {
     15000,
   );
 
+  // bdboard-b0yd R2-4: 実測 (`/tmp` の使い捨てリポジトリ) — `git fetch origin
+  // peerA peerB --quiet` は peerB が削除済みだと exit 128 で **peerA も**
+  // 更新されない。`git fetch origin --quiet` (refspec を並べない全体 fetch) なら
+  // peerB が無くてもエラーにならず、peerA だけ正しく更新される。この repo の
+  // マージ手順 (`gh pr merge --squash --delete-branch`) は drift 直前に走るため、
+  // `gh pr list` と fetch の間 (約1秒) に並列セッションがマージ+ブランチ削除を
+  // 終える競合は現実に起きる。
+  it(
+    'still updates the surviving peer ref when another listed peer branch was deleted',
+    () => {
+      const { bare, work } = makeRepo('two-peer-one-deleted');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'shared.ts'), 'mine\n');
+      sh(work, 'git', 'add', 'shared.ts');
+      sh(work, 'git', 'commit', '-qm', 'mine');
+
+      const peerA = path.join(tmpRoot, 'two-peer-one-deleted-a');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peerA);
+      sh(peerA, 'git', 'checkout', '-qb', 'peerA');
+      fs.writeFileSync(path.join(peerA, 'shared.ts'), 'peer A\n');
+      sh(peerA, 'git', 'add', 'shared.ts');
+      sh(peerA, 'git', 'commit', '-qm', 'peer A edits shared.ts');
+      sh(peerA, 'git', 'push', '-q', 'origin', 'peerA');
+
+      const peerB = path.join(tmpRoot, 'two-peer-one-deleted-b');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peerB);
+      sh(peerB, 'git', 'checkout', '-qb', 'peerB');
+      fs.writeFileSync(path.join(peerB, 'other.ts'), 'peer B\n');
+      sh(peerB, 'git', 'add', 'other.ts');
+      sh(peerB, 'git', 'commit', '-qm', 'peer B');
+      sh(peerB, 'git', 'push', '-q', 'origin', 'peerB');
+      // gh pr list ではまだ見えているが、fetch の直前に他セッションがマージして
+      // ブランチを消した、という競合状態を再現する。
+      sh(peerB, 'git', 'push', '-q', 'origin', '--delete', 'peerB');
+
+      const { status, stdout } = runDrift(
+        work,
+        {
+          status: 0,
+          output: JSON.stringify([
+            { number: 26, headRefName: 'peerA', isCrossRepository: false },
+            { number: 27, headRefName: 'peerB', isCrossRepository: false },
+          ]),
+        },
+        { noFetch: false },
+      );
+      expect(status).toBe(0);
+      // peerB が消えていても fetch 全体は失敗しない (劣化メッセージが出ない)。
+      expect(stdout).not.toContain('open PR のブランチを fetch できませんでした');
+      // peerA は正しく最新化され、shared.ts の重なりが検出できる。
+      expect(stdout).toContain('open PR #26 (peerA)');
+      expect(stdout).toContain('  shared.ts');
+      // peerB はそもそも ref が存在しない (fetch できるはずがない) ので、
+      // 個別に「リモート追跡ブランチがない」に落ちる。
+      expect(stdout).toContain('リモート追跡ブランチがないため比較を省略しました (PR #27)');
+    },
+    15000,
+  );
+
   it(
     'reports a merge-tree conflict as the stronger signal without a duplicate file-level warning',
     () => {
@@ -490,6 +599,49 @@ describe('check-drift CLI', () => {
     15000,
   );
 
+  // bdboard-b0yd R2-6: mergeTree() の `-c core.quotepath=false` に対する CLI 級の
+  // 回帰テスト。既存のパーサテストは手作りの文字列しか見ておらず、mergeTree() から
+  // フラグを外しても赤くならなかった。ここでは実際に非ASCIIパスを両側で追加して
+  // add/add 衝突させ、changedFiles() 側 (常に quotepath=false) が返す表記と
+  // mergeTree() 側の表記が一致することを検証する。フラグを外すと衝突ファイルが
+  // 8進エスケープされた別表記になり、branchFiles との積集合が空になって
+  // バケットC (ファイルの外) に落ちる。
+  it(
+    'recognizes a conflict on a non-ASCII path instead of losing it to octal escaping',
+    () => {
+      const { bare, work } = makeRepo('non-ascii-conflict');
+      const nonAsciiPath = 'docs/日本語.md';
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.mkdirSync(path.join(work, 'docs'), { recursive: true });
+      fs.writeFileSync(path.join(work, nonAsciiPath), 'mine\n');
+      sh(work, 'git', 'add', nonAsciiPath);
+      sh(work, 'git', 'commit', '-qm', 'mine adds a non-ASCII path');
+
+      const peer = path.join(tmpRoot, 'non-ascii-conflict-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      fs.mkdirSync(path.join(peer, 'docs'), { recursive: true });
+      fs.writeFileSync(path.join(peer, nonAsciiPath), 'peer\n');
+      sh(peer, 'git', 'add', nonAsciiPath);
+      sh(peer, 'git', 'commit', '-qm', 'peer adds the same non-ASCII path');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+      sh(work, 'git', 'fetch', '-q', 'origin', 'peer');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 41, headRefName: 'peer', isCrossRepository: false },
+        ]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR #41 (peer) と衝突します (rebase でテキスト衝突)');
+      expect(stdout).toContain(`  ${nonAsciiPath}`);
+      // quotepath=false が外れると、この行に落ちてしまう。
+      expect(stdout).not.toContain('衝突パスはこのブランチが触ったファイルの外です');
+    },
+    15000,
+  );
+
   it(
     'reports a rename conflict even when merge-tree names only the new path',
     () => {
@@ -515,7 +667,8 @@ describe('check-drift CLI', () => {
       });
       expect(status).toBe(0);
       expect(stdout).toContain('open PR #23 (peer) は衝突していますが');
-      expect(stdout).toContain(outsideBranchConflictExplanation);
+      expect(stdout).toContain(renameConflictExplanation);
+      expect(stdout).not.toContain(staleMainConflictExplanation);
       expect(stdout).toContain('  renamed-hot.ts');
       expect(stdout).toContain('この PR と同じファイルも触っています');
       expect(stdout).toContain('  hot.ts');
@@ -556,9 +709,70 @@ describe('check-drift CLI', () => {
       expect(status).toBe(0);
       expect(stdout).not.toContain('HEAD が merge-base そのものです');
       expect(stdout).toContain('衝突パスはこのブランチが触ったファイルの外です');
-      expect(stdout).toContain(outsideBranchConflictExplanation);
+      expect(stdout).toContain(staleMainConflictExplanation);
+      expect(stdout).not.toContain(renameConflictExplanation);
       expect(stdout).not.toContain('open PR #13 (peer) と衝突します');
       expect(stdout).not.toContain('open PR #13 (peer) と同じファイルを触っています');
+      expect(stdout).toContain('  hot.ts');
+    },
+    15000,
+  );
+
+  // bdboard-b0yd R2-2: 実測 (`/tmp` の使い捨てリポジトリ) — 自然な
+  // merge-tree(HEAD, peer) は exit 1 (CONFLICT) だが、`--merge-base=origin/main`
+  // を明示した ground truth は exit 0 (clean)。peer が origin/main に対して
+  // stale (自分の hot 行の編集を main の編集と衝突させたまま) なせいで、
+  // 「main と peer の衝突」が「自分と peer の衝突」に化けている。衝突ファイルが
+  // 自分の branchFiles とファイル名だけで一致しても、この場合は断定してはならない。
+  it(
+    'softens a layer-1 conflict instead of asserting it when the peer is stale relative to main',
+    () => {
+      const bare = path.join(tmpRoot, 'stale-layer1.git');
+      const work = path.join(tmpRoot, 'stale-layer1');
+      fs.mkdirSync(bare, { recursive: true });
+      sh(tmpRoot, 'git', 'init', '--bare', '-b', 'main', bare);
+      sh(tmpRoot, 'git', 'clone', '-q', bare, work);
+      fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
+      fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
+      fs.writeFileSync(path.join(work, 'hot.ts'), HOT_LINE_FILE('base', 'base'));
+      sh(work, 'git', 'add', '-A');
+      sh(work, 'git', 'commit', '-qm', 'base');
+      sh(work, 'git', 'push', '-q', 'origin', 'main');
+
+      // peer は base から分岐し、hot 行だけを編集する。main の後続の編集は
+      // 一切取り込まない (= 今後 stale になる)。
+      const peer = path.join(tmpRoot, 'stale-layer1-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      fs.writeFileSync(path.join(peer, 'hot.ts'), HOT_LINE_FILE('peer', 'base'));
+      sh(peer, 'git', 'commit', '-qam', 'peer edits the hot line');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+
+      // main は同じ hot 行を別の値に進める。peer は一度もこれを取り込まない。
+      advanceMain(bare, 'stale-layer1-main-advance', (dir) => {
+        fs.writeFileSync(path.join(dir, 'hot.ts'), HOT_LINE_FILE('main', 'base'));
+      });
+
+      // 自分のブランチは最新の main から分岐し、hot 行とは無関係な marker 行
+      // だけを編集する。hot.ts が branchFiles に載るのはこの marker 編集のため。
+      sh(work, 'git', 'fetch', '-q', 'origin');
+      sh(work, 'git', 'checkout', '-qb', 'feature', 'origin/main');
+      fs.writeFileSync(path.join(work, 'hot.ts'), HOT_LINE_FILE('main', 'mine'));
+      sh(work, 'git', 'commit', '-qam', 'mine edits an unrelated line');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 40, headRefName: 'peer', isCrossRepository: false },
+        ]),
+      });
+
+      expect(status).toBe(0);
+      // 実際の衝突原因は main vs peer (hot 行) であって、自分の編集 (marker 行)
+      // とは無関係。「衝突します」と断定するのは誤りで、弱い文言に落ちる。
+      expect(stdout).not.toContain('open PR #40 (peer) と衝突します (rebase でテキスト衝突)');
+      expect(stdout).toContain('open PR #40 (peer) と衝突する可能性があります');
+      expect(stdout).toContain('peer が origin/main に対して古いため');
       expect(stdout).toContain('  hot.ts');
     },
     15000,
@@ -593,6 +807,10 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('比較できた open PR がありません');
       expect(stdout).toContain('比較に失敗したため省略しました (PR #24:');
       expect(stdout).not.toContain('リモート追跡ブランチがないため比較を省略しました');
+      // bdboard-b0yd R2-5: unrelated histories は merge-tree 自体も
+      // (未知オプションと同じ) 非1終了で失敗する。以前はこれが完全に無言だった。
+      expect(stdout).toContain('merge-tree が使えないため PR #24 (peer) はファイル単位でのみ比較しました');
+      expect(stdout).toContain('unrelated histories');
     },
     15000,
   );
