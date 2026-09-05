@@ -72,7 +72,24 @@
  * まま余裕を厚めに取るしかなかった。`reportResidualMeasurement` が成功時にも 1 行 JSON を
  * `MOBILE_SCROLL_RESIDUAL_MEASUREMENT=` 付きで出すので、CI ログを
  * `grep -o 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=.*'` で拾って macOS 実測と突き合わせられる。
- * 下の 2 つの予算を Linux 実測込みで締め直すのは bdboard-ij7g のラウンド 2。
+ * bdboard-ij7g のラウンド 2 で、Linux/macOS の直接実測を基に下の 2 つの予算を締めた。
+ *
+ * ## 予算を締めたときの直接実測 (2026-09-05)
+ *
+ * 測定元は Linux が PR #399 の CI e2e ジョブ (ubuntu-latest, main 8fb4e8a) のログ、macOS が
+ * ローカルで `npx playwright test --config test/e2e/playwright.config.ts` を 2 回連続実行した結果
+ * (完全一致) である。いずれも `grep -o 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=.*'` で抽出した。
+ * `filterBar` は各行とも 54 (+ margin 4) で、tips は worst-case / first-card-worst-case-tip で
+ * 198.81、tips-dismissed で 0 である。
+ *
+ * | platform | label                       | header | maxScrollY | nonDismissibleResidual |
+ * |----------|-----------------------------|-------:|-----------:|-----------------------:|
+ * | Linux    | worst-case-tip              |    243 |        328 |                  75.19 |
+ * | Linux    | tips-dismissed              |    243 |        129 |                  75.00 |
+ * | Linux    | first-card-worst-case-tip   |    243 |        328 |                  75.19 |
+ * | macOS    | worst-case-tip              |    245 |        330 |                  77.19 |
+ * | macOS    | tips-dismissed              |    245 |        131 |                  77.00 |
+ * | macOS    | first-card-worst-case-tip   |    245 |        330 |                  77.19 |
  *
  * ## このガードが構造的に見ていないもの
  *
@@ -104,19 +121,17 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
 /**
  * ページスクロール残差の上限。
  *
- * 根拠: worst-case 実測 330px (macOS Chromium) に対して 30px の余裕。Linux CI の
- * フォントメトリクスでも上振れしないことは `mobile-header-compact.spec.ts:126-131` の
- * 2026-09-05 ubuntu-latest 実測 (同一 fixture・同一 pin) で裏が取れている:
- * headerBottom は Linux 243 / macOS 245 で **Linux のほうが 2px 小さく**、
- * tipsBannerHeight は 198.8125 で 1px の差もなく同値。上のモデル
- * (maxScrollY = header + tips + filterBarBox - 172) に入れると Linux の worst-case は
- * 328px 相当なので、実質の余裕は 32px。リポジトリの慣行 (+16px) の 2 倍取ってある。
+ * 根拠: worst-case の直接実測最大は macOS Chromium の 330px (Linux CI は 328px)。330px に
+ * リポジトリ慣行の +16px を足した。実測済みのプラットフォーム差 2px の 8 倍であり、フォント
+ * メトリクスや `documentElement.scrollHeight` の整数丸めが 1〜2px 動いても赤くならない。
  *
  * 400 では緩すぎた: `.lane` の高さ上限を 60px 劣化させるミューテーション (maxScrollY=390)
- * が素通りしていた。360 なら捕まる。同時に bd 記載の起点 478px と qxt1 着手時の 436.48px
- * のどちらも下回るので、ラチェットとして本物。
+ * が素通りしていた。346 なら +16px 以上の劣化で必ず捕まる。同時に bd 記載の起点 478px と
+ * qxt1 着手時の 436.48px のどちらも下回るので、ラチェットとして本物である。ここが回帰すると
+ * モバイルでページ全体のスクロールとレーン内スクロールが奪い合い、指を置いた位置でどちらが
+ * 動くか変わる帯が広がる。
  */
-const MAX_PAGE_SCROLL_RESIDUAL_PX = 360;
+const MAX_PAGE_SCROLL_RESIDUAL_PX = 346;
 
 /**
  * 「ユーザーが消せない」残差の上限 = maxScrollY から Tips と絞り込みバーの実測高を
@@ -126,11 +141,27 @@ const MAX_PAGE_SCROLL_RESIDUAL_PX = 360;
  * 上の予算だけだと、ヘッダーや `.lane` 上限が育っても Tips が短い日は吸収されて気付けない。
  * こちらは Tips/絞り込みバーの高さを両辺から落とすので、Tips の折り返し行数に鈍い。
  *
- * 根拠: 実測 77.19px (worst-case) / 76.52 / 77.00 / 81.00 に対して 104px。
- * ヘッダーに換算すると 272px までで、`mobile-header-compact.spec.ts` の
- * MAX_HEADER_HEIGHT_PX = 250 より緩い = こちらが先に赤くなることはない。
+ * 根拠: 上の表の実測最大は macOS の 77.19px (Linux は 75.19px) なので、切り上げた 78px に
+ * リポジトリ慣行の +16px を足した。これは実測済みのプラットフォーム差 2px の 8 倍であり、
+ * フォントメトリクスや `documentElement.scrollHeight` の整数丸めが 1〜2px 動いても赤くならない。
+ *
+ * bdboard-4ij6 (#390) の 5 点実測には 81.00px も含まれていた。上の表と矛盾しない —
+ * あれは**絞り込みバーが展開されている**状態で、`filterBarMarginBottom` が 4px でなく 8px に
+ * なるぶん `header - 164` へ上がる。bdboard-qxt1 が既定を畳んだ状態にしたので現在は到達しない。
+ * 仮に既定が展開へ巻き戻っても、そのときは maxScrollY 側が大きく跳ねて
+ * MAX_PAGE_SCROLL_RESIDUAL_PX に落ちるので、こちらの予算を 81.00px 基準にする必要は無い
+ * (下の `test` 内のコメントが「あえて assert しない」と言っているのはこの二重ガードのこと)。
+ *
+ * 94px を下限として選んだ。filterBar margin-bottom=4px ならこれは `header - 168` であり、
+ * `mobile-header-compact.spec.ts` の MAX_HEADER_HEIGHT_PX = 250 に対応する残差は 82px である。
+ * 82px 未満まで締めると、ヘッダー太りを同テストの名前付きアサーションではなくこちらが先に
+ * 落とし、失敗メッセージが原因から遠くなる。この 82px が上の 81.00px とほぼ同値なのは偶然で、
+ * 片方はヘッダー予算からの逆算、もう片方は展開時の実測という独立した根拠である。94px は 82px より緩いまま、旧 104px
+ * (= ヘッダー換算 272px) から 10px 締めているので、`.lane` の 260px リテラル削り由来の
+ * 退行も 27px 以上ではなく 17px 以上で捕まえる。ここが回帰すると、ファーストカードが折り目より
+ * 下へ押し出され、ページ側とレーン内のスクロールが奪い合う。
  */
-const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 104;
+const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 94;
 
 test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
   test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });
@@ -169,7 +200,7 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
     const nonDismissibleResidual = nonDismissibleResidualPx(before);
 
     // 成功時にも実測値を残す (bdboard-ij7g)。CI ログを grep して Linux 実測を読み、
-    // ラウンド 2 で予算を macOS/Linux 双方の実測を上回る最小値へ締め直すための材料。
+    // ラウンド 2 で予算を macOS/Linux 双方の直接実測に基づく値へ締める材料となった。
     await reportResidualMeasurement('worst-case-tip', before, {
       tipId: selectedTip.id,
       budgetMaxScrollY: MAX_PAGE_SCROLL_RESIDUAL_PX,
