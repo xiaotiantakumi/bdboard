@@ -1,6 +1,6 @@
 ---
 name: bdboard-harness
-description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first 排他と claim、確認待ちのノンブロッキング化(bd human + human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ(failure-catalog 照合・brushup・層判定と還流)の5規律を定める。
+description: .beads/ を持つプロジェクトでチケット作業・自律作業・並列セッション作業を始めるときに必ず適用する作業規律。セッション開始(bd prime→stale lease確認→bd ready)、worktree-first 排他と claim、確認待ちのノンブロッキング化(bd human + human gate)、close はマージ成功後だけ、ハーネス失敗の学習ループ(failure-catalog 照合・brushup・層判定と還流)、複雑度別のモデル振り分けの6規律を定める。
 ---
 
 # bdboard-harness — bd 運用プロジェクトの自律作業規律
@@ -119,6 +119,41 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 詳細: `brushup-protocol.md` / `layering.md` / `failure-catalog.md`
 
+## 規律6: モデル振り分け — 複雑度と可用性を分ける
+
+なぜ: 契約の `models` に従って工程ごとの候補を選ぶ。rate limit などの可用性の失敗だけで
+複雑度を上げると、品質と関係なく高いセルへ移り続けるので、2 種のフローを分離する。
+
+手順:
+
+1. 議長が着手時に `bd show <id>` と対象の grep を各 1 回行い、次のルーブリックで推定する。
+   **high の条件を優先し、迷ったら med**。
+   - **low**: 対象ファイルが特定済み（または grep 1 回で確定）、1〜2 ファイル、公開契約
+     （型・API・スキーマ・hook・`help-content.json` の構造）を変えない、のすべてを満たす。
+   - **high**: 層をまたぐ（domain⇄interface、server⇄web）、セキュリティ境界
+     （write-guard・hooks・contract parser・auth）、並列セッション整合（reclaim・merge-slot）、
+     不可逆操作、のいずれかに該当する。
+   - **med**: それ以外。
+2. `bdboard.complexity=low|med|high` と
+   `bdboard.complexity.source=declared|estimated|escalated` をメタデータに記録する。
+   初回推定は `estimated`。**人間が事前に置いた declared は自動上書き禁止、降格は人間のみ**。
+3. 対象プロジェクト/worktree のルートで
+   `bash .claude/skills/bdboard-harness/scripts/route.sh <stage> <complexity>` を実行する。
+   該当セル、未定義なら同じ工程の `*` の順に解決し、出力順で候補を試す。
+   契約/`models`/工程/セルが無く無出力で成功したら、呼び出し側の従来の既定動作へ戻る。
+   呼び出し側が決めた `member:model` を委譲先へ渡し、委譲先はモデルを決め打ちしない。
+4. **可用性の失敗**（rate limit / bin 不在 / タイムアウト / 同じ候補で 0 編集 2 連続）は
+   **同じセルの次候補へ**。**複雑度と source は変えない**。候補が尽きたら失敗を報告する。
+5. **品質の失敗**は、次の 3 トリガーだけで **low → med → high と 1 段上のセルへ**。
+   `bdboard.complexity.source=escalated` を書き、`bd comment` に理由を 1 行残す。
+   - (a) 委譲成果の verify が赤で、同じセルでの再委譲 1 回も赤。
+   - (b) レビューの major 以上の指摘が 3 件超（4 件以上）。
+   - (c) low 推定なのに当該作業の差分が 3 ファイル以上。
+   high でなお失敗する場合は理由を報告する。declared の変更が必要なら、人間へ判断を返し、
+   自動更新しない。品質が改善しても自動降格しない。
+
+詳細: `model-routing.md`
+
 ## 機械ガード（hooks）— 文章で防げない操作は hook が止める
 
 - `hooks/` の3スクリプトは、注入時に注入先の `.claude/settings.json` へ登録される。
@@ -133,4 +168,5 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 ## references
 
 `references/` の全量: worktree-pr-flow / lease-params / question-template / close-template /
-verification / failure-catalog / brushup-protocol / layering / frontend-gotchas（web 実装の罠）。
+verification / failure-catalog / brushup-protocol / layering / model-routing /
+frontend-gotchas（web 実装の罠）。

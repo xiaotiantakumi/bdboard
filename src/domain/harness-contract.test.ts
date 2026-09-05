@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   evaluateContractState,
   HARNESS_CONTRACT_RELATIVE_PATH,
   parseHarnessContract,
   resolveVerifyScriptRequirement,
   summarizeHarnessModels,
+  type HarnessModelCandidate,
   type ParseHarnessContractResult,
 } from './harness-contract.js';
 
@@ -534,6 +535,19 @@ describe('parseHarnessContract > models', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.contract.version).toBe(1);
+  });
+
+  it('brands parsed candidates without accepting an unvalidated string at the type boundary', () => {
+    expectTypeOf<string>().not.toExtend<HarnessModelCandidate>();
+    expectTypeOf<HarnessModelCandidate>().toExtend<string>();
+
+    const result = parseModelsSection({ routes: { review: { '*': ['claude:opus'] } } });
+    if (!result.ok || result.contract.models === null) throw new Error('expected models');
+    const route = result.contract.models.routes[0]!;
+    expectTypeOf(route.low).toEqualTypeOf<readonly HarnessModelCandidate[]>();
+    expectTypeOf(route.med).toEqualTypeOf<readonly HarnessModelCandidate[]>();
+    expectTypeOf(route.high).toEqualTypeOf<readonly HarnessModelCandidate[]>();
+    expect(route.low).toEqual(['claude:opus']);
   });
 
   it('parses a full routes table and resolves the wildcard into all three tiers', () => {
