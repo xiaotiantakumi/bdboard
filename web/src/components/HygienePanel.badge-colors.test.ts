@@ -17,7 +17,19 @@ function readSource(relativePath: string): string {
   );
 }
 
-const cssSource = readSource('../index.css');
+/**
+ * CSS コメントを除去する。除去前だと `indexOf('@media')` や `@media (prefers-
+ * color-scheme: dark)` を探す正規表現が、説明文中にたまたま現れた同じ文字列に
+ * ヒットしてブロック境界を誤検出しうる (bdboard-k2ql、実例は
+ * index.css.customProperties.test.ts / errorBoundaryLayout.test.ts /
+ * badgeNeutralContrast.test.ts と同じ流儀)。このファイルは行番号を報告しないので、
+ * dvhFallback 版のような空白置換ではなく単純な削除で揃える。
+ */
+function stripCssComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
+const cssSource = stripCssComments(readSource('../index.css'));
 const hygienePanelSource = readSource('./HygienePanel.tsx');
 
 /** WCAG 2.1 AA 通常テキストの最小コントラスト比。 */
