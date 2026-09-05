@@ -149,7 +149,14 @@ body {
   font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.47;
+  /* vh は large viewport (モバイルでアドレスバーが引っ込んだ状態の高さ) にマップされる一方、
+     スクロールポートの実高は dynamic viewport なので、実機ではアドレスバーが出ている間ずっと
+     lvh - dvh (iOS Safari で概ね 60-100px) ぶんドキュメントが viewport より高くなり、中身が
+     空でも消えないページスクロール残差の床になる (bdboard-rhv0)。dvh 未対応ブラウザで宣言ごと
+     落ちないよう、.lane と同じ 2 行フォールバック形で書く。Playwright の固定 viewport では
+     lvh === dvh === svh なので、この床は e2e からは常に 0 に見える。 */
   min-height: 100vh;
+  min-height: 100dvh;
   -webkit-font-smoothing: antialiased;
   /* overflow-x: clip (§3.1 non-scrollable): clips horizontal bleed without
    * widening the layout viewport or coercing overflow-y to auto (unlike hidden),
@@ -162,11 +169,15 @@ body {
 }
 
 #root {
+  /* body と同じ理由で dvh。body / #root / .app は入れ子なので、どれか 1 つでも lvh のまま
+     残すとそれが最も高い床になり、他を dvh にした意味が消える。 */
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .app {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   flex-direction: column;
   max-width: 100vw;
@@ -2590,7 +2601,14 @@ body {
 }
 
 .board-section .lane {
+  /* モバイル幅の同セレクタ (下の media query) は既に dvh 併記済みなので、デスクトップ側も
+     揃える。lvh のままでもレーンがビューポートより高くなることは無い (220px の chrome 予算は
+     lvh - svh の実測 60〜115px より常に大きい)。問題は逆で、アドレスバーが出ている間は
+     100lvh - 220px が実際の可視高より lvh - dvh ぶん大きく、差のぶんレーンの下端が
+     フォールドの下に潜る — つまり 220px という chrome 予算が過大に効く。この media query に
+     入らない横持ちのスマートフォン (例 844x390) が実際の当事者。 */
   max-height: calc(100vh - 220px);
+  max-height: calc(100dvh - 220px);
 }
 
 .board-section-title {
