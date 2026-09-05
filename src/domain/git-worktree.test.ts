@@ -23,6 +23,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: ['bd/bdboard-3tw.94'],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);
@@ -44,6 +45,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: ['bd/bdboard-3tw.96'],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);
@@ -72,6 +74,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: ['bd/bdboard-3tw.96'],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);
@@ -97,6 +100,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: ['bd/bdboard-orphan'],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);
@@ -127,6 +131,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: [],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);
@@ -157,6 +162,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: [],
+      complete: true,
     };
 
     expect(collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot)).toEqual([]);
@@ -178,6 +184,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: [],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);
@@ -201,6 +208,7 @@ describe('collectLeftoverCandidates', () => {
         },
       ],
       bdBranches: ['bd/bdboard-3tw.96'],
+      complete: true,
     };
 
     const candidates = collectLeftoverCandidates(PROJECT_ID, REPO_ROOT, snapshot);

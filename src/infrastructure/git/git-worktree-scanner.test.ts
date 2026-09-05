@@ -115,6 +115,9 @@ describe('createGitWorktreeScanner', () => {
 
     expect(snapshot.worktrees).toEqual([]);
     expect(snapshot.bdBranches).toEqual(['bd/bdboard-3tw.94']);
+    // **空 = 残骸なし、ではない。** これを取り違えると reclaim が生存セッションの
+    // チケットを奪う (bdboard-6aci)。読めなかったことをスナップショットに載せる。
+    expect(snapshot.complete).toBe(false);
   });
 
   it('returns empty bdBranches when branch list fails', async () => {
@@ -135,6 +138,41 @@ describe('createGitWorktreeScanner', () => {
 
     expect(snapshot.worktrees).toHaveLength(3);
     expect(snapshot.bdBranches).toEqual([]);
+    expect(snapshot.complete).toBe(false);
+  });
+
+  // CommandRunner は timeout / spawn 失敗を throw せず failureKind 付きで resolve する。
+  // exitCode だけ見ていると timeout が exitCode 0 として通ることがあるので両方見る。
+  it('reports an incomplete scan when git times out', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args[0] === '-C' && args[2] === 'worktree') {
+          return { stdout: '', stderr: '', exitCode: 0, failureKind: 'timeout' as const };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    const snapshot = await scanner.scan(ROOT);
+
+    expect(snapshot.complete).toBe(false);
+  });
+
+  it('reports a complete scan when both git calls succeed', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args[0] === '-C' && args[2] === 'worktree') {
+          return { stdout: PORCELAIN_OUTPUT, stderr: '', exitCode: 0 };
+        }
+        return { stdout: 'bd/bdboard-3tw.94\n', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    const snapshot = await scanner.scan(ROOT);
+
+    expect(snapshot.complete).toBe(true);
   });
 
   it('lets a bare repo block consume the main slot so linked worktrees stay candidates', async () => {

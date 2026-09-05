@@ -1,6 +1,7 @@
 import { compareStrings } from '../../domain/compare.js';
 import type { ReclaimRunRecord } from '../../domain/harness-kpi.js';
 import type { Project } from '../../domain/project.js';
+import type { ReclaimPlan } from '../../domain/reclaim-plan.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
 import { parseReclaimStdout } from './parse-reclaim-output.js';
@@ -88,12 +89,21 @@ export interface ReclaimSchedulerConfig {
  */
 export type ReclaimRunObserver = (run: ReclaimRunRecord) => void;
 
+/**
+ * 回収前に「生存証拠のあるチケットを外す」計画を立てる (bdboard-6aci)。
+ *
+ * `null` を返したら **そのプロジェクトは今回スキップする**。判断材料が無いときに
+ * 全件回収へフォールバックすると、この仕組みが防ごうとしている事故そのものが起きる。
+ */
+export type ReclaimPlanner = (project: Project) => Promise<ReclaimPlan | null>;
+
 export interface ReclaimSchedulerDeps {
   readonly reclaimer: LeaseReclaimer;
   readonly listProjects: () => readonly Project[];
   readonly config: ReclaimSchedulerConfig;
   readonly logError?: (message: string) => void;
   readonly observer?: ReclaimRunObserver;
+  readonly planner: ReclaimPlanner;
 }
 
 export interface ReclaimScheduler {
@@ -170,7 +180,41 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
   const runForProject = async (project: Project): Promise<void> => {
     const entry = ensureProjectStatus(project.id);
     try {
-      const result = await reclaimer.reclaim(project.rootPath, config.olderThan);
+      const plan = await deps.planner(project);
+      if (plan === null) {
+        // 判断材料が無い。全件回収へ落とすくらいなら 1 周見送る (回収漏れは次の
+        // 巡回で取り返せるが、生きている作業を奪うのは取り返せない)。
+        entry.lastRunAt = new Date();
+        // 「0 件回収した」とは言えない。何件回収すべきだったかを知らないまま
+        // 見送ったので、件数は unknown として表示する。
+        entry.reclaimedCount = null;
+        entry.reclaimedCountUnknown = true;
+        entry.rawSummary = 'skipped: 生存証拠を判定できませんでした';
+        entry.lastError = null;
+        return;
+      }
+
+      // `| undefined` を明示するのが要点。分割代入だと (noUncheckedIndexedAccess が
+      // 無い今の tsconfig では) 型が `string` になり、下のガードを消しても tsc が通る。
+      // ここを undefined 込みで受けておけば、ガードの削除が TS2322 で落ちる。
+      const firstTicketId: string | undefined = plan.reclaimTicketIds[0];
+      if (firstTicketId === undefined) {
+        // **ここで bd を呼んではいけない。** `--id` 無しの reclaim は全件対象になる。
+        entry.lastRunAt = new Date();
+        entry.reclaimedCount = 0;
+        entry.reclaimedCountUnknown = false;
+        entry.rawSummary =
+          plan.protectedTicketIds.length > 0
+            ? `protected ${plan.protectedTicketIds.length} (worktree が生きているため回収しませんでした)`
+            : null;
+        entry.lastError = null;
+        return;
+      }
+
+      const result = await reclaimer.reclaim(project.rootPath, config.olderThan, [
+        firstTicketId,
+        ...plan.reclaimTicketIds.slice(1),
+      ]);
       const runAt = new Date();
       entry.lastRunAt = runAt;
 
@@ -193,7 +237,15 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
       const parsed = parseReclaimStdout(result.stdout);
       entry.reclaimedCount = parsed.count;
       entry.reclaimedCountUnknown = parsed.count === null;
-      entry.rawSummary = parsed.summary.length > 0 ? parsed.summary : null;
+      const protectedNote =
+        plan.protectedTicketIds.length > 0
+          ? `protected ${plan.protectedTicketIds.length}`
+          : null;
+      const summaryParts = [
+        parsed.summary.length > 0 ? parsed.summary : null,
+        protectedNote,
+      ].filter((part): part is string => part !== null);
+      entry.rawSummary = summaryParts.length > 0 ? summaryParts.join('; ') : null;
       entry.lastError = null;
 
       notifyObserver({
