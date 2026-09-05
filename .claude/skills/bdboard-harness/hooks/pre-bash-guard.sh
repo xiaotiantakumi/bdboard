@@ -208,6 +208,154 @@ CONTRACT_FILE="$REPO_ROOT/.claude/bdboard-harness.json"
 CONTRACT="$(cat "$CONTRACT_FILE" 2>/dev/null)"
 [ -n "$CONTRACT" ] || exit 0
 
+# 6. aimix run のモデル指定を、検証コントラクトの models 表のセル所属で照合する。
+#
+#    ここに置くのは意図的。規則 5 の後ろに置くと、その直前の
+#    `[ -n "$CONTRACT_PATTERN_LIST" ] || exit 0` に食われて、hooks.denyBashPatterns を
+#    持たない契約では規則 6 が一切走らなくなる。
+#
+#    判定は「そのセルの候補配列に含まれるか」だけで行う。vendor 名 (codex / cursor /
+#    claude) で弾くと、セルの正当な 2 番手である cursor:... が道連れになる。
+#
+#    候補の抽出は scripts/route.sh に一本化する (jq/python3 の抽出ロジックをここへ
+#    コピーしない)。hooks/ の隣が scripts/ という関係は正本
+#    (harness/packs/bdboard-harness/) でも注入コピー
+#    (.claude/skills/bdboard-harness/) でも同じなので、$0 からの相対で解決できる。
+ROUTE_SCRIPT="$(cd "$(dirname "$0")/../scripts" 2>/dev/null && pwd)/route.sh"
+
+# 1 セグメントから --<flag> の値を取る。`--flag value` と `--flag=value` の両形式を
+# 受け、同じ flag が複数あれば後勝ち (多くの CLI と同じ)。`--member` の照合が
+# `--members` を巻き込まないよう、`=` は別ケースで見て前方一致にしない。
+segment_flag() {
+  segment_flag_name="$1"
+  segment_flag_text="$2"
+  segment_flag_value=''
+  set -f
+  # shellcheck disable=SC2086
+  set -- $segment_flag_text
+  set +f
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      "--$segment_flag_name")
+        [ $# -gt 1 ] && segment_flag_value="$2"
+        ;;
+      "--$segment_flag_name="*)
+        segment_flag_value="${1#--$segment_flag_name=}"
+        ;;
+    esac
+    shift
+  done
+  case "$segment_flag_value" in
+    '"'*'"') segment_flag_value="${segment_flag_value#\"}"; segment_flag_value="${segment_flag_value%\"}" ;;
+    "'"*"'") segment_flag_value="${segment_flag_value#\'}"; segment_flag_value="${segment_flag_value%\'}" ;;
+  esac
+  printf '%s' "$segment_flag_value"
+}
+
+# stderr は 3 行以内という不変条件を守る。member/model はコマンド行由来 (= route.sh の
+# 候補正規表現を通っていない) 文字列なので、規則 5 の contract message と同じ理由で
+# 改行/CR/TAB を空白へ潰し、長さを切ってから出す。
+route_safe() {
+  route_safe_value="$(printf '%s' "$1" | tr '\n\r\t' '   ')"
+  printf '%s' "${route_safe_value:0:200}"
+}
+
+# 規則 6 専用のセグメント分割。規則 1〜5 と違って複数のフラグが 1 セグメントに揃って
+# いることを前提にするので、先に行継続 (`\` + 改行) を畳む。畳まないと、実際に文書化
+# されている複数行の呼び出し形 (agents/*.md の `aimix run ... \` 形式) で
+# 「--model が別行 → 誤 deny」「--complexity が別行 → 照合を素通り」の両方が起きる。
+# 規則 1〜5 は単一トークン照合なので、こちらだけ畳んで影響範囲を閉じる。
+aimix_command_segments() {
+  printf '%s\n' "$COMMAND" | sed -e :a -e '/\\$/N; s/\\\n/ /; ta' | tr ';&|' '\n\n\n'
+}
+
+AIMIX_SEGMENTS="$(aimix_command_segments |
+  grep -E '(^|[^[:alnum:]_-])aimix[[:space:]]+run([[:space:]]|$)' 2>/dev/null)"
+if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
+  while IFS= read -r aimix_segment; do
+    [ -n "$aimix_segment" ] || continue
+
+    # ゲート対象は implement / refactor だけ。consult / review / debate は素通り。
+    # (現在の aimix run --mode に refactor は無いが、先回りしてゲートしておく。)
+    route_stage="$(segment_flag mode "$aimix_segment")"
+    case "$route_stage" in
+      implement | refactor) ;;
+      *) continue ;;
+    esac
+
+    # エスケープハッチを先に見る。環境変数でも、コマンド頭のインライン代入でもよい。
+    # 理由が空 (BDBOARD_ROUTE_OVERRIDE= / ="" / ='') は「理由なし」なので通さない。
+    #
+    # インライン代入は **aimix より前のプレフィックスだけ** を見る。セグメント全体の
+    # 部分一致にすると、`--task "... BDBOARD_ROUTE_OVERRIDE=x ..."` のように引数の
+    # 中身で黙ってゲートが外れる。しかも下の deny 文言自身がこの文字列を含むので、
+    # deny 文や README を委譲ブリーフへ貼って再試行するだけで無効化できてしまう。
+    route_override="${BDBOARD_ROUTE_OVERRIDE:-}"
+    route_override_prefix="${aimix_segment%%aimix*}"
+    case "$route_override_prefix" in
+      *BDBOARD_ROUTE_OVERRIDE=*)
+        route_override_rest="${route_override_prefix#*BDBOARD_ROUTE_OVERRIDE=}"
+        case "$route_override_rest" in
+          '"'*) route_override_rest="${route_override_rest#\"}"
+                route_override="${route_override_rest%%\"*}" ;;
+          "'"*) route_override_rest="${route_override_rest#\'}"
+                route_override="${route_override_rest%%\'*}" ;;
+          *) route_override="${route_override_rest%%[[:space:]]*}" ;;
+        esac
+        ;;
+    esac
+    [ -n "$route_override" ] && continue
+
+    # ここから先は「セルを特定できたときだけ」判定する。member や complexity が
+    # 読めないなら黙って通す (fail-open)。complexity 未記録を deny にするかは
+    # Phase 2 (bdboard-p5l.19) の観測結果で決める話であって、ここではやらない。
+    route_model="$(segment_flag model "$aimix_segment")"
+    route_member="$(segment_flag member "$aimix_segment")"
+    [ -n "$route_member" ] || continue
+    route_complexity="$(segment_flag complexity "$aimix_segment")"
+    case "$route_complexity" in
+      low | med | high) ;;
+      *) continue ;;
+    esac
+
+    # route.sh は「候補なし」を無出力 exit 0、契約不正を exit 1、jq/python3 不在を
+    # exit 127 で返す。deny してよいのは「候補を実際に取れた」ときだけ。
+    ROUTE_CANDIDATES="$(cd "$REPO_ROOT" 2>/dev/null &&
+      bash "$ROUTE_SCRIPT" "$route_stage" "$route_complexity" 2>/dev/null)"
+    [ $? -eq 0 ] || continue
+    [ -n "$ROUTE_CANDIDATES" ] || continue
+
+    # --model の必須チェックは「セルの候補を実際に取れた」後に置く。前に置くと、
+    # models 表を宣言していないプロジェクト (照合は必ず fail-open) でも deny だけが
+    # 発火し、しかも案内する route.sh は無出力なので従いようがない。実際 bdboard 自身の
+    # 契約にはまだ models 節が無く、そこでは「強制力ゼロ・摩擦のみ」になっていた。
+    # ここに置けば「表を持つプロジェクトでだけ、どの候補を使ったかを明示させる」になる。
+    if [ -z "$route_model" ]; then
+      deny \
+        'bdboard-harness: 振り分け表のあるこの工程/複雑度では aimix run に --model の明示が必須です (どの候補を使ったか記録に残らないため)。' \
+        "候補: $(route_safe "$(printf '%s' "$ROUTE_CANDIDATES" | tr '\n' ',' | sed 's/,$//')")" \
+        'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+    fi
+
+    route_wanted="$route_member:$route_model"
+    route_hit=''
+    while IFS= read -r route_candidate; do
+      [ "$route_candidate" = "$route_wanted" ] && route_hit='yes'
+    done <<ROUTE_CANDIDATES_EOF
+$ROUTE_CANDIDATES
+ROUTE_CANDIDATES_EOF
+    [ -n "$route_hit" ] && continue
+
+    route_candidate_list="$(printf '%s' "$ROUTE_CANDIDATES" | tr '\n' ',' | sed 's/,$//')"
+    deny \
+      "bdboard-harness: $(route_safe "$route_wanted") は検証コントラクトの ${route_stage}/${route_complexity} セルの候補ではありません。" \
+      "候補: $(route_safe "$route_candidate_list")" \
+      'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+  done <<AIMIX_SEGMENTS_EOF
+$AIMIX_SEGMENTS
+AIMIX_SEGMENTS_EOF
+fi
+
 contract_patterns() {
   case "$JSON_TOOL" in
     jq)

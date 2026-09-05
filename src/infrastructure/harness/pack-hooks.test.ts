@@ -310,6 +310,386 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     });
   });
 
+  /**
+   * 規則 6 (bdboard-p5l.15): aimix run のモデル指定を、検証コントラクトの
+   * models 表のセル所属で照合する。候補の抽出は scripts/route.sh に一本化されて
+   * いるので、ここでは「hook が route.sh をどう使い、どこで fail-open するか」を固定する。
+   */
+  describe('pre-bash-guard.sh rule 6 (model routing)', () => {
+    const ROUTES = {
+      implement: {
+        low: ['codex:gpt-5.6-luna'],
+        med: ['codex:gpt-5.6-terra', 'cursor:composer-2.5'],
+        high: ['codex:gpt-5.6-sol'],
+      },
+      // 現行の aimix run --mode に refactor は無いが、hook は先回りしてゲートしている。
+      // --model 必須チェックはセルを引けたときだけ効くので、その工程の表も要る。
+      refactor: { '*': ['codex:gpt-5.6-terra'] },
+    };
+
+    let projectRoot: string;
+    let env: Record<string, string>;
+
+    beforeEach(async () => {
+      projectRoot = path.join(tmpRoot, 'project');
+      mkdirSync(path.join(projectRoot, '.claude'), { recursive: true });
+      env = isolatedEnv();
+      await initGitRepo(projectRoot, 'main', env);
+    });
+
+    function writeContract(contract: Record<string, unknown>): void {
+      writeFileSync(
+        path.join(projectRoot, '.claude', 'bdboard-harness.json'),
+        `${JSON.stringify(contract)}\n`,
+        'utf8',
+      );
+    }
+
+    async function guard(
+      command: string,
+      extraEnv?: Record<string, string>,
+    ): Promise<CommandResult> {
+      return runHook(
+        PRE_BASH_GUARD,
+        { tool_name: 'Bash', cwd: projectRoot, tool_input: { command } },
+        { cwd: projectRoot, env: { ...env, ...extraEnv } },
+      );
+    }
+
+    for (const mode of ['implement', 'refactor']) {
+      it(`denies --mode ${mode} without --model`, async () => {
+        writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+        const result = await guard(
+          `aimix run --mode ${mode} --member codex --complexity high`,
+        );
+
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('--model の明示が必須');
+        expect(result.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+      });
+    }
+
+    it('denies a model that is not in the cell', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('codex:gpt-5.6-luna');
+      expect(result.stderr).toContain('implement/high');
+      expect(result.stderr).toContain('codex:gpt-5.6-sol');
+      expect(result.stderr.trim().split('\n').length).toBeLessThanOrEqual(3);
+    });
+
+    /**
+     * セルの 2 番手が通ることを固定する回帰テスト。vendor 名 (codex/cursor/claude) で
+     * 弾く実装にすると、正当な 2 番手である cursor:... が道連れで死ぬ。
+     */
+    it('allows the runner-up candidate of the same cell', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member cursor --model composer-2.5 --complexity med',
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    it('accepts --flag=value as well as --flag value', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode=implement --member=codex --model=gpt-5.6-sol --complexity=high',
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    it('allows an off-cell model when BDBOARD_ROUTE_OVERRIDE carries a reason', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+      const offCell =
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high';
+
+      const inline = await guard(`BDBOARD_ROUTE_OVERRIDE="枠逼迫" ${offCell}`);
+      expect(inline.exitCode).toBe(0);
+      expect(inline.stderr).toBe('');
+
+      const fromEnv = await guard(offCell, { BDBOARD_ROUTE_OVERRIDE: '枠逼迫' });
+      expect(fromEnv.exitCode).toBe(0);
+      expect(fromEnv.stderr).toBe('');
+    });
+
+    for (const empty of ['BDBOARD_ROUTE_OVERRIDE=', 'BDBOARD_ROUTE_OVERRIDE=""']) {
+      it(`still denies when the override reason is empty (${empty})`, async () => {
+        writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+        const result = await guard(
+          `${empty} aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high`,
+        );
+
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr).toContain('候補');
+      });
+    }
+
+    for (const mode of ['consult', 'review', 'debate']) {
+      it(`ignores --mode ${mode}`, async () => {
+        writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+        const result = await guard(`aimix run --mode ${mode} --member codex`);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe('');
+      });
+    }
+
+    /**
+     * deny してよいのは「セルの候補を取れて、そこに無かった」ときだけ。判定材料が
+     * 欠けているケースはすべて素通りさせる (fail-open)。README の fail-open 一覧に
+     * 対応する。
+     *
+     * 注意: 'no contract file at all' は規則 6 まで到達せず、規則 5 の手前にある
+     * `[ -r "$CONTRACT_FILE" ] || exit 0` で抜ける。規則 6 を丸ごと消しても通るので、
+     * 規則 6 の回帰は検出できない。README が挙げる fail-open 条件を固定する目的で
+     * 残してあるだけで、規則 6 の防護としては数えないこと。
+     */
+    const failOpenCases: ReadonlyArray<{
+      readonly name: string;
+      readonly contract?: Record<string, unknown>;
+      readonly command: string;
+    }> = [
+      {
+        name: 'no contract file at all',
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a --complexity value that is not low/med/high',
+        contract: { mainBranch: 'main', models: { routes: ROUTES } },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity HIGH',
+      },
+      {
+        name: 'a contract without a models section',
+        contract: { mainBranch: 'main' },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a contract whose models table lacks the stage',
+        contract: { mainBranch: 'main', models: { routes: { review: ROUTES.implement } } },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a contract whose stage lacks the cell',
+        contract: {
+          mainBranch: 'main',
+          models: { routes: { implement: { low: ROUTES.implement.low } } },
+        },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        // route.sh は exit 1 で返るが、下流の「候補が空なら continue」ガードでも
+        // 同じ結論になる。route.sh は検証を終えるまで一切 stdout に出さない設計なので、
+        // 「非 0 終了かつ候補が非空」という状態は原理的に作れない。$? ガードは
+        // その設計への保険であって、このテストが単独で守っているわけではない。
+        name: 'a models table that route.sh rejects as invalid',
+        contract: { mainBranch: 'main', models: { routes: { implement: { high: [] } } } },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a call without --complexity',
+        contract: { mainBranch: 'main', models: { routes: ROUTES } },
+        command: 'aimix run --mode implement --member codex --model gpt-5.6-luna',
+      },
+      {
+        name: 'a call without --member',
+        contract: { mainBranch: 'main', models: { routes: ROUTES } },
+        command: 'aimix run --mode implement --model gpt-5.6-luna --complexity high',
+      },
+    ];
+
+    for (const failOpen of failOpenCases) {
+      it(`does not deny with ${failOpen.name}`, async () => {
+        if (failOpen.contract !== undefined) {
+          writeContract(failOpen.contract);
+        }
+
+        const result = await guard(failOpen.command);
+
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toBe('');
+      });
+    }
+
+    // これも規則 6 には到達しない (30 行目の縮退モードで hook 全体が抜ける)。
+    // README の fail-open 一覧を固定する目的で置いている。
+    it('does not deny when neither jq nor python3 is available', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await runHook(
+        PRE_BASH_GUARD,
+        {
+          tool_name: 'Bash',
+          cwd: projectRoot,
+          tool_input: {
+            command:
+              'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+          },
+        },
+        { cwd: projectRoot, env: minimalEnv() },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain('jq/python3 not found');
+    });
+
+    /**
+     * 規則 6 の位置の回帰テスト。規則 5 の後ろに置くと、その直前の
+     * 「denyBashPatterns が 1 件も無ければ exit 0」に食われて規則 6 が丸ごと死ぬ。
+     * このファイルの他の規則 6 テストはすべて denyBashPatterns の無い契約なので
+     * そちらが「食われない」側を張る。ここは逆に denyBashPatterns が **有る** 契約で、
+     * 規則 5 が規則 6 を覆い隠さないことを固定する。
+     */
+    it('still runs when the contract also declares denyBashPatterns', async () => {
+      writeContract({
+        mainBranch: 'main',
+        models: { routes: ROUTES },
+        hooks: {
+          denyBashPatterns: ['npm run verify:steps'],
+          denyBashMessages: ['verify:steps は直叩き禁止です。'],
+        },
+      });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('セルの候補ではありません');
+      expect(result.stderr).not.toContain('verify:steps');
+    });
+
+    /**
+     * models 表を宣言していないプロジェクトでは規則 6 は完全に素通りする。
+     * --model 必須チェックを route.sh 参照より前に置くと、照合は必ず fail-open
+     * なのに deny だけが発火し、しかも案内する route.sh は無出力なので従いようがない
+     * (レビュー指摘 blocker)。
+     */
+    it('does not require --model when the contract declares no models table', async () => {
+      writeContract({ mainBranch: 'main' });
+
+      const result = await guard('aimix run --mode implement --member codex --complexity low');
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    /**
+     * エスケープハッチは aimix より前のプレフィックスだけを見る。セグメント全体の
+     * 部分一致にすると --task の中身でゲートが外れる。deny 文言自身が
+     * BDBOARD_ROUTE_OVERRIDE を含むため、deny 文を委譲ブリーフへ貼って再試行するだけで
+     * 無効化できてしまう (レビュー指摘 major)。
+     */
+    it('ignores BDBOARD_ROUTE_OVERRIDE that appears inside an argument', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high ' +
+          '--task "note: BDBOARD_ROUTE_OVERRIDE=x is the hatch"',
+      );
+
+      expect(result.exitCode).toBe(2);
+    });
+
+    /**
+     * 行継続 (`\` + 改行) を畳まないと、agents/*.md が文書化している複数行の呼び出し形で
+     * 「--model が別行 → 誤 deny」「--complexity が別行 → 照合を素通り」の両方が起きる
+     * (レビュー指摘 major)。規則 1〜5 は単一トークン照合なのでこの弱点を持たない。
+     */
+    it('folds line continuations before judging (correct multi-line call passes)', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --complexity high \\\n' +
+          '  --model gpt-5.6-sol \\\n' +
+          '  --task "implement bdboard-xyz"',
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    it('folds line continuations before judging (off-cell multi-line call is denied)', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member cursor --model totally-bogus \\\n' +
+          '  --complexity high --json',
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('cursor:totally-bogus');
+    });
+
+    /**
+     * hook は bash 3.2 互換で書く契約 (macOS の /bin/bash)。テストの `bash` は PATH 解決
+     * なので Homebrew の 5.x を引きうる。4.x 構文を書いても CI が緑のままにならないよう、
+     * 3.2 そのものに対しても deny/allow の両方向を 1 本ずつ固定する。
+     */
+    it.skipIf(!existsSync('/bin/bash'))('behaves the same under /bin/bash (3.2)', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+      const payload = (command: string): string =>
+        JSON.stringify({ tool_name: 'Bash', cwd: projectRoot, tool_input: { command } });
+
+      const denied = await runner.run('/bin/bash', [PRE_BASH_GUARD], {
+        input: payload(
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+        ),
+        timeoutMs: 20_000,
+        cwd: projectRoot,
+        env,
+      });
+      expect(denied.exitCode).toBe(2);
+      expect(denied.stderr).toContain('セルの候補ではありません');
+
+      const allowed = await runner.run('/bin/bash', [PRE_BASH_GUARD], {
+        input: payload(
+          'BDBOARD_ROUTE_OVERRIDE="枠逼迫" aimix run --mode implement --member codex ' +
+            '--model gpt-5.6-luna --complexity high',
+        ),
+        timeoutMs: 20_000,
+        cwd: projectRoot,
+        env,
+      });
+      expect(allowed.exitCode).toBe(0);
+      expect(allowed.stderr).toBe('');
+    });
+
+    /**
+     * 規則 2・3 と同じく、コマンド列は「コマンド 1 個」へ割ってから判定する。
+     * 列全体を 1 つとして見ると「先頭だけ行儀の良い」列が素通りする。
+     */
+    it('judges each command of a sequence separately', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high; ' +
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      );
+
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
   describe('degraded mode (no jq, no python3)', () => {
     /**
      * jq も python3 も無い環境では、生の JSON へ正規表現を当てる縮退判定はせず、

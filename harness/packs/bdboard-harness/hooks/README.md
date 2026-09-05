@@ -34,6 +34,7 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
+| 6 | `aimix run --mode implement` / `--mode refactor` で、`models.routes` の該当セルを引けたのに `--model` が無い、または `<member>:<model>` がそのセルの候補でない | `scripts/route.sh <工程> <low\|med\|high>` で候補を引いて渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
 判定する。列全体をまとめて見ると `bd dolt push --remote legacy; bd dolt push` や
@@ -69,6 +70,81 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
   への指示文を紛れ込ませるプロンプト注入面にもなるため。
 - worktree でも `rev-parse --show-toplevel` は worktree の根を返すので、tracked
   ファイルであればそのまま読める。
+
+### 6 の振り分け照合
+
+規律 6 (SKILL.md) の「工程 × 複雑度のモデル振り分け表」を機械で強制する。文章だけの規律は
+failure-catalog の「D: 文章で禁止しても再発する操作ミス」に落ちるため。
+
+判定対象は `command_segments` で割った各コマンドのうち、`aimix run` かつ
+`--mode implement` / `--mode refactor` のもの。`--mode consult` / `review` / `debate` と
+`aimix` 以外は素通りする。フラグは `--flag value` と `--flag=value` の両形式を受け、同じ
+フラグが複数あれば後勝ち。
+
+- **セルを引けたときは `--model` が必須**。無ければ deny する。どの候補を使ったのかが
+  記録に残らないため。**逆に言うと、`models` 表を宣言していないプロジェクトでは
+  `--model` 無しでも通る** — 照合が必ず fail-open になる場所で deny だけ発火させると、
+  deny 文が案内する `route.sh` は無出力なので従いようがなく、摩擦だけが残るため。
+- **判定は「そのセルの候補配列に `<member>:<model>` が含まれるか」だけで行う。**
+  vendor 名 (`codex` / `cursor` / `claude`) で弾く実装にしてはならない — セルの正当な
+  2 番手である `cursor:...` が道連れになる。
+- 候補の抽出は **`scripts/route.sh` に一本化**する。jq / python3 の抽出ロジックをこの
+  hook 側へコピーしない (二重実装は片方だけ直って静かにズレる)。`hooks/` の隣が
+  `scripts/` という関係は正本 (`harness/packs/bdboard-harness/`) でも注入コピー
+  (`.claude/skills/bdboard-harness/`) でも同じなので、`$0` からの相対で解決している。
+
+**この規則の位置は `hooks.denyBashPatterns` の読み出しより前**でなければならない。規則 5 の
+後ろに置くと、その直前の「パターンが 1 件も無ければ `exit 0`」に食われて、
+`denyBashPatterns` を持たない契約では規則 6 が丸ごと死ぬ。
+
+#### fail-open する条件
+
+deny してよいのは「セルの候補を実際に取れて、そこに無かった」ときだけ。次はすべて素通り:
+
+- `scripts/route.sh` が読めない。
+- `route.sh` が非 0 で終わる — 契約の JSON が不正 (exit 1)、jq も python3 も無い (exit 127)。
+- `route.sh` の出力が空 — 契約に `models` 節が無い / その工程が無い / そのセルが無い。
+- `--member` が読めない、または `--complexity` が `low` / `med` / `high` でない
+  (大文字小文字は区別する。`--complexity LOW` は素通りする)。
+  **complexity 未記録を deny にするかは Phase 2 (bdboard-p5l.19) の観測結果で決める話**で、
+  ここではやらない。
+
+`--model` の必須チェックも**この fail-open の後ろ**にある。順序は
+mode ゲート → エスケープハッチ → `--member` / `--complexity` → `route.sh` →
+`--model` 必須 → セル所属照合。
+
+#### エスケープハッチ
+
+`BDBOARD_ROUTE_OVERRIDE=<理由>` があれば通す。hook 自身の環境変数でも、コマンド先頭の
+インライン代入 (`BDBOARD_ROUTE_OVERRIDE="枠逼迫" aimix run ...`。クォートは `"` / `'` /
+無しのいずれでも可) でもよい。**理由が空 (`BDBOARD_ROUTE_OVERRIDE=` / `=""` / `=''`) は
+通らない** — 「理由を書かせる」ことがこのハッチの目的なので。
+
+インライン代入は **`aimix` より前のプレフィックスだけ**を見る。セグメント全体の部分一致に
+すると `--task "... BDBOARD_ROUTE_OVERRIDE=x ..."` のように引数の中身でゲートが外れる。
+しかも**上の deny 文言自身がこの文字列を含む**ので、deny 文やこの README を委譲ブリーフへ
+貼って再試行するだけで無効化できてしまう。
+
+インライン代入のほうが実務では望ましい。理由がそのままコマンド列としてトランスクリプトに
+残り、後から「なぜ表を外れたか」を追えるため。
+
+#### 限界
+
+- **Bash hook は Agent ツールの `model:` を見られない。** したがって規則 6 が守れるのは
+  Bash 経由の `aimix run` だけで、`claude:*` を Agent ツールで直接呼ぶ経路は素通りする。
+  これは既知の穴であり、埋めるかどうかは Phase 2 (bdboard-p5l.19) の観測結果で判断する。
+- 現在の `aimix run --mode` は `consult` / `review` / `debate` / `implement` のみで、
+  **`refactor` は存在しない**。将来 (または別経路) のために先回りしてゲートしてある。
+- 規則 6 だけは、判定前に**行継続 (`\` + 改行) を畳む**。規則 1〜5 が単一トークン照合なのに
+  対し、規則 6 は複数のフラグが 1 セグメントに揃っていることを前提にするため。畳まないと、
+  `agents/*.md` が文書化している複数行の呼び出し形で「`--model` が別行 → 誤 deny」
+  「`--complexity` が別行 → 照合を素通り」の両方が起きる。畳むのは規則 6 用の分割だけで、
+  規則 1〜5 の判定は従来どおり。
+- 規則 1〜5 と同じく、判定はコマンド文字列への照合なので「そのコマンドを実行する意図」と
+  「そのコマンドについて書いているだけの文字列」を区別しない。`aimix run --mode implement
+  --model ...` を例示として heredoc やテストフィクスチャに書くと deny されうる。実測例:
+  規則 1 の禁止事項リストをそのまま heredoc に書き写した委譲ブリーフが、規則 1 自身に
+  弾かれた (2026-09-05)。回避はプレースホルダで書いてから別プロセスで置換する。
 
 ### 誤検知について
 
