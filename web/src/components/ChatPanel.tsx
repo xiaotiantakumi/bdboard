@@ -1,4 +1,5 @@
 import {
+  type ChangeEvent,
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
@@ -411,6 +412,7 @@ export function ChatPanel({
   const threadDrawerCloseButtonRef = useRef<HTMLButtonElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const formRef = useRef<HTMLFormElement>(null);
 
   const [selectedProjectId, setSelectedProjectId] = useState(() =>
@@ -1868,24 +1870,18 @@ export function ChatPanel({
     [selectedAgent],
   );
 
-  const handleImagePaste = useCallback(
-    (event: ClipboardEvent<HTMLTextAreaElement>) => {
-      const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
-        file.type.startsWith('image/'),
-      );
-      // 通常のテキスト paste はブラウザへ委ねる。画像を含む paste のときだけ
-      // textarea へのバイナリ由来文字列挿入を止める。
-      if (imageFiles.length === 0) {
+  const ingestImageFiles = useCallback(
+    (files: readonly File[]) => {
+      if (files.length === 0) {
         return;
       }
-      event.preventDefault();
       const attachmentKey = currentConversationKey;
       // attachmentKey と imageFiles をキャプチャしたクロージャで .then() 内の再検証を行うため、
       // 連続 paste が3回以上重なると conversationAttachmentsRef.current の読み取りタイミング次第で
       // 上限判定が甘くなりうる。現行の上限4枚では実害が観測されていないが、上限を変えるときはここが表面化しうる。
       const validationError = validateChatAttachments(
         conversationAttachmentsRef.current[attachmentKey] ?? [],
-        imageFiles,
+        files,
       );
       if (validationError !== null) {
         setAttachmentErrors((prev) => ({ ...prev, [attachmentKey]: validationError }));
@@ -1893,7 +1889,7 @@ export function ChatPanel({
       }
 
       void Promise.all(
-        imageFiles.map(async (file) => {
+        files.map(async (file) => {
           const previewUrl = await readFileAsDataUrl(file);
           attachmentIdRef.current += 1;
           return {
@@ -1912,7 +1908,7 @@ export function ChatPanel({
           if (currentConversationKeyRef.current !== attachmentKey) return;
           const latestValidationError = validateChatAttachments(
             conversationAttachmentsRef.current[attachmentKey] ?? [],
-            imageFiles,
+            files,
           );
           if (latestValidationError !== null) {
             setAttachmentErrors((prev) => ({
@@ -1940,6 +1936,34 @@ export function ChatPanel({
         });
     },
     [currentConversationKey, updateConversationAttachments],
+  );
+
+  const handleImagePaste = useCallback(
+    (event: ClipboardEvent<HTMLTextAreaElement>) => {
+      const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
+        file.type.startsWith('image/'),
+      );
+      // 通常のテキスト paste はブラウザへ委ねる。画像を含む paste のときだけ
+      // textarea へのバイナリ由来文字列挿入を止める。
+      if (imageFiles.length === 0) {
+        return;
+      }
+      event.preventDefault();
+      ingestImageFiles(imageFiles);
+    },
+    [ingestImageFiles],
+  );
+
+  const handleImageFileChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files ?? []);
+      if (files.length === 0) {
+        return;
+      }
+      ingestImageFiles(files);
+      event.target.value = '';
+    },
+    [ingestImageFiles],
   );
 
   const removeAttachment = useCallback(
@@ -3461,31 +3485,50 @@ export function ChatPanel({
             onPaste={handleImagePaste}
             onKeyDown={handleKeyDown}
           />
-          <button
-            type="submit"
-            className="btn"
-            disabled={
-              selectedProjectId === '' ||
-              isSending ||
-              isHistoryPending ||
-              chatUnsupported ||
-              selectedAgentUnavailable ||
-              hasUnsupportedAttachments ||
-              (currentInput.trim() === '' && currentAttachments.length === 0)
-            }
-            aria-describedby={
-              [
-                projectSelectionHintId,
-                agentUnavailableHintId,
-              ]
-                .filter((id): id is string => id !== null)
-                .join(' ') || undefined
-            }
-          >
-            送信
-          </button>
+          <div className="chat-input-actions">
+            <button
+              type="button"
+              className="chat-attach-button"
+              aria-label="画像を添付"
+              disabled={isSending || chatUnsupported}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              📎
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              multiple
+              hidden
+              onChange={handleImageFileChange}
+            />
+            <button
+              type="submit"
+              className="btn"
+              disabled={
+                selectedProjectId === '' ||
+                isSending ||
+                isHistoryPending ||
+                chatUnsupported ||
+                selectedAgentUnavailable ||
+                hasUnsupportedAttachments ||
+                (currentInput.trim() === '' && currentAttachments.length === 0)
+              }
+              aria-describedby={
+                [
+                  projectSelectionHintId,
+                  agentUnavailableHintId,
+                ]
+                  .filter((id): id is string => id !== null)
+                  .join(' ') || undefined
+              }
+            >
+              送信
+            </button>
+          </div>
           <span className="chat-input-hint">
-            ⌘/Ctrl + Enter で送信 · PNG/JPEG/WebP を貼り付け（最大4枚）
+            ⌘/Ctrl + Enter で送信 · 画像は PNG/JPEG/WebP を4枚まで（貼り付け可）
           </span>
           <span className="chat-image-privacy-hint">
             画像はこの画面のメモリ上だけに保持され、履歴 API / localStorage には保存されません。

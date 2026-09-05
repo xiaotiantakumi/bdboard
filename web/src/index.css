@@ -5598,6 +5598,43 @@ body {
   color: var(--color-text-tertiary);
 }
 
+.chat-input-actions {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.chat-attach-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-attach-button:hover:not(:disabled) {
+  background: var(--badge-neutral-bg);
+  color: var(--color-text);
+}
+
+.chat-attach-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input-actions .btn {
+  flex: 1 1 auto;
+}
+
 .chat-image-privacy-hint {
   color: var(--color-text-tertiary);
   font-size: 0.6875rem;

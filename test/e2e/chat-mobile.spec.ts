@@ -283,6 +283,31 @@ test.describe('chat panel mobile layout', () => {
     expect(messagesHeight).toBeGreaterThanOrEqual(40);
   });
 
+  test('375px width shows attach button without textarea focus', async ({ page }) => {
+    const dialog = await openChatPanel(page);
+    await ensureProjectSelected(page);
+
+    const textarea = dialog.locator('.chat-input');
+    await expect(textarea).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+
+    const attachButton = dialog.getByRole('button', { name: '画像を添付' });
+    await expect(attachButton).toBeVisible();
+
+    const box = await attachButton.boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(375);
+    expect(box!.height).toBeGreaterThanOrEqual(44);
+
+    console.log(
+      JSON.stringify({
+        case: '375x812-attach-button',
+        boundingBox: box,
+      }),
+    );
+  });
+
   test('375px width shows privacy hint when image is attached via paste', async ({
     page,
   }) => {

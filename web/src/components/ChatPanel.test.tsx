@@ -212,6 +212,34 @@ function pasteFiles(target: HTMLElement, files: readonly File[]) {
   });
 }
 
+function makeFileList(files: readonly File[]): FileList {
+  const fileList = {
+    length: files.length,
+    item: (index: number) => files[index] ?? null,
+    [Symbol.iterator]: function* () {
+      for (const file of files) {
+        yield file;
+      }
+    },
+  } as FileList;
+  files.forEach((file, index) => {
+    Object.defineProperty(fileList, index, { value: file, enumerable: true });
+  });
+  return fileList;
+}
+
+function selectFiles(input: HTMLInputElement, files: readonly File[]) {
+  fireEvent.change(input, { target: { files: makeFileList(files) } });
+}
+
+function getImageFileInput(container: HTMLElement): HTMLInputElement {
+  const input = container.querySelector('input[type="file"]');
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error('Image file input not found');
+  }
+  return input;
+}
+
 function makeImageFile(
   name: string,
   type: string = 'image/png',
@@ -711,6 +739,124 @@ describe('ChatPanel', () => {
       ).not.toBeInTheDocument();
       expect(within(screen.getByRole('log')).getByAltText('添付画像: abort.png')).toBeInTheDocument();
       expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(0);
+    });
+  });
+
+  describe('画像添付ボタン', () => {
+    it('shows a preview when images are selected via the attach button', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const { container } = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+
+      const attachButton = screen.getByRole('button', { name: '画像を添付' });
+      expect(attachButton).toBeInTheDocument();
+      const fileInput = getImageFileInput(container);
+      expect(fileInput).toHaveAttribute('accept', 'image/png,image/jpeg,image/webp');
+      expect(fileInput).toHaveAttribute('multiple');
+
+      selectFiles(fileInput, [makeImageFile('picked.png')]);
+
+      expect(
+        await screen.findByAltText('送信前の添付画像: picked.png'),
+      ).toBeInTheDocument();
+    });
+
+    it('rejects five images selected at once via the attach button', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const { container } = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+
+      const readSpy = vi.spyOn(FileReader.prototype, 'readAsDataURL');
+      selectFiles(
+        getImageFileInput(container),
+        Array.from({ length: 5 }, (_, index) => makeImageFile(`${index}.png`)),
+      );
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        '画像は最大 4 枚まで添付できます。',
+      );
+      expect(readSpy).not.toHaveBeenCalled();
+      readSpy.mockRestore();
+      expect(screen.queryByRole('list', { name: '送信前の添付画像' })).not.toBeInTheDocument();
+    });
+
+    it('rejects unsupported MIME types selected via the attach button', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const { container } = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+
+      const readSpy = vi.spyOn(FileReader.prototype, 'readAsDataURL');
+      selectFiles(getImageFileInput(container), [
+        makeImageFile('animated.gif', 'image/gif'),
+      ]);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'PNG・JPEG・WebP 形式の画像だけ貼り付けられます。',
+      );
+      expect(readSpy).not.toHaveBeenCalled();
+      readSpy.mockRestore();
+      expect(screen.queryByRole('list', { name: '送信前の添付画像' })).not.toBeInTheDocument();
+    });
+
+    it('rejects HEIC selected via the attach button', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const { container } = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+
+      selectFiles(getImageFileInput(container), [
+        makeImageFile('photo.heic', 'image/heic'),
+      ]);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'PNG・JPEG・WebP 形式の画像だけ貼り付けられます。',
+      );
+    });
+
+    it('shares attachment state between paste and attach button paths', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const { container } = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+      const messageInput = screen.getByLabelText('メッセージ');
+
+      pasteFiles(messageInput, [
+        makeImageFile('paste-1.png'),
+        makeImageFile('paste-2.png'),
+        makeImageFile('paste-3.png'),
+      ]);
+      await screen.findByAltText('送信前の添付画像: paste-1.png');
+      const attachmentList = screen.getByRole('list', { name: '送信前の添付画像' });
+      expect(within(attachmentList).getAllByRole('listitem')).toHaveLength(3);
+
+      const readSpy = vi.spyOn(FileReader.prototype, 'readAsDataURL');
+      selectFiles(getImageFileInput(container), [
+        makeImageFile('pick-1.png'),
+        makeImageFile('pick-2.png'),
+      ]);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        '画像は最大 4 枚まで添付できます。',
+      );
+      expect(readSpy).not.toHaveBeenCalled();
+      readSpy.mockRestore();
+      expect(within(attachmentList).getAllByRole('listitem')).toHaveLength(3);
+    });
+
+    it('allows selecting the same file twice in a row via the attach button', async () => {
+      fetchChatAgentsMock.mockResolvedValue([CODEX_IMAGE_AGENT]);
+      const { container } = renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+      const fileInput = getImageFileInput(container);
+      const sameFile = makeImageFile('repeat.png');
+
+      selectFiles(fileInput, [sameFile]);
+      await screen.findByAltText('送信前の添付画像: repeat.png');
+      const attachmentList = screen.getByRole('list', { name: '送信前の添付画像' });
+      expect(within(attachmentList).getAllByRole('listitem')).toHaveLength(1);
+
+      selectFiles(fileInput, [sameFile]);
+      await waitFor(() => {
+        expect(within(attachmentList).getAllByRole('listitem')).toHaveLength(2);
+      });
     });
   });
 
