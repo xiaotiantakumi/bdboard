@@ -1,7 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { compareStrings } from '../compare';
 import {
   BoardFilterBar,
   countActiveFilters,
@@ -212,10 +211,22 @@ describe('BoardFilterBar', () => {
     expect(onLabelsChange).toHaveBeenLastCalledWith([]);
   });
 
-  it('hides label section when availableLabels is empty', () => {
+  it('hides label section when the label union is empty', () => {
     renderBar({ availableLabels: [] });
 
     expect(screen.queryByRole('button', { name: 'human' })).not.toBeInTheDocument();
+  });
+
+  it('renders the label section when only a selected-but-unavailable label remains', () => {
+    // Pins the `labelOptions.length > 0` guard itself: with availableLabels empty,
+    // reverting the guard to availableLabels.length hides the whole group, which is
+    // exactly the bdboard-we44 repro (badge counts 1, no chip to unpress).
+    renderBar({ availableLabels: [], labels: ['archived'] });
+
+    expect(screen.getByRole('button', { name: 'archived' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 
   it('keeps selected labels visible when they are no longer available', async () => {
@@ -265,16 +276,14 @@ describe('BoardFilterBar', () => {
     const labels = ['Z'];
     renderBar({ availableLabels, labels });
 
-    const compareSorted = [...new Set([...availableLabels, ...labels])].sort(compareStrings);
-    const localeSorted = [...new Set([...availableLabels, ...labels])].sort((a, b) =>
-      a.localeCompare(b),
-    );
     const renderedLabels = screen
       .getAllByRole('button', { name: /^(Z|a)$/ })
       .map((button) => button.textContent);
 
-    expect(localeSorted).not.toEqual(compareSorted);
-    expect(renderedLabels).toEqual(compareSorted);
+    // Literal, not recomputed with compareStrings: this must fail if compareStrings
+    // itself regresses. 'Z' (U+005A) sorts before 'a' (U+0061) in code-unit order,
+    // whereas localeCompare would give ['a', 'Z'].
+    expect(renderedLabels).toEqual(['Z', 'a']);
   });
 
   it('marks selected issue type chips as pressed', () => {
