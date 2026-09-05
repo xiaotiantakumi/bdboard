@@ -37,6 +37,15 @@ function normalizeForSearch(text: string): string {
 }
 
 /** HELP_SECTIONS から、他の節の title/description/steps に現れない語を1つ選ぶ。 */
+// userEvent.type() は `{` と `[` を「{Enter}」「[Space]」のようなキー記述の開始と解釈する。
+// 打ち込む文字列は docs/help-content.json から実行時に取ってくる (bdboard-h4xs.16 minor-8) ため、
+// 原本に将来これらの文字が入るとテストが不可解に壊れる。二重化がリテラル1文字のエスケープ。
+// 原本を直した人が無関係な HelpPanel.test.tsx の失敗に出くわす、という minor-8 が塞いだはずの
+// 結合をここで作り直さないための予防。
+function escapeForUserEventType(text: string): string {
+  return text.replace(/[{[]/g, '$&$&');
+}
+
 function findUniqueFilterKeyword(): { keyword: string; sectionId: string } {
   const sectionParts = HELP_SECTIONS.map((section) => ({
     id: section.id,
@@ -199,7 +208,7 @@ describe('HelpPanel', () => {
 
     await user.type(
       screen.getByRole('searchbox', { name: '絞り込み' }),
-      keyword,
+      escapeForUserEventType(keyword),
     );
 
     expect(screen.getByRole('navigation', { name: '目次' }).children).toHaveLength(
