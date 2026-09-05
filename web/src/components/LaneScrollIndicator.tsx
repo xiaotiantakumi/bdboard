@@ -4,6 +4,13 @@ import { useLaneStripHeightVar } from '../hooks/useLaneStripHeightVar';
 import { navCurrentProps } from './toggleGroupA11y';
 import { selectMostVisibleLane } from './laneScrollTracking';
 
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 export interface LaneIndicatorItem {
   lane: Lane;
   countLabel: string;
@@ -81,7 +88,9 @@ export function LaneScrollIndicator({
         return;
       }
       const target = root.querySelector<HTMLElement>(`[data-lane="${lane}"]`);
-      target?.scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+      // scrollIntoView の behavior は JS 側で明示すると CSS scroll-behavior より優先される。
+      const scrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth';
+      target?.scrollIntoView({ behavior: scrollBehavior, inline: 'start', block: 'nearest' });
       setActiveLane(lane);
     },
     [scrollContainerRef],

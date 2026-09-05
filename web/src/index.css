@@ -7699,3 +7699,20 @@ body {
     font-size: 16px;
   }
 }
+
+/* prefers-reduced-motion: OS「視差効果を減らす」向けの横断ブロック。
+   個々の transition に散らさず、既存・将来分をまとめて短縮する。
+   0.01ms（0 ではない）: 完全 0 だと transitionend が発火しない実装があり得る。
+   scroll-behavior は含めない: JS の scrollIntoView({ behavior: 'smooth' }) は
+   CSS より優先され、ここに auto を書いても止まらない（LaneScrollIndicator で個別対応）。
+   animation 系は現状 0 箇所だが、今後の @keyframes もここで拾う。
+   scroll-snap は位置決めのため無効化しない。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
