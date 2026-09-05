@@ -5950,6 +5950,13 @@ body {
 
   .main {
     padding: 14px;
+    padding-bottom: calc(14px + var(--bulk-bar-height, 0px));
+  }
+
+  /* ルートスクロールポートの下端に余白を持たせ、キーボードフォーカスが
+     fixed の一括操作バーの下に隠れるのを防ぐ。 */
+  html {
+    scroll-padding-bottom: var(--bulk-bar-height, 0px);
   }
 
   .lane {
@@ -5957,13 +5964,13 @@ body {
     max-width: min(86vw, 320px);
     /* 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸び横スワイプ時に
        空白へ飛ぶのを防ぐ (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。 */
-    max-height: calc(100vh - 260px);
-    max-height: calc(100dvh - 260px);
+    max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
+    max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
   }
 
   .board-section .lane {
-    max-height: calc(100vh - 260px);
-    max-height: calc(100dvh - 260px);
+    max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
+    max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
   }
 
   .lanes-scroll-region {
@@ -5987,6 +5994,39 @@ body {
     top: var(--header-height, 0px);
     z-index: 5;
     background: var(--color-bg);
+  }
+
+  /*
+   * fixed でフローから外して盤面と積み上がらないようにし、--bulk-bar-height の
+   * 高さ補償でカードがバーの下に潜り込んで永久に届かない構図を無くす。
+   * order は視覚順しか変えず DOM 順（フォーカス順）は変わらないため使わない。
+   * bdboard-53my が order を却下したのと同じ理由。z-index:6 は .card (auto) と
+   * .lane-indicator-strip (5) の上、.header (10) の下。
+   */
+  .bulk-action-bar {
+    position: fixed;
+    left: 14px; /* .main のこの帯の水平 padding と一致させる */
+    right: 14px;
+    bottom: 0;
+    z-index: 6;
+    margin: 0;
+    /* MINOR-6: 確認パネル展開時にバーが伸びて上端が画面外へ出るのを防ぐ */
+    max-height: 70dvh;
+    overflow-y: auto;
+    /* --color-bg-elevated は不透明。fixed なので safe-area は自前で持つ */
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /*
+   * 下に出すと画面外で到達不能になるため上へ反転する。375x812 の実測では ul が
+   * 809–847.58px と innerHeight 812 を超え、候補ボタン中心の elementFromPoint は null。
+   * bottom:100% は入力行の上（バーの内側）に出るため、バーの overflow-y で消えない。
+   */
+  .bulk-label-suggestions {
+    top: auto;
+    bottom: 100%;
+    max-height: 40dvh;
+    overflow-y: auto;
   }
 
   .lanes-row {
@@ -6396,6 +6436,12 @@ body {
 
   .main {
     padding: 12px;
+    padding-bottom: calc(12px + var(--bulk-bar-height, 0px));
+  }
+
+  .bulk-action-bar {
+    left: 12px;
+    right: 12px;
   }
 
   .lanes-scroll-region {
@@ -6917,6 +6963,12 @@ body {
   background: var(--color-text);
   color: var(--color-bg-elevated);
   box-shadow: 0 8px 24px var(--color-shadow);
+}
+
+@media (max-width: 700px) {
+  .undo-snackbar {
+    bottom: calc(24px + var(--bulk-bar-height, 0px));
+  }
 }
 
 .undo-snackbar-message {
