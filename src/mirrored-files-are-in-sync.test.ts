@@ -14,8 +14,10 @@ import { describe, expect, it } from 'vitest';
  *
  * ## 何を不変条件にするか
  *
- * 「正本の内容から一意に導ける文字列とミラーが byte 一致すること」。各ペアの `deriveMirror` が
- * その全域変換で、許される差分 (出所ヘッダー・import 指定子) はそこに**列挙されたものだけ**。
+ * 「正本の内容から一意に導ける文字列とミラーが byte 一致すること」。導出は共有の
+ * `deriveMirror()` 1 本で、ペアごとに変えられるのは `headerNotes` (出所ヘッダーに足す説明行) と
+ * `rewrites` (`replaceExactlyOnce` で順に当てる文字列置換) だけ。許される差分は**そこに
+ * データとして列挙されたものだけ**で、ペアが任意のコードを差し込む余地は無い (bdboard-8x2e)。
  * ticket の当初案にあった「`export function compareStrings` 以降だけ比較する」は採らない —
  * それだと JSDoc のドリフトを素通しし、このチケットの発端 (#386 の JSDoc 修正) をまさに
  * 検出できない。
@@ -53,11 +55,49 @@ const MIRROR_MARKER = 'Canonical implementation:';
 const MIRROR_MARKER_LINE_PREFIX = `// ${MIRROR_MARKER} `;
 
 /**
- * マーカー走査の対象ルート。走査するのはこの 2 ルート配下の `.ts` / `.tsx` だけで、
- * `scripts/` や `test/` や `web/` 直下、`.mjs` は見ていない (範囲の拡大は別チケット)。
- * `node_modules` はこの下に無いが、念のため降下時に弾く。
+ * 未登録ミラー走査で、どの深さでも降下しないディレクトリ名。
+ *
+ * 依存物・生成物・テスト成果物を除く。走査から外れるのはここと `SCAN_EXCLUDED_REPO_PATHS`、
+ * そして**ディレクトリの symlink** の 3 つ。`readdirSync(..., { withFileTypes: true })` の
+ * dirent は lstat 相当なので、ディレクトリ symlink は `isDirectory()` が false になり降下しない。
+ * これは荷重のかかった挙動で、`.claude/worktrees` の除外を symlink 経由で迂回できないことを
+ * 保証している — 「symlink も辿るべきでは」と親切心で直すと、そこに静かな穴が開く。
  */
-const SCAN_ROOTS = ['src', 'web/src'] as const;
+const SCAN_EXCLUDED_DIRECTORY_NAMES = new Set([
+  'node_modules',
+  'dist',
+  '.git',
+  '.dolt',
+  'logs',
+  'coverage',
+  'test-results',
+  'playwright-report',
+  'blob-report',
+]);
+
+/**
+ * 未登録ミラー走査で降下しないリポジトリ相対パス。
+ *
+ * `.claude/worktrees` の除外はコストではなく**正しさ**に効く。メインチェックアウトから走ると
+ * 兄弟 worktree 側の `web/src/compare.ts` が未登録ミラーとして拾われ、main が赤くなる
+ * (実測: worktree 12 本で偽ヒット 24 件)。`.gitignore` 済みなので CI のランナーには存在せず、
+ * そちらでは no-op。
+ *
+ * `.beads` は丸ごと除外する。ここにコードファイルは 1 件も無い一方、`.beads/dolt` は 171 MB の
+ * Dolt 作業ディレクトリで、**別セッションの `bd` が随時書き換えている**。降下すると
+ * `readdirSync` と再帰の間にサブディレクトリが消えて `ENOENT: scandir` で落ちうる
+ * (マージ後にメインチェックアウトで `npm run verify` を回している最中が一番踏みやすい)。
+ * その赤はミラーと無関係な scandir エラーとして出るので、読んだ人は間違った場所を調べ始める。
+ * `.beads/.gitignore` が `dolt/` `embeddeddolt/` `proxieddb/` を並べて無視していることからも、
+ * 個別に列挙するのではなく親ごと落とすのが素直。
+ */
+const SCAN_EXCLUDED_REPO_PATHS = new Set(['.claude/worktrees', '.beads']);
+
+/**
+ * 未登録ミラー走査の対象となるコードファイルの拡張子。Markdown は出所ヘッダーを引用しただけの
+ * ドキュメントを誤検出しうるため含めない。
+ */
+const SCAN_FILE_EXTENSIONS = new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']);
 
 /**
  * このファイル自身の絶対パス。失敗時に「どこへ登録すればよいか」を指すために使う。
@@ -70,14 +110,10 @@ interface MirrorPair {
   readonly canonicalPath: string;
   /** リポジトリ相対 (posix) のミラーパス。 */
   readonly mirrorPath: string;
-  /**
-   * 正本の内容からミラーの内容を一意に導く全域変換。ここに書かれていない差分は許されない。
-   *
-   * 第 2 引数には上の `canonicalPath` がそのまま渡る。出所ヘッダーに書く正本パスを
-   * リテラルで持たせないためで、リテラルだと `canonicalPath` と照合されず、ミラーが
-   * 実在しない (あるいは別の) 正本を名乗っていてもこのテストが緑のままになる。
-   */
-  readonly deriveMirror: (canonicalContent: string, canonicalPath: string) => string;
+  /** 出所ヘッダーのマーカー行に続く補足行 (各行は `// ` を付けて出力される)。 */
+  readonly headerNotes: readonly string[];
+  /** ミラーで許される書き換えの全体 (これ以外の差分は許されない)。順に replaceExactlyOnce される。 */
+  readonly rewrites: readonly { readonly from: string; readonly to: string }[];
 }
 
 /** ミラー冒頭の出所ヘッダー (マーカー行 + 補足行 + 空行) を組み立てる。 */
@@ -107,23 +143,39 @@ function replaceExactlyOnce(source: string, from: string, to: string): string {
   return source.replace(from, () => to);
 }
 
+/**
+ * 構造化した出所ヘッダーと列挙済みの書き換えだけからミラーを導出する。
+ *
+ * 任意の関数を持たせず許される差分をデータとして列挙することで、未宣言の書き換えを差し込む
+ * 余地をなくす。replaceExactlyOnce で表現できない変換が必要になったらデータ表現を拡張し、
+ * 関数のエスケープハッチは戻さない。ヘッダーの正本パスは pair.canonicalPath から構造的に作る。
+ */
+function deriveMirror(pair: MirrorPair, canonicalContent: string): string {
+  return (
+    mirrorHeader(pair.canonicalPath, pair.headerNotes) +
+    pair.rewrites.reduce(
+      (content, { from, to }) => replaceExactlyOnce(content, from, to),
+      canonicalContent,
+    )
+  );
+}
+
 const MIRROR_PAIRS: readonly MirrorPair[] = [
   {
     canonicalPath: 'src/domain/compare.ts',
     mirrorPath: 'web/src/compare.ts',
-    deriveMirror: (canonicalContent, canonicalPath) =>
-      mirrorHeader(canonicalPath, ['Mirrored here because web cannot import src/ directly.']) +
-      canonicalContent,
+    headerNotes: ['Mirrored here because web cannot import src/ directly.'],
+    rewrites: [],
   },
   {
     canonicalPath: 'src/domain/compare.test.ts',
     mirrorPath: 'web/src/compare.test.ts',
-    deriveMirror: (canonicalContent, canonicalPath) =>
-      mirrorHeader(canonicalPath, [
-        'Mirrored here because web cannot import src/ directly.',
-        'Apart from this provenance header, the only other difference is the import specifier:',
-        'the root project resolves with NodeNext (explicit .js), web/ with bundler resolution.',
-      ]) + replaceExactlyOnce(canonicalContent, "from './compare.js';", "from './compare';"),
+    headerNotes: [
+      'Mirrored here because web cannot import src/ directly.',
+      'Apart from this provenance header, the only other difference is the import specifier:',
+      'the root project resolves with NodeNext (explicit .js), web/ with bundler resolution.',
+    ],
+    rewrites: [{ from: "from './compare.js';", to: "from './compare';" }],
   },
 ];
 
@@ -135,20 +187,24 @@ function toRepoRelativePosix(absolutePath: string): string {
   return path.relative(REPO_ROOT, absolutePath).split(path.sep).join('/');
 }
 
-function collectSourceFiles(directory: string): readonly string[] {
+function collectCodeFiles(directory: string): readonly string[] {
   const files: string[] = [];
 
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const absolutePath = path.join(directory, entry.name);
 
     if (entry.isDirectory()) {
-      if (entry.name !== 'node_modules') {
-        files.push(...collectSourceFiles(absolutePath));
+      const repoRelativePath = toRepoRelativePosix(absolutePath);
+      if (
+        !SCAN_EXCLUDED_DIRECTORY_NAMES.has(entry.name) &&
+        !SCAN_EXCLUDED_REPO_PATHS.has(repoRelativePath)
+      ) {
+        files.push(...collectCodeFiles(absolutePath));
       }
       continue;
     }
 
-    if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.tsx'))) {
+    if (entry.isFile() && SCAN_FILE_EXTENSIONS.has(path.extname(entry.name))) {
       files.push(absolutePath);
     }
   }
@@ -183,7 +239,7 @@ describe('mirrored files are in sync with their canonical source', () => {
   for (const pair of MIRROR_PAIRS) {
     it(`${pair.mirrorPath} is derivable from ${pair.canonicalPath}`, () => {
       const canonicalContent = readNormalized(pair.canonicalPath);
-      const expected = pair.deriveMirror(canonicalContent, pair.canonicalPath);
+      const expected = deriveMirror(pair, canonicalContent);
       const actual = readNormalized(pair.mirrorPath);
 
       expect(
@@ -198,14 +254,15 @@ describe('mirrored files are in sync with their canonical source', () => {
     });
   }
 
-  it('registers every .ts/.tsx file under src/ and web/src/ that starts with the marker line', () => {
+  it('registers every marked code file in the repository, regardless of header position', () => {
     const markedMirrors: string[] = [];
 
-    for (const scanRoot of SCAN_ROOTS) {
-      for (const absolutePath of collectSourceFiles(path.join(REPO_ROOT, scanRoot))) {
-        if (readFileSync(absolutePath, 'utf8').startsWith(MIRROR_MARKER_LINE_PREFIX)) {
-          markedMirrors.push(toRepoRelativePosix(absolutePath));
-        }
+    for (const absolutePath of collectCodeFiles(REPO_ROOT)) {
+      const normalizedContent = readFileSync(absolutePath, 'utf8')
+        .replace(/\r\n/g, '\n')
+        .replace(/^\uFEFF/, '');
+      if (normalizedContent.split('\n').some((line) => line.startsWith(MIRROR_MARKER_LINE_PREFIX))) {
+        markedMirrors.push(toRepoRelativePosix(absolutePath));
       }
     }
 
@@ -213,11 +270,15 @@ describe('mirrored files are in sync with their canonical source', () => {
 
     expect(
       markedMirrors.sort(),
-      `files whose first line is a ${JSON.stringify(MIRROR_MARKER_LINE_PREFIX)} header must match ` +
-        'MIRROR_PAIRS exactly (both directions): a new mirror must be registered here, and a ' +
-        'registered mirror must keep its header line. This scan only covers ' +
-        `${SCAN_ROOTS.join(' and ')} (.ts/.tsx only, node_modules skipped), so mirrors placed ` +
-        'elsewhere are not seen by it.',
+      `code files containing a line that starts with ${JSON.stringify(MIRROR_MARKER_LINE_PREFIX)} must match ` +
+        `MIRROR_PAIRS of ${toRepoRelativePosix(SELF_ABSOLUTE_PATH)} exactly (both directions): a new mirror ` +
+        'must be registered there, and a registered mirror must keep its header line. ' +
+        'If the unexpected file is NOT a mirror (a generator template or a fixture that merely quotes the header ' +
+        'line at column 0), do not register it: either move it out of the scanned extensions or add its path to ' +
+        'SCAN_EXCLUDED_REPO_PATHS with a comment saying why. The repository-wide scan includes only ' +
+        `${[...SCAN_FILE_EXTENSIONS].join(', ')} ` +
+        `files and excludes directories named ${[...SCAN_EXCLUDED_DIRECTORY_NAMES].join(', ')} plus ` +
+        `repository paths ${[...SCAN_EXCLUDED_REPO_PATHS].join(', ')}.`,
     ).toEqual([...registeredMirrors].sort());
   });
 });
