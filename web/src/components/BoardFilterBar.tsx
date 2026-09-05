@@ -112,21 +112,37 @@ export function BoardFilterBar({
   return (
     <div className="board-filter-bar" role="group" aria-label="ボード絞り込み">
       {isMobile && (
-        <button
-          type="button"
-          className="board-filter-toggle"
-          aria-label={toggleAriaLabel}
-          aria-expanded={expanded}
-          aria-controls={expanded ? 'board-filter-panel' : undefined}
-          onClick={() => setExpanded((value) => !value)}
-        >
-          <span className="board-filter-toggle-label">絞り込み</span>
-          {activeFilterCount > 0 && (
-            <span className="board-filter-active-badge" aria-hidden="true">
-              {activeFilterCount}
-            </span>
+        <div className="board-filter-toggle-row">
+          <button
+            type="button"
+            className="board-filter-toggle"
+            aria-label={toggleAriaLabel}
+            aria-expanded={expanded}
+            aria-controls={expanded ? 'board-filter-panel' : undefined}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <span className="board-filter-toggle-label">絞り込み</span>
+            {activeFilterCount > 0 && (
+              <span className="board-filter-active-badge" aria-hidden="true">
+                {activeFilterCount}
+              </span>
+            )}
+          </button>
+          {/* 折りたたみ時 (!expanded) かつ activeFilterCount > 0 のときだけ表示する。
+              展開時は board-filter-panel 側に既存の「フィルタ解除」があるため重複させない。
+              常時表示にするとトグル行が常に2要素になり、折りたたみで稼いだ縦の節約を削るので
+              条件付きのままにすること (bdboard-jch5)。 */}
+          {!expanded && filterActive && (
+            <button
+              type="button"
+              className="board-filter-toggle-clear"
+              aria-label="絞り込みを解除"
+              onClick={handleClearFilter}
+            >
+              解除
+            </button>
           )}
-        </button>
+        </div>
       )}
 
       {showFilterPanel && (

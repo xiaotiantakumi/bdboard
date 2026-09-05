@@ -7128,6 +7128,13 @@ body {
     gap: 0;
   }
 
+  .board-filter-toggle-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+
   .board-filter-toggle {
     display: flex;
     align-items: center;
@@ -7146,7 +7153,43 @@ body {
     cursor: pointer;
   }
 
+  /* 解除ボタンが併置されているときだけトグル本体の幅を可変にする。単独描画時
+     (解除ボタン非表示) は従来どおり width:100% でトグル本体のタップ領域を
+     一切削らない。 */
+  .board-filter-toggle-row:has(.board-filter-toggle-clear) .board-filter-toggle {
+    width: auto;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
   .board-filter-toggle:focus-visible {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  }
+
+  /* 折りたたみ時かつ activeFilterCount > 0 のときだけトグル行に併置される解除ボタン
+     (bdboard-jch5)。44px 角の WCAG 2.5.8 タップ領域を確保しつつ、トグル本体の
+     min-height:44px と揃えて行の高さを増やさない。 */
+  .board-filter-toggle-clear {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .board-filter-toggle-clear:focus-visible {
     outline: none;
     border-color: var(--color-accent);
     box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);

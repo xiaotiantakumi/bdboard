@@ -121,6 +121,77 @@ describe('BoardFilterBar', () => {
       );
       expect(document.querySelector('.board-filter-active-badge')).toHaveTextContent(/^4$/);
     });
+
+    describe('quick clear in the collapsed toggle row (bdboard-jch5)', () => {
+      it('shows a quick clear button next to the toggle when collapsed with active filters', () => {
+        renderBar({ priorityCeiling: '1' });
+
+        expect(
+          screen.getByRole('button', { name: '絞り込みを解除' }),
+        ).toBeInTheDocument();
+      });
+
+      it('hides the quick clear button when there are no active filters', () => {
+        renderBar();
+
+        expect(
+          screen.queryByRole('button', { name: '絞り込みを解除' }),
+        ).not.toBeInTheDocument();
+      });
+
+      it('hides the quick clear button once the panel is expanded (no duplicate with the panel clear button)', async () => {
+        const user = userEvent.setup();
+        renderBar({ priorityCeiling: '1' });
+
+        await user.click(screen.getByRole('button', { name: '絞り込み (1件適用中)' }));
+
+        expect(
+          screen.queryByRole('button', { name: '絞り込みを解除' }),
+        ).not.toBeInTheDocument();
+        // The panel's own clear button takes over instead.
+        expect(
+          screen.getByRole('button', { name: 'フィルタ解除' }),
+        ).toBeInTheDocument();
+      });
+
+      it('resets all filter values when the quick clear button is pressed', async () => {
+        const user = userEvent.setup();
+        const onPriorityCeilingChange = vi.fn();
+        const onIssueTypesChange = vi.fn();
+        const onLabelsChange = vi.fn();
+        const onFilterTextChange = vi.fn();
+
+        renderBar({
+          priorityCeiling: '1',
+          issueTypes: ['bug'],
+          labels: ['human'],
+          filterText: 'alpha',
+          onPriorityCeilingChange,
+          onIssueTypesChange,
+          onLabelsChange,
+          onFilterTextChange,
+        });
+
+        await user.click(screen.getByRole('button', { name: '絞り込みを解除' }));
+
+        expect(onPriorityCeilingChange).toHaveBeenCalledWith('all');
+        expect(onIssueTypesChange).toHaveBeenCalledWith([]);
+        expect(onLabelsChange).toHaveBeenCalledWith([]);
+        expect(onFilterTextChange).toHaveBeenCalledWith('');
+      });
+    });
+  });
+
+  it('never shows the mobile quick clear button on desktop widths', () => {
+    // At desktop widths isMobile is false, so the toggle row (and with it the
+    // quick clear button) is not rendered at all — only the panel's own clear
+    // button can appear.
+    renderBar({ priorityCeiling: '1' });
+
+    expect(
+      screen.queryByRole('button', { name: '絞り込みを解除' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'フィルタ解除' })).toBeInTheDocument();
   });
 
   it('calls onPriorityCeilingChange when select changes', () => {
