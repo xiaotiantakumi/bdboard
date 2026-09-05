@@ -4581,6 +4581,11 @@ body {
   font-size: 0.75rem;
   line-height: 1.45;
   white-space: normal;
+  /* --popover-shift-x is inherited from .ai-quota-popover; re-declare 0px so a
+     parent's shift never leaks in before this element's own clamp runs. The
+     hook's inline style overrides this declaration. */
+  --popover-shift-x: 0px;
+  transform: translateX(var(--popover-shift-x, 0px));
 }
 
 @media (max-width: 480px) {
