@@ -9,7 +9,9 @@ import { expect, test, type JSHandle, type Page } from '@playwright/test';
  * で **既定 'light'** に解決され、`_combinedContextOptions` 経由で page フィクスチャにも
  * 手書きの browser.newContext() にも back-fill される。つまり明示的に上書きしない限り
  * どのスペックもダークを一度も描画しない。このファイルだけが `test.use({ colorScheme: 'dark' })`
- * でそれを外す。他の 89 件はライトのまま = ライト/ダーク両方が suite 全体で踏まれる。
+ * でそれを外す。他の 91 件はライトのまま = **描画**としてはライト/ダーク両方が suite 全体で
+ * 踏まれる。ただし**コントラスト検査はこのファイル (= ダーク) だけ**で、ライトは見ていない。
+ * 同じ掃引をライトに倒すと sub-AA は 20 セレクタ出る (実測。ダークの既知 3 件よりずっと多い)。
  *
  * このアプリのテーマは 2 状態しかない: `:root` (light) と
  * `@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) }`。
@@ -18,39 +20,79 @@ import { expect, test, type JSHandle, type Page } from '@playwright/test';
  * したがってダークを描画する手段は prefers-color-scheme の emulation だけ。
  */
 
-/** index.css の :root / dark ブロックが定義するトークンの実値。ずれたら気付けるよう直値で持つ。 */
-const LIGHT_BG_TOKEN = '#f2f2f7';
+/** index.css の dark ブロックが定義するトークンの実値。ずれたら気付けるよう直値で持つ。 */
 const DARK_BG_TOKEN = '#000000';
 const DARK_TEXT_TOKEN = '#f2f2f7';
 
 /**
- * ライトとダークで **同じ値のままが正しい**色。
- * index.css の色系トークン 41 個のうち、両テーマで同値なのはここに挙げた 2 つだけ
- * (--color-text-tertiary と .overlay のスクリム)。セレクタではなく色の値で持つのは、
+ * ライトとダークで **同じ値のままが正しい**色。セレクタではなく色の値で持つのは、
  * 同じトークンを使う要素が増えても許可リストを触らずに済ませるため。
+ *
+ * index.css の色系トークン 41 個のうち両テーマで同値なのは **2 つ**:
+ * `--color-text-tertiary` (#8e8e93) と `--color-accent-fg` (#ffffff)。
+ * ここに挙げてあるのは前者と .overlay のスクリム (トークンではない直値) だけで、
+ * `--color-accent-fg` は入れていない — 現在 web/src/ には `var(--color-accent-fg)` の参照が
+ * 1 つも無く (実測)、描画に出ないので掃引に掛からないため。
+ * **将来この死にトークンを実際に配線した瞬間、両テーマ同値が正しいにもかかわらず
+ * pinned として誤って赤になる。** そのときの直し方は「白 = rgb(255, 255, 255) をここへ足す」
+ * ではない (白は他の箇所でも使われうるので、正当な pinned まで一緒に隠してしまう)。
+ * 許可リストを値ではなくセレクタで持つ形に作り替えるほうを先に検討すること。
  */
 const INTENTIONALLY_THEME_INVARIANT = new Set([
   'rgb(142, 142, 147)', // --color-text-tertiary: #8e8e93 — 両テーマ同値で定義されている
   'rgba(0, 0, 0, 0.4)', // .overlay のモーダルスクリム — 下地を暗くするのが目的なので不変
 ]);
 
+type KnownSubAA = {
+  /** ダークでの実測比率 (macOS Chromium)。floor の出どころ。 */
+  readonly measured: number;
+  /** これを下回ったら「許容済みの箇所がさらに悪化した」として落とす。 */
+  readonly floor: number;
+  readonly note: string;
+};
+
 /**
- * ダークで WCAG AA (4.5:1) を満たさない既知の箇所。
+ * ダークで WCAG AA (4.5:1) を満たさない既知の箇所と、その**現在値に基づく下限**。
  * 追加するときは必ず bd チケットを立ててここに ID を書く。空にするのが目標。
  * 現在の 3 件はいずれも**ライトの方が比率が悪い**既存債務で、ダーク固有の退行ではない。
+ *
+ * セレクタの集合にして無条件に読み飛ばす形にはしないこと。それだと許可リストに載った
+ * セレクタは**いくら悪化しても緑のまま**出荷される (実測: `.lane-count` をダーク限定で
+ * #1b1b1d = 約 1.05:1 の事実上不可視にしても 3 テストとも緑だった)。
+ * 代わりに両方向を見る:
+ *  - floor を下回ったら赤 = 許容済みの箇所のさらなる悪化
+ *  - AA を満たすようになったら赤 = このエントリが陳腐化した (許可リストから外せ)
+ * 後者が無いと「直したのに許可リストに残り続ける」状態に誰も気付けない。
+ *
+ * floor は measured を 0.05 ほど下へ丸めた値。比率は整数 sRGB 2 色だけから決まる純関数なので
+ * 実測は 4 回とも同値で、この 0.05 は「実効背景の合成経路が祖先の構造変更でわずかに変わる」
+ * 程度しか見込んでいない。AA (4.5) までの隔たり (0.27〜0.59) より十分狭いので、
+ * 実際の悪化を取り逃すことはない。
  */
-const KNOWN_SUB_AA: ReadonlyMap<string, string> = new Map([
+const KNOWN_SUB_AA: ReadonlyMap<string, KnownSubAA> = new Map([
   [
     'span.lane-count',
-    'bdboard-skde: --color-text-tertiary (#8e8e93) が両テーマ同値なため light 2.83:1 / dark 3.91:1',
+    {
+      measured: 3.91,
+      floor: 3.85,
+      note: 'bdboard-skde: --color-text-tertiary (#8e8e93) が両テーマ同値なため light 2.83:1 / dark 3.91:1',
+    },
   ],
   [
     'button.filter-chip.filter-chip-active',
-    'bdboard-skde: アクセント色を同じアクセントで着色した背景に置いており light 3.40:1 / dark 4.23:1',
+    {
+      measured: 4.23,
+      floor: 4.15,
+      note: 'bdboard-skde: アクセント色を同じアクセントで着色した背景に置いており light 3.40:1 / dark 4.23:1',
+    },
   ],
   [
     'span.filter-chip-clear',
-    'bdboard-skde: 上と同じチップ内の ✕。light 3.40:1 / dark 4.23:1',
+    {
+      measured: 4.23,
+      floor: 4.15,
+      note: 'bdboard-skde: 上と同じチップ内の ✕。light 3.40:1 / dark 4.23:1',
+    },
   ],
 ]);
 
@@ -259,6 +301,35 @@ async function freezeTransitions(page: Page): Promise<void> {
   });
 }
 
+/**
+ * いま emulate しているテーマでの `--color-text-secondary` の**確定値**を、
+ * 使い捨てのプローブ要素経由で計算値 (rgb 文字列) として解決する。
+ *
+ * 期待値を直値 (`rgb(108, 108, 112)`) で書くと、パレットを触っただけで
+ * 「transition が凍結されていない可能性がある」という嘘のエラーになり、
+ * 触った人が transition を疑って時間を溶かす。期待値側もトークンから引く。
+ *
+ * **これは恒真にはならない。** ここで読むのは *新しく生やした* 要素の初期計算値で、
+ * 初期スタイルの決定では transition は走らないのでトークンの確定値がそのまま出る。
+ * 一方 .toggle-btn は既に描画済みの要素なので、凍結が効いていなければテーマ切り替えの
+ * 遷移中の中間色を返す。つまり両者が食い違うのは「凍結が効いていないとき」だけで、
+ * 直値で書いていたときと同じ鋭さを保つ (実測でも凍結を外すと落ちる)。
+ */
+async function settledTextSecondary(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const probe = document.createElement('span');
+    probe.style.color = 'var(--color-text-secondary)';
+    probe.style.position = 'fixed';
+    probe.style.left = '-9999px';
+    probe.style.top = '0';
+    probe.textContent = '.';
+    document.body.appendChild(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+}
+
 /** ボードを開き、先頭カードの詳細パネルまで出す (= 実画面を 2 面ぶん描画する)。 */
 async function openBoardAndDetail(page: Page): Promise<void> {
   await page.goto('/');
@@ -293,7 +364,6 @@ test.describe('dark theme', () => {
     // トークンだけだと emulation が効いていない状態を見逃す。
     expect(state.prefersDark).toBe(true);
     expect(state.bgToken).toBe(DARK_BG_TOKEN);
-    expect(state.bgToken).not.toBe(LIGHT_BG_TOKEN);
     expect(state.textToken).toBe(DARK_TEXT_TOKEN);
     // トークンが実際に描画へ届いていること (var() の参照切れなら届かない)。
     expect(state.bodyBackground).toBe('rgb(0, 0, 0)');
@@ -312,6 +382,9 @@ test.describe('dark theme', () => {
 
     const unparseable: string[] = [];
     const failures: string[] = [];
+    // 同じセレクタが複数回現れる (`.lane-count` は 4 個) ので Set で潰す。
+    const regressed = new Set<string>();
+    const staleAllowances = new Set<string>();
 
     for (const sample of textSamples) {
       const fgRaw = parseCssColor(sample.color);
@@ -331,10 +404,27 @@ test.describe('dark theme', () => {
 
       const ratio = contrastRatio(fg, bg);
       const required = requiredRatio(sample);
-      if (ratio >= required) continue;
-
       const selector = selectorOf(sample.key);
-      if (KNOWN_SUB_AA.has(selector)) continue;
+
+      const known = KNOWN_SUB_AA.get(selector);
+      if (known !== undefined) {
+        if (ratio >= required) {
+          // 直っている。許可リストに残っているほうが嘘なので、外させるために落とす。
+          staleAllowances.add(
+            `${selector} — ${ratio.toFixed(2)}:1 で要 ${required}:1 を満たしている ` +
+              `(登録時 ${known.measured}:1)。${known.note}`,
+          );
+        } else if (ratio < known.floor) {
+          regressed.add(
+            `${selector} — ${ratio.toFixed(2)}:1 が下限 ${known.floor}:1 を割った ` +
+              `(登録時 ${known.measured}:1, ${sample.fontSize}px/${sample.fontWeight}) ` +
+              `color=${sample.color} on rgb(${bg.map(Math.round).join(', ')})`,
+          );
+        }
+        continue;
+      }
+
+      if (ratio >= required) continue;
 
       failures.push(
         `${selector} — ${ratio.toFixed(2)}:1 (要 ${required}:1, ${sample.fontSize}px/${sample.fontWeight}) ` +
@@ -344,6 +434,18 @@ test.describe('dark theme', () => {
 
     // 色が読めない = 掃引が黙って素通りしている状態なので、これも失敗として出す。
     expect(unparseable, `ダークで色を解決できなかった要素:\n${unparseable.join('\n')}`).toEqual([]);
+    expect(
+      [...regressed].sort(),
+      `KNOWN_SUB_AA で許容済みの箇所がさらに悪化している:\n${[...regressed].sort().join('\n')}\n` +
+        '許容済みであることは「いくら暗くしてもよい」という意味ではない。' +
+        'floor を下げて追認する前に、直せないかを先に検討すること。',
+    ).toEqual([]);
+    expect(
+      [...staleAllowances].sort(),
+      `KNOWN_SUB_AA のエントリが陳腐化している (もう AA を満たしている):\n` +
+        `${[...staleAllowances].sort().join('\n')}\n` +
+        '該当エントリを KNOWN_SUB_AA から削除し、参照している bd チケットを閉じること。',
+    ).toEqual([]);
     expect(
       failures,
       `ダークで WCAG AA を満たさない要素:\n${failures.join('\n')}\n` +
@@ -357,8 +459,10 @@ test.describe('dark theme', () => {
     // 同一 DOM の同じ要素オブジェクトに対して emulation だけを切り替える。
     const handle = await pinElements(page);
     await page.emulateMedia({ colorScheme: 'light' });
+    const lightSettledSecondary = await settledTextSecondary(page);
     const light = await page.evaluate(readSamples, handle);
     await page.emulateMedia({ colorScheme: 'dark' });
+    const darkSettledSecondary = await settledTextSecondary(page);
     const dark = await page.evaluate(readSamples, handle);
     await handle.dispose();
     expect(light.length).toBe(dark.length);
@@ -371,16 +475,28 @@ test.describe('dark theme', () => {
     expect(darkBody?.background).toBe('rgb(0, 0, 0)');
 
     // body には transition が無いので上の 2 行だけでは「transition が固まっているか」を
-    // 確かめられない。.toggle-btn は color に 0.15s の transition を持つので、
-    // 採取値が --color-text-secondary の**確定値** (light #6c6c70 / dark #a1a1a6) に
-    // なっていることを見て、遷移途中の中間色を測っていないことを保証する。
-    // freezeTransitions を外すとここが中間色になって落ちる。
+    // 確かめられない。.toggle-btn は `color: var(--color-text-secondary)` を
+    // `transition: ... color 0.15s ...` 付きで持つ (index.css の .toggle-btn) ので、
+    // 採取値がそのトークンの**確定値**になっていることを見て、遷移途中の中間色を
+    // 測っていないことを保証する。freezeTransitions を外すとここが中間色になって落ちる。
     const toggleKey = (s: Sample | null): boolean => /:button\.toggle-btn$/.test(s?.key ?? '');
     const lightToggle = light.find(toggleKey);
     const darkToggle = dark.find(toggleKey);
     expect(lightToggle, '.toggle-btn が採取できていない').toBeDefined();
-    expect(lightToggle?.color, 'transition が凍結されていない可能性がある').toBe('rgb(108, 108, 112)');
-    expect(darkToggle?.color, 'transition が凍結されていない可能性がある').toBe('rgb(161, 161, 166)');
+    // 先に「このトークンが両テーマで実際に変わる」ことを確かめる。同値になったら
+    // 遷移そのものが起きず、下の 2 行は凍結が効いていてもいなくても通る = 空虚になる。
+    expect(
+      lightSettledSecondary,
+      '--color-text-secondary が両テーマで同値になっており、下の凍結ガードが空虚になっている',
+    ).not.toBe(darkSettledSecondary);
+    expect(
+      lightToggle?.color,
+      'transition が凍結されていない (.toggle-btn が --color-text-secondary の確定値になっていない)',
+    ).toBe(lightSettledSecondary);
+    expect(
+      darkToggle?.color,
+      'transition が凍結されていない (.toggle-btn が --color-text-secondary の確定値になっていない)',
+    ).toBe(darkSettledSecondary);
 
     const pinned = new Set<string>();
     let observations = 0;
@@ -421,8 +537,13 @@ test.describe('dark theme', () => {
     // 再描画で片側から要素が消えると比較対象が痩せるが、痩せきったら緑ではなくここで落ちる。
     expect(compared).toBeGreaterThan(300);
     // 空虚化防止 その2: 比較した「プロパティの回数」。要素数だけだと
-    // props が空 (border 幅 0 かつ透明) でも気付けない。実測は 1000 件超。
-    expect(observations).toBeGreaterThan(600);
+    // props が空 (border 幅 0 かつ透明) でも気付けない。
+    // 実測は 675 (macOS Chromium、4 回とも同値)。下限 450 は上の 2 つと同程度の余裕
+    // (実測比 1.5 倍。compared が 1.48 倍、textSamples が 1.63 倍) に合わせてある。
+    // CI はこの e2e を ubuntu で回すので Linux 側の実測は未知だが、掃引が 1/3 でも
+    // 痩せれば (675 → 450 未満) 落ちる幅は残している。以前の 600 は余裕が 11% しか無く、
+    // かつコメントの「1000 件超」が事実と食い違っていた。
+    expect(observations).toBeGreaterThan(450);
 
     expect(
       [...pinned].sort(),
