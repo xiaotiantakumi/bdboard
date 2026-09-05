@@ -259,3 +259,53 @@ git rev-parse origin/main   # base SHA を控える → マージ直前 CAS で�
 - rebase 後に検証が割れたら、それは自分のブランチと main の意味的衝突であって
   「テストの flake」ではない、をまず疑う。原因を特定してから直す（タイムアウト延長などの
   対症療法は本物の退行を隠す方向に効く）。
+
+## サイクルタイムの内訳を測る — レビュー時間は GitHub に痕跡が残らない
+
+「チケット消化が遅い」を調べるとき、GitHub 上の所要時間（PR open → merge）は測れるが、
+**その内訳のうちレビュー委譲だけは GitHub にイベントを一切残さない**（サブエージェント
+レビューはローカルで走り、`reviews` も `comments` も空のまま）。よって CI や merge-slot を
+疑って空振りしやすい。
+
+切り分けは「**PR 作成時刻 → PR 作成後に積まれた最初のコミットの committedDate**」で測る。
+この空白がレビュー本体＋指摘への修正着手までの時間になる。
+
+```bash
+# レビュー空白時間の実測（マージ済み PR 1本ぶん）
+gh pr view <N> --json number,createdAt,mergedAt,commits | python3 -c "
+import json,sys,datetime as dt
+r=json.load(sys.stdin); p=lambda s: dt.datetime.fromisoformat(s.replace('Z','+00:00'))
+c=p(r['createdAt']); after=[p(x['committedDate']) for x in r['commits'] if p(x['committedDate'])>c]
+print('total', (p(r['mergedAt'])-c).total_seconds()/60, 'idle-before-first-fix', (min(after)-c).total_seconds()/60 if after else None)"
+
+# CI 自体の所要（workflow 単位。updatedAt-createdAt が実時間）
+gh run list --workflow ci --limit 40 --json workflowName,createdAt,updatedAt,conclusion
+
+# ブランチあたりの CI run 数 = 修正ラウンドの回数（1 を超えるぶんが手戻り）
+gh run list --workflow ci --event pull_request --limit 200 --json headBranch,conclusion
+```
+
+2026-09-05 実測（直近マージ 15 本）: 全体の中央値 30 分に対し、CI 4.1 分・CI green →
+マージ 1〜2 分・ローカル `npm run verify` 70 秒〜3 分（スロット待ちは発生せず）。
+**残り 20〜45 分がレビュー空白で、全体の 60〜90%**。15 本すべてが PR 作成後の修正 push を
+持ち、1 ブランチあたり CI run は平均 3 回。工程別モデルは `bdboard.model.review=opus-5` が
+106 件に対し implement は `composer-2.5-fast` が主で、**実装より遅いモデルでレビューを
+毎回フルに回す配分**になっていた。
+
+スループットとレイテンシを取り違えないこと。同日は 7 時間で 30 件 close（4.3 件/時）と
+高スループットだが、1 チケットの created → closed 中央値は 186 分。並列 worktree で
+全体は進んでいても「いま見ているチケット」は止まって見えるので、体感は必ず悪化する。
+遅さを訴えられたら、まず**どちらの指標の話かを分ける**。
+
+```bash
+# 工程別モデルの集計（レビューがどれだけ重い層で回っているか）
+bd list --status closed --json | python3 -c "
+import json,sys,collections
+c=collections.Counter()
+for r in json.load(sys.stdin):
+    md=r.get('metadata') or {}
+    md=json.loads(md) if isinstance(md,str) else md
+    for k,v in md.items():
+        if k.startswith('bdboard.model.'): c[(k,v)]+=1
+print(*sorted(c.items(), key=lambda x:-x[1]), sep='\n')"
+```
