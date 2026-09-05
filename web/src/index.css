@@ -64,9 +64,23 @@
      妥当な適用対象なので個別に検証済み: light は pinned 3.68:1 / hooked 4.60:1
      (このアプリは --color-success 等の意味的トークンを背景直上の塗り/ドットとして
      直接使う既存慣習があり、そちらは 2.2〜4.1:1 で 3:1 に届かない場合もある —
-     .pr-check-pass 等参照。新設 2 色はその最悪値より高い水準に置いた)。 */
+     .pr-check-pass 等参照。新設 2 色はその最悪値より高い水準に置いた)。
+
+     bdboard-8gvg: closed/deferred に流用した --color-success / --color-warning は、
+     light の --color-bg-elevated (#ffffff) 上で closed 2.22:1 / deferred 2.20:1 と
+     SC 1.4.11 (3:1) を下回っていた (dark は 8.42:1 / 8.28:1 で問題なし)。
+     --color-success / --color-warning は他に約 30 箇所で参照されており値そのものは
+     動かせないため、--lane-header-wip-fg / --badge-neutral-fg と同じ形で CFD 専用の
+     派生トークンをここに新設する。同じ色相・彩度のまま明度だけ落とし (HSL で L を
+     down)、3:1 を超える最小限の変更幅 + 丸め誤差に対する安全マージンを見て採用:
+     closed は元の 49.2% から 41.4% (#2ca74b、3.117:1)、deferred は元の 50.0% から
+     41.8% (#d57d00、3.105:1)。dark は既に 3:1 を満たしているため値を変えず、
+     --color-success / --color-warning の現行 dark 値をそのまま複製する (下の
+     prefers-color-scheme: dark ブロック参照、closed 8.42:1 / deferred 8.28:1 で維持)。 */
   --throughput-cfd-pinned: #0891b2;
   --throughput-cfd-hooked: #db2777;
+  --throughput-cfd-closed: #2ca74b;
+  --throughput-cfd-deferred: #d57d00;
 
   --badge-p0-bg: rgba(255, 59, 48, 0.12);
   --badge-p0-fg: #d70015;
@@ -141,9 +155,15 @@
     --color-purple: #bf5af2;
 
     /* bdboard-7g0a: 上の light 定義と対。dark は #1c1c1e 背景に対して
-       pinned 9.42:1 / hooked 6.42:1 (どちらも 3:1 を大きく超える)。 */
+       pinned 9.42:1 / hooked 6.42:1 (どちらも 3:1 を大きく超える)。
+       bdboard-8gvg: closed/deferred は dark 側では元々 3:1 を満たしていた
+       (--color-success dark #30d158 が 8.42:1、--color-warning dark #ff9f0a が
+       8.28:1) ため、新設トークンには light 側の再計算とは独立に、現行の dark 値を
+       そのまま複製する (悪化させない。値を変える理由が無い)。 */
     --throughput-cfd-pinned: #22d3ee;
     --throughput-cfd-hooked: #f472b6;
+    --throughput-cfd-closed: #30d158;
+    --throughput-cfd-deferred: #ff9f0a;
 
     --badge-p0-bg: rgba(255, 69, 58, 0.18);
     --badge-p0-fg: #ff6961;
