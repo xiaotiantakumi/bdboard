@@ -4219,6 +4219,7 @@ body {
   }
 
   .help-panel-toc-item {
+    font-size: 0.875rem;
     min-height: 44px;
   }
 

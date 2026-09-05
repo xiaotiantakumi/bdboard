@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HELP_SECTIONS } from '../helpContent';
@@ -217,7 +217,9 @@ describe('HelpPanel', () => {
     expect(
       screen.getByRole('heading', { name: uniqueSection!.title }),
     ).toBeInTheDocument();
-    expect(screen.getByText(`${HELP_SECTIONS.length}件中 1件`)).toBeInTheDocument();
+    expect(screen.getByTestId('help-panel-filter-count')).toHaveTextContent(
+      `${HELP_SECTIONS.length}件中 1件`,
+    );
     expect(
       container.querySelectorAll('details.help-panel-section'),
     ).toHaveLength(1);
@@ -252,9 +254,11 @@ describe('HelpPanel', () => {
     );
 
     expect(screen.getByText('該当するセクションがありません')).toBeInTheDocument();
-    expect(screen.queryByRole('navigation', { name: '目次' })).not.toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: '目次' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'すべて開く' })).toBeDisabled();
-    expect(screen.getByText(`${HELP_SECTIONS.length}件中 0件`)).toBeInTheDocument();
+    expect(screen.getByTestId('help-panel-filter-count')).toHaveTextContent(
+      `${HELP_SECTIONS.length}件中 0件`,
+    );
   });
 
   it('restores all sections after clearing the filter', async () => {
@@ -275,7 +279,9 @@ describe('HelpPanel', () => {
     expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
       HELP_SECTIONS.length,
     );
-    expect(screen.getByText(`${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`)).toBeInTheDocument();
+    expect(screen.getByTestId('help-panel-filter-count')).toHaveTextContent(
+      `${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`,
+    );
   });
 
   it('matches section tokens when filter uses full-width alphanumerics', async () => {
@@ -305,6 +311,201 @@ describe('HelpPanel', () => {
     expect(sections.length).toBe(HELP_SECTIONS.length);
     for (const section of sections) {
       expect(section).toHaveAttribute('open');
+    }
+  });
+
+  it('auto-expands matching sections while filtering', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    await user.type(
+      screen.getByRole('searchbox', { name: '絞り込み' }),
+      escapeForUserEventType(keyword),
+    );
+
+    const section = container.querySelector(`#help-section-${sectionId}`)?.closest('details');
+    expect(section).not.toBeNull();
+    expect(section).toHaveAttribute('open');
+  });
+
+  it('restores manual open state after clearing the filter', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    const manuallyOpened = HELP_SECTIONS.find(
+      (section) => section.id !== sectionId,
+    )!;
+    expect(manuallyOpened.id).not.toBe(sectionId);
+
+    const manualSummary = container
+      .querySelector(`#help-section-${manuallyOpened.id}`)
+      ?.closest('details')
+      ?.querySelector('summary');
+    expect(manualSummary).not.toBeNull();
+    await user.click(manualSummary!);
+    expect(
+      container
+        .querySelector(`#help-section-${manuallyOpened.id}`)
+        ?.closest('details'),
+    ).toHaveAttribute('open');
+
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+    await user.type(searchbox, escapeForUserEventType(keyword));
+
+    const filteredSection = container
+      .querySelector(`#help-section-${sectionId}`)
+      ?.closest('details');
+    expect(filteredSection).toHaveAttribute('open');
+
+    const filteredSummary = filteredSection?.querySelector('summary');
+    expect(filteredSummary).not.toBeNull();
+    await user.click(filteredSummary!);
+    expect(filteredSection).not.toHaveAttribute('open');
+
+    await user.clear(searchbox);
+
+    expect(
+      container
+        .querySelector(`#help-section-${manuallyOpened.id}`)
+        ?.closest('details'),
+    ).toHaveAttribute('open');
+    expect(
+      container.querySelector(`#help-section-${sectionId}`)?.closest('details'),
+    ).not.toHaveAttribute('open');
+  });
+
+  it('does not persist filter-time section closes into manual open state', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    await user.type(searchbox, escapeForUserEventType(keyword));
+
+    const section = container
+      .querySelector(`#help-section-${sectionId}`)
+      ?.closest('details');
+    expect(section).toHaveAttribute('open');
+
+    const summary = section?.querySelector('summary');
+    expect(summary).not.toBeNull();
+    await user.click(summary!);
+    expect(section).not.toHaveAttribute('open');
+
+    await user.clear(searchbox);
+
+    expect(section).not.toHaveAttribute('open');
+  });
+
+  it('highlights matching text with mark elements while filtering', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword } = findUniqueFilterKeyword();
+    const normalizedKeyword = normalizeForSearch(keyword);
+
+    await user.type(
+      screen.getByRole('searchbox', { name: '絞り込み' }),
+      escapeForUserEventType(keyword),
+    );
+
+    const marks = container.querySelectorAll('mark');
+    expect(marks.length).toBeGreaterThan(0);
+    expect(
+      Array.from(marks).some(
+        (mark) => normalizeForSearch(mark.textContent ?? '') === normalizedKeyword,
+      ),
+    ).toBe(true);
+  });
+
+  it('clears the filter on the first Escape and closes on the second when the search input is focused', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderHelpPanel({ onClose });
+
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+    await user.click(searchbox);
+    await user.type(searchbox, 'zzzznonexistentkeyword12345');
+
+    await user.keyboard('{Escape}');
+    expect(onClose).not.toHaveBeenCalled();
+    expect(searchbox).toHaveValue('');
+
+    await user.keyboard('{Escape}');
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not apply filtering while IME composition is in progress', async () => {
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    fireEvent.compositionStart(searchbox);
+    fireEvent.change(searchbox, { target: { value: 'r' } });
+
+    expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
+      HELP_SECTIONS.length,
+    );
+
+    fireEvent.change(searchbox, { target: { value: 'reclaim' } });
+    fireEvent.compositionEnd(searchbox, {
+      currentTarget: searchbox,
+      target: searchbox,
+    });
+
+    expect(container.querySelectorAll('details.help-panel-section').length).toBeLessThan(
+      HELP_SECTIONS.length,
+    );
+  });
+
+  it('keeps the table of contents nav mounted when the filter matches nothing', async () => {
+    const user = userEvent.setup();
+    renderHelpPanel({ onClose: vi.fn() });
+
+    await user.type(
+      screen.getByRole('searchbox', { name: '絞り込み' }),
+      'zzzznonexistentkeyword12345',
+    );
+
+    const toc = screen.getByRole('navigation', { name: '目次' });
+    expect(toc).toBeInTheDocument();
+    expect(within(toc).getByText('該当するセクションがありません')).toBeInTheDocument();
+  });
+
+  it('debounces screen reader count announcements without delaying visual count', () => {
+    vi.useFakeTimers();
+
+    try {
+      renderHelpPanel({ onClose: vi.fn() });
+
+      const initialCount = `${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`;
+      const visualCount = screen.getByTestId('help-panel-filter-count');
+      const liveCount = screen.getByTestId('help-panel-filter-count-live');
+
+      expect(visualCount).toHaveTextContent(initialCount);
+      expect(liveCount).toHaveTextContent(initialCount);
+
+      const { keyword } = findUniqueFilterKeyword();
+      // userEvent は偽タイマー下で await が解決せずタイムアウトするため fireEvent を使う。
+      fireEvent.change(screen.getByRole('searchbox', { name: '絞り込み' }), {
+        target: { value: keyword },
+      });
+
+      const filteredCount = `${HELP_SECTIONS.length}件中 1件`;
+      // 視覚表示は即時、読み上げ用 live region はまだ古い件数のまま。
+      expect(visualCount).toHaveTextContent(filteredCount);
+      expect(liveCount).toHaveTextContent(initialCount);
+
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      expect(liveCount).toHaveTextContent(filteredCount);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
