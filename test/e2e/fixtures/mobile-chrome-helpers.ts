@@ -111,13 +111,20 @@ export interface HeaderHeightConvergence {
   headerHeight: number;
   /** 収束時点の `--header-height` (px 値)。 */
   headerHeightVar: number;
+  /**
+   * 収束時点の `.view-toolbar` 配下の要素総数 (`querySelectorAll('*').length`)。
+   * bdboard-wt89: ai-quota 枠やチャットボタンのように「非表示 (null 描画) → 出現」で
+   * 増える非同期コントロールは、高さを動かさなくてもここが変化する。収束判定に
+   * 混ぜている理由は下の JSDoc の「3 つ目の非同期コントロール」節を参照。
+   */
+  toolbarChildCount: number;
   /** 待ち始めてから収束を確認するまでの実測ミリ秒。 */
   stableAfterMs: number;
-  /** 最後に高さが動いてから収束判定までの静止時間 (ミリ秒)。 */
+  /** 最後に高さ (または toolbarChildCount) が動いてから収束判定までの静止時間 (ミリ秒)。 */
   quietMs: number;
   /** 収束判定までに読んだサンプル数 (フレーム数)。 */
   samples: number;
-  /** 収束待ちを開始した後に観測した高さの遷移。CI ログ用の証拠。 */
+  /** 収束待ちを開始した後に観測した高さ/ツールバー構成の遷移。CI ログ用の証拠。 */
   changes: string[];
 }
 
@@ -125,6 +132,13 @@ export interface HeaderHeightConvergence {
 const HEADER_QUIET_WINDOW_MS = 250;
 /** 静止判定に必要な最小サンプル数。rAF が絞られて 1〜2 サンプルで窓を跨ぐのを防ぐ。 */
 const HEADER_QUIET_MIN_SAMPLES = 4;
+/**
+ * ブラウザ側ループの 1 周を、rAF が発火しなくても打ち切るための保険 (bdboard-qi3b)。
+ * 通常のフレーム間隔 (~16ms @ 60fps) より十分大きく、かつ `HEADER_QUIET_WINDOW_MS` (250ms) や
+ * 10s デッドラインよりずっと小さい値として選んだ — 健全経路では rAF が先に解決するので
+ * この値そのものが収束の速さに影響することはなく、rAF が完全に止まった異常系でだけ効く。
+ */
+const RAF_FALLBACK_MS = 50;
 
 /**
  * ヘッダー高が動かなくなるまで静止時間で待つ。
@@ -184,6 +198,34 @@ const HEADER_QUIET_MIN_SAMPLES = 4;
  * **期待するヘッダー高の数値 (245 等) は待ち条件に一切書かない。** 書くと本物の退行が
  * 「タイムアウト」として出てしまい、`mobile-header-compact.spec.ts` の `MAX_HEADER_HEIGHT_PX`
  * のような名前付きアサーションで落ちなくなる。
+ *
+ * ## 3 つ目の非同期コントロールに対する保険 (bdboard-wt89)
+ *
+ * 2 のループは `.header` の高さと `--header-height` の一致だけでなく、`.view-toolbar` 配下の
+ * 要素総数 (`toolbarChildCount`) も一緒に静止判定へ混ぜている。ai-quota 枠・チャットボタンは
+ * どちらも「非表示 (null 描画) → 出現」という増え方をするので、`assertViewToolbarSettled` が
+ * 名前で知っている 2 つ以外に**将来 3 つ目の非同期コントロールが `.view-toolbar` に増えても**、
+ * その出現がこの静止窓のあいだに起きればここで捕まる — 高さを動かさない (折り返しを
+ * 誘発しない) 追加であっても、child count は変わるので取りこぼさない。
+ *
+ * **ただし解決していない穴が 1 つ残る**: この仕組みは「静止窓の中で起きた変化」しか
+ * 検出できない。3 つ目のコントロールの到着そのものが `HEADER_QUIET_WINDOW_MS` の静止判定が
+ * 成立したあと (＝収束を返したあと) にずれ込めば、当然ここでは捕まらない。これは
+ * `assertViewToolbarSettled` の許可リスト方式と同じ「まだ始まっていない非同期処理は待てない」
+ * 制約であり、根本的に解消するにはチケット本文が挙げるもう一方の案 (`.view-toolbar` の
+ * 描画をゲートするネットワーク境界を列挙して待つ) が要る。今回はコストの低い保険として
+ * 後者ではなくこちらを採用した — 本番相当の変化 (要素の出現/消滅) を直接見るぶん、
+ * 高さ変化を経由する既存の仕組みより取りこぼしにくいが、万能ではない。
+ *
+ * ## rAF が発火しない場合の保険 (bdboard-qi3b)
+ *
+ * 旧実装はループの折り返しを `requestAnimationFrame` だけに依存していた。rAF が完全に
+ * 止まると (Playwright の chromium 起動スイッチは背景タブでの抑制を無効化しているため
+ * 実際に踏む確率は低いが) ループ先頭の `timeoutMs` デッドライン判定が二度と評価されず、
+ * 丁寧に組み立てた `samples=`/`changes=[...]` 付きの失敗メッセージではなく素の 60s テスト
+ * タイムアウトで落ちる。`RAF_FALLBACK_MS` (50ms) を rAF と `Promise.race` させることで、
+ * rAF が止まっていてもループは高々 50ms 周期で回り続け、10s デッドラインを確実に評価する。
+ * 健全経路では rAF (~16ms) が先に解決するため、この保険は普段の収束速度に影響しない。
  */
 export async function waitForHeaderHeightConvergence(
   page: Page,
@@ -194,15 +236,29 @@ export async function waitForHeaderHeightConvergence(
   await assertViewToolbarSettled(page);
 
   return page.evaluate(
-    async ({ timeoutMs, quietWindowMs, minQuietSamples, failureMessage }) => {
+    async ({ timeoutMs, quietWindowMs, minQuietSamples, rafFallbackMs, failureMessage }) => {
       const startedAt = performance.now();
-      const nextFrame = () =>
+      // rAF と `rafFallbackMs` の setTimeout を race させる (bdboard-qi3b)。rAF だけに依存すると
+      // rAF が止まったときにこの promise が解決せず、下の while の `timeoutMs` デッドライン
+      // 判定が二度と評価されない。健全経路では rAF (~16ms) が先に解決するので通常の収束速度は
+      // 変わらない。
+      const nextFrameOrTimeout = () =>
         new Promise<void>((resolve) => {
-          requestAnimationFrame(() => resolve());
+          let settled = false;
+          const finish = () => {
+            if (!settled) {
+              settled = true;
+              resolve();
+            }
+          };
+          requestAnimationFrame(finish);
+          setTimeout(finish, rafFallbackMs);
         });
-      const sample = (): { headerHeight: number; headerHeightVar: number } | null => {
+      type Sample = { headerHeight: number; headerHeightVar: number; toolbarChildCount: number };
+      const sample = (): Sample | null => {
         const header = document.querySelector('.header');
-        if (!header) {
+        const toolbar = document.querySelector('.view-toolbar');
+        if (!header || !toolbar) {
           return null;
         }
         const headerHeightVarStr = getComputedStyle(document.documentElement)
@@ -214,12 +270,18 @@ export async function waitForHeaderHeightConvergence(
         if (!Number.isFinite(headerHeightVar)) {
           return null;
         }
-        return { headerHeight: header.getBoundingClientRect().height, headerHeightVar };
+        return {
+          headerHeight: header.getBoundingClientRect().height,
+          headerHeightVar,
+          // bdboard-wt89: `.view-toolbar` 配下の要素総数。ai-quota 枠やチャットボタンは
+          // 「非表示 (null 描画) → 出現」で増えるので、高さを動かさない追加でもここで検出できる。
+          toolbarChildCount: toolbar.querySelectorAll('*').length,
+        };
       };
 
       const since = () => Math.round((performance.now() - startedAt) * 100) / 100;
       const changes: string[] = [];
-      let previous: { headerHeight: number; headerHeightVar: number } | null = null;
+      let previous: Sample | null = null;
       let lastChangeAt = performance.now();
       let samples = 0;
       let quietSamples = 0;
@@ -232,12 +294,13 @@ export async function waitForHeaderHeightConvergence(
           current === null ||
           previous === null ||
           current.headerHeight !== previous.headerHeight ||
-          current.headerHeightVar !== previous.headerHeightVar;
+          current.headerHeightVar !== previous.headerHeightVar ||
+          current.toolbarChildCount !== previous.toolbarChildCount;
         if (changed) {
           lastChangeAt = performance.now();
           quietSamples = 0;
           if (current !== null) {
-            changes.push(`${current.headerHeight}@${since()}`);
+            changes.push(`h=${current.headerHeight},tb=${current.toolbarChildCount}@${since()}`);
           }
         } else {
           quietSamples += 1;
@@ -254,6 +317,7 @@ export async function waitForHeaderHeightConvergence(
           return {
             headerHeight: current.headerHeight,
             headerHeightVar: current.headerHeightVar,
+            toolbarChildCount: current.toolbarChildCount,
             stableAfterMs: since(),
             quietMs: Math.round(quietMs * 100) / 100,
             samples,
@@ -261,13 +325,14 @@ export async function waitForHeaderHeightConvergence(
           };
         }
 
-        await nextFrame();
+        await nextFrameOrTimeout();
       }
 
       const lastSeen =
         previous === null
-          ? '.header または --header-height が読めなかった'
-          : `headerHeight=${previous.headerHeight}, --header-height=${previous.headerHeightVar}`;
+          ? '.header/.view-toolbar または --header-height が読めなかった'
+          : `headerHeight=${previous.headerHeight}, --header-height=${previous.headerHeightVar}, ` +
+            `toolbarChildCount=${previous.toolbarChildCount}`;
       throw new Error(
         `${failureMessage} (samples=${samples}, ${lastSeen}, changes=[${changes.join(', ')}])`,
       );
@@ -276,6 +341,7 @@ export async function waitForHeaderHeightConvergence(
       timeoutMs: 10_000,
       quietWindowMs: HEADER_QUIET_WINDOW_MS,
       minQuietSamples: HEADER_QUIET_MIN_SAMPLES,
+      rafFallbackMs: RAF_FALLBACK_MS,
       failureMessage: message,
     },
   );
