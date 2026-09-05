@@ -82,6 +82,14 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
  *   （直近の firstCardTop では macOS 625.4375 / Linux 623.4375 で Linux のほうが 2px 小さい）。
  * - これ以上締めたい場合は、先に mobile-header-compact.spec.ts の MAX_CONTENT_START_PX を
  *   締めてから、同じ差分だけこちらも動かすこと。逆順にすると上記の窓が復活する。
+ * - 「MAX_CONTENT_START_PX と等価なら、この 1 本は冗長では」への回答: 等価なのは
+ *   **兄弟が 642 のときだけ**である。両者が同じ firstCardTop を縛っていても、片方は
+ *   mobile-header-compact.spec.ts に、もう片方はこの「折り返しより上にカードが見えるか」の
+ *   文脈にあり、緩められる理由が違う。兄弟が 642 から**緩められた**瞬間 (例: 700)、
+ *   firstCardTop=660 は兄弟では緑になるがここでは foldMargin=152 < 170 で赤になり、
+ *   このガードだけが独立に binding になる。つまりこれは兄弟の**緩和方向**に対する
+ *   ラチェットとして働く — ヘッダーが太ったとき、予算を上げて追認する側の変更を
+ *   別ファイルから 1 本止める。冗長に見える一致は現在値の偶然であって、統合してはいけない。
  */
 const MIN_FOLD_MARGIN_PX = 170;
 
