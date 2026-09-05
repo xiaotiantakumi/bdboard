@@ -85,7 +85,11 @@
   --badge-p0-bg: rgba(255, 59, 48, 0.12);
   --badge-p0-fg: #d70015;
   --badge-p1-bg: rgba(255, 149, 0, 0.14);
-  --badge-p1-fg: #c25400;
+  /* bdboard-97ib.1: 旧値 #c25400 は --badge-p1-bg 上で white 面 4.15:1 / #f2f2f7 面
+     4.11:1 (span.badge.badge-p1 実測 4.11:1) と AA (4.5:1) 未達。同色相のまま明度だけ
+     落とし、両面で 4.5:1 を超える最小限の変更幅 (#ac4a00、white 面 5.03:1 / #f2f2f7 面
+     4.56:1) を採用。dark 側は元々 AA 充足のため値を変えない。 */
+  --badge-p1-fg: #ac4a00;
   --badge-neutral-bg: rgba(120, 120, 128, 0.12);
   /* bdboard-tlus: 旧値 #6c6c70 (= --color-text-secondary と同値) は #ffffff 面でこそ
      4.54:1 (余白 +0.04) だが、実効背景が少しでも暗くなる面 — `.header`
@@ -101,7 +105,12 @@
   --badge-blocked-bg: rgba(255, 59, 48, 0.1);
   --badge-blocked-fg: #d70015;
   --badge-unblocks-bg: rgba(52, 199, 89, 0.13);
-  --badge-unblocks-fg: #1f8a3d;
+  /* bdboard-97ib.1: 旧値 #1f8a3d は --badge-unblocks-bg 上で white 面 3.97:1 (実測値) /
+     #f2f2f7 面 3.87:1 と AA (4.5:1) 未達。同色相のまま明度だけ落とし、両面で 4.5:1 を
+     超える最小限の変更幅 (#1b7735、white 面 5.07:1 / #f2f2f7 面 4.59:1) を採用。
+     --badge-session-fg・.badge-pr-merged も同じ bg/fg 値を共有するため同時に直る。
+     dark 側は元々 AA 充足のため値を変えない。 */
+  --badge-unblocks-fg: #1b7735;
   --badge-defer-bg: rgba(0, 122, 255, 0.1);
   --badge-defer-fg: #0064d1;
   --badge-stalled-bg: rgba(255, 149, 0, 0.14);
@@ -111,9 +120,16 @@
   --badge-defer-overdue-bg: rgba(255, 59, 48, 0.12);
   --badge-defer-overdue-fg: #d70015;
   --badge-session-bg: rgba(52, 199, 89, 0.13);
-  --badge-session-fg: #1f8a3d;
+  /* bdboard-97ib.1: button.status-pill.status-pill-ok 実測 3.92:1。
+     --badge-unblocks-fg と同じ理由・同じ新値 (#1b7735) を採用 (--badge-unblocks-bg と
+     rgba 値が同一のため計算根拠も同一)。 */
+  --badge-session-fg: #1b7735;
   --badge-pending-decision-bg: rgba(90, 200, 250, 0.14);
-  --badge-pending-decision-fg: #007aff;
+  /* bdboard-97ib.1: 旧値 #007aff (= --color-accent と同値) は --badge-pending-decision-bg
+     の着色背景の上で前景・背景の色相が同じになり輝度差が稼げず light 3.67:1 (実測)。
+     --color-accent-text (#005ec4、.filter-chip-active 用に新設済み) を流用すると
+     white 面 5.65:1 / #f2f2f7 面 5.13:1 で AA を満たす。 */
+  --badge-pending-decision-fg: var(--color-accent-text);
   --badge-label-bg: rgba(142, 142, 147, 0.14);
   --badge-label-fg: #636366;
 
@@ -545,7 +561,10 @@ body {
   background: var(--badge-neutral-bg);
   border: none;
   border-radius: var(--radius-pill);
-  color: var(--color-text-secondary);
+  /* bdboard-97ib.1: 自身の背景 (--badge-neutral-bg) 上で --color-text-secondary は light
+     4.49:1 (実測、AA まで 0.01) と AA 未達。同じ背景向けに調整済みの --badge-neutral-fg
+     に揃える (.toggle-btn と同じ理由)。 */
+  color: var(--badge-neutral-fg);
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
@@ -688,7 +707,11 @@ body {
 .toggle-btn {
   background: transparent;
   border: none;
-  color: var(--color-text-secondary);
+  /* bdboard-97ib.1: 親 .toggle-group の背景 (--badge-neutral-bg) 上で --color-text-secondary
+     は light 4.49:1〜4.54:1 (実測、最悪値は #f2f2f7 面) と AA (4.5:1) にわずかに届かなかった。
+     同じ --badge-neutral-bg 上で AA を満たすよう既に調整済みの --badge-neutral-fg
+     (light 4.55:1 on #f2f2f7 面) に揃える。 */
+  color: var(--badge-neutral-fg);
   cursor: pointer;
   padding: 6px 14px;
   font-size: 0.8125rem;
@@ -702,7 +725,9 @@ body {
 
 .toggle-btn.active {
   background: var(--color-bg-elevated);
-  color: var(--color-accent);
+  /* bdboard-97ib.1: --color-accent (#007aff) on --color-bg-elevated (#fff) は light
+     4.02:1 (実測) で AA 未達。--color-accent-text (light 6.18:1) に置き換える。 */
+  color: var(--color-accent-text);
   box-shadow: 0 1px 3px var(--color-shadow);
 }
 
@@ -802,17 +827,25 @@ body {
   border: none;
   padding: 0;
   cursor: pointer;
+  /* bdboard-97ib.1: .meta-text の --color-text-tertiary (#8e8e93) は light で 3.22:1 と
+     AA (4.5:1) 未達 (button.meta-text.meta-text-btn 実測)。.meta-text-btn は常に .meta-text
+     と併用される (ViewToolbar.tsx の唯一の利用箇所) ため、ここで --color-text-secondary
+     (light 5.23:1 / white 面) に上書きする。下線色も揃える。 */
+  color: var(--color-text-secondary);
   /* font-size は .meta-text 側を活かす(font ショートハンドだと上書きされる) */
   font-family: inherit;
   text-decoration: underline;
-  text-decoration-color: var(--color-text-tertiary);
+  text-decoration-color: var(--color-text-secondary);
   text-underline-offset: 2px;
   transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
 .meta-text-btn:hover {
-  color: var(--color-text-secondary);
-  text-decoration-color: var(--color-text-secondary);
+  /* bdboard-97ib.1: 静止時が --color-text-secondary になったため、hover 用に
+     .toggle-btn:hover:not(.active) と同じ一段濃い --color-text へ差し替える
+     (差し替えないと静止/hover が同色になり視覚的な変化が消える)。 */
+  color: var(--color-text);
+  text-decoration-color: var(--color-text);
 }
 
 .error-banner {
@@ -934,7 +967,11 @@ body {
 .tips-banner-label {
   flex: none;
   margin: 0;
-  color: var(--color-accent);
+  /* bdboard-97ib.1: --color-accent (#007aff) は tips banner の着色背景
+     (color-mix(accent 5%, --color-bg)) の上で前景・背景の色相が同じになり輝度差が
+     稼げず light 3.39:1 (実測)。--color-accent-text (#005ec4、.filter-chip-active 用に
+     新設済み) を流用すると light 5.21:1 で AA を満たす。 */
+  color: var(--color-accent-text);
   font-size: 0.6875rem;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -947,6 +984,13 @@ body {
   gap: 6px;
   color: var(--color-text-secondary);
   font-size: 0.8125rem;
+}
+
+.tips-banner-text-body {
+  /* bdboard-97ib.1: 継承する --color-text-secondary は tips banner 背景上で light
+     4.41:1 (実測)、AA まで 0.09 しか足りていなかった。--badge-neutral-fg (light 4.89:1
+     on this bg) に上書きする。 */
+  color: var(--badge-neutral-fg);
 }
 
 .tips-banner-text strong {
@@ -3051,6 +3095,15 @@ body {
   color: var(--lane-header-wip-fg);
 }
 
+.lane-header.lane-header-wip-exceeded .lane-chevron {
+  /* bdboard-97ib.1: .lane-chevron は自身の color (--color-text-tertiary) を明示宣言して
+     いるため、.lane-header-wip-exceeded の継承色 (--lane-header-wip-fg) を素通りしていた。
+     単層の 16% tint 背景 (.lane-header-wip-exceeded 自身と同じ) の上で light 2.87:1 /
+     dark 3.85:1 (実測、WCAG SC 1.4.11 の 3:1 も下回る) だったのを、レーン名と同じ
+     --lane-header-wip-fg に揃えて light 5.42:1 / dark 7.24:1 へ解消する。 */
+  color: var(--lane-header-wip-fg);
+}
+
 .lane-header-label {
   display: flex;
   align-items: center;
@@ -3292,7 +3345,9 @@ body {
 
 .card-id {
   font-size: 0.6875rem;
-  color: var(--color-text-tertiary);
+  /* bdboard-97ib.1: --color-text-tertiary (#8e8e93) は light 3.26:1 で AA (4.5:1) 未達
+     (div.card-id 実測)。--color-text-secondary (light 5.23:1 / white 面) に置き換える。 */
+  color: var(--color-text-secondary);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   margin-bottom: 6px;
   word-break: break-all;
@@ -3608,7 +3663,10 @@ body {
 }
 
 .detail-field-label {
-  color: var(--color-text-tertiary);
+  /* bdboard-97ib.1: --color-text-tertiary (#8e8e93) は light 3.26:1 で AA (4.5:1) 未達
+     (div.detail-field-label 実測)。--color-text-secondary (light 5.23:1 / white 面) に
+     置き換える。 */
+  color: var(--color-text-secondary);
   font-size: 0.6875rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -4614,7 +4672,10 @@ body {
   border: none;
   padding: 0;
   margin: 0;
-  color: var(--color-accent);
+  /* bdboard-97ib.1: --color-accent (#007aff) on #fff は light 4.02:1 (実測、
+     .markdown-bead-link 併用時も同じ色を継承) で AA 未達。--color-accent-text
+     (light 6.18:1) に置き換える。 */
+  color: var(--color-accent-text);
   font: inherit;
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 0.8125rem;
@@ -7416,13 +7477,22 @@ body {
      出なくなる (.toggle-btn には作者側の :focus-visible 指定が無く、UA 任せ)。
    ・inset リングは --color-border-strong だと地の --color-bg-elevated に対して
      light 1.48:1 / dark 1.81:1 しか出ず、実質見えない。取り消し線と同じ
-     --color-text-secondary に揃えて light 5.23:1 / dark 6.61:1 にする。
-   ・--color-text-muted は存在しないので --color-text-secondary を使う (index.css の
-     同名注意書き参照)。text-decoration-color は currentcolor が既定なので書かない。 */
+     チップ自身の色に揃えて light 5.80:1 / dark 6.69:1 にする。
+   ・--color-text-muted は存在しないので使わない (index.css の同名注意書き参照)。
+     text-decoration-color は currentcolor が既定なので書かない。
+   ・bdboard-97ib.1: 色は --badge-neutral-fg で、**.toggle-btn の非 active 色と同じ
+     トークンでなければならない**。board-filter-missing-label.spec.ts は
+     「0 件で消えたチップ」と「選択されていない生きたチップ」が同色であることを
+     assert している (議長裁定 2026-09-05: 0 件のチップはアクセントではなく
+     二次色のままにする)。.toggle-btn 側を --color-text-secondary から
+     --badge-neutral-fg へ動かしたとき、ここを取り残して CI を落とした。
+     .toggle-btn の色を動かすときは必ずここも一緒に動かすこと。
+   ・リングは色と同じトークンを使う。spec が boxShadow に color 文字列が含まれることを
+     assert しているので、色とリングがずれると必ず落ちる。 */
 .board-filter-label-group .toggle-btn.board-filter-label-missing {
-  color: var(--color-text-secondary);
+  color: var(--badge-neutral-fg);
   box-shadow:
-    inset 0 0 0 1px var(--color-text-secondary),
+    inset 0 0 0 1px var(--badge-neutral-fg),
     0 1px 3px var(--color-shadow);
   text-decoration: line-through;
 }
