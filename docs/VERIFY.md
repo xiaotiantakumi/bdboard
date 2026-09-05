@@ -90,6 +90,36 @@ What this means operationally:
   more verifies in parallel — that recreates the incident. CI needs no
   special casing (one verify per runner; the slot is acquired instantly).
 
+## 既知 flake の判別 (`[vitest-worker]: Timeout calling "onTaskUpdate"`)
+
+`npm run verify` が非ゼロで終了したとき、その原因が bdboard-c6nv で追跡している vitest
+本体の未解決 upstream バグ (birpc の RPC ACK タイムアウトが 60 秒でハードコードされており
+プール側から上書きできない) による既知の偽陽性かどうかを、リーダーモード
+(`scripts/verify.mjs --group-leader`) が `npm run verify:steps` の出力から自動判定する
+(判定ロジック本体は `scripts/verify-flake-detector.mjs`、テストは
+`scripts/verify-flake-detector.test.mjs` — bdboard-8rl8)。
+
+判定は次の 2 条件が両方そろったときだけ「既知 flake」とみなし、ログ末尾に
+`verify: known flake detected (bdboard-c6nv)` の説明ブロックを追加で出す:
+
+- vitest の `Tests` サマリ行 (`Test Files` 行ではない) の failed 件数の合計が 0 件
+- 出力に `Timeout calling "onTaskUpdate"` を含む
+
+**実失敗が 1 件でもあれば、`onTaskUpdate` が同居していても実失敗として扱う**
+(2026-09-06 の bdboard-6y5b で per-test timeout の実失敗と onTaskUpdate の unhandled error
+が同居した実例があるため、向きを間違えると実バグを握り潰す)。`Tests` サマリ行が 1 行も
+見つからない場合 (出力の書式が変わった、vitest 自体が走っていない等) は「判定不能」として
+安全側に倒し、既知 flake とは表示しない。
+
+**このメッセージは表示を追加するだけで、`npm run verify` の終了コードの意味は変えない** —
+既知 flake であっても exit は非ゼロのまま返る。自動 rerun も行わない (実失敗を握り潰す方向の
+自動化は明示的にスコープ外)。
+
+判定のためリーダーモードの子プロセス (`npm run verify:steps`) の stdio は `inherit` ではなく
+pipe にしてテキストを溜め込み、実画面へは従来どおり tee で流している。ローカルの対話端末
+(TTY) で色付き出力が変わらないよう `FORCE_COLOR` を補っているが、CI はもともと非TTYなので
+影響はない。
+
 ## ローカル起動コマンドの違い
 
 `npm run start` serves the backend + built `web/dist` together on `BDBOARD_PORT` (default `8787` —
