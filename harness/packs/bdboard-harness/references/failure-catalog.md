@@ -78,10 +78,11 @@
 - 防止: check-runs/check-suites の REST 照会で「未起動」を判別し、空コミットで再トリガー（本則: worktree-pr-flow.md §4）
 - 出典: グローバル lessons-learned.md（webhook dispatch の節）
 
-### graphql-quota-exhaustion — 並列セッション群の gh 呼び出し合算で GraphQL 枠が枯渇し `gh pr create` 等が失敗（2026-08-18, 再発 2026-08-29）
-- 原因: gh の PR 系コマンドはアカウント単位（リポジトリ単位でない）の GraphQL 枠 5000/h を消費し、短間隔 watch でも多数セッションの通常呼び出しの合算でも食い潰せる。rate_limit スナップショットは他セッションの同時消費を追い切れず「満タン表示直後に枯渇」が起きる
-- 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約・枯渇時は REST で状態確認と PR 作成。busy-retry せず graphql.reset（epoch秒）まで待って1回だけ再試行（ループ文脈では ScheduleWakeup で reset 後に再開）（本則: worktree-pr-flow.md §4）
-- 出典: bdboard-p5l.10 / bdboard-2w3
+### graphql-quota-exhaustion — `gh pr create` 等の GraphQL 系コマンドが枠を理由に拒否される（2026-08-18, 再発 2026-08-29, 別原因の同症状 2026-09-05）
+- 原因1（一次枠の枯渇）: gh の PR 系コマンドはアカウント単位（リポジトリ単位でない）の GraphQL 枠 5000/h を消費し、短間隔 watch でも多数セッションの通常呼び出しの合算でも食い潰せる。rate_limit スナップショットは他セッションの同時消費を追い切れず「満タン表示直後に枯渇」が起きる
+- 原因2（secondary rate limit と考えられる。2026-09-05 実測）: `gh api rate_limit` が core / graphql とも **5000/5000 remaining** を返すのに `GraphQL: API rate limit already exceeded for user ID …` で拒否される。**一次枠の残量を見ても診断にならず、`graphql.reset` まで待っても解けない**（GitHub が secondary と名乗るわけではないので断定はしない）。原因1と2は症状で区別できないが、**対処は同じ＝即 REST へ切り替える**ので確定させる必要は無い
+- 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約。**拒否されたら reset を待たずに REST へ切り替える**（create / merge / check-runs / ref DELETE の4経路とも REST で完走できる。本則: worktree-pr-flow.md §4）。reset まで待って1回だけ再試行するのは原因1のときだけ有効で、原因2では無駄に最大1時間を失う
+- 出典: bdboard-p5l.10 / bdboard-2w3 / bdboard-il3i（原因2の実測: PR #387 作成時）
 
 ## サーバー・ポート
 

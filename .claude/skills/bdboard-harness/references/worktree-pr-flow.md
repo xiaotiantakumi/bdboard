@@ -188,18 +188,33 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
   1 周で全対象 PR をまとめて照会すれば、ポーリング回数（= 枠の消費速度）が PR の
   本数に比例して増えない。
 
-**GraphQL 枠が実際に枯渇したら**（`GraphQL: API rate limit already exceeded ...`）:
+**GraphQL 呼び出しが `GraphQL: API rate limit already exceeded ...` で拒否されたら**:
 
 1. **`git push` は影響を受けていない**。`gh pr create` が枯渇で失敗しても、ブランチは
    既にリモートに存在している — 復旧は `gh pr create` のリトライだけでよく、worktree や
    ブランチの作り直しは不要。状態確認だけなら、上の 503 障害時の REST コマンド群も
-   core 枠なのでそのまま使える。**PR 作成自体も REST で代替できる**（GraphQL を一切
-   使わない）:
+   core 枠なのでそのまま使える。**原因の切り分けに時間を使わず、PR 操作一式を REST へ
+   切り替える**。これは GraphQL 一次枠の枯渇・スナップショットのラグ・後述の secondary
+   rate limit のいずれにも有効で、GraphQL を一切使わない:
 
    ```bash
-   gh api repos/<owner>/<repo>/pulls -f title="..." -f head=<branch> -f base=main -f body="..." \
-     --jq '{number, html_url}'
+   # create-pull.json は下の例のように json.dumps で作る
+   gh api repos/<owner>/<repo>/pulls --method POST --input create-pull.json --jq .html_url
+   gh api repos/<owner>/<repo>/pulls/<N>/merge --method PUT --input merge-pull.json
+   gh api repos/<owner>/<repo>/commits/<sha>/check-runs
+   gh api repos/<owner>/<repo>/git/refs/heads/<branch> --method DELETE
    ```
+
+   本文に日本語や改行を含むと `-f key=value` は壊れうるため、ペイロードをシェルで組み立てず
+   `python3` の `json.dumps` で一時ファイルへ書き出し、`--input` で渡す。PR 作成の例:
+
+   ```bash
+   python3 -c 'import json; open("create-pull.json", "w").write(json.dumps({"title": "<title>", "head": "<branch>", "base": "main", "body": "Closes: <id>\\n\\n<変更サマリ>"}, ensure_ascii=False))'
+   ```
+
+   merge-pull.json は `merge_method`、`commit_title`、`commit_message` を持たせる。REST の
+   `PUT .../merge` 後も、マージ成否は CLI の終了 status ではなく層2で控えた SHA と
+   `git ls-remote origin main` の再読みを比較して判定する（詳細は層3）。
 
    実測（2026-08-29, PR #134 / bdboard-2w3）: `gh api rate_limit` の graphql が
    **remaining=5000 を示していても GraphQL 呼び出しが exceeded で拒否され続ける**
@@ -208,8 +223,12 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
    スナップショットの取得後、実際の呼び出しまでの間に他セッションの並行消費で枯渇した」
    （スナップショットが実態より新しく見えるラグ）と確認できた — 表示自体が誤りなの
    ではなく、アカウント単位で共有される枠を他セッションが同時に食う速さにスナップ
-   ショットが追いつかない。rate_limit の表示を信じて sleep で待つ前に、まず REST
-   代替を試すほうが速い。
+   ショットが追いつかない。加えて実測（2026-09-05, PR #387 / bdboard-69w1）では、
+   `gh api rate_limit` が core / graphql とも 5000/5000 なのに同じエラーで PR 作成が失敗した。
+   GitHub 側が secondary rate limit と明示したわけではないが、コンテンツ作成に対する
+   **secondary rate limit と考えられる**。この場合 `.resources.graphql.reset` は一次枠の
+   リセット時刻であり待っても解けないため、手順2・3の sleep に頼り切らず即 REST へ
+   切り替える。満タン表示時はラグか secondary かを確定しなくても、対処は同じである。
 2. 正確なリセット時刻を取る（`gh api rate_limit` 自体は REST(core) 枠なので、GraphQL が
    枯渇していても通る）:
 
@@ -224,9 +243,11 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
    GraphQL を使わない作業（実装・検証・`git push` まで）を進めてから戻ってよい。
    Monitor/loop 等の能動ポーリング文脈では、sleep で滞留せず ScheduleWakeup
    （等のスケジュール手段）で reset 時刻以降の再開を予約してターンを返してよい。
-4. `gh pr merge` の途中で枯渇した場合は、リトライの前に**マージが実際どこまで進んだかを
-   REST で確認する**（GitHub 側は成功していて、CLI のレスポンス取得だけが失敗した
-   可能性がある。盲目リトライは二重マージ・状態不整合のもと）:
+4. `gh pr merge` の途中で拒否された場合は、リトライの前に**マージが実際どこまで進んだかを
+   確認する**（GitHub 側は成功していて、CLI のレスポンス取得だけが失敗した可能性がある。
+   盲目リトライは二重マージ・状態不整合のもと）。第一の判定は `git ls-remote origin main`
+   の再読みと層2の base SHA の比較であり、SHA が進んでいれば成功である。補助的な REST 確認は
+   次のとおり:
 
    ```bash
    gh api repos/<owner>/<repo>/pulls/<N> --jq '{state, merged}'
@@ -279,6 +300,18 @@ git -C <メインチェックアウト> pull --ff-only
 # → main 上で検証コマンド（コントラクトの verify）を実行し、緑を確認
 ```
 
+`gh pr merge --squash --delete-branch` の exit status はマージ本体ではなくローカルブランチ
+削除の後処理で非0になりうる。成否は exit status にも GraphQL 依存の `gh pr view` にも頼らず、
+**常に** `git ls-remote origin main` を再読みして層2で控えた base SHA と比較する。SHA が進んで
+いればマージ成功であり、後処理へ進む。GraphQL が死んでいる症状と重なると `gh pr view` 自身も
+使えないため、これが最終的な判定手段である。
+
+マージは worktree から打ち切る。メインチェックアウトは常時稼働サーバーを抱えるため、そこへ
+作業を移す手順を増やすとサーバー停止や別ブランチ配信の事故面が広がる。worktree から実際に
+壊れるのはブランチ削除の後処理だけで、マージ本体は成功する。上の SHA 判定と後述の remote
+削除を手順化するほうが副作用が小さい。`git pull --ff-only` と着地後検証は従来どおりメイン
+チェックアウトで行う。
+
 独立に緑だった2本の意味的衝突は**ここでしか**捕まらない。squash マージなら壊れていても
 revert 1発で戻せる。緑を確認するまで次の PR をマージしない。
 
@@ -300,25 +333,36 @@ git remote prune origin
 **層3の `gh pr merge --delete-branch` はブランチ削除の後処理がまず失敗する — エラーが
 指すブランチ名で2パターンを見分ける**。観測例ではいずれも squash マージ自体は GitHub 側で
 成功していた（マージが失敗したように見えて実は成功している）。どちらのパターンでも慌てて
-再マージせず、まずマージの成否を事実で確認する:
+再マージせず、まず `git ls-remote origin main` を再読みして層2で控えた base SHA から進んだかを
+確認する。進んでいればマージ済みである。`gh pr view` は GraphQL 依存で症状2と重なると使えない
+ため、次は補助確認にとどめる:
 
 ```bash
 gh pr view <N> --json state,mergedAt,mergeCommit   # state が MERGED ならマージ済み
 ```
 
+どちらのパターンでも、remote ブランチが残っていないかを必ず確認する。残っていれば削除する:
+
+```bash
+git ls-remote origin refs/heads/bd/<id>   # 出力があれば remote に未削除で残っている
+git push origin --delete bd/<id>
+```
+
+GraphQL 不通時は次の REST 削除を使う:
+
+```bash
+gh api repos/<owner>/<repo>/git/refs/heads/bd/<id> --method DELETE
+```
+
 - **エラーが PR 自身のブランチを指す**（`cannot delete branch 'bd/<id>' used by worktree
-  at …`）— 既知の通常パス。リモートブランチの削除は**成功**しており、ローカルブランチが
-  worktree に掴まれて消せないだけ。エラーではなく worktree 運用の通常の帰結 — 上記の
-  掃除どおり worktree を削除してから `git branch -D bd/<id>` で完了する。
+  at …`）— ローカルブランチが worktree に掴まれて消せない。PR #384 / bdboard-rccf
+  （2026-09-05、main `d80e993` → `c1414cb`）ではマージ本体は成功していた。上記の掃除どおり
+  worktree を削除してから `git branch -D bd/<id>` で完了する。
 - **エラーが `main` を指す**（`failed to run git: fatal: 'main' is already used by
   worktree at '<メインチェックアウト>'`）— こちらは**remote ブランチの削除まで実行されず
-  残る**のが既知パターンとの最大の違い。マージ成功を確認したら、追加で remote の残存を
-  確認し、残っていれば手動で削除する:
-
-  ```bash
-  git ls-remote origin refs/heads/bd/<id>   # 出力があれば remote に未削除で残っている
-  git push origin --delete bd/<id>
-  ```
+  残る**のが既知パターンとの最大の違い。実測: PR #379 / bdboard-p5l.13（merge `dfb97f4`）・
+  PR #380 / bdboard-p5l.21（merge `eef8df0`）、いずれも2026-09-05。どちらのパターンでも
+  マージ成功を確認したら、上の remote 残存確認と手動削除を必ず行う。
 
   見落とすと `bd/<id>` が remote に残骸として蓄積する。原因は未検証の推定: `gh pr merge
   --delete-branch` はマージ成功後、ローカルブランチ削除の前に一旦デフォルトブランチ
