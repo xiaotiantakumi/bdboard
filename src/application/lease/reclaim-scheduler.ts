@@ -94,7 +94,6 @@ export type ReclaimRunObserver = (run: ReclaimRunRecord) => void;
  *
  * `null` を返したら **そのプロジェクトは今回スキップする**。判断材料が無いときに
  * 全件回収へフォールバックすると、この仕組みが防ごうとしている事故そのものが起きる。
- * 未指定なら計画を挟まず従来どおりプロジェクト全体を対象にする。
  */
 export type ReclaimPlanner = (project: Project) => Promise<ReclaimPlan | null>;
 
@@ -195,7 +194,10 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
         return;
       }
 
-      const [firstTicketId, ...restTicketIds] = plan.reclaimTicketIds;
+      // `| undefined` を明示するのが要点。分割代入だと (noUncheckedIndexedAccess が
+      // 無い今の tsconfig では) 型が `string` になり、下のガードを消しても tsc が通る。
+      // ここを undefined 込みで受けておけば、ガードの削除が TS2322 で落ちる。
+      const firstTicketId: string | undefined = plan.reclaimTicketIds[0];
       if (firstTicketId === undefined) {
         // **ここで bd を呼んではいけない。** `--id` 無しの reclaim は全件対象になる。
         entry.lastRunAt = new Date();
@@ -211,7 +213,7 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
 
       const result = await reclaimer.reclaim(project.rootPath, config.olderThan, [
         firstTicketId,
-        ...restTicketIds,
+        ...plan.reclaimTicketIds.slice(1),
       ]);
       const runAt = new Date();
       entry.lastRunAt = runAt;
@@ -236,7 +238,7 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
       entry.reclaimedCount = parsed.count;
       entry.reclaimedCountUnknown = parsed.count === null;
       const protectedNote =
-        plan !== undefined && plan.protectedTicketIds.length > 0
+        plan.protectedTicketIds.length > 0
           ? `protected ${plan.protectedTicketIds.length}`
           : null;
       const summaryParts = [

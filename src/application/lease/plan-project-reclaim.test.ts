@@ -120,22 +120,24 @@ describe('planProjectReclaim', () => {
     });
   });
 
-  it('falls back to updatedAt when the ticket has no startedAt', async () => {
+  it('still protects a ticket whose createdAt is inside the cap', async () => {
     const plan = await planProjectReclaim(project, {
       listTickets: () => [
         makeTicket({
           id: 'bdboard-live',
           status: 'in_progress',
           startedAt: undefined,
-          // 上限を大きく超えた updatedAt。保護が切れる側に倒れることを固定する。
-          updatedAt: new Date(NOW.getTime() - 48 * 60 * 60_000),
+          // 上限 (12h) の内側。フォールバックしても保護は効く。
+          createdAt: new Date(NOW.getTime() - 2 * 60 * 60_000),
+          updatedAt: new Date(NOW.getTime() - 2 * 60 * 60_000),
         }),
       ],
       scanner: scannerWith(snapshotWithBranch('bdboard-live')),
       now: () => NOW,
     });
 
-    expect(plan?.reclaimTicketIds).toEqual(['bdboard-live']);
+    expect(plan?.protectedTicketIds).toEqual(['bdboard-live']);
+    expect(plan?.reclaimTicketIds).toEqual([]);
   });
 
   // startedAt はチケットが reclaim されると bd が消す。フォールバックに updatedAt を

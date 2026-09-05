@@ -39,8 +39,12 @@ export const WORKTREE_PROTECTION_CAP_MS = 12 * 60 * 60_000;
 export interface ReclaimPlanCandidate {
   readonly ticketId: string;
   /**
-   * 作業開始時刻。保護の打ち切り判定にだけ使う。`startedAt` が無いチケットは
-   * 呼び出し側が `updatedAt` で代用してよい (どちらも claim 以降にしか進まない)。
+   * 作業開始時刻。保護の打ち切り判定にだけ使う。`startedAt` が無いチケット
+   * (reclaim 済みだと bd が消す) は呼び出し側が `createdAt` で代用する。
+   *
+   * **`updatedAt` を代用に使わないこと。** コメント・メタデータ更新のたびに進むので、
+   * 触り続けている限り保護が延び続ける (打ち切りたい向きと逆)。`createdAt` は
+   * `startedAt` 以前なので、外れるとしても保護が早く切れる側にしか倒れない。
    */
   readonly startedAt: Date;
   /** worktree かブランチが実在する = セッションが生きている証拠 */
