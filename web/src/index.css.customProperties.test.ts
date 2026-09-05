@@ -26,6 +26,9 @@ const RUNTIME_CUSTOM_PROPERTIES = new Set([
   '--lane-strip-height',
   '--bulk-bar-height',
   // usePopoverViewportClamp.ts が開いている各ポップオーバー要素の inline style に書く値。
+  // index.css:4870 の .ai-quota-note[open] にも --popover-shift-x: 0px があるが、あれは
+  // 祖先からの継承を打ち消すための防御的な再宣言であって値の出所ではない (直上のコメント
+  // 参照)。仮にあれを bare :root へ動かすと全ポップオーバーのシフトが 0 に固定される。
   '--popover-shift-x',
 ]);
 
@@ -35,6 +38,20 @@ const SCOPED_CUSTOM_PROPERTIES = new Set([
   // .detail-panel.chat-panel 上の値を、その子孫の .chat-attachment 系が参照する。
   '--chat-attachment-preview-size',
 ]);
+
+/**
+ * 文字列リテラルの中に波かっこが無いこと。
+ *
+ * collectDefinedCustomProperties は `{` / `}` を数えてブロックの深さを追うだけで、文字列
+ * リテラルを認識しない。`content: '{'` のような宣言が 1 つ入るだけで深さがずれ、以降の
+ * bare :root ブロックが「入れ子」と誤認されて定義集合から落ちる。落ちた結果は
+ * 「未定義参照あり」の赤なので気付けはするが、原因がまったく別の場所に見えるので
+ * ここで名指しで落とす。今日の index.css には該当が無いので、これは前提の明文化。
+ */
+function stringLiteralsWithBraces(css: string): string[] {
+  const literals = css.match(/"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'/g) ?? [];
+  return literals.filter((literal) => literal.includes('{') || literal.includes('}'));
+}
 
 function collectDefinedCustomProperties(css: string): Set<string> {
   const defined = new Set<string>();
@@ -140,6 +157,14 @@ describe('index.css custom properties', () => {
     expect(
       staleAllowedProperties,
       `カスタムプロパティ許可リストに不要なエントリがあります: ${staleAllowedProperties.join(', ')}。var() 参照がなくなったか bare :root に定義されたため、許可リストから削除してください。`,
+    ).toEqual([]);
+  });
+
+  it('keeps the brace-counting walker honest: no braces inside string literals', () => {
+    const offenders = stringLiteralsWithBraces(stripCssComments(cssSource));
+    expect(
+      offenders,
+      `index.css の文字列リテラルに波かっこが入っています: ${offenders.join(', ')}。collectDefinedCustomProperties は文字列リテラルを認識せず波かっこを数えるだけなので、ブロックの深さがずれて bare :root の定義を取りこぼします。リテラル側を書き換えるか、walker に文字列リテラルの読み飛ばしを実装してください。`,
     ).toEqual([]);
   });
 });
