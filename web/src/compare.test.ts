@@ -1,7 +1,7 @@
 // Canonical implementation: src/domain/compare.test.ts
 // Mirrored here because web cannot import src/ directly.
-// The import specifier is the only allowed difference: the root project resolves
-// with NodeNext (explicit .js) and web/ with bundler resolution.
+// Apart from this provenance header, the only other difference is the import specifier:
+// the root project resolves with NodeNext (explicit .js), web/ with bundler resolution.
 
 import { describe, expect, it } from 'vitest';
 import { compareStrings } from './compare';

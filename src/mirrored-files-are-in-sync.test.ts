@@ -32,17 +32,36 @@ import { describe, expect, it } from 'vitest';
  * 改行コードの差だけで、内容のドリフトは隠せない。
  */
 
+/**
+ * リポジトリルートの絶対パス。
+ *
+ * **このファイルがリポジトリルートの 1 階層下 (`src/` 直下) に置かれている**ことを前提にした
+ * `..` である。`src/` のサブディレクトリなど別の深さへ移すと REPO_ROOT が静かにずれ、以降の
+ * 読み込みが「なぜそのパスなのか」を説明しない ENOENT になる。移動するなら段数も直すこと。
+ */
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 
-/** ミラー冒頭に置く出所マーカー。未登録のミラーを炙り出す走査 (下の it) の手掛かりでもある。 */
+/** ミラー冒頭に置く出所マーカー。 */
 const MIRROR_MARKER = 'Canonical implementation:';
 
-/** マーカー走査の対象。`node_modules` はこの下に無いが、念のため降下時に弾く。 */
+/**
+ * 出所ヘッダー 1 行目の接頭辞。`mirrorHeader()` が組み立てる先頭でもあり、未登録のミラーを
+ * 炙り出す走査 (下の it) の錨でもある。両者が同じ定数を使うことで、マーカー文字列に言及した
+ * だけのファイル (1つ上で MIRROR_MARKER を定義しているこのファイル自身がまさにそれ) を走査が
+ * ミラーと取り違えない。
+ */
+const MIRROR_MARKER_LINE_PREFIX = `// ${MIRROR_MARKER} `;
+
+/**
+ * マーカー走査の対象ルート。走査するのはこの 2 ルート配下の `.ts` / `.tsx` だけで、
+ * `scripts/` や `test/` や `web/` 直下、`.mjs` は見ていない (範囲の拡大は別チケット)。
+ * `node_modules` はこの下に無いが、念のため降下時に弾く。
+ */
 const SCAN_ROOTS = ['src', 'web/src'] as const;
 
 /**
- * このファイル自身。`MIRROR_MARKER` の定義を含むのでマーカー走査に自分が引っ掛かる。
- * パスをハードコードせず import.meta から取るので、リネームしても除外が腐らない。
+ * このファイル自身の絶対パス。失敗時に「どこへ登録すればよいか」を指すために使う。
+ * パスをハードコードせず import.meta から取るので、リネームしても指し先が腐らない。
  */
 const SELF_ABSOLUTE_PATH = fileURLToPath(import.meta.url);
 
@@ -51,14 +70,20 @@ interface MirrorPair {
   readonly canonicalPath: string;
   /** リポジトリ相対 (posix) のミラーパス。 */
   readonly mirrorPath: string;
-  /** 正本の内容からミラーの内容を一意に導く全域変換。ここに書かれていない差分は許されない。 */
-  readonly deriveMirror: (canonicalContent: string) => string;
+  /**
+   * 正本の内容からミラーの内容を一意に導く全域変換。ここに書かれていない差分は許されない。
+   *
+   * 第 2 引数には上の `canonicalPath` がそのまま渡る。出所ヘッダーに書く正本パスを
+   * リテラルで持たせないためで、リテラルだと `canonicalPath` と照合されず、ミラーが
+   * 実在しない (あるいは別の) 正本を名乗っていてもこのテストが緑のままになる。
+   */
+  readonly deriveMirror: (canonicalContent: string, canonicalPath: string) => string;
 }
 
 /** ミラー冒頭の出所ヘッダー (マーカー行 + 補足行 + 空行) を組み立てる。 */
 function mirrorHeader(canonicalPath: string, noteLines: readonly string[]): string {
   return [
-    `// ${MIRROR_MARKER} ${canonicalPath}`,
+    `${MIRROR_MARKER_LINE_PREFIX}${canonicalPath}`,
     ...noteLines.map((line) => `// ${line}`),
     '',
     '',
@@ -68,6 +93,9 @@ function mirrorHeader(canonicalPath: string, noteLines: readonly string[]): stri
 /**
  * `from` がちょうど 1 箇所のときだけ置換する。0 箇所や 2 箇所以上で黙って no-op にすると、
  * 正本側の変更で変換が意味を失っても緑のままになりうるため、そこで落とす。
+ *
+ * 置換は関数リプレーサで行う。文字列を渡すと `to` の中の `$&` / `$1` / `` $` `` が置換パターン
+ * として解釈され、リテラルとして書いたつもりの `to` が黙って別物になるため。
  */
 function replaceExactlyOnce(source: string, from: string, to: string): string {
   const occurrences = source.split(from).length - 1;
@@ -76,26 +104,25 @@ function replaceExactlyOnce(source: string, from: string, to: string): string {
       `mirror derivation expected exactly 1 occurrence of ${JSON.stringify(from)}, found ${occurrences}`,
     );
   }
-  return source.replace(from, to);
+  return source.replace(from, () => to);
 }
 
 const MIRROR_PAIRS: readonly MirrorPair[] = [
   {
     canonicalPath: 'src/domain/compare.ts',
     mirrorPath: 'web/src/compare.ts',
-    deriveMirror: (canonicalContent) =>
-      mirrorHeader('src/domain/compare.ts', [
-        'Mirrored here because web cannot import src/ directly.',
-      ]) + canonicalContent,
+    deriveMirror: (canonicalContent, canonicalPath) =>
+      mirrorHeader(canonicalPath, ['Mirrored here because web cannot import src/ directly.']) +
+      canonicalContent,
   },
   {
     canonicalPath: 'src/domain/compare.test.ts',
     mirrorPath: 'web/src/compare.test.ts',
-    deriveMirror: (canonicalContent) =>
-      mirrorHeader('src/domain/compare.test.ts', [
+    deriveMirror: (canonicalContent, canonicalPath) =>
+      mirrorHeader(canonicalPath, [
         'Mirrored here because web cannot import src/ directly.',
-        'The import specifier is the only allowed difference: the root project resolves',
-        'with NodeNext (explicit .js) and web/ with bundler resolution.',
+        'Apart from this provenance header, the only other difference is the import specifier:',
+        'the root project resolves with NodeNext (explicit .js), web/ with bundler resolution.',
       ]) + replaceExactlyOnce(canonicalContent, "from './compare.js';", "from './compare';"),
   },
 ];
@@ -156,7 +183,7 @@ describe('mirrored files are in sync with their canonical source', () => {
   for (const pair of MIRROR_PAIRS) {
     it(`${pair.mirrorPath} is derivable from ${pair.canonicalPath}`, () => {
       const canonicalContent = readNormalized(pair.canonicalPath);
-      const expected = pair.deriveMirror(canonicalContent);
+      const expected = pair.deriveMirror(canonicalContent, pair.canonicalPath);
       const actual = readNormalized(pair.mirrorPath);
 
       expect(
@@ -171,15 +198,12 @@ describe('mirrored files are in sync with their canonical source', () => {
     });
   }
 
-  it('registers every file that carries the mirror marker', () => {
+  it('registers every .ts/.tsx file under src/ and web/src/ that starts with the marker line', () => {
     const markedMirrors: string[] = [];
 
     for (const scanRoot of SCAN_ROOTS) {
       for (const absolutePath of collectSourceFiles(path.join(REPO_ROOT, scanRoot))) {
-        if (absolutePath === SELF_ABSOLUTE_PATH) {
-          continue;
-        }
-        if (readFileSync(absolutePath, 'utf8').includes(MIRROR_MARKER)) {
+        if (readFileSync(absolutePath, 'utf8').startsWith(MIRROR_MARKER_LINE_PREFIX)) {
           markedMirrors.push(toRepoRelativePosix(absolutePath));
         }
       }
@@ -189,8 +213,11 @@ describe('mirrored files are in sync with their canonical source', () => {
 
     expect(
       markedMirrors.sort(),
-      'files carrying the mirror marker must match MIRROR_PAIRS exactly (both directions): ' +
-        'a new mirror must be registered here, and a registered mirror must keep its marker',
+      `files whose first line is a ${JSON.stringify(MIRROR_MARKER_LINE_PREFIX)} header must match ` +
+        'MIRROR_PAIRS exactly (both directions): a new mirror must be registered here, and a ' +
+        'registered mirror must keep its header line. This scan only covers ' +
+        `${SCAN_ROOTS.join(' and ')} (.ts/.tsx only, node_modules skipped), so mirrors placed ` +
+        'elsewhere are not seen by it.',
     ).toEqual([...registeredMirrors].sort());
   });
 });
