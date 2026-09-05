@@ -149,6 +149,15 @@ function envString(name: string, defaultValue: string): string {
   return raw;
 }
 
+/** 未設定・空文字のとき undefined。health の instanceNonce など「無いときフィールド自体を出さない」用途向け。 */
+function envOptionalString(name: string): string | undefined {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') {
+    return undefined;
+  }
+  return raw;
+}
+
 function envBool(name: string): boolean {
   const raw = process.env[name];
   if (raw === undefined || raw === '') {
@@ -233,6 +242,7 @@ function updateStatusFromResult(
 
 async function main(): Promise<void> {
   const applicationVersion = createPackageJsonVersionProvider();
+  const instanceNonce = envOptionalString('BDBOARD_INSTANCE_NONCE');
   const bdVersionCheckTimeoutMs = 3_000;
   const port = envInt('BDBOARD_PORT', 8787);
   const host = envString('BDBOARD_HOST', '127.0.0.1');
@@ -898,6 +908,7 @@ async function main(): Promise<void> {
     buildApiDeps({
       cache,
       applicationVersion,
+      instanceNonce,
       now: () => new Date(),
       getStatus: () => status,
       refresh: () => runRefresh(true),
