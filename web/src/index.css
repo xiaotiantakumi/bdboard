@@ -1664,8 +1664,34 @@ body {
   cursor: pointer;
 }
 
+/*
+ * 375px モバイル: stale lease 行は kind バッジ「stale lease（heartbeat 途絶）」が
+ * 長く project セルが 87px に狭まる。実機最長名 chewing-enlightenment (133.7px) が
+ * clip される (bdboard-4kik, 2026-09-05 実測)。project を行全幅に落とすと 325px になり
+ * 133.7px が収まる。行高は最大 139px → 140px (+1px)、リスト全体 9536px → 9399px、横スクロールなし。
+ * 480px 幅では変更前から溢れていない。
+ */
+@media (max-width: 480px) {
+  .hygiene-issue-row {
+    grid-template-areas:
+      'kind severity id'
+      'project project project'
+      'message message message';
+  }
+
+  .hygiene-issue-id {
+    align-self: center;
+  }
+}
+
 .hygiene-issue-row:hover {
   border-color: var(--color-border-strong);
+}
+
+/* severity バッジは row-major 自動配置でたまたま最初の空セルに落ちていた。
+   bdboard-4kik が grid-template-areas を書き換えた以上、テンプレートを自己文書化して将来の並べ替えに耐えさせる。 */
+.hygiene-issue-row > .badge {
+  grid-area: severity;
 }
 
 .hygiene-kind-badge {
@@ -1959,6 +1985,11 @@ body {
   white-space: nowrap;
 }
 
+/* 注意: このセレクタは 1682 行の `@media (max-width: 480px)` 内にも同名で存在し、
+   そちらが `align-self: center` を宣言している。詳細度は同じ (0,1,0) なので、
+   メディアクエリ側が勝っているのは「基底のこのブロックが align-self を宣言していない」
+   ことだけが理由 — カスケードの順序では後ろにある基底側が本来は勝つ位置にある。
+   ここに `align-self` を足すと、モバイルの中央揃えが黙って負ける (bdboard-4kik レビュー N4)。 */
 .hygiene-issue-id {
   grid-area: id;
   font-family: var(--font-mono, ui-monospace, monospace);
