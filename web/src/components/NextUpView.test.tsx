@@ -352,21 +352,57 @@ describe('NextUpView', () => {
   });
 });
 
-// bdboard-gwgy: poll_failed テストが testTimeout で落ちたとき、本関数内の
+interface ActiveTimerLoop {
+  abort: () => void;
+  settled: Promise<void>;
+}
+
+let activeTimerLoop: ActiveTimerLoop | null = null;
+
+// bdboard-ujnd: poll_failed テストが testTimeout で落ちたとき、本関数内の
 // vi.advanceTimersByTimeAsync ループは vitest により中断されずバックグラウンドで
-// 動き続け、後続テストの beforeEach/afterEach で張り直した fake タイマー/モックを
-// 壊しうる (タイムアウトではなく即座のアサーション失敗として連鎖する既知挙動)。
-// per-test timeout でタイムアウト自体を防げばこの連鎖は発火しない。
+// 動き続ける。afterEach の vi.useRealTimers() が、act() スコープ内で pending の
+// advanceTimersByTimeAsync が待つ fake clock を外すため act コールバックが return
+// できず、React 19 のグローバル actQueue が非 null のまま次テストへ漏れる。
+// 後続の render() は flush されず DOM が空 (<body><div /></body>) になり、
+// 「role が見つからない」系の即時失敗として連鎖する (bdboard-gwgy の per-test
+// timeout は予防策。本チケットではループを abort 可能にし afterEach で act スコープ
+// 終了を待ってから useRealTimers() するので連鎖しない)。
 async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
-  for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS);
-    });
-    if (screen.queryByRole('button', { name: '▶ 一括実行' })) {
-      return;
+  let abort!: () => void;
+  const aborted = new Promise<'aborted'>((resolve) => {
+    abort = () => resolve('aborted');
+  });
+  let markSettled!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    markSettled = resolve;
+  });
+  const token: ActiveTimerLoop = { abort, settled };
+  activeTimerLoop = token;
+  try {
+    for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
+      const outcome = await act(async () =>
+        Promise.race([
+          vi
+            .advanceTimersByTimeAsync(NEXT_UP_LOOP_POLL_MAX_DELAY_MS)
+            .then((): 'advanced' => 'advanced'),
+          aborted,
+        ]),
+      );
+      if (outcome === 'aborted') {
+        return;
+      }
+      if (screen.queryByRole('button', { name: '▶ 一括実行' })) {
+        return;
+      }
     }
+    throw new Error('batch run did not finish within timer budget');
+  } finally {
+    if (activeTimerLoop === token) {
+      activeTimerLoop = null;
+    }
+    markSettled();
   }
-  throw new Error('batch run did not finish within timer budget');
 }
 
 describe('NextUpView batch run loop', () => {
@@ -386,7 +422,16 @@ describe('NextUpView batch run loop', () => {
     user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    // タイムアウトしたテストが残したタイマーループを止め、その act() スコープが
+    // 完全に閉じるまで待つ。ここで待たずに useRealTimers() すると、act の内側で
+    // 止まっている advanceTimersByTimeAsync が待つ fake clock が消え、act スコープが
+    // 永久に閉じない = React のグローバル actQueue が次のテストへ漏れる (bdboard-ujnd)。
+    const loop = activeTimerLoop;
+    if (loop) {
+      loop.abort();
+      await loop.settled;
+    }
     vi.useRealTimers();
     vi.clearAllMocks();
   });
