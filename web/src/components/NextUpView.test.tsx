@@ -396,6 +396,16 @@ async function advanceInAct(ms: number): Promise<'advanced' | 'aborted'> {
 // timeout は予防策)。「useRealTimers() を後ろにずらせば漏れない」は誤りで、効くのは abort であって
 // useRealTimers() との順序ではない。本チケットでは advanceInAct で abort 可能にし afterEach が
 // act スコープ終了を待ってから useRealTimers() するので連鎖しない。
+// bdboard-z231: 直線の advanceInAct 呼び出しは、TicketDetailPanel.test.tsx と違って
+// 戻り値を捨ててよい。あちらは 'aborted' を受けたら必ず return する形になっているが、
+// それは advance の後ろで render / user.click / fireEvent / モック再設定を行うテストがあり、
+// timeout 済みの本体が abort 後に再開すると後続テストの DOM とモック呼び出し回数を汚すため
+// (bdboard-d6b8。早期 return 無しだと失敗が 1 件でなく 3 件残った)。
+// このファイルの直線サイトは advance の後ろが waitFor / expect の読み取りだけなので、
+// 再開しても汚すものが無い。強制 timeout で実測しても、早期 return の有無で失敗件数は
+// 変わらなかった (両起点とも 1 件。abort 自体を外すと 29 件 / 13 件に跳ねる)。
+// つまり効いているのは abort であって早期 return ではない。ここに advance 後の DOM 操作を
+// 増やす変更をするなら、TicketDetailPanel と同じ早期 return が必要になる。
 async function finishBatchRunAfterPersistentPollFailures(): Promise<void> {
   for (let tick = 0; tick < NEXT_UP_LOOP_POLL_MAX_FAILURES * 4; tick += 1) {
     // abort は戻り値で伝播する。'aborted' を受けたら必ず return すること。return せずに次の反復へ進むと、
