@@ -6436,6 +6436,13 @@ body {
     flex: 1 1 100%;
   }
 
+  /* flex: 1 1 100% で延期グループだけ次行へ落ちると、完了ボタンが1行に単独で残り
+     上の .btn { flex: 1 1 auto } により全幅に伸びる。先頭の完了だけ伸長させない
+     (bdboard-53my 観測点1) */
+  .bulk-action-bar-buttons > .btn.bulk-action-btn:first-child {
+    flex-grow: 0;
+  }
+
   .bulk-action-bar-summary .btn {
     min-height: 34px;
   }
