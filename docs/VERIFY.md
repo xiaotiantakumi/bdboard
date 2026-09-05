@@ -109,12 +109,34 @@ CHANGELOG — permanently once the release tag is cut. Fix or hand-restore befor
 tagging.
 
 `scripts/check-commit-parse.mjs` exposes a `KNOWN_UNPARSABLE` allowlist for
-this, and it is **empty by design**. The check scans `v<last-release>..HEAD`,
-so an unparsable commit leaves the range by itself once the next tag is cut —
-the list is only for the temporary window where such a commit sits on `main`
-and turns every push red. Before adding an entry you must hand-restore the
-CHANGELOG line first; excluding without restoring causes the exact silent drop
-this guard exists to catch. (The original `15651d3` entry was removed once the
-`v0.1.2` tag put it out of range — bdboard-r5we, bdboard-tbgj.)
+this. The check scans `v<last-release>..HEAD`, so an unparsable commit leaves
+the range by itself once the next tag is cut — the list is only for the
+temporary window where such a commit sits on `main` and turns every push red.
+New occurrences are kept off `main` by the `pull_request` arm of the same job
+(`base.sha..head.sha`, bdboard-qhsb), so an entry here covers history that can
+no longer be fixed without rewriting `main`.
+
+Entries are objects, not strings, and `recovery` is **required** (bdboard-721p):
+
+```js
+{ sha: '<full sha>', subject: '<commit subject>', ticket: 'bdboard-xxxx',
+  recovery: '<what to hand-restore before the tag is cut>' }
+```
+
+An entry without a usable `recovery` is not honoured — it stays a failure. The
+script re-prints every excluded entry's `recovery` on each run under
+`=== リリース (タグ生成) の前にやること ===`, so silencing the exit code never
+silences the reminder. When the default range is used and an entry matches no
+commit in it, the run says so: the tag has been cut and the entry should be
+deleted. (The earlier rule "hand-restore the CHANGELOG line *before* adding an
+entry" was unenforceable — release-please runs with `always-update: true`
+(bdboard-2tch) and regenerates the release PR branch on every `main` push, so a
+pre-emptive edit is overwritten. `recovery` replaces it with a condition the
+script can actually check.)
+
+Current entry: `5d3be46` (bdboard-ym9r) — its CHANGELOG line must be added to
+release PR #258 immediately before that PR is merged. (The original `15651d3`
+entry was removed once the `v0.1.2` tag put it out of range — bdboard-r5we,
+bdboard-tbgj.)
 
 Not part of `npm run verify` (needs git tags).

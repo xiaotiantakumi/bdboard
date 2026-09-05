@@ -18,20 +18,44 @@ import { parser } from '@conventional-commits/parser';
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
- * 解析不能と分かっているコミットの除外リスト。**既定は空にしておく。**
+ * 解析不能と分かっているコミットの除外リスト。**エントリは例外**で、増やす前に下の条件を読むこと。
  *
  * 検査範囲は `v<last>..HEAD` なので、解析不能コミットは次のリリースタグを切った時点で
  * 自動的に範囲外になる。つまりこのリストが要るのは「解析不能コミットが main に載って
  * しまい、次のタグを切るまでの間、毎回の main push が赤くなる」という一時的な状況だけ。
  *
+ * **エントリの形** (bdboard-721p): 文字列ではなくオブジェクトで、`recovery` が必須。
+ * `recovery` を持たないエントリは除外として採用されない (fail-closed)。これは
+ * 「CHANGELOG から黙って消える」事象を allowlist 自身が引き起こさないための歯止めで、
+ * 除外した分の手当ては毎回の実行で `formatFindings` が全文を再掲する。
+ *
+ * 旧ルールは「足す前に CHANGELOG へ該当行を手で復元しておくこと」だったが、
+ * release-please は always-update: true でリリースPRブランチを main push のたびに
+ * 再生成する (bdboard-2tch) ため、先に復元しても次の push で消える = 原理的に満たせない。
+ * 実行可能な条件に置き換えたのが上の `recovery` 必須化。
+ *
  * 発端の 15651d3 (bdboard-r5we) は v0.1.2 のタグ (f2662b6) が切られて範囲外になったため
  * 削除した。CHANGELOG の行はリリースブランチへ手で足して回復済み (c8a94d4)。
- *
- * **エントリを足すときの条件**: 先に CHANGELOG へ該当行を手で復元すること。復元せずに
- * 除外だけすると、このガードが検知しようとしている「CHANGELOG から黙って消える」事象を
- * 自分で起こすことになる。足す場合は理由と、いつ消せるようになるかをコメントで残す。
  */
-export const KNOWN_UNPARSABLE = [];
+export const KNOWN_UNPARSABLE = [
+  {
+    // bdboard-ym9r / bdboard-721p。main 上の既存コミットなので履歴書き換え以外に直す手が無く、
+    // v0.2.0 のタグを切るまで v0.1.2..HEAD の範囲に残り続けて main push を毎回赤くしていた。
+    // 新規発生の防止は PR 側チェック (bdboard-qhsb, ci.yml の pull_request 分岐) が担うので、
+    // main push 側でこの 1 件を落とし続ける価値は「タグ前の手当てを忘れないこと」だけ。
+    // それは exit 1 ではなく下の recovery の恒久表示で担保する。
+    // **削除できるのは v0.2.0 のタグが切られた後** (範囲外になり、下の unused 通知が出る)。
+    sha: '5d3be460e19479cfe2fb8e06249bb096a6fcbf7f',
+    subject: 'feat(bdboard-h4xs.1): スマホ幅のKanbanにレーン切り替えストリップを追加する (#260)',
+    ticket: 'bdboard-ym9r',
+    recovery: [
+      'リリースPR #258 をマージする直前に、そのブランチの CHANGELOG.md 0.2.0 の Features へ次の 1 行を手で追記する:',
+      '  * **bdboard-h4xs.1:** スマホ幅のKanbanにレーン切り替えストリップを追加する ([#260](https://github.com/xiaotiantakumi/bdboard/issues/260)) ([5d3be46](https://github.com/xiaotiantakumi/bdboard/commit/5d3be460e19479cfe2fb8e06249bb096a6fcbf7f))',
+      'release-please は always-update: true なので、追記後に main へ push が入ると再生成で消える。',
+      '「他の全PRをマージ済み → 追記 → 直後に #258 をマージ」を連続で行うこと。タグを切った後は永久に回復できない。',
+    ].join('\n'),
+  },
+];
 
 const CHANGELOG_TYPES = new Set(['feat', 'fix', 'perf', 'revert', 'deps']);
 const CONVENTIONAL_SUBJECT =
@@ -42,6 +66,8 @@ const EXIT_FOUND = 1;
 const EXIT_UNAVAILABLE = 2;
 
 const LOCATION_RE = /\bat (\d+):(\d+)/;
+
+const EXPLICIT_RANGE_FLAGS = new Set(['--range', '--from', '--to']);
 
 /**
  * release-please と同じ parser で 1 件のコミット本文を検査する。純関数。
@@ -75,28 +101,47 @@ export function isChangelogRelevant(subject) {
 
 const MIN_ALLOWLIST_PREFIX_LEN = 7;
 
-function isValidAllowlistEntry(entry) {
-  return typeof entry === 'string' && entry.length >= MIN_ALLOWLIST_PREFIX_LEN;
+/**
+ * 除外として採用できるエントリか。`sha` と `recovery` の両方が要る (bdboard-721p)。
+ *
+ * `recovery` を必須にしているのは fail-closed のため。手当ての手順を書かずに黙らせると、
+ * このガードが検知しようとしている「CHANGELOG から黙って消える」事象を allowlist 自身が
+ * 起こすことになる。書式ミスや古い文字列エントリは「除外しない」側に倒れて赤くなる。
+ */
+export function isValidAllowlistEntry(entry) {
+  if (entry == null || typeof entry !== 'object') {
+    return false;
+  }
+  const { sha, recovery } = entry;
+  if (typeof sha !== 'string' || sha.length < MIN_ALLOWLIST_PREFIX_LEN) {
+    return false;
+  }
+  return typeof recovery === 'string' && recovery.trim().length > 0;
 }
 
-function isAllowlisted(sha, allowlist) {
-  return allowlist
-    .filter(isValidAllowlistEntry)
-    .some((entry) => sha.startsWith(entry) || entry.startsWith(sha));
+function matchesSha(entry, sha) {
+  return sha.startsWith(entry.sha) || entry.sha.startsWith(sha);
+}
+
+function findAllowlistEntry(sha, entries) {
+  return entries.find((entry) => matchesSha(entry, sha));
 }
 
 /**
  * 解析不能コミットを CHANGELOG 対象 (failures) とそれ以外 (warnings) に分類する。
  */
 export function findUnparsableCommits(commits, options = {}) {
-  const allowlist = options.allowlist ?? KNOWN_UNPARSABLE;
+  const allowlist = (options.allowlist ?? KNOWN_UNPARSABLE).filter(isValidAllowlistEntry);
   const failures = [];
   const warnings = [];
   const excluded = [];
+  const matched = new Set();
 
   for (const commit of commits) {
-    if (isAllowlisted(commit.sha, allowlist)) {
-      excluded.push(commit);
+    const entry = findAllowlistEntry(commit.sha, allowlist);
+    if (entry) {
+      matched.add(entry);
+      excluded.push({ ...commit, entry });
       continue;
     }
 
@@ -105,15 +150,19 @@ export function findUnparsableCommits(commits, options = {}) {
       continue;
     }
 
-    const entry = { ...commit, ...parsed };
+    const finding = { ...commit, ...parsed };
     if (isChangelogRelevant(commit.subject)) {
-      failures.push(entry);
+      failures.push(finding);
     } else {
-      warnings.push(entry);
+      warnings.push(finding);
     }
   }
 
-  return { failures, warnings, excluded };
+  // 範囲内に見つからなかったエントリ。既定範囲での実行なら「タグが切られて範囲外になった =
+  // 消してよい」を意味する。PR の限定範囲では当然見つからないので、通知するかは呼び出し側の判断。
+  const unused = allowlist.filter((entry) => !matched.has(entry));
+
+  return { failures, warnings, excluded, unused };
 }
 
 function escapeControlChars(text) {
@@ -157,27 +206,54 @@ function formatFailure(failure) {
 }
 
 /**
+ * 除外したエントリの手当て (recovery) を毎回再掲する。
+ *
+ * allowlist は exit code を 0 に戻すだけで、やるべきことは消えていない。タグを切ると
+ * その手当ては永久に不可能になるので、赤の代わりにこのブロックが恒久的なリマインダになる。
+ */
+function formatPendingRecovery(excluded) {
+  const entries = [];
+  for (const item of excluded) {
+    const entry = item?.entry;
+    if (entry && !entries.includes(entry)) {
+      entries.push(entry);
+    }
+  }
+  if (entries.length === 0) {
+    return [];
+  }
+
+  const parts = [
+    `commit-parse: === リリース (タグ生成) の前にやること ${entries.length} 件 — allowlist で除外した分の手当て ===`,
+  ];
+  for (const entry of entries) {
+    parts.push(`commit-parse:   ${entry.sha.slice(0, 7)} ${entry.subject ?? ''}`.trimEnd());
+    if (entry.ticket) {
+      parts.push(`commit-parse:     チケット: ${entry.ticket}`);
+    }
+    for (const line of entry.recovery.split('\n')) {
+      parts.push(`commit-parse:     ${line}`);
+    }
+  }
+  return parts;
+}
+
+/**
  * 人間 (とエージェント) 向けの本文。exit code は持たせない。
  */
 export function formatFindings(result, ctx = {}) {
   const { failures, warnings, excluded } = result;
-  const { range, commitCount } = ctx;
+  const { range, commitCount, reportUnused = false } = ctx;
   const header =
     range != null && commitCount != null
       ? `commit-parse: ${range} の範囲で ${commitCount} 件のコミットを調べました。`
       : `commit-parse: ${commitCount ?? 0} 件のコミットを調べました。`;
 
-  if (failures.length === 0 && warnings.length === 0) {
-    const parts = [`${header}\ncommit-parse: CHANGELOG 対象の解析不能コミットはありません。`];
-    if (excluded?.length > 0) {
-      parts.push(
-        `commit-parse: allowlist により ${excluded.length} 件を除外しました (既知の取りこぼし)。`,
-      );
-    }
-    return parts.join('\n');
-  }
-
   const parts = [header];
+
+  if (failures.length === 0 && warnings.length === 0) {
+    parts.push('commit-parse: CHANGELOG 対象の解析不能コミットはありません。');
+  }
 
   if (failures.length > 0) {
     parts.push(
@@ -201,6 +277,20 @@ export function formatFindings(result, ctx = {}) {
     parts.push(
       `commit-parse: allowlist により ${excluded.length} 件を除外しました (既知の取りこぼし)。`,
     );
+    parts.push(...formatPendingRecovery(excluded));
+  }
+
+  // PR の限定範囲 (base..head) では allowlist のエントリが見つからないのが当たり前なので、
+  // 既定範囲 (v<last>..HEAD) で走ったときだけ「もう消してよい」を伝える。
+  if (reportUnused && result.unused?.length > 0) {
+    parts.push(
+      `commit-parse: allowlist の ${result.unused.length} 件が範囲内に見つかりません — タグが切られて範囲外になったなら KNOWN_UNPARSABLE から削除してください:`,
+    );
+    for (const entry of result.unused) {
+      parts.push(
+        `commit-parse:   ${entry.sha.slice(0, 7)} ${entry.subject ?? ''}${entry.ticket ? ` (${entry.ticket})` : ''}`.trimEnd(),
+      );
+    }
   }
 
   return parts.join('\n');
@@ -315,8 +405,14 @@ function main(argv) {
     return EXIT_UNAVAILABLE;
   }
 
+  // 範囲を明示されたとき (PR の base..head) は allowlist の未使用エントリを通知しない。
+  // その範囲に居ないのは当たり前で、毎PRに「消してよい」と出すのはノイズにしかならない。
+  const isDefaultRange = !rangeArgv.some((arg) => EXPLICIT_RANGE_FLAGS.has(arg));
+
   const result = findUnparsableCommits(commits);
-  console.log(formatFindings(result, { range, commitCount: commits.length }));
+  console.log(
+    formatFindings(result, { range, commitCount: commits.length, reportUnused: isDefaultRange }),
+  );
 
   if (result.failures.length > 0) {
     return EXIT_FOUND;
