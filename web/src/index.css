@@ -3,6 +3,15 @@
 
   /* Apple HIG-inspired design tokens (light) */
   --color-accent: #007aff;
+  /* アクセント色をアクセントで着色した面の上に文字として置くと、前景と背景の色相が
+     同じで輝度差が稼げず AA に届かない (.filter-chip-active で light 3.40:1)。
+     文字用に明度だけずらした派生値。
+     **移行済みは .filter-chip-active の 1 箇所だけ。** `color: var(--color-accent)` は
+     まだ 20 セレクタ残っており (.toggle-btn.active は light 4.02:1、
+     .lane-indicator-item-current は light 3.44:1 と、同じ構図が丸ごと残っている)、
+     ライト側の sub-AA の主要因はここ。掃引はダークしか見ていないので自動検出されない
+     (ライト側掃引は bdboard-97ib)。 */
+  --color-accent-text: #005ec4;
   --color-accent-fg: #ffffff;
   --color-bg: #f2f2f7;
   --color-bg-elevated: #ffffff;
@@ -61,6 +70,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --color-accent: #0a84ff;
+    --color-accent-text: #5eabff;
     --color-accent-fg: #ffffff;
     --color-bg: #000000;
     --color-bg-elevated: #1c1c1e;
@@ -540,13 +550,16 @@ body {
 .filter-chip-active {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: var(--color-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .filter-chip-clear {
   font-size: 0.75rem;
   line-height: 1;
-  opacity: 0.85;
+  /* ここに opacity を置かない。✕は色を持たず .filter-chip-active の color を継承する。 */
+  /* 掃引は computed color だけを見るため opacity をすり抜ける。上の --color-accent-text に
+     しても opacity: 0.85 なら実描画の✕はライト 4.016:1 で AA 未満のまま
+     (修正前の --color-accent + 0.85 は 2.855:1)。 */
 }
 
 .header-title {
@@ -2905,7 +2918,18 @@ body {
 }
 
 .lane-count {
-  color: var(--color-text-tertiary);
+  /* --badge-neutral-bg では、他の9箇所と同じく --badge-neutral-fg を対にする。 */
+  /* --color-text-tertiary はこの背景上で light 2.83:1 / dark 3.91:1 と AA (4.5:1) に届かない。 */
+  /* **AA を満たすのは静止状態だけ。** light 4.542:1 の余白 0.042 は、.lane-header:hover の
+     rgba(28,28,30,.04) や .lane-drop-allowed / .lane-drop-rejected が --badge-neutral-bg の
+     下に潜り込むと 4.13〜4.22:1 まで落ちる (dark の hover は 4.5002:1)。そもそも 4.542:1 は
+     .card / .lane の #ffffff 面に載ったときの値で、.header 上では 4.49:1、body の #f2f2f7 上では
+     4.10:1 と、静止状態でも既に AA を割っている面がある (--badge-neutral-fg を使う
+     .alert-bar-quiet / .status-pill-reconnecting が該当)。トークン側で余白を広げる話は
+     bdboard-tlus。WIP 超過時は下の .lane-header-wip-exceeded .lane-count が
+     color も background も warning 系で上書きするため、この対は効かない (light 1.66:1、
+     bdboard-bdsd)。掃引は hover もドラッグも WIP 超過も踏まないので、いずれも自動検出されない。 */
+  color: var(--badge-neutral-fg);
   font-weight: 500;
   font-size: 0.75rem;
   background: var(--badge-neutral-bg);
