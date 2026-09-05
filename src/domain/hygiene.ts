@@ -42,7 +42,8 @@ export type HygieneIssueKind =
   | 'merged_leftover'
   | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
-  | 'closed_without_evidence';
+  | 'closed_without_evidence'
+  | 'reclaimed_live_worktree';
 
 export interface HygieneCycleEdge {
   readonly issueId: TicketId;
@@ -88,7 +89,12 @@ export interface HygieneIssue {
   readonly projectId: string;
   readonly message: string;
   readonly severity: 'warning' | 'info';
-  /** merged_leftover のときだけ入る。UI が掃除コマンド文字列を組み立てる材料 */
+  /**
+   * merged_leftover のときだけ入る。UI が掃除コマンド文字列を組み立てる材料。
+   *
+   * 鏡像の `reclaimed_live_worktree` には**意図的に付けない** — 理由は
+   * `checkReclaimedLiveWorktree` の末尾コメント。足す前にそこを読むこと。
+   */
   readonly cleanup?: HygieneCleanupTarget;
   /** orphan_heartbeat_loop のときだけ入る。UI が kill コマンドを組み立てる材料 */
   readonly heartbeatLoop?: HygieneHeartbeatLoopTarget;
@@ -502,6 +508,75 @@ function checkMergedLeftover(
   };
 }
 
+/**
+ * merged_leftover の鏡像 (bdboard-rkde)。
+ *
+ * merged_leftover は「チケットは closed なのに worktree/ブランチが残っている」を見る。
+ * こちらは **「チケットは open (＝ bd ready が空きとして提示する) なのに worktree か
+ * ブランチが存在する」** を見る。
+ *
+ * この盤面は 2026-09-05 に 4 件同時に発生した。常時稼働サーバーの reclaim スケジューラが
+ * lease だけを見て回収するため、heartbeat を打っていない生存セッションのチケットが
+ * 作業中に open へ戻される。当人はそのまま PR を出すので、台帳だけが「空き」と言い続ける。
+ * 回収そのものは `bd history <id> --events` に `lease_reclaimed` として残る (実測 2026-09-05:
+ * `05:52:41 lease_reclaimed by ...`。bd history は UTC 表記)。ただし `bd show` には出ないので、台帳を1件ずつ開かない
+ * 限り気付けない。この述語は**盤面から候補を一覧にする**ためのもので、手動の
+ * `bd update -s open` との確定的な切り分けは上の history コマンドが担う。
+ *
+ * worktree/ブランチの存在を生存の代理指標に使えるのは、ワークフロー上それらが
+ * claim からマージ後の掃除までの間しか存在しないため (docs/GIT-WORKFLOW.md)。
+ * 掃除漏れとの区別は付かないが、掃除漏れもまた対処すべき盤面なので実害はない。
+ *
+ * in_progress は対象外。そちらは lease が生きている正常な状態か、さもなくば
+ * stale_in_progress が拾う。
+ */
+function checkReclaimedLiveWorktree(
+  candidate: LeftoverCandidate,
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): HygieneIssue | null {
+  if (candidate.worktreePath === null && candidate.branchName === null) {
+    return null;
+  }
+
+  const ticket = ticketById.get(candidate.ticketId);
+  if (ticket === undefined) {
+    return null;
+  }
+  if (ticket.status !== 'open') {
+    return null;
+  }
+  if (ticket.projectId !== candidate.projectId) {
+    return null;
+  }
+
+  // 助詞の付き方は merged_leftover (上) と揃える。分岐ごとに文全体を組むのは
+  // `${evidence} が` にすると「ブランチ が」と不自然に割れるため。
+  let evidence: string;
+  if (candidate.worktreePath !== null && candidate.branchName !== null) {
+    evidence = 'チケットは open ですが worktree とブランチが残っています';
+  } else if (candidate.worktreePath !== null) {
+    evidence = 'チケットは open ですが worktree が残っています';
+  } else {
+    evidence = 'チケットは open ですがブランチが残っています';
+  }
+
+  return {
+    kind: 'reclaimed_live_worktree',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message:
+      `${evidence}。作業中に自動 reclaim された可能性があります。` +
+      `bd ready が空きとして提示するので、作業が生きているなら bd update ${ticket.id} --claim で claim し直してください` +
+      `（確認: bd history ${ticket.id} --events の直近の状態変更が lease_reclaimed なら自動回収です）`,
+    severity: 'warning',
+    // **cleanup は意図的に付けない (bdboard-rkde)。** merged_leftover と同じ候補を使うが、
+    // 提案すべき対処は正反対である。UI の cleanup は lsof ガード付きとはいえ
+    // `git worktree remove` + `branch -d` を出す (web/src/bdCommands.ts)。この kind が
+    // 見ているのは「まだ生きているかもしれない作業」なので、そこに削除コマンドを
+    // 添えるのは最悪の誤誘導になる。対処は claim し直すことで、message に書いてある。
+  };
+}
+
 function checkOrphanHeartbeatLoop(
   candidate: HeartbeatLoopCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
@@ -719,21 +794,26 @@ export function findDependencyCycles(
   return cycles.sort((a, b) => compareStrings(a.ticketIds[0]!, b.ticketIds[0]!));
 }
 
-const KIND_ORDER: readonly HygieneIssueKind[] = [
-  'dependency_cycle',
-  'overdue_defer',
-  'stale_epic',
-  'stale_in_progress',
-  'unblocked_high_priority_idle',
-  'stale_pending_decision',
-  'closed_without_evidence',
-  'merged_leftover',
-  'orphan_heartbeat_loop',
-  'in_flight_file_overlap',
-];
+/**
+ * 表示順。**Record にしてあるのは網羅性を tsc に強制させるため** — 配列だと新しい kind を
+ * 足し忘れても `indexOf` が -1 を返して黙って先頭に並ぶ (bdboard-rkde のレビュー指摘)。
+ */
+const KIND_ORDER: Record<HygieneIssueKind, number> = {
+  dependency_cycle: 0,
+  overdue_defer: 1,
+  stale_epic: 2,
+  stale_in_progress: 3,
+  unblocked_high_priority_idle: 4,
+  stale_pending_decision: 5,
+  closed_without_evidence: 6,
+  merged_leftover: 7,
+  reclaimed_live_worktree: 8,
+  orphan_heartbeat_loop: 9,
+  in_flight_file_overlap: 10,
+};
 
 function compareIssues(a: HygieneIssue, b: HygieneIssue): number {
-  const kindDiff = KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind);
+  const kindDiff = KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
   if (kindDiff !== 0) {
     return kindDiff;
   }
@@ -878,6 +958,12 @@ export function checkHygiene(
       const mergedLeftover = checkMergedLeftover(candidate, ticketById);
       if (mergedLeftover !== null) {
         issues.push(mergedLeftover);
+      }
+      // 同じ候補列を鏡像の述語でもう一度見る。両者は status で排他 (closed / open) なので
+      // 1つの候補が両方に載ることはない。
+      const reclaimedLive = checkReclaimedLiveWorktree(candidate, ticketById);
+      if (reclaimedLive !== null) {
+        issues.push(reclaimedLive);
       }
     }
   }

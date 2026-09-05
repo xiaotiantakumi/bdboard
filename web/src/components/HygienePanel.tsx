@@ -87,6 +87,7 @@ export const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   unblocked_high_priority_idle: '着手待ち高優先',
   stale_pending_decision: '放置された確認待ち',
   merged_leftover: '残骸 worktree',
+  reclaimed_live_worktree: '誤回収の疑い',
   orphan_heartbeat_loop: '残骸 heartbeat ループ',
   in_flight_file_overlap: '着手中の重複',
   closed_without_evidence: 'close 証拠なし',
