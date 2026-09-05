@@ -6,7 +6,22 @@ import { expect, test } from '@playwright/test';
  * Uses scrollLeft assignment (not scrollIntoView) to trigger mandatory scroll-snap,
  * verifying the second lane snaps to the scroll-padding-left inset.
  * Runs at 375x812 and 600x900 viewports to cover both @media (max-width:700px) and
- * (max-width:480px) scroll-padding-left rules.
+ * (max-width:480px) scroll-padding-left rules. Both branches are guarded independently:
+ * deleting the 14px rule fails only 600x900, deleting the 12px rule fails only 375x812.
+ *
+ * Deliberately NOT guarded: whether the snap is `mandatory` or `proximity`.
+ * index.css:2720 declares `.lanes-row { scroll-snap-type: x proximity }` as the base rule and
+ * index.css:5779 upgrades it to `x mandatory` on mobile, so deleting the mandatory line leaves
+ * proximity snapping and this spec stays green. That is intended — the contract this spec owns is
+ * "the lane snaps to the scroll-padding inset rather than the scrollport edge", which both
+ * strengths satisfy at the offset used below. Replacing scroll-snap-type with `none` (i.e. really
+ * removing the snap mechanism) does fail both viewports, which is what makes this spec a real
+ * guard rather than the scrollIntoView version it replaced. If the mandatory-vs-proximity
+ * distinction ever needs guarding, that belongs to a spec about swipe behaviour, not this one.
+ *
+ * Detection margin note: the 12px-rule mutation is caught by a 2px gap (14 vs 12) against a 1.5px
+ * tolerance. If the two padding values ever converge, this spec quietly loses that half of its
+ * detection power — re-check the mutation table in bdboard-h4xs.11 before changing either value.
  */
 const VIEWPORTS: { width: number; height: number }[] = [
   { width: 375, height: 812 },
