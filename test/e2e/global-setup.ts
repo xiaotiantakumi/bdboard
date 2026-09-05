@@ -224,11 +224,13 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // `stale lease（heartbeat 途絶）` は 182px・white-space: nowrap でパネル中
       // 最長。`.hygiene-issue-row` は grid-template-columns: auto auto 1fr
       // (web/src/index.css:1648) なので、この行だけ project 列 (1fr) が潰れる。
-      // 結果として mobile-activity-hygiene-truncation.spec.ts:185-189 が全
-      // `.hygiene-issue-project` に課している「省略されていない
-      // (scrollWidth <= clientWidth)」の安全余白が 66px から 8px に縮んだ。
-      // macOS Chromium 実測: 既存の `放置された確認待ち` 行は 145px 列に 78.75px で
-      // 余白 66.25px、新しい stale lease 行は 87px 列に 78.75px で余白 8.25px。
+      // ≤480px の帯では bdboard-4kik で project が行全幅 (375px 幅で 325px) に移った。
+      // 以下の 87px / 余白 8.25px の実測は 481px 以上の帯（旧 3 列レイアウト）の話。
+      // 結果として同 spec の `.hygiene-issue-project` に対する
+      // `scrollWidth <= clientWidth` / `clientWidth >= rowContentWidth` の assert 群の
+      // 安全余白が 66px から 8px に縮んだ（481px+ 帯での話）。
+      // macOS Chromium 実測 (481px+ 帯): 既存の `放置された確認待ち` 行は 145px 列に
+      // 78.75px で余白 66.25px、新しい stale lease 行は 87px 列に 78.75px で余白 8.25px。
       // truncation 系 spec が落ちたらまずここを疑うこと。
       //
       // (m4) lease.in-progress.json は bdboard-3tw.8 を

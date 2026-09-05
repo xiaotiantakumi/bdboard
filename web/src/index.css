@@ -1688,6 +1688,12 @@ body {
   border-color: var(--color-border-strong);
 }
 
+/* severity バッジは row-major 自動配置でたまたま最初の空セルに落ちていた。
+   bdboard-4kik が grid-template-areas を書き換えた以上、テンプレートを自己文書化して将来の並べ替えに耐えさせる。 */
+.hygiene-issue-row > .badge {
+  grid-area: severity;
+}
+
 .hygiene-kind-badge {
   grid-area: kind;
   display: inline-flex;
