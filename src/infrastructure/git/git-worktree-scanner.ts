@@ -263,12 +263,15 @@ export function createGitWorktreeScanner(
         ),
       ]);
 
-      const worktrees =
-        worktreeResult.exitCode === 0 ? parseWorktreePorcelain(worktreeResult.stdout) : [];
-      const bdBranches =
-        branchResult.exitCode === 0 ? parseBdBranches(branchResult.stdout) : [];
+      const worktreeOk = worktreeResult.exitCode === 0 && worktreeResult.failureKind === undefined;
+      const branchOk = branchResult.exitCode === 0 && branchResult.failureKind === undefined;
 
-      return { worktrees, bdBranches };
+      const worktrees = worktreeOk ? parseWorktreePorcelain(worktreeResult.stdout) : [];
+      const bdBranches = branchOk ? parseBdBranches(branchResult.stdout) : [];
+
+      // CommandRunner は spawn 失敗も timeout も throw せず resolve するので、
+      // ここで落とすと「git が動かなかった」が「残骸ゼロ」と区別できなくなる。
+      return { worktrees, bdBranches, complete: worktreeOk && branchOk };
     },
 
     async listChangedFiles(worktreePath: string): Promise<readonly string[]> {

@@ -104,7 +104,7 @@ export interface ReclaimSchedulerDeps {
   readonly config: ReclaimSchedulerConfig;
   readonly logError?: (message: string) => void;
   readonly observer?: ReclaimRunObserver;
-  readonly planner?: ReclaimPlanner;
+  readonly planner: ReclaimPlanner;
 }
 
 export interface ReclaimScheduler {
@@ -181,39 +181,38 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
   const runForProject = async (project: Project): Promise<void> => {
     const entry = ensureProjectStatus(project.id);
     try {
-      let plan: ReclaimPlan | undefined;
-      if (deps.planner !== undefined) {
-        const planned = await deps.planner(project);
-        if (planned === null) {
-          // 判断材料が無い。全件回収へ落とすくらいなら 1 周見送る (回収漏れは次の
-          // 巡回で取り返せるが、生きている作業を奪うのは取り返せない)。
-          entry.lastRunAt = new Date();
-          entry.reclaimedCount = 0;
-          entry.reclaimedCountUnknown = false;
-          entry.rawSummary = 'skipped: 生存証拠を判定できませんでした';
-          entry.lastError = null;
-          return;
-        }
-        plan = planned;
-
-        if (plan.reclaimTicketIds.length === 0) {
-          // **ここで bd を呼んではいけない。** `--id` 無しの reclaim は全件対象になる。
-          entry.lastRunAt = new Date();
-          entry.reclaimedCount = 0;
-          entry.reclaimedCountUnknown = false;
-          entry.rawSummary =
-            plan.protectedTicketIds.length > 0
-              ? `protected ${plan.protectedTicketIds.length} (worktree が生きているため回収しませんでした)`
-              : null;
-          entry.lastError = null;
-          return;
-        }
+      const plan = await deps.planner(project);
+      if (plan === null) {
+        // 判断材料が無い。全件回収へ落とすくらいなら 1 周見送る (回収漏れは次の
+        // 巡回で取り返せるが、生きている作業を奪うのは取り返せない)。
+        entry.lastRunAt = new Date();
+        // 「0 件回収した」とは言えない。何件回収すべきだったかを知らないまま
+        // 見送ったので、件数は unknown として表示する。
+        entry.reclaimedCount = null;
+        entry.reclaimedCountUnknown = true;
+        entry.rawSummary = 'skipped: 生存証拠を判定できませんでした';
+        entry.lastError = null;
+        return;
       }
 
-      const result =
-        plan === undefined
-          ? await reclaimer.reclaim(project.rootPath, config.olderThan)
-          : await reclaimer.reclaim(project.rootPath, config.olderThan, plan.reclaimTicketIds);
+      const [firstTicketId, ...restTicketIds] = plan.reclaimTicketIds;
+      if (firstTicketId === undefined) {
+        // **ここで bd を呼んではいけない。** `--id` 無しの reclaim は全件対象になる。
+        entry.lastRunAt = new Date();
+        entry.reclaimedCount = 0;
+        entry.reclaimedCountUnknown = false;
+        entry.rawSummary =
+          plan.protectedTicketIds.length > 0
+            ? `protected ${plan.protectedTicketIds.length} (worktree が生きているため回収しませんでした)`
+            : null;
+        entry.lastError = null;
+        return;
+      }
+
+      const result = await reclaimer.reclaim(project.rootPath, config.olderThan, [
+        firstTicketId,
+        ...restTicketIds,
+      ]);
       const runAt = new Date();
       entry.lastRunAt = runAt;
 

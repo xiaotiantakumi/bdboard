@@ -13,6 +13,16 @@ export interface GitWorktreeSnapshot {
   readonly worktrees: readonly GitWorktreeEntry[];
   /** `bd/` プレフィックス込みのローカルブランチ名。例 'bd/bdboard-3tw.96' */
   readonly bdBranches: readonly string[];
+  /**
+   * git を最後まで読めたか。`false` なら **空 = 存在しない、ではない**。
+   *
+   * Hygiene 側 (scan-git-leftovers / scan-in-flight-overlaps) は「読めた範囲で残骸を
+   * 出す」ので不完全でも困らないが、reclaim 側 (plan-project-reclaim) にとっては
+   * 「worktree が無い」と「worktree を確認できなかった」の取り違えがそのまま
+   * 生存セッションのチケット強奪になる (bdboard-6aci)。読めなかったことを
+   * スナップショット自身に持たせて、消費側が自分の許容度で分岐できるようにする。
+   */
+  readonly complete: boolean;
 }
 
 export const BD_BRANCH_PREFIX = 'bd/';

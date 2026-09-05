@@ -1933,6 +1933,7 @@ describe('createApiRoutes', () => {
           },
         ],
         bdBranches: ['bd/bdboard-merged'],
+        complete: true,
       })),
     };
 
@@ -1975,6 +1976,7 @@ describe('createApiRoutes', () => {
         bdBranches: Object.keys(filesByWorktree).map(
           (path) => `bd/${path.slice(path.lastIndexOf('/') + 1)}`,
         ),
+        complete: true,
       }),
       listChangedFiles: async (worktreePath) => filesByWorktree[worktreePath] ?? [],
     };
@@ -2066,6 +2068,7 @@ describe('createApiRoutes', () => {
       scan: async () => ({
         worktrees: [{ path: '/projects/a', branch: 'main', isMain: true }],
         bdBranches: [],
+        complete: true,
       }),
       listChangedFiles,
     };
@@ -2108,7 +2111,7 @@ describe('createApiRoutes', () => {
       fingerprint: 'fp-a',
       fetchedAt: NOW,
     });
-    const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [] }));
+    const scan = vi.fn(async () => ({ worktrees: [], bdBranches: [], complete: true }));
     const app = createApiRoutes(
       createDeps({
         cache,

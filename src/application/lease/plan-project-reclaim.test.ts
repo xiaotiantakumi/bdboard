@@ -22,10 +22,10 @@ function scannerWith(snapshot: GitWorktreeSnapshot): WorktreeScanner {
   };
 }
 
-const emptySnapshot: GitWorktreeSnapshot = { worktrees: [], bdBranches: [] };
+const emptySnapshot: GitWorktreeSnapshot = { worktrees: [], bdBranches: [], complete: true };
 
 function snapshotWithBranch(ticketId: string): GitWorktreeSnapshot {
-  return { worktrees: [], bdBranches: [`bd/${ticketId}`] };
+  return { worktrees: [], bdBranches: [`bd/${ticketId}`], complete: true };
 }
 
 describe('planProjectReclaim', () => {
@@ -35,6 +35,23 @@ describe('planProjectReclaim', () => {
     const plan = await planProjectReclaim(project, {
       listTickets: () => undefined,
       scanner: scannerWith(emptySnapshot),
+      now: () => NOW,
+      logWarn,
+    });
+
+    expect(plan).toBeNull();
+    expect(logWarn).toHaveBeenCalledOnce();
+  });
+
+  // 本番のスキャナは git の非ゼロ / timeout / spawn 失敗を **throw せず空スナップショットに
+  // 畳む**。complete を見ないと、負荷で git が 10 秒に間に合わなかっただけの巡回が
+  // 「worktree が 1 つも無い」= 全件回収対象、に化ける (fable レビュー B1)。
+  it('returns null when the scan came back incomplete', async () => {
+    const logWarn = vi.fn();
+
+    const plan = await planProjectReclaim(project, {
+      listTickets: () => [makeTicket({ id: 'bdboard-a', status: 'in_progress' })],
+      scanner: scannerWith({ worktrees: [], bdBranches: [], complete: false }),
       now: () => NOW,
       logWarn,
     });
@@ -119,5 +136,28 @@ describe('planProjectReclaim', () => {
     });
 
     expect(plan?.reclaimTicketIds).toEqual(['bdboard-live']);
+  });
+
+  // startedAt はチケットが reclaim されると bd が消す。フォールバックに updatedAt を
+  // 使うと、コメントやメタデータ更新のたびに時計が巻き戻り、触り続けている限り保護が
+  // 延び続ける (向きが逆)。createdAt は startedAt 以前なので保護は早く切れる側に倒れる。
+  it('falls back to createdAt, so a recent update cannot extend the protection', async () => {
+    const ticket = makeTicket({
+      id: 'bdboard-a',
+      status: 'in_progress',
+      createdAt: new Date('2026-09-04T00:00:00Z'), // 36 時間前 = 12h の上限超え
+      updatedAt: new Date('2026-09-05T11:59:00Z'), // 1 分前に触られている
+    });
+    expect(ticket.startedAt).toBeUndefined();
+
+    const plan = await planProjectReclaim(project, {
+      listTickets: () => [ticket],
+      scanner: scannerWith(snapshotWithBranch('bdboard-a')),
+      now: () => NOW,
+      logWarn: () => {},
+    });
+
+    expect(plan?.reclaimTicketIds).toEqual(['bdboard-a']);
+    expect(plan?.protectedTicketIds).toEqual([]);
   });
 });

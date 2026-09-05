@@ -47,6 +47,16 @@ export async function planProjectReclaim(
   let liveTicketIds: ReadonlySet<string>;
   try {
     const snapshot = await deps.scanner.scan(project.rootPath);
+    if (!snapshot.complete) {
+      // git が非ゼロ / timeout / spawn 失敗。スキャナはこれを空スナップショットに
+      // 畳むので、`complete` を見ずに進むと全 in_progress が「worktree 無し」= 回収対象
+      // になる。負荷で git が 10 秒に間に合わなかっただけで生存セッションを奪う。
+      logWarn(
+        `[reclaim] git worktree scan was incomplete for project=${project.id}; skipping this cycle ` +
+          '(an incomplete scan cannot tell "no worktree" from "could not look")',
+      );
+      return null;
+    }
     liveTicketIds = new Set(
       collectLeftoverCandidates(project.id, project.rootPath, snapshot).map(
         (candidate) => candidate.ticketId,
@@ -65,9 +75,11 @@ export async function planProjectReclaim(
   return planReclaim(
     inProgress.map((ticket) => ({
       ticketId: ticket.id,
-      // startedAt が無いチケットは updatedAt で代用する。どちらも claim 以降にしか
-      // 進まないので、保護が実際より早く切れる方向にしか外れない (安全側)。
-      startedAt: ticket.startedAt ?? ticket.updatedAt,
+      // startedAt が無いチケット (reclaim 済みだと bd が消す) は createdAt で代用する。
+      // `createdAt <= startedAt` なので経過時間は実際より長く出て、保護は早く切れる
+      // 方向にしか外れない。updatedAt は使えない — コメント・メタデータ更新のたびに
+      // 進むので、触り続けている限り保護が延び続ける (向きが逆)。
+      startedAt: ticket.startedAt ?? ticket.createdAt,
       hasLiveWorktree: liveTicketIds.has(ticket.id),
     })),
     now,

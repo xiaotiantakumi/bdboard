@@ -22,6 +22,16 @@ function project(id: string, rootPath: string): Project {
   };
 }
 
+/**
+ * planner は必須依存。ここより下の既存テストは「回収対象が 1 件ある」状況を見ているので、
+ * 常にその 1 件を返す既定を置く。planner 固有の分岐は下の専用 describe が持つ。
+ */
+const PLANNED_ID = 'bdboard-stale';
+const reclaimEverything = async (): Promise<ReclaimPlan> => ({
+  reclaimTicketIds: [PLANNED_ID],
+  protectedTicketIds: [],
+});
+
 describe('createReclaimScheduler', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -43,6 +53,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer,
       listProjects: () => projects,
+      planner: reclaimEverything,
       config: {
         enabled: true,
         intervalMs: 1_000,
@@ -56,7 +67,9 @@ describe('createReclaimScheduler', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(reclaim).toHaveBeenCalledTimes(2);
-    expect(reclaim).toHaveBeenCalledWith('/projects/a', DEFAULT_RECLAIM_OLDER_THAN);
+    expect(reclaim).toHaveBeenCalledWith('/projects/a', DEFAULT_RECLAIM_OLDER_THAN, [
+      PLANNED_ID,
+    ]);
 
     const status = scheduler.getStatus();
     expect(status.enabled).toBe(true);
@@ -99,6 +112,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer,
       listProjects: () => [project('proj-a', '/projects/a')],
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: 100, olderThan: '10m' },
     });
 
@@ -134,6 +148,7 @@ describe('createReclaimScheduler', () => {
         project('proj-a', '/projects/a'),
         project('proj-b', '/projects/b'),
       ],
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: DEFAULT_RECLAIM_INTERVAL_MS, olderThan: '10m' },
       logError,
     });
@@ -163,6 +178,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer: { reclaim },
       listProjects: () => [project('proj-a', '/projects/a')],
+      planner: reclaimEverything,
       config: { enabled: false, intervalMs: 100, olderThan: '10m' },
     });
 
@@ -195,6 +211,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer: { reclaim },
       listProjects: () => projects,
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: 1_000, olderThan: '10m' },
     });
 
@@ -228,6 +245,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer,
       listProjects: () => [project('proj-a', '/projects/a')],
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: 100, olderThan: '10m' },
     });
 
@@ -256,6 +274,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer,
       listProjects: () => [project('proj-a', '/projects/a')],
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: 100, olderThan: '10m' },
       observer,
     });
@@ -289,6 +308,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer,
       listProjects: () => [project('proj-a', '/projects/a')],
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: 100, olderThan: '10m' },
       logError: () => {},
       observer,
@@ -313,6 +333,7 @@ describe('createReclaimScheduler', () => {
     const scheduler = createReclaimScheduler({
       reclaimer: { reclaim },
       listProjects: () => [project('proj-a', '/projects/a'), project('proj-b', '/projects/b')],
+      planner: reclaimEverything,
       config: { enabled: true, intervalMs: 100, olderThan: '10m' },
       logError,
       observer: () => {
@@ -406,26 +427,12 @@ describe('createReclaimScheduler の planner (bdboard-6aci)', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(reclaim).not.toHaveBeenCalled();
-    expect(s.getStatus().projects[0]?.rawSummary).toContain('skipped');
-    s.stop();
-  });
-
-  it('keeps the old whole-project behaviour when no planner is wired', async () => {
-    const reclaim = vi.fn(async () => ({
-      exitCode: 0,
-      stdout: 'reclaimed 0 issues',
-      stderr: '',
-    }));
-
-    const s = createReclaimScheduler({
-      reclaimer: { reclaim } as unknown as LeaseReclaimer,
-      listProjects: () => [project('proj-a', '/projects/a')],
-      config: { enabled: true, intervalMs: 1_000, olderThan: '2h' },
-    });
-    s.start();
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(reclaim).toHaveBeenCalledWith('/projects/a', '2h');
+    const status = s.getStatus().projects[0];
+    expect(status?.rawSummary).toContain('skipped');
+    // 「0 件回収した」と言ってはいけない。何件回収すべきだったかを知らないまま
+    // 見送っているので、成功して 0 件だった巡回と区別が付く必要がある。
+    expect(status?.reclaimedCount).toBeNull();
+    expect(status?.reclaimedCountUnknown).toBe(true);
     s.stop();
   });
 });

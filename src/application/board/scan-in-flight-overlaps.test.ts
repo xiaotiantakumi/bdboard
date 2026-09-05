@@ -11,7 +11,7 @@ function createScanner(
   filesByPath: Readonly<Record<string, readonly string[] | Error>>,
 ): WorktreeScanner {
   return {
-    scan: async () => ({ worktrees: [], bdBranches: [] }),
+    scan: async () => ({ worktrees: [], bdBranches: [], complete: true }),
     listChangedFiles: async (worktreePath) => {
       const value = filesByPath[worktreePath];
       if (value instanceof Error) {
@@ -26,7 +26,7 @@ describe('scanInFlightOverlaps', () => {
   it('returns nothing without touching git when there are no worktrees', async () => {
     const listChangedFiles = vi.fn();
     const scanner: WorktreeScanner = {
-      scan: async () => ({ worktrees: [], bdBranches: [] }),
+      scan: async () => ({ worktrees: [], bdBranches: [], complete: true }),
       listChangedFiles,
     };
 
@@ -88,7 +88,7 @@ describe('scanInFlightOverlaps', () => {
     let active = 0;
     let peak = 0;
     const scanner: WorktreeScanner = {
-      scan: async () => ({ worktrees: [], bdBranches: [] }),
+      scan: async () => ({ worktrees: [], bdBranches: [], complete: true }),
       listChangedFiles: async () => {
         active += 1;
         peak = Math.max(peak, active);
@@ -109,7 +109,7 @@ describe('scanInFlightOverlaps', () => {
   it('drops a worktree that blows the per-worktree deadline and keeps the rest', async () => {
     const logWarn = vi.fn();
     const scanner: WorktreeScanner = {
-      scan: async () => ({ worktrees: [], bdBranches: [] }),
+      scan: async () => ({ worktrees: [], bdBranches: [], complete: true }),
       listChangedFiles: async (worktreePath) => {
         if (worktreePath === '/wt/p1/slow') {
           // 締め切りより十分に遅いが、テストは待たずに戻る

@@ -29,6 +29,7 @@ describe('scanGitLeftovers', () => {
               },
             ],
             bdBranches: ['bd/bdboard-a'],
+            complete: true,
           };
         }
         return {
@@ -36,6 +37,7 @@ describe('scanGitLeftovers', () => {
             { path: '/projects/b', branch: 'main', isMain: true },
           ],
           bdBranches: ['bd/bdboard-b'],
+          complete: true,
         };
       },
     };
@@ -71,6 +73,7 @@ describe('scanGitLeftovers', () => {
             { path: '/projects/a', branch: 'main', isMain: true },
           ],
           bdBranches: ['bd/bdboard-a'],
+          complete: true,
         };
       },
     };
@@ -102,6 +105,7 @@ describe('scanGitLeftovers', () => {
         return {
           worktrees: [{ path: '/projects/x', branch: 'main', isMain: true }],
           bdBranches: ['bd/bdboard-x'],
+          complete: true,
         };
       }),
     };
@@ -125,6 +129,7 @@ describe('scanGitLeftovers', () => {
             { path: '/projects/a', branch: 'main', isMain: true },
           ],
           bdBranches: ['bd/bdboard-a'],
+          complete: true,
         };
       },
     };
