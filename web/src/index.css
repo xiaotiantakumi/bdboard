@@ -5391,6 +5391,37 @@ body {
   padding-bottom: 20px;
 }
 
+/* 添付一覧・添付エラー・画像非対応警告・エージェント不在警告をまとめた可変領域。
+   短いビューポート (下の @media) ではここに max-height + overflow-y を与え、
+   フォーム高さへの寄与を内容によらない定数にする (bdboard-iglk)。 */
+.chat-input-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 中身が全部非表示のときは gap を生まないよう要素ごと消す。描画条件の二重管理を避けるため
+   React 側の条件式ではなくここで判定する。 */
+.chat-input-notices:empty {
+  display: none;
+}
+
+/* プロジェクトバー内の可変注意書き（未選択ヒント/チケット由来プロジェクトのフォールバック通知）を
+   まとめた領域。.chat-input-notices と同じ理由・同じ流儀で、短いビューポートでは高さを固定する
+   (bdboard-iglk)。この2つは .chat-input-form の外にあるので、添付バナーを囲っただけでは
+   キャップされないまま残る — 未選択のまま画像を貼ると両方同時に出る。 */
+.chat-project-bar-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-project-bar-notices:empty {
+  display: none;
+}
+
 .chat-quick-commands {
   display: flex;
   flex-wrap: nowrap;
@@ -5786,6 +5817,10 @@ body {
     gap: 6px;
   }
 
+  .chat-input-notices {
+    gap: 6px;
+  }
+
   /* 入力ヒントはキーボード操作の視覚的リマインダ。非フォーカス時は display:none で隠す。
      AT からも消えるが、視覚的リマインダなので許容。 */
   .chat-input-form:not(:focus-within) .chat-input-hint {
@@ -5899,14 +5934,46 @@ body {
     overflow-y: auto;
   }
 
-  /* 縦が足りないときは focus-within でもキーボード案内を出さない (再び溢れるのを防ぐ)。
-     プライバシー説明は添付があるときだけ表示を維持する。 */
+  /* 縦が足りないときは focus-within でもキーボード案内を出さない (再び溢れるのを防ぐ)。 */
   .chat-input-form:focus-within .chat-input-hint {
     display: none;
   }
 
-  /* .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
-  .chat-input-form:not(.has-attachments) .chat-image-privacy-hint {
+  /* 375×430 e2e (.chat-panel clientHeight=430) 実測 (bdboard-iglk):
+     e2e フィクスチャは2プロジェクト構成なので .chat-project-select (44px) が出て実ボードと同条件。
+     可変領域を .chat-input-notices に集約し max-height 44px で固定した。
+     添付0枚: panel 430/430、余裕 (.chat-messages) 46px。
+     添付1枚 / 4枚 / 5枚目拒否 (エラー+非対応警告 同時): いずれも panel 430/430、余裕 9px で不変。
+     .chat-input-notices の中身 (scrollHeight) は 79 → 121 → 147px と増えるが max-height 44px で吸収。
+     余裕が内容によらず一定であることがこの設計の要点 (旧実装は余裕 7.9px でバナー1つで破綻した)。 */
+  /* 可変バナー領域はここで高さを固定する。中に何個バナーが増えても
+     フォームへの寄与は max-height のまま変わらない — これが「1つ増えても破綻しない」の根拠。
+     スクロールコンテナを .chat-attachments ではなくラッパーに置くのは、入れ子スクロールを
+     作らないため (削除ボタンへの scrollIntoView が単一コンテナで完結する)。 */
+  .chat-input-notices {
+    max-height: 44px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    gap: 4px;
+  }
+
+  /* .chat-input-notices と同じ: 中身が何行になってもフォーム外の固定チャンクへの寄与を
+     定数に保つ。ここを囲わないと「未選択ヒント + 添付バナー」の同時表示で再び溢れる。 */
+  .chat-project-bar-notices {
+    max-height: 32px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    gap: 0;
+  }
+
+  /* 縦 576px 以下では、添付の有無によらず画像プライバシー説明を視覚的に隠す (sr-only なので
+     支援技術には残る)。#334 が @media (max-width:700px) で「添付があるときは表示」にしたのは
+     375x812 のような縦に余裕のある端末の話で、そのルールは 577px 以上の高さでは無傷のまま。
+     430px しかない縦では、この2行 (実測 29px) を出すか主要コントロールを押せるようにするかの
+     二択になり、後者を採る。
+     セレクタに条件を持たせない = :has() もクラスも要らないので、どのブラウザでも同じに効く。
+     .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+  .chat-image-privacy-hint {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -5916,6 +5983,37 @@ body {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+  }
+
+  .chat-attachments {
+    gap: 4px;
+  }
+
+  .chat-attachment {
+    padding: 4px;
+    gap: 4px;
+    grid-template-columns: 28px minmax(0, 1fr) 28px;
+  }
+
+  .chat-attachment-preview {
+    width: 28px;
+    height: 28px;
+  }
+
+  .chat-attachment-name {
+    font-size: 0.6875rem;
+  }
+
+  .chat-attachment-size {
+    display: none;
+  }
+
+  /* e2e 警告ブロック圧縮: 50.8px → 36.6px (padding 3+3, font 0.6875rem, line-height 1.3) */
+  .chat-attachment-error,
+  .chat-attachment-unsupported {
+    padding: 3px 8px;
+    font-size: 0.6875rem;
+    line-height: 1.3;
   }
 }
 
