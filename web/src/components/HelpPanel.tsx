@@ -203,24 +203,38 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
     (sectionId: string, isOpen: boolean) => {
       if (isFiltering) {
         setClosedWhileFilteringIds((previous) => {
-          const next = new Set(previous);
           if (isOpen) {
+            if (!previous.has(sectionId)) {
+              return previous;
+            }
+            const next = new Set(previous);
             next.delete(sectionId);
-          } else {
-            next.add(sectionId);
+            return next;
           }
+          if (previous.has(sectionId)) {
+            return previous;
+          }
+          const next = new Set(previous);
+          next.add(sectionId);
           return next;
         });
         return;
       }
 
       setOpenSectionIds((previous) => {
-        const next = new Set(previous);
         if (isOpen) {
+          if (previous.has(sectionId)) {
+            return previous;
+          }
+          const next = new Set(previous);
           next.add(sectionId);
-        } else {
-          next.delete(sectionId);
+          return next;
         }
+        if (!previous.has(sectionId)) {
+          return previous;
+        }
+        const next = new Set(previous);
+        next.delete(sectionId);
         return next;
       });
     },
@@ -240,6 +254,18 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
             next.delete(section.id);
           }
         }
+        if (next.size === previous.size) {
+          let unchanged = true;
+          for (const id of next) {
+            if (!previous.has(id)) {
+              unchanged = false;
+              break;
+            }
+          }
+          if (unchanged) {
+            return previous;
+          }
+        }
         return next;
       });
       return;
@@ -256,6 +282,18 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
           next.add(section.id);
         }
       }
+      if (next.size === previous.size) {
+        let unchanged = true;
+        for (const id of next) {
+          if (!previous.has(id)) {
+            unchanged = false;
+            break;
+          }
+        }
+        if (unchanged) {
+          return previous;
+        }
+      }
       return next;
     });
   }, [allFilteredOpen, filteredSections, isFiltering]);
@@ -264,12 +302,18 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
     (sectionId: string) => {
       if (isFiltering) {
         setClosedWhileFilteringIds((previous) => {
+          if (!previous.has(sectionId)) {
+            return previous;
+          }
           const next = new Set(previous);
           next.delete(sectionId);
           return next;
         });
       } else {
         setOpenSectionIds((previous) => {
+          if (previous.has(sectionId)) {
+            return previous;
+          }
           const next = new Set(previous);
           next.add(sectionId);
           return next;
@@ -287,12 +331,19 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
     [isFiltering],
   );
 
+  const handleFilterBlur = useCallback(() => {
+    isComposingRef.current = false;
+  }, []);
+
   const handleFilterChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const value = event.target.value;
       setFilterQuery(value);
       // nativeEvent は Event 型だが、一部環境では compositionstart より先に input が来る
       const nativeEvent = event.nativeEvent as Event & { isComposing?: boolean };
+      if (nativeEvent.isComposing === false) {
+        isComposingRef.current = false;
+      }
       if (!isComposingRef.current && nativeEvent.isComposing !== true) {
         setAppliedQuery(value);
       }
@@ -323,8 +374,12 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
       if (event.key !== 'Escape') {
         return;
       }
-      const nativeEvent = event.nativeEvent as Event & { isComposing?: boolean };
-      if (isComposingRef.current || nativeEvent.isComposing === true) {
+      if (isComposingRef.current || event.nativeEvent.isComposing === true) {
+        // 合成中 Escape は主要ブラウザでは key: "Process" で届かず到達不能だが、
+        // 万一届いた場合は preventDefault してパネル閉じを抑止する。トレードオフ:
+        // IME キャンセルが効かない代わりに「パネルが消えて文脈ごと失われる」を防ぐ。
+        // IME キャンセルは選択削除で回避できるが、パネル消失は 1 打鍵で不可逆。
+        event.preventDefault();
         return;
       }
       if (filterQuery !== '') {
@@ -390,6 +445,7 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
                 className="help-panel-filter-input"
                 value={filterQuery}
                 onChange={handleFilterChange}
+                onBlur={handleFilterBlur}
                 onCompositionStart={handleCompositionStart}
                 onCompositionEnd={handleCompositionEnd}
                 onKeyDownCapture={handleFilterKeyDown}
@@ -402,7 +458,6 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
               <p
                 className="help-panel-filter-count"
                 aria-hidden="true"
-                data-testid="help-panel-filter-count"
               >
                 {filterCountText}
               </p>
@@ -410,7 +465,6 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
                 className="sr-only"
                 role="status"
                 aria-live="polite"
-                data-testid="help-panel-filter-count-live"
               >
                 {liveFilterCountText}
               </span>

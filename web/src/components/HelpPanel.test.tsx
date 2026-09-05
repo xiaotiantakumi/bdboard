@@ -78,6 +78,15 @@ function findUniqueFilterKeyword(): { keyword: string; sectionId: string } {
   );
 }
 
+// 件数表示は視覚用 (.help-panel-filter-count) と live region (role=status) の
+// 2 要素に同一テキストが出るため getByText では曖昧 — クラス / role で取り分ける。
+function getFilterCountElements(container: HTMLElement) {
+  return {
+    visual: container.querySelector('.help-panel-filter-count'),
+    live: screen.getByRole('status'),
+  };
+}
+
 describe('HelpPanel', () => {
   beforeEach(() => {
     Object.defineProperty(Element.prototype, 'scrollIntoView', {
@@ -217,9 +226,9 @@ describe('HelpPanel', () => {
     expect(
       screen.getByRole('heading', { name: uniqueSection!.title }),
     ).toBeInTheDocument();
-    expect(screen.getByTestId('help-panel-filter-count')).toHaveTextContent(
-      `${HELP_SECTIONS.length}件中 1件`,
-    );
+    expect(
+      getFilterCountElements(container).visual,
+    ).toHaveTextContent(`${HELP_SECTIONS.length}件中 1件`);
     expect(
       container.querySelectorAll('details.help-panel-section'),
     ).toHaveLength(1);
@@ -246,7 +255,7 @@ describe('HelpPanel', () => {
 
   it('shows empty state and disables toggle when filter matches nothing', async () => {
     const user = userEvent.setup();
-    renderHelpPanel({ onClose: vi.fn() });
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
 
     await user.type(
       screen.getByRole('searchbox', { name: '絞り込み' }),
@@ -256,9 +265,9 @@ describe('HelpPanel', () => {
     expect(screen.getByText('該当するセクションがありません')).toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: '目次' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'すべて開く' })).toBeDisabled();
-    expect(screen.getByTestId('help-panel-filter-count')).toHaveTextContent(
-      `${HELP_SECTIONS.length}件中 0件`,
-    );
+    expect(
+      getFilterCountElements(container).visual,
+    ).toHaveTextContent(`${HELP_SECTIONS.length}件中 0件`);
   });
 
   it('restores all sections after clearing the filter', async () => {
@@ -279,9 +288,9 @@ describe('HelpPanel', () => {
     expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
       HELP_SECTIONS.length,
     );
-    expect(screen.getByTestId('help-panel-filter-count')).toHaveTextContent(
-      `${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`,
-    );
+    expect(
+      getFilterCountElements(container).visual,
+    ).toHaveTextContent(`${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`);
   });
 
   it('matches section tokens when filter uses full-width alphanumerics', async () => {
@@ -376,6 +385,78 @@ describe('HelpPanel', () => {
     ).not.toHaveAttribute('open');
   });
 
+  it('closes all filtered sections via the toggle button while filtering', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    await user.type(searchbox, escapeForUserEventType(keyword));
+
+    const section = container
+      .querySelector(`#help-section-${sectionId}`)
+      ?.closest('details');
+    expect(section).toHaveAttribute('open');
+
+    await user.click(screen.getByRole('button', { name: 'すべて閉じる' }));
+    expect(section).not.toHaveAttribute('open');
+    expect(screen.getByRole('button', { name: 'すべて開く' })).toBeInTheDocument();
+  });
+
+  it('opens a filtered section when its table-of-contents chip is clicked while filtering', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    const uniqueSection = HELP_SECTIONS.find((section) => section.id === sectionId)!;
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    await user.type(searchbox, escapeForUserEventType(keyword));
+
+    const section = container
+      .querySelector(`#help-section-${sectionId}`)
+      ?.closest('details');
+    expect(section).toHaveAttribute('open');
+
+    const summary = section?.querySelector('summary');
+    expect(summary).not.toBeNull();
+    await user.click(summary!);
+    expect(section).not.toHaveAttribute('open');
+
+    await user.click(screen.getByRole('button', { name: uniqueSection.title }));
+    expect(section).toHaveAttribute('open');
+  });
+
+  it('keeps manually opened section open after closing it while filtering on its own keyword', async () => {
+    const user = userEvent.setup();
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+
+    const { keyword, sectionId } = findUniqueFilterKeyword();
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    const summary = container
+      .querySelector(`#help-section-${sectionId}`)
+      ?.closest('details')
+      ?.querySelector('summary');
+    expect(summary).not.toBeNull();
+    await user.click(summary!);
+
+    const section = container
+      .querySelector(`#help-section-${sectionId}`)
+      ?.closest('details');
+    expect(section).toHaveAttribute('open');
+
+    await user.type(searchbox, escapeForUserEventType(keyword));
+    expect(section).toHaveAttribute('open');
+
+    await user.click(summary!);
+    expect(section).not.toHaveAttribute('open');
+
+    await user.clear(searchbox);
+    expect(section).toHaveAttribute('open');
+  });
+
   it('does not persist filter-time section closes into manual open state', async () => {
     const user = userEvent.setup();
     const { container } = renderHelpPanel({ onClose: vi.fn() });
@@ -440,25 +521,46 @@ describe('HelpPanel', () => {
 
   it('does not apply filtering while IME composition is in progress', async () => {
     const { container } = renderHelpPanel({ onClose: vi.fn() });
+    const { keyword } = findUniqueFilterKeyword();
 
     const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
 
     fireEvent.compositionStart(searchbox);
-    fireEvent.change(searchbox, { target: { value: 'r' } });
+    fireEvent.change(searchbox, { target: { value: keyword.slice(0, 1) } });
 
     expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
       HELP_SECTIONS.length,
     );
 
-    fireEvent.change(searchbox, { target: { value: 'reclaim' } });
+    fireEvent.change(searchbox, { target: { value: keyword } });
     fireEvent.compositionEnd(searchbox, {
       currentTarget: searchbox,
       target: searchbox,
     });
 
-    expect(container.querySelectorAll('details.help-panel-section').length).toBeLessThan(
+    const filteredCount = container.querySelectorAll('details.help-panel-section').length;
+    expect(filteredCount).toBeGreaterThan(0);
+    expect(filteredCount).toBeLessThan(HELP_SECTIONS.length);
+  });
+
+  it('recovers filtering when compositionend is missed', () => {
+    const { container } = renderHelpPanel({ onClose: vi.fn() });
+    const { keyword } = findUniqueFilterKeyword();
+    const searchbox = screen.getByRole('searchbox', { name: '絞り込み' });
+
+    fireEvent.compositionStart(searchbox);
+    fireEvent.change(searchbox, { target: { value: keyword.slice(0, -1) } });
+
+    expect(container.querySelectorAll('details.help-panel-section')).toHaveLength(
       HELP_SECTIONS.length,
     );
+
+    fireEvent.blur(searchbox);
+    fireEvent.change(searchbox, { target: { value: keyword } });
+
+    const filteredCount = container.querySelectorAll('details.help-panel-section').length;
+    expect(filteredCount).toBeGreaterThan(0);
+    expect(filteredCount).toBeLessThan(HELP_SECTIONS.length);
   });
 
   it('keeps the table of contents nav mounted when the filter matches nothing', async () => {
@@ -479,11 +581,11 @@ describe('HelpPanel', () => {
     vi.useFakeTimers();
 
     try {
-      renderHelpPanel({ onClose: vi.fn() });
+      const { container } = renderHelpPanel({ onClose: vi.fn() });
 
       const initialCount = `${HELP_SECTIONS.length}件中 ${HELP_SECTIONS.length}件`;
-      const visualCount = screen.getByTestId('help-panel-filter-count');
-      const liveCount = screen.getByTestId('help-panel-filter-count-live');
+      const { visual: visualCount, live: liveCount } =
+        getFilterCountElements(container);
 
       expect(visualCount).toHaveTextContent(initialCount);
       expect(liveCount).toHaveTextContent(initialCount);

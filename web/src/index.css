@@ -4100,6 +4100,17 @@ body {
   font-size: 0.875rem;
 }
 
+.help-panel-toc > .help-panel-empty {
+  margin-bottom: 0;
+}
+
+.help-panel mark {
+  background: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 .help-panel-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
