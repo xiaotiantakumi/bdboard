@@ -36,7 +36,10 @@ export function TipsBanner({ onOpenHelp, onDismiss }: TipsBannerProps) {
         <p className="tips-banner-label">TIP</p>
         <p className="tips-banner-text" aria-live="polite">
           <strong>{tip.title}</strong>
-          <span>{tip.text}</span>
+          {/* bdboard-97ib: クラス無しの <span> は e2e コントラスト掃引の許可リストが
+              セレクタをタグ名+クラスで組み立てるため、無クラスだと "span" という
+              過度に広いキーになり、他の無クラス span まで巻き込んでしまう。 */}
+          <span className="tips-banner-text-body">{tip.text}</span>
         </p>
       </div>
       <div className="tips-banner-actions">

@@ -9,12 +9,40 @@ import { expect, test, type JSHandle, type Page } from '@playwright/test';
  * で **既定 'light'** に解決され、`_combinedContextOptions` 経由で page フィクスチャにも
  * 手書きの browser.newContext() にも back-fill される。つまり明示的に上書きしない限り
  * どのスペックもダークを一度も描画しない。このファイルだけが `test.use({ colorScheme: 'dark' })`
- * でそれを外す。他の 91 件はライトのまま = **描画**としてはライト/ダーク両方が suite 全体で
- * 踏まれる。ただし**コントラスト検査はこのファイル (= ダーク) だけ**で、ライトは見ていない。
- * 同じ掃引をライトに倒すと sub-AA が多数出る。bdboard-rr8m 時点の実測は 20 セレクタで、
- * bdboard-skde がそのうち 3 件 (.lane-count / .filter-chip-active / .filter-chip-clear) を
- * 直したので現在は 17 前後のはずだが、**再測していないので数字は信用しないこと**。
- * ライト側の掃引を e2e に足す話は bdboard-97ib。
+ * / `test.use({ colorScheme: 'light' })` で明示的にテーマを固定する。他の 91 件はライトの
+ * まま = **描画**としてはライト/ダーク両方が suite 全体で踏まれる。
+ *
+ * コントラスト検査はこのファイルの 2 本の describe (dark theme / light theme) だけが行う。
+ * bdboard-rr8m でダーク側の掃引を先に入れ、bdboard-97ib (本チェンジ) でライト側にも同じ
+ * 掃引を回すようにした (`runContrastSweep()` を両テーマで共有)。ライト側の実測は 2026-09-05
+ * 時点で sub-AA **18 セレクタ** (`KNOWN_SUB_AA_LIGHT` 参照)。20 → 18 の内訳は
+ * 引き算だけでは合わないので順に書く:
+ *
+ *   bdboard-rr8m 時点          20
+ *   bdboard-skde が 3 件を解消  -3  → 17
+ *   opacity 合成の導入で
+ *   disabled ボタン 4 件が新規検出 +4  → 21
+ *   その 4 件を :disabled 除外で落とす -4  → 17
+ *   `.tips-banner-text-body` を計上  +1  → 18
+ *
+ * 途中の ±4 が相殺されるのが要点で、これを飛ばすと 20-3-4+1=14 という誤った数になる。
+ * disabled の 4 件が rr8m 時点の 20 件に入っていなかったのは、当時 opacity を合成して
+ * いなかったため (素の色だけなら AA を余裕で満たして見えていた)。
+ * `.tips-banner-text-body` はクラス付与前は無クラス `span` で、許可リストキーが `span` と
+ * いう他の無クラス span まで巻き込む危険な形になるため `TipsBanner.tsx` でクラスを付けた。
+ *
+ * `readSamples()` は要素の `opacity` (自身と、実効背景が確定するまでの祖先の累積値) を
+ * 前景色の alpha に掛け合わせる。これを入れていないと `opacity` で薄めた前景が
+ * 「濃い色のまま」判定されて掃引を素通りする (bdboard-skde の `.filter-chip-clear` が
+ * `opacity: 0.85` で実際にこれを踏んだ)。あわせて `:disabled` の要素は掃引から除外する
+ * (WCAG 2.2 Understanding SC 1.4.3: 非活性な UI コンポーネントの文字はコントラスト要件の
+ * 対象外)。これを入れないと `.btn:disabled { opacity: 0.5 }` が意図的な非活性表現なのに
+ * 退行として誤検知される。**除外の根拠は SC 1.4.3 であって比率ではない**: トークンから
+ * 計算すると light は 3.18:1 (`--color-text` #1c1c1e を opacity 0.5 で
+ * `--badge-neutral-bg` 越しに白パネルへ合成) だが、dark はダーク側のトークン上書き
+ * (`--color-text` #f2f2f7 / `--badge-neutral-bg` の alpha 0.24 / 下地 #1c1c1e) で
+ * 4.85:1 となり AA を**満たす**。つまり「どちらも 4.5 未満だから除外」という理屈は
+ * 成り立たず、非活性であること自体が除外理由である。
  *
  * このアプリのテーマは 2 状態しかない: `:root` (light) と
  * `@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) }`。
@@ -47,7 +75,7 @@ const INTENTIONALLY_THEME_INVARIANT = new Set([
 ]);
 
 type KnownSubAA = {
-  /** ダークでの実測比率 (macOS Chromium)。floor の出どころ。 */
+  /** そのテーマでの実測比率 (macOS Chromium)。floor の出どころ。 */
   readonly measured: number;
   /** これを下回ったら「許容済みの箇所がさらに悪化した」として落とす。 */
   readonly floor: number;
@@ -55,30 +83,134 @@ type KnownSubAA = {
 };
 
 /**
- * ダークで WCAG AA (4.5:1) を満たさない既知の箇所と、その**現在値に基づく下限**。
+ * WCAG AA (4.5:1) を満たさない既知の箇所と、その**現在値に基づく下限**。
  * 追加するときは必ず bd チケットを立ててここに ID を書く。空にするのが目標。
- * 現在は空。bdboard-skde で 3 件とも解消した。
  *
  * セレクタの集合にして無条件に読み飛ばす形にはしないこと。それだと許可リストに載った
  * セレクタは**いくら悪化しても緑のまま**出荷される (実測: `.lane-count` をダーク限定で
  * #1b1b1d = 約 1.05:1 の事実上不可視にしても 3 テストとも緑だった)。
- * 代わりに両方向を見る:
+ * 代わりに 3 方向を見る:
  *  - floor を下回ったら赤 = 許容済みの箇所のさらなる悪化
  *  - AA を満たすようになったら赤 = このエントリが陳腐化した (許可リストから外せ)
- * 後者が無いと「直したのに許可リストに残り続ける」状態に誰も気付けない。
+ *  - 掃引に一度も現れなかったら赤 = セレクタが変わった/要素が消えた (bdboard-97ib)
+ * 2 つめが無いと「直したのに許可リストに残り続ける」状態に、3 つめが無いと
+ * 「セレクタごと消えたのにエントリだけ残る」状態に、それぞれ誰も気付けない。
+ * 上 2 つは occurrence を観測できたセレクタにしか効かないので、3 つめは代替不能である。
  *
  * 今後のエントリでは floor を measured より 0.05 ほど下へ丸める。比率は整数 sRGB 2 色だけから
  * 決まる純関数なので、実測は 4 回とも同値で、この 0.05 は「実効背景の合成経路が祖先の構造変更で
  * わずかに変わる」程度しか見込んでいない。AA (4.5) までの隔たりより十分狭くして、実際の悪化を
  * 取り逃さないこと。
  */
-const KNOWN_SUB_AA: ReadonlyMap<string, KnownSubAA> = new Map();
+const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map();
+
+/**
+ * ライトで WCAG AA (4.5:1) を満たさない既知の箇所。bdboard-97ib で初めて実測
+ * (2026-09-05、Chromium 1280x720、board + ticket detail panel、opacity 込みで計算)。
+ * bdboard-rr8m 時点の "20 セレクタ" のうち bdboard-skde が 3 件 (`.lane-count` /
+ * `.filter-chip-active` / `.filter-chip-clear`) を解消し、本チェンジで disabled ボタン
+ * 4 件 (`.btn:disabled { opacity: 0.5 }`) を WCAG 1.4.3 (非活性 UI コンポーネントは対象外)
+ * として掃引そのものから除外し、新たに `.tips-banner-text-body` (無クラス `span` だった
+ * ものにクラスを付与して初めて拾えるようになった) を計上して、正味 18 件。
+ * 棚卸しチケット: bdboard-97ib.1 (このリストを空にするのが受け入れ条件)。
+ *
+ * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
+ */
+const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([
+  [
+    'button.meta-text.meta-text-btn',
+    { measured: 3.22, floor: 3.17, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
+  ],
+  ['span.lane-chevron', { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' }],
+  [
+    'span.watch-toggle-icon',
+    { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
+  ],
+  ['div.card-id', { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' }],
+  [
+    'div.detail-field-label',
+    { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
+  ],
+  [
+    'p.tips-banner-label',
+    { measured: 3.39, floor: 3.34, note: 'bdboard-97ib.1: --color-accent (#007aff) on tips banner の着色背景' },
+  ],
+  [
+    'span.badge.badge-pending-decision',
+    { measured: 3.67, floor: 3.62, note: 'bdboard-97ib.1: --color-accent (#007aff) on badge の着色背景' },
+  ],
+  [
+    'button.status-pill.status-pill-ok',
+    { measured: 3.92, floor: 3.87, note: 'bdboard-97ib.1: success 系の前景/背景の組み合わせ' },
+  ],
+  [
+    'span.badge.badge-unblocks',
+    { measured: 3.97, floor: 3.92, note: 'bdboard-97ib.1: success 系の前景/背景の組み合わせ' },
+  ],
+  [
+    'button.toggle-btn.active',
+    { measured: 4.02, floor: 3.97, note: 'bdboard-97ib.1: --color-accent (#007aff) on #fff' },
+  ],
+  [
+    'button.ticket-id-link',
+    { measured: 4.02, floor: 3.97, note: 'bdboard-97ib.1: --color-accent (#007aff) on #fff' },
+  ],
+  [
+    'button.ticket-id-link.markdown-bead-link',
+    { measured: 4.02, floor: 3.97, note: 'bdboard-97ib.1: --color-accent (#007aff) on #fff' },
+  ],
+  [
+    'span.badge.badge-p1',
+    { measured: 4.11, floor: 4.06, note: 'bdboard-97ib.1: warning 系の前景/背景の組み合わせ' },
+  ],
+  [
+    'span.tips-banner-text-body',
+    {
+      measured: 4.41,
+      floor: 4.36,
+      note:
+        'bdboard-97ib.1: --color-text-secondary on tips banner 背景。' +
+        'AA まで 0.09 しか離れておらず着手コストは低い',
+    },
+  ],
+  [
+    'button.toggle-btn',
+    {
+      measured: 4.49,
+      floor: 4.44,
+      note:
+        'bdboard-97ib.1: --color-text-secondary on #ededef。同じクラスの occurrence が複数あり ' +
+        '実効背景の違いで 4.49:1〜4.54:1 に分かれる。最悪値 (4.49:1) を測定値として計上',
+    },
+  ],
+  [
+    'span.project-picker-caret',
+    { measured: 4.49, floor: 4.44, note: 'bdboard-97ib.1: --color-text-secondary on #ededef。AA まで 0.01' },
+  ],
+  [
+    'button.overflow-menu-button',
+    { measured: 4.49, floor: 4.44, note: 'bdboard-97ib.1: --color-text-secondary on #ededef。AA まで 0.01' },
+  ],
+  [
+    'span.preset-control-caret',
+    { measured: 4.49, floor: 4.44, note: 'bdboard-97ib.1: --color-text-secondary on #ededef。AA まで 0.01' },
+  ],
+]);
 
 type Sample = {
   key: string;
   color: string;
   background: string;
   effectiveBg: [number, number, number] | null;
+  /**
+   * 要素自身から、実効背景が確定する祖先 (effectiveBg が採用する不透明な背景を持つノード) の
+   * 手前までの `opacity` の累積値。1 なら opacity の影響なし。コントラスト計算では
+   * 前景の alpha にこれを掛け合わせる — `opacity` は要素 (とその子孫) をまとめて
+   * 半透明にし、その手前の不透明な背景に対して透けるので、fg 単体の alpha 合成と
+   * 数式上は同じ扱いにできる (bdboard-skde の `.filter-chip-clear { opacity: 0.85 }` が
+   * これを踏んだ実例: 素の色だけなら light 5.23:1 に見えるが実描画は 4.02:1 前後)。
+   */
+  opacity: number;
   borderColors: string[];
   borderWidths: number[];
   fontSize: number;
@@ -139,12 +271,51 @@ function readSamples(elements: Element[]): (Sample | null)[] {
     for (let i = stack.length - 2; i >= 0; i--) acc = over(stack[i]!, acc);
     return acc;
   };
+  /**
+ * 要素自身から、effectiveBg が「不透明な下地」として採用するノードの**手前**までの
+   * opacity を掛け合わせる。その下地ノード自身の opacity は**含めない**。
+   *
+   * **これは「下地の opacity は内部のコントラストに効かない」からではない。効く。**
+   * グループ opacity は前景・背景の両方を同じ式で真の backdrop B へ寄せるので
+   * (`c' = a*c + (1-a)*B`)、輝度の大小関係は保たれるが**比は保たれない**
+   * (実例: 黒地に白 21:1 が a=0.5・B=黒 で 5.28:1 まで落ちる)。
+   * 含めないのは、正しく扱うには前景だけでなく**実効背景も同じ a で B へ合成**しないと
+   * 辻褄が合わず、effectiveBg 側がそこまで実装されていないからである。前景にだけ掛けると
+   * 背景を据え置いたまま前景だけ薄める形になり、現状より悪い嘘をつく。
+   *
+   * **したがって現状の掃引には既知の甘さがある**: 不透明な背景を持つ要素自身に
+   * 静止状態の `opacity` が付くと、掃引はその減光を無視して実描画より**良い**比率を
+   * 報告する。今そのパターンは `.card.card-dragging { opacity: 0.45 }` などドラッグ中の
+   * 一時状態だけで静止掃引には掛からない (静止状態で `opacity` を持つのは `:disabled` のみ)。
+   * 静止状態でそれを足す変更 (例: `.card-archived { opacity: 0.5 }`) が入ったら、
+   * この関数を「グループ opacity を前景と実効背景の両方へ適用する」形に拡張すること。
+   * effectiveBg と同じ停止条件で歩くのはこのため。
+   */
+  const cumulativeOpacity = (el: Element): number => {
+    let node: Element | null = el;
+    let acc = 1;
+    while (node) {
+      const bg = parse(getComputedStyle(node).backgroundColor);
+      if (bg !== null && bg[3] >= 1) break;
+      const op = Number(getComputedStyle(node).opacity);
+      if (!Number.isNaN(op)) acc *= op;
+      node = node.parentElement;
+    }
+    return acc;
+  };
 
   return elements.map((el, index) => {
     // 再描画で DOM から外れた要素は getComputedStyle が空を返すので比較対象から外す。
     if (!el.isConnected) return null;
     const cs = getComputedStyle(el);
     if (cs.visibility === 'hidden' || cs.display === 'none' || Number(cs.opacity) === 0) return null;
+    // WCAG 2.2 Understanding SC 1.4.3: 非活性な UI コンポーネントの文字はコントラスト
+    // 要件の対象外。`.btn:disabled { opacity: 0.5 }` はこれに該当する。
+    // `matches` ではなく `closest` を使うのは、disabled なボタンが子要素にラベルを
+    // 持つ場合 (`<button disabled><span>…</span></button>`) にその子が :disabled に
+    // 一致せず掃引に残る一方、cumulativeOpacity は親の opacity を拾ってしまい、
+    // 非活性表現をそのまま sub-AA の退行として誤報するため。
+    if (el.closest(':disabled') !== null) return null;
     const rect = el.getBoundingClientRect();
     if (rect.width < 2 || rect.height < 2) return null;
     const classes = typeof el.className === 'string' && el.className.trim().length > 0
@@ -155,6 +326,7 @@ function readSamples(elements: Element[]): (Sample | null)[] {
       color: cs.color,
       background: cs.backgroundColor,
       effectiveBg: effectiveBg(el),
+      opacity: cumulativeOpacity(el),
       borderColors: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
       borderWidths: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(
         (w) => parseFloat(w) || 0,
@@ -319,6 +491,174 @@ async function openBoardAndDetail(page: Page): Promise<void> {
   await waitForDomQuiet(page);
 }
 
+/**
+ * コントラスト掃引本体。dark / light の両 describe から同じ実装を呼ぶ
+ * (bdboard-97ib でライト側を追加するにあたり、ダーク単体だったテストから抽出した)。
+ * `themeLabel` はアサーションメッセージ用 ("ダーク" / "ライト")、`knownSubAA` は
+ * そのテーマの許可リスト (`KNOWN_SUB_AA_DARK` / `KNOWN_SUB_AA_LIGHT`)。
+ */
+/**
+ * 掃引が実際にボード・詳細パネル・ヘッダーの 3 領域を舐めたことを確かめるアンカー。
+ * 許可リスト (`KNOWN_SUB_AA_*`) とは独立に置く — 許可リストは空にするのが目標なので、
+ * それをアンカー代わりにすると目標を達成した瞬間に空虚化の検知が消える。
+ * `startsWith` で照合するので、状態クラスが付いた派生 (`button.toggle-btn.active` 等) も
+ * 同じアンカーに数える。
+ */
+const SWEEP_ANCHORS = ['div.card-id', 'div.detail-field-label', 'button.toggle-btn'] as const;
+
+async function runContrastSweep(
+  page: Page,
+  themeLabel: string,
+  knownSubAA: ReadonlyMap<string, KnownSubAA>,
+): Promise<void> {
+  await openBoardAndDetail(page);
+  const handle = await pinElements(page);
+  const samples = await page.evaluate(readSamples, handle);
+  await handle.dispose();
+
+  // 許可リストのキーがタグ名だけだと、そのタグの**すべての無クラス要素**が 1 つの floor で
+  // 覆われ、他の occurrence がいくら悪化しても最悪値の 1 件しか見られなくなる。
+  // bdboard-97ib で `.tips-banner-text-body` を付与したのはまさにこの回避で、
+  // ここで機械的に強制しておかないと次の無クラス要素で同じ判断をやり直す羽目になる。
+  expect(
+    [...knownSubAA.keys()].filter((selector) => !selector.includes('.')),
+    `${themeLabel}の許可リストにタグ名だけのキーがある。そのタグの無クラス要素すべてを ` +
+      '巻き込むので、対象にクラスを付けてから登録すること。',
+  ).toEqual([]);
+
+  const textSamples = samples.filter((s): s is Sample => s !== null && s.hasOwnText);
+  // 空虚化防止: 掃引対象が消えたら (セレクタ変更・描画失敗) ここで落ちる。
+  // 実測値は 241 件 (disabled ボタン 4 件を除外後。bdboard-97ib) なので 150 は
+  // 十分に余裕のある下限。light/dark で描画される要素数は同じ。
+  expect(textSamples.length).toBeGreaterThan(150);
+
+  // 掃引が「開いてはいるが中身が痩せた」状態を、件数の下限は捉えられない
+  // (ボードとヘッダーだけで 150 は超え続ける)。許可リストのキーは結果的にアンカーとして
+  // 働くが、ダーク側は許可リストが空なのでその保護が無く、また**空にするのが目標**である
+  // 以上ライト側もいずれ失う。そこで許可リストから独立したアンカーを置く。
+  // ボード / 詳細パネル / ヘッダーから 1 つずつ選んである。
+  const observedSelectors = new Set(textSamples.map((sample) => selectorOf(sample.key)));
+  const missingAnchors = SWEEP_ANCHORS.filter(
+    (anchor) => ![...observedSelectors].some((selector) => selector.startsWith(anchor)),
+  );
+  expect(
+    missingAnchors,
+    `${themeLabel}の掃引にアンカー要素が現れなかった:\n${missingAnchors.join('\n')}\n` +
+      'ボード/詳細パネル/ヘッダーのいずれかが描画されていないか、セレクタが変わった可能性が高い。',
+  ).toEqual([]);
+
+  const unparseable: string[] = [];
+  const failures: string[] = [];
+  // 同じセレクタが複数回現れる (`.lane-count` は 4 個) ので Set で潰す。
+  const regressed = new Set<string>();
+  const staleAllowances = new Set<string>();
+  // 許可リストに載っているセレクタは、同じクラスでも背景の違いで occurrence ごとに
+  // 比率が変わりうる (実測: `button.toggle-btn` が同一クラスで 4.4874:1 と 4.5428:1 の
+  // 2 通りに分かれた — サイドバーの他のトグルと隣接するかどうかで実効背景が変わるため)。
+  // occurrence 単位で stale/regressed を判定すると、複数箇所のうち 1 つだけ AA を
+  // 満たした瞬間に「陳腐化した」という誤検知になる (他の occurrence はまだ未達なのに)。
+  // 必ず**そのセレクタの全 occurrence の中で最悪の比率**を使って一度だけ判定する。
+  const knownRatios = new Map<string, { minRatio: number; required: number; known: KnownSubAA }>();
+
+  for (const sample of textSamples) {
+    const fgRaw = parseCssColor(sample.color);
+    if (fgRaw === null || sample.effectiveBg === null) {
+      unparseable.push(`${selectorOf(sample.key)} color=${sample.color} bg=${sample.background}`);
+      continue;
+    }
+    const bg = sample.effectiveBg;
+    // opacity を前景の alpha に合成する (Sample.opacity の doc コメント参照)。
+    const combinedAlpha = fgRaw[3] * sample.opacity;
+    const fg: [number, number, number] =
+      combinedAlpha < 1
+        ? [
+            fgRaw[0] * combinedAlpha + bg[0] * (1 - combinedAlpha),
+            fgRaw[1] * combinedAlpha + bg[1] * (1 - combinedAlpha),
+            fgRaw[2] * combinedAlpha + bg[2] * (1 - combinedAlpha),
+          ]
+        : [fgRaw[0], fgRaw[1], fgRaw[2]];
+
+    const ratio = contrastRatio(fg, bg);
+    const required = requiredRatio(sample);
+    const selector = selectorOf(sample.key);
+
+    const known = knownSubAA.get(selector);
+    if (known !== undefined) {
+      const existing = knownRatios.get(selector);
+      // 比そのものではなく **要求値に対する達成率** (ratio / required) の最小で選ぶ。
+      // required は occurrence ごとに変わりうる (24px 以上、または 18.66px+bold は 3.0 に
+      // 緩和される)。生の比で選ぶと、比 4.3 / 要 3.0 (達成) の occurrence が
+      // 比 4.4 / 要 4.5 (未達) より小さいという理由で採用され、一緒に required=3.0 まで
+      // 持って行かれて「もう AA を満たしている、許可リストから外せ」と**逆のことを言う**。
+      if (existing === undefined || ratio / required < existing.minRatio / existing.required) {
+        knownRatios.set(selector, { minRatio: ratio, required, known });
+      }
+      continue;
+    }
+
+    if (ratio >= required) continue;
+
+    failures.push(
+      `${selector} — ${ratio.toFixed(2)}:1 (要 ${required}:1, ${sample.fontSize}px/${sample.fontWeight}) ` +
+        `color=${sample.color} on rgb(${bg.map(Math.round).join(', ')}) text=${JSON.stringify(sample.text)}`,
+    );
+  }
+
+  // 掃引で一度も現れなかった許可リストのエントリ。
+  // stale / regressed はどちらも「occurrence を観測できたセレクタ」に対する判定なので、
+  // セレクタ自体が消えた (クラス名変更・要素削除・掃引の起点から辿れなくなった) エントリは
+  // **どちらの網にも掛からず黙って残り続ける**。18 件を抱えた今それを許すと、許可リストが
+  // 現実と乖離したまま「対応済み」に見え、棚卸しチケット bdboard-97ib.1 の受け入れ条件
+  // (リストを空にする) も嘘になる。textSamples.length の下限チェックは掃引全体が消えたときしか
+  // 反応せず、1 セレクタの消滅は捕まえられないので、ここで個別に見る。
+  const unobserved = [...knownSubAA.keys()].filter((selector) => !knownRatios.has(selector));
+
+  for (const [selector, { minRatio, required, known }] of knownRatios) {
+    if (minRatio >= required) {
+      // 全 occurrence が直っている。許可リストに残っているほうが嘘なので、外させるために落とす。
+      staleAllowances.add(
+        `${selector} — 最悪でも ${minRatio.toFixed(2)}:1 で要 ${required}:1 を満たしている ` +
+          `(登録時 ${known.measured}:1)。${known.note}`,
+      );
+    } else if (minRatio < known.floor) {
+      regressed.add(
+        `${selector} — ${minRatio.toFixed(2)}:1 が下限 ${known.floor}:1 を割った ` +
+          `(登録時 ${known.measured}:1)。${known.note}`,
+      );
+    }
+  }
+
+  expect(
+    unobserved.sort(),
+    `${themeLabel}の許可リストに、掃引で一度も現れなかったエントリがある:\n${unobserved.sort().join('\n')}\n` +
+      'セレクタが変わった/要素が消えたのに許可リストだけ残っている可能性が高い。' +
+      'ただし掃引はフィクスチャ (test/fixtures/bd/bdboard.list.json) の中身と ' +
+      '「先頭カードを開く」ことに依存しているので、優先度バッジや bead 参照など ' +
+      'データ由来のエントリはフィクスチャの変更でも現れなくなる。' +
+      '現在のセレクタに直すか、不要になったならエントリごと削除すること。',
+  ).toEqual([]);
+
+  // 色が読めない = 掃引が黙って素通りしている状態なので、これも失敗として出す。
+  expect(unparseable, `${themeLabel}で色を解決できなかった要素:\n${unparseable.join('\n')}`).toEqual([]);
+  expect(
+    [...regressed].sort(),
+    `${themeLabel}の許可リストで許容済みの箇所がさらに悪化している:\n${[...regressed].sort().join('\n')}\n` +
+      '許容済みであることは「いくら暗くしてもよい」という意味ではない。' +
+      'floor を下げて追認する前に、直せないかを先に検討すること。',
+  ).toEqual([]);
+  expect(
+    [...staleAllowances].sort(),
+    `${themeLabel}の許可リストのエントリが陳腐化している (もう AA を満たしている):\n` +
+      `${[...staleAllowances].sort().join('\n')}\n` +
+      '該当エントリを許可リストから削除し、参照している bd チケットを閉じること。',
+  ).toEqual([]);
+  expect(
+    failures,
+    `${themeLabel}で WCAG AA を満たさない要素:\n${failures.join('\n')}\n` +
+      '意図的に許容するなら bd チケットを立てて許可リストに追加すること。',
+  ).toEqual([]);
+}
+
 test.describe('dark theme', () => {
   test.use({ colorScheme: 'dark' });
 
@@ -348,87 +688,7 @@ test.describe('dark theme', () => {
   });
 
   test('dark text meets WCAG AA on the board and the ticket detail panel', async ({ page }) => {
-    await openBoardAndDetail(page);
-    const handle = await pinElements(page);
-    const samples = await page.evaluate(readSamples, handle);
-    await handle.dispose();
-
-    const textSamples = samples.filter((s): s is Sample => s !== null && s.hasOwnText);
-    // 空虚化防止: 掃引対象が消えたら (セレクタ変更・描画失敗) ここで落ちる。
-    // 実測値は 245 件なので 150 は十分に余裕のある下限。
-    expect(textSamples.length).toBeGreaterThan(150);
-
-    const unparseable: string[] = [];
-    const failures: string[] = [];
-    // 同じセレクタが複数回現れる (`.lane-count` は 4 個) ので Set で潰す。
-    const regressed = new Set<string>();
-    const staleAllowances = new Set<string>();
-
-    for (const sample of textSamples) {
-      const fgRaw = parseCssColor(sample.color);
-      if (fgRaw === null || sample.effectiveBg === null) {
-        unparseable.push(`${selectorOf(sample.key)} color=${sample.color} bg=${sample.background}`);
-        continue;
-      }
-      const bg = sample.effectiveBg;
-      const fg: [number, number, number] =
-        fgRaw[3] < 1
-          ? [
-              fgRaw[0] * fgRaw[3] + bg[0] * (1 - fgRaw[3]),
-              fgRaw[1] * fgRaw[3] + bg[1] * (1 - fgRaw[3]),
-              fgRaw[2] * fgRaw[3] + bg[2] * (1 - fgRaw[3]),
-            ]
-          : [fgRaw[0], fgRaw[1], fgRaw[2]];
-
-      const ratio = contrastRatio(fg, bg);
-      const required = requiredRatio(sample);
-      const selector = selectorOf(sample.key);
-
-      const known = KNOWN_SUB_AA.get(selector);
-      if (known !== undefined) {
-        if (ratio >= required) {
-          // 直っている。許可リストに残っているほうが嘘なので、外させるために落とす。
-          staleAllowances.add(
-            `${selector} — ${ratio.toFixed(2)}:1 で要 ${required}:1 を満たしている ` +
-              `(登録時 ${known.measured}:1)。${known.note}`,
-          );
-        } else if (ratio < known.floor) {
-          regressed.add(
-            `${selector} — ${ratio.toFixed(2)}:1 が下限 ${known.floor}:1 を割った ` +
-              `(登録時 ${known.measured}:1, ${sample.fontSize}px/${sample.fontWeight}) ` +
-              `color=${sample.color} on rgb(${bg.map(Math.round).join(', ')})`,
-          );
-        }
-        continue;
-      }
-
-      if (ratio >= required) continue;
-
-      failures.push(
-        `${selector} — ${ratio.toFixed(2)}:1 (要 ${required}:1, ${sample.fontSize}px/${sample.fontWeight}) ` +
-          `color=${sample.color} on rgb(${bg.map(Math.round).join(', ')}) text=${JSON.stringify(sample.text)}`,
-      );
-    }
-
-    // 色が読めない = 掃引が黙って素通りしている状態なので、これも失敗として出す。
-    expect(unparseable, `ダークで色を解決できなかった要素:\n${unparseable.join('\n')}`).toEqual([]);
-    expect(
-      [...regressed].sort(),
-      `KNOWN_SUB_AA で許容済みの箇所がさらに悪化している:\n${[...regressed].sort().join('\n')}\n` +
-        '許容済みであることは「いくら暗くしてもよい」という意味ではない。' +
-        'floor を下げて追認する前に、直せないかを先に検討すること。',
-    ).toEqual([]);
-    expect(
-      [...staleAllowances].sort(),
-      `KNOWN_SUB_AA のエントリが陳腐化している (もう AA を満たしている):\n` +
-        `${[...staleAllowances].sort().join('\n')}\n` +
-        '該当エントリを KNOWN_SUB_AA から削除し、参照している bd チケットを閉じること。',
-    ).toEqual([]);
-    expect(
-      failures,
-      `ダークで WCAG AA を満たさない要素:\n${failures.join('\n')}\n` +
-        '意図的に許容するなら bd チケットを立てて KNOWN_SUB_AA に追加すること。',
-    ).toEqual([]);
+    await runContrastSweep(page, 'ダーク', KNOWN_SUB_AA_DARK);
   });
 
   test('colors adapt between light and dark — 片方のテーマに固定された色が無い', async ({ page }) => {
@@ -517,7 +777,7 @@ test.describe('dark theme', () => {
     // 空虚化防止 その2: 比較した「プロパティの回数」。要素数だけだと
     // props が空 (border 幅 0 かつ透明) でも気付けない。
     // 実測は 675 (macOS Chromium、4 回とも同値)。下限 450 は上の 2 つと同程度の余裕
-    // (実測比 1.5 倍。compared が 1.48 倍、textSamples が 1.63 倍) に合わせてある。
+    // (実測比 1.5 倍。compared が 1.48 倍、textSamples が 241/150 = 1.61 倍) に合わせてある。
     // CI はこの e2e を ubuntu で回すので Linux 側の実測は未知だが、掃引が 1/3 でも
     // 痩せれば (675 → 450 未満) 落ちる幅は残している。以前の 600 は余裕が 11% しか無く、
     // かつコメントの「1000 件超」が事実と食い違っていた。
@@ -531,5 +791,21 @@ test.describe('dark theme', () => {
         'テーマトークンではなく生の色を書いていないかを疑うこと。' +
         '両テーマで同値が正しいなら INTENTIONALLY_THEME_INVARIANT に理由付きで追加する。',
     ).toEqual([]);
+  });
+});
+
+/*
+ * bdboard-97ib: コントラスト掃引をライトでも回す。既定のまま (`test.use` を書かない) だと
+ * `colorScheme` フィクスチャが 'light' に解決されるので `test.use({ colorScheme: 'light' })`
+ * は無くても等価だが、"dark theme" 側と対称にして、既定挙動に依存していることを明示する
+ * ために明示的に書いている。フィクスチャの解決はテスト単位ではなく describe 単位で決まるため
+ * (上の "dark theme" ブロックとは独立した別の describe として) 実装した — 同じ describe に
+ * 両方の test.use を書いても後勝ちで全テストがそちらに揃ってしまう。
+ */
+test.describe('light theme (contrast sweep)', () => {
+  test.use({ colorScheme: 'light' });
+
+  test('light text meets WCAG AA on the board and the ticket detail panel', async ({ page }) => {
+    await runContrastSweep(page, 'ライト', KNOWN_SUB_AA_LIGHT);
   });
 });
