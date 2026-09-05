@@ -11,7 +11,10 @@ import { expect, test, type JSHandle, type Page } from '@playwright/test';
  * どのスペックもダークを一度も描画しない。このファイルだけが `test.use({ colorScheme: 'dark' })`
  * でそれを外す。他の 91 件はライトのまま = **描画**としてはライト/ダーク両方が suite 全体で
  * 踏まれる。ただし**コントラスト検査はこのファイル (= ダーク) だけ**で、ライトは見ていない。
- * 同じ掃引をライトに倒すと sub-AA は 20 セレクタ出る (実測。ダークの既知 3 件よりずっと多い)。
+ * 同じ掃引をライトに倒すと sub-AA が多数出る。bdboard-rr8m 時点の実測は 20 セレクタで、
+ * bdboard-skde がそのうち 3 件 (.lane-count / .filter-chip-active / .filter-chip-clear) を
+ * 直したので現在は 17 前後のはずだが、**再測していないので数字は信用しないこと**。
+ * ライト側の掃引を e2e に足す話は bdboard-97ib。
  *
  * このアプリのテーマは 2 状態しかない: `:root` (light) と
  * `@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) }`。
