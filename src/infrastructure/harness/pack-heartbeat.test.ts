@@ -378,6 +378,58 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     }
   }
 
+  /**
+   * 「止まるはずのループが止まったこと」を待つ待機 (bdboard-69w1)。
+   *
+   * pollUntilProgressing の双対。あちらは「進捗が続く限り待ち、止まったら失敗」、
+   * こちらは「余計な進捗が出ない限り待ち、出続けたら失敗」。
+   *
+   * 壁時計デッドラインで待つと、「マシンが遅くてループがまだ 1 周していないだけ」と
+   * 「セッションが消えてもループが生き残った」退行とを区別できず、高負荷で偽陽性に
+   * なる。ここでは判定基準を時間ではなく extraBeats() — 停止すべき事象が起きた後に
+   * 追加で観測されたビート数 — に置く。健全なループが余分に打てる回数はループ 1 周の
+   * 構造で決まっていて負荷では増えない (遅いマシンは 1 周が遅くなるだけ)。逆に
+   * ループが生き残る退行では、どれだけ遅くてもビートは際限なく積み上がるので必ず
+   * maxExtraBeats を超える。
+   *
+   * maxMs は「止まりも進みもしない (wedged)」ときにテストが永久にぶら下がらない
+   * ための最後の歯止めであって、通常の合否判定には使われない。
+   */
+  async function pollUntilStopped(
+    predicate: () => boolean | Promise<boolean>,
+    options: {
+      readonly extraBeats: () => number;
+      readonly maxExtraBeats: number;
+      readonly what: string;
+      readonly maxMs?: number;
+      readonly intervalMs?: number;
+    },
+  ): Promise<void> {
+    const maxMs = options.maxMs ?? 30_000;
+    const intervalMs = options.intervalMs ?? 100;
+    const startedAt = Date.now();
+
+    for (;;) {
+      if (await predicate()) {
+        return;
+      }
+      const extra = options.extraBeats();
+      if (extra > options.maxExtraBeats) {
+        throw new Error(
+          `${options.what}: ${extra} extra heartbeats observed after the loop should have stopped `
+          + `(allowed ${options.maxExtraBeats}); the heartbeat loop appears to have survived`,
+        );
+      }
+      if (Date.now() - startedAt >= maxMs) {
+        throw new Error(
+          `${options.what}: hard cap ${maxMs}ms reached (extra heartbeats=${extra}); `
+          + 'the loop neither finished stopping nor kept beating',
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
   function callCount(argsLog: string, cmd: string, id: string): number {
     if (!existsSync(argsLog)) {
       return 0;
@@ -544,6 +596,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
   }, 90_000);
 
   it('drops after 3 consecutive show failures but keeps after 1-2', async () => {
+    const HEARTBEAT_INTERVAL_SEC = 0.2;
     const hbEnvThree = setupEnv();
     writeFixture(hbEnvThree.fixturePath, [
       'HEARTBEAT_triple=fail',
@@ -559,7 +612,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         '--session-pid',
         String(sessionThree.pid),
         '--interval',
-        '0.2',
+        String(HEARTBEAT_INTERVAL_SEC),
         '--repo',
         tmpRoot,
         'triple',
@@ -568,9 +621,17 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     );
 
     const logThree = logfilePath(hbEnvThree.tmpDir, sessionThree.pid);
-    await pollUntil(
+    // show の 3 連続失敗にはループ 3 周が要る。壁時計 15s だと「高負荷で 3 周が
+    // 入らなかっただけ」でも落ちるので、triple のビートが伸びているかで待つ
+    // (bdboard-69w1)。ループが止まればビートも止まり stall で落ちる。
+    await pollUntilProgressing(
       () => existsSync(logThree) && readFileSync(logThree, 'utf8').includes('reason=show-failed-3x'),
-      { timeoutMs: 15_000 },
+      {
+        counts: () => ({ triple: heartbeatCallCount(hbEnvThree.argsLog, 'triple') }),
+        what: 'waiting for 3 consecutive show failures to drop the id',
+        intervalSec: HEARTBEAT_INTERVAL_SEC,
+        maxMs: 30_000,
+      },
     );
     await pollUntil(() => readPidfile(hbEnvThree.tmpDir, sessionThree.pid) === undefined, {
       timeoutMs: 10_000,
@@ -595,7 +656,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         '--session-pid',
         String(sessionTwo.pid),
         '--interval',
-        '0.2',
+        String(HEARTBEAT_INTERVAL_SEC),
         '--repo',
         tmpRoot,
         'pair',
@@ -603,22 +664,42 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       hbEnvTwo,
     );
 
-    await pollUntil(() => heartbeatCallCount(hbEnvTwo.argsLog, 'pair') >= 4, {
-      timeoutMs: 15_000,
+    // 4 周ぶんの待ち。閾値 4 は据え置きで、判定だけ時間から進捗へ移す (bdboard-69w1)。
+    await pollUntilProgressing(() => heartbeatCallCount(hbEnvTwo.argsLog, 'pair') >= 4, {
+      counts: () => ({ pair: heartbeatCallCount(hbEnvTwo.argsLog, 'pair') }),
+      what: 'waiting for 4 beats on pair',
+      intervalSec: HEARTBEAT_INTERVAL_SEC,
+      maxMs: 30_000,
     });
 
     const logTwo = logfilePath(hbEnvTwo.tmpDir, sessionTwo.pid);
     const logText = existsSync(logTwo) ? readFileSync(logTwo, 'utf8') : '';
     expect(logText).not.toContain('drop id=pair reason=show-failed-3x');
     const countBeforeWait = heartbeatCallCount(hbEnvTwo.argsLog, 'pair');
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    // 「実時間 800ms 待って 1 回以上増えていること」を直に assert していたが、高負荷では
+    // ループ 1 周が 800ms を超えうる。遅いだけならいくらでも待ち、まったく増えなく
+    // なったときにだけ落とす (bdboard-69w1)。検出したい退行 (1-2 回の show 失敗で
+    // pair を drop してしまう = 打つのをやめる) は stall として捕まる。
+    await pollUntilProgressing(
+      () => heartbeatCallCount(hbEnvTwo.argsLog, 'pair') > countBeforeWait,
+      {
+        counts: () => ({ pair: heartbeatCallCount(hbEnvTwo.argsLog, 'pair') }),
+        what: 'waiting for pair to keep beating after 1-2 show failures',
+        intervalSec: HEARTBEAT_INTERVAL_SEC,
+        maxMs: 30_000,
+      },
+    );
     expect(heartbeatCallCount(hbEnvTwo.argsLog, 'pair')).toBeGreaterThan(countBeforeWait);
 
     await runHeartbeat(['stop', '--session-pid', String(sessionTwo.pid)], hbEnvTwo);
     activeSessions = activeSessions.filter((s) => s.sessionPid !== sessionTwo.pid);
-  }, 30_000);
+  }, 120_000);
 
+  // 待機は壁時計デッドラインではなく「セッション消失後に余分に打たれたビート数」で
+  // 判定する。遅いだけならいくらでも待ち、ループが生き残ったときだけ落ちる
+  // (bdboard-69w1)。
   it('exits when the session pid goes away', async () => {
+    const HEARTBEAT_INTERVAL_SEC = 0.2;
     const hbEnv = setupEnv();
     writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok']);
 
@@ -631,7 +712,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         '--session-pid',
         String(session.pid),
         '--interval',
-        '0.2',
+        String(HEARTBEAT_INTERVAL_SEC),
         '--repo',
         tmpRoot,
         'a-1',
@@ -642,27 +723,65 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     const loopPidStr = readPidfile(hbEnv.tmpDir, session.pid);
     expect(loopPidStr).toBeDefined();
 
+    // 殺す前に、ループが実際に回っていたことを確定させる。ここを飛ばすと後段の
+    // 「止まった」が、消失を検知した結果なのか、そもそも一度も回っていなかった
+    // だけなのかを区別できない。
+    await pollUntilProgressing(() => heartbeatCallCount(hbEnv.argsLog, 'a-1') >= 1, {
+      counts: () => ({ 'a-1': heartbeatCallCount(hbEnv.argsLog, 'a-1') }),
+      what: 'waiting for the loop to start beating',
+      intervalSec: HEARTBEAT_INTERVAL_SEC,
+      maxMs: 30_000,
+    });
+
     await session.stop();
 
-    await pollUntil(async () => {
-      const pf = readPidfile(hbEnv.tmpDir, session.pid);
-      if (pf !== undefined) {
-        return false;
-      }
-      if (loopPidStr === undefined) {
-        return true;
-      }
-      return !(await isPidAlive(Number.parseInt(loopPidStr, 10), hbEnv.env));
-    }, { timeoutMs: 15_000 });
+    // kill -TERM は非同期。「消失後に何ビート打たれたか」の基準点を確定させるため、
+    // セッションが本当に消えたことをここで確認してから baseline を取る。
+    await pollUntil(async () => !(await isPidAlive(session.pid, hbEnv.env)), {
+      timeoutMs: 15_000,
+    });
+
+    // ループ 1 周は「セッション生存チェック → 各 id を beat → sleep」の順なので、
+    // 消失を確認した時点で進行中だった 1 周ぶん (= 1 ビート) までは健全でも観測
+    // されうる。3 はその 3 倍の余裕で、負荷が上がっても動かない上限 (遅いマシンでは
+    // 1 周が遅くなるだけで、余分なビートが増えるわけではない)。
+    const beatsAtSessionDeath = heartbeatCallCount(hbEnv.argsLog, 'a-1');
+    const extraBeats = (): number =>
+      heartbeatCallCount(hbEnv.argsLog, 'a-1') - beatsAtSessionDeath;
 
     const logPath = logfilePath(hbEnv.tmpDir, session.pid);
-    await pollUntil(
+    await pollUntilStopped(
       () => existsSync(logPath) && readFileSync(logPath, 'utf8').includes('exit reason=session-gone'),
-      { timeoutMs: 10_000 },
+      {
+        extraBeats,
+        maxExtraBeats: 3,
+        what: 'waiting for the loop to log exit reason=session-gone',
+      },
+    );
+
+    // exit reason はループを break する *前* に、pidfile の掃除は break した *後* に
+    // 行われる。よってここから先に残っているのは rm -f とプロセス終了だけで、sleep も
+    // bd 呼び出しも挟まらない。
+    await pollUntilStopped(
+      async () => {
+        const pf = readPidfile(hbEnv.tmpDir, session.pid);
+        if (pf !== undefined) {
+          return false;
+        }
+        if (loopPidStr === undefined) {
+          return true;
+        }
+        return !(await isPidAlive(Number.parseInt(loopPidStr, 10), hbEnv.env));
+      },
+      {
+        extraBeats,
+        maxExtraBeats: 3,
+        what: 'waiting for the loop to remove its pidfile and exit',
+      },
     );
 
     activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
-  }, 30_000);
+  }, 120_000);
 
   it('exits when all ids have dropped', async () => {
     const hbEnv = setupEnv();
@@ -689,18 +808,25 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     );
 
     const logPath = logfilePath(hbEnv.tmpDir, session.pid);
-    await pollUntil(
+    // 健全なループは only を 1 回だけ打ち、show が closed を返すので drop → no-ids で
+    // 抜ける。3 はその 3 倍の余裕。「drop されず打ち続ける」退行なら、どれだけ遅い
+    // マシンでもビートが積み上がって budget を超える (bdboard-69w1)。
+    await pollUntilStopped(
       () =>
         existsSync(logPath)
         && readFileSync(logPath, 'utf8').includes('exit reason=no-ids'),
-      { timeoutMs: 15_000 },
+      {
+        extraBeats: () => heartbeatCallCount(hbEnv.argsLog, 'only'),
+        maxExtraBeats: 3,
+        what: 'waiting for the loop to exit with reason=no-ids',
+      },
     );
     await pollUntil(() => readPidfile(hbEnv.tmpDir, session.pid) === undefined, {
       timeoutMs: 10_000,
     });
 
     activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
-  }, 30_000);
+  }, 60_000);
 
   it('exits when --max-hours is reached', async () => {
     const hbEnv = setupEnv();
@@ -726,16 +852,24 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     );
 
     const logPath = logfilePath(hbEnv.tmpDir, session.pid);
-    await pollUntil(
+    // interval 0.1s / max-hours 0.0001h (= 0.36s) なので健全時のビートは 3 回前後。
+    // 20 は 6 倍以上の余裕で、しかも遅いマシンほど周回数は減る (max-hours の引き金は
+    // 経過実時間なので、1 周が遅いと少ない周回数で到達する)。max-hours ベルトが
+    // 効かない退行ではビートが際限なく増えるので必ず超える (bdboard-69w1)。
+    await pollUntilStopped(
       () => existsSync(logPath) && readFileSync(logPath, 'utf8').includes('exit reason=max-hours'),
-      { timeoutMs: 15_000 },
+      {
+        extraBeats: () => heartbeatCallCount(hbEnv.argsLog, 'only'),
+        maxExtraBeats: 20,
+        what: 'waiting for the loop to exit with reason=max-hours',
+      },
     );
     await pollUntil(() => readPidfile(hbEnv.tmpDir, session.pid) === undefined, {
       timeoutMs: 10_000,
     });
 
     activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
-  }, 30_000);
+  }, 60_000);
 
   it('replaces the previous loop on start with the same session-pid', async () => {
     const hbEnv = setupEnv();
@@ -964,11 +1098,17 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       );
 
       const logPath = logfilePath(hbEnv.tmpDir, session.pid);
-      await pollUntil(
+      // 「exits when all ids have dropped」と同じシナリオを /bin/bash 3.2 で回すだけ
+      // なので、待ち方も同じ (健全なら only のビートは 1 回、3 は 3 倍の余裕)。
+      await pollUntilStopped(
         () =>
           existsSync(logPath)
           && readFileSync(logPath, 'utf8').includes('exit reason=no-ids'),
-        { timeoutMs: 15_000 },
+        {
+          extraBeats: () => heartbeatCallCount(hbEnv.argsLog, 'only'),
+          maxExtraBeats: 3,
+          what: 'waiting for the bash 3.2 loop to exit with reason=no-ids',
+        },
       );
       await pollUntil(() => readPidfile(hbEnv.tmpDir, session.pid) === undefined, {
         timeoutMs: 10_000,
@@ -976,7 +1116,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
 
       activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
     },
-    30_000,
+    60_000,
   );
 });
 

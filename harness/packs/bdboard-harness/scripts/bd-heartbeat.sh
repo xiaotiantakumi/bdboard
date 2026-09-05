@@ -338,7 +338,15 @@ run_heartbeat_loop() {
     fi
     current_lstart="$(session_lstart "$session_pid")"
     if [ -z "$current_lstart" ] || [ "$current_lstart" != "$session_lstart_baseline" ]; then
-      log_event "$session_pid" "exit reason=session-pid-reused"
+      # 上の is_pid_alive (kill -0) と、この ps の間にセッションが死ぬと lstart は
+      # 空になる。そこで一律 session-pid-reused と記録すると、実際には起きていない
+      # PID 再利用を報告してしまう (bdboard-69w1)。分類の前に生死を取り直す:
+      # 死んでいれば「消えた」であって「再利用された」ではない。
+      if ! is_pid_alive "$session_pid"; then
+        log_event "$session_pid" "exit reason=session-gone"
+      else
+        log_event "$session_pid" "exit reason=session-pid-reused"
+      fi
       break
     fi
     pf_pid="$(read_pidfile "$session_pid")"
