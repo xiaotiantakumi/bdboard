@@ -763,6 +763,10 @@ body {
   display: block;
 }
 
+.error-boundary-body {
+  overflow-y: auto;
+}
+
 .error-boundary-detail {
   margin: 6px 0 0;
   word-break: break-word;
@@ -790,6 +794,28 @@ body {
 
 .error-boundary-overlay .error-boundary {
   width: min(520px, 100%);
+  /* オーバーレイの padding とパネルの max-height はセットで dvh にする
+     (bdboard-68ub / .tunnel-modal-panel と同じ理由)。長いエラーメッセージ
+     (スタックトレース級) でも .error-boundary-actions が画面外に落ちないよう、
+     本文 (.error-boundary-body) 側をスクロールさせてアクション行を常にパネル内に残す。 */
+  max-height: min(85vh, 720px);
+  max-height: min(85dvh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* .error-boundary-body だけが縮むのは、flex アイテムの自動最小サイズ
+     (min-height: auto) が「主軸方向の overflow が **非スクロール** (visible または
+     clip) のときだけ min-content になる」ため (css-flexbox-1 §4.5)。body は
+     overflow-y: auto なので下限 0 まで縮み、title と actions は visible なので
+     min-content 未満には縮まない。**つまり title / actions に overflow: auto /
+     scroll / hidden を足すと、それらも縮めるようになってこの保証が壊れる**
+     (パネルは可視高に収まったままボタンが潰れる、より分かりにくい形で再発する)。
+     clip だけは非スクロール側なので足しても縮まないが、区別が微妙なので触らないこと。
+     .tunnel-modal-panel / .tunnel-modal-body も同じ仕組みで、どちらも flex 短縮形や
+     min-height: 0 を明示していない。
+     この 4 つの宣言 (max-height / display:flex / flex-direction:column と
+     .error-boundary-body の overflow-y) はどれか 1 行消すだけでバグが再発する。
+     index.css.errorBoundaryLayout.test.ts がテキストとして固定している。 */
 }
 
 .main {

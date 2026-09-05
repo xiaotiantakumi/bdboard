@@ -68,10 +68,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <strong className="error-boundary-title">
           {this.props.label}の表示に失敗しました
         </strong>
-        <p className="error-boundary-detail">{error.message}</p>
-        <p className="error-boundary-hint">
-          この部分だけが停止しています。他の表示は続けて操作できます。
-        </p>
+        <div className="error-boundary-body">
+          <p className="error-boundary-detail">{error.message}</p>
+          <p className="error-boundary-hint">
+            この部分だけが停止しています。他の表示は続けて操作できます。
+          </p>
+        </div>
         <div className="error-boundary-actions">
           <button type="button" className="btn btn-small" onClick={this.handleReset}>
             {this.props.resetLabel ?? '再試行'}
