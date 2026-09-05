@@ -46,6 +46,13 @@ test.describe('prefers-reduced-motion: reduce', () => {
   });
 });
 
+// この対照群を消すと上の reduce 側テストが恒真になる。消さないこと。
+// transition を持たない要素でも getComputedStyle().transitionDuration は "0s" を返し、
+// parseTransitionDurations("0s") は [0] を返すので、reduce 側の
+// `durations.length > 0` と `every(d => d < 0.001)` は「そもそも transition が無い」
+// ケースでも成立してしまう。同じ要素が no-preference では実際に短縮されていない
+// duration を持つ、と示すこの対照群だけが、reduce 側の緑に意味を与えている
+// (bdboard-s1vj レビュー nit 1)。
 test.describe('prefers-reduced-motion: no-preference (control)', () => {
   test.use({ contextOptions: { reducedMotion: 'no-preference' } });
 
@@ -55,7 +62,10 @@ test.describe('prefers-reduced-motion: no-preference (control)', () => {
     const refreshButton = await waitForBoardAndRefreshButton(page);
     const durations = await readTransitionDurations(refreshButton);
 
+    // 具体値 (0.15s) ではなく「短縮されていないこと」を見る。デザイン調整で .btn の
+    // duration が変わっただけの PR がこの spec を赤くすると、reduced-motion 対応が
+    // 壊れたように見えて誤誘導になる (同 nit 2)。
     expect(durations.length).toBeGreaterThan(0);
-    expect(durations.every((duration) => Math.abs(duration - 0.15) < 0.001)).toBe(true);
+    expect(durations.every((duration) => duration > 0.05)).toBe(true);
   });
 });
