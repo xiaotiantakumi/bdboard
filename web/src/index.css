@@ -4409,7 +4409,16 @@ body {
   margin-top: 7px;
 }
 
-@media (max-width: 700px) {
+/* bdboard-gx3i: 横向きスマートフォン (例 844x390 / 932x430) は幅が 700px を超えるため
+   このブロックに入らず、5dvh + 20px + 90dvh の割合指定 (index.css:4136-4144) だけになる。
+   iPhone 14 横持ち (dvh≈390) では 5dvh(19.5) + 20px + 90dvh(351) = 390.5px となり、
+   dvh そのものよりわずかに超過する境界ケース (bdboard-68uh のレビュー時点では未検出)。
+   `(max-height: 500px) and (orientation: landscape)` を幅条件に OR することで、
+   縦の余裕が薄い横持ちスマホもこのブロックの全画面/px 上書きに入れる。500px は
+   iPad 横 (1024x768) を除外しつつスマホ横持ち帯 (390〜430px 高) を含めるための閾値
+   (iPad は縦に余裕があり割合指定のままで問題ない)。orientation:landscape を付けるのは
+   縦持ちの短い帯 (幅も同時に小さいので既に幅条件で拾われている) を誤って対象にしないため。 */
+@media (max-width: 700px), (max-height: 500px) and (orientation: landscape) {
   .help-panel-overlay {
     padding: max(10px, env(safe-area-inset-top)) 10px
       max(10px, env(safe-area-inset-bottom));
@@ -6852,25 +6861,11 @@ body {
     width: auto;
   }
 
-  .search-overlay {
-    padding: 0;
-    align-items: stretch;
-  }
-
-  .search-palette {
-    width: 100vw;
-    max-width: 100vw;
-    height: 100vh;
-    max-height: 100vh;
-    height: 100dvh;
-    max-height: 100dvh;
-    border-radius: 0;
-    border: none;
-    padding-top: max(16px, env(safe-area-inset-top));
-    padding-left: max(12px, env(safe-area-inset-left));
-    padding-right: max(12px, env(safe-area-inset-right));
-    padding-bottom: max(16px, env(safe-area-inset-bottom));
-  }
+  /* bdboard-gx3i: .search-overlay / .search-palette の全画面上書きは
+     このブロックの外 (下の `@media (max-width: 480px), (max-height: 500px) and
+     (orientation: landscape)`) に切り出した。幅条件は変えず、横向きスマホも
+     同じ扱いに入れるための OR を追加するだけなので、ここでの見た目 (<=480px) は
+     変わらない。理由は次のブロック直前のコメントを参照。 */
 
   .search-palette-input {
     min-height: 44px;
@@ -6971,6 +6966,40 @@ body {
   .next-up-epic-toggle,
   .board-filter-bar .toggle-btn {
     min-height: 44px;
+  }
+}
+
+/* bdboard-gx3i: 横向きスマートフォン (例 844x390 / 932x430) は幅が 480px は
+   もちろん 700px も超えるため、.search-overlay / .search-palette の全画面上書き
+   (元は上の `@media (max-width: 480px)` 内、bdboard-h4xs 由来) に入らず、
+   12dvh + 16px + 70dvh の割合指定 (index.css:3866-3893) だけが当たる。
+   dvh 併記済み (bdboard-68uh) なので比率上のオーバーフローはもう起きないが
+   (82dvh + 16px <= 100dvh は可視高 88.9px 以上で常に成立)、縦の余裕が薄い帯で
+   丸角・余白ありのパレットのままにしておく理由も無い。
+   `(max-height: 500px) and (orientation: landscape)` を幅条件に OR し、
+   横向きスマホも全画面上書きに入れる。500px は iPad 横 (1024x768) を除外しつつ
+   スマホ横持ち帯 (390〜430px 高) を含める閾値 (.help-panel 側 index.css:4396 と同じ値・
+   同じ理由)。幅条件はこれまでどおり 480px のまま (481〜700px 帯の縦持ちタブレット等は
+   このチケットの対象外)。 */
+@media (max-width: 480px), (max-height: 500px) and (orientation: landscape) {
+  .search-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .search-palette {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
 }
 
