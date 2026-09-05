@@ -1,6 +1,11 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { StatusPill } from './StatusPill';
 
 // 「今日」だと vi.setSystemTime が効いていなくても通ってしまう。任意の日付にする
@@ -129,32 +134,6 @@ describe('StatusPill popover freshness (bdboard-d55)', () => {
     expect(onOpenSessionList).toHaveBeenCalledTimes(1);
   });
 });
-
-const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
-const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
-
-function gutterForViewport(viewportWidth: number): number {
-  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
-}
-
-function stubClientWidth(width: number) {
-  return vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
-}
-
-function stubBoundingRect(rect: Pick<DOMRect, 'left' | 'right'>) {
-  const width = rect.right - rect.left;
-  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-    x: rect.left,
-    y: 0,
-    width,
-    height: 0,
-    top: 0,
-    right: rect.right,
-    bottom: 0,
-    left: rect.left,
-    toJSON: () => ({}),
-  });
-}
 
 describe('StatusPill popover viewport clamp (bdboard-h4xs.13)', () => {
   let clientWidthSpy: ReturnType<typeof stubClientWidth> | undefined;

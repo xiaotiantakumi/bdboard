@@ -1,13 +1,11 @@
 import { render } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import {
+  gutterForViewport,
+  stubBoundingRect,
+  stubClientWidth,
+} from '../test/popoverViewportClampTestHelpers';
 import { usePopoverViewportClamp } from './usePopoverViewportClamp';
-
-const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
-const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
-
-function gutterForViewport(viewportWidth: number): number {
-  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
-}
 
 function PopoverProbe({ open }: { open: boolean }) {
   const ref = usePopoverViewportClamp<HTMLDivElement>(open);
@@ -17,25 +15,6 @@ function PopoverProbe({ open }: { open: boolean }) {
 function SwappablePopoverProbe({ open, mounted }: { open: boolean; mounted: boolean }) {
   const ref = usePopoverViewportClamp<HTMLDivElement>(open);
   return mounted ? <div ref={ref} data-testid="popover" /> : null;
-}
-
-function stubClientWidth(width: number) {
-  return vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
-}
-
-function stubBoundingRect(rect: Pick<DOMRect, 'left' | 'right'>) {
-  const width = rect.right - rect.left;
-  return vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-    x: rect.left,
-    y: 0,
-    width,
-    height: 0,
-    top: 0,
-    right: rect.right,
-    bottom: 0,
-    left: rect.left,
-    toJSON: () => ({}),
-  });
 }
 
 describe('usePopoverViewportClamp', () => {
@@ -89,6 +68,16 @@ describe('usePopoverViewportClamp', () => {
 
     expect(shiftPx).toBeLessThan(0);
     expect(1300 + shiftPx).toBeLessThanOrEqual(viewportWidth - gutter);
+  });
+
+  it('does not shift when the popover right edge sits at the gutter ceiling (1920px viewport)', () => {
+    const viewportWidth = 1920;
+    clientWidthSpy = stubClientWidth(viewportWidth);
+    rectSpy = stubBoundingRect({ left: 1700, right: 1900 });
+
+    const { getByTestId } = render(<PopoverProbe open />);
+    expect(getByTestId('popover').style.getPropertyValue('--popover-shift-x')).toBe('0px');
+    expect(gutterForViewport(viewportWidth)).toBe(20);
   });
 
   it('does not write --popover-shift-x while closed', () => {

@@ -3,8 +3,6 @@ import { expect, test } from '@playwright/test';
 const MOBILE_320_VIEWPORT = { width: 320, height: 568 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
 const BOUNDS_EPSILON_PX = 0.5;
-/** 1280px で overflow/preset が実測 ±5.6px 程度の shift になる上限（厳密一致は避ける） */
-const DESKTOP_MINOR_SHIFT_MAX_PX = 10;
 
 test.describe('header popovers viewport clamp at 320px (bdboard-oeh5)', () => {
   test.use({ viewport: MOBILE_320_VIEWPORT, isMobile: true, hasTouch: true });
@@ -101,7 +99,6 @@ test.describe('header popovers viewport clamp — desktop (bdboard-oeh5)', () =>
       popoverSelector: string,
     ): Promise<{
       shift: string;
-      shiftAbsPx: number;
       found: boolean;
       left: number;
       right: number;
@@ -118,7 +115,6 @@ test.describe('header popovers viewport clamp — desktop (bdboard-oeh5)', () =>
             : '';
           return {
             shift,
-            shiftAbsPx: Math.abs(Number.parseFloat(shift)),
             found: !!rect,
             left: rect?.left ?? Number.NaN,
             right: rect?.right ?? Number.NaN,
@@ -146,20 +142,17 @@ test.describe('header popovers viewport clamp — desktop (bdboard-oeh5)', () =>
     ).toBe(true);
 
     // overflow-menu / preset-control は right:0 / left:0 で .header/.view-toolbar の
-    // 20px padding 端に張り付くが、usePopoverViewportClamp の gutter は
-    // max(12, viewportWidth * 0.02) (= 1280px で 25.6px)。viewportWidth >= 1000px では
-    // 実際にははみ出していなくても 2% ガター方針の数 px 補正がかかる（bdboard-hovk PR #318
-    // 由来の既存フック仕様。本チケットのスコープ外）。1280px 実測: overflow ≈ -5.6px、
-    // preset ≈ +5.6px。
+    // 20px padding 端に張り付く。ガター天井 POPOVER_VIEWPORT_GUTTER_MAX_PX も 20px で
+    // パディングと意図的に一致している（bdboard-s0o7 / bdboard-hovk PR #318）ため、
+    // コンテナ端に張り付く 2 種でも shift は 0px のまま。パディングが 20px 未満に変わると
+    // 偽陽性シフトが復活しこの assert が落ちる — 結合の腐り検出用（padding > 20px 方向は
+    // gutter < padding なのでずれず、落ちなくて正しい）。
     const overflowMenu = await readPopoverClamp(
       '.overflow-menu-button',
       '.overflow-menu-popover',
     );
     expect(overflowMenu.found, 'overflow-menu popover must be present').toBe(true);
-    expect(
-      overflowMenu.shiftAbsPx,
-      `overflow-menu shift should stay small at 1280px (measured ≈5.6px, got ${overflowMenu.shift})`,
-    ).toBeLessThanOrEqual(DESKTOP_MINOR_SHIFT_MAX_PX);
+    expect(overflowMenu.shift).toBe('0px');
     expect(
       overflowMenu.left >= -BOUNDS_EPSILON_PX &&
         overflowMenu.right <= overflowMenu.innerWidth + BOUNDS_EPSILON_PX,
@@ -172,10 +165,7 @@ test.describe('header popovers viewport clamp — desktop (bdboard-oeh5)', () =>
       '.preset-control-popover',
     );
     expect(presetControl.found, 'preset-control popover must be present').toBe(true);
-    expect(
-      presetControl.shiftAbsPx,
-      `preset-control shift should stay small at 1280px (measured ≈5.6px, got ${presetControl.shift})`,
-    ).toBeLessThanOrEqual(DESKTOP_MINOR_SHIFT_MAX_PX);
+    expect(presetControl.shift).toBe('0px');
     expect(
       presetControl.left >= -BOUNDS_EPSILON_PX &&
         presetControl.right <= presetControl.innerWidth + BOUNDS_EPSILON_PX,
