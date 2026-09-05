@@ -20,12 +20,14 @@ class MockIntersectionObserver {
   }
 }
 
-function mockMobileViewport(enabled: boolean) {
+function mockMobileViewport(enabled: boolean, reducedMotion = false) {
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
-      matches: enabled && query === '(max-width: 700px)',
+      matches:
+        (enabled && query === '(max-width: 700px)') ||
+        (reducedMotion && query === '(prefers-reduced-motion: reduce)'),
       media: query,
       onchange: null,
       addEventListener: vi.fn(),
@@ -192,6 +194,34 @@ describe('BoardLanes mobile lane indicator', () => {
     const scrollSpy = vi.mocked(Element.prototype.scrollIntoView);
     expect(scrollSpy).toHaveBeenCalledWith({
       behavior: 'smooth',
+      inline: 'start',
+      block: 'nearest',
+    });
+    expect(scrollSpy.mock.contexts.at(-1)).toBe(readyLane);
+  });
+
+  it('scrolls instantly when prefers-reduced-motion is enabled', async () => {
+    const user = userEvent.setup();
+    mockMobileViewport(true, true);
+
+    render(
+      <WatchedTicketsProvider>
+        <BoardLanes {...sharedProps} board={makeBoard()} />
+      </WatchedTicketsProvider>,
+    );
+
+    const strip = screen.getByRole('navigation', { name: 'レーン切り替え' });
+    const readyButton = within(strip).getByRole('button', {
+      name: '着手可能 (1件)',
+    });
+    const readyLane = document.querySelector('[data-lane="ready"]');
+    expect(readyLane).not.toBeNull();
+
+    await user.click(readyButton);
+
+    const scrollSpy = vi.mocked(Element.prototype.scrollIntoView);
+    expect(scrollSpy).toHaveBeenCalledWith({
+      behavior: 'auto',
       inline: 'start',
       block: 'nearest',
     });
