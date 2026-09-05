@@ -526,6 +526,17 @@ function checkOrphanHeartbeatLoop(
   const representative = sortedKnownTickets[0]!;
 
   const allClosed = sortedKnownTickets.every((ticket) => ticket.status === 'closed');
+  // sessionAlive が undefined（pidfile も --session-pid もない手書きループ）は、
+  // 意図的に「セッション消失」を理由には警告しません（全チケット closed なら別理由で警告します）。
+  // undefined は「セッションが死んでいる」ではなく、「生死が分からない」という意味です。
+  // bdboard-7j49 で ps -o ppid= の ppid === 1 を代理指標にできるか実測し、却下しました。
+  // nohup ... & でデタッチしたループは健全でも起動直後に ppid 1 になり、
+  // 同梱の bd-heartbeat.sh 自身もこの形で起動するため、偽陽性と区別できません。
+  // 実際に、起動から約1秒で ppid 1 になる健全なループを確認しています。
+  // 親が tmux 等の長命プロセスなら、セッションが死んでも ppid は 1 にならず偽陰性です。
+  // macOS では全プロセスの 718/892（約8割）が ppid 1 で、そもそも情報量がありません。
+  // pgid リーダーの死亡や tty 無しも、健全なデタッチ済みループで成立するため使えません。
+  // 再提案するなら代理指標ではなく、pidfile / --session-pid のような明示的なセッション識別子を増やします。
   const sessionGone = candidate.sessionAlive === false;
 
   if (!allClosed && !sessionGone) {
