@@ -922,7 +922,14 @@ body {
   flex-direction: column;
   gap: 10px;
   padding-top: 4px;
-  border-top: 1px solid var(--color-border-subtle, rgba(0, 0, 0, 0.08));
+  /* 元は var(--color-border-subtle, rgba(0, 0, 0, 0.08)) だった。--color-border-subtle は
+     どこにも定義が無いので必ずフォールバックの固定色が効き、ダークでも「黒を 8% 載せる」
+     ままだった = --color-bg-elevated (#1c1c1e) の上では実質不可視で、区切り線が消えていた。
+     すぐ下の .next-up-epic-title は同じ理由で既に修正済み (var(--color-text-muted, #6b7280)
+     -> var(--color-text-secondary))。同じ規則の border だけが取り残されていた。
+     --color-border はライト rgba(60,60,67,0.13) / ダーク rgba(84,84,88,0.55) で、
+     ライトでの見た目はほぼ据え置きのままテーマ追従だけが増える。 */
+  border-top: 1px solid var(--color-border-subtle, var(--color-border));
 }
 
 .next-up-epic-title {
