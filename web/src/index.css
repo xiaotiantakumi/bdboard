@@ -6579,11 +6579,12 @@ body {
      折り返したカードは実際に背が高くなる (fixture 8 枚のうち 6 枚が +20.25px = 1 行分。
      375x812 実測)。48px にしても .card-title は 204px までしか戻らず、折り返す枚数は
      52px と同じ 7/8 なので、この背高化は 52px 固有のコストではない。
-     この背高化が bdboard-z7ah (mobile-header-compact.spec.ts:29 のカード可視ガード) を
-     悪化させないことは実測で確認済み — ガードを満たしうる唯一のカードは先頭カードで、
-     その height/top は 40px 条件と 52px 条件で完全に一致する (delta 0)。ただし先頭カードの
-     タイトル折り返しまでの余裕は 19.36px → 7.36px (テキスト幅の 3.8%) に縮むため、
-     fixture のタイトル文言やフォントサイズを変えるときは z7ah 側の注記を読むこと。
+     現在の守り手は mobile-header-compact.spec.ts の MAX_CONTENT_START_EXCLUDING_TIPS_PX /
+     MAX_TIPS_BANNER_HEIGHT_PX / MAX_CONTENT_START_PX / MAX_HEADER_HEIGHT_PX という高さ予算の
+     ラチェット (bdboard-z7ah で置き換えた)。これらはヘッダー下端と先頭カード上端の位置だけを
+     見ており、カードの高さはどのガードにも入らない。したがって ::before によるこの背高化
+     (fixture 8 枚中 6 枚が +20.25px) は e2e の判定に影響しない。「カードが折り返し上に
+     見えない」という product 側の問題は bdboard-qxt1 で追跡中。
      チェックボックスとの重なり制約は解消済みだが、横方向 44px 化そのものは本チケットの
      範囲外。左へ 20px 伸ばすとタイトルのグリフを食う問題が別途残るため、横方向の拡張は
      bdboard-h4xs.9 系の後続作業に残す。現状でも WCAG 2.5.8 の最小 24×24px は満たす。 */
