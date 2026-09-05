@@ -324,8 +324,22 @@ describe('index.css custom properties', () => {
 
     // 向き 1: 実際に書き込まれているのに許可リストに無い。書き込み先が新設され、
     // 許可リストの追従漏れがあるケース。
+    //
+    // bare :root に定義がある値は除く。RUNTIME_CUSTOM_PROPERTIES の意味は「実行時に
+    // 書かれるので index.css に定義が無くてよい」であって「実行時に書かれる値の一覧」では
+    // ない。両者を同一視して *すべての* setProperty 先を許可リストへ強制すると、
+    // たとえば --color-accent を実行時に上書きするコンポーネントが 1 つ増えただけで
+    // --color-accent が許可リストに載り、**上のテストがその :root 定義の消失を
+    // 検出しなくなる** — 免除を塞ぐはずのこのテストが、逆向きの免除窓口を開けてしまう。
+    const definedInBareRoot = collectDefinedCustomProperties(
+      stripCssComments(cssSource),
+    );
     const writtenButNotAllowed = [...targets]
-      .filter((property) => !RUNTIME_CUSTOM_PROPERTIES.has(property))
+      .filter(
+        (property) =>
+          !RUNTIME_CUSTOM_PROPERTIES.has(property) &&
+          !definedInBareRoot.has(property),
+      )
       .sort();
     // 向き 2: 許可リストにあるのに、もう誰も setProperty していない。フックが削除・
     // リネームされ、許可リストだけが取り残されたケース (bdboard-hzpw の
@@ -337,7 +351,7 @@ describe('index.css custom properties', () => {
 
     expect(
       writtenButNotAllowed,
-      `web/src で setProperty されているのに RUNTIME_CUSTOM_PROPERTIES に無いカスタムプロパティがあります: ${writtenButNotAllowed.join(', ')}。実行時に書き込まれる値は理由付きで RUNTIME_CUSTOM_PROPERTIES に追加してください。`,
+      `web/src で setProperty されているのに RUNTIME_CUSTOM_PROPERTIES にも bare :root にも無いカスタムプロパティがあります: ${writtenButNotAllowed.join(', ')}。どちらか一方を選んでください — index.css の bare :root に既定値を定義するか、実行時書き込みだけで完結するなら理由付きで RUNTIME_CUSTOM_PROPERTIES に追加する。`,
     ).toEqual([]);
     expect(
       allowedButNotWritten,
