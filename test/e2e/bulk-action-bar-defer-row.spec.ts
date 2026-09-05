@@ -406,9 +406,15 @@ for (const viewport of MOBILE_VIEWPORTS) {
   });
 }
 
-// 320px カスタム状態は実測済み (2026-09-05, chromium, isMobile): body.scrollWidth=320,
-// innerWidth=320, 延期グループ実幅=277px, horizontalOverflow=false。index.css コメントの
-// 289px はより広いビューポートでの値で、320px では date 入力が縮んで収まる。
+// 320px カスタム状態の実測 (2026-09-05, chromium, isMobile):
+// 延期グループ実幅=277px、コンテナ .bulk-action-bar-buttons の clientWidth=270 /
+// scrollWidth=277 で、グループ右端 302 はコンテナ右端 295 を 7px はみ出す。
+// 一方 body.scrollWidth=320 = innerWidth なので horizontalOverflow は false —
+// バー自体が左右 25px インセットされており、はみ出した 7px がバーの右パディングに
+// 収まってビューポート端に届かないため。**body 基準の overflow 判定では
+// このはみ出しは検出できない**ので、「horizontalOverflow=false だから問題なし」と
+// 読まないこと (bdboard-53my 議長裁定 2026-09-05。コンテナ基準の 7px は
+// 別チケット bdboard-rccf)。index.css コメントの 289px はより広いビューポートでの値。
 // この describe は :has() narrowing 用に非カスタム状態だけを見る。
 test.describe('bulk action bar non-custom defer row @ 320x812', () => {
   test.use({
