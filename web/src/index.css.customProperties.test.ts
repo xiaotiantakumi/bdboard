@@ -362,6 +362,72 @@ function collectRuntimeSetPropertyTargets(): {
   return { targets, unresolved };
 }
 
+const VAR_REFERENCE_PATTERN = /var\(\s*(--[\w-]+)/g;
+
+/**
+ * bare :root に定義だけあって参照が無いトークンを、意図的に見逃してよいものだけ列挙する
+ * (bdboard-kjn9)。
+ *
+ * `defines every referenced custom property...` (上の向き 1) の逆方向 — 「定義はあるが
+ * 参照が無い」— を見る `it` 用の許可リスト。2026-09-06 時点で実測した bare :root の
+ * 全トークンはいずれも index.css の CSS か web/src の .ts/.tsx から参照されており、
+ * このリストは空。将来ここへ足すのは「意図的に未配線のまま置く」ケースだけにし、
+ * 単なる消し忘れを紛れ込ませないこと。
+ */
+const UNREFERENCED_ROOT_CUSTOM_PROPERTIES = new Set<string>([]);
+
+/**
+ * web/src 配下の *.ts / *.tsx を再帰的に列挙する。listRuntimeSourceFiles と違い
+ * **テストファイルも test/ ディレクトリも除外しない**。
+ *
+ * 除外しない理由: この関数は「定義はあるが参照が無い」(向き 2、bdboard-kjn9) の検査専用で、
+ * テストコードにしか現れない var() 参照を見逃すと**使われているトークンを未参照と誤判定して
+ * 消す**という危険な誤検出になる。実例: `HygienePanel.badge-colors.test.ts` は
+ * `var(--badge-stalled-bg)` / `var(--badge-stalled-fg)` を期待値として直接埋め込んでいる。
+ * これはランタイム書き込み側 (listRuntimeSourceFiles がテストを除外する理由) とは逆向きの
+ * リスクなので、除外の要否も逆になる。
+ */
+function listAllTsxSourceFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entryName of readdirSync(dir)) {
+    const fullPath = join(dir, entryName);
+    if (statSync(fullPath).isDirectory()) {
+      files.push(...listAllTsxSourceFiles(fullPath));
+      continue;
+    }
+    if (!/\.tsx?$/.test(entryName)) {
+      continue;
+    }
+    files.push(fullPath);
+  }
+  return files;
+}
+
+/**
+ * web/src 配下すべての .ts/.tsx から `var(--foo)` 参照の集合を集める (bdboard-kjn9、
+ * 「定義はあるが参照が無い」方向の検査専用)。
+ *
+ * コメントは stripJsComments で先に取り除く。取り除かないと、たとえば
+ * usePopoverViewportClamp.ts の JSDoc 中の
+ * `` `transform: translateX(var(--popover-shift-x, 0px))` `` のような**説明目的の言及**を
+ * 実参照と誤認し、本当に配線が抜けているケースを見逃す (このテストが赤くなるべき側)。
+ *
+ * **bdboard-wws5 (未定義参照の検査を .tsx/.ts の var() 参照まで広げる、順方向の拡張) と
+ * 走査対象が重なる。** 重複を承知の上で置いている — 本チケットは逆方向の検査なので、
+ * wws5 が担当するファイルを先回りして変更しない。将来どちらかが実装されたら、この
+ * 走査ロジックを共有ヘルパーへ切り出すことを検討してよい。
+ */
+function collectTsxCustomPropertyReferences(dir: string): Set<string> {
+  const referenced = new Set<string>();
+  for (const filePath of listAllTsxSourceFiles(dir)) {
+    const source = stripJsComments(readFileSync(filePath, 'utf8'));
+    for (const match of source.matchAll(VAR_REFERENCE_PATTERN)) {
+      referenced.add(match[1]!);
+    }
+  }
+  return referenced;
+}
+
 describe('index.css custom properties', () => {
   it('defines every referenced custom property in bare :root or a documented exception', () => {
     const sourceWithoutComments = stripCssComments(cssSource);
@@ -392,6 +458,46 @@ describe('index.css custom properties', () => {
     expect(
       staleAllowedProperties,
       `カスタムプロパティ許可リストに不要なエントリがあります: ${staleAllowedProperties.join(', ')}。var() 参照がなくなったか bare :root に定義されたため、許可リストから削除してください。`,
+    ).toEqual([]);
+  });
+
+  it('references every bare :root custom property from index.css or web/src TS(X) (bdboard-kjn9)', () => {
+    // 向き 2 (逆方向): 「定義はあるが参照が無い」。上のテストが見る向き 1 の鏡像で、
+    // bare :root に定義したまま誰からも参照されなくなったトークン (bdboard-kjn9 の題材)
+    // ―― ライト/ダークの対を維持するコストだけが残る死んだ定義 ―― を検出する。
+    //
+    // CSS の参照だけを見ると TSX 専用トークンが全部死んで見える偽陽性になるため
+    // (実例: --color-purple / --throughput-cfd-pinned / --throughput-cfd-hooked は
+    // ThroughputStats.tsx からしか参照されない)、CSS の var() と web/src の .ts/.tsx の
+    // var() の両方を参照として数える。
+    const sourceWithoutComments = stripCssComments(cssSource);
+    const definedInBareRoot = collectDefinedCustomProperties(sourceWithoutComments);
+    const referencedInCss = collectReferencedCustomProperties(sourceWithoutComments);
+    const referencedInTsx = collectTsxCustomPropertyReferences(webSrcDir);
+    const referenced = new Set([...referencedInCss, ...referencedInTsx]);
+
+    const unreferencedProperties = [...definedInBareRoot]
+      .filter(
+        (property) =>
+          !referenced.has(property) &&
+          !UNREFERENCED_ROOT_CUSTOM_PROPERTIES.has(property),
+      )
+      .sort();
+    // 許可リスト自身の陳腐化も両方向で見る: 参照されるようになった、または bare :root の
+    // 定義そのものが消えたエントリは、もう許可リストに残す理由が無い。
+    const staleUnreferencedAllowlist = [...UNREFERENCED_ROOT_CUSTOM_PROPERTIES]
+      .filter(
+        (property) => referenced.has(property) || !definedInBareRoot.has(property),
+      )
+      .sort();
+
+    expect(
+      unreferencedProperties,
+      `index.css の bare :root に定義されているのに、index.css からも web/src の .ts/.tsx からも var() 参照が無いカスタムプロパティがあります: ${unreferencedProperties.join(', ')}。使われていないなら定義ごと削除し、ライト/ダークの対を維持するコストだけが残る状態を解消してください。本来ここを使うべき箇所がハードコード値 (#fff 等) になっているだけなら、削除ではなくそこで参照するよう直してください。意図的に未配線のまま置くなら、理由付きで UNREFERENCED_ROOT_CUSTOM_PROPERTIES に追加してください。`,
+    ).toEqual([]);
+    expect(
+      staleUnreferencedAllowlist,
+      `UNREFERENCED_ROOT_CUSTOM_PROPERTIES に不要なエントリがあります: ${staleUnreferencedAllowlist.join(', ')}。参照されるようになったか bare :root の定義が無くなったため、許可リストから削除してください。`,
     ).toEqual([]);
   });
 
