@@ -203,6 +203,8 @@ function LanesRow({
         items={laneIndicatorItems}
         scrollContainerRef={lanesRowRef}
         enabled={showLaneIndicator}
+        collapsedLanes={collapsedLanes}
+        onToggleCollapse={onToggleLaneCollapse}
       />
       <div
         ref={lanesRowRef}

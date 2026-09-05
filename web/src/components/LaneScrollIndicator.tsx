@@ -21,6 +21,15 @@ interface LaneScrollIndicatorProps {
   items: readonly LaneIndicatorItem[];
   scrollContainerRef: RefObject<HTMLElement | null>;
   enabled: boolean;
+  /**
+   * bdboard-6y5b: モバイルでは .lane-header (レーン名・件数・折りたたみトグル) を
+   * 丸ごと描画しない (index.css の `@media (max-width: 700px) { .lane-header
+   * { display: none; } }` 参照)。折りたたみトグルはレーンヘッダーにしか無い
+   * 唯一の操作なので、到達性を落とさないようここへ移す。両方渡されたときだけ
+   * トグルボタンを描画する (呼び出し元がまだ未対応なら何も増やさない)。
+   */
+  collapsedLanes?: ReadonlySet<Lane>;
+  onToggleCollapse?: (lane: Lane) => void;
 }
 
 export function LaneScrollIndicator({
@@ -28,6 +37,8 @@ export function LaneScrollIndicator({
   items,
   scrollContainerRef,
   enabled,
+  collapsedLanes,
+  onToggleCollapse,
 }: LaneScrollIndicatorProps) {
   const stripRef = useRef<HTMLElement>(null);
   const stripVisible = enabled && items.length > 0;
@@ -108,6 +119,7 @@ export function LaneScrollIndicator({
           const ariaLabel = item.countLabel.startsWith('WIP超過:')
             ? `${LANE_LABELS[item.lane]} (${item.countLabel})`
             : `${LANE_LABELS[item.lane]} (${item.countLabel}件)`;
+          const isCollapsed = collapsedLanes?.has(item.lane) ?? false;
           return (
             <li key={item.lane} className="lane-indicator-item-wrap">
               <button
@@ -120,6 +132,17 @@ export function LaneScrollIndicator({
                 <span className="lane-indicator-label">{LANE_LABELS[item.lane]}</span>
                 <span className="lane-indicator-count">{item.countLabel}</span>
               </button>
+              {onToggleCollapse !== undefined && (
+                <button
+                  type="button"
+                  className="lane-indicator-collapse-toggle"
+                  aria-expanded={!isCollapsed}
+                  aria-label={`${LANE_LABELS[item.lane]}レーンを${isCollapsed ? '展開' : '折りたたむ'}`}
+                  onClick={() => onToggleCollapse(item.lane)}
+                >
+                  <span aria-hidden="true">{isCollapsed ? '▶' : '▼'}</span>
+                </button>
+              )}
             </li>
           );
         })}
