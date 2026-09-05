@@ -1888,16 +1888,13 @@ body {
 }
 
 .hygiene-issue-row-static {
+  /* 元は :hover に background: var(--color-surface) があったが、--color-surface はどこにも
+     定義が無く宣言ごと無効だったので、実際には何も塗っていなかった。意図は「static な行は
+     hover しても背景が変わらない」で、.hygiene-issue-row:hover は border-color しか変えない
+     から、その意図は宣言を持たないことで既に満たされている。base と同じ値を書き直すルールを
+     残すと、後で base の背景を変えたときにここだけ取り残されて static 行が hover でチラつく。
+     非対話性は下の cursor: default が表現する。 */
   cursor: default;
-}
-
-.hygiene-issue-row-static:hover {
-  /* このルールは「static な行は hover しても見た目が変わらない」を明示するためのもので、
-     .hygiene-issue-row の平常時の背景 (--color-bg-elevated) をそのまま置き直すのが意図。
-     元は未定義の --color-surface だったので宣言ごと無効になり、たまたま意図どおりの
-     no-op になっていた。--color-bg を置くと light は #ffffff -> #f2f2f7、dark は
-     #1c1c1e -> #000000 と、非対話的なはずの行が hover で目に見えて変わってしまう。 */
-  background: var(--color-bg-elevated);
 }
 
 .hygiene-panel-feedback {
