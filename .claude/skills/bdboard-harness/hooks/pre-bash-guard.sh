@@ -260,7 +260,16 @@ route_safe() {
   printf '%s' "${route_safe_value:0:200}"
 }
 
-AIMIX_SEGMENTS="$(command_segments |
+# 規則 6 専用のセグメント分割。規則 1〜5 と違って複数のフラグが 1 セグメントに揃って
+# いることを前提にするので、先に行継続 (`\` + 改行) を畳む。畳まないと、実際に文書化
+# されている複数行の呼び出し形 (agents/*.md の `aimix run ... \` 形式) で
+# 「--model が別行 → 誤 deny」「--complexity が別行 → 照合を素通り」の両方が起きる。
+# 規則 1〜5 は単一トークン照合なので、こちらだけ畳んで影響範囲を閉じる。
+aimix_command_segments() {
+  printf '%s\n' "$COMMAND" | sed -e :a -e '/\\$/N; s/\\\n/ /; ta' | tr ';&|' '\n\n\n'
+}
+
+AIMIX_SEGMENTS="$(aimix_command_segments |
   grep -E '(^|[^[:alnum:]_-])aimix[[:space:]]+run([[:space:]]|$)' 2>/dev/null)"
 if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
   while IFS= read -r aimix_segment; do
@@ -274,12 +283,18 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
       *) continue ;;
     esac
 
-    # エスケープハッチを先に見る。環境変数でも、セグメント頭のインライン代入でもよい。
+    # エスケープハッチを先に見る。環境変数でも、コマンド頭のインライン代入でもよい。
     # 理由が空 (BDBOARD_ROUTE_OVERRIDE= / ="" / ='') は「理由なし」なので通さない。
+    #
+    # インライン代入は **aimix より前のプレフィックスだけ** を見る。セグメント全体の
+    # 部分一致にすると、`--task "... BDBOARD_ROUTE_OVERRIDE=x ..."` のように引数の
+    # 中身で黙ってゲートが外れる。しかも下の deny 文言自身がこの文字列を含むので、
+    # deny 文や README を委譲ブリーフへ貼って再試行するだけで無効化できてしまう。
     route_override="${BDBOARD_ROUTE_OVERRIDE:-}"
-    case "$aimix_segment" in
+    route_override_prefix="${aimix_segment%%aimix*}"
+    case "$route_override_prefix" in
       *BDBOARD_ROUTE_OVERRIDE=*)
-        route_override_rest="${aimix_segment#*BDBOARD_ROUTE_OVERRIDE=}"
+        route_override_rest="${route_override_prefix#*BDBOARD_ROUTE_OVERRIDE=}"
         case "$route_override_rest" in
           '"'*) route_override_rest="${route_override_rest#\"}"
                 route_override="${route_override_rest%%\"*}" ;;
@@ -291,17 +306,10 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
     esac
     [ -n "$route_override" ] && continue
 
-    route_model="$(segment_flag model "$aimix_segment")"
-    if [ -z "$route_model" ]; then
-      deny \
-        'bdboard-harness: aimix run --mode implement/refactor は --model の明示が必須です (振り分け表のどのセルを使ったか記録に残らないため)。' \
-        'bash .claude/skills/bdboard-harness/scripts/route.sh <工程> <low|med|high> で候補を引き、先頭候補を --member/--model に渡してください。' \
-        'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
-    fi
-
     # ここから先は「セルを特定できたときだけ」判定する。member や complexity が
     # 読めないなら黙って通す (fail-open)。complexity 未記録を deny にするかは
     # Phase 2 (bdboard-p5l.19) の観測結果で決める話であって、ここではやらない。
+    route_model="$(segment_flag model "$aimix_segment")"
     route_member="$(segment_flag member "$aimix_segment")"
     [ -n "$route_member" ] || continue
     route_complexity="$(segment_flag complexity "$aimix_segment")"
@@ -316,6 +324,18 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
       bash "$ROUTE_SCRIPT" "$route_stage" "$route_complexity" 2>/dev/null)"
     [ $? -eq 0 ] || continue
     [ -n "$ROUTE_CANDIDATES" ] || continue
+
+    # --model の必須チェックは「セルの候補を実際に取れた」後に置く。前に置くと、
+    # models 表を宣言していないプロジェクト (照合は必ず fail-open) でも deny だけが
+    # 発火し、しかも案内する route.sh は無出力なので従いようがない。実際 bdboard 自身の
+    # 契約にはまだ models 節が無く、そこでは「強制力ゼロ・摩擦のみ」になっていた。
+    # ここに置けば「表を持つプロジェクトでだけ、どの候補を使ったかを明示させる」になる。
+    if [ -z "$route_model" ]; then
+      deny \
+        'bdboard-harness: 振り分け表のあるこの工程/複雑度では aimix run に --model の明示が必須です (どの候補を使ったか記録に残らないため)。' \
+        "候補: $(route_safe "$(printf '%s' "$ROUTE_CANDIDATES" | tr '\n' ',' | sed 's/,$//')")" \
+        'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+    fi
 
     route_wanted="$route_member:$route_model"
     route_hit=''

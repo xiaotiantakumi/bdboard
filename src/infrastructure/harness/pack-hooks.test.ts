@@ -322,6 +322,9 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         med: ['codex:gpt-5.6-terra', 'cursor:composer-2.5'],
         high: ['codex:gpt-5.6-sol'],
       },
+      // 現行の aimix run --mode に refactor は無いが、hook は先回りしてゲートしている。
+      // --model 必須チェックはセルを引けたときだけ効くので、その工程の表も要る。
+      refactor: { '*': ['codex:gpt-5.6-terra'] },
     };
 
     let projectRoot: string;
@@ -446,8 +449,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     }
 
     /**
-     * deny してよいのは「セルの候補を実際に取れて、そこに無かった」ときだけ。
-     * 判定材料が欠けているケースはすべて素通りさせる (fail-open)。
+     * deny してよいのは「セルの候補を取れて、そこに無かった」ときだけ。判定材料が
+     * 欠けているケースはすべて素通りさせる (fail-open)。README の fail-open 一覧に
+     * 対応する。
+     *
+     * 注意: 'no contract file at all' は規則 6 まで到達せず、規則 5 の手前にある
+     * `[ -r "$CONTRACT_FILE" ] || exit 0` で抜ける。規則 6 を丸ごと消しても通るので、
+     * 規則 6 の回帰は検出できない。README が挙げる fail-open 条件を固定する目的で
+     * 残してあるだけで、規則 6 の防護としては数えないこと。
      */
     const failOpenCases: ReadonlyArray<{
       readonly name: string;
@@ -458,6 +467,12 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         name: 'no contract file at all',
         command:
           'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+      },
+      {
+        name: 'a --complexity value that is not low/med/high',
+        contract: { mainBranch: 'main', models: { routes: ROUTES } },
+        command:
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity HIGH',
       },
       {
         name: 'a contract without a models section',
@@ -481,6 +496,10 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
       },
       {
+        // route.sh は exit 1 で返るが、下流の「候補が空なら continue」ガードでも
+        // 同じ結論になる。route.sh は検証を終えるまで一切 stdout に出さない設計なので、
+        // 「非 0 終了かつ候補が非空」という状態は原理的に作れない。$? ガードは
+        // その設計への保険であって、このテストが単独で守っているわけではない。
         name: 'a models table that route.sh rejects as invalid',
         contract: { mainBranch: 'main', models: { routes: { implement: { high: [] } } } },
         command:
@@ -511,6 +530,8 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       });
     }
 
+    // これも規則 6 には到達しない (30 行目の縮退モードで hook 全体が抜ける)。
+    // README の fail-open 一覧を固定する目的で置いている。
     it('does not deny when neither jq nor python3 is available', async () => {
       writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
 
@@ -534,15 +555,123 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     /**
      * 規則 6 の位置の回帰テスト。規則 5 の後ろに置くと、その直前の
      * 「denyBashPatterns が 1 件も無ければ exit 0」に食われて規則 6 が丸ごと死ぬ。
+     * このファイルの他の規則 6 テストはすべて denyBashPatterns の無い契約なので
+     * そちらが「食われない」側を張る。ここは逆に denyBashPatterns が **有る** 契約で、
+     * 規則 5 が規則 6 を覆い隠さないことを固定する。
      */
-    it('still runs when the contract declares no denyBashPatterns', async () => {
-      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+    it('still runs when the contract also declares denyBashPatterns', async () => {
+      writeContract({
+        mainBranch: 'main',
+        models: { routes: ROUTES },
+        hooks: {
+          denyBashPatterns: ['npm run verify:steps'],
+          denyBashMessages: ['verify:steps は直叩き禁止です。'],
+        },
+      });
 
       const result = await guard(
         'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
       );
 
       expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('セルの候補ではありません');
+      expect(result.stderr).not.toContain('verify:steps');
+    });
+
+    /**
+     * models 表を宣言していないプロジェクトでは規則 6 は完全に素通りする。
+     * --model 必須チェックを route.sh 参照より前に置くと、照合は必ず fail-open
+     * なのに deny だけが発火し、しかも案内する route.sh は無出力なので従いようがない
+     * (レビュー指摘 blocker)。
+     */
+    it('does not require --model when the contract declares no models table', async () => {
+      writeContract({ mainBranch: 'main' });
+
+      const result = await guard('aimix run --mode implement --member codex --complexity low');
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    /**
+     * エスケープハッチは aimix より前のプレフィックスだけを見る。セグメント全体の
+     * 部分一致にすると --task の中身でゲートが外れる。deny 文言自身が
+     * BDBOARD_ROUTE_OVERRIDE を含むため、deny 文を委譲ブリーフへ貼って再試行するだけで
+     * 無効化できてしまう (レビュー指摘 major)。
+     */
+    it('ignores BDBOARD_ROUTE_OVERRIDE that appears inside an argument', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high ' +
+          '--task "note: BDBOARD_ROUTE_OVERRIDE=x is the hatch"',
+      );
+
+      expect(result.exitCode).toBe(2);
+    });
+
+    /**
+     * 行継続 (`\` + 改行) を畳まないと、agents/*.md が文書化している複数行の呼び出し形で
+     * 「--model が別行 → 誤 deny」「--complexity が別行 → 照合を素通り」の両方が起きる
+     * (レビュー指摘 major)。規則 1〜5 は単一トークン照合なのでこの弱点を持たない。
+     */
+    it('folds line continuations before judging (correct multi-line call passes)', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member codex --complexity high \\\n' +
+          '  --model gpt-5.6-sol \\\n' +
+          '  --task "implement bdboard-xyz"',
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toBe('');
+    });
+
+    it('folds line continuations before judging (off-cell multi-line call is denied)', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+      const result = await guard(
+        'aimix run --mode implement --member cursor --model totally-bogus \\\n' +
+          '  --complexity high --json',
+      );
+
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('cursor:totally-bogus');
+    });
+
+    /**
+     * hook は bash 3.2 互換で書く契約 (macOS の /bin/bash)。テストの `bash` は PATH 解決
+     * なので Homebrew の 5.x を引きうる。4.x 構文を書いても CI が緑のままにならないよう、
+     * 3.2 そのものに対しても deny/allow の両方向を 1 本ずつ固定する。
+     */
+    it.skipIf(!existsSync('/bin/bash'))('behaves the same under /bin/bash (3.2)', async () => {
+      writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+      const payload = (command: string): string =>
+        JSON.stringify({ tool_name: 'Bash', cwd: projectRoot, tool_input: { command } });
+
+      const denied = await runner.run('/bin/bash', [PRE_BASH_GUARD], {
+        input: payload(
+          'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
+        ),
+        timeoutMs: 20_000,
+        cwd: projectRoot,
+        env,
+      });
+      expect(denied.exitCode).toBe(2);
+      expect(denied.stderr).toContain('セルの候補ではありません');
+
+      const allowed = await runner.run('/bin/bash', [PRE_BASH_GUARD], {
+        input: payload(
+          'BDBOARD_ROUTE_OVERRIDE="枠逼迫" aimix run --mode implement --member codex ' +
+            '--model gpt-5.6-luna --complexity high',
+        ),
+        timeoutMs: 20_000,
+        cwd: projectRoot,
+        env,
+      });
+      expect(allowed.exitCode).toBe(0);
+      expect(allowed.stderr).toBe('');
     });
 
     /**
