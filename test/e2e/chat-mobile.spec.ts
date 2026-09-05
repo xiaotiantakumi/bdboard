@@ -1,4 +1,12 @@
 import { expect, test } from '@playwright/test';
+import {
+  ensureProjectSelected,
+  isInsideScrollContainer,
+  openChatPanel,
+  pastePngAttachment,
+  pastePngAttachments,
+  readChatPanelMetrics,
+} from './fixtures/chat-panel-helpers.js';
 
 /**
  * Mobile chat panel layout regressions (bdboard-ysm).
@@ -15,144 +23,12 @@ test.describe('chat panel mobile layout', () => {
     hasTouch: true,
   });
 
-  async function openChatPanel(page: import('@playwright/test').Page) {
-    await page.goto('/');
-    await expect(page.locator('.header')).toBeVisible({ timeout: 5_000 });
-    const chatButton = page.getByRole('button', { name: 'チャット' });
-    await expect(chatButton).toBeVisible({ timeout: 15_000 });
-    await chatButton.click();
-    const dialog = page.getByRole('dialog');
-    await expect(dialog).toBeVisible();
-    return dialog;
-  }
-
-  async function ensureProjectSelected(page: import('@playwright/test').Page) {
-    // e2e フィクスチャは2プロジェクト構成 (global-setup.ts) なので
-    // #chat-project-select が描画される (ChatPanel.tsx の showProjectSelect)。
-    // select 経路が本線。AC1 の「プロジェクト選択済み」は fixture-project を
-    // select した状態。.chat-project-name 分岐は後方互換のフォールバック。
-    const projectSelect = page.locator('#chat-project-select');
-    if ((await projectSelect.count()) > 0) {
-      await expect(projectSelect).toBeVisible({ timeout: 15_000 });
-      await projectSelect.selectOption({ label: 'fixture-project' });
-      await expect(projectSelect).not.toHaveValue('');
-    } else {
-      await expect(page.locator('.chat-project-name')).toHaveText('fixture-project', {
-        timeout: 15_000,
-      });
-    }
-
-    await expect(page.locator('.chat-project-unselected-hint')).toHaveCount(0);
-
-    const sendBtn = page.getByRole('button', { name: '送信' });
-    await expect(sendBtn).toBeVisible({ timeout: 15_000 });
-    const describedBy = (await sendBtn.getAttribute('aria-describedby')) ?? '';
-    expect(describedBy).not.toContain('chat-project-unselected-hint');
-  }
-
   function expectBoxInsideViewport(
     box: { x: number; y: number; width: number; height: number },
     viewportHeight: number,
   ) {
     expect(box.y).toBeGreaterThanOrEqual(0);
     expect(box.y + box.height).toBeLessThanOrEqual(viewportHeight);
-  }
-
-  async function pastePngAttachment(
-    textarea: import('@playwright/test').Locator,
-    fileName: string,
-  ) {
-    await textarea.evaluate((el, name) => {
-      const pngBase64 =
-        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-      const binary = atob(pngBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      const file = new File([bytes], name, { type: 'image/png' });
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      el.dispatchEvent(
-        new ClipboardEvent('paste', {
-          clipboardData: dt,
-          bubbles: true,
-          cancelable: true,
-        }),
-      );
-    }, fileName);
-  }
-
-  async function pastePngAttachments(
-    textarea: import('@playwright/test').Locator,
-    count: number,
-  ) {
-    for (let i = 0; i < count; i++) {
-      await pastePngAttachment(textarea, `test-${i + 1}.png`);
-    }
-  }
-
-  /**
-   * `.chat-messages` は `.chat-panel` 内で唯一の `flex: 1 1 auto; min-height: 0` なので、
-   * 固定チャンクが増えるとこれが先に潰れ、0 になって初めてパネルが溢れる。
-   * つまり clientHeight がそのまま「あと何 px 増やせるか」の実測値になる。
-   * `scrollHeight <= clientHeight` は溢れの有無しか言わないので、余裕の観測にはこちらを見る
-   * (bdboard-iglk レビュー: 余裕 7.9px で破綻した件)。
-   * なお短いビューポートでこれが 0 まで潰れること自体は別チケット bdboard-7fsw の対象で、
-   * 本PRのスコープ外 (main でも既に 0)。
-   */
-  async function readChatPanelMetrics(page: import('@playwright/test').Page) {
-    return page.evaluate(() => {
-      const panel = document.querySelector('.chat-panel');
-      const heightOf = (selector: string) => {
-        const el = document.querySelector(selector);
-        if (!el) {
-          return null;
-        }
-        const box = el as HTMLElement;
-        return {
-          offsetHeight: box.offsetHeight,
-          clientHeight: box.clientHeight,
-          scrollHeight: box.scrollHeight,
-        };
-      };
-      return {
-        clientHeight: panel?.clientHeight ?? 0,
-        scrollHeight: panel?.scrollHeight ?? 0,
-        chatMessages: heightOf('.chat-messages'),
-        chatInputNotices: heightOf('.chat-input-notices'),
-        chatAttachments: heightOf('.chat-attachments'),
-        chatAttachmentError: heightOf('.chat-attachment-error'),
-        chatAttachmentUnsupported: heightOf('.chat-attachment-unsupported'),
-        chatImagePrivacyHint: heightOf('.chat-image-privacy-hint'),
-      };
-    });
-  }
-
-  /**
-   * 祖先の overflow でクリップされた要素も toBeVisible() は可視と判定するため、
-   * スクロールコンテナの矩形に収まっているかを自前で見る (bdboard-iglk レビュー D)。
-   */
-  async function isInsideScrollContainer(
-    page: import('@playwright/test').Page,
-    containerSelector: string,
-    itemSelector: string,
-    index: number,
-  ): Promise<boolean> {
-    return page.evaluate(
-      ({ containerSel, itemSel, idx }) => {
-        const container = document.querySelector(containerSel);
-        const items = document.querySelectorAll(itemSel);
-        const item = items[idx];
-        if (!container || !item) {
-          return false;
-        }
-        const c = container.getBoundingClientRect();
-        const i = item.getBoundingClientRect();
-        return i.top >= c.top - 0.5 && i.bottom <= c.bottom + 0.5;
-      },
-      { containerSel: containerSelector, itemSel: itemSelector, idx: index },
-    );
   }
 
   async function assertControlHitTarget(
@@ -448,8 +324,9 @@ test.describe('chat panel mobile layout', () => {
 
     const previewBox = await page.locator('.chat-attachment-preview').first().boundingBox();
     expect(previewBox).not.toBeNull();
-    expect(previewBox!.width).toBeGreaterThanOrEqual(20);
-    expect(previewBox!.height).toBeGreaterThanOrEqual(20);
+    // 430dvh 帯では notices cap=44px が行高≒38px を許容する下限。preview 28px は CSS 下限。
+    expect(previewBox!.width).toBeGreaterThanOrEqual(28);
+    expect(previewBox!.height).toBeGreaterThanOrEqual(28);
 
     const fourthRemove = page.locator('.chat-attachment-remove').nth(3);
     await fourthRemove.scrollIntoViewIfNeeded();
