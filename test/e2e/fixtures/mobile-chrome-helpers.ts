@@ -70,10 +70,14 @@ export async function assertAiQuotaBadgeVisible(page: Page): Promise<void> {
 }
 
 /**
- * `.view-toolbar` の右グループが出揃ったことを確定する (bdboard-ij7g)。
+ * `.view-toolbar` の非同期コントロールが出揃ったことを確定する (bdboard-ij7g)。
  *
- * 375px 幅ではこの右グループ (セッション数 / ai-quota 枠 / 手動更新 / チャット) が 1 行に
- * 収まらなくなった時点で 2 行に折り返し、ヘッダーが 42px 伸びて 203 → 245 になる。
+ * 375px 幅では `.view-toolbar-left` / `.view-toolbar-right` が `display: contents` で箱を
+ * 潰され、コントロールは `.view-toolbar` という 1 本の折り返し列に流れる。折り返すのは
+ * 「右グループ」ではなくこの 1 本の列であり、ヘッダーが 42px 伸びて 203 → 245 になる。
+ * セッション数ボタン (`.meta-text-btn`) は同じメディアクエリで `display: none` なのでこの
+ * 帯では折り返しに寄与しない。折り返しに効く非同期コントロールは ai-quota 枠 / 手動更新 /
+ * チャットボタンである。
  * それぞれ別々の非同期クエリに依存しているので、**最後に届いた 1 つ**が折り返しの引き金になる。
  * `waitForHeaderHeightConvergence` の解説にあるフレーム単位トレースでは、ai-quota 枠が出た
  * あとも 48ms のあいだヘッダーは 203 のままで、チャットボタン (`chatAvailable` =
@@ -113,9 +117,14 @@ export interface HeaderHeightConvergence {
   quietMs: number;
   /** 収束判定までに読んだサンプル数 (フレーム数)。 */
   samples: number;
-  /** 待っている間に観測した高さの遷移 (`203@0`, `245@47.9` の形)。CI ログ用の証拠。 */
+  /** 収束待ちを開始した後に観測した高さの遷移。CI ログ用の証拠。 */
   changes: string[];
 }
+
+/** 静止判定の窓 (ミリ秒)。 */
+const HEADER_QUIET_WINDOW_MS = 250;
+/** 静止判定に必要な最小サンプル数。rAF が絞られて 1〜2 サンプルで窓を跨ぐのを防ぐ。 */
+const HEADER_QUIET_MIN_SAMPLES = 4;
 
 /**
  * ヘッダー高が動かなくなるまで静止時間で待つ。
@@ -130,14 +139,21 @@ export interface HeaderHeightConvergence {
  *
  * ## 203 の正体 (実測トレースで確定させた。チケット記載の推定とは違う)
  *
- * `.view-toolbar` は折り返す。375px 幅では右グループ (セッション数 / ai-quota 枠 / 手動更新 /
- * チャット) が 1 行に収まらなくなった時点で 2 行になり、ヘッダーが 42px 伸びて 203 → 245 になる。
+ * `.view-toolbar` は折り返す。375px 幅では `.view-toolbar-left` / `.view-toolbar-right` が
+ * `display: contents` で箱を潰され、コントロールは `.view-toolbar` という 1 本の折り返し列に
+ * 流れる。折り返すのは「右グループ」ではなくこの 1 本の列である。セッション数ボタン
+ * (`.meta-text-btn`) は同じメディアクエリで `display: none` なのでこの帯では折り返しに寄与せず、
+ * 折り返しに効く非同期コントロールは ai-quota 枠 / 手動更新 / チャットボタンである。最後に
+ * 届いた 1 つが 42px (203 → 245) の引き金になる。
  * ページ読み込み直後のフレーム単位トレース (macOS Chromium 375x812) は
  *
  *     t=129.6ms  header=203  ツールバー右 = [セッション, 更新中…]
  *     t=145.3ms  header=203  ai-quota 枠が出現 — **まだ 1 行のままで高さは変わらない**
  *     t=179.1ms  header=203  更新中… → 手動更新
  *     t=193.4ms  header=245  チャットボタンが出現 → ここで初めて 2 行に折り返す
+ *
+ * この列挙は DOM 上の存在であって可視要素ではない (セッション数ボタンは 375px では
+ * `display: none` なので折り返しには寄与しない)。
  *
  * つまり 203 は「ai-quota 枠の描画前」ではなく「**ツールバーがまだ 2 行に折り返していない**」
  * 状態。枠の描画は 42px を動かす**必要**条件ではあるが引き金ではなく、引き金は最後に届いた
@@ -169,10 +185,6 @@ export interface HeaderHeightConvergence {
  * 「タイムアウト」として出てしまい、`mobile-header-compact.spec.ts` の `MAX_HEADER_HEIGHT_PX`
  * のような名前付きアサーションで落ちなくなる。
  */
-const HEADER_QUIET_WINDOW_MS = 250;
-/** 静止判定に必要な最小サンプル数。rAF が絞られて 1〜2 サンプルで窓を跨ぐのを防ぐ。 */
-const HEADER_QUIET_MIN_SAMPLES = 4;
-
 export async function waitForHeaderHeightConvergence(
   page: Page,
   message =
@@ -433,9 +445,10 @@ export const RESIDUAL_MEASUREMENT_LOG_PREFIX = 'MOBILE_SCROLL_RESIDUAL_MEASUREME
  * 「ユーザーが消せない」残差 = maxScrollY から Tips と絞り込みバーの実測高を引いた残り。
  * モデル上は `header + filterBarMarginBottom - 172` になる。
  * mobile-page-scroll-residual.spec.ts の 2 つ目の予算と同じ量。
+ * アサーション対象は生値であり、丸めは表示側だけで行う。
  */
 export function nonDismissibleResidualPx(m: ResidualMetrics): number {
-  return Math.round((m.maxScrollY - m.tipsBanner - m.boardFilterBar) * 100) / 100;
+  return m.maxScrollY - m.tipsBanner - m.boardFilterBar;
 }
 
 /**
@@ -474,7 +487,7 @@ export async function reportResidualMeasurement(
     filterBar: m.boardFilterBar,
     filterBarMarginBottom: m.boardFilterBarMarginBottom,
     maxScrollY: m.maxScrollY,
-    nonDismissibleResidual: nonDismissibleResidualPx(m),
+    nonDismissibleResidual: Math.round(nonDismissibleResidualPx(m) * 100) / 100,
     modelMaxScrollY: modelMaxScrollYPx(m),
     viewportHeight: m.viewportHeight,
     laneIndicatorStrip: m.laneIndicatorStrip,

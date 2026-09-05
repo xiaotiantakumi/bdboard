@@ -126,8 +126,12 @@ test.describe('mobile first card visibility (bdboard-qxt1)', () => {
       headerConvergenceQuietMs: convergence.quietMs,
       headerConvergenceSamples: convergence.samples,
       headerHeightVar: convergence.headerHeightVar,
-      // 待っている間にヘッダー高が動いた履歴。`203@0 245@47.9` のように 2 段で出ていれば
-      // 「ツールバーが遅れて 2 行になった」= 旧実装なら低い値を読んでいた回だと分かる。
+      // `changes` は収束待ちを開始した後の変化履歴である。203 → 245 の折り返しは
+      // `assertViewToolbarSettled` 完了時点で既に終わっているため、ここには現れない。
+      // 初回サンプルと `--header-height` の 1 フレーム遅れにより、正常時も `245@0 245@16.7` の
+      // ように同じ高さのエントリが 1〜2 個出る。異なる高さが並ぶときだけ待ち中に動いた証拠である。
+      // ヘッダーを低く読んだ回 (203 のまま測った回) は、このフィールドではなくペイロードの
+      // `header` フィールドで検知する (Linux CI ログで 203 と出れば一目で分かる)。
       headerHeightChanges: convergence.changes.join(' '),
     });
 
