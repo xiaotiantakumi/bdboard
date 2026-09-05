@@ -5,10 +5,13 @@ export const POPOVER_VIEWPORT_GUTTER_RATIO = 0.02;
 // Ratio-only gutters shrink on narrow viewports (320px→6.4px) where margin matters most;
 // align with repo conventions (.undo-snackbar uses calc(100vw - 32px), etc.).
 export const POPOVER_VIEWPORT_GUTTER_MIN_PX = 12;
-// ガターが .header / .view-toolbar の左右パディング（20px、web/src/index.css）を上回ると、
-// usePopoverViewportClamp がレイアウト上の内側インセットと喧嘩し、実際にははみ出していない
-// ポップオーバーまで動かす（1280px で ±5.6px の偽陽性シフト。bdboard-s0o7 / bdboard-hovk PR #318）。
-// 天井をパディングと同じ 20px に置き結合を固定する。この結合が腐ると e2e が落ちる。
+// ガターが .header の左右パディング（web/src/index.css の calc(20px + env(safe-area-inset-*))。
+// .view-toolbar 自身に左右パディングは無く、width:100% でその内側に敷かれているだけ）を
+// 上回ると、usePopoverViewportClamp がレイアウト上の内側インセットと喧嘩し、実際には
+// はみ出していないポップオーバーまで動かす
+// （1280px で ±5.6px の偽陽性シフト。bdboard-s0o7 / bdboard-hovk PR #318）。
+// 天井をパディングの素の値と同じ 20px に置き結合を固定する。この結合が腐ると e2e が落ちる。
+// 前提: MIN < MAX。逆転させると下の Math.min が勝ち、狭幅の床 12px が無言で消える。
 export const POPOVER_VIEWPORT_GUTTER_MAX_PX = 20;
 
 function clampPopoverToViewport(el: HTMLElement): void {

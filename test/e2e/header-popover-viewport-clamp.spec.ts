@@ -39,12 +39,21 @@ test.describe('header popovers viewport clamp at 320px (bdboard-oeh5)', () => {
     await page.keyboard.press('Escape');
 
     // overflow-menu: 実測では 320px で収まる (shift=0) が、退行しないことを確認する。
+    // shift も見る理由: この帯のガターは床 12px が支配し、.header の左右 padding も
+    // 12px（index.css の @media (max-width: 480px)）で、余裕がちょうど 0 の等号成立。
+    // padding を 12px 未満に変えると偽陽性シフトが復活するが、「ビューポートに収まるか」
+    // だけを見る下の assert は緑のまま通る（デスクトップ帯の 20px 側だけがテストで
+    // 守られている状態だった。bdboard-s0o7 レビュー minor 1）。
     await page.locator('.overflow-menu-button').click();
     await expect(page.locator('.overflow-menu-popover')).toBeVisible();
     const overflowMenu = await page.evaluate((epsilon) => {
       const el = document.querySelector('.overflow-menu-popover');
       const rect = el?.getBoundingClientRect();
+      const shift = el
+        ? getComputedStyle(el).getPropertyValue('--popover-shift-x').trim()
+        : '';
       return {
+        shift,
         found: !!rect,
         left: rect?.left ?? Number.NaN,
         right: rect?.right ?? Number.NaN,
@@ -53,6 +62,7 @@ test.describe('header popovers viewport clamp at 320px (bdboard-oeh5)', () => {
       };
     }, BOUNDS_EPSILON_PX);
     expect(overflowMenu.found, 'overflow-menu popover must be present').toBe(true);
+    expect(overflowMenu.shift).toBe('0px');
     expect(
       overflowMenu.left >= -overflowMenu.epsilon &&
         overflowMenu.right <= overflowMenu.innerWidth + overflowMenu.epsilon,
@@ -141,9 +151,11 @@ test.describe('header popovers viewport clamp — desktop (bdboard-oeh5)', () =>
         `(left=${projectPicker.left}, right=${projectPicker.right}, innerWidth=${projectPicker.innerWidth})`,
     ).toBe(true);
 
-    // overflow-menu / preset-control は right:0 / left:0 で .header/.view-toolbar の
-    // 20px padding 端に張り付く。ガター天井 POPOVER_VIEWPORT_GUTTER_MAX_PX も 20px で
-    // パディングと意図的に一致している（bdboard-s0o7 / bdboard-hovk PR #318）ため、
+    // overflow-menu / preset-control は right:0 / left:0 で .header の左右 padding
+    // （calc(20px + env(safe-area-inset-*))。.view-toolbar 自身は padding を持たず
+    // その内側に敷かれているだけ）の端に張り付く。ガター天井
+    // POPOVER_VIEWPORT_GUTTER_MAX_PX も 20px でパディングの素の値と意図的に一致して
+    // いる（bdboard-s0o7 / bdboard-hovk PR #318）ため、
     // コンテナ端に張り付く 2 種でも shift は 0px のまま。パディングが 20px 未満に変わると
     // 偽陽性シフトが復活しこの assert が落ちる — 結合の腐り検出用（padding > 20px 方向は
     // gutter < padding なのでずれず、落ちなくて正しい）。
