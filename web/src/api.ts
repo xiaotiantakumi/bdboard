@@ -1803,10 +1803,6 @@ export interface ProjectHarnessPackStatusDto {
 
 export type HarnessPrFlowDto = 'pr' | 'direct' | 'none';
 
-/**
- * 注入先プロジェクトの検証コントラクト (`.claude/bdboard-harness.json`) の状態。
- * `not-applicable` はパック未注入のプロジェクト — UI には何も出さない。
- */
 /** `models` 節の要約 1 工程ぶん。候補列そのものは API に出さない。 */
 export interface ProjectHarnessModelStageDto {
   stage: string;
@@ -1814,6 +1810,10 @@ export interface ProjectHarnessModelStageDto {
   tiers: number;
 }
 
+/**
+ * 注入先プロジェクトの検証コントラクト (`.claude/bdboard-harness.json`) の状態。
+ * `not-applicable` はパック未注入のプロジェクト — UI には何も出さない。
+ */
 export type ProjectHarnessContractDto =
   | {
       state: 'ok';

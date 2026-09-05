@@ -200,15 +200,29 @@ describe('formatHarnessModelRoutes', () => {
   it('renders nothing when the project declares no models table', () => {
     expect(formatHarnessModelRoutes(null)).toBeNull();
     expect(formatHarnessModelRoutes([])).toBeNull();
+    expect(formatHarnessModelRoutes(undefined as never)).toBeNull();
   });
 
-  it('lists each stage with its declared tier count', () => {
+  it('labels shared and explicitly declared complexity tiers', () => {
     expect(
       formatHarnessModelRoutes([
         { stage: 'implement', tiers: 3 },
         { stage: 'review', tiers: 1 },
       ]),
-    ).toBe('振り分け: implement 3 段 / review 1 段');
+    ).toBe('振り分け: implement 3 段宣言、review 共通');
+  });
+
+  it('folds stages after the first four', () => {
+    expect(
+      formatHarnessModelRoutes([
+        { stage: 'implement', tiers: 3 },
+        { stage: 'review', tiers: 1 },
+        { stage: 'check', tiers: 1 },
+        { stage: 'test', tiers: 3 },
+        { stage: 'deploy', tiers: 1 },
+        { stage: 'audit', tiers: 1 },
+      ]),
+    ).toBe('振り分け: implement 3 段宣言、review 共通、check 共通、test 3 段宣言、…他 2 工程');
   });
 });
 
@@ -238,7 +252,7 @@ describe('formatHarnessContractDetail with models', () => {
         ],
       }),
     ).toBe(
-      '検証: npm run verify / PR 必須 / main: main / 振り分け: implement 3 段 / review 1 段',
+      '検証: npm run verify / PR 必須 / main: main / 振り分け: implement 3 段宣言、review 共通',
     );
   });
 });

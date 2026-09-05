@@ -609,6 +609,7 @@ describe('parseHarnessContract > models', () => {
     const message = expectSchemaFailure(parseModelsSection({ routes: { implement: {} } }));
 
     expect(message).toContain('models.routes.implement');
+    expect(message).toContain('1 つ以上');
   });
 
   it('rejects complexity keys outside low / med / high / *', () => {
@@ -627,6 +628,25 @@ describe('parseHarnessContract > models', () => {
 
     expect(message).toContain('"medium"');
     expect(message).toContain('low / med / high / *');
+  });
+
+  it('ignores unknown keys directly under models for forward compatibility', () => {
+    expect(
+      parseModelsSection({
+        routes: { review: { '*': ['claude:opus'] } },
+        future: { enabled: true },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('rejects unknown keys under a stage route', () => {
+    expect(
+      expectSchemaFailure(
+        parseModelsSection({
+          routes: { review: { '*': ['claude:opus'], future: ['claude:sonnet'] } },
+        }),
+      ),
+    ).toContain('low / med / high / *');
   });
 
   it('rejects stage keys that do not match the stage-name pattern', () => {
@@ -661,7 +681,9 @@ describe('parseHarnessContract > models', () => {
     expect(expectSchemaFailure(parseModelsSection({ routes: stages(17) }))).toContain(
       '1〜16 個',
     );
-    expect(expectSchemaFailure(parseModelsSection({ routes: {} }))).toContain('1〜16 個');
+    expect(expectSchemaFailure(parseModelsSection({ routes: {} }))).toContain(
+      'models.routes を空にはできません',
+    );
   });
 
   it('requires 1 to 6 candidates per cell', () => {

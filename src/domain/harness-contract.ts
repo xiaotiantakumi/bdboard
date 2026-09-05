@@ -68,7 +68,7 @@ export type HarnessModelComplexityKey =
  */
 export interface HarnessModelStageRoute {
   readonly stage: string;
-  /** 宣言に現れた複雑度キー。UI に出す「段数」はこの長さ。 */
+  /** 宣言に現れた複雑度キー。UI に出す宣言段数で、`*` 一本は共通扱いになる。 */
   readonly declaredKeys: readonly HarnessModelComplexityKey[];
   readonly low: readonly string[];
   readonly med: readonly string[];
@@ -256,6 +256,8 @@ const MODEL_CANDIDATES_MAX = 6;
  */
 const MODEL_CANDIDATE_PATTERN =
   /^(claude|[a-z][a-z0-9-]{0,15}):[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+// `claude` は後続の `[a-z]…` に包含されており冗長だが、設計ドキュメントおよび T2/T3/T8 の
+// チケット本文と表記を一致させるために残している。実際の特別扱いは下の `CLAUDE_MODEL_NAMES` の閉集合チェック。
 
 /**
  * `claude:` の model 部だけは閉集合で見る。bdboard 自身が起動するモデルなので
@@ -440,7 +442,13 @@ function parseModels(value: unknown): ModelsParseResult {
   }
 
   const stages = Object.keys(routesValue);
-  if (stages.length === 0 || stages.length > MODEL_STAGE_MAX_COUNT) {
+  if (stages.length === 0) {
+    return {
+      ok: false,
+      message: 'models.routes を空にはできません（工程を 1 つ以上宣言してください）',
+    };
+  }
+  if (stages.length > MODEL_STAGE_MAX_COUNT) {
     return {
       ok: false,
       message:
