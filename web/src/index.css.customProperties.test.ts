@@ -404,18 +404,21 @@ function listAllTsxSourceFiles(dir: string): string[] {
 }
 
 /**
- * web/src 配下すべての .ts/.tsx から `var(--foo)` 参照の集合を集める (bdboard-kjn9、
- * 「定義はあるが参照が無い」方向の検査専用)。
+ * web/src 配下すべての .ts/.tsx から `var()` 参照の集合を集める。
  *
  * コメントは stripJsComments で先に取り除く。取り除かないと、たとえば
  * usePopoverViewportClamp.ts の JSDoc 中の
  * `` `transform: translateX(var(--popover-shift-x, 0px))` `` のような**説明目的の言及**を
- * 実参照と誤認し、本当に配線が抜けているケースを見逃す (このテストが赤くなるべき側)。
+ * 実参照と誤認し、本当に配線が抜けているケースを見逃す (向き2 がこのテストで赤くなるべき側)。
  *
- * **bdboard-wws5 (未定義参照の検査を .tsx/.ts の var() 参照まで広げる、順方向の拡張) と
- * 走査対象が重なる。** 重複を承知の上で置いている — 本チケットは逆方向の検査なので、
- * wws5 が担当するファイルを先回りして変更しない。将来どちらかが実装されたら、この
- * 走査ロジックを共有ヘルパーへ切り出すことを検討してよい。
+ * **両方向の検査が共有する**: 元々は向き2 (bdboard-kjn9、「定義はあるが参照が無い」) 専用
+ * だったが、bdboard-wws5 (向き1、「参照されているが定義されていない」を .tsx/.ts まで
+ * 拡張) が走査対象の重なりに気付いて再利用した。テストファイルを除外しない
+ * (listAllTsxSourceFiles 参照) 判断はどちらの向きにも安全に効く:
+ * 向き2 では HygienePanel.badge-colors.test.ts の期待値リテラルが唯一の参照サイトである
+ * トークンを誤って「未参照」と判定しないために必要。向き1 では、テストの期待値リテラルが
+ * 定義済みトークン名しか書かない前提のもと、除外する積極的な理由が無い一方、除外すると
+ * テストコード側だけの typo (存在しないトークン名) を見逃しうる。
  */
 function collectTsxCustomPropertyReferences(dir: string): Set<string> {
   const referenced = new Set<string>();
@@ -429,16 +432,32 @@ function collectTsxCustomPropertyReferences(dir: string): Set<string> {
 }
 
 describe('index.css custom properties', () => {
-  it('defines every referenced custom property in bare :root or a documented exception', () => {
+  it('defines every referenced custom property in bare :root or a documented exception (bdboard-wws5: index.css + web/src TS(X))', () => {
     const sourceWithoutComments = stripCssComments(cssSource);
     const defined = collectDefinedCustomProperties(sourceWithoutComments);
-    const referenced = collectReferencedCustomProperties(sourceWithoutComments);
+    const referencedInCss = collectReferencedCustomProperties(sourceWithoutComments);
+    // bdboard-wws5: index.css の中だけでなく web/src の .ts/.tsx (インラインスタイルや
+    // 定数テーブルに埋め込まれた var(--...)) も未定義参照検査の対象にする。実例:
+    // ThroughputStats.tsx の CFD_STATUS_COLORS が var(--throughput-cfd-pinned, #hex) の
+    // ように未定義トークンを参照していても、CSS だけを見る検査では検出できなかった
+    // (bdboard-7g0a)。走査ロジックは向き2 (bdboard-kjn9) の
+    // collectTsxCustomPropertyReferences をそのまま再利用する — 走査対象
+    // (listAllTsxSourceFiles: テストファイルも除外しない) も含めて共有する設計は、その
+    // 関数の JSDoc に明記済み。テストファイルを除外しない理由もここで両立する:
+    // HygienePanel.badge-colors.test.ts のような期待値リテラルの var() 参照も、
+    // 「定義されていない名前を書いていないか」を検証する対象として扱って問題ない
+    // (除外すべき積極的な理由が無い一方、除外すると別の未定義参照を見逃しうる)。
+    const referencedInTsx = collectTsxCustomPropertyReferences(webSrcDir);
+    const referenced = new Set([...referencedInCss, ...referencedInTsx]);
     const allowedNonRootProperties = new Set([
       ...RUNTIME_CUSTOM_PROPERTIES,
       ...SCOPED_CUSTOM_PROPERTIES,
     ]);
     // フォールバック付き var() も許容しない。未定義参照は固定ライト色のフォールバックを
     // ダークテーマへ持ち込むなどの欠陥を隠すため、定義漏れとして必ず検出する。
+    // collectReferencedCustomProperties / collectTsxCustomPropertyReferences とも
+    // VAR_REFERENCE_PATTERN 系の正規表現でプロパティ名だけを捕捉し、フォールバック引数
+    // (`, #fallback` の部分) は読み捨てるので、フォールバックの有無に関わらず同じ扱いになる。
     const undefinedProperties = [...referenced]
       .filter(
         (property) =>
@@ -453,7 +472,7 @@ describe('index.css custom properties', () => {
 
     expect(
       undefinedProperties,
-      `index.css に bare :root で未定義のカスタムプロパティ参照があります: ${undefinedProperties.join(', ')}。全テーマ・全スコープで使う値は条件なしの単独 :root ブロックに定義し、要素スコープまたは実行時書き込みが意図的なら理由付きで許可リストに追加してください。":root, .foo { … }" のようなセレクタリストと at-rule (@media / @supports / @container / @layer) の中の :root は、意図的に定義として数えていません。`,
+      `index.css または web/src の .ts/.tsx に bare :root で未定義のカスタムプロパティ参照があります: ${undefinedProperties.join(', ')}。全テーマ・全スコープで使う値は条件なしの単独 :root ブロックに定義し、要素スコープまたは実行時書き込みが意図的なら理由付きで許可リストに追加してください。":root, .foo { … }" のようなセレクタリストと at-rule (@media / @supports / @container / @layer) の中の :root は、意図的に定義として数えていません。`,
     ).toEqual([]);
     expect(
       staleAllowedProperties,
