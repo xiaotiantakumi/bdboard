@@ -140,3 +140,83 @@ entry was removed once the `v0.1.2` tag put it out of range — bdboard-r5we,
 bdboard-tbgj.)
 
 Not part of `npm run verify` (needs git tags).
+
+### 書いた瞬間に弾く: `scripts/commit-message-guard.mjs` (bdboard-ekj3)
+
+The two CI arms above both find the problem *after* the commit exists, and they
+only ever see the **squashed** commit that lands on `main` (the `pull_request`
+arm sees `base..head`, but the branch is squashed on merge, so what reaches
+`main` is a message nobody has checked in that form). The `PreToolUse(Bash)`
+hook registered in `.claude/settings.json` looks at something different: **every
+commit written locally**, before `git commit` runs, whatever its type and
+whether or not it survives the squash. It pulls the message out of the command
+line, runs it through the same `checkCommitMessage()` from
+`scripts/check-commit-parse.mjs`, and exits 2 with the offending line, column
+and caret. It is not a third copy of the CI check — it watches a different set
+of commits.
+
+What actually breaks, and why it is invisible: the parser treats a `(` that
+directly follows a word character (`採った(縦積み`) as the start of a *scope*
+that has to close before the line ends. Put a single space in front of the same
+`(` and it parses fine. Nothing in the rendered message tells the author which
+one they wrote, and the cost of getting it wrong is that release-please drops
+the commit from the CHANGELOG — permanently, once the tag is cut.
+
+**What the hook denies, and what it deliberately does not.** It denies only
+parse failures where the parser was waiting for a closing `)` — the error text
+ends in `valid tokens [)]`, which can only happen after a `(` was consumed as a
+scope. Of the 40 unparsable commits on `main`, 38 are this class (35 broke at
+the newline, 3 at a nested `(` such as `なっている(clear() の…)`). The other two
+have a subject that is not conventional at all (`bd/bdboard 3tw.149 (#83)`).
+Everything outside the paren class — `wip`, `Revert "…"`, `Merge branch …`,
+`fixup!` / `squash!`, an empty message — is **allowed**, with a single warning
+line on stderr. The hook is not a conventional-commit style enforcer: someone
+who types `wip` knows they typed `wip`, and a guard that sits on every `Bash`
+call in every worktree would get an override made permanent, disabling the one
+thing it is actually for.
+
+Why the real parser instead of a regex: a lexical "line ends with an unclosed
+`(`" rule was measured against all 383 commits on `main` and flagged **198 of
+them (52%)** — Japanese bodies wrap parenthetical asides across lines all the
+time. The parser rejects 40 (10.4%), of which 38 are the unclosed-paren class.
+Only the real parser separates the harmful from the ordinary. That 10.4% is not
+the day-to-day firing rate, though: it covers the whole of `main`, including old
+history from before the allowlist existed. Over the release range that actually
+matters, `v0.1.2..HEAD` (130 commits), only 2 are unparsable (**1.5%**), and one
+of those is already allowlisted. Expect this hook to stay silent almost always.
+
+Why not a `commit-msg` git hook: `core.hooksPath` already points at
+`.beads/hooks` (beads installs five hooks there). Adding one would mean writing
+into a directory `bd init` regenerates and PRs may not touch, or repointing
+`core.hooksPath` — which would silently disable all five beads hooks for the
+main checkout and every worktree at once, since that config lives in the shared
+`.git`. It would also need a per-clone install step.
+
+**Fail-open by design.** The hook allows the command whenever it cannot be sure:
+the message comes from a variable or an unrelated substitution; an unquoted
+heredoc delimiter means the body still expands; a heredoc is unterminated or a
+quote unclosed; `-F -` cannot be tied to exactly one heredoc opened by that same
+command; `-F` points at a file it cannot read, is not a regular file, or is over
+1 MiB; there is no `-m` / `-F` at all (editor, `--amend --no-edit`,
+`git commit -C <sha>`, `cherry-pick`, `rebase` — which is also why replaying an
+already-unparsable historical commit never trips it); the parse failure is not
+about parens; `@conventional-commits/parser` is not installed yet; stdin is not
+valid hook JSON; or anything throws. A guard that blocks commits because it
+could not read its own input is worse than no guard.
+
+Known limitation: the hook reads the command line, not the shell's semantics, so
+a command that merely *mentions* `git commit -m '<unclosed paren>'` — `echo`, a
+grep pattern, a snippet in a doc being written with a heredoc — is denied too.
+Separating mention from execution needs shell semantics the tokenizer
+deliberately does not have; use the override on the rare occasions it bites.
+
+Escape hatch: `BDBOARD_COMMIT_GUARD_OVERRIDE="<reason>"` as an assignment in the
+**same simple command** as `git` — `BDBOARD_COMMIT_GUARD_OVERRIDE="reason" git
+commit …` or `env BDBOARD_COMMIT_GUARD_OVERRIDE="reason" git commit …`. A
+separate `export …` statement, or `VAR=x && git commit …`, does not reach the
+hook, which only sees the one command line it was invoked for. An empty reason
+does not count. It is honoured from the environment or from that inline
+assignment only — never from anywhere inside the message body, or the denial
+text itself (which names the variable) could be pasted into a commit body to
+disarm the guard. When it does fire, the hook writes one line to stderr saying
+it let an unclosed-paren message through, so the bypass leaves a trace.
