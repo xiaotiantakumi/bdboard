@@ -2884,6 +2884,9 @@ body {
 }
 
 .lane-indicator-item-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -2932,6 +2935,39 @@ body {
 .lane-indicator-item-current .lane-indicator-count {
   color: inherit;
   background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* bdboard-6y5b: モバイルでは .lane-header を丸ごと描画しないため (下の
+   `@media (max-width: 700px)` の `.lane-header { display: none; }` 参照)、
+   レーンヘッダーにしか無かった折りたたみトグルをここへ移す。ストリップ自体が
+   `.lane-indicator-strip { display: none; }` (このファイル冒頭) を挟んで
+   モバイル幅の @media 内でしか `display: block` にならないので、この
+   ボタンのスタイルにモバイル専用の @media ガードは要らない — 親が非表示なら
+   このボタンも描画されない。 */
+.lane-indicator-collapse-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lane-indicator-collapse-toggle:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
+}
+
+.lane-indicator-collapse-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .lanes-row {
@@ -6186,6 +6222,25 @@ body {
   .board-section .lane {
     max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
     max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
+  }
+
+  /* bdboard-6y5b: ページ最下端までスクロールしたとき .lane 上端が sticky な
+     .lane-indicator-strip の下へ潜り込み、.lane-header (レーン名・件数・
+     折りたたみトグル) が隠れる問題 (bdboard-knrx / bdboard-t0hx)。上の
+     `.lane` / `.board-section .lane` の減算式 (260px) には触れず、隠れて困る
+     .lane-header 自体をモバイルで描画しないことで解消する。ストリップが
+     既にレーン名・件数を持つので情報は失われず (下の `.lane-indicator-strip`
+     ルール参照)、折りたたみトグルだけは唯一の操作なので
+     `.lane-indicator-collapse-toggle` としてストリップ側へ移した
+     (LaneScrollIndicator.tsx)。ヘッダー分の高さがまるごとカード領域に返るため、
+     PR #392 (別解: 260px を実ヘッダー高へ追従させる案、-10.1% のカード密度を
+     払っていた) と異なり density は悪化しない。分割ビュー
+     (.board-section .lane) にも同じ .lane-header 非表示が効くので、
+     .board-section の margin-bottom (このファイル内 .board-section 定義) が
+     絡む潜り込み残差はこの方式では発生しない — .lane-header がそもそも
+     存在しないため隠れようがない。 */
+  .lane-header {
+    display: none;
   }
 
   .lanes-scroll-region {
