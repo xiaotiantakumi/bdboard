@@ -134,26 +134,18 @@ const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([
  *
  * さらに bdboard-bdsd (WIP 超過レーンの `.lane-count` 修正) が掃引フィクスチャに WIP 超過
  * レーンを初めて足したことで `span.lane-header-label-text` (レーン名文字列。無クラス `span`
- * だったので `.tips-banner-text-body` と同じ理由でクラスを付与) が新規検出され、正味 19 件。
- * bdboard-bdsd のスコープは `.lane-header-wip-exceeded .lane-count` の前景/背景だけで、
- * `.lane-header-wip-exceeded` 自身の文字色 (`color: var(--color-warning)`、レーン名は
- * これを継承する) は対象外。同じ「同色相の前景/背景」構図の別インスタンスなので直すこと
- * 自体は同じ手法で可能だが、本チケットの受け入れ条件には含まれない。
+ * だったので `.tips-banner-text-body` と同じ理由でクラスを付与) が一時的に新規検出され
+ * (正味 19 件)、bdboard-hodh がこれを直して 18 件へ戻した。bdboard-bdsd のスコープは
+ * `.lane-header-wip-exceeded .lane-count` の前景/背景だけで、`.lane-header-wip-exceeded`
+ * 自身の文字色 (`color: var(--color-warning)`、レーン名はこれを継承する) は対象外だった
+ * ため一度未修正のまま残ったが、bdboard-hodh が同じ派生トークン (`--lane-header-wip-fg`、
+ * `.lane-count` 用に新設された `--lane-count-wip-fg` を改名・流用) をこの `color` にも
+ * 適用して light 1.93:1 → 5.42:1 (dark は元々 6.10:1 で AA 充足済み、同トークンで 7.24:1) に
+ * 解消した。
  *
  * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
  */
 const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([
-  [
-    'span.lane-header-label-text',
-    {
-      measured: 1.93,
-      floor: 1.88,
-      note:
-        'bdboard-97ib.1: --color-warning (#ff9500) on .lane-header-wip-exceeded の着色背景。' +
-        'bdboard-bdsd の対で直した .lane-count と同じ構図だが、bdboard-bdsd のスコープ外 ' +
-        '(.lane-header-wip-exceeded 自身の color は対象に含まれない)。棚卸しは bdboard-97ib.1 へ',
-    },
-  ],
   [
     'button.meta-text.meta-text-btn',
     { measured: 3.22, floor: 3.17, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
