@@ -12,6 +12,7 @@ import {
   classifyVerifyOutput,
   formatKnownFlakeNotice,
   ON_TASK_UPDATE_TIMEOUT_SIGNATURE,
+  stripAnsi,
 } from './verify-flake-detector.mjs';
 
 // bdboard-c6nv の実測ログに基づく最小再現。
@@ -123,6 +124,56 @@ describe('classifyVerifyOutput', () => {
   it('treats empty or non-string input as undetermined without throwing', () => {
     expect(classifyVerifyOutput('').status).toBe('undetermined');
     expect(classifyVerifyOutput(undefined).status).toBe('undetermined');
+  });
+});
+
+// verify.mjs は TTY のとき FORCE_COLOR=1 を子に渡す。そのとき vitest のサマリ行は
+// 行頭の空白より**前**に `\u001B[2m` が付いた形で来る。下は実測したバイト列そのまま。
+// ANSI を除去しないと `^[ \t]*Tests` が一致せず summaryLines が 0 件になり、
+// ローカル (= このチケットが対象にしている macOS 手元実行) だけ黙って
+// 'undetermined' に落ちる。CI は非TTYで色が付かないので通ってしまい、
+// 一番効いてほしい環境でだけ機能が死ぬ、という非対称な壊れ方をする。
+const ANSI_TESTS_SUMMARY_LINE =
+  '\u001B[2m      Tests \u001B[22m \u001B[1m\u001B[32m9 passed\u001B[39m\u001B[22m\u001B[90m (9)\u001B[39m';
+
+describe('classifyVerifyOutput with ANSI-coloured output (FORCE_COLOR)', () => {
+  it('strips ANSI so the Tests summary line is still found', () => {
+    const result = classifyVerifyOutput(ANSI_TESTS_SUMMARY_LINE);
+    expect(
+      result.summaryLineCount,
+      'ANSI 付きサマリ行が 1 件として数えられること (0 なら strip が効いていない)',
+    ).toBe(1);
+    expect(result.status).not.toBe('undetermined');
+  });
+
+  it('classifies a coloured known-flake run as known-flake, not undetermined', () => {
+    const output = [ANSI_TESTS_SUMMARY_LINE, ON_TASK_UPDATE_ERROR_BLOCK].join('\n');
+    const result = classifyVerifyOutput(output);
+    expect(result.status).toBe('known-flake');
+    expect(result.failedCount).toBe(0);
+    expect(result.hasOnTaskUpdateTimeout).toBe(true);
+  });
+
+  it('still counts failures when the failed summary line is coloured', () => {
+    const colouredFailure =
+      '\u001B[2m      Tests \u001B[22m \u001B[1m\u001B[31m2 failed\u001B[39m | 7 passed\u001B[22m';
+    const output = [colouredFailure, ON_TASK_UPDATE_ERROR_BLOCK].join('\n');
+    const result = classifyVerifyOutput(output);
+    expect(
+      result.status,
+      '実失敗は色が付いていても known-flake に握り潰されないこと',
+    ).toBe('real-failure');
+    expect(result.failedCount).toBe(2);
+  });
+});
+
+describe('stripAnsi', () => {
+  it('removes CSI sequences and leaves the payload intact', () => {
+    expect(stripAnsi(ANSI_TESTS_SUMMARY_LINE)).toBe('      Tests  9 passed (9)');
+  });
+
+  it('is a no-op for text that has no escapes', () => {
+    expect(stripAnsi('      Tests  9 passed (9)')).toBe('      Tests  9 passed (9)');
   });
 });
 

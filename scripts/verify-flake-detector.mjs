@@ -28,6 +28,25 @@
 
 export const ON_TASK_UPDATE_TIMEOUT_SIGNATURE = 'Timeout calling "onTaskUpdate"';
 
+// ANSI エスケープ (CSI シーケンス)。**判定前に必ず除去する。**
+// verify.mjs は TTY のとき FORCE_COLOR=1 を子に渡すため、ローカルの対話実行では
+// vitest のサマリ行が `\u001B[2m      Tests \u001B[22m ...` の形で来る。
+// エスケープが行頭の空白より**前**に付くので、除去しないと `^[ \t]*Tests` が
+// 一致せず summaryLines が 0 件になり、常に 'undetermined' へ落ちる。
+// CI は非TTYで色が付かないため通り、ローカルだけ黙って死ぬ — この非対称が厄介なので
+// 純関数側で吸収する (bdboard-8rl8 の議長レビューで実測して是正)。
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_RE = /\u001B\[[0-9;]*[A-Za-z]/g;
+
+/**
+ * ANSI エスケープを除去する。
+ * @param {string} text
+ * @returns {string}
+ */
+export function stripAnsi(text) {
+  return text.replace(ANSI_ESCAPE_RE, '');
+}
+
 // "Tests" サマリ行そのもの (行頭の空白を許容し、"Test Files" は "Tests" にマッチしない —
 // 直後に来るのは空白であって "Files" ではないため)。
 const TESTS_SUMMARY_LINE_RE = /^[ \t]*Tests[ \t]+.+$/gm;
@@ -44,7 +63,7 @@ const TESTS_FAILED_COUNT_RE = /^[ \t]*Tests[ \t]+(\d+)[ \t]+failed\b/;
  * }}
  */
 export function classifyVerifyOutput(output) {
-  const text = typeof output === 'string' ? output : '';
+  const text = stripAnsi(typeof output === 'string' ? output : '');
   const hasOnTaskUpdateTimeout = text.includes(ON_TASK_UPDATE_TIMEOUT_SIGNATURE);
   const summaryLines = text.match(TESTS_SUMMARY_LINE_RE) ?? [];
 
