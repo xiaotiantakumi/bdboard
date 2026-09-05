@@ -119,6 +119,13 @@ export function useFocusTrap({
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && onEscapeRef.current !== undefined) {
+        // この early-return は「先に Escape を消費した子がいるなら閉じない」という契約であり、
+        // HelpPanel がそれに依存している (bdboard-okdh): 絞り込み入力に文字が入っている間の
+        // 1 回目の Escape は「絞り込みのクリア」で、パネルを閉じてはいけない。HelpPanel 側は
+        // onKeyDownCapture (React のキャプチャは root に付くので、この <aside> 直付けの
+        // バブルリスナより先に走る) で preventDefault() し、ここを素通りさせている。
+        // この 3 行を消すと、HelpPanel の Escape が「1 回目でいきなり閉じる」に無言で退行する
+        // (テストは拾うが、useFocusTrap.ts しか触っていない人には理由が見えない)。
         if (event.defaultPrevented) {
           return;
         }
