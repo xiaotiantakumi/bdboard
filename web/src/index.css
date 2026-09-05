@@ -1516,7 +1516,10 @@ body {
   align-self: flex-start;
   background: var(--color-accent, #007aff);
   border-color: transparent;
-  color: white;
+  /* bdboard-kjn9: accent 背景の上に載る前景色は --color-accent-fg
+     (light/dark とも #ffffff で white と等値なので見た目の変化は無い)。
+     ここがハードコード white だったのが、そのトークンが「参照 0」に見えていた原因。 */
+  color: var(--color-accent-fg);
   font-weight: 600;
 }
 

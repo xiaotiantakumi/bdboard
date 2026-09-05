@@ -62,9 +62,12 @@ const DARK_TEXT_TOKEN = '#f2f2f7';
  * index.css の色系トークン 42 個のうち両テーマで同値なのは **2 つ**:
  * `--color-text-tertiary` (#8e8e93) と `--color-accent-fg` (#ffffff)。
  * ここに挙げてあるのは前者と .overlay のスクリム (トークンではない直値) だけで、
- * `--color-accent-fg` は入れていない — 現在 web/src/ には `var(--color-accent-fg)` の参照が
- * 1 つも無く (実測)、描画に出ないので掃引に掛からないため。
- * **将来この死にトークンを実際に配線した瞬間、両テーマ同値が正しいにもかかわらず
+ * `--color-accent-fg` は入れていない — bdboard-kjn9 で `.settings-panel-save`
+ * (`SettingsPanel.tsx`) の前景ハードコード `color: white` を `var(--color-accent-fg)`
+ * に置き換え、`var(--color-accent-fg)` の参照は 1 つになった。ただし `SettingsPanel` は
+ * `view === 'settings'` でのみ描画され、この掃引が開くのは `openBoardAndDetail()`
+ * (ボード + チケット詳細パネル) だけなので、依然としてこの掃引には現れない (実測)。
+ * **将来この設定ビューを掃引の描画対象に含めた瞬間、両テーマ同値が正しいにもかかわらず
  * pinned として誤って赤になる。** そのときの直し方は「白 = rgb(255, 255, 255) をここへ足す」
  * ではない (白は他の箇所でも使われうるので、正当な pinned まで一緒に隠してしまう)。
  * 許可リストを値ではなくセレクタで持つ形に作り替えるほうを先に検討すること。
