@@ -158,11 +158,18 @@ type Sample = {
   background: string;
   effectiveBg: [number, number, number] | null;
   /**
-   * `aria-hidden="true"` が要素自身に直接付いているか。アクセシビリティツリーから隠された
-   * 装飾グリフ (チェブロン ▶/▼・キャレット・トグルアイコン等) は、視覚的には文字だが
-   * 支援技術には「テキスト」として一切露出しない — WCAG SC 1.4.3 (テキストの 4.5:1) では
-   * なく SC 1.4.11 (非テキストコントラスト、3:1) の対象になる (bdboard-97ib.1 の
-   * opus-5 レビュー指摘、requiredRatio() 参照)。
+   * **アイコンとして機能する装飾グリフ**か。判定は `aria-hidden="true"` が要素自身に直接
+   * 付いていること **かつ** own text が「英数字を含まない 1〜2 文字」であること の両方。
+   * チェブロン ▶/▼・キャレット ⌄・チェック ✓ 等がこれに当たり、視覚的には文字だが
+   * 役割はアイコンなので WCAG SC 1.4.3 (テキストの 4.5:1) ではなく SC 1.4.11
+   * (非テキストコントラスト、3:1) の対象として扱う。
+   *
+   * **`aria-hidden` だけを条件にしてはいけない** (bdboard-97ib.1 の議長レビューで是正)。
+   * `aria-hidden="true"` は「支援技術に露出しない」であって「テキストではない」ではなく、
+   * 見えている文章に付くことが実際にある — 現に `LoadingIndicator.tsx` は
+   * `<span aria-hidden="true">{` (${elapsedSeconds}秒経過)`}</span>` のように**可読な文章**へ
+   * 付けている (読み上げは別の live region が担うため)。字数・字種の条件を外すと、この種の
+   * 「見える文章」が 4.5:1 の網から静かに落ちて、掃引が緩んだことに誰も気付けなくなる。
    */
   decorative: boolean;
   /**
@@ -289,7 +296,9 @@ function readSamples(elements: Element[]): (Sample | null)[] {
       color: cs.color,
       background: cs.backgroundColor,
       effectiveBg: effectiveBg(el),
-      decorative: el.getAttribute('aria-hidden') === 'true',
+      decorative:
+        el.getAttribute('aria-hidden') === 'true'
+        && /^[^\p{L}\p{N}]{1,2}$/u.test((el.textContent ?? '').trim()),
       opacity: cumulativeOpacity(el),
       borderColors: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
       borderWidths: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(
@@ -387,13 +396,12 @@ function contrastRatio(fg: [number, number, number], bg: [number, number, number
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
-/** WCAG 2.2 の large text: 24px 以上、または 18.66px 以上かつ bold。 */
 /**
  * WCAG 2.2 の large text: 24px 以上、または 18.66px 以上かつ bold は 3:1 に緩和される
- * (SC 1.4.3)。`sample.decorative` (`aria-hidden="true"`) はサイズに関わらず 3:1 —
- * アクセシビリティツリーから隠された装飾グリフはテキストとして支援技術に露出しないため、
- * SC 1.4.3 ではなく非テキストコントラスト SC 1.4.11 が適用対象になる
- * (bdboard-97ib.1、Sample.decorative の doc コメント参照)。
+ * (SC 1.4.3)。`sample.decorative` (アイコンとして機能する装飾グリフ) もサイズに関わらず
+ * 3:1 — テキストではなくアイコンなので SC 1.4.11 (非テキストコントラスト) が適用対象。
+ * decorative の判定条件と、`aria-hidden` 単独を条件にできない理由は
+ * `Sample.decorative` の doc コメントを参照。
  */
 function requiredRatio(sample: Sample): number {
   const large = sample.fontSize >= 24 || (sample.fontSize >= 18.66 && sample.fontWeight >= 700);
