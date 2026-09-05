@@ -28,6 +28,7 @@ import {
   formatWorktreeCleanupScript,
 } from '../bdCommands';
 import { formatActivityTime } from './activityFeedFormatting';
+import { LoadingIndicator } from './LoadingIndicator';
 import {
   buildHarnessDriftMessage,
   buildHarnessHooksMessage,
@@ -544,7 +545,7 @@ export function HygienePanel({
         </span>
       </div>
 
-      {isLoading && <p className="loading">読み込み中…</p>}
+      {isLoading && <LoadingIndicator />}
       {isError && (
         <p className="error-message">
           {loadError !== null

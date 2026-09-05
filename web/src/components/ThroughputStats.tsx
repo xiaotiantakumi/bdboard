@@ -21,6 +21,7 @@ import {
   statsWeeksLabel,
   type StatsWeeks,
 } from '../uiPersistedState';
+import { LoadingIndicator } from './LoadingIndicator';
 import { ModelStatsTableScroll } from './ModelStatsTableScroll';
 import { togglePressedProps } from './toggleGroupA11y';
 import {
@@ -707,7 +708,7 @@ export function ThroughputStats({
         </div>
       </div>
 
-      {isLoading && <p className="loading">読み込み中…</p>}
+      {isLoading && <LoadingIndicator />}
       {isError && <p className="error-message">{errorMessage}</p>}
       {!isLoading &&
         !isError &&
@@ -757,7 +758,7 @@ export function ThroughputStats({
               {SECTION_DESCRIPTIONS.harnessKpi}
             </p>
           </div>
-          {harnessKpiQuery.isLoading && <p className="loading">読み込み中…</p>}
+          {harnessKpiQuery.isLoading && <LoadingIndicator />}
           {!harnessKpiQuery.isLoading && harnessKpiQuery.isError && (
             <p className="error-message">{harnessKpiErrorMessage}</p>
           )}

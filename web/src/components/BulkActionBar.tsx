@@ -403,7 +403,9 @@ export function BulkActionBar({
         >
           完了
         </button>
-        <div className="quick-action-defer-group">
+        <div
+          className={`quick-action-defer-group${deferPeriodKind === 'custom' ? ' quick-action-defer-group-custom' : ''}`}
+        >
           <select
             aria-label="延期期間"
             value={deferPeriodKind}

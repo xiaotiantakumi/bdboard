@@ -14,6 +14,7 @@ import {
   type ActivityWindowDays,
 } from '../uiPersistedState';
 import { buildDailyDigestMarkdown } from './dailyDigestMarkdown';
+import { LoadingIndicator } from './LoadingIndicator';
 import { togglePressedProps } from './toggleGroupA11y';
 
 const COPY_FEEDBACK_MS = 2000;
@@ -184,7 +185,7 @@ export function DailyDigest({
         </div>
       </div>
 
-      {isLoading && <p className="loading">読み込み中…</p>}
+      {isLoading && <LoadingIndicator />}
       {errorMessage !== null && <p className="error-message">{errorMessage}</p>}
       {!isLoading && errorMessage === null && markdown !== null && (
         <pre className="daily-digest-preview">{markdown}</pre>

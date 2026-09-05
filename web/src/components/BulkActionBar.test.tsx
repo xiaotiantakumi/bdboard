@@ -426,6 +426,26 @@ describe('BulkActionBar', () => {
     expect(mockPostTicketAddLabel).not.toHaveBeenCalled();
   });
 
+  // jsdom では flex 折り返しの幾何を検証できず、e2e も複数選択 → BulkActionBar
+  // のフィクスチャが無いため独立行レイアウトは DOM クラスの付け外しだけを検証する。
+  it('adds quick-action-defer-group-custom only when defer period is custom', async () => {
+    const cards = new Map([['bdboard-ok', makeCard('bdboard-ok')]]);
+    renderBulkBar(cards, ['bdboard-ok']);
+
+    const deferGroup = () =>
+      screen.getByLabelText('延期期間').closest('.quick-action-defer-group');
+
+    expect(deferGroup()).not.toHaveClass('quick-action-defer-group-custom');
+
+    await user.selectOptions(screen.getByLabelText('延期期間'), 'custom');
+    expect(deferGroup()).toHaveClass('quick-action-defer-group-custom');
+    expect(document.querySelector('input[type="date"]')).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('延期期間'), '1week');
+    expect(deferGroup()).not.toHaveClass('quick-action-defer-group-custom');
+    expect(document.querySelector('input[type="date"]')).not.toBeInTheDocument();
+  });
+
   it('opens bulk label confirm on plain Enter in the label input', async () => {
     const cards = new Map([['bdboard-a', makeCard('bdboard-a')]]);
     renderBulkBar(cards, ['bdboard-a']);
