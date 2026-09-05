@@ -36,6 +36,37 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('隣のパネル')).toBeInTheDocument();
   });
 
+  it('keeps the action row outside the scrollable body so it never gets scrolled away', () => {
+    // bdboard-54uh: 長いエラーメッセージ (スタックトレース級) でパネルが可視高を
+    // 超えても .error-boundary-actions がパネル外に落ちないよう、本文
+    // (.error-boundary-body) だけがスクロールし、title/actions はその外に
+    // 置かれている必要がある。DOM 構造でその契約を固定する
+    // (実際に画面外へ落ちないことの検証は手動で実施済み — PR 説明を参照)。
+    render(
+      <ErrorBoundary label="チケット詳細" overlay>
+        <Boom message="stack trace level message" />
+      </ErrorBoundary>,
+    );
+
+    const panel = screen.getByRole('alert');
+    const body = panel.querySelector<HTMLElement>('.error-boundary-body');
+    const actions = panel.querySelector<HTMLElement>('.error-boundary-actions');
+    const title = panel.querySelector<HTMLElement>('.error-boundary-title');
+
+    expect(body).not.toBeNull();
+    expect(actions).not.toBeNull();
+    // detail/hint はスクロール対象の本文コンテナの中。
+    expect(body).toContainElement(screen.getByText('stack trace level message'));
+    expect(body).toContainElement(
+      screen.getByText('この部分だけが停止しています。他の表示は続けて操作できます。'),
+    );
+    // title と actions は本文コンテナの外 (パネル直下の兄弟) — スクロールしても
+    // 隠れない。
+    expect(body).not.toContainElement(title);
+    expect(body).not.toContainElement(actions);
+    expect(panel).toContainElement(actions);
+  });
+
   it('renders children untouched when nothing throws', () => {
     render(
       <ErrorBoundary label="ボード">

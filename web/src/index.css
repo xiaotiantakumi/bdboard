@@ -768,6 +768,10 @@ body {
   word-break: break-word;
 }
 
+.error-boundary-body {
+  overflow-y: auto;
+}
+
 .error-boundary-hint {
   margin: 6px 0 0;
   font-size: 0.85em;
@@ -790,6 +794,15 @@ body {
 
 .error-boundary-overlay .error-boundary {
   width: min(520px, 100%);
+  /* オーバーレイの padding とパネルの max-height はセットで dvh にする
+     (bdboard-68ub / .tunnel-modal-panel と同じ理由)。長いエラーメッセージ
+     (スタックトレース級) でも .error-boundary-actions が画面外に落ちないよう、
+     本文 (.error-boundary-body) 側をスクロールさせてアクション行を常にパネル内に残す。 */
+  max-height: min(85vh, 720px);
+  max-height: min(85dvh, 720px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .main {
