@@ -3528,7 +3528,7 @@ export function ChatPanel({
             </button>
           </div>
           <span className="chat-input-hint">
-            ⌘/Ctrl + Enter で送信 · PNG/JPEG/WebP を貼り付け（最大4枚）
+            ⌘/Ctrl + Enter で送信 · 画像は PNG/JPEG/WebP を4枚まで（貼り付け可）
           </span>
           <span className="chat-image-privacy-hint">
             画像はこの画面のメモリ上だけに保持され、履歴 API / localStorage には保存されません。
