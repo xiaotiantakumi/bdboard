@@ -37,17 +37,17 @@ export class WrongHealthServerError extends Error {
     const reason = options?.reason ?? 'nonce_mismatch';
     if (reason === 'invalid_body') {
       super(
-        `bdboard e2e: another process's server is listening on port ${port} ` +
-          `but did not return bdboard health JSON (expected instanceNonce=${expectedNonce}). ` +
-          'The spawned e2e server may have failed to bind; health check matched a foreign listener.',
+        `bdboard e2e: the server answering on port ${port} did not identify itself as this run's instance — ` +
+          `it did not return bdboard health JSON (expected instanceNonce=${expectedNonce}). ` +
+          'The spawned e2e server may have failed to bind, or another process or proxy may be holding the port.',
       );
     } else {
       const actualLabel =
         actualNonce === undefined ? '(missing instanceNonce field)' : actualNonce;
       super(
-        `bdboard e2e: another process's server is listening on port ${port} ` +
+        `bdboard e2e: the server answering on port ${port} did not identify itself as this run's instance ` +
           `(expected instanceNonce=${expectedNonce}, got ${actualLabel}). ` +
-          'The spawned e2e server may have failed to bind; health check matched a foreign listener.',
+          'The spawned e2e server may have failed to bind, and another process may be holding the port.',
       );
     }
     this.name = 'WrongHealthServerError';
@@ -58,9 +58,20 @@ export class WrongHealthServerError extends Error {
 function assertMatchingNonce(
   port: number,
   expectedNonce: string,
-  body: HealthBody,
+  body: unknown,
 ): void {
-  const actual = body.instanceNonce;
+  if (typeof body !== 'object' || body === null) {
+    throw new WrongHealthServerError(port, expectedNonce, undefined, {
+      reason: 'invalid_body',
+    });
+  }
+  const healthBody = body as HealthBody;
+  if (healthBody.ok !== true) {
+    throw new WrongHealthServerError(port, expectedNonce, undefined, {
+      reason: 'invalid_body',
+    });
+  }
+  const actual = healthBody.instanceNonce;
   if (actual !== expectedNonce) {
     throw new WrongHealthServerError(port, expectedNonce, actual);
   }
@@ -68,8 +79,9 @@ function assertMatchingNonce(
 
 /**
  * Polls /api/health until the spawned child responds with the expected instance nonce.
- * Foreign listeners on the same port fail immediately (no retry) so mis-binding does not
- * masquerade as a slow start.
+ * Nonce mismatch and non-health 200 responses fail immediately (no retry).
+ * Connection refusal (network_error) and non-2xx (http_error) retry until the deadline;
+ * timeout messages distinguish the two cases.
  */
 export async function waitForHealth(params: WaitForHealthParams): Promise<void> {
   const {
@@ -86,6 +98,8 @@ export async function waitForHealth(params: WaitForHealthParams): Promise<void> 
 
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
+  let sawHttpResponse = false;
+  let lastHttpStatus: number | undefined;
 
   while (Date.now() < deadline) {
     if (!isChildAlive()) {
@@ -103,11 +117,15 @@ export async function waitForHealth(params: WaitForHealthParams): Promise<void> 
         lastError = result.error;
       } else if (result.kind === 'invalid_body') {
         // 200 なのに health JSON に読めない = 他人のサーバー。即 fail（リトライしても改善しない）。
-        // http_error は自子が listen 済みでもまだ ready でない可能性があるため従来どおりリトライする。
         throw new WrongHealthServerError(port, expectedNonce, undefined, {
           reason: 'invalid_body',
         });
       } else if (result.kind === 'http_error') {
+        // 非 2xx を即 fail にすると、将来 readiness ゲートが一時的に 5xx を返す設計にしたときに自傷する。
+        // よってリトライは残し、代わりに最終タイムアウトのメッセージで「HTTP は返ってきたが名乗らなかった」
+        // ことを伝えて診断可能にする。
+        sawHttpResponse = true;
+        lastHttpStatus = result.status;
         lastError = new Error(`unexpected status ${result.status}`);
       } else {
         assertMatchingNonce(port, expectedNonce, result.body);
@@ -121,6 +139,12 @@ export async function waitForHealth(params: WaitForHealthParams): Promise<void> 
     }
 
     await sleep(pollIntervalMs);
+  }
+
+  if (sawHttpResponse) {
+    throw new Error(
+      `bdboard e2e server did not become healthy within ${timeoutMs}ms; a server on port ${port} answered HTTP (last: status ${lastHttpStatus}) but never identified itself as this run's instance (instanceNonce=${expectedNonce}) — another process may be holding the port.`,
+    );
   }
 
   throw new Error(
