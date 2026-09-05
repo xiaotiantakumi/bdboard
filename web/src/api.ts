@@ -345,6 +345,7 @@ export type HygieneIssueKindDto =
   | 'stale_pending_decision'
   | 'merged_leftover'
   | 'reclaimed_live_worktree'
+  | 'stale_harness_worktree'
   | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
   | 'closed_without_evidence';

@@ -250,7 +250,33 @@ export function createGitWorktreeScanner(
     );
   }
 
+  async function countCommitsBehindDefaultBranch(worktreePath: string): Promise<number> {
+    for (const ref of MERGE_BASE_CANDIDATE_REFS) {
+      const result = await runGitReadOnly(
+        commandRunner,
+        gitPath,
+        worktreePath,
+        ['rev-list', '--count', `HEAD..${ref}`],
+        timeoutMs,
+      );
+      if (result.exitCode !== 0) {
+        // その ref が無いだけかもしれないので次の候補へ。全部落ちたら下で throw する。
+        continue;
+      }
+      const parsed = Number.parseInt(result.stdout.trim(), 10);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    throw new Error(
+      `could not count commits behind ${MERGE_BASE_CANDIDATE_REFS.join(' / ')} in ${worktreePath}`,
+    );
+  }
+
   return {
+    countCommitsBehindDefaultBranch,
+
     async scan(rootPath: string): Promise<GitWorktreeSnapshot> {
       const [worktreeResult, branchResult] = await Promise.all([
         runGit(commandRunner, gitPath, rootPath, ['worktree', 'list', '--porcelain'], timeoutMs),

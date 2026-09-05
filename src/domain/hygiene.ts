@@ -43,7 +43,8 @@ export type HygieneIssueKind =
   | 'orphan_heartbeat_loop'
   | 'in_flight_file_overlap'
   | 'closed_without_evidence'
-  | 'reclaimed_live_worktree';
+  | 'reclaimed_live_worktree'
+  | 'stale_harness_worktree';
 
 export interface HygieneCycleEdge {
   readonly issueId: TicketId;
@@ -577,6 +578,81 @@ function checkReclaimedLiveWorktree(
   };
 }
 
+/**
+ * worktree が既定ブランチからどれだけ遅れているか (bdboard-tdua)。git を叩く必要が
+ * あるのでドメインでは組み立てず、呼び出し側から受け取る。
+ */
+export interface HarnessWorktreeLag {
+  readonly projectId: string;
+  readonly ticketId: TicketId;
+  readonly worktreePath: string;
+  /** `git rev-list --count HEAD..<既定ブランチ>` の値 */
+  readonly commitsBehind: number;
+}
+
+/**
+ * この数を超えて遅れている worktree を「ハーネスが凍っている」とみなす。
+ *
+ * 50 の根拠: 実測 (2026-09-05) では、稼働中のセッションが **124 コミット遅れ**の
+ * worktree に居て、同じ日にハーネス改善 PR を自分でマージしていた。一方で通常の
+ * per-ticket worktree は PR が開いている数時間のうちに 10 前後しか遅れない
+ * (この repo のマージ頻度)。50 はその 2 つの帯の間で、常用の worktree を巻き込まずに
+ * 長命化したものだけを拾える。
+ *
+ * ここは意図的に **hygiene-thresholds の設定項目にしていない** — あちらは時間 (ms) と
+ * 優先度の閾値だけを扱っており、UI もそれ前提。コミット数という別次元の単位を
+ * 混ぜるより、事故が再発したときにこの定数を動かすほうが安い。
+ */
+export const STALE_HARNESS_WORKTREE_MIN_COMMITS_BEHIND = 50;
+
+/**
+ * 「稼働中のセッションが、main から大きく遅れた worktree に居る」を拾う (bdboard-tdua)。
+ *
+ * 注入コピー (`.claude/skills/` と `.claude/settings.json`) は**チェックアウト単位**で、
+ * worktree は作成時点の main で凍る。長命の worktree に居るセッションは、hooks も
+ * スクリプトも規律本文も古いまま動き続ける。本人からは「ハーネスが入っている」ように
+ * しか見えないので、**外から測らないと気付けない**。
+ *
+ * 実測 (2026-09-05): 124 コミット遅れの worktree で稼働していたセッションが、同じ日に
+ * ハーネス改善 PR をマージしていた。自分がマージした改善が自分には効いていない。
+ *
+ * in_progress のチケットだけを見る。誰も作業していない worktree が古いのは当たり前で、
+ * それは merged_leftover / reclaimed_live_worktree の担当。
+ */
+function checkStaleHarnessWorktree(
+  lag: HarnessWorktreeLag,
+  ticketById: ReadonlyMap<TicketId, Ticket>,
+): HygieneIssue | null {
+  if (lag.commitsBehind < STALE_HARNESS_WORKTREE_MIN_COMMITS_BEHIND) {
+    return null;
+  }
+
+  const ticket = ticketById.get(lag.ticketId);
+  if (ticket === undefined) {
+    return null;
+  }
+  if (ticket.status !== 'in_progress') {
+    return null;
+  }
+  if (ticket.projectId !== lag.projectId) {
+    return null;
+  }
+
+  return {
+    kind: 'stale_harness_worktree',
+    ticketId: ticket.id,
+    projectId: ticket.projectId,
+    message:
+      `worktree が main から ${lag.commitsBehind} コミット遅れています。` +
+      'ハーネス (.claude/skills と .claude/settings.json) はチェックアウト単位なので、' +
+      'このセッションは worktree 作成時点の古い規律・hooks のまま動いています。' +
+      `git -C ${lag.worktreePath} rebase origin/main で追従してください`,
+    severity: 'warning',
+    // cleanup は付けない。rebase は掃除ではないうえ、未コミットの成果を抱えた
+    // worktree に対してワンクリック相当のコマンドを出すのは危険。
+  };
+}
+
 function checkOrphanHeartbeatLoop(
   candidate: HeartbeatLoopCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
@@ -808,8 +884,9 @@ const KIND_ORDER: Record<HygieneIssueKind, number> = {
   closed_without_evidence: 6,
   merged_leftover: 7,
   reclaimed_live_worktree: 8,
-  orphan_heartbeat_loop: 9,
-  in_flight_file_overlap: 10,
+  stale_harness_worktree: 9,
+  orphan_heartbeat_loop: 10,
+  in_flight_file_overlap: 11,
 };
 
 function compareIssues(a: HygieneIssue, b: HygieneIssue): number {
@@ -841,6 +918,12 @@ export function checkHygiene(
      * in_flight_file_overlap は一切出ない。
      */
     readonly inFlightOverlaps?: readonly InFlightOverlap[];
+    /**
+     * 着手中 worktree が既定ブランチから何コミット遅れているか (scanHarnessWorktreeLags
+     * の戻り)。git を叩く必要があるのでドメインでは組み立てず、呼び出し側から受け取る。
+     * 未指定なら stale_harness_worktree は一切出ない。
+     */
+    readonly harnessWorktreeLags?: readonly HarnessWorktreeLag[];
     /**
      * 確認待ち(awaiting_human)のチケット。bd の human ラベル由来で Ticket からは
      * 判定できないため、呼び出し側が集めて渡す。キーは pendingDecisionKey() で
@@ -964,6 +1047,15 @@ export function checkHygiene(
       const reclaimedLive = checkReclaimedLiveWorktree(candidate, ticketById);
       if (reclaimedLive !== null) {
         issues.push(reclaimedLive);
+      }
+    }
+  }
+
+  if (ctx.harnessWorktreeLags !== undefined) {
+    for (const lag of ctx.harnessWorktreeLags) {
+      const staleHarness = checkStaleHarnessWorktree(lag, ticketById);
+      if (staleHarness !== null) {
+        issues.push(staleHarness);
       }
     }
   }
