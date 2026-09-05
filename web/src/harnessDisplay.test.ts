@@ -11,6 +11,7 @@ import {
   formatHarnessContractLabel,
   formatHarnessHooksDetail,
   formatHarnessHooksLabel,
+  formatHarnessModelRoutes,
   formatHarnessPackStatusLabel,
   harnessContractNeedsAttention,
   harnessHooksNeedAttention,
@@ -82,6 +83,7 @@ describe('harness contract display', () => {
       verify: 'npm run verify',
       prFlow: 'pr',
       mainBranch: 'main',
+      models: null,
     },
     missing: { state: 'missing' },
     invalid: { state: 'invalid', message: 'verify は空でない文字列である必要があります' },
@@ -190,6 +192,67 @@ describe('harnessDisplay hooks state', () => {
     expect(formatHarnessHooksDetail(pack)).toContain('.claude/settings.json');
     expect(buildHarnessHooksMessage(pack)).toBe(
       'bdboard-harness: hook 1 件が .claude/settings.json に未登録です (再注入で解消)',
+    );
+  });
+});
+
+describe('formatHarnessModelRoutes', () => {
+  it('renders nothing when the project declares no models table', () => {
+    expect(formatHarnessModelRoutes(null)).toBeNull();
+    expect(formatHarnessModelRoutes([])).toBeNull();
+    expect(formatHarnessModelRoutes(undefined as never)).toBeNull();
+  });
+
+  it('labels shared and explicitly declared complexity tiers', () => {
+    expect(
+      formatHarnessModelRoutes([
+        { stage: 'implement', tiers: 3 },
+        { stage: 'review', tiers: 1 },
+      ]),
+    ).toBe('振り分け: implement 3 段宣言、review 共通');
+  });
+
+  it('folds stages after the first four', () => {
+    expect(
+      formatHarnessModelRoutes([
+        { stage: 'implement', tiers: 3 },
+        { stage: 'review', tiers: 1 },
+        { stage: 'check', tiers: 1 },
+        { stage: 'test', tiers: 3 },
+        { stage: 'deploy', tiers: 1 },
+        { stage: 'audit', tiers: 1 },
+      ]),
+    ).toBe('振り分け: implement 3 段宣言、review 共通、check 共通、test 3 段宣言、…他 2 工程');
+  });
+});
+
+describe('formatHarnessContractDetail with models', () => {
+  it('leaves the tooltip untouched when models is not declared', () => {
+    expect(
+      formatHarnessContractDetail({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: null,
+      }),
+    ).toBe('検証: npm run verify / PR 必須 / main: main');
+  });
+
+  it('appends the routing summary when models is declared', () => {
+    expect(
+      formatHarnessContractDetail({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: [
+          { stage: 'implement', tiers: 3 },
+          { stage: 'review', tiers: 1 },
+        ],
+      }),
+    ).toBe(
+      '検証: npm run verify / PR 必須 / main: main / 振り分け: implement 3 段宣言、review 共通',
     );
   });
 });

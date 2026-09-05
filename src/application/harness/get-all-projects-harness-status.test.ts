@@ -235,6 +235,7 @@ describe('getAllProjectsHarnessStatus', () => {
       verify: 'npm run verify',
       prFlow: 'pr',
       mainBranch: 'main',
+      models: null,
     });
     expect(statuses[1]?.status.contract.state).toBe('invalid');
   });

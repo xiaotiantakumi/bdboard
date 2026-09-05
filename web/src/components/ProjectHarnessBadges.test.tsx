@@ -289,6 +289,7 @@ describe('ProjectHarnessBadges', () => {
         verify: 'npm run verify',
         prFlow: 'pr',
         mainBranch: 'main',
+        models: null,
       },
       packs: [
         {

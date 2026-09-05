@@ -1803,6 +1803,13 @@ export interface ProjectHarnessPackStatusDto {
 
 export type HarnessPrFlowDto = 'pr' | 'direct' | 'none';
 
+/** `models` 節の要約 1 工程ぶん。候補列そのものは API に出さない。 */
+export interface ProjectHarnessModelStageDto {
+  stage: string;
+  /** 宣言された複雑度の段数。`*` 一本なら 1、low/med/high なら 3。 */
+  tiers: number;
+}
+
 /**
  * 注入先プロジェクトの検証コントラクト (`.claude/bdboard-harness.json`) の状態。
  * `not-applicable` はパック未注入のプロジェクト — UI には何も出さない。
@@ -1813,6 +1820,8 @@ export type ProjectHarnessContractDto =
       verify: string;
       prFlow: HarnessPrFlowDto;
       mainBranch: string;
+      /** モデル振り分け表の要約。未宣言なら null。 */
+      models: ProjectHarnessModelStageDto[] | null;
     }
   | { state: 'missing' }
   | { state: 'invalid'; message: string }

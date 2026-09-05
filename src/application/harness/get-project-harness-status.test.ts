@@ -251,6 +251,7 @@ describe('resolveProjectContractState', () => {
       verify: 'npm run verify',
       prFlow: 'pr',
       mainBranch: 'main',
+      models: null,
     });
     expect(reader.readPackageScripts).toHaveBeenCalledWith('/tmp/proj');
   });

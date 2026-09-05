@@ -15,6 +15,7 @@ const OK_CONTRACT: ContractState = {
   verify: 'npm run verify',
   prFlow: 'pr',
   mainBranch: 'main',
+  models: null,
 };
 
 function pack(

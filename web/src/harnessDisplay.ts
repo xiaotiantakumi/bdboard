@@ -1,6 +1,7 @@
 import type {
   HarnessPrFlowDto,
   ProjectHarnessContractDto,
+  ProjectHarnessModelStageDto,
   ProjectHarnessPackStatusDto,
 } from './api';
 
@@ -92,6 +93,27 @@ export function formatHarnessContractLabel(
   }
 }
 
+/**
+ * モデル振り分け表の要約。「振り分け: implement 3 段宣言、review 共通」。
+ *
+ * 段数 = その工程が宣言した複雑度キーの数 (`*` 一本なら共通、low/med/high なら 3 段宣言)。
+ * 候補のモデル名は出さない — ツールチップに収まらないうえ、DTO にも来ていない。
+ */
+export function formatHarnessModelRoutes(
+  models: readonly ProjectHarnessModelStageDto[] | null,
+): string | null {
+  if (!models?.length) {
+    return null;
+  }
+  const routeLabels = models
+    .slice(0, 4)
+    .map(({ stage, tiers }) => (tiers === 1 ? `${stage} 共通` : `${stage} ${tiers} 段宣言`));
+  if (models.length > 4) {
+    routeLabels.push(`…他 ${models.length - 4} 工程`);
+  }
+  return `振り分け: ${routeLabels.join('、')}`;
+}
+
 /** ツールチップ用の全文。何を直せばよいかまで書く。 */
 export function formatHarnessContractDetail(
   contract: ProjectHarnessContractDto,
@@ -103,8 +125,11 @@ export function formatHarnessContractDetail(
       return `検証コントラクト不正: ${contract.message} (${HARNESS_CONTRACT_PATH})`;
     case 'command-missing':
       return `検証コマンド未定義: npm script ${contract.script} が無い (verify = ${contract.verify})`;
-    case 'ok':
-      return `検証: ${contract.verify} / ${PR_FLOW_LABELS[contract.prFlow]} / main: ${contract.mainBranch}`;
+    case 'ok': {
+      const base = `検証: ${contract.verify} / ${PR_FLOW_LABELS[contract.prFlow]} / main: ${contract.mainBranch}`;
+      const routes = formatHarnessModelRoutes(contract.models);
+      return routes === null ? base : `${base} / ${routes}`;
+    }
     case 'not-applicable':
       return null;
   }

@@ -101,8 +101,15 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 ### ハーネスの検証コントラクト
 
 注入先プロジェクトは `.claude/bdboard-harness.json` に「フル検証コマンド(`verify`)・
-git 運用(`prFlow`)・メインブランチ(`mainBranch`)」を宣言する。`.claude/` 配下に置くのは
-注入 API のパストラバーサルガード `resolveUnderClaudeDir` の内側に収めるため。パースと
+git 運用(`prFlow`)・メインブランチ(`mainBranch`)」を宣言する。省略可能な `models` 節は
+工程(stage)×複雑度(low/med/high、まとめるなら `*`)のモデル候補列で、**構文の正本はここ**、
+**モデルの実在の正本は実行する CLI 自身**という分担にしてある(端末固有の設定ファイルを
+bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)。候補文字列を
+`member:model` の狭い文字集合へ閉じることが唯一かつ十分な注入防御で、後段にサニタイズを
+重ねない。UI へ運ぶのは工程名と段数の要約だけで、候補列は DTO にも run プロンプトにも載せない。
+
+`.claude/` 配下に置くのは、注入 API のパストラバーサルガード `resolveUnderClaudeDir` の内側に
+収めるため。パースと
 判定は `src/domain/harness-contract.ts`(純粋関数。`parseHarnessContract` /
 `evaluateContractState`)、fs アクセスは `HarnessContractReaderPort` の実装に閉じてあり、
 `ProjectHarnessStatus.contract` としてパックの導入状況と同じ経路で UI まで運ばれる。
