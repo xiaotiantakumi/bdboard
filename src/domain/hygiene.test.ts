@@ -1110,7 +1110,8 @@ describe('checkHygiene stale_pending_decision (bdboard-ijk1)', () => {
   });
 
   it('sorts after unblocked_high_priority_idle and before merged_leftover', () => {
-    // KIND_ORDER に足し忘れると indexOf が -1 になり、先頭へ回って並びが崩れる。
+    // KIND_ORDER に足し忘れると tsc が落ちる (Record 化した。bdboard-rkde)。
+    // 値の入れ替えは型では捕まらないので、並び順はこの手のテストで固定する。
     const idle = makeTicket({
       id: 'bdboard-idle',
       status: 'open',
@@ -1846,18 +1847,17 @@ describe('checkHygiene reclaimed_live_worktree', () => {
     // 文言そのものを固定する。`toContain` だけだと evidence の組み立て
     // ('worktree とブランチ' / 'worktree' / 'ブランチ') を書き換えても落ちない。
     expect(found[0]?.message).toBe(
-      'チケットは open ですが worktree とブランチ が残っています。' +
+      'チケットは open ですが worktree とブランチが残っています。' +
         '作業中に自動 reclaim された可能性があります。' +
         'bd ready が空きとして提示するので、作業が生きているなら ' +
         'bd update bdboard-live --claim で claim し直してください' +
-        '（確認: bd history bdboard-live --events に lease_reclaimed が残っていれば自動回収です）',
+        '（確認: bd history bdboard-live --events の直近の状態変更が lease_reclaimed なら自動回収です）',
     );
   });
 
-  // KIND_ORDER から落ちると indexOf が -1 を返して黙って先頭に並ぶ、という
-  // 配列時代の失敗形の回帰ガード (Record 化した今は tsc でも落ちるが、
-  // 並び順そのものはここでしか固定されない)。
-  it('sorts after merged_leftover', () => {
+  // KIND_ORDER の**相対順**を固定する。Record 化で「kind の足し忘れ」は tsc が
+  // 落とすようになったが、値を入れ替えても型は通るので順序はテストで押さえる。
+  it('sorts between merged_leftover and orphan_heartbeat_loop', () => {
     const open = makeTicket({ id: 'bdboard-live', projectId: repoRoot, status: 'open' });
     const closed = makeTicket({ id: 'bdboard-done', projectId: repoRoot, status: 'closed' });
 
@@ -1867,12 +1867,30 @@ describe('checkHygiene reclaimed_live_worktree', () => {
         liveCandidate(),
         liveCandidate({ ticketId: 'bdboard-done' }),
       ],
+      heartbeatLoops: [
+        {
+          pid: 12_345,
+          commandLine:
+            'bash /path/bd-heartbeat.sh start --session-pid 4242 --interval 90 ' +
+            '--max-hours 12 --repo /repo bdboard-done',
+        },
+      ],
     });
 
+    // 前後を両方挟む。片側だけだと隣の kind と値を入れ替えても通ってしまう。
     const kinds = issues
       .map((issue) => issue.kind)
-      .filter((kind) => kind === 'merged_leftover' || kind === 'reclaimed_live_worktree');
-    expect(kinds).toEqual(['merged_leftover', 'reclaimed_live_worktree']);
+      .filter(
+        (kind) =>
+          kind === 'merged_leftover' ||
+          kind === 'reclaimed_live_worktree' ||
+          kind === 'orphan_heartbeat_loop',
+      );
+    expect(kinds).toEqual([
+      'merged_leftover',
+      'reclaimed_live_worktree',
+      'orphan_heartbeat_loop',
+    ]);
   });
 
   // 生きているかもしれない作業に削除コマンドを添えてはいけない (本文のコメント参照)。
@@ -1897,13 +1915,13 @@ describe('checkHygiene reclaimed_live_worktree', () => {
       now: NOW,
       leftoverCandidates: [liveCandidate({ branchName: null })],
     }).find((issue) => issue.kind === 'reclaimed_live_worktree');
-    expect(worktreeOnly?.message).toContain('worktree が残っています');
+    expect(worktreeOnly?.message).toContain('チケットは open ですが worktree が残っています');
 
     const branchOnly = checkHygiene([ticket], {
       now: NOW,
       leftoverCandidates: [liveCandidate({ worktreePath: null })],
     }).find((issue) => issue.kind === 'reclaimed_live_worktree');
-    expect(branchOnly?.message).toContain('ブランチ が残っています');
+    expect(branchOnly?.message).toContain('チケットは open ですがブランチが残っています');
   });
 
   it('does not flag in_progress tickets (lease is alive, or stale_in_progress covers it)', () => {

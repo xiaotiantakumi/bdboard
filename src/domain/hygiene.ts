@@ -519,7 +519,7 @@ function checkMergedLeftover(
  * lease だけを見て回収するため、heartbeat を打っていない生存セッションのチケットが
  * 作業中に open へ戻される。当人はそのまま PR を出すので、台帳だけが「空き」と言い続ける。
  * 回収そのものは `bd history <id> --events` に `lease_reclaimed` として残る (実測 2026-09-05:
- * `05:52:41 lease_reclaimed by ...`)。ただし `bd show` には出ないので、台帳を1件ずつ開かない
+ * `05:52:41 lease_reclaimed by ...`。bd history は UTC 表記)。ただし `bd show` には出ないので、台帳を1件ずつ開かない
  * 限り気付けない。この述語は**盤面から候補を一覧にする**ためのもので、手動の
  * `bd update -s open` との確定的な切り分けは上の history コマンドが担う。
  *
@@ -549,13 +549,15 @@ function checkReclaimedLiveWorktree(
     return null;
   }
 
+  // 助詞の付き方は merged_leftover (上) と揃える。分岐ごとに文全体を組むのは
+  // `${evidence} が` にすると「ブランチ が」と不自然に割れるため。
   let evidence: string;
   if (candidate.worktreePath !== null && candidate.branchName !== null) {
-    evidence = 'worktree とブランチ';
+    evidence = 'チケットは open ですが worktree とブランチが残っています';
   } else if (candidate.worktreePath !== null) {
-    evidence = 'worktree';
+    evidence = 'チケットは open ですが worktree が残っています';
   } else {
-    evidence = 'ブランチ';
+    evidence = 'チケットは open ですがブランチが残っています';
   }
 
   return {
@@ -563,10 +565,9 @@ function checkReclaimedLiveWorktree(
     ticketId: ticket.id,
     projectId: ticket.projectId,
     message:
-      `チケットは open ですが ${evidence} が残っています。` +
-      '作業中に自動 reclaim された可能性があります。' +
+      `${evidence}。作業中に自動 reclaim された可能性があります。` +
       `bd ready が空きとして提示するので、作業が生きているなら bd update ${ticket.id} --claim で claim し直してください` +
-      `（確認: bd history ${ticket.id} --events に lease_reclaimed が残っていれば自動回収です）`,
+      `（確認: bd history ${ticket.id} --events の直近の状態変更が lease_reclaimed なら自動回収です）`,
     severity: 'warning',
     // **cleanup は意図的に付けない (bdboard-rkde)。** merged_leftover と同じ候補を使うが、
     // 提案すべき対処は正反対である。UI の cleanup は lsof ガード付きとはいえ
