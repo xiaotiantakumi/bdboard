@@ -1664,6 +1664,26 @@ body {
   cursor: pointer;
 }
 
+/*
+ * 375px モバイル: stale lease 行は kind バッジ「stale lease（heartbeat 途絶）」が
+ * 長く project セルが 87px に狭まる。実機最長名 chewing-enlightenment (133.7px) が
+ * clip される (bdboard-4kik, 2026-09-05 実測)。project を行全幅に落とすと 325px になり
+ * 133.7px が収まる。行高は最大 139px → 140px (+1px)、リスト全体 9536px → 9399px、横スクロールなし。
+ * 480px 幅では変更前から溢れていない。
+ */
+@media (max-width: 480px) {
+  .hygiene-issue-row {
+    grid-template-areas:
+      'kind severity id'
+      'project project project'
+      'message message message';
+  }
+
+  .hygiene-issue-id {
+    align-self: center;
+  }
+}
+
 .hygiene-issue-row:hover {
   border-color: var(--color-border-strong);
 }

@@ -45,7 +45,23 @@ interface HygieneProjectMetrics {
   title: string | null;
   clientWidth: number;
   scrollWidth: number;
+  displayedNaturalWidth: number;
+  realisticNameWidth: number;
+  textOverflow: string;
+  overflowX: string;
 }
+
+/**
+ * 実ボード (localhost:8787) で実測した最長のプロジェクト名 (2026-09-05, 13 プロジェクト中最長の 21 文字)。
+ * e2e フィクスチャの basename は `fixture-project` (15 文字 / 自然幅 78.75px @375px) しかなく、
+ * 最狭の hygiene 行 (stale lease、project セル 87px) にも収まってしまうため、
+ * `scrollWidth <= clientWidth` は 74 行中 0 行でしか発火しない空振りガードだった (bdboard-4kik)。
+ * 実機相当の長さはこの定数が持ち、列がその幅を確保していることを直接検査する。
+ */
+const REAL_BOARD_LONGEST_PROJECT_NAME = 'chewing-enlightenment';
+
+/** 上記の名前の @375px 実測自然幅 133.7px を下回らないことの下限 (フォント差のマージン込み) */
+const REAL_BOARD_LONGEST_PROJECT_NAME_MIN_WIDTH_PX = 120;
 
 /*
  * 実在するチケットタイトル相当の長さ。修正前は nowrap + ellipsis + 幅 176px のため
@@ -106,14 +122,44 @@ async function readActivityTitleMetrics(page: Page): Promise<ActivityTitleMetric
   });
 }
 
-async function readHygieneProjectMetrics(page: Page): Promise<HygieneProjectMetrics[]> {
-  return page.evaluate(() =>
-    Array.from(document.querySelectorAll('.hygiene-issue-project')).map((el) => ({
-      textContent: (el.textContent ?? '').trim(),
-      title: el.getAttribute('title'),
-      clientWidth: el.clientWidth,
-      scrollWidth: el.scrollWidth,
-    })),
+async function readHygieneProjectMetrics(
+  page: Page,
+  realisticProjectName: string,
+): Promise<HygieneProjectMetrics[]> {
+  return page.evaluate(
+    ({ realisticName }) => {
+      function measureNaturalWidth(el: Element, text?: string): number {
+        const probe = el.cloneNode(true) as HTMLElement;
+        probe.style.position = 'absolute';
+        probe.style.visibility = 'hidden';
+        probe.style.display = 'inline';
+        probe.style.width = 'auto';
+        probe.style.maxWidth = 'none';
+        probe.style.whiteSpace = 'nowrap';
+        if (text !== undefined) {
+          probe.textContent = text;
+        }
+        el.parentElement!.appendChild(probe);
+        const width = probe.getBoundingClientRect().width;
+        probe.remove();
+        return width;
+      }
+
+      return Array.from(document.querySelectorAll('.hygiene-issue-project')).map((el) => {
+        const style = getComputedStyle(el);
+        return {
+          textContent: (el.textContent ?? '').trim(),
+          title: el.getAttribute('title'),
+          clientWidth: el.clientWidth,
+          scrollWidth: el.scrollWidth,
+          displayedNaturalWidth: measureNaturalWidth(el),
+          realisticNameWidth: measureNaturalWidth(el, realisticName),
+          textOverflow: style.textOverflow,
+          overflowX: style.overflow,
+        };
+      });
+    },
+    { realisticName: realisticProjectName },
   );
 }
 
@@ -175,7 +221,7 @@ test.describe('mobile activity and hygiene truncation', () => {
       timeout: 15_000,
     });
 
-    const projects = await readHygieneProjectMetrics(page);
+    const projects = await readHygieneProjectMetrics(page, REAL_BOARD_LONGEST_PROJECT_NAME);
 
     expect(
       projects.length,
@@ -183,6 +229,31 @@ test.describe('mobile activity and hygiene truncation', () => {
     ).toBeGreaterThanOrEqual(1);
 
     for (const [index, project] of projects.entries()) {
+      expect(
+        project.realisticNameWidth,
+        `[${index}] REAL_BOARD_LONGEST_PROJECT_NAME ("${REAL_BOARD_LONGEST_PROJECT_NAME}") renders only ${project.realisticNameWidth}px wide — 実機最長 (133.7px @375px) を下回る定数に置き換えるとこのガードは空振りする`,
+      ).toBeGreaterThanOrEqual(REAL_BOARD_LONGEST_PROJECT_NAME_MIN_WIDTH_PX);
+
+      expect(
+        project.realisticNameWidth,
+        `[${index}] fixture basename ("${project.textContent}", ${project.displayedNaturalWidth}px) is shorter than real-board longest (${project.realisticNameWidth}px) — column-width guard below is enforced by REAL_BOARD_LONGEST_PROJECT_NAME, not the fixture name`,
+      ).toBeGreaterThan(project.displayedNaturalWidth);
+
+      expect(
+        project.clientWidth,
+        `[${index}] project cell clientWidth (${project.clientWidth}px) should fit realistic longest name (${project.realisticNameWidth}px) for "${project.textContent}" — before bdboard-4kik fix, stale lease rows were 87px and failed here`,
+      ).toBeGreaterThanOrEqual(project.realisticNameWidth);
+
+      expect(
+        project.textOverflow,
+        `[${index}] textOverflow should be "ellipsis" so overflow names degrade gracefully, got "${project.textOverflow}"`,
+      ).toBe('ellipsis');
+
+      expect(
+        project.overflowX,
+        `[${index}] overflow should be "hidden" so ellipsis applies, got "${project.overflowX}"`,
+      ).toBe('hidden');
+
       expect(
         project.scrollWidth,
         `[${index}] scrollWidth (${project.scrollWidth}) should fit within clientWidth (${project.clientWidth}) for "${project.textContent}"`,
