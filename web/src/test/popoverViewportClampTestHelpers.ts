@@ -1,11 +1,15 @@
 import { vi } from 'vitest';
 import {
+  POPOVER_VIEWPORT_GUTTER_MAX_PX,
   POPOVER_VIEWPORT_GUTTER_MIN_PX,
   POPOVER_VIEWPORT_GUTTER_RATIO,
 } from '../hooks/usePopoverViewportClamp';
 
 export function gutterForViewport(viewportWidth: number): number {
-  return Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO);
+  return Math.min(
+    POPOVER_VIEWPORT_GUTTER_MAX_PX,
+    Math.max(POPOVER_VIEWPORT_GUTTER_MIN_PX, viewportWidth * POPOVER_VIEWPORT_GUTTER_RATIO),
+  );
 }
 
 export function stubClientWidth(width: number) {
