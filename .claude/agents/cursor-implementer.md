@@ -164,7 +164,9 @@ tools: Bash, Read, Glob, Grep
    実際に編集が入ったかを確認する（cursor-agent が「説明だけして編集しない」ケースの検出）。
    必要に応じて Read/Grep で要点を自己確認する。**ここで勝手にコミットはしない。**
    チケットがあれば実際に使用したモデルを
-   `bd update <id> --set-metadata "bdboard.model.implement=$CURSOR_MODEL"` で自分で記録する。
+   `bd update <id> --set-metadata "bdboard.model.implement=<受け取ったmodel>"` で自分で記録する。
+   (シェルの変数は Bash 呼び出しをまたいで残らないので、手順3 で置いた `CURSOR_MODEL` を
+   別の呼び出しで参照しない。空文字で記録すると、記録したつもりで何も残らない。)
    記録の失敗は報告に含める。複雑度・source はこのエージェントで変更しない。
 
 5. **結果を返す**: 以下を構造化して呼び出し元に返す。**QAレビューはここでは行わない**
@@ -235,7 +237,7 @@ tools: Bash, Read, Glob, Grep
 コード上の特定箇所・意味ベースの場所特定が必要なら、編集せずに Cursor の検索能力を借りてよい。
 ```bash
 # --mode ask = 読み取り専用Q&A（編集不可）。--workspace で対象リポジトリ指定（--cwd は無い）。
-cursor-agent -p --mode ask --model "$CURSOR_MODEL" --output-format text --trust \
+cursor-agent -p --mode ask --model "<受け取ったmodel>" --output-format text --trust \
   --workspace "<repo>" "<探したいことを自然文で>。該当ファイルと行を列挙して。"
 ```
 cursor-agentが自前でインデックス同期を行うため semantic search（無ければ agentic grep）で探索される。

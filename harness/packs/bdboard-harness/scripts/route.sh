@@ -87,7 +87,11 @@ def object_value(value):
     return value
 
 
-with open(sys.argv[1], encoding="utf-8") as source:
+# jq は BOM も不正 UTF-8 も黙って読む。Python の既定 (strict utf-8) だと
+# 同じ契約が jq のマシンでは通り python3 のマシンでは exit 1 になるので、
+# 「両経路は交換可能」というこのスクリプトの契約が壊れる。実測で確認した
+# 差分は BOM 付きファイルと、読み取らない文字列中の不正 UTF-8 の 2 種。
+with open(sys.argv[1], encoding="utf-8-sig", errors="replace") as source:
     document = object_value(json.load(source))
 if "models" not in document:
     sys.exit(0)
