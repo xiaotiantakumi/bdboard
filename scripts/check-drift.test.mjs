@@ -920,7 +920,20 @@ describe('check-drift CLI', () => {
   // レビューの再現手順どおり、`merge-tree --name-only` だけを失敗させる偽の
   // `git` を PATH の先頭に置いて再現する (check-drift.mjs 自身の `git()` には
   // gh のような差し替えフックが無いため)。
-  it(
+  // bdboard-b0yd R4-C: **Windows では skip する。** この2本は「PATH の先頭に偽の
+  // `git` を置いて merge-tree だけ失敗させる」構成だが、check-drift.mjs の `git()` は
+  // `execFileSync('git', …)` (shell 無し) なので、Windows では CreateProcess が
+  // `git.cmd` を解決せず PATH の後方にある本物の `git.exe` が走る — R2-1 で
+  // `gh` について学んだのと同じ罠で、実際に verify-windows がこの2本だけで落ちた
+  // (2026-09-06、run 33976779917: シムを素通りして「衝突します」と本物の判定が出た)。
+  // ここで検証しているのは **merge-tree が失敗したときの文言の出し分け**であって
+  // パス解決ではなく、その分岐に OS 依存は無い。`gh` と同じ env 間接呼び出しフックを
+  // `git` にも production 側に増やす手はあるが、この2本のためだけに全 `git()` 呼び出しに
+  // 差し替え口を開けるのは割に合わない (この PR は既に凝ったテスト基盤で
+  // Windows CI を2度壊している)。verify (Linux) 側で常時実行されるので網は残る。
+  const itUnlessWindows = process.platform === 'win32' ? it.skip : it;
+
+  itUnlessWindows(
     'does not assert a clean merge when merge-tree itself is unavailable (C)',
     () => {
       const { bare, work } = makeRepo('mergetree-unavailable');
@@ -1011,7 +1024,7 @@ describe('check-drift CLI', () => {
   // peer が混在し、comparedCount > 0 のまま階層2の行が実際に印字される。
   //
   // その版の git を再現するため、シムは `--merge-base=` が付いたときだけ失敗させる。
-  it(
+  itUnlessWindows(
     'does not claim a clean merge for the peer whose merge-tree failed while another peer was compared (C)',
     () => {
       const { bare, work } = makeRepo('mergetree-unavailable-mixed');
