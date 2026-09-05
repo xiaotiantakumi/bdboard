@@ -277,7 +277,7 @@ remove_id_at_index() {
 run_heartbeat_loop() {
   local session_pid="$1" interval="$2" max_hours="$3" repo="$4"
   local session_lstart_baseline loop_pid idsfile
-  local start_epoch elapsed_hours
+  local start_epoch elapsed_hours lstart_fail
 
   ensure_state_dir || {
     log_event "$session_pid" "exit reason=state-dir-unavailable"
@@ -329,6 +329,7 @@ run_heartbeat_loop() {
   done
 
   start_epoch=$(date +%s)
+  lstart_fail=0
 
   while :; do
     # --- session survival ---
@@ -336,10 +337,36 @@ run_heartbeat_loop() {
       log_event "$session_pid" "exit reason=session-gone"
       break
     fi
+    # lstart が空になる原因は 2 つあり、区別しないと嘘のログを残す (bdboard-69w1)。
+    # (1) 上の is_pid_alive (kill -0、fork 不要のビルトイン) と、この ps
+    #     (fork+exec) の間にセッションが死んだ。→ 「消えた」であって
+    #     「PID が再利用された」ではない。
+    # (2) セッションは生きているが ps 自体が失敗した。高負荷 (load average 190
+    #     超の実績あり: bdboard-d48) では fork の EAGAIN やスケジューリング飢餓で
+    #     起こりうる。ここで break すると生存中セッションの lease を見殺しにして
+    #     他セッションにチケットを奪わせる — 誤ったログ行より悪い。よって
+    #     show-failed-3x / heartbeat-failed-3x と同じ 3 連続基準にし、
+    #     一時的な読み取り失敗ではその周の分類を見送って beat を続ける。
     current_lstart="$(session_lstart "$session_pid")"
-    if [ -z "$current_lstart" ] || [ "$current_lstart" != "$session_lstart_baseline" ]; then
+    if [ -z "$current_lstart" ]; then
+      if ! is_pid_alive "$session_pid"; then
+        log_event "$session_pid" "exit reason=session-gone"
+        break
+      fi
+      lstart_fail=$((lstart_fail + 1))
+      if [ "$lstart_fail" -ge 3 ]; then
+        log_event "$session_pid" "exit reason=session-lstart-unavailable"
+        break
+      fi
+      log_event "$session_pid" "session-lstart-unreadable consecutive=${lstart_fail} keeping"
+    elif [ "$current_lstart" != "$session_lstart_baseline" ]; then
+      # 実際に観測された再利用 (非空かつ baseline と相違)。生死の取り直しで
+      # session-gone へ格下げしてはならない — 再利用は起きたという事実が消える。
+      lstart_fail=0
       log_event "$session_pid" "exit reason=session-pid-reused"
       break
+    else
+      lstart_fail=0
     fi
     pf_pid="$(read_pidfile "$session_pid")"
     if [ -n "$pf_pid" ]; then
