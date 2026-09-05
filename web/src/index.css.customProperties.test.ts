@@ -365,6 +365,61 @@ function collectRuntimeSetPropertyTargets(): {
 const VAR_REFERENCE_PATTERN = /var\(\s*(--[\w-]+)/g;
 
 /**
+ * コメント除去済み CSS から、指定セレクタと**完全一致するトップレベル規則**の本文を集める。
+ * `.toggle-btn.active` や @media 内の `.toggle-btn` を部分一致で拾うと、通常状態の色を
+ * 検査したつもりで別状態を検査してしまうため、ヘッダーと深さの両方を絞る。
+ */
+function collectTopLevelRuleBodies(css: string, selector: string): string[] {
+  const bodies: string[] = [];
+  let blockDepth = 0;
+  let topLevelHeader = '';
+  let bodyStart: number | undefined;
+
+  for (let index = 0; index < css.length; index += 1) {
+    const character = css[index];
+    if (character === '{') {
+      if (blockDepth === 0) {
+        if (topLevelHeader.trim() === selector) {
+          bodyStart = index + 1;
+        }
+        topLevelHeader = '';
+      }
+      blockDepth += 1;
+      continue;
+    }
+    if (character === '}') {
+      blockDepth -= 1;
+      if (blockDepth === 0 && bodyStart !== undefined) {
+        bodies.push(css.slice(bodyStart, index));
+        bodyStart = undefined;
+      }
+      continue;
+    }
+    if (blockDepth === 0) {
+      if (character === ';') {
+        topLevelHeader = '';
+      } else {
+        topLevelHeader += character;
+      }
+    }
+  }
+  return bodies;
+}
+
+/** 宣言値を `;` まで 1 つだけ取り出す。欠落・重複は呼び出し側で明示的に赤にする。 */
+function collectDeclarationValues(ruleBody: string, property: string): string[] {
+  const propertyPattern = new RegExp(
+    `(?:^|;)\\s*${escapeForRegExp(property)}\\s*:\\s*([\\s\\S]*?);`,
+    'g',
+  );
+  return [...ruleBody.matchAll(propertyPattern)].map((match) => match[1]);
+}
+
+function collectVarReferenceTokens(value: string): string[] {
+  return [...value.matchAll(VAR_REFERENCE_PATTERN)].map((match) => match[1]);
+}
+
+/**
  * bare :root に定義だけあって参照が無いトークンを、意図的に見逃してよいものだけ列挙する
  * (bdboard-kjn9)。
  *
@@ -432,6 +487,51 @@ function collectTsxCustomPropertyReferences(dir: string): Set<string> {
 }
 
 describe('index.css custom properties', () => {
+  it('keeps missing-label color and inset-ring tokens tied to the non-active toggle color (bdboard-xo4k)', () => {
+    // board-filter-missing-label.spec.ts は「0 件で消えたチップ」と未選択の生きたチップの
+    // 同色性を E2E で見る。CI まで待たず、片方だけ別トークンへ動かす取り残しをここで止める。
+    const sourceWithoutComments = stripCssComments(cssSource);
+    const toggleRules = collectTopLevelRuleBodies(
+      sourceWithoutComments,
+      '.toggle-btn',
+    );
+    const missingLabelRules = collectTopLevelRuleBodies(
+      sourceWithoutComments,
+      '.board-filter-label-group .toggle-btn.board-filter-label-missing',
+    );
+
+    // 対象セレクタが消えた・リネームされた、または同じ規則が重複して曖昧になった場合に
+    // 「何も取れなかったので緑」という空振りを許さない。
+    expect(toggleRules, 'トップレベルの厳密な .toggle-btn 規則を 1 つだけ見つけてください。').toHaveLength(1);
+    expect(missingLabelRules, '欠損ラベル用の厳密な規則を 1 つだけ見つけてください。').toHaveLength(1);
+
+    const toggleColorTokens = collectVarReferenceTokens(
+      collectDeclarationValues(toggleRules[0]!, 'color')[0] ?? '',
+    );
+    const missingLabelColorTokens = collectVarReferenceTokens(
+      collectDeclarationValues(missingLabelRules[0]!, 'color')[0] ?? '',
+    );
+    const boxShadowValues = collectDeclarationValues(
+      missingLabelRules[0]!,
+      'box-shadow',
+    );
+    const insetRingLayers = (boxShadowValues[0] ?? '')
+      .split(',')
+      .filter((layer) => /\binset\b/.test(layer));
+    const insetRingTokens = collectVarReferenceTokens(insetRingLayers[0] ?? '');
+
+    expect(toggleColorTokens, '.toggle-btn の color から var(--トークン) を 1 つ取得してください。').toHaveLength(1);
+    expect(missingLabelColorTokens, '欠損ラベルの color から var(--トークン) を 1 つ取得してください。').toHaveLength(1);
+    expect(boxShadowValues, '欠損ラベルの box-shadow 宣言を 1 つ取得してください。').toHaveLength(1);
+    expect(insetRingLayers, '欠損ラベルの box-shadow から inset リングを 1 本だけ取得してください。').toHaveLength(1);
+    expect(insetRingTokens, 'inset リングから var(--トークン) を 1 つ取得してください。').toHaveLength(1);
+
+    // 値の解決結果ではなくトークン名そのものを固定する。別トークンが現在たまたま同色でも、
+    // 将来片方だけテーマ値を変えたときに結合が壊れるためである。
+    expect(toggleColorTokens[0]).toBe(missingLabelColorTokens[0]);
+    expect(missingLabelColorTokens[0]).toBe(insetRingTokens[0]);
+  });
+
   it('defines every referenced custom property in bare :root or a documented exception (bdboard-wws5: index.css + web/src TS(X))', () => {
     const sourceWithoutComments = stripCssComments(cssSource);
     const defined = collectDefinedCustomProperties(sourceWithoutComments);
