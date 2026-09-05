@@ -6438,7 +6438,17 @@ body {
 
   /* flex: 1 1 100% で延期グループだけ次行へ落ちると、完了ボタンが1行に単独で残り
      上の .btn { flex: 1 1 auto } により全幅に伸びる。先頭の完了だけ伸長させない
-     (bdboard-53my 観測点1) */
+     (bdboard-53my 観測点1)
+
+     :first-child という位置依存のセレクタなのは意図的。代案は2つとも劣る:
+     - 延期グループに order を振って末尾へ回す → DOM 順と視覚順がずれ、
+       フォーカス順が飛ぶ (WCAG 1.3.2)。44px タップ領域を守っている本バーで
+       それは割に合わない。
+     - :has(.quick-action-defer-group-custom) で全ボタンの伸長を止める →
+       単独行でない優先度ボタンの行まで見た目が変わり、非カスタム時と不整合になる。
+     位置依存の前提 (先頭 = 完了) が壊れたら
+     test/e2e/bulk-action-bar-defer-row.spec.ts の
+     completeButtonNotSoloFullWidth が落ちるので、結合はテストで守られている。 */
   .bulk-action-bar-buttons > .btn.bulk-action-btn:first-child {
     flex-grow: 0;
   }

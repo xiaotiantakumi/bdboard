@@ -465,6 +465,12 @@ for (const viewport of MOBILE_VIEWPORTS) {
       // 詳細パネル側には BulkActionBar のような `.btn { flex: 1 1 auto }` が無いため、
       // 完了ボタンは伸長せず単独全幅行にならない (実測: 375px で widthRatio=0.158 /
       // 480px で 0.121、いずれも同一行に兄弟あり)。ここはその性質を固定する回帰ガード。
+      //
+      // 注意: このアサーションは BulkActionBar 側の2件と違い**変異で検出力を実証していない**
+      // (取り除くべき CSS 規則がそもそも存在しないため、等価な変異が作れない)。
+      // 閾値 0.9 に対して実測 0.158/0.121 と余裕が桁違いなので、拾えるのは
+      // 「詳細パネルにも flex 伸長が入った」級の粗い退行だけ。細かい劣化は捕まえられない、
+      // という前提でこのガードを読むこと (bdboard-53my 議長裁定 2026-09-05)。
       expect(
         metrics.completeButtonNotSoloFullWidth,
         `${viewport.label} detail panel: complete button must not occupy a solo full-width row ` +
