@@ -4382,6 +4382,7 @@ body {
   }
 
   .help-panel {
+    max-height: calc(100vh - 20px);
     max-height: calc(100dvh - 20px);
   }
 
@@ -6162,6 +6163,7 @@ body {
     z-index: 6;
     margin: 0;
     /* MINOR-6: 確認パネル展開時にバーが伸びて上端が画面外へ出るのを防ぐ */
+    max-height: 70vh;
     max-height: 70dvh;
     overflow-y: auto;
     /* --color-bg-elevated は不透明。fixed なので safe-area は自前で持つ */
@@ -6176,6 +6178,7 @@ body {
   .bulk-label-suggestions {
     top: auto;
     bottom: 100%;
+    max-height: 40vh;
     max-height: 40dvh;
     overflow-y: auto;
   }
@@ -6238,6 +6241,7 @@ body {
   }
 
   .overlay {
+    height: 100vh;
     height: 100dvh;
     overscroll-behavior: none;
   }
@@ -6247,6 +6251,7 @@ body {
     min-width: 0;
     max-width: 100vw;
     height: 100%;
+    max-height: 100vh;
     max-height: 100dvh;
     overscroll-behavior: contain;
   }
@@ -6402,6 +6407,26 @@ body {
        (messages = 100dvh - 421)。ヘッダ / gap / .chat-input 46px 等の高さ・個数・gap を
        変えたら両方再導出すること — 片方だけ直すと crossover 帯 (431〜575px) だけ壊れる。
        calc 項が動く帯: 469 側 513〜565dvh / 485 側 513〜529dvh。 */
+    /* bdboard-qti6: ここだけは vh→dvh の単純併記が効かない (index.css:5101-5104 の
+       制約そのもの)。カスタムプロパティの宣言は型グラマーに対して検証されず任意の
+       トークン列として受理されるため、vh 版を先に併記しても dvh 版は「無効なので
+       捨てられる」のではなく vh 版を黙って上書きするだけになる。破綻は var() で
+       消費する側 (width/height: index.css:5905-5906, 6519-6520) の
+       invalid-at-computed-value-time として起き、var() の第2引数フォールバックは
+       custom property が「未定義」のときにしか効かないのでそこでも救えない。
+
+       対処しない判断 (議長裁定, bdboard-qti6)。dvh 非対応ブラウザ (Chrome <108 /
+       Safari <15.4 / Firefox <101) では width/height が初期値 auto に落ち、chat パネル幅
+       576px 以上で添付サムネイルが正方形でなく元画像のアスペクト比で出る見込み
+       (実測はしていない)。正しい直し方は `@supports not (height: 100dvh)` でこの
+       カスタムプロパティ自体を vh 版へ上書きする方式である。**この修正は加算的で、
+       dvh を解釈できるブラウザには一切影響しない** — 直前のコメントにある crossover 帯
+       の導出にも触れない。それでも入れないのは次の 2 点による:
+         (a) 実害が EOL ブラウザ限定の見た目だけで、対象ブラウザのシェア減少とともに
+             自然消滅する種類の問題であること (放置しても悪化しない)
+         (b) この index.css は @supports を他に一箇所も使っておらず、この 1 件のために
+             新しいパターンを持ち込む価値が薄いこと
+       裸の dvh が新たに増えないことは index.css.dvhFallback.test.ts が機械的に守る。 */
     --chat-attachment-preview-size: clamp(28px, calc(100dvh - 485px), 44px);
   }
 
@@ -6495,6 +6520,13 @@ body {
      スクロールコンテナを .chat-attachments ではなくラッパーに置くのは、入れ子スクロールを
      作らないため (削除ボタンへの scrollIntoView が単一コンテナで完結する)。 */
   .chat-input-notices {
+    /* clamp() の引数に dvh が現れても、宣言全体がトップレベルの dvh と同じ扱いで
+       検証される (min()/max() と同じ math function の型チェック規則 — 未知の
+       dimension unit は <calc-sum> として不正なので clamp() ごと無効)。つまりこの
+       max-height は「custom property 経由」ではない普通の型付きプロパティなので、
+       単純な vh→dvh の 2 行併記がそのまま効く (bdboard-qti6)。同じ考え方で
+       clamp()/min() に dvh を使っている他の箇所 (.search-palette 等) と同型。 */
+    max-height: clamp(44px, calc(100vh - 469px), 96px);
     max-height: clamp(44px, calc(100dvh - 469px), 96px);
     overflow-y: auto;
     overscroll-behavior: contain;
