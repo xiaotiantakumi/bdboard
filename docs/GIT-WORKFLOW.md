@@ -180,6 +180,31 @@ session end, not per-ticket.
 
 ## ブランチ保護
 
-GitHub Free private repos can't enforce branch protection rules; this is
-covered by convention + CI + always merging through `gh pr merge` instead.
-Revisit if the repo goes public or moves to a paid plan.
+`main` は GitHub の **repository ruleset `protect-main`** (2026-09-05、bdboard-nmnj) で
+保護している。リポジトリが public になったので Free プランでも ruleset が使える
+(それ以前は「Free の private repo では強制できない」として規約 + CI + `gh pr merge` だけで
+運用していた)。内容は上の運用規約をそのまま機械で固定したもの:
+
+- **PR 経由必須** (`pull_request`、approvals 0 — ソロ開発)。マージ方式は **squash のみ**
+  (`gh pr merge --squash` に揃える)。
+- **required status checks** = `verify` / `e2e` / `commit-parse` (GitHub Actions 発のもの
+  だけを認める)。`verify-windows` は `continue-on-error` のまま必須化しない (判断は
+  bdboard-51qb)。GitGuardian は外部 app なので必須にしない。**strict (up-to-date 必須) は
+  off** — main が動いたときの追従は上の drift + merge-slot + CAS の運用に任せ、PR ごとの
+  rebase → CI 再走を強制しない。
+- **force push 禁止** (`non_fast_forward`)、**ブランチ削除禁止** (`deletion`)。
+- **bypass = Repository admin (always)**。オーナーだけが例外 2 件
+  (`chore(beads)` と CI 復旧) を直接コミットできる。bypass は「規約上の例外を打てる」
+  ためであって、通常の変更を main に直接 push してよい意味ではない。
+
+確認・変更は API から:
+
+```bash
+gh api repos/xiaotiantakumi/bdboard/rules/branches/main --jq '.[].type'   # 効いている rule
+gh api repos/xiaotiantakumi/bdboard/rulesets                             # ruleset 一覧 (id を取る)
+gh api -X PUT repos/xiaotiantakumi/bdboard/rulesets/<id> --input ruleset.json
+```
+
+required checks の **名前はジョブ名と一致していなければならない**。ci.yml のジョブ名を
+変えるときは ruleset 側も同じ PR の流れで更新すること (名前がずれると、その check が
+永遠に「待ち」のままマージできなくなる — bypass で押し通すのは規約違反)。
