@@ -197,3 +197,62 @@ export async function pinTipsBannerRandom(page: Page, index: number, tipCount: n
     Math.random = () => (pinnedIndex + 0.5) / tipCount;
   }, { pinnedIndex: index, tipCount });
 }
+
+/**
+ * 375x812 のモバイル縦方向を「ページ側スクロール残差 (maxScrollY)」とその内訳で測る。
+ *
+ * 残差のモデルは mobile-page-scroll-residual.spec.ts の冒頭に書いてある:
+ *   maxScrollY = header + tipsBanner + boardFilterBarBox - 172
+ * `boardFilterBarBox` は border-box 高 + margin-bottom。getBoundingClientRect().height は
+ * margin を含まないので、`boardFilterBar` と `boardFilterBarMarginBottom` を別々に返す
+ * (畳んで 4px / 展開して 8px。index.css の `.board-filter-bar` と
+ * `:has(.board-filter-toggle[aria-expanded='false'])`)。この 4px の差が、展開時だけ
+ * 実測の定数項が 168 ではなく 164 に見える理由そのもの。
+ */
+export interface ResidualMetrics {
+  maxScrollY: number;
+  viewportHeight: number;
+  header: number;
+  tipsBanner: number;
+  boardFilterBar: number;
+  boardFilterBarMarginBottom: number;
+  laneIndicatorStrip: number;
+  lane: number;
+}
+
+export async function measureResidual(page: Page): Promise<ResidualMetrics> {
+  return page.evaluate(() => {
+    const px = (n: number) => Math.round(n * 100) / 100;
+    const heightOf = (selector: string): number => {
+      const el = document.querySelector(selector);
+      return el ? px(el.getBoundingClientRect().height) : 0;
+    };
+    const marginBottomOf = (selector: string): number => {
+      const el = document.querySelector(selector);
+      return el ? px(Number.parseFloat(getComputedStyle(el).marginBottom) || 0) : 0;
+    };
+    const root = document.documentElement;
+    return {
+      // clientHeight はレイアウトビューポート (縦スクロールバーぶんを含まない) なので
+      // innerHeight より「実際に scrollTo できる上限」に忠実。モバイルエミュレーションでは
+      // スクロールバーが無く両者は一致するが、定義として正しいほうを使う。
+      maxScrollY: px(root.scrollHeight - root.clientHeight),
+      viewportHeight: root.clientHeight,
+      header: heightOf('.header'),
+      tipsBanner: heightOf('.tips-banner'),
+      boardFilterBar: heightOf('.board-filter-bar'),
+      boardFilterBarMarginBottom: marginBottomOf('.board-filter-bar'),
+      laneIndicatorStrip: heightOf('.lane-indicator-strip'),
+      lane: heightOf('.lanes-row .lane'),
+    };
+  });
+}
+
+export function describeResidualMetrics(m: ResidualMetrics): string {
+  return (
+    `maxScrollY=${m.maxScrollY}, viewportHeight=${m.viewportHeight}, ` +
+    `header=${m.header}, tips=${m.tipsBanner}, ` +
+    `filterBar=${m.boardFilterBar}(+${m.boardFilterBarMarginBottom} margin), ` +
+    `laneStrip=${m.laneIndicatorStrip}, lane=${m.lane}`
+  );
+}
