@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -14,6 +15,8 @@ function readSource(relativePath: string): string {
 }
 
 const cssSource = readSource('./index.css');
+// このテストファイル自身が web/src 直下にあるので、そのディレクトリがそのまま走査の起点になる。
+const webSrcDir = fileURLToPath(new NodeUrl('.', import.meta.url));
 
 function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
@@ -32,6 +35,12 @@ const RUNTIME_CUSTOM_PROPERTIES = new Set([
   // .ai-quota-popover より継承チェーンの上流なので打ち消しが効かなくなり、親の inline
   // シフトが子に漏れて二重適用される。各ポップオーバー自身のシフトは inline 宣言が同一要素
   // で継承値に勝つので消えない。
+  //
+  // 上の 3 件 (documentElement 書き込み) とこの 1 件 (各ポップオーバー要素への書き込み) は
+  // 書き込み先の要素が違う非対称な集合だが、下の
+  // 「keeps RUNTIME_CUSTOM_PROPERTIES in sync with...」テストは書き込み先を
+  // documentElement に絞らず `.style.setProperty('--...')` 呼び出し全般を走査するので、
+  // この非対称を気にせず 1 つの集合として同じ assert に載せられる (bdboard-hzpw)。
   '--popover-shift-x',
 ]);
 
@@ -152,6 +161,116 @@ function collectReferencedCustomProperties(css: string): Set<string> {
   );
 }
 
+/**
+ * web/src 配下の *.ts / *.tsx を再帰的に列挙する（*.test.ts(x) は除外）。
+ *
+ * 除外理由: 現状どの *.test.ts(x) も `.style.setProperty(` を呼んでいない
+ * (`.style.removeProperty(` の後始末呼び出しはあるが対象外)。テストファイルは
+ * assert 対象のプロダクションコードそのものではないので、走査対象から外して
+ * ノイズを減らす。将来テストが setProperty を呼ぶようになったら、このテストが
+ * 検出漏れではなく「対象を広げる必要がある」というシグナルとして機能するよう、
+ * 除外は拡張子パターンではなくここに明文化しておく。
+ */
+function listRuntimeSourceFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entryName of readdirSync(dir)) {
+    const fullPath = join(dir, entryName);
+    if (statSync(fullPath).isDirectory()) {
+      files.push(...listRuntimeSourceFiles(fullPath));
+      continue;
+    }
+    if (!/\.tsx?$/.test(entryName) || /\.test\.tsx?$/.test(entryName)) {
+      continue;
+    }
+    files.push(fullPath);
+  }
+  return files;
+}
+
+const SET_PROPERTY_CALL_PATTERN = /\.style\.setProperty\(\s*([^,)]+)\s*,/g;
+const STRING_LITERAL_CUSTOM_PROPERTY = /^(['"])(--[\w-]+)\1$/;
+const IDENTIFIER_PATTERN = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * 1 ファイル分の `<何か>.style.setProperty('--x', …)` 呼び出しから、書き込まれている
+ * カスタムプロパティ名の集合を集める。
+ *
+ * **書き込み先の要素は問わない** (`documentElement.style` でも各ポップオーバー要素の
+ * `el.style` でも同じ扱い)。これは手抜きではなく設計判断: RUNTIME_CUSTOM_PROPERTIES は
+ * documentElement 書き込み 3 件とポップオーバー要素書き込み 1 件が混在した非対称な集合
+ * なので (上のコメント参照)、書き込み先で絞ると 2 つの検査に分ける必要が出る。
+ * `.style.setProperty` 全般を対象にすれば 1 つの assert で両方カバーできる。
+ *
+ * 第 1 引数が `'--foo'` のような文字列リテラルならそのまま採用する。
+ * useLaneStripHeightVar.ts / useBulkBarHeightVar.ts のように `const CSS_VAR = '--foo'`
+ * を経由する場合は、同じファイル内でその定数の宣言を逆引きする。
+ * どちらの形にも当てはまらない呼び出しは見逃さず `unresolved` に積む —
+ * ここで黙って読み飛ばすと、将来 3 つ目の書き方が増えたときに検出そのものが
+ * 静かに無効化されてしまう。
+ */
+function collectSetPropertyTargets(
+  filePath: string,
+  fileSource: string,
+  unresolved: string[],
+): Set<string> {
+  const targets = new Set<string>();
+  for (const match of fileSource.matchAll(SET_PROPERTY_CALL_PATTERN)) {
+    const rawArgument = match[1].trim();
+
+    const literalMatch = rawArgument.match(STRING_LITERAL_CUSTOM_PROPERTY);
+    if (literalMatch) {
+      targets.add(literalMatch[2]);
+      continue;
+    }
+
+    if (!IDENTIFIER_PATTERN.test(rawArgument)) {
+      unresolved.push(
+        `${filePath}: setProperty の第1引数を解釈できません (${rawArgument})`,
+      );
+      continue;
+    }
+
+    const constDeclarationPattern = new RegExp(
+      `const\\s+${rawArgument}\\s*(?::[^=]+)?=\\s*(['"])(--[\\w-]+)\\1`,
+    );
+    const constMatch = fileSource.match(constDeclarationPattern);
+    if (!constMatch) {
+      unresolved.push(
+        `${filePath}: 識別子 ${rawArgument} を --で始まる文字列リテラルの const 宣言に解決できません`,
+      );
+      continue;
+    }
+    targets.add(constMatch[2]);
+  }
+  return targets;
+}
+
+/**
+ * web/src 配下すべての `.style.setProperty('--...')` 呼び出しから書き込み先の
+ * カスタムプロパティ名を集める。テスト実行のたびにソースを読んで走査するので、
+ * フックの削除・リネーム・新規追加のいずれにも追従する
+ * (RUNTIME_CUSTOM_PROPERTIES 側にハードコードした期待値を書き足すだけでは、この
+ * ズレを検出できない — bdboard-hzpw)。
+ */
+function collectRuntimeSetPropertyTargets(): {
+  targets: Set<string>;
+  unresolved: string[];
+} {
+  const unresolved: string[] = [];
+  const targets = new Set<string>();
+  for (const filePath of listRuntimeSourceFiles(webSrcDir)) {
+    const fileSource = readFileSync(filePath, 'utf8');
+    for (const target of collectSetPropertyTargets(
+      filePath,
+      fileSource,
+      unresolved,
+    )) {
+      targets.add(target);
+    }
+  }
+  return { targets, unresolved };
+}
+
 describe('index.css custom properties', () => {
   it('defines every referenced custom property in bare :root or a documented exception', () => {
     const sourceWithoutComments = stripCssComments(cssSource);
@@ -190,6 +309,39 @@ describe('index.css custom properties', () => {
     expect(
       offenders,
       `index.css の文字列リテラルまたは url() トークンに波かっこが入っています: ${offenders.join(', ')}。collectDefinedCustomProperties はどちらも認識せず波かっこを数えるだけなので、ブロックの深さがずれます。url() 側は深さが浅くなる向きにずれ、条件付き :root が bare :root に昇格してこのファイルの検査ごと緑で素通りします。トークン側を書き換えるか、walker に文字列リテラルと url() の読み飛ばしを実装してください。`,
+    ).toEqual([]);
+  });
+
+  it('keeps RUNTIME_CUSTOM_PROPERTIES in sync with every .style.setProperty(\'--...\') call under web/src', () => {
+    const { targets, unresolved } = collectRuntimeSetPropertyTargets();
+
+    // 解決できなかった呼び出しがある時点で、以下の集合比較そのものが信用できない。
+    // 「一致した」と誤って報告するより先に、走査ロジックの更新を要求して止める。
+    expect(
+      unresolved,
+      `.style.setProperty('--...') 呼び出しを静的解析できませんでした。走査ロジック (collectSetPropertyTargets) を更新してください:\n${unresolved.join('\n')}`,
+    ).toEqual([]);
+
+    // 向き 1: 実際に書き込まれているのに許可リストに無い。書き込み先が新設され、
+    // 許可リストの追従漏れがあるケース。
+    const writtenButNotAllowed = [...targets]
+      .filter((property) => !RUNTIME_CUSTOM_PROPERTIES.has(property))
+      .sort();
+    // 向き 2: 許可リストにあるのに、もう誰も setProperty していない。フックが削除・
+    // リネームされ、許可リストだけが取り残されたケース (bdboard-hzpw の
+    // useBulkBarHeightVar 削除シナリオそのもの)。このテストが無いと、この向きのズレは
+    // 「許可リストに何を足しても黙って通る」窓口として残り続ける。
+    const allowedButNotWritten = [...RUNTIME_CUSTOM_PROPERTIES]
+      .filter((property) => !targets.has(property))
+      .sort();
+
+    expect(
+      writtenButNotAllowed,
+      `web/src で setProperty されているのに RUNTIME_CUSTOM_PROPERTIES に無いカスタムプロパティがあります: ${writtenButNotAllowed.join(', ')}。実行時に書き込まれる値は理由付きで RUNTIME_CUSTOM_PROPERTIES に追加してください。`,
+    ).toEqual([]);
+    expect(
+      allowedButNotWritten,
+      `RUNTIME_CUSTOM_PROPERTIES にあるのに web/src のどこからも setProperty されていないカスタムプロパティがあります: ${allowedButNotWritten.join(', ')}。値を書き込むフックが削除・リネームされた可能性があります (index.css 側の var() フォールバック値に固定される実害があります)。setProperty 呼び出しを復元するか、意図的な削除なら RUNTIME_CUSTOM_PROPERTIES からも削除してください。`,
     ).toEqual([]);
   });
 });
