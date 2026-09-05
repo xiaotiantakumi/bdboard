@@ -1985,6 +1985,11 @@ body {
   white-space: nowrap;
 }
 
+/* 注意: このセレクタは 1682 行の `@media (max-width: 480px)` 内にも同名で存在し、
+   そちらが `align-self: center` を宣言している。詳細度は同じ (0,1,0) なので、
+   メディアクエリ側が勝っているのは「基底のこのブロックが align-self を宣言していない」
+   ことだけが理由 — カスケードの順序では後ろにある基底側が本来は勝つ位置にある。
+   ここに `align-self` を足すと、モバイルの中央揃えが黙って負ける (bdboard-4kik レビュー N4)。 */
 .hygiene-issue-id {
   grid-area: id;
   font-family: var(--font-mono, ui-monospace, monospace);
