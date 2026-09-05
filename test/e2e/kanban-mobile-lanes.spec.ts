@@ -65,9 +65,11 @@ test.describe('kanban mobile lanes', () => {
    * あったと推定されるが再現していない)。再現手順: npx playwright test は web/dist を
    * 再ビルドしないので、計測前に npm run build:web が必要。
    *
-   * activationScrollY (= stripDocTop - headerHeight) はヘッダー高 H に依存しないが、
-   * maxScrollY (= pageHeight - innerHeight) は H に比例する。ヘッダーが 9px 縮むだけで
-   * maxScrollY < activationScrollY となり strip が一度も stuck せずテストが空振りする。
+   * activationScrollY (= stripDocTop - headerHeight) はヘッダー高 H に依存する。maxScrollY
+   * (= pageHeight - innerHeight) は bdboard-knrx 以降 H に依存しない (レーン上限が
+   * --header-height を引くのでヘッダー項が打ち消える) ので、ヘッダーが縮むと
+   * activationScrollY だけが上がり、maxScrollY < activationScrollY となって strip が
+   * 一度も stuck せずテストが空振りしうる。
    * header-sticky.spec.ts の ensurePageScrollable と同型で、.lanes-scroll-region 末尾に
    * flex-shrink:0 の spacer を足して縦スクロール余裕を確保してから検証する (.app ではなく
    * region — .app に足すと strip ごと画面外へ流れる)。

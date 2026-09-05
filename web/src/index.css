@@ -53,6 +53,15 @@
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
+
+  /* 盤面の縦チェーンで、モバイルの .lane 高さ上限 (`@media (max-width: 700px)` の
+   * `.lane` / `.board-section .lane`) が減算しなければならない固定クローム。
+   * 実 padding とその減算項が同じトークンを参照することが要点 — 片方だけ動いたときに
+   * レーン上端が sticky な .lane-indicator-strip の下へ潜る (bdboard-knrx)。
+   * --main-padding は .main の実 padding そのもの (PC 20px)。モバイルの各ブレークポイントで
+   * 14px / 12px に上書きし、そこで .lane の高さ上限が同じトークンを引く。 */
+  --lanes-row-padding-bottom: 10px;
+  --main-padding: 20px;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -766,8 +775,11 @@ body {
 
 .main {
   flex: 1;
-  padding: 20px calc(20px + env(safe-area-inset-right))
-    calc(20px + env(safe-area-inset-bottom)) calc(20px + env(safe-area-inset-left));
+  /* --main-padding は :root のトークン。モバイルでは 14px / 12px に上書きされ、同じ値を
+     .lane の高さ上限が減算する (bdboard-knrx)。ここを直接 px で書くとその連動が切れる。 */
+  padding: var(--main-padding) calc(var(--main-padding) + env(safe-area-inset-right))
+    calc(var(--main-padding) + env(safe-area-inset-bottom))
+    calc(var(--main-padding) + env(safe-area-inset-left));
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -2771,7 +2783,7 @@ body {
   display: flex;
   gap: 14px;
   overflow-x: auto;
-  padding-bottom: 10px;
+  padding-bottom: var(--lanes-row-padding-bottom);
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
   flex: 1;
@@ -5948,9 +5960,15 @@ body {
     width: auto;
   }
 
+  /* --main-padding は :root トークン。この padding と、下の .lane 高さ上限が引く
+     --main-padding が同じ値を指すのが要点 (bdboard-knrx)。 */
+  :root {
+    --main-padding: 14px;
+  }
+
   .main {
-    padding: 14px;
-    padding-bottom: calc(14px + var(--bulk-bar-height, 0px));
+    padding: var(--main-padding);
+    padding-bottom: calc(var(--main-padding) + var(--bulk-bar-height, 0px));
   }
 
   /* ルートスクロールポートの下端に余白を持たせ、キーボードフォーカスが
@@ -5959,18 +5977,59 @@ body {
     scroll-padding-bottom: var(--bulk-bar-height, 0px);
   }
 
+  /*
+   * レーンの高さ上限 = 「sticky クロームの下に残るビューポート帯」そのもの。
+   *
+   *   100dvh - .header - .lane-indicator-strip - (.lanes-row と .main の下 padding)
+   *
+   * 旧実装はここが `100dvh - 260px` のリテラルだった。260 の内訳は strip 44 +
+   * 固定 padding 44 + **ヘッダー 245 のうち 172 だけ**で、ヘッダーが 203px だった頃の
+   * 較正がそのまま残っていた (bdboard-knrx / bdboard-4ij6)。実測 375x812 では最大スクロール時に
+   * レーン上端 51.19px (= .lane-header 46.63px 全部) が sticky な strip の下へ潜り、
+   * 同時にレーン下端とビューポート下端の間に 22.19px の死に領域ができていた。
+   *
+   * 導出: 最大スクロール時、レーン下端はビューポート下端から下側 padding ぶん
+   * (--lanes-row-padding-bottom + --main-padding) だけ上に固定される。stuck した
+   * sticky クロームの下端は --header-height + --lane-strip-height。両者が交差しない
+   * 条件がそのまま下の式で、これは最大スクロール時が最悪ケースなので全スクロール位置で成立する。
+   *
+   * リテラルではなく変数にしてあるのが本質: ヘッダーを縮める作業 (bdboard-qxt1) が
+   * そのぶんカード表示面積として自動的に返ってくるし、ヘッダーが太ってもレーンが
+   * strip に潜り直すことがない。
+   *
+   * フォールバックが 0px なのは意図的。--lane-strip-height は strip 未描画時に
+   * 削除される (useLaneStripHeightVar) ので 0px が正しい値。--header-height は
+   * App.tsx が useLayoutEffect で無条件に設定する (= paint 前) ため実質到達しない。
+   *
+   * 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸び横スワイプ時に
+   * 空白へ飛ぶのを防ぐ (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。
+   */
   .lane {
     min-width: min(86vw, 320px);
     max-width: min(86vw, 320px);
-    /* 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸び横スワイプ時に
-       空白へ飛ぶのを防ぐ (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。 */
-    max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
-    max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
+    max-height: calc(
+      100vh - var(--header-height, 0px) - var(--lane-strip-height, 0px) -
+        var(--lanes-row-padding-bottom) - var(--main-padding) -
+        var(--bulk-bar-height, 0px)
+    );
+    max-height: calc(
+      100dvh - var(--header-height, 0px) - var(--lane-strip-height, 0px) -
+        var(--lanes-row-padding-bottom) - var(--main-padding) -
+        var(--bulk-bar-height, 0px)
+    );
   }
 
   .board-section .lane {
-    max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
-    max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
+    max-height: calc(
+      100vh - var(--header-height, 0px) - var(--lane-strip-height, 0px) -
+        var(--lanes-row-padding-bottom) - var(--main-padding) -
+        var(--bulk-bar-height, 0px)
+    );
+    max-height: calc(
+      100dvh - var(--header-height, 0px) - var(--lane-strip-height, 0px) -
+        var(--lanes-row-padding-bottom) - var(--main-padding) -
+        var(--bulk-bar-height, 0px)
+    );
   }
 
   .lanes-scroll-region {
@@ -6434,9 +6493,10 @@ body {
     min-height: 34px;
   }
 
-  .main {
-    padding: 12px;
-    padding-bottom: calc(12px + var(--bulk-bar-height, 0px));
+  /* .main の実 padding も .lane 高さ上限の減算項も、この 1 トークンから引く (bdboard-knrx)。
+     .main 自体のルールは max-width: 700px 側にあり、そちらが var(--main-padding) を読む。 */
+  :root {
+    --main-padding: 12px;
   }
 
   .bulk-action-bar {
@@ -6453,7 +6513,7 @@ body {
   }
 
   .lanes-row {
-    padding: 0 12px 10px;
+    padding: 0 12px var(--lanes-row-padding-bottom);
     /* padding-left と一致。未設定だと2枚目以降のレーンがスナップ後に scrollport 左端へ密着 (bdboard-h4xs.11) */
     scroll-padding-left: 12px;
   }

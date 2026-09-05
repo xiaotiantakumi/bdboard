@@ -201,13 +201,15 @@ export async function pinTipsBannerRandom(page: Page, index: number, tipCount: n
 /**
  * 375x812 のモバイル縦方向を「ページ側スクロール残差 (maxScrollY)」とその内訳で測る。
  *
- * 残差のモデルは mobile-page-scroll-residual.spec.ts の冒頭に書いてある:
- *   maxScrollY = header + tipsBanner + boardFilterBarBox - 172
+ * 残差のモデルは mobile-page-scroll-residual.spec.ts の冒頭に書いてある。bdboard-knrx が
+ * `.lane` の高さ上限を `--header-height` 追従にしてヘッダー項が打ち消えたので、現在は
+ *   maxScrollY = tipsBanner + boardFilterBarBox + 22
+ * (22 = `.main` padding-top 12 + `.lane-indicator-strip` margin-bottom 10)。
  * `boardFilterBarBox` は border-box 高 + margin-bottom。getBoundingClientRect().height は
  * margin を含まないので、`boardFilterBar` と `boardFilterBarMarginBottom` を別々に返す
  * (畳んで 4px / 展開して 8px。index.css の `.board-filter-bar` と
  * `:has(.board-filter-toggle[aria-expanded='false'])`)。この 4px の差が、展開時だけ
- * 実測の定数項が 168 ではなく 164 に見える理由そのもの。
+ * 定数項が 26 ではなく 30 に見える理由そのもの。
  */
 export interface ResidualMetrics {
   maxScrollY: number;
