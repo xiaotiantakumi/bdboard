@@ -78,7 +78,12 @@ async function assertAiQuotaBadgeVisible(page: Page): Promise<void> {
 }
 
 /** --header-height が .header 実測に追いつくまで待つ (AiQuotaWidget 描画後 1 フレーム遅延)。 */
-async function waitForHeaderHeightConvergence(page: Page): Promise<void> {
+async function waitForHeaderHeightConvergence(
+  page: Page,
+  message =
+    '--header-height が .header の実測高に追いつかない。' +
+    'レーンストリップ sticky top / scroll-padding-top のずれ原因。',
+): Promise<void> {
   await expect
     .poll(
       async () =>
@@ -100,9 +105,7 @@ async function waitForHeaderHeightConvergence(page: Page): Promise<void> {
           return Math.abs(headerHeightVar - Math.ceil(headerHeight));
         }),
       {
-        message:
-          '--header-height が .header の実測高に追いつかない。' +
-          'レーンストリップ sticky top / scroll-padding-top のずれ原因。',
+        message,
         timeout: 10_000,
       },
     )
@@ -128,8 +131,17 @@ interface WorstCaseTipMeasurement {
   heights: number[];
 }
 
+interface TipTextFixture {
+  title: string;
+  description: string;
+}
+
 /** ブラウザ上で各 Tips 文言を差し替え、バナー高さが最大になる index を返す。 */
 async function findWorstCaseTipIndex(page: Page): Promise<WorstCaseTipMeasurement> {
+  const tipTexts: TipTextFixture[] = HELP_TIPS.map(({ title, description }) => ({
+    title,
+    description,
+  }));
   return page.evaluate((tipsData) => {
     const banner = document.querySelector('.tips-banner');
     if (!banner) {
@@ -169,7 +181,7 @@ async function findWorstCaseTipIndex(page: Page): Promise<WorstCaseTipMeasuremen
 
     clone.remove();
     return { index: maxIndex, bannerHeight: maxHeight, heights };
-  }, HELP_TIPS);
+  }, tipTexts);
 }
 
 /**
@@ -178,6 +190,7 @@ async function findWorstCaseTipIndex(page: Page): Promise<WorstCaseTipMeasuremen
  *
  * この spec では preset 生成やパネル履歴トークン生成が走らないため、Math.random を定数化しても
  * 他機能への副作用はない (global-setup へ波及させないのは addInitScript をテスト内に閉じるため)。
+ * この前提が崩れたら pin を TipsBanner 専用の注入に切り替えること。
  */
 async function pinTipsBannerRandom(page: Page, index: number, tipCount: number): Promise<void> {
   await page.addInitScript(({ pinnedIndex, tipCount }) => {
@@ -292,10 +305,21 @@ const MAX_CONTENT_START_EXCLUDING_TIPS_PX = 649;
 //
 // MAX_TIPS_BANNER_HEIGHT_PX: .tips-banner の実測高さ。折り返し行数がフォント環境で動く唯一の
 // 要素なので +24px (≒ 折り返し 1 行ぶん) の余裕。1 行増えても赤くならないが 2 行以上ぶん
-// 肥大したら捕まえる。
+// 肥大したら捕まえる。この 24px は Linux フォント差専用の予算であり、padding / font-size を
+// 増やす変更でこれを食うのは禁止。
 //
 // 上記 3 回実測 tipsBannerHeight=198.8125 (3/3 同値) → ceil(198.8125)+24 = 223
 const MAX_TIPS_BANNER_HEIGHT_PX = 223;
+//
+// MAX_CONTENT_START_PX: firstCardTop 本体のラチェット (Tips バナー内部の肥大を検知する)。
+// 3 回実測 firstCardTop=831.4375 の切り上げ 832 に Linux CI フォント差ぶん +16px のみを足した
+// 値 (MAX_CONTENT_START_EXCLUDING_TIPS_PX と同じ許容幅)。MAX_TIPS_BANNER_HEIGHT_PX の +24px
+// (Tips の折り返し 1 行ぶん) をここに二重計上しないのは意図的 — 二重計上して 872 にすると、
+// バナー padding を 20px 増やす程度の実劣化をこの上限が素通りしてしまい、このアサートを足す
+// 意味が消えるため。バナーの折り返しは MAX_TIPS_BANNER_HEIGHT_PX 側が専用に見る。
+// 先例として AC4 の header 実測が Linux CI 99px / macOS 103px で Linux のほうが小さいため、
+// この非対称な予算配分が CI を赤くするリスクは低いと判断した。
+const MAX_CONTENT_START_PX = 848;
 
 // これを超える変更を入れるときは、数字を黙って上げるのではなく、なぜ予算を増やしてよいかを
 // 根拠付きで書いてから上げること。前回より大きいから上げた、という形にすると次に本当の肥大が
@@ -308,9 +332,7 @@ test.describe('mobile header compact — AC1 content start budget', () => {
     hasTouch: true,
   });
 
-  test('375x812: content start stays within budget and first card is not hidden under the sticky header', async ({
-    page,
-  }) => {
+  test('375x812: content start stays within budget', async ({ page }) => {
     await installAiQuotaRoute(page);
     await page.goto('/');
     await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
@@ -358,6 +380,25 @@ test.describe('mobile header compact — AC1 content start budget', () => {
       `innerHeight=${metrics.innerHeight}, --header-height=${metrics.headerHeightVar}, ` +
       `tipId=${selectedTip.id}`;
 
+    const contentStartExcludingTipsMargin =
+      MAX_CONTENT_START_EXCLUDING_TIPS_PX - contentStartExcludingTips;
+    const tipsBannerHeightMargin = MAX_TIPS_BANNER_HEIGHT_PX - metrics.tipsBannerHeight;
+    const firstCardTopMargin = MAX_CONTENT_START_PX - metrics.firstCardTop;
+
+    console.log(
+      `[ac1] contentStartExcludingTips=${contentStartExcludingTips} ` +
+        `(margin=${contentStartExcludingTipsMargin}), ` +
+        `tipsBannerHeight=${metrics.tipsBannerHeight} (margin=${tipsBannerHeightMargin}), ` +
+        `firstCardTop=${metrics.firstCardTop} (margin=${firstCardTopMargin}), ` +
+        `headerBottom=${metrics.headerBottom}, innerHeight=${metrics.innerHeight}, ` +
+        `foldMarginPx=${foldMarginPx}, tipId=${selectedTip.id}`,
+    );
+
+    expect(
+      metrics.tipsBannerHeight,
+      'clone measurement must match the real render; if diverged, worst-case selection picked a non-worst tip',
+    ).toBeCloseTo(worstCase.bannerHeight, 0);
+
     expect(
       contentStartExcludingTips,
       `content start excluding tips must stay within budget ` +
@@ -366,9 +407,20 @@ test.describe('mobile header compact — AC1 content start budget', () => {
 
     expect(
       metrics.tipsBannerHeight,
-      `tips banner height must stay within budget (max=${MAX_TIPS_BANNER_HEIGHT_PX}px, ${debugInfo})`,
+      `tips banner height must stay within budget (max=${MAX_TIPS_BANNER_HEIGHT_PX}px, ${debugInfo}). ` +
+        'docs/help-content.json の説明文を長くすると、モバイルで Tips バナーが実際に太っている。' +
+        '予算を上げる前に文言を短くできないか検討すること。',
     ).toBeLessThanOrEqual(MAX_TIPS_BANNER_HEIGHT_PX);
 
+    expect(
+      metrics.firstCardTop,
+      `first card top must stay within budget (max=${MAX_CONTENT_START_PX}px, ${debugInfo}). ` +
+        'Tips バナー内部の肥大 (padding / font-size) は contentStartExcludingTips の引き算を素通りするため、' +
+        'この 1 本だけが検知できる。',
+    ).toBeLessThanOrEqual(MAX_CONTENT_START_PX);
+
+    // scrollY=0 では通常フロー上ほぼ恒真の安全網。実際の潜り込み検知は
+    // waitForHeaderHeightConvergence (--header-height と実測高の一致) 側が担う。
     expect(
       metrics.firstCardTop,
       `first card must not slide under sticky header (${debugInfo})`,
@@ -394,37 +446,14 @@ test.describe('mobile header compact — header height budget (bdboard-k21o)', (
 
     // --header-height は useHeaderHeightVar の ResizeObserver 経由で 1 フレーム遅れて追いつく
     // (実測: バッジ描画直後は 203px のまま → 収束後 245px)。収束を待ってから比較する。
-    await expect
-      .poll(
-        async () =>
-          page.evaluate(() => {
-            const header = document.querySelector('.header');
-            if (!header) {
-              return Number.POSITIVE_INFINITY;
-            }
-            const headerHeight = header.getBoundingClientRect().height;
-            const headerHeightVarStr = getComputedStyle(document.documentElement)
-              .getPropertyValue('--header-height')
-              .trim();
-            const headerHeightVar = headerHeightVarStr.endsWith('px')
-              ? Number.parseFloat(headerHeightVarStr)
-              : Number.NaN;
-            if (!Number.isFinite(headerHeightVar)) {
-              return Number.POSITIVE_INFINITY;
-            }
-            return Math.abs(headerHeightVar - Math.ceil(headerHeight));
-          }),
-        {
-          message:
-            '--header-height が .header の実測高に追いつかない。この変数は ' +
-            '.lane-indicator-strip の sticky top と html の scroll-padding-top を駆動するので、' +
-            'ずれるとレーンストリップがヘッダーの下に潜る。' +
-            '(#346 マージ後の 2026-09-05 に実ボードを測り直した時点では var=245px / 実測 245px で ' +
-            '一致しており、以前記録された 37.5px のずれは再現しなかった。追跡は bdboard-s61q)',
-          timeout: 10_000,
-        },
-      )
-      .toBeLessThanOrEqual(1);
+    await waitForHeaderHeightConvergence(
+      page,
+      '--header-height が .header の実測高に追いつかない。この変数は ' +
+        '.lane-indicator-strip の sticky top と html の scroll-padding-top を駆動するので、' +
+        'ずれるとレーンストリップがヘッダーの下に潜る。' +
+        '(#346 マージ後の 2026-09-05 に実ボードを測り直した時点では var=245px / 実測 245px で ' +
+        '一致しており、以前記録された 37.5px のずれは再現しなかった。追跡は bdboard-s61q)',
+    );
 
     const metrics = await page.evaluate(() => {
       const innerHeight = window.innerHeight;
