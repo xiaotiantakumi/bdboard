@@ -3,6 +3,10 @@
 
   /* Apple HIG-inspired design tokens (light) */
   --color-accent: #007aff;
+  /* アクセント色をアクセントで着色した面の上に文字として置くと、前景と背景の色相が
+     同じで輝度差が稼げず AA に届かない (.filter-chip-active で light 3.40:1)。
+     文字用に明度だけずらした派生値。--color-accent は面・枠・outline 用のまま。 */
+  --color-accent-text: #005ec4;
   --color-accent-fg: #ffffff;
   --color-bg: #f2f2f7;
   --color-bg-elevated: #ffffff;
@@ -61,6 +65,7 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --color-accent: #0a84ff;
+    --color-accent-text: #5eabff;
     --color-accent-fg: #ffffff;
     --color-bg: #000000;
     --color-bg-elevated: #1c1c1e;
@@ -540,13 +545,14 @@ body {
 .filter-chip-active {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: var(--color-accent);
-  color: var(--color-accent);
+  color: var(--color-accent-text);
 }
 
 .filter-chip-clear {
   font-size: 0.75rem;
   line-height: 1;
-  opacity: 0.85;
+  /* ここに opacity を置かない。✕は色を持たず .filter-chip-active の color を継承する。 */
+  /* 掃引は computed color だけを見るため、opacity: 0.85 では実描画の✕がライト約4.02:1でAA未満になる。 */
 }
 
 .header-title {
@@ -2905,7 +2911,9 @@ body {
 }
 
 .lane-count {
-  color: var(--color-text-tertiary);
+  /* --badge-neutral-bg では、他の9箇所と同じく --badge-neutral-fg を対にする。 */
+  /* --color-text-tertiary はこの背景上で light 2.83:1 / dark 3.91:1 と AA (4.5:1) に届かない。 */
+  color: var(--badge-neutral-fg);
   font-weight: 500;
   font-size: 0.75rem;
   background: var(--badge-neutral-bg);

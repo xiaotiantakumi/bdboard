@@ -28,7 +28,7 @@ const DARK_TEXT_TOKEN = '#f2f2f7';
  * ライトとダークで **同じ値のままが正しい**色。セレクタではなく色の値で持つのは、
  * 同じトークンを使う要素が増えても許可リストを触らずに済ませるため。
  *
- * index.css の色系トークン 41 個のうち両テーマで同値なのは **2 つ**:
+ * index.css の色系トークン 42 個のうち両テーマで同値なのは **2 つ**:
  * `--color-text-tertiary` (#8e8e93) と `--color-accent-fg` (#ffffff)。
  * ここに挙げてあるのは前者と .overlay のスクリム (トークンではない直値) だけで、
  * `--color-accent-fg` は入れていない — 現在 web/src/ には `var(--color-accent-fg)` の参照が
@@ -54,7 +54,7 @@ type KnownSubAA = {
 /**
  * ダークで WCAG AA (4.5:1) を満たさない既知の箇所と、その**現在値に基づく下限**。
  * 追加するときは必ず bd チケットを立ててここに ID を書く。空にするのが目標。
- * 現在の 3 件はいずれも**ライトの方が比率が悪い**既存債務で、ダーク固有の退行ではない。
+ * 現在は空。bdboard-skde で 3 件とも解消した。
  *
  * セレクタの集合にして無条件に読み飛ばす形にはしないこと。それだと許可リストに載った
  * セレクタは**いくら悪化しても緑のまま**出荷される (実測: `.lane-count` をダーク限定で
@@ -64,37 +64,12 @@ type KnownSubAA = {
  *  - AA を満たすようになったら赤 = このエントリが陳腐化した (許可リストから外せ)
  * 後者が無いと「直したのに許可リストに残り続ける」状態に誰も気付けない。
  *
- * floor は measured を 0.05 ほど下へ丸めた値。比率は整数 sRGB 2 色だけから決まる純関数なので
- * 実測は 4 回とも同値で、この 0.05 は「実効背景の合成経路が祖先の構造変更でわずかに変わる」
- * 程度しか見込んでいない。AA (4.5) までの隔たり (0.27〜0.59) より十分狭いので、
- * 実際の悪化を取り逃すことはない。
+ * 今後のエントリでは floor を measured より 0.05 ほど下へ丸める。比率は整数 sRGB 2 色だけから
+ * 決まる純関数なので、実測は 4 回とも同値で、この 0.05 は「実効背景の合成経路が祖先の構造変更で
+ * わずかに変わる」程度しか見込んでいない。AA (4.5) までの隔たりより十分狭くして、実際の悪化を
+ * 取り逃さないこと。
  */
-const KNOWN_SUB_AA: ReadonlyMap<string, KnownSubAA> = new Map([
-  [
-    'span.lane-count',
-    {
-      measured: 3.91,
-      floor: 3.85,
-      note: 'bdboard-skde: --color-text-tertiary (#8e8e93) が両テーマ同値なため light 2.83:1 / dark 3.91:1',
-    },
-  ],
-  [
-    'button.filter-chip.filter-chip-active',
-    {
-      measured: 4.23,
-      floor: 4.15,
-      note: 'bdboard-skde: アクセント色を同じアクセントで着色した背景に置いており light 3.40:1 / dark 4.23:1',
-    },
-  ],
-  [
-    'span.filter-chip-clear',
-    {
-      measured: 4.23,
-      floor: 4.15,
-      note: 'bdboard-skde: 上と同じチップ内の ✕。light 3.40:1 / dark 4.23:1',
-    },
-  ],
-]);
+const KNOWN_SUB_AA: ReadonlyMap<string, KnownSubAA> = new Map();
 
 type Sample = {
   key: string;
