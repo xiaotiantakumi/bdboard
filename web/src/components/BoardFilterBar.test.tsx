@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { compareStrings } from '../compare';
 import {
   BoardFilterBar,
   countActiveFilters,
@@ -215,6 +216,65 @@ describe('BoardFilterBar', () => {
     renderBar({ availableLabels: [] });
 
     expect(screen.queryByRole('button', { name: 'human' })).not.toBeInTheDocument();
+  });
+
+  it('keeps selected labels visible when they are no longer available', async () => {
+    const user = userEvent.setup();
+    const onLabelsChange = vi.fn();
+    const { rerender } = render(
+      <BoardFilterBar
+        priorityCeiling="all"
+        onPriorityCeilingChange={vi.fn()}
+        issueTypes={[]}
+        onIssueTypesChange={vi.fn()}
+        labels={['archived']}
+        onLabelsChange={onLabelsChange}
+        availableLabels={['human']}
+        filterText=""
+        onFilterTextChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'archived' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await user.click(screen.getByRole('button', { name: 'archived' }));
+    expect(onLabelsChange).toHaveBeenCalledWith([]);
+
+    rerender(
+      <BoardFilterBar
+        priorityCeiling="all"
+        onPriorityCeilingChange={vi.fn()}
+        issueTypes={[]}
+        onIssueTypesChange={vi.fn()}
+        labels={[]}
+        onLabelsChange={onLabelsChange}
+        availableLabels={['human']}
+        filterText=""
+        onFilterTextChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'archived' })).not.toBeInTheDocument();
+  });
+
+  it('sorts the label union with compareStrings order', () => {
+    const availableLabels = ['a'];
+    const labels = ['Z'];
+    renderBar({ availableLabels, labels });
+
+    const compareSorted = [...new Set([...availableLabels, ...labels])].sort(compareStrings);
+    const localeSorted = [...new Set([...availableLabels, ...labels])].sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const renderedLabels = screen
+      .getAllByRole('button', { name: /^(Z|a)$/ })
+      .map((button) => button.textContent);
+
+    expect(localeSorted).not.toEqual(compareSorted);
+    expect(renderedLabels).toEqual(compareSorted);
   });
 
   it('marks selected issue type chips as pressed', () => {
