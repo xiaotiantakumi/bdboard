@@ -17,6 +17,7 @@ interface AiQuotaFixtureProvider {
   label: string;
   availability: 'live' | 'manual' | 'unavailable';
   metrics: AiQuotaFixtureMetric[];
+  detail?: string;
 }
 interface AiQuotaFixture {
   state: 'ok';
@@ -33,6 +34,9 @@ type AiQuotaRouteResponse = AiQuotaFixture | AiQuotaErrorFixture;
 
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 const DESKTOP_VIEWPORT = { width: 1280, height: 800 };
+const MID_RANGE_520_VIEWPORT = { width: 520, height: 800 };
+const MID_RANGE_700_VIEWPORT = { width: 700, height: 800 };
+const MID_RANGE_760_VIEWPORT = { width: 760, height: 800 };
 const BOUNDS_EPSILON_PX = 0.5;
 
 const AI_QUOTA_FIXTURE: AiQuotaFixture = {
@@ -107,6 +111,21 @@ const AI_QUOTA_FIXTURE: AiQuotaFixture = {
   ],
 };
 
+const AI_QUOTA_MANUAL_FIXTURE: AiQuotaFixture = {
+  ...AI_QUOTA_FIXTURE,
+  providers: [
+    ...AI_QUOTA_FIXTURE.providers,
+    {
+      id: 'manual-x',
+      label: 'Manual Provider',
+      availability: 'manual',
+      detail:
+        '数値を自動取得できません。対象サービスのダッシュボードで残量を確認してください。',
+      metrics: [],
+    },
+  ],
+};
+
 const AI_QUOTA_ERROR_FIXTURE: AiQuotaErrorFixture = {
   state: 'error',
   message: 'quota fetch failed',
@@ -118,6 +137,16 @@ async function installAiQuotaRoute(page: Page): Promise<void> {
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify(AI_QUOTA_FIXTURE),
+    });
+  });
+}
+
+async function installAiQuotaManualRoute(page: Page): Promise<void> {
+  await page.route('**/api/ai-quota', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(AI_QUOTA_MANUAL_FIXTURE),
     });
   });
 }
@@ -150,6 +179,49 @@ async function openAiQuotaPopover(page: Page): Promise<void> {
   await expect(
     page.locator('[role="region"][aria-label="AIクォータ詳細"]'),
   ).toBeVisible();
+}
+
+interface ManualNoteDetailMetrics {
+  innerWidth: number;
+  shift: string;
+  inlineShift: string;
+  detail: { left: number; right: number };
+  summaryRight: number;
+  epsilon: number;
+}
+
+async function openManualNoteDetail(page: Page): Promise<ManualNoteDetailMetrics> {
+  await openAiQuotaPopover(page);
+  const summary = page.locator('.ai-quota-note > summary');
+  await expect(summary).toBeVisible();
+  await summary.click();
+  await expect(page.locator('.ai-quota-note-detail')).toBeVisible();
+
+  return page.evaluate((epsilon) => {
+    const innerWidth = window.innerWidth;
+    const detail = document.querySelector('.ai-quota-note-detail');
+    const summaryEl = document.querySelector('.ai-quota-note > summary');
+    const detailRect = detail?.getBoundingClientRect();
+    const summaryRect = summaryEl?.getBoundingClientRect();
+    const shift = detail
+      ? getComputedStyle(detail).getPropertyValue('--popover-shift-x').trim()
+      : '';
+    const inlineShift = detail
+      ? (detail as HTMLElement).style.getPropertyValue('--popover-shift-x').trim()
+      : '';
+
+    return {
+      innerWidth,
+      shift,
+      inlineShift,
+      detail: {
+        left: detailRect?.left ?? Number.NaN,
+        right: detailRect?.right ?? Number.NaN,
+      },
+      summaryRight: summaryRect?.right ?? Number.NaN,
+      epsilon,
+    };
+  }, BOUNDS_EPSILON_PX);
 }
 
 test.describe('ai quota popover viewport clamp — mobile', () => {
@@ -345,6 +417,115 @@ test.describe('ai quota popover viewport clamp — desktop', () => {
       Math.abs(metrics.popoverRight - metrics.badgeRight) <= metrics.epsilon,
       `popover right edge must align with badge right edge ` +
         `(popoverRight=${metrics.popoverRight}, badgeRight=${metrics.badgeRight})`,
+    ).toBe(true);
+  });
+});
+
+function assertManualNoteDetailClampedMidRange(metrics: ManualNoteDetailMetrics): void {
+  const { detail, innerWidth, shift, inlineShift, epsilon } = metrics;
+  expect(
+    detail.left >= -epsilon && detail.right <= innerWidth + epsilon,
+    `manual note detail must fit within viewport ` +
+      `(left=${detail.left}, right=${detail.right}, innerWidth=${innerWidth}, inlineShift=${inlineShift}, shift=${shift})`,
+  ).toBe(true);
+
+  const inlineShiftPx = Number.parseFloat(inlineShift);
+  expect(
+    inlineShift !== '' && inlineShiftPx > 0,
+    `manual note detail must apply a positive horizontal shift in mid-range band ` +
+      `(inlineShift=${inlineShift}, shift=${shift}, left=${detail.left}, right=${detail.right}, innerWidth=${innerWidth})`,
+  ).toBe(true);
+}
+
+test.describe('ai quota note detail viewport clamp — mid-range 520', () => {
+  test.use({ viewport: MID_RANGE_520_VIEWPORT });
+
+  test('520x800: manual note detail stays within viewport with positive shift', async ({
+    page,
+  }) => {
+    await installAiQuotaManualRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    const metrics = await openManualNoteDetail(page);
+    assertManualNoteDetailClampedMidRange(metrics);
+  });
+});
+
+test.describe('ai quota note detail viewport clamp — mid-range 700', () => {
+  test.use({ viewport: MID_RANGE_700_VIEWPORT });
+
+  test('700x800: manual note detail stays within viewport with positive shift', async ({
+    page,
+  }) => {
+    await installAiQuotaManualRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    const metrics = await openManualNoteDetail(page);
+    assertManualNoteDetailClampedMidRange(metrics);
+  });
+});
+
+test.describe('ai quota note detail viewport clamp — mid-range 760', () => {
+  test.use({ viewport: MID_RANGE_760_VIEWPORT });
+
+  test('760x800: manual note detail stays within viewport with positive shift', async ({
+    page,
+  }) => {
+    await installAiQuotaManualRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    const metrics = await openManualNoteDetail(page);
+    assertManualNoteDetailClampedMidRange(metrics);
+  });
+});
+
+test.describe('ai quota note detail viewport clamp — desktop', () => {
+  test.use({ viewport: DESKTOP_VIEWPORT });
+
+  test('1280x800: manual note detail stays right-aligned without horizontal shift', async ({
+    page,
+  }) => {
+    await installAiQuotaManualRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    const metrics = await openManualNoteDetail(page);
+
+    expect(
+      metrics.inlineShift,
+      `desktop must write 0px when clamp hook is attached (inlineShift=${metrics.inlineShift}, shift=${metrics.shift})`,
+    ).toBe('0px');
+    expect(
+      Math.abs(metrics.detail.right - metrics.summaryRight) <= metrics.epsilon,
+      `manual note detail right edge must align with summary right edge ` +
+        `(detailRight=${metrics.detail.right}, summaryRight=${metrics.summaryRight}, inlineShift=${metrics.inlineShift}, shift=${metrics.shift})`,
+    ).toBe(true);
+  });
+});
+
+test.describe('ai quota note detail viewport clamp — mobile', () => {
+  test.use({
+    viewport: MOBILE_VIEWPORT,
+    isMobile: true,
+    hasTouch: true,
+  });
+
+  test('375x812: manual note detail stays within viewport without horizontal shift', async ({
+    page,
+  }) => {
+    await installAiQuotaManualRoute(page);
+    await page.goto('/');
+    await expect(page.locator('.header')).toBeVisible({ timeout: 15_000 });
+    const metrics = await openManualNoteDetail(page);
+
+    expect(
+      metrics.inlineShift,
+      `mobile must write 0px when clamp hook is attached (inlineShift=${metrics.inlineShift}, shift=${metrics.shift})`,
+    ).toBe('0px');
+    expect(
+      metrics.detail.left >= -metrics.epsilon &&
+        metrics.detail.right <= metrics.innerWidth + metrics.epsilon,
+      `manual note detail must fit within viewport ` +
+        `(left=${metrics.detail.left}, right=${metrics.detail.right}, innerWidth=${metrics.innerWidth}, inlineShift=${metrics.inlineShift}, shift=${metrics.shift})`,
     ).toBe(true);
   });
 });
