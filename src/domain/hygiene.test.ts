@@ -1843,7 +1843,36 @@ describe('checkHygiene reclaimed_live_worktree', () => {
       projectId: repoRoot,
       severity: 'warning',
     });
-    expect(found[0]?.message).toContain('bd update bdboard-live --claim');
+    // 文言そのものを固定する。`toContain` だけだと evidence の組み立て
+    // ('worktree とブランチ' / 'worktree' / 'ブランチ') を書き換えても落ちない。
+    expect(found[0]?.message).toBe(
+      'チケットは open ですが worktree とブランチ が残っています。' +
+        '作業中に自動 reclaim された可能性があります。' +
+        'bd ready が空きとして提示するので、作業が生きているなら ' +
+        'bd update bdboard-live --claim で claim し直してください' +
+        '（確認: bd history bdboard-live --events に lease_reclaimed が残っていれば自動回収です）',
+    );
+  });
+
+  // KIND_ORDER から落ちると indexOf が -1 を返して黙って先頭に並ぶ、という
+  // 配列時代の失敗形の回帰ガード (Record 化した今は tsc でも落ちるが、
+  // 並び順そのものはここでしか固定されない)。
+  it('sorts after merged_leftover', () => {
+    const open = makeTicket({ id: 'bdboard-live', projectId: repoRoot, status: 'open' });
+    const closed = makeTicket({ id: 'bdboard-done', projectId: repoRoot, status: 'closed' });
+
+    const issues = checkHygiene([open, closed], {
+      now: NOW,
+      leftoverCandidates: [
+        liveCandidate(),
+        liveCandidate({ ticketId: 'bdboard-done' }),
+      ],
+    });
+
+    const kinds = issues
+      .map((issue) => issue.kind)
+      .filter((kind) => kind === 'merged_leftover' || kind === 'reclaimed_live_worktree');
+    expect(kinds).toEqual(['merged_leftover', 'reclaimed_live_worktree']);
   });
 
   // 生きているかもしれない作業に削除コマンドを添えてはいけない (本文のコメント参照)。

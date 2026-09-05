@@ -89,7 +89,12 @@ export interface HygieneIssue {
   readonly projectId: string;
   readonly message: string;
   readonly severity: 'warning' | 'info';
-  /** merged_leftover のときだけ入る。UI が掃除コマンド文字列を組み立てる材料 */
+  /**
+   * merged_leftover のときだけ入る。UI が掃除コマンド文字列を組み立てる材料。
+   *
+   * 鏡像の `reclaimed_live_worktree` には**意図的に付けない** — 理由は
+   * `checkReclaimedLiveWorktree` の末尾コメント。足す前にそこを読むこと。
+   */
   readonly cleanup?: HygieneCleanupTarget;
   /** orphan_heartbeat_loop のときだけ入る。UI が kill コマンドを組み立てる材料 */
   readonly heartbeatLoop?: HygieneHeartbeatLoopTarget;
@@ -513,8 +518,10 @@ function checkMergedLeftover(
  * この盤面は 2026-09-05 に 4 件同時に発生した。常時稼働サーバーの reclaim スケジューラが
  * lease だけを見て回収するため、heartbeat を打っていない生存セッションのチケットが
  * 作業中に open へ戻される。当人はそのまま PR を出すので、台帳だけが「空き」と言い続ける。
- * bd reclaim は理由を残さないので `bd show` からは手動の `bd update -s open` と区別できず、
- * **盤面から再計算できるこの述語が唯一の事後検知**になる。
+ * 回収そのものは `bd history <id> --events` に `lease_reclaimed` として残る (実測 2026-09-05:
+ * `05:52:41 lease_reclaimed by ...`)。ただし `bd show` には出ないので、台帳を1件ずつ開かない
+ * 限り気付けない。この述語は**盤面から候補を一覧にする**ためのもので、手動の
+ * `bd update -s open` との確定的な切り分けは上の history コマンドが担う。
  *
  * worktree/ブランチの存在を生存の代理指標に使えるのは、ワークフロー上それらが
  * claim からマージ後の掃除までの間しか存在しないため (docs/GIT-WORKFLOW.md)。
@@ -558,7 +565,8 @@ function checkReclaimedLiveWorktree(
     message:
       `チケットは open ですが ${evidence} が残っています。` +
       '作業中に自動 reclaim された可能性があります。' +
-      `bd ready が空きとして提示するので、作業が生きているなら bd update ${ticket.id} --claim で claim し直してください`,
+      `bd ready が空きとして提示するので、作業が生きているなら bd update ${ticket.id} --claim で claim し直してください` +
+      `（確認: bd history ${ticket.id} --events に lease_reclaimed が残っていれば自動回収です）`,
     severity: 'warning',
     // **cleanup は意図的に付けない (bdboard-rkde)。** merged_leftover と同じ候補を使うが、
     // 提案すべき対処は正反対である。UI の cleanup は lsof ガード付きとはいえ
@@ -785,22 +793,26 @@ export function findDependencyCycles(
   return cycles.sort((a, b) => compareStrings(a.ticketIds[0]!, b.ticketIds[0]!));
 }
 
-const KIND_ORDER: readonly HygieneIssueKind[] = [
-  'dependency_cycle',
-  'overdue_defer',
-  'stale_epic',
-  'stale_in_progress',
-  'unblocked_high_priority_idle',
-  'stale_pending_decision',
-  'closed_without_evidence',
-  'merged_leftover',
-  'reclaimed_live_worktree',
-  'orphan_heartbeat_loop',
-  'in_flight_file_overlap',
-];
+/**
+ * 表示順。**Record にしてあるのは網羅性を tsc に強制させるため** — 配列だと新しい kind を
+ * 足し忘れても `indexOf` が -1 を返して黙って先頭に並ぶ (bdboard-rkde のレビュー指摘)。
+ */
+const KIND_ORDER: Record<HygieneIssueKind, number> = {
+  dependency_cycle: 0,
+  overdue_defer: 1,
+  stale_epic: 2,
+  stale_in_progress: 3,
+  unblocked_high_priority_idle: 4,
+  stale_pending_decision: 5,
+  closed_without_evidence: 6,
+  merged_leftover: 7,
+  reclaimed_live_worktree: 8,
+  orphan_heartbeat_loop: 9,
+  in_flight_file_overlap: 10,
+};
 
 function compareIssues(a: HygieneIssue, b: HygieneIssue): number {
-  const kindDiff = KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind);
+  const kindDiff = KIND_ORDER[a.kind] - KIND_ORDER[b.kind];
   if (kindDiff !== 0) {
     return kindDiff;
   }
