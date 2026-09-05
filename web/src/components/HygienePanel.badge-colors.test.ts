@@ -381,4 +381,30 @@ describe('HygienePanel kind badge colors', () => {
     }
     expect(failures).toEqual([]);
   });
+
+  // このアプリのダークテーマは @media (prefers-color-scheme: dark) 内の
+  // :root:not([data-theme='light']) だけが DOM に効く。[data-theme="dark"] など別形を
+  // 足しても data-theme を設定するコードが無いので永久に適用されない。コントラスト比
+  // 計算だけでは extractKindRuleProperties の endsWith 一致で誤って緑になる（bdboard-i874 実測）。
+  it("only uses the app's single dark-theme selector form for kind badge overrides", () => {
+    const darkCss = extractDarkMediaContent(cssSource);
+    const rulePattern = /([^{]+)\{([^}]*)\}/g;
+    const inspected: string[] = [];
+    const offenders: string[] = [];
+    const requiredPrefix = ":root:not([data-theme='light'])";
+
+    for (const match of darkCss.matchAll(rulePattern)) {
+      for (const raw of match[1].split(',')) {
+        const trimmed = raw.trim();
+        if (!trimmed.includes('.hygiene-kind-')) continue;
+        inspected.push(trimmed);
+        if (!trimmed.startsWith(requiredPrefix)) {
+          offenders.push(trimmed);
+        }
+      }
+    }
+
+    expect(inspected.length).toBeGreaterThan(0);
+    expect(offenders).toEqual([]);
+  });
 });
