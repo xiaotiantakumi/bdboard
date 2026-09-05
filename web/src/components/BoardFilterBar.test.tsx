@@ -123,20 +123,38 @@ describe('BoardFilterBar', () => {
     });
 
     describe('quick clear in the collapsed toggle row (bdboard-jch5)', () => {
+      // 名前ではなくクラスで引く。アクセシブル名はパネル側の解除ボタンと同じ
+      // 「フィルタ解除」に揃えてあるため、名前だけでは両者を区別できない
+      // (排他レンダリングなので実画面では衝突しないが、テストの意図は
+      //  「トグル行側のボタン」に固定したい)。
+      const quickClear = () =>
+        document.querySelector<HTMLButtonElement>('.board-filter-toggle-clear');
+
       it('shows a quick clear button next to the toggle when collapsed with active filters', () => {
         renderBar({ priorityCeiling: '1' });
 
-        expect(
-          screen.getByRole('button', { name: '絞り込みを解除' }),
-        ).toBeInTheDocument();
+        expect(quickClear()).toBeInTheDocument();
+      });
+
+      it('keeps the toggle the only button whose name starts with 絞り込み', () => {
+        // アクセシブル名を「絞り込みを解除」等にすると、トグル本体
+        // 「絞り込み (N件適用中)」の接頭辞拡張になり、e2e 4本
+        // (board-filter-breakpoint / board-filter-mobile-reach /
+        //  mobile-input-font-size / fixtures/mobile-chrome-helpers の
+        //  assertBoardFilterBarCollapsed) が使う
+        // getByRole('button', { name: /^絞り込み/ }) が2要素に当たって
+        // strict mode violation になる。この不変条件を単体側で固定する
+        // (bdboard-jch5 レビュー MAJOR-1)。
+        renderBar({ priorityCeiling: '1' });
+
+        expect(quickClear()).toHaveAttribute('aria-label', 'フィルタ解除');
+        expect(screen.getAllByRole('button', { name: /^絞り込み/ })).toHaveLength(1);
       });
 
       it('hides the quick clear button when there are no active filters', () => {
         renderBar();
 
-        expect(
-          screen.queryByRole('button', { name: '絞り込みを解除' }),
-        ).not.toBeInTheDocument();
+        expect(quickClear()).not.toBeInTheDocument();
       });
 
       it('hides the quick clear button once the panel is expanded (no duplicate with the panel clear button)', async () => {
@@ -145,9 +163,7 @@ describe('BoardFilterBar', () => {
 
         await user.click(screen.getByRole('button', { name: '絞り込み (1件適用中)' }));
 
-        expect(
-          screen.queryByRole('button', { name: '絞り込みを解除' }),
-        ).not.toBeInTheDocument();
+        expect(quickClear()).not.toBeInTheDocument();
         // The panel's own clear button takes over instead.
         expect(
           screen.getByRole('button', { name: 'フィルタ解除' }),
@@ -172,12 +188,25 @@ describe('BoardFilterBar', () => {
           onFilterTextChange,
         });
 
-        await user.click(screen.getByRole('button', { name: '絞り込みを解除' }));
+        await user.click(quickClear()!);
 
         expect(onPriorityCeilingChange).toHaveBeenCalledWith('all');
         expect(onIssueTypesChange).toHaveBeenCalledWith([]);
         expect(onLabelsChange).toHaveBeenCalledWith([]);
         expect(onFilterTextChange).toHaveBeenCalledWith('');
+      });
+
+      it('moves focus back to the toggle after the quick clear is pressed', async () => {
+        // 実画面では押した瞬間に filterActive が false になってこのボタン自身が
+        // unmount されるため、放っておくとフォーカスが body へ落ちてキーボード
+        // 利用者が文脈を失う。トグル本体へ戻していることを固定する
+        // (bdboard-jch5 レビュー MINOR-3)。
+        const user = userEvent.setup();
+        renderBar({ priorityCeiling: '1' });
+
+        await user.click(quickClear()!);
+
+        expect(screen.getByRole('button', { name: /^絞り込み/ })).toHaveFocus();
       });
     });
   });
@@ -186,12 +215,19 @@ describe('BoardFilterBar', () => {
     // At desktop widths isMobile is false, so the toggle row (and with it the
     // quick clear button) is not rendered at all — only the panel's own clear
     // button can appear.
-    renderBar({ priorityCeiling: '1' });
+    // 幅は jsdom の既定値に頼らず明示する。既定は 1024 だが、これはテストの前提
+    // ではなく jsdom の実装詳細で、変わればこのテストは黙って意味を失う
+    // (bdboard-jch5 レビュー NIT-7)。
+    setLayoutWidth(1280);
+    try {
+      renderBar({ priorityCeiling: '1' });
 
-    expect(
-      screen.queryByRole('button', { name: '絞り込みを解除' }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'フィルタ解除' })).toBeInTheDocument();
+      expect(document.querySelector('.board-filter-toggle-clear')).not.toBeInTheDocument();
+      expect(document.querySelector('.board-filter-toggle-row')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'フィルタ解除' })).toBeInTheDocument();
+    } finally {
+      restoreLayoutWidth();
+    }
   });
 
   it('calls onPriorityCeilingChange when select changes', () => {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { compareStrings } from '../compare';
 import { useMatchMedia } from '../hooks/useMatchMedia';
 import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
@@ -78,6 +78,7 @@ export function BoardFilterBar({
     filterText,
   );
   const filterActive = activeFilterCount > 0;
+  const toggleRef = useRef<HTMLButtonElement>(null);
   const showFilterPanel = !isMobile || expanded;
   const labelOptions = [...new Set([...availableLabels, ...labels])].sort(compareStrings);
 
@@ -115,6 +116,7 @@ export function BoardFilterBar({
         <div className="board-filter-toggle-row">
           <button
             type="button"
+            ref={toggleRef}
             className="board-filter-toggle"
             aria-label={toggleAriaLabel}
             aria-expanded={expanded}
@@ -122,22 +124,36 @@ export function BoardFilterBar({
             onClick={() => setExpanded((value) => !value)}
           >
             <span className="board-filter-toggle-label">絞り込み</span>
-            {activeFilterCount > 0 && (
+            {filterActive && (
               <span className="board-filter-active-badge" aria-hidden="true">
                 {activeFilterCount}
               </span>
             )}
           </button>
-          {/* 折りたたみ時 (!expanded) かつ activeFilterCount > 0 のときだけ表示する。
+          {/* 折りたたみ時 (!expanded) かつ filterActive のときだけ表示する。
               展開時は board-filter-panel 側に既存の「フィルタ解除」があるため重複させない。
               常時表示にするとトグル行が常に2要素になり、折りたたみで稼いだ縦の節約を削るので
-              条件付きのままにすること (bdboard-jch5)。 */}
+              条件付きのままにすること (bdboard-jch5)。
+
+              アクセシブル名はパネル側の解除ボタンと同じ「フィルタ解除」にしてある。
+              「絞り込みを解除」だとトグル本体の名前「絞り込み」の接頭辞拡張になり、
+              e2e の getByRole('button', { name: /^絞り込み/ }) が2要素に当たって
+              strict mode violation になる (board-filter-breakpoint /
+              board-filter-mobile-reach / mobile-input-font-size /
+              fixtures/mobile-chrome-helpers の assertBoardFilterBarCollapsed)。
+              パネル側とは !expanded / expanded で排他なので同名でも衝突しない。
+              可視ラベル「解除」は「フィルタ解除」に含まれるので WCAG 2.5.3 を満たす。 */}
           {!expanded && filterActive && (
             <button
               type="button"
               className="board-filter-toggle-clear"
-              aria-label="絞り込みを解除"
-              onClick={handleClearFilter}
+              aria-label="フィルタ解除"
+              onClick={() => {
+                handleClearFilter();
+                // 押した直後にこのボタン自身が unmount されるのでフォーカスが body へ
+                // 落ちる。トグル本体へ戻して文脈を失わせない。
+                toggleRef.current?.focus();
+              }}
             >
               解除
             </button>

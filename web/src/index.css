@@ -7103,7 +7103,13 @@ body {
   margin-left: auto;
 }
 
-.board-filter-toggle {
+/* 折りたたみ UI 一式のデスクトップ既定。表示可否は JS 側の isMobile
+   (documentElement.clientWidth) が決めるが、CSS のブレークポイント (max-width:700px) と
+   境界で食い違いうるので、トグル本体だけでなく行と解除ボタンにも同じ既定を張っておく
+   (bdboard-jch5 レビュー MINOR-2)。 */
+.board-filter-toggle,
+.board-filter-toggle-row,
+.board-filter-toggle-clear {
   display: none;
 }
 
@@ -7151,15 +7157,6 @@ body {
     font-family: inherit;
     font-weight: 600;
     cursor: pointer;
-  }
-
-  /* 解除ボタンが併置されているときだけトグル本体の幅を可変にする。単独描画時
-     (解除ボタン非表示) は従来どおり width:100% でトグル本体のタップ領域を
-     一切削らない。 */
-  .board-filter-toggle-row:has(.board-filter-toggle-clear) .board-filter-toggle {
-    width: auto;
-    flex: 1 1 auto;
-    min-width: 0;
   }
 
   .board-filter-toggle:focus-visible {
