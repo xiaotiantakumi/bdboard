@@ -13,10 +13,15 @@ import { expect, test, type JSHandle, type Page } from '@playwright/test';
  * まま = **描画**としてはライト/ダーク両方が suite 全体で踏まれる。
  *
  * コントラスト検査はこのファイルの 2 本の describe (dark theme / light theme) だけが行う。
- * bdboard-rr8m でダーク側の掃引を先に入れ、bdboard-97ib (本チェンジ) でライト側にも同じ
- * 掃引を回すようにした (`runContrastSweep()` を両テーマで共有)。ライト側の実測は 2026-09-05
- * 時点で sub-AA **18 セレクタ** (`KNOWN_SUB_AA_LIGHT` 参照)。20 → 18 の内訳は
- * 引き算だけでは合わないので順に書く:
+ * bdboard-rr8m でダーク側の掃引を先に入れ、bdboard-97ib でライト側にも同じ掃引を回すように
+ * した (`runContrastSweep()` を両テーマで共有)。ライト側の実測は 2026-09-05 時点で sub-AA
+ * **18 セレクタ** (棚卸しチケット bdboard-97ib.1) だったが、同チケットで全件解消し
+ * `KNOWN_SUB_AA_LIGHT` / `KNOWN_SUB_AA_DARK` はどちらも空になった。18 件のうち 4 件
+ * (`span.watch-toggle-icon` / `span.lane-chevron` / `span.project-picker-caret` /
+ * `span.preset-control-caret`) は `aria-hidden="true"` の装飾グリフで、テキストではなく
+ * 非テキストコントラスト SC 1.4.11 (3:1) が適用対象と判明したため `requiredRatio()` /
+ * `Sample.decorative` 側で扱いを変えて解消し、残り 14 件は色トークンの置き換えで解消した
+ * (`git log` で bdboard-97ib.1 を参照)。20 → 18 の内訳は引き算だけでは合わないので順に書く:
  *
  *   bdboard-rr8m 時点          20
  *   bdboard-skde が 3 件を解消  -3  → 17
@@ -105,145 +110,61 @@ type KnownSubAA = {
  * わずかに変わる」程度しか見込んでいない。AA (4.5) までの隔たりより十分狭くして、実際の悪化を
  * 取り逃さないこと。
  */
-const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([
-  [
-    'span.lane-chevron',
-    {
-      measured: 3.85,
-      floor: 3.80,
-      note:
-        'bdboard-97ib.1: --color-text-tertiary (#8e8e93、ライト/ダーク両テーマ同値) on ' +
-        'rgb(64, 49, 27) — bdboard-bdsd が掃引フィクスチャに WIP 超過レーンを足すまでダークでは ' +
-        '一度も掃引されていなかった occurrence。.lane-header-wip-exceeded 自身の着色背景 ' +
-        '(color-mix(--color-warning 16%)) の上に乗る .lane-chevron (色は変更していない) で、' +
-        'bdboard-bdsd のスコープ (.lane-header-wip-exceeded .lane-count の fg/bg) 外。' +
-        '棚卸しは bdboard-97ib.1 へ',
-    },
-  ],
-]);
+/**
+ * bdboard-97ib.1 (2026-09-06) で唯一の登録エントリ (`span.lane-chevron`, dark 3.85:1) を
+ * 解消した。`.lane-header-wip-exceeded .lane-chevron` に `--lane-header-wip-fg` を適用して
+ * dark 7.24:1 まで引き上げた (index.css 参照)。空のまま維持するのが目標— 追加するときは
+ * 必ず bd チケットを立ててここに ID を書く。
+ */
+const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([]);
 
 /**
- * ライトで WCAG AA (4.5:1) を満たさない既知の箇所。bdboard-97ib で初めて実測
- * (2026-09-05、Chromium 1280x720、board + ticket detail panel、opacity 込みで計算)。
- * bdboard-rr8m 時点の "20 セレクタ" のうち bdboard-skde が 3 件 (`.lane-count` /
- * `.filter-chip-active` / `.filter-chip-clear`) を解消し、本チェンジで disabled ボタン
- * 4 件 (`.btn:disabled { opacity: 0.5 }`) を WCAG 1.4.3 (非活性 UI コンポーネントは対象外)
- * として掃引そのものから除外し、新たに `.tips-banner-text-body` (無クラス `span` だった
- * ものにクラスを付与して初めて拾えるようになった) を計上して、正味 18 件。
- * 棚卸しチケット: bdboard-97ib.1 (このリストを空にするのが受け入れ条件)。
+ * bdboard-97ib で初めて実測した際 (2026-09-05) はライトで sub-AA **18 セレクタ**だったが、
+ * bdboard-97ib.1 (2026-09-06) で全件解消し空になった。空のまま維持するのが目標 —
+ * 追加するときは必ず bd チケットを立ててここに ID を書く。
  *
- * さらに bdboard-bdsd (WIP 超過レーンの `.lane-count` 修正) が掃引フィクスチャに WIP 超過
- * レーンを初めて足したことで `span.lane-header-label-text` (レーン名文字列。無クラス `span`
- * だったので `.tips-banner-text-body` と同じ理由でクラスを付与) が一時的に新規検出され
- * (正味 19 件)、bdboard-hodh がこれを直して 18 件へ戻した。bdboard-bdsd のスコープは
- * `.lane-header-wip-exceeded .lane-count` の前景/背景だけで、`.lane-header-wip-exceeded`
- * 自身の文字色 (`color: var(--color-warning)`、レーン名はこれを継承する) は対象外だった
- * ため一度未修正のまま残ったが、bdboard-hodh が同じ派生トークン (`--lane-header-wip-fg`、
- * `.lane-count` 用に新設された `--lane-count-wip-fg` を改名・流用) をこの `color` にも
- * 適用して light 1.93:1 → 5.42:1 (dark は元々 6.10:1 で AA 充足済み、同トークンで 7.24:1) に
- * 解消した。
+ * 18 件の内訳と解消方法 (詳細は該当コミットと index.css のコメント参照):
+ * - `button.meta-text.meta-text-btn` / `div.card-id` / `div.detail-field-label`:
+ *   `--color-text-tertiary` (#8e8e93、light 3.22〜3.26:1) → `--color-text-secondary` へ変更。
+ * - `p.tips-banner-label` / `button.toggle-btn.active` / `button.ticket-id-link` /
+ *   `button.ticket-id-link.markdown-bead-link`: 着色背景の上に直接置いていた
+ *   `--color-accent` → `--color-accent-text` (#005ec4) へ変更。
+ * - `span.badge.badge-pending-decision`: `--badge-pending-decision-fg` を
+ *   `var(--color-accent-text)` に変更 (同じ構図)。
+ * - `button.status-pill.status-pill-ok` / `span.badge.badge-unblocks`: 共有していた
+ *   `--badge-session-fg` / `--badge-unblocks-fg` (#1f8a3d) を #1b7735 へ暗くした。
+ * - `span.badge.badge-p1`: `--badge-p1-fg` (#c25400) を #ac4a00 へ暗くした。
+ * - `span.tips-banner-text-body`: 継承していた `--color-text-secondary` (light 4.41:1、AA
+ *   まで 0.09) を `--badge-neutral-fg` へ変更。
+ * - `button.toggle-btn` / `button.overflow-menu-button` / `span.project-picker-caret` /
+ *   `span.preset-control-caret`: いずれも `--badge-neutral-bg` (または同じ実効背景) 上の
+ *   `--color-text-secondary` (light 4.49:1、AA まで 0.01) を、同じ背景向けに既に調整済みの
+ *   `--badge-neutral-fg` へ変更。
+ * - `span.watch-toggle-icon` / `span.project-picker-caret` / `span.preset-control-caret` /
+ *   `span.lane-chevron` は `aria-hidden="true"` の装飾グリフで、SC 1.4.3 (テキスト 4.5:1)
+ *   ではなく SC 1.4.11 (非テキスト 3:1) が適用対象と判明した (`Sample.decorative` /
+ *   `requiredRatio()` 参照)。前 3 件は元の色のまま 3:1 を満たしていたため色は変更していない。
+ *   `span.lane-chevron` だけは WIP 超過レーンの occurrence が 3:1 も割っていた (light
+ *   2.87:1) ため、`.lane-header-wip-exceeded .lane-chevron` に `--lane-header-wip-fg` を
+ *   適用して light 5.42:1 へ引き上げた (dark も同じ修正で 3.85:1 → 7.24:1)。
  *
  * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
  */
-const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([
-  [
-    'button.meta-text.meta-text-btn',
-    { measured: 3.22, floor: 3.17, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
-  ],
-  [
-    'span.lane-chevron',
-    {
-      measured: 2.87,
-      floor: 2.82,
-      note:
-        'bdboard-97ib.1: --color-text-tertiary (#8e8e93)。bdboard-bdsd が掃引フィクスチャに ' +
-        'WIP 超過レーンを足すまでは 3.26:1 (登録時) だったが、.lane-header-wip-exceeded 自身の ' +
-        '着色背景 (color-mix(--color-warning 16%)) の上に乗る occurrence が新たに掃引され、そちらが ' +
-        '最悪値 2.87:1 になった。.lane-chevron 自身の color は変更しておらず (--color-text-tertiary の ' +
-        'まま)、bdboard-bdsd のスコープ (.lane-header-wip-exceeded .lane-count の fg/bg) 外。棚卸しは ' +
-        'bdboard-97ib.1 へ',
-    },
-  ],
-  [
-    'span.watch-toggle-icon',
-    { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
-  ],
-  ['div.card-id', { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' }],
-  [
-    'div.detail-field-label',
-    { measured: 3.26, floor: 3.21, note: 'bdboard-97ib.1: --color-text-tertiary (#8e8e93)' },
-  ],
-  [
-    'p.tips-banner-label',
-    { measured: 3.39, floor: 3.34, note: 'bdboard-97ib.1: --color-accent (#007aff) on tips banner の着色背景' },
-  ],
-  [
-    'span.badge.badge-pending-decision',
-    { measured: 3.67, floor: 3.62, note: 'bdboard-97ib.1: --color-accent (#007aff) on badge の着色背景' },
-  ],
-  [
-    'button.status-pill.status-pill-ok',
-    { measured: 3.92, floor: 3.87, note: 'bdboard-97ib.1: success 系の前景/背景の組み合わせ' },
-  ],
-  [
-    'span.badge.badge-unblocks',
-    { measured: 3.97, floor: 3.92, note: 'bdboard-97ib.1: success 系の前景/背景の組み合わせ' },
-  ],
-  [
-    'button.toggle-btn.active',
-    { measured: 4.02, floor: 3.97, note: 'bdboard-97ib.1: --color-accent (#007aff) on #fff' },
-  ],
-  [
-    'button.ticket-id-link',
-    { measured: 4.02, floor: 3.97, note: 'bdboard-97ib.1: --color-accent (#007aff) on #fff' },
-  ],
-  [
-    'button.ticket-id-link.markdown-bead-link',
-    { measured: 4.02, floor: 3.97, note: 'bdboard-97ib.1: --color-accent (#007aff) on #fff' },
-  ],
-  [
-    'span.badge.badge-p1',
-    { measured: 4.11, floor: 4.06, note: 'bdboard-97ib.1: warning 系の前景/背景の組み合わせ' },
-  ],
-  [
-    'span.tips-banner-text-body',
-    {
-      measured: 4.41,
-      floor: 4.36,
-      note:
-        'bdboard-97ib.1: --color-text-secondary on tips banner 背景。' +
-        'AA まで 0.09 しか離れておらず着手コストは低い',
-    },
-  ],
-  [
-    'button.toggle-btn',
-    {
-      measured: 4.49,
-      floor: 4.44,
-      note:
-        'bdboard-97ib.1: --color-text-secondary on #ededef。同じクラスの occurrence が複数あり ' +
-        '実効背景の違いで 4.49:1〜4.54:1 に分かれる。最悪値 (4.49:1) を測定値として計上',
-    },
-  ],
-  [
-    'span.project-picker-caret',
-    { measured: 4.49, floor: 4.44, note: 'bdboard-97ib.1: --color-text-secondary on #ededef。AA まで 0.01' },
-  ],
-  [
-    'button.overflow-menu-button',
-    { measured: 4.49, floor: 4.44, note: 'bdboard-97ib.1: --color-text-secondary on #ededef。AA まで 0.01' },
-  ],
-  [
-    'span.preset-control-caret',
-    { measured: 4.49, floor: 4.44, note: 'bdboard-97ib.1: --color-text-secondary on #ededef。AA まで 0.01' },
-  ],
-]);
+const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([]);
 
 type Sample = {
   key: string;
   color: string;
   background: string;
   effectiveBg: [number, number, number] | null;
+  /**
+   * `aria-hidden="true"` が要素自身に直接付いているか。アクセシビリティツリーから隠された
+   * 装飾グリフ (チェブロン ▶/▼・キャレット・トグルアイコン等) は、視覚的には文字だが
+   * 支援技術には「テキスト」として一切露出しない — WCAG SC 1.4.3 (テキストの 4.5:1) では
+   * なく SC 1.4.11 (非テキストコントラスト、3:1) の対象になる (bdboard-97ib.1 の
+   * opus-5 レビュー指摘、requiredRatio() 参照)。
+   */
+  decorative: boolean;
   /**
    * 要素自身から、実効背景が確定する祖先 (effectiveBg が採用する不透明な背景を持つノード) の
    * 手前までの `opacity` の累積値。1 なら opacity の影響なし。コントラスト計算では
@@ -368,6 +289,7 @@ function readSamples(elements: Element[]): (Sample | null)[] {
       color: cs.color,
       background: cs.backgroundColor,
       effectiveBg: effectiveBg(el),
+      decorative: el.getAttribute('aria-hidden') === 'true',
       opacity: cumulativeOpacity(el),
       borderColors: [cs.borderTopColor, cs.borderRightColor, cs.borderBottomColor, cs.borderLeftColor],
       borderWidths: [cs.borderTopWidth, cs.borderRightWidth, cs.borderBottomWidth, cs.borderLeftWidth].map(
@@ -466,9 +388,17 @@ function contrastRatio(fg: [number, number, number], bg: [number, number, number
 }
 
 /** WCAG 2.2 の large text: 24px 以上、または 18.66px 以上かつ bold。 */
+/**
+ * WCAG 2.2 の large text: 24px 以上、または 18.66px 以上かつ bold は 3:1 に緩和される
+ * (SC 1.4.3)。`sample.decorative` (`aria-hidden="true"`) はサイズに関わらず 3:1 —
+ * アクセシビリティツリーから隠された装飾グリフはテキストとして支援技術に露出しないため、
+ * SC 1.4.3 ではなく非テキストコントラスト SC 1.4.11 が適用対象になる
+ * (bdboard-97ib.1、Sample.decorative の doc コメント参照)。
+ */
 function requiredRatio(sample: Sample): number {
   const large = sample.fontSize >= 24 || (sample.fontSize >= 18.66 && sample.fontWeight >= 700);
-  return large ? 3 : 4.5;
+  if (large || sample.decorative) return 3;
+  return 4.5;
 }
 
 /** クラス部分だけを取り出す (差分比較の許可リストとメッセージ用。先頭の DOM index を落とす)。 */
@@ -494,7 +424,7 @@ async function freezeTransitions(page: Page): Promise<void> {
 }
 
 /**
- * いま emulate しているテーマでの `--color-text-secondary` の**確定値**を、
+ * いま emulate しているテーマでの、指定した CSS カスタムプロパティの**確定値**を、
  * 使い捨てのプローブ要素経由で計算値 (rgb 文字列) として解決する。
  *
  * 期待値を直値 (`rgb(108, 108, 112)`) で書くと、パレットを触っただけで
@@ -506,11 +436,15 @@ async function freezeTransitions(page: Page): Promise<void> {
  * 一方 .toggle-btn は既に描画済みの要素なので、凍結が効いていなければテーマ切り替えの
  * 遷移中の中間色を返す。つまり両者が食い違うのは「凍結が効いていないとき」だけで、
  * 直値で書いていたときと同じ鋭さを保つ (実測でも凍結を外すと落ちる)。
+ *
+ * bdboard-97ib.1: 元は `--color-text-secondary` 固定だったが、.toggle-btn の color を
+ * `--badge-neutral-fg` へ移したため引数化した (呼び出し側は実際に対象要素が参照している
+ * トークンを渡すこと)。
  */
-async function settledTextSecondary(page: Page): Promise<string> {
-  return page.evaluate(() => {
+async function settledTokenColor(page: Page, cssVarName: string): Promise<string> {
+  return page.evaluate((varName) => {
     const probe = document.createElement('span');
-    probe.style.color = 'var(--color-text-secondary)';
+    probe.style.color = `var(${varName})`;
     probe.style.position = 'fixed';
     probe.style.left = '-9999px';
     probe.style.top = '0';
@@ -519,7 +453,7 @@ async function settledTextSecondary(page: Page): Promise<string> {
     const color = getComputedStyle(probe).color;
     probe.remove();
     return color;
-  });
+  }, cssVarName);
 }
 
 /**
@@ -760,10 +694,10 @@ async function runContrastSweep(
   // 掃引で一度も現れなかった許可リストのエントリ。
   // stale / regressed はどちらも「occurrence を観測できたセレクタ」に対する判定なので、
   // セレクタ自体が消えた (クラス名変更・要素削除・掃引の起点から辿れなくなった) エントリは
-  // **どちらの網にも掛からず黙って残り続ける**。18 件を抱えた今それを許すと、許可リストが
-  // 現実と乖離したまま「対応済み」に見え、棚卸しチケット bdboard-97ib.1 の受け入れ条件
-  // (リストを空にする) も嘘になる。textSamples.length の下限チェックは掃引全体が消えたときしか
-  // 反応せず、1 セレクタの消滅は捕まえられないので、ここで個別に見る。
+  // **どちらの網にも掛からず黙って残り続ける**。許可リストにエントリを抱えた状態でこれを
+  // 許すと、リストが現実と乖離したまま「対応済み」に見えてしまう (bdboard-97ib.1 で
+  // 18 件を空にするまではこれが実際に効いていた)。textSamples.length の下限チェックは
+  // 掃引全体が消えたときしか反応せず、1 セレクタの消滅は捕まえられないので、ここで個別に見る。
   const unobserved = [...knownSubAA.keys()].filter((selector) => !knownRatios.has(selector));
 
   for (const [selector, { minRatio, required, known }] of knownRatios) {
@@ -850,10 +784,10 @@ test.describe('dark theme', () => {
     // 同一 DOM の同じ要素オブジェクトに対して emulation だけを切り替える。
     const handle = await pinElements(page);
     await page.emulateMedia({ colorScheme: 'light' });
-    const lightSettledSecondary = await settledTextSecondary(page);
+    const lightSettledNeutralFg = await settledTokenColor(page, '--badge-neutral-fg');
     const light = await page.evaluate(readSamples, handle);
     await page.emulateMedia({ colorScheme: 'dark' });
-    const darkSettledSecondary = await settledTextSecondary(page);
+    const darkSettledNeutralFg = await settledTokenColor(page, '--badge-neutral-fg');
     const dark = await page.evaluate(readSamples, handle);
     await handle.dispose();
     expect(light.length).toBe(dark.length);
@@ -866,10 +800,11 @@ test.describe('dark theme', () => {
     expect(darkBody?.background).toBe('rgb(0, 0, 0)');
 
     // body には transition が無いので上の 2 行だけでは「transition が固まっているか」を
-    // 確かめられない。.toggle-btn は `color: var(--color-text-secondary)` を
-    // `transition: ... color 0.15s ...` 付きで持つ (index.css の .toggle-btn) ので、
-    // 採取値がそのトークンの**確定値**になっていることを見て、遷移途中の中間色を
-    // 測っていないことを保証する。freezeTransitions を外すとここが中間色になって落ちる。
+    // 確かめられない。.toggle-btn は `color: var(--badge-neutral-fg)` を
+    // `transition: ... color 0.15s ...` 付きで持つ (index.css の .toggle-btn。bdboard-97ib.1
+    // で --color-text-secondary から移行) ので、採取値がそのトークンの**確定値**に
+    // なっていることを見て、遷移途中の中間色を測っていないことを保証する。
+    // freezeTransitions を外すとここが中間色になって落ちる。
     const toggleKey = (s: Sample | null): boolean => /:button\.toggle-btn$/.test(s?.key ?? '');
     const lightToggle = light.find(toggleKey);
     const darkToggle = dark.find(toggleKey);
@@ -877,17 +812,17 @@ test.describe('dark theme', () => {
     // 先に「このトークンが両テーマで実際に変わる」ことを確かめる。同値になったら
     // 遷移そのものが起きず、下の 2 行は凍結が効いていてもいなくても通る = 空虚になる。
     expect(
-      lightSettledSecondary,
-      '--color-text-secondary が両テーマで同値になっており、下の凍結ガードが空虚になっている',
-    ).not.toBe(darkSettledSecondary);
+      lightSettledNeutralFg,
+      '--badge-neutral-fg が両テーマで同値になっており、下の凍結ガードが空虚になっている',
+    ).not.toBe(darkSettledNeutralFg);
     expect(
       lightToggle?.color,
-      'transition が凍結されていない (.toggle-btn が --color-text-secondary の確定値になっていない)',
-    ).toBe(lightSettledSecondary);
+      'transition が凍結されていない (.toggle-btn が --badge-neutral-fg の確定値になっていない)',
+    ).toBe(lightSettledNeutralFg);
     expect(
       darkToggle?.color,
-      'transition が凍結されていない (.toggle-btn が --color-text-secondary の確定値になっていない)',
-    ).toBe(darkSettledSecondary);
+      'transition が凍結されていない (.toggle-btn が --badge-neutral-fg の確定値になっていない)',
+    ).toBe(darkSettledNeutralFg);
 
     const pinned = new Set<string>();
     let observations = 0;
