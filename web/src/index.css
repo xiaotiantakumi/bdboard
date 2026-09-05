@@ -53,6 +53,9 @@
 
   --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;
+  /* --font-mono は未定義でも各所のフォールバックが ui-monospace, monospace だった。
+     同じ実効値をここでトークン化して、フォールバックが未定義参照を隠さないようにする。 */
+  --font-mono: ui-monospace, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -781,7 +784,9 @@ body {
   padding: 10px max(20px, env(safe-area-inset-right)) 10px
     max(20px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-surface));
+  /* 元は未定義の --color-surface だったため color-mix 全体が無効になり、背景は
+     transparent に落ちていた。main と同じ地の --color-bg に accent を混ぜる。 */
+  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg));
 }
 
 .tips-banner-content {
@@ -928,8 +933,12 @@ body {
      すぐ下の .next-up-epic-title は同じ理由で既に修正済み (var(--color-text-muted, #6b7280)
      -> var(--color-text-secondary))。同じ規則の border だけが取り残されていた。
      --color-border はライト rgba(60,60,67,0.13) / ダーク rgba(84,84,88,0.55) で、
-     ライトでの見た目はほぼ据え置きのままテーマ追従だけが増える。 */
-  border-top: 1px solid var(--color-border-subtle, var(--color-border));
+     ライトでの見た目はほぼ据え置きのままテーマ追従だけが増える。
+     PR #393 は var(--color-border-subtle, var(--color-border)) と未定義トークンへの参照を
+     残す形で直したが、フォールバック付きでも未定義参照は index.css.customProperties.test.ts
+     が赤にする (未定義であること自体が見えなくなり、固定色が焼き付く前段だから)。
+     実効値は同じなので参照ごと消す。 */
+  border-top: 1px solid var(--color-border);
 }
 
 .next-up-epic-title {
@@ -1460,7 +1469,9 @@ body {
   padding: 8px 10px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: var(--color-surface);
+  /* 元は未定義の --color-surface で background が transparent に落ちていた。
+     同じ settings panel 内の他の入力と同じ --color-bg を使う。 */
+  background: var(--color-bg);
   color: var(--color-text);
 }
 
@@ -1881,7 +1892,7 @@ body {
 }
 
 .hygiene-issue-row-static:hover {
-  background: var(--color-surface);
+  background: var(--color-bg);
 }
 
 .hygiene-panel-feedback {
@@ -2390,7 +2401,9 @@ body {
   font-size: 0.8125rem;
   border: 1px solid var(--color-border);
   border-radius: 6px;
-  background: var(--color-surface);
+  /* 元は未定義の --color-surface で background が transparent に落ちていた。
+     同じ軽量コントロールの地色として --color-bg を使い、hover は既存の淡い混色にする。 */
+  background: var(--color-bg);
   color: var(--color-text);
   cursor: pointer;
 }
@@ -2401,7 +2414,7 @@ body {
 }
 
 .dependency-graph-show-all-button:not(:disabled):hover {
-  background: var(--color-surface-hover, var(--color-surface));
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg));
 }
 
 .dependency-graph-focus-status {
@@ -2684,12 +2697,12 @@ body {
   border-radius: var(--radius-pill);
   padding: 1px 6px;
   font-size: 0.6875rem;
-  background: var(--color-surface);
+  background: var(--color-bg);
   cursor: pointer;
 }
 
 .project-harness-action:hover:not(:disabled) {
-  background: var(--color-surface-hover);
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg));
 }
 
 .project-harness-action:disabled {
@@ -3937,7 +3950,7 @@ body {
   justify-content: space-between;
   gap: 16px;
   padding: 6px 0;
-  border-bottom: 1px solid var(--color-border-subtle, var(--color-border));
+  border-bottom: 1px solid var(--color-border);
   font-size: 0.875rem;
 }
 
@@ -4100,7 +4113,7 @@ body {
 
 .help-panel-toc-item {
   appearance: none;
-  border: 1px solid var(--color-border-subtle, var(--color-border));
+  border: 1px solid var(--color-border);
   border-radius: 999px;
   background: color-mix(in srgb, var(--badge-neutral-bg) 72%, transparent);
   color: var(--color-text);
@@ -4151,7 +4164,7 @@ body {
 .help-panel-section {
   min-width: 0;
   background: color-mix(in srgb, var(--badge-neutral-bg) 72%, transparent);
-  border: 1px solid var(--color-border-subtle, var(--color-border));
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
@@ -5435,7 +5448,9 @@ body {
 }
 
 .chat-thread-rename-input:focus {
-  outline: 2px solid var(--color-focus-ring);
+  /* 元は未定義の --color-focus-ring で outline ショートハンド全体が無効だった。
+     他の focus outline と同じ accent を使い、キーボード操作でも輪郭を描画する。 */
+  outline: 2px solid var(--color-accent);
   outline-offset: -2px;
 }
 
@@ -7870,7 +7885,9 @@ body {
   padding: 8px;
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  background: var(--color-surface-secondary, var(--color-bg));
+  /* 元は未定義の --color-surface-secondary だった。フォールバックの --color-bg が
+     常に実効値だったので、そのトークンだけを残して見た目を変えない。 */
+  background: var(--color-bg);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.75rem;
   line-height: 1.4;
@@ -7911,12 +7928,14 @@ body {
 }
 
 .agent-run-history-btn:hover {
-  background: var(--color-surface-secondary, rgba(127, 127, 127, 0.08));
+  /* 元は未定義の --color-surface-secondary だった。テーマ中立のフォールバックだけを
+     残して、hover 時の実効値を変えない。 */
+  background: rgba(127, 127, 127, 0.08);
 }
 
 .agent-run-history-btn.is-selected {
   border-color: var(--color-accent, #2563eb);
-  background: var(--color-surface-secondary, rgba(127, 127, 127, 0.08));
+  background: rgba(127, 127, 127, 0.08);
 }
 
 .agent-run-history-status {
