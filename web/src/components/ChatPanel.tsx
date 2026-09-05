@@ -1880,6 +1880,9 @@ export function ChatPanel({
       }
       event.preventDefault();
       const attachmentKey = currentConversationKey;
+      // attachmentKey と imageFiles をキャプチャしたクロージャで .then() 内の再検証を行うため、
+      // 連続 paste が3回以上重なると conversationAttachmentsRef.current の読み取りタイミング次第で
+      // 上限判定が甘くなりうる。現行の上限4枚では実害が観測されていないが、上限を変えるときはここが表面化しうる。
       const validationError = validateChatAttachments(
         conversationAttachmentsRef.current[attachmentKey] ?? [],
         imageFiles,
@@ -3057,20 +3060,23 @@ export function ChatPanel({
           ) : (
             <p className="chat-project-name">{selectedProject?.name ?? '—'}</p>
           )}
-          {projectSelectionHint !== null && (
-            <p
-              className="chat-project-unselected-hint"
-              id="chat-project-unselected-hint"
-              role="status"
-            >
-              {projectSelectionHint}
-            </p>
-          )}
-          {ticketProjectFallbackNotice !== null && (
-            <p className="chat-ticket-project-fallback-notice" role="status">
-              {ticketProjectFallbackNotice}
-            </p>
-          )}
+          {/* .chat-input-notices と同じ: 条件式でラッパーを消さず :empty に任せ、gap の二重管理を避ける。 */}
+          <div className="chat-project-bar-notices">
+            {projectSelectionHint !== null && (
+              <p
+                className="chat-project-unselected-hint"
+                id="chat-project-unselected-hint"
+                role="status"
+              >
+                {projectSelectionHint}
+              </p>
+            )}
+            {ticketProjectFallbackNotice !== null && (
+              <p className="chat-ticket-project-fallback-notice" role="status">
+                {ticketProjectFallbackNotice}
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Chat Redesign 1b: タブ帯を「現在のスレッド名+件数」ボタン1つに圧縮し、
@@ -3386,53 +3392,59 @@ export function ChatPanel({
               </button>
             ))}
           </div>
-          {currentAttachments.length > 0 && (
-            <div className="chat-attachments" aria-label="送信前の添付画像" role="list">
-              {currentAttachments.map((attachment) => (
-                <div className="chat-attachment" key={attachment.id} role="listitem">
-                  <img
-                    className="chat-attachment-preview"
-                    src={attachment.previewUrl}
-                    alt={`送信前の添付画像: ${attachment.name}`}
-                  />
-                  <span className="chat-attachment-details">
-                    <span className="chat-attachment-name">{attachment.name}</span>
-                    <span className="chat-attachment-size">
-                      {formatImageSize(attachment.size)}
+          {/* 「バナーが1つでもあるか」の条件式をここに書くと、将来バナーを足した人がその条件式の
+              更新を忘れた瞬間に空の div が gap を生む。`:empty` なら描画条件の集合を二重管理しない。
+              JSX は改行だけの空白テキストノードを出力しないので、4つとも false のとき要素は本当に空になり
+              `:empty` が成立する。 */}
+          <div className="chat-input-notices">
+            {currentAttachments.length > 0 && (
+              <div className="chat-attachments" aria-label="送信前の添付画像" role="list">
+                {currentAttachments.map((attachment) => (
+                  <div className="chat-attachment" key={attachment.id} role="listitem">
+                    <img
+                      className="chat-attachment-preview"
+                      src={attachment.previewUrl}
+                      alt={`送信前の添付画像: ${attachment.name}`}
+                    />
+                    <span className="chat-attachment-details">
+                      <span className="chat-attachment-name">{attachment.name}</span>
+                      <span className="chat-attachment-size">
+                        {formatImageSize(attachment.size)}
+                      </span>
                     </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="chat-attachment-remove"
-                    aria-label={`添付画像「${attachment.name}」を削除`}
-                    disabled={isSending}
-                    onClick={() => removeAttachment(currentConversationKey, attachment.id)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {currentAttachmentError !== null && (
-            <p className="chat-attachment-error" role="alert">
-              {currentAttachmentError}
-            </p>
-          )}
-          {hasUnsupportedAttachments && (
-            <p className="chat-attachment-unsupported" role="alert">
-              このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。
-            </p>
-          )}
-          {selectedAgentUnavailable && (
-            <p
-              id={agentUnavailableHintId ?? undefined}
-              className="chat-agent-unavailable-banner"
-              role="alert"
-            >
-              {CHAT_AGENT_UNAVAILABLE_WARNING}
-            </p>
-          )}
+                    <button
+                      type="button"
+                      className="chat-attachment-remove"
+                      aria-label={`添付画像「${attachment.name}」を削除`}
+                      disabled={isSending}
+                      onClick={() => removeAttachment(currentConversationKey, attachment.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            {currentAttachmentError !== null && (
+              <p className="chat-attachment-error" role="alert">
+                {currentAttachmentError}
+              </p>
+            )}
+            {hasUnsupportedAttachments && (
+              <p className="chat-attachment-unsupported" role="alert">
+                このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。
+              </p>
+            )}
+            {selectedAgentUnavailable && (
+              <p
+                id={agentUnavailableHintId ?? undefined}
+                className="chat-agent-unavailable-banner"
+                role="alert"
+              >
+                {CHAT_AGENT_UNAVAILABLE_WARNING}
+              </p>
+            )}
+          </div>
           <textarea
             ref={inputRef}
             className="chat-input"

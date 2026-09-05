@@ -127,6 +127,28 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-e2e-'));
   const projectDir = path.join(tmpRoot, 'fixture-project');
   fs.mkdirSync(path.join(projectDir, '.beads'), { recursive: true });
+  // 2つ目はプロジェクト数を2にして ChatPanel.tsx の showProjectSelect 経路
+  // (.chat-project-select, モバイル min-height 44px) を e2e でも描画させるためだけ
+  // (bdboard-iglk)。実ボードは複数プロジェクトなので select が出るが、従来の
+  // 1プロジェクト fixture では .chat-project-name (~19px) だけが計測対象になり、
+  // CI と実環境で .chat-panel overflow が一致しなかった。
+  //
+  // bd スタブは -C <root> を読み飛ばして全プロジェクトに同じゴールデン一覧
+  // (test/fixtures/bd/bdboard.list.json) を返すので、2つ目にも同じチケットが出る。
+  // smoke.spec.ts の article 厳密一致や健全性パネル行数が倍化して落ちるため、
+  // 2つ目は .beads/e2e-empty-list マーカーで list/gate list を [] に固定し、
+  // 盤面の中身は1プロジェクト時と同一に保つ。
+  //
+  // パス一致 (env で絶対パスを渡す) ではなくマーカーファイルにした理由:
+  // macOS の os.tmpdir() は /var/folders/.../T だが fs.realpathSync 後は
+  // /private/var/folders/.../T になる。global-setup が env に入れるのは前者、
+  // サーバーが bd -C に渡すのは実体解決後の後者なので文字列完全一致が成立せず、
+  // 14 件の e2e が fixture-project と fixture-project-b の両方に同じチケットが
+  // 出る strict mode violation で落ちた (実測)。シンボリックリンク・末尾スラッシュ・
+  // 相対パスのどれが来ても壊れない方式が必要。
+  const secondProjectDir = path.join(tmpRoot, 'fixture-project-b');
+  fs.mkdirSync(path.join(secondProjectDir, '.beads'), { recursive: true });
+  fs.writeFileSync(path.join(secondProjectDir, '.beads', 'e2e-empty-list'), '');
   const dbPath = path.join(tmpRoot, 'cache.db');
 
   const binDir = path.join(here, 'fixtures', 'bin');
@@ -188,7 +210,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       BDBOARD_PORT: port,
       BDBOARD_HOST: host,
       BDBOARD_DB: dbPath,
-      BDBOARD_SCAN_ROOTS: projectDir,
+      BDBOARD_SCAN_ROOTS: `${projectDir},${secondProjectDir}`,
       // Points the scan-roots user-config store at a throwaway path inside this test's tmp
       // root so the e2e run never reads/writes the developer's real
       // ~/.config/bdboard/config.json (bdboard-3tw.102.2).

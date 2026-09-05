@@ -27,9 +27,10 @@ test.describe('chat panel mobile layout', () => {
   }
 
   async function ensureProjectSelected(page: import('@playwright/test').Page) {
-    // e2e フィクスチャはプロジェクト1件で自動選択されるため select は描画されない
-    // (ChatPanel.tsx の showProjectSelect)。AC1 が言う「プロジェクト選択済み」は
-    // この既定状態そのもの。
+    // e2e フィクスチャは2プロジェクト構成 (global-setup.ts) なので
+    // #chat-project-select が描画される (ChatPanel.tsx の showProjectSelect)。
+    // select 経路が本線。AC1 の「プロジェクト選択済み」は fixture-project を
+    // select した状態。.chat-project-name 分岐は後方互換のフォールバック。
     const projectSelect = page.locator('#chat-project-select');
     if ((await projectSelect.count()) > 0) {
       await expect(projectSelect).toBeVisible({ timeout: 15_000 });
@@ -91,6 +92,15 @@ test.describe('chat panel mobile layout', () => {
     }
   }
 
+  /**
+   * `.chat-messages` は `.chat-panel` 内で唯一の `flex: 1 1 auto; min-height: 0` なので、
+   * 固定チャンクが増えるとこれが先に潰れ、0 になって初めてパネルが溢れる。
+   * つまり clientHeight がそのまま「あと何 px 増やせるか」の実測値になる。
+   * `scrollHeight <= clientHeight` は溢れの有無しか言わないので、余裕の観測にはこちらを見る
+   * (bdboard-iglk レビュー: 余裕 7.9px で破綻した件)。
+   * なお短いビューポートでこれが 0 まで潰れること自体は別チケット bdboard-7fsw の対象で、
+   * 本PRのスコープ外 (main でも既に 0)。
+   */
   async function readChatPanelMetrics(page: import('@playwright/test').Page) {
     return page.evaluate(() => {
       const panel = document.querySelector('.chat-panel');
@@ -103,16 +113,46 @@ test.describe('chat panel mobile layout', () => {
         return {
           offsetHeight: box.offsetHeight,
           clientHeight: box.clientHeight,
+          scrollHeight: box.scrollHeight,
         };
       };
       return {
         clientHeight: panel?.clientHeight ?? 0,
         scrollHeight: panel?.scrollHeight ?? 0,
+        chatMessages: heightOf('.chat-messages'),
+        chatInputNotices: heightOf('.chat-input-notices'),
         chatAttachments: heightOf('.chat-attachments'),
+        chatAttachmentError: heightOf('.chat-attachment-error'),
         chatAttachmentUnsupported: heightOf('.chat-attachment-unsupported'),
         chatImagePrivacyHint: heightOf('.chat-image-privacy-hint'),
       };
     });
+  }
+
+  /**
+   * 祖先の overflow でクリップされた要素も toBeVisible() は可視と判定するため、
+   * スクロールコンテナの矩形に収まっているかを自前で見る (bdboard-iglk レビュー D)。
+   */
+  async function isInsideScrollContainer(
+    page: import('@playwright/test').Page,
+    containerSelector: string,
+    itemSelector: string,
+    index: number,
+  ): Promise<boolean> {
+    return page.evaluate(
+      ({ containerSel, itemSel, idx }) => {
+        const container = document.querySelector(containerSel);
+        const items = document.querySelectorAll(itemSel);
+        const item = items[idx];
+        if (!container || !item) {
+          return false;
+        }
+        const c = container.getBoundingClientRect();
+        const i = item.getBoundingClientRect();
+        return i.top >= c.top - 0.5 && i.bottom <= c.bottom + 0.5;
+      },
+      { containerSel: containerSelector, itemSel: itemSelector, idx: index },
+    );
   }
 
   async function assertControlHitTarget(
@@ -136,7 +176,7 @@ test.describe('chat panel mobile layout', () => {
       return {
         ok,
         reason: ok ? 'hit' : 'obstructed',
-        hitClassName: target.className,
+        hitClassName: String(target.className),
       };
     }, selector);
 
@@ -292,6 +332,7 @@ test.describe('chat panel mobile layout', () => {
         panelMetrics: baselineMetrics,
       }),
     );
+    expect(baselineMetrics.scrollHeight).toBeLessThanOrEqual(baselineMetrics.clientHeight);
 
     await pastePngAttachment(textarea, 'test-one.png');
     await expect(page.locator('.chat-attachment')).toHaveCount(1);
@@ -303,20 +344,35 @@ test.describe('chat panel mobile layout', () => {
         panelMetrics: oneAttachmentMetrics,
       }),
     );
-    expect(oneAttachmentMetrics.scrollHeight).toBeLessThanOrEqual(
-      oneAttachmentMetrics.clientHeight,
-    );
+    await expect
+      .poll(
+        async () =>
+          page.locator('.chat-panel').evaluate((el) => el.scrollHeight - el.clientHeight),
+        { timeout: 10_000 },
+      )
+      .toBeLessThanOrEqual(0);
 
     await pastePngAttachments(textarea, 3);
     await expect(page.locator('.chat-attachment')).toHaveCount(4);
 
-    const attachmentNames = page.locator('.chat-attachment-name');
-    await expect(attachmentNames).toHaveCount(4);
-    for (let i = 0; i < 4; i++) {
-      const name = attachmentNames.nth(i);
-      await expect(name).toBeVisible();
-      await expect(name).not.toHaveText(/^\s*$/);
-    }
+    // 先頭のアイテムはコンテナ内に見えている。4枚目はスクロールしないと見えない —
+    // 将来コンテナが広くなって4枚とも見えるようになったら、nth(3) も true を期待するよう更新する。
+    expect(
+      await isInsideScrollContainer(
+        page,
+        '.chat-input-notices',
+        '.chat-attachment',
+        0,
+      ),
+    ).toBe(true);
+    expect(
+      await isInsideScrollContainer(
+        page,
+        '.chat-input-notices',
+        '.chat-attachment',
+        3,
+      ),
+    ).toBe(false);
 
     await expect
       .poll(
@@ -337,6 +393,23 @@ test.describe('chat panel mobile layout', () => {
       fourAttachmentMetrics.clientHeight,
     );
 
+    const oneNotices = oneAttachmentMetrics.chatInputNotices;
+    const fourNotices = fourAttachmentMetrics.chatInputNotices;
+    expect(oneNotices).not.toBeNull();
+    expect(fourNotices).not.toBeNull();
+    // この2組はセットで1つの主張を成す: 中身が増えているのに余裕が変わらない = キャップが効いている。
+    // 上の「余裕は変わらない」が意味を持つのは、中身が実際に増えているときだけ。
+    expect(fourNotices!.scrollHeight).toBeGreaterThan(oneNotices!.scrollHeight);
+    expect(oneAttachmentMetrics.chatMessages).not.toBeNull();
+    expect(fourAttachmentMetrics.chatMessages).not.toBeNull();
+    // 設計上の不変条件: 可変バナーは .chat-input-notices の max-height に吸収されるので、
+    // バナーが何個増えても .chat-panel の余裕 (= .chat-messages の高さ) は変わらない。
+    // ここが崩れたら「ピクセルを削って収める」設計に戻っている合図
+    // (レビュー: 余裕 7.9px しか無く、5枚目の paste 1回で破綻した件)。
+    expect(fourAttachmentMetrics.chatMessages!.clientHeight).toBe(
+      oneAttachmentMetrics.chatMessages!.clientHeight,
+    );
+
     await assertControlHitTarget(
       page,
       '.chat-panel-settings-summary',
@@ -353,8 +426,68 @@ test.describe('chat panel mobile layout', () => {
     expect(previewBox!.width).toBeGreaterThanOrEqual(20);
     expect(previewBox!.height).toBeGreaterThanOrEqual(20);
 
-    await page.locator('.chat-attachment-remove').first().click();
+    const fourthRemove = page.locator('.chat-attachment-remove').nth(3);
+    await fourthRemove.scrollIntoViewIfNeeded();
+    expect(
+      await isInsideScrollContainer(
+        page,
+        '.chat-input-notices',
+        '.chat-attachment-remove',
+        3,
+      ),
+    ).toBe(true);
+    await fourthRemove.click();
     await expect(page.locator('.chat-attachment')).toHaveCount(3);
+
+    // 4枚添付済みの状態を再現して5枚目を貼る — エラー + 非対応警告が同時に出ても溢れないこと。
+    await pastePngAttachments(textarea, 1);
+    await expect(page.locator('.chat-attachment')).toHaveCount(4);
+    await pastePngAttachment(textarea, 'test-rejected.png');
+
+    await expect(page.locator('.chat-attachment-error')).toBeVisible();
+    await expect(page.locator('.chat-attachment-error')).toContainText(
+      '画像は最大 4 枚まで添付できます。',
+    );
+    await expect(page.locator('.chat-attachment-unsupported')).toBeVisible();
+
+    await expect
+      .poll(
+        async () =>
+          page.locator('.chat-panel').evaluate((el) => el.scrollHeight - el.clientHeight),
+        { timeout: 10_000 },
+      )
+      .toBeLessThanOrEqual(0);
+
+    const fiveRejectedMetrics = await readChatPanelMetrics(page);
+    console.log(
+      JSON.stringify({
+        case: '375x430-panel-attachments-5-rejected',
+        panelMetrics: fiveRejectedMetrics,
+      }),
+    );
+    expect(fiveRejectedMetrics.scrollHeight).toBeLessThanOrEqual(
+      fiveRejectedMetrics.clientHeight,
+    );
+
+    const fiveNotices = fiveRejectedMetrics.chatInputNotices;
+    expect(fiveNotices).not.toBeNull();
+    expect(fiveRejectedMetrics.chatMessages).not.toBeNull();
+    // この2組はセットで1つの主張を成す (fourAttachment との比較)。
+    expect(fiveNotices!.scrollHeight).toBeGreaterThan(fourNotices!.scrollHeight);
+    expect(fiveRejectedMetrics.chatMessages!.clientHeight).toBe(
+      fourAttachmentMetrics.chatMessages!.clientHeight,
+    );
+
+    await assertControlHitTarget(
+      page,
+      '.chat-panel-settings-summary',
+      'chat settings after 5 rejected',
+    );
+    await assertControlHitTarget(
+      page,
+      '.chat-thread-switcher-toggle',
+      'thread switcher after 5 rejected',
+    );
   });
 
   test('overlay z-index stacks above undo snackbar', async ({ page }) => {

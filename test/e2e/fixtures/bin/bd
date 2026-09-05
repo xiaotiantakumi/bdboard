@@ -32,6 +32,20 @@
 #   bd --readonly -C <root> gate list --json ...
 #     → BDBOARD_E2E_BD_GATE_LIST_FIXTURE, or `[]` when unset
 #
+# Root-aware empty override (marker file):
+#   When `-C <root>` points at a project whose `.beads/e2e-empty-list` exists,
+#   every `list` shape (including `--all`) and `gate list` returns `[]` and exits
+#   0 — before any required-fixture check. global-setup creates a second scan
+#   root (`fixture-project-b`) with that marker so the board has two projects and
+#   ChatPanel renders `.chat-project-select` (bdboard-iglk), but the stub cannot
+#   scope the golden issue list per root. Without this override the second project
+#   would duplicate every ticket (smoke strict-mode violations, doubled hygiene-
+#   panel rows). The empty root exists only to bump project count; board content
+#   stays identical to the single-project fixture.
+#   Marker file instead of env path matching: macOS os.tmpdir() is a symlink
+#   (/var → /private/var) so global-setup's path and the realpath the server
+#   passes to `-C` never string-match; 14 e2e failures were observed that way.
+#
 # global-setup (test/e2e/global-setup.ts) sets all five vars: the required
 # BDBOARD_E2E_BD_LIST_FIXTURE, BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE (same golden
 # file — stale_pending_decision rows in the health panel), and e2e-only fixtures
@@ -117,6 +131,61 @@ emit_required_fixture() {
   exit 0
 }
 
+# Sets global: repo_root (absolute path from `-C`, or empty when absent)
+parse_repo_root() {
+  repo_root=""
+  local -a args=("$@")
+  local i=0
+  local in_opts=true
+  local arg=""
+  local prev=""
+
+  while [[ $i -lt ${#args[@]} ]]; do
+    arg="${args[$i]}"
+    if [[ "$in_opts" == true && "$arg" == "--" ]]; then
+      break
+    fi
+
+    if [[ "$in_opts" == true ]]; then
+      if [[ "$prev" == "-C" ]]; then
+        repo_root="$arg"
+        return 0
+      fi
+      case "$arg" in
+        -C | --limit | -l | --label | --status)
+          prev="$arg"
+          i=$((i + 1))
+          continue
+          ;;
+        --readonly | --json | --all | --no-pager | --include-gates)
+          prev=""
+          i=$((i + 1))
+          continue
+          ;;
+        --*)
+          prev=""
+          i=$((i + 1))
+          continue
+          ;;
+        -*)
+          prev=""
+          i=$((i + 1))
+          continue
+          ;;
+      esac
+    fi
+
+    prev=""
+    i=$((i + 1))
+  done
+}
+
+# Return 0 when repo_root has the e2e empty-list marker (path-agnostic).
+is_empty_root() {
+  local root="$1"
+  [[ -n "$root" && -f "$root/.beads/e2e-empty-list" ]]
+}
+
 # Sets globals: subcommand, sub_subcommand
 parse_subcommands() {
   subcommand=""
@@ -164,7 +233,19 @@ parse_subcommands() {
   done
 }
 
+parse_repo_root "$@"
 parse_subcommands "$@"
+
+if is_empty_root "$repo_root"; then
+  if [[ "$subcommand" == "gate" && "$sub_subcommand" == "list" ]]; then
+    printf '[]\n'
+    exit 0
+  fi
+  if [[ "$subcommand" == "list" ]]; then
+    printf '[]\n'
+    exit 0
+  fi
+fi
 
 if [[ "$subcommand" == "gate" && "$sub_subcommand" == "list" ]]; then
   emit_optional_fixture BDBOARD_E2E_BD_GATE_LIST_FIXTURE
