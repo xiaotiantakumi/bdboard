@@ -2641,6 +2641,46 @@ describe('パネル内の戻るボタン (bdboard-4ql7)', () => {
   });
 });
 
+interface ActiveTimerLoop {
+  abort: () => void;
+  settled: Promise<void>;
+}
+
+let activeTimerLoop: ActiveTimerLoop | null = null;
+
+async function advanceInAct(ms: number): Promise<'advanced' | 'aborted'> {
+  let abort!: () => void;
+  const aborted = new Promise<'aborted'>((resolve) => {
+    abort = () => resolve('aborted');
+  });
+  let markSettled!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    markSettled = resolve;
+  });
+  const token: ActiveTimerLoop = { abort, settled };
+  // Promise の executor は同期実行されるので、act() を呼ぶ前に必ず登録が完了している。
+  // これが afterEach 側で「開いている act スコープが常に見つかる」ことの根拠。
+  activeTimerLoop = token;
+  try {
+    return await act(async () =>
+      Promise.race([
+        vi.advanceTimersByTimeAsync(ms).then((): 'advanced' => 'advanced'),
+        aborted,
+      ]),
+    );
+  } finally {
+    if (activeTimerLoop === token) {
+      activeTimerLoop = null;
+    }
+    markSettled();
+  }
+}
+
+// bdboard-d6b8: per-test timeout が act の内側で発火しても Vitest はテスト Promise をキャンセルしない。
+// afterEach から advanceInAct を abort して settled を待つことで、実際に漏れた act スコープを閉じる。
+// これは vi.useRealTimers() の順序で解消する問題ではない。呼び出し側は 'aborted' を受けたら必ず
+// return すること。続行すると timeout 済みのテスト本体が再開し、後続テストの DOM とモック呼び出し
+// 回数を汚染する（実測では return 無しだと起点を含む失敗が 1 件ではなく 3 件残った）。
 describe('TicketDetailPanel agent run', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
@@ -2692,10 +2732,18 @@ describe('TicketDetailPanel agent run', () => {
     user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
   });
 
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
+  afterEach(async () => {
+    try {
+      const loop = activeTimerLoop;
+      if (loop) {
+        loop.abort();
+        await loop.settled;
+      }
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    }
   });
 
   it('disables the run button when the ticket is blocked', async () => {
@@ -2836,25 +2884,25 @@ describe('TicketDetailPanel agent run', () => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(2);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(3);
     });
 
     const callCountAfterTerminal = mockFetchAgentRun.mock.calls.length;
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4000);
-    });
+    if ((await advanceInAct(4000)) === 'aborted') {
+      return;
+    }
 
     expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterTerminal);
     expect(await screen.findByText(/状態: 成功/)).toBeInTheDocument();
@@ -3043,25 +3091,25 @@ describe('TicketDetailPanel agent run', () => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(2);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(3);
     });
 
     const callCountAfterStop = mockFetchAgentRun.mock.calls.length;
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(6000);
-    });
+    if ((await advanceInAct(6000)) === 'aborted') {
+      return;
+    }
 
     expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterStop);
     expect(screen.getByText(/状態を取得できません/)).toBeInTheDocument();
@@ -3087,9 +3135,9 @@ describe('TicketDetailPanel agent run', () => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(1);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(2);
     });
@@ -3099,25 +3147,25 @@ describe('TicketDetailPanel agent run', () => {
       ).toBeDisabled();
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(3);
     });
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2000);
-    });
+    if ((await advanceInAct(2000)) === 'aborted') {
+      return;
+    }
     await waitFor(() => {
       expect(mockFetchAgentRun).toHaveBeenCalledTimes(4);
     });
 
     const callCountAfterTerminal = mockFetchAgentRun.mock.calls.length;
 
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(4000);
-    });
+    if ((await advanceInAct(4000)) === 'aborted') {
+      return;
+    }
 
     expect(mockFetchAgentRun.mock.calls.length).toBe(callCountAfterTerminal);
     expect(await screen.findByText(/状態: 中止/)).toBeInTheDocument();
