@@ -114,6 +114,11 @@ test.describe('mobile input font-size', () => {
     const card = page.locator('article').first();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
+    const filterToggle = page.getByRole('button', { name: /^絞り込み/ });
+    await expect(filterToggle).toBeVisible();
+    await filterToggle.click();
+    await expect(page.locator('#board-priority-ceiling')).toBeVisible();
+
     // 実測2（board-filter select + search）。件数が少ないので下限も2のまま。
     await expectAllFormElementsAtLeast16px(page, 'board root', 2);
 

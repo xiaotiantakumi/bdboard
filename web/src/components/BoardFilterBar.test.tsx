@@ -1,7 +1,22 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import { BoardFilterBar } from './BoardFilterBar';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  BoardFilterBar,
+  countActiveFilters,
+  isFilterActive,
+} from './BoardFilterBar';
+
+function setLayoutWidth(px: number) {
+  Object.defineProperty(document.documentElement, 'clientWidth', {
+    configurable: true,
+    value: px,
+  });
+}
+
+function restoreLayoutWidth() {
+  Reflect.deleteProperty(document.documentElement, 'clientWidth');
+}
 
 function renderBar(
   overrides: Partial<{
@@ -44,6 +59,70 @@ function renderBar(
 }
 
 describe('BoardFilterBar', () => {
+  describe('countActiveFilters', () => {
+    it('counts each active constraint', () => {
+      expect(
+        countActiveFilters('all', [], [], ''),
+      ).toBe(0);
+      expect(
+        countActiveFilters('2', ['bug', 'task'], ['human'], 'alpha'),
+      ).toBe(5);
+      expect(
+        isFilterActive('all', [], [], ''),
+      ).toBe(false);
+      expect(
+        isFilterActive('1', [], [], ''),
+      ).toBe(true);
+    });
+  });
+
+  describe('mobile collapse', () => {
+    beforeEach(() => {
+      setLayoutWidth(375);
+    });
+
+    afterEach(() => {
+      restoreLayoutWidth();
+    });
+
+    it('starts collapsed and hides filter controls until toggled', async () => {
+      const user = userEvent.setup();
+      renderBar();
+
+      expect(screen.getByRole('button', { name: '絞り込み' })).toHaveAttribute(
+        'aria-expanded',
+        'false',
+      );
+      expect(screen.queryByLabelText('優先度上限')).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole('button', { name: '絞り込み' }));
+      expect(screen.getByRole('button', { name: '絞り込み' })).toHaveAttribute(
+        'aria-expanded',
+        'true',
+      );
+      expect(screen.getByLabelText('優先度上限')).toBeInTheDocument();
+    });
+
+    it('keeps the toggle text concise while exposing active filter count to assistive tech', () => {
+      renderBar({
+        priorityCeiling: '1',
+        issueTypes: ['bug'],
+        labels: ['human'],
+        filterText: 'alpha',
+      });
+
+      expect(screen.getByRole('button', { name: '絞り込み (4件適用中)' })).toBeInTheDocument();
+      expect(document.querySelector('.board-filter-toggle-label')).toHaveTextContent(
+        /^絞り込み$/,
+      );
+      expect(document.querySelector('.board-filter-active-badge')).toHaveAttribute(
+        'aria-hidden',
+        'true',
+      );
+      expect(document.querySelector('.board-filter-active-badge')).toHaveTextContent(/^4$/);
+    });
+  });
+
   it('calls onPriorityCeilingChange when select changes', () => {
     const { onPriorityCeilingChange } = renderBar();
 

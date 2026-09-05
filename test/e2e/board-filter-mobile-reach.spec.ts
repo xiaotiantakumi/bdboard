@@ -33,6 +33,16 @@ interface ViewportFitResult {
   fitsInViewport: boolean;
 }
 
+async function expandMobileFilterBar(page: import('@playwright/test').Page): Promise<void> {
+  const toggle = page.getByRole('button', { name: /^絞り込み/ });
+  await expect(toggle).toBeVisible({ timeout: 15_000 });
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') {
+    await toggle.click();
+  }
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.board-filter-label-group')).toBeVisible();
+}
+
 async function measureGroupScroll(
   page: import('@playwright/test').Page,
   groupSelector: string,
@@ -166,6 +176,7 @@ test.describe('board filter mobile reach — AC1 label chips', () => {
   }) => {
     await page.goto('/');
     await expect(page.locator('.board-filter-bar')).toBeVisible({ timeout: 15_000 });
+    await expandMobileFilterBar(page);
 
     const labelGroup = page.locator('.board-filter-label-group');
     await expect(labelGroup).toBeVisible();
@@ -204,6 +215,7 @@ test.describe('board filter mobile reach — AC2 type chips', () => {
   }) => {
     await page.goto('/');
     await expect(page.locator('.board-filter-bar')).toBeVisible({ timeout: 15_000 });
+    await expandMobileFilterBar(page);
 
     const typeGroup = page.locator('.board-filter-type-group');
     await expect(typeGroup).toBeVisible();

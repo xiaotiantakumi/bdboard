@@ -8,6 +8,7 @@ import {
   type ProjectBoardDto,
 } from '../api';
 import { useMatchMedia } from '../hooks/useMatchMedia';
+import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import {
   type BoardFilter,
   boardFilterKey,
@@ -127,7 +128,7 @@ function LanesRow({
   const boardNav = useBoardKeyboardNav();
   const filterKey = boardFilterKey(filter);
   const lanesRowRef = useRef<HTMLDivElement>(null);
-  const showLaneIndicator = useMatchMedia('(max-width: 700px)');
+  const showLaneIndicator = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
 
   const laneDerived = lanes.map((lane) => {
     const laneCards = board.lanes[lane] ?? [];

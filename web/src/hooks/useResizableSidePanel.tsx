@@ -1,13 +1,11 @@
 import { type KeyboardEvent, type PointerEvent, useRef, useState } from 'react';
+import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import { usePersistedState } from './usePersistedState';
 
 const MIN_WIDTH = 360;
 const MAX_WIDTH = 720;
 const MIN_REMAINING_WIDTH = 320;
 const RESIZE_STEP = 20;
-
-/** Matches index.css @media (max-width: 700px) where .side-panel-resize-handle { display: none }. */
-const MOBILE_LAYOUT_MEDIA_QUERY = '(max-width: 700px)';
 
 /**
  * Layout viewport width — the same value CSS media queries use
@@ -31,8 +29,9 @@ function clampWidth(width: number): number {
 }
 
 /**
- * Resize is allowed only above the mobile breakpoint. Uses matchMedia so JS agrees
- * with CSS even when horizontal overflow inflates window.innerWidth.
+ * Resize is allowed only above the mobile breakpoint, where index.css hides
+ * .side-panel-resize-handle. Uses matchMedia so JS agrees with CSS even when
+ * horizontal overflow inflates window.innerWidth.
  */
 function canResize(): boolean {
   if (typeof window === 'undefined') return false;
