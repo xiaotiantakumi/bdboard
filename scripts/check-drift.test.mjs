@@ -10,7 +10,11 @@ const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'che
 /** 改名前後で git の類似度検出が効く程度に大きいファイル。 */
 const BIG_FILE = (marker) =>
   `${Array.from({ length: 40 }, (_, i) => `export const line${i} = ${i};`).join('\n')}\nexport const marker = ${marker};\n`;
-import { computeDrift, formatDriftReport } from './check-drift.mjs';
+import {
+  computeDrift,
+  formatDriftReport,
+  parseMergeTreeConflictFiles,
+} from './check-drift.mjs';
 
 const CTX = {
   mergeBase: '0123456789abcdef',
@@ -110,6 +114,28 @@ describe('formatDriftReport', () => {
   });
 });
 
+describe('merge-tree conflict output parser', () => {
+  it('returns no files for clean output', () => {
+    expect(parseMergeTreeConflictFiles('0123456789abcdef0123456789abcdef01234567\n')).toEqual([]);
+  });
+
+  it('keeps only the filename among merge-tree conflict messages', () => {
+    expect(
+      parseMergeTreeConflictFiles(
+        '0123456789abcdef0123456789abcdef01234567\nweb/src/index.css\nAuto-merging web/src/index.css\nCONFLICT (content): Merge conflict in web/src/index.css\n',
+      ),
+    ).toEqual(['web/src/index.css']);
+  });
+
+  it('returns every conflict filename', () => {
+    expect(
+      parseMergeTreeConflictFiles(
+        '0123456789abcdef0123456789abcdef01234567\nserver/src/main.ts\nweb/src/index.css\nAuto-merging server/src/main.ts\nCONFLICT (content): Merge conflict in server/src/main.ts\nAuto-merging web/src/index.css\nCONFLICT (content): Merge conflict in web/src/index.css\n',
+      ),
+    ).toEqual(['server/src/main.ts', 'web/src/index.css']);
+  });
+});
+
 /*
  * ここから下は main() の配線 = 実際に git を叩く側のテスト。
  *
@@ -158,10 +184,20 @@ describe('check-drift CLI', () => {
     sh(other, 'git', 'fetch', '-q', 'origin');
   }
 
-  function runDrift(work) {
+  function runDrift(work, gh = { status: 0, output: '[]' }) {
+    // 実 gh は呼ばない。CLI 配線テストはネットワーク状態に依存させず、gh の成功・
+    // 非ゼロ終了・壊れた JSON をこの小さな代役で再現する。
+    const bin = path.join(work, 'fake-bin');
+    fs.mkdirSync(bin, { recursive: true });
+    fs.writeFileSync(
+      path.join(bin, 'gh'),
+      `#!/bin/sh\nprintf '%s' '${gh.output.replaceAll("'", "'\\\"'\\\"'")}'\nexit ${gh.status}\n`,
+    );
+    fs.chmodSync(path.join(bin, 'gh'), 0o755);
     const result = spawnSync(process.execPath, ['scripts/check-drift.mjs', '--no-fetch'], {
       cwd: work,
       encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
     });
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
   }
@@ -193,6 +229,110 @@ describe('check-drift CLI', () => {
       const { status, stdout } = runDrift(work);
       expect(stdout).toContain('hot.ts');
       expect(status).toBe(0);
+    },
+    15000,
+  );
+
+  it(
+    'reports a broken gh invocation once but preserves the successful drift exit code',
+    () => {
+      const { bare, work } = makeRepo('gh-failure');
+      advanceMain(bare, 'gh-failure', (dir) => {
+        fs.writeFileSync(path.join(dir, 'hot.ts'), BIG_FILE('2'));
+      });
+      sh(work, 'git', 'fetch', '-q', 'origin');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('3'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
+
+      const { status, stderr } = runDrift(work, { status: 1, output: 'not authenticated' });
+      expect(status).toBe(0);
+      expect(stderr.trim()).toBe('drift: open PR を取得できなかったため、他 PR との比較を省略しました。');
+    },
+    15000,
+  );
+
+  it(
+    'does not compare its own PR and summarizes a missing remote-tracking branch',
+    () => {
+      const { work } = makeRepo('own-pr');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('2'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([
+          { number: 10, headRefName: 'feature' },
+          { number: 11, headRefName: 'not-fetched' },
+        ]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR 0 件との重なりはありません');
+      expect(stdout).toContain('PR #11');
+      expect(stdout).not.toContain('PR #10');
+    },
+    15000,
+  );
+
+  it(
+    'reports a merge-tree conflict as the stronger signal without a duplicate file-level warning',
+    () => {
+      const { bare, work } = makeRepo('peer-conflict');
+      sh(work, 'git', 'checkout', '-qb', 'feature');
+      fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('mine'));
+      sh(work, 'git', 'commit', '-qam', 'mine');
+
+      const peer = path.join(tmpRoot, 'peer-conflict-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      fs.writeFileSync(path.join(peer, 'hot.ts'), BIG_FILE('peer'));
+      sh(peer, 'git', 'commit', '-qam', 'peer');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+      sh(work, 'git', 'fetch', '-q', 'origin');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([{ number: 12, headRefName: 'peer' }]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('open PR #12 (peer) と衝突します');
+      expect(stdout).toContain('  hot.ts');
+      expect(stdout).not.toContain('open PR #12 (peer) と同じファイルを触っています');
+    },
+    15000,
+  );
+
+  it(
+    'does not report a peer branch’s stale-main conflict on a file this branch did not touch',
+    () => {
+      const { bare, work } = makeRepo('peer-stale-main-conflict');
+
+      // peer は base の hot.ts を変える。後で main も同じ行を変えるため、peer を
+      // main に rebase すれば解消すべき衝突だけが merge-tree に現れる。
+      const peer = path.join(tmpRoot, 'peer-stale-main-conflict-peer');
+      sh(tmpRoot, 'git', 'clone', '-q', bare, peer);
+      sh(peer, 'git', 'checkout', '-qb', 'peer');
+      fs.writeFileSync(path.join(peer, 'hot.ts'), BIG_FILE('peer'));
+      sh(peer, 'git', 'commit', '-qam', 'peer');
+      sh(peer, 'git', 'push', '-q', 'origin', 'peer');
+
+      advanceMain(bare, 'peer-stale-main-conflict-main', (dir) => {
+        fs.writeFileSync(path.join(dir, 'hot.ts'), BIG_FILE('main'));
+      });
+      sh(work, 'git', 'fetch', '-q', 'origin');
+      sh(work, 'git', 'checkout', '-qb', 'feature', 'origin/main');
+
+      const { status, stdout } = runDrift(work, {
+        status: 0,
+        output: JSON.stringify([{ number: 13, headRefName: 'peer' }]),
+      });
+      expect(status).toBe(0);
+      expect(stdout).toContain('HEAD が merge-base そのものです');
+      expect(stdout).toContain('open PR 1 件との重なりはありません');
+      expect(stdout).not.toContain('open PR #13 (peer) と衝突します');
+      expect(stdout).not.toContain('open PR #13 (peer) と同じファイルを触っています');
+      expect(stdout).not.toContain('  hot.ts');
     },
     15000,
   );

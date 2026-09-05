@@ -55,6 +55,25 @@ export function computeDrift(mainFiles, branchFiles) {
 }
 
 /**
+ * `git merge-tree --write-tree --name-only` の stdout から衝突ファイルだけを取る。
+ *
+ * 衝突時は先頭に result tree の OID が出て、その後に --name-only のパスと git の
+ * 情報行が混ざる。情報行の文言は git バージョンで変わり得るので、既知のメッセージ
+ * 接頭辞と OID を除外し、残りをパスとして扱う。
+ */
+export function parseMergeTreeConflictFiles(output) {
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(
+      (line) =>
+        line !== '' &&
+        !/^[0-9a-f]{40,64}$/i.test(line) &&
+        !/^(?:Auto-merging |CONFLICT(?: \([^)]*\))?: |Automatic merge failed|fatal: |error: |warning: )/.test(line),
+    );
+}
+
+/**
  * 人間 (とエージェント) 向けの本文。exit code は持たせない。
  *
  * upstream が動いていない / ブランチが何も触っていないケースを先に畳むのは、
@@ -124,6 +143,129 @@ function changedFiles(from, to) {
   return out === '' ? [] : out.split('\n');
 }
 
+function listOpenPullRequests() {
+  try {
+    // drift は必須ゲートなので、GitHub API の障害で止めない。execFileSync は gh の
+    // 非ゼロ終了でも throw するため、timeout・認証/API エラー・JSON 壊れをすべてここで
+    // 非致命として扱う。shell を通さないので branch 名もコマンドとして解釈されない。
+    const output = execFileSync('gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName'], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 20_000,
+    });
+    const pullRequests = JSON.parse(output);
+    if (!Array.isArray(pullRequests) || pullRequests.some((pr) => !Number.isInteger(pr.number) || typeof pr.headRefName !== 'string')) {
+      throw new Error('unexpected gh JSON');
+    }
+    return { pullRequests };
+  } catch {
+    return { error: 'drift: open PR を取得できなかったため、他 PR との比較を省略しました。' };
+  }
+}
+
+function mergeTree(ref) {
+  try {
+    git(['merge-tree', '--write-tree', '--name-only', 'HEAD', ref]);
+    return { status: 'clean' };
+  } catch (error) {
+    // merge-tree はテキスト衝突を exit 1 で知らせる。execFileSync は非ゼロを
+    // throw するので、ここでだけ正常な「衝突あり」として stdout を読む。
+    if (error.status === 1) {
+      return {
+        status: 'conflict',
+        files: parseMergeTreeConflictFiles(String(error.stdout ?? '')),
+      };
+    }
+    // 古い git の未知オプション、unrelated histories などは階層1を諦め、階層2
+    // （同じファイル）の警告だけを続ける。
+    return { status: 'unavailable' };
+  }
+}
+
+function reportOpenPullRequestOverlap(currentBranch, branchFiles) {
+  const listed = listOpenPullRequests();
+  if (listed.error) {
+    console.error(listed.error);
+    return;
+  }
+
+  const skippedAutomatic = [];
+  const skippedMissingRef = [];
+  const conflicts = [];
+  const sharedFileOverlaps = [];
+  let comparedCount = 0;
+
+  for (const pr of listed.pullRequests) {
+    if (pr.headRefName === currentBranch) {
+      continue;
+    }
+    // release-please は package version/changelog を main の内容から自動生成する。
+    // 作業中の機能ブランチとのマージ順を人が決める対象ではないのでノイズを避けて除外する。
+    if (pr.headRefName.startsWith('release-please--')) {
+      skippedAutomatic.push(pr);
+      continue;
+    }
+
+    const ref = `origin/${pr.headRefName}`;
+    try {
+      git(['rev-parse', '--verify', '--quiet', ref]);
+    } catch {
+      skippedMissingRef.push(pr);
+      continue;
+    }
+
+    try {
+      comparedCount += 1;
+      const mergeResult = mergeTree(ref);
+      if (mergeResult.status === 'conflict') {
+        // merge-tree の3-way base は peer と HEAD の merge-base なので、古い base
+        // の peer 自身が main へ rebase できない衝突もここに混ざる。我々が実際に
+        // 触ったファイルだけに絞れば、それは我々とのマージ順を決める材料になる。
+        const files = computeDrift(mergeResult.files, branchFiles).overlap;
+        if (files.length > 0) {
+          conflicts.push({ pr, files });
+          continue;
+        }
+      }
+
+      const peerMergeBase = git(['merge-base', 'origin/main', ref]);
+      const peerFiles = changedFiles(peerMergeBase, ref);
+      const files = computeDrift(peerFiles, branchFiles).overlap;
+      if (files.length > 0) {
+        sharedFileOverlaps.push({ pr, files });
+      }
+    } catch {
+      // ローカル参照が途中で消えた等でも、origin/main の既存判定を妨げない。
+      skippedMissingRef.push(pr);
+    }
+  }
+
+  if (conflicts.length === 0 && sharedFileOverlaps.length === 0) {
+    console.log(`drift: open PR ${comparedCount} 件との重なりはありません。`);
+  } else {
+    for (const { pr, files } of conflicts) {
+      console.log(`drift: open PR #${pr.number} (${pr.headRefName}) と衝突します (rebase でテキスト衝突):`);
+      for (const file of files) {
+        console.log(`  ${file}`);
+      }
+    }
+    for (const { pr, files } of sharedFileOverlaps) {
+      console.log(`drift: open PR #${pr.number} (${pr.headRefName}) と同じファイルを触っています (衝突はしませんが意味的な整合は要確認):`);
+      for (const file of files) {
+        console.log(`  ${file}`);
+      }
+    }
+    console.log('drift: マージ順は議長が決めてください (これは報告であり、終了コードには影響しません)。');
+  }
+  if (skippedMissingRef.length > 0) {
+    console.log(`drift: リモート追跡ブランチがないため比較を省略しました (${skippedMissingRef.map((pr) => `PR #${pr.number}`).join(', ')})。`);
+  }
+  if (skippedAutomatic.length > 0) {
+    console.log(`drift: release-please の自動生成 PR は比較から除外しました (${skippedAutomatic.map((pr) => `PR #${pr.number}`).join(', ')})。`);
+  }
+}
+
 function main(argv) {
   const upstream = 'origin/main';
   const shouldFetch = !argv.includes('--no-fetch');
@@ -151,6 +293,7 @@ function main(argv) {
 
   if (mergeBase === git(['rev-parse', 'HEAD'])) {
     console.log('drift: HEAD が merge-base そのものです (このブランチにはまだコミットがありません)。');
+    reportOpenPullRequestOverlap(git(['rev-parse', '--abbrev-ref', 'HEAD']), []);
     return EXIT_OK;
   }
 
@@ -158,6 +301,10 @@ function main(argv) {
   const drift = computeDrift(changedFiles(mergeBase, upstream), changedFiles(mergeBase, 'HEAD'));
 
   console.log(formatDriftReport(drift, { mergeBase, upstream, aheadCount }));
+  reportOpenPullRequestOverlap(
+    git(['rev-parse', '--abbrev-ref', 'HEAD']),
+    changedFiles(mergeBase, 'HEAD'),
+  );
   return EXIT_OK;
 }
 
