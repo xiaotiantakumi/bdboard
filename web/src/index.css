@@ -6177,6 +6177,18 @@ body {
     font-size: 0.9375rem;
   }
 
+  /* bdboard-1oep: モバイルのチェックボックスはカード右端から right(4px)+width(44px)=48px
+     食い込むが、ベースの .card:has(.card-bulk-checkbox) の padding-right は
+     デスクトップの 28px+8px 用に 40px のままだった。差分 8px がコンテンツボックスの
+     右端 = .card-title-row 末尾のウォッチ切替に重なり、z-index:1 のチェックボックスが
+     ☆の見えているグリフの右 4px を奪っていた (実測 375x812: toggle=[244,268],
+     checkbox=[260,304], elementFromPoint(260..) は checkbox を返す)。
+     48px でちょうど接し、52px で デスクトップと同じ 4px の間隔ができる。
+     ベース側 (40px) はデスクトップの実測重なり 0px なので触らない。 */
+  .card:has(.card-bulk-checkbox) {
+    padding-right: 52px;
+  }
+
   .card-bulk-checkbox {
     min-width: 44px;
     min-height: 44px;
@@ -6345,13 +6357,14 @@ body {
   }
 
   /* Tier 2: ウォッチ切替 — ::before で行高を押し上げず、縦方向だけ 44px に拡張する。
-     375px の主要カードではボタンの幾何 rect = [244, 268]、実効タップ帯 = [243.25, 259]
-     (右 8px はチェックボックスが取る)。帯の縦方向は 44.5px 実測で、タイトルボックス右端 238
-     に対して 5.25px の余白があり衝突しない。
-     横方向を 44px にできないのは、.card-bulk-checkbox が x=260 から z-index:1 で重なるため右へ
-     伸ばせず、左へ伸ばすとタイトルのグリフを食うため（実測 109/122 枚）。横方向の解決は
-     bdboard-1oep（チェックボックスが☆の 8px を奪う既存不具合）の修正後に行う。現状でも
-     WCAG 2.5.8 の最小 24×24px は満たす。 */
+     bdboard-1oep で padding-right: 52px にした結果、375px の主要カードではボタンの幾何
+     rect = [232, 256]、チェックボックス左端 = 260 で重なり 0px・間隔 4px になった。
+     帯の縦方向は 44.5px 実測で、タイトル右端 226 に対して 6px の余白があり衝突しない。
+     タイトル幅は 212px → 200px に 12px 狭くなるが -webkit-line-clamp: 2 により
+     カード高さの上限は変わらない (fixture では 1 行 → 2 行に折り返すだけ)。
+     チェックボックスとの重なり制約は解消済みだが、横方向 44px 化そのものは本チケットの
+     範囲外。左へ 20px 伸ばすとタイトルのグリフを食う問題が別途残るため、横方向の拡張は
+     bdboard-h4xs.9 系の後続作業に残す。現状でも WCAG 2.5.8 の最小 24×24px は満たす。 */
   .card-watch-toggle::before {
     content: '';
     position: absolute;

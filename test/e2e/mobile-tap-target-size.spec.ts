@@ -26,7 +26,7 @@ type CardHitAreaMeasurement = HitAreaMeasurement & {
   titleFound: boolean;
   checkboxLeft: number;
   titleRight: number;
-  leftOfCheckboxHit: boolean;
+  gapPointHitsWatch: boolean;
   checkboxHit: boolean;
 };
 
@@ -78,7 +78,7 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
           titleFound: title !== null,
           checkboxLeft: 0,
           titleRight: 0,
-          leftOfCheckboxHit: false,
+          gapPointHitsWatch: false,
           checkboxHit: false,
         };
       }
@@ -107,11 +107,10 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
         const left = scan(centerX, -1, (x) => isToggleHit(x, centerY));
-        // The card bulk checkbox overlays the lower-right part of this band's x range.
+        // bdboard-1oep 後: bulk checkbox (left=260) no longer overlaps the watch band
+        // (toggle=[232,256]); scan the full horizontal band at button centre.
         const top = scan(centerY, -1, (y) => isToggleHit(left.boundary + 1, y));
         const bottom = scan(centerY, 1, (y) => isToggleHit(left.boundary + 1, y));
-        // Measure the touchable horizontal band at the button centre. Its rightmost
-        // 8px is intentionally claimed by the overlaid bulk checkbox.
         const right = scan(centerX, 1, (x) => isToggleHit(x, centerY));
         return {
           found: true,
@@ -141,7 +140,7 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
         titleFound: true,
         checkboxLeft: checkboxRect.left,
         titleRight: titleRect.right,
-        leftOfCheckboxHit: isToggleHit(
+        gapPointHitsWatch: isToggleHit(
           checkboxRect.left - 1,
           (measurement.measuredTop + measurement.measuredBottom) / 2,
         ),
@@ -175,9 +174,9 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
         measuredHeight,
       }),
     );
-    // 375px 実測: 実効タップ帯=[243.25, 259]、縦=[466.47, 510.97]=44.5px。
-    // titleRight=238、checkboxLeft=260。measuredWidth は 44px 未満で意図どおり
-    // (横方向は bdboard-1oep 待ち。右 8px はチェックボックスが取る)。
+    // 375px 実測 (bdboard-1oep 後): toggle=[232,256]、checkboxLeft=260、帯は重ならない。
+    // measuredWidth は 44px 未満で意図どおり — 横方向 44px 化が未了だからであり、
+    // チェックボックスに食われているからではない。
     expect(measuredHeight, `card watch measured height=${measuredHeight}px`).toBeGreaterThanOrEqual(
       MIN_TAP_TARGET_PX,
     );
@@ -187,14 +186,25 @@ test.describe('mobile tap target size — bdboard-h4xs.9', () => {
     expect(result.measuredLeft, `card watch measured left=${result.measuredLeft}px`).toBeGreaterThanOrEqual(
       result.titleRight,
     );
-    // Same 375px measurement: checkboxLeft=260. The measured band ends at 259;
-    // the 0.5px allowance only accounts for hit-test rounding and keeps it out of
-    // the checkbox.
+    // bdboard-1oep 後: checkboxLeft=260, toggle right=256 — 4px gap, no overlap.
+    // The 0.5px allowance only accounts for hit-test rounding.
     expect(result.measuredRight).toBeLessThanOrEqual(result.checkboxLeft + 0.5);
+    // bdboard-1oep: ここは以前 toBe(true) だった — 当時はウォッチ帯とチェックボックスが
+    // 8px 重なっていて隙間が無かったため。今は .card:has(.card-bulk-checkbox) の
+    // モバイル padding-right: 52px で 4px の分離帯があり、チェックボックス左端の 1px 手前は
+    // どちらのコントロールでもない素のカード余白に当たるのが正しい。true に戻したら
+    // ☆の右端がまたチェックボックスに食われている。
     expect(
-      result.leftOfCheckboxHit,
-      'one pixel left of checkbox must hit the watch band',
-    ).toBe(true);
+      result.gapPointHitsWatch,
+      'one pixel left of the checkbox must fall in the deliberate separation gap, not the watch band',
+    ).toBe(false);
+    // 隙間が広がりすぎる = ウォッチ切替が不必要に左へ追いやられてタイトルを削っている。
+    // 375x812 実測: checkboxLeft=260, measuredRight=255.75 → 4.25px。
+    const separationPx = result.checkboxLeft - result.measuredRight;
+    expect(separationPx, `separation between watch band and checkbox=${separationPx}px`)
+      .toBeGreaterThanOrEqual(0);
+    expect(separationPx, `separation between watch band and checkbox=${separationPx}px`)
+      .toBeLessThanOrEqual(8);
     expect(result.checkboxHit, 'one pixel inside checkbox must hit the checkbox').toBe(true);
   });
 
