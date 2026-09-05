@@ -25,6 +25,19 @@
 
   --color-success: #34c759;
   --color-warning: #ff9500;
+  /* bdboard-bdsd: `.lane-header-wip-exceeded .lane-count` は背景 (22% warning tint) が
+     `.lane-header-wip-exceeded` 自身の背景 (16% warning tint over --color-bg-grouped) の
+     上にさらに乗る二重合成で、実効背景は light rgb(255, 218, 167) / dark
+     rgb(106, 73, 23) まで色付く。そこへ前景も同じ --color-warning (同色相) を置くと
+     輝度差が稼げず light 1.663:1 / dark 3.950:1 (WCAG AA 4.5:1 未達、bdboard-skde が
+     直した .filter-chip-active と同じ構図)。--color-warning 自体は他にも約 30 箇所で
+     使われているため値を動かさず、このバッジ専用の派生値をここへ新設する
+     (--color-accent-text / --badge-neutral-fg と同じ形)。同色相のまま明度だけ振って
+     4.5:1 を超える最小限の変更幅を採用: light は元の 56% の明度 (#8f5300、上記実効
+     背景で 4.665:1)、dark は白へ 25% 寄せた明度 (後方の prefers-color-scheme: dark
+     ブロックの --lane-count-wip-fg 参照、同 4.685:1)。使用箇所は
+     `.lane-header.lane-header-wip-exceeded .lane-count` の 1 箇所のみ。 */
+  --lane-count-wip-fg: #8f5300;
   --color-danger: #ff3b30;
   --color-purple: #af52de;
 
@@ -109,6 +122,9 @@
 
     --color-success: #30d158;
     --color-warning: #ff9f0a;
+    /* bdboard-bdsd: light 側の --lane-count-wip-fg と対。dark の実効背景
+       rgb(106, 73, 23) に対して 4.685:1 (詳細は light 側のコメント参照)。 */
+    --lane-count-wip-fg: #ffb747;
     --color-danger: #ff453a;
     --color-purple: #bf5af2;
 
@@ -2957,8 +2973,10 @@ body {
 }
 
 .lane-header.lane-header-wip-exceeded .lane-count {
+  /* bdboard-bdsd: 前景だけ --lane-count-wip-fg に分ける。理由は :root の
+     --lane-count-wip-fg 定義コメント参照。背景 (22%) はそのまま。 */
   background: color-mix(in srgb, var(--color-warning) 22%, transparent);
-  color: var(--color-warning);
+  color: var(--lane-count-wip-fg);
 }
 
 .lane-header-label {
@@ -2991,9 +3009,9 @@ body {
      `.status-pill-reconnecting` が載る面)・`.lane-drop-allowed` (4.58:1)・
      `.lane-drop-rejected` (4.68:1) のいずれでも 4.5:1 以上になった (旧値はこれらの面で
      4.10〜4.22:1 と AA 未満)。WIP 超過時は下の .lane-header-wip-exceeded .lane-count が
-     color も background も warning 系で上書きするため、この対は効かない (light 1.66:1、
-     bdboard-bdsd。この対とは無関係の別トークンなので本チェンジのスコープ外)。掃引は
-     ドラッグ中も WIP 超過も踏まないので、いずれも自動検出されない。 */
+     color も background も warning 系で上書きしていたためこの対が効かず light 1.66:1
+     だったが、bdboard-bdsd で前景を --lane-count-wip-fg に分けて解消済み (定義は :root
+     参照)。ドラッグ中の状態は未確認のまま残っている。 */
   color: var(--badge-neutral-fg);
   font-weight: 500;
   font-size: 0.75rem;

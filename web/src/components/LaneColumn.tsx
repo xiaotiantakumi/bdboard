@@ -482,7 +482,7 @@ export function LaneColumn({
           <span className="lane-chevron" aria-hidden="true">
             {collapsed ? '▶' : '▼'}
           </span>
-          <span>{LANE_LABELS[lane]}</span>
+          <span className="lane-header-label-text">{LANE_LABELS[lane]}</span>
         </span>
         <span className="lane-count">{countLabel}</span>
       </button>
