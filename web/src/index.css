@@ -785,6 +785,7 @@ body {
   justify-content: center;
   align-items: flex-start;
   padding: 10vh 16px 16px;
+  padding: 10dvh 16px 16px;
 }
 
 .error-boundary-overlay .error-boundary {
@@ -3784,6 +3785,7 @@ body {
   justify-content: center;
   align-items: flex-start;
   padding: 12vh 16px 16px;
+  padding: 12dvh 16px 16px;
 }
 
 .search-palette-header {
@@ -3796,6 +3798,7 @@ body {
 .search-palette {
   width: min(640px, 100%);
   max-height: min(70vh, 560px);
+  max-height: min(70dvh, 560px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -3924,17 +3927,32 @@ body {
   justify-content: center;
   align-items: flex-start;
   padding: 10vh 16px 16px;
+  padding: 10dvh 16px 16px;
 }
 
 .tunnel-modal-overlay {
   justify-content: center;
   align-items: flex-start;
+  /* オーバーレイの padding とパネルの max-height は**必ずセットで** dvh にする。
+     高さの基準は帯で違う: 縦持ちスマホ (<=700px) は下の `@media (max-width: 700px)` の
+     `.overlay { height: 100dvh }`、それより広い帯はベースの `.overlay` の fixed inset:0。
+     後者が small / dynamic どちらの viewport に敷かれるかは iOS Safari で未実測
+     (bdboard-h4xs.21 待ち) なので、以下の検算は 100dvh 基準の <=700px 帯の話。
+     パネルだけ dvh にすると収まる条件は `10lvh + 85dvh + 16px <= 100dvh`、つまり
+     `10lvh + 16 <= 15dvh` で、**縮みはするが余裕が chrome の高さに依存する**。
+     iPhone SE (lvh 667) なら chrome 116px で 82.7 vs 82.65 と 0.05px 超過、
+     chrome 100px なら 82.7 <= 85.05 で収まる、という綱渡りになる。
+     padding も dvh にすれば条件は `16 <= 5dvh`、すなわち可視高 320px 以上で常に成立し、
+     端末とアドレスバーの出入りに依存しなくなる。これがセットで直す理由。
+     デスクトップでは lvh === dvh なので、この併記は完全に no-op (bdboard-68ub)。 */
   padding: 10vh 16px 16px;
+  padding: 10dvh 16px 16px;
 }
 
 .tunnel-modal-panel {
   width: min(520px, 100%);
   max-height: min(85vh, 720px);
+  max-height: min(85dvh, 720px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -3952,6 +3970,7 @@ body {
 .shortcuts-help-panel {
   width: min(520px, 100%);
   max-height: min(75vh, 640px);
+  max-height: min(75dvh, 640px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -4030,11 +4049,13 @@ body {
   justify-content: center;
   align-items: flex-start;
   padding: 5vh 20px 20px;
+  padding: 5dvh 20px 20px;
 }
 
 .help-panel {
   width: min(880px, 100%);
   max-height: min(90vh, 900px);
+  max-height: min(90dvh, 900px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -6290,11 +6311,12 @@ body {
 
   /* 静止時 48px。resize ハンドルのドラッグはインライン style で height を書くため
      スタイルシートの height に勝つ。auto-grow JS は無い (rows={3}) ので、
-     縦拡張手段はこの resize のみ。ユーザーは最大 30vh まで伸ばせる。 */
+     縦拡張手段はこの resize のみ。ユーザーは最大 30dvh まで伸ばせる。 */
   .chat-input {
     height: 48px;
     min-height: 48px;
     max-height: 30vh;
+    max-height: 30dvh;
     overflow-y: auto;
   }
 }
@@ -6377,6 +6399,7 @@ body {
     height: 46px;
     min-height: 46px;
     max-height: 25vh;
+    max-height: 25dvh;
     overflow-y: auto;
   }
 
@@ -7437,6 +7460,7 @@ body {
   width: 300px;
   max-width: calc(100vw - 32px);
   max-height: min(60vh, 420px);
+  max-height: min(60dvh, 420px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
@@ -7611,6 +7635,7 @@ body {
   width: 320px;
   max-width: calc(100vw - 32px);
   max-height: min(60vh, 420px);
+  max-height: min(60dvh, 420px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
