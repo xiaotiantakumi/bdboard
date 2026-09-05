@@ -803,6 +803,14 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* .error-boundary-body だけが縮むのは、flex アイテムの自動最小サイズ
+     (min-height: auto) が「overflow が visible のときだけ min-content になる」ため。
+     body は overflow-y: auto なので下限 0 まで縮み、title と actions は overflow が
+     visible なので min-content 未満には縮まない。**つまり title / actions に
+     overflow: hidden 等を足すと、それらも縮めるようになってこの保証が壊れる**
+     (パネルは可視高に収まったままボタンが潰れる、より分かりにくい形で再発する)。
+     .tunnel-modal-panel / .tunnel-modal-body も同じ仕組みで、どちらも flex 短縮形や
+     min-height: 0 を明示していない。 */
 }
 
 .main {

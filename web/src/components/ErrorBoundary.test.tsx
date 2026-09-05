@@ -40,8 +40,10 @@ describe('ErrorBoundary', () => {
     // bdboard-54uh: 長いエラーメッセージ (スタックトレース級) でパネルが可視高を
     // 超えても .error-boundary-actions がパネル外に落ちないよう、本文
     // (.error-boundary-body) だけがスクロールし、title/actions はその外に
-    // 置かれている必要がある。DOM 構造でその契約を固定する
-    // (実際に画面外へ落ちないことの検証は手動で実施済み — PR 説明を参照)。
+    // 置かれている必要がある。DOM 構造でその契約を固定する。
+    // 実寸の検証は jsdom では不可能 (レイアウトが無い) なので実ブラウザで別途実施した:
+    // 375x812 / 約 40 行のスタックトレースで、修正前はアクション行が top=5151px と
+    // 画面外だったのが、修正後は top=724px に収まることを確認している (bdboard-54uh)。
     render(
       <ErrorBoundary label="チケット詳細" overlay>
         <Boom message="stack trace level message" />
