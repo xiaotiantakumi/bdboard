@@ -104,7 +104,7 @@ export async function planProjectReclaim(
   return planReclaim(
     inProgress.map((ticket) => ({
       ticketId: ticket.id,
-      startedAt: resolveProtectionOrigin(ticket, now),
+      protectionOriginAt: resolveProtectionOrigin(ticket, now),
       hasLiveWorktree: liveTicketIds.has(ticket.id),
     })),
     now,

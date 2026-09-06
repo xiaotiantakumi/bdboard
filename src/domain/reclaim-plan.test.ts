@@ -10,7 +10,7 @@ const NOW = new Date('2026-09-05T12:00:00Z');
 function candidate(overrides: Partial<ReclaimPlanCandidate> = {}): ReclaimPlanCandidate {
   return {
     ticketId: 'bdboard-live',
-    startedAt: new Date(NOW.getTime() - 20 * 60_000),
+    protectionOriginAt: new Date(NOW.getTime() - 20 * 60_000),
     hasLiveWorktree: true,
     ...overrides,
   };
@@ -37,7 +37,7 @@ describe('planReclaim', () => {
   // 永久に in_progress で塩漬けになる — reclaim が防いでいた失敗形そのもの。
   it('stops protecting once the cap has passed', () => {
     const plan = planReclaim(
-      [candidate({ startedAt: new Date(NOW.getTime() - WORKTREE_PROTECTION_CAP_MS - 1) })],
+      [candidate({ protectionOriginAt: new Date(NOW.getTime() - WORKTREE_PROTECTION_CAP_MS - 1) })],
       NOW,
     );
 
@@ -47,7 +47,7 @@ describe('planReclaim', () => {
 
   it('still protects exactly at the cap boundary', () => {
     const plan = planReclaim(
-      [candidate({ startedAt: new Date(NOW.getTime() - WORKTREE_PROTECTION_CAP_MS) })],
+      [candidate({ protectionOriginAt: new Date(NOW.getTime() - WORKTREE_PROTECTION_CAP_MS) })],
       NOW,
     );
 
@@ -62,7 +62,7 @@ describe('planReclaim', () => {
         candidate({
           ticketId: 'c',
           hasLiveWorktree: true,
-          startedAt: new Date(NOW.getTime() - 2 * WORKTREE_PROTECTION_CAP_MS),
+          protectionOriginAt: new Date(NOW.getTime() - 2 * WORKTREE_PROTECTION_CAP_MS),
         }),
       ],
       NOW,

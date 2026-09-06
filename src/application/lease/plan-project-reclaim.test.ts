@@ -171,6 +171,24 @@ describe('planProjectReclaim', () => {
   });
 
   // lease 失効起点で測ると、失効から 12h 経過した時点で証拠があっても回収対象へ戻る。
+  it('keeps protecting while the lease has not expired yet (negative elapsed time)', async () => {
+    const plan = await planProjectReclaim(project, {
+      leaseReader: leaseReaderWith([
+        leaseTicket({
+          id: 'bdboard-live-lease',
+          // lease はまだ 30 分先まで有効 — 経過が負値でも保護側に倒れること。
+          // Math.max(0, elapsed) のような「負値の正規化」を入れるとここで落ちる。
+          leaseExpiresAt: new Date(NOW.getTime() + 30 * 60_000).toISOString(),
+        }),
+      ]),
+      scanner: scannerWith(snapshotWithBranch('bdboard-live-lease')),
+      now: () => NOW,
+    });
+
+    expect(plan?.protectedTicketIds).toEqual(['bdboard-live-lease']);
+    expect(plan?.reclaimTicketIds).toEqual([]);
+  });
+
   it('reclaims once the cap has passed measured from lease expiry, even with worktree evidence', async () => {
     const plan = await planProjectReclaim(project, {
       leaseReader: leaseReaderWith([
