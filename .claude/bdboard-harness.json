@@ -8,5 +8,23 @@
     "denyBashMessages": [
       "verify:steps はラッパー内部の入口です。npm run verify を使ってください（スロットとプロセスグループ kill を素通りします）"
     ]
+  },
+  "models": {
+    "routes": {
+      "implement": {
+        "low": ["codex:gpt-5.6-luna", "cursor:composer-2.5-fast", "claude:haiku"],
+        "med": ["codex:gpt-5.6-terra", "cursor:composer-2.5", "claude:sonnet"],
+        "high": ["claude:opus", "codex:gpt-5.6-sol"]
+      },
+      "review": {
+        "*": ["claude:opus"]
+      },
+      "check": {
+        "*": ["claude:fable", "claude:opus"]
+      },
+      "skill": {
+        "*": ["claude:fable", "claude:opus"]
+      }
+    }
   }
 }
