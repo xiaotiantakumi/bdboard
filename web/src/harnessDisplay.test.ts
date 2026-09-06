@@ -212,6 +212,19 @@ describe('formatHarnessModelRoutes', () => {
     ).toBe('振り分け: implement 3 段宣言、review 共通');
   });
 
+  it('renders the tooltip summary for bdboard own dogfooded routing table (bdboard-p5l.16)', () => {
+    // .claude/bdboard-harness.json の models.routes と一致する段数
+    // (implement は low/med/high を個別宣言、review/check/skill は `*` 共通)。
+    expect(
+      formatHarnessModelRoutes([
+        { stage: 'implement', tiers: 3 },
+        { stage: 'review', tiers: 1 },
+        { stage: 'check', tiers: 1 },
+        { stage: 'skill', tiers: 1 },
+      ]),
+    ).toBe('振り分け: implement 3 段宣言、review 共通、check 共通、skill 共通');
+  });
+
   it('folds stages after the first four', () => {
     expect(
       formatHarnessModelRoutes([

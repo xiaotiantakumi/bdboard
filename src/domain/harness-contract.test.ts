@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   evaluateContractState,
@@ -12,6 +15,8 @@ import {
 function parse(value: unknown): ParseHarnessContractResult {
   return parseHarnessContract(JSON.stringify(value));
 }
+
+const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 
 describe('HARNESS_CONTRACT_RELATIVE_PATH', () => {
   it('stays under .claude/ so the injection path guard covers it', () => {
@@ -901,5 +906,46 @@ describe('summarizeHarnessModels', () => {
       models: [{ stage: 'implement', tiers: 1 }],
     });
     expect(JSON.stringify(state)).not.toContain('gpt-5.6-terra');
+  });
+});
+
+describe('bdboard-p5l.16: dogfooded .claude/bdboard-harness.json', () => {
+  it('parses this repo own contract as ok with the initial routing table (no test/docs stages)', () => {
+    const text = readFileSync(path.join(REPO_ROOT, HARNESS_CONTRACT_RELATIVE_PATH), 'utf8');
+    const parsed = parseHarnessContract(text);
+
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+
+    expect(parsed.contract.version).toBe(1);
+    expect(parsed.contract.models).not.toBeNull();
+    const stages = parsed.contract.models!.routes.map((route) => route.stage);
+    expect(stages).toEqual(['implement', 'review', 'check', 'skill']);
+    expect(stages).not.toContain('test');
+    expect(stages).not.toContain('docs');
+
+    expect(summarizeHarnessModels(parsed.contract.models)).toEqual([
+      { stage: 'implement', tiers: 3 },
+      { stage: 'review', tiers: 1 },
+      { stage: 'check', tiers: 1 },
+      { stage: 'skill', tiers: 1 },
+    ]);
+
+    // review は low/med/high の全セルが claude:opus に固定 (bd memory
+    // 2026-08-30-bdboard-review-model-opus のユーザー指示を維持)。
+    const reviewRoute = parsed.contract.models!.routes.find((route) => route.stage === 'review')!;
+    expect(reviewRoute.low).toEqual(['claude:opus']);
+    expect(reviewRoute.med).toEqual(['claude:opus']);
+    expect(reviewRoute.high).toEqual(['claude:opus']);
+
+    const state = evaluateContractState(parsed, { verifyPackageScripts: ['verify'] });
+    expect(state.state).toBe('ok');
+    if (state.state !== 'ok') return;
+    expect(state.models).toEqual([
+      { stage: 'implement', tiers: 3 },
+      { stage: 'review', tiers: 1 },
+      { stage: 'check', tiers: 1 },
+      { stage: 'skill', tiers: 1 },
+    ]);
   });
 });
