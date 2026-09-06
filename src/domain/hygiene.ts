@@ -467,11 +467,21 @@ function checkClosedWithoutEvidence(
   };
 }
 
+/**
+ * worktree かブランチのどちらかが残っている = 生存の代理指標 (bdboard-rkde)。
+ * checkMergedLeftover / checkReclaimedLiveWorktree の判定条件をここに集約する。
+ * ハーネス KPI の誤回収件数 (bdboard-t3ct, computeReclaimKpi) もこれを使う —
+ * 生存判定を2箇所で別々に実装すると、片方だけ直したときにズレる。
+ */
+export function hasLiveWorktreeEvidence(candidate: LeftoverCandidate): boolean {
+  return candidate.worktreePath !== null || candidate.branchName !== null;
+}
+
 function checkMergedLeftover(
   candidate: LeftoverCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
 ): HygieneIssue | null {
-  if (candidate.worktreePath === null && candidate.branchName === null) {
+  if (!hasLiveWorktreeEvidence(candidate)) {
     return null;
   }
 
@@ -535,7 +545,7 @@ function checkReclaimedLiveWorktree(
   candidate: LeftoverCandidate,
   ticketById: ReadonlyMap<TicketId, Ticket>,
 ): HygieneIssue | null {
-  if (candidate.worktreePath === null && candidate.branchName === null) {
+  if (!hasLiveWorktreeEvidence(candidate)) {
     return null;
   }
 

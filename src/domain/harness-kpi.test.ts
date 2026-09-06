@@ -259,6 +259,8 @@ describe('computeReclaimKpi', () => {
       reclaimedThenInProgressCount: 0,
       reclaimedThenInProgressRate: null,
       windowMs: RECLAIM_RECLAIM_WINDOW_MS,
+      reclaimedLiveWorktreeCount: 0,
+      reclaimedLiveWorktreeRate: null,
     });
   });
 
@@ -383,6 +385,78 @@ describe('computeReclaimKpi', () => {
   });
 });
 
+describe('computeReclaimKpi: reclaimedLiveWorktreeCount (誤回収件数)', () => {
+  const projectId = '/projects/bdboard';
+
+  function run(overrides: Partial<ReclaimRunRecord> = {}): ReclaimRunRecord {
+    return {
+      projectId,
+      at: at('2026-08-10T00:00:00.000Z'),
+      reclaimedCount: 1,
+      ticketIds: ['bdboard-a'],
+      ...overrides,
+    };
+  }
+
+  it('counts a reclaimed ticket whose worktree is still alive', () => {
+    const runs = [run({ ticketIds: ['bdboard-a'] })];
+    const tickets = [makeTicket({ id: 'bdboard-a', projectId })];
+    const leftoverCandidates = [
+      {
+        projectId,
+        repoRootPath: '/repo',
+        ticketId: 'bdboard-a',
+        worktreePath: '/repo/.claude/worktrees/bdboard-a',
+        branchName: 'bd/bdboard-a',
+      },
+    ];
+
+    const result = computeReclaimKpi(runs, tickets, RANGE, undefined, leftoverCandidates);
+    expect(result.reclaimedLiveWorktreeCount).toBe(1);
+    expect(result.reclaimedLiveWorktreeRate).toBe(1);
+  });
+
+  it('does not count a reclaimed ticket with no worktree or branch left', () => {
+    const runs = [run({ ticketIds: ['bdboard-a'] })];
+    const tickets = [makeTicket({ id: 'bdboard-a', projectId })];
+    const leftoverCandidates = [
+      {
+        projectId,
+        repoRootPath: '/repo',
+        ticketId: 'bdboard-a',
+        worktreePath: null,
+        branchName: null,
+      },
+    ];
+
+    const result = computeReclaimKpi(runs, tickets, RANGE, undefined, leftoverCandidates);
+    expect(result.reclaimedLiveWorktreeCount).toBe(0);
+    expect(result.reclaimedLiveWorktreeRate).toBe(0);
+  });
+
+  it('is 0 when the reclaim history is empty', () => {
+    const result = computeReclaimKpi([], [], RANGE, undefined, [
+      {
+        projectId,
+        repoRootPath: '/repo',
+        ticketId: 'bdboard-a',
+        worktreePath: '/repo/.claude/worktrees/bdboard-a',
+        branchName: null,
+      },
+    ]);
+    expect(result.reclaimedLiveWorktreeCount).toBe(0);
+    expect(result.reclaimedLiveWorktreeRate).toBeNull();
+  });
+
+  it('defaults to 0 when no leftoverCandidates are supplied', () => {
+    const runs = [run({ ticketIds: ['bdboard-a'] })];
+    const tickets = [makeTicket({ id: 'bdboard-a', projectId })];
+
+    const result = computeReclaimKpi(runs, tickets, RANGE);
+    expect(result.reclaimedLiveWorktreeCount).toBe(0);
+  });
+});
+
 describe('computeHarnessLabeledShare / computeDuplicateMentionShare', () => {
   it('returns a null rate for an empty period', () => {
     expect(computeHarnessLabeledShare([], RANGE)).toEqual({
@@ -456,6 +530,8 @@ describe('computeHarnessKpi', () => {
         reclaimedThenInProgressCount: 0,
         reclaimedThenInProgressRate: null,
         windowMs: RECLAIM_RECLAIM_WINDOW_MS,
+        reclaimedLiveWorktreeCount: 0,
+        reclaimedLiveWorktreeRate: null,
       },
       harnessLabeled: { matchedCount: 0, totalCount: 0, rate: null },
       duplicateMention: { matchedCount: 0, totalCount: 0, rate: null },
@@ -490,5 +566,35 @@ describe('computeHarnessKpi', () => {
     expect(kpi.reclaim.reclaimedThenInProgressRate).toBe(1);
     expect(kpi.harnessLabeled).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
     expect(kpi.duplicateMention).toEqual({ matchedCount: 1, totalCount: 1, rate: 1 });
+  });
+
+  it('passes leftoverCandidates through to the misreclaim count', () => {
+    const projectId = '/projects/bdboard';
+    const tickets = [makeTicket({ id: 'bdboard-a', projectId })];
+    const reclaimRuns: ReclaimRunRecord[] = [
+      {
+        projectId,
+        at: at('2026-08-10T00:00:00.000Z'),
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-a'],
+      },
+    ];
+
+    const kpi = computeHarnessKpi({
+      tickets,
+      range: RANGE,
+      reclaimRuns,
+      leftoverCandidates: [
+        {
+          projectId,
+          repoRootPath: '/repo',
+          ticketId: 'bdboard-a',
+          worktreePath: '/repo/.claude/worktrees/bdboard-a',
+          branchName: null,
+        },
+      ],
+    });
+    expect(kpi.reclaim.reclaimedLiveWorktreeCount).toBe(1);
+    expect(kpi.reclaim.reclaimedLiveWorktreeRate).toBe(1);
   });
 });

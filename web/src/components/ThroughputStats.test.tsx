@@ -56,6 +56,8 @@ function makeHarnessKpi(overrides?: Partial<HarnessKpiDto>): HarnessKpiDto {
       windowMs: 30 * 60_000,
       since: '2026-08-18T00:00:00.000Z',
       unparsedRunCount: 0,
+      reclaimedLiveWorktreeCount: 1,
+      reclaimedLiveWorktreeRate: 0.25,
     },
     harnessLabeled: { matchedCount: 3, totalCount: 8, rate: 0.375 },
     duplicateMention: { matchedCount: 2, totalCount: 8, rate: 0.25 },
@@ -229,6 +231,8 @@ describe('ThroughputStats', () => {
           windowMs: 30 * 60_000,
           since: '2026-08-18T00:00:00.000Z',
           unparsedRunCount: 3,
+          reclaimedLiveWorktreeCount: 0,
+          reclaimedLiveWorktreeRate: 0,
         },
       }),
     );
@@ -277,6 +281,8 @@ describe('ThroughputStats', () => {
           windowMs: 30 * 60_000,
           since: null,
           unparsedRunCount: 0,
+          reclaimedLiveWorktreeCount: 0,
+          reclaimedLiveWorktreeRate: null,
         },
         harnessLabeled: { matchedCount: 0, totalCount: 0, rate: null },
         duplicateMention: { matchedCount: 0, totalCount: 0, rate: null },
@@ -288,6 +294,7 @@ describe('ThroughputStats', () => {
     const panel = await screen.findByLabelText('ハーネスKPI');
     expect(within(panel).getByText('— / —')).toBeInTheDocument();
     expect(within(panel).getByText('0回 / —')).toBeInTheDocument();
+    expect(within(panel).getByText('0件 / —')).toBeInTheDocument();
     expect(within(panel).getAllByText('0件 / 0件 (—)')).toHaveLength(2);
   });
 

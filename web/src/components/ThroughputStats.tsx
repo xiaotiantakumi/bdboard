@@ -613,6 +613,17 @@ function HarnessKpiTable({ kpi }: { kpi: HarnessKpiDto }) {
         `${reclaim.unparsedRunCount > 0 ? ` (出力を読めず除外した実行 ${reclaim.unparsedRunCount}回)` : ''}。`,
     },
     {
+      key: 'reclaim-live-worktree',
+      label: '誤回収件数 / 率',
+      value: `${reclaim.reclaimedLiveWorktreeCount}件 / ${formatRatePercent(reclaim.reclaimedLiveWorktreeRate)}`,
+      note:
+        `ID を追えた ${reclaim.identifiedTicketCount}件のうち、いま見ても worktree か ` +
+        `ブランチが残っている (＝作業中に回収された疑いがある) チケットの数です。` +
+        'Hygiene の「reclaimed_live_worktree」と同じ生存判定を使っていますが、' +
+        '見ているのは回収時点ではなく現時点の生存証拠なので、回収後すぐに掃除された' +
+        '誤回収は数え損ないます (実測値の下限)。',
+    },
+    {
       key: 'harness-labeled',
       label: 'ハーネス起票率',
       value: formatShare(

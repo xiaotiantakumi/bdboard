@@ -254,6 +254,66 @@ describe('getHarnessKpi', () => {
     });
   });
 
+  it('applies the project filter to leftoverCandidates as well', () => {
+    const cache = createFakeBoardCache();
+    cache.putProject({
+      project: project('/a', '/projects/a'),
+      tickets: [makeTicket({ id: 'bdboard-a1', projectId: '/a' })],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+    cache.putProject({
+      project: project('/b', '/projects/b'),
+      tickets: [makeTicket({ id: 'bdboard-b1', projectId: '/b' })],
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const reclaimRuns: ReclaimRunRecord[] = [
+      {
+        projectId: '/a',
+        at: utcInstant(2026, 8, 12),
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-a1'],
+      },
+      {
+        projectId: '/b',
+        at: utcInstant(2026, 8, 12),
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-b1'],
+      },
+    ];
+    const leftoverCandidates = [
+      {
+        projectId: '/a',
+        repoRootPath: '/projects/a',
+        ticketId: 'bdboard-a1',
+        worktreePath: '/projects/a/.claude/worktrees/bdboard-a1',
+        branchName: null,
+      },
+      {
+        projectId: '/b',
+        repoRootPath: '/projects/b',
+        ticketId: 'bdboard-b1',
+        worktreePath: '/projects/b/.claude/worktrees/bdboard-b1',
+        branchName: null,
+      },
+    ];
+
+    const options = { weeks: 2, timeZone: UTC, reclaimRuns, leftoverCandidates } as const;
+
+    expect(getHarnessKpi(cache, now, options).kpi.reclaim).toMatchObject({
+      reclaimedLiveWorktreeCount: 2,
+    });
+
+    // /a だけを選んだら /b の worktree は母数にも件数にも入らない。
+    expect(
+      getHarnessKpi(cache, now, { ...options, projectIds: ['/a'] }).kpi.reclaim,
+    ).toMatchObject({
+      reclaimedLiveWorktreeCount: 1,
+    });
+  });
+
   it('passes the unparsed run count through untouched', () => {
     const cache = createFakeBoardCache();
 

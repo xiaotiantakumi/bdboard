@@ -721,10 +721,27 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     return c.json(toModelStatsDto(stats));
   });
 
-  app.get('/api/harness-kpi', (c) => {
+  app.get('/api/harness-kpi', async (c) => {
     const projectIds = parseProjectIds(c.req.query('projects'));
     const weeks = parseStatsWeeks(c.req.query('weeks'));
     const history = deps.reclaimHistory;
+
+    // 誤回収件数 (reclaimedLiveWorktreeCount) の材料。/api/hygiene の
+    // merged_leftover / reclaimed_live_worktree と同じ scanGitLeftovers を使い回す
+    // (bdboard-t3ct)。scanner が無ければ計測できないので省略し、0 になる。
+    let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
+    if (deps.worktreeScanner !== undefined) {
+      let entries = deps.cache.listProjects();
+      if (projectIds !== undefined) {
+        const filterSet = new Set(projectIds);
+        entries = entries.filter((entry) => filterSet.has(entry.project.id));
+      }
+      leftoverCandidates = await scanGitLeftovers(
+        entries.map((entry) => entry.project),
+        deps.worktreeScanner,
+      );
+    }
+
     const stats = getHarnessKpi(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       weeks,
@@ -735,6 +752,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
             reclaimUnparsedRunCount: history.unparsedRunCount(),
           }
         : {}),
+      ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
     });
     return c.json(toHarnessKpiDto(stats));
   });

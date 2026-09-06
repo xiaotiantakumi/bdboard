@@ -319,6 +319,10 @@ export interface ReclaimKpiDto {
   since: string | null;
   /** 出力を読めず履歴に積めなかった実行の累積回数 */
   unparsedRunCount: number;
+  /** 誤回収件数。identifiedTicketCount のうち、いま worktree/ブランチが残っている数 */
+  reclaimedLiveWorktreeCount: number;
+  /** 母数 (identifiedTicketCount) が 0 なら null */
+  reclaimedLiveWorktreeRate: number | null;
 }
 
 export interface HarnessShareKpiDto {

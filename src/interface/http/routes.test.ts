@@ -1575,8 +1575,64 @@ describe('createApiRoutes', () => {
       runCount: 0,
       since: null,
       unparsedRunCount: 0,
+      reclaimedLiveWorktreeCount: 0,
+      reclaimedLiveWorktreeRate: null,
     });
     assertNoDates(body);
+  });
+
+  it('counts a reclaimed ticket with a live worktree as reclaimedLiveWorktreeCount', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-live',
+          projectId: a.id,
+          status: 'open',
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const reclaimHistory = createReclaimHistory({
+      startedAt: new Date('2026-06-01T00:00:00.000Z'),
+    });
+    reclaimHistory.record({
+      projectId: a.id,
+      at: new Date('2026-06-01T09:00:00.000Z'),
+      reclaimedCount: 1,
+      ticketIds: ['bdboard-live'],
+    });
+
+    const worktreeScanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
+      scan: vi.fn(async () => ({
+        worktrees: [
+          { path: '/projects/a', branch: 'main', isMain: true },
+          {
+            path: '/projects/a/.claude/worktrees/bdboard-live',
+            branch: 'bd/bdboard-live',
+            isMain: false,
+          },
+        ],
+        bdBranches: ['bd/bdboard-live'],
+        complete: true,
+      })),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, reclaimHistory, worktreeScanner }));
+    const response = await app.request('/api/harness-kpi?weeks=1');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reclaim).toMatchObject({
+      identifiedTicketCount: 1,
+      reclaimedLiveWorktreeCount: 1,
+      reclaimedLiveWorktreeRate: 1,
+    });
   });
 
   it('returns hygiene issues filtered by projects', async () => {

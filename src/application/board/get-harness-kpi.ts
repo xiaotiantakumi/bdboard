@@ -1,4 +1,5 @@
 import { getBoardTimeZone } from '../../config/board-timezone.js';
+import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import {
   computeHarnessKpi,
   type HarnessKpi,
@@ -19,6 +20,11 @@ export interface GetHarnessKpiOptions {
   readonly reclaimSince?: Date;
   /** 出力を読めず履歴に積めなかった reclaim 実行の回数 */
   readonly reclaimUnparsedRunCount?: number;
+  /**
+   * 誤回収件数 (reclaimedLiveWorktreeCount) 用の git worktree/branch スキャン結果
+   * (scanGitLeftovers)。未指定なら 0 になる (bdboard-t3ct)。
+   */
+  readonly leftoverCandidates?: readonly LeftoverCandidate[];
 }
 
 export interface HarnessKpiStats {
@@ -60,6 +66,17 @@ function filterReclaimRuns(
   return runs.filter((run) => projectIdFilter.has(run.projectId));
 }
 
+/** filterReclaimRuns と同じ理由で、leftoverCandidates にも同じ絞り込みを掛ける。 */
+function filterLeftoverCandidates(
+  candidates: readonly LeftoverCandidate[],
+  projectIdFilter?: ReadonlySet<string>,
+): readonly LeftoverCandidate[] {
+  if (projectIdFilter === undefined) {
+    return candidates;
+  }
+  return candidates.filter((candidate) => projectIdFilter.has(candidate.projectId));
+}
+
 /**
  * ハーネス KPI (docs/HARNESS-EVALUATION.md §4.4 / §5 P4)。
  *
@@ -85,6 +102,14 @@ export function getHarnessKpi(
     range: { start: rangeStart, end: now },
     ...(options?.reclaimRuns !== undefined
       ? { reclaimRuns: filterReclaimRuns(options.reclaimRuns, projectIdFilter) }
+      : {}),
+    ...(options?.leftoverCandidates !== undefined
+      ? {
+          leftoverCandidates: filterLeftoverCandidates(
+            options.leftoverCandidates,
+            projectIdFilter,
+          ),
+        }
       : {}),
   });
 

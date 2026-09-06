@@ -367,6 +367,13 @@ export interface ReclaimKpiDto {
   since: string | null;
   /** 出力を読めず履歴に積めなかった実行の累積回数 */
   unparsedRunCount: number;
+  /**
+   * 誤回収件数。identifiedTicketCount のうち、いま見えている生存証拠
+   * (worktree/ブランチ、bdboard-rkde と同じ判定) がある数 (bdboard-t3ct)
+   */
+  reclaimedLiveWorktreeCount: number;
+  /** 母数 (identifiedTicketCount) が 0 なら null */
+  reclaimedLiveWorktreeRate: number | null;
 }
 
 export interface HarnessShareKpiDto {
@@ -974,6 +981,8 @@ export function toHarnessKpiDto(stats: HarnessKpiStats): HarnessKpiDto {
       windowMs: kpi.reclaim.windowMs,
       since: stats.reclaimSince?.toISOString() ?? null,
       unparsedRunCount: stats.reclaimUnparsedRunCount,
+      reclaimedLiveWorktreeCount: kpi.reclaim.reclaimedLiveWorktreeCount,
+      reclaimedLiveWorktreeRate: kpi.reclaim.reclaimedLiveWorktreeRate,
     },
     harnessLabeled: { ...kpi.harnessLabeled },
     duplicateMention: { ...kpi.duplicateMention },
