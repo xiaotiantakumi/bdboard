@@ -97,19 +97,27 @@ describe('createBdCliLeaseReader', () => {
     ]);
   });
 
-  it('throws schema-mismatch when created_at is missing (bd guarantees it on every ticket)', async () => {
+  it('maps a missing created_at to null instead of failing the whole list', async () => {
+    // この reader は Hygiene の失効 lease 一覧も支える。1 件の欠落で一覧ごと空に
+    // なると失効 lease が黙って見えなくなる (e2e の lease fixture で実際に起きた)。
     const { runner } = createFakeRunner({
       handler: async () => ({
-        stdout: JSON.stringify([{ id: 'bdboard-1' }]),
+        stdout: JSON.stringify([{ id: 'bdboard-1', lease_expires_at: '2026-08-22T10:00:00Z' }]),
         stderr: '',
         exitCode: 0,
       }),
     });
 
     const reader = createBdCliLeaseReader(runner);
-    await expect(reader.listInProgressWithLease(ROOT)).rejects.toMatchObject({
-      kind: 'schema-mismatch',
-    } satisfies Partial<BdError>);
+    await expect(reader.listInProgressWithLease(ROOT)).resolves.toEqual([
+      {
+        id: 'bdboard-1',
+        leaseExpiresAt: '2026-08-22T10:00:00Z',
+        heartbeatAt: null,
+        startedAt: null,
+        createdAt: null,
+      },
+    ]);
   });
 
   it('treats empty stdout as an empty list', async () => {

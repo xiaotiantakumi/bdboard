@@ -36,9 +36,10 @@ function resolveProtectionOrigin(ticket: InProgressWithLease, now: Date): Date {
       return new Date(ms);
     }
   }
-  // createdAt は bd の全チケットに必ず付くので、ここに来るのは値が壊れている
-  // (パース不能) 場合だけ。時刻情報が無いものとして「今始まった」扱いにする —
+  // 3 つとも無い / パース不能なら時刻情報が無いものとして「今始まった」扱いにする —
   // hasLiveWorktree が true なら保護され、false ならどのみち回収対象になる。
+  // (実 bd では createdAt が必ず付くので、ここに来るのは値が壊れているか、
+  // reader に渡った JSON が実 bd 由来でない場合。)
   return now;
 }
 

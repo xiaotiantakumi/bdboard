@@ -9,9 +9,10 @@ export interface InProgressWithLease {
   readonly startedAt: string | null;
   /**
    * チケット作成時刻 (bd の `created_at`)。startedAt も無いチケットの、保護窓起点の
-   * 最終フォールバックに使う (bdboard-vz01)。bd の全チケットに必ず付く値。
+   * 最終フォールバックに使う (bdboard-vz01)。実 bd では必ず付くが、欠けていても
+   * reader は失敗させず null にする (欠落で失効 lease 一覧まで消えないように)。
    */
-  readonly createdAt: string;
+  readonly createdAt: string | null;
 }
 
 export interface LeaseReader {
