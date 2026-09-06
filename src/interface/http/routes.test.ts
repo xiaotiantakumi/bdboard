@@ -2169,6 +2169,8 @@ describe('createApiRoutes', () => {
           id: 'bdboard-stale',
           leaseExpiresAt: '2026-06-01T11:50:00.000Z',
           heartbeatAt: '2026-06-01T11:45:00.000Z',
+          startedAt: null,
+          createdAt: '2026-06-01T00:00:00.000Z',
         },
       ]),
     };

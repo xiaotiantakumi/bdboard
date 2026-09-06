@@ -17,13 +17,17 @@
  *
  * 証拠を無条件に信じると、**掃除し損ねた worktree が残っているだけのチケットが永久に
  * in_progress で塩漬けになる** — reclaim が本来防いでいた失敗形をそのまま復活させる。
- * よって保護は打ち切り時刻を持つ。基準は「作業開始からの経過時間」で、
+ * よって保護は打ち切り時刻を持つ。基準は「打ち切り起点からの経過時間」で、
  * `WORKTREE_PROTECTION_CAP_MS` を超えたら証拠があっても回収対象へ戻す。
  *
- * 打ち切りを「lease 失効からの経過」ではなく **startedAt からの経過**で測るのは、
- * lease の失効時刻が盤面キャッシュに載っていないため。startedAt から測ると保護は
- * 実際より短く切れる方向にしか外れない (claim 直後から時計が回るので)。回収漏れではなく
- * 「保護が早く切れる」側に倒れるのは、reclaim 本来の目的を損なわない安全側。
+ * 打ち切り起点 (`ReclaimPlanCandidate.startedAt`) には、呼び出し側 (planProjectReclaim)
+ * が lease の実失効時刻 (`lease_expires_at`。LeaseReader.listInProgressWithLease() の
+ * 生値) を渡す (bdboard-vz01)。以前は盤面キャッシュに lease 失効時刻が載っていなかった
+ * ため作業開始時刻で代用していたが、LeaseReader が配線された今はその制約が無い。
+ * lease がまだ失効していなければ経過は負値になり保護は実質無期限に続く — heartbeat が
+ * 生きている限り lease は延長され続けるので、これは意図した挙動。lease 情報が無い
+ * チケットに限り、呼び出し側は従来どおり startedAt (無ければ createdAt) にフォールバック
+ * する。
  */
 
 /**
@@ -39,8 +43,11 @@ export const WORKTREE_PROTECTION_CAP_MS = 12 * 60 * 60_000;
 export interface ReclaimPlanCandidate {
   readonly ticketId: string;
   /**
-   * 作業開始時刻。保護の打ち切り判定にだけ使う。`startedAt` が無いチケット
-   * (reclaim 済みだと bd が消す) は呼び出し側が `createdAt` で代用する。
+   * 保護打ち切りの起点。呼び出し側 (planProjectReclaim) は lease_expires_at が
+   * 取れるチケットにはそれを渡す (bdboard-vz01) — lease 未失効なら経過が負値になり、
+   * 実質無期限に保護される。lease 情報が無いチケットに限り、従来どおり作業開始時刻
+   * (`startedAt` が無いチケット、reclaim 済みだと bd が消す、は `createdAt` で代用)
+   * にフォールバックする。
    *
    * **`updatedAt` を代用に使わないこと。** コメント・メタデータ更新のたびに進むので、
    * 触り続けている限り保護が延び続ける (打ち切りたい向きと逆)。`createdAt` は

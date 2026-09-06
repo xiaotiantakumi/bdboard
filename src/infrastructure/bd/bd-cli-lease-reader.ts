@@ -20,6 +20,9 @@ const bdInProgressItemSchema = z.object({
   id: z.string(),
   lease_expires_at: z.string().nullable().optional(),
   heartbeat_at: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  // bd の全チケットに必ず付く (bd-issue-schema.ts と同じ前提)。
+  created_at: z.string(),
 });
 
 function buildListArgs(rootPath: string): readonly string[] {
@@ -42,6 +45,8 @@ function mapItem(raw: z.infer<typeof bdInProgressItemSchema>): InProgressWithLea
     id: raw.id,
     leaseExpiresAt: raw.lease_expires_at ?? null,
     heartbeatAt: raw.heartbeat_at ?? null,
+    startedAt: raw.started_at ?? null,
+    createdAt: raw.created_at,
   };
 }
 
