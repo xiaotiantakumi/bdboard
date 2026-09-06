@@ -10,7 +10,11 @@
 # models.exclude (bdboard-p5l.20): until (YYYY-MM-DD) が今日以降の entry を「有効な
 # 除外」として member を候補列から落としてから出力する。期限切れ entry は自動で無視
 # (TypeScript 側 domain/harness-contract.ts の isModelExcludeActive と同じ判定 —
-# until を含む当日まで有効・固定長 YYYY-MM-DD の辞書順比較)。除外で候補が全部落ちても
+# until を含む当日まで有効・固定長 YYYY-MM-DD の辞書順比較。ただしこれは TS 側が
+# valid とみなす契約に限る — until が不正な文字列 (YYYY-MM-DD でない) のとき、shell
+# は文字列の辞書順比較をそのまま行うため実質永久に除外され続けるが、TS 側はパース時点
+# で invalid として弾く。両者が一致するのは「TS が valid と認める until」の範囲だけ)。
+# 除外で候補が全部落ちても
 # ここでは無出力 exit 0 (「候補なし」と同じ形) — セル空の警告は Hygiene 側の責務で、
 # route.sh / pre-bash-guard.sh は「候補が空なら fail-open で素通り」という既存の
 # 契約を変えない。exclude entry 自体が壊れている (member/until が文字列でない等) 場合は
