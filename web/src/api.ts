@@ -1830,6 +1830,10 @@ export type ProjectHarnessContractDto =
       mainBranch: string;
       /** モデル振り分け表の要約。未宣言なら null。 */
       models: ProjectHarnessModelStageDto[] | null;
+      /** `models.exclude` のうち評価時点で期限切れの件数。0 件なら特に出さない。 */
+      expiredExcludeCount: number;
+      /** 除外により候補が 0 件になったセルの警告メッセージ。invalid ではなく警告扱い。 */
+      modelExclusionWarnings: string[];
     }
   | { state: 'missing' }
   | { state: 'invalid'; message: string }

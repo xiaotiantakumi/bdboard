@@ -117,6 +117,8 @@ const OK_HARNESS_CONTRACT: ProjectHarnessContractDto = {
   prFlow: 'pr',
   mainBranch: 'main',
   models: null,
+  expiredExcludeCount: 0,
+  modelExclusionWarnings: [],
 };
 
 /** エージェント実行の前提を満たしたハーネス状態 (bdboard-pkr6.11)。 */

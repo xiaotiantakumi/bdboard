@@ -64,14 +64,27 @@ const PR_FLOW_LABELS: Record<HarnessPrFlowDto, string> = {
   none: 'git 運用なし',
 };
 
-/** Hygiene / バッジで警告として扱うべき状態か。未注入 (not-applicable) と ok は false。 */
+/**
+ * Hygiene / バッジで警告として扱うべき状態か。未注入 (not-applicable) は false。
+ *
+ * `ok` でも、期限切れの除外が残っている・除外で候補が 0 件になったセルがある
+ * ときは掃除を促すために警告扱いにする (bdboard-p5l.20)。契約自体は妥当なので
+ * `invalid`/`command-missing` と表示の重さは分けたいが、放置されると気付かれない
+ * ため badge の見た目は同じ「要注意」クラスに乗せる。
+ */
 export function harnessContractNeedsAttention(
   contract: ProjectHarnessContractDto,
 ): boolean {
-  return (
+  if (
     contract.state === 'missing' ||
     contract.state === 'invalid' ||
     contract.state === 'command-missing'
+  ) {
+    return true;
+  }
+  return (
+    contract.state === 'ok' &&
+    (contract.expiredExcludeCount > 0 || contract.modelExclusionWarnings.length > 0)
   );
 }
 
@@ -114,6 +127,23 @@ export function formatHarnessModelRoutes(
   return `振り分け: ${routeLabels.join('、')}`;
 }
 
+/**
+ * `models.exclude` の掃除サマリ。「期限切れの除外が N 件」と、除外で候補が
+ * 0 件になったセルの警告を並べる (bdboard-p5l.20)。両方 0 件なら null。
+ */
+export function formatHarnessModelExclusionSummary(
+  contract: Extract<ProjectHarnessContractDto, { state: 'ok' }>,
+): string | null {
+  const parts: string[] = [];
+  if (contract.expiredExcludeCount > 0) {
+    parts.push(`期限切れの除外が ${contract.expiredExcludeCount} 件`);
+  }
+  if (contract.modelExclusionWarnings.length > 0) {
+    parts.push(...contract.modelExclusionWarnings);
+  }
+  return parts.length === 0 ? null : parts.join(' / ');
+}
+
 /** ツールチップ用の全文。何を直せばよいかまで書く。 */
 export function formatHarnessContractDetail(
   contract: ProjectHarnessContractDto,
@@ -128,7 +158,9 @@ export function formatHarnessContractDetail(
     case 'ok': {
       const base = `検証: ${contract.verify} / ${PR_FLOW_LABELS[contract.prFlow]} / main: ${contract.mainBranch}`;
       const routes = formatHarnessModelRoutes(contract.models);
-      return routes === null ? base : `${base} / ${routes}`;
+      const withRoutes = routes === null ? base : `${base} / ${routes}`;
+      const exclusion = formatHarnessModelExclusionSummary(contract);
+      return exclusion === null ? withRoutes : `${withRoutes} / ${exclusion}`;
     }
     case 'not-applicable':
       return null;

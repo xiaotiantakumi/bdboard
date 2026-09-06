@@ -290,6 +290,8 @@ describe('ProjectHarnessBadges', () => {
         prFlow: 'pr',
         mainBranch: 'main',
         models: null,
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: [],
       },
       packs: [
         {

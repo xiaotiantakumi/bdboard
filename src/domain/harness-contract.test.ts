@@ -3,6 +3,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
+  computeModelExclusionWarnings,
+  countExpiredModelExcludes,
   evaluateContractState,
   HARNESS_CONTRACT_RELATIVE_PATH,
   parseHarnessContract,
@@ -421,6 +423,8 @@ describe('evaluateContractState', () => {
       prFlow: 'pr',
       mainBranch: 'main',
       models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
   });
 
@@ -449,6 +453,8 @@ describe('evaluateContractState', () => {
       prFlow: 'direct',
       mainBranch: 'main',
       models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
   });
 
@@ -594,6 +600,7 @@ describe('parseHarnessContract > models', () => {
           high: ['claude:fable', 'claude:opus'],
         },
       ],
+      exclude: [],
     });
   });
 
@@ -904,6 +911,8 @@ describe('summarizeHarnessModels', () => {
       prFlow: 'pr',
       mainBranch: 'main',
       models: [{ stage: 'implement', tiers: 1 }],
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
     expect(JSON.stringify(state)).not.toContain('gpt-5.6-terra');
   });
@@ -947,5 +956,338 @@ describe('bdboard-p5l.16: dogfooded .claude/bdboard-harness.json', () => {
       { stage: 'check', tiers: 1 },
       { stage: 'skill', tiers: 1 },
     ]);
+  });
+});
+
+/**
+ * `models.exclude` — member 単位の期限付き除外 (bdboard-p5l.20)。
+ *
+ * ここでの主張は 3 つ:
+ * 1. パースは構文だけを見る (期限切れかどうかは `now` を渡す評価時にしか分からない)。
+ * 2. `reason` は `verify`/`mainBranch` と同じ untrusted input 扱い (制御文字禁止・200字以内)。
+ * 3. 除外で候補列が空になっても `invalid` にはならず、警告 (`modelExclusionWarnings`) に回る。
+ */
+describe('parseHarnessContract > models.exclude', () => {
+  const BASE = { version: 1, verify: 'npm run verify', prFlow: 'pr' } as const;
+  const ONE_ROUTE = { routes: { review: { '*': ['claude:opus'] } } };
+
+  function parseExclude(exclude: unknown): ParseHarnessContractResult {
+    return parse({ ...BASE, models: { ...ONE_ROUTE, exclude } });
+  }
+
+  function expectSchemaFailure(result: ParseHarnessContractResult): string {
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      throw new Error('expected a schema failure');
+    }
+    expect(result.reason).toBe('schema');
+    return result.message;
+  }
+
+  it('defaults to an empty list when exclude is omitted', () => {
+    const result = parse({ ...BASE, models: ONE_ROUTE });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.contract.models?.exclude).toEqual([]);
+  });
+
+  it('parses a full entry including reason', () => {
+    const result = parseExclude([
+      { member: 'cursor', until: '2026-09-15', reason: 'レートリミット逼迫' },
+    ]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.contract.models?.exclude).toEqual([
+      { member: 'cursor', until: '2026-09-15', reason: 'レートリミット逼迫' },
+    ]);
+  });
+
+  it('defaults reason to null when omitted (reason is optional)', () => {
+    const result = parseExclude([{ member: 'cursor', until: '2026-09-15' }]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.contract.models?.exclude).toEqual([
+      { member: 'cursor', until: '2026-09-15', reason: null },
+    ]);
+  });
+
+  it('keeps version at 1 even when exclude is declared', () => {
+    const result = parseExclude([{ member: 'cursor', until: '2026-09-15' }]);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.contract.version).toBe(1);
+  });
+
+  it('ignores unknown keys inside an exclude entry for forward compatibility', () => {
+    const result = parseExclude([
+      { member: 'cursor', until: '2026-09-15', futureField: 'x' },
+    ]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects exclude that is not an array', () => {
+    expect(expectSchemaFailure(parseExclude('cursor'))).toContain(
+      'models.exclude は配列である必要があります',
+    );
+  });
+
+  it('rejects more than 32 exclude entries', () => {
+    const many = Array.from({ length: 33 }, (_, i) => ({
+      member: `m${i}`,
+      until: '2026-09-15',
+    }));
+    expect(expectSchemaFailure(parseExclude(many))).toContain('最大 32 件');
+    // 32 件ちょうどは受理される。
+    expect(parseExclude(many.slice(0, 32)).ok).toBe(true);
+  });
+
+  it('rejects a non-object entry', () => {
+    expect(expectSchemaFailure(parseExclude(['cursor']))).toContain(
+      'models.exclude[0] はオブジェクトである必要があります',
+    );
+  });
+
+  it.each([
+    ['not a string', 123],
+    ['empty string', ''],
+    ['uppercase', 'Cursor'],
+    ['too long (17 chars)', 'a'.repeat(17)],
+    ['contains a colon', 'cursor:model'],
+  ])('rejects an invalid member (%s)', (_label, member) => {
+    const message = expectSchemaFailure(
+      parseExclude([{ member, until: '2026-09-15' }]),
+    );
+    expect(message).toContain('models.exclude[0].member');
+  });
+
+  it('accepts a 16-character member (the same bound as candidate member)', () => {
+    const result = parseExclude([{ member: 'a'.repeat(16), until: '2026-09-15' }]);
+    expect(result.ok).toBe(true);
+  });
+
+  it.each([
+    ['not a string', 20260915],
+    ['missing leading zero', '2026-9-15'],
+    ['with a time component', '2026-09-15T00:00:00Z'],
+    ['month out of range', '2026-13-01'],
+    ['day out of range for the month', '2026-02-30'],
+    ['completely malformed', 'soon'],
+  ])('rejects an invalid until (%s)', (_label, until) => {
+    const message = expectSchemaFailure(
+      parseExclude([{ member: 'cursor', until }]),
+    );
+    expect(message).toContain('models.exclude[0].until');
+  });
+
+  it('accepts a leap-day until value', () => {
+    const result = parseExclude([{ member: 'cursor', until: '2028-02-29' }]);
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects a non-string reason', () => {
+    const message = expectSchemaFailure(
+      parseExclude([{ member: 'cursor', until: '2026-09-15', reason: 42 }]),
+    );
+    expect(message).toContain('models.exclude[0].reason は文字列である必要があります');
+  });
+
+  it('rejects a reason with control characters, mirroring verify/mainBranch', () => {
+    const message = expectSchemaFailure(
+      parseExclude([
+        { member: 'cursor', until: '2026-09-15', reason: 'line1\nline2' },
+      ]),
+    );
+    expect(message).toContain('models.exclude[0].reason に改行・制御文字は使えません');
+  });
+
+  it('rejects a reason longer than 200 characters', () => {
+    const message = expectSchemaFailure(
+      parseExclude([
+        { member: 'cursor', until: '2026-09-15', reason: 'a'.repeat(201) },
+      ]),
+    );
+    expect(message).toContain('200 文字以内');
+  });
+
+  it('accepts a reason at exactly 200 characters', () => {
+    const result = parseExclude([
+      { member: 'cursor', until: '2026-09-15', reason: 'a'.repeat(200) },
+    ]);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe('countExpiredModelExcludes', () => {
+  it('returns 0 when models is null', () => {
+    expect(countExpiredModelExcludes(null, new Date('2026-09-06T00:00:00Z'))).toBe(0);
+  });
+
+  it('returns 0 when there is no exclude entry', () => {
+    const parsed = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      models: { routes: { review: { '*': ['claude:opus'] } } },
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    expect(
+      countExpiredModelExcludes(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toBe(0);
+  });
+
+  it('counts an entry whose until is strictly before today as expired', () => {
+    const parsed = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      models: {
+        routes: { review: { '*': ['claude:opus'] } },
+        exclude: [{ member: 'cursor', until: '2026-09-01' }],
+      },
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    expect(
+      countExpiredModelExcludes(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toBe(1);
+  });
+
+  it('treats until === today as still active (inclusive), not expired', () => {
+    const parsed = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      models: {
+        routes: { review: { '*': ['claude:opus'] } },
+        exclude: [{ member: 'cursor', until: '2026-09-06' }],
+      },
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    expect(
+      countExpiredModelExcludes(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toBe(0);
+  });
+
+  it('counts only the expired entries out of a mixed list', () => {
+    const parsed = parse({
+      version: 1,
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      models: {
+        routes: { review: { '*': ['claude:opus'] } },
+        exclude: [
+          { member: 'cursor', until: '2026-09-01' }, // expired
+          { member: 'codex', until: '2026-09-15' }, // still active
+          { member: 'gemini', until: '2026-08-01' }, // expired
+        ],
+      },
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    expect(
+      countExpiredModelExcludes(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toBe(2);
+  });
+});
+
+describe('computeModelExclusionWarnings', () => {
+  function parseModels(models: unknown): ParseHarnessContractResult {
+    return parse({ version: 1, verify: 'npm run verify', prFlow: 'pr', models });
+  }
+
+  it('returns no warnings when models is null', () => {
+    expect(computeModelExclusionWarnings(null, new Date('2026-09-06T00:00:00Z'))).toEqual(
+      [],
+    );
+  });
+
+  it('returns no warnings when no exclude is active', () => {
+    const parsed = parseModels({
+      routes: { review: { '*': ['claude:opus', 'cursor:composer-2.5'] } },
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    expect(
+      computeModelExclusionWarnings(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toEqual([]);
+  });
+
+  it('drops the excluded member and resolves with the rest, without warning', () => {
+    const parsed = parseModels({
+      routes: { review: { '*': ['claude:opus', 'cursor:composer-2.5'] } },
+      exclude: [{ member: 'cursor', until: '2026-09-15' }],
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    // claude:opus は候補に残るので、このセルは空にならない -> 警告なし。
+    expect(
+      computeModelExclusionWarnings(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toEqual([]);
+  });
+
+  it('warns (not invalid) when excluding the only candidate empties a cell', () => {
+    const parsed = parseModels({
+      routes: { review: { '*': ['cursor:composer-2.5'] } },
+      exclude: [{ member: 'cursor', until: '2026-09-15' }],
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    const warnings = computeModelExclusionWarnings(
+      parsed.contract.models,
+      new Date('2026-09-06T00:00:00Z'),
+    );
+    // `*` は low/med/high の 3 段すべてに展開されているので、3 段とも警告が出る。
+    expect(warnings).toHaveLength(3);
+    expect(warnings[0]).toContain('models.routes.review.low');
+    expect(warnings[0]).toContain('cursor');
+    expect(warnings[1]).toContain('models.routes.review.med');
+    expect(warnings[2]).toContain('models.routes.review.high');
+  });
+
+  it('an expired exclude does not empty a cell or produce a warning', () => {
+    const parsed = parseModels({
+      routes: { review: { '*': ['cursor:composer-2.5'] } },
+      exclude: [{ member: 'cursor', until: '2026-09-01' }],
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    expect(
+      computeModelExclusionWarnings(parsed.contract.models, new Date('2026-09-06T00:00:00Z')),
+    ).toEqual([]);
+  });
+
+  it('only warns for the cell that actually empties, not every stage', () => {
+    const parsed = parseModels({
+      routes: {
+        implement: {
+          low: ['cursor:composer-2.5'],
+          med: ['claude:sonnet', 'cursor:composer-2.5'],
+          high: ['claude:opus'],
+        },
+        review: { '*': ['claude:opus'] },
+      },
+      exclude: [{ member: 'cursor', until: '2026-09-15' }],
+    });
+    if (!parsed.ok) throw new Error('expected ok');
+    const warnings = computeModelExclusionWarnings(
+      parsed.contract.models,
+      new Date('2026-09-06T00:00:00Z'),
+    );
+    expect(warnings).toEqual([
+      expect.stringContaining('models.routes.implement.low'),
+    ]);
+  });
+
+  it('feeds through evaluateContractState end to end', () => {
+    const parsed = parseModels({
+      routes: { review: { '*': ['cursor:composer-2.5'] } },
+      exclude: [
+        { member: 'cursor', until: '2026-09-15', reason: 'レートリミット逼迫' },
+        { member: 'codex', until: '2026-08-01' }, // expired
+      ],
+    });
+    const state = evaluateContractState(
+      parsed,
+      { verifyPackageScripts: ['verify'] },
+      new Date('2026-09-06T00:00:00Z'),
+    );
+    expect(state.state).toBe('ok');
+    if (state.state !== 'ok') return;
+    expect(state.expiredExcludeCount).toBe(1);
+    expect(state.modelExclusionWarnings).toHaveLength(3);
   });
 });

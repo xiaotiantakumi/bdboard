@@ -1099,6 +1099,7 @@ async function main(): Promise<void> {
     `Agent runs: enabled (remote: ${remoteAgentRunsAllowed ? 'allowed' : 'denied'} by setting)`,
   );
 
+  const agentRunRoutesNow = () => new Date();
   app.route(
     '/',
     createAgentRunRoutes({
@@ -1114,6 +1115,9 @@ async function main(): Promise<void> {
       isRemoteAgentRunAllowed: async () => remoteAgentRunsAllowed,
       // preflight (bdboard-pkr6.11) はハーネス表示と同じ組み立てを使う。
       // 「バッジは緑なのに run は 409」を避けるため、入力を 1 関数に寄せている。
+      // now も同じ agentRunRoutesNow を通すことで、models.exclude の期限切れ判定
+      // (harness-contract.ts の isModelExcludeActive) がこのリクエスト内の他の
+      // 時刻判定と食い違わないようにする (harness-routes.ts の deps.now?.() と同じ流儀)。
       getHarnessStatus: (repoRootPath: string) =>
         readProjectHarnessStatus(
           {
@@ -1122,8 +1126,9 @@ async function main(): Promise<void> {
             contractReader: harnessContractReader,
           },
           repoRootPath,
+          agentRunRoutesNow(),
         ),
-      now: () => new Date(),
+      now: agentRunRoutesNow,
     }),
   );
 
