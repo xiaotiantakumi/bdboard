@@ -17,13 +17,16 @@
  *
  * 証拠を無条件に信じると、**掃除し損ねた worktree が残っているだけのチケットが永久に
  * in_progress で塩漬けになる** — reclaim が本来防いでいた失敗形をそのまま復活させる。
- * よって保護は打ち切り時刻を持つ。基準は「作業開始からの経過時間」で、
+ * よって保護は打ち切り時刻を持つ。基準は「打ち切り起点からの経過時間」で、
  * `WORKTREE_PROTECTION_CAP_MS` を超えたら証拠があっても回収対象へ戻す。
  *
- * 打ち切りを「lease 失効からの経過」ではなく **startedAt からの経過**で測るのは、
- * lease の失効時刻が盤面キャッシュに載っていないため。startedAt から測ると保護は
- * 実際より短く切れる方向にしか外れない (claim 直後から時計が回るので)。回収漏れではなく
- * 「保護が早く切れる」側に倒れるのは、reclaim 本来の目的を損なわない安全側。
+ * 打ち切り起点 (`ReclaimPlanCandidate.protectionOriginAt`) には、呼び出し側 (planProjectReclaim)
+ * が lease の実失効時刻 (`lease_expires_at`。LeaseReader.listInProgressWithLease() の
+ * 生値) を渡す (bdboard-vz01)。以前は盤面キャッシュに lease 失効時刻が載っていなかった
+ * ため作業開始時刻で代用していたが、LeaseReader が配線された今はその制約が無い。
+ * lease がまだ失効していなければ経過は負値になり、失効するまで保護が続く (heartbeat で
+ * lease が延長されている間は延び続ける)。lease 情報が無いチケットに限り、呼び出し側は
+ * 従来どおり startedAt (無ければ createdAt) にフォールバックする。
  */
 
 /**
@@ -39,14 +42,18 @@ export const WORKTREE_PROTECTION_CAP_MS = 12 * 60 * 60_000;
 export interface ReclaimPlanCandidate {
   readonly ticketId: string;
   /**
-   * 作業開始時刻。保護の打ち切り判定にだけ使う。`startedAt` が無いチケット
-   * (reclaim 済みだと bd が消す) は呼び出し側が `createdAt` で代用する。
+   * 保護打ち切りの起点。呼び出し側 (planProjectReclaim) は lease_expires_at が
+   * 取れるチケットにはそれを渡す (bdboard-vz01) — lease 未失効なら経過が負値になり、
+   * 失効するまで保護される。lease 情報が無いチケットに限り、従来どおり作業開始時刻
+   * (`startedAt` が無いチケット、reclaim 済みだと bd が消す、は `createdAt` で代用)
+   * にフォールバックする。作業開始時刻そのものではないので `startedAt` とは呼ばない —
+   * `InProgressWithLease.startedAt` (本物の started_at) と同名で別物になるのを避ける。
    *
    * **`updatedAt` を代用に使わないこと。** コメント・メタデータ更新のたびに進むので、
    * 触り続けている限り保護が延び続ける (打ち切りたい向きと逆)。`createdAt` は
    * `startedAt` 以前なので、外れるとしても保護が早く切れる側にしか倒れない。
    */
-  readonly startedAt: Date;
+  readonly protectionOriginAt: Date;
   /** worktree かブランチが実在する = セッションが生きている証拠 */
   readonly hasLiveWorktree: boolean;
 }
@@ -74,7 +81,7 @@ export function planReclaim(
   const protectedTicketIds: string[] = [];
 
   for (const candidate of candidates) {
-    const elapsedMs = now.getTime() - candidate.startedAt.getTime();
+    const elapsedMs = now.getTime() - candidate.protectionOriginAt.getTime();
     const protectedNow = candidate.hasLiveWorktree && elapsedMs <= protectionCapMs;
     if (protectedNow) {
       protectedTicketIds.push(candidate.ticketId);

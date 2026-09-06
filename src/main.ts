@@ -835,9 +835,11 @@ async function main(): Promise<void> {
       reclaimHistory.record(run);
     },
     // 生存証拠 (worktree/ブランチ) のあるチケットを回収対象から外す (bdboard-6aci)。
+    // in_progress 集合と lease 失効時刻は LeaseReader の生値から取る — 盤面キャッシュ
+    // は使わない (bdboard-vz01)。
     planner: (project) =>
       planProjectReclaim(project, {
-        listTickets: (target) => cache.getProject(target.id)?.tickets,
+        leaseReader,
         scanner: worktreeScanner,
         logWarn: (message) => {
           console.warn(message);

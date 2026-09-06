@@ -1,16 +1,17 @@
 import { collectLeftoverCandidates } from '../../domain/git-worktree.js';
 import type { Project } from '../../domain/project.js';
 import { planReclaim, type ReclaimPlan } from '../../domain/reclaim-plan.js';
-import type { Ticket } from '../../domain/ticket.js';
+import type { InProgressWithLease, LeaseReader } from '../ports/lease-reader.js';
 import type { WorktreeScanner } from '../ports/worktree-scanner.js';
 
 export interface PlanProjectReclaimDeps {
   /**
-   * そのプロジェクトのチケット。盤面キャッシュがまだ持っていない (起動直後・取得失敗)
-   * なら **undefined を返すこと**。空配列で代用すると「in_progress は 1 件も無い」と
-   * 解釈され、回収が黙って止まる。
+   * in_progress 集合と lease 失効時刻の生値の取得元 (bdboard-vz01)。盤面キャッシュ
+   * (cache.getProject) は使わない — refresh-projects が失敗し続けても、この呼び出しは
+   * 毎回 `bd list --status in_progress` を直接叩くので古い集合で `--id` を組まない。
+   * 失敗したら (呼び出し側は) 今回の巡回を丸ごと見送ること。
    */
-  readonly listTickets: (project: Project) => readonly Ticket[] | undefined;
+  readonly leaseReader: LeaseReader;
   readonly scanner: WorktreeScanner;
   readonly now?: () => Date;
   /** 判定できなかった理由のログ。未指定なら console.warn */
@@ -18,11 +19,38 @@ export interface PlanProjectReclaimDeps {
 }
 
 /**
- * 1 プロジェクトぶんの reclaim 計画を立てる (bdboard-6aci)。
+ * 保護打ち切りの起点を求める (bdboard-vz01)。
+ *
+ * 優先順位は lease_expires_at → startedAt → createdAt。lease_expires_at が使える
+ * チケットは、未失効なら経過が負値になり実質無期限に保護される (heartbeat が生きて
+ * いる限り lease は延長され続けるので意図した挙動)。lease 情報が無いチケットに限り、
+ * 従来どおり作業開始時刻にフォールバックする。
+ */
+function resolveProtectionOrigin(ticket: InProgressWithLease, now: Date): Date {
+  for (const raw of [ticket.leaseExpiresAt, ticket.startedAt, ticket.createdAt]) {
+    if (raw === null || raw === undefined) {
+      continue;
+    }
+    const ms = Date.parse(raw);
+    if (Number.isFinite(ms)) {
+      return new Date(ms);
+    }
+  }
+  // 3 つとも無い / パース不能なら時刻情報が無いものとして「今始まった」扱いにする —
+  // hasLiveWorktree が true なら保護され、false ならどのみち回収対象になる。
+  // (実 bd では createdAt が必ず付くので、ここに来るのは値が壊れているか、
+  // reader に渡った JSON が実 bd 由来でない場合。)
+  return now;
+}
+
+/**
+ * 1 プロジェクトぶんの reclaim 計画を立てる (bdboard-6aci / bdboard-vz01)。
  *
  * `null` = 判断材料が無いので今回は見送る。呼び出し側 (reclaim-scheduler) は
  * この場合 bd を一切呼ばない。**全件回収へフォールバックしない**のが要点で、
- * それをやると生存セッションのチケットを奪う元の事故に戻る。
+ * それをやると生存セッションのチケットを奪う元の事故に戻る。LeaseReader が
+ * 失敗した場合も同様に見送る — 「盤面キャッシュが最後に成功した時点の古い集合」で
+ * `--id` を組む準停止状態には戻さない。
  */
 export async function planProjectReclaim(
   project: Project,
@@ -30,16 +58,17 @@ export async function planProjectReclaim(
 ): Promise<ReclaimPlan | null> {
   const logWarn = deps.logWarn ?? ((message: string) => console.warn(message));
 
-  const tickets = deps.listTickets(project);
-  if (tickets === undefined) {
+  let inProgress: readonly InProgressWithLease[];
+  try {
+    inProgress = await deps.leaseReader.listInProgressWithLease(project.rootPath);
+  } catch (error) {
     logWarn(
-      `[reclaim] no cached tickets for project=${project.id}; skipping this cycle ` +
-        '(reclaim needs the in-flight ticket list to protect live worktrees)',
+      `[reclaim] could not read in-progress leases for project=${project.id}; skipping this cycle: ` +
+        (error instanceof Error ? error.message : String(error)),
     );
     return null;
   }
 
-  const inProgress = tickets.filter((ticket) => ticket.status === 'in_progress');
   if (inProgress.length === 0) {
     return { reclaimTicketIds: [], protectedTicketIds: [] };
   }
@@ -75,11 +104,7 @@ export async function planProjectReclaim(
   return planReclaim(
     inProgress.map((ticket) => ({
       ticketId: ticket.id,
-      // startedAt が無いチケット (reclaim 済みだと bd が消す) は createdAt で代用する。
-      // `createdAt <= startedAt` なので経過時間は実際より長く出て、保護は早く切れる
-      // 方向にしか外れない。updatedAt は使えない — コメント・メタデータ更新のたびに
-      // 進むので、触り続けている限り保護が延び続ける (向きが逆)。
-      startedAt: ticket.startedAt ?? ticket.createdAt,
+      protectionOriginAt: resolveProtectionOrigin(ticket, now),
       hasLiveWorktree: liveTicketIds.has(ticket.id),
     })),
     now,

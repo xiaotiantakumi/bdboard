@@ -20,6 +20,12 @@ const bdInProgressItemSchema = z.object({
   id: z.string(),
   lease_expires_at: z.string().nullable().optional(),
   heartbeat_at: z.string().nullable().optional(),
+  started_at: z.string().nullable().optional(),
+  // 実 bd では全チケットに付くが、ここで必須にしない。この reader は Hygiene の
+  // 失効 lease 一覧 (get-stale-lease-issues) も支えているので、1 件でも欠けると
+  // 一覧ごと黙って空になる (e2e の lease fixture で実際に起きた)。欠けたら null にし、
+  // reclaim 側は保護起点を「今」にフォールバックする (plan-project-reclaim.ts)。
+  created_at: z.string().nullable().optional(),
 });
 
 function buildListArgs(rootPath: string): readonly string[] {
@@ -42,6 +48,8 @@ function mapItem(raw: z.infer<typeof bdInProgressItemSchema>): InProgressWithLea
     id: raw.id,
     leaseExpiresAt: raw.lease_expires_at ?? null,
     heartbeatAt: raw.heartbeat_at ?? null,
+    startedAt: raw.started_at ?? null,
+    createdAt: raw.created_at ?? null,
   };
 }
 

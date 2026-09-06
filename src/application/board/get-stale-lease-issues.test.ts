@@ -25,6 +25,8 @@ describe('getStaleLeaseIssues', () => {
               id: 'bdboard-stale',
               leaseExpiresAt: '2026-08-16T09:55:00.000Z',
               heartbeatAt: '2026-08-16T09:50:00.000Z',
+              startedAt: null,
+              createdAt: '2026-08-16T08:00:00.000Z',
             },
           ];
         }
@@ -58,6 +60,8 @@ describe('getStaleLeaseIssues', () => {
           id: 'bdboard-stale',
           leaseExpiresAt: '2026-08-16T09:55:00.000Z',
           heartbeatAt: '2026-08-16T09:50:00.000Z',
+          startedAt: null,
+          createdAt: '2026-08-16T08:00:00.000Z',
         },
       ]),
     };
@@ -92,6 +96,8 @@ describe('getStaleLeaseIssues', () => {
             id: 'bdboard-stale',
             leaseExpiresAt: '2026-08-16T09:55:00.000Z',
             heartbeatAt: '2026-08-16T09:50:00.000Z',
+            startedAt: null,
+            createdAt: '2026-08-16T08:00:00.000Z',
           },
         ];
       }),
@@ -113,6 +119,8 @@ describe('getStaleLeaseIssues', () => {
               id: 'bdboard-stale',
               leaseExpiresAt: '2026-08-16T09:55:00.000Z',
               heartbeatAt: '2026-08-16T09:50:00.000Z',
+              startedAt: null,
+              createdAt: '2026-08-16T08:00:00.000Z',
             },
           ];
         }

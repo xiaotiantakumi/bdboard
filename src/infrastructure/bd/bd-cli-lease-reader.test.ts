@@ -62,8 +62,14 @@ describe('createBdCliLeaseReader', () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
         stdout: JSON.stringify([
-          { id: 'bdboard-1', lease_expires_at: '2026-08-23T00:00:00Z', heartbeat_at: '2026-08-22T23:59:00Z' },
-          { id: 'bdboard-2' },
+          {
+            id: 'bdboard-1',
+            lease_expires_at: '2026-08-23T00:00:00Z',
+            heartbeat_at: '2026-08-22T23:59:00Z',
+            started_at: '2026-08-22T12:00:00Z',
+            created_at: '2026-08-22T10:00:00Z',
+          },
+          { id: 'bdboard-2', created_at: '2026-08-20T00:00:00Z' },
         ]),
         stderr: '',
         exitCode: 0,
@@ -78,8 +84,39 @@ describe('createBdCliLeaseReader', () => {
         id: 'bdboard-1',
         leaseExpiresAt: '2026-08-23T00:00:00Z',
         heartbeatAt: '2026-08-22T23:59:00Z',
+        startedAt: '2026-08-22T12:00:00Z',
+        createdAt: '2026-08-22T10:00:00Z',
       },
-      { id: 'bdboard-2', leaseExpiresAt: null, heartbeatAt: null },
+      {
+        id: 'bdboard-2',
+        leaseExpiresAt: null,
+        heartbeatAt: null,
+        startedAt: null,
+        createdAt: '2026-08-20T00:00:00Z',
+      },
+    ]);
+  });
+
+  it('maps a missing created_at to null instead of failing the whole list', async () => {
+    // この reader は Hygiene の失効 lease 一覧も支える。1 件の欠落で一覧ごと空に
+    // なると失効 lease が黙って見えなくなる (e2e の lease fixture で実際に起きた)。
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: JSON.stringify([{ id: 'bdboard-1', lease_expires_at: '2026-08-22T10:00:00Z' }]),
+        stderr: '',
+        exitCode: 0,
+      }),
+    });
+
+    const reader = createBdCliLeaseReader(runner);
+    await expect(reader.listInProgressWithLease(ROOT)).resolves.toEqual([
+      {
+        id: 'bdboard-1',
+        leaseExpiresAt: '2026-08-22T10:00:00Z',
+        heartbeatAt: null,
+        startedAt: null,
+        createdAt: null,
+      },
     ]);
   });
 
