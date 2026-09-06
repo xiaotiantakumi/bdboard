@@ -236,6 +236,8 @@ describe('getAllProjectsHarnessStatus', () => {
       prFlow: 'pr',
       mainBranch: 'main',
       models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
     expect(statuses[1]?.status.contract.state).toBe('invalid');
   });

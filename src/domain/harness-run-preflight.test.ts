@@ -16,6 +16,8 @@ const OK_CONTRACT: ContractState = {
   prFlow: 'pr',
   mainBranch: 'main',
   models: null,
+  expiredExcludeCount: 0,
+  modelExclusionWarnings: [],
 };
 
 function pack(

@@ -80,8 +80,25 @@ export interface HarnessModelStageRoute {
   readonly high: readonly HarnessModelCandidate[];
 }
 
+/**
+ * member 単位の期限付き除外。チャットで「Cursor を 9/15 まで止めて」と言われたときに、
+ * 議長がこの 1 entry を足すだけで振り分け表から一時退避できるようにする (bdboard-p5l.20)。
+ *
+ * 削除ではなく「期限切れなら自動的に無視」という運用にしているのは、履歴を残して
+ * Hygiene に掃除を促すため — 消してしまうと「いつ・なぜ外したか」が失われる。
+ */
+export interface HarnessModelExclude {
+  readonly member: string;
+  /** `YYYY-MM-DD` のみ。時刻は持たせない (曖昧さより粗さを採る)。この日を含めて有効。 */
+  readonly until: string;
+  /** 表示専用。省略可。`verify`/`mainBranch` と同じ untrusted input 扱い。 */
+  readonly reason: string | null;
+}
+
 export interface HarnessContractModels {
   readonly routes: readonly HarnessModelStageRoute[];
+  /** 期限切れ entry も含む生のリスト。期限切れの判定は評価時 (`now` 注入) に行う。 */
+  readonly exclude: readonly HarnessModelExclude[];
 }
 
 /**
@@ -129,6 +146,17 @@ export type ContractState =
       readonly mainBranch: string;
       /** `models` の要約。未宣言なら null。生の候補列はここに出さない。 */
       readonly models: readonly HarnessModelStageSummary[] | null;
+      /**
+       * `models.exclude` のうち、評価時点 (`now`) で期限切れの件数。0 件なら Hygiene に
+       * 何も出さない。削除ではなく無視するだけなので、掃除を促すためにここで数える。
+       */
+      readonly expiredExcludeCount: number;
+      /**
+       * 除外により候補列が空になったセルの警告。**`invalid` ではなくここに載せる** —
+       * 契約自体は妥当 (member:model の構文は正しい) で、たまたま今アクティブな除外と
+       * 突き合わせた結果 0 件になっているだけなので、待遇を分ける。
+       */
+      readonly modelExclusionWarnings: readonly string[];
     }
   | { readonly state: 'missing' }
   | { readonly state: 'invalid'; readonly message: string }
@@ -362,6 +390,182 @@ function parseModelCandidates(value: unknown, fieldName: string): CandidatesPars
   return { ok: true, value: validated };
 }
 
+/** `models.exclude[].member` の文字集合。候補 (`member:model`) の member 部分と同じ。 */
+const MODEL_EXCLUDE_MEMBER_PATTERN = /^[a-z][a-z0-9-]{0,15}$/;
+const MODEL_EXCLUDE_UNTIL_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const MODEL_EXCLUDE_MAX_COUNT = 32;
+
+/** `YYYY-MM-DD` が実在する暦日かを確かめる (例: 2026-02-30 を弾く)。 */
+function isValidCalendarDate(dateStr: string): boolean {
+  if (!MODEL_EXCLUDE_UNTIL_PATTERN.test(dateStr)) {
+    return false;
+  }
+  const [yearStr, monthStr, dayStr] = dateStr.split('-');
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if (month < 1 || month > 12) {
+    return false;
+  }
+  // 月の翌月 0 日目 = その月の末日 (UTC 固定で夏時間等の影響を受けない)。
+  const lastDayOfMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return day >= 1 && day <= lastDayOfMonth;
+}
+
+type ModelExcludeParseResult =
+  | { readonly ok: true; readonly value: readonly HarnessModelExclude[] }
+  | { readonly ok: false; readonly message: string };
+
+/**
+ * `models.exclude`。省略可 (省略時は `[]` = 除外なし、従来と同じ挙動)。
+ *
+ * ここでは構文だけを見る。期限切れかどうかは評価時 (`now` 注入) にしか分からないため、
+ * パース時点では判定しない — `until` の形式さえ正しければ受理する。
+ */
+function parseModelExclude(value: unknown): ModelExcludeParseResult {
+  if (value === undefined) {
+    return { ok: true, value: [] };
+  }
+  if (!Array.isArray(value)) {
+    return { ok: false, message: 'models.exclude は配列である必要があります' };
+  }
+  if (value.length > MODEL_EXCLUDE_MAX_COUNT) {
+    return {
+      ok: false,
+      message: `models.exclude は最大 ${MODEL_EXCLUDE_MAX_COUNT} 件です (受領: ${value.length} 件)`,
+    };
+  }
+
+  const excludes: HarnessModelExclude[] = [];
+  for (const [index, entry] of value.entries()) {
+    const field = `models.exclude[${index}]`;
+    if (!isPlainObject(entry)) {
+      return { ok: false, message: `${field} はオブジェクトである必要があります` };
+    }
+
+    const member = entry.member;
+    if (typeof member !== 'string' || !MODEL_EXCLUDE_MEMBER_PATTERN.test(member)) {
+      return {
+        ok: false,
+        message:
+          `${field}.member は member 形式 (英小文字始まり 16 文字以内の英小文字・数字・ハイフン) ` +
+          `である必要があります (受領: ${describeContractValue(String(member))})`,
+      };
+    }
+
+    const until = entry.until;
+    if (typeof until !== 'string' || !isValidCalendarDate(until)) {
+      return {
+        ok: false,
+        message:
+          `${field}.until は YYYY-MM-DD 形式の実在する日付である必要があります ` +
+          `(時刻は持てません) (受領: ${describeContractValue(String(until))})`,
+      };
+    }
+
+    let reason: string | null = null;
+    if (entry.reason !== undefined) {
+      if (typeof entry.reason !== 'string') {
+        return { ok: false, message: `${field}.reason は文字列である必要があります` };
+      }
+      if (!isSafeSingleLineValue(entry.reason)) {
+        return {
+          ok: false,
+          message: `${field}.reason に改行・制御文字は使えません (200 文字以内)`,
+        };
+      }
+      reason = entry.reason;
+    }
+
+    excludes.push({ member, until, reason });
+  }
+
+  return { ok: true, value: excludes };
+}
+
+/** `member:model` から member 部分だけを取り出す。パース済みの候補にのみ使う。 */
+function candidateMember(candidate: HarnessModelCandidate): string {
+  return candidate.slice(0, candidate.indexOf(':'));
+}
+
+/** 評価時点 (`today`) でまだ有効 (期限切れでない) 除外か。`until` を含む当日まで有効。 */
+function isModelExcludeActive(entry: HarnessModelExclude, today: Date): boolean {
+  const todayIso = today.toISOString().slice(0, 10);
+  // 固定長 YYYY-MM-DD 同士なので、文字列の辞書順比較がそのまま日付順になる。
+  return entry.until >= todayIso;
+}
+
+/**
+ * `models.exclude` のうち評価時点で期限切れの件数。Hygiene の
+ * 「期限切れの除外が N 件」の元データ。0 件なら何も出さない。
+ */
+export function countExpiredModelExcludes(
+  models: HarnessContractModels | null,
+  today: Date,
+): number {
+  if (models === null) {
+    return 0;
+  }
+  return models.exclude.filter((entry) => !isModelExcludeActive(entry, today)).length;
+}
+
+/**
+ * 除外によって候補列が空になった (stage, 複雑度) の警告メッセージ一覧。
+ *
+ * 除外された member を候補列から落とし、残りの候補で解決する。**セルの候補が
+ * 全部落ちたら invalid ではなく警告を出す** — 契約自体 (member:model の構文) は
+ * 妥当なので、待遇を invalid とは分ける (bdboard-p5l.20)。
+ *
+ * low/med/high は `*` からの展開で同じ配列を指すことがあり、その場合は 3 段とも
+ * 同じ理由で空になる。冗長に見えても「宣言した 3 段それぞれが今 0 件」という
+ * 事実は正しいため、複雑度ごとに個別の警告として出す (dedupe しない)。
+ */
+export function computeModelExclusionWarnings(
+  models: HarnessContractModels | null,
+  today: Date,
+): readonly string[] {
+  if (models === null) {
+    return [];
+  }
+
+  const activeExcludedMembers = new Set(
+    models.exclude
+      .filter((entry) => isModelExcludeActive(entry, today))
+      .map((entry) => entry.member),
+  );
+  if (activeExcludedMembers.size === 0) {
+    return [];
+  }
+
+  const warnings: string[] = [];
+  for (const route of models.routes) {
+    for (const complexity of HARNESS_MODEL_COMPLEXITIES) {
+      const candidates = route[complexity];
+      if (candidates.length === 0) {
+        continue;
+      }
+      const excludedHere = new Set(
+        candidates
+          .map(candidateMember)
+          .filter((member) => activeExcludedMembers.has(member)),
+      );
+      if (excludedHere.size === 0) {
+        continue;
+      }
+      const remaining = candidates.filter(
+        (candidate) => !excludedHere.has(candidateMember(candidate)),
+      );
+      if (remaining.length === 0) {
+        warnings.push(
+          `models.routes.${route.stage}.${complexity}: 除外 (${[...excludedHere].join(', ')}) ` +
+            'により候補が 0 件になりました',
+        );
+      }
+    }
+  }
+  return warnings;
+}
+
 type StageRouteParseResult =
   | { readonly ok: true; readonly route: HarnessModelStageRoute }
   | { readonly ok: false; readonly message: string };
@@ -483,7 +687,12 @@ function parseModels(value: unknown): ModelsParseResult {
     routes.push(route.route);
   }
 
-  return { ok: true, models: { routes } };
+  const exclude = parseModelExclude(value.exclude);
+  if (!exclude.ok) {
+    return { ok: false, message: exclude.message };
+  }
+
+  return { ok: true, models: { routes, exclude: exclude.value } };
 }
 
 /** 表示用の要約へ落とす。候補そのものは UI へ流さない。 */
@@ -678,9 +887,15 @@ export function resolveVerifyScriptRequirement(
  * パース結果とプロジェクトの事実から表示用の状態を作る。
  * `parsed` が null は「ファイルが無い」。
  */
+/**
+ * @param now 「期限切れ」判定の基準時刻。省略時は呼び出し時点の実時刻
+ *   (`new Date()`) — 呼び出し側 (route/preflight) は本物の時計でよいが、
+ *   テストは決定的にするため明示的に渡す (bdboard-p5l.20)。
+ */
 export function evaluateContractState(
   parsed: ParseHarnessContractResult | null,
   projectFacts: HarnessProjectFacts,
+  now: Date = new Date(),
 ): ContractState {
   if (parsed === null) {
     return { state: 'missing' };
@@ -712,5 +927,7 @@ export function evaluateContractState(
     prFlow: contract.prFlow,
     mainBranch: contract.mainBranch,
     models: summarizeHarnessModels(contract.models),
+    expiredExcludeCount: countExpiredModelExcludes(contract.models, now),
+    modelExclusionWarnings: computeModelExclusionWarnings(contract.models, now),
   };
 }

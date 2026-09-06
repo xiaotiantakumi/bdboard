@@ -79,6 +79,8 @@ function toContractJson(contract: ContractState): Record<string, unknown> {
                 stage: stage.stage,
                 tiers: stage.tiers,
               })),
+        expiredExcludeCount: contract.expiredExcludeCount,
+        modelExclusionWarnings: contract.modelExclusionWarnings,
       };
     case 'invalid':
       return { state: 'invalid', message: contract.message };
@@ -117,7 +119,7 @@ async function resolveProjectHarnessStatus(
     return 'project-not-found';
   }
 
-  return readProjectHarnessStatus(deps, cached.project.rootPath);
+  return readProjectHarnessStatus(deps, cached.project.rootPath, deps.now?.());
 }
 
 export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
@@ -144,6 +146,7 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
       injector: deps.injector,
       contractReader: deps.contractReader,
       projects,
+      now: now(),
     });
 
     return c.json({
@@ -209,6 +212,7 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
         deps.contractReader,
         cached.project.rootPath,
         result.manifest,
+        now(),
       ),
       deps.injector.readSettings(cached.project.rootPath),
     ]);

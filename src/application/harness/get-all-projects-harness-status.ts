@@ -18,18 +18,21 @@ export interface GetAllProjectsHarnessStatusInput {
   readonly injector: HarnessInjectorPort;
   readonly contractReader: HarnessContractReaderPort;
   readonly projects: readonly Project[];
+  /** 「期限切れ除外」判定の基準時刻。省略時は実時刻 (bdboard-p5l.20)。 */
+  readonly now?: Date;
 }
 
 export async function getAllProjectsHarnessStatus(
   input: GetAllProjectsHarnessStatusInput,
 ): Promise<readonly ProjectHarnessStatusEntry[]> {
   const availablePacks = await input.registry.listPacks();
+  const now = input.now ?? new Date();
 
   return Promise.all(
     input.projects.map(async (project) => {
       const manifest = await input.injector.readManifest(project.rootPath);
       const [contract, settingsJson] = await Promise.all([
-        resolveProjectContractState(input.contractReader, project.rootPath, manifest),
+        resolveProjectContractState(input.contractReader, project.rootPath, manifest, now),
         input.injector.readSettings(project.rootPath),
       ]);
       return {

@@ -64,6 +64,7 @@ export async function resolveProjectContractState(
   reader: HarnessContractReaderPort,
   projectRootPath: string,
   manifest: HarnessManifest,
+  now: Date = new Date(),
 ): Promise<ContractState> {
   if (manifest.packs.length === 0) {
     return { state: 'not-applicable' };
@@ -71,7 +72,7 @@ export async function resolveProjectContractState(
 
   const text = await reader.readContract(projectRootPath);
   if (text === null) {
-    return evaluateContractState(null, { verifyPackageScripts: null });
+    return evaluateContractState(null, { verifyPackageScripts: null }, now);
   }
 
   const parsed = parseHarnessContract(text);
@@ -91,7 +92,7 @@ export async function resolveProjectContractState(
     }
   }
 
-  return evaluateContractState(parsed, { verifyPackageScripts });
+  return evaluateContractState(parsed, { verifyPackageScripts }, now);
 }
 
 export async function getProjectHarnessStatus(
@@ -123,10 +124,11 @@ export interface HarnessStatusSources {
 export async function readProjectHarnessStatus(
   sources: HarnessStatusSources,
   projectRootPath: string,
+  now: Date = new Date(),
 ): Promise<ProjectHarnessStatus> {
   const manifest = await sources.injector.readManifest(projectRootPath);
   const [contract, settingsJson] = await Promise.all([
-    resolveProjectContractState(sources.contractReader, projectRootPath, manifest),
+    resolveProjectContractState(sources.contractReader, projectRootPath, manifest, now),
     sources.injector.readSettings(projectRootPath),
   ]);
   return getProjectHarnessStatus(sources.registry, manifest, contract, settingsJson);

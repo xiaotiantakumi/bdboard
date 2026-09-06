@@ -157,6 +157,8 @@ const READY_CONTRACT: ContractState = {
   prFlow: 'pr',
   mainBranch: 'main',
   models: null,
+  expiredExcludeCount: 0,
+  modelExclusionWarnings: [],
 };
 
 function harnessPack(
@@ -1704,6 +1706,8 @@ describe('createAgentRunRoutes harness preflight', () => {
           prFlow: 'direct',
           mainBranch: 'trunk',
           models: null,
+          expiredExcludeCount: 0,
+          modelExclusionWarnings: [],
         }),
     });
     const response = await app.request(

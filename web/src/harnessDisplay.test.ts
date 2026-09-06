@@ -84,6 +84,8 @@ describe('harness contract display', () => {
       prFlow: 'pr',
       mainBranch: 'main',
       models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     },
     missing: { state: 'missing' },
     invalid: { state: 'invalid', message: 'verify は空でない文字列である必要があります' },
@@ -248,6 +250,8 @@ describe('formatHarnessContractDetail with models', () => {
         prFlow: 'pr',
         mainBranch: 'main',
         models: null,
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: [],
       }),
     ).toBe('検証: npm run verify / PR 必須 / main: main');
   });
@@ -263,9 +267,86 @@ describe('formatHarnessContractDetail with models', () => {
           { stage: 'implement', tiers: 3 },
           { stage: 'review', tiers: 1 },
         ],
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: [],
       }),
     ).toBe(
       '検証: npm run verify / PR 必須 / main: main / 振り分け: implement 3 段宣言、review 共通',
     );
+  });
+
+  it('appends the expired-exclude count (bdboard-p5l.20)', () => {
+    expect(
+      formatHarnessContractDetail({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 2,
+        modelExclusionWarnings: [],
+      }),
+    ).toBe('検証: npm run verify / PR 必須 / main: main / 期限切れの除外が 2 件');
+  });
+
+  it('appends cell-emptied warnings alongside the expired-exclude count', () => {
+    expect(
+      formatHarnessContractDetail({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 1,
+        modelExclusionWarnings: ['models.routes.implement.low: 除外 (cursor) により候補が 0 件になりました'],
+      }),
+    ).toBe(
+      '検証: npm run verify / PR 必須 / main: main / 期限切れの除外が 1 件 / ' +
+        'models.routes.implement.low: 除外 (cursor) により候補が 0 件になりました',
+    );
+  });
+});
+
+describe('harnessContractNeedsAttention with model exclusions', () => {
+  it('is false for an ok contract with no expired excludes or warnings', () => {
+    expect(
+      harnessContractNeedsAttention({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: [],
+      }),
+    ).toBe(false);
+  });
+
+  it('is true when there are expired excludes, even though the contract is ok', () => {
+    expect(
+      harnessContractNeedsAttention({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 1,
+        modelExclusionWarnings: [],
+      }),
+    ).toBe(true);
+  });
+
+  it('is true when a cell was emptied by exclusion, even though the contract is ok', () => {
+    expect(
+      harnessContractNeedsAttention({
+        state: 'ok',
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'main',
+        models: null,
+        expiredExcludeCount: 0,
+        modelExclusionWarnings: ['models.routes.review.low: 除外 (cursor) により候補が 0 件になりました'],
+      }),
+    ).toBe(true);
   });
 });

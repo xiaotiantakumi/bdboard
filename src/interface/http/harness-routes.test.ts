@@ -394,6 +394,8 @@ describe('createHarnessRoutes', () => {
       prFlow: 'pr',
       mainBranch: 'main',
       models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
   });
 
@@ -455,6 +457,8 @@ describe('createHarnessRoutes', () => {
         { stage: 'implement', tiers: 3 },
         { stage: 'review', tiers: 1 },
       ],
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
     expect(JSON.stringify(body.contract)).not.toContain('gpt-5.6-luna');
   });

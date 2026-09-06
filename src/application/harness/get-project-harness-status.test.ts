@@ -252,6 +252,8 @@ describe('resolveProjectContractState', () => {
       prFlow: 'pr',
       mainBranch: 'main',
       models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
     });
     expect(reader.readPackageScripts).toHaveBeenCalledWith('/tmp/proj');
   });

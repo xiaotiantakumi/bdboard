@@ -49,6 +49,8 @@ const OK_CONTRACT: ProjectHarnessContractDto = {
   prFlow: 'pr',
   mainBranch: 'main',
   models: null,
+  expiredExcludeCount: 0,
+  modelExclusionWarnings: [],
 };
 
 function harnessPack(
