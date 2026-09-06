@@ -4,7 +4,7 @@ import type { Ticket } from './ticket.js';
 import type { TicketId } from './ticket-id.js';
 
 /**
- * ハーネス自体の効き目を測る 4 指標 (docs/HARNESS-EVALUATION.md §4.4 / §5 P4)。
+ * ハーネス自体の効き目を測る 5 指標 (docs/HARNESS-EVALUATION.md §4.4 / §5 P4)。
  *
  * すべて純粋関数で、入力は「板面キャッシュに載っている Ticket[]」と
  * 「reclaim 実行の記録 (ReclaimRunRecord[])」だけ。新しい永続化は要らない。
@@ -97,10 +97,21 @@ export interface ReclaimKpi {
   readonly reclaimedThenInProgressRate: number | null;
   readonly windowMs: number;
   /**
-   * identifiedTicketCount のうち、**現時点で** worktree かブランチが残っている数
-   * (bdboard-rkde の `reclaimed_live_worktree` と同じ生存判定 =
-   * `hasLiveWorktreeEvidence`)。回収時点の状態そのものではなく「いま見えている
-   * 生存証拠」なので、回収後すぐに掃除された誤回収は数え損なう (実測値の下限)。
+   * identifiedTicketCount のうち、**現時点で** ticket.status === 'open' かつ
+   * worktree かブランチが残っている数 (bdboard-rkde の `reclaimed_live_worktree` /
+   * `checkReclaimedLiveWorktree` と同じ生存判定 = open ゲート付きの
+   * `hasLiveWorktreeEvidence`)。open ゲートが無いと、回収後に別セッションが
+   * 再 claim して worktree を作り直した正常系まで誤回収として数えてしまう
+   * (bdboard-t3ct M1)。
+   *
+   * 回収時点の状態そのものではなく「いま見えている生存証拠」を見るので、回収
+   * 直後に掃除された誤回収は数え損なう一方 (下振れ)、`checkReclaimedLiveWorktree`
+   * と同じく掃除がまだ終わっていないだけの盤面との区別も付かない (上振れうる)。
+   * どちらにも振れるので「実測値の下限」とは言えない。母数のスキャン
+   * (leftoverCandidates) 自体が git を読めず不完全だったときにこの値を
+   * どう扱うかは呼び出し元の責務 — /api/harness-kpi ルートはスキャン不完全
+   * (scanGitLeftovers().complete === false) なら DTO で null に上書きする
+   * (bdboard-t3ct M2)。
    */
   readonly reclaimedLiveWorktreeCount: number;
   /** 母数 (identifiedTicketCount) が 0 なら null */
@@ -300,7 +311,15 @@ export function computeReclaimKpi(
 
       identifiedTicketCount += 1;
 
-      if (liveWorktreeTicketKeys.has(ticketKey(run.projectId, ticketId))) {
+      // open ゲート: checkReclaimedLiveWorktree (hygiene.ts) と同じく in_progress
+      // (再 claim 済み) は対象外にする。bdboard-6aci 以降 reclaim は生存証拠の無い
+      // チケットしか回収しないので、ゲート無しだと「回収後に別セッションが
+      // 再 claim して worktree を作った」正常系まで誤回収として数えてしまう
+      // (bdboard-t3ct M1)。
+      if (
+        ticket.status === 'open' &&
+        liveWorktreeTicketKeys.has(ticketKey(run.projectId, ticketId))
+      ) {
         reclaimedLiveWorktreeCount += 1;
       }
 

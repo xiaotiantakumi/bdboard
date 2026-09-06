@@ -178,7 +178,7 @@ describe('ThroughputStats', () => {
     fetchHarnessKpiMock.mockResolvedValue(makeHarnessKpi());
   });
 
-  it('renders the harness KPI panel with all four metrics', async () => {
+  it('renders the harness KPI panel with all five metrics', async () => {
     fetchThroughputStatsMock.mockResolvedValue(makeStats());
 
     renderThroughputStats();
@@ -189,8 +189,40 @@ describe('ThroughputStats', () => {
     ).toBeInTheDocument();
     expect(within(panel).getByText('2.0時間 / 1.3日')).toBeInTheDocument();
     expect(within(panel).getByText('4回 / 25.0%')).toBeInTheDocument();
+    // m6(b) (bdboard-t3ct): 誤回収件数 / 率の値あり行とラベル。
+    expect(within(panel).getByText('誤回収件数 / 率')).toBeInTheDocument();
+    expect(within(panel).getByText('1件 / 25.0%')).toBeInTheDocument();
     expect(within(panel).getByText('3件 / 8件 (37.5%)')).toBeInTheDocument();
     expect(within(panel).getByText('2件 / 8件 (25.0%)')).toBeInTheDocument();
+  });
+
+  it('shows a dash for the misreclaim count when the git scan is incomplete', async () => {
+    // M2 (bdboard-t3ct): scanGitLeftovers が不完全 (scanner 未設定 / 一部失敗) な
+    // ときはサーバーが null を返す。0件と断言できないので — を出す。
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockResolvedValue(
+      makeHarnessKpi({
+        reclaim: {
+          runCount: 4,
+          reclaimedCountTotal: 5,
+          unknownCountRunCount: 0,
+          identifiedTicketCount: 4,
+          reclaimedThenInProgressCount: 1,
+          reclaimedThenInProgressRate: 0.25,
+          windowMs: 30 * 60_000,
+          since: '2026-08-18T00:00:00.000Z',
+          unparsedRunCount: 0,
+          reclaimedLiveWorktreeCount: null,
+          reclaimedLiveWorktreeRate: null,
+        },
+      }),
+    );
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(within(panel).getByText('誤回収件数 / 率')).toBeInTheDocument();
+    expect(within(panel).getByText('— / —')).toBeInTheDocument();
   });
 
   it('notes the created-time fallback and that reclaim records are not persisted', async () => {

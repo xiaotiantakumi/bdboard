@@ -369,10 +369,13 @@ export interface ReclaimKpiDto {
   unparsedRunCount: number;
   /**
    * 誤回収件数。identifiedTicketCount のうち、いま見えている生存証拠
-   * (worktree/ブランチ、bdboard-rkde と同じ判定) がある数 (bdboard-t3ct)
+   * (worktree/ブランチ、bdboard-rkde と同じ判定 + open ゲート) がある数
+   * (bdboard-t3ct)。git worktree スキャンが不完全 (一部プロジェクトで失敗した、
+   * または scanner 未設定) なら null — 「0件」と「読めなかった」を混同しない
+   * ため (bdboard-t3ct M2)。UI は — を表示する。
    */
-  reclaimedLiveWorktreeCount: number;
-  /** 母数 (identifiedTicketCount) が 0 なら null */
+  reclaimedLiveWorktreeCount: number | null;
+  /** 母数 (identifiedTicketCount) が 0、またはスキャンが不完全なら null */
   reclaimedLiveWorktreeRate: number | null;
 }
 
@@ -981,8 +984,13 @@ export function toHarnessKpiDto(stats: HarnessKpiStats): HarnessKpiDto {
       windowMs: kpi.reclaim.windowMs,
       since: stats.reclaimSince?.toISOString() ?? null,
       unparsedRunCount: stats.reclaimUnparsedRunCount,
-      reclaimedLiveWorktreeCount: kpi.reclaim.reclaimedLiveWorktreeCount,
-      reclaimedLiveWorktreeRate: kpi.reclaim.reclaimedLiveWorktreeRate,
+      // スキャンが不完全なら「0件」と断言できないので null にする (bdboard-t3ct M2)。
+      reclaimedLiveWorktreeCount: stats.leftoverScanComplete
+        ? kpi.reclaim.reclaimedLiveWorktreeCount
+        : null,
+      reclaimedLiveWorktreeRate: stats.leftoverScanComplete
+        ? kpi.reclaim.reclaimedLiveWorktreeRate
+        : null,
     },
     harnessLabeled: { ...kpi.harnessLabeled },
     duplicateMention: { ...kpi.duplicateMention },

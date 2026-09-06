@@ -1575,10 +1575,62 @@ describe('createApiRoutes', () => {
       runCount: 0,
       since: null,
       unparsedRunCount: 0,
-      reclaimedLiveWorktreeCount: 0,
+      // M2 (bdboard-t3ct): worktreeScanner が無いのでスキャン自体していない。
+      // 「0件」と断言できないので null (UI は — を出す)。
+      reclaimedLiveWorktreeCount: null,
       reclaimedLiveWorktreeRate: null,
     });
     assertNoDates(body);
+  });
+
+  it('returns null misreclaim count/rate when the git worktree scan is incomplete', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({
+          id: 'bdboard-live',
+          projectId: a.id,
+          status: 'open',
+        }),
+      ],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+
+    const reclaimHistory = createReclaimHistory({
+      startedAt: new Date('2026-06-01T00:00:00.000Z'),
+    });
+    reclaimHistory.record({
+      projectId: a.id,
+      at: new Date('2026-06-01T09:00:00.000Z'),
+      reclaimedCount: 1,
+      ticketIds: ['bdboard-live'],
+    });
+
+    // M2 (bdboard-t3ct): git-worktree-scanner.ts はコマンド失敗を throw せず
+    // complete:false に畳む。scanGitLeftovers はそれでも「読めた範囲」の候補を
+    // 返すが、harness-kpi ルートは complete:false を見て null に上書きすること。
+    const worktreeScanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
+      scan: vi.fn(async () => ({
+        worktrees: [],
+        bdBranches: [],
+        complete: false,
+      })),
+    };
+
+    const app = createApiRoutes(createDeps({ cache, reclaimHistory, worktreeScanner }));
+    const response = await app.request('/api/harness-kpi?weeks=1');
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.reclaim).toMatchObject({
+      identifiedTicketCount: 1,
+      reclaimedLiveWorktreeCount: null,
+      reclaimedLiveWorktreeRate: null,
+    });
   });
 
   it('counts a reclaimed ticket with a live worktree as reclaimedLiveWorktreeCount', async () => {

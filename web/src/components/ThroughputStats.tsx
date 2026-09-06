@@ -26,6 +26,7 @@ import { ModelStatsTableScroll } from './ModelStatsTableScroll';
 import { togglePressedProps } from './toggleGroupA11y';
 import {
   ageBucketEntries,
+  formatCount,
   formatDurationMs,
   formatKpiTimestamp,
   formatRatePercent,
@@ -615,13 +616,16 @@ function HarnessKpiTable({ kpi }: { kpi: HarnessKpiDto }) {
     {
       key: 'reclaim-live-worktree',
       label: '誤回収件数 / 率',
-      value: `${reclaim.reclaimedLiveWorktreeCount}件 / ${formatRatePercent(reclaim.reclaimedLiveWorktreeRate)}`,
+      value: `${formatCount(reclaim.reclaimedLiveWorktreeCount)} / ${formatRatePercent(reclaim.reclaimedLiveWorktreeRate)}`,
       note:
-        `ID を追えた ${reclaim.identifiedTicketCount}件のうち、いま見ても worktree か ` +
-        `ブランチが残っている (＝作業中に回収された疑いがある) チケットの数です。` +
-        'Hygiene の「reclaimed_live_worktree」と同じ生存判定を使っていますが、' +
-        '見ているのは回収時点ではなく現時点の生存証拠なので、回収後すぐに掃除された' +
-        '誤回収は数え損ないます (実測値の下限)。',
+        `ID を追えた ${reclaim.identifiedTicketCount}件のうち、いま見ても open のまま ` +
+        `worktree かブランチが残っている (＝作業中に回収された疑いがある) チケットの` +
+        '数です。Hygiene の「reclaimed_live_worktree」と同じ生存判定 (open ゲート込み)' +
+        'を使っていますが、見ているのは回収時点ではなく現時点の生存証拠なので、' +
+        '回収後すぐに掃除された誤回収は数え損ない、逆に掃除がまだ終わっていないだけの' +
+        '盤面と区別も付きません。過小にも過大にも振れるため実測値の下限ではありません。' +
+        '一部のプロジェクトで git を読めなかった、または git スキャン自体が未設定の' +
+        'ときは件数・率とも — を表示します。',
     },
     {
       key: 'harness-labeled',

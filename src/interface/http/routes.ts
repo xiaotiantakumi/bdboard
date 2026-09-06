@@ -19,6 +19,7 @@ import {
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { getMergeSlotStatus } from '../../application/board/get-merge-slot-status.js';
 import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js';
+import { describeFetchFailures } from '../../application/board/fetch-failure-log.js';
 import { scanInFlightOverlaps } from '../../application/board/scan-in-flight-overlaps.js';
 import { scanHarnessWorktreeLags } from '../../application/board/scan-harness-worktree-lags.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
@@ -728,18 +729,31 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
     // 誤回収件数 (reclaimedLiveWorktreeCount) の材料。/api/hygiene の
     // merged_leftover / reclaimed_live_worktree と同じ scanGitLeftovers を使い回す
-    // (bdboard-t3ct)。scanner が無ければ計測できないので省略し、0 になる。
+    // (bdboard-t3ct)。scanner が無い、または一部でも git を読めなかったときは
+    // 「0件」と断言できないので leftoverScanComplete=false を渡し、DTO 側で
+    // count/rate を null にする (bdboard-t3ct M2)。
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
+    let leftoverScanComplete = false;
     if (deps.worktreeScanner !== undefined) {
       let entries = deps.cache.listProjects();
       if (projectIds !== undefined) {
         const filterSet = new Set(projectIds);
         entries = entries.filter((entry) => filterSet.has(entry.project.id));
       }
-      leftoverCandidates = await scanGitLeftovers(
+      const scan = await scanGitLeftovers(
         entries.map((entry) => entry.project),
         deps.worktreeScanner,
+        {
+          // m4 (bdboard-t3ct): [hygiene] パネル向けの既定文言だと、統計タブの
+          // 誤回収件数が影響を受けたことが伝わらないので差し替える。
+          describeFailure: (failures, totalCount) =>
+            '[harness-kpi] could not scan git worktrees for some projects; ' +
+            'misreclaim count on the stats tab is unavailable (shown as —). ' +
+            describeFetchFailures(failures, totalCount),
+        },
       );
+      leftoverCandidates = scan.candidates;
+      leftoverScanComplete = scan.complete;
     }
 
     const stats = getHarnessKpi(deps.cache, deps.now(), {
@@ -753,6 +767,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
           }
         : {}),
       ...(leftoverCandidates !== undefined ? { leftoverCandidates } : {}),
+      leftoverScanComplete,
     });
     return c.json(toHarnessKpiDto(stats));
   });
@@ -781,7 +796,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         entries = entries.filter((entry) => filterSet.has(entry.project.id));
       }
       const projects = entries.map((entry) => entry.project);
-      leftoverCandidates = await scanGitLeftovers(projects, deps.worktreeScanner);
+      leftoverCandidates = (await scanGitLeftovers(projects, deps.worktreeScanner)).candidates;
 
       // merged_leftover と同じ worktree 一覧を使い回す。closed のものはあちらが、
       // まだ closed でないものはこちらが見る (git worktree list は 1 回で済む)。
@@ -1026,7 +1041,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       // git worktree list までは走らせる (1 回で済む安い呼び出し) が、変更ファイルを
       // 読むのはこのチケット自身に worktree があるときだけ。詳細パネルは worktree の
       // 無いチケットでも開くので、ここで大半が落ちる。
-      const leftovers = await scanGitLeftovers([entry.project], scanner);
+      const { candidates: leftovers } = await scanGitLeftovers([entry.project], scanner);
       const inFlight = selectInFlightWorktrees(leftovers, entry.tickets);
       if (!inFlight.some((worktree) => worktree.ticketId === id)) {
         return c.json([]);

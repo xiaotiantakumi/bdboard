@@ -325,6 +325,8 @@ harness ラベルの起票率、重複解消/やり直しチケットの比率�
   (stalled の補完) を追加。
 - ハーネス KPI パネル (統計タブに追加): 確認待ち滞留 (human ラベル付与 → gate close の
   中央値)、reclaim 発火数と直後に同一チケットが再 claim された率 (誤回収の代理指標)、
+  誤回収件数 (ID を追えた回収のうち、いま見ても ticket が open のまま worktree/
+  ブランチが残っている数と率。git を読めなかったときは — 表示、bdboard-t3ct)、
   `harness` / `harness-upstream` 起票数、`重複|duplicate|再発` を含むチケット比率。
   データはすべて既存の台帳・interactions.jsonl・reclaim ログにあり、新しい永続化は不要。
 

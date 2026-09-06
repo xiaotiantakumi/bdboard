@@ -25,12 +25,22 @@ export interface GetHarnessKpiOptions {
    * (scanGitLeftovers)。未指定なら 0 になる (bdboard-t3ct)。
    */
   readonly leftoverCandidates?: readonly LeftoverCandidate[];
+  /**
+   * leftoverCandidates が git を最後まで読めた完全なスキャン結果かどうか
+   * (`scanGitLeftovers().complete`)。省略時は true (bdboard-t3ct 以前の呼び出し元
+   * との互換)。false なら DTO 変換 (toHarnessKpiDto) が reclaimedLiveWorktreeCount /
+   * Rate を null に上書きする — 「0件」と「読めなかった」を混同しないため
+   * (bdboard-t3ct M2)。
+   */
+  readonly leftoverScanComplete?: boolean;
 }
 
 export interface HarnessKpiStats {
   readonly kpi: HarnessKpi;
   readonly reclaimSince: Date | null;
   readonly reclaimUnparsedRunCount: number;
+  /** GetHarnessKpiOptions.leftoverScanComplete を参照。 */
+  readonly leftoverScanComplete: boolean;
 }
 
 const DEFAULT_WEEKS = 8;
@@ -117,5 +127,6 @@ export function getHarnessKpi(
     kpi,
     reclaimSince: options?.reclaimSince ?? null,
     reclaimUnparsedRunCount: options?.reclaimUnparsedRunCount ?? 0,
+    leftoverScanComplete: options?.leftoverScanComplete ?? true,
   };
 }

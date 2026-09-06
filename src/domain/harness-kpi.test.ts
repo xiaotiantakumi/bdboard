@@ -455,6 +455,62 @@ describe('computeReclaimKpi: reclaimedLiveWorktreeCount (誤回収件数)', () =
     const result = computeReclaimKpi(runs, tickets, RANGE);
     expect(result.reclaimedLiveWorktreeCount).toBe(0);
   });
+
+  // M1 (bdboard-t3ct): 6aci 後の reclaim は生存証拠が無いチケットしか回収しない
+  // ので、「回収後に別セッションが再 claim して worktree を作った」正常系まで
+  // 誤回収として数えてはいけない。in_progress (＝再 claim 済み) はゲートで除外する。
+  it('does not count a reclaimed ticket that was already re-claimed (in_progress)', () => {
+    const runs = [run({ ticketIds: ['bdboard-a'] })];
+    const tickets = [
+      makeTicket({ id: 'bdboard-a', projectId, status: 'in_progress' }),
+    ];
+    const leftoverCandidates = [
+      {
+        projectId,
+        repoRootPath: '/repo',
+        ticketId: 'bdboard-a',
+        worktreePath: '/repo/.claude/worktrees/bdboard-a',
+        branchName: 'bd/bdboard-a',
+      },
+    ];
+
+    const result = computeReclaimKpi(runs, tickets, RANGE, undefined, leftoverCandidates);
+    expect(result.reclaimedLiveWorktreeCount).toBe(0);
+    expect(result.reclaimedLiveWorktreeRate).toBe(0);
+  });
+
+  // m6(a): projectId を挟んだ連結キー (ticketKey) が別プロジェクトの同名
+  // ticketId を取り違えないこと。取り違えると、別プロジェクトにだけ生存証拠が
+  // ある同名チケットの回収まで誤回収として数えてしまう。
+  it('does not match a leftover candidate whose ticketId collides across projects', () => {
+    const runs = [
+      {
+        projectId: 'proj-a',
+        at: at('2026-08-10T00:00:00.000Z'),
+        reclaimedCount: 1,
+        ticketIds: ['bdboard-a'],
+      },
+    ];
+    const tickets = [
+      makeTicket({ id: 'bdboard-a', projectId: 'proj-a', status: 'open' }),
+      makeTicket({ id: 'bdboard-a', projectId: 'proj-b', status: 'open' }),
+    ];
+    const leftoverCandidates = [
+      {
+        // 同じ ticketId だが別プロジェクトの生存証拠。proj-a の回収に混ざらないこと。
+        projectId: 'proj-b',
+        repoRootPath: '/repo-b',
+        ticketId: 'bdboard-a',
+        worktreePath: '/repo-b/.claude/worktrees/bdboard-a',
+        branchName: 'bd/bdboard-a',
+      },
+    ];
+
+    const result = computeReclaimKpi(runs, tickets, RANGE, undefined, leftoverCandidates);
+    expect(result.identifiedTicketCount).toBe(1);
+    expect(result.reclaimedLiveWorktreeCount).toBe(0);
+    expect(result.reclaimedLiveWorktreeRate).toBe(0);
+  });
 });
 
 describe('computeHarnessLabeledShare / computeDuplicateMentionShare', () => {
