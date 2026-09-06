@@ -56,6 +56,8 @@ function makeHarnessKpi(overrides?: Partial<HarnessKpiDto>): HarnessKpiDto {
       windowMs: 30 * 60_000,
       since: '2026-08-18T00:00:00.000Z',
       unparsedRunCount: 0,
+      reclaimedLiveWorktreeCount: 1,
+      reclaimedLiveWorktreeRate: 0.25,
     },
     harnessLabeled: { matchedCount: 3, totalCount: 8, rate: 0.375 },
     duplicateMention: { matchedCount: 2, totalCount: 8, rate: 0.25 },
@@ -176,7 +178,7 @@ describe('ThroughputStats', () => {
     fetchHarnessKpiMock.mockResolvedValue(makeHarnessKpi());
   });
 
-  it('renders the harness KPI panel with all four metrics', async () => {
+  it('renders the harness KPI panel with all five metrics', async () => {
     fetchThroughputStatsMock.mockResolvedValue(makeStats());
 
     renderThroughputStats();
@@ -187,8 +189,40 @@ describe('ThroughputStats', () => {
     ).toBeInTheDocument();
     expect(within(panel).getByText('2.0時間 / 1.3日')).toBeInTheDocument();
     expect(within(panel).getByText('4回 / 25.0%')).toBeInTheDocument();
+    // m6(b) (bdboard-t3ct): 誤回収件数 / 率の値あり行とラベル。
+    expect(within(panel).getByText('誤回収件数 / 率')).toBeInTheDocument();
+    expect(within(panel).getByText('1件 / 25.0%')).toBeInTheDocument();
     expect(within(panel).getByText('3件 / 8件 (37.5%)')).toBeInTheDocument();
     expect(within(panel).getByText('2件 / 8件 (25.0%)')).toBeInTheDocument();
+  });
+
+  it('shows a dash for the misreclaim count when the git scan is incomplete', async () => {
+    // M2 (bdboard-t3ct): scanGitLeftovers が不完全 (scanner 未設定 / 一部失敗) な
+    // ときはサーバーが null を返す。0件と断言できないので — を出す。
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+    fetchHarnessKpiMock.mockResolvedValue(
+      makeHarnessKpi({
+        reclaim: {
+          runCount: 4,
+          reclaimedCountTotal: 5,
+          unknownCountRunCount: 0,
+          identifiedTicketCount: 4,
+          reclaimedThenInProgressCount: 1,
+          reclaimedThenInProgressRate: 0.25,
+          windowMs: 30 * 60_000,
+          since: '2026-08-18T00:00:00.000Z',
+          unparsedRunCount: 0,
+          reclaimedLiveWorktreeCount: null,
+          reclaimedLiveWorktreeRate: null,
+        },
+      }),
+    );
+
+    renderThroughputStats();
+
+    const panel = await screen.findByLabelText('ハーネスKPI');
+    expect(within(panel).getByText('誤回収件数 / 率')).toBeInTheDocument();
+    expect(within(panel).getByText('— / —')).toBeInTheDocument();
   });
 
   it('notes the created-time fallback and that reclaim records are not persisted', async () => {
@@ -229,6 +263,8 @@ describe('ThroughputStats', () => {
           windowMs: 30 * 60_000,
           since: '2026-08-18T00:00:00.000Z',
           unparsedRunCount: 3,
+          reclaimedLiveWorktreeCount: 0,
+          reclaimedLiveWorktreeRate: 0,
         },
       }),
     );
@@ -277,6 +313,8 @@ describe('ThroughputStats', () => {
           windowMs: 30 * 60_000,
           since: null,
           unparsedRunCount: 0,
+          reclaimedLiveWorktreeCount: 0,
+          reclaimedLiveWorktreeRate: null,
         },
         harnessLabeled: { matchedCount: 0, totalCount: 0, rate: null },
         duplicateMention: { matchedCount: 0, totalCount: 0, rate: null },
@@ -288,6 +326,7 @@ describe('ThroughputStats', () => {
     const panel = await screen.findByLabelText('ハーネスKPI');
     expect(within(panel).getByText('— / —')).toBeInTheDocument();
     expect(within(panel).getByText('0回 / —')).toBeInTheDocument();
+    expect(within(panel).getByText('0件 / —')).toBeInTheDocument();
     expect(within(panel).getAllByText('0件 / 0件 (—)')).toHaveLength(2);
   });
 

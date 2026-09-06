@@ -63,6 +63,17 @@ export function formatDurationMs(ms: number | null): string {
   return `${(ms / DAY_MS).toFixed(1)}日`;
 }
 
+/**
+ * 件数の表示。null は「測れなかった」(git を読めなかった等) として NO_VALUE_LABEL
+ * にする。0 件と区別するため、0 は '0件' のまま出す (bdboard-t3ct M2)。
+ */
+export function formatCount(count: number | null): string {
+  if (count === null || !Number.isFinite(count)) {
+    return NO_VALUE_LABEL;
+  }
+  return `${count}件`;
+}
+
 /** 0〜1 の比率を百分率に。null は NO_VALUE_LABEL。 */
 export function formatRatePercent(rate: number | null): string {
   if (rate === null || !Number.isFinite(rate)) {

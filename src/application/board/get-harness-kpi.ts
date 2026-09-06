@@ -1,4 +1,5 @@
 import { getBoardTimeZone } from '../../config/board-timezone.js';
+import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import {
   computeHarnessKpi,
   type HarnessKpi,
@@ -19,12 +20,27 @@ export interface GetHarnessKpiOptions {
   readonly reclaimSince?: Date;
   /** 出力を読めず履歴に積めなかった reclaim 実行の回数 */
   readonly reclaimUnparsedRunCount?: number;
+  /**
+   * 誤回収件数 (reclaimedLiveWorktreeCount) 用の git worktree/branch スキャン結果
+   * (scanGitLeftovers)。未指定なら 0 になる (bdboard-t3ct)。
+   */
+  readonly leftoverCandidates?: readonly LeftoverCandidate[];
+  /**
+   * leftoverCandidates が git を最後まで読めた完全なスキャン結果かどうか
+   * (`scanGitLeftovers().complete`)。省略時は true (bdboard-t3ct 以前の呼び出し元
+   * との互換)。false なら DTO 変換 (toHarnessKpiDto) が reclaimedLiveWorktreeCount /
+   * Rate を null に上書きする — 「0件」と「読めなかった」を混同しないため
+   * (bdboard-t3ct M2)。
+   */
+  readonly leftoverScanComplete?: boolean;
 }
 
 export interface HarnessKpiStats {
   readonly kpi: HarnessKpi;
   readonly reclaimSince: Date | null;
   readonly reclaimUnparsedRunCount: number;
+  /** GetHarnessKpiOptions.leftoverScanComplete を参照。 */
+  readonly leftoverScanComplete: boolean;
 }
 
 const DEFAULT_WEEKS = 8;
@@ -60,6 +76,17 @@ function filterReclaimRuns(
   return runs.filter((run) => projectIdFilter.has(run.projectId));
 }
 
+/** filterReclaimRuns と同じ理由で、leftoverCandidates にも同じ絞り込みを掛ける。 */
+function filterLeftoverCandidates(
+  candidates: readonly LeftoverCandidate[],
+  projectIdFilter?: ReadonlySet<string>,
+): readonly LeftoverCandidate[] {
+  if (projectIdFilter === undefined) {
+    return candidates;
+  }
+  return candidates.filter((candidate) => projectIdFilter.has(candidate.projectId));
+}
+
 /**
  * ハーネス KPI (docs/HARNESS-EVALUATION.md §4.4 / §5 P4)。
  *
@@ -86,11 +113,20 @@ export function getHarnessKpi(
     ...(options?.reclaimRuns !== undefined
       ? { reclaimRuns: filterReclaimRuns(options.reclaimRuns, projectIdFilter) }
       : {}),
+    ...(options?.leftoverCandidates !== undefined
+      ? {
+          leftoverCandidates: filterLeftoverCandidates(
+            options.leftoverCandidates,
+            projectIdFilter,
+          ),
+        }
+      : {}),
   });
 
   return {
     kpi,
     reclaimSince: options?.reclaimSince ?? null,
     reclaimUnparsedRunCount: options?.reclaimUnparsedRunCount ?? 0,
+    leftoverScanComplete: options?.leftoverScanComplete ?? true,
   };
 }

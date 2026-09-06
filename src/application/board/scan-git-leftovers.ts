@@ -12,32 +12,70 @@ const PROJECT_SCAN_CONCURRENCY = 3;
 export interface ScanGitLeftoversOptions {
   /** 取得失敗の警告ログ。未指定なら console.warn (discover-projects と同じ注入流儀)。 */
   readonly logWarn?: (message: string) => void;
+  /**
+   * 取得失敗の警告文を組み立てる関数。未指定なら hygiene パネル向けの既定文言
+   * ("... missing from the panel")。呼び出し元の画面がそれ以外なら文言を
+   * 差し替える (m4, bdboard-t3ct) — 例えば harness-kpi ルートは統計タブの
+   * 誤回収件数への影響を書いた文言を渡す。
+   */
+  readonly describeFailure?: (
+    failures: readonly FetchFailure[],
+    totalCount: number,
+  ) => string;
+}
+
+export interface ScanGitLeftoversResult {
+  readonly candidates: readonly LeftoverCandidate[];
+  /**
+   * 全プロジェクトぶん git を最後まで読めたか。1件でも取得失敗 (throw) か
+   * `snapshot.complete === false` (git-worktree-scanner.ts がコマンド失敗を
+   * throw せず畳んだもの) があれば false。
+   *
+   * `candidates` はどちらの場合も「読めた範囲」で返す (hygiene パネルはそれで
+   * 十分、`false` == 存在しない ではないだけ)。だが誤回収 KPI
+   * (harness-kpi ルート, bdboard-t3ct M2) のように「0件」と「読めなかった」を
+   * 混同できない呼び出し元は、この `complete` を見て自分の出力を null にする。
+   */
+  readonly complete: boolean;
+}
+
+function defaultDescribeFailure(
+  failures: readonly FetchFailure[],
+  totalCount: number,
+): string {
+  return (
+    '[hygiene] could not scan git worktrees for some projects; leftovers there are missing from the panel. ' +
+    describeFetchFailures(failures, totalCount)
+  );
 }
 
 export async function scanGitLeftovers(
   projects: readonly Project[],
   scanner: WorktreeScanner,
   options?: ScanGitLeftoversOptions,
-): Promise<readonly LeftoverCandidate[]> {
+): Promise<ScanGitLeftoversResult> {
   const result: LeftoverCandidate[] = [];
   const failures: FetchFailure[] = [];
+  let complete = true;
 
   await runWithConcurrencyLimit(projects, PROJECT_SCAN_CONCURRENCY, async (project) => {
     try {
       const snapshot = await scanner.scan(project.rootPath);
+      if (!snapshot.complete) {
+        complete = false;
+      }
       result.push(...collectLeftoverCandidates(project.id, project.rootPath, snapshot));
     } catch (error) {
+      complete = false;
       failures.push({ id: project.id, error });
     }
   });
 
   if (failures.length > 0) {
     const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
-    logWarn(
-      '[hygiene] could not scan git worktrees for some projects; leftovers there are missing from the panel. ' +
-        describeFetchFailures(failures, projects.length),
-    );
+    const describeFailure = options?.describeFailure ?? defaultDescribeFailure;
+    logWarn(describeFailure(failures, projects.length));
   }
 
-  return result;
+  return { candidates: result, complete };
 }
