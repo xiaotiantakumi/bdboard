@@ -78,6 +78,11 @@ const HARNESS_CONTRACT_KIND_LABEL = '検証コントラクト';
 const HARNESS_HOOKS_KIND_LABEL = 'hook 未登録';
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
+/**
+ * stale lease が 0 件でも reclaim の見送り/エラーがあるときに単独で出す欄の種別ラベル。
+ * stale lease 行の補足として出るときと違い、見出しが無いと何の欄か読めない (bdboard-0xsw)。
+ */
+const RECLAIM_STATUS_KIND_LABEL = '自動 reclaim';
 
 export const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
   dependency_cycle: '循環依存',
@@ -272,6 +277,18 @@ function filterReclaimProjects(
   return projects.filter((project) => filterSet.has(project.projectId));
 }
 
+function selectReclaimProblemProjects(
+  reclaimProjects: readonly ReclaimProjectStatusDto[],
+  reclaimEnabled: boolean,
+): readonly ReclaimProjectStatusDto[] {
+  if (!reclaimEnabled) {
+    return [];
+  }
+  return reclaimProjects.filter(
+    (project) => project.reclaimedCountUnknown || project.lastError !== null,
+  );
+}
+
 function formatReclaimProjectLine(status: ReclaimProjectStatusDto): string {
   const parts: string[] = [];
   if (status.lastRunAt !== null) {
@@ -285,6 +302,36 @@ function formatReclaimProjectLine(status: ReclaimProjectStatusDto): string {
     parts.push(`回収 ${status.reclaimedCount}件`);
   }
   return parts.join(' / ');
+}
+
+function ReclaimProjectLines({
+  projects,
+}: {
+  readonly projects: readonly ReclaimProjectStatusDto[];
+}) {
+  return projects.map((projectStatus) => {
+    // 見送り理由 (skipped: …) や回収要約。これが無いと「回収件数不明」
+    // の原因が /api/lease-health の JSON を直接見ないと分からない。
+    const summary = projectStatus.rawSummary?.trim() ?? '';
+    return (
+      <p key={projectStatus.projectId}>
+        <span>{projectStatus.projectId}: </span>
+        <span>{formatReclaimProjectLine(projectStatus)}</span>
+        {summary.length > 0 && (
+          <span className="hygiene-reclaim-status-summary">
+            {' / '}
+            {summary}
+          </span>
+        )}
+        {projectStatus.lastError !== null && (
+          <span className="hygiene-reclaim-status-error">
+            {' '}
+            / エラー: {projectStatus.lastError}
+          </span>
+        )}
+      </p>
+    );
+  });
 }
 
 export function HygienePanel({
@@ -492,6 +539,11 @@ export function HygienePanel({
     leaseHealthQuery.data,
     projectIds,
   );
+  const reclaimEnabled = leaseHealthQuery.data?.reclaim.enabled !== false;
+  const reclaimProblemProjects = selectReclaimProblemProjects(
+    reclaimProjects,
+    reclaimEnabled,
+  );
   const isLoading =
     query.isLoading ||
     harnessDriftQuery.isLoading ||
@@ -518,6 +570,7 @@ export function HygienePanel({
     harnessContractItems.length > 0 ||
     harnessHooksItems.length > 0 ||
     staleLeases.length > 0 ||
+    reclaimProblemProjects.length > 0 ||
     heldMergeSlots.length > 0;
 
   return (
@@ -583,34 +636,39 @@ export function HygienePanel({
                     </span>
                   </button>
                 ))}
-                <div className="hygiene-reclaim-status" aria-label="自動 reclaim 状況">
-                  {leaseHealthQuery.data?.reclaim.enabled === false ? (
+                <div
+                  className="hygiene-reclaim-status"
+                  role="group"
+                  aria-label="自動 reclaim 状況"
+                >
+                  {!reclaimEnabled ? (
                     <p>自動 reclaim は無効です</p>
                   ) : (
-                    reclaimProjects.map((projectStatus) => {
-                      // 見送り理由 (skipped: …) や回収要約。これが無いと「回収件数不明」
-                      // の原因が /api/lease-health の JSON を直接見ないと分からない。
-                      const summary = projectStatus.rawSummary?.trim() ?? '';
-                      return (
-                        <p key={projectStatus.projectId}>
-                          <span>{projectStatus.projectId}: </span>
-                          <span>{formatReclaimProjectLine(projectStatus)}</span>
-                          {summary.length > 0 && (
-                            <span className="hygiene-reclaim-status-summary">
-                              {' / '}
-                              {summary}
-                            </span>
-                          )}
-                          {projectStatus.lastError !== null && (
-                            <span className="hygiene-reclaim-status-error">
-                              {' '}
-                              / エラー: {projectStatus.lastError}
-                            </span>
-                          )}
-                        </p>
-                      );
-                    })
+                    <ReclaimProjectLines projects={reclaimProjects} />
                   )}
+                </div>
+              </div>
+            </li>
+          )}
+          {staleLeases.length === 0 && reclaimProblemProjects.length > 0 && (
+            <li key="reclaim-status">
+              {/* レイアウト (縦並び + 6px 間隔) は stale lease グループと共用する。 */}
+              <div className="hygiene-stale-lease-group">
+                <div className="hygiene-issue-row hygiene-issue-row-static">
+                  <span className="hygiene-kind-badge hygiene-kind-stale_lease">
+                    {RECLAIM_STATUS_KIND_LABEL}
+                  </span>
+                  <span className="badge badge-stalled">警告</span>
+                  <span className="hygiene-issue-message">
+                    巡回の見送り・エラーがあります
+                  </span>
+                </div>
+                <div
+                  className="hygiene-reclaim-status"
+                  role="group"
+                  aria-label="自動 reclaim 状況"
+                >
+                  <ReclaimProjectLines projects={reclaimProblemProjects} />
                 </div>
               </div>
             </li>
