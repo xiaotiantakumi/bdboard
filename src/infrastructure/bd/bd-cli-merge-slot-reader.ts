@@ -16,7 +16,8 @@ export interface BdCliMergeSlotReaderOptions {
   readonly timeoutMs?: number;
 }
 
-const bdMergeSlotItemSchema = z.object({
+// e2e fixture の契約テスト (e2e-fixtures-contract.test.ts, bdboard-0rch) から参照するため export する。
+export const bdMergeSlotItemSchema = z.object({
   id: z.string(),
   status: z.string(),
   updated_at: z.string(),
