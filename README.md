@@ -139,6 +139,13 @@ loopback 接続をローカル直アクセスとみなす認証免除の前提�
 `.env` ファイル(git 管理外)を置くと `npm run dev` / `npm run start` / `bdboard` が自動で読み込む
 (`tsx --env-file-if-exists=.env`)。雛形は `.env.example` を参照(認証用の2変数のみ)。
 
+### このリポジトリ自身の bd チケット履歴について
+
+このリポジトリ自身の課題管理(bd/beads)は、メンテナのローカル環境だけで行っている。
+clone した直後に `.beads/` ディレクトリが無いのは正常で、追加で取得すべきものは無い
+(bdboard がスキャンする対象プロジェクトの `.beads/` とは別の話)。バグ報告や機能提案・
+コード変更は GitHub の Issues / Pull Requests で受け付けている。
+
 ## Quick tour
 
 起動できたら、最初はだいたい次のような流れで触ってみるとひととおりの機能に触れられる。

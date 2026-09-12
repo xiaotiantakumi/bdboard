@@ -20,7 +20,7 @@ permissions:
   issues: write
   pull-requests: write
 
-# main への push は squash マージ以外にも chore(beads) 直コミット等で重なりうる。
+# main への push は squash マージ以外にも CI 復旧コミット等で重なりうる。
 # release-please のリリース処理は Release 作成 -> ラベル付替え の多段 API 呼び出しなので、
 # 途中でキャンセルされると「Release は作られたがラベルが autorelease: pending のまま」という
 # 中途半端な状態になる (次回 run が DuplicateReleaseError を検知して自己修復はするが、

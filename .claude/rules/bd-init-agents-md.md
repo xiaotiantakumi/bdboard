@@ -65,29 +65,34 @@ Check specifically for:
    Reference blocks inside the managed blocks — losing it
    reopens the bdboard-9k3 merge-slot mis-claim failure mode.
 2. **No unconfirmed push/sync command** (`bd dolt push`, `bd dolt push
-   --remote legacy`, etc.) was added to the Session Completion / git-handling
+   --remote <name>`, etc.) was added to the Session Completion / git-handling
    steps without a confirmation gate.
+3. **Root `.gitignore` still ignores `/.beads/`** — `bd init`/`bd setup` can
+   rewrite `.gitignore` as part of its own scaffolding; confirm the
+   bdboard-specific `/.beads/` line survived the run.
 
-If either check fails, hand-restore the customized wording before
+If any check fails, hand-restore the customized wording before
 committing. Do not `git add`/commit an unreviewed `bd init` diff.
 
 **Alignment with the direct-to-main ban:** `bd init` can autocommit straight
 to whatever branch happens to be checked out — on 2026-08-17 it produced two
 commits directly on `main` on a separate machine (bdboard-ejz), one
-rewriting AGENTS.md and one adjusting `.beads/config.yaml`. The Git Workflow
-section of AGENTS.md bans direct-to-main commits except `chore(beads): ...` commits
-that touch **only** `.beads/`. A `bd init` commit that touches AGENTS.md (or
-any other non-`.beads/` file) does not qualify for that exception even when a
-sibling commit from the same `bd init` run is `.beads/`-only — each commit is
-judged on its own diff. Practically:
+rewriting AGENTS.md and one adjusting `.beads/config.yaml`. At the time, the
+Git Workflow section of AGENTS.md banned direct-to-main commits except a
+`chore(beads): ...` exception for commits that touched **only** `.beads/`.
+**That exception no longer exists**: `.beads/` is not git-tracked in this
+repo (see root `.gitignore`), so a `bd init` run cannot produce a
+`.beads/`-only commit here any more — any commit it makes now needs the
+normal branch + PR flow like every other change. A `bd init` commit that
+touches AGENTS.md (or any other tracked file) never qualified for the old
+exception even when a sibling commit from the same run was `.beads/`-only —
+each commit was judged on its own diff. Practically:
 
 - Never let `bd init` run with `main` checked out. Run it on a feature
   branch or inside a per-ticket worktree first, review the diff per the
   checklist above, then land it through the normal PR flow.
-- If it already ran directly on `main` (as happened here) before push: keep
-  or cherry-pick any commit that touches only `.beads/` through the existing
-  `chore(beads)` exception, but re-route any commit touching AGENTS.md (or
-  other non-`.beads/` files) through a normal `bd/<ticket-id>` branch + PR
-  instead of pushing it straight — e.g. extract the diff with `git show
-  <sha> -- AGENTS.md` and apply it on a fresh branch, or reset/revert the
-  non-`.beads/` commit off `main` before it is ever pushed.
+- If it already ran directly on `main`: re-route any commit touching
+  AGENTS.md (or other tracked files) through a normal `bd/<ticket-id>`
+  branch + PR instead of pushing it straight — e.g. extract the diff with
+  `git show <sha> -- AGENTS.md` and apply it on a fresh branch, or
+  reset/revert the commit off `main` before it is ever pushed.

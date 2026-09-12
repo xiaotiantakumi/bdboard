@@ -163,9 +163,8 @@ fi
 case "$BRANCH" in
   bd/*)
     deny \
-      "bdboard-harness: PR ブランチ ($BRANCH) では .beads/ を変更できません — CI のガードステップが落ちます。" \
-      '.beads/ の変更は main への chore(beads) 直コミット例外だけで扱ってください。' \
-      'チケット操作は bd コマンド経由で行い、このブランチではファイルを直接編集しないでください。'
+      "bdboard-harness: PR ブランチ ($BRANCH) では .beads/ を変更できません。" \
+      '.beads/ は PR に含めない。台帳の変更は bd コマンド経由で行う（ファイルを直接編集・コミットしない）。'
     ;;
 esac
 

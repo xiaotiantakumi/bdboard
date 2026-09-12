@@ -1,9 +1,11 @@
 
-# Beads / Dolt files (added by bd init)
+# Beads / Dolt files (added by bd init).
 .dolt/
 *.db
 .beads-credential-key
-.beads/proxieddb/
+
+# bdboard-specific: this repo's own bd issue tracking is not git-tracked here.
+/.beads/
 
 # Node / build artifacts
 node_modules/
