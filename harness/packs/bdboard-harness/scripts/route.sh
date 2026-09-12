@@ -7,6 +7,12 @@
 # member:model を候補順に 1 行ずつ返す。契約/models/stage/セル不在は無出力 exit 0。
 # 不正入力は無出力 exit 1 + stderr、引数不正は exit 2。モデルの実行は呼び出し側の責務。
 #
+# bash scripts/route.sh --excluded <stage> <complexity> (bdboard-p5l.22): 同じ契約を
+# 同じ検証で読み、セルを引けた (宣言されていて妥当な) ときだけ、有効な除外の member を
+# 宣言順・重複なしで 1 行ずつ返す (そのセルの候補に居るかは問わない — 除外は routes
+# 全体に効くため)。契約/models/stage/セル不在は通常モードと同じく無出力 exit 0。
+# 通常モードの出力はこのオプションの追加で一切変わらない。
+#
 # models.exclude (bdboard-p5l.20): until (YYYY-MM-DD) が今日以降の entry を「有効な
 # 除外」として member を候補列から落としてから出力する。期限切れ entry は自動で無視
 # (TypeScript 側 domain/harness-contract.ts の isModelExcludeActive と同じ判定 —
@@ -14,11 +20,17 @@
 # valid とみなす契約に限る — until が不正な文字列 (YYYY-MM-DD でない) のとき、shell
 # は文字列の辞書順比較をそのまま行うため実質永久に除外され続けるが、TS 側はパース時点
 # で invalid として弾く。両者が一致するのは「TS が valid と認める until」の範囲だけ)。
-# 除外で候補が全部落ちても
-# ここでは無出力 exit 0 (「候補なし」と同じ形) — セル空の警告は Hygiene 側の責務で、
-# route.sh / pre-bash-guard.sh は「候補が空なら fail-open で素通り」という既存の
-# 契約を変えない。exclude entry 自体が壊れている (member/until が文字列でない等) 場合は
-# その entry だけ無視する (契約全体は壊さない — 壊れた exclude で振り分け機能そのものが
+# 除外で候補が全部落ちても通常モードは無出力 exit 0 (「候補なし」と同じ形) のまま。通常モードの出力だけでは
+# 「宣言されていないセル (意見なし)」と「宣言されていたが除外で空になったセル」を
+# 呼び出し側が区別できないので、後者は --excluded で除外中の member を別に問い合わせる
+# (pre-bash-guard.sh 規則6 は候補が空のときだけこれを引き、除外中の member を名指しした
+# 委譲を deny、それ以外の member は従来どおり fail-open で通す)。
+# exclude entry 自体が壊れている (member/until が文字列でない等) 場合は
+# その entry だけ無視する。member が TS 側 MODEL_EXCLUDE_MEMBER_PATTERN
+# (^[a-z][a-z0-9-]{0,15}$) に合わない entry も同様に無視する — --excluded の出力は
+# 1 行 1 member なので、改行入りの member が別の member 名に化けるのを防ぐ
+# (bdboard-p5l.22。TS はこの形を契約ごと invalid にする)。
+# (契約全体は壊さない — 壊れた exclude で振り分け機能そのものが
 # 止まるのは過剰反応)。
 #
 # 依存: bash(3.2 互換) と jq または python3。jq を優先し、両方無ければ診断して
@@ -29,9 +41,16 @@ set -uo pipefail
 LC_ALL=C; export LC_ALL
 
 usage() {
-  printf '%s\n' 'usage: bash route.sh <stage> <low|med|high>' >&2
+  printf '%s\n' 'usage: bash route.sh [--excluded] <stage> <low|med|high>' >&2
   exit 2
 }
+
+# 出力モード。candidates (既定) はセルの残り候補、excluded は有効な除外の member。
+output_mode='candidates'
+if [[ $# -ge 1 && "$1" == '--excluded' ]]; then
+  output_mode='excluded'
+  shift
+fi
 
 [[ $# -eq 2 ]] || usage
 stage="$1"
@@ -70,7 +89,8 @@ fi
 read_candidates() {
   if [[ "$json_tool" == 'jq' ]]; then
     jq -rs --arg stage "$stage" --arg complexity "$complexity" \
-      --arg pattern "$candidate_pattern" --arg today "$today" '
+      --arg pattern "$candidate_pattern" --arg today "$today" \
+      --arg mode "$output_mode" '
       def object:
         if type == "object" then . else error("expected object") end;
       if length == 1 then .[0] else error("expected one JSON document") end
@@ -83,6 +103,7 @@ read_candidates() {
           | if type == "array" then . else [] end
           | map(select(type == "object"))
           | map(select((.member|type) == "string" and (.until|type) == "string"))
+          | map(select(.member | test("^[a-z][a-z0-9-]{0,15}\\z")))
           | map(select(.until >= $today))
           | map(.member)
         ) as $active_excluded
@@ -103,10 +124,18 @@ read_candidates() {
            . != "claude:opus" and . != "claude:fable")) then error("invalid claude model")
         elif (unique | length) != length then error("duplicate candidate")
         else . end
-      # 除外された member を候補列から落とし、残りの候補で解決する (bdboard-p5l.20)。
-      # 全部落ちても無出力 exit 0 (「候補なし」と同じ形) — セル空の警告は Hygiene 側。
-      | map(select( (split(":")[0]) as $m | ($active_excluded | index($m)) == null ))
-      | .[]
+      # --excluded (bdboard-p5l.22): セルを引けて検証も通ったときだけ、有効な除外の
+      # member を宣言順・重複なしで返す。
+      | if $mode == "excluded" then
+          ( $active_excluded
+            | reduce .[] as $m ([]; if any(.[]; . == $m) then . else . + [$m] end)
+            | .[] )
+        else
+          # 除外された member を候補列から落とし、残りの候補で解決する (bdboard-p5l.20)。
+          # 全部落ちても無出力 exit 0 (「候補なし」と同じ形) — セル空の警告は Hygiene 側。
+          ( map(select( (split(":")[0]) as $m | ($active_excluded | index($m)) == null ))
+            | .[] )
+        end
     ' "$contract_path"
   else
     python3 -c '
@@ -131,12 +160,13 @@ if "models" not in document:
     sys.exit(0)
 models = object_value(document["models"])
 routes = object_value(models.get("routes"))
-stage, complexity, pattern, today = sys.argv[2:]
+stage, complexity, pattern, today, mode = sys.argv[2:]
 
 # models.exclude (bdboard-p5l.20): 壊れた entry は個別に無視する (TypeScript 側
 # domain/harness-contract.ts の isModelExcludeActive と同じ判定: until を含む当日
 # まで有効・固定長 YYYY-MM-DD の辞書順比較)。
-active_excluded = set()
+# 宣言順・重複なしのリスト (--excluded の出力順を jq 経路と揃えるため set にしない)。
+active_excluded = []
 exclude_raw = models.get("exclude")
 if isinstance(exclude_raw, list):
     for entry in exclude_raw:
@@ -146,8 +176,10 @@ if isinstance(exclude_raw, list):
         until = entry.get("until")
         if not isinstance(member, str) or not isinstance(until, str):
             continue
-        if until >= today:
-            active_excluded.add(member)
+        if re.fullmatch(r"[a-z][a-z0-9-]{0,15}", member) is None:
+            continue
+        if until >= today and member not in active_excluded:
+            active_excluded.append(member)
 
 if stage not in routes:
     sys.exit(0)
@@ -169,12 +201,18 @@ for candidate in candidates:
         raise ValueError("invalid claude model")
 if len(set(candidates)) != len(candidates):
     raise ValueError("duplicate candidate")
+# --excluded (bdboard-p5l.22): セルを引けて検証も通ったときだけ、有効な除外の
+# member を宣言順・重複なしで返す。
+if mode == "excluded":
+    if active_excluded:
+        sys.stdout.write("\n".join(active_excluded) + "\n")
+    sys.exit(0)
 # 除外された member を候補列から落とし、残りの候補で解決する (bdboard-p5l.20)。
 # 全部落ちても無出力 exit 0 (「候補なし」と同じ形) — セル空の警告は Hygiene 側。
 remaining = [c for c in candidates if c.split(":", 1)[0] not in active_excluded]
 if remaining:
     sys.stdout.write("\n".join(remaining) + "\n")
-' "$contract_path" "$stage" "$complexity" "$candidate_pattern" "$today"
+' "$contract_path" "$stage" "$complexity" "$candidate_pattern" "$today" "$output_mode"
   fi
 }
 

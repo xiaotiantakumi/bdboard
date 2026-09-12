@@ -34,7 +34,7 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
-| 6 | `aimix run --mode implement` / `--mode refactor` で、`models.routes` の該当セルを引けたのに `--model` が無い、または `<member>:<model>` がそのセルの候補でない | `scripts/route.sh <工程> <low\|med\|high>` で候補を引いて渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
+| 6 | `aimix run --mode implement` / `--mode refactor` で、`models.routes` の該当セルを引けたのに `--model` が無い、または `<member>:<model>` がそのセルの候補でない。セルが `models.exclude` で候補 0 件になっている場合は、`--member` が除外中の member のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引いて渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
 判定する。列全体をまとめて見ると `bd dolt push --remote backup; bd dolt push` や
@@ -99,11 +99,16 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」に�
 
 #### fail-open する条件
 
-deny してよいのは「セルの候補を実際に取れて、そこに無かった」ときだけ。次はすべて素通り:
+deny してよいのは「セルの候補を実際に取れて、そこに無かった」ときと、「宣言されている
+セルが `models.exclude` で候補 0 件になっていて、`--member` が除外中の member だった」
+とき (`route.sh --excluded` で判定。bdboard-p5l.22) だけ。次はすべて素通り:
 
 - `scripts/route.sh` が読めない。
 - `route.sh` が非 0 で終わる — 契約の JSON が不正 (exit 1)、jq も python3 も無い (exit 127)。
 - `route.sh` の出力が空 — 契約に `models` 節が無い / その工程が無い / そのセルが無い。
+- 除外で候補 0 件になったセルで、`--member` が除外中の member ではない (空セルを全面
+  deny にすると、枠逼迫の退避がそのセルの委譲の全停止になるため)。`route.sh --excluded`
+  が非 0 で終わったときも判定しない。
 - `--member` が読めない、または `--complexity` が `low` / `med` / `high` でない
   (大文字小文字は区別する。`--complexity LOW` は素通りする)。
   **complexity 未記録を deny にするかは Phase 2 (bdboard-p5l.19) の観測結果で決める話**で、
@@ -111,7 +116,8 @@ deny してよいのは「セルの候補を実際に取れて、そこに無か
 
 `--model` の必須チェックも**この fail-open の後ろ**にある。順序は
 mode ゲート → エスケープハッチ → `--member` / `--complexity` → `route.sh` →
-`--model` 必須 → セル所属照合。
+(候補が空なら `route.sh --excluded` で除外中 member の照合) → `--model` 必須 →
+セル所属照合。
 
 #### エスケープハッチ
 

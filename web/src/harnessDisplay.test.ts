@@ -298,11 +298,11 @@ describe('formatHarnessContractDetail with models', () => {
         mainBranch: 'main',
         models: null,
         expiredExcludeCount: 1,
-        modelExclusionWarnings: ['models.routes.implement.low: 除外 (cursor) により候補が 0 件になりました'],
+        modelExclusionWarnings: ['models.routes.implement.low: 除外 (cursor) により候補が 0 件になりました (hook は除外中の member の委譲を止め、他の member は表の判定なしで通します)'],
       }),
     ).toBe(
       '検証: npm run verify / PR 必須 / main: main / 期限切れの除外が 1 件 / ' +
-        'models.routes.implement.low: 除外 (cursor) により候補が 0 件になりました',
+        'models.routes.implement.low: 除外 (cursor) により候補が 0 件になりました (hook は除外中の member の委譲を止め、他の member は表の判定なしで通します)',
     );
   });
 });
@@ -345,7 +345,7 @@ describe('harnessContractNeedsAttention with model exclusions', () => {
         mainBranch: 'main',
         models: null,
         expiredExcludeCount: 0,
-        modelExclusionWarnings: ['models.routes.review.low: 除外 (cursor) により候補が 0 件になりました'],
+        modelExclusionWarnings: ['models.routes.review.low: 除外 (cursor) により候補が 0 件になりました (hook は除外中の member の委譲を止め、他の member は表の判定なしで通します)'],
       }),
     ).toBe(true);
   });

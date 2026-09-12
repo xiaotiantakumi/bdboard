@@ -705,102 +705,260 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
      * 「route.sh 単体の出力」と「guard 経由の allow/deny」を同じ契約に対して
      * 突き合わせ、二重実装のズレ (TS 側 isModelExcludeActive との差異含む) が
      * 無いことを示す。
+     *
+     * route.sh は jq を優先し、無ければ python3 で読む。除外判定は両分岐に別々に
+     * 書かれているので、同じケースを両方で回す (bdboard-p5l.22)。python3 分岐は
+     * jq を張らない専用 PATH (noJqEnv) で強制し、実際にどちらを通ったかは
+     * 不正な表を読ませたときの `(via <tool>)` で確かめる。
      */
-    describe('models.exclude (bdboard-p5l.20)', () => {
-      it('route.sh drops an actively-excluded member from the candidates', async () => {
-        writeContract({
-          mainBranch: 'main',
-          models: {
-            routes: ROUTES,
-            exclude: [{ member: 'cursor', until: '2999-01-01', reason: 'レートリミット逼迫' }],
-          },
+    // jq 側は通常の PATH で走らせ、jq が無い環境では skip せずに落とす (jq はこの
+    // テストの必須依存)。skip や python3 への黙った縮退を許すと、jq 分岐を検証した
+    // つもりで python3 分岐を 2 回回すだけになる — 下の `(via jq)` テストがその番人。
+    for (const jsonTool of ['jq', 'python3'] as const) {
+      describe(`models.exclude (bdboard-p5l.20 / p5l.22) via ${jsonTool}`, () => {
+        beforeEach(async () => {
+          if (jsonTool === 'python3') {
+            env = await noJqEnv();
+          }
         });
 
-        const result = await runRoute('implement', 'med');
+        it(`route.sh actually resolves through ${jsonTool}`, async () => {
+          writeContract({ mainBranch: 'main', models: { routes: { implement: { high: [] } } } });
 
-        expect(result.exitCode).toBe(0);
-        const lines = result.stdout.trim().split('\n').filter(Boolean);
-        expect(lines).toContain('codex:gpt-5.6-terra');
-        expect(lines).not.toContain('cursor:composer-2.5');
-      });
+          const result = await runRoute('implement', 'high');
 
-      it('guard denies the actively-excluded member with the same "not in cell" message', async () => {
-        writeContract({
-          mainBranch: 'main',
-          models: {
-            routes: ROUTES,
-            exclude: [{ member: 'cursor', until: '2999-01-01', reason: 'レートリミット逼迫' }],
-          },
+          expect(result.exitCode).toBe(1);
+          expect(result.stdout).toBe('');
+          expect(result.stderr).toContain(`(via ${jsonTool})`);
         });
 
-        const result = await guard(
-          'aimix run --mode implement --member cursor --model composer-2.5 --complexity med',
-        );
+        it('route.sh drops an actively-excluded member from the candidates', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [{ member: 'cursor', until: '2999-01-01', reason: 'レートリミット逼迫' }],
+            },
+          });
 
-        expect(result.exitCode).toBe(2);
-        expect(result.stderr).toContain('cursor:composer-2.5');
-        expect(result.stderr).toContain('implement/med');
-      });
+          const result = await runRoute('implement', 'med');
 
-      it('guard still allows the remaining candidate in the same cell', async () => {
-        writeContract({
-          mainBranch: 'main',
-          models: {
-            routes: ROUTES,
-            exclude: [{ member: 'cursor', until: '2999-01-01', reason: 'レートリミット逼迫' }],
-          },
+          expect(result.exitCode).toBe(0);
+          const lines = result.stdout.trim().split('\n').filter(Boolean);
+          expect(lines).toContain('codex:gpt-5.6-terra');
+          expect(lines).not.toContain('cursor:composer-2.5');
         });
 
-        const result = await guard(
-          'aimix run --mode implement --member codex --model gpt-5.6-terra --complexity med',
-        );
+        it('guard denies the actively-excluded member with the same "not in cell" message', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [{ member: 'cursor', until: '2999-01-01', reason: 'レートリミット逼迫' }],
+            },
+          });
 
-        expect(result.exitCode).toBe(0);
-        expect(result.stderr).toBe('');
-      });
+          const result = await guard(
+            'aimix run --mode implement --member cursor --model composer-2.5 --complexity med',
+          );
 
-      it('an expired exclude is ignored by both route.sh and the guard', async () => {
-        writeContract({
-          mainBranch: 'main',
-          models: {
-            routes: ROUTES,
-            exclude: [{ member: 'cursor', until: '2000-01-01', reason: '期限切れ' }],
-          },
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('cursor:composer-2.5');
+          expect(result.stderr).toContain('implement/med');
         });
 
-        const routeResult = await runRoute('implement', 'med');
-        expect(routeResult.exitCode).toBe(0);
-        expect(routeResult.stdout.trim().split('\n').filter(Boolean)).toContain(
-          'cursor:composer-2.5',
-        );
+        it('guard still allows the remaining candidate in the same cell', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [{ member: 'cursor', until: '2999-01-01', reason: 'レートリミット逼迫' }],
+            },
+          });
 
-        const guardResult = await guard(
-          'aimix run --mode implement --member cursor --model composer-2.5 --complexity med',
-        );
-        expect(guardResult.exitCode).toBe(0);
-        expect(guardResult.stderr).toBe('');
-      });
+          const result = await guard(
+            'aimix run --mode implement --member codex --model gpt-5.6-terra --complexity med',
+          );
 
-      it('fails open when exclusion empties the cell, on both route.sh and the guard', async () => {
-        writeContract({
-          mainBranch: 'main',
-          models: {
-            routes: ROUTES,
-            exclude: [{ member: 'codex', until: '2999-01-01', reason: '枠逼迫' }],
-          },
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
         });
 
-        const routeResult = await runRoute('implement', 'high');
-        expect(routeResult.exitCode).toBe(0);
-        expect(routeResult.stdout.trim()).toBe('');
+        it('an expired exclude is ignored by both route.sh and the guard', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [{ member: 'cursor', until: '2000-01-01', reason: '期限切れ' }],
+            },
+          });
 
-        const guardResult = await guard(
-          'aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high',
-        );
-        expect(guardResult.exitCode).toBe(0);
-        expect(guardResult.stderr).toBe('');
+          const routeResult = await runRoute('implement', 'med');
+          expect(routeResult.exitCode).toBe(0);
+          expect(routeResult.stdout.trim().split('\n').filter(Boolean)).toContain(
+            'cursor:composer-2.5',
+          );
+
+          const guardResult = await guard(
+            'aimix run --mode implement --member cursor --model composer-2.5 --complexity med',
+          );
+          expect(guardResult.exitCode).toBe(0);
+          expect(guardResult.stderr).toBe('');
+        });
+
+        /**
+         * bdboard-p5l.22: 除外で候補が 0 件になったセル。route.sh の通常出力は空で
+         * 「宣言されていないセル」と区別できないので、guard は route.sh --excluded で
+         * 除外中の member を問い合わせ、名指しされたらそこで deny する。
+         */
+        describe('a cell emptied by exclusion', () => {
+          const EXCLUDE = [
+            { member: 'codex', until: '2999-01-01', reason: '枠逼迫' },
+            // 同じ member の重複 entry と、セルに居ない member。--excluded は routes
+            // 全体に効く有効な除外を宣言順・重複なしで返す。
+            { member: 'codex', until: '2999-02-01' },
+            { member: 'gemini', until: '2999-01-01' },
+            // 期限切れ・壊れた entry は --excluded にも出ない。
+            { member: 'cursor', until: '2000-01-01' },
+            { member: 42, until: '2999-01-01' },
+            // TS の member 形式に合わない entry (改行入りで別 member 名に化けうる) も無視。
+            { member: 'bad\ncursor', until: '2999-01-01' },
+            { member: 'Codex', until: '2999-01-01' },
+            'not-an-object',
+          ];
+
+          beforeEach(() => {
+            writeContract({ mainBranch: 'main', models: { routes: ROUTES, exclude: EXCLUDE } });
+          });
+
+          it('route.sh prints nothing, and --excluded lists the active excluded members', async () => {
+            const routeResult = await runRoute('implement', 'high');
+            expect(routeResult.exitCode).toBe(0);
+            expect(routeResult.stdout).toBe('');
+
+            const excluded = await runner.run(
+              'bash',
+              [ROUTE_SCRIPT, '--excluded', 'implement', 'high'],
+              { cwd: projectRoot, env, timeoutMs: 20_000 },
+            );
+            expect(excluded.exitCode).toBe(0);
+            expect(excluded.stdout).toBe('codex\ngemini\n');
+          });
+
+          it('guard denies the excluded member named in the command', async () => {
+            const result = await guard(
+              'aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high',
+            );
+
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr).toContain('codex');
+            expect(result.stderr).toContain('models.exclude');
+            expect(result.stderr).toContain('implement/high');
+            expect(result.stderr.trimEnd().split('\n').length).toBeLessThanOrEqual(3);
+          });
+
+          it('guard denies the excluded member even without --model', async () => {
+            const result = await guard('aimix run --mode implement --member codex --complexity high');
+
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr).toContain('models.exclude');
+          });
+
+          it('guard denies an excluded member that is not in the emptied cell', async () => {
+            const result = await guard(
+              'aimix run --mode implement --member gemini --model gemini-3 --complexity high',
+            );
+
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr).toContain('gemini');
+          });
+
+          it('guard still lets a non-excluded member through (fail-open, no table check)', async () => {
+            const result = await guard(
+              'aimix run --mode implement --member cursor --model composer-2.5 --complexity high',
+            );
+
+            expect(result.exitCode).toBe(0);
+            expect(result.stderr).toBe('');
+          });
+
+          it('the escape hatch still lets the excluded member through', async () => {
+            const result = await guard(
+              'BDBOARD_ROUTE_OVERRIDE="枠が戻った" aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high',
+            );
+
+            expect(result.exitCode).toBe(0);
+            expect(result.stderr).toBe('');
+          });
+        });
+
+        it('an undeclared cell stays "no opinion" even for an excluded member', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: { review: ROUTES.implement },
+              exclude: [{ member: 'codex', until: '2999-01-01' }],
+            },
+          });
+
+          const excluded = await runner.run(
+            'bash',
+            [ROUTE_SCRIPT, '--excluded', 'implement', 'high'],
+            { cwd: projectRoot, env, timeoutMs: 20_000 },
+          );
+          expect(excluded.exitCode).toBe(0);
+          expect(excluded.stdout).toBe('');
+
+          const result = await guard(
+            'aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high',
+          );
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('an expired exclude on a single-candidate cell neither empties it nor denies', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [{ member: 'codex', until: '2000-01-01' }],
+            },
+          });
+
+          const excluded = await runner.run(
+            'bash',
+            [ROUTE_SCRIPT, '--excluded', 'implement', 'high'],
+            { cwd: projectRoot, env, timeoutMs: 20_000 },
+          );
+          expect(excluded.exitCode).toBe(0);
+          expect(excluded.stdout).toBe('');
+
+          const result = await guard(
+            'aimix run --mode implement --member codex --model gpt-5.6-sol --complexity high',
+          );
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('route.sh --excluded validates its arguments like the default mode', async () => {
+          writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+
+          for (const args of [
+            ['--excluded', 'implement', 'bogus'],
+            ['--excluded', 'implement'],
+            ['implement', 'high', '--excluded'],
+          ]) {
+            const result = await runner.run('bash', [ROUTE_SCRIPT, ...args], {
+              cwd: projectRoot,
+              env,
+              timeoutMs: 20_000,
+            });
+            expect(result.exitCode).toBe(2);
+            expect(result.stdout).toBe('');
+          }
+        });
       });
-    });
+    }
   });
 
   describe('degraded mode (no jq, no python3)', () => {
@@ -1118,6 +1276,51 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         break;
       }
     }
+
+    const home = path.join(tmpRoot, 'home');
+    mkdirSync(home, { recursive: true });
+    return { PATH: binDir, HOME: home };
+  }
+
+  /**
+   * jq を引けず python3 だけを引ける PATH を作る (route.sh の python3 分岐を強制する。
+   * bdboard-p5l.22)。minimalEnv と同じく専用ディレクトリへの symlink だけで PATH を
+   * 組む — PATH から jq の在るディレクトリを抜く方式だと、macOS では /usr/bin/jq が
+   * 標準で在るため /usr/bin ごと抜けてしまい、他の必須コマンドまで消える。python3 は
+   * 実体 (sys.executable) へ張る。pyenv の shim は痩せた PATH では動かないため。
+   */
+  async function noJqEnv(): Promise<Record<string, string>> {
+    const binDir = path.join(tmpRoot, 'no-jq-bin');
+    mkdirSync(binDir, { recursive: true });
+    const searchDirs = (process.env.PATH ?? '/usr/bin:/bin').split(path.delimiter);
+
+    for (const name of ['bash', 'cat', 'grep', 'sed', 'tr', 'git', 'date', 'dirname']) {
+      const target = searchDirs
+        .map((dir) => path.join(dir, name))
+        .find((candidate) => {
+          try {
+            accessSync(candidate, fsConstants.X_OK);
+            return true;
+          } catch {
+            return false;
+          }
+        });
+      if (target === undefined) {
+        throw new Error(`noJqEnv: required command not found on PATH: ${name}`);
+      }
+      symlinkSync(target, path.join(binDir, name));
+    }
+
+    // 実体の解決も NodeCommandRunner 経由で行う (テストから child_process を直接
+    // import しない — check:boundaries の no-child-process-outside-process-runners)。
+    const pythonProbe = await runner.run('python3', ['-c', 'import sys; print(sys.executable)'], {
+      timeoutMs: 20_000,
+    });
+    const python = pythonProbe.stdout.trim();
+    if (pythonProbe.exitCode !== 0 || python === '') {
+      throw new Error(`noJqEnv: cannot resolve the python3 interpreter: ${pythonProbe.stderr}`);
+    }
+    symlinkSync(python, path.join(binDir, 'python3'));
 
     const home = path.join(tmpRoot, 'home');
     mkdirSync(home, { recursive: true });

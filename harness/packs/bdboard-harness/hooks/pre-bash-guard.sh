@@ -216,6 +216,8 @@ CONTRACT="$(cat "$CONTRACT_FILE" 2>/dev/null)"
 #
 #    判定は「そのセルの候補配列に含まれるか」だけで行う。vendor 名 (codex / cursor /
 #    claude) で弾くと、セルの正当な 2 番手である cursor:... が道連れになる。
+#    唯一の例外は models.exclude で候補が 0 件になったセルで、そこでは「除外中の
+#    member を名指ししたか」だけを見る (bdboard-p5l.22、下の route.sh --excluded 参照)。
 #
 #    候補の抽出は scripts/route.sh に一本化する (jq/python3 の抽出ロジックをここへ
 #    コピーしない)。hooks/ の隣が scripts/ という関係は正本
@@ -319,11 +321,36 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
     esac
 
     # route.sh は「候補なし」を無出力 exit 0、契約不正を exit 1、jq/python3 不在を
-    # exit 127 で返す。deny してよいのは「候補を実際に取れた」ときだけ。
+    # exit 127 で返す。deny してよいのは「候補を実際に取れた」ときと、下の「除外で
+    # 空になったセルで除外中の member を名指しした」ときだけ。
     ROUTE_CANDIDATES="$(cd "$REPO_ROOT" 2>/dev/null &&
       bash "$ROUTE_SCRIPT" "$route_stage" "$route_complexity" 2>/dev/null)"
     [ $? -eq 0 ] || continue
-    [ -n "$ROUTE_CANDIDATES" ] || continue
+
+    # 候補が空 (bdboard-p5l.22)。通常出力だけでは「宣言されていないセル = 意見なし」と
+    # 「宣言されていたが models.exclude で空になったセル」を区別できない。後者で素通り
+    # させると、除外した member 自身の委譲まで通ってしまう。そこで route.sh --excluded
+    # で「セルを引けたときだけ」有効な除外 member の一覧を問い合わせ、名指しされた
+    # member がそこに居れば deny する。居なければ従来どおり fail-open で通す — 空セルを
+    # 全面 deny にすると、枠逼迫の退避 (exclude) が委譲の全停止になってしまうため。
+    # --excluded が非 0 (契約不正・古い route.sh で usage exit 2 等) なら判定しない。
+    if [ -z "$ROUTE_CANDIDATES" ]; then
+      ROUTE_EXCLUDED="$(cd "$REPO_ROOT" 2>/dev/null &&
+        bash "$ROUTE_SCRIPT" --excluded "$route_stage" "$route_complexity" 2>/dev/null)"
+      [ $? -eq 0 ] || continue
+      route_excluded_hit=''
+      while IFS= read -r route_excluded_member; do
+        [ -n "$route_excluded_member" ] || continue
+        [ "$route_excluded_member" = "$route_member" ] && route_excluded_hit='yes'
+      done <<ROUTE_EXCLUDED_EOF
+$ROUTE_EXCLUDED
+ROUTE_EXCLUDED_EOF
+      [ -n "$route_excluded_hit" ] || continue
+      deny \
+        "bdboard-harness: $(route_safe "$route_member") は検証コントラクトの models.exclude で除外中です (${route_stage}/${route_complexity} セルは除外で候補が 0 件)。" \
+        '除外されていない member で委譲するか、models.exclude の until を見直してください。' \
+        'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+    fi
 
     # --model の必須チェックは「セルの候補を実際に取れた」後に置く。前に置くと、
     # models 表を宣言していないプロジェクト (照合は必ず fail-open) でも deny だけが
