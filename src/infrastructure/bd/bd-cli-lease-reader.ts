@@ -16,7 +16,8 @@ export interface BdCliLeaseReaderOptions {
   readonly timeoutMs?: number;
 }
 
-const bdInProgressItemSchema = z.object({
+// e2e fixture の契約テスト (e2e-fixtures-contract.test.ts, bdboard-0rch) から参照するため export する。
+export const bdInProgressItemSchema = z.object({
   id: z.string(),
   lease_expires_at: z.string().nullable().optional(),
   heartbeat_at: z.string().nullable().optional(),
