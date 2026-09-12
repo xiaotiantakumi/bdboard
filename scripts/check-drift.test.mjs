@@ -3,10 +3,17 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-drift.mjs');
 const FAKE_GH_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-gh.mjs');
+
+// bdboard-ypjz: Vitest 3.2.7 の同期テストは途中で打ち切れず、本体終了後に経過時間が
+// timeout 以上なら timed out と報告するだけである。Windows の実測は中央値 0.8〜3.1s、成功
+// job 最大 10.5s、ランナー全体スローダウン時の外れ値は 14〜32s (PR#435 run は32.4s、rebase
+// 後 run は16.2/20.6/15.4s) なので、観測最悪値の約2倍の60sを判定閾値にする。macOS/Linux は
+// 本当に遅くなったときに素早く落ちるシグナルを保つため、従来の15sを維持する。
+const CLI_TEST_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 15_000;
 
 /** 改名前後で git の類似度検出が効く程度に大きいファイル。 */
 const BIG_FILE = (marker) =>
@@ -196,7 +203,7 @@ describe('merge-tree conflict output parser', () => {
  * 「pure 関数だけ見ておけばよい」が成り立たなかったので、使い捨てリポジトリを作って
  * 実際に走らせる層を足す。verify-slot.test.mjs が subprocess を起こす前例。
  */
-describe('check-drift CLI', () => {
+describe('check-drift CLI', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
   // bdboard-b0yd R2-3: `git merge-base --is-ancestor` で peer の新旧が分かるので、
   // バケットC (衝突パスが自分のファイル外) はもう両論併記しない。peer が
   // origin/main を取り込み済みなら rename、そうでなければ peer 自身の
@@ -224,6 +231,8 @@ describe('check-drift CLI', () => {
     .split(/\r?\n/)[0];
 
   let tmpRoot;
+  let templateRoot;
+  const repoTemplates = new Map();
 
   function sh(cwd, ...args) {
     return execFileSync(args[0], args.slice(1), {
@@ -233,21 +242,44 @@ describe('check-drift CLI', () => {
     });
   }
 
-  /** bare remote + クローン1つ。クローンの scripts/ に本体をコピーして返す。 */
-  function makeRepo(name) {
+  /** 初期内容ごとの bare remote + クローンをテンプレート化して git spawn を減らす。 */
+  function makeRepo(name, hotContent = BIG_FILE('1')) {
+    let template = repoTemplates.get(hotContent);
+    if (!template) {
+      // 生成が途中で失敗しても次の呼び出しが残骸と衝突しないよう、毎回新しいディレクトリに作る。
+      const dir = fs.mkdtempSync(path.join(templateRoot, 't-'));
+      const bare = path.join(dir, 'repo.git');
+      const work = path.join(dir, 'repo');
+      fs.mkdirSync(bare, { recursive: true });
+      sh(templateRoot, 'git', 'init', '--bare', '-b', 'main', bare);
+      sh(templateRoot, 'git', 'clone', '-q', bare, work);
+      fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
+      fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
+      // rename 検出は類似度で効くので、中身が1行だと改名しても delete+add 扱いになり
+      // --no-renames の有無が観測できない。十分な行数を持たせる。
+      fs.writeFileSync(path.join(work, 'hot.ts'), hotContent);
+      sh(work, 'git', 'add', '-A');
+      sh(work, 'git', 'commit', '-qm', 'base');
+      sh(work, 'git', 'push', '-q', 'origin', 'main');
+      template = { bare, work };
+      repoTemplates.set(hotContent, template);
+    }
+
     const bare = path.join(tmpRoot, `${name}.git`);
     const work = path.join(tmpRoot, name);
-    fs.mkdirSync(bare, { recursive: true });
-    sh(tmpRoot, 'git', 'init', '--bare', '-b', 'main', bare);
-    sh(tmpRoot, 'git', 'clone', '-q', bare, work);
-    fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
-    fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
-    // rename 検出は類似度で効くので、中身が1行だと改名しても delete+add 扱いになり
-    // --no-renames の有無が観測できない。十分な行数を持たせる。
-    fs.writeFileSync(path.join(work, 'hot.ts'), BIG_FILE('1'));
-    sh(work, 'git', 'add', '-A');
-    sh(work, 'git', 'commit', '-qm', 'base');
-    sh(work, 'git', 'push', '-q', 'origin', 'main');
+    fs.cpSync(template.bare, bare, { recursive: true });
+    fs.cpSync(template.work, work, { recursive: true });
+    const configPath = path.join(work, '.git', 'config');
+    const config = fs.readFileSync(configPath, 'utf8');
+    const urlLines = config.match(/^\s*url = .*$/gm) ?? [];
+    if (urlLines.length !== 1) {
+      throw new Error(`expected one origin URL in ${configPath}, found ${urlLines.length}`);
+    }
+    fs.writeFileSync(
+      configPath,
+      // 置換側を関数にして、パスに `$&` 等が含まれても特殊置換として解釈させない。
+      config.replace(urlLines[0], () => `\turl = ${bare.replaceAll('\\', '/')}`),
+    );
     return { bare, work };
   }
 
@@ -259,7 +291,6 @@ describe('check-drift CLI', () => {
     sh(other, 'git', 'add', '-A');
     sh(other, 'git', 'commit', '-qm', 'peer');
     sh(other, 'git', 'push', '-q', 'origin', 'main');
-    sh(other, 'git', 'fetch', '-q', 'origin');
   }
 
   function runDrift(
@@ -310,14 +341,22 @@ describe('check-drift CLI', () => {
     tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'drift-cli-'));
   });
 
+  // フックには describe の timeout が継承されない (既定 hookTimeout は10s)。後片付けの削除も
+  // テスト本体と同じランナー全体のスローダウンを受けるので、同じ判定閾値を渡す。
   afterEach(() => {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }, CLI_TEST_TIMEOUT_MS);
+
+  beforeAll(() => {
+    templateRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'drift-cli-template-'));
   });
 
-  // bdboard-z4h0: Windows runner の git 操作は稀に既定の5000msタイムアウトを
-  // 超えることがある(bdboard-s0yv/PR#226, bdboard-f1c9/PR#236 で2回観測)。
-  // makeRepo/advanceMain が実ファイルシステム上でbareリポジトリの
-  // git init/commit/push を行うため、このテストだけI/Oが重い。
+  afterAll(() => {
+    fs.rmSync(templateRoot, { recursive: true, force: true });
+  }, CLI_TEST_TIMEOUT_MS);
+
+  // bdboard-ypjz: z4h0→8r5b→pqhe で per-test に 15000 を個別に付け、npf9 で Windows の全体
+  // testTimeout も 15s にしてきたが、外れ値はテストを選ばずに当たるため describe 単位へ集約する。
   it(
     'names the file when both sides edited it',
     () => {
@@ -334,7 +373,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('hot.ts');
       expect(status).toBe(0);
     },
-    15000,
   );
 
   it(
@@ -360,7 +398,6 @@ describe('check-drift CLI', () => {
       expect(stderr).toContain('open PR を取得できなかったため');
       expect(stderr).toContain('not authenticated try gh auth login');
     },
-    15000,
   );
 
   // bdboard-b0yd R2-7: このブランチがまだ何も変更していない (worktree 作成直後)
@@ -385,7 +422,6 @@ describe('check-drift CLI', () => {
       // gh 自体を呼んでいないことを、代役に渡された引数の不在で確認する。
       expect(ghArgs).toEqual([]);
     },
-    15000,
   );
 
   it(
@@ -412,7 +448,6 @@ describe('check-drift CLI', () => {
       expect(ghArgs[ghArgs.indexOf('--limit') + 1]).toBe('100');
       expect(ghArgs).toContain('number,headRefName,isCrossRepository');
     },
-    15000,
   );
 
   it(
@@ -432,7 +467,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('open PR を取得できなかったため');
       expect(stdout).toContain('unexpected gh JSON');
     },
-    15000,
   );
 
   it(
@@ -455,7 +489,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('fork 由来の PR は比較から除外しました (PR #21)');
       expect(stdout).not.toContain('open PR #21 (main) と衝突します');
     },
-    15000,
   );
 
   it(
@@ -495,7 +528,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('open PR #22 (peer) と衝突します');
       expect(stdout).toContain('  shared.ts');
     },
-    15000,
   );
 
   it(
@@ -530,7 +562,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('open PR #25 (peer) と衝突します');
       expect(stdout).toContain('  hot.ts');
     },
-    15000,
   );
 
   // bdboard-b0yd R2-4: 実測 (`/tmp` の使い捨てリポジトリ) — `git fetch origin
@@ -589,7 +620,6 @@ describe('check-drift CLI', () => {
       // 個別に「リモート追跡ブランチがない」に落ちる。
       expect(stdout).toContain('リモート追跡ブランチがないため比較を省略しました (PR #27)');
     },
-    15000,
   );
 
   it(
@@ -619,7 +649,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('  hot.ts');
       expect(stdout).not.toContain('open PR #12 (peer) と同じファイルを触っています');
     },
-    15000,
   );
 
   // bdboard-b0yd R2-6: mergeTree() の `-c core.quotepath=false` に対する CLI 級の
@@ -662,7 +691,6 @@ describe('check-drift CLI', () => {
       // quotepath=false が外れると、この行に落ちてしまう。
       expect(stdout).not.toContain('衝突パスはこのブランチが触ったファイルの外です');
     },
-    15000,
   );
 
   it(
@@ -697,7 +725,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('  hot.ts');
       expect(stdout).not.toContain('衝突はしませんが');
     },
-    15000,
   );
 
   it(
@@ -738,7 +765,6 @@ describe('check-drift CLI', () => {
       expect(stdout).not.toContain('open PR #13 (peer) と同じファイルを触っています');
       expect(stdout).toContain('  hot.ts');
     },
-    15000,
   );
 
   // bdboard-b0yd R2-2: 実測 (`/tmp` の使い捨てリポジトリ) — 自然な
@@ -750,17 +776,10 @@ describe('check-drift CLI', () => {
   it(
     'softens a layer-1 conflict instead of asserting it when the peer is stale relative to main',
     () => {
-      const bare = path.join(tmpRoot, 'stale-layer1.git');
-      const work = path.join(tmpRoot, 'stale-layer1');
-      fs.mkdirSync(bare, { recursive: true });
-      sh(tmpRoot, 'git', 'init', '--bare', '-b', 'main', bare);
-      sh(tmpRoot, 'git', 'clone', '-q', bare, work);
-      fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
-      fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
-      fs.writeFileSync(path.join(work, 'hot.ts'), HOT_LINE_FILE('base', 'base'));
-      sh(work, 'git', 'add', '-A');
-      sh(work, 'git', 'commit', '-qm', 'base');
-      sh(work, 'git', 'push', '-q', 'origin', 'main');
+      const { bare, work } = makeRepo(
+        'stale-layer1',
+        HOT_LINE_FILE('base', 'base'),
+      );
 
       // peer は base から分岐し、hot 行だけを編集する。main の後続の編集は
       // 一切取り込まない (= 今後 stale になる)。
@@ -798,7 +817,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('peer が origin/main に対して古いため');
       expect(stdout).toContain('  hot.ts');
     },
-    15000,
   );
 
   // bdboard-b0yd R4-A: 象限は4つある (自分/peer それぞれ current か stale か)。
@@ -810,17 +828,10 @@ describe('check-drift CLI', () => {
   it(
     'blames itself, not a current peer, for a layer-1 conflict caused by its own stale base (A: !W && P)',
     () => {
-      const bare = path.join(tmpRoot, 'self-stale-layer1.git');
-      const work = path.join(tmpRoot, 'self-stale-layer1');
-      fs.mkdirSync(bare, { recursive: true });
-      sh(tmpRoot, 'git', 'init', '--bare', '-b', 'main', bare);
-      sh(tmpRoot, 'git', 'clone', '-q', bare, work);
-      fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
-      fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
-      fs.writeFileSync(path.join(work, 'hot.ts'), HOT_LINE_FILE('base', 'base'));
-      sh(work, 'git', 'add', '-A');
-      sh(work, 'git', 'commit', '-qm', 'base');
-      sh(work, 'git', 'push', '-q', 'origin', 'main');
+      const { bare, work } = makeRepo(
+        'self-stale-layer1',
+        HOT_LINE_FILE('base', 'base'),
+      );
 
       // 自分 (feature) は古い base から分岐し、hot 行を編集する。main の
       // その後の進みは一切取り込まない (= 自分が stale になる)。
@@ -861,7 +872,6 @@ describe('check-drift CLI', () => {
       expect(stdout).not.toContain('open PR #50 (peer) と衝突します (rebase でテキスト衝突)');
       expect(stdout).toContain('  hot.ts');
     },
-    15000,
   );
 
   // bdboard-b0yd R4-B: バケットC の「原因は一意に決まる」は自分が origin/main
@@ -912,7 +922,6 @@ describe('check-drift CLI', () => {
       expect(stdout).not.toContain(renameConflictExplanation);
       expect(stdout).not.toContain(staleMainConflictExplanation);
     },
-    15000,
   );
 
   // bdboard-b0yd R4-C: merge-tree が使えない (古い git の未知オプション等) とき、
@@ -1008,7 +1017,6 @@ describe('check-drift CLI', () => {
       // このケースでは唯一の peer が comparedCount から外れ、0件に落ちる。
       expect(stdout).toContain('比較できた open PR がありません');
     },
-    15000,
   );
 
   // bdboard-b0yd R4-C(2): 上の R4-C は peer が1本しかないため comparedCount が0に
@@ -1122,7 +1130,6 @@ describe('check-drift CLI', () => {
       // comparedCount そのものは、findings があるとき all-clear 行が出ないので
       // この経路では観測できない。件数の除外は上の R4-C (peer 1本 → 0件) が見る。
     },
-    15000,
   );
 
 
@@ -1162,7 +1169,6 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('open PR のブランチを fetch できませんでした');
       expect(stdout).toContain('比較できた open PR がありません。 (古い ref で比較)');
     },
-    15000,
   );
 
   it(
@@ -1199,11 +1205,8 @@ describe('check-drift CLI', () => {
       expect(stdout).toContain('merge-tree が使えないため PR #24 (peer) はファイル単位でのみ比較しました');
       expect(stdout).toContain('unrelated histories');
     },
-    15000,
   );
 
-  // bdboard-8r5b: 上の「両側編集」と同じ makeRepo/advanceMain 負荷。観測は未だが
-  // 同等の flake リスクがあるため同じ per-test タイムアウトを付ける。
   it(
     'still names the file when the upstream renamed it',
     () => {
@@ -1227,14 +1230,8 @@ describe('check-drift CLI', () => {
       expect(stdout).not.toContain('重なるファイルはありません');
       expect(status).toBe(0);
     },
-    15000,
   );
 
-  // bdboard-pqhe: Windows で実測 10108ms かかって既定の5000msを超えた
-  // (2026-09-04, PR#257 の verify-windows)。同一ブランチ・同一内容の別 run では
-  // pass しており、product ではなくランナー上の実行時間のばらつき。
-  // makeRepo + runDrift でサブプロセスから更に git を呼ぶため、Windows の
-  // 遅いプロセス生成がそのまま効く。上2件と同じ 15000 に揃える。
   it(
     'exits 2 without a report when the check cannot run at all',
     () => {
@@ -1247,13 +1244,8 @@ describe('check-drift CLI', () => {
       expect(status).toBe(2);
       expect(stdout).toBe('');
     },
-    15000,
   );
 
-  // bdboard-pqhe: この describe 内で唯一 per-test タイムアウトが無いまま残る
-  // ケースだったので予防的に付ける (bdboard-8r5b と同じ判断)。git init --bare /
-  // clone / commit x2 / push に runDrift を足しており、git 呼び出し回数は
-  // 実際に落ちた orphan ケースより多い。
   it(
     'runs even when the repository path contains a space',
     () => {
@@ -1279,6 +1271,5 @@ describe('check-drift CLI', () => {
       expect(stdout).not.toBe('');
       expect(stdout).toContain('drift:');
     },
-    15000,
   );
 });
