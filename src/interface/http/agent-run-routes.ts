@@ -352,6 +352,10 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       provision = await deps.worktreeProvisioner.provision({
         repoRootPath: project.rootPath,
         ticketId,
+        // preflight が読んだ検証コントラクトの mainBranch (省略時 main)。worktree の起点と
+        // マージ済み判定の両方をこれに合わせる — origin/main 決め打ちだと master 系
+        // リポジトリで実行できない (bdboard-pkr6.18)。
+        mainBranch: preflight.mainBranch,
         cleanupEligibleTicketIds,
         isTicketProtected: (candidateTicketId) =>
           deps.runStore.list().some(

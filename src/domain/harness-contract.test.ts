@@ -332,6 +332,33 @@ describe('parseHarnessContract', () => {
     if (result.ok) return;
     expect(result.message).toBe('mainBranch に改行・制御文字は使えません (200 文字以内)');
   });
+
+  // mainBranch は worktree provisioner で `git fetch origin <name>` や
+  // `origin/<name>` として argv に入る (bdboard-pkr6.18)。オプションに化ける値は
+  // preflight の段階 (harness-contract-invalid) で止める。
+  it.each(['--upload-pack=touch /tmp/pwned', '-x', 'a..b', 'a b', 'x.lock', 'feat/.hidden', '/main'])(
+    'rejects the unsafe mainBranch %j',
+    (mainBranch) => {
+      const result = parse({ version: 1, verify: 'npm run verify', prFlow: 'pr', mainBranch });
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.message).toBe(
+        'mainBranch は英数字と . _ / - だけのブランチ名である必要があります (先頭の - や .. は不可)',
+      );
+    },
+  );
+
+  it.each(['master', 'develop', 'release/2026.09', 'trunk-1_x'])(
+    'accepts the ordinary branch name %j as mainBranch',
+    (mainBranch) => {
+      const result = parse({ version: 1, verify: 'npm run verify', prFlow: 'pr', mainBranch });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.contract.mainBranch).toBe(mainBranch);
+    },
+  );
 });
 
 describe('resolveVerifyScriptRequirement', () => {

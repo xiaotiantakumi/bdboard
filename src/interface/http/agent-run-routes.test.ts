@@ -1661,6 +1661,35 @@ describe('createAgentRunRoutes harness preflight', () => {
     expect(worktreeProvisioner.provision).toHaveBeenCalledTimes(1);
   });
 
+  it('passes the contract mainBranch to the worktree provisioner (bdboard-pkr6.18)', async () => {
+    const masterContract: ContractState = {
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'master',
+      models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
+    };
+    const { response, worktreeProvisioner } = await postRun(async () =>
+      readyHarnessStatus({}, masterContract),
+    );
+
+    expect(response.status).toBe(202);
+    expect(worktreeProvisioner.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ mainBranch: 'master' }),
+    );
+  });
+
+  it('passes the default mainBranch when the contract omits it', async () => {
+    const { response, worktreeProvisioner } = await postRun(async () => readyHarnessStatus());
+
+    expect(response.status).toBe(202);
+    expect(worktreeProvisioner.provision).toHaveBeenCalledWith(
+      expect.objectContaining({ mainBranch: 'main' }),
+    );
+  });
+
   it('returns an empty warnings array on a clean preflight', async () => {
     const { response } = await postRun(async () => readyHarnessStatus());
 

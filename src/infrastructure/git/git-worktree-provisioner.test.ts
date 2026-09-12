@@ -13,6 +13,7 @@ import {
   formatWorktreeBranchMismatchMessage,
   normalizePathForComparison,
 } from './git-worktree-provisioner.js';
+import { isSafeMainBranchName } from '../../domain/harness-contract.js';
 
 const ROOT = '/Users/example/repo';
 const TICKET_ID = 'bdboard-54be.1';
@@ -57,12 +58,20 @@ function isBranchList(args: readonly string[]): boolean {
   return args[2] === 'for-each-ref';
 }
 
+function isFetchOrigin(args: readonly string[], mainBranch: string): boolean {
+  return args[2] === 'fetch' && args[3] === 'origin' && args[4] === mainBranch;
+}
+
 function isFetchOriginMain(args: readonly string[]): boolean {
-  return args[2] === 'fetch' && args[3] === 'origin' && args[4] === 'main';
+  return isFetchOrigin(args, 'main');
+}
+
+function isRevParseOrigin(args: readonly string[], mainBranch: string): boolean {
+  return args[2] === 'rev-parse' && args.includes(`origin/${mainBranch}`);
 }
 
 function isRevParseOriginMain(args: readonly string[]): boolean {
-  return args[2] === 'rev-parse' && args.includes('origin/main');
+  return isRevParseOrigin(args, 'main');
 }
 
 function isWorktreeStatus(worktreePath: string, args: readonly string[]): boolean {
@@ -94,12 +103,16 @@ function worktreeListWithManaged(
   ].join('\n');
 }
 
-function isMergeCheck(args: readonly string[], branchName: string): boolean {
+function isMergeCheck(
+  args: readonly string[],
+  branchName: string,
+  mainBranch = 'main',
+): boolean {
   return (
     args[2] === 'merge-base'
     && args[3] === '--is-ancestor'
     && args[4] === `refs/heads/${branchName}`
-    && args[5] === 'origin/main'
+    && args[5] === `origin/${mainBranch}`
   );
 }
 
@@ -1019,5 +1032,325 @@ describe('createGitWorktreeProvisioner', () => {
     });
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
+
+describe('createGitWorktreeProvisioner with a non-main mainBranch (bdboard-pkr6.18)', () => {
+  const OLD_TICKET_ID = 'bdboard-old';
+  const OLD_WORKTREE_PATH = path.join(ROOT, '.claude/worktrees', OLD_TICKET_ID);
+  const OLD_BRANCH_NAME = `bd/${OLD_TICKET_ID}`;
+  const OLD_HEAD_OID = 'feedface';
+  const MERGE_COMMIT_OID = 'mergec0de';
+
+  function worktreeListWithMaster(ticketId: string): string {
+    return worktreeListWithManaged(ticketId).replace(
+      'branch refs/heads/main',
+      'branch refs/heads/master',
+    );
+  }
+
+  function isGhMergedPrList(command: string, args: readonly string[]): boolean {
+    return command === 'gh' && args[0] === 'pr' && args[1] === 'list';
+  }
+
+  /**
+   * master-only repository with one merged, clean, idle managed worktree.
+   * `mergedBy` chooses which evidence path proves the merge; `prBaseRefName`
+   * lets a test hand back a PR merged into some other base.
+   */
+  function createMasterRepoRunner(options: {
+    readonly mergedBy: 'ancestor' | 'merged-pr';
+    readonly prBaseRefName?: string;
+  }) {
+    return createFakeRunner({
+      handler: async (command, args) => {
+        if (isWorktreeList(args)) {
+          return { stdout: worktreeListWithMaster(OLD_TICKET_ID), stderr: '', exitCode: 0 };
+        }
+        if (args.some((arg) => arg === 'main' || arg === 'origin/main')) {
+          // The repository has no main branch at all.
+          return { stdout: '', stderr: 'unknown revision origin/main', exitCode: 128 };
+        }
+        if (isFetchOrigin(args, 'master') || isRevParseOrigin(args, 'master')) {
+          return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        }
+        if (isWorktreeStatus(OLD_WORKTREE_PATH, args)) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (isMergeCheck(args, OLD_BRANCH_NAME, 'master')) {
+          return options.mergedBy === 'ancestor'
+            ? { stdout: '', stderr: '', exitCode: 0 }
+            : { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (
+          args[2] === 'rev-parse'
+          && args[3] === '--verify'
+          && args[4] === `refs/heads/${OLD_BRANCH_NAME}`
+        ) {
+          return { stdout: `${OLD_HEAD_OID}\n`, stderr: '', exitCode: 0 };
+        }
+        if (isGhMergedPrList(command, args)) {
+          return {
+            stdout: JSON.stringify([
+              {
+                baseRefName: options.prBaseRefName ?? 'master',
+                headRefOid: OLD_HEAD_OID,
+                mergeCommit: { oid: MERGE_COMMIT_OID },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (
+          args[2] === 'merge-base'
+          && args[3] === '--is-ancestor'
+          && args[4] === MERGE_COMMIT_OID
+          && args[5] === 'origin/master'
+        ) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        if (command === 'lsof') {
+          return { stdout: '', stderr: '', exitCode: 1 };
+        }
+        if (
+          isWorktreeRemove(args, OLD_WORKTREE_PATH)
+          || (args[2] === 'branch' && args[3] === '-d' && args[4] === OLD_BRANCH_NAME)
+          || (args[2] === 'update-ref' && args[3] === '-d')
+          || (args[2] === 'worktree' && args[3] === 'add' && args[4] === '-b')
+          || args[2] === 'for-each-ref'
+        ) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+  }
+
+  it('creates the worktree from origin/master and never touches origin/main', async () => {
+    const { runner, calls } = createMasterRepoRunner({ mergedBy: 'ancestor' });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      mainBranch: 'master',
+    });
+
+    expect(outcome).toEqual({
+      ok: true,
+      worktreePath: WORKTREE_PATH,
+      branchName: BRANCH_NAME,
+      reused: false,
+    });
+    expect(calls.some((call) => isFetchOrigin(call.args, 'master'))).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[2] === 'worktree'
+          && call.args[3] === 'add'
+          && call.args[4] === '-b'
+          && call.args[5] === BRANCH_NAME
+          && call.args[7] === 'origin/master',
+      ),
+    ).toBe(true);
+    expect(
+      calls.some((call) => call.args.some((arg) => arg === 'main' || arg === 'origin/main')),
+    ).toBe(false);
+  });
+
+  it('removes a worktree whose branch is an ancestor of origin/master', async () => {
+    const { runner, calls } = createMasterRepoRunner({ mergedBy: 'ancestor' });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      mainBranch: 'master',
+      cleanupEligibleTicketIds: [OLD_TICKET_ID],
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.some((call) => isWorktreeRemove(call.args, OLD_WORKTREE_PATH))).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[2] === 'branch' && call.args[3] === '-d' && call.args[4] === OLD_BRANCH_NAME,
+      ),
+    ).toBe(true);
+  });
+
+  it('removes a worktree whose squash-merged PR targeted master and landed on origin/master', async () => {
+    const { runner, calls } = createMasterRepoRunner({ mergedBy: 'merged-pr' });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      mainBranch: 'master',
+      cleanupEligibleTicketIds: [OLD_TICKET_ID],
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.some((call) => isWorktreeRemove(call.args, OLD_WORKTREE_PATH))).toBe(true);
+    expect(
+      calls.some(
+        (call) =>
+          call.args[2] === 'update-ref'
+          && call.args[3] === '-d'
+          && call.args[4] === `refs/heads/${OLD_BRANCH_NAME}`
+          && call.args[5] === OLD_HEAD_OID,
+      ),
+    ).toBe(true);
+  });
+
+  it('does not treat a PR merged into main as merged when mainBranch is master', async () => {
+    const { runner, calls } = createMasterRepoRunner({
+      mergedBy: 'merged-pr',
+      prBaseRefName: 'main',
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      mainBranch: 'master',
+      cleanupEligibleTicketIds: [OLD_TICKET_ID],
+    });
+
+    expect(outcome.ok).toBe(true);
+    expect(calls.some((call) => isWorktreeRemove(call.args, OLD_WORKTREE_PATH))).toBe(false);
+    expect(calls.some((call) => call.args[2] === 'update-ref')).toBe(false);
+  });
+
+  it('names origin/master in no-base-ref when it cannot be resolved', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (isWorktreeList(args)) {
+          return { stdout: `worktree ${ROOT}\n`, stderr: '', exitCode: 0 };
+        }
+        if (isFetchOrigin(args, 'master')) {
+          return { stdout: '', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'missing', exitCode: 1 };
+      },
+    });
+
+    const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+    const outcome = await provisioner.provision({
+      repoRootPath: ROOT,
+      ticketId: TICKET_ID,
+      mainBranch: 'master',
+    });
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: 'no-base-ref',
+      message: 'origin/master could not be resolved',
+    });
+  });
+
+  it.each(['--upload-pack=touch /tmp/pwned', '-x', '../main', 'main..x', 'a b', 'feat/.hidden', 'x.lock', '/main', 'main/'])(
+    'rejects the unsafe mainBranch %j before running any git command',
+    async (mainBranch) => {
+      const { runner, calls } = createFakeRunner();
+
+      const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+      const outcome = await provisioner.provision({
+        repoRootPath: ROOT,
+        ticketId: TICKET_ID,
+        mainBranch,
+        cleanupEligibleTicketIds: [OLD_TICKET_ID],
+      });
+
+      expect(outcome).toEqual({
+        ok: false,
+        reason: 'no-base-ref',
+        message: 'invalid main branch name in the verify contract',
+      });
+      expect(calls).toHaveLength(0);
+    },
+  );
+
+  it('accepts ordinary branch names', () => {
+    for (const name of ['main', 'master', 'develop', 'release/2026.09', 'trunk-1_x']) {
+      expect(isSafeMainBranchName(name)).toBe(true);
+    }
+  });
+
+  it('provisions from origin/master and cleans a merged worktree in a real master-only repository', async () => {
+    // Cleanup is fail-closed without lsof, so the removal half cannot be
+    // observed where lsof is missing (Windows CI). One repo covers creation
+    // and the ancestor cleanup path to keep git setup to a minimum (bdboard-ypjz).
+    const runner = new NodeCommandRunner();
+    const lsofProbe = await runner.run('lsof', ['-v'], { timeoutMs: 5_000 });
+    if (lsofProbe.failureKind === 'spawn-failed') {
+      return;
+    }
+
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-master-'));
+    const repoRoot = path.join(tmpDir, 'repo');
+    const originPath = path.join(tmpDir, 'origin.git');
+    const oldTicketId = 'bdboard-merged';
+    const oldWorktreePath = path.join(repoRoot, '.claude', 'worktrees', oldTicketId);
+    const newTicketId = 'bdboard-next';
+
+    try {
+      fs.mkdirSync(repoRoot, { recursive: true });
+      await runChecked(runner, 'git', ['init', '--initial-branch=master', repoRoot]);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'config', 'user.name', 'bdboard-test']);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+      fs.writeFileSync(path.join(repoRoot, 'README.md'), 'fixture\n');
+      await runChecked(runner, 'git', ['-C', repoRoot, 'add', 'README.md']);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'commit', '-m', 'fixture']);
+      await runChecked(runner, 'git', ['init', '--bare', originPath]);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'remote', 'add', 'origin', originPath]);
+      await runChecked(runner, 'git', ['-C', repoRoot, 'push', '-u', 'origin', 'master']);
+      await runChecked(runner, 'git', [
+        '-C',
+        repoRoot,
+        'worktree',
+        'add',
+        '-b',
+        `bd/${oldTicketId}`,
+        oldWorktreePath,
+        'origin/master',
+      ]);
+
+      const provisioner = createGitWorktreeProvisioner({ commandRunner: runner });
+      const outcome = await provisioner.provision({
+        repoRootPath: repoRoot,
+        ticketId: newTicketId,
+        mainBranch: 'master',
+        cleanupEligibleTicketIds: [oldTicketId],
+      });
+
+      expect(outcome.ok).toBe(true);
+      if (!outcome.ok) {
+        return;
+      }
+      const newHead = await runner.run(
+        'git',
+        ['-C', outcome.worktreePath, 'rev-parse', 'HEAD'],
+        { timeoutMs: 5_000 },
+      );
+      const originMaster = await runner.run(
+        'git',
+        ['-C', repoRoot, 'rev-parse', 'origin/master'],
+        { timeoutMs: 5_000 },
+      );
+      expect(newHead.exitCode).toBe(0);
+      expect(newHead.stdout.trim()).toBe(originMaster.stdout.trim());
+
+      expect(fs.existsSync(oldWorktreePath)).toBe(false);
+      const oldBranch = await runner.run(
+        'git',
+        ['-C', repoRoot, 'rev-parse', '--verify', `bd/${oldTicketId}`],
+        { timeoutMs: 5_000 },
+      );
+      expect(oldBranch.exitCode).not.toBe(0);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
