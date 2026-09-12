@@ -1,7 +1,7 @@
 # Git Workflow の詳細 (multi-session: per-ticket worktree + branch + PR)
 
 AGENTS.md「Git Workflow」に骨格（ブランチ/worktree 命名、lifecycle、direct-to-main 禁止、
-`.beads/` 不可触、dolt push 先、close タイミング）がある。**この文書はその根拠と手順の詳細**。
+`.beads/` 不可触、Dolt remote の明示、close タイミング）がある。**この文書はその根拠と手順の詳細**。
 読むタイミング:
 
 - PR を開く / マージする直前（`npm run drift`・merge serialization・cleanup の手順）
@@ -14,7 +14,7 @@ AGENTS.md「Git Workflow」に骨格（ブランチ/worktree 命名、lifecycle�
 
 ## 由来
 
-Since 2026-08-15 this repo is pushed to GitHub (private:
+Since 2026-08-15 this repo is pushed to GitHub (public:
 https://github.com/xiaotiantakumi/bdboard) and uses a per-ticket worktree +
 branch + PR flow instead of direct-to-main commits, specifically to avoid
 silent conflicts when multiple sessions/agents work on the project
@@ -206,8 +206,9 @@ Two things to expect here, so they are not mistaken for failures:
 
 (separate from the above): `bd dolt push`/`bd dolt
 pull` sync issue history to `refs/dolt/data` on a git remote — fully
-independent of code branches/PRs, invisible in any diff. `origin` is the public code remote (`xiaotiantakumi/bdboard`) and must
-never be used as a Dolt remote for issue history.
+independent of code branches/PRs, invisible in any diff. `origin` is the
+public code remote (`xiaotiantakumi/bdboard`) and must never be used as a
+Dolt remote for issue history.
 **Always pass `--remote <name>` explicitly. Never run a bare `bd dolt
 push` or `bd dolt pull` on this repo.**
 A bare push can silently push to (or adopt) a Dolt-layer remote derived
@@ -221,11 +222,8 @@ Dolt-layer remote already registered underneath it. Before ever running a
 bare `bd dolt push`/`bd dolt pull` on **any** checkout of this repo
 (including a freshly-cloned one right after `bd init`), run `bd dolt
 remote list` and confirm it shows no `origin` entry — if it does, remove
-it with `bd dolt remote remove origin` first. Push periodically at
-session end, not per-ticket. Machine-specific sync details (remote name,
-credentials, restore steps for a new machine) are not tracked in this
-public file — they live in `bd remember` notes on the maintainer's own
-environment.
+it with `bd dolt remote remove origin` first. In an environment that uses
+a Dolt remote, push periodically at session end, not per-ticket.
 
 ## ブランチ保護
 

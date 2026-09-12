@@ -78,7 +78,7 @@ async function killAndWait(child: ChildProcess): Promise<void> {
  * That "never inside this repo" part is load-bearing, not stylistic: project
  * discovery normalizes any candidate that sits inside a git working tree to
  * that tree's common .git root (src/application/discovery/discover-projects.ts,
- * normalizeWorktreeRoot), and this repo's own root has a real .beads/. A
+ * normalizeWorktreeRoot), and this repo's own root may have a real .beads/. A
  * fixture project nested under test/e2e would get silently rewritten to the
  * checkout root instead of staying the isolated fixture project. os.tmpdir()
  * is outside any git working tree, so that rewrite never triggers.

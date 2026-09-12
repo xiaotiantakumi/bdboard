@@ -67,8 +67,11 @@ Check specifically for:
 2. **No unconfirmed push/sync command** (`bd dolt push`, `bd dolt push
    --remote <name>`, etc.) was added to the Session Completion / git-handling
    steps without a confirmation gate.
+3. **Root `.gitignore` still ignores `/.beads/`** — `bd init`/`bd setup` can
+   rewrite `.gitignore` as part of its own scaffolding; confirm the
+   bdboard-specific `/.beads/` line survived the run.
 
-If either check fails, hand-restore the customized wording before
+If any check fails, hand-restore the customized wording before
 committing. Do not `git add`/commit an unreviewed `bd init` diff.
 
 **Alignment with the direct-to-main ban:** `bd init` can autocommit straight

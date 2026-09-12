@@ -162,9 +162,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
 - **Direct-to-main commits are banned.** 唯一の例外は `.github/workflows/` のみを触る CI 復旧コミット。
 - **`.beads/` はこのリポジトリで git 追跡していない** (ルート `.gitignore` 参照)。PR で
   `.beads/` 配下を追加・変更しない — CI が `origin/main` との diff に含めば PR を落とす。
-- **Dolt remote は必ず `--remote <name>` を明示する。素の `bd dolt push` / `bd dolt pull` は
+- **Dolt remote は必ず `--remote <name>` を明示する（`--remote origin` も不可）。素の `bd dolt push` / `bd dolt pull` は
   この repo で禁止** — `origin` を Dolt 層が黙って採用しうる (bdboard-23v / bdboard-jb1)。事前に
-  `bd dolt remote list` で `origin` が無いことを確認する。push はセッション終わりに定期的に。
+  `bd dolt remote list` で `origin` が無いことを確認する。Dolt remote を使う環境では push はセッション終わりに。
 - **Cleanup after merge** (マージしたセッションの責任): `git worktree remove` →
   `git branch -D bd/<id>` → `git remote prune origin` → 常時稼働サーバーを再起動
   (skill `bdboard-server-ops`)。remove 前に `lsof -a -d cwd +D <worktree>` で他セッションが

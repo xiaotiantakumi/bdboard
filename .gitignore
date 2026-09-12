@@ -1,10 +1,11 @@
 
-# Beads / Dolt files (added by bd init). This repo's own bd issue tracking
-# lives only in the maintainer's local environment and is not git-tracked.
+# Beads / Dolt files (added by bd init).
 .dolt/
 *.db
 .beads-credential-key
-.beads/
+
+# bdboard-specific: this repo's own bd issue tracking is not git-tracked here.
+/.beads/
 
 # Node / build artifacts
 node_modules/

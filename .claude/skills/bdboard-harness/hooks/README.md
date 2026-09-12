@@ -161,7 +161,7 @@ mode ゲート → エスケープハッチ → `--member` / `--complexity` → 
 | # | deny 条件 | 代わりに |
 |---|---|---|
 | 1 | パスが `/.claude/skills/bdboard-harness/` を含む (注入コピー。bdboard 自身でも deny) | 原本 `harness/packs/bdboard-harness/` を直して再注入。注入先固有の内容なら `.claude/skills/project-harness/` |
-| 2 | パスが `/.beads/` を含み、かつ現在ブランチが `bd/` で始まる | `.beads/` は PR ブランチで触らない (CI ガードで落ちる)。main への `chore(beads)` 直コミット例外で扱う |
+| 2 | パスが `/.beads/` を含み、かつ現在ブランチが `bd/` で始まる | `.beads/` は PR に含めない。台帳の変更は bd コマンド経由で行う（ファイルを直接編集・コミットしない） |
 
 ブランチは「そのパスの実在する最も近い祖先ディレクトリ」に対する
 `git rev-parse --abbrev-ref HEAD` で見る (detached HEAD のときは `symbolic-ref` で再試行)。

@@ -4,9 +4,13 @@
   "prFlow": "pr",
   "mainBranch": "main",
   "hooks": {
-    "denyBashPatterns": ["\\bnpm run verify:steps\\b"],
+    "denyBashPatterns": [
+      "\\bnpm run verify:steps\\b",
+      "bd[[:space:]]+dolt[[:space:]]+(push|pull)([[:space:]].*)?--remote([[:space:]]+|=)origin([[:space:]]|$)"
+    ],
     "denyBashMessages": [
-      "verify:steps はラッパー内部の入口です。npm run verify を使ってください（スロットとプロセスグループ kill を素通りします）"
+      "verify:steps はラッパー内部の入口です。npm run verify を使ってください（スロットとプロセスグループ kill を素通りします）",
+      "origin は公開 remote なので Dolt の push/pull に使わない。"
     ]
   },
   "models": {
