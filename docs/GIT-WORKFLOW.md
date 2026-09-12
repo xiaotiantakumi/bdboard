@@ -199,10 +199,15 @@ Two things to expect here, so they are not mistaken for failures:
 > remote — separate from `refs/heads/*` where your code lives.
 > `.beads/issues.jsonl` is a passive export, not the wire protocol.
 >
-> See [SYNC_CONCEPTS.md](https://github.com/gastownhall/beads/blob/main/docs/SYNC_CONCEPTS.md)
+> See [sync-concepts.md](https://github.com/gastownhall/beads/blob/main/docs/core-concepts/sync-concepts.md)
 > for the one-screen overview and anti-patterns (don't treat JSONL as the
-> source of truth; don't `bd import` during normal operation; don't
-> reach for third-party Dolt hosting before trying the default).
+> source of truth; don't `bd import` during normal operation), and
+> [architecture/dolt.md](https://github.com/gastownhall/beads/blob/main/docs/architecture/dolt.md)
+> for embedded vs server mode, remotes/backups, and corruption recovery
+> (`bd doctor --deep` / `--fix`).
+> **Caution:** upstream's defaults — `bd init` / `bd bootstrap` wiring git
+> `origin` as the Dolt remote, and the Repair steps' `bd dolt remote add origin …`
+> — are exactly what this repo forbids; see below.
 
 (separate from the above): `bd dolt push`/`bd dolt
 pull` sync issue history to `refs/dolt/data` on a git remote — fully
@@ -220,7 +225,7 @@ had a Dolt-layer `origin` remote pointing at the public repo, even though
 (bdboard-23v) — disabling that app-level default did not remove the
 Dolt-layer remote already registered underneath it. Before ever running a
 bare `bd dolt push`/`bd dolt pull` on **any** checkout of this repo
-(including a freshly-cloned one right after `bd init`), run `bd dolt
+(including a freshly-cloned one right after `bd init` or `bd bootstrap`), run `bd dolt
 remote list` and confirm it shows no `origin` entry — if it does, remove
 it with `bd dolt remote remove origin` first. In an environment that uses
 a Dolt remote, push periodically at session end, not per-ticket.

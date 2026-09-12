@@ -175,8 +175,8 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the onion 4-layer breakdown
 (domain/application/infrastructure/interface), the port list, the bd CLI → cache →
 SSE → UI data flow, and the safety guarantees (readonly bd calls, the write-guard
-middleware, and why the agent Runner is currently unwired). See
-[docs/PLAN.md](docs/PLAN.md) for the original full design doc.
+middleware, and the agent Runner reachable only via `POST /api/runs` behind `agent-run-guard`:
+local runs allowed, remote off by default). Original design doc: [docs/PLAN.md](docs/PLAN.md).
 
 ## Conventions & Patterns
 
