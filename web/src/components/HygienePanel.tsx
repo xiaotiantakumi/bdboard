@@ -587,18 +587,29 @@ export function HygienePanel({
                   {leaseHealthQuery.data?.reclaim.enabled === false ? (
                     <p>自動 reclaim は無効です</p>
                   ) : (
-                    reclaimProjects.map((projectStatus) => (
-                      <p key={projectStatus.projectId}>
-                        <span>{projectStatus.projectId}: </span>
-                        <span>{formatReclaimProjectLine(projectStatus)}</span>
-                        {projectStatus.lastError !== null && (
-                          <span className="hygiene-reclaim-status-error">
-                            {' '}
-                            / エラー: {projectStatus.lastError}
-                          </span>
-                        )}
-                      </p>
-                    ))
+                    reclaimProjects.map((projectStatus) => {
+                      // 見送り理由 (skipped: …) や回収要約。これが無いと「回収件数不明」
+                      // の原因が /api/lease-health の JSON を直接見ないと分からない。
+                      const summary = projectStatus.rawSummary?.trim() ?? '';
+                      return (
+                        <p key={projectStatus.projectId}>
+                          <span>{projectStatus.projectId}: </span>
+                          <span>{formatReclaimProjectLine(projectStatus)}</span>
+                          {summary.length > 0 && (
+                            <span className="hygiene-reclaim-status-summary">
+                              {' / '}
+                              {summary}
+                            </span>
+                          )}
+                          {projectStatus.lastError !== null && (
+                            <span className="hygiene-reclaim-status-error">
+                              {' '}
+                              / エラー: {projectStatus.lastError}
+                            </span>
+                          )}
+                        </p>
+                      );
+                    })
                   )}
                 </div>
               </div>
