@@ -90,12 +90,52 @@ export interface ReclaimSchedulerConfig {
 export type ReclaimRunObserver = (run: ReclaimRunRecord) => void;
 
 /**
+ * 巡回を見送った理由 (bdboard-2hsq)。健全性表示から原因を追えるよう、読めなかった
+ * 情報源ごとに分ける。
+ *
+ * - `lease-read-failed`: `bd list --status in_progress` (LeaseReader) を読めなかった
+ * - `scan-incomplete`: `git worktree list` / `git branch --list bd/*` が非ゼロ終了・
+ *   timeout・spawn 失敗のいずれかで、最後まで読めなかった (スキャナは throw せず
+ *   `complete: false` の空スナップショットに畳む)
+ * - `scan-failed`: スキャナ呼び出し自体が例外を投げた
+ */
+export type ReclaimSkipReason = 'lease-read-failed' | 'scan-incomplete' | 'scan-failed';
+
+/**
+ * planner の結果。`skipped` は「判断材料が無いので今回は見送る」で、呼び出し側は
+ * bd を一切呼ばない。
+ */
+export type ReclaimPlanOutcome =
+  | { readonly kind: 'plan'; readonly plan: ReclaimPlan }
+  | { readonly kind: 'skipped'; readonly reason: ReclaimSkipReason };
+
+/**
  * 回収前に「生存証拠のあるチケットを外す」計画を立てる (bdboard-6aci)。
  *
- * `null` を返したら **そのプロジェクトは今回スキップする**。判断材料が無いときに
+ * `skipped` を返したら **そのプロジェクトは今回スキップする**。判断材料が無いときに
  * 全件回収へフォールバックすると、この仕組みが防ごうとしている事故そのものが起きる。
  */
-export type ReclaimPlanner = (project: Project) => Promise<ReclaimPlan | null>;
+export type ReclaimPlanner = (project: Project) => Promise<ReclaimPlanOutcome>;
+
+/**
+ * 見送り理由ごとの健全性表示 (rawSummary)。以前は理由を問わず「生存証拠を判定
+ * できませんでした」一本で、bd 側の失敗でも git の話に見えていた (bdboard-2hsq)。
+ */
+export function describeReclaimSkip(reason: ReclaimSkipReason): string {
+  switch (reason) {
+    case 'lease-read-failed':
+      return 'skipped: bd の in_progress 一覧を読めませんでした';
+    case 'scan-incomplete':
+      return 'skipped: git の worktree / bd ブランチ一覧を最後まで読めず、生存証拠を判定できませんでした';
+    case 'scan-failed':
+      return 'skipped: git worktree を走査できず、生存証拠を判定できませんでした';
+    default: {
+      // 理由を足したのに表示を足し忘れたら tsc で落とす。
+      const unreachable: never = reason;
+      return `skipped: ${String(unreachable)}`;
+    }
+  }
+}
 
 export interface ReclaimSchedulerDeps {
   readonly reclaimer: LeaseReclaimer;
@@ -180,8 +220,8 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
   const runForProject = async (project: Project): Promise<void> => {
     const entry = ensureProjectStatus(project.id);
     try {
-      const plan = await deps.planner(project);
-      if (plan === null) {
+      const outcome = await deps.planner(project);
+      if (outcome.kind === 'skipped') {
         // 判断材料が無い。全件回収へ落とすくらいなら 1 周見送る (回収漏れは次の
         // 巡回で取り返せるが、生きている作業を奪うのは取り返せない)。
         entry.lastRunAt = new Date();
@@ -189,10 +229,11 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
         // 見送ったので、件数は unknown として表示する。
         entry.reclaimedCount = null;
         entry.reclaimedCountUnknown = true;
-        entry.rawSummary = 'skipped: 生存証拠を判定できませんでした';
+        entry.rawSummary = describeReclaimSkip(outcome.reason);
         entry.lastError = null;
         return;
       }
+      const { plan } = outcome;
 
       // `| undefined` を明示するのが要点。分割代入だと (noUncheckedIndexedAccess が
       // 無い今の tsconfig では) 型が `string` になり、下のガードを消しても tsc が通る。

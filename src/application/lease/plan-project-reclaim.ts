@@ -1,8 +1,9 @@
-import { collectLeftoverCandidates } from '../../domain/git-worktree.js';
+import { collectLeftoverCandidates, type GitWorktreeSnapshot } from '../../domain/git-worktree.js';
 import type { Project } from '../../domain/project.js';
-import { planReclaim, type ReclaimPlan } from '../../domain/reclaim-plan.js';
+import { planReclaim } from '../../domain/reclaim-plan.js';
 import type { InProgressWithLease, LeaseReader } from '../ports/lease-reader.js';
 import type { WorktreeScanner } from '../ports/worktree-scanner.js';
+import type { ReclaimPlanOutcome } from './reclaim-scheduler.js';
 
 export interface PlanProjectReclaimDeps {
   /**
@@ -46,16 +47,17 @@ function resolveProtectionOrigin(ticket: InProgressWithLease, now: Date): Date {
 /**
  * 1 プロジェクトぶんの reclaim 計画を立てる (bdboard-6aci / bdboard-vz01)。
  *
- * `null` = 判断材料が無いので今回は見送る。呼び出し側 (reclaim-scheduler) は
- * この場合 bd を一切呼ばない。**全件回収へフォールバックしない**のが要点で、
- * それをやると生存セッションのチケットを奪う元の事故に戻る。LeaseReader が
+ * `{ kind: 'skipped', reason }` = 判断材料が無いので今回は見送る。呼び出し側
+ * (reclaim-scheduler) はこの場合 bd を一切呼ばない。**全件回収へフォールバックしない**
+ * のが要点で、それをやると生存セッションのチケットを奪う元の事故に戻る。LeaseReader が
  * 失敗した場合も同様に見送る — 「盤面キャッシュが最後に成功した時点の古い集合」で
- * `--id` を組む準停止状態には戻さない。
+ * `--id` を組む準停止状態には戻さない。見送り理由は健全性表示で出し分けるため、
+ * 読めなかった情報源ごとに返す (bdboard-2hsq)。
  */
 export async function planProjectReclaim(
   project: Project,
   deps: PlanProjectReclaimDeps,
-): Promise<ReclaimPlan | null> {
+): Promise<ReclaimPlanOutcome> {
   const logWarn = deps.logWarn ?? ((message: string) => console.warn(message));
 
   let inProgress: readonly InProgressWithLease[];
@@ -66,47 +68,53 @@ export async function planProjectReclaim(
       `[reclaim] could not read in-progress leases for project=${project.id}; skipping this cycle: ` +
         (error instanceof Error ? error.message : String(error)),
     );
-    return null;
+    return { kind: 'skipped', reason: 'lease-read-failed' };
   }
 
   if (inProgress.length === 0) {
-    return { reclaimTicketIds: [], protectedTicketIds: [] };
+    return { kind: 'plan', plan: { reclaimTicketIds: [], protectedTicketIds: [] } };
   }
 
-  let liveTicketIds: ReadonlySet<string>;
+  // try は scanner 呼び出しだけを囲む。collectLeftoverCandidates (domain) の不具合まで
+  // scan-failed に畳むと「git を走査できず」と原因を取り違える — そちらはスケジューラの
+  // catch へ流れ、bd を呼ばずに lastError として出る。
+  let snapshot: GitWorktreeSnapshot;
   try {
-    const snapshot = await deps.scanner.scan(project.rootPath);
-    if (!snapshot.complete) {
-      // git が非ゼロ / timeout / spawn 失敗。スキャナはこれを空スナップショットに
-      // 畳むので、`complete` を見ずに進むと全 in_progress が「worktree 無し」= 回収対象
-      // になる。負荷で git が 10 秒に間に合わなかっただけで生存セッションを奪う。
-      logWarn(
-        `[reclaim] git worktree scan was incomplete for project=${project.id}; skipping this cycle ` +
-          '(an incomplete scan cannot tell "no worktree" from "could not look")',
-      );
-      return null;
-    }
-    liveTicketIds = new Set(
-      collectLeftoverCandidates(project.id, project.rootPath, snapshot).map(
-        (candidate) => candidate.ticketId,
-      ),
-    );
+    snapshot = await deps.scanner.scan(project.rootPath);
   } catch (error) {
     logWarn(
       `[reclaim] could not scan git worktrees for project=${project.id}; skipping this cycle: ` +
         (error instanceof Error ? error.message : String(error)),
     );
-    return null;
+    return { kind: 'skipped', reason: 'scan-failed' };
   }
+  if (!snapshot.complete) {
+    // git が非ゼロ / timeout / spawn 失敗。スキャナはこれを空スナップショットに
+    // 畳むので、`complete` を見ずに進むと全 in_progress が「worktree 無し」= 回収対象
+    // になる。負荷で git が 10 秒に間に合わなかっただけで生存セッションを奪う。
+    logWarn(
+      `[reclaim] git worktree scan was incomplete for project=${project.id}; skipping this cycle ` +
+        '(an incomplete scan cannot tell "no worktree" from "could not look")',
+    );
+    return { kind: 'skipped', reason: 'scan-incomplete' };
+  }
+  const liveTicketIds: ReadonlySet<string> = new Set(
+    collectLeftoverCandidates(project.id, project.rootPath, snapshot).map(
+      (candidate) => candidate.ticketId,
+    ),
+  );
 
   const now = (deps.now ?? (() => new Date()))();
 
-  return planReclaim(
-    inProgress.map((ticket) => ({
-      ticketId: ticket.id,
-      protectionOriginAt: resolveProtectionOrigin(ticket, now),
-      hasLiveWorktree: liveTicketIds.has(ticket.id),
-    })),
-    now,
-  );
+  return {
+    kind: 'plan',
+    plan: planReclaim(
+      inProgress.map((ticket) => ({
+        ticketId: ticket.id,
+        protectionOriginAt: resolveProtectionOrigin(ticket, now),
+        hasLiveWorktree: liveTicketIds.has(ticket.id),
+      })),
+      now,
+    ),
+  };
 }

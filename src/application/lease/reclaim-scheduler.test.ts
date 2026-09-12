@@ -2,14 +2,16 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../domain/project.js';
-import type { ReclaimPlan } from '../../domain/reclaim-plan.js';
 import type { LeaseReclaimer } from '../ports/lease-reclaimer.js';
 import {
   createReclaimScheduler,
   DEFAULT_RECLAIM_INTERVAL_MS,
   DEFAULT_RECLAIM_OLDER_THAN,
+  describeReclaimSkip,
   MIN_SAFE_RECLAIM_OLDER_THAN_MS,
   parseReclaimDurationMs,
+  type ReclaimPlanOutcome,
+  type ReclaimSkipReason,
 } from './reclaim-scheduler.js';
 
 function project(id: string, rootPath: string): Project {
@@ -27,9 +29,9 @@ function project(id: string, rootPath: string): Project {
  * 常にその 1 件を返す既定を置く。planner 固有の分岐は下の専用 describe が持つ。
  */
 const PLANNED_ID = 'bdboard-stale';
-const reclaimEverything = async (): Promise<ReclaimPlan> => ({
-  reclaimTicketIds: [PLANNED_ID],
-  protectedTicketIds: [],
+const reclaimEverything = async (): Promise<ReclaimPlanOutcome> => ({
+  kind: 'plan',
+  plan: { reclaimTicketIds: [PLANNED_ID], protectedTicketIds: [] },
 });
 
 describe('createReclaimScheduler', () => {
@@ -369,7 +371,7 @@ describe('createReclaimScheduler の planner (bdboard-6aci)', () => {
 
   function scheduler(
     reclaim: ReturnType<typeof vi.fn>,
-    planner: (project: Project) => Promise<ReclaimPlan | null>,
+    planner: (project: Project) => Promise<ReclaimPlanOutcome>,
   ) {
     return createReclaimScheduler({
       reclaimer: { reclaim } as unknown as LeaseReclaimer,
@@ -387,8 +389,8 @@ describe('createReclaimScheduler の planner (bdboard-6aci)', () => {
     }));
 
     const s = scheduler(reclaim, async () => ({
-      reclaimTicketIds: ['bdboard-dead'],
-      protectedTicketIds: ['bdboard-live'],
+      kind: 'plan',
+      plan: { reclaimTicketIds: ['bdboard-dead'], protectedTicketIds: ['bdboard-live'] },
     }));
     s.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -404,8 +406,8 @@ describe('createReclaimScheduler の planner (bdboard-6aci)', () => {
     const reclaim = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 
     const s = scheduler(reclaim, async () => ({
-      reclaimTicketIds: [],
-      protectedTicketIds: ['bdboard-live'],
+      kind: 'plan',
+      plan: { reclaimTicketIds: [], protectedTicketIds: ['bdboard-live'] },
     }));
     s.start();
     await vi.advanceTimersByTimeAsync(0);
@@ -419,16 +421,33 @@ describe('createReclaimScheduler の planner (bdboard-6aci)', () => {
   });
 
   // 判断材料が無いときに全件回収へ落ちないこと。落ちると 2026-09-05 の事故に戻る。
-  it('skips the project entirely when the planner returns null', async () => {
+  // 見送り理由ごとに表示を出し分ける (bdboard-2hsq)。以前は bd list 側の失敗でも
+  // 「生存証拠を判定できませんでした」と出て、健全性表示から原因を追えなかった。
+  // Record で持つので、理由を足したのに表示の固定を足し忘れると tsc で落ちる。
+  const SKIP_SUMMARIES = {
+    'lease-read-failed': 'skipped: bd の in_progress 一覧を読めませんでした',
+    'scan-incomplete':
+      'skipped: git の worktree / bd ブランチ一覧を最後まで読めず、生存証拠を判定できませんでした',
+    'scan-failed': 'skipped: git worktree を走査できず、生存証拠を判定できませんでした',
+  } satisfies Record<ReclaimSkipReason, string>;
+  const SKIP_CASES = Object.entries(SKIP_SUMMARIES) as Array<[ReclaimSkipReason, string]>;
+
+  it('uses a distinct summary for every skip reason', () => {
+    const summaries = SKIP_CASES.map(([reason]) => describeReclaimSkip(reason));
+    expect(new Set(summaries).size).toBe(SKIP_CASES.length);
+  });
+
+  it.each(SKIP_CASES)('skips the project entirely when the planner skips with %s', async (reason, summary) => {
     const reclaim = vi.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 
-    const s = scheduler(reclaim, async () => null);
+    const s = scheduler(reclaim, async () => ({ kind: 'skipped', reason }));
     s.start();
     await vi.advanceTimersByTimeAsync(0);
 
     expect(reclaim).not.toHaveBeenCalled();
     const status = s.getStatus().projects[0];
-    expect(status?.rawSummary).toContain('skipped');
+    expect(status?.rawSummary).toBe(summary);
+    expect(status?.lastError).toBeNull();
     // 「0 件回収した」と言ってはいけない。何件回収すべきだったかを知らないまま
     // 見送っているので、成功して 0 件だった巡回と区別が付く必要がある。
     expect(status?.reclaimedCount).toBeNull();
