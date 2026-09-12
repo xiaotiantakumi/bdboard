@@ -876,10 +876,95 @@ describe('HygienePanel stale lease display', () => {
     renderHygienePanel();
 
     expect(await screen.findByText('stale lease（heartbeat 途絶）')).toBeInTheDocument();
-    expect(screen.getByLabelText('自動 reclaim 状況')).toHaveTextContent(
-      'proj-a: 最終実行 11:55 / 回収 1件',
+    // 成功時も rawSummary (bd reclaim の出力要約) を件数の後ろに続ける。
+    expect(screen.getByLabelText('自動 reclaim 状況').textContent?.trim()).toBe(
+      'proj-a: 最終実行 11:55 / 回収 1件 / reclaimed 1 issue',
     );
   });
+
+  // 文言は src/application/lease/reclaim-scheduler.ts の describeReclaimSkip のコピー
+  // (web はサーバーのコードを import できない)。理由→文言の対応自体はサーバー側の
+  // テストが固定しており、ここで守るのは「件数の後ろに ' / ' で続けて見える」こと。
+  it.each([
+    'skipped: bd の in_progress 一覧を読めませんでした',
+    'skipped: git の worktree / bd ブランチ一覧を最後まで読めず、生存証拠を判定できませんでした',
+    'skipped: git worktree を走査できず、生存証拠を判定できませんでした',
+  ])('shows the reclaim skip reason next to the unknown count: %s', async (reason) => {
+    fetchLeaseHealthMock.mockResolvedValue(
+      makeLeaseHealth({
+        staleLeases: [
+          {
+            ticketId: 'bdboard-stale',
+            projectId: 'proj-a',
+            leaseExpiresAt: '2026-08-16T09:55:00.000Z',
+            staleForMs: 300_000,
+          },
+        ],
+        reclaim: {
+          enabled: true,
+          intervalMs: 300_000,
+          olderThan: '10m',
+          projects: [
+            {
+              projectId: 'proj-a',
+              lastRunAt: '2026-08-16T02:55:00.000Z',
+              reclaimedCount: null,
+              reclaimedCountUnknown: true,
+              rawSummary: reason,
+              lastError: null,
+            },
+          ],
+        },
+      }),
+    );
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('stale lease（heartbeat 途絶）')).toBeInTheDocument();
+    expect(screen.getByLabelText('自動 reclaim 状況')).toHaveTextContent(
+      `proj-a: 最終実行 11:55 / 回収件数不明 / ${reason}`,
+    );
+  });
+
+  it.each([null, '', '   '])(
+    'does not append a reclaim summary separator when rawSummary is %j',
+    async (rawSummary) => {
+    fetchLeaseHealthMock.mockResolvedValue(
+      makeLeaseHealth({
+        staleLeases: [
+          {
+            ticketId: 'bdboard-stale',
+            projectId: 'proj-a',
+            leaseExpiresAt: '2026-08-16T09:55:00.000Z',
+            staleForMs: 300_000,
+          },
+        ],
+        reclaim: {
+          enabled: true,
+          intervalMs: 300_000,
+          olderThan: '10m',
+          projects: [
+            {
+              projectId: 'proj-a',
+              lastRunAt: '2026-08-16T02:55:00.000Z',
+              reclaimedCount: 1,
+              reclaimedCountUnknown: false,
+              rawSummary,
+              lastError: null,
+            },
+          ],
+        },
+      }),
+    );
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('stale lease（heartbeat 途絶）')).toBeInTheDocument();
+    const status = screen.getByLabelText('自動 reclaim 状況');
+    expect(status.textContent?.trim()).toBe('proj-a: 最終実行 11:55 / 回収 1件');
+    expect(status.querySelector('.hygiene-reclaim-status-summary')).toBeNull();
+    },
+  );
 
   it('shows reclaim error in the stale lease section', async () => {
     fetchLeaseHealthMock.mockResolvedValue(
