@@ -108,7 +108,7 @@ matches() {
 
 # コマンド列を「シェルのコマンド 1 個」単位へ割る。; & | を改行へ潰すだけの粗い分割
 # だが、`A; B` の B や `A && B` の B を独立に見るにはこれで足りる。列全体を 1 つとして
-# 見ると `bd dolt push --remote legacy; bd dolt push` のように「先頭だけ行儀の良い」
+# 見ると `bd dolt push --remote backup; bd dolt push` のように「先頭だけ行儀の良い」
 # 列が素通りしてしまう。
 command_segments() {
   printf '%s\n' "$COMMAND" | tr ';&|' '\n\n\n'
@@ -142,7 +142,7 @@ if [ -n "$DOLT_SEGMENTS" ]; then
     fi
     deny \
       'bdboard-harness: --remote 無しの bd dolt push/pull は git origin 由来の remote を採用し、私的な issue 履歴を公開 remote へ流す恐れがあります。' \
-      'remote を必ず明示してください: bd dolt push --remote <name> (bdboard では legacy)。' \
+      'remote を必ず明示してください: bd dolt push --remote <name>。' \
       '事前に bd dolt remote list で origin が登録されていないことも確認してください。'
   done <<DOLT_SEGMENTS_EOF
 $DOLT_SEGMENTS

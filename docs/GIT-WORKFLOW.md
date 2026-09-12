@@ -9,8 +9,8 @@ AGENTS.md「Git Workflow」に骨格（ブランチ/worktree 命名、lifecycle�
 - 上記の規律が「なぜ」そうなのかを確認したいとき
 
 汎用の worktree+PR 規律は skill `bdboard-harness` の `references/worktree-pr-flow.md` が正。
-**この文書は bdboard 固有の値（remote 名 `legacy`、merge-slot bead 名、worktree パス、
-実際に起きた事故）だけを持つ**。両者が食い違ったら、固有値はこの文書、規律はパックが正。
+**この文書は bdboard 固有の値（merge-slot bead 名、worktree パス、実際に起きた事故）だけを
+持つ**。両者が食い違ったら、固有値はこの文書、規律はパックが正。
 
 ## 由来
 
@@ -33,20 +33,17 @@ port, so those run fine in parallel worktrees.
 `bd/bdboard-3tw.65` — dots are legal in git ref names). Non-ticket
 exploratory branches use `spike/` and never get a PR.
 
-## Direct-to-main の禁止と 2 つの例外
+## Direct-to-main の禁止とその唯一の例外
 
-**Direct-to-main commits are banned**, with exactly two exceptions:
-`chore(beads): ...` commits that touch only `.beads/` (routine
-`interactions.jsonl` sync), and CI-recovery commits touching only
-`.github/workflows/`. Even a one-line fix goes through a PR — the
-consistency is what makes "main is always PR-gated" a reliable invariant
-for concurrent sessions.
+**Direct-to-main commits are banned**, with exactly one exception:
+CI-recovery commits touching only `.github/workflows/`. Even a one-line
+fix goes through a PR — the consistency is what makes "main is always
+PR-gated" a reliable invariant for concurrent sessions.
 
-**`.beads/` is never touched inside a PR branch.** CI has a guard step
-that fails any PR whose diff against `origin/main` touches `.beads/`.
-Tracked `.beads/` files (`.gitignore`, `README.md`, `config.yaml`,
-`hooks/*`, `interactions.jsonl`, `metadata.json`) only change via the
-`chore(beads)` main-direct exception above.
+**This repo does not track `.beads/` in git** (see root `.gitignore`) —
+it is local to the maintainer's own environment. **`.beads/` is never
+touched inside a PR branch.** CI has a guard step that fails any PR whose
+diff against `origin/main` touches `.beads/`.
 
 ## Drift check (`npm run drift`)
 
@@ -209,14 +206,12 @@ Two things to expect here, so they are not mistaken for failures:
 
 (separate from the above): `bd dolt push`/`bd dolt
 pull` sync issue history to `refs/dolt/data` on a git remote — fully
-independent of code branches/PRs, invisible in any diff. **This repo has
-two git remotes**: `origin` (public, `xiaotiantakumi/bdboard`) and
-`legacy` (private, `xiaotiantakumi/bdboard-legacy-private`). Issue
-history is private and must go to `legacy` only — see bdboard-23v for why.
-**Always run `bd dolt push --remote legacy` / `bd dolt pull --remote
-legacy`. Never run a bare `bd dolt push` or `bd dolt pull` on this repo.**
+independent of code branches/PRs, invisible in any diff. `origin` is the public code remote (`xiaotiantakumi/bdboard`) and must
+never be used as a Dolt remote for issue history.
+**Always pass `--remote <name>` explicitly. Never run a bare `bd dolt
+push` or `bd dolt pull` on this repo.**
 A bare push can silently push to (or adopt) a Dolt-layer remote derived
-from `git origin` — i.e. the public repo — leaking private issue history;
+from `git origin` — i.e. the public repo — leaking issue history;
 `bd dolt push --help` documents this remote-adoption behavior. This is not
 hypothetical: on 2026-08-17 (bdboard-jb1) the main checkout itself still
 had a Dolt-layer `origin` remote pointing at the public repo, even though
@@ -227,7 +222,10 @@ bare `bd dolt push`/`bd dolt pull` on **any** checkout of this repo
 (including a freshly-cloned one right after `bd init`), run `bd dolt
 remote list` and confirm it shows no `origin` entry — if it does, remove
 it with `bd dolt remote remove origin` first. Push periodically at
-session end, not per-ticket.
+session end, not per-ticket. Machine-specific sync details (remote name,
+credentials, restore steps for a new machine) are not tracked in this
+public file — they live in `bd remember` notes on the maintainer's own
+environment.
 
 ## ブランチ保護
 
@@ -244,9 +242,9 @@ session end, not per-ticket.
   off** — main が動いたときの追従は上の drift + merge-slot + CAS の運用に任せ、PR ごとの
   rebase → CI 再走を強制しない。
 - **force push 禁止** (`non_fast_forward`)、**ブランチ削除禁止** (`deletion`)。
-- **bypass = Repository admin (always)**。オーナーだけが例外 2 件
-  (`chore(beads)` と CI 復旧) を直接コミットできる。bypass は「規約上の例外を打てる」
-  ためであって、通常の変更を main に直接 push してよい意味ではない。
+- **bypass = Repository admin (always)**。オーナーだけが唯一の例外 (CI 復旧) を直接
+  コミットできる。bypass は「規約上の例外を打てる」ためであって、通常の変更を main に
+  直接 push してよい意味ではない。
 
 確認・変更は API から:
 

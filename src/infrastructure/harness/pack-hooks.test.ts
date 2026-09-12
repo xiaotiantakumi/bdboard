@@ -164,7 +164,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         name: 'bare bd dolt push after one with --remote',
         payload: {
           tool_name: 'Bash',
-          tool_input: { command: 'bd dolt push --remote legacy; bd dolt push' },
+          tool_input: { command: 'bd dolt push --remote backup; bd dolt push' },
         },
         stderrIncludes: '--remote',
       },
@@ -223,8 +223,8 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         payload: { tool_name: 'Bash', tool_input: { command: 'git stash list' } },
       },
       {
-        name: 'bd dolt push --remote legacy',
-        payload: { tool_name: 'Bash', tool_input: { command: 'bd dolt push --remote legacy' } },
+        name: 'bd dolt push --remote backup',
+        payload: { tool_name: 'Bash', tool_input: { command: 'bd dolt push --remote backup' } },
       },
       {
         // 2>&1 は末尾 & ではない。run_in_background:true でも通ること。

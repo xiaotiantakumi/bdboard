@@ -125,7 +125,7 @@ bdboard を「Claude Code でチケット駆動の自律開発を回すための
 | 事故 | 何が起きたか | hook で防げたか |
 |---|---|---|
 | pkill-collateral | `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーを巻き込む。後日 sonnet-5 実装ラッパーが**指示書で明示禁止されていたのに再度 pkill 使用** (p5l コメント) | PreToolUse(Bash): `pkill\|killall` を deny |
-| bare-dolt-push | `bd dolt push` を `--remote legacy` 無しで実行すると私的履歴が公開 remote へ | PreToolUse(Bash): `bd dolt (push\|pull)` に `--remote legacy` が無ければ deny |
+| bare-dolt-push | `bd dolt push` を `--remote <name>` 無しで実行すると私的履歴が公開 remote へ | PreToolUse(Bash): `bd dolt (push\|pull)` に `--remote <name>` が無ければ deny |
 | verify-storm / verify:steps 直叩き | スロットを迂回 | PreToolUse(Bash): `verify:steps` deny |
 | injected-copy-edit | 注入コピー側を編集して正本に反映し損ねかけた | PreToolUse(Edit/Write): 注入先で `.claude/skills/bdboard-harness/**` を deny、bdboard 内では警告 |
 | double-background-verify | **同一セッション内で 2 回再発** (bdboard-j0us) | PreToolUse(Bash): `run_in_background` かつ末尾 `&` を deny |
@@ -304,7 +304,7 @@ harness ラベルの起票率、重複解消/やり直しチケットの比率�
 
 - AGENTS.md を「毎セッション必要」なものだけに絞る: Quick Reference、verify 一行、
   Git Workflow の骨格 (branch/worktree/close タイミング/direct-to-main 禁止)、`.beads/`
-  不可触、Dolt push は `--remote legacy` 固定。目標 150〜200 行。
+  不可触、Dolt push は `--remote <name>` 必須。目標 150〜200 行。
 - 残りは発動時ロードへ移す: 「Always-On Local Hosting」→ `.claude/skills/bdboard-server-ops/`
   (サーバー起動・診断・再起動時に読む)、「bd init Re-runs」→ 同 skill か
   `.claude/rules/` の path-scoped rule (`AGENTS.md`, `.beads/**`)、「Verify slots」詳細 →

@@ -171,5 +171,5 @@
 
 ### bare-dolt-push — Dolt レイヤーに残っていた public 向け remote により、bare push が私的チケット履歴を公開リポジトリへ漏らす寸前だった（2026-08-17）
 - 原因: config.yaml の sync.remote 無効化では、既に登録済みの Dolt レイヤー remote は消えない
-- 防止: 常に `bd dolt push --remote legacy`。bare push 前は `bd dolt remote list` で origin 不在を確認（本則: bdboard の `docs/GIT-WORKFLOW.md`「.beads/ Dolt sync」）
+- 防止: 常に `bd dolt push --remote <name>` を明示（bare push しない）。bare push 前は `bd dolt remote list` で origin 不在を確認（本則: bdboard の `docs/GIT-WORKFLOW.md`「.beads/ Dolt sync」）
 - 出典: bdboard-jb1（背景: bdboard-23v）

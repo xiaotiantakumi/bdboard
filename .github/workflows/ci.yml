@@ -23,7 +23,7 @@ jobs:
         run: |
           git fetch origin main
           if git diff --name-only origin/main...HEAD | grep '^\.beads/'; then
-            echo "::error::PR branches must not modify .beads/ (beads metadata is committed only via chore(beads) commits on main)"
+            echo "::error::PR branches must not add or modify .beads/ - this repo does not track .beads/ in git (see .gitignore)"
             exit 1
           fi
 

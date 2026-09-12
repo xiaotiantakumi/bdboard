@@ -3,7 +3,8 @@
 AI コーディングエージェント向けの常時ロードされる指示 (`CLAUDE.md` はこのファイルへの
 シンボリックリンク)。**200 行以下に保つ** — 詳細は各節が指す skill / `.claude/rules/` / `docs/`
 に置き、ここには「常に必要なこと」と「いつそれを読むか」だけ書く。課題管理は **bd** (beads):
-全体像は `bd prime`。
+全体像は `bd prime`。**bd issue 履歴はメンテナのローカル環境限定で git 追跡していない**
+— clone に `.beads/` が無いのは正常、他に取得すべきものは無い。貢献は GitHub Issues/PR で。
 
 ## Non-Interactive Shell Commands
 
@@ -158,14 +159,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   CAS → `gh pr merge --squash --delete-branch` → `git pull --ff-only` して main で
   `npm run verify` → `bd merge-slot release`) → **`bd close <id>` はマージ成功後だけ**
   (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
-- **Direct-to-main commits are banned.** 例外は 2 つだけ: `.beads/` のみを触る
-  `chore(beads): ...` と、`.github/workflows/` のみを触る CI 復旧コミット。
-- **`.beads/` は PR ブランチで一切触らない。** CI が `origin/main` との diff に `.beads/` を
-  含む PR を落とす。
-- **`bd dolt push --remote legacy` / `bd dolt pull --remote legacy` 固定。素の `bd dolt push` /
-  `bd dolt pull` はこの repo で禁止** — public remote (`origin`) を Dolt 層が黙って採用し、
-  private な issue 履歴が漏れうる (bdboard-23v / bdboard-jb1)。push はチケット毎ではなく
-  セッション終わりに定期的に。
+- **Direct-to-main commits are banned.** 唯一の例外は `.github/workflows/` のみを触る CI 復旧コミット。
+- **`.beads/` はこのリポジトリで git 追跡していない** (ルート `.gitignore` 参照)。PR で
+  `.beads/` 配下を追加・変更しない — CI が `origin/main` との diff に含めば PR を落とす。
+- **Dolt remote は必ず `--remote <name>` を明示する。素の `bd dolt push` / `bd dolt pull` は
+  この repo で禁止** — `origin` を Dolt 層が黙って採用しうる (bdboard-23v / bdboard-jb1)。事前に
+  `bd dolt remote list` で `origin` が無いことを確認する。push はセッション終わりに定期的に。
 - **Cleanup after merge** (マージしたセッションの責任): `git worktree remove` →
   `git branch -D bd/<id>` → `git remote prune origin` → 常時稼働サーバーを再起動
   (skill `bdboard-server-ops`)。remove 前に `lsof -a -d cwd +D <worktree>` で他セッションが

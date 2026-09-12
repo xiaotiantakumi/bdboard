@@ -30,14 +30,14 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | # | deny 条件 | 代わりに |
 |---|---|---|
 | 1 | `pkill` / `killall` (単語境界。コメント内も含む) | `lsof -nP -iTCP:<port> -sTCP:LISTEN` や `pgrep -x <name>` で PID を特定し `kill <pid>` |
-| 2 | `--remote` の無い `bd dolt push` / `bd dolt pull` | `bd dolt push --remote <name>` (bdboard では `legacy`)。事前に `bd dolt remote list` で `origin` が無いことを確認 |
+| 2 | `--remote` の無い `bd dolt push` / `bd dolt pull` | `bd dolt push --remote <name>`。事前に `bd dolt remote list` で `origin` が無いことを確認 |
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
 | 6 | `aimix run --mode implement` / `--mode refactor` で、`models.routes` の該当セルを引けたのに `--model` が無い、または `<member>:<model>` がそのセルの候補でない | `scripts/route.sh <工程> <low\|med\|high>` で候補を引いて渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
-判定する。列全体をまとめて見ると `bd dolt push --remote legacy; bd dolt push` や
+判定する。列全体をまとめて見ると `bd dolt push --remote backup; bd dolt push` や
 `git stash list; git stash pop` のように「先頭だけ行儀の良い」列が素通りする。
 
 3 のメッセージ指定は `-m` / `-um` のような短オプションの束・`-m"x"`・`--message`・
@@ -207,7 +207,7 @@ git が無い・パスが取れない・ブランチが判らない場合は all
 echo '{"tool_name":"Bash","tool_input":{"command":"pkill -f tsx"}}' \
   | bash harness/packs/bdboard-harness/hooks/pre-bash-guard.sh; echo $?   # => 2
 
-echo '{"tool_name":"Bash","tool_input":{"command":"bd dolt push --remote legacy"}}' \
+echo '{"tool_name":"Bash","tool_input":{"command":"bd dolt push --remote backup"}}' \
   | bash harness/packs/bdboard-harness/hooks/pre-bash-guard.sh; echo $?   # => 0
 ```
 
