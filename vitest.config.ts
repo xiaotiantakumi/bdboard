@@ -32,6 +32,8 @@ export default defineConfig({
     // macOS/Linux は本当に遅くなったときに素早く落ちるシグナルを保ちたいので据え置く。既存の
     // gitサブプロセスを起こすテストの個別15000ms指定は、macOS/Linuxを5000msから守るため残す。
     // Windowsでは同じ15000msに一致して冗長になるだけで無害である。
+    // scripts/check-drift.test.mjs の CLI テストだけは個別指定をやめ、describe 単位で
+    // Windows 60s / 他 15s にしている (bdboard-ypjz)。
     testTimeout: process.platform === 'win32' ? 15_000 : 5_000,
     // maxWorkers はプール非依存のフォールバック(vitest 3.2.7 実装:
     // `poolOptions.maxForks ?? vitest.config.maxWorkers ?? threadsCount`)。
