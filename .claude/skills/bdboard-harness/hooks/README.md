@@ -34,7 +34,7 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
-| 6 | `aimix run --mode implement` / `--mode refactor` で、`models.routes` の該当セルを引けたのに `--model` が無い、または `<member>:<model>` がそのセルの候補でない。セルが `models.exclude` で候補 0 件になっている場合は、`--member` が除外中の member のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引いて渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
+| 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
 判定する。列全体をまとめて見ると `bd dolt push --remote backup; bd dolt push` や
@@ -76,14 +76,42 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 規律 6 (SKILL.md) の「工程 × 複雑度のモデル振り分け表」を機械で強制する。文章だけの規律は
 failure-catalog の「D: 文章で禁止しても再発する操作ミス」に落ちるため。
 
-判定対象は `command_segments` で割った各コマンドのうち、`aimix run` かつ
-`--mode implement` / `--mode refactor` のもの。`--mode consult` / `review` / `debate` と
-`aimix` 以外は素通りする。フラグは `--flag value` と `--flag=value` の両形式を受け、同じ
-フラグが複数あれば後勝ち。
+判定対象は `command_segments` で割った各コマンドのうち、`aimix run` かつ実効 mode が
+`implement` / `refactor` のもの。mode 省略時は aimix と同じ `consult` なので、`consult` /
+`review` / `debate` と `aimix` 以外は素通りする。
 
-- **セルを引けたときは `--model` が必須**。無ければ deny する。どの候補を使ったのかが
+#### フラグ解釈
+
+1 セグメントを左から右へ 1 回走査し、長オプションの名前解決は aimix 本体の argparse
+(`allow_abbrev=True`) と同じ「完全一致、無ければ一意な前方一致」にする。
+
+- `--flag value` と `--flag=value` の両形式を受け、同じオプションが複数あれば後勝ち。
+- 名前は完全一致を優先し、完全一致が無ければ既知オプションの一意な前方一致を受ける。
+  例えば `--co` / `--compl` / `--complexit` は `--complexity`、`--ca` は `--category`、
+  `--cw` は `--cwd` になる。一方 `--memb` は `--member` / `--members`、`--mod` は
+  `--mode` / `--model` のどちらにも一致して曖昧。aimix 本体はここで argparse エラーになり実行
+  されないが、hook はそのトークンだけを無視して走査自体を続ける。hook の素朴な分割が
+  引数文字列内の断片をオプションと誤認しても、後続の正規フラグまで判定放棄しないためである。
+  未知の長オプションも同様に、そのトークンだけを無視する。
+- 値を取るオプションの `=` 無し形式は次トークンを値として消費する。ただし次が `-` で始まる
+  2 文字以上のトークンなら、argparse と同じく値とはみなさず消費しない (空白を含む語は argparse
+  でも位置引数扱いなので値として消費する。`--task "--member cursor"` 等)。
+- 対象オプションは、値ありの `--mode --member --members --category --model --complexity
+  --task --task-file --diff-file --rounds --cwd --run-dir` と、値なしの `--git-diff --qa --json
+  --no-log --brief --help`。短い `-h` は規則 6 の判定材料にしない。
+- `--complexity` 省略時は aimix の既定どおり `med`。明示値が `low` / `med` / `high` 以外なら
+  aimix 自身が argparse エラーで実行しないため、hook は素通りする。
+- member は、空でない `--member` があればそれを使う。そうでなければ `--members` を `,` で
+  分割し、引用符を除いて前後空白を落とした先頭の空でない要素を使う。後者では aimix が
+  `--model` を無視して各 member の tier 既定モデルを使い、implement は先頭 member だけを
+  実行するため、候補のあるセルでは `--members` の呼び出しを deny する。
+
+- **セルを引けたときは空でない `--member` と `--model` が必須**。member 不明なら、
+  `--member` が無い経路では aimix が `--model` を無視して registry 等から自動選択する旨を示して
+  deny する。`--members` 由来なら上記の tier 既定モデルになる旨を示して deny する。`--model` が
+  無ければ従来どおり deny する。どの候補を使ったのかが
   記録に残らないため。**逆に言うと、`models` 表を宣言していないプロジェクトでは
-  `--model` 無しでも通る** — 照合が必ず fail-open になる場所で deny だけ発火させると、
+  member / `--model` 無しや `--members` でも通る** — 照合が必ず fail-open になる場所で deny だけ発火させると、
   deny 文が案内する `route.sh` は無出力なので従いようがなく、摩擦だけが残るため。
 - **判定は「そのセルの候補配列に `<member>:<model>` が含まれるか」だけで行う。**
   vendor 名 (`codex` / `cursor` / `claude`) で弾く実装にしてはならない — セルの正当な
@@ -99,25 +127,26 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」に�
 
 #### fail-open する条件
 
-deny してよいのは「セルの候補を実際に取れて、そこに無かった」ときと、「宣言されている
-セルが `models.exclude` で候補 0 件になっていて、`--member` が除外中の member だった」
+deny してよいのは「セルの候補を実際に取れて、明示指定が上の契約を満たさなかった」ときと、
+「宣言されているセルが `models.exclude` で候補 0 件になっていて、解決した member が除外中だった」
 とき (`route.sh --excluded` で判定。bdboard-p5l.22) だけ。次はすべて素通り:
 
 - `scripts/route.sh` が読めない。
 - `route.sh` が非 0 で終わる — 契約の JSON が不正 (exit 1)、jq も python3 も無い (exit 127)。
 - `route.sh` の出力が空 — 契約に `models` 節が無い / その工程が無い / そのセルが無い。
-- 除外で候補 0 件になったセルで、`--member` が除外中の member ではない (空セルを全面
+- 除外で候補 0 件になったセルで、member が不明、または解決した member が除外中ではない
+  (空セルを全面
   deny にすると、枠逼迫の退避がそのセルの委譲の全停止になるため)。`route.sh --excluded`
   が非 0 で終わったときも判定しない。
-- `--member` が読めない、または `--complexity` が `low` / `med` / `high` でない
-  (大文字小文字は区別する。`--complexity LOW` は素通りする)。
-  **complexity 未記録を deny にするかは Phase 2 (bdboard-p5l.19) の観測結果で決める話**で、
-  ここではやらない。
+- `--complexity` を明示したが `low` / `med` / `high` でない (大文字小文字は区別する。
+  `--complexity LOW` は素通りする)。**`--complexity` 省略は aimix の既定 `med` として判定する。**
+  これは aimix が実際に使うセルで照合するだけで、チケットの `bdboard.complexity` 未記録を deny
+  にするかは引き続き Phase 2 (bdboard-p5l.19) の話。
 
-`--model` の必須チェックも**この fail-open の後ろ**にある。順序は
-mode ゲート → エスケープハッチ → `--member` / `--complexity` → `route.sh` →
-(候補が空なら `route.sh --excluded` で除外中 member の照合) → `--model` 必須 →
-セル所属照合。
+member / `--model` の必須チェックも**この fail-open の後ろ**にある。順序は
+1 回のフラグ走査 → mode ゲート → エスケープハッチ → complexity の choices 確認 →
+member 解決 → `route.sh` → (候補が空なら、member が分かる場合だけ `route.sh --excluded` で
+除外中 member の照合) → member 不明 → `--members` 由来 → `--model` 必須 → セル所属照合。
 
 #### エスケープハッチ
 
@@ -146,6 +175,13 @@ mode ゲート → エスケープハッチ → `--member` / `--complexity` → 
   `agents/*.md` が文書化している複数行の呼び出し形で「`--model` が別行 → 誤 deny」
   「`--complexity` が別行 → 照合を素通り」の両方が起きる。畳むのは規則 6 用の分割だけで、
   規則 1〜5 の判定は従来どおり。
+- その後のトークン化は shell parser ではない。`set -f` で空白分割したあと、開いた引用符
+  (`"` / `'`) が閉じるまで断片をつなぎ直し、引用符文字を取り除いて 1 語にする。これで
+  `--task "x --comp y"` の中身をフラグと読まない・`"--complexity" high` をオプションとして
+  読む・`--members " cursor"` の先頭 member を読む、の 3 点がシェル (= aimix が受け取る引数) と
+  揃う。バックスラッシュエスケープ・`$()`・変数展開は扱わない近似で、引用符の中の `;` `&` `|`
+  はその前段のコマンド分割で割れてしまう。曖昧・未知な断片で走査を中断しないのは、この近似で
+  拾った断片によって後続の正規フラグまで判定放棄させないため。
 - 規則 1〜5 と同じく、判定はコマンド文字列への照合なので「そのコマンドを実行する意図」と
   「そのコマンドについて書いているだけの文字列」を区別しない。`aimix run --mode implement
   --model ...` を例示として heredoc やテストフィクスチャに書くと deny されうる。実測例:

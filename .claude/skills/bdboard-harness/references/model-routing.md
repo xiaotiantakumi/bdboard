@@ -97,6 +97,26 @@ route.sh は選択に必要な構造と候補を検証する読み取り専用�
 
 `*` は既定値であって排他ではない。同じ工程に `*` と個別キーを併記でき、**個別キーが勝つ**。
 
+## pre-bash-guard.sh の aimix 引数解釈
+
+規律6の hook は `aimix run` の 1 セグメントを 1 回走査し、長オプションの名前解決は aimix 本体の
+argparse (`allow_abbrev=True`) と同じ「完全一致、無ければ一意な前方一致」にする。
+`--flag value` / `--flag=value` の両方と後勝ちを扱う。例えば `--co` は `--complexity` だが、
+`--memb` (`--member` / `--members`) や `--mod` (`--mode` / `--model`) は曖昧である。aimix 本体は
+曖昧略記を argparse エラーにして実行しない。一方、hook の分割は近似 (空白分割のあと引用符が
+閉じるまで断片をつなぎ直して引用符を外すが、エスケープや `$()` は扱わない) なので、曖昧・未知な
+トークンだけを無視し、後続フラグの走査は続ける。
+
+`--complexity` 省略時は aimix の既定 `med` としてセルを引く。空でない `--member` があればそれを
+優先し、無ければ `--members` の comma 区切りで先頭の空でない member を使う。候補があるセルでは、
+member 不明の呼び出しと `--members` 由来の呼び出しを deny する。前者は aimix が `--model` を無視して
+registry 等から自動選択し、後者も `--model` を無視して tier 既定モデルで先頭 member だけを実行する
+ためである。`--member <member> --model <候補>` の形へ直す。
+
+候補が空なら、member が分かる場合だけ `route.sh --excluded` と照合する。member 不明や未宣言セルは
+従来どおり fail-open。`--complexity` の明示値が `low` / `med` / `high` 以外の場合も、aimix 自身が
+argparse エラーで実行しないため hook は素通りする。
+
 ## レートリミット除外 (models.exclude)
 
 member がレートリミットに当たっているときに、`.claude/bdboard-harness.json` の
