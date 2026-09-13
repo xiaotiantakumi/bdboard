@@ -69,6 +69,11 @@ export const UI_STORAGE_KEYS = {
   notificationEvents: 'bdboard.ui.notificationEvents',
   notificationLastReadAt: 'bdboard.ui.notificationLastReadAt',
   notificationsEnabled: 'bdboard.ui.notificationsEnabled',
+  /*
+   * bdboard-3tw.161: 最後に受け取った通知の SSE event id。usePersistedState は通さず生文字列で
+   * 保存する (web/src/lib/notificationLastEventId.ts)。
+   */
+  notificationLastEventId: 'bdboard.ui.notificationLastEventId',
   watchedTicketIds: 'bdboard.ui.watchedTicketIds',
   recentTickets: 'bdboard.ui.recentTickets',
   /*

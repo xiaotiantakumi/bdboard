@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BoardCardDto, TicketDetailDto } from '../api';
 import { acquireSharedEventSource } from '../lib/sseConnection';
+import { writeNotificationLastEventId } from '../lib/notificationLastEventId';
 import {
   buildTicketWatchSnapshot,
   diffTicketWatchSnapshots,
@@ -110,7 +111,12 @@ export interface UseNotificationEventsResult {
 
 type TicketNotificationKind = 'ticket_ready' | 'decision_pending';
 
-type NotificationPayload =
+type NotificationPayload = NotificationPayloadBody & {
+  /** サーバーが再接続時に再送した通知 (bdboard-3tw.161)。 */
+  readonly replayed?: boolean;
+};
+
+type NotificationPayloadBody =
   | {
       kind: TicketNotificationKind;
       ticketId: string;
@@ -535,7 +541,10 @@ export function useNotificationEvents(
   );
 
   const appendNotificationItems = useCallback(
-    (items: readonly NotificationEventItem[]) => {
+    (
+      items: readonly NotificationEventItem[],
+      { notifyBrowser = true }: { readonly notifyBrowser?: boolean } = {},
+    ) => {
       if (items.length === 0) {
         return;
       }
@@ -545,6 +554,9 @@ export function useNotificationEvents(
       }
       eventsRef.current = merged;
       setEvents(merged);
+      if (!notifyBrowser) {
+        return;
+      }
       for (const item of added) {
         enqueueBrowserNotification(item, notificationsEnabledRef.current);
       }
@@ -608,8 +620,17 @@ export function useNotificationEvents(
         return;
       }
 
+      // 再接続時にサーバーが取り戻した分 (replayed) はイベントセンターにだけ戻し、
+      // デスクトップ通知は鳴らさない。まとめて鳴ると古い通知が今起きたように見えるため
+      // (bdboard-3tw.161)。id は payload 由来のままなので、既に見た分やクロスタブで
+      // 同期済みの分は mergeUniqueNotificationEvents で落ちる (bdboard-7io7)。
       const item = buildNotificationEventItem(payload);
-      appendNotificationItems([item]);
+      appendNotificationItems([item], { notifyBrowser: payload.replayed !== true });
+      // 受け取れた (検証を通って一覧に反映した) 通知の id だけを控える。検証に落ちた通知の
+      // id まで控えると、画面を更新して読めるようになっても次の接続で再送されなくなる。
+      if (typeof event.lastEventId === 'string' && event.lastEventId !== '') {
+        writeNotificationLastEventId(event.lastEventId);
+      }
     };
 
     conn.addEventListener('notification', onNotification as EventListener);
