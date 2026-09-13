@@ -552,6 +552,128 @@ describe('POST /api/chat/message/stream', () => {
     }
   });
 
+  it('releases the chat lock when a short turn settles even if the client stalls below the queue limit (bdboard-pti0)', async () => {
+    const sessionId = '550e8400-e29b-41d4-a716-446655440055';
+    const stallText = 'x'.repeat(256 * 1024);
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        // The body is never read, and the deltas are large enough that the writer stalls in
+        // writeSSE whatever the response stream buffers. 'done' stays queued far below
+        // CHAT_STREAM_QUEUE_MAX_SIZE, so the overflow abort never fires: before bdboard-pti0
+        // the stalled writer held the lock. Now it is released at settle, before the writer
+        // gets that far.
+        onDelta({ text: `first-${stallText}` });
+        onDelta({ text: `second-${stallText}` });
+        return { reply: 'short reply', sessionId, agentId: 'test-agent', failedTools: [] };
+      }),
+    });
+    const store = createChatSessionStore();
+    const rememberSpy = vi.spyOn(store, 'remember');
+    const releaseSpy = vi.spyOn(store, 'release');
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store });
+
+    const response = await app.request(
+      '/api/chat/message/stream',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+      }),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(200);
+    await vi.waitFor(() => expect(rememberSpy).toHaveBeenCalledWith('p', sessionId, 'test-agent'));
+    expect(store.isBusy('p')).toBe(false);
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+
+    // The stalled writer has not exited, yet the next turn for the project is accepted.
+    const followUp = await app.request(
+      '/api/chat/message',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'follow-up' }),
+      }),
+      LOCAL_ENV,
+    );
+    expect(followUp.status).toBe(200);
+    expect(releaseSpy).toHaveBeenCalledTimes(2);
+
+    // Delivery still completes once the client resumes reading.
+    const text = await response.text();
+    expect(text.match(/event: delta/g)).toHaveLength(2);
+    expect(text.match(/event: done/g)).toHaveLength(1);
+    expect(text).toContain('"reply":"short reply"');
+    // The late writer exit must not release again.
+    expect(releaseSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not release the next turn's lock when an earlier stalled stream writer exits late (bdboard-pti0)", async () => {
+    const firstSessionId = '550e8400-e29b-41d4-a716-446655440044';
+    const secondSessionId = '550e8400-e29b-41d4-a716-446655440033';
+    const stallText = 'x'.repeat(256 * 1024);
+    let resolveSecond: (result: ChatTurnResult) => void = () => {};
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        onDelta({ text: `first-${stallText}` });
+        onDelta({ text: `second-${stallText}` });
+        return { reply: 'first reply', sessionId: firstSessionId, agentId: 'test-agent', failedTools: [] };
+      }),
+      sendMessage: vi.fn(
+        async (): Promise<ChatTurnResult> =>
+          await new Promise<ChatTurnResult>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      ),
+    });
+    const store = createChatSessionStore();
+    const rememberSpy = vi.spyOn(store, 'remember');
+    const releaseSpy = vi.spyOn(store, 'release');
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store });
+    const post = (route: string, message: string): Promise<Response> =>
+      Promise.resolve(
+        app.request(
+          route,
+          withLocalHost({
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ projectId: 'p', message }),
+          }),
+          LOCAL_ENV,
+        ),
+      );
+
+    // Turn 1 settles while its client is stalled (body unread).
+    const firstResponse = await post('/api/chat/message/stream', 'turn 1');
+    expect(firstResponse.status).toBe(200);
+    await vi.waitFor(() => expect(rememberSpy).toHaveBeenCalledWith('p', firstSessionId, 'test-agent'));
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+
+    // Turn 2 acquires the lock and stays in flight.
+    const secondPromise = post('/api/chat/message', 'turn 2');
+    await vi.waitFor(() => expect(streamingAgent.sendMessage).toHaveBeenCalled());
+    expect(store.isBusy('p')).toBe(true);
+
+    // Turn 1's client resumes, so its writer loop finally exits. That exit must not
+    // call store.release (locks.delete) and free turn 2's lock.
+    const firstText = await firstResponse.text();
+    expect(firstText).toContain('"reply":"first reply"');
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+    expect(store.isBusy('p')).toBe(true);
+    const blocked = await post('/api/chat/message', 'turn 3');
+    expect(blocked.status).toBe(409);
+
+    resolveSecond({ reply: 'second reply', sessionId: secondSessionId, agentId: 'test-agent', failedTools: [] });
+    const secondResponse = await secondPromise;
+    expect(secondResponse.status).toBe(200);
+    expect(releaseSpy).toHaveBeenCalledTimes(2);
+    expect(store.isBusy('p')).toBe(false);
+  });
+
   it('streaming done payload matches the bulk 200 body shape for the same turn (bdboard-l1t.9 delta 再レビュー N2)', async () => {
     const turnResult: ChatTurnResult = {
       reply: 'same reply',
