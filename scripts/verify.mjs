@@ -41,47 +41,10 @@ import path from 'node:path';
 import { npmRunSpawnSpec } from './npm-command.mjs';
 import { isOrphaned, killProcessTree } from './process-tree.mjs';
 import { acquireVerifySlot, envSlotOptions, SlotWaitTimeoutError } from './verify-slot.mjs';
-import { classifyVerifyOutput, formatKnownFlakeNotice } from './verify-flake-detector.mjs';
 
 const GRACE_MS = 5_000;
 const ORPHAN_POLL_MS = 1_000;
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-// bdboard-8rl8: リーダーの子 (verify:steps) の stdout/stderr を実画面へそのまま
-// 流しつつ (tee)、既知 flake 判定用にも溜め込む。判定に使うのは末尾だけで十分
-// なので、無制限に溜め込んで長時間 verify でメモリを食わないよう上限を設ける
-// (8MB は数千行のログでも十分に収まる余裕を見た値 — チケット本文の実測ログは
-// 数千行オーダー)。
-const CAPTURE_LIMIT_BYTES = 8 * 1024 * 1024;
-
-function createOutputCapture() {
-  const chunks = [];
-  let bytes = 0;
-  return {
-    append(chunk) {
-      chunks.push(chunk);
-      bytes += chunk.length;
-      while (bytes > CAPTURE_LIMIT_BYTES && chunks.length > 1) {
-        bytes -= chunks.shift().length;
-      }
-    },
-    toText() {
-      return Buffer.concat(chunks).toString('utf8');
-    },
-  };
-}
-
-// verify:steps の子は本来 stdio: 'inherit' で直結していたが、既知 flake 判定には
-// テキストを読む必要があるため pipe に変える。tsc/vitest 等は非TTYへ出力する際に
-// 色付けを止めることがあるので、呼び出し元 (verify.mjs 自身) の stdout が実際に
-// TTY のときだけ FORCE_COLOR で従来の見え方を保つ (CI ではもともと非TTYなので
-// 挙動は変わらない)。
-function colorPreservingEnv() {
-  if (!process.stdout.isTTY || process.env.FORCE_COLOR !== undefined) {
-    return {};
-  }
-  return { FORCE_COLOR: '1' };
-}
 
 // 起動時の親 PID。win32 の孤児検知はこれの生存確認で行う (process-tree.mjs の isOrphaned)。
 // 分岐前に採るので、外側モードでは呼び出し元シェル、リーダーモードでは外側の PID になる。
@@ -92,23 +55,10 @@ const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGKILL: 137, SIGTERM: 143
 if (process.argv.includes('--group-leader')) {
   // ---- リーダーモード: 新プロセスグループの先頭。verify 本体を同グループで走らせる ----
   const { command, args, options } = npmRunSpawnSpec('verify:steps');
-  // bdboard-8rl8: 既知 flake 判定のため 'inherit' ではなく pipe にして出力を溜め込む
-  // (下の stdout/stderr 'data' ハンドラで実画面へは従来どおり流す — tee)。
   const child = spawn(command, args, {
     cwd: repoRoot,
+    stdio: 'inherit',
     ...options,
-    env: { ...process.env, ...colorPreservingEnv(), ...options.env },
-    stdio: ['inherit', 'pipe', 'pipe'],
-  });
-
-  const outputCapture = createOutputCapture();
-  child.stdout.on('data', (chunk) => {
-    process.stdout.write(chunk);
-    outputCapture.append(chunk);
-  });
-  child.stderr.on('data', (chunk) => {
-    process.stderr.write(chunk);
-    outputCapture.append(chunk);
   });
 
   // 後始末の根にする pid。
@@ -153,25 +103,12 @@ if (process.argv.includes('--group-leader')) {
     }
   }, ORPHAN_POLL_MS);
 
-  // bdboard-8rl8: 'exit' ではなく 'close' を使う — 'exit' は子プロセスの終了時点で
-  // 発火し、pipe にした stdout/stderr の最後のデータ (まさに判定に要る "Tests" サマリ
-  // 行や "Errors 1 error" 行) がまだ流れ切っていない可能性がある。'close' は
-  // stdio ストリームが全て閉じた後に発火するため、outputCapture への取りこぼしが無い。
-  // code/signal の意味は 'exit' と同一なので、既存の終了コード処理は変えていない。
-  child.on('close', (code, signal) => {
+  child.on('exit', (code, signal) => {
     clearInterval(orphanWatch);
     if (killSequenceStarted) {
       // グループの後始末(SIGKILL タイマー)が走り切るのを待ってから消える。
       setTimeout(() => process.exit(SIGNAL_EXIT_CODES[signal] ?? code ?? 1), GRACE_MS + 500);
       return;
-    }
-    // シグナルで打ち切られた場合 (kill 系) は既知 flake 判定の対象外。
-    // 終了コードの意味は一切変えない — 既知 flake であっても非ゼロのまま返す。
-    if (signal === null && code !== 0) {
-      const classification = classifyVerifyOutput(outputCapture.toText());
-      if (classification.status === 'known-flake') {
-        console.error(formatKnownFlakeNotice(classification));
-      }
     }
     process.exit(signal !== null ? (SIGNAL_EXIT_CODES[signal] ?? 1) : (code ?? 1));
   });
