@@ -2139,6 +2139,81 @@ describe('createApiRoutes', () => {
     assertNoDates(body);
   });
 
+  it('uses the contract mainBranch only for worktrees measured by hygiene', async () => {
+    const { cache, projectId } = inFlightCache();
+    const getProjectMainBranch = vi.fn(async () => 'master');
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
+      commitsBehind: 5,
+      baseRef: `origin/${options?.mainBranch}`,
+    }));
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        worktreeScanner: { ...base, countHarnessCommitsBehindDefaultBranch },
+        getProjectMainBranch,
+      }),
+    );
+
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(getProjectMainBranch).toHaveBeenCalledTimes(1);
+    expect(getProjectMainBranch).toHaveBeenCalledWith('/projects/a');
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith(
+      '/projects/a/.claude/worktrees/bdboard-x',
+      { mainBranch: 'master' },
+    );
+    expect(body.issues).toContainEqual(expect.objectContaining({
+      kind: 'stale_harness_worktree',
+      projectId,
+      message: expect.stringContaining('origin/master'),
+    }));
+  });
+
+  it('does not read the contract when the scanner cannot measure harness lag', async () => {
+    const { cache } = inFlightCache();
+    const getProjectMainBranch = vi.fn(async () => 'master');
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const withoutLag: WorktreeScanner = {
+      scan: base.scan,
+      listChangedFiles: base.listChangedFiles,
+    };
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: withoutLag, getProjectMainBranch }),
+    );
+
+    const response = await app.request('/api/hygiene');
+
+    expect(response.status).toBe(200);
+    expect(getProjectMainBranch).not.toHaveBeenCalled();
+  });
+
+  it('falls back without failing hygiene when the contract mainBranch cannot be read', async () => {
+    const { cache } = inFlightCache();
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
+      commitsBehind: 5,
+      baseRef: options?.mainBranch === undefined ? 'origin/main' : 'origin/master',
+    }));
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        worktreeScanner: { ...base, countHarnessCommitsBehindDefaultBranch },
+        getProjectMainBranch: async () => {
+          throw new Error('contract unavailable');
+        },
+      }),
+    );
+
+    const response = await app.request('/api/hygiene');
+
+    expect(response.status).toBe(200);
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith(
+      '/projects/a/.claude/worktrees/bdboard-x',
+      { mainBranch: undefined },
+    );
+  });
+
   it('returns the in-flight overlaps of a single ticket for the detail panel', async () => {
     const { cache } = inFlightCache();
     const app = createApiRoutes(

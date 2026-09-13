@@ -133,3 +133,27 @@ export async function readProjectHarnessStatus(
   ]);
   return getProjectHarnessStatus(sources.registry, manifest, contract, settingsJson);
 }
+
+/**
+ * 検証コントラクトの `mainBranch` だけを読む (bdboard-pkr6.19)。Hygiene の
+ * 「ハーネス凍結」がどの ref に対して遅れを測るかの優先指定に使う。
+ *
+ * `resolveProjectContractState` を通さないのは、あちらの `ok` 以外の状態
+ * (verify の npm script が無い `command-missing` など) でも mainBranch 自体は
+ * 正しく読めているため。どのブランチが main かは verify の健全性と関係ない。
+ * 注入マニフェストも見ない — コントラクトのファイルがあればそれが意思表示。
+ *
+ * コントラクトが無い・壊れているときは undefined (呼び出し側は既定の候補順で測る)。
+ * 省略時の値は `parseHarnessContract` と同じ `main`。
+ */
+export async function readProjectMainBranch(
+  reader: HarnessContractReaderPort,
+  projectRootPath: string,
+): Promise<string | undefined> {
+  const text = await reader.readContract(projectRootPath);
+  if (text === null) {
+    return undefined;
+  }
+  const parsed = parseHarnessContract(text);
+  return parsed.ok ? parsed.contract.mainBranch : undefined;
+}

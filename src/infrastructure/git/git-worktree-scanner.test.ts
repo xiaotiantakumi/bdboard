@@ -475,7 +475,7 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
-    ).resolves.toBe(17);
+    ).resolves.toEqual({ commitsBehind: 17, baseRef: 'origin/main' });
 
     const args = calls[0]?.args ?? [];
     expect(args).toContain('--');
@@ -490,7 +490,7 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
-    ).resolves.toBe(4);
+    ).resolves.toEqual({ commitsBehind: 4, baseRef: 'main' });
   });
 
   // **「読めなかった」を 0 として返さない。** 0 は「遅れていない」を意味してしまい、
@@ -514,6 +514,85 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
-    ).resolves.toBe(2);
+    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/master' });
+  });
+
+  it('prefers the contract mainBranch over origin/main when both exist', async () => {
+    const { runner } = revListRunner({
+      'HEAD..origin/main': { stdout: '2\n', exitCode: 0 },
+      'HEAD..origin/master': { stdout: '7\n', exitCode: 0 },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
+    ).resolves.toEqual({ commitsBehind: 7, baseRef: 'origin/master' });
+  });
+
+  it.each(['-x', 'a..b'])('ignores unsafe contract mainBranch %s', async (mainBranch) => {
+    const { runner, calls } = revListRunner({
+      'HEAD..origin/main': { stdout: '2\n', exitCode: 0 },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch }),
+    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/main' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('falls back when the origin contract branch is missing', async () => {
+    const { runner } = revListRunner({
+      'HEAD..master': { stdout: '5\n', exitCode: 0 },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
+    ).resolves.toEqual({ commitsBehind: 5, baseRef: 'master' });
+  });
+});
+
+describe('countHarnessCommitsBehindDefaultBranch candidate order (bdboard-pkr6.19)', () => {
+  function rangesRunner(okRanges: Readonly<Record<string, string>>) {
+    return createFakeRunner({
+      handler: async (_command, args) => {
+        const range = args.find((arg) => arg.includes('..'));
+        const stdout = range === undefined ? undefined : okRanges[range];
+        return stdout === undefined
+          ? { stdout: '', stderr: 'fatal: bad revision', exitCode: 128 }
+          : { stdout, stderr: '', exitCode: 0 };
+      },
+    });
+  }
+
+  function triedRanges(calls: readonly { args: readonly string[] }[]): string[] {
+    return calls.flatMap((call) => call.args.filter((arg) => arg.startsWith('HEAD..')));
+  }
+
+  // 省略時の mainBranch は parse で main に埋まるので「明示された master」を厳密扱いに
+  // できない。存在しなければ既定順へ落ち、測れた ref を正直に返す。
+  it('falls back to the default order when the contract branch has no ref', async () => {
+    const { runner, calls } = rangesRunner({ 'HEAD..origin/main': '6\n' });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
+    ).resolves.toEqual({ commitsBehind: 6, baseRef: 'origin/main' });
+    expect(triedRanges(calls)).toEqual([
+      'HEAD..origin/master',
+      'HEAD..master',
+      'HEAD..origin/main',
+    ]);
+  });
+
+  it('does not try the same ref twice when mainBranch is main', async () => {
+    const { runner, calls } = rangesRunner({ 'HEAD..origin/master': '1\n' });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'main' }),
+    ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/master' });
+    expect(triedRanges(calls)).toEqual(['HEAD..origin/main', 'HEAD..main', 'HEAD..origin/master']);
   });
 });

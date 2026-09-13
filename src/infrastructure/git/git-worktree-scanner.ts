@@ -1,11 +1,15 @@
 import type { CommandResult, CommandRunner } from '../../application/ports/command-runner.js';
-import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
+import type {
+  HarnessLagMeasurement,
+  WorktreeScanner,
+} from '../../application/ports/worktree-scanner.js';
 import { compareStrings } from '../../domain/compare.js';
 import {
   BD_BRANCH_PREFIX,
   type GitWorktreeEntry,
   type GitWorktreeSnapshot,
 } from '../../domain/git-worktree.js';
+import { isSafeMainBranchName } from '../../domain/harness-contract.js';
 
 const DEFAULT_GIT_PATH = 'git';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -262,8 +266,23 @@ export function createGitWorktreeScanner(
     );
   }
 
-  async function countHarnessCommitsBehindDefaultBranch(worktreePath: string): Promise<number> {
-    for (const ref of MERGE_BASE_CANDIDATE_REFS) {
+  async function countHarnessCommitsBehindDefaultBranch(
+    worktreePath: string,
+    options?: { readonly mainBranch?: string },
+  ): Promise<HarnessLagMeasurement> {
+    // コントラクトの mainBranch を優先し、その ref が無ければ既定の候補順へ落ちる
+    // (bdboard-pkr6.19)。worktree の provisioner (origin/<mainBranch> 以外は no-base-ref で
+    // 失敗) より緩いのは、こちらが「測るだけ」だから — 測れた ref は baseRef として
+    // 文言とコマンドにそのまま出るので、別の ref で測っても利用者を取り違えさせない。
+    // 省略時の mainBranch は parse 時点で main に埋まるため、明示か省略かは区別できない。
+    const mainBranch = options?.mainBranch;
+    const preferredRefs =
+      mainBranch !== undefined && isSafeMainBranchName(mainBranch)
+        ? [`origin/${mainBranch}`, mainBranch]
+        : [];
+    const candidateRefs = [...new Set([...preferredRefs, ...MERGE_BASE_CANDIDATE_REFS])];
+
+    for (const ref of candidateRefs) {
       const result = await runGitReadOnly(
         commandRunner,
         gitPath,
@@ -277,12 +296,12 @@ export function createGitWorktreeScanner(
       }
       const parsed = Number.parseInt(result.stdout.trim(), 10);
       if (Number.isFinite(parsed)) {
-        return parsed;
+        return { commitsBehind: parsed, baseRef: ref };
       }
     }
 
     throw new Error(
-      `could not count harness commits behind ${MERGE_BASE_CANDIDATE_REFS.join(' / ')} ` +
+      `could not count harness commits behind ${candidateRefs.join(' / ')} ` +
         `in ${worktreePath}`,
     );
   }

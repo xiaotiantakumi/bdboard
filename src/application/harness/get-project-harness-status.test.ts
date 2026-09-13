@@ -2,6 +2,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   getProjectHarnessStatus,
+  readProjectMainBranch,
   resolveProjectContractState,
 } from './get-project-harness-status.js';
 import type {
@@ -418,5 +419,43 @@ describe('getProjectHarnessStatus hooksState', () => {
     );
 
     expect(status.packs[0]).toMatchObject({ drift: true, hooksState: 'ok' });
+  });
+});
+
+describe('readProjectMainBranch', () => {
+  // verify の npm script が無い (resolveProjectContractState なら command-missing) 契約でも
+  // mainBranch は読めている。ハーネス凍結の基準 ref はそれに従う (bdboard-pkr6.19)。
+  it('returns the declared mainBranch without checking the verify script', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({
+        version: 1,
+        verify: 'npm run verify',
+        prFlow: 'pr',
+        mainBranch: 'master',
+      }),
+    });
+
+    await expect(readProjectMainBranch(reader, '/tmp/proj')).resolves.toBe('master');
+    expect(reader.readPackageScripts).not.toHaveBeenCalled();
+  });
+
+  it('returns the default main when the contract omits mainBranch', async () => {
+    const reader = fakeContractReader({
+      contract: JSON.stringify({ version: 1, verify: 'npm run verify', prFlow: 'pr' }),
+    });
+
+    await expect(readProjectMainBranch(reader, '/tmp/proj')).resolves.toBe('main');
+  });
+
+  it('returns undefined when there is no contract file', async () => {
+    const reader = fakeContractReader({ contract: null });
+
+    await expect(readProjectMainBranch(reader, '/tmp/proj')).resolves.toBeUndefined();
+  });
+
+  it('returns undefined for a broken contract file', async () => {
+    const reader = fakeContractReader({ contract: '{ broken' });
+
+    await expect(readProjectMainBranch(reader, '/tmp/proj')).resolves.toBeUndefined();
   });
 });
