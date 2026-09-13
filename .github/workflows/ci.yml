@@ -220,11 +220,21 @@ jobs:
       # pin すると本番経路 (playwright.config.ts の書き戻し) が一度も検証されず、壊れても CI が緑のままになる。
       - run: npm run test:e2e
 
-  # release-please が作る release PR には pull_request トリガーの ci が走らない
-  # (GITHUB_TOKEN 仕様 — release-please.yml 先頭コメント参照)。squash 後の最終メッセージも
-  # PR 時点では未確定なので pull_request では検査しない。main push 時に v<last>..HEAD を
-  # 見ればタグを切る前に間に合う。concurrency で前 run がキャンセルされても範囲全体を
-  # 見るので後続 run が取りこぼしを拾い直せる。
+  # CHANGELOG から落ちる解析不能コミットを検知する。pull_request と main への push の
+  # 両方で走り、イベントで見る範囲を分ける。範囲の表は docs/VERIFY.md の
+  # 「ローカルが exit 1 なのに CI の commit-parse が緑のとき」にある。
+  #   - pull_request: base.sha..head.sha = その PR が足すコミットだけ (bdboard-qhsb)。
+  #     マージ前に止めるための関門で、main 上の既存コミットは巻き込まない。
+  #   - push (main): v<last-release>..HEAD = リリース以降の main の全コミット。
+  # PR 分岐をすり抜け、main への push で初めて見えるものが2種ある:
+  #   - PR を経ずに main へ載るコミット (docs/GIT-WORKFLOW.md の唯一の例外、CI 復旧コミット)。
+  #   - squash の最終メッセージがブランチ上のどのコミットとも違うとき。複数コミットの
+  #     PR は PR タイトルが件名になり、マージ画面で手で編集することもできる。
+  # どちらもタグを切る前の main push で拾う。なお release-please の release PR には
+  # pull_request トリガーの ci が走らない (GITHUB_TOKEN 仕様、release-please.yml 先頭参照)。
+  # 中身は CHANGELOG 対象外の release コミットだけなので、検査の穴にはならない。
+  # push 分岐は毎回範囲全体を見るので、concurrency で前 run がキャンセルされても、
+  # 同じリリース範囲の中なら後続 run が取りこぼしを拾い直せる。
   commit-parse:
     runs-on: ubuntu-latest
     timeout-minutes: 10
