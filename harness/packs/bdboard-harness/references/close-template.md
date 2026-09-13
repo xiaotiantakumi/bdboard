@@ -8,6 +8,20 @@ close（= マージ成功）の直前に、そのチケットで**何をどう�
 でなく機械（Stop hook の「痕跡があるか」判定、Hygiene の「close 済みだが PR/検証記録なし」）も
 証拠の有無を判定できる。
 
+## 規律4 の手順（全文）
+
+SKILL.md 規律4 の手順の全文。本文には骨格だけを残している（brushup-protocol.md §7 の予算）。
+手順番号は本文と同じ。
+
+1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **`.claude/bdboard-harness.json`
+   の `verify` → CLAUDE.md / AGENTS.md → 無ければ検証せず進めない**の順で決める。
+2. **マージ成功後、`bd close` の前に証拠コメント**（`close-template.md` の書式。**`PR:` 行必須**）。
+3. **その上で `bd close <id>`。マージ前に close しない**（未到達なら in_progress のまま現状
+   をコメントに残す）。
+4. worktree を掃除する（remove → ブランチ削除 → `git remote prune origin`）。
+5. 残作業・気づきはチケット化する（`--deps discovered-from:<元>` で来歴を辺に残す）。
+6. `bd dolt push` はセッション末に1回。外向き操作なので、許可が無ければ実行前に確認する。
+
 ## 手順（SKILL.md 規律4 手順2 の実体）
 
 ```bash

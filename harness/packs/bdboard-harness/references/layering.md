@@ -69,7 +69,7 @@ description に発動トリガーを書き、本文は骨格、詳細は referen
 
 1. そのプロジェクトの beads にチケットを切る:
    `bd create --type=task --priority=2 --title="[harness-upstream] <教訓の一行>"`
-   （成果消失級の再発リスクなら priority=1 — SKILL.md 規律5 手順3 と同じ基準）、
+   （成果消失級の再発リスクなら priority=1 — brushup-protocol.md「規律5 の手順（全文）」手順3 と同じ基準）、
    `bd label add <新id> harness-upstream`。本文に failure-catalog 書式のエントリ案
    （症状・原因・防止・出典）をそのまま書く。
 2. 暫定運用として、確定するまでは自プロジェクトの project-harness にもエントリを置いて
