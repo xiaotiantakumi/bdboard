@@ -141,8 +141,8 @@
 - 出典: GitHub #437 / bdboard-p5l.24
 
 ### delegation-brief-no-commit — 一括した git 禁止ブリーフで委譲成果が未コミットのまま残った（2026-09-03〜04）
-- 原因: git操作の禁止を一括で書くと委譲先は安全側に倒してコミットも避け、未コミット成果が議長の checkout / restore / rebase の巻き添えになる
-- 防止: セッション内サブエージェント宛は「worktreeでコミットまで（pushとPR作成はしない）」、外部CLI（Codex）宛は禁止形を維持し議長が受領直後にコミット（本則: verification.md）
+- 原因: git 操作の禁止を一括で書くと委譲先は安全側に倒してコミットも避け、未コミット成果が議長の checkout / restore / rebase の巻き添えになる
+- 防止: セッション内サブエージェント宛は「worktree でコミットまで（push と PR 作成はしない）」、外部 CLI（Codex）宛は禁止形を維持し議長が受領直後にコミット（本則: verification.md）
 - 出典: GitHub #437 / bdboard-p5l.24
 
 ### diff-against-moving-main — `git diff origin/main` が他セッションのマージ分を「自分の削除」に見せ、無実の成果物を捨てかけた（2026-08-16）
