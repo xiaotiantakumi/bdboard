@@ -23,6 +23,12 @@ Node が `package.json` の `engines.node` を満たさないと、verify は子
 `scripts/node-version-guard.mjs`)。`.nvmrc` は自動では適用されない (非対話シェルは nvm を読み込まない
 ことがある) ので、PATH の先頭に engines を満たす v22 の bin を置く (または
 `. "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use`) してから回す。ガード自体は v14.13.1 以上でパースできる。
+CI の ubuntu `verify` job は `BDBOARD_OLD_NODE` で実 Node 14.15.0 を
+`scripts/node-version-guard.old-node.test.mjs` に渡すため、ガードの import graph に Node 14.15.0 が
+パースできない構文や、ガードより前に評価される新しい API が紛れれば CI は赤くなる (同 job は
+`BDBOARD_OLD_NODE_REQUIRED=1` も立てるので、旧 Node の設定が抜けると skip ではなく失敗する)。
+環境変数がないローカル実行ではこのテストは skip される。再現するには
+`BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v14.15.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs` を使う。
 
 ## tsc プロジェクトの表
 
