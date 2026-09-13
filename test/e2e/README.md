@@ -179,3 +179,111 @@ focus / ドラッグ中 / WIP 超過といった状態と、モバイル media q
 8. **祖先の `opacity: 0` は弾いていない。** 要素自身の `opacity === 0` は除外しているが、
    祖先が 0 だと `cumulativeOpacity` が 0 になり前景が背景と同色に潰れて 1.00:1 の
    偽陽性になる。静止状態で `opacity: 0` の規則は現在存在しない。
+
+## e2e を書く・回すときの落とし穴
+
+上の節はテーマ・コントラスト掃引に固有の落とし穴で、ここは e2e 全般のもの。各項目は
+「症状 / 原因 / どう書く・どう回す」の順。
+
+### 1. 単独実行だけ落ちる → まず web/dist の鮮度を疑う (bdboard-hje9 / PR #312)
+
+- **症状**: フルスイートは通るのに `npx playwright test <spec>` の単独実行だけが落ちる。
+  「変更前のクリーンな HEAD でも同じ値で再現する」ように見える。
+- **原因**: `npm run test:e2e` は `npm run build:web && playwright test …` なので毎回 UI を
+  作り直すが、`npx playwright test` の直叩きはビルドしない。`global-setup.ts` は
+  **その時点の `web/dist` をそのまま**スナップショットして配信する。`web/dist` は gitignore
+  対象で、`git checkout` や worktree の切り替えにも追従しないため、別ブランチや古いコミットで
+  作った dist が残り続ける。bdboard-hje9 の `942.9375 > 812` はこれで、ヘッダーが 402px
+  だった頃 (PR #304 の前) の dist をまだ見ていた。HEAD を戻しても dist は変わらないので、
+  「クリーンな HEAD でも再現する」のは当然だった。
+- **どう回す**: 単独実行で調べる前に `npm run build:web` を明示的に走らせる。逆に
+  レイアウト依存の spec が「たまたま通っている」だけでないかを疑うときは、dist の
+  ビルド元コミットを差し替えて余裕 (margin) を実測すると効く。
+
+### 2. 絶対ピクセル値をアサーションに固定しない (bdboard-h4xs.5 / PR #304)
+
+- **症状**: 同じコミットが macOS では通り、CI (Linux) だけ赤になる。PR #304 の AC4 テストは
+  デスクトップのヘッダー高を `103±2` px に固定しており、macOS 103px に対し CI は 99px だった。
+- **原因**: 対象の CSS は `@media (max-width: 700px)` の中にしか無く、1280px では効きえない。
+  つまり測っていたのは変更の性質ではなく、Chromium + OS のフォントメトリクスだった。
+  下限アサーション (例: 「カードの可視高 100px 以上」) も、フォントが小さく描画される環境で
+  落ちる向きなので同じ事故を起こす。
+- **どう書く**:
+  - CSS の**著者値**を `getComputedStyle` で読む。`minHeight` / `minWidth` / `columnGap` は
+    著者値がそのまま返るので環境に依存しない。`width` は used value なのでレイアウト依存が
+    残り、この用途には使えない。
+  - あるいは**相対関係**で書く (`firstCardTop > headerHeight`、
+    `rect.bottom <= window.innerHeight`)。可視判定は「`rect.top >= headerBottom &&
+    rect.bottom <= innerHeight` を満たす要素が 1 枚以上」のように、要素が小さく描画される
+    ほど通りやすくなる向きに書く。
+  - `display` が `grid` / `contents` になっていない、といった構造アサーションだけでは、
+    単一ルールの漏れ (例: `.header .project-picker-button` の `width` / `min-height` だけが
+    デスクトップに漏れる) を検知できない。著者値のアサーションで各モバイルルール群を
+    1 対 1 にカバーする (`mobile-header-compact.spec.ts` がこの形)。
+
+### 3. ページの横溢れは `document.body.scrollWidth` で測る。ただし万能ではない (bdboard-83tc / PR #313、bdboard-rccf / PR #384)
+
+- **症状**: 横溢れのアサーションが、実際に溢れていても緑のまま通る。
+- **原因**: `index.css` はルートに `html { overflow-x: hidden }`、`body { overflow-x: clip }`
+  という組を置いている。
+  - **`document.documentElement.scrollWidth` はビューポート幅に張り付く**ので、溢れの検出には
+    使えない。html の `hidden` 単独のせいではなく**組み合わせ**の効果で、html が overflow を
+    持つので body の値はビューポートへ伝播せず、body の `clip` が in-flow の溢れをビューポートの
+    スクロール領域に届く前に切り落とす。html を `hidden`・body を `visible` にすると
+    documentElement 側も溢れた幅を返す (bdboard-pkr6.22.3 の実測)。
+  - `body.scrollWidth` は内容の実寸を返す。body の `clip` はスクロールポートを作らない
+    (CSS Overflow 3 §3.1 で scrollable な値ではない) ので、切り落とされた in-flow の溢れも
+    body 自身の scrollWidth には現れる。PR #313 はこれで統計テーブルの溢れを捉えた
+    (修正前の 375px で `body.scrollWidth=1067`、`documentElement.scrollWidth=375`)。
+  - ただし `body.scrollWidth` にも**現れない溢れ**がある。bdboard-pkr6.22.3 で同じ html/body の組を
+    標準モード・Chromium 151・375px で測った結果:
+
+    | 1000px 相当はみ出す要素 | `body.scrollWidth` | `documentElement.scrollWidth` |
+    | --- | ---: | ---: |
+    | in-flow / transform / `position: relative` の祖先を持つ absolute | 1000 | 375 |
+    | 位置指定された祖先を持たない (初期包含ブロック基準の) absolute | 375 | 1000 |
+    | `position: fixed` の中 | 375 | 375 |
+    | body の箱の内側に収まる溢れ (インセットされたコンテナ内の数 px) | 375 | 375 |
+
+    PR #384 (320px で一括操作バーのカスタム延期グループがコンテナを 7px 溢れた件) で
+    `body.scrollWidth` が 320 のままだったのは、モバイルの `.bulk-action-bar` が
+    `position: fixed` だから。
+  - `visualViewport.offsetLeft` / `window.scrollX` で横パンを検出しようとしても、body を経由する
+    溢れについては body の `clip` がパン自体を封じるので、実際に溢れていても 0 のまま動かない。
+    `header-sticky.spec.ts` が CDP の `Input.dispatchTouchEvent` でタッチドラッグを
+    注入しているのは sticky を確かめるためで、横パン検出にも CDP を使えばよいと類推しないこと。
+- **どう書く**: ページ全体の溢れのガードは `document.body.scrollWidth <= window.innerWidth`
+  で書く (`documentElement` 側は使わない)。ただしそれを「溢れていない」ことの証明として
+  読まない。fixed なバーやポップオーバー、コンテナの内側の溢れを疑うときは、その要素と
+  包含コンテナの `getBoundingClientRect()` を直接比べる。
+- **実測するとき**: 使い捨てのプローブを `page.setContent()` で書くなら、先頭に
+  `<!doctype html>` を付ける。付け忘れると quirks mode で描画され、上の表とは逆の値
+  (in-flow の溢れで `body.scrollWidth` が 375 のまま) が出る。アプリの `web/index.html` は
+  標準モードで動く。
+
+### 4. react-query の再取得は offline/online のトグルでは起きない。`page.clock` を使う (bdboard-hovk / PR #318)
+
+- **症状**: `page.context().setOffline(true)` → `setOffline(false)` で再取得させたつもりが、
+  `page.route` のヒット数が増えない。
+- **原因**: `web/src/main.tsx` の `QueryClient` はグローバル既定を
+  `defaultOptions: { queries: { staleTime: 30_000 } }` にしている。`refetchOnReconnect` は
+  **stale なクエリしか再取得しない**ので、初回取得から 30 秒間は reconnect が何もしない。
+  `page.reload()` も代わりにならない場面がある。ポップオーバーの開閉などコンポーネントの
+  ローカル state がリセットされ、検証したいバグの前提そのものが崩れる。
+- **どう書く**: `page.clock.install()` を **`page.goto()` の前に**呼び (後だと
+  `refetchInterval` のタイマーを掴めない)、`page.clock.fastForward()` で対象クエリの
+  `refetchInterval` をまたがせる。PR #318 の診断では、トグル方式のヒット数は 1 のまま
+  変わらず、`fastForward('05:10')` 方式では 1 → 2 → 3 と増えた。現状この形を使う spec は
+  `ai-quota-popover-clamp.spec.ts` だけなので、同種が増えるならヘルパ化を検討する。
+
+### 5. 色トークンを動かす PR は e2e を全件回す (bdboard-97ib.1 / PR #423)
+
+- **症状**: 近傍の spec (`dark-theme.spec.ts` など) だけを回して push したら、別の spec が
+  CI で落ちる。bdboard-97ib.1 では `board-filter-missing-label.spec.ts` が落ちた。
+- **原因**: 落ちたのは色そのものの検査ではなく、「2 つの要素が同じ色であること」を assert する
+  不変条件だった。`index.css` の色宣言は複数の spec から間接的に参照されるので、
+  変更点の近傍だけを回すという判断は構造的に効かない。色を変えた本人からは見えない場所で
+  落ちる。
+- **どう回す**: 色トークンを動かしたら、`npm run test:e2e` で Playwright を全件回してから
+  push する。CI の `e2e` が落ちたときに、原因を見ないまま flake 扱いで rerun に流さないこと
+  (bdboard-97ib.1 の赤は flake ではなく実バグだった)。
