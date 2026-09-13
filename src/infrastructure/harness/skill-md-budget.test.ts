@@ -63,7 +63,10 @@ function checkSkillMdBudget(
   maxLines = DISCIPLINE_MAX_LINES,
 ): string[] {
   const violations: string[] = [];
-  const bytes = Buffer.byteLength(text, 'utf8');
+  // バイト数はリポジトリの blob と同じ LF 改行で数える。Windows の core.autocrlf で CRLF に
+  // チェックアウトされると 1 行ごとに \r の 1 バイトが足され、同じ内容でも verify-windows だけが
+  // 赤くなる (実測: LF 8,159 バイトが CRLF で 8,281 バイト)。
+  const bytes = Buffer.byteLength(text.replace(/\r\n/g, '\n'), 'utf8');
   if (bytes > maxBytes) {
     violations.push(`SKILL.md is ${bytes} bytes (limit ${maxBytes}, over by ${bytes - maxBytes}).`);
   }
@@ -119,6 +122,14 @@ describe('checkSkillMdBudget', () => {
   it('passes at exactly 8192 bytes and fails at 8193', () => {
     expect(checkSkillMdBudget(`${'a'.repeat(8191)}\n`)).toEqual([]);
     expect(checkSkillMdBudget(`${'a'.repeat(8192)}\n`)).toEqual([
+      'SKILL.md is 8193 bytes (limit 8192, over by 1).',
+    ]);
+  });
+
+  it('counts bytes of the LF-normalized text, so a CRLF checkout (Windows autocrlf) measures the same', () => {
+    expect(checkSkillMdBudget(`${'a'.repeat(8191)}\r\n`)).toEqual([]);
+    expect(checkSkillMdBudget(`${'a'.repeat(4094)}\r\n${'b'.repeat(4096)}\r\n`)).toEqual([]);
+    expect(checkSkillMdBudget(`${'a'.repeat(8192)}\r\n`)).toEqual([
       'SKILL.md is 8193 bytes (limit 8192, over by 1).',
     ]);
   });
