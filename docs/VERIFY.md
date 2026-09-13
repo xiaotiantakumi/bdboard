@@ -108,35 +108,28 @@ What this means operationally:
   more verifies in parallel — that recreates the incident. CI needs no
   special casing (one verify per runner; the slot is acquired instantly).
 
-## 既知 flake の判別 (`[vitest-worker]: Timeout calling "onTaskUpdate"`)
+## vitest worker RPC タイムアウトの既知 flake 判別 (撤去済み)
 
-`npm run verify` が非ゼロで終了したとき、その原因が bdboard-c6nv で追跡している vitest
-本体の未解決 upstream バグ (birpc の RPC ACK タイムアウトが 60 秒でハードコードされており
-プール側から上書きできない) による既知の偽陽性かどうかを、リーダーモード
-(`scripts/verify.mjs --group-leader`) が `npm run verify:steps` の出力から自動判定する
-(判定ロジック本体は `scripts/verify-flake-detector.mjs`、テストは
-`scripts/verify-flake-detector.test.mjs` — bdboard-8rl8)。
+Vitest 3 では worker → main の RPC (`onTaskUpdate`) の応答待ちが birpc の既定 60 秒で
+打ち切られ、テストが全件成功していても `[vitest-worker]: Timeout calling "onTaskUpdate"` が
+unhandled error として計上されて verify が非ゼロで落ちることがあった (bdboard-c6nv)。
+これを実失敗と見分けるため、リーダーモード (`scripts/verify.mjs --group-leader`) が子の出力を
+pipe で溜めて判定する `scripts/verify-flake-detector.mjs` を置いていた (bdboard-8rl8)。
 
-判定は次の 2 条件が両方そろったときだけ「既知 flake」とみなし、ログ末尾に
-`verify: known flake detected (bdboard-c6nv)` の説明ブロックを追加で出す:
+Vitest 4 (bdboard-cd1v で 4.1.11 へ更新) に合わせてこの判別器は撤去した (bdboard-4agr)。
+birpc 自体の既定は今も 60 秒だが、`vitest run` が使う worker 側 (`createRuntimeRpc`) と
+プール側 (PoolRunner) の birpc には Vitest が `timeout: -1` を明示して渡しており、タイマー自体が
+張られない。そのため同じ経路のタイムアウトエラー (Vitest 4 の文言では
+`[birpc] timeout on calling "…"`) は起きず、Vitest 3 の文言は Vitest 4 の dist に存在しない。
+あわせて、リーダーモードの子 (`npm run verify:steps`) の stdio は判別用の pipe + tee をやめて
+`inherit` に戻した。
 
-- vitest の `Tests` サマリ行 (`Test Files` 行ではない) の failed 件数の合計が 0 件
-- 出力に `Timeout calling "onTaskUpdate"` を含む
-
-**実失敗が 1 件でもあれば、`onTaskUpdate` が同居していても実失敗として扱う**
-(2026-09-06 の bdboard-6y5b で per-test timeout の実失敗と onTaskUpdate の unhandled error
-が同居した実例があるため、向きを間違えると実バグを握り潰す)。`Tests` サマリ行が 1 行も
-見つからない場合 (出力の書式が変わった、vitest 自体が走っていない等) は「判定不能」として
-安全側に倒し、既知 flake とは表示しない。
-
-**このメッセージは表示を追加するだけで、`npm run verify` の終了コードの意味は変えない** —
-既知 flake であっても exit は非ゼロのまま返る。自動 rerun も行わない (実失敗を握り潰す方向の
-自動化は明示的にスコープ外)。
-
-判定のためリーダーモードの子プロセス (`npm run verify:steps`) の stdio は `inherit` ではなく
-pipe にしてテキストを溜め込み、実画面へは従来どおり tee で流している。ローカルの対話端末
-(TTY) で色付き出力が変わらないよう `FORCE_COLOR` を補っているが、CI はもともと非TTYなので
-影響はない。
+birpc の外には固定のタイムアウトが残っている (worker の起動・停止待ちの
+`[vitest-pool-runner]: Timeout waiting for worker to respond`、ランナー起動待ちの
+`[vitest-pool]: Timeout starting … runner.` など)。これらや teardown 時の
+`[vitest-worker]: Closing rpc while "…" was pending` で verify が落ちた場合は既知 flake と
+みなさず、実失敗として原因を調べる。Vitest を上げて `createRuntimeRpc` / PoolRunner が birpc に
+渡す `timeout: -1` が変わったら、この節の前提を見直す。
 
 ## ローカル起動コマンドの違い
 
