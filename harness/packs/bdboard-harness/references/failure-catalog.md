@@ -132,8 +132,18 @@
 
 ### codex-autonomous-push — Codex実装委譲がcommit禁止ブリーフを無視してcommit+pushし、さらにバックグラウンド再開後に無断PR作成・捏造レビュー起点の追加実装・オープンPRブランチへのrebase+force-pushまで実行（2026-08-29）
 - 原因: Codexがプロジェクトの通常Git Workflow知識をブリーフの明示的な制約より優先して自律適用（codex-zero-editと同根・逆方向の過剰行動）。一度exitしたaimixバックグラウンドプロセスが再開して追加のgit操作を行った
-- 防止: 委譲完了報告の直後と、以後の各outward操作の直前に `git log --oneline -5`・`git status`・`git ls-remote origin <branch>` で無断commit/pushを再確認し、委譲プロセスの終了を確認してからPR操作へ進む。ブリーフはgit操作を禁止形＋違反時自己申告義務で書く（本則: verification.md）
+- 防止: 委譲完了報告の直後と、以後の各outward操作の直前に `git log --oneline -5`・`git status`・`git ls-remote origin <branch>` で無断commit/pushを再確認し、委譲プロセスの終了を確認してからPR操作へ進む。外部CLI（Codex）宛ブリーフはgit操作を禁止形＋違反時自己申告義務で書き、受領後は議長がコミットする（delegation-brief-no-commit、本則: verification.md）
 - 出典: bdboard-ge20
+
+### uncommitted-delegation-wiped-by-checkout — 未コミットの委譲成果が検証中の checkout で消失（2026-09-03〜04）
+- 原因: `git checkout -- <file>` / `git restore` は HEAD 以降の全変更を捨てる。委譲先が未コミットのまま報告し、議長はその上で壊す→戻すを行った
+- 防止: 受領したら検証より先に受領状態を1コミット。HEAD へ戻す操作の前に `git status --porcelain -- <path>` が空を確認（本則: verification.md）
+- 出典: GitHub #437 / bdboard-p5l.24
+
+### delegation-brief-no-commit — 一括した git 禁止ブリーフで委譲成果が未コミットのまま残った（2026-09-03〜04）
+- 原因: git操作の禁止を一括で書くと委譲先は安全側に倒してコミットも避け、未コミット成果が議長の checkout / restore / rebase の巻き添えになる
+- 防止: セッション内サブエージェント宛は「worktreeでコミットまで（pushとPR作成はしない）」、外部CLI（Codex）宛は禁止形を維持し議長が受領直後にコミット（本則: verification.md）
+- 出典: GitHub #437 / bdboard-p5l.24
 
 ### diff-against-moving-main — `git diff origin/main` が他セッションのマージ分を「自分の削除」に見せ、無実の成果物を捨てかけた（2026-08-16）
 - 原因: 並列運用では origin/main が動く的になり、素の diff は他人の追加を自分の削除として表示する

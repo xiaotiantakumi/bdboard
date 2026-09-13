@@ -30,6 +30,11 @@
   ループを同様に渡す（このループ自体は verify の成否を運ばないので、判定は上の
   `EXIT=` 行規律と組み合わせる）。「数秒で完了通知が来た」のに長時間コマンドのはずなら、
   まずこの二重バックグラウンド化を疑い、`pgrep`/`ps` で実プロセスの生死を確認する。
+- **検証より先に受領状態を1コミットする。** 委譲先の未コミット成果の上で実装を壊して戻す・
+  rebaseする・`git checkout -- <path>` / `git restore` を打つと、成果ごと消える。作業ツリーを
+  HEADへ戻す操作の前に `git status --porcelain -- <path>` が空であることを確認し、`M` 等が
+  出たら誰の変更かを確定してから戻す（実測: failure-catalog.md の
+  uncommitted-delegation-wiped-by-checkout）。
 - 委譲成果を受け取ったら、採用判定の前に**検証コマンドを自分で回す**。対象の worktree で、
   フルの検証チェーンを回す。コマンドは (1) 注入先の検証コントラクト
   `.claude/bdboard-harness.json` の `verify` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md →
@@ -184,10 +189,18 @@ git ls-remote origin <branch>  # remote 側の先端が自分の認識と一致�
 
 予防（委譲を投げる側の義務）:
 
-- ブリーフの git 制約は**禁止形＋自己申告義務**で書く。「commit はしないでよい」のような
-  許可解除形は誤適用の余地を残す（実測ではこの形の指示が無視された）。定型文:
-  「`git add` / `git commit` / `git push` / `gh` 系コマンドは一切実行しないこと。
-  実行してしまった場合は、理由を問わず status=failed としてその旨を報告すること。」
+- 外部CLI（Codex等）宛は、封じ込め優先で**禁止形＋自己申告義務**を使う。「commit はしないで
+  よい」のような許可解除形は誤適用の余地を残す（実測ではこの形の指示が無視された）。定型文:
+  「`git add` / `git commit` / `git push` / `gh` 系コマンドは一切実行しないこと。実行して
+  しまった場合は、理由を問わず status=failed としてその旨を報告すること。」受領直後に議長が
+  受領状態をコミットする。
+- セッション内サブエージェント宛は、定型「作業が一区切りしたらworktreeでコミットまで行うこと
+  （`git push` とPR作成はしない）。pushや `gh pr create` 等を実行してしまった場合は
+  status=failedとして報告すること。」を使う。git操作を一括で禁止すると委譲先はコミットまで避け、
+  未コミット成果が議長の checkout / restore / rebase の巻き添えになる（実測:
+  failure-catalog.md の delegation-brief-no-commit）。
+- どちらの定型でも、上の「検証より先に受領状態を1コミットする」は省略しない。不変条件は、
+  壊す・戻す前にコミット済みであること。
 - 機械ガードとして、委譲前に worktree 限定の pre-push hook で push を塞いでよい
   （下記コマンド。委譲先の**誤適用**を止めるためのもので、敵対的な回避までは防がない）。
   hook 置き場は worktree の作業ツリー内ではなく、`git rev-parse --absolute-git-dir`
