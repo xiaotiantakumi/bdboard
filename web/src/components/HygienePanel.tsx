@@ -42,6 +42,11 @@ import {
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { describeWriteError } from '../writeAccessMessage';
+import {
+  runHarnessBulkUpdate,
+  type HarnessBulkUpdateSummary,
+  type HarnessBulkUpdateTarget,
+} from '../harnessBulkUpdate';
 import { useUndoSnackbar } from './UndoSnackbar';
 
 export interface HygienePanelProps {
@@ -376,6 +381,11 @@ export function HygienePanel({
   );
   const [pendingRepairKey, setPendingRepairKey] = useState<string | null>(null);
   const [repairError, setRepairError] = useState<RepairFeedback | null>(null);
+  const [bulkUpdateTargets, setBulkUpdateTargets] = useState<
+    readonly HarnessBulkUpdateTarget[] | null
+  >(null);
+  const [bulkUpdateSummary, setBulkUpdateSummary] =
+    useState<HarnessBulkUpdateSummary | null>(null);
 
   const clearRepairFeedback = useCallback(() => {
     setRepairError(null);
@@ -472,6 +482,24 @@ export function HygienePanel({
     },
   });
 
+  const harnessBulkUpdateMutation = useMutation({
+    mutationFn: (targets: readonly HarnessBulkUpdateTarget[]) =>
+      runHarnessBulkUpdate(targets, (target) =>
+        postProjectHarnessInject(target.projectId, target.packName),
+      ),
+    onMutate: () => {
+      setBulkUpdateSummary(null);
+      clearRepairFeedback();
+    },
+    onSuccess: async (summary) => {
+      await queryClient.invalidateQueries({ queryKey: ['project-harness'] });
+      await queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
+      await queryClient.invalidateQueries({ queryKey: ['harness-status-all'] });
+      setBulkUpdateTargets(null);
+      setBulkUpdateSummary(summary);
+    },
+  });
+
   const handleConfirmRepair = useCallback(
     (issue: HygieneIssueDto, rowKey: string) => {
       if (repairMutation.isPending) {
@@ -506,6 +534,27 @@ export function HygienePanel({
     [harnessInjectMutation, repairMutation.isPending],
   );
 
+  const beginBulkUpdateConfirm = useCallback(
+    (items: readonly HarnessPackItem[]) => {
+      setBulkUpdateSummary(null);
+      setBulkUpdateTargets(
+        items.map(({ projectId, pack }) => ({
+          projectId,
+          packName: pack.name,
+          installedVersion: pack.installedVersion,
+          availableVersion: pack.availableVersion,
+        })),
+      );
+    },
+    [],
+  );
+
+  const confirmBulkUpdate = useCallback(() => {
+    if (bulkUpdateTargets !== null && !harnessBulkUpdateMutation.isPending) {
+      harnessBulkUpdateMutation.mutate(bulkUpdateTargets);
+    }
+  }, [bulkUpdateTargets, harnessBulkUpdateMutation]);
+
   const handleCopyCleanup = useCallback(
     async (script: string) => {
       try {
@@ -520,7 +569,9 @@ export function HygienePanel({
   );
 
   const repairDisabled =
-    repairMutation.isPending || harnessInjectMutation.isPending;
+    repairMutation.isPending ||
+    harnessInjectMutation.isPending ||
+    harnessBulkUpdateMutation.isPending;
   const harnessDriftItems = harnessDriftQuery.data?.driftItems ?? [];
   const harnessContractItems = harnessDriftQuery.data?.contractItems ?? [];
   const harnessHooksItems = harnessDriftQuery.data?.hooksItems ?? [];
@@ -698,6 +749,74 @@ export function HygienePanel({
                     </span>
                   </div>
                 ))}
+              </div>
+            </li>
+          )}
+          {(harnessDriftItems.length > 0 ||
+            bulkUpdateTargets !== null ||
+            bulkUpdateSummary !== null) && (
+            <li key="harness-bulk-update">
+              <div className="hygiene-repair">
+                {bulkUpdateTargets !== null ? (
+                  <div
+                    className="hygiene-repair-confirm"
+                    role="dialog"
+                    aria-label="ハーネス一括更新の確認"
+                  >
+                    <p>次の要更新パックを1件ずつ更新します。</p>
+                    <ul>
+                      {bulkUpdateTargets.map((target) => (
+                        <li key={`${target.projectId}-${target.packName}`}>
+                          {projectNameFallback(target.projectId)} / {target.packName}: v
+                          {target.installedVersion} → v{target.availableVersion}
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      className="hygiene-repair-confirm-btn"
+                      disabled={repairDisabled}
+                      onClick={confirmBulkUpdate}
+                    >
+                      {harnessBulkUpdateMutation.isPending ? '更新中…' : '確定: まとめて更新'}
+                    </button>
+                    <button
+                      type="button"
+                      className="hygiene-repair-cancel"
+                      disabled={repairDisabled}
+                      onClick={() => setBulkUpdateTargets(null)}
+                    >
+                      キャンセル
+                    </button>
+                  </div>
+                ) : harnessDriftItems.length > 0 && bulkUpdateSummary === null ? (
+                  <button
+                    type="button"
+                    className="hygiene-repair-action"
+                    disabled={repairDisabled}
+                    onClick={() => beginBulkUpdateConfirm(harnessDriftItems)}
+                  >
+                    要更新 {harnessDriftItems.length} 件をまとめて更新
+                  </button>
+                ) : null}
+                {bulkUpdateSummary !== null && (
+                  <div role="status">
+                    <p>
+                      まとめて更新: 成功 {bulkUpdateSummary.successCount} 件・失敗{' '}
+                      {bulkUpdateSummary.failureCount} 件
+                    </p>
+                    <ul>
+                      {bulkUpdateSummary.results.map((result) => (
+                        <li key={`${result.target.projectId}-${result.target.packName}`}>
+                          {projectNameFallback(result.target.projectId)} / {result.target.packName}:{' '}
+                          {result.status === 'success'
+                            ? '成功'
+                            : `失敗 (${describeWriteError(result.error, 'ハーネスの更新に失敗しました')})`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </li>
           )}

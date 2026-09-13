@@ -1695,18 +1695,8 @@ describe('HygienePanel repair actions', () => {
     });
     postProjectHarnessInjectMock.mockResolvedValue({
       contract: NOT_APPLICABLE_CONTRACT,
-      packs: [
-        {
-          name: 'bdboard-harness',
-          availableVersion: '0.2.0',
-          installedVersion: '0.2.0',
-          drift: false,
-          hooksState: 'none-declared',
-          missingHooks: [],
-        },
-      ],
+      packs: [],
     });
-
     renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
 
     expect(await screen.findByText('ハーネス要更新')).toBeInTheDocument();
@@ -1722,6 +1712,122 @@ describe('HygienePanel repair actions', () => {
         '/tmp/proj-a',
         'bdboard-harness',
       );
+    });
+  });
+
+  it('hides bulk update when there are no harness drift items', async () => {
+    renderHygienePanel();
+
+    await screen.findByText('警告はありません');
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: /要更新 .* 件をまとめて更新/ }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('shows a drift snapshot and does not write when bulk update is cancelled', async () => {
+    const user = userEvent.setup();
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [{
+        projectId: '/tmp/proj-a',
+        contract: NOT_APPLICABLE_CONTRACT,
+        packs: [{
+          name: 'bdboard-harness', availableVersion: '0.2.0', installedVersion: '0.1.0',
+          drift: true, hooksState: 'none-declared', missingHooks: [],
+        }],
+      }],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+    await user.click(await screen.findByRole('button', { name: '要更新 1 件をまとめて更新' }));
+
+    expect(screen.getByRole('dialog', { name: 'ハーネス一括更新の確認' })).toHaveTextContent(
+      'proj-a / bdboard-harness: v0.1.0 → v0.2.0',
+    );
+    await user.click(screen.getByRole('button', { name: 'キャンセル' }));
+    expect(postProjectHarnessInjectMock).not.toHaveBeenCalled();
+  });
+
+  it('reports every bulk update result and continues after one inject fails', async () => {
+    const user = userEvent.setup();
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a', contract: NOT_APPLICABLE_CONTRACT,
+          packs: [{ name: 'pack-a', availableVersion: '0.2.0', installedVersion: '0.1.0', drift: true, hooksState: 'none-declared', missingHooks: [] }],
+        },
+        {
+          projectId: '/tmp/proj-b', contract: NOT_APPLICABLE_CONTRACT,
+          packs: [{ name: 'pack-b', availableVersion: '0.3.0', installedVersion: '0.1.0', drift: true, hooksState: 'none-declared', missingHooks: [] }],
+        },
+      ],
+    });
+    postProjectHarnessInjectMock
+      .mockRejectedValueOnce(new Error('pack-a failed'))
+      .mockResolvedValue({ contract: NOT_APPLICABLE_CONTRACT, packs: [] });
+
+    renderHygienePanel();
+    await user.click(await screen.findByRole('button', { name: '要更新 2 件をまとめて更新' }));
+    await user.click(screen.getByRole('button', { name: '確定: まとめて更新' }));
+
+    await waitFor(() => {
+      expect(postProjectHarnessInjectMock).toHaveBeenNthCalledWith(1, '/tmp/proj-a', 'pack-a');
+      expect(postProjectHarnessInjectMock).toHaveBeenNthCalledWith(2, '/tmp/proj-b', 'pack-b');
+    });
+    expect(await screen.findByText('まとめて更新: 成功 1 件・失敗 1 件')).toBeInTheDocument();
+    expect(screen.getByText('proj-a / pack-a: 失敗 (pack-a failed)')).toBeInTheDocument();
+    expect(screen.getByText('proj-b / pack-b: 成功')).toBeInTheDocument();
+  });
+
+  it('keeps the successful bulk update summary after refetch clears drift', async () => {
+    const user = userEvent.setup();
+    fetchAllHarnessStatusMock.mockResolvedValueOnce({
+      projects: [{ projectId: '/tmp/proj-a', contract: NOT_APPLICABLE_CONTRACT, packs: [{
+        name: 'bdboard-harness', availableVersion: '0.2.0', installedVersion: '0.1.0',
+        drift: true, hooksState: 'none-declared', missingHooks: [],
+      }] }],
+    }).mockResolvedValueOnce({
+      projects: [{ projectId: '/tmp/proj-a', contract: NOT_APPLICABLE_CONTRACT, packs: [{
+        name: 'bdboard-harness', availableVersion: '0.2.0', installedVersion: '0.1.0',
+        drift: true, hooksState: 'none-declared', missingHooks: [],
+      }] }],
+    }).mockResolvedValue({
+      projects: [{ projectId: '/tmp/proj-a', contract: NOT_APPLICABLE_CONTRACT, packs: [{
+        name: 'bdboard-harness', availableVersion: '0.2.0', installedVersion: '0.2.0',
+        drift: false, hooksState: 'none-declared', missingHooks: [],
+      }] }],
+    });
+    postProjectHarnessInjectMock.mockResolvedValue({
+      contract: NOT_APPLICABLE_CONTRACT,
+      packs: [
+        {
+          name: 'bdboard-harness',
+          availableVersion: '0.2.0',
+          installedVersion: '0.2.0',
+          drift: false,
+          hooksState: 'none-declared',
+          missingHooks: [],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+    await user.click(await screen.findByRole('button', { name: '要更新 1 件をまとめて更新' }));
+    await user.click(screen.getByRole('button', { name: '確定: まとめて更新' }));
+
+    await waitFor(() => {
+      expect(postProjectHarnessInjectMock).toHaveBeenCalledWith(
+        '/tmp/proj-a',
+        'bdboard-harness',
+      );
+    });
+    expect(await screen.findByText('まとめて更新: 成功 1 件・失敗 0 件')).toBeInTheDocument();
+    expect(screen.getByText('proj-a / bdboard-harness: 成功')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: /要更新 .* 件をまとめて更新/ }),
+      ).not.toBeInTheDocument();
     });
   });
 
