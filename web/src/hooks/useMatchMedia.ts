@@ -1,19 +1,15 @@
 import { useEffect, useState } from 'react';
+import { canUseMatchMedia, matchesMediaQuery } from '../mediaQueries';
 
 /**
  * Subscribes to a window.matchMedia query. Returns false when matchMedia is
  * unavailable (SSR / test environments without a stub).
  */
 export function useMatchMedia(query: string): boolean {
-  const [matches, setMatches] = useState(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-      return false;
-    }
-    return window.matchMedia(query).matches;
-  });
+  const [matches, setMatches] = useState(() => matchesMediaQuery(query));
 
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    if (!canUseMatchMedia()) {
       return;
     }
     const media = window.matchMedia(query);

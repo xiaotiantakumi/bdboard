@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardDto } from '../api';
 import { EMPTY_BOARD_FILTER } from '../boardFilter';
+import { MOBILE_LAYOUT_MEDIA_QUERY, REDUCED_MOTION_MEDIA_QUERY } from '../mediaQueries';
 import { BoardLanes } from './BoardView';
 import { WatchedTicketsProvider } from './WatchedTicketsProvider';
 
@@ -26,8 +27,8 @@ function mockMobileViewport(enabled: boolean, reducedMotion = false) {
     configurable: true,
     value: vi.fn().mockImplementation((query: string) => ({
       matches:
-        (enabled && query === '(max-width: 700px)') ||
-        (reducedMotion && query === '(prefers-reduced-motion: reduce)'),
+        (enabled && query === MOBILE_LAYOUT_MEDIA_QUERY) ||
+        (reducedMotion && query === REDUCED_MOTION_MEDIA_QUERY),
       media: query,
       onchange: null,
       addEventListener: vi.fn(),

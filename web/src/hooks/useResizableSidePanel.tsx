@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type PointerEvent, useRef, useState } from 'react';
-import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
+import { canUseMatchMedia, matchesMediaQuery, MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import { usePersistedState } from './usePersistedState';
 
 const MIN_WIDTH = 360;
@@ -35,9 +35,7 @@ function clampWidth(width: number): number {
  */
 function canResize(): boolean {
   if (typeof window === 'undefined') return false;
-  if (typeof window.matchMedia === 'function') {
-    return !window.matchMedia(MOBILE_LAYOUT_MEDIA_QUERY).matches;
-  }
+  if (canUseMatchMedia()) return !matchesMediaQuery(MOBILE_LAYOUT_MEDIA_QUERY);
   return getLayoutViewportWidth() > 700;
 }
 

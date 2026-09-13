@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import { LANE_LABELS, type Lane } from '../api';
 import { useLaneStripHeightVar } from '../hooks/useLaneStripHeightVar';
+import { matchesMediaQuery, REDUCED_MOTION_MEDIA_QUERY } from '../mediaQueries';
 import { navCurrentProps } from './toggleGroupA11y';
 import { selectMostVisibleLane } from './laneScrollTracking';
-
-function prefersReducedMotion(): boolean {
-  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
-    return false;
-  }
-  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-}
 
 export interface LaneIndicatorItem {
   lane: Lane;
@@ -100,7 +94,7 @@ export function LaneScrollIndicator({
       }
       const target = root.querySelector<HTMLElement>(`[data-lane="${lane}"]`);
       // scrollIntoView の behavior は JS 側で明示すると CSS scroll-behavior より優先される。
-      const scrollBehavior = prefersReducedMotion() ? 'auto' : 'smooth';
+      const scrollBehavior = matchesMediaQuery(REDUCED_MOTION_MEDIA_QUERY) ? 'auto' : 'smooth';
       target?.scrollIntoView({ behavior: scrollBehavior, inline: 'start', block: 'nearest' });
       setActiveLane(lane);
     },
