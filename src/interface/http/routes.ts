@@ -41,7 +41,7 @@ import {
 } from '../../application/board/get-ticket-token-usage.js';
 import { searchTickets } from '../../application/board/search-tickets.js';
 import type { ApplicationVersionProvider } from '../../application/ports/application-version.js';
-import type { BoardCache } from '../../application/ports/board-cache.js';
+import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
 import type { CommentReader } from '../../application/ports/comment-reader.js';
 import { respondBdError } from './bd-error-response.js';
 import type { ProcessScanner } from '../../application/ports/process-scanner.js';
@@ -516,12 +516,36 @@ async function buildGetBoardDeps(deps: ApiDeps): Promise<GetBoardDeps> {
  * プロジェクト集合が同じ呼び出しは短時間だけ結果を使い回す。30 秒あれば
  * 「Hygiene を見る → 気になったチケットを開く」がまとめて 1 回で済み、それを超えれば
  * 作業中の編集が反映される程度には短い。
+ *
+ * ただし bd 側の変化 (他チケットの close / reopen で着手中 worktree 集合が変わる) は
+ * 30 秒を待たない。メモには計算時のキャッシュ世代 (fingerprint + fetchedAt) を持たせ、
+ * どれかのプロジェクトが再取得されていたら使わない (bdboard-3tw.162)。再取得は
+ * board.changed の refreshed と同じ条件なので、クライアントが board.changed で
+ * invalidate した直後の再取得に古い重複を返さずに済む。EventHub を購読しないのは、
+ * 購読者数が ai-quota プローブの要否判定に使われているため (bdboard-uopj)。
+ * worktree の追加・削除やファイル編集は bd に現れないので、従来どおり寿命任せ。
  */
 const IN_FLIGHT_OVERLAP_MEMO_MS = 30_000;
 
 interface InFlightOverlapMemoEntry {
   readonly expiresAt: number;
+  /** 計算時点のキャッシュ世代。inFlightOverlapGeneration の戻り */
+  readonly generation: string;
   readonly result: Promise<readonly InFlightOverlap[]>;
+}
+
+/**
+ * プロジェクト群のキャッシュ世代。refreshProjects は再取得したプロジェクトだけを
+ * fetchedAt = now で putProject し直すので、fetchedAt が変われば bd が変わったとみなせる。
+ * fingerprint も入れて、同じ時刻に書き直された場合も取りこぼさない。
+ */
+function inFlightOverlapGeneration(entries: readonly CachedProject[]): string {
+  return entries
+    .map((entry) =>
+      [entry.project.id, entry.fingerprint, String(entry.fetchedAt.getTime())].join('\u0001'),
+    )
+    .sort()
+    .join('\u0000');
 }
 
 export function createApiRoutes(deps: ApiDeps): Hono {
@@ -533,32 +557,52 @@ export function createApiRoutes(deps: ApiDeps): Hono {
 
   /**
    * 同じプロジェクト集合に対する着手中重複の計算を、IN_FLIGHT_OVERLAP_MEMO_MS だけ
-   * 共有する。失敗した Promise は残さない (次の呼び出しでやり直す)。
+   * 共有する。キャッシュ世代が変わったメモは使わず、同じキーで上書きする (キーは
+   * プロジェクト集合のままなのでメモが世代ごとに増えていくことはない)。
+   * 失敗した Promise は残さない (次の呼び出しでやり直す)。
    */
-  const inFlightOverlapMemoKey = (projectIds: readonly string[]): string =>
-    [...projectIds].sort().join('\u0000');
+  const inFlightOverlapMemoKey = (entries: readonly CachedProject[]): string =>
+    entries
+      .map((entry) => entry.project.id)
+      .sort()
+      .join('\u0000');
+
+  /** 期限内かつ同じキャッシュ世代のメモだけを返す */
+  const liveInFlightOverlapMemo = (
+    entries: readonly CachedProject[],
+    now: number,
+  ): InFlightOverlapMemoEntry | undefined => {
+    const cached = inFlightOverlapMemo.get(inFlightOverlapMemoKey(entries));
+    return cached !== undefined &&
+      cached.expiresAt > now &&
+      cached.generation === inFlightOverlapGeneration(entries)
+      ? cached
+      : undefined;
+  };
 
   /** 生きているメモがあれば返す。無ければ undefined (計算はしない) */
   const peekInFlightOverlaps = (
-    projectIds: readonly string[],
-  ): Promise<readonly InFlightOverlap[]> | undefined => {
-    const cached = inFlightOverlapMemo.get(inFlightOverlapMemoKey(projectIds));
-    return cached !== undefined && cached.expiresAt > Date.now() ? cached.result : undefined;
-  };
+    entries: readonly CachedProject[],
+  ): Promise<readonly InFlightOverlap[]> | undefined =>
+    liveInFlightOverlapMemo(entries, Date.now())?.result;
 
   const memoizedInFlightOverlaps = (
-    projectIds: readonly string[],
+    entries: readonly CachedProject[],
     compute: () => Promise<readonly InFlightOverlap[]>,
   ): Promise<readonly InFlightOverlap[]> => {
-    const key = inFlightOverlapMemoKey(projectIds);
+    const key = inFlightOverlapMemoKey(entries);
     const now = Date.now();
-    const cached = inFlightOverlapMemo.get(key);
-    if (cached !== undefined && cached.expiresAt > now) {
+    const cached = liveInFlightOverlapMemo(entries, now);
+    if (cached !== undefined) {
       return cached.result;
     }
 
     const result = compute();
-    inFlightOverlapMemo.set(key, { expiresAt: now + IN_FLIGHT_OVERLAP_MEMO_MS, result });
+    inFlightOverlapMemo.set(key, {
+      expiresAt: now + IN_FLIGHT_OVERLAP_MEMO_MS,
+      generation: inFlightOverlapGeneration(entries),
+      result,
+    });
     result.catch(() => {
       const current = inFlightOverlapMemo.get(key);
       if (current?.result === result) {
@@ -830,9 +874,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         entries.flatMap((entry) => entry.tickets),
       );
       const scanner = deps.worktreeScanner;
-      inFlightOverlaps = await memoizedInFlightOverlaps(
-        projects.map((project) => project.id),
-        () => scanInFlightOverlaps(inFlight, scanner),
+      inFlightOverlaps = await memoizedInFlightOverlaps(entries, () =>
+        scanInFlightOverlaps(inFlight, scanner),
       );
       // 同じ inFlight 一覧を使い回して「ハーネスが凍っている worktree」も測る
       // (bdboard-tdua)。scanner が遅れを測れない構成なら空配列が返る。
@@ -1087,9 +1130,9 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     }
 
     const scanner = deps.worktreeScanner;
-    const projectKey = [entry.project.id];
+    const projectEntries = [entry];
 
-    const memoized = peekInFlightOverlaps(projectKey);
+    const memoized = peekInFlightOverlaps(projectEntries);
     let overlaps: readonly InFlightOverlap[];
     if (memoized !== undefined) {
       overlaps = await memoized;
@@ -1102,7 +1145,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       if (!inFlight.some((worktree) => worktree.ticketId === id)) {
         return c.json([]);
       }
-      overlaps = await memoizedInFlightOverlaps(projectKey, () =>
+      overlaps = await memoizedInFlightOverlaps(projectEntries, () =>
         scanInFlightOverlaps(inFlight, scanner),
       );
     }

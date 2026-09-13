@@ -2285,6 +2285,100 @@ describe('createApiRoutes', () => {
     expect(listChangedFiles.mock.calls.length).toBe(afterHygiene);
   });
 
+  it('does not reuse the memo after the project is refetched on close (bdboard-3tw.162)', async () => {
+    const { cache } = inFlightCache();
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const listChangedFiles = vi.fn(base.listChangedFiles);
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: { ...base, listChangedFiles } }),
+    );
+
+    await app.request('/api/hygiene?projects=proj-a');
+    const afterHygiene = listChangedFiles.mock.calls.length;
+
+    // 他セッションが bdboard-y を close した → refresh が putProject し直す (board.changed と同じ条件)
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [
+        makeTicket({ id: 'bdboard-x', projectId: a.id, status: 'in_progress' }),
+        makeTicket({ id: 'bdboard-y', projectId: a.id, status: 'closed' }),
+        makeTicket({ id: 'bdboard-z', projectId: a.id, status: 'in_progress' }),
+      ],
+      fingerprint: 'fp-a-2',
+      fetchedAt: new Date(NOW.getTime() + 1_000),
+    });
+
+    const body = await (
+      await app.request('/api/tickets/bdboard-x/in-flight-overlaps')
+    ).json();
+
+    expect(body).toEqual([]);
+    expect(listChangedFiles.mock.calls.length).toBeGreaterThan(afterHygiene);
+
+    // 新しい世代で計算し直した結果は、同じ世代のあいだは再び使い回す
+    const afterRescan = listChangedFiles.mock.calls.length;
+    await app.request('/api/hygiene?projects=proj-a');
+    expect(listChangedFiles.mock.calls.length).toBe(afterRescan);
+  });
+
+  it('does not reuse the memo after a forced refetch that keeps the fingerprint', async () => {
+    const { cache } = inFlightCache();
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const listChangedFiles = vi.fn(base.listChangedFiles);
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: { ...base, listChangedFiles } }),
+    );
+
+    await app.request('/api/hygiene?projects=proj-a');
+    const afterHygiene = listChangedFiles.mock.calls.length;
+
+    // 書き込み後の強制リフレッシュは fingerprint が同じでも fetchedAt を進める
+    const entry = cache.getProject('proj-a');
+    if (entry === undefined) {
+      throw new Error('proj-a must be cached');
+    }
+    cache.putProject({ ...entry, fetchedAt: new Date(NOW.getTime() + 1_000) });
+
+    await app.request('/api/tickets/bdboard-x/in-flight-overlaps');
+
+    expect(listChangedFiles.mock.calls.length).toBeGreaterThan(afterHygiene);
+  });
+
+  // 世代を listProjects() 全体ではなく、メモのキーになったプロジェクトだけから作ることの回帰ガード
+  it('keeps the memo when only another project is refetched', async () => {
+    const { cache } = inFlightCache();
+    const b = project('proj-b', '/projects/b');
+    cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'other-1', projectId: b.id, status: 'open' })],
+      fingerprint: 'fp-b',
+      fetchedAt: NOW,
+    });
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const listChangedFiles = vi.fn(base.listChangedFiles);
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: { ...base, listChangedFiles } }),
+    );
+
+    await app.request('/api/hygiene?projects=proj-a');
+    const afterHygiene = listChangedFiles.mock.calls.length;
+
+    cache.putProject({
+      project: b,
+      tickets: [makeTicket({ id: 'other-1', projectId: b.id, status: 'closed' })],
+      fingerprint: 'fp-b-2',
+      fetchedAt: new Date(NOW.getTime() + 1_000),
+    });
+
+    const body = await (
+      await app.request('/api/tickets/bdboard-x/in-flight-overlaps')
+    ).json();
+
+    expect(body).toEqual([{ ticketId: 'bdboard-y', files: ['src/domain/hygiene.ts'] }]);
+    expect(listChangedFiles.mock.calls.length).toBe(afterHygiene);
+  });
+
   it('returns an empty in-flight overlap list for a closed ticket without touching git', async () => {
     const cache = createFakeBoardCache();
     const a = project('proj-a', '/projects/a');
