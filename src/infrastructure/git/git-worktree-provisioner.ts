@@ -7,6 +7,7 @@ import type {
   WorktreeProvisioner,
 } from '../../application/ports/worktree-provisioner.js';
 import { BD_BRANCH_PREFIX, WORKTREES_DIR } from '../../domain/git-worktree.js';
+import { DEFAULT_MAIN_BRANCH, isSafeMainBranchName } from '../../domain/harness-contract.js';
 import { isTicketId } from '../../domain/ticket-id.js';
 
 const DEFAULT_GIT_PATH = 'git';
@@ -208,6 +209,8 @@ interface CleanupMergedOptions {
    */
   readonly cleanupEligibleTicketIds: ReadonlySet<string>;
   readonly isTicketProtected: (ticketId: string) => boolean;
+  /** Verify contract's main branch; merge evidence is checked against origin/<mainBranch>. */
+  readonly mainBranch: string;
   readonly timeoutMs: number;
   readonly logWarn: (message: string) => void;
 }
@@ -231,14 +234,16 @@ async function isBranchMerged(
   ghPath: string,
   repoRootPath: string,
   branchName: string,
+  mainBranch: string,
   timeoutMs: number,
 ): Promise<BranchMergeEvidence | null> {
   const fullBranchRef = `refs/heads/${branchName}`;
+  const baseRef = `origin/${mainBranch}`;
   const ancestor = await runGit(
     commandRunner,
     gitPath,
     repoRootPath,
-    ['merge-base', '--is-ancestor', fullBranchRef, 'origin/main'],
+    ['merge-base', '--is-ancestor', fullBranchRef, baseRef],
     timeoutMs,
   );
   if (ancestor.exitCode === 0) {
@@ -246,7 +251,7 @@ async function isBranchMerged(
   }
 
   // This repository requires squash merges, so the branch tip is normally not
-  // an ancestor of origin/main. A merged PR is sufficient only when its recorded
+  // an ancestor of origin/<mainBranch>. A merged PR is sufficient only when its recorded
   // head oid still equals the local branch tip; a reused branch with newer,
   // unmerged commits must not be mistaken for the older merged PR.
   const localHead = await runGit(
@@ -296,7 +301,7 @@ async function isBranchMerged(
         readonly mergeCommit?: { readonly oid?: unknown } | null;
       };
       if (
-        candidate.baseRefName !== 'main'
+        candidate.baseRefName !== mainBranch
         || candidate.headRefOid !== expectedHead
         || typeof candidate.mergeCommit?.oid !== 'string'
       ) {
@@ -306,7 +311,7 @@ async function isBranchMerged(
         commandRunner,
         gitPath,
         repoRootPath,
-        ['merge-base', '--is-ancestor', candidate.mergeCommit.oid, 'origin/main'],
+        ['merge-base', '--is-ancestor', candidate.mergeCommit.oid, baseRef],
         timeoutMs,
       );
       if (mergeLanded.exitCode === 0) {
@@ -326,7 +331,7 @@ async function cleanupMergedManagedArtifacts(
   // uncommitted edits for a human to verify and turn into a PR, while a failed
   // run may leave evidence needed for diagnosis. Cleanup is therefore
   // opportunistic, immediately before another managed worktree would be added,
-  // and limited to artifacts already merged into origin/main.
+  // and limited to artifacts already merged into origin/<mainBranch>.
   const {
     commandRunner,
     gitPath,
@@ -336,6 +341,7 @@ async function cleanupMergedManagedArtifacts(
     worktreeListOutput,
     cleanupEligibleTicketIds,
     isTicketProtected,
+    mainBranch,
     timeoutMs,
     logWarn,
   } = options;
@@ -377,6 +383,7 @@ async function cleanupMergedManagedArtifacts(
       ghPath,
       repoRootPath,
       entry.branch,
+      mainBranch,
       timeoutMs,
     );
     if (mergeEvidence === null) {
@@ -488,6 +495,7 @@ async function cleanupMergedManagedArtifacts(
         ghPath,
         repoRootPath,
         branchName,
+        mainBranch,
         timeoutMs,
       );
       if (mergeEvidence === null) {
@@ -533,37 +541,41 @@ async function cleanupMergedManagedArtifacts(
 }
 
 type ResolveBaseRefResult =
-  | { readonly baseRef: string; readonly originMainFresh: boolean }
+  | { readonly baseRef: string; readonly baseRefFresh: boolean }
   | Extract<WorktreeProvisionOutcome, { ok: false }>;
 
 async function resolveBaseRef(
   commandRunner: CommandRunner,
   gitPath: string,
   repoRootPath: string,
+  mainBranch: string,
   timeoutMs: number,
 ): Promise<ResolveBaseRefResult> {
-  // 古い origin/main の追跡 ref のまま worktree を切らないよう先に fetch する。
+  // 古い origin/<mainBranch> の追跡 ref のまま worktree を切らないよう先に fetch する。
   // オフライン等で fetch が失敗しても続行する — ローカルに残っている ref で provision できるべき。
+  // mainBranch は検証コントラクト由来 (省略時 main)。master 系リポジトリで origin/main を
+  // 決め打ちすると no-base-ref で必ず失敗する (bdboard-pkr6.18)。
+  const baseRef = `origin/${mainBranch}`;
   const fetchResult = await runGit(
     commandRunner,
     gitPath,
     repoRootPath,
-    ['fetch', 'origin', 'main', '--quiet'],
+    ['fetch', 'origin', mainBranch, '--quiet'],
     timeoutMs,
   );
 
-  const originMain = await runGit(
+  const resolved = await runGit(
     commandRunner,
     gitPath,
     repoRootPath,
-    ['rev-parse', '--verify', 'origin/main'],
+    ['rev-parse', '--verify', baseRef],
     timeoutMs,
   );
 
-  if (originMain.exitCode === 0) {
+  if (resolved.exitCode === 0) {
     return {
-      baseRef: 'origin/main',
-      originMainFresh:
+      baseRef,
+      baseRefFresh:
         fetchResult.exitCode === 0 && fetchResult.failureKind === undefined,
     };
   }
@@ -571,7 +583,7 @@ async function resolveBaseRef(
   return {
     ok: false,
     reason: 'no-base-ref',
-    message: 'origin/main could not be resolved',
+    message: `${baseRef} could not be resolved`,
   };
 }
 
@@ -592,9 +604,22 @@ export function createGitWorktreeProvisioner(
     req: WorktreeProvisionRequest,
   ): Promise<WorktreeProvisionOutcome> => {
     const { repoRootPath, ticketId } = req;
+    const mainBranch = req.mainBranch ?? DEFAULT_MAIN_BRANCH;
 
     if (!validateTicketIdForWorktree(ticketId)) {
       return { ok: false, reason: 'invalid-ticket-id' };
+    }
+
+    // Checked before any git call: nothing may be fetched, cleaned up, or
+    // created on the strength of a branch name git could read as an option.
+    // Contract parsing already rejects these (so preflight answers 409 first);
+    // this is the second guard at the point the value reaches git argv.
+    if (!isSafeMainBranchName(mainBranch)) {
+      return {
+        ok: false,
+        reason: 'no-base-ref',
+        message: 'invalid main branch name in the verify contract',
+      };
     }
 
       const { worktreePath, branchName } = buildPaths(repoRootPath, ticketId);
@@ -688,6 +713,7 @@ export function createGitWorktreeProvisioner(
         commandRunner,
         gitPath,
         repoRootPath,
+        mainBranch,
         timeoutMs,
       );
 
@@ -695,7 +721,7 @@ export function createGitWorktreeProvisioner(
         return baseRefResult;
       }
 
-      const { baseRef, originMainFresh } = baseRefResult;
+      const { baseRef, baseRefFresh } = baseRefResult;
 
       const cleanupResult = await cleanupMergedManagedArtifacts({
         commandRunner,
@@ -706,11 +732,12 @@ export function createGitWorktreeProvisioner(
         worktreeListOutput: listResult.stdout,
         // A stale remote-tracking ref is sufficient to provision offline, but
         // never sufficient evidence for a destructive cleanup after a failed
-        // fetch (origin/main may have been force-updated remotely).
-        cleanupEligibleTicketIds: originMainFresh
+        // fetch (origin/<mainBranch> may have been force-updated remotely).
+        cleanupEligibleTicketIds: baseRefFresh
           ? new Set(req.cleanupEligibleTicketIds ?? [])
           : new Set(),
         isTicketProtected: req.isTicketProtected ?? (() => false),
+        mainBranch,
         timeoutMs,
         logWarn,
       });

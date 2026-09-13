@@ -2,6 +2,12 @@ export interface WorktreeProvisionRequest {
   readonly repoRootPath: string;
   readonly ticketId: string;
   /**
+   * The verify contract's `mainBranch` (bdboard-pkr6.18). New worktrees are cut
+   * from `origin/<mainBranch>`, and merged-worktree cleanup checks merge
+   * evidence against the same branch. Omitted means `main`.
+   */
+  readonly mainBranch?: string;
+  /**
    * Closed tickets eligible for destructive cleanup. Omitting this protects
    * everything: an absent filter must never widen what may be deleted, because
    * the caller that forgot it is exactly the caller that did not think about
