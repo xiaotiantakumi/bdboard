@@ -168,7 +168,14 @@ export function App() {
    * the presentation while the app-scoped loop keeps running; returning to
    * Next Up reuses this state and shows whether it is active or completed.
    */
-  const nextUpBatchRun = useNextUpRunLoopController();
+  const queryClient = useQueryClient();
+  // 詳細パネルは自分で開始した実行しか追跡しないので、ループ由来の実行の開始・終了は
+  // ここから ticket-runs に知らせる (bdboard-3tw.163)。
+  const nextUpBatchRun = useNextUpRunLoopController({
+    onTicketRunsChanged: (ticketId) => {
+      void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
+    },
+  });
   const [activityWindowDays, setActivityWindowDays] = usePersistedState(
     UI_STORAGE_KEYS.activityWindowDays,
     1,
@@ -245,8 +252,6 @@ export function App() {
 
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
-
-  const queryClient = useQueryClient();
 
   const projectsQuery = useQuery({
     queryKey: ['projects'],
