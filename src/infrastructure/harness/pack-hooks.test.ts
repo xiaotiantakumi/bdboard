@@ -769,6 +769,62 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           expect(result.stderr).toBe('');
         });
 
+        /**
+         * レビュー指摘 (bdboard-uaqe M1): 引用符の中の `;` `&` `|` 改行は前段のセグメント分割で
+         * 割れる。割れ目より後ろのフラグは見えないので、既定値 (member 不明 / complexity=med) を
+         * 実効値とみなして誤 deny・誤照合しないこと、割れ目より前に揃っていれば従来どおり
+         * 判定することを固定する。
+         */
+        it('does not guess flags hidden behind a separator inside quotes', async () => {
+          for (const command of [
+            'aimix run --mode implement --task "fix a; b" --member codex ' +
+              '--model gpt-5.6-luna --complexity low',
+            'aimix run --mode implement --task "line1\nline2" --member codex ' +
+              '--model gpt-5.6-luna --complexity low',
+            // --complexity high が割れ目の後ろ。med セルとして照合すると sol は候補外で誤 deny。
+            'aimix run --mode implement --member codex --model gpt-5.6-sol ' +
+              '--task "a && b" --complexity high',
+            // 1 断片で引用符の種類が混ざる形も、閉じない引用符として同じ扱いになる。
+            `aimix run --mode implement --task "a"' b' --member codex ` +
+              '--model gpt-5.6-luna --complexity low',
+          ]) {
+            const result = await guard(command);
+            expect(result.exitCode, command).toBe(0);
+            expect(result.stderr, command).toBe('');
+          }
+
+          await expectDeny(
+            'aimix run --mode implement --member codex --model bogus --complexity high ' +
+              '--task "a; b"',
+            'codex:bogus',
+            'implement/high',
+          );
+        });
+
+        /** レビュー指摘 (bdboard-uaqe M2): ラッパーの引用符の中の aimix run も判定する。 */
+        it('judges aimix run wrapped in bash -c or command substitution', async () => {
+          for (const command of [
+            'bash -c "aimix run --mode implement --complexity high --member codex --model bogus"',
+            "bash -lc 'aimix run --mode implement --complexity high --member codex --model bogus --json'",
+            'OUT="$(aimix run --mode implement --complexity high --member codex --model bogus --json)"',
+          ]) {
+            await expectDeny(command, 'codex:bogus', 'implement/high');
+          }
+
+          const allowed = await guard(
+            'bash -c "aimix run --mode implement --complexity high --member codex --model gpt-5.6-sol"',
+          );
+          expect(allowed.exitCode).toBe(0);
+          expect(allowed.stderr).toBe('');
+
+          // ラッパー側の --mode 等は aimix の引数ではないので読まない。
+          const wrapperFlags = await guard(
+            'mytool --mode implement --complexity high aimix run --member codex --model bogus',
+          );
+          expect(wrapperFlags.exitCode).toBe(0);
+          expect(wrapperFlags.stderr).toBe('');
+        });
+
         it('still allows an explicitly selected in-cell candidate', async () => {
           const result = await guard(
             'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity low',
@@ -1110,6 +1166,22 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
 
             expect(result.exitCode).toBe(2);
             expect(result.stderr).toContain('gemini');
+          });
+
+          // レビュー指摘 (bdboard-uaqe M3): --member 無しだと aimix はレジストリの既定から
+          // member を選ぶので、除外中の member に落ちうる。空セルでも member の明示を求める。
+          it('guard denies a call without a member (aimix may fall back to an excluded member)', async () => {
+            for (const command of [
+              'aimix run --mode implement --complexity high',
+              'aimix run --mode implement --category implement --complexity high',
+              'aimix run --mode implement --members " , " --complexity high',
+            ]) {
+              const result = await guard(command);
+              expect(result.exitCode, command).toBe(2);
+              expect(result.stderr, command).toContain('models.exclude');
+              expect(result.stderr, command).toContain('--member');
+              expect(result.stderr.trimEnd().split('\n').length).toBeLessThanOrEqual(3);
+            }
           });
 
           it('guard still lets a non-excluded member through (fail-open, no table check)', async () => {

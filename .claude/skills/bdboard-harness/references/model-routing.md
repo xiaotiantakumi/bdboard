@@ -113,9 +113,15 @@ member 不明の呼び出しと `--members` 由来の呼び出しを deny する
 registry 等から自動選択し、後者も `--model` を無視して tier 既定モデルで先頭 member だけを実行する
 ためである。`--member <member> --model <候補>` の形へ直す。
 
-候補が空なら、member が分かる場合だけ `route.sh --excluded` と照合する。member 不明や未宣言セルは
-従来どおり fail-open。`--complexity` の明示値が `low` / `med` / `high` 以外の場合も、aimix 自身が
-argparse エラーで実行しないため hook は素通りする。
+候補が空なら `route.sh --excluded` と照合する。除外で空になったセルでは、member 不明
+(aimix がレジストリの既定から除外中の member を選びうる) と除外中の member を deny し、除外されて
+いない member は通す。未宣言セルは従来どおり fail-open。`--complexity` の明示値が `low` / `med` /
+`high` 以外の場合も、aimix 自身が argparse エラーで実行しないため hook は素通りする。
+
+走査するのはセグメント内の最初の `aimix run` より後ろだけで、その前置部で引用符が開いたまま
+(`bash -c "aimix run ..."` / `"$(aimix run ...)"`) なら、閉じる引用符の手前までを aimix の引数と
+みなす。引用符の中の `;` `&` `|` 改行でセグメントが途中で割れた (閉じない引用符が残った) ときは、
+割れ目より前に member と `--complexity` が明示されている場合だけ判定し、それ以外は素通りする。
 
 ## レートリミット除外 (models.exclude)
 

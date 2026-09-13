@@ -128,25 +128,31 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」に�
 #### fail-open する条件
 
 deny してよいのは「セルの候補を実際に取れて、明示指定が上の契約を満たさなかった」ときと、
-「宣言されているセルが `models.exclude` で候補 0 件になっていて、解決した member が除外中だった」
-とき (`route.sh --excluded` で判定。bdboard-p5l.22) だけ。次はすべて素通り:
+「宣言されているセルが `models.exclude` で候補 0 件になっていて、member が不明か、解決した
+member が除外中だった」とき (`route.sh --excluded` で判定。bdboard-p5l.22 / bdboard-uaqe) だけ。
+member 不明を止めるのは、`--member` 無しだと aimix がレジストリの既定から除外中の member を
+選びうるため。次はすべて素通り:
 
 - `scripts/route.sh` が読めない。
 - `route.sh` が非 0 で終わる — 契約の JSON が不正 (exit 1)、jq も python3 も無い (exit 127)。
 - `route.sh` の出力が空 — 契約に `models` 節が無い / その工程が無い / そのセルが無い。
-- 除外で候補 0 件になったセルで、member が不明、または解決した member が除外中ではない
-  (空セルを全面
-  deny にすると、枠逼迫の退避がそのセルの委譲の全停止になるため)。`route.sh --excluded`
-  が非 0 で終わったときも判定しない。
+- 除外で候補 0 件になったセルで、解決した member が除外中ではない (空セルを全面
+  deny にすると、枠逼迫の退避がそのセルの委譲の全停止になるため。名指しすれば通る)。
+  `route.sh --excluded` が非 0 で終わったときも判定しない。
+- セグメントが引用符の途中で割れていて (後述の「限界」)、割れ目より前に member
+  (`--member` / `--members`) と `--complexity` の両方が明示されていない。割れ目の後ろの
+  フラグは見えないので、既定値 (member 不明 / `med`) を実効値とみなすと誤判定になる。
 - `--complexity` を明示したが `low` / `med` / `high` でない (大文字小文字は区別する。
   `--complexity LOW` は素通りする)。**`--complexity` 省略は aimix の既定 `med` として判定する。**
   これは aimix が実際に使うセルで照合するだけで、チケットの `bdboard.complexity` 未記録を deny
   にするかは引き続き Phase 2 (bdboard-p5l.19) の話。
 
 member / `--model` の必須チェックも**この fail-open の後ろ**にある。順序は
-1 回のフラグ走査 → mode ゲート → エスケープハッチ → complexity の choices 確認 →
-member 解決 → `route.sh` → (候補が空なら、member が分かる場合だけ `route.sh --excluded` で
-除外中 member の照合) → member 不明 → `--members` 由来 → `--model` 必須 → セル所属照合。
+1 回のフラグ走査 (最初の `aimix run` 以降だけ) → mode ゲート → エスケープハッチ →
+complexity の choices 確認 → member 解決 → (セグメントが割れていれば、member と
+`--complexity` の明示を確認) → `route.sh` → (候補が空なら `route.sh --excluded` で、除外で
+空になったセルなら member 不明と除外中 member を deny) → member 不明 → `--members` 由来 →
+`--model` 必須 → セル所属照合。
 
 #### エスケープハッチ
 
@@ -180,7 +186,12 @@ member 解決 → `route.sh` → (候補が空なら、member が分かる場合
   `--task "x --comp y"` の中身をフラグと読まない・`"--complexity" high` をオプションとして
   読む・`--members " cursor"` の先頭 member を読む、の 3 点がシェル (= aimix が受け取る引数) と
   揃う。バックスラッシュエスケープ・`$()`・変数展開は扱わない近似で、引用符の中の `;` `&` `|`
-  はその前段のコマンド分割で割れてしまう。曖昧・未知な断片で走査を中断しないのは、この近似で
+  改行はその前段のコマンド分割で割れてしまう。割れたセグメント (閉じない引用符が残る) は
+  割れ目より後ろのフラグが見えないので、割れ目より前に member と `--complexity` が明示されて
+  いるときだけ判定し、それ以外は素通りする (既定値で照合すると誤 deny・誤照合になるため)。
+  走査対象はセグメント内の最初の `aimix run` 以降だけで、前置部で引用符が開いたまま
+  (`bash -c "aimix run ..."` / `"$(aimix run ...)"`) なら閉じる引用符の手前までを aimix の
+  引数とみなす。前置部 (ラッパーコマンド) の `--xxx` は読まない。曖昧・未知な断片で走査を中断しないのは、この近似で
   拾った断片によって後続の正規フラグまで判定放棄させないため。
 - 規則 1〜5 と同じく、判定はコマンド文字列への照合なので「そのコマンドを実行する意図」と
   「そのコマンドについて書いているだけの文字列」を区別しない。`aimix run --mode implement

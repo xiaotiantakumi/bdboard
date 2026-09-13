@@ -261,9 +261,12 @@ resolve_aimix_option() {
 #   - `"--complexity" high` をオプションと認識せず、既定の med セルで照合する
 #   - `--members " cursor"` の先頭 member を読めず、除外で空になったセルを素通りする
 # バックスラッシュエスケープ・$()・変数展開は扱わない近似。引用符の種類は各断片で最初に
-# 現れたものだけを数える。閉じない引用符 (シェルなら構文エラー) は残りを 1 語にする。
+# 現れたものだけを数える。閉じない引用符は残りを 1 語にし、aimix_truncated を立てる。
+# 閉じない引用符が残るのは、たいてい引用符の中の `;` `&` `|` 改行で前段のセグメント分割が
+# 引数の途中を割ったときで、割れ目より後ろのフラグはこのセグメントから見えていない。
 aimix_segment_words() {
   aimix_words=()
+  aimix_truncated=''
   aimix_pending=''
   aimix_quote=''
   aimix_dq='"'
@@ -306,20 +309,67 @@ aimix_segment_words() {
   if [ -n "$aimix_quote" ]; then
     aimix_unquoted="${aimix_pending//$aimix_dq/}"
     aimix_words[${#aimix_words[@]}]="${aimix_unquoted//$aimix_sq/}"
+    aimix_truncated='yes'
   fi
+}
+
+# セグメントのうち、最初の `aimix run` 以降だけを返す (bdboard-uaqe レビュー M2)。
+# 前置部 (ラッパーコマンドや代入) の `--xxx` を aimix の引数と読まないためと、
+# `bash -c "aimix run ..."` / `"$(aimix run ...)"` のように aimix run 全体が外側の引用符の
+# 中にあるとき、それを 1 語につなぎ直して --mode を見失わないため。前置部で引用符が
+# 開いたままなら、aimix の引数は閉じる引用符の手前までとみなす。語の判定は
+# AIMIX_SEGMENTS を選ぶ grep と同じ (直前が英数字・`_`・`-` なら別の語の一部)。
+aimix_run_tail() {
+  tail_rest="$1"
+  tail_prefix=''
+  tail_re='^aimix[[:space:]]+run([[:space:]]|$)'
+  while :; do
+    case "$tail_rest" in
+      *aimix*) ;;
+      *)
+        printf '%s' "$1"
+        return
+        ;;
+    esac
+    tail_head="${tail_rest%%aimix*}"
+    tail_after="${tail_rest#"$tail_head"}"
+    tail_prefix="$tail_prefix$tail_head"
+    if [[ "$tail_after" =~ $tail_re ]]; then
+      case "$tail_prefix" in
+        *[[:alnum:]_-]) ;;
+        *) break ;;
+      esac
+    fi
+    tail_prefix="${tail_prefix}aimix"
+    tail_rest="${tail_after#aimix}"
+  done
+  tail_dq='"'
+  tail_sq="'"
+  tail_count_dq="${tail_prefix//[!$tail_dq]/}"
+  tail_count_sq="${tail_prefix//[!$tail_sq]/}"
+  if [ $(( ${#tail_count_dq} % 2 )) -eq 1 ]; then
+    tail_after="${tail_after%%"$tail_dq"*}"
+  elif [ $(( ${#tail_count_sq} % 2 )) -eq 1 ]; then
+    tail_after="${tail_after%%"$tail_sq"*}"
+  fi
+  printf '%s' "$tail_after"
 }
 
 # 1 セグメントを 1 回だけ走査し、規則 6 が使う実効引数をグローバル変数へ入れる。
 # 語への分割は aimix_segment_words (引用符をつなぎ直す近似) に任せる。
 # 値を取るオプションは `--name=value` と `--name value` の両方を受け、同じものは後勝ち。
+# route_complexity_explicit は --complexity を実際に見たか、route_truncated はセグメントが
+# 引用符の途中で割れていたか (割れ目の後ろのフラグが見えていない) を表す。
 scan_aimix_segment() {
   route_stage='consult'
   route_member_flag=''
   route_members_flag=''
   route_model=''
   route_complexity='med'
+  route_complexity_explicit=''
 
-  aimix_segment_words "$1"
+  aimix_segment_words "$(aimix_run_tail "$1")"
+  route_truncated="$aimix_truncated"
   set -- "${aimix_words[@]}"
   while [ $# -gt 0 ]; do
     scan_token="$1"
@@ -362,7 +412,10 @@ scan_aimix_segment() {
           member) route_member_flag="$scan_value" ;;
           members) route_members_flag="$scan_value" ;;
           model) route_model="$scan_value" ;;
-          complexity) route_complexity="$scan_value" ;;
+          complexity)
+            route_complexity="$scan_value"
+            route_complexity_explicit='yes'
+            ;;
         esac
         ;;
     esac
@@ -465,6 +518,15 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
       [ -n "$route_member" ] && route_member_from_members='yes'
     fi
 
+    # セグメントが引用符の途中で割れていた (bdboard-uaqe レビュー M1)。割れ目より後ろの
+    # フラグは見えていないので、既定値 (member 不明 / complexity=med) を実効値とみなすと
+    # 正当な呼び出しの誤 deny や別セルでの誤照合になる。割れ目より前に member と
+    # --complexity が明示されていたときだけ判定する (割れ目の後ろでの上書きは近似の限界)。
+    if [ -n "$route_truncated" ]; then
+      [ -n "$route_member" ] || continue
+      [ -n "$route_complexity_explicit" ] || continue
+    fi
+
     # route.sh は「候補なし」を無出力 exit 0、契約不正を exit 1、jq/python3 不在を
     # exit 127 で返す。deny してよいのは「候補を実際に取れた」ときと、下の「除外で
     # 空になったセルで除外中の member を名指しした」ときだけ。
@@ -479,11 +541,22 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
     # member がそこに居れば deny する。居なければ従来どおり fail-open で通す — 空セルを
     # 全面 deny にすると、枠逼迫の退避 (exclude) が委譲の全停止になってしまうため。
     # --excluded が非 0 (契約不正・古い route.sh で usage exit 2 等) なら判定しない。
+    # --excluded が空なら宣言されていないセル (意見なし) なので通す。除外で空になった
+    # セルで member 不明 (--member 無し・--members が全部空) なら deny する — aimix は
+    # --category / レジストリ既定で member を選ぶので、除外中の member に落ちうる
+    # (bdboard-uaqe レビュー M3)。名指しすれば除外されていない member は通るので、
+    # 退避が委譲の全停止になることはない。
     if [ -z "$ROUTE_CANDIDATES" ]; then
-      [ -n "$route_member" ] || continue
       ROUTE_EXCLUDED="$(cd "$REPO_ROOT" 2>/dev/null &&
         bash "$ROUTE_SCRIPT" --excluded "$route_stage" "$route_complexity" 2>/dev/null)"
       [ $? -eq 0 ] || continue
+      [ -n "$ROUTE_EXCLUDED" ] || continue
+      if [ -z "$route_member" ]; then
+        deny \
+          "bdboard-harness: ${route_stage}/${route_complexity} セルは models.exclude で候補が 0 件です。--member 無しだと aimix が除外中の member を選びうるため、--member の明示が必須です。" \
+          "除外中: $(route_safe "$(printf '%s' "$ROUTE_EXCLUDED" | tr '\n' ',' | sed 's/,$//')")" \
+          'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+      fi
       route_excluded_hit=''
       while IFS= read -r route_excluded_member; do
         [ -n "$route_excluded_member" ] || continue
