@@ -61,40 +61,54 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 
 ## ポート一覧(`src/application/ports/`)
 
-`application` が定義し `infrastructure` が実装するインターフェース。主なもの:
+`application` が定義し `infrastructure` が実装するインターフェース。全ポートモジュールを次に示す。
 
 | ポート | 主な実装(infrastructure) | 役割 |
 | --- | --- | --- |
-| `IssueRepository` | `BdCliIssueRepository` | `bd --readonly list --json` でチケット一覧取得 |
-| `IssueWriter` | `BdCliIssueWriter` | チケットの状態変更・コメント等の書き込み |
-| `DependencyWriter` | `BdCliDependencyWriter` | 依存関係(blocks等)の追加 |
-| `LeaseReader` / `LeaseReclaimer` | `BdCliLeaseReader` / `BdCliLeaseReclaimer` | claim(lease)の読み取り/期限切れ回収 |
-| `MergeSlotReader` | `BdCliMergeSlotReader` | マージ直列化用スロットの読み取り |
-| `CommentReader` | `BdCliCommentReader` | チケットコメント取得 |
-| `HumanDecisionsPort` | `BdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
-| `SessionLinkWriter` | `BdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
-| `PrStatusReader` | `GhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
-| `WorktreeScanner` | `GitWorktreeScanner` | worktree一覧のスキャン |
-| `ProjectDiscovery` | `FsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
-| `ProjectFingerprinter` | `BeadsFingerprinter` | 変化検知用フィンガープリント計算 |
-| `ProjectWatcher` | `ChokidarProjectWatcher` | プロジェクトのファイル変更監視 |
-| `BoardCache` | `SqliteBoardCache` | 横断ボードの永続キャッシュ(プロジェクト/チケット/セッションリンク/オフセット) |
-| `SessionRegistry` | `ClaudeSessionRegistry` | `~/.claude/sessions/*.json` + PID生存確認からセッション列挙 |
-| `TranscriptScanner` | `JsonlTranscriptScanner` | セッショントランスクリプトの増分tail走査(チケットID抽出) |
-| `SessionTailReader` | `SessionTailReader`(infrastructure/session) | セッションログ末尾の取得 |
-| `InteractionReader` | `JsonlInteractionReader` | agy等のheadless実行ログ(soft-deny等)読み取り |
-| `ProcessScanner` | `PsProcessScanner` | `ps` によるエージェントプロセス列挙 |
+| `IssueRepository` | `createBdCliIssueRepository` | `bd --readonly list --json` でチケット一覧取得 |
+| `IssueWriterPort` | `createBdCliIssueWriter` | チケットの状態変更・コメント等の書き込み |
+| `DependencyWriterPort` | `createBdCliDependencyWriter` | 依存関係(blocks等)の追加 |
+| `LeaseReader` / `LeaseReclaimer` | `createBdCliLeaseReader` / `createBdCliLeaseReclaimer` | claim(lease)の読み取り/期限切れ回収 |
+| `MergeSlotReader` | `createBdCliMergeSlotReader` | マージ直列化用スロットの読み取り |
+| `CommentReader` | `createBdCliCommentReader` | チケットコメント取得 |
+| `HumanDecisionsPort` | `createBdCliHumanDecisions` | 人間の意思決定待ちキューの読み書き |
+| `SessionLinkWriterPort` | `createBdCliSessionLinkWriter` | チケット⇔セッションの手動紐付け |
+| `PrStatusReader` | `createGhCliPrStatusReader` | `gh` CLI でPRステータス取得 |
+| `WorktreeScanner` | `createGitWorktreeScanner` | worktree一覧のスキャン |
+| `ProjectDiscovery` | `createFsProjectDiscovery` | スキャンルート配下の `.beads/` プロジェクト検出 |
+| `ProjectFingerprinter` | `createBeadsFingerprinter` | 変化検知用フィンガープリント計算 |
+| `ProjectWatcher` | `createChokidarProjectWatcher` | プロジェクトのファイル変更監視 |
+| `BoardCache` | `createSqliteBoardCache` | 横断ボードの永続キャッシュ(プロジェクト/チケット/セッションリンク/オフセット) |
+| `SessionRegistry` | `createClaudeSessionRegistry` | `~/.claude/sessions/*.json` + PID生存確認からセッション列挙 |
+| `TranscriptScanner` | `createJsonlTranscriptScanner` | セッショントランスクリプトの増分tail走査(チケットID抽出) |
+| `SessionTailReader` | `createSessionTailReader` | セッションログ末尾の取得 |
+| `InteractionReader` | `createJsonlInteractionReader` | agy等のheadless実行ログ(soft-deny等)読み取り |
+| `ProcessScanner` | `createPsProcessScanner` | `ps` によるエージェントプロセス列挙 |
 | `ProcessProbe` | `NodeProcessProbe` | PID生存確認(`process.kill(pid, 0)`) |
 | `CommandRunner` / `StreamingCommandRunner` | `NodeCommandRunner` / `NodeStreamingCommandRunner` | 子プロセス実行の共通口(`infrastructure/process` 配下限定) |
-| `ChatAgent` | `ClaudeChatAgent` 等(`infrastructure/chat`) | チャット機能のエージェントアダプタ(claude常設、codex/cursor/agyはopt-in) |
-| `ChatSessionRepository` / `ChatMessageRepository` | `SqliteChatSessionRepository` / `SqliteChatMessageRepository` | チャットセッション・メッセージの永続化 |
-| `TunnelPort` | `CloudflaredTunnel` | cloudflared quick tunnel の起動/停止 |
-| `AiQuotaSource` | `NodeAiQuotaSource` | `ai-quota` CLI 経由の残量取得 |
-| `WorktreeProvisioner` | `GitWorktreeProvisioner` | エージェント実行用 worktree の作成と、マージ済み生成物の安全な回収 |
-| `AgentRunConfigPort` | `FileAgentRunConfigStore`(`createFileAgentRunConfigStore`) | エージェント実行設定(リモート許可トグル等)の永続化 |
-| `AgentRunner` | `ClaudeSpawnRunner` / `ClaudeResumeRunner` / `DisabledRunner` 等 | エージェント起動(`POST /api/runs` の1経路のみ。`agent-run-guard` 必須) |
-| `PackRegistryPort` / `HarnessInjectorPort` | `FsPackRegistry` / `FsHarnessInjector` | ハーネスパックの一覧と、注入先 `.claude/` への書き込み |
-| `HarnessContractReaderPort` | `FsHarnessContractReader` | 注入先の検証コントラクトと `package.json` の scripts 読み取り |
+| `ChatAgentPort` | `createClaudeChatAgent` 等(`infrastructure/chat`) | チャット機能のエージェントアダプタ(claude常設、codex/cursor/agyはopt-in) |
+| `ChatSessionRepository` / `ChatMessageRepository` | `createSqliteChatSessionRepository` / `createSqliteChatMessageRepository` | チャットセッション・メッセージの永続化 |
+| `TunnelProcess` | `createCloudflaredTunnel` | cloudflared quick tunnel の起動/停止 |
+| `AiQuotaSource` | `createNodeAiQuotaSource` | `ai-quota` CLI 経由の残量取得 |
+| `WorktreeProvisioner` | `createGitWorktreeProvisioner` | エージェント実行用 worktree の作成と、マージ済み生成物の安全な回収 |
+| `AgentRunConfigPort` | `createFileAgentRunConfigStore` | エージェント実行設定(リモート許可トグル等)の永続化 |
+| `AgentRunner` | `createClaudeSpawnRunner` / `createClaudeResumeRunner` / `createDisabledRunner` 等 | エージェント起動(`POST /api/runs` の1経路のみ。`agent-run-guard` 必須) |
+| `PackRegistryPort` / `HarnessInjectorPort` | `createFsPackRegistry` / `createFsHarnessInjector` | ハーネスパックの一覧と、注入先 `.claude/` への書き込み |
+| `HarnessContractReaderPort` | `createFsHarnessContractReader` | 注入先の検証コントラクトと `package.json` の scripts 読み取り |
+| `FileSystemPort` | `NodeFileSystem` | ファイルシステムの非同期読み取り(ディレクトリ列挙・stat・範囲読み取り。読めなければ `undefined`) |
+| `ScanRootsConfigPort` | `createFileScanRootsConfigStore` | スキャン対象ルートと除外パスの設定の永続化 |
+| `BoardThresholdsConfigPort` | `createFileBoardThresholdsConfigStore` | 滞留・liveness 判定しきい値と In Progress の WIP 上限設定の永続化 |
+| `AiQuotaAlertConfigPort` | `createFileAiQuotaAlertConfigStore` | AI残量アラート設定の永続化 |
+| `HygieneThresholdsConfigPort` | `createFileHygieneThresholdsConfigStore` | 健全性(Hygiene)パネルの検出しきい値設定の永続化 |
+| `ApplicationVersionProvider` | `createPackageJsonVersionProvider` | アプリケーションのバージョン取得 |
+| `ChatSessionDiscoveryPort` | `createFsChatSessionDiscovery` | CLI で起動した既存 Claude セッションのトランスクリプトからの検出・所有権(cwd)検証・adopt 時の履歴シード読み取り |
+| `TunnelInterruptionStore` | `createFileTunnelInterruptionStore` | トンネル中断状態の記録と読み取り |
+| `ReleaseSource` | `createGithubReleaseSource` | リリース情報の取得 |
+
+表に載せないモジュール:
+
+- `board-cache-fakes.ts` — `BoardCache` のメソッド群(CFD・セッションリンク・interactions)ごとの部分 fake(`Pick<>`)を返すテスト用ファクトリ。
+- `tunnel-interruption-store-fakes.ts` — `TunnelInterruptionStore` のテスト用 in-memory fake ファクトリ。
 
 各ポートのフルインターフェースは `src/application/ports/*.ts` を参照。
 
@@ -121,22 +135,22 @@ bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)
 
 `src/main.ts` が起動時に組み立てる定期リフレッシュ + イベント通知のパイプライン:
 
-1. **収集**: `ProjectDiscovery`(`FsProjectDiscovery`)がスキャンルート配下の `.beads/` を検出し、
-   `IssueRepository`(`BdCliIssueRepository`)が各プロジェクトに対して
+1. **収集**: `ProjectDiscovery`(`createFsProjectDiscovery`)がスキャンルート配下の `.beads/` を検出し、
+   `IssueRepository`(`createBdCliIssueRepository`)が各プロジェクトに対して
    `bd --readonly -C <dir> list --json --all --limit 0 --no-pager` を実行してチケット一覧を取得する。
 2. **変更検知**: 全プロジェクトへ毎回 `bd` を叩くコストを避けるため、`ProjectFingerprinter`
-   (`BeadsFingerprinter`)が `.beads/last-touched` 等からフィンガープリントを計算し、
+   (`createBeadsFingerprinter`)が `.beads/last-touched` 等からフィンガープリントを計算し、
    `application/board/refresh-projects.ts` の `refreshProjects()` が前回と変化のあった
-   プロジェクトだけを再取得する(`chokidar` によるファイル監視 `ChokidarProjectWatcher` が
+   プロジェクトだけを再取得する(`chokidar` によるファイル監視 `createChokidarProjectWatcher` が
    変化トリガーそのものも供給し、加えて `BDBOARD_REFRESH_INTERVAL_MS` 間隔の全体リフレッシュを
    取りこぼし保険として併走させる)。
-3. **キャッシュ**: 取得結果は `BoardCache`(`SqliteBoardCache`、`~/.bdboard/cache.db`)に永続化される。
+3. **キャッシュ**: 取得結果は `BoardCache`(`createSqliteBoardCache`、`~/.bdboard/cache.db`)に永続化される。
    チケット/プロジェクト/セッションリンク/トランスクリプト走査オフセット/CFDスナップショット等を
    保持し、再起動時もここから復元する(トランスクリプトリンクは起動時に
    `hydrateTranscriptLinksFromCache()` でインメモリ `Map` へ再構築)。
-4. **セッション/トランスクリプト観測**: 並行して `SessionRegistry`(`ClaudeSessionRegistry`)が
+4. **セッション/トランスクリプト観測**: 並行して `SessionRegistry`(`createClaudeSessionRegistry`)が
    `~/.claude/sessions/*.json` とPID生存確認から稼働中セッションを列挙し
-   (`BDBOARD_SESSION_INTERVAL_MS` 間隔)、`TranscriptScanner`(`JsonlTranscriptScanner`)が
+   (`BDBOARD_SESSION_INTERVAL_MS` 間隔)、`TranscriptScanner`(`createJsonlTranscriptScanner`)が
    セッションのトランスクリプトを増分走査してチケットID⇔セッションIDのリンクを推定する
    (`BDBOARD_TRANSCRIPT_INTERVAL_MS` 間隔)。
 5. **配信**: 何か実際に変化した場合(空更新は抑制)、`interface/sse/event-hub.ts` の `EventHub` へ
@@ -149,12 +163,12 @@ bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)
    `GET /api/board` 等のREST APIを再フェッチする。**SSEイベント自体はペイロードを運ばない
    invalidation信号であり、実データは常にREST経由で取得し直す**設計。
 
-つまり実データの経路は「bd CLI(readonly) → SqliteBoardCache → REST API」、変更通知の経路は
+つまり実データの経路は「bd CLI(readonly) → BoardCache(SQLite) → REST API」、変更通知の経路は
 「EventHub → SSE → クライアント側リフェッチのトリガー」という2系統に分離されている。
 
 ## 安全保証
 
-- **bdへの読み取りは `--readonly` 固定**: `BdCliIssueRepository` の一覧取得や、書き込み系アダプタが
+- **bdへの読み取りは `--readonly` 固定**: `createBdCliIssueRepository` の一覧取得や、書き込み系アダプタが
   内部で行う存在確認的な `show` 呼び出しも含め、読み取り目的のbd呼び出しは一貫して `--readonly`
   フラグを付与する(`src/infrastructure/bd/*.ts`)。
 - **子プロセス起動経路の一本化**: `.dependency-cruiser.cjs` のルールにより `child_process` は
@@ -210,7 +224,7 @@ bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)
 
 ## v1計画との差分(注記)
 
-[docs/PLAN.md](./PLAN.md) の「v1 の安全保証」節には「`IssueWriter` ポートの infrastructure 実装を
+[docs/PLAN.md](./PLAN.md) の「v1 の安全保証」節には「`IssueWriter` ポート(現 `IssueWriterPort`)の infrastructure 実装を
 v1の合成ルートに登録しない」という当初方針が書かれているが、現在の `src/main.ts` は
 `createBdCliIssueWriter` / `createBdCliDependencyWriter` / `createBdCliSessionLinkWriter` 等を
 実際に生成し `createApiRoutes` へ配線している。書き込み機能はその後のスライスで計画通り実装され、
