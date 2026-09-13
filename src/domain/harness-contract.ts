@@ -39,8 +39,8 @@ export function isSafeMainBranchName(name: string): boolean {
     && !name.includes('//')
     && !name.includes('..')
     && !name.endsWith('.')
-    && !name.endsWith('.lock')
-    && !name.split('/').some((segment) => segment.startsWith('.'))
+    && name !== 'HEAD'
+    && !name.split('/').some((segment) => segment.startsWith('.') || segment.endsWith('.lock'))
   );
 }
 
@@ -803,7 +803,7 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
     }
     if (!isSafeMainBranchName(parsed.mainBranch.trim())) {
       return schemaFailure(
-        'mainBranch は英数字と . _ / - だけのブランチ名である必要があります (先頭の - や .. は不可)',
+        'mainBranch は英数字と . _ / - だけのブランチ名である必要があります (先頭の - や .. など git が別の意味に読む形は不可)',
       );
     }
     mainBranch = parsed.mainBranch.trim();

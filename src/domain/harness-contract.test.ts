@@ -336,7 +336,7 @@ describe('parseHarnessContract', () => {
   // mainBranch は worktree provisioner で `git fetch origin <name>` や
   // `origin/<name>` として argv に入る (bdboard-pkr6.18)。オプションに化ける値は
   // preflight の段階 (harness-contract-invalid) で止める。
-  it.each(['--upload-pack=touch /tmp/pwned', '-x', 'a..b', 'a b', 'x.lock', 'feat/.hidden', '/main'])(
+  it.each(['--upload-pack=touch /tmp/pwned', '-x', 'a..b', 'a b', 'x.lock', 'foo.lock/bar', 'HEAD', 'feat/.hidden', '/main'])(
     'rejects the unsafe mainBranch %j',
     (mainBranch) => {
       const result = parse({ version: 1, verify: 'npm run verify', prFlow: 'pr', mainBranch });
@@ -344,7 +344,7 @@ describe('parseHarnessContract', () => {
       expect(result.ok).toBe(false);
       if (result.ok) return;
       expect(result.message).toBe(
-        'mainBranch は英数字と . _ / - だけのブランチ名である必要があります (先頭の - や .. は不可)',
+        'mainBranch は英数字と . _ / - だけのブランチ名である必要があります (先頭の - や .. など git が別の意味に読む形は不可)',
       );
     },
   );

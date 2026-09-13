@@ -7,6 +7,7 @@ function input(overrides: Partial<BuildRunPromptInput> = {}): BuildRunPromptInpu
     ticketTitle: 'Agent run wiring',
     verify: 'npm run verify',
     prFlow: 'pr',
+    mainBranch: 'main',
     ...overrides,
   };
 }
@@ -79,5 +80,12 @@ describe('buildRunPrompt', () => {
       'git 運用: main へ直接コミット可',
     );
     expect(buildRunPrompt(input({ prFlow: 'none' }))).toContain('git 運用: git 運用なし');
+  });
+
+  it('names the contract mainBranch in the direct flow description', () => {
+    const prompt = buildRunPrompt(input({ prFlow: 'direct', mainBranch: 'master' }));
+
+    expect(prompt).toContain('git 運用: master へ直接コミット可');
+    expect(prompt).not.toContain('main へ直接コミット可');
   });
 });

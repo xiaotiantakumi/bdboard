@@ -458,6 +458,7 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       ticketTitle: ticket.title,
       verify: preflight.verify,
       prFlow: preflight.prFlow,
+      mainBranch: preflight.mainBranch,
     });
     const sink = {
       onChunk: (chunk: { stream: 'stdout' | 'stderr'; text: string }) => {

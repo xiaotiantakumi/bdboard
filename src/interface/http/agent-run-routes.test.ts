@@ -1681,7 +1681,7 @@ describe('createAgentRunRoutes harness preflight', () => {
     );
   });
 
-  it('passes the default mainBranch when the contract omits it', async () => {
+  it('passes the default contract mainBranch main through to provision', async () => {
     const { response, worktreeProvisioner } = await postRun(async () => readyHarnessStatus());
 
     expect(response.status).toBe(202);
