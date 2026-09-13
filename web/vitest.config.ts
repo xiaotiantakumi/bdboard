@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 import rootPackage from '../package.json';
 
+// mockReset / restoreMocks は意図的に設定しない (bdboard-cqur)。mockReset を有効にすると (restoreMocks
+// と併用しても同じ) 各テストの直前 (beforeAll の後) に reset が走り、モジュールトップの
+// vi.fn().mockReturnValue(...) や beforeAll で仕込んだ実装まで全ファイルで消える。代わりに
+// restoreAllMocks の直前の resetAllMocks をリポジトリルートの src/vitest-mock-cleanup-pairing.test.ts が検査する。
+
 // bdboard-3tw.106: 並列worktreeセッションでCPUが過剰契約されると、jsdom環境の
 // 起動(ファイル先頭テストに乗る固定コスト)がスケジューリング飢餓で5000msの
 // testTimeoutを超えてflakeする。そのためワーカー数をキャップする。

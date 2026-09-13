@@ -1,6 +1,11 @@
 import { availableParallelism } from 'node:os';
 import { defineConfig } from 'vitest/config';
 
+// mockReset / restoreMocks は意図的に設定しない (bdboard-cqur)。mockReset を有効にすると (restoreMocks
+// と併用しても同じ) 各テストの直前 (beforeAll の後) に reset が走り、モジュールトップの
+// vi.fn().mockReturnValue(...) や beforeAll で仕込んだ実装まで全ファイルで消える。代わりに
+// restoreAllMocks の直前の resetAllMocks をリポジトリルートの src/vitest-mock-cleanup-pairing.test.ts が検査する。
+
 // bdboard-255: worktree並行運用(同時2〜6本のverify)でvitestワーカーがコアを
 // 食い尽くし、10コア機でload average 200超に達した対策。Vitest 4 ではプールごとの
 // maxForks / maxThreads と poolOptions が廃止され、maxWorkers がプール非依存で唯一の
