@@ -70,9 +70,18 @@ Check specifically for:
 3. **Root `.gitignore` still ignores `/.beads/`** — `bd init`/`bd setup` can
    rewrite `.gitignore` as part of its own scaffolding; confirm the
    bdboard-specific `/.beads/` line survived the run.
+4. **AGENTS.md is still 200 lines or fewer** — a regenerated block can grow
+   the file past the 200-line limit (「200 行以下に保つ」) stated at its top.
+   `scripts/agents-md-line-limit.test.mjs` (part of `npm run test:server`,
+   so `npm run verify` and CI) fails on 201+ lines and names where to move
+   content (a skill under `.claude/skills/`, a path-scoped rule under
+   `.claude/rules/`, or `docs/`). Make room outside the managed markers
+   rather than hand-trimming inside them, since the next `bd init` would
+   undo that.
 
-If any check fails, hand-restore the customized wording before
-committing. Do not `git add`/commit an unreviewed `bd init` diff.
+If check 1–3 fails, hand-restore the customized wording before
+committing; for check 4, make room outside the markers as described
+above. Do not `git add`/commit an unreviewed `bd init` diff.
 
 **Alignment with the direct-to-main ban:** `bd init` can autocommit straight
 to whatever branch happens to be checked out — on 2026-08-17 it produced two
