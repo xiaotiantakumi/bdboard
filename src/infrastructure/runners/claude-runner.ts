@@ -1,6 +1,7 @@
-// Claude runners launch via StreamingCommandRunner when wired; otherwise they stay
-// dispatch-disabled so the composition root can keep agent runners unwired until
-// POST /api/runs is enabled.
+// Claude runners launch via StreamingCommandRunner when one is passed; without it they
+// return a dispatch-disabled outcome instead of spawning. The composition root
+// (src/main.ts) wires the spawn runner with a streaming runner, reachable only via
+// POST /api/runs behind agent-run-guard.
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
