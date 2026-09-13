@@ -6,6 +6,7 @@ import { TipsBanner } from './TipsBanner';
 
 describe('TipsBanner', () => {
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

@@ -39,6 +39,7 @@ describe('TunnelControl publish confirmation', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
@@ -227,6 +228,7 @@ describe('TunnelControl QR code', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
@@ -334,6 +336,7 @@ describe('TunnelControl write access notice', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
@@ -391,6 +394,7 @@ describe('TunnelControl tunnel interruption notice', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

@@ -386,6 +386,7 @@ describe('ChatPanel', () => {
       value: defaultWindowInnerWidth,
     });
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

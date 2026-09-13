@@ -27,6 +27,7 @@ describe('isTypingTarget', () => {
 
 describe('KeyboardShortcutsPanel', () => {
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

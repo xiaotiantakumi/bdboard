@@ -33,6 +33,7 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

@@ -165,6 +165,7 @@ describe('useNotificationEvents watched ticket snapshot continuity', () => {
 
   afterEach(() => {
     __resetSharedEventSourceForTests();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -321,6 +322,7 @@ describe('useNotificationEvents', () => {
 
   afterEach(() => {
     __resetSharedEventSourceForTests();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.useRealTimers();

@@ -566,6 +566,7 @@ describe('POST /api/chat/message/stream', () => {
   describe('SSE keepalive ping', () => {
     afterEach(() => {
       vi.useRealTimers();
+      vi.resetAllMocks();
       vi.restoreAllMocks();
     });
 

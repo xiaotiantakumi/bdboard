@@ -38,6 +38,7 @@ describe('App error boundaries (bdboard-yfq)', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

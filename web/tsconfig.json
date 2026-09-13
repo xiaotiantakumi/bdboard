@@ -8,7 +8,7 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    "types": ["node", "vitest/globals", "@testing-library/jest-dom"]
   },
   // vitest.setup.ts は src/ 外だが DOM/jest-dom 前提のため Node 用 tsconfig.node ではなくこちらで検査する
   "include": ["src", "vitest.setup.ts"]

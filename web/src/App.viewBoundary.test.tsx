@@ -42,6 +42,7 @@ describe('App view boundary (bdboard-yfq)', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

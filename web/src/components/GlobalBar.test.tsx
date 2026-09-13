@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { GlobalBar } from './GlobalBar';
 
 function renderGlobalBar(overrides?: Partial<React.ComponentProps<typeof GlobalBar>>) {
@@ -74,7 +74,7 @@ describe('GlobalBar view switcher a11y', () => {
 });
 
 describe('GlobalBar view switcher scroll', () => {
-  let scrollIntoViewMock: ReturnType<typeof vi.fn>;
+  let scrollIntoViewMock: Mock<(arg?: boolean | ScrollIntoViewOptions) => void>;
   let originalScrollIntoView: Element['scrollIntoView'] | undefined;
 
   beforeEach(() => {

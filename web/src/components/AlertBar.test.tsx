@@ -11,6 +11,7 @@ vi.mock('../hooks/useNow', () => ({
 
 describe('AlertBar', () => {
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

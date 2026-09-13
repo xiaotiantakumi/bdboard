@@ -112,6 +112,7 @@ describe('useFocusTrap', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
