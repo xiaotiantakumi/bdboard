@@ -25,7 +25,9 @@ concurrently. Design rationale and full detail: bdboard-3tw.74.
 `.claude/worktrees/<ticket-id>/`, created at claim time from
 `origin/main`, removed after merge. Each worktree needs its own
 `npm install && npm --prefix web install` (`node_modules` isn't shared
-across worktrees). Don't run `npm run dev` inside a worktree — it collides
+across worktrees). Use npm 10 (the one bundled with Node 22) so
+`npm install` doesn't rewrite the committed lockfiles (see docs/VERIFY.md,
+"lockfile と npm の版"). Don't run `npm run dev` inside a worktree — it collides
 on the port with the main checkout. `vitest`/`tsc`/`depcruise` don't bind a
 port, so those run fine in parallel worktrees.
 

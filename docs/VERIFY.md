@@ -147,6 +147,29 @@ for local iteration (server watch mode / Vite dev server, respectively).
 worktree での起動可否・常時稼働サーバーの扱いは skill `bdboard-server-ops`
 (`.claude/skills/bdboard-server-ops/SKILL.md`) を参照。
 
+## lockfile と npm の版
+
+コミットする `package-lock.json` / `web/package-lock.json` は **Node 22 同梱の npm 10 系 (10.9.x)** が
+書く形に揃える (bdboard-m4sl)。CI (ubuntu / windows の `node-version: 22`) とメインチェックアウトの
+Node 22 がこの npm を使うため。`packageManager` / `devEngines` で npm を固定しないのは、release-please
+の publish ジョブだけが trusted publishing のために npm 11 へ上げており、固定するとそこと食い違うため。
+
+npm 11 系は、新しく解決したプラットフォーム別バイナリ (rollup / lzma の linux 版など) のエントリに
+`"libc": ["glibc"|"musl"]` を書き足す。npm 10 系はこのフィールドを書かず、`npm install` のたびに
+消すので、npm 11 で依存を足した lockfile をコミットすると、以後の worktree で `npm install` するたびに
+lockfile が modified になり、無関係な PR に紛れ込む。CI の `npm ci` は lockfile を書き換えないので
+このズレに気付けない。`scripts/lockfile-npm-version.test.mjs` が両 lockfile に `libc` が無いことを
+検査する。落ちたら npm 10 で lockfile を再生成する — Node 24 以降の同梱 npm は 11 系なので、手元の
+Node に依らない次のコマンドが確実 (依存の解決結果は変わらず、`libc` の行だけが消える):
+
+```bash
+npx -y npm@10 install --package-lock-only
+npx -y npm@10 --prefix web install --package-lock-only
+```
+
+Dependabot のセキュリティ更新 PR も lockfile を書き換えるので、将来その npm が `libc` を書くように
+なればこのテストで落ちる。その場合も同じコマンドで Dependabot のブランチ上の lockfile を作り直す。
+
 ## コミットのパースチェック (`npm run check:commits`)
 
 on each main push, CI scans
