@@ -64,7 +64,9 @@ describe('parseMinimumRange', () => {
   });
 });
 
-describe('satisfiesMinimum (engines >=22.9.0)', () => {
+// この境界値は package.json とは独立した固定フィクスチャである。実 engines の境界は
+// engines-coverage.test.mjs が package.json から導出して検査する。
+describe('satisfiesMinimum (fixture range >=22.9.0)', () => {
   const range = '>=22.9.0';
 
   it.each([
