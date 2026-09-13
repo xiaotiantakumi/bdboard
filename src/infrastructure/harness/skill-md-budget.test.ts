@@ -24,6 +24,8 @@ const SKILL_MD_PATH = fileURLToPath(
 const SKILL_MD_MAX_BYTES = 8192;
 const DISCIPLINE_MAX_LINES = 25;
 const DISCIPLINE_HEADING_PREFIX = '## 規律';
+// 規律を増減したらここも更新する (SKILL.md の description の「6規律」と同じ数)。
+const EXPECTED_DISCIPLINE_COUNT = 6;
 
 const FIX_HINT = [
   'Fix it the way references/brushup-protocol.md §7 prescribes:',
@@ -162,8 +164,13 @@ describe('checkSkillMdBudget', () => {
 describe('harness/packs/bdboard-harness/SKILL.md', () => {
   it(`stays within ${SKILL_MD_MAX_BYTES} bytes and ${DISCIPLINE_MAX_LINES} lines per discipline`, () => {
     const text = readFileSync(SKILL_MD_PATH, 'utf8');
-    // 規律の見出しが 1 つも取れないなら数え方の前提 (`## 規律N`) が崩れている — 黙って素通りさせない。
-    expect(disciplineSections(text).length).toBeGreaterThan(0);
+    // 規律の見出しの書式が崩れる (例: `## 規律6: …` が `## モデル振り分け` になる) と、その節は
+    // 数えられず、直前の規律の節もそこで打ち切られて両方とも素通りする。規律番号が 1..N の
+    // 連番で揃っていることを先に確かめる。
+    const numbers = disciplineSections(text).map((section) =>
+      Number(/^## 規律(\d+)/.exec(section.heading)?.[1]),
+    );
+    expect(numbers).toEqual(Array.from({ length: EXPECTED_DISCIPLINE_COUNT }, (_, i) => i + 1));
     const violations = checkSkillMdBudget(text);
     // expect.fail なら対処の手がかりが改行付きのまま 1 回だけ表示される。
     if (violations.length > 0) expect.fail(formatFailure(violations));

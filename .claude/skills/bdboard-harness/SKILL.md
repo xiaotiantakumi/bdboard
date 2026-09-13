@@ -11,7 +11,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
   （単独でも同じ規律を守る — いつ並列になるか自分からは分からない）。
 - **プロジェクト固有の値はここに書かない。** 検証コマンド・ブランチ命名・マージ方式・
   サーバー/ポートは注入先の CLAUDE.md / AGENTS.md（と検証コントラクト）に従う。
-- **本文は骨格。各規律の `詳細:` が挙げるファイルはすべて `references/` 配下**。着手前に開く。
+- **本文は骨格。各規律の `詳細:` が挙げるファイルはすべて `references/` 配下**（先頭が手順の全文）。着手前に開く。
 
 ## 規律1: セッション開始 — prime → stale lease 確認 → ready
 
@@ -40,10 +40,11 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 2. **`git worktree add <path> -b <branch>` の成否が排他** — 失敗（既存）なら次の候補へ。
 3. **成功して初めて `bd update <id> --claim`。** claim を worktree より先に打たない。
 4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
-5. **heartbeat は scripts/bd-heartbeat.sh で**保持中の全チケットへ。失敗＝所有権喪失、直ちに停止。
-6. **負けたら**相手を戻さない・kill しない（空の worktree の扱いは詳細）。
+5. **heartbeat は scripts/bd-heartbeat.sh で**保持中の全チケットへ。失敗＝所有権喪失、直ちに停止。worktree 保護を当てにしない。
+6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」
+   と断定しない。
 
-詳細: `worktree-pr-flow.md`（手順の全文）/ `lease-params.md`
+詳細: `worktree-pr-flow.md` / `lease-params.md`
 
 ## 規律3: 確認待ち — 質問はチケットに載せ、回答を待たずに次へ進む
 
@@ -54,12 +55,12 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 1. `bd comment <id> "<質問>"` — 選択肢と帰結・推奨・回答後の再開手順まで書く。
 2. `bd label add <id> human` で確認待ちレーンへ（`bd update --label` は存在しない）。
-3. `bd gate create --type=human` で `bd ready` から外す（**`bd dep add` で代用しない**）。
+3. `bd gate create --type=human --blocks <id>` で `bd ready` から外す（**`bd dep add` で代用しない**）。
 4. **回答を待たず次のチケットへ。** worktree は残し、heartbeat の対象に含め続ける。
 5. 回答が来たら `bd label remove <id> human` して再開（作業チケットは close しない）。
 6. **例外**: 破壊的・不可逆・外向きの操作はその場で確認する。
 
-詳細: `question-template.md`（手順の全文）
+詳細: `question-template.md`
 
 ## 規律4: セッションクローズ — close はマージ成功後だけ
 
@@ -68,14 +69,15 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 手順:
 
-1. 検証 → PR → CI → マージ、まで完走する（検証コマンドの決め方は詳細。**無ければ検証せず進めない**）。
+1. 検証 → PR → CI → マージ、まで完走する。検証コマンドは **`.claude/bdboard-harness.json`
+   の `verify` → CLAUDE.md / AGENTS.md → 無ければ検証せず進めない**の順で決める。
 2. **マージ成功後、`bd close` の前に証拠コメント**（**`PR:` 行必須**）。
 3. **その上で `bd close <id>`。マージ前に close しない**。
 4. worktree を掃除する（remove → ブランチ削除 → `git remote prune origin`）。
 5. 残作業・気づきはチケット化する（`--deps discovered-from:<元>`）。
 6. `bd dolt push` はセッション末に1回（外向き操作。許可が無ければ確認）。
 
-詳細: `close-template.md`（手順の全文）/ `worktree-pr-flow.md` / `verification.md`
+詳細: `close-template.md` / `worktree-pr-flow.md` / `verification.md`
 
 ## 規律5: ハーネス失敗の学習ループ — 同じ失敗を二度踏まない
 
@@ -91,7 +93,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 5. **検討は Fable の最大熟考で固める**。規律を変える PR はマージ前に Fable の独立レビューへ。
 6. **確定した教訓は必ず failure-catalog にエントリを持つ**（本則が他所ならポインタ付きで）。
 
-詳細: `brushup-protocol.md`（手順の全文）/ `layering.md` / `failure-catalog.md`
+詳細: `brushup-protocol.md` / `layering.md` / `failure-catalog.md`
 
 ## 規律6: モデル振り分け — 複雑度と可用性を分ける
 
@@ -104,7 +106,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 2. `scripts/route.sh <stage> <complexity>` の出力順で候補を試す。
 3. **可用性の失敗**は同じセルの次候補へ、**品質の失敗**は 3 トリガーだけで 1 段上のセルへ。
 
-詳細: `model-routing.md`（手順の全文・ルーブリック・記録例）
+詳細: `model-routing.md`
 
 ## 機械ガード（hooks）— 文章で防げない操作は hook が止める
 
