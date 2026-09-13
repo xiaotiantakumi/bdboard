@@ -30,6 +30,22 @@ CLAUDE.md / AGENTS.md が正。以下では既定の推奨としてブランチ 
 `.claude/worktrees/<id>/` と書く。main ブランチはコマンド中では `<mainBranch>`（検証コントラクトの
 `mainBranch`、省略時 `main`）と書き、手順・規律の本文の「main」もこのブランチを指す。
 
+## 規律2 の手順（全文）
+
+SKILL.md 規律2 の手順の全文。本文には骨格だけを残している（brushup-protocol.md §7 の予算）。
+手順番号は本文と同じ。
+
+1. 空き確認は worktree とブランチの**両方**が「無い」こと。
+2. **`git worktree add <path> -b <branch>` の成否が排他** — 失敗（既存）なら次の候補へ。
+3. **成功して初めて `bd update <id> --claim`。** claim を worktree より先に打たない。
+4. 実装前に既存実装を1回探す（`git grep -n` と `bd search --status in_progress` を各1回）。
+5. **heartbeat は scripts/bd-heartbeat.sh で**（保持中の全チケット・寿命はセッション束縛）。失敗＝所有権喪失、直ちに停止。
+   ただし **heartbeat は排他の最後の砦ではない** — bdboard の reclaim は `bd/<id>` ブランチか
+   `.claude/worktrees/<id>` が残っているチケットを回収対象から外す（作業開始から 12 時間まで、
+   かつ git を読めた巡回のみ。lease-params.md）。**この保護を当てにして heartbeat を切らさない**。
+6. **負けたら**相手を戻さない・kill しない（成果は patch へ退避）。空の worktree を「放棄」
+   と断定しない。
+
 ## ライフサイクル
 
 ```
