@@ -200,6 +200,27 @@ New occurrences are kept off `main` by the `pull_request` arm of the same job
 (`base.sha..head.sha`, bdboard-qhsb), so an entry here covers history that can
 no longer be fixed without rewriting `main`.
 
+**Base of the default range when the tag is missing** (bdboard-zoxs): the
+default base is the `v<version>` tag for the `"."` version in
+`.release-please-manifest.json`. If that tag does not exist, the script falls
+back to the commit on `HEAD` that set the manifest to that version — walking
+back past later edits that keep the same version (reformatting, a new key), so
+the base is never "whatever touched the manifest last". That commit is the one
+release-please tags (the release PR's squash commit; true for v0.1.0–v0.1.2), so
+the range is identical to `v<version>..HEAD`. It exists for the release race:
+merging the release PR pushes `main` with the bumped manifest, and ci.yml's
+commit-parse runs in parallel with release-please.yml, which creates the tag
+through the API some seconds later (on v0.1.2 the Release appeared ~11s after
+both runs started; commit-parse did not exist yet then). Checking out inside
+that window would make the job exit 2 and turn `main` red. The fallback is never silent: it prints
+`commit-parse: リリースタグ v<version> が見つからないため、… を範囲の起点にします`
+before the findings. Exit 2 remains for when neither works: no tag and no
+commit with the checked-out manifest version (e.g. the manifest was only edited
+locally), or a shallow clone — its oldest commit looks like it added the
+manifest, which would silently narrow the range (`git fetch --unshallow --tags`).
+Accepted risk: a non-release commit that bumps the version by hand also becomes
+the base; the notice prints that commit's subject, so it shows in the log.
+
 Entries are objects, not strings, and `recovery` is **required** (bdboard-721p):
 
 ```js
@@ -223,7 +244,8 @@ release PR #258 immediately before that PR is merged. (The original `15651d3`
 entry was removed once the `v0.1.2` tag put it out of range — bdboard-r5we,
 bdboard-tbgj.)
 
-Not part of `npm run verify` (needs git tags).
+Not part of `npm run verify` (needs the full git history, and the release tags
+for the normal path).
 
 ### ローカルが exit 1 なのに CI の commit-parse が緑のとき
 
@@ -231,9 +253,9 @@ Not part of `npm run verify` (needs git tags).
 
 | 実行のしかた | 範囲 | 何が入るか |
 |---|---|---|
-| ローカルで引数なし `npm run check:commits` | `v<last-release>..HEAD` (版はチェックアウト中の `.release-please-manifest.json` から) | 自分のブランチのコミット**と**、ブランチの土台に含まれる `v<last-release>` 以降の `main` のコミット |
+| ローカルで引数なし `npm run check:commits` | `v<last-release>..HEAD` (版はチェックアウト中の `.release-please-manifest.json` から。タグが手元に無ければ manifest をその版に上げたコミット`..HEAD` — 同じ範囲) | 自分のブランチのコミット**と**、ブランチの土台に含まれる `v<last-release>` 以降の `main` のコミット |
 | CI の `pull_request` 分岐 | `base.sha..head.sha` | その PR が足すコミットだけ |
-| CI の `push` 分岐 (main) | `v<last-release>..HEAD` | `main` 上のリリース以降の全コミット |
+| CI の `push` 分岐 (main) | `v<last-release>..HEAD` (リリース PR マージ直後でタグ未作成なら manifest を上げたコミット`..HEAD` — 同じ範囲、bdboard-zoxs) | `main` 上のリリース以降の全コミット |
 
 そのため、ローカルでは `main` 由来の解析不能コミットまで拾って exit 1 になるが、PR の
 commit-parse は緑、ということが起きる。実例は bdboard-z7ah / PR #367: ローカルの exit 1 の原因は
@@ -249,7 +271,9 @@ exit 1 を見たら、「CI が赤くなるかも」と判断する前に次の�
    `CHANGELOG から落ちる解析不能コミットが N 件あります:` の下に並んだコミットだけ
    (CHANGELOG 対象の型 — feat / fix / perf / revert / deps か `!` 付き — で allowlist に無いもの)。
    `参考 — CHANGELOG 対象外の…` の下の行は exit code に効かないので、手順 2 に渡すのは前者の sha。
-   exit 2 は範囲自体を作れなかったとき (リリースタグが手元に無い、`--range` の ref が解決できない等)。
+   exit 2 は範囲自体を作れなかったとき (リリースタグも、manifest をその版に上げたコミットも
+   見つからない、タグが無いうえ shallow clone、`--range` の ref が解決できない等)。タグが無いだけなら exit 2 にはならず、
+   `…を範囲の起点にします` の通知を出して manifest を上げたコミットから調べる (bdboard-zoxs)。
 2. **flag されたコミットが自分のものか確かめる。**
    `git merge-base --is-ancestor <sha> origin/main && echo main由来` が `main由来` を出せば、
    そのコミットは既に `main` にあり、この PR の責任ではない (直すのは `main` 側の話で、
