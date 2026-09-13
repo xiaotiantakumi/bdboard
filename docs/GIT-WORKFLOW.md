@@ -35,6 +35,13 @@ port, so those run fine in parallel worktrees.
 `bd/bdboard-3tw.65` — dots are legal in git ref names). Non-ticket
 exploratory branches use `spike/` and never get a PR.
 
+## GitHub issue linking (`npm run check:gh-issues`)
+
+At session start, run `npm run check:gh-issues`. It lists open GitHub issues
+that are not linked from any bd ticket with `--external-ref gh-<number>`.
+The check is read-only, uses the GitHub REST API only, and remains advisory:
+it exits 0 even when `gh` is unavailable or cannot authenticate.
+
 ## Direct-to-main の禁止とその唯一の例外
 
 **Direct-to-main commits are banned**, with exactly one exception:

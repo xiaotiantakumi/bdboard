@@ -37,6 +37,7 @@
     "verify:steps": "npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
     "drift": "node scripts/check-drift.mjs",
     "check:commits": "node scripts/check-commit-parse.mjs",
+    "check:gh-issues": "node scripts/check-gh-issues.mjs",
     "test:e2e": "npm run build:web && playwright test --config test/e2e/playwright.config.ts",
     "prepack": "npm run build:web"
   },
