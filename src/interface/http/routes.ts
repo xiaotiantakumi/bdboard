@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { z } from 'zod';
 import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
@@ -176,6 +176,29 @@ export interface ApiDeps {
 interface QueuedSseMessage {
   readonly event?: string;
   readonly data: string;
+  /** SSE の `id:`。`notification` だけが持つ (bdboard-3tw.161)。 */
+  readonly id?: string;
+}
+
+/**
+ * 再接続時にどこから再送するかを決める id。ブラウザの自動再接続は `Last-Event-ID`
+ * ヘッダーを送るのでそれを優先し、ページを開き直したときのように EventSource が
+ * id を持っていない場合はクライアントが控えた id を `lastEventId` クエリで受け取る。
+ */
+function sseLastEventId(c: Context): string | undefined {
+  const header = c.req.header('Last-Event-ID');
+  if (header !== undefined && header !== '') {
+    return header;
+  }
+  const query = c.req.query('lastEventId');
+  return query !== undefined && query !== '' ? query : undefined;
+}
+
+function replayedNotificationData(data: unknown): string {
+  if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+    return JSON.stringify({ ...(data as Record<string, unknown>), replayed: true });
+  }
+  return JSON.stringify(data);
 }
 
 /** Max queued SSE messages per /api/events client before force-disconnect. */
@@ -1726,6 +1749,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   });
 
   app.get('/api/events', (c) => {
+    const lastEventId = sseLastEventId(c);
     return streamSSE(c, async (stream) => {
       const queue: QueuedSseMessage[] = [];
       let wake: (() => void) | undefined;
@@ -1795,8 +1819,19 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         enqueue({
           event: event.name,
           data: JSON.stringify(event.data),
+          ...(event.id !== undefined ? { id: event.id } : {}),
         });
       });
+
+      // subscribe と同じ同期区間で取り出すので、取り出しと購読開始のあいだに publish が
+      // 挟まって欠落・重複することは無い。hello の直後にライブ分より先に流れる。
+      for (const replay of deps.events.notificationsSince(lastEventId)) {
+        enqueue({
+          event: replay.name,
+          data: replayedNotificationData(replay.data),
+          ...(replay.id !== undefined ? { id: replay.id } : {}),
+        });
+      }
 
       stream.onAbort(() => {
         cleanup();
