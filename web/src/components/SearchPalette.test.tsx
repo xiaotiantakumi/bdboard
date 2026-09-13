@@ -100,6 +100,7 @@ describe('SearchPalette', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

@@ -37,6 +37,7 @@ describe('UndoSnackbar', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

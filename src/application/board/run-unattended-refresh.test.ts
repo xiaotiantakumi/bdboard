@@ -12,6 +12,7 @@ function failingRefresh(): Promise<void> {
 
 describe('runUnattendedRefresh (bdboard-66sp)', () => {
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

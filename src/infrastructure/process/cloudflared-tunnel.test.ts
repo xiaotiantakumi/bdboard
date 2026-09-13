@@ -31,6 +31,7 @@ function createFakeLogSink(): LogSink & { readonly lines: string[]; closed: bool
 describe('createCloudflaredTunnel', () => {
   afterEach(() => {
     vi.useRealTimers();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
@@ -562,6 +563,7 @@ describe('log sink creation failure (bdboard-nte)', () => {
   // ここには及ばない。付けないと console.error のモックがファイル末尾まで残り、
   // 後続 describe の診断出力が黙殺される (PR#113 fable レビュー minor)。
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

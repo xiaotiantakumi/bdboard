@@ -16,6 +16,7 @@ describe('ErrorBoundary', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

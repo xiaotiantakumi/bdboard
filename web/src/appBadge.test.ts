@@ -30,6 +30,7 @@ describe('updateAppBadge', () => {
       configurable: true,
       value: originalNavigator,
     });
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

@@ -133,6 +133,7 @@ describe('BoardLanes mobile lane indicator', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

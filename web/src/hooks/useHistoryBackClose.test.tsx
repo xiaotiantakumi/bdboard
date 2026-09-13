@@ -12,6 +12,7 @@ describe('useHistoryBackClose', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

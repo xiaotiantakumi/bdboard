@@ -366,6 +366,7 @@ describe('TicketDetailPanel bd commands', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -464,6 +465,7 @@ describe('TicketDetailPanel markdown content', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -513,6 +515,7 @@ describe('TicketDetailPanel comments', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -658,6 +661,7 @@ describe('TicketDetailPanel comment form', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -786,6 +790,7 @@ describe('TicketDetailPanel pending decisions', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1310,6 +1315,7 @@ describe('TicketDetailPanel quick actions', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1423,6 +1429,7 @@ describe('TicketDetailPanel quick action undo snackbar', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1522,6 +1529,7 @@ describe('TicketDetailPanel comment shortcut', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1602,6 +1610,7 @@ describe('TicketDetailPanel dependency editing', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1785,6 +1794,7 @@ describe('TicketDetailPanel label editing', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -1859,6 +1869,7 @@ describe('TicketDetailPanel title and description editing', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -2018,6 +2029,7 @@ describe('TicketDetailPanel models', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -2098,6 +2110,7 @@ describe('TicketDetailPanel session link', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -2744,6 +2757,7 @@ describe('TicketDetailPanel agent run', () => {
       }
     } finally {
       vi.useRealTimers();
+      vi.resetAllMocks();
       vi.restoreAllMocks();
       vi.unstubAllGlobals();
     }

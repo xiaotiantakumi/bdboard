@@ -36,6 +36,7 @@ function installFetchMock(response: AiQuotaDto | 'network-error'): ReturnType<ty
 describe('AiQuotaWidget', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

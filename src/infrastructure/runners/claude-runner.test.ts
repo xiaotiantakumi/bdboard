@@ -304,6 +304,7 @@ describe('createClaudeRunner', () => {
     for (const dir of tempWorktreeDirs.splice(0)) {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

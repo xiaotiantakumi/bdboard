@@ -2,11 +2,11 @@ import { availableParallelism } from 'node:os';
 import { defineConfig } from 'vitest/config';
 
 // bdboard-255: worktree並行運用(同時2〜6本のverify)でvitestワーカーがコアを
-// 食い尽くし、10コア機でload average 200超に達した対策。vitest 3の既定プールは
-// `forks` なので上限は poolOptions.forks.maxForks に設定する(threads側にも同値を
-// 置き、将来プールを切り替えてもキャップが黙って消えないようにする)。
+// 食い尽くし、10コア機でload average 200超に達した対策。Vitest 4 ではプールごとの
+// maxForks / maxThreads と poolOptions が廃止され、maxWorkers がプール非依存で唯一の
+// ワーカー上限になった。これにより、プール変更でキャップが黙って効かなくなる罠を防ぐ。
 // 上限値 max(2, ceil(cores/4)) は「1本あたり2〜3ワーカー」の想定(10コア機で3、
-// 4コアCIで2)。実測: キャップ無しは10コア機で9ワーカー/27s、maxForks=3で3ワーカー
+// 4コアCIで2)。実測: キャップ無しは10コア機で9ワーカー/27s、3ワーカー上限で3ワーカー
 // (壁時計の実測値はbdboard-255のnotes参照)。
 const maxTestWorkers = Math.max(2, Math.ceil(availableParallelism() / 4));
 
@@ -35,19 +35,8 @@ export default defineConfig({
     // scripts/check-drift.test.mjs の CLI テストだけは個別指定をやめ、describe 単位で
     // Windows 60s / 他 15s にしている (bdboard-ypjz)。
     testTimeout: process.platform === 'win32' ? 15_000 : 5_000,
-    // maxWorkers はプール非依存のフォールバック(vitest 3.2.7 実装:
-    // `poolOptions.maxForks ?? vitest.config.maxWorkers ?? threadsCount`)。
-    // poolOptions.<pool>.* は現在の既定プールにのみ効き、将来既定プールが
-    // 変わると黙って無効化される(threads→forks の既定変更で 3tw.106 の
-    // キャップが死んでいたのと同じ罠)。両方に設定して安全網とする。
+    // Vitest 4 の maxWorkers はプール非依存で唯一のワーカー上限。bdboard-255 / 3tw.106
+    // で起きた、実行プールの変更によりキャップが黙って効かなくなる事故を防ぐ。
     maxWorkers: maxTestWorkers,
-    poolOptions: {
-      forks: {
-        maxForks: maxTestWorkers,
-      },
-      threads: {
-        maxThreads: maxTestWorkers,
-      },
-    },
   },
 });

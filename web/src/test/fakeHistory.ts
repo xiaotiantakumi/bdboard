@@ -1,8 +1,8 @@
-import { vi } from 'vitest';
+import { type Mock, vi } from 'vitest';
 
 export interface FakeHistory {
-  pushState: ReturnType<typeof vi.fn>;
-  back: ReturnType<typeof vi.fn>;
+  pushState: Mock<(state: unknown) => void>;
+  back: Mock<() => void>;
   getCurrentState: () => unknown;
 }
 

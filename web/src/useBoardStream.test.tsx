@@ -95,6 +95,7 @@ describe('useBoardStream', () => {
     __resetSharedEventSourceForTests();
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

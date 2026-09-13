@@ -404,6 +404,7 @@ describe('App ticket deep link', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     localStorage.clear();
   });
@@ -508,6 +509,7 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     localStorage.clear();
   });
@@ -648,6 +650,7 @@ describe('board filter presets (bdboard-3tw.112)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     localStorage.clear();
   });
@@ -870,6 +873,7 @@ describe('header help overlays', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     localStorage.clear();
   });
@@ -1048,6 +1052,7 @@ describe('board generatedAt freshness (bdboard-3tw.125)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
     localStorage.clear();
   });

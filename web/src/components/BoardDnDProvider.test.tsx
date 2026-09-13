@@ -98,6 +98,7 @@ describe('BoardDnDProvider quick action undo snackbar', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

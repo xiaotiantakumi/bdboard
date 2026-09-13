@@ -26,6 +26,7 @@ describe('useTicketDeepLink', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

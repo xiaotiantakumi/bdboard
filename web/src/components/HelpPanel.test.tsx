@@ -107,6 +107,7 @@ describe('HelpPanel', () => {
   afterEach(() => {
     delete (Element.prototype as Partial<Pick<Element, 'scrollIntoView'>>).scrollIntoView;
     scrollIntoViewMock.mockReset();
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 

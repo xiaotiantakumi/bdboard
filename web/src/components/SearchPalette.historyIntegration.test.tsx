@@ -1,14 +1,14 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useMemo, useState } from 'react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest';
 import { SearchPalette } from './SearchPalette';
 import { useTicketDeepLink } from '../hooks/useTicketDeepLink';
 import type { PaletteAction } from '../paletteActions';
 import type { RecentTicketEntry, ViewMode } from '../uiPersistedState';
 
 interface HistoryHarnessProps {
-  noopActionOnSelect?: ReturnType<typeof vi.fn>;
+  noopActionOnSelect?: Mock<() => void>;
   recentTickets?: RecentTicketEntry[];
 }
 
@@ -72,6 +72,7 @@ describe('SearchPalette history integration', () => {
   });
 
   afterEach(() => {
+    vi.resetAllMocks();
     vi.restoreAllMocks();
   });
 
