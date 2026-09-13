@@ -4,11 +4,12 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const CHILD_TIMEOUT_MS = 60_000;
 const CHILD_OPTIONS = {
   cwd: REPO_ROOT,
   encoding: 'utf8',
   stdio: ['ignore', 'pipe', 'pipe'],
-  timeout: 60_000,
+  timeout: CHILD_TIMEOUT_MS,
   maxBuffer: 10 * 1024 * 1024,
 };
 
@@ -28,6 +29,14 @@ export function parseRepoSlug(value) {
   return `${match[1]}/${match[2]}`;
 }
 
+/**
+ * issue タイトルは public リポジトリで誰でも書ける外部入力。ESC 等の制御文字を
+ * そのまま端末に流さないよう空白に置き換える。
+ */
+export function sanitizeTitle(title) {
+  return title.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+}
+
 /** gh api の JSON Lines を、PR を含めず issue だけに正規化する。 */
 export function parseIssueLines(output) {
   const issues = [];
@@ -42,12 +51,16 @@ export function parseIssueLines(output) {
     if (!Number.isInteger(item?.number) || typeof item.title !== 'string' || typeof item.pull_request !== 'boolean') {
       throw new Error('gh の出力形式が想定と異なります');
     }
-    if (!item.pull_request) issues.push({ number: item.number, title: item.title });
+    if (!item.pull_request) issues.push({ number: item.number, title: sanitizeTitle(item.title) });
   }
   return issues;
 }
 
-/** external_ref のうち、このリポジトリの GitHub issue を指す番号を返す。 */
+/**
+ * external_ref のうち、このリポジトリの GitHub issue を指す番号を返す。受け付けるのは
+ * `gh-<番号>` (大小文字無視) と `https://github.com/<owner>/<repo>/issues/<番号>` の 2 形式
+ * だけ。それ以外の書き方は「未紐付け」側に倒れる (誤報はしても見逃しはしない)。
+ */
 export function linkedIssueNumbers(externalRefs, slug) {
   const linked = new Set();
   const escapedSlug = slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -68,6 +81,9 @@ export function findUnlinkedIssues(issues, linkedNumbers) {
 }
 
 export function formatReport(unlinked, checkedCount) {
+  if (checkedCount === 0) {
+    return 'check:gh-issues: OK — open な issue はありません。';
+  }
   if (unlinked.length === 0) {
     return `check:gh-issues: OK — open issue ${checkedCount} 件はすべて bd に紐付いています。`;
   }
@@ -96,6 +112,8 @@ function invocation(name) {
 
 function failureReason(error, command) {
   if (error?.code === 'ENOENT') return `${command} コマンドが見つかりません`;
+  // タイムアウト時に部分的な stderr だけを出すと、何が起きたか分からなくなる。
+  if (error?.code === 'ETIMEDOUT') return `${command} が ${CHILD_TIMEOUT_MS / 1000} 秒以内に終わらずタイムアウトしました`;
   const stderr = String(error?.stderr ?? '').trim();
   if (stderr) return stderr.split(/\r?\n/).slice(0, 3).join(' ').trim();
   return String(error?.message ?? error).replace(/\s+/g, ' ').trim();
@@ -144,7 +162,11 @@ function main() {
   }
   let externalRefs;
   try {
-    externalRefs = externalRefsFromBd(run(bd.bin, [...bd.prefixArgs, 'list', '--all', '--json', '--limit', '0']));
+    // --brief は description 等を落として出力を約 1/4 にする (external_ref は残る)。
+    // 全件 JSON は 700 件で約 3MB あり、maxBuffer 超過で黙って skip し続ける事態を避ける。
+    externalRefs = externalRefsFromBd(
+      run(bd.bin, [...bd.prefixArgs, 'list', '--all', '--json', '--limit', '0', '--brief']),
+    );
   } catch (error) {
     console.log(`check:gh-issues: bd チケットを取得できませんでした (${failureReason(error, 'bd')})。スキップします。`);
     return;
