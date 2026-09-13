@@ -131,6 +131,8 @@ const CHAT_TURN_STATUS_PATH_PATTERN = /^\/api\/chat\/turn-status$/;
  */
 const CHAT_COMPLETED_TURNS_MAX = 20;
 const CHAT_STREAM_PING_INTERVAL_MS = 15_000;
+// Keep this aligned with /api/events' SSE_EVENTS_QUEUE_MAX_SIZE in routes.ts.
+export const CHAT_STREAM_QUEUE_MAX_SIZE = 500;
 
 interface CompletedChatTurn {
   readonly sessionId: string;
@@ -671,6 +673,16 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         resume?.();
       };
       const enqueue = (message: QueuedSseMessage): void => {
+        if (clientGone) return;
+        if (queue.length >= CHAT_STREAM_QUEUE_MAX_SIZE) {
+          console.warn(
+            `SSE /api/chat/message/stream: per-client queue limit (${CHAT_STREAM_QUEUE_MAX_SIZE}) reached; stopping delivery to slow client (turn continues)`,
+          );
+          queue.length = 0;
+          cleanup();
+          stream.abort();
+          return;
+        }
         queue.push(message);
         wakeUp();
       };
@@ -679,6 +691,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         // forwarded that abort to the CLI process and killed the actual AI turn.
         // A disconnect now stops SSE delivery only; runTurn deliberately receives no
         // request signal and continues through finalizeChatTurnSuccess for recovery.
+        // Queue overflow uses this same path and aborts only the SSE writer.
         // onAbort() and the request signal can both arrive, so cleanup stays idempotent.
         if (cleanedUp) return;
         cleanedUp = true;
@@ -745,7 +758,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
 
       try {
         while (!clientGone && !stream.aborted && !stream.closed) {
-          while (queue.length > 0) {
+          while (!clientGone && queue.length > 0) {
             const message = queue.shift();
             if (message !== undefined) await stream.writeSSE(message);
           }

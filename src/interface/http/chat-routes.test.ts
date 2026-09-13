@@ -22,6 +22,7 @@ import {
   CHAT_CSRF_DENIED,
   CHAT_NOT_AUTHORIZED,
   CHAT_SESSION_DISCOVERY_LOCAL_ONLY,
+  CHAT_STREAM_QUEUE_MAX_SIZE,
   createChatRoutes,
 } from './chat-routes.js';
 import { CHAT_RATE_LIMITED } from './chat-rate-limit.js';
@@ -479,6 +480,76 @@ describe('POST /api/chat/message/stream', () => {
         'test-agent',
       ),
     );
+  });
+
+  it('stops delivery to a stalled client on queue overflow, still finalizes the turn, and releases the lock', async () => {
+    const sessionId = '550e8400-e29b-41d4-a716-446655440066';
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        // The response body is not read during the turn, so real Hono backpressure applies:
+        // 'first' fills the body's one-chunk buffer and the writer stalls inside writeSSE on
+        // 'second'. The burst then overflows the queue while that write is still stalled.
+        onDelta({ text: 'first' });
+        onDelta({ text: 'second' });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        for (let index = 0; index <= CHAT_STREAM_QUEUE_MAX_SIZE; index += 1) {
+          onDelta({ text: `burst-${index}` });
+        }
+        return { reply: 'final reply', sessionId, agentId: 'test-agent', failedTools: [] };
+      }),
+    });
+    const store = createChatSessionStore();
+    const rememberSpy = vi.spyOn(store, 'remember');
+    const messages = createInMemoryChatMessageRepository();
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store, messages });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    try {
+      const response = await app.request(
+        '/api/chat/message/stream',
+        withLocalHost({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+        }),
+        LOCAL_ENV,
+      );
+      expect(response.status).toBe(200);
+
+      await vi.waitFor(() =>
+        expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('per-client queue limit')),
+      );
+      await vi.waitFor(() =>
+        expect(rememberSpy).toHaveBeenCalledWith('p', sessionId, 'test-agent'),
+      );
+      expect(messages.listBySession(sessionId)).toEqual([
+        expect.objectContaining({ role: 'user', content: 'hello' }),
+        expect.objectContaining({ role: 'assistant', content: 'final reply' }),
+      ]);
+
+      // Still without reading the body: only the overflow abort can unblock the stalled
+      // write. Without it the writer loop never reaches its finally and the per-project
+      // chat lock stays held, so this follow-up would get 409.
+      const followUp = await app.request(
+        '/api/chat/message',
+        withLocalHost({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: 'follow-up' }),
+        }),
+        LOCAL_ENV,
+      );
+      expect(followUp.status).toBe(200);
+
+      const text = await response.text();
+      expect(text).toContain('"text":"first"');
+      expect(text).not.toContain('burst-');
+      expect(text).not.toContain('event: done');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('streaming done payload matches the bulk 200 body shape for the same turn (bdboard-l1t.9 delta 再レビュー N2)', async () => {
