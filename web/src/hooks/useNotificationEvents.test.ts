@@ -471,6 +471,18 @@ describe('useNotificationEvents', () => {
       expect(localStorage.getItem(UI_STORAGE_KEYS.notificationLastEventId)).toBe('boot-7');
     });
 
+    it('does not remember the id of a notification that failed validation', () => {
+      localStorage.setItem(UI_STORAGE_KEYS.notificationLastEventId, 'boot-2');
+      const { result, es } = renderNotificationEvents();
+
+      act(() => {
+        es.dispatch('notification', JSON.stringify({ kind: 'future_kind', occurredAt: 'x' }), 'boot-3');
+      });
+
+      expect(result.current.events).toHaveLength(0);
+      expect(localStorage.getItem(UI_STORAGE_KEYS.notificationLastEventId)).toBe('boot-2');
+    });
+
     it('keeps the stored id when a message carries no event id', () => {
       localStorage.setItem(UI_STORAGE_KEYS.notificationLastEventId, 'boot-2');
       const { es } = renderNotificationEvents();

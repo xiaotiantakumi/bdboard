@@ -61,7 +61,8 @@ export function createEventHub(options: EventHubOptions = {}): EventHub {
 
   const stamp = (event: AppEvent): AppEvent => {
     if (event.name !== 'notification') {
-      return event;
+      // 通知以外に id が付くとブラウザの Last-Event-ID が上書きされ、再送範囲が狂う。
+      return event.id === undefined ? event : { name: event.name, data: event.data };
     }
     seq += 1;
     const stamped: AppEvent = { name: event.name, data: event.data, id: `${idPrefix}${seq}` };

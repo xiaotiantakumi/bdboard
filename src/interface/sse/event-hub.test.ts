@@ -89,6 +89,19 @@ describe('createEventHub', () => {
       expect(received).toEqual(['e1-1', undefined, 'e1-2']);
     });
 
+    it('drops a caller-supplied id from non-notification events and re-stamps notifications', () => {
+      const hub = createEventHub({ epoch: 'e1' });
+      const received: (string | undefined)[] = [];
+      hub.subscribe((event) => {
+        received.push(event.id);
+      });
+
+      hub.publish({ name: 'board.changed', data: {}, id: 'spoofed' });
+      hub.publish({ name: 'notification', data: {}, id: 'spoofed' });
+
+      expect(received).toEqual([undefined, 'e1-1']);
+    });
+
     it('keeps notifications published with no subscribers', () => {
       const hub = createEventHub({ epoch: 'e1' });
 
