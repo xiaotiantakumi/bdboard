@@ -13,6 +13,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # bdboard-41rp: 旧 Node テストを skip させない。下の export ステップが消える・空になると
+    # BDBOARD_OLD_NODE 未設定で黙って skip に戻るので、job 単位のこのフラグでテスト側を落とす。
+    env:
+      BDBOARD_OLD_NODE_REQUIRED: '1'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,6 +30,23 @@ jobs:
             echo "::error::PR branches must not add or modify .beads/ - this repo does not track .beads/ in git (see .gitignore)"
             exit 1
           fi
+
+      # bdboard-41rp: エージェント shell で実測した旧 Node 14.15.0 (bdboard-eu2k) を入れ、その
+      # パスを export する。下の Node 22 setup-node が 22 の bin を PATH 先頭に足す (14 の bin は
+      # 後方に残る) ため以降は 22 のまま。test:server の旧 Node テスト
+      # (scripts/node-version-guard.old-node.test.mjs) だけが BDBOARD_OLD_NODE を使う。
+      # ubuntu 限定なので Windows は不変。
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 14.15.0
+          package-manager-cache: false
+      - name: Export old Node path for the version-guard test
+        run: |
+          set -euo pipefail
+          old_node="$(command -v node)"
+          test -x "$old_node"
+          "$old_node" --version
+          echo "BDBOARD_OLD_NODE=$old_node" >> "$GITHUB_ENV"
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:

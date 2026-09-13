@@ -32,6 +32,7 @@
 // 含むモジュールグラフ全体をパースしてから評価するため、このファイルと下の import 先は
 // すべて古い Node (目安 v14.13.1 以上 — `node:` 指定子とトップレベル await が要る) でも
 // パースできる構文に保つこと (でないとガードに届く前に SyntaxError で落ちる)。
+// bdboard-41rp: 実際の旧 Node でこの前提を検証するテストは node-version-guard.old-node.test.mjs。
 // import の並び順自体には意味は無い。
 import { checkNodeVersion } from './node-version-guard.mjs';
 import { spawn } from 'node:child_process';
