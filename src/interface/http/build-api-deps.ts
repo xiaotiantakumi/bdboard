@@ -40,6 +40,7 @@ export interface BuildApiDepsParams {
   readonly processScanner?: ProcessScanner;
   readonly humanDecisions?: HumanDecisionsPort;
   readonly worktreeScanner?: WorktreeScanner;
+  readonly getProjectMainBranch?: (rootPath: string) => Promise<string | undefined>;
   readonly issueWriter?: IssueWriterPort;
   readonly dependencyWriter?: DependencyWriterPort;
   readonly sessionLinkWriter?: SessionLinkWriterPort;

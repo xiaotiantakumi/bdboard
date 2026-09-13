@@ -149,6 +149,8 @@ export interface ApiDeps {
   readonly processScanner?: ProcessScanner;
   readonly humanDecisions?: HumanDecisionsPort;
   readonly worktreeScanner?: WorktreeScanner;
+  /** 注入先の検証コントラクトから mainBranch を読む。失敗時は undefined。 */
+  readonly getProjectMainBranch?: (rootPath: string) => Promise<string | undefined>;
   readonly issueWriter?: IssueWriterPort;
   readonly dependencyWriter?: DependencyWriterPort;
   readonly sessionLinkWriter?: SessionLinkWriterPort;
@@ -818,9 +820,40 @@ export function createApiRoutes(deps: ApiDeps): Hono {
             .map((ticket) => `${entry.project.id}\0${ticket.id}`),
         ),
       );
+      const isMeasured = (worktree: { projectId: string; ticketId: string }): boolean =>
+        inProgressWorktreeKeys.has(`${worktree.projectId}\0${worktree.ticketId}`);
+      // 遅れの基準 ref を検証コントラクトの mainBranch に合わせる (bdboard-pkr6.19)。読むのは
+      // 実際に測るプロジェクトだけ。読めなければ scanner が既定の候補順で測る。
+      const mainBranchesByProject = new Map<string, string>();
+      const getMainBranch = deps.getProjectMainBranch;
+      if (
+        getMainBranch !== undefined &&
+        scanner.countHarnessCommitsBehindDefaultBranch !== undefined
+      ) {
+        const rootPathById = new Map(projects.map((project) => [project.id, project.rootPath]));
+        const measuredProjectIds = new Set(
+          inFlight.filter(isMeasured).map((worktree) => worktree.projectId),
+        );
+        await Promise.all(
+          [...measuredProjectIds].map(async (projectId) => {
+            const rootPath = rootPathById.get(projectId);
+            if (rootPath === undefined) {
+              return;
+            }
+            try {
+              const mainBranch = await getMainBranch(rootPath);
+              if (mainBranch !== undefined) {
+                mainBranchesByProject.set(projectId, mainBranch);
+              }
+            } catch {
+              // 既定の候補順で測る。1 プロジェクトの失敗で盤面を落とさない。
+            }
+          }),
+        );
+      }
       harnessWorktreeLags = await scanHarnessWorktreeLags(inFlight, scanner, {
-        shouldMeasure: (worktree) =>
-          inProgressWorktreeKeys.has(`${worktree.projectId}\0${worktree.ticketId}`),
+        shouldMeasure: isMeasured,
+        resolveMainBranch: (projectId) => mainBranchesByProject.get(projectId),
       });
     }
 

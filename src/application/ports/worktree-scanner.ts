@@ -1,5 +1,11 @@
 import type { GitWorktreeSnapshot } from '../../domain/git-worktree.js';
 
+export interface HarnessLagMeasurement {
+  readonly commitsBehind: number;
+  /** 遅れの計測に実際に使えた既定ブランチ ref。 */
+  readonly baseRef: string;
+}
+
 export interface WorktreeScanner {
   /** rootPath の git worktree / bd ブランチを読み取り専用で調べる。破壊的操作は行わない */
   scan(rootPath: string): Promise<GitWorktreeSnapshot>;
@@ -13,8 +19,9 @@ export interface WorktreeScanner {
    */
   listChangedFiles(worktreePath: string): Promise<readonly string[]>;
   /**
-   * その worktree の HEAD が既定ブランチ (origin/main 等) から何コミット遅れているかを返す
-   * (`git rev-list --count HEAD..<ref>`)。読み取り専用。
+   * その worktree の HEAD が既定ブランチから何コミット遅れているかと、計測に使った
+   * ref を返す (`git rev-list --count HEAD..<ref>`)。`options.mainBranch` が安全なら
+   * origin 側、ローカル側の順で優先し、それ以外は既定の候補順を試す。読み取り専用。
    *
    * 注入コピー (`.claude/skills/` と `.claude/settings.json`) はチェックアウト単位なので、
    * worktree が古いままだとそこで動くセッションのハーネスも古いまま凍る (bdboard-tdua)。
@@ -25,5 +32,8 @@ export interface WorktreeScanner {
    * 「測れなかった」を「遅れていない」と取り違えないよう、呼び出し側は未実装と
    * 0 コミット遅れを区別すること。
    */
-  countHarnessCommitsBehindDefaultBranch?(worktreePath: string): Promise<number>;
+  countHarnessCommitsBehindDefaultBranch?(
+    worktreePath: string,
+    options?: { readonly mainBranch?: string },
+  ): Promise<HarnessLagMeasurement>;
 }

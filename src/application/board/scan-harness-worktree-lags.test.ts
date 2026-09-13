@@ -25,7 +25,10 @@ describe('scanHarnessWorktreeLags', () => {
     const lags = await scanHarnessWorktreeLags(
       worktrees,
       scanner({
-        countHarnessCommitsBehindDefaultBranch: async (path) => (path === '/repo/wt/a' ? 124 : 3),
+        countHarnessCommitsBehindDefaultBranch: async (path) => ({
+          commitsBehind: path === '/repo/wt/a' ? 124 : 3,
+          baseRef: 'origin/main',
+        }),
       }),
     );
 
@@ -35,12 +38,14 @@ describe('scanHarnessWorktreeLags', () => {
         ticketId: 'bdboard-a',
         worktreePath: '/repo/wt/a',
         commitsBehind: 124,
+        baseRef: 'origin/main',
       },
       {
         projectId: '/repo',
         ticketId: 'bdboard-b',
         worktreePath: '/repo/wt/b',
         commitsBehind: 3,
+        baseRef: 'origin/main',
       },
     ]);
   });
@@ -63,7 +68,7 @@ describe('scanHarnessWorktreeLags', () => {
           if (path === '/repo/wt/a') {
             throw new Error('no origin/main');
           }
-          return 60;
+          return { commitsBehind: 60, baseRef: 'origin/main' };
         },
       }),
       { logWarn },
@@ -79,7 +84,7 @@ describe('scanHarnessWorktreeLags', () => {
     const lags = await scanHarnessWorktreeLags(
       [worktrees[0]!],
       scanner({
-        countHarnessCommitsBehindDefaultBranch: () => new Promise<number>(() => {}),
+        countHarnessCommitsBehindDefaultBranch: () => new Promise<never>(() => {}),
       }),
       { logWarn, worktreeDeadlineMs: 5 },
     );
@@ -105,7 +110,10 @@ describe('scanHarnessWorktreeLags', () => {
   });
 
   it('only measures the worktrees shouldMeasure selects', async () => {
-    const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => 9);
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => ({
+      commitsBehind: 9,
+      baseRef: 'origin/main',
+    }));
 
     const lags = await scanHarnessWorktreeLags(
       [worktree('bdboard-a', '/repo/wt/a'), worktree('bdboard-b', '/repo/wt/b')],
@@ -115,11 +123,43 @@ describe('scanHarnessWorktreeLags', () => {
 
     expect(lags.map((l) => l.ticketId)).toEqual(['bdboard-b']);
     expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledTimes(1);
-    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith('/repo/wt/b');
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith('/repo/wt/b', {
+      mainBranch: undefined,
+    });
+  });
+
+  it('passes each project contract mainBranch and propagates the measured ref', async () => {
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
+      commitsBehind: 9,
+      baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+    }));
+    const projectWorktrees = [
+      worktree('bdboard-a', '/repo/wt/a'),
+      { projectId: '/other', ticketId: 'bdboard-b', worktreePath: '/other/wt/b' },
+    ];
+
+    const lags = await scanHarnessWorktreeLags(
+      projectWorktrees,
+      scanner({ countHarnessCommitsBehindDefaultBranch }),
+      { resolveMainBranch: (projectId) => (projectId === '/other' ? 'master' : 'main') },
+    );
+
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith('/repo/wt/a', {
+      mainBranch: 'main',
+    });
+    expect(countHarnessCommitsBehindDefaultBranch).toHaveBeenCalledWith('/other/wt/b', {
+      mainBranch: 'master',
+    });
+    expect(lags).toContainEqual(expect.objectContaining({
+      projectId: '/other', baseRef: 'origin/master',
+    }));
   });
 
   it('does not call the scanner when there are no in-flight worktrees', async () => {
-    const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => 0);
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => ({
+      commitsBehind: 0,
+      baseRef: 'origin/main',
+    }));
 
     const lags = await scanHarnessWorktreeLags(
       [],

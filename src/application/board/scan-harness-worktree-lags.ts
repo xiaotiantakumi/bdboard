@@ -21,6 +21,8 @@ export interface ScanHarnessWorktreeLagsOptions {
    * 絞り込みで、**判定そのものは domain 側が持つ** (ここを緩めても結果は変わらない)。
    */
   readonly shouldMeasure?: (worktree: InFlightWorktree) => boolean;
+  /** プロジェクトの検証コントラクトが宣言する既定ブランチ。読めなければ undefined。 */
+  readonly resolveMainBranch?: (projectId: string) => string | undefined;
 }
 
 async function withDeadline<T>(
@@ -78,8 +80,12 @@ export async function scanHarnessWorktreeLags(
 
   await runWithConcurrencyLimit(targets, WORKTREE_SCAN_CONCURRENCY, async (worktree) => {
     try {
-      const commitsBehind = await withDeadline(
-        Promise.resolve(countCommitsBehind(worktree.worktreePath)),
+      const measurement = await withDeadline(
+        Promise.resolve(
+          countCommitsBehind(worktree.worktreePath, {
+            mainBranch: options?.resolveMainBranch?.(worktree.projectId),
+          }),
+        ),
         deadlineMs,
         worktree.worktreePath,
       );
@@ -87,7 +93,8 @@ export async function scanHarnessWorktreeLags(
         projectId: worktree.projectId,
         ticketId: worktree.ticketId,
         worktreePath: worktree.worktreePath,
-        commitsBehind,
+        commitsBehind: measurement.commitsBehind,
+        baseRef: measurement.baseRef,
       });
     } catch (error) {
       failures.push({ id: worktree.ticketId, error });

@@ -124,7 +124,10 @@ import { createDbStatsRoutes } from './interface/http/db-stats-routes.js';
 import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
 import { createAgentRunSettingsRoutes } from './interface/http/agent-run-settings-routes.js';
 import { createAgentRunRoutes } from './interface/http/agent-run-routes.js';
-import { readProjectHarnessStatus } from './application/harness/get-project-harness-status.js';
+import {
+  readProjectHarnessStatus,
+  readProjectMainBranch,
+} from './application/harness/get-project-harness-status.js';
 import { createRunStore } from './application/runner/run-store.js';
 import { createAgentRunnerRegistry } from './application/runner/runner-registry.js';
 import { resolveAllowRemoteAgentRuns } from './domain/agent-run-policy.js';
@@ -934,6 +937,9 @@ async function main(): Promise<void> {
     hasTunnelSession: createSessionValidator(tunnelAccess),
   };
 
+  // /api/hygiene (getProjectMainBranch) と harness routes の両方が使う。createApiRoutes より
+  // 前で作る — 後ろで宣言するとクロージャが TDZ の前方参照になる (bdboard-pkr6.19)。
+  const harnessContractReader = createFsHarnessContractReader();
   const inner = createApiRoutes(
     buildApiDeps({
       cache,
@@ -960,6 +966,9 @@ async function main(): Promise<void> {
       processScanner,
       humanDecisions,
       worktreeScanner,
+      // 失敗時の握りつぶしは /api/hygiene 側 (既定の候補順へフォールバック) が持つ。
+      getProjectMainBranch: (rootPath: string) =>
+        readProjectMainBranch(harnessContractReader, rootPath),
       issueWriter,
       dependencyWriter,
       sessionLinkWriter,
@@ -1001,7 +1010,6 @@ async function main(): Promise<void> {
   const harnessPacksRoot = path.join(repoRoot, 'harness', 'packs');
   const packRegistry = createFsPackRegistry(harnessPacksRoot);
   const harnessInjector = createFsHarnessInjector({ packsRoot: harnessPacksRoot });
-  const harnessContractReader = createFsHarnessContractReader();
   app.route(
     '/',
     createHarnessRoutes({

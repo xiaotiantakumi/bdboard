@@ -1992,6 +1992,7 @@ describe('checkHygiene stale_harness_worktree', () => {
       ticketId: 'bdboard-frozen',
       worktreePath: '/repo/.claude/worktrees/bdboard-frozen',
       commitsBehind: 17,
+      baseRef: 'origin/main',
       ...overrides,
     };
   }
@@ -2042,6 +2043,26 @@ describe('checkHygiene stale_harness_worktree', () => {
     const found = issues.find((issue) => issue.kind === 'stale_harness_worktree');
     expect(found).toBeDefined();
     expect(found?.cleanup).toBeUndefined();
+  });
+
+  it('uses the measured origin/master ref in the warning and rebase guidance', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-frozen',
+      projectId: repoRoot,
+      status: 'in_progress',
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      harnessWorktreeLags: [lag({ baseRef: 'origin/master' })],
+    });
+
+    expect(issues.find((issue) => issue.kind === 'stale_harness_worktree')?.message).toContain(
+      'origin/master より 17 コミットぶん古いままです。',
+    );
+    expect(issues.find((issue) => issue.kind === 'stale_harness_worktree')?.message).toContain(
+      'rebase origin/master で追従してください',
+    );
   });
 
   it('stays quiet just below the threshold and fires just above it', () => {

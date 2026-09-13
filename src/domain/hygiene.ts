@@ -602,6 +602,8 @@ export interface HarnessWorktreeLag {
   readonly worktreePath: string;
   /** `git rev-list --count HEAD..<既定ブランチ>` の値 */
   readonly commitsBehind: number;
+  /** 遅れの計測に実際に使えた既定ブランチ ref。 */
+  readonly baseRef: string;
 }
 
 /**
@@ -666,10 +668,10 @@ function checkStaleHarnessWorktree(
     ticketId: ticket.id,
     projectId: ticket.projectId,
     message:
-      `この worktree のハーネスは origin/main より ${lag.commitsBehind} コミットぶん古いままです。` +
+      `この worktree のハーネスは ${lag.baseRef} より ${lag.commitsBehind} コミットぶん古いままです。` +
       'ハーネス (.claude/skills と .claude/settings.json) はチェックアウト単位なので、' +
       'このセッションは worktree 作成時点の古い規律・hooks のまま動いています。' +
-      `git -C ${lag.worktreePath} rebase origin/main で追従してください`,
+      `git -C ${lag.worktreePath} rebase ${lag.baseRef} で追従してください`,
     severity: 'warning',
     // cleanup は付けない。rebase は掃除ではないうえ、未コミットの成果を抱えた
     // worktree に対してワンクリック相当のコマンドを出すのは危険。
