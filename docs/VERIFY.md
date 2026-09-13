@@ -6,6 +6,8 @@ AGENTS.md「Build & Test」から分離した詳細。**`npm run verify` を回�
 - 個別の tsc プロジェクト構成を触る / 新しい設定ファイルを足す（下の「tsc プロジェクトの表」）
 - `npm run verify` が待たされている・スロット関連のメッセージが出た（下の「Verify slots」）
 - ローカルの起動 (`npm run start` / `dev` / `dev:web`) の違いを確認したい
+- e2e を足した・変えた / verify が通ったのに e2e がどうなったか分からない（下の「e2e は verify に含まれない」）
+- ローカルの `npm run check:commits` が exit 1 なのに CI の commit-parse は緑（下の「ローカルが exit 1 なのに…」）
 
 AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文書が詳細の正**。ただし slot の実装挙動は
 `scripts/verify.mjs` / `scripts/verify-slot.mjs` が正で、この文書はその要約。
@@ -70,6 +72,24 @@ npm run test:server      # vitest run (src/)
 npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
 ```
+
+## e2e は verify に含まれない (`npm run test:e2e`)
+
+`npm run verify` が回すのは build / build:web / test:server / test:web / check:boundaries だけで、
+Playwright の e2e は**含まない** (`test/e2e/*.test.ts` の vitest 単体テスト — ポート採番などの補助 — だけは
+test:server に入る)。e2e は CI の別ジョブ `e2e` (`npm run test:e2e`) で走り、`verify` /
+`commit-parse` と並ぶ required status check になっている ([GIT-WORKFLOW.md](GIT-WORKFLOW.md))。
+したがって:
+
+- **「verify が exit 0」は e2e が通った根拠にならない。** e2e の spec を足した・変えた PR、あるいは
+  既存 spec が見ている UI (レイアウト・スクロール・ビューポート・フォーカス順など) を変える PR では、
+  PR 上の CI `e2e` ジョブが pass していることを根拠にする。手元で先に確かめたいときは
+  `npm run test:e2e` を回す (回し方・前提は [test/e2e/README.md](../test/e2e/README.md))。
+- **逆に `npm run test:e2e` は型検査をしない。** e2e spec の型エラーは verify 側の `npm run build`
+  (上の表の `test/e2e/tsconfig.json` の行) でしか出ない。
+
+e2e については verify と test:e2e が互いの穴を埋める関係なので、e2e を触る変更では両方を見る
+(bdboard-wdwa / PR #301 のレビュー指摘)。
 
 ## Verify slots (max 2 concurrent `npm run verify` per machine)
 
@@ -204,6 +224,45 @@ entry was removed once the `v0.1.2` tag put it out of range — bdboard-r5we,
 bdboard-tbgj.)
 
 Not part of `npm run verify` (needs git tags).
+
+### ローカルが exit 1 なのに CI の commit-parse が緑のとき
+
+ローカルと CI は**見ているコミットの範囲が違う**ので、結果が食い違うのは異常ではない。
+
+| 実行のしかた | 範囲 | 何が入るか |
+|---|---|---|
+| ローカルで引数なし `npm run check:commits` | `v<last-release>..HEAD` (版はチェックアウト中の `.release-please-manifest.json` から) | 自分のブランチのコミット**と**、ブランチの土台に含まれる `v<last-release>` 以降の `main` のコミット |
+| CI の `pull_request` 分岐 | `base.sha..head.sha` | その PR が足すコミットだけ |
+| CI の `push` 分岐 (main) | `v<last-release>..HEAD` | `main` 上のリリース以降の全コミット |
+
+そのため、ローカルでは `main` 由来の解析不能コミットまで拾って exit 1 になるが、PR の
+commit-parse は緑、ということが起きる。実例は bdboard-z7ah / PR #367: ローカルの exit 1 の原因は
+既に `main` にあった `5d3be46` (PR #260, `feat`) で、当時は `KNOWN_UNPARSABLE` が空だった。PR の
+commit-parse は緑だった。`5d3be46` はその後 bdboard-721p / PR #372 で allowlist に入った。
+
+exit 1 を見たら、「CI が赤くなるかも」と判断する前に次の順で切り分ける (委譲先がそう報告してきた
+ときも同じ):
+
+0. **先に `git fetch origin --tags` する。** 以下はどれも `origin/main` とリリースタグが手元で
+   最新であることを前提にしている。
+1. **exit code と、どの見出しの下に出たかを確かめる。** exit 1 の原因は
+   `CHANGELOG から落ちる解析不能コミットが N 件あります:` の下に並んだコミットだけ
+   (CHANGELOG 対象の型 — feat / fix / perf / revert / deps か `!` 付き — で allowlist に無いもの)。
+   `参考 — CHANGELOG 対象外の…` の下の行は exit code に効かないので、手順 2 に渡すのは前者の sha。
+   exit 2 は範囲自体を作れなかったとき (リリースタグが手元に無い、`--range` の ref が解決できない等)。
+2. **flag されたコミットが自分のものか確かめる。**
+   `git merge-base --is-ancestor <sha> origin/main && echo main由来` が `main由来` を出せば、
+   そのコミットは既に `main` にあり、この PR の責任ではない (直すのは `main` 側の話で、
+   上の `KNOWN_UNPARSABLE` の運用に乗る)。
+3. **CI の PR 分岐とほぼ同じ範囲で回し直す。**
+   `npm run check:commits -- --range origin/main..HEAD` が exit 0 なら、PR の commit-parse も緑に
+   なる。ここで flag されたコミットは自分のものなので、メッセージを直す。CI が見るのは
+   `base.sha..head.sha` なので、手元の HEAD と PR に push した head が違う (未 push・amend 後) と
+   結果もずれる。
+
+別 PR のブランチに積んだブランチでは、土台の PR が squash マージされても元のコミットは
+`origin/main` の祖先にならない (squash で別の sha になる)。そのため手順 2 で main 由来と判定されず、
+手順 3 の範囲にも残る。`git rebase --onto origin/main <旧土台>` で外してから手順 3 を回す。
 
 ### 書いた瞬間に弾く: `scripts/commit-message-guard.mjs` (bdboard-ekj3)
 
