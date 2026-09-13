@@ -1832,6 +1832,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
           ...(replay.id !== undefined ? { id: replay.id } : {}),
         });
       }
+      // 再送だけでキュー上限に達して切断済みなら、ping タイマー等を張らずに抜ける
+      // (張ると cleanup 済みのため誰も止めない)。
+      if (clientGone) {
+        return;
+      }
 
       stream.onAbort(() => {
         cleanup();

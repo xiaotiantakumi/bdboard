@@ -2,6 +2,18 @@ import { readNotificationLastEventId } from './notificationLastEventId';
 
 const EVENT_SOURCE_OPEN = 1;
 
+/**
+ * The server pings every 15s. If nothing at all has arrived for three ping
+ * intervals when the page comes back to the foreground, the socket is almost
+ * certainly frozen: mobile PWAs suspend a backgrounded EventSource without
+ * firing onerror, and it can stay OPEN forever. Replacing it is the only way
+ * to get the server to replay notifications missed meanwhile (bdboard-3tw.161).
+ */
+export const SSE_STALE_AFTER_MS = 45_000;
+
+/** Event types the server sends; any of them proves the socket is alive. */
+const ACTIVITY_EVENT_TYPES = ['hello', 'ping', 'notification', 'board.changed', 'session.changed'];
+
 function eventsUrl(): string {
   // Absolute URL built from origin rather than relative '/api/events': a
   // relative URL resolves against the document URL, and if that still carries
@@ -32,6 +44,8 @@ export interface SharedEventSourceHandle {
 
 let refCount = 0;
 let eventSource: EventSource | null = null;
+let lastActivityAtMs = 0;
+let visibilityListenerAttached = false;
 const openListeners = new Set<OpenListener>();
 const errorListeners = new Set<ErrorListener>();
 const namedListeners = new Map<string, Set<EventListener>>();
@@ -56,10 +70,52 @@ function attachNamedListeners(es: EventSource): void {
   }
 }
 
+function touchActivity(): void {
+  lastActivityAtMs = Date.now();
+}
+
 function attachEventSourceHandlers(es: EventSource): void {
-  es.onopen = () => dispatchOpen();
+  touchActivity();
+  es.onopen = () => {
+    touchActivity();
+    dispatchOpen();
+  };
   es.onerror = () => dispatchError();
+  for (const type of ACTIVITY_EVENT_TYPES) {
+    es.addEventListener(type, touchActivity);
+  }
   attachNamedListeners(es);
+}
+
+function onVisibilityChange(): void {
+  if (document.visibilityState !== 'visible') {
+    return;
+  }
+  // CONNECTING means the browser is already retrying; CLOSED is recovered by
+  // the explicit reconnect path in useBoardStream.
+  if (refCount === 0 || eventSource === null || eventSource.readyState !== EVENT_SOURCE_OPEN) {
+    return;
+  }
+  if (Date.now() - lastActivityAtMs < SSE_STALE_AFTER_MS) {
+    return;
+  }
+  reconnectSharedEventSource();
+}
+
+function attachVisibilityListener(): void {
+  if (visibilityListenerAttached || typeof document === 'undefined') {
+    return;
+  }
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  visibilityListenerAttached = true;
+}
+
+function detachVisibilityListener(): void {
+  if (!visibilityListenerAttached) {
+    return;
+  }
+  document.removeEventListener('visibilitychange', onVisibilityChange);
+  visibilityListenerAttached = false;
 }
 
 function ensureEventSource(): EventSource {
@@ -67,6 +123,7 @@ function ensureEventSource(): EventSource {
     eventSource = new EventSource(eventsUrl());
     attachEventSourceHandlers(eventSource);
   }
+  attachVisibilityListener();
   return eventSource;
 }
 
@@ -77,6 +134,7 @@ function resetIfIdle(): void {
     openListeners.clear();
     errorListeners.clear();
     namedListeners.clear();
+    detachVisibilityListener();
   }
 }
 
@@ -140,6 +198,8 @@ export function acquireSharedEventSource(): SharedEventSourceHandle {
 /** Test-only reset when RTL cleanup order leaves module state behind. */
 export function __resetSharedEventSourceForTests(): void {
   refCount = 0;
+  detachVisibilityListener();
+  lastActivityAtMs = 0;
   if (eventSource !== null) {
     eventSource.close();
     eventSource = null;

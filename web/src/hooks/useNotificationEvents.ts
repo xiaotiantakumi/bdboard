@@ -610,9 +610,6 @@ export function useNotificationEvents(
     const conn = acquireSharedEventSource();
 
     const onNotification = (event: MessageEvent<string>) => {
-      if (typeof event.lastEventId === 'string' && event.lastEventId !== '') {
-        writeNotificationLastEventId(event.lastEventId);
-      }
       let payload: unknown;
       try {
         payload = JSON.parse(event.data);
@@ -629,6 +626,11 @@ export function useNotificationEvents(
       // 同期済みの分は mergeUniqueNotificationEvents で落ちる (bdboard-7io7)。
       const item = buildNotificationEventItem(payload);
       appendNotificationItems([item], { notifyBrowser: payload.replayed !== true });
+      // 受け取れた (検証を通って一覧に反映した) 通知の id だけを控える。検証に落ちた通知の
+      // id まで控えると、画面を更新して読めるようになっても次の接続で再送されなくなる。
+      if (typeof event.lastEventId === 'string' && event.lastEventId !== '') {
+        writeNotificationLastEventId(event.lastEventId);
+      }
     };
 
     conn.addEventListener('notification', onNotification as EventListener);
