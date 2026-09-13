@@ -220,8 +220,10 @@ git ls-remote origin <branch>  # remote 側の先端が自分の認識と一致�
 
 ## diff は merge-base 基準で読む
 
-なぜ: 並列セッション運用では `origin/main` は**動く的**になる。作業中に他セッションが
-PR をマージすると、`git diff origin/main` は「他人の追加」を**自分の削除**として表示する。
+`<mainBranch>` は検証コントラクトの `mainBranch`（省略時 `main`）である。
+
+なぜ: 並列セッション運用では `origin/<mainBranch>` は**動く的**になる。作業中に他セッションが
+PR をマージすると、`git diff origin/<mainBranch>` は「他人の追加」を**自分の削除**として表示する。
 これを「委譲先が暴走して他機能を消した」と誤読すると、無実の成果物を捨てる判断に直結する
 （実例あり: 16ファイルの追加変更が、52ファイル・数千行の削除に見えた）。
 
@@ -229,11 +231,11 @@ PR をマージすると、`git diff origin/main` は「他人の追加」を**�
 
 ```bash
 # (a) 自分の変更「だけ」を見る
-git diff --stat $(git merge-base HEAD origin/main)
+git diff --stat $(git merge-base HEAD origin/<mainBranch>)
 # → git status --porcelain のファイル数と突き合わせる
 
 # (b) 想定外に大きければ、相手が進んだのか自分が壊れたのかを切り分ける
-git log --oneline HEAD..origin/main
+git log --oneline HEAD..origin/<mainBranch>
 ```
 
 委譲先を疑うのは (a)(b) の後。
@@ -248,13 +250,13 @@ git log --oneline HEAD..origin/main
 
 ```bash
 git fetch origin
-git rebase origin/main
+git rebase origin/<mainBranch>
 # → 検証コマンド（規律4 手順1 の参照順で決めたもの）をフルで回し直す（ここを省略しない。
 #    テキスト上クリーンな rebase でも意味的衝突は残り、再検証がその唯一の網）
-git rev-parse origin/main   # base SHA を控える → マージ直前 CAS で使う
+git rev-parse origin/<mainBranch>   # base SHA を控える → マージ直前 CAS で使う
 ```
 
-- 控えた base SHA は、マージ直前に `git ls-remote origin main` と突き合わせる
+- 控えた base SHA は、マージ直前に `git ls-remote origin <mainBranch>` と突き合わせる
   （[worktree-pr-flow.md](worktree-pr-flow.md) のマージ排他・層2）。
 - rebase 後に検証が割れたら、それは自分のブランチと main の意味的衝突であって
   「テストの flake」ではない、をまず疑う。原因を特定してから直す（タイムアウト延長などの

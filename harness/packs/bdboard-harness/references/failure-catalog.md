@@ -137,7 +137,7 @@
 
 ### diff-against-moving-main — `git diff origin/main` が他セッションのマージ分を「自分の削除」に見せ、無実の成果物を捨てかけた（2026-08-16）
 - 原因: 並列運用では origin/main が動く的になり、素の diff は他人の追加を自分の削除として表示する
-- 防止: diff は必ず merge-base 基準（`git diff $(git merge-base HEAD origin/main)`）で読む（本則: verification.md）
+- 防止: diff は必ず merge-base 基準（`git diff $(git merge-base HEAD origin/<mainBranch>)`。`<mainBranch>` は検証コントラクトの `mainBranch`、省略時 `main`）で読む（本則: verification.md）
 - 出典: bdboard-3tw.104.4 / グローバル lessons-learned.md
 
 ## 多層ハーネス・配布
@@ -149,7 +149,7 @@
 
 ### stale-harness-worktree — main から大きく遅れた worktree で走り続けたセッションが、自分がマージしたハーネス改善を自分には適用しないまま動き続けた（2026-09-05）
 - 原因: 注入コピー（`.claude/skills/` と `.claude/settings.json`）は**チェックアウト単位**で、worktree は作成時点の main で凍る。長命の worktree に居るセッションは、hooks もスクリプトも規律本文も古いまま。本人からは「ハーネスが入っている」ようにしか見えない
-- 防止: `bd/<id>` worktree のハーネス差分（`git rev-list --count HEAD..origin/main -- .claude harness`）が 3 以上で、チケットが in_progress なら Hygiene の `stale_harness_worktree` が出す。**プロセス生存は見ておらず、`feature/*` 等の非チケット worktree も対象外**（実測ではそちらのほうが深く凍っていた。対応は bdboard-wadg）。自分の worktree は上のコマンドで自分で測ること。1チケット=1worktree を守り、長命化したら PR を分割するか `git rebase origin/main` でハーネスごと追従する（本則: SKILL.md 規律1 手順2, CLAUDE.md「Git Workflow」）
+- 防止: 検証コントラクトの `mainBranch`（省略時 `main`）を `<mainBranch>` とし、`bd/<id>` worktree のハーネス差分（`git rev-list --count HEAD..origin/<mainBranch> -- .claude harness`）が 3 以上で、チケットが in_progress なら Hygiene の `stale_harness_worktree` が出す。Hygiene は実際に測った基準 ref（コントラクトの `mainBranch` を優先）を警告と rebase コマンドに出す。**プロセス生存は見ておらず、`feature/*` 等の非チケット worktree も対象外**（実測ではそちらのほうが深く凍っていた。対応は bdboard-wadg）。自分の worktree は上のコマンドで自分で測ること。1チケット=1worktree を守り、長命化したら PR を分割するか `git rebase origin/<mainBranch>` でハーネスごと追従する（本則: SKILL.md 規律1 手順2, CLAUDE.md「Git Workflow」）
 - 出典: bdboard-tdua（実測: ハーネス差分 17 コミットの worktree で稼働中のセッションが、同じ日にハーネス改善 PR をマージしていた）
 
 ## bd 操作・確認待ち

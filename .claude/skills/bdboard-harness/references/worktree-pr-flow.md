@@ -27,7 +27,8 @@ bd comment <id> "検証ループ未定義: このプロジェクトに検証コ�
 
 コントラクトが持たない値（ブランチ命名・worktree 置き場・マージ方式）は従来どおり
 CLAUDE.md / AGENTS.md が正。以下では既定の推奨としてブランチ `bd/<id>`、worktree
-`.claude/worktrees/<id>/`、main ブランチ `main` と書く。
+`.claude/worktrees/<id>/` と書く。main ブランチはコマンド中では `<mainBranch>`（検証コントラクトの
+`mainBranch`、省略時 `main`）と書き、手順・規律の本文の「main」もこのブランチを指す。
 
 ## ライフサイクル
 
@@ -57,10 +58,10 @@ git rev-parse --verify bd/<id>     # 「存在しない」ことを確認
 
 ```bash
 git -C <メインチェックアウト> fetch origin
-git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b bd/<id> origin/main
+git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b bd/<id> origin/<mainBranch>
 ```
 
-- `origin/main` 起点で作る（ローカル main が古くても最新から始められる）。
+- `origin/<mainBranch>` 起点で作る（ローカルの main が古くても最新から始められる）。
 - 成功 = 排他獲得。失敗（ブランチ/パス既存）= 他セッションが着手中。別チケットへ。
 - 成功したら `bd update <id> --claim`。
 - **複数チケットを一括で並列着手するときも、2本目以降を毎回この `git -C
@@ -115,9 +116,9 @@ git -C <メインチェックアウト> worktree add .claude/worktrees/<id> -b b
 
 ```bash
 git fetch origin
-git rebase origin/main
+git rebase origin/<mainBranch>
 # → 検証コマンドをもう一度全部回す（テキスト上クリーンな rebase でも意味的衝突は残る）
-git rev-parse origin/main   # ← この base SHA を控える（後述の直前CASで使う）
+git rev-parse origin/<mainBranch>   # ← この base SHA を控える（後述の直前CASで使う）
 ```
 
 詳細な理由と merge-base 基準の diff の読み方は [verification.md](verification.md)。
@@ -209,12 +210,12 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
    `python3` の `json.dumps` で一時ファイルへ書き出し、`--input` で渡す。PR 作成の例:
 
    ```bash
-   python3 -c 'import json; open("create-pull.json", "w").write(json.dumps({"title": "<title>", "head": "<branch>", "base": "main", "body": "Closes: <id>\\n\\n<変更サマリ>"}, ensure_ascii=False))'
+   python3 -c 'import json; open("create-pull.json", "w").write(json.dumps({"title": "<title>", "head": "<branch>", "base": "<mainBranch>", "body": "Closes: <id>\\n\\n<変更サマリ>"}, ensure_ascii=False))'
    ```
 
    merge-pull.json は `merge_method`、`commit_title`、`commit_message` を持たせる。REST の
    `PUT .../merge` 後も、マージ成否は CLI の終了 status ではなく層2で控えた SHA と
-   `git ls-remote origin main` の再読みを比較して判定する（詳細は層3）。
+   `git ls-remote origin <mainBranch>` の再読みを比較して判定する（詳細は層3）。
 
    実測（2026-08-29, PR #134 / bdboard-2w3）: `gh api rate_limit` の graphql が
    **remaining=5000 を示していても GraphQL 呼び出しが exceeded で拒否され続ける**
@@ -245,7 +246,7 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
    （等のスケジュール手段）で reset 時刻以降の再開を予約してターンを返してよい。
 4. `gh pr merge` の途中で拒否された場合は、リトライの前に**マージが実際どこまで進んだかを
    確認する**（GitHub 側は成功していて、CLI のレスポンス取得だけが失敗した可能性がある。
-   盲目リトライは二重マージ・状態不整合のもと）。第一の判定は `git ls-remote origin main`
+   盲目リトライは二重マージ・状態不整合のもと）。第一の判定は `git ls-remote origin <mainBranch>`
    の再読みと層2の base SHA の比較であり、SHA が進んでいれば成功である。補助的な REST 確認は
    次のとおり:
 
@@ -284,7 +285,7 @@ bd を読むセッションには効くが、規約に従わないプロセス�
 remote main が動いていないか突き合わせる:
 
 ```bash
-git ls-remote origin main   # ← 手順3で控えた base SHA と比較
+git ls-remote origin <mainBranch>   # ← 手順3で控えた base SHA と比較
 ```
 
 - 一致 → そのままマージ。
@@ -302,7 +303,7 @@ git -C <メインチェックアウト> pull --ff-only
 
 `gh pr merge --squash --delete-branch` の exit status はマージ本体ではなくローカルブランチ
 削除の後処理で非0になりうる。成否は exit status にも GraphQL 依存の `gh pr view` にも頼らず、
-**常に** `git ls-remote origin main` を再読みして層2で控えた base SHA と比較する。SHA が進んで
+**常に** `git ls-remote origin <mainBranch>` を再読みして層2で控えた base SHA と比較する。SHA が進んで
 いればマージ成功であり、後処理へ進む。GraphQL が死んでいる症状と重なると `gh pr view` 自身も
 使えないため、これが最終的な判定手段である。
 
@@ -333,7 +334,7 @@ git remote prune origin
 **層3の `gh pr merge --delete-branch` はブランチ削除の後処理がまず失敗する — エラーが
 指すブランチ名で2パターンを見分ける**。観測例ではいずれも squash マージ自体は GitHub 側で
 成功していた（マージが失敗したように見えて実は成功している）。どちらのパターンでも慌てて
-再マージせず、まず `git ls-remote origin main` を再読みして層2で控えた base SHA から進んだかを
+再マージせず、まず `git ls-remote origin <mainBranch>` を再読みして層2で控えた base SHA から進んだかを
 確認する。進んでいればマージ済みである。`gh pr view` は GraphQL 依存で症状2と重なると使えない
 ため、次は補助確認にとどめる:
 
