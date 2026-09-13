@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ApiError } from './api';
 import {
+  buildHarnessBulkSummaryMessage,
+  describeHarnessBulkFailure,
   runHarnessBulkUpdate,
   type HarnessBulkUpdateTarget,
 } from './harnessBulkUpdate';
@@ -22,5 +25,30 @@ describe('runHarnessBulkUpdate', () => {
     expect(summary.successCount).toBe(2);
     expect(summary.failureCount).toBe(1);
     expect(summary.results[1]).toEqual({ target: targets[1], status: 'failure', error: failure });
+  });
+});
+
+describe('describeHarnessBulkFailure', () => {
+  it('appends the server detail to the error message', () => {
+    expect(
+      describeHarnessBulkFailure(
+        new ApiError(500, 'injection failed', {
+          errorMessage: 'injection failed',
+          detail: 'disk full',
+        }),
+      ),
+    ).toBe('injection failed: disk full');
+  });
+
+  it('uses the plain message when there is no detail', () => {
+    expect(describeHarnessBulkFailure(new Error('boom'))).toBe('boom');
+  });
+});
+
+describe('buildHarnessBulkSummaryMessage', () => {
+  it('shows success and failure counts', () => {
+    expect(
+      buildHarnessBulkSummaryMessage({ results: [], successCount: 2, failureCount: 1 }),
+    ).toBe('まとめて更新: 成功 2 件・失敗 1 件');
   });
 });

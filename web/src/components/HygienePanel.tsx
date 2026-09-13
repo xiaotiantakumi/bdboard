@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   HygieneIssueDto,
   HygieneIssueKindDto,
@@ -43,6 +43,8 @@ import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { describeWriteError } from '../writeAccessMessage';
 import {
+  buildHarnessBulkSummaryMessage,
+  describeHarnessBulkFailure,
   runHarnessBulkUpdate,
   type HarnessBulkUpdateSummary,
   type HarnessBulkUpdateTarget,
@@ -395,6 +397,8 @@ export function HygienePanel({
   const beginRepairConfirm = useCallback(
     (rowKey: string) => {
       setConfirmingRepairKey(rowKey);
+      // 確認欄は同時に1つだけ開く (一括更新の確認も閉じる)。
+      setBulkUpdateTargets(null);
       clearRepairFeedback();
     },
     [clearRepairFeedback],
@@ -469,6 +473,8 @@ export function HygienePanel({
       });
       setConfirmingRepairKey(null);
       setPendingRepairKey(null);
+      // 単体で直した後に古い一括結果 (「失敗」行など) を残さない。
+      setBulkUpdateSummary(null);
       showRepairStatusMessage(
         buildHarnessInjectSuccessMessage(vars.pack.name, vars.pack),
       );
@@ -497,6 +503,8 @@ export function HygienePanel({
       await queryClient.invalidateQueries({ queryKey: ['harness-status-all'] });
       setBulkUpdateTargets(null);
       setBulkUpdateSummary(summary);
+      // 件数は常駐の aria-live に流す (後から挿入された role=status は読まれにくい)。
+      showRepairStatusMessage(buildHarnessBulkSummaryMessage(summary));
     },
   });
 
@@ -537,6 +545,8 @@ export function HygienePanel({
   const beginBulkUpdateConfirm = useCallback(
     (items: readonly HarnessPackItem[]) => {
       setBulkUpdateSummary(null);
+      setConfirmingRepairKey(null);
+      clearRepairFeedback();
       setBulkUpdateTargets(
         items.map(({ projectId, pack }) => ({
           projectId,
@@ -546,7 +556,7 @@ export function HygienePanel({
         })),
       );
     },
-    [],
+    [clearRepairFeedback],
   );
 
   const confirmBulkUpdate = useCallback(() => {
@@ -554,6 +564,15 @@ export function HygienePanel({
       harnessBulkUpdateMutation.mutate(bulkUpdateTargets);
     }
   }, [bulkUpdateTargets, harnessBulkUpdateMutation]);
+
+  // 確認欄を開いたら確定ボタンへフォーカスを移す (トリガーのボタンはアンマウントされる)。
+  const bulkConfirmButtonRef = useRef<HTMLButtonElement>(null);
+  const isBulkConfirming = bulkUpdateTargets !== null;
+  useEffect(() => {
+    if (isBulkConfirming) {
+      bulkConfirmButtonRef.current?.focus();
+    }
+  }, [isBulkConfirming]);
 
   const handleCopyCleanup = useCallback(
     async (script: string) => {
@@ -573,6 +592,11 @@ export function HygienePanel({
     harnessInjectMutation.isPending ||
     harnessBulkUpdateMutation.isPending;
   const harnessDriftItems = harnessDriftQuery.data?.driftItems ?? [];
+  // drift はサーバー側で installedVersion !== null のときだけ立つが、一括更新の範囲は
+  // 「注入済みパックの更新」だけなので、未導入が紛れ込まないよう念のため絞る。
+  const bulkUpdatableItems = harnessDriftItems.filter(
+    (item) => item.pack.installedVersion !== null,
+  );
   const harnessContractItems = harnessDriftQuery.data?.contractItems ?? [];
   const harnessHooksItems = harnessDriftQuery.data?.hooksItems ?? [];
   const hygieneIssues = query.data?.issues ?? [];
@@ -622,7 +646,10 @@ export function HygienePanel({
     harnessHooksItems.length > 0 ||
     staleLeases.length > 0 ||
     reclaimProblemProjects.length > 0 ||
-    heldMergeSlots.length > 0;
+    heldMergeSlots.length > 0 ||
+    // 全件成功で要更新が 0 件になっても、一括更新の確認・結果は消さずに見せる。
+    bulkUpdateTargets !== null ||
+    bulkUpdateSummary !== null;
 
   return (
     <section className="hygiene-panel" aria-label="ボード健全性">
@@ -752,7 +779,7 @@ export function HygienePanel({
               </div>
             </li>
           )}
-          {(harnessDriftItems.length > 0 ||
+          {(bulkUpdatableItems.length > 0 ||
             bulkUpdateTargets !== null ||
             bulkUpdateSummary !== null) && (
             <li key="harness-bulk-update">
@@ -760,19 +787,29 @@ export function HygienePanel({
                 {bulkUpdateTargets !== null ? (
                   <div
                     className="hygiene-repair-confirm"
-                    role="dialog"
+                    role="group"
                     aria-label="ハーネス一括更新の確認"
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape' && !repairDisabled) {
+                        event.stopPropagation();
+                        setBulkUpdateTargets(null);
+                      }
+                    }}
                   >
                     <p>次の要更新パックを1件ずつ更新します。</p>
                     <ul>
                       {bulkUpdateTargets.map((target) => (
-                        <li key={`${target.projectId}-${target.packName}`}>
+                        <li
+                          key={`${target.projectId}-${target.packName}`}
+                          title={target.projectId}
+                        >
                           {projectNameFallback(target.projectId)} / {target.packName}: v
                           {target.installedVersion} → v{target.availableVersion}
                         </li>
                       ))}
                     </ul>
                     <button
+                      ref={bulkConfirmButtonRef}
                       type="button"
                       className="hygiene-repair-confirm-btn"
                       disabled={repairDisabled}
@@ -789,32 +826,40 @@ export function HygienePanel({
                       キャンセル
                     </button>
                   </div>
-                ) : harnessDriftItems.length > 0 && bulkUpdateSummary === null ? (
+                ) : bulkUpdatableItems.length > 0 ? (
+                  // 結果の表示中でも要更新が残っていれば (一部失敗など) そのまま再試行できる。
                   <button
                     type="button"
                     className="hygiene-repair-action"
                     disabled={repairDisabled}
-                    onClick={() => beginBulkUpdateConfirm(harnessDriftItems)}
+                    onClick={() => beginBulkUpdateConfirm(bulkUpdatableItems)}
                   >
-                    要更新 {harnessDriftItems.length} 件をまとめて更新
+                    要更新 {bulkUpdatableItems.length} 件をまとめて更新
                   </button>
                 ) : null}
-                {bulkUpdateSummary !== null && (
-                  <div role="status">
-                    <p>
-                      まとめて更新: 成功 {bulkUpdateSummary.successCount} 件・失敗{' '}
-                      {bulkUpdateSummary.failureCount} 件
-                    </p>
+                {bulkUpdateSummary !== null && bulkUpdateTargets === null && (
+                  <div role="group" aria-label="ハーネス一括更新の結果">
+                    <p>{buildHarnessBulkSummaryMessage(bulkUpdateSummary)}</p>
                     <ul>
                       {bulkUpdateSummary.results.map((result) => (
-                        <li key={`${result.target.projectId}-${result.target.packName}`}>
+                        <li
+                          key={`${result.target.projectId}-${result.target.packName}`}
+                          title={result.target.projectId}
+                        >
                           {projectNameFallback(result.target.projectId)} / {result.target.packName}:{' '}
                           {result.status === 'success'
                             ? '成功'
-                            : `失敗 (${describeWriteError(result.error, 'ハーネスの更新に失敗しました')})`}
+                            : `失敗 (${describeHarnessBulkFailure(result.error)})`}
                         </li>
                       ))}
                     </ul>
+                    <button
+                      type="button"
+                      className="hygiene-repair-cancel"
+                      onClick={() => setBulkUpdateSummary(null)}
+                    >
+                      結果を閉じる
+                    </button>
                   </div>
                 )}
               </div>

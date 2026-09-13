@@ -1,3 +1,6 @@
+import { ApiError } from './api';
+import { describeWriteError } from './writeAccessMessage';
+
 /** 一括更新の対象。UI の表示値を確認時点で固定するため、パック状態そのものは持たない。 */
 export interface HarnessBulkUpdateTarget {
   readonly projectId: string;
@@ -35,4 +38,26 @@ export async function runHarnessBulkUpdate(
     successCount: results.filter((result) => result.status === 'success').length,
     failureCount: results.filter((result) => result.status === 'failure').length,
   };
+}
+
+/**
+ * 一括更新の失敗理由。サーバーは注入失敗を 500 `{ error: 'injection failed', detail }` で
+ * 返すため、describeWriteError だけでは「injection failed」しか残らない。一括更新は
+ * 失敗理由の表示が要件なので、detail があれば併記する。
+ */
+export function describeHarnessBulkFailure(error: unknown): string {
+  const base = describeWriteError(error, 'ハーネスの更新に失敗しました');
+  if (
+    error instanceof ApiError &&
+    error.detail !== undefined &&
+    error.detail.length > 0 &&
+    error.detail !== base
+  ) {
+    return `${base}: ${error.detail}`;
+  }
+  return base;
+}
+
+export function buildHarnessBulkSummaryMessage(summary: HarnessBulkUpdateSummary): string {
+  return `まとめて更新: 成功 ${summary.successCount} 件・失敗 ${summary.failureCount} 件`;
 }
