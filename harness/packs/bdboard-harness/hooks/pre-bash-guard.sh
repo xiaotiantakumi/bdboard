@@ -225,33 +225,222 @@ CONTRACT="$(cat "$CONTRACT_FILE" 2>/dev/null)"
 #    (.claude/skills/bdboard-harness/) でも同じなので、$0 からの相対で解決できる。
 ROUTE_SCRIPT="$(cd "$(dirname "$0")/../scripts" 2>/dev/null && pwd)/route.sh"
 
-# 1 セグメントから --<flag> の値を取る。`--flag value` と `--flag=value` の両形式を
-# 受け、同じ flag が複数あれば後勝ち (多くの CLI と同じ)。`--member` の照合が
-# `--members` を巻き込まないよう、`=` は別ケースで見て前方一致にしない。
-segment_flag() {
-  segment_flag_name="$1"
-  segment_flag_text="$2"
-  segment_flag_value=''
-  set -f
-  # shellcheck disable=SC2086
-  set -- $segment_flag_text
-  set +f
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      "--$segment_flag_name")
-        [ $# -gt 1 ] && segment_flag_value="$2"
-        ;;
-      "--$segment_flag_name="*)
-        segment_flag_value="${1#--$segment_flag_name=}"
+# aimix run の argparse (allow_abbrev=True) と同じ長オプション解決をする。
+# 完全一致を優先し、そうでなければ既知オプションの一意な前方一致だけを返す。
+# 曖昧・未知な名前は空を返す。aimix 本体は曖昧名を argparse エラーにするが、hook は
+# 素朴なトークン分割で引数内の断片も拾うため、そのトークンだけを無視して走査を続ける。
+resolve_aimix_option() {
+  resolve_name="$1"
+  resolve_options='mode member members category model complexity task task-file diff-file rounds cwd run-dir git-diff qa json no-log brief help'
+
+  for resolve_option in $resolve_options; do
+    [ "$resolve_name" = "$resolve_option" ] && {
+      printf '%s' "$resolve_option"
+      return
+    }
+  done
+
+  resolve_match=''
+  resolve_count=0
+  for resolve_option in $resolve_options; do
+    case "$resolve_option" in
+      "$resolve_name"*)
+        resolve_match="$resolve_option"
+        resolve_count=$((resolve_count + 1))
         ;;
     esac
+  done
+  [ "$resolve_count" -eq 1 ] && printf '%s' "$resolve_match"
+}
+
+# hook のコマンド分割は空白分割 (set -f) だが、aimix が受け取るのはシェルが引用符を外した
+# 後の引数である。そこで空白で割った断片を「開いた引用符が閉じるまで」つなぎ直し、引用符
+# 文字を取り除いてから 1 語として aimix_words に入れる (bdboard-uaqe レビュー)。これを
+# しないと次の 3 つがいずれも aimix の実際の解釈とずれる:
+#   - `--task "x --comp y"` の中の断片を complexity と読んで判定を放棄する
+#   - `"--complexity" high` をオプションと認識せず、既定の med セルで照合する
+#   - `--members " cursor"` の先頭 member を読めず、除外で空になったセルを素通りする
+# バックスラッシュエスケープ・$()・変数展開は扱わない近似。引用符の種類は各断片で最初に
+# 現れたものだけを数える。閉じない引用符は残りを 1 語にし、aimix_truncated を立てる。
+# 閉じない引用符が残るのは、たいてい引用符の中の `;` `&` `|` 改行で前段のセグメント分割が
+# 引数の途中を割ったときで、割れ目より後ろのフラグはこのセグメントから見えていない。
+aimix_segment_words() {
+  aimix_words=()
+  aimix_truncated=''
+  aimix_pending=''
+  aimix_quote=''
+  aimix_dq='"'
+  aimix_sq="'"
+  set -f
+  # shellcheck disable=SC2086
+  set -- $1
+  set +f
+  for aimix_piece in "$@"; do
+    if [ -n "$aimix_quote" ]; then
+      aimix_pending="$aimix_pending $aimix_piece"
+      aimix_count="${aimix_piece//[!$aimix_quote]/}"
+      [ $(( ${#aimix_count} % 2 )) -eq 1 ] || continue
+      aimix_quote=''
+      aimix_unquoted="${aimix_pending//$aimix_dq/}"
+      aimix_words[${#aimix_words[@]}]="${aimix_unquoted//$aimix_sq/}"
+      aimix_pending=''
+      continue
+    fi
+    # 先に現れた引用符の種類を、その手前までの長さで決める (無い種類は断片全体の長さ)。
+    aimix_before_dq="${aimix_piece%%"$aimix_dq"*}"
+    aimix_before_sq="${aimix_piece%%"$aimix_sq"*}"
+    aimix_first=''
+    if [ "${#aimix_before_dq}" -lt "${#aimix_before_sq}" ]; then
+      aimix_first="$aimix_dq"
+    elif [ "${#aimix_before_sq}" -lt "${#aimix_before_dq}" ]; then
+      aimix_first="$aimix_sq"
+    fi
+    if [ -n "$aimix_first" ]; then
+      aimix_count="${aimix_piece//[!$aimix_first]/}"
+      if [ $(( ${#aimix_count} % 2 )) -eq 1 ]; then
+        aimix_quote="$aimix_first"
+        aimix_pending="$aimix_piece"
+        continue
+      fi
+    fi
+    aimix_unquoted="${aimix_piece//$aimix_dq/}"
+    aimix_words[${#aimix_words[@]}]="${aimix_unquoted//$aimix_sq/}"
+  done
+  if [ -n "$aimix_quote" ]; then
+    aimix_unquoted="${aimix_pending//$aimix_dq/}"
+    aimix_words[${#aimix_words[@]}]="${aimix_unquoted//$aimix_sq/}"
+    aimix_truncated='yes'
+  fi
+}
+
+# セグメントのうち、最初の `aimix run` 以降だけを返す (bdboard-uaqe レビュー M2)。
+# 前置部 (ラッパーコマンドや代入) の `--xxx` を aimix の引数と読まないためと、
+# `bash -c "aimix run ..."` / `"$(aimix run ...)"` のように aimix run 全体が外側の引用符の
+# 中にあるとき、それを 1 語につなぎ直して --mode を見失わないため。前置部で引用符が
+# 開いたままなら、aimix の引数は閉じる引用符の手前までとみなす。語の判定は
+# AIMIX_SEGMENTS を選ぶ grep と同じ (直前が英数字・`_`・`-` なら別の語の一部)。
+aimix_run_tail() {
+  tail_rest="$1"
+  tail_prefix=''
+  tail_re='^aimix[[:space:]]+run([[:space:]]|$)'
+  while :; do
+    case "$tail_rest" in
+      *aimix*) ;;
+      *)
+        printf '%s' "$1"
+        return
+        ;;
+    esac
+    tail_head="${tail_rest%%aimix*}"
+    tail_after="${tail_rest#"$tail_head"}"
+    tail_prefix="$tail_prefix$tail_head"
+    if [[ "$tail_after" =~ $tail_re ]]; then
+      case "$tail_prefix" in
+        *[[:alnum:]_-]) ;;
+        *) break ;;
+      esac
+    fi
+    tail_prefix="${tail_prefix}aimix"
+    tail_rest="${tail_after#aimix}"
+  done
+  tail_dq='"'
+  tail_sq="'"
+  tail_count_dq="${tail_prefix//[!$tail_dq]/}"
+  tail_count_sq="${tail_prefix//[!$tail_sq]/}"
+  if [ $(( ${#tail_count_dq} % 2 )) -eq 1 ]; then
+    tail_after="${tail_after%%"$tail_dq"*}"
+  elif [ $(( ${#tail_count_sq} % 2 )) -eq 1 ]; then
+    tail_after="${tail_after%%"$tail_sq"*}"
+  fi
+  printf '%s' "$tail_after"
+}
+
+# 1 セグメントを 1 回だけ走査し、規則 6 が使う実効引数をグローバル変数へ入れる。
+# 語への分割は aimix_segment_words (引用符をつなぎ直す近似) に任せる。
+# 値を取るオプションは `--name=value` と `--name value` の両方を受け、同じものは後勝ち。
+# route_complexity_explicit は --complexity を実際に見たか、route_truncated はセグメントが
+# 引用符の途中で割れていたか (割れ目の後ろのフラグが見えていない) を表す。
+scan_aimix_segment() {
+  route_stage='consult'
+  route_member_flag=''
+  route_members_flag=''
+  route_model=''
+  route_complexity='med'
+  route_complexity_explicit=''
+
+  aimix_segment_words "$(aimix_run_tail "$1")"
+  route_truncated="$aimix_truncated"
+  set -- "${aimix_words[@]}"
+  while [ $# -gt 0 ]; do
+    scan_token="$1"
+    shift
+    case "$scan_token" in
+      --*) ;;
+      *) continue ;;
+    esac
+
+    scan_body="${scan_token#--}"
+    scan_has_equals=''
+    case "$scan_body" in
+      *=*)
+        scan_name="${scan_body%%=*}"
+        scan_value="${scan_body#*=}"
+        scan_has_equals='yes'
+        ;;
+      *)
+        scan_name="$scan_body"
+        scan_value=''
+        ;;
+    esac
+
+    scan_option="$(resolve_aimix_option "$scan_name")"
+    [ -n "$scan_option" ] || continue
+
+    case "$scan_option" in
+      mode | member | members | category | model | complexity | task | task-file | diff-file | rounds | cwd | run-dir)
+        # argparse は `-` で始まる 2 文字以上の引数を値として取らない。ただし空白を含む
+        # 引数は位置引数扱いなので値として取る (`--task "--member cursor"` 等)。
+        if [ -z "$scan_has_equals" ] && [ $# -gt 0 ]; then
+          case "$1" in
+            *' '*) scan_value="$1"; shift ;;
+            -?*) ;;
+            *) scan_value="$1"; shift ;;
+          esac
+        fi
+        case "$scan_option" in
+          mode) route_stage="$scan_value" ;;
+          member) route_member_flag="$scan_value" ;;
+          members) route_members_flag="$scan_value" ;;
+          model) route_model="$scan_value" ;;
+          complexity)
+            route_complexity="$scan_value"
+            route_complexity_explicit='yes'
+            ;;
+        esac
+        ;;
+    esac
+  done
+}
+
+first_aimix_member() {
+  # argparse の _resolve_specs と同じく comma split → strip → 空要素除外の先頭。
+  # hook の素朴な token 分割で残る引用符は member 名に混ぜない。
+  first_members="$(printf '%s' "$1" | tr -d "\"'")"
+  first_old_ifs="$IFS"
+  IFS=','
+  set -f
+  # shellcheck disable=SC2086
+  set -- $first_members
+  set +f
+  IFS="$first_old_ifs"
+  while [ $# -gt 0 ]; do
+    first_member="$(printf '%s' "$1" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+    [ -n "$first_member" ] && {
+      printf '%s' "$first_member"
+      return
+    }
     shift
   done
-  case "$segment_flag_value" in
-    '"'*'"') segment_flag_value="${segment_flag_value#\"}"; segment_flag_value="${segment_flag_value%\"}" ;;
-    "'"*"'") segment_flag_value="${segment_flag_value#\'}"; segment_flag_value="${segment_flag_value%\'}" ;;
-  esac
-  printf '%s' "$segment_flag_value"
 }
 
 # stderr は 3 行以内という不変条件を守る。member/model はコマンド行由来 (= route.sh の
@@ -279,7 +468,7 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
 
     # ゲート対象は implement / refactor だけ。consult / review / debate は素通り。
     # (現在の aimix run --mode に refactor は無いが、先回りしてゲートしておく。)
-    route_stage="$(segment_flag mode "$aimix_segment")"
+    scan_aimix_segment "$aimix_segment"
     case "$route_stage" in
       implement | refactor) ;;
       *) continue ;;
@@ -308,17 +497,35 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
     esac
     [ -n "$route_override" ] && continue
 
-    # ここから先は「セルを特定できたときだけ」判定する。member や complexity が
-    # 読めないなら黙って通す (fail-open)。complexity 未記録を deny にするかは
-    # Phase 2 (bdboard-p5l.19) の観測結果で決める話であって、ここではやらない。
-    route_model="$(segment_flag model "$aimix_segment")"
-    route_member="$(segment_flag member "$aimix_segment")"
-    [ -n "$route_member" ] || continue
-    route_complexity="$(segment_flag complexity "$aimix_segment")"
+    # --complexity 省略は aimix の既定 med として判定する。aimix が実際に使うセルで
+    # 照合するだけで、チケットの bdboard.complexity 未記録を deny にするかは引き続き
+    # Phase 2 (bdboard-p5l.19) の話。明示値が choices 外なら aimix 自身がエラーにするため
+    # hook は素通りさせる。
     case "$route_complexity" in
       low | med | high) ;;
       *) continue ;;
     esac
+
+    # _resolve_specs と同じ優先順位。空でない --member が最優先。そうでなければ
+    # --members の comma 区切りから先頭の空でない member を使う。この経路では
+    # aimix が --model を無視して tier 既定モデルを選ぶため、候補のあるセルでは後で deny。
+    route_member=''
+    route_member_from_members=''
+    if [ -n "$route_member_flag" ]; then
+      route_member="$route_member_flag"
+    elif [ -n "$route_members_flag" ]; then
+      route_member="$(first_aimix_member "$route_members_flag")"
+      [ -n "$route_member" ] && route_member_from_members='yes'
+    fi
+
+    # セグメントが引用符の途中で割れていた (bdboard-uaqe レビュー M1)。割れ目より後ろの
+    # フラグは見えていないので、既定値 (member 不明 / complexity=med) を実効値とみなすと
+    # 正当な呼び出しの誤 deny や別セルでの誤照合になる。割れ目より前に member と
+    # --complexity が明示されていたときだけ判定する (割れ目の後ろでの上書きは近似の限界)。
+    if [ -n "$route_truncated" ]; then
+      [ -n "$route_member" ] || continue
+      [ -n "$route_complexity_explicit" ] || continue
+    fi
 
     # route.sh は「候補なし」を無出力 exit 0、契約不正を exit 1、jq/python3 不在を
     # exit 127 で返す。deny してよいのは「候補を実際に取れた」ときと、下の「除外で
@@ -334,10 +541,22 @@ if [ -n "$AIMIX_SEGMENTS" ] && [ -r "$ROUTE_SCRIPT" ]; then
     # member がそこに居れば deny する。居なければ従来どおり fail-open で通す — 空セルを
     # 全面 deny にすると、枠逼迫の退避 (exclude) が委譲の全停止になってしまうため。
     # --excluded が非 0 (契約不正・古い route.sh で usage exit 2 等) なら判定しない。
+    # --excluded が空なら宣言されていないセル (意見なし) なので通す。除外で空になった
+    # セルで member 不明 (--member 無し・--members が全部空) なら deny する — aimix は
+    # --category / レジストリ既定で member を選ぶので、除外中の member に落ちうる
+    # (bdboard-uaqe レビュー M3)。名指しすれば除外されていない member は通るので、
+    # 退避が委譲の全停止になることはない。
     if [ -z "$ROUTE_CANDIDATES" ]; then
       ROUTE_EXCLUDED="$(cd "$REPO_ROOT" 2>/dev/null &&
         bash "$ROUTE_SCRIPT" --excluded "$route_stage" "$route_complexity" 2>/dev/null)"
       [ $? -eq 0 ] || continue
+      [ -n "$ROUTE_EXCLUDED" ] || continue
+      if [ -z "$route_member" ]; then
+        deny \
+          "bdboard-harness: ${route_stage}/${route_complexity} セルは models.exclude で候補が 0 件です。--member 無しだと aimix が除外中の member を選びうるため、--member の明示が必須です。" \
+          "除外中: $(route_safe "$(printf '%s' "$ROUTE_EXCLUDED" | tr '\n' ',' | sed 's/,$//')")" \
+          'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+      fi
       route_excluded_hit=''
       while IFS= read -r route_excluded_member; do
         [ -n "$route_excluded_member" ] || continue
@@ -352,6 +571,22 @@ ROUTE_EXCLUDED_EOF
         'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
     fi
 
+    route_candidate_list="$(printf '%s' "$ROUTE_CANDIDATES" | tr '\n' ',' | sed 's/,$//')"
+
+    if [ -z "$route_member" ]; then
+      deny \
+        'bdboard-harness: 振り分け表のあるこの工程/複雑度では --member と --model の明示が必須です (--member が無いと aimix は --model を無視して自分でモデルを選びます)。' \
+        "候補: $(route_safe "$route_candidate_list")" \
+        'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+    fi
+
+    if [ -n "$route_member_from_members" ]; then
+      deny \
+        'bdboard-harness: --members では aimix が --model を無視し tier 既定モデルで先頭 member を実行します。--member <member> --model <候補> で呼んでください。' \
+        "候補: $(route_safe "$route_candidate_list")" \
+        'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
+    fi
+
     # --model の必須チェックは「セルの候補を実際に取れた」後に置く。前に置くと、
     # models 表を宣言していないプロジェクト (照合は必ず fail-open) でも deny だけが
     # 発火し、しかも案内する route.sh は無出力なので従いようがない。実際 bdboard 自身の
@@ -360,7 +595,7 @@ ROUTE_EXCLUDED_EOF
     if [ -z "$route_model" ]; then
       deny \
         'bdboard-harness: 振り分け表のあるこの工程/複雑度では aimix run に --model の明示が必須です (どの候補を使ったか記録に残らないため)。' \
-        "候補: $(route_safe "$(printf '%s' "$ROUTE_CANDIDATES" | tr '\n' ',' | sed 's/,$//')")" \
+        "候補: $(route_safe "$route_candidate_list")" \
         'どうしても表から外れるなら BDBOARD_ROUTE_OVERRIDE="<理由>" を前置してください。'
     fi
 
@@ -373,7 +608,6 @@ $ROUTE_CANDIDATES
 ROUTE_CANDIDATES_EOF
     [ -n "$route_hit" ] && continue
 
-    route_candidate_list="$(printf '%s' "$ROUTE_CANDIDATES" | tr '\n' ',' | sed 's/,$//')"
     deny \
       "bdboard-harness: $(route_safe "$route_wanted") は検証コントラクトの ${route_stage}/${route_complexity} セルの候補ではありません。" \
       "候補: $(route_safe "$route_candidate_list")" \

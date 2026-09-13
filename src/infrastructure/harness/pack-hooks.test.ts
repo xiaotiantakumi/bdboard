@@ -515,16 +515,6 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         command:
           'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high',
       },
-      {
-        name: 'a call without --complexity',
-        contract: { mainBranch: 'main', models: { routes: ROUTES } },
-        command: 'aimix run --mode implement --member codex --model gpt-5.6-luna',
-      },
-      {
-        name: 'a call without --member',
-        contract: { mainBranch: 'main', models: { routes: ROUTES } },
-        command: 'aimix run --mode implement --model gpt-5.6-luna --complexity high',
-      },
     ];
 
     for (const failOpen of failOpenCases) {
@@ -537,6 +527,311 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
 
         expect(result.exitCode).toBe(0);
         expect(result.stderr).toBe('');
+      });
+    }
+
+    /**
+     * aimix run は argparse の allow_abbrev=True と _resolve_specs で実効値を決める。
+     * hook の jq/python3 はコントラクト読取だけに使われるが、どちらの経路でも同じ
+     * 引数解釈になることを固定する。
+     */
+    for (const jsonTool of ['jq', 'python3'] as const) {
+      describe(`aimix argparse compatibility via ${jsonTool}`, () => {
+        beforeEach(async () => {
+          if (jsonTool === 'python3') {
+            env = await noJqEnv();
+          }
+          writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+        });
+
+        async function expectDeny(
+          command: string,
+          ...stderrIncludes: ReadonlyArray<string>
+        ): Promise<void> {
+          const result = await guard(command);
+          expect(result.exitCode).toBe(2);
+          for (const expected of stderrIncludes) {
+            expect(result.stderr).toContain(expected);
+          }
+          expect(result.stderr.trimEnd().split('\n').length).toBeLessThanOrEqual(3);
+        }
+
+        it('denies --members even when --model is present', async () => {
+          await expectDeny(
+            'aimix run --mode implement --members codex --model gpt-5.6-sol --complexity high',
+            '--members',
+            'tier 既定モデル',
+          );
+          await expectDeny(
+            'aimix run --mode implement --members=codex --model gpt-5.6-sol --complexity high',
+            '--members',
+          );
+        });
+
+        it('prefers a non-empty --member over --members', async () => {
+          const result = await guard(
+            'aimix run --mode implement --member codex --model gpt-5.6-sol ' +
+              '--members cursor --complexity high',
+          );
+
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('uses the first non-empty --members entry for an exclusion-emptied cell', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [{ member: 'codex', until: '2999-01-01' }],
+            },
+          });
+
+          await expectDeny(
+            'aimix run --mode implement --members codex,cursor --complexity high',
+            'models.exclude',
+          );
+
+          const allowed = await guard(
+            'aimix run --mode implement --members cursor,codex --complexity high',
+          );
+          expect(allowed.exitCode).toBe(0);
+          expect(allowed.stderr).toBe('');
+        });
+
+        it('resolves unique complexity abbreviations', async () => {
+          await expectDeny(
+            'aimix run --mode implement --member codex --model gpt-5.6-sol --co low',
+            'implement/low',
+          );
+
+          const allowed = await guard(
+            'aimix run --mode implement --member codex --model gpt-5.6-sol --compl=high',
+          );
+          expect(allowed.exitCode).toBe(0);
+          expect(allowed.stderr).toBe('');
+
+          await expectDeny(
+            'aimix run --mode implement --member codex --model gpt-5.6-luna --complexit high',
+            'implement/high',
+          );
+        });
+
+        it('ignores ambiguous long-option abbreviations and keeps scanning', async () => {
+          await expectDeny(
+            'aimix run --mode implement --memb codex --model gpt-5.6-sol --complexity high',
+            '--member と --model の明示が必須',
+          );
+
+          const ambiguousMode = await guard(
+            'aimix run --mod implement --member codex --model gpt-5.6-sol --complexity high',
+          );
+          expect(ambiguousMode.exitCode).toBe(0);
+          expect(ambiguousMode.stderr).toBe('');
+
+          const continued = await guard(
+            'aimix run --mode implement --task "x --m y" --member codex ' +
+              '--model gpt-5.6-sol --complexity high',
+          );
+          expect(continued.exitCode).toBe(0);
+          expect(continued.stderr).toBe('');
+        });
+
+        /**
+         * レビュー指摘 (bdboard-uaqe): hook の分割は空白分割なので、引用符でくくった引数を
+         * aimix (= シェルが引用符を外した後の引数) と同じ 1 語として扱うことを固定する。
+         */
+        it('treats a quoted --task value as one argument, not as flags', async () => {
+          await expectDeny(
+            'aimix run --mode implement --member codex --model bogus --complexity high ' +
+              '--task "x --comp y"',
+            'codex:bogus',
+            'implement/high',
+          );
+          await expectDeny(
+            'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity high ' +
+              '--task "note --member cursor --model composer-2.5 --complexity med"',
+            'codex:gpt-5.6-luna',
+            'implement/high',
+          );
+        });
+
+        it('recognizes quoted option names', async () => {
+          await expectDeny(
+            'aimix run --mode implement --member cursor --model composer-2.5 "--complexity" high',
+            'implement/high',
+          );
+          await expectDeny(
+            "aimix run '--mode' implement --member cursor --model bogus --complexity high",
+            'cursor:bogus',
+          );
+        });
+
+        it('reads the first member of a quoted --members value with blanks', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [
+                { member: 'codex', until: '2999-01-01' },
+                { member: 'cursor', until: '2999-01-01' },
+              ],
+            },
+          });
+
+          await expectDeny('aimix run --mode implement --members " cursor"', 'models.exclude');
+          await expectDeny('aimix run --mode implement --members " ,cursor"', 'models.exclude');
+        });
+
+        it('falls back to --members when --member is empty', async () => {
+          await expectDeny(
+            'aimix run --mode implement --member= --members codex --model gpt-5.6-sol ' +
+              '--complexity high',
+            '--members',
+          );
+          await expectDeny(
+            'aimix run --mode implement --member "" --members codex --model gpt-5.6-sol ' +
+              '--complexity high',
+            '--members',
+          );
+        });
+
+        it('uses the last occurrence of a repeated option', async () => {
+          const result = await guard(
+            'aimix run --mode consult --mode implement --member codex ' +
+              '--complexity low --co high --model gpt-5.6-sol',
+          );
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('uses argparse default mode consult when --mode is omitted', async () => {
+          const result = await guard(
+            'aimix run --member codex --model gpt-5.6-luna --complexity high',
+          );
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        it('uses argparse default complexity med when --complexity is omitted', async () => {
+          await expectDeny(
+            'aimix run --mode implement --member codex --model gpt-5.6-luna',
+            'implement/med',
+          );
+
+          const allowed = await guard(
+            'aimix run --mode implement --member cursor --model composer-2.5',
+          );
+          expect(allowed.exitCode).toBe(0);
+          expect(allowed.stderr).toBe('');
+        });
+
+        it('checks exclusions in the default med cell', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: {
+              routes: ROUTES,
+              exclude: [
+                { member: 'codex', until: '2999-01-01' },
+                { member: 'cursor', until: '2999-01-01' },
+              ],
+            },
+          });
+
+          await expectDeny(
+            'aimix run --mode implement --member codex --model gpt-5.6-terra',
+            'models.exclude',
+            'implement/med',
+          );
+        });
+
+        it('denies an unknown member when the selected cell has candidates', async () => {
+          await expectDeny(
+            'aimix run --mode implement --model gpt-5.6-luna --complexity high',
+            '--member と --model の明示が必須',
+          );
+          await expectDeny(
+            'aimix run --mode implement --category implement --complexity high',
+            '--member と --model の明示が必須',
+          );
+        });
+
+        it('allows an unknown member when the selected cell is undeclared', async () => {
+          writeContract({
+            mainBranch: 'main',
+            models: { routes: { implement: { low: ROUTES.implement.low } } },
+          });
+
+          const result = await guard(
+            'aimix run --mode implement --model gpt-5.6-sol --complexity high',
+          );
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
+
+        /**
+         * レビュー指摘 (bdboard-uaqe M1): 引用符の中の `;` `&` `|` 改行は前段のセグメント分割で
+         * 割れる。割れ目より後ろのフラグは見えないので、既定値 (member 不明 / complexity=med) を
+         * 実効値とみなして誤 deny・誤照合しないこと、割れ目より前に揃っていれば従来どおり
+         * 判定することを固定する。
+         */
+        it('does not guess flags hidden behind a separator inside quotes', async () => {
+          for (const command of [
+            'aimix run --mode implement --task "fix a; b" --member codex ' +
+              '--model gpt-5.6-luna --complexity low',
+            'aimix run --mode implement --task "line1\nline2" --member codex ' +
+              '--model gpt-5.6-luna --complexity low',
+            // --complexity high が割れ目の後ろ。med セルとして照合すると sol は候補外で誤 deny。
+            'aimix run --mode implement --member codex --model gpt-5.6-sol ' +
+              '--task "a && b" --complexity high',
+            // 1 断片で引用符の種類が混ざる形も、閉じない引用符として同じ扱いになる。
+            `aimix run --mode implement --task "a"' b' --member codex ` +
+              '--model gpt-5.6-luna --complexity low',
+          ]) {
+            const result = await guard(command);
+            expect(result.exitCode, command).toBe(0);
+            expect(result.stderr, command).toBe('');
+          }
+
+          await expectDeny(
+            'aimix run --mode implement --member codex --model bogus --complexity high ' +
+              '--task "a; b"',
+            'codex:bogus',
+            'implement/high',
+          );
+        });
+
+        /** レビュー指摘 (bdboard-uaqe M2): ラッパーの引用符の中の aimix run も判定する。 */
+        it('judges aimix run wrapped in bash -c or command substitution', async () => {
+          for (const command of [
+            'bash -c "aimix run --mode implement --complexity high --member codex --model bogus"',
+            "bash -lc 'aimix run --mode implement --complexity high --member codex --model bogus --json'",
+            'OUT="$(aimix run --mode implement --complexity high --member codex --model bogus --json)"',
+          ]) {
+            await expectDeny(command, 'codex:bogus', 'implement/high');
+          }
+
+          const allowed = await guard(
+            'bash -c "aimix run --mode implement --complexity high --member codex --model gpt-5.6-sol"',
+          );
+          expect(allowed.exitCode).toBe(0);
+          expect(allowed.stderr).toBe('');
+
+          // ラッパー側の --mode 等は aimix の引数ではないので読まない。
+          const wrapperFlags = await guard(
+            'mytool --mode implement --complexity high aimix run --member codex --model bogus',
+          );
+          expect(wrapperFlags.exitCode).toBe(0);
+          expect(wrapperFlags.stderr).toBe('');
+        });
+
+        it('still allows an explicitly selected in-cell candidate', async () => {
+          const result = await guard(
+            'aimix run --mode implement --member codex --model gpt-5.6-luna --complexity low',
+          );
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+        });
       });
     }
 
@@ -871,6 +1166,22 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
 
             expect(result.exitCode).toBe(2);
             expect(result.stderr).toContain('gemini');
+          });
+
+          // レビュー指摘 (bdboard-uaqe M3): --member 無しだと aimix はレジストリの既定から
+          // member を選ぶので、除外中の member に落ちうる。空セルでも member の明示を求める。
+          it('guard denies a call without a member (aimix may fall back to an excluded member)', async () => {
+            for (const command of [
+              'aimix run --mode implement --complexity high',
+              'aimix run --mode implement --category implement --complexity high',
+              'aimix run --mode implement --members " , " --complexity high',
+            ]) {
+              const result = await guard(command);
+              expect(result.exitCode, command).toBe(2);
+              expect(result.stderr, command).toContain('models.exclude');
+              expect(result.stderr, command).toContain('--member');
+              expect(result.stderr.trimEnd().split('\n').length).toBeLessThanOrEqual(3);
+            }
           });
 
           it('guard still lets a non-excluded member through (fail-open, no table check)', async () => {
