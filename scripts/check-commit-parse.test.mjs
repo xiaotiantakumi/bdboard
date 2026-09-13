@@ -2,7 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-commit-parse.mjs');
@@ -399,14 +399,135 @@ describe('check-commit-parse CLI', () => {
     15000,
   );
 
+  // 既定範囲の起点 (bdboard-zoxs)。タグがあればタグ、無ければ manifest を上げたコミット。
   it(
-    'exits 2 when the release tag from manifest does not exist',
+    'uses the v<manifest> tag as the default base when the tag exists',
     () => {
-      const { work } = makeRepo('unavailable', { manifestVersion: '9.9.9', tagVersion: '0.0.0' });
+      const { work } = makeRepo('tagged');
+      fs.writeFileSync(path.join(work, 'change.txt'), 'x\n');
+      sh(work, 'git', 'add', 'change.txt');
+      commitFromFixture(work, QS6_FIXTURE);
+
+      const result = runCheck(work, []);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('v0.0.0..HEAD');
+      expect(result.stdout).not.toContain('範囲の起点にします');
+    },
+    15000,
+  );
+
+  it(
+    'falls back to the commit that bumped the manifest when its tag is not created yet',
+    () => {
+      // リリース PR のマージ直後を再現する: v0.0.0 以降に解析不能コミットがあり、
+      // その後 manifest を 0.0.1 に上げたが、release-please がまだ v0.0.1 を作っていない。
+      const { work } = makeRepo('release-race');
+      fs.writeFileSync(path.join(work, 'change.txt'), 'x\n');
+      sh(work, 'git', 'add', 'change.txt');
+      commitFromFixture(work, R5WE_FIXTURE);
+      const beforeRelease = sh(work, 'git', 'rev-parse', 'HEAD').trim();
+      fs.writeFileSync(
+        path.join(work, '.release-please-manifest.json'),
+        `${JSON.stringify({ '.': '0.0.1' })}\n`,
+      );
+      sh(work, 'git', 'add', '.release-please-manifest.json');
+      sh(work, 'git', 'commit', '-qm', 'chore(main): release 0.0.1');
+      const releaseCommit = sh(work, 'git', 'rev-parse', 'HEAD').trim();
+
+      const atRelease = runCheck(work, []);
+      expect(atRelease.status).toBe(0);
+      expect(atRelease.stdout).toContain('リリースタグ v0.0.1 が見つからないため');
+      expect(atRelease.stdout).toContain(releaseCommit.slice(0, 7));
+      expect(atRelease.stdout).toContain(`${releaseCommit}..HEAD の範囲で 0 件`);
+      // リリース済みの (v0.0.1 タグが切られる側の) コミットは範囲外。
+      expect(atRelease.stdout).not.toContain(beforeRelease.slice(0, 7));
+
+      // 範囲は「全部スキップ」ではなく生きている: リリース後の解析不能コミットは拾う。
+      fs.writeFileSync(path.join(work, 'after.txt'), 'y\n');
+      sh(work, 'git', 'add', 'after.txt');
+      commitFromFixture(work, R5WE_FIXTURE);
+      const afterRelease = sh(work, 'git', 'rev-parse', 'HEAD').trim();
+
+      const afterResult = runCheck(work, []);
+      const combined = `${afterResult.stdout}\n${afterResult.stderr}`;
+      expect(afterResult.status).toBe(1);
+      expect(combined).toContain('CHANGELOG から落ちる解析不能コミットが 1 件あります');
+      expect(combined).toContain(afterRelease.slice(0, 7));
+      expect(combined).not.toContain(beforeRelease.slice(0, 7));
+    },
+    15000,
+  );
+
+  it(
+    'starts from the commit that bumped the version, not a later same-version manifest edit',
+    () => {
+      // 版を変えない manifest の書き換え (整形) を「最後に触ったコミット」として起点にすると、
+      // リリース後の解析不能コミットが範囲外に落ちて黙って通ってしまう。
+      const { work } = makeRepo('reformat');
+      fs.writeFileSync(
+        path.join(work, '.release-please-manifest.json'),
+        `${JSON.stringify({ '.': '0.0.1' })}\n`,
+      );
+      sh(work, 'git', 'add', '.release-please-manifest.json');
+      sh(work, 'git', 'commit', '-qm', 'chore(main): release 0.0.1');
+      const releaseCommit = sh(work, 'git', 'rev-parse', 'HEAD').trim();
+
+      fs.writeFileSync(path.join(work, 'change.txt'), 'x\n');
+      sh(work, 'git', 'add', 'change.txt');
+      commitFromFixture(work, R5WE_FIXTURE);
+      const unparsable = sh(work, 'git', 'rev-parse', 'HEAD').trim();
+
+      fs.writeFileSync(
+        path.join(work, '.release-please-manifest.json'),
+        `${JSON.stringify({ '.': '0.0.1' }, null, 2)}\n`,
+      );
+      sh(work, 'git', 'add', '.release-please-manifest.json');
+      sh(work, 'git', 'commit', '-qm', 'chore: reformat release manifest');
+
+      const result = runCheck(work, []);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      expect(result.status).toBe(1);
+      expect(combined).toContain(`${releaseCommit}..HEAD`);
+      expect(combined).toContain(unparsable.slice(0, 7));
+    },
+    15000,
+  );
+
+  it(
+    'exits 2 instead of narrowing the range in a shallow clone without the tag',
+    () => {
+      const { bare, work } = makeRepo('shallow-src');
+      fs.writeFileSync(path.join(work, 'change.txt'), 'x\n');
+      sh(work, 'git', 'add', 'change.txt');
+      commitFromFixture(work, R5WE_FIXTURE);
+      sh(work, 'git', 'push', '-q', 'origin', 'main');
+
+      // ローカルパスの clone は --depth を無視するので file:// URL で浅く取る。
+      const shallow = path.join(tmpRoot, 'shallow');
+      sh(tmpRoot, 'git', 'clone', '-q', '--depth', '1', '--no-tags', pathToFileURL(bare).href, shallow);
+
+      const result = runCheck(shallow, []);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      expect(result.status).toBe(2);
+      expect(combined).toContain('shallow clone');
+    },
+    15000,
+  );
+
+  it(
+    'exits 2 when neither the tag nor a commit with the same manifest version exists',
+    () => {
+      // 手元で manifest だけ書き換えた状態: v9.9.9 タグも、版を 9.9.9 にしたコミットも無い。
+      const { work } = makeRepo('unavailable');
+      fs.writeFileSync(
+        path.join(work, '.release-please-manifest.json'),
+        `${JSON.stringify({ '.': '9.9.9' })}\n`,
+      );
       const result = runCheck(work, []);
       const combined = `${result.stdout}\n${result.stderr}`;
       expect(result.status).toBe(2);
       expect(combined).toMatch(/commit-parse:/);
+      expect(combined).toContain('v9.9.9');
     },
     15000,
   );
