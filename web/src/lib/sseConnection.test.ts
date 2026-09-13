@@ -4,6 +4,7 @@ import {
   acquireSharedEventSource,
   reconnectSharedEventSource,
 } from './sseConnection';
+import { UI_STORAGE_KEYS } from '../uiPersistedState';
 
 class MockEventSource {
   static readonly CONNECTING = 0;
@@ -56,12 +57,25 @@ describe('sseConnection', () => {
   beforeEach(() => {
     MockEventSource.instances = [];
     __resetSharedEventSourceForTests();
+    localStorage.clear();
     vi.stubGlobal('EventSource', MockEventSource);
   });
 
   afterEach(() => {
     __resetSharedEventSourceForTests();
     vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  it('passes the last seen notification id to the server when one is stored', () => {
+    localStorage.setItem(UI_STORAGE_KEYS.notificationLastEventId, 'boot 1/2');
+    const conn = acquireSharedEventSource();
+
+    expect(MockEventSource.instances[0]!.url).toBe(
+      `${window.location.origin}/api/events?lastEventId=boot%201%2F2`,
+    );
+
+    conn.release();
   });
 
   it('creates a single EventSource on first acquire', () => {

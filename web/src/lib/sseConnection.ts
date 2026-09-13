@@ -1,3 +1,5 @@
+import { readNotificationLastEventId } from './notificationLastEventId';
+
 const EVENT_SOURCE_OPEN = 1;
 
 function eventsUrl(): string {
@@ -5,7 +7,14 @@ function eventsUrl(): string {
   // relative URL resolves against the document URL, and if that still carries
   // QR credentials WebKit rejects the EventSource outright. `origin` never
   // includes userinfo. See stripUrlCredentials.ts.
-  return `${window.location.origin}/api/events`;
+  const base = `${window.location.origin}/api/events`;
+  // A fresh EventSource has no Last-Event-ID, so tell the server which
+  // notification we saw last; it replays only newer ones (bdboard-3tw.161).
+  // The browser's own auto-reconnect sends the header, which the server prefers.
+  const lastEventId = readNotificationLastEventId();
+  return lastEventId === null
+    ? base
+    : `${base}?lastEventId=${encodeURIComponent(lastEventId)}`;
 }
 
 type OpenListener = () => void;

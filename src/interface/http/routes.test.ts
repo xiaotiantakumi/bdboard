@@ -5626,6 +5626,134 @@ describe('createApiRoutes', () => {
     expect(bodyText).toContain('"ticketId":"bdboard-ready"');
   });
 
+  describe('notification replay on connect (bdboard-3tw.161)', () => {
+    const readSse = async (
+      app: ReturnType<typeof createApiRoutes>,
+      path: string,
+      headers: Record<string, string> = {},
+    ): Promise<string> => {
+      const controller = new AbortController();
+      const requestPromise = app.request(path, { signal: controller.signal, headers });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 30);
+      });
+      controller.abort();
+      const response = await requestPromise;
+      return response.text();
+    };
+
+    const ticketReady = (ticketId: string) => ({
+      name: 'notification' as const,
+      data: { kind: 'ticket_ready', ticketId, occurredAt: NOW.toISOString() },
+    });
+
+    it('replays a notification published while nobody was subscribed', async () => {
+      const events = createEventHub({ epoch: 'boot' });
+      const app = createApiRoutes(createDeps({ events }));
+
+      events.publish(ticketReady('bdboard-missed'));
+      expect(events.subscriberCount()).toBe(0);
+
+      const bodyText = await readSse(app, '/api/events');
+
+      expect(bodyText).toContain('event: notification');
+      expect(bodyText).toContain('id: boot-1');
+      expect(bodyText).toContain('"ticketId":"bdboard-missed"');
+      expect(bodyText).toContain('"replayed":true');
+      expect(bodyText.indexOf('event: hello')).toBeLessThan(
+        bodyText.indexOf('event: notification'),
+      );
+    });
+
+    it('replays only notifications newer than the Last-Event-ID header', async () => {
+      const events = createEventHub({ epoch: 'boot' });
+      const app = createApiRoutes(createDeps({ events }));
+
+      events.publish(ticketReady('bdboard-seen'));
+      events.publish(ticketReady('bdboard-new'));
+
+      const bodyText = await readSse(app, '/api/events', { 'Last-Event-ID': 'boot-1' });
+
+      expect(bodyText).not.toContain('bdboard-seen');
+      expect(bodyText).toContain('"ticketId":"bdboard-new"');
+      expect(bodyText).toContain('id: boot-2');
+    });
+
+    it('accepts the last seen id via the lastEventId query parameter', async () => {
+      const events = createEventHub({ epoch: 'boot' });
+      const app = createApiRoutes(createDeps({ events }));
+
+      events.publish(ticketReady('bdboard-seen'));
+      events.publish(ticketReady('bdboard-new'));
+
+      const bodyText = await readSse(app, '/api/events?lastEventId=boot-1');
+
+      expect(bodyText).not.toContain('bdboard-seen');
+      expect(bodyText).toContain('"ticketId":"bdboard-new"');
+    });
+
+    it('prefers the Last-Event-ID header over the query parameter', async () => {
+      const events = createEventHub({ epoch: 'boot' });
+      const app = createApiRoutes(createDeps({ events }));
+
+      events.publish(ticketReady('bdboard-one'));
+      events.publish(ticketReady('bdboard-two'));
+
+      const bodyText = await readSse(app, '/api/events?lastEventId=boot-0', {
+        'Last-Event-ID': 'boot-1',
+      });
+
+      expect(bodyText).not.toContain('bdboard-one');
+      expect(bodyText).toContain('bdboard-two');
+    });
+
+    it('delivers an AI quota threshold breach that happened while disconnected', async () => {
+      const events = createEventHub({ epoch: 'boot' });
+      const app = createApiRoutes(createDeps({ events }));
+
+      events.publish({
+        name: 'notification',
+        data: {
+          kind: 'ai_quota_threshold',
+          providerId: 'codex',
+          providerLabel: 'Codex',
+          metricLabel: 'weekly',
+          percentRemaining: 12,
+          thresholdPercent: 20,
+          occurredAt: NOW.toISOString(),
+        },
+      });
+
+      const bodyText = await readSse(app, '/api/events');
+
+      expect(bodyText).toContain('"kind":"ai_quota_threshold"');
+      expect(bodyText).toContain('"replayed":true');
+    });
+
+    it('sends live notifications with an id and without the replayed flag', async () => {
+      const events = createEventHub({ epoch: 'boot' });
+      const app = createApiRoutes(createDeps({ events }));
+
+      const controller = new AbortController();
+      const requestPromise = app.request('/api/events', { signal: controller.signal });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 30);
+      });
+      events.publish(ticketReady('bdboard-live'));
+      events.publish({ name: 'board.changed', data: { reason: 'test' } });
+      await new Promise((resolve) => {
+        setTimeout(resolve, 30);
+      });
+      controller.abort();
+      const bodyText = await (await requestPromise).text();
+
+      expect(bodyText).toContain('id: boot-1');
+      expect(bodyText).toContain('"ticketId":"bdboard-live"');
+      expect(bodyText).not.toContain('"replayed":true');
+      expect(bodyText.match(/^id: /gm)).toHaveLength(1);
+    });
+  });
+
   it('disconnects SSE when the per-client queue exceeds the limit', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
