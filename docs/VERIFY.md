@@ -18,6 +18,12 @@ AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文�
 npm run verify   # build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
+Node が `package.json` の `engines.node` を満たさないと、verify は子プロセス (tsc / vite / vitest) を
+1 つも起動せず、要求版・現在版・`.nvmrc` の案内を出して exit 1 する (bdboard-eu2k,
+`scripts/node-version-guard.mjs`)。`.nvmrc` は自動では適用されない (非対話シェルは nvm を読み込まない
+ことがある) ので、PATH の先頭に engines を満たす v22 の bin を置く (または
+`. "${NVM_DIR:-$HOME/.nvm}/nvm.sh" && nvm use`) してから回す。ガード自体は v14.13.1 以上でパースできる。
+
 ## tsc プロジェクトの表
 
 `npm run build` は**サーバー側**を型チェックする。3 つの別々の tsc プロジェクトを直列に走らせる。
