@@ -762,6 +762,12 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         finished = true;
         wakeUp();
       });
+      // bdboard-gwxz: the only other handler is the `await turnPromise` after the writer
+      // loop. If runTurn rejects with a non-ChatAgentError (e.g. finalize throwing) while
+      // the writer is stalled in writeSSE on a slow client, the rejection would sit
+      // unhandled and Node's default --unhandled-rejections=throw could take the process
+      // down. Mark it handled up front; the await below still rethrows to streamSSE.
+      void turnPromise.catch(() => {});
 
       try {
         while (!clientGone && !stream.aborted && !stream.closed) {
