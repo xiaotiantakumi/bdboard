@@ -1,5 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { BOARD_CHANGED_QUERY_KEY_ROOTS } from './boardChangedQueryKeys';
 import { acquireSharedEventSource, reconnectSharedEventSource } from './lib/sseConnection';
 
 export type StreamState = 'connecting' | 'open' | 'reconnecting' | 'error';
@@ -141,29 +142,9 @@ export function useBoardStream(): BoardStreamResult {
 
     const onBoardChanged = () => {
       touchContact();
-      void queryClient.invalidateQueries({ queryKey: ['board'] });
-      void queryClient.invalidateQueries({ queryKey: ['status'] });
-      // .beads の変更を検知した = チケット本文やコメントも変わりうる
-      void queryClient.invalidateQueries({ queryKey: ['ticket'] });
-      void queryClient.invalidateQueries({ queryKey: ['ticket-comments'] });
-      void queryClient.invalidateQueries({ queryKey: ['pending-decisions'] });
-      void queryClient.invalidateQueries({ queryKey: ['pr-links'] });
-      void queryClient.invalidateQueries({ queryKey: ['projects'] });
-      // 集計系ビュー・詳細パネルのタイムライン（prefix マッチで全パラメータ版を一括 invalidate）
-      void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
-      void queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
-      void queryClient.invalidateQueries({ queryKey: ['project-harness'] });
-      void queryClient.invalidateQueries({ queryKey: ['harness-status-all'] });
-      void queryClient.invalidateQueries({ queryKey: ['lease-health'] });
-      void queryClient.invalidateQueries({ queryKey: ['merge-slot-status'] });
-      void queryClient.invalidateQueries({ queryKey: ['activity'] });
-      void queryClient.invalidateQueries({ queryKey: ['digest-activity'] });
-      void queryClient.invalidateQueries({ queryKey: ['throughput-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['cfd-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['model-stats'] });
-      void queryClient.invalidateQueries({ queryKey: ['dependency-graph'] });
-      void queryClient.invalidateQueries({ queryKey: ['ticket-timeline'] });
-      void queryClient.invalidateQueries({ queryKey: ['similar-tickets'] });
+      for (const root of BOARD_CHANGED_QUERY_KEY_ROOTS) {
+        void queryClient.invalidateQueries({ queryKey: [root] });
+      }
     };
 
     const onSessionChanged = () => {

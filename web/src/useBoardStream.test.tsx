@@ -3,6 +3,7 @@ import { act, renderHook } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { computeStatusLevel } from './boardFreshness';
+import { BOARD_CHANGED_QUERY_KEY_ROOTS } from './boardChangedQueryKeys';
 import { __resetSharedEventSourceForTests } from './lib/sseConnection';
 import { CONNECT_STALL_MS, useBoardStream } from './useBoardStream';
 
@@ -52,30 +53,7 @@ function renderBoardStream() {
   return { ...view, invalidateSpy, es };
 }
 
-const BOARD_CHANGED_INVALIDATED_KEYS = [
-  'board',
-  'status',
-  'ticket',
-  'ticket-comments',
-  'pending-decisions',
-  'pr-links',
-  'projects',
-  'hygiene',
-  'harness-drift',
-  'project-harness',
-  'lease-health',
-  'merge-slot-status',
-  'activity',
-  'digest-activity',
-  'throughput-stats',
-  'cfd-stats',
-  'model-stats',
-  'dependency-graph',
-  'ticket-timeline',
-  'similar-tickets',
-];
-
-const ALL_INVALIDATED_KEYS = [...BOARD_CHANGED_INVALIDATED_KEYS, 'sessions'];
+const ALL_INVALIDATED_KEYS = [...BOARD_CHANGED_QUERY_KEY_ROOTS, 'sessions'];
 
 type InvalidateSpy = ReturnType<typeof renderBoardStream>['invalidateSpy'];
 
@@ -107,7 +85,7 @@ describe('useBoardStream', () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
-  it('invalidates projects when board.changed is dispatched', () => {
+  it('invalidates exactly the board.changed query roots when board.changed is dispatched', () => {
     const { es, invalidateSpy } = renderBoardStream();
 
     act(() => es.onopen?.());
@@ -116,9 +94,10 @@ describe('useBoardStream', () => {
     act(() => es.dispatch('board.changed'));
 
     const keys = invalidatedKeys(invalidateSpy);
-    for (const key of BOARD_CHANGED_INVALIDATED_KEYS) {
-      expect(keys).toContain(key);
-    }
+    expect([...keys].sort()).toEqual([...BOARD_CHANGED_QUERY_KEY_ROOTS].sort());
+    // bdboard-3tw.160 で漏れていた 2 root を明示的に固定する。
+    expect(keys).toContain('harness-kpi');
+    expect(keys).toContain('ticket-in-flight-overlaps');
   });
 
   it('revalidates board, session, and related queries after an onerror followed by onopen', () => {
