@@ -28,6 +28,12 @@
 //
 // bdboard-d48: さらに外側モードは、リーダー起動前にマシン単位の実行スロット
 // (既定2、verify-slot.mjs) を獲得する。verify の同時実行本数の上限はここで効く。
+// bdboard-eu2k: Node 版ガード (照合は下の外側モード本体で行う)。ESM は静的 import 先を
+// 含むモジュールグラフ全体をパースしてから評価するため、このファイルと下の import 先は
+// すべて古い Node (目安 v14.13.1 以上 — `node:` 指定子とトップレベル await が要る) でも
+// パースできる構文に保つこと (でないとガードに届く前に SyntaxError で落ちる)。
+// import の並び順自体には意味は無い。
+import { checkNodeVersion } from './node-version-guard.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -174,6 +180,16 @@ if (process.argv.includes('--group-leader')) {
   });
 } else {
   // ---- 外側モード: 実行スロットを獲得してから、リーダーを新プロセスグループ(detached)で起動する ----
+  // bdboard-eu2k: 非対話シェルは .nvmrc を読まないので、古い既定 node のまま verify が
+  // 起動されうる (実測 v14.15.0 → 子の tsc/vitest が `||=` の SyntaxError で即死)。
+  // スロット獲得・子プロセス起動より前に engines.node と照合し、満たさなければ何も
+  // spawn せず版不足を明示して終わる。リーダーモードは外側が通した後なので照合しない。
+  const nodeCheck = checkNodeVersion({ repoRoot });
+  if (!nodeCheck.ok) {
+    console.error(nodeCheck.message);
+    process.exit(1);
+  }
+
   // スロット待機中のシグナルは「列から抜けて終了」(holder file は acquire 側の
   // exit フックが片付ける)。リーダー起動後は下の killLeaderGroup 系に役目を渡す。
   const waitPhaseHandlers = new Map();
