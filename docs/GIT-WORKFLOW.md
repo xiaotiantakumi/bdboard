@@ -7,6 +7,7 @@ AGENTS.md「Git Workflow」に骨格（ブランチ/worktree 命名、lifecycle�
 - PR を開く / マージする直前（`npm run drift`・merge serialization・cleanup の手順）
 - `bd dolt push` / `bd dolt pull` を打つ前（remote 事故の詳細）
 - 上記の規律が「なぜ」そうなのかを確認したいとき
+- セッション開始時（`npm run check:gh-issues` で bd 未紐付けの GitHub issue を確認）
 
 汎用の worktree+PR 規律は skill `bdboard-harness` の `references/worktree-pr-flow.md` が正。
 **この文書は bdboard 固有の値（merge-slot bead 名、worktree パス、実際に起きた事故）だけを
@@ -34,6 +35,16 @@ port, so those run fine in parallel worktrees.
 ブランチ: `bd/<ticket-id>` (ticket ID used verbatim, e.g.
 `bd/bdboard-3tw.65` — dots are legal in git ref names). Non-ticket
 exploratory branches use `spike/` and never get a PR.
+
+## GitHub issue linking (`npm run check:gh-issues`)
+
+At session start, run `npm run check:gh-issues`. It lists open GitHub issues
+that are not linked from any bd ticket with `--external-ref gh-<number>`
+(an external_ref of `https://github.com/<owner>/<repo>/issues/<number>` also
+counts; any other form is reported as unlinked). Tickets of every status count,
+including closed ones.
+The check is read-only, uses the GitHub REST API only, and remains advisory:
+it exits 0 even when `gh` is unavailable or cannot authenticate.
 
 ## Direct-to-main の禁止とその唯一の例外
 
