@@ -749,6 +749,13 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           } else {
             throw err;
           }
+        } finally {
+          // bdboard-pti0: release the per-project chat lock when the turn settles (after
+          // finalize, before the writer can deliver 'done'), as bulk sendChatMessage does.
+          // Tying it to the writer's exit let a stalled client below the queue limit hold
+          // the lock forever. store.release is locks.delete(projectId): this must stay the
+          // turn's only release, or a late writer exit would free the next turn's lock.
+          resolved.handle.release();
         }
       };
       const turnPromise = runTurn().finally(() => {
@@ -767,8 +774,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         }
         await turnPromise;
       } finally {
+        // Lock release is owned by runTurn's settle path (bdboard-pti0), not here.
         cleanup();
-        resolved.handle.release();
       }
     });
   });
