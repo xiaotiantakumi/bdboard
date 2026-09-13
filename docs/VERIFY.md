@@ -30,6 +30,12 @@ CI の ubuntu `verify` job は `BDBOARD_OLD_NODE` で実 Node 14.15.0 を
 環境変数がないローカル実行ではこのテストは skip される。再現するには
 `BDBOARD_OLD_NODE=$HOME/.nvm/versions/node/v14.15.0/bin/node npm run test:server -- scripts/node-version-guard.old-node.test.mjs` を使う。
 
+`engines.node` の下限は、ルート・`web` の直接依存が宣言する `engines.node` のうち、22.x 系で最も高い
+要求に揃える (bdboard-ugt1、現状はサーバー側テストの vitest が使うルートの Vite 7)。
+`scripts/engines-coverage.test.mjs` がコミット済みの lockfile から直接依存の engines を読み、下限を
+受け付けない依存があれば落ちる。推移依存は対象外 — rollup の optional なプラットフォーム別バイナリの
+ように特定 OS/CPU でしか入らず engines が厳しいものがあり、それに合わせると利用者を不要に締め出すため。
+
 ## tsc プロジェクトの表
 
 `npm run build` は**サーバー側**を型チェックする。3 つの別々の tsc プロジェクトを直列に走らせる。

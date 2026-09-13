@@ -45,9 +45,15 @@
 
 ### 必要なもの / 前提
 
-- **Node.js 22.9.0 以上** — `bdboard` の起動スクリプトが Node の
-  `--env-file-if-exists` フラグ(22.9.0 で追加)を常に渡すため。22.0〜22.8 では
-  このフラグ自体が未知なので、`.env` の有無に関係なく `bad option` で起動に失敗する。
+- **Node.js 22.12.0 以上**(`package.json` の `engines.node`)。内訳は次の 2 つ:
+  - **起動するだけなら 22.9.0 以上** — `bdboard` の起動スクリプトが Node の
+    `--env-file-if-exists` フラグ(22.9.0 で追加)を常に渡すため。22.0〜22.8 では
+    このフラグ自体が未知なので、`.env` の有無に関係なく `bad option` で起動に失敗する。
+  - **開発(`npm run verify` 等)には 22.12.0 以上** — サーバー側テストの vitest が使うルートの
+    Vite 7 が、22.x では 22.12.0 以上を要求するため。`engines.node` はこちらに合わせている。
+
+  npm は既定では engine-strict が無効なので、22.9〜22.11 で `npx bdboard` / `npm install -g bdboard`
+  すると EBADENGINE の警告が出るが、インストールと起動はそのまま行える。
 - **`bd`(Beads) CLI** — bdboard は `bd` が管理するチケットを見る UI であり、
   `bd` 本体が別途インストールされていないと動かない(冒頭の説明も参照)。
   前提バージョンは **v1.2.1**(詳細は後述の「bd CLI の前提バージョン」節)。
