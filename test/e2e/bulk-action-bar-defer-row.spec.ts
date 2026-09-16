@@ -422,21 +422,31 @@ for (const viewport of MOBILE_VIEWPORTS) {
 // 計測時の注意: isMobile: true を付けないと別のレイアウトになり、はみ出しが
 // 再現しない。必ず test.use({ viewport, isMobile: true, hasTouch: true }) で測ること
 // (議長が isMobile 無しの probe で「解消済み」と誤判定した。2026-09-05)。
-// 機構: web/src/index.css:7904 の @media (hover: none) and (pointer: coarse) が
+// 機構: web/src/index.css の @media (hover: none) and (pointer: coarse) ブロックが
 // select / input[type=date] を font-size:16px に上げ、これが date 入力を 147px へ
 // 押し上げている。**幅のメディアクエリではないので、isMobile 無しでは 320px でも
 // 発火しない。**
 //
 // 重要: body.scrollWidth=320 = innerWidth なので horizontalOverflow は false のまま。
-// 理由は2つあり、決定的なのは後者:
-//   1. バー自体が左右 25px インセットされており、この 7px はバーの右パディング
-//      (12px) に収まってビューポート端に届かない。
-//   2. web/src/index.css:158 の body { overflow-x: clip }。body は非スクロールの
-//      クリップコンテナなので、**はみ出しがどれだけ大きくても body.scrollWidth は
-//      body 幅を超えない**。つまり「もっと大きくはみ出せば horizontalOverflow で
-//      捕まる」わけではなく、原理的に捕まらない。
-// したがって本ファイルの既存 horizontalOverflow アサーションは、この種のはみ出しに
-// 対しては構造的にほぼ vacuous である。「horizontalOverflow=false だから問題なし」と
+// これは body の overflow-x: clip のせいではない。標準モードでは clip された in-flow の
+// 溢れも body.scrollWidth に現れる (test/e2e/README.md「e2e を書く・回すときの落とし穴」
+// 項目 3 の実測表。in-flow の 1000px 溢れで body.scrollWidth=1000)。
+// このはみ出しが body.scrollWidth に現れないのは、どれか1つで足りる理由が3つ重なっているから
+// (bdboard-h4xs.22 で 320x812・isMobile・Chromium を実測):
+//   1. モバイルの .bulk-action-bar は position: fixed (web/src/index.css の
+//      @media (max-width: 700px) 内)。fixed の中の溢れは body.scrollWidth に現れない
+//      (README の表の fixed 行)。README が PR #384 の理由として挙げているのはこれ。
+//   2. 同じ規則の overflow-y: auto により overflow-x も auto に計算され、バー自身が
+//      スクロールコンテナになる。position: static に戻しても 1000px の溢れはバーの中で
+//      止まり body.scrollWidth は 320 のまま。static かつ overflow: visible にして
+//      初めて 1025 になった。
+//   3. 7px 程度ならそもそも body の箱を出ない。max-width: 480px 帯のバーは左右
+//      25px インセット (left/right 12px + border 1px + padding 12px。700px 帯では
+//      left/right が 14px) されており、コンテナの内容右端 295 はビューポート端から
+//      25px 内側にある。25px 未満のはみ出し (今回はグループ右端 302) は body の右端
+//      320 を越えない (README の表の「body の箱の内側に収まる溢れ」行)。
+// したがって本ファイルの既存 horizontalOverflow アサーションは、バーの中のはみ出しに
+// 対しては構造的に vacuous である。「horizontalOverflow=false だから問題なし」と
 // 読まないこと。コンテナ基準で測る必要がある。
 // index.css コメントの 289px はより広いビューポートでの値。
 // この直下の describe は :has() narrowing 用に非カスタム状態だけを見る。
