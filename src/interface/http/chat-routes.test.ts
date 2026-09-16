@@ -674,6 +674,132 @@ describe('POST /api/chat/message/stream', () => {
     expect(store.isBusy('p')).toBe(false);
   });
 
+  it('does not leave an unhandled rejection when finalize throws while the writer is stalled (bdboard-gwxz)', async () => {
+    const sessionId = '550e8400-e29b-41d4-a716-446655440066';
+    const stallText = 'x'.repeat(256 * 1024);
+    const finalizeFailure = new Error('remember failed');
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        // Unread body + large deltas: the writer stalls in writeSSE, so it has not reached
+        // `await turnPromise` when runTurn rejects below.
+        onDelta({ text: `first-${stallText}` });
+        onDelta({ text: `second-${stallText}` });
+        return { reply: 'never delivered', sessionId, agentId: 'test-agent', failedTools: [] };
+      }),
+    });
+    const store = createChatSessionStore();
+    // store.remember throwing makes finalizeChatTurnSuccess throw a non-ChatAgentError,
+    // which runTurn rethrows.
+    const rememberSpy = vi.spyOn(store, 'remember').mockImplementation(() => {
+      throw finalizeFailure;
+    });
+    const releaseSpy = vi.spyOn(store, 'release');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+      const app = createApp({ agent: streamingAgent, cache, store });
+
+      const response = await app.request(
+        '/api/chat/message/stream',
+        withLocalHost({
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+        }),
+        LOCAL_ENV,
+      );
+      expect(response.status).toBe(200);
+      await vi.waitFor(() => expect(rememberSpy).toHaveBeenCalled());
+      // Node reports unhandled rejections once the microtask queue drains, so give it a
+      // few macrotask turns while the writer is still stalled.
+      for (let turn = 0; turn < 3; turn += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      // The writer is still stalled: had it reached `await turnPromise`, the rethrow would
+      // already have reached streamSSE's console.error.
+      expect(consoleError).not.toHaveBeenCalled();
+      expect(unhandled).toEqual([]);
+      // The lock is still released on the throw path, and since finalize threw nothing
+      // was recorded as completed.
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+      expect(store.isBusy('p')).toBe(false);
+      const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+      expect(await status.json()).toEqual({ state: 'idle' });
+
+      // Once the client reads, the writer drains the deltas and `await turnPromise` still
+      // propagates the error to streamSSE; no 'done' is sent.
+      const text = await response.text();
+      expect(text.match(/event: delta/g)).toHaveLength(2);
+      expect(text).not.toContain('event: done');
+      await vi.waitFor(() => expect(consoleError).toHaveBeenCalledWith(finalizeFailure));
+      expect(unhandled).toEqual([]);
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      consoleError.mockRestore();
+    }
+  });
+
+  it('records the completed turn before releasing the lock, so turn-status never reads idle in between (bdboard-gwxz)', async () => {
+    // web's ChatPanel detects a finished turn by turn-status going straight from
+    // processing to completed (PR #467). Releasing first would open an idle window.
+    const sessionId = '550e8400-e29b-41d4-a716-446655440077';
+    const events: string[] = [];
+    const now = vi.fn(() => {
+      events.push('now');
+      return NOW;
+    });
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async () => ({
+        reply: 'ordered reply',
+        sessionId,
+        agentId: 'test-agent',
+        failedTools: [],
+      })),
+    });
+    const store = createChatSessionStore();
+    const originalRelease = store.release.bind(store);
+    const releaseSpy = vi.spyOn(store, 'release').mockImplementation((projectId: string) => {
+      events.push('release');
+      originalRelease(projectId);
+    });
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store, now });
+
+    const response = await app.request(
+      '/api/chat/message/stream',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+      }),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('"reply":"ordered reply"');
+
+    expect(releaseSpy).toHaveBeenCalledTimes(1);
+    // recordCompletedTurn stamps completedAt via now(); that must happen before release.
+    // The now() call is a proxy for the record itself: completedTurns is not observable
+    // synchronously, so hoisting only the timestamp above release would slip past this.
+    expect(events.lastIndexOf('now')).toBeGreaterThanOrEqual(0);
+    expect(events.lastIndexOf('now')).toBeLessThan(events.indexOf('release'));
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await status.json()).toEqual({
+      state: 'completed',
+      sessionId,
+      agentId: 'test-agent',
+      completedAt: NOW.toISOString(),
+    });
+  });
+
   it('streaming done payload matches the bulk 200 body shape for the same turn (bdboard-l1t.9 delta 再レビュー N2)', async () => {
     const turnResult: ChatTurnResult = {
       reply: 'same reply',
