@@ -36,7 +36,7 @@ export const BOARD_CHANGED_QUERY_KEY_ROOTS = [
  */
 export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
   'ticket-runs':
-    'エージェント実行の履歴 (bdboard 自身の runStore 由来)。詳細パネル自身の実行開始時と、追跡中の実行が終わった時に invalidate する。他経路で始めた実行は再マウント・フォーカス時に反映される。',
+    'エージェント実行の履歴 (bdboard 自身の runStore 由来)。.beads の変更とは無関係に変わるので、実行を開始した側と終端を観測した側が invalidate する: 詳細パネル自身の実行開始時と追跡中の実行の終了時、Next Up ループの開始要求の結果が出た時と実行の終了時 (App が useNextUpRunLoopController に渡す通知)。別タブ・別端末など他のクライアントで始めた実行は、staleTime 経過後の再マウント・フォーカス時に反映される。',
   'agent-run':
     '履歴から選んだ 1 件の実行詳細で、bdboard 自身の実行記録 (runStore) 由来。.beads の変更では変わらず、実行中の進捗は詳細パネルの独自ポーリングで追う。',
   'agent-runs-config': '設定パネル自身の保存操作で invalidate する設定値。',

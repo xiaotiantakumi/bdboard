@@ -1,3 +1,5 @@
+import { QueryClient } from '@tanstack/react-query';
+import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunDetailDto } from '../api';
 import { fetchAgentRun, startTicketRun } from '../api';
@@ -7,10 +9,12 @@ import {
   NEXT_UP_LOOP_POLL_MAX_DELAY_MS,
   NEXT_UP_LOOP_POLL_MAX_FAILURES,
   buildConsecutiveFailureComment,
+  createTicketRunsInvalidator,
   describeConsecutiveFailureStop,
   nextUpLoopPollDelayMs,
   runNextUpTicketLoop,
   type NextUpLoopProgress,
+  useNextUpRunLoopController,
   waitForAgentRunTerminal,
 } from './nextUpRunLoop';
 
@@ -714,6 +718,184 @@ describe('nextUpRunLoop', () => {
       firstEmission.failedCount = 999;
       expect(emissions[1]!.failedCount).not.toBe(999);
       expect(result.failedCount).toBe(2);
+    });
+  });
+
+  describe('ticket-runs change notification (bdboard-3tw.163)', () => {
+    function resolveRunsWith(status: AgentRunDetailDto['status']): void {
+      mockFetchAgentRun.mockImplementation(async (runId) =>
+        makeRunDetail(runId, runId.replace(/^run-/, ''), status),
+      );
+    }
+
+    it('notifies once when a run starts and once when it reaches a terminal status', async () => {
+      const onTicketRunsChanged = vi.fn();
+      const callsAtFirstPoll: number[] = [];
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        callsAtFirstPoll.push(onTicketRunsChanged.mock.calls.length);
+        return makeRunDetail(runId, runId.replace(/^run-/, ''), 'succeeded');
+      });
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        onTicketRunsChanged,
+      });
+      await finishLoopWithTimers(loopPromise);
+      await loopPromise;
+
+      expect(onTicketRunsChanged.mock.calls).toEqual([
+        ['ticket-1'],
+        ['ticket-1'],
+        ['ticket-2'],
+        ['ticket-2'],
+      ]);
+      // 開始の通知はポーリングより前に届く (実行中の行を履歴に出すため)。
+      expect(callsAtFirstPoll).toEqual([1, 3]);
+    });
+
+    it.each(['failed', 'cancelled'] as const)(
+      'notifies on the %s terminal status too',
+      async (status) => {
+        const onTicketRunsChanged = vi.fn();
+        resolveRunsWith(status);
+
+        const loopPromise = runNextUpTicketLoop({
+          ticketIds: ['ticket-1'],
+          isStopRequested: () => false,
+          onProgress: () => {},
+          onTicketRunsChanged,
+        });
+        await finishLoopWithTimers(loopPromise);
+        await loopPromise;
+
+        expect(onTicketRunsChanged.mock.calls).toEqual([['ticket-1'], ['ticket-1']]);
+      },
+    );
+
+    // サーバーは開始失敗でも failed の実行記録を残すことがあるので、開始失敗も通知する。
+    it('notifies once for a ticket whose run failed to start', async () => {
+      const onTicketRunsChanged = vi.fn();
+      mockStartTicketRun.mockRejectedValueOnce(new Error('start failed'));
+      resolveRunsWith('succeeded');
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        onTicketRunsChanged,
+      });
+      await finishLoopWithTimers(loopPromise);
+      await loopPromise;
+
+      expect(onTicketRunsChanged.mock.calls).toEqual([
+        ['ticket-1'],
+        ['ticket-2'],
+        ['ticket-2'],
+      ]);
+    });
+
+    it('only notifies the start when polling gives up before the run ends', async () => {
+      const onTicketRunsChanged = vi.fn();
+      mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        onTicketRunsChanged,
+      });
+      await finishLoopWithTimers(loopPromise);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('poll_failed');
+      expect(onTicketRunsChanged.mock.calls).toEqual([['ticket-1']]);
+    });
+
+    it('only notifies the start when the loop stops waiting before the run ends', async () => {
+      const onTicketRunsChanged = vi.fn();
+      let stopRequested = false;
+      mockFetchAgentRun.mockImplementation(async (runId) => {
+        stopRequested = true;
+        return makeRunDetail(runId, runId.replace(/^run-/, ''), 'running');
+      });
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => stopRequested,
+        onProgress: () => {},
+        onTicketRunsChanged,
+      });
+      await finishLoopWithTimers(loopPromise);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('stopped');
+      expect(onTicketRunsChanged.mock.calls).toEqual([['ticket-1']]);
+    });
+
+    it('keeps the batch going when the listener throws', async () => {
+      const onTicketRunsChanged = vi.fn(() => {
+        throw new Error('listener failed');
+      });
+      resolveRunsWith('succeeded');
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        onTicketRunsChanged,
+      });
+      await finishLoopWithTimers(loopPromise);
+      const result = await loopPromise;
+
+      expect(result.completedCount).toBe(2);
+      expect(result.endReason).toBe('completed');
+      expect(onTicketRunsChanged).toHaveBeenCalledTimes(4);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Failed to notify ticket runs change',
+        expect.any(Error),
+      );
+    });
+
+    it('invalidates only the notified ticket runs query', () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['ticket-runs', 'ticket-1'], []);
+      queryClient.setQueryData(['ticket-runs', 'ticket-2'], []);
+      queryClient.setQueryData(['ticket', 'ticket-1'], {});
+
+      createTicketRunsInvalidator(queryClient)('ticket-1');
+
+      expect(queryClient.getQueryState(['ticket-runs', 'ticket-1'])?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(['ticket-runs', 'ticket-2'])?.isInvalidated).toBe(false);
+      expect(queryClient.getQueryState(['ticket', 'ticket-1'])?.isInvalidated).toBe(false);
+      queryClient.clear();
+    });
+
+    it('routes the controller loop through the latest listener passed to the hook', async () => {
+      const firstListener = vi.fn();
+      const latestListener = vi.fn();
+      resolveRunsWith('succeeded');
+
+      const { result, rerender } = renderHook(
+        ({ listener }) => useNextUpRunLoopController({ onTicketRunsChanged: listener }),
+        { initialProps: { listener: firstListener } },
+      );
+      rerender({ listener: latestListener });
+
+      act(() => {
+        result.current.beginBatchRun(['ticket-1']);
+      });
+      for (let tick = 0; tick < 10 && result.current.phase !== 'idle'; tick += 1) {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(AGENT_RUN_POLL_INTERVAL_MS);
+        });
+      }
+
+      expect(result.current.phase).toBe('idle');
+      expect(result.current.progress.completedCount).toBe(1);
+      expect(firstListener).not.toHaveBeenCalled();
+      expect(latestListener.mock.calls).toEqual([['ticket-1'], ['ticket-1']]);
     });
   });
 

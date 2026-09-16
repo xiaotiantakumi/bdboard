@@ -1,3 +1,4 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchAgentRun, postTicketComment, startTicketRun } from '../api';
 import {
@@ -22,6 +23,26 @@ export interface NextUpLoopProgress {
   totalCount: number;
   lastFailureReason: string | null;
   endReason: NextUpLoopEndReason | null;
+}
+
+/**
+ * ループが開始・終了させた実行を、ループの外にある実行履歴 (詳細パネルの ticket-runs) へ
+ * 知らせるための通知。詳細パネルは自分で開始した実行しか追跡しないので、ループ由来の
+ * 実行は通知が無いと再マウント・フォーカスまで履歴に出ない (bdboard-3tw.163)。
+ */
+export type TicketRunsChangedListener = (ticketId: string) => void;
+
+/** 通知を受けて、そのチケットの実行履歴 (ticket-runs) を stale にするリスナーを作る。 */
+export function createTicketRunsInvalidator(
+  queryClient: Pick<QueryClient, 'invalidateQueries'>,
+): TicketRunsChangedListener {
+  return (ticketId) => {
+    void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
+  };
+}
+
+export interface NextUpRunLoopControllerOptions {
+  onTicketRunsChanged?: TicketRunsChangedListener;
 }
 
 export interface NextUpRunLoopController {
@@ -174,13 +195,30 @@ export async function runNextUpTicketLoop(options: {
   isStopRequested: () => boolean;
   onProgress: (progress: NextUpLoopProgress) => void;
   postComment?: (ticketId: string, text: string) => Promise<void>;
+  /**
+   * 開始要求の結果が出た時 (成功・失敗とも) と、実行が終端状態 (succeeded / failed /
+   * cancelled) に達した時に呼ぶ。
+   */
+  onTicketRunsChanged?: TicketRunsChangedListener;
 }): Promise<NextUpLoopProgress> {
   const {
     ticketIds,
     isStopRequested,
     onProgress,
     postComment = postTicketComment,
+    onTicketRunsChanged,
   } = options;
+  // 通知は表示側のキャッシュ更新にすぎないので、失敗してもバッチの進行には影響させない。
+  const notifyTicketRunsChanged = (ticketId: string): void => {
+    if (onTicketRunsChanged === undefined) {
+      return;
+    }
+    try {
+      onTicketRunsChanged(ticketId);
+    } catch (notifyError) {
+      console.error('Failed to notify ticket runs change', notifyError);
+    }
+  };
   const progress: NextUpLoopProgress = {
     currentTicketId: null,
     completedCount: 0,
@@ -282,6 +320,9 @@ export async function runNextUpTicketLoop(options: {
       const response = await startTicketRun(ticketId);
       runId = response.runId;
     } catch (error) {
+      // 開始に失敗しても、サーバーは worktree の用意などで失敗した実行を failed として
+      // 記録していることがある (runStore.start が provision より前に走るため)。
+      notifyTicketRunsChanged(ticketId);
       progress.failedCount += 1;
       const failureReason = describeRunStartError(error);
       progress.currentTicketId = null;
@@ -295,6 +336,8 @@ export async function runNextUpTicketLoop(options: {
       }
       continue;
     }
+
+    notifyTicketRunsChanged(ticketId);
 
     const { outcome, lastPollError } = await waitForAgentRunTerminal(
       runId,
@@ -316,6 +359,9 @@ export async function runNextUpTicketLoop(options: {
       break;
     }
 
+    // ここに来るのは終端状態 (succeeded / failed / cancelled) だけ。stopped と poll_failed は
+    // 実行の状態が変わったと言えないので通知しない。
+    notifyTicketRunsChanged(ticketId);
     progress.currentTicketId = null;
     if (outcome === 'succeeded') {
       progress.completedCount += 1;
@@ -346,7 +392,13 @@ export async function runNextUpTicketLoop(options: {
   return { ...progress };
 }
 
-export function useNextUpRunLoopController(): NextUpRunLoopController {
+export function useNextUpRunLoopController(
+  options: NextUpRunLoopControllerOptions = {},
+): NextUpRunLoopController {
+  const { onTicketRunsChanged } = options;
+  // beginBatchRun は依存無しで安定させているので、最新のリスナーは ref 経由で読む。
+  const onTicketRunsChangedRef = useRef(onTicketRunsChanged);
+  onTicketRunsChangedRef.current = onTicketRunsChanged;
   const [phase, setPhase] = useState<NextUpLoopPhase>('idle');
   const [progress, setProgress] = useState<NextUpLoopProgress>(
     INITIAL_NEXT_UP_LOOP_PROGRESS,
@@ -375,6 +427,9 @@ export function useNextUpRunLoopController(): NextUpRunLoopController {
         await runNextUpTicketLoop({
           ticketIds,
           isStopRequested: () => stopRequestedRef.current,
+          onTicketRunsChanged: (ticketId) => {
+            onTicketRunsChangedRef.current?.(ticketId);
+          },
           onProgress: (nextProgress) => {
             // Generation guard (bdboard-54be.4 M3 / 54be.2 R10): drop progress from a
             // loop whose runId was invalidated. loopRunIdRef advances only when (1)
