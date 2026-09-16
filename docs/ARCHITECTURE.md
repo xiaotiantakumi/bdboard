@@ -157,7 +157,13 @@ bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)
    `board.changed` / `session.changed` / `notification` 等のイベントを `publish()` する。
 6. **SSE配信**: `interface/http/routes.ts` の `GET /api/events` が `EventHub.subscribe()` して
    Server-Sent Events としてクライアントへ中継する(接続ごとに ping タイマーを持ち、
-   `AbortSignal` とレスポンスの両方の切断経路を監視してリークを防ぐ)。
+   `AbortSignal` とレスポンスの両方の切断経路を監視してリークを防ぐ)。`notification` だけは
+   `EventHub` が `<epoch>-<seq>` の id を振って直近50件をメモリに保持し、接続時に
+   `Last-Event-ID` ヘッダー(無ければ `lastEventId` クエリ)より新しい分を `replayed: true` 付きで
+   再送する。未接続中に出た通知の取りこぼし対策で、クライアントは payload 由来の id で重複を落とし、
+   再送分ではデスクトップ通知を鳴らさない。バックグラウンドのモバイルPWAでは onerror 無しに
+   接続が凍るため、前面復帰時に45秒以上何も届いていなければ `web/src/lib/sseConnection.ts` が
+   EventSource を張り直して再送を受け取る(bdboard-3tw.161)。
 7. **UI側**: `web/src/useBoardStream.ts` が `EventSource` を張り(`web/src/lib/sseConnection.ts` で
    タブ間共有)、イベント受信をトリガーに TanStack Query のキャッシュを invalidate して
    `GET /api/board` 等のREST APIを再フェッチする。**SSEイベント自体はペイロードを運ばない

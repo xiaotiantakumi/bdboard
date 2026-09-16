@@ -34,8 +34,8 @@ class MockEventSource {
     this.listeners.get(type)?.delete(listener);
   }
 
-  dispatch(type: string, data: string) {
-    const event = { data } as MessageEvent<string>;
+  dispatch(type: string, data: string, lastEventId = '') {
+    const event = { data, lastEventId } as MessageEvent<string>;
     this.listeners.get(type)?.forEach((listener) => listener(event));
   }
 
@@ -393,6 +393,105 @@ describe('useNotificationEvents', () => {
       percentRemaining: 15,
       thresholdPercent: 20,
       id: 'ai_quota_threshold:codex:週次リクエスト:2026-08-17T11:00:00.000Z',
+    });
+  });
+
+  describe('replayed notifications after reconnect (bdboard-3tw.161)', () => {
+    function hiddenAndGranted() {
+      MockNotification.permission = 'granted';
+      localStorage.setItem(UI_STORAGE_KEYS.notificationsEnabled, 'true');
+      vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    }
+
+    it('puts a replayed quota breach into the event list without a desktop notification', () => {
+      withFakeBatchTimers(() => {
+        hiddenAndGranted();
+        const { result, es } = renderNotificationEvents();
+
+        act(() => {
+          es.dispatch('notification', aiQuotaThresholdPayload({ replayed: true }), 'boot-3');
+        });
+        advanceBatchWindow();
+
+        expect(result.current.events).toHaveLength(1);
+        expect(result.current.events[0]).toMatchObject({
+          kind: 'ai_quota_threshold',
+          id: 'ai_quota_threshold:codex:週次リクエスト:2026-08-17T11:00:00.000Z',
+        });
+        expect(result.current.unreadCount).toBe(1);
+        expect(notificationCtor).not.toHaveBeenCalled();
+      });
+    });
+
+    it('still raises a desktop notification for live (non-replayed) messages', () => {
+      withFakeBatchTimers(() => {
+        hiddenAndGranted();
+        const { es } = renderNotificationEvents();
+
+        act(() => {
+          es.dispatch('notification', aiQuotaThresholdPayload(), 'boot-4');
+        });
+        advanceBatchWindow();
+
+        expect(notificationCtor).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('does not duplicate a replayed notification already synced from another tab', () => {
+      const existingEvent = {
+        id: 'ticket_ready:bdboard-abc:2026-08-17T10:00:00.000Z',
+        kind: 'ticket_ready' as const,
+        ticketId: 'bdboard-abc',
+        title: 'Example ticket',
+        occurredAt: '2026-08-17T10:00:00.000Z',
+      };
+      localStorage.setItem(UI_STORAGE_KEYS.notificationEvents, JSON.stringify([existingEvent]));
+
+      const { result, es } = renderNotificationEvents();
+
+      act(() => {
+        es.dispatch(
+          'notification',
+          JSON.stringify({ ...JSON.parse(ticketReadyPayload()), replayed: true }),
+          'boot-1',
+        );
+      });
+
+      expect(result.current.events).toHaveLength(1);
+      expect(result.current.unreadCount).toBe(1);
+    });
+
+    it('remembers the last received notification event id', () => {
+      const { es } = renderNotificationEvents();
+
+      act(() => {
+        es.dispatch('notification', ticketReadyPayload(), 'boot-7');
+      });
+
+      expect(localStorage.getItem(UI_STORAGE_KEYS.notificationLastEventId)).toBe('boot-7');
+    });
+
+    it('does not remember the id of a notification that failed validation', () => {
+      localStorage.setItem(UI_STORAGE_KEYS.notificationLastEventId, 'boot-2');
+      const { result, es } = renderNotificationEvents();
+
+      act(() => {
+        es.dispatch('notification', JSON.stringify({ kind: 'future_kind', occurredAt: 'x' }), 'boot-3');
+      });
+
+      expect(result.current.events).toHaveLength(0);
+      expect(localStorage.getItem(UI_STORAGE_KEYS.notificationLastEventId)).toBe('boot-2');
+    });
+
+    it('keeps the stored id when a message carries no event id', () => {
+      localStorage.setItem(UI_STORAGE_KEYS.notificationLastEventId, 'boot-2');
+      const { es } = renderNotificationEvents();
+
+      act(() => {
+        es.dispatch('notification', ticketReadyPayload());
+      });
+
+      expect(localStorage.getItem(UI_STORAGE_KEYS.notificationLastEventId)).toBe('boot-2');
     });
   });
 

@@ -3,7 +3,9 @@ import {
   __resetSharedEventSourceForTests,
   acquireSharedEventSource,
   reconnectSharedEventSource,
+  SSE_STALE_AFTER_MS,
 } from './sseConnection';
+import { UI_STORAGE_KEYS } from '../uiPersistedState';
 
 class MockEventSource {
   static readonly CONNECTING = 0;
@@ -56,12 +58,104 @@ describe('sseConnection', () => {
   beforeEach(() => {
     MockEventSource.instances = [];
     __resetSharedEventSourceForTests();
+    localStorage.clear();
     vi.stubGlobal('EventSource', MockEventSource);
   });
 
   afterEach(() => {
     __resetSharedEventSourceForTests();
     vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  describe('reconnecting a frozen connection on return to the foreground (bdboard-3tw.161)', () => {
+    const T0 = 1_000_000;
+
+    function withClock(run: (setNow: (ms: number) => void) => void) {
+      let now = T0;
+      const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get');
+      visibilitySpy.mockReturnValue('visible');
+      try {
+        run((ms) => {
+          now = ms;
+        });
+      } finally {
+        nowSpy.mockRestore();
+        visibilitySpy.mockRestore();
+      }
+    }
+
+    function becomeVisible() {
+      document.dispatchEvent(new Event('visibilitychange'));
+    }
+
+    it('replaces an OPEN source that has been silent past the stale threshold', () => {
+      withClock((setNow) => {
+        const conn = acquireSharedEventSource();
+        const first = MockEventSource.instances[0]!;
+        first.simulateOpen();
+
+        setNow(T0 + SSE_STALE_AFTER_MS + 1);
+        becomeVisible();
+
+        expect(first.close).toHaveBeenCalled();
+        expect(MockEventSource.instances).toHaveLength(2);
+        conn.release();
+      });
+    });
+
+    it('keeps a source that received a ping recently', () => {
+      withClock((setNow) => {
+        const conn = acquireSharedEventSource();
+        const first = MockEventSource.instances[0]!;
+        first.simulateOpen();
+
+        setNow(T0 + SSE_STALE_AFTER_MS - 1000);
+        first.dispatch('ping');
+        setNow(T0 + SSE_STALE_AFTER_MS + 1);
+        becomeVisible();
+
+        expect(MockEventSource.instances).toHaveLength(1);
+        conn.release();
+      });
+    });
+
+    it('leaves a CONNECTING source to the browser retry', () => {
+      withClock((setNow) => {
+        const conn = acquireSharedEventSource();
+
+        setNow(T0 + SSE_STALE_AFTER_MS * 2);
+        becomeVisible();
+
+        expect(MockEventSource.instances).toHaveLength(1);
+        conn.release();
+      });
+    });
+
+    it('stops listening once the last consumer releases', () => {
+      withClock((setNow) => {
+        const conn = acquireSharedEventSource();
+        MockEventSource.instances[0]!.simulateOpen();
+        conn.release();
+
+        setNow(T0 + SSE_STALE_AFTER_MS * 2);
+        becomeVisible();
+
+        expect(MockEventSource.instances).toHaveLength(1);
+      });
+    });
+  });
+
+  it('passes the last seen notification id to the server when one is stored', () => {
+    localStorage.setItem(UI_STORAGE_KEYS.notificationLastEventId, 'boot 1/2');
+    const conn = acquireSharedEventSource();
+
+    expect(MockEventSource.instances[0]!.url).toBe(
+      `${window.location.origin}/api/events?lastEventId=boot%201%2F2`,
+    );
+
+    conn.release();
   });
 
   it('creates a single EventSource on first acquire', () => {
