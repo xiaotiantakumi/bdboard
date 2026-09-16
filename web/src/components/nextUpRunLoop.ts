@@ -1,3 +1,4 @@
+import type { QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchAgentRun, postTicketComment, startTicketRun } from '../api';
 import {
@@ -30,6 +31,15 @@ export interface NextUpLoopProgress {
  * 実行は通知が無いと再マウント・フォーカスまで履歴に出ない (bdboard-3tw.163)。
  */
 export type TicketRunsChangedListener = (ticketId: string) => void;
+
+/** 通知を受けて、そのチケットの実行履歴 (ticket-runs) を stale にするリスナーを作る。 */
+export function createTicketRunsInvalidator(
+  queryClient: Pick<QueryClient, 'invalidateQueries'>,
+): TicketRunsChangedListener {
+  return (ticketId) => {
+    void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
+  };
+}
 
 export interface NextUpRunLoopControllerOptions {
   onTicketRunsChanged?: TicketRunsChangedListener;
@@ -185,7 +195,10 @@ export async function runNextUpTicketLoop(options: {
   isStopRequested: () => boolean;
   onProgress: (progress: NextUpLoopProgress) => void;
   postComment?: (ticketId: string, text: string) => Promise<void>;
-  /** 実行の開始成功時と、実行が終端状態 (succeeded / failed / cancelled) に達した時に呼ぶ。 */
+  /**
+   * 開始要求の結果が出た時 (成功・失敗とも) と、実行が終端状態 (succeeded / failed /
+   * cancelled) に達した時に呼ぶ。
+   */
   onTicketRunsChanged?: TicketRunsChangedListener;
 }): Promise<NextUpLoopProgress> {
   const {
@@ -307,6 +320,9 @@ export async function runNextUpTicketLoop(options: {
       const response = await startTicketRun(ticketId);
       runId = response.runId;
     } catch (error) {
+      // 開始に失敗しても、サーバーは worktree の用意などで失敗した実行を failed として
+      // 記録していることがある (runStore.start が provision より前に走るため)。
+      notifyTicketRunsChanged(ticketId);
       progress.failedCount += 1;
       const failureReason = describeRunStartError(error);
       progress.currentTicketId = null;

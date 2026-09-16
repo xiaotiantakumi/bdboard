@@ -37,7 +37,10 @@ import { HygienePanel } from './components/HygienePanel';
 import { SettingsPanel } from './components/SettingsPanel';
 import { EventCenterPanel } from './components/EventCenterPanel';
 import { NextUpView } from './components/NextUpView';
-import { useNextUpRunLoopController } from './components/nextUpRunLoop';
+import {
+  createTicketRunsInvalidator,
+  useNextUpRunLoopController,
+} from './components/nextUpRunLoop';
 import { ThroughputStats } from './components/ThroughputStats';
 import { KeyboardShortcutsPanel } from './components/KeyboardShortcutsPanel';
 import { HelpPanel } from './components/HelpPanel';
@@ -172,9 +175,7 @@ export function App() {
   // 詳細パネルは自分で開始した実行しか追跡しないので、ループ由来の実行の開始・終了は
   // ここから ticket-runs に知らせる (bdboard-3tw.163)。
   const nextUpBatchRun = useNextUpRunLoopController({
-    onTicketRunsChanged: (ticketId) => {
-      void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
-    },
+    onTicketRunsChanged: createTicketRunsInvalidator(queryClient),
   });
   const [activityWindowDays, setActivityWindowDays] = usePersistedState(
     UI_STORAGE_KEYS.activityWindowDays,

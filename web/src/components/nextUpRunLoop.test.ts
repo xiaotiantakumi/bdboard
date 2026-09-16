@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query';
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRunDetailDto } from '../api';
@@ -8,6 +9,7 @@ import {
   NEXT_UP_LOOP_POLL_MAX_DELAY_MS,
   NEXT_UP_LOOP_POLL_MAX_FAILURES,
   buildConsecutiveFailureComment,
+  createTicketRunsInvalidator,
   describeConsecutiveFailureStop,
   nextUpLoopPollDelayMs,
   runNextUpTicketLoop,
@@ -772,7 +774,8 @@ describe('nextUpRunLoop', () => {
       },
     );
 
-    it('does not notify for a ticket whose run failed to start', async () => {
+    // サーバーは開始失敗でも failed の実行記録を残すことがあるので、開始失敗も通知する。
+    it('notifies once for a ticket whose run failed to start', async () => {
       const onTicketRunsChanged = vi.fn();
       mockStartTicketRun.mockRejectedValueOnce(new Error('start failed'));
       resolveRunsWith('succeeded');
@@ -786,7 +789,28 @@ describe('nextUpRunLoop', () => {
       await finishLoopWithTimers(loopPromise);
       await loopPromise;
 
-      expect(onTicketRunsChanged.mock.calls).toEqual([['ticket-2'], ['ticket-2']]);
+      expect(onTicketRunsChanged.mock.calls).toEqual([
+        ['ticket-1'],
+        ['ticket-2'],
+        ['ticket-2'],
+      ]);
+    });
+
+    it('only notifies the start when polling gives up before the run ends', async () => {
+      const onTicketRunsChanged = vi.fn();
+      mockFetchAgentRun.mockRejectedValue(new Error('persistent poll error'));
+
+      const loopPromise = runNextUpTicketLoop({
+        ticketIds: ['ticket-1', 'ticket-2'],
+        isStopRequested: () => false,
+        onProgress: () => {},
+        onTicketRunsChanged,
+      });
+      await finishLoopWithTimers(loopPromise);
+      const result = await loopPromise;
+
+      expect(result.endReason).toBe('poll_failed');
+      expect(onTicketRunsChanged.mock.calls).toEqual([['ticket-1']]);
     });
 
     it('only notifies the start when the loop stops waiting before the run ends', async () => {
@@ -828,6 +852,24 @@ describe('nextUpRunLoop', () => {
       expect(result.completedCount).toBe(2);
       expect(result.endReason).toBe('completed');
       expect(onTicketRunsChanged).toHaveBeenCalledTimes(4);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        'Failed to notify ticket runs change',
+        expect.any(Error),
+      );
+    });
+
+    it('invalidates only the notified ticket runs query', () => {
+      const queryClient = new QueryClient();
+      queryClient.setQueryData(['ticket-runs', 'ticket-1'], []);
+      queryClient.setQueryData(['ticket-runs', 'ticket-2'], []);
+      queryClient.setQueryData(['ticket', 'ticket-1'], {});
+
+      createTicketRunsInvalidator(queryClient)('ticket-1');
+
+      expect(queryClient.getQueryState(['ticket-runs', 'ticket-1'])?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(['ticket-runs', 'ticket-2'])?.isInvalidated).toBe(false);
+      expect(queryClient.getQueryState(['ticket', 'ticket-1'])?.isInvalidated).toBe(false);
+      queryClient.clear();
     });
 
     it('routes the controller loop through the latest listener passed to the hook', async () => {
