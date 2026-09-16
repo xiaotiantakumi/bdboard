@@ -17,6 +17,7 @@ import {
   isLaneStatusMismatch,
   postChatMessage,
   postChatMessageStream,
+  ChatStreamEndedWithoutResultError,
   postTicketDecision,
   putScanRootsConfig,
   saveAgentRunConfig,
@@ -161,6 +162,23 @@ describe('chat thread API', () => {
       message: 'stream image',
       images,
     });
+  });
+
+  it('postChatMessageStream rejects with a typed error when the stream ends without done (bdboard-zlzo)', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('event: delta\ndata: {"text":"AB"}\n\n'));
+        controller.close();
+      },
+    })))));
+    const onDelta = vi.fn();
+    const promise = postChatMessageStream({ projectId: 'p', message: 'hello' }, { onDelta });
+    await expect(promise).rejects.toBeInstanceOf(ChatStreamEndedWithoutResultError);
+    await expect(promise).rejects.toMatchObject({
+      name: 'ChatStreamEndedWithoutResultError',
+      message: 'chat stream ended unexpectedly',
+    });
+    expect(onDelta.mock.calls).toEqual([['AB']]);
   });
 
   it('postChatMessageStream converts stream errors to ApiError', async () => {

@@ -20,6 +20,7 @@ import {
   fetchChatSessionMessages,
   postChatMessage,
   postChatMessageStream,
+  ChatStreamEndedWithoutResultError,
   type ChatAgentDto,
   type ChatImageMimeType,
   type ChatImagePayload,
@@ -396,6 +397,10 @@ function compareThreadsNewestFirst(
   return threadRecency(b) - threadRecency(a);
 }
 
+// bdboard-zlzo: 配信停止後にサーバー側でもターンの完了を確認できなかったときの文言。
+const CHAT_STREAM_DETACHED_FAILED_MESSAGE =
+  '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。';
+
 export function ChatPanel({
   projects,
   initialProjectId,
@@ -569,6 +574,17 @@ export function ChatPanel({
   // 取り直しが進行中のスレッド。state を使うと、印を外した瞬間に上の effect が
   // 張り直されて自分の fetch を捨てるので、ここだけは ref で持つ。
   const unresolvedRefetchRef = useRef<Set<string>>(new Set());
+  // bdboard-zlzo: done/error なしで配信が止まった送信。ターンはサーバー側で続いて
+  // いるはずなので、その場ではエラーにせず turn-status 回収に任せる。サーバーは
+  // recordCompletedTurn を済ませてからロックを解放するため、完走したターンは
+  // processing → completed と見え、間に idle を挟まない。回収前に idle が見えたら
+  // ターンは完走しなかった (エージェント失敗など、配信停止後はサーバーが error を
+  // 送らない) ので、fail() で通常の送信失敗 (エラー表示と入力復元) に戻す。
+  const detachedStreamSendRef = useRef<{
+    projectId: string;
+    sessionId: string | undefined;
+    fail: () => void;
+  } | null>(null);
   const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
     if (sessionId === undefined) return;
     setUnresolvedSends((prev) => (prev[sessionId] === true ? prev : { ...prev, [sessionId]: true }));
@@ -1150,6 +1166,14 @@ export function ChatPanel({
         const status = await fetchChatTurnStatus(selectedProjectId);
         if (cancelled) return;
         setBackgroundTurnStatus(status);
+        if (status.state === 'idle') {
+          const detached = detachedStreamSendRef.current;
+          if (detached !== null && detached.projectId === selectedProjectId) {
+            detachedStreamSendRef.current = null;
+            detached.fail();
+          }
+          return;
+        }
         if (status.state === 'processing') {
           pollTimer = setTimeout(() => {
             void checkTurnStatus();
@@ -1161,6 +1185,14 @@ export function ChatPanel({
         // 回り続けないようにする (bdboard-3tw.156)。
         if (recoveredSessionIds.has(status.sessionId)) return;
         recoveredSessionIds.add(status.sessionId);
+        const detached = detachedStreamSendRef.current;
+        if (
+          detached !== null &&
+          detached.projectId === selectedProjectId &&
+          (detached.sessionId === undefined || detached.sessionId === status.sessionId)
+        ) {
+          detachedStreamSendRef.current = null;
+        }
 
         // A detached turn can create a session whose id was unknown when the tab closed.
         // Invalidate older history/thread-list requests before hydrating the server-owned
@@ -2174,6 +2206,8 @@ export function ChatPanel({
       // 書き込める手段は実際には存在せず、このガードは現状到達しない防御的
       // コードである。将来 disabled 制御を緩める変更が入ったときの保険として
       // 残す(ガードとそれを固定する回帰テストは維持する)。
+      // bdboard-zlzo: 配信停止後の失敗判定 (detachedStreamSendRef の fail) は
+      // isSending が落ちた後に非同期で届くため、このガードへ実際に到達する。
       //
       // SF1(Opus レビュー): ここで draftSeedTextRef.current[convKey] を delete
       // しては**いけない**。104.17 の isUserEdit は「ユーザーが書いた本文を
@@ -2324,6 +2358,15 @@ export function ChatPanel({
       setBackgroundTurnStatus({ state: 'idle' });
       setIsSending(true);
       const sendKey = currentConversationKey;
+      // bdboard-zlzo: 新しいターンが完走したならサーバーは空いていたので、前の配信停止分の
+      // 判定は捨てる (失われるのは失敗表示だけ)。送信の開始時点では捨てない —
+      // 前のターンが続いている間の再送は 409 で弾かれ、判定を失うと、その後に前の
+      // ターンが失敗しても何も表示されなくなる。
+      const settleEarlierDetachedSend = (): void => {
+        if (detachedStreamSendRef.current?.projectId === selectedProjectId) {
+          detachedStreamSendRef.current = null;
+        }
+      };
       const requestController = new AbortController();
       requestAbortControllerRef.current = requestController;
 
@@ -2344,6 +2387,7 @@ export function ChatPanel({
               requestController.signal,
             );
             applyChatSuccess(sendKey, text, result);
+            settleEarlierDetachedSend();
           } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') {
               // unmount / スレッド切替 / プロジェクト切替由来の意図的 abort。
@@ -2352,6 +2396,27 @@ export function ChatPanel({
               // generation で明示的に再起動する。
               setTurnRecoveryGeneration((generation) => generation + 1);
               // 回収が取りこぼしたときの安全網 (bdboard-3tw.156)。
+              markUnresolvedSend(sessionId);
+            } else if (error instanceof ChatStreamEndedWithoutResultError) {
+              // bdboard-zlzo: サーバーが done/error を送らずに配信だけを止めた
+              // (SSE キュー上限超過など)。ターンはサーバー側で完走・保存されるので、
+              // 送信失敗として扱うとエラー表示と入力復元で再送 → 重複ターンを招く。
+              // AbortError と同じく turn-status 回収へ流し、取りこぼしの安全網も張る。
+              // 回収前に idle が見えたら完走しなかったので、そこで送信失敗に戻す。
+              const detachedError = error;
+              detachedStreamSendRef.current = {
+                projectId: selectedProjectId,
+                sessionId,
+                fail: () =>
+                  applyChatError(
+                    sendKey,
+                    sentRawText,
+                    sentAttachments,
+                    new Error(CHAT_STREAM_DETACHED_FAILED_MESSAGE, { cause: detachedError }),
+                    sentAt,
+                  ),
+              };
+              setTurnRecoveryGeneration((generation) => generation + 1);
               markUnresolvedSend(sessionId);
             } else {
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
@@ -2363,6 +2428,7 @@ export function ChatPanel({
           try {
             const result = await postChatMessage(messagePayload, requestController.signal);
             applyChatSuccess(sendKey, text, result);
+            settleEarlierDetachedSend();
           } catch (error) {
             if (error instanceof DOMException && error.name === 'AbortError') {
               setTurnRecoveryGeneration((generation) => generation + 1);

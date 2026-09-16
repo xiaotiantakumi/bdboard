@@ -1627,6 +1627,20 @@ export function postChatMessage(
   });
 }
 
+/**
+ * `done` / `error` のどちらも受け取らないままチャットストリームが正常終了したことを表す。
+ * サーバーは SSE キュー上限超過 (CHAT_STREAM_QUEUE_MAX_SIZE, bdboard-zyr3) などで配信
+ * だけを止めることがあり、その場合もターン自体はサーバー側で完走・保存され、
+ * /api/chat/turn-status から回収できる。呼び出し側はメッセージ文字列ではなく
+ * この型で判別し、送信失敗ではなくターン回収経路へ流す (bdboard-zlzo)。
+ */
+export class ChatStreamEndedWithoutResultError extends Error {
+  constructor() {
+    super('chat stream ended unexpectedly');
+    this.name = 'ChatStreamEndedWithoutResultError';
+  }
+}
+
 export function postChatMessageStream(
   body: ChatMessageRequest,
   callbacks: { onDelta: (text: string) => void },
@@ -1707,7 +1721,7 @@ export function postChatMessageStream(
       // 停止にもつながる副次効果がある。
       reader.cancel().catch(() => {});
     }
-    if (result === undefined) throw new Error('chat stream ended unexpectedly');
+    if (result === undefined) throw new ChatStreamEndedWithoutResultError();
     return result;
   })();
 }

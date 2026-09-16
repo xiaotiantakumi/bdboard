@@ -3064,6 +3064,319 @@ describe('ChatPanel', () => {
     });
   });
 
+  it('recovers a completed turn instead of showing an error when the stream ends without done (bdboard-zlzo)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    // サーバーは SSE キュー上限超過で done/error を送らずに配信だけを止め、ターンは
+    // 裏で完走・保存する。ストリーム終了前の turn-status は idle、終了後は processing
+    // を 1 回返してから completed になる。
+    let streamClosed = false;
+    let statusCallsAfterClose = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      statusCallsAfterClose += 1;
+      if (statusCallsAfterClose === 1) {
+        return { state: 'processing', message: 'overflow question', agentId: 'claude' };
+      }
+      return {
+        state: 'completed',
+        sessionId: 'sess-overflow',
+        agentId: 'claude',
+        completedAt: '2026-09-13T08:00:10.000Z',
+      };
+    });
+    fetchChatThreadsMock.mockImplementation(async () =>
+      streamClosed
+        ? [
+            {
+              sessionId: 'sess-overflow',
+              agentId: 'claude',
+              title: 'overflow question',
+              pinned: false,
+              updatedAt: '2026-09-13T08:00:10.000Z',
+            },
+          ]
+        : [],
+    );
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/chat/sessions/sess-overflow/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-overflow',
+          agentId: 'claude',
+          messages: [
+            { role: 'user', content: 'overflow question', createdAt: '2026-09-13T08:00:00.000Z' },
+            {
+              role: 'assistant',
+              content: 'full reply recovered from turn-status',
+              createdAt: '2026-09-13T08:00:10.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'overflow question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messages = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('partial');
+    });
+
+    releaseClose();
+
+    expect(
+      await screen.findByText('full reply recovered from turn-status', {}, { timeout: 2_500 }),
+    ).toBeInTheDocument();
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-overflow');
+    expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
+    // 送信失敗扱いにしない: エラー吹き出しも入力欄への本文復元も起きない。
+    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(0);
+    expect(screen.queryByText('chat stream ended unexpectedly')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+  });
+
+  it('falls back to a send failure when turn-status turns idle without recovering the detached turn (bdboard-zlzo)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    // 配信停止後にエージェントが失敗した: サーバーは error を送れず、completed も
+    // 記録されないので、turn-status は processing のあと idle になる。
+    let streamClosed = false;
+    let statusCallsAfterClose = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      statusCallsAfterClose += 1;
+      return statusCallsAfterClose === 1
+        ? { state: 'processing', message: 'doomed question', agentId: 'claude' }
+        : { state: 'idle' };
+    });
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'doomed question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+    });
+
+    releaseClose();
+
+    const errorText = await screen.findByText(
+      '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      {},
+      { timeout: 2_500 },
+    );
+    expect(errorText.closest('.chat-message')).toHaveClass('chat-message-error');
+    expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
+    expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
+  });
+
+  it('recovers a detached turn on an existing thread without duplicating the user message (bdboard-zlzo)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    let streamClosed = false;
+    let statusCallsAfterClose = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      statusCallsAfterClose += 1;
+      if (statusCallsAfterClose === 1) {
+        return { state: 'processing', message: 'overflow question', agentId: 'claude', sessionId: 'sess-1' };
+      }
+      return {
+        state: 'completed',
+        sessionId: 'sess-1',
+        agentId: 'claude',
+        completedAt: '2026-09-13T08:00:10.000Z',
+      };
+    });
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          // 実サーバーは finalize で初めて保存するので、履歴が伸びるのは completed 以降。
+          messages: statusCallsAfterClose >= 2
+            ? [
+                { role: 'user', content: 'earlier question', createdAt: '2026-09-13T07:00:00.000Z' },
+                { role: 'assistant', content: 'earlier answer', createdAt: '2026-09-13T07:00:05.000Z' },
+                { role: 'user', content: 'overflow question', createdAt: '2026-09-13T08:00:00.000Z' },
+                { role: 'assistant', content: 'recovered answer for sess-1', createdAt: '2026-09-13T08:00:10.000Z' },
+              ]
+            : [
+                { role: 'user', content: 'earlier question', createdAt: '2026-09-13T07:00:00.000Z' },
+                { role: 'assistant', content: 'earlier answer', createdAt: '2026-09-13T07:00:05.000Z' },
+              ],
+        });
+      }
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        expect(JSON.parse(init.body as string)).toMatchObject({ sessionId: 'sess-1' });
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByText('earlier answer');
+    await user.type(screen.getByLabelText('メッセージ'), 'overflow question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+    });
+
+    releaseClose();
+
+    expect(
+      await screen.findByText('recovered answer for sess-1', {}, { timeout: 2_500 }),
+    ).toBeInTheDocument();
+    // turn-status の completed 回収 (= 配信停止分の判定の解消) と ACK まで待ってから、
+    // エラーに落ちていないことを確かめる。
+    await waitFor(
+      () => expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-1'),
+      { timeout: 2_500 },
+    );
+    const log = screen.getByRole('log');
+    expect(within(log).getAllByText('overflow question')).toHaveLength(1);
+    expect(log.querySelectorAll('.chat-message-error')).toHaveLength(0);
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+  });
+
+  it('keeps the detached-send failure check across a resend rejected with 409 (bdboard-zlzo)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    // 配信停止後、前のターンがまだ続いている間に再送して 409 で弾かれ、その後に
+    // 前のターンが失敗した (turn-status が idle になった)。
+    let streamClosed = false;
+    let resendRejected = false;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      return resendRejected
+        ? { state: 'idle' }
+        : { state: 'processing', message: 'doomed question', agentId: 'claude' };
+    });
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    let streamPosts = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        streamPosts += 1;
+        if (streamPosts === 1) {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+                );
+                await closeGate;
+                streamClosed = true;
+                controller.close();
+              },
+            }),
+          );
+        }
+        resendRejected = true;
+        return new Response(JSON.stringify({ error: 'chat is busy for this project' }), {
+          status: 409,
+          statusText: 'Conflict',
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'doomed question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+    });
+    releaseClose();
+    await waitFor(() => {
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
+      expect(screen.getByLabelText('メッセージ')).not.toBeDisabled();
+    });
+
+    await user.type(screen.getByLabelText('メッセージ'), 'second try');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => expect(resendRejected).toBe(true));
+
+    expect(
+      await screen.findByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+        {},
+        { timeout: 2_500 },
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(2);
+    // 409 で戻った再送文を、後から届いた前の送信の復元で上書きしない。
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('second try');
+  });
+
   describe('streaming abort on unmount / conversation switch (bdboard-7st)', () => {
     function makeGatedStreamingFetchMock(
       fetchMock: ReturnType<typeof vi.fn>,
