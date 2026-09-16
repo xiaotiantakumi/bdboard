@@ -1,6 +1,6 @@
 ---
 name: bdboard-server-ops
-description: bdboard の常時稼働ローカルサーバー (メインチェックアウト・BDBOARD_PORT 既定 8787) の起動確認・起動・再起動・停止判断が要るときに読む。ヘルスチェックが 000 だった / リスナーは居るのに応答しない / マージ後にサーバーを作り直す / worktree から preview_start・npm run dev を打ちたくなった / cloudflared トンネルが同居している、のいずれかに当たったらこの skill の手順に従う。pkill・killall によるパターンマッチ kill の禁止理由もここ。
+description: bdboard の常時稼働ローカルサーバー (メインチェックアウト・BDBOARD_PORT 既定 8787) の起動確認・起動・再起動・停止判断が要るときに読む。ヘルスチェックが 000 だった / リスナーは居るのに応答しない / マージ後にサーバーを作り直す / worktree から preview_start・npm run dev を打ちたくなった / web だけ変わったマージで再起動を省きたくなった / 再起動後の health 確認をループで待つ / cloudflared トンネルが同居している、のいずれかに当たったらこの skill の手順に従う。pkill・killall によるパターンマッチ kill の禁止理由もここ。
 ---
 
 # bdboard-server-ops — 常時稼働ローカルサーバーの運用
@@ -120,9 +120,11 @@ worktree-cwd case above, where every attempt reproduces (2/2).
 - **After merging a PR into main** (right after the fast-forward in the Git
   Workflow cleanup): `git pull --ff-only` → `npm install` /
   `npm --prefix web install` if lockfiles changed → `npm run build:web` →
-  restart the server → re-check with the status-code command above.
+  restart the server → wait for health as described in the next section.
   `npm run start` runs tsx without watch and serves a static `web/dist`, so
   neither server nor UI changes are picked up without this rebuild+restart.
+  **This includes merges that change only `web/`** — see
+  "web だけの変更でも再起動が要る" below for the measurement.
   - **A `git pull --ff-only` here can be blocked by an uncommitted local
     diff to `.claude/bdboard-packs.json`** (measured 2026-08-29, bdboard-8okb):
     `Your local changes to the following files would be overwritten by
@@ -136,6 +138,139 @@ worktree-cwd case above, where every attempt reproduces (2/2).
     and retry the pull — the incoming commit's value supersedes it. If the
     diff looks like anything other than that, stop and investigate instead
     of discarding.
+
+## 再起動後の health 待ち
+
+Two separate traps sit between "kill" and "healthy": a wait with no delay
+fails too early, and a wait that only looks at the status code succeeds too
+early. The procedure below closes both. Run each step as its own Bash call.
+
+0. **Do the cloudflared check first** — `pgrep -x cloudflared`, see
+   "再起動の前に: cloudflared トンネルの同居確認" below. Warn the user
+   before step 1 if a tunnel is running.
+
+1. **Record the old PID, then kill it** (the PID, never a pattern):
+
+   ```bash
+   lsof -nP -iTCP:8787 -sTCP:LISTEN -t   # exactly one PID expected; note it as OLD
+   kill <OLD>
+   ```
+
+2. **Wait until the old process is gone** — `kill -0 <OLD>` must *fail*
+   before you start anything. On SIGTERM, `src/interface/http/graceful-shutdown.ts`
+   runs `drain()` (watcher / tunnel / cache cleanup) first and only calls
+   `server.close()` after it resolves, so for up to
+   `DEFAULT_SHUTDOWN_TIMEOUT_MS` (5000 ms, overridable with
+   `BDBOARD_SHUTDOWN_TIMEOUT_MS`) the old process is **still listening and
+   still answers `/api/health` with 200**. Measured 2026-09-13 after
+   merging #466: a health poll right after the kill got 200 from the dying
+   process and reported success; `lsof` then showed no listener at all, and
+   the new PID only started listening about 5 s later. Waiting here also
+   keeps the old process's shutdown lines out of the new log: it keeps
+   writing to the same file after the new start has truncated it.
+
+   Check with `kill -0 <OLD> 2>/dev/null; echo $?` — `0` means still alive,
+   `1` means gone. Repeat it as separate Bash calls rather than a foreground
+   `sleep` loop (the agent Bash tool blocks foreground `sleep`). Budget
+   about 10 s: the shutdown timeout plus margin (the startup log prints the
+   effective value as `Shutdown timeout: <N>ms`; `.env` may override it).
+   Past that budget, `kill -9 <OLD>`. Since the timeout path
+   (bdboard-3tw.91) calls `closeAllConnections()` and exits, a process that
+   outlives it is not the SSE drain case — suspect a blocked event loop and
+   read the log after the `kill -9`.
+
+3. **Start** the server (from the main checkout, as above). If the old
+   server had been started with `preview_start`, run `preview_stop` first
+   so the stale serverId does not make `preview_start` think it is already
+   running.
+
+4. **Wait for health with a real delay between attempts**, then confirm the
+   listener is a *new* PID:
+
+   ```bash
+   curl -sS -o /dev/null -w '%{http_code}\n' \
+     --connect-timeout 2 --max-time 5 \
+     --retry 60 --retry-delay 1 --retry-connrefused --retry-max-time 90 \
+     http://localhost:8787/api/health
+   lsof -nP -iTCP:8787 -sTCP:LISTEN -t   # must differ from OLD
+   ```
+
+   Healthy means **200 *and* a listening PID different from OLD**; a 200
+   with OLD still listening means step 2 was skipped.
+
+   - **Why the delay**: a refused connection makes curl return `000` in
+     **0 ms**, so a retry loop with no wait burns through all its attempts
+     before the server has even bound the port, reports `000`, and invites
+     a second `npm run start` (happened 2026-09-05: a 40-attempt loop
+     finished instantly while the server came up fine seconds later; the
+     second process died on `EADDRINUSE`, but only after truncating
+     `/tmp/bdboard-server.log`).
+   - **What**: the status code of `/api/health`, judged exactly as in the
+     session-start section above (200 healthy; 401/503 listener present;
+     `000` down). curl prints only the final attempt's code on stdout —
+     judge by that last 3-digit line alone. A `curl: (7) Failed to connect`
+     line on stderr for each refused attempt is normal. `--retry` also
+     retries HTTP 408/429/500/502/503/504 (`man curl`), so where the
+     request is answered `503` it waits out the budget before printing
+     `503`; `401` is not retried and returns at once.
+   - **Per-attempt cap**: `--max-time 5` stops a listener that accepts but
+     never answers from hanging curl until the tool timeout (which would
+     print nothing and look like "down"). A timeout counts as transient,
+     so it is retried; `--retry-max-time 90` bounds the whole wait.
+   - **Interval**: 1 second (`--retry-delay 1`). `--retry-connrefused` is
+     what makes a refused connection count as retryable; without it curl
+     gives up on the first `000`. Measured on a closed port: `--retry 3`
+     returns after 3 s, no retry returns after 0 s.
+   - **How long**: up to 60 seconds (`--retry 60`). A cold start measured
+     **15 s** to the first 200 on 2026-09-13 with parallel verify runs
+     loading the machine (bdboard-pkr6.22.5).
+   - **Still `000` after 60 s**: read the server log first, then count
+     listeners with `lsof -nP -iTCP:8787 -sTCP:LISTEN -t | wc -l`. Do not
+     start another server on a guess, and do not reach for a pattern-match
+     kill if you suspect a double start — pick the PID from that `lsof`.
+
+## web だけの変更でも再起動が要る
+
+- **A web-only merge needs `npm run build:web` *and* a restart.** Rebuilding
+  without restarting leaves the server half-updated, and the half that stays
+  stale breaks the page rather than showing an old one. Measured
+  2026-09-13 in a worktree on test port 18787 (bdboard-pkr6.22.5): build,
+  start, then add a probe line to `web/src/main.tsx` and rebuild, which
+  changed the JS asset from `index-5wcYSvcy.js` to `index-BRjlTLQz.js`
+  (CSS `index-B9YzvpfB.css` unchanged).
+
+  | Request | after rebuild, no restart | after restart |
+  | --- | --- | --- |
+  | `/`, `/index.html`, `/?probe=1` | new `index-BRjlTLQz.js` | new |
+  | `/pkr6-probe/deep/link` (any non-API path with no file in `web/dist`) | **old `index-5wcYSvcy.js`** | new |
+  | `/assets/index-5wcYSvcy.js` (the old asset) | **200 `text/html`** (index HTML) | still `200 text/html`, but no longer referenced |
+  | `/build-meta.json` | new `builtAt` | new |
+
+  The split comes from `src/main.ts`: `serveStatic` reads `web/dist` from
+  disk on every request, so `/`, `/index.html` and every real file are
+  fresh; every other non-API path falls through to the SPA fallback, which
+  returns `spaIndexHtml` — `web/dist/index.html` read **once at startup**.
+  And because `vite build` empties `web/dist` first, the old asset that
+  stale HTML points to no longer exists, so its request *also* falls
+  through to the fallback and comes back as `200 text/html`. A browser
+  refuses to run a `text/html` response as a module script, so a non-root
+  URL should render blank (inferred from that MIME mismatch; the
+  measurement used curl, not a browser) — while `/api/health` and `/` both
+  look perfect.
+
+- **Why this was believed unnecessary**: the evidence was that
+  `/build-meta.json` served the new sha after `build:web` alone. That
+  file goes through `serveStatic`, i.e. the half that *is* fresh, so it
+  cannot show whether the startup-cached HTML is stale. Neither can a
+  check of `/`. Docs-only merges are not exempt either:
+  `src/infrastructure/chat/help-content.ts` reads `docs/help-content.json`
+  once at module load for the chat system prompt, so a help change reaches
+  chat only after a restart.
+- **Why normal use rarely hits it**: the board's deep links are hash-based
+  (`/#…`), so the browser requests `/`. Any URL with a real path — typed by
+  hand, an old bookmark, a link from elsewhere — still gets the stale HTML.
+  That is enough to keep the rule simple: restart after every merge, and
+  let SSE clients reconnect.
 
 ## 再起動の前に: cloudflared トンネルの同居確認
 
