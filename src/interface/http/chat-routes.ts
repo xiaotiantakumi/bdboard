@@ -744,9 +744,9 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           // abort() cancels the stream) — it could only ever reach a client in the
           // narrower case of a fast reader hitting a synchronous delta-burst overflow.
           // web never consumed it either way (only delta/done/error are handled).
-          // turn-status (below, via recordFailedTurn) remains the reliable signal a
-          // disconnected client actually relies on to learn a turn failed; this removal
-          // does not touch that path.
+          // GET /api/chat/turn-status (recordFailedTurn below records this turn as
+          // failed) remains the reliable signal a disconnected client actually relies
+          // on to learn a turn failed; this removal does not touch that path.
           cleanup();
           stream.abort();
           return;

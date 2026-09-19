@@ -882,6 +882,45 @@ describe('POST /api/chat/message/stream', () => {
     expect(Object.keys(JSON.parse(errorEvents[0]![1]!)).sort()).toEqual(['code', 'detail', 'error']);
   });
 
+  it('stops delivery on queue overflow even for a client actively draining the stream (bdboard-rrvr)', async () => {
+    // Unlike the "stalled client" overflow test above, nothing here artificially keeps
+    // the response body unread: res.text() actively drains the stream as it arrives, so
+    // this exercises the overflow-while-actively-reading regime separately from the
+    // overflow-while-stalled regime (bdboard-rrvr removed the 'detached' SSE event this
+    // test used to assert on; the surrounding delivery-stop behavior it also covered is
+    // kept here so that regime isn't left with only the stalled-client test).
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        for (let index = 0; index <= CHAT_STREAM_QUEUE_MAX_SIZE; index += 1) {
+          onDelta({ text: `burst-${index}` });
+        }
+        return { reply: 'final reply', sessionId: '550e8400-e29b-41d4-a716-446655440091', agentId: 'test-agent', failedTools: [] };
+      }),
+    });
+    const app = createApp({
+      agent: streamingAgent,
+      cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await app.request('/api/chat/message/stream', withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+      }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      // Delivery stopped at the overflow: the turn's own 'done' never reaches this
+      // client (it still finalizes server-side; that is covered by the existing
+      // "stops delivery..." stalled-client test above).
+      expect(text).not.toContain('event: done');
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('per-client queue limit'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
   it('reports a failed turn via turn-status and clears it on ack, alongside the SSE error event a connected client already sees (bdboard-3tw.165)', async () => {
     const sessionId = '550e8400-e29b-41d4-a716-446655440092';
     const streamingAgent = createFakeAgent({
