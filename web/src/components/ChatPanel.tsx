@@ -28,6 +28,7 @@ import {
   type ChatMessageRequest,
   type ProjectDto,
   type ChatThreadDto,
+  type ChatSessionMessagesDto,
   type ChatTurnStatusDto,
   type SessionTailMessageDto,
 } from '../api';
@@ -113,6 +114,17 @@ type ChatAttachment = ChatMessageImage & {
 // 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
 // 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
 const BOTTOM_STICK_THRESHOLD_PX = 48;
+
+// bdboard-3tw.164: turn-status の取得が一時的に失敗しても (ネットワークエラー /
+// 一時的な 5xx 等) ポーリングを止めずに再試行するためのバックオフ表。要素数が
+// そのまま再試行回数の上限になる (この配列なら5回)。値を使い切ってもなお失敗が
+// 続く場合はこのポーリング自体を諦める — このポーリングは「取れれば儲けもの」の
+// 付加的な回収経路であり、無限リトライでサーバーを叩き続けるより安全側に倒す。
+// 送信元スレッドの sessionId が既知なら (=新規スレッドの最初の送信でなければ)
+// unresolvedSends 経由の履歴再取得安全網 (bdboard-3tw.156) がスレッド閲覧時に
+// 拾えるが、sessionId 未確定の新規スレッドはこの安全網の対象外 (markUnresolvedSend
+// は sessionId undefined を no-op で無視する) — 諦めた場合そちらは回収されない。
+const TURN_STATUS_POLL_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 8_000];
 
 const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
 const CHAT_IMAGE_MAX_COUNT = 4;
@@ -1160,11 +1172,16 @@ export function ChatPanel({
     setBackgroundTurnProjectId(selectedProjectId);
     setBackgroundTurnStatus({ state: 'idle' });
     const recoveredSessionIds = new Set<string>();
+    // bdboard-3tw.164: 連続失敗回数。fetchChatTurnStatus が一度でも成功したら
+    // (idle/processing/completed いずれでも) 0 へ戻す — 「1回目が失敗、2回目で
+    // completed」のように失敗が連続しなければ上限を消費しない。
+    let consecutiveFailures = 0;
 
     const checkTurnStatus = async (): Promise<void> => {
       try {
         const status = await fetchChatTurnStatus(selectedProjectId);
         if (cancelled) return;
+        consecutiveFailures = 0;
         setBackgroundTurnStatus(status);
         if (status.state === 'idle') {
           const detached = detachedStreamSendRef.current;
@@ -1200,10 +1217,25 @@ export function ChatPanel({
         historyRequestIdRef.current += 1;
         setLoadingHistoryFor(null);
         const recoveryThreadRequestId = ++threadListRequestIdRef.current;
-        const [threads, payload] = await Promise.all([
-          fetchChatThreads(selectedProjectId),
-          fetchChatSessionMessages(status.sessionId, selectedProjectId),
-        ]);
+        let threads: ChatThreadDto[];
+        let payload: ChatSessionMessagesDto;
+        try {
+          [threads, payload] = await Promise.all([
+            fetchChatThreads(selectedProjectId),
+            fetchChatSessionMessages(status.sessionId, selectedProjectId),
+          ]);
+        } catch (hydrationError) {
+          // bdboard-3tw.164 (Opus レビュー指摘): ここで投げると外側の catch の
+          // retry/backoff に乗るが、上の重複防止印 (recoveredSessionIds、
+          // bdboard-3tw.156) を外さないと、再試行のたびに fetchChatTurnStatus は
+          // 同じ completed を返すだけで「同じ1件を返し続けている」と誤認され、
+          // ハイドレーションを二度と試みないまま再試行予算を空費してしまう。
+          // ここでの失敗は「同じ1件を返し続けている」のではなく取得そのものの
+          // 一時的な失敗なので、印を外して再試行時にもう一度ハイドレーションを
+          // 試みられるようにする。
+          recoveredSessionIds.delete(status.sessionId);
+          throw hydrationError;
+        }
         if (
           cancelled ||
           recoveryThreadRequestId !== threadListRequestIdRef.current
@@ -1265,7 +1297,29 @@ export function ChatPanel({
         // ことがあるので、掃けるまで聞き直す (bdboard-3tw.156)。
         await checkTurnStatus();
       } catch {
-        // Status recovery is additive. Ordinary thread/history loading remains usable.
+        // bdboard-3tw.164: unmount / スレッド切替 / プロジェクト切替による中断は
+        // 従来どおり即座に止める (再試行しない)。cancelled はこの effect の
+        // cleanup でだけ立つので、ここでの失敗はネットワークエラーや一時的な
+        // 5xx 等の実際の取得失敗に限られる。
+        if (cancelled) return;
+        consecutiveFailures += 1;
+        const backoffMs =
+          TURN_STATUS_POLL_RETRY_BACKOFF_MS[consecutiveFailures - 1];
+        if (backoffMs === undefined) {
+          // 再試行の上限に達した。sessionId が既知の送信元は既に
+          // markUnresolvedSend 済みで、unresolvedSends 経由の安全網
+          // (bdboard-3tw.156) がスレッド閲覧時に取りこぼしを拾えるが、
+          // sessionId 未確定の新規スレッドはこの安全網の対象外 (上の定数の
+          // コメント参照)。Status recovery is additive; ordinary thread/history
+          // loading remains usable either way.
+          console.warn(
+            `chat turn-status polling gave up after ${TURN_STATUS_POLL_RETRY_BACKOFF_MS.length} consecutive failures`,
+          );
+          return;
+        }
+        pollTimer = setTimeout(() => {
+          void checkTurnStatus();
+        }, backoffMs);
       }
     };
 
