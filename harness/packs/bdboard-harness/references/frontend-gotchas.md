@@ -80,3 +80,49 @@ npm run preview -- --port 4173
 `vite preview` は `vite.config.ts` の `server.proxy`（`/api` → バックエンド）を
 引き継ぐので、`/api/health` 等が 200 で返るか確認してからブラウザで再現テスト
 すれば、dev server 特有のノイズを排除した状態で検証できる。
+
+## 複数マウントされる hook で module-scope の安定した関数参照を addEventListener に渡すと、重複登録されない
+
+症状: 同じイベントリスナーを複数コンポーネント（同じ hook の複数インスタンス）が
+それぞれ `addEventListener` で登録しているつもりが、実際には1つしか登録されて
+いない。最初にマウント解除されたコンポーネントの `removeEventListener` が、
+まだマウントされている他コンポーネント分も含めて全員のリスナーを道連れに消す
+（実例: `useLaneStripHeightVar`、bdboard-1n0r / PR #319）。
+
+原因: DOM 仕様の「同一の `(type, listener, capture)` の組は重複登録されない」
+という規則。`useCallback` で安定化した参照や、hook の外（module scope）で
+定義した関数をそのまま `addEventListener` に渡すと、複数のコンポーネント
+インスタンスから見て「同じ listener」として扱われ、ブラウザ側が2個目以降の
+登録を黙って無視する。エラーは出ない。
+
+対処: 複数マウントされうる hook でグローバルなイベントを購読するときは、
+**必ず effect ごとに新しいクロージャを作って渡す**。
+
+```ts
+useEffect(() => {
+  const handle = () => shared(); // 呼び出し先が同じでも、参照はこの effect 専用
+  window.addEventListener('resize', handle);
+  return () => window.removeEventListener('resize', handle);
+}, []);
+```
+
+`useCallback` で安定化した参照をそのまま渡すのは、意図（毎回同じ関数を使い
+たい）と実際の挙動（ブラウザに重複登録として弾かれる）が逆転するので避ける。
+
+## パスの左省略表示に `direction: rtl` を使うと bidi 並べ替えで誤読を招く
+
+症状: 長いファイルパスを CSS だけで左側省略（`...` を先頭に出す）しようとして
+`direction: rtl` を当てると、375px 幅の実機で `/Users/takumi/src/private_src/bdboard
+(v2)` が `...vate_src/bdboard (v2)/` のように表示され、先頭の `/` が右端へ
+回り込んで末尾スラッシュに見える（実測: bdboard-h4xs.8）。パス自体を誤読させる。
+
+原因: `direction: rtl` は文字の描画順そのものを反転する bidi
+（bidirectional text）制御であり、単なる省略記号の位置調整ではない。パス中の
+`/` のような方向性のない文字も含めて並び順が変わるため、省略というより
+「文字列全体を右から左に描画した結果、たまたま先頭が右端に来ている」状態になる。
+
+対処: `direction: rtl` でごまかさず、**basename 表示 + `title` 属性にフルパス**
+の組み合わせを使う。basename を取る関数は `web/src/api.ts` の
+`projectNameFallback()` が既にあり、`LaneColumn` / `NextUpView` /
+`dailyDigestMarkdown` が使っている既存慣例なので、新しい省略関数は書かず
+これを再利用する。
