@@ -3408,6 +3408,104 @@ describe('ChatPanel', () => {
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
   });
 
+  it('falls back to a send failure on the explicit failed turn-status instead of waiting for idle (bdboard-3tw.165)', async () => {
+    // Same scenario as the idle-inference test above, but the server now reports the
+    // failure explicitly instead of turn-status silently falling through to idle. web
+    // must reach the exact same failure UI from this new signal, and must ack it (unlike
+    // idle, which has nothing on the server to ack).
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let streamClosed = false;
+    let statusCallsAfterClose = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      statusCallsAfterClose += 1;
+      if (statusCallsAfterClose === 1) {
+        return { state: 'processing', message: 'doomed question', agentId: 'claude' };
+      }
+      return {
+        state: 'failed',
+        code: 'agent-timeout',
+        agentId: 'claude',
+        sessionId: 'sess-failed',
+        failedAt: '2026-09-19T08:00:10.000Z',
+      };
+    });
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'doomed question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+    });
+
+    releaseClose();
+
+    const errorText = await screen.findByText(
+      '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      {},
+      { timeout: 2_500 },
+    );
+    expect(errorText.closest('.chat-message')).toHaveClass('chat-message-error');
+    expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
+    expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-failed');
+  });
+
+  it('drains a stale failed turn from an unrelated session instead of surfacing it as an error (bdboard-3tw.165 Opus レビュー)', async () => {
+    // failedTurns is a per-project queue (like completedTurns, bdboard-3tw.155/156), so a
+    // background poll can see an old failure that has nothing to do with anything this
+    // panel is currently tracking. Unlike 'idle' (which under the single-lock-per-project
+    // model can only mean "our own pending send settled"), a mismatched 'failed' entry
+    // must not resolve an unrelated pending send as failed (nothing was pending here at
+    // all) and must not surface any error UI — it should just be acked and drained.
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (acknowledgeChatTurnMock.mock.calls.length === 0) {
+        return {
+          state: 'failed',
+          code: 'agent-timeout',
+          agentId: 'claude',
+          sessionId: 'sess-stale',
+          failedAt: '2026-09-01T00:00:00.000Z',
+        };
+      }
+      return { state: 'idle' };
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+
+    await waitFor(() => {
+      expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-stale');
+    });
+    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(0);
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+  });
+
   it('recovers a detached turn on an existing thread without duplicating the user message (bdboard-zlzo)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);

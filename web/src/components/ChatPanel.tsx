@@ -1172,6 +1172,14 @@ export function ChatPanel({
     setBackgroundTurnProjectId(selectedProjectId);
     setBackgroundTurnStatus({ state: 'idle' });
     const recoveredSessionIds = new Set<string>();
+    // bdboard-3tw.165 (Opus レビュー指摘): failedTurns はプロジェクト1件の
+    // completedTurns と同じ「キュー」(bdboard-3tw.155/156) — idle (単一ロック下では
+    // 「今追っている detached 送信が settle した」以外に意味を持たない) と違って、
+    // ここに乗るのは「今 detachedStreamSendRef が追っている送信とは無関係の、古い/
+    // 別セッションの失敗」のことがある。ACK 済みでも印を付け、ACK がサーバー側で
+    // 効かず同じ1件を返し続けても tight loop しないようにする
+    // (recoveredSessionIds と同じ、bdboard-3tw.156 由来のガード)。
+    const drainedFailedSessionIds = new Set<string>();
     // bdboard-3tw.164: 連続失敗回数。fetchChatTurnStatus が一度でも成功したら
     // (idle/processing/completed いずれでも) 0 へ戻す — 「1回目が失敗、2回目で
     // completed」のように失敗が連続しなければ上限を消費しない。
@@ -1184,11 +1192,59 @@ export function ChatPanel({
         consecutiveFailures = 0;
         setBackgroundTurnStatus(status);
         if (status.state === 'idle') {
+          // 単一ロック下では、プロジェクトにつき同時に走るターンは高々1つ。idle に
+          // 落ちたのは「今追っている detached 送信が completed も failed も残さず
+          // settle した」ことを意味するので、セッションIDの突き合わせは不要
+          // (failed と違い、複数件が溜まる「キュー」ではない)。
           const detached = detachedStreamSendRef.current;
           if (detached !== null && detached.projectId === selectedProjectId) {
             detachedStreamSendRef.current = null;
             detached.fail();
           }
+          return;
+        }
+        if (status.state === 'failed') {
+          // bdboard-3tw.165 (Opus レビュー指摘): completed 側と同じく、追っている
+          // detachedStreamSendRef と sessionId が一致する場合だけ解決する。一致しない
+          // 場合に idle と同じ無条件 fail() をすると、無関係な古い失敗で今追っている
+          // (まだ成功するかもしれない) 送信を誤って失敗扱いにしてしまう。
+          const detached = detachedStreamSendRef.current;
+          const matchesTrackedSend =
+            detached !== null &&
+            detached.projectId === selectedProjectId &&
+            (detached.sessionId === undefined || detached.sessionId === status.sessionId);
+          if (matchesTrackedSend) {
+            if (status.sessionId !== undefined) {
+              try {
+                await acknowledgeChatTurn(selectedProjectId, status.sessionId);
+              } catch {
+                // ACK is best-effort; a later poll can just see the same failed turn again.
+              }
+              if (cancelled) return;
+            }
+            detachedStreamSendRef.current = null;
+            detached!.fail();
+            return;
+          }
+          // 追っている送信とは無関係: 後ろに隠れているかもしれない新しいエントリ
+          // (completed かもしれないし、本当に一致する failed かもしれない) を
+          // 取りこぼさないよう、ACK して掃いてから聞き直す。sessionId が無い失敗
+          // (エージェントがセッションを払い出す前の新規スレッド失敗) は ACK 経路が
+          // 無く区別もできないので、無関係な pending 送信を誤って失敗扱いにしない
+          // よう何もしない (CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出されるまで
+          // 残る — bdboard-3tw.165 の既知の制約、サーバー側コメント参照)。
+          if (status.sessionId === undefined || drainedFailedSessionIds.has(status.sessionId)) {
+            return;
+          }
+          drainedFailedSessionIds.add(status.sessionId);
+          try {
+            await acknowledgeChatTurn(selectedProjectId, status.sessionId);
+          } catch {
+            // best-effort; if the ack didn't really take effect the dedup guard above
+            // still stops this from looping tightly on the exact same entry.
+          }
+          if (cancelled) return;
+          await checkTurnStatus();
           return;
         }
         if (status.state === 'processing') {

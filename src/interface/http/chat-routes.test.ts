@@ -882,6 +882,153 @@ describe('POST /api/chat/message/stream', () => {
     expect(Object.keys(JSON.parse(errorEvents[0]![1]!)).sort()).toEqual(['code', 'detail', 'error']);
   });
 
+  it('emits a detached SSE event ahead of stopping delivery on queue overflow (bdboard-3tw.165)', async () => {
+    // Unlike the "stalled client" overflow test above, nothing here artificially keeps
+    // the response body unread: res.text() actively drains the stream, so the
+    // best-effort detached write (queued just before cleanup/abort) has a real chance to
+    // reach the client instead of racing a write that can never complete.
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (_request, onDelta) => {
+        for (let index = 0; index <= CHAT_STREAM_QUEUE_MAX_SIZE; index += 1) {
+          onDelta({ text: `burst-${index}` });
+        }
+        return { reply: 'final reply', sessionId: '550e8400-e29b-41d4-a716-446655440091', agentId: 'test-agent', failedTools: [] };
+      }),
+    });
+    const app = createApp({
+      agent: streamingAgent,
+      cache: createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]),
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await app.request('/api/chat/message/stream', withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'hello' }),
+      }), LOCAL_ENV);
+      expect(res.status).toBe(200);
+      const text = await res.text();
+      expect(text).toContain('event: detached');
+      // Delivery stopped at the overflow: the turn's own 'done' never reaches this
+      // client (it still finalizes server-side; that is covered by the existing
+      // "stops delivery..." test above).
+      expect(text).not.toContain('event: done');
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('reports a failed turn via turn-status and clears it on ack, alongside the SSE error event a connected client already sees (bdboard-3tw.165)', async () => {
+    const sessionId = '550e8400-e29b-41d4-a716-446655440092';
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (): Promise<ChatTurnResult> => {
+        throw new ChatAgentError('agent-timeout');
+      }),
+    });
+    const store = createChatSessionStore();
+    store.remember('p', sessionId, 'test-agent');
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store, now: () => NOW });
+
+    const res = await app.request('/api/chat/message/stream', withLocalHost({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', sessionId, message: 'hello' }),
+    }), LOCAL_ENV);
+    expect(res.status).toBe(200);
+    await res.text();
+
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await status.json()).toEqual({
+      state: 'failed',
+      code: 'agent-timeout',
+      agentId: 'test-agent',
+      sessionId,
+      failedAt: NOW.toISOString(),
+    });
+
+    const ack = await app.request(
+      `/api/chat/turn-status?projectId=p&sessionId=${sessionId}`,
+      withLocalHost({ method: 'DELETE' }),
+      LOCAL_ENV,
+    );
+    expect(ack.status).toBe(204);
+    const idle = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await idle.json()).toEqual({ state: 'idle' });
+  });
+
+  it('reports a failed turn via turn-status when the agent fails after the client disconnects, without the idle inference (bdboard-3tw.165)', async () => {
+    // This is the ticket's core scenario: bdboard-3tw.164's web recovery previously had
+    // to infer failure from turn-status going straight from processing to idle. Here the
+    // server records it explicitly instead, so turn-status never has to fall through to
+    // 'idle' for this case.
+    const sessionId = '550e8400-e29b-41d4-a716-446655440093';
+    let rejectAgent: (err: unknown) => void = () => {};
+    let sendMessageStreamCalled = false;
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(
+        async (): Promise<ChatTurnResult> => {
+          sendMessageStreamCalled = true;
+          return await new Promise<ChatTurnResult>((_resolve, reject) => {
+            rejectAgent = reject;
+          });
+        },
+      ),
+    });
+    const store = createChatSessionStore();
+    store.remember('p', sessionId, 'test-agent');
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store, now: () => NOW });
+    const controller = new AbortController();
+    const responsePromise = app.request(
+      '/api/chat/message/stream',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', sessionId, message: 'hello' }),
+        signal: controller.signal,
+      }),
+      LOCAL_ENV,
+    );
+
+    await vi.waitFor(() => expect(sendMessageStreamCalled).toBe(true));
+    controller.abort();
+    await responsePromise;
+
+    // The lock-release-ordering invariant (bdboard-pti0) applies here too: recordFailedTurn
+    // runs synchronously in the same catch as release() (finally), with no await between
+    // them, so there is no idle window to race even though this test's own vi.waitFor
+    // polling below wouldn't itself catch a brief one if there were.
+    rejectAgent(new ChatAgentError('agent-timeout'));
+
+    await vi.waitFor(async () => {
+      const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+      expect(await status.json()).toEqual({
+        state: 'failed',
+        code: 'agent-timeout',
+        agentId: 'test-agent',
+        sessionId,
+        failedAt: NOW.toISOString(),
+      });
+    });
+
+    // The lock must already be free too (release() and recordFailedTurn both happen in
+    // the same catch/finally pass, same as the completed-turn path).
+    const followUp = await app.request(
+      '/api/chat/message',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: 'p', message: 'follow-up' }),
+      }),
+      LOCAL_ENV,
+    );
+    expect(followUp.status).toBe(200);
+  });
+
   describe('SSE keepalive ping', () => {
     afterEach(() => {
       vi.useRealTimers();
