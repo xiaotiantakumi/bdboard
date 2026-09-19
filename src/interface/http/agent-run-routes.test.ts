@@ -1788,6 +1788,55 @@ describe('createAgentRunRoutes ticket claim on run start (bdboard-pkr6.26)', () 
     expect(issueWriter.unclaim).not.toHaveBeenCalled();
   });
 
+  it('does not unclaim when the outcome is ok:false with no failureKind (unknown, treated as not-provably-pre-spawn)', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-unknown-failure-kind';
+    seedOpenTicket(cache, 'bdboard-unknown-kind', rootPath);
+
+    const issueWriter = makeIssueWriter();
+    // Hypothetical/future runner misbehavior: ok:false with no failureKind at
+    // all. isPreSpawnFailure treats this as "unknown, might have started" and
+    // must not roll back the claim (opus review, bdboard-pkr6.26 PR #502).
+    const dispatch = vi.fn(async (): Promise<RunOutcome> => ({
+      ok: false,
+      run: {
+        id: 'ignored',
+        ticketId: 'bdboard-unknown-kind',
+        runner: 'claude-spawn',
+        mode: 'spawn',
+        status: 'failed',
+        startedAt: NOW,
+        finishedAt: NOW,
+      },
+    }));
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-unknown-kind', rootPath),
+        branchName: 'bd/bdboard-unknown-kind',
+        reused: false,
+      })),
+    });
+
+    const runStore = createRunStore({ now: () => NOW });
+    const { app } = makeRoutes({ cache, registry, runStore, worktreeProvisioner, issueWriter });
+
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-unknown-kind')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(issueWriter.unclaim).not.toHaveBeenCalled();
+  });
+
   it('unclaims when dispatchRun rejects before any runner is dispatched (e.g. registry.resolve throws)', async () => {
     const cache = createFakeBoardCache();
     const rootPath = '/projects/claim-registry-throw';

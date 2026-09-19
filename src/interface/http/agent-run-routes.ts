@@ -206,7 +206,14 @@ function buildDispatchFailureOutcome(
  * claim を戻さず、後者だけ unclaim の対象にする。
  */
 function isPreSpawnFailure(outcome: RunOutcome): boolean {
-  return !outcome.ok && outcome.failureKind !== 'failed';
+  // failureKind is optional on the type; no current runner produces ok:false
+  // without one, but treat a hypothetical future gap as "unknown, might have
+  // started" rather than "definitely pre-spawn" -- the safe default here is to
+  // NOT roll back (matches the same-caution-as-'failed' stance below), since a
+  // wrongly-dropped claim while edits exist is worse than a stale in_progress
+  // ticket (which stale_in_progress hygiene already reclaims). (opus review,
+  // bdboard-pkr6.26 PR #502)
+  return !outcome.ok && outcome.failureKind !== undefined && outcome.failureKind !== 'failed';
 }
 
 /**
