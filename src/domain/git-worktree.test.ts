@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   collectLeftoverCandidates,
+  collectNonTicketWorktrees,
   type GitWorktreeSnapshot,
 } from './git-worktree.js';
 
@@ -215,5 +216,103 @@ describe('collectLeftoverCandidates', () => {
 
     expect(candidates[0]?.ticketId).toBe('bdboard-3tw.96');
     expect(candidates[0]?.branchName).toBe('bd/bdboard-3tw.96');
+  });
+});
+
+describe('collectNonTicketWorktrees', () => {
+  it('ignores the main worktree', () => {
+    const snapshot: GitWorktreeSnapshot = {
+      worktrees: [{ path: REPO_ROOT, branch: 'main', isMain: true }],
+      bdBranches: [],
+      complete: true,
+    };
+
+    expect(collectNonTicketWorktrees(PROJECT_ID, REPO_ROOT, snapshot)).toEqual([]);
+  });
+
+  it('ignores bd/<id> worktrees (those are collectLeftoverCandidates territory)', () => {
+    const snapshot: GitWorktreeSnapshot = {
+      worktrees: [
+        { path: REPO_ROOT, branch: 'main', isMain: true },
+        {
+          path: `${REPO_ROOT}/.claude/worktrees/bdboard-3tw.96`,
+          branch: 'bd/bdboard-3tw.96',
+          isMain: false,
+        },
+      ],
+      bdBranches: ['bd/bdboard-3tw.96'],
+      complete: true,
+    };
+
+    expect(collectNonTicketWorktrees(PROJECT_ID, REPO_ROOT, snapshot)).toEqual([]);
+  });
+
+  it('ignores detached HEAD worktrees (collectLeftoverCandidates already treats them as ticket candidates)', () => {
+    const snapshot: GitWorktreeSnapshot = {
+      worktrees: [
+        { path: REPO_ROOT, branch: 'main', isMain: true },
+        {
+          path: `${REPO_ROOT}/.claude/worktrees/some-id`,
+          branch: null,
+          isMain: false,
+        },
+      ],
+      bdBranches: [],
+      complete: true,
+    };
+
+    expect(collectNonTicketWorktrees(PROJECT_ID, REPO_ROOT, snapshot)).toEqual([]);
+  });
+
+  // bdboard-wadg の本題: isolation: "worktree" が作る feature/* 等、bd/ に紐づかない
+  // worktree を拾う。
+  it('collects worktrees on non-bd/ branches', () => {
+    const snapshot: GitWorktreeSnapshot = {
+      worktrees: [
+        { path: REPO_ROOT, branch: 'main', isMain: true },
+        {
+          path: `${REPO_ROOT}/.claude/worktrees/mac-slow-diagnosis-7ddee1`,
+          branch: 'feature/mac-slow-diagnosis-7ddee1',
+          isMain: false,
+        },
+        {
+          path: `${REPO_ROOT}/.claude/worktrees/bdboard-3tw.96`,
+          branch: 'bd/bdboard-3tw.96',
+          isMain: false,
+        },
+      ],
+      bdBranches: ['bd/bdboard-3tw.96'],
+      complete: true,
+    };
+
+    const result = collectNonTicketWorktrees(PROJECT_ID, REPO_ROOT, snapshot);
+
+    expect(result).toEqual([
+      {
+        projectId: PROJECT_ID,
+        repoRootPath: REPO_ROOT,
+        worktreePath: `${REPO_ROOT}/.claude/worktrees/mac-slow-diagnosis-7ddee1`,
+        branchName: 'feature/mac-slow-diagnosis-7ddee1',
+      },
+    ]);
+  });
+
+  it('sorts by worktreePath', () => {
+    const snapshot: GitWorktreeSnapshot = {
+      worktrees: [
+        { path: REPO_ROOT, branch: 'main', isMain: true },
+        { path: `${REPO_ROOT}/.claude/worktrees/z`, branch: 'feature/z', isMain: false },
+        { path: `${REPO_ROOT}/.claude/worktrees/a`, branch: 'feature/a', isMain: false },
+      ],
+      bdBranches: [],
+      complete: true,
+    };
+
+    const result = collectNonTicketWorktrees(PROJECT_ID, REPO_ROOT, snapshot);
+
+    expect(result.map((w) => w.worktreePath)).toEqual([
+      `${REPO_ROOT}/.claude/worktrees/a`,
+      `${REPO_ROOT}/.claude/worktrees/z`,
+    ]);
   });
 });

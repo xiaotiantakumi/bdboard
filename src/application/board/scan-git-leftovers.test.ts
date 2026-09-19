@@ -174,6 +174,45 @@ describe('scanGitLeftovers', () => {
     expect(complete).toBe(false);
   });
 
+  // bdboard-wadg: bd/ に紐づかない worktree (feature/* 等) も同じ snapshot から拾う。
+  it('also collects non-ticket worktrees from the same snapshot', async () => {
+    const scanner: WorktreeScanner = {
+      listChangedFiles: async () => [],
+      scan: async () => ({
+        worktrees: [
+          { path: '/projects/a', branch: 'main', isMain: true },
+          {
+            path: '/projects/a/.claude/worktrees/bdboard-a',
+            branch: 'bd/bdboard-a',
+            isMain: false,
+          },
+          {
+            path: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+            branch: 'feature/mac-slow-diagnosis-7ddee1',
+            isMain: false,
+          },
+        ],
+        bdBranches: ['bd/bdboard-a'],
+        complete: true,
+      }),
+    };
+
+    const { candidates, nonTicketWorktrees } = await scanGitLeftovers(
+      [project('proj-a', '/projects/a')],
+      scanner,
+    );
+
+    expect(candidates.map((c) => c.ticketId)).toEqual(['bdboard-a']);
+    expect(nonTicketWorktrees).toEqual([
+      {
+        projectId: 'proj-a',
+        repoRootPath: '/projects/a',
+        worktreePath: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+        branchName: 'feature/mac-slow-diagnosis-7ddee1',
+      },
+    ]);
+  });
+
   // m4 (bdboard-t3ct): 警告文の本体 ("[hygiene] ...") は決め打ちにせず、
   // 呼び出し元の画面に合わせて差し替えられる。
   it('lets the caller customize the failure message instead of the hard-coded [hygiene] text', async () => {

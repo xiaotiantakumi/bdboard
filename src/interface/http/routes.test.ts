@@ -2214,6 +2214,75 @@ describe('createApiRoutes', () => {
     );
   });
 
+  // bdboard-wadg: bd/ に紐づかない worktree (feature/* 等) は HygieneIssue の形に乗らない
+  // ため、/api/hygiene のチケット issues とは別に nonTicketHarnessWorktrees で返す。
+  it('reports stale harness for non-ticket (feature/*) worktrees separately from issues', async () => {
+    const { cache } = inFlightCache();
+    const getProjectMainBranch = vi.fn(async () => 'master');
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const scanWithFeatureWorktree: WorktreeScanner = {
+      ...base,
+      scan: async (rootPath) => {
+        const snapshot = await base.scan(rootPath);
+        return {
+          ...snapshot,
+          worktrees: [
+            ...snapshot.worktrees,
+            {
+              path: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+              branch: 'feature/mac-slow-diagnosis-7ddee1',
+              isMain: false,
+            },
+          ],
+        };
+      },
+      countHarnessCommitsBehindDefaultBranch: async (_path, options) => ({
+        commitsBehind: 63,
+        baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+      }),
+    };
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        worktreeScanner: scanWithFeatureWorktree,
+        getProjectMainBranch,
+      }),
+    );
+
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(body.nonTicketHarnessWorktrees).toContainEqual({
+      projectId: 'proj-a',
+      worktreePath: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+      branchName: 'feature/mac-slow-diagnosis-7ddee1',
+      commitsBehind: 63,
+      baseRef: 'origin/master',
+      message: expect.stringContaining('feature/mac-slow-diagnosis-7ddee1'),
+    });
+    // チケット単位の issues には (ticketId を持たないので) この feature/* worktree 自体は
+    // 出ない。同じレスポンス内にチケット worktree の stale_harness_worktree が別途出ることは
+    // 妨げない (このテストの IN_FLIGHT_FILES にも in_progress チケットの worktree があるため)。
+    expect(
+      body.issues.some((issue: { message?: string }) =>
+        issue.message?.includes('feature/mac-slow-diagnosis-7ddee1'),
+      ),
+    ).toBe(false);
+  });
+
+  it('returns an empty nonTicketHarnessWorktrees array when the scanner cannot measure lag', async () => {
+    const { cache } = inFlightCache();
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const withoutLag: WorktreeScanner = {
+      scan: base.scan,
+      listChangedFiles: base.listChangedFiles,
+    };
+    const app = createApiRoutes(createDeps({ cache, worktreeScanner: withoutLag }));
+
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(body.nonTicketHarnessWorktrees).toEqual([]);
+  });
+
   it('returns the in-flight overlaps of a single ticket for the detail panel', async () => {
     const { cache } = inFlightCache();
     const app = createApiRoutes(

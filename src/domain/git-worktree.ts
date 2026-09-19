@@ -91,6 +91,59 @@ function upsertCandidate(
   });
 }
 
+/**
+ * `bd/<id>` に紐づかない worktree (Claude Code の `isolation: "worktree"` が作る
+ * `feature/<slug>` 等)。1 チケット = 1 worktree の外にあるためチケット ID を持たず、
+ * `LeftoverCandidate` / `HygieneIssue` の形には乗らない (bdboard-wadg)。
+ */
+export interface NonTicketWorktree {
+  readonly projectId: string;
+  /** 掃除コマンドの `git -C <ここ>` に使うリポジトリルート */
+  readonly repoRootPath: string;
+  readonly worktreePath: string;
+  readonly branchName: string;
+}
+
+/**
+ * `collectLeftoverCandidates` が skip する非 `bd/` ブランチの worktree だけを集める。
+ *
+ * 実測 (2026-09-05, bdboard-tdua): 生存プロセスを抱えたまま最も深く凍っていたのは
+ * `bd/<id>` worktree ではなく、こちらの非チケット worktree だった。チケットに紐づかない
+ * ため Hygiene の `stale_harness_worktree` (checkStaleHarnessWorktree) には一切乗らず、
+ * 盤面から見えていなかった。
+ *
+ * detached HEAD (`branch === null`) は対象外 — `collectLeftoverCandidates` 側が
+ * 既にディレクトリ名をチケット ID として扱っており、二重計上を避ける。
+ */
+export function collectNonTicketWorktrees(
+  projectId: string,
+  repoRootPath: string,
+  snapshot: GitWorktreeSnapshot,
+): readonly NonTicketWorktree[] {
+  const result: NonTicketWorktree[] = [];
+
+  for (const worktree of snapshot.worktrees) {
+    if (worktree.isMain) {
+      continue;
+    }
+    if (worktree.branch === null) {
+      continue;
+    }
+    if (worktree.branch.startsWith(BD_BRANCH_PREFIX)) {
+      continue;
+    }
+
+    result.push({
+      projectId,
+      repoRootPath,
+      worktreePath: worktree.path,
+      branchName: worktree.branch,
+    });
+  }
+
+  return result.sort((a, b) => compareStrings(a.worktreePath, b.worktreePath));
+}
+
 export function collectLeftoverCandidates(
   projectId: string,
   repoRootPath: string,

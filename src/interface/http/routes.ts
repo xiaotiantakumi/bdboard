@@ -22,7 +22,10 @@ import { scanGitLeftovers } from '../../application/board/scan-git-leftovers.js'
 import { describeFetchFailures } from '../../application/board/fetch-failure-log.js';
 import { scanInFlightOverlaps } from '../../application/board/scan-in-flight-overlaps.js';
 import { scanHarnessWorktreeLags } from '../../application/board/scan-harness-worktree-lags.js';
-import type { LeftoverCandidate } from '../../domain/git-worktree.js';
+import { scanNonTicketHarnessWorktreeLags } from '../../application/board/scan-non-ticket-harness-worktree-lags.js';
+import { checkNonTicketHarnessWorktrees } from '../../domain/non-ticket-harness-worktree.js';
+import type { NonTicketHarnessWorktreeLag } from '../../domain/non-ticket-harness-worktree.js';
+import type { LeftoverCandidate, NonTicketWorktree } from '../../domain/git-worktree.js';
 import {
   overlapPeersForTicket,
   selectInFlightWorktrees,
@@ -99,6 +102,7 @@ import {
   toCfdStatsDto,
   toHarnessKpiDto,
   toHygieneIssueDto,
+  toNonTicketHarnessWorktreeWarningDto,
   toLeaseHealthDto,
   toMergeSlotStatusDto,
   toPrBadgeDto,
@@ -857,6 +861,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
     let leftoverCandidates: readonly LeftoverCandidate[] | undefined;
     let inFlightOverlaps: readonly InFlightOverlap[] | undefined;
     let harnessWorktreeLags: readonly HarnessWorktreeLag[] | undefined;
+    let nonTicketHarnessWorktreeLags: readonly NonTicketHarnessWorktreeLag[] | undefined;
     let heartbeatLoops: readonly HeartbeatLoopCandidate[] | undefined;
     if (deps.worktreeScanner !== undefined) {
       let entries = deps.cache.listProjects();
@@ -865,7 +870,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         entries = entries.filter((entry) => filterSet.has(entry.project.id));
       }
       const projects = entries.map((entry) => entry.project);
-      leftoverCandidates = (await scanGitLeftovers(projects, deps.worktreeScanner)).candidates;
+      const leftoverScan = await scanGitLeftovers(projects, deps.worktreeScanner);
+      leftoverCandidates = leftoverScan.candidates;
+      // bd/<id> に紐づかない worktree (feature/* 等)。同じ snapshot から拾うので
+      // git 呼び出しは増えない (bdboard-wadg)。
+      const nonTicketWorktrees: readonly NonTicketWorktree[] = leftoverScan.nonTicketWorktrees;
 
       // merged_leftover と同じ worktree 一覧を使い回す。closed のものはあちらが、
       // まだ closed でないものはこちらが見る (git worktree list は 1 回で済む)。
@@ -900,6 +909,10 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         const measuredProjectIds = new Set(
           inFlight.filter(isMeasured).map((worktree) => worktree.projectId),
         );
+        // 非チケット worktree はチケットの in_progress で絞れないので、見つかった分すべて測る。
+        for (const worktree of nonTicketWorktrees) {
+          measuredProjectIds.add(worktree.projectId);
+        }
         await Promise.all(
           [...measuredProjectIds].map(async (projectId) => {
             const rootPath = rootPathById.get(projectId);
@@ -921,6 +934,11 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         shouldMeasure: isMeasured,
         resolveMainBranch: (projectId) => mainBranchesByProject.get(projectId),
       });
+      nonTicketHarnessWorktreeLags = await scanNonTicketHarnessWorktreeLags(
+        nonTicketWorktrees,
+        scanner,
+        { resolveMainBranch: (projectId) => mainBranchesByProject.get(projectId) },
+      );
     }
 
     // 確認待ちの放置判定は最終コメント日時も見る (bdboard-19db)。bd の updated_at は
@@ -990,9 +1008,16 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       ...(harnessWorktreeLags !== undefined ? { harnessWorktreeLags } : {}),
       ...(thresholds !== undefined ? { thresholds } : {}),
     });
+    const nonTicketHarnessWorktrees = checkNonTicketHarnessWorktrees(
+      nonTicketHarnessWorktreeLags ?? [],
+    );
+
     return c.json({
       issues: issues.map(toHygieneIssueDto),
       closeEvidence: closeEvidenceStatus,
+      nonTicketHarnessWorktrees: nonTicketHarnessWorktrees.map(
+        toNonTicketHarnessWorktreeWarningDto,
+      ),
     });
   });
 
