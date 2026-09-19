@@ -200,8 +200,8 @@
 - 出典: bdboard-axl
 
 ### bd-notes-backtick-shell-injection — bd ノート本文中のバッククォートがシェルにコマンド置換され、ノートが壊れ引数無し git checkout/restore が実行された（2026-09-05）
-- 原因: `bd update --append-notes` 等へ Bash から渡す文字列を二重引用符のまま埋め込み、本文中のバッククォート・`$` がシェル展開された
-- 防止: 長文ノートは常にシングルクォートのヒアドキュメントでファイルへ書いてから（`cat > /tmp/x.txt <<'EOF' ... EOF`）`bd update <id> --append-notes "$(cat /tmp/x.txt)"` で渡す。バッククォート/`$` を含まないと確信できる短文のみ直接引用してよい
+- 原因: `bd update --append-notes` 等へ Bash から渡す文字列を二重引用符のまま埋め込み、本文中のバッククォート・`$`・`\` がシェル展開された
+- 防止（本則: 本エントリ）: 長文ノートは常にシングルクォートのヒアドキュメントで `$(mktemp)` 等の衝突しない一時ファイルへ書いてから（`f=$(mktemp); cat > "$f" <<'EOF' ... EOF`）`bd update <id> --append-notes "$(cat "$f")"` で渡す。バッククォート/`$`/`\` を含まないと確信できる短文のみ直接引用してよい。`bd comment`/`bd create`/`bd update` の description/comment 系フィールドは `--body-file`/`--stdin` 等のファイル入力形式を持つものがあるが、`--notes`/`--append-notes` には無いため、notes 系は常にこの `$(cat "$f")` 方式で渡す
 - 出典: bdboard-qxt1（裁定ノートでの実例）/ bd memory `2026-09-05-bd-notes-backtick-shell-injection`
 
 ### bd-init-overwrite — 別マシンの `bd init` が AGENTS.md 管理ブロック内のカスタマイズ（gt:slot 除外等）を黙って戻し、main へ直接コミットした（2026-08-17）
