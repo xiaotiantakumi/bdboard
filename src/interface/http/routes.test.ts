@@ -2383,6 +2383,93 @@ describe('createApiRoutes', () => {
     );
   });
 
+  // bdboard-xjzj: bdboard-wadg (PR #480) の Opus レビュー指摘。既存テストは全て proj-a
+  // (in_progress チケット持ち) だけを使うため、routes.ts の
+  // `for (const worktree of nonTicketWorktrees) { measuredProjectIds.add(...) }` を
+  // 削除してもどのテストも落ちない = ミューテーション未検出だった。in_progress チケットを
+  // 一切持たない proj-b を用意し、getProjectMainBranch が proj-b に対しても呼ばれ、
+  // nonTicketHarnessWorktrees の baseRef が解決された main branch (develop) を正しく
+  // 反映することをアサートする。
+  it('measures a project that has only a non-ticket worktree and no in_progress tickets', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    cache.putProject({
+      project: a,
+      tickets: [],
+      fingerprint: 'fp-a',
+      fetchedAt: NOW,
+    });
+    const b = project('proj-b', '/projects/b');
+    cache.putProject({
+      project: b,
+      tickets: [],
+      fingerprint: 'fp-b',
+      fetchedAt: NOW,
+    });
+
+    const featureWorktreePath = '/projects/b/.claude/worktrees/only-feature';
+    const scanner: WorktreeScanner = {
+      scan: async (rootPath) => {
+        if (rootPath === '/projects/b') {
+          return {
+            worktrees: [
+              { path: '/projects/b', branch: 'main', isMain: true },
+              {
+                path: featureWorktreePath,
+                branch: 'feature/only-feature',
+                isMain: false,
+              },
+            ],
+            bdBranches: [],
+            complete: true,
+          };
+        }
+        return {
+          worktrees: [{ path: '/projects/a', branch: 'main', isMain: true }],
+          bdBranches: [],
+          complete: true,
+        };
+      },
+      listChangedFiles: async () => [],
+      countHarnessCommitsBehindDefaultBranch: async (_path, options) => ({
+        commitsBehind: 63,
+        baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+      }),
+    };
+
+    // proj-a と proj-b で異なる main branch を返し、baseRef にどちらが反映されたかで
+    // どちらのプロジェクトに対して呼ばれたかを区別できるようにする。
+    const getProjectMainBranch = vi.fn(async (rootPath: string) =>
+      rootPath === '/projects/b' ? 'develop' : 'master',
+    );
+    const session = makeSession({ cwd: featureWorktreePath, alive: true });
+
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        worktreeScanner: scanner,
+        getProjectMainBranch,
+        sessions: () => [session],
+      }),
+    );
+
+    const body = await (await app.request('/api/hygiene')).json();
+
+    // proj-b は in_progress チケットを一切持たないので、これが呼ばれるのは非チケット
+    // worktree 経由で measuredProjectIds に proj-b が追加された場合に限る。
+    expect(getProjectMainBranch).toHaveBeenCalledWith('/projects/b');
+    expect(body.nonTicketHarnessWorktrees).toContainEqual({
+      projectId: 'proj-b',
+      worktreePath: featureWorktreePath,
+      branchName: 'feature/only-feature',
+      commitsBehind: 63,
+      // 解決された main branch (develop) が baseRef に反映されていること自体が、
+      // measuredProjectIds への追加が効いていることの証拠になる。
+      baseRef: 'origin/develop',
+      message: expect.stringContaining('feature/only-feature'),
+    });
+  });
+
   it('returns the in-flight overlaps of a single ticket for the detail panel', async () => {
     const { cache } = inFlightCache();
     const app = createApiRoutes(
