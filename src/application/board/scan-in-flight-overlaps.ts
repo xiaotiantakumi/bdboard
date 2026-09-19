@@ -7,6 +7,7 @@ import {
 import { runWithConcurrencyLimit } from '../concurrency.js';
 import type { WorktreeScanner } from '../ports/worktree-scanner.js';
 import { describeFetchFailures, type FetchFailure } from './fetch-failure-log.js';
+import { withDeadline } from './with-deadline.js';
 
 /**
  * worktree を同時に何本まで読むか。leftovers スキャン (PROJECT_SCAN_CONCURRENCY)
@@ -30,28 +31,6 @@ export interface ScanInFlightOverlapsOptions {
   readonly logWarn?: (message: string) => void;
   /** worktree 1 本あたりの締め切り (ms)。テスト用。既定 WORKTREE_DEADLINE_MS */
   readonly worktreeDeadlineMs?: number;
-}
-
-async function withDeadline<T>(
-  work: Promise<T>,
-  deadlineMs: number,
-  label: string,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => {
-          reject(new Error(`timed out after ${deadlineMs}ms reading ${label}`));
-        }, deadlineMs);
-      }),
-    ]);
-  } finally {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-    }
-  }
 }
 
 /**

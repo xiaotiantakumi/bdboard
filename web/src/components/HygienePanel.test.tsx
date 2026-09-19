@@ -92,8 +92,9 @@ const NOT_APPLICABLE_CONTRACT = { state: 'not-applicable' } as const;
 function makeHygieneResponse(
   issues: HygieneIssueDto[] = [],
   closeEvidence: HygieneResponseDto['closeEvidence'] = null,
+  nonTicketHarnessWorktrees: HygieneResponseDto['nonTicketHarnessWorktrees'] = [],
 ): HygieneResponseDto {
-  return { issues, closeEvidence };
+  return { issues, closeEvidence, nonTicketHarnessWorktrees };
 }
 
 function makeIssue(
@@ -1311,6 +1312,54 @@ describe('HygienePanel merge slot display', () => {
     await screen.findByText('警告はありません');
 
     expect(fetchMergeSlotStatusMock).toHaveBeenCalledWith(['proj-a', 'proj-b']);
+  });
+});
+
+describe('HygienePanel non-ticket harness worktree display', () => {
+  beforeEach(() => {
+    fetchHygieneMock.mockReset();
+    fetchLeaseHealthMock.mockReset();
+    fetchMergeSlotStatusMock.mockReset();
+    fetchAllHarnessStatusMock.mockReset();
+    fetchLeaseHealthMock.mockResolvedValue(makeLeaseHealth());
+    fetchMergeSlotStatusMock.mockResolvedValue([]);
+    fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
+  });
+
+  it('renders non-ticket (feature/*) harness worktrees separately from stale_harness_worktree issues', async () => {
+    fetchHygieneMock.mockResolvedValue(
+      makeHygieneResponse([], null, [
+        {
+          projectId: 'proj-a',
+          worktreePath: '/repo/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+          branchName: 'feature/mac-slow-diagnosis-7ddee1',
+          commitsBehind: 63,
+          baseRef: 'origin/main',
+          message:
+            'この worktree (ブランチ feature/mac-slow-diagnosis-7ddee1) のハーネスは origin/main より 63 コミットぶん古いままです。',
+        },
+      ]),
+    );
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('ハーネス凍結（非チケット）')).toBeInTheDocument();
+    expect(screen.getByText('proj-a')).toBeInTheDocument();
+    expect(screen.getByText('feature/mac-slow-diagnosis-7ddee1')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'この worktree (ブランチ feature/mac-slow-diagnosis-7ddee1) のハーネスは origin/main より 63 コミットぶん古いままです。',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('does not render a non-ticket harness worktree section when there are none', async () => {
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+
+    renderHygienePanel();
+
+    expect(await screen.findByText('警告はありません')).toBeInTheDocument();
+    expect(screen.queryByText('ハーネス凍結（非チケット）')).not.toBeInTheDocument();
   });
 });
 

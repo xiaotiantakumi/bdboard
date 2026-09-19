@@ -409,10 +409,25 @@ export interface HygieneCloseEvidenceStatusDto {
   unknownCount: number;
 }
 
+/**
+ * `bd/<id>` に紐づかない worktree (Claude Code の `isolation: "worktree"` が作る
+ * `feature/<slug>` 等) のハーネス凍結警告。ticketId を持たないため HygieneIssueDto
+ * には乗らず、`issues` とは別枠で返す (bdboard-wadg)。
+ */
+export interface NonTicketHarnessWorktreeWarningDto {
+  projectId: string;
+  worktreePath: string;
+  branchName: string;
+  commitsBehind: number;
+  baseRef: string;
+  message: string;
+}
+
 export interface HygieneResponseDto {
   issues: HygieneIssueDto[];
   /** commentReader が無く検査自体を行っていないときは null。 */
   closeEvidence: HygieneCloseEvidenceStatusDto | null;
+  nonTicketHarnessWorktrees: NonTicketHarnessWorktreeWarningDto[];
 }
 
 /** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */

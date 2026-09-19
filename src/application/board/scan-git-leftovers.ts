@@ -1,6 +1,8 @@
 import {
   collectLeftoverCandidates,
+  collectNonTicketWorktrees,
   type LeftoverCandidate,
+  type NonTicketWorktree,
 } from '../../domain/git-worktree.js';
 import type { Project } from '../../domain/project.js';
 import { runWithConcurrencyLimit } from '../concurrency.js';
@@ -26,6 +28,12 @@ export interface ScanGitLeftoversOptions {
 
 export interface ScanGitLeftoversResult {
   readonly candidates: readonly LeftoverCandidate[];
+  /**
+   * `bd/<id>` に紐づかない worktree (feature/* 等)。`scanner.scan()` の結果は
+   * `candidates` と共通なので、同じ snapshot から拾って git 呼び出しを増やさない
+   * (bdboard-wadg)。
+   */
+  readonly nonTicketWorktrees: readonly NonTicketWorktree[];
   /**
    * 全プロジェクトぶん git を最後まで読めたか。1件でも取得失敗 (throw) か
    * `snapshot.complete === false` (git-worktree-scanner.ts がコマンド失敗を
@@ -55,6 +63,7 @@ export async function scanGitLeftovers(
   options?: ScanGitLeftoversOptions,
 ): Promise<ScanGitLeftoversResult> {
   const result: LeftoverCandidate[] = [];
+  const nonTicketWorktrees: NonTicketWorktree[] = [];
   const failures: FetchFailure[] = [];
   let complete = true;
 
@@ -65,6 +74,9 @@ export async function scanGitLeftovers(
         complete = false;
       }
       result.push(...collectLeftoverCandidates(project.id, project.rootPath, snapshot));
+      nonTicketWorktrees.push(
+        ...collectNonTicketWorktrees(project.id, project.rootPath, snapshot),
+      );
     } catch (error) {
       complete = false;
       failures.push({ id: project.id, error });
@@ -77,5 +89,5 @@ export async function scanGitLeftovers(
     logWarn(describeFailure(failures, projects.length));
   }
 
-  return { candidates: result, complete };
+  return { candidates: result, nonTicketWorktrees, complete };
 }

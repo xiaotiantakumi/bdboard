@@ -85,6 +85,7 @@ const HARNESS_CONTRACT_KIND_LABEL = '検証コントラクト';
 const HARNESS_HOOKS_KIND_LABEL = 'hook 未登録';
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
+const NON_TICKET_HARNESS_WORKTREE_KIND_LABEL = 'ハーネス凍結（非チケット）';
 /**
  * stale lease が 0 件でも reclaim の見送り/エラーがあるときに単独で出す欄の種別ラベル。
  * stale lease 行の補足として出るときと違い、見出しが無いと何の欄か読めない (bdboard-0xsw)。
@@ -610,6 +611,7 @@ export function HygienePanel({
   const heldMergeSlots = (mergeSlotQuery.data ?? []).filter(
     (status) => status.held,
   );
+  const nonTicketHarnessWorktrees = query.data?.nonTicketHarnessWorktrees ?? [];
   const reclaimProjects = filterReclaimProjects(
     leaseHealthQuery.data,
     projectIds,
@@ -647,6 +649,7 @@ export function HygienePanel({
     staleLeases.length > 0 ||
     reclaimProblemProjects.length > 0 ||
     heldMergeSlots.length > 0 ||
+    nonTicketHarnessWorktrees.length > 0 ||
     // 全件成功で要更新が 0 件になっても、一括更新の確認・結果は消さずに見せる。
     bulkUpdateTargets !== null ||
     bulkUpdateSummary !== null;
@@ -774,6 +777,28 @@ export function HygienePanel({
                     <span className="hygiene-issue-message">
                       保持中 {formatStaleDuration(status.heldForMs)}
                     </span>
+                  </div>
+                ))}
+              </div>
+            </li>
+          )}
+          {nonTicketHarnessWorktrees.length > 0 && (
+            <li key="non-ticket-harness-worktrees">
+              <div className="hygiene-merge-slot-group">
+                {nonTicketHarnessWorktrees.map((worktree) => (
+                  <div
+                    key={`${worktree.projectId}:${worktree.worktreePath}`}
+                    className="hygiene-issue-row hygiene-issue-row-static"
+                  >
+                    <span className="hygiene-kind-badge hygiene-kind-stale_harness_worktree">
+                      {NON_TICKET_HARNESS_WORKTREE_KIND_LABEL}
+                    </span>
+                    <span className="badge badge-stalled">警告</span>
+                    <span className="hygiene-issue-project" title={worktree.projectId}>
+                      {projectNameFallback(worktree.projectId)}
+                    </span>
+                    <span className="hygiene-issue-id">{worktree.branchName}</span>
+                    <span className="hygiene-issue-message">{worktree.message}</span>
                   </div>
                 ))}
               </div>

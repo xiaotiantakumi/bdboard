@@ -24,6 +24,7 @@ import type {
 } from '../../application/board/get-model-stats.js';
 import type { HarnessKpiStats } from '../../application/board/get-harness-kpi.js';
 import type { HygieneIssue } from '../../domain/hygiene.js';
+import type { NonTicketHarnessWorktreeWarning } from '../../domain/non-ticket-harness-worktree.js';
 import type { InFlightOverlapPeer } from '../../domain/in-flight-overlap.js';
 import type { StaleLeaseIssue } from '../../domain/lease.js';
 import type { MergeSlotStatus } from '../../domain/merge-slot.js';
@@ -458,10 +459,25 @@ export interface HygieneCloseEvidenceStatusDto {
   unknownCount: number;
 }
 
+/**
+ * `bd/<id>` に紐づかない worktree (feature/* 等) のハーネス凍結警告 1 件ぶん。
+ * `HygieneIssueDto` と違い ticketId を持たない (bdboard-wadg)。
+ */
+export interface NonTicketHarnessWorktreeWarningDto {
+  projectId: string;
+  worktreePath: string;
+  branchName: string;
+  commitsBehind: number;
+  baseRef: string;
+  message: string;
+}
+
 export interface HygieneResponseDto {
   issues: HygieneIssueDto[];
   /** commentReader が無く検査自体を行っていないときは null。 */
   closeEvidence: HygieneCloseEvidenceStatusDto | null;
+  /** 非チケット worktree のハーネス凍結。scanner が遅れを測れない構成では常に []。 */
+  nonTicketHarnessWorktrees: NonTicketHarnessWorktreeWarningDto[];
 }
 
 /** チケット詳細パネルの「衝突しうる着手中チケット」1 行ぶん */
@@ -1055,6 +1071,19 @@ export function toTicketInFlightOverlapDto(
   peer: InFlightOverlapPeer,
 ): TicketInFlightOverlapDto {
   return { ticketId: peer.ticketId, files: [...peer.files] };
+}
+
+export function toNonTicketHarnessWorktreeWarningDto(
+  warning: NonTicketHarnessWorktreeWarning,
+): NonTicketHarnessWorktreeWarningDto {
+  return {
+    projectId: warning.projectId,
+    worktreePath: warning.worktreePath,
+    branchName: warning.branchName,
+    commitsBehind: warning.commitsBehind,
+    baseRef: warning.baseRef,
+    message: warning.message,
+  };
 }
 
 export function toStaleLeaseDto(issue: StaleLeaseIssue): StaleLeaseDto {
