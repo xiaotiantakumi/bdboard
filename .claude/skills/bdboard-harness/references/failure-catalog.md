@@ -74,9 +74,9 @@
 - 出典: bd memory `bdboard-merge-slot-syntax`
 
 ### merge-gate-pipe-masked — `bd merge-slot acquire 2>&1 | tail -2 && gh pr merge ...` がパイプの終了ステータスで acquire 失敗を隠し、スロット外マージが発生（2026-09-04, PR #296）
-- 原因: acquire は「slot held by: fable-chair-pkr6」で失敗していたが、パイプの終了ステータスは末尾 `tail` の exit 0 になり `&&` 後続の `gh pr merge` が素通りした（merge-chain-semicolon とは別の機序＝`;` ではなくパイプ）
-- 防止: ゲート判定コマンド（`bd merge-slot acquire`・検証コマンド等）はパイプせず単独実行して `$?` を見るか、リダイレクト後に `EXIT=$?` を取る（本則: worktree-pr-flow.md §5「ゲート判定コマンドをパイプに通して`&&`で繋がない」節）
-- 出典: PR #296 / bdboard-pkr6.22.2（発見: bdboard-9one）
+- 原因: acquire は「slot held by: fable-chair-pkr6」で失敗していたが、パイプの終了ステータスは末尾 `tail` の exit 0 になり `&&` 後続の `gh pr merge` が素通りした（merge-chain-semicolon とは別の機序＝`;` ではなくパイプ。同機序: verify-exit-masked）
+- 防止: ゲート判定コマンド（`bd merge-slot acquire`・検証コマンド等）はパイプせず単独実行して `$?` を見るか、リダイレクト後に `echo "EXIT=$?"` を取る（本則: worktree-pr-flow.md §5「ゲート判定コマンドをパイプに通して `&&` で繋がない」節）
+- 出典: PR #296 / bdboard-pkr6.22.2（索引化: bdboard-9one）
 
 ### ci-webhook-drop — GitHub 障害中の force-push で CI が起動せず、pending と誤認して待ち続けた（2026-08-17）
 - 原因: 障害中は webhook の synchronize イベントが無言でドロップされ、check-suite 自体が生成されない
