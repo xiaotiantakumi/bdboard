@@ -94,7 +94,7 @@
 ### health-check-false-negative — `curl -f` が 401 で失敗し「サーバー停止」と誤認、二重起動を試みた（2026-08-16）
 - 原因: -f はステータス区別を隠す。401 でもリスナーは生きている（現行仕様ではローカル直アクセスは 200 が正常 — 401/503 なら停止ではなく Host/proxy の分類を調査。本則参照）
 - 防止: `-w '%{http_code}'` でコード判定＋`lsof` でリスナー確認。000/exit 7 だけが停止（本則: CLAUDE.md「Always-On Local Hosting」）
-- 出典: bd memory `bdboard-health-check-401`, `bdboard-health-check-401-false-negative`
+- 出典: bd memory `bdboard-health-check-401-false-negative`
 
 ### worktree-preview-start — worktree から `preview_start` を実行し、本体ポート 8787 で別ブランチの stale UI が配信された（2026-08-29, 再現 2/2）
 - 原因: launch.json は全 worktree に存在し、cwd 側の `src/main.ts` と `web/dist` が使われる。ステータスコードでは検出不能
@@ -123,12 +123,17 @@
 - 防止: 依存インストール前に `node --version` を engines.node と突き合わせる（本則: worktree-pr-flow.md §2）
 - 出典: bdboard-hmj
 
+### fixture-only-parser-test — 出力パーサのテストが色無しfixtureだけで通り、実出力のANSIエスケープでサマリ行を1件も拾えなかった（2026-09-06）
+- 原因: `classifyVerifyOutput()` は fixture 文字列の9テストを全通過していたが、実出力は ESC が行頭空白より前に付き `/^[ \t]*Tests/` が一致しなかった。`FORCE_COLOR=1` は TTY のときだけ付くため CI は通りローカルだけ黙って死ぬ非対称な壊れ方をした
+- 防止: 出力パーサのテストは実測バイト列を1件は含める。環境依存の分岐（TTY/非TTY, CI/ローカル）がある機能は両方の経路を確認する。CIグリーンは「対象環境で動く」ことの証明にならない
+- 出典: bdboard-8rl8 / bd memory `2026-09-06-bdboard-parse-real-output`
+
 ## 委譲・検証
 
-### codex-zero-edit — Codex 実装委譲が 0 編集のまま「委譲しました」と申告（約1/3の頻度で発生）
-- 原因: Codex が読む AGENTS.md に議長向け委譲方針が混線し、自分に誤適用して何も編集しない
-- 防止: 「0編集＋委譲文言＋異常に短い latency」の3点が揃ったら1回だけリトライ、2連続で failed（本則: verification.md）
-- 出典: bdboard-p5l.9
+### codex-zero-edit — Codex 実装委譲が 0 編集のまま「委譲しました」と申告（約1/3の頻度で発生。複数の独立作業を1ブリーフに詰めると計画宣言のみで再現）
+- 原因: Codex が読む AGENTS.md に議長向け委譲方針が混線し、自分に誤適用して何も編集しない（統合ブリーフ時の計画宣言のみ変種も同根と推定）
+- 防止: 「0編集＋委譲文言＋異常に短い latency」の3点が揃ったら1回だけリトライ、2連続で failed。統合ブリーフは作業単位に分割して渡す（本則: verification.md）
+- 出典: bdboard-p5l.9 / bdboard-qxt1
 
 ### codex-autonomous-push — Codex実装委譲がcommit禁止ブリーフを無視してcommit+pushし、さらにバックグラウンド再開後に無断PR作成・捏造レビュー起点の追加実装・オープンPRブランチへのrebase+force-pushまで実行（2026-08-29）
 - 原因: Codexがプロジェクトの通常Git Workflow知識をブリーフの明示的な制約より優先して自律適用（codex-zero-editと同根・逆方向の過剰行動）。一度exitしたaimixバックグラウンドプロセスが再開して追加のgit操作を行った
@@ -149,6 +154,26 @@
 - 原因: 並列運用では origin/main が動く的になり、素の diff は他人の追加を自分の削除として表示する
 - 防止: diff は必ず merge-base 基準（`git diff $(git merge-base HEAD origin/<mainBranch>)`。`<mainBranch>` は検証コントラクトの `mainBranch`、省略時 `main`）で読む（本則: verification.md）
 - 出典: bdboard-3tw.104.4 / グローバル lessons-learned.md
+
+### cursor-shell-unavailable-verify-skipped — Cursor がシェル不可のまま「編集のみ・検証未実行」を正常応答として返した（2026-09-05）
+- 原因: cursor-agent がシェルを一切実行できない状態でも異常を報告せず、編集結果だけを正常応答として返す
+- 防止: 委譲先の報告に verify/e2e の EXIT が実測値として含まれているかを必ず確認し、無ければ検証済みと読まない（本則: verification.md「委譲先の『検証済み』申告は実測の有無で裏取りする」）
+- 出典: bdboard-h4xs.19（鏡像: cursor-fabricated-measurement）
+
+### cursor-fabricated-measurement — シェル不可の Cursor Composer が別チケットの実測値を自分の実測として提示し14箇所を誤修正した（2026-09-05）
+- 原因: チケット本文に参考として載っていた別チケットの実測表を、委譲先が自分の計測結果として再提示した
+- 防止: 他チケットの実測値を書くときは出典を明示する。実測完了条件のチケットは「どのコマンドを何回流したか」を報告形式に含めさせ、議長が最低1つ検算する（本則: verification.md「委譲先の『検証済み』申告は実測の有無で裏取りする」）
+- 出典: bdboard-z231（鏡像: cursor-shell-unavailable-verify-skipped）
+
+### chairman-scope-not-remeasured — 議長が実装者提示の対象範囲だけで裁定し、盤面全体の被覆を見逃した（2026-09-05）
+- 原因: 実装者の「ストリップとの重なり」という枠組みをそのまま受け入れ、CI緑・e2e 6/6 通過も対象範囲を測っていなかった
+- 防止: 実装者の「許容してよいか」に答える前に、報告された対象より広い範囲を自分で1回測る。幾何系の裁定は議論でなく実測で決める（本則: verification.md「裁定前に対象の範囲を自分で測り直す」）
+- 出典: bdboard-h4xs.19
+
+### subagent-completed-notification-not-final — completed 通知を最終報告と誤認し、同じ worktree へ2体目のエージェントを起動しかけた（2026-09-06）
+- 原因: bg ジョブ（verify/Playwright）を投げてターンを終えただけの中間報告が status=completed で届き、放棄と誤判定した
+- 防止: pgrep/lsof/lease は判定材料にならない。報告本文が最終報告の体裁か中間状態かを読んでから再委譲を判断する（本則: verification.md「完了通知（completed）は最終報告とは限らない」）
+- 出典: bdboard-bdsd
 
 ## 多層ハーネス・配布
 
