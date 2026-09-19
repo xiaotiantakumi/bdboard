@@ -3253,6 +3253,104 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
   });
 
+  it('retries hydration (not just the turn-status fetch) after a transient failure loading a completed turn (bdboard-3tw.164 Opus レビュー)', async () => {
+    // turn-status 自体は毎回 completed を返すが、掃き出し用の thread 一覧取得
+    // (fetchChatThreads) が最初の1回だけ失敗する。重複防止印 (recoveredSessionIds)
+    // が外れずに再試行が黙って戻り続ける退行を防ぐための回帰テスト。
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let streamClosed = false;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      return {
+        state: 'completed',
+        sessionId: 'sess-overflow',
+        agentId: 'claude',
+        completedAt: '2026-09-13T08:00:10.000Z',
+      };
+    });
+    // マウント時の初期スレッド一覧取得 (streamClosed===false の間) は成功させ、
+    // ストリーム終了後 (ハイドレーション経路) の最初の1回だけ失敗させる。
+    let hydrationThreadsCalls = 0;
+    fetchChatThreadsMock.mockImplementation(async () => {
+      if (!streamClosed) return [];
+      hydrationThreadsCalls += 1;
+      if (hydrationThreadsCalls === 1) {
+        throw new TypeError('network hiccup');
+      }
+      return [
+        {
+          sessionId: 'sess-overflow',
+          agentId: 'claude',
+          title: 'overflow question',
+          pinned: false,
+          updatedAt: '2026-09-13T08:00:10.000Z',
+        },
+      ];
+    });
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/chat/sessions/sess-overflow/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-overflow',
+          agentId: 'claude',
+          messages: [
+            { role: 'user', content: 'overflow question', createdAt: '2026-09-13T08:00:00.000Z' },
+            {
+              role: 'assistant',
+              content: 'full reply recovered after hydration retry',
+              createdAt: '2026-09-13T08:00:10.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'overflow question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messages = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('partial');
+    });
+
+    releaseClose();
+
+    expect(
+      await screen.findByText(
+        'full reply recovered after hydration retry',
+        {},
+        { timeout: 2_500 },
+      ),
+    ).toBeInTheDocument();
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-overflow');
+    // 少なくとも「失敗した1回」+「成功した1回」はハイドレーション経路から
+    // fetchChatThreads を試みている。
+    expect(hydrationThreadsCalls).toBeGreaterThanOrEqual(2);
+  });
+
   it('falls back to a send failure when turn-status turns idle without recovering the detached turn (bdboard-zlzo)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
