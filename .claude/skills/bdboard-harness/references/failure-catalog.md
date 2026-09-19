@@ -123,7 +123,7 @@
 - 防止: 依存インストール前に `node --version` を engines.node と突き合わせる（本則: worktree-pr-flow.md §2）
 - 出典: bdboard-hmj
 
-### fixture-only-parser-test — 出力パーサのテストが色無しfixtureだけで通り、実出力のANSIエスケープでサマリ行を1件も拾えなかった（bdboard-8rl8）
+### fixture-only-parser-test — 出力パーサのテストが色無しfixtureだけで通り、実出力のANSIエスケープでサマリ行を1件も拾えなかった（2026-09-06）
 - 原因: `classifyVerifyOutput()` は fixture 文字列の9テストを全通過していたが、実出力は ESC が行頭空白より前に付き `/^[ \t]*Tests/` が一致しなかった。`FORCE_COLOR=1` は TTY のときだけ付くため CI は通りローカルだけ黙って死ぬ非対称な壊れ方をした
 - 防止: 出力パーサのテストは実測バイト列を1件は含める。環境依存の分岐（TTY/非TTY, CI/ローカル）がある機能は両方の経路を確認する。CIグリーンは「対象環境で動く」ことの証明にならない
 - 出典: bdboard-8rl8 / bd memory `2026-09-06-bdboard-parse-real-output`
@@ -131,7 +131,7 @@
 ## 委譲・検証
 
 ### codex-zero-edit — Codex 実装委譲が 0 編集のまま「委譲しました」と申告（約1/3の頻度で発生。複数の独立作業を1ブリーフに詰めると計画宣言のみで再現）
-- 原因: Codex が読む AGENTS.md に議長向け委譲方針が混線し、自分に誤適用して何も編集しない
+- 原因: Codex が読む AGENTS.md に議長向け委譲方針が混線し、自分に誤適用して何も編集しない（統合ブリーフ時の計画宣言のみ変種も同根と推定）
 - 防止: 「0編集＋委譲文言＋異常に短い latency」の3点が揃ったら1回だけリトライ、2連続で failed。統合ブリーフは作業単位に分割して渡す（本則: verification.md）
 - 出典: bdboard-p5l.9 / bdboard-qxt1
 
