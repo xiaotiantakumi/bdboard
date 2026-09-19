@@ -36,6 +36,15 @@ port, so those run fine in parallel worktrees.
 `bd/bdboard-3tw.65` — dots are legal in git ref names). Non-ticket
 exploratory branches use `spike/` and never get a PR.
 
+## bd チケット title の命名規約
+
+チケット title に `[bug]` 等の type 接頭辞を付けない。`type=bug` は bdboard の詳細パネルで
+`[BUG]` バッジとして描画されるため、title 側にも書くと `[BUG] · [bug]` のように二重表示に
+なる。既存チケットに接頭辞付きのものが残っていることがあるが、命名慣習をそれらの既存
+title から推測すると再発する（実例: bdboard-wdwa・bdboard-nzul で2回発生し、いずれも
+`bd update --title` で接頭辞を除去した）。書式は **`<領域>: <症状>`**（type の情報は
+`--type` フィールドに持たせる。title には書かない）。
+
 ## GitHub issue linking (`npm run check:gh-issues`)
 
 At session start, run `npm run check:gh-issues`. It lists open GitHub issues
@@ -45,6 +54,18 @@ counts; any other form is reported as unlinked). Tickets of every status count,
 including closed ones.
 The check is read-only, uses the GitHub REST API only, and remains advisory:
 it exits 0 even when `gh` is unavailable or cannot authenticate.
+
+GitHub issue（別端末・別アカウントから起票されることもある）は bd チケット化して対応する:
+
+1. **紐付け**: `bd create` または `bd update <id> --external-ref gh-<番号>` で bd チケットと
+   GitHub issue を1対1に結ぶ（上の check スクリプトが認識する形式は `gh-<番号>` または
+   `https://github.com/<owner>/<repo>/issues/<番号>`）。
+2. **進捗コメント**: 着手・PR 作成・マージ・close の節目ごとに、紐付けた GitHub issue 側にも
+   コメントで進捗を書く。対応が完了したら issue を閉じる。
+3. **判断が残る場合**: 対応方針の判断がまだ残っている（要確認・要議論）なら issue を閉じず、
+   その旨をコメントに書いて次のセッションに引き継ぐ。
+4. **公開リポジトリの注意**: このリポジトリは public なので、issue コメントに非公開の運用上
+   の履歴（内部パス・非公開の同期先 remote 名など）やシークレットを書かない。
 
 ## Direct-to-main の禁止とその唯一の例外
 
