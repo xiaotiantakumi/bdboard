@@ -3226,8 +3226,17 @@ describe('ChatPanel', () => {
     });
     await user.click(screen.getByRole('button', { name: '送信' }));
 
-    // クリックしても3本目のストリーム POST は発生しない (無理に発生したら上の
-    // fetchMock 実装が例外を投げてテストを落とす)。D の部分テキストは消えずに残る。
+    // bdboard-v3ag Opus レビュー指摘 (nit N2): この回帰を実際に検出しているのは
+    // 直前の toBeDisabled() の waitFor (ガードを外すと disabled にならずここで
+    // タイムアウトする)。この下の streamPosts===2 はそのうえでの二重チェックで、
+    // 万一クリックがすり抜けて3本目の POST が発生しても、上の fetchMock 実装は
+    // Promise を reject するだけ — アプリ側の catch (postChatMessageStream の
+    // エラーハンドリング) に飲まれて通常のチャットエラー表示になるだけで、
+    // テスト自体を例外で落とすわけではない。
+    // (旧コメントは「fetchMock が例外を投げてテストを落とす」としていたが不正確
+    // だったため修正した。)
+    // クリックしても3本目のストリーム POST は発生しない。D の部分テキストは
+    // 消えずに残る。
     expect(streamPosts).toBe(2);
     expect(
       screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
@@ -4008,6 +4017,247 @@ describe('ChatPanel', () => {
     await user.click(screen.getByRole('button', { name: '送信' }));
     expect(await screen.findByText('second reply')).toBeInTheDocument();
     expect(streamPosts).toBe(2);
+  });
+
+  it(
+    'unblocks the send button and shows a failure once turn-status polling exhausts its retry backoff (bdboard-v3ag Opus レビュー指摘 blocker B1)',
+    async () => {
+      // B1: bdboard-v3ag の送信ブロックは detachedStreamSendRef が non-null な間ずっと
+      // 有効になる。turn-status のポーリングが (ネットワーク断などで)
+      // TURN_STATUS_POLL_RETRY_BACKOFF_MS を使い切って諦めた場合、修正前はその ref を
+      // 誰も解放しないまま effect が黙って止まり、送信ボタンが永久に disabled のまま
+      // 残る (ページ再読み込み以外に回復手段の無いデッドロック) というのが指摘内容。
+      // ここでは turn-status を毎回エラーにしてバックオフを使い切らせ、それでも
+      // 最終的に失敗表示が出てボタンが再度有効になることを確認する。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      fetchChatTurnStatusMock.mockRejectedValue(new Error('turn-status unavailable'));
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+      await user.type(screen.getByLabelText('メッセージ'), 'doomed question');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      // done/error 無しでストリームが閉じる = 配信停止 → turn-status 回収へ。
+      await waitFor(() => {
+        expect(
+          screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+            ?.textContent,
+        ).toBe('partial');
+      });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+      });
+
+      // turn-status がここから先ずっとエラーを返し続け、バックオフ
+      // ([1s, 2s, 4s, 8s, 8s] = 最大23秒) を使い切って諦める。B1 の修正が無いと、
+      // 送信ボタンはここで二度と有効に戻らない。
+      expect(
+        await screen.findByText(
+          '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+          {},
+          { timeout: 26_000 },
+        ),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+      });
+      expect(
+        screen.getByRole('log').querySelector('.chat-message-streaming'),
+      ).not.toBeInTheDocument();
+    },
+    30_000,
+  );
+
+  it('keeps polling past an unrelated sessionId-less failed entry instead of stalling forever (bdboard-v3ag Opus レビュー指摘 blocker B1)', async () => {
+    // B1 (b)(c): 追っている送信とは無関係な failed エントリ (sessionId 無し、または
+    // 既に一度ACK済みの重複) を見たとき、修正前は effect が無条件 return して二度と
+    // checkTurnStatus を呼ばなかった。無関係なエントリがキューの先頭に居座っている
+    // だけで、本当に追っている送信の回収が永久に止まってしまう (=送信ボタンも
+    // 永久に disabled のまま)。
+    //
+    // これを確実に再現するには、追っている送信 (D) 自身の sessionId が既知
+    // (=既存スレッドへの再送) である必要がある — 新規スレッドの初回送信のように
+    // D 自身の sessionId が未知 (undefined) だと、「sessionId 無しの failed は
+    // 全部 D 自身のものかもしれない」という既存の (bdboard-3tw.165 由来の)
+    // 寛容な一致判定 (matchesTrackedSend) に飲み込まれてしまい、このテストが
+    // 狙う「無関係で一致しない failed をどう扱うか」の分岐を素通りしてしまう。
+    // そのため、まず1通目を通常どおり完走させて sessionId を確定させ、2通目を
+    // 配信停止させる。
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let detachStreamClosed = false;
+    let postDetachCalls = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!detachStreamClosed) return { state: 'idle' };
+      postDetachCalls += 1;
+      if (postDetachCalls === 1) {
+        // 無関係な新規スレッドの sessionId 無し失敗 (ACK 経路が無く区別もできない)。
+        // D 自身の sessionId は既知 ('sess-b1bc') なので、これは matchesTrackedSend
+        // に一致しない = 無関係扱いの分岐 (B1 の修正対象) を通る。
+        return {
+          state: 'failed',
+          code: 'agent-error',
+          agentId: 'claude',
+          failedAt: '2026-09-19T08:00:10.000Z',
+          // sessionId は意図的に省略 (新規スレッドの初回送信中の失敗を模す)。
+        };
+      }
+      // 追っている送信 (D) 自身は completed/failed どちらのエントリも残さず終わった
+      // = 失敗として確定する。
+      return { state: 'idle' };
+    });
+    let streamPosts = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        streamPosts += 1;
+        if (streamPosts === 1) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"first reply","sessionId":"sess-b1bc","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"d partial"}\n\n'),
+              );
+              controller.close();
+              detachStreamClosed = true;
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('first reply');
+    acknowledgeChatTurnMock.mockClear();
+
+    await user.type(screen.getByLabelText('メッセージ'), 'detach this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    // 配信停止した瞬間 (無関係な failed の聞き直しが1秒後に控えている) と実時間で
+    // 競合しないよう、「送信直後、まだ聞き直し前」の一時的な状態を短いタイムアウト
+    // で先に確定させる。
+    await waitFor(
+      () => {
+        expect(
+          screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+            ?.textContent,
+        ).toBe('d partial');
+      },
+      { timeout: 400 },
+    );
+    await waitFor(
+      () => {
+        expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+      },
+      { timeout: 400 },
+    );
+
+    // 無関係な1件を挟んでも、1秒後の聞き直しで idle に辿り着き解決する
+    // (B1 の修正が無いと、この findByText はタイムアウトするまで永久に見つからない)。
+    expect(
+      await screen.findByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+        {},
+        { timeout: 4_000 },
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
+    expect(postDetachCalls).toBeGreaterThanOrEqual(2);
+    expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks a resend triggered via ⌘/Ctrl+Enter (which bypasses the disabled submit button) while recovery is unresolved (bdboard-v3ag Opus レビュー指摘 W3)', async () => {
+    // W3: ⌘/Ctrl+Enter は handleKeyDown から formRef.current.requestSubmit() を
+    // 直接呼ぶ。ブラウザの `disabled` はマウスクリックによる暗黙の送信は止めるが、
+    // requestSubmit() は disabled な送信ボタンの有無にかかわらず form の submit
+    // イベントを発火させる。したがって、この経路を実際にブロックしているのは
+    // ボタンの disabled 属性ではなく submitChatMessage 冒頭の
+    // unresolvedProjectRecoveryAtSubmit ガードそのものである。それを確認する。
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatTurnStatusMock.mockResolvedValue({
+      state: 'processing',
+      message: 'detach this',
+      agentId: 'claude',
+    });
+    let streamPosts = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        streamPosts += 1;
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'detach this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+          ?.textContent,
+      ).toBe('partial');
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+    });
+    expect(streamPosts).toBe(1);
+
+    await user.type(screen.getByLabelText('メッセージ'), 'second try');
+    await user.type(screen.getByLabelText('メッセージ'), '{Meta>}{Enter}{/Meta}');
+
+    // ⌘+Enter で form.requestSubmit() が呼ばれても、submitChatMessage 自身の
+    // ガードにより2本目のストリーム POST は発生しない。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(streamPosts).toBe(1);
+    expect(
+      screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+        ?.textContent,
+    ).toBe('partial');
   });
 
   describe('streaming abort on unmount / conversation switch (bdboard-7st)', () => {

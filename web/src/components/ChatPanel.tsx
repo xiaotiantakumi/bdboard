@@ -1253,6 +1253,16 @@ export function ChatPanel({
           // よう何もしない (CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出されるまで
           // 残る — bdboard-3tw.165 の既知の制約、サーバー側コメント参照)。
           if (status.sessionId === undefined || drainedFailedSessionIds.has(status.sessionId)) {
+            // bdboard-v3ag Opus レビュー指摘 (blocker B1): 無条件の return だと、次の
+            // トリガー (=新しい送信の配信停止) が無い限りこの effect は二度と
+            // checkTurnStatus を呼ばない。無関係な failed が先頭に居座っている間、
+            // 本当に追っている送信の結末を永遠に確認できなくなり、ref も送信ボタンの
+            // disabled も解けない。'processing' 分岐と同じ間隔で聞き直しを続ける —
+            // サーバー側は CHAT_COMPLETED_TURNS_MAX の上限に達すればこのエントリを
+            // 自然に押し出すので、無限ループというより粘り強いポーリングになる。
+            pollTimer = setTimeout(() => {
+              void checkTurnStatus();
+            }, 1_000);
             return;
           }
           drainedFailedSessionIds.add(status.sessionId);
@@ -1275,22 +1285,44 @@ export function ChatPanel({
         if (status.state !== 'completed') return;
         // ACK が効かずサーバーが同じ1件を返し続けても、掃き出しループが
         // 回り続けないようにする (bdboard-3tw.156)。
-        if (recoveredSessionIds.has(status.sessionId)) return;
+        if (recoveredSessionIds.has(status.sessionId)) {
+          // bdboard-v3ag Opus レビュー指摘 (blocker B1): drainedFailedSessionIds と
+          // 同じ理由で、ここも無条件 return にすると effect が二度と
+          // checkTurnStatus を呼ばなくなる。この completed エントリの背後に、
+          // detachedStreamSendRef が追っている別セッションの completed/failed が
+          // 隠れている場合、その解決を永遠に確認できず ref も送信ボタンの
+          // disabled も解けない。'failed' 分岐の無関係エントリと同じ間隔で
+          // 聞き直しを続ける (サーバー側の CHAT_COMPLETED_TURNS_MAX で自然に
+          // 押し出されるまでの、粘り強いポーリング)。
+          pollTimer = setTimeout(() => {
+            void checkTurnStatus();
+          }, 1_000);
+          return;
+        }
         recoveredSessionIds.add(status.sessionId);
-        // bdboard-3tw.166 (Opus レビュー指摘): ref 自体はここで即座に外す (このターンの
-        // detached 追跡としてはもう完了扱いで正しい)。ただし表示中の部分テキストを
-        // 消すのは下のハイドレーション (fetch → setConversations) が実際に成功して
-        // からにする — ここで即座に消すと、2件の fetch を待つ間だけ「部分テキストも
-        // 確定本文もどちらも無い」空白の間が生まれてしまい、"回収したターンの本文が
-        // 届いたら置き換える" という要件 (本文が届く *前* に消えない) を満たせない。
+        // bdboard-3tw.166 (Opus レビュー指摘): 表示中の部分テキストを消すのは下の
+        // ハイドレーション (fetch → setConversations) が実際に成功してからにする —
+        // ここで即座に消すと、2件の fetch を待つ間だけ「部分テキストも確定本文も
+        // どちらも無い」空白の間が生まれてしまい、"回収したターンの本文が届いたら
+        // 置き換える" という要件 (本文が届く *前* に消えない) を満たせない。
+        //
+        // bdboard-v3ag Opus レビュー指摘 (W1): detachedStreamSendRef 自体のクリアも
+        // 同じタイミングまで遅らせる。以前は「もう完了扱いで正しい」として即座に
+        // 外していたが、bdboard-v3ag のガード (hasUnresolvedProjectRecovery /
+        // unresolvedProjectRecoveryAtSubmit) はこの ref の non-null を「再送を
+        // 止めるべき区間」の目印として使っている。ここで先に ref だけ外すと、
+        // ハイドレーション fetch が終わるまでの間だけ再送がすり抜けられるように
+        // なり、その再送自身の setStreamingReply({ key: sendKey, text: '' }) が
+        // (a) このあと届く確定本文と同じ会話キーの部分テキストを本文到着前に消す、
+        // (b) 新しい送信自身のライブな部分テキストまで巻き添えで消す、という
+        // v3ag が塞ごうとした穴を completed 経路でだけ再現してしまう。ref のクリアと
+        // clearStreamingReplyForKey を下の「本文を書き込むタイミング」に揃えることで、
+        // 再送のブロックがハイドレーション完了まで一貫して効くようにする。
         const detached = detachedStreamSendRef.current;
         const detachedMatchesThisRecovery =
           detached !== null &&
           detached.projectId === selectedProjectId &&
           (detached.sessionId === undefined || detached.sessionId === status.sessionId);
-        if (detachedMatchesThisRecovery) {
-          detachedStreamSendRef.current = null;
-        }
 
         // A detached turn can create a session whose id was unknown when the tab closed.
         // Invalidate older history/thread-list requests before hydrating the server-owned
@@ -1354,6 +1386,10 @@ export function ChatPanel({
           // 確定本文が二重に出ることも、本文が届く前に両方とも消えて空白になることも
           // 防ぐ。detached!.streamingKey の detached は detachedMatchesThisRecovery が
           // true の時点で null でないことが確定している (上で導出した局所変数)。
+          // bdboard-v3ag (W1): ref のクリアもここへ揃える (上のコメント参照) —
+          // ハイドレーションが成功して初めて、このターンの detached 追跡を終えたと
+          // 見なす。
+          detachedStreamSendRef.current = null;
           clearStreamingReplyForKey(detached!.streamingKey);
         }
         setHistoryLoadedFor((prev) => ({ ...prev, [status.sessionId]: true }));
@@ -1404,6 +1440,22 @@ export function ChatPanel({
           console.warn(
             `chat turn-status polling gave up after ${TURN_STATUS_POLL_RETRY_BACKOFF_MS.length} consecutive failures`,
           );
+          // bdboard-v3ag Opus レビュー指摘 (blocker B1): ここで何もせず return すると、
+          // detachedStreamSendRef が追っていた送信の結末を永遠に確認できないまま
+          // ref が non-null で残り続ける。bdboard-v3ag はこの ref が同じプロジェクトを
+          // 指している間ずっと送信ボタンを disabled にするため、対処しないと利用者は
+          // 二度とこのプロジェクトへ送信できなくなる(ページ再読み込み以外に回復手段が
+          // 無いデッドロック)。ポーリング自体を諦める以上、idle/failed 分岐と同じ扱い
+          // (ref 解放 + 保持していた部分テキストのクリア + 失敗表示) にする。
+          const exhaustedDetached = detachedStreamSendRef.current;
+          if (
+            exhaustedDetached !== null &&
+            exhaustedDetached.projectId === selectedProjectId
+          ) {
+            detachedStreamSendRef.current = null;
+            clearStreamingReplyForKey(exhaustedDetached.streamingKey);
+            exhaustedDetached.fail();
+          }
           return;
         }
         pollTimer = setTimeout(() => {
@@ -2560,6 +2612,15 @@ export function ChatPanel({
           // 場合、ref は前のターンを指したままなので誤って「今回も配信停止した」と
           // 判定してしまい、この再送自身が受け取った部分テキストが消えずに残る。
           // ローカル変数で「この送信自身が配信停止したか」だけを見る。
+          //
+          // bdboard-v3ag Opus レビュー指摘 (nit N1): 上で説明している「同じ会話への
+          // 以前の未解決の配信停止が残っている」ケース自体、bdboard-v3ag 以降は
+          // 単一タブの中では起こり得ない — submitChatMessage 冒頭の
+          // unresolvedProjectRecoveryAtSubmit ガードが、同じプロジェクトの ref が
+          // non-null な間はこの関数の本体に到達する前に return するため。したがって
+          // このローカル変数による判定は今のところ常に ref の直接比較と一致するはず
+          // だが、ガードを潜り抜ける経路が将来増えても壊れない防御としてそのまま
+          // 残す(コード自体は変更しない、コメントのみ更新)。
           let detachedThisSend = false;
           try {
             const result = await postChatMessageStream(
@@ -2640,6 +2701,16 @@ export function ChatPanel({
               // (checkTurnStatus の completed 分岐 → 掃けたら再帰的に failed も掃く)
               // に任せる — 結果として少し遅れて ACK されるだけで、正しい優先順位
               // (completed を先に処理する) が保たれる。
+              // bdboard-v3ag Opus レビュー指摘 (nit N1): 上の finding-1 シナリオ
+              // (D が未回収のまま同じ会話へ N を送る) は、bdboard-v3ag 以降は単一タブ
+              // では再現できない — 同じ理由 (submitChatMessage 冒頭のガード) で、D が
+              // 未回収である間はそもそも N をこの関数の中まで進められない。この分岐
+              // 自体は「ガードを回避する経路が将来増えても安全」な防御としてそのまま
+              // 残している。別タブ/別クライアントから見ても、detachedStreamSendRef は
+              // タブ固有の ref (コンポーネントインスタンスのメモリ上) なので、他タブの
+              // D をこのタブのガードが知ることはできない — その意味では cross-tab の
+              // 防御にもなっていない。したがって現状はどちらのタブ内シナリオでも
+              // 到達しない、意図した防御的デッドコードだと理解した上で残している。
               const unresolvedSameSessionDetach =
                 detachedStreamSendRef.current !== null &&
                 detachedStreamSendRef.current.projectId === selectedProjectId &&
@@ -3736,10 +3807,14 @@ export function ChatPanel({
                 スクリーンリーダーが2回連続で読み上げることになる。ここは見た目上の
                 補助表示として置くだけで、状態変化の告知そのものはログ側の1箇所に
                 任せる。ログをスクロールしている/入力欄だけ見ている利用者にも視覚的に
-                処理継続中であることが伝わるようにする。 */}
-            {!isSending &&
-              backgroundTurnProjectId === selectedProjectId &&
-              backgroundTurnStatus.state === 'processing' && (
+                処理継続中であることが伝わるようにする。
+                bdboard-v3ag Opus レビュー指摘 (W4): 条件を backgroundTurnStatus (poll
+                の1レスポンス単位でしか更新されない) から、送信ボタンの disabled と
+                全く同じ式 hasUnresolvedProjectRecovery に揃える。backgroundTurnStatus
+                だけに頼ると、ポーリングの谷間や B1 の「無関係な failed で足止め」
+                「バックオフ尽き」のような区間でボタンだけ disabled のままバナーが
+                消え、利用者に理由が伝わらない窓ができていた。 */}
+            {!isSending && hasUnresolvedProjectRecovery && (
               <p className="chat-pending chat-input-recovery-status">
                 バックグラウンドで応答を処理中です…
               </p>
