@@ -1524,6 +1524,17 @@ export type ChatTurnStatusDto =
       sessionId: string;
       agentId: string;
       completedAt: string;
+    }
+  | {
+      // bdboard-3tw.165: explicit failure state, so a completed-turn recovery flow can
+      // stop inferring a failed turn from turn-status going idle without ever passing
+      // through 'completed'. sessionId is absent when the turn failed before the agent
+      // ever assigned one (a brand-new thread).
+      state: 'failed';
+      code: string;
+      sessionId?: string;
+      agentId: string;
+      failedAt: string;
     };
 
 export interface DiscoveredChatSessionDto {

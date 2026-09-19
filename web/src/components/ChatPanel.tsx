@@ -1183,7 +1183,21 @@ export function ChatPanel({
         if (cancelled) return;
         consecutiveFailures = 0;
         setBackgroundTurnStatus(status);
-        if (status.state === 'idle') {
+        if (status.state === 'idle' || status.state === 'failed') {
+          // bdboard-3tw.165: 'failed' is the server's explicit signal for the same
+          // situation 'idle' used to leave us guessing about (processing → idle without
+          // ever passing through completed). Treat both the same way here so this
+          // ticket's server change can't silently regress bdboard-3tw.164's existing
+          // detached-turn failure recovery — 'idle' stays as the fallback for turns the
+          // server didn't record as failed (e.g. ChatAgentAbortedError, which is treated
+          // as a deliberate/expected cancellation server-side and is not recorded).
+          if (status.state === 'failed' && status.sessionId !== undefined) {
+            try {
+              await acknowledgeChatTurn(selectedProjectId, status.sessionId);
+            } catch {
+              // ACK is best-effort; a later poll can just see the same failed turn again.
+            }
+          }
           const detached = detachedStreamSendRef.current;
           if (detached !== null && detached.projectId === selectedProjectId) {
             detachedStreamSendRef.current = null;

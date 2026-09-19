@@ -140,6 +140,24 @@ interface CompletedChatTurn {
   readonly completedAt: string;
 }
 
+/**
+ * bdboard-3tw.165: completedTurns と並行して失敗ターンも憶えておく。turn-status の
+ * ポーリング側 (web) が「processing から completed を経ずに idle へ落ちた」ことから
+ * 失敗を推測するのをやめ、サーバーが明示できるようにする。
+ *
+ * sessionId が無いことがある: エージェントがまだセッションを払い出す前に失敗した
+ * 新規スレッドの場合。ACK (DELETE /api/chat/turn-status) は sessionId が分かって
+ * いるケースだけ completed と相乗りさせる (ackFailedTurn)。sessionId 不明な失敗は
+ * 参照できる識別子がクライアント側にも無いので、専用の ACK 経路は作らず
+ * CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出す。
+ */
+interface FailedChatTurn {
+  readonly sessionId?: string;
+  readonly agentId: string;
+  readonly code: string;
+  readonly failedAt: string;
+}
+
 interface QueuedSseMessage {
   readonly event: string;
   readonly data: string;
@@ -215,6 +233,28 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       return;
     }
     completedTurns.set(projectId, next);
+  };
+  // bdboard-3tw.165: failedTurns の記録・ACK。completedTurns と同じ形の per-project
+  // キューだが、sessionId が無いエントリがあり得るので dedupe/フィルタは sessionId が
+  // 分かっているものだけに絞る。
+  const failedTurns = new Map<string, readonly FailedChatTurn[]>();
+  const recordFailedTurn = (projectId: string, entry: FailedChatTurn): void => {
+    const queued = failedTurns.get(projectId) ?? [];
+    const next =
+      entry.sessionId !== undefined
+        ? [...queued.filter((item) => item.sessionId !== entry.sessionId), entry]
+        : [...queued, entry];
+    failedTurns.set(projectId, next.slice(-CHAT_COMPLETED_TURNS_MAX));
+  };
+  const ackFailedTurn = (projectId: string, sessionId: string): void => {
+    const queued = failedTurns.get(projectId);
+    if (queued === undefined) return;
+    const next = queued.filter((item) => item.sessionId !== sessionId);
+    if (next.length === 0) {
+      failedTurns.delete(projectId);
+      return;
+    }
+    failedTurns.set(projectId, next);
   };
   const rateLimit = createChatRateLimitMiddleware(limiter, {
     // /api/chat/agents は免除しない: 1 リクエストで N 個の --version 子プロセスを
@@ -444,6 +484,20 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     if (completed !== undefined) {
       return c.json({ state: 'completed' as const, ...completed });
     }
+    // bdboard-3tw.165: completed の次に failed を見る。同じプロジェクトの
+    // ターンは isBusy の単一ロックで直列化されるので、1つのターンが completed と
+    // failed の両方に載ることは無い (別ターンどうしがそれぞれ未回収のまま
+    // 両方のキューに残ることはあり得るが、completed 優先で構わない)。
+    const failed = failedTurns.get(parsed.data.projectId)?.[0];
+    if (failed !== undefined) {
+      return c.json({
+        state: 'failed' as const,
+        code: failed.code,
+        agentId: failed.agentId,
+        failedAt: failed.failedAt,
+        ...(failed.sessionId !== undefined ? { sessionId: failed.sessionId } : {}),
+      });
+    }
     return c.json({ state: 'idle' as const });
   });
 
@@ -457,6 +511,7 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     });
     if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
     ackCompletedTurn(parsed.data.projectId, parsed.data.sessionId);
+    ackFailedTurn(parsed.data.projectId, parsed.data.sessionId);
     return c.body(null, 204);
   });
 
@@ -658,6 +713,11 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       let clientGone = false;
       let cleanedUp = false;
       let finished = false;
+      // bdboard-3tw.165: guards enqueue's overflow branch against re-entry while the
+      // detached write below is still in flight (cleanup/abort are deferred a tick, see
+      // that branch) — without it, more deltas arriving in that gap could refill queue
+      // and trip the overflow branch a second time.
+      let stopping = false;
       let pingTimer: ReturnType<typeof setInterval> | undefined;
       const signal = c.req.raw.signal;
       const waitForQueue = (): Promise<void> => new Promise((resolve) => {
@@ -673,14 +733,34 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         resume?.();
       };
       const enqueue = (message: QueuedSseMessage): void => {
-        if (clientGone) return;
+        if (clientGone || stopping) return;
         if (queue.length >= CHAT_STREAM_QUEUE_MAX_SIZE) {
           console.warn(
             `SSE /api/chat/message/stream: per-client queue limit (${CHAT_STREAM_QUEUE_MAX_SIZE}) reached; stopping delivery to slow client (turn continues)`,
           );
+          stopping = true;
           queue.length = 0;
-          cleanup();
-          stream.abort();
+          // bdboard-3tw.165: best-effort explicit signal issued *before* cleanup/abort
+          // below, so web can tell "delivery deliberately stopped" apart from an
+          // ordinary abrupt disconnect (it previously had to infer this from the stream
+          // just ending without `done`/`error`). Not guaranteed: on a client that is
+          // merely slow (not dead) it typically gets flushed, but on a genuinely
+          // stalled/dead connection it can be dropped like any other frame would be.
+          //
+          // cleanup/abort are deferred one macrotask so this write's own microtask chain
+          // (writeSSE → write → writer.write, several hops) gets a turn to actually reach
+          // the underlying writer before the stream is torn down — calling abort()
+          // synchronously right after starting the write reliably wins that race and the
+          // write is silently dropped (observed empirically; see the dedicated test).
+          // The defer still can't become a barrier: a writer genuinely stalled inside an
+          // *earlier* writeSSE (a real slow/dead client, the queue-overflow test's
+          // scenario) must still get unblocked by this abort, just one tick later than
+          // before — vi.waitFor's polling timeout comfortably covers that extra tick.
+          void stream.writeSSE({ event: 'detached', data: '{}' }).catch(() => {});
+          setTimeout(() => {
+            cleanup();
+            stream.abort();
+          }, 0);
           return;
         }
         queue.push(message);
@@ -743,6 +823,20 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           if (err instanceof ChatAgentAbortedError) {
             console.debug('chat stream aborted');
           } else if (err instanceof ChatAgentError) {
+            // bdboard-3tw.165: record the failure the same way finalizeChatTurnSuccess's
+            // sibling recordCompletedTurn does — unconditionally, not just when
+            // clientGone. A connected client learns about this turn immediately via the
+            // 'error' SSE event below and doesn't need to poll turn-status for it, but
+            // recording it anyway keeps the two queues symmetric and is what lets a
+            // *disconnected* client (whether via the queue-overflow detach above or an
+            // ordinary drop) learn the turn failed from turn-status instead of inferring
+            // it from an idle-without-completion transition.
+            recordFailedTurn(parsed.data.projectId, {
+              ...(sendInput.sessionId !== undefined ? { sessionId: sendInput.sessionId } : {}),
+              agentId: resolved.handle.agent.descriptor.id,
+              code: err.code,
+              failedAt: now().toISOString(),
+            });
             if (!clientGone) {
               enqueue({ event: 'error', data: JSON.stringify({ error: 'chat failed', code: err.code, detail: err.detail }) });
             }
