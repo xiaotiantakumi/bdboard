@@ -25,6 +25,7 @@ import { scanHarnessWorktreeLags } from '../../application/board/scan-harness-wo
 import { scanNonTicketHarnessWorktreeLags } from '../../application/board/scan-non-ticket-harness-worktree-lags.js';
 import {
   checkNonTicketHarnessWorktrees,
+  filterNonTicketWorktreesWithLiveSession,
   type NonTicketHarnessWorktreeLag,
 } from '../../domain/non-ticket-harness-worktree.js';
 import type { LeftoverCandidate } from '../../domain/git-worktree.js';
@@ -875,8 +876,12 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       const leftoverScan = await scanGitLeftovers(projects, deps.worktreeScanner);
       leftoverCandidates = leftoverScan.candidates;
       // bd/<id> に紐づかない worktree (feature/* 等)。同じ snapshot から拾うので
-      // git 呼び出しは増えない (bdboard-wadg)。
-      const nonTicketWorktrees = leftoverScan.nonTicketWorktrees;
+      // git 呼び出しは増えない (bdboard-wadg)。生存セッションの cwd がその worktree の
+      // 内側に無いものは、放棄済みと見て以降の測定・警告の対象から外す (bdboard-cjsa)。
+      const nonTicketWorktrees = filterNonTicketWorktreesWithLiveSession(
+        leftoverScan.nonTicketWorktrees,
+        deps.sessions?.() ?? [],
+      );
 
       // merged_leftover と同じ worktree 一覧を使い回す。closed のものはあちらが、
       // まだ closed でないものはこちらが見る (git worktree list は 1 回で済む)。
@@ -911,7 +916,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
         const measuredProjectIds = new Set(
           inFlight.filter(isMeasured).map((worktree) => worktree.projectId),
         );
-        // 非チケット worktree はチケットの in_progress で絞れないので、見つかった分すべて測る。
+        // 非チケット worktree はチケットの in_progress で絞れないので、生存セッションが
+        // あるもの (filterNonTicketWorktreesWithLiveSession 済み) はすべて測る (bdboard-cjsa)。
         for (const worktree of nonTicketWorktrees) {
           measuredProjectIds.add(worktree.projectId);
         }
