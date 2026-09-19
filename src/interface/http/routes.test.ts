@@ -2437,8 +2437,9 @@ describe('createApiRoutes', () => {
       }),
     };
 
-    // proj-a と proj-b で異なる main branch を返し、baseRef にどちらが反映されたかで
-    // どちらのプロジェクトに対して呼ばれたかを区別できるようにする。
+    // proj-a と proj-b で異なる main branch を返す。proj-a には in_progress チケットも
+    // 非チケット worktree も無いので正しい実装では呼ばれないはずだが、万一誤って measured
+    // 対象に入っても baseRef で proj-a/proj-b どちらが解決されたか区別できるようにしておく。
     const getProjectMainBranch = vi.fn(async (rootPath: string) =>
       rootPath === '/projects/b' ? 'develop' : 'master',
     );
@@ -2456,7 +2457,9 @@ describe('createApiRoutes', () => {
     const body = await (await app.request('/api/hygiene')).json();
 
     // proj-b は in_progress チケットを一切持たないので、これが呼ばれるのは非チケット
-    // worktree 経由で measuredProjectIds に proj-b が追加された場合に限る。
+    // worktree 経由で measuredProjectIds に proj-b が追加された場合に限る。proj-a は
+    // チケットも非チケット worktree も持たないので一切測られないはず (Opus レビュー指摘)。
+    expect(getProjectMainBranch).toHaveBeenCalledTimes(1);
     expect(getProjectMainBranch).toHaveBeenCalledWith('/projects/b');
     expect(body.nonTicketHarnessWorktrees).toContainEqual({
       projectId: 'proj-b',
