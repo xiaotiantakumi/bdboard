@@ -713,11 +713,6 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
       let clientGone = false;
       let cleanedUp = false;
       let finished = false;
-      // bdboard-3tw.165: guards enqueue's overflow branch against re-entry while the
-      // detached write below is still in flight (cleanup/abort are deferred a tick, see
-      // that branch) — without it, more deltas arriving in that gap could refill queue
-      // and trip the overflow branch a second time.
-      let stopping = false;
       let pingTimer: ReturnType<typeof setInterval> | undefined;
       const signal = c.req.raw.signal;
       const waitForQueue = (): Promise<void> => new Promise((resolve) => {
@@ -733,41 +728,27 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
         resume?.();
       };
       const enqueue = (message: QueuedSseMessage): void => {
-        if (clientGone || stopping) return;
+        if (clientGone) return;
         if (queue.length >= CHAT_STREAM_QUEUE_MAX_SIZE) {
           console.warn(
             `SSE /api/chat/message/stream: per-client queue limit (${CHAT_STREAM_QUEUE_MAX_SIZE}) reached; stopping delivery to slow client (turn continues)`,
           );
-          stopping = true;
           queue.length = 0;
-          // bdboard-3tw.165: best-effort explicit signal issued *before* cleanup/abort
-          // below, so a client that is still actually reading the stream (the overflow
-          // came from the agent bursting deltas faster than the writer could drain them,
-          // not from the connection itself stalling) can tell "delivery deliberately
-          // stopped" apart from an ordinary abrupt disconnect. This is NOT reliable for
-          // the more common case this feature exists for — a writer already stalled
-          // inside an *earlier* writeSSE because the connection itself is slow/dead (the
-          // queue-overflow test's scenario): the detached frame queues directly behind
-          // that stalled write and is discarded along with it once abort() cancels the
-          // stream (verified empirically against a real node-server client over a paused
-          // TCP socket). web does not currently act on this event at all (only
-          // delta/done/error are handled); turn-status (below) is what a disconnected
-          // client actually relies on to learn a turn failed.
-          //
-          // cleanup/abort are deferred one macrotask so this write's own microtask chain
-          // (writeSSE → write → writer.write, several hops) gets a turn to actually reach
-          // the underlying writer before the stream is torn down — calling abort()
-          // synchronously right after starting the write reliably wins that race and the
-          // write is silently dropped (observed empirically; see the dedicated test).
-          // The defer still can't become a barrier: a writer genuinely stalled inside an
-          // *earlier* writeSSE (a real slow/dead client, the queue-overflow test's
-          // scenario) must still get unblocked by this abort, just one macrotask later
-          // than before, which is immaterial to anything actually waiting on it.
-          void stream.writeSSE({ event: 'detached', data: '{}' }).catch(() => {});
-          setTimeout(() => {
-            cleanup();
-            stream.abort();
-          }, 0);
+          // bdboard-rrvr: bdboard-3tw.165 (#482) added a best-effort 'detached' SSE
+          // event here, issued just before cleanup/abort, so a client still actually
+          // reading the stream could tell "delivery deliberately stopped" apart from an
+          // ordinary abrupt disconnect. Removed: empirical testing against a real
+          // node-server client over a paused TCP socket showed it is reliably dropped
+          // for the actual slow/dead-connection case this feature exists for (it queues
+          // directly behind an already-stalled write and is discarded with it once
+          // abort() cancels the stream) — it could only ever reach a client in the
+          // narrower case of a fast reader hitting a synchronous delta-burst overflow.
+          // web never consumed it either way (only delta/done/error are handled).
+          // turn-status (below, via recordFailedTurn) remains the reliable signal a
+          // disconnected client actually relies on to learn a turn failed; this removal
+          // does not touch that path.
+          cleanup();
+          stream.abort();
           return;
         }
         queue.push(message);
