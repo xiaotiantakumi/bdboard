@@ -1448,8 +1448,8 @@ export function ChatPanel({
           // 無いデッドロック)。ポーリング自体を諦める以上、idle/failed 分岐と同じ扱い
           // (ref 解放 + 保持していた部分テキストのクリア + 失敗表示) にする。
           //
-          // bdboard-qfps: setBackgroundTurnStatus は checkTurnStatus の try 内、
-          // fetchChatTurnStatus が成功した直後にしか呼ばれない (上の行1205相当)。
+          // bdboard-qfps: setBackgroundTurnStatus(status) は checkTurnStatus の
+          // try 内、fetchChatTurnStatus が成功した直後の1箇所でしか呼ばれない。
           // ここ (catch, ポーリング自体を諦めた場合) はその手前で諦めているので、
           // backgroundTurnStatus は最後に成功した poll の値 (大抵 'processing') の
           // まま二度と更新されない。detachedStreamSendRef の有無に関わらず (この
@@ -1460,7 +1460,16 @@ export function ChatPanel({
           // 状態は「不明」だが、ChatTurnStatusDto に unknown 相当の state は無いため、
           // 'idle' (=このプロジェクトについて表示すべきバックグラウンドターンは
           // 無い) にフォールバックし、凍りついたバナーを消す。
-          setBackgroundTurnStatus({ state: 'idle' });
+          //
+          // bdboard-qfps Opus レビュー指摘 (worth-considering): 'processing' 以外
+          // (例えば直前の poll が 'completed' を返していて、その後のハイドレーション
+          // fetch が失敗してバックオフに入り、そのまま諦めたようなケース) まで
+          // 無条件に 'idle' へ巻き戻すと、まだ意味のある「バックグラウンドの返信が
+          // 完了しました。」通知を巻き添えで消してしまう。'processing' のときだけ
+          // 'idle' に落とし、それ以外 (completed/failed/idle) はそのまま残す。
+          setBackgroundTurnStatus((prev) =>
+            prev.state === 'processing' ? { state: 'idle' } : prev,
+          );
           const exhaustedDetached = detachedStreamSendRef.current;
           if (
             exhaustedDetached !== null &&

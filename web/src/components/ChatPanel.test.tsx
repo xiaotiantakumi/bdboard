@@ -4137,24 +4137,28 @@ describe('ChatPanel', () => {
       await screen.findByText('返信をバックグラウンドで処理中…');
 
       // 以降は毎回失敗し、バックオフ ([1s, 2s, 4s, 8s, 8s] = 最大23秒) を
-      // 使い切って諦める。
+      // 使い切って諦める。qfps Opus レビュー指摘: give-up 自体が既に約23秒かかる
+      // ため、直後の findByText/it のタイムアウト余裕が薄いとCI/並列worktreeの
+      // 負荷下でフレークしうる — 26s/30s から 28s/32s へ広げておく。
       expect(
         await screen.findByText(
           '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
           {},
-          { timeout: 26_000 },
+          { timeout: 28_000 },
         ),
       ).toBeInTheDocument();
       await waitFor(() => {
         expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
       });
-      // qfps の修正が無いと、このバナーは上の失敗表示と同時に凍りついたまま
-      // 残り続ける。
+      // qfps の修正が無いと、このバナーとメッセージバブルは上の失敗表示と同時に
+      // 凍りついたまま残り続ける (どちらも backgroundTurnStatus.state===
+      // 'processing' 直結)。
       expect(
         screen.queryByText('返信をバックグラウンドで処理中…'),
       ).not.toBeInTheDocument();
+      expect(screen.queryByText('まだ処理中です')).not.toBeInTheDocument();
     },
-    30_000,
+    32_000,
   );
 
   it('keeps polling past an unrelated sessionId-less failed entry instead of stalling forever (bdboard-v3ag Opus レビュー指摘 blocker B1)', async () => {
