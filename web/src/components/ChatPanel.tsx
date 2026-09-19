@@ -592,9 +592,14 @@ export function ChatPanel({
   // processing → completed と見え、間に idle を挟まない。回収前に idle が見えたら
   // ターンは完走しなかった (エージェント失敗など、配信停止後はサーバーが error を
   // 送らない) ので、fail() で通常の送信失敗 (エラー表示と入力復元) に戻す。
+  // streamingKey は配信停止時点の streamingReply.key (=送信元の会話キー) を保持する
+  // (bdboard-3tw.166)。回収が確定する (completed のハイドレーション or fail() 側の
+  // 送信失敗表示) まで、この会話キーに対応する部分テキストを画面に残し続けるための
+  // 目印で、確定した瞬間にだけ clearStreamingReplyForKey で消す。
   const detachedStreamSendRef = useRef<{
     projectId: string;
     sessionId: string | undefined;
+    streamingKey: string;
     fail: () => void;
   } | null>(null);
   const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
@@ -608,6 +613,13 @@ export function ChatPanel({
       delete next[sessionId];
       return next;
     });
+  }, []);
+  // bdboard-3tw.166: 配信停止からの回収中に表示し続けている部分テキストを、
+  // その会話キーのものだけ消す。無条件の setStreamingReply(null) だと、回収と
+  // 無関係な会話に切り替わっていた場合にも消してしまう (今は起きなくても、
+  // 呼び出し側が増えたときの事故を防ぐため key 一致を必須にする)。
+  const clearStreamingReplyForKey = useCallback((key: string) => {
+    setStreamingReply((prev) => (prev !== null && prev.key === key ? null : prev));
   }, []);
   const [historyLoadedFor, setHistoryLoadedFor] = useState<
     Record<string, true>
@@ -1199,6 +1211,10 @@ export function ChatPanel({
           const detached = detachedStreamSendRef.current;
           if (detached !== null && detached.projectId === selectedProjectId) {
             detachedStreamSendRef.current = null;
+            // bdboard-3tw.166: 送信失敗が確定した以上、回収中ずっと表示していた
+            // 部分テキストはここで消す (fail() が積むエラーメッセージと二重表示
+            // させない)。
+            clearStreamingReplyForKey(detached.streamingKey);
             detached.fail();
           }
           return;
@@ -1223,6 +1239,9 @@ export function ChatPanel({
               if (cancelled) return;
             }
             detachedStreamSendRef.current = null;
+            // bdboard-3tw.166: idle 分岐と同じ理由 — 送信失敗が確定したので、回収中
+            // 表示していた部分テキストをここで消す。
+            clearStreamingReplyForKey(detached!.streamingKey);
             detached!.fail();
             return;
           }
@@ -1265,6 +1284,11 @@ export function ChatPanel({
           (detached.sessionId === undefined || detached.sessionId === status.sessionId)
         ) {
           detachedStreamSendRef.current = null;
+          // bdboard-3tw.166: 回収したターンの本文がこのあと conversations へ
+          // ハイドレートされる (下)。表示し続けていた部分テキストは、その本文に
+          // 置き換わったことにして消す — 同じ会話キーに部分テキストと確定本文が
+          // 二重に出るのを防ぐ。
+          clearStreamingReplyForKey(detached.streamingKey);
         }
 
         // A detached turn can create a session whose id was unknown when the tab closed.
@@ -1384,7 +1408,7 @@ export function ChatPanel({
       cancelled = true;
       if (pollTimer !== undefined) clearTimeout(pollTimer);
     };
-  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend]);
+  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey]);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -2473,8 +2497,13 @@ export function ChatPanel({
       // 前のターンが続いている間の再送は 409 で弾かれ、判定を失うと、その後に前の
       // ターンが失敗しても何も表示されなくなる。
       const settleEarlierDetachedSend = (): void => {
-        if (detachedStreamSendRef.current?.projectId === selectedProjectId) {
+        const detached = detachedStreamSendRef.current;
+        if (detached !== null && detached.projectId === selectedProjectId) {
           detachedStreamSendRef.current = null;
+          // bdboard-3tw.166: 前の配信停止分が残していた部分テキストも一緒に消す。
+          // 新しいターンが完走した以上、その古い部分テキストが後から置き換わる
+          // ことはもう無い (このあと fail() も呼ばれない)。
+          clearStreamingReplyForKey(detached.streamingKey);
         }
       };
       const requestController = new AbortController();
@@ -2517,6 +2546,7 @@ export function ChatPanel({
               detachedStreamSendRef.current = {
                 projectId: selectedProjectId,
                 sessionId,
+                streamingKey: sendKey,
                 fail: () =>
                   applyChatError(
                     sendKey,
@@ -2532,7 +2562,16 @@ export function ChatPanel({
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
           } finally {
-            setStreamingReply(null);
+            // bdboard-3tw.166: 配信停止 (上の ChatStreamEndedWithoutResultError 分岐)
+            // で今まさに detachedStreamSendRef を張った送信は、ここではまだ消さない。
+            // turn-status 回収が確定する (completed のハイドレーション、または idle/
+            // failed からの fail()) まで、最後に受け取った部分テキストを表示し続ける
+            // ("回収中は最後に受け取った部分テキストを表示し続ける" 要件)。それ以外
+            // (成功 / 通常失敗 / このターンとは無関係な detached が残っている) は
+            // 従来どおり即座に消す。
+            if (detachedStreamSendRef.current?.streamingKey !== sendKey) {
+              setStreamingReply(null);
+            }
           }
         } else {
           try {
@@ -3594,9 +3633,22 @@ export function ChatPanel({
           </div>
           {/* 「バナーが1つでもあるか」の条件式をここに書くと、将来バナーを足した人がその条件式の
               更新を忘れた瞬間に空の div が gap を生む。`:empty` なら描画条件の集合を二重管理しない。
-              JSX は改行だけの空白テキストノードを出力しないので、4つとも false のとき要素は本当に空になり
+              JSX は改行だけの空白テキストノードを出力しないので、5つとも false のとき要素は本当に空になり
               `:empty` が成立する。 */}
           <div className="chat-input-notices">
+            {/* bdboard-3tw.166: 配信停止後の回収中インジケータを入力欄付近にも出す。
+                メッセージログ上部の同種インジケータ (「返信をバックグラウンドで処理中…」) と
+                同じ条件だが、テキストは変えてある — 同一文言を2箇所に出すと
+                screen.findByText 等の単一マッチ前提のテストや、スクリーンリーダーの
+                重複読み上げにつながるため。ログをスクロールしている/入力欄だけ見ている
+                利用者にも処理継続中であることが伝わるようにする。 */}
+            {!isSending &&
+              backgroundTurnProjectId === selectedProjectId &&
+              backgroundTurnStatus.state === 'processing' && (
+              <p className="chat-pending chat-input-recovery-status" role="status">
+                バックグラウンドで応答を処理中です…
+              </p>
+            )}
             {currentAttachments.length > 0 && (
               <div className="chat-attachments" aria-label="送信前の添付画像" role="list">
                 {currentAttachments.map((attachment) => (
