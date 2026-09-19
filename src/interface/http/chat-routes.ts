@@ -238,16 +238,22 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
   // キューだが、sessionId が無いエントリがあり得るので dedupe/フィルタは sessionId が
   // 分かっているものだけに絞る。
   //
-  // bdboard-96rp (Opus レビュー指摘 B1): sessionId 無しのエントリどうしも dedupe する
-  // (既存の sessionId 無しエントリは全部落として、新しい1件だけを積む)。単一ロックの
-  // isBusy によりプロジェクトにつき同時に処理されるターンは高々1つなので、
-  // 「同時に2件の未解決 sessionId 無し失敗」が本当に起こることは無い — dedupe しても
-  // 正規の失敗を握り潰さない。dedupe しないと、古い sessionId 無しエントリ (ACK 経路が
-  // 無く CHAT_COMPLETED_TURNS_MAX まで消えない) が先頭に居座ったまま、後から積まれた
-  // *別の* sessionId 無し失敗 (=追っている送信自身の失敗かもしれない) をクライアントの
-  // checkTurnStatus から見えなくしてしまう。この新しいエントリで置き換えることで、
-  // GET が返す sessionId 無しエントリは常に「最新の1件」になり、クライアント側の
-  // detachedAt 突き合わせ (ChatPanel.tsx の checkTurnStatus) が正しく解決できる。
+  // bdboard-96rp (Opus レビュー指摘 B1、round 2 再レビューでコメント文言を修正):
+  // sessionId 無しのエントリどうしも dedupe する (既存の sessionId 無しエントリは
+  // 全部落として、新しい1件だけを積む)。単一ロックの isBusy により「同時に2件の
+  // sessionId 無し失敗が *記録される*」ことは無い (isBusy の解放は runTurn の
+  // finally が recordFailedTurn の後に行うため、記録自体は直列化されている) が、
+  // これは「未解決の sessionId 無し失敗が高々1件しか存在しない」ことまでは保証しない
+  // — 例えば1件目が (ACK 経路が無いまま) クライアントに回収されないうちに、
+  // 別の (後続の、無関係な) sessionId 無し送信が2件目を記録することは普通にあり得る。
+  // dedupe はこの2件目で1件目を意図的に上書きする: 古いエントリが先頭に居座ったまま
+  // 後から積まれた別の sessionId 無し失敗をクライアントの checkTurnStatus から
+  // 見えなくしてしまう害の方が、稀に「本当は1件目を待っていたクライアントが2件目の
+  // 結果で解決してしまう」害より大きいと判断した (ChatPanel.tsx 側にも
+  // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS による猶予後の受け入れがあり、
+  // どのみち無期限には待たない)。GET が返す sessionId 無しエントリは常に「最新の
+  // 1件」になり、クライアント側の detachedAt 突き合わせ (ChatPanel.tsx の
+  // checkTurnStatus) が正しく解決できる。
   const failedTurns = new Map<string, readonly FailedChatTurn[]>();
   const recordFailedTurn = (projectId: string, entry: FailedChatTurn): void => {
     const queued = failedTurns.get(projectId) ?? [];

@@ -4469,6 +4469,82 @@ describe('ChatPanel', () => {
   10_000,
   );
 
+  it('eventually resolves a tracked send whose own sessionId-less failure never satisfies the time-window match, instead of blocking forever (bdboard-96rp round 2 reblocker)', async () => {
+    // Round 2 Opus reblocker: a genuinely stalled/tunneled connection can mean the
+    // server records failedAt well before the client notices the stream died and
+    // stamps detachedAt (e.g. a slow-to-timeout proxy/tunnel hop) -- more than
+    // TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS apart. Because a sessionId-less failed
+    // entry has no ack path, the *first* unmatched observation used to just poll
+    // again forever with nothing ever superseding it -- a real, permanent deadlock
+    // (send button disabled forever, no error ever shown). This proves
+    // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS bounds that wait: the same
+    // never-changing sessionId-less failed entry must eventually resolve the
+    // tracked send once the give-up threshold is reached.
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let detachStreamClosed = false;
+    let postDetachCalls = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!detachStreamClosed) return { state: 'idle' };
+      postDetachCalls += 1;
+      // Always the same stale-looking, sessionId-less failed entry -- never changes,
+      // never acked (no ack path), never superseded. Simulates the deadlock case.
+      return {
+        state: 'failed',
+        code: 'agent-error',
+        agentId: 'claude',
+        failedAt: '2020-01-01T00:00:00.000Z',
+      };
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"stuck partial"}\n\n'),
+              );
+              controller.close();
+              detachStreamClosed = true;
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'stuck message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    // It must still be unresolved well before the give-up threshold -- otherwise
+    // this would just be testing the immediate-match path, not the give-up path.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(
+      screen.queryByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+
+    // But it must NOT hang forever: once the give-up threshold is reached, the same
+    // persistent entry is accepted as this send's own (delayed) failure.
+    expect(
+      await screen.findByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+        {},
+        { timeout: 25_000 },
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
+    // 20 (the give-up threshold) plus some margin, given the leading 3s wait above
+    // and setTimeout/microtask jitter.
+    expect(postDetachCalls).toBeGreaterThanOrEqual(20);
+  }, 35_000);
+
   it('blocks a resend triggered via ⌘/Ctrl+Enter (which bypasses the disabled submit button) while recovery is unresolved (bdboard-v3ag Opus レビュー指摘 W3)', async () => {
     // W3: ⌘/Ctrl+Enter は handleKeyDown から formRef.current.requestSubmit() を
     // 直接呼ぶ。ブラウザの `disabled` はマウスクリックによる暗黙の送信は止めるが、

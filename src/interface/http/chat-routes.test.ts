@@ -1101,6 +1101,56 @@ describe('POST /api/chat/message/stream', () => {
     });
   });
 
+  it('replaces an older sessionId-less failed entry with a newer one instead of appending (bdboard-96rp B1, round 2 re-review)', async () => {
+    // Round 2 Opus re-review finding B1: the fix above only reorders session-scoped vs.
+    // sessionId-less entries -- it does nothing for two sessionId-less entries competing
+    // with each other. Before this fix, recordFailedTurn appended a second sessionId-less
+    // entry behind the first; since GET's selection falls back to failedQueue[0] among
+    // sessionId-less entries (see the .find(...) ?? [0] above), the OLDER, un-ACKable
+    // orphan would keep shadowing the newer one forever (no ack path exists for either).
+    // recordFailedTurn must instead replace the old sessionId-less entry with the new one,
+    // so GET always surfaces the newest sessionId-less failure.
+    let call = 0;
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (): Promise<ChatTurnResult> => {
+        call += 1;
+        throw new ChatAgentError(call === 1 ? 'agent-timeout' : 'agent-exit-nonzero');
+      }),
+    });
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({ agent: streamingAgent, cache, store: createChatSessionStore(), now: () => NOW });
+
+    // 1st: a brand-new thread fails, sessionId-less, un-ACKable, would sit forever.
+    const first = await app.request('/api/chat/message/stream', withLocalHost({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', message: 'first doomed new thread' }),
+    }), LOCAL_ENV);
+    expect(first.status).toBe(200);
+    await first.text();
+
+    // 2nd: a DIFFERENT brand-new thread also fails, also sessionId-less.
+    const second = await app.request('/api/chat/message/stream', withLocalHost({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', message: 'second doomed new thread' }),
+    }), LOCAL_ENV);
+    expect(second.status).toBe(200);
+    await second.text();
+
+    // Without the fix, GET would still return the 1st entry (agent-timeout) forever --
+    // there is no way to ack it and let the 2nd become visible. With the fix, the 2nd
+    // (newest) sessionId-less entry replaces the 1st and is what GET surfaces.
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await status.json()).toEqual({
+      state: 'failed',
+      code: 'agent-exit-nonzero',
+      agentId: 'test-agent',
+      failedAt: NOW.toISOString(),
+    });
+  });
+
   describe('SSE keepalive ping', () => {
     afterEach(() => {
       vi.useRealTimers();
