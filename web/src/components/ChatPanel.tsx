@@ -2578,6 +2578,24 @@ export function ChatPanel({
               setTurnRecoveryGeneration((generation) => generation + 1);
               markUnresolvedSend(sessionId);
             } else {
+              // bdboard-w26w: まだ接続中のクライアントがインライン SSE 'error' で
+              // 受け取った失敗 (この else 分岐、ApiError(502, ...) 等) も、成功時の
+              // applyChatSuccess と対称に turn-status を ACK する。サーバーは
+              // ChatAgentError を無条件で failedTurns へ記録する (recordFailedTurn、
+              // finalizeChatTurnSuccess の隣の recordCompletedTurn と同型) ため、
+              // ACK しないとこのエントリが CHAT_COMPLETED_TURNS_MAX の上限で押し
+              // 出されるまで turn-status に残り続け、後から GET /api/chat/turn-status
+              // を見る別クライアント/再接続後のこの会話がこの古い失敗を拾ってしまう
+              // (この画面はすでにエラー表示済みなので二重に見る必要が無い)。
+              // sessionId が無い場合 (新規スレッドの初回送信中の失敗) はサーバー側も
+              // sessionId 無しで記録しており ACK できる識別子がクライアントに無いため、
+              // 何もしない (キャップ eviction に任せる、FailedChatTurn の設計どおり)。
+              if (sessionId !== undefined) {
+                void acknowledgeChatTurn(selectedProjectId, sessionId).catch(() => {
+                  // ACK 失敗は turn-status に古い失敗エントリが残るだけ。表示は
+                  // このあとの applyChatError で既にエラーとして出る。
+                });
+              }
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
           } finally {
