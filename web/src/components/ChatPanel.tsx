@@ -2579,8 +2579,10 @@ export function ChatPanel({
               markUnresolvedSend(sessionId);
             } else {
               // bdboard-w26w: まだ接続中のクライアントがインライン SSE 'error' で
-              // 受け取った失敗 (この else 分岐、ApiError(502, ...) 等) も、成功時の
-              // applyChatSuccess と対称に turn-status を ACK する。サーバーは
+              // 受け取った失敗 (この else 分岐、ApiError(502, ...) 等。プリストリーム
+              // の 409/400/404 やネットワーク断もここへ来るが、それらはサーバー側で
+              // recordFailedTurn されていないので以下の ACK は素通りする) も、
+              // 成功時の applyChatSuccess と対称に turn-status を ACK する。サーバーは
               // ChatAgentError を無条件で failedTurns へ記録する (recordFailedTurn、
               // finalizeChatTurnSuccess の隣の recordCompletedTurn と同型) ため、
               // ACK しないとこのエントリが CHAT_COMPLETED_TURNS_MAX の上限で押し
@@ -2590,7 +2592,28 @@ export function ChatPanel({
               // sessionId が無い場合 (新規スレッドの初回送信中の失敗) はサーバー側も
               // sessionId 無しで記録しており ACK できる識別子がクライアントに無いため、
               // 何もしない (キャップ eviction に任せる、FailedChatTurn の設計どおり)。
-              if (sessionId !== undefined) {
+              //
+              // Opus レビュー指摘 (finding 1): DELETE /api/chat/turn-status は同じ
+              // sessionId の completed と failed を両方まとめて ACK する
+              // (ackCompletedTurn + ackFailedTurn、chat-routes.ts)。isBusy はプロジェクト
+              // 単位のロックなので、この送信 (N) の直前に「別の送信 (D) が配信停止し、
+              // まだ回収 (turn-status 回収 effect のポーリング) が終わっていない」状態が
+              // ありえ、しかも D と N が同じ会話 (同じ sessionId) を続けて送信した場合、
+              // D はサーバー側では既に完走していて未 ACK の completedTurns エントリを
+              // 残しているだけかもしれない。この状況で N の失敗をここで直接 ACK すると、
+              // 本来は「D の回収」が先に処理すべきだった D の completed エントリまで
+              // 巻き添えで消してしまい、次の poll が idle を見て D を「配信停止のまま
+              // 失敗した」と誤判定する (実際には D は成功していたのに)。
+              // detachedStreamSendRef が今まさに同じ project + sessionId を追っている
+              // 間はここで直接 ACK せず、回収 effect 自身の完了優先の掃き出しロジック
+              // (checkTurnStatus の completed 分岐 → 掃けたら再帰的に failed も掃く)
+              // に任せる — 結果として少し遅れて ACK されるだけで、正しい優先順位
+              // (completed を先に処理する) が保たれる。
+              const unresolvedSameSessionDetach =
+                detachedStreamSendRef.current !== null &&
+                detachedStreamSendRef.current.projectId === selectedProjectId &&
+                detachedStreamSendRef.current.sessionId === sessionId;
+              if (sessionId !== undefined && !unresolvedSameSessionDetach) {
                 void acknowledgeChatTurn(selectedProjectId, sessionId).catch(() => {
                   // ACK 失敗は turn-status に古い失敗エントリが残るだけ。表示は
                   // このあとの applyChatError で既にエラーとして出る。
