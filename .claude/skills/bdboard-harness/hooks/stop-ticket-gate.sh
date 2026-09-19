@@ -4,7 +4,7 @@
 #
 # 「チケットに何も残さずセッションを終える」を差し戻す (bdboard-pkr6.1)。
 # in_progress のチケットに PR コメントも直近の作業記録も無いまま、未コミット差分や
-# 未 push コミットを残して止まると、次に見た人 (や次のセッション) は bd からは
+# main へ未取り込みのコミットを残して止まると、次に見た人 (や次のセッション) は bd からは
 # 進行中に見えるのに痕跡が何も無い状態になる。
 #
 # 契約: stdin に Claude Code の hook 入力 JSON。差し戻しは exit 2 + stderr 3 行以内、
@@ -240,7 +240,7 @@ if [ "$LATEST_EPOCH" -gt 0 ] && [ "$NOW_EPOCH" -gt 0 ] &&
   exit 0
 fi
 
-# 5. 未コミット差分 / 未 push コミットが残っていれば差し戻す。
+# 5. 未コミット差分 / main 未取り込みのコミットが残っていれば差し戻す。
 DIRTY_COUNT="$(git -C "$HOOK_CWD" status --porcelain 2>/dev/null | wc -l | tr -d '[:space:]')"
 case "$DIRTY_COUNT" in
   '' | *[!0-9]*) DIRTY_COUNT=0 ;;
@@ -253,19 +253,22 @@ if [ -n "$REPO_ROOT" ] && [ -r "$REPO_ROOT/.claude/bdboard-harness.json" ]; then
   [ -z "$CONTRACT_MAIN" ] || MAIN_BRANCH="$CONTRACT_MAIN"
 fi
 
-UNPUSHED_COUNT=0
+# origin/$MAIN_BRANCH..HEAD を数える: これは「push していない」ではなく「main へまだ
+# マージされていない」コミット数であり、ブランチを push した後もマージまでは減らない
+# (bdboard-pkr6.25)。origin/$MAIN_BRANCH が無ければこの判定は skip する (fail-open)。
+UNMERGED_COUNT=0
 if git -C "$HOOK_CWD" rev-parse --verify --quiet "origin/$MAIN_BRANCH" >/dev/null 2>&1; then
-  UNPUSHED_COUNT="$(git -C "$HOOK_CWD" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null)"
-  case "$UNPUSHED_COUNT" in
-    '' | *[!0-9]*) UNPUSHED_COUNT=0 ;;
+  UNMERGED_COUNT="$(git -C "$HOOK_CWD" rev-list --count "origin/$MAIN_BRANCH..HEAD" 2>/dev/null)"
+  case "$UNMERGED_COUNT" in
+    '' | *[!0-9]*) UNMERGED_COUNT=0 ;;
   esac
 fi
 
-if [ "$DIRTY_COUNT" -gt 0 ] || [ "$UNPUSHED_COUNT" -gt 0 ]; then
+if [ "$DIRTY_COUNT" -gt 0 ] || [ "$UNMERGED_COUNT" -gt 0 ]; then
   printf '%s\n' \
     "bdboard-harness: チケット $TICKET_ID は in_progress ですが、PR も直近15分のコメントもありません。" \
     "終える前に次のどちらかを行ってください: (1) コミットして PR を開き bd comment $TICKET_ID \"PR: <url>\"、(2) 現状と残作業を bd comment $TICKET_ID \"...\" に残す。" \
-    "（未コミット差分: $DIRTY_COUNT ファイル / 未 push コミット: $UNPUSHED_COUNT 件）" >&2
+    "（未コミット差分: $DIRTY_COUNT ファイル / $MAIN_BRANCH 未取り込みのコミット: $UNMERGED_COUNT 件）" >&2
   exit 2
 fi
 

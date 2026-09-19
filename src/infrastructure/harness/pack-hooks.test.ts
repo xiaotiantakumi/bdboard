@@ -1389,49 +1389,162 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
      * Stop hook は bd を叩くので、PATH の先頭に固定 JSON を返す fake bd を置いた
      * 一時ディレクトリを差し込む。実際の .beads/ を読ませないため。
      */
+    /**
+     * fake bd。`show` は id が 'test-1' のときだけ成功する (どの id でも成功させると、
+     * worktree 名フォールバックの id 推定ロジック自体が壊れても気付けないため —
+     * bdboard-pkr6.25 レビュー指摘)。全テストのチケット id は 'test-1' に統一している。
+     */
+    function fakeBdScriptSource(comments: string, argsLog: string): string {
+      return [
+        '#!/bin/sh',
+        `echo "$*" >> '${argsLog}'`,
+        '# hook は必ず -C <cwd> を先頭に付けて呼ぶ。本物と同じくそれを取り除いて解釈する。',
+        'if [ "${1:-}" = "-C" ]; then',
+        '  shift 2',
+        'fi',
+        'case "${1:-}" in',
+        '  show)',
+        `    if [ "\${2:-}" != 'test-1' ]; then exit 1; fi`,
+        `    cat <<'BD_SHOW_EOF'`,
+        JSON.stringify([{ id: 'test-1', status: 'in_progress' }]),
+        'BD_SHOW_EOF',
+        '    ;;',
+        `  comments) cat <<'BD_COMMENTS_EOF'`,
+        comments,
+        'BD_COMMENTS_EOF',
+        '    ;;',
+        '  *) exit 1 ;;',
+        'esac',
+        '',
+      ].join('\n');
+    }
+
+    function writeFakeBd(binDir: string, comments: string, argsLog: string): void {
+      mkdirSync(binDir, { recursive: true });
+      const fakeBd = path.join(binDir, 'bd');
+      writeFileSync(fakeBd, fakeBdScriptSource(comments, argsLog), 'utf8');
+      chmodSync(fakeBd, 0o755);
+    }
+
+    /**
+     * PATH から実行ファイルを探して binDir へ symlink する (noJqEnv と同じ方式)。
+     */
+    function symlinkFromPath(binDir: string, names: readonly string[]): void {
+      const searchDirs = (process.env.PATH ?? '/usr/bin:/bin').split(path.delimiter);
+      for (const name of names) {
+        const target = searchDirs
+          .map((dir) => path.join(dir, name))
+          .find((candidate) => {
+            try {
+              accessSync(candidate, fsConstants.X_OK);
+              return true;
+            } catch {
+              return false;
+            }
+          });
+        if (target === undefined) {
+          throw new Error(`symlinkFromPath: required command not found on PATH: ${name}`);
+        }
+        symlinkSync(target, path.join(binDir, name));
+      }
+    }
+
+    /**
+     * jq 経路は isolatedEnv (実 PATH + fake bd 前置) をそのまま使う。python3 経路は
+     * noJqEnv の隔離 PATH (jq を引けない) に、stop-ticket-gate.sh が追加で使う wc/cut と
+     * fake bd を同じ binDir へ足して作る (bdboard-pkr6.25: 4分岐を両経路で固定するため)。
+     */
+    async function setupJsonTool(
+      jsonTool: 'jq' | 'python3',
+      comments: string,
+    ): Promise<{ env: Record<string, string>; argsLog: string }> {
+      const argsLog = path.join(tmpRoot, 'bd-args.log');
+      if (jsonTool === 'python3') {
+        const env = await noJqEnv();
+        symlinkFromPath(env.PATH, ['wc', 'cut']);
+        writeFakeBd(env.PATH, comments, argsLog);
+        return { env, argsLog };
+      }
+      const binDir = path.join(tmpRoot, 'bin');
+      writeFakeBd(binDir, comments, argsLog);
+      return { env: isolatedEnv(binDir), argsLog };
+    }
+
     async function setupTicketWorktree(options: {
       readonly branch: string;
       readonly comments: string;
       readonly dirty: boolean;
+      /** 既定は tmpRoot/repo。worktree 名フォールバックの検証など、パスそのものを
+       *  試験対象にしたいときだけ上書きする。 */
+      readonly repoDir?: string;
+      /** 既定は 'jq'。 */
+      readonly jsonTool?: 'jq' | 'python3';
     }): Promise<{ repo: string; env: Record<string, string>; argsLog: string }> {
-      const binDir = path.join(tmpRoot, 'bin');
-      mkdirSync(binDir, { recursive: true });
-      const argsLog = path.join(tmpRoot, 'bd-args.log');
-      const fakeBd = path.join(binDir, 'bd');
-      writeFileSync(
-        fakeBd,
-        [
-          '#!/bin/sh',
-          `echo "$*" >> '${argsLog}'`,
-          '# hook は必ず -C <cwd> を先頭に付けて呼ぶ。本物と同じくそれを取り除いて解釈する。',
-          'if [ "${1:-}" = "-C" ]; then',
-          '  shift 2',
-          'fi',
-          'case "${1:-}" in',
-          `  show) cat <<'BD_SHOW_EOF'`,
-          JSON.stringify([{ id: 'test-1', status: 'in_progress' }]),
-          'BD_SHOW_EOF',
-          '    ;;',
-          `  comments) cat <<'BD_COMMENTS_EOF'`,
-          options.comments,
-          'BD_COMMENTS_EOF',
-          '    ;;',
-          '  *) exit 1 ;;',
-          'esac',
-          '',
-        ].join('\n'),
-        'utf8',
-      );
-      chmodSync(fakeBd, 0o755);
+      const { env, argsLog } = await setupJsonTool(options.jsonTool ?? 'jq', options.comments);
 
-      const env = isolatedEnv(binDir);
-      const repo = path.join(tmpRoot, 'repo');
+      const repo = options.repoDir ?? path.join(tmpRoot, 'repo');
       await initGitRepo(repo, options.branch, env);
       if (options.dirty) {
         writeFileSync(path.join(repo, 'dirty.txt'), 'wip\n', 'utf8');
       }
 
       return { repo, env, argsLog };
+    }
+
+    /**
+     * origin リモートを bare repo として用意し、現在の HEAD を <mainBranchName> へ
+     * push + fetch する (ローカルの origin/<mainBranchName> 追跡参照を作るため)。
+     */
+    async function addOriginRemote(
+      repo: string,
+      env: Record<string, string>,
+      mainBranchName: string,
+    ): Promise<void> {
+      const bare = path.join(tmpRoot, `origin-${mainBranchName}.git`);
+      await runGit(tmpRoot, ['init', '-q', '--bare', bare], env);
+      await runGit(repo, ['remote', 'add', 'origin', bare], env);
+      await runGit(repo, ['push', '-q', 'origin', `HEAD:refs/heads/${mainBranchName}`], env);
+      await runGit(repo, ['fetch', '-q', 'origin'], env);
+    }
+
+    /**
+     * 既に書き出し済みのファイルを add + commit する (中身は書き換えない)。
+     */
+    async function commitPath(
+      repo: string,
+      env: Record<string, string>,
+      relPath: string,
+    ): Promise<void> {
+      await runGit(repo, ['add', relPath], env);
+      await runGit(
+        repo,
+        [
+          '-c',
+          'user.name=bdboard-test',
+          '-c',
+          'user.email=bdboard-test@example.invalid',
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '-q',
+          '-m',
+          `commit: ${relPath}`,
+        ],
+        env,
+      );
+    }
+
+    /**
+     * ファイルを1つ追加してコミットする。呼び出し前に working tree が clean なら、
+     * 呼び出し後も clean なまま HEAD だけ 1 コミット進む。
+     */
+    async function commitExtra(
+      repo: string,
+      env: Record<string, string>,
+      fileName: string,
+    ): Promise<void> {
+      writeFileSync(path.join(repo, fileName), 'extra\n', 'utf8');
+      await commitPath(repo, env, fileName);
     }
 
     it('passes when the branch is not a per-ticket branch', async () => {
@@ -1548,6 +1661,151 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       expect(result.exitCode).toBe(0);
       expect(result.stderr).toBe('');
     });
+
+    /**
+     * bdboard-pkr6.25: それまで未テストだった4分岐を jq / python3 の両経路で固定する。
+     * (a) 作業ツリーはクリーンだが origin/<mainBranch>..HEAD にコミットがありブロックされる
+     * (b) ブランチが bd/* でないとき .claude/worktrees/<name> からチケット ID を推定する
+     *     フォールバック
+     * (c) 検証コントラクトの mainBranch (例 master) 解決
+     * (d) origin/<mainBranch> が無いときの skip
+     */
+    for (const jsonTool of ['jq', 'python3'] as const) {
+      describe(`4 untested branches via ${jsonTool}`, () => {
+        it('(a) blocks a clean tree when HEAD has commits not yet merged into main', async () => {
+          const { repo, env } = await setupTicketWorktree({
+            branch: 'bd/test-1',
+            comments: '[]',
+            dirty: false,
+            jsonTool,
+          });
+          await addOriginRemote(repo, env, 'main');
+          await commitExtra(repo, env, 'unmerged.txt');
+
+          const result = await runHook(
+            STOP_TICKET_GATE,
+            { hook_event_name: 'Stop', cwd: repo },
+            { cwd: repo, env },
+          );
+
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('未コミット差分: 0 ファイル');
+          expect(result.stderr).toContain('main 未取り込みのコミット: 1 件');
+        });
+
+        it('(b) derives the ticket id from the worktree path when the branch is not bd/*', async () => {
+          const worktreeRepo = path.join(tmpRoot, '.claude', 'worktrees', 'test-1');
+          const { repo, env, argsLog } = await setupTicketWorktree({
+            branch: 'feature/not-a-ticket-branch',
+            comments: '[]',
+            dirty: true,
+            repoDir: worktreeRepo,
+            jsonTool,
+          });
+
+          const result = await runHook(
+            STOP_TICKET_GATE,
+            { hook_event_name: 'Stop', cwd: repo },
+            { cwd: repo, env },
+          );
+
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('test-1');
+
+          // 推定した ticket id (worktree ディレクトリ名) で bd show が呼ばれていること。fake
+          // bd は id が 'test-1' のときだけ成功するので、推定した名前が違えばここで失敗する。
+          const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
+          expect(bdCalls.some((call) => call.startsWith(`-C ${repo} show test-1`))).toBe(true);
+        });
+
+        it('(b-negative) does not fall back to an unrelated worktree directory name', async () => {
+          // fake bd の show は 'test-1' 以外を拒否する。推定した id がそれと違えば
+          // (= フォールバック条件「bd show が成功したときだけ採用」が効いていれば)
+          // per-ticket worktree ではないのと同じ exit 0 になるはず。
+          const worktreeRepo = path.join(tmpRoot, '.claude', 'worktrees', 'not-a-ticket');
+          const { repo, env, argsLog } = await setupTicketWorktree({
+            branch: 'feature/not-a-ticket-branch',
+            comments: '[]',
+            dirty: true,
+            repoDir: worktreeRepo,
+            jsonTool,
+          });
+
+          const result = await runHook(
+            STOP_TICKET_GATE,
+            { hook_event_name: 'Stop', cwd: repo },
+            { cwd: repo, env },
+          );
+
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+
+          // show は試みるが失敗し、以降 (comments 等) には進まない。
+          const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
+          expect(bdCalls.some((call) => call.startsWith(`-C ${repo} show not-a-ticket`))).toBe(
+            true,
+          );
+          expect(bdCalls.some((call) => call.includes(' comments '))).toBe(false);
+        });
+
+        it('(c) resolves mainBranch from the verification contract', async () => {
+          const { repo, env } = await setupTicketWorktree({
+            branch: 'bd/test-1',
+            comments: '[]',
+            dirty: false,
+            jsonTool,
+          });
+          mkdirSync(path.join(repo, '.claude'), { recursive: true });
+          writeFileSync(
+            path.join(repo, '.claude', 'bdboard-harness.json'),
+            `${JSON.stringify({ mainBranch: 'master' })}\n`,
+            'utf8',
+          );
+          // コントラクト自体を未コミットのまま残すと DIRTY_COUNT が動いてしまい、
+          // 「クリーンな作業ツリーでも mainBranch 解決経由でブロックする」ことの
+          // 検証にならない。commit してから origin を積む。
+          await commitPath(repo, env, path.join('.claude', 'bdboard-harness.json'));
+          await addOriginRemote(repo, env, 'master');
+          await commitExtra(repo, env, 'unmerged.txt');
+
+          const result = await runHook(
+            STOP_TICKET_GATE,
+            { hook_event_name: 'Stop', cwd: repo },
+            { cwd: repo, env },
+          );
+
+          expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('未コミット差分: 0 ファイル');
+          expect(result.stderr).toContain('master 未取り込みのコミット: 1 件');
+        });
+
+        it('(d) skips the unmerged-commit check when origin/<mainBranch> does not exist', async () => {
+          const { repo, env, argsLog } = await setupTicketWorktree({
+            branch: 'bd/test-1',
+            comments: '[]',
+            dirty: false,
+            jsonTool,
+          });
+          // origin は一度も設定しない。ローカルにだけ余分なコミットを積んでも、
+          // 比較対象の origin/main が無いので判定は skip され、通過するはず。
+          await commitExtra(repo, env, 'local-only.txt');
+
+          const result = await runHook(
+            STOP_TICKET_GATE,
+            { hook_event_name: 'Stop', cwd: repo },
+            { cwd: repo, env },
+          );
+
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+
+          // 早期リターン (ticket id 不明・status 判定漏れ等) ではなく、実際に
+          // 手順4 (comments 参照) まで進んだ上で手順5の判定が skip されたことを確かめる。
+          const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
+          expect(bdCalls.some((call) => call.includes(' comments '))).toBe(true);
+        });
+      });
+    }
   });
 
   /**
