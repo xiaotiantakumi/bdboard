@@ -291,23 +291,24 @@ exit 1 を見たら、「CI が赤くなるかも」と判断する前に次の�
 ### 書いた瞬間に弾く: `scripts/commit-message-guard.mjs` (bdboard-ekj3)
 
 The two CI arms above both find the problem *after* the commit exists, and each
-checks a different range. The `push` arm on `main` scans `v<last-release>..HEAD`
-— by then a squash-merged PR shows up as the single commit GitHub generated for
-it, and the individual branch commits are gone. The `pull_request` arm instead
-scans `base.sha..head.sha`, the PR branch's own pre-squash commits exactly as
-authored; because this repo keeps 1 PR = 1 commit, that message is normally
-what will land on `main` too, so this arm effectively checks the to-be-merged
-message before it lands (bdboard-qhsb) — a multi-commit branch is the exception
-it still catches, even though none of those individual commits survive the
-squash. The `PreToolUse(Bash)` hook registered in `.claude/settings.json` looks
-at something earlier than either arm: **every commit written locally**, before
-`git commit` even runs — before a PR exists, before anything is pushed,
-whatever its type, and whether or not it survives a later squash. It pulls the
-message out of the command line, runs it through the same
-`checkCommitMessage()` from `scripts/check-commit-parse.mjs`, and exits 2 with
-the offending line, column and caret. It is not a third copy of the CI check —
-it watches a different set of commits, and catches them earlier than either CI
-arm can.
+checks a different range. The `pull_request` arm scans `base.sha..head.sha`,
+the PR branch's own pre-squash commits exactly as authored; because this repo
+keeps 1 PR = 1 commit, that message is normally what will land on `main` too,
+so this arm normally checks the to-be-merged message before it lands
+(bdboard-qhsb). It has a gap the `push` arm then closes: on a multi-commit
+branch the squash subject becomes the PR title (or whatever is typed on the
+merge screen), not any individual branch commit, and a commit that reaches
+`main` without a PR (the sole exception in docs/GIT-WORKFLOW.md, a CI-recovery
+commit) skips the `pull_request` arm entirely — both surface only once the
+`push` arm scans `v<last-release>..HEAD` after the fact. The `PreToolUse(Bash)`
+hook registered in `.claude/settings.json` looks at something earlier than
+either arm: **every commit written locally**, before `git commit` even runs —
+before a PR exists, before anything is pushed, whatever its type, and whether
+or not it survives a later squash. It pulls the message out of the command
+line, runs it through the same `checkCommitMessage()` from
+`scripts/check-commit-parse.mjs`, and exits 2 with the offending line, column
+and caret. It is not a third copy of the CI check — it catches problems before
+either CI arm runs, regardless of commit type or whether a PR exists yet.
 
 What actually breaks, and why it is invisible: the parser treats a `(` that
 directly follows a word character (`採った(縦積み`) as the start of a *scope*
