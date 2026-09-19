@@ -1389,6 +1389,11 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
      * Stop hook は bd を叩くので、PATH の先頭に固定 JSON を返す fake bd を置いた
      * 一時ディレクトリを差し込む。実際の .beads/ を読ませないため。
      */
+    /**
+     * fake bd。`show` は id が 'test-1' のときだけ成功する (どの id でも成功させると、
+     * worktree 名フォールバックの id 推定ロジック自体が壊れても気付けないため —
+     * bdboard-pkr6.25 レビュー指摘)。全テストのチケット id は 'test-1' に統一している。
+     */
     function fakeBdScriptSource(comments: string, argsLog: string): string {
       return [
         '#!/bin/sh',
@@ -1398,7 +1403,9 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
         '  shift 2',
         'fi',
         'case "${1:-}" in',
-        `  show) cat <<'BD_SHOW_EOF'`,
+        '  show)',
+        `    if [ "\${2:-}" != 'test-1' ]; then exit 1; fi`,
+        `    cat <<'BD_SHOW_EOF'`,
         JSON.stringify([{ id: 'test-1', status: 'in_progress' }]),
         'BD_SHOW_EOF',
         '    ;;',
@@ -1501,16 +1508,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
     }
 
     /**
-     * ファイルを1つ追加してコミットする。呼び出し前に working tree が clean なら、
-     * 呼び出し後も clean なまま HEAD だけ 1 コミット進む。
+     * 既に書き出し済みのファイルを add + commit する (中身は書き換えない)。
      */
-    async function commitExtra(
+    async function commitPath(
       repo: string,
       env: Record<string, string>,
-      fileName: string,
+      relPath: string,
     ): Promise<void> {
-      writeFileSync(path.join(repo, fileName), 'extra\n', 'utf8');
-      await runGit(repo, ['add', fileName], env);
+      await runGit(repo, ['add', relPath], env);
       await runGit(
         repo,
         [
@@ -1523,10 +1528,23 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           'commit',
           '-q',
           '-m',
-          `extra: ${fileName}`,
+          `commit: ${relPath}`,
         ],
         env,
       );
+    }
+
+    /**
+     * ファイルを1つ追加してコミットする。呼び出し前に working tree が clean なら、
+     * 呼び出し後も clean なまま HEAD だけ 1 コミット進む。
+     */
+    async function commitExtra(
+      repo: string,
+      env: Record<string, string>,
+      fileName: string,
+    ): Promise<void> {
+      writeFileSync(path.join(repo, fileName), 'extra\n', 'utf8');
+      await commitPath(repo, env, fileName);
     }
 
     it('passes when the branch is not a per-ticket branch', async () => {
@@ -1694,9 +1712,40 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           expect(result.exitCode).toBe(2);
           expect(result.stderr).toContain('test-1');
 
-          // 推定した ticket id (worktree ディレクトリ名) で bd show が呼ばれていること。
+          // 推定した ticket id (worktree ディレクトリ名) で bd show が呼ばれていること。fake
+          // bd は id が 'test-1' のときだけ成功するので、推定した名前が違えばここで失敗する。
           const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
           expect(bdCalls.some((call) => call.startsWith(`-C ${repo} show test-1`))).toBe(true);
+        });
+
+        it('(b-negative) does not fall back to an unrelated worktree directory name', async () => {
+          // fake bd の show は 'test-1' 以外を拒否する。推定した id がそれと違えば
+          // (= フォールバック条件「bd show が成功したときだけ採用」が効いていれば)
+          // per-ticket worktree ではないのと同じ exit 0 になるはず。
+          const worktreeRepo = path.join(tmpRoot, '.claude', 'worktrees', 'not-a-ticket');
+          const { repo, env, argsLog } = await setupTicketWorktree({
+            branch: 'feature/not-a-ticket-branch',
+            comments: '[]',
+            dirty: true,
+            repoDir: worktreeRepo,
+            jsonTool,
+          });
+
+          const result = await runHook(
+            STOP_TICKET_GATE,
+            { hook_event_name: 'Stop', cwd: repo },
+            { cwd: repo, env },
+          );
+
+          expect(result.exitCode).toBe(0);
+          expect(result.stderr).toBe('');
+
+          // show は試みるが失敗し、以降 (comments 等) には進まない。
+          const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
+          expect(bdCalls.some((call) => call.startsWith(`-C ${repo} show not-a-ticket`))).toBe(
+            true,
+          );
+          expect(bdCalls.some((call) => call.includes(' comments '))).toBe(false);
         });
 
         it('(c) resolves mainBranch from the verification contract', async () => {
@@ -1712,6 +1761,10 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
             `${JSON.stringify({ mainBranch: 'master' })}\n`,
             'utf8',
           );
+          // コントラクト自体を未コミットのまま残すと DIRTY_COUNT が動いてしまい、
+          // 「クリーンな作業ツリーでも mainBranch 解決経由でブロックする」ことの
+          // 検証にならない。commit してから origin を積む。
+          await commitPath(repo, env, path.join('.claude', 'bdboard-harness.json'));
           await addOriginRemote(repo, env, 'master');
           await commitExtra(repo, env, 'unmerged.txt');
 
@@ -1722,11 +1775,12 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           );
 
           expect(result.exitCode).toBe(2);
+          expect(result.stderr).toContain('未コミット差分: 0 ファイル');
           expect(result.stderr).toContain('master 未取り込みのコミット: 1 件');
         });
 
         it('(d) skips the unmerged-commit check when origin/<mainBranch> does not exist', async () => {
-          const { repo, env } = await setupTicketWorktree({
+          const { repo, env, argsLog } = await setupTicketWorktree({
             branch: 'bd/test-1',
             comments: '[]',
             dirty: false,
@@ -1744,6 +1798,11 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
 
           expect(result.exitCode).toBe(0);
           expect(result.stderr).toBe('');
+
+          // 早期リターン (ticket id 不明・status 判定漏れ等) ではなく、実際に
+          // 手順4 (comments 参照) まで進んだ上で手順5の判定が skip されたことを確かめる。
+          const bdCalls = readFileSync(argsLog, 'utf8').trim().split('\n');
+          expect(bdCalls.some((call) => call.includes(' comments '))).toBe(true);
         });
       });
     }

@@ -232,10 +232,11 @@ git が無い・パスが取れない・ブランチが判らない場合は all
 4. `bd -C <cwd> comments <id> --json` に `PR:` を含むコメントがある、または最新コメントが
    15 分以内なら通過 (痕跡は残っている)。
 5. それ以外で `git status --porcelain` が非空、または `origin/<mainBranch>..HEAD` に
-   main へ未取り込みのコミットがあれば **exit 2** で差し戻す (push 済みでも main へ
-   マージされるまではカウントされ続けるため、「未 push」ではなく「main 未取り込み」
-   と数えている — bdboard-pkr6.25)。`mainBranch` は検証コントラクトの同名フィールド、
-   無ければ `main`。`origin/<mainBranch>` が無ければこの条件は skip。
+   `<mainBranch>` へ未取り込みのコミットがあれば **exit 2** で差し戻す (push 済みでも
+   `<mainBranch>` へマージされるまではカウントされ続けるため、「未 push」ではなく
+   「`<mainBranch>` 未取り込み」と数えている — bdboard-pkr6.25)。`mainBranch` は
+   検証コントラクトの同名フィールド、無ければ `main`。`origin/<mainBranch>` が
+   無ければこの条件は skip。
 6. それ以外は通過。
 
 `bd` が PATH に無い場合・JSON ツールが無い場合はいずれも通過する。`bd` はすべて
