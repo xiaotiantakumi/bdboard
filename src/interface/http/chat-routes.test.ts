@@ -998,9 +998,10 @@ describe('POST /api/chat/message/stream', () => {
     controller.abort();
     await responsePromise;
 
-    // The lock-release-ordering invariant (bdboard-pti0) applies here too: release() must
-    // not run before the failure is recorded, so this poll below can never observe an
-    // idle window between release and the failedTurns write.
+    // The lock-release-ordering invariant (bdboard-pti0) applies here too: recordFailedTurn
+    // runs synchronously in the same catch as release() (finally), with no await between
+    // them, so there is no idle window to race even though this test's own vi.waitFor
+    // polling below wouldn't itself catch a brief one if there were.
     rejectAgent(new ChatAgentError('agent-timeout'));
 
     await vi.waitFor(async () => {

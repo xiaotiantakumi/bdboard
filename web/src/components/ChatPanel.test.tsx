@@ -3475,6 +3475,37 @@ describe('ChatPanel', () => {
     expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-failed');
   });
 
+  it('drains a stale failed turn from an unrelated session instead of surfacing it as an error (bdboard-3tw.165 Opus レビュー)', async () => {
+    // failedTurns is a per-project queue (like completedTurns, bdboard-3tw.155/156), so a
+    // background poll can see an old failure that has nothing to do with anything this
+    // panel is currently tracking. Unlike 'idle' (which under the single-lock-per-project
+    // model can only mean "our own pending send settled"), a mismatched 'failed' entry
+    // must not resolve an unrelated pending send as failed (nothing was pending here at
+    // all) and must not surface any error UI — it should just be acked and drained.
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (acknowledgeChatTurnMock.mock.calls.length === 0) {
+        return {
+          state: 'failed',
+          code: 'agent-timeout',
+          agentId: 'claude',
+          sessionId: 'sess-stale',
+          failedAt: '2026-09-01T00:00:00.000Z',
+        };
+      }
+      return { state: 'idle' };
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+
+    await waitFor(() => {
+      expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-stale');
+    });
+    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(0);
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+  });
+
   it('recovers a detached turn on an existing thread without duplicating the user message (bdboard-zlzo)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);

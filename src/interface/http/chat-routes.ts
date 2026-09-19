@@ -741,11 +741,18 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           stopping = true;
           queue.length = 0;
           // bdboard-3tw.165: best-effort explicit signal issued *before* cleanup/abort
-          // below, so web can tell "delivery deliberately stopped" apart from an
-          // ordinary abrupt disconnect (it previously had to infer this from the stream
-          // just ending without `done`/`error`). Not guaranteed: on a client that is
-          // merely slow (not dead) it typically gets flushed, but on a genuinely
-          // stalled/dead connection it can be dropped like any other frame would be.
+          // below, so a client that is still actually reading the stream (the overflow
+          // came from the agent bursting deltas faster than the writer could drain them,
+          // not from the connection itself stalling) can tell "delivery deliberately
+          // stopped" apart from an ordinary abrupt disconnect. This is NOT reliable for
+          // the more common case this feature exists for — a writer already stalled
+          // inside an *earlier* writeSSE because the connection itself is slow/dead (the
+          // queue-overflow test's scenario): the detached frame queues directly behind
+          // that stalled write and is discarded along with it once abort() cancels the
+          // stream (verified empirically against a real node-server client over a paused
+          // TCP socket). web does not currently act on this event at all (only
+          // delta/done/error are handled); turn-status (below) is what a disconnected
+          // client actually relies on to learn a turn failed.
           //
           // cleanup/abort are deferred one macrotask so this write's own microtask chain
           // (writeSSE → write → writer.write, several hops) gets a turn to actually reach
@@ -754,8 +761,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
           // write is silently dropped (observed empirically; see the dedicated test).
           // The defer still can't become a barrier: a writer genuinely stalled inside an
           // *earlier* writeSSE (a real slow/dead client, the queue-overflow test's
-          // scenario) must still get unblocked by this abort, just one tick later than
-          // before — vi.waitFor's polling timeout comfortably covers that extra tick.
+          // scenario) must still get unblocked by this abort, just one macrotask later
+          // than before, which is immaterial to anything actually waiting on it.
           void stream.writeSSE({ event: 'detached', data: '{}' }).catch(() => {});
           setTimeout(() => {
             cleanup();
