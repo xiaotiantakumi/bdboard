@@ -882,11 +882,13 @@ describe('POST /api/chat/message/stream', () => {
     expect(Object.keys(JSON.parse(errorEvents[0]![1]!)).sort()).toEqual(['code', 'detail', 'error']);
   });
 
-  it('emits a detached SSE event ahead of stopping delivery on queue overflow (bdboard-3tw.165)', async () => {
+  it('stops delivery on queue overflow even for a client actively draining the stream (bdboard-rrvr)', async () => {
     // Unlike the "stalled client" overflow test above, nothing here artificially keeps
-    // the response body unread: res.text() actively drains the stream, so the
-    // best-effort detached write (queued just before cleanup/abort) has a real chance to
-    // reach the client instead of racing a write that can never complete.
+    // the response body unread: res.text() actively drains the stream as it arrives, so
+    // this exercises the overflow-while-actively-reading regime separately from the
+    // overflow-while-stalled regime (bdboard-rrvr removed the 'detached' SSE event this
+    // test used to assert on; the surrounding delivery-stop behavior it also covered is
+    // kept here so that regime isn't left with only the stalled-client test).
     const streamingAgent = createFakeAgent({
       descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
       sendMessageStream: vi.fn(async (_request, onDelta) => {
@@ -909,11 +911,11 @@ describe('POST /api/chat/message/stream', () => {
       }), LOCAL_ENV);
       expect(res.status).toBe(200);
       const text = await res.text();
-      expect(text).toContain('event: detached');
       // Delivery stopped at the overflow: the turn's own 'done' never reaches this
       // client (it still finalizes server-side; that is covered by the existing
-      // "stops delivery..." test above).
+      // "stops delivery..." stalled-client test above).
       expect(text).not.toContain('event: done');
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('per-client queue limit'));
     } finally {
       warnSpy.mockRestore();
     }
