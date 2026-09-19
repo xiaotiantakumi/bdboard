@@ -157,8 +157,11 @@ PR を開いた時点では **close しない**（SKILL.md 規律4）。CI が�
 2026-09-04、同一セッション内で3回発生）。見分け方: 出力末尾が `Post
 "https://api.github.com/graphql": read tcp ...: read: operation timed out` で、個別チェックの
 fail 行が無ければ通信断であって CI 失敗ではない。誤読して原因調査や再実装に時間を使わず、
-`gh pr checks <N>`（`--watch` 無しで単発実行）をやり直すか `--watch` を張り直せばよい —
-再実行すれば全チェック pass が返る。
+`gh pr checks <N>`（`--watch` 無しで単発実行）をやり直せばよい（実測では再実行で全チェック
+pass が返った。CI がまだ走行中なら pending が返るだけで、これも失敗ではない）。`--watch` を
+張り直す場合は既定の 10 秒間隔のままにせず `--interval 30` 以上を付ける（下の GraphQL 枠の
+節にある短間隔ポーリング禁止と同じ理由）。再実行しても失敗し続けるなら通信断ではなく実際の
+障害の可能性があるので次項へ進む。
 
 **CI待ち中に `gh pr checks`/`gh pr view` が503等で失敗し続ける場合**（GitHub障害時など）:
 「障害で確認できないだけ」と決めつけない。これらはGraphQL裏付けのコマンドで、GraphQLが
@@ -300,11 +303,13 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
 merge-slot acquire 2>&1 | tail -2 && gh pr merge ...` を実行したところ、acquire 自体は
 「slot held by: fable-chair-pkr6」で失敗していたのに `tail` の exit 0 で `&&` が通り、
 スロット外マージ（PR #296）が発生した。`npm run verify ... | tail -N` の exit code を
-verify 自身のものと誤読する事故も同日に別途発生している（failure-catalog.md の
-verify-exit-masked）。対策: ゲートになるコマンドは (1) パイプせず単独で実行して `$?` を見る、
-または (2) 出力をファイルへリダイレクトし直後に `echo "EXIT=$?"` を取る。特に `bd
-merge-slot acquire` と検証コマンド（`npm run verify` 等）は必ずこの形で実行する — 下の層1
-の例も単独実行を前提にしている。
+verify 自身のものと誤読する事故も同日に別途発生している。同じ機序（ラッパー/パイプの
+終了コードを検証コマンド自身のものと取り違える）の既知事故は failure-catalog.md の
+verify-exit-masked（2026-08-29, PR #134。`npm run verify > log; echo EXIT=$?; tail log` の
+セミコロン連結の変種）にも記録されている。対策: ゲートになるコマンドは (1) パイプせず
+単独で実行して `$?` を見る、または (2) 出力をファイルへリダイレクトし直後に
+`echo "EXIT=$?"` を取る。特に `bd merge-slot acquire` と検証コマンド（`npm run verify` 等）は
+必ずこの形で実行する — 下の層1の例も単独実行を前提にしている。
 
 **層1 — 協調ロック（bd merge-slot）**: マージ作業を一度に1セッションへ直列化する。
 
@@ -344,40 +349,49 @@ git -C <メインチェックアウト> pull --ff-only
 使えないため、これが最終的な判定手段である。
 
 **main チェックアウトの作業ツリーが汚れていて着地後検証が赤くなることがある** —
-原因をマージ回帰と決めつけない。`npm run verify`（コントラクトの `verify`）は main
+原因をマージ回帰と決めつけない。検証コマンド（コントラクトの `verify`）は main
 チェックアウトの**作業ツリー**を読むため、別セッションが未コミットの変更を残していると
 （実例 2026-09-05: 正本 `harness/packs/bdboard-harness/SKILL.md` ではなく注入コピー
 `.claude/skills/bdboard-harness/SKILL.md` を直接編集して未コミットのまま放置し、
 `injected-pack-is-in-sync.test.ts` が content hash mismatch で失敗）、CI が緑のまま main 側の
-検証だけ落ちる。直前にマージした PR とは無関係なことも多い。着地後検証が落ちたら、まず
-main チェックアウトで確認する:
+検証だけ落ちる（実例 2026-09-05 / bdboard-kj4s: 直前にマージした PR #337 とは無関係だった）。
+着地後検証が落ちたら、マージ回帰と決めつける前にまず main チェックアウトで確認する:
 
 ```bash
 git -C <メインチェックアウト> status --porcelain   # 汚れているか
 ```
 
-汚れていれば **他セッションの WIP を `git checkout --` で絶対に捨てない**。復旧手順: 差分を
-退避 → 発見をチケット化（`bd create ... --deps discovered-from:<自分>`）→ `git checkout --
-<path>` で作業ツリーを戻す → 再検証。ハーネスパックを編集するときは常に正本側
-`harness/packs/` を編集し、注入コピーと**同一コミットで**両方を更新する（layering.md）ことが
+汚れていれば **他セッションの WIP を `git checkout --` で絶対に捨てない**。復旧手順:
+(1) `git -C <メインチェックアウト> diff > <退避先>/<tag>.patch` で追跡ファイルの差分を
+退避する。未追跡ファイルも含めて退避したいときの bare `git stash` / `git stash pop` は
+hook（pre-bash-guard.sh）に拒否され、拒否メッセージは WIP コミットを勧めてくるが、これは
+**他セッションの WIP であり自分が main へコミットしてよい理由にはならない**ので従わない —
+`git stash push -u -m "<tag>"` を使い、直後に `git stash list --format='%H %gs'` で SHA を
+控える（復元は `pop` ではなく `apply <sha>`）。(2) 発見をチケット化
+（`bd create ... --deps discovered-from:<自分>`、退避先パスを本文に書く）。(3) `git checkout
+-- <path>` で作業ツリーを戻す。(4) 再検証。ハーネスパックを編集するときは常に正本側
+`harness/packs/` を編集し、注入コピーと同じ PR で両方を更新する（layering.md）ことが
 そもそもの予防策。
 
 **汚れを避けたいなら、着地後検証は「main のツリー」ではなく「PR ブランチの tip」で代用できる**
 — 手順3の rebase で PR ブランチを検証コントラクトの `mainBranch` の最新 SHA に乗せておけば、
-squash 後の main のツリーはブランチ tip のツリーと同一になる。`git diff --stat <mainHEAD>
-<branchtip>` が空であることを確認すれば、そのブランチ worktree で回した検証結果がそのまま
-着地後ゲートの証拠として使える。rebase を省くとこの同一性が壊れるため、この代替を使うなら
-手順3の rebase は必須（他セッションの WIP で main が汚れている状況でも、汚れに触れずに
-着地後ゲートを満たせる）。
+squash 後の main のツリーはブランチ tip のツリーと同一になる。マージ後に `git fetch origin`
+して取得した `origin/<mainBranch>`（squash コミット）と PR ブランチ tip との
+`git diff --stat` が空であることを確認すれば（ブランチ worktree 内だけで完結し、main
+チェックアウトには一切触れない）、そのブランチ worktree で回した検証結果がそのまま着地後
+ゲートの証拠として使える。rebase を省くとこの同一性が壊れるため、この代替を使うなら手順3の
+rebase は必須（他セッションの WIP で main が汚れている状況でも、汚れに触れずに着地後ゲートを
+満たせる）。
 
 マージは worktree から打ち切る。メインチェックアウトは常時稼働サーバーを抱えるため、そこへ
 作業を移す手順を増やすとサーバー停止や別ブランチ配信の事故面が広がる。worktree から実際に
 壊れるのはブランチ削除の後処理だけで、マージ本体は成功する。上の SHA 判定と後述の remote
-削除を手順化するほうが副作用が小さい。`git pull --ff-only` と着地後検証は従来どおりメイン
-チェックアウトで行う。
+削除を手順化するほうが副作用が小さい。`git pull --ff-only` と着地後検証は原則メイン
+チェックアウトで行う（メインチェックアウトが汚れている場合の代替は前掲のブランチ tip 検証）。
 
-独立に緑だった2本の意味的衝突は**ここでしか**捕まらない。squash マージなら壊れていても
-revert 1発で戻せる。緑を確認するまで次の PR をマージしない。
+独立に緑だった2本の意味的衝突は、main 上の着地後検証か前掲のブランチ tip 検証の**どちらか**
+でしか捕まらない。squash マージなら壊れていても revert 1発で戻せる。緑を確認するまで次の
+PR をマージしない。
 
 ### 6. close と掃除
 
