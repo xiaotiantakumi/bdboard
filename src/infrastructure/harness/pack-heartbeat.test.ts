@@ -570,10 +570,21 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
 
   function readPidfile(tmpDir: string, sessionPid: number): string | undefined {
     const pf = pidfilePath(tmpDir, sessionPid);
-    if (!existsSync(pf)) {
-      return undefined;
+    // existsSync() -> readFileSync() は check-then-read の競合を持つ: --max-hours 等で
+    // 終了する heartbeat ループが existsSync の直後・readFileSync の直前に pidfile を
+    // unlink すると、存在確認は通ったのに読み取りが ENOENT で例外を投げる
+    // (bdboard-tzty, 高負荷時に実測)。ここでは単一の読み取り試行に一本化し、ENOENT は
+    // 「読む前に消えた = 既に停止済み」として undefined を返す。ENOENT 以外の読み取り
+    // エラー(権限不足等)は本物の異常なので握りつぶさず再送出する。
+    let line: string;
+    try {
+      line = readFileSync(pf, 'utf8').trim();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        return undefined;
+      }
+      throw err;
     }
-    const line = readFileSync(pf, 'utf8').trim();
     const pidField = (line.split('\t')[0] ?? '').replace(/\s/g, '');
     if (!pidField || !/^\d+$/.test(pidField)) {
       return undefined;
