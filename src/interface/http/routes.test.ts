@@ -2290,14 +2290,40 @@ describe('createApiRoutes', () => {
     ).toBe(false);
   });
 
+  // bdboard-cjsa レビュー指摘: 元のこのテストは non-ticket worktree を snapshot に
+  // 一切含めていなかったため、結果が空になる理由が「scanner が測れない」なのか
+  // 「そもそも non-ticket worktree が無い」なのか区別できていなかった。feature/*
+  // worktree と生存セッションを足し、gate は通るが scanner 側が測れない、という
+  // ケースを明示的に作る。
   it('returns an empty nonTicketHarnessWorktrees array when the scanner cannot measure lag', async () => {
     const { cache } = inFlightCache();
     const base = inFlightScanner(IN_FLIGHT_FILES);
     const withoutLag: WorktreeScanner = {
-      scan: base.scan,
+      scan: async (rootPath) => {
+        const snapshot = await base.scan(rootPath);
+        return {
+          ...snapshot,
+          worktrees: [
+            ...snapshot.worktrees,
+            {
+              path: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+              branch: 'feature/mac-slow-diagnosis-7ddee1',
+              isMain: false,
+            },
+          ],
+        };
+      },
       listChangedFiles: base.listChangedFiles,
+      // countHarnessCommitsBehindDefaultBranch を意図的に持たせない
+      // (scanNonTicketHarnessWorktreeLags / scanHarnessWorktreeLags 双方の早期 return を突く)。
     };
-    const app = createApiRoutes(createDeps({ cache, worktreeScanner: withoutLag }));
+    const session = makeSession({
+      cwd: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+      alive: true,
+    });
+    const app = createApiRoutes(
+      createDeps({ cache, worktreeScanner: withoutLag, sessions: () => [session] }),
+    );
 
     const body = await (await app.request('/api/hygiene')).json();
 

@@ -92,6 +92,21 @@ export function checkNonTicketHarnessWorktrees(
  *
  * 除外は「遅れていない」ではなく「もう測る価値が無い」の意味 ― `scanNonTicketHarnessWorktreeLags`
  * を呼ぶ前にここで絞ることで、生存確認できない worktree ぶんの git 呼び出しも増やさない。
+ *
+ * **既知の限界 (bdboard-cjsa の Opus レビュー指摘):**
+ * - `isPathInside` は文字列比較 (`path.resolve` ベース) で、symlink を解決しない
+ *   (`harness-path.ts` の既存の前提と同じ ― 呼び出し側が realpath 済みの絶対パスを渡す
+ *   前提)。`worktreePath` / `session.cwd` のどちらかだけが realpath 形
+ *   (`git-worktree-provisioner.ts` が worktree パスに `fs.realpathSync.native` を使う
+ *   のと同じ理由で起こりうる) だと、実際は同じ場所でも不一致と判定し偽陰性 (誤って
+ *   「放棄済み」扱い) になりうる。resolve は呼び出し側 (scanner / セッション収集側) の
+ *   責務とし、ここでは行わない。
+ * - 「生存セッションが無い」は `deps.sessions()` が追跡できる Claude Code セッションの
+ *   範囲でしか判定できない。その worktree で Codex/Cursor 等の別ツールが動いている、
+ *   または `isolation: "worktree"` のサブエージェントが親セッションと別の cwd 追跡経路を
+ *   持つ、といったケースは検知できず、偽陰性 (実際は使用中なのに「放棄済み」扱い) になりうる。
+ *   このレーンは「確実に放棄されたもの」だけを削れば十分という前提に立っており、この
+ *   偽陰性は許容している (偽陽性 ― 使っていないのに警告し続ける ― の防止が本題のため)。
  */
 export function filterNonTicketWorktreesWithLiveSession(
   worktrees: readonly NonTicketWorktree[],

@@ -152,6 +152,10 @@ export function useBoardStream(): BoardStreamResult {
       void queryClient.invalidateQueries({ queryKey: ['sessions'] });
       void queryClient.invalidateQueries({ queryKey: ['board'] });
       void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      // bdboard-cjsa: /api/hygiene の nonTicketHarnessWorktrees が生存セッションの有無で
+      // 内容を変えるようになったため、セッション開始/終了時に hygiene も追従させないと、
+      // 次の board.changed (チケット/コメント変更由来) までパネルが古い判定のまま残る。
+      void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
     };
 
     conn.addEventListener('board.changed', onBoardChanged);

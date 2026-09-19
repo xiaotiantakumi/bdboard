@@ -476,7 +476,11 @@ export interface HygieneResponseDto {
   issues: HygieneIssueDto[];
   /** commentReader が無く検査自体を行っていないときは null。 */
   closeEvidence: HygieneCloseEvidenceStatusDto | null;
-  /** 非チケット worktree のハーネス凍結。scanner が遅れを測れない構成では常に []。 */
+  /**
+   * 非チケット worktree のハーネス凍結。以下のいずれかでも空 []: scanner が遅れを
+   * 測れない構成のとき / 生存セッション (cwd がその worktree の内側にある alive な
+   * セッション) が1つも無いとき (bdboard-cjsa)。
+   */
   nonTicketHarnessWorktrees: NonTicketHarnessWorktreeWarningDto[];
 }
 
