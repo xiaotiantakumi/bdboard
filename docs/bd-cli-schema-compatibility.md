@@ -6,8 +6,11 @@
 `.beads/embeddeddolt/bdboard` にあり、読み取り専用の確認で
 `schema_migrations` の最大バージョンが **v65** であることを確認している。
 2026-09-05 に dolt sql-server モードへ移行済み（詳細は下記「sql-server
-モードへの移行」節）で DB パスと排他方式は変わっているが、以下のスキーマ
-バージョン互換性の判断自体はモードに依存しない。
+モードへの移行」節）で、DB パスは `.beads/dolt/bdboard` に、排他方式は
+プロセス flock からサーバー接続に変わっている。以下のスキーマバージョン
+互換性の判断自体はモードに依存しないが、下記「誤ってアップグレードした
+場合の復旧」で SQL を直接叩く際は、server モードでは先に `bd dolt stop`
+でサーバーを止めてから操作する（動作中に直接 DB を触らない）。
 
 一方、beads **v1.2.2 以降**は、v1.2.0 / v1.2.1 で誤って公開された未検証の
 マイグレーションを巻き戻すための保守リリースであり、DB スキーマは **v53** までしか
@@ -84,8 +87,10 @@ pin を解除してよいのは、schema v65（または対象 DB の実際の�
 bdboard の bd は 2026-09-05 に embedded mode から **dolt sql-server モード**へ
 移行済み（bdboard-62u / gate bdboard-7h8）。同日、bd 管理下の他プロジェクトも
 同じ backup/restore 手順で server モードへ移行し、全件で issue 件数一致を確認
-している。embedded mode は DB を開くだけでプロセスレベルの排他 `flock` を取る
-ため、常時稼働サーバー + 並列エージェントからの `bd` 呼び出しと衝突していた。
+している。embedded mode は DB を開くだけでプロセスレベルの排他 `flock` を取ると
+観測されており（bdboard-bks の調査。`--readonly` でもロックエラーが出た
+実測に基づく推定で、upstream ドキュメントの正式な仕様記載ではない）、
+常時稼働サーバー + 並列エージェントからの `bd` 呼び出しと衝突していた。
 sql-server モードでは dolt プロセスが 1 つ DB を保持し、各 `bd` 呼び出しは
 クライアント接続になる。
 
@@ -105,10 +110,22 @@ sql-server モードでは dolt プロセスが 1 つ DB を保持し、各 `bd`
   追跡から外す。
 - issue ID の接頭辞は DB 内に保存されており、backup restore で復元される
   （`bd init` の `--prefix` より優先）。DB 名と接頭辞が食い違うリポジトリでは、
-  `bd init` に `--database <既存DB名>` を渡せば restore が正しく当たる。
-- `bd list --all` は `bd status` の Total より少なく出ることがある。移行検証は
-  同じ方法で前後比較するか、dolt backup を restore した一時ディレクトリで
-  `dolt sql -q 'select count(*) from issues'` を数えて突き合わせる。
+  `bd init` に `--database <既存DB名>` を渡せば restore が正しく当たる
+  （`bd init --help` は "proxied-server mode only" と記すが、2026-09-05 の
+  移行では plain server mode でも機能することを実証済み）。
+- `bd list --all` は `bd status` の Total より少なく出ることがある
+  （`--all` は既定の `--limit 50` を外すだけなので、この差はそれが原因では
+  ない）。移行検証は同じ方法で前後比較するか、dolt backup を restore した
+  一時ディレクトリで `dolt sql -q 'select count(*) from issues'` を数えて
+  突き合わせる（server モードでは稼働中のサーバーが `.beads/dolt` を
+  保持しているため、そこに直接 `dolt sql` は打てない。別ディレクトリに
+  restore してから数える）。
 - ロールバック用バックアップは、移行前に取得した embedded 版一式と
-  dolt-native なバックアップの二系統を安定確認できるまで残す。安定確認後は
-  ディスク容量のため削除してよい。
+  dolt-native なバックアップの二系統を安定確認できるまで残す。**bdboard
+  自体はすでに安定確認済みで、この 2 系統(約713MB)は 2026-09-05 に削除
+  済み**（bdboard-62u）。他リポジトリへこの手順を適用する場合の一般的な
+  注意として残す。
+- `.beads/.gitignore` への追記は、`.beads/` 自体を git 追跡していない
+  repo（bdboard は bd77eb3 以降、ルート `.gitignore` の `/.beads/` で
+  丸ごと対象外）には適用されない。追跡している他リポジトリ向けの注意
+  として残す。
