@@ -151,6 +151,15 @@ bd comment <id> "PR: <url>"
 PR を開いた時点では **close しない**（SKILL.md 規律4）。CI が緑になるのを待つ
 （待ち時間に他チケットを進めてよい）。
 
+**`gh pr checks <N> --watch` はネットワーク由来で exit 1 を返すことがある（CI失敗と誤読
+しない）**: CI 自体は緑でも、`gh pr checks --watch` は GraphQL 呼び出しの読み込みタイムアウト
+で異常終了し、その時点の一覧には一部チェックが pending のまま残ることがある（実測
+2026-09-04、同一セッション内で3回発生）。見分け方: 出力末尾が `Post
+"https://api.github.com/graphql": read tcp ...: read: operation timed out` で、個別チェックの
+fail 行が無ければ通信断であって CI 失敗ではない。誤読して原因調査や再実装に時間を使わず、
+`gh pr checks <N>`（`--watch` 無しで単発実行）をやり直すか `--watch` を張り直せばよい —
+再実行すれば全チェック pass が返る。
+
 **CI待ち中に `gh pr checks`/`gh pr view` が503等で失敗し続ける場合**（GitHub障害時など）:
 「障害で確認できないだけ」と決めつけない。これらはGraphQL裏付けのコマンドで、GraphQLが
 落ちていてもREST APIは動いていることが多い。まずRESTへ切り替えて実態を確認する:
@@ -286,6 +295,17 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
 無条件実行された実例がある（failure-catalog.md の merge-chain-semicolon）。1コマンド
 ずつ結果を確認して進めるか、スクリプト化するなら `set -euo pipefail` を付ける。
 
+**ゲート判定コマンドをパイプに通して `&&` で繋がない** — パイプの終了ステータスは末尾
+コマンド（例: `tail`）のものになり、先頭コマンドの失敗を隠す。実例（2026-09-04）: `bd
+merge-slot acquire 2>&1 | tail -2 && gh pr merge ...` を実行したところ、acquire 自体は
+「slot held by: fable-chair-pkr6」で失敗していたのに `tail` の exit 0 で `&&` が通り、
+スロット外マージ（PR #296）が発生した。`npm run verify ... | tail -N` の exit code を
+verify 自身のものと誤読する事故も同日に別途発生している（failure-catalog.md の
+verify-exit-masked）。対策: ゲートになるコマンドは (1) パイプせず単独で実行して `$?` を見る、
+または (2) 出力をファイルへリダイレクトし直後に `echo "EXIT=$?"` を取る。特に `bd
+merge-slot acquire` と検証コマンド（`npm run verify` 等）は必ずこの形で実行する — 下の層1
+の例も単独実行を前提にしている。
+
 **層1 — 協調ロック（bd merge-slot）**: マージ作業を一度に1セッションへ直列化する。
 
 ```bash
@@ -322,6 +342,33 @@ git -C <メインチェックアウト> pull --ff-only
 **常に** `git ls-remote origin <mainBranch>` を再読みして層2で控えた base SHA と比較する。SHA が進んで
 いればマージ成功であり、後処理へ進む。GraphQL が死んでいる症状と重なると `gh pr view` 自身も
 使えないため、これが最終的な判定手段である。
+
+**main チェックアウトの作業ツリーが汚れていて着地後検証が赤くなることがある** —
+原因をマージ回帰と決めつけない。`npm run verify`（コントラクトの `verify`）は main
+チェックアウトの**作業ツリー**を読むため、別セッションが未コミットの変更を残していると
+（実例 2026-09-05: 正本 `harness/packs/bdboard-harness/SKILL.md` ではなく注入コピー
+`.claude/skills/bdboard-harness/SKILL.md` を直接編集して未コミットのまま放置し、
+`injected-pack-is-in-sync.test.ts` が content hash mismatch で失敗）、CI が緑のまま main 側の
+検証だけ落ちる。直前にマージした PR とは無関係なことも多い。着地後検証が落ちたら、まず
+main チェックアウトで確認する:
+
+```bash
+git -C <メインチェックアウト> status --porcelain   # 汚れているか
+```
+
+汚れていれば **他セッションの WIP を `git checkout --` で絶対に捨てない**。復旧手順: 差分を
+退避 → 発見をチケット化（`bd create ... --deps discovered-from:<自分>`）→ `git checkout --
+<path>` で作業ツリーを戻す → 再検証。ハーネスパックを編集するときは常に正本側
+`harness/packs/` を編集し、注入コピーと**同一コミットで**両方を更新する（layering.md）ことが
+そもそもの予防策。
+
+**汚れを避けたいなら、着地後検証は「main のツリー」ではなく「PR ブランチの tip」で代用できる**
+— 手順3の rebase で PR ブランチを検証コントラクトの `mainBranch` の最新 SHA に乗せておけば、
+squash 後の main のツリーはブランチ tip のツリーと同一になる。`git diff --stat <mainHEAD>
+<branchtip>` が空であることを確認すれば、そのブランチ worktree で回した検証結果がそのまま
+着地後ゲートの証拠として使える。rebase を省くとこの同一性が壊れるため、この代替を使うなら
+手順3の rebase は必須（他セッションの WIP で main が汚れている状況でも、汚れに触れずに
+着地後ゲートを満たせる）。
 
 マージは worktree から打ち切る。メインチェックアウトは常時稼働サーバーを抱えるため、そこへ
 作業を移す手順を増やすとサーバー停止や別ブランチ配信の事故面が広がる。worktree から実際に
