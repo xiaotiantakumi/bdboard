@@ -61,9 +61,10 @@ export function checkNonTicketHarnessWorktrees(
         `この worktree (ブランチ ${lag.branchName}) のハーネスは ${lag.baseRef} より ` +
         `${lag.commitsBehind} コミットぶん古いままです。チケットに紐づかない worktree の` +
         'ため盤面のチケット一覧には出ません。ハーネス (.claude/skills と ' +
-        '.claude/settings.json) はチェックアウト単位なので、このセッションは worktree ' +
-        `作成時点の古い規律・hooks のまま動いています。git -C ${lag.worktreePath} rebase ` +
-        `${lag.baseRef} で追従してください`,
+        '.claude/settings.json) はチェックアウト単位なので、ここでまだセッションが動いて' +
+        'いるならその作成時点の古い規律・hooks のまま動作しています(このレーンは生存確認を' +
+        `していません ― まだ使うなら git -C ${lag.worktreePath} rebase ${lag.baseRef} で` +
+        '追従、使っていないなら worktree ごと削除してください)',
     });
   }
 

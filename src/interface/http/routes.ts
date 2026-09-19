@@ -23,9 +23,11 @@ import { describeFetchFailures } from '../../application/board/fetch-failure-log
 import { scanInFlightOverlaps } from '../../application/board/scan-in-flight-overlaps.js';
 import { scanHarnessWorktreeLags } from '../../application/board/scan-harness-worktree-lags.js';
 import { scanNonTicketHarnessWorktreeLags } from '../../application/board/scan-non-ticket-harness-worktree-lags.js';
-import { checkNonTicketHarnessWorktrees } from '../../domain/non-ticket-harness-worktree.js';
-import type { NonTicketHarnessWorktreeLag } from '../../domain/non-ticket-harness-worktree.js';
-import type { LeftoverCandidate, NonTicketWorktree } from '../../domain/git-worktree.js';
+import {
+  checkNonTicketHarnessWorktrees,
+  type NonTicketHarnessWorktreeLag,
+} from '../../domain/non-ticket-harness-worktree.js';
+import type { LeftoverCandidate } from '../../domain/git-worktree.js';
 import {
   overlapPeersForTicket,
   selectInFlightWorktrees,
@@ -874,7 +876,7 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       leftoverCandidates = leftoverScan.candidates;
       // bd/<id> に紐づかない worktree (feature/* 等)。同じ snapshot から拾うので
       // git 呼び出しは増えない (bdboard-wadg)。
-      const nonTicketWorktrees: readonly NonTicketWorktree[] = leftoverScan.nonTicketWorktrees;
+      const nonTicketWorktrees = leftoverScan.nonTicketWorktrees;
 
       // merged_leftover と同じ worktree 一覧を使い回す。closed のものはあちらが、
       // まだ closed でないものはこちらが見る (git worktree list は 1 回で済む)。

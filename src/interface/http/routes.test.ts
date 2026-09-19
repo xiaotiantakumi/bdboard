@@ -2259,12 +2259,25 @@ describe('createApiRoutes', () => {
       baseRef: 'origin/master',
       message: expect.stringContaining('feature/mac-slow-diagnosis-7ddee1'),
     });
-    // チケット単位の issues には (ticketId を持たないので) この feature/* worktree 自体は
-    // 出ない。同じレスポンス内にチケット worktree の stale_harness_worktree が別途出ることは
-    // 妨げない (このテストの IN_FLIGHT_FILES にも in_progress チケットの worktree があるため)。
+    // チケット単位の issues 側に stale_harness_worktree が出ること自体は妨げない
+    // (このテストの IN_FLIGHT_FILES には in_progress チケットの bd/ worktree があるため、
+    // それらは正当に stale_harness_worktree としても検出される)。ここで確認したいのは、
+    // feature/* worktree 自体がどちらか一方にしか出ないこと ―― ticketId を持たないので
+    // issues 側には一切現れず、その worktree パスへの言及も issues 側のどのメッセージにも
+    // 無いことを、パス文字列で厳密にチェックする。
+    const staleHarnessIssues = body.issues.filter(
+      (issue: { kind: string }) => issue.kind === 'stale_harness_worktree',
+    );
+    expect(
+      staleHarnessIssues.every((issue: { ticketId: string }) =>
+        ['bdboard-x', 'bdboard-y', 'bdboard-z'].includes(issue.ticketId),
+      ),
+    ).toBe(true);
     expect(
       body.issues.some((issue: { message?: string }) =>
-        issue.message?.includes('feature/mac-slow-diagnosis-7ddee1'),
+        issue.message?.includes(
+          '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+        ),
       ),
     ).toBe(false);
   });

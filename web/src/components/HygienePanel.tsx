@@ -787,7 +787,7 @@ export function HygienePanel({
               <div className="hygiene-merge-slot-group">
                 {nonTicketHarnessWorktrees.map((worktree) => (
                   <div
-                    key={worktree.worktreePath}
+                    key={`${worktree.projectId}:${worktree.worktreePath}`}
                     className="hygiene-issue-row hygiene-issue-row-static"
                   >
                     <span className="hygiene-kind-badge hygiene-kind-stale_harness_worktree">

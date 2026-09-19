@@ -642,7 +642,9 @@ export const STALE_HARNESS_WORKTREE_MIN_COMMITS_BEHIND = 3;
  * **見えている範囲は `bd/<id>` worktree に限る。** Claude Code の `isolation: "worktree"`
  * が作る `feature/<slug>` のような非チケット worktree は、紐づくチケットが無いため
  * Hygiene issue の形に載らない (HygieneIssue.ticketId は必須)。実測ではそちらのほうが
- * 深く凍っていたので、対応は bdboard-wadg。
+ * 深く凍っていた。そちらは `/api/hygiene` レスポンスの `nonTicketHarnessWorktrees`
+ * (checkNonTicketHarnessWorktrees, non-ticket-harness-worktree.ts) が別レーンとして担当
+ * する (bdboard-wadg)。
  */
 function checkStaleHarnessWorktree(
   lag: HarnessWorktreeLag,
