@@ -3366,7 +3366,13 @@ describe('ChatPanel', () => {
         state: 'completed',
         sessionId: 'sess-overflow-2',
         agentId: 'claude',
-        completedAt: '2026-09-13T08:00:10.000Z',
+        // bdboard-96rp (Opus レビュー指摘 W1): 追っている送信の sessionId が未確定
+        // (新規スレッドの初回送信) な間は、completed の completedAt が detachedAt
+        // (=この送信を追い始めた実時刻) 以降であることまで確認するようになった。
+        // 固定の過去日時だと、実行時刻によってはこの現実的な時系列の前提
+        // (completedAt は detachedAt より前には絶対にならない) を満たさなくなり
+        // テストが壊れるため、実行時刻ベースの値にする。
+        completedAt: new Date().toISOString(),
       };
     });
     fetchChatThreadsMock.mockImplementation(async () =>
@@ -3714,8 +3720,12 @@ describe('ChatPanel', () => {
   it('falls back to a send failure on the explicit failed turn-status instead of waiting for idle (bdboard-3tw.165)', async () => {
     // Same scenario as the idle-inference test above, but the server now reports the
     // failure explicitly instead of turn-status silently falling through to idle. web
-    // must reach the exact same failure UI from this new signal, and must ack it (unlike
-    // idle, which has nothing on the server to ack).
+    // must reach the exact same failure UI from this new signal. This send is a brand
+    // new thread's first message, so it has no sessionId of its own yet -- and per the
+    // real server contract (chat-routes.ts's recordFailedTurn mirrors the *request's*
+    // sessionId verbatim), a failed entry for a sessionId-less request is always itself
+    // sessionId-less too. So (bdboard-96rp) there is nothing to ack here, unlike the
+    // sibling test below for an existing thread.
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
     let streamClosed = false;
@@ -3730,8 +3740,11 @@ describe('ChatPanel', () => {
         state: 'failed',
         code: 'agent-timeout',
         agentId: 'claude',
-        sessionId: 'sess-failed',
-        failedAt: '2026-09-19T08:00:10.000Z',
+        // bdboard-96rp: no sessionId, matching the tracked send's own (also
+        // undefined) sessionId, and failedAt is generated fresh (>= the moment the
+        // send detached) so the recency guard in checkTurnStatus's 'failed' branch
+        // accepts it as this send's own failure rather than an unrelated stale entry.
+        failedAt: new Date().toISOString(),
       };
     });
     let releaseClose: () => void = () => {};
@@ -3775,11 +3788,93 @@ describe('ChatPanel', () => {
     expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
-    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-failed');
+    // bdboard-96rp: sessionId-less, so there is no ack path (see FailedChatTurn's doc
+    // comment in chat-routes.ts) -- the resolution still happens, just without an ack.
+    expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
     // bdboard-3tw.166 (Opus レビュー指摘): idle 分岐と同様、失敗確定後は部分テキストの
     // 吹き出しも消えている必要がある。
     expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
+
+  it('acks and surfaces a send failure on an existing thread whose own sessionId matches the failed turn-status (bdboard-96rp Opus レビュー指摘 W2)', async () => {
+    // bdboard-96rp (W2): the sibling test above ("falls back to a send failure...") only
+    // covers a brand new thread's first message, whose own sessionId is unknown at detach
+    // time -- so matchesTrackedSend's `detached.sessionId !== undefined` branch (the ack
+    // path) was never exercised by any test. This covers that branch: an existing thread's
+    // resend detaches with a KNOWN sessionId, and the turn-status poll later reports
+    // 'failed' with that SAME sessionId -- matchesTrackedSend must resolve it as this
+    // send's own failure (surfacing the error UI) AND ack it (unlike the sessionId-less
+    // case, which has no ack path).
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let detachStreamClosed = false;
+    let postDetachCalls = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!detachStreamClosed) return { state: 'idle' };
+      postDetachCalls += 1;
+      if (postDetachCalls === 1) {
+        return { state: 'processing', message: 'second try', agentId: 'claude' };
+      }
+      return {
+        state: 'failed',
+        code: 'agent-timeout',
+        agentId: 'claude',
+        sessionId: 'sess-w2',
+        failedAt: new Date().toISOString(),
+      };
+    });
+    let streamPosts = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        streamPosts += 1;
+        if (streamPosts === 1) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"first reply","sessionId":"sess-w2","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"w2 partial"}\n\n'),
+              );
+              controller.close();
+              detachStreamClosed = true;
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('first reply');
+    acknowledgeChatTurnMock.mockClear();
+
+    await user.type(screen.getByLabelText('メッセージ'), 'second try');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const errorText = await screen.findByText(
+      '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      {},
+      { timeout: 4_000 },
+    );
+    expect(errorText.closest('.chat-message')).toHaveClass('chat-message-error');
+    expect(postDetachCalls).toBeGreaterThanOrEqual(2);
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-w2');
+  }, 10_000);
 
   it('drains a stale failed turn from an unrelated session instead of surfacing it as an error (bdboard-3tw.165 Opus レビュー)', async () => {
     // failedTurns is a per-project queue (like completedTurns, bdboard-3tw.155/156), so a
@@ -4169,11 +4264,18 @@ describe('ChatPanel', () => {
     // 永久に disabled のまま)。
     //
     // これを確実に再現するには、追っている送信 (D) 自身の sessionId が既知
-    // (=既存スレッドへの再送) である必要がある — 新規スレッドの初回送信のように
-    // D 自身の sessionId が未知 (undefined) だと、「sessionId 無しの failed は
-    // 全部 D 自身のものかもしれない」という既存の (bdboard-3tw.165 由来の)
-    // 寛容な一致判定 (matchesTrackedSend) に飲み込まれてしまい、このテストが
-    // 狙う「無関係で一致しない failed をどう扱うか」の分岐を素通りしてしまう。
+    // (=既存スレッドへの再送) である必要がある。
+    //
+    // bdboard-96rp (Opus レビュー指摘 W3, 旧コメント更新): 修正前は「sessionId 無しの
+    // failed は全部 D 自身のものかもしれない」という無条件の寛容な一致判定
+    // (matchesTrackedSend) だったため、D 自身の sessionId が未知だとこのテストが
+    // 狙う「無関係で一致しない failed をどう扱うか」の分岐を素通りしてしまっていた。
+    // bdboard-96rp の修正で matchesTrackedSend は sessionId 無し同士でも detachedAt
+    // (クロックずれ許容込み) 以降の失敗しか一致させなくなったため、この特定の
+    // 固定 failedAt だけを見れば D の sessionId が未知でも素通りしなくなった可能性は
+    // あるが、それはテスト実行時刻に依存する脆い前提になってしまう。D の sessionId を
+    // 既知に固定するこの構成は、タイミングに依存せず「無関係な failed をどう扱うか」の
+    // 分岐だけを決定的に踏むための意図的な設計として維持する。
     // そのため、まず1通目を通常どおり完走させて sessionId を確定させ、2通目を
     // 配信停止させる。
     const user = userEvent.setup();
@@ -4276,6 +4378,172 @@ describe('ChatPanel', () => {
     expect(postDetachCalls).toBeGreaterThanOrEqual(2);
     expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
   });
+
+  it('does not resolve a still-open new-thread send using a stale sessionId-less failed entry that predates it (bdboard-96rp)', async () => {
+    // Before this fix, the tracked send's own sessionId is unknown at detach time
+    // (brand new thread, first message) -- checkTurnStatus's 'failed' branch treated
+    // ANY sessionId-less failed entry as "maybe mine", including one that was already
+    // queued *before* this send even started (e.g. left over from a completely
+    // different, earlier attempt in the same project). That let an unrelated, already
+    // stale failure immediately and incorrectly resolve this send as failed on the
+    // very first poll.
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let detachStreamClosed = false;
+    let postDetachCalls = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!detachStreamClosed) return { state: 'idle' };
+      postDetachCalls += 1;
+      if (postDetachCalls === 1) {
+        // Stale and unrelated: recorded long before this send was even submitted.
+        return {
+          state: 'failed',
+          code: 'agent-error',
+          agentId: 'claude',
+          failedAt: '2020-01-01T00:00:00.000Z',
+        };
+      }
+      // This send itself settled without leaving a completed/failed entry of its own.
+      return { state: 'idle' };
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"d partial"}\n\n'),
+              );
+              controller.close();
+              detachStreamClosed = true;
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'first message ever');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+            ?.textContent,
+        ).toBe('d partial');
+      },
+      { timeout: 400 },
+    );
+
+    // The stale, unrelated entry must not resolve this send yet: the partial text (and
+    // the disabled send button) must still be there shortly after the first
+    // post-detach poll would have seen it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(
+      screen.queryByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+
+    // Once the real settlement (idle) is observed, it resolves normally.
+    expect(
+      await screen.findByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+        {},
+        { timeout: 4_000 },
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
+    expect(postDetachCalls).toBeGreaterThanOrEqual(2);
+  },
+  // bdboard-96rp (Opus レビュー指摘 W4): 累積の待ち時間 (300ms + waitFor 400ms +
+  // findByText 4_000ms) がデフォルトの testTimeout (5000ms) に近く、CI や並列
+  // worktree 実行時の揺れでフレーキーになり得るため、他のテスト (32_000 の前例) に
+  // 倣って明示的に余裕を持たせる。
+  10_000,
+  );
+
+  it('eventually resolves a tracked send whose own sessionId-less failure never satisfies the time-window match, instead of blocking forever (bdboard-96rp round 2 reblocker)', async () => {
+    // Round 2 Opus reblocker: a genuinely stalled/tunneled connection can mean the
+    // server records failedAt well before the client notices the stream died and
+    // stamps detachedAt (e.g. a slow-to-timeout proxy/tunnel hop) -- more than
+    // TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS apart. Because a sessionId-less failed
+    // entry has no ack path, the *first* unmatched observation used to just poll
+    // again forever with nothing ever superseding it -- a real, permanent deadlock
+    // (send button disabled forever, no error ever shown). This proves
+    // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS bounds that wait: the same
+    // never-changing sessionId-less failed entry must eventually resolve the
+    // tracked send once the give-up threshold is reached.
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let detachStreamClosed = false;
+    let postDetachCalls = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!detachStreamClosed) return { state: 'idle' };
+      postDetachCalls += 1;
+      // Always the same stale-looking, sessionId-less failed entry -- never changes,
+      // never acked (no ack path), never superseded. Simulates the deadlock case.
+      return {
+        state: 'failed',
+        code: 'agent-error',
+        agentId: 'claude',
+        failedAt: '2020-01-01T00:00:00.000Z',
+      };
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"stuck partial"}\n\n'),
+              );
+              controller.close();
+              detachStreamClosed = true;
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'stuck message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    // It must still be unresolved well before the give-up threshold -- otherwise
+    // this would just be testing the immediate-match path, not the give-up path.
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    expect(
+      screen.queryByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+
+    // But it must NOT hang forever: once the give-up threshold is reached, the same
+    // persistent entry is accepted as this send's own (delayed) failure.
+    expect(
+      await screen.findByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+        {},
+        { timeout: 25_000 },
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
+    // 20 (the give-up threshold) plus some margin, given the leading 3s wait above
+    // and setTimeout/microtask jitter.
+    expect(postDetachCalls).toBeGreaterThanOrEqual(20);
+  }, 35_000);
 
   it('blocks a resend triggered via ⌘/Ctrl+Enter (which bypasses the disabled submit button) while recovery is unresolved (bdboard-v3ag Opus レビュー指摘 W3)', async () => {
     // W3: ⌘/Ctrl+Enter は handleKeyDown から formRef.current.requestSubmit() を

@@ -237,13 +237,30 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
   // bdboard-3tw.165: failedTurns の記録・ACK。completedTurns と同じ形の per-project
   // キューだが、sessionId が無いエントリがあり得るので dedupe/フィルタは sessionId が
   // 分かっているものだけに絞る。
+  //
+  // bdboard-96rp (Opus レビュー指摘 B1、round 2 再レビューでコメント文言を修正):
+  // sessionId 無しのエントリどうしも dedupe する (既存の sessionId 無しエントリは
+  // 全部落として、新しい1件だけを積む)。単一ロックの isBusy により「同時に2件の
+  // sessionId 無し失敗が *記録される*」ことは無い (isBusy の解放は runTurn の
+  // finally が recordFailedTurn の後に行うため、記録自体は直列化されている) が、
+  // これは「未解決の sessionId 無し失敗が高々1件しか存在しない」ことまでは保証しない
+  // — 例えば1件目が (ACK 経路が無いまま) クライアントに回収されないうちに、
+  // 別の (後続の、無関係な) sessionId 無し送信が2件目を記録することは普通にあり得る。
+  // dedupe はこの2件目で1件目を意図的に上書きする: 古いエントリが先頭に居座ったまま
+  // 後から積まれた別の sessionId 無し失敗をクライアントの checkTurnStatus から
+  // 見えなくしてしまう害の方が、稀に「本当は1件目を待っていたクライアントが2件目の
+  // 結果で解決してしまう」害より大きいと判断した (ChatPanel.tsx 側にも
+  // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS による猶予後の受け入れがあり、
+  // どのみち無期限には待たない)。GET が返す sessionId 無しエントリは常に「最新の
+  // 1件」になり、クライアント側の detachedAt 突き合わせ (ChatPanel.tsx の
+  // checkTurnStatus) が正しく解決できる。
   const failedTurns = new Map<string, readonly FailedChatTurn[]>();
   const recordFailedTurn = (projectId: string, entry: FailedChatTurn): void => {
     const queued = failedTurns.get(projectId) ?? [];
     const next =
       entry.sessionId !== undefined
         ? [...queued.filter((item) => item.sessionId !== entry.sessionId), entry]
-        : [...queued, entry];
+        : [...queued.filter((item) => item.sessionId !== undefined), entry];
     failedTurns.set(projectId, next.slice(-CHAT_COMPLETED_TURNS_MAX));
   };
   const ackFailedTurn = (projectId: string, sessionId: string): void => {
@@ -488,7 +505,17 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     // ターンは isBusy の単一ロックで直列化されるので、1つのターンが completed と
     // failed の両方に載ることは無い (別ターンどうしがそれぞれ未回収のまま
     // 両方のキューに残ることはあり得るが、completed 優先で構わない)。
-    const failed = failedTurns.get(parsed.data.projectId)?.[0];
+    //
+    // bdboard-96rp: sessionId 有りのエントリを sessionId 無しより優先して返す。
+    // sessionId 無し (新規スレッドの初回送信中の失敗、FailedChatTurn の doc comment
+    // 参照) は ACK 経路が無く CHAT_COMPLETED_TURNS_MAX の上限に達するまで消えない —
+    // 素朴に [0] (最古) を返すと、それが先頭に居座っている間、後から積まれた
+    // sessionId 有りの (=クライアントが ACK して正しく前進できる) 失敗が同じプロジェクト
+    // の別セッションから永遠に見えなくなってしまう。sessionId 有りのものが1件でも
+    // あれば (キュー内の相対順序を保ったまま) それを優先して返し、無ければ従来どおり
+    // 最古のエントリ (sessionId 無し) を返す。
+    const failedQueue = failedTurns.get(parsed.data.projectId);
+    const failed = failedQueue?.find((entry) => entry.sessionId !== undefined) ?? failedQueue?.[0];
     if (failed !== undefined) {
       return c.json({
         state: 'failed' as const,

@@ -126,6 +126,39 @@ const BOTTOM_STICK_THRESHOLD_PX = 48;
 // は sessionId undefined を no-op で無視する) — 諦めた場合そちらは回収されない。
 const TURN_STATUS_POLL_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 8_000];
 
+// bdboard-96rp (Opus レビュー指摘 B2): sessionId 未確定の送信を detachedAt (クライアント
+// の Date.now()) と status.failedAt/completedAt (サーバーの時刻) を突き合わせて絞り込む
+// 際、両者は別プロセス・別マシン (モバイルトンネル経由のクライアントもあり得る) の
+// クロックなので、わずかな時刻ずれで「本当は自分の送信の結果なのに detachedAt より
+// わずかに前の時刻として記録され、取りこぼす」誤判定が起き得る。実用上あり得るずれ幅
+// より十分大きいマージンを許容側に加えることで、取りこぼしより「多少広めに一致させる」
+// 方に倒す (単一ロックの isBusy により、この許容幅の中で無関係な別ターンの結果と
+// 衝突するリスクは実質無い)。
+const TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS = 30_000;
+
+// bdboard-96rp (round 2 再レビューで発見されたブロッカー): sessionId 未確定の
+// tracked send が、自分自身の sessionId 無し failed と時刻的に一致しない場合
+// (TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS を超えるずれ — 上のコメント群が言う
+// cloudflared トンネル越しの切断検知遅延等)、下の 'failed' 分岐は「無関係かもしれない
+// ので ACK せず何もしない」まま1秒間隔でポーリングを続け続ける。sessionId 無しの
+// エントリは ACK 経路が無く、bdboard-96rp B1 の dedupe によりサーバーはこの1件を
+// 置き換わるまで返し続けるので、これが本当に自分自身の (時刻がずれて観測された)
+// 失敗だった場合、何も置き換えが起きず無期限に一致しないまま — 送信ボタンが
+// 二度と解放されない実質的なデッドロックになる。これを避けるため、「一致しない
+// sessionId 無し failed」を一定回数 (=一定時間) 観測し続けたら、時刻の厳密な
+// 一致を諦めてこのエントリを自分自身の失敗として受け入れる。誤って無関係な
+// エントリを受け入れてしまうリスクはあるが、単一ロック (isBusy) 下でこの猶予
+// 時間の間ずっと同じ sessionId 無し failed が居座り続けるのは「本当に自分自身の
+// 失敗が遅れて観測されている」可能性の方が、他プロジェクトクライアントが偶然
+// 同じ猶予時間内に別の sessionId 無し失敗を起こす可能性より高いと判断した —
+// 無期限に沈黙してハングし続けるより、猶予後に (多少不正確でも) 解決して
+// 利用者に再送の機会を与える方を優先する。
+const UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS = 20;
+// ↑ 1秒間隔のポーリングなので実測で約20秒の猶予。既存の
+// TURN_STATUS_POLL_RETRY_BACKOFF_MS (5回・合計約23秒) と同じ桁数に揃えた —
+// この値そのものに強い根拠は無く、「無期限にブロックしない」ことが目的の
+// 主眼であり、猶予の長さは今後の実測次第で調整して良い。
+
 const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
 const CHAT_IMAGE_MAX_COUNT = 4;
 const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -600,6 +633,12 @@ export function ChatPanel({
     projectId: string;
     sessionId: string | undefined;
     streamingKey: string;
+    // bdboard-96rp: 発生時刻 (Date.now()) を憶えておく。sessionId が未確定 (新規
+    // スレッドの初回送信) な間は、後段の checkTurnStatus がこの送信「自身」の失敗と
+    // 「無関係な古い sessionId 無しエントリ」を sessionId だけでは区別できない —
+    // この時刻より前に記録された sessionId 無しエントリは、この送信より前に失敗した
+    // 別の送信のものだと判定できる (詳細は checkTurnStatus の 'failed' 分岐)。
+    detachedAt: number;
     fail: () => void;
   } | null>(null);
   const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
@@ -1196,6 +1235,12 @@ export function ChatPanel({
     // (idle/processing/completed いずれでも) 0 へ戻す — 「1回目が失敗、2回目で
     // completed」のように失敗が連続しなければ上限を消費しない。
     let consecutiveFailures = 0;
+    // bdboard-96rp: UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS 用のカウンタ。
+    // 「sessionId 未確定の tracked send を追っていて、sessionId 無しの failed が
+    // 見えているが時刻が一致しない」という特定の状況が連続した回数だけを数える —
+    // それ以外の状況 (一致した/無関係な session 付きエントリ/processing/completed/
+    // idle) を1回でも挟めば 0 に戻す。定数のコメント参照。
+    let unmatchedSessionlessFailedStreak = 0;
 
     const checkTurnStatus = async (): Promise<void> => {
       try {
@@ -1208,6 +1253,7 @@ export function ChatPanel({
           // 落ちたのは「今追っている detached 送信が completed も failed も残さず
           // settle した」ことを意味するので、セッションIDの突き合わせは不要
           // (failed と違い、複数件が溜まる「キュー」ではない)。
+          unmatchedSessionlessFailedStreak = 0;
           const detached = detachedStreamSendRef.current;
           if (detached !== null && detached.projectId === selectedProjectId) {
             detachedStreamSendRef.current = null;
@@ -1225,11 +1271,25 @@ export function ChatPanel({
           // 場合に idle と同じ無条件 fail() をすると、無関係な古い失敗で今追っている
           // (まだ成功するかもしれない) 送信を誤って失敗扱いにしてしまう。
           const detached = detachedStreamSendRef.current;
+          // bdboard-96rp: 追っている送信自身の sessionId がまだ未確定 (新規スレッド
+          // の初回送信) な場合、以前は「sessionId 無しの failed なら何でも自分の
+          // ものかもしれない」として無条件に一致させていた。これは (a) 別の既に
+          // sessionId が確定している送信の失敗 (status.sessionId が定義済み) まで
+          // 誤って一致させてしまう、(b) この送信を追い始める *前から* キューに
+          // 残っていた無関係な古い sessionId 無しエントリにも一致してしまう、という
+          // 2つの誤判定を許していた。sessionId 未確定の場合は
+          // status.sessionId も未確定であること・かつこの送信を追い始めた時刻
+          // (detachedAt) 以降に失敗したものであることまで確認する。
           const matchesTrackedSend =
             detached !== null &&
             detached.projectId === selectedProjectId &&
-            (detached.sessionId === undefined || detached.sessionId === status.sessionId);
+            (detached.sessionId !== undefined
+              ? detached.sessionId === status.sessionId
+              : status.sessionId === undefined &&
+                Date.parse(status.failedAt) >=
+                  detached.detachedAt - TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS);
           if (matchesTrackedSend) {
+            unmatchedSessionlessFailedStreak = 0;
             if (status.sessionId !== undefined) {
               try {
                 await acknowledgeChatTurn(selectedProjectId, status.sessionId);
@@ -1252,7 +1312,33 @@ export function ChatPanel({
           // 無く区別もできないので、無関係な pending 送信を誤って失敗扱いにしない
           // よう何もしない (CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出されるまで
           // 残る — bdboard-3tw.165 の既知の制約、サーバー側コメント参照)。
-          if (status.sessionId === undefined || drainedFailedSessionIds.has(status.sessionId)) {
+          if (status.sessionId === undefined) {
+            // bdboard-96rp (round 2 再レビューで発見されたブロッカー): ここに来るのは
+            // 「sessionId 未確定の tracked send を追っているが上の時刻突き合わせで
+            // 一致しなかった」場合と「そもそも sessionId 未確定の送信を追っていない」
+            // 場合の両方。前者だけ、一致しない状態が
+            // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS 回続いたら、時刻の厳密な一致を
+            // 諦めてこのエントリを自分自身の失敗として受け入れる (定数のコメント参照 —
+            // でなければ ACK 経路が無いこの手の failed に対して無期限にブロックし得る)。
+            const maybeOwnDelayedFailure =
+              detached !== null &&
+              detached.projectId === selectedProjectId &&
+              detached.sessionId === undefined;
+            if (maybeOwnDelayedFailure) {
+              unmatchedSessionlessFailedStreak += 1;
+              if (
+                unmatchedSessionlessFailedStreak >=
+                UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS
+              ) {
+                unmatchedSessionlessFailedStreak = 0;
+                detachedStreamSendRef.current = null;
+                clearStreamingReplyForKey(detached!.streamingKey);
+                detached!.fail();
+                return;
+              }
+            } else {
+              unmatchedSessionlessFailedStreak = 0;
+            }
             // bdboard-v3ag Opus レビュー指摘 (blocker B1): 無条件の return だと、次の
             // トリガー (=新しい送信の配信停止) が無い限りこの effect は二度と
             // checkTurnStatus を呼ばない。無関係な failed が先頭に居座っている間、
@@ -1260,6 +1346,13 @@ export function ChatPanel({
             // disabled も解けない。'processing' 分岐と同じ間隔で聞き直しを続ける —
             // サーバー側は CHAT_COMPLETED_TURNS_MAX の上限に達すればこのエントリを
             // 自然に押し出すので、無限ループというより粘り強いポーリングになる。
+            pollTimer = setTimeout(() => {
+              void checkTurnStatus();
+            }, 1_000);
+            return;
+          }
+          unmatchedSessionlessFailedStreak = 0;
+          if (drainedFailedSessionIds.has(status.sessionId)) {
             pollTimer = setTimeout(() => {
               void checkTurnStatus();
             }, 1_000);
@@ -1277,12 +1370,14 @@ export function ChatPanel({
           return;
         }
         if (status.state === 'processing') {
+          unmatchedSessionlessFailedStreak = 0;
           pollTimer = setTimeout(() => {
             void checkTurnStatus();
           }, 1_000);
           return;
         }
         if (status.state !== 'completed') return;
+        unmatchedSessionlessFailedStreak = 0;
         // ACK が効かずサーバーが同じ1件を返し続けても、掃き出しループが
         // 回り続けないようにする (bdboard-3tw.156)。
         if (recoveredSessionIds.has(status.sessionId)) {
@@ -1319,6 +1414,25 @@ export function ChatPanel({
         // clearStreamingReplyForKey を下の「本文を書き込むタイミング」に揃えることで、
         // 再送のブロックがハイドレーション完了まで一貫して効くようにする。
         const detached = detachedStreamSendRef.current;
+        // bdboard-96rp (round 2 Opus レビューで W1 として一旦 'failed' 分岐と同じ
+        // detachedAt 突き合わせを入れたが、round 2 の再レビューでリバートした。理由:
+        // 'failed' の sessionId 無しエントリと違い、completed エントリは常に
+        // sessionId が確定しており、下のハイドレーション+ACK (この関数の後半、
+        // detachedMatchesThisRecovery の値に関わらず必ず実行される) で毎回
+        // drain されるため、無関係な古い completed に「一致」させてしまう実害は
+        // 「今追っている送信の部分テキスト表示をこの回では消し損ねる」程度に留まる
+        // (次の completed/failed/idle でいずれ解決する)。
+        // 一方で detachedAt 突き合わせを入れると、サーバーの completedAt がクライアント
+        // 側の detachedAt (ストリーム切断を検知した時刻) より大きく後ろにずれるケース
+        // (例: cloudflared トンネル越しの切断検知の遅延、bdboard-rrvr #499 が
+        // 'detached' SSE イベントを消した理由と同種の「サーバーは完走しているのに
+        // クライアントの切断検知が大きく遅れる」ケース) で、実際には成功して
+        // ハイドレーションも完了したこの送信を、直後の 'idle' 分岐
+        // (detachedStreamSendRef が non-null のまま次のポーリングに入り、
+        // 「completed/failed を残さず idle に落ちた」と誤認される) が無条件に
+        // fail() してしまう実害の方が大きいと判断した (round 2 レビューで再現済み)。
+        // そのため sessionId 未確定の場合は 'failed' 分岐と違って時刻突き合わせをせず、
+        // 元の無条件マッチに戻す。
         const detachedMatchesThisRecovery =
           detached !== null &&
           detached.projectId === selectedProjectId &&
@@ -2681,6 +2795,7 @@ export function ChatPanel({
                 projectId: selectedProjectId,
                 sessionId,
                 streamingKey: sendKey,
+                detachedAt: Date.now(),
                 fail: () =>
                   applyChatError(
                     sendKey,
