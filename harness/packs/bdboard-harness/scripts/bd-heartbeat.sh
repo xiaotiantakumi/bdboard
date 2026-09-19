@@ -113,12 +113,17 @@ kill_pid_gracefully() {
 
 read_pidfile() {
   # $1: session-pid — stdout: pid or empty (第1フィールドのみ、数値検証付き)
+  # bdboard-cxf5: [ -f ] の存在確認と read を分けると check-then-read の
+  # レースになる (並行する heartbeat ループの終了で確認直後にファイルが
+  # 消え得る)。TypeScript側の readPidfile (bdboard-tzty で修正済み) と同じ
+  # 「単一の読み取り試行 + エラー抑制」に一本化し、存在しない/消えた場合も
+  # read 自体の失敗として拾う。**2>/dev/null は必ず < "$pf" より前に書く**:
+  # bash はリダイレクトを左から順に適用するため、`< "$pf" 2>/dev/null`
+  # (入力リダイレクトが先) だと open 失敗のエラーは後続の 2>/dev/null が
+  # 効く前に出力されてしまい抑制されない (実機確認済み)。
   local pf line pid
   pf="$(pidfile_path "$1")"
-  if [ ! -f "$pf" ]; then
-    return 0
-  fi
-  IFS= read -r line < "$pf" || return 0
+  IFS= read -r line 2>/dev/null < "$pf" || return 0
   pid="${line%%$'\t'*}"
   pid="$(printf '%s' "$pid" | tr -d '[:space:]')"
   case "$pid" in
@@ -132,12 +137,11 @@ read_pidfile() {
 
 read_pidfile_token() {
   # $1: session-pid — stdout: lstart token (第2フィールド) or empty
+  # bdboard-cxf5: read_pidfile と同じ理由で単一読み取り+エラー抑制に一本化。
+  # リダイレクト順序の注意点も同じ (read_pidfile のコメント参照)。
   local pf line token
   pf="$(pidfile_path "$1")"
-  if [ ! -f "$pf" ]; then
-    return 0
-  fi
-  IFS= read -r line < "$pf" || return 0
+  IFS= read -r line 2>/dev/null < "$pf" || return 0
   case "$line" in
     *$'\t'*)
       token="${line#*$'\t'}"
@@ -201,16 +205,16 @@ write_idsfile() {
 
 read_idsfile() {
   # $1: session-pid — populates global ids[] array
+  # bdboard-cxf5: read_pidfile と同じ check-then-read (Fable レビューで
+  # 同一ファイル内の見落としとして指摘)。同じ理由・同じリダイレクト順序
+  # (2>/dev/null を < より前に書く) で単一試行+エラー抑制に一本化。
   ids=()
   local idsfile line
   idsfile="$(idsfile_path "$1")"
-  if [ ! -f "$idsfile" ]; then
-    return 0
-  fi
   while IFS= read -r line || [ -n "$line" ]; do
     [ -z "$line" ] && continue
     ids[${#ids[@]}]="$line"
-  done < "$idsfile"
+  done 2>/dev/null < "$idsfile"
 }
 
 session_lstart() {
