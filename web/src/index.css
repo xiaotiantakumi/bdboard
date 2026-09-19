@@ -6532,7 +6532,7 @@ body {
   }
 
   /* 画像プライバシー説明: 添付なし・非フォーカス時は視覚のみ隠し (AT には残す)。
-     .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+     .sr-only と同じ定義。片方だけ変えないこと */
   .chat-input-form:not(.has-attachments):not(:focus-within) .chat-image-privacy-hint {
     position: absolute;
     width: 1px;
@@ -6618,7 +6618,7 @@ body {
     gap: 0;
   }
 
-  /* .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+  /* .sr-only と同じ定義。片方だけ変えないこと */
   .chat-project-bar-label {
     position: absolute;
     width: 1px;
@@ -6727,7 +6727,7 @@ body {
      430px しかない縦では、この2行 (実測 29px) を出すか主要コントロールを押せるようにするかの
      二択になり、後者を採る。
      セレクタに条件を持たせない = :has() もクラスも要らないので、どのブラウザでも同じに効く。
-     .sr-only (index.css:3578) と同じ定義。片方だけ変えないこと */
+     .sr-only と同じ定義。片方だけ変えないこと */
   .chat-image-privacy-hint {
     position: absolute;
     width: 1px;
@@ -7267,7 +7267,7 @@ body {
     min-height: 44px;
   }
 
-  /* 素の .overflow-menu-button { min-width:36px } (431行) は本ブロックより前なので
+  /* 素の .overflow-menu-button { min-width:36px }（メディアクエリ外のベース定義）は本ブロックより前なので
      詳細度 (0,1,0) のまま min-width:44px が勝つ。AC3 の幅 44px 要件を満たす。 */
   .overflow-menu-button {
     min-width: 44px;
@@ -8330,7 +8330,7 @@ body {
 
 /* タッチデバイス向けフォーム要素の font-size 下限（iOS Safari オートズーム対策）。
    iOS Safari は select も含む 16px 未満のフォーム要素でフォーカス時に自動ズームする
-   （index.css:5638 の .chat-project-select が同じ判断の先行例）。
+   （@media (max-width: 700px) 内の .chat-project-select が同じ判断の先行例）。
    maximum-scale / user-scalable=no はピンチズームを殺すので使わない。
    このブロックは index.css の末尾に置くこと。下のセレクタは (0,1,1) なので、
    同詳細度 (0,1,1) の font-size ルールが後ろに追加されるとソース順で負ける。
