@@ -3131,18 +3131,25 @@ describe('ChatPanel', () => {
     expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-w26w');
   });
 
-  it('skips the direct turn-status ACK when an unresolved same-session detached send is still being recovered (bdboard-w26w Opus レビュー finding 1)', async () => {
-    // bdboard-w26w Opus レビュー finding 1: DELETE /api/chat/turn-status acks the
-    // completed AND the failed queue entry for a sessionId together (ackCompletedTurn +
-    // ackFailedTurn in chat-routes.ts). isBusy is a project-wide lock, so an earlier send
-    // (D) on this *same* session can detach (its outcome isn't known to the client yet,
-    // but the server may have already recorded it as completed) while a later send (N)
-    // on that same session fails inline. If N's failure directly ACKed here, it would
-    // also wipe out D's still-unrecovered completed entry before the turn-status
-    // recovery poll (which correctly hydrates completed before failed) ever sees it —
-    // making D look like it failed even though it actually succeeded. This test asserts
-    // the direct ACK is skipped while D's recovery is still unresolved (turn-status
-    // keeps reporting 'processing'), leaving it to the recovery poll instead.
+  it('blocks a resend while an earlier same-project detached send is still being recovered (bdboard-v3ag), which also makes the bdboard-w26w finding-1 direct-ACK-skip branch unreachable from a single tab', async () => {
+    // 由来: bdboard-w26w Opus レビュー finding 1。DELETE /api/chat/turn-status は同じ
+    // sessionId の completed と failed を両方まとめて ACK する (ackCompletedTurn +
+    // ackFailedTurn, chat-routes.ts)。isBusy はプロジェクト単位のロックなので、
+    // 「同じ会話への前の送信 (D) が配信停止し、まだ回収が終わっていない間に、後続の
+    // 送信 (N) がインライン失敗する」状況が起きれば、N の失敗を直接 ACK すると D の
+    // 未回収の completed エントリまで巻き添えで消しうる、というのが finding-1 の懸念
+    // だった。それを防ぐガード (unresolvedSameSessionDetach, ChatPanel.tsx) 自体は
+    // まだ残っている。
+    //
+    // ただし bdboard-v3ag (このテスト) は、その前提そのもの — 「D が未回収の間に
+    // 同じタブから N を送れてしまう」— を1つ手前で塞ぐ: D の turn-status 回収が
+    // 'processing' のまま確定していない間は送信ボタンを disabled にし、
+    // submitChatMessage 自体もガードする (サーバー側の 409/isBusy と足並みを揃える)。
+    // そのため、この1コンポーネントインスタンス (=1タブ) の中では N がそもそも
+    // 送信できず、finding-1 の直接 ACK スキップ分岐はもう露出しない
+    // (別タブ/別クライアントからの N は、そのタブ自身の detachedStreamSendRef が
+    // D を追っていないため、そもそもこのガードの対象にならない — finding-1 の
+    // コードは今もそちら向けの防御として残る)。
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
     fetchChatTurnStatusMock.mockResolvedValue({
@@ -3185,18 +3192,7 @@ describe('ChatPanel', () => {
             }),
           );
         }
-        return new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(
-                new TextEncoder().encode(
-                  'event: error\ndata: {"error":"chat failed","code":"agent-error"}\n\n',
-                ),
-              );
-              controller.close();
-            },
-          }),
-        );
+        throw new Error('unexpected third stream POST: a resend should have been blocked client-side');
       }
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
@@ -3222,16 +3218,22 @@ describe('ChatPanel', () => {
       expect(screen.getByLabelText('メッセージ')).not.toBeDisabled();
     });
 
+    // D の回収 (turn-status) がまだ 'processing' のまま確定していないので、送信ボタンは
+    // disabled のまま — 入力欄自体は使えるが、送信できない (bdboard-v3ag)。
     await user.type(screen.getByLabelText('メッセージ'), 'second try');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+    });
     await user.click(screen.getByRole('button', { name: '送信' }));
 
-    const messages = screen.getByRole('log');
-    await waitFor(() => {
-      expect(within(messages).getByText('chat failed')).toBeInTheDocument();
-    });
-    // D (前の配信停止) の turn-status 回収がまだ 'processing' のまま確定していないので、
-    // N (この送信) の失敗をここで直接 ACK しない — した場合、D の completed エントリを
-    // 巻き添えで消しうる (ガード無しだとこのアサートが落ちる)。
+    // クリックしても3本目のストリーム POST は発生しない (無理に発生したら上の
+    // fetchMock 実装が例外を投げてテストを落とす)。D の部分テキストは消えずに残る。
+    expect(streamPosts).toBe(2);
+    expect(
+      screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+        ?.textContent,
+    ).toBe('d partial');
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('second try');
     expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
   });
 
@@ -3892,18 +3894,27 @@ describe('ChatPanel', () => {
     expect(log.querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
-  it('keeps the detached-send failure check across a resend rejected with 409 (bdboard-zlzo)', async () => {
+  it('blocks a resend while the previous turn is still recovering, then allows it once the recovery resolves to a failure (bdboard-v3ag)', async () => {
+    // bdboard-v3ag: 配信停止 (SSE キュー上限超過等) からの turn-status 回収中に、
+    // 従来は「前のターンがまだ続いている間の再送」がサーバー側の 409 で弾かれるまで
+    // クライアント側では止められず、その再送自身の
+    // setStreamingReply({ key: sendKey, text: '' }) が回収中ずっと表示していた部分
+    // テキストを即座に空文字で上書きしてしまっていた (bdboard-3tw.166 の保証が
+    // その場で壊れる)。このテストは、その再送がそもそも送信ボタンの disabled で
+    // 止まり、部分テキストが上書きされないこと、かつ回収が実際に失敗で確定した
+    // あとは再送が通常どおり行えることを確認する。
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
-    // 配信停止後、前のターンがまだ続いている間に再送して 409 で弾かれ、その後に
-    // 前のターンが失敗した (turn-status が idle になった)。
     let streamClosed = false;
-    let resendRejected = false;
+    let recoveryResolved = false;
     fetchChatTurnStatusMock.mockImplementation(async () => {
       if (!streamClosed) return { state: 'idle' };
-      return resendRejected
-        ? { state: 'idle' }
-        : { state: 'processing', message: 'doomed question', agentId: 'claude' };
+      if (!recoveryResolved) {
+        return { state: 'processing', message: 'doomed question', agentId: 'claude' };
+      }
+      // 前のターンは結局 completed/failed どちらのエントリも残さず終わった
+      // (=失敗) 扱いで確定する。
+      return { state: 'idle' };
     });
     let releaseClose: () => void = () => {};
     const closeGate = new Promise<void>((resolve) => {
@@ -3927,12 +3938,20 @@ describe('ChatPanel', () => {
             }),
           );
         }
-        resendRejected = true;
-        return new Response(JSON.stringify({ error: 'chat is busy for this project' }), {
-          status: 409,
-          statusText: 'Conflict',
-          headers: { 'Content-Type': 'application/json' },
-        });
+        // 2本目 (second try) はガードが解けたあとにしか届かないはず — 通常どおり
+        // 完走させる。
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: done\ndata: {"reply":"second reply","sessionId":"sess-second","agentId":"claude"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+        );
       }
       throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
     });
@@ -3955,10 +3974,21 @@ describe('ChatPanel', () => {
         ?.textContent,
     ).toBe('partial');
 
+    // 回収中は送信ボタンが disabled になり、クリックしても再送は発生しない
+    // (bdboard-v3ag)。部分テキストも上書きされずに残る。
     await user.type(screen.getByLabelText('メッセージ'), 'second try');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+    });
     await user.click(screen.getByRole('button', { name: '送信' }));
-    await waitFor(() => expect(resendRejected).toBe(true));
+    expect(streamPosts).toBe(1);
+    expect(
+      screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+        ?.textContent,
+    ).toBe('partial');
 
+    // 前のターンの回収が実際には失敗として確定する。
+    recoveryResolved = true;
     expect(
       await screen.findByText(
         '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
@@ -3966,19 +3996,18 @@ describe('ChatPanel', () => {
         { timeout: 2_500 },
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(2);
-    // bdboard-3tw.166 (Opus レビュー指摘): この時点で部分テキストの吹き出しが無いこと
-    // 自体は確認するが、このテストのシナリオでは再送 (second try) 自体が
-    // setStreamingReply({key, text:''}) で同じ会話キーのテキストを既に '' へ
-    // 上書きしているため、この assert 単体は idle 分岐の clearStreamingReplyForKey が
-    // 実際に呼ばれたことの証明にはならない (空文字はそもそも描画されない)。その
-    // 呼び出し自体の回帰保証は上の「falls back to a send failure when turn-status
-    // turns idle」テストの対応する assert が担っている。ここではあくまで
-    // 「409 で弾かれた再送を挟んでも、最終的な表示に部分テキストの吹き出しが
-    // 残っていない」という統合的な見た目を確認する。
     expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
-    // 409 で戻った再送文を、後から届いた前の送信の復元で上書きしない。
+    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(1);
+
+    // 確定した以上、送信ボタンは再び有効になり、"second try" を実際に送れる —
+    // 再送そのものは禁止されていない。
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
     expect(screen.getByLabelText('メッセージ')).toHaveValue('second try');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    expect(await screen.findByText('second reply')).toBeInTheDocument();
+    expect(streamPosts).toBe(2);
   });
 
   describe('streaming abort on unmount / conversation switch (bdboard-7st)', () => {

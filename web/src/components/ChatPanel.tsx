@@ -1977,6 +1977,29 @@ export function ChatPanel({
       ? streamingReply.text
       : '';
 
+  // bdboard-v3ag: 配信停止(SSE キュー上限超過等)からの turn-status 回収が
+  // まだ終わっていない間、同じプロジェクトへの再送を止める。サーバーは
+  // プロジェクト単位で同時に1ターンしか受け付けない (isBusy ロック) ため、
+  // ここでブロックしなくても再送自体は通常 409 で弾かれるが、409 が返る
+  // 前後のタイミング次第では再送がそのまま処理されてしまうことがあり、その
+  // 場合 submitChatMessage 冒頭の setStreamingReply({ key: sendKey, text: '' })
+  // が回収中に保持していた部分テキストを即座に空文字で上書きしてしまう
+  // (bdboard-v3ag のチケット本文、bdboard-3tw.166 の Opus レビュー由来)。
+  //
+  // detachedStreamSendRef は ref なので、その変更だけでは再レンダーが起きない
+  // が、この ref への書き込み/クリアは必ず同じ同期ブロック内で別の setState
+  // (setTurnRecoveryGeneration、setStreamingReply 等、上の checkTurnStatus /
+  // submitChatMessage を参照) を伴っており、その setState が再レンダーを
+  // 引き起こす。したがって useMemo 等でメモ化せず、毎レンダーでこの ref を
+  // 直接読むだけで値が最新に保たれる。加えて、この値は
+  // submitChatMessage 自身の冒頭(クリック/Enter 時点)でも同様に ref を直接
+  // 読んで判定しており、そちらはそもそも再レンダーに依存しない
+  // (setTurnRecoveryGeneration より前に ref へ書き込まれるため、isSending が
+  // false に落ちた直後の一瞬の隙間も塞げる)。
+  const hasUnresolvedProjectRecovery =
+    detachedStreamSendRef.current !== null &&
+    detachedStreamSendRef.current.projectId === selectedProjectId;
+
   // 「最下部に貼り付いているときだけ追う」。ストリーミング中は
   // activeStreamingText がトークンごとに伸びるので、無条件に最下部へ飛ばすと
   // 利用者が過去ログを読み返せなくなる。逆に追わないと、伸びていく返信が画面
@@ -2409,11 +2432,19 @@ export function ChatPanel({
         }
         return;
       }
+      // bdboard-v3ag: detachedStreamSendRef を ref のまま直接読む(クリック/
+      // Enter 時点の最新値、hasUnresolvedProjectRecovery の定義コメント参照)。
+      // isSending は配信停止直後に false へ戻るため、isSending だけのガードでは
+      // 回収中の再送を防げない。
+      const unresolvedProjectRecoveryAtSubmit =
+        detachedStreamSendRef.current !== null &&
+        detachedStreamSendRef.current.projectId === selectedProjectId;
       if (
         (text === '' && sentAttachments.length === 0) ||
         isSending ||
         selectedProjectId === '' ||
         isHistoryPending ||
+        unresolvedProjectRecoveryAtSubmit ||
         (sentAttachments.length > 0 && selectedAgent?.supportsImages !== true)
       ) {
         return;
@@ -3805,6 +3836,9 @@ export function ChatPanel({
                 chatUnsupported ||
                 selectedAgentUnavailable ||
                 hasUnsupportedAttachments ||
+                // bdboard-v3ag: 配信停止からの turn-status 回収が終わるまで
+                // 再送を止める(hasUnresolvedProjectRecovery の定義コメント参照)。
+                hasUnresolvedProjectRecovery ||
                 (currentInput.trim() === '' && currentAttachments.length === 0)
               }
               aria-describedby={
