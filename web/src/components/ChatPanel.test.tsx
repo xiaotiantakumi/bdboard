@@ -3714,8 +3714,12 @@ describe('ChatPanel', () => {
   it('falls back to a send failure on the explicit failed turn-status instead of waiting for idle (bdboard-3tw.165)', async () => {
     // Same scenario as the idle-inference test above, but the server now reports the
     // failure explicitly instead of turn-status silently falling through to idle. web
-    // must reach the exact same failure UI from this new signal, and must ack it (unlike
-    // idle, which has nothing on the server to ack).
+    // must reach the exact same failure UI from this new signal. This send is a brand
+    // new thread's first message, so it has no sessionId of its own yet -- and per the
+    // real server contract (chat-routes.ts's recordFailedTurn mirrors the *request's*
+    // sessionId verbatim), a failed entry for a sessionId-less request is always itself
+    // sessionId-less too. So (bdboard-96rp) there is nothing to ack here, unlike the
+    // sibling test below for an existing thread.
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
     let streamClosed = false;
@@ -3730,8 +3734,11 @@ describe('ChatPanel', () => {
         state: 'failed',
         code: 'agent-timeout',
         agentId: 'claude',
-        sessionId: 'sess-failed',
-        failedAt: '2026-09-19T08:00:10.000Z',
+        // bdboard-96rp: no sessionId, matching the tracked send's own (also
+        // undefined) sessionId, and failedAt is generated fresh (>= the moment the
+        // send detached) so the recency guard in checkTurnStatus's 'failed' branch
+        // accepts it as this send's own failure rather than an unrelated stale entry.
+        failedAt: new Date().toISOString(),
       };
     });
     let releaseClose: () => void = () => {};
@@ -3775,7 +3782,9 @@ describe('ChatPanel', () => {
     expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
-    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-failed');
+    // bdboard-96rp: sessionId-less, so there is no ack path (see FailedChatTurn's doc
+    // comment in chat-routes.ts) -- the resolution still happens, just without an ack.
+    expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
     // bdboard-3tw.166 (Opus レビュー指摘): idle 分岐と同様、失敗確定後は部分テキストの
     // 吹き出しも消えている必要がある。
     expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
@@ -4275,6 +4284,90 @@ describe('ChatPanel', () => {
     });
     expect(postDetachCalls).toBeGreaterThanOrEqual(2);
     expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
+  });
+
+  it('does not resolve a still-open new-thread send using a stale sessionId-less failed entry that predates it (bdboard-96rp)', async () => {
+    // Before this fix, the tracked send's own sessionId is unknown at detach time
+    // (brand new thread, first message) -- checkTurnStatus's 'failed' branch treated
+    // ANY sessionId-less failed entry as "maybe mine", including one that was already
+    // queued *before* this send even started (e.g. left over from a completely
+    // different, earlier attempt in the same project). That let an unrelated, already
+    // stale failure immediately and incorrectly resolve this send as failed on the
+    // very first poll.
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    let detachStreamClosed = false;
+    let postDetachCalls = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!detachStreamClosed) return { state: 'idle' };
+      postDetachCalls += 1;
+      if (postDetachCalls === 1) {
+        // Stale and unrelated: recorded long before this send was even submitted.
+        return {
+          state: 'failed',
+          code: 'agent-error',
+          agentId: 'claude',
+          failedAt: '2020-01-01T00:00:00.000Z',
+        };
+      }
+      // This send itself settled without leaving a completed/failed entry of its own.
+      return { state: 'idle' };
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"d partial"}\n\n'),
+              );
+              controller.close();
+              detachStreamClosed = true;
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'first message ever');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(
+      () => {
+        expect(
+          screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+            ?.textContent,
+        ).toBe('d partial');
+      },
+      { timeout: 400 },
+    );
+
+    // The stale, unrelated entry must not resolve this send yet: the partial text (and
+    // the disabled send button) must still be there shortly after the first
+    // post-detach poll would have seen it.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(
+      screen.queryByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+      ),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '送信' })).toBeDisabled();
+
+    // Once the real settlement (idle) is observed, it resolves normally.
+    expect(
+      await screen.findByText(
+        '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+        {},
+        { timeout: 4_000 },
+      ),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
+    expect(postDetachCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('blocks a resend triggered via ⌘/Ctrl+Enter (which bypasses the disabled submit button) while recovery is unresolved (bdboard-v3ag Opus レビュー指摘 W3)', async () => {

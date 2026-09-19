@@ -488,7 +488,17 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     // ターンは isBusy の単一ロックで直列化されるので、1つのターンが completed と
     // failed の両方に載ることは無い (別ターンどうしがそれぞれ未回収のまま
     // 両方のキューに残ることはあり得るが、completed 優先で構わない)。
-    const failed = failedTurns.get(parsed.data.projectId)?.[0];
+    //
+    // bdboard-96rp: sessionId 有りのエントリを sessionId 無しより優先して返す。
+    // sessionId 無し (新規スレッドの初回送信中の失敗、FailedChatTurn の doc comment
+    // 参照) は ACK 経路が無く CHAT_COMPLETED_TURNS_MAX の上限に達するまで消えない —
+    // 素朴に [0] (最古) を返すと、それが先頭に居座っている間、後から積まれた
+    // sessionId 有りの (=クライアントが ACK して正しく前進できる) 失敗が同じプロジェクト
+    // の別セッションから永遠に見えなくなってしまう。sessionId 有りのものが1件でも
+    // あれば (キュー内の相対順序を保ったまま) それを優先して返し、無ければ従来どおり
+    // 最古のエントリ (sessionId 無し) を返す。
+    const failedQueue = failedTurns.get(parsed.data.projectId);
+    const failed = failedQueue?.find((entry) => entry.sessionId !== undefined) ?? failedQueue?.[0];
     if (failed !== undefined) {
       return c.json({
         state: 'failed' as const,

@@ -600,6 +600,12 @@ export function ChatPanel({
     projectId: string;
     sessionId: string | undefined;
     streamingKey: string;
+    // bdboard-96rp: 発生時刻 (Date.now()) を憶えておく。sessionId が未確定 (新規
+    // スレッドの初回送信) な間は、後段の checkTurnStatus がこの送信「自身」の失敗と
+    // 「無関係な古い sessionId 無しエントリ」を sessionId だけでは区別できない —
+    // この時刻より前に記録された sessionId 無しエントリは、この送信より前に失敗した
+    // 別の送信のものだと判定できる (詳細は checkTurnStatus の 'failed' 分岐)。
+    detachedAt: number;
     fail: () => void;
   } | null>(null);
   const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
@@ -1225,10 +1231,22 @@ export function ChatPanel({
           // 場合に idle と同じ無条件 fail() をすると、無関係な古い失敗で今追っている
           // (まだ成功するかもしれない) 送信を誤って失敗扱いにしてしまう。
           const detached = detachedStreamSendRef.current;
+          // bdboard-96rp: 追っている送信自身の sessionId がまだ未確定 (新規スレッド
+          // の初回送信) な場合、以前は「sessionId 無しの failed なら何でも自分の
+          // ものかもしれない」として無条件に一致させていた。これは (a) 別の既に
+          // sessionId が確定している送信の失敗 (status.sessionId が定義済み) まで
+          // 誤って一致させてしまう、(b) この送信を追い始める *前から* キューに
+          // 残っていた無関係な古い sessionId 無しエントリにも一致してしまう、という
+          // 2つの誤判定を許していた。sessionId 未確定の場合は
+          // status.sessionId も未確定であること・かつこの送信を追い始めた時刻
+          // (detachedAt) 以降に失敗したものであることまで確認する。
           const matchesTrackedSend =
             detached !== null &&
             detached.projectId === selectedProjectId &&
-            (detached.sessionId === undefined || detached.sessionId === status.sessionId);
+            (detached.sessionId !== undefined
+              ? detached.sessionId === status.sessionId
+              : status.sessionId === undefined &&
+                Date.parse(status.failedAt) >= detached.detachedAt);
           if (matchesTrackedSend) {
             if (status.sessionId !== undefined) {
               try {
@@ -2681,6 +2699,7 @@ export function ChatPanel({
                 projectId: selectedProjectId,
                 sessionId,
                 streamingKey: sendKey,
+                detachedAt: Date.now(),
                 fail: () =>
                   applyChatError(
                     sendKey,
