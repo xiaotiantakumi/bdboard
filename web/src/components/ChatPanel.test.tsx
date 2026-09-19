@@ -3523,6 +3523,10 @@ describe('ChatPanel', () => {
     expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
+    // bdboard-3tw.166 (Opus レビュー指摘): 失敗が確定した以上、回収中ずっと表示して
+    // いた部分テキストの吹き出しもここで消えている必要がある (エラー吹き出しと
+    // 二重に出たままにしない)。
+    expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
   it('falls back to a send failure on the explicit failed turn-status instead of waiting for idle (bdboard-3tw.165)', async () => {
@@ -3590,6 +3594,9 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
     expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-failed');
+    // bdboard-3tw.166 (Opus レビュー指摘): idle 分岐と同様、失敗確定後は部分テキストの
+    // 吹き出しも消えている必要がある。
+    expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
   it('drains a stale failed turn from an unrelated session instead of surfacing it as an error (bdboard-3tw.165 Opus レビュー)', async () => {
@@ -3708,6 +3715,10 @@ describe('ChatPanel', () => {
     expect(within(log).getAllByText('overflow question')).toHaveLength(1);
     expect(log.querySelectorAll('.chat-message-error')).toHaveLength(0);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+    // bdboard-3tw.166 (Opus レビュー指摘): ハイドレートされた確定本文
+    // ('recovered answer for sess-1') の隣に、回収中ずっと表示していた部分テキストの
+    // 吹き出しが残ったまま (二重表示) になっていないことを確認する。
+    expect(log.querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
   it('keeps the detached-send failure check across a resend rejected with 409 (bdboard-zlzo)', async () => {
@@ -3785,8 +3796,15 @@ describe('ChatPanel', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(2);
-    // bdboard-3tw.166: 元の配信停止分が turn-status の idle で失敗確定した時点で、
-    // 表示し続けていた部分テキストも (fail() 側の clearStreamingReplyForKey で) 消える。
+    // bdboard-3tw.166 (Opus レビュー指摘): この時点で部分テキストの吹き出しが無いこと
+    // 自体は確認するが、このテストのシナリオでは再送 (second try) 自体が
+    // setStreamingReply({key, text:''}) で同じ会話キーのテキストを既に '' へ
+    // 上書きしているため、この assert 単体は idle 分岐の clearStreamingReplyForKey が
+    // 実際に呼ばれたことの証明にはならない (空文字はそもそも描画されない)。その
+    // 呼び出し自体の回帰保証は上の「falls back to a send failure when turn-status
+    // turns idle」テストの対応する assert が担っている。ここではあくまで
+    // 「409 で弾かれた再送を挟んでも、最終的な表示に部分テキストの吹き出しが
+    // 残っていない」という統合的な見た目を確認する。
     expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
     // 409 で戻った再送文を、後から届いた前の送信の復元で上書きしない。
     expect(screen.getByLabelText('メッセージ')).toHaveValue('second try');

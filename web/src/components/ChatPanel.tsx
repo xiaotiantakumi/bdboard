@@ -1277,18 +1277,19 @@ export function ChatPanel({
         // 回り続けないようにする (bdboard-3tw.156)。
         if (recoveredSessionIds.has(status.sessionId)) return;
         recoveredSessionIds.add(status.sessionId);
+        // bdboard-3tw.166 (Opus レビュー指摘): ref 自体はここで即座に外す (このターンの
+        // detached 追跡としてはもう完了扱いで正しい)。ただし表示中の部分テキストを
+        // 消すのは下のハイドレーション (fetch → setConversations) が実際に成功して
+        // からにする — ここで即座に消すと、2件の fetch を待つ間だけ「部分テキストも
+        // 確定本文もどちらも無い」空白の間が生まれてしまい、"回収したターンの本文が
+        // 届いたら置き換える" という要件 (本文が届く *前* に消えない) を満たせない。
         const detached = detachedStreamSendRef.current;
-        if (
+        const detachedMatchesThisRecovery =
           detached !== null &&
           detached.projectId === selectedProjectId &&
-          (detached.sessionId === undefined || detached.sessionId === status.sessionId)
-        ) {
+          (detached.sessionId === undefined || detached.sessionId === status.sessionId);
+        if (detachedMatchesThisRecovery) {
           detachedStreamSendRef.current = null;
-          // bdboard-3tw.166: 回収したターンの本文がこのあと conversations へ
-          // ハイドレートされる (下)。表示し続けていた部分テキストは、その本文に
-          // 置き換わったことにして消す — 同じ会話キーに部分テキストと確定本文が
-          // 二重に出るのを防ぐ。
-          clearStreamingReplyForKey(detached.streamingKey);
         }
 
         // A detached turn can create a session whose id was unknown when the tab closed.
@@ -1347,6 +1348,14 @@ export function ChatPanel({
             agentId: payload.agentId,
           },
         }));
+        if (detachedMatchesThisRecovery) {
+          // bdboard-3tw.166 (Opus レビュー指摘): 確定本文を conversations へ書き込む
+          // まさにこのタイミングで部分テキストを消す。同じ会話キーに部分テキストと
+          // 確定本文が二重に出ることも、本文が届く前に両方とも消えて空白になることも
+          // 防ぐ。detached!.streamingKey の detached は detachedMatchesThisRecovery が
+          // true の時点で null でないことが確定している (上で導出した局所変数)。
+          clearStreamingReplyForKey(detached!.streamingKey);
+        }
         setHistoryLoadedFor((prev) => ({ ...prev, [status.sessionId]: true }));
         if (payload.model !== undefined && payload.model !== '') {
           setThreadModelIds((prev) => ({
@@ -2512,6 +2521,15 @@ export function ChatPanel({
       try {
         if (selectedAgent?.supportsStreaming === true) {
           setStreamingReply({ key: sendKey, text: '' });
+          // bdboard-3tw.166 (Opus レビュー指摘): 「この送信が今まさに配信停止した」を
+          // detachedStreamSendRef.current の中身 (streamingKey が sendKey と一致するか)
+          // で判定すると、同じ会話キーへの以前の (まだ未解決の) 配信停止が残っている
+          // ときに誤判定する — 例えば前のターンが配信停止で回収待ちのまま、同じ会話へ
+          // 再送し、その再送が (409 ではなく) 通常のネットワークエラー等で失敗した
+          // 場合、ref は前のターンを指したままなので誤って「今回も配信停止した」と
+          // 判定してしまい、この再送自身が受け取った部分テキストが消えずに残る。
+          // ローカル変数で「この送信自身が配信停止したか」だけを見る。
+          let detachedThisSend = false;
           try {
             const result = await postChatMessageStream(
               messagePayload,
@@ -2543,6 +2561,7 @@ export function ChatPanel({
               // AbortError と同じく turn-status 回収へ流し、取りこぼしの安全網も張る。
               // 回収前に idle が見えたら完走しなかったので、そこで送信失敗に戻す。
               const detachedError = error;
+              detachedThisSend = true;
               detachedStreamSendRef.current = {
                 projectId: selectedProjectId,
                 sessionId,
@@ -2562,14 +2581,14 @@ export function ChatPanel({
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
           } finally {
-            // bdboard-3tw.166: 配信停止 (上の ChatStreamEndedWithoutResultError 分岐)
-            // で今まさに detachedStreamSendRef を張った送信は、ここではまだ消さない。
-            // turn-status 回収が確定する (completed のハイドレーション、または idle/
-            // failed からの fail()) まで、最後に受け取った部分テキストを表示し続ける
-            // ("回収中は最後に受け取った部分テキストを表示し続ける" 要件)。それ以外
-            // (成功 / 通常失敗 / このターンとは無関係な detached が残っている) は
-            // 従来どおり即座に消す。
-            if (detachedStreamSendRef.current?.streamingKey !== sendKey) {
+            // bdboard-3tw.166: この送信自身が配信停止した (上の
+            // ChatStreamEndedWithoutResultError 分岐、detachedThisSend) 場合だけ、
+            // ここではまだ消さない。turn-status 回収が確定する (completed の
+            // ハイドレーション、または idle/failed からの fail()) まで、最後に
+            // 受け取った部分テキストを表示し続ける ("回収中は最後に受け取った部分
+            // テキストを表示し続ける" 要件)。それ以外 (成功 / この送信自身の通常失敗)
+            // は従来どおり即座に消す。
+            if (!detachedThisSend) {
               setStreamingReply(null);
             }
           }
@@ -3637,15 +3656,19 @@ export function ChatPanel({
               `:empty` が成立する。 */}
           <div className="chat-input-notices">
             {/* bdboard-3tw.166: 配信停止後の回収中インジケータを入力欄付近にも出す。
-                メッセージログ上部の同種インジケータ (「返信をバックグラウンドで処理中…」) と
-                同じ条件だが、テキストは変えてある — 同一文言を2箇所に出すと
-                screen.findByText 等の単一マッチ前提のテストや、スクリーンリーダーの
-                重複読み上げにつながるため。ログをスクロールしている/入力欄だけ見ている
-                利用者にも処理継続中であることが伝わるようにする。 */}
+                メッセージログ上部の同種インジケータ (role="status" 付きの
+                「返信をバックグラウンドで処理中…」、ログの aria-live="polite" 領域内)
+                と条件は同じだが、テキストは変えてある — 同一文言を2箇所に出すと
+                screen.findByText 等の単一マッチ前提のテストで区別できなくなるため。
+                role="status" は付けない (Opus レビュー指摘): 付けると同じ状態変化を
+                スクリーンリーダーが2回連続で読み上げることになる。ここは見た目上の
+                補助表示として置くだけで、状態変化の告知そのものはログ側の1箇所に
+                任せる。ログをスクロールしている/入力欄だけ見ている利用者にも視覚的に
+                処理継続中であることが伝わるようにする。 */}
             {!isSending &&
               backgroundTurnProjectId === selectedProjectId &&
               backgroundTurnStatus.state === 'processing' && (
-              <p className="chat-pending chat-input-recovery-status" role="status">
+              <p className="chat-pending chat-input-recovery-status">
                 バックグラウンドで応答を処理中です…
               </p>
             )}
