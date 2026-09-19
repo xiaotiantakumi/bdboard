@@ -3159,6 +3159,100 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
   });
 
+  it('keeps polling and recovers a completed turn after turn-status fails once (bdboard-3tw.164, done なし回収)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    // 同じ done なし配信停止シナリオだが、配信停止後 最初の turn-status 取得が
+    // ネットワークエラーで失敗する。以前はここでポーリングが止まり、サーバー側で
+    // 完走・保存済みのターンが画面に表示されないまま残っていた (bdboard-3tw.164)。
+    let streamClosed = false;
+    let statusCallsAfterClose = 0;
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      statusCallsAfterClose += 1;
+      if (statusCallsAfterClose === 1) {
+        throw new TypeError('network hiccup');
+      }
+      return {
+        state: 'completed',
+        sessionId: 'sess-overflow',
+        agentId: 'claude',
+        completedAt: '2026-09-13T08:00:10.000Z',
+      };
+    });
+    fetchChatThreadsMock.mockImplementation(async () =>
+      streamClosed
+        ? [
+            {
+              sessionId: 'sess-overflow',
+              agentId: 'claude',
+              title: 'overflow question',
+              pinned: false,
+              updatedAt: '2026-09-13T08:00:10.000Z',
+            },
+          ]
+        : [],
+    );
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/chat/sessions/sess-overflow/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-overflow',
+          agentId: 'claude',
+          messages: [
+            { role: 'user', content: 'overflow question', createdAt: '2026-09-13T08:00:00.000Z' },
+            {
+              role: 'assistant',
+              content: 'full reply recovered after a retry',
+              createdAt: '2026-09-13T08:00:10.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'overflow question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messages = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('partial');
+    });
+
+    releaseClose();
+
+    expect(
+      await screen.findByText('full reply recovered after a retry', {}, { timeout: 2_500 }),
+    ).toBeInTheDocument();
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-overflow');
+    // 少なくとも「失敗した1回」+「成功した1回」の2回は取得を試みている。
+    expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
+    expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(0);
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+  });
+
   it('falls back to a send failure when turn-status turns idle without recovering the detached turn (bdboard-zlzo)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
@@ -3616,6 +3710,117 @@ describe('ChatPanel', () => {
       await selectThreadFromDrawer(container, user, 'first thread');
       expect(
         await screen.findByText('recovered detached reply'),
+      ).toBeInTheDocument();
+      expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2);
+    });
+
+    it('keeps polling and recovers a detached reply after turn-status fails once during abort recovery (bdboard-3tw.164)', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      const threads: ChatThreadDto[] = [
+        {
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          title: 'first thread',
+          pinned: false,
+          updatedAt: '2026-01-02T00:00:00Z',
+        },
+        {
+          sessionId: 'sess-2',
+          agentId: 'claude',
+          title: 'second thread',
+          pinned: false,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ];
+      fetchChatThreadsMock.mockResolvedValue(threads);
+      // スレッド切替による abort 回収の1回目の turn-status 取得がネットワーク
+      // エラーで失敗する (bdboard-3tw.164)。以前はここでポーリングが止まり、完走した
+      // ターンが取りこぼされていた。
+      fetchChatTurnStatusMock
+        .mockResolvedValueOnce({ state: 'idle' })
+        .mockRejectedValueOnce(new TypeError('network hiccup'))
+        .mockResolvedValueOnce({ state: 'processing' })
+        .mockResolvedValue({
+          state: 'completed',
+          sessionId: 'sess-1',
+          agentId: 'claude',
+          completedAt: '2026-08-18T12:00:00.000Z',
+        });
+      let sess1HistoryCalls = 0;
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          sess1HistoryCalls += 1;
+          return jsonResponse({
+            sessionId: 'sess-1',
+            agentId: 'claude',
+            messages:
+              sess1HistoryCalls === 1
+                ? []
+                : [
+                    {
+                      role: 'user',
+                      content: 'finish after switch',
+                      createdAt: '2026-08-18T11:59:00.000Z',
+                    },
+                    {
+                      role: 'assistant',
+                      content: 'recovered after a retry',
+                      createdAt: '2026-08-18T12:00:00.000Z',
+                    },
+                  ],
+          });
+        }
+        if (url.includes('/api/chat/sessions/sess-2/messages')) {
+          return jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] });
+        }
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: delta\ndata: {"text":"partial "}\n\n',
+                  ),
+                );
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(
+                    new DOMException('The operation was aborted.', 'AbortError'),
+                  );
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      const { container } = renderChatPanel([PROJECT_A]);
+      openThreadDrawer(container);
+      expect(
+        await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+      ).toBeInTheDocument();
+      await user.type(screen.getByLabelText('メッセージ'), 'finish after switch');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      await selectThreadFromDrawer(container, user, 'second thread');
+      expect(
+        await screen.findByText('返信をバックグラウンドで処理中…', {}, { timeout: 2_500 }),
+      ).toBeInTheDocument();
+      expect(
+        await screen.findByText(
+          'バックグラウンドの返信が完了しました。',
+          {},
+          { timeout: 2_500 },
+        ),
+      ).toBeInTheDocument();
+
+      await selectThreadFromDrawer(container, user, 'first thread');
+      expect(
+        await screen.findByText('recovered after a retry'),
       ).toBeInTheDocument();
       expect(sess1HistoryCalls).toBeGreaterThanOrEqual(2);
     });
