@@ -527,6 +527,32 @@ describe('createBdCliIssueWriter', () => {
     });
   });
 
+  // bdboard-pkr6.26 実測 (bd 1.x, 2026-09-19): 使い捨てチケットで
+  // 1) 同一アクターの再 claim -> exit 0, revision すら変わらない真の no-op
+  //    (reopen/undefer (bdboard-3tw.93) の「前提を満たさなくても no-op」パターンとは
+  //    別物 — claim には元々そのパターンが無いことを確認した)
+  // 2) 別アクター(--actor で偽装)が既に in_progress のチケットへ claim -> exit 1,
+  //    stderr "Error updating <id>: issue already claimed by <assignee>"
+  // ここでは 2) の文言をそのまま流し込み、"already claimed" は lock-contention の
+  // パターン(/\block\w*\b/)に一致しないため BdError.kind='unknown' で失敗することを
+  // 固定する。呼び出し元 (agent-run-routes.ts の run-start claim) は kind を問わず
+  // 「claim が例外を投げたら run を開始しない」という判定しかしていないため、これは
+  // その判定の前提が実測と食い違っていないことの裏取り。
+  it('throws BdError (kind: unknown) when claim fails because another actor already holds it', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: `Error updating ${TICKET_ID}: issue already claimed by Takumi Oda\n`,
+        exitCode: 1,
+      }),
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await expect(port.claim(ROOT, TICKET_ID)).rejects.toMatchObject({
+      kind: 'unknown',
+    });
+  });
+
   it('uses custom bdPath when provided', async () => {
     const { runner, calls } = createFakeRunner();
     const port = createBdCliIssueWriter(runner, { bdPath: '/usr/bin/bd' });
