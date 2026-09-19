@@ -1447,6 +1447,20 @@ export function ChatPanel({
           // 二度とこのプロジェクトへ送信できなくなる(ページ再読み込み以外に回復手段が
           // 無いデッドロック)。ポーリング自体を諦める以上、idle/failed 分岐と同じ扱い
           // (ref 解放 + 保持していた部分テキストのクリア + 失敗表示) にする。
+          //
+          // bdboard-qfps: setBackgroundTurnStatus は checkTurnStatus の try 内、
+          // fetchChatTurnStatus が成功した直後にしか呼ばれない (上の行1205相当)。
+          // ここ (catch, ポーリング自体を諦めた場合) はその手前で諦めているので、
+          // backgroundTurnStatus は最後に成功した poll の値 (大抵 'processing') の
+          // まま二度と更新されない。detachedStreamSendRef の有無に関わらず (この
+          // プロジェクトの誰か/何かの 'processing' 表示を単に観測しているだけの
+          // ケースも含む)、ログ上部の「返信をバックグラウンドで処理中…」バナーと
+          // メッセージバブル (どちらも backgroundTurnStatus.state==='processing' 直結)
+          // が凍りついたまま残ってしまう。サーバーへの疎通自体を諦めた以上、実際の
+          // 状態は「不明」だが、ChatTurnStatusDto に unknown 相当の state は無いため、
+          // 'idle' (=このプロジェクトについて表示すべきバックグラウンドターンは
+          // 無い) にフォールバックし、凍りついたバナーを消す。
+          setBackgroundTurnStatus({ state: 'idle' });
           const exhaustedDetached = detachedStreamSendRef.current;
           if (
             exhaustedDetached !== null &&
