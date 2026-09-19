@@ -126,6 +126,16 @@ const BOTTOM_STICK_THRESHOLD_PX = 48;
 // は sessionId undefined を no-op で無視する) — 諦めた場合そちらは回収されない。
 const TURN_STATUS_POLL_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 8_000];
 
+// bdboard-96rp (Opus レビュー指摘 B2): sessionId 未確定の送信を detachedAt (クライアント
+// の Date.now()) と status.failedAt/completedAt (サーバーの時刻) を突き合わせて絞り込む
+// 際、両者は別プロセス・別マシン (モバイルトンネル経由のクライアントもあり得る) の
+// クロックなので、わずかな時刻ずれで「本当は自分の送信の結果なのに detachedAt より
+// わずかに前の時刻として記録され、取りこぼす」誤判定が起き得る。実用上あり得るずれ幅
+// より十分大きいマージンを許容側に加えることで、取りこぼしより「多少広めに一致させる」
+// 方に倒す (単一ロックの isBusy により、この許容幅の中で無関係な別ターンの結果と
+// 衝突するリスクは実質無い)。
+const TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS = 30_000;
+
 const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
 const CHAT_IMAGE_MAX_COUNT = 4;
 const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -1246,7 +1256,8 @@ export function ChatPanel({
             (detached.sessionId !== undefined
               ? detached.sessionId === status.sessionId
               : status.sessionId === undefined &&
-                Date.parse(status.failedAt) >= detached.detachedAt);
+                Date.parse(status.failedAt) >=
+                  detached.detachedAt - TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS);
           if (matchesTrackedSend) {
             if (status.sessionId !== undefined) {
               try {
@@ -1337,10 +1348,19 @@ export function ChatPanel({
         // clearStreamingReplyForKey を下の「本文を書き込むタイミング」に揃えることで、
         // 再送のブロックがハイドレーション完了まで一貫して効くようにする。
         const detached = detachedStreamSendRef.current;
+        // bdboard-96rp (Opus レビュー指摘 W1): 'failed' 分岐と同様に、sessionId 未確定の
+        // 送信を「sessionId 無しなら何でも一致」という無条件マッチにしていた。これだと
+        // (a) この送信を追い始める *前から* 残っていた無関係な古い completed 結果にも
+        // 一致してしまう。CompletedChatTurn.sessionId は常に定義済みなので
+        // status.sessionId 側の未定義チェックは不要だが、detachedAt (クロックずれ許容
+        // 込み) 以降の完了であることまでは 'failed' 分岐と同じく確認する。
         const detachedMatchesThisRecovery =
           detached !== null &&
           detached.projectId === selectedProjectId &&
-          (detached.sessionId === undefined || detached.sessionId === status.sessionId);
+          (detached.sessionId !== undefined
+            ? detached.sessionId === status.sessionId
+            : Date.parse(status.completedAt) >=
+                detached.detachedAt - TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS);
 
         // A detached turn can create a session whose id was unknown when the tab closed.
         // Invalidate older history/thread-list requests before hydrating the server-owned

@@ -237,13 +237,24 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
   // bdboard-3tw.165: failedTurns の記録・ACK。completedTurns と同じ形の per-project
   // キューだが、sessionId が無いエントリがあり得るので dedupe/フィルタは sessionId が
   // 分かっているものだけに絞る。
+  //
+  // bdboard-96rp (Opus レビュー指摘 B1): sessionId 無しのエントリどうしも dedupe する
+  // (既存の sessionId 無しエントリは全部落として、新しい1件だけを積む)。単一ロックの
+  // isBusy によりプロジェクトにつき同時に処理されるターンは高々1つなので、
+  // 「同時に2件の未解決 sessionId 無し失敗」が本当に起こることは無い — dedupe しても
+  // 正規の失敗を握り潰さない。dedupe しないと、古い sessionId 無しエントリ (ACK 経路が
+  // 無く CHAT_COMPLETED_TURNS_MAX まで消えない) が先頭に居座ったまま、後から積まれた
+  // *別の* sessionId 無し失敗 (=追っている送信自身の失敗かもしれない) をクライアントの
+  // checkTurnStatus から見えなくしてしまう。この新しいエントリで置き換えることで、
+  // GET が返す sessionId 無しエントリは常に「最新の1件」になり、クライアント側の
+  // detachedAt 突き合わせ (ChatPanel.tsx の checkTurnStatus) が正しく解決できる。
   const failedTurns = new Map<string, readonly FailedChatTurn[]>();
   const recordFailedTurn = (projectId: string, entry: FailedChatTurn): void => {
     const queued = failedTurns.get(projectId) ?? [];
     const next =
       entry.sessionId !== undefined
         ? [...queued.filter((item) => item.sessionId !== entry.sessionId), entry]
-        : [...queued, entry];
+        : [...queued.filter((item) => item.sessionId !== undefined), entry];
     failedTurns.set(projectId, next.slice(-CHAT_COMPLETED_TURNS_MAX));
   };
   const ackFailedTurn = (projectId: string, sessionId: string): void => {
