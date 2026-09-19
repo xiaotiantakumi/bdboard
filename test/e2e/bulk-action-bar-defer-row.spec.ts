@@ -220,6 +220,7 @@ async function measureBulkButtonsLayout(page: import('@playwright/test').Page): 
 
 interface DetailQuickButtonsLayoutMetrics {
   containerClientWidth: number;
+  containerScrollWidth: number;
   rowCount: number;
   completeButtonSharesRow: boolean;
   completeButtonWidthRatio: number;
@@ -326,6 +327,7 @@ async function measureDetailQuickButtonsLayout(
 
       return {
         containerClientWidth: container.clientWidth,
+        containerScrollWidth: container.scrollWidth,
         rowCount: rowTops.length,
         completeButtonSharesRow,
         completeButtonWidthRatio,
@@ -542,6 +544,32 @@ for (const viewport of MOBILE_VIEWPORTS) {
         `${viewport.label} detail panel: body must not overflow horizontally ` +
           `(body.scrollWidth=${metrics.bodyScrollWidth}, innerWidth=${metrics.viewportInnerWidth})`,
       ).toBe(false);
+
+      // bdboard-h4xs.23: 上の horizontalOverflow (body 基準) は、このパネル内の溢れに
+      // 対して構造的に vacuous — 上の「320px カスタム状態について」コメント (bdboard-h4xs.22)
+      // が挙げるバー側の理由と同型のパターンで、複合の可能性がある:
+      //   1. .detail-panel は TicketDetailPanel.tsx の .overlay (position: fixed;
+      //      inset: 0) の子であり、fixed 内の溢れは body.scrollWidth に現れない
+      //      (バー側の理由1と同じ)。
+      //   2. .detail-panel は overflow-y: auto を持ち overflow-x を明示していない
+      //      ため、非 visible な overflow-y に揃えて overflow-x も auto へ計算され
+      //      (CSS Overflow 仕様どおり)、パネル自身がスクロールコンテナになる
+      //      (バー側の理由2と同じ)。
+      // 実測 (2026-09-19): 375px 幅で .quick-action-buttons 内に 2000px 幅のプローブ
+      // 要素を注入しても bodyScrollWidth は 375 のまま変わらず、containerScrollWidth
+      // だけ 342→2000 に変化 (bdboard-h4xs.23 の調査)。ただしこの実測はどちらの理由が
+      // 効いているかまでは切り分けていない — 1・2 のどちらか一方が変わっても、もう
+      // 一方だけで body への非伝播は成立し得る。したがって「.detail-panel の
+      // overflow-x を visible に変えれば body 基準で検出できるはず」という直し方は
+      // 誤り (理由1がまだ残る)。コンテナ自身の scrollWidth/clientWidth で測る必要が
+      // ある (バー側の bdboard-rccf と同じ手法)。
+      expect(
+        metrics.containerScrollWidth,
+        `${viewport.label} detail panel: quick-action-buttons must not overflow ` +
+          `horizontally (containerScrollWidth=${metrics.containerScrollWidth}, ` +
+          `containerClientWidth=${metrics.containerClientWidth}). body 基準では検出 ` +
+          `できないので、この2つで測ること。`,
+      ).toBeLessThanOrEqual(metrics.containerClientWidth);
 
       // 詳細パネル側には BulkActionBar のような `.btn { flex: 1 1 auto }` が無いため、
       // 完了ボタンは伸長せず単独全幅行にならない (実測: 375px で widthRatio=0.158 /
