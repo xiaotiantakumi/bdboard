@@ -3064,6 +3064,177 @@ describe('ChatPanel', () => {
     });
   });
 
+  it('acks the failed turn-status entry when a still-connected client sees the inline SSE error event (bdboard-w26w)', async () => {
+    // bdboard-w26w: PR #482 (bdboard-3tw.165) recorded every ChatAgentError into
+    // failedTurns unconditionally (recordFailedTurn), mirroring recordCompletedTurn, but
+    // only the completed-turn success path (applyChatSuccess) acked it. A client that is
+    // still connected and sees the failure directly via the inline SSE 'error' event
+    // (this test) never called DELETE /api/chat/turn-status, so the entry piled up until
+    // CHAT_COMPLETED_TURNS_MAX eviction. This test sends two turns on the same session:
+    // the first succeeds (establishing sessionId), the second fails inline while still
+    // connected, and asserts the failure is acked with that same sessionId.
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string | undefined) ?? '{}') as {
+          sessionId?: string;
+        };
+        if (body.sessionId === undefined) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"first reply","sessionId":"sess-w26w","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: error\ndata: {"error":"chat failed","code":"agent-error"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('first reply');
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-w26w');
+
+    // 以降のアサートが今回のバグ修正 (失敗時の ACK) 由来であることを、成功時の
+    // ACK 呼び出しと区別するためにクリアする。
+    acknowledgeChatTurnMock.mockClear();
+
+    await user.type(screen.getByLabelText('メッセージ'), 'second message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messages = screen.getByRole('log');
+    await waitFor(() => {
+      expect(within(messages).getByText('chat failed')).toBeInTheDocument();
+    });
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-w26w');
+  });
+
+  it('skips the direct turn-status ACK when an unresolved same-session detached send is still being recovered (bdboard-w26w Opus レビュー finding 1)', async () => {
+    // bdboard-w26w Opus レビュー finding 1: DELETE /api/chat/turn-status acks the
+    // completed AND the failed queue entry for a sessionId together (ackCompletedTurn +
+    // ackFailedTurn in chat-routes.ts). isBusy is a project-wide lock, so an earlier send
+    // (D) on this *same* session can detach (its outcome isn't known to the client yet,
+    // but the server may have already recorded it as completed) while a later send (N)
+    // on that same session fails inline. If N's failure directly ACKed here, it would
+    // also wipe out D's still-unrecovered completed entry before the turn-status
+    // recovery poll (which correctly hydrates completed before failed) ever sees it —
+    // making D look like it failed even though it actually succeeded. This test asserts
+    // the direct ACK is skipped while D's recovery is still unresolved (turn-status
+    // keeps reporting 'processing'), leaving it to the recovery poll instead.
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatTurnStatusMock.mockResolvedValue({
+      state: 'processing',
+      message: 'detach this',
+      agentId: 'claude',
+    });
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    let streamPosts = 0;
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        streamPosts += 1;
+        if (streamPosts === 1) {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"first reply","sessionId":"sess-w26w-guard","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+        if (streamPosts === 2) {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"d partial"}\n\n'),
+                );
+                await closeGate;
+                controller.close();
+              },
+            }),
+          );
+        }
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: error\ndata: {"error":"chat failed","code":"agent-error"}\n\n',
+                ),
+              );
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'first message');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await screen.findByText('first reply');
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-w26w-guard');
+    acknowledgeChatTurnMock.mockClear();
+
+    await user.type(screen.getByLabelText('メッセージ'), 'detach this');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(
+        screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+          ?.textContent,
+      ).toBe('d partial');
+    });
+    releaseClose();
+    await waitFor(() => {
+      expect(screen.getByLabelText('メッセージ')).not.toBeDisabled();
+    });
+
+    await user.type(screen.getByLabelText('メッセージ'), 'second try');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messages = screen.getByRole('log');
+    await waitFor(() => {
+      expect(within(messages).getByText('chat failed')).toBeInTheDocument();
+    });
+    // D (前の配信停止) の turn-status 回収がまだ 'processing' のまま確定していないので、
+    // N (この送信) の失敗をここで直接 ACK しない — した場合、D の completed エントリを
+    // 巻き添えで消しうる (ガード無しだとこのアサートが落ちる)。
+    expect(acknowledgeChatTurnMock).not.toHaveBeenCalled();
+  });
+
   it('recovers a completed turn instead of showing an error when the stream ends without done (bdboard-zlzo)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
