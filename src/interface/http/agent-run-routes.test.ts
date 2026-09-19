@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
 import type { AgentRunner, RunOutcome } from '../../application/ports/agent-runner.js';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
+import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { WorktreeProvisioner } from '../../application/ports/worktree-provisioner.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../../application/ports/board-cache-fakes.js';
 import { createRunStore, type RunStoreRecord } from '../../application/runner/run-store.js';
@@ -142,6 +143,32 @@ function makeProvisioner(
   };
 }
 
+/**
+ * run 開始時の claim (bdboard-pkr6.26) のテスト用フェイク。既定は claim/unclaim とも
+ * 無条件成功 (他の quick-action 相当メソッドは呼ばれない想定のスタブ)。claim の失敗や
+ * unclaim の呼び出し検証をしたいテストだけ overrides で差し替える。
+ */
+function makeIssueWriter(
+  overrides: Partial<IssueWriterPort> = {},
+): IssueWriterPort {
+  return {
+    claim: vi.fn(async () => {}),
+    close: vi.fn(async () => {}),
+    defer: vi.fn(async () => {}),
+    setPriority: vi.fn(async () => {}),
+    addComment: vi.fn(async () => {}),
+    addLabel: vi.fn(async () => {}),
+    removeLabel: vi.fn(async () => {}),
+    reopen: vi.fn(async () => {}),
+    unclaim: vi.fn(async () => {}),
+    undefer: vi.fn(async () => {}),
+    undoPriority: vi.fn(async () => {}),
+    updateTitle: vi.fn(async () => {}),
+    updateDescription: vi.fn(async () => {}),
+    ...overrides,
+  };
+}
+
 function makeRunner(dispatch: AgentRunner['dispatch']): AgentRunner {
   return {
     id: 'claude-spawn',
@@ -192,6 +219,7 @@ function makeRoutes(deps: Partial<Parameters<typeof createAgentRunRoutes>[0]> = 
   const registry = deps.registry ?? createAgentRunnerRegistry();
   const runStore = deps.runStore ?? createRunStore({ now: () => NOW });
   const worktreeProvisioner = deps.worktreeProvisioner ?? makeProvisioner();
+  const issueWriter = deps.issueWriter ?? makeIssueWriter();
 
   const app = createAgentRunRoutes({
     cache,
@@ -204,10 +232,11 @@ function makeRoutes(deps: Partial<Parameters<typeof createAgentRunRoutes>[0]> = 
     getHarnessStatus: deps.getHarnessStatus ?? (async () => readyHarnessStatus()),
     isRemoteAgentRunAllowed: deps.isRemoteAgentRunAllowed ?? (async () => true),
     now: deps.now ?? (() => NOW),
+    issueWriter,
     ...deps,
   });
 
-  return { app, cache, registry, runStore, worktreeProvisioner };
+  return { app, cache, registry, runStore, worktreeProvisioner, issueWriter };
 }
 
 function seedOpenTicket(
@@ -1537,6 +1566,319 @@ describe('createAgentRunRoutes', () => {
   });
 });
 
+describe('createAgentRunRoutes ticket claim on run start (bdboard-pkr6.26)', () => {
+  it('claims the ticket before dispatching, using the resolved project rootPath', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-order';
+    seedOpenTicket(cache, 'bdboard-claim-order', rootPath);
+
+    const callOrder: string[] = [];
+    const issueWriter = makeIssueWriter({
+      claim: vi.fn(async () => {
+        callOrder.push('claim');
+      }),
+    });
+
+    const dispatch = vi.fn(async (): Promise<RunOutcome> => {
+      callOrder.push('dispatch');
+      return {
+        ok: true,
+        run: {
+          id: 'ignored',
+          ticketId: 'bdboard-claim-order',
+          runner: 'claude-spawn',
+          mode: 'spawn',
+          status: 'succeeded',
+          startedAt: NOW,
+          finishedAt: NOW,
+        },
+      };
+    });
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-claim-order', rootPath),
+        branchName: 'bd/bdboard-claim-order',
+        reused: false,
+      })),
+    });
+
+    const { app } = makeRoutes({ cache, registry, worktreeProvisioner, issueWriter });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-claim-order')),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(202);
+    expect(issueWriter.claim).toHaveBeenCalledWith(rootPath, 'bdboard-claim-order');
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+    expect(callOrder).toEqual(['claim', 'dispatch']);
+  });
+
+  it('returns 409 with reason claim-failed and does not dispatch when claim fails', async () => {
+    const cache = createFakeBoardCache();
+    seedOpenTicket(cache, 'bdboard-claim-fail');
+
+    const issueWriter = makeIssueWriter({
+      claim: vi.fn(async () => {
+        throw new Error('issue already claimed by someone-else');
+      }),
+    });
+
+    const dispatch = vi.fn();
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const runStore = createRunStore({ now: () => NOW });
+    const { app } = makeRoutes({ cache, registry, runStore, issueWriter });
+
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-claim-fail')),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: 'issue already claimed by someone-else',
+      reason: 'claim-failed',
+    });
+    expect(dispatch).not.toHaveBeenCalled();
+    const runs = runStore.list({ ticketId: 'bdboard-claim-fail' });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('failed');
+    expect(issueWriter.unclaim).not.toHaveBeenCalled();
+  });
+
+  it('unclaims the ticket when the run fails before any runner actually dispatches (dispatch-disabled)', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-rollback';
+    seedOpenTicket(cache, 'bdboard-prespawn', rootPath);
+
+    const issueWriter = makeIssueWriter();
+    // No runner registered at all -> dispatchRun resolves with failureKind
+    // 'unsupported', which is a pre-spawn failure (no runner.dispatch ever ran).
+    const registry = createAgentRunnerRegistry();
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-prespawn', rootPath),
+        branchName: 'bd/bdboard-prespawn',
+        reused: false,
+      })),
+    });
+
+    const runStore = createRunStore({ now: () => NOW });
+    const { app } = makeRoutes({ cache, registry, runStore, worktreeProvisioner, issueWriter });
+
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-prespawn')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => {
+      const runs = runStore.list({ ticketId: 'bdboard-prespawn' });
+      expect(runs[0]?.status).toBe('failed');
+    });
+
+    expect(issueWriter.unclaim).toHaveBeenCalledWith(rootPath, 'bdboard-prespawn');
+    const runs = runStore.list({ ticketId: 'bdboard-prespawn' });
+    // buildUnsupportedOutcome (dispatch-run.ts) has no runner and never calls
+    // runner.dispatch(); this is exactly the pre-spawn case the rollback targets.
+    expect(runs[0]?.status).toBe('failed');
+  });
+
+  it('does not unclaim when the runner actually dispatched and then failed (failureKind failed)', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-no-rollback';
+    seedOpenTicket(cache, 'bdboard-ran-then-failed', rootPath);
+
+    const issueWriter = makeIssueWriter();
+    const dispatch = vi.fn(async (): Promise<RunOutcome> => ({
+      ok: false,
+      failureKind: 'failed',
+      error: 'claude exited with code 1',
+      run: {
+        id: 'ignored',
+        ticketId: 'bdboard-ran-then-failed',
+        runner: 'claude-spawn',
+        mode: 'spawn',
+        status: 'failed',
+        startedAt: NOW,
+        finishedAt: NOW,
+      },
+    }));
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-ran-then-failed', rootPath),
+        branchName: 'bd/bdboard-ran-then-failed',
+        reused: false,
+      })),
+    });
+
+    const runStore = createRunStore({ now: () => NOW });
+    const { app } = makeRoutes({ cache, registry, runStore, worktreeProvisioner, issueWriter });
+
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-ran-then-failed')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+    // Let the fire-and-forget .then() chain settle.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(issueWriter.unclaim).not.toHaveBeenCalled();
+  });
+
+  it('does not unclaim when the run succeeds', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-success';
+    seedOpenTicket(cache, 'bdboard-claim-success', rootPath);
+
+    const issueWriter = makeIssueWriter();
+    const dispatch = vi.fn(async (): Promise<RunOutcome> => ({
+      ok: true,
+      run: {
+        id: 'ignored',
+        ticketId: 'bdboard-claim-success',
+        runner: 'claude-spawn',
+        mode: 'spawn',
+        status: 'succeeded',
+        startedAt: NOW,
+        finishedAt: NOW,
+      },
+    }));
+    const registry = createAgentRunnerRegistry();
+    registry.register(makeRunner(dispatch));
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-claim-success', rootPath),
+        branchName: 'bd/bdboard-claim-success',
+        reused: false,
+      })),
+    });
+
+    const { app } = makeRoutes({ cache, registry, worktreeProvisioner, issueWriter });
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-claim-success')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => expect(dispatch).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(issueWriter.unclaim).not.toHaveBeenCalled();
+  });
+
+  it('unclaims when dispatchRun rejects before any runner is dispatched (e.g. registry.resolve throws)', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-registry-throw';
+    seedOpenTicket(cache, 'bdboard-registry-throw', rootPath);
+
+    const issueWriter = makeIssueWriter();
+    const explodingRegistry = {
+      register: vi.fn(),
+      resolve: vi.fn(() => {
+        throw new Error('registry exploded');
+      }),
+      list: vi.fn(() => []),
+    };
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-registry-throw', rootPath),
+        branchName: 'bd/bdboard-registry-throw',
+        reused: false,
+      })),
+    });
+
+    const runStore = createRunStore({ now: () => NOW });
+    const { app } = makeRoutes({
+      cache,
+      registry: explodingRegistry,
+      runStore,
+      worktreeProvisioner,
+      issueWriter,
+    });
+
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-registry-throw')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => {
+      const runs = runStore.list({ ticketId: 'bdboard-registry-throw' });
+      expect(runs[0]?.status).toBe('failed');
+    });
+
+    expect(issueWriter.unclaim).toHaveBeenCalledWith(rootPath, 'bdboard-registry-throw');
+  });
+
+  it('does not fail the run when unclaim itself fails after a pre-spawn failure (best-effort rollback)', async () => {
+    const cache = createFakeBoardCache();
+    const rootPath = '/projects/claim-unclaim-fails';
+    seedOpenTicket(cache, 'bdboard-unclaim-fails', rootPath);
+
+    const issueWriter = makeIssueWriter({
+      unclaim: vi.fn(async () => {
+        throw new Error('unclaim exploded');
+      }),
+    });
+    const registry = createAgentRunnerRegistry();
+
+    const worktreeProvisioner = makeProvisioner({
+      provision: vi.fn(async () => ({
+        ok: true as const,
+        worktreePath: managedWorktreePath('bdboard-unclaim-fails', rootPath),
+        branchName: 'bd/bdboard-unclaim-fails',
+        reused: false,
+      })),
+    });
+
+    const runStore = createRunStore({ now: () => NOW });
+    const { app } = makeRoutes({ cache, registry, runStore, worktreeProvisioner, issueWriter });
+
+    const response = await app.request(
+      '/api/runs',
+      withLocalHost(postRunsInit('bdboard-unclaim-fails')),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(202);
+
+    await vi.waitFor(() => {
+      const runs = runStore.list({ ticketId: 'bdboard-unclaim-fails' });
+      expect(runs[0]?.status).toBe('failed');
+    });
+
+    expect(issueWriter.unclaim).toHaveBeenCalledWith(rootPath, 'bdboard-unclaim-fails');
+    // The run's recorded outcome reflects the original dispatch failure, not the
+    // secondary unclaim failure -- rollback is best-effort and must not mask it.
+    const runs = runStore.list({ ticketId: 'bdboard-unclaim-fails' });
+    expect(runs[0]?.status).toBe('failed');
+  });
+});
+
 describe('createAgentRunRoutes guard mount scope', () => {
   it('does not leak the agent-run guard onto routes registered after the mount', async () => {
     const parent = new Hono();
@@ -1552,6 +1894,7 @@ describe('createAgentRunRoutes guard mount scope', () => {
         getHarnessStatus: async () => readyHarnessStatus(),
         isRemoteAgentRunAllowed: async () => false,
         now: () => NOW,
+        issueWriter: makeIssueWriter(),
       }),
     );
     // main.ts の serveStatic / SPA フォールバックと同じ「後から登録される '*' ハンドラ」

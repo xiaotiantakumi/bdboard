@@ -3,6 +3,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import type { BoardCache, CachedProject } from '../../application/ports/board-cache.js';
 import type { RunOutcome } from '../../application/ports/agent-runner.js';
+import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { WorktreeProvisioner } from '../../application/ports/worktree-provisioner.js';
 import { buildRunPrompt } from '../../application/runner/build-run-prompt.js';
 import { dispatchRun } from '../../application/runner/dispatch-run.js';
@@ -75,6 +76,22 @@ export interface AgentRunRoutesDeps {
     readonly perMinute?: number;
     readonly perDay?: number;
   };
+  /**
+   * run 開始時にサーバー側でチケットを claim するための port (bdboard-pkr6.26)。
+   *
+   * これが無いと run は worktree を作って実際にファイルを編集するのに、bd 上は
+   * open のままで他セッションの `bd ready` に出続け、二重着手を招く
+   * (ハーネスの「worktree-first 排他」規律の穴)。claim/unclaim は
+   * IssueWriterPort の既存実装 (bd update --claim / bd unclaim) をそのまま使う。
+   *
+   * `bd update --claim` の実測 (bdboard-pkr6.26 調査, 2026-09-19): 同一アクターの
+   * 再 claim は revision すら変わらない真の no-op で exit 0 (reopen/undefer
+   * (bdboard-3tw.93) のような「前提を満たさなくても no-op」パターンではない)。
+   * 別アクターが既に保持しているときは exit 1 "issue already claimed by <assignee>"
+   * で明確に失敗する。よって claim の失敗はそのまま run 開始を止める根拠にできる
+   * (reopen/undefer のような read-then-write CAS 前段の状態確認は不要)。
+   */
+  readonly issueWriter: IssueWriterPort;
 }
 
 export interface RunSummaryDto {
@@ -177,6 +194,40 @@ function buildDispatchFailureOutcome(
       finishedAt,
     },
   };
+}
+
+/**
+ * dispatchRun の outcome が「実エージェントプロセスが一度も動き出さないまま失敗した」を
+ * 示すかどうか (bdboard-pkr6.26)。RunFailureKind のうち `failed` だけが
+ * 「dispatch ran but failed」(agent-runner.ts のコメント) — 残り4種
+ * (invalid-request/unsupported/dispatch-disabled/runner-unavailable) は
+ * claude-runner.ts の実装上いずれも実プロセスを spawn する前 (または spawn 自体が
+ * 失敗した runner-unavailable) に確定する。前者は編集が残っている可能性があるため
+ * claim を戻さず、後者だけ unclaim の対象にする。
+ */
+function isPreSpawnFailure(outcome: RunOutcome): boolean {
+  return !outcome.ok && outcome.failureKind !== 'failed';
+}
+
+/**
+ * spawn 前失敗 (isPreSpawnFailure) のときだけ呼ばれる unclaim ロールバック
+ * (bdboard-pkr6.26)。unclaim 自体の失敗はベストエフォートで警告ログに落とし、
+ * fire-and-forget の dispatchRun チェーンを unhandled rejection にしない。
+ */
+async function rollbackClaimAfterPreSpawnFailure(
+  deps: AgentRunRoutesDeps,
+  rootPath: string,
+  ticketId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    await deps.issueWriter.unclaim(rootPath, ticketId);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `bdboard: failed to unclaim ${ticketId} after pre-spawn run failure (${reason}): ${message}`,
+    );
+  }
 }
 
 /** preflight 失敗の英語ラベル。`reason` が機械可読側で、こちらは既存 409 と同じ体裁の `error`。 */
@@ -453,6 +504,28 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       return c.json({ error: message }, 500);
     }
 
+    // claim (bdboard-pkr6.26): worktree はここまでで用意済み。実際にプロセスを
+    // spawn する前に claim を試み、失敗したら run を開始しない (409) — run 開始
+    // そのものを排他ゲートにする。成功後は spawn 前失敗 (下の isPreSpawnFailure)
+    // でだけ unclaim して戻す。
+    try {
+      await deps.issueWriter.claim(project.rootPath, ticketId);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      deps.runStore.finish(
+        runId,
+        buildDispatchFailureOutcome(
+          runId,
+          ticketId,
+          mode,
+          startedAt,
+          message,
+          deps.now(),
+        ),
+      );
+      return c.json({ error: message, reason: 'claim-failed' }, 409);
+    }
+
     const prompt = buildRunPrompt({
       ticketId,
       ticketTitle: ticket.title,
@@ -479,10 +552,18 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
       deps.now,
       sink,
     )
-      .then((outcome) => {
+      .then(async (outcome) => {
         deps.runStore.finish(runId, outcome);
+        if (isPreSpawnFailure(outcome)) {
+          await rollbackClaimAfterPreSpawnFailure(
+            deps,
+            project.rootPath,
+            ticketId,
+            `dispatch outcome failureKind=${outcome.failureKind ?? 'unknown'}`,
+          );
+        }
       })
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         deps.runStore.finish(
           runId,
@@ -494,6 +575,17 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
             message,
             deps.now(),
           ),
+        );
+        // dispatchRun 自身の try/catch は各 runner.dispatch() 呼び出しを個別に
+        // 包んでおり、runner-unavailable/failed 等は outcome として返る (上の
+        // .then() 側)。ここに来るのはそれより手前 (registry.resolve() 等) の
+        // 例外であり、実プロセスが spawn される前に確定している — 常に unclaim
+        // してよい。
+        await rollbackClaimAfterPreSpawnFailure(
+          deps,
+          project.rootPath,
+          ticketId,
+          'dispatchRun rejected before any runner dispatched',
         );
       });
 

@@ -1137,6 +1137,9 @@ async function main(): Promise<void> {
           agentRunRoutesNow(),
         ),
       now: agentRunRoutesNow,
+      // run 開始時のチケット claim (bdboard-pkr6.26)。routes.ts のクイックアクション
+      // claim と同じ issueWriter インスタンスを共有する。
+      issueWriter,
     }),
   );
 
