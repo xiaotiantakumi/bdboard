@@ -6878,11 +6878,13 @@ body {
        body.scrollWidth に現れる (test/e2e/bulk-action-bar-defer-row.spec.ts の
        「320px カスタム状態について」コメント参照)。実際の理由は次の3つ、どれか
        1つで足りる独立理由が重なっている: 1) .bulk-action-bar が position: fixed
-       で、fixed 内の溢れは body.scrollWidth に伝播しない。2) 同じバーが
-       overflow-y: auto を持ち、これにより overflow-x も auto に計算されて
-       バー自身がスクロールコンテナになる。3) バーは左右 25px インセットされて
-       おり、7px 程度はそもそも body の箱を出ない。実測と切り分けは同 spec
-       コメント (bdboard-h4xs.22) と bdboard-rccf を参照。 */
+       (@media (max-width: 700px) 内の同じ規則で宣言、この 480px 帯でも有効) で、
+       fixed 内の溢れは body.scrollWidth に伝播しない。2) 同じ規則の
+       overflow-y: auto により overflow-x も auto に計算されて、バー自身が
+       スクロールコンテナになる。3) この 480px 帯では .bulk-action-bar が左右
+       12px + border 1px + padding 12px = 25px インセットされており、7px 程度は
+       そもそも body の箱を出ない。実測と切り分けは同 spec コメント
+       (bdboard-h4xs.22) と bdboard-rccf を参照。 */
     min-width: 0;
   }
 
