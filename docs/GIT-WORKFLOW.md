@@ -269,6 +269,22 @@ remote list` and confirm it shows no `origin` entry — if it does, remove
 it with `bd dolt remote remove origin` first. In an environment that uses
 a Dolt remote, push periodically at session end, not per-ticket.
 
+**`bd import` silently defaults a missing `priority` field to 0 (P0, the highest lane).**
+Out-of-range values (e.g. `9`) are rejected with `priority must be between 0 and 4` — same for
+`bd create -p 5` / `bd update -p 7`, which reject with `invalid priority (expected 0-4 or
+P0-P4)` — but an entirely *missing* `priority` field on import is not treated as an error; it is
+silently filled in as `0` (confirmed on bd 1.2.1 while investigating bdboard-2czx / PR #305, in
+an isolated scratch bd repo). This repo doesn't use `bd import` in normal operation (see the
+anti-pattern note above), so there's no current exposure — but if you ever import from JSONL or
+another tool for recovery, fill in `priority` explicitly on every row first, or imported issues
+can land in the highest-priority lane indistinguishable from a real P0. This is a different failure
+mode from bdboard's own `missing_priority` health check (removed in bdboard-2czx): that check could
+never fire via the normal `bd` CLI path because `src/infrastructure/bd/bd-issue-schema.ts`'s
+`priority` field is *required*, not merely 0–4-bounded — a bd-CLI row missing `priority` is dropped
+whole at the mapper (`[schema-mismatch] ... priority: Required`) rather than reaching hygiene as a
+missing-priority issue. `bd import`'s silent-zero-fill only matters for whatever downstream (JSONL,
+other tools) reads the imported issue before it round-trips back through that same schema.
+
 ## ブランチ保護
 
 `main` は GitHub の **repository ruleset `protect-main`** (2026-09-05、bdboard-nmnj) で
