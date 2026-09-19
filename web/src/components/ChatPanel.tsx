@@ -592,9 +592,14 @@ export function ChatPanel({
   // processing → completed と見え、間に idle を挟まない。回収前に idle が見えたら
   // ターンは完走しなかった (エージェント失敗など、配信停止後はサーバーが error を
   // 送らない) ので、fail() で通常の送信失敗 (エラー表示と入力復元) に戻す。
+  // streamingKey は配信停止時点の streamingReply.key (=送信元の会話キー) を保持する
+  // (bdboard-3tw.166)。回収が確定する (completed のハイドレーション or fail() 側の
+  // 送信失敗表示) まで、この会話キーに対応する部分テキストを画面に残し続けるための
+  // 目印で、確定した瞬間にだけ clearStreamingReplyForKey で消す。
   const detachedStreamSendRef = useRef<{
     projectId: string;
     sessionId: string | undefined;
+    streamingKey: string;
     fail: () => void;
   } | null>(null);
   const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
@@ -608,6 +613,13 @@ export function ChatPanel({
       delete next[sessionId];
       return next;
     });
+  }, []);
+  // bdboard-3tw.166: 配信停止からの回収中に表示し続けている部分テキストを、
+  // その会話キーのものだけ消す。無条件の setStreamingReply(null) だと、回収と
+  // 無関係な会話に切り替わっていた場合にも消してしまう (今は起きなくても、
+  // 呼び出し側が増えたときの事故を防ぐため key 一致を必須にする)。
+  const clearStreamingReplyForKey = useCallback((key: string) => {
+    setStreamingReply((prev) => (prev !== null && prev.key === key ? null : prev));
   }, []);
   const [historyLoadedFor, setHistoryLoadedFor] = useState<
     Record<string, true>
@@ -1199,6 +1211,10 @@ export function ChatPanel({
           const detached = detachedStreamSendRef.current;
           if (detached !== null && detached.projectId === selectedProjectId) {
             detachedStreamSendRef.current = null;
+            // bdboard-3tw.166: 送信失敗が確定した以上、回収中ずっと表示していた
+            // 部分テキストはここで消す (fail() が積むエラーメッセージと二重表示
+            // させない)。
+            clearStreamingReplyForKey(detached.streamingKey);
             detached.fail();
           }
           return;
@@ -1223,6 +1239,9 @@ export function ChatPanel({
               if (cancelled) return;
             }
             detachedStreamSendRef.current = null;
+            // bdboard-3tw.166: idle 分岐と同じ理由 — 送信失敗が確定したので、回収中
+            // 表示していた部分テキストをここで消す。
+            clearStreamingReplyForKey(detached!.streamingKey);
             detached!.fail();
             return;
           }
@@ -1258,12 +1277,18 @@ export function ChatPanel({
         // 回り続けないようにする (bdboard-3tw.156)。
         if (recoveredSessionIds.has(status.sessionId)) return;
         recoveredSessionIds.add(status.sessionId);
+        // bdboard-3tw.166 (Opus レビュー指摘): ref 自体はここで即座に外す (このターンの
+        // detached 追跡としてはもう完了扱いで正しい)。ただし表示中の部分テキストを
+        // 消すのは下のハイドレーション (fetch → setConversations) が実際に成功して
+        // からにする — ここで即座に消すと、2件の fetch を待つ間だけ「部分テキストも
+        // 確定本文もどちらも無い」空白の間が生まれてしまい、"回収したターンの本文が
+        // 届いたら置き換える" という要件 (本文が届く *前* に消えない) を満たせない。
         const detached = detachedStreamSendRef.current;
-        if (
+        const detachedMatchesThisRecovery =
           detached !== null &&
           detached.projectId === selectedProjectId &&
-          (detached.sessionId === undefined || detached.sessionId === status.sessionId)
-        ) {
+          (detached.sessionId === undefined || detached.sessionId === status.sessionId);
+        if (detachedMatchesThisRecovery) {
           detachedStreamSendRef.current = null;
         }
 
@@ -1323,6 +1348,14 @@ export function ChatPanel({
             agentId: payload.agentId,
           },
         }));
+        if (detachedMatchesThisRecovery) {
+          // bdboard-3tw.166 (Opus レビュー指摘): 確定本文を conversations へ書き込む
+          // まさにこのタイミングで部分テキストを消す。同じ会話キーに部分テキストと
+          // 確定本文が二重に出ることも、本文が届く前に両方とも消えて空白になることも
+          // 防ぐ。detached!.streamingKey の detached は detachedMatchesThisRecovery が
+          // true の時点で null でないことが確定している (上で導出した局所変数)。
+          clearStreamingReplyForKey(detached!.streamingKey);
+        }
         setHistoryLoadedFor((prev) => ({ ...prev, [status.sessionId]: true }));
         if (payload.model !== undefined && payload.model !== '') {
           setThreadModelIds((prev) => ({
@@ -1384,7 +1417,7 @@ export function ChatPanel({
       cancelled = true;
       if (pollTimer !== undefined) clearTimeout(pollTimer);
     };
-  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend]);
+  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey]);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -2473,8 +2506,13 @@ export function ChatPanel({
       // 前のターンが続いている間の再送は 409 で弾かれ、判定を失うと、その後に前の
       // ターンが失敗しても何も表示されなくなる。
       const settleEarlierDetachedSend = (): void => {
-        if (detachedStreamSendRef.current?.projectId === selectedProjectId) {
+        const detached = detachedStreamSendRef.current;
+        if (detached !== null && detached.projectId === selectedProjectId) {
           detachedStreamSendRef.current = null;
+          // bdboard-3tw.166: 前の配信停止分が残していた部分テキストも一緒に消す。
+          // 新しいターンが完走した以上、その古い部分テキストが後から置き換わる
+          // ことはもう無い (このあと fail() も呼ばれない)。
+          clearStreamingReplyForKey(detached.streamingKey);
         }
       };
       const requestController = new AbortController();
@@ -2483,6 +2521,15 @@ export function ChatPanel({
       try {
         if (selectedAgent?.supportsStreaming === true) {
           setStreamingReply({ key: sendKey, text: '' });
+          // bdboard-3tw.166 (Opus レビュー指摘): 「この送信が今まさに配信停止した」を
+          // detachedStreamSendRef.current の中身 (streamingKey が sendKey と一致するか)
+          // で判定すると、同じ会話キーへの以前の (まだ未解決の) 配信停止が残っている
+          // ときに誤判定する — 例えば前のターンが配信停止で回収待ちのまま、同じ会話へ
+          // 再送し、その再送が (409 ではなく) 通常のネットワークエラー等で失敗した
+          // 場合、ref は前のターンを指したままなので誤って「今回も配信停止した」と
+          // 判定してしまい、この再送自身が受け取った部分テキストが消えずに残る。
+          // ローカル変数で「この送信自身が配信停止したか」だけを見る。
+          let detachedThisSend = false;
           try {
             const result = await postChatMessageStream(
               messagePayload,
@@ -2514,9 +2561,11 @@ export function ChatPanel({
               // AbortError と同じく turn-status 回収へ流し、取りこぼしの安全網も張る。
               // 回収前に idle が見えたら完走しなかったので、そこで送信失敗に戻す。
               const detachedError = error;
+              detachedThisSend = true;
               detachedStreamSendRef.current = {
                 projectId: selectedProjectId,
                 sessionId,
+                streamingKey: sendKey,
                 fail: () =>
                   applyChatError(
                     sendKey,
@@ -2532,7 +2581,16 @@ export function ChatPanel({
               applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
             }
           } finally {
-            setStreamingReply(null);
+            // bdboard-3tw.166: この送信自身が配信停止した (上の
+            // ChatStreamEndedWithoutResultError 分岐、detachedThisSend) 場合だけ、
+            // ここではまだ消さない。turn-status 回収が確定する (completed の
+            // ハイドレーション、または idle/failed からの fail()) まで、最後に
+            // 受け取った部分テキストを表示し続ける ("回収中は最後に受け取った部分
+            // テキストを表示し続ける" 要件)。それ以外 (成功 / この送信自身の通常失敗)
+            // は従来どおり即座に消す。
+            if (!detachedThisSend) {
+              setStreamingReply(null);
+            }
           }
         } else {
           try {
@@ -3594,9 +3652,26 @@ export function ChatPanel({
           </div>
           {/* 「バナーが1つでもあるか」の条件式をここに書くと、将来バナーを足した人がその条件式の
               更新を忘れた瞬間に空の div が gap を生む。`:empty` なら描画条件の集合を二重管理しない。
-              JSX は改行だけの空白テキストノードを出力しないので、4つとも false のとき要素は本当に空になり
+              JSX は改行だけの空白テキストノードを出力しないので、5つとも false のとき要素は本当に空になり
               `:empty` が成立する。 */}
           <div className="chat-input-notices">
+            {/* bdboard-3tw.166: 配信停止後の回収中インジケータを入力欄付近にも出す。
+                メッセージログ上部の同種インジケータ (role="status" 付きの
+                「返信をバックグラウンドで処理中…」、ログの aria-live="polite" 領域内)
+                と条件は同じだが、テキストは変えてある — 同一文言を2箇所に出すと
+                screen.findByText 等の単一マッチ前提のテストで区別できなくなるため。
+                role="status" は付けない (Opus レビュー指摘): 付けると同じ状態変化を
+                スクリーンリーダーが2回連続で読み上げることになる。ここは見た目上の
+                補助表示として置くだけで、状態変化の告知そのものはログ側の1箇所に
+                任せる。ログをスクロールしている/入力欄だけ見ている利用者にも視覚的に
+                処理継続中であることが伝わるようにする。 */}
+            {!isSending &&
+              backgroundTurnProjectId === selectedProjectId &&
+              backgroundTurnStatus.state === 'processing' && (
+              <p className="chat-pending chat-input-recovery-status">
+                バックグラウンドで応答を処理中です…
+              </p>
+            )}
             {currentAttachments.length > 0 && (
               <div className="chat-attachments" aria-label="送信前の添付画像" role="list">
                 {currentAttachments.map((attachment) => (

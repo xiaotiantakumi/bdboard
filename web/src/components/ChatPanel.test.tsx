@@ -3159,6 +3159,123 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
   });
 
+  it('keeps showing the last received partial text and a near-input processing indicator while recovering a detached turn, then replaces both with the completed reply (bdboard-3tw.166)', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    // 同じ done なし配信停止シナリオ (bdboard-zlzo) だが、このテストは回収中
+    // (turn-status が processing を返している間) に何が見えているかを検証する:
+    // 直前まで受け取っていた部分テキストが消えずに残っていること、かつ入力欄付近にも
+    // 処理中インジケータが出ていること。completed が届くゲートを自前で止めて、
+    // その "processing のまま" の窓を確定的に観測できるようにする。
+    let streamClosed = false;
+    let statusCallsAfterClose = 0;
+    let releaseCompletion: () => void = () => {};
+    const completionGate = new Promise<void>((resolve) => {
+      releaseCompletion = resolve;
+    });
+    fetchChatTurnStatusMock.mockImplementation(async () => {
+      if (!streamClosed) return { state: 'idle' };
+      statusCallsAfterClose += 1;
+      if (statusCallsAfterClose === 1) {
+        return { state: 'processing', message: 'overflow question', agentId: 'claude' };
+      }
+      await completionGate;
+      return {
+        state: 'completed',
+        sessionId: 'sess-overflow-2',
+        agentId: 'claude',
+        completedAt: '2026-09-13T08:00:10.000Z',
+      };
+    });
+    fetchChatThreadsMock.mockImplementation(async () =>
+      streamClosed
+        ? [
+            {
+              sessionId: 'sess-overflow-2',
+              agentId: 'claude',
+              title: 'overflow question',
+              pinned: false,
+              updatedAt: '2026-09-13T08:00:10.000Z',
+            },
+          ]
+        : [],
+    );
+    let releaseClose: () => void = () => {};
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/chat/sessions/sess-overflow-2/messages')) {
+        return jsonResponse({
+          sessionId: 'sess-overflow-2',
+          agentId: 'claude',
+          messages: [
+            { role: 'user', content: 'overflow question', createdAt: '2026-09-13T08:00:00.000Z' },
+            {
+              role: 'assistant',
+              content: 'full reply recovered while indicator was showing',
+              createdAt: '2026-09-13T08:00:10.000Z',
+            },
+          ],
+        });
+      }
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+              );
+              await closeGate;
+              streamClosed = true;
+              controller.close();
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A]);
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'overflow question');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messages = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('partial');
+    });
+
+    releaseClose();
+
+    // 回収中 (processing) の窓: ログ上部・入力欄付近、両方のインジケータが見える。
+    await screen.findByText('返信をバックグラウンドで処理中…', {}, { timeout: 2_500 });
+    await screen.findByText('バックグラウンドで応答を処理中です…', {}, { timeout: 2_500 });
+    // この時点ではまだ回収が確定していないので、直前に受け取った部分テキストは
+    // 消えずに残っている (bdboard-3tw.166 の要件)。
+    expect(
+      messages.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+    ).toBe('partial');
+
+    releaseCompletion();
+
+    expect(
+      await screen.findByText(
+        'full reply recovered while indicator was showing',
+        {},
+        { timeout: 2_500 },
+      ),
+    ).toBeInTheDocument();
+    // 回収したターンの本文が届いたら、部分テキストの吹き出しと両方の処理中
+    // インジケータは両方とも消える (二重表示にならない)。
+    expect(messages.querySelector('.chat-message-streaming')).not.toBeInTheDocument();
+    expect(screen.queryByText('返信をバックグラウンドで処理中…')).not.toBeInTheDocument();
+    expect(screen.queryByText('バックグラウンドで応答を処理中です…')).not.toBeInTheDocument();
+    expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-overflow-2');
+  });
+
   it('keeps polling and recovers a completed turn after turn-status fails once (bdboard-3tw.164, done なし回収)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
@@ -3406,6 +3523,10 @@ describe('ChatPanel', () => {
     expect(statusCallsAfterClose).toBeGreaterThanOrEqual(2);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
+    // bdboard-3tw.166 (Opus レビュー指摘): 失敗が確定した以上、回収中ずっと表示して
+    // いた部分テキストの吹き出しもここで消えている必要がある (エラー吹き出しと
+    // 二重に出たままにしない)。
+    expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
   it('falls back to a send failure on the explicit failed turn-status instead of waiting for idle (bdboard-3tw.165)', async () => {
@@ -3473,6 +3594,9 @@ describe('ChatPanel', () => {
     expect(screen.getByLabelText('メッセージ')).toHaveValue('doomed question');
     expect(within(screen.getByRole('log')).queryByText('doomed question')).not.toBeInTheDocument();
     expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-failed');
+    // bdboard-3tw.166 (Opus レビュー指摘): idle 分岐と同様、失敗確定後は部分テキストの
+    // 吹き出しも消えている必要がある。
+    expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
   it('drains a stale failed turn from an unrelated session instead of surfacing it as an error (bdboard-3tw.165 Opus レビュー)', async () => {
@@ -3591,6 +3715,10 @@ describe('ChatPanel', () => {
     expect(within(log).getAllByText('overflow question')).toHaveLength(1);
     expect(log.querySelectorAll('.chat-message-error')).toHaveLength(0);
     expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+    // bdboard-3tw.166 (Opus レビュー指摘): ハイドレートされた確定本文
+    // ('recovered answer for sess-1') の隣に、回収中ずっと表示していた部分テキストの
+    // 吹き出しが残ったまま (二重表示) になっていないことを確認する。
+    expect(log.querySelector('.chat-message-streaming')).not.toBeInTheDocument();
   });
 
   it('keeps the detached-send failure check across a resend rejected with 409 (bdboard-zlzo)', async () => {
@@ -3647,9 +3775,14 @@ describe('ChatPanel', () => {
     });
     releaseClose();
     await waitFor(() => {
-      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
       expect(screen.getByLabelText('メッセージ')).not.toBeDisabled();
     });
+    // bdboard-3tw.166: 配信停止直後はまだ回収中(turn-status がここでは
+    // processing を返す)なので、直前に受け取った部分テキストはまだ消えない。
+    expect(
+      screen.getByRole('log').querySelector('.chat-message-streaming .chat-message-text')
+        ?.textContent,
+    ).toBe('partial');
 
     await user.type(screen.getByLabelText('メッセージ'), 'second try');
     await user.click(screen.getByRole('button', { name: '送信' }));
@@ -3663,6 +3796,16 @@ describe('ChatPanel', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('log').querySelectorAll('.chat-message-error')).toHaveLength(2);
+    // bdboard-3tw.166 (Opus レビュー指摘): この時点で部分テキストの吹き出しが無いこと
+    // 自体は確認するが、このテストのシナリオでは再送 (second try) 自体が
+    // setStreamingReply({key, text:''}) で同じ会話キーのテキストを既に '' へ
+    // 上書きしているため、この assert 単体は idle 分岐の clearStreamingReplyForKey が
+    // 実際に呼ばれたことの証明にはならない (空文字はそもそも描画されない)。その
+    // 呼び出し自体の回帰保証は上の「falls back to a send failure when turn-status
+    // turns idle」テストの対応する assert が担っている。ここではあくまで
+    // 「409 で弾かれた再送を挟んでも、最終的な表示に部分テキストの吹き出しが
+    // 残っていない」という統合的な見た目を確認する。
+    expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeInTheDocument();
     // 409 で戻った再送文を、後から届いた前の送信の復元で上書きしない。
     expect(screen.getByLabelText('メッセージ')).toHaveValue('second try');
   });
