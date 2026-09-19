@@ -78,6 +78,11 @@
 - 防止: ゲート判定コマンド（`bd merge-slot acquire`・検証コマンド等）はパイプせず単独実行して `$?` を見るか、リダイレクト後に `echo "EXIT=$?"` を取る（本則: worktree-pr-flow.md §5「ゲート判定コマンドをパイプに通して `&&` で繋がない」節）
 - 出典: PR #296 / bdboard-pkr6.22.2（索引化: bdboard-9one）
 
+### merge-slot-waiters-stale — `bd merge-slot` の waiters 残骸を先頭待ちの根拠にして、available なのに acquire せず永久停滞した（2026-09-19〜20）
+- 原因: `bd merge-slot acquire`（`--wait` 無し）は `status` だけで可否判定し `metadata.waiters` を見ないが、waiters には release 後も消えない残骸（2026-09-04 以来の3件）が溜まっており、2エージェントがそれを「自分より先に並んでいる」根拠として誤読した
+- 防止: available なら waiters の中身に関わらず即 acquire する。先頭待ちのポーリングを自作しない（本則: worktree-pr-flow.md §5 層1「waiters は参考情報」節）。waiters の自動失効・release時クリアなど bd 本体側の改修は harness-upstream チケットへ
+- 出典: bdboard-5avg（実測: bdboard-wadg / PR #480 マージ時、議長観測 2026-09-20）
+
 ### ci-webhook-drop — GitHub 障害中の force-push で CI が起動せず、pending と誤認して待ち続けた（2026-08-17）
 - 原因: 障害中は webhook の synchronize イベントが無言でドロップされ、check-suite 自体が生成されない
 - 防止: check-runs/check-suites の REST 照会で「未起動」を判別し、空コミットで再トリガー（本則: worktree-pr-flow.md §4）

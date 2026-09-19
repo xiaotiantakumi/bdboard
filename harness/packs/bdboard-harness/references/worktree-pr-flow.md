@@ -322,6 +322,29 @@ bd merge-slot release   # 完了後（失敗して撤退するときも必ず re
 
 bd を読むセッションには効くが、規約に従わないプロセスには効かない。だから層2が要る。
 
+**waiters は参考情報 — 先頭待ちをしない**: `bd merge-slot acquire`（`--wait` 無し）は `status`
+（open/in_progress）だけで可否を判定し、`metadata.waiters`（`--wait` で積む自由文字列の待ち
+行列）を一切参照しない。よって「waiters の先頭が自分になるまで待つ」という自作のキュー
+先頭判定は当てにならない — waiters には release 後も残る残骸（下記）が溜まるため、「自分の
+前にまだ誰か居る」と誤読して available なのに acquire を見送り、**永久に先頭待ちで停滞する**
+方向に壊れる（mutual exclusion 自体は status が守るので二重取得は起きない）。実測
+（2026-09-19〜20, bdboard-wadg / PR #480 マージ時。詳細: failure-catalog.md の
+merge-slot-waiters-stale）: 2026-09-04 以来の残骸3件を先頭待ちの根拠にした2エージェントが
+available な状態のまま停滞し、議長の「available なら acquire せよ」という指示でようやく
+解消した。**`bd merge-slot check`/`acquire` が available と示したら、waiters の中身に関わらず
+そのまま acquire する。保持中（in_progress）なら数分おきに再チェックする**（先頭待ちの
+ポーリングを自作しない）。
+
+**残骸 waiters の扱い**: waiters は `--wait` で追加されるが、release 時に対応エントリを
+自動で取り除く仕組みが無く、数日〜2週間残存した実例がある。掃除には `<prefix>-merge-slot`
+bead の `metadata.waiters` 書き換えが要るが、**全セッション共有の状態を書き換える操作なので
+この skill からは実行しない** — 手順の文書化に留める: (1) `bd show <slot-id> --json` で現在の
+waiters を確認、(2) 今夜アクティブな PR/セッションに対応しない明らかに古いエントリを特定、
+(3) `bd update <slot-id> --metadata '{"waiters": [<残す分だけの配列>]}'` を提示、
+(4) チャットで人間の承認を得てから実行する（不可逆・共有状態への書き込みは SKILL.md 規律3
+手順6 の即時確認対象）。waiters の自動失効や release 時クリアなど bd 本体（上流ツール）側の
+改修が必要な部分は harness-upstream チケットへ切り出す（layering.md「アップストリーム経路」）。
+
 **層2 — マージ直前の CAS（必ずやる）**: CI 緑を確認した*後*、マージを実行する**直前**に
 remote main が動いていないか突き合わせる:
 
