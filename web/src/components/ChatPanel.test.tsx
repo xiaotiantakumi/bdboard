@@ -4084,6 +4084,83 @@ describe('ChatPanel', () => {
     30_000,
   );
 
+  it(
+    'clears the frozen "processing in background" banner once turn-status polling gives up (bdboard-qfps)',
+    async () => {
+      // qfps: bdboard-v3ag の B1 修正は、ポーリングを諦めたときに
+      // detachedStreamSendRef を解放して送信ボタンの永久ロック(デッドロック)を
+      // 解消したが、backgroundTurnStatus 自体は据え置きだった —
+      // setBackgroundTurnStatus(status) は checkTurnStatus の try 内、
+      // fetchChatTurnStatus が成功した直後にしか呼ばれず、ポーリングを諦める
+      // catch 経路はそこを通らない。そのため、諦める直前に一度でも
+      // 'processing' を観測していた場合、ログ上部の「返信をバックグラウンドで
+      // 処理中…」バナー (bdboard-3tw.166 由来、backgroundTurnStatus.state==
+      // 'processing' 直結) は、送信ボタンが再度有効になり失敗表示が出た後も
+      // 凍りついたまま残ってしまう — これが qfps チケット本文そのものの症状。
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      let afterDetach = false;
+      let pollsAfterDetach = 0;
+      fetchChatTurnStatusMock.mockImplementation(async () => {
+        if (!afterDetach) return { state: 'idle' };
+        pollsAfterDetach += 1;
+        if (pollsAfterDetach === 1) {
+          // 配信停止後、最初の聞き直しでは 'processing' が見え、バナーが灯る。
+          return { state: 'processing', message: 'まだ処理中です', agentId: 'claude' };
+        }
+        // 以降はずっと取得に失敗し、バックオフを使い切って諦める。
+        throw new Error('turn-status unavailable');
+      });
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial"}\n\n'),
+                );
+                controller.close();
+                afterDetach = true;
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      await screen.findByLabelText('チャットエージェント');
+      await user.type(screen.getByLabelText('メッセージ'), 'doomed question');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      // 配信停止後の1回目の聞き直しで 'processing' を観測し、バナーが出る。
+      await screen.findByText('返信をバックグラウンドで処理中…');
+
+      // 以降は毎回失敗し、バックオフ ([1s, 2s, 4s, 8s, 8s] = 最大23秒) を
+      // 使い切って諦める。qfps Opus レビュー指摘: give-up 自体が既に約23秒かかる
+      // ため、直後の findByText/it のタイムアウト余裕が薄いとCI/並列worktreeの
+      // 負荷下でフレークしうる — 26s/30s から 28s/32s へ広げておく。
+      expect(
+        await screen.findByText(
+          '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。',
+          {},
+          { timeout: 28_000 },
+        ),
+      ).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+      });
+      // qfps の修正が無いと、このバナーとメッセージバブルは上の失敗表示と同時に
+      // 凍りついたまま残り続ける (どちらも backgroundTurnStatus.state===
+      // 'processing' 直結)。
+      expect(
+        screen.queryByText('返信をバックグラウンドで処理中…'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText('まだ処理中です')).not.toBeInTheDocument();
+    },
+    32_000,
+  );
+
   it('keeps polling past an unrelated sessionId-less failed entry instead of stalling forever (bdboard-v3ag Opus レビュー指摘 blocker B1)', async () => {
     // B1 (b)(c): 追っている送信とは無関係な failed エントリ (sessionId 無し、または
     // 既に一度ACK済みの重複) を見たとき、修正前は effect が無条件 return して二度と
