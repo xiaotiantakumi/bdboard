@@ -2216,6 +2216,9 @@ describe('createApiRoutes', () => {
 
   // bdboard-wadg: bd/ に紐づかない worktree (feature/* 等) は HygieneIssue の形に乗らない
   // ため、/api/hygiene のチケット issues とは別に nonTicketHarnessWorktrees で返す。
+  // bdboard-cjsa: このレーンは生存セッション (cwd がその worktree の内側にある alive な
+  // セッション) がある worktree だけを対象にするので、ここでは cwd の合う生存セッションを
+  // 明示的に用意する。
   it('reports stale harness for non-ticket (feature/*) worktrees separately from issues', async () => {
     const { cache } = inFlightCache();
     const getProjectMainBranch = vi.fn(async () => 'master');
@@ -2241,11 +2244,16 @@ describe('createApiRoutes', () => {
         baseRef: `origin/${options?.mainBranch ?? 'main'}`,
       }),
     };
+    const session = makeSession({
+      cwd: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+      alive: true,
+    });
     const app = createApiRoutes(
       createDeps({
         cache,
         worktreeScanner: scanWithFeatureWorktree,
         getProjectMainBranch,
+        sessions: () => [session],
       }),
     );
 
@@ -2294,6 +2302,59 @@ describe('createApiRoutes', () => {
     const body = await (await app.request('/api/hygiene')).json();
 
     expect(body.nonTicketHarnessWorktrees).toEqual([]);
+  });
+
+  // bdboard-cjsa 本題: 生存セッションのゲーティング。セッションが無い/死んでいる/cwd が
+  // 別の worktree を指している場合は、放棄済みとみなして警告からもコミット遅れ計測からも
+  // 除外する。
+  it('omits a non-ticket worktree with no live session, and never measures it', async () => {
+    const { cache } = inFlightCache();
+    const base = inFlightScanner(IN_FLIGHT_FILES);
+    const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
+      commitsBehind: 63,
+      baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+    }));
+    const scanWithFeatureWorktree: WorktreeScanner = {
+      ...base,
+      scan: async (rootPath) => {
+        const snapshot = await base.scan(rootPath);
+        return {
+          ...snapshot,
+          worktrees: [
+            ...snapshot.worktrees,
+            {
+              path: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+              branch: 'feature/mac-slow-diagnosis-7ddee1',
+              isMain: false,
+            },
+          ],
+        };
+      },
+      countHarnessCommitsBehindDefaultBranch,
+    };
+    const deadSession = makeSession({
+      cwd: '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+      alive: false,
+    });
+    const elsewhereSession = makeSession({
+      cwd: '/projects/a/.claude/worktrees/some-other',
+      alive: true,
+    });
+    const app = createApiRoutes(
+      createDeps({
+        cache,
+        worktreeScanner: scanWithFeatureWorktree,
+        sessions: () => [deadSession, elsewhereSession],
+      }),
+    );
+
+    const body = await (await app.request('/api/hygiene')).json();
+
+    expect(body.nonTicketHarnessWorktrees).toEqual([]);
+    expect(countHarnessCommitsBehindDefaultBranch).not.toHaveBeenCalledWith(
+      '/projects/a/.claude/worktrees/mac-slow-diagnosis-7ddee1',
+      expect.anything(),
+    );
   });
 
   it('returns the in-flight overlaps of a single ticket for the detail panel', async () => {
