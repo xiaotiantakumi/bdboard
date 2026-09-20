@@ -16,12 +16,19 @@ export interface RespondOutcome {
    */
   readonly resolvedGateIds?: readonly string[];
   /**
-   * kind === 'gate' のときだけ設定される。この gate を resolve した結果、他に
-   * ブロックしている open な human gate が残っていなかったために human ラベルを
-   * 外した work ticket の ID 一覧(bdboard-giyt。bdboard-vy0h の逆方向)。他の
-   * human gate がまだ残っているチケットのラベルは外さない。読み取りに失敗した
-   * 場合は fail-soft でそのチケットをスキップする(gate 自体の close は既に成功
-   * しているため、この清掃だけを理由に respond() 全体を失敗させない)。
+   * kind === 'gate' または kind === 'ticket' のときに設定されうる。resolve した
+   * gate(kind === 'gate' なら回答対象の gate 自身、kind === 'ticket' なら
+   * resolvedGateIds で resolve した gate)がブロックしていた work ticket のうち、
+   * 他に何もブロックしていなかったために human ラベルを外した ID 一覧
+   * (bdboard-giyt: gate→ticket 方向。bdboard-ixx9: ticket→gate 方向、同じ gate が
+   * 複数チケットをブロックしていた場合の兄弟チケット。「回答対象自身を除いて」は
+   * kind === 'ticket' の場合のみ意味を持つ — gate は自分自身の dependents には
+   * 現れないため kind === 'gate' では自明)。他の open な human gate がまだ残って
+   * いる、または standalone な decision_question(bdboard-mw8y)を記録している
+   * チケットのラベルは外さない。読み取りに失敗した場合は fail-soft でそのチケットを
+   * スキップする(gate の close/resolve 自体は既に成功しているため、この清掃だけを
+   * 理由に respond() 全体を失敗させない)。resolvedGateIds と異なり、1件も外さな
+   * かった場合はこの項目自体を設定しない(空配列は返さない)。
    */
   readonly clearedHumanLabelTicketIds?: readonly string[];
   /**

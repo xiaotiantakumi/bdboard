@@ -987,6 +987,15 @@ describe('createBdCliHumanDecisions', () => {
         args: expectedRemoveHumanLabelArgs('/my/root', issueId),
         options: { timeoutMs: 30_000 },
       },
+      // bdboard-ixx9: after resolving its one blocking gate, respond() looks up any
+      // sibling tickets also blocked by that same gate. The fixture's --include-dependents
+      // response has no `dependents` field, so this resolves to an empty list and nothing
+      // further happens.
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowWithDependentsArgs('/my/root', 'bdboard-human-gate-1'),
+        options: { timeoutMs: 5_000 },
+      },
     ]);
     // timer gate, the already-closed human gate, and the non-blocking discovered-from
     // dependency must never be resolved.
@@ -998,6 +1007,195 @@ describe('createBdCliHumanDecisions', () => {
           (call.args.includes('bdboard-timer-gate') ||
             call.args.includes('bdboard-human-gate-closed') ||
             call.args.includes('bdboard-discovered-from')),
+      ),
+    ).toBe(false);
+  });
+
+  // bdboard-ixx9: bdboard-giyt (gate->ticket direction) added sibling-ticket cleanup when
+  // one gate blocks multiple tickets, but only wired it into the gate-side branch. These
+  // three tests cover the ticket-side (ticket->gate direction, bdboard-vy0h/PR#504) branch,
+  // which had no such cleanup at all before this fix.
+  // Stateful: tracks whether `bd gate resolve <gateId>` has already run, so that a
+  // re-`show` of the *answered* ticket (issueId) reflects the gate as closed afterward —
+  // matching real bd behavior. This is what lets a test actually exercise the
+  // `blockedTicketId !== issueId` self-exclusion guard in the ticket branch: without a
+  // stateful mock, issueId's own gate dependency would always read back as still 'open'
+  // and get skipped by the ordinary blocking-gate check regardless of that guard, masking
+  // a regression where the guard is removed and issueId's own label gets a redundant
+  // second `label remove` and incorrectly appears in clearedHumanLabelTicketIds.
+  function ticketRespondHandler(options: {
+    readonly issueId: string;
+    readonly gateId: string;
+    readonly gateDependents?: readonly Record<string, unknown>[];
+    readonly siblingShowResponses?: Record<string, Record<string, unknown>>;
+  }) {
+    let gateResolved = false;
+    return async (_command: string, args: readonly string[]) => {
+      if (args.includes('gate') && args.includes('resolve')) {
+        gateResolved = true;
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }
+      if (args.includes('show')) {
+        const showIndex = args.indexOf('show');
+        const shownId = args[showIndex + 1];
+        if (args.includes('--include-dependents')) {
+          return {
+            stdout: JSON.stringify([
+              { id: shownId, issue_type: 'gate', dependents: options.gateDependents ?? [] },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (shownId === options.issueId) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: shownId,
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: options.gateId,
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: gateResolved ? 'closed' : 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        const siblingItem = options.siblingShowResponses?.[shownId as string] ?? {
+          id: shownId,
+          issue_type: 'task',
+          dependencies: [],
+        };
+        return { stdout: JSON.stringify([siblingItem]), stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    };
+  }
+
+  it('clears a sibling ticket also blocked by the same gate after resolving it via the ticket (bdboard-ixx9)', async () => {
+    const issueId = 'bdboard-task-a';
+    const gateId = 'bdboard-shared-gate';
+    const siblingId = 'bdboard-task-b';
+    const { runner, calls } = createFakeRunner({
+      handler: ticketRespondHandler({
+        issueId,
+        gateId,
+        gateDependents: [
+          { id: issueId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+          { id: siblingId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({
+      kind: 'ticket',
+      closed: false,
+      resolvedGateIds: [gateId],
+      clearedHumanLabelTicketIds: [siblingId],
+    });
+    // bdboard-ixx9: asserts the `blockedTicketId !== issueId` self-exclusion guard is
+    // doing real work, not just satisfying a shape check. issueId's own label was already
+    // removed once (unconditionally, before the sibling lookup even runs); without the
+    // guard, issueId would also be re-processed as its own "sibling" (the gate's
+    // dependents list includes it) and, once the mock reports the just-resolved gate as
+    // closed, would get a redundant second `label remove` and wrongly appear in
+    // clearedHumanLabelTicketIds above.
+    const labelRemoveTargets = calls
+      .filter((call) => call.args.includes('label') && call.args.includes('remove'))
+      .map((call) => call.args[call.args.length - 2]);
+    expect(labelRemoveTargets).toEqual([issueId, siblingId]);
+  });
+
+  it('keeps a sibling ticket label when it is still blocked by another open human gate (bdboard-ixx9)', async () => {
+    const issueId = 'bdboard-task-a';
+    const gateId = 'bdboard-shared-gate';
+    const siblingId = 'bdboard-task-b';
+    const { runner, calls } = createFakeRunner({
+      handler: ticketRespondHandler({
+        issueId,
+        gateId,
+        gateDependents: [
+          { id: issueId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+          { id: siblingId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+        siblingShowResponses: {
+          [siblingId]: {
+            id: siblingId,
+            issue_type: 'task',
+            dependencies: [
+              {
+                id: 'bdboard-other-gate',
+                issue_type: 'gate',
+                await_type: 'human',
+                status: 'open',
+                dependency_type: 'blocks',
+              },
+            ],
+          },
+        },
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, resolvedGateIds: [gateId] });
+    expect(
+      calls.some(
+        (call) =>
+          call.args.includes('label') &&
+          call.args.includes('remove') &&
+          call.args.includes(siblingId),
+      ),
+    ).toBe(false);
+  });
+
+  // Combines with bdboard-mw8y: a sibling blocked by the same shared gate, but which also
+  // carries its own standalone decision_question, must not have that question's label
+  // stripped by someone else's answer to the shared gate.
+  it('keeps a sibling ticket label when it carries its own standalone decision_question (bdboard-ixx9 + bdboard-mw8y)', async () => {
+    const issueId = 'bdboard-task-a';
+    const gateId = 'bdboard-shared-gate';
+    const siblingId = 'bdboard-task-b';
+    const { runner, calls } = createFakeRunner({
+      handler: ticketRespondHandler({
+        issueId,
+        gateId,
+        gateDependents: [
+          { id: issueId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+          { id: siblingId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+        siblingShowResponses: {
+          [siblingId]: {
+            id: siblingId,
+            issue_type: 'task',
+            dependencies: [],
+            metadata: { decision_question: '別の質問です' },
+          },
+        },
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, resolvedGateIds: [gateId] });
+    expect(
+      calls.some(
+        (call) =>
+          call.args.includes('label') &&
+          call.args.includes('remove') &&
+          call.args.includes(siblingId),
       ),
     ).toBe(false);
   });
