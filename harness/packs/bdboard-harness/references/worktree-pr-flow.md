@@ -22,7 +22,7 @@
 bd comment <id> "検証ループ未定義: このプロジェクトに検証コマンドの宣言がありません (.claude/bdboard-harness.json を作成してください)"
 ```
 
-そのうえで **human ラベル＋human gate（SKILL.md 規律3 手順2–3）**を付け、回答を待たずに次の
+そのうえで **human ラベル＋human gate（SKILL.md 規律3 手順1–3）**を付け、回答を待たずに次の
 チケットへ回る。検証コマンドが無いまま「たぶん通る」で PR を開かない。
 
 コントラクトが持たない値（ブランチ命名・worktree 置き場・マージ方式）は従来どおり
@@ -347,7 +347,7 @@ failure-catalog.md の merge-slot-waiters-stale）: 2026-09-04 以来の残骸3�
 残すなら `bd update <slot-id> --metadata '{"waiters": [<残す分だけの配列>]}'` を提示するが、
 実行後に `bd show <slot-id> --json` で `holder` が意図せず消えていないか確認する、
 (4) いずれもチャットで人間の承認を得てから実行する（不可逆・共有状態への書き込みは SKILL.md
-規律3 手順6 の即時確認対象）。waiters の自動失効や acquire/release 時のエントリ除去など
+規律3 手順7 の即時確認対象）。waiters の自動失効や acquire/release 時のエントリ除去など
 bd 本体（上流ツール）側の改修が必要な部分は harness-upstream チケット（bdboard-c6wu）へ
 切り出し済み（layering.md「アップストリーム経路」）。
 

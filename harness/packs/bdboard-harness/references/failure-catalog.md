@@ -206,7 +206,7 @@
 
 ### dep-instead-of-gate — 確認待ちを `bd dep add` で表現しようとして既存の discovered-from 辺と衝突・失敗（bd 1.2.1 実測）
 - 原因: bd は同じ向きの2者間に複数タイプの辺を持てない
-- 防止: 確認待ちは `bd gate create --type=human`（別ノードへの blocks 辺なので既存来歴と衝突しない）（本則: SKILL.md 規律3 手順3）
+- 防止: 確認待ちは `bd gate create --type=human`（別ノードへの blocks 辺なので既存来歴と衝突しない）（本則: SKILL.md 規律3 手順1）
 - 出典: bdboard-axl
 
 ### bd-notes-backtick-shell-injection — bd ノート本文中のバッククォートがシェルにコマンド置換され、ノートが壊れ引数無し git checkout/restore が実行された（2026-09-05）
