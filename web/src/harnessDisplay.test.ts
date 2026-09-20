@@ -4,6 +4,7 @@ import type {
   ProjectHarnessPackStatusDto,
 } from './api';
 import {
+  buildHarnessContractTicketSuccessMessage,
   buildHarnessDriftMessage,
   buildHarnessHooksMessage,
   buildHarnessInjectSuccessMessage,
@@ -14,6 +15,7 @@ import {
   formatHarnessModelRoutes,
   formatHarnessPackStatusLabel,
   harnessContractNeedsAttention,
+  harnessContractNeedsTicket,
   harnessHooksNeedAttention,
   harnessInjectButtonLabel,
   harnessPackNeedsAction,
@@ -136,6 +138,62 @@ describe('harness contract display', () => {
     expect(formatHarnessContractLabel(contracts.ok!)).toBe('検証: npm run verify');
     expect(formatHarnessContractDetail(contracts.ok!)).toBe(
       '検証: npm run verify / PR 必須 / main: main',
+    );
+  });
+});
+
+describe('harnessContractNeedsTicket (bdboard-p5l.25)', () => {
+  const contracts: Record<string, ProjectHarnessContractDto> = {
+    ok: {
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'main',
+      models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
+    },
+    missing: { state: 'missing' },
+    invalid: { state: 'invalid', message: 'bad json' },
+    commandMissing: {
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    },
+    notApplicable: { state: 'not-applicable' },
+  };
+
+  it('is true for missing / invalid / command-missing — the states a ticket can fix', () => {
+    expect(harnessContractNeedsTicket(contracts.missing!)).toBe(true);
+    expect(harnessContractNeedsTicket(contracts.invalid!)).toBe(true);
+    expect(harnessContractNeedsTicket(contracts.commandMissing!)).toBe(true);
+  });
+
+  it('is false for an ok contract, even with expired-exclude warnings', () => {
+    expect(harnessContractNeedsTicket(contracts.ok!)).toBe(false);
+    expect(
+      harnessContractNeedsTicket({
+        ...(contracts.ok as Extract<ProjectHarnessContractDto, { state: 'ok' }>),
+        expiredExcludeCount: 3,
+      }),
+    ).toBe(false);
+  });
+
+  it('is false for an uninjected (not-applicable) project', () => {
+    expect(harnessContractNeedsTicket(contracts.notApplicable!)).toBe(false);
+  });
+});
+
+describe('buildHarnessContractTicketSuccessMessage (bdboard-p5l.25)', () => {
+  it('reports a fresh ticket when created is true', () => {
+    expect(buildHarnessContractTicketSuccessMessage('proj-42', true)).toBe(
+      'チケットを起票しました: proj-42',
+    );
+  });
+
+  it('reports the existing ticket (not "created again") when created is false', () => {
+    expect(buildHarnessContractTicketSuccessMessage('proj-42', false)).toBe(
+      '既存のチケットがあります: proj-42',
     );
   });
 });

@@ -88,6 +88,21 @@ export function harnessContractNeedsAttention(
   );
 }
 
+/**
+ * 検証コントラクト不足を直すチケットを起票できる状態か (bdboard-p5l.25)。
+ * `ok` は (期限切れの除外などで) 要注意扱いでも、そもそも直すべき契約ファイルの
+ * 不備が無いのでチケット起票の対象外。`not-applicable` (未注入) も対象外。
+ */
+export function harnessContractNeedsTicket(
+  contract: ProjectHarnessContractDto,
+): boolean {
+  return (
+    contract.state === 'missing' ||
+    contract.state === 'invalid' ||
+    contract.state === 'command-missing'
+  );
+}
+
 /** バッジ本体。短く保ち、詳細は formatHarnessContractDetail (ツールチップ) に回す。 */
 export function formatHarnessContractLabel(
   contract: ProjectHarnessContractDto,
@@ -208,4 +223,18 @@ export function buildHarnessHooksMessage(
   pack: ProjectHarnessPackStatusDto,
 ): string {
   return `${pack.name}: hook ${pack.missingHooks.length} 件が ${HARNESS_SETTINGS_PATH} に未登録です (再注入で解消)`;
+}
+
+/**
+ * 検証コントラクト不足を直すチケットを起票した後のフィードバック文言 (bdboard-p5l.25)。
+ * `created: false` は冪等性で既存チケットを見つけたケース — 「また作った」と
+ * 誤解されないよう文言を分ける。
+ */
+export function buildHarnessContractTicketSuccessMessage(
+  ticketId: string,
+  created: boolean,
+): string {
+  return created
+    ? `チケットを起票しました: ${ticketId}`
+    : `既存のチケットがあります: ${ticketId}`;
 }

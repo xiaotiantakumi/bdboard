@@ -940,6 +940,17 @@ async function main(): Promise<void> {
   // /api/hygiene (getProjectMainBranch) と harness routes の両方が使う。createApiRoutes より
   // 前で作る — 後ろで宣言するとクロージャが TDZ の前方参照になる (bdboard-pkr6.19)。
   const harnessContractReader = createFsHarnessContractReader();
+  // harness routes (ハーネス契約チケットの起票、bdboard-p5l.25) も同じリフレッシュ
+  // フックを使う。createApiRoutes 側の refreshProjectByRootPath と同じ関数を共有する
+  // ため、buildApiDeps 呼び出しより前に名前を出す。
+  const refreshProjectByRootPath = async (rootPath: string): Promise<void> => {
+    const projectId = cache
+      .listProjects()
+      .find((entry) => entry.project.rootPath === rootPath)?.project.id;
+    // キャッシュに無い rootPath は絞り込みようがないので、安全側に倒して
+    // 従来どおり全体を強制リフレッシュする。
+    await runRefresh(true, projectId === undefined ? undefined : [projectId]);
+  };
   const inner = createApiRoutes(
     buildApiDeps({
       cache,
@@ -948,14 +959,7 @@ async function main(): Promise<void> {
       now: () => new Date(),
       getStatus: () => status,
       refresh: () => runRefresh(true),
-      refreshProjectByRootPath: async (rootPath: string) => {
-        const projectId = cache
-          .listProjects()
-          .find((entry) => entry.project.rootPath === rootPath)?.project.id;
-        // キャッシュに無い rootPath は絞り込みようがないので、安全側に倒して
-        // 従来どおり全体を強制リフレッシュする。
-        await runRefresh(true, projectId === undefined ? undefined : [projectId]);
-      },
+      refreshProjectByRootPath,
       events,
       boardThresholdsConfigStore,
       hygieneThresholdsConfigStore,
@@ -1018,6 +1022,8 @@ async function main(): Promise<void> {
       injector: harnessInjector,
       contractReader: harnessContractReader,
       writeAccess,
+      issueWriter,
+      refreshProjectByRootPath,
     }),
   );
 

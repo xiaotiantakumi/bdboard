@@ -11,6 +11,7 @@ import {
   runBdCommand,
   runBdCommandForStdout,
   runBdTool,
+  runBdWriteCommandForStdout,
 } from './bd-cli-tool-runner.js';
 import { withLockContentionRetry } from './bd-retry.js';
 
@@ -168,6 +169,76 @@ async function readCurrentDescription(
     (data) => data.description ?? '',
   );
 }
+
+// findOpenTicketByLabel の CAS 不要読み取り用。`bd list --label` の既定挙動が
+// closed を除外するので、ここでは status を見ない (bd 側のフィルタに任せる)。
+const bdListLabelItemSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+});
+
+async function readOpenTicketByLabel(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  timeoutMs: number,
+  rootPath: string,
+  label: string,
+): Promise<{ readonly id: string; readonly title: string } | null> {
+  const stdout = await runBdCommandForStdout(
+    commandRunner,
+    bdPath,
+    timeoutMs,
+    rootPath,
+    ['--readonly', '-C', rootPath, 'list', '--label', label, '--json', '--limit', '0', '--no-pager'],
+    // errorSubject は BdError.projectId に載る (throwBdToolFailure 参照)。ここでの
+    // 「対象」は label ではなく rootPath — 他の呼び出し箇所 (reopen の CAS 読み取り等)
+    // と揃え、失敗ログから実際に失敗したプロジェクトを追えるようにする (レビュー指摘)。
+    rootPath,
+  );
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new BdError(
+      'unknown',
+      rootPath,
+      `failed to parse bd list output while checking for an existing ${label} ticket`,
+    );
+  }
+
+  // 配列でない出力は「該当なし」ではなく「bd の出力形式が想定と違う」ので、null を
+  // 返さず即座に投げる。ここを null にすると、冪等性チェックが「既存チケットなし」と
+  // 誤判定してチケットを重複作成してしまう — このチェック自体の存在理由を壊す
+  // (レビュー指摘の blocker 相当)。空配列 (該当なし) だけを null として扱う。
+  if (!Array.isArray(parsed)) {
+    throw new BdError(
+      'unknown',
+      rootPath,
+      `unexpected bd list output shape while checking for an existing ${label} ticket`,
+    );
+  }
+  if (parsed.length === 0) {
+    return null;
+  }
+
+  const result = bdListLabelItemSchema.safeParse(parsed[0]);
+  if (!result.success) {
+    throw new BdError(
+      'unknown',
+      rootPath,
+      `bd list output missing id/title while checking for an existing ${label} ticket`,
+    );
+  }
+
+  return { id: result.data.id, title: result.data.title };
+}
+
+// create の結果パース用。bd create --json は成功時オブジェクト1件を返す
+// (実測: bd 1.2.1)。
+const bdCreateResultSchema = z.object({
+  id: z.string(),
+});
 
 export interface BdCliIssueWriterOptions {
   readonly bdPath?: string;
@@ -499,6 +570,72 @@ export function createBdCliIssueWriter(
         { id: ticketId, description },
         ticketId,
       );
+    },
+
+    // bd-tool-catalog の bd_create はチャットエージェント向けの制限 (labels 無し等)
+    // を持つため経由しない。bdboard 自身がサーバー側で固定文言から組み立てた
+    // title/description だけを渡す用途 (ハーネス契約チケットの起票、bdboard-p5l.25)
+    // の直叩き専用。
+    async findOpenTicketByLabel(
+      rootPath: string,
+      label: string,
+    ): Promise<{ readonly id: string; readonly title: string } | null> {
+      return readOpenTicketByLabel(commandRunner, bdPath, timeoutMs, rootPath, label);
+    },
+
+    async create(
+      rootPath: string,
+      input: {
+        readonly title: string;
+        readonly description: string;
+        readonly type: string;
+        readonly priority: number;
+        readonly labels: readonly string[];
+      },
+    ): Promise<{ readonly id: string }> {
+      const args: string[] = [
+        '-C',
+        rootPath,
+        'create',
+        '--title',
+        input.title,
+        '--type',
+        input.type,
+        '--priority',
+        String(input.priority),
+        '--json',
+      ];
+      if (input.labels.length > 0) {
+        args.push('--labels', input.labels.join(','));
+      }
+      // 説明は常に非空 (呼び出し元はサーバー側で固定テンプレートを組み立てる) 前提。
+      // --allow-empty-description の分岐は持たない。
+      args.push('--stdin');
+
+      const stdout = await runBdWriteCommandForStdout(
+        commandRunner,
+        bdPath,
+        timeoutMs,
+        rootPath,
+        args,
+        rootPath,
+        input.description,
+      );
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(stdout) as unknown;
+      } catch {
+        throw new BdError('unknown', rootPath, 'failed to parse bd create output');
+      }
+
+      const item = Array.isArray(parsed) ? parsed[0] : parsed;
+      const result = bdCreateResultSchema.safeParse(item);
+      if (!result.success) {
+        throw new BdError('unknown', rootPath, 'bd create output missing id');
+      }
+
+      return { id: result.data.id };
     },
   };
 }

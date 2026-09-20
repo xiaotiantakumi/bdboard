@@ -1929,3 +1929,22 @@ export function postProjectHarnessInject(
     },
   );
 }
+
+/**
+ * 検証コントラクト不足 (missing/invalid/command-missing) を直すチケットの起票結果
+ * (bdboard-p5l.25)。`created: false` は「既存の未クローズチケットを見つけたので
+ * 作らなかった」(冪等性)。
+ */
+export interface HarnessContractTicketResultDto {
+  ticketId: string;
+  created: boolean;
+}
+
+export function postProjectHarnessContractTicket(
+  projectId: string,
+): Promise<HarnessContractTicketResultDto> {
+  return fetchJson<HarnessContractTicketResultDto>(
+    `/api/projects/${encodeURIComponent(projectId)}/harness/contract-ticket`,
+    { method: 'POST' },
+  );
+}

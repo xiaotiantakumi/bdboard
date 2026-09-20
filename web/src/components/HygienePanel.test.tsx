@@ -49,6 +49,7 @@ vi.mock('../api', async (importOriginal) => {
     fetchMergeSlotStatus: vi.fn(),
     fetchAllHarnessStatus: vi.fn(),
     postProjectHarnessInject: vi.fn(),
+    postProjectHarnessContractTicket: vi.fn(),
     postTicketQuickAction: vi.fn(),
     postTicketQuickActionUndo: vi.fn(),
   };
@@ -72,6 +73,7 @@ import {
   fetchHygiene,
   fetchLeaseHealth,
   fetchMergeSlotStatus,
+  postProjectHarnessContractTicket,
   postProjectHarnessInject,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -83,6 +85,9 @@ const fetchLeaseHealthMock = vi.mocked(fetchLeaseHealth);
 const fetchMergeSlotStatusMock = vi.mocked(fetchMergeSlotStatus);
 const fetchAllHarnessStatusMock = vi.mocked(fetchAllHarnessStatus);
 const postProjectHarnessInjectMock = vi.mocked(postProjectHarnessInject);
+const postProjectHarnessContractTicketMock = vi.mocked(
+  postProjectHarnessContractTicket,
+);
 const postTicketQuickActionMock = vi.mocked(postTicketQuickAction);
 const postTicketQuickActionUndoMock = vi.mocked(postTicketQuickActionUndo);
 const copyTextToClipboardMock = vi.mocked(copyTextToClipboard);
@@ -2268,5 +2273,104 @@ describe('HygienePanel repair actions', () => {
 
     expect(await screen.findByText('警告はありません')).toBeInTheDocument();
     expect(screen.queryByText('検証コントラクト')).not.toBeInTheDocument();
+  });
+
+  it('files a harness-contract ticket for a broken contract and shows the created-ticket feedback', async () => {
+    const user = userEvent.setup();
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: { state: 'missing' },
+          packs: [
+            {
+              name: 'bdboard-harness',
+              availableVersion: '0.2.0',
+              installedVersion: '0.2.0',
+              drift: false,
+              hooksState: 'none-declared',
+              missingHooks: [],
+            },
+          ],
+        },
+      ],
+    });
+    postProjectHarnessContractTicketMock.mockResolvedValue({
+      ticketId: 'proj-a-42',
+      created: true,
+    });
+
+    const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('検証ループ未定義')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'チケットを起票' }));
+    await user.click(screen.getByRole('button', { name: '確定: チケットを起票' }));
+
+    await waitFor(() => {
+      expect(postProjectHarnessContractTicketMock).toHaveBeenCalledWith(
+        '/tmp/proj-a',
+      );
+    });
+
+    const repairStatus = container.querySelector('.hygiene-panel-repair-status');
+    expect(repairStatus).toHaveTextContent('チケットを起票しました: proj-a-42');
+  });
+
+  it('shows the idempotent (existing-ticket) message, not a "created" message, when the label already had an open ticket', async () => {
+    const user = userEvent.setup();
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        { projectId: '/tmp/proj-a', contract: { state: 'invalid', message: 'bad json' }, packs: [] },
+      ],
+    });
+    postProjectHarnessContractTicketMock.mockResolvedValue({
+      ticketId: 'proj-a-7',
+      created: false,
+    });
+
+    const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('検証コントラクト不正')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'チケットを起票' }));
+    await user.click(screen.getByRole('button', { name: '確定: チケットを起票' }));
+
+    const repairStatus = await waitFor(() => {
+      const el = container.querySelector('.hygiene-panel-repair-status');
+      expect(el).toHaveTextContent('既存のチケットがあります: proj-a-7');
+      return el;
+    });
+    expect(repairStatus).not.toHaveTextContent('チケットを起票しました');
+  });
+
+  it('does not offer a ticket button for an ok contract (nothing to fix)', async () => {
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        {
+          projectId: '/tmp/proj-a',
+          contract: {
+            state: 'ok',
+            verify: 'npm run verify',
+            prFlow: 'pr',
+            mainBranch: 'main',
+            models: null,
+            expiredExcludeCount: 1,
+            modelExclusionWarnings: [],
+          },
+          packs: [],
+        },
+      ],
+    });
+
+    renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    // ok は (期限切れ除外で) 要注意バッジ付きで出るが、直すべきファイル不備が無いので
+    // チケット起票ボタンは出ない (harnessContractNeedsTicket が false)。
+    expect(await screen.findByText('検証コントラクト')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'チケットを起票' }),
+    ).not.toBeInTheDocument();
   });
 });

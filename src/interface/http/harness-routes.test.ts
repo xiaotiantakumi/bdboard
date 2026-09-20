@@ -6,6 +6,8 @@ import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, create
 import type { HarnessContractReaderPort } from '../../application/ports/harness-contract-reader.js';
 import type { HarnessInjectorPort } from '../../application/ports/harness-injector.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
+import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
+import { BdError } from '../../application/ports/issue-repository.js';
 import type { Project } from '../../domain/project.js';
 import { createHarnessRoutes } from './harness-routes.js';
 
@@ -90,6 +92,8 @@ function createHarnessApp(options?: {
   readonly injector?: HarnessInjectorPort;
   readonly cache?: BoardCache;
   readonly contractReader?: HarnessContractReaderPort;
+  readonly issueWriter?: IssueWriterPort;
+  readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
 }): Hono {
   const cache = options?.cache ?? createFakeBoardCache();
   const registry: PackRegistryPort =
@@ -139,6 +143,8 @@ function createHarnessApp(options?: {
     injector,
     contractReader: options?.contractReader ?? createFakeContractReader(),
     now: () => new Date('2026-08-16T10:00:00.000Z'),
+    issueWriter: options?.issueWriter,
+    refreshProjectByRootPath: options?.refreshProjectByRootPath,
   });
 }
 
@@ -612,6 +618,283 @@ describe('createHarnessRoutes', () => {
     await expect(response.json()).resolves.toMatchObject({
       error: 'injection failed',
       detail: 'disk full',
+    });
+  });
+});
+
+describe('POST /api/projects/*/harness/contract-ticket', () => {
+  function createFakeIssueWriter(overrides?: {
+    readonly findOpenTicketByLabel?: IssueWriterPort['findOpenTicketByLabel'];
+    readonly create?: IssueWriterPort['create'];
+  }): IssueWriterPort {
+    return {
+      claim: vi.fn(async () => {}),
+      close: vi.fn(async () => {}),
+      defer: vi.fn(async () => {}),
+      setPriority: vi.fn(async () => {}),
+      addComment: vi.fn(async () => {}),
+      reopen: vi.fn(async () => {}),
+      unclaim: vi.fn(async () => {}),
+      undefer: vi.fn(async () => {}),
+      undoPriority: vi.fn(async () => {}),
+      updateTitle: vi.fn(async () => {}),
+      updateDescription: vi.fn(async () => {}),
+      addLabel: vi.fn(async () => {}),
+      removeLabel: vi.fn(async () => {}),
+      findOpenTicketByLabel:
+        overrides?.findOpenTicketByLabel ?? vi.fn(async () => null),
+      create: overrides?.create ?? vi.fn(async () => ({ id: 'proj-a-1' })),
+    };
+  }
+
+  /** manifest に pack はあるがコントラクトファイルが無い = 'missing' 状態のプロジェクト。 */
+  function setUpMissingContractProject(cache: BoardCache): {
+    readonly proj: Project;
+    readonly injector: HarnessInjectorPort;
+  } {
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({
+      project: proj,
+      tickets: [],
+      fingerprint: 'fp',
+      pendingDecisions: [],
+      fetchedAt: new Date('2026-08-16T00:00:00Z'),
+    });
+    const injector: HarnessInjectorPort = {
+      readSettings: vi.fn(async () => null),
+      readManifest: vi.fn(async () => ({
+        packs: [
+          {
+            name: 'bdboard-harness',
+            version: '0.1.0',
+            injectedAt: '2026-08-16T00:00:00.000Z',
+            files: [],
+          },
+        ],
+      })),
+      injectPack: vi.fn(),
+    };
+    return { proj, injector };
+  }
+
+  it('creates a ticket for a missing contract and refreshes the project cache', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const issueWriter = createFakeIssueWriter({
+      findOpenTicketByLabel: vi.fn(async () => null),
+      create: vi.fn(async () => ({ id: 'proj-a-42' })),
+    });
+    const refreshProjectByRootPath = vi.fn(async () => {});
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+      issueWriter,
+      refreshProjectByRootPath,
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ticketId: 'proj-a-42',
+      created: true,
+    });
+    expect(issueWriter.findOpenTicketByLabel).toHaveBeenCalledWith(
+      proj.rootPath,
+      'harness-contract',
+    );
+    expect(issueWriter.create).toHaveBeenCalledTimes(1);
+    const [rootPath, input] = (issueWriter.create as ReturnType<typeof vi.fn>)
+      .mock.calls[0] as [string, { readonly labels: readonly string[] }];
+    expect(rootPath).toBe(proj.rootPath);
+    expect(input.labels).toEqual(['harness-contract']);
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
+  });
+
+  it('does not fail the request when the post-create cache refresh rejects (fail-open)', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const issueWriter = createFakeIssueWriter({
+      findOpenTicketByLabel: vi.fn(async () => null),
+      create: vi.fn(async () => ({ id: 'proj-a-1' })),
+    });
+    const refreshProjectByRootPath = vi.fn(async () => {
+      throw new Error('cache refresh exploded');
+    });
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+      issueWriter,
+      refreshProjectByRootPath,
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    // A failed best-effort refresh must not turn a successful ticket creation
+    // into an error response — the ticket really was created.
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ticketId: 'proj-a-1',
+      created: true,
+    });
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('is idempotent: returns the existing ticket without creating a duplicate', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const issueWriter = createFakeIssueWriter({
+      findOpenTicketByLabel: vi.fn(async () => ({
+        id: 'proj-a-7',
+        title: 'existing ticket',
+      })),
+    });
+    const refreshProjectByRootPath = vi.fn(async () => {});
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+      issueWriter,
+      refreshProjectByRootPath,
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ticketId: 'proj-a-7',
+      created: false,
+    });
+    expect(issueWriter.create).not.toHaveBeenCalled();
+    // 冪等パス (created: false) はキャッシュを汚していないので再フェッチ不要。
+    expect(refreshProjectByRootPath).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for an unknown project', async () => {
+    const issueWriter = createFakeIssueWriter();
+    const app = createHarnessApp({ issueWriter });
+    const response = await app.request(
+      '/api/projects/missing-project/harness/contract-ticket',
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(404);
+  });
+
+  it('returns 501 when no issueWriter is configured', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+    expect(response.status).toBe(501);
+  });
+
+  it('returns 409 when the contract does not need a ticket (not-applicable)', async () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/tmp/proj-a', '/tmp/proj-a');
+    cache.putProject({
+      project: proj,
+      tickets: [],
+      fingerprint: 'fp',
+      pendingDecisions: [],
+      fetchedAt: new Date('2026-08-16T00:00:00Z'),
+    });
+    const issueWriter = createFakeIssueWriter();
+
+    // 未注入 (manifest.packs === []) なので既定の contractReader/injector のまま 'not-applicable'。
+    const app = createHarnessApp({ cache, issueWriter });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      reason: 'not-applicable',
+    });
+    expect(issueWriter.create).not.toHaveBeenCalled();
+  });
+
+  it('returns 422 when bd is not initialized for the project', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const issueWriter = createFakeIssueWriter({
+      findOpenTicketByLabel: vi.fn(async () => {
+        throw new BdError('not-a-beads-project', proj.rootPath, 'no .beads directory');
+      }),
+    });
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+      issueWriter,
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({
+      error: 'bd not initialized for this project',
+      detail: 'no .beads directory',
+    });
+  });
+
+  it('returns 502 for an unexpected bd failure', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const issueWriter = createFakeIssueWriter({
+      findOpenTicketByLabel: vi.fn(async () => {
+        throw new Error('bd binary crashed');
+      }),
+    });
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+      issueWriter,
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      detail: 'bd binary crashed',
     });
   });
 });

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { parseJsonBody } from './request-body.js';
+import { respondBdError } from './bd-error-response.js';
 import { getAllProjectsHarnessStatus } from '../../application/harness/get-all-projects-harness-status.js';
 import {
   getProjectHarnessStatus,
@@ -8,9 +9,12 @@ import {
   resolveProjectContractState,
 } from '../../application/harness/get-project-harness-status.js';
 import { injectHarnessPack } from '../../application/harness/inject-harness-pack.js';
+import { fileHarnessContractTicket } from '../../application/harness/file-harness-contract-ticket.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { HarnessContractReaderPort } from '../../application/ports/harness-contract-reader.js';
 import type { HarnessInjectorPort } from '../../application/ports/harness-injector.js';
+import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
+import { BdError } from '../../application/ports/issue-repository.js';
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
 import type { ContractState } from '../../domain/harness-contract.js';
 import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
@@ -26,6 +30,18 @@ export interface HarnessRoutesDeps {
   readonly contractReader: HarnessContractReaderPort;
   readonly now?: () => Date;
   readonly writeAccess?: WriteGuardDeps;
+  /**
+   * 検証コントラクト不足のチケット起票 (`POST .../harness/contract-ticket`,
+   * bdboard-p5l.25) にだけ使う。`create`/`findOpenTicketByLabel` を持たない
+   * (undefined の) 実装が渡された場合、そのルートは 501 を返す。
+   */
+  readonly issueWriter?: IssueWriterPort;
+  /**
+   * チケット作成後にそのプロジェクトのキャッシュを強制リフレッシュするフック。
+   * routes.ts の refreshAfterWrite と同じ目的・同じ fail-open 方針 (失敗しても
+   * 書き込み自体は成功扱い) — 未指定ならリフレッシュしない。
+   */
+  readonly refreshProjectByRootPath?: (rootPath: string) => Promise<void>;
 }
 
 const injectBodySchema = z.object({
@@ -44,6 +60,12 @@ function extractProjectIdFromHarnessPath(reqPath: string): string | undefined {
   const prefix = '/api/projects/';
   const harnessSuffix = '/harness';
   const injectSuffix = '/harness/inject';
+  const contractTicketSuffix = '/harness/contract-ticket';
+
+  if (reqPath.endsWith(contractTicketSuffix)) {
+    const encoded = reqPath.slice(prefix.length, reqPath.length - contractTicketSuffix.length);
+    return encoded.length > 0 ? decodeProjectIdParam(encoded) : undefined;
+  }
 
   if (reqPath.endsWith(injectSuffix)) {
     const encoded = reqPath.slice(prefix.length, reqPath.length - injectSuffix.length);
@@ -223,6 +245,76 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
       settingsJson,
     );
     return c.json(toHarnessStatusJson(status));
+  });
+
+  app.post('/api/projects/*/harness/contract-ticket', async (c) => {
+    const projectId = extractProjectIdFromHarnessPath(c.req.path);
+    if (projectId === undefined) {
+      return c.notFound();
+    }
+
+    const cached = deps.cache.getProject(projectId);
+    if (cached === undefined) {
+      return c.json({ error: 'project not found' }, 404);
+    }
+
+    // create/findOpenTicketByLabel は IssueWriterPort 上 optional (issue-writer.ts の
+    // doc コメント参照)。narrow してからユースケースへ渡す — 呼び出し先で
+    // undefined チェックを繰り返させない。
+    const { create, findOpenTicketByLabel } = deps.issueWriter ?? {};
+    if (create === undefined || findOpenTicketByLabel === undefined) {
+      return c.json({ error: 'ticket creation not supported' }, 501);
+    }
+
+    const rootPath = cached.project.rootPath;
+    const status = await readProjectHarnessStatus(deps, rootPath, now());
+
+    // 'missing' のときだけ、プロジェクトルートの package.json から verify 候補を
+    // 推測する (他の状態は ContractState 自身が必要な情報 (script/verify/message) を
+    // 持っている)。
+    const rootPackageScripts =
+      status.contract.state === 'missing'
+        ? await deps.contractReader.readPackageScripts(rootPath)
+        : null;
+
+    try {
+      const result = await fileHarnessContractTicket(
+        { create, findOpenTicketByLabel },
+        rootPath,
+        status.contract,
+        rootPackageScripts,
+      );
+
+      if (!result.ok) {
+        return c.json(
+          { error: 'contract does not need a ticket', reason: result.reason },
+          409,
+        );
+      }
+
+      if (result.created && deps.refreshProjectByRootPath !== undefined) {
+        try {
+          await deps.refreshProjectByRootPath(rootPath);
+        } catch (error: unknown) {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(`post-write refresh failed (rootPath=${rootPath}): ${detail}`);
+        }
+      }
+
+      return c.json({ ticketId: result.ticketId, created: result.created });
+    } catch (error: unknown) {
+      if (error instanceof BdError && error.kind === 'not-a-beads-project') {
+        // 設計メモ通り: bd 未導入のプロジェクトではボタンを出さない想定だが、
+        // discovery が .beads/ を前提にプロジェクトを列挙するため実運用では
+        // ほぼ起きない (bdboard-p5l.25 参照)。万一のズレ (削除競合等) はここで
+        // 502 に潰さず、明確な理由を返す。
+        return c.json(
+          { error: 'bd not initialized for this project', detail: error.detail },
+          422,
+        );
+      }
+      return respondBdError(c, 'failed to file harness contract ticket', error);
+    }
   });
 
   return app;
