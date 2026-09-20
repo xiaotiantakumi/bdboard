@@ -15,7 +15,7 @@
 //   (a) baseline に無いファイルが既定上限超               → fail
 //   (b) baseline のファイルが自分の limit 超               → fail
 //   (c) baseline にあるのに既定上限以下 / ファイルが無い   → fail (baseline から外す)
-//   (d) baseline の limit が現行行数より 200 行以上大きい  → warn (ラチェットを締める余地)
+//   (d) baseline の limit が現行行数より ratchetWarningThreshold 行以上大きい → warn (ラチェットを締める余地、既定 400)
 //
 // exit code: 0 = 問題なし / 1 = (a)(b)(c) のいずれかを検知 / 2 = 検査そのものが実行不能
 // (git 呼び出し失敗・baseline JSON の形式不正など)。
@@ -259,7 +259,15 @@ export function evaluate(records, config) {
     }
   }
 
-  return { newOverLimit, overOwnLimit, shrunkBelowDefault, missingFiles, ratchetWarnings, ok };
+  return {
+    newOverLimit,
+    overOwnLimit,
+    shrunkBelowDefault,
+    missingFiles,
+    ratchetWarnings,
+    ratchetWarningThreshold,
+    ok,
+  };
 }
 
 // ---- 表示 ----
@@ -269,8 +277,15 @@ function formatFinding(prefix, lines) {
 }
 
 export function formatResult(evaluation, { report = false } = {}) {
-  const { newOverLimit, overOwnLimit, shrunkBelowDefault, missingFiles, ratchetWarnings, ok } =
-    evaluation;
+  const {
+    newOverLimit,
+    overOwnLimit,
+    shrunkBelowDefault,
+    missingFiles,
+    ratchetWarnings,
+    ratchetWarningThreshold,
+    ok,
+  } = evaluation;
   const parts = [];
   const total =
     newOverLimit.length + overOwnLimit.length + shrunkBelowDefault.length + missingFiles.length;
@@ -340,7 +355,7 @@ export function formatResult(evaluation, { report = false } = {}) {
 
   if (ratchetWarnings.length > 0) {
     parts.push(
-      `file-size: (d) 警告 — baseline の limit が現行行数より 200 行以上大きく、ラチェットを締める余地があります (${ratchetWarnings.length} 件):`,
+      `file-size: (d) 警告 — baseline の limit が現行行数より ${ratchetWarningThreshold} 行以上大きく、ラチェットを締める余地があります (${ratchetWarnings.length} 件、非fatal):`,
     );
     parts.push(
       formatFinding(

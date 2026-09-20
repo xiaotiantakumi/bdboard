@@ -92,8 +92,12 @@ npm run check:boundaries # dependency-cruiser (architecture layering)
 既定上限・baseline (登録済みファイルの個別上限と理由) は両方とも
 [`scripts/file-size-baseline.json`](../scripts/file-size-baseline.json) に置き、スクリプト本体
 (`scripts/check-file-size.mjs`) には数値を埋め込まない。並行 PR がファイルを少し育てても、
-baseline の limit は現行行数を 100 行単位で切り上げた値にしてあるので、通常の小修正では
-baseline を触らずに通る。
+baseline の limit は現行行数に 200 行の余白を足した上で 100 行単位で切り上げた値にしてある
+(既定 100 行の余白は、行数が多い方から見て高頻度に更新されるファイルでは1コミットの純増分
+(観測ベースで数十〜100行超) より小さく、頻繁な (b) 再発を招くと判明したため — bdboard-jygp の
+レビューで判明。以後 baseline を新規登録・調整する際もこの200行余白を踏襲すること)。
+`ratchetWarningThreshold` も同じ理由で既定 400 にしてあり、上記の余白を確保した直後の baseline が
+(d) 警告を出さない程度の余裕を持たせてある。
 
 判定は4種類:
 
@@ -102,7 +106,7 @@ baseline を触らずに通る。
 | (a) | baseline に無いファイルが既定上限 (非テスト 500 行 / テスト `*.test.*`・`*.spec.*` 1500 行) 超 | fail — 分割するか、理由を添えて baseline に登録する |
 | (b) | baseline にあるファイルが自分の `limit` 超 | fail — 分割するか、`limit` と `reason` を書き換える |
 | (c) | baseline にあるのに既定上限以下まで縮んだ、または対象ファイルが見つからない (削除・リネーム・対象ディレクトリ外への移動) | fail — baseline の `entries` から外す |
-| (d) | baseline の `limit` が現行行数より `ratchetWarningThreshold` (既定 200) 行以上大きい | warn のみ (exit には影響しない) — ラチェットを締める余地がある通知 |
+| (d) | baseline の `limit` が現行行数より `ratchetWarningThreshold` (既定 400) 行以上大きい | warn のみ (exit には影響しない) — ラチェットを締める余地がある通知 |
 
 **baseline エントリの書き方**: `reason` は1ファイルずつ中身を見て書く。「ChatPanel コンポーネント
 1関数で約3665行 (449〜4114行目)。分割判断チケット bdboard-78ve は見送りで close 済み」のように、

@@ -3,221 +3,221 @@
     "nonTest": 500,
     "test": 1500
   },
-  "ratchetWarningThreshold": 200,
+  "ratchetWarningThreshold": 400,
   "entries": [
     {
       "path": "web/src/index.css",
-      "limit": 8500,
+      "limit": 8700,
       "reason": "単一グローバルスタイルシート。セレクタ約1130個、コンポーネント単位の分割は無い。分割は bdboard-jygp の調査で優先候補の1つに挙がったが実施は別チケット・時期はユーザー判断待ち。"
     },
     {
       "path": "web/src/components/ChatPanel.tsx",
-      "limit": 4200,
+      "limit": 4400,
       "reason": "ChatPanel コンポーネント1関数で約3665行 (449〜4114行目)。分割判断チケット bdboard-78ve はリスクとコストを検討した上で見送りとして close 済み。"
     },
     {
       "path": "web/src/components/TicketDetailPanel.tsx",
-      "limit": 2800,
+      "limit": 3000,
       "reason": "TicketDetailPanel コンポーネント1関数で約2369行 (374〜2743行目)。チケット詳細の全セクション (メタ情報・依存関係・コメント・実行履歴等) を1コンポーネントに集約。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
     },
     {
       "path": "src/interface/http/routes.ts",
-      "limit": 2000,
+      "limit": 2200,
       "reason": "Hono ルート定義39本 (app.get/post/put/delete/patch) を1ファイルに集約。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
     },
     {
       "path": "web/src/api.ts",
-      "limit": 2000,
+      "limit": 2200,
       "reason": "サーバーAPIクライアント。エンドポイントごとの fetch 関数が80個。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
     },
     {
       "path": "src/main.ts",
-      "limit": 1500,
+      "limit": 1700,
       "reason": "アプリケーションのコンポジションルート。DB・git・bd CLI・ランナー等の全アダプタの生成と配線をここで行うため、機能追加のたびに配線コードが増える構造。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/SettingsPanel.tsx",
-      "limit": 1400,
+      "limit": 1600,
       "reason": "SettingsPanel コンポーネント1関数で約1042行 (275〜1317行目)。スキャンルート・しきい値・衛生設定など複数カテゴリの設定UIを1コンポーネントに集約。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/HygienePanel.tsx",
-      "limit": 1300,
+      "limit": 1500,
       "reason": "HygienePanel コンポーネント1関数で約943行 (348〜1291行目)。衛生チェックの複数カテゴリ (stale lease・重複worktree等) の表示とone-click修復操作を1コンポーネントに集約。分割検討・チケット未起票。"
     },
     {
       "path": "src/interface/http/dto.ts",
-      "limit": 1300,
+      "limit": 1500,
       "reason": "ドメイン型→DTO変換関数が32個。ticket/board/session/activity/throughput/hygiene 等エンティティ種別ごとの変換をまとめて1ファイルに集約。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/App.tsx",
-      "limit": 1200,
+      "limit": 1400,
       "reason": "App コンポーネント1関数で約1102行 (98〜1200行目)。ボード全体の状態管理・イベント配線をトップレベルコンポーネントに集約。分割検討・チケット未起票。"
     },
     {
       "path": "src/domain/hygiene.ts",
-      "limit": 1200,
+      "limit": 1400,
       "reason": "衛生チェックのドメインロジック。checkHygiene を頂点に export 関数7個、stale lease・重複worktree・close証跡欠如など検査カテゴリごとのロジックが並ぶ。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/bd/bd-cli-human-decisions.ts",
-      "limit": 1100,
+      "limit": 1300,
       "reason": "createBdCliHumanDecisions 1関数 (799〜1027行目) が bd CLI 経由の human gate/decision 操作全種を実装するアダプタ。分割検討・チケット未起票。"
     },
     {
       "path": "src/interface/http/chat-routes.ts",
-      "limit": 1100,
+      "limit": 1300,
       "reason": "チャット関連 Hono ルート12本 (availability/agents/messages/turn-status/message送受信ストリーム等) を1ファイルに集約。分割検討・チケット未起票。"
     },
     {
       "path": "src/domain/harness-contract.ts",
-      "limit": 1000,
+      "limit": 1200,
       "reason": "注入先プロジェクトの検証コントラクト (.claude/bdboard-harness.json) の型定義・パース・評価をまとめて1ファイルに集約 (interface/type 定義が大半、export 関数7個)。分割検討・チケット未起票。"
     },
     {
       "path": "scripts/commit-message-guard.mjs",
-      "limit": 1000,
+      "limit": 1200,
       "reason": "PreToolUse フックの git commit メッセージガード本体。ヒアドキュメント抽出・トークナイズ・コマンド分類・拒否/通知メッセージ整形まで export 関数12個が並ぶ。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/chat/bd-tool-catalog.ts",
-      "limit": 1000,
+      "limit": 1200,
       "reason": "チャットのツール呼び出し (bd_list/bd_show/bd_create 等) 定義19件を1つの配列にまとめたカタログ。定義1件あたりのボイラープレートが大きく件数分だけ線形に伸びる構造。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/cache/sqlite-board-cache.ts",
-      "limit": 900,
+      "limit": 1100,
       "reason": "createSqliteBoardCache 1関数がボードキャッシュ (チケット・プロジェクト・スループット統計・CFDスナップショット等) 全操作を実装するアダプタ。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/git/git-worktree-provisioner.ts",
-      "limit": 900,
+      "limit": 1100,
       "reason": "createGitWorktreeProvisioner (590行目〜) が worktree 作成・検証・掃除の全操作を実装するアダプタ。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/ThroughputStats.tsx",
-      "limit": 900,
+      "limit": 1100,
       "reason": "ThroughputStats コンポーネント本体は680行目からの約123行だが、その手前に統計計算ヘルパーが680行分並ぶ。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/runners/claude-runner.ts",
-      "limit": 800,
+      "limit": 1000,
       "reason": "Claude runner アダプタ。ファイル冒頭コメントの通り StreamingCommandRunner 経由の起動と dispatch-disabled 時のフォールバックを export 関数4個で実装。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/hooks/useNotificationEvents.ts",
-      "limit": 700,
+      "limit": 900,
       "reason": "通知イベント購読フック1個。SSE 購読・スナップショット差分計算・既読状態更新を1フックに集約。分割検討・チケット未起票。"
     },
     {
       "path": "src/interface/http/agent-run-routes.ts",
-      "limit": 700,
+      "limit": 900,
       "reason": "エージェント実行 (/api/runs) の Hono ルート4本を1ファイルに集約。ルート本体より前段のバリデーション・ガードコードが大半を占める。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/bd/bd-cli-issue-writer.ts",
-      "limit": 700,
+      "limit": 900,
       "reason": "bd CLI 経由のチケット作成/更新アダプタ。IssueWriterPort 実装1個に各種エラー分類 (ContentConflict/PriorityConflict/StatusConflict 等) が同居。分割検討・チケット未起票。"
     },
     {
       "path": "scripts/check-drift.mjs",
-      "limit": 700,
+      "limit": 900,
       "reason": "ブランチの drift 検知スクリプト。open PR との重なり判定・出力整形を export 関数3個で実装。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/uiPersistedState.ts",
-      "limit": 700,
+      "limit": 900,
       "reason": "UI永続化状態 (viewMode・フィルタ・しきい値等) の localStorage アクセサ。永続化キー1種につき get/set 関数を対で持つ構造で export 関数28個。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/BulkActionBar.tsx",
-      "limit": 600,
+      "limit": 800,
       "reason": "BulkActionBar コンポーネント1関数で約412行 (180〜592行目)。一括操作 (優先度変更・ラベル付与等) の各アクションのハンドラを1コンポーネントに集約。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/HelpPanel.tsx",
-      "limit": 600,
+      "limit": 800,
       "reason": "HelpPanel コンポーネント1関数 (117行目〜)。ヘルプ本文の静的コンテンツと表示ロジックが同居。分割検討・チケット未起票。"
     },
     {
       "path": "scripts/check-commit-parse.mjs",
-      "limit": 600,
+      "limit": 800,
       "reason": "release-please 向け conventional commit 解析ガード。範囲解決・allowlist 判定・メッセージ整形まで export 関数13個が並ぶ。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/LaneColumn.tsx",
-      "limit": 600,
+      "limit": 800,
       "reason": "CardItem (158〜397行目) と LaneColumn (397〜532行目) の2コンポーネントを1ファイルに同居。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/TunnelControl.tsx",
-      "limit": 600,
+      "limit": 800,
       "reason": "TunnelControl コンポーネント1関数 (45行目〜) がトンネル起動/停止のUIと状態管理をまとめて実装。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/BoardKeyboardNavProvider.tsx",
-      "limit": 600,
+      "limit": 800,
       "reason": "useBoardKeyboardNav フックと BoardKeyboardNavProvider コンポーネントの2 export を1ファイルに同居。キーボードナビゲーションの状態機械が大半を占める。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/ChatPanel.test.tsx",
-      "limit": 9300,
+      "limit": 9500,
       "reason": "ChatPanel の回帰テスト。describe 10 / it 196件が1ファイルに集約。実装側 (ChatPanel.tsx) の分割判断チケット bdboard-78ve が見送りで close 済みのため、テストの分割も未着手。"
     },
     {
       "path": "src/interface/http/routes.test.ts",
-      "limit": 7400,
+      "limit": 7600,
       "reason": "routes.ts (Hono ルート39本) に対応するテスト。describe 7 / it 212件。ルート実装が1ファイルに集約されているのに追随してテストも1ファイルに集約。分割検討・チケット未起票。"
     },
     {
       "path": "src/interface/http/chat-routes.test.ts",
-      "limit": 4000,
+      "limit": 4200,
       "reason": "chat-routes.ts のテスト。describe 11 / it 102件。実装同様チャット関連ルート12本ぶんのシナリオを1ファイルに集約。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/TicketDetailPanel.test.tsx",
-      "limit": 3300,
+      "limit": 3500,
       "reason": "TicketDetailPanel のテスト。describe 22 / it 107件。実装側の分割は bdboard-jygp 調査の優先候補 (実施タイミング未定) のため、テストの分割も未着手。"
     },
     {
       "path": "web/src/components/HygienePanel.test.tsx",
-      "limit": 2400,
+      "limit": 2600,
       "reason": "HygienePanel のテスト。describe 6 / it 72件。衛生チェックカテゴリごとのシナリオが並ぶ。分割検討・チケット未起票。"
     },
     {
       "path": "src/interface/http/agent-run-routes.test.ts",
-      "limit": 2400,
+      "limit": 2600,
       "reason": "agent-run-routes.ts のテスト。describe 6 / it 51件。分割検討・チケット未起票。"
     },
     {
       "path": "src/domain/hygiene.test.ts",
-      "limit": 2200,
+      "limit": 2400,
       "reason": "hygiene.ts のテスト。describe 16 / it 112件。検査カテゴリごとの describe が並ぶ構造で、実装側の分割と対応関係にある。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/harness/pack-hooks.test.ts",
-      "limit": 2000,
+      "limit": 2200,
       "reason": "ハーネスパックのフック (pre-bash-guard/pre-edit-guard/stop-ticket-gate 等) のテスト。describe 10 / it 72件。フック種別ごとのシナリオを1ファイルに集約。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/bd/bd-cli-human-decisions.test.ts",
-      "limit": 2000,
+      "limit": 2200,
       "reason": "bd-cli-human-decisions.ts のテスト。describe 7 / it 51件。分割検討・チケット未起票。"
     },
     {
       "path": "src/infrastructure/harness/pack-heartbeat.test.ts",
-      "limit": 1600,
+      "limit": 1800,
       "reason": "ハーネスパックの heartbeat スクリプトのテスト。it 17件だが1件あたりのセットアップ (一時 git repo 構築等) が大きい。分割検討・チケット未起票。"
     },
     {
       "path": "harness/packs/bdboard-harness/hooks/pre-bash-guard.sh",
-      "limit": 700,
+      "limit": 900,
       "reason": "PreToolUse(Bash) フック本体。deny 条件の判定関数が13個、bash 3.2 互換を保ちながら jq/python3 ありなし両対応の判定ロジックを1スクリプトに集約 (fail-open 前提の網羅性を優先)。分割検討・チケット未起票。"
     },
     {
       "path": "harness/packs/bdboard-harness/scripts/bd-heartbeat.sh",
-      "limit": 800,
+      "limit": 1000,
       "reason": "bd heartbeat ループの同梱スクリプト。start/stop/status に加え孤児ループ防止の3重寿命判定を関数27個で実装。分割検討・チケット未起票。"
     }
   ]
