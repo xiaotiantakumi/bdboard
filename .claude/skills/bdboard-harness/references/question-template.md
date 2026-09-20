@@ -84,7 +84,7 @@ EOF
 実機・見た目の確認を human gate に載せるときは、ユーザーが**画面を見るだけ**で回答できる
 状態にする。
 
-- gate の `description` に、スクリーンショット（PR やコメントに添付できる形）か、
+- gate の `description` に、スクリーンショット（下記の添付 API で貼った画像）か、
   プレビュー URL（空きポートでのローカルホスティング、または mobile-preview-tunnel 等の
   一時公開 URL）への導線を必ず含める。
 - 確認できる環境が無い場合は「実機で確認してください」とだけ書いてユーザーに丸投げしない。
@@ -94,6 +94,69 @@ EOF
 - bdboard 側のチケット本文・コメントでの画像表示そのものは別チケット bdboard-qw26 で扱う
   （bdboard-qw26 はこの規律だけでは close しない）。このテンプレが担うのは「導線を必ず
   添える」規律の側だけ。
+
+### スクリーンショットの添付手順（bdboard-qw26 の添付画像 API）
+
+bdboard の常駐サーバー（既定 `http://localhost:8787`。`BDBOARD_PORT` を変えている構成では
+そのポート）は、任意のチケット（gate を含む）へ画像を添付する API を持つ。POST 後は
+チケット詳細の「添付画像」セクションに自動で出る（追加の API 呼び出し不要）。
+
+**body は一旦ファイルに書いてから `--data-binary @file` で送る。** コマンド置換で直接
+`-d` に埋め込む形 (`-d "{...$(base64 -i screenshot.png)...}"`) は、Retina のスクショ等で
+base64 が大きくなると macOS の `ARG_MAX`（シェル引数長上限）に当たりうる。ファイル経由
+ならその制約を受けない。
+
+```bash
+BDBOARD_BASE_URL="http://localhost:8787"   # BDBOARD_PORT を変えている場合はポートも合わせる
+TICKET_ID="<画像を見せたいチケット/gate の id>"   # 選び方は次節「gate のときはどちらに貼るか」
+
+python3 -c "
+import json, base64, sys
+data = open('screenshot.png', 'rb').read()
+json.dump({'mimeType': 'image/png', 'data': base64.b64encode(data).decode('ascii')}, sys.stdout)
+" > /tmp/attachment-body.json
+
+curl -sS -X POST -H 'Content-Type: application/json' \
+  --data-binary @/tmp/attachment-body.json \
+  "$BDBOARD_BASE_URL/api/tickets/$TICKET_ID/attachments"
+```
+
+- `mimeType` は `image/png` / `image/jpeg` / `image/webp` / `image/gif` のみ。判定は
+  拡張子ではなくマジックバイトで行われるので、間違った `mimeType` を申告しても 400 になる。
+- サイズ上限は 1 枚 10MB（デコード後）、1 チケットあたり 20 枚まで。超えると 400 / 409。
+- **base64 に改行を含めないこと。** サーバーのデコーダは RFC 4648 の正規形しか受け付けず、
+  1 文字でも改行が混じると 400 で弾かれる（実機確認済み: 改行入り base64 を送ると
+  `"invalid or unsupported image data"`）。
+  - macOS の `base64 -i screenshot.png` は既定で改行を入れない（`-b`/`--break` の既定値が
+    `0` = unbroken stream。実機確認済み）。
+  - GNU coreutils の `base64`（Linux）は既定で 76 桁ごとに改行を入れる。`-w0`
+    （`--wrap=0`）を付けて無効化する必要がある。このフラグは GNU 専用で macOS には無い。
+  - OS を問わず動かしたいなら、上の python3 例のように `base64.b64encode(...).decode()`
+    を直接使うのが確実（改行が入り得ない）。
+- **localhost からの直アクセスなら追加のトークンは不要。** write-guard
+  (`src/interface/http/write-guard.ts` + `local-request.ts`) は、ループバック接続
+  (127.0.0.1/::1) かつ `Host` ヘッダが期待どおり（`localhost`/`127.0.0.1`/`[::1]` +
+  実際に listen しているポート）であれば、Basic Auth 等を要求せず書き込みを許可する
+  （DNS rebinding 対策として `Host` の一致だけは見る）。トンネル経由（cloudflared の
+  転送ヘッダが付く場合）は別ルートで強パスワード+セッション Cookie が要る。
+- **チケット ID はどのプロジェクトのものでもよく、プロジェクトを指定する必要はない。**
+  サーバーはスキャン済みの全プロジェクトを横断してチケット ID を探す
+  (`findProjectRootPathForTicket`)。bdboard 以外のプロジェクト（PicRill 等）で作業して
+  いるエージェントも、そのプロジェクト自身のチケット ID をそのまま `TICKET_ID` に渡せば
+  よい（8787 とは別ポートで一時起動したサーバーに対し、他プロジェクトの実チケット ID へ
+  GET して 404 にならないことを確認済み — bdboard-c6al 検証）。
+
+### gate のときはどちらに貼るか — gate 本体と作業チケットの両方に POST する
+
+`bd gate create` で human gate を作ると、確認待ちレーンには **gate 自身のカードと、
+それがブロックしている作業チケットのカードが別々に**並ぶ（どちらも独立に「確認待ち」
+バッジが付く）。ユーザーがどちらのカードを開いて詳細パネルを見るかは固定されない —
+本ファイル「手順（SKILL.md 規律3 の実体）」節にある「回答がどちらに付くかは固定されない」
+（gate 解決時の既知の非対称性）と同じ理由による。そのため、視覚確認の画像は
+**gate の id と、ブロックしている作業チケットの id の両方へ POST する**（同じ画像を
+2回 upload してよい。添付枚数の上限 20/チケットには十分余裕がある）。gate を使わず
+質問専用チケット/作業チケット直付けで確認を求める場合は、その1チケットの id にだけ
+POST すればよい。
 
 ## なぜ `bd gate` なのか — `bd dep add` で代用できない理由
 
@@ -153,8 +216,9 @@ human gate は親が close しても自動解除されず `bd gate resolve` が�
 <AかBか + 理由1行。推奨が無いなら「判断材料が拮抗しており推奨なし」と明記>
 
 ## 視覚的な確認が要る場合
-<スクショの添付先、またはプレビューURL。無ければどう用意したかをここに書く。
- 視覚確認が不要ならこの節ごと省いてよい>
+<スクショを添付した場合はその旨（手順は本ファイル「スクリーンショットの添付手順」節。
+ gate なら gate 本体と作業チケットの両方に POST 済みと明記）、プレビューURLがあれば
+ それも書く。無ければどう用意したかをここに書く。視覚確認が不要ならこの節ごと省いてよい>
 
 ## 回答後の再開手順
 <回答を受けたセッションが何をすればよいか。worktree のパス、着手済みの変更の場所、
