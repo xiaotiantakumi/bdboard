@@ -2,11 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { ApiError, fetchAgentRunConfig, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig, saveAgentRunConfig } from '../api';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
-import { ModelStatsTableScroll } from './ModelStatsTableScroll';
-import { formatBytes, msToDays, msToHours, msToMinutes } from './settings/formatters';
+import { msToDays, msToHours, msToMinutes } from './settings/formatters';
 import {
   isAbsolutePath,
-  looksObviouslyDangerous,
   parseDays,
   parseHours,
   parseMinutes,
@@ -19,13 +17,16 @@ import {
   type ProjectWipOverrideRow,
 } from './settings/wipOverrides';
 import {
-  DANGEROUS_SCAN_ROOT_ROW_WARNING,
   describeAgentRunWriteError,
   describeAiQuotaAlertWriteError,
   describeBoardThresholdWriteError,
   describeHygieneThresholdWriteError,
   describeScanRootWriteError,
 } from './settings/errors';
+import { EffectiveScanRootsSection } from './settings/EffectiveScanRootsSection';
+import { ScanRootsSection } from './settings/ScanRootsSection';
+import { ExcludePathsSection } from './settings/ExcludePathsSection';
+import { DbStatsSection } from './settings/DbStatsSection';
 
 export function SettingsPanel() {
   const queryClient = useQueryClient();
@@ -482,125 +483,27 @@ export function SettingsPanel() {
           環境変数 BDBOARD_SCAN_ROOTS が設定されているため、この画面での設定は現在無視されています
         </div>
       )}
-      <section className="settings-panel-section" aria-labelledby="effective-scan-roots-title">
-        <div className="settings-panel-section-header">
-          <h3 id="effective-scan-roots-title">現在有効なスキャンルート</h3>
-          <span className="settings-panel-badge">{currentLabel}</span>
-        </div>
-        {currentRoots.length > 0 ? (
-          <ul className="settings-panel-root-list">
-            {currentRoots.map((path) => (
-              <li key={path}>{path}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="settings-panel-empty">有効なスキャンルートがありません</p>
-        )}
-      </section>
-      <section className="settings-panel-section" aria-labelledby="user-scan-roots-title">
-        <h3 id="user-scan-roots-title">
-          {query.data.envOverride ? '保存済み設定(現在は無効)' : 'ユーザー設定ルート'}
-        </h3>
-        {scanRoots.length > 0 ? (
-          <ul className="settings-panel-edit-list settings-panel-scan-root-list">
-            {scanRoots.map((path) => (
-              <li key={path}>
-                <div className="settings-panel-edit-row">
-                  <span>{path}</span>
-                  <button
-                    type="button"
-                    onClick={() => removePath(path)}
-                    disabled={saveMutation.isPending}
-                    aria-label={`スキャンルート ${path} を削除`}
-                  >
-                    削除
-                  </button>
-                </div>
-                {looksObviouslyDangerous(path) && (
-                  <p className="settings-panel-path-danger" role="alert">
-                    {DANGEROUS_SCAN_ROOT_ROW_WARNING}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="settings-panel-empty">ユーザー設定ルートはありません</p>
-        )}
-        <form
-          className="settings-panel-add-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            addPath();
-          }}
-        >
-          <label htmlFor="settings-scan-root-input">パスを追加</label>
-          <div className="settings-panel-add-row">
-            <input
-              id="settings-scan-root-input"
-              type="text"
-              value={newPath}
-              disabled={saveMutation.isPending}
-              onChange={(event) => setNewPath(event.target.value)}
-            />
-            <button type="submit" disabled={saveMutation.isPending}>
-              追加
-            </button>
-          </div>
-          {pathHint && <p className="settings-panel-path-hint">{pathHint}</p>}
-        </form>
-      </section>
-      <section className="settings-panel-section" aria-labelledby="exclude-paths-title">
-        <h3 id="exclude-paths-title">
-          {query.data.envOverride ? '除外パス(現在は無効)' : '除外パス'}
-        </h3>
-        <p className="settings-panel-subtitle">
-          {query.data.envOverride
-            ? '環境変数 BDBOARD_SCAN_ROOTS が有効なため、保存済みの除外パスは現在スキャンに適用されません。'
-            : 'ここに追加した絶対パス配下のプロジェクトはスキャン時に除外されます。'}
-        </p>
-        {excludePaths.length > 0 ? (
-          <ul className="settings-panel-edit-list">
-            {excludePaths.map((path) => (
-              <li key={path}>
-                <span>{path}</span>
-                <button
-                  type="button"
-                  onClick={() => removeExcludePath(path)}
-                  disabled={saveMutation.isPending}
-                  aria-label={`除外パス ${path} を削除`}
-                >
-                  削除
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="settings-panel-empty">除外パスはありません</p>
-        )}
-        <form
-          className="settings-panel-add-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            addExcludePath();
-          }}
-        >
-          <label htmlFor="settings-exclude-path-input">除外パスを追加</label>
-          <div className="settings-panel-add-row">
-            <input
-              id="settings-exclude-path-input"
-              type="text"
-              value={newExcludePath}
-              disabled={saveMutation.isPending}
-              onChange={(event) => setNewExcludePath(event.target.value)}
-            />
-            <button type="submit" disabled={saveMutation.isPending}>
-              追加
-            </button>
-          </div>
-          {excludePathHint && <p className="settings-panel-path-hint">{excludePathHint}</p>}
-        </form>
-      </section>
+      <EffectiveScanRootsSection currentLabel={currentLabel} currentRoots={currentRoots} />
+      <ScanRootsSection
+        envOverride={query.data.envOverride}
+        scanRoots={scanRoots}
+        onRemovePath={removePath}
+        isSaving={saveMutation.isPending}
+        newPath={newPath}
+        onNewPathChange={setNewPath}
+        pathHint={pathHint}
+        onAddPath={addPath}
+      />
+      <ExcludePathsSection
+        envOverride={query.data.envOverride}
+        excludePaths={excludePaths}
+        onRemoveExcludePath={removeExcludePath}
+        isSaving={saveMutation.isPending}
+        newExcludePath={newExcludePath}
+        onNewExcludePathChange={setNewExcludePath}
+        excludePathHint={excludePathHint}
+        onAddExcludePath={addExcludePath}
+      />
       <section className="settings-panel-section" aria-labelledby="board-thresholds-title">
         <h3 id="board-thresholds-title">滞留・liveness 閾値</h3>
         <p className="settings-panel-subtitle">
@@ -1017,39 +920,11 @@ export function SettingsPanel() {
           </div>
         </form>
       </section>
-      <section className="settings-panel-section" aria-labelledby="db-stats-title">
-        <h3 id="db-stats-title">ローカルDB統計</h3>
-        <p className="settings-panel-subtitle">
-          SQLiteキャッシュのファイルサイズとテーブル別件数です。CFDスナップショット等は起動時・定期処理で保持期間に応じて整理されます。
-        </p>
-        {dbStatsQuery.isPending ? (
-          <p>読み込み中…</p>
-        ) : dbStatsQuery.isError || dbStatsQuery.data === undefined ? (
-          <p className="settings-panel-error">DB統計を読み込めませんでした</p>
-        ) : (
-          <>
-            <p>DBサイズ: {formatBytes(dbStatsQuery.data.sizeBytes)}</p>
-            <ModelStatsTableScroll ariaLabel="ローカルDB統計（横スクロール可能）">
-              <table className="model-stats-table">
-                <thead>
-                  <tr>
-                    <th scope="col">テーブル</th>
-                    <th scope="col">件数</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dbStatsQuery.data.tables.map((table) => (
-                    <tr key={table.name}>
-                      <td>{table.name}</td>
-                      <td>{table.rowCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </ModelStatsTableScroll>
-          </>
-        )}
-      </section>
+      <DbStatsSection
+        isPending={dbStatsQuery.isPending}
+        isError={dbStatsQuery.isError}
+        data={dbStatsQuery.data}
+      />
       <div className="settings-panel-footer">
         <button
           type="button"
