@@ -11,6 +11,8 @@ import {
   fetchProjects,
   fetchSessionHistory,
   fetchSessions,
+  type AgentProcessDto,
+  type SessionHistoryEntryDto,
 } from '../../api';
 import { compareStrings } from '../../compare';
 import { LIVENESS_ORDER } from '../../liveness';
@@ -99,9 +101,9 @@ export function useSessionListData(
     });
   }, [sessionsQuery.data, sessionProjectMap, projectId]);
 
-  const historyRows = historyQuery.data ?? [];
+  const historyRows: readonly SessionHistoryEntryDto[] = historyQuery.data ?? [];
 
-  const processRows = useMemo(() => {
+  const processRows = useMemo((): readonly AgentProcessDto[] => {
     const processes = processesQuery.data ?? [];
     if (projectId === undefined) {
       return processes;

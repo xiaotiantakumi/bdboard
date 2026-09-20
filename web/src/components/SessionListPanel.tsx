@@ -12,6 +12,7 @@ import { SessionTailViewer } from './SessionTailViewer';
 import { SessionActiveList } from './session-list/SessionActiveList';
 import { SessionEndedList } from './session-list/SessionEndedList';
 import { SessionProcessList } from './session-list/SessionProcessList';
+import { SessionListTabBar } from './session-list/SessionListTabBar';
 import type { SessionListTab } from './session-list/sessionListHelpers';
 import { useSessionListData } from './session-list/useSessionListData';
 
@@ -121,31 +122,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
           </button>
         </div>
 
-        <div className="session-list-tabs">
-          <div className="toggle-group">
-            <button
-              type="button"
-              className={`toggle-btn${tab === 'active' ? ' active' : ''}`}
-              onClick={() => setTab('active')}
-            >
-              稼働中
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${tab === 'ended' ? ' active' : ''}`}
-              onClick={() => setTab('ended')}
-            >
-              終了
-            </button>
-            <button
-              type="button"
-              className={`toggle-btn${tab === 'processes' ? ' active' : ''}`}
-              onClick={() => setTab('processes')}
-            >
-              プロセス
-            </button>
-          </div>
-        </div>
+        <SessionListTabBar tab={tab} onChangeTab={setTab} />
 
         {/* 空リストや 501 だけでは「壊れている」のか「そもそも動かない」のか
             区別が付かないので、理由をここに出す (bdboard-70z.9)。 */}
