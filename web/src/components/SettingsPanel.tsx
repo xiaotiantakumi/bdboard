@@ -1,23 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { ApiError, fetchBoardThresholdsConfig, fetchDbStats, fetchProjects, fetchScanRootsConfig, postRefresh, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchBoardThresholdsConfig, fetchDbStats, fetchProjects, postRefresh, putBoardThresholdsConfig } from '../api';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
 import { msToHours, msToMinutes } from './settings/formatters';
-import {
-  isAbsolutePath,
-  parseHours,
-  parseMinutes,
-  parseWipLimit,
-} from './settings/validators';
+import { parseHours, parseMinutes, parseWipLimit } from './settings/validators';
 import {
   projectWipOverridesFromConfig,
   projectWipOverridesToConfig,
   type ProjectWipOverrideRow,
 } from './settings/wipOverrides';
-import {
-  describeBoardThresholdWriteError,
-  describeScanRootWriteError,
-} from './settings/errors';
+import { describeBoardThresholdWriteError } from './settings/errors';
 import { EffectiveScanRootsSection } from './settings/EffectiveScanRootsSection';
 import { ScanRootsSection } from './settings/ScanRootsSection';
 import { ExcludePathsSection } from './settings/ExcludePathsSection';
@@ -30,10 +22,12 @@ import { AgentRunsSection } from './settings/AgentRunsSection';
 import { useAiQuotaAlertForm } from './settings/useAiQuotaAlertForm';
 import { useAgentRunsForm } from './settings/useAgentRunsForm';
 import { useHygieneThresholdsForm } from './settings/useHygieneThresholdsForm';
+import { useScanRootsForm } from './settings/useScanRootsForm';
 
 export function SettingsPanel() {
   const queryClient = useQueryClient();
-  const query = useQuery({ queryKey: ['scan-roots-config'], queryFn: fetchScanRootsConfig });
+  const scanRootsForm = useScanRootsForm();
+  const query = scanRootsForm.query;
   const thresholdsQuery = useQuery({
     queryKey: ['board-thresholds-config'],
     queryFn: fetchBoardThresholdsConfig,
@@ -52,15 +46,6 @@ export function SettingsPanel() {
     queryKey: ['db-stats'],
     queryFn: fetchDbStats,
   });
-  const [scanRoots, setScanRoots] = useState<string[]>([]);
-  const [excludePaths, setExcludePaths] = useState<string[]>([]);
-  const [version, setVersion] = useState('');
-  const [newPath, setNewPath] = useState('');
-  const [newExcludePath, setNewExcludePath] = useState('');
-  const scanRootsFeedback = useSaveFeedback();
-  const [pathHint, setPathHint] = useState('');
-  const [excludePathHint, setExcludePathHint] = useState('');
-  const [dirty, setDirty] = useState(false);
   const [stalledHours, setStalledHours] = useState('');
   const [activeMinutes, setActiveMinutes] = useState('');
   const [idleMinutes, setIdleMinutes] = useState('');
@@ -74,14 +59,6 @@ export function SettingsPanel() {
   const [newWipProjectLimit, setNewWipProjectLimit] = useState('');
   const wipFeedback = useSaveFeedback();
   const [wipDirty, setWipDirty] = useState(false);
-
-  useEffect(() => {
-    if (query.data !== undefined && !dirty) {
-      setScanRoots(query.data.scanRoots);
-      setExcludePaths(query.data.excludePaths);
-      setVersion(query.data.version);
-    }
-  }, [dirty, query.data]);
 
   useEffect(() => {
     if (thresholdsQuery.data !== undefined && !thresholdsDirty) {
@@ -122,38 +99,6 @@ export function SettingsPanel() {
       setThresholdsVersion(thresholdsQuery.data.version);
     }
   }, [thresholdsDirty, wipDirty, thresholdsQuery.data]);
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      putScanRootsConfig({
-        scanRoots,
-        excludePaths,
-        version,
-      }),
-    onSuccess: async (data) => {
-      // S3: the PUT response carries the version the server actually persisted this write as —
-      // use it directly instead of waiting on the subsequent GET (invalidateQueries still runs,
-      // to keep scanRoots/excludePaths in sync with the server's canonical trimmed/normalized
-      // values, but the version itself doesn't need to round-trip through a refetch).
-      setVersion(data.version);
-      await queryClient.invalidateQueries({ queryKey: ['scan-roots-config'] });
-      setDirty(false);
-      try {
-        await postRefresh();
-      } catch (error) {
-        console.warn('Failed to refresh board after saving scan roots', error);
-      }
-      await queryClient.invalidateQueries({ queryKey: ['projects'] });
-      scanRootsFeedback.showSuccess('設定を保存しました');
-    },
-    onError: (error) => {
-      scanRootsFeedback.showError(describeScanRootWriteError(error));
-      if (error instanceof ApiError && error.status === 409) {
-        setDirty(false);
-        void queryClient.invalidateQueries({ queryKey: ['scan-roots-config'] });
-      }
-    },
-  });
 
   const saveThresholdsMutation = useMutation({
     mutationFn: () => {
@@ -284,54 +229,6 @@ export function SettingsPanel() {
       ? 'ユーザー設定'
       : 'OS既定';
 
-  function addPath() {
-    const path = newPath.trim();
-    if (path.length === 0 || !isAbsolutePath(path)) {
-      setPathHint(
-        '絶対パスを入力してください (例: /Users/you/projects, C:\\Users\\you\\projects)',
-      );
-      return;
-    }
-    if (scanRoots.includes(path)) {
-      setPathHint('既に追加されています');
-      return;
-    }
-    setScanRoots((roots) => [...roots, path]);
-    setDirty(true);
-    setNewPath('');
-    setPathHint('');
-  }
-
-  function removePath(path: string) {
-    setScanRoots((roots) => roots.filter((root) => root !== path));
-    setDirty(true);
-  }
-
-  function addExcludePath() {
-    // Discovery matches `excluded` itself or the `excluded + '/'` prefix, so a trailing
-    // separator would silently disable the exclusion — strip it before validating/saving.
-    const path = newExcludePath.trim().replace(/[\\/]+$/, '');
-    if (path.length === 0 || !isAbsolutePath(path)) {
-      setExcludePathHint(
-        '絶対パスを入力してください (例: /Users/you/projects, C:/Users/you/projects)',
-      );
-      return;
-    }
-    if (excludePaths.includes(path)) {
-      setExcludePathHint('既に追加されています');
-      return;
-    }
-    setExcludePaths((paths) => [...paths, path]);
-    setDirty(true);
-    setNewExcludePath('');
-    setExcludePathHint('');
-  }
-
-  function removeExcludePath(path: string) {
-    setExcludePaths((paths) => paths.filter((currentPath) => currentPath !== path));
-    setDirty(true);
-  }
-
   return (
     <section className="settings-panel" aria-label="設定">
       <div className="settings-panel-header">
@@ -348,23 +245,23 @@ export function SettingsPanel() {
       <EffectiveScanRootsSection currentLabel={currentLabel} currentRoots={currentRoots} />
       <ScanRootsSection
         envOverride={query.data.envOverride}
-        scanRoots={scanRoots}
-        onRemovePath={removePath}
-        isSaving={saveMutation.isPending}
-        newPath={newPath}
-        onNewPathChange={setNewPath}
-        pathHint={pathHint}
-        onAddPath={addPath}
+        scanRoots={scanRootsForm.scanRoots}
+        onRemovePath={scanRootsForm.onRemovePath}
+        isSaving={scanRootsForm.isSaving}
+        newPath={scanRootsForm.newPath}
+        onNewPathChange={scanRootsForm.onNewPathChange}
+        pathHint={scanRootsForm.pathHint}
+        onAddPath={scanRootsForm.onAddPath}
       />
       <ExcludePathsSection
         envOverride={query.data.envOverride}
-        excludePaths={excludePaths}
-        onRemoveExcludePath={removeExcludePath}
-        isSaving={saveMutation.isPending}
-        newExcludePath={newExcludePath}
-        onNewExcludePathChange={setNewExcludePath}
-        excludePathHint={excludePathHint}
-        onAddExcludePath={addExcludePath}
+        excludePaths={scanRootsForm.excludePaths}
+        onRemoveExcludePath={scanRootsForm.onRemoveExcludePath}
+        isSaving={scanRootsForm.isSaving}
+        newExcludePath={scanRootsForm.newExcludePath}
+        onNewExcludePathChange={scanRootsForm.onNewExcludePathChange}
+        excludePathHint={scanRootsForm.excludePathHint}
+        onAddExcludePath={scanRootsForm.onAddExcludePath}
       />
       <BoardThresholdsSection
         values={{
@@ -484,17 +381,17 @@ export function SettingsPanel() {
         <button
           type="button"
           className="settings-panel-save"
-          disabled={!dirty || saveMutation.isPending}
-          onClick={() => saveMutation.mutate()}
+          disabled={!scanRootsForm.isDirty || scanRootsForm.isSaving}
+          onClick={() => scanRootsForm.onSubmit()}
         >
-          {saveMutation.isPending ? '保存中…' : '保存'}
+          {scanRootsForm.isSaving ? '保存中…' : '保存'}
         </button>
         <p
           className="settings-panel-feedback"
           aria-live="polite"
-          role={scanRootsFeedback.isError ? 'alert' : undefined}
+          role={scanRootsForm.feedback.isError ? 'alert' : undefined}
         >
-          {scanRootsFeedback.message}
+          {scanRootsForm.feedback.message}
         </p>
       </div>
     </section>
