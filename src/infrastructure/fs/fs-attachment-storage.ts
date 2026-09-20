@@ -28,7 +28,11 @@ export function createFsAttachmentStorage(baseDir: string): AttachmentStoragePor
     const withSep = resolvedBaseDir.endsWith(path.sep)
       ? resolvedBaseDir
       : resolvedBaseDir + path.sep;
-    if (dir !== resolvedBaseDir && !dir.startsWith(withSep)) {
+    // projectKey/issueId は非空文字列なので、正当な入力で dir が resolvedBaseDir と
+    // 完全一致することはない。以前あった `dir !== resolvedBaseDir &&` の除外は、
+    // このチェックがまさに防ぐべき「呼び出し側の検証をすり抜けた '..' 等」を
+    // 通してしまう穴だったため削除した (bdboard-qw26 Opus レビュー指摘)。
+    if (!dir.startsWith(withSep)) {
       throw new Error(`attachment path escapes base dir: ${projectKey}/${issueId}`);
     }
     return dir;

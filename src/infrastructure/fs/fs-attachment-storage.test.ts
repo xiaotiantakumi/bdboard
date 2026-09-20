@@ -69,4 +69,19 @@ describe('createFsAttachmentStorage', () => {
       storage.save('proj-a', '../../escape', 'png', new Uint8Array([1])),
     ).rejects.toThrow(/escapes/);
   });
+
+  it('rejects an issueId that resolves exactly onto the base dir itself (Opus review regression, bdboard-qw26)', async () => {
+    // path.resolve(baseDir, 'proj-a', '..') === baseDir exactly. An earlier
+    // version of the containment check special-cased "dir === resolvedBaseDir"
+    // as allowed (on the theory that a legitimate call could never produce
+    // this), which meant this exact input bypassed the defense-in-depth check
+    // entirely and would have written straight into baseDir, alongside every
+    // project's directory. The interface layer already rejects a literal '..'
+    // segment, but this adapter-level check exists specifically to catch a
+    // regression there, so it must not carry its own exemption for this case.
+    const storage = createFsAttachmentStorage(baseDir);
+    await expect(
+      storage.save('proj-a', '..', 'png', new Uint8Array([1])),
+    ).rejects.toThrow(/escapes/);
+  });
 });

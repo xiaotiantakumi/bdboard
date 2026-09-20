@@ -83,6 +83,17 @@ function hasExpectedMagicBytes(mimeType: AttachmentMimeType, data: Uint8Array): 
 }
 
 /**
+ * decodeStrictBase64 (デコード + 再エンコード + 文字列比較で入力全体を舐める) に
+ * 渡す前に、base64 文字列の長さだけで上限超過を弾くための閾値。
+ * N バイトの base64 表現は ceil(N/3)*4 文字になるため、上限バイト数から
+ * 決定的に計算できる。
+ * (bdboard-qw26 Opus レビュー指摘: 上限超過でも一度フルデコードしてしまうと、
+ * レート制限の無いこの endpoint では CPU 消費による DoS の材料になり得る。
+ * 長さチェックはデコード無しで O(1) なので、先に弾く。)
+ */
+const ATTACHMENT_MAX_BASE64_LENGTH = Math.ceil(ATTACHMENT_MAX_BYTES / 3) * 4;
+
+/**
  * base64 文字列をデコードし、サイズ上限とマジックバイトを検証する。
  * 検証に失敗した場合は undefined (呼び出し側は 400 を返す)。
  */
@@ -90,6 +101,7 @@ export function decodeAttachmentImage(
   mimeType: AttachmentMimeType,
   data: string,
 ): Uint8Array | undefined {
+  if (data.length > ATTACHMENT_MAX_BASE64_LENGTH) return undefined;
   const decoded = decodeStrictBase64(data);
   if (decoded === undefined) return undefined;
   if (decoded.byteLength === 0 || decoded.byteLength > ATTACHMENT_MAX_BYTES) return undefined;

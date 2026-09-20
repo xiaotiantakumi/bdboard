@@ -30,6 +30,36 @@ import { createWriteGuardMiddleware, type WriteGuardDeps } from './write-guard.j
  * chat-routes.ts の画像添付 (bdboard-3tw.104.24) と同じ形。
  */
 
+/**
+ * (projectKey, issueId) 単位で非同期処理を直列化する。
+ *
+ * Opus レビュー指摘 (bdboard-qw26): count() で件数を確認してから save()
+ * する、という 2 段階の await の間に別のリクエストが割り込めると、
+ * 同時並行アップロードが両方とも ATTACHMENT_MAX_COUNT_PER_TICKET の
+ * チェックを通過してしまう TOCTOU がある (実際に 30 並列 POST で
+ * 20 件上限を超えて 31 件保存されることを確認済み)。
+ * 「件数チェック→保存」を同一チケットに対しては必ず1つずつ直列実行する
+ * ことでこれを閉じる。プロセス内メモリの Map なので複数サーバープロセス
+ * 間では効かないが、このアプリは1ポートにつき1プロセスの構成。
+ */
+const ticketUploadLocks = new Map<string, Promise<void>>();
+
+function runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const previous = ticketUploadLocks.get(key) ?? Promise.resolve();
+  const result = previous.then(fn, fn);
+  const settled = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  ticketUploadLocks.set(key, settled);
+  void settled.finally(() => {
+    if (ticketUploadLocks.get(key) === settled) {
+      ticketUploadLocks.delete(key);
+    }
+  });
+  return result;
+}
+
 export interface AttachmentRoutesDeps {
   readonly cache: BoardCache;
   readonly storage: AttachmentStoragePort;
@@ -95,6 +125,14 @@ export function createAttachmentRoutes(deps: AttachmentRoutesDeps): Hono {
   // app.use('*', createWriteGuardMiddleware(...)) はこちらのルートには効かないため
   // (chat-routes.ts と同じ理由)、独自に mount する。'/attachments' 単体は
   // '/attachments/*' にマッチしない (前方一致はサブパスのみ) ので両方登録する。
+  //
+  // 注意 (Opus レビュー指摘): main.ts はこのサブアプリを inner より「先」に
+  // mount する (inner の GET /api/tickets/:id{.+} キャッチオールに横取りされ
+  // ないようにするため)。つまり inner 側の app.use('*', createWriteGuardMiddleware
+  // (...)) というブランケットガードの「安全網」もこのサブアプリには掛からない。
+  // 今後このファイルに書き込み系ルートを追加するときは、必ず対応する
+  // path pattern を上の2行と同様に writeGuard へ明示的に use() すること
+  // (でないと無認証で書き込み可能なエンドポイントが生まれる)。
   const writeGuard = createWriteGuardMiddleware(deps.writeAccess ?? {});
   app.use('/api/tickets/:id/attachments', writeGuard);
   app.use('/api/tickets/:id/attachments/*', writeGuard);
@@ -139,8 +177,21 @@ export function createAttachmentRoutes(deps: AttachmentRoutesDeps): Hono {
     }
 
     const projectKey = toProjectAttachmentKey(rootPath);
-    const existingCount = await deps.storage.count(projectKey, id);
-    if (existingCount >= ATTACHMENT_MAX_COUNT_PER_TICKET) {
+    const outcome = await runExclusive(`${projectKey}/${id}`, async () => {
+      const existingCount = await deps.storage.count(projectKey, id);
+      if (existingCount >= ATTACHMENT_MAX_COUNT_PER_TICKET) {
+        return { ok: false as const };
+      }
+      const stored = await deps.storage.save(
+        projectKey,
+        id,
+        extensionForMimeType(mimeType),
+        decoded,
+      );
+      return { ok: true as const, stored };
+    });
+
+    if (!outcome.ok) {
       return c.json(
         {
           error: `attachment limit reached (max ${ATTACHMENT_MAX_COUNT_PER_TICKET} per ticket)`,
@@ -149,13 +200,7 @@ export function createAttachmentRoutes(deps: AttachmentRoutesDeps): Hono {
       );
     }
 
-    const stored = await deps.storage.save(
-      projectKey,
-      id,
-      extensionForMimeType(mimeType),
-      decoded,
-    );
-    return c.json({ attachment: toAttachmentDto(id, stored) }, 201);
+    return c.json({ attachment: toAttachmentDto(id, outcome.stored) }, 201);
   });
 
   app.get('/api/tickets/:id/attachments/:fileName', async (c) => {

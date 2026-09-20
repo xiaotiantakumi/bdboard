@@ -281,6 +281,67 @@ describe('GET /api/tickets/:id/attachments/:fileName', () => {
   });
 });
 
+describe('POST /api/tickets/:id/attachments concurrency', () => {
+  it('never stores more than the per-ticket limit under concurrent uploads (TOCTOU regression, bdboard-qw26)', async () => {
+    // count() と save() の間に別リクエストが割り込めると、同時アップロードが
+    // 両方とも上限チェックを通過して超過保存されてしまう (Opus レビューで
+    // 実サーバーに対する30並列アップロードで再現確認済み)。この fake storage
+    // は count/save の両方に明示的な await の隙間 (setImmediate) を挟むことで、
+    // ロックが無ければ確実にレースが顕在化するようにしている。
+    const files = new Map<string, Buffer>();
+    const byIssue = new Map<string, StoredAttachment[]>();
+    let seq = 0;
+    const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const storage: AttachmentStoragePort = {
+      async count(projectKey, issueId) {
+        await tick();
+        return byIssue.get(`${projectKey}/${issueId}`)?.length ?? 0;
+      },
+      async save(projectKey, issueId, extension, data) {
+        await tick();
+        seq += 1;
+        const fileName = `${1758300000000 + seq}-${seq.toString(16).padStart(16, '0')}.${extension}`;
+        files.set(`${projectKey}/${issueId}/${fileName}`, Buffer.from(data));
+        const entry: StoredAttachment = { fileName, byteLength: data.byteLength, createdAt: NOW };
+        const issueKey = `${projectKey}/${issueId}`;
+        byIssue.set(issueKey, [...(byIssue.get(issueKey) ?? []), entry]);
+        return entry;
+      },
+      async list(projectKey, issueId) {
+        return byIssue.get(`${projectKey}/${issueId}`) ?? [];
+      },
+      async read(projectKey, issueId, fileName) {
+        return files.get(`${projectKey}/${issueId}/${fileName}`);
+      },
+    };
+    const app = createApp({ storage });
+
+    const ATTACHMENT_MAX_COUNT_PER_TICKET = 20;
+    const attempts = 30;
+    const responses = await Promise.all(
+      Array.from({ length: attempts }, () =>
+        app.request(
+          '/api/tickets/bdboard-1/attachments',
+          withLocalHost({
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mimeType: 'image/png', data: PNG_BASE64 }),
+          }),
+          LOCAL_ENV,
+        ),
+      ),
+    );
+
+    const created = responses.filter((res) => res.status === 201);
+    const limitReached = responses.filter((res) => res.status === 409);
+    expect(created).toHaveLength(ATTACHMENT_MAX_COUNT_PER_TICKET);
+    expect(limitReached).toHaveLength(attempts - ATTACHMENT_MAX_COUNT_PER_TICKET);
+
+    const finalList = await storage.list(toProjectAttachmentKey('/tmp/p'), 'bdboard-1');
+    expect(finalList).toHaveLength(ATTACHMENT_MAX_COUNT_PER_TICKET);
+  });
+});
+
 describe('toProjectAttachmentKey', () => {
   it('is deterministic and distinguishes different roots with the same basename', () => {
     const a = toProjectAttachmentKey('/Users/a/src/bdboard');
