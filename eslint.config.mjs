@@ -17,8 +17,11 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
+  'src/interface/http/agent-run-routes-test-support.ts': 240, // 現在 232 (bdboard-sso1.36: agent-run-routes.test.ts move-only 分割で5ファイルから共有される createFakeBoardCache/makeRoutes/seedOpenTicket 等のヘルパー置き場。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
-  'web/src/components/TicketDetailPanel.tsx': 1360, // 現在 1316 (bdboard-sso1.5 PR-K: クイックアクション(着手/完了/延期/優先度変更)を useTicketQuickActions.ts + TicketQuickActionsSection.tsx へ移動)
+  'web/src/components/TicketDetailPanel.tsx': 800, // 現在 757 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングを useTicketAgentRun.ts + TicketAgentRunTriggerSection.tsx + TicketAgentRunSection.tsx へ、human decision 回答を useTicketDecisionAnswer.ts + TicketDecisionSection.tsx へ移動)
+  'web/src/components/ticket-detail/useTicketAgentRun.ts': 260, // 現在 246 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングの state/query/mutation/effect をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加。Opus レビュー対応でticketId変更リセットを内部effect化した分+4)
+  'web/src/components/ticket-detail/TicketAgentRunSection.tsx': 250, // 現在 235 (bdboard-sso1.5 PR-L: エージェント実行の表示セクション(現在の状態/ログ/中止/実行履歴)を移動しただけの表示専用コンポーネント。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/components/SettingsPanel.tsx': 390, // 現在 372 (bdboard-sso1.10 PR-F: useScanRootsForm)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
@@ -26,30 +29,17 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/bulk-action/useBulkActions.ts': 290, // 現在 280 (bdboard-sso1.23 PR-C: 一括操作の確認/実行/Undo の state+mutation+handler をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'scripts/commit-message-guard.mjs': 670, // 現在 667
-  'web/src/hooks/useNotificationEvents.ts': 620, // 現在 619
-  'src/interface/http/agent-run-routes.ts': 500, // 現在 497
   'web/src/components/HelpPanel.tsx': 500, // 現在 496
-  'web/src/components/LaneColumn.tsx': 490, // 現在 483
-  'web/src/components/TunnelControl.tsx': 470, // 現在 468
-  'src/infrastructure/runners/claude-runner.ts': 460, // 現在 455
-  'web/src/components/BoardKeyboardNavProvider.tsx': 440, // 現在 437
-  'web/src/components/PresetControl.tsx': 430, // 現在 428
-  'web/src/components/SessionListPanel.tsx': 430, // 現在 427
+  'web/src/components/TunnelControl.tsx': 230, // 現在 224 (bdboard-sso1.35: 純ヘルパー/表示部品/関心別フックを web/src/components/tunnel/ へ移動)
   'scripts/check-drift.mjs': 410, // 現在 409
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
-  'src/application/runner/run-store.ts': 390, // 現在 381
   'scripts/check-commit-parse.mjs': 380, // 現在 380
   'web/src/components/nextUpRunLoop.ts': 380, // 現在 371
-  'src/domain/board.ts': 370, // 現在 368
-  'web/src/components/DependencyGraphView.tsx': 370, // 現在 367
   'web/src/components/BoardView.tsx': 370, // 現在 365
   'scripts/check-file-size.mjs': 370, // 現在 362
   'web/src/components/NextUpView.tsx': 370, // 現在 362
-  'src/infrastructure/chat/cli-chat-agent.ts': 360, // 現在 351
   'src/infrastructure/chat/specs/claude-spec.ts': 340, // 現在 331
-  'src/infrastructure/harness/fs-harness-injector.ts': 320, // 現在 312
   'src/infrastructure/process/cloudflared-tunnel.ts': 320, // 現在 311
-  'src/infrastructure/process/ai-quota-source.ts': 310, // 現在 307
   'web/src/components/SearchPalette.tsx': 290, // 現在 282
   'src/application/lease/reclaim-scheduler.ts': 280, // 現在 280
   'src/infrastructure/process/ps-process-scanner.ts': 280, // 現在 279
@@ -68,11 +58,8 @@ const MAX_LINES_ALLOWLIST = {
   'src/domain/in-flight-overlap.ts': 210, // 現在 204
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
-  'src/interface/http/routes.test.ts': 6360, // 現在 6359
-  'src/interface/http/chat-routes.test.ts': 3390, // 現在 3389
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
-  'src/interface/http/agent-run-routes.test.ts': 2010, // 現在 2007
   'src/domain/hygiene.test.ts': 1840, // 現在 1835
   'src/infrastructure/bd/bd-cli-human-decisions.test.ts': 1680, // 現在 1679
 };

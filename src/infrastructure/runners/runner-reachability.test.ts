@@ -29,12 +29,35 @@ const RUNNER_REFERENCE_TOKENS = [
 
 const RUNNER_REFERENCE_ALLOWLIST_FILES = [
   'src/interface/http/agent-run-routes.ts',
+  // bdboard-sso1.27: agent-run-routes.ts (旧672行) はルート別の登録関数
+  // (agent-run-create-routes.ts / agent-run-read-routes.ts /
+  // agent-run-cancel-routes.ts) と共有ヘルパー (agent-run-shared.ts /
+  // agent-run-dispatch-outcome.ts / agent-run-provision.ts) へ分割済み (move
+  // only)。分割後もこれらは createAgentRunRoutes(agent-run-routes.ts) からのみ
+  // マウントされる唯一の HTTP エントリの内側にとどまり、その手前で
+  // agentRunGuard/agentRunBodyLimit/rateLimit が適用される「単一の守られた経路」
+  // という不変条件は変わらない。分割前は 1 ファイルで足りていた許可リストを、
+  // 分割後のファイル群へそのまま引き継ぐ。
+  'src/interface/http/agent-run-create-routes.ts',
+  'src/interface/http/agent-run-read-routes.ts',
+  'src/interface/http/agent-run-cancel-routes.ts',
+  'src/interface/http/agent-run-shared.ts',
+  'src/interface/http/agent-run-dispatch-outcome.ts',
+  'src/interface/http/agent-run-provision.ts',
   // bdboard-sso1.14: main.ts のエージェント実行 (agent-run) 領域配線は
   // src/bootstrap/wire-agent-run.ts へ切り出し済み (move only) で、main.ts 自体は
   // もう RUNNER_REFERENCE_TOKENS のどれも参照しない。許可リストを main.ts から
   // wire-agent-run.ts へ移し、ガードを緩めたままにしない。
   'src/bootstrap/wire-agent-run.ts',
   'src/application/ports/agent-runner.ts',
+  // bdboard-sso1.36: agent-run-routes.test.ts (2007行) の move-only 分割で、
+  // 複数のテストファイルから共有されるフェイク/ヘルパー置き場として
+  // agent-run-routes-test-support.ts を新設した。中身は createRunStore /
+  // createAgentRunnerRegistry のフェイクや AgentRunner 型を使うテスト用
+  // フィクスチャのみで、実行時の dispatch 経路には一切関わらない。`.test.ts`
+  // 拡張子ではないため collectSourceFiles のスキャン対象になるが、実体は
+  // *.test.ts と同じテスト専用コードなのでここに明示的に許可する。
+  'src/interface/http/agent-run-routes-test-support.ts',
 ] as const;
 
 const RUNNER_REFERENCE_ALLOWLIST_PREFIXES = [

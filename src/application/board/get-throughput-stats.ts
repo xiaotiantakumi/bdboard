@@ -4,9 +4,10 @@ import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
 import { MS_PER_DAY } from './board-date-time.js';
 import {
-  buildWeekStarts,
-  isInWeek,
-  isInWeekRange,
+  buildWeekBoundaries,
+  isInWeekBounds,
+  isInWeekRangeBounds,
+  type WeekRange,
 } from './week-boundary.js';
 
 export interface WeeklyCloseCount {
@@ -58,7 +59,7 @@ function createEmptyWeeklyCloses(weekStarts: readonly Date[]): WeeklyCloseCount[
 function countWeeklyCloses(
   tickets: readonly Ticket[],
   weekStarts: readonly Date[],
-  timeZone: string,
+  weekRanges: readonly WeekRange[],
 ): WeeklyCloseCount[] {
   const counts = createEmptyWeeklyCloses(weekStarts);
 
@@ -66,16 +67,16 @@ function countWeeklyCloses(
     if (ticket.closedAt === undefined) {
       continue;
     }
-    if (!isInWeekRange(ticket.closedAt, weekStarts, timeZone)) {
+    if (!isInWeekRangeBounds(ticket.closedAt, weekRanges)) {
       continue;
     }
 
-    for (let index = 0; index < weekStarts.length; index += 1) {
-      const weekStart = weekStarts[index];
-      if (weekStart !== undefined && isInWeek(ticket.closedAt, weekStart, timeZone)) {
+    for (let index = 0; index < weekRanges.length; index += 1) {
+      const range = weekRanges[index];
+      if (range !== undefined && isInWeekBounds(ticket.closedAt, range)) {
         const current = counts[index];
         if (current !== undefined) {
-          counts[index] = { weekStart, count: current.count + 1 };
+          counts[index] = { weekStart: current.weekStart, count: current.count + 1 };
         }
         break;
       }
@@ -151,7 +152,7 @@ export function getThroughputStats(
 ): ThroughputStats {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
-  const weekStarts = buildWeekStarts(now, weeks, timeZone);
+  const { weekStarts, weekRanges } = buildWeekBoundaries(now, weeks, timeZone);
   const projectIdFilter = options?.projectIds;
 
   let entries = cache.listProjects();
@@ -165,7 +166,7 @@ export function getThroughputStats(
   let totalsAge: AgeDistribution = { ...EMPTY_AGE_DISTRIBUTION };
 
   for (const entry of entries) {
-    const weeklyCloses = countWeeklyCloses(entry.tickets, weekStarts, timeZone);
+    const weeklyCloses = countWeeklyCloses(entry.tickets, weekStarts, weekRanges);
     const openTicketAge = countOpenTicketAge(entry.tickets, now);
 
     projects.push({
