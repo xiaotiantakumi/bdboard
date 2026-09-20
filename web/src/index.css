@@ -2211,7 +2211,7 @@ body {
   white-space: nowrap;
 }
 
-/* 注意: このセレクタは 1682 行の `@media (max-width: 480px)` 内にも同名で存在し、
+/* 注意: このセレクタは `@media (max-width: 480px)` 内にも同名で存在し、
    そちらが `align-self: center` を宣言している。詳細度は同じ (0,1,0) なので、
    メディアクエリ側が勝っているのは「基底のこのブロックが align-self を宣言していない」
    ことだけが理由 — カスケードの順序では後ろにある基底側が本来は勝つ位置にある。
@@ -4524,7 +4524,8 @@ body {
 }
 
 /* bdboard-gx3i: 横向きスマートフォン (例 844x390 / 932x430) は幅が 700px を超えるため
-   このブロックに入らず、5dvh + 20px + 90dvh の割合指定 (index.css:4136-4144) だけになる。
+   このブロックに入らず、5dvh + 20px + 90dvh の割合指定 (`.help-panel-overlay` の padding と
+   `.help-panel` の max-height) だけになる。
    iPhone 14 横持ち (dvh≈390) では 5dvh(19.5) + 20px + 90dvh(351) = 390.5px となり、
    dvh そのものよりわずかに超過する境界ケース (bdboard-68uh のレビュー時点では未検出)。
    `(max-height: 500px) and (orientation: landscape)` を幅条件に OR することで、
@@ -6586,11 +6587,13 @@ body {
        (messages = 100dvh - 421)。ヘッダ / gap / .chat-input 46px 等の高さ・個数・gap を
        変えたら両方再導出すること — 片方だけ直すと crossover 帯 (431〜575px) だけ壊れる。
        calc 項が動く帯: 469 側 513〜565dvh / 485 側 513〜529dvh。 */
-    /* bdboard-qti6: ここだけは vh→dvh の単純併記が効かない (index.css:5101-5104 の
-       制約そのもの)。カスタムプロパティの宣言は型グラマーに対して検証されず任意の
+    /* bdboard-qti6: ここだけは vh→dvh の単純併記が効かない（カスタムプロパティの値が
+       CSS 型グラマーに対して検証されないという制約そのもの）。カスタムプロパティの宣言は
+       型グラマーに対して検証されず任意の
        トークン列として受理されるため、vh 版を先に併記しても dvh 版は「無効なので
        捨てられる」のではなく vh 版を黙って上書きするだけになる。破綻は var() で
-       消費する側 (width/height: index.css:5905-5906, 6519-6520) の
+       消費する側 (`.chat-attachment-preview` の width/height。ベースブロックと
+       `@media (max-width: 700px)` 内の同名ブロックの両方) の
        invalid-at-computed-value-time として起き、var() の第2引数フォールバックは
        custom property が「未定義」のときにしか効かないのでそこでも救えない。
 
@@ -6661,8 +6664,8 @@ body {
 
   /* border-box 46px = padding 10+10 + line-height 23.2 + border 1+1 = 45.2 切り上げ。
      44px だと content box 22px に対し 1 行 23.2px で 1.2px 欠ける (375×430 実測済み)。
-     46px は index.css:5647 のモバイル 44px タップ領域規約も満たす。
-     resize: vertical (ベース :5517-5529) で縦に伸ばせるので静止 1 行でも操作性は損なわれない。 */
+     46px は `bdboard-h4xs.2`「モバイル幅では 44px タップ領域を確保」規約も満たす。
+     resize: vertical (ベースの `.chat-input` 定義) で縦に伸ばせるので静止 1 行でも操作性は損なわれない。 */
   .chat-input {
     height: 46px;
     min-height: 46px;
@@ -7116,14 +7119,15 @@ body {
 /* bdboard-gx3i: 横向きスマートフォン (例 844x390 / 932x430) は幅が 480px は
    もちろん 700px も超えるため、.search-overlay / .search-palette の全画面上書き
    (元は上の `@media (max-width: 480px)` 内、bdboard-h4xs 由来) に入らず、
-   12dvh + 16px + 70dvh の割合指定 (index.css:3866-3893) だけが当たる。
+   12dvh + 16px + 70dvh の割合指定 (`.search-overlay` の padding と
+   `.search-palette` の max-height) だけが当たる。
    dvh 併記済み (bdboard-68uh) なので比率上のオーバーフローはもう起きないが
    (82dvh + 16px <= 100dvh は可視高 88.9px 以上で常に成立)、縦の余裕が薄い帯で
    丸角・余白ありのパレットのままにしておく理由も無い。
    `(max-height: 500px) and (orientation: landscape)` を幅条件に OR し、
    横向きスマホも全画面上書きに入れる。500px は iPad 横 (1024x768) を除外しつつ
-   スマホ横持ち帯 (390〜430px 高) を含める閾値 (.help-panel 側 index.css:4396 と同じ値・
-   同じ理由)。幅条件はこれまでどおり 480px のまま (481〜700px 帯の縦持ちタブレット等は
+   スマホ横持ち帯 (390〜430px 高) を含める閾値 (`.help-panel-overlay` 側の同条件と
+   同じ値・同じ理由)。幅条件はこれまでどおり 480px のまま (481〜700px 帯の縦持ちタブレット等は
    このチケットの対象外)。 */
 @media (max-width: 480px), (max-height: 500px) and (orientation: landscape) {
   .search-overlay {
@@ -7177,7 +7181,8 @@ body {
   /* .chat-messages を潰すのは添付そのものではなく .chat-input-notices が cap いっぱいを
      占めること (添付は一因)。selectedAgentUnavailable は添付0でも常時バナー、
      currentAttachmentError も非対応1枚目でエラーだけ残り添付0になりうる。
-     :has(... :not(:empty)) は index.css:5624 の :empty 方針と一致。:has() 下限は dvh と同水準。 */
+     :has(... :not(:empty)) は `.chat-input-notices:empty { display: none; }` の方針と一致。
+     :has() 下限は dvh と同水準。 */
   .chat-input-form:has(.chat-input-notices:not(:empty)) .chat-quick-commands {
     display: none;
   }
@@ -7251,7 +7256,7 @@ body {
   /* 210px 固定のままだと grid の可変トラックからはみ出す。ラベル側に
      text-overflow: ellipsis が既にあるので、幅だけトラックに合わせる。
      同詳細度 (0,1,0) だと後ろにある素の .project-picker-button { min-height:30px;
-     width:210px } (6240行付近) が勝つため、.header プレフィックスで (0,2,0) に底上げする。
+     width:210px } が勝つため、.header プレフィックスで (0,2,0) に底上げする。
      max-width:210px は 481〜700px 帯で 1fr トラック全幅へ広がるのを防ぐ (375px では 1fr が
      210px より狭いので既存の圧縮挙動は変わらない)。 */
   .header .project-picker-button {
