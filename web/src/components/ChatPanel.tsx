@@ -23,7 +23,6 @@ import {
   ChatStreamEndedWithoutResultError,
   type ChatAgentDto,
   type ChatImageMimeType,
-  type ChatImagePayload,
   type ChatMessageResponseDto,
   type ChatMessageRequest,
   type ProjectDto,
@@ -66,7 +65,6 @@ import {
   SidePanelResizeHandle,
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
-import { getBoardTimeZone } from '../boardTimeZone';
 import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
 import { isImeComposingKeyEvent } from '../imeGuard';
 import {
@@ -75,6 +73,28 @@ import {
   chatAgentErrorMessage,
   writeAccessErrorMessage,
 } from '../writeAccessMessage';
+import {
+  CHAT_IMAGE_ONLY_PROMPT,
+  attachmentsToPayload,
+  formatImageSize,
+  readFileAsDataUrl,
+  validateChatAttachments,
+  type ChatAttachment,
+  type ChatMessageImage,
+} from './chat/attachments';
+import {
+  formatAgentOptionLabel,
+  hasSelectableModels,
+  resolveDefaultModel,
+} from './chat/agentOptions';
+import { makeDraftKey } from './chat/draftKey';
+import { resolveInitialProjectId } from './chat/projectSelection';
+import {
+  compareThreadsNewestFirst,
+  formatThreadUpdatedAt,
+  summarizeTitle,
+} from './chat/threads';
+export { formatThreadUpdatedAt } from './chat/threads';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -97,18 +117,6 @@ type ChatMessage = {
   agentWarnings?: string[];
   /** 画像バイナリは履歴 API に残らないため、このマウント中だけ表示する preview。 */
   images?: ChatMessageImage[];
-};
-
-type ChatMessageImage = {
-  previewUrl: string;
-  name: string;
-  size: number;
-};
-
-type ChatAttachment = ChatMessageImage & {
-  id: string;
-  file: File;
-  mimeType: ChatImageMimeType;
 };
 
 // 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
@@ -159,185 +167,6 @@ const UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS = 20;
 // この値そのものに強い根拠は無く、「無期限にブロックしない」ことが目的の
 // 主眼であり、猶予の長さは今後の実測次第で調整して良い。
 
-const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
-const CHAT_IMAGE_MAX_COUNT = 4;
-const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
-const CHAT_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
-const CHAT_IMAGE_TYPES: readonly ChatImageMimeType[] = [
-  'image/png',
-  'image/jpeg',
-  'image/webp',
-];
-
-function isChatImageMimeType(value: string): value is ChatImageMimeType {
-  return CHAT_IMAGE_TYPES.some((mimeType) => mimeType === value);
-}
-
-function validateChatAttachments(
-  existing: readonly ChatAttachment[],
-  incoming: readonly File[],
-): string | null {
-  const unsupported = incoming.find((file) => !isChatImageMimeType(file.type));
-  if (unsupported !== undefined) {
-    return 'PNG・JPEG・WebP 形式の画像だけ貼り付けられます。';
-  }
-  if (existing.length + incoming.length > CHAT_IMAGE_MAX_COUNT) {
-    return `画像は最大 ${CHAT_IMAGE_MAX_COUNT} 枚まで添付できます。`;
-  }
-  const oversized = incoming.find((file) => file.size > CHAT_IMAGE_MAX_FILE_BYTES);
-  if (oversized !== undefined) {
-    return `「${oversized.name || '名称なしの画像'}」は 5 MiB を超えています。`;
-  }
-  const totalBytes =
-    existing.reduce((total, attachment) => total + attachment.size, 0) +
-    incoming.reduce((total, file) => total + file.size, 0);
-  if (totalBytes > CHAT_IMAGE_MAX_TOTAL_BYTES) {
-    return '画像の合計サイズは 10 MiB 以下にしてください。';
-  }
-  return null;
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      if (typeof reader.result === 'string') {
-        resolve(reader.result);
-      } else {
-        reject(new Error('画像を読み込めませんでした。'));
-      }
-    });
-    reader.addEventListener('error', () =>
-      reject(reader.error ?? new Error('画像を読み込めませんでした。')),
-    );
-    reader.readAsDataURL(file);
-  });
-}
-
-function attachmentsToPayload(
-  attachments: readonly ChatAttachment[],
-): ChatImagePayload[] {
-  return attachments.map((attachment) => {
-    const dataUrl = attachment.previewUrl;
-    const commaIndex = dataUrl.indexOf(',');
-    if (commaIndex < 0) {
-      throw new Error('画像を送信形式に変換できませんでした。');
-    }
-    return {
-      mimeType: attachment.mimeType,
-      data: dataUrl.slice(commaIndex + 1),
-    };
-  });
-}
-
-function formatImageSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
-  }
-  return `${Math.max(1, Math.ceil(bytes / 1024))} KiB`;
-}
-
-// SF3: 会話キーの「新規ドラフト」書式(セッションIDを持たない未送信スレッド)を
-// 1箇所に集約する。以前はこの文字列テンプレートが複数箇所(state 初期化・
-// startNewDraftThread・draftKey ローカル関数・handleAgentChange)に散在していた。
-function makeDraftKey(projectId: string, nonce: number): string {
-  return `new:${projectId}:${nonce}`;
-}
-
-function resolveInitialProjectId(
-  projects: readonly ProjectDto[],
-  initialProjectId?: string,
-): string {
-  if (
-    initialProjectId !== undefined &&
-    projects.some((project) => project.id === initialProjectId)
-  ) {
-    return initialProjectId;
-  }
-  // bdboard-r5we: 「一覧の先頭を暗黙の対象にする」挙動は廃止。プロジェクトが
-  // 1件だけなら曖昧さが無いので自動選択してよいが、複数あるときは '' (未選択)
-  // のままにして、ユーザーに明示選択させる。
-  if (projects.length === 1) {
-    return projects[0]?.id ?? '';
-  }
-  return '';
-}
-
-function hasSelectableModels(agent: ChatAgentDto): boolean {
-  return (agent.models?.length ?? 0) >= 2;
-}
-
-function formatAgentOptionLabel(agent: ChatAgentDto): string {
-  let label = agent.label;
-  // モデルを選べるエージェントでは、隣のモデルセレクトが現在値を持っている。
-  // ここに descriptor 既定(例: sonnet)を出すと、Opus を選んでいるのに
-  // "Claude Code (sonnet)" と表示され、2つのコントロールが矛盾する。
-  if (
-    !hasSelectableModels(agent) &&
-    agent.model !== undefined &&
-    agent.model !== ''
-  ) {
-    label += ` (${agent.model})`;
-  }
-  if (agent.experimental) {
-    label += ' [experimental]';
-  }
-  if (agent.capability !== 'bd-only') {
-    label += ` [${agent.capability}]`;
-  }
-  label += agent.supportsImages ? ' [画像対応]' : ' [画像非対応]';
-  if (agent.availability === 'unavailable') {
-    label += '（利用不可）';
-  } else if (agent.availability === 'unknown') {
-    label += '（認証未確認）';
-  }
-  return label;
-}
-
-function resolveDefaultModel(agent: ChatAgentDto): string {
-  const models = agent.models ?? [];
-  if (
-    agent.model !== undefined &&
-    models.some((entry) => entry.id === agent.model)
-  ) {
-    return agent.model;
-  }
-  return models[0]?.id ?? '';
-}
-
-function summarizeTitle(content: string): string {
-  const chars = Array.from(content.trim());
-  return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : chars.join('');
-}
-
-const threadUpdatedAtFormatters = new Map<string, Intl.DateTimeFormat>();
-
-function getThreadUpdatedAtFormatter(timeZone: string): Intl.DateTimeFormat {
-  let formatter = threadUpdatedAtFormatters.get(timeZone);
-  if (formatter === undefined) {
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      month: 'numeric',
-      day: 'numeric',
-    });
-    threadUpdatedAtFormatters.set(timeZone, formatter);
-  }
-  return formatter;
-}
-
-// bdboard チャット改善(Chat Redesign 1b): スレッド一覧ドロワーの各行に出す
-// 更新日時の短縮表示。「N分前」のような相対表記は Date.now() 依存でテストが
-// 時刻に脆くなるため避け、月/日の絶対表記だけを返す決定的な実装にしている。
-// 暦日はボード設定 TZ 基準(activityFeedFormatting と同様、see bdboard-3tw.75)。
-export function formatThreadUpdatedAt(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return '';
-  const parts = getThreadUpdatedAtFormatter(getBoardTimeZone()).formatToParts(date);
-  const month = parts.find((part) => part.type === 'month')?.value;
-  const day = parts.find((part) => part.type === 'day')?.value;
-  if (month === undefined || day === undefined) return '';
-  return `${month}/${day}`;
-}
 
 // bdboard-ru4d: 会話キー再割り当てサイトごとのドラフト積載物引き継ぎ選択。
 // ストアを1つ増やすと、ここと3サイト(handleAgentChange / startNewDraftThread /
@@ -417,30 +246,6 @@ const APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan(
     reason: '送信時点でドラフト積載物はクリア済み',
   },
 });
-
-// スレッド一覧の並び順(bdboard-3tw.154)。更新の新しい順。
-//
-// ピン留めはここでは見ない。ドロワーは「ピン留め」節と「開いている/閉じた」節に
-// pinned で振り分けてから描画しており、振り分けは filter なので相対順序を保つ。
-// つまりピン留め優先はこの比較関数を通さずに成立していて、ここに pinned を足すと
-// 表示に出ない分岐が増えるだけになる。
-//
-// 更新日時が読めないスレッドは 0 として最後尾に落とす。ここに来るのは
-// 「開いてはいるがスレッド一覧の再取得がまだ届いていない」極短い窓
-// (CLIセッションの再開直後など)だけで、次の再取得で正しい位置へ移る。
-// NaN をそのまま比較に流すと比較関数が非推移的になり、並びが入力順で変わる。
-function threadRecency(thread: ChatThreadDto | undefined): number {
-  if (thread === undefined) return 0;
-  const at = Date.parse(thread.updatedAt);
-  return Number.isNaN(at) ? 0 : at;
-}
-
-function compareThreadsNewestFirst(
-  a: ChatThreadDto | undefined,
-  b: ChatThreadDto | undefined,
-): number {
-  return threadRecency(b) - threadRecency(a);
-}
 
 // bdboard-zlzo: 配信停止後にサーバー側でもターンの完了を確認できなかったときの文言。
 const CHAT_STREAM_DETACHED_FAILED_MESSAGE =
