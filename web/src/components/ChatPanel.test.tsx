@@ -3464,6 +3464,132 @@ describe('ChatPanel', () => {
     expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-overflow-2');
   });
 
+  it('keeps a still-recovering project A partial reply intact after switching to project B, sending there, and completing that send normally (bdboard-1qoe)', async () => {
+    // streamingReply が単一スロットだった頃は、プロジェクト B での送信開始時の
+    // 初期化 (setStreamingReply({ key: sendKeyB, text: '' })) と完了時のクリア
+    // (setStreamingReply(null)) が、無関係なプロジェクト A がバックグラウンドで
+    // 配信停止回収待ちのまま保持していた部分テキストを巻き添えで消していた
+    // (元チケット bdboard-v3ag PR #492 の Opus レビュー worth-considering W2)。
+    // 会話キーでスコープした Record に変えたことで、これが構造的に起きなくなった
+    // ことを検証する。
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatThreadsMock.mockResolvedValue([]);
+    // プロジェクト A の配信停止回収は意図的に永遠に 'processing' のまま止めておく
+    // (この会話キーの部分テキストが、他の操作で偶発的に消えていないかだけを見たい
+    // ため。'idle'/'failed'/'completed' に倒すと、その分岐自身が別の理由で
+    // clearStreamingReplyForKey を呼んでしまい、何を検証しているのか曖昧になる)。
+    // プロジェクト B は何も配信停止していないので 'idle' のままでよい。
+    fetchChatTurnStatusMock.mockImplementation(async (projectId: string) =>
+      projectId === PROJECT_A.id ? { state: 'processing' as const } : { state: 'idle' as const },
+    );
+
+    let releaseAClose: () => void = () => {};
+    const aCloseGate = new Promise<void>((resolve) => {
+      releaseAClose = resolve;
+    });
+    let releaseBDone: () => void = () => {};
+    const bDoneGate = new Promise<void>((resolve) => {
+      releaseBDone = resolve;
+    });
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        const body = JSON.parse((init.body as string) ?? '{}') as { message?: string };
+        if (body.message === 'question from A') {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial-from-A"}\n\n'),
+                );
+                await aCloseGate;
+                // done/error を送らずに閉じる = ChatStreamEndedWithoutResultError
+                // (bdboard-zlzo の配信停止シナリオ)。
+                controller.close();
+              },
+            }),
+          );
+        }
+        if (body.message === 'question from B') {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial-from-B"}\n\n'),
+                );
+                // bdboard-l1t.9 Opus レビュー S7 と同じ理由: delta と done を同期的に
+                // 続けて enqueue すると、テスト側が partial-from-B を観測する前に
+                // currentConversationKey が sess-b へ進んでしまい (delta 到着時点の
+                // 会話キーは draftKey、done 到着後は sessionId)、途中経過を確定的に
+                // 観測できない。ゲートで区切る。
+                await bDoneGate;
+                controller.enqueue(
+                  new TextEncoder().encode(
+                    'event: done\ndata: {"reply":"reply from B","sessionId":"sess-b","agentId":"claude"}\n\n',
+                  ),
+                );
+                controller.close();
+              },
+            }),
+          );
+        }
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: PROJECT_A.id });
+    await screen.findByLabelText('チャットエージェント');
+    await user.type(screen.getByLabelText('メッセージ'), 'question from A');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messagesA = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        messagesA.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('partial-from-A');
+    });
+
+    releaseAClose();
+    // 配信停止 → バックグラウンド回収中インジケータが出るまで待つ (この時点で
+    // detachedStreamSendRef がプロジェクト A を指した状態になる)。
+    await screen.findByText('返信をバックグラウンドで処理中…', {}, { timeout: 2_500 });
+    expect(
+      messagesA.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+    ).toBe('partial-from-A');
+
+    // プロジェクト B へ切り替える (A の配信停止回収はまだ未解決のまま)。
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), PROJECT_B.id);
+    await waitFor(() => {
+      expect(fetchChatThreadsMock).toHaveBeenCalledWith(PROJECT_B.id);
+    });
+
+    // プロジェクト B で送信し、途中経過を経て正常に完了させる。
+    await user.type(screen.getByLabelText('メッセージ'), 'question from B');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    const messagesB = screen.getByRole('log');
+    await waitFor(() => {
+      expect(
+        messagesB.querySelector('.chat-message-streaming .chat-message-text')?.textContent,
+      ).toBe('partial-from-B');
+    });
+    releaseBDone();
+    expect(await within(messagesB).findByText('reply from B')).toBeInTheDocument();
+    expect(messagesB.querySelector('.chat-message-streaming')).not.toBeInTheDocument();
+
+    // プロジェクト A へ戻る: バックグラウンドで回収待ちのまま保持していたはずの
+    // 部分テキストが、B での送信開始/完了に巻き添えで消されていないことを確認する。
+    await user.selectOptions(screen.getByLabelText('対象プロジェクト'), PROJECT_A.id);
+    await waitFor(() => {
+      expect(fetchChatThreadsMock).toHaveBeenCalledWith(PROJECT_A.id);
+    });
+    const messagesAfterSwitchBack = screen.getByRole('log');
+    expect(
+      messagesAfterSwitchBack.querySelector('.chat-message-streaming .chat-message-text')
+        ?.textContent,
+    ).toBe('partial-from-A');
+  });
+
   it('keeps polling and recovers a completed turn after turn-status fails once (bdboard-3tw.164, done なし回収)', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);

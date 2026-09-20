@@ -604,7 +604,12 @@ export function ChatPanel({
     }, 1_000);
     return () => clearInterval(timer);
   }, [isSending]);
-  const [streamingReply, setStreamingReply] = useState<{ key: string; text: string } | null>(null);
+  // bdboard-1qoe: 会話キーでスコープした Record にする (単一スロットだった頃は、
+  // 無関係な会話/プロジェクトへの書き込み (送信開始時の初期化・完了時のクリア) が
+  // 無条件にスロット全体を上書きし、別の会話がバックグラウンドで回収待ちの間
+  // 表示し続けているはずの部分テキストを巻き添えで消してしまっていた。詳細は
+  // 元チケット (bdboard-v3ag PR #492 の Opus レビュー worth-considering W2) 参照。
+  const [streamingReply, setStreamingReply] = useState<Record<string, string>>({});
   const [backgroundTurnStatus, setBackgroundTurnStatus] = useState<ChatTurnStatusDto>({
     state: 'idle',
   });
@@ -625,7 +630,8 @@ export function ChatPanel({
   // processing → completed と見え、間に idle を挟まない。回収前に idle が見えたら
   // ターンは完走しなかった (エージェント失敗など、配信停止後はサーバーが error を
   // 送らない) ので、fail() で通常の送信失敗 (エラー表示と入力復元) に戻す。
-  // streamingKey は配信停止時点の streamingReply.key (=送信元の会話キー) を保持する
+  // streamingKey は配信停止時点の送信元の会話キー (streamingReply の Record を
+  // 引くキー、bdboard-1qoe) を保持する
   // (bdboard-3tw.166)。回収が確定する (completed のハイドレーション or fail() 側の
   // 送信失敗表示) まで、この会話キーに対応する部分テキストを画面に残し続けるための
   // 目印で、確定した瞬間にだけ clearStreamingReplyForKey で消す。
@@ -654,11 +660,18 @@ export function ChatPanel({
     });
   }, []);
   // bdboard-3tw.166: 配信停止からの回収中に表示し続けている部分テキストを、
-  // その会話キーのものだけ消す。無条件の setStreamingReply(null) だと、回収と
-  // 無関係な会話に切り替わっていた場合にも消してしまう (今は起きなくても、
-  // 呼び出し側が増えたときの事故を防ぐため key 一致を必須にする)。
+  // その会話キーのものだけ消す。streamingReply は会話キーでスコープした Record
+  // (bdboard-1qoe) なので、これはその1キーだけを delete する形になる。
+  // bdboard-1qoe 以降、この「その会話キーだけ消す」性質に実際に依存している
+  // 呼び出し側がある (submitChatMessage の完了/通常失敗クリア、~2888行目) —
+  // 無関係な会話/プロジェクトの部分テキストを巻き添えで消さないための本番経路。
   const clearStreamingReplyForKey = useCallback((key: string) => {
-    setStreamingReply((prev) => (prev !== null && prev.key === key ? null : prev));
+    setStreamingReply((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   }, []);
   const [historyLoadedFor, setHistoryLoadedFor] = useState<
     Record<string, true>
@@ -734,7 +747,14 @@ export function ChatPanel({
   // applyChatSuccess)の引き継ぎ選択も更新すること。
   //
   // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
-  // これらは「サーバーのセッション状態」側であり、下の2つの呼び出しサイト
+  // conversations / historyLoadedFor は「サーバーのセッション状態」側。
+  // streamingReply は bdboard-1qoe で会話キーでスコープした Record になり形は
+  // draft payload ストアと同じだが、これはクライアントが受信中のストリーム
+  // バッファであり、ドラフトの「積載物」(未送信の入力/添付) ではないため対象に
+  // 含めない — sendKey は selectedProjectId==='' の間は submitChatMessage が
+  // 早期 return するため (~2641行目) '' キースペースに入ることが無く、かつ
+  // 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
+  // ので、ここで移送/掃除しなくても取り残されない。下の2つの呼び出しサイト
   // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
   // 移送されていない。ここに含めると挙動が変わる。
   const applyToDraftPayloadStores = useCallback(
@@ -1407,7 +1427,7 @@ export function ChatPanel({
         // unresolvedProjectRecoveryAtSubmit) はこの ref の non-null を「再送を
         // 止めるべき区間」の目印として使っている。ここで先に ref だけ外すと、
         // ハイドレーション fetch が終わるまでの間だけ再送がすり抜けられるように
-        // なり、その再送自身の setStreamingReply({ key: sendKey, text: '' }) が
+        // なり、その再送自身の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' })) が
         // (a) このあと届く確定本文と同じ会話キーの部分テキストを本文到着前に消す、
         // (b) 新しい送信自身のライブな部分テキストまで巻き添えで消す、という
         // v3ag が塞ごうとした穴を completed 経路でだけ再現してしまう。ref のクリアと
@@ -2160,18 +2180,16 @@ export function ChatPanel({
   ]);
 
   // 表示中の会話にだけ効くストリーミングテキスト。他の会話のストリームで
-  // この会話をスクロールしない。
-  const activeStreamingText =
-    streamingReply !== null && streamingReply.key === currentConversationKey
-      ? streamingReply.text
-      : '';
+  // この会話をスクロールしない。streamingReply は会話キーでスコープした Record
+  // (bdboard-1qoe) なので、ここは単純な参照になる。
+  const activeStreamingText = streamingReply[currentConversationKey] ?? '';
 
   // bdboard-v3ag: 配信停止(SSE キュー上限超過等)からの turn-status 回収が
   // まだ終わっていない間、同じプロジェクトへの再送を止める。サーバーは
   // プロジェクト単位で同時に1ターンしか受け付けない (isBusy ロック) ため、
   // ここでブロックしなくても再送自体は通常 409 で弾かれるが、409 が返る
   // 前後のタイミング次第では再送がそのまま処理されてしまうことがあり、その
-  // 場合 submitChatMessage 冒頭の setStreamingReply({ key: sendKey, text: '' })
+  // 場合 submitChatMessage 冒頭の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }))
   // が回収中に保持していた部分テキストを即座に空文字で上書きしてしまう
   // (bdboard-v3ag のチケット本文、bdboard-3tw.166 の Opus レビュー由来)。
   //
@@ -2740,7 +2758,10 @@ export function ChatPanel({
 
       try {
         if (selectedAgent?.supportsStreaming === true) {
-          setStreamingReply({ key: sendKey, text: '' });
+          // bdboard-1qoe: 会話キーだけを初期化する (Record 全体を作り直さない)。
+          // 無関係な会話/プロジェクトが同じ Record に保持している部分テキストを
+          // 巻き添えで消さないため。
+          setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }));
           // bdboard-3tw.166 (Opus レビュー指摘): 「この送信が今まさに配信停止した」を
           // detachedStreamSendRef.current の中身 (streamingKey が sendKey と一致するか)
           // で判定すると、同じ会話キーへの以前の (まだ未解決の) 配信停止が残っている
@@ -2764,11 +2785,10 @@ export function ChatPanel({
               messagePayload,
               {
                 onDelta: (delta) =>
-                  setStreamingReply((prev) =>
-                    prev !== null && prev.key === sendKey
-                      ? { key: sendKey, text: prev.text + delta }
-                      : prev,
-                  ),
+                  setStreamingReply((prev) => ({
+                    ...prev,
+                    [sendKey]: (prev[sendKey] ?? '') + delta,
+                  })),
               },
               requestController.signal,
             );
@@ -2870,7 +2890,11 @@ export function ChatPanel({
             // テキストを表示し続ける" 要件)。それ以外 (成功 / この送信自身の通常失敗)
             // は従来どおり即座に消す。
             if (!detachedThisSend) {
-              setStreamingReply(null);
+              // bdboard-1qoe: この会話キーのぶんだけ消す (Record 全体を null にしない)。
+              // 他の会話/プロジェクトがバックグラウンドで回収待ちの間に保持している
+              // 部分テキストを、この送信の完了/通常失敗のたびに巻き添えで消していた
+              // (単一スロットだった頃の元チケットのバグ)。
+              clearStreamingReplyForKey(sendKey);
             }
           }
         } else {
