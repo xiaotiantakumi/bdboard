@@ -70,11 +70,6 @@ import { WatchToggle } from './WatchToggle';
 import { TicketAttachments } from './TicketAttachments';
 import { useUndoSnackbar } from './UndoSnackbar';
 import {
-  ACTIVITY_KIND_LABELS,
-  formatActivityTime,
-  groupEventsByDate,
-} from './activityFeedFormatting';
-import {
   computeDeferUntilDate,
   DEFAULT_DEFER_PERIOD,
   DEFER_PERIOD_OPTIONS,
@@ -89,10 +84,6 @@ import {
   OVERLAP_FILE_DISPLAY_LIMIT,
   COPY_FEEDBACK_MS,
 } from './ticket-detail/constants';
-import {
-  timelineKindBadgeClass,
-  formatTimelineChangeDetail,
-} from './ticket-detail/timelineFormatting';
 import {
   type TicketDetailPanelProps,
   type NextStepCopyTarget,
@@ -121,6 +112,8 @@ import {
 } from './ticket-detail/agentRun';
 import { AgentRunNextStep } from './ticket-detail/AgentRunNextStep';
 import { TicketIdLink } from './ticket-detail/TicketIdLink';
+import { TicketTimelineSection } from './ticket-detail/TicketTimelineSection';
+import { TicketCommentsSection } from './ticket-detail/TicketCommentsSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -2003,173 +1996,29 @@ export function TicketDetailPanel({
                 )}
               </div>
             )}
-            <div className="detail-section">
-              <div className="ticket-timeline-header">
-                <h3>変更履歴</h3>
-                <button
-                  type="button"
-                  className="btn ticket-timeline-toggle-btn"
-                  onClick={() => setTimelineExpanded((expanded) => !expanded)}
-                >
-                  {timelineExpanded ? '閉じる' : '表示'}
-                </button>
-              </div>
-              {timelineExpanded && timelineLoading && (
-                <p className="loading">読み込み中…</p>
-              )}
-              {timelineExpanded && timelineError !== null && (
-                <p className="error-message">
-                  {timelineError instanceof Error
-                    ? timelineError.message
-                    : '変更履歴の読み込みに失敗しました'}
-                </p>
-              )}
-              {timelineExpanded &&
-                timelineEvents !== undefined &&
-                timelineEvents.length === 0 && (
-                  <p className="detail-help">変更履歴はありません</p>
-                )}
-              {timelineExpanded &&
-                timelineEvents !== undefined &&
-                timelineEvents.length > 0 && (
-                  <div className="ticket-timeline-groups">
-                    {groupEventsByDate(timelineEvents, new Date()).map((group) => (
-                      <section key={group.heading} className="ticket-timeline-date-group">
-                        <h4 className="ticket-timeline-date-heading">{group.heading}</h4>
-                        <ul className="ticket-timeline-list">
-                          {group.events.map((event) => {
-                            const at = new Date(event.at);
-                            const changeDetail = formatTimelineChangeDetail(
-                              event.kind,
-                              event.from,
-                              event.to,
-                            );
-                            const secondaryParts = [
-                              event.actor !== undefined ? `@${event.actor}` : undefined,
-                              changeDetail,
-                              event.reason,
-                            ].filter(
-                              (part): part is string =>
-                                part !== undefined && part.length > 0,
-                            );
-                            const secondaryText =
-                              secondaryParts.length > 0
-                                ? secondaryParts.join(' · ')
-                                : undefined;
-
-                            return (
-                              <li
-                                key={`${event.kind}-${event.at}`}
-                                className="ticket-timeline-item"
-                              >
-                                <span className="ticket-timeline-time">
-                                  {formatActivityTime(at)}
-                                </span>
-                                <span className={timelineKindBadgeClass(event.kind)}>
-                                  {ACTIVITY_KIND_LABELS[event.kind]}
-                                </span>
-                                {secondaryText !== undefined && (
-                                  <span className="ticket-timeline-detail">
-                                    {secondaryText}
-                                  </span>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </section>
-                    ))}
-                  </div>
-                )}
-            </div>
+            <TicketTimelineSection
+              expanded={timelineExpanded}
+              onToggleExpanded={() =>
+                setTimelineExpanded((expanded) => !expanded)
+              }
+              loading={timelineLoading}
+              error={timelineError}
+              events={timelineEvents}
+            />
             <TicketAttachments ticketId={ticketId} />
-            <div className="detail-section">
-              <h3>コメント</h3>
-              {!commentsEnabled && (
-                <p className="detail-help">コメントはありません</p>
-              )}
-              {commentsEnabled && commentsLoading && (
-                <p className="loading">読み込み中…</p>
-              )}
-              {commentsEnabled && commentsError !== null && (
-                <p className="error-message">
-                  {commentsError instanceof Error
-                    ? commentsError.message
-                    : 'コメントの読み込みに失敗しました'}
-                </p>
-              )}
-              {commentsEnabled &&
-                !commentsLoading &&
-                commentsError === null &&
-                comments !== undefined &&
-                comments.length === 0 && (
-                  <p className="detail-help">コメントはありません</p>
-                )}
-              {commentsEnabled &&
-                comments !== undefined &&
-                comments.length > 0 && (
-                  <ul className="comment-list">
-                    {comments.map((comment) => (
-                      <li key={comment.id} className="comment-item">
-                        <div className="comment-meta">
-                          <span className="comment-author">{comment.author}</span>
-                          <time
-                            className="comment-date"
-                            dateTime={comment.createdAt}
-                          >
-                            {formatAbsoluteTime(comment.createdAt)}
-                          </time>
-                        </div>
-                        <MarkdownContent
-                          text={comment.text}
-                          isTicketOnBoard={isTicketOnBoard}
-                          onOpenTicket={onOpenTicket}
-                          className="markdown-detail"
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              <form
-                className="comment-form"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (!canSubmitComment || commentMutation.isPending) {
-                    return;
-                  }
-                  commentMutation.mutate();
-                }}
-              >
-                <label className="comment-form-label" htmlFor="comment-text">
-                  コメントを追加
-                </label>
-                <textarea
-                  ref={commentTextareaRef}
-                  id="comment-text"
-                  className="comment-form-input"
-                  value={commentText}
-                  onChange={(event) => setCommentText(event.target.value)}
-                  rows={3}
-                  maxLength={2000}
-                  disabled={commentMutation.isPending}
-                />
-                <button
-                  type="submit"
-                  className="btn comment-form-submit"
-                  disabled={!canSubmitComment || commentMutation.isPending}
-                >
-                  {commentMutation.isPending ? '送信中…' : 'コメントを投稿'}
-                </button>
-                {commentMutation.error !== null && (
-                  <p className="error-message">
-                    {describeWriteError(
-                      commentMutation.error,
-                      'コメントの投稿に失敗しました',
-                    )}
-                  </p>
-                )}
-              </form>
-            </div>
+            <TicketCommentsSection
+              enabled={commentsEnabled}
+              loading={commentsLoading}
+              error={commentsError}
+              comments={comments}
+              isTicketOnBoard={isTicketOnBoard}
+              onOpenTicket={onOpenTicket}
+              textareaRef={commentTextareaRef}
+              commentText={commentText}
+              onCommentTextChange={setCommentText}
+              canSubmit={canSubmitComment}
+              mutation={commentMutation}
+            />
             <div className="detail-section">
               <h3>クイックアクション</h3>
               <p className="detail-help">
