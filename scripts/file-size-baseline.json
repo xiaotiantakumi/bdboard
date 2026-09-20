@@ -161,6 +161,11 @@
       "reason": "useBoardKeyboardNav フックと BoardKeyboardNavProvider コンポーネントの2 export を1ファイルに同居。キーボードナビゲーションの状態機械が大半を占める。分割検討・チケット未起票。"
     },
     {
+      "path": "src/application/board/get-pr-badges.ts",
+      "limit": 600,
+      "reason": "bdboard-7ln6 (PR #526) で PR バッジの gh 失敗キャッシュ/バックオフを拡張し518行に。bdboard-jygp の file-size guard 導入と入れ違いで baseline 未登録のまま既定上限500行を超過し、main の verify/verify-windows CI 自体と、main に向けた全ての open PR の CI を fatal にブロックしていた (bdboard-kgjq, discovered-from bdboard-sso1.4)。分割/削減は bdboard-7ln6 側の判断に委ねる暫定措置。"
+    },
+    {
       "path": "web/src/components/ChatPanel.test.tsx",
       "limit": 9500,
       "reason": "ChatPanel の回帰テスト。describe 10 / it 196件が1ファイルに集約。実装側 (ChatPanel.tsx) の分割判断チケット bdboard-78ve が見送りで close 済みのため、テストの分割も未着手。"
