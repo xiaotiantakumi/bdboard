@@ -1239,6 +1239,44 @@ describe('getPrBadges: gh rate-limit circuit breaker (bdboard-7ln6)', () => {
     fakeNow += 600; // 合計 2100ms 経過 → 2000ms のクールダウンは明けている
     expect(statusCache.isCircuitOpen()).toBe(false);
   });
+
+  it('does not let a concurrent success for a different URL close the breaker mid-cooldown (bdboard-v538)', async () => {
+    // COMMENT_FETCH_CONCURRENCY=3 のもとで rate-limit と成功が同一バッチで
+    // 並行起動されるケースの再現。url1 は rate-limit、url2 は (確実に url1 の
+    // 結果より後に解決するよう遅延させた) 成功を返す。修正前は url2 の成功が
+    // recordResult 経由で無条件に closeCircuit() を呼び、トリップ直後の
+    // クールダウンが即座にリセットされてしまっていた。
+    const { cache, urls } = makeManyProjectTickets(2);
+    const [rateLimitedUrl, successUrl] = urls;
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async (url: string) => {
+        if (url === rateLimitedUrl) {
+          return { status: null, reason: 'rate-limit' } as const;
+        }
+        // 確実に rate-limit の結果が先に record されるよう、実タイマーで遅延させる。
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        return { status: { state: 'open', checkStatus: 'pass' } } as const;
+      }),
+    };
+
+    const fakeNow = 0;
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      circuitInitialCooldownMs: 15 * 60_000,
+    });
+
+    const badges = await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+    // 本題: url2 の成功が届いた後も、まだクールダウン中のブレーカーは開いたまま。
+    expect(statusCache.isCircuitOpen()).toBe(true);
+    // successUrl 自体の badge は取れているはず (呼び出し自体は成功している)。
+    const successBadge = badges.find((badge) => badge.url === successUrl);
+    expect(successBadge?.status).toEqual({ state: 'open', checkStatus: 'pass' });
+  });
 });
 
 describe('getPrBadges: per-request new-fetch budget (bdboard-7ln6 #6)', () => {

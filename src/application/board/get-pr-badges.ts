@@ -273,7 +273,15 @@ export class PrBadgeStatusCache {
   private recordResult(url: string, result: PrStatusResult): void {
     if (result.status !== null) {
       this.recordSuccess(url, result.status);
-      this.closeCircuit();
+      // クールダウン中 (isCircuitOpen()===true) なら閉じない。並行起動された
+      // 別URLの成功が、たまたま rate-limit トリップの直後に届いただけかも
+      // しれず、それでブレーカーを即リセットしてしまうと再試行間隔の一元管理
+      // という目的そのものが壊れる (bdboard-v538)。cooldown が自然に経過した
+      // 後の成功 (half-open probe) でのみ閉じ、そこで cooldown 段階もリセット
+      // する。
+      if (!this.isCircuitOpen()) {
+        this.closeCircuit();
+      }
       return;
     }
     if (result.reason === 'rate-limit') {

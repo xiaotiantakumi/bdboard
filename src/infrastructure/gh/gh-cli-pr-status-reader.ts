@@ -43,14 +43,18 @@ const STATUS_CONTEXT_FAIL_STATES = new Set(['FAILURE', 'ERROR']);
 const STATUS_CONTEXT_PENDING_STATES = new Set(['PENDING', 'EXPECTED']);
 
 // gh の失敗メッセージ文言 (bdboard-7ln6 #1)。GraphQL/REST どちらの経路でも
-// 「rate limit」という語自体は共通して出てくる。HTTP 403/429 も rate limit
-// として扱う (gh は "(HTTP 403)" / "(HTTP 429)" のように末尾に付記する)。
+// 「rate limit」という語自体は共通して出てくる。HTTP 429 は他の意味を持たない
+// ため単独で rate limit 確定として扱う。HTTP 403 は権限/SSOエラーでも返る
+// ため単独では rate limit と判定しない — 403 は必ず RATE_LIMIT_TEXT_PATTERNS
+// のいずれかと併記されている場合のみ rate limit 扱いとする (実際の gh の
+// rate-limit メッセージは "API rate limit exceeded ... (HTTP 403)" のように
+// 文言を伴うため、これでも正規の検知漏れは起きない。bdboard-v538)。
 const RATE_LIMIT_TEXT_PATTERNS = [
   /api rate limit/i,
   /rate limit exceeded/i,
   /secondary rate limit/i,
 ];
-const RATE_LIMIT_HTTP_STATUS_PATTERN = /\bHTTP\s+(403|429)\b/i;
+const RATE_LIMIT_HTTP_429_PATTERN = /\bHTTP\s+429\b/i;
 const NOT_FOUND_TEXT_PATTERNS = [
   /could not resolve/i,
   /no pull requests found/i,
@@ -60,7 +64,7 @@ const NOT_FOUND_TEXT_PATTERNS = [
 function looksLikeRateLimit(text: string): boolean {
   return (
     RATE_LIMIT_TEXT_PATTERNS.some((pattern) => pattern.test(text)) ||
-    RATE_LIMIT_HTTP_STATUS_PATTERN.test(text)
+    RATE_LIMIT_HTTP_429_PATTERN.test(text)
   );
 }
 

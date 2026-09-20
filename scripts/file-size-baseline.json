@@ -6,6 +6,11 @@
   "ratchetWarningThreshold": 400,
   "entries": [
     {
+      "path": "src/application/board/get-pr-badges.test.ts",
+      "limit": 1520,
+      "reason": "bdboard-7ln6 (PR #526) のサーキットブレーカー/バックオフ/in-flight共有/予算/merged-pending永続化の回帰テストと、bdboard-v538 のサーキットブレーカー早期リセット・403誤判定の回帰テストを追加。分割は継続検討。"
+    },
+    {
       "path": "web/src/index.css",
       "limit": 8700,
       "reason": "単一グローバルスタイルシート。セレクタ約1130個、コンポーネント単位の分割は無い。分割は bdboard-jygp の調査で優先候補の1つに挙がったが実施は別チケット・時期はユーザー判断待ち。"
@@ -163,7 +168,7 @@
     {
       "path": "src/application/board/get-pr-badges.ts",
       "limit": 600,
-      "reason": "PR バッジ算出。PrBadgeCommentCache と PrBadgeStatusCache の2キャッシュ実装＋算出本体を1ファイルに同居。bdboard-7ln6 (#526) で PrBadgeStatusCache に rate-limit 分類とサーキットブレーカー (reason別15分〜1時間バックオフ) を追加した際、file-size guard (bdboard-jygp, #523 で verify に追加) の baseline 登録が漏れていた。CI を通すため bdboard-sso1.1 のブランチ上でこの1エントリだけ登録し、baseline 登録漏れの再発防止は別チケットへ切り出す (discovered-from:bdboard-sso1.1)。分割検討・チケット未起票。"
+      "reason": "PR バッジ算出。PrBadgeCommentCache と PrBadgeStatusCache の2キャッシュ実装＋算出本体を1ファイルに同居。bdboard-7ln6 (#526) で PrBadgeStatusCache に rate-limit 分類とサーキットブレーカー (reason別15分〜1時間バックオフ) を追加した際、file-size guard (bdboard-jygp, #523 で verify に追加) の baseline 登録が漏れていた。CI を通すため bdboard-sso1.1 のブランチ上でこの1エントリだけ登録し、baseline 登録漏れの再発防止は別チケットへ切り出す (discovered-from:bdboard-sso1.1)。bdboard-v538 でサーキットブレーカー早期リセット不具合・403誤判定を追加修正 (+8行、600行の枠内)。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/ChatPanel.test.tsx",
