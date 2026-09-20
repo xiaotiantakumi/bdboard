@@ -29,7 +29,6 @@ const MAX_LINES_ALLOWLIST = {
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'web/src/components/BulkActionBar.tsx': 570, // 現在 565
   'web/src/components/HelpPanel.tsx': 500, // 現在 496
-  'web/src/components/LaneColumn.tsx': 435, // 現在 424 (bdboard-sso1.33 PR-A: 純ヘルパー/型/定数を lane/ へ移動)
   'web/src/components/TunnelControl.tsx': 470, // 現在 468
   'web/src/components/BoardKeyboardNavProvider.tsx': 440, // 現在 437
   'web/src/components/PresetControl.tsx': 430, // 現在 428
