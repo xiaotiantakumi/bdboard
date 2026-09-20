@@ -25,11 +25,11 @@ const MAX_LINES_ALLOWLIST = {
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
   'web/src/components/hygiene/useHygieneRepairActions.ts': 315, // 現在 307 (bdboard-sso1.11 PR-C: repair/mutation ハンドラをカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
+  'web/src/components/help/useHelpPanelFilter.ts': 275, // 現在 264 (bdboard-sso1.28: HelpPanel.tsx の絞り込み・開閉 state とハンドラをカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'web/src/hooks/useNotificationEvents.ts': 620, // 現在 619
   'web/src/components/BulkActionBar.tsx': 570, // 現在 565
-  'web/src/components/HelpPanel.tsx': 500, // 現在 496
   'web/src/components/LaneColumn.tsx': 490, // 現在 483
   'web/src/components/TunnelControl.tsx': 470, // 現在 468
   'web/src/components/BoardKeyboardNavProvider.tsx': 440, // 現在 437
