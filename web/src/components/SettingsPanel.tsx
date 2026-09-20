@@ -27,6 +27,11 @@ import { EffectiveScanRootsSection } from './settings/EffectiveScanRootsSection'
 import { ScanRootsSection } from './settings/ScanRootsSection';
 import { ExcludePathsSection } from './settings/ExcludePathsSection';
 import { DbStatsSection } from './settings/DbStatsSection';
+import { BoardThresholdsSection } from './settings/BoardThresholdsSection';
+import { HygieneThresholdsSection } from './settings/HygieneThresholdsSection';
+import { WipLimitsSection } from './settings/WipLimitsSection';
+import { AiQuotaAlertSection } from './settings/AiQuotaAlertSection';
+import { AgentRunsSection } from './settings/AgentRunsSection';
 
 export function SettingsPanel() {
   const queryClient = useQueryClient();
@@ -504,422 +509,144 @@ export function SettingsPanel() {
         excludePathHint={excludePathHint}
         onAddExcludePath={addExcludePath}
       />
-      <section className="settings-panel-section" aria-labelledby="board-thresholds-title">
-        <h3 id="board-thresholds-title">滞留・liveness 閾値</h3>
-        <p className="settings-panel-subtitle">
-          チケットの滞留判定とセッションの liveness 帯域を調整します。保存後、次回のボード取得から反映されます。
-        </p>
-        <form
-          className="settings-panel-thresholds-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveThresholdsMutation.mutate();
-          }}
-        >
-          <label htmlFor="settings-stalled-hours">滞留判定 (時間)</label>
-          <input
-            id="settings-stalled-hours"
-            type="number"
-            min={1}
-            step={1}
-            value={stalledHours}
-            placeholder={msToHours(thresholdsQuery.data.defaults.stalledAfterMs)}
-            disabled={saveThresholdsMutation.isPending}
-            onChange={(event) => {
-              setStalledHours(event.target.value);
-              setThresholdsDirty(true);
-            }}
-          />
-          <label htmlFor="settings-active-minutes">liveness active (分)</label>
-          <input
-            id="settings-active-minutes"
-            type="number"
-            min={1}
-            step={1}
-            value={activeMinutes}
-            placeholder={msToMinutes(thresholdsQuery.data.defaults.livenessActiveMs)}
-            disabled={saveThresholdsMutation.isPending}
-            onChange={(event) => {
-              setActiveMinutes(event.target.value);
-              setThresholdsDirty(true);
-            }}
-          />
-          <label htmlFor="settings-idle-minutes">liveness idle (分)</label>
-          <input
-            id="settings-idle-minutes"
-            type="number"
-            min={1}
-            step={1}
-            value={idleMinutes}
-            placeholder={msToMinutes(thresholdsQuery.data.defaults.livenessIdleMs)}
-            disabled={saveThresholdsMutation.isPending}
-            onChange={(event) => {
-              setIdleMinutes(event.target.value);
-              setThresholdsDirty(true);
-            }}
-          />
-          <label htmlFor="settings-stale-hours">liveness stale (時間)</label>
-          <input
-            id="settings-stale-hours"
-            type="number"
-            min={1}
-            step={1}
-            value={staleHours}
-            placeholder={msToHours(thresholdsQuery.data.defaults.livenessStaleMs)}
-            disabled={saveThresholdsMutation.isPending}
-            onChange={(event) => {
-              setStaleHours(event.target.value);
-              setThresholdsDirty(true);
-            }}
-          />
-          <div className="settings-panel-footer">
-            <button
-              type="submit"
-              className="settings-panel-save"
-              disabled={!thresholdsDirty || saveThresholdsMutation.isPending}
-            >
-              {saveThresholdsMutation.isPending ? '保存中…' : '閾値を保存'}
-            </button>
-            <div
-              className="settings-panel-feedback"
-              aria-live="polite"
-              role={thresholdsFeedback.isError ? 'alert' : undefined}
-            >
-              {thresholdsFeedback.message}
-            </div>
-          </div>
-        </form>
-      </section>
-      <section className="settings-panel-section" aria-labelledby="hygiene-thresholds-title">
-        <h3 id="hygiene-thresholds-title">健全性 (Hygiene) 閾値</h3>
-        <p className="settings-panel-subtitle">
-          健全性ビューの検知に使う閾値を調整します。保存後、次回の健全性取得から反映されます。
-        </p>
-        <form
-          className="settings-panel-thresholds-form"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveHygieneThresholdsMutation.mutate();
-          }}
-        >
-          <label htmlFor="settings-hygiene-stale-in-progress-days">in_progress 放置 (日)</label>
-          <input
-            id="settings-hygiene-stale-in-progress-days"
-            type="number"
-            min={1}
-            step={1}
-            value={hygieneStaleInProgressDays}
-            placeholder={msToDays(hygieneThresholdsQuery.data.staleInProgressAfterMs)}
-            disabled={saveHygieneThresholdsMutation.isPending}
-            onChange={(event) => {
-              setHygieneStaleInProgressDays(event.target.value);
-              setHygieneThresholdsDirty(true);
-            }}
-          />
-          <label htmlFor="settings-hygiene-high-priority-max">高優先度上限 (P0=0)</label>
-          <input
-            id="settings-hygiene-high-priority-max"
-            type="number"
-            min={0}
-            max={4}
-            step={1}
-            value={hygieneHighPriorityMax}
-            placeholder={String(hygieneThresholdsQuery.data.highPriorityMax)}
-            disabled={saveHygieneThresholdsMutation.isPending}
-            onChange={(event) => {
-              setHygieneHighPriorityMax(event.target.value);
-              setHygieneThresholdsDirty(true);
-            }}
-          />
-          <label htmlFor="settings-hygiene-stale-pending-decision-days">確認待ち放置 (日)</label>
-          <input
-            id="settings-hygiene-stale-pending-decision-days"
-            type="number"
-            min={1}
-            step={1}
-            value={hygieneStalePendingDecisionDays}
-            placeholder={msToDays(hygieneThresholdsQuery.data.stalePendingDecisionAfterMs)}
-            disabled={saveHygieneThresholdsMutation.isPending}
-            onChange={(event) => {
-              setHygieneStalePendingDecisionDays(event.target.value);
-              setHygieneThresholdsDirty(true);
-            }}
-          />
-          <label htmlFor="settings-hygiene-closed-without-evidence-days">
-            close 証拠チェック期間 (日)
-          </label>
-          <input
-            id="settings-hygiene-closed-without-evidence-days"
-            type="number"
-            min={1}
-            step={1}
-            value={hygieneClosedWithoutEvidenceDays}
-            placeholder={msToDays(hygieneThresholdsQuery.data.closedWithoutEvidenceWindowMs)}
-            disabled={saveHygieneThresholdsMutation.isPending}
-            onChange={(event) => {
-              setHygieneClosedWithoutEvidenceDays(event.target.value);
-              setHygieneThresholdsDirty(true);
-            }}
-          />
-          <div className="settings-panel-footer">
-            <button
-              type="submit"
-              className="settings-panel-save"
-              disabled={!hygieneThresholdsDirty || saveHygieneThresholdsMutation.isPending}
-            >
-              {saveHygieneThresholdsMutation.isPending ? '保存中…' : '閾値を保存'}
-            </button>
-            <div
-              className="settings-panel-feedback"
-              aria-live="polite"
-              role={hygieneThresholdsFeedback.isError ? 'alert' : undefined}
-            >
-              {hygieneThresholdsFeedback.message}
-            </div>
-          </div>
-        </form>
-      </section>
-      <section className="settings-panel-section" aria-labelledby="wip-limits-title">
-        <h3 id="wip-limits-title">WIP上限</h3>
-        <p className="settings-panel-subtitle">
-          In Progress レーンの同時着手枚数の上限を設定します。超過時はレーンヘッダーが警告表示されます。空欄は上限なしです。
-        </p>
-        <form
-          className="settings-panel-thresholds-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveWipLimitsMutation.mutate();
-          }}
-        >
-          <label htmlFor="settings-global-wip-limit">In Progress 上限 (全体)</label>
-          <input
-            id="settings-global-wip-limit"
-            type="number"
-            min={1}
-            step={1}
-            value={globalWipLimit}
-            placeholder="未設定 (上限なし)"
-            disabled={saveWipLimitsMutation.isPending}
-            onChange={(event) => {
-              setGlobalWipLimit(event.target.value);
-              setWipDirty(true);
-            }}
-          />
-          <p className="settings-panel-subtitle">プロジェクト別の上限</p>
-          {projectWipOverrides.length > 0 ? (
-            <ul className="settings-panel-edit-list">
-              {projectWipOverrides.map((row, index) => {
-                const projectName =
-                  projectsQuery.data?.find((project) => project.id === row.projectId)?.name ??
-                  row.projectId;
-                return (
-                  <li key={`${row.projectId}-${index}`} className="settings-panel-wip-override-row">
-                    <span className="settings-panel-wip-override-label">{projectName}</span>
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      aria-label={`${projectName} の WIP上限`}
-                      value={row.limit}
-                      disabled={saveWipLimitsMutation.isPending}
-                      onChange={(event) => {
-                        setProjectWipOverrides((current) =>
-                          current.map((entry, entryIndex) =>
-                            entryIndex === index
-                              ? { ...entry, limit: event.target.value }
-                              : entry,
-                          ),
-                        );
-                        setWipDirty(true);
-                      }}
-                    />
-                    <button
-                      type="button"
-                      disabled={saveWipLimitsMutation.isPending}
-                      onClick={() => {
-                        setProjectWipOverrides((current) =>
-                          current.filter((_, entryIndex) => entryIndex !== index),
-                        );
-                        setWipDirty(true);
-                      }}
-                    >
-                      削除
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <p className="settings-panel-empty">プロジェクト別の上限はありません</p>
-          )}
-          <div className="settings-panel-add-form">
-            <label htmlFor="settings-wip-project-select">プロジェクト別上限を追加</label>
-            <div className="settings-panel-add-row">
-              <select
-                id="settings-wip-project-select"
-                value={newWipProjectId}
-                disabled={saveWipLimitsMutation.isPending || projectsQuery.isPending}
-                onChange={(event) => setNewWipProjectId(event.target.value)}
-              >
-                <option value="">プロジェクトを選択</option>
-                {(projectsQuery.data ?? [])
-                  .filter(
-                    (project) =>
-                      !projectWipOverrides.some((row) => row.projectId === project.id),
-                  )
-                  .map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-              </select>
-              <input
-                type="number"
-                min={1}
-                step={1}
-                aria-label="追加する WIP上限"
-                value={newWipProjectLimit}
-                placeholder="上限"
-                disabled={saveWipLimitsMutation.isPending}
-                onChange={(event) => setNewWipProjectLimit(event.target.value)}
-              />
-              <button
-                type="button"
-                disabled={
-                  saveWipLimitsMutation.isPending ||
-                  newWipProjectId === '' ||
-                  parseWipLimit(newWipProjectLimit) === undefined
-                }
-                onClick={() => {
-                  const limit = parseWipLimit(newWipProjectLimit);
-                  if (newWipProjectId === '' || limit === undefined) {
-                    return;
-                  }
-                  setProjectWipOverrides((current) => [
-                    ...current,
-                    { projectId: newWipProjectId, limit: String(limit) },
-                  ]);
-                  setNewWipProjectId('');
-                  setNewWipProjectLimit('');
-                  setWipDirty(true);
-                }}
-              >
-                追加
-              </button>
-            </div>
-          </div>
-          <div className="settings-panel-footer">
-            <button
-              type="submit"
-              className="settings-panel-save"
-              disabled={!wipDirty || saveWipLimitsMutation.isPending}
-            >
-              {saveWipLimitsMutation.isPending ? '保存中…' : 'WIP上限を保存'}
-            </button>
-            <div
-              className="settings-panel-feedback"
-              aria-live="polite"
-              role={wipFeedback.isError ? 'alert' : undefined}
-            >
-              {wipFeedback.message}
-            </div>
-          </div>
-        </form>
-      </section>
-      <section className="settings-panel-section" aria-labelledby="ai-quota-alert-title">
-        <h3 id="ai-quota-alert-title">AIクォータ通知閾値</h3>
-        <p className="settings-panel-subtitle">
-          AIクォータ残量がこの値(%)を下回ったらイベントセンターに通知します。
-        </p>
-        <form
-          className="settings-panel-thresholds-form"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveAiQuotaAlertMutation.mutate();
-          }}
-        >
-          <label htmlFor="settings-ai-quota-threshold-percent">クォータ通知閾値 (%)</label>
-          <input
-            id="settings-ai-quota-threshold-percent"
-            type="number"
-            min={1}
-            max={99}
-            step={1}
-            value={aiQuotaThresholdPercent}
-            placeholder={String(aiQuotaAlertQuery.data.defaults.thresholdPercent)}
-            disabled={saveAiQuotaAlertMutation.isPending}
-            onChange={(event) => {
-              setAiQuotaThresholdPercent(event.target.value);
-              setAiQuotaAlertDirty(true);
-            }}
-          />
-          <div className="settings-panel-footer">
-            <button
-              type="submit"
-              className="settings-panel-save"
-              disabled={!aiQuotaAlertDirty || saveAiQuotaAlertMutation.isPending}
-            >
-              {saveAiQuotaAlertMutation.isPending ? '保存中…' : '閾値を保存'}
-            </button>
-            <div
-              className="settings-panel-feedback"
-              aria-live="polite"
-              role={aiQuotaAlertFeedback.isError ? 'alert' : undefined}
-            >
-              {aiQuotaAlertFeedback.message}
-            </div>
-          </div>
-        </form>
-      </section>
-      <section className="settings-panel-section" aria-labelledby="agent-runs-title">
-        <h3 id="agent-runs-title">エージェント実行</h3>
-        <p className="settings-panel-subtitle">
-          チケットの実行ボタンから Claude CLI を起動する機能の、リモートからの利用可否です。既定はオフで、オフのままでもPCのローカル画面からは実行できます。オンにするとトンネル経由の端末からもエージェントを起動できるようになります。
-        </p>
-        <p className="settings-panel-subtitle">
-          保存した内容は次回のサーバー再起動から有効になります。稼働中のサーバーには反映されません（実行中のエージェントが設定を書き換えて即座に権限を広げられないようにするため）。
-        </p>
-        <form
-          className="settings-panel-thresholds-form"
-          noValidate
-          onSubmit={(event) => {
-            event.preventDefault();
-            saveAgentRunsMutation.mutate();
-          }}
-        >
-          <label htmlFor="settings-allow-remote-agent-runs">
-            リモート(トンネル経由)からのエージェント実行を許可する
-          </label>
-          <input
-            id="settings-allow-remote-agent-runs"
-            type="checkbox"
-            checked={allowRemoteAgentRuns}
-            disabled={saveAgentRunsMutation.isPending}
-            onChange={(event) => {
-              setAllowRemoteAgentRuns(event.target.checked);
-              setAgentRunsDirty(true);
-            }}
-          />
-          <div className="settings-panel-footer">
-            <button
-              type="submit"
-              className="settings-panel-save"
-              disabled={!agentRunsDirty || saveAgentRunsMutation.isPending}
-            >
-              {saveAgentRunsMutation.isPending ? '保存中…' : '設定を保存'}
-            </button>
-            <div
-              className="settings-panel-feedback"
-              aria-live="polite"
-              role={agentRunsFeedback.isError ? 'alert' : undefined}
-            >
-              {agentRunsFeedback.message}
-            </div>
-          </div>
-        </form>
-      </section>
+      <BoardThresholdsSection
+        values={{
+          stalledHours,
+          activeMinutes,
+          idleMinutes,
+          staleHours,
+        }}
+        defaults={thresholdsQuery.data.defaults}
+        onStalledHoursChange={(value) => {
+          setStalledHours(value);
+          setThresholdsDirty(true);
+        }}
+        onActiveMinutesChange={(value) => {
+          setActiveMinutes(value);
+          setThresholdsDirty(true);
+        }}
+        onIdleMinutesChange={(value) => {
+          setIdleMinutes(value);
+          setThresholdsDirty(true);
+        }}
+        onStaleHoursChange={(value) => {
+          setStaleHours(value);
+          setThresholdsDirty(true);
+        }}
+        isSaving={saveThresholdsMutation.isPending}
+        isDirty={thresholdsDirty}
+        onSubmit={() => saveThresholdsMutation.mutate()}
+        feedback={{ message: thresholdsFeedback.message, isError: thresholdsFeedback.isError }}
+      />
+      <HygieneThresholdsSection
+        values={{
+          staleInProgressDays: hygieneStaleInProgressDays,
+          highPriorityMax: hygieneHighPriorityMax,
+          stalePendingDecisionDays: hygieneStalePendingDecisionDays,
+          closedWithoutEvidenceDays: hygieneClosedWithoutEvidenceDays,
+        }}
+        data={hygieneThresholdsQuery.data}
+        onStaleInProgressDaysChange={(value) => {
+          setHygieneStaleInProgressDays(value);
+          setHygieneThresholdsDirty(true);
+        }}
+        onHighPriorityMaxChange={(value) => {
+          setHygieneHighPriorityMax(value);
+          setHygieneThresholdsDirty(true);
+        }}
+        onStalePendingDecisionDaysChange={(value) => {
+          setHygieneStalePendingDecisionDays(value);
+          setHygieneThresholdsDirty(true);
+        }}
+        onClosedWithoutEvidenceDaysChange={(value) => {
+          setHygieneClosedWithoutEvidenceDays(value);
+          setHygieneThresholdsDirty(true);
+        }}
+        isSaving={saveHygieneThresholdsMutation.isPending}
+        isDirty={hygieneThresholdsDirty}
+        onSubmit={() => saveHygieneThresholdsMutation.mutate()}
+        feedback={{
+          message: hygieneThresholdsFeedback.message,
+          isError: hygieneThresholdsFeedback.isError,
+        }}
+      />
+      <WipLimitsSection
+        global={{
+          value: globalWipLimit,
+          onChange: (value) => {
+            setGlobalWipLimit(value);
+            setWipDirty(true);
+          },
+        }}
+        overrides={{
+          rows: projectWipOverrides,
+          projects: projectsQuery.data,
+          projectsPending: projectsQuery.isPending,
+          onLimitChange: (index, value) => {
+            setProjectWipOverrides((current) =>
+              current.map((entry, entryIndex) =>
+                entryIndex === index ? { ...entry, limit: value } : entry,
+              ),
+            );
+            setWipDirty(true);
+          },
+          onRemove: (index) => {
+            setProjectWipOverrides((current) =>
+              current.filter((_, entryIndex) => entryIndex !== index),
+            );
+            setWipDirty(true);
+          },
+        }}
+        addRow={{
+          projectId: newWipProjectId,
+          onProjectIdChange: setNewWipProjectId,
+          limit: newWipProjectLimit,
+          onLimitChange: setNewWipProjectLimit,
+          onAdd: () => {
+            const limit = parseWipLimit(newWipProjectLimit);
+            if (newWipProjectId === '' || limit === undefined) {
+              return;
+            }
+            setProjectWipOverrides((current) => [
+              ...current,
+              { projectId: newWipProjectId, limit: String(limit) },
+            ]);
+            setNewWipProjectId('');
+            setNewWipProjectLimit('');
+            setWipDirty(true);
+          },
+        }}
+        isSaving={saveWipLimitsMutation.isPending}
+        isDirty={wipDirty}
+        onSubmit={() => saveWipLimitsMutation.mutate()}
+        feedback={{ message: wipFeedback.message, isError: wipFeedback.isError }}
+      />
+      <AiQuotaAlertSection
+        value={aiQuotaThresholdPercent}
+        onChange={(value) => {
+          setAiQuotaThresholdPercent(value);
+          setAiQuotaAlertDirty(true);
+        }}
+        defaultPercent={aiQuotaAlertQuery.data.defaults.thresholdPercent}
+        isSaving={saveAiQuotaAlertMutation.isPending}
+        isDirty={aiQuotaAlertDirty}
+        onSubmit={() => saveAiQuotaAlertMutation.mutate()}
+        feedback={{
+          message: aiQuotaAlertFeedback.message,
+          isError: aiQuotaAlertFeedback.isError,
+        }}
+      />
+      <AgentRunsSection
+        checked={allowRemoteAgentRuns}
+        onChange={(checked) => {
+          setAllowRemoteAgentRuns(checked);
+          setAgentRunsDirty(true);
+        }}
+        isSaving={saveAgentRunsMutation.isPending}
+        isDirty={agentRunsDirty}
+        onSubmit={() => saveAgentRunsMutation.mutate()}
+        feedback={{ message: agentRunsFeedback.message, isError: agentRunsFeedback.isError }}
+      />
       <DbStatsSection
         isPending={dbStatsQuery.isPending}
         isError={dbStatsQuery.isError}
