@@ -78,7 +78,11 @@ describe('Intl.DateTimeFormat construction count (bdboard-k99x)', () => {
     // board-date-time.ts uses exactly 3 distinct (locale, options) shapes
     // (date-key, offset, weekday) for a single timeZone, regardless of how
     // many dates/iterations are exercised — this is the regression guard for
-    // the O(calls) formatter construction bdboard-k99x fixed.
+    // the O(calls) formatter construction bdboard-k99x fixed. The lower bound
+    // guards against the instrumentation itself silently doing nothing (e.g.
+    // if resetModules/the class swap stopped taking effect, this would still
+    // pass at 0 without it).
+    expect(constructCount).toBeGreaterThan(0);
     expect(constructCount).toBeLessThanOrEqual(3);
   });
 });
