@@ -68,7 +68,7 @@ const MAX_LINES_ALLOWLIST = {
   'src/domain/in-flight-overlap.ts': 210, // 現在 204
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
-  'src/interface/http/routes.test.ts': 6360, // 現在 6359
+  'src/interface/http/routes.test.ts': 4250, // 現在 4248 (bdboard-sso1.7 PR1: health-status/board/stats/comment/session-process/refresh-events-routes.test.ts + routes-test-support.ts へ分割。hygiene/ticket-read/ticket-write は後続PRで分割予定)
   'src/interface/http/chat-routes.test.ts': 3390, // 現在 3389
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
