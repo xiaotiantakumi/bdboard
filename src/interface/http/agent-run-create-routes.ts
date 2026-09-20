@@ -48,7 +48,6 @@ export interface AgentRunCreateRoutesDeps {
   readonly worktreeProvisioner: WorktreeProvisioner;
   readonly normalizePath: (pathValue: string) => string;
   readonly getHarnessStatus: (repoRootPath: string) => Promise<ProjectHarnessStatus>;
-  readonly isRemoteAgentRunAllowed: () => Promise<boolean>;
   readonly now: () => Date;
   readonly issueWriter: IssueWriterPort;
 }
