@@ -91,9 +91,9 @@ EOF
   **環境を用意するところまで自分の作業に含める**（2026-09-19、PicRill-7vh.17 で確認環境が
   無いままゲートに載り、ユーザーから「まず環境自体を用意しておいてほしい」と差し戻された
   実例がある）。
-- bdboard 側のチケット本文・コメントでの画像表示そのものは別チケット bdboard-qw26 で扱う
-  （bdboard-qw26 はこの規律だけでは close しない）。このテンプレが担うのは「導線を必ず
-  添える」規律の側だけ。
+- bdboard 側のチケット本文・コメントでの画像表示は bdboard-qw26 で実装済み（下記
+  「スクリーンショットの添付手順」節）。このテンプレが担うのは「導線を必ず添える」規律の
+  側だけ。
 
 ### スクリーンショットの添付手順（bdboard-qw26 の添付画像 API）
 
@@ -110,27 +110,38 @@ base64 が大きくなると macOS の `ARG_MAX`（シェル引数長上限）�
 BDBOARD_BASE_URL="http://localhost:8787"   # BDBOARD_PORT を変えている場合はポートも合わせる
 TICKET_ID="<画像を見せたいチケット/gate の id>"   # 選び方は次節「gate のときはどちらに貼るか」
 
+BODY_FILE="$(mktemp)"   # 固定パスにしない(並列セッションの取り違え防止)
 python3 -c "
 import json, base64, sys
 data = open('screenshot.png', 'rb').read()
 json.dump({'mimeType': 'image/png', 'data': base64.b64encode(data).decode('ascii')}, sys.stdout)
-" > /tmp/attachment-body.json
+" > "$BODY_FILE"
 
 curl -sS -X POST -H 'Content-Type: application/json' \
-  --data-binary @/tmp/attachment-body.json \
+  --data-binary @"$BODY_FILE" \
   "$BDBOARD_BASE_URL/api/tickets/$TICKET_ID/attachments"
 ```
 
+- 成功すると `201` + `{"attachment":{"fileName":...,"url":...}}`。`bd gate create` /
+  `bd create` の直後だと、bdboard 側のプロジェクトキャッシュ更新がまだ追いついておらず
+  一時的に `404 ticket not found` になることがある。数秒待って再試行し、それでも 404 なら
+  そのプロジェクトが bdboard のスキャン対象に入っているか確認する。
 - `mimeType` は `image/png` / `image/jpeg` / `image/webp` / `image/gif` のみ。判定は
   拡張子ではなくマジックバイトで行われるので、間違った `mimeType` を申告しても 400 になる。
-- サイズ上限は 1 枚 10MB（デコード後）、1 チケットあたり 20 枚まで。超えると 400 / 409。
+- サイズ上限は 1 枚 10MB（デコード後）、1 チケットあたり 20 枚まで。デコード後 10MB
+  超は 400、JSON body 自体が 14MB を超えるとデコードより先に 413 (`request body too
+  large`) になる、枚数超過は 409。
 - **base64 に改行を含めないこと。** サーバーのデコーダは RFC 4648 の正規形しか受け付けず、
   1 文字でも改行が混じると 400 で弾かれる（実機確認済み: 改行入り base64 を送ると
   `"invalid or unsupported image data"`）。
   - macOS の `base64 -i screenshot.png` は既定で改行を入れない（`-b`/`--break` の既定値が
-    `0` = unbroken stream。実機確認済み）。
-  - GNU coreutils の `base64`（Linux）は既定で 76 桁ごとに改行を入れる。`-w0`
-    （`--wrap=0`）を付けて無効化する必要がある。このフラグは GNU 専用で macOS には無い。
+    `0` = unbroken stream。実機確認済み）。素の `base64 screenshot.png`（`-i` 無し）は
+    macOS では「入力ファイルが無い」エラーになる点に注意 — 必ず `-i` を付けるか標準入力に
+    流し込む。
+  - GNU coreutils の `base64`（Linux）は既定で 76 桁ごとに改行を入れる点が macOS と違う。
+    `-w0`（`--wrap=0`）で無効化できる（macOS の base64 も GNU 互換でこのフラグ自体は
+    受け付けるが、そもそも既定が改行無しなので付ける意味が無い — 違うのはフラグの有無では
+    なく既定値の方）。
   - OS を問わず動かしたいなら、上の python3 例のように `base64.b64encode(...).decode()`
     を直接使うのが確実（改行が入り得ない）。
 - **localhost からの直アクセスなら追加のトークンは不要。** write-guard
@@ -153,10 +164,20 @@ curl -sS -X POST -H 'Content-Type: application/json' \
 バッジが付く）。ユーザーがどちらのカードを開いて詳細パネルを見るかは固定されない —
 本ファイル「手順（SKILL.md 規律3 の実体）」節にある「回答がどちらに付くかは固定されない」
 （gate 解決時の既知の非対称性）と同じ理由による。そのため、視覚確認の画像は
-**gate の id と、ブロックしている作業チケットの id の両方へ POST する**（同じ画像を
-2回 upload してよい。添付枚数の上限 20/チケットには十分余裕がある）。gate を使わず
-質問専用チケット/作業チケット直付けで確認を求める場合は、その1チケットの id にだけ
-POST すればよい。
+**gate の id と、ブロックしている作業チケットの id の両方へ POST する**（同じ
+`$BODY_FILE` を使い回して 2 回 upload してよい。添付枚数の上限 20/チケットには十分
+余裕がある）:
+
+```bash
+for TICKET_ID in "$GATE_ID" "<ブロックされている作業チケットの id>"; do
+  curl -sS -X POST -H 'Content-Type: application/json' \
+    --data-binary @"$BODY_FILE" \
+    "$BDBOARD_BASE_URL/api/tickets/$TICKET_ID/attachments"
+done
+```
+
+gate を使わず質問専用チケット/作業チケット直付けで確認を求める場合は、その1チケットの
+id にだけ POST すればよい。
 
 ## なぜ `bd gate` なのか — `bd dep add` で代用できない理由
 
