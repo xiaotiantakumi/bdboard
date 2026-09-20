@@ -8,9 +8,7 @@ import {
 import {
   computeDeferUntilDate,
   DEFAULT_DEFER_PERIOD,
-  DEFER_PERIOD_OPTIONS,
   isFutureLocalDate,
-  todayLocalDateInputValue,
   type DeferPeriodKind,
 } from '../deferPeriods';
 import {
@@ -21,24 +19,22 @@ import {
   runBulkQuickAction,
 } from '../bulkQuickAction';
 import { planQuickActionUndo } from '../quickActionUndo';
-import { isImeComposingKeyEvent } from '../imeGuard';
 import { useBulkBarHeightVar } from '../hooks/useBulkBarHeightVar';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { describeWriteError } from '../writeAccessMessage';
 import { useBulkSelection } from './BulkSelectionProvider';
 import { useUndoSnackbar } from './UndoSnackbar';
-import {
-  bulkSuccessMessage,
-  formatBulkConfirmDescription,
-  formatBulkConfirmTitle,
-  formatBulkFailure,
-} from './bulk-action/messages';
+import { bulkSuccessMessage } from './bulk-action/messages';
 import {
   buildTargetsForAction,
   countEligibleForAction,
   filterIdsPresentOnBoard,
 } from './bulk-action/targets';
 import type { BulkActionBarProps, BulkConfirmingAction } from './bulk-action/types';
+import { BulkActionSummaryBar } from './bulk-action/BulkActionSummaryBar';
+import { BulkActionDeferGroup } from './bulk-action/BulkActionDeferGroup';
+import { BulkActionLabelGroup } from './bulk-action/BulkActionLabelGroup';
+import { BulkActionMessages } from './bulk-action/BulkActionMessages';
+import { BulkActionConfirmPanel } from './bulk-action/BulkActionConfirmPanel';
 
 export type { BulkActionBarProps } from './bulk-action/types';
 
@@ -251,17 +247,11 @@ export function BulkActionBar({
 
   return (
     <div ref={barRef} className="bulk-action-bar">
-      <div className="bulk-action-bar-summary">
-        <span className="bulk-action-bar-count">{selectedCount}件選択中</span>
-        <button
-          type="button"
-          className="btn btn-small bulk-action-bar-clear"
-          onClick={() => bulkSelection.clear()}
-          disabled={mutationPending}
-        >
-          全解除
-        </button>
-      </div>
+      <BulkActionSummaryBar
+        selectedCount={selectedCount}
+        mutationPending={mutationPending}
+        onClear={() => bulkSelection.clear()}
+      />
       <div className="bulk-action-bar-buttons">
         <button
           type="button"
@@ -271,41 +261,15 @@ export function BulkActionBar({
         >
           完了
         </button>
-        <div
-          className={`quick-action-defer-group${deferPeriodKind === 'custom' ? ' quick-action-defer-group-custom' : ''}`}
-        >
-          <select
-            aria-label="延期期間"
-            value={deferPeriodKind}
-            onChange={(event) =>
-              setDeferPeriodKind(event.target.value as DeferPeriodKind)
-            }
-            disabled={actionsDisabled}
-          >
-            {DEFER_PERIOD_OPTIONS.map(({ kind, label }) => (
-              <option key={kind} value={kind}>
-                {label}
-              </option>
-            ))}
-          </select>
-          {deferPeriodKind === 'custom' && (
-            <input
-              type="date"
-              min={todayLocalDateInputValue()}
-              value={customDeferDate}
-              onChange={(event) => setCustomDeferDate(event.target.value)}
-              disabled={actionsDisabled}
-            />
-          )}
-          <button
-            type="button"
-            className="btn btn-small bulk-action-btn"
-            disabled={actionsDisabled || deferSubmitDisabled}
-            onClick={handleDeferBulkAction}
-          >
-            延期
-          </button>
-        </div>
+        <BulkActionDeferGroup
+          deferPeriodKind={deferPeriodKind}
+          onDeferPeriodKindChange={setDeferPeriodKind}
+          customDeferDate={customDeferDate}
+          onCustomDeferDateChange={setCustomDeferDate}
+          actionsDisabled={actionsDisabled}
+          deferSubmitDisabled={deferSubmitDisabled}
+          onDeferBulkAction={handleDeferBulkAction}
+        />
         <button
           type="button"
           className="btn btn-small bulk-action-btn"
@@ -322,135 +286,33 @@ export function BulkActionBar({
         >
           優先度を下げる
         </button>
-        <div className="bulk-action-label-group">
-          <input
-            type="text"
-            className="bulk-action-label-input"
-            aria-label="付与するラベル"
-            value={bulkLabelInput}
-            onChange={(event) => setBulkLabelInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                if (isImeComposingKeyEvent(event)) {
-                  return;
-                }
-                event.preventDefault();
-                if (canSubmitBulkLabel && !actionsDisabled) {
-                  handleBulkLabelAction();
-                }
-              }
-            }}
-            disabled={actionsDisabled}
-            maxLength={200}
-            placeholder="ラベル"
-          />
-          {trimmedBulkLabelInput.length > 0 &&
-            bulkLabelSuggestions.length > 0 && (
-              <ul className="dependency-suggestions bulk-label-suggestions">
-                {bulkLabelSuggestions.map((label) => (
-                  <li key={label}>
-                    <button
-                      type="button"
-                      className="dependency-suggestion-btn"
-                      disabled={actionsDisabled}
-                      onClick={() => {
-                        setBulkLabelInput(label);
-                        setConfirmingAction({ kind: 'add-label', label });
-                      }}
-                    >
-                      {label}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          <button
-            type="button"
-            className="btn btn-small bulk-action-btn"
-            disabled={actionsDisabled || !canSubmitBulkLabel}
-            onClick={handleBulkLabelAction}
-          >
-            ラベル付与
-          </button>
-        </div>
+        <BulkActionLabelGroup
+          bulkLabelInput={bulkLabelInput}
+          onBulkLabelInputChange={setBulkLabelInput}
+          actionsDisabled={actionsDisabled}
+          canSubmitBulkLabel={canSubmitBulkLabel}
+          bulkLabelSuggestions={bulkLabelSuggestions}
+          trimmedBulkLabelInput={trimmedBulkLabelInput}
+          onBulkLabelAction={handleBulkLabelAction}
+          onSelectSuggestion={(label) => {
+            setBulkLabelInput(label);
+            setConfirmingAction({ kind: 'add-label', label });
+          }}
+        />
       </div>
-      {lastOutcome !== null && lastOutcome.failed.length > 0 && (
-        <p className="bulk-action-failure" role="alert">
-          {formatBulkFailure(lastOutcome)}
-        </p>
-      )}
-      {mutationError !== null && (
-        <p className="error-message bulk-action-error">
-          {describeWriteError(
-            mutationError,
-            '一括操作に失敗しました',
-          )}
-        </p>
-      )}
+      <BulkActionMessages lastOutcome={lastOutcome} mutationError={mutationError} />
       {confirmingAction !== null && (
-        <div
-          ref={confirmPanelRef}
-          className="quick-action-confirm-panel bulk-action-confirm-panel"
-          role="alertdialog"
-          aria-labelledby="bulk-action-confirm-title"
-          aria-describedby="bulk-action-confirm-desc"
-        >
-          <p
-            id="bulk-action-confirm-title"
-            className="quick-action-confirm-title"
-          >
-            {formatBulkConfirmTitle(confirmingAction)}
-          </p>
-          <p
-            id="bulk-action-confirm-desc"
-            className="quick-action-confirm-desc"
-          >
-            {formatBulkConfirmDescription(
-              confirmingAction,
-              confirmingTargetCount,
-            )}
-          </p>
-          {confirmingAction.kind === 'close' && (
-            <>
-              <label
-                className="quick-action-reason-label"
-                htmlFor="bulk-action-close-reason"
-              >
-                理由(任意)
-              </label>
-              <textarea
-                id="bulk-action-close-reason"
-                className="quick-action-reason-input"
-                value={closeReason}
-                onChange={(event) => setCloseReason(event.target.value)}
-                rows={3}
-                maxLength={2000}
-                disabled={mutationPending}
-              />
-            </>
-          )}
-          <div className="quick-action-confirm-actions">
-            <button
-              ref={cancelConfirmRef}
-              type="button"
-              className="btn quick-action-confirm-cancel"
-              onClick={handleCancelConfirm}
-              disabled={mutationPending}
-            >
-              キャンセル
-            </button>
-            <button
-              type="button"
-              className="btn"
-              onClick={handleConfirm}
-              disabled={
-                mutationPending || confirmingTargetCount === 0
-              }
-            >
-              {mutationPending ? '実行中…' : '実行する'}
-            </button>
-          </div>
-        </div>
+        <BulkActionConfirmPanel
+          confirmingAction={confirmingAction}
+          confirmingTargetCount={confirmingTargetCount}
+          closeReason={closeReason}
+          onCloseReasonChange={setCloseReason}
+          mutationPending={mutationPending}
+          onCancel={handleCancelConfirm}
+          onConfirm={handleConfirm}
+          confirmPanelRef={confirmPanelRef}
+          cancelConfirmRef={cancelConfirmRef}
+        />
       )}
     </div>
   );

@@ -27,7 +27,7 @@ const MAX_LINES_ALLOWLIST = {
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'web/src/hooks/useNotificationEvents.ts': 620, // 現在 619
   'src/infrastructure/bd/bd-cli-issue-writer.ts': 570, // 現在 565
-  'web/src/components/BulkActionBar.tsx': 440, // 現在 438 (bdboard-sso1.23 PR-A: 純ヘルパー/型を bulk-action/ へ移動)
+  'web/src/components/BulkActionBar.tsx': 310, // 現在 300 (bdboard-sso1.23 PR-B: 表示部品を bulk-action/ へ移動)
   'web/src/uiPersistedState.ts': 530, // 現在 523
   'src/interface/http/ticket-write-routes.ts': 520, // 現在 511
   'src/interface/http/agent-run-routes.ts': 500, // 現在 497
