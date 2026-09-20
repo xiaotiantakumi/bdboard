@@ -635,18 +635,35 @@ export function ChatPanel({
   // (bdboard-3tw.166)。回収が確定する (completed のハイドレーション or fail() 側の
   // 送信失敗表示) まで、この会話キーに対応する部分テキストを画面に残し続けるための
   // 目印で、確定した瞬間にだけ clearStreamingReplyForKey で消す。
-  const detachedStreamSendRef = useRef<{
-    projectId: string;
-    sessionId: string | undefined;
-    streamingKey: string;
-    // bdboard-96rp: 発生時刻 (Date.now()) を憶えておく。sessionId が未確定 (新規
-    // スレッドの初回送信) な間は、後段の checkTurnStatus がこの送信「自身」の失敗と
-    // 「無関係な古い sessionId 無しエントリ」を sessionId だけでは区別できない —
-    // この時刻より前に記録された sessionId 無しエントリは、この送信より前に失敗した
-    // 別の送信のものだと判定できる (詳細は checkTurnStatus の 'failed' 分岐)。
-    detachedAt: number;
-    fail: () => void;
-  } | null>(null);
+  //
+  // bdboard-t5i0 (bdboard-1qoe の残課題): streamingReply と対称的に、projectId を
+  // キーにした Record にする。単一スロットの ref だった頃は、サーバー側の isBusy
+  // ロックがプロジェクト単位である以上ごく普通に起きる「プロジェクト A の配信停止が
+  // 回収待ちのまま、別プロジェクト B でも配信停止した」場合に、後から配信停止した B
+  // への代入が A の { fail, streamingKey, ... } を無条件に上書きしていた。結果、A の
+  // fail() コールバックが永久に失われ、A の checkTurnStatus (下の effect) がその後
+  // 'failed'/'idle' を見ても、ref はもう B の情報しか持っていないため A 用の fail()
+  // を呼べず、A 側の画面は「回収中」のまま二度と解決しない凍りついた表示になっていた
+  // (実害の詳細はチケット本文・コメント参照)。projectId ごとに独立したエントリへ
+  // 分離することで、この上書き自体が構造的に起きなくなる — B の代入は A のキーに
+  // 触れない。
+  const detachedStreamSendRef = useRef<
+    Record<
+      string,
+      {
+        sessionId: string | undefined;
+        streamingKey: string;
+        // bdboard-96rp: 発生時刻 (Date.now()) を憶えておく。sessionId が未確定 (新規
+        // スレッドの初回送信) な間は、後段の checkTurnStatus がこの送信「自身」の
+        // 失敗と「無関係な古い sessionId 無しエントリ」を sessionId だけでは区別
+        // できない — この時刻より前に記録された sessionId 無しエントリは、この
+        // 送信より前に失敗した別の送信のものだと判定できる (詳細は checkTurnStatus
+        // の 'failed' 分岐)。
+        detachedAt: number;
+        fail: () => void;
+      }
+    >
+  >({});
   const markUnresolvedSend = useCallback((sessionId: string | undefined) => {
     if (sessionId === undefined) return;
     setUnresolvedSends((prev) => (prev[sessionId] === true ? prev : { ...prev, [sessionId]: true }));
@@ -1274,9 +1291,9 @@ export function ChatPanel({
           // settle した」ことを意味するので、セッションIDの突き合わせは不要
           // (failed と違い、複数件が溜まる「キュー」ではない)。
           unmatchedSessionlessFailedStreak = 0;
-          const detached = detachedStreamSendRef.current;
-          if (detached !== null && detached.projectId === selectedProjectId) {
-            detachedStreamSendRef.current = null;
+          const detached = detachedStreamSendRef.current[selectedProjectId];
+          if (detached !== undefined) {
+            delete detachedStreamSendRef.current[selectedProjectId];
             // bdboard-3tw.166: 送信失敗が確定した以上、回収中ずっと表示していた
             // 部分テキストはここで消す (fail() が積むエラーメッセージと二重表示
             // させない)。
@@ -1290,7 +1307,7 @@ export function ChatPanel({
           // detachedStreamSendRef と sessionId が一致する場合だけ解決する。一致しない
           // 場合に idle と同じ無条件 fail() をすると、無関係な古い失敗で今追っている
           // (まだ成功するかもしれない) 送信を誤って失敗扱いにしてしまう。
-          const detached = detachedStreamSendRef.current;
+          const detached = detachedStreamSendRef.current[selectedProjectId];
           // bdboard-96rp: 追っている送信自身の sessionId がまだ未確定 (新規スレッド
           // の初回送信) な場合、以前は「sessionId 無しの failed なら何でも自分の
           // ものかもしれない」として無条件に一致させていた。これは (a) 別の既に
@@ -1301,8 +1318,7 @@ export function ChatPanel({
           // status.sessionId も未確定であること・かつこの送信を追い始めた時刻
           // (detachedAt) 以降に失敗したものであることまで確認する。
           const matchesTrackedSend =
-            detached !== null &&
-            detached.projectId === selectedProjectId &&
+            detached !== undefined &&
             (detached.sessionId !== undefined
               ? detached.sessionId === status.sessionId
               : status.sessionId === undefined &&
@@ -1318,7 +1334,7 @@ export function ChatPanel({
               }
               if (cancelled) return;
             }
-            detachedStreamSendRef.current = null;
+            delete detachedStreamSendRef.current[selectedProjectId];
             // bdboard-3tw.166: idle 分岐と同じ理由 — 送信失敗が確定したので、回収中
             // 表示していた部分テキストをここで消す。
             clearStreamingReplyForKey(detached!.streamingKey);
@@ -1341,9 +1357,7 @@ export function ChatPanel({
             // 諦めてこのエントリを自分自身の失敗として受け入れる (定数のコメント参照 —
             // でなければ ACK 経路が無いこの手の failed に対して無期限にブロックし得る)。
             const maybeOwnDelayedFailure =
-              detached !== null &&
-              detached.projectId === selectedProjectId &&
-              detached.sessionId === undefined;
+              detached !== undefined && detached.sessionId === undefined;
             if (maybeOwnDelayedFailure) {
               unmatchedSessionlessFailedStreak += 1;
               if (
@@ -1351,7 +1365,7 @@ export function ChatPanel({
                 UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS
               ) {
                 unmatchedSessionlessFailedStreak = 0;
-                detachedStreamSendRef.current = null;
+                delete detachedStreamSendRef.current[selectedProjectId];
                 clearStreamingReplyForKey(detached!.streamingKey);
                 detached!.fail();
                 return;
@@ -1433,7 +1447,7 @@ export function ChatPanel({
         // v3ag が塞ごうとした穴を completed 経路でだけ再現してしまう。ref のクリアと
         // clearStreamingReplyForKey を下の「本文を書き込むタイミング」に揃えることで、
         // 再送のブロックがハイドレーション完了まで一貫して効くようにする。
-        const detached = detachedStreamSendRef.current;
+        const detached = detachedStreamSendRef.current[selectedProjectId];
         // bdboard-96rp (round 2 Opus レビューで W1 として一旦 'failed' 分岐と同じ
         // detachedAt 突き合わせを入れたが、round 2 の再レビューでリバートした。理由:
         // 'failed' の sessionId 無しエントリと違い、completed エントリは常に
@@ -1454,8 +1468,7 @@ export function ChatPanel({
         // そのため sessionId 未確定の場合は 'failed' 分岐と違って時刻突き合わせをせず、
         // 元の無条件マッチに戻す。
         const detachedMatchesThisRecovery =
-          detached !== null &&
-          detached.projectId === selectedProjectId &&
+          detached !== undefined &&
           (detached.sessionId === undefined || detached.sessionId === status.sessionId);
 
         // A detached turn can create a session whose id was unknown when the tab closed.
@@ -1523,7 +1536,7 @@ export function ChatPanel({
           // bdboard-v3ag (W1): ref のクリアもここへ揃える (上のコメント参照) —
           // ハイドレーションが成功して初めて、このターンの detached 追跡を終えたと
           // 見なす。
-          detachedStreamSendRef.current = null;
+          delete detachedStreamSendRef.current[selectedProjectId];
           clearStreamingReplyForKey(detached!.streamingKey);
         }
         setHistoryLoadedFor((prev) => ({ ...prev, [status.sessionId]: true }));
@@ -1604,12 +1617,9 @@ export function ChatPanel({
           setBackgroundTurnStatus((prev) =>
             prev.state === 'processing' ? { state: 'idle' } : prev,
           );
-          const exhaustedDetached = detachedStreamSendRef.current;
-          if (
-            exhaustedDetached !== null &&
-            exhaustedDetached.projectId === selectedProjectId
-          ) {
-            detachedStreamSendRef.current = null;
+          const exhaustedDetached = detachedStreamSendRef.current[selectedProjectId];
+          if (exhaustedDetached !== undefined) {
+            delete detachedStreamSendRef.current[selectedProjectId];
             clearStreamingReplyForKey(exhaustedDetached.streamingKey);
             exhaustedDetached.fail();
           }
@@ -2204,8 +2214,7 @@ export function ChatPanel({
   // (setTurnRecoveryGeneration より前に ref へ書き込まれるため、isSending が
   // false に落ちた直後の一瞬の隙間も塞げる)。
   const hasUnresolvedProjectRecovery =
-    detachedStreamSendRef.current !== null &&
-    detachedStreamSendRef.current.projectId === selectedProjectId;
+    detachedStreamSendRef.current[selectedProjectId] !== undefined;
 
   // 「最下部に貼り付いているときだけ追う」。ストリーミング中は
   // activeStreamingText がトークンごとに伸びるので、無条件に最下部へ飛ばすと
@@ -2644,8 +2653,7 @@ export function ChatPanel({
       // isSending は配信停止直後に false へ戻るため、isSending だけのガードでは
       // 回収中の再送を防げない。
       const unresolvedProjectRecoveryAtSubmit =
-        detachedStreamSendRef.current !== null &&
-        detachedStreamSendRef.current.projectId === selectedProjectId;
+        detachedStreamSendRef.current[selectedProjectId] !== undefined;
       if (
         (text === '' && sentAttachments.length === 0) ||
         isSending ||
@@ -2744,9 +2752,9 @@ export function ChatPanel({
       // 前のターンが続いている間の再送は 409 で弾かれ、判定を失うと、その後に前の
       // ターンが失敗しても何も表示されなくなる。
       const settleEarlierDetachedSend = (): void => {
-        const detached = detachedStreamSendRef.current;
-        if (detached !== null && detached.projectId === selectedProjectId) {
-          detachedStreamSendRef.current = null;
+        const detached = detachedStreamSendRef.current[selectedProjectId];
+        if (detached !== undefined) {
+          delete detachedStreamSendRef.current[selectedProjectId];
           // bdboard-3tw.166: 前の配信停止分が残していた部分テキストも一緒に消す。
           // 新しいターンが完走した以上、その古い部分テキストが後から置き換わる
           // ことはもう無い (このあと fail() も呼ばれない)。
@@ -2811,8 +2819,7 @@ export function ChatPanel({
               // 回収前に idle が見えたら完走しなかったので、そこで送信失敗に戻す。
               const detachedError = error;
               detachedThisSend = true;
-              detachedStreamSendRef.current = {
-                projectId: selectedProjectId,
+              detachedStreamSendRef.current[selectedProjectId] = {
                 sessionId,
                 streamingKey: sendKey,
                 detachedAt: Date.now(),
@@ -2870,9 +2877,8 @@ export function ChatPanel({
               // 防御にもなっていない。したがって現状はどちらのタブ内シナリオでも
               // 到達しない、意図した防御的デッドコードだと理解した上で残している。
               const unresolvedSameSessionDetach =
-                detachedStreamSendRef.current !== null &&
-                detachedStreamSendRef.current.projectId === selectedProjectId &&
-                detachedStreamSendRef.current.sessionId === sessionId;
+                detachedStreamSendRef.current[selectedProjectId] !== undefined &&
+                detachedStreamSendRef.current[selectedProjectId].sessionId === sessionId;
               if (sessionId !== undefined && !unresolvedSameSessionDetach) {
                 void acknowledgeChatTurn(selectedProjectId, sessionId).catch(() => {
                   // ACK 失敗は turn-status に古い失敗エントリが残るだけ。表示は
