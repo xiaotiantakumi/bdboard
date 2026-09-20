@@ -35,7 +35,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
   'scripts/check-commit-parse.mjs': 380, // 現在 380
   'web/src/components/nextUpRunLoop.ts': 380, // 現在 371
-  'web/src/components/DependencyGraphView.tsx': 370, // 現在 367
   'web/src/components/BoardView.tsx': 370, // 現在 365
   'scripts/check-file-size.mjs': 370, // 現在 362
   'web/src/components/NextUpView.tsx': 370, // 現在 362
