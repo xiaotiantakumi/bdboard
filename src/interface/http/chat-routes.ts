@@ -140,7 +140,8 @@ const CHAT_COMPLETED_TURNS_MAX = 20;
  * いない」クライアントの checkTurnStatus (ChatPanel.tsx) がポーリングする
  * たびに 'failed' を検知するが、matchesTrackedSend も detached も
  * 一致しないため消化できず、無条件に 1 秒間隔で再ポーリングし続ける —
- * ポーリング元が上限に達するまでのループが実質無限に続く。
+ * そのポーリングは、このエントリが (キュー自体の上限
+ * CHAT_COMPLETED_TURNS_MAX に達する等で) 消えるまで際限なく続く。
  *
  * クライアント側には自分自身が絡む検知失敗を諦めて自己解決する猶予
  * (UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS、ChatPanel.tsx で約20〜30秒)
