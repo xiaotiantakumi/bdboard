@@ -1272,6 +1272,9 @@ export function createApiRoutes(deps: ApiDeps): Hono {
           ...(outcome.clearedHumanLabelTicketIds !== undefined
             ? { clearedHumanLabelTicketIds: outcome.clearedHumanLabelTicketIds }
             : {}),
+          ...(outcome.ambiguousGateIds !== undefined
+            ? { ambiguousGateIds: outcome.ambiguousGateIds }
+            : {}),
         },
       });
     } catch (error: unknown) {
