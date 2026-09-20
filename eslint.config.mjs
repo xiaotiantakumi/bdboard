@@ -41,7 +41,6 @@ const MAX_LINES_ALLOWLIST = {
   'scripts/check-file-size.mjs': 370, // 現在 362
   'web/src/components/NextUpView.tsx': 370, // 現在 362
   'src/infrastructure/chat/specs/claude-spec.ts': 340, // 現在 331
-  'src/infrastructure/harness/fs-harness-injector.ts': 320, // 現在 312
   'src/infrastructure/process/cloudflared-tunnel.ts': 320, // 現在 311
   'src/infrastructure/process/ai-quota-source.ts': 310, // 現在 307
   'web/src/components/SearchPalette.tsx': 290, // 現在 282
