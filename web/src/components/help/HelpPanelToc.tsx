@@ -1,6 +1,6 @@
 // bdboard-sso1.28: HelpPanel.tsx の目次 (TOC) ナビゲーションを移動しただけの
-// 表示専用コンポーネント (move-only)。state・ジャンプ処理は親 (HelpPanel) に
-// 残し、値とハンドラを props で受け取る。JSX・className・文言・DOM 構造は
+// 表示専用コンポーネント (move-only)。state・ジャンプ処理は
+// useHelpPanelFilter フックに残し、値とハンドラを props で受け取る。JSX・className・文言・DOM 構造は
 // 移動前から変えていない。
 import type { HelpSection } from '../../helpContent';
 import { highlightMatches } from './helpSearch';

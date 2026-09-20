@@ -1,6 +1,6 @@
 // bdboard-sso1.28: HelpPanel.tsx の1セクション分の <details> 表示を移動した
 // だけの表示専用コンポーネント (move-only)。開閉 state・ref 登録・絞り込み
-// 判定は親 (HelpPanel) に残し、値とハンドラを props で受け取る。JSX・
+// 判定は useHelpPanelFilter フックに残し、値とハンドラを props で受け取る。JSX・
 // className・aria属性・文言・DOM 構造・キーボード操作 (summary tabIndex)
 // は移動前から変えていない。
 import type { HelpSection } from '../../helpContent';

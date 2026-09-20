@@ -1,6 +1,6 @@
 // bdboard-sso1.28: HelpPanel.tsx の絞り込み入力欄+件数表示+すべて開閉ボタンを
-// 移動しただけの表示専用コンポーネント (move-only)。state・ハンドラは親
-// (HelpPanel) に残し、値とハンドラを props で受け取る。JSX・className・
+// 移動しただけの表示専用コンポーネント (move-only)。state・ハンドラは
+// useHelpPanelFilter フックに残し、値とハンドラを props で受け取る。JSX・className・
 // 文言・DOM 構造は移動前から変えていない。
 import type {
   ChangeEvent,
