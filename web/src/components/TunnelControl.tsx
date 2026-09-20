@@ -1,41 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
-import {
-  ApiError,
-  createTunnelAccessToken,
-  dismissTunnelInterruption,
-  fetchTunnel,
-  startTunnel,
-  stopTunnel,
-  type TunnelDto,
-} from '../api';
-import { formatAbsoluteTime } from '../formatAbsoluteTime';
+import { ApiError } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { buildTunnelTokenUrl } from '../tunnelQr';
-import { TUNNEL_NOT_RUNNING_HELP } from '../writeAccessMessage';
-
-const TUNNEL_QUERY_KEY = ['tunnel'] as const;
-const POLL_INTERVAL_MS = 1200;
-
-function isLocalOnlyError(error: unknown): boolean {
-  return error instanceof ApiError && error.status === 403;
-}
-
-function accessTokenErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 409) {
-      // bdboard-o2o: writeAccessMessage.ts の定数と共有し、文言の fork を防ぐ。
-      return TUNNEL_NOT_RUNNING_HELP;
-    }
-    if (error.status === 403) {
-      return 'この操作はローカルの画面からのみ実行できます';
-    }
-  }
-  // Deliberately generic: the server's own message is not surfaced here, so a
-  // token can never reach the screen through an error path.
-  return 'QRコードの準備に失敗しました';
-}
+import { isLocalOnlyError } from './tunnel/tunnelHelpers';
+import { useTunnelStatus } from './tunnel/useTunnelStatus';
+import { useTunnelPublish } from './tunnel/useTunnelPublish';
+import { useTunnelQr } from './tunnel/useTunnelQr';
+import { useTunnelStop } from './tunnel/useTunnelStop';
+import { useTunnelDismiss } from './tunnel/useTunnelDismiss';
+import { TunnelUnavailableNotice } from './tunnel/TunnelUnavailableNotice';
+import { TunnelInterruptedNotice } from './tunnel/TunnelInterruptedNotice';
+import { TunnelPublishForm } from './tunnel/TunnelPublishForm';
+import { TunnelPublishConfirmDialog } from './tunnel/TunnelPublishConfirmDialog';
+import { TunnelOnPanel } from './tunnel/TunnelOnPanel';
 
 export interface TunnelControlProps {
   open: boolean;
@@ -43,37 +19,12 @@ export interface TunnelControlProps {
 }
 
 export function TunnelControl({ open, onClose }: TunnelControlProps) {
-  const queryClient = useQueryClient();
-  const [passwordInput, setPasswordInput] = useState('');
-  // The QR encodes a one-time token, so it stays hidden until explicitly
-  // requested.
-  const [qrVisible, setQrVisible] = useState(false);
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [validationError, setValidationError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [localOnlyNotice, setLocalOnlyNotice] = useState(false);
-  const [publishPhase, setPublishPhase] = useState<'idle' | 'confirming'>('idle');
-  const cancelPublishRef = useRef<HTMLButtonElement>(null);
-  const confirmPanelRef = useRef<HTMLDivElement>(null);
   const modalPanelRef = useRef<HTMLElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  const tunnelQuery = useQuery({
-    queryKey: TUNNEL_QUERY_KEY,
-    queryFn: fetchTunnel,
-    // A 403 here is the policy answer for a board opened through the tunnel, not
-    // a transient failure. Retrying it with backoff would leave the publish
-    // control live on a phone for several seconds before the notice appears.
-    retry: (failureCount, error) =>
-      !isLocalOnlyError(error) && failureCount < 2,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data?.state === 'starting') {
-        return POLL_INTERVAL_MS;
-      }
-      return false;
-    },
-  });
+  const status = useTunnelStatus();
 
   const handleMutationError = useCallback((error: unknown) => {
     if (isLocalOnlyError(error)) {
@@ -92,108 +43,47 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
     setActionError('操作に失敗しました');
   }, []);
 
-  const startMutation = useMutation({
-    mutationFn: (password?: string) => startTunnel(password),
-    onSuccess: (data: TunnelDto) => {
-      queryClient.setQueryData(TUNNEL_QUERY_KEY, data);
-      setPasswordInput('');
-      setValidationError(null);
-      setActionError(null);
-      setPublishPhase('idle');
-    },
-    onError: handleMutationError,
+  const clearActionError = useCallback(() => setActionError(null), []);
+
+  const publish = useTunnelPublish({
+    onMutationError: handleMutationError,
+    clearActionError,
   });
 
-  const tokenMutation = useMutation({
-    mutationFn: createTunnelAccessToken,
-    onSuccess: (data) => {
-      setAccessToken(data.token);
-    },
-    onError: () => {
-      setAccessToken(null);
-    },
+  const qr = useTunnelQr();
+
+  const stop = useTunnelStop({
+    onMutationError: handleMutationError,
+    clearActionError,
+    resetQr: qr.resetForStop,
   });
 
-  const stopMutation = useMutation({
-    mutationFn: stopTunnel,
-    onSuccess: (data: TunnelDto) => {
-      queryClient.setQueryData(TUNNEL_QUERY_KEY, data);
-      setActionError(null);
-      // Don't carry "shown" across tunnel sessions — the next tunnel has
-      // different credentials and should start hidden like the first one.
-      setQrVisible(false);
-      setAccessToken(null);
-      tokenMutation.reset();
-    },
-    onError: handleMutationError,
-  });
-
-  const dismissMutation = useMutation({
-    mutationFn: dismissTunnelInterruption,
-    onSuccess: (data: TunnelDto) => {
-      queryClient.setQueryData(TUNNEL_QUERY_KEY, data);
-      setActionError(null);
-    },
-    onError: handleMutationError,
+  const dismiss = useTunnelDismiss({
+    onMutationError: handleMutationError,
+    clearActionError,
   });
 
   const isMutating =
-    startMutation.isPending || stopMutation.isPending || dismissMutation.isPending;
+    publish.startMutation.isPending || stop.isPending || dismiss.isPending;
 
   useEffect(() => {
-    if (tunnelQuery.error !== null && isLocalOnlyError(tunnelQuery.error)) {
+    if (status.error !== null && isLocalOnlyError(status.error)) {
       setLocalOnlyNotice(true);
     }
-  }, [tunnelQuery.error]);
-
-  const handleRequestPublish = useCallback(() => {
-    setValidationError(null);
-    setActionError(null);
-
-    const trimmed = passwordInput.trim();
-    if (trimmed.length > 0) {
-      if (trimmed.length < 2 || trimmed.length > 64) {
-        setValidationError(
-          'パスワードは2〜64文字で入力してください（トンネルURLは公開されます）',
-        );
-        return;
-      }
-    }
-    setPublishPhase('confirming');
-  }, [passwordInput]);
-
-  const handleConfirmPublish = useCallback(() => {
-    const trimmed = passwordInput.trim();
-    startMutation.mutate(trimmed.length > 0 ? trimmed : undefined);
-  }, [passwordInput, startMutation]);
-
-  const handleCancelPublish = useCallback(() => {
-    setPublishPhase('idle');
-  }, []);
-
-  const handleQrToggle = useCallback(() => {
-    if (qrVisible) {
-      setQrVisible(false);
-      setAccessToken(null);
-      tokenMutation.reset();
-      return;
-    }
-    setQrVisible(true);
-    tokenMutation.mutate();
-  }, [qrVisible, tokenMutation]);
+  }, [status.error]);
 
   useFocusTrap({
     containerRef: modalPanelRef,
     initialFocusRef: closeButtonRef,
-    enabled: open && publishPhase !== 'confirming',
+    enabled: open && publish.publishPhase !== 'confirming',
     onEscape: onClose,
   });
 
   useFocusTrap({
-    containerRef: confirmPanelRef,
-    initialFocusRef: cancelPublishRef,
-    enabled: open && publishPhase === 'confirming',
-    onEscape: handleCancelPublish,
+    containerRef: publish.confirmPanelRef,
+    initialFocusRef: publish.cancelPublishRef,
+    enabled: open && publish.publishPhase === 'confirming',
+    onEscape: publish.handleCancelPublish,
   });
 
   if (!open) {
@@ -202,20 +92,20 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
 
   let panelBody: ReactNode;
 
-  if (localOnlyNotice || (tunnelQuery.error !== null && isLocalOnlyError(tunnelQuery.error))) {
+  if (localOnlyNotice || (status.error !== null && isLocalOnlyError(status.error))) {
     panelBody = (
       <p className="tunnel-local-only">
         この操作はローカルの画面からのみ実行できます
       </p>
     );
-  } else if (tunnelQuery.error !== null) {
+  } else if (status.error !== null) {
     const message =
-      tunnelQuery.error instanceof Error
-        ? tunnelQuery.error.message
+      status.error instanceof Error
+        ? status.error.message
         : 'トンネル状態の取得に失敗しました';
     panelBody = <p className="tunnel-error-message">{message}</p>;
   } else {
-    const data = tunnelQuery.data;
+    const data = status.data;
     const unavailable = data !== undefined && !data.available;
     const authUnavailable = data !== undefined && data.authEnabled !== true;
     // Never offer the publish control before the first response has told us whether
@@ -236,7 +126,7 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
       isMutating ||
       data?.state === 'starting' ||
       isOn ||
-      publishPhase === 'confirming';
+      publish.publishPhase === 'confirming';
     const passwordDisabled =
       unavailable ||
       authUnavailable ||
@@ -255,132 +145,35 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
       )}
 
       {interruptedAt !== null && (
-        <div className="tunnel-interrupted-notice" role="status">
-          <p className="tunnel-help">
-            前回はトンネルが動作中のままサーバーが停止しました。
-          </p>
-          <p className="tunnel-help">
-            公開していた URL は失効しています（cloudflared の URL
-            は毎回変わるため、スマホ側は再読み込みでは復旧しません）。
-          </p>
-          <p className="tunnel-help">
-            もう一度スマホから使うには、下のパスワード欄から公開し直して QR
-            を取り直してください。
-          </p>
-          <p className="tunnel-help">
-            停止時刻:{' '}
-            <time dateTime={interruptedAt}>
-              {formatAbsoluteTime(interruptedAt)}
-            </time>
-          </p>
-          <button
-            type="button"
-            className="btn btn-small"
-            onClick={() => dismissMutation.mutate()}
-            disabled={dismissMutation.isPending}
-          >
-            閉じる
-          </button>
-        </div>
+        <TunnelInterruptedNotice
+          interruptedAt={interruptedAt}
+          onDismiss={() => dismiss.mutate()}
+          dismissPending={dismiss.isPending}
+        />
       )}
 
-      {unavailable && (
-        <>
-          <p className="tunnel-help">
-            cloudflared が見つかりません。ローカルにインストールしてください。
-          </p>
-          <button
-            type="button"
-            className="btn"
-            disabled
-            title="cloudflared が見つかりません"
-          >
-            スマホ用に公開
-          </button>
-        </>
-      )}
+      {unavailable && <TunnelUnavailableNotice />}
 
       {!unavailable && showOffControls && (
         <>
-          <div className="tunnel-off-row">
-            <input
-              type="password"
-              className="tunnel-input"
-              value={passwordInput}
-              onChange={(event) => {
-                setPasswordInput(event.target.value);
-                setValidationError(null);
-                setPublishPhase('idle');
-              }}
-              placeholder="未入力ならランダム生成"
-              disabled={passwordDisabled}
-              aria-label="トンネル用パスワード（任意）"
-              aria-describedby="tunnel-password-write-hint"
+          <TunnelPublishForm
+            passwordInput={publish.passwordInput}
+            onPasswordChange={publish.handlePasswordChange}
+            passwordDisabled={passwordDisabled}
+            startDisabled={startDisabled}
+            authUnavailable={authUnavailable}
+            onRequestPublish={publish.handleRequestPublish}
+            startPending={publish.startMutation.isPending}
+          />
+
+          {publish.publishPhase === 'confirming' && (
+            <TunnelPublishConfirmDialog
+              confirmPanelRef={publish.confirmPanelRef}
+              cancelPublishRef={publish.cancelPublishRef}
+              startPending={publish.startMutation.isPending}
+              onCancel={publish.handleCancelPublish}
+              onConfirm={publish.handleConfirmPublish}
             />
-            <button
-              type="button"
-              className="btn"
-              onClick={handleRequestPublish}
-              disabled={startDisabled}
-              title={
-                authUnavailable
-                  ? 'Basic Authが有効でないためトンネル公開はできません'
-                  : undefined
-              }
-            >
-              {startMutation.isPending ? '送信中…' : 'スマホ用に公開'}
-            </button>
-          </div>
-
-          {/* bdboard-cu4: 公開してからでは遅い情報なので、公開前に出す。
-              12文字未満のパスワードで公開したトンネルは読み取り専用になる。 */}
-          <p id="tunnel-password-write-hint" className="tunnel-help">
-            パスワードが12文字未満だと、スマホからは読み取り専用になります（空欄=自動生成なら変更もできます）。
-          </p>
-
-          {publishPhase === 'confirming' && (
-            <div
-              ref={confirmPanelRef}
-              className="tunnel-confirm-panel"
-              role="alertdialog"
-              aria-labelledby="tunnel-confirm-title"
-              aria-describedby="tunnel-confirm-desc"
-            >
-              <p id="tunnel-confirm-title" className="tunnel-confirm-title">
-                公開の確認
-              </p>
-              <div id="tunnel-confirm-desc" className="tunnel-confirm-desc">
-                <p>
-                  公開すると、全プロジェクトのチケット内容がインターネットから読める状態になります。
-                </p>
-                <p>
-                  公開先には Basic 認証が掛かります。スマホはこの画面で発行する1回限りのQRコードから認証済みセッションを開始します。
-                </p>
-                <p>
-                  パスワードを空欄のまま公開した場合は、安全なランダムパスワードが自動生成されます。スマホでは公開後のQRコードから開きます。
-                </p>
-                <p>「キャンセル」を選べば、何も起きずに元の画面に戻れます。</p>
-              </div>
-              <div className="tunnel-confirm-actions">
-                <button
-                  ref={cancelPublishRef}
-                  type="button"
-                  className="btn tunnel-confirm-cancel"
-                  onClick={handleCancelPublish}
-                  disabled={startMutation.isPending}
-                >
-                  キャンセル
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-danger-outline"
-                  onClick={handleConfirmPublish}
-                  disabled={startMutation.isPending}
-                >
-                  {startMutation.isPending ? '送信中…' : '公開する'}
-                </button>
-              </div>
-            </div>
           )}
         </>
       )}
@@ -392,77 +185,19 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
       )}
 
       {data?.state === 'on' && (
-        <div className="tunnel-on-panel">
-          {/* bdboard-cu4: スマホ側で「書き込めない理由」が分からず 403 トーストだけが
-              出る状態だったので、公開中のトンネルが読み書きできるのかをここに出す。
-              サーバーは state==='on' のとき必ず writeAccess を返す(bdboard-9rz)。
-              未定義になるのは古いサーバーと話しているときだけなので、その場合は
-              断定せずに何も出さない。 */}
-          {data.writeAccess !== undefined && (
-            <div className="tunnel-field">
-              <span className="tunnel-field-label">スマホからの操作</span>
-              {data.writeAccess ? (
-                <p className="tunnel-write-access tunnel-write-access-on">
-                  変更もできます。公開後のQRコードからスマホで開いてください。
-                </p>
-              ) : (
-                <p className="tunnel-write-access tunnel-write-access-off">
-                  読み取り専用です。パスワードが12文字未満のためチケットの変更・コメント・チャットはできません。変更もしたい場合は、いったん公開を停止して、パスワード欄を空欄（自動生成）にするか12文字以上のパスワードで公開し直してください。
-                </p>
-              )}
-            </div>
-          )}
-          <div className="tunnel-field">
-            <span className="tunnel-field-label">スマホで開く</span>
-            <div className="tunnel-field-row">
-              <button
-                type="button"
-                className="btn btn-small"
-                onClick={handleQrToggle}
-                aria-expanded={qrVisible}
-              >
-                {qrVisible ? 'QRを隠す' : 'QRを表示'}
-              </button>
-              <span className="tunnel-qr-hint">
-                カメラで読むとログイン済みの状態で開けます（変更操作もこの入口からのみ）
-              </span>
-            </div>
-            {qrVisible && (
-              <div className="tunnel-qr">
-                {tokenMutation.isPending && (
-                  <p className="tunnel-qr-status">準備中…</p>
-                )}
-                {tokenMutation.isError && (
-                  <p className="tunnel-error-message">
-                    {accessTokenErrorMessage(tokenMutation.error)}
-                  </p>
-                )}
-                {accessToken !== null && data.state === 'on' && (
-                  <>
-                    <QRCodeSVG
-                      value={buildTunnelTokenUrl(data.url, accessToken)}
-                      size={192}
-                      level="M"
-                      marginSize={2}
-                      title="トンネルURL(ワンタイムトークンつき)のQRコード"
-                    />
-                    <p className="tunnel-qr-note">
-                      1回だけ使える入場用コードです。有効期限は約5分。
-                    </p>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => stopMutation.mutate()}
-            disabled={stopDisabled}
-          >
-            {stopMutation.isPending ? '停止中…' : '公開を停止'}
-          </button>
-        </div>
+        <TunnelOnPanel
+          writeAccess={data.writeAccess}
+          qrVisible={qr.qrVisible}
+          onQrToggle={qr.handleQrToggle}
+          tokenPending={qr.tokenMutation.isPending}
+          tokenIsError={qr.tokenMutation.isError}
+          tokenError={qr.tokenMutation.error}
+          tunnelUrl={data.url}
+          accessToken={qr.accessToken}
+          onStop={() => stop.mutate()}
+          stopDisabled={stopDisabled}
+          stopPending={stop.isPending}
+        />
       )}
 
       {data?.state === 'error' && (
@@ -474,8 +209,8 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
         </div>
       )}
 
-      {validationError !== null && (
-        <p className="tunnel-error-message">{validationError}</p>
+      {publish.validationError !== null && (
+        <p className="tunnel-error-message">{publish.validationError}</p>
       )}
 
       {actionError !== null && (
