@@ -371,6 +371,71 @@ describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
       closed: false,
     });
   });
+
+  // bdboard-v78e: ambiguousGateIds (bdboard-q1k9) must reach the UI so it can tell the
+  // user their answer resolved nothing, instead of the generic "removed from the queue"
+  // message that would otherwise apply whenever closed === false.
+  it('preserves ambiguousGateIds from the server response', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'ticket',
+              closed: false,
+              ambiguousGateIds: ['bdboard-gate-1', 'bdboard-gate-2'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+      ambiguousGateIds: ['bdboard-gate-1', 'bdboard-gate-2'],
+    });
+  });
+
+  it('omits ambiguousGateIds when the server sends an empty array', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: { kind: 'ticket', closed: false, ambiguousGateIds: [] },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+    });
+  });
+
+  it('ignores non-array ambiguousGateIds values from the server', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: { kind: 'ticket', closed: false, ambiguousGateIds: 'not-an-array' },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+    });
+  });
 });
 
 describe('agent run API', () => {

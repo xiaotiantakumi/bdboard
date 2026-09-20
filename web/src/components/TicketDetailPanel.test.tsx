@@ -1007,6 +1007,45 @@ describe('TicketDetailPanel pending decisions', () => {
     ).toBeInTheDocument();
   });
 
+  // bdboard-v78e: when respond() returns ambiguousGateIds (bdboard-q1k9: 2+ distinct open
+  // human gates blocked this ticket, so nothing was resolved), the UI must show guidance
+  // to answer the gates individually instead of the generic closed:false message, which
+  // would otherwise falsely imply the ticket left the awaiting-human queue.
+  it('shows ambiguous-gate guidance instead of the generic message when the decision resolves nothing (bdboard-v78e)', async () => {
+    mockPostTicketDecision.mockResolvedValue({
+      kind: 'ticket',
+      closed: false,
+      ambiguousGateIds: ['bdboard-gate-1', 'bdboard-gate-2'],
+    });
+
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'ticket',
+      projectId: sampleTicket.projectId,
+      options: [
+        { label: 'A案', value: 'a' },
+        { label: 'B案', value: 'b' },
+      ],
+      allowFreeform: true,
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'A案' }));
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+
+    expect(
+      await screen.findByText(
+        'このチケットは複数の質問(gate)に分かれています。どの質問への回答か特定できなかったため、何も解決していません。下の gate を開いて個別に回答してください。',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-gate-1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-gate-2' })).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。',
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows gate outcome message when the decision closes a gate', async () => {
     mockPostTicketDecision.mockResolvedValue({ kind: 'gate', closed: true });
 

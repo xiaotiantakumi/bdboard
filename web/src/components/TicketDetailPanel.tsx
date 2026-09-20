@@ -2197,13 +2197,42 @@ export function TicketDetailPanel({
                   <p className="detail-pre">{submittedDecision.freeform}</p>
                 )}
                 <p className="detail-help">回答を送信しました</p>
-                <p className="detail-help">
-                  {submittedDecision.outcome.kind === 'unknown'
-                    ? '種別(ゲート/作業チケット)を判定できませんでした。回答はコメントとして記録しましたが、確認待ちのまま残っています。しばらくしてからもう一度送信してください。'
-                    : submittedDecision.outcome.closed
-                      ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
-                      : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
-                </p>
+                {/*
+                 * bdboard-q1k9: ambiguousGateIds が返ってきた場合、このチケットは
+                 * 2件以上の独立した human gate にブロックされていて、どの質問への
+                 * 回答か特定できず respond() は何も resolve していない(human ラベルも
+                 * 外れていない)。closed は常に false のまま同じなので、下の通常分岐
+                 * (「確認待ちから外れ、次の更新で通常のレーンに戻ります」)をそのまま
+                 * 出すと実際には何も変わっていないのに解決したかのように誤読させる
+                 * (bdboard-v78e)。この分岐を優先し、個別の gate へ回答するよう促す。
+                 */}
+                {submittedDecision.outcome.ambiguousGateIds !== undefined &&
+                submittedDecision.outcome.ambiguousGateIds.length > 0 ? (
+                  <>
+                    <p className="detail-help">
+                      このチケットは複数の質問(gate)に分かれています。どの質問への回答か特定できなかったため、何も解決していません。下の gate を開いて個別に回答してください。
+                    </p>
+                    <ul className="detail-list">
+                      {submittedDecision.outcome.ambiguousGateIds.map((gateId) => (
+                        <li key={gateId}>
+                          <TicketIdLink
+                            id={gateId}
+                            isTicketOnBoard={isTicketOnBoard}
+                            onOpenTicket={onOpenTicket}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                ) : (
+                  <p className="detail-help">
+                    {submittedDecision.outcome.kind === 'unknown'
+                      ? '種別(ゲート/作業チケット)を判定できませんでした。回答はコメントとして記録しましたが、確認待ちのまま残っています。しばらくしてからもう一度送信してください。'
+                      : submittedDecision.outcome.closed
+                        ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
+                        : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
+                  </p>
+                )}
               </div>
             )}
             <div className="detail-section">

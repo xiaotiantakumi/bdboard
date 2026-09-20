@@ -453,6 +453,15 @@ export interface PendingDecisionDto {
 export interface TicketDecisionOutcome {
   kind: 'gate' | 'ticket' | 'unknown';
   closed: boolean;
+  /**
+   * kind === 'ticket' のときだけ設定されうる(bdboard-q1k9 / bdboard-v78e)。このチケットを
+   * ブロックしている open な human gate が2件以上あり、どの gate への回答か特定できな
+   * かったために、どの gate も resolve せず・human ラベルも外さなかった場合の gate ID
+   * 一覧。UI 側はこれが空でないときに「個別に回答してください」という案内を出し、
+   * closed: false の通常の「確認待ちから外れました」メッセージは出さない
+   * (実際には何も変わっていないため)。
+   */
+  ambiguousGateIds?: string[];
 }
 
 export type BoardMode = 'merged' | 'split';
@@ -997,9 +1006,14 @@ function mapTicketDecisionOutcome(raw: unknown): TicketDecisionOutcome {
   }
   const kind = (outcome as { kind?: unknown }).kind;
   const closed = (outcome as { closed?: unknown }).closed;
+  const rawAmbiguousGateIds = (outcome as { ambiguousGateIds?: unknown }).ambiguousGateIds;
+  const ambiguousGateIds = Array.isArray(rawAmbiguousGateIds)
+    ? rawAmbiguousGateIds.filter((entry): entry is string => typeof entry === 'string')
+    : undefined;
   return {
     kind: kind === 'gate' ? 'gate' : kind === 'ticket' ? 'ticket' : 'unknown',
     closed: closed === true,
+    ...(ambiguousGateIds !== undefined && ambiguousGateIds.length > 0 ? { ambiguousGateIds } : {}),
   };
 }
 
@@ -1007,14 +1021,14 @@ export function postTicketDecision(
   id: string,
   body: { choice?: string; freeform?: string },
 ): Promise<TicketDecisionOutcome> {
-  return fetchJson<{ ok: true; outcome?: { kind?: string; closed?: boolean } }>(
-    `/api/tickets/${encodeURIComponent(id)}/decision`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    },
-  ).then((data) => mapTicketDecisionOutcome(data));
+  return fetchJson<{
+    ok: true;
+    outcome?: { kind?: string; closed?: boolean; ambiguousGateIds?: string[] };
+  }>(`/api/tickets/${encodeURIComponent(id)}/decision`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then((data) => mapTicketDecisionOutcome(data));
 }
 
 export type QuickActionRequest =
