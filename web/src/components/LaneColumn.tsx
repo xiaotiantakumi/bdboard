@@ -1,53 +1,25 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import {
-  type BoardCardDto,
   isLaneStatusMismatch,
-  type Lane,
   LANE_LABELS,
-  type PrBadgeDto,
   projectNameFallback,
 } from '../api';
 import { livenessClass } from '../liveness';
 import { useBoardDnD } from './BoardDnDProvider';
-import {
-  type CardNavProps,
-  useBoardKeyboardNav,
-} from './BoardKeyboardNavProvider';
-import { localDateKey } from './activityFeedFormatting';
+import { useBoardKeyboardNav } from './BoardKeyboardNavProvider';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
 import { useBulkSelection } from './BulkSelectionProvider';
+import { PAGE_SIZE } from './lane/constants';
+import {
+  deferCountdownClass,
+  formatDeferCountdown,
+  formatDeferDate,
+  priorityBadgeClass,
+} from './lane/cardHelpers';
+import type { CardItemProps, LaneColumnProps } from './lane/types';
 
-export interface CardItemProps {
-  card: BoardCardDto;
-  lane: Lane;
-  showProjectName: boolean;
-  projectName: string;
-  activeSessionCount: number;
-  hasPendingDecision: boolean;
-  prLink?: PrBadgeDto;
-  onClick: (ticketId: string) => void;
-  enableDrag?: boolean;
-  nav?: CardNavProps;
-}
-
-function priorityBadgeClass(priority: number): string {
-  if (priority === 0) return 'badge-p0';
-  if (priority === 1) return 'badge-p1';
-  if (priority === 2) return 'badge-p2';
-  if (priority === 3) return 'badge-p3';
-  return 'badge-p4';
-}
-
-function formatDeferDate(deferUntil: string): string {
-  // ISO 文字列を slice(0, 10) すると UTC の日付になる。defer は UI 側が
-  // ローカル日付で送り、bd が「その日のローカル深夜」の UTC 瞬間として持つので
-  // (例: Asia/Tokyo なら …T15:00:00Z)、素朴に切ると常に1日前を表示していた (bdboard-ol9)。
-  // 日付境界は board の設定タイムゾーン（デフォルトはブラウザ TZ、BDBOARD_TIMEZONE で
-  // 上書き可）で求める — CI は UTC で走るので host TZ に頼ると環境で結果が変わる
-  // (bdboard-3tw.75)。手書きのオフセット算術は tzdata の歴史的例外で食い違うため使わない。
-  return localDateKey(new Date(deferUntil));
-}
+export type { CardItemProps, LaneColumnProps } from './lane/types';
 
 function BlockedIcon() {
   return (
@@ -128,31 +100,6 @@ function PendingDecisionIcon() {
       <circle cx="9.8" cy="7.2" r="0.7" fill="currentColor" />
     </svg>
   );
-}
-
-function formatDeferCountdown(
-  deferDays: number,
-  deferUrgency: BoardCardDto['deferUrgency'],
-): string {
-  if (deferUrgency === 'overdue' || deferDays < 0) {
-    return '期限超過';
-  }
-  if (deferUrgency === 'today' || deferDays === 0) {
-    return '今日';
-  }
-  return `あと${deferDays}日`;
-}
-
-function deferCountdownClass(deferUrgency: BoardCardDto['deferUrgency']): string {
-  switch (deferUrgency) {
-    case 'overdue':
-      return 'badge badge-defer-countdown badge-defer-overdue';
-    case 'today':
-    case 'soon':
-      return 'badge badge-defer-countdown badge-defer-soon';
-    default:
-      return 'badge badge-defer-countdown';
-  }
 }
 
 export function CardItem({
@@ -369,30 +316,6 @@ export function CardItem({
     </article>
   );
 }
-
-export interface LaneColumnProps {
-  lane: Lane;
-  cards: BoardCardDto[];
-  /** stalledOnly 適用後・board filter 適用前の件数(filtered/total 表示用) */
-  unfilteredCount?: number;
-  showProjectName: boolean;
-  projectNames: Map<string, string>;
-  projectActiveSessions: Map<string, number>;
-  pendingDecisionIds: ReadonlySet<string>;
-  prLinksById: ReadonlyMap<string, PrBadgeDto>;
-  onCardClick: (ticketId: string) => void;
-  /**
-   * サーバー側のclosedLimitで切り捨てられ、このレーンに一切届いていないカード数
-   * (doneレーンのみ意味を持つ; bdboard-3tw.86)。0またはundefinedなら非表示。
-   */
-  hiddenCount?: number;
-  collapsed?: boolean;
-  onToggleCollapse?: () => void;
-  /** in_progress レーンの WIP 状態。exceeded 時にヘッダー警告を表示する。 */
-  wipStatus?: { limit: number; count: number; exceeded: boolean };
-}
-
-const PAGE_SIZE = 50;
 
 export function LaneColumn({
   lane,
