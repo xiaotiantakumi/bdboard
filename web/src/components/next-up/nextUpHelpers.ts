@@ -17,7 +17,7 @@ export function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
 }
 
 /** endReason ごとの表示ラベル。Record なので endReason が増えたら型エラーで気づける。 */
-export const NEXT_UP_LOOP_END_REASON_LABELS: Record<NextUpLoopEndReason, string> = {
+const NEXT_UP_LOOP_END_REASON_LABELS: Record<NextUpLoopEndReason, string> = {
   completed: '完走',
   stopped: '中断',
   poll_failed: '中断(状況を確認できず)',

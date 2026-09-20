@@ -2,8 +2,9 @@
 // 進捗表示 (next-up-run-group) を移動しただけの表示専用コンポーネント。
 // state・ref は親 (NextUpView / useNextUpBatchRun) に残し、値とハンドラを
 // props で受け取る。isLoopActive / hasLastRunSummary は loopPhase /
-// loopProgress から移動前と同じ式でこの中で導出する (親の useNextUpBatchRun
-// と重複するが、どちらも同じ純粋な式なので出力は変わらない)。
+// loopProgress からこの中で導出する — 移動前は NextUpView.tsx 直下の同じ式で
+// 計算されていたものをそのままここへ移した (親側には残していない。重複では
+// なく移動)。
 // JSX・className・aria属性・文言・DOM構造は移動前から変えていない。
 import type { RefObject } from 'react';
 import {
