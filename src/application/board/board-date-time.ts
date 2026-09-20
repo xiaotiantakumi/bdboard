@@ -1,3 +1,5 @@
+import { getCachedDateTimeFormat } from '../../domain/intl-format-cache.js';
+
 export const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 const WEEKDAY_MAP: Record<string, number> = {
@@ -11,7 +13,7 @@ const WEEKDAY_MAP: Record<string, number> = {
 };
 
 export function localDateKey(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
+  return getCachedDateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
@@ -20,7 +22,7 @@ export function localDateKey(date: Date, timeZone: string): string {
 }
 
 export function getTimeZoneOffsetMs(at: Date, timeZone: string): number {
-  const dtf = new Intl.DateTimeFormat('en-US', {
+  const dtf = getCachedDateTimeFormat('en-US', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
@@ -59,7 +61,7 @@ export function zonedMidnight(dateKey: string, timeZone: string): Date {
 }
 
 export function getWeekdayInTimeZone(date: Date, timeZone: string): number {
-  const weekday = new Intl.DateTimeFormat('en-US', {
+  const weekday = getCachedDateTimeFormat('en-US', {
     timeZone,
     weekday: 'short',
   }).format(date);

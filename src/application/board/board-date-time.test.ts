@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { addCalendarDaysToDateKey, localDateKey, zonedMidnight } from './board-date-time.js';
 
 describe('zonedMidnight', () => {
@@ -41,5 +41,48 @@ describe('addCalendarDaysToDateKey', () => {
   it('advances across America/New_York DST spring-forward day (23 local hours)', () => {
     expect(addCalendarDaysToDateKey('2026-03-08', 1, newYork)).toBe('2026-03-09');
     expect(addCalendarDaysToDateKey('2026-03-02', 7, newYork)).toBe('2026-03-09');
+  });
+});
+
+describe('Intl.DateTimeFormat construction count (bdboard-k99x)', () => {
+  const OriginalDateTimeFormat = Intl.DateTimeFormat;
+
+  afterEach(() => {
+    Intl.DateTimeFormat = OriginalDateTimeFormat;
+  });
+
+  it('constructs a bounded number of formatters across many calls for one timeZone', async () => {
+    // Fresh module graph so the cache this test observes isn't pre-populated
+    // by the describe blocks above (which already exercised these helpers).
+    vi.resetModules();
+    const boardDateTime = await import('./board-date-time.js');
+
+    let constructCount = 0;
+    class CountingDateTimeFormat extends OriginalDateTimeFormat {
+      constructor(locale?: string | string[], options?: Intl.DateTimeFormatOptions) {
+        super(locale, options);
+        constructCount += 1;
+      }
+    }
+    Intl.DateTimeFormat = CountingDateTimeFormat as unknown as typeof Intl.DateTimeFormat;
+
+    const timeZone = 'Asia/Tokyo';
+    let dateKey = '2026-01-01';
+    for (let index = 0; index < 200; index += 1) {
+      const now = boardDateTime.zonedMidnight(dateKey, timeZone);
+      boardDateTime.localDateKey(now, timeZone);
+      boardDateTime.getWeekdayInTimeZone(now, timeZone);
+      dateKey = boardDateTime.addCalendarDaysToDateKey(dateKey, 1, timeZone);
+    }
+
+    // board-date-time.ts uses exactly 3 distinct (locale, options) shapes
+    // (date-key, offset, weekday) for a single timeZone, regardless of how
+    // many dates/iterations are exercised — this is the regression guard for
+    // the O(calls) formatter construction bdboard-k99x fixed. The lower bound
+    // guards against the instrumentation itself silently doing nothing (e.g.
+    // if resetModules/the class swap stopped taking effect, this would still
+    // pass at 0 without it).
+    expect(constructCount).toBeGreaterThan(0);
+    expect(constructCount).toBeLessThanOrEqual(3);
   });
 });

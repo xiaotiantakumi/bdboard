@@ -1,3 +1,5 @@
+import { getCachedDateTimeFormat } from './intl-format-cache.js';
+
 const MS_PER_DAY = 86_400_000;
 
 /**
@@ -21,7 +23,7 @@ function truncateToLocalDayMs(date: Date, timeZone?: string): number {
     ).getTime();
   }
 
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = getCachedDateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
