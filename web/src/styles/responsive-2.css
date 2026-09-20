@@ -1,0 +1,340 @@
+
+
+/* iPhone portrait */
+@media (max-width: 480px) {
+  body {
+    font-size: 14px;
+  }
+
+  .header {
+    padding: 10px 12px;
+  }
+
+  .header-group {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .meta-text {
+    width: auto;
+  }
+
+  .btn,
+  .toggle-btn {
+    min-height: 34px;
+  }
+
+  .main {
+    padding: 12px;
+    padding-bottom: calc(12px + var(--bulk-bar-height, 0px));
+  }
+
+  .bulk-action-bar {
+    left: 12px;
+    right: 12px;
+  }
+
+  .lanes-scroll-region {
+    margin: 0 -12px;
+  }
+
+  .lane-indicator-strip {
+    padding: 0 12px;
+  }
+
+  .lanes-row {
+    padding: 0 12px 10px;
+    /* padding-left と一致。未設定だと2枚目以降のレーンがスナップ後に scrollport 左端へ密着 (bdboard-h4xs.11) */
+    scroll-padding-left: 12px;
+  }
+
+  .card {
+    padding: 12px 14px;
+  }
+
+  .card-title {
+    font-size: 0.9375rem;
+  }
+
+  /* bdboard-1oep: モバイルのチェックボックスはカード右端から right(4px)+width(44px)=48px
+     食い込むが、ベースの .card:has(.card-bulk-checkbox) の padding-right は
+     デスクトップの 28px+8px 用に 40px のままだった。差分 8px がコンテンツボックスの
+     右端 = .card-title-row 末尾のウォッチ切替に重なり、z-index:1 のチェックボックスが
+     ☆の見えているグリフの右 4px を奪っていた (実測 375x812: toggle=[244,268],
+     checkbox=[260,304], elementFromPoint(260..) は checkbox を返す)。
+     48px でちょうど接し、52px で デスクトップと同じ 4px の間隔ができる。
+     ベース側 (40px) はデスクトップの実測重なり 0px なので触らない。 */
+  .card:has(.card-bulk-checkbox) {
+    padding-right: 52px;
+  }
+
+  .card-bulk-checkbox {
+    min-width: 44px;
+    min-height: 44px;
+    top: 4px;
+    right: 4px;
+  }
+
+  .card-bulk-checkbox input[type='checkbox'] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bulk-action-bar-buttons {
+    width: 100%;
+  }
+
+  .bulk-action-bar-buttons .btn {
+    flex: 1 1 auto;
+    min-height: 34px;
+  }
+
+  /* カスタム日付を選ぶと date 入力(16px化で147px)が入って延期グループが 289px まで伸び、
+     .bulk-action-bar-buttons の折り返しが1行増える。カスタムのときだけ独立行にして
+     他のボタンの並びを乱さない (bdboard-h4xs.11)
+     (289px は h4xs.11 時点のより広いビューポートでの値。320px での実寸は下記の 277px。) */
+  .bulk-action-bar-buttons .quick-action-defer-group-custom {
+    flex: 1 1 100%;
+    /* min-width: auto (flex item の既定) だと自動最小サイズが min-content で
+       止まり、flex-basis 100% を割り込めない。320px では中身の実寸が
+       86 + 6 + 147 + 6 + 32 = 277px で、コンテナの内容領域 270px を 7px はみ出す。
+       この 7px は body 基準の overflow 判定 (horizontalOverflow:
+       document.body.scrollWidth > innerWidth) では検出できないが、原因は
+       overflow-x: clip ではない — 標準モードでは clip された in-flow の溢れも
+       body.scrollWidth に現れる (test/e2e/bulk-action-bar-defer-row.spec.ts の
+       「320px カスタム状態について」コメント参照)。実際の理由は次の3つ、どれか
+       1つで足りる独立理由が重なっている: 1) .bulk-action-bar が position: fixed
+       (@media (max-width: 700px) 内の同じ規則で宣言、この 480px 帯でも有効) で、
+       fixed 内の溢れは body.scrollWidth に伝播しない。2) 同じ規則の
+       overflow-y: auto により overflow-x も auto に計算されて、バー自身が
+       スクロールコンテナになる。3) この 480px 帯では .bulk-action-bar が左右
+       12px + border 1px + padding 12px = 25px インセットされており、7px 程度は
+       そもそも body の箱を出ない。実測と切り分けは同 spec コメント
+       (bdboard-h4xs.22) と bdboard-rccf を参照。 */
+    min-width: 0;
+  }
+
+  /* 上の min-width:0 だけではグループ自身が縮めるようになるだけで、中の select と
+     date 入力が min-width:auto のままだと結局縮まない。この2つは font-size:16px
+     (iOS のズーム抑止。下方の @media (hover: none) and (pointer: coarse) 内、
+     :root プレフィックスで詳細度を底上げしたフォーム要素向けルール) で実寸が
+     決まっており、date 入力が 147px を占める。縮小を許可して 7px を吸わせる。
+     グループ3番目の子である「延期」ボタンは上の .bulk-action-bar-buttons .btn
+     { flex: 1 1 auto } を受けており、かつ既に min-content 幅なので追加指定は不要。
+     (「完了」ボタンはこのグループの子ではなくコンテナ直下の兄弟。) */
+  .bulk-action-bar-buttons .quick-action-defer-group-custom > select,
+  .bulk-action-bar-buttons .quick-action-defer-group-custom > input[type='date'] {
+    min-width: 0;
+  }
+
+  /* flex: 1 1 100% で延期グループだけ次行へ落ちると、完了ボタンが1行に単独で残り
+     上の .btn { flex: 1 1 auto } により全幅に伸びる。カスタム延期時だけ先頭の完了だけ
+     伸長させない (bdboard-53my 観測点1)。非カスタム時は flex-grow: 0 を当てないので
+     完了ボタンが行内の残り幅を吸い、行末空白が出ない。
+
+     :first-child という位置依存のセレクタなのは意図的。代案は2つ検討した:
+     - 延期グループに order を振って末尾へ回す → DOM 順と視覚順がずれ、
+       フォーカス順が飛ぶ (WCAG 1.3.2)。本バーの .btn は min-height: 34px で、
+       44px なのは .card-bulk-checkbox (カード側) だけなので order 却下の主因は
+       フォーカス順の一貫性。
+     - :has(.quick-action-defer-group-custom) で全ボタンの伸長を止める広い形は却下した
+       (単独行でない優先度ボタンの行まで見た目が変わる) が、:first-child と組み合わせて
+       先頭ボタンだけに限定した narrowed 形を採用した。
+     位置依存の前提 (先頭 = 完了) が壊れたら
+     test/e2e/bulk-action-bar-defer-row.spec.ts の
+     completeButtonNotSoloFullWidth が落ちるので、結合はテストで守られている。 */
+  .bulk-action-bar-buttons:has(.quick-action-defer-group-custom)
+    > .btn.bulk-action-btn:first-child {
+    flex-grow: 0;
+  }
+
+  .bulk-action-bar-summary .btn {
+    min-height: 34px;
+  }
+
+  /* Direct children only: the inline copy/reveal buttons sit next to the value
+     they act on, and stretching those to full width pushes the board off screen. */
+  .tunnel-on-panel > .btn {
+    width: 100%;
+  }
+
+  .tunnel-error-panel .btn {
+    width: 100%;
+  }
+
+  /* セッション行は表示専用でタップ先が無いので、44px のタップ領域は与えない。
+     フィールドは1行あたり6個あり、44px を敷くと1セッションで 264px を超えて、
+     縦幅が最も貴重な画面で読み取り専用のリストが何も得ずに膨らむ。
+     代わりにスクロール中の誤選択だけを抑える。 */
+  .session-row {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* pid は手で拾ってコマンドに貼るため、meta 行だけ選択可能に戻す */
+  .session-row-meta {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  .meta-text-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .tunnel-input {
+    min-height: 44px;
+  }
+
+  .tunnel-off-row .btn,
+  .tunnel-confirm-actions .btn {
+    min-height: 44px;
+    min-width: 44px;
+    width: auto;
+  }
+
+  .chat-input {
+    width: 100%;
+    font-size: 16px;
+  }
+
+  .chat-input-form .btn {
+    min-height: 44px;
+  }
+
+  .chat-quick-command-chip {
+    min-height: 44px;
+  }
+
+  .chat-message {
+    max-width: 90%;
+  }
+
+  .session-tail-message {
+    max-width: 90%;
+  }
+
+  .bd-command-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .quick-action-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .quick-action-confirm-actions .btn {
+    min-height: 44px;
+    min-width: 44px;
+    width: auto;
+  }
+
+  /* bdboard-gx3i: .search-overlay / .search-palette の全画面上書きは
+     このブロックの外 (下の `@media (max-width: 480px), (max-height: 500px) and
+     (orientation: landscape)`) に切り出した。幅条件は変えず、横向きスマホも
+     同じ扱いに入れるための OR を追加するだけなので、ここでの見た目 (<=480px) は
+     変わらない。理由は次のブロック直前のコメントを参照。 */
+
+  .search-palette-input {
+    min-height: 44px;
+  }
+
+  .search-result-item {
+    min-height: 44px;
+  }
+
+  .btn-search {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* --- bdboard-h4xs.9: モバイル(<=480px)タップ領域底上げ ---
+     44px はヒット領域の要件。見た目は padding / ::before で拡張する。
+     .btn/.toggle-btn の既定 min-height:34px は一括変更しないが、.view-switcher .toggle-btn は
+     ヘッダー内なのでヘッダー高は 234.5px → 244.5px (+10px) 増える。これは本チケットのコストとして受け入れる。 */
+
+  /* Tier 1: 副作用のある操作 */
+  .hygiene-repair-action,
+  .hygiene-repair-confirm-btn,
+  .hygiene-repair-cancel {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .settings-panel-save {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+  }
+
+  .comment-form-submit {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  .detail-inline-edit-btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Tier 2: ウォッチ切替 — ::before で行高を押し上げず、縦方向だけ 44px に拡張する。
+     bdboard-1oep で padding-right: 52px にした結果、375px の主要カードではボタンの幾何
+     rect = [232, 256]、チェックボックス左端 = 260 で重なり 0px・間隔 4px になった。
+     帯の縦方向は 44.5px 実測で、タイトル右端 226 に対して 6px の余白があり衝突しない。
+     タイトル幅は 212px → 200px に 12px 狭くなる。-webkit-line-clamp: 2 は「上限 2 行の
+     クランプ」であって「2 行分の高さの予約」ではないので、1 行だったタイトルが 2 行に
+     折り返したカードは実際に背が高くなる (fixture 8 枚のうち 6 枚が +20.25px = 1 行分。
+     375x812 実測)。48px にしても .card-title は 204px までしか戻らず、折り返す枚数は
+     52px と同じ 7/8 なので、この背高化は 52px 固有のコストではない。
+     現在の守り手は mobile-header-compact.spec.ts の MAX_CONTENT_START_EXCLUDING_TIPS_PX /
+     MAX_TIPS_BANNER_HEIGHT_PX / MAX_CONTENT_START_PX / MAX_HEADER_HEIGHT_PX という高さ予算の
+     ラチェット (bdboard-z7ah で置き換えた)。これらはヘッダー下端と先頭カード上端の位置だけを
+     見ており、カードの高さはどのガードにも入らない。したがって ::before によるこの背高化
+     (fixture 8 枚中 6 枚が +20.25px) は e2e の判定に影響しない。「カードが折り返し上に
+     見えない」という product 側の問題は bdboard-qxt1 で追跡中。
+     チェックボックスとの重なり制約は解消済みだが、横方向 44px 化そのものは本チケットの
+     範囲外。左へ 20px 伸ばすとタイトルのグリフを食う問題が別途残るため、横方向の拡張は
+     bdboard-h4xs.9 系の後続作業に残す。現状でも WCAG 2.5.8 の最小 24×24px は満たす。 */
+  .card-watch-toggle::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    transform: translateY(-50%);
+    height: 44px;
+  }
+
+  .detail-watch-toggle::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+    height: 44px;
+  }
+
+  /* ::before が 44px 幅なので隣接ボタンとの間隔を 8px → 12px にして重なりを解消
+     (bdboard-h4xs.9 レビュー major#4)。 */
+  .detail-header-actions {
+    gap: 12px;
+  }
+
+  /* Tier 3: 期間切替・ビュータブ・チャット以外の toggle-btn */
+  .view-switcher .toggle-btn {
+    min-height: 44px;
+  }
+
+  .activity-window-group .toggle-btn,
+  .throughput-weeks-group .toggle-btn,
+  .session-list-tabs .toggle-btn,
+  .next-up-limit-group .toggle-btn,
+  .next-up-epic-toggle,
+  .board-filter-bar .toggle-btn {
+    min-height: 44px;
+  }
+}

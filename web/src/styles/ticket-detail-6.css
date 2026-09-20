@@ -1,0 +1,17 @@
+
+
+.detail-panel.resizable-side-panel {
+  position: relative;
+  min-width: 360px;
+  max-width: min(720px, calc(100vw - 320px));
+}
+
+.detail-panel.chat-panel {
+  overflow: hidden;
+  padding-bottom: 0;
+  /* 添付プレビュー辺長の base トークン。子孫 (.chat-attachment 等) ではなくここで定義する —
+     576px 帯の clamp が同じ要素で上書きできる。.chat-attachment 側に置くと近い定義が勝ち
+     clamp が効かなくなる。var(..., fallback) は custom property 未定義時のみ効き、dvh 非対応では
+     トークン列としてパース通過後 invalid-at-computed-value-time → auto 落ちで fallback も守らない。 */
+  --chat-attachment-preview-size: 44px;
+}

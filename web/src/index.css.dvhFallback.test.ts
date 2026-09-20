@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { resolveCssImports } from './testUtils/resolveCssImports';
 
 /**
  * bdboard-qti6 の回帰ガード。
@@ -55,7 +55,7 @@ const DVH_WITHOUT_FALLBACK_ALLOWLIST = new Set<string>([
 ]);
 
 function readCss(): string {
-  return readFileSync(fileURLToPath(new NodeUrl(CSS_RELATIVE_PATH, import.meta.url)), 'utf8');
+  return resolveCssImports(fileURLToPath(new NodeUrl(CSS_RELATIVE_PATH, import.meta.url)));
 }
 
 /**

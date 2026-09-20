@@ -1,0 +1,217 @@
+:root {
+  color-scheme: light dark;
+
+  /* Apple HIG-inspired design tokens (light) */
+  --color-accent: #007aff;
+  /* アクセント色をアクセントで着色した面の上に文字として置くと、前景と背景の色相が
+     同じで輝度差が稼げず AA に届かない (.filter-chip-active で light 3.40:1)。
+     文字用に明度だけずらした派生値。
+     **移行済みは .filter-chip-active の 1 箇所だけ。** `color: var(--color-accent)` は
+     まだ 20 セレクタ残っており (.toggle-btn.active は light 4.02:1、
+     .lane-indicator-item-current は light 3.44:1 と、同じ構図が丸ごと残っている)、
+     ライト側の sub-AA の主要因はここ。掃引はダークしか見ていないので自動検出されない
+     (ライト側掃引は bdboard-97ib)。 */
+  --color-accent-text: #005ec4;
+  --color-accent-fg: #ffffff;
+  --color-bg: #f2f2f7;
+  --color-bg-elevated: #ffffff;
+  --color-bg-grouped: #ffffff;
+  --color-border: rgba(60, 60, 67, 0.13);
+  --color-border-strong: rgba(60, 60, 67, 0.22);
+  --color-text: #1c1c1e;
+  --color-text-secondary: #6c6c70;
+  --color-text-tertiary: #8e8e93;
+  --color-shadow: rgba(0, 0, 0, 0.08);
+
+  --color-success: #34c759;
+  --color-warning: #ff9500;
+  /* bdboard-bdsd: `.lane-header-wip-exceeded .lane-count` は背景 (22% warning tint) が
+     `.lane-header-wip-exceeded` 自身の背景 (16% warning tint over --color-bg-grouped) の
+     上にさらに乗る二重合成で、実効背景は light rgb(255, 218, 167) / dark
+     rgb(106, 73, 23) まで色付く。そこへ前景も同じ --color-warning (同色相) を置くと
+     輝度差が稼げず light 1.663:1 / dark 3.950:1 (WCAG AA 4.5:1 未達、bdboard-skde が
+     直した .filter-chip-active と同じ構図)。--color-warning 自体は他にも約 30 箇所で
+     使われているため値を動かさず、このバッジ専用の派生値をここへ新設する
+     (--color-accent-text / --badge-neutral-fg と同じ形)。同色相のまま明度だけ振って
+     4.5:1 を超える最小限の変更幅を採用: light は元の 56% の明度 (#8f5300、上記実効
+     背景で 4.665:1)、dark は白へ 25% 寄せた明度 (後方の prefers-color-scheme: dark
+     ブロックの --lane-header-wip-fg 参照、同 4.685:1)。
+     bdboard-hodh: `.lane-header-wip-exceeded` 自身の `color` (レーン名などヘッダ内の全
+     子孫が継承) にも同じ問題があった (16% tint だけの単層背景 = light rgb(255, 238, 214) /
+     dark rgb(64, 49, 27) 上で light 1.932:1 / dark 6.104:1、light のみ未達)。この単層背景は
+     .lane-count の二重合成背景より light では白に近く (dark ではベースに近く)、同じ前景色
+     #8f5300 / #ffb747 でどちらの向きでも二重合成側より輝度差が広がる (light 5.42:1 /
+     dark 7.24:1、いずれも .lane-count 側の 4.665:1 / 4.685:1 より余裕がある) ため、新しい
+     値を作らずこのトークンをそのまま流用できる。「count 専用」の意味を超えて
+     `.lane-header-wip-exceeded` と `.lane-count` 双方の前景になったため、トークン名を
+     --lane-count-wip-fg から --lane-header-wip-fg へ改名した (参照箇所は下の dark ブロックと
+     `.lane-header.lane-header-wip-exceeded` / `.lane-header.lane-header-wip-exceeded
+     .lane-count` の 2 箇所)。 */
+  --lane-header-wip-fg: #8f5300;
+  --color-danger: #ff3b30;
+  --color-purple: #af52de;
+
+  /* bdboard-7g0a: 累積フロー図 (CFD) の凡例/バー用の系列色。ThroughputStats.tsx の
+     CFD_STATUS_COLORS が参照する。7 系列のうち open/in_progress/blocked/closed/deferred は
+     既存の意味的トークン (accent/purple/danger/success/warning) を流用し、既存のどの
+     トークンとも被らない残り 2 系列 (pinned/hooked) だけをここで新設する。
+     要件は「7 系列が互いに判別できる」ことであり、これは色相・明度・彩度の知覚的な
+     分離で担保する — WCAG のコントラスト比 (輝度ベース) は同程度の明度を持つ有彩色どうし
+     の識別性には unsuited (実測: 本ブロックの 7 色を総当たりで比較すると 21 組すべてが
+     3:1 未満になる。人間の目には明確に別の色として見える純色どうしでもこうなるので、
+     このコントラスト比を「系列間の判別性」の指標として使わないこと)。
+     背景 (--color-bg-elevated) に対する非テキストコントラスト (WCAG SC 1.4.11、3:1) は
+     妥当な適用対象なので個別に検証済み: light は pinned 3.68:1 / hooked 4.60:1
+     (このアプリは --color-success 等の意味的トークンを背景直上の塗り/ドットとして
+     直接使う既存慣習があり、そちらは 2.2〜4.1:1 で 3:1 に届かない場合もある —
+     .pr-check-pass 等参照。新設 2 色はその最悪値より高い水準に置いた)。
+
+     bdboard-8gvg: closed/deferred に流用した --color-success / --color-warning は、
+     light の --color-bg-elevated (#ffffff) 上で closed 2.22:1 / deferred 2.20:1 と
+     SC 1.4.11 (3:1) を下回っていた (dark は 8.42:1 / 8.28:1 で問題なし)。
+     --color-success / --color-warning は他に約 30 箇所で参照されており値そのものは
+     動かせないため、--lane-header-wip-fg / --badge-neutral-fg と同じ形で CFD 専用の
+     派生トークンをここに新設する。同じ色相・彩度のまま明度だけ落とし (HSL で L を
+     down)、3:1 を超える最小限の変更幅 + 丸め誤差に対する安全マージンを見て採用:
+     closed は元の 49.2% から 41.4% (#2ca74b、3.117:1)、deferred は元の 50.0% から
+     41.8% (#d57d00、3.105:1)。dark は既に 3:1 を満たしているため値を変えず、
+     --color-success / --color-warning の現行 dark 値をそのまま複製する (下の
+     prefers-color-scheme: dark ブロック参照、closed 8.42:1 / deferred 8.28:1 で維持)。 */
+  --throughput-cfd-pinned: #0891b2;
+  --throughput-cfd-hooked: #db2777;
+  --throughput-cfd-closed: #2ca74b;
+  --throughput-cfd-deferred: #d57d00;
+
+  --badge-p0-bg: rgba(255, 59, 48, 0.12);
+  --badge-p0-fg: #d70015;
+  --badge-p1-bg: rgba(255, 149, 0, 0.14);
+  /* bdboard-97ib.1: 旧値 #c25400 は --badge-p1-bg 上で white 面 4.15:1 / #f2f2f7 面
+     4.11:1 (span.badge.badge-p1 実測 4.11:1) と AA (4.5:1) 未達。同色相のまま明度だけ
+     落とし、両面で 4.5:1 を超える最小限の変更幅 (#ac4a00、white 面 5.03:1 / #f2f2f7 面
+     4.56:1) を採用。dark 側は元々 AA 充足のため値を変えない。 */
+  --badge-p1-fg: #ac4a00;
+  --badge-neutral-bg: rgba(120, 120, 128, 0.12);
+  /* bdboard-tlus: 旧値 #6c6c70 (= --color-text-secondary と同値) は #ffffff 面でこそ
+     4.54:1 (余白 +0.04) だが、実効背景が少しでも暗くなる面 — `.header`
+     (color-mix 88% over body、4.49:1)・`.lane-header:hover` (color-mix 4% over #fff、
+     4.22:1)・body 直下の #f2f2f7 (4.10:1、`.alert-bar-quiet` が実際にここに載る) — では
+     いずれも AA (4.5:1) 未満だった。R/G を 108→101、B を R+4 に保って再計算し、上記 4 面
+     すべてで 4.5:1 以上になる最小の変更幅 (グレー 101 = #656569、最悪値は #f2f2f7 面で
+     4.55:1) を採用。これで --color-text-secondary (#6c6c70) と分岐し、バッジ専用の
+     派生値になった (light 側は skde が新設した --color-accent-text と同じ形)。 */
+  --badge-neutral-fg: #656569;
+  --badge-mismatch-bg: rgba(175, 82, 222, 0.13);
+  --badge-mismatch-fg: #8944ab;
+  --badge-blocked-bg: rgba(255, 59, 48, 0.1);
+  --badge-blocked-fg: #d70015;
+  --badge-unblocks-bg: rgba(52, 199, 89, 0.13);
+  /* bdboard-97ib.1: 旧値 #1f8a3d は --badge-unblocks-bg 上で white 面 3.97:1 (実測値) /
+     #f2f2f7 面 3.87:1 と AA (4.5:1) 未達。同色相のまま明度だけ落とし、両面で 4.5:1 を
+     超える最小限の変更幅 (#1b7735、white 面 5.07:1 / #f2f2f7 面 4.59:1) を採用。
+     --badge-session-fg・.badge-pr-merged も同じ bg/fg 値を共有するため同時に直る。
+     dark 側は元々 AA 充足のため値を変えない。 */
+  --badge-unblocks-fg: #1b7735;
+  --badge-defer-bg: rgba(0, 122, 255, 0.1);
+  --badge-defer-fg: #0064d1;
+  --badge-stalled-bg: rgba(255, 149, 0, 0.14);
+  --badge-stalled-fg: #a85000;
+  --badge-defer-soon-bg: rgba(255, 149, 0, 0.14);
+  --badge-defer-soon-fg: #c25400;
+  --badge-defer-overdue-bg: rgba(255, 59, 48, 0.12);
+  --badge-defer-overdue-fg: #d70015;
+  --badge-session-bg: rgba(52, 199, 89, 0.13);
+  /* bdboard-97ib.1: button.status-pill.status-pill-ok 実測 3.92:1。
+     --badge-unblocks-fg と同じ理由・同じ新値 (#1b7735) を採用 (--badge-unblocks-bg と
+     rgba 値が同一のため計算根拠も同一)。 */
+  --badge-session-fg: #1b7735;
+  --badge-pending-decision-bg: rgba(90, 200, 250, 0.14);
+  /* bdboard-97ib.1: 旧値 #007aff (= --color-accent と同値) は --badge-pending-decision-bg
+     の着色背景の上で前景・背景の色相が同じになり輝度差が稼げず light 3.67:1 (実測)。
+     --color-accent-text (#005ec4、.filter-chip-active 用に新設済み) を流用すると
+     white 面 5.65:1 / #f2f2f7 面 5.13:1 で AA を満たす。 */
+  --badge-pending-decision-fg: var(--color-accent-text);
+  --badge-label-bg: rgba(142, 142, 147, 0.14);
+  --badge-label-fg: #636366;
+
+  --radius-lg: 16px;
+  --radius-md: 12px;
+  --radius-sm: 8px;
+  --radius-pill: 999px;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  /* --font-mono は未定義でも各所のフォールバックが ui-monospace, monospace だった。
+     同じ実効値をここでトークン化して、フォールバックが未定義参照を隠さないようにする。 */
+  --font-mono: ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --color-accent: #0a84ff;
+    --color-accent-text: #5eabff;
+    --color-accent-fg: #ffffff;
+    --color-bg: #000000;
+    --color-bg-elevated: #1c1c1e;
+    --color-bg-grouped: #1c1c1e;
+    --color-border: rgba(84, 84, 88, 0.55);
+    --color-border-strong: rgba(84, 84, 88, 0.75);
+    --color-text: #f2f2f7;
+    --color-text-secondary: #a1a1a6;
+    --color-text-tertiary: #8e8e93;
+    --color-shadow: rgba(0, 0, 0, 0.4);
+
+    --color-success: #30d158;
+    --color-warning: #ff9f0a;
+    /* bdboard-bdsd: light 側の --lane-header-wip-fg と対。dark の実効背景
+       rgb(106, 73, 23) (.lane-count) に対して 4.685:1、rgb(64, 49, 27)
+       (.lane-header-wip-exceeded 自身、bdboard-hodh) に対して 7.24:1
+       (詳細は light 側のコメント参照)。 */
+    --lane-header-wip-fg: #ffb747;
+    --color-danger: #ff453a;
+    --color-purple: #bf5af2;
+
+    /* bdboard-7g0a: 上の light 定義と対。dark は #1c1c1e 背景に対して
+       pinned 9.42:1 / hooked 6.42:1 (どちらも 3:1 を大きく超える)。
+       bdboard-8gvg: closed/deferred は dark 側では元々 3:1 を満たしていた
+       (--color-success dark #30d158 が 8.42:1、--color-warning dark #ff9f0a が
+       8.28:1) ため、新設トークンには light 側の再計算とは独立に、現行の dark 値を
+       そのまま複製する (悪化させない。値を変える理由が無い)。 */
+    --throughput-cfd-pinned: #22d3ee;
+    --throughput-cfd-hooked: #f472b6;
+    --throughput-cfd-closed: #30d158;
+    --throughput-cfd-deferred: #ff9f0a;
+
+    --badge-p0-bg: rgba(255, 69, 58, 0.18);
+    --badge-p0-fg: #ff6961;
+    --badge-p1-bg: rgba(255, 159, 10, 0.2);
+    --badge-p1-fg: #ffb340;
+    --badge-neutral-bg: rgba(120, 120, 128, 0.24);
+    /* bdboard-tlus: 旧値 #a1a1a6 は代表面 (#1c1c1e) では 4.96:1 と余裕があるが、
+       `.lane-header:hover` (color-mix 4% over #1c1c1e) だけは 4.5002:1 で実質マージン 0
+       だった。light 側と対で動かす方針のもと、R/G を 161→162、B を R+5 に保って
+       再計算し、4 面 (#000000 body / .header / #1c1c1e 代表面 / hover) すべてで
+       4.5:1 以上になる最小の変更幅 (グレー 162 = #a2a2a7、最悪値は hover 面で 4.55:1、
+       light の 4.55:1 と同水準) を採用。 */
+    --badge-neutral-fg: #a2a2a7;
+    --badge-mismatch-bg: rgba(191, 90, 242, 0.2);
+    --badge-mismatch-fg: #d391f0;
+    --badge-blocked-bg: rgba(255, 69, 58, 0.18);
+    --badge-blocked-fg: #ff8a80;
+    --badge-unblocks-bg: rgba(48, 209, 88, 0.18);
+    --badge-unblocks-fg: #6fe28f;
+    --badge-defer-bg: rgba(10, 132, 255, 0.18);
+    --badge-defer-fg: #6cb4ff;
+    --badge-stalled-bg: rgba(255, 159, 10, 0.2);
+    --badge-stalled-fg: #ffb340;
+    --badge-defer-soon-bg: rgba(255, 159, 10, 0.2);
+    --badge-defer-soon-fg: #ffb340;
+    --badge-defer-overdue-bg: rgba(255, 69, 58, 0.18);
+    --badge-defer-overdue-fg: #ff6961;
+    --badge-session-bg: rgba(48, 209, 88, 0.18);
+    --badge-session-fg: #6fe28f;
+    --badge-pending-decision-bg: rgba(100, 210, 255, 0.2);
+    --badge-pending-decision-fg: #64d2ff;
+    --badge-label-bg: rgba(142, 142, 147, 0.24);
+    --badge-label-fg: #aeaeb2;
+  }
+}

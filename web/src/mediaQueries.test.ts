@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -7,6 +6,7 @@ import {
   MOBILE_LAYOUT_MEDIA_QUERY,
   REDUCED_MOTION_MEDIA_QUERY,
 } from './mediaQueries';
+import { resolveCssImports } from './testUtils/resolveCssImports';
 
 /**
  * bdboard-ymrj: JS 側のメディアクエリ文字列は index.css の @media と対で持つ。
@@ -14,7 +14,7 @@ import {
  * 気付けない。ここで CSS 側に同じ文字列の @media 規則があることを固定する。
  */
 describe('media query constants stay paired with index.css', () => {
-  const css = readFileSync(fileURLToPath(new NodeUrl('./index.css', import.meta.url)), 'utf8');
+  const css = resolveCssImports(fileURLToPath(new NodeUrl('./index.css', import.meta.url)));
 
   it.each([
     ['REDUCED_MOTION_MEDIA_QUERY', REDUCED_MOTION_MEDIA_QUERY],

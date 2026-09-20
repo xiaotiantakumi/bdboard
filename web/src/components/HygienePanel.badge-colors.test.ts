@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { KIND_LABELS } from './HygienePanel';
+import { resolveCssImports } from '../testUtils/resolveCssImports';
 
 /**
  * jsdom 環境ではグローバルの `URL` が jsdom 実装で Node の `URL` とは別物になる。
@@ -29,7 +30,11 @@ function stripCssComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
-const cssSource = stripCssComments(readSource('../index.css'));
+// bdboard-sso1.3: index.css は分割後 `@import` の入口だけになった。HygienePanel.tsx の
+// 読み方 (readSource) はそのままに、CSS だけ resolveCssImports で @import を解決する。
+const cssSource = stripCssComments(
+  resolveCssImports(fileURLToPath(new NodeUrl('../index.css', import.meta.url))),
+);
 const hygienePanelSource = readSource('./HygienePanel.tsx');
 
 /** WCAG 2.1 AA 通常テキストの最小コントラスト比。 */

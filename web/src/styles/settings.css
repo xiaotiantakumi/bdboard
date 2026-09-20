@@ -1,0 +1,252 @@
+
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.settings-panel-header,
+.settings-panel-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-panel-header {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-panel-title,
+.settings-panel-section h3 {
+  margin: 0;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.settings-panel-title {
+  font-size: 1.0625rem;
+}
+
+.settings-panel-section h3 {
+  font-size: 0.9375rem;
+}
+
+.settings-panel-subtitle,
+.settings-panel-empty,
+.settings-panel-error,
+.settings-panel-feedback {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.875rem;
+}
+
+.settings-panel-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+}
+
+.settings-panel-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--badge-pending-decision-bg);
+  color: var(--badge-pending-decision-fg);
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.settings-panel-warning {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 149, 0, 0.45);
+  border-radius: 8px;
+  background: rgba(255, 149, 0, 0.12);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+}
+
+.settings-panel-root-list,
+.settings-panel-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.settings-panel-root-list li,
+.settings-panel-edit-list li {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.settings-panel-edit-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* scanRoots 行だけは「パス+削除ボタン」の行の下に危険警告を積めるよう縦積みにする
+   (bdboard-mmb 再レビュー S1)。除外パス側は従来どおり単純な横並び。 */
+.settings-panel-scan-root-list li {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.settings-panel-edit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-panel-path-danger {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.settings-panel-edit-list button,
+.settings-panel-add-row button,
+.settings-panel-save {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 7px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.8125rem;
+}
+
+.settings-panel-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.settings-panel-add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-panel-add-row input {
+  min-width: 0;
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.settings-panel-add-row select {
+  min-width: 0;
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.settings-panel-wip-override-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-panel-wip-override-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-panel-wip-override-row input {
+  width: 5rem;
+  padding: 7px 9px;
+  border: 1px solid var(--color-border);
+  border-radius: 7px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.settings-panel-save {
+  align-self: flex-start;
+  background: var(--color-accent, #007aff);
+  border-color: transparent;
+  /* bdboard-kjn9: accent 背景の上に載る前景色は --color-accent-fg
+     (light/dark とも #ffffff で white と等値なので見た目の変化は無い)。
+     ここがハードコード white だったのが、そのトークンが「参照 0」に見えていた原因。 */
+  color: var(--color-accent-fg);
+  font-weight: 600;
+}
+
+.settings-panel-save:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.settings-panel-feedback {
+  min-height: 1.25em;
+}
+
+.settings-panel-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-panel-path-hint {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.settings-panel-thresholds-form {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-panel-thresholds-form label {
+  font-size: 0.875rem;
+}
+
+.settings-panel-thresholds-form input {
+  width: 100%;
+  max-width: 12rem;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  /* 元は未定義の --color-surface で background が transparent に落ちていた。
+     同じ settings panel 内の他の入力と同じ --color-bg を使う。 */
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.settings-panel-error-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--color-danger, #c0392b);
+}

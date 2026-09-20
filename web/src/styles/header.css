@@ -1,0 +1,443 @@
+
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--color-border);
+  /*
+    Installed to the home screen the board runs full-bleed under a translucent
+    status bar, so the header has to carry the top inset itself or its first row
+    sits under the clock. The insets are 0 in a normal browser tab.
+  */
+  padding: calc(12px + env(safe-area-inset-top)) calc(20px + env(safe-area-inset-right))
+    12px calc(20px + env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.global-bar,
+.view-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  align-items: center;
+  width: 100%;
+}
+
+.global-bar > *,
+.view-toolbar-left > *,
+.view-toolbar-right > * {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+/*
+  ビュー切替タブ列(.view-switcher)は常に自分の行の中で潰れてよく、あふれた分は内側の
+  .toggle-group(既に横スクロール対応済み)が吸収する。これが無いと、幅の狭い画面で
+  view-switcher自体が(潰れず)自然幅のまま次の行に落ち、ページ全体が横に溢れて右側の
+  要素が画面外へ切れる(699x900で実測。480px以下でだけ .header-group{width:100%}が
+  効いて偶然回避されていたが、480〜700px近辺は素通りしていた)。
+*/
+.global-bar > .view-switcher {
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.global-bar > .view-switcher .view-switcher-scroller {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  position: relative;
+}
+
+/*
+  ピルはラッパーの中でも従来どおり余白いっぱいに伸ばす。ラッパー導入前は
+  .toggle-group 自身がこの flex: 1 1 auto を持っており、これが無いと既定の
+  flex: 0 1 auto に戻ってPC幅でピルがコンテンツ幅まで縮む(見た目の退行)。
+*/
+.global-bar > .view-switcher .view-switcher-scroller > .toggle-group {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/*
+  フェードはスクロールコンテナ(.toggle-group)の外側ラッパー(.view-switcher-scroller)に置く。
+  .toggle-group は overflow-x: auto のスクロールコンテナなので、その中の position:absolute
+  の包含ブロックはスクロールされるコンテンツ側になる。擬似要素を .toggle-group 直下に置くと
+  コンテンツと一緒に流れて可視端から外れ、スクロール済みのとき左フェードが見えなくなる。
+*/
+.view-switcher-scroller.can-scroll-start::before,
+.view-switcher-scroller.can-scroll-end::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 20px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.view-switcher-scroller.can-scroll-start::before {
+  left: 0;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  background: linear-gradient(to right, var(--badge-neutral-bg), transparent);
+}
+
+.view-switcher-scroller.can-scroll-end::after {
+  right: 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  background: linear-gradient(to left, var(--badge-neutral-bg), transparent);
+}
+
+/*
+  幅に余裕がある画面だけ、GlobalBar を折り返さない1行固定にする(bdboard-3tw.149)。
+  折り返しに任せると、幅が足りないときに最後の子(⋯メニュー)だけが孤立した行の左端に
+  落ち、絶対配置のポップオーバーが画面外に描画されて開けなくなる(1280x800で実測)。
+  あふれる分は上の view-switcher だけが吸収し、ロゴ・検索・状態ピル・プロジェクト
+  フィルタ・⋯メニューは常に本来の位置(⋯は右端)を保つ。
+  700px 未満(既存のモバイル向けブレークポイントと同じ閾値)ではこの1行固定はしない —
+  view-switcher をゼロ幅まで潰しても他の固定要素の合計だけで幅を超えるナロー端末では、
+  そもそも複数行への折り返しが正しいフォールバックであるため(375x812で実測)。
+*/
+@media (min-width: 700px) {
+  .global-bar {
+    flex-wrap: nowrap;
+  }
+}
+
+.view-toolbar {
+  justify-content: space-between;
+}
+
+.view-toolbar-left {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.view-toolbar-right {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.status-pill-widget {
+  position: relative;
+}
+
+.status-pill {
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 5px 12px;
+  min-height: 28px;
+  transition: opacity 0.15s ease;
+}
+
+.status-pill:hover {
+  opacity: 0.88;
+}
+
+.status-pill-ok {
+  background: var(--badge-session-bg);
+  color: var(--badge-session-fg);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.status-pill-delayed {
+  background: var(--badge-stalled-bg);
+  color: var(--badge-stalled-fg);
+  border-color: color-mix(in srgb, var(--color-warning) 35%, transparent);
+}
+
+.status-pill-disconnected {
+  background: var(--badge-p0-bg);
+  color: var(--badge-p0-fg);
+  border-color: color-mix(in srgb, var(--color-danger) 35%, transparent);
+}
+
+.status-pill-reconnecting {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  border-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+}
+
+.status-pill-connecting {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  border-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+}
+
+.status-pill-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 12px 14px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+  /* transform creates a containing block: position:fixed descendants would anchor here, not the viewport. Safe today (only <p> and <button> inside). */
+  transform: translateX(var(--popover-shift-x, 0px));
+}
+
+.status-pill-detail {
+  margin: 0 0 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+}
+
+.status-pill-session-btn {
+  background: none;
+  border: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.75rem;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.status-pill-session-btn:hover {
+  color: var(--color-text);
+}
+
+.alert-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 10px calc(20px + env(safe-area-inset-right)) 10px
+    calc(20px + env(safe-area-inset-left));
+  background: var(--badge-stalled-bg);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  color: var(--badge-stalled-fg);
+}
+
+.alert-bar-quiet {
+  background: var(--badge-neutral-bg);
+  border-bottom-color: color-mix(in srgb, var(--badge-neutral-fg) 35%, transparent);
+  color: var(--badge-neutral-fg);
+}
+
+.alert-bar-message {
+  font-size: 0.8125rem;
+}
+
+.alert-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.header-status-errors {
+  margin: 0;
+  padding: 10px calc(20px + env(safe-area-inset-right)) 10px
+    calc(20px + env(safe-area-inset-left));
+  border-bottom: 1px solid var(--badge-p0-fg);
+}
+
+.overflow-menu {
+  position: relative;
+}
+
+.overflow-menu-button {
+  position: relative;
+  background: var(--badge-neutral-bg);
+  border: none;
+  border-radius: var(--radius-pill);
+  /* bdboard-97ib.1: 自身の背景 (--badge-neutral-bg) 上で --color-text-secondary は light
+     4.49:1 (実測、AA まで 0.01) と AA 未達。同じ背景向けに調整済みの --badge-neutral-fg
+     に揃える (.toggle-btn と同じ理由)。 */
+  color: var(--badge-neutral-fg);
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  min-height: 30px;
+  min-width: 36px;
+  padding: 4px 10px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.overflow-menu-button:hover {
+  background: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.overflow-menu-update-dot {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-accent, #007aff);
+}
+
+.overflow-menu-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 6px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+  /* transform creates a containing block: position:fixed descendants would anchor here, not the viewport. Safe today (only .overflow-menu-item buttons, optional .update-notice link, and .overflow-menu-footnote <p> inside). */
+  transform: translateX(var(--popover-shift-x, 0px));
+}
+
+.overflow-menu-item {
+  display: block;
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  padding: 8px 10px;
+  text-align: left;
+  transition: background-color 0.15s ease;
+}
+
+.overflow-menu-item:hover {
+  background: var(--badge-neutral-bg);
+}
+
+.overflow-menu-footnote {
+  margin: 6px 2px 2px;
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.filter-chip {
+  background: transparent;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  min-height: 30px;
+  padding: 5px 12px;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.filter-chip:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.filter-chip-active {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.filter-chip-clear {
+  font-size: 0.75rem;
+  line-height: 1;
+  /* ここに opacity を置かない。✕は色を持たず .filter-chip-active の color を継承する。 */
+  /* 掃引は computed color だけを見るため opacity をすり抜ける。上の --color-accent-text に
+     しても opacity: 0.85 なら実描画の✕はライト 4.016:1 で AA 未満のまま
+     (修正前の --color-accent + 0.85 は 2.855:1)。 */
+}
+
+.header-title {
+  margin: 0;
+  font-size: 1.1875rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.header-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.header-label {
+  flex: 0 0 auto;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+/* ラベルは単語途中で折り返さず、狭い幅では横スクロールで全選択肢を1行表示する */
+.toggle-group {
+  display: inline-flex;
+  background: var(--badge-neutral-bg);
+  border-radius: var(--radius-pill);
+  padding: 2px;
+  gap: 2px;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.toggle-group::-webkit-scrollbar {
+  display: none;
+}
+
+.toggle-btn {
+  background: transparent;
+  border: none;
+  /* bdboard-97ib.1: 親 .toggle-group の背景 (--badge-neutral-bg) 上で --color-text-secondary
+     は light 4.49:1〜4.54:1 (実測、最悪値は #f2f2f7 面) と AA (4.5:1) にわずかに届かなかった。
+     同じ --badge-neutral-bg 上で AA を満たすよう既に調整済みの --badge-neutral-fg
+     (light 4.55:1 on #f2f2f7 面) に揃える。 */
+  color: var(--badge-neutral-fg);
+  cursor: pointer;
+  padding: 6px 14px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  border-radius: var(--radius-pill);
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  min-height: 30px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.toggle-btn.active {
+  background: var(--color-bg-elevated);
+  /* bdboard-97ib.1: --color-accent (#007aff) on --color-bg-elevated (#fff) は light
+     4.02:1 (実測) で AA 未達。--color-accent-text (light 6.18:1) に置き換える。 */
+  color: var(--color-accent-text);
+  box-shadow: 0 1px 3px var(--color-shadow);
+}
+
+.toggle-btn:hover:not(.active) {
+  color: var(--color-text);
+}

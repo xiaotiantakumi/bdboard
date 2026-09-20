@@ -11,11 +11,6 @@
       "reason": "bdboard-7ln6 (PR #526) のサーキットブレーカー/バックオフ/in-flight共有/予算/merged-pending永続化の回帰テストと、bdboard-v538 のサーキットブレーカー早期リセット・403誤判定の回帰テストを追加。分割は継続検討。"
     },
     {
-      "path": "web/src/index.css",
-      "limit": 8700,
-      "reason": "単一グローバルスタイルシート。セレクタ約1130個、コンポーネント単位の分割は無い。分割は bdboard-jygp の調査で優先候補の1つに挙がったが実施は別チケット・時期はユーザー判断待ち。"
-    },
-    {
       "path": "web/src/components/ChatPanel.tsx",
       "limit": 4100,
       "reason": "ChatPanel コンポーネント1関数で約3546行 (241〜3786行目。ファイル全体は3786行)。bdboard-78ve は custom hook 単位への分割を見送ったが、bdboard-sso1.2 で純粋ヘルパー(PR-A)→状態を持たない表示コンポーネント(PR-B〜)の順で段階的に分割を継続中。状態/effect/rekey はコンポーネント本体に残す方針。"

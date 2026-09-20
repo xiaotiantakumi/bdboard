@@ -1,0 +1,66 @@
+
+
+/* タッチデバイス向けフォーム要素の font-size 下限（iOS Safari オートズーム対策）。
+   iOS Safari は select も含む 16px 未満のフォーム要素でフォーカス時に自動ズームする
+   （@media (max-width: 700px) 内の .chat-project-select が同じ判断の先行例）。
+   maximum-scale / user-scalable=no はピンチズームを殺すので使わない。
+   このブロックは index.css の末尾に置くこと。下のセレクタは (0,1,1) なので、
+   同詳細度 (0,1,1) の font-size ルールが後ろに追加されるとソース順で負ける。
+   （現時点でそのような既存ルールは無い。予防としての位置指定。）
+   受入基準は <=480px 相当だったが、横向き landscape でも効くよう
+   (hover: none) and (pointer: coarse) に変更（議長裁定）。
+   @media (max-width: 700px) 内の .chat-project-select / .chat-input の 16px 指定は
+   これと冗長になるが、別 PR で触らない。 */
+@media (hover: none) and (pointer: coarse) {
+  /* :root プレフィックスは詳細度を (0,1,0) 分だけ底上げするためのもの（選択対象は変わらない）。
+     これが無いと要素セレクタ（0,0,1）が .comment-form-input（0,1,0・font: inherit）のような
+     既存のクラスルールに負けて font-size が効かない。
+     以前は textarea[class] / select[class] で凌いでいたが、[class] は
+     .settings-panel-add-row 直下の select のようなクラス無しの要素をそもそも選べず、
+     UA デフォルト（Chrome で約 13px）のまま取りこぼしていたため :root 方式に変更した。
+     ここで効いているのは (0,1,0) のクラスルールに勝つことと、クラス有無に関わらず
+     選べることの2点で、同詳細度 (0,1,1) の font-size ルールとの争いではない
+     （bdboard-2czx で .hygiene-repair-priority select を削除した結果、
+     フォーム要素に font-size を当てている (0,1,1) の既存ルールは残っていない）。 */
+  :root input[type='text'],
+  :root input[type='search'],
+  :root input[type='number'],
+  :root input[type='password'],
+  :root input[type='email'],
+  :root input[type='url'],
+  :root input[type='tel'],
+  :root input[type='date'],
+  :root input[type='datetime-local'],
+  :root input[type='time'],
+  :root input[type='month'],
+  :root input[type='week'],
+  :root input:not([type]),
+  :root textarea,
+  :root select {
+    font-size: 16px;
+  }
+}
+
+/* prefers-reduced-motion: OS「視差効果を減らす」向けの横断ブロック。
+   個々の transition に散らさず、既存・将来分をまとめて短縮する。
+   0.01ms（0 ではない）: 完全 0 だと transitionend が発火しない実装があり得る。
+   delay も 0 にする: duration だけ潰すと「動きは消えたが待たされる」状態が残る。
+   scroll-behavior: CSS 由来の smooth はここで拾える。拾えないのは JS が
+   scrollIntoView({ behavior: 'smooth' }) と明示した場合だけで、そのときは
+   ScrollOptions.behavior が優先される（CSSOM View は behavior: 'auto' のときにのみ
+   計算値 scroll-behavior を参照する）ため LaneScrollIndicator で個別対応している。
+   behavior を省略した scrollIntoView は 'auto' 扱いなのでここが効く。
+   animation 系は現状 0 箇所だが、今後の @keyframes もここで拾う。
+   scroll-snap は位置決めのため無効化しない。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+}

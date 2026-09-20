@@ -1,0 +1,308 @@
+
+
+/* --- bdboard-3tw.69: quick-action undo snackbar --- */
+.undo-snackbar {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(480px, calc(100vw - 32px));
+  padding: 10px 12px 10px 16px;
+  border-radius: var(--radius-md);
+  background: var(--color-text);
+  color: var(--color-bg-elevated);
+  box-shadow: 0 8px 24px var(--color-shadow);
+}
+
+@media (max-width: 700px) {
+  .undo-snackbar {
+    bottom: calc(24px + var(--bulk-bar-height, 0px));
+  }
+}
+
+.undo-snackbar-message {
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.undo-snackbar-error {
+  color: var(--color-danger);
+}
+
+.undo-snackbar-action {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: 1px solid color-mix(in srgb, var(--color-bg-elevated) 55%, transparent);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.undo-snackbar-dismiss {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-bg-elevated);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+
+@media (max-width: 640px) {
+  .undo-snackbar-action,
+  .undo-snackbar-dismiss {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}
+
+.board-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.filter-bar-epic-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.board-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  /*
+    flex アイテムの既定 min-width:auto は子の min-content 幅まで膨らむ。
+    .toggle-group の overflow-x:auto は「親が収まる幅」に対してしか効かないので、
+    親 .board-filter-group が縮まないと max-width:100% が膨らんだ親基準になり
+    横スクロールが一度も発火しない (375px でラベルチップ到達不能、bdboard-h4xs.4)。
+  */
+  min-width: 0;
+}
+
+.board-filter-group > .header-label {
+  flex: 0 0 auto;
+}
+
+.board-filter-group > .toggle-group {
+  min-width: 0;
+}
+
+.board-filter-type-group {
+  flex-wrap: wrap;
+}
+
+/* bdboard-gxq5: 盤面から消えたのに選択だけ残っているラベルのチップ。生きたチップと
+   同じ「押された」見た目のままだと、0 件になっている理由が読み取れない。
+   ・箱のサイズを変えない指定だけを使う (inset box-shadow / 取り消し線)。border や
+     padding はタップ領域を「広げる」ので WCAG 2.5.8 (下限 24px、ここでは 44px) を
+     割ることは無い。避けたいのはレイアウトのずれの方で、.board-filter-label-group
+     は overflow-x:auto のスクローラなので、1 チップだけ幅が変わると 375px では
+     並びが動き、他のチップが横スクロールの奥へ押し出される。
+   ・outline は使わない。詳細度の話ではなく原点の話で、作者原点の宣言は詳細度に
+     関わらず UA 原点に勝つ。ここで outline を書くと :focus-visible の UA リングが
+     出なくなる (.toggle-btn には作者側の :focus-visible 指定が無く、UA 任せ)。
+   ・inset リングは --color-border-strong だと地の --color-bg-elevated に対して
+     light 1.48:1 / dark 1.81:1 しか出ず、実質見えない。取り消し線と同じ
+     チップ自身の色に揃えて light 5.80:1 / dark 6.69:1 にする。
+   ・--color-text-muted は存在しないので使わない (index.css の同名注意書き参照)。
+     text-decoration-color は currentcolor が既定なので書かない。
+   ・bdboard-97ib.1: 色は --badge-neutral-fg で、**.toggle-btn の非 active 色と同じ
+     トークンでなければならない**。board-filter-missing-label.spec.ts は
+     「0 件で消えたチップ」と「選択されていない生きたチップ」が同色であることを
+     assert している (議長裁定 2026-09-05: 0 件のチップはアクセントではなく
+     二次色のままにする)。.toggle-btn 側を --color-text-secondary から
+     --badge-neutral-fg へ動かしたとき、ここを取り残して CI を落とした。
+     .toggle-btn の色を動かすときは必ずここも一緒に動かすこと。
+   ・リングは色と同じトークンを使う。spec が boxShadow に color 文字列が含まれることを
+     assert しているので、色とリングがずれると必ず落ちる。 */
+.board-filter-label-group .toggle-btn.board-filter-label-missing {
+  color: var(--badge-neutral-fg);
+  box-shadow:
+    inset 0 0 0 1px var(--badge-neutral-fg),
+    0 1px 3px var(--color-shadow);
+  text-decoration: line-through;
+}
+
+.board-filter-text-group {
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.board-filter-select {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  min-height: 30px;
+}
+
+.board-filter-select:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.board-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  min-height: 30px;
+}
+
+.board-filter-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.board-filter-clear {
+  margin-left: auto;
+}
+
+/* 折りたたみ UI 一式のデスクトップ既定。表示可否は JS 側の isMobile
+   (documentElement.clientWidth) が決めるが、CSS のブレークポイント (max-width:700px) と
+   境界で食い違いうるので、トグル本体だけでなく行と解除ボタンにも同じ既定を張っておく
+   (bdboard-jch5 レビュー MINOR-2)。 */
+.board-filter-toggle,
+.board-filter-toggle-row,
+.board-filter-toggle-clear {
+  display: none;
+}
+
+.board-filter-panel {
+  /* デスクトップ幅では折りたたみ UI を使わないため、このラッパーの箱を消して子要素を
+     .board-filter-bar の flex 直下に流し、bdboard-qxt1 以前のレイアウトを保つ。
+     ここには箱がないので padding / margin / background / border を指定しても無言で無視される。
+     間隔を変えるときは .board-filter-bar 側か子要素側で調整すること。 */
+  display: contents;
+}
+
+@media (max-width: 700px) {
+  .board-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .board-filter-bar:has(.board-filter-toggle[aria-expanded='false']) {
+    padding: 4px 8px;
+    margin-bottom: 4px;
+    gap: 0;
+  }
+
+  .board-filter-toggle-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .board-filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    min-height: 44px;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.875rem;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .board-filter-toggle:focus-visible {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  }
+
+  /* 折りたたみ時かつ activeFilterCount > 0 のときだけトグル行に併置される解除ボタン
+     (bdboard-jch5)。44px 角の WCAG 2.5.8 タップ領域を確保しつつ、トグル本体の
+     min-height:44px と揃えて行の高さを増やさない。 */
+  .board-filter-toggle-clear {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .board-filter-toggle-clear:focus-visible {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+  }
+
+  .board-filter-toggle-label {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .board-filter-active-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0 6px;
+    border-radius: var(--radius-pill);
+    background: var(--badge-neutral-bg);
+    color: var(--badge-neutral-fg);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .board-filter-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 16px;
+    width: 100%;
+  }
+}

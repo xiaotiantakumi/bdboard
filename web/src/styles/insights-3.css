@@ -1,0 +1,220 @@
+
+
+.throughput-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+}
+
+.throughput-stats-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.throughput-stats-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+}
+
+.throughput-weeks-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.throughput-stats-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.throughput-stats-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+}
+
+.throughput-stats-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.throughput-stats-section:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
+.throughput-stats-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.throughput-stats-section-heading {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.throughput-stats-section-description {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.throughput-stats-card-title {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.throughput-chart-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.throughput-chart-heading {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.throughput-chart-description {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+}
+
+.throughput-week-list,
+.throughput-age-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.throughput-week-item,
+.throughput-age-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.throughput-week-count,
+.throughput-age-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.throughput-week-chart,
+.throughput-age-chart {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.throughput-week-bar {
+  fill: color-mix(in srgb, var(--color-accent) 72%, white);
+}
+
+.throughput-age-bar {
+  fill: color-mix(in srgb, #6366f1 65%, white);
+}
+
+.throughput-age-axis-label {
+  font-size: 6px;
+  fill: var(--color-text-secondary);
+}
+
+.throughput-cfd-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.throughput-cfd-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.throughput-cfd-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.throughput-cfd-chart {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.throughput-cfd-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.throughput-cfd-legend-above-chart {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
+}
+
+.throughput-cfd-legend-count {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.throughput-cfd-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.throughput-cfd-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.throughput-stats .empty-message {
+  padding: 32px 16px;
+}

@@ -1,0 +1,25 @@
+
+
+.liveness-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-right: 3px;
+}
+
+.liveness-active {
+  background: var(--color-success);
+}
+
+.liveness-idle {
+  background: var(--color-warning);
+}
+
+.liveness-stale {
+  background: var(--color-danger);
+}
+
+.liveness-unknown {
+  background: var(--color-text-tertiary);
+}

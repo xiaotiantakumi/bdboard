@@ -1,0 +1,480 @@
+
+
+.board-section {
+  margin-bottom: 28px;
+}
+
+.board-section .lanes-row {
+  flex: none;
+  min-height: auto;
+}
+
+.board-section .lanes-scroll-region {
+  flex: none;
+  min-height: auto;
+}
+
+.board-section .lane {
+  /* モバイル幅の同セレクタ (下の media query) は既に dvh 併記済みなので、デスクトップ側も
+     揃える。lvh のままでもレーンがビューポートより高くなることは無い (220px の chrome 予算は
+     lvh - svh の実測 60〜115px より常に大きい)。問題は逆で、アドレスバーが出ている間は
+     100lvh - 220px が実際の可視高より lvh - dvh ぶん大きく、差のぶんレーンの下端が
+     フォールドの下に潜る — つまり 220px という chrome 予算が過大に効く。この media query に
+     入らない横持ちのスマートフォン (例 844x390) が実際の当事者。 */
+  max-height: calc(100vh - 220px);
+  max-height: calc(100dvh - 220px);
+}
+
+.board-section-title {
+  margin: 0 0 12px;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+}
+
+.session-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-session-bg);
+  color: var(--badge-session-fg);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.session-badge-btn {
+  border: none;
+  cursor: pointer;
+  /* font-size/weight は .session-badge 側を活かす(font ショートハンドだと上書きされる) */
+  font-family: inherit;
+  transition: opacity 0.15s ease;
+}
+
+.session-badge-btn:hover {
+  opacity: 0.85;
+}
+
+.card-project .session-badge {
+  margin-left: 6px;
+}
+
+.project-harness-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.project-harness-pack {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  font-size: 0.6875rem;
+}
+
+.project-harness-pack-name {
+  font-weight: 600;
+}
+
+.project-harness-status {
+  color: var(--color-text-secondary);
+}
+
+.project-harness-status-missing {
+  color: var(--badge-stalled-fg);
+}
+
+.project-harness-status-drift {
+  color: var(--badge-stalled-fg);
+  font-weight: 600;
+}
+
+.project-harness-status-ok {
+  color: var(--color-text-secondary);
+}
+
+.project-harness-status-hooks {
+  color: var(--badge-stalled-fg);
+  font-weight: 600;
+}
+
+.project-harness-contract {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  font-size: 0.6875rem;
+  color: var(--color-text-secondary);
+  /* verify コマンドは任意長になりうるので、行を押し広げず省略表示にする (全文は title 属性側にある) */
+  max-width: 20rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-harness-contract-warn {
+  color: var(--badge-stalled-fg);
+  font-weight: 600;
+}
+
+.project-harness-action {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  padding: 1px 6px;
+  font-size: 0.6875rem;
+  background: var(--color-bg);
+  cursor: pointer;
+}
+
+.project-harness-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg));
+}
+
+.project-harness-action:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.project-harness-feedback {
+  font-size: 0.6875rem;
+  color: var(--color-text-secondary);
+}
+
+.lanes-scroll-region {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.lane-indicator-strip {
+  display: none;
+}
+
+.lane-indicator-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lane-indicator-item-wrap {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.lane-indicator-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lane-indicator-item:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
+}
+
+.lane-indicator-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lane-indicator-item-current {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-elevated));
+  color: var(--color-accent);
+}
+
+.lane-indicator-count {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  background: var(--badge-neutral-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.lane-indicator-item-current .lane-indicator-count {
+  color: inherit;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+/* bdboard-6y5b: モバイルでは .lane-header を丸ごと描画しないため (下の
+   `@media (max-width: 700px)` の `.lane-header { display: none; }` 参照)、
+   レーンヘッダーにしか無かった折りたたみトグルをここへ移す。ストリップ自体が
+   `.lane-indicator-strip { display: none; }` (このファイル冒頭) を挟んで
+   モバイル幅の @media 内でしか `display: block` にならないので、この
+   ボタンのスタイルにモバイル専用の @media ガードは要らない — 親が非表示なら
+   このボタンも描画されない。 */
+.lane-indicator-collapse-toggle {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lane-indicator-collapse-toggle:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg-elevated));
+}
+
+.lane-indicator-collapse-toggle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lanes-row {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+  min-height: 0;
+}
+
+.main > .lanes-scroll-region {
+  flex: 1;
+  min-height: 0;
+}
+
+.main > .lanes-row {
+  flex: 1;
+  min-height: 0;
+}
+
+.lane {
+  min-width: 300px;
+  max-width: 300px;
+  flex-shrink: 0;
+  background: var(--color-bg-grouped);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 2px var(--color-shadow);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  align-self: stretch;
+  scroll-snap-align: start;
+}
+
+.lane-header {
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  border-radius: 0;
+  font-weight: 600;
+  font-size: 0.875rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--color-text);
+  width: 100%;
+  margin: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: inherit;
+}
+
+.lane-header:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+}
+
+.lane-header:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.lane-header.lane-header-wip-exceeded {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  /* bdboard-hodh: 前景を --lane-header-wip-fg に分ける (旧 --color-warning は同色相の
+     着色背景の上で light 1.932:1 と AA 未達だった)。この color はレーンヘッダ内の全子孫
+     (レーン名の span.lane-header-label-text を含む) に継承される。理由は :root の
+     --lane-header-wip-fg 定義コメント参照。 */
+  color: var(--lane-header-wip-fg);
+}
+
+.lane-header.lane-header-wip-exceeded .lane-count {
+  /* bdboard-bdsd: 前景だけ --lane-header-wip-fg に分ける。理由は :root の
+     --lane-header-wip-fg 定義コメント参照。背景 (22%) はそのまま。 */
+  background: color-mix(in srgb, var(--color-warning) 22%, transparent);
+  color: var(--lane-header-wip-fg);
+}
+
+.lane-header.lane-header-wip-exceeded .lane-chevron {
+  /* bdboard-97ib.1: .lane-chevron は自身の color (--color-text-tertiary) を明示宣言して
+     いるため、.lane-header-wip-exceeded の継承色 (--lane-header-wip-fg) を素通りしていた。
+     単層の 16% tint 背景 (.lane-header-wip-exceeded 自身と同じ) の上で light 2.87:1 /
+     dark 3.85:1 (実測、WCAG SC 1.4.11 の 3:1 も下回る) だったのを、レーン名と同じ
+     --lane-header-wip-fg に揃えて light 5.42:1 / dark 7.24:1 へ解消する。 */
+  color: var(--lane-header-wip-fg);
+}
+
+.lane-header-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lane-chevron {
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1;
+  width: 0.875rem;
+  flex-shrink: 0;
+}
+
+.lane-collapsed {
+  align-self: flex-start;
+}
+
+.lane-collapsed .lane-header {
+  border-bottom: none;
+}
+
+.lane-count {
+  /* --badge-neutral-bg では、他の9箇所と同じく --badge-neutral-fg を対にする。 */
+  /* bdboard-tlus: --badge-neutral-fg を light #6c6c70→#656569 / dark #a1a1a6→#a2a2a7 に
+     広げたことで、静止状態 (#ffffff/#1c1c1e 面 4.54:1) だけでなく `.header` (4.98/5.21:1)・
+     `.lane-header:hover` (4.69/4.55:1)・body 直下の #f2f2f7 (4.55:1、`.alert-bar-quiet` /
+     `.status-pill-reconnecting` が載る面)・`.lane-drop-allowed` (4.58:1)・
+     `.lane-drop-rejected` (4.68:1) のいずれでも 4.5:1 以上になった (旧値はこれらの面で
+     4.10〜4.22:1 と AA 未満)。WIP 超過時は下の .lane-header-wip-exceeded .lane-count が
+     color も background も warning 系で上書きしていたためこの対が効かず light 1.66:1
+     だったが、bdboard-bdsd で前景を --lane-header-wip-fg に分けて解消済み (定義は :root
+     参照)。ドラッグ中の状態は未確認のまま残っている。 */
+  color: var(--badge-neutral-fg);
+  font-weight: 500;
+  font-size: 0.75rem;
+  background: var(--badge-neutral-bg);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+
+.lane-cards {
+  padding: 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: background-color 0.12s ease, outline-color 0.12s ease;
+}
+
+.lane.lane-drop-allowed {
+  outline: 2px dashed var(--color-accent);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--color-accent) 8%, var(--color-bg-grouped));
+}
+
+.lane.lane-drop-rejected {
+  outline: 2px dashed var(--color-danger);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--color-danger) 6%, var(--color-bg-grouped));
+  cursor: not-allowed;
+}
+
+.board-dnd-error {
+  margin: 0 0 12px;
+}
+
+.card {
+  position: relative;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 2px var(--color-shadow);
+  padding: 12px;
+  cursor: pointer;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+}
+
+.card:hover {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 3px 10px var(--color-shadow);
+}
+
+.card:active {
+  transform: scale(0.99);
+}
+
+.card[draggable='true'] {
+  cursor: grab;
+}
+
+.card[draggable='true']:active {
+  cursor: grabbing;
+}
+
+.card.card-dragging {
+  opacity: 0.45;
+  border-style: dashed;
+}
+
+.card-bulk-selected {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-elevated));
+}
+
+.card-bulk-checkbox {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 28px;
+  margin: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.card-bulk-checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.card:has(.card-bulk-checkbox) {
+  padding-right: 40px;
+}

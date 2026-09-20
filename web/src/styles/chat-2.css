@@ -1,0 +1,408 @@
+
+
+.chat-discovered-sessions-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chat-discovered-sessions-title {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.chat-discovered-sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-discovered-sessions-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.chat-discovered-sessions-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+  font-size: 0.75rem;
+}
+
+.chat-discovered-sessions-id {
+  font-family: monospace;
+  font-weight: 600;
+}
+
+.chat-discovered-sessions-preview {
+  flex-basis: 100%;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-discovered-sessions-badge {
+  color: var(--color-text-secondary);
+}
+
+.chat-discovered-sessions-scope-note {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.chat-discovered-sessions-empty,
+.chat-discovered-sessions-error {
+  margin: 0;
+  font-size: 0.8125rem;
+}
+
+.chat-discovered-sessions-error {
+  color: var(--color-danger);
+}
+
+.chat-messages {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+
+.chat-messages .empty-message {
+  padding: 24px 0;
+}
+
+.chat-message {
+  max-width: 85%;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+}
+
+.chat-message-user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
+}
+
+.chat-message-assistant {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--color-text) 6%, var(--color-bg-elevated));
+  border: 1px solid var(--color-border);
+}
+
+.chat-message-error {
+  align-self: flex-start;
+  background: color-mix(in srgb, var(--color-danger) 12%, var(--color-bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--color-danger) 35%, var(--color-border));
+  color: var(--color-danger);
+}
+
+.chat-message-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+.chat-message-text.markdown-body {
+  white-space: normal;
+}
+
+.chat-message-images {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.chat-message-images figure {
+  min-width: 0;
+  margin: 0;
+}
+
+.chat-message-images img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 34%, var(--color-border));
+  border-radius: calc(var(--radius-md) - 2px);
+  background: var(--color-bg);
+}
+
+.chat-message-images figcaption {
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--color-text-secondary);
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-message-failed-tools {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-warning);
+}
+
+.chat-message-agent-warnings {
+  margin: 6px 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-warning);
+}
+
+.chat-pending {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.chat-input-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: sticky;
+  bottom: 0;
+  background: var(--color-bg-elevated);
+  padding-top: 12px;
+  padding-bottom: 20px;
+}
+
+/* 添付一覧・添付エラー・画像非対応警告・エージェント不在警告をまとめた可変領域。
+   短いビューポート (下の @media) ではここに max-height + overflow-y を与え、
+   フォーム高さへの寄与を内容によらない定数にする (bdboard-iglk)。 */
+.chat-input-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* 中身が全部非表示のときは gap を生まないよう要素ごと消す。描画条件の二重管理を避けるため
+   React 側の条件式ではなくここで判定する。 */
+.chat-input-notices:empty {
+  display: none;
+}
+
+/* プロジェクトバー内の可変注意書き（未選択ヒント/チケット由来プロジェクトのフォールバック通知）を
+   まとめた領域。.chat-input-notices と同じ理由・同じ流儀で、短いビューポートでは高さを固定する
+   (bdboard-iglk)。この2つは .chat-input-form の外にあるので、添付バナーを囲っただけでは
+   キャップされないまま残る — 未選択のまま画像を貼ると両方同時に出る。 */
+.chat-project-bar-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-project-bar-notices:empty {
+  display: none;
+}
+
+.chat-quick-commands {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 2px;
+}
+
+.chat-quick-commands::-webkit-scrollbar {
+  display: none;
+}
+
+.chat-quick-command-chip {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-family: inherit;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.chat-quick-command-chip:hover:not(:disabled) {
+  color: var(--color-text);
+  border-color: var(--color-border-strong, var(--color-border));
+}
+
+.chat-quick-command-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-attachments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.chat-attachment {
+  display: grid;
+  grid-template-columns: var(--chat-attachment-preview-size) minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 34%, var(--color-border));
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--color-accent) 9%, transparent),
+      transparent 58%
+    ),
+    var(--color-bg);
+}
+
+.chat-attachment-preview {
+  width: var(--chat-attachment-preview-size);
+  height: var(--chat-attachment-preview-size);
+  object-fit: cover;
+  border-radius: calc(var(--radius-md) - 3px);
+  background: var(--color-bg-elevated);
+}
+
+.chat-attachment-details {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chat-attachment-name {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-attachment-size {
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+}
+
+.chat-attachment-remove {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 1.125rem;
+  line-height: 1;
+}
+
+.chat-attachment-remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
+  color: var(--color-danger);
+}
+
+.chat-attachment-remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.chat-attachment-error,
+.chat-attachment-unsupported {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--color-danger) 34%, var(--color-border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-danger) 9%, var(--color-bg-elevated));
+  color: var(--color-danger);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.chat-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  font-family: inherit;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.chat-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input-hint {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+}
+
+.chat-input-actions {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.chat-attach-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-attach-button:hover:not(:disabled) {
+  background: var(--badge-neutral-bg);
+  color: var(--color-text);
+}
+
+.chat-attach-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-input-actions .btn {
+  flex: 1 1 auto;
+}
+
+.chat-image-privacy-hint {
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
