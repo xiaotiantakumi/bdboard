@@ -17,7 +17,7 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 2410, // 現在 2404
+  'web/src/components/ChatPanel.tsx': 2370, // 現在 2362 (bdboard-sso1.2 PR-E でさらに分割)
   'web/src/components/TicketDetailPanel.tsx': 2180, // 現在 2177
   'web/src/components/SettingsPanel.tsx': 1220, // 現在 1216
   'src/main.ts': 1200, // 現在 1193
