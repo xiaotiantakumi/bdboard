@@ -8,10 +8,8 @@ import {
 } from '../bdCommands';
 import {
   cancelAgentRun,
-  deleteTicketSessionLink,
   fetchAgentRun,
   fetchProjectHarnessStatus,
-  fetchSessions,
   fetchTicket,
   fetchTicketRuns,
   fetchTicketComments,
@@ -21,7 +19,6 @@ import {
   postTicketDecision,
   postTicketQuickAction,
   postTicketQuickActionUndo,
-  postTicketSessionLink,
   startTicketRun,
   type AgentRunDetailDto,
   type AgentRunNextStepDto,
@@ -46,7 +43,6 @@ import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { describeWriteError } from '../writeAccessMessage';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { MarkdownContent } from './MarkdownContent';
-import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
 import { TicketAttachments } from './TicketAttachments';
@@ -74,12 +70,7 @@ import {
   formatQuickActionConfirmDescription,
   toQuickActionRequest,
 } from './ticket-detail/quickActionConfirm';
-import {
-  formatDateTime,
-  sessionLinkBadgeLabel,
-  sessionLinkBadgeClass,
-  formatSessionPickerLabel,
-} from './ticket-detail/formatters';
+import { formatDateTime } from './ticket-detail/formatters';
 import {
   AGENT_RUN_LOG_LOCAL_ONLY_HELP,
   computeRunStartDisabled,
@@ -105,6 +96,8 @@ import { TicketUsageSection } from './ticket-detail/TicketUsageSection';
 import { TicketChildrenSection } from './ticket-detail/TicketChildrenSection';
 import { TicketBdCommandSection } from './ticket-detail/TicketBdCommandSection';
 import { useTicketComment } from './ticket-detail/useTicketComment';
+import { useTicketSessionLink } from './ticket-detail/useTicketSessionLink';
+import { TicketSessionLinkSection } from './ticket-detail/TicketSessionLinkSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -304,7 +297,17 @@ export function TicketDetailPanel({
     mutation: commentMutation,
     reset: resetComment,
   } = useTicketComment(ticketId);
-  const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
+  const {
+    sessionLinkPickerOpen,
+    togglePicker: toggleSessionLinkPicker,
+    isLoadingSessions,
+    activeSessionCandidates,
+    sessionLinkMutationPending,
+    sessionLinkMutationError,
+    onLinkSession,
+    onUnlinkSession,
+    reset: resetSessionLink,
+  } = useTicketSessionLink(ticketId);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -337,7 +340,7 @@ export function TicketDetailPanel({
     resetLabelInput();
     resetTitleEditing();
     resetDescriptionEditing();
-    setSessionLinkPickerOpen(false);
+    resetSessionLink();
     setConfirmingAgentRun(false);
     setActiveRunId(null);
     setActiveRunMeta(null);
@@ -350,6 +353,7 @@ export function TicketDetailPanel({
     resetDependencies,
     resetDescriptionEditing,
     resetLabelInput,
+    resetSessionLink,
     resetTitleEditing,
   ]);
 
@@ -695,41 +699,6 @@ export function TicketDetailPanel({
       }
     },
   });
-
-  // 'sessions' クエリキーは SessionListPanel と共有している(同じアクティブ
-  // セッション一覧なので、既存キャッシュがあれば流用できる)。
-  const activeSessionsQuery = useQuery({
-    queryKey: ['sessions'],
-    queryFn: fetchSessions,
-    enabled: sessionLinkPickerOpen,
-  });
-
-  const linkSessionMutation = useMutation({
-    mutationFn: async (sessionId: string) => {
-      await postTicketSessionLink(ticketId, sessionId);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-      setSessionLinkPickerOpen(false);
-    },
-  });
-
-  const unlinkSessionMutation = useMutation({
-    mutationFn: async () => {
-      await deleteTicketSessionLink(ticketId);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-    },
-  });
-
-  const sessionLinkMutationPending =
-    linkSessionMutation.isPending || unlinkSessionMutation.isPending;
-  const sessionLinkMutationError =
-    linkSessionMutation.error ?? unlinkSessionMutation.error;
-  const activeSessionCandidates = (activeSessionsQuery.data ?? []).filter(
-    (session) => session.alive,
-  );
 
   const handleConfirmQuickAction = useCallback(() => {
     if (confirmingQuickAction === null) {
@@ -1168,95 +1137,17 @@ export function TicketDetailPanel({
               </div>
             )}
             <TicketModelsSection models={data.models} />
-            <div className="detail-section">
-              <h3>セッションリンク</h3>
-              {data.sessionLinks.length === 0 && (
-                <p className="detail-help">リンクされたセッションはありません</p>
-              )}
-              {data.sessionLinks.length > 0 && (
-                <ul className="session-link-list">
-                  {data.sessionLinks.map((link) => (
-                    <li key={link.sessionId} className="session-link-item">
-                      <span
-                        className={`badge ${sessionLinkBadgeClass(link.source)}`}
-                      >
-                        {sessionLinkBadgeLabel(link.source)}
-                      </span>
-                      <span className="session-link-id">{link.sessionId}</span>
-                      {link.source === 'metadata' && (
-                        <button
-                          type="button"
-                          className="btn session-link-unlink-btn"
-                          disabled={sessionLinkMutationPending}
-                          aria-label={`${link.sessionId} のリンクを解除`}
-                          onClick={() => unlinkSessionMutation.mutate()}
-                        >
-                          解除
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <button
-                type="button"
-                className="btn session-link-picker-toggle-btn"
-                disabled={sessionLinkMutationPending}
-                onClick={() => setSessionLinkPickerOpen((open) => !open)}
-              >
-                {sessionLinkPickerOpen ? '閉じる' : 'セッションをリンク'}
-              </button>
-              {sessionLinkPickerOpen && (
-                <>
-                  <p className="detail-help">
-                    稼働中セッションから選択します(既存の手動リンクは上書きされます)
-                  </p>
-                  {/* win32 ではセッション検出そのものが動かないため、ここは
-                      常に空になる。理由を出さないと「稼働中のセッションが
-                      ありません」が壊れているようにしか読めない
-                      (bdboard-70z.9, PR#115 fable レビュー minor)。 */}
-                  <PlatformLimitationNotice feature="session-discovery" />
-                  {activeSessionsQuery.isLoading && (
-                    <p className="loading">読み込み中…</p>
-                  )}
-                  {!activeSessionsQuery.isLoading &&
-                    activeSessionCandidates.length === 0 && (
-                      <p className="detail-help">稼働中のセッションがありません</p>
-                    )}
-                  {activeSessionCandidates.length > 0 && (
-                    <ul className="dependency-suggestions">
-                      {activeSessionCandidates.map((session) => (
-                        <li key={session.sessionId}>
-                          <button
-                            type="button"
-                            className="dependency-suggestion-btn"
-                            disabled={sessionLinkMutationPending}
-                            onClick={() =>
-                              linkSessionMutation.mutate(session.sessionId)
-                            }
-                          >
-                            <span className="dependency-suggestion-id">
-                              {session.sessionId}
-                            </span>
-                            <span className="dependency-suggestion-title">
-                              {formatSessionPickerLabel(session)}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </>
-              )}
-              {sessionLinkMutationError !== null && (
-                <p className="error-message">
-                  {describeWriteError(
-                    sessionLinkMutationError,
-                    'セッションリンクの更新に失敗しました',
-                  )}
-                </p>
-              )}
-            </div>
+            <TicketSessionLinkSection
+              sessionLinks={data.sessionLinks}
+              pickerOpen={sessionLinkPickerOpen}
+              onTogglePicker={toggleSessionLinkPicker}
+              isLoadingSessions={isLoadingSessions}
+              activeSessionCandidates={activeSessionCandidates}
+              mutationPending={sessionLinkMutationPending}
+              mutationError={sessionLinkMutationError}
+              onLinkSession={onLinkSession}
+              onUnlinkSession={onUnlinkSession}
+            />
             <TicketUsageSection usage={data.usage} />
             {pendingDecision !== undefined && (
               <div className="detail-section">
