@@ -57,31 +57,48 @@ const bdShowDependencySchema = z.object({
   dependency_type: z.string().optional(),
 });
 
+// bdboard-vy0h レビュー指摘: dependencies を bdShowItemSchema に厳密な配列型として
+// 混ぜると、bd の別コマンド(`bd list --json` の生 dependency レコード等)が将来
+// 混入した場合や 1 件でも想定外の形の要素が来た場合に item 全体の safeParse が
+// 失敗し、kind 判定まで 'unknown' に道連れで倒れてしまう(=ラベルも gate も一切
+// 触らなくなり、この PR が直そうとしているバグより悪化する)。kind 判定は
+// issue_type だけに依存させ、dependencies は unknown のまま受け取って要素ごとに
+// safeParse する(parseListStdout / parseGateListStdout と同じ「1件の不正で
+// 全体を隠さない」方針)。
 const bdShowItemSchema = z.object({
   issue_type: z.string().optional(),
-  dependencies: z.array(bdShowDependencySchema).optional(),
+  dependencies: z.unknown().optional(),
 });
 
 // 作業チケットの dependencies[] のうち、respond() が resolve してよい対象だけを絞り込む。
+// 要素ごとに safeParse し、1件でも形が崩れていれば「その要素だけ」スキップする
+// (dependencies 全体の形が想定外でも kind 判定には影響させない)。
 // - dependency_type === 'blocks': このチケットをブロックしている依存だけ(discovered-from 等を除く)
 // - issue_type === 'gate' かつ await_type === 'human': human gate 以外 (timer/gh:run/gh:pr) は絶対に触らない
 // - status === 'open': 既に閉じている gate は対象外(冪等な再実行で二重に触らない)
-function filterBlockingHumanGateIds(
-  dependencies: readonly z.infer<typeof bdShowDependencySchema>[] | undefined,
-): readonly string[] {
-  if (dependencies === undefined) {
+function filterBlockingHumanGateIds(dependencies: unknown): readonly string[] {
+  if (!Array.isArray(dependencies)) {
     return [];
   }
 
-  return dependencies
-    .filter(
-      (dep) =>
-        dep.dependency_type === 'blocks' &&
-        dep.issue_type === 'gate' &&
-        dep.await_type === 'human' &&
-        dep.status === 'open',
-    )
-    .map((dep) => dep.id);
+  const ids: string[] = [];
+  for (const rawDep of dependencies) {
+    const depResult = bdShowDependencySchema.safeParse(rawDep);
+    if (!depResult.success) {
+      continue;
+    }
+    const dep = depResult.data;
+    if (
+      dep.dependency_type === 'blocks' &&
+      dep.issue_type === 'gate' &&
+      dep.await_type === 'human' &&
+      dep.status === 'open'
+    ) {
+      ids.push(dep.id);
+    }
+  }
+
+  return ids;
 }
 
 function buildListArgs(rootPath: string): readonly string[] {
@@ -319,8 +336,9 @@ interface ShowKindAndBlockingGates {
 
 // `bd show <id> --json` の stdout から種別(gate/ticket/unknown)と、作業チケットの場合に
 // それをブロックしている open な human gate の ID 一覧を読み取る (bdboard-vy0h)。
-// kind の判定ロジックは従来の parseShowStdoutForKind と同じ(壊れた/想定外の stdout は
-// 常に 'unknown' に倒す fail-safe)。
+// kind の判定は issue_type だけを見る従来の parseShowStdoutForKind と完全に同じであり、
+// dependencies の形が想定外でも kind 判定には影響しない(filterBlockingHumanGateIds が
+// 要素ごとに safeParse するため。壊れた/想定外の stdout は常に 'unknown' に倒す fail-safe)。
 function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
   const trimmedStdout = stdout.trim();
   if (trimmedStdout.length === 0) {

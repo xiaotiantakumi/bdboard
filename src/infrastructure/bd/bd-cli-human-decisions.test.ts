@@ -1106,4 +1106,105 @@ describe('resolveKindAndBlockingGates', () => {
 
     expect(result).toEqual({ kind: 'gate', blockingHumanGateIds: [] });
   });
+
+  // bdboard-vy0h レビュー指摘: dependencies の形が想定外でも kind 判定を道連れにしない。
+  // bdShowItemSchema は dependencies を z.unknown() で受けるので、1件の不正な要素や
+  // 配列そのものが壊れていても 'unknown' に倒れるのは kind ではなく該当要素の除外だけで
+  // あることを直接押さえる。
+  it('keeps kind=ticket and skips only malformed dependency entries when dependencies has an unexpected shape', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [
+                  // bd list --json 由来の生 dependency レコード形(id が無い)。
+                  { issue_id: 'bdboard-x', depends_on_id: 'bdboard-y', type: 'parent-child' },
+                  null,
+                  'not-an-object',
+                  {
+                    id: 'bdboard-human-open',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: ['bdboard-human-open'],
+    });
+  });
+
+  it('keeps kind=ticket with no blocking gates when dependencies itself is null instead of an array', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              { id: 'bdboard-probe', issue_type: 'task', dependencies: null },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
+  });
+
+  // dependency_type と issue_type/await_type の条件が独立に効いていることを確認する
+  // (bdboard-vy0h レビュー指摘: 既存の discovered-from フィクスチャは issue_type が
+  // 'task' で dependency_type 条件だけを単離していなかった)。
+  it('excludes an open human gate whose dependency_type is not blocks (e.g. related)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: 'bdboard-related-human-gate',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'related',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
+  });
 });
