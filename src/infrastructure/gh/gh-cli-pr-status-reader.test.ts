@@ -248,6 +248,41 @@ describe('createGhCliPrStatusReader', () => {
     });
   });
 
+  it('does not classify a bare HTTP 403 without rate-limit wording as a rate-limit failure (bdboard-v538)', async () => {
+    // 403 は権限/SSOエラーでも返る。rate-limit 文言を伴わない 403 単体を
+    // rate-limit と誤判定すると、rate-limit 結果はURL単位でキャッシュされない
+    // ため同じURLが毎回再フェッチされ続けてしまう (bdboard-v538)。
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'gh: Resource not accessible by integration (HTTP 403)',
+        exitCode: 1,
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'other',
+    });
+  });
+
+  it('still classifies a real gh rate-limit 403 (with rate-limit wording) as rate-limit', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'gh: API rate limit exceeded for user ID 12345678. (HTTP 403)',
+        exitCode: 1,
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'rate-limit',
+    });
+  });
+
   it('classifies a timeout failureKind as a timeout failure', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
