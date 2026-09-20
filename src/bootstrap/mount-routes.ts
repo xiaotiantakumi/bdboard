@@ -96,12 +96,16 @@ export function mountRoutes(app: Hono, deps: MountRoutesDeps): void {
   if (deps.staticSpa !== undefined) {
     // root には絶対パスを渡す (bdboard-gki の経緯は main.ts 側の wire-static-spa
     // コメントを参照)。
-    app.use('/*', serveStatic({ root: deps.staticSpa.webDistDir }));
+    // クロージャ内から deps.staticSpa を再度参照すると TS の narrowing が効かず
+    // 非null断言が要る (bdboard-sso1.14 レビュー指摘1.2)。ローカル const に
+    // 分割代入して、元の main.ts と同じく確定値を閉じ込める。
+    const { webDistDir, spaIndexHtml } = deps.staticSpa;
+    app.use('/*', serveStatic({ root: webDistDir }));
     app.get('*', (c) => {
       if (c.req.path.startsWith('/api/') || c.req.path === '/api') {
         return c.notFound();
       }
-      return c.html(deps.staticSpa!.spaIndexHtml);
+      return c.html(spaIndexHtml);
     });
   }
 }

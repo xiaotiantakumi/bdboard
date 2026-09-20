@@ -135,6 +135,11 @@ describe('chat specs safety guards', () => {
     // 保っていることだけを固定する。
     const mainPath = path.join(REPO_ROOT, 'src/main.ts');
     const mainSource = readFileSync(mainPath, 'utf8');
+    // main.ts 自身は登録配線を持たず wireChat( 経由で委譲する形を保っていることを
+    // 固定する (bdboard-sso1.14 レビュー指摘)。これが無いと、将来 main.ts に
+    // 別の登録経路を直書きしても (create*ChatAgent の4シンボルさえ使わなければ)
+    // このテストは気付かない。
+    expect(mainSource).toContain('wireChat(');
     expect(mainSource).not.toContain('createClaudeChatAgent');
     expect(mainSource).not.toContain('createCodexChatAgent');
     expect(mainSource).not.toContain('createCursorChatAgent');

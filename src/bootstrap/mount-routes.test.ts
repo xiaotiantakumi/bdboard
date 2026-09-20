@@ -107,6 +107,35 @@ describe('mountRoutes order lock-down (bdboard-sso1.14)', () => {
     ]);
   });
 
+  it('mounts security headers/auth and compression middleware before every route (bdboard-sso1.14 review 1.1)', () => {
+    // mountSecurityMiddleware / createCompressionMiddleware は共に app.use('*', ...)
+    // (= method 'ALL', path '/*') として登録される。これが後ろへずれると、認証/CSRF
+    // ミドルウェアがそれより前に mount 済みのルートを一切ガードしなくなる
+    // (サイレントな認証バイパス)。buildDeps() の security は access 未指定なので
+    // tunnel-token-exchange は登録されず、securityHeaders + basicAuth の2本 +
+    // compression の1本、計3本の ALL '/*' が期待値。
+    const app = new Hono();
+    mountRoutes(app, buildDeps());
+
+    const paths = app.routes.map((route) => route.path);
+    const platformSupportIndex = paths.indexOf('/api/platform-support');
+    expect(platformSupportIndex).toBeGreaterThanOrEqual(0);
+
+    // SPA static fallback (serveStatic) も末尾で app.use('/*', ...) を登録するため
+    // method 'ALL' / path '/*' に一致してしまう。先頭 (platform-support より前) の
+    // 区間だけを見て、そこに security headers + basic auth + compression の3本が
+    // 連続して並んでいることを固定する。この3本が末尾へ動く回帰 (レビューで
+    // 実演されたミューテーション) があれば platformSupportIndex が 0 になり、
+    // このスライスは空になって toEqual([0, 1, 2]) が落ちる。
+    const leadingWildcardIndexes = app.routes
+      .slice(0, platformSupportIndex)
+      .map((route, index) => ({ route, index }))
+      .filter(({ route }) => route.method === 'ALL' && route.path === '/*')
+      .map(({ index }) => index);
+
+    expect(leadingWildcardIndexes).toEqual([0, 1, 2]);
+  });
+
   it('serves the SPA static fallback last when provided, and skips it when undefined (API-only mode)', () => {
     const appWithSpa = new Hono();
     mountRoutes(appWithSpa, buildDeps());
