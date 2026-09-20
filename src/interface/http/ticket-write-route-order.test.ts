@@ -41,7 +41,7 @@ function buildMinimalDeps(): ApiDeps {
       listProjects: () => [],
       getProject: () => undefined,
     } as unknown as ApiDeps['cache'],
-    applicationVersion: { getVersion: () => 'test' } as ApiDeps['applicationVersion'],
+    applicationVersion: { getVersion: () => 'test' },
     now: () => new Date('2026-01-01T00:00:00Z'),
     getStatus: () => ({ lastRefreshAt: null, errors: [], projectCount: 0 }),
     refresh: async () => {},
