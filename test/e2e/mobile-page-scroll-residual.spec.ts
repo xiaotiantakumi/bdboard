@@ -16,9 +16,9 @@
  *
  * モバイル (`max-width: 700px`) の `web/src/index.css` で効いているのは 2 か所:
  *
- *   `.lane` / `.board-section .lane` (5967-5973)
+ *   `@media (max-width: 700px)` 内の `.lane` / `.board-section .lane`
  *       max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px))
- *   `.header` (172-174)
+ *   ベースの `.header` ルール
  *       position: sticky
  *
  * `.lane` の **260 は `--header-height` を参照しないリテラル**で、`.header` は sticky =

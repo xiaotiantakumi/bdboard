@@ -30,8 +30,8 @@ import { describe, expect, it } from 'vitest';
  * プロパティ) に書いているだけで custom property は介さない。`clamp()`/`min()` は
  * 引数に dvh があれば宣言全体がトップレベルの dvh 宣言と同じ規則で無効化される
  * (bdboard-68ub のレビューで実測確認済み — `.error-boundary-overlay .error-boundary` の
- * `max-height: min(85vh, 720px)` / `max-height: min(85dvh, 720px)` 併記等の既存 `min()`
- * 併記と同型) ので、単純な 2 行併記がそのまま効く。custom property 経由で本当に単純併記が
+ * `max-height: min(85vh, 720px)` / `max-height: min(85dvh, 720px)` 併記等、既存の
+ * `min()` と同型) ので、単純な 2 行併記がそのまま効く。custom property 経由で本当に単純併記が
  * 効かないのは `--chat-attachment-preview-size` (index.css の定義箇所コメント参照)
  * の 1 件だけだった。
  *
