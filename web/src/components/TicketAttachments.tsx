@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef, useState } from 'react';
-import { fetchTicketAttachments, type AttachmentDto } from '../api';
+import { deleteTicketAttachment, fetchTicketAttachments, type AttachmentDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 
@@ -15,14 +15,21 @@ function formatByteSize(bytes: number): string {
 }
 
 function AttachmentLightbox({
+  ticketId,
   attachment,
   onClose,
 }: {
+  ticketId: string;
   attachment: AttachmentDto;
   onClose: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const queryClient = useQueryClient();
+  // bdboard-ij1h: 誤操作防止のため二段階確認 (HygienePanel の
+  // hygiene-repair-confirm と同じ「ボタンがその場で確定/キャンセルの
+  // ペアに差し替わる」流儀)。
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
   const { requestClose } = useHistoryBackClose({
     panelId: 'ticket-attachment-lightbox',
     onClose,
@@ -31,6 +38,16 @@ function AttachmentLightbox({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: requestClose,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      await deleteTicketAttachment(ticketId, attachment.fileName);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['ticket-attachments', ticketId] });
+      onClose();
+    },
   });
 
   return (
@@ -49,6 +66,41 @@ function AttachmentLightbox({
           <button ref={closeButtonRef} type="button" className="btn" onClick={requestClose}>
             閉じる
           </button>
+        </div>
+        <div className="attachment-lightbox-toolbar">
+          {isConfirmingDelete ? (
+            <div className="attachment-lightbox-delete-confirm">
+              <button
+                type="button"
+                className="btn attachment-lightbox-delete-confirm-btn"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate()}
+              >
+                {deleteMutation.isPending ? '削除中…' : '確定: 削除'}
+              </button>
+              <button
+                type="button"
+                className="btn attachment-lightbox-delete-cancel"
+                disabled={deleteMutation.isPending}
+                onClick={() => setIsConfirmingDelete(false)}
+              >
+                キャンセル
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn attachment-lightbox-delete-btn"
+              onClick={() => setIsConfirmingDelete(true)}
+            >
+              削除
+            </button>
+          )}
+          {deleteMutation.isError && (
+            <p className="attachment-lightbox-delete-error" role="alert">
+              削除に失敗しました。もう一度お試しください。
+            </p>
+          )}
         </div>
         <img
           className="attachment-lightbox-image"
@@ -96,7 +148,11 @@ export function TicketAttachments({ ticketId }: TicketAttachmentsProps) {
         ))}
       </ul>
       {opened !== undefined && (
-        <AttachmentLightbox attachment={opened} onClose={() => setOpenedIndex(null)} />
+        <AttachmentLightbox
+          ticketId={ticketId}
+          attachment={opened}
+          onClose={() => setOpenedIndex(null)}
+        />
       )}
     </div>
   );

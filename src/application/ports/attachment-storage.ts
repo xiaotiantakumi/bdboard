@@ -33,4 +33,15 @@ export interface AttachmentStoragePort {
     issueId: string,
     fileName: string,
   ): Promise<Buffer | undefined>;
+  /**
+   * 添付を削除する (bdboard-ij1h)。実体は unlink せず、同じ保存領域配下の
+   * ゴミ箱へ移動する想定 (エージェントの誤削除から人間が復旧できるように
+   * するため)。ゴミ箱へ移した後は count / list / read の対象から外れる。
+   * 対象が存在しなければ false (呼び出し側は 404 を返す)。
+   */
+  delete(
+    projectKey: string,
+    issueId: string,
+    fileName: string,
+  ): Promise<boolean>;
 }

@@ -229,5 +229,36 @@ export function createAttachmentRoutes(deps: AttachmentRoutesDeps): Hono {
     return c.body(new Uint8Array(data));
   });
 
+  // DELETE も上の write-guard (`/api/tickets/:id/attachments/*`) の対象になる。
+  // v1 では upload と同じ権限 (write-guard を通る者は誰でも削除可) にとどめる
+  // (bdboard-ij1h)。実体は unlink せず、AttachmentStoragePort.delete() がゴミ箱へ
+  // 退避する (誤削除からの復旧手段を残すため)。上限カウントと同じ per-(projectKey,
+  // issueId) ロックに含めるのは、上限ちょうどの状態で削除とアップロードが並行しても
+  // 件数上限を破らないようにするため (count/save/delete を同一チケットに対しては
+  // 直列実行する)。
+  app.delete('/api/tickets/:id/attachments/:fileName', async (c) => {
+    const id = c.req.param('id');
+    if (!isSafePathSegment(id)) {
+      return c.json({ error: 'invalid ticket id' }, 400);
+    }
+    const fileName = c.req.param('fileName');
+    // GET と同じ判定 (isGeneratedAttachmentFileName 相当) を再利用する。
+    if (contentTypeForGeneratedFileName(fileName) === undefined) {
+      return c.json({ error: 'invalid attachment file name' }, 400);
+    }
+    const rootPath = findProjectRootPathForTicket(deps.cache, id);
+    if (rootPath === undefined) {
+      return c.json({ error: 'ticket not found', id }, 404);
+    }
+    const projectKey = toProjectAttachmentKey(rootPath);
+    const deleted = await runExclusive(`${projectKey}/${id}`, () =>
+      deps.storage.delete(projectKey, id, fileName),
+    );
+    if (!deleted) {
+      return c.json({ error: 'attachment not found' }, 404);
+    }
+    return c.json({ ok: true });
+  });
+
   return app;
 }

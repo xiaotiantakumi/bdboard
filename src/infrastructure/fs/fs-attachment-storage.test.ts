@@ -84,4 +84,52 @@ describe('createFsAttachmentStorage', () => {
       storage.save('proj-a', '..', 'png', new Uint8Array([1])),
     ).rejects.toThrow(/escapes/);
   });
+
+  describe('delete (bdboard-ij1h)', () => {
+    it('moves a stored file into .trash instead of unlinking it, and it no longer reads/lists/counts', async () => {
+      const storage = createFsAttachmentStorage(baseDir);
+      const stored = await storage.save('proj-abc12345', 'bdboard-ij1h', 'png', new Uint8Array([9]));
+
+      expect(await storage.delete('proj-abc12345', 'bdboard-ij1h', stored.fileName)).toBe(true);
+
+      expect(await storage.read('proj-abc12345', 'bdboard-ij1h', stored.fileName)).toBeUndefined();
+      expect(await storage.list('proj-abc12345', 'bdboard-ij1h')).toEqual([]);
+      expect(await storage.count('proj-abc12345', 'bdboard-ij1h')).toBe(0);
+
+      const trashed = path.join(baseDir, '.trash', 'proj-abc12345', 'bdboard-ij1h', stored.fileName);
+      await expect(fs.stat(trashed)).resolves.toBeDefined();
+      const original = path.join(baseDir, 'proj-abc12345', 'bdboard-ij1h', stored.fileName);
+      await expect(fs.stat(original)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('returns false for a file that does not exist, without throwing', async () => {
+      const storage = createFsAttachmentStorage(baseDir);
+      expect(
+        await storage.delete('proj-abc12345', 'bdboard-ij1h', '1-aaaaaaaaaaaaaaaa.png'),
+      ).toBe(false);
+    });
+
+    it('returns false on a second delete of the same file (double-delete is safe)', async () => {
+      const storage = createFsAttachmentStorage(baseDir);
+      const stored = await storage.save('proj-abc12345', 'bdboard-ij1h', 'png', new Uint8Array([1]));
+
+      expect(await storage.delete('proj-abc12345', 'bdboard-ij1h', stored.fileName)).toBe(true);
+      expect(await storage.delete('proj-abc12345', 'bdboard-ij1h', stored.fileName)).toBe(false);
+    });
+
+    it('keeps trashed files unreachable through list/read of a sibling issue named like the trash segment', async () => {
+      // Defense-in-depth: even if a caller somehow passed '.trash' as an issueId,
+      // the containment check on the *real* issue dir must still reject it exactly
+      // like any other value, rather than accidentally resolving into the trash tree.
+      const storage = createFsAttachmentStorage(baseDir);
+      await expect(storage.list('proj-abc12345', '.trash')).resolves.toEqual([]);
+    });
+
+    it('rejects a path-traversal file name at delete time instead of escaping the base dir', async () => {
+      const storage = createFsAttachmentStorage(baseDir);
+      await expect(
+        storage.delete('proj-a', 'issue-1', '../../../etc/passwd'),
+      ).rejects.toThrow(/escapes/);
+    });
+  });
 });

@@ -102,6 +102,15 @@ function createFakeAttachmentStorage(overrides: {
     async read(projectKey, issueId, fileName) {
       return files.get(key(projectKey, issueId, fileName));
     },
+    async delete(projectKey, issueId, fileName) {
+      const fileKey = key(projectKey, issueId, fileName);
+      if (!files.has(fileKey)) return false;
+      files.delete(fileKey);
+      const issueKey = `${projectKey}/${issueId}`;
+      const remaining = (byIssue.get(issueKey) ?? []).filter((entry) => entry.fileName !== fileName);
+      byIssue.set(issueKey, remaining);
+      return true;
+    },
   };
 }
 
@@ -313,6 +322,17 @@ describe('POST /api/tickets/:id/attachments concurrency', () => {
       async read(projectKey, issueId, fileName) {
         return files.get(`${projectKey}/${issueId}/${fileName}`);
       },
+      async delete(projectKey, issueId, fileName) {
+        const key = `${projectKey}/${issueId}/${fileName}`;
+        if (!files.has(key)) return false;
+        files.delete(key);
+        const issueKey = `${projectKey}/${issueId}`;
+        byIssue.set(
+          issueKey,
+          (byIssue.get(issueKey) ?? []).filter((entry) => entry.fileName !== fileName),
+        );
+        return true;
+      },
     };
     const app = createApp({ storage });
 
@@ -336,6 +356,213 @@ describe('POST /api/tickets/:id/attachments concurrency', () => {
     const limitReached = responses.filter((res) => res.status === 409);
     expect(created).toHaveLength(ATTACHMENT_MAX_COUNT_PER_TICKET);
     expect(limitReached).toHaveLength(attempts - ATTACHMENT_MAX_COUNT_PER_TICKET);
+
+    const finalList = await storage.list(toProjectAttachmentKey('/tmp/p'), 'bdboard-1');
+    expect(finalList).toHaveLength(ATTACHMENT_MAX_COUNT_PER_TICKET);
+  });
+});
+
+describe('DELETE /api/tickets/:id/attachments/:fileName', () => {
+  it('rejects a request without local access or an authorized tunnel session', async () => {
+    const storage = createFakeAttachmentStorage();
+    const app = createApp({ storage });
+    const upload = await app.request(
+      '/api/tickets/bdboard-1/attachments',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mimeType: 'image/png', data: PNG_BASE64 }),
+      }),
+      LOCAL_ENV,
+    );
+    const uploadBody = (await upload.json()) as { attachment: { fileName: string } };
+
+    const res = await app.request(
+      `/api/tickets/bdboard-1/attachments/${uploadBody.attachment.fileName}`,
+      { method: 'DELETE' },
+      {},
+    );
+    expect(res.status).toBe(403);
+    // Not authorized to delete, so it must still be listed.
+    const list = await app.request('/api/tickets/bdboard-1/attachments', {}, {});
+    expect(((await list.json()) as { attachments: unknown[] }).attachments).toHaveLength(1);
+  });
+
+  it('400s for a file name that is not server-generated', async () => {
+    const app = createApp();
+    const res = await app.request(
+      '/api/tickets/bdboard-1/attachments/photo.png',
+      withLocalHost({ method: 'DELETE' }),
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('400s for a disallowed extension even when the rest of the shape matches', async () => {
+    const app = createApp();
+    const res = await app.request(
+      '/api/tickets/bdboard-1/attachments/1758300000000-0123456789abcdef.svg',
+      withLocalHost({ method: 'DELETE' }),
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('404s for an unknown ticket before touching storage', async () => {
+    const app = createApp();
+    const res = await app.request(
+      '/api/tickets/bdboard-999/attachments/1758300000000-0123456789abcdef.png',
+      withLocalHost({ method: 'DELETE' }),
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('404s when the file does not exist on the known ticket', async () => {
+    const app = createApp();
+    const res = await app.request(
+      '/api/tickets/bdboard-1/attachments/1758300000000-0123456789abcdef.png',
+      withLocalHost({ method: 'DELETE' }),
+      LOCAL_ENV,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it('deletes a stored attachment: it disappears from the list and GET 404s afterward', async () => {
+    const storage = createFakeAttachmentStorage();
+    const app = createApp({ storage });
+    const upload = await app.request(
+      '/api/tickets/bdboard-1/attachments',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mimeType: 'image/png', data: PNG_BASE64 }),
+      }),
+      LOCAL_ENV,
+    );
+    const uploadBody = (await upload.json()) as { attachment: { fileName: string; url: string } };
+
+    const del = await app.request(
+      `/api/tickets/bdboard-1/attachments/${uploadBody.attachment.fileName}`,
+      withLocalHost({ method: 'DELETE' }),
+      LOCAL_ENV,
+    );
+    expect(del.status).toBe(200);
+    expect(await del.json()).toEqual({ ok: true });
+
+    const list = await app.request('/api/tickets/bdboard-1/attachments', {}, {});
+    expect(((await list.json()) as { attachments: unknown[] }).attachments).toEqual([]);
+
+    const get = await app.request(uploadBody.attachment.url, {}, {});
+    expect(get.status).toBe(404);
+  });
+
+  it('the second of two concurrent deletes of the same file gets 404, not a crash or double-success', async () => {
+    const storage = createFakeAttachmentStorage();
+    const app = createApp({ storage });
+    const upload = await app.request(
+      '/api/tickets/bdboard-1/attachments',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ mimeType: 'image/png', data: PNG_BASE64 }),
+      }),
+      LOCAL_ENV,
+    );
+    const uploadBody = (await upload.json()) as { attachment: { fileName: string } };
+    const deleteUrl = `/api/tickets/bdboard-1/attachments/${uploadBody.attachment.fileName}`;
+
+    const [first, second] = await Promise.all([
+      app.request(deleteUrl, withLocalHost({ method: 'DELETE' }), LOCAL_ENV),
+      app.request(deleteUrl, withLocalHost({ method: 'DELETE' }), LOCAL_ENV),
+    ]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([200, 404]);
+  });
+
+  it('never lets a concurrent delete + upload exceed the per-ticket limit at capacity (bdboard-ij1h)', async () => {
+    // Same regression shape as the upload-only TOCTOU test above, but this time
+    // the count is exactly at the cap and one of the concurrent requests is a
+    // delete for an existing file while the rest are uploads. Serializing
+    // delete through the same runExclusive lock as count/save must keep the
+    // final stored count within the limit.
+    const files = new Map<string, Buffer>();
+    const byIssue = new Map<string, StoredAttachment[]>();
+    let seq = 0;
+    const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
+    const issueKey = `${toProjectAttachmentKey('/tmp/p')}/bdboard-1`;
+    const ATTACHMENT_MAX_COUNT_PER_TICKET = 20;
+    const seed: StoredAttachment[] = Array.from({ length: ATTACHMENT_MAX_COUNT_PER_TICKET }, (_, i) => ({
+      fileName: `1758300000000-${(i + 1).toString(16).padStart(16, '0')}.png`,
+      byteLength: 8,
+      createdAt: NOW,
+    }));
+    byIssue.set(issueKey, seed);
+    for (const entry of seed) {
+      files.set(`${issueKey}/${entry.fileName}`, Buffer.from(PNG_BYTES));
+    }
+    const storage: AttachmentStoragePort = {
+      async count(projectKey, issueId) {
+        await tick();
+        return byIssue.get(`${projectKey}/${issueId}`)?.length ?? 0;
+      },
+      async save(projectKey, issueId, extension, data) {
+        await tick();
+        seq += 1;
+        const fileName = `${1758300000000 + 1000 + seq}-${seq.toString(16).padStart(16, '0')}.${extension}`;
+        files.set(`${projectKey}/${issueId}/${fileName}`, Buffer.from(data));
+        const entry: StoredAttachment = { fileName, byteLength: data.byteLength, createdAt: NOW };
+        const key = `${projectKey}/${issueId}`;
+        byIssue.set(key, [...(byIssue.get(key) ?? []), entry]);
+        return entry;
+      },
+      async list(projectKey, issueId) {
+        return byIssue.get(`${projectKey}/${issueId}`) ?? [];
+      },
+      async read(projectKey, issueId, fileName) {
+        return files.get(`${projectKey}/${issueId}/${fileName}`);
+      },
+      async delete(projectKey, issueId, fileName) {
+        await tick();
+        const key = `${projectKey}/${issueId}/${fileName}`;
+        if (!files.has(key)) return false;
+        files.delete(key);
+        const issueKeyLocal = `${projectKey}/${issueId}`;
+        byIssue.set(
+          issueKeyLocal,
+          (byIssue.get(issueKeyLocal) ?? []).filter((entry) => entry.fileName !== fileName),
+        );
+        return true;
+      },
+    };
+    const app = createApp({ storage });
+
+    const uploadAttempts = 5;
+    const [deleteRes, ...uploadResponses] = await Promise.all([
+      app.request(
+        `/api/tickets/bdboard-1/attachments/${seed[0]?.fileName}`,
+        withLocalHost({ method: 'DELETE' }),
+        LOCAL_ENV,
+      ),
+      ...Array.from({ length: uploadAttempts }, () =>
+        app.request(
+          '/api/tickets/bdboard-1/attachments',
+          withLocalHost({
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ mimeType: 'image/png', data: PNG_BASE64 }),
+          }),
+          LOCAL_ENV,
+        ),
+      ),
+    ]);
+
+    expect(deleteRes.status).toBe(200);
+    const created = uploadResponses.filter((res) => res.status === 201);
+    const limitReached = uploadResponses.filter((res) => res.status === 409);
+    // Exactly one slot opened up (the delete), so at most one upload may succeed.
+    expect(created).toHaveLength(1);
+    expect(limitReached).toHaveLength(uploadAttempts - 1);
 
     const finalList = await storage.list(toProjectAttachmentKey('/tmp/p'), 'bdboard-1');
     expect(finalList).toHaveLength(ATTACHMENT_MAX_COUNT_PER_TICKET);
