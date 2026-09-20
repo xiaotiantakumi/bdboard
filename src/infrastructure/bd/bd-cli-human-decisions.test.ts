@@ -8,6 +8,7 @@ import { BdError } from '../../application/ports/issue-repository.js';
 import {
   buildGateCloseReason,
   buildResponseCommentBody,
+  buildTicketAmbiguousGatesResponseCommentBody,
   buildTicketResponseCommentBody,
   buildUnknownKindResponseCommentBody,
   createBdCliHumanDecisions,
@@ -862,7 +863,7 @@ describe('createBdCliHumanDecisions', () => {
     expect(calls[2]?.args).not.toContain('--readonly');
   });
 
-  it('resolves open human gates blocking a work ticket before removing the human label (bdboard-vy0h)', async () => {
+  it('resolves the one open human gate blocking a work ticket before removing the human label (bdboard-vy0h)', async () => {
     const issueId = 'bdboard-task';
     const { runner, calls } = createFakeRunner({
       handler: showTaskWithDependenciesHandler(issueId, [
@@ -893,13 +894,6 @@ describe('createBdCliHumanDecisions', () => {
           status: 'open',
           dependency_type: 'discovered-from',
         },
-        {
-          id: 'bdboard-human-gate-2',
-          issue_type: 'gate',
-          await_type: 'human',
-          status: 'open',
-          dependency_type: 'blocks',
-        },
       ]),
     });
     const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
@@ -909,7 +903,7 @@ describe('createBdCliHumanDecisions', () => {
     expect(outcome).toEqual({
       kind: 'ticket',
       closed: false,
-      resolvedGateIds: ['bdboard-human-gate-1', 'bdboard-human-gate-2'],
+      resolvedGateIds: ['bdboard-human-gate-1'],
     });
     expect(calls).toEqual([
       {
@@ -925,11 +919,6 @@ describe('createBdCliHumanDecisions', () => {
       {
         command: '/usr/bin/bd',
         args: expectedGateResolveArgs('/my/root', 'bdboard-human-gate-1', 'A案を採用'),
-        options: { timeoutMs: 30_000 },
-      },
-      {
-        command: '/usr/bin/bd',
-        args: expectedGateResolveArgs('/my/root', 'bdboard-human-gate-2', 'A案を採用'),
         options: { timeoutMs: 30_000 },
       },
       {
@@ -952,7 +941,90 @@ describe('createBdCliHumanDecisions', () => {
     ).toBe(false);
   });
 
-  it('stops resolving further gates and does not remove the label when a gate resolve fails (bdboard-vy0h)', async () => {
+  it('does not resolve any gate or remove the label when two distinct open human gates block the ticket (bdboard-q1k9)', async () => {
+    const issueId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: showTaskWithDependenciesHandler(issueId, [
+        {
+          id: 'bdboard-human-gate-1',
+          issue_type: 'gate',
+          await_type: 'human',
+          status: 'open',
+          dependency_type: 'blocks',
+        },
+        {
+          id: 'bdboard-human-gate-2',
+          issue_type: 'gate',
+          await_type: 'human',
+          status: 'open',
+          dependency_type: 'blocks',
+        },
+      ]),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({
+      kind: 'ticket',
+      closed: false,
+      ambiguousGateIds: ['bdboard-human-gate-1', 'bdboard-human-gate-2'],
+    });
+    // Deliberately does NOT reuse buildResponseCommentBody's kind/count selector here
+    // (that would make the assertion self-referential and blind to a wrong '> 1'
+    // threshold in the production selector). Instead it builds the expected comment
+    // straight from the ambiguous-body builder, so a regression in the selector logic
+    // shows up as a call-args mismatch.
+    expect(calls).toEqual([
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowArgs('/my/root', issueId),
+        options: { timeoutMs: 5_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: [
+          '-C',
+          '/my/root',
+          'comment',
+          issueId,
+          buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+            'bdboard-human-gate-1',
+            'bdboard-human-gate-2',
+          ]),
+        ],
+        options: { timeoutMs: 30_000 },
+      },
+    ]);
+    // Neither gate is resolved and the human label is never touched — the answer is
+    // recorded as a comment only, and both tickets stay in the pending-decision lane.
+    expect(calls.some((call) => call.args.includes('gate') && call.args.includes('resolve'))).toBe(
+      false,
+    );
+    expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
+    expect(
+      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+        'bdboard-human-gate-1',
+        'bdboard-human-gate-2',
+      ]),
+    ).toContain('どの質問への回答か特定できない');
+    // The comment must name the actual blocked gates, not just a count, so the
+    // responder knows which cards to open (review finding bdboard-q1k9/PR#513).
+    expect(
+      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+        'bdboard-human-gate-1',
+        'bdboard-human-gate-2',
+      ]),
+    ).toContain('bdboard-human-gate-1');
+    expect(
+      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+        'bdboard-human-gate-1',
+        'bdboard-human-gate-2',
+      ]),
+    ).toContain('bdboard-human-gate-2');
+  });
+
+  it('does not remove the label when the single blocking gate resolve fails (bdboard-vy0h)', async () => {
     const issueId = 'bdboard-task';
     const { runner, calls } = createFakeRunner({
       handler: async (_command: string, args: readonly string[]) => {
@@ -965,13 +1037,6 @@ describe('createBdCliHumanDecisions', () => {
                 dependencies: [
                   {
                     id: 'bdboard-human-gate-1',
-                    issue_type: 'gate',
-                    await_type: 'human',
-                    status: 'open',
-                    dependency_type: 'blocks',
-                  },
-                  {
-                    id: 'bdboard-human-gate-2',
                     issue_type: 'gate',
                     await_type: 'human',
                     status: 'open',
@@ -995,9 +1060,9 @@ describe('createBdCliHumanDecisions', () => {
     await expect(port.respond('/my/root', issueId, 'A案を採用')).rejects.toMatchObject({
       kind: 'lock-contention',
     } satisfies Partial<BdError>);
-    // show, comment, then only the first gate resolve attempt — no second gate resolve
-    // and no label removal once a gate resolve fails (fail-safe: don't leave the label
-    // removed while a blocking gate is still open).
+    // show, comment, then the (failing) gate resolve attempt — no label removal once
+    // the gate resolve fails (fail-safe: don't leave the label removed while a
+    // blocking gate is still open).
     expect(calls).toHaveLength(3);
     expect(calls[2]?.args).toEqual(
       expectedGateResolveArgs('/my/root', 'bdboard-human-gate-1', 'A案を採用'),

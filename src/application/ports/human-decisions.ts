@@ -24,6 +24,13 @@ export interface RespondOutcome {
    * しているため、この清掃だけを理由に respond() 全体を失敗させない)。
    */
   readonly clearedHumanLabelTicketIds?: readonly string[];
+  /**
+   * kind === 'ticket' のときだけ設定される。このチケットをブロックしている open な
+   * human gate が2件以上あり、どの gate への回答か特定できなかったために、どの gate も
+   * resolve せず・human ラベルも外さなかった場合の、その gate ID 一覧(bdboard-q1k9)。
+   * 1件以下の場合は resolvedGateIds 側で処理され、この項目は設定されない。
+   */
+  readonly ambiguousGateIds?: readonly string[];
 }
 
 export interface PendingDecisionOption {

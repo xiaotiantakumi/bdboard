@@ -188,6 +188,24 @@ function buildTicketResponseCommentBody(responseText: string): string {
 (timer/gh:run/gh:pr)は対象外です。)`;
 }
 
+// bdboard-q1k9: 1チケットに独立した質問を表す open な human gate が2件以上ぶら下がって
+// いる場合、作業チケット側への1回answerで全部を同じ理由でresolveすると、回答していない
+// 質問まで同じ回答で閉じてしまう。安全側に倒し、この場合はどの gate も resolve せず・
+// human ラベルも外さない(確認待ちのまま残す)。
+function buildTicketAmbiguousGatesResponseCommentBody(
+  responseText: string,
+  blockingHumanGateIds: readonly string[],
+): string {
+  const gateList = blockingHumanGateIds.map((id) => `- ${id}`).join('\n');
+  return `${buildGateResponseCommentBody(responseText)}
+
+(bdboard: 確認待ちへの回答として記録しましたが、このチケットをブロックしている open な
+human gate が${blockingHumanGateIds.length}件あり、どの質問への回答か特定できないため、gate の
+resolve と human ラベルの解除は行っていません。確認待ちのまま残ります。以下の gate カードを
+個別に開いて、それぞれの質問に回答してください。
+${gateList})`;
+}
+
 function buildUnknownKindResponseCommentBody(responseText: string): string {
   return `${buildGateResponseCommentBody(responseText)}
 
@@ -198,12 +216,15 @@ close も human ラベルの解除も行っていません。確認待ちのま�
 function buildResponseCommentBody(
   responseText: string,
   kind: ResolvedDecisionKind,
+  blockingHumanGateIds: readonly string[] = [],
 ): string {
   if (kind === 'gate') {
     return buildGateResponseCommentBody(responseText);
   }
   if (kind === 'ticket') {
-    return buildTicketResponseCommentBody(responseText);
+    return blockingHumanGateIds.length > 1
+      ? buildTicketAmbiguousGatesResponseCommentBody(responseText, blockingHumanGateIds)
+      : buildTicketResponseCommentBody(responseText);
   }
   return buildUnknownKindResponseCommentBody(responseText);
 }
@@ -213,13 +234,14 @@ function buildAddResponseCommentArgs(
   issueId: string,
   responseText: string,
   kind: ResolvedDecisionKind,
+  blockingHumanGateIds: readonly string[] = [],
 ): readonly string[] {
   return [
     '-C',
     rootPath,
     'comment',
     issueId,
-    buildResponseCommentBody(responseText, kind),
+    buildResponseCommentBody(responseText, kind, blockingHumanGateIds),
   ];
 }
 
@@ -748,9 +770,15 @@ export function createBdCliHumanDecisions(
         issueId,
       );
 
+      // bdboard-q1k9: 独立した質問を表す open な human gate が2件以上あると、
+      // 1つの回答テキストで全部を resolve してしまうと回答していない質問まで
+      // 閉じてしまう。この場合はコメントの文面を変え、どの gate も resolve せず・
+      // human ラベルも外さない(下の分岐で resolvedGateIds は返さず ambiguousGateIds を返す)。
+      const isAmbiguousTicketAnswer = kind === 'ticket' && blockingHumanGateIds.length > 1;
+
       const commentResult = await commandRunner.run(
         bdPath,
-        buildAddResponseCommentArgs(rootPath, issueId, responseText, kind),
+        buildAddResponseCommentArgs(rootPath, issueId, responseText, kind, blockingHumanGateIds),
         { timeoutMs },
       );
 
@@ -827,13 +855,18 @@ export function createBdCliHumanDecisions(
           ...(clearedHumanLabelTicketIds.length > 0 ? { clearedHumanLabelTicketIds } : {}),
         };
       } else if (kind === 'ticket') {
+        if (isAmbiguousTicketAnswer) {
+          return { kind, closed: false, ambiguousGateIds: blockingHumanGateIds };
+        }
+
         // ブロックしている human gate を先に resolve してから human ラベルを外す。
         // 逆順(先にラベルだけ外す)だと、gate resolve が失敗したときに「確認待ち
         // レーンから消えたのに実は bd ready からブロックされたまま」という、
         // まさにこのチケット(bdboard-vy0h)の元バグと同じ形の中途半端な状態が
         // 残ってしまう。filterBlockingHumanGateIds が human/open/blocks だけに
         // 絞っているので、ここで timer/gh:run/gh:pr 等の gate を誤って resolve
-        // することはない。
+        // することはない。isAmbiguousTicketAnswer で 2 件以上は上で早期 return
+        // しているので、ここに来る時点で blockingHumanGateIds は高々 1 件。
         const resolvedGateIds: string[] = [];
         for (const gateId of blockingHumanGateIds) {
           const gateResolveResult = await commandRunner.run(
@@ -892,6 +925,7 @@ export function createBdCliHumanDecisions(
 export {
   buildGateCloseReason,
   buildResponseCommentBody,
+  buildTicketAmbiguousGatesResponseCommentBody,
   buildTicketResponseCommentBody,
   buildUnknownKindResponseCommentBody,
   parseShowStdoutForKind,
