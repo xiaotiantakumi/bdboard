@@ -9,6 +9,12 @@ export type ResolvedDecisionKind = PendingDecisionKind | 'unknown';
 export interface RespondOutcome {
   readonly kind: ResolvedDecisionKind;
   readonly closed: boolean;
+  /**
+   * kind === 'ticket' のときだけ設定される。respond() が追加で resolve した、
+   * このチケットをブロックしていた open な human gate の ID 一覧(bdboard-vy0h)。
+   * 空配列は「ブロックしている human gate が無かった」ことを表す。
+   */
+  readonly resolvedGateIds?: readonly string[];
 }
 
 export interface PendingDecisionOption {
