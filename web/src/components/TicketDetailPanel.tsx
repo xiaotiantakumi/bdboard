@@ -27,7 +27,6 @@ import {
   type AgentRunDetailDto,
   type AgentRunNextStepDto,
   type QuickActionRequest,
-  LANE_LABELS,
 } from '../api';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -104,6 +103,8 @@ import { useTicketDependencies } from './ticket-detail/useTicketDependencies';
 import { TicketDependenciesSection } from './ticket-detail/TicketDependenciesSection';
 import { TicketModelsSection } from './ticket-detail/TicketModelsSection';
 import { TicketUsageSection } from './ticket-detail/TicketUsageSection';
+import { TicketChildrenSection } from './ticket-detail/TicketChildrenSection';
+import { TicketBdCommandSection } from './ticket-detail/TicketBdCommandSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -1057,31 +1058,12 @@ export function TicketDetailPanel({
                 </div>
               </div>
             )}
-            {data.children.length > 0 && (
-              <div className="detail-section">
-                <h3>子チケット</h3>
-                <ul className="detail-list">
-                  {data.children.map((child) => (
-                    <li key={child.id}>
-                      <TicketIdLink
-                        id={child.id}
-                        isTicketOnBoard={isTicketOnBoard}
-                        onOpenTicket={onOpenTicket}
-                      />{' '}
-                      <span>{child.title}</span>{' '}
-                      <span className="badge">{LANE_LABELS[child.lane]}</span>
-                    </li>
-                  ))}
-                </ul>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  onClick={() => onFilterByEpic(data.id)}
-                >
-                  このエピックのみ表示
-                </button>
-              </div>
-            )}
+            <TicketChildrenSection
+              children={data.children}
+              isTicketOnBoard={isTicketOnBoard}
+              onOpenTicket={onOpenTicket}
+              onFilterByEpic={() => onFilterByEpic(data.id)}
+            />
             <TicketInFlightOverlapsSection
               enabled={inFlightOverlapsEnabled}
               error={inFlightOverlapsError}
@@ -1762,38 +1744,13 @@ export function TicketDetailPanel({
                 </div>
               )}
             </div>
-            <div className="detail-section">
-              <h3>bdコマンド</h3>
-              <p className="detail-help">
-                クリップボードにコピーしてターミナルで実行できます
-              </p>
-              <div className="bd-command-actions">
-                {BD_COMMAND_DEFINITIONS.map(({ kind, label }) => {
-                  const command = buildBdCommand(kind, data.id, projectRootPath);
-                  const showSuccess =
-                    copyFeedback?.kind === 'success' &&
-                    copyFeedback.command === kind;
-
-                  return (
-                    <button
-                      key={kind}
-                      type="button"
-                      className="btn bd-command-btn"
-                      onClick={() => void handleCopyCommand(kind)}
-                      aria-label={`${label}コマンドをコピー: ${command}`}
-                    >
-                      {showSuccess ? 'コピーしました' : label}
-                    </button>
-                  );
-                })}
-              </div>
-              {copyFeedback?.kind === 'error' && (
-                <p className="error-message">コピーできませんでした</p>
-              )}
-              <p className="sr-only" aria-live="polite">
-                {ariaLiveMessage}
-              </p>
-            </div>
+            <TicketBdCommandSection
+              ticketId={data.id}
+              projectRootPath={projectRootPath}
+              copyFeedback={copyFeedback}
+              ariaLiveMessage={ariaLiveMessage}
+              onCopyCommand={(kind) => void handleCopyCommand(kind)}
+            />
           </>
         )}
       </div>
