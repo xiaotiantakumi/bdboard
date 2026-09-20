@@ -45,9 +45,12 @@ bd label add <id> human
 # → 回答を待たずに次の ready へ進む
 ```
 
-回答が来たら: gate が resolve されているのを確認 → `bd show <gate-id>` で回答コメントを
-読む → `bd label remove <id> human` → gate 本文の「回答後の再開手順」に書いた地点から
-作業を再開する（作業チケットは close しない — close はマージ成功後だけ、SKILL.md 規律4）。
+回答が来たら: bdboard の確認待ちレーンは gate と作業チケットの両方をカードとして出すため、
+**回答がどちらに付くかは固定されない**（作業チケット側で回答されると gate は自動では
+resolve されない — bdboard-vy0h）。`bd show <gate-id>` と `bd show <id>` の**両方**を見て
+回答コメントを探す → gate がまだ open なら `bd gate resolve <gate-id>` する → `bd label
+remove <id> human` → gate 本文の「回答後の再開手順」に書いた地点から作業を再開する
+（作業チケットは close しない — close はマージ成功後だけ、SKILL.md 規律4）。
 
 ## 質問が変わったとき — 訂正コメントを積まない、gate 本体を全文書き換える
 
