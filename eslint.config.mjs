@@ -29,7 +29,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/infrastructure/bd/bd-cli-human-decisions.ts': 770, // 現在 762
   'src/infrastructure/cache/sqlite-board-cache.ts': 750, // 現在 749
   'web/src/components/ThroughputStats.tsx': 740, // 現在 740
-  'src/interface/http/chat-routes.ts': 730, // 現在 730
   'src/infrastructure/git/git-worktree-provisioner.ts': 690, // 現在 690
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'src/domain/harness-contract.ts': 650, // 現在 646
