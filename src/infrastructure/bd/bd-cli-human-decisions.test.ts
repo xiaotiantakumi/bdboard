@@ -13,6 +13,7 @@ import {
   createBdCliHumanDecisions,
   parseShowStdoutForKind,
   resolveKind,
+  resolveKindAndBlockingGates,
 } from './bd-cli-human-decisions.js';
 
 const expectedListArgs = (rootPath: string): readonly string[] => [
@@ -102,6 +103,20 @@ const expectedRemoveHumanLabelArgs = (
   issueId: string,
 ): readonly string[] => ['-C', rootPath, 'label', 'remove', issueId, 'human'];
 
+const expectedGateResolveArgs = (
+  rootPath: string,
+  gateId: string,
+  responseText: string,
+): readonly string[] => [
+  '-C',
+  rootPath,
+  'gate',
+  'resolve',
+  gateId,
+  '--reason',
+  buildGateCloseReason(responseText),
+];
+
 interface FakeRunnerOptions {
   readonly handler?: (
     command: string,
@@ -163,6 +178,22 @@ function showTaskHandler(issueId: string) {
     if (args.includes('show')) {
       return {
         stdout: JSON.stringify([{ id: issueId, issue_type: 'task' }]),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  };
+}
+
+function showTaskWithDependenciesHandler(
+  issueId: string,
+  dependencies: readonly Record<string, unknown>[],
+) {
+  return async (_command: string, args: readonly string[]) => {
+    if (args.includes('show')) {
+      return {
+        stdout: JSON.stringify([{ id: issueId, issue_type: 'task', dependencies }]),
         stderr: '',
         exitCode: 0,
       };
@@ -619,7 +650,7 @@ describe('createBdCliHumanDecisions', () => {
 
     const outcome = await port.respond('/my/root', issueId, 'A案を採用');
 
-    expect(outcome).toEqual({ kind: 'ticket', closed: false });
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, resolvedGateIds: [] });
     expect(calls).toEqual([
       {
         command: '/usr/bin/bd',
@@ -638,12 +669,155 @@ describe('createBdCliHumanDecisions', () => {
       },
     ]);
     expect(calls.some((call) => call.args.includes('close'))).toBe(false);
-    expect(buildTicketResponseCommentBody('A案を採用')).toContain('close せず');
+    expect(buildTicketResponseCommentBody('A案を採用')).toContain('close はせず');
     // respond の書き込み呼び出し(comment / label remove)は --readonly を付けない。
     // 先頭の show 呼び出しだけは読み取り専用なので --readonly を付ける。
     expect(calls[0]?.args).toContain('--readonly');
     expect(calls[1]?.args).not.toContain('--readonly');
     expect(calls[2]?.args).not.toContain('--readonly');
+  });
+
+  it('resolves open human gates blocking a work ticket before removing the human label (bdboard-vy0h)', async () => {
+    const issueId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: showTaskWithDependenciesHandler(issueId, [
+        {
+          id: 'bdboard-timer-gate',
+          issue_type: 'gate',
+          await_type: 'timer',
+          status: 'open',
+          dependency_type: 'blocks',
+        },
+        {
+          id: 'bdboard-human-gate-1',
+          issue_type: 'gate',
+          await_type: 'human',
+          status: 'open',
+          dependency_type: 'blocks',
+        },
+        {
+          id: 'bdboard-human-gate-closed',
+          issue_type: 'gate',
+          await_type: 'human',
+          status: 'closed',
+          dependency_type: 'blocks',
+        },
+        {
+          id: 'bdboard-discovered-from',
+          issue_type: 'task',
+          status: 'open',
+          dependency_type: 'discovered-from',
+        },
+        {
+          id: 'bdboard-human-gate-2',
+          issue_type: 'gate',
+          await_type: 'human',
+          status: 'open',
+          dependency_type: 'blocks',
+        },
+      ]),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({
+      kind: 'ticket',
+      closed: false,
+      resolvedGateIds: ['bdboard-human-gate-1', 'bdboard-human-gate-2'],
+    });
+    expect(calls).toEqual([
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowArgs('/my/root', issueId),
+        options: { timeoutMs: 5_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedTicketResponseCommentArgs('/my/root', issueId, 'A案を採用'),
+        options: { timeoutMs: 30_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedGateResolveArgs('/my/root', 'bdboard-human-gate-1', 'A案を採用'),
+        options: { timeoutMs: 30_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedGateResolveArgs('/my/root', 'bdboard-human-gate-2', 'A案を採用'),
+        options: { timeoutMs: 30_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedRemoveHumanLabelArgs('/my/root', issueId),
+        options: { timeoutMs: 30_000 },
+      },
+    ]);
+    // timer gate, the already-closed human gate, and the non-blocking discovered-from
+    // dependency must never be resolved.
+    expect(
+      calls.some(
+        (call) =>
+          call.args.includes('gate') &&
+          call.args.includes('resolve') &&
+          (call.args.includes('bdboard-timer-gate') ||
+            call.args.includes('bdboard-human-gate-closed') ||
+            call.args.includes('bdboard-discovered-from')),
+      ),
+    ).toBe(false);
+  });
+
+  it('stops resolving further gates and does not remove the label when a gate resolve fails (bdboard-vy0h)', async () => {
+    const issueId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command: string, args: readonly string[]) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: issueId,
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: 'bdboard-human-gate-1',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                  {
+                    id: 'bdboard-human-gate-2',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args.includes('gate') && args.includes('resolve')) {
+          return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner);
+
+    await expect(port.respond('/my/root', issueId, 'A案を採用')).rejects.toMatchObject({
+      kind: 'lock-contention',
+    } satisfies Partial<BdError>);
+    // show, comment, then only the first gate resolve attempt — no second gate resolve
+    // and no label removal once a gate resolve fails (fail-safe: don't leave the label
+    // removed while a blocking gate is still open).
+    expect(calls).toHaveLength(3);
+    expect(calls[2]?.args).toEqual(
+      expectedGateResolveArgs('/my/root', 'bdboard-human-gate-1', 'A案を採用'),
+    );
+    expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
   });
 
   it('records a comment but does not close or remove label when kind is unknown', async () => {
@@ -864,5 +1038,173 @@ describe('resolveKind', () => {
     expect(showAttempts).toBe(1);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.options).toEqual({ timeoutMs: 5_000 });
+  });
+});
+
+// bdboard-vy0h: resolveKind の kind 判定と、respond() が実際に使う
+// blockingHumanGateIds の両方を、同じ 1 回の bd show 呼び出しから正しく取り出せることを
+// 直接押さえる。
+describe('resolveKindAndBlockingGates', () => {
+  it('returns blockingHumanGateIds filtered to open human blocks gates for a ticket', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: 'bdboard-timer',
+                    issue_type: 'gate',
+                    await_type: 'timer',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                  {
+                    id: 'bdboard-human-open',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: ['bdboard-human-open'],
+    });
+  });
+
+  it('returns an empty blockingHumanGateIds for a gate (blocking gates are only tracked for tickets)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([{ id: 'bdboard-gate', issue_type: 'gate' }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-gate');
+
+    expect(result).toEqual({ kind: 'gate', blockingHumanGateIds: [] });
+  });
+
+  // bdboard-vy0h レビュー指摘: dependencies の形が想定外でも kind 判定を道連れにしない。
+  // bdShowItemSchema は dependencies を z.unknown() で受けるので、1件の不正な要素や
+  // 配列そのものが壊れていても 'unknown' に倒れるのは kind ではなく該当要素の除外だけで
+  // あることを直接押さえる。
+  it('keeps kind=ticket and skips only malformed dependency entries when dependencies has an unexpected shape', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [
+                  // bd list --json 由来の生 dependency レコード形(id が無い)。
+                  { issue_id: 'bdboard-x', depends_on_id: 'bdboard-y', type: 'parent-child' },
+                  null,
+                  'not-an-object',
+                  {
+                    id: 'bdboard-human-open',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: ['bdboard-human-open'],
+    });
+  });
+
+  it('keeps kind=ticket with no blocking gates when dependencies itself is null instead of an array', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              { id: 'bdboard-probe', issue_type: 'task', dependencies: null },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
+  });
+
+  // dependency_type と issue_type/await_type の条件が独立に効いていることを確認する
+  // (bdboard-vy0h レビュー指摘: 既存の discovered-from フィクスチャは issue_type が
+  // 'task' で dependency_type 条件だけを単離していなかった)。
+  it('excludes an open human gate whose dependency_type is not blocks (e.g. related)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: 'bdboard-related-human-gate',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'related',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
   });
 });

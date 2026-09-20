@@ -46,9 +46,60 @@ export const bdGateListItemSchema = z.object({
   metadata: z.record(z.unknown()).optional(),
 });
 
+// bd show --json の dependencies[] 各要素。作業チケットをブロックしている open な
+// human gate を見つけるために使う (bdboard-vy0h)。dependency_type は 'blocks' 以外にも
+// 'discovered-from' / 'related' 等が混在しうるので、'blocks' だけを対象にする。
+const bdShowDependencySchema = z.object({
+  id: z.string(),
+  issue_type: z.string().optional(),
+  await_type: z.string().optional(),
+  status: z.string().optional(),
+  dependency_type: z.string().optional(),
+});
+
+// bdboard-vy0h レビュー指摘: dependencies を bdShowItemSchema に厳密な配列型として
+// 混ぜると、bd の別コマンド(`bd list --json` の生 dependency レコード等)が将来
+// 混入した場合や 1 件でも想定外の形の要素が来た場合に item 全体の safeParse が
+// 失敗し、kind 判定まで 'unknown' に道連れで倒れてしまう(=ラベルも gate も一切
+// 触らなくなり、この PR が直そうとしているバグより悪化する)。kind 判定は
+// issue_type だけに依存させ、dependencies は unknown のまま受け取って要素ごとに
+// safeParse する(parseListStdout / parseGateListStdout と同じ「1件の不正で
+// 全体を隠さない」方針)。
 const bdShowItemSchema = z.object({
   issue_type: z.string().optional(),
+  dependencies: z.unknown().optional(),
 });
+
+// 作業チケットの dependencies[] のうち、respond() が resolve してよい対象だけを絞り込む。
+// 要素ごとに safeParse し、1件でも形が崩れていれば「その要素だけ」スキップする
+// (dependencies 全体の形が想定外でも kind 判定には影響させない)。
+// - dependency_type === 'blocks': このチケットをブロックしている依存だけ(discovered-from 等を除く)
+// - issue_type === 'gate' かつ await_type === 'human': human gate 以外 (timer/gh:run/gh:pr) は絶対に触らない
+// - status === 'open': 既に閉じている gate は対象外(冪等な再実行で二重に触らない)
+function filterBlockingHumanGateIds(dependencies: unknown): readonly string[] {
+  if (!Array.isArray(dependencies)) {
+    return [];
+  }
+
+  const ids: string[] = [];
+  for (const rawDep of dependencies) {
+    const depResult = bdShowDependencySchema.safeParse(rawDep);
+    if (!depResult.success) {
+      continue;
+    }
+    const dep = depResult.data;
+    if (
+      dep.dependency_type === 'blocks' &&
+      dep.issue_type === 'gate' &&
+      dep.await_type === 'human' &&
+      dep.status === 'open'
+    ) {
+      ids.push(dep.id);
+    }
+  }
+
+  return ids;
+}
 
 function buildListArgs(rootPath: string): readonly string[] {
   return [
@@ -81,7 +132,9 @@ function buildGateResponseCommentBody(responseText: string): string {
 function buildTicketResponseCommentBody(responseText: string): string {
   return `${buildGateResponseCommentBody(responseText)}
 
-(bdboard: 確認待ちへの回答として記録しました。作業チケットのため close せず、human ラベルのみ解除しています。)`;
+(bdboard: 確認待ちへの回答として記録しました。作業チケットのため close はせず、human ラベルと、
+このチケットをブロックしている open な human gate(あれば)を解除します。human 以外の gate
+(timer/gh:run/gh:pr)は対象外です。)`;
 }
 
 function buildUnknownKindResponseCommentBody(responseText: string): string {
@@ -163,6 +216,27 @@ function buildRemoveHumanLabelArgs(
   issueId: string,
 ): readonly string[] {
   return ['-C', rootPath, 'label', 'remove', issueId, 'human'];
+}
+
+// 作業チケットをブロックしている open な human gate を resolve する。
+// `bd gate resolve` は `bd close <gate-id>` と等価(gate --help より)だが、
+// gate 種別に応じた前提チェック(誤って human 以外を resolve していないか)は
+// 呼び出し側(filterBlockingHumanGateIds)で担保する。reason は close/gate 双方で
+// 同じ整形(buildGateCloseReason: 制御文字除去 + 200 コードポイント切り詰め)を使う。
+function buildGateResolveArgs(
+  rootPath: string,
+  gateId: string,
+  responseText: string,
+): readonly string[] {
+  return [
+    '-C',
+    rootPath,
+    'gate',
+    'resolve',
+    gateId,
+    '--reason',
+    buildGateCloseReason(responseText),
+  ];
 }
 
 function parseAllowFreeform(value: unknown): boolean {
@@ -255,29 +329,49 @@ function mapListItemToPendingDecision(
   };
 }
 
-function parseShowStdoutForKind(stdout: string): ResolvedDecisionKind {
+interface ShowKindAndBlockingGates {
+  readonly kind: ResolvedDecisionKind;
+  readonly blockingHumanGateIds: readonly string[];
+}
+
+// `bd show <id> --json` の stdout から種別(gate/ticket/unknown)と、作業チケットの場合に
+// それをブロックしている open な human gate の ID 一覧を読み取る (bdboard-vy0h)。
+// kind の判定は issue_type だけを見る従来の parseShowStdoutForKind と完全に同じであり、
+// dependencies の形が想定外でも kind 判定には影響しない(filterBlockingHumanGateIds が
+// 要素ごとに safeParse するため。壊れた/想定外の stdout は常に 'unknown' に倒す fail-safe)。
+function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
   const trimmedStdout = stdout.trim();
   if (trimmedStdout.length === 0) {
-    return 'unknown';
+    return { kind: 'unknown', blockingHumanGateIds: [] };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmedStdout) as unknown;
   } catch {
-    return 'unknown';
+    return { kind: 'unknown', blockingHumanGateIds: [] };
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    return 'unknown';
+    return { kind: 'unknown', blockingHumanGateIds: [] };
   }
 
   const itemResult = bdShowItemSchema.safeParse(parsed[0]);
   if (!itemResult.success) {
-    return 'unknown';
+    return { kind: 'unknown', blockingHumanGateIds: [] };
   }
 
-  return itemResult.data.issue_type === 'gate' ? 'gate' : 'ticket';
+  const kind = itemResult.data.issue_type === 'gate' ? 'gate' : 'ticket';
+  const blockingHumanGateIds =
+    kind === 'ticket' ? filterBlockingHumanGateIds(itemResult.data.dependencies) : [];
+
+  return { kind, blockingHumanGateIds };
+}
+
+// bdboard-xgvh レビュー指摘で追加されたテストが直接参照する。fail-safe の中核(gate と
+// 判定できたときだけ close する)なので kind 判定だけを取り出す薄いラッパーとして残す。
+function parseShowStdoutForKind(stdout: string): ResolvedDecisionKind {
+  return parseShowStdout(stdout).kind;
 }
 
 function parseListStdout(stdout: string): readonly PendingDecision[] {
@@ -421,12 +515,12 @@ async function runBdCommandOrThrow(
   return result;
 }
 
-async function resolveKind(
+async function resolveKindAndBlockingGates(
   commandRunner: CommandRunner,
   bdPath: string,
   rootPath: string,
   issueId: string,
-): Promise<ResolvedDecisionKind> {
+): Promise<ShowKindAndBlockingGates> {
   try {
     const result = await withLockContentionRetry(
       async () => {
@@ -455,13 +549,24 @@ async function resolveKind(
     );
 
     if (result === null) {
-      return 'unknown';
+      return { kind: 'unknown', blockingHumanGateIds: [] };
     }
 
-    return parseShowStdoutForKind(result.stdout);
+    return parseShowStdout(result.stdout);
   } catch {
-    return 'unknown';
+    return { kind: 'unknown', blockingHumanGateIds: [] };
   }
+}
+
+// テストと外部呼び出しが従来の「kind だけ返す」契約に依存しているため薄いラッパーとして残す。
+async function resolveKind(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  rootPath: string,
+  issueId: string,
+): Promise<ResolvedDecisionKind> {
+  const result = await resolveKindAndBlockingGates(commandRunner, bdPath, rootPath, issueId);
+  return result.kind;
 }
 
 export function createBdCliHumanDecisions(
@@ -517,7 +622,7 @@ export function createBdCliHumanDecisions(
       issueId: string,
       responseText: string,
     ): Promise<RespondOutcome> {
-      const kind = await resolveKind(
+      const { kind, blockingHumanGateIds } = await resolveKindAndBlockingGates(
         commandRunner,
         bdPath,
         rootPath,
@@ -557,6 +662,39 @@ export function createBdCliHumanDecisions(
           );
         }
       } else if (kind === 'ticket') {
+        // ブロックしている human gate を先に resolve してから human ラベルを外す。
+        // 逆順(先にラベルだけ外す)だと、gate resolve が失敗したときに「確認待ち
+        // レーンから消えたのに実は bd ready からブロックされたまま」という、
+        // まさにこのチケット(bdboard-vy0h)の元バグと同じ形の中途半端な状態が
+        // 残ってしまう。filterBlockingHumanGateIds が human/open/blocks だけに
+        // 絞っているので、ここで timer/gh:run/gh:pr 等の gate を誤って resolve
+        // することはない。
+        const resolvedGateIds: string[] = [];
+        for (const gateId of blockingHumanGateIds) {
+          const gateResolveResult = await commandRunner.run(
+            bdPath,
+            buildGateResolveArgs(rootPath, gateId, responseText),
+            { timeoutMs },
+          );
+
+          if (gateResolveResult.exitCode !== 0) {
+            const combined =
+              `${gateResolveResult.stdout}\n${gateResolveResult.stderr}`.toLowerCase();
+            const errorKind = classifyBdError(gateResolveResult.exitCode, combined);
+            // fail-safe: 一部の gate だけ resolve できてラベルは剥がれていない状態で
+            // throw する。「ラベル解除だけ成功して gate が残った」を成功として
+            // 返さない(呼び出し元は human ラベルが付いたまま = 確認待ちのまま、と
+            // 見なせる)。
+            throw new BdError(
+              errorKind,
+              gateId,
+              combined.trim() || `exit code ${gateResolveResult.exitCode}`,
+            );
+          }
+
+          resolvedGateIds.push(gateId);
+        }
+
         const labelResult = await commandRunner.run(
           bdPath,
           buildRemoveHumanLabelArgs(rootPath, issueId),
@@ -572,6 +710,8 @@ export function createBdCliHumanDecisions(
             combined.trim() || `exit code ${labelResult.exitCode}`,
           );
         }
+
+        return { kind, closed: false, resolvedGateIds };
       }
       // kind === 'unknown': 迷ったら閉じないだけでなく、human ラベルも剥がさない。
       // 回答コメントだけ残し確認待ちのままにする(fail-safe)。
@@ -591,4 +731,5 @@ export {
   buildUnknownKindResponseCommentBody,
   parseShowStdoutForKind,
   resolveKind,
+  resolveKindAndBlockingGates,
 };

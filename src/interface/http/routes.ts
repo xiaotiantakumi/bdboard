@@ -1263,7 +1263,13 @@ export function createApiRoutes(deps: ApiDeps): Hono {
       await refreshAfterWrite(rootPath);
       return c.json({
         ok: true,
-        outcome: { kind: outcome.kind, closed: outcome.closed },
+        outcome: {
+          kind: outcome.kind,
+          closed: outcome.closed,
+          ...(outcome.resolvedGateIds !== undefined
+            ? { resolvedGateIds: outcome.resolvedGateIds }
+            : {}),
+        },
       });
     } catch (error: unknown) {
       return respondBdError(c, 'failed to respond', error);
