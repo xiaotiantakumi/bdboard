@@ -17,12 +17,9 @@ import {
   fetchSimilarTickets,
   fetchTicketInFlightOverlaps,
   postTicketDecision,
-  postTicketQuickAction,
-  postTicketQuickActionUndo,
   startTicketRun,
   type AgentRunDetailDto,
   type AgentRunNextStepDto,
-  type QuickActionRequest,
 } from '../api';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -41,20 +38,11 @@ import {
 import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { describeWriteError } from '../writeAccessMessage';
-import { planQuickActionUndo } from '../quickActionUndo';
 import { MarkdownContent } from './MarkdownContent';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
 import { TicketAttachments } from './TicketAttachments';
 import { useUndoSnackbar } from './UndoSnackbar';
-import {
-  computeDeferUntilDate,
-  DEFAULT_DEFER_PERIOD,
-  DEFER_PERIOD_OPTIONS,
-  isFutureLocalDate,
-  todayLocalDateInputValue,
-  type DeferPeriodKind,
-} from '../deferPeriods';
 
 import { COPY_FEEDBACK_MS } from './ticket-detail/constants';
 import {
@@ -62,14 +50,8 @@ import {
   type NextStepCopyTarget,
   type CopyDisplay,
   EMPTY_COPY_DISPLAY,
-  type ConfirmingQuickAction,
   type SubmittedDecision,
 } from './ticket-detail/types';
-import {
-  formatQuickActionConfirmTitle,
-  formatQuickActionConfirmDescription,
-  toQuickActionRequest,
-} from './ticket-detail/quickActionConfirm';
 import { formatDateTime } from './ticket-detail/formatters';
 import {
   AGENT_RUN_LOG_LOCAL_ONLY_HELP,
@@ -98,6 +80,8 @@ import { TicketBdCommandSection } from './ticket-detail/TicketBdCommandSection';
 import { useTicketComment } from './ticket-detail/useTicketComment';
 import { useTicketSessionLink } from './ticket-detail/useTicketSessionLink';
 import { TicketSessionLinkSection } from './ticket-detail/TicketSessionLinkSection';
+import { useTicketQuickActions } from './ticket-detail/useTicketQuickActions';
+import { TicketQuickActionsSection } from './ticket-detail/TicketQuickActionsSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -233,12 +217,7 @@ export function TicketDetailPanel({
     undefined,
   );
   const [freeformText, setFreeformText] = useState('');
-  const [confirmingQuickAction, setConfirmingQuickAction] =
-    useState<ConfirmingQuickAction | null>(null);
-  const [deferPeriodKind, setDeferPeriodKind] =
-    useState<DeferPeriodKind>(DEFAULT_DEFER_PERIOD);
-  const [customDeferDate, setCustomDeferDate] = useState('');
-  const [closeReason, setCloseReason] = useState('');
+  const quickActions = useTicketQuickActions(ticketId, data, undoSnackbar);
   const {
     titleEditing,
     titleDraft,
@@ -312,8 +291,6 @@ export function TicketDetailPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const cancelQuickActionRef = useRef<HTMLButtonElement>(null);
-  const quickActionConfirmRef = useRef<HTMLDivElement>(null);
   const cancelAgentRunConfirmRef = useRef<HTMLButtonElement>(null);
   const agentRunConfirmRef = useRef<HTMLDivElement>(null);
   const projectRootPath =
@@ -325,16 +302,14 @@ export function TicketDetailPanel({
     setFreeformText('');
   }, []);
 
+  const resetQuickActions = quickActions.reset;
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
     clearCopyDisplay();
     resetDecisionAnswer();
     if (options?.clearSubmittedDecision === true) {
       setSubmittedDecision(null);
     }
-    setConfirmingQuickAction(null);
-    setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
-    setCustomDeferDate('');
-    setCloseReason('');
+    resetQuickActions();
     resetComment();
     resetDependencies();
     resetLabelInput();
@@ -348,6 +323,7 @@ export function TicketDetailPanel({
     setSelectedHistoryRunId(null);
   }, [
     clearCopyDisplay,
+    resetQuickActions,
     resetComment,
     resetDecisionAnswer,
     resetDependencies,
@@ -365,21 +341,7 @@ export function TicketDetailPanel({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    enabled: confirmingQuickAction === null && !confirmingAgentRun,
-  });
-
-  const handleCancelQuickAction = useCallback(() => {
-    setConfirmingQuickAction(null);
-    setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
-    setCustomDeferDate('');
-    setCloseReason('');
-  }, []);
-
-  useFocusTrap({
-    containerRef: quickActionConfirmRef,
-    initialFocusRef: cancelQuickActionRef,
-    enabled: confirmingQuickAction !== null,
-    onEscape: handleCancelQuickAction,
+    enabled: quickActions.confirmingQuickAction === null && !confirmingAgentRun,
   });
 
   const handleCancelAgentRun = useCallback(() => {
@@ -667,76 +629,15 @@ export function TicketDetailPanel({
     resetDecision();
   }, [pendingDecision?.id, resetDecisionAnswer, resetDecision]);
 
-  const quickActionMutation = useMutation({
-    mutationFn: async (vars: {
-      request: QuickActionRequest;
-      previousPriority?: number;
-    }) => {
-      await postTicketQuickAction(ticketId, vars.request);
-      return vars;
-    },
-    onSuccess: async (vars) => {
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-      await queryClient.invalidateQueries({ queryKey: ['board'] });
-      setConfirmingQuickAction(null);
-      setCloseReason('');
-
-      // 誤操作からの復帰用にUndoスナックバーを出す(bdboard-3tw.69: 確認ダイアログの
-      // 代わりの事後Undo)。priority は実行前の値(vars.previousPriority)を
-      // handleConfirmQuickAction 側で確定当時の data.priority から渡している。
-      const plan = planQuickActionUndo(vars.request, vars.previousPriority);
-      if (plan !== null) {
-        undoSnackbar?.showUndo({
-          message: plan.message,
-          onUndo: async () => {
-            await postTicketQuickActionUndo(ticketId, plan.undoRequest);
-            await queryClient.invalidateQueries({
-              queryKey: ['ticket', ticketId],
-            });
-            await queryClient.invalidateQueries({ queryKey: ['board'] });
-          },
-        });
-      }
-    },
-  });
-
-  const handleConfirmQuickAction = useCallback(() => {
-    if (confirmingQuickAction === null) {
-      return;
-    }
-
-    quickActionMutation.mutate({
-      request: toQuickActionRequest(confirmingQuickAction, closeReason),
-      // priority のUndoは「実行前の値へ戻す」ため、確定操作の時点(=まだ古い値を
-      // 表示している data)から previousPriority を採取する。invalidate 後に
-      // data.priority を読むと新しい値になってしまうため、ここで確定させる。
-      ...(confirmingQuickAction.kind === 'priority' && data !== undefined
-        ? { previousPriority: data.priority }
-        : {}),
-    });
-  }, [closeReason, confirmingQuickAction, data, quickActionMutation]);
-
-  const canRaisePriority = data !== undefined && data.priority > 0;
-  const canLowerPriority = data !== undefined && data.priority < 4;
   const quickActionsDisabled =
-    quickActionMutation.isPending ||
-    confirmingQuickAction !== null ||
+    quickActions.mutationPending ||
+    quickActions.confirmingQuickAction !== null ||
     confirmingAgentRun ||
     startRunMutation.isPending;
   const agentRunActionsDisabled =
     startRunMutation.isPending ||
-    confirmingQuickAction !== null ||
+    quickActions.confirmingQuickAction !== null ||
     confirmingAgentRun;
-  const deferSubmitDisabled =
-    deferPeriodKind === 'custom' && !isFutureLocalDate(customDeferDate);
-
-  const handleDeferQuickAction = useCallback(() => {
-    const untilDate =
-      deferPeriodKind === 'custom'
-        ? customDeferDate
-        : computeDeferUntilDate(deferPeriodKind);
-    setConfirmingQuickAction({ kind: 'defer', untilDate });
-  }, [customDeferDate, deferPeriodKind]);
 
   return (
     <div
@@ -771,7 +672,7 @@ export function TicketDetailPanel({
               return;
             }
           }
-          if (confirmingQuickAction !== null || confirmingAgentRun) {
+          if (quickActions.confirmingQuickAction !== null || confirmingAgentRun) {
             return;
           }
           const textarea = commentTextareaRef.current;
@@ -1296,157 +1197,28 @@ export function TicketDetailPanel({
               canSubmit={canSubmitComment}
               mutation={commentMutation}
             />
-            <div className="detail-section">
-              <h3>クイックアクション</h3>
-              <p className="detail-help">
-                ローカル画面から bd コマンドを直接実行します(確認あり)
-              </p>
-              <div className="quick-action-buttons">
-                <button
-                  type="button"
-                  className="btn quick-action-btn"
-                  disabled={quickActionsDisabled}
-                  onClick={() => setConfirmingQuickAction({ kind: 'claim' })}
-                >
-                  着手
-                </button>
-                <button
-                  type="button"
-                  className="btn quick-action-btn"
-                  disabled={quickActionsDisabled}
-                  onClick={() => setConfirmingQuickAction({ kind: 'close' })}
-                >
-                  完了
-                </button>
-                <div className="quick-action-defer-group">
-                  <select
-                    aria-label="延期期間"
-                    value={deferPeriodKind}
-                    onChange={(event) =>
-                      setDeferPeriodKind(event.target.value as DeferPeriodKind)
-                    }
-                    disabled={quickActionsDisabled}
-                  >
-                    {DEFER_PERIOD_OPTIONS.map(({ kind, label }) => (
-                      <option key={kind} value={kind}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  {deferPeriodKind === 'custom' && (
-                    <input
-                      type="date"
-                      min={todayLocalDateInputValue()}
-                      value={customDeferDate}
-                      onChange={(event) => setCustomDeferDate(event.target.value)}
-                      disabled={quickActionsDisabled}
-                    />
-                  )}
-                  <button
-                    type="button"
-                    className="btn quick-action-btn"
-                    disabled={quickActionsDisabled || deferSubmitDisabled}
-                    onClick={handleDeferQuickAction}
-                  >
-                    延期
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  className="btn quick-action-btn"
-                  disabled={quickActionsDisabled || !canRaisePriority}
-                  onClick={() =>
-                    setConfirmingQuickAction({
-                      kind: 'priority',
-                      priority: Math.max(0, data.priority - 1),
-                    })
-                  }
-                >
-                  優先度を上げる
-                </button>
-                <button
-                  type="button"
-                  className="btn quick-action-btn"
-                  disabled={quickActionsDisabled || !canLowerPriority}
-                  onClick={() =>
-                    setConfirmingQuickAction({
-                      kind: 'priority',
-                      priority: Math.min(4, data.priority + 1),
-                    })
-                  }
-                >
-                  優先度を下げる
-                </button>
-              </div>
-              {confirmingQuickAction !== null && (
-                <div
-                  ref={quickActionConfirmRef}
-                  className="quick-action-confirm-panel"
-                  role="alertdialog"
-                  aria-labelledby="quick-action-confirm-title"
-                  aria-describedby="quick-action-confirm-desc"
-                >
-                  <p
-                    id="quick-action-confirm-title"
-                    className="quick-action-confirm-title"
-                  >
-                    {formatQuickActionConfirmTitle(confirmingQuickAction)}
-                  </p>
-                  <p
-                    id="quick-action-confirm-desc"
-                    className="quick-action-confirm-desc"
-                  >
-                    {formatQuickActionConfirmDescription(confirmingQuickAction)}
-                  </p>
-                  {confirmingQuickAction.kind === 'close' && (
-                    <>
-                      <label
-                        className="quick-action-reason-label"
-                        htmlFor="quick-action-close-reason"
-                      >
-                        理由(任意)
-                      </label>
-                      <textarea
-                        id="quick-action-close-reason"
-                        className="quick-action-reason-input"
-                        value={closeReason}
-                        onChange={(event) => setCloseReason(event.target.value)}
-                        rows={3}
-                        maxLength={2000}
-                        disabled={quickActionMutation.isPending}
-                      />
-                    </>
-                  )}
-                  <div className="quick-action-confirm-actions">
-                    <button
-                      ref={cancelQuickActionRef}
-                      type="button"
-                      className="btn quick-action-confirm-cancel"
-                      onClick={handleCancelQuickAction}
-                      disabled={quickActionMutation.isPending}
-                    >
-                      キャンセル
-                    </button>
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={handleConfirmQuickAction}
-                      disabled={quickActionMutation.isPending}
-                    >
-                      {quickActionMutation.isPending ? '実行中…' : '実行する'}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {quickActionMutation.error !== null && (
-                <p className="error-message">
-                  {describeWriteError(
-                    quickActionMutation.error,
-                    'クイックアクションの実行に失敗しました',
-                  )}
-                </p>
-              )}
-            </div>
+            <TicketQuickActionsSection
+              priority={data.priority}
+              confirmingQuickAction={quickActions.confirmingQuickAction}
+              onSetConfirmingQuickAction={quickActions.setConfirmingQuickAction}
+              quickActionsDisabled={quickActionsDisabled}
+              deferPeriodKind={quickActions.deferPeriodKind}
+              onDeferPeriodKindChange={quickActions.setDeferPeriodKind}
+              customDeferDate={quickActions.customDeferDate}
+              onCustomDeferDateChange={quickActions.setCustomDeferDate}
+              deferSubmitDisabled={quickActions.deferSubmitDisabled}
+              onDeferQuickAction={quickActions.handleDeferQuickAction}
+              canRaisePriority={quickActions.canRaisePriority}
+              canLowerPriority={quickActions.canLowerPriority}
+              quickActionConfirmRef={quickActions.quickActionConfirmRef}
+              cancelQuickActionRef={quickActions.cancelQuickActionRef}
+              onCancelQuickAction={quickActions.handleCancelQuickAction}
+              closeReason={quickActions.closeReason}
+              onCloseReasonChange={quickActions.setCloseReason}
+              mutationPending={quickActions.mutationPending}
+              onConfirmQuickAction={quickActions.handleConfirmQuickAction}
+              mutationError={quickActions.mutationError}
+            />
             <div className="detail-section">
               <h3>エージェント実行</h3>
               {(polledRunDetail !== null ||
