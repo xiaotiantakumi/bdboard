@@ -67,18 +67,27 @@ const bdShowDependencySchema = z.object({
 // 全体を隠さない」方針)。
 // metadata は bdboard-mw8y: 作業チケットが自分自身のスタンドアロンな決定待ち
 // (metadata.decision_question)を持っているかどうかを判定するために読む。
-// dependencies と同じ理由で緩く z.record(z.unknown()) のまま受け取る。
+// dependencies と同じ理由(直上のコメント参照)で z.unknown() のまま受け取る —
+// z.record(z.unknown()) は一見緩そうだが、値が object リテラルであることまで
+// 要求するため metadata: null 等で item 全体の safeParse を失敗させ、
+// dependencies が避けている「1件の不正で kind 判定まで道連れにする」失敗モードを
+// このフィールドだけ再導入してしまう(opus レビュー指摘, PR #517)。型の妥当性は
+// 呼び出し側の hasOwnDecisionQuestion() が typeof で自前チェックする。
 const bdShowItemSchema = z.object({
   issue_type: z.string().optional(),
   dependencies: z.unknown().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.unknown().optional(),
 });
 
 // mapListItemToPendingDecision の question 抽出と同じ判定(非空文字列の
-// decision_question)。bd gate create --type=human --blocks によって human ラベルが
-// 付いたチケットでも、そのチケット自身が独立した decision_question を持つことがある
-// (bdboard-v4pl / bdboard-51qb のような実データ)。この場合はラベルがどちらの
-// 意味を担っているか区別できないので、gate 側の掃除では剥がさない(bdboard-mw8y)。
+// decision_question)。true は「このチケットは decision_question を記録している」
+// ことだけを意味し、その質問がまだ未回答かどうかまでは保証しない(respond() は
+// decision_question を消す経路を持たないため、一度回答済みでも残り続けうる —
+// opus レビュー指摘, PR #517)。bd gate create --type=human --blocks によって
+// human ラベルが付いたチケットでも、そのチケット自身が独立した decision_question を
+// 持つことがある(実データにこの形自体は存在する。この場合はラベルがどちらの
+// 意味を担っているか区別できないので、gate 側の掃除では安全側に倒して剥がさない
+// (bdboard-mw8y))。
 function hasOwnDecisionQuestion(metadata: unknown): boolean {
   if (metadata === null || typeof metadata !== 'object') {
     return false;
@@ -840,12 +849,15 @@ export function createBdCliHumanDecisions(
 
         // bdboard-giyt: bdboard-vy0h の逆方向。この gate が直接ブロックしていた
         // work ticket のうち、他に open な human gate が残っていない かつ
-        // そのチケット自身が standalone な decision_question を持っていないものだけ
+        // そのチケット自身が standalone な decision_question を記録していないものだけ
         // human ラベルを外す(兄弟 gate が残っているうちはそのチケットはまだ
         // 確認待ちなので触らない。bdboard-mw8y: standalone な decision_question を
-        // 持つチケットは、たまたま無関係な human gate にもブロックされていた場合、
-        // その gate への回答でチケット自身の未回答の質問まで確認待ちレーンから
-        // 消えてしまう — この場合はここで剥がさず、そのチケット自身への回答時に
+        // 記録しているチケットは、たまたま無関係な human gate にもブロックされていた
+        // 場合、その gate への回答でチケット自身の質問まで確認待ちレーンから
+        // 消えてしまう(respond() は decision_question 自体を消す経路を持たないため、
+        // hasOwnDecisionQuestion は「回答済みかどうか」ではなく「記録されているか
+        // どうか」しか見分けられない — 安全側に倒し、記録されている限り剥がさない)。
+        // この場合はここで剥がさず、そのチケット自身への回答時に
         // filterBlockingHumanGateIds 経由で既に閉じたこの gate が除外されて
         // 自己修復する)。gate の close 自体は既に成功しているので、
         // ここから先は fail-soft — 個々のチケットで読み取りやラベル解除に失敗

@@ -1532,6 +1532,68 @@ describe('resolveKindAndBlockingGates', () => {
       hasOwnDecisionQuestion: false,
     });
   });
+
+  // bdboard-mw8y opus レビュー指摘: metadata を bdShowItemSchema へ z.record(z.unknown())
+  // として混ぜると、dependencies が避けている「1件の不正で item 全体の safeParse が
+  // 失敗し kind 判定まで 'unknown' に道連れにする」失敗モードをこのフィールドだけ
+  // 再導入する(bd が metadata: null を返すこと自体は未確認だが、想定外の形が来ても
+  // kind 判定へ波及しないという既存の不変条件を守る)。metadata: null でも
+  // kind が 'ticket' のまま倒れず、hasOwnDecisionQuestion だけ安全側の false に
+  // 倒れることを直接押さえる。
+  it('keeps kind=ticket instead of falling to unknown when metadata is null (bdboard-mw8y)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              { id: 'bdboard-probe', issue_type: 'task', dependencies: [], metadata: null },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: false,
+    });
+  });
+
+  it('reports hasOwnDecisionQuestion true when the ticket carries a non-empty decision_question (bdboard-mw8y)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [],
+                metadata: { decision_question: 'どちらにしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: true,
+    });
+  });
 });
 
 // bdboard-giyt: gate 側 respond() が使う「この gate がブロックしている work ticket」の
