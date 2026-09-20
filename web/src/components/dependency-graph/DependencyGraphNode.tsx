@@ -1,7 +1,7 @@
 // bdboard-sso1.41: DependencyGraphView.tsx の layout.nodes.map(...) 内にあった
 // 1ノード分の <g> ブロック(クリック領域 + 詳細ボタン)を、挙動と DOM を変えずに
 // この表示部品へ移したもの。呼び出し元は key を付けて描画する(key はリスト側で
-// 管理するため props には含めない)。state は持たず、props は 5 個。
+// 管理するため props には含めない)。state は持たず、props は 6 個。
 import type { GraphNodeDto } from '../../api';
 import { NODE_HEIGHT, NODE_WIDTH, statusClassName, truncateTitle } from './dependencyGraphHelpers';
 
