@@ -1438,8 +1438,9 @@ export function ChatPanel({
         // bdboard-v3ag Opus レビュー指摘 (W1): detachedStreamSendRef 自体のクリアも
         // 同じタイミングまで遅らせる。以前は「もう完了扱いで正しい」として即座に
         // 外していたが、bdboard-v3ag のガード (hasUnresolvedProjectRecovery /
-        // unresolvedProjectRecoveryAtSubmit) はこの ref の non-null を「再送を
-        // 止めるべき区間」の目印として使っている。ここで先に ref だけ外すと、
+        // unresolvedProjectRecoveryAtSubmit) はこのプロジェクトのエントリの有無を
+        // 「再送を止めるべき区間」の目印として使っている。ここで先にエントリだけ
+        // 外すと、
         // ハイドレーション fetch が終わるまでの間だけ再送がすり抜けられるように
         // なり、その再送自身の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' })) が
         // (a) このあと届く確定本文と同じ会話キーの部分テキストを本文到着前に消す、
@@ -1462,7 +1463,8 @@ export function ChatPanel({
         // 'detached' SSE イベントを消した理由と同種の「サーバーは完走しているのに
         // クライアントの切断検知が大きく遅れる」ケース) で、実際には成功して
         // ハイドレーションも完了したこの送信を、直後の 'idle' 分岐
-        // (detachedStreamSendRef が non-null のまま次のポーリングに入り、
+        // (このプロジェクトの detachedStreamSendRef エントリが残ったまま次の
+        // ポーリングに入り、
         // 「completed/failed を残さず idle に落ちた」と誤認される) が無条件に
         // fail() してしまう実害の方が大きいと判断した (round 2 レビューで再現済み)。
         // そのため sessionId 未確定の場合は 'failed' 分岐と違って時刻突き合わせをせず、
@@ -1532,7 +1534,7 @@ export function ChatPanel({
           // まさにこのタイミングで部分テキストを消す。同じ会話キーに部分テキストと
           // 確定本文が二重に出ることも、本文が届く前に両方とも消えて空白になることも
           // 防ぐ。detached!.streamingKey の detached は detachedMatchesThisRecovery が
-          // true の時点で null でないことが確定している (上で導出した局所変数)。
+          // true の時点で undefined でないことが確定している (上で導出した局所変数)。
           // bdboard-v3ag (W1): ref のクリアもここへ揃える (上のコメント参照) —
           // ハイドレーションが成功して初めて、このターンの detached 追跡を終えたと
           // 見なす。
@@ -1589,8 +1591,9 @@ export function ChatPanel({
           );
           // bdboard-v3ag Opus レビュー指摘 (blocker B1): ここで何もせず return すると、
           // detachedStreamSendRef が追っていた送信の結末を永遠に確認できないまま
-          // ref が non-null で残り続ける。bdboard-v3ag はこの ref が同じプロジェクトを
-          // 指している間ずっと送信ボタンを disabled にするため、対処しないと利用者は
+          // このプロジェクトのエントリが残り続ける。bdboard-v3ag はこのプロジェクトの
+          // エントリが存在する間ずっと送信ボタンを disabled にするため、対処しないと
+          // 利用者は
           // 二度とこのプロジェクトへ送信できなくなる(ページ再読み込み以外に回復手段が
           // 無いデッドロック)。ポーリング自体を諦める以上、idle/failed 分岐と同じ扱い
           // (ref 解放 + 保持していた部分テキストのクリア + 失敗表示) にする。
@@ -2775,16 +2778,18 @@ export function ChatPanel({
           // で判定すると、同じ会話キーへの以前の (まだ未解決の) 配信停止が残っている
           // ときに誤判定する — 例えば前のターンが配信停止で回収待ちのまま、同じ会話へ
           // 再送し、その再送が (409 ではなく) 通常のネットワークエラー等で失敗した
-          // 場合、ref は前のターンを指したままなので誤って「今回も配信停止した」と
+          // 場合、このプロジェクトのエントリは前のターンのままなので誤って「今回も
+          // 配信停止した」と
           // 判定してしまい、この再送自身が受け取った部分テキストが消えずに残る。
           // ローカル変数で「この送信自身が配信停止したか」だけを見る。
           //
           // bdboard-v3ag Opus レビュー指摘 (nit N1): 上で説明している「同じ会話への
           // 以前の未解決の配信停止が残っている」ケース自体、bdboard-v3ag 以降は
           // 単一タブの中では起こり得ない — submitChatMessage 冒頭の
-          // unresolvedProjectRecoveryAtSubmit ガードが、同じプロジェクトの ref が
-          // non-null な間はこの関数の本体に到達する前に return するため。したがって
-          // このローカル変数による判定は今のところ常に ref の直接比較と一致するはず
+          // unresolvedProjectRecoveryAtSubmit ガードが、同じプロジェクトのエントリが
+          // 存在する間はこの関数の本体に到達する前に return するため。したがって
+          // このローカル変数による判定は今のところ常にエントリの有無の判定と一致
+          // するはず
           // だが、ガードを潜り抜ける経路が将来増えても壊れない防御としてそのまま
           // 残す(コード自体は変更しない、コメントのみ更新)。
           let detachedThisSend = false;
