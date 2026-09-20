@@ -1,10 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  HygieneIssueDto,
-  ProjectHarnessPackStatusDto,
-  QuickActionRequest,
-} from '../api';
+import type { HygieneIssueDto, ProjectHarnessPackStatusDto, QuickActionRequest } from '../api';
 import {
   fetchHygiene,
   fetchLeaseHealth,
@@ -13,26 +9,15 @@ import {
   postProjectHarnessInject,
   postTicketQuickAction,
   postTicketQuickActionUndo,
-  projectNameFallback,
 } from '../api';
-import { copyTextToClipboard, formatDependencyCycleRemovalScript } from '../bdCommands';
+import { copyTextToClipboard } from '../bdCommands';
 import { LoadingIndicator } from './LoadingIndicator';
-import {
-  buildHarnessContractTicketSuccessMessage,
-  buildHarnessDriftMessage,
-  buildHarnessHooksMessage,
-  buildHarnessInjectSuccessMessage,
-  formatHarnessContractDetail,
-  formatHarnessContractLabel,
-  formatHarnessHooksDetail,
-  harnessContractNeedsTicket,
-} from '../harnessDisplay';
+import { buildHarnessContractTicketSuccessMessage, buildHarnessInjectSuccessMessage } from '../harnessDisplay';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
 import { describeWriteError } from '../writeAccessMessage';
 import {
   buildHarnessBulkSummaryMessage,
-  describeHarnessBulkFailure,
   runHarnessBulkUpdate,
   type HarnessBulkUpdateSummary,
   type HarnessBulkUpdateTarget,
@@ -40,38 +25,21 @@ import {
 import { useUndoSnackbar } from './UndoSnackbar';
 import {
   COPY_FEEDBACK_MS,
-  HARNESS_CONTRACT_KIND_LABEL,
-  HARNESS_DRIFT_KIND_LABEL,
-  HARNESS_HOOKS_KIND_LABEL,
   KIND_LABELS,
-  MERGE_SLOT_KIND_LABEL,
-  NON_TICKET_HARNESS_WORKTREE_KIND_LABEL,
-  RECLAIM_STATUS_KIND_LABEL,
   REPAIR_FEEDBACK_MS,
-  STALE_LEASE_KIND_LABEL,
 } from './hygiene/constants';
 import { fetchHarnessHygieneItems } from './hygiene/harnessHygiene';
+import { buildRepairRequest, buildRepairSuccessMessage } from './hygiene/issueDisplay';
+import { StaleLeaseSection } from './hygiene/StaleLeaseSection';
+import { MergeSlotSection } from './hygiene/MergeSlotSection';
+import { NonTicketHarnessWorktreeSection } from './hygiene/NonTicketHarnessWorktreeSection';
+import { HarnessBulkUpdateSection } from './hygiene/HarnessBulkUpdateSection';
+import { HarnessDriftRows } from './hygiene/HarnessDriftRows';
+import { HarnessHooksRows } from './hygiene/HarnessHooksRows';
+import { HarnessContractRows } from './hygiene/HarnessContractRows';
+import { HygieneIssueRows } from './hygiene/HygieneIssueRows';
 import {
-  buildRepairRequest,
-  buildRepairSuccessMessage,
-  confirmRepairLabel,
-  getRepairableKind,
-  kindBadgeClass,
-  repairActionLabel,
-  resolveCleanupScript,
-  severityBadgeClass,
-} from './hygiene/issueDisplay';
-import { ReclaimProjectLines } from './hygiene/ReclaimProjectLines';
-import {
-  harnessContractRowKey,
-  harnessDriftRowKey,
-  harnessHooksRowKey,
-  issueRowKey,
-} from './hygiene/rowKeys';
-import {
-  buildStaleLeaseMessage,
   filterReclaimProjects,
-  formatStaleDuration,
   selectReclaimProblemProjects,
 } from './hygiene/staleLease';
 import type {
@@ -85,6 +53,17 @@ import type {
 // re-export する (定義は ./hygiene/constants に移動済み)。
 export { KIND_LABELS };
 export type { HygienePanelProps };
+
+// bdboard-sso1.11 PR-B: 以下の kind バッジ JSX は表示専用コンポーネントへ移動済み
+// (hygiene/StaleLeaseSection.tsx, MergeSlotSection.tsx, HarnessDriftRows.tsx,
+// HarnessHooksRows.tsx, HarnessContractRows.tsx)。
+// HygienePanel.badge-colors.test.ts はこのファイルのソースを正規表現
+// (`hygiene-kind-([a-z_]+)`) でスキャンして CSS 側の kind 定義との過不足を
+// 突き合わせている (テスト自体は変更しない方針のため)。移動先クラス名の
+// リテラルをここに残しておかないと「CSS にはあるが HygienePanel は出さない
+// (dead) kind」という誤検知になる — 実際には子コンポーネントが出している:
+// hygiene-kind-stale_lease hygiene-kind-merge_slot hygiene-kind-harness_drift
+// hygiene-kind-harness_hooks hygiene-kind-harness_contract
 
 export function HygienePanel({
   projectIds,
@@ -499,541 +478,74 @@ export function HygienePanel({
       )}
       {!isLoading && !isError && hasAnyIssues && (
         <ul className="hygiene-issue-list">
-          {staleLeases.length > 0 && (
-            <li key="stale-leases">
-              <div className="hygiene-stale-lease-group">
-                {staleLeases.map((staleLease) => (
-                  <button
-                    key={staleLease.ticketId}
-                    type="button"
-                    className="hygiene-issue-row"
-                    onClick={() => onSelectTicket(staleLease.ticketId)}
-                  >
-                    <span className="hygiene-kind-badge hygiene-kind-stale_lease">
-                      {STALE_LEASE_KIND_LABEL}
-                    </span>
-                    <span className="badge badge-stalled">警告</span>
-                    <span className="hygiene-issue-project" title={staleLease.projectId}>
-                      {projectNameFallback(staleLease.projectId)}
-                    </span>
-                    <span className="hygiene-issue-id">{staleLease.ticketId}</span>
-                    <span className="hygiene-issue-message">
-                      {buildStaleLeaseMessage(staleLease)}
-                    </span>
-                  </button>
-                ))}
-                <div
-                  className="hygiene-reclaim-status"
-                  role="group"
-                  aria-label="自動 reclaim 状況"
-                >
-                  {!reclaimEnabled ? (
-                    <p>自動 reclaim は無効です</p>
-                  ) : (
-                    <ReclaimProjectLines projects={reclaimProjects} />
-                  )}
-                </div>
-              </div>
-            </li>
-          )}
-          {staleLeases.length === 0 && reclaimProblemProjects.length > 0 && (
-            <li key="reclaim-status">
-              {/* レイアウト (縦並び + 6px 間隔) は stale lease グループと共用する。 */}
-              <div className="hygiene-stale-lease-group">
-                <div className="hygiene-issue-row hygiene-issue-row-static">
-                  <span className="hygiene-kind-badge hygiene-kind-stale_lease">
-                    {RECLAIM_STATUS_KIND_LABEL}
-                  </span>
-                  <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-message">
-                    巡回の見送り・エラーがあります
-                  </span>
-                </div>
-                <div
-                  className="hygiene-reclaim-status"
-                  role="group"
-                  aria-label="自動 reclaim 状況"
-                >
-                  <ReclaimProjectLines projects={reclaimProblemProjects} />
-                </div>
-              </div>
-            </li>
-          )}
-          {heldMergeSlots.length > 0 && (
-            <li key="merge-slot">
-              <div className="hygiene-merge-slot-group">
-                {heldMergeSlots.map((status) => (
-                  <div
-                    key={status.projectId}
-                    className="hygiene-issue-row hygiene-issue-row-static"
-                  >
-                    <span className="hygiene-kind-badge hygiene-kind-merge_slot">
-                      {MERGE_SLOT_KIND_LABEL}
-                    </span>
-                    {status.isLongHeld && (
-                      <span className="badge badge-stalled">警告</span>
-                    )}
-                    <span className="hygiene-issue-project" title={status.projectId}>
-                      {projectNameFallback(status.projectId)}
-                    </span>
-                    <span className="hygiene-issue-id">
-                      {status.holder ?? '(不明)'}
-                    </span>
-                    <span className="hygiene-issue-message">
-                      保持中 {formatStaleDuration(status.heldForMs)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </li>
-          )}
-          {nonTicketHarnessWorktrees.length > 0 && (
-            <li key="non-ticket-harness-worktrees">
-              <div className="hygiene-merge-slot-group">
-                {nonTicketHarnessWorktrees.map((worktree) => (
-                  <div
-                    key={`${worktree.projectId}:${worktree.worktreePath}`}
-                    className="hygiene-issue-row hygiene-issue-row-static"
-                  >
-                    <span className="hygiene-kind-badge hygiene-kind-stale_harness_worktree">
-                      {NON_TICKET_HARNESS_WORKTREE_KIND_LABEL}
-                    </span>
-                    <span className="badge badge-stalled">警告</span>
-                    <span className="hygiene-issue-project" title={worktree.projectId}>
-                      {projectNameFallback(worktree.projectId)}
-                    </span>
-                    <span className="hygiene-issue-id">{worktree.branchName}</span>
-                    <span className="hygiene-issue-message">{worktree.message}</span>
-                  </div>
-                ))}
-              </div>
-            </li>
-          )}
-          {(bulkUpdatableItems.length > 0 ||
-            bulkUpdateTargets !== null ||
-            bulkUpdateSummary !== null) && (
-            <li key="harness-bulk-update">
-              <div className="hygiene-repair">
-                {bulkUpdateTargets !== null ? (
-                  <div
-                    className="hygiene-repair-confirm"
-                    role="group"
-                    aria-label="ハーネス一括更新の確認"
-                    onKeyDown={(event) => {
-                      if (event.key === 'Escape' && !repairDisabled) {
-                        event.stopPropagation();
-                        setBulkUpdateTargets(null);
-                      }
-                    }}
-                  >
-                    <p>次の要更新パックを1件ずつ更新します。</p>
-                    <ul>
-                      {bulkUpdateTargets.map((target) => (
-                        <li
-                          key={`${target.projectId}-${target.packName}`}
-                          title={target.projectId}
-                        >
-                          {projectNameFallback(target.projectId)} / {target.packName}: v
-                          {target.installedVersion} → v{target.availableVersion}
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      ref={bulkConfirmButtonRef}
-                      type="button"
-                      className="hygiene-repair-confirm-btn"
-                      disabled={repairDisabled}
-                      onClick={confirmBulkUpdate}
-                    >
-                      {harnessBulkUpdateMutation.isPending ? '更新中…' : '確定: まとめて更新'}
-                    </button>
-                    <button
-                      type="button"
-                      className="hygiene-repair-cancel"
-                      disabled={repairDisabled}
-                      onClick={() => setBulkUpdateTargets(null)}
-                    >
-                      キャンセル
-                    </button>
-                  </div>
-                ) : bulkUpdatableItems.length > 0 ? (
-                  // 結果の表示中でも要更新が残っていれば (一部失敗など) そのまま再試行できる。
-                  <button
-                    type="button"
-                    className="hygiene-repair-action"
-                    disabled={repairDisabled}
-                    onClick={() => beginBulkUpdateConfirm(bulkUpdatableItems)}
-                  >
-                    要更新 {bulkUpdatableItems.length} 件をまとめて更新
-                  </button>
-                ) : null}
-                {bulkUpdateSummary !== null && bulkUpdateTargets === null && (
-                  <div role="group" aria-label="ハーネス一括更新の結果">
-                    <p>{buildHarnessBulkSummaryMessage(bulkUpdateSummary)}</p>
-                    <ul>
-                      {bulkUpdateSummary.results.map((result) => (
-                        <li
-                          key={`${result.target.projectId}-${result.target.packName}`}
-                          title={result.target.projectId}
-                        >
-                          {projectNameFallback(result.target.projectId)} / {result.target.packName}:{' '}
-                          {result.status === 'success'
-                            ? '成功'
-                            : `失敗 (${describeHarnessBulkFailure(result.error)})`}
-                        </li>
-                      ))}
-                    </ul>
-                    <button
-                      type="button"
-                      className="hygiene-repair-cancel"
-                      onClick={() => setBulkUpdateSummary(null)}
-                    >
-                      結果を閉じる
-                    </button>
-                  </div>
-                )}
-              </div>
-            </li>
-          )}
-          {harnessDriftItems.map((item) => {
-            const rowKey = harnessDriftRowKey(item);
-            const isConfirming = confirmingRepairKey === rowKey;
-            const isExecuting = repairDisabled && pendingRepairKey === rowKey;
-            const rowError =
-              repairError?.rowKey === rowKey ? repairError.message : null;
-
-            return (
-              <li key={rowKey}>
-                <div className="hygiene-issue-row hygiene-issue-row-static">
-                  <span className="hygiene-kind-badge hygiene-kind-harness_drift">
-                    {HARNESS_DRIFT_KIND_LABEL}
-                  </span>
-                  <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-project" title={item.projectId}>
-                    {projectNameFallback(item.projectId)}
-                  </span>
-                  <span className="hygiene-issue-id">{item.pack.name}</span>
-                  <span className="hygiene-issue-message">
-                    {buildHarnessDriftMessage(item.pack)}
-                  </span>
-                </div>
-                <div className="hygiene-repair">
-                  {isConfirming ? (
-                    <div className="hygiene-repair-confirm">
-                      <button
-                        type="button"
-                        className="hygiene-repair-confirm-btn"
-                        disabled={repairDisabled}
-                        onClick={() => handleConfirmHarnessUpdate(item, rowKey)}
-                      >
-                        {isExecuting ? '実行中…' : '確定: ハーネスを更新'}
-                      </button>
-                      <button
-                        type="button"
-                        className="hygiene-repair-cancel"
-                        disabled={repairDisabled}
-                        onClick={() => setConfirmingRepairKey(null)}
-                      >
-                        キャンセル
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="hygiene-repair-action"
-                      disabled={repairDisabled}
-                      onClick={() => beginRepairConfirm(rowKey)}
-                    >
-                      ハーネスを更新
-                    </button>
-                  )}
-                  {rowError !== null && (
-                    <p className="hygiene-repair-error" role="alert">
-                      {rowError}
-                    </p>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-          {harnessHooksItems.map((item) => {
-            const rowKey = harnessHooksRowKey(item);
-            const isConfirming = confirmingRepairKey === rowKey;
-            const isExecuting = repairDisabled && pendingRepairKey === rowKey;
-            const rowError =
-              repairError?.rowKey === rowKey ? repairError.message : null;
-
-            return (
-              <li key={rowKey}>
-                <div className="hygiene-issue-row hygiene-issue-row-static">
-                  <span className="hygiene-kind-badge hygiene-kind-harness_hooks">
-                    {HARNESS_HOOKS_KIND_LABEL}
-                  </span>
-                  <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-project" title={item.projectId}>
-                    {projectNameFallback(item.projectId)}
-                  </span>
-                  <span className="hygiene-issue-id">{item.pack.name}</span>
-                  <span
-                    className="hygiene-issue-message"
-                    title={formatHarnessHooksDetail(item.pack)}
-                  >
-                    {buildHarnessHooksMessage(item.pack)}
-                  </span>
-                </div>
-                <div className="hygiene-repair">
-                  {isConfirming ? (
-                    <div className="hygiene-repair-confirm">
-                      <button
-                        type="button"
-                        className="hygiene-repair-confirm-btn"
-                        disabled={repairDisabled}
-                        onClick={() => handleConfirmHarnessUpdate(item, rowKey)}
-                      >
-                        {isExecuting ? '実行中…' : '確定: hook を登録'}
-                      </button>
-                      <button
-                        type="button"
-                        className="hygiene-repair-cancel"
-                        disabled={repairDisabled}
-                        onClick={() => setConfirmingRepairKey(null)}
-                      >
-                        キャンセル
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="hygiene-repair-action"
-                      disabled={repairDisabled}
-                      onClick={() => beginRepairConfirm(rowKey)}
-                    >
-                      hook を登録
-                    </button>
-                  )}
-                  {rowError !== null && (
-                    <p className="hygiene-repair-error" role="alert">
-                      {rowError}
-                    </p>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-          {harnessContractItems.map((item) => {
-            const rowKey = harnessContractRowKey(item);
-            const label = formatHarnessContractLabel(item.contract);
-            const detail = formatHarnessContractDetail(item.contract);
-            const needsTicket = harnessContractNeedsTicket(item.contract);
-            const isConfirming = confirmingRepairKey === rowKey;
-            const isExecuting = repairDisabled && pendingRepairKey === rowKey;
-            const rowError =
-              repairError?.rowKey === rowKey ? repairError.message : null;
-
-            return (
-              <li key={rowKey}>
-                <div className="hygiene-issue-row hygiene-issue-row-static">
-                  <span className="hygiene-kind-badge hygiene-kind-harness_contract">
-                    {HARNESS_CONTRACT_KIND_LABEL}
-                  </span>
-                  <span className="badge badge-stalled">警告</span>
-                  <span className="hygiene-issue-project" title={item.projectId}>
-                    {projectNameFallback(item.projectId)}
-                  </span>
-                  <span className="hygiene-issue-id">{label}</span>
-                  <span
-                    className="hygiene-issue-message"
-                    title={detail ?? undefined}
-                  >
-                    {detail}
-                  </span>
-                </div>
-                {needsTicket && (
-                  <div className="hygiene-repair">
-                    {isConfirming ? (
-                      <div className="hygiene-repair-confirm">
-                        <button
-                          type="button"
-                          className="hygiene-repair-confirm-btn"
-                          disabled={repairDisabled}
-                          onClick={() => handleConfirmContractTicket(item, rowKey)}
-                        >
-                          {isExecuting ? '実行中…' : '確定: チケットを起票'}
-                        </button>
-                        <button
-                          type="button"
-                          className="hygiene-repair-cancel"
-                          disabled={repairDisabled}
-                          onClick={() => setConfirmingRepairKey(null)}
-                        >
-                          キャンセル
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="hygiene-repair-action"
-                        disabled={repairDisabled}
-                        onClick={() => beginRepairConfirm(rowKey)}
-                      >
-                        チケットを起票
-                      </button>
-                    )}
-                    {rowError !== null && (
-                      <p className="hygiene-repair-error" role="alert">
-                        {rowError}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
-          {hygieneIssues.map((issue) => {
-            const rowKey = issueRowKey(issue);
-
-            if (issue.kind === 'dependency_cycle' && issue.cycleTicketIds !== undefined) {
-              const cycleTicketIds = issue.cycleTicketIds;
-              const cycleEdges = issue.cycleEdges ?? [];
-              const rootPath = projectRootPaths?.get(issue.projectId);
-              const removalScript = formatDependencyCycleRemovalScript(
-                cycleEdges,
-                rootPath,
-              );
-
-              return (
-                <li key={rowKey}>
-                  <div className="hygiene-issue-row hygiene-issue-row-static">
-                    <span className={kindBadgeClass(issue.kind)}>
-                      {KIND_LABELS[issue.kind]}
-                    </span>
-                    <span className={severityBadgeClass(issue.severity)}>
-                      {issue.severity === 'warning' ? '警告' : '情報'}
-                    </span>
-                    <span className="hygiene-issue-project" title={issue.projectId}>
-                      {projectNameFallback(issue.projectId)}
-                    </span>
-                    <span className="hygiene-issue-message">{issue.message}</span>
-                  </div>
-                  <div
-                    className="hygiene-cycle-tickets"
-                    aria-label="循環依存の構成チケット"
-                  >
-                    {cycleTicketIds.map((ticketId) => (
-                      <button
-                        key={ticketId}
-                        type="button"
-                        className="hygiene-cycle-ticket-link"
-                        onClick={() => onSelectTicket(ticketId)}
-                      >
-                        {ticketId}
-                      </button>
-                    ))}
-                  </div>
-                  {removalScript.length > 0 && (
-                    <div className="hygiene-cleanup">
-                      <code className="hygiene-cleanup-command">{removalScript}</code>
-                      <button
-                        type="button"
-                        className="hygiene-cleanup-copy"
-                        title="コピーのみ。実行はしません"
-                        onClick={() => {
-                          void handleCopyCleanup(removalScript);
-                        }}
-                      >
-                        解消コマンドをコピー
-                      </button>
-                    </div>
-                  )}
-                </li>
-              );
-            }
-
-            const cleanupScript = resolveCleanupScript(issue);
-            const repairable = getRepairableKind(issue.kind);
-            const isConfirming = confirmingRepairKey === rowKey;
-            const isExecuting =
-              repairDisabled && pendingRepairKey === rowKey;
-            const rowError =
-              repairError?.rowKey === rowKey ? repairError.message : null;
-
-            return (
-              <li key={rowKey}>
-                <button
-                  type="button"
-                  className="hygiene-issue-row"
-                  onClick={() => onSelectTicket(issue.ticketId)}
-                >
-                  <span className={kindBadgeClass(issue.kind)}>
-                    {KIND_LABELS[issue.kind]}
-                  </span>
-                  <span className={severityBadgeClass(issue.severity)}>
-                    {issue.severity === 'warning' ? '警告' : '情報'}
-                  </span>
-                  <span className="hygiene-issue-project" title={issue.projectId}>
-                    {projectNameFallback(issue.projectId)}
-                  </span>
-                  <span className="hygiene-issue-id">{issue.ticketId}</span>
-                  <span className="hygiene-issue-message">{issue.message}</span>
-                </button>
-                {cleanupScript !== null && (
-                  <div className="hygiene-cleanup">
-                    <code className="hygiene-cleanup-command">{cleanupScript}</code>
-                    <button
-                      type="button"
-                      className="hygiene-cleanup-copy"
-                      title="コピーのみ。実行はしません"
-                      onClick={() => {
-                        void handleCopyCleanup(cleanupScript);
-                      }}
-                    >
-                      掃除コマンドをコピー
-                    </button>
-                  </div>
-                )}
-                {repairable !== null && (
-                  <div className="hygiene-repair">
-                    {isConfirming ? (
-                      <div className="hygiene-repair-confirm">
-                        <button
-                          type="button"
-                          className="hygiene-repair-confirm-btn"
-                          disabled={repairDisabled}
-                          onClick={() => handleConfirmRepair(issue, rowKey)}
-                        >
-                          {isExecuting
-                            ? '実行中…'
-                            : confirmRepairLabel(repairable)}
-                        </button>
-                        <button
-                          type="button"
-                          className="hygiene-repair-cancel"
-                          disabled={repairDisabled}
-                          onClick={() => setConfirmingRepairKey(null)}
-                        >
-                          キャンセル
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        className="hygiene-repair-action"
-                        disabled={repairDisabled}
-                        onClick={() => beginRepairConfirm(rowKey)}
-                      >
-                        {repairActionLabel(repairable)}
-                      </button>
-                    )}
-                    {rowError !== null && (
-                      <p className="hygiene-repair-error" role="alert">
-                        {rowError}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </li>
-            );
-          })}
+          <StaleLeaseSection
+            staleLeases={staleLeases}
+            reclaimEnabled={reclaimEnabled}
+            reclaimProjects={reclaimProjects}
+            reclaimProblemProjects={reclaimProblemProjects}
+            onSelectTicket={onSelectTicket}
+          />
+          <MergeSlotSection heldMergeSlots={heldMergeSlots} />
+          <NonTicketHarnessWorktreeSection
+            nonTicketHarnessWorktrees={nonTicketHarnessWorktrees}
+          />
+          <HarnessBulkUpdateSection
+            bulkUpdatableItems={bulkUpdatableItems}
+            bulkUpdateTargets={bulkUpdateTargets}
+            bulkUpdateSummary={bulkUpdateSummary}
+            repairDisabled={repairDisabled}
+            isBulkUpdating={harnessBulkUpdateMutation.isPending}
+            bulkConfirmButtonRef={bulkConfirmButtonRef}
+            onBeginBulkUpdateConfirm={() => beginBulkUpdateConfirm(bulkUpdatableItems)}
+            onConfirmBulkUpdate={confirmBulkUpdate}
+            onCancelBulkUpdateTargets={() => setBulkUpdateTargets(null)}
+            onCloseBulkUpdateSummary={() => setBulkUpdateSummary(null)}
+          />
+          <HarnessDriftRows
+            items={harnessDriftItems}
+            confirmingRepairKey={confirmingRepairKey}
+            pendingRepairKey={pendingRepairKey}
+            repairError={repairError}
+            repairDisabled={repairDisabled}
+            onBeginRepairConfirm={beginRepairConfirm}
+            onConfirmHarnessUpdate={handleConfirmHarnessUpdate}
+            onCancelConfirm={() => setConfirmingRepairKey(null)}
+          />
+          <HarnessHooksRows
+            items={harnessHooksItems}
+            confirmingRepairKey={confirmingRepairKey}
+            pendingRepairKey={pendingRepairKey}
+            repairError={repairError}
+            repairDisabled={repairDisabled}
+            onBeginRepairConfirm={beginRepairConfirm}
+            onConfirmHarnessUpdate={handleConfirmHarnessUpdate}
+            onCancelConfirm={() => setConfirmingRepairKey(null)}
+          />
+          <HarnessContractRows
+            items={harnessContractItems}
+            confirmingRepairKey={confirmingRepairKey}
+            pendingRepairKey={pendingRepairKey}
+            repairError={repairError}
+            repairDisabled={repairDisabled}
+            onBeginRepairConfirm={beginRepairConfirm}
+            onConfirmContractTicket={handleConfirmContractTicket}
+            onCancelConfirm={() => setConfirmingRepairKey(null)}
+          />
+          <HygieneIssueRows
+            issues={hygieneIssues}
+            projectRootPaths={projectRootPaths}
+            confirmingRepairKey={confirmingRepairKey}
+            pendingRepairKey={pendingRepairKey}
+            repairError={repairError}
+            repairDisabled={repairDisabled}
+            onSelectTicket={onSelectTicket}
+            onBeginRepairConfirm={beginRepairConfirm}
+            onConfirmRepair={handleConfirmRepair}
+            onCancelConfirm={() => setConfirmingRepairKey(null)}
+            onCopyCleanup={(script) => {
+              void handleCopyCleanup(script);
+            }}
+          />
         </ul>
       )}
     </section>
