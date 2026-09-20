@@ -660,9 +660,11 @@ export function ChatPanel({
     });
   }, []);
   // bdboard-3tw.166: 配信停止からの回収中に表示し続けている部分テキストを、
-  // その会話キーのものだけ消す。無条件の setStreamingReply(null) だと、回収と
-  // 無関係な会話に切り替わっていた場合にも消してしまう (今は起きなくても、
-  // 呼び出し側が増えたときの事故を防ぐため key 一致を必須にする)。
+  // その会話キーのものだけ消す。streamingReply は会話キーでスコープした Record
+  // (bdboard-1qoe) なので、これはその1キーだけを delete する形になる。
+  // bdboard-1qoe 以降、この「その会話キーだけ消す」性質に実際に依存している
+  // 呼び出し側がある (submitChatMessage の完了/通常失敗クリア、~2888行目) —
+  // 無関係な会話/プロジェクトの部分テキストを巻き添えで消さないための本番経路。
   const clearStreamingReplyForKey = useCallback((key: string) => {
     setStreamingReply((prev) => {
       if (!(key in prev)) return prev;
@@ -745,7 +747,14 @@ export function ChatPanel({
   // applyChatSuccess)の引き継ぎ選択も更新すること。
   //
   // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
-  // これらは「サーバーのセッション状態」側であり、下の2つの呼び出しサイト
+  // conversations / historyLoadedFor は「サーバーのセッション状態」側。
+  // streamingReply は bdboard-1qoe で会話キーでスコープした Record になり形は
+  // draft payload ストアと同じだが、これはクライアントが受信中のストリーム
+  // バッファであり、ドラフトの「積載物」(未送信の入力/添付) ではないため対象に
+  // 含めない — sendKey は selectedProjectId==='' の間は submitChatMessage が
+  // 早期 return するため (~2641行目) '' キースペースに入ることが無く、かつ
+  // 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
+  // ので、ここで移送/掃除しなくても取り残されない。下の2つの呼び出しサイト
   // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
   // 移送されていない。ここに含めると挙動が変わる。
   const applyToDraftPayloadStores = useCallback(
