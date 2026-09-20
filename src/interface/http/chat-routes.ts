@@ -130,6 +130,24 @@ const CHAT_TURN_STATUS_PATH_PATTERN = /^\/api\/chat\/turn-status$/;
  * 分だけなので、この数に届くことは想定していない。
  */
 const CHAT_COMPLETED_TURNS_MAX = 20;
+
+/**
+ * sessionId 無しの failed エントリを ACK 経路なしに残しておける上限時間
+ * (bdboard-kg0m)。sessionId 無し失敗 (新規スレッドの初回送信失敗、
+ * FailedChatTurn の doc comment 参照) には DELETE /api/chat/turn-status での
+ * ACK 手段が無く、これまでは CHAT_COMPLETED_TURNS_MAX の上限に達するまで
+ * 消えなかった。その間、当該プロジェクトを見ている「自分では何も送信して
+ * いない」クライアントの checkTurnStatus (ChatPanel.tsx) がポーリングする
+ * たびに 'failed' を検知するが、matchesTrackedSend も detached も
+ * 一致しないため消化できず、無条件に 1 秒間隔で再ポーリングし続ける —
+ * ポーリング元が上限に達するまでのループが実質無限に続く。
+ *
+ * クライアント側には自分自身が絡む検知失敗を諦めて自己解決する猶予
+ * (UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS、ChatPanel.tsx で約20〜30秒)
+ * が既にあるので、このTTLはそれより十分長く取り、正当な回収中クライアントの
+ * 振る舞いには決して干渉しないようにする。
+ */
+const FAILED_TURN_SESSIONLESS_TTL_MS = 60_000;
 const CHAT_STREAM_PING_INTERVAL_MS = 15_000;
 // Keep this aligned with /api/events' SSE_EVENTS_QUEUE_MAX_SIZE in routes.ts.
 export const CHAT_STREAM_QUEUE_MAX_SIZE = 500;
@@ -149,7 +167,9 @@ interface CompletedChatTurn {
  * 新規スレッドの場合。ACK (DELETE /api/chat/turn-status) は sessionId が分かって
  * いるケースだけ completed と相乗りさせる (ackFailedTurn)。sessionId 不明な失敗は
  * 参照できる識別子がクライアント側にも無いので、専用の ACK 経路は作らず
- * CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出す。
+ * CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出す。それとは別に、
+ * bdboard-kg0m で FAILED_TURN_SESSIONLESS_TTL_MS を超えたものは GET
+ * /api/chat/turn-status のたびにも刈り取られる (pruneExpiredSessionlessFailedTurn)。
  */
 interface FailedChatTurn {
   readonly sessionId?: string;
@@ -267,6 +287,29 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     const queued = failedTurns.get(projectId);
     if (queued === undefined) return;
     const next = queued.filter((item) => item.sessionId !== sessionId);
+    if (next.length === 0) {
+      failedTurns.delete(projectId);
+      return;
+    }
+    failedTurns.set(projectId, next);
+  };
+  // bdboard-kg0m: sessionId 無しの failed エントリは ACK 経路が無く、
+  // CHAT_COMPLETED_TURNS_MAX の上限に達するまでは消えない。上限にまだ余裕が
+  // あると、無関係な閲覧者の checkTurnStatus ポーリングが「差分なし」を
+  // 検知できないまま無条件に 1 秒間隔で回り続けてしまう (詳細は
+  // FAILED_TURN_SESSIONLESS_TTL_MS の doc comment を参照)。GET のたびに TTL を
+  // 過ぎた sessionId 無しエントリだけを取り除く。sessionId 有りのエントリは
+  // 引き続き ACK で明示的に消えるのでここでは手を付けない。
+  const pruneExpiredSessionlessFailedTurn = (projectId: string): void => {
+    const queued = failedTurns.get(projectId);
+    if (queued === undefined) return;
+    const nowMs = now().getTime();
+    const next = queued.filter(
+      (entry) =>
+        entry.sessionId !== undefined ||
+        nowMs - Date.parse(entry.failedAt) <= FAILED_TURN_SESSIONLESS_TTL_MS,
+    );
+    if (next.length === queued.length) return;
     if (next.length === 0) {
       failedTurns.delete(projectId);
       return;
@@ -514,6 +557,8 @@ export function createChatRoutes(deps: ChatRoutesDeps): Hono {
     // の別セッションから永遠に見えなくなってしまう。sessionId 有りのものが1件でも
     // あれば (キュー内の相対順序を保ったまま) それを優先して返し、無ければ従来どおり
     // 最古のエントリ (sessionId 無し) を返す。
+    // bdboard-kg0m: 取得前に TTL を過ぎた sessionId 無しエントリを刈り取る。
+    pruneExpiredSessionlessFailedTurn(parsed.data.projectId);
     const failedQueue = failedTurns.get(parsed.data.projectId);
     const failed = failedQueue?.find((entry) => entry.sessionId !== undefined) ?? failedQueue?.[0];
     if (failed !== undefined) {

@@ -1084,8 +1084,10 @@ describe('POST /api/chat/message/stream', () => {
     });
 
     // ACKing it drains only that entry; the still-unreachable sessionId-less one remains
-    // queued behind (this is the documented, unresolved half of the constraint -- see
-    // FailedChatTurn's doc comment -- and out of this fix's scope).
+    // queued behind (this was, at the time, the documented, unresolved half of the
+    // constraint -- see FailedChatTurn's doc comment -- and out of this fix's scope; it is
+    // now bounded by FAILED_TURN_SESSIONLESS_TTL_MS instead of lingering indefinitely,
+    // see the bdboard-kg0m tests below).
     const ack = await app.request(
       `/api/chat/turn-status?projectId=p&sessionId=${sessionId}`,
       withLocalHost({ method: 'DELETE' }),
@@ -1148,6 +1150,127 @@ describe('POST /api/chat/message/stream', () => {
       code: 'agent-exit-nonzero',
       agentId: 'test-agent',
       failedAt: NOW.toISOString(),
+    });
+  });
+
+  it('keeps a sessionId-less failed turn visible to GET until FAILED_TURN_SESSIONLESS_TTL_MS elapses (bdboard-kg0m)', async () => {
+    // Regression guard for the TTL fix below: a sessionId-less failed entry must not be
+    // pruned early. A genuinely-recovering client (e.g. one that lost its own connection
+    // right when the stream detached) still needs to see this entry within the TTL window.
+    let currentMs = 0;
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (): Promise<ChatTurnResult> => {
+        throw new ChatAgentError('agent-timeout');
+      }),
+    });
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({
+      agent: streamingAgent,
+      cache,
+      store: createChatSessionStore(),
+      now: () => new Date(currentMs),
+    });
+
+    const send = await app.request('/api/chat/message/stream', withLocalHost({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', message: 'doomed new thread' }),
+    }), LOCAL_ENV);
+    expect(send.status).toBe(200);
+    await send.text();
+
+    // Just under the TTL (FAILED_TURN_SESSIONLESS_TTL_MS = 60_000): still visible.
+    currentMs += 59_000;
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await status.json()).toEqual({
+      state: 'failed',
+      code: 'agent-timeout',
+      agentId: 'test-agent',
+      failedAt: new Date(0).toISOString(),
+    });
+  });
+
+  it('prunes an expired sessionId-less failed turn instead of leaving an uninvolved poller stuck forever (bdboard-kg0m)', async () => {
+    // bdboard-kg0m: a sessionId-less failed entry has no ACK path (see FailedChatTurn's
+    // doc comment), so before this fix it lingered until CHAT_COMPLETED_TURNS_MAX
+    // eviction. Any client polling this project that is NOT the one that sent the doomed
+    // message -- e.g. a viewer with no unresolved send of its own -- would see 'failed'
+    // forever, fail every matchesTrackedSend/detached check in ChatPanel.tsx's
+    // checkTurnStatus, and fall through to an unconditional 1-second re-poll with no
+    // bound. Once the entry ages past FAILED_TURN_SESSIONLESS_TTL_MS, GET must stop
+    // surfacing it so such a poller can settle back to 'idle'.
+    let currentMs = 0;
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (): Promise<ChatTurnResult> => {
+        throw new ChatAgentError('agent-timeout');
+      }),
+    });
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({
+      agent: streamingAgent,
+      cache,
+      store: createChatSessionStore(),
+      now: () => new Date(currentMs),
+    });
+
+    const send = await app.request('/api/chat/message/stream', withLocalHost({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', message: 'doomed new thread' }),
+    }), LOCAL_ENV);
+    expect(send.status).toBe(200);
+    await send.text();
+
+    // Past the TTL (FAILED_TURN_SESSIONLESS_TTL_MS = 60_000): no other entry is queued,
+    // so GET must fall through to idle instead of surfacing the stale entry forever.
+    currentMs += 60_001;
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await status.json()).toEqual({ state: 'idle' });
+  });
+
+  it('does not prune a session-scoped failed turn past the sessionId-less TTL (bdboard-kg0m)', async () => {
+    // The TTL only targets sessionId-less entries, which have no ACK path. A
+    // session-scoped entry is always ACK-able (DELETE /api/chat/turn-status), so it must
+    // keep surfacing indefinitely regardless of age -- pruning it by time as well would
+    // silently drop a legitimate failure a client hasn't gotten around to acking yet.
+    let currentMs = 0;
+    const sessionId = '550e8400-e29b-41d4-a716-446655440095';
+    const streamingAgent = createFakeAgent({
+      descriptor: { ...createFakeAgent().descriptor, supportsStreaming: true },
+      sendMessageStream: vi.fn(async (): Promise<ChatTurnResult> => {
+        throw new ChatAgentError('agent-timeout');
+      }),
+    });
+    const store = createChatSessionStore();
+    store.remember('p', sessionId, 'test-agent');
+    const cache = createFakeBoardCache([cachedProject(project('p', '/tmp/p'))]);
+    const app = createApp({
+      agent: streamingAgent,
+      cache,
+      store,
+      now: () => new Date(currentMs),
+    });
+
+    const send = await app.request('/api/chat/message/stream', withLocalHost({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: 'p', sessionId, message: 'doomed existing thread' }),
+    }), LOCAL_ENV);
+    expect(send.status).toBe(200);
+    await send.text();
+
+    // Well past the sessionId-less TTL (FAILED_TURN_SESSIONLESS_TTL_MS = 60_000): a
+    // session-scoped entry must still be returned, unpruned.
+    currentMs += 10 * 60_000;
+    const status = await app.request('/api/chat/turn-status?projectId=p', withLocalHost({}), LOCAL_ENV);
+    expect(await status.json()).toEqual({
+      state: 'failed',
+      code: 'agent-timeout',
+      agentId: 'test-agent',
+      sessionId,
+      failedAt: new Date(0).toISOString(),
     });
   });
 
