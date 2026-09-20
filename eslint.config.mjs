@@ -21,7 +21,7 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/TicketDetailPanel.tsx': 2180, // 現在 2177
   'web/src/components/SettingsPanel.tsx': 650, // 現在 629
   'src/main.ts': 948, // 現在 941 (bdboard-sso1.9: 1193 から分割)
-  'web/src/components/HygienePanel.tsx': 1200, // 現在 1191
+  'web/src/components/HygienePanel.tsx': 1000, // 現在 984 (bdboard-sso1.11 PR-A で hygiene/ へ移動)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'src/infrastructure/chat/bd-tool-catalog.ts': 840, // 現在 834
   'src/domain/hygiene.ts': 780, // 現在 780

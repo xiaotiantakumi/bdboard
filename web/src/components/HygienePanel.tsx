@@ -2,16 +2,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
   HygieneIssueDto,
-  HygieneIssueKindDto,
-  LeaseHealthDto,
-  ProjectHarnessContractDto,
   ProjectHarnessPackStatusDto,
   QuickActionRequest,
-  ReclaimProjectStatusDto,
-  StaleLeaseDto,
 } from '../api';
 import {
-  fetchAllHarnessStatus,
   fetchHygiene,
   fetchLeaseHealth,
   fetchMergeSlotStatus,
@@ -21,14 +15,7 @@ import {
   postTicketQuickActionUndo,
   projectNameFallback,
 } from '../api';
-import {
-  buildWorktreeCleanupCommands,
-  copyTextToClipboard,
-  formatDependencyCycleRemovalScript,
-  formatHeartbeatLoopKillScript,
-  formatWorktreeCleanupScript,
-} from '../bdCommands';
-import { formatActivityTime } from './activityFeedFormatting';
+import { copyTextToClipboard, formatDependencyCycleRemovalScript } from '../bdCommands';
 import { LoadingIndicator } from './LoadingIndicator';
 import {
   buildHarnessContractTicketSuccessMessage,
@@ -38,9 +25,7 @@ import {
   formatHarnessContractDetail,
   formatHarnessContractLabel,
   formatHarnessHooksDetail,
-  harnessContractNeedsAttention,
   harnessContractNeedsTicket,
-  harnessHooksNeedAttention,
 } from '../harnessDisplay';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { planQuickActionUndo } from '../quickActionUndo';
@@ -53,297 +38,53 @@ import {
   type HarnessBulkUpdateTarget,
 } from '../harnessBulkUpdate';
 import { useUndoSnackbar } from './UndoSnackbar';
+import {
+  COPY_FEEDBACK_MS,
+  HARNESS_CONTRACT_KIND_LABEL,
+  HARNESS_DRIFT_KIND_LABEL,
+  HARNESS_HOOKS_KIND_LABEL,
+  KIND_LABELS,
+  MERGE_SLOT_KIND_LABEL,
+  NON_TICKET_HARNESS_WORKTREE_KIND_LABEL,
+  RECLAIM_STATUS_KIND_LABEL,
+  REPAIR_FEEDBACK_MS,
+  STALE_LEASE_KIND_LABEL,
+} from './hygiene/constants';
+import { fetchHarnessHygieneItems } from './hygiene/harnessHygiene';
+import {
+  buildRepairRequest,
+  buildRepairSuccessMessage,
+  confirmRepairLabel,
+  getRepairableKind,
+  kindBadgeClass,
+  repairActionLabel,
+  resolveCleanupScript,
+  severityBadgeClass,
+} from './hygiene/issueDisplay';
+import { ReclaimProjectLines } from './hygiene/ReclaimProjectLines';
+import {
+  harnessContractRowKey,
+  harnessDriftRowKey,
+  harnessHooksRowKey,
+  issueRowKey,
+} from './hygiene/rowKeys';
+import {
+  buildStaleLeaseMessage,
+  filterReclaimProjects,
+  formatStaleDuration,
+  selectReclaimProblemProjects,
+} from './hygiene/staleLease';
+import type {
+  HarnessContractItem,
+  HarnessPackItem,
+  HygienePanelProps,
+  RepairFeedback,
+} from './hygiene/types';
 
-export interface HygienePanelProps {
-  readonly projectIds: readonly string[];
-  onSelectTicket: (ticketId: string) => void;
-  readonly projectRootPaths?: ReadonlyMap<string, string>;
-}
-
-/**
- * プロジェクト × パックの警告行。drift (要更新) と hook 未登録は、行の中身も
- * 直し方 (再注入) も同じなので 1 つの型にまとめる。どちらのリストに入っているかが
- * 種別を決める。
- */
-interface HarnessPackItem {
-  readonly projectId: string;
-  readonly pack: ProjectHarnessPackStatusDto;
-}
-
-interface HarnessContractItem {
-  readonly projectId: string;
-  readonly contract: ProjectHarnessContractDto;
-}
-
-interface HarnessHygieneItems {
-  readonly driftItems: readonly HarnessPackItem[];
-  readonly contractItems: readonly HarnessContractItem[];
-  readonly hooksItems: readonly HarnessPackItem[];
-}
-
-const COPY_FEEDBACK_MS = 2000;
-const REPAIR_FEEDBACK_MS = 4000;
-const HARNESS_DRIFT_KIND_LABEL = 'ハーネス要更新';
-const HARNESS_CONTRACT_KIND_LABEL = '検証コントラクト';
-const HARNESS_HOOKS_KIND_LABEL = 'hook 未登録';
-const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
-const MERGE_SLOT_KIND_LABEL = 'マージスロット';
-const NON_TICKET_HARNESS_WORKTREE_KIND_LABEL = 'ハーネス凍結（非チケット）';
-/**
- * stale lease が 0 件でも reclaim の見送り/エラーがあるときに単独で出す欄の種別ラベル。
- * stale lease 行の補足として出るときと違い、見出しが無いと何の欄か読めない (bdboard-0xsw)。
- */
-const RECLAIM_STATUS_KIND_LABEL = '自動 reclaim';
-
-export const KIND_LABELS: Record<HygieneIssueKindDto, string> = {
-  dependency_cycle: '循環依存',
-  overdue_defer: '期限超過の保留',
-  stale_epic: '完了済みエピック',
-  stale_in_progress: '長期 in_progress',
-  unblocked_high_priority_idle: '着手待ち高優先',
-  stale_pending_decision: '放置された確認待ち',
-  merged_leftover: '残骸 worktree',
-  reclaimed_live_worktree: '誤回収の疑い',
-  stale_harness_worktree: 'ハーネス凍結',
-  orphan_heartbeat_loop: '残骸 heartbeat ループ',
-  in_flight_file_overlap: '着手中の重複',
-  closed_without_evidence: 'close 証拠なし',
-};
-
-type RepairableKind = 'undefer' | 'close';
-
-type RepairFeedback = {
-  readonly rowKey: string;
-  readonly message: string;
-};
-
-/**
- * 行キー。**projectId を含める**。
- *
- * bd のチケット ID はプロジェクト内でしか一意でないので、複数プロジェクトを同時に
- * 見ているとき kind + ticketId だけでは衝突しうる。kind ごとに 1 チケット 1 行と
- * いう前提 (in_flight_file_overlap も相手をまとめて 1 行に畳んでいる) は保つ。
- */
-function issueRowKey(issue: HygieneIssueDto): string {
-  const pidSuffix =
-    issue.heartbeatLoop !== undefined ? `-${issue.heartbeatLoop.pid}` : '';
-  return `${issue.kind}-${issue.projectId}-${issue.ticketId}${pidSuffix}`;
-}
-
-function harnessDriftRowKey(item: HarnessPackItem): string {
-  return `harness-drift-${item.projectId}-${item.pack.name}`;
-}
-
-function harnessContractRowKey(item: HarnessContractItem): string {
-  return `harness-contract-${item.projectId}`;
-}
-
-function harnessHooksRowKey(item: HarnessPackItem): string {
-  return `harness-hooks-${item.projectId}-${item.pack.name}`;
-}
-
-/**
- * ハーネス由来の警告を1回のリクエストからまとめて作る。
- *
- * 検証コントラクトは**注入済みプロジェクトだけ**が対象で、未注入は
- * サーバー側で `not-applicable` になっている。ここでフィルタし直さないのは、
- * 「どこまでを問題扱いにするか」の判断をサーバーの1か所に集めるため
- * (bdboard-pkr6.3)。
- */
-async function fetchHarnessHygieneItems(
-  projectIds: readonly string[],
-): Promise<HarnessHygieneItems> {
-  const batch = await fetchAllHarnessStatus();
-  const filterSet = projectIds.length > 0 ? new Set(projectIds) : null;
-  const entries = batch.projects.filter(
-    (entry) => filterSet === null || filterSet.has(entry.projectId),
-  );
-
-  return {
-    driftItems: entries.flatMap(({ projectId, packs }) =>
-      packs.filter((pack) => pack.drift).map((pack) => ({ projectId, pack })),
-    ),
-    contractItems: entries
-      .filter((entry) => harnessContractNeedsAttention(entry.contract))
-      .map(({ projectId, contract }) => ({ projectId, contract })),
-    hooksItems: entries.flatMap(({ projectId, packs }) =>
-      packs.filter(harnessHooksNeedAttention).map((pack) => ({ projectId, pack })),
-    ),
-  };
-}
-
-function getRepairableKind(kind: HygieneIssueKindDto): RepairableKind | null {
-  switch (kind) {
-    case 'overdue_defer':
-      return 'undefer';
-    case 'stale_epic':
-      return 'close';
-    default:
-      return null;
-  }
-}
-
-function kindBadgeClass(kind: HygieneIssueKindDto): string {
-  return `hygiene-kind-badge hygiene-kind-${kind}`;
-}
-
-function severityBadgeClass(severity: HygieneIssueDto['severity']): string {
-  return severity === 'warning' ? 'badge badge-stalled' : 'badge badge-info';
-}
-
-function resolveCleanupScript(issue: HygieneIssueDto): string | null {
-  if (issue.heartbeatLoop !== undefined) {
-    const script = formatHeartbeatLoopKillScript({
-      pid: issue.heartbeatLoop.pid,
-      ...(issue.heartbeatLoop.startedAt !== undefined
-        ? { startedAt: issue.heartbeatLoop.startedAt }
-        : {}),
-    });
-    return script.length > 0 ? script : null;
-  }
-  if (issue.cleanup === undefined) {
-    return null;
-  }
-  const commands = buildWorktreeCleanupCommands(issue.cleanup);
-  if (commands.length === 0) {
-    return null;
-  }
-  return formatWorktreeCleanupScript(issue.cleanup);
-}
-
-function buildRepairRequest(
-  issue: HygieneIssueDto,
-): { request: QuickActionRequest; previousDeferUntil?: string } | null {
-  const repairable = getRepairableKind(issue.kind);
-  if (repairable === null) {
-    return null;
-  }
-
-  switch (repairable) {
-    case 'undefer':
-      return {
-        request: { action: 'undefer' },
-        previousDeferUntil: issue.deferUntil,
-      };
-    case 'close':
-      return { request: { action: 'close' } };
-  }
-}
-
-function repairActionLabel(repairable: RepairableKind): string {
-  switch (repairable) {
-    case 'undefer':
-      return '保留を解除';
-    case 'close':
-      return 'エピックを完了';
-  }
-}
-
-function confirmRepairLabel(repairable: RepairableKind): string {
-  return `確定: ${repairActionLabel(repairable)}`;
-}
-
-function buildRepairSuccessMessage(
-  request: QuickActionRequest,
-  ticketId: string,
-): string {
-  switch (request.action) {
-    case 'undefer':
-      return `保留を解除しました: ${ticketId}`;
-    case 'close':
-      return `エピックを完了しました: ${ticketId}`;
-    default:
-      return '';
-  }
-}
-
-function formatStaleDuration(staleForMs: number): string {
-  if (staleForMs < 60_000) {
-    return `${Math.max(1, Math.floor(staleForMs / 1000))}秒`;
-  }
-  if (staleForMs < 60 * 60_000) {
-    return `${Math.floor(staleForMs / 60_000)}分`;
-  }
-  const hours = Math.floor(staleForMs / (60 * 60_000));
-  const minutes = Math.floor((staleForMs % (60 * 60_000)) / 60_000);
-  if (minutes === 0) {
-    return `${hours}時間`;
-  }
-  return `${hours}時間${minutes}分`;
-}
-
-function buildStaleLeaseMessage(staleLease: StaleLeaseDto): string {
-  return `lease 失効から ${formatStaleDuration(staleLease.staleForMs)}`;
-}
-
-function filterReclaimProjects(
-  leaseHealth: LeaseHealthDto | undefined,
-  projectIds: readonly string[],
-): readonly ReclaimProjectStatusDto[] {
-  const projects = leaseHealth?.reclaim.projects ?? [];
-  if (projectIds.length === 0) {
-    return projects;
-  }
-  const filterSet = new Set(projectIds);
-  return projects.filter((project) => filterSet.has(project.projectId));
-}
-
-function selectReclaimProblemProjects(
-  reclaimProjects: readonly ReclaimProjectStatusDto[],
-  reclaimEnabled: boolean,
-): readonly ReclaimProjectStatusDto[] {
-  if (!reclaimEnabled) {
-    return [];
-  }
-  return reclaimProjects.filter(
-    (project) => project.reclaimedCountUnknown || project.lastError !== null,
-  );
-}
-
-function formatReclaimProjectLine(status: ReclaimProjectStatusDto): string {
-  const parts: string[] = [];
-  if (status.lastRunAt !== null) {
-    parts.push(`最終実行 ${formatActivityTime(new Date(status.lastRunAt))}`);
-  } else {
-    parts.push('未実行');
-  }
-  if (status.reclaimedCountUnknown) {
-    parts.push('回収件数不明');
-  } else if (status.reclaimedCount !== null) {
-    parts.push(`回収 ${status.reclaimedCount}件`);
-  }
-  return parts.join(' / ');
-}
-
-function ReclaimProjectLines({
-  projects,
-}: {
-  readonly projects: readonly ReclaimProjectStatusDto[];
-}) {
-  return projects.map((projectStatus) => {
-    // 見送り理由 (skipped: …) や回収要約。これが無いと「回収件数不明」
-    // の原因が /api/lease-health の JSON を直接見ないと分からない。
-    const summary = projectStatus.rawSummary?.trim() ?? '';
-    return (
-      <p key={projectStatus.projectId}>
-        <span>{projectStatus.projectId}: </span>
-        <span>{formatReclaimProjectLine(projectStatus)}</span>
-        {summary.length > 0 && (
-          <span className="hygiene-reclaim-status-summary">
-            {' / '}
-            {summary}
-          </span>
-        )}
-        {projectStatus.lastError !== null && (
-          <span className="hygiene-reclaim-status-error">
-            {' '}
-            / エラー: {projectStatus.lastError}
-          </span>
-        )}
-      </p>
-    );
-  });
-}
+// HygienePanel.badge-colors.test.ts が './HygienePanel' から直接 import するため
+// re-export する (定義は ./hygiene/constants に移動済み)。
+export { KIND_LABELS };
+export type { HygienePanelProps };
 
 export function HygienePanel({
   projectIds,
