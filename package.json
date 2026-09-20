@@ -18,7 +18,7 @@
     "harness"
   ],
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=.env src/main.ts",
@@ -34,10 +34,11 @@
     "check:boundaries": "npm run depcruise",
     "mcp:config": "tsx src/infrastructure/chat/mcp-client-config-main.ts",
     "verify": "node scripts/verify.mjs",
-    "verify:steps": "npm run check:file-size && npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
+    "verify:steps": "npm run check:file-size && npm run lint && npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
     "drift": "node scripts/check-drift.mjs",
     "check:commits": "node scripts/check-commit-parse.mjs",
     "check:file-size": "node scripts/check-file-size.mjs",
+    "lint": "eslint --cache --cache-location .eslintcache src web/src scripts",
     "check:gh-issues": "node scripts/check-gh-issues.mjs",
     "test:e2e": "npm run build:web && playwright test --config test/e2e/playwright.config.ts",
     "prepack": "npm run build:web"
@@ -52,11 +53,16 @@
   },
   "devDependencies": {
     "@conventional-commits/parser": "^0.4.1",
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.62.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.15.21",
     "dependency-cruiser": "^16.10.1",
+    "eslint": "^10.11.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.12.0",
     "typescript": "^5.8.3",
+    "typescript-eslint": "^8.70.0",
     "vite": "^7.3.6",
     "vitest": "^4.1.11"
   }

@@ -53,21 +53,27 @@ describe('countLines', () => {
 });
 
 // ---- isTargetPath: 対象ディレクトリ x 対象拡張子。似た名前のディレクトリと衝突しないこと ----
+// bdboard-sso1.8: src/ web/src/ scripts/ の .ts/.tsx/.mjs/.js は eslint.config.mjs の
+// max-lines に一本化したため、この3ディレクトリではそれらの拡張子が対象外になった
+// (ESLint が見ない拡張子 = .css だけがここに残る)。harness/ と test/ は ESLint が
+// 見ないため、引き続き全対象拡張子を見る。
 describe('isTargetPath', () => {
   it.each([
-    ['src/foo.ts', true],
-    ['src/nested/foo.tsx', true],
-    ['web/src/foo.tsx', true],
-    ['web/src/foo.css', true],
-    ['scripts/foo.mjs', true],
-    ['scripts/foo.sh', true],
-    ['harness/packs/x/foo.sh', true],
-    ['test/e2e/foo.ts', true],
+    ['web/src/foo.css', true], // ESLint が見ない拡張子は引き続き対象
+    ['scripts/foo.sh', true], // scripts/ でも .sh は ESLint 対象外 (実在しないが仕様上は対象)
+    ['harness/packs/x/foo.sh', true], // harness/ は ESLint の ignores 対象、全拡張子を見る
+    ['harness/packs/x/foo.ts', true],
+    ['test/e2e/foo.ts', true], // test/ は ESLint の lint 対象外、引き続き .ts も見る
+    ['test/e2e/foo.tsx', true],
   ])('%s -> %s (matches)', (p, expected) => {
     expect(isTargetPath(p)).toBe(expected);
   });
 
   it.each([
+    ['src/foo.ts', false], // ESLint (src/**/*.ts) が見るため対象外
+    ['src/nested/foo.tsx', false],
+    ['web/src/foo.tsx', false], // ESLint (web/src/**/*.tsx) が見るため対象外
+    ['scripts/foo.mjs', false], // ESLint (scripts/**/*.mjs) が見るため対象外
     ['srcfoo/bar.ts', false], // ディレクトリ名の前方一致誤爆
     ['testing/bar.ts', false], // 'test' の前方一致誤爆
     ['websrc/bar.ts', false],
@@ -80,10 +86,19 @@ describe('isTargetPath', () => {
     expect(isTargetPath(p)).toBe(expected);
   });
 
-  it('does not confuse .ts with .tsx', () => {
-    expect(isTargetPath('src/foo.tsx')).toBe(true);
-    expect(isTargetPath('src/foo.ts')).toBe(true);
-    expect(isTargetPath('src/foo.tsxx')).toBe(false);
+  it('does not confuse .ts with .tsx (in a dir ESLint does not cover)', () => {
+    expect(isTargetPath('test/e2e/foo.tsx')).toBe(true);
+    expect(isTargetPath('test/e2e/foo.ts')).toBe(true);
+    expect(isTargetPath('test/e2e/foo.tsxx')).toBe(false);
+  });
+
+  it('excludes ESLint-covered extensions only inside src/, web/src/, scripts/', () => {
+    expect(isTargetPath('src/foo.ts')).toBe(false);
+    expect(isTargetPath('web/src/foo.ts')).toBe(false);
+    expect(isTargetPath('scripts/foo.mjs')).toBe(false);
+    // 同じ拡張子でも ESLint が見ない harness/ test/ では引き続き対象。
+    expect(isTargetPath('harness/foo.ts')).toBe(true);
+    expect(isTargetPath('test/foo.ts')).toBe(true);
   });
 });
 
@@ -396,33 +411,33 @@ describe('buildFileRecords', () => {
   });
 
   it('reads real files and classifies test vs non-test', () => {
-    fs.mkdirSync(path.join(tmpRoot, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(tmpRoot, 'src', 'a.ts'), 'x\ny\n');
-    fs.writeFileSync(path.join(tmpRoot, 'src', 'a.test.ts'), 'x\ny\nz\n');
-    const records = buildFileRecords(tmpRoot, ['src/a.ts', 'src/a.test.ts']);
+    fs.mkdirSync(path.join(tmpRoot, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, 'test', 'a.ts'), 'x\ny\n');
+    fs.writeFileSync(path.join(tmpRoot, 'test', 'a.test.ts'), 'x\ny\nz\n');
+    const records = buildFileRecords(tmpRoot, ['test/a.ts', 'test/a.test.ts']);
     expect(records).toEqual([
-      { path: 'src/a.ts', isTest: false, lines: 2 },
-      { path: 'src/a.test.ts', isTest: true, lines: 3 },
+      { path: 'test/a.ts', isTest: false, lines: 2 },
+      { path: 'test/a.test.ts', isTest: true, lines: 3 },
     ]);
   });
 
   it('excludes fixtures even when the path is otherwise a target', () => {
-    fs.mkdirSync(path.join(tmpRoot, 'src', 'fixtures'), { recursive: true });
-    fs.writeFileSync(path.join(tmpRoot, 'src', 'fixtures', 'big.ts'), 'x\n'.repeat(10));
-    const records = buildFileRecords(tmpRoot, ['src/fixtures/big.ts']);
+    fs.mkdirSync(path.join(tmpRoot, 'test', 'fixtures'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, 'test', 'fixtures', 'big.ts'), 'x\n'.repeat(10));
+    const records = buildFileRecords(tmpRoot, ['test/fixtures/big.ts']);
     expect(records).toEqual([]);
   });
 
   it('silently skips a listed path that no longer exists on disk', () => {
-    const records = buildFileRecords(tmpRoot, ['src/gone.ts']);
+    const records = buildFileRecords(tmpRoot, ['test/gone.ts']);
     expect(records).toEqual([]);
   });
 
   it('CRLF and LF files with the same content produce the same line count', () => {
-    fs.mkdirSync(path.join(tmpRoot, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(tmpRoot, 'src', 'lf.ts'), 'a\nb\nc\n');
-    fs.writeFileSync(path.join(tmpRoot, 'src', 'crlf.ts'), 'a\r\nb\r\nc\r\n');
-    const records = buildFileRecords(tmpRoot, ['src/lf.ts', 'src/crlf.ts']);
+    fs.mkdirSync(path.join(tmpRoot, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, 'test', 'lf.ts'), 'a\nb\nc\n');
+    fs.writeFileSync(path.join(tmpRoot, 'test', 'crlf.ts'), 'a\r\nb\r\nc\r\n');
+    const records = buildFileRecords(tmpRoot, ['test/lf.ts', 'test/crlf.ts']);
     expect(records[0].lines).toBe(records[1].lines);
     expect(records[0].lines).toBe(3);
   });
@@ -496,30 +511,30 @@ describe('check-file-size CLI', () => {
   it('(a) detects a new file over the default limit even before it is committed', () => {
     // git add すらしていない未追跡ファイルも拾えること (仕様: --cached --others の両方を見る)。
     writeConfig();
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'big.ts'), lines(6));
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(6));
     const result = runCheck();
     expect(result.status).toBe(EXIT_FOUND);
-    expect(result.stdout).toContain('src/big.ts');
+    expect(result.stdout).toContain('test/big.ts');
     expect(result.stdout).toContain('(a)');
     expect(result.stdout).toContain(CONFIG_RELATIVE_PATH);
   });
 
   it('(b) fails when a baselined file exceeds its own registered limit', () => {
-    writeConfig({ entries: [{ path: 'src/big.ts', limit: 7, reason: 'test fixture' }] });
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'big.ts'), lines(8));
+    writeConfig({ entries: [{ path: 'test/big.ts', limit: 7, reason: 'test fixture' }] });
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(8));
     sh(work, 'git', 'add', '-A');
     const result = runCheck();
     expect(result.status).toBe(EXIT_FOUND);
     expect(result.stdout).toContain('(b)');
-    expect(result.stdout).toContain('src/big.ts');
+    expect(result.stdout).toContain('test/big.ts');
   });
 
   it('(c) fails when a baselined file shrank back under the default limit', () => {
-    writeConfig({ entries: [{ path: 'src/big.ts', limit: 7, reason: 'test fixture' }] });
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'big.ts'), lines(4));
+    writeConfig({ entries: [{ path: 'test/big.ts', limit: 7, reason: 'test fixture' }] });
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(4));
     sh(work, 'git', 'add', '-A');
     const result = runCheck();
     expect(result.status).toBe(EXIT_FOUND);
@@ -528,21 +543,21 @@ describe('check-file-size CLI', () => {
   });
 
   it('(c) fails when a baselined file has been deleted / renamed away', () => {
-    writeConfig({ entries: [{ path: 'src/gone.ts', limit: 7, reason: 'stale' }] });
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'other.ts'), lines(1));
+    writeConfig({ entries: [{ path: 'test/gone.ts', limit: 7, reason: 'stale' }] });
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'other.ts'), lines(1));
     sh(work, 'git', 'add', '-A');
     const result = runCheck();
     expect(result.status).toBe(EXIT_FOUND);
-    expect(result.stdout).toContain('src/gone.ts');
+    expect(result.stdout).toContain('test/gone.ts');
     expect(result.stdout).toContain('見つからない');
   });
 
   it('(d) warns without failing when the baseline has more than the ratchet threshold of slack', () => {
     // 既定上限 5、limit 9 -> 現行 6 行なら差 3 == threshold(3) で警告のみ、exit は 0。
-    writeConfig({ entries: [{ path: 'src/big.ts', limit: 9, reason: 'slack' }] });
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'big.ts'), lines(6));
+    writeConfig({ entries: [{ path: 'test/big.ts', limit: 9, reason: 'slack' }] });
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'big.ts'), lines(6));
     sh(work, 'git', 'add', '-A');
     const result = runCheck();
     expect(result.status).toBe(EXIT_OK);
@@ -552,9 +567,9 @@ describe('check-file-size CLI', () => {
 
   it('produces the same line count for a CRLF-committed file as an LF one (verify-windows 対策)', () => {
     writeConfig();
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'lf.ts'), lines(6));
-    fs.writeFileSync(path.join(work, 'src', 'crlf.ts'), lines(6).replace(/\n/g, '\r\n'));
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'lf.ts'), lines(6));
+    fs.writeFileSync(path.join(work, 'test', 'crlf.ts'), lines(6).replace(/\n/g, '\r\n'));
     sh(work, 'git', 'add', '-A');
     const result = runCheck(['--report']);
     // 両方とも 6 行として (a) に出るか、report テーブルに同じ行数で出る。
@@ -577,13 +592,13 @@ describe('check-file-size CLI', () => {
 
   it('--report lists all scanned files regardless of pass/fail', () => {
     writeConfig();
-    fs.mkdirSync(path.join(work, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(work, 'src', 'ok.ts'), lines(2));
+    fs.mkdirSync(path.join(work, 'test'), { recursive: true });
+    fs.writeFileSync(path.join(work, 'test', 'ok.ts'), lines(2));
     sh(work, 'git', 'add', '-A');
     const result = runCheck(['--report']);
     expect(result.status).toBe(EXIT_OK);
     expect(result.stdout).toContain('--report 一覧');
-    expect(result.stdout).toContain('src/ok.ts');
+    expect(result.stdout).toContain('test/ok.ts');
   });
 });
 

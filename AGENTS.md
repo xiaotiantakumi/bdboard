@@ -105,11 +105,11 @@ bd prime                # Refresh Beads context
 Before committing any change (server or web), run the full verification chain — it must be clean:
 
 ```bash
-npm run verify   # check:file-size + build + build:web + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + lint + build + build:web + test:server + test:web + check:boundaries
 ```
 
 - **フルチェーンは必ず `npm run verify` で回す。`npm run verify:steps` の直叩きは禁止** —
-  プロセスグループ kill (bdboard-kia) とスロットの両方を迂回する。反復中の個別ステップは可。
+  プロセスグループ kill (bdboard-kia) とスロットの両方を迂回する。反復中の個別ステップは可。`lint` は ESLint + typescript-eslint (`src/` `web/src/` `scripts/` のみ、詳細は [docs/VERIFY.md](docs/VERIFY.md))。
 - **Verify slots**: verify は 1 マシン最大 2 並列に自分でスロット制限する (2026-08-18 に 6 並列が
   load average 190–258 を数時間続けた事故 bdboard-d48 の対策)。`verify: waiting for a verify
   slot (queue position N/M …)` が 10 秒ごとに出るのは**ハングではなく FIFO 待ち**。kill して
