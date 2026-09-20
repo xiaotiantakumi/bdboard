@@ -7,7 +7,7 @@ import { formatBulkFailure } from './messages';
 
 export interface BulkActionMessagesProps {
   lastOutcome: BulkQuickActionOutcome | BulkIdOutcome | null;
-  mutationError: unknown;
+  mutationError: Error | null;
 }
 
 export function BulkActionMessages({

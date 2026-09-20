@@ -52,7 +52,7 @@ export interface BulkActions {
   readonly actionsDisabled: boolean;
   readonly deferSubmitDisabled: boolean;
   readonly mutationPending: boolean;
-  readonly mutationError: unknown;
+  readonly mutationError: Error | null;
   readonly confirmPanelRef: RefObject<HTMLDivElement | null>;
   readonly cancelConfirmRef: RefObject<HTMLButtonElement | null>;
   readonly setDeferPeriodKind: (kind: DeferPeriodKind) => void;
