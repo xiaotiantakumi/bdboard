@@ -71,7 +71,8 @@ export interface BoardViewDto {
 export type BoardMode = 'merged' | 'split';
 
 // 列の表示順は「着手可能 → 進行中 → 確認待ち → ブロック → 完了」(bdboard-662)。この配列の
-// 並びがそのままレーン列の表示順になる(BoardView.tsx の visibleLanes 参照)。サーバー側の
+// 並びがそのままレーン列の表示順になる(components/board/boardLanesHelpers.ts の
+// visibleLanes 参照)。サーバー側の
 // LANES (src/domain/readiness.ts)と値の集合を必ず一致させること(web は src を import
 // できないため、独立に2箇所で定義している)。
 //

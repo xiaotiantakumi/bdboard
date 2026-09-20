@@ -22,7 +22,7 @@ export function applyStalledOnly(
   return cards.filter((card) => card.stalled);
 }
 
-export function filterCards(
+function filterCards(
   cards: BoardCardDto[],
   stalledOnly: boolean,
   filter: BoardFilter = EMPTY_BOARD_FILTER,
