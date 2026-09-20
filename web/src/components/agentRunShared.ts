@@ -55,7 +55,10 @@ function withDetail(base: string, detail: string | undefined): string {
 // `issue already claimed by <assignee>` (bd-cli-issue-writer.test.ts に実測値を
 // 固定済み) なので、その一部だけを表示用に抜き出す。抜き出せなければ undefined を
 // 返し、呼び出し側は汎用文言にフォールバックする。
-const CLAIM_FAILED_ALREADY_CLAIMED_PATTERN = /issue already claimed by (.+?)\s*$/i;
+// `$` だけだと bd 出力が将来 "...claimed by <name>\nhint: ..." のように
+// 別行を続けてきたとき丸ごとマッチしなくなる (`.` は改行をまたがない) ため、
+// 改行を含まない一続きとして "by " の後ろを拾う。
+const CLAIM_FAILED_ALREADY_CLAIMED_PATTERN = /issue already claimed by ([^\n]+)/i;
 
 function extractClaimFailedAssignee(
   errorMessage: string | undefined,
