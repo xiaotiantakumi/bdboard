@@ -18,7 +18,7 @@ import globals from 'globals';
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
-  'web/src/components/TicketDetailPanel.tsx': 1580, // 現在 1532 (bdboard-sso1.5 PR-H+PR-I+PR-J 合算: 子チケット/bdコマンド/コメント投稿/セッションリンク編集を各セクション/フックへ移動)
+  'web/src/components/TicketDetailPanel.tsx': 1360, // 現在 1316 (bdboard-sso1.5 PR-K: クイックアクション(着手/完了/延期/優先度変更)を useTicketQuickActions.ts + TicketQuickActionsSection.tsx へ移動)
   'web/src/components/SettingsPanel.tsx': 390, // 現在 372 (bdboard-sso1.10 PR-F: useScanRootsForm)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
