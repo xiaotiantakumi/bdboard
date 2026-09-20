@@ -1015,13 +1015,26 @@ describe('createBdCliHumanDecisions', () => {
   // one gate blocks multiple tickets, but only wired it into the gate-side branch. These
   // three tests cover the ticket-side (ticket->gate direction, bdboard-vy0h/PR#504) branch,
   // which had no such cleanup at all before this fix.
+  // Stateful: tracks whether `bd gate resolve <gateId>` has already run, so that a
+  // re-`show` of the *answered* ticket (issueId) reflects the gate as closed afterward —
+  // matching real bd behavior. This is what lets a test actually exercise the
+  // `blockedTicketId !== issueId` self-exclusion guard in the ticket branch: without a
+  // stateful mock, issueId's own gate dependency would always read back as still 'open'
+  // and get skipped by the ordinary blocking-gate check regardless of that guard, masking
+  // a regression where the guard is removed and issueId's own label gets a redundant
+  // second `label remove` and incorrectly appears in clearedHumanLabelTicketIds.
   function ticketRespondHandler(options: {
     readonly issueId: string;
     readonly gateId: string;
     readonly gateDependents?: readonly Record<string, unknown>[];
     readonly siblingShowResponses?: Record<string, Record<string, unknown>>;
   }) {
+    let gateResolved = false;
     return async (_command: string, args: readonly string[]) => {
+      if (args.includes('gate') && args.includes('resolve')) {
+        gateResolved = true;
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }
       if (args.includes('show')) {
         const showIndex = args.indexOf('show');
         const shownId = args[showIndex + 1];
@@ -1045,7 +1058,7 @@ describe('createBdCliHumanDecisions', () => {
                     id: options.gateId,
                     issue_type: 'gate',
                     await_type: 'human',
-                    status: 'open',
+                    status: gateResolved ? 'closed' : 'open',
                     dependency_type: 'blocks',
                   },
                 ],
@@ -1090,14 +1103,17 @@ describe('createBdCliHumanDecisions', () => {
       resolvedGateIds: [gateId],
       clearedHumanLabelTicketIds: [siblingId],
     });
-    expect(
-      calls.some(
-        (call) =>
-          call.args.includes('label') &&
-          call.args.includes('remove') &&
-          call.args.includes(siblingId),
-      ),
-    ).toBe(true);
+    // bdboard-ixx9: asserts the `blockedTicketId !== issueId` self-exclusion guard is
+    // doing real work, not just satisfying a shape check. issueId's own label was already
+    // removed once (unconditionally, before the sibling lookup even runs); without the
+    // guard, issueId would also be re-processed as its own "sibling" (the gate's
+    // dependents list includes it) and, once the mock reports the just-resolved gate as
+    // closed, would get a redundant second `label remove` and wrongly appear in
+    // clearedHumanLabelTicketIds above.
+    const labelRemoveTargets = calls
+      .filter((call) => call.args.includes('label') && call.args.includes('remove'))
+      .map((call) => call.args[call.args.length - 2]);
+    expect(labelRemoveTargets).toEqual([issueId, siblingId]);
   });
 
   it('keeps a sibling ticket label when it is still blocked by another open human gate (bdboard-ixx9)', async () => {
