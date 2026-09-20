@@ -19,7 +19,7 @@ const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
   'web/src/components/TicketDetailPanel.tsx': 2180, // 現在 2177
-  'web/src/components/SettingsPanel.tsx': 1040, // 現在 1027
+  'web/src/components/SettingsPanel.tsx': 920, // 現在 902
   'src/main.ts': 1200, // 現在 1193
   'web/src/components/HygienePanel.tsx': 1200, // 現在 1191
   'web/src/App.tsx': 1040, // 現在 1033
