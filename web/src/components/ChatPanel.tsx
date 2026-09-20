@@ -107,7 +107,6 @@ interface ChatPanelProps {
   onClose: () => void;
 }
 
-
 // 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
 // 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
 const BOTTOM_STICK_THRESHOLD_PX = 48;
