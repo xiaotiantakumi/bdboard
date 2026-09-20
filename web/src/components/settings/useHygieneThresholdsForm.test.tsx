@@ -139,7 +139,11 @@ describe('useHygieneThresholdsForm', () => {
     await waitFor(() => expect(result.current.query.data).toBeDefined());
 
     // Only the refetch triggered by the upcoming save's invalidateQueries hangs; the initial
-    // mount fetch above already resolved normally.
+    // mount fetch above already resolved normally. Note: react-query awaits the mutation's
+    // onSuccess before marking it settled, so with the refetch hanging the first mutation stays
+    // "pending" forever (isSaving never flips back to false, no success feedback fires) — that's
+    // expected and is why this test only asserts on putHygieneThresholdsConfigMock's call args,
+    // not on isDirty/feedback, for the first submit below.
     fetchHygieneThresholdsConfigMock.mockImplementationOnce(() => new Promise(() => {}));
     act(() => {
       result.current.onStaleInProgressDaysChange('30');
