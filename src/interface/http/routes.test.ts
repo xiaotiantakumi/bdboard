@@ -1904,7 +1904,7 @@ describe('createApiRoutes', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const app = createApiRoutes(
@@ -1961,7 +1961,7 @@ describe('createApiRoutes', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const app = createApiRoutes(
@@ -2800,7 +2800,7 @@ describe('createApiRoutes', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -2867,7 +2867,7 @@ describe('createApiRoutes', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'merged', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'merged', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
