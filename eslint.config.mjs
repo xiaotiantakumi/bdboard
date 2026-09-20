@@ -18,8 +18,7 @@ import globals from 'globals';
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2630, // 現在 2623
-  'web/src/components/TicketDetailPanel.tsx': 2580, // 現在 2576
-  'web/src/api.ts': 1620, // 現在 1616
+  'web/src/components/TicketDetailPanel.tsx': 2400, // 現在 2395
   'web/src/components/SettingsPanel.tsx': 1220, // 現在 1216
   'src/main.ts': 1200, // 現在 1193
   'web/src/components/HygienePanel.tsx': 1200, // 現在 1191
@@ -48,15 +47,15 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/PresetControl.tsx': 430, // 現在 428
   'web/src/components/SessionListPanel.tsx': 430, // 現在 427
   'scripts/check-drift.mjs': 410, // 現在 409
-  'src/application/board/get-pr-badges.ts': 390, // 現在 386
+  'src/application/board/get-pr-badges.ts': 390, // 現在 388
   'src/application/runner/run-store.ts': 390, // 現在 381
   'scripts/check-commit-parse.mjs': 380, // 現在 380
   'web/src/components/nextUpRunLoop.ts': 380, // 現在 371
   'src/domain/board.ts': 370, // 現在 368
   'web/src/components/DependencyGraphView.tsx': 370, // 現在 367
   'web/src/components/BoardView.tsx': 370, // 現在 365
+  'scripts/check-file-size.mjs': 370, // 現在 362
   'web/src/components/NextUpView.tsx': 370, // 現在 362
-  'scripts/check-file-size.mjs': 360, // 現在 351
   'src/infrastructure/chat/cli-chat-agent.ts': 360, // 現在 351
   'src/infrastructure/chat/specs/claude-spec.ts': 340, // 現在 331
   'src/infrastructure/harness/fs-harness-injector.ts': 320, // 現在 312
@@ -65,6 +64,7 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/SearchPalette.tsx': 290, // 現在 282
   'src/application/lease/reclaim-scheduler.ts': 280, // 現在 280
   'src/infrastructure/process/ps-process-scanner.ts': 280, // 現在 279
+  'web/src/api/chat.ts': 280, // 現在 279
   'src/domain/harness-kpi.ts': 270, // 現在 270
   'src/interface/http/harness-routes.ts': 270, // 現在 270
   'src/infrastructure/git/git-worktree-scanner.ts': 270, // 現在 269

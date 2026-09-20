@@ -109,13 +109,7 @@ npm run verify   # check:file-size + lint + build + build:web + test:server + te
 ```
 
 - **フルチェーンは必ず `npm run verify` で回す。`npm run verify:steps` の直叩きは禁止** —
-  プロセスグループ kill (bdboard-kia) とスロットの両方を迂回する。反復中の個別ステップは可。
-- **`npm run lint`** は ESLint + typescript-eslint (`eslint.config.mjs`、`src/` `web/src/`
-  `scripts/` のみ対象)。`max-lines` はラチェット方式の許可リスト (`MAX_LINES_ALLOWLIST`) —
-  既存の超過ファイルだけを列挙し、分割して収まったらエントリを消す。既存の他ルール違反は
-  台帳コメントつきで `warn` にしてあり、`warn` では失敗しない。JS/TS の行数上限は ESLint に
-  一本化したため `check:file-size`/`file-size-baseline.json` は `src/` `web/src/` `scripts/`
-  配下では ESLint が見ない拡張子 (`web/src/index.css` 等) だけを見る (bdboard-sso1.8)。
+  プロセスグループ kill (bdboard-kia) とスロットの両方を迂回する。反復中の個別ステップは可。`lint` は ESLint + typescript-eslint (`src/` `web/src/` `scripts/` のみ、詳細は [docs/VERIFY.md](docs/VERIFY.md))。
 - **Verify slots**: verify は 1 マシン最大 2 並列に自分でスロット制限する (2026-08-18 に 6 並列が
   load average 190–258 を数時間続けた事故 bdboard-d48 の対策)。`verify: waiting for a verify
   slot (queue position N/M …)` が 10 秒ごとに出るのは**ハングではなく FIFO 待ち**。kill して
