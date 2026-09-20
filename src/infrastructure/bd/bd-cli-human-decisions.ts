@@ -65,10 +65,36 @@ const bdShowDependencySchema = z.object({
 // issue_type だけに依存させ、dependencies は unknown のまま受け取って要素ごとに
 // safeParse する(parseListStdout / parseGateListStdout と同じ「1件の不正で
 // 全体を隠さない」方針)。
+// metadata は bdboard-mw8y: 作業チケットが自分自身のスタンドアロンな決定待ち
+// (metadata.decision_question)を持っているかどうかを判定するために読む。
+// dependencies と同じ理由(直上のコメント参照)で z.unknown() のまま受け取る —
+// z.record(z.unknown()) は一見緩そうだが、値が object リテラルであることまで
+// 要求するため metadata: null 等で item 全体の safeParse を失敗させ、
+// dependencies が避けている「1件の不正で kind 判定まで道連れにする」失敗モードを
+// このフィールドだけ再導入してしまう(opus レビュー指摘, PR #517)。型の妥当性は
+// 呼び出し側の hasOwnDecisionQuestion() が typeof で自前チェックする。
 const bdShowItemSchema = z.object({
   issue_type: z.string().optional(),
   dependencies: z.unknown().optional(),
+  metadata: z.unknown().optional(),
 });
+
+// mapListItemToPendingDecision の question 抽出と同じ判定(非空文字列の
+// decision_question)。true は「このチケットは decision_question を記録している」
+// ことだけを意味し、その質問がまだ未回答かどうかまでは保証しない(respond() は
+// decision_question を消す経路を持たないため、一度回答済みでも残り続けうる —
+// opus レビュー指摘, PR #517)。bd gate create --type=human --blocks によって
+// human ラベルが付いたチケットでも、そのチケット自身が独立した decision_question を
+// 持つことがある(実データにこの形自体は存在する。この場合はラベルがどちらの
+// 意味を担っているか区別できないので、gate 側の掃除では安全側に倒して剥がさない
+// (bdboard-mw8y))。
+function hasOwnDecisionQuestion(metadata: unknown): boolean {
+  if (metadata === null || typeof metadata !== 'object') {
+    return false;
+  }
+  const question = (metadata as Record<string, unknown>).decision_question;
+  return typeof question === 'string' && question.length > 0;
+}
 
 // 作業チケットの dependencies[] のうち、respond() が resolve してよい対象だけを絞り込む。
 // 要素ごとに safeParse し、1件でも形が崩れていれば「その要素だけ」スキップする
@@ -405,6 +431,13 @@ function mapListItemToPendingDecision(
 interface ShowKindAndBlockingGates {
   readonly kind: ResolvedDecisionKind;
   readonly blockingHumanGateIds: readonly string[];
+  /**
+   * kind === 'ticket' のときだけ意味を持つ。このチケット自身が standalone な
+   * decision_question(metadata.decision_question)を持っているかどうか(bdboard-mw8y)。
+   * gate 側の掃除(respond() の kind === 'gate' 分岐)が、このチケット自身の未回答の
+   * 質問を巻き込んで human ラベルを剥がさないようにするために使う。
+   */
+  readonly hasOwnDecisionQuestion: boolean;
 }
 
 // `bd show <id> --json` の stdout から種別(gate/ticket/unknown)と、作業チケットの場合に
@@ -415,30 +448,35 @@ interface ShowKindAndBlockingGates {
 function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
   const trimmedStdout = stdout.trim();
   if (trimmedStdout.length === 0) {
-    return { kind: 'unknown', blockingHumanGateIds: [] };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmedStdout) as unknown;
   } catch {
-    return { kind: 'unknown', blockingHumanGateIds: [] };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    return { kind: 'unknown', blockingHumanGateIds: [] };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
   }
 
   const itemResult = bdShowItemSchema.safeParse(parsed[0]);
   if (!itemResult.success) {
-    return { kind: 'unknown', blockingHumanGateIds: [] };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
   }
 
   const kind = itemResult.data.issue_type === 'gate' ? 'gate' : 'ticket';
   const blockingHumanGateIds =
     kind === 'ticket' ? filterBlockingHumanGateIds(itemResult.data.dependencies) : [];
 
-  return { kind, blockingHumanGateIds };
+  return {
+    kind,
+    blockingHumanGateIds,
+    hasOwnDecisionQuestion:
+      kind === 'ticket' ? hasOwnDecisionQuestion(itemResult.data.metadata) : false,
+  };
 }
 
 // bdboard-xgvh レビュー指摘で追加されたテストが直接参照する。fail-safe の中核(gate と
@@ -622,12 +660,12 @@ async function resolveKindAndBlockingGates(
     );
 
     if (result === null) {
-      return { kind: 'unknown', blockingHumanGateIds: [] };
+      return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
     }
 
     return parseShowStdout(result.stdout);
   } catch {
-    return { kind: 'unknown', blockingHumanGateIds: [] };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
   }
 }
 
@@ -810,9 +848,18 @@ export function createBdCliHumanDecisions(
         }
 
         // bdboard-giyt: bdboard-vy0h の逆方向。この gate が直接ブロックしていた
-        // work ticket のうち、他に open な human gate が残っていないものだけ
+        // work ticket のうち、他に open な human gate が残っていない かつ
+        // そのチケット自身が standalone な decision_question を記録していないものだけ
         // human ラベルを外す(兄弟 gate が残っているうちはそのチケットはまだ
-        // 確認待ちなので触らない)。gate の close 自体は既に成功しているので、
+        // 確認待ちなので触らない。bdboard-mw8y: standalone な decision_question を
+        // 記録しているチケットは、たまたま無関係な human gate にもブロックされていた
+        // 場合、その gate への回答でチケット自身の質問まで確認待ちレーンから
+        // 消えてしまう(respond() は decision_question 自体を消す経路を持たないため、
+        // hasOwnDecisionQuestion は「回答済みかどうか」ではなく「記録されているか
+        // どうか」しか見分けられない — 安全側に倒し、記録されている限り剥がさない)。
+        // この場合はここで剥がさず、そのチケット自身への回答時に
+        // filterBlockingHumanGateIds 経由で既に閉じたこの gate が除外されて
+        // 自己修復する)。gate の close 自体は既に成功しているので、
         // ここから先は fail-soft — 個々のチケットで読み取りやラベル解除に失敗
         // しても、そのチケットだけスキップして次へ進む。
         const blockedTicketIds = await resolveGateBlockedTicketIds(
@@ -830,7 +877,11 @@ export function createBdCliHumanDecisions(
               rootPath,
               ticketId,
             );
-            if (ticketState.kind !== 'ticket' || ticketState.blockingHumanGateIds.length > 0) {
+            if (
+              ticketState.kind !== 'ticket' ||
+              ticketState.blockingHumanGateIds.length > 0 ||
+              ticketState.hasOwnDecisionQuestion
+            ) {
               continue;
             }
 

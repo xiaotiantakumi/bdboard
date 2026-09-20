@@ -827,6 +827,67 @@ describe('createBdCliHumanDecisions', () => {
     expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
   });
 
+  // bdboard-mw8y: a blocked ticket can itself carry a standalone
+  // decision_question (unrelated to the gate that was just answered). Even
+  // though no other open human gate blocks it, the gate-side cleanup must not
+  // strip the ticket's own pending-decision label out from under it.
+  it('keeps the human label on a blocked ticket that carries its own standalone decision_question (bdboard-mw8y)', async () => {
+    const gateId = 'bdboard-gate';
+    const ticketId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          const showIndex = args.indexOf('show');
+          const shownId = args[showIndex + 1];
+          if (args.includes('--include-dependents')) {
+            return {
+              stdout: JSON.stringify([
+                {
+                  id: shownId,
+                  issue_type: 'gate',
+                  dependents: [
+                    { id: ticketId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+                  ],
+                },
+              ]),
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          if (shownId === gateId) {
+            return {
+              stdout: JSON.stringify([{ id: shownId, issue_type: 'gate' }]),
+              stderr: '',
+              exitCode: 0,
+            };
+          }
+          // The blocked ticket itself: no other open human gates block it
+          // (dependencies: []), but it carries its own unanswered
+          // decision_question in metadata.
+          return {
+            stdout: JSON.stringify([
+              {
+                id: shownId,
+                issue_type: 'task',
+                dependencies: [],
+                metadata: { decision_question: 'この場合どうしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', gateId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'gate', closed: true });
+    expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
+  });
+
   it('removes the human label for a work ticket without closing it', async () => {
     const issueId = 'bdboard-task';
     const { runner, calls } = createFakeRunner({
@@ -1335,6 +1396,7 @@ describe('resolveKindAndBlockingGates', () => {
     expect(result).toEqual({
       kind: 'ticket',
       blockingHumanGateIds: ['bdboard-human-open'],
+      hasOwnDecisionQuestion: false,
     });
   });
 
@@ -1354,7 +1416,11 @@ describe('resolveKindAndBlockingGates', () => {
 
     const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-gate');
 
-    expect(result).toEqual({ kind: 'gate', blockingHumanGateIds: [] });
+    expect(result).toEqual({
+      kind: 'gate',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: false,
+    });
   });
 
   // bdboard-vy0h レビュー指摘: dependencies の形が想定外でも kind 判定を道連れにしない。
@@ -1398,6 +1464,7 @@ describe('resolveKindAndBlockingGates', () => {
     expect(result).toEqual({
       kind: 'ticket',
       blockingHumanGateIds: ['bdboard-human-open'],
+      hasOwnDecisionQuestion: false,
     });
   });
 
@@ -1419,7 +1486,11 @@ describe('resolveKindAndBlockingGates', () => {
 
     const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
 
-    expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: false,
+    });
   });
 
   // dependency_type と issue_type/await_type の条件が独立に効いていることを確認する
@@ -1455,7 +1526,73 @@ describe('resolveKindAndBlockingGates', () => {
 
     const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
 
-    expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: false,
+    });
+  });
+
+  // bdboard-mw8y opus レビュー指摘: metadata を bdShowItemSchema へ z.record(z.unknown())
+  // として混ぜると、dependencies が避けている「1件の不正で item 全体の safeParse が
+  // 失敗し kind 判定まで 'unknown' に道連れにする」失敗モードをこのフィールドだけ
+  // 再導入する(bd が metadata: null を返すこと自体は未確認だが、想定外の形が来ても
+  // kind 判定へ波及しないという既存の不変条件を守る)。metadata: null でも
+  // kind が 'ticket' のまま倒れず、hasOwnDecisionQuestion だけ安全側の false に
+  // 倒れることを直接押さえる。
+  it('keeps kind=ticket instead of falling to unknown when metadata is null (bdboard-mw8y)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              { id: 'bdboard-probe', issue_type: 'task', dependencies: [], metadata: null },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: false,
+    });
+  });
+
+  it('reports hasOwnDecisionQuestion true when the ticket carries a non-empty decision_question (bdboard-mw8y)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: 'bdboard-probe',
+                issue_type: 'task',
+                dependencies: [],
+                metadata: { decision_question: 'どちらにしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result).toEqual({
+      kind: 'ticket',
+      blockingHumanGateIds: [],
+      hasOwnDecisionQuestion: true,
+    });
   });
 });
 
