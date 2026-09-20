@@ -201,8 +201,8 @@
 
 ### blocking-chat-question — ユーザーへの質問をチャットで投げて回答待ちし、セッション全体が停止（実測）
 - 原因: 確認待ちを台帳に載せる手段を使わず、同期の質問にした
-- 防止: bd comment + human ラベル + human gate に載せて次のチケットへ進む（本則: SKILL.md 規律3）
-- 出典: SKILL.md 規律3 の動機事例
+- 防止: gate 本体（title/description）を質問の正本にし、作業チケット側は pointer comment + human ラベルに留めて次のチケットへ進む（本則: SKILL.md 規律3, question-template.md）
+- 出典: SKILL.md 規律3 の動機事例 / bdboard-p5l.26
 
 ### dep-instead-of-gate — 確認待ちを `bd dep add` で表現しようとして既存の discovered-from 辺と衝突・失敗（bd 1.2.1 実測）
 - 原因: bd は同じ向きの2者間に複数タイプの辺を持てない
