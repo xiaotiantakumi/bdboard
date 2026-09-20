@@ -22,8 +22,8 @@
     },
     {
       "path": "web/src/components/TicketDetailPanel.tsx",
-      "limit": 3000,
-      "reason": "TicketDetailPanel コンポーネント1関数で約2369行 (374〜2743行目)。チケット詳細の全セクション (メタ情報・依存関係・コメント・実行履歴等) を1コンポーネントに集約。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
+      "limit": 2800,
+      "reason": "TicketDetailPanel コンポーネント1関数で約2413行 (移動前は374〜2786行目、PR-A後は128〜2540行目)。チケット詳細の全セクション (メタ情報・依存関係・コメント・実行履歴等) を1コンポーネントに集約。bdboard-sso1.5 PR-A で純粋ヘルパー・型・自己完結コンポーネントを web/src/components/ticket-detail/ へ移動 (2786→2540行)。セクション別の分割は bdboard-sso1.5 の続きの PR (PR-B以降) で継続。現行 2540 行 + 200 行余白を100行単位で切り上げ。"
     },
     {
       "path": "src/main.ts",
