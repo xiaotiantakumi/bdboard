@@ -50,6 +50,17 @@ module.exports = {
       to: { path: '^src/interface' },
     },
     {
+      name: 'no-upstream-deps-on-bootstrap',
+      severity: 'error',
+      comment:
+        'bdboard-sso1.14: domain/application/infrastructure/interface must not depend on ' +
+        'src/bootstrap (the composition root). bootstrap itself stays unconstrained as an ' +
+        'IMPORT SOURCE (it may import from any layer, same as main.ts always could) — this ' +
+        'rule only constrains it as an IMPORT TARGET.',
+      from: { path: '^src/(domain|application|infrastructure|interface)' },
+      to: { path: '^src/bootstrap' },
+    },
+    {
       name: 'no-child-process-outside-process-runners',
       severity: 'error',
       comment:

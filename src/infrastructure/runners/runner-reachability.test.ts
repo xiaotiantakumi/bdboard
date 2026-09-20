@@ -30,6 +30,9 @@ const RUNNER_REFERENCE_TOKENS = [
 const RUNNER_REFERENCE_ALLOWLIST_FILES = [
   'src/interface/http/agent-run-routes.ts',
   'src/main.ts',
+  // bdboard-sso1.14: main.ts のエージェント実行 (agent-run) 領域配線を
+  // src/bootstrap/wire-agent-run.ts へ切り出した (move only)。
+  'src/bootstrap/wire-agent-run.ts',
   'src/application/ports/agent-runner.ts',
 ] as const;
 

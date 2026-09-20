@@ -125,18 +125,28 @@ describe('chat specs safety guards', () => {
     expect(source.toLowerCase().includes('claude')).toBe(false);
   });
 
-  it('src/main.ts wires chat agent registration through buildChatAgentRegistry (bdboard-l1t.4 SF6)', () => {
+  it('src/main.ts and src/bootstrap/wire-chat.ts wire chat agent registration through buildChatAgentRegistry (bdboard-l1t.4 SF6)', () => {
     // 実際の登録配線(claude 常時登録 / codex・cursor は opt-in)は
     // chat-agent-registry-builder.ts に切り出してユニットテストしてある
-    // (chat-agent-registry-builder.test.ts)。ここでは main.ts が配線を
-    // 自前で持たず、その関数を呼ぶ形を保っていることだけを固定する。
+    // (chat-agent-registry-builder.test.ts)。main.ts 自体のチャット領域配線は
+    // bdboard-sso1.14 で src/bootstrap/wire-chat.ts へ move only で切り出した
+    // ため、buildChatAgentRegistry( の呼び出しはそちらにある。ここでは
+    // main.ts / wire-chat.ts のどちらも配線を自前で持たず、その関数を呼ぶ形を
+    // 保っていることだけを固定する。
     const mainPath = path.join(REPO_ROOT, 'src/main.ts');
-    const source = readFileSync(mainPath, 'utf8');
-    expect(source).toContain('buildChatAgentRegistry(');
-    expect(source).not.toContain('createClaudeChatAgent');
-    expect(source).not.toContain('createCodexChatAgent');
-    expect(source).not.toContain('createCursorChatAgent');
-    expect(source).not.toContain('createAgyChatAgent');
+    const mainSource = readFileSync(mainPath, 'utf8');
+    expect(mainSource).not.toContain('createClaudeChatAgent');
+    expect(mainSource).not.toContain('createCodexChatAgent');
+    expect(mainSource).not.toContain('createCursorChatAgent');
+    expect(mainSource).not.toContain('createAgyChatAgent');
+
+    const wireChatPath = path.join(REPO_ROOT, 'src/bootstrap/wire-chat.ts');
+    const wireChatSource = readFileSync(wireChatPath, 'utf8');
+    expect(wireChatSource).toContain('buildChatAgentRegistry(');
+    expect(wireChatSource).not.toContain('createClaudeChatAgent');
+    expect(wireChatSource).not.toContain('createCodexChatAgent');
+    expect(wireChatSource).not.toContain('createCursorChatAgent');
+    expect(wireChatSource).not.toContain('createAgyChatAgent');
   });
 
   it('chat-agent-registry-builder.ts always registers claude and gates codex/cursor/agy behind BDBOARD_CHAT_AGENTS opt-in', () => {
