@@ -26,7 +26,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'web/src/hooks/useNotificationEvents.ts': 620, // 現在 619
-  'src/infrastructure/bd/bd-cli-issue-writer.ts': 570, // 現在 565
   'web/src/components/BulkActionBar.tsx': 570, // 現在 565
   'web/src/uiPersistedState.ts': 530, // 現在 523
   'src/interface/http/ticket-write-routes.ts': 520, // 現在 511

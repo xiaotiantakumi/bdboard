@@ -1,258 +1,35 @@
-import { z } from 'zod';
+// src/infrastructure/bd/bd-cli-issue-writer.ts は bdboard-sso1.24 でモジュール分割された。
+// 実体は ./bd-cli-issue-writer/ 配下:
+//   - shared.ts               : CAS 読み取りの共通ジェネリック (readTicketField)
+//   - read-status-priority.ts : priority/status の CAS 読み取り (readCurrentPriority/Status)
+//   - read-content.ts         : title/description の CAS 読み取り (readCurrentTitle/Description)
+//   - find-by-label.ts        : findOpenTicketByLabel の CAS 不要読み取り
+//   - lifecycle.ts            : claim/close/unclaim/reopen/undefer
+//   - schedule-label.ts       : defer/setPriority/addLabel/removeLabel/undoPriority
+//   - content.ts              : addComment/updateTitle/updateDescription
+//   - create-dep.ts           : create/findOpenTicketByLabel/setMetadata
+// このファイルは import 側 (呼び出し元・テスト) を書き換えないための入口としてのみ残す。
+// 挙動・型は一切変えていない (移動のみ)。
+//
+// createBdCliIssueWriter() 自体は元々クラスではなく、commandRunner/bdPath/timeoutMs を
+// クロージャで捕捉するオブジェクトファクトリだった。分割にあたり、公開 API (関数名・引数・
+// 戻り値の形) とコンストラクタ引数 (commandRunner, options) は変えず、各メソッドの本体だけを
+// 対応するモジュールの関数へ委譲する形にした (クロージャ捕捉していた変数は明示引数に変換)。
 import type { CommandRunner } from '../../application/ports/command-runner.js';
-import { BdError } from '../../application/ports/issue-repository.js';
+import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import {
-  ContentConflictError,
-  PriorityConflictError,
-  StatusConflictError,
-  type IssueWriterPort,
-} from '../../application/ports/issue-writer.js';
-import {
-  runBdCommand,
-  runBdCommandForStdout,
-  runBdTool,
-  runBdWriteCommandForStdout,
-} from './bd-cli-tool-runner.js';
-import { withLockContentionRetry } from './bd-retry.js';
+  addLabel,
+  defer,
+  removeLabel,
+  setPriority,
+  undoPriority,
+} from './bd-cli-issue-writer/schedule-label.js';
+import { addComment, updateDescription, updateTitle } from './bd-cli-issue-writer/content.js';
+import { create, findOpenTicketByLabel, setMetadata } from './bd-cli-issue-writer/create-dep.js';
+import { claim, close, reopen, unclaim, undefer } from './bd-cli-issue-writer/lifecycle.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
-
-// undoPriority の CAS チェック用。bd show --json の出力から priority だけ読めればよい。
-const bdShowPriorityItemSchema = z.object({
-  id: z.string(),
-  priority: z.number().int().min(0).max(4),
-});
-
-type CasReadContext = 'undo' | 'update';
-
-async function readTicketField<TSchema, TValue>(
-  commandRunner: CommandRunner,
-  bdPath: string,
-  timeoutMs: number,
-  rootPath: string,
-  ticketId: string,
-  schema: z.ZodType<TSchema>,
-  fieldLabel: string,
-  casContext: CasReadContext,
-  extract: (data: TSchema) => TValue,
-): Promise<TValue> {
-  const stdout = await runBdCommandForStdout(
-    commandRunner,
-    bdPath,
-    timeoutMs,
-    rootPath,
-    ['--readonly', '-C', rootPath, 'show', '--json', `--id=${ticketId}`],
-    ticketId,
-  );
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      `failed to parse bd show output while checking ${fieldLabel} for ${casContext}`,
-    );
-  }
-
-  const item = Array.isArray(parsed) ? parsed[0] : parsed;
-  const result = schema.safeParse(item);
-  if (!result.success) {
-    throw new BdError(
-      'unknown',
-      ticketId,
-      `bd show output missing ${fieldLabel} while checking ${casContext} precondition`,
-    );
-  }
-
-  return extract(result.data);
-}
-
-async function readCurrentPriority(
-  commandRunner: CommandRunner,
-  bdPath: string,
-  timeoutMs: number,
-  rootPath: string,
-  ticketId: string,
-): Promise<number> {
-  return readTicketField(
-    commandRunner,
-    bdPath,
-    timeoutMs,
-    rootPath,
-    ticketId,
-    bdShowPriorityItemSchema,
-    'priority',
-    'undo',
-    (data) => data.priority,
-  );
-}
-
-// reopen/undefer の CAS チェック用。bd show --json の出力から status だけ読めればよい。
-// bdboard-3tw.93: bd reopen / bd undefer は前提条件を満たさなくても exit 0 の
-// まま no-op するため、実コマンドを叩く前にここで現在ステータスを確認する。
-const bdShowStatusItemSchema = z.object({
-  id: z.string(),
-  status: z.string(),
-});
-
-async function readCurrentStatus(
-  commandRunner: CommandRunner,
-  bdPath: string,
-  timeoutMs: number,
-  rootPath: string,
-  ticketId: string,
-): Promise<string> {
-  return readTicketField(
-    commandRunner,
-    bdPath,
-    timeoutMs,
-    rootPath,
-    ticketId,
-    bdShowStatusItemSchema,
-    'status',
-    'undo',
-    (data) => data.status,
-  );
-}
-
-// updateTitle/updateDescription の CAS チェック用。bd show --json の出力から
-// title / description だけ読めればよい。
-const bdShowTitleItemSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-});
-
-const bdShowDescriptionItemSchema = z.object({
-  id: z.string(),
-  description: z.string().nullish(),
-});
-
-async function readCurrentTitle(
-  commandRunner: CommandRunner,
-  bdPath: string,
-  timeoutMs: number,
-  rootPath: string,
-  ticketId: string,
-): Promise<string> {
-  return readTicketField(
-    commandRunner,
-    bdPath,
-    timeoutMs,
-    rootPath,
-    ticketId,
-    bdShowTitleItemSchema,
-    'title',
-    'update',
-    (data) => data.title,
-  );
-}
-
-async function readCurrentDescription(
-  commandRunner: CommandRunner,
-  bdPath: string,
-  timeoutMs: number,
-  rootPath: string,
-  ticketId: string,
-): Promise<string> {
-  return readTicketField(
-    commandRunner,
-    bdPath,
-    timeoutMs,
-    rootPath,
-    ticketId,
-    bdShowDescriptionItemSchema,
-    'description',
-    'update',
-    (data) => data.description ?? '',
-  );
-}
-
-// findOpenTicketByLabel の CAS 不要読み取り用。`bd list --label` の既定挙動が
-// closed を除外するので、ここでは status を見ない (bd 側のフィルタに任せる)。
-// metadata は optional (実測: メタデータが1つも無いチケットは `bd list --json` の
-// 出力にキー自体が現れない・bdboard-13mp) なので z.record を optional で受ける。
-const bdListLabelItemSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  // .nullish(): bd list --json は metadata が無いチケットではキーごと省略するが
-  // (確認済み)、将来 bd 側の挙動が変わって明示的に null を返すようになっても
-  // ルート全体が 502 に落ちないよう .optional() ではなく .nullish() にしておく
-  // (bdShowDescriptionItemSchema と同じ防御方針、レビュー指摘)。
-  metadata: z.record(z.unknown()).nullish(),
-});
-
-async function readOpenTicketByLabel(
-  commandRunner: CommandRunner,
-  bdPath: string,
-  timeoutMs: number,
-  rootPath: string,
-  label: string,
-): Promise<
-  | { readonly id: string; readonly title: string; readonly metadata: Readonly<Record<string, unknown>> }
-  | null
-> {
-  const stdout = await runBdCommandForStdout(
-    commandRunner,
-    bdPath,
-    timeoutMs,
-    rootPath,
-    ['--readonly', '-C', rootPath, 'list', '--label', label, '--json', '--limit', '0', '--no-pager'],
-    // errorSubject は BdError.projectId に載る (throwBdToolFailure 参照)。ここでの
-    // 「対象」は label ではなく rootPath — 他の呼び出し箇所 (reopen の CAS 読み取り等)
-    // と揃え、失敗ログから実際に失敗したプロジェクトを追えるようにする (レビュー指摘)。
-    rootPath,
-  );
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout) as unknown;
-  } catch {
-    throw new BdError(
-      'unknown',
-      rootPath,
-      `failed to parse bd list output while checking for an existing ${label} ticket`,
-    );
-  }
-
-  // 配列でない出力は「該当なし」ではなく「bd の出力形式が想定と違う」ので、null を
-  // 返さず即座に投げる。ここを null にすると、冪等性チェックが「既存チケットなし」と
-  // 誤判定してチケットを重複作成してしまう — このチェック自体の存在理由を壊す
-  // (レビュー指摘の blocker 相当)。空配列 (該当なし) だけを null として扱う。
-  if (!Array.isArray(parsed)) {
-    throw new BdError(
-      'unknown',
-      rootPath,
-      `unexpected bd list output shape while checking for an existing ${label} ticket`,
-    );
-  }
-  if (parsed.length === 0) {
-    return null;
-  }
-
-  const result = bdListLabelItemSchema.safeParse(parsed[0]);
-  if (!result.success) {
-    throw new BdError(
-      'unknown',
-      rootPath,
-      `bd list output missing id/title while checking for an existing ${label} ticket`,
-    );
-  }
-
-  return {
-    id: result.data.id,
-    title: result.data.title,
-    metadata: result.data.metadata ?? {},
-  };
-}
-
-// create の結果パース用。bd create --json は成功時オブジェクト1件を返す
-// (実測: bd 1.2.1)。
-const bdCreateResultSchema = z.object({
-  id: z.string(),
-});
 
 export interface BdCliIssueWriterOptions {
   readonly bdPath?: string;
@@ -267,239 +44,60 @@ export function createBdCliIssueWriter(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    // bdboard-miqg: claim は「同一アクターの再 claim は exit 0 の真の no-op」
-    // (bdboard-pkr6.26 で実測・bd-cli-issue-writer.test.ts に固定) であることが
-    // 分かっている冪等な書き込みなので、一時的な .beads lock-contention に限り
-    // 数回リトライする(runBdCommand 全体には適用しない方針は
-    // bd-cli-tool-runner.ts の doc コメントの通り — 他の非冪等な書き込みコマンドを
-    // 巻き込まないよう、この呼び出しだけ個別に対象へ含める)。
-    // 「別アクターが既に保持している」という真の排他違反は classifyBdError で
-    // kind='unknown' になり(bd-cli-issue-writer.test.ts で固定済み)、
-    // withLockContentionRetry は kind='lock-contention' のときしかリトライしない
-    // ため対象外のまま即座に失敗する。
     async claim(rootPath: string, ticketId: string): Promise<void> {
-      await withLockContentionRetry(() =>
-        runBdTool(
-          commandRunner,
-          bdPath,
-          timeoutMs,
-          rootPath,
-          'bd_claim',
-          { id: ticketId },
-          ticketId,
-        ),
-      );
+      await claim(commandRunner, bdPath, timeoutMs, rootPath, ticketId);
     },
 
-    async close(
-      rootPath: string,
-      ticketId: string,
-      reason?: string,
-    ): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_close',
-        {
-          id: ticketId,
-          ...(reason !== undefined ? { reason } : {}),
-        },
-        ticketId,
-      );
+    async close(rootPath: string, ticketId: string, reason?: string): Promise<void> {
+      await close(commandRunner, bdPath, timeoutMs, rootPath, ticketId, reason);
     },
 
-    async defer(
-      rootPath: string,
-      ticketId: string,
-      untilDate: string,
-    ): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_defer',
-        { id: ticketId, untilDate },
-        ticketId,
-      );
+    async defer(rootPath: string, ticketId: string, untilDate: string): Promise<void> {
+      await defer(commandRunner, bdPath, timeoutMs, rootPath, ticketId, untilDate);
     },
 
-    async setPriority(
-      rootPath: string,
-      ticketId: string,
-      priority: number,
-    ): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_priority',
-        { id: ticketId, priority },
-        ticketId,
-      );
+    async setPriority(rootPath: string, ticketId: string, priority: number): Promise<void> {
+      await setPriority(commandRunner, bdPath, timeoutMs, rootPath, ticketId, priority);
     },
 
-    async addComment(
-      rootPath: string,
-      ticketId: string,
-      text: string,
-    ): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_comment',
-        { id: ticketId, text },
-        ticketId,
-      );
+    async addComment(rootPath: string, ticketId: string, text: string): Promise<void> {
+      await addComment(commandRunner, bdPath, timeoutMs, rootPath, ticketId, text);
     },
 
-    // bd-tool-catalog 経由でチャットエージェントと同じ bd label add/remove を叩く。
-    async addLabel(
-      rootPath: string,
-      ticketId: string,
-      label: string,
-    ): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_label_add',
-        { id: ticketId, label },
-        ticketId,
-      );
+    async addLabel(rootPath: string, ticketId: string, label: string): Promise<void> {
+      await addLabel(commandRunner, bdPath, timeoutMs, rootPath, ticketId, label);
     },
 
-    async removeLabel(
-      rootPath: string,
-      ticketId: string,
-      label: string,
-    ): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_label_remove',
-        { id: ticketId, label },
-        ticketId,
-      );
+    async removeLabel(rootPath: string, ticketId: string, label: string): Promise<void> {
+      await removeLabel(commandRunner, bdPath, timeoutMs, rootPath, ticketId, label);
     },
 
-    // 以下 3 メソッドはクイックアクションの逆操作(undo)専用。bd-tool-catalog(チャット
-    // エージェントに公開するツール一覧)を経由せず bd を直接呼ぶ。理由は
-    // bd-cli-tool-runner.ts の runBdCommand の doc コメントを参照。
-    // bdboard-3tw.93: `bd reopen` is exit-0-and-no-op when the ticket isn't
-    // currently closed (it prints something like 'is not closed; nothing to
-    // do' to stderr but does not fail) — the old implementation trusted the
-    // exit code and reported a fake success to the UI. Read-then-write CAS,
-    // same shape as undoPriority (bdboard-3tw.82): check the current status
-    // first and refuse to write if it has drifted away from 'closed'.
     async reopen(rootPath: string, ticketId: string): Promise<void> {
-      const actualStatus = await readCurrentStatus(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        ticketId,
-      );
-
-      if (actualStatus !== 'closed') {
-        throw new StatusConflictError(ticketId, 'closed', actualStatus);
-      }
-
-      await runBdCommand(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        ['-C', rootPath, 'reopen', ticketId],
-        ticketId,
-      );
+      await reopen(commandRunner, bdPath, timeoutMs, rootPath, ticketId);
     },
 
     async unclaim(rootPath: string, ticketId: string): Promise<void> {
-      await runBdCommand(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        ['-C', rootPath, 'unclaim', ticketId],
-        ticketId,
-      );
+      await unclaim(commandRunner, bdPath, timeoutMs, rootPath, ticketId);
     },
 
     async undefer(rootPath: string, ticketId: string): Promise<void> {
-      // bdboard-3tw.82: 以前は `update --defer ''` という素朴なフィールド更新だったが、
-      // これはステータスの前提条件を明示的にチェックしない未文書化の副作用に頼っていた。
-      // 専用の `bd undefer` サブコマンドへ切り替えた。
-      //
-      // bdboard-3tw.93: ただし `bd undefer` のガードは exit 0 のまま no-op するだけで
-      // エラーにはならない(「reopen/unclaim と同じ形の built-in ガード」という以前の
-      // コメントは、無言で上書きしないという意味では正しかったが、エラーを返すという
-      // 意味では誤りだった)。undoPriority(bdboard-3tw.82)と同じ read-then-write CAS で
-      // 対処する: 呼び出し前に現在ステータスを確認し、'deferred' から動いていれば
-      // 書き込まずに StatusConflictError を投げる。
-      const actualStatus = await readCurrentStatus(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        ticketId,
-      );
-
-      if (actualStatus !== 'deferred') {
-        throw new StatusConflictError(ticketId, 'deferred', actualStatus);
-      }
-
-      await runBdCommand(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        ['-C', rootPath, 'undefer', ticketId],
-        ticketId,
-      );
+      await undefer(commandRunner, bdPath, timeoutMs, rootPath, ticketId);
     },
 
-    // bdboard-3tw.82: bd に --if-priority が無いため、read-then-write で CAS を近似する。
-    // 現在値を bd show で読み、Undo が想定している「クイックアクション実行直後の値」と
-    // 一致するときだけ setPriority を叩く。不一致なら書き込まず PriorityConflictError。
     async undoPriority(
       rootPath: string,
       ticketId: string,
       expectedCurrentPriority: number,
       previousPriority: number,
     ): Promise<void> {
-      const actualPriority = await readCurrentPriority(
+      await undoPriority(
         commandRunner,
         bdPath,
         timeoutMs,
         rootPath,
         ticketId,
-      );
-
-      if (actualPriority !== expectedCurrentPriority) {
-        throw new PriorityConflictError(
-          ticketId,
-          expectedCurrentPriority,
-          actualPriority,
-        );
-      }
-
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_priority',
-        { id: ticketId, priority: previousPriority },
-        ticketId,
+        expectedCurrentPriority,
+        previousPriority,
       );
     },
 
@@ -509,32 +107,7 @@ export function createBdCliIssueWriter(
       title: string,
       expectedCurrentTitle: string,
     ): Promise<void> {
-      const actualTitle = await readCurrentTitle(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        ticketId,
-      );
-
-      if (actualTitle !== expectedCurrentTitle) {
-        throw new ContentConflictError(
-          ticketId,
-          'title',
-          expectedCurrentTitle,
-          actualTitle,
-        );
-      }
-
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_update_title',
-        { id: ticketId, title },
-        ticketId,
-      );
+      await updateTitle(commandRunner, bdPath, timeoutMs, rootPath, ticketId, title, expectedCurrentTitle);
     },
 
     async updateDescription(
@@ -543,53 +116,17 @@ export function createBdCliIssueWriter(
       description: string,
       expectedCurrentDescription: string,
     ): Promise<void> {
-      const actualDescription = await readCurrentDescription(
+      await updateDescription(
         commandRunner,
         bdPath,
         timeoutMs,
         rootPath,
         ticketId,
-      );
-
-      if (actualDescription !== expectedCurrentDescription) {
-        throw new ContentConflictError(
-          ticketId,
-          'description',
-          expectedCurrentDescription,
-          actualDescription,
-        );
-      }
-
-      if (description.length === 0) {
-        // bd-tool-catalog の bd_update_description は min(1) だが、REST API は
-        // description クリア(空文字)を許容する。--stdin に空文字を渡すと
-        // --allow-empty-description が必要になるため、インライン --description "" を使う。
-        await runBdCommand(
-          commandRunner,
-          bdPath,
-          timeoutMs,
-          rootPath,
-          ['-C', rootPath, 'update', ticketId, '--description', ''],
-          ticketId,
-        );
-        return;
-      }
-
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_update_description',
-        { id: ticketId, description },
-        ticketId,
+        description,
+        expectedCurrentDescription,
       );
     },
 
-    // bd-tool-catalog の bd_create はチャットエージェント向けの制限 (labels 無し等)
-    // を持つため経由しない。bdboard 自身がサーバー側で固定文言から組み立てた
-    // title/description だけを渡す用途 (ハーネス契約チケットの起票、bdboard-p5l.25)
-    // の直叩き専用。
     async findOpenTicketByLabel(
       rootPath: string,
       label: string,
@@ -601,7 +138,7 @@ export function createBdCliIssueWriter(
         }
       | null
     > {
-      return readOpenTicketByLabel(commandRunner, bdPath, timeoutMs, rootPath, label);
+      return findOpenTicketByLabel(commandRunner, bdPath, timeoutMs, rootPath, label);
     },
 
     async create(
@@ -615,75 +152,11 @@ export function createBdCliIssueWriter(
         readonly metadata?: Readonly<Record<string, string>>;
       },
     ): Promise<{ readonly id: string }> {
-      const args: string[] = [
-        '-C',
-        rootPath,
-        'create',
-        '--title',
-        input.title,
-        '--type',
-        input.type,
-        '--priority',
-        String(input.priority),
-        '--json',
-      ];
-      if (input.labels.length > 0) {
-        args.push('--labels', input.labels.join(','));
-      }
-      // `bd create --metadata '<json>'` は作成時点でメタデータを set できる (実測
-      // 確認済み・bdboard-13mp)。空オブジェクトなら渡さない (省略時と同じ挙動にする)。
-      if (input.metadata !== undefined && Object.keys(input.metadata).length > 0) {
-        args.push('--metadata', JSON.stringify(input.metadata));
-      }
-      // 説明は常に非空 (呼び出し元はサーバー側で固定テンプレートを組み立てる) 前提。
-      // --allow-empty-description の分岐は持たない。
-      args.push('--stdin');
-
-      const stdout = await runBdWriteCommandForStdout(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        args,
-        rootPath,
-        input.description,
-      );
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(stdout) as unknown;
-      } catch {
-        throw new BdError('unknown', rootPath, 'failed to parse bd create output');
-      }
-
-      const item = Array.isArray(parsed) ? parsed[0] : parsed;
-      const result = bdCreateResultSchema.safeParse(item);
-      if (!result.success) {
-        throw new BdError('unknown', rootPath, 'bd create output missing id');
-      }
-
-      return { id: result.data.id };
+      return create(commandRunner, bdPath, timeoutMs, rootPath, input);
     },
 
-    // `bd update --set-metadata k=v` は代入操作 (追記系の comment と違い同じ引数で
-    // 何度実行しても最終状態は変わらない) なので lock-contention リトライの対象に
-    // 含めてよい (bd-cli-session-link-writer.ts の同種コメント参照・bdboard-13mp)。
-    async setMetadata(
-      rootPath: string,
-      ticketId: string,
-      key: string,
-      value: string,
-    ): Promise<void> {
-      await withLockContentionRetry(() =>
-        runBdCommand(
-          commandRunner,
-          bdPath,
-          timeoutMs,
-          rootPath,
-          ['-C', rootPath, 'update', ticketId, '--set-metadata', `${key}=${value}`],
-          ticketId,
-        ),
-      );
+    async setMetadata(rootPath: string, ticketId: string, key: string, value: string): Promise<void> {
+      await setMetadata(commandRunner, bdPath, timeoutMs, rootPath, ticketId, key, value);
     },
   };
 }
