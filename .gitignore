@@ -17,6 +17,9 @@ web/dist/
 logs/
 .claude/worktrees/
 
+# Ticket attachment images (bdboard-qw26). Override with BDBOARD_ATTACHMENTS_DIR.
+/data/attachments/
+
 # Local environment (contains auth credentials)
 .env
 .env.local

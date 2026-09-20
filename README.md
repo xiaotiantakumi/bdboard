@@ -190,6 +190,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_PORT` | 待ち受けポート | `8787` |
 | `BDBOARD_HOST` | 待ち受けホスト | `127.0.0.1` |
 | `BDBOARD_DB` | ローカルキャッシュ用 SQLite ファイルのパス | `~/.bdboard/cache.db` |
+| `BDBOARD_ATTACHMENTS_DIR` | チケット添付画像(bdboard-qw26)の保存先ディレクトリ | `<リポジトリルート>/data/attachments`(gitignore 済み) |
 | `BDBOARD_INSTANCE_NONCE` | health API の応答に含めるインスタンス識別子。ローリング再起動等で応答元を識別する用途 | (未設定 = フィールドを返さない) |
 | `BDBOARD_SHUTDOWN_TIMEOUT_MS` | graceful shutdown で接続を drain する最大時間(ミリ秒)。超過時は既存接続を閉じる | `5000`(5秒) |
 | `BDBOARD_SCAN_ROOTS` | `.beads/` を探索するルートディレクトリ(カンマ区切りで複数指定可) | `~/Documents`(存在しない場合は `~`。Windows は `%USERPROFILE%\Documents`、`%USERPROFILE%` 未設定時は `os.homedir()` 起点)。未設定時はユーザー設定(`~/.config/bdboard/config.json`、Windows は `%APPDATA%\bdboard\config.json`)、その後 OS 検出デフォルトを使用 |

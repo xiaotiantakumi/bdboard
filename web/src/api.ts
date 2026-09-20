@@ -932,6 +932,20 @@ export function fetchTicketComments(ticketId: string): Promise<CommentDto[]> {
   );
 }
 
+export interface AttachmentDto {
+  fileName: string;
+  url: string;
+  byteLength: number;
+  createdAt: string;
+}
+
+/** bdboard-qw26: チケット詳細の添付画像一覧。0件のときは空配列(セクション自体を隠すのは呼び出し側)。 */
+export function fetchTicketAttachments(ticketId: string): Promise<{ attachments: AttachmentDto[] }> {
+  return fetchJson<{ attachments: AttachmentDto[] }>(
+    `/api/tickets/${encodeURIComponent(ticketId)}/attachments`,
+  );
+}
+
 export function fetchPendingDecisions(): Promise<PendingDecisionDto[]> {
   return fetchJson<PendingDecisionDto[]>('/api/tickets/pending-decisions');
 }

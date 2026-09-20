@@ -74,6 +74,7 @@ import { MarkdownContent } from './MarkdownContent';
 import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
+import { TicketAttachments } from './TicketAttachments';
 import { useUndoSnackbar } from './UndoSnackbar';
 import {
   ACTIVITY_KIND_LABELS,
@@ -2284,6 +2285,7 @@ export function TicketDetailPanel({
                   </div>
                 )}
             </div>
+            <TicketAttachments ticketId={ticketId} />
             <div className="detail-section">
               <h3>コメント</h3>
               {!commentsEnabled && (

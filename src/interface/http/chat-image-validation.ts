@@ -29,7 +29,11 @@ function hasExpectedMagicBytes(mimeType: ChatImageMimeType, data: Uint8Array): b
   }
 }
 
-function decodeStrictBase64(value: string): Uint8Array | undefined {
+/**
+ * 厳密な base64 デコード(RFC 4648 の正規形のみ許可)。チャット画像専用ではないので
+ * bdboard-qw26 (チケット添付画像) が同じデコードロジックを再利用できるよう export する。
+ */
+export function decodeStrictBase64(value: string): Uint8Array | undefined {
   if (value.length % 4 !== 0) return undefined;
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
   const contentLength = value.length - padding;
