@@ -1,14 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { ApiError, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig } from '../api';
+import { ApiError, fetchBoardThresholdsConfig, fetchDbStats, fetchProjects, fetchScanRootsConfig, postRefresh, putBoardThresholdsConfig, putScanRootsConfig } from '../api';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
-import { msToDays, msToHours, msToMinutes } from './settings/formatters';
+import { msToHours, msToMinutes } from './settings/formatters';
 import {
   isAbsolutePath,
-  parseDays,
   parseHours,
   parseMinutes,
-  parsePriorityMax,
   parseWipLimit,
 } from './settings/validators';
 import {
@@ -18,7 +16,6 @@ import {
 } from './settings/wipOverrides';
 import {
   describeBoardThresholdWriteError,
-  describeHygieneThresholdWriteError,
   describeScanRootWriteError,
 } from './settings/errors';
 import { EffectiveScanRootsSection } from './settings/EffectiveScanRootsSection';
@@ -32,6 +29,7 @@ import { AiQuotaAlertSection } from './settings/AiQuotaAlertSection';
 import { AgentRunsSection } from './settings/AgentRunsSection';
 import { useAiQuotaAlertForm } from './settings/useAiQuotaAlertForm';
 import { useAgentRunsForm } from './settings/useAgentRunsForm';
+import { useHygieneThresholdsForm } from './settings/useHygieneThresholdsForm';
 
 export function SettingsPanel() {
   const queryClient = useQueryClient();
@@ -40,10 +38,8 @@ export function SettingsPanel() {
     queryKey: ['board-thresholds-config'],
     queryFn: fetchBoardThresholdsConfig,
   });
-  const hygieneThresholdsQuery = useQuery({
-    queryKey: ['hygiene-thresholds-config'],
-    queryFn: fetchHygieneThresholdsConfig,
-  });
+  const hygieneThresholdsForm = useHygieneThresholdsForm();
+  const hygieneThresholdsQuery = hygieneThresholdsForm.query;
   const projectsQuery = useQuery({
     queryKey: ['projects'],
     queryFn: fetchProjects,
@@ -72,13 +68,6 @@ export function SettingsPanel() {
   const [thresholdsVersion, setThresholdsVersion] = useState('');
   const thresholdsFeedback = useSaveFeedback();
   const [thresholdsDirty, setThresholdsDirty] = useState(false);
-  const [hygieneStaleInProgressDays, setHygieneStaleInProgressDays] = useState('');
-  const [hygieneHighPriorityMax, setHygieneHighPriorityMax] = useState('');
-  const [hygieneStalePendingDecisionDays, setHygieneStalePendingDecisionDays] = useState('');
-  const [hygieneClosedWithoutEvidenceDays, setHygieneClosedWithoutEvidenceDays] = useState('');
-  const [hygieneThresholdsVersion, setHygieneThresholdsVersion] = useState('');
-  const hygieneThresholdsFeedback = useSaveFeedback();
-  const [hygieneThresholdsDirty, setHygieneThresholdsDirty] = useState(false);
   const [globalWipLimit, setGlobalWipLimit] = useState('');
   const [projectWipOverrides, setProjectWipOverrides] = useState<ProjectWipOverrideRow[]>([]);
   const [newWipProjectId, setNewWipProjectId] = useState('');
@@ -102,22 +91,6 @@ export function SettingsPanel() {
       setStaleHours(msToHours(thresholdsQuery.data.livenessStaleMs));
     }
   }, [thresholdsDirty, thresholdsQuery.data]);
-
-  useEffect(() => {
-    if (hygieneThresholdsQuery.data !== undefined && !hygieneThresholdsDirty) {
-      setHygieneStaleInProgressDays(
-        msToDays(hygieneThresholdsQuery.data.staleInProgressAfterMs),
-      );
-      setHygieneHighPriorityMax(String(hygieneThresholdsQuery.data.highPriorityMax));
-      setHygieneStalePendingDecisionDays(
-        msToDays(hygieneThresholdsQuery.data.stalePendingDecisionAfterMs),
-      );
-      setHygieneClosedWithoutEvidenceDays(
-        msToDays(hygieneThresholdsQuery.data.closedWithoutEvidenceWindowMs),
-      );
-      setHygieneThresholdsVersion(hygieneThresholdsQuery.data.version);
-    }
-  }, [hygieneThresholdsDirty, hygieneThresholdsQuery.data]);
 
   useEffect(() => {
     if (thresholdsQuery.data !== undefined && !wipDirty) {
@@ -230,49 +203,6 @@ export function SettingsPanel() {
       if (error instanceof ApiError && error.status === 409) {
         setThresholdsDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
-      }
-    },
-  });
-
-  const saveHygieneThresholdsMutation = useMutation({
-    mutationFn: () => {
-      const staleInProgressAfterMs = parseDays(hygieneStaleInProgressDays);
-      const highPriorityMax = parsePriorityMax(hygieneHighPriorityMax);
-      const stalePendingDecisionAfterMs = parseDays(hygieneStalePendingDecisionDays);
-      const closedWithoutEvidenceWindowMs = parseDays(hygieneClosedWithoutEvidenceDays);
-      if (
-        staleInProgressAfterMs === undefined ||
-        highPriorityMax === undefined ||
-        stalePendingDecisionAfterMs === undefined ||
-        closedWithoutEvidenceWindowMs === undefined
-      ) {
-        throw new Error('invalid local hygiene threshold input');
-      }
-      return putHygieneThresholdsConfig({
-        staleInProgressAfterMs,
-        highPriorityMax,
-        stalePendingDecisionAfterMs,
-        closedWithoutEvidenceWindowMs,
-        version: hygieneThresholdsVersion,
-      });
-    },
-    onSuccess: async (data) => {
-      setHygieneThresholdsVersion(data.version);
-      await queryClient.invalidateQueries({ queryKey: ['hygiene-thresholds-config'] });
-      setHygieneThresholdsDirty(false);
-      try {
-        await postRefresh();
-      } catch (error) {
-        console.warn('Failed to refresh board after saving hygiene thresholds', error);
-      }
-      await queryClient.invalidateQueries({ queryKey: ['hygiene'] });
-      hygieneThresholdsFeedback.showSuccess('健全性閾値を保存しました');
-    },
-    onError: (error) => {
-      hygieneThresholdsFeedback.showError(describeHygieneThresholdWriteError(error));
-      if (error instanceof ApiError && error.status === 409) {
-        setHygieneThresholdsDirty(false);
-        void queryClient.invalidateQueries({ queryKey: ['hygiene-thresholds-config'] });
       }
     },
   });
@@ -466,36 +396,16 @@ export function SettingsPanel() {
         feedback={{ message: thresholdsFeedback.message, isError: thresholdsFeedback.isError }}
       />
       <HygieneThresholdsSection
-        values={{
-          staleInProgressDays: hygieneStaleInProgressDays,
-          highPriorityMax: hygieneHighPriorityMax,
-          stalePendingDecisionDays: hygieneStalePendingDecisionDays,
-          closedWithoutEvidenceDays: hygieneClosedWithoutEvidenceDays,
-        }}
+        values={hygieneThresholdsForm.values}
         data={hygieneThresholdsQuery.data}
-        onStaleInProgressDaysChange={(value) => {
-          setHygieneStaleInProgressDays(value);
-          setHygieneThresholdsDirty(true);
-        }}
-        onHighPriorityMaxChange={(value) => {
-          setHygieneHighPriorityMax(value);
-          setHygieneThresholdsDirty(true);
-        }}
-        onStalePendingDecisionDaysChange={(value) => {
-          setHygieneStalePendingDecisionDays(value);
-          setHygieneThresholdsDirty(true);
-        }}
-        onClosedWithoutEvidenceDaysChange={(value) => {
-          setHygieneClosedWithoutEvidenceDays(value);
-          setHygieneThresholdsDirty(true);
-        }}
-        isSaving={saveHygieneThresholdsMutation.isPending}
-        isDirty={hygieneThresholdsDirty}
-        onSubmit={() => saveHygieneThresholdsMutation.mutate()}
-        feedback={{
-          message: hygieneThresholdsFeedback.message,
-          isError: hygieneThresholdsFeedback.isError,
-        }}
+        onStaleInProgressDaysChange={hygieneThresholdsForm.onStaleInProgressDaysChange}
+        onHighPriorityMaxChange={hygieneThresholdsForm.onHighPriorityMaxChange}
+        onStalePendingDecisionDaysChange={hygieneThresholdsForm.onStalePendingDecisionDaysChange}
+        onClosedWithoutEvidenceDaysChange={hygieneThresholdsForm.onClosedWithoutEvidenceDaysChange}
+        isSaving={hygieneThresholdsForm.isSaving}
+        isDirty={hygieneThresholdsForm.isDirty}
+        onSubmit={hygieneThresholdsForm.onSubmit}
+        feedback={hygieneThresholdsForm.feedback}
       />
       <WipLimitsSection
         global={{
