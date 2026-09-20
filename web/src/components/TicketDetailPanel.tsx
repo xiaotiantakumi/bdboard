@@ -7,7 +7,6 @@ import {
   copyTextToClipboard,
 } from '../bdCommands';
 import {
-  deleteTicketDependency,
   cancelAgentRun,
   deleteTicketSessionLink,
   fetchAgentRun,
@@ -21,16 +20,13 @@ import {
   fetchTicketInFlightOverlaps,
   postTicketComment,
   postTicketDecision,
-  postTicketDependency,
   postTicketQuickAction,
   postTicketQuickActionUndo,
   postTicketSessionLink,
-  searchTickets,
   startTicketRun,
   type AgentRunDetailDto,
   type AgentRunNextStepDto,
   type QuickActionRequest,
-  type TicketSearchResultDto,
   LANE_LABELS,
 } from '../api';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
@@ -51,10 +47,6 @@ import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { describeWriteError } from '../writeAccessMessage';
 import { planQuickActionUndo } from '../quickActionUndo';
-import {
-  describeDependencyError,
-  filterDependencyCandidates,
-} from './dependencyEditing';
 import { MarkdownContent } from './MarkdownContent';
 import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { PrLinkBadge } from './PrLinkBadge';
@@ -70,11 +62,7 @@ import {
   type DeferPeriodKind,
 } from '../deferPeriods';
 
-import {
-  DEPENDENCY_SEARCH_DEBOUNCE_MS,
-  DEPENDENCY_SEARCH_LIMIT,
-  COPY_FEEDBACK_MS,
-} from './ticket-detail/constants';
+import { COPY_FEEDBACK_MS } from './ticket-detail/constants';
 import {
   type TicketDetailPanelProps,
   type NextStepCopyTarget,
@@ -113,6 +101,8 @@ import { useTicketDescriptionEditing } from './ticket-detail/useTicketDescriptio
 import { TicketDescriptionSection } from './ticket-detail/TicketDescriptionSection';
 import { useTicketLabels } from './ticket-detail/useTicketLabels';
 import { TicketLabelsSection } from './ticket-detail/TicketLabelsSection';
+import { useTicketDependencies } from './ticket-detail/useTicketDependencies';
+import { TicketDependenciesSection } from './ticket-detail/TicketDependenciesSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -255,14 +245,6 @@ export function TicketDetailPanel({
   const [customDeferDate, setCustomDeferDate] = useState('');
   const [closeReason, setCloseReason] = useState('');
   const [commentText, setCommentText] = useState('');
-  const [dependencySearchQuery, setDependencySearchQuery] = useState('');
-  const [dependencyCandidates, setDependencyCandidates] = useState<
-    TicketSearchResultDto[]
-  >([]);
-  const [dependencySearchLoading, setDependencySearchLoading] = useState(false);
-  const [dependencySearchError, setDependencySearchError] = useState<Error | null>(
-    null,
-  );
   const {
     titleEditing,
     titleDraft,
@@ -301,6 +283,19 @@ export function TicketDetailPanel({
     handleRemoveLabel,
     reset: resetLabelInput,
   } = useTicketLabels(ticketId, currentLabels, availableLabels);
+  const {
+    dependencySearchQuery,
+    setDependencySearchQuery,
+    hasDependencySearchQuery,
+    dependencySearchLoading,
+    dependencySearchError,
+    dependencyCandidates,
+    dependencyMutationPending,
+    error: dependencyMutationError,
+    handleAddDependency,
+    handleRemoveDependency,
+    reset: resetDependencies,
+  } = useTicketDependencies(ticketId, data);
   const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -330,10 +325,7 @@ export function TicketDetailPanel({
     setCustomDeferDate('');
     setCloseReason('');
     setCommentText('');
-    setDependencySearchQuery('');
-    setDependencyCandidates([]);
-    setDependencySearchLoading(false);
-    setDependencySearchError(null);
+    resetDependencies();
     resetLabelInput();
     resetTitleEditing();
     resetDescriptionEditing();
@@ -346,6 +338,7 @@ export function TicketDetailPanel({
   }, [
     clearCopyDisplay,
     resetDecisionAnswer,
+    resetDependencies,
     resetDescriptionEditing,
     resetLabelInput,
     resetTitleEditing,
@@ -709,81 +702,6 @@ export function TicketDetailPanel({
       setCommentText('');
     },
   });
-
-  const trimmedDependencySearchQuery = dependencySearchQuery.trim();
-  const hasDependencySearchQuery = trimmedDependencySearchQuery.length > 0;
-
-  useEffect(() => {
-    if (data === undefined || !hasDependencySearchQuery) {
-      setDependencyCandidates([]);
-      setDependencySearchLoading(false);
-      setDependencySearchError(null);
-      return;
-    }
-
-    let cancelled = false;
-    setDependencySearchLoading(true);
-    setDependencySearchError(null);
-
-    const handle = window.setTimeout(() => {
-      void searchTickets(trimmedDependencySearchQuery, DEPENDENCY_SEARCH_LIMIT)
-        .then((hits) => {
-          if (cancelled) return;
-          setDependencyCandidates(
-            filterDependencyCandidates(hits, {
-              ticketId: data.id,
-              projectId: data.projectId,
-              existingDependsOnIds: data.dependencies.map(
-                (dep) => dep.dependsOnId,
-              ),
-            }),
-          );
-          setDependencySearchLoading(false);
-        })
-        .catch((caught: unknown) => {
-          if (cancelled) return;
-          setDependencySearchError(
-            caught instanceof Error ? caught : new Error('検索に失敗しました'),
-          );
-          setDependencyCandidates([]);
-          setDependencySearchLoading(false);
-        });
-    }, DEPENDENCY_SEARCH_DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [
-    data,
-    hasDependencySearchQuery,
-    trimmedDependencySearchQuery,
-  ]);
-
-  const addDependencyMutation = useMutation({
-    mutationFn: async (dependsOnId: string) => {
-      await postTicketDependency(ticketId, dependsOnId);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-      setDependencySearchQuery('');
-      setDependencyCandidates([]);
-    },
-  });
-
-  const removeDependencyMutation = useMutation({
-    mutationFn: async (dependsOnId: string) => {
-      await deleteTicketDependency(ticketId, dependsOnId);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-    },
-  });
-
-  const dependencyMutationPending =
-    addDependencyMutation.isPending || removeDependencyMutation.isPending;
-  const dependencyMutationError =
-    addDependencyMutation.error ?? removeDependencyMutation.error;
 
   // 'sessions' クエリキーは SessionListPanel と共有している(同じアクティブ
   // セッション一覧なので、既存キャッシュがあれば流用できる)。
@@ -1228,94 +1146,21 @@ export function TicketDetailPanel({
                 />
               </div>
             )}
-            <div className="detail-section">
-              <h3>Dependencies</h3>
-              {data.dependencies.length > 0 && (
-                <ul className="detail-list">
-                  {data.dependencies.map((dep) => (
-                    <li key={`${dep.issueId}-${dep.dependsOnId}-${dep.kind}`}>
-                      <TicketIdLink
-                        id={dep.issueId}
-                        isTicketOnBoard={isTicketOnBoard}
-                        onOpenTicket={onOpenTicket}
-                      />
-                      {' → '}
-                      <TicketIdLink
-                        id={dep.dependsOnId}
-                        isTicketOnBoard={isTicketOnBoard}
-                        onOpenTicket={onOpenTicket}
-                      />
-                      {' '}
-                      ({dep.kind})
-                      {dep.kind === 'blocks' && (
-                        <button
-                          type="button"
-                          className="btn dependency-remove-btn"
-                          aria-label={`${dep.dependsOnId} への依存を削除`}
-                          disabled={dependencyMutationPending}
-                          onClick={() =>
-                            removeDependencyMutation.mutate(dep.dependsOnId)
-                          }
-                        >
-                          削除
-                        </button>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <label className="dependency-search-label" htmlFor="dependency-search">
-                依存を追加(このチケットが待つ相手)
-              </label>
-              <input
-                id="dependency-search"
-                type="search"
-                className="dependency-search-input"
-                value={dependencySearchQuery}
-                onChange={(event) => setDependencySearchQuery(event.target.value)}
-                disabled={dependencyMutationPending}
-              />
-              {hasDependencySearchQuery && dependencySearchLoading && (
-                <p className="detail-help">検索中…</p>
-              )}
-              {hasDependencySearchQuery &&
-                !dependencySearchLoading &&
-                dependencySearchError === null &&
-                dependencyCandidates.length === 0 && (
-                  <p className="detail-help">該当するチケットがありません</p>
-                )}
-              {dependencySearchError !== null && (
-                <p className="error-message">
-                  {dependencySearchError.message}
-                </p>
-              )}
-              {dependencyCandidates.length > 0 && (
-                <ul className="dependency-suggestions">
-                  {dependencyCandidates.map((candidate) => (
-                    <li key={candidate.id}>
-                      <button
-                        type="button"
-                        className="dependency-suggestion-btn"
-                        disabled={dependencyMutationPending}
-                        onClick={() => addDependencyMutation.mutate(candidate.id)}
-                      >
-                        <span className="dependency-suggestion-id">
-                          {candidate.id}
-                        </span>
-                        <span className="dependency-suggestion-title">
-                          {candidate.title}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {dependencyMutationError !== null && (
-                <p className="error-message">
-                  {describeDependencyError(dependencyMutationError)}
-                </p>
-              )}
-            </div>
+            <TicketDependenciesSection
+              dependencies={data.dependencies}
+              isTicketOnBoard={isTicketOnBoard}
+              onOpenTicket={onOpenTicket}
+              dependencyMutationPending={dependencyMutationPending}
+              onRemoveDependency={handleRemoveDependency}
+              dependencySearchQuery={dependencySearchQuery}
+              onDependencySearchQueryChange={setDependencySearchQuery}
+              hasDependencySearchQuery={hasDependencySearchQuery}
+              dependencySearchLoading={dependencySearchLoading}
+              dependencySearchError={dependencySearchError}
+              dependencyCandidates={dependencyCandidates}
+              onAddDependency={handleAddDependency}
+              error={dependencyMutationError}
+            />
             {data.blockedBy.length > 0 && (
               <div className="detail-section">
                 <h3>Blocked By</h3>
