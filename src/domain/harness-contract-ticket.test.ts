@@ -3,8 +3,10 @@ import { HARNESS_CONTRACT_RELATIVE_PATH, type ContractState } from './harness-co
 import {
   HARNESS_CONTRACT_TICKET_LABEL,
   HARNESS_CONTRACT_TICKET_PRIORITY,
+  HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY,
   HARNESS_CONTRACT_TICKET_TYPE,
   buildHarnessContractTicketContent,
+  buildHarnessContractTicketStateChangeComment,
   suggestVerifyCommand,
 } from './harness-contract-ticket.js';
 
@@ -110,5 +112,65 @@ describe('harness contract ticket constants', () => {
     expect(HARNESS_CONTRACT_TICKET_LABEL).toBe('harness-contract');
     expect(HARNESS_CONTRACT_TICKET_TYPE).toBe('task');
     expect(HARNESS_CONTRACT_TICKET_PRIORITY).toBe(2);
+  });
+});
+
+describe('buildHarnessContractTicketStateChangeComment (bdboard-13mp)', () => {
+  it('returns null for an "ok" contract (nothing to append)', () => {
+    const contract: ContractState = {
+      state: 'ok',
+      verify: 'npm run verify',
+      prFlow: 'pr',
+      mainBranch: 'main',
+      models: null,
+      expiredExcludeCount: 0,
+      modelExclusionWarnings: [],
+    };
+    expect(buildHarnessContractTicketStateChangeComment(contract, null)).toBeNull();
+  });
+
+  it('returns null for a "not-applicable" contract', () => {
+    expect(
+      buildHarnessContractTicketStateChangeComment({ state: 'not-applicable' }, null),
+    ).toBeNull();
+  });
+
+  it('leads with the current state and reuses the "missing" instructions verbatim', () => {
+    const contract: ContractState = { state: 'missing' };
+    const comment = buildHarnessContractTicketStateChangeComment(contract, ['verify']);
+    expect(comment).not.toBeNull();
+    // 先頭行は state 名を含む固定文言 (frontend/API 双方がこの文言をそのまま出す想定)。
+    expect(comment?.startsWith('現在の状態は missing です。いま必要な対処:')).toBe(true);
+    // 本文 (対処内容) は起票時と同じビルダーの description をそのまま含む — 二重に
+    // 書かない設計の固定。
+    const content = buildHarnessContractTicketContent(contract, ['verify']);
+    expect(comment).toContain(content?.description);
+  });
+
+  it('leads with "invalid" for an invalid contract and includes the validation message', () => {
+    const contract: ContractState = { state: 'invalid', message: 'verify must be a string' };
+    const comment = buildHarnessContractTicketStateChangeComment(contract, null);
+    expect(comment?.startsWith('現在の状態は invalid です。いま必要な対処:')).toBe(true);
+    expect(comment).toContain('verify must be a string');
+  });
+
+  it('leads with "command-missing" and names the missing script', () => {
+    const contract: ContractState = {
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    };
+    const comment = buildHarnessContractTicketStateChangeComment(contract, null);
+    expect(comment?.startsWith('現在の状態は command-missing です。いま必要な対処:')).toBe(true);
+    // "verify" という部分文字列だけだと missing 状態のテンプレートにも
+    // (`"verify": "<検証コマンド...>"` として) 含まれてしまい、ビルダーの取り違えを
+    // 検出できない。command-missing 特有の文言まで見る (レビュー指摘)。
+    expect(comment).toContain('が package.json に見つかりません');
+  });
+});
+
+describe('HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY', () => {
+  it('is a fixed bd metadata key', () => {
+    expect(HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY).toBe('bdboard.harness_contract.state');
   });
 });

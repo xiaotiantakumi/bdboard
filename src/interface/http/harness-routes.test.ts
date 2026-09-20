@@ -8,6 +8,7 @@ import type { HarnessInjectorPort } from '../../application/ports/harness-inject
 import type { PackRegistryPort } from '../../application/ports/pack-registry.js';
 import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import { BdError } from '../../application/ports/issue-repository.js';
+import { HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY } from '../../domain/harness-contract-ticket.js';
 import type { Project } from '../../domain/project.js';
 import { createHarnessRoutes } from './harness-routes.js';
 
@@ -626,13 +627,15 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
   function createFakeIssueWriter(overrides?: {
     readonly findOpenTicketByLabel?: IssueWriterPort['findOpenTicketByLabel'];
     readonly create?: IssueWriterPort['create'];
+    readonly addComment?: IssueWriterPort['addComment'];
+    readonly setMetadata?: IssueWriterPort['setMetadata'];
   }): IssueWriterPort {
     return {
       claim: vi.fn(async () => {}),
       close: vi.fn(async () => {}),
       defer: vi.fn(async () => {}),
       setPriority: vi.fn(async () => {}),
-      addComment: vi.fn(async () => {}),
+      addComment: overrides?.addComment ?? vi.fn(async () => {}),
       reopen: vi.fn(async () => {}),
       unclaim: vi.fn(async () => {}),
       undefer: vi.fn(async () => {}),
@@ -644,6 +647,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
       findOpenTicketByLabel:
         overrides?.findOpenTicketByLabel ?? vi.fn(async () => null),
       create: overrides?.create ?? vi.fn(async () => ({ id: 'proj-a-1' })),
+      setMetadata: overrides?.setMetadata ?? vi.fn(async () => {}),
     };
   }
 
@@ -703,6 +707,8 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
     await expect(response.json()).resolves.toEqual({
       ticketId: 'proj-a-42',
       created: true,
+      stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
     expect(issueWriter.findOpenTicketByLabel).toHaveBeenCalledWith(
       proj.rootPath,
@@ -710,10 +716,17 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
     );
     expect(issueWriter.create).toHaveBeenCalledTimes(1);
     const [rootPath, input] = (issueWriter.create as ReturnType<typeof vi.fn>)
-      .mock.calls[0] as [string, { readonly labels: readonly string[] }];
+      .mock.calls[0] as [
+      string,
+      { readonly labels: readonly string[]; readonly metadata?: Record<string, string> },
+    ];
     expect(rootPath).toBe(proj.rootPath);
     expect(input.labels).toEqual(['harness-contract']);
+    // bdboard-13mp: 新規作成時、起票時点の state をメタデータへ載せる。
+    expect(input.metadata).toEqual({ [HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY]: 'missing' });
     expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
+    // 新規作成パスでは追記の必要が無い。
+    expect(issueWriter.addComment).not.toHaveBeenCalled();
   });
 
   it('does not fail the request when the post-create cache refresh rejects (fail-open)', async () => {
@@ -749,19 +762,22 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
     await expect(response.json()).resolves.toEqual({
       ticketId: 'proj-a-1',
       created: true,
+      stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
     expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
 
     consoleErrorSpy.mockRestore();
   });
 
-  it('is idempotent: returns the existing ticket without creating a duplicate', async () => {
+  it('is idempotent: returns the existing ticket without creating a duplicate when the recorded state matches', async () => {
     const cache = createFakeBoardCache();
     const { proj, injector } = setUpMissingContractProject(cache);
     const issueWriter = createFakeIssueWriter({
       findOpenTicketByLabel: vi.fn(async () => ({
         id: 'proj-a-7',
         title: 'existing ticket',
+        metadata: { [HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY]: 'missing' },
       })),
     });
     const refreshProjectByRootPath = vi.fn(async () => {});
@@ -783,10 +799,176 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
     await expect(response.json()).resolves.toEqual({
       ticketId: 'proj-a-7',
       created: false,
+      stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
     expect(issueWriter.create).not.toHaveBeenCalled();
-    // 冪等パス (created: false) はキャッシュを汚していないので再フェッチ不要。
+    // 同じ state のときはコメント追記もメタデータ更新もしない (ボタン連打への冪等性)。
+    expect(issueWriter.addComment).not.toHaveBeenCalled();
+    expect(issueWriter.setMetadata).not.toHaveBeenCalled();
+    // 冪等パス (created: false, stateAppend: not-needed) はキャッシュを汚していないので再フェッチ不要。
     expect(refreshProjectByRootPath).not.toHaveBeenCalled();
+  });
+
+  // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い。
+  describe('state transition across an existing ticket (bdboard-13mp)', () => {
+    it('appends a state-change comment and updates metadata when the recorded state differs from the current state', async () => {
+      const cache = createFakeBoardCache();
+      const { proj, injector } = setUpMissingContractProject(cache);
+      const issueWriter = createFakeIssueWriter({
+        findOpenTicketByLabel: vi.fn(async () => ({
+          id: 'proj-a-7',
+          title: 'existing ticket',
+          // 記録済み state は "invalid" — 現在の contract は 'missing' (setUpMissingContractProject) なので不一致。
+          metadata: { [HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY]: 'invalid' },
+        })),
+      });
+      const refreshProjectByRootPath = vi.fn(async () => {});
+
+      const app = createHarnessApp({
+        cache,
+        injector,
+        contractReader: createFakeContractReader({ contract: null }),
+        issueWriter,
+        refreshProjectByRootPath,
+      });
+      const response = await app.request(
+        `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+        withLocalHost({ method: 'POST' }),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        ticketId: 'proj-a-7',
+        created: false,
+        stateAppend: 'appended',
+        contract: { state: 'missing' },
+      });
+      expect(issueWriter.create).not.toHaveBeenCalled();
+      expect(issueWriter.addComment).toHaveBeenCalledTimes(1);
+      const [rootPath, ticketId, text] = (
+        issueWriter.addComment as ReturnType<typeof vi.fn>
+      ).mock.calls[0] as [string, string, string];
+      expect(rootPath).toBe(proj.rootPath);
+      expect(ticketId).toBe('proj-a-7');
+      expect(text).toContain('現在の状態は missing です');
+      expect(issueWriter.setMetadata).toHaveBeenCalledWith(
+        proj.rootPath,
+        'proj-a-7',
+        HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY,
+        'missing',
+      );
+      // bdboard-13mp レビュー指摘: 新規作成だけでなく、既存チケットへの状態追記も
+      // (comment件数/metadataを書き換えるので) 再フェッチが要る。
+      expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
+    });
+
+    it('treats a legacy ticket with no recorded metadata as "unknown" and appends exactly once', async () => {
+      const cache = createFakeBoardCache();
+      const { proj, injector } = setUpMissingContractProject(cache);
+      const issueWriter = createFakeIssueWriter({
+        findOpenTicketByLabel: vi.fn(async () => ({
+          id: 'proj-a-legacy',
+          title: 'pre-bdboard-13mp ticket',
+          // bd-cli-issue-writer.ts の readOpenTicketByLabel は metadata が無い bd
+          // チケットに対して `{}` を返す (undefined にはしない) — 旧チケットの
+          // 「state 不明」はキーが無いことで表現される。
+          metadata: {},
+        })),
+      });
+
+      const app = createHarnessApp({
+        cache,
+        injector,
+        contractReader: createFakeContractReader({ contract: null }),
+        issueWriter,
+      });
+      const response = await app.request(
+        `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+        withLocalHost({ method: 'POST' }),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        ticketId: 'proj-a-legacy',
+        created: false,
+        stateAppend: 'appended',
+        contract: { state: 'missing' },
+      });
+      expect(issueWriter.addComment).toHaveBeenCalledTimes(1);
+      expect(issueWriter.setMetadata).toHaveBeenCalledWith(
+        proj.rootPath,
+        'proj-a-legacy',
+        HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY,
+        'missing',
+      );
+    });
+
+    it('is fail-soft: a comment-append failure still returns 200 with the existing ticket id, flagged as failed', async () => {
+      const cache = createFakeBoardCache();
+      const { proj, injector } = setUpMissingContractProject(cache);
+      const issueWriter = createFakeIssueWriter({
+        findOpenTicketByLabel: vi.fn(async () => ({
+          id: 'proj-a-7',
+          title: 'existing ticket',
+          metadata: { [HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY]: 'invalid' },
+        })),
+        addComment: vi.fn(async () => {
+          throw new Error('bd comment failed: lock held');
+        }),
+      });
+
+      const refreshProjectByRootPath = vi.fn(async () => {});
+      const app = createHarnessApp({
+        cache,
+        injector,
+        contractReader: createFakeContractReader({ contract: null }),
+        issueWriter,
+        refreshProjectByRootPath,
+      });
+      const response = await app.request(
+        `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+        withLocalHost({ method: 'POST' }),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        ticketId: 'proj-a-7',
+        created: false,
+        stateAppend: 'failed',
+        contract: { state: 'missing' },
+      });
+      expect(issueWriter.setMetadata).not.toHaveBeenCalled();
+      // 追記に失敗した (stateAppend: 'failed') ときは何も書き込めていないので
+      // 再フェッチ不要。
+      expect(refreshProjectByRootPath).not.toHaveBeenCalled();
+    });
+
+    it('returns 501 when the issueWriter has no setMetadata (state-append support missing)', async () => {
+      const cache = createFakeBoardCache();
+      const { proj, injector } = setUpMissingContractProject(cache);
+      const issueWriter: IssueWriterPort = {
+        ...createFakeIssueWriter(),
+        setMetadata: undefined,
+      };
+
+      const app = createHarnessApp({
+        cache,
+        injector,
+        contractReader: createFakeContractReader({ contract: null }),
+        issueWriter,
+      });
+      const response = await app.request(
+        `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+        withLocalHost({ method: 'POST' }),
+        LOCAL_ENV,
+      );
+
+      expect(response.status).toBe(501);
+    });
   });
 
   it('returns 404 for an unknown project', async () => {

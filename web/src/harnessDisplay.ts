@@ -1,4 +1,5 @@
 import type {
+  HarnessContractTicketStateAppend,
   HarnessPrFlowDto,
   ProjectHarnessContractDto,
   ProjectHarnessModelStageDto,
@@ -229,12 +230,46 @@ export function buildHarnessHooksMessage(
  * 検証コントラクト不足を直すチケットを起票した後のフィードバック文言 (bdboard-p5l.25)。
  * `created: false` は冪等性で既存チケットを見つけたケース — 「また作った」と
  * 誤解されないよう文言を分ける。
+ *
+ * `stateAppend` (bdboard-13mp): 既存チケットが見つかったときだけ意味を持つ。
+ * state 遷移をまたいだ陳腐化チケットの扱い — 記録済み state と現在の state が
+ * 違って追記した場合は「現在の状態 <ラベル> を追記しました」と明示し、追記に
+ * 失敗した場合 (fail-soft) はその旨を伝える。ラベルは `formatHarnessContractLabel`
+ * を再利用し、生の state 文字列を画面に出さない。
+ *
+ * `contract` は**呼び出し元がポーリングでキャッシュしているものではなく、
+ * このリクエストのレスポンスがサーバーから返した contract** を渡すこと
+ * (レビュー指摘 bdboard-13mp)。サーバーはこのリクエスト内で契約ファイルを
+ * 都度読み直してからコメントを追記しているため、クライアント側の古いキャッシュを
+ * 渡すと「追記した文言なのに表示は別の (古い) 状態」というズレが起きうる —
+ * まさにこのチケットが直そうとしている陳腐化を UI 側で再発させてしまう。
  */
 export function buildHarnessContractTicketSuccessMessage(
   ticketId: string,
   created: boolean,
+  stateAppend: HarnessContractTicketStateAppend,
+  contract: ProjectHarnessContractDto,
 ): string {
-  return created
-    ? `チケットを起票しました: ${ticketId}`
-    : `既存のチケットがあります: ${ticketId}`;
+  if (created) {
+    return `チケットを起票しました: ${ticketId}`;
+  }
+  const base = `既存のチケットがあります: ${ticketId}`;
+  switch (stateAppend) {
+    case 'appended': {
+      const stateLabel = formatHarnessContractLabel(contract) ?? contract.state;
+      return `${base}（現在の状態 ${stateLabel} を追記しました）`;
+    }
+    case 'failed':
+      return `${base}（現在の状態の追記に失敗しました。手動でコメントを確認してください）`;
+    case 'not-needed':
+      return base;
+    default:
+      // fetchJson はレスポンスを検証しない unchecked cast (api.ts) なので、
+      // dev:web が別バージョンのサーバーに proxy している (worktree の Vite dev
+      // サーバーが main checkout の常駐サーバーを指す運用、CLAUDE.md 参照) 等で
+      // stateAppend が未知の値/undefined で来ても、型を信じて既存の文言に
+      // フォールバックする — 素通りで壊れた文字列 ("undefined" 混入等) を
+      // 出さない (レビュー指摘)。
+      return base;
+  }
 }

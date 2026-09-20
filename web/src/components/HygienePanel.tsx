@@ -537,10 +537,19 @@ export function HygienePanel({
       setPendingRepairKey(null);
       // 単体で直した後に古い一括結果 (「失敗」行など) を残さない。
       setBulkUpdateSummary(null);
+      // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い — 文言に使う contract は
+      // クリック時点でこのコンポーネントがポーリングでキャッシュしていた item.contract
+      // ではなく、サーバーがこのリクエストで実際に読んだ vars.result.contract を使う
+      // (レビュー指摘)。ポーリングキャッシュとの間には、最後のポーリングからクリック
+      // までの間に契約ファイルが変わっている可能性がある窓があり、それをそのまま
+      // 使うと「追記した」と言いながら別の (古い) 状態名を出しかねない — まさに
+      // この機能が直そうとしている陳腐化表示をクライアント側で再発させてしまう。
       showRepairStatusMessage(
         buildHarnessContractTicketSuccessMessage(
           vars.result.ticketId,
           vars.result.created,
+          vars.result.stateAppend,
+          vars.result.contract,
         ),
       );
     },

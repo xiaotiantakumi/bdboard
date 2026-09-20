@@ -172,9 +172,16 @@ async function readCurrentDescription(
 
 // findOpenTicketByLabel の CAS 不要読み取り用。`bd list --label` の既定挙動が
 // closed を除外するので、ここでは status を見ない (bd 側のフィルタに任せる)。
+// metadata は optional (実測: メタデータが1つも無いチケットは `bd list --json` の
+// 出力にキー自体が現れない・bdboard-13mp) なので z.record を optional で受ける。
 const bdListLabelItemSchema = z.object({
   id: z.string(),
   title: z.string(),
+  // .nullish(): bd list --json は metadata が無いチケットではキーごと省略するが
+  // (確認済み)、将来 bd 側の挙動が変わって明示的に null を返すようになっても
+  // ルート全体が 502 に落ちないよう .optional() ではなく .nullish() にしておく
+  // (bdShowDescriptionItemSchema と同じ防御方針、レビュー指摘)。
+  metadata: z.record(z.unknown()).nullish(),
 });
 
 async function readOpenTicketByLabel(
@@ -183,7 +190,10 @@ async function readOpenTicketByLabel(
   timeoutMs: number,
   rootPath: string,
   label: string,
-): Promise<{ readonly id: string; readonly title: string } | null> {
+): Promise<
+  | { readonly id: string; readonly title: string; readonly metadata: Readonly<Record<string, unknown>> }
+  | null
+> {
   const stdout = await runBdCommandForStdout(
     commandRunner,
     bdPath,
@@ -231,7 +241,11 @@ async function readOpenTicketByLabel(
     );
   }
 
-  return { id: result.data.id, title: result.data.title };
+  return {
+    id: result.data.id,
+    title: result.data.title,
+    metadata: result.data.metadata ?? {},
+  };
 }
 
 // create の結果パース用。bd create --json は成功時オブジェクト1件を返す
@@ -579,7 +593,14 @@ export function createBdCliIssueWriter(
     async findOpenTicketByLabel(
       rootPath: string,
       label: string,
-    ): Promise<{ readonly id: string; readonly title: string } | null> {
+    ): Promise<
+      | {
+          readonly id: string;
+          readonly title: string;
+          readonly metadata: Readonly<Record<string, unknown>>;
+        }
+      | null
+    > {
       return readOpenTicketByLabel(commandRunner, bdPath, timeoutMs, rootPath, label);
     },
 
@@ -591,6 +612,7 @@ export function createBdCliIssueWriter(
         readonly type: string;
         readonly priority: number;
         readonly labels: readonly string[];
+        readonly metadata?: Readonly<Record<string, string>>;
       },
     ): Promise<{ readonly id: string }> {
       const args: string[] = [
@@ -607,6 +629,11 @@ export function createBdCliIssueWriter(
       ];
       if (input.labels.length > 0) {
         args.push('--labels', input.labels.join(','));
+      }
+      // `bd create --metadata '<json>'` は作成時点でメタデータを set できる (実測
+      // 確認済み・bdboard-13mp)。空オブジェクトなら渡さない (省略時と同じ挙動にする)。
+      if (input.metadata !== undefined && Object.keys(input.metadata).length > 0) {
+        args.push('--metadata', JSON.stringify(input.metadata));
       }
       // 説明は常に非空 (呼び出し元はサーバー側で固定テンプレートを組み立てる) 前提。
       // --allow-empty-description の分岐は持たない。
@@ -636,6 +663,27 @@ export function createBdCliIssueWriter(
       }
 
       return { id: result.data.id };
+    },
+
+    // `bd update --set-metadata k=v` は代入操作 (追記系の comment と違い同じ引数で
+    // 何度実行しても最終状態は変わらない) なので lock-contention リトライの対象に
+    // 含めてよい (bd-cli-session-link-writer.ts の同種コメント参照・bdboard-13mp)。
+    async setMetadata(
+      rootPath: string,
+      ticketId: string,
+      key: string,
+      value: string,
+    ): Promise<void> {
+      await withLockContentionRetry(() =>
+        runBdCommand(
+          commandRunner,
+          bdPath,
+          timeoutMs,
+          rootPath,
+          ['-C', rootPath, 'update', ticketId, '--set-metadata', `${key}=${value}`],
+          ticketId,
+        ),
+      );
     },
   };
 }

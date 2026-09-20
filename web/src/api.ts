@@ -1945,13 +1945,33 @@ export function postProjectHarnessInject(
 }
 
 /**
+ * 既存チケットへの state 変化追記の結果 (bdboard-13mp)。サーバー側
+ * `HarnessContractTicketStateAppend` と同じ意味:
+ * - `not-needed`: 新規作成した、または既存チケットの記録済み state が現在の
+ *   state と同じで追記の必要が無かった。
+ * - `appended`: 既存チケットへ「現在の状態は…」のコメントを追記した。
+ * - `failed`: 追記を試みたが失敗した (fail-soft — チケット自体は見つかっている)。
+ */
+export type HarnessContractTicketStateAppend = 'not-needed' | 'appended' | 'failed';
+
+/**
  * 検証コントラクト不足 (missing/invalid/command-missing) を直すチケットの起票結果
  * (bdboard-p5l.25)。`created: false` は「既存の未クローズチケットを見つけたので
- * 作らなかった」(冪等性)。
+ * 作らなかった」(冪等性)。`stateAppend` は state 遷移をまたいだ陳腐化チケットの
+ * 扱い (bdboard-13mp) — 既存チケットが見つかったときだけ意味を持つ。
  */
 export interface HarnessContractTicketResultDto {
   ticketId: string;
   created: boolean;
+  stateAppend: HarnessContractTicketStateAppend;
+  /**
+   * サーバーがこのリクエストで実際に読んだ (再注入直前に都度取得した)
+   * ProjectHarnessContractDto。呼び出し側はポーリングでキャッシュしている
+   * 古い contract ではなく、必ずこれを使って「現在の状態」の文言を組み立てる
+   * こと (bdboard-13mp レビュー指摘 — でないとこの機能自体が直そうとしている
+   * 「古い状態を表示する」問題がクライアント側に移るだけになる)。
+   */
+  contract: ProjectHarnessContractDto;
 }
 
 export function postProjectHarnessContractTicket(

@@ -97,7 +97,20 @@ export interface IssueWriterPort {
   findOpenTicketByLabel?(
     rootPath: string,
     label: string,
-  ): Promise<{ readonly id: string; readonly title: string } | null>;
+  ): Promise<
+    | {
+        readonly id: string;
+        readonly title: string;
+        /**
+         * `HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY` (bdboard-13mp) 等、呼び出し元が
+         * 関心を持つ bd メタデータの生の中身。キーが1つも無いチケットは `{}`
+         * (null/undefined にはしない — 呼び出し元に `metadata?.[key]` の undefined
+         * チェックだけで「無い」を判定させ、null 分岐を追加で持たせない)。
+         */
+        readonly metadata: Readonly<Record<string, unknown>>;
+      }
+    | null
+  >;
 
   /**
    * 新規チケットを作成し、作成された ID を返す。bd-tool-catalog (チャット向けの
@@ -115,8 +128,28 @@ export interface IssueWriterPort {
       readonly type: string;
       readonly priority: number;
       readonly labels: readonly string[];
+      /**
+       * 作成時点で設定する bd メタデータ (`bd create --metadata` 相当、実測で
+       * 確認済み・bdboard-13mp)。省略時はメタデータなしで作成する。
+       */
+      readonly metadata?: Readonly<Record<string, string>>;
     },
   ): Promise<{ readonly id: string }>;
+
+  /**
+   * 既存チケットの bd メタデータを1キーだけ set する (`bd update --set-metadata`
+   * 相当)。追記系の comment と違い代入操作なので、同じ値で何度呼んでも最終状態は
+   * 変わらない (bd-cli-session-link-writer.ts の同種コメント参照)。
+   *
+   * ハーネス契約チケットの state 追記 (bdboard-13mp) にだけ使う。
+   * findOpenTicketByLabel/create と同じ理由で **optional**。
+   */
+  setMetadata?(
+    rootPath: string,
+    ticketId: string,
+    key: string,
+    value: string,
+  ): Promise<void>;
 }
 
 /**
