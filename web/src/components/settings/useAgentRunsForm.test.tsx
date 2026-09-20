@@ -100,6 +100,47 @@ describe('useAgentRunsForm', () => {
     );
   });
 
+  it("updates the local version from the PUT response so it doesn't wait on the GET refetch", async () => {
+    // Isolates onSuccess's setAgentRunsVersion(data.version) from the invalidateQueries
+    // refetch that follows it: the refetch is left hanging (never resolves) so only the direct
+    // setVersion call can be responsible for the mutationFn picking up 'agent-runs-v2' on a
+    // second, immediate submit. Without this, the version comes from the refetch instead.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useAgentRunsForm(), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.query.data).toBeDefined());
+
+    // Only the refetch triggered by the upcoming save's invalidateQueries hangs; the initial
+    // mount fetch above already resolved normally.
+    fetchAgentRunConfigMock.mockImplementationOnce(() => new Promise(() => {}));
+    act(() => {
+      result.current.onChange(true);
+    });
+    await act(async () => {
+      result.current.onSubmit();
+    });
+    await waitFor(() => {
+      expect(saveAgentRunConfigMock).toHaveBeenCalledWith({
+        allowRemoteAgentRuns: true,
+        version: 'agent-runs-v1',
+      });
+    });
+
+    act(() => {
+      result.current.onChange(false);
+    });
+    await act(async () => {
+      result.current.onSubmit();
+    });
+    await waitFor(() => {
+      expect(saveAgentRunConfigMock).toHaveBeenLastCalledWith({
+        allowRemoteAgentRuns: false,
+        version: 'agent-runs-v2',
+      });
+    });
+  });
+
   it('clears dirty and refetches on a 409 conflict', async () => {
     saveAgentRunConfigMock.mockRejectedValue(
       new ApiError(409, 'agent run config changed since read', {
@@ -121,5 +162,8 @@ describe('useAgentRunsForm', () => {
 
     await waitFor(() => expect(result.current.isDirty).toBe(false));
     await waitFor(() => expect(result.current.feedback.isError).toBe(true));
+    // "refetches on a 409" must actually refetch: the initial mount fetch plus the
+    // invalidateQueries the onError handler issues for the 409 branch.
+    await waitFor(() => expect(fetchAgentRunConfigMock).toHaveBeenCalledTimes(2));
   });
 });

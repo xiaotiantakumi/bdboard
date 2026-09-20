@@ -101,6 +101,47 @@ describe('useAiQuotaAlertForm', () => {
     );
   });
 
+  it("updates the local version from the PUT response so it doesn't wait on the GET refetch", async () => {
+    // Isolates onSuccess's setAiQuotaAlertVersion(data.version) from the invalidateQueries
+    // refetch that follows it: the refetch is left hanging (never resolves) so only the direct
+    // setVersion call can be responsible for the mutationFn picking up 'ai-quota-alert-v2' on a
+    // second, immediate submit. Without this, the version comes from the refetch instead.
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { result } = renderHook(() => useAiQuotaAlertForm(), {
+      wrapper: createWrapper(queryClient),
+    });
+    await waitFor(() => expect(result.current.query.data).toBeDefined());
+
+    // Only the refetch triggered by the upcoming save's invalidateQueries hangs; the initial
+    // mount fetch above already resolved normally.
+    fetchAiQuotaAlertConfigMock.mockImplementationOnce(() => new Promise(() => {}));
+    act(() => {
+      result.current.onChange('30');
+    });
+    await act(async () => {
+      result.current.onSubmit();
+    });
+    await waitFor(() => {
+      expect(putAiQuotaAlertConfigMock).toHaveBeenCalledWith({
+        thresholdPercent: 30,
+        version: 'ai-quota-alert-v1',
+      });
+    });
+
+    act(() => {
+      result.current.onChange('40');
+    });
+    await act(async () => {
+      result.current.onSubmit();
+    });
+    await waitFor(() => {
+      expect(putAiQuotaAlertConfigMock).toHaveBeenLastCalledWith({
+        thresholdPercent: 40,
+        version: 'ai-quota-alert-v2',
+      });
+    });
+  });
+
   it('clears dirty and refetches on a 409 conflict', async () => {
     putAiQuotaAlertConfigMock.mockRejectedValue(
       new ApiError(409, 'ai quota alert config changed since read', {
@@ -122,5 +163,8 @@ describe('useAiQuotaAlertForm', () => {
 
     await waitFor(() => expect(result.current.isDirty).toBe(false));
     await waitFor(() => expect(result.current.feedback.isError).toBe(true));
+    // "refetches on a 409" must actually refetch: the initial mount fetch plus the
+    // invalidateQueries the onError handler issues for the 409 branch.
+    await waitFor(() => expect(fetchAiQuotaAlertConfigMock).toHaveBeenCalledTimes(2));
   });
 });
