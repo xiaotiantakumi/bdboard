@@ -5,15 +5,15 @@ import { ApiError } from '../../api';
 import { describeWriteError } from '../../writeAccessMessage';
 
 /** サーバー(scan-roots-routes.ts)がこの 400 で使う error 文字列。 */
-export const DANGEROUS_SCAN_ROOT_ERROR = 'dangerous scan root rejected';
+const DANGEROUS_SCAN_ROOT_ERROR = 'dangerous scan root rejected';
 /**
  * details.rejected が期待した形で来なかった場合(S5)や空配列の場合(N2)のフォールバック文言。
  * 生の英語エラー文字列 (DANGEROUS_SCAN_ROOT_ERROR) をそのまま UI に出さないための保険。
  */
-export const DANGEROUS_SCAN_ROOT_FALLBACK_MESSAGE =
+const DANGEROUS_SCAN_ROOT_FALLBACK_MESSAGE =
   '危険なスキャンルートが含まれているため保存できませんでした';
 /** rejected を全件羅列すると長くなりすぎるため、先頭何件までを表示するか(N3/N4)。 */
-export const REJECTED_PATHS_DISPLAY_LIMIT = 5;
+const REJECTED_PATHS_DISPLAY_LIMIT = 5;
 /** 保存前の軽量チェックに引っかかったスキャンルート行に出す、確定形の警告文(S4)。 */
 export const DANGEROUS_SCAN_ROOT_ROW_WARNING = 'このパスは保存時にサーバーに拒否されます';
 /**
@@ -21,12 +21,12 @@ export const DANGEROUS_SCAN_ROOT_ROW_WARNING = 'このパスは保存時にサ�
  * 画面上のスキャンルート/除外パス入力はサーバーの最新値に置き換わる(=編集内容は破棄される)。
  * その仕様を隠さず、何が起きたかとやり直し方をここで明示する。
  */
-export const CONFLICT_WRITE_MESSAGE =
+const CONFLICT_WRITE_MESSAGE =
   '他のセッションが先に変更したため保存できませんでした。入力内容は最新の設定で置き換えられました。内容を確認してからやり直してください。';
 
-export const INVALID_BOARD_THRESHOLDS_ERROR = 'invalid board thresholds';
-export const INVALID_HYGIENE_THRESHOLDS_ERROR = 'invalid hygiene thresholds';
-export const INVALID_AI_QUOTA_ALERT_THRESHOLD_ERROR = 'invalid ai quota alert threshold';
+const INVALID_BOARD_THRESHOLDS_ERROR = 'invalid board thresholds';
+const INVALID_HYGIENE_THRESHOLDS_ERROR = 'invalid hygiene thresholds';
+const INVALID_AI_QUOTA_ALERT_THRESHOLD_ERROR = 'invalid ai quota alert threshold';
 
 function isBoardThresholdErrors(details: unknown): details is { errors: string[] } {
   if (typeof details !== 'object' || details === null || !('errors' in details)) {
