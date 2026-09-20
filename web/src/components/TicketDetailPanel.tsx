@@ -34,14 +34,7 @@ import {
   startTicketRun,
   type AgentRunDetailDto,
   type AgentRunNextStepDto,
-  type AgentRunSummaryDto,
-  type PendingDecisionDto,
-  type TicketDecisionOutcome,
-  type PrBadgeDto,
   type QuickActionRequest,
-  type SessionDto,
-  type ActivityEventDto,
-  type TicketDetailDto,
   type TicketSearchResultDto,
   type TicketInFlightOverlapDto,
   type TicketSimilarResultDto,
@@ -90,286 +83,47 @@ import {
   type DeferPeriodKind,
 } from '../deferPeriods';
 
-const DEPENDENCY_SEARCH_DEBOUNCE_MS = 200;
-const DEPENDENCY_SEARCH_LIMIT = 20;
+import {
+  DEPENDENCY_SEARCH_DEBOUNCE_MS,
+  DEPENDENCY_SEARCH_LIMIT,
+  OVERLAP_FILE_DISPLAY_LIMIT,
+  COPY_FEEDBACK_MS,
+} from './ticket-detail/constants';
+import {
+  timelineKindBadgeClass,
+  formatTimelineChangeDetail,
+} from './ticket-detail/timelineFormatting';
+import {
+  type TicketDetailPanelProps,
+  type NextStepCopyTarget,
+  type CopyDisplay,
+  EMPTY_COPY_DISPLAY,
+  type ConfirmingQuickAction,
+  type SubmittedDecision,
+} from './ticket-detail/types';
+import {
+  formatQuickActionConfirmTitle,
+  formatQuickActionConfirmDescription,
+  toQuickActionRequest,
+} from './ticket-detail/quickActionConfirm';
+import {
+  formatDateTime,
+  formatTokenCount,
+  sessionLinkBadgeLabel,
+  sessionLinkBadgeClass,
+  formatSessionPickerLabel,
+} from './ticket-detail/formatters';
+import {
+  AGENT_RUN_LOG_LOCAL_ONLY_HELP,
+  computeRunStartDisabled,
+  AGENT_RUN_NEXT_STEP_LABEL,
+  formatAgentRunStatus,
+} from './ticket-detail/agentRun';
+import { AgentRunNextStep } from './ticket-detail/AgentRunNextStep';
+import { TicketIdLink } from './ticket-detail/TicketIdLink';
 
-/**
- * 「衝突しうる着手中チケット」で相手 1 件あたりに並べるファイル数の上限。
- * 大きく育ったブランチだと 100 件を超えることがあり、詳細パネルがファイル一覧で
- * 埋まって他の情報が押し出される。残りは件数だけ出す。
- */
-const OVERLAP_FILE_DISPLAY_LIMIT = 20;
-
-const COPY_FEEDBACK_MS = 2000;
-
-function timelineKindBadgeClass(
-  kind: ActivityEventDto['kind'],
-): string {
-  return `activity-kind-badge activity-kind-${kind}`;
-}
-
-function formatTimelineChangeDetail(
-  kind: ActivityEventDto['kind'],
-  from: string | undefined,
-  to: string | undefined,
-): string | undefined {
-  if (
-    (kind === 'status_changed' || kind === 'priority_changed') &&
-    from !== undefined &&
-    to !== undefined
-  ) {
-    return `${from} → ${to}`;
-  }
-  return undefined;
-}
-
-export interface TicketDetailPanelProps {
-  ticketId: string;
-  /**
-   * projectId -> project root path. The panel resolves the path from the loaded
-   * ticket's own projectId rather than from the board, so the generated
-   * commands keep their `-C` even for tickets that are not on the board
-   * (a parent or blocker outside the current filter, for instance).
-   */
-  projectRootPaths: ReadonlyMap<string, string>;
-  pendingDecision: PendingDecisionDto | undefined;
-  prLink?: PrBadgeDto;
-  onClose: () => void;
-  onChatAboutTicket?: (ctx: { projectId: string; ticketId: string }) => void;
-  onOpenTicket: (ticketId: string) => void;
-  /**
-   * 最大化中か (bdboard-0hcx)。state は App 側が持つ。
-   *
-   * このコンポーネントで useState すると、App の ErrorBoundary が
-   * key={selectedTicketId} を持つ (App.tsx) ためチケットを1つたどるたびに
-   * unmount/remount され、最大化が毎回解除される。ChatPanel 側の
-   * ErrorBoundary には key が無いので同じ書き方で問題にならないが、詳細パネルは
-   * 「盤面のカードを次々開く」使い方をするので寿命がまったく違う
-   * (PR#242 opus レビュー major-1)。
-   */
-  isMaximized: boolean;
-  onToggleMaximized: () => void;
-  /**
-   * 詳細パネル内で1つ前のチケットへ戻る (bdboard-4ql7)。
-   * 戻り先が無いときは undefined — ボタン自体を出さない。
-   */
-  onBackTicket?: (() => void) | undefined;
-  isTicketOnBoard: (ticketId: string) => boolean;
-  onFilterByEpic: (ticketId: string) => void;
-  onTicketViewed?: (entry: { id: string; title: string; projectId: string }) => void;
-  availableLabels?: readonly string[];
-}
-
-/**
- * 「次に実行」のコピーは現在の run と履歴の run で別々に出るので、コピー完了
- * バッジもその 2 箇所を区別する (bdboard-pkr6.11)。
- */
-type NextStepCopyTarget = 'next-step-current' | 'next-step-history';
-
-type CopyFeedback =
-  | { kind: 'success'; command: BdCommandKind | NextStepCopyTarget }
-  | { kind: 'error' };
-
-/**
- * コピー結果の表示。ボタン脇のバッジ (feedback) と読み上げ (aria) は必ず一緒に
- * 出て一緒に消えるので、1つの値として useAutoClearedValue に持たせる
- * (bdboard-ty72)。別々の state にすると自動消去タイマーも2本になる。
- */
-interface CopyDisplay {
-  readonly feedback: CopyFeedback | null;
-  readonly aria: string;
-}
-
-const EMPTY_COPY_DISPLAY: CopyDisplay = { feedback: null, aria: '' };
-
-type ConfirmingQuickAction =
-  | { kind: 'claim' }
-  | { kind: 'close' }
-  | { kind: 'defer'; untilDate: string }
-  | { kind: 'priority'; priority: number };
-
-type SubmittedDecision = {
-  decisionId: string;
-  choiceLabel?: string;
-  freeform?: string;
-  outcome: TicketDecisionOutcome;
-};
-
-function formatQuickActionConfirmTitle(action: ConfirmingQuickAction): string {
-  switch (action.kind) {
-    case 'claim':
-      return '着手の確認';
-    case 'close':
-      return '完了の確認';
-    case 'defer':
-      return '延期の確認';
-    case 'priority':
-      return '優先度変更の確認';
-  }
-}
-
-function formatQuickActionConfirmDescription(
-  action: ConfirmingQuickAction,
-): string {
-  switch (action.kind) {
-    case 'claim':
-      return 'このチケットを着手(claim)します。よろしいですか?';
-    case 'close':
-      return 'このチケットをクローズします。よろしいですか?';
-    case 'defer':
-      return `${action.untilDate} まで延期します。よろしいですか?`;
-    case 'priority':
-      return `優先度を P${action.priority} に変更します。よろしいですか?`;
-  }
-}
-
-function toQuickActionRequest(action: ConfirmingQuickAction, closeReason: string): QuickActionRequest {
-  switch (action.kind) {
-    case 'claim':
-      return { action: 'claim' };
-    case 'close': {
-      const trimmedReason = closeReason.trim();
-      return {
-        action: 'close',
-        ...(trimmedReason.length > 0 ? { reason: trimmedReason } : {}),
-      };
-    }
-    case 'defer':
-      return { action: 'defer', untilDate: action.untilDate };
-    case 'priority':
-      return { action: 'priority', priority: action.priority };
-  }
-}
-
-function formatDateTime(value: string | undefined): string {
-  if (value === undefined) return '—';
-  return formatAbsoluteTime(value);
-}
-
-function formatTokenCount(value: number): string {
-  return value.toLocaleString();
-}
-
-function sessionLinkBadgeLabel(source: 'metadata' | 'transcript'): string {
-  return source === 'metadata' ? '手動' : '自動推定';
-}
-
-function sessionLinkBadgeClass(source: 'metadata' | 'transcript'): string {
-  return source === 'metadata' ? 'badge-link-manual' : 'badge-link-inferred';
-}
-
-function formatSessionPickerLabel(session: SessionDto): string {
-  return session.name !== undefined
-    ? `${session.name} (${session.cwd})`
-    : `${session.sessionId} (${session.cwd})`;
-}
-
-export const AGENT_RUN_LOG_LOCAL_ONLY_HELP =
-  'ログはこのPCのローカル画面からのみ表示できます。';
-
-function computeRunStartDisabled(
-  ticket: TicketDetailDto,
-  hasActiveRun: boolean,
-  nowMs: number = Date.now(),
-): { disabled: boolean; reason?: string } {
-  if (ticket.status === 'closed') {
-    return { disabled: true, reason: '完了済みのチケットは実行できません' };
-  }
-  if (
-    (ticket.status === 'open' || ticket.status === 'pinned') &&
-    ticket.blockedBy.length > 0
-  ) {
-    return { disabled: true, reason: 'ブロック中のチケットは実行できません' };
-  }
-  if (
-    ticket.deferUntil !== undefined &&
-    new Date(ticket.deferUntil).getTime() > nowMs
-  ) {
-    return { disabled: true, reason: '保留中のチケットは実行できません' };
-  }
-  if (hasActiveRun) {
-    return { disabled: true };
-  }
-  return { disabled: false };
-}
-
-export const AGENT_RUN_NEXT_STEP_LABEL = '次に実行';
-
-/**
- * run 完了後に人が run の外で回す検証コマンド (bdboard-pkr6.11 仕様4)。
- * run 内では検証できないので、終わったあとの導線をここに置く。
- */
-function AgentRunNextStep({
-  nextStep,
-  target,
-  copied,
-  onCopy,
-}: {
-  nextStep: AgentRunNextStepDto;
-  target: NextStepCopyTarget;
-  copied: boolean;
-  onCopy: (target: NextStepCopyTarget, nextStep: AgentRunNextStepDto) => void;
-}) {
-  const command = buildRunNextStepCommand(nextStep);
-
-  return (
-    <div className="agent-run-next-step">
-      <span className="agent-run-next-step-label">{AGENT_RUN_NEXT_STEP_LABEL}:</span>
-      <code className="agent-run-next-step-command">{command}</code>
-      <button
-        type="button"
-        className="btn btn-small agent-run-next-step-copy"
-        aria-label={`次に実行するコマンドをコピー: ${command}`}
-        onClick={() => onCopy(target, nextStep)}
-      >
-        {copied ? 'コピーしました' : 'コピー'}
-      </button>
-    </div>
-  );
-}
-
-function formatAgentRunStatus(status: AgentRunSummaryDto['status']): string {
-  switch (status) {
-    case 'pending':
-      return '待機中';
-    case 'running':
-      return '実行中';
-    case 'cancelling':
-      return '中止中…';
-    case 'succeeded':
-      return '成功';
-    case 'failed':
-      return '失敗';
-    case 'cancelled':
-      return '中止';
-  }
-}
-
-interface TicketIdLinkProps {
-  id: string;
-  isTicketOnBoard: (ticketId: string) => boolean;
-  onOpenTicket: (ticketId: string) => void;
-}
-
-function TicketIdLink({ id, isTicketOnBoard, onOpenTicket }: TicketIdLinkProps) {
-  if (isTicketOnBoard(id)) {
-    return (
-      <button
-        type="button"
-        className="ticket-id-link"
-        onClick={() => onOpenTicket(id)}
-      >
-        {id}
-      </button>
-    );
-  }
-
-  return (
-    <span className="ticket-id-unavailable" title="現在のボードに表示されていません">
-      {id}
-    </span>
-  );
-}
+export type { TicketDetailPanelProps };
+export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
 
 export function TicketDetailPanel({
   ticketId,
