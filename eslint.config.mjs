@@ -24,8 +24,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
   'web/src/components/hygiene/useHygieneRepairActions.ts': 315, // 現在 307 (bdboard-sso1.11 PR-C: repair/mutation ハンドラをカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
-  'src/infrastructure/bd/bd-cli-human-decisions.ts': 770, // 現在 762
-  'src/infrastructure/git/git-worktree-provisioner.ts': 690, // 現在 690
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'src/domain/harness-contract.ts': 650, // 現在 646
   'web/src/hooks/useNotificationEvents.ts': 620, // 現在 619
