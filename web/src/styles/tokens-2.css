@@ -1,0 +1,69 @@
+
+
+/* kind バッジの per-kind 配色はライト前提の固定色なので、ダークでは前景/背景を
+   個別に上書きしないと WCAG 2.1 の 4.5:1 を満たせない (実測で9件すべて未達、
+   最悪 harness_hooks が 1.74:1 だった)。トークン化せず merge_slot (bdboard-vpdn) と
+   同じ「個別上書き」に揃え、@media を kind ごとに増やさないよう1ブロックへまとめている。
+   値の根拠と再測定手段は HygienePanel.badge-colors.test.ts のコントラストガード。
+   (bdboard-i874) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .hygiene-kind-dependency_cycle {
+    background: rgba(255, 55, 95, 0.2);
+    color: #ff8fa3;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-merged_leftover {
+    background: rgba(255, 149, 0, 0.2);
+    color: #ff9f5a;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-reclaimed_live_worktree {
+    background: rgba(175, 82, 222, 0.24);
+    color: #e0a6f5;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-stale_harness_worktree {
+    background: rgba(0, 122, 255, 0.24);
+    color: #8ec5ff;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-orphan_heartbeat_loop {
+    background: rgba(255, 105, 0, 0.22);
+    color: #f0956a;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-harness_drift {
+    background: rgba(191, 90, 242, 0.2);
+    color: #d391f0;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-harness_contract {
+    background: rgba(10, 132, 255, 0.2);
+    color: #6cb4ff;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-harness_hooks {
+    background: rgba(94, 92, 230, 0.22);
+    color: #a9a7ff;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-stale_lease {
+    background: rgba(255, 69, 58, 0.18);
+    color: #ff8a80;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-in_flight_file_overlap {
+    background: rgba(0, 199, 190, 0.2);
+    color: #5fd9d0;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-closed_without_evidence {
+    background: rgba(100, 210, 255, 0.16);
+    color: #7fc8e8;
+  }
+
+  :root:not([data-theme='light']) .hygiene-kind-merge_slot {
+    background: rgba(172, 142, 104, 0.22);
+    color: #d9b98c;
+  }
+}

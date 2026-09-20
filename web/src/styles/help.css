@@ -1,0 +1,67 @@
+
+
+.tips-banner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px max(20px, env(safe-area-inset-right)) 10px
+    max(20px, env(safe-area-inset-left));
+  border-bottom: 1px solid var(--color-border);
+  /* 元は未定義の --color-surface だったため color-mix 全体が無効になり、背景は
+     transparent に落ちていた。main と同じ地の --color-bg に accent を混ぜる。 */
+  background: color-mix(in srgb, var(--color-accent) 5%, var(--color-bg));
+}
+
+.tips-banner-content {
+  display: flex;
+  align-items: baseline;
+  min-width: 0;
+  gap: 10px;
+}
+
+.tips-banner-label {
+  flex: none;
+  margin: 0;
+  /* bdboard-97ib.1: --color-accent (#007aff) は tips banner の着色背景
+     (color-mix(accent 5%, --color-bg)) の上で前景・背景の色相が同じになり輝度差が
+     稼げず light 3.39:1 (実測)。--color-accent-text (#005ec4、.filter-chip-active 用に
+     新設済み) を流用すると light 5.21:1 で AA を満たす。 */
+  color: var(--color-accent-text);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.tips-banner-text {
+  display: flex;
+  min-width: 0;
+  margin: 0;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 0.8125rem;
+}
+
+.tips-banner-text-body {
+  /* bdboard-97ib.1: 継承する --color-text-secondary は tips banner 背景上で light
+     4.41:1 (実測)、AA まで 0.09 しか足りていなかった。--badge-neutral-fg (light 4.89:1
+     on this bg) に上書きする。 */
+  color: var(--badge-neutral-fg);
+}
+
+.tips-banner-text strong {
+  flex: none;
+  color: var(--color-text);
+}
+
+.tips-banner-actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tips-banner-actions .btn {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+}

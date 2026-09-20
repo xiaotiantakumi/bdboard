@@ -1,0 +1,150 @@
+
+
+.search-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  padding: 12dvh 16px 16px;
+}
+
+.search-palette-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.search-palette {
+  width: min(640px, 100%);
+  max-height: min(70vh, 560px);
+  max-height: min(70dvh, 560px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px var(--color-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.search-palette-input {
+  width: 100%;
+  font: inherit;
+  font-size: 1rem;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-grouped);
+  color: var(--color-text);
+}
+
+.search-palette-input:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.search-palette-hint {
+  margin: 4px 0 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.search-result-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.search-result-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'project priority'
+    'id id'
+    'title title';
+  gap: 2px 12px;
+  padding: 12px 14px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.search-result-item:hover,
+.search-result-item.selected {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+}
+
+.search-result-project {
+  grid-area: project;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.search-result-id {
+  grid-area: id;
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.search-result-title {
+  grid-area: title;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.search-result-priority {
+  grid-area: priority;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  justify-self: end;
+}
+
+.search-result-action {
+  grid-template-columns: minmax(4.5rem, auto) minmax(0, 1fr) auto;
+  grid-template-areas: 'group title detail';
+  align-items: center;
+}
+
+.search-result-group {
+  grid-area: group;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.search-result-detail {
+  grid-area: detail;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  justify-self: end;
+  white-space: nowrap;
+}
+
+.btn-search {
+  min-height: 34px;
+}
+
+.shortcuts-help-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 16px 16px;
+  padding: 10dvh 16px 16px;
+}

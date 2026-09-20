@@ -1,0 +1,351 @@
+
+
+/* Tablet / iPhone landscape and below */
+@media (max-width: 700px) {
+  .header {
+    padding: 10px 14px;
+    gap: 10px 12px;
+  }
+
+  .tips-banner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 14px;
+  }
+
+  .tips-banner-content {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .tips-banner-text {
+    display: block;
+  }
+
+  .tips-banner-text strong {
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .tips-banner-actions {
+    justify-content: flex-start;
+  }
+
+  .header-title {
+    font-size: 1.0625rem;
+  }
+
+  .global-bar .header-title {
+    width: auto;
+  }
+
+  .main {
+    padding: 14px;
+    padding-bottom: calc(14px + var(--bulk-bar-height, 0px));
+  }
+
+  /* ルートスクロールポートの下端に余白を持たせ、キーボードフォーカスが
+     fixed の一括操作バーの下に隠れるのを防ぐ。 */
+  html {
+    scroll-padding-bottom: var(--bulk-bar-height, 0px);
+  }
+
+  .lane {
+    min-width: min(86vw, 320px);
+    max-width: min(86vw, 320px);
+    /* 統合ビューにも効かせる。.board-section 外の .lane が 7708px まで伸び横スワイプ時に
+       空白へ飛ぶのを防ぐ (bdboard-h4xs.3)。分割ビューは下の .board-section .lane が同値で上書き。 */
+    max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
+    max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
+  }
+
+  .board-section .lane {
+    max-height: calc(100vh - 260px - var(--bulk-bar-height, 0px));
+    max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px));
+  }
+
+  /* bdboard-6y5b: ページ最下端までスクロールしたとき .lane 上端が sticky な
+     .lane-indicator-strip の下へ潜り込み、.lane-header (レーン名・件数・
+     折りたたみトグル) が隠れる問題 (bdboard-knrx / bdboard-t0hx)。上の
+     `.lane` / `.board-section .lane` の減算式 (260px) には触れず、隠れて困る
+     .lane-header 自体をモバイルで描画しないことで解消する。ストリップが
+     既にレーン名・件数を持つので情報は失われず (下の `.lane-indicator-strip`
+     ルール参照)、折りたたみトグルだけは唯一の操作なので
+     `.lane-indicator-collapse-toggle` としてストリップ側へ移した
+     (LaneScrollIndicator.tsx)。ヘッダー分の高さがまるごとカード領域に返るため、
+     PR #392 (別解: 260px を実ヘッダー高へ追従させる案、-10.1% のカード密度を
+     払っていた) と異なり density は悪化しない。分割ビュー
+     (.board-section .lane) にも同じ .lane-header 非表示が効くので、
+     .board-section の margin-bottom (このファイル内 .board-section 定義) が
+     絡む潜り込み残差はこの方式では発生しない — .lane-header がそもそも
+     存在しないため隠れようがない。 */
+  .lane-header {
+    display: none;
+  }
+
+  .lanes-scroll-region {
+    margin: 0 -14px;
+  }
+
+  /*
+   * Sticks below the variable-height .header via --header-height
+   * (ResizeObserver in useHeaderHeightVar.ts). Requires html=hidden / body=clip
+   * so the viewport remains the scrollport (bdboard-wdwa).
+   *
+   * kanban-mobile-lanes e2e verifies strip sticks below the header via
+   * --header-height once sticky is active and stays in viewport at that scroll
+   * depth; scrollY=0 before activation is not asserted.
+   */
+  .lane-indicator-strip {
+    display: block;
+    margin: 0 0 10px;
+    padding: 0 14px 8px;
+    position: sticky;
+    top: var(--header-height, 0px);
+    z-index: 5;
+    background: var(--color-bg);
+  }
+
+  /*
+   * fixed でフローから外して盤面と積み上がらないようにし、--bulk-bar-height の
+   * 高さ補償でカードがバーの下に潜り込んで永久に届かない構図を無くす。
+   * order は視覚順しか変えず DOM 順（フォーカス順）は変わらないため使わない。
+   * bdboard-53my が order を却下したのと同じ理由。z-index:6 は .card (auto) と
+   * .lane-indicator-strip (5) の上、.header (10) の下。
+   */
+  .bulk-action-bar {
+    position: fixed;
+    left: 14px; /* .main のこの帯の水平 padding と一致させる */
+    right: 14px;
+    bottom: 0;
+    z-index: 6;
+    margin: 0;
+    /* MINOR-6: 確認パネル展開時にバーが伸びて上端が画面外へ出るのを防ぐ */
+    max-height: 70vh;
+    max-height: 70dvh;
+    overflow-y: auto;
+    /* --color-bg-elevated は不透明。fixed なので safe-area は自前で持つ */
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /*
+   * 下に出すと画面外で到達不能になるため上へ反転する。375x812 の実測では ul が
+   * 809–847.58px と innerHeight 812 を超え、候補ボタン中心の elementFromPoint は null。
+   * bottom:100% は入力行の上（バーの内側）に出るため、バーの overflow-y で消えない。
+   */
+  .bulk-label-suggestions {
+    top: auto;
+    bottom: 100%;
+    max-height: 40vh;
+    max-height: 40dvh;
+    overflow-y: auto;
+  }
+
+  .lanes-row {
+    gap: 10px;
+    padding: 0 14px 10px;
+    /* padding-left と一致。未設定だと2枚目以降のレーンがスナップ後に scrollport 左端へ密着 (bdboard-h4xs.11) */
+    scroll-padding-left: 14px;
+    scroll-snap-type: x mandatory;
+  }
+
+  .detail-panel {
+    width: 100vw;
+    padding-top: 16px;
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+
+  .detail-header {
+    padding-top: max(20px, env(safe-area-inset-top));
+  }
+
+  /* 481–700px 帯も含め、モバイル幅では 44px タップ領域を確保 (bdboard-h4xs.2) */
+  .btn.detail-close {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* btn-small のままだと 26px でタップ標的として小さすぎるので、閉じるボタンと
+     同じ 44px へ揃える (bdboard-4ql7) */
+  .btn.detail-back {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* スマホ幅ではヘッダーを縦積みにして、アクション群（戻る / ウォッチ / 閉じる）を
+     タイトルの下の独立した行へ下ろす。全画面パネルの右上は片手操作で親指が最も
+     届きにくい位置で、そこに 44px の閉じるボタンを置いても押しにくさは解消しない
+     (bdboard-h4xs.2 受け入れ条件2「配置し直す」)。
+     .detail-header は7つのパネルで共有しているので、詳細パネル専用の
+     .ticket-detail-header に限定する。
+     ヘッダーはスティッキーなので縦に伸びる分だけ本文の可視領域は減る — 意図した取引。 */
+  .ticket-detail-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .ticket-detail-header .detail-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .overlay {
+    height: 100vh;
+    height: 100dvh;
+    overscroll-behavior: none;
+  }
+
+  .detail-panel.resizable-side-panel {
+    width: 100vw !important;
+    min-width: 0;
+    max-width: 100vw;
+    height: 100%;
+    max-height: 100vh;
+    max-height: 100dvh;
+    overscroll-behavior: contain;
+  }
+
+  .chat-messages {
+    overscroll-behavior-y: contain;
+  }
+
+  .side-panel-resize-handle {
+    display: none;
+  }
+
+  /* モバイルのパネルは既に 100vw なので、最大化操作は表示しない。 */
+  .chat-panel-maximize,
+  .detail-maximize {
+    display: none;
+  }
+
+  .tunnel-control {
+    width: 100%;
+  }
+
+  .tunnel-off-row {
+    width: 100%;
+  }
+
+  .tunnel-input {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .tunnel-field-row .btn {
+    flex-shrink: 0;
+  }
+
+  /* レビュー minor-5: iOS Safari は 16px 未満のフォーム要素で自動ズームする。
+     対象プロジェクトは常時表示の主導線になったので .chat-input と同じ扱いにする。 */
+  .chat-project-select {
+    font-size: 16px;
+    min-height: 44px;
+  }
+
+  .chat-input {
+    width: 100%;
+    font-size: 16px;
+  }
+
+  .chat-input-form .btn {
+    min-height: 44px;
+  }
+
+  .chat-quick-command-chip {
+    min-height: 44px;
+  }
+
+  .chat-message {
+    max-width: 90%;
+  }
+
+  .session-tail-message {
+    max-width: 90%;
+  }
+
+  /* bdboard-h4xs.15: モバイル幅で固定チャンクを圧縮し、会話領域 (.chat-messages) を確保する。
+     デスクトップ (>=701px) の見た目は触らない。 */
+  .detail-panel.chat-panel {
+    gap: 8px;
+  }
+
+  .detail-panel.chat-panel .detail-header {
+    padding-bottom: 8px;
+  }
+
+  .chat-thread-switcher {
+    margin: 4px 0;
+  }
+
+  .chat-thread-empty-hint {
+    margin-bottom: 4px;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    line-height: 1.35;
+  }
+
+  .chat-input-form {
+    padding-top: 8px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    gap: 6px;
+  }
+
+  .chat-input-notices {
+    gap: 6px;
+  }
+
+  /* 入力ヒントはキーボード操作の視覚的リマインダ。非フォーカス時は display:none で隠す。
+     AT からも消えるが、視覚的リマインダなので許容。 */
+  .chat-input-form:not(:focus-within) .chat-input-hint {
+    display: none;
+  }
+
+  /* 画像プライバシー説明: 添付なし・非フォーカス時は視覚のみ隠し (AT には残す)。
+     .sr-only と同じ定義。片方だけ変えないこと */
+  .chat-input-form:not(.has-attachments):not(:focus-within) .chat-image-privacy-hint {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* 添付があるときはフォーカス外でもプライバシー説明を表示する */
+  .chat-input-form.has-attachments .chat-image-privacy-hint {
+    font-size: 0.6875rem;
+    line-height: 1.3;
+  }
+
+  .chat-input-form:focus-within .chat-input-hint,
+  .chat-input-form:focus-within .chat-image-privacy-hint {
+    font-size: 0.6875rem;
+    line-height: 1.3;
+  }
+
+  /* 静止時 48px。resize ハンドルのドラッグはインライン style で height を書くため
+     スタイルシートの height に勝つ。auto-grow JS は無い (rows={3}) ので、
+     縦拡張手段はこの resize のみ。ユーザーは最大 30dvh まで伸ばせる。 */
+  .chat-input {
+    height: 48px;
+    min-height: 48px;
+    max-height: 30vh;
+    max-height: 30dvh;
+    overflow-y: auto;
+  }
+}

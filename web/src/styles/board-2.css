@@ -1,0 +1,130 @@
+
+
+.bulk-action-bar {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bulk-action-bar-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bulk-action-bar-count {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.bulk-action-bar-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bulk-action-failure {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-danger, #b42318);
+  word-break: break-word;
+}
+
+.bulk-action-error {
+  margin: 0;
+}
+
+.bulk-action-confirm-panel {
+  margin-top: 4px;
+}
+
+.card-title {
+  margin: 0 0 6px;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--color-text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* overflow-wrap: break-word は min-content 幅に効かず flex/grid 内ではみ出すことがある。
+     anywhere は min-content にも効くため、狭いカラムでも空白の無い長大トークンを折り返せる。 */
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.card-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.card-title-row .card-title {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.watch-toggle {
+  /* bdboard-h4xs.9: ::before による 44px ヒット領域拡張の containing block。
+     見た目は変わらない。モバイル向け ::before は @media (max-width:480px) 内。 */
+  position: relative;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  /* 元は var(--color-text-muted) でフォールバックも無かった。未定義の var() を含む
+     宣言は計算値の時点で無効になるため color は継承値に落ち、カードのタイトルと
+     同じ濃さで出ていた = 「muted にする」意図がまったく効いていなかった。
+     :hover が --color-text なので、静止時はそれより明確に暗い段が要る。同じカード内の
+     .card-id と同じ tertiary に揃える。 */
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  font-size: 1rem;
+}
+
+.watch-toggle:hover {
+  color: var(--color-text);
+}
+
+.watch-toggle-active {
+  color: var(--color-accent, #f5a623);
+}
+
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.card-id {
+  font-size: 0.6875rem;
+  /* bdboard-97ib.1: --color-text-tertiary (#8e8e93) は light 3.26:1 で AA (4.5:1) 未達
+     (div.card-id 実測)。--color-text-secondary (light 5.23:1 / white 面) に置き換える。 */
+  color: var(--color-text-secondary);
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.card-project {
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  margin-bottom: 6px;
+}
+
+.card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}

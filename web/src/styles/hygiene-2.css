@@ -1,0 +1,189 @@
+
+
+.hygiene-stale-lease-group,
+.hygiene-merge-slot-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hygiene-reclaim-status {
+  margin: 0;
+  padding: 0 12px 4px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-text-secondary);
+  /* projectId / lastError は空白無しの長トークン。幅は .hygiene-panel 由来で
+     確定しているので折り返し許可だけで足りる (min-width: 0 は実測で無効果)。
+     anywhere は .card-title と同判断 — min-content にも効くので将来 auto 幅へ
+     移っても壊れない。 */
+  overflow-wrap: anywhere;
+}
+
+.hygiene-reclaim-status-error {
+  color: var(--color-danger, #c62828);
+}
+
+.hygiene-issue-row-static {
+  /* 元は :hover に background: var(--color-surface) があったが、--color-surface はどこにも
+     定義が無く宣言ごと無効だったので、実際には何も塗っていなかった。意図は「static な行は
+     hover しても背景が変わらない」で、.hygiene-issue-row:hover は border-color しか変えない
+     から、その意図は宣言を持たないことで既に満たされている。base と同じ値を書き直すルールを
+     残すと、後で base の背景を変えたときにここだけ取り残されて static 行が hover でチラつく。
+     非対話性は下の cursor: default が表現する。 */
+  cursor: default;
+}
+
+.hygiene-panel-feedback {
+  min-height: 1.25em;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.hygiene-panel-repair-status {
+  min-height: 1.25em;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.hygiene-issue-list > li {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hygiene-cleanup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 4px;
+}
+
+.hygiene-cleanup-command {
+  display: block;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+}
+
+.hygiene-cleanup-copy {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.hygiene-cleanup-copy:hover {
+  border-color: var(--color-border-strong);
+}
+
+.hygiene-cycle-tickets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 4px;
+}
+
+.hygiene-cycle-ticket-link {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-bg-elevated);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.hygiene-cycle-ticket-link:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.hygiene-repair {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 4px;
+}
+
+.hygiene-repair-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.hygiene-repair-action,
+.hygiene-repair-confirm-btn,
+.hygiene-repair-cancel {
+  align-self: flex-start;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.hygiene-repair-action:hover,
+.hygiene-repair-confirm-btn:hover,
+.hygiene-repair-cancel:hover {
+  border-color: var(--color-border-strong);
+}
+
+.hygiene-repair-action:disabled,
+.hygiene-repair-confirm-btn:disabled,
+.hygiene-repair-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.hygiene-repair-error {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-danger, #c62828);
+}
+
+.hygiene-issue-project {
+  grid-area: project;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 注意: このセレクタは `@media (max-width: 480px)` 内にも同名で存在し、
+   そちらが `align-self: center` を宣言している。詳細度は同じ (0,1,0) なので、
+   メディアクエリ側が勝っているのは「基底のこのブロックが align-self を宣言していない」
+   ことだけが理由 — カスケードの順序では後ろにある基底側が本来は勝つ位置にある。
+   ここに `align-self` を足すと、モバイルの中央揃えが黙って負ける (bdboard-4kik レビュー N4)。 */
+.hygiene-issue-id {
+  grid-area: id;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.hygiene-issue-message {
+  grid-area: message;
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.hygiene-panel .empty-message {
+  padding: 32px 16px;
+}

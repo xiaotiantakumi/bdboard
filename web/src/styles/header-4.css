@@ -1,0 +1,192 @@
+
+
+/* bdboard-gx3i: 横向きスマートフォン (例 844x390 / 932x430) は幅が 480px は
+   もちろん 700px も超えるため、.search-overlay / .search-palette の全画面上書き
+   (元は上の `@media (max-width: 480px)` 内、bdboard-h4xs 由来) に入らず、
+   12dvh + 16px + 70dvh の割合指定 (`.search-overlay` の padding と
+   `.search-palette` の max-height) だけが当たる。
+   dvh 併記済み (bdboard-68uh) なので比率上のオーバーフローはもう起きないが
+   (82dvh + 16px <= 100dvh は可視高 88.9px 以上で常に成立)、縦の余裕が薄い帯で
+   丸角・余白ありのパレットのままにしておく理由も無い。
+   `(max-height: 500px) and (orientation: landscape)` を幅条件に OR し、
+   横向きスマホも全画面上書きに入れる。500px は iPad 横 (1024x768) を除外しつつ
+   スマホ横持ち帯 (390〜430px 高) を含める閾値 (`.help-panel-overlay` 側の同条件と
+   同じ値・同じ理由)。幅条件はこれまでどおり 480px のまま (481〜700px 帯の縦持ちタブレット等は
+   このチケットの対象外)。 */
+@media (max-width: 480px), (max-height: 500px) and (orientation: landscape) {
+  .search-overlay {
+    padding: 0;
+    align-items: stretch;
+  }
+
+  .search-palette {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: none;
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+}
+
+/* bdboard-h4xs.9: 480px ブロックの .chat-quick-command-chip {44px} より後に置くことで
+   このブロックが勝つ。高さ 576px 以下では 44px のチップが固定チャンクを押し広げ、
+   .chat-messages が 46.3px → 38.6px まで潰れるため、タップ領域より会話領域を優先して
+   34px に戻す (bdboard-h4xs.15 の chat-mobile 可視領域予算)。ここが本体。 */
+@media (max-width: 700px) and (max-height: 576px) {
+  .chat-quick-command-chip {
+    min-height: 34px;
+  }
+}
+
+/* bdboard-7fsw: 添付時に固定チャンク .chat-quick-commands (実測回収 31.125px) と
+   .chat-panel gap 4px→2px (5 本 = 実測 9.25px 回収) を回収し .chat-messages を 40px 以上確保。
+   messages=高さ-421px なので 40px 割当は 461px 未満 → max-height:460px でカット。
+   576px 帯全体には効かせない (指摘1 と同型の過剰適用)。
+   375×430 実測: 添付0枚 46.30px → 添付1枚 9px (旧) → 40.125px (quick-commands 隠し) →
+   49.375px (gap 2px 追加、閾値 40px に対し 9.375px = 約23% の余裕)。
+   460px と 461px の境界で .chat-messages が約 40px 不連続にジャンプし、チップ行も出入りする。
+   1px リサイズで見た目が跳ねるが messages = 高さ - 421px で 40px を割るのが 461px 未満のため
+   導出上意図どおり (対処不要、記録のみ)。
+   圧縮のトリガは添付そのものではなく .chat-input-notices が空でないこと。チップ列を隠す方だけでなく
+   パネルの行 gap も同じ述語で揃える。揃えないと添付0枚でバナーだけの経路が 40.125px (余裕 0.125px) の
+   knife-edge になる。揃えると 49.375px (余裕 9.375px ≒ 23%)。いずれも 375×430 の e2e 実測値。 */
+@media (max-width: 700px) and (max-height: 460px) {
+  .detail-panel.chat-panel:has(.chat-input-notices:not(:empty)) {
+    gap: 2px;
+  }
+
+  /* .chat-messages を潰すのは添付そのものではなく .chat-input-notices が cap いっぱいを
+     占めること (添付は一因)。selectedAgentUnavailable は添付0でも常時バナー、
+     currentAttachmentError も非対応1枚目でエラーだけ残り添付0になりうる。
+     :has(... :not(:empty)) は `.chat-input-notices:empty { display: none; }` の方針と一致。
+     :has() 下限は dvh と同水準。 */
+  .chat-input-form:has(.chat-input-notices:not(:empty)) .chat-quick-commands {
+    display: none;
+  }
+}
+
+/* --- bdboard-h4xs.5: モバイルのヘッダー圧縮 ---
+   375px 幅では @media (max-width: 480px) の .header-group{width:100%} が
+   StatusPill / ProjectPicker / OverflowMenu / view-switcher など全ヘッダーコントロールを
+   1個ずつ専用行に積み、header が 402px を占有していた。sticky が効くようになった
+   (bdboard-wdwa) ので、初期表示だけでなくスクロール中も恒久占有 (446px = 55%) になる。
+   flex の折り返しに任せず grid で行を決め打ちするのは、折り返しだと最後の子 (⋯メニュー)
+   だけが孤立行の左端に落ち、絶対配置のポップオーバーが画面外に描画されて開けなくなる
+   既知の失敗 (上記 .global-bar 1行固定コメント参照) を再発させうるため。grid なら配置が
+   決定的。.tsx を変えないのは PC 幅 (>=701px) を定義上不変に保つため。 */
+@media (max-width: 700px) {
+  .header {
+    /* 行間の gap を 10px -> 8px。行数が減るので体感は変わらない。 */
+    gap: 8px;
+  }
+
+  /* GlobalBar を 2 行の grid に固定する。
+     1行目: タイトル / 検索 / 状態ピル / プロジェクト選択(可変幅) / ⋯
+     2行目: ビュー切替 (既存の横スクロール可能な .toggle-group がはみ出しを吸収) */
+  .global-bar {
+    display: grid;
+    grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .global-bar > .header-title {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .global-bar > .btn-search {
+    grid-row: 1;
+    grid-column: 2;
+  }
+
+  .global-bar > .status-pill-widget {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  .global-bar > .project-picker {
+    grid-row: 1;
+    grid-column: 4;
+    min-width: 0;
+  }
+
+  .global-bar > .overflow-menu {
+    grid-row: 1;
+    grid-column: 5;
+  }
+
+  .global-bar > .view-switcher {
+    grid-row: 2;
+    grid-column: 1 / -1;
+  }
+
+  /* <=480px の .header-group{width:100%} を打ち消す。これが残ると grid トラックを
+     はみ出し、ツールバー側でも各コントロールが専用行に戻ってしまう。
+     view-switcher は grid-column: 1 / -1 + justify-self:stretch で全幅になるので
+     width:100% は不要。詳細度 (0,2,0) > (0,1,0) なのでソース順に依存せず勝つ。 */
+  .global-bar > .header-group,
+  .view-toolbar .header-group {
+    width: auto;
+  }
+
+  /* 210px 固定のままだと grid の可変トラックからはみ出す。ラベル側に
+     text-overflow: ellipsis が既にあるので、幅だけトラックに合わせる。
+     同詳細度 (0,1,0) だと後ろにある素の .project-picker-button { min-height:30px;
+     width:210px } が勝つため、.header プレフィックスで (0,2,0) に底上げする。
+     max-width:210px は 481〜700px 帯で 1fr トラック全幅へ広がるのを防ぐ (375px では 1fr が
+     210px より狭いので既存の圧縮挙動は変わらない)。 */
+  .header .project-picker-button {
+    width: 100%;
+    max-width: 210px;
+    min-height: 44px;
+  }
+
+  /* 1行目の高さは .btn-search の min-height:44px で決まるので、他のコントロールを
+     44px にしても行は伸びない。タップ領域が実質ただで 44px に揃う (AC3)。 */
+  .status-pill,
+  .overflow-menu-button {
+    min-height: 44px;
+  }
+
+  /* 素の .overflow-menu-button { min-width:36px }（メディアクエリ外のベース定義）は本ブロックより前なので
+     詳細度 (0,1,0) のまま min-width:44px が勝つ。AC3 の幅 44px 要件を満たす。 */
+  .overflow-menu-button {
+    min-width: 44px;
+  }
+
+  /* bdboard-h4xs.9: ⋯ メニュー内項目 (既定 padding 8px 10px ≈ 35px) を 44px ヒット領域へ */
+  .overflow-menu-item {
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+  }
+
+  /* ツールバーは左右グループの箱を畳んで、6個のコントロールを1つの折り返し列に流す。
+     箱のまま (左グループ2行 + 右グループ1行) だと 124px 使うが、1列に流すと2行に収まる。
+     display: contents は箱だけ消して子は残すので、DOM も role も変わらない。 */
+  .view-toolbar {
+    justify-content: flex-start;
+    gap: 8px;
+  }
+
+  .view-toolbar-left,
+  .view-toolbar-right {
+    display: contents;
+  }
+
+  /* セッション件数は状態ピルのポップオーバー内の
+     `.status-pill-session-btn` (同じ onOpenSessionList / 同じラベル) と完全な重複。
+     縦幅が最も貴重な画面では常設せず、状態ピル経由に一本化する
+     (AC2「畳んだ先からでよい」)。docs/help-content.json の sessions 節も追従済み。 */
+  .view-toolbar .meta-text-btn {
+    display: none;
+  }
+}

@@ -1,0 +1,78 @@
+
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  /* CSS Overflow 3 §3.1.4 (Overflow Viewport Propagation): overflow on html
+   * propagates to the viewport, and html's own used value then becomes
+   * visible — so this line alone can never break position:sticky. hidden
+   * (§3.1 scrollable value) suppresses horizontal paint/scroll overflow but
+   * does not shrink scrollWidth — e.g. with body overflow visible,
+   * documentElement.scrollWidth stays at the pre-clip content width.
+   *
+   * This is kept as the fallback for browsers without overflow:clip
+   * (Safari <16.2): there the `overflow-x: clip` on body below is dropped,
+   * and this line is what still suppresses the horizontal scrollbar. On
+   * clip-capable browsers body is what actually stops the pan — measured:
+   * removing this line changes neither innerWidth nor
+   * visualViewport.offsetLeft — so it is deliberately redundant, not
+   * load-bearing. Do NOT pair it with a non-visible overflow-x on body:
+   * that combination is precisely what breaks sticky (bdboard-wdwa). */
+  overflow-x: hidden;
+  /* scroll-padding on the root scrollport (not scroll-margin on each target):
+   * scrollIntoView({ block: 'nearest' }) respects it so focus is not hidden
+   * under sticky chrome. --header-height (useHeaderHeightVar) plus
+   * --lane-strip-height (useLaneStripHeightVar) cover the header and the mobile
+   * lane strip that sticks directly below it. */
+  scroll-padding-top: calc(var(--header-height, 0px) + var(--lane-strip-height, 0px));
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.47;
+  /* vh は large viewport (モバイルでアドレスバーが引っ込んだ状態の高さ) にマップされる一方、
+     スクロールポートの実高は dynamic viewport なので、実機ではアドレスバーが出ている間ずっと
+     lvh - dvh (iOS Safari で概ね 60-100px) ぶんドキュメントが viewport より高くなり、中身が
+     空でも消えないページスクロール残差の床になる (bdboard-rhv0)。dvh 未対応ブラウザで宣言ごと
+     落ちないよう、.lane と同じ 2 行フォールバック形で書く。Playwright の固定 viewport では
+     lvh === dvh === svh なので、この床は e2e からは常に 0 に見える。 */
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  /* overflow-x: clip (§3.1 non-scrollable): clips horizontal bleed without
+   * widening the layout viewport or coercing overflow-y to auto (unlike hidden),
+   * so sticky .header / .lane-indicator-strip keep the viewport as scrollport.
+   * Sticky breaks only when BOTH html and body are non-visible (html=hidden alone
+   * or body=hidden alone is fine; both together is the failure mode). Current pair:
+   * html=hidden, body=clip. Unsupported browsers ignore clip → visible; horizontal
+   * pan may return but sticky still works (Safari 16+, Chrome 90+, Firefox 81+). */
+  overflow-x: clip;
+}
+
+#root {
+  /* body と同じ理由で dvh。body / #root / .app は入れ子なので、どれか 1 つでも lvh のまま
+     残すとそれが最も高い床になり、他を dvh にした意味が消える。 */
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+.app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  max-width: 100vw;
+}

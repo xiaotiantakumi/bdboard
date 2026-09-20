@@ -1,0 +1,163 @@
+
+
+.ai-quota-widget {
+  position: relative;
+  gap: 10px;
+}
+
+.ai-quota-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--badge-neutral-bg);
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ai-quota-badge-warn {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.ai-quota-badge-critical {
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+}
+
+.ai-quota-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: max-content;
+  max-width: min(420px, 90vw);
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 3px 10px var(--color-shadow);
+  /* transform creates a containing block: position:fixed descendants would anchor here, not the viewport. Safe today (only <span> and <details> inside). */
+  transform: translateX(var(--popover-shift-x, 0px));
+}
+
+.ai-quota-popover-error {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.ai-quota-popover-manual {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.ai-quota-provider {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.ai-quota-provider-label {
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.ai-quota-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--badge-neutral-bg);
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.ai-quota-chip-warn {
+  background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  color: var(--color-warning);
+}
+
+.ai-quota-chip-manual {
+  color: var(--color-text-secondary);
+  cursor: help;
+}
+
+.ai-quota-note {
+  position: relative;
+  display: inline-flex;
+}
+
+.ai-quota-note > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.ai-quota-note > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ai-quota-note-detail {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  width: max-content;
+  max-width: min(360px, 80vw);
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 3px 10px var(--color-shadow);
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: normal;
+  /* --popover-shift-x is inherited from .ai-quota-popover; re-declare 0px so a
+     parent's shift never leaks in before this element's own clamp runs. The
+     hook's inline style overrides this declaration. */
+  --popover-shift-x: 0px;
+  transform: translateX(var(--popover-shift-x, 0px));
+}
+
+@media (max-width: 480px) {
+  .ai-quota-note[open] {
+    position: static;
+  }
+
+  .ai-quota-note-detail {
+    left: 24px;
+    right: 24px;
+    width: auto;
+    max-width: none;
+  }
+}
+
+.ai-quota-chip-critical {
+  background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+  color: var(--color-danger);
+}
+
+.ai-quota-chip-reset {
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+}

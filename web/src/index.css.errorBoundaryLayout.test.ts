@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { resolveCssImports } from './testUtils/resolveCssImports';
 
 /**
  * ErrorBoundary のオーバーレイ表示は 4 つの CSS 宣言の**組**で成立している。
@@ -27,7 +27,7 @@ import { describe, expect, it } from 'vitest';
  * 読み方は index.css.customProperties.test.ts に合わせている。
  */
 function readCss(): string {
-  return readFileSync(fileURLToPath(new NodeUrl('./index.css', import.meta.url)), 'utf8');
+  return resolveCssImports(fileURLToPath(new NodeUrl('./index.css', import.meta.url)));
 }
 
 function stripCssComments(css: string): string {

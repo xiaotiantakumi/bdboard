@@ -1,0 +1,75 @@
+
+
+.quick-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.quick-action-defer-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick-action-btn {
+  min-height: 30px;
+}
+
+.quick-action-confirm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-grouped);
+}
+
+.quick-action-confirm-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.quick-action-confirm-desc {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.quick-action-reason-label {
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.quick-action-reason-input {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: 0.8125rem;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.quick-action-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.quick-action-confirm-cancel {
+  font-weight: 600;
+  border: 1px solid var(--color-text-secondary);
+}

@@ -1,6 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { resolveCssImports } from './testUtils/resolveCssImports';
 
 /**
  * bdboard-tlus の回帰ガード。
@@ -57,7 +57,7 @@ const SURFACE_TOKENS = ['--color-bg', '--color-bg-elevated', '--color-bg-grouped
 const REQUIRED_CONTRAST_RATIO = 4.5;
 
 function readCss(): string {
-  return readFileSync(fileURLToPath(new NodeUrl('./index.css', import.meta.url)), 'utf8');
+  return resolveCssImports(fileURLToPath(new NodeUrl('./index.css', import.meta.url)));
 }
 
 function stripCssComments(css: string): string {

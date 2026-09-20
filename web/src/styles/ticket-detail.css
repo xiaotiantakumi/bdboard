@@ -1,0 +1,231 @@
+
+
+.dependency-graph {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.dependency-graph-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dependency-graph-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+}
+
+.dependency-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.dependency-graph-focus-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.dependency-graph-focus-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.dependency-graph-focus-depth {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dependency-graph-show-all-button {
+  padding: 4px 10px;
+  font-size: 0.8125rem;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  /* 元は未定義の --color-surface で background が transparent に落ちていた。
+     同じ軽量コントロールの地色として --color-bg を使い、hover は既存の淡い混色にする。 */
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.dependency-graph-show-all-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dependency-graph-show-all-button:not(:disabled):hover {
+  background: color-mix(in srgb, var(--color-text) 4%, var(--color-bg));
+}
+
+.dependency-graph-focus-status {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.dependency-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dependency-graph-legend-blocks::before,
+.dependency-graph-legend-parent-child::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 0;
+  border-top-width: 2px;
+  border-top-style: solid;
+}
+
+.dependency-graph-legend-blocks::before {
+  border-top-color: #6366f1;
+}
+
+.dependency-graph-legend-parent-child::before {
+  border-top-color: #14b8a6;
+  border-top-style: dashed;
+}
+
+.dependency-graph-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 8px;
+  max-width: 100%;
+}
+
+.dependency-graph-canvas {
+  display: block;
+  min-width: min(100%, 320px);
+}
+
+.dependency-graph-edge-blocks {
+  stroke: #6366f1;
+  stroke-width: 1.5;
+}
+
+.dependency-graph-edge-parent-child {
+  stroke: #14b8a6;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+}
+
+.dependency-graph-node-group {
+  cursor: default;
+}
+
+.dependency-graph-node-clickarea {
+  cursor: pointer;
+}
+
+.dependency-graph-node-clickarea:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.dependency-graph-node {
+  fill: var(--color-bg-elevated);
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+}
+
+.dependency-graph-node-clickarea:hover .dependency-graph-node {
+  stroke: var(--color-accent);
+}
+
+.dependency-graph-node-detail-button {
+  cursor: pointer;
+}
+
+.dependency-graph-node-detail-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.dependency-graph-node-detail-button-bg {
+  fill: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-elevated));
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.dependency-graph-node-detail-button:hover .dependency-graph-node-detail-button-bg,
+.dependency-graph-node-detail-button:focus-visible .dependency-graph-node-detail-button-bg {
+  fill: color-mix(in srgb, var(--color-accent) 22%, var(--color-bg-elevated));
+  stroke: var(--color-accent);
+}
+
+.dependency-graph-node-detail-button-label {
+  font-size: 8px;
+  fill: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.dependency-graph-node-focus-center {
+  stroke: var(--color-accent, #3b82f6);
+  stroke-width: 3;
+}
+
+.dependency-graph-node-status-open,
+.dependency-graph-node-status-ready,
+.dependency-graph-node-status-pinned {
+  stroke: #22c55e;
+}
+
+.dependency-graph-node-status-in_progress,
+.dependency-graph-node-status-hooked {
+  stroke: #6366f1;
+}
+
+.dependency-graph-node-status-blocked {
+  stroke: #ef4444;
+}
+
+.dependency-graph-node-status-deferred {
+  stroke: #f59e0b;
+}
+
+.dependency-graph-node-status-closed,
+.dependency-graph-node-status-done {
+  stroke: #94a3b8;
+}
+
+.dependency-graph-node-id {
+  font-size: 10px;
+  font-weight: 600;
+  fill: var(--color-text);
+  pointer-events: none;
+}
+
+.dependency-graph-node-title {
+  font-size: 9px;
+  fill: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+.dependency-graph-node-meta {
+  font-size: 8px;
+  fill: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
+.dependency-graph .empty-message {
+  padding: 32px 16px;
+}

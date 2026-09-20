@@ -1,0 +1,88 @@
+
+
+.tunnel-control {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.tunnel-local-only {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+.tunnel-help {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
+/* bdboard-cu4: 公開中のトンネルが読み書きできるのか / 読み取り専用なのか */
+.tunnel-write-access {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.tunnel-write-access-on {
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+
+.tunnel-write-access-off {
+  color: var(--color-text-secondary);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+}
+
+.tunnel-off-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  max-width: 100%;
+}
+
+.tunnel-confirm-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-grouped);
+}
+
+.tunnel-confirm-title {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.tunnel-confirm-desc {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tunnel-confirm-desc p {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.tunnel-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}

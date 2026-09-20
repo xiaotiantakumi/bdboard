@@ -1,0 +1,229 @@
+
+
+
+/* =========================================================================
+   ヘッダーのポップオーバー (Header Redesign Turn 4)
+
+   崩れを止めるための規則:
+   1. 開く中身は行に足さない — position: absolute で重ね、ヘッダーの高さと
+      各ボタンの位置を開閉で動かさない。
+   2. 行は折り返さない — バー直下の子は flex: 0 0 auto; white-space: nowrap。
+   3. ボタン幅を内容で変えない — 選択が増えても「他N件」で吸収し、max-width と
+      省略記号を持たせる。
+   4. 縦に伸ばさずスクロール — max-height を決め、リスト部分だけスクロール。
+      ヘッダー(検索・全選択)とフッター(保存)は固定。
+   5. 同時に開かない — PopoverCoordinator が担当 (CSSではなくTS側)。
+   ========================================================================= */
+
+
+.popover-head {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.popover-foot {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-accent);
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+/* --- 4a プロジェクト選択 ------------------------------------------------ */
+
+.project-picker {
+  position: relative;
+}
+
+/*
+  ボタン幅は選択内容によらず一定にする(規則3)。中のラベルだけが省略記号で潰れ、
+  ボタンの外形は動かない — これが「押すたびにヘッダーの見た目が変わる」のを止める。
+*/
+.project-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 210px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--badge-neutral-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.project-picker-button:hover {
+  background: var(--color-border-strong);
+}
+
+.project-picker-button-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.project-picker-caret {
+  flex: 0 0 auto;
+  font-size: 0.7em;
+  color: var(--color-text-secondary);
+}
+
+.project-picker-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* ヘッダー右寄りに置かれるコントロールなので、右端を揃えて画面外へはみ出させない。 */
+  right: 0;
+  left: auto;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  max-height: min(60vh, 420px);
+  max-height: min(60dvh, 420px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px var(--color-shadow);
+  overflow: hidden;
+  /* transform creates a containing block: position:fixed descendants would anchor here, not the viewport. Safe today (only .popover-head, .project-picker-list, and .popover-foot with inputs/buttons/<p> inside). */
+  transform: translateX(var(--popover-shift-x, 0px));
+}
+
+.project-picker-search {
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  min-height: 30px;
+}
+
+.project-picker-search:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.project-picker-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: var(--color-text-secondary);
+}
+
+.project-picker-bulk {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-picker-bulk-sep {
+  color: var(--color-border-strong);
+}
+
+/* リストだけがスクロールする(規則4)。件数が9件でも50件でも高さは変わらない。 */
+.project-picker-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.project-picker-group-label {
+  margin: 6px 6px 4px;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.project-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-picker-row:hover {
+  background: var(--color-bg-grouped);
+}
+
+.project-picker-row-selected {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+}
+
+.project-picker-row-selected:hover {
+  background: color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+
+.project-picker-check {
+  flex: 0 0 auto;
+  width: 14px;
+  color: var(--color-accent);
+}
+
+.project-picker-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-picker-ticket-count {
+  flex: 0 0 auto;
+  min-width: 1.5em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.project-picker-ticket-count-zero {
+  color: var(--color-text-tertiary);
+}
+
+.project-picker-empty {
+  margin: 10px 8px;
+  font-size: 0.8125rem;
+  color: var(--color-text-tertiary);
+}
+
+.project-picker-save {
+  width: 100%;
+}

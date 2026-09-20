@@ -1,0 +1,38 @@
+
+
+.tunnel-modal-overlay {
+  justify-content: center;
+  align-items: flex-start;
+  /* オーバーレイの padding とパネルの max-height は**必ずセットで** dvh にする。
+     高さの基準は帯で違う: 縦持ちスマホ (<=700px) は下の `@media (max-width: 700px)` の
+     `.overlay { height: 100dvh }`、それより広い帯はベースの `.overlay` の fixed inset:0。
+     後者が small / dynamic どちらの viewport に敷かれるかは iOS Safari で未実測
+     (bdboard-h4xs.21 待ち) なので、以下の検算は 100dvh 基準の <=700px 帯の話。
+     パネルだけ dvh にすると収まる条件は `10lvh + 85dvh + 16px <= 100dvh`、つまり
+     `10lvh + 16 <= 15dvh` で、**縮みはするが余裕が chrome の高さに依存する**。
+     iPhone SE (lvh 667) なら chrome 116px で 82.7 vs 82.65 と 0.05px 超過、
+     chrome 100px なら 82.7 <= 85.05 で収まる、という綱渡りになる。
+     padding も dvh にすれば条件は `16 <= 5dvh`、すなわち可視高 320px 以上で常に成立し、
+     端末とアドレスバーの出入りに依存しなくなる。これがセットで直す理由。
+     デスクトップでは lvh === dvh なので、この併記は完全に no-op (bdboard-68ub)。 */
+  padding: 10vh 16px 16px;
+  padding: 10dvh 16px 16px;
+}
+
+.tunnel-modal-panel {
+  width: min(520px, 100%);
+  max-height: min(85vh, 720px);
+  max-height: min(85dvh, 720px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 16px 48px var(--color-shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tunnel-modal-body {
+  overflow-y: auto;
+  padding: 0 20px 20px;
+}

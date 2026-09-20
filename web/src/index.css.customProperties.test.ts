@@ -2,19 +2,12 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { URL as NodeUrl, fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { resolveCssImports } from './testUtils/resolveCssImports';
 
-/**
- * jsdom のグローバル URL は Node の URL と別実装なので、CSS をファイルとして読むときは
- * node:url の URL を明示する。HygienePanel.badge-colors.test.ts と同じ読み方にする。
- */
-function readSource(relativePath: string): string {
-  return readFileSync(
-    fileURLToPath(new NodeUrl(relativePath, import.meta.url)),
-    'utf8',
-  );
-}
-
-const cssSource = readSource('./index.css');
+// bdboard-sso1.3: index.css は分割後 `@import` の入口だけになった。分割前と同じ
+// 連結テキストを得るため、@import を解決する resolveCssImports() を通す
+// (jsdom のグローバル URL は Node の URL と別実装なので、node:url の URL を明示する)。
+const cssSource = resolveCssImports(fileURLToPath(new NodeUrl('./index.css', import.meta.url)));
 // このテストファイル自身が web/src 直下にあるので、そのディレクトリがそのまま走査の起点になる。
 const webSrcDir = fileURLToPath(new NodeUrl('.', import.meta.url));
 

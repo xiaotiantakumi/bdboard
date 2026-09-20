@@ -1,0 +1,41 @@
+
+
+.resizable-side-panel.is-resizing {
+  user-select: none;
+}
+
+/* 通常パネルの 720px / viewport - 320px 上限を、最大化時だけ外す。
+   幅は React 側で 100% を設定し、解除時は保存済みの通常幅へ戻る。
+   チャット専用だったのをチケット詳細でも使えるよう一般化した (bdboard-0hcx)。 */
+.detail-panel.resizable-side-panel.is-maximized {
+  min-width: 100%;
+  max-width: 100%;
+  border-left: none;
+  box-shadow: none;
+}
+
+.side-panel-resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.side-panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+}
+
+.side-panel-resize-handle:hover::after,
+.side-panel-resize-handle:focus-visible::after {
+  background: var(--color-accent);
+}

@@ -1,0 +1,22 @@
+
+
+.badge-defer-countdown {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+}
+
+.badge-defer-soon {
+  background: var(--badge-defer-soon-bg);
+  color: var(--badge-defer-soon-fg);
+  border: 1px solid var(--badge-defer-soon-fg);
+}
+
+/* Overdue must read as more urgent than "soon" without relying on hue alone:
+   a heavier weight and a thicker outline keep the escalation legible for
+   color-vision-deficient users, on top of the distinct "期限超過" wording. */
+.badge-defer-overdue {
+  background: var(--badge-defer-overdue-bg);
+  color: var(--badge-defer-overdue-fg);
+  border: 1.5px solid var(--badge-defer-overdue-fg);
+  font-weight: 700;
+}
