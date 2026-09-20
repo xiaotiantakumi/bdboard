@@ -6587,13 +6587,13 @@ body {
        (messages = 100dvh - 421)。ヘッダ / gap / .chat-input 46px 等の高さ・個数・gap を
        変えたら両方再導出すること — 片方だけ直すと crossover 帯 (431〜575px) だけ壊れる。
        calc 項が動く帯: 469 側 513〜565dvh / 485 側 513〜529dvh。 */
-    /* bdboard-qti6: ここだけは vh→dvh の単純併記が効かない（カスタムプロパティの値が
-       CSS 型グラマーに対して検証されないという制約そのもの）。カスタムプロパティの宣言は
-       型グラマーに対して検証されず任意の
+    /* bdboard-qti6: ここだけは vh→dvh の単純併記が効かない（`.detail-panel.chat-panel`
+       ベースブロックの `--chat-attachment-preview-size` 宣言コメントにある制約そのもの）。
+       カスタムプロパティの宣言は型グラマーに対して検証されず任意の
        トークン列として受理されるため、vh 版を先に併記しても dvh 版は「無効なので
        捨てられる」のではなく vh 版を黙って上書きするだけになる。破綻は var() で
        消費する側 (`.chat-attachment-preview` の width/height。ベースブロックと
-       `@media (max-width: 700px)` 内の同名ブロックの両方) の
+       `@media (max-width: 700px) and (max-height: 576px)` 内の同名ブロックの両方) の
        invalid-at-computed-value-time として起き、var() の第2引数フォールバックは
        custom property が「未定義」のときにしか効かないのでそこでも救えない。
 
