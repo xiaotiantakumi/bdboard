@@ -108,6 +108,13 @@ export interface FileHarnessContractTicketOptions {
  *
  * コメント追記/メタデータ更新の失敗は fail-soft: 既存チケット ID を返す動作自体は
  * 成功させ、`stateAppend: 'failed'` で呼び出し元に伝える (ログは `logWarn`)。
+ *
+ * **ここにも真の CAS ではない小さな競合窓がある** (上の新規作成パスと同じ注意書き
+ * — レビュー指摘)。`findOpenTicketByLabel` の読み取りと `addComment`/`setMetadata`
+ * の書き込みの間に、2つのリクエストが両方とも同じ古い metadata を読んで両方とも
+ * 追記してしまう窓がある。踏んだ場合に起きるのは「同じ内容のコメントが2回付く」
+ * 程度 (新規作成パスの「チケットが2枚になる」より実害が小さい) なので、新規作成
+ * パスと同じ理由でここでも許容している。
  */
 export async function fileHarnessContractTicket(
   issueWriter: HarnessContractTicketWriter,
@@ -148,8 +155,23 @@ export async function fileHarnessContractTicket(
       contract,
       rootPackageScripts,
     );
+    if (comment === null) {
+      // 上の content !== null ガードと同じ switch を見ている (buildHarnessContractTicketContent
+      // と buildHarnessContractTicketStateChangeComment は同じ contract.state で分岐する) ので
+      // ここには到達しないはずだが、両者が将来ズレても "as string" で握りつぶさず即座に
+      // わかるようにしておく (レビュー指摘)。
+      throw new Error(
+        `buildHarnessContractTicketStateChangeComment unexpectedly returned null for state=${contract.state}`,
+      );
+    }
     try {
-      await issueWriter.addComment(rootPath, existing.id, comment as string);
+      // 追記 (comment) → メタデータ更新の順で行う。逆順にすると、コメントが失敗した
+      // ときにメタデータだけ更新済みになり「追記した体で実は通知が残っていない」
+      // (silent loss) という、この順序より悪い失敗モードになる。この順序でも
+      // comment 成功・setMetadata 失敗のケースは残る (comment 自体は届いているのに
+      // stateAppend: 'failed' を返すため、次のクリックで同じコメントが重複追記され得る) —
+      // 許容トレードオフとして残す (レビュー指摘、bdboard-13mp)。
+      await issueWriter.addComment(rootPath, existing.id, comment);
       await issueWriter.setMetadata(
         rootPath,
         existing.id,

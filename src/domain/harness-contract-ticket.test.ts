@@ -162,7 +162,10 @@ describe('buildHarnessContractTicketStateChangeComment (bdboard-13mp)', () => {
     };
     const comment = buildHarnessContractTicketStateChangeComment(contract, null);
     expect(comment?.startsWith('現在の状態は command-missing です。いま必要な対処:')).toBe(true);
-    expect(comment).toContain('"verify"');
+    // "verify" という部分文字列だけだと missing 状態のテンプレートにも
+    // (`"verify": "<検証コマンド...>"` として) 含まれてしまい、ビルダーの取り違えを
+    // 検出できない。command-missing 特有の文言まで見る (レビュー指摘)。
+    expect(comment).toContain('が package.json に見つかりません');
   });
 });
 

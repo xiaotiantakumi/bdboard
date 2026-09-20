@@ -2300,6 +2300,7 @@ describe('HygienePanel repair actions', () => {
       ticketId: 'proj-a-42',
       created: true,
       stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
 
     const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
@@ -2330,6 +2331,7 @@ describe('HygienePanel repair actions', () => {
       ticketId: 'proj-a-7',
       created: false,
       stateAppend: 'not-needed',
+      contract: { state: 'invalid', message: 'bad json' },
     });
 
     const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
@@ -2357,10 +2359,17 @@ describe('HygienePanel repair actions', () => {
         { projectId: '/tmp/proj-a', contract: { state: 'invalid', message: 'bad json' }, packs: [] },
       ],
     });
+    // bdboard-13mp レビュー指摘の回帰テスト: サーバーのレスポンスに載る contract
+    // (command-missing) を、この行より前にポーリングでキャッシュされていた
+    // fetchAllHarnessStatusMock の contract (invalid) とわざと違えてある。
+    // メッセージが「検証コマンド未定義」(サーバーのレスポンス由来) になれば
+    // vars.result.contract を使っている証拠、「検証コントラクト不正」(キャッシュ由来)
+    // のままなら古いキャッシュを使ってしまう回帰。
     postProjectHarnessContractTicketMock.mockResolvedValue({
       ticketId: 'proj-a-7',
       created: false,
       stateAppend: 'appended',
+      contract: { state: 'command-missing', script: 'verify', verify: 'npm run verify' },
     });
 
     const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
@@ -2372,11 +2381,12 @@ describe('HygienePanel repair actions', () => {
     const repairStatus = await waitFor(() => {
       const el = container.querySelector('.hygiene-panel-repair-status');
       expect(el).toHaveTextContent(
-        '既存のチケットがあります: proj-a-7（現在の状態 検証コントラクト不正 を追記しました）',
+        '既存のチケットがあります: proj-a-7（現在の状態 検証コマンド未定義 を追記しました）',
       );
       return el;
     });
     expect(repairStatus).not.toHaveTextContent('チケットを起票しました');
+    expect(repairStatus).not.toHaveTextContent('検証コントラクト不正');
   });
 
   it('shows the append-failed (fail-soft) message when the server could not append the state-change comment', async () => {
@@ -2391,6 +2401,7 @@ describe('HygienePanel repair actions', () => {
       ticketId: 'proj-a-9',
       created: false,
       stateAppend: 'failed',
+      contract: { state: 'missing' },
     });
 
     const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });

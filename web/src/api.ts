@@ -1964,6 +1964,14 @@ export interface HarnessContractTicketResultDto {
   ticketId: string;
   created: boolean;
   stateAppend: HarnessContractTicketStateAppend;
+  /**
+   * サーバーがこのリクエストで実際に読んだ (再注入直前に都度取得した)
+   * ProjectHarnessContractDto。呼び出し側はポーリングでキャッシュしている
+   * 古い contract ではなく、必ずこれを使って「現在の状態」の文言を組み立てる
+   * こと (bdboard-13mp レビュー指摘 — でないとこの機能自体が直そうとしている
+   * 「古い状態を表示する」問題がクライアント側に移るだけになる)。
+   */
+  contract: ProjectHarnessContractDto;
 }
 
 export function postProjectHarnessContractTicket(

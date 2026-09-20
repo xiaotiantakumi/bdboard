@@ -520,11 +520,7 @@ export function HygienePanel({
    * 文言を出し分けるだけ。
    */
   const contractTicketMutation = useMutation({
-    mutationFn: async (vars: {
-      rowKey: string;
-      projectId: string;
-      contract: ProjectHarnessContractDto;
-    }) => {
+    mutationFn: async (vars: { rowKey: string; projectId: string }) => {
       const result = await postProjectHarnessContractTicket(vars.projectId);
       return { ...vars, result };
     },
@@ -541,15 +537,19 @@ export function HygienePanel({
       setPendingRepairKey(null);
       // 単体で直した後に古い一括結果 (「失敗」行など) を残さない。
       setBulkUpdateSummary(null);
-      // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い — クリック時点の
-      // contract (vars.contract) を渡し、既存チケットへ追記できた/できなかったを
-      // 文言に反映する。
+      // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い — 文言に使う contract は
+      // クリック時点でこのコンポーネントがポーリングでキャッシュしていた item.contract
+      // ではなく、サーバーがこのリクエストで実際に読んだ vars.result.contract を使う
+      // (レビュー指摘)。ポーリングキャッシュとの間には、最後のポーリングからクリック
+      // までの間に契約ファイルが変わっている可能性がある窓があり、それをそのまま
+      // 使うと「追記した」と言いながら別の (古い) 状態名を出しかねない — まさに
+      // この機能が直そうとしている陳腐化表示をクライアント側で再発させてしまう。
       showRepairStatusMessage(
         buildHarnessContractTicketSuccessMessage(
           vars.result.ticketId,
           vars.result.created,
           vars.result.stateAppend,
-          vars.contract,
+          vars.result.contract,
         ),
       );
     },
@@ -601,11 +601,7 @@ export function HygienePanel({
       if (contractTicketMutation.isPending) {
         return;
       }
-      contractTicketMutation.mutate({
-        rowKey,
-        projectId: item.projectId,
-        contract: item.contract,
-      });
+      contractTicketMutation.mutate({ rowKey, projectId: item.projectId });
     },
     [contractTicketMutation],
   );

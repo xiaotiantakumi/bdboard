@@ -708,6 +708,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
       ticketId: 'proj-a-42',
       created: true,
       stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
     expect(issueWriter.findOpenTicketByLabel).toHaveBeenCalledWith(
       proj.rootPath,
@@ -762,6 +763,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
       ticketId: 'proj-a-1',
       created: true,
       stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
     expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
 
@@ -798,6 +800,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
       ticketId: 'proj-a-7',
       created: false,
       stateAppend: 'not-needed',
+      contract: { state: 'missing' },
     });
     expect(issueWriter.create).not.toHaveBeenCalled();
     // 同じ state のときはコメント追記もメタデータ更新もしない (ボタン連打への冪等性)。
@@ -820,12 +823,14 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
           metadata: { [HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY]: 'invalid' },
         })),
       });
+      const refreshProjectByRootPath = vi.fn(async () => {});
 
       const app = createHarnessApp({
         cache,
         injector,
         contractReader: createFakeContractReader({ contract: null }),
         issueWriter,
+        refreshProjectByRootPath,
       });
       const response = await app.request(
         `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
@@ -838,6 +843,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
         ticketId: 'proj-a-7',
         created: false,
         stateAppend: 'appended',
+        contract: { state: 'missing' },
       });
       expect(issueWriter.create).not.toHaveBeenCalled();
       expect(issueWriter.addComment).toHaveBeenCalledTimes(1);
@@ -853,6 +859,9 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
         HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY,
         'missing',
       );
+      // bdboard-13mp レビュー指摘: 新規作成だけでなく、既存チケットへの状態追記も
+      // (comment件数/metadataを書き換えるので) 再フェッチが要る。
+      expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
     });
 
     it('treats a legacy ticket with no recorded metadata as "unknown" and appends exactly once', async () => {
@@ -886,6 +895,7 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
         ticketId: 'proj-a-legacy',
         created: false,
         stateAppend: 'appended',
+        contract: { state: 'missing' },
       });
       expect(issueWriter.addComment).toHaveBeenCalledTimes(1);
       expect(issueWriter.setMetadata).toHaveBeenCalledWith(
@@ -910,11 +920,13 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
         }),
       });
 
+      const refreshProjectByRootPath = vi.fn(async () => {});
       const app = createHarnessApp({
         cache,
         injector,
         contractReader: createFakeContractReader({ contract: null }),
         issueWriter,
+        refreshProjectByRootPath,
       });
       const response = await app.request(
         `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
@@ -927,8 +939,12 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
         ticketId: 'proj-a-7',
         created: false,
         stateAppend: 'failed',
+        contract: { state: 'missing' },
       });
       expect(issueWriter.setMetadata).not.toHaveBeenCalled();
+      // 追記に失敗した (stateAppend: 'failed') ときは何も書き込めていないので
+      // 再フェッチ不要。
+      expect(refreshProjectByRootPath).not.toHaveBeenCalled();
     });
 
     it('returns 501 when the issueWriter has no setMetadata (state-append support missing)', async () => {

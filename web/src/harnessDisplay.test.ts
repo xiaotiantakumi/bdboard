@@ -263,6 +263,23 @@ describe('buildHarnessContractTicketSuccessMessage (bdboard-p5l.25 / bdboard-13m
       ),
     ).toBe('既存のチケットがあります: proj-42（現在の状態の追記に失敗しました。手動でコメントを確認してください）');
   });
+
+  // bdboard-13mp レビュー指摘: fetchJson はレスポンスを検証しない (api.ts の unchecked
+  // cast) ので、サーバーが未知/欠落の stateAppend を返しても (worktree の dev:web が
+  // 別バージョンの常駐サーバーへ proxy している場合など) 壊れた文字列を出さず、
+  // 素の「既存のチケットがあります」にフォールバックすることを固定する。
+  it('falls back to the plain existing-ticket message for an unrecognized stateAppend value', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        false,
+        'unknown-future-value' as unknown as Parameters<
+          typeof buildHarnessContractTicketSuccessMessage
+        >[2],
+        contracts.missing!,
+      ),
+    ).toBe('既存のチケットがあります: proj-42');
+  });
 });
 
 describe('harnessDisplay hooks state', () => {

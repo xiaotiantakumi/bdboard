@@ -177,7 +177,11 @@ async function readCurrentDescription(
 const bdListLabelItemSchema = z.object({
   id: z.string(),
   title: z.string(),
-  metadata: z.record(z.unknown()).optional(),
+  // .nullish(): bd list --json は metadata が無いチケットではキーごと省略するが
+  // (確認済み)、将来 bd 側の挙動が変わって明示的に null を返すようになっても
+  // ルート全体が 502 に落ちないよう .optional() ではなく .nullish() にしておく
+  // (bdShowDescriptionItemSchema と同じ防御方針、レビュー指摘)。
+  metadata: z.record(z.unknown()).nullish(),
 });
 
 async function readOpenTicketByLabel(

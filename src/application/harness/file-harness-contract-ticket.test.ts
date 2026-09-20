@@ -266,12 +266,16 @@ describe('fileHarnessContractTicket', () => {
           throw new Error('bd update failed');
         },
       });
+      // デフォルトの console.warn へフォールバックさせず、テスト実行時のノイズを
+      // 出さない (レビュー指摘)。
+      const logWarn = vi.fn();
 
       const result = await fileHarnessContractTicket(
         writer,
         '/tmp/proj',
         INVALID_CONTRACT,
         null,
+        { logWarn },
       );
 
       expect(result).toEqual({
@@ -282,6 +286,7 @@ describe('fileHarnessContractTicket', () => {
       });
       // The comment itself did go through even though the metadata write failed.
       expect(writer.addComment).toHaveBeenCalledTimes(1);
+      expect(logWarn).toHaveBeenCalledTimes(1);
     });
   });
 

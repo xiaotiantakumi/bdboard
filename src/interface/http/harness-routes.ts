@@ -300,7 +300,15 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
         );
       }
 
-      if (result.created && deps.refreshProjectByRootPath !== undefined) {
+      // bdboard-13mp: 新規作成だけでなく、既存チケットへのコメント追記/メタデータ
+      // 更新 (stateAppend: 'appended') もキャッシュ済みの comment 件数・metadata を
+      // 古いままにする書き込みなので、同じくリフレッシュが要る (bdboard-6qs6 と同じ理由 —
+      // routes.ts の POST /api/tickets/:id/comment が addComment 後に必ず
+      // refreshAfterWrite するのと揃える)。
+      if (
+        (result.created || result.stateAppend === 'appended') &&
+        deps.refreshProjectByRootPath !== undefined
+      ) {
         try {
           await deps.refreshProjectByRootPath(rootPath);
         } catch (error: unknown) {
@@ -313,6 +321,12 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
         ticketId: result.ticketId,
         created: result.created,
         stateAppend: result.stateAppend,
+        // bdboard-13mp: サーバーがこのリクエストで実際に読んだ contract をそのまま返す。
+        // フロントは (ポーリングで持っている可能性のある古い) 自分のキャッシュ済み
+        // contract ではなく、これを使って「現在の状態」の文言を組み立てる —
+        // でないとこのチケット自体が直そうとした「古い状態を表示する」問題が
+        // クライアント側に移るだけになる (レビュー指摘)。
+        contract: toContractJson(status.contract),
       });
     } catch (error: unknown) {
       if (error instanceof BdError && error.kind === 'not-a-beads-project') {

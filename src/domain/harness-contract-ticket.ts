@@ -171,6 +171,14 @@ export function buildHarnessContractTicketContent(
  * 再利用する — 「いま必要な対処」の文面を state ごとに2箇所へ書かない。
  * `ok` / `not-applicable` は (呼び出し元がその時点でチケットを起票/追記しない
  * 状態なので) content が null になり、この関数も null を返す。
+ *
+ * **文字数上限に注意**: この文字列は `bd comment` (bd-tool-catalog の `bd_comment`,
+ * 上限 2000 文字) 経由で送るのに対し、`buildHarnessContractTicketContent` は
+ * チケット起票 (`bd create --stdin`, 上限無し) にも使われる。現状の各 state の
+ * 生成量 (missing 500字台 / invalid 200字台+メッセージ / command-missing 250字台、
+ * いずれも `CONTRACT_ECHO_MAX_LENGTH` 等で頭打ち) は上限に対して十分な余裕がある
+ * (レビュー確認済み) が、テンプレートを拡張するときはこの非対称 — 起票は通っても
+ * 追記だけ失敗する — を踏まないよう長さを意識すること。
  */
 export function buildHarnessContractTicketStateChangeComment(
   contract: ContractState,
