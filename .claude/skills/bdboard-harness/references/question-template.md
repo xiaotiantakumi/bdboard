@@ -45,9 +45,13 @@ bd label add <id> human
 # → 回答を待たずに次の ready へ進む
 ```
 
-**create → update の間で中断したら**: `bd gate list` で title だけ付いた gate（`bd show` が
-`Ad-hoc gate blocking <id>` のままの状態）を見つけ、上の `bd update "$GATE_ID" --description`
-から手順をやり直す。実害は小さい（gate は残るだけで壊れない）。
+**create → update の間で中断したら**: `bd gate list <id>` で当該チケットをブロックしている
+gate を出し、`bd show <gate-id>` の description が `Ad-hoc gate blocking <id>` のままの
+ものを見つける（**プレーンな `bd gate list`（引数なし）は全 gate を `title`/`description` 抜きで
+一覧するだけで、この特定には使えない**）。`GATE_ID=<その id>` を入れ直して（シェル変数は
+中断で失われている）、上の `bd update "$GATE_ID" --description` から手順をやり直す
+（`bd gate create` は再実行しない — gate が二重になる）。実害は小さい（gate は残るだけで
+壊れない）。
 
 回答が来たら: bdboard の確認待ちレーンは gate と作業チケットの両方をカードとして出すため、
 **回答がどちらに付くかは固定されない**（作業チケット側で回答されると gate は自動では
