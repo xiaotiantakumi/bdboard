@@ -58,7 +58,7 @@ export type NotificationPayload = NotificationPayloadBody & {
   readonly replayed?: boolean;
 };
 
-export type NotificationPayloadBody =
+type NotificationPayloadBody =
   | {
       kind: TicketNotificationKind;
       ticketId: string;
