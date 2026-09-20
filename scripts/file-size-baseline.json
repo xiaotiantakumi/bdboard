@@ -18,7 +18,7 @@
     {
       "path": "web/src/components/TicketDetailPanel.tsx",
       "limit": 2600,
-      "reason": "TicketDetailPanel コンポーネント1関数。チケット詳細の全セクション (メタ情報・依存関係・実行履歴等) を1コンポーネントに集約。bdboard-sso1.5 PR-A で純粋ヘルパー・型・自己完結コンポーネントを web/src/components/ticket-detail/ へ移動 (2786→2540行)。PR-B で「変更履歴」「コメント」の表示ブロックを web/src/components/ticket-detail/TicketTimelineSection.tsx / TicketCommentsSection.tsx へ move-only 切り出し (2540→2389行)。state・effect・mutation・query は親に残し、子は props で値とハンドラを受け取る表示専用コンポーネント。セクション別の分割は bdboard-sso1.5 の続きの PR (PR-C以降) で継続。現行 2389 行 + 200 行余白を100行単位で切り上げ。"
+      "reason": "TicketDetailPanel コンポーネント1関数。チケット詳細の全セクション (メタ情報・依存関係・実行履歴等) を1コンポーネントに集約。bdboard-sso1.5 PR-A で純粋ヘルパー・型・自己完結コンポーネントを web/src/components/ticket-detail/ へ移動 (2786→2540行)。PR-B で「変更履歴」「コメント」の表示ブロックを web/src/components/ticket-detail/TicketTimelineSection.tsx / TicketCommentsSection.tsx へ move-only 切り出し (2540→2389行)。PR-C で「衝突しうる着手中チケット」「似ているチケット」の表示ブロックを TicketInFlightOverlapsSection.tsx / TicketSimilarTicketsSection.tsx へ move-only 切り出し (2389→2319行)。state・effect・mutation・query は親に残し、子は props で値とハンドラを受け取る表示専用コンポーネント。セクション別の分割は bdboard-sso1.5 の続きの PR (PR-D以降) で継続。現行 2319 行 + 200 行余白を100行単位で切り上げ (2600のまま据え置き)。"
     },
     {
       "path": "src/main.ts",
