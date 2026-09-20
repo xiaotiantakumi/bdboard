@@ -22,7 +22,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/SettingsPanel.tsx': 1040, // 現在 1027
   'src/main.ts': 1200, // 現在 1193
   'web/src/components/HygienePanel.tsx': 1200, // 現在 1191
-  'src/interface/http/dto.ts': 1060, // 現在 1055
   'web/src/App.tsx': 1040, // 現在 1033
   'src/infrastructure/chat/bd-tool-catalog.ts': 840, // 現在 834
   'src/domain/hygiene.ts': 780, // 現在 780
