@@ -32,7 +32,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/HelpPanel.tsx': 500, // 現在 496
   'web/src/components/TunnelControl.tsx': 470, // 現在 468
   'web/src/components/BoardKeyboardNavProvider.tsx': 440, // 現在 437
-  'web/src/components/PresetControl.tsx': 430, // 現在 428
   'web/src/components/SessionListPanel.tsx': 430, // 現在 427
   'scripts/check-drift.mjs': 410, // 現在 409
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
