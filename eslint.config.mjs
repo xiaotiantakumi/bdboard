@@ -32,7 +32,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/HelpPanel.tsx': 500, // 現在 496
   'web/src/components/LaneColumn.tsx': 490, // 現在 483
   'web/src/components/TunnelControl.tsx': 470, // 現在 468
-  'src/infrastructure/runners/claude-runner.ts': 460, // 現在 455
   'web/src/components/BoardKeyboardNavProvider.tsx': 440, // 現在 437
   'web/src/components/PresetControl.tsx': 430, // 現在 428
   'web/src/components/SessionListPanel.tsx': 430, // 現在 427
