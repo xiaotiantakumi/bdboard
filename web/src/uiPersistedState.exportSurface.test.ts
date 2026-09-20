@@ -7,7 +7,7 @@ import * as uiPersistedState from './uiPersistedState';
  *
  * このリストは分割前の uiPersistedState.ts から
  * `grep -oE '^export (class|function|async function|const) [A-Za-z0-9_]+' web/src/uiPersistedState.ts`
- * で機械的に採取した値エクスポート名 (39件) をそのままハードコードしている。
+ * で機械的に採取した値エクスポート名 (40件) をそのままハードコードしている。
  * `export interface` / `export type` は TypeScript の型のみの宣言で実行時の
  * バインディングを持たない (コンパイルで消える) ため、`Object.keys()` には現れず
  * このリストにも含めていない — 含めるべきなのは `class` / `function` /
