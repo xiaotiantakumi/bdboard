@@ -21,11 +21,6 @@
       "reason": "TicketDetailPanel コンポーネント1関数で約2369行 (374〜2743行目)。チケット詳細の全セクション (メタ情報・依存関係・コメント・実行履歴等) を1コンポーネントに集約。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
     },
     {
-      "path": "src/interface/http/routes.ts",
-      "limit": 2200,
-      "reason": "Hono ルート定義39本 (app.get/post/put/delete/patch) を1ファイルに集約。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
-    },
-    {
       "path": "web/src/api.ts",
       "limit": 2200,
       "reason": "サーバーAPIクライアント。エンドポイントごとの fetch 関数が80個。分割は bdboard-jygp 調査の優先候補、実施タイミングは未定 (ユーザー判断待ち)。"
@@ -159,6 +154,16 @@
       "path": "web/src/components/BoardKeyboardNavProvider.tsx",
       "limit": 800,
       "reason": "useBoardKeyboardNav フックと BoardKeyboardNavProvider コンポーネントの2 export を1ファイルに同居。キーボードナビゲーションの状態機械が大半を占める。分割検討・チケット未起票。"
+    },
+    {
+      "path": "src/interface/http/ticket-write-routes.ts",
+      "limit": 700,
+      "reason": "チケット書き込み系 Hono ルート12本 (decision/quick-action/quick-action-undo/dependencies追加・削除/title/description/labels追加・削除/session-link追加・削除/comment) を1ファイルに集約。bdboard-sso1.1 で旧 routes.ts (1973行・39ルート) を分割した際、書き込み系はリクエストボディの zod スキーマ9個をハンドラごとに伴うため読み取り系より本体が大きい。さらなる分割は将来検討・チケット未起票。"
+    },
+    {
+      "path": "src/application/board/get-pr-badges.ts",
+      "limit": 600,
+      "reason": "PR バッジ算出。PrBadgeCommentCache と PrBadgeStatusCache の2キャッシュ実装＋算出本体を1ファイルに同居。bdboard-7ln6 (#526) で PrBadgeStatusCache に rate-limit 分類とサーキットブレーカー (reason別15分〜1時間バックオフ) を追加した際、file-size guard (bdboard-jygp, #523 で verify に追加) の baseline 登録が漏れていた。CI を通すため bdboard-sso1.1 のブランチ上でこの1エントリだけ登録し、baseline 登録漏れの再発防止は別チケットへ切り出す (discovered-from:bdboard-sso1.1)。分割検討・チケット未起票。"
     },
     {
       "path": "web/src/components/ChatPanel.test.tsx",
