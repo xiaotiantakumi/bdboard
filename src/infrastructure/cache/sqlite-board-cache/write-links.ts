@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { SessionLinkRow } from '../../../application/ports/board-cache.js';
+import type { BoardCache, SessionLinkRow } from '../../../application/ports/board-cache.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import { MAX_TRANSCRIPT_SESSION_LINKS } from '../../../domain/session.js';
 
@@ -10,10 +10,12 @@ import { MAX_TRANSCRIPT_SESSION_LINKS } from '../../../domain/session.js';
  */
 export const MAX_INTERACTIONS = 5000;
 
-export interface BoardCacheLinksWriteOperations {
-  upsertSessionLinks(rows: readonly SessionLinkRow[]): void;
-  appendInteractions(records: readonly InteractionRecord[]): void;
-}
+// BoardCache (アプリ層のポート) の一部を実装する。read.ts と同じ理由で Pick を使う
+// (BoardCacheReadOperations のコメント参照)。
+export type BoardCacheLinksWriteOperations = Pick<
+  BoardCache,
+  'upsertSessionLinks' | 'appendInteractions'
+>;
 
 export function createLinksWriteOperations(
   db: Database.Database,

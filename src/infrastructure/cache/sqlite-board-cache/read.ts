@@ -1,6 +1,7 @@
 import type Database from 'better-sqlite3';
 import { statSync } from 'node:fs';
 import type {
+  BoardCache,
   CachedProject,
   CacheStats,
   CfdSnapshotRow,
@@ -19,17 +20,21 @@ import type {
   TranscriptOffsetRow,
 } from './row-types.js';
 
-export interface BoardCacheReadOperations {
-  getProject(projectId: string): CachedProject | undefined;
-  listProjects(): readonly CachedProject[];
-  getTranscriptOffset(filePath: string): number | undefined;
-  getSessionUsage(sessionIds: readonly string[]): readonly ModelUsageTotals[];
-  listCfdSnapshots(projectIds?: readonly string[]): readonly CfdSnapshotRow[];
-  getLatestCfdSnapshotDate(): string | undefined;
-  getCacheStats(): CacheStats;
-  listSessionLinks(): readonly SessionLinkRow[];
-  listInteractions(options?: { readonly since?: Date }): readonly InteractionRecord[];
-}
+// BoardCache (アプリ層のポート) の一部を実装する。Pick で束ねることで、ポート側に
+// メソッドが増減したときにここが自動追随し (増分は他モジュール側で要実装、削除は
+// 型エラーで検出)、手書きコピーの2箇所が乖離する事故を防ぐ。
+export type BoardCacheReadOperations = Pick<
+  BoardCache,
+  | 'getProject'
+  | 'listProjects'
+  | 'getTranscriptOffset'
+  | 'getSessionUsage'
+  | 'listCfdSnapshots'
+  | 'getLatestCfdSnapshotDate'
+  | 'getCacheStats'
+  | 'listSessionLinks'
+  | 'listInteractions'
+>;
 
 export function createReadOperations(
   db: Database.Database,

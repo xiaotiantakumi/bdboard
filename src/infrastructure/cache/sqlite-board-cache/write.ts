@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { CachedProject, SessionLinkRow } from '../../../application/ports/board-cache.js';
+import type { BoardCache, CachedProject, SessionLinkRow } from '../../../application/ports/board-cache.js';
 import type { ModelUsageTotals } from '../../../application/transcript/extract-usage.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import { serializeTickets } from '../ticket-serialization.js';
@@ -7,21 +7,20 @@ import { createLinksWriteOperations } from './write-links.js';
 
 export { MAX_INTERACTIONS } from './write-links.js';
 
-export interface BoardCacheWriteOperations {
-  putProject(entry: CachedProject): void;
-  deleteProject(projectId: string): void;
-  clear(): void;
-  setTranscriptOffset(filePath: string, offset: number): void;
-  addSessionUsage(sessionId: string, usage: ModelUsageTotals): void;
-  putCfdSnapshot(
-    snapshotDate: string,
-    snapshottedAt: Date,
-    rows: readonly { projectId: string; status: string; count: number }[],
-  ): void;
-  pruneCfdSnapshots(olderThanDate: string): number;
-  upsertSessionLinks(rows: readonly SessionLinkRow[]): void;
-  appendInteractions(records: readonly InteractionRecord[]): void;
-}
+// BoardCache (アプリ層のポート) の一部を実装する。read.ts と同じ理由で Pick を使う
+// (BoardCacheReadOperations のコメント参照)。
+export type BoardCacheWriteOperations = Pick<
+  BoardCache,
+  | 'putProject'
+  | 'deleteProject'
+  | 'clear'
+  | 'setTranscriptOffset'
+  | 'addSessionUsage'
+  | 'putCfdSnapshot'
+  | 'pruneCfdSnapshots'
+  | 'upsertSessionLinks'
+  | 'appendInteractions'
+>;
 
 export function createWriteOperations(db: Database.Database): BoardCacheWriteOperations {
   const putProjectStmt = db.prepare(`

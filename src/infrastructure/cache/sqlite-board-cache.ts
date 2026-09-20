@@ -1,10 +1,13 @@
 // src/infrastructure/cache/sqlite-board-cache.ts は bdboard-sso1.19 でモジュール分割された。
 // 実体は ./sqlite-board-cache/ 配下:
-//   - schema.ts : SCHEMA_VERSION・テーブル定義・列追加マイグレーション・openCacheDatabase
-//   - row-types.ts : DB 行の型定義 (schema.ts / convert.ts / read.ts / write.ts が共有)
+//   - schema.ts : SCHEMA_VERSION・テーブル定義・openCacheDatabase (再構築判定含む)
+//   - schema-migrations.ts : 列追加の in-place マイグレーション (ensure*Column、schema.ts から呼ぶ)
+//   - row-types.ts : DB 行の型定義 (schema*.ts / convert.ts / read.ts / write*.ts が共有)
 //   - convert.ts : 行 → ドメインオブジェクトの変換 (rowToCachedProject 等)
 //   - read.ts   : 読み取りクエリ (getProject / listProjects / getCacheStats 等)
-//   - write.ts  : 書き込み (upsert / 無効化。putProject / clear / appendInteractions 等)
+//   - write.ts  : 書き込み (upsert / 無効化。putProject / clear / putCfdSnapshot 等)
+//   - write-links.ts : session_links / interactions の書き込みと MAX_INTERACTIONS
+//     (件数上限までの trim を含み、write.ts から呼ばれる)
 // このファイルは import 側 (呼び出し元・テスト) を書き換えないための入口としてのみ残す。
 // SQL 文字列・マイグレーションの順序・トランザクション境界・prepared statement の生成
 // タイミング (コンストラクタで一度) は一切変えていない (移動のみ)。
