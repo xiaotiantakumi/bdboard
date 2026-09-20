@@ -13,6 +13,7 @@ import {
   runBdTool,
   runBdWriteCommandForStdout,
 } from './bd-cli-tool-runner.js';
+import { withLockContentionRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -238,15 +239,27 @@ export function createBdCliIssueWriter(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
+    // bdboard-miqg: claim は「同一アクターの再 claim は exit 0 の真の no-op」
+    // (bdboard-pkr6.26 で実測・bd-cli-issue-writer.test.ts に固定) であることが
+    // 分かっている冪等な書き込みなので、一時的な .beads lock-contention に限り
+    // 数回リトライする(runBdCommand 全体には適用しない方針は
+    // bd-cli-tool-runner.ts の doc コメントの通り — 他の非冪等な書き込みコマンドを
+    // 巻き込まないよう、この呼び出しだけ個別に対象へ含める)。
+    // 「別アクターが既に保持している」という真の排他違反は classifyBdError で
+    // kind='unknown' になり(bd-cli-issue-writer.test.ts で固定済み)、
+    // withLockContentionRetry は kind='lock-contention' のときしかリトライしない
+    // ため対象外のまま即座に失敗する。
     async claim(rootPath: string, ticketId: string): Promise<void> {
-      await runBdTool(
-        commandRunner,
-        bdPath,
-        timeoutMs,
-        rootPath,
-        'bd_claim',
-        { id: ticketId },
-        ticketId,
+      await withLockContentionRetry(() =>
+        runBdTool(
+          commandRunner,
+          bdPath,
+          timeoutMs,
+          rootPath,
+          'bd_claim',
+          { id: ticketId },
+          ticketId,
+        ),
       );
     },
 
