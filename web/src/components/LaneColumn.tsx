@@ -1,9 +1,8 @@
-import { useEffect, useState } from 'react';
 import { LANE_LABELS, projectNameFallback } from '../api';
 import { useBoardDnD } from './BoardDnDProvider';
 import { useBoardKeyboardNav } from './BoardKeyboardNavProvider';
-import { PAGE_SIZE } from './lane/constants';
 import { CardItem } from './lane/CardItem';
+import { useLaneCardPaging } from './lane/useLaneCardPaging';
 import type { LaneColumnProps } from './lane/types';
 
 export { CardItem } from './lane/CardItem';
@@ -26,11 +25,11 @@ export function LaneColumn({
 }: LaneColumnProps) {
   const boardDnD = useBoardDnD();
   const boardNav = useBoardKeyboardNav();
-  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
-  const visibleCards = cards.slice(0, visibleCount);
-  const visibleCardIds = visibleCards.map((card) => card.ticket.id);
-  const idsKey = visibleCardIds.join(',');
-  const remaining = cards.length - visibleCount;
+  const { visibleCards, remaining, showMore } = useLaneCardPaging(
+    lane,
+    cards,
+    collapsed,
+  );
   const dropHoverClass =
     boardDnD?.dropHover?.lane === lane
       ? boardDnD.dropHover.allowed
@@ -38,30 +37,12 @@ export function LaneColumn({
         : ' lane-drop-rejected'
       : '';
 
-  // registerLane/unregisterLane は provider 側で useCallback により参照安定。
-  // boardNav 自体を依存に入れるとフォーカス移動のたびに context 値の identity が
-  // 変わり、全レーンが unregister→register を繰り返すので、関数だけを依存にする。
-  const registerLane = boardNav?.registerLane;
-  const unregisterLane = boardNav?.unregisterLane;
-
-  useEffect(() => {
-    if (registerLane === undefined || unregisterLane === undefined) {
-      return;
-    }
-    // idsKey は visibleCardIds の内容キー。内容が同じ間は再登録不要なので、
-    // visibleCardIds 自体は依存に入れない(毎レンダー新しい配列になるため)。
-    registerLane(lane, collapsed ? [] : visibleCardIds);
-    return () => {
-      unregisterLane(lane);
-    };
-  }, [registerLane, unregisterLane, lane, idsKey, collapsed]);
-
   const showMoreButton =
     remaining > 0 ? (
       <button
         type="button"
         className="btn btn-small show-more-btn"
-        onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+        onClick={showMore}
       >
         さらに表示 (残り {remaining} 件)
       </button>
