@@ -18,7 +18,6 @@ import {
   fetchTicketTimeline,
   fetchSimilarTickets,
   fetchTicketInFlightOverlaps,
-  postTicketComment,
   postTicketDecision,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -105,6 +104,7 @@ import { TicketModelsSection } from './ticket-detail/TicketModelsSection';
 import { TicketUsageSection } from './ticket-detail/TicketUsageSection';
 import { TicketChildrenSection } from './ticket-detail/TicketChildrenSection';
 import { TicketBdCommandSection } from './ticket-detail/TicketBdCommandSection';
+import { useTicketComment } from './ticket-detail/useTicketComment';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -246,7 +246,6 @@ export function TicketDetailPanel({
     useState<DeferPeriodKind>(DEFAULT_DEFER_PERIOD);
   const [customDeferDate, setCustomDeferDate] = useState('');
   const [closeReason, setCloseReason] = useState('');
-  const [commentText, setCommentText] = useState('');
   const {
     titleEditing,
     titleDraft,
@@ -298,6 +297,13 @@ export function TicketDetailPanel({
     handleRemoveDependency,
     reset: resetDependencies,
   } = useTicketDependencies(ticketId, data);
+  const {
+    commentText,
+    setCommentText,
+    canSubmitComment,
+    mutation: commentMutation,
+    reset: resetComment,
+  } = useTicketComment(ticketId);
   const [sessionLinkPickerOpen, setSessionLinkPickerOpen] = useState(false);
   const prevCommentCountRef = useRef<number | undefined>(undefined);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -326,7 +332,7 @@ export function TicketDetailPanel({
     setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
     setCustomDeferDate('');
     setCloseReason('');
-    setCommentText('');
+    resetComment();
     resetDependencies();
     resetLabelInput();
     resetTitleEditing();
@@ -339,6 +345,7 @@ export function TicketDetailPanel({
     setSelectedHistoryRunId(null);
   }, [
     clearCopyDisplay,
+    resetComment,
     resetDecisionAnswer,
     resetDependencies,
     resetDescriptionEditing,
@@ -686,22 +693,6 @@ export function TicketDetailPanel({
           },
         });
       }
-    },
-  });
-
-  const trimmedCommentText = commentText.trim();
-  const canSubmitComment = trimmedCommentText.length > 0;
-
-  const commentMutation = useMutation({
-    mutationFn: async () => {
-      await postTicketComment(ticketId, trimmedCommentText);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-      await queryClient.invalidateQueries({
-        queryKey: ['ticket-comments', ticketId],
-      });
-      setCommentText('');
     },
   });
 
