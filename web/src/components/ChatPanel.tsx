@@ -63,7 +63,7 @@ import {
   SidePanelResizeHandle,
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
-import { CHAT_QUICK_COMMANDS, type ChatQuickCommand } from '../chatQuickCommands';
+import type { ChatQuickCommand } from '../chatQuickCommands';
 import { isImeComposingKeyEvent } from '../imeGuard';
 import {
   CHAT_AGENT_UNAVAILABLE_WARNING,
@@ -89,9 +89,10 @@ import {
 export { formatThreadUpdatedAt } from './chat/threads';
 import { ChatThreadDrawer } from './chat/ChatThreadDrawer';
 import { ChatMessageRow } from './chat/ChatMessageRow';
-import { ChatAttachmentPreview } from './chat/ChatAttachmentPreview';
 import { ChatSettingsPanel } from './chat/ChatSettingsPanel';
 import { ChatInputActions } from './chat/ChatInputActions';
+import { ChatQuickCommands } from './chat/ChatQuickCommands';
+import { ChatInputNotices } from './chat/ChatInputNotices';
 import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
@@ -3595,77 +3596,42 @@ export function ChatPanel({
             void handleSubmit(event);
           }}
         >
-          <div
-            className="chat-quick-commands"
-            role="group"
-            aria-label="クイックコマンド"
-          >
-            {CHAT_QUICK_COMMANDS.map((command) => (
-              <button
-                key={command.id}
-                type="button"
-                className="chat-quick-command-chip"
-                disabled={
-                  isSending || isHistoryPending || selectedProjectId === ''
-                }
-                aria-label={`${command.label}を入力欄に挿入`}
-                onClick={() => handleQuickCommand(command)}
-              >
-                {command.label}
-              </button>
-            ))}
-          </div>
+          <ChatQuickCommands
+            isSending={isSending}
+            isHistoryPending={isHistoryPending}
+            selectedProjectId={selectedProjectId}
+            onQuickCommand={handleQuickCommand}
+          />
           {/* 「バナーが1つでもあるか」の条件式をここに書くと、将来バナーを足した人がその条件式の
               更新を忘れた瞬間に空の div が gap を生む。`:empty` なら描画条件の集合を二重管理しない。
               JSX は改行だけの空白テキストノードを出力しないので、5つとも false のとき要素は本当に空になり
               `:empty` が成立する。 */}
-          <div className="chat-input-notices">
-            {/* bdboard-3tw.166: 配信停止後の回収中インジケータを入力欄付近にも出す。
-                メッセージログ上部の同種インジケータ (role="status" 付きの
-                「返信をバックグラウンドで処理中…」、ログの aria-live="polite" 領域内)
-                と条件は同じだが、テキストは変えてある — 同一文言を2箇所に出すと
-                screen.findByText 等の単一マッチ前提のテストで区別できなくなるため。
-                role="status" は付けない (Opus レビュー指摘): 付けると同じ状態変化を
-                スクリーンリーダーが2回連続で読み上げることになる。ここは見た目上の
-                補助表示として置くだけで、状態変化の告知そのものはログ側の1箇所に
-                任せる。ログをスクロールしている/入力欄だけ見ている利用者にも視覚的に
-                処理継続中であることが伝わるようにする。
-                bdboard-v3ag Opus レビュー指摘 (W4): 条件を backgroundTurnStatus (poll
-                の1レスポンス単位でしか更新されない) から、送信ボタンの disabled と
-                全く同じ式 hasUnresolvedProjectRecovery に揃える。backgroundTurnStatus
-                だけに頼ると、ポーリングの谷間や B1 の「無関係な failed で足止め」
-                「バックオフ尽き」のような区間でボタンだけ disabled のままバナーが
-                消え、利用者に理由が伝わらない窓ができていた。 */}
-            {!isSending && hasUnresolvedProjectRecovery && (
-              <p className="chat-pending chat-input-recovery-status">
-                バックグラウンドで応答を処理中です…
-              </p>
-            )}
-            <ChatAttachmentPreview
-              attachments={currentAttachments}
-              isSending={isSending}
-              onRemove={(attachmentId) => removeAttachment(currentConversationKey, attachmentId)}
-            />
-            {currentAttachmentError !== null && (
-              <p className="chat-attachment-error" role="alert">
-                {currentAttachmentError}
-              </p>
-            )}
-            {hasUnsupportedAttachments && (
-              <p className="chat-attachment-unsupported" role="alert">
-                このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。
-              </p>
-            )}
-            {selectedAgentUnavailable && (
-              <p
-                id={agentUnavailableHintId ?? undefined}
-                className="chat-agent-unavailable-banner"
-                role="alert"
-              >
-                {CHAT_AGENT_UNAVAILABLE_WARNING}
-              </p>
-            )}
-          </div>
+          {/* bdboard-3tw.166: 配信停止後の回収中インジケータを入力欄付近にも出す。
+              メッセージログ上部の同種インジケータ (role="status" 付きの
+              「返信をバックグラウンドで処理中…」、ログの aria-live="polite" 領域内)
+              と条件は同じだが、テキストは変えてある — 同一文言を2箇所に出すと
+              screen.findByText 等の単一マッチ前提のテストで区別できなくなるため。
+              role="status" は付けない (Opus レビュー指摘): 付けると同じ状態変化を
+              スクリーンリーダーが2回連続で読み上げることになる。ここは見た目上の
+              補助表示として置くだけで、状態変化の告知そのものはログ側の1箇所に
+              任せる。ログをスクロールしている/入力欄だけ見ている利用者にも視覚的に
+              処理継続中であることが伝わるようにする。
+              bdboard-v3ag Opus レビュー指摘 (W4): 条件を backgroundTurnStatus (poll
+              の1レスポンス単位でしか更新されない) から、送信ボタンの disabled と
+              全く同じ式 hasUnresolvedProjectRecovery に揃える。backgroundTurnStatus
+              だけに頼ると、ポーリングの谷間や B1 の「無関係な failed で足止め」
+              「バックオフ尽き」のような区間でボタンだけ disabled のままバナーが
+              消え、利用者に理由が伝わらない窓ができていた。 */}
+          <ChatInputNotices
+            hasUnresolvedProjectRecovery={hasUnresolvedProjectRecovery}
+            isSending={isSending}
+            attachments={currentAttachments}
+            onRemoveAttachment={(attachmentId) => removeAttachment(currentConversationKey, attachmentId)}
+            attachmentError={currentAttachmentError}
+            hasUnsupportedAttachments={hasUnsupportedAttachments}
+            selectedAgentUnavailable={selectedAgentUnavailable}
+            agentUnavailableHintId={agentUnavailableHintId}
+          />
           <textarea
             ref={inputRef}
             className="chat-input"
