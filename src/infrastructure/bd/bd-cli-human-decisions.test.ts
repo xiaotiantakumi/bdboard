@@ -970,6 +970,11 @@ describe('createBdCliHumanDecisions', () => {
       closed: false,
       ambiguousGateIds: ['bdboard-human-gate-1', 'bdboard-human-gate-2'],
     });
+    // Deliberately does NOT reuse buildResponseCommentBody's kind/count selector here
+    // (that would make the assertion self-referential and blind to a wrong '> 1'
+    // threshold in the production selector). Instead it builds the expected comment
+    // straight from the ambiguous-body builder, so a regression in the selector logic
+    // shows up as a call-args mismatch.
     expect(calls).toEqual([
       {
         command: '/usr/bin/bd',
@@ -983,7 +988,10 @@ describe('createBdCliHumanDecisions', () => {
           '/my/root',
           'comment',
           issueId,
-          buildResponseCommentBody('A案を採用', 'ticket', 2),
+          buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+            'bdboard-human-gate-1',
+            'bdboard-human-gate-2',
+          ]),
         ],
         options: { timeoutMs: 30_000 },
       },
@@ -995,8 +1003,25 @@ describe('createBdCliHumanDecisions', () => {
     );
     expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
     expect(
-      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', 2),
+      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+        'bdboard-human-gate-1',
+        'bdboard-human-gate-2',
+      ]),
     ).toContain('どの質問への回答か特定できない');
+    // The comment must name the actual blocked gates, not just a count, so the
+    // responder knows which cards to open (review finding bdboard-q1k9/PR#513).
+    expect(
+      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+        'bdboard-human-gate-1',
+        'bdboard-human-gate-2',
+      ]),
+    ).toContain('bdboard-human-gate-1');
+    expect(
+      buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+        'bdboard-human-gate-1',
+        'bdboard-human-gate-2',
+      ]),
+    ).toContain('bdboard-human-gate-2');
   });
 
   it('does not remove the label when the single blocking gate resolve fails (bdboard-vy0h)', async () => {

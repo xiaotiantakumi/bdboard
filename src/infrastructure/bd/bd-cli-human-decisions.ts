@@ -194,14 +194,16 @@ function buildTicketResponseCommentBody(responseText: string): string {
 // human ラベルも外さない(確認待ちのまま残す)。
 function buildTicketAmbiguousGatesResponseCommentBody(
   responseText: string,
-  blockingHumanGateCount: number,
+  blockingHumanGateIds: readonly string[],
 ): string {
+  const gateList = blockingHumanGateIds.map((id) => `- ${id}`).join('\n');
   return `${buildGateResponseCommentBody(responseText)}
 
 (bdboard: 確認待ちへの回答として記録しましたが、このチケットをブロックしている open な
-human gate が${blockingHumanGateCount}件あり、どの質問への回答か特定できないため、gate の
-resolve と human ラベルの解除は行っていません。確認待ちのまま残ります。各 gate カード
-(bd gate list 等)を個別に開いて、それぞれの質問に回答してください。)`;
+human gate が${blockingHumanGateIds.length}件あり、どの質問への回答か特定できないため、gate の
+resolve と human ラベルの解除は行っていません。確認待ちのまま残ります。以下の gate カードを
+個別に開いて、それぞれの質問に回答してください。
+${gateList})`;
 }
 
 function buildUnknownKindResponseCommentBody(responseText: string): string {
@@ -214,14 +216,14 @@ close も human ラベルの解除も行っていません。確認待ちのま�
 function buildResponseCommentBody(
   responseText: string,
   kind: ResolvedDecisionKind,
-  blockingHumanGateCount = 0,
+  blockingHumanGateIds: readonly string[] = [],
 ): string {
   if (kind === 'gate') {
     return buildGateResponseCommentBody(responseText);
   }
   if (kind === 'ticket') {
-    return blockingHumanGateCount > 1
-      ? buildTicketAmbiguousGatesResponseCommentBody(responseText, blockingHumanGateCount)
+    return blockingHumanGateIds.length > 1
+      ? buildTicketAmbiguousGatesResponseCommentBody(responseText, blockingHumanGateIds)
       : buildTicketResponseCommentBody(responseText);
   }
   return buildUnknownKindResponseCommentBody(responseText);
@@ -232,14 +234,14 @@ function buildAddResponseCommentArgs(
   issueId: string,
   responseText: string,
   kind: ResolvedDecisionKind,
-  blockingHumanGateCount = 0,
+  blockingHumanGateIds: readonly string[] = [],
 ): readonly string[] {
   return [
     '-C',
     rootPath,
     'comment',
     issueId,
-    buildResponseCommentBody(responseText, kind, blockingHumanGateCount),
+    buildResponseCommentBody(responseText, kind, blockingHumanGateIds),
   ];
 }
 
@@ -776,13 +778,7 @@ export function createBdCliHumanDecisions(
 
       const commentResult = await commandRunner.run(
         bdPath,
-        buildAddResponseCommentArgs(
-          rootPath,
-          issueId,
-          responseText,
-          kind,
-          blockingHumanGateIds.length,
-        ),
+        buildAddResponseCommentArgs(rootPath, issueId, responseText, kind, blockingHumanGateIds),
         { timeoutMs },
       );
 
