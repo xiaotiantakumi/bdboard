@@ -29,7 +29,11 @@ const RUNNER_REFERENCE_TOKENS = [
 
 const RUNNER_REFERENCE_ALLOWLIST_FILES = [
   'src/interface/http/agent-run-routes.ts',
-  'src/main.ts',
+  // bdboard-sso1.14: main.ts のエージェント実行 (agent-run) 領域配線は
+  // src/bootstrap/wire-agent-run.ts へ切り出し済み (move only) で、main.ts 自体は
+  // もう RUNNER_REFERENCE_TOKENS のどれも参照しない。許可リストを main.ts から
+  // wire-agent-run.ts へ移し、ガードを緩めたままにしない。
+  'src/bootstrap/wire-agent-run.ts',
   'src/application/ports/agent-runner.ts',
 ] as const;
 

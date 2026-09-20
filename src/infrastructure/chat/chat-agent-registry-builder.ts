@@ -9,23 +9,7 @@ import { createClaudeChatAgent } from './claude-chat-agent.js';
 import { createCodexChatAgent } from './codex-chat-agent.js';
 import { createCursorChatAgent } from './cursor-chat-agent.js';
 import { createAgyChatAgent } from './agy-chat-agent.js';
-
-function envString(env: NodeJS.ProcessEnv, name: string, defaultValue: string): string {
-  const raw = env[name];
-  if (raw === undefined || raw === '') {
-    return defaultValue;
-  }
-  return raw;
-}
-
-function envInt(env: NodeJS.ProcessEnv, name: string, defaultValue: number): number {
-  const raw = env[name];
-  if (raw === undefined || raw === '') {
-    return defaultValue;
-  }
-  const parsed = Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? defaultValue : parsed;
-}
+import { envInt, envString } from '../env.js';
 
 /**
  * env が未設定/不正なら `undefined` を返す(既定値は呼ばない — bdboard-3tw.104.11 Opus

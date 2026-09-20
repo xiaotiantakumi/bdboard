@@ -1,133 +1,45 @@
-import { randomInt } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import type { RefreshResult } from './application/board/refresh-projects.js';
 import { runBdVersionStartupCheck } from './application/bd/run-bd-version-startup-check.js';
-import { runInitialRefresh } from './application/board/run-initial-refresh.js';
-import { runUnattendedRefresh } from './application/board/run-unattended-refresh.js';
-import { recordCfdSnapshot, pruneOldCfdSnapshots } from './application/board/record-cfd-snapshot.js';
 import { createShutdownDrain } from './application/board/shutdown-drain.js';
-import { createBoardNotificationPublisher } from './application/board/board-notification-transitions.js';
-import { createWatchedProjectsSync } from './application/board/sync-watched-projects.js';
-import type { WatchedProjectsSync } from './application/board/sync-watched-projects.js';
 import {
-  createReclaimScheduler,
   DEFAULT_RECLAIM_INTERVAL_MS,
   DEFAULT_RECLAIM_OLDER_THAN,
-  MIN_SAFE_RECLAIM_OLDER_THAN_MS,
-  parseReclaimDurationMs,
 } from './application/lease/reclaim-scheduler.js';
-import { createReclaimHistory } from './application/lease/reclaim-history.js';
-import { planProjectReclaim } from './application/lease/plan-project-reclaim.js';
-import { createAiQuotaService } from './application/ai-quota/get-ai-quota.js';
-import { createUpdateCheckService } from './application/update/get-update-check.js';
-import { createAiQuotaThresholdPublisher } from './application/ai-quota/ai-quota-threshold-alerts.js';
-import { createChatSessionStore } from './application/chat/chat-session-store.js';
-import { buildChatAgentRegistry } from './infrastructure/chat/chat-agent-registry-builder.js';
-import { createTunnelService } from './application/tunnel/tunnel-service.js';
-import { createTunnelAccessService } from './application/tunnel/tunnel-access.js';
-import { computeBoardNotificationSnapshot } from './domain/board-notifications.js';
-import { resolveAiQuotaAlertThresholdPercent } from './domain/ai-quota-alert-thresholds.js';
-import { generatePassphrase } from './domain/passphrase.js';
 import {
-  createBdCliCommentReader,
-  createBdCliHumanDecisions,
-  createBdCliIssueRepository,
-  createBdCliLeaseReader,
-  createBdCliMergeSlotReader,
-  createBdCliLeaseReclaimer,
-  createBdCliDependencyWriter,
-  createBdCliIssueWriter,
-  createBdCliSessionLinkWriter,
-  readBdVersion,
-  createBeadsFingerprinter,
-  createChokidarProjectWatcher,
-  createClaudeSessionRegistry,
-  createCloudflaredTunnel,
-  resolveDefaultTunnelLogFilePath,
-  createGithubReleaseSource,
-  createFileTunnelInterruptionStore,
-  createFileScanRootsConfigStore,
+  createFileAiQuotaAlertConfigStore,
   createFileBoardThresholdsConfigStore,
   createFileHygieneThresholdsConfigStore,
-  createFileAiQuotaAlertConfigStore,
+  createFileScanRootsConfigStore,
   createFsHarnessContractReader,
-  createFsHarnessInjector,
-  createFsPackRegistry,
-  createFsProjectDiscovery,
-  createGhCliPrStatusReader,
-  createGitWorktreeScanner,
-  createFsChatSessionDiscovery,
-  createJsonlInteractionReader,
-  createJsonlTranscriptScanner,
-  createNodeAiQuotaSource,
-  createPsProcessScanner,
-  createSessionTailReader,
-  createSqliteBoardCache,
-  createSqliteChatMessageRepository,
-  createSqliteChatSessionRepository,
-  NodeCommandRunner,
-  NodeStreamingCommandRunner,
-  NodeFileSystem,
-  NodeProcessProbe,
   createPackageJsonVersionProvider,
+  createPsProcessScanner,
+  createSqliteBoardCache,
+  NodeCommandRunner,
+  NodeFileSystem,
+  NodeStreamingCommandRunner,
+  readBdVersion,
   resolveConfigFilePath,
 } from './infrastructure/index.js';
-import {
-  resolveAuthMode,
-} from './interface/http/basic-auth.js';
-import { mountSecurityMiddleware } from './interface/http/app-security.js';
+import { resolveAuthMode } from './interface/http/basic-auth.js';
 import {
   describePlatformSupport,
   isPlatformFeatureSupported,
   unrestrictedPlatformSupport,
 } from './domain/platform-support.js';
-import {
-  createPlatformFeatureGuard,
-  createPlatformSupportRoutes,
-} from './interface/http/platform-support-routes.js';
 import { createSessionValidator } from './interface/http/tunnel-session.js';
-import { createAiQuotaRoutes } from './interface/http/ai-quota-routes.js';
-import { createUpdateCheckRoutes } from './interface/http/update-check-routes.js';
-import { createCompressionMiddleware } from './interface/http/compression.js';
 import { buildApiDeps } from './interface/http/build-api-deps.js';
-import { createApiRoutes, type ApiStatus } from './interface/http/routes.js';
-import { createChatRoutes } from './interface/http/chat-routes.js';
-import { createAttachmentRoutes } from './interface/http/attachment-routes.js';
-import { createFsAttachmentStorage } from './infrastructure/fs/fs-attachment-storage.js';
-import { resolveAttachmentsDir } from './infrastructure/fs/resolve-attachments-dir.js';
-import {
-  DEFAULT_CHAT_RATE_LIMIT_WEIGHT,
-  DEFAULT_CHAT_RATE_LIMIT_PER_DAY,
-  DEFAULT_CHAT_RATE_LIMIT_PER_MINUTE,
-} from './interface/http/chat-rate-limit.js';
-import { createHarnessRoutes } from './interface/http/harness-routes.js';
+import { createApiRoutes } from './interface/http/routes.js';
 import { createScanRootsRoutes } from './interface/http/scan-roots-routes.js';
 import { createBoardThresholdsRoutes } from './interface/http/board-thresholds-routes.js';
 import { createHygieneThresholdsRoutes } from './interface/http/hygiene-thresholds-routes.js';
 import { createDbStatsRoutes } from './interface/http/db-stats-routes.js';
 import { createAiQuotaAlertRoutes } from './interface/http/ai-quota-alert-routes.js';
-import { createAgentRunSettingsRoutes } from './interface/http/agent-run-settings-routes.js';
-import { createAgentRunRoutes } from './interface/http/agent-run-routes.js';
-import {
-  readProjectHarnessStatus,
-  readProjectMainBranch,
-} from './application/harness/get-project-harness-status.js';
-import { createRunStore } from './application/runner/run-store.js';
-import { createAgentRunnerRegistry } from './application/runner/runner-registry.js';
-import { resolveAllowRemoteAgentRuns } from './domain/agent-run-policy.js';
-import { createFileAgentRunConfigStore } from './infrastructure/fs/agent-run-config-store.js';
-import {
-  createGitWorktreeProvisioner,
-  DEFAULT_MAX_MANAGED_WORKTREES,
-  normalizePathForComparison,
-} from './infrastructure/git/git-worktree-provisioner.js';
-import { createClaudeSpawnRunner } from './infrastructure/runners/claude-spawn-runner.js';
+import { readProjectMainBranch } from './application/harness/get-project-harness-status.js';
 import { resolveDefaultScanRoots } from './infrastructure/discovery/default-scan-roots.js';
 import { resolveWebDistDir } from './infrastructure/web/resolve-web-dist-dir.js';
 import { createTunnelRoutes } from './interface/http/tunnel-routes.js';
@@ -139,33 +51,27 @@ import {
 import {
   envBool,
   envBoolDefaultTrue,
-  envFloat,
   envInt,
   envOptionalString,
   envString,
 } from './bootstrap/env.js';
-import { createTranscriptLinkTracker } from './application/board/transcript-link-tracker.js';
-import { createSessionLivenessTracker } from './application/board/session-liveness-tracker.js';
+import { wireBdServices } from './bootstrap/wire-bd-services.js';
+import { wireAttachments } from './bootstrap/wire-attachments.js';
+import { wireHarness } from './bootstrap/wire-harness.js';
+import { wireTunnel } from './bootstrap/wire-tunnel.js';
+import { wireAgentRun } from './bootstrap/wire-agent-run.js';
+import { wireChat } from './bootstrap/wire-chat.js';
+import { wireAiQuotaWidget } from './bootstrap/wire-ai-quota-widget.js';
+import { wireUpdateCheck } from './bootstrap/wire-update-check.js';
+import { wireBoardReclaim } from './bootstrap/wire-board-reclaim.js';
+import { wireBoardRefresh } from './bootstrap/wire-board-refresh.js';
 import {
-  boardSnapshotInputFromCache,
-  createRefreshRunner,
-} from './application/board/refresh-runner.js';
-
-function updateStatusFromResult(
-  cache: ReturnType<typeof createSqliteBoardCache>,
-  result: RefreshResult,
-  refreshedAt: Date,
-): ApiStatus {
-  return {
-    lastRefreshAt: refreshedAt,
-    errors: result.errors.map((error) => ({
-      kind: error.kind,
-      projectId: error.projectId,
-      detail: error.detail,
-    })),
-    projectCount: cache.listProjects().length,
-  };
-}
+  createBoardSessionServices,
+  runInitialSessionsFetch,
+  startSessionInterval,
+  startTranscriptInterval,
+} from './bootstrap/wire-board-sessions.js';
+import { mountRoutes, type StaticSpaDeps } from './bootstrap/mount-routes.js';
 
 async function main(): Promise<void> {
   const applicationVersion = createPackageJsonVersionProvider();
@@ -173,30 +79,18 @@ async function main(): Promise<void> {
   const bdVersionCheckTimeoutMs = 3_000;
   const port = envInt('BDBOARD_PORT', 8787);
   const host = envString('BDBOARD_HOST', '127.0.0.1');
-  const dbPath = envString(
-    'BDBOARD_DB',
-    path.join(os.homedir(), '.bdboard', 'cache.db'),
-  );
+  const dbPath = envString('BDBOARD_DB', path.join(os.homedir(), '.bdboard', 'cache.db'));
   const refreshIntervalMs = envInt('BDBOARD_REFRESH_INTERVAL_MS', 300_000);
   const sessionIntervalMs = envInt('BDBOARD_SESSION_INTERVAL_MS', 10_000);
   const transcriptIntervalMs = envInt('BDBOARD_TRANSCRIPT_INTERVAL_MS', 30_000);
-  const shutdownTimeoutMs = envInt(
-    'BDBOARD_SHUTDOWN_TIMEOUT_MS',
-    DEFAULT_SHUTDOWN_TIMEOUT_MS,
-  );
+  const shutdownTimeoutMs = envInt('BDBOARD_SHUTDOWN_TIMEOUT_MS', DEFAULT_SHUTDOWN_TIMEOUT_MS);
   const cfdSnapshotIntervalMs = envInt('BDBOARD_CFD_SNAPSHOT_INTERVAL_MS', 3_600_000);
   const cfdSnapshotRetentionDays = envInt('BDBOARD_CFD_SNAPSHOT_RETENTION_DAYS', 365);
   const bdPath = envString('BDBOARD_BD_PATH', 'bd');
   const ghPath = envString('BDBOARD_GH_PATH', 'gh');
   const reclaimEnabled = envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED');
-  const reclaimIntervalMs = envInt(
-    'BDBOARD_RECLAIM_INTERVAL_MS',
-    DEFAULT_RECLAIM_INTERVAL_MS,
-  );
-  const reclaimOlderThan = envString(
-    'BDBOARD_RECLAIM_OLDER_THAN',
-    DEFAULT_RECLAIM_OLDER_THAN,
-  );
+  const reclaimIntervalMs = envInt('BDBOARD_RECLAIM_INTERVAL_MS', DEFAULT_RECLAIM_INTERVAL_MS);
+  const reclaimOlderThan = envString('BDBOARD_RECLAIM_OLDER_THAN', DEFAULT_RECLAIM_OLDER_THAN);
 
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -223,37 +117,20 @@ async function main(): Promise<void> {
     envString('BDBOARD_AI_QUOTA_ALERT_CONFIG_PATH', configFilePath),
   );
 
-  const scanRootsRaw = process.env.BDBOARD_SCAN_ROOTS;
-  const isScanRootsEnvOverridden = scanRootsRaw !== undefined && scanRootsRaw !== '';
-  const envScanRootsList = (scanRootsRaw ?? '')
-    .split(',')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  const discovery =
-    isScanRootsEnvOverridden
-      ? createFsProjectDiscovery(
-          {
-            scanRoots: envScanRootsList,
-          },
-          { fs: fsPort, commandRunner },
-        )
-      : createFsProjectDiscovery(undefined, {
-          fs: fsPort,
-          commandRunner,
-          scanRootsConfigStore,
-        });
+  const {
+    repository,
+    leaseReader,
+    mergeSlotReader,
+    leaseReclaimer,
+    commentReader,
+    prStatusReader,
+    humanDecisions,
+    worktreeScanner,
+    issueWriter,
+    dependencyWriter,
+    sessionLinkWriter,
+  } = wireBdServices(commandRunner, { bdPath, ghPath });
 
-  const repository = createBdCliIssueRepository(commandRunner, { bdPath });
-  const leaseReader = createBdCliLeaseReader(commandRunner, { bdPath });
-  const mergeSlotReader = createBdCliMergeSlotReader(commandRunner, { bdPath });
-  const leaseReclaimer = createBdCliLeaseReclaimer(commandRunner, { bdPath });
-  const commentReader = createBdCliCommentReader(commandRunner);
-  const prStatusReader = createGhCliPrStatusReader(commandRunner, { ghPath });
-  const humanDecisions = createBdCliHumanDecisions(commandRunner);
-  const worktreeScanner = createGitWorktreeScanner(commandRunner);
-  const issueWriter = createBdCliIssueWriter(commandRunner);
-  const dependencyWriter = createBdCliDependencyWriter(commandRunner);
-  const sessionLinkWriter = createBdCliSessionLinkWriter(commandRunner);
   // Windows は「全機能対応」ではなく「機能制限 + 正直な案内」で出す方針
   // (bdboard-70z.9)。BDBOARD_IGNORE_PLATFORM_LIMITS は、独自に環境を整えた
   // 利用者が制限を外して試せるようにするための逃げ道。
@@ -266,351 +143,61 @@ async function main(): Promise<void> {
   );
 
   const processScanner = createPsProcessScanner(commandRunner);
-  const fingerprinter = createBeadsFingerprinter(fsPort);
   const events = createEventHub();
-  const sessionRegistry = createClaudeSessionRegistry(
+
+  const boardSessionServices = createBoardSessionServices({ fsPort, cache, events });
+
+  const boardRefreshServices = await wireBoardRefresh({
+    env: process.env,
     fsPort,
-    new NodeProcessProbe(),
-  );
-  const transcriptScanner = createJsonlTranscriptScanner(fsPort, cache);
-  const chatSessionDiscovery = createFsChatSessionDiscovery(fsPort);
-  const interactionReader = createJsonlInteractionReader(fsPort, cache);
-  const sessionTailReader = createSessionTailReader(fsPort);
-
-  const boardNotificationPublisher = createBoardNotificationPublisher();
-
-  // bdboard-sso1.9: transcript link のインメモリ集計 (旧 transcriptLinkMap 一式) は
-  // application/board/transcript-link-tracker.ts へ移動 (move only)。
-  const transcriptLinkTracker = createTranscriptLinkTracker({ cache });
-
-  // 起動時に SQLite の session_links から transcriptLinkTracker を再構築する。走査位置
-  // (transcript_offsets)は既に永続化されているため、これをやらないと再起動のたびに
-  // 過去のリンクが読み直されずに失われる(bdboard-3tw.83)。
-  transcriptLinkTracker.hydrateFromCache();
-  console.log(`Hydrated transcript links from cache: count=${transcriptLinkTracker.size()}`);
-
-  let transcriptScanRunning = false;
-
-  // bdboard-sso1.9: セッション生死の定期取得・差分検知 (旧 refreshSessions 一式) は
-  // application/board/session-liveness-tracker.ts へ移動 (move only)。
-  const sessionLivenessTracker = createSessionLivenessTracker({
-    registry: sessionRegistry,
-    now: () => new Date(),
-    publishSessionDied: (payload) => {
-      events.publish({ name: 'notification', data: payload });
-    },
-    publishSessionsChanged: (data) => {
-      events.publish({ name: 'session.changed', data });
-    },
-  });
-
-  const runTranscriptScan = async (): Promise<void> => {
-    if (transcriptScanRunning) {
-      return;
-    }
-
-    transcriptScanRunning = true;
-
-    try {
-      const entries = cache.listProjects();
-      const projects = entries.map((entry) => entry.project);
-      const knownIdsByProject = new Map(
-        entries.map((entry) => [
-          entry.project.id,
-          new Set(entry.tickets.map((ticket) => ticket.id)),
-        ]),
-      );
-
-      const newLinks = await transcriptScanner.scan({
-        projects,
-        knownIdsByProject,
-        now: new Date(),
-      });
-
-      const hasNew = transcriptLinkTracker.merge(newLinks);
-      if (hasNew) {
-        events.publish({
-          name: 'board.changed',
-          data: {
-            refreshed: [],
-            reused: [],
-            removed: [],
-          },
-        });
-      }
-
-      const newInteractions = await interactionReader.read({ projects });
-      if (newInteractions.length > 0) {
-        console.log(`Interaction read: records=${newInteractions.length}`);
-      }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(`Transcript scan error: ${detail}`);
-    } finally {
-      transcriptScanRunning = false;
-    }
-  };
-
-  let status: ApiStatus = {
-    lastRefreshAt: null,
-    errors: [],
-    projectCount: 0,
-  };
-
-  // watcher はこの下の初期リフレッシュのあとに作るので、それまでは undefined。
-  let watchedProjectsSync: WatchedProjectsSync | undefined;
-
-  // bdboard-sso1.9: runRefresh の合流(coalescing)状態machine (旧 refreshRunning /
-  // pendingRefresh / refreshWaiters / mergePendingRefresh 一式) は
-  // application/board/refresh-runner.ts へ移動 (move only)。
-  const refreshRunner = createRefreshRunner({
-    discovery,
+    commandRunner,
+    scanRootsConfigStore,
     repository,
-    fingerprinter,
     cache,
-    now: () => new Date(),
     humanDecisions,
-    boardNotificationPublisher,
-    publishBoardChanged: (data) => {
-      events.publish({ name: 'board.changed', data });
-    },
-    publishNotification: (payload) => {
-      events.publish({ name: 'notification', data: payload });
-    },
-    getWatchedProjectsSync: () => watchedProjectsSync,
-    onResult: (result, refreshedAt) => {
-      status = updateStatusFromResult(cache, result, refreshedAt);
-    },
+    events,
+    refreshIntervalMs,
+    cfdSnapshotIntervalMs,
+    cfdSnapshotRetentionDays,
   });
-  const runRefresh = (force = false, onlyProjectIds?: readonly string[]): Promise<void> =>
-    refreshRunner.run(force, onlyProjectIds);
 
-  const initialResult = await runInitialRefresh({
-    discovery,
-    repository,
-    fingerprinter,
+  await runInitialSessionsFetch(boardSessionServices, platformSupport, sessionDiscoverySupported);
+
+  boardRefreshServices.finishInitialization();
+
+  const transcriptIntervalTimer = await startTranscriptInterval(boardSessionServices, {
     cache,
-    now: () => new Date(),
-    humanDecisions,
+    transcriptIntervalMs,
   });
 
-  console.log(
-    `Initial refresh: refreshed=${initialResult.refreshed.length} reused=${initialResult.reused.length} removed=${initialResult.removed.length}`,
+  const { watchHandle, refreshIntervalTimer, cfdSnapshotIntervalTimer } =
+    await boardRefreshServices.startWatchAndIntervals();
+
+  const sessionIntervalTimer = startSessionInterval(
+    boardSessionServices,
+    sessionDiscoverySupported,
+    sessionIntervalMs,
   );
 
-  for (const error of initialResult.errors) {
-    console.error(
-      `Refresh error [${error.kind}] project=${error.projectId}: ${error.detail}`,
-    );
-  }
-
-  status = updateStatusFromResult(
+  const { reclaimScheduler, reclaimHistory } = wireBoardReclaim({
+    leaseReclaimer,
+    leaseReader,
+    worktreeScanner,
     cache,
-    initialResult,
-    new Date(),
-  );
-
-  if (sessionDiscoverySupported) {
-    await sessionLivenessTracker.refresh();
-    console.log(
-      `Initial sessions: total=${sessionLivenessTracker.current().length} alive=${sessionLivenessTracker.current().filter((session) => session.alive).length}`,
-    );
-  } else {
-    // ps/lsof が無い環境で回しても毎周期失敗するだけなので、走らせない
-    // (bdboard-70z.9)。UI 側は /api/platform-support を見て理由を出す。
-    console.log(
-      `Sessions: disabled on ${platformSupport.platform} (session discovery needs ps/lsof)`,
-    );
-  }
-
-  const initialCacheEntries = cache.listProjects();
-  boardNotificationPublisher.seedSnapshot(
-    computeBoardNotificationSnapshot(
-      boardSnapshotInputFromCache(initialCacheEntries),
-      new Date(),
-    ),
-  );
-
-  const initialCfdSnapshot = recordCfdSnapshot(cache, new Date());
-  console.log(
-    `Initial CFD snapshot: recorded=${initialCfdSnapshot.recorded} date=${initialCfdSnapshot.snapshotDate}`,
-  );
-  const initialPrune = pruneOldCfdSnapshots(cache, new Date(), cfdSnapshotRetentionDays);
-  if (initialPrune.deletedCount > 0) {
-    console.log(
-      `Initial CFD snapshot prune: deleted=${initialPrune.deletedCount} cutoff=${initialPrune.cutoffDate}`,
-    );
-  }
-
-  let transcriptIntervalTimer: ReturnType<typeof setInterval> | undefined;
-  let cfdSnapshotIntervalTimer: ReturnType<typeof setInterval> | undefined;
-  let aiQuotaAlertIntervalTimer: ReturnType<typeof setInterval> | undefined;
-
-  if (transcriptIntervalMs > 0) {
-    try {
-      const initialLinks = await transcriptScanner.scan({
-        projects: cache.listProjects().map((entry) => entry.project),
-        knownIdsByProject: new Map(
-          cache.listProjects().map((entry) => [
-            entry.project.id,
-            new Set(entry.tickets.map((ticket) => ticket.id)),
-          ]),
-        ),
-        now: new Date(),
-      });
-      transcriptLinkTracker.merge(initialLinks);
-      console.log(`Initial transcript scan: links=${initialLinks.length}`);
-
-      const initialInteractions = await interactionReader.read({
-        projects: cache.listProjects().map((entry) => entry.project),
-      });
-      console.log(`Initial interaction read: records=${initialInteractions.length}`);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(`Initial transcript scan error: ${detail}`);
-    }
-
-    transcriptIntervalTimer = setInterval(() => {
-      void runTranscriptScan();
-    }, transcriptIntervalMs);
-  }
-
-  const watcher = createChokidarProjectWatcher();
-  const initialWatchedProjects = cache
-    .listProjects()
-    .map((entry) => entry.project);
-  const watchHandle = await watcher.watch(initialWatchedProjects, () => {
-    void runUnattendedRefresh({ refresh: () => runRefresh(false) });
+    reclaimEnabled,
+    reclaimIntervalMs,
+    reclaimOlderThan,
   });
-  watchedProjectsSync = createWatchedProjectsSync({
-    cache,
-    handle: watchHandle,
-    initialProjects: initialWatchedProjects,
-  });
-
-  const intervalTimer = setInterval(() => {
-    void runUnattendedRefresh({ refresh: () => runRefresh(true) });
-  }, refreshIntervalMs);
-
-  const sessionIntervalTimer = sessionDiscoverySupported
-    ? setInterval(() => {
-        void sessionLivenessTracker.refresh();
-      }, sessionIntervalMs)
-    : null;
-
-  if (cfdSnapshotIntervalMs > 0) {
-    cfdSnapshotIntervalTimer = setInterval(() => {
-      const result = recordCfdSnapshot(cache, new Date());
-      if (result.recorded) {
-        console.log(`CFD snapshot recorded: date=${result.snapshotDate}`);
-      }
-      const pruneResult = pruneOldCfdSnapshots(cache, new Date(), cfdSnapshotRetentionDays);
-      if (pruneResult.deletedCount > 0) {
-        console.log(
-          `CFD snapshot prune: deleted=${pruneResult.deletedCount} cutoff=${pruneResult.cutoffDate}`,
-        );
-      }
-    }, cfdSnapshotIntervalMs);
-  }
-
-  // ハーネス KPI 用の reclaim 記録 (bdboard-pkr6.9)。サーバー起動からの累積で
-  // 永続化しない — 起動時刻を UI に注記して読ませる。
-  const reclaimHistory = createReclaimHistory();
-  const reclaimScheduler = createReclaimScheduler({
-    reclaimer: leaseReclaimer,
-    listProjects: () => cache.listProjects().map((entry) => entry.project),
-    config: {
-      enabled: reclaimEnabled,
-      intervalMs: reclaimIntervalMs,
-      olderThan: reclaimOlderThan,
-    },
-    logError: (message) => {
-      console.error(message);
-    },
-    observer: (run) => {
-      reclaimHistory.record(run);
-    },
-    // 生存証拠 (worktree/ブランチ) のあるチケットを回収対象から外す (bdboard-6aci)。
-    // in_progress 集合と lease 失効時刻は LeaseReader の生値から取る — 盤面キャッシュ
-    // は使わない (bdboard-vz01)。
-    planner: (project) =>
-      planProjectReclaim(project, {
-        leaseReader,
-        scanner: worktreeScanner,
-        logWarn: (message) => {
-          console.warn(message);
-        },
-      }),
-  });
-  reclaimScheduler.start();
-  if (reclaimEnabled) {
-    console.log(
-      `Lease reclaim: enabled (interval=${reclaimIntervalMs}ms older-than=${reclaimOlderThan})`,
-    );
-    // 既定値はテストで下限に固定してあるが、env で上書きされた値は誰も検査しない。
-    // 猶予窓を短くする設定は「作業中のチケットを回収する」既定へ逆戻りさせるので、
-    // 起動時に一度だけ警告する (bdboard-hybu)。
-    const reclaimOlderThanMs = parseReclaimDurationMs(reclaimOlderThan);
-    if (reclaimOlderThanMs === undefined) {
-      console.warn(
-        `Lease reclaim: BDBOARD_RECLAIM_OLDER_THAN=${reclaimOlderThan} を duration として` +
-          '解釈できませんでした。値の妥当性は検査していません (bd 側の解釈に委ねます)',
-      );
-    } else if (reclaimOlderThanMs < MIN_SAFE_RECLAIM_OLDER_THAN_MS) {
-      console.warn(
-        `Lease reclaim: 猶予窓 ${reclaimOlderThan} は推奨下限 ` +
-          `${MIN_SAFE_RECLAIM_OLDER_THAN_MS / 60_000}m を下回っています。heartbeat が一時的に` +
-          '途切れただけの作業中チケットが回収されるおそれがあります (bdboard-hybu)',
-      );
-    }
-  } else {
-    console.log('Lease reclaim: disabled');
-  }
 
   const authMode = resolveAuthMode(process.env);
   const authUsername = envString('BDBOARD_AUTH_USER', 'bdboard');
 
-  const tunnelLogMaxBytes = envInt('BDBOARD_TUNNEL_LOG_MAX_BYTES', 5 * 1024 * 1024);
-  // 既定は ~/.bdboard/logs/cloudflared-tunnel.log (bdboard-3b0)。cwd 基準では
-  // なくなったので、リポジトリ内にログを置きたい場合は明示的に指定してもらう。
-  // path.resolve で起動時の cwd に対して一度だけ固定する。相対パスを渡された
-  // まま createFileLogSink まで持っていくと、解決は start() 時点の cwd 基準に
-  // なる — このチケットが潰そうとしている cwd 依存が、明示指定の裏口から
-  // 戻ってくる (PR#111 fable レビュー minor-3)。
-  const tunnelLogFilePath = path.resolve(
-    envString('BDBOARD_TUNNEL_LOG_PATH', resolveDefaultTunnelLogFilePath()),
-  );
-  const tunnelProcess = createCloudflaredTunnel({
+  const { tunnelService, tunnelAccess } = await wireTunnel({
+    env: process.env,
     port,
-    logFilePath: tunnelLogFilePath,
-    logMaxBytes: tunnelLogMaxBytes,
+    dbPath,
+    authUsername,
   });
-  const tunnelAccess = createTunnelAccessService({ now: () => new Date() });
-  const tunnelInterruptions = createFileTunnelInterruptionStore(
-    path.join(path.dirname(dbPath), 'tunnel-interruption.json'),
-  );
-  const tunnelService = createTunnelService({
-    tunnel: tunnelProcess,
-    now: () => new Date(),
-    username: authUsername,
-    // Math.random is not a CSPRNG: V8's generator leaks its internal state to
-    // anyone who observes enough output, and this passphrase is handed out over
-    // a public URL. randomInt draws from the same pool as the rest of node:crypto.
-    generatePassword: () => generatePassphrase(() => randomInt(0, 2 ** 32) / 2 ** 32),
-    access: tunnelAccess,
-    interruptions: tunnelInterruptions,
-  });
-
-  try {
-    const tunnelAvailable = await tunnelService.probeAvailability();
-    if (tunnelAvailable) {
-      console.log('Tunnel: available');
-    } else {
-      console.log('Tunnel: not available (cloudflared not found)');
-    }
-  } catch {
-    console.log('Tunnel: not available (cloudflared not found)');
-  }
 
   if (authMode.kind === 'enabled') {
     console.log('Basic auth: enabled');
@@ -633,16 +220,13 @@ async function main(): Promise<void> {
   // /api/hygiene (getProjectMainBranch) と harness routes の両方が使う。createApiRoutes より
   // 前で作る — 後ろで宣言するとクロージャが TDZ の前方参照になる (bdboard-pkr6.19)。
   const harnessContractReader = createFsHarnessContractReader();
-  // harness routes (ハーネス契約チケットの起票、bdboard-p5l.25) も同じリフレッシュ
-  // フックを使う。createApiRoutes 側の refreshProjectByRootPath と同じ関数を共有する
-  // ため、buildApiDeps 呼び出しより前に名前を出す。
   const refreshProjectByRootPath = async (rootPath: string): Promise<void> => {
     const projectId = cache
       .listProjects()
       .find((entry) => entry.project.rootPath === rootPath)?.project.id;
     // キャッシュに無い rootPath は絞り込みようがないので、安全側に倒して
     // 従来どおり全体を強制リフレッシュする。
-    await runRefresh(true, projectId === undefined ? undefined : [projectId]);
+    await boardRefreshServices.runRefresh(true, projectId === undefined ? undefined : [projectId]);
   };
   const inner = createApiRoutes(
     buildApiDeps({
@@ -650,14 +234,14 @@ async function main(): Promise<void> {
       applicationVersion,
       instanceNonce,
       now: () => new Date(),
-      getStatus: () => status,
-      refresh: () => runRefresh(true),
+      getStatus: boardRefreshServices.getStatus,
+      refresh: () => boardRefreshServices.runRefresh(true),
       refreshProjectByRootPath,
       events,
       boardThresholdsConfigStore,
       hygieneThresholdsConfigStore,
-      sessions: () => sessionLivenessTracker.current(),
-      links: () => transcriptLinkTracker.list(),
+      sessions: () => boardSessionServices.sessionLivenessTracker.current(),
+      links: () => boardSessionServices.transcriptLinkTracker.list(),
       commentReader,
       prStatusReader,
       processScanner,
@@ -669,7 +253,7 @@ async function main(): Promise<void> {
       issueWriter,
       dependencyWriter,
       sessionLinkWriter,
-      sessionTail: sessionTailReader,
+      sessionTail: boardSessionServices.sessionTailReader,
       writeAccess,
       leaseReader,
       mergeSlotReader,
@@ -679,371 +263,126 @@ async function main(): Promise<void> {
   );
 
   const app = new Hono();
-  const repoRoot = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-  );
-  mountSecurityMiddleware(app, {
-    authMode,
-    access: tunnelAccess,
-    getExtraCredentials: () => tunnelService.getCredentials(),
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+  const { attachmentsRouter } = wireAttachments({
+    repoRoot,
+    env: process.env,
+    cache,
+    writeAccess,
   });
-  app.use('*', createCompressionMiddleware());
 
-  // 未対応機能は inner へ届く前に 501 で止める。素通しすると ps/lsof や
-  // .cmd シムが無いことに由来する例外が 500 になり、「壊れている」のか
-  // 「そもそも動かない」のか区別が付かない (bdboard-70z.9)。
-  app.route('/', createPlatformSupportRoutes({ platformSupport }));
-  // コレクションとワイルドカードの両方を登録する。後からサブパス
-  // (/api/processes/:pid など) が足されたときの掛け忘れを防ぐ、という
-  // chat-routes.ts の既存の作法に合わせている (PR#115 fable レビュー nit)。
-  for (const pattern of ['/api/processes', '/api/processes/*']) {
-    app.use(pattern, createPlatformFeatureGuard(platformSupport, 'session-discovery'));
-  }
-  app.use('/api/chat/*', createPlatformFeatureGuard(platformSupport, 'chat'));
-
-  // チケット添付画像 (bdboard-qw26) は `inner` (routes.ts) より先に mount する。
-  // routes.ts の `GET /api/tickets/:id{.+}` は catch-all で `:id` に '/' を含む
-  // 任意の残りパスを飲み込むため、`/api/tickets/:id/attachments` 等を
-  // `inner` の後に mount すると先着の catch-all に横取りされ、常に
-  // "ticket not found" になってしまう (実機確認で発覚: bdboard-qw26)。
-  // Hono は method+path が重なる場合は登録順で先勝ちなので、ここで
-  // catch-all より先に登録して優先させる。保存先は常に main checkout 側
-  // (repoRoot) の gitignore 済みディレクトリで、BDBOARD_ATTACHMENTS_DIR で
-  // 上書きできる。書き込みは chat と同じ writeAccess 材料 (bdboard-9rz/cu4)
-  // を共有する。
-  const attachmentsDir = resolveAttachmentsDir(repoRoot, process.env);
-  const attachmentStorage = createFsAttachmentStorage(attachmentsDir);
-  app.route(
-    '/',
-    createAttachmentRoutes({
-      cache,
-      storage: attachmentStorage,
-      writeAccess,
-    }),
-  );
-  console.log(`Ticket attachments: storing under ${attachmentsDir}`);
-
-  app.route('/', inner);
-
-  const harnessPacksRoot = path.join(repoRoot, 'harness', 'packs');
-  const packRegistry = createFsPackRegistry(harnessPacksRoot);
-  const harnessInjector = createFsHarnessInjector({ packsRoot: harnessPacksRoot });
-  app.route(
-    '/',
-    createHarnessRoutes({
-      cache,
-      registry: packRegistry,
-      injector: harnessInjector,
-      contractReader: harnessContractReader,
-      writeAccess,
-      issueWriter,
-      refreshProjectByRootPath,
-    }),
-  );
-
-  app.route(
-    '/',
-    createScanRootsRoutes({
-      store: scanRootsConfigStore,
-      writeAccess,
-      isEnvOverridden: isScanRootsEnvOverridden,
-      envScanRoots: isScanRootsEnvOverridden ? envScanRootsList : undefined,
-      resolveDefaultScanRoots: () => resolveDefaultScanRoots(fsPort),
-    }),
-  );
-
-  app.route(
-    '/',
-    createBoardThresholdsRoutes({
-      store: boardThresholdsConfigStore,
-      writeAccess,
-    }),
-  );
-
-  app.route(
-    '/',
-    createHygieneThresholdsRoutes({
-      store: hygieneThresholdsConfigStore,
-      writeAccess,
-    }),
-  );
-
-  app.route('/', createDbStatsRoutes({ cache }));
-
-  app.route(
-    '/',
-    createAiQuotaAlertRoutes({
-      store: aiQuotaAlertConfigStore,
-      writeAccess,
-    }),
-  );
-
-  const agentRunConfigStore = createFileAgentRunConfigStore(
-    envString('BDBOARD_AGENT_RUN_CONFIG_PATH', configFilePath),
-  );
-  app.route(
-    '/',
-    createAgentRunSettingsRoutes({
-      store: agentRunConfigStore,
-      writeAccess,
-    }),
-  );
-
-  const agentRunRegistry = createAgentRunnerRegistry();
-  agentRunRegistry.register(
-    createClaudeSpawnRunner({
-      streamingRunner: streamingCommandRunner,
-    }),
-  );
-  const runStore = createRunStore({
-    // Keep in sync with run-store DEFAULT_MAX_CONCURRENT: verify uses two slots per
-    // machine, and each run prompt drives npm run verify.
-    maxConcurrent: envInt('BDBOARD_MAX_CONCURRENT_RUNS', 1),
-    now: () => new Date(),
+  const { harnessRouter, packRegistry, harnessInjector } = wireHarness({
+    repoRoot,
+    cache,
+    harnessContractReader,
+    writeAccess,
+    issueWriter,
+    refreshProjectByRootPath,
   });
-  const worktreeProvisioner = createGitWorktreeProvisioner({
+
+  const scanRootsRouter = createScanRootsRoutes({
+    store: scanRootsConfigStore,
+    writeAccess,
+    isEnvOverridden: boardRefreshServices.isScanRootsEnvOverridden,
+    envScanRoots: boardRefreshServices.isScanRootsEnvOverridden
+      ? boardRefreshServices.envScanRootsList
+      : undefined,
+    resolveDefaultScanRoots: () => resolveDefaultScanRoots(fsPort),
+  });
+
+  const boardThresholdsRouter = createBoardThresholdsRoutes({
+    store: boardThresholdsConfigStore,
+    writeAccess,
+  });
+
+  const hygieneThresholdsRouter = createHygieneThresholdsRoutes({
+    store: hygieneThresholdsConfigStore,
+    writeAccess,
+  });
+
+  const dbStatsRouter = createDbStatsRoutes({ cache });
+
+  const aiQuotaAlertRouter = createAiQuotaAlertRoutes({
+    store: aiQuotaAlertConfigStore,
+    writeAccess,
+  });
+
+  const { agentRunSettingsRouter, agentRunRouter, runStore } = await wireAgentRun({
+    env: process.env,
+    configFilePath,
+    cache,
     commandRunner,
+    streamingCommandRunner,
     ghPath,
-    maxManagedWorktrees: envInt(
-      'BDBOARD_MAX_MANAGED_WORKTREES',
-      DEFAULT_MAX_MANAGED_WORKTREES,
-    ),
+    writeAccess,
+    issueWriter,
+    packRegistry,
+    harnessInjector,
+    harnessContractReader,
   });
 
-  // bdboard-54be.1: allowRemoteAgentRuns は起動時に一度だけ読み、リクエスト毎に config を
-  // 再読み込みしない。実行中のエージェントが config ファイルを書き換えた瞬間にリモート実行が
-  // 有効化される権限昇格経路（confused deputy）になるため。変更を反映するにはサーバー再起動が
-  // 必要 — UX（即時反映）より安全側を取る裁定済みのトレードオフ。ここをリクエスト毎の再読み込み
-  // に戻さないこと。
-  const remoteAgentRunsAllowed = await (async (): Promise<boolean> => {
-    try {
-      return resolveAllowRemoteAgentRuns(await agentRunConfigStore.read());
-    } catch (err) {
-      console.warn('bdboard: failed to read agent run config for startup log', err);
-      return false;
-    }
-  })();
-  console.log(
-    `Agent runs: enabled (remote: ${remoteAgentRunsAllowed ? 'allowed' : 'denied'} by setting)`,
-  );
-
-  const agentRunRoutesNow = () => new Date();
-  app.route(
-    '/',
-    createAgentRunRoutes({
-      cache,
-      registry: agentRunRegistry,
-      runStore,
-      worktreeProvisioner,
-      // provisioner が返す worktree パスは `git worktree list --porcelain` の realpath
-      // なので、repoRoot から組み立てた期待値と揃えるにはガード側も realpath 正規化が要る
-      // (/tmp と /private/tmp など)。infrastructure の実装をここで注入する。
-      normalizePath: normalizePathForComparison,
-      writeAccess,
-      isRemoteAgentRunAllowed: async () => remoteAgentRunsAllowed,
-      // preflight (bdboard-pkr6.11) はハーネス表示と同じ組み立てを使う。
-      // 「バッジは緑なのに run は 409」を避けるため、入力を 1 関数に寄せている。
-      // now も同じ agentRunRoutesNow を通すことで、models.exclude の期限切れ判定
-      // (harness-contract.ts の isModelExcludeActive) がこのリクエスト内の他の
-      // 時刻判定と食い違わないようにする (harness-routes.ts の deps.now?.() と同じ流儀)。
-      getHarnessStatus: (repoRootPath: string) =>
-        readProjectHarnessStatus(
-          {
-            registry: packRegistry,
-            injector: harnessInjector,
-            contractReader: harnessContractReader,
-          },
-          repoRootPath,
-          agentRunRoutesNow(),
-        ),
-      now: agentRunRoutesNow,
-      // run 開始時のチケット claim (bdboard-pkr6.26)。routes.ts のクイックアクション
-      // claim と同じ issueWriter インスタンスを共有する。
-      issueWriter,
-    }),
-  );
-
-  app.route(
-    '/',
-    createTunnelRoutes({
-      tunnelService,
-      authEnabled: authMode.kind === 'enabled',
-      access: tunnelAccess,
-    }),
-  );
-
-  // 新しいリリースの通知 (bdboard-70z.7)。bdboard はローカル完結のツールなので、
-  // 外部への通信が増えるのは性質の変化にあたる。既定は有効だが
-  // BDBOARD_UPDATE_CHECK_DISABLED=1 で完全に無効化でき、無効時は
-  // createUpdateCheckService がネットワークへ一切出ない (ルート自体は残り、
-  // 常に state=unknown を返す — UI 側はそれを「黙る」として扱う)。
-  const updateCheckEnabled = !envBool('BDBOARD_UPDATE_CHECK_DISABLED');
-  const updateCheckService = createUpdateCheckService({
-    applicationVersion,
-    source: createGithubReleaseSource({
-      repository: envString('BDBOARD_UPDATE_CHECK_REPO', 'xiaotiantakumi/bdboard'),
-      timeoutMs: envInt('BDBOARD_UPDATE_CHECK_TIMEOUT_MS', 3_000),
-      userAgent: applicationVersion.getVersion(),
-    }),
-    now: () => new Date(),
-    ttlMs: envInt('BDBOARD_UPDATE_CHECK_CACHE_MS', 6 * 60 * 60_000),
-    enabled: updateCheckEnabled,
+  const tunnelRouter = createTunnelRoutes({
+    tunnelService,
+    authEnabled: authMode.kind === 'enabled',
+    access: tunnelAccess,
   });
-  app.route('/', createUpdateCheckRoutes({ updateCheckService }));
 
-  const aiQuotaDisabled = envBool('BDBOARD_AI_QUOTA_DISABLED');
-  if (!aiQuotaDisabled) {
-    const aiQuotaSource = createNodeAiQuotaSource(commandRunner, {
-      command: envString('BDBOARD_AI_QUOTA_PATH', 'ai-quota'),
-      timeoutMs: envInt('BDBOARD_AI_QUOTA_TIMEOUT_MS', 70_000),
-    });
-    const aiQuotaService = createAiQuotaService({
-      source: aiQuotaSource,
-      now: () => new Date(),
-      ttlMs: envInt('BDBOARD_AI_QUOTA_CACHE_MS', 5 * 60_000),
-    });
-    app.route('/', createAiQuotaRoutes({ aiQuotaService }));
+  const { updateCheckRouter } = wireUpdateCheck({ env: process.env, applicationVersion });
 
-    const aiQuotaThresholdPublisher = createAiQuotaThresholdPublisher();
-    // SSE購読者がいない間は`ai-quota`の実プローブ(pty経由、agy/codexを順に叩き最大50秒強)を
-    // 起動しない — 誰も見ていないヘッダウィジェットのために常時稼働サーバー上で永久に
-    // ptyプローブを回し続けていた問題(bdboard-uopj)。購読者がいる間だけ通常の
-    // getSnapshot()(必要ならfetchを起動)を使い、いない間はpeekSnapshot()でキャッシュ
-    // 参照のみに留める(キャッシュが無ければ何もしない)。
-    const checkAiQuotaThresholds = async (): Promise<void> => {
-      try {
-        const state = events.subscriberCount() > 0
-          ? await aiQuotaService.getSnapshot()
-          : aiQuotaService.peekSnapshot();
-        if (state === null || state.kind !== 'ok') {
-          return;
-        }
-        const config = await aiQuotaAlertConfigStore.read();
-        const thresholdPercent = resolveAiQuotaAlertThresholdPercent(config);
-        const occurredAt = new Date();
-        for (const payload of aiQuotaThresholdPublisher.collectBreaches(
-          state.providers,
-          thresholdPercent,
-          occurredAt,
-        )) {
-          events.publish({ name: 'notification', data: payload });
-        }
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        console.error(`AI quota threshold check error: ${detail}`);
-      }
-    };
-    void checkAiQuotaThresholds();
-    aiQuotaAlertIntervalTimer = setInterval(
-      () => void checkAiQuotaThresholds(),
-      envInt('BDBOARD_AI_QUOTA_ALERT_INTERVAL_MS', 60_000),
-    );
+  const { aiQuotaRouter, aiQuotaAlertIntervalTimer } = wireAiQuotaWidget({
+    env: process.env,
+    aiQuotaDisabled: envBool('BDBOARD_AI_QUOTA_DISABLED'),
+    commandRunner,
+    events,
+    aiQuotaAlertConfigStore,
+  });
 
-    console.log('AI quota widget: enabled');
-  } else {
-    console.log('AI quota widget: disabled');
-  }
-
-  const chatDisabled = envBool('BDBOARD_CHAT_DISABLED');
-  const chatCloseables: { readonly close: () => void }[] = [];
-  if (!chatDisabled) {
-    // 登録配線そのもの(claude 常時登録 / codex・cursor は opt-in 時のみ)は
-    // chat-agent-registry-builder.ts に切り出してユニットテスト可能にしてある
-    // (bdboard-l1t.4 SF6, cursor は bdboard-l1t.5)。ここでは env を渡して呼ぶだけにする。
-    const { registry: chatAgentRegistry, codexEnabled, cursorEnabled, agyEnabled } = buildChatAgentRegistry(
-      process.env,
-      commandRunner,
-      streamingCommandRunner,
-    );
-    if (codexEnabled) {
-      console.log('Chat: codex adapter enabled via BDBOARD_CHAT_AGENTS opt-in (bdboard-l1t.4)');
-    }
-    if (cursorEnabled) {
-      console.log('Chat: cursor adapter enabled via BDBOARD_CHAT_AGENTS opt-in (bdboard-l1t.5)');
-    }
-    if (agyEnabled) {
-      console.log('Chat: agy adapter enabled via BDBOARD_CHAT_AGENTS opt-in (bdboard-l1t.6)');
-    }
-    const chatAgent = chatAgentRegistry.defaultAgent();
-    if (chatAgent === undefined) {
-      throw new Error('chat agent registry has no registered agents');
-    }
-    const chatSessionRepository = createSqliteChatSessionRepository(dbPath);
-    const chatMessageRepository = createSqliteChatMessageRepository(dbPath);
-    chatCloseables.push(chatSessionRepository, chatMessageRepository);
-    const chatStore = createChatSessionStore({ repository: chatSessionRepository });
-    const chatPerMinute = envInt(
-      'BDBOARD_CHAT_TUNNEL_RATE_PER_MINUTE',
-      DEFAULT_CHAT_RATE_LIMIT_PER_MINUTE,
-    );
-    const chatPerDay = envInt(
-      'BDBOARD_CHAT_TUNNEL_LIMIT_PER_DAY',
-      DEFAULT_CHAT_RATE_LIMIT_PER_DAY,
-    );
-    const chatDefaultWeight = envFloat(
-      'BDBOARD_CHAT_RATE_WEIGHT_DEFAULT',
-      DEFAULT_CHAT_RATE_LIMIT_WEIGHT,
-    );
-    app.route(
-      '/',
-      createChatRoutes({
-        cache,
-        agents: chatAgentRegistry,
-        store: chatStore,
-        sessionDiscovery: chatSessionDiscovery,
-        messages: chatMessageRepository,
-        writeAccess,
-        rateLimit: {
-          perMinute: chatPerMinute,
-          perDay: chatPerDay,
-          defaultWeight: chatDefaultWeight,
-        },
-      }),
-    );
-    console.log(
-      'Chat: enabled (local, or a tunnel session from the QR when the tunnel password is strong)',
-    );
-    const defaultAgentModels = chatAgentRegistry.defaultAgent()?.descriptor.models;
-    const modelWeightsLog =
-      defaultAgentModels !== undefined && defaultAgentModels.length > 0
-        ? ` (${defaultAgentModels
-            .map((entry) => `${entry.id} x${entry.weight ?? chatDefaultWeight}`)
-            .join(', ')})`
-        : '';
-    console.log(
-      `Chat rate limit (tunnel only): ${chatPerMinute}/min, ${chatPerDay}/day${modelWeightsLog}`,
-    );
-  } else {
-    console.log('Chat: disabled');
-  }
+  const { chatRouter, chatCloseables } = wireChat({
+    env: process.env,
+    chatDisabled: envBool('BDBOARD_CHAT_DISABLED'),
+    cache,
+    chatSessionDiscovery: boardSessionServices.chatSessionDiscovery,
+    dbPath,
+    commandRunner,
+    streamingCommandRunner,
+    writeAccess,
+  });
 
   const webDistDir = resolveWebDistDir(repoRoot, process.env);
-
   const spaIndexPath = path.join(webDistDir, 'index.html');
+  let staticSpa: StaticSpaDeps | undefined;
   if (fs.existsSync(spaIndexPath)) {
     const spaIndexHtml = fs.readFileSync(spaIndexPath, 'utf8');
-
     console.log(`Serving static web UI from ${webDistDir}`);
-
-    // root には絶対パスを渡す。以前は path.relative(process.cwd(), webDistDir) を
-    // 渡していて実際に動いていたが、それは @hono/node-server の serve-static が
-    // root を (存在チェックの警告ログを除いて) 検証も正規化もせず、join(root, filename)
-    // の結果をそのまま statSync に渡す (= cwd 基準で解決される) 実装詳細と、path.relative の
-    // 計算がちょうど相殺していただけだった。任意の cwd から起動すると root は
-    // ".." を含む相対パスになる。serve-static が将来 root を正規化・検証するように
-    // なれば黙って壊れる類の依存なので、cwd に依存しない絶対パスに寄せる
-    // (join は絶対パスの LHS を保持する)。bdboard-gki。
-    app.use('/*', serveStatic({ root: webDistDir }));
-    app.get('*', (c) => {
-      if (c.req.path.startsWith('/api/') || c.req.path === '/api') {
-        return c.notFound();
-      }
-      return c.html(spaIndexHtml);
-    });
+    staticSpa = { webDistDir, spaIndexHtml };
   } else {
     console.log('web/dist not found; serving API only');
   }
+
+  mountRoutes(app, {
+    security: {
+      authMode,
+      access: tunnelAccess,
+      getExtraCredentials: () => tunnelService.getCredentials(),
+    },
+    platformSupport,
+    attachmentsRouter,
+    inner,
+    harnessRouter,
+    scanRootsRouter,
+    boardThresholdsRouter,
+    hygieneThresholdsRouter,
+    dbStatsRouter,
+    aiQuotaAlertRouter,
+    agentRunSettingsRouter,
+    agentRunRouter,
+    tunnelRouter,
+    updateCheckRouter,
+    aiQuotaRouter,
+    chatRouter,
+    staticSpa,
+  });
 
   const server = serve({
     fetch: app.fetch,
@@ -1094,7 +433,7 @@ async function main(): Promise<void> {
   });
 
   const shutdownForSignal = (): void => {
-    clearInterval(intervalTimer);
+    clearInterval(refreshIntervalTimer);
     if (sessionIntervalTimer !== null) {
       clearInterval(sessionIntervalTimer);
     }
