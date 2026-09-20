@@ -50,6 +50,14 @@ const RUNNER_REFERENCE_ALLOWLIST_FILES = [
   // wire-agent-run.ts へ移し、ガードを緩めたままにしない。
   'src/bootstrap/wire-agent-run.ts',
   'src/application/ports/agent-runner.ts',
+  // bdboard-sso1.36: agent-run-routes.test.ts (2007行) の move-only 分割で、
+  // 複数のテストファイルから共有されるフェイク/ヘルパー置き場として
+  // agent-run-routes-test-support.ts を新設した。中身は createRunStore /
+  // createAgentRunnerRegistry のフェイクや AgentRunner 型を使うテスト用
+  // フィクスチャのみで、実行時の dispatch 経路には一切関わらない。`.test.ts`
+  // 拡張子ではないため collectSourceFiles のスキャン対象になるが、実体は
+  // *.test.ts と同じテスト専用コードなのでここに明示的に許可する。
+  'src/interface/http/agent-run-routes-test-support.ts',
 ] as const;
 
 const RUNNER_REFERENCE_ALLOWLIST_PREFIXES = [
