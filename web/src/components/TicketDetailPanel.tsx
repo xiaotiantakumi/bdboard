@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   BD_COMMAND_DEFINITIONS,
   buildBdCommand,
@@ -7,37 +7,21 @@ import {
   copyTextToClipboard,
 } from '../bdCommands';
 import {
-  cancelAgentRun,
-  fetchAgentRun,
-  fetchProjectHarnessStatus,
   fetchTicket,
-  fetchTicketRuns,
   fetchTicketComments,
   fetchTicketTimeline,
   fetchSimilarTickets,
   fetchTicketInFlightOverlaps,
-  postTicketDecision,
-  startTicketRun,
-  type AgentRunDetailDto,
   type AgentRunNextStepDto,
 } from '../api';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import {
-  AGENT_RUN_POLL_INTERVAL_MS,
-  AGENT_RUN_POLL_MAX_FAILURES,
-  buildRunNextStepCommand,
-  describeHarnessRunBlock,
-  describeRunStartError,
-  isAgentRunInProgress,
-} from './agentRunShared';
+import { buildRunNextStepCommand } from './agentRunShared';
 import {
   SidePanelResizeHandle,
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
-import { formatAbsoluteTime } from '../formatAbsoluteTime';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
-import { describeWriteError } from '../writeAccessMessage';
 import { MarkdownContent } from './MarkdownContent';
 import { PrLinkBadge } from './PrLinkBadge';
 import { WatchToggle } from './WatchToggle';
@@ -50,16 +34,12 @@ import {
   type NextStepCopyTarget,
   type CopyDisplay,
   EMPTY_COPY_DISPLAY,
-  type SubmittedDecision,
 } from './ticket-detail/types';
 import { formatDateTime } from './ticket-detail/formatters';
 import {
   AGENT_RUN_LOG_LOCAL_ONLY_HELP,
-  computeRunStartDisabled,
   AGENT_RUN_NEXT_STEP_LABEL,
-  formatAgentRunStatus,
 } from './ticket-detail/agentRun';
-import { AgentRunNextStep } from './ticket-detail/AgentRunNextStep';
 import { TicketIdLink } from './ticket-detail/TicketIdLink';
 import { TicketTimelineSection } from './ticket-detail/TicketTimelineSection';
 import { TicketCommentsSection } from './ticket-detail/TicketCommentsSection';
@@ -82,6 +62,14 @@ import { useTicketSessionLink } from './ticket-detail/useTicketSessionLink';
 import { TicketSessionLinkSection } from './ticket-detail/TicketSessionLinkSection';
 import { useTicketQuickActions } from './ticket-detail/useTicketQuickActions';
 import { TicketQuickActionsSection } from './ticket-detail/TicketQuickActionsSection';
+import { useTicketAgentRun } from './ticket-detail/useTicketAgentRun';
+import {
+  TicketAgentRunTrigger,
+  TicketAgentRunConfirm,
+} from './ticket-detail/TicketAgentRunTriggerSection';
+import { TicketAgentRunSection } from './ticket-detail/TicketAgentRunSection';
+import { useTicketDecisionAnswer } from './ticket-detail/useTicketDecisionAnswer';
+import { TicketDecisionSection } from './ticket-detail/TicketDecisionSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -123,11 +111,10 @@ export function TicketDetailPanel({
     });
   }, [data?.id, data?.title, data?.projectId, onTicketViewed]);
 
-  const [submittedDecision, setSubmittedDecision] =
-    useState<SubmittedDecision | null>(null);
+  const decision = useTicketDecisionAnswer(ticketId, pendingDecision);
   const commentsEnabled =
     data !== undefined &&
-    (data.commentCount > 0 || submittedDecision !== null);
+    (data.commentCount > 0 || decision.submittedDecision !== null);
   const {
     data: comments,
     isLoading: commentsLoading,
@@ -165,45 +152,7 @@ export function TicketDetailPanel({
     queryFn: () => fetchTicketInFlightOverlaps(ticketId),
     enabled: inFlightOverlapsEnabled,
   });
-  // エージェント実行の前提 (bdboard-pkr6.11)。ProjectHarnessBadges と同じ
-  // queryKey なので、同じプロジェクトを表示中なら取得は 1 回に畳まれる。
-  const harnessProjectId = data?.projectId;
-  const { data: harnessStatus } = useQuery({
-    queryKey: ['project-harness', harnessProjectId],
-    queryFn: () => {
-      if (harnessProjectId === undefined) {
-        throw new Error('project id is required');
-      }
-      return fetchProjectHarnessStatus(harnessProjectId);
-    },
-    enabled: harnessProjectId !== undefined,
-    // 前提の可視化が目的なので、落ちたら黙って未取得のまま (= ブロックしない)。
-    // リトライで詳細パネルを開くたびに 3 回叩く価値は無い。
-    retry: false,
-  });
-  const harnessRunBlockReason = describeHarnessRunBlock(harnessStatus);
-  const {
-    data: ticketRunsData,
-    isLoading: ticketRunsLoading,
-    error: ticketRunsError,
-  } = useQuery({
-    queryKey: ['ticket-runs', ticketId],
-    queryFn: () => fetchTicketRuns(ticketId),
-  });
-  const [confirmingAgentRun, setConfirmingAgentRun] = useState(false);
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
-  const [activeRunMeta, setActiveRunMeta] = useState<{
-    worktreePath: string;
-    branchName: string;
-    reused: boolean;
-  } | null>(null);
-  const [polledRunDetail, setPolledRunDetail] = useState<AgentRunDetailDto | null>(
-    null,
-  );
-  const [runStatusUnavailable, setRunStatusUnavailable] = useState(false);
-  const [selectedHistoryRunId, setSelectedHistoryRunId] = useState<string | null>(
-    null,
-  );
+  const agentRun = useTicketAgentRun(ticketId, data);
   // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
   // setTimeout だとアンマウント後にタイマーを仕掛けうる。
   const {
@@ -213,10 +162,6 @@ export function TicketDetailPanel({
   } = useAutoClearedValue<CopyDisplay>(EMPTY_COPY_DISPLAY, COPY_FEEDBACK_MS);
   const copyFeedback = copyDisplay.feedback;
   const ariaLiveMessage = copyDisplay.aria;
-  const [selectedChoice, setSelectedChoice] = useState<string | undefined>(
-    undefined,
-  );
-  const [freeformText, setFreeformText] = useState('');
   const quickActions = useTicketQuickActions(ticketId, data, undoSnackbar);
   const {
     titleEditing,
@@ -291,24 +236,17 @@ export function TicketDetailPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const cancelAgentRunConfirmRef = useRef<HTMLButtonElement>(null);
-  const agentRunConfirmRef = useRef<HTMLDivElement>(null);
   const projectRootPath =
     data === undefined ? undefined : projectRootPaths.get(data.projectId);
 
-  // 質問への回答欄だけを初期化する。resetFormState はこれを含む全体リセット。
-  const resetDecisionAnswer = useCallback(() => {
-    setSelectedChoice(undefined);
-    setFreeformText('');
-  }, []);
-
   const resetQuickActions = quickActions.reset;
+  const resetDecision = decision.reset;
+  const resetAgentRun = agentRun.reset;
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
     clearCopyDisplay();
-    resetDecisionAnswer();
-    if (options?.clearSubmittedDecision === true) {
-      setSubmittedDecision(null);
-    }
+    resetDecision({
+      clearSubmittedDecision: options?.clearSubmittedDecision === true,
+    });
     resetQuickActions();
     resetComment();
     resetDependencies();
@@ -316,16 +254,13 @@ export function TicketDetailPanel({
     resetTitleEditing();
     resetDescriptionEditing();
     resetSessionLink();
-    setConfirmingAgentRun(false);
-    setActiveRunId(null);
-    setActiveRunMeta(null);
-    setPolledRunDetail(null);
-    setSelectedHistoryRunId(null);
+    resetAgentRun();
   }, [
     clearCopyDisplay,
+    resetAgentRun,
+    resetDecision,
     resetQuickActions,
     resetComment,
-    resetDecisionAnswer,
     resetDependencies,
     resetDescriptionEditing,
     resetLabelInput,
@@ -341,172 +276,7 @@ export function TicketDetailPanel({
     containerRef: panelRef,
     initialFocusRef: closeButtonRef,
     onEscape: onClose,
-    enabled: quickActions.confirmingQuickAction === null && !confirmingAgentRun,
-  });
-
-  const handleCancelAgentRun = useCallback(() => {
-    setConfirmingAgentRun(false);
-  }, []);
-
-  useFocusTrap({
-    containerRef: agentRunConfirmRef,
-    initialFocusRef: cancelAgentRunConfirmRef,
-    enabled: confirmingAgentRun,
-    onEscape: handleCancelAgentRun,
-  });
-
-  const activeRunFromList = useMemo(() => {
-    return ticketRunsData?.runs.find((run) => isAgentRunInProgress(run.status));
-  }, [ticketRunsData]);
-
-  const hasActiveRun = useMemo(() => {
-    if (runStatusUnavailable) {
-      return false;
-    }
-    if (
-      polledRunDetail !== null &&
-      isAgentRunInProgress(polledRunDetail.status)
-    ) {
-      return true;
-    }
-    if (activeRunFromList !== undefined) {
-      return true;
-    }
-    if (activeRunId !== null && polledRunDetail === null) {
-      return true;
-    }
-    return false;
-  }, [activeRunFromList, activeRunId, polledRunDetail, runStatusUnavailable]);
-
-  const runStartDisabled = useMemo(() => {
-    if (data === undefined) {
-      return { disabled: true };
-    }
-    return computeRunStartDisabled(data, hasActiveRun);
-  }, [data, hasActiveRun]);
-
-  useEffect(() => {
-    if (activeRunFromList === undefined) {
-      return;
-    }
-    setActiveRunId(activeRunFromList.id);
-  }, [activeRunFromList?.id, ticketId]);
-
-  const {
-    data: selectedHistoryRun,
-    isLoading: selectedHistoryRunLoading,
-    error: selectedHistoryRunError,
-  } = useQuery({
-    queryKey: ['agent-run', selectedHistoryRunId],
-    queryFn: () => fetchAgentRun(selectedHistoryRunId!),
-    enabled: selectedHistoryRunId !== null,
-  });
-
-  useEffect(() => {
-    if (activeRunId === null) {
-      setPolledRunDetail(null);
-      setRunStatusUnavailable(false);
-      return;
-    }
-
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
-    let consecutiveFailures = 0;
-
-    setRunStatusUnavailable(false);
-    consecutiveFailures = 0;
-
-    const poll = async (): Promise<AgentRunDetailDto | null> => {
-      try {
-        const detail = await fetchAgentRun(activeRunId);
-        if (cancelled) {
-          return null;
-        }
-        consecutiveFailures = 0;
-        setRunStatusUnavailable(false);
-        setPolledRunDetail(detail);
-        if (!isAgentRunInProgress(detail.status)) {
-          void queryClient.invalidateQueries({
-            queryKey: ['ticket-runs', ticketId],
-          });
-        }
-        return detail;
-      } catch (pollError) {
-        console.error('Failed to poll agent run', pollError);
-        if (cancelled) {
-          return null;
-        }
-        consecutiveFailures += 1;
-        if (consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
-          setRunStatusUnavailable(true);
-          if (intervalId !== undefined) {
-            clearInterval(intervalId);
-            intervalId = undefined;
-          }
-        }
-        return null;
-      }
-    };
-
-    void (async () => {
-      const initialDetail = await poll();
-      if (cancelled || consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
-        return;
-      }
-      if (
-        initialDetail !== null &&
-        !isAgentRunInProgress(initialDetail.status)
-      ) {
-        return;
-      }
-
-      intervalId = setInterval(() => {
-        void (async () => {
-          const detail = await poll();
-          if (cancelled || consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
-            return;
-          }
-          if (
-            detail !== null &&
-            !isAgentRunInProgress(detail.status) &&
-            intervalId !== undefined
-          ) {
-            clearInterval(intervalId);
-            intervalId = undefined;
-          }
-        })();
-      }, AGENT_RUN_POLL_INTERVAL_MS);
-    })();
-
-    return () => {
-      cancelled = true;
-      if (intervalId !== undefined) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [activeRunId, queryClient, ticketId]);
-
-  const startRunMutation = useMutation({
-    mutationFn: () => startTicketRun(ticketId),
-    onSuccess: (response) => {
-      setConfirmingAgentRun(false);
-      setActiveRunId(response.runId);
-      setActiveRunMeta({
-        worktreePath: response.worktreePath,
-        branchName: response.branchName,
-        reused: response.reused,
-      });
-      void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
-    },
-  });
-
-  const cancelRunMutation = useMutation({
-    mutationFn: async () => {
-      if (activeRunId === null) {
-        throw new Error('active run is not available');
-      }
-      await cancelAgentRun(activeRunId);
-    },
+    enabled: quickActions.confirmingQuickAction === null && !agentRun.confirmingAgentRun,
   });
 
   useEffect(() => {
@@ -567,77 +337,15 @@ export function TicketDetailPanel({
     [showCopyDisplay],
   );
 
-  const trimmedFreeform = freeformText.trim();
-  const canSubmitDecision =
-    selectedChoice !== undefined || trimmedFreeform.length > 0;
-
-  const decisionMutation = useMutation({
-    mutationFn: async () => {
-      if (pendingDecision === undefined) {
-        throw new Error('pending decision is not available');
-      }
-
-      return postTicketDecision(pendingDecision.id, {
-        ...(selectedChoice !== undefined ? { choice: selectedChoice } : {}),
-        ...(trimmedFreeform.length > 0 ? { freeform: trimmedFreeform } : {}),
-      });
-    },
-    onSuccess: async (outcome) => {
-      if (pendingDecision !== undefined) {
-        const choiceLabel =
-          selectedChoice !== undefined
-            ? pendingDecision.options?.find(
-                (option) => option.value === selectedChoice,
-              )?.label
-            : undefined;
-        setSubmittedDecision({
-          decisionId: pendingDecision.id,
-          outcome,
-          ...(choiceLabel !== undefined ? { choiceLabel } : {}),
-          ...(trimmedFreeform.length > 0 ? { freeform: trimmedFreeform } : {}),
-        });
-      }
-      await queryClient.invalidateQueries({ queryKey: ['ticket', ticketId] });
-      await queryClient.invalidateQueries({ queryKey: ['pending-decisions'] });
-      await queryClient.invalidateQueries({
-        queryKey: ['ticket-comments', ticketId],
-      });
-      setSelectedChoice(undefined);
-      setFreeformText('');
-    },
-  });
-
-  // submittedDecision は pendingDecision 切り替えでは消さない。回答直後に
-  // 「送信した回答」セクションが消えると bdboard-50n の元バグに戻るため。
-  //
-  // ここで消すのは *この質問への回答欄だけ*。pendingDecision はポーリング由来で、
-  // 利用者が何もしていなくても出現/消滅する — フォーム全体を resetFormState() で
-  // 消していたため、エージェントが質問を投稿した瞬間に書きかけのコメントや
-  // クローズ理由が警告なく消えていた (bdboard-9hl)。チケット自体が変わったときの
-  // 全体リセットは上の effect が担当する。
-  //
-  // 送信ミューテーションの状態もここで捨てる。質問1の送信に失敗したあと
-  // エージェントが質問1を取り下げて質問2を出すと、質問2の送信ボタンの下に
-  // 質問1の失敗メッセージが残り続けていた (bdboard-uez)。id が変わったときだけ
-  // 消すので、「失敗したが質問は同じまま」ではメッセージは残る。
-  //
-  // この effect が decisionMutation の下にあるのは、deps 配列が描画中に
-  // 評価されるため。上に置くと decisionMutation が TDZ で ReferenceError になる。
-  const resetDecision = decisionMutation.reset;
-  useEffect(() => {
-    resetDecisionAnswer();
-    resetDecision();
-  }, [pendingDecision?.id, resetDecisionAnswer, resetDecision]);
-
   const quickActionsDisabled =
     quickActions.mutationPending ||
     quickActions.confirmingQuickAction !== null ||
-    confirmingAgentRun ||
-    startRunMutation.isPending;
+    agentRun.confirmingAgentRun ||
+    agentRun.startRunMutation.isPending;
   const agentRunActionsDisabled =
-    startRunMutation.isPending ||
+    agentRun.startRunMutation.isPending ||
     quickActions.confirmingQuickAction !== null ||
-    confirmingAgentRun;
+    agentRun.confirmingAgentRun;
 
   return (
     <div
@@ -672,7 +380,7 @@ export function TicketDetailPanel({
               return;
             }
           }
-          if (quickActions.confirmingQuickAction !== null || confirmingAgentRun) {
+          if (quickActions.confirmingQuickAction !== null || agentRun.confirmingAgentRun) {
             return;
           }
           const textarea = commentTextareaRef.current;
@@ -787,77 +495,24 @@ export function TicketDetailPanel({
                   このチケットについてチャット
                 </button>
               )}
-              <button
-                type="button"
-                className="btn ticket-run-btn"
-                disabled={
-                  agentRunActionsDisabled ||
-                  runStartDisabled.disabled ||
-                  harnessRunBlockReason !== null
-                }
-                title={runStartDisabled.reason ?? harnessRunBlockReason ?? undefined}
-                onClick={() => setConfirmingAgentRun(true)}
-              >
-                ▶ 実行
-              </button>
-              {harnessRunBlockReason !== null && (
-                <span className="agent-run-blocked-reason">
-                  {harnessRunBlockReason}
-                </span>
-              )}
-              {hasActiveRun && (
-                <span className="agent-run-active-indicator">実行中</span>
-              )}
+              <TicketAgentRunTrigger
+                agentRunActionsDisabled={agentRunActionsDisabled}
+                runStartDisabled={agentRun.runStartDisabled}
+                harnessRunBlockReason={agentRun.harnessRunBlockReason}
+                hasActiveRun={agentRun.hasActiveRun}
+                onStartConfirm={() => agentRun.setConfirmingAgentRun(true)}
+              />
             </div>
-            {confirmingAgentRun && (
-              <div
-                ref={agentRunConfirmRef}
-                className="quick-action-confirm-panel agent-run-confirm-panel"
-                role="alertdialog"
-                aria-labelledby="agent-run-confirm-title"
-                aria-describedby="agent-run-confirm-desc"
-              >
-                <p
-                  id="agent-run-confirm-title"
-                  className="quick-action-confirm-title"
-                >
-                  エージェント実行の確認
-                </p>
-                <p
-                  id="agent-run-confirm-desc"
-                  className="quick-action-confirm-desc"
-                >
-                  対象チケット用の worktree（.claude/worktrees/{ticketId}
-                  ）を新規作成するか、既に存在してクリーンならそれを再利用して、Claude
-                  CLI を起動します。対象 worktree
-                  に未コミットの変更がある場合は実行できません。よろしいですか?
-                </p>
-                <div className="quick-action-confirm-actions">
-                  <button
-                    ref={cancelAgentRunConfirmRef}
-                    type="button"
-                    className="btn quick-action-confirm-cancel"
-                    onClick={handleCancelAgentRun}
-                    disabled={startRunMutation.isPending}
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={() => startRunMutation.mutate()}
-                    disabled={startRunMutation.isPending}
-                  >
-                    {startRunMutation.isPending ? '実行中…' : '実行する'}
-                  </button>
-                </div>
-              </div>
-            )}
-            {startRunMutation.error !== null && (
-              <p className="error-message">
-                {describeRunStartError(startRunMutation.error)}
-              </p>
-            )}
+            <TicketAgentRunConfirm
+              ticketId={ticketId}
+              confirmingAgentRun={agentRun.confirmingAgentRun}
+              agentRunConfirmRef={agentRun.agentRunConfirmRef}
+              cancelAgentRunConfirmRef={agentRun.cancelAgentRunConfirmRef}
+              onCancelAgentRun={agentRun.handleCancelAgentRun}
+              onStartRun={() => agentRun.startRunMutation.mutate()}
+              startRunPending={agentRun.startRunMutation.isPending}
+              startRunError={agentRun.startRunMutation.error}
+            />
             <div className="detail-field">
               <div className="detail-field-label">ID</div>
               <div>{data.id}</div>
@@ -1050,130 +705,17 @@ export function TicketDetailPanel({
               onUnlinkSession={onUnlinkSession}
             />
             <TicketUsageSection usage={data.usage} />
-            {pendingDecision !== undefined && (
-              <div className="detail-section">
-                <h3>ユーザー確認待ち</h3>
-                {pendingDecision.question !== undefined && (
-                  <p className="detail-pre">{pendingDecision.question}</p>
-                )}
-                {pendingDecision.options !== undefined &&
-                  pendingDecision.options.length > 0 && (
-                    <div className="decision-options">
-                      {pendingDecision.options.map((option) => (
-                        <button
-                          key={option.value}
-                          type="button"
-                          className={`toggle-btn decision-option-btn${
-                            selectedChoice === option.value ? ' active' : ''
-                          }`}
-                          onClick={() => setSelectedChoice(option.value)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                <label className="decision-freeform-label" htmlFor="decision-freeform">
-                  自由記入
-                </label>
-                <textarea
-                  id="decision-freeform"
-                  className="decision-freeform-input"
-                  value={freeformText}
-                  onChange={(event) => setFreeformText(event.target.value)}
-                  rows={4}
-                />
-                {/*
-                 * pendingDecision.kind はキャッシュ由来で 'ticket' に倒れうる。
-                 * 'gate' と判定されたときだけ予告を出す片側運用。'ticket' 側には出さない。
-                 */}
-                {pendingDecision.kind === 'gate' && (
-                  <p className="detail-help">
-                    これは質問専用のゲートです。回答するとゲートはクローズされ、ブロックされていたチケットが着手可能になります。
-                  </p>
-                )}
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!canSubmitDecision || decisionMutation.isPending}
-                  onClick={() => decisionMutation.mutate()}
-                >
-                  {decisionMutation.isPending ? '送信中…' : '回答を送信'}
-                </button>
-                {decisionMutation.error !== null && (
-                  <p className="error-message">
-                    {describeWriteError(
-                      decisionMutation.error,
-                      '回答の送信に失敗しました',
-                    )}
-                  </p>
-                )}
-              </div>
-            )}
-            {submittedDecision !== null &&
-              (pendingDecision === undefined ||
-                pendingDecision.id === submittedDecision.decisionId) && (
-              <div className="detail-section">
-                <h3>送信した回答</h3>
-                {submittedDecision.choiceLabel !== undefined && (
-                  <p className="detail-pre">{submittedDecision.choiceLabel}</p>
-                )}
-                {submittedDecision.freeform !== undefined && (
-                  <p className="detail-pre">{submittedDecision.freeform}</p>
-                )}
-                <p className="detail-help">回答を送信しました</p>
-                {/*
-                 * bdboard-q1k9: ambiguousGateIds が返ってきた場合、このチケットは
-                 * 2件以上の独立した human gate にブロックされていて、どの質問への
-                 * 回答か特定できず respond() は何も resolve していない(human ラベルも
-                 * 外れていない)。closed は常に false のまま同じなので、下の通常分岐
-                 * (「確認待ちから外れ、次の更新で通常のレーンに戻ります」)をそのまま
-                 * 出すと実際には何も変わっていないのに解決したかのように誤読させる
-                 * (bdboard-v78e)。この分岐を優先し、個別の gate へ回答するよう促す。
-                 * kind/closed との整合性(kind==='ticket' かつ closed===false のとき
-                 * だけ設定される、配列は非空)は web/src/api.ts の
-                 * mapTicketDecisionOutcome 側で強制済みなので、ここでは
-                 * ambiguousGateIds の有無だけを見ればよい。
-                 */}
-                {submittedDecision.outcome.ambiguousGateIds !== undefined ? (
-                  <>
-                    <p className="detail-help">
-                      このチケットは複数の質問(gate)に分かれています。どの質問への回答か特定できなかったため、回答はコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。
-                    </p>
-                    {/*
-                     * bdboard-v78e レビュー指摘: gate はエピック絞り込みの対象外
-                     * (parentId を持たない)なので、絞り込み中は isTicketOnBoard(gateId)
-                     * が false になり TicketIdLink が非クリック化してしまう
-                     * (「現在のボードに表示されていません」)。ここで列挙する gate ID は
-                     * ユーザーが自由入力したテキストからの自動リンクではなく respond()
-                     * のレスポンスに含まれるサーバー由来の確定 ID なので、盤面フィルタの
-                     * 状態に関わらず常にクリック可能にする(TicketIdLink は使わない)。
-                     */}
-                    <ul className="detail-list">
-                      {submittedDecision.outcome.ambiguousGateIds.map((gateId) => (
-                        <li key={gateId}>
-                          <button
-                            type="button"
-                            className="ticket-id-link"
-                            onClick={() => onOpenTicket(gateId)}
-                          >
-                            {gateId}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </>
-                ) : (
-                  <p className="detail-help">
-                    {submittedDecision.outcome.kind === 'unknown'
-                      ? '種別(ゲート/作業チケット)を判定できませんでした。回答はコメントとして記録しましたが、確認待ちのまま残っています。しばらくしてからもう一度送信してください。'
-                      : submittedDecision.outcome.closed
-                        ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
-                        : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
-                  </p>
-                )}
-              </div>
-            )}
+            <TicketDecisionSection
+              pendingDecision={pendingDecision}
+              selectedChoice={decision.selectedChoice}
+              onSelectChoice={decision.setSelectedChoice}
+              freeformText={decision.freeformText}
+              onFreeformTextChange={decision.setFreeformText}
+              canSubmitDecision={decision.canSubmitDecision}
+              decisionMutation={decision.decisionMutation}
+              submittedDecision={decision.submittedDecision}
+              onOpenTicket={onOpenTicket}
+            />
             <TicketTimelineSection
               expanded={timelineExpanded}
               onToggleExpanded={() =>
@@ -1219,185 +761,24 @@ export function TicketDetailPanel({
               onConfirmQuickAction={quickActions.handleConfirmQuickAction}
               mutationError={quickActions.mutationError}
             />
-            <div className="detail-section">
-              <h3>エージェント実行</h3>
-              {(polledRunDetail !== null ||
-                activeRunMeta !== null ||
-                runStatusUnavailable) && (
-                <div className="agent-run-current">
-                  {runStatusUnavailable && (
-                    <p className="agent-run-status agent-run-status-unavailable">
-                      状態を取得できません（実行状況の取得に失敗したため監視を停止しました）
-                    </p>
-                  )}
-                  {polledRunDetail !== null && (
-                    <p className="agent-run-status">
-                      状態: {formatAgentRunStatus(polledRunDetail.status)}
-                      {polledRunDetail.exitCode !== undefined &&
-                        ` (終了コード: ${polledRunDetail.exitCode})`}
-                      {polledRunDetail.error !== undefined &&
-                        ` — ${polledRunDetail.error}`}
-                    </p>
-                  )}
-                  {(activeRunMeta !== null || polledRunDetail !== null) && (
-                    <dl className="agent-run-meta">
-                      <div>
-                        <dt>worktree</dt>
-                        <dd>
-                          {polledRunDetail?.cwd ??
-                            activeRunMeta?.worktreePath ??
-                            '—'}
-                        </dd>
-                      </div>
-                      {activeRunMeta !== null && (
-                        <div>
-                          <dt>branch</dt>
-                          <dd>{activeRunMeta.branchName}</dd>
-                        </div>
-                      )}
-                      {activeRunMeta !== null && (
-                        <div>
-                          <dt>worktree の扱い</dt>
-                          <dd>
-                            {activeRunMeta.reused ? '既存を再利用' : '新規作成'}
-                          </dd>
-                        </div>
-                      )}
-                    </dl>
-                  )}
-                  {polledRunDetail?.nextStep !== undefined && (
-                    <AgentRunNextStep
-                      nextStep={polledRunDetail.nextStep}
-                      target="next-step-current"
-                      copied={
-                        copyFeedback?.kind === 'success' &&
-                        copyFeedback.command === 'next-step-current'
-                      }
-                      onCopy={(target, nextStep) =>
-                        void handleCopyNextStep(target, nextStep)
-                      }
-                    />
-                  )}
-                  {polledRunDetail !== null &&
-                    isAgentRunInProgress(polledRunDetail.status) && (
-                      <button
-                        type="button"
-                        className="btn btn-small agent-run-cancel-btn"
-                        disabled={
-                          cancelRunMutation.isPending ||
-                          polledRunDetail.status === 'cancelling'
-                        }
-                        onClick={() => cancelRunMutation.mutate()}
-                      >
-                        {cancelRunMutation.isPending ||
-                        polledRunDetail.status === 'cancelling'
-                          ? '中止中…'
-                          : '中止'}
-                      </button>
-                    )}
-                  {cancelRunMutation.error !== null && (
-                    <p className="error-message">
-                      {describeWriteError(
-                        cancelRunMutation.error,
-                        'エージェントの実行を中止できませんでした',
-                      )}
-                    </p>
-                  )}
-                  {polledRunDetail !== null &&
-                    polledRunDetail.logRestricted === true && (
-                      <p className="detail-help">{AGENT_RUN_LOG_LOCAL_ONLY_HELP}</p>
-                    )}
-                  {polledRunDetail !== null &&
-                    polledRunDetail.logRestricted !== true &&
-                    polledRunDetail.log.length > 0 && (
-                      <details className="agent-run-log-details">
-                        <summary>実行ログ</summary>
-                        <pre className="agent-run-log-pre">{polledRunDetail.log}</pre>
-                      </details>
-                    )}
-                </div>
-              )}
-              <h4 className="agent-run-history-heading">実行履歴</h4>
-              {ticketRunsLoading && <p className="loading">読み込み中…</p>}
-              {ticketRunsError !== null && (
-                <p className="error-message">
-                  {ticketRunsError instanceof Error
-                    ? ticketRunsError.message
-                    : '実行履歴の読み込みに失敗しました'}
-                </p>
-              )}
-              {ticketRunsData !== undefined &&
-                ticketRunsData.runs.length === 0 && (
-                  <p className="detail-help">実行履歴はありません</p>
-                )}
-              {ticketRunsData !== undefined && ticketRunsData.runs.length > 0 && (
-                <ul className="agent-run-history-list">
-                  {ticketRunsData.runs.map((run) => (
-                    <li key={run.id}>
-                      <button
-                        type="button"
-                        className={`agent-run-history-btn${
-                          selectedHistoryRunId === run.id ? ' is-selected' : ''
-                        }`}
-                        onClick={() => setSelectedHistoryRunId(run.id)}
-                      >
-                        <time dateTime={run.startedAt}>
-                          {formatAbsoluteTime(run.startedAt)}
-                        </time>
-                        <span className="agent-run-history-status">
-                          {formatAgentRunStatus(run.status)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {selectedHistoryRunId !== null && selectedHistoryRunLoading && (
-                <p className="loading">ログを読み込み中…</p>
-              )}
-              {selectedHistoryRunError !== null && (
-                <p className="error-message">
-                  {selectedHistoryRunError instanceof Error
-                    ? selectedHistoryRunError.message
-                    : '実行ログの読み込みに失敗しました'}
-                </p>
-              )}
-              {selectedHistoryRun !== undefined && (
-                <div className="agent-run-history-detail">
-                  <dl className="agent-run-meta">
-                    <div>
-                      <dt>worktree</dt>
-                      <dd>{selectedHistoryRun.cwd ?? '—'}</dd>
-                    </div>
-                  </dl>
-                  {selectedHistoryRun.nextStep !== undefined && (
-                    <AgentRunNextStep
-                      nextStep={selectedHistoryRun.nextStep}
-                      target="next-step-history"
-                      copied={
-                        copyFeedback?.kind === 'success' &&
-                        copyFeedback.command === 'next-step-history'
-                      }
-                      onCopy={(target, nextStep) =>
-                        void handleCopyNextStep(target, nextStep)
-                      }
-                    />
-                  )}
-                  <details className="agent-run-log-details" open>
-                    <summary>実行ログ</summary>
-                    {selectedHistoryRun.logRestricted === true ? (
-                      <p className="detail-help">{AGENT_RUN_LOG_LOCAL_ONLY_HELP}</p>
-                    ) : (
-                      <pre className="agent-run-log-pre">
-                        {selectedHistoryRun.log.length > 0
-                          ? selectedHistoryRun.log
-                          : '(ログなし)'}
-                      </pre>
-                    )}
-                  </details>
-                </div>
-              )}
-            </div>
+            <TicketAgentRunSection
+              polledRunDetail={agentRun.polledRunDetail}
+              activeRunMeta={agentRun.activeRunMeta}
+              runStatusUnavailable={agentRun.runStatusUnavailable}
+              copyFeedback={copyFeedback}
+              onCopyNextStep={(target, nextStep) =>
+                void handleCopyNextStep(target, nextStep)
+              }
+              cancelRunMutation={agentRun.cancelRunMutation}
+              ticketRunsLoading={agentRun.ticketRunsLoading}
+              ticketRunsError={agentRun.ticketRunsError}
+              ticketRunsData={agentRun.ticketRunsData}
+              selectedHistoryRunId={agentRun.selectedHistoryRunId}
+              onSelectHistoryRun={agentRun.setSelectedHistoryRunId}
+              selectedHistoryRunLoading={agentRun.selectedHistoryRunLoading}
+              selectedHistoryRunError={agentRun.selectedHistoryRunError}
+              selectedHistoryRun={agentRun.selectedHistoryRun}
+            />
             <TicketBdCommandSection
               ticketId={data.id}
               projectRootPath={projectRootPath}
