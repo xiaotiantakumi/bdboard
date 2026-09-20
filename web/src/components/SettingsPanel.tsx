@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
-import { ApiError, fetchAgentRunConfig, fetchAiQuotaAlertConfig, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putAiQuotaAlertConfig, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig, saveAgentRunConfig } from '../api';
+import { ApiError, fetchBoardThresholdsConfig, fetchDbStats, fetchHygieneThresholdsConfig, fetchProjects, fetchScanRootsConfig, postRefresh, putBoardThresholdsConfig, putHygieneThresholdsConfig, putScanRootsConfig } from '../api';
 import { useSaveFeedback } from '../hooks/useSaveFeedback';
 import { msToDays, msToHours, msToMinutes } from './settings/formatters';
 import {
@@ -17,8 +17,6 @@ import {
   type ProjectWipOverrideRow,
 } from './settings/wipOverrides';
 import {
-  describeAgentRunWriteError,
-  describeAiQuotaAlertWriteError,
   describeBoardThresholdWriteError,
   describeHygieneThresholdWriteError,
   describeScanRootWriteError,
@@ -32,6 +30,8 @@ import { HygieneThresholdsSection } from './settings/HygieneThresholdsSection';
 import { WipLimitsSection } from './settings/WipLimitsSection';
 import { AiQuotaAlertSection } from './settings/AiQuotaAlertSection';
 import { AgentRunsSection } from './settings/AgentRunsSection';
+import { useAiQuotaAlertForm } from './settings/useAiQuotaAlertForm';
+import { useAgentRunsForm } from './settings/useAgentRunsForm';
 
 export function SettingsPanel() {
   const queryClient = useQueryClient();
@@ -48,14 +48,10 @@ export function SettingsPanel() {
     queryKey: ['projects'],
     queryFn: fetchProjects,
   });
-  const aiQuotaAlertQuery = useQuery({
-    queryKey: ['ai-quota-alert-config'],
-    queryFn: fetchAiQuotaAlertConfig,
-  });
-  const agentRunsQuery = useQuery({
-    queryKey: ['agent-runs-config'],
-    queryFn: fetchAgentRunConfig,
-  });
+  const aiQuotaAlertForm = useAiQuotaAlertForm();
+  const aiQuotaAlertQuery = aiQuotaAlertForm.query;
+  const agentRunsForm = useAgentRunsForm();
+  const agentRunsQuery = agentRunsForm.query;
   const dbStatsQuery = useQuery({
     queryKey: ['db-stats'],
     queryFn: fetchDbStats,
@@ -89,14 +85,6 @@ export function SettingsPanel() {
   const [newWipProjectLimit, setNewWipProjectLimit] = useState('');
   const wipFeedback = useSaveFeedback();
   const [wipDirty, setWipDirty] = useState(false);
-  const [aiQuotaThresholdPercent, setAiQuotaThresholdPercent] = useState('');
-  const [aiQuotaAlertVersion, setAiQuotaAlertVersion] = useState('');
-  const aiQuotaAlertFeedback = useSaveFeedback();
-  const [aiQuotaAlertDirty, setAiQuotaAlertDirty] = useState(false);
-  const [allowRemoteAgentRuns, setAllowRemoteAgentRuns] = useState(false);
-  const [agentRunsVersion, setAgentRunsVersion] = useState('');
-  const agentRunsFeedback = useSaveFeedback();
-  const [agentRunsDirty, setAgentRunsDirty] = useState(false);
 
   useEffect(() => {
     if (query.data !== undefined && !dirty) {
@@ -161,20 +149,6 @@ export function SettingsPanel() {
       setThresholdsVersion(thresholdsQuery.data.version);
     }
   }, [thresholdsDirty, wipDirty, thresholdsQuery.data]);
-
-  useEffect(() => {
-    if (aiQuotaAlertQuery.data !== undefined && !aiQuotaAlertDirty) {
-      setAiQuotaThresholdPercent(String(aiQuotaAlertQuery.data.thresholdPercent));
-      setAiQuotaAlertVersion(aiQuotaAlertQuery.data.version);
-    }
-  }, [aiQuotaAlertDirty, aiQuotaAlertQuery.data]);
-
-  useEffect(() => {
-    if (agentRunsQuery.data !== undefined && !agentRunsDirty) {
-      setAllowRemoteAgentRuns(agentRunsQuery.data.allowRemoteAgentRuns);
-      setAgentRunsVersion(agentRunsQuery.data.version);
-    }
-  }, [agentRunsDirty, agentRunsQuery.data]);
 
   const saveMutation = useMutation({
     mutationFn: () =>
@@ -333,53 +307,6 @@ export function SettingsPanel() {
       if (error instanceof ApiError && error.status === 409) {
         setWipDirty(false);
         void queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
-      }
-    },
-  });
-
-  const saveAiQuotaAlertMutation = useMutation({
-    mutationFn: () => {
-      const thresholdPercent = Number(aiQuotaThresholdPercent.trim());
-      if (!Number.isInteger(thresholdPercent)) {
-        throw new Error('invalid local ai quota threshold input');
-      }
-      return putAiQuotaAlertConfig({
-        thresholdPercent,
-        version: aiQuotaAlertVersion,
-      });
-    },
-    onSuccess: async (data) => {
-      setAiQuotaAlertVersion(data.version);
-      await queryClient.invalidateQueries({ queryKey: ['ai-quota-alert-config'] });
-      setAiQuotaAlertDirty(false);
-      aiQuotaAlertFeedback.showSuccess('AIクォータ通知閾値を保存しました');
-    },
-    onError: (error) => {
-      aiQuotaAlertFeedback.showError(describeAiQuotaAlertWriteError(error));
-      if (error instanceof ApiError && error.status === 409) {
-        setAiQuotaAlertDirty(false);
-        void queryClient.invalidateQueries({ queryKey: ['ai-quota-alert-config'] });
-      }
-    },
-  });
-
-  const saveAgentRunsMutation = useMutation({
-    mutationFn: () =>
-      saveAgentRunConfig({
-        allowRemoteAgentRuns,
-        version: agentRunsVersion,
-      }),
-    onSuccess: async (data) => {
-      setAgentRunsVersion(data.version);
-      await queryClient.invalidateQueries({ queryKey: ['agent-runs-config'] });
-      setAgentRunsDirty(false);
-      agentRunsFeedback.showSuccess('エージェント実行設定を保存しました');
-    },
-    onError: (error) => {
-      agentRunsFeedback.showError(describeAgentRunWriteError(error));
-      if (error instanceof ApiError && error.status === 409) {
-        setAgentRunsDirty(false);
-        void queryClient.invalidateQueries({ queryKey: ['agent-runs-config'] });
       }
     },
   });
@@ -622,30 +549,21 @@ export function SettingsPanel() {
         feedback={{ message: wipFeedback.message, isError: wipFeedback.isError }}
       />
       <AiQuotaAlertSection
-        value={aiQuotaThresholdPercent}
-        onChange={(value) => {
-          setAiQuotaThresholdPercent(value);
-          setAiQuotaAlertDirty(true);
-        }}
+        value={aiQuotaAlertForm.value}
+        onChange={aiQuotaAlertForm.onChange}
         defaultPercent={aiQuotaAlertQuery.data.defaults.thresholdPercent}
-        isSaving={saveAiQuotaAlertMutation.isPending}
-        isDirty={aiQuotaAlertDirty}
-        onSubmit={() => saveAiQuotaAlertMutation.mutate()}
-        feedback={{
-          message: aiQuotaAlertFeedback.message,
-          isError: aiQuotaAlertFeedback.isError,
-        }}
+        isSaving={aiQuotaAlertForm.isSaving}
+        isDirty={aiQuotaAlertForm.isDirty}
+        onSubmit={aiQuotaAlertForm.onSubmit}
+        feedback={aiQuotaAlertForm.feedback}
       />
       <AgentRunsSection
-        checked={allowRemoteAgentRuns}
-        onChange={(checked) => {
-          setAllowRemoteAgentRuns(checked);
-          setAgentRunsDirty(true);
-        }}
-        isSaving={saveAgentRunsMutation.isPending}
-        isDirty={agentRunsDirty}
-        onSubmit={() => saveAgentRunsMutation.mutate()}
-        feedback={{ message: agentRunsFeedback.message, isError: agentRunsFeedback.isError }}
+        checked={agentRunsForm.checked}
+        onChange={agentRunsForm.onChange}
+        isSaving={agentRunsForm.isSaving}
+        isDirty={agentRunsForm.isDirty}
+        onSubmit={agentRunsForm.onSubmit}
+        feedback={agentRunsForm.feedback}
       />
       <DbStatsSection
         isPending={dbStatsQuery.isPending}
