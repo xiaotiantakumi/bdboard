@@ -16,12 +16,16 @@ export interface RespondOutcome {
    */
   readonly resolvedGateIds?: readonly string[];
   /**
-   * kind === 'gate' のときだけ設定される。この gate を resolve した結果、他に
-   * ブロックしている open な human gate が残っていなかったために human ラベルを
-   * 外した work ticket の ID 一覧(bdboard-giyt。bdboard-vy0h の逆方向)。他の
-   * human gate がまだ残っているチケットのラベルは外さない。読み取りに失敗した
-   * 場合は fail-soft でそのチケットをスキップする(gate 自体の close は既に成功
-   * しているため、この清掃だけを理由に respond() 全体を失敗させない)。
+   * kind === 'gate' または kind === 'ticket' のときに設定されうる。resolve した
+   * gate(kind === 'gate' なら回答対象の gate 自身、kind === 'ticket' なら
+   * resolvedGateIds で resolve した gate)がブロックしていた work ticket のうち、
+   * 回答対象自身を除いて他に何もブロックしていなかったために human ラベルを外した
+   * ID 一覧(bdboard-giyt: gate→ticket 方向。bdboard-ixx9: ticket→gate 方向、同じ
+   * gate が複数チケットをブロックしていた場合の兄弟チケット)。他の open な human
+   * gate がまだ残っている、または standalone な decision_question(bdboard-mw8y)を
+   * 記録しているチケットのラベルは外さない。読み取りに失敗した場合は fail-soft で
+   * そのチケットをスキップする(gate の close/resolve 自体は既に成功しているため、
+   * この清掃だけを理由に respond() 全体を失敗させない)。
    */
   readonly clearedHumanLabelTicketIds?: readonly string[];
   /**

@@ -737,6 +737,54 @@ async function resolveGateBlockedTicketIds(
   }
 }
 
+// bdboard-giyt(gate 側respond())と bdboard-ixx9(ticket 側respond())の両方が使う
+// 共通の fail-soft 清掃ループ。渡された各チケットについて、他に open な human gate が
+// 残っていない かつ standalone な decision_question を記録していない(bdboard-mw8y)
+// ものだけ human ラベルを外す。呼び出し時点でこのラベル解除の前提となる主処理
+// (gate の close、または ticket 自身の gate resolve + ラベル解除)は既に成功して
+// いるので、個々のチケットでの読み取り・ラベル解除の失敗はそのチケットだけスキップして
+// 次へ進む(gate/ticket 側の既存コメントと同じ fail-soft 方針)。
+async function clearHumanLabelOnUnblockedTickets(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  rootPath: string,
+  timeoutMs: number,
+  ticketIds: readonly string[],
+): Promise<readonly string[]> {
+  const clearedHumanLabelTicketIds: string[] = [];
+  for (const ticketId of ticketIds) {
+    try {
+      const ticketState = await resolveKindAndBlockingGates(
+        commandRunner,
+        bdPath,
+        rootPath,
+        ticketId,
+      );
+      if (
+        ticketState.kind !== 'ticket' ||
+        ticketState.blockingHumanGateIds.length > 0 ||
+        ticketState.hasOwnDecisionQuestion
+      ) {
+        continue;
+      }
+
+      const labelResult = await commandRunner.run(
+        bdPath,
+        buildRemoveHumanLabelArgs(rootPath, ticketId),
+        { timeoutMs },
+      );
+      if (labelResult.exitCode === 0) {
+        clearedHumanLabelTicketIds.push(ticketId);
+      }
+    } catch {
+      // fail-soft: このチケットはスキップする。直接そのチケットへ回答すれば
+      // filterBlockingHumanGateIds が既に閉じたこの gate を除外するので、
+      // 既存の間接回復パスで自己修復する。
+    }
+  }
+  return clearedHumanLabelTicketIds;
+}
+
 // テストと外部呼び出しが従来の「kind だけ返す」契約に依存しているため薄いラッパーとして残す。
 async function resolveKind(
   commandRunner: CommandRunner,
@@ -848,57 +896,24 @@ export function createBdCliHumanDecisions(
         }
 
         // bdboard-giyt: bdboard-vy0h の逆方向。この gate が直接ブロックしていた
-        // work ticket のうち、他に open な human gate が残っていない かつ
-        // そのチケット自身が standalone な decision_question を記録していないものだけ
-        // human ラベルを外す(兄弟 gate が残っているうちはそのチケットはまだ
-        // 確認待ちなので触らない。bdboard-mw8y: standalone な decision_question を
-        // 記録しているチケットは、たまたま無関係な human gate にもブロックされていた
-        // 場合、その gate への回答でチケット自身の質問まで確認待ちレーンから
-        // 消えてしまう(respond() は decision_question 自体を消す経路を持たないため、
-        // hasOwnDecisionQuestion は「回答済みかどうか」ではなく「記録されているか
-        // どうか」しか見分けられない — 安全側に倒し、記録されている限り剥がさない)。
-        // この場合はここで剥がさず、そのチケット自身への回答時に
-        // filterBlockingHumanGateIds 経由で既に閉じたこの gate が除外されて
-        // 自己修復する)。gate の close 自体は既に成功しているので、
-        // ここから先は fail-soft — 個々のチケットで読み取りやラベル解除に失敗
-        // しても、そのチケットだけスキップして次へ進む。
+        // work ticket のうち、他に何もブロックしていないものだけ human ラベルを外す。
+        // 判定条件(他の open human gate なし かつ standalone な decision_question も
+        // 記録していない)は clearHumanLabelOnUnblockedTickets のコメント参照
+        // (bdboard-mw8y)。gate の close 自体は既に成功しているので、清掃の失敗を
+        // 理由に respond() 全体を失敗させない(fail-soft、同関数内)。
         const blockedTicketIds = await resolveGateBlockedTicketIds(
           commandRunner,
           bdPath,
           rootPath,
           issueId,
         );
-        const clearedHumanLabelTicketIds: string[] = [];
-        for (const ticketId of blockedTicketIds) {
-          try {
-            const ticketState = await resolveKindAndBlockingGates(
-              commandRunner,
-              bdPath,
-              rootPath,
-              ticketId,
-            );
-            if (
-              ticketState.kind !== 'ticket' ||
-              ticketState.blockingHumanGateIds.length > 0 ||
-              ticketState.hasOwnDecisionQuestion
-            ) {
-              continue;
-            }
-
-            const labelResult = await commandRunner.run(
-              bdPath,
-              buildRemoveHumanLabelArgs(rootPath, ticketId),
-              { timeoutMs },
-            );
-            if (labelResult.exitCode === 0) {
-              clearedHumanLabelTicketIds.push(ticketId);
-            }
-          } catch {
-            // fail-soft: このチケットはスキップする。直接そのチケットへ回答すれば
-            // filterBlockingHumanGateIds が既に閉じたこの gate を除外するので、
-            // 既存の間接回復パスで自己修復する。
-          }
-        }
+        const clearedHumanLabelTicketIds = await clearHumanLabelOnUnblockedTickets(
+          commandRunner,
+          bdPath,
+          rootPath,
+          timeoutMs,
+          blockedTicketIds,
+        );
 
         return {
           kind,
@@ -960,7 +975,43 @@ export function createBdCliHumanDecisions(
           );
         }
 
-        return { kind, closed: false, resolvedGateIds };
+        // bdboard-ixx9: bdboard-giyt の逆方向(gate 側respond()の兄弟チケット清掃)の
+        // 抜け。ticket→gate 方向で gate を resolve したとき、同じ gate が他のチケット
+        // もブロックしていれば(1つの Gate: human が複数チケットを blocks する形。
+        // bd dep add で作れる)、その兄弟チケットの human ラベルは(bdboard-vy0h以来)
+        // 何もチェックされず残ったままだった。resolvedGateIds は上の
+        // isAmbiguousTicketAnswer 早期 return により高々1件なので、ここは実質
+        // 0〜1回のループ。gate の resolve と自分自身のラベル解除は既に成功して
+        // いるので、ここから先は gate 側と同じ fail-soft
+        // (clearHumanLabelOnUnblockedTickets 内)。
+        const siblingTicketIds: string[] = [];
+        for (const resolvedGateId of resolvedGateIds) {
+          const blockedByGate = await resolveGateBlockedTicketIds(
+            commandRunner,
+            bdPath,
+            rootPath,
+            resolvedGateId,
+          );
+          for (const blockedTicketId of blockedByGate) {
+            if (blockedTicketId !== issueId && !siblingTicketIds.includes(blockedTicketId)) {
+              siblingTicketIds.push(blockedTicketId);
+            }
+          }
+        }
+        const clearedHumanLabelTicketIds = await clearHumanLabelOnUnblockedTickets(
+          commandRunner,
+          bdPath,
+          rootPath,
+          timeoutMs,
+          siblingTicketIds,
+        );
+
+        return {
+          kind,
+          closed: false,
+          resolvedGateIds,
+          ...(clearedHumanLabelTicketIds.length > 0 ? { clearedHumanLabelTicketIds } : {}),
+        };
       }
       // kind === 'unknown': 迷ったら閉じないだけでなく、human ラベルも剥がさない。
       // 回答コメントだけ残し確認待ちのままにする(fail-safe)。
