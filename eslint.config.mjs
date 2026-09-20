@@ -18,7 +18,7 @@ import globals from 'globals';
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
-  'web/src/components/TicketDetailPanel.tsx': 1900, // 現在 1879 (bdboard-sso1.5 PR-E: ラベル編集をフック+コンポーネントへ抽出)
+  'web/src/components/TicketDetailPanel.tsx': 1800, // 現在 1732 (bdboard-sso1.5 PR-F: Dependencies 編集をフック+コンポーネントへ抽出)
   'web/src/components/SettingsPanel.tsx': 390, // 現在 372 (bdboard-sso1.10 PR-F: useScanRootsForm)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
