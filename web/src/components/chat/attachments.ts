@@ -15,16 +15,16 @@ export type ChatAttachment = ChatMessageImage & {
 };
 
 export const CHAT_IMAGE_ONLY_PROMPT = '添付画像の内容を説明してください。';
-export const CHAT_IMAGE_MAX_COUNT = 4;
-export const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
-export const CHAT_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
-export const CHAT_IMAGE_TYPES: readonly ChatImageMimeType[] = [
+const CHAT_IMAGE_MAX_COUNT = 4;
+const CHAT_IMAGE_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const CHAT_IMAGE_MAX_TOTAL_BYTES = 10 * 1024 * 1024;
+const CHAT_IMAGE_TYPES: readonly ChatImageMimeType[] = [
   'image/png',
   'image/jpeg',
   'image/webp',
 ];
 
-export function isChatImageMimeType(value: string): value is ChatImageMimeType {
+function isChatImageMimeType(value: string): value is ChatImageMimeType {
   return CHAT_IMAGE_TYPES.some((mimeType) => mimeType === value);
 }
 

@@ -167,7 +167,6 @@ const UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS = 20;
 // この値そのものに強い根拠は無く、「無期限にブロックしない」ことが目的の
 // 主眼であり、猶予の長さは今後の実測次第で調整して良い。
 
-
 // bdboard-ru4d: 会話キー再割り当てサイトごとのドラフト積載物引き継ぎ選択。
 // ストアを1つ増やすと、ここと3サイト(handleAgentChange / startNewDraftThread /
 // applyChatSuccess)すべてで選択を書かない限り tsc が落ちる。

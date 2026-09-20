@@ -49,7 +49,7 @@ export function formatThreadUpdatedAt(iso: string): string {
 // 「開いてはいるがスレッド一覧の再取得がまだ届いていない」極短い窓
 // (CLIセッションの再開直後など)だけで、次の再取得で正しい位置へ移る。
 // NaN をそのまま比較に流すと比較関数が非推移的になり、並びが入力順で変わる。
-export function threadRecency(thread: ChatThreadDto | undefined): number {
+function threadRecency(thread: ChatThreadDto | undefined): number {
   if (thread === undefined) return 0;
   const at = Date.parse(thread.updatedAt);
   return Number.isNaN(at) ? 0 : at;
