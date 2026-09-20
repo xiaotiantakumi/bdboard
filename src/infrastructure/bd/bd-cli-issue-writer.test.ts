@@ -738,4 +738,189 @@ describe('createBdCliIssueWriter', () => {
 
     expect(calls.every((call) => !call.args.includes('--stdin'))).toBe(true);
   });
+
+  // bdboard-p5l.25: ハーネス契約チケットの起票 (findOpenTicketByLabel / create).
+  describe('findOpenTicketByLabel', () => {
+    it('returns null when bd list finds no open ticket for the label', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({ stdout: '[]', stderr: '', exitCode: 0 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      const result = await port.findOpenTicketByLabel?.(ROOT, 'harness-contract');
+
+      expect(result).toBeNull();
+      expect(calls).toEqual([
+        {
+          command: 'bd',
+          args: [
+            '--readonly',
+            '-C',
+            ROOT,
+            'list',
+            '--label',
+            'harness-contract',
+            '--json',
+            '--limit',
+            '0',
+            '--no-pager',
+          ],
+          options: { cwd: ROOT, timeoutMs: 30_000 },
+        },
+      ]);
+    });
+
+    it('returns the first open ticket id/title when bd list finds a match', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify([
+            { id: 'proj-42', title: 'existing harness-contract ticket' },
+            { id: 'proj-43', title: 'a second match, ignored' },
+          ]),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      const result = await port.findOpenTicketByLabel?.(ROOT, 'harness-contract');
+
+      expect(result).toEqual({
+        id: 'proj-42',
+        title: 'existing harness-contract ticket',
+      });
+    });
+
+    it('throws BdError when bd list output is not valid JSON', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({ stdout: 'not json', stderr: '', exitCode: 0 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(
+        port.findOpenTicketByLabel?.(ROOT, 'harness-contract'),
+      ).rejects.toBeInstanceOf(BdError);
+    });
+
+    it('throws BdError when a matched item is missing id/title', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify([{ id: 'proj-42' }]),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(
+        port.findOpenTicketByLabel?.(ROOT, 'harness-contract'),
+      ).rejects.toBeInstanceOf(BdError);
+    });
+  });
+
+  describe('create', () => {
+    const CREATE_INPUT = {
+      title: 'ハーネス: 検証コントラクトを作成する',
+      description: 'line1\nline2',
+      type: 'task',
+      priority: 2,
+      labels: ['harness-contract'],
+    };
+
+    it('builds create args with title/type/priority/labels and passes the description via stdin', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({ id: 'proj-42' }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      const result = await port.create?.(ROOT, CREATE_INPUT);
+
+      expect(result).toEqual({ id: 'proj-42' });
+      expect(calls).toEqual([
+        {
+          command: 'bd',
+          args: [
+            '-C',
+            ROOT,
+            'create',
+            '--title',
+            CREATE_INPUT.title,
+            '--type',
+            'task',
+            '--priority',
+            '2',
+            '--json',
+            '--labels',
+            'harness-contract',
+            '--stdin',
+          ],
+          options: { cwd: ROOT, timeoutMs: 30_000, input: CREATE_INPUT.description },
+        },
+      ]);
+    });
+
+    it('omits --labels when no labels are given', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({ id: 'proj-1' }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await port.create?.(ROOT, { ...CREATE_INPUT, labels: [] });
+
+      expect(calls[0]?.args).not.toContain('--labels');
+    });
+
+    it('parses a create result wrapped in a JSON array', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify([{ id: 'proj-99' }]),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      const result = await port.create?.(ROOT, CREATE_INPUT);
+
+      expect(result).toEqual({ id: 'proj-99' });
+    });
+
+    it('throws BdError when bd create exits non-zero (no retry for a non-idempotent write)', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({ stdout: '', stderr: 'database is locked', exitCode: 1 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(port.create?.(ROOT, CREATE_INPUT)).rejects.toBeInstanceOf(BdError);
+      // A non-idempotent write must not be retried, or we risk creating a
+      // duplicate ticket on lock contention.
+      expect(calls).toHaveLength(1);
+    });
+
+    it('throws BdError when bd create output is not valid JSON', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({ stdout: 'not json', stderr: '', exitCode: 0 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(port.create?.(ROOT, CREATE_INPUT)).rejects.toBeInstanceOf(BdError);
+    });
+
+    it('throws BdError when bd create output is missing an id', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({ stdout: JSON.stringify({}), stderr: '', exitCode: 0 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(port.create?.(ROOT, CREATE_INPUT)).rejects.toBeInstanceOf(BdError);
+    });
+  });
 });

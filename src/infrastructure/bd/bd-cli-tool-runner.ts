@@ -98,6 +98,43 @@ export async function runBdCommandForStdout(
   return result.stdout;
 }
 
+/**
+ * runBdCommand と同じ(書き込み用、lock-contention の自動リトライなし)だが、成功時に
+ * stdout を返す。`bd create --json` のように作成結果 (id 等) を呼び出し元へ返す必要が
+ * ある書き込みコマンド専用。
+ *
+ * runBdCommandForStdout との違いは retry の有無だけ — あちらは読み取り専用コマンド
+ * (べき等) 向けの自動リトライを持つが、`bd create` は呼ぶたびに新しいチケットを
+ * 作る非べき等コマンドなので、lock-contention での自動リトライは二重作成のリスクに
+ * なる。書き込みに転用しないこと(bd-cli-tool-runner.ts の他の doc コメントと同じ注意)。
+ */
+export async function runBdWriteCommandForStdout(
+  commandRunner: CommandRunner,
+  bdPath: string,
+  timeoutMs: number,
+  rootPath: string,
+  args: readonly string[],
+  errorSubject: string,
+  stdin?: string,
+): Promise<string> {
+  const result = await commandRunner.run(bdPath, args, {
+    cwd: rootPath,
+    timeoutMs,
+    ...(stdin !== undefined ? { input: stdin } : {}),
+  });
+
+  if (result.exitCode !== 0) {
+    throwBdToolFailure(
+      result.exitCode,
+      result.stdout,
+      result.stderr,
+      errorSubject,
+    );
+  }
+
+  return result.stdout;
+}
+
 export async function runBdTool(
   commandRunner: CommandRunner,
   bdPath: string,

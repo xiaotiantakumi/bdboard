@@ -15,6 +15,7 @@ import {
   fetchHygiene,
   fetchLeaseHealth,
   fetchMergeSlotStatus,
+  postProjectHarnessContractTicket,
   postProjectHarnessInject,
   postTicketQuickAction,
   postTicketQuickActionUndo,
@@ -30,6 +31,7 @@ import {
 import { formatActivityTime } from './activityFeedFormatting';
 import { LoadingIndicator } from './LoadingIndicator';
 import {
+  buildHarnessContractTicketSuccessMessage,
   buildHarnessDriftMessage,
   buildHarnessHooksMessage,
   buildHarnessInjectSuccessMessage,
@@ -37,6 +39,7 @@ import {
   formatHarnessContractLabel,
   formatHarnessHooksDetail,
   harnessContractNeedsAttention,
+  harnessContractNeedsTicket,
   harnessHooksNeedAttention,
 } from '../harnessDisplay';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
@@ -509,6 +512,47 @@ export function HygienePanel({
     },
   });
 
+  /**
+   * 検証コントラクト不足を直すチケット起票 (bdboard-p5l.25)。drift/hooks の
+   * 「再注入で直す」とは違い、bd 側にチケットを立てるだけ (ファイルは書き換えない)。
+   * 冪等性 (既存の harness-contract ラベル付き未クローズチケットがあれば新規作成しない)
+   * はサーバー側 (fileHarnessContractTicket) の責務 — ここは結果の created で
+   * 文言を出し分けるだけ。
+   */
+  const contractTicketMutation = useMutation({
+    mutationFn: async (vars: { rowKey: string; projectId: string }) => {
+      const result = await postProjectHarnessContractTicket(vars.projectId);
+      return { ...vars, result };
+    },
+    onMutate: (vars) => {
+      setPendingRepairKey(vars.rowKey);
+      clearRepairFeedback();
+    },
+    onSuccess: async (vars) => {
+      await queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
+      await queryClient.invalidateQueries({
+        queryKey: ['project-harness', vars.projectId],
+      });
+      setConfirmingRepairKey(null);
+      setPendingRepairKey(null);
+      // 単体で直した後に古い一括結果 (「失敗」行など) を残さない。
+      setBulkUpdateSummary(null);
+      showRepairStatusMessage(
+        buildHarnessContractTicketSuccessMessage(
+          vars.result.ticketId,
+          vars.result.created,
+        ),
+      );
+    },
+    onError: (error, vars) => {
+      setPendingRepairKey(null);
+      setRepairError({
+        rowKey: vars.rowKey,
+        message: describeWriteError(error, 'チケットの起票に失敗しました'),
+      });
+    },
+  });
+
   const handleConfirmRepair = useCallback(
     (issue: HygieneIssueDto, rowKey: string) => {
       if (repairMutation.isPending) {
@@ -541,6 +585,16 @@ export function HygienePanel({
       });
     },
     [harnessInjectMutation, repairMutation.isPending],
+  );
+
+  const handleConfirmContractTicket = useCallback(
+    (item: HarnessContractItem, rowKey: string) => {
+      if (contractTicketMutation.isPending) {
+        return;
+      }
+      contractTicketMutation.mutate({ rowKey, projectId: item.projectId });
+    },
+    [contractTicketMutation],
   );
 
   const beginBulkUpdateConfirm = useCallback(
@@ -591,7 +645,8 @@ export function HygienePanel({
   const repairDisabled =
     repairMutation.isPending ||
     harnessInjectMutation.isPending ||
-    harnessBulkUpdateMutation.isPending;
+    harnessBulkUpdateMutation.isPending ||
+    contractTicketMutation.isPending;
   const harnessDriftItems = harnessDriftQuery.data?.driftItems ?? [];
   // drift はサーバー側で installedVersion !== null のときだけ立つが、一括更新の範囲は
   // 「注入済みパックの更新」だけなので、未導入が紛れ込まないよう念のため絞る。
@@ -1019,6 +1074,11 @@ export function HygienePanel({
             const rowKey = harnessContractRowKey(item);
             const label = formatHarnessContractLabel(item.contract);
             const detail = formatHarnessContractDetail(item.contract);
+            const needsTicket = harnessContractNeedsTicket(item.contract);
+            const isConfirming = confirmingRepairKey === rowKey;
+            const isExecuting = repairDisabled && pendingRepairKey === rowKey;
+            const rowError =
+              repairError?.rowKey === rowKey ? repairError.message : null;
 
             return (
               <li key={rowKey}>
@@ -1038,6 +1098,44 @@ export function HygienePanel({
                     {detail}
                   </span>
                 </div>
+                {needsTicket && (
+                  <div className="hygiene-repair">
+                    {isConfirming ? (
+                      <div className="hygiene-repair-confirm">
+                        <button
+                          type="button"
+                          className="hygiene-repair-confirm-btn"
+                          disabled={repairDisabled}
+                          onClick={() => handleConfirmContractTicket(item, rowKey)}
+                        >
+                          {isExecuting ? '実行中…' : '確定: チケットを起票'}
+                        </button>
+                        <button
+                          type="button"
+                          className="hygiene-repair-cancel"
+                          disabled={repairDisabled}
+                          onClick={() => setConfirmingRepairKey(null)}
+                        >
+                          キャンセル
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="hygiene-repair-action"
+                        disabled={repairDisabled}
+                        onClick={() => beginRepairConfirm(rowKey)}
+                      >
+                        チケットを起票
+                      </button>
+                    )}
+                    {rowError !== null && (
+                      <p className="hygiene-repair-error" role="alert">
+                        {rowError}
+                      </p>
+                    )}
+                  </div>
+                )}
               </li>
             );
           })}

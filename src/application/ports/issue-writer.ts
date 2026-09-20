@@ -82,6 +82,41 @@ export interface IssueWriterPort {
     description: string,
     expectedCurrentDescription: string,
   ): Promise<void>;
+
+  /**
+   * label が付いた「未クローズ」チケットを1件探す (`bd list --label` の既定挙動が
+   * closed を除外する挙動をそのまま使う)。同じ目的の重複チケットを作らないための
+   * 存在確認専用 (bdboard-p5l.25)。複数件あっても先頭の1件だけ返す — 呼び出し元は
+   * 「1件でもあれば十分」の用途 (冪等性チェック) でしか使わない前提。無ければ null。
+   *
+   * **optional**: 既存の IssueWriterPort 実装/フェイクの大半 (quick-action 等) は
+   * チケット作成に関与しないため、必須化すると無関係なテストフェイク全部の更新を
+   * 強制してしまう。この機能 (ハーネス契約チケットの起票) を使う経路だけが実装を
+   * 要求する。
+   */
+  findOpenTicketByLabel?(
+    rootPath: string,
+    label: string,
+  ): Promise<{ readonly id: string; readonly title: string } | null>;
+
+  /**
+   * 新規チケットを作成し、作成された ID を返す。bd-tool-catalog (チャット向けの
+   * bd_create) を経由しない直叩き — 呼び出し元 (ハーネス契約チケットの起票、
+   * bdboard-p5l.25) がサーバー側で固定文言から組み立てた title/description だけを
+   * 渡す想定で、任意の自由入力をそのまま bd create に流さない。
+   *
+   * findOpenTicketByLabel と同じ理由で **optional**。
+   */
+  create?(
+    rootPath: string,
+    input: {
+      readonly title: string;
+      readonly description: string;
+      readonly type: string;
+      readonly priority: number;
+      readonly labels: readonly string[];
+    },
+  ): Promise<{ readonly id: string }>;
 }
 
 /**
