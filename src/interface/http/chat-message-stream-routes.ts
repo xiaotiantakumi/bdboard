@@ -123,7 +123,7 @@ export function createChatMessageStreamRoutes(
           // abort() cancels the stream) — it could only ever reach a client in the
           // narrower case of a fast reader hitting a synchronous delta-burst overflow.
           // web never consumed it either way (only delta/done/error are handled).
-          // GET /api/chat/turn-status (recordFailedTurn below records this turn as
+          // GET /api/chat/turn-status (turnTracker.recordFailed below records this turn as
           // failed) remains the reliable signal a disconnected client actually relies
           // on to learn a turn failed; this removal does not touch that path.
           cleanup();
@@ -191,7 +191,7 @@ export function createChatMessageStreamRoutes(
             console.debug('chat stream aborted');
           } else if (err instanceof ChatAgentError) {
             // bdboard-3tw.165: record the failure the same way finalizeChatTurnSuccess's
-            // sibling recordCompletedTurn does — unconditionally, not just when
+            // sibling turnTracker.recordCompleted does — unconditionally, not just when
             // clientGone. A connected client learns about this turn immediately via the
             // 'error' SSE event below and doesn't need to poll turn-status for it, but
             // recording it anyway keeps the two queues symmetric and is what lets a

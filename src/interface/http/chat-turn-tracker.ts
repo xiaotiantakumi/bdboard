@@ -45,7 +45,7 @@ export interface CompletedChatTurn {
  *
  * sessionId が無いことがある: エージェントがまだセッションを払い出す前に失敗した
  * 新規スレッドの場合。ACK (DELETE /api/chat/turn-status) は sessionId が分かって
- * いるケースだけ completed と相乗りさせる (ackFailedTurn)。sessionId 不明な失敗は
+ * いるケースだけ completed と相乗りさせる (turnTracker.ackFailed)。sessionId 不明な失敗は
  * 参照できる識別子がクライアント側にも無いので、専用の ACK 経路は作らず
  * CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出す。それとは別に、
  * bdboard-kg0m で FAILED_TURN_SESSIONLESS_TTL_MS を超えたものは GET
@@ -109,7 +109,7 @@ export function createChatTurnTracker(now: () => Date): ChatTurnTracker {
   // sessionId 無しのエントリどうしも dedupe する (既存の sessionId 無しエントリは
   // 全部落として、新しい1件だけを積む)。単一ロックの isBusy により「同時に2件の
   // sessionId 無し失敗が *記録される*」ことは無い (isBusy の解放は runTurn の
-  // finally が recordFailedTurn の後に行うため、記録自体は直列化されている) が、
+  // finally が recordFailed の後に行うため、記録自体は直列化されている) が、
   // これは「未解決の sessionId 無し失敗が高々1件しか存在しない」ことまでは保証しない
   // — 例えば1件目が (ACK 経路が無いまま) クライアントに回収されないうちに、
   // 別の (後続の、無関係な) sessionId 無し送信が2件目を記録することは普通にあり得る。
