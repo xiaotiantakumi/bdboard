@@ -36,8 +36,6 @@ import {
   type AgentRunNextStepDto,
   type QuickActionRequest,
   type TicketSearchResultDto,
-  type TicketInFlightOverlapDto,
-  type TicketSimilarResultDto,
   LANE_LABELS,
 } from '../api';
 import { useAutoClearedValue } from '../hooks/useAutoClearedValue';
@@ -81,7 +79,6 @@ import {
 import {
   DEPENDENCY_SEARCH_DEBOUNCE_MS,
   DEPENDENCY_SEARCH_LIMIT,
-  OVERLAP_FILE_DISPLAY_LIMIT,
   COPY_FEEDBACK_MS,
 } from './ticket-detail/constants';
 import {
@@ -114,6 +111,8 @@ import { AgentRunNextStep } from './ticket-detail/AgentRunNextStep';
 import { TicketIdLink } from './ticket-detail/TicketIdLink';
 import { TicketTimelineSection } from './ticket-detail/TicketTimelineSection';
 import { TicketCommentsSection } from './ticket-detail/TicketCommentsSection';
+import { TicketInFlightOverlapsSection } from './ticket-detail/TicketInFlightOverlapsSection';
+import { TicketSimilarTicketsSection } from './ticket-detail/TicketSimilarTicketsSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -1413,89 +1412,20 @@ export function TicketDetailPanel({
                 </button>
               </div>
             )}
-            {inFlightOverlapsEnabled && inFlightOverlapsError !== null && (
-              <div className="detail-section">
-                <h3>衝突しうる着手中チケット</h3>
-                <p className="detail-help">重複チェックを実行できませんでした。</p>
-              </div>
-            )}
-            {/*
-              読み込み中は何も出さない。見出しだけ先に出して直後に消える
-              (重複が無ければ節ごと消える) と、開くたびに画面が跳ねる。
-            */}
-            {inFlightOverlapsEnabled &&
-              inFlightOverlapsError === null &&
-              inFlightOverlaps !== undefined &&
-              inFlightOverlaps.length > 0 && (
-                <div className="detail-section">
-                  <h3>衝突しうる着手中チケット</h3>
-                  <p className="detail-help">
-                    同じファイルを編集中の着手中チケットです。どちらかへ寄せるか、
-                    マージの順番を先に決めてください。
-                  </p>
-                  <ul className="detail-list">
-                    {inFlightOverlaps.map((overlap: TicketInFlightOverlapDto) => {
-                      const shownFiles = overlap.files.slice(
-                        0,
-                        OVERLAP_FILE_DISPLAY_LIMIT,
-                      );
-                      const hiddenFileCount = overlap.files.length - shownFiles.length;
-                      return (
-                        <li key={overlap.ticketId}>
-                          <TicketIdLink
-                            id={overlap.ticketId}
-                            isTicketOnBoard={isTicketOnBoard}
-                            onOpenTicket={onOpenTicket}
-                          />{' '}
-                          <span className="badge">{overlap.files.length} ファイル</span>
-                          <ul className="detail-list">
-                            {shownFiles.map((file) => (
-                              <li key={file}>
-                                <code>{file}</code>
-                              </li>
-                            ))}
-                            {hiddenFileCount > 0 && (
-                              <li className="detail-help">ほか {hiddenFileCount} 件</li>
-                            )}
-                          </ul>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              )}
-            <div className="detail-section">
-              <h3>似ているチケット</h3>
-              {similarTicketsLoading && (
-                <p className="detail-help">読み込み中…</p>
-              )}
-              {similarTicketsError !== null && (
-                <p className="detail-help">似ているチケットの取得に失敗しました。</p>
-              )}
-              {!similarTicketsLoading &&
-                similarTicketsError === null &&
-                similarTickets !== undefined &&
-                similarTickets.length === 0 && (
-                  <p className="detail-help">似ているチケットはありません。</p>
-                )}
-              {similarTickets !== undefined && similarTickets.length > 0 && (
-                <ul className="detail-list">
-                  {similarTickets.map((similar: TicketSimilarResultDto) => (
-                    <li key={similar.id}>
-                      <TicketIdLink
-                        id={similar.id}
-                        isTicketOnBoard={isTicketOnBoard}
-                        onOpenTicket={onOpenTicket}
-                      />{' '}
-                      <span>{similar.title}</span>{' '}
-                      <span className="badge">
-                        {Math.round(similar.score * 100)}%
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+            <TicketInFlightOverlapsSection
+              enabled={inFlightOverlapsEnabled}
+              error={inFlightOverlapsError}
+              overlaps={inFlightOverlaps}
+              isTicketOnBoard={isTicketOnBoard}
+              onOpenTicket={onOpenTicket}
+            />
+            <TicketSimilarTicketsSection
+              loading={similarTicketsLoading}
+              error={similarTicketsError}
+              tickets={similarTickets}
+              isTicketOnBoard={isTicketOnBoard}
+              onOpenTicket={onOpenTicket}
+            />
             <div className="detail-field">
               <div className="detail-field-label">Created</div>
               <div>{formatDateTime(data.createdAt)}</div>
