@@ -64,7 +64,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/domain/in-flight-overlap.ts': 210, // 現在 204
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
-  'src/interface/http/chat-routes.test.ts': 2075, // 現在 2074 (bdboard-sso1.31 PR1/3: GET /api/chat/availability・GET /api/chat/agents・agents rate limit/cache・POST /api/chat/message/stream を chat-agent-routes.test.ts / chat-message-stream-routes.test.ts へ抽出)
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
   'src/interface/http/agent-run-routes.test.ts': 2010, // 現在 2007
