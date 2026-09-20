@@ -200,7 +200,6 @@ export function useContainerKeyDown({
       moveWithinLane,
       rangeAnchorRef,
       resolveMoveWithinLane,
-      resetRangeSelectionRefs,
     ],
   );
 }

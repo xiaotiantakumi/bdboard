@@ -120,7 +120,7 @@ export function useCardFocusState({
         },
       };
     },
-    [defaultFocusedCardId, focusedCardId, rememberLaneFocus, resetRangeSelectionRefs],
+    [defaultFocusedCardId, focusedCardId, rememberLaneFocus],
   );
 
   return {
