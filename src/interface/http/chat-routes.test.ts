@@ -12,7 +12,6 @@ import { CHAT_RATE_LIMITED } from './chat-rate-limit.js';
 import type { WriteGuardDeps } from './write-guard.js';
 import {
   LOCAL_ENV,
-  NOW,
   cachedProject,
   createApp,
   createFakeAgent,
@@ -22,18 +21,16 @@ import {
 } from './chat-routes-test-support.js';
 
 // bdboard-sso1.31: chat-routes.test.ts (chat ルート総合テスト) を実装側の chat
-// ルートモジュール分割 (bdboard-sso1.17) に追随させて move-only 分割している途中
-// (2/3)。このPRでは 'detached bulk chat turn recovery' / 'createChatRoutes
-// behavior' (POST /api/chat/message の bulk 送信・sessionId/agentId/model
-// バリデーション・永続化) を chat-message-routes.test.ts へ、'chat sessionId
-// validation and agentId' describe のうち GET /api/chat/sessions/:id/messages・
-// GET /api/chat/threads・PATCH .../thread・DELETE /api/chat/sessions/:id を
-// chat-thread-routes.test.ts へ抽出した。CHAT_ROUTES_SOURCE の定義も
-// '.uuid()' チェックのテストと一緒に chat-message-routes.test.ts へ移した。
-// 残りのテスト本体・期待値・モックの記述は元の chat-routes.test.ts から一字一句
-// 変更していない。discovered-sessions 系 (元 'chat sessionId validation and
-// agentId' describe の残り) と DNS rebinding 系は chat-routes.test.ts に残し、
-// 後続PR (bdboard-sso1.31-c) で分割する。
+// ルートモジュール分割 (bdboard-sso1.17) に追随させて move-only 分割した最終PR
+// (3/3)。'chat sessionId validation and agentId' describe の残り
+// (discovered-sessions の list/adopt 4テスト) を chat-discovery-routes.test.ts
+// へ抽出し、その際に説明的でなかった describe 名を内容に合わせて改めた
+// (bdboard-sso1.31 PR2/3 レビュー finding #1)。残りのテスト本体・期待値・
+// モックの記述は元の chat-routes.test.ts から一字一句変更していない。ここに
+// 残るのはトンネル認証・rate limit・local-only guard・DNS rebinding という、
+// createChatRoutes 全体にまたがる横断的なテストのみで、個別リソース
+// モジュールへは分解しない(composition layer 自体のテストとして構成層の
+// ファイルに残す, bdboard-sso1.7 の前例と同じ方針)。
 describe('createChatRoutes local-only guard', () => {
   it('allows loopback without Cloudflare headers', async () => {
     const app = createApp();
@@ -672,164 +669,6 @@ describe('chat tunnel rate limit (bdboard-b7n)', () => {
 
     tunnelWriteAllowed = true;
     expect((await messageRequest(app)).status).toBe(200);
-  });
-});
-
-describe('chat sessionId validation and agentId (bdboard-l1t.2 step 2)', () => {
-  it('lists and adopts discovered sessions', async () => {
-    const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
-    const discovery: ChatSessionDiscoveryPort = {
-      listDiscoveredSessions: vi.fn(async () => [{ sessionId: 'session-1', lastActivityAt: NOW }]),
-      verifySessionExists: vi.fn(async (_project, _projects, sessionId) => sessionId === 'session-1'),
-      readAdoptSeedMessages: vi.fn(async (_project, _projects, sessionId) =>
-        sessionId === 'session-1'
-          ? [{ role: 'user' as const, text: 'seeded question', timestamp: NOW.toISOString() }]
-          : undefined,
-      ),
-    };
-    // bdboard-l1t.5 Opus レビュー SF6(b): discovery が発見するのは claude CLI の
-    // トランスクリプトだけなので、adopt が受け付ける agentId も 'claude' 固定になった
-    // (それ以外は登録済みでも拒否する)。そのためここでは agent の id を 'claude' にして
-    // 登録する(以前は汎用の 'test-agent' を明示指定して adopt できたが、それ自体が
-    // discovery の実体と矛盾する構成だったため許可しなくなった)。
-    const app = createApp({
-      cache,
-      sessionDiscovery: discovery,
-      agent: createFakeAgent({
-        descriptor: { id: 'claude', label: 'Claude', models: [{ id: 'sonnet', label: 'Sonnet' }], experimental: false, capability: 'bd-only' },
-      }),
-    });
-    const listed = await app.request('/api/chat/projects/proj-a/discovered-sessions', withLocalHost({}), LOCAL_ENV);
-    expect(listed.status).toBe(200);
-    expect(await listed.json()).toEqual({ sessions: [{ sessionId: 'session-1', lastActivityAt: NOW.toISOString(), alreadyAdopted: false }] });
-
-    const adopted = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      withLocalHost({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'claude' }),
-      }),
-      LOCAL_ENV,
-    );
-    expect(adopted.status).toBe(200);
-    expect(await adopted.json()).toEqual({
-      sessionId: 'session-1',
-      agentId: 'claude',
-      seedMessages: [{ role: 'user', text: 'seeded question', timestamp: NOW.toISOString() }],
-    });
-  });
-
-  it('rejects adopt with a non-claude agentId even when that agent is registered (bdboard-l1t.5 Opus review SF6b)', async () => {
-    const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
-    const discovery: ChatSessionDiscoveryPort = {
-      listDiscoveredSessions: vi.fn(async () => [{ sessionId: 'session-1', lastActivityAt: NOW }]),
-      verifySessionExists: vi.fn(async () => true),
-      readAdoptSeedMessages: vi.fn(async () => []),
-    };
-    // 'test-agent' はデフォルトで登録されているが、discovery の実体が claude CLI
-    // トランスクリプトである以上、登録済みであっても拒否されなければならない。
-    const app = createApp({ cache, sessionDiscovery: discovery });
-    const adopted = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      withLocalHost({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'test-agent' }),
-      }),
-      LOCAL_ENV,
-    );
-    expect(adopted.status).toBe(400);
-  });
-
-  it('returns discovery availability and validation errors', async () => {
-    const missing = await createApp().request('/api/chat/projects/proj-a/discovered-sessions', withLocalHost({}), LOCAL_ENV);
-    expect(missing.status).toBe(501);
-    const discovery: ChatSessionDiscoveryPort = {
-      listDiscoveredSessions: vi.fn(async () => []),
-      verifySessionExists: vi.fn(async () => true),
-      readAdoptSeedMessages: vi.fn(async () => []),
-    };
-    const app = createApp({
-      cache: createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]),
-      sessionDiscovery: discovery,
-    });
-    const unknown = await app.request('/api/chat/projects/nope/discovered-sessions', withLocalHost({}), LOCAL_ENV);
-    expect(unknown.status).toBe(404);
-    const invalid = await app.request('/api/chat/projects/proj-a/discovered-sessions/..s1/adopt', withLocalHost({ method: 'POST' }), LOCAL_ENV);
-    expect(invalid.status).toBe(400);
-    // N6: URL エンコードされた traversal 形式(`..%2f` = `../`)も、Hono のパスパラメータ
-    // デコード後に同じ `includes('..')` チェックへ落ちて 400 になることを固定する。
-    const encodedTraversal = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions/..%2fsecret/adopt',
-      withLocalHost({ method: 'POST' }),
-      LOCAL_ENV,
-    );
-    expect(encodedTraversal.status).toBe(400);
-  });
-
-  // bdboard-3tw.104.3 レビュー MF1: 発見/adopt は通常の chatGuard (トンネル書き込み許可が
-  // あれば通す) より厳しく常にローカル限定。トンネル利用者が自分で作っていない端末セッションの
-  // トランスクリプトを閲覧・再開できてしまうため、当面ローカル限定。外部開放はユーザー裁定
-  // チケット参照。トンネル書き込みが許可された状態でも 403 になることを固定する。
-  it('keeps discovered-sessions and adopt local-only even when tunnel writes are otherwise authorized', async () => {
-    const cache = createFakeBoardCache([cachedProject(project('proj-a', '/projects/a'))]);
-    const discovery: ChatSessionDiscoveryPort = {
-      listDiscoveredSessions: vi.fn(async () => [{ sessionId: 'session-1', lastActivityAt: NOW }]),
-      verifySessionExists: vi.fn(async () => true),
-      readAdoptSeedMessages: vi.fn(async () => []),
-    };
-    // bdboard-l1t.5 Opus レビュー SF6(b): adopt が受け付ける agentId は 'claude' 固定に
-    // なったため、対照実験(下記 adoptedLocal)が 200 になるよう agent を 'claude' として登録する。
-    const app = createApp({
-      cache,
-      sessionDiscovery: discovery,
-      agent: createFakeAgent({
-        descriptor: { id: 'claude', label: 'Claude', models: [{ id: 'sonnet', label: 'Sonnet' }], experimental: false, capability: 'bd-only' },
-      }),
-      writeAccess: {
-        isTunnelWriteAllowed: () => true,
-        hasTunnelSession: () => true,
-      },
-    });
-    const tunnelHeaders = {
-      'CF-Ray': 'abc123-NRT',
-      Cookie: 'bdboard_tunnel_session=example-session-value',
-      'Content-Type': 'application/json',
-    };
-
-    const listed = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions',
-      { headers: tunnelHeaders },
-      LOCAL_ENV,
-    );
-    expect(listed.status).toBe(403);
-    expect(discovery.listDiscoveredSessions).not.toHaveBeenCalled();
-    // N2: 403 本文は専用の export 定数と一致する(リテラル文字列の重複を避ける)。
-    expect(await listed.json()).toEqual({ error: CHAT_SESSION_DISCOVERY_LOCAL_ONLY });
-
-    const adopted = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      { method: 'POST', headers: tunnelHeaders, body: '{}' },
-      LOCAL_ENV,
-    );
-    expect(adopted.status).toBe(403);
-    expect(discovery.verifySessionExists).not.toHaveBeenCalled();
-    expect(await adopted.json()).toEqual({ error: CHAT_SESSION_DISCOVERY_LOCAL_ONLY });
-
-    // 対照実験: 同じ経路がローカルなら通る(200)。
-    const listedLocal = await app.request('/api/chat/projects/proj-a/discovered-sessions', withLocalHost({}), LOCAL_ENV);
-    expect(listedLocal.status).toBe(200);
-    const adoptedLocal = await app.request(
-      '/api/chat/projects/proj-a/discovered-sessions/session-1/adopt',
-      withLocalHost({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agentId: 'claude' }),
-      }),
-      LOCAL_ENV,
-    );
-    expect(adoptedLocal.status).toBe(200);
   });
 });
 
