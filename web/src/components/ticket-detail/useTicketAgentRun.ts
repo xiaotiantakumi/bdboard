@@ -16,6 +16,28 @@
 // 「次に実行」コマンドのコピー (copyFeedback / handleCopyNextStep) は bd コマンド
 // コピーと状態を共有する (useAutoClearedValue, bdboard-ty72) ため、このフックには
 // 含めない。呼び出し元がそのまま表示コンポーネントへ props で渡す。
+//
+// ticketId/projectRootPath 変更時のリセットはこのフックが自前で持つ (Opus レビュー
+// で指摘・修正: 元の実装では TicketDetailPanel 本体の1つの useEffect
+// (`[ticketId, projectRootPath]`) が resetFormState 経由で全セクションをまとめて
+// リセットしており、その宣言位置は「activeRunFromList → activeRunId」の同期
+// useEffect より*前*だった。つまり「まずリセット、その後キャッシュ済みの実行中run
+// で復元」という順序がソース上の宣言順で保証されていた。この関心事をフック化する
+// と、フック呼び出し自体が親コンポーネント内で resetFormState の定義より前に来る
+// (resetFormState が agentRun.reset を参照するため、agentRun の宣言が先でなければ
+// ならない) ことにより、フック内部のeffectは常に親のリセットeffectより先に登録
+// されるようになり、順序が逆転してしまう。結果として「['ticket-runs', ticketId]
+// のキャッシュに実行中runが既にある状態で同じチケットを再訪した」ケースで、フック
+// 内の同期effectがactiveRunIdを正しくセットした直後に、親のリセットeffectがそれを
+// nullへ巻き戻し、ポーリングが一切始まらない (=実行中の表示が消える) という
+// リグレッションを生んだ。
+// 対策として、ticketId/projectRootPath 変更によるリセットをフック内部の
+// useEffect として持たせ (下記)、その宣言順序を「activeRunFromList →
+// activeRunId」の同期effectより前に固定する。こうすればフックがどこで呼ばれても
+// (親のresetFormStateのタイミングに関係なく)、フック内部の2つのeffectだけで
+// 元の「リセット→復元」の順序が保証される。親からの明示的な `agentRun.reset()`
+// 呼び出しは廃止した (呼ぶと今回と同じ理由で再度上書きしてしまうため)。
+// `reset` はテスト・将来の手動リセット用途のために戻り値として公開したまま。
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -39,6 +61,7 @@ import { computeRunStartDisabled } from './agentRun';
 export function useTicketAgentRun(
   ticketId: string,
   data: TicketDetailDto | undefined,
+  projectRootPath: string | undefined,
 ) {
   const queryClient = useQueryClient();
 
@@ -97,6 +120,27 @@ export function useTicketAgentRun(
     enabled: confirmingAgentRun,
     onEscape: handleCancelAgentRun,
   });
+
+  /**
+   * ticketId/projectRootPath 切り替え時のフルリセット。手動呼び出し (テスト等)
+   * にも使えるよう戻り値として公開しているが、本番コードから呼ぶのは直下の
+   * ticketId 変更 effect のみ — 元は親 (resetFormState) から呼ばれていたが、
+   * フック内の同期effectとの順序保証のためフック内部へ移した (ファイル冒頭の
+   * コメント参照)。
+   */
+  const reset = useCallback(() => {
+    setConfirmingAgentRun(false);
+    setActiveRunId(null);
+    setActiveRunMeta(null);
+    setPolledRunDetail(null);
+    setSelectedHistoryRunId(null);
+  }, []);
+
+  // このeffectは下の「activeRunFromList → activeRunId」同期effectより必ず前に
+  // 宣言すること (順序がファイル冒頭の解説コメントの前提)。
+  useEffect(() => {
+    reset();
+  }, [ticketId, projectRootPath, reset]);
 
   const activeRunFromList = useMemo(() => {
     return ticketRunsData?.runs.find((run) => isAgentRunInProgress(run.status));
@@ -251,15 +295,6 @@ export function useTicketAgentRun(
       await cancelAgentRun(activeRunId);
     },
   });
-
-  /** ticketId 切り替え時のフルリセット (resetFormState から呼ぶ)。 */
-  const reset = useCallback(() => {
-    setConfirmingAgentRun(false);
-    setActiveRunId(null);
-    setActiveRunMeta(null);
-    setPolledRunDetail(null);
-    setSelectedHistoryRunId(null);
-  }, []);
 
   return {
     confirmingAgentRun,

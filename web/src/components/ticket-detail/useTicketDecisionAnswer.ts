@@ -88,6 +88,9 @@ export function useTicketDecisionAnswer(
   // エージェントが質問1を取り下げて質問2を出すと、質問2の送信ボタンの下に
   // 質問1の失敗メッセージが残り続けていた (bdboard-uez)。id が変わったときだけ
   // 消すので、「失敗したが質問は同じまま」ではメッセージは残る。
+  //
+  // この effect が decisionMutation の下にあるのは、deps 配列が描画中に
+  // 評価されるため。上に置くと decisionMutation が TDZ で ReferenceError になる。
   const resetDecision = decisionMutation.reset;
   useEffect(() => {
     resetDecisionAnswer();

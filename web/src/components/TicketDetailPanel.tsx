@@ -111,6 +111,12 @@ export function TicketDetailPanel({
     });
   }, [data?.id, data?.title, data?.projectId, onTicketViewed]);
 
+  // agentRun (下) の ticketId/projectRootPath 変更リセットが内部の同期effectより
+  // 先に走る順序を保証するため、agentRun 呼び出しより前で確定させておく
+  // (bdboard-sso1.5 PR-L Opus レビュー対応、useTicketAgentRun.ts 冒頭コメント参照)。
+  const projectRootPath =
+    data === undefined ? undefined : projectRootPaths.get(data.projectId);
+
   const decision = useTicketDecisionAnswer(ticketId, pendingDecision);
   const commentsEnabled =
     data !== undefined &&
@@ -152,7 +158,7 @@ export function TicketDetailPanel({
     queryFn: () => fetchTicketInFlightOverlaps(ticketId),
     enabled: inFlightOverlapsEnabled,
   });
-  const agentRun = useTicketAgentRun(ticketId, data);
+  const agentRun = useTicketAgentRun(ticketId, data, projectRootPath);
   // bdboard-ty72: コピー表示は copyTextToClipboard の継続から出るので、素の
   // setTimeout だとアンマウント後にタイマーを仕掛けうる。
   const {
@@ -236,12 +242,13 @@ export function TicketDetailPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const projectRootPath =
-    data === undefined ? undefined : projectRootPaths.get(data.projectId);
 
   const resetQuickActions = quickActions.reset;
   const resetDecision = decision.reset;
-  const resetAgentRun = agentRun.reset;
+  // agentRun のリセットはこの親effectからは呼ばない — useTicketAgentRun が
+  // ticketId/projectRootPath 変更を自前で検知して内部effectの順序込みでリセット
+  // する (bdboard-sso1.5 PR-L Opus レビュー対応)。ここから重ねて呼ぶと、
+  // キャッシュ済みの実行中run復元を再び巻き戻してしまう。
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
     clearCopyDisplay();
     resetDecision({
@@ -254,10 +261,8 @@ export function TicketDetailPanel({
     resetTitleEditing();
     resetDescriptionEditing();
     resetSessionLink();
-    resetAgentRun();
   }, [
     clearCopyDisplay,
-    resetAgentRun,
     resetDecision,
     resetQuickActions,
     resetComment,
