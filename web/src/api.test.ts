@@ -436,6 +436,82 @@ describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
       closed: false,
     });
   });
+
+  // bdboard-v78e レビュー指摘#4: 一部だけ string でない要素が混ざった配列は、部分的に
+  // フィルタして使うのではなく配列全体を無視する(そもそもサーバー側の契約違反であり、
+  // 中途半端な gate ID リストを UI に出すより無い方が安全なため)。
+  it('rejects the entire ambiguousGateIds array when any entry is not a string', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'ticket',
+              closed: false,
+              ambiguousGateIds: ['bdboard-gate-1', 123, 'bdboard-gate-2'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+    });
+  });
+
+  // bdboard-v78e レビュー指摘#5: ambiguousGateIds は kind==='ticket' かつ closed===false の
+  // ときにしか意味を持たない(bd-cli-human-decisions.ts の respond() はそれ以外の組み合わせで
+  // このフィールドを返さない)。サーバーの不具合や将来の変更で他の組み合わせと一緒に送られて
+  // 来ても、UI 側の不変条件を守るためここで無視する。
+  it('strips ambiguousGateIds when kind is not ticket, even if the server sends it', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'gate',
+              closed: true,
+              ambiguousGateIds: ['bdboard-gate-1'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'gate',
+      closed: true,
+    });
+  });
+
+  it('strips ambiguousGateIds when closed is true, even if the server sends it', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'ticket',
+              closed: true,
+              ambiguousGateIds: ['bdboard-gate-1'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: true,
+    });
+  });
 });
 
 describe('agent run API', () => {

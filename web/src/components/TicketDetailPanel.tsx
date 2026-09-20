@@ -2205,21 +2205,35 @@ export function TicketDetailPanel({
                  * (「確認待ちから外れ、次の更新で通常のレーンに戻ります」)をそのまま
                  * 出すと実際には何も変わっていないのに解決したかのように誤読させる
                  * (bdboard-v78e)。この分岐を優先し、個別の gate へ回答するよう促す。
+                 * kind/closed との整合性(kind==='ticket' かつ closed===false のとき
+                 * だけ設定される、配列は非空)は web/src/api.ts の
+                 * mapTicketDecisionOutcome 側で強制済みなので、ここでは
+                 * ambiguousGateIds の有無だけを見ればよい。
                  */}
-                {submittedDecision.outcome.ambiguousGateIds !== undefined &&
-                submittedDecision.outcome.ambiguousGateIds.length > 0 ? (
+                {submittedDecision.outcome.ambiguousGateIds !== undefined ? (
                   <>
                     <p className="detail-help">
-                      このチケットは複数の質問(gate)に分かれています。どの質問への回答か特定できなかったため、何も解決していません。下の gate を開いて個別に回答してください。
+                      このチケットは複数の質問(gate)に分かれています。どの質問への回答か特定できなかったため、回答はコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。
                     </p>
+                    {/*
+                     * bdboard-v78e レビュー指摘: gate はエピック絞り込みの対象外
+                     * (parentId を持たない)なので、絞り込み中は isTicketOnBoard(gateId)
+                     * が false になり TicketIdLink が非クリック化してしまう
+                     * (「現在のボードに表示されていません」)。ここで列挙する gate ID は
+                     * ユーザーが自由入力したテキストからの自動リンクではなく respond()
+                     * のレスポンスに含まれるサーバー由来の確定 ID なので、盤面フィルタの
+                     * 状態に関わらず常にクリック可能にする(TicketIdLink は使わない)。
+                     */}
                     <ul className="detail-list">
                       {submittedDecision.outcome.ambiguousGateIds.map((gateId) => (
                         <li key={gateId}>
-                          <TicketIdLink
-                            id={gateId}
-                            isTicketOnBoard={isTicketOnBoard}
-                            onOpenTicket={onOpenTicket}
-                          />
+                          <button
+                            type="button"
+                            className="ticket-id-link"
+                            onClick={() => onOpenTicket(gateId)}
+                          >
+                            {gateId}
+                          </button>
                         </li>
                       ))}
                     </ul>
