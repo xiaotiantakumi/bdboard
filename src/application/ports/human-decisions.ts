@@ -15,6 +15,15 @@ export interface RespondOutcome {
    * 空配列は「ブロックしている human gate が無かった」ことを表す。
    */
   readonly resolvedGateIds?: readonly string[];
+  /**
+   * kind === 'gate' のときだけ設定される。この gate を resolve した結果、他に
+   * ブロックしている open な human gate が残っていなかったために human ラベルを
+   * 外した work ticket の ID 一覧(bdboard-giyt。bdboard-vy0h の逆方向)。他の
+   * human gate がまだ残っているチケットのラベルは外さない。読み取りに失敗した
+   * 場合は fail-soft でそのチケットをスキップする(gate 自体の close は既に成功
+   * しているため、この清掃だけを理由に respond() 全体を失敗させない)。
+   */
+  readonly clearedHumanLabelTicketIds?: readonly string[];
 }
 
 export interface PendingDecisionOption {

@@ -12,6 +12,8 @@ import {
   buildUnknownKindResponseCommentBody,
   createBdCliHumanDecisions,
   parseShowStdoutForKind,
+  parseShowWithDependentsStdout,
+  resolveGateBlockedTicketIds,
   resolveKind,
   resolveKindAndBlockingGates,
 } from './bd-cli-human-decisions.js';
@@ -47,6 +49,19 @@ const expectedShowArgs = (rootPath: string, issueId: string): readonly string[] 
   'show',
   issueId,
   '--json',
+];
+
+const expectedShowWithDependentsArgs = (
+  rootPath: string,
+  issueId: string,
+): readonly string[] => [
+  '--readonly',
+  '-C',
+  rootPath,
+  'show',
+  issueId,
+  '--json',
+  '--include-dependents',
 ];
 
 const expectedGateResponseCommentArgs = (
@@ -194,6 +209,49 @@ function showTaskWithDependenciesHandler(
     if (args.includes('show')) {
       return {
         stdout: JSON.stringify([{ id: issueId, issue_type: 'task', dependencies }]),
+        stderr: '',
+        exitCode: 0,
+      };
+    }
+    return { stdout: '', stderr: '', exitCode: 0 };
+  };
+}
+
+// bdboard-giyt: gate 側から respond() したときの一連の show 呼び出しを組み立てる。
+// - `show <gateId>`(--include-dependents 無し)は kind 判定用(常に issue_type: 'gate')
+// - `show <gateId> --include-dependents` は dependents(この gate がブロックしている
+//   work ticket)を返す
+// - `show <ticketId>`(--include-dependents 無し、gateId 以外の ID)は、その ticket に
+//   他に残っている open な human gate を判定するための呼び出し。ticketDependencies に
+//   ticketId のエントリが無ければ dependencies: [] を返す(=もう何も残っていない)。
+function gateRespondHandler(options: {
+  readonly gateId: string;
+  readonly dependents?: readonly Record<string, unknown>[];
+  readonly ticketDependencies?: Record<string, readonly Record<string, unknown>[]>;
+}) {
+  return async (_command: string, args: readonly string[]) => {
+    if (args.includes('show')) {
+      const showIndex = args.indexOf('show');
+      const shownId = args[showIndex + 1];
+      if (args.includes('--include-dependents')) {
+        return {
+          stdout: JSON.stringify([
+            { id: shownId, issue_type: 'gate', dependents: options.dependents ?? [] },
+          ]),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      if (shownId === options.gateId) {
+        return {
+          stdout: JSON.stringify([{ id: shownId, issue_type: 'gate' }]),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      const dependencies = options.ticketDependencies?.[shownId as string] ?? [];
+      return {
+        stdout: JSON.stringify([{ id: shownId, issue_type: 'task', dependencies }]),
         stderr: '',
         exitCode: 0,
       };
@@ -614,6 +672,10 @@ describe('createBdCliHumanDecisions', () => {
 
     const outcome = await port.respond('/my/root', issueId, 'A案を採用');
 
+    // showGateHandler returns the same gate-shaped item (no dependents) for every
+    // `show` call, including the post-close --include-dependents probe added by
+    // bdboard-giyt, so there is nothing to clear and clearedHumanLabelTicketIds is
+    // omitted.
     expect(outcome).toEqual({ kind: 'gate', closed: true });
     expect(calls).toEqual([
       {
@@ -631,14 +693,137 @@ describe('createBdCliHumanDecisions', () => {
         args: expectedCloseRespondedIssueArgs('/my/root', issueId, 'A案を採用'),
         options: { timeoutMs: 30_000 },
       },
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowWithDependentsArgs('/my/root', issueId),
+        options: { timeoutMs: 5_000 },
+      },
     ]);
     // respond の書き込み呼び出し(comment / close)は --readonly を付けない。
-    // 先頭の show 呼び出しだけは読み取り専用なので --readonly を付ける。
+    // show 呼び出し(kind 判定・bdboard-giyt の dependents 読み取り)は読み取り専用
+    // なので --readonly を付ける。
     expect(calls[0]?.args).toContain('--readonly');
     expect(calls[1]?.args).not.toContain('--readonly');
     expect(calls[2]?.args).not.toContain('--readonly');
+    expect(calls[3]?.args).toContain('--readonly');
     expect(calls[2]?.args[5]).toMatch(/^Responded: /);
     expect(calls[2]?.args[5]).toContain('A案を採用');
+  });
+
+  // bdboard-giyt: bdboard-vy0h の逆方向。gate カードへ直接回答したとき、その gate が
+  // ブロックしていた work ticket 側の human ラベルも(他に残っている gate が無ければ)
+  // 一緒に外れることを押さえる。
+  it('clears the human label on the blocked ticket when closing its only open human gate (bdboard-giyt)', async () => {
+    const gateId = 'bdboard-gate';
+    const ticketId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: gateRespondHandler({
+        gateId,
+        dependents: [
+          { id: ticketId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+        ticketDependencies: { [ticketId]: [] },
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', gateId, 'A案を採用');
+
+    expect(outcome).toEqual({
+      kind: 'gate',
+      closed: true,
+      clearedHumanLabelTicketIds: [ticketId],
+    });
+    expect(calls).toEqual([
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowArgs('/my/root', gateId),
+        options: { timeoutMs: 5_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedGateResponseCommentArgs('/my/root', gateId, 'A案を採用'),
+        options: { timeoutMs: 30_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedCloseRespondedIssueArgs('/my/root', gateId, 'A案を採用'),
+        options: { timeoutMs: 30_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowWithDependentsArgs('/my/root', gateId),
+        options: { timeoutMs: 5_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowArgs('/my/root', ticketId),
+        options: { timeoutMs: 5_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedRemoveHumanLabelArgs('/my/root', ticketId),
+        options: { timeoutMs: 30_000 },
+      },
+    ]);
+  });
+
+  it('keeps the human label on the blocked ticket when another open human gate still blocks it (bdboard-giyt)', async () => {
+    const gateId = 'bdboard-gate-a';
+    const ticketId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: gateRespondHandler({
+        gateId,
+        dependents: [
+          { id: ticketId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+        ticketDependencies: {
+          [ticketId]: [
+            {
+              id: 'bdboard-gate-b',
+              issue_type: 'gate',
+              await_type: 'human',
+              status: 'open',
+              dependency_type: 'blocks',
+            },
+          ],
+        },
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', gateId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'gate', closed: true });
+    expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
+  });
+
+  it('does not remove a blocked ticket label when the post-close dependents lookup fails (fail-soft, bdboard-giyt)', async () => {
+    const gateId = 'bdboard-gate';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show') && args.includes('--include-dependents')) {
+          return { stdout: '', stderr: 'database is locked', exitCode: 1 };
+        }
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([{ id: gateId, issue_type: 'gate' }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', gateId, 'A案を採用');
+
+    // The gate itself is already closed successfully (see the earlier calls); a
+    // failure reading its dependents must not fail the whole respond() call, and
+    // must not falsely report any ticket as cleared.
+    expect(outcome).toEqual({ kind: 'gate', closed: true });
+    expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
   });
 
   it('removes the human label for a work ticket without closing it', async () => {
@@ -1206,5 +1391,145 @@ describe('resolveKindAndBlockingGates', () => {
     const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
 
     expect(result).toEqual({ kind: 'ticket', blockingHumanGateIds: [] });
+  });
+});
+
+// bdboard-giyt: gate 側 respond() が使う「この gate がブロックしている work ticket」の
+// 抽出ロジックを、resolveKindAndBlockingGates と同じ粒度で直接押さえる。
+describe('parseShowWithDependentsStdout', () => {
+  it('extracts non-closed, blocks-typed, non-gate dependents', () => {
+    const stdout = JSON.stringify([
+      {
+        id: 'bdboard-gate',
+        issue_type: 'gate',
+        dependents: [
+          { id: 'bdboard-open-task', issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+          // bdboard-giyt レビュー指摘: 'open' 以外の未終了ステータス(claim 済みの
+          // in_progress 等)も、'closed' でない限りは対象に含める。vy0h 側の
+          // filterBlockingHumanGateIds がチケットの状態を問わずラベルを外すのと対称。
+          {
+            id: 'bdboard-in-progress-task',
+            issue_type: 'task',
+            status: 'in_progress',
+            dependency_type: 'blocks',
+          },
+          {
+            id: 'bdboard-closed-task',
+            issue_type: 'task',
+            status: 'closed',
+            dependency_type: 'blocks',
+          },
+          {
+            id: 'bdboard-related-task',
+            issue_type: 'task',
+            status: 'open',
+            dependency_type: 'related',
+          },
+          {
+            id: 'bdboard-other-gate',
+            issue_type: 'gate',
+            status: 'open',
+            dependency_type: 'blocks',
+          },
+        ],
+      },
+    ]);
+
+    expect(parseShowWithDependentsStdout(stdout)).toEqual([
+      'bdboard-open-task',
+      'bdboard-in-progress-task',
+    ]);
+  });
+
+  it.each([
+    ['empty stdout', ''],
+    ['invalid JSON', '{not json'],
+    ['an empty array', '[]'],
+    ['dependents missing', '[{"id":"bdboard-gate","issue_type":"gate"}]'],
+    ['dependents not an array', '[{"id":"bdboard-gate","dependents":"nope"}]'],
+  ])('returns an empty array for %s', (_label, stdout) => {
+    expect(parseShowWithDependentsStdout(stdout)).toEqual([]);
+  });
+
+  it('skips only malformed dependent entries without hiding valid ones', () => {
+    const stdout = JSON.stringify([
+      {
+        id: 'bdboard-gate',
+        dependents: [
+          null,
+          'not-an-object',
+          { issue_id: 'bdboard-x', depends_on_id: 'bdboard-y' },
+          { id: 'bdboard-open-task', issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+      },
+    ]);
+
+    expect(parseShowWithDependentsStdout(stdout)).toEqual(['bdboard-open-task']);
+  });
+});
+
+describe('resolveGateBlockedTicketIds', () => {
+  it('returns blocked ticket ids from bd show --include-dependents', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async () => ({
+        stdout: JSON.stringify([
+          {
+            id: 'bdboard-gate',
+            issue_type: 'gate',
+            dependents: [
+              {
+                id: 'bdboard-task',
+                issue_type: 'task',
+                status: 'open',
+                dependency_type: 'blocks',
+              },
+            ],
+          },
+        ]),
+        stderr: '',
+        exitCode: 0,
+      }),
+    });
+
+    const ids = await resolveGateBlockedTicketIds(runner, 'bd', '/my/root', 'bdboard-gate');
+
+    expect(ids).toEqual(['bdboard-task']);
+    expect(calls).toEqual([
+      {
+        command: 'bd',
+        args: [
+          '--readonly',
+          '-C',
+          '/my/root',
+          'show',
+          'bdboard-gate',
+          '--json',
+          '--include-dependents',
+        ],
+        options: { timeoutMs: 5_000 },
+      },
+    ]);
+  });
+
+  it('fails soft to an empty array when the show command exits non-zero', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({ stdout: '', stderr: 'not found', exitCode: 1 }),
+    });
+
+    const ids = await resolveGateBlockedTicketIds(runner, 'bd', '/my/root', 'bdboard-gate');
+
+    expect(ids).toEqual([]);
+  });
+
+  it('fails soft to an empty array when the command runner throws', async () => {
+    const runner: CommandRunner = {
+      async run() {
+        throw new Error('boom');
+      },
+    };
+
+    const ids = await resolveGateBlockedTicketIds(runner, 'bd', '/my/root', 'bdboard-gate');
+
+    expect(ids).toEqual([]);
   });
 });
