@@ -1,10 +1,12 @@
 // bdboard-sso1.35: TunnelControl.tsx の純ヘルパー・定数を、挙動を変えずに
 // このファイルへ移動しただけのもの。ThroughputStats.tsx / HygienePanel.tsx の
 // 「pure helpers を兄弟ディレクトリへ移す」パターン(PR #560 / #544)を踏襲する。
+//
+// TUNNEL_QUERY_KEY はここには置かない — useTunnelStatus.ts が唯一の定義元
+// (理由はそちらのコメント参照)。setQueryData 側で使う場合はそこから import する。
 import { ApiError } from '../../api';
 import { TUNNEL_NOT_RUNNING_HELP } from '../../writeAccessMessage';
 
-export const TUNNEL_QUERY_KEY = ['tunnel'] as const;
 export const POLL_INTERVAL_MS = 1200;
 
 export function isLocalOnlyError(error: unknown): boolean {

@@ -3,20 +3,23 @@
 // refetchInterval は移動前と同一。呼び出し位置は元の tunnelQuery と同じ
 // (最初の hook 呼び出し) なので、他の hook との発火順は変わらない。
 //
-// queryKey はこのファイル内のリテラルとして書く(TUNNEL_QUERY_KEY を import
-// しない) — web/src/boardChangedQueryKeys.test.ts の静的スキャナが
-// `queryKey:` の root を「同じファイル内のリテラル」でしか解決できないため
-// (他の web/src/components/**/use*.ts の queryKey もすべて同様にインライン
-// リテラル)。setQueryData 側 (useTunnelPublish.ts 等) はこのスキャナの対象外
-// なので、そちらは引き続き tunnelHelpers.ts の TUNNEL_QUERY_KEY を使う。
-// 値 (['tunnel']) は tunnelHelpers.ts の TUNNEL_QUERY_KEY と一致させること。
+// TUNNEL_QUERY_KEY はこのファイルで定義してここから export する(唯一の
+// 定義)。web/src/boardChangedQueryKeys.test.ts の静的スキャナが `queryKey:`
+// の root を「同じファイル内のリテラル、または同じファイル内で定義した
+// const」でしか解決できないため(他の web/src/components/**/use*.ts の
+// queryKey もすべて同様にインラインリテラル)。setQueryData 側
+// (useTunnelPublish.ts 等) はこのスキャナの対象外(パターンが `queryKey:` に
+// マッチしない)なので、そちらは export されたこの定数をそのまま import して
+// 使う — 2箇所に同じ文字列リテラルを重複定義して値がずれるリスクを避ける。
 import { useQuery } from '@tanstack/react-query';
 import { fetchTunnel } from '../../api';
 import { isLocalOnlyError, POLL_INTERVAL_MS } from './tunnelHelpers';
 
+export const TUNNEL_QUERY_KEY = ['tunnel'] as const;
+
 export function useTunnelStatus() {
   return useQuery({
-    queryKey: ['tunnel'],
+    queryKey: TUNNEL_QUERY_KEY,
     queryFn: fetchTunnel,
     // A 403 here is the policy answer for a board opened through the tunnel, not
     // a transient failure. Retrying it with backoff would leave the publish

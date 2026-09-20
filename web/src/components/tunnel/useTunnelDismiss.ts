@@ -2,7 +2,7 @@
 // mutation を、挙動を変えずにこのフックへ抽出したもの。
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { dismissTunnelInterruption, type TunnelDto } from '../../api';
-import { TUNNEL_QUERY_KEY } from './tunnelHelpers';
+import { TUNNEL_QUERY_KEY } from './useTunnelStatus';
 
 export interface UseTunnelDismissOptions {
   onMutationError: (error: unknown) => void;

@@ -55,7 +55,7 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
   const stop = useTunnelStop({
     onMutationError: handleMutationError,
     clearActionError,
-    resetQr: qr.resetForStop,
+    resetQr: qr.reset,
   });
 
   const dismiss = useTunnelDismiss({

@@ -4,16 +4,20 @@
 // 確認ダイアログの state・ref・mutation・handler をひとつのフックにまとめる。
 //
 // このフックには confirmPanelRef 用の useFocusTrap を含めていない —
-// 親 (TunnelControl) には modalPanelRef 用の useFocusTrap もあり、
-// enabled の一方が publishPhase に依存して互いに排他的に切り替わるため、
-// 2つの useFocusTrap 呼び出しの相対順序(cleanup → setup の順)は
-// フォーカス復帰の挙動に直結する(useFocusTrap.ts の previousFocusRef)。
-// 安全側に倒し、両方の useFocusTrap 呼び出しは元の位置のまま親に残し、
-// このフックは ref とハンドラだけを返す。TunnelControl.tsx のコメント参照。
+// 親 (TunnelControl) には modalPanelRef 用の useFocusTrap もあり、enabled は
+// 互いに publishPhase に依存して排他的に切り替わる。React はコミットの
+// cleanup を全て走らせてから setup を全て走らせるので、両者の呼び出し順
+// 自体は(こちらが先でも後でも)フォーカス復帰の連鎖に影響しない —
+// ただし連鎖自体(一方の cleanup が previousFocusRef へ戻す→他方の setup が
+// その時点の activeElement を自分の previousFocusRef として捕まえる、
+// useFocusTrap.ts 参照)は実際の挙動であり、2つの呼び出しを別ファイルへ
+// 分割して片方だけ先に評価されるような形(例: 早期 return を挟む)にしない
+// 限り安全に保たれる。安全側に倒し、両方の useFocusTrap 呼び出しは元の
+// 位置のまま親に残し、このフックは ref とハンドラだけを返す。
 import { useCallback, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { startTunnel, type TunnelDto } from '../../api';
-import { TUNNEL_QUERY_KEY } from './tunnelHelpers';
+import { TUNNEL_QUERY_KEY } from './useTunnelStatus';
 
 export interface UseTunnelPublishOptions {
   onMutationError: (error: unknown) => void;
