@@ -88,11 +88,11 @@ import {
 } from './chat/threads';
 export { formatThreadUpdatedAt } from './chat/threads';
 import { ChatThreadDrawer } from './chat/ChatThreadDrawer';
-import { ChatMessageRow } from './chat/ChatMessageRow';
 import { ChatSettingsPanel } from './chat/ChatSettingsPanel';
 import { ChatInputActions } from './chat/ChatInputActions';
 import { ChatQuickCommands } from './chat/ChatQuickCommands';
 import { ChatInputNotices } from './chat/ChatInputNotices';
+import { ChatMessageList } from './chat/ChatMessageList';
 import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
@@ -3527,67 +3527,21 @@ export function ChatPanel({
         {/* 送信して初めて 501 に気付く、では遅い (bdboard-70z.9)。 */}
         <PlatformLimitationNotice feature="chat" />
 
-        <div
-          ref={messagesRef}
-          className="chat-messages"
-          role="log"
-          aria-live="polite"
+        <ChatMessageList
+          messagesRef={messagesRef}
           onScroll={handleMessagesScroll}
-        >
-          {currentMessages.length === 0 &&
-            loadingHistoryFor !== currentConversationKey && (
-              <p className="empty-message">まだメッセージはありません</p>
-            )}
-          {loadingHistoryFor === currentConversationKey && (
-            <p className="chat-pending">履歴を読み込み中…</p>
-          )}
-          {!isSending &&
-            backgroundTurnProjectId === selectedProjectId &&
-            backgroundTurnStatus.state === 'processing' &&
-            backgroundTurnStatus.message !== undefined && (
-            // プロジェクト単位の busy 粒度に合わせ、sessionId との突き合わせは行わない
-            // (bdboard-3tw.104.22 の処理中バナーと同じスコープ。新規セッションは送信時点で
-            // sessionId が未確定のため、厳密な会話一致は原理的にできない)。
-            <div className="chat-message chat-message-user">
-              <p className="chat-message-text">{backgroundTurnStatus.message}</p>
-            </div>
-          )}
-          {!isSending &&
-            backgroundTurnProjectId === selectedProjectId &&
-            backgroundTurnStatus.state === 'processing' && (
-            <p className="chat-pending" role="status">
-              返信をバックグラウンドで処理中…
-            </p>
-          )}
-          {!isSending &&
-            backgroundTurnProjectId === selectedProjectId &&
-            backgroundTurnStatus.state === 'completed' && (
-            <p className="chat-pending" role="status">
-              バックグラウンドの返信が完了しました。
-            </p>
-          )}
-          {currentMessages.map((message, index) => (
-            <ChatMessageRow
-              key={`${message.at}-${index}`}
-              message={message}
-              isTicketOnBoard={isTicketOnBoard}
-              onOpenTicket={onOpenTicket}
-            />
-          ))}
-          {activeStreamingText !== '' && (
-            <div className="chat-message chat-message-assistant chat-message-streaming">
-              <p className="chat-message-text">{activeStreamingText}</p>
-            </div>
-          )}
-          {/* bdboard-l1t.9 Opus レビュー N5: streaming で部分テキストが
-              表示され始めたら「考え中…」は隠す(両方同時に出ると、もう
-              テキストが見えているのに「考え中」と言い続けるのが不自然)。 */}
-          {isSending && activeStreamingText === '' && (
-            <p className="chat-pending">
-              考え中…{sendElapsedSeconds}秒（最大3分かかることがあります）
-            </p>
-          )}
-        </div>
+          currentMessages={currentMessages}
+          currentConversationKey={currentConversationKey}
+          loadingHistoryFor={loadingHistoryFor}
+          isSending={isSending}
+          backgroundTurnProjectId={backgroundTurnProjectId}
+          selectedProjectId={selectedProjectId}
+          backgroundTurnStatus={backgroundTurnStatus}
+          isTicketOnBoard={isTicketOnBoard}
+          onOpenTicket={onOpenTicket}
+          activeStreamingText={activeStreamingText}
+          sendElapsedSeconds={sendElapsedSeconds}
+        />
 
         <form
           ref={formRef}
