@@ -29,7 +29,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/infrastructure/bd/bd-cli-issue-writer.ts': 570, // 現在 565
   'web/src/components/BulkActionBar.tsx': 570, // 現在 565
   'web/src/uiPersistedState.ts': 530, // 現在 523
-  'src/interface/http/ticket-write-routes.ts': 520, // 現在 511
   'src/interface/http/agent-run-routes.ts': 500, // 現在 497
   'web/src/components/HelpPanel.tsx': 500, // 現在 496
   'web/src/components/LaneColumn.tsx': 490, // 現在 483
