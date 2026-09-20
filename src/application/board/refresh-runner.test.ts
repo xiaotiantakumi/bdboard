@@ -175,11 +175,22 @@ describe('createRefreshRunner (bdboard-sso1.9 move only)', () => {
 
   it('coalesces a run() request that arrives while one is already in flight, resolving the waiter after the merged cycle', async () => {
     const { cache, fingerprinter, repository } = createBaseDeps();
+    const projects = [project('proj-a'), project('proj-b')];
+    // proj-b is pre-cached with a matching fingerprint so it would normally be
+    // "reused" (fingerprint unchanged, no force) — this lets the second cycle's
+    // assertions prove `force` was actually OR'd into the merged pending request,
+    // not just present on the first call.
+    cache.putProject({
+      project: project('proj-b'),
+      tickets: [],
+      fingerprint: 'fp-proj-b',
+      fetchedAt: new Date('2025-12-31T00:00:00Z'),
+    });
     const pendingResolvers: Array<() => void> = [];
     const gatedDiscovery: ProjectDiscovery = {
       discover: () =>
         new Promise((resolve) => {
-          pendingResolvers.push(() => resolve([]));
+          pendingResolvers.push(() => resolve(projects));
         }),
     };
     const onResult = vi.fn();
@@ -196,18 +207,31 @@ describe('createRefreshRunner (bdboard-sso1.9 move only)', () => {
       onResult,
     });
 
-    const first = runner.run(true);
+    // Cycle 1: force=false, restricted to proj-a only (proj-b is untouched/reused
+    // purely because it is outside onlyProjectIds — it isn't even cached yet at
+    // this point for proj-a, so it is not a fingerprint-match reuse).
+    const first = runner.run(false, ['proj-a']);
     // Wait a tick so the first call is definitely inside refreshProjects (discovery gated).
     await Promise.resolve();
-    const second = runner.run(true, ['only-me']);
+    // Cycle 2's request: force=true, no onlyProjectIds (= all projects). Per
+    // mergePendingRefresh, "undefined widens" — this must NOT be narrowed down to
+    // just ['proj-a'] by whatever cycle 1 was doing (cycle 1 already claimed its
+    // own request before this arrives, so there is nothing to merge with — this
+    // becomes the entirety of the pending request for cycle 2).
+    const second = runner.run(true, undefined);
 
     // Resolve cycle 1 (the initial request); this unblocks the inner loop, which then
     // sees the coalesced request from `second` and starts cycle 2, calling discover()
     // again (gated the same way) before either promise settles.
     expect(pendingResolvers).toHaveLength(1);
     pendingResolvers[0]?.();
-    await Promise.resolve();
-    await Promise.resolve();
+    // Cycle 1 now does real async work (fingerprint + listAll + cache write +
+    // notification snapshot + watcher sync) before looping back to discover()
+    // for the coalesced cycle 2, so drain microtasks until that happens instead
+    // of assuming a fixed number of ticks.
+    for (let i = 0; i < 50 && pendingResolvers.length < 2; i += 1) {
+      await Promise.resolve();
+    }
     expect(pendingResolvers).toHaveLength(2);
     pendingResolvers[1]?.();
 
@@ -217,5 +241,18 @@ describe('createRefreshRunner (bdboard-sso1.9 move only)', () => {
     // First cycle (the initial request) + a second cycle for the coalesced request
     // that arrived mid-flight.
     expect(onResult).toHaveBeenCalledTimes(2);
+
+    // Cycle 1: onlyProjectIds=['proj-a'] correctly limited the refresh to proj-a;
+    // proj-b was left alone (reused) even though it was never force-refreshed here.
+    const [cycle1Result] = onResult.mock.calls[0] ?? [];
+    expect(cycle1Result).toMatchObject({ refreshed: ['proj-a'], reused: ['proj-b'] });
+
+    // Cycle 2: force=true (OR'd in) + onlyProjectIds=undefined (widened to "all")
+    // must refresh BOTH projects — including proj-b, whose cached fingerprint still
+    // matches and which would otherwise be reused. If `force` were dropped during
+    // the merge, or if the merged onlyProjectIds were narrowed instead of widened,
+    // proj-b would show up as reused here instead of refreshed.
+    const [cycle2Result] = onResult.mock.calls[1] ?? [];
+    expect(cycle2Result).toMatchObject({ refreshed: ['proj-a', 'proj-b'], reused: [] });
   });
 });
