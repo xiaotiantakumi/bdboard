@@ -33,6 +33,16 @@ export function resolveCssImports(entryPath: string): string {
       parts.push(resolveCssImports(importedPath));
       continue;
     }
+    // Fail loudly rather than silently passing through an @import form this
+    // resolver doesn't understand (double quotes, url(), layer(), leading
+    // whitespace, ...): a test that scans the "full" resolved text for e.g. a
+    // bare `dvh` unit or a brace-balance count must never pass vacuously
+    // because a chunk of CSS quietly failed to get inlined.
+    if (/^\s*@import\b/.test(line)) {
+      throw new Error(
+        `resolveCssImports: unrecognized @import syntax in ${entryPath} at line ${i + 1}: ${line}`,
+      );
+    }
     // preserve the line, and the newline that followed it in the original file
     // (split('\n') drops them; re-add except after the very last line).
     parts.push(i < lines.length - 1 ? `${line}\n` : line);
