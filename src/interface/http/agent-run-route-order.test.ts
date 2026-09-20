@@ -44,11 +44,13 @@ function buildMinimalDeps(): AgentRunRoutesDeps {
     runStore: createRunStore({ now: () => new Date('2026-01-01T00:00:00Z') }),
     worktreeProvisioner: {} as unknown as AgentRunRoutesDeps['worktreeProvisioner'],
     normalizePath: (pathValue: string) => pathValue,
-    getHarnessStatus: async () =>
-      ({ packs: [], contract: {} }) as unknown as Awaited<
-        ReturnType<AgentRunRoutesDeps['getHarnessStatus']>
-      >,
-    isRemoteAgentRunAllowed: async () => true,
+    getHarnessStatus: () =>
+      Promise.resolve(
+        { packs: [], contract: {} } as unknown as Awaited<
+          ReturnType<AgentRunRoutesDeps['getHarnessStatus']>
+        >,
+      ),
+    isRemoteAgentRunAllowed: () => Promise.resolve(true),
     now: () => new Date('2026-01-01T00:00:00Z'),
     issueWriter: {} as unknown as AgentRunRoutesDeps['issueWriter'],
   };
