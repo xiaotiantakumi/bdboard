@@ -54,9 +54,9 @@ describe('createGhCliPrStatusReader', () => {
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    const status = await reader.getPrStatus(PR_URL);
+    const result = await reader.getPrStatus(PR_URL);
 
-    expect(status).toEqual({ state: 'open', checkStatus: 'pass' });
+    expect(result).toEqual({ status: { state: 'open', checkStatus: 'pass' } });
   });
 
   it('maps MERGED state', async () => {
@@ -78,9 +78,9 @@ describe('createGhCliPrStatusReader', () => {
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    const status = await reader.getPrStatus(PR_URL);
+    const result = await reader.getPrStatus(PR_URL);
 
-    expect(status).toEqual({ state: 'merged', checkStatus: 'pass' });
+    expect(result).toEqual({ status: { state: 'merged', checkStatus: 'pass' } });
   });
 
   it('returns fail when any rollup item indicates failure', async () => {
@@ -107,9 +107,9 @@ describe('createGhCliPrStatusReader', () => {
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    const status = await reader.getPrStatus(PR_URL);
+    const result = await reader.getPrStatus(PR_URL);
 
-    expect(status).toEqual({ state: 'open', checkStatus: 'fail' });
+    expect(result).toEqual({ status: { state: 'open', checkStatus: 'fail' } });
   });
 
   it('returns pending when checks are incomplete without failures', async () => {
@@ -135,9 +135,9 @@ describe('createGhCliPrStatusReader', () => {
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    const status = await reader.getPrStatus(PR_URL);
+    const result = await reader.getPrStatus(PR_URL);
 
-    expect(status).toEqual({ state: 'open', checkStatus: 'pending' });
+    expect(result).toEqual({ status: { state: 'open', checkStatus: 'pending' } });
   });
 
   it('returns unknown check status for empty or missing rollup', async () => {
@@ -160,29 +160,112 @@ describe('createGhCliPrStatusReader', () => {
     const nullReader = createGhCliPrStatusReader(nullRunner);
 
     expect(await emptyReader.getPrStatus(PR_URL)).toEqual({
-      state: 'open',
-      checkStatus: 'unknown',
+      status: { state: 'open', checkStatus: 'unknown' },
     });
     expect(await nullReader.getPrStatus(PR_URL)).toEqual({
-      state: 'open',
-      checkStatus: 'unknown',
+      status: { state: 'open', checkStatus: 'unknown' },
     });
   });
 
-  it('returns null when gh exits non-zero without throwing', async () => {
+  it('returns a not-found failure for an unresolvable PR without throwing', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
         stdout: '',
-        stderr: 'not found',
+        stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 999999.',
         exitCode: 1,
       }),
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    await expect(reader.getPrStatus(PR_URL)).resolves.toBeNull();
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'not-found',
+    });
   });
 
-  it('returns null for invalid JSON without throwing', async () => {
+  it('returns an other failure for a generic non-zero exit without throwing', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'unexpected failure',
+        exitCode: 1,
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'other',
+    });
+  });
+
+  it('classifies "API rate limit" stderr as a rate-limit failure', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr:
+          "gh: API rate limit exceeded for user ID 12345678. (HTTP 403)",
+        exitCode: 1,
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'rate-limit',
+    });
+  });
+
+  it('classifies "secondary rate limit" stderr as a rate-limit failure', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'You have exceeded a secondary rate limit. Please wait a few minutes.',
+        exitCode: 1,
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'rate-limit',
+    });
+  });
+
+  it('classifies a bare HTTP 429 as a rate-limit failure', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'gh: Too many requests. (HTTP 429)',
+        exitCode: 1,
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'rate-limit',
+    });
+  });
+
+  it('classifies a timeout failureKind as a timeout failure', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: 124,
+        failureKind: 'timeout',
+      }),
+    });
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'timeout',
+    });
+  });
+
+  it('returns an other failure for invalid JSON without throwing', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
         stdout: 'not-json',
@@ -192,10 +275,13 @@ describe('createGhCliPrStatusReader', () => {
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    await expect(reader.getPrStatus(PR_URL)).resolves.toBeNull();
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'other',
+    });
   });
 
-  it('returns null for schema mismatch without throwing', async () => {
+  it('returns an other failure for schema mismatch without throwing', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
         stdout: JSON.stringify({ state: 'OPEN', statusCheckRollup: 'not-an-array' }),
@@ -205,7 +291,38 @@ describe('createGhCliPrStatusReader', () => {
     });
 
     const reader = createGhCliPrStatusReader(runner);
-    await expect(reader.getPrStatus(PR_URL)).resolves.toBeNull();
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'other',
+    });
+  });
+
+  it('classifies a thrown rate-limit error from the command runner without throwing', async () => {
+    const runner: CommandRunner = {
+      run: async () => {
+        throw new Error('API rate limit exceeded for user ID 12345678.');
+      },
+    };
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'rate-limit',
+    });
+  });
+
+  it('classifies a generic thrown error from the command runner as other without throwing', async () => {
+    const runner: CommandRunner = {
+      run: async () => {
+        throw new Error('spawn gh ENOENT');
+      },
+    };
+
+    const reader = createGhCliPrStatusReader(runner);
+    await expect(reader.getPrStatus(PR_URL)).resolves.toEqual({
+      status: null,
+      reason: 'other',
+    });
   });
 
   it('invokes gh pr view with expected arguments', async () => {

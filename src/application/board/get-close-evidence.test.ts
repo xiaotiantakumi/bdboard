@@ -75,7 +75,7 @@ function readerReturning(
 }
 
 const noopPrStatusReader: PrStatusReader = {
-  getPrStatus: vi.fn(async () => null),
+  getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
 };
 
 function closedTicket(

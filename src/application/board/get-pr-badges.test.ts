@@ -63,6 +63,47 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 
 const PR_URL = 'https://github.com/xiaotiantakumi/bdboard/pull/99';
 
+function makeManyProjectTickets(count: number): {
+  readonly cache: BoardCache & { readonly entries: Map<string, CachedProject> };
+  readonly urls: readonly string[];
+} {
+  const cache = createFakeBoardCache();
+  const a = project('proj-a', '/projects/a');
+  const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+  const urls = Array.from(
+    { length: count },
+    (_, index) => `https://github.com/xiaotiantakumi/bdboard/pull/${900 + index}`,
+  );
+  cache.putProject({
+    project: a,
+    tickets: Array.from({ length: count }, (_, index) =>
+      makeTicket({ id: `bdboard-rl-${index}`, projectId: a.id, commentCount: 1, updatedAt }),
+    ),
+    fingerprint: 'fp-a',
+    fetchedAt: updatedAt,
+  });
+  return { cache, urls };
+}
+
+function commentReaderForUrls(
+  tickets: readonly { readonly id: string }[],
+  urls: readonly string[],
+): CommentReader {
+  const urlByTicketId = new Map(tickets.map((ticket, index) => [ticket.id, urls[index]]));
+  return {
+    listComments: vi.fn(async (_rootPath: string, issueId: string) => [
+      {
+        id: 'c1',
+        issueId,
+        author: 'agent',
+        text: `PR: ${urlByTicketId.get(issueId)}`,
+        createdAt: new Date('2026-06-01T12:00:00.000Z'),
+      },
+    ]),
+  };
+}
+
+
 describe('getPrBadges', () => {
   it('returns badges with status when comments and gh lookup succeed', async () => {
     const cache = createFakeBoardCache();
@@ -94,7 +135,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -131,7 +172,7 @@ describe('getPrBadges', () => {
       listComments: vi.fn(async () => []),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const badges = await getPrBadges(cache, commentReader, prStatusReader);
@@ -188,7 +229,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'merged', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'merged', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -345,7 +386,7 @@ describe('getPrBadges', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const logWarn = vi.fn();
@@ -383,7 +424,7 @@ describe('getPrBadges', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const badges = await getPrBadges(cache, commentReader, prStatusReader);
@@ -427,7 +468,7 @@ describe('getPrBadges', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const badges = await getPrBadges(cache, commentReader, prStatusReader);
@@ -479,7 +520,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -530,7 +571,7 @@ describe('getPrBadges', () => {
       }),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     await getPrBadges(cache, commentReader, prStatusReader);
@@ -586,7 +627,7 @@ describe('getPrBadges', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const badges = await getPrBadges(cache, commentReader, prStatusReader);
@@ -636,7 +677,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -700,7 +741,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -781,7 +822,7 @@ describe('getPrBadges', () => {
       ]),
     };
     const prStatusReader: PrStatusReader = {
-      getPrStatus: vi.fn(async () => null),
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const),
     };
 
     const commentCache = new PrBadgeCommentCache();
@@ -829,7 +870,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'merged', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'merged', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -871,7 +912,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus,
+        ({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus }),
       ),
     };
 
@@ -918,7 +959,7 @@ describe('getPrBadges', () => {
       getPrStatus: vi
         .fn()
         .mockRejectedValueOnce(new Error('gh not authenticated'))
-        .mockResolvedValueOnce(({ state: 'open', checkStatus: 'pass' }) satisfies PrStatus),
+        .mockResolvedValueOnce(({ status: { state: 'open', checkStatus: 'pass' } satisfies PrStatus })),
     };
 
     const commentCache = new PrBadgeCommentCache();
@@ -958,7 +999,7 @@ describe('getPrBadges', () => {
     };
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ state: 'merged', checkStatus: 'pending' }) satisfies PrStatus,
+        ({ status: { state: 'merged', checkStatus: 'pending' } satisfies PrStatus }),
       ),
     };
 
@@ -1009,7 +1050,7 @@ describe('getPrBadges', () => {
           },
         ]),
       };
-      const prStatusReader: PrStatusReader = { getPrStatus: vi.fn(async () => null) };
+      const prStatusReader: PrStatusReader = { getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const) };
       const commentCache = new PrBadgeCommentCache();
 
       await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
@@ -1045,7 +1086,7 @@ describe('getPrBadges', () => {
           },
         ]),
       };
-      const prStatusReader: PrStatusReader = { getPrStatus: vi.fn(async () => null) };
+      const prStatusReader: PrStatusReader = { getPrStatus: vi.fn(async () => ({ status: null, reason: 'other' }) as const) };
       const commentCache = new PrBadgeCommentCache();
 
       await getPrBadges(cache, commentReader, prStatusReader, { commentCache });
@@ -1054,6 +1095,357 @@ describe('getPrBadges', () => {
         commentCache.getCloseEvidence(ticket.id, ticket.commentCount, ticket.updatedAt.getTime()),
       ).toBe(false);
     });
+  });
+});
+
+describe('getPrBadges: gh rate-limit circuit breaker (bdboard-7ln6)', () => {
+  it('trips the breaker on the first rate-limit and skips gh entirely for the rest while open', async () => {
+    // 6 チケット・6 個の別々の PR URL。同時実行数 (COMMENT_FETCH_CONCURRENCY=3) を
+    // 超える件数を用意し、「1バッチ目の rate-limit 検知後、2バッチ目は gh を
+    // 1回も起動しない」ことを検証する (bdboard-7ln6 #2)。
+    const { cache, urls } = makeManyProjectTickets(6);
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'rate-limit' }) as const),
+    };
+
+    let fakeNow = 0;
+    const logWarn = vi.fn();
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      circuitInitialCooldownMs: 15 * 60_000,
+      // サーキットブレーカーの警告は PrBadgeStatusCache 自身が出す (getPrBadges の
+      // logWarn オプションとは別経路)。両方に同じ関数を注入して1本で検証する。
+      logWarn,
+    });
+
+    const badges = await getPrBadges(cache, commentReader, prStatusReader, {
+      statusCache,
+      logWarn,
+    });
+
+    // 有界であること: 6件中、実際に gh が起動されたのは concurrency 上限 (3) 以下。
+    // ブレーカーが開いた後は残りが1回も起動されない。
+    const callCount = (prStatusReader.getPrStatus as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(callCount).toBeGreaterThan(0);
+    expect(callCount).toBeLessThanOrEqual(3);
+    expect(badges).toHaveLength(6);
+    expect(badges.every((badge) => badge.status === null)).toBe(true);
+    expect(statusCache.isCircuitOpen()).toBe(true);
+    expect(
+      logWarn.mock.calls.some((call) =>
+        (call[0] as string).includes('rate limit'),
+      ),
+    ).toBe(true);
+  });
+
+  it('calls gh zero times on a fresh request while the breaker is open', async () => {
+    const { cache, urls } = makeManyProjectTickets(1);
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    let fakeNow = 0;
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      circuitInitialCooldownMs: 15 * 60_000,
+    });
+
+    // 1回目: rate-limit を踏んでブレーカーを開く。
+    const rateLimitedReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'rate-limit' }) as const),
+    };
+    await getPrBadges(cache, commentReader, rateLimitedReader, { statusCache });
+    expect(statusCache.isCircuitOpen()).toBe(true);
+
+    // 2回目 (同じ now、クールダウン中): 別の reader を渡し、1回も呼ばれないことを
+    // 直接確認する (呼ばれていたら成功レスポンスを返してしまうダミー)。
+    fakeNow += 1_000;
+    const neverCalledReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: { state: 'open', checkStatus: 'pass' } }) as const),
+    };
+    const badges = await getPrBadges(cache, commentReader, neverCalledReader, { statusCache });
+
+    expect(neverCalledReader.getPrStatus).not.toHaveBeenCalled();
+    expect(badges[0]?.status).toBeNull();
+  });
+
+  it('recovers after the cooldown elapses and closes the breaker on the next success', async () => {
+    const { cache, urls } = makeManyProjectTickets(1);
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    let fakeNow = 0;
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      circuitInitialCooldownMs: 1_000,
+    });
+
+    const rateLimitedReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'rate-limit' }) as const),
+    };
+    await getPrBadges(cache, commentReader, rateLimitedReader, { statusCache });
+    expect(statusCache.isCircuitOpen()).toBe(true);
+
+    // クールダウン経過前: まだ open。
+    fakeNow += 500;
+    expect(statusCache.isCircuitOpen()).toBe(true);
+
+    // ちょうど境界 (now === circuitOpenUntil): 開いた瞬間からクールダウン ms
+    // 経過した時点はもう open ではない (< の境界を厳密に固定する)。
+    fakeNow += 500;
+    expect(statusCache.isCircuitOpen()).toBe(false);
+
+    // クールダウン経過後: half-open で次の1回は通す。
+    fakeNow += 100;
+    expect(statusCache.isCircuitOpen()).toBe(false);
+
+    const healthyReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: { state: 'open', checkStatus: 'pass' } }) as const),
+    };
+    const badges = await getPrBadges(cache, commentReader, healthyReader, { statusCache });
+
+    expect(healthyReader.getPrStatus).toHaveBeenCalledTimes(1);
+    expect(badges[0]?.status).toEqual({ state: 'open', checkStatus: 'pass' });
+    expect(statusCache.isCircuitOpen()).toBe(false);
+  });
+
+  it('doubles the cooldown on a repeat rate-limit without an intervening success', async () => {
+    const { cache, urls } = makeManyProjectTickets(1);
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    let fakeNow = 0;
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      circuitInitialCooldownMs: 1_000,
+      circuitMaxCooldownMs: 60_000,
+    });
+    const rateLimitedReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'rate-limit' }) as const),
+    };
+
+    // 1回目のトリップ: 1000ms のクールダウン。
+    await getPrBadges(cache, commentReader, rateLimitedReader, { statusCache });
+    fakeNow += 1_001; // クールダウン明け
+    expect(statusCache.isCircuitOpen()).toBe(false);
+
+    // half-open の probe も rate-limit → 2回目のトリップは倍の 2000ms になるはず。
+    await getPrBadges(cache, commentReader, rateLimitedReader, { statusCache });
+    fakeNow += 1_500; // 1000ms 明けのタイミングではまだ閉じない (倍化されていれば)
+    expect(statusCache.isCircuitOpen()).toBe(true);
+
+    fakeNow += 600; // 合計 2100ms 経過 → 2000ms のクールダウンは明けている
+    expect(statusCache.isCircuitOpen()).toBe(false);
+  });
+});
+
+describe('getPrBadges: per-request new-fetch budget (bdboard-7ln6 #6)', () => {
+  it('caps new gh launches per call and drains the rest across subsequent calls', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+    const urls = Array.from(
+      { length: 5 },
+      (_, index) => `https://github.com/xiaotiantakumi/bdboard/pull/${800 + index}`,
+    );
+    cache.putProject({
+      project: a,
+      tickets: Array.from({ length: 5 }, (_, index) =>
+        makeTicket({ id: `bdboard-budget-${index}`, projectId: a.id, commentCount: 1, updatedAt }),
+      ),
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: { state: 'open', checkStatus: 'pass' } }) as const),
+    };
+
+    const statusCache = new PrBadgeStatusCache();
+    const logWarn = vi.fn();
+
+    // 1回目: 上限2件だけ新規起動。5件中3件は今回 URL のみのバッジで妥協する。
+    const firstBadges = await getPrBadges(cache, commentReader, prStatusReader, {
+      statusCache,
+      logWarn,
+      maxNewFetchesPerCall: 2,
+    });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+    expect(firstBadges.filter((badge) => badge.status !== null)).toHaveLength(2);
+    expect(firstBadges.filter((badge) => badge.status === null)).toHaveLength(3);
+    expect(
+      logWarn.mock.calls.some((call) => (call[0] as string).includes('deferred')),
+    ).toBe(true);
+
+    // 2回目: 前回キャッシュされた2件はヒット、新規予算(2件)は前回見送った分から
+    // 消費される。上限を超えて一度に起動しないこと自体がこのテストの本旨。
+    const secondBadges = await getPrBadges(cache, commentReader, prStatusReader, {
+      statusCache,
+      maxNewFetchesPerCall: 2,
+    });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(4);
+    expect(secondBadges.filter((badge) => badge.status !== null)).toHaveLength(4);
+
+    // 3回目: 残り1件を消化しきる。
+    await getPrBadges(cache, commentReader, prStatusReader, {
+      statusCache,
+      maxNewFetchesPerCall: 2,
+    });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe('getPrBadges: in-flight sharing for duplicate URLs (bdboard-7ln6 #6)', () => {
+  it('launches gh only once when multiple tickets share the same PR URL concurrently', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+    const sharedUrl = 'https://github.com/xiaotiantakumi/bdboard/pull/700';
+    cache.putProject({
+      project: a,
+      tickets: Array.from({ length: 4 }, (_, index) =>
+        makeTicket({ id: `bdboard-shared-${index}`, projectId: a.id, commentCount: 1, updatedAt }),
+      ),
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async (_rootPath, issueId) => [
+        {
+          id: 'c1',
+          issueId,
+          author: 'agent',
+          text: `PR: ${sharedUrl}`,
+          createdAt: updatedAt,
+        },
+      ]),
+    };
+
+    // 実行がオーバーラップするよう、わずかに遅延させて解決する。
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(
+        async () =>
+          new Promise<{ status: { state: 'open'; checkStatus: 'pass' } }>((resolve) => {
+            setTimeout(() => resolve({ status: { state: 'open', checkStatus: 'pass' } }), 20);
+          }),
+      ),
+    };
+
+    const statusCache = new PrBadgeStatusCache();
+    const badges = await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+    expect(badges).toHaveLength(4);
+    expect(
+      badges.every((badge) => badge.status !== null && badge.status.state === 'open'),
+    ).toBe(true);
+  });
+});
+
+describe('PrBadgeStatusCache: negative-cache backoff for non-rate-limit failures (bdboard-7ln6 #3)', () => {
+  it('doubles the negative-cache TTL on each consecutive failure, capped at negativeCacheMaxMs', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+    const url = 'https://github.com/xiaotiantakumi/bdboard/pull/600';
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-nf', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        { id: 'c1', issueId: 'bdboard-nf', author: 'agent', text: `PR: ${url}`, createdAt: updatedAt },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () => ({ status: null, reason: 'not-found' }) as const),
+    };
+
+    let fakeNow = 0;
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      ttlMs: 60_000,
+      negativeCacheMaxMs: 10_000_000,
+    });
+
+    // 1回目: 失敗streak=1、TTL=60_000。
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    // TTL 内 (59_999ms 後): キャッシュヒットで再取得しない。
+    fakeNow = 59_999;
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    // TTL 超過 (60_001ms 後): 再取得。streak=2、TTL=120_000 に倍化。
+    fakeNow = 60_001;
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+
+    // 120_000ms 未満ならまだキャッシュヒット (60秒固定なら再取得されてしまうはず)。
+    fakeNow = 60_001 + 119_999;
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+
+    // 120_000ms 超過で再取得。streak=3。
+    fakeNow = 60_001 + 120_001;
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('PrBadgeStatusCache: merged/closed+pending eventual permanence (bdboard-7ln6 #4)', () => {
+  it('refetches merged+pending up to mergedPendingMaxRetries, then freezes permanently', async () => {
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+    const url = 'https://github.com/xiaotiantakumi/bdboard/pull/500';
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-mp', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        { id: 'c1', issueId: 'bdboard-mp', author: 'agent', text: `PR: ${url}`, createdAt: updatedAt },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(
+        async () => ({ status: { state: 'merged', checkStatus: 'pending' } }) as const,
+      ),
+    };
+
+    let fakeNow = 0;
+    const statusCache = new PrBadgeStatusCache({
+      now: () => fakeNow,
+      mergedPendingTtlMs: 1_000,
+      mergedPendingMaxRetries: 2,
+    });
+
+    // 1回目: retries=1 (< 2), 恒久化しない。
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+    // TTL 超過で2回目: retries=2 (>= 2) → 恒久化。
+    fakeNow = 1_001;
+    await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+
+    // どれだけ時間が経っても (恒久キャッシュなので) 再取得されない。
+    fakeNow += 999_999_999;
+    const finalBadges = await getPrBadges(cache, commentReader, prStatusReader, { statusCache });
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+    expect(finalBadges[0]?.status).toEqual({ state: 'merged', checkStatus: 'pending' });
   });
 });
 
