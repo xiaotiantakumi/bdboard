@@ -48,6 +48,34 @@ export function createFsAttachmentStorage(baseDir: string): AttachmentStoragePor
     return target;
   }
 
+  /**
+   * ゴミ箱側の issue ディレクトリ (bdboard-ij1h)。baseDir 直下の `.trash/` に
+   * projectKey/issueId と同じ形でぶら下げる。list/count/read はこの配下を
+   * 一切辿らない (issueDir() 経由でしか到達できず、そちらは `.trash` という
+   * セグメントを通らない) ので、削除済みファイルは一覧・取得・件数上限の
+   * カウントから自然に除外される。
+   */
+  function trashIssueDir(projectKey: string, issueId: string): string {
+    const dir = path.resolve(resolvedBaseDir, '.trash', projectKey, issueId);
+    const withSep = resolvedBaseDir.endsWith(path.sep)
+      ? resolvedBaseDir
+      : resolvedBaseDir + path.sep;
+    if (!dir.startsWith(withSep)) {
+      throw new Error(`attachment trash path escapes base dir: ${projectKey}/${issueId}`);
+    }
+    return dir;
+  }
+
+  function trashFilePath(projectKey: string, issueId: string, fileName: string): string {
+    const dir = trashIssueDir(projectKey, issueId);
+    const target = path.resolve(dir, fileName);
+    const dirWithSep = dir.endsWith(path.sep) ? dir : dir + path.sep;
+    if (!target.startsWith(dirWithSep)) {
+      throw new Error(`attachment trash file path escapes trash issue dir: ${fileName}`);
+    }
+    return target;
+  }
+
   async function listEntries(
     projectKey: string,
     issueId: string,
@@ -119,6 +147,22 @@ export function createFsAttachmentStorage(baseDir: string): AttachmentStoragePor
         return await fs.readFile(target);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+        throw err;
+      }
+    },
+
+    async delete(projectKey, issueId, fileName) {
+      const source = filePath(projectKey, issueId, fileName);
+      const destDir = trashIssueDir(projectKey, issueId);
+      const dest = trashFilePath(projectKey, issueId, fileName);
+      await fs.mkdir(destDir, { recursive: true });
+      try {
+        // fileName はサーバー採番 (epochMs + 16桁hexランダム) で衝突は事実上
+        // 起きないため、同名の既存ゴミ箱エントリを上書きする心配はしていない。
+        await fs.rename(source, dest);
+        return true;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
         throw err;
       }
     },
