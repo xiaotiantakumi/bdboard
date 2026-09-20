@@ -24,8 +24,9 @@ export interface TicketDetailPanelProps {
   /**
    * 最大化中か (bdboard-0hcx)。state は App 側が持つ。
    *
-   * このコンポーネントで useState すると、App の ErrorBoundary が
-   * key={selectedTicketId} を持つ (App.tsx) ためチケットを1つたどるたびに
+   * このコンポーネントで useState すると、AppTicketDetailOverlay
+   * (web/src/components/app/AppTicketDetailOverlay.tsx、旧: App.tsx) 内の
+   * ErrorBoundary が key={selectedTicketId} を持つためチケットを1つたどるたびに
    * unmount/remount され、最大化が毎回解除される。ChatPanel 側の
    * ErrorBoundary には key が無いので同じ書き方で問題にならないが、詳細パネルは
    * 「盤面のカードを次々開く」使い方をするので寿命がまったく違う

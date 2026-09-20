@@ -31,7 +31,6 @@ import { DailyDigest } from './components/DailyDigest';
 import { AlertBar } from './components/AlertBar';
 import { GlobalBar } from './components/GlobalBar';
 import { ViewToolbar } from './components/ViewToolbar';
-import { ChatPanel } from './components/ChatPanel';
 import { DependencyGraphView } from './components/DependencyGraphView';
 import { HygienePanel } from './components/HygienePanel';
 import { SettingsPanel } from './components/SettingsPanel';
@@ -42,14 +41,15 @@ import {
   useNextUpRunLoopController,
 } from './components/nextUpRunLoop';
 import { ThroughputStats } from './components/ThroughputStats';
-import { KeyboardShortcutsPanel } from './components/KeyboardShortcutsPanel';
-import { HelpPanel } from './components/HelpPanel';
 import { TipsBanner } from './components/TipsBanner';
-import { SearchPalette } from './components/SearchPalette';
-import { SessionListPanel } from './components/SessionListPanel';
-import { TicketDetailPanel } from './components/TicketDetailPanel';
-import { TunnelControl } from './components/TunnelControl';
 import { useWatchedTickets } from './components/WatchedTicketsProvider';
+import { AppTicketDetailOverlay } from './components/app/AppTicketDetailOverlay';
+import { AppSessionListOverlay } from './components/app/AppSessionListOverlay';
+import { AppShortcutsOverlay } from './components/app/AppShortcutsOverlay';
+import { AppHelpOverlay } from './components/app/AppHelpOverlay';
+import { AppSearchOverlay } from './components/app/AppSearchOverlay';
+import { AppTunnelOverlay } from './components/app/AppTunnelOverlay';
+import { AppChatOverlay } from './components/app/AppChatOverlay';
 import { isBoardFilterActive } from './boardFilter';
 import type { WipLimitsOverrides } from './wip-limits';
 import { useAppBadge } from './hooks/useAppBadge';
@@ -213,7 +213,8 @@ export function App() {
   /*
    * 詳細パネルの最大化 (bdboard-0hcx)。TicketDetailPanel ではなくここで持つ。
    *
-   * 下の ErrorBoundary が key={selectedTicketId} を持つため、パネル側で
+   * AppTicketDetailOverlay 内の ErrorBoundary が key={selectedTicketId} を
+   * 持つため（bdboard-sso1.13 で分割、旧: 下の ErrorBoundary）、パネル側で
    * useState するとチケットを1つたどるたびに remount されて最大化が解除される
    * (PR#242 opus レビュー major-1)。詳細パネルは「似ているチケット」や
    * 「← 戻る」でチケットを渡り歩く使い方をするので、その都度リセットされると
@@ -1064,134 +1065,76 @@ export function App() {
         </BoardDnDProvider>
       </main>
 
-      {selectedTicketId !== null && (
-        <ErrorBoundary
-          key={selectedTicketId}
-          label="チケット詳細"
-          resetLabel="閉じる"
-          onReset={handleCloseDetail}
-          overlay
-        >
-        <TicketDetailPanel
-          ticketId={selectedTicketId}
-          projectRootPaths={projectRootPaths}
-          pendingDecision={pendingDecisionsById.get(selectedTicketId)}
-          prLink={prLinksById.get(selectedTicketId)}
-          onClose={handleCloseDetail}
-          onChatAboutTicket={
-            chatAvailable
-              ? (context) => {
-                  setChatContext(context);
-                  setChatContextToken((token) => token + 1);
-                  setChatOpen(true);
-                }
-              : undefined
-          }
-          onOpenTicket={handleSelectTicket}
-          onBackTicket={canGoBackTicket ? goBackTicket : undefined}
-          isMaximized={detailMaximized}
-          onToggleMaximized={handleToggleDetailMaximized}
-          isTicketOnBoard={isTicketOnBoard}
-          onFilterByEpic={handleFilterByEpic}
-          onTicketViewed={handleRecordRecentTicket}
-          availableLabels={availableLabels ?? []}
-        />
-        </ErrorBoundary>
-      )}
+      <AppTicketDetailOverlay
+        selectedTicketId={selectedTicketId}
+        projectRootPaths={projectRootPaths}
+        pendingDecision={
+          selectedTicketId !== null ? pendingDecisionsById.get(selectedTicketId) : undefined
+        }
+        prLink={selectedTicketId !== null ? prLinksById.get(selectedTicketId) : undefined}
+        onClose={handleCloseDetail}
+        onChatAboutTicket={
+          chatAvailable
+            ? (context) => {
+                setChatContext(context);
+                setChatContextToken((token) => token + 1);
+                setChatOpen(true);
+              }
+            : undefined
+        }
+        onOpenTicket={handleSelectTicket}
+        onBackTicket={canGoBackTicket ? goBackTicket : undefined}
+        isMaximized={detailMaximized}
+        onToggleMaximized={handleToggleDetailMaximized}
+        isTicketOnBoard={isTicketOnBoard}
+        onFilterByEpic={handleFilterByEpic}
+        onTicketViewed={handleRecordRecentTicket}
+        availableLabels={availableLabels ?? []}
+      />
 
-      {sessionListOpen && (
-        <ErrorBoundary
-          label="セッション一覧"
-          resetLabel="閉じる"
-          onReset={handleCloseSessionList}
-          overlay
-        >
-          <SessionListPanel
-            projectId={sessionListProjectId}
-            onClose={handleCloseSessionList}
-          />
-        </ErrorBoundary>
-      )}
+      <AppSessionListOverlay
+        open={sessionListOpen}
+        projectId={sessionListProjectId}
+        onClose={handleCloseSessionList}
+      />
 
-      {shortcutsOpen && (
-        <ErrorBoundary
-          label="ショートカット一覧"
-          resetLabel="閉じる"
-          onReset={handleCloseShortcuts}
-          overlay
-        >
-          <KeyboardShortcutsPanel onClose={handleCloseShortcuts} />
-        </ErrorBoundary>
-      )}
+      <AppShortcutsOverlay open={shortcutsOpen} onClose={handleCloseShortcuts} />
 
-      {helpOpen && (
-        <ErrorBoundary label="ヘルプ" resetLabel="閉じる" onReset={handleCloseHelp} overlay>
-          <HelpPanel onClose={handleCloseHelp} />
-        </ErrorBoundary>
-      )}
+      <AppHelpOverlay open={helpOpen} onClose={handleCloseHelp} />
 
-      {searchOpen && (
-        <ErrorBoundary label="検索" resetLabel="閉じる" onReset={handleCloseSearch} overlay>
-        <SearchPalette
-          onClose={handleCloseSearch}
-          onSelect={handleSelectTicket}
-          actions={paletteActions}
-          recentTickets={recentTickets}
-        />
-        </ErrorBoundary>
-      )}
+      <AppSearchOverlay
+        open={searchOpen}
+        onClose={handleCloseSearch}
+        onSelect={handleSelectTicket}
+        actions={paletteActions}
+        recentTickets={recentTickets}
+      />
 
-      {/* TunnelControl は閉じていても常時マウントされている (中で null を返す)。
-          閉じている間の throw まで overlay で覆うと、何も開いていないのに暗幕が
-          残って操作不能になるので、overlay は開いているときだけ。 */}
-      <ErrorBoundary
-        label="トンネル"
-        resetLabel="閉じる"
-        onReset={() => setTunnelModalOpen(false)}
-        overlay={tunnelModalOpen}
-      >
-        <TunnelControl
-          open={tunnelModalOpen}
-          onClose={() => setTunnelModalOpen(false)}
-        />
-      </ErrorBoundary>
+      <AppTunnelOverlay open={tunnelModalOpen} onClose={() => setTunnelModalOpen(false)} />
 
-      {chatOpen && (
-        <ErrorBoundary
-          label="チャット"
-          resetLabel="閉じる"
-          onReset={() => {
-            setChatOpen(false);
-            setChatContext(undefined);
-          }}
-          overlay
-        >
-        <ChatPanel
-          projects={chatProjects}
-          initialProjectId={
-            chatContext?.projectId ??
-            (selectedProjectIds.length === 1
-              ? selectedProjectIds[0]
-              : lastChatProjectId !== ''
-                ? lastChatProjectId
-                : undefined)
-          }
-          initialInput={
-            chatContext === undefined
-              ? undefined
-              : `${chatContext.ticketId} について: `
-          }
-          ticketContextToken={chatContext === undefined ? undefined : chatContextToken}
-          onProjectIdChange={setLastChatProjectId}
-          isTicketOnBoard={isTicketOnBoard}
-          onOpenTicket={handleSelectTicket}
-          onClose={() => {
-            setChatOpen(false);
-            setChatContext(undefined);
-          }}
-        />
-        </ErrorBoundary>
-      )}
+      <AppChatOverlay
+        open={chatOpen}
+        projects={chatProjects}
+        initialProjectId={
+          chatContext?.projectId ??
+          (selectedProjectIds.length === 1
+            ? selectedProjectIds[0]
+            : lastChatProjectId !== ''
+              ? lastChatProjectId
+              : undefined)
+        }
+        initialInput={
+          chatContext === undefined ? undefined : `${chatContext.ticketId} について: `
+        }
+        ticketContextToken={chatContext === undefined ? undefined : chatContextToken}
+        onProjectIdChange={setLastChatProjectId}
+        isTicketOnBoard={isTicketOnBoard}
+        onOpenTicket={handleSelectTicket}
+        onClose={() => {
+          setChatOpen(false);
+          setChatContext(undefined);
+        }}
+      />
 
     </div>
     </PopoverCoordinatorProvider>
