@@ -78,11 +78,7 @@ import {
   validateChatAttachments,
   type ChatAttachment,
 } from './chat/attachments';
-import {
-  formatAgentOptionLabel,
-  hasSelectableModels,
-  resolveDefaultModel,
-} from './chat/agentOptions';
+import { hasSelectableModels, resolveDefaultModel } from './chat/agentOptions';
 import { makeDraftKey } from './chat/draftKey';
 import { resolveInitialProjectId } from './chat/projectSelection';
 import {
@@ -94,6 +90,8 @@ export { formatThreadUpdatedAt } from './chat/threads';
 import { ChatThreadDrawer } from './chat/ChatThreadDrawer';
 import { ChatMessageRow } from './chat/ChatMessageRow';
 import { ChatAttachmentPreview } from './chat/ChatAttachmentPreview';
+import { ChatSettingsPanel } from './chat/ChatSettingsPanel';
+import { ChatInputActions } from './chat/ChatInputActions';
 import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
@@ -3512,61 +3510,18 @@ export function ChatPanel({
           }}
         />
 
-        <details className="chat-panel-settings">
-          <summary className="chat-panel-settings-summary">
-            {chatSettingsSummaryParts.join(' — ')}
-          </summary>
-          <div className="chat-panel-settings-body">
-        {threadError !== null && <p className="chat-message-error chat-thread-error" role="alert">{threadError}</p>}
-
-        {agents.length > 0 && (
-          <select
-            className="chat-agent-select"
-            aria-label="チャットエージェント"
-            value={selectedAgentId}
-            disabled={isSending}
-            onChange={(event) => handleAgentChange(event.target.value)}
-          >
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {formatAgentOptionLabel(agent)}
-              </option>
-            ))}
-          </select>
-        )}
-
-        {selectedAgent !== undefined && showModelSelect && (
-          <select
-            className="chat-model-select"
-            aria-label="モデル"
-            value={effectiveModelId}
-            disabled={isSending}
-            onChange={(event) => handleModelChange(event.target.value)}
-          >
-            {(selectedAgent.models ?? []).map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-              </option>
-            ))}
-          </select>
-        )}
-
-        {selectedAgent !== undefined &&
-          selectedAgent.capability !== 'bd-only' && (
-            <p className="chat-agent-capability-warning" role="note">
-              このエージェントは bd チケット操作以外の権限を持ちます（
-              {selectedAgent.capability}）。
-            </p>
-          )}
-
-        {selectedAgent === undefined || selectedAgent.capability === 'bd-only' ? (
-          <p className="detail-help">
-            このチャットは localhost からのみ利用できます。AIが実行できるのは、このプロジェクトの
-            bdチケット操作(一覧・詳細・claim・状態変更・クローズ・コメント追加)だけです。
-          </p>
-        ) : null}
-          </div>
-        </details>
+        <ChatSettingsPanel
+          summaryParts={chatSettingsSummaryParts}
+          threadError={threadError}
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          isSending={isSending}
+          onAgentChange={handleAgentChange}
+          selectedAgent={selectedAgent}
+          showModelSelect={showModelSelect}
+          effectiveModelId={effectiveModelId}
+          onModelChange={handleModelChange}
+        />
 
         {/* 送信して初めて 501 に気付く、では遅い (bdboard-70z.9)。 */}
         <PlatformLimitationNotice feature="chat" />
@@ -3727,51 +3682,32 @@ export function ChatPanel({
             onPaste={handleImagePaste}
             onKeyDown={handleKeyDown}
           />
-          <div className="chat-input-actions">
-            <button
-              type="button"
-              className="chat-attach-button"
-              aria-label="画像を添付"
-              disabled={isSending || chatUnsupported}
-              onClick={() => fileInputRef.current?.click()}
-            >
-              📎
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              multiple
-              hidden
-              onChange={handleImageFileChange}
-            />
-            <button
-              type="submit"
-              className="btn"
-              disabled={
-                selectedProjectId === '' ||
-                isSending ||
-                isHistoryPending ||
-                chatUnsupported ||
-                selectedAgentUnavailable ||
-                hasUnsupportedAttachments ||
-                // bdboard-v3ag: 配信停止からの turn-status 回収が終わるまで
-                // 再送を止める(hasUnresolvedProjectRecovery の定義コメント参照)。
-                hasUnresolvedProjectRecovery ||
-                (currentInput.trim() === '' && currentAttachments.length === 0)
-              }
-              aria-describedby={
-                [
-                  projectSelectionHintId,
-                  agentUnavailableHintId,
-                ]
-                  .filter((id): id is string => id !== null)
-                  .join(' ') || undefined
-              }
-            >
-              送信
-            </button>
-          </div>
+          <ChatInputActions
+            fileInputRef={fileInputRef}
+            isSending={isSending}
+            chatUnsupported={chatUnsupported}
+            onImageFileChange={handleImageFileChange}
+            submitDisabled={
+              selectedProjectId === '' ||
+              isSending ||
+              isHistoryPending ||
+              chatUnsupported ||
+              selectedAgentUnavailable ||
+              hasUnsupportedAttachments ||
+              // bdboard-v3ag: 配信停止からの turn-status 回収が終わるまで
+              // 再送を止める(hasUnresolvedProjectRecovery の定義コメント参照)。
+              hasUnresolvedProjectRecovery ||
+              (currentInput.trim() === '' && currentAttachments.length === 0)
+            }
+            ariaDescribedBy={
+              [
+                projectSelectionHintId,
+                agentUnavailableHintId,
+              ]
+                .filter((id): id is string => id !== null)
+                .join(' ') || undefined
+            }
+          />
           <span className="chat-input-hint">
             ⌘/Ctrl + Enter で送信 · 画像は PNG/JPEG/WebP を4枚まで（貼り付け可）
           </span>

@@ -12,8 +12,8 @@
     },
     {
       "path": "web/src/components/ChatPanel.tsx",
-      "limit": 4100,
-      "reason": "ChatPanel コンポーネント1関数で約3546行 (241〜3786行目。ファイル全体は3786行)。bdboard-78ve は custom hook 単位への分割を見送ったが、bdboard-sso1.2 で純粋ヘルパー(PR-A)→状態を持たない表示コンポーネント(PR-B〜)の順で段階的に分割を継続中。状態/effect/rekey はコンポーネント本体に残す方針。"
+      "limit": 4000,
+      "reason": "ChatPanel コンポーネント1関数で約3483行 (239〜3721行目。ファイル全体は3721行)。bdboard-78ve は custom hook 単位への分割を見送ったが、bdboard-sso1.2 で純粋ヘルパー(PR-A)→状態を持たない表示コンポーネント(PR-B, PR-C〜)の順で段階的に分割を継続中。PR-C でエージェント/モデル選択パネル(ChatSettingsPanel)と入力欄アクション行(ChatInputActions)を分離。状態/effect/rekey はコンポーネント本体に残す方針。"
     },
     {
       "path": "web/src/components/TicketDetailPanel.tsx",
