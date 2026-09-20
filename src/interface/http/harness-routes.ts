@@ -32,8 +32,9 @@ export interface HarnessRoutesDeps {
   readonly writeAccess?: WriteGuardDeps;
   /**
    * 検証コントラクト不足のチケット起票 (`POST .../harness/contract-ticket`,
-   * bdboard-p5l.25) にだけ使う。`create`/`findOpenTicketByLabel` を持たない
-   * (undefined の) 実装が渡された場合、そのルートは 501 を返す。
+   * bdboard-p5l.25) にだけ使う。`create`/`findOpenTicketByLabel`/`setMetadata`
+   * (いずれも optional) を持たない実装が渡された場合、そのルートは 501 を返す
+   * (bdboard-13mp: state 遷移をまたいだ追記に setMetadata も必須化)。
    */
   readonly issueWriter?: IssueWriterPort;
   /**
@@ -258,11 +259,18 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
       return c.json({ error: 'project not found' }, 404);
     }
 
-    // create/findOpenTicketByLabel は IssueWriterPort 上 optional (issue-writer.ts の
-    // doc コメント参照)。narrow してからユースケースへ渡す — 呼び出し先で
-    // undefined チェックを繰り返させない。
-    const { create, findOpenTicketByLabel } = deps.issueWriter ?? {};
-    if (create === undefined || findOpenTicketByLabel === undefined) {
+    // create/findOpenTicketByLabel/setMetadata は IssueWriterPort 上 optional
+    // (issue-writer.ts の doc コメント参照)。addComment は必須。narrow してから
+    // ユースケースへ渡す — 呼び出し先で undefined チェックを繰り返させない
+    // (bdboard-13mp: state 遷移の追記に setMetadata も要るため narrow 対象に追加)。
+    const { create, findOpenTicketByLabel, setMetadata } = deps.issueWriter ?? {};
+    const addComment = deps.issueWriter?.addComment;
+    if (
+      create === undefined ||
+      findOpenTicketByLabel === undefined ||
+      setMetadata === undefined ||
+      addComment === undefined
+    ) {
       return c.json({ error: 'ticket creation not supported' }, 501);
     }
 
@@ -279,7 +287,7 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
 
     try {
       const result = await fileHarnessContractTicket(
-        { create, findOpenTicketByLabel },
+        { create, findOpenTicketByLabel, addComment, setMetadata },
         rootPath,
         status.contract,
         rootPackageScripts,
@@ -301,7 +309,11 @@ export function createHarnessRoutes(deps: HarnessRoutesDeps): Hono {
         }
       }
 
-      return c.json({ ticketId: result.ticketId, created: result.created });
+      return c.json({
+        ticketId: result.ticketId,
+        created: result.created,
+        stateAppend: result.stateAppend,
+      });
     } catch (error: unknown) {
       if (error instanceof BdError && error.kind === 'not-a-beads-project') {
         // 設計メモ通り: bd 未導入のプロジェクトではボタンを出さない想定だが、

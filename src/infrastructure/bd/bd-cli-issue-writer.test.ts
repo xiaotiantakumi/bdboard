@@ -810,6 +810,34 @@ describe('createBdCliIssueWriter', () => {
       expect(result).toEqual({
         id: 'proj-42',
         title: 'existing harness-contract ticket',
+        metadata: {},
+      });
+    });
+
+    // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱いを、起票時/最後に
+    // 追記した state を記録した bd メタデータの読み取りで判別する。
+    it('surfaces metadata from bd list output for the state-change comparison (bdboard-13mp)', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify([
+            {
+              id: 'proj-42',
+              title: 'existing harness-contract ticket',
+              metadata: { 'bdboard.harness_contract.state': 'invalid' },
+            },
+          ]),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      const result = await port.findOpenTicketByLabel?.(ROOT, 'harness-contract');
+
+      expect(result).toEqual({
+        id: 'proj-42',
+        title: 'existing harness-contract ticket',
+        metadata: { 'bdboard.harness_contract.state': 'invalid' },
       });
     });
 
@@ -961,6 +989,111 @@ describe('createBdCliIssueWriter', () => {
       const port = createBdCliIssueWriter(runner);
 
       await expect(port.create?.(ROOT, CREATE_INPUT)).rejects.toBeInstanceOf(BdError);
+    });
+
+    // bdboard-13mp: 起票と同時に state を記録できるかを実測で確認した
+    // (`bd create --metadata '<json>'` は作成時点で set できる) 挙動の固定。
+    it('passes --metadata as a JSON string when metadata is given', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({ id: 'proj-42' }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await port.create?.(ROOT, {
+        ...CREATE_INPUT,
+        metadata: { 'bdboard.harness_contract.state': 'missing' },
+      });
+
+      expect(calls[0]?.args).toContain('--metadata');
+      const metadataIndex = calls[0]?.args.indexOf('--metadata') ?? -1;
+      expect(calls[0]?.args[metadataIndex + 1]).toBe(
+        JSON.stringify({ 'bdboard.harness_contract.state': 'missing' }),
+      );
+    });
+
+    it('omits --metadata when metadata is not given or empty', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({ id: 'proj-42' }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await port.create?.(ROOT, CREATE_INPUT);
+      await port.create?.(ROOT, { ...CREATE_INPUT, metadata: {} });
+
+      expect(calls[0]?.args).not.toContain('--metadata');
+      expect(calls[1]?.args).not.toContain('--metadata');
+    });
+  });
+
+  // bdboard-13mp: 既存のハーネス契約チケットへ state 変化を追記する際に使う
+  // `bd update --set-metadata` の直叩き。
+  describe('setMetadata', () => {
+    it('builds a bd update --set-metadata command', async () => {
+      const { runner, calls } = createFakeRunner({
+        handler: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await port.setMetadata?.(
+        ROOT,
+        TICKET_ID,
+        'bdboard.harness_contract.state',
+        'invalid',
+      );
+
+      expect(calls).toEqual([
+        {
+          command: 'bd',
+          args: [
+            '-C',
+            ROOT,
+            'update',
+            TICKET_ID,
+            '--set-metadata',
+            'bdboard.harness_contract.state=invalid',
+          ],
+          options: { cwd: ROOT, timeoutMs: 30_000 },
+        },
+      ]);
+    });
+
+    it('throws BdError when bd update exits non-zero', async () => {
+      const { runner } = createFakeRunner({
+        handler: async () => ({ stdout: '', stderr: 'boom', exitCode: 1 }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(
+        port.setMetadata?.(ROOT, TICKET_ID, 'k', 'v'),
+      ).rejects.toBeInstanceOf(BdError);
+    });
+
+    // --set-metadata は代入操作 (同じ引数で複数回実行しても最終状態は変わらない) なので
+    // lock-contention に限りリトライしてよい (create とは対照的 — create は非冪等)。
+    it('retries once on lock-contention and succeeds on the second attempt', async () => {
+      let attempts = 0;
+      const { runner, calls } = createFakeRunner({
+        handler: async () => {
+          attempts += 1;
+          if (attempts === 1) {
+            return { stdout: '', stderr: 'error: database is locked', exitCode: 1 };
+          }
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await port.setMetadata?.(ROOT, TICKET_ID, 'k', 'v');
+
+      expect(calls).toHaveLength(2);
     });
   });
 });

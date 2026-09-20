@@ -14,6 +14,15 @@ export const HARNESS_CONTRACT_TICKET_LABEL = 'harness-contract';
 export const HARNESS_CONTRACT_TICKET_TYPE = 'task';
 export const HARNESS_CONTRACT_TICKET_PRIORITY = 2;
 
+/**
+ * 起票時/最後に state 変化を追記した時点の契約 state を記録する bd メタデータキー
+ * (bdboard-13mp)。ラベルは state ごとに分けず `HARNESS_CONTRACT_TICKET_LABEL` を
+ * 使い回すため、「このチケットが最後にどの state 向けだったか」はこのキーでだけ
+ * 判別できる。キーの無い旧チケット (この仕組みが導入される前に起票されたもの) は
+ * 「state 不明」として扱う — 判定は application 層の責務。
+ */
+export const HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY = 'bdboard.harness_contract.state';
+
 export interface HarnessContractTicketContent {
   readonly title: string;
   readonly description: string;
@@ -150,4 +159,30 @@ export function buildHarnessContractTicketContent(
     case 'command-missing':
       return buildCommandMissingContent(contract.script, contract.verify);
   }
+}
+
+/**
+ * state 遷移をまたいだ陳腐化チケットの扱い (bdboard-13mp)。既存の
+ * `HARNESS_CONTRACT_TICKET_LABEL` 付き未クローズチケットを見つけたが、起票時/
+ * 最後に追記した state (`HARNESS_CONTRACT_TICKET_STATE_METADATA_KEY` の値) が
+ * 現在の state と違うときに追記するコメント本文を組み立てる。
+ *
+ * 本文は `buildHarnessContractTicketContent` (起票時と同じビルダー) をそのまま
+ * 再利用する — 「いま必要な対処」の文面を state ごとに2箇所へ書かない。
+ * `ok` / `not-applicable` は (呼び出し元がその時点でチケットを起票/追記しない
+ * 状態なので) content が null になり、この関数も null を返す。
+ */
+export function buildHarnessContractTicketStateChangeComment(
+  contract: ContractState,
+  rootPackageScripts: VerifyPackageScripts,
+): string | null {
+  const content = buildHarnessContractTicketContent(contract, rootPackageScripts);
+  if (content === null) {
+    return null;
+  }
+  return [
+    `現在の状態は ${contract.state} です。いま必要な対処:`,
+    '',
+    content.description,
+  ].join('\n');
 }

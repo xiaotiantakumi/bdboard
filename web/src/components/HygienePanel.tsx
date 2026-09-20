@@ -520,7 +520,11 @@ export function HygienePanel({
    * 文言を出し分けるだけ。
    */
   const contractTicketMutation = useMutation({
-    mutationFn: async (vars: { rowKey: string; projectId: string }) => {
+    mutationFn: async (vars: {
+      rowKey: string;
+      projectId: string;
+      contract: ProjectHarnessContractDto;
+    }) => {
       const result = await postProjectHarnessContractTicket(vars.projectId);
       return { ...vars, result };
     },
@@ -537,10 +541,15 @@ export function HygienePanel({
       setPendingRepairKey(null);
       // 単体で直した後に古い一括結果 (「失敗」行など) を残さない。
       setBulkUpdateSummary(null);
+      // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い — クリック時点の
+      // contract (vars.contract) を渡し、既存チケットへ追記できた/できなかったを
+      // 文言に反映する。
       showRepairStatusMessage(
         buildHarnessContractTicketSuccessMessage(
           vars.result.ticketId,
           vars.result.created,
+          vars.result.stateAppend,
+          vars.contract,
         ),
       );
     },
@@ -592,7 +601,11 @@ export function HygienePanel({
       if (contractTicketMutation.isPending) {
         return;
       }
-      contractTicketMutation.mutate({ rowKey, projectId: item.projectId });
+      contractTicketMutation.mutate({
+        rowKey,
+        projectId: item.projectId,
+        contract: item.contract,
+      });
     },
     [contractTicketMutation],
   );

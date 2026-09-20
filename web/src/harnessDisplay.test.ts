@@ -184,17 +184,84 @@ describe('harnessContractNeedsTicket (bdboard-p5l.25)', () => {
   });
 });
 
-describe('buildHarnessContractTicketSuccessMessage (bdboard-p5l.25)', () => {
-  it('reports a fresh ticket when created is true', () => {
-    expect(buildHarnessContractTicketSuccessMessage('proj-42', true)).toBe(
-      'チケットを起票しました: proj-42',
-    );
+describe('buildHarnessContractTicketSuccessMessage (bdboard-p5l.25 / bdboard-13mp)', () => {
+  const contracts: Record<string, ProjectHarnessContractDto> = {
+    missing: { state: 'missing' },
+    invalid: { state: 'invalid', message: 'verify は空でない文字列である必要があります' },
+    commandMissing: {
+      state: 'command-missing',
+      script: 'verify',
+      verify: 'npm run verify',
+    },
+  };
+
+  it('reports a fresh ticket when created is true, regardless of stateAppend/contract', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        true,
+        'not-needed',
+        contracts.missing!,
+      ),
+    ).toBe('チケットを起票しました: proj-42');
   });
 
-  it('reports the existing ticket (not "created again") when created is false', () => {
-    expect(buildHarnessContractTicketSuccessMessage('proj-42', false)).toBe(
-      '既存のチケットがあります: proj-42',
-    );
+  it('reports the existing ticket plainly when the recorded state matched (stateAppend: not-needed)', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        false,
+        'not-needed',
+        contracts.missing!,
+      ),
+    ).toBe('既存のチケットがあります: proj-42');
+  });
+
+  // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い — 追記できた/できなかったを
+  // ユーザーに伝える。formatHarnessContractLabel の出力を自己参照せず、期待文字列は
+  // リテラルで書く (このテストがビルダーの誤りを検出できるように)。
+  it('names the current state when a state-change comment was appended (missing)', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        false,
+        'appended',
+        contracts.missing!,
+      ),
+    ).toBe('既存のチケットがあります: proj-42（現在の状態 検証ループ未定義 を追記しました）');
+  });
+
+  it('names the current state when a state-change comment was appended (invalid)', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        false,
+        'appended',
+        contracts.invalid!,
+      ),
+    ).toBe('既存のチケットがあります: proj-42（現在の状態 検証コントラクト不正 を追記しました）');
+  });
+
+  it('names the current state when a state-change comment was appended (command-missing)', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        false,
+        'appended',
+        contracts.commandMissing!,
+      ),
+    ).toBe('既存のチケットがあります: proj-42（現在の状態 検証コマンド未定義 を追記しました）');
+  });
+
+  it('reports the append failure distinctly (fail-soft) without claiming success', () => {
+    expect(
+      buildHarnessContractTicketSuccessMessage(
+        'proj-42',
+        false,
+        'failed',
+        contracts.missing!,
+      ),
+    ).toBe('既存のチケットがあります: proj-42（現在の状態の追記に失敗しました。手動でコメントを確認してください）');
   });
 });
 

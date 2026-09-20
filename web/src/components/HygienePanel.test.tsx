@@ -2299,6 +2299,7 @@ describe('HygienePanel repair actions', () => {
     postProjectHarnessContractTicketMock.mockResolvedValue({
       ticketId: 'proj-a-42',
       created: true,
+      stateAppend: 'not-needed',
     });
 
     const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
@@ -2328,6 +2329,7 @@ describe('HygienePanel repair actions', () => {
     postProjectHarnessContractTicketMock.mockResolvedValue({
       ticketId: 'proj-a-7',
       created: false,
+      stateAppend: 'not-needed',
     });
 
     const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
@@ -2341,6 +2343,70 @@ describe('HygienePanel repair actions', () => {
       expect(el).toHaveTextContent('既存のチケットがあります: proj-a-7');
       return el;
     });
+    expect(repairStatus).not.toHaveTextContent('チケットを起票しました');
+    expect(repairStatus).not.toHaveTextContent('追記');
+  });
+
+  // bdboard-13mp: state 遷移をまたいだ陳腐化チケットの扱い — 既存チケットの記録済み
+  // state が現在の state と違って追記されたとき/追記に失敗したときの UI 文言。
+  it('shows the state-change-appended message when the server appended a comment to the existing ticket', async () => {
+    const user = userEvent.setup();
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        { projectId: '/tmp/proj-a', contract: { state: 'invalid', message: 'bad json' }, packs: [] },
+      ],
+    });
+    postProjectHarnessContractTicketMock.mockResolvedValue({
+      ticketId: 'proj-a-7',
+      created: false,
+      stateAppend: 'appended',
+    });
+
+    const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('検証コントラクト不正')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'チケットを起票' }));
+    await user.click(screen.getByRole('button', { name: '確定: チケットを起票' }));
+
+    const repairStatus = await waitFor(() => {
+      const el = container.querySelector('.hygiene-panel-repair-status');
+      expect(el).toHaveTextContent(
+        '既存のチケットがあります: proj-a-7（現在の状態 検証コントラクト不正 を追記しました）',
+      );
+      return el;
+    });
+    expect(repairStatus).not.toHaveTextContent('チケットを起票しました');
+  });
+
+  it('shows the append-failed (fail-soft) message when the server could not append the state-change comment', async () => {
+    const user = userEvent.setup();
+    fetchHygieneMock.mockResolvedValue(makeHygieneResponse());
+    fetchAllHarnessStatusMock.mockResolvedValue({
+      projects: [
+        { projectId: '/tmp/proj-a', contract: { state: 'missing' }, packs: [] },
+      ],
+    });
+    postProjectHarnessContractTicketMock.mockResolvedValue({
+      ticketId: 'proj-a-9',
+      created: false,
+      stateAppend: 'failed',
+    });
+
+    const { container } = renderHygienePanel({ projectIds: ['/tmp/proj-a'] });
+
+    expect(await screen.findByText('検証ループ未定義')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'チケットを起票' }));
+    await user.click(screen.getByRole('button', { name: '確定: チケットを起票' }));
+
+    const repairStatus = await waitFor(() => {
+      const el = container.querySelector('.hygiene-panel-repair-status');
+      expect(el).toHaveTextContent(
+        '既存のチケットがあります: proj-a-9（現在の状態の追記に失敗しました。手動でコメントを確認してください）',
+      );
+      return el;
+    });
+    // fail-soft: still a "found the ticket" message, not the request-level error banner.
     expect(repairStatus).not.toHaveTextContent('チケットを起票しました');
   });
 
