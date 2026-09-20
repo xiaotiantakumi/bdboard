@@ -2,8 +2,10 @@
 // モジュール分割に追随) で複数のリソース別テストファイルから共有される、非テストの
 // ヘルパー/フィクスチャ置き場。中身 (withLocalHost/createFakeBoardCache/
 // createFakeAgent/createApp 等) は元の chat-routes.test.ts から一字一句変更せず
-// 移動しただけ (move only)。export の付与のみ加えた。
+// 移動しただけ (move only)。export の付与と、createApp の戻り値型注釈の維持
+// (import 元が変わったための `Hono` 型 import 追加) のみ加えた。
 import { vi } from 'vitest';
+import type { Hono } from 'hono';
 import { compareStrings } from '../../domain/compare.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { Project } from '../../domain/project.js';
@@ -137,7 +139,7 @@ export function createApp(
     readonly availabilityCacheMs?: number;
     readonly sessionDiscovery?: ChatSessionDiscoveryPort;
   } = {},
-) {
+): Hono {
   const agents =
     overrides.agents ??
     (() => {
