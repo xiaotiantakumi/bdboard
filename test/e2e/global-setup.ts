@@ -223,7 +223,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // lease fixture が健全性パネルに増やす行の kind バッジ
       // `stale lease（heartbeat 途絶）` は 182px・white-space: nowrap でパネル中
       // 最長。`.hygiene-issue-row` は grid-template-columns: auto auto 1fr
-      // (web/src/index.css:1648) なので、この行だけ project 列 (1fr) が潰れる。
+      // なので、この行だけ project 列 (1fr) が潰れる。
       // ≤480px の帯では bdboard-4kik で project が行全幅 (375px 幅で 325px) に移った。
       // 以下の 87px / 余白 8.25px の実測は 481px 以上の帯（旧 3 列レイアウト）の話。
       // 結果として同 spec の `.hygiene-issue-project` に対する

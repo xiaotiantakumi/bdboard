@@ -10,9 +10,10 @@ import { expect, test } from '@playwright/test';
  * deleting the 14px rule fails only 600x900, deleting the 12px rule fails only 375x812.
  *
  * Deliberately NOT guarded: whether the snap is `mandatory` or `proximity`.
- * index.css:2720 declares `.lanes-row { scroll-snap-type: x proximity }` as the base rule and
- * index.css:5779 upgrades it to `x mandatory` on mobile, so deleting the mandatory line leaves
- * proximity snapping and this spec stays green. That is intended — the contract this spec owns is
+ * The base `.lanes-row` rule declares `scroll-snap-type: x proximity` and the
+ * `@media (max-width: 700px)` block's `.lanes-row` override upgrades it to `x mandatory` on
+ * mobile, so deleting the mandatory line leaves proximity snapping and this spec stays green.
+ * That is intended — the contract this spec owns is
  * "the lane snaps to the scroll-padding inset rather than the scrollport edge", which both
  * strengths satisfy at the offset used below. Replacing scroll-snap-type with `none` (i.e. really
  * removing the snap mechanism) does fail both viewports, which is what makes this spec a real
