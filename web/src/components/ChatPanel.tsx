@@ -93,6 +93,8 @@ import { ChatInputActions } from './chat/ChatInputActions';
 import { ChatQuickCommands } from './chat/ChatQuickCommands';
 import { ChatInputNotices } from './chat/ChatInputNotices';
 import { ChatMessageList } from './chat/ChatMessageList';
+import { ChatProjectBar } from './chat/ChatProjectBar';
+import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
 import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
@@ -3387,108 +3389,30 @@ export function ChatPanel({
           </div>
         </div>
 
-        {/* bdboard-r5we: 対象プロジェクトはチャット設定(details)の中に畳まれていて
-            既定では見えなかった。送信先はチャットの最重要文脈なので、details の外の
-            常時表示行へ出す。
-            レビュー major-1: 描画条件を projects.length ではなく「選択が必要か」で
-            決める。送信可否(selectedProjectId === '')と条件を揃えないと、
-            「1件だけ到着したがチケットのプロジェクトと違う」経路で select が出ない
-            まま送信が永久 disabled になり、脱出手段が無くなる。 */}
-        <div className="chat-project-bar">
-          {showProjectSelect ? (
-            <label className="chat-project-bar-label" htmlFor="chat-project-select">
-              対象プロジェクト
-            </label>
-          ) : (
-            <span className="chat-project-bar-label">対象プロジェクト</span>
-          )}
-          {showProjectSelect ? (
-            <select
-              id="chat-project-select"
-              className="chat-project-select"
-              value={selectedProjectId}
-              disabled={isSending}
-              aria-describedby={
-                projectSelectionHintId === null ? undefined : projectSelectionHintId
-              }
-              onChange={(event) => handleProjectSelectChange(event.target.value)}
-            >
-              {selectedProjectId === '' && (
-                <option value="">プロジェクトを選択…</option>
-              )}
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <p className="chat-project-name">{selectedProject?.name ?? '—'}</p>
-          )}
-          {/* .chat-input-notices と同じ: 条件式でラッパーを消さず :empty に任せ、gap の二重管理を避ける。 */}
-          <div className="chat-project-bar-notices">
-            {projectSelectionHint !== null && (
-              <p
-                className="chat-project-unselected-hint"
-                id="chat-project-unselected-hint"
-                role="status"
-              >
-                {projectSelectionHint}
-              </p>
-            )}
-            {ticketProjectFallbackNotice !== null && (
-              <p className="chat-ticket-project-fallback-notice" role="status">
-                {ticketProjectFallbackNotice}
-              </p>
-            )}
-          </div>
-        </div>
+        <ChatProjectBar
+          showProjectSelect={showProjectSelect}
+          selectedProjectId={selectedProjectId}
+          isSending={isSending}
+          projectSelectionHintId={projectSelectionHintId}
+          onProjectSelectChange={handleProjectSelectChange}
+          projects={projects}
+          selectedProjectName={selectedProject?.name}
+          projectSelectionHint={projectSelectionHint}
+          ticketProjectFallbackNotice={ticketProjectFallbackNotice}
+        />
 
-        {/* Chat Redesign 1b: タブ帯を「現在のスレッド名+件数」ボタン1つに圧縮し、
-            押すと縦一覧ドロワーがかぶさる形に置き換えた。個別のリネーム/ピン留め/
-            タブから閉じる/削除は各行の「⋯」メニューへ集約し(旧: 選択中タブにだけ
-            並んでいたボタン列)、ピン留め/開いている/閉じた/外部CLIセッションの
-            3+1種類を見出しで言葉として示す。
-            チャット設定(details)の外に置く: details の body は閉じている間も
-            常にレンダリングされる既存バグ(chat-panel-settings-body に
-            display:flex を無条件付与しており、UA既定の details:not([open])
-            > :not(summary){display:none} を上書きしてしまう)があり、この中に
-            置くと chat-messages と座標が重なってクリックを奪われる
-            (bdboard-wkl で発見)。スレッド切替は常時表示すべき主導線でもあるため、
-            details の外側に出す。 */}
-        <div className="chat-thread-switcher">
-          <button
-            type="button"
-            className="chat-thread-switcher-toggle"
-            aria-haspopup="dialog"
-            aria-expanded={threadDrawerOpen}
-            aria-controls="chat-thread-drawer"
-            onClick={() => setThreadDrawerOpen((prev) => !prev)}
-          >
-            <span className="chat-thread-switcher-icon" aria-hidden="true">☰</span>
-            <span className="chat-thread-switcher-title">{currentThreadTitle}</span>
-            <span className="chat-thread-switcher-count">スレッド {openThreads.length}</span>
-          </button>
-          <button
-            type="button"
-            className="btn chat-thread-new"
-            aria-label="新しい空のスレッドを開始"
-            title="新しい空のスレッドを開始します(今開いているスレッドはそのまま残ります)"
-            onClick={() => {
-              setThreadDrawerOpen(false);
-              handleNewThread();
-            }}
-          >
-            + 新規スレッド
-          </button>
-        </div>
-        {displayedOpenThreads.length === 0 && (
-          <p className="chat-thread-empty-hint" role="status">
-            {hasClosedThreads
-              ? '開いているスレッドはありません。「+ 新規スレッド」で新しく始めるか、スレッド一覧の「閉じたスレッド」から再開できます。'
-              : '開いているスレッドはありません。「+ 新規スレッド」で新しく始めてください。'}
-          </p>
-        )}
+        <ChatThreadSwitcher
+          threadDrawerOpen={threadDrawerOpen}
+          onToggleDrawer={() => setThreadDrawerOpen((prev) => !prev)}
+          currentThreadTitle={currentThreadTitle}
+          openThreadsCount={openThreads.length}
+          onNewThread={() => {
+            setThreadDrawerOpen(false);
+            handleNewThread();
+          }}
+          hasNoDisplayedOpenThreads={displayedOpenThreads.length === 0}
+          hasClosedThreads={hasClosedThreads}
+        />
         <ChatThreadDrawer
           open={threadDrawerOpen}
           drawerRef={threadDrawerRef}
