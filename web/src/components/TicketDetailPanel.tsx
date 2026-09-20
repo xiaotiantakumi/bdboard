@@ -78,7 +78,6 @@ import {
 } from './ticket-detail/quickActionConfirm';
 import {
   formatDateTime,
-  formatTokenCount,
   sessionLinkBadgeLabel,
   sessionLinkBadgeClass,
   formatSessionPickerLabel,
@@ -103,6 +102,8 @@ import { useTicketLabels } from './ticket-detail/useTicketLabels';
 import { TicketLabelsSection } from './ticket-detail/TicketLabelsSection';
 import { useTicketDependencies } from './ticket-detail/useTicketDependencies';
 import { TicketDependenciesSection } from './ticket-detail/TicketDependenciesSection';
+import { TicketModelsSection } from './ticket-detail/TicketModelsSection';
+import { TicketUsageSection } from './ticket-detail/TicketUsageSection';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -1193,19 +1194,7 @@ export function TicketDetailPanel({
                 </ul>
               </div>
             )}
-            {data.models !== undefined && data.models.length > 0 && (
-              <div className="detail-section">
-                <h3>使用モデル</h3>
-                <ul className="detail-list">
-                  {data.models.map((entry) => (
-                    <li key={entry.stage}>
-                      <span className="ticket-model-stage">{entry.stage}</span>
-                      <span className="ticket-model-name">{entry.model}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <TicketModelsSection models={data.models} />
             <div className="detail-section">
               <h3>セッションリンク</h3>
               {data.sessionLinks.length === 0 && (
@@ -1295,46 +1284,7 @@ export function TicketDetailPanel({
                 </p>
               )}
             </div>
-            {data.usage !== undefined && (
-              <div className="detail-section">
-                <h3>AI使用量</h3>
-                <div className="detail-field">
-                  <div className="detail-field-label">入力トークン</div>
-                  <div>{formatTokenCount(data.usage.totalInputTokens)}</div>
-                </div>
-                <div className="detail-field">
-                  <div className="detail-field-label">出力トークン</div>
-                  <div>{formatTokenCount(data.usage.totalOutputTokens)}</div>
-                </div>
-                {(data.usage.totalCacheCreationInputTokens > 0 ||
-                  data.usage.totalCacheReadInputTokens > 0) && (
-                  <>
-                    <div className="detail-field">
-                      <div className="detail-field-label">キャッシュ作成入力</div>
-                      <div>
-                        {formatTokenCount(data.usage.totalCacheCreationInputTokens)}
-                      </div>
-                    </div>
-                    <div className="detail-field">
-                      <div className="detail-field-label">キャッシュ読み取り入力</div>
-                      <div>
-                        {formatTokenCount(data.usage.totalCacheReadInputTokens)}
-                      </div>
-                    </div>
-                  </>
-                )}
-                {data.usage.byModel.length > 0 && (
-                  <ul className="detail-list">
-                    {data.usage.byModel.map((entry) => (
-                      <li key={entry.model}>
-                        {entry.model}: 入力 {formatTokenCount(entry.inputTokens)} / 出力{' '}
-                        {formatTokenCount(entry.outputTokens)}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
+            <TicketUsageSection usage={data.usage} />
             {pendingDecision !== undefined && (
               <div className="detail-section">
                 <h3>ユーザー確認待ち</h3>
