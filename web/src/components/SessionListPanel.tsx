@@ -1,18 +1,5 @@
-import { useQuery } from '@tanstack/react-query';
-import { useMemo, useRef, useState } from 'react';
-import {
-  ApiError,
-  fetchAgentProcesses,
-  fetchProjects,
-  fetchSessionHistory,
-  fetchSessions,
-  type AgentProcessDto,
-  type ProjectDto,
-  type SessionDto,
-  type SessionHistoryEntryDto,
-} from '../api';
-import { compareStrings } from '../compare';
-import { formatAbsoluteTime } from '../formatAbsoluteTime';
+import { useRef, useState } from 'react';
+import { ApiError, type SessionDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
 import {
@@ -20,54 +7,17 @@ import {
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
-import {
-  LIVENESS_ORDER,
-  livenessClass,
-  livenessLabel,
-  type Liveness,
-} from '../liveness';
 import { PlatformLimitationNotice } from './PlatformLimitationNotice';
 import { SessionTailViewer } from './SessionTailViewer';
+import { SessionActiveList } from './session-list/SessionActiveList';
+import { SessionEndedList } from './session-list/SessionEndedList';
+import { SessionProcessList } from './session-list/SessionProcessList';
+import type { SessionListTab } from './session-list/sessionListHelpers';
+import { useSessionListData } from './session-list/useSessionListData';
 
 interface SessionListPanelProps {
   projectId?: string;
   onClose: () => void;
-}
-
-type SessionListTab = 'active' | 'ended' | 'processes';
-
-const SESSION_HISTORY_LIMIT = 50;
-
-interface SessionRow {
-  session: SessionDto;
-  projectName: string;
-  liveness: Liveness;
-}
-
-function buildSessionProjectMap(
-  projects: readonly ProjectDto[],
-): Map<string, { projectId: string; projectName: string }> {
-  const map = new Map<string, { projectId: string; projectName: string }>();
-  for (const project of projects) {
-    for (const session of project.sessions) {
-      map.set(session.sessionId, {
-        projectId: project.id,
-        projectName: project.name,
-      });
-    }
-  }
-  return map;
-}
-
-function formatTicketLabel(ticket: SessionHistoryEntryDto['tickets'][number]): string {
-  if (ticket.title !== undefined) {
-    return `${ticket.ticketId} — ${ticket.title}`;
-  }
-  return ticket.ticketId;
-}
-
-function processProjectLabel(process: AgentProcessDto): string {
-  return process.projectName ?? process.cwd;
 }
 
 export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) {
@@ -90,88 +40,16 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
     onEscape: requestClose,
   });
 
-  const sessionsQuery = useQuery({
-    queryKey: ['sessions'],
-    queryFn: fetchSessions,
-    refetchInterval: tab === 'active' ? 10_000 : false,
-  });
-
-  const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: fetchProjects,
-    refetchInterval: tab === 'active' ? 10_000 : false,
-  });
-
-  const historyQuery = useQuery({
-    queryKey: ['sessionHistory', SESSION_HISTORY_LIMIT, projectId],
-    queryFn: () => fetchSessionHistory(SESSION_HISTORY_LIMIT, projectId),
-    enabled: tab === 'ended',
-    refetchInterval: tab === 'ended' ? 10_000 : false,
-  });
-
-  const processesQuery = useQuery({
-    queryKey: ['agentProcesses'],
-    queryFn: fetchAgentProcesses,
-    enabled: tab === 'processes',
-    refetchInterval: tab === 'processes' ? 10_000 : false,
-    retry: (failureCount, error) => {
-      if (error instanceof ApiError && error.status === 501) {
-        return false;
-      }
-      return failureCount < 1;
-    },
-  });
-
-  const sessionProjectMap = useMemo(
-    () => buildSessionProjectMap(projectsQuery.data ?? []),
-    [projectsQuery.data],
-  );
-
-  const projectName = useMemo(() => {
-    if (projectId === undefined) {
-      return undefined;
-    }
-    return (projectsQuery.data ?? []).find((project) => project.id === projectId)?.name;
-  }, [projectId, projectsQuery.data]);
-
-  const rows = useMemo((): SessionRow[] => {
-    const sessions = sessionsQuery.data ?? [];
-
-    const mapped = sessions.map((session) => {
-      const projectInfo = sessionProjectMap.get(session.sessionId);
-      return {
-        session,
-        projectName: projectInfo?.projectName ?? '—',
-        liveness: session.liveness,
-      };
-    });
-
-    const filtered =
-      projectId === undefined
-        ? mapped
-        : mapped.filter((row) => {
-            const info = sessionProjectMap.get(row.session.sessionId);
-            return info?.projectId === projectId;
-          });
-
-    return filtered.sort((a, b) => {
-      const livenessDiff = LIVENESS_ORDER[a.liveness] - LIVENESS_ORDER[b.liveness];
-      if (livenessDiff !== 0) {
-        return livenessDiff;
-      }
-      return compareStrings(a.session.sessionId, b.session.sessionId);
-    });
-  }, [sessionsQuery.data, sessionProjectMap, projectId]);
-
-  const historyRows: readonly SessionHistoryEntryDto[] = historyQuery.data ?? [];
-
-  const processRows = useMemo((): readonly AgentProcessDto[] => {
-    const processes = processesQuery.data ?? [];
-    if (projectId === undefined) {
-      return processes;
-    }
-    return processes.filter((process) => process.projectId === projectId);
-  }, [processesQuery.data, projectId]);
+  const {
+    sessionsQuery,
+    projectsQuery,
+    historyQuery,
+    processesQuery,
+    projectName,
+    rows,
+    historyRows,
+    processRows,
+  } = useSessionListData(tab, projectId);
 
   const isActiveTab = tab === 'active';
   const isEndedTab = tab === 'ended';
@@ -301,60 +179,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
           !isLoading &&
           error === null &&
           rows.length > 0 && (
-            <ul className="session-list">
-              {rows.map((row) => (
-                <li key={row.session.sessionId} className="session-row">
-                  <div className="session-row-field">
-                    <div className="detail-field-label">プロジェクト</div>
-                    <div>{row.projectName}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">セッション ID</div>
-                    <div className="session-row-mono">{row.session.sessionId}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">cwd</div>
-                    <div className="session-row-mono">{row.session.cwd}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">状態</div>
-                    <div className="session-row-liveness">
-                      <span
-                        className={`liveness-dot ${livenessClass(row.liveness)}`}
-                      />
-                      {livenessLabel(row.liveness)}
-                    </div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">開始時刻</div>
-                    <div>{formatAbsoluteTime(row.session.startedAt)}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">最終活動</div>
-                    <div>{formatAbsoluteTime(row.session.lastActivityAt)}</div>
-                  </div>
-                  <div className="session-row-meta">
-                    <span>pid: {row.session.pid}</span>
-                    {row.session.name !== undefined && (
-                      <span className="session-row-name">{row.session.name}</span>
-                    )}
-                    <button
-                      type="button"
-                      className="btn btn-small session-tail-open-btn"
-                      disabled={row.liveness !== 'active'}
-                      onClick={() => setTailSession(row.session)}
-                      title={
-                        row.liveness === 'active'
-                          ? undefined
-                          : 'テールは稼働中のセッションでのみ表示できます'
-                      }
-                    >
-                      テールを見る
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
+            <SessionActiveList rows={rows} onOpenTail={setTailSession} />
           )}
 
         {isEndedTab &&
@@ -366,47 +191,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
         {isEndedTab &&
           !isLoading &&
           error === null &&
-          historyRows.length > 0 && (
-            <ul className="session-list">
-              {historyRows.map((entry) => (
-                <li key={entry.session.sessionId} className="session-row">
-                  <div className="session-row-field">
-                    <div className="detail-field-label">最終活動</div>
-                    <div>{formatAbsoluteTime(entry.session.lastActivityAt)}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">セッション</div>
-                    <div className="session-row-mono">
-                      {entry.session.name ?? entry.session.sessionId}
-                    </div>
-                    {entry.session.name !== undefined && (
-                      <div className="session-row-mono session-row-sub-id">
-                        {entry.session.sessionId}
-                      </div>
-                    )}
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">プロジェクト</div>
-                    <div>{entry.projectName ?? '—'}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">チケット</div>
-                    {entry.tickets.length === 0 ? (
-                      <div>—</div>
-                    ) : (
-                      <ul className="session-history-tickets">
-                        {entry.tickets.map((ticket) => (
-                          <li key={ticket.ticketId} className="session-row-mono">
-                            {formatTicketLabel(ticket)}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+          historyRows.length > 0 && <SessionEndedList rows={historyRows} />}
 
         {isProcessesTab &&
           !isLoading &&
@@ -419,36 +204,7 @@ export function SessionListPanel({ projectId, onClose }: SessionListPanelProps) 
           !isLoading &&
           !processesUnavailable &&
           error === null &&
-          processRows.length > 0 && (
-            <ul className="session-list">
-              {processRows.map((process) => (
-                <li key={process.pid} className="session-row">
-                  <div className="session-row-field">
-                    <div className="detail-field-label">コマンド</div>
-                    <div className="session-row-mono">{process.command}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">pid</div>
-                    <div>{process.pid}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">プロジェクト</div>
-                    <div>{processProjectLabel(process)}</div>
-                  </div>
-                  <div className="session-row-field">
-                    <div className="detail-field-label">cwd</div>
-                    <div className="session-row-mono">{process.cwd}</div>
-                  </div>
-                  {process.startedAt !== undefined && (
-                    <div className="session-row-field">
-                      <div className="detail-field-label">起動時刻</div>
-                      <div>{formatAbsoluteTime(process.startedAt)}</div>
-                    </div>
-                  )}
-                </li>
-              ))}
-            </ul>
-          )}
+          processRows.length > 0 && <SessionProcessList rows={processRows} />}
       </aside>
     </div>
       {tailSession !== null && (
