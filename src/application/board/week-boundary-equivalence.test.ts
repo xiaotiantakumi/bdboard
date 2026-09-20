@@ -141,7 +141,10 @@ const TIME_ZONE_CASES: readonly TimeZoneCase[] = [
     ],
   },
   {
-    // US DST 2026: spring-forward Mar 8, fall-back Nov 1.
+    // US DST 2026: spring-forward Mar 8, fall-back Nov 1. The last two
+    // entries of each transition group place that transition week at the
+    // *middle* probe index (see `weekIndexesToProbe` below) for weeks=8 and
+    // weeks=26 respectively, not just at index 0 or weeks-1.
     timeZone: 'America/New_York',
     nows: [
       '2026-03-04T12:00:00.000Z',
@@ -149,15 +152,21 @@ const TIME_ZONE_CASES: readonly TimeZoneCase[] = [
       '2026-03-09T12:00:00.000Z',
       '2026-03-11T12:00:00.000Z',
       '2026-04-20T12:00:00.000Z',
+      '2026-04-01T12:00:00.000Z', // spring-forward week at middle index, weeks=8
+      '2026-06-03T12:00:00.000Z', // spring-forward week at middle index, weeks=26
       '2026-10-27T12:00:00.000Z',
       '2026-10-30T12:00:00.000Z',
       '2026-11-02T12:00:00.000Z',
       '2026-11-04T12:00:00.000Z',
       '2026-12-15T12:00:00.000Z',
+      '2026-11-25T12:00:00.000Z', // fall-back week at middle index, weeks=8
+      '2027-01-27T12:00:00.000Z', // fall-back week at middle index, weeks=26
     ],
   },
   {
-    // EU DST 2026: spring-forward Mar 29, fall-back Oct 25.
+    // EU DST 2026: spring-forward Mar 29, fall-back Oct 25. As above, the
+    // last two entries of each transition group place that transition week
+    // at the middle probe index for weeks=8 and weeks=26 respectively.
     timeZone: 'Europe/London',
     nows: [
       '2026-03-25T12:00:00.000Z',
@@ -165,11 +174,15 @@ const TIME_ZONE_CASES: readonly TimeZoneCase[] = [
       '2026-03-30T12:00:00.000Z',
       '2026-04-01T12:00:00.000Z',
       '2026-04-26T12:00:00.000Z',
+      '2026-04-22T12:00:00.000Z', // spring-forward week at middle index, weeks=8
+      '2026-06-24T12:00:00.000Z', // spring-forward week at middle index, weeks=26
       '2026-10-21T12:00:00.000Z',
       '2026-10-24T12:00:00.000Z',
       '2026-10-26T12:00:00.000Z',
       '2026-10-28T12:00:00.000Z',
       '2026-12-08T12:00:00.000Z',
+      '2026-11-18T12:00:00.000Z', // fall-back week at middle index, weeks=8
+      '2027-01-20T12:00:00.000Z', // fall-back week at middle index, weeks=26
     ],
   },
 ];

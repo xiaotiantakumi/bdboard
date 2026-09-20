@@ -42,11 +42,24 @@ export interface WeekBoundaries {
  * instead of recomputed from scratch per index (O(weeks) total instead of
  * O(weeks^2)).
  *
- * Each week's end is computed with the exact same formula the old
- * `nextWeekStart` used internally (`addCalendarDaysToDateKey(weekKey, 7, timeZone)`
- * then `zonedMidnight`), just evaluated once per week here instead of once
- * per ticket x week -- so `isInWeekBounds`/`isInWeekRangeBounds` below match
- * `isInWeek`/`isInWeekRange` exactly while doing zero further Intl work.
+ * Each week's end is computed from *that week's own* key with the same
+ * formula the old `nextWeekStart` used internally
+ * (`addCalendarDaysToDateKey(weekKey, 7, timeZone)` then `zonedMidnight`),
+ * evaluated once per week here instead of once per ticket x week. Strictly,
+ * `nextWeekStart` re-derives the key via `localDateKey(zonedMidnight(weekStart))`
+ * first, which only round-trips back to the same key when local midnight for
+ * that key isn't itself skipped by a DST transition -- a handful of dates
+ * worldwide, but always a Sunday, never a Monday (checked across all IANA
+ * zones). Every key here is a Monday (week starts), so the round-trip always
+ * holds and `isInWeekBounds`/`isInWeekRangeBounds` below match
+ * `isInWeek`/`isInWeekRange` exactly while doing zero further Intl work. If
+ * this project ever supports a non-Monday week start, re-verify this.
+ * Computing every week's own end (rather than reusing the next week's start,
+ * which is provably equal but would need its own proof to rely on) costs
+ * roughly 2x the calendar-day work here -- immaterial at the `weeks` sizes
+ * this project uses, and it keeps this function's correctness independent of
+ * `isInWeek`'s day-math instead of assuming forward/backward are exact
+ * inverses.
  */
 export function buildWeekBoundaries(
   now: Date,
@@ -60,21 +73,23 @@ export function buildWeekBoundaries(
   const currentWeekStart = startOfWeekMonday(now, timeZone);
   const currentWeekKey = localDateKey(currentWeekStart, timeZone);
 
-  const keysNewestFirst: string[] = [currentWeekKey];
+  const keysOldestFirst: string[] = [currentWeekKey];
+  let previousKey = currentWeekKey;
   for (let index = 1; index < weeks; index += 1) {
-    const previous = keysNewestFirst[index - 1] as string;
-    keysNewestFirst.push(subtractCalendarDaysFromDateKey(previous, 7, timeZone));
+    previousKey = subtractCalendarDaysFromDateKey(previousKey, 7, timeZone);
+    keysOldestFirst.push(previousKey);
   }
-  const keysOldestFirst = [...keysNewestFirst].reverse();
+  keysOldestFirst.reverse();
 
-  const weekStarts = keysOldestFirst.map((key) => zonedMidnight(key, timeZone));
-  const weekRanges = keysOldestFirst.map((key, index) => {
+  const weekStarts: Date[] = [];
+  const weekRanges: WeekRange[] = [];
+  for (const key of keysOldestFirst) {
+    const start = zonedMidnight(key, timeZone);
     const endKey = addCalendarDaysToDateKey(key, 7, timeZone);
-    return {
-      start: weekStarts[index]!.getTime(),
-      end: zonedMidnight(endKey, timeZone).getTime(),
-    };
-  });
+    const end = zonedMidnight(endKey, timeZone);
+    weekStarts.push(start);
+    weekRanges.push({ start: start.getTime(), end: end.getTime() });
+  }
 
   return { weekStarts, weekRanges };
 }
