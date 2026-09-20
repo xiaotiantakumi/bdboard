@@ -1,0 +1,27 @@
+import { describe, expect, it } from 'vitest';
+import * as runStore from './run-store.js';
+
+/**
+ * bdboard-sso1.32: src/application/runner/run-store.ts を機能別モジュール
+ * (./run-store/*.ts) へ分割した際の、実行時エクスポート面の回帰ガード。
+ *
+ * このリストは分割前 (分割 PR のベース、main の run-store.ts) から
+ * `grep -nE '^export ' src/application/runner/run-store.ts` で機械的に採取した値
+ * エクスポート名 (1件) をそのままハードコードしている。`export interface` /
+ * `export type` は TypeScript の型のみの宣言で実行時のバインディングを持たない
+ * (コンパイルで消える) ため、`Object.keys()` には現れずこのリストにも含めていない —
+ * 型エクスポート面は run-store-type-export-surface.check.ts が tsc (`npm run build`) で
+ * 固定する (dto.ts 分割, PR #540 / claude-runner.ts 分割, PR #580 と同じ方式)。
+ *
+ * 分割後の run-store.ts は各サブモジュールからの named re-export のみになる。ここが
+ * 崩れる (関数の移し忘れ・名前の変更・re-export の欠落、または内部ヘルパーの意図しない
+ * re-export による面の拡大) と、この一覧との差分としてすぐ検出できる。
+ */
+const EXPECTED_VALUE_EXPORTS = ['createRunStore'].sort();
+
+describe('run-store.ts export surface (bdboard-sso1.32 module split regression guard)', () => {
+  it('re-exports exactly the same runtime bindings as the pre-split file', () => {
+    const actual = Object.keys(runStore).sort();
+    expect(actual).toEqual(EXPECTED_VALUE_EXPORTS);
+  });
+});

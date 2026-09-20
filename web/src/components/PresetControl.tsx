@@ -1,16 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  BOARD_FILTER_PRESET_NAME_MAX_LENGTH,
-  createBoardFilterPresetId,
   describeBoardFilterPresetState,
-  findMatchingBoardFilterPreset,
   type BoardFilterPreset,
   type BoardFilterPresetState,
 } from '../uiPersistedState';
-import { isImeComposingKeyEvent } from '../imeGuard';
-import { useFocusTrap } from '../hooks/useFocusTrap';
-import { usePopoverViewportClamp } from '../hooks/usePopoverViewportClamp';
-import { useExclusivePopover } from './PopoverCoordinator';
+import { usePresetControlPopover } from './preset-control/usePresetControlPopover';
+import { PresetControlItemRow } from './preset-control/PresetControlItemRow';
+import { PresetControlRenameRow } from './preset-control/PresetControlRenameRow';
+import { PresetControlSaveFoot } from './preset-control/PresetControlSaveFoot';
 
 /*
   Header Redesign Turn 4 / 4b。「プリセット」と「管理」の2ボタンを1つに統合し、
@@ -27,38 +23,6 @@ export interface PresetControlProps {
   saveIntentToken?: number;
 }
 
-function validatePresetName(
-  name: string,
-  presets: readonly BoardFilterPreset[],
-  excludeId: string | null,
-): string | null {
-  if (name === '') {
-    return '名前を入力してください';
-  }
-  if (name.length > BOARD_FILTER_PRESET_NAME_MAX_LENGTH) {
-    return `名前は${BOARD_FILTER_PRESET_NAME_MAX_LENGTH}文字以内にしてください`;
-  }
-  if (presets.some((preset) => preset.name === name && preset.id !== excludeId)) {
-    return '同じ名前のプリセットが既にあります';
-  }
-  return null;
-}
-
-function duplicateName(base: string, presets: readonly BoardFilterPreset[]): string {
-  const taken = new Set(presets.map((preset) => preset.name));
-  const candidate = `${base} のコピー`;
-  if (!taken.has(candidate) && candidate.length <= BOARD_FILTER_PRESET_NAME_MAX_LENGTH) {
-    return candidate;
-  }
-  for (let index = 2; index < 100; index += 1) {
-    const next = `${base} のコピー${index}`;
-    if (!taken.has(next) && next.length <= BOARD_FILTER_PRESET_NAME_MAX_LENGTH) {
-      return next;
-    }
-  }
-  return createBoardFilterPresetId().slice(0, BOARD_FILTER_PRESET_NAME_MAX_LENGTH);
-}
-
 export function PresetControl({
   presets,
   onPresetsChange,
@@ -66,172 +30,40 @@ export function PresetControl({
   onApplyPreset,
   saveIntentToken = 0,
 }: PresetControlProps) {
-  const [open, setOpen] = useState(false);
-  const [lastAppliedId, setLastAppliedId] = useState<string | null>(null);
-  const [menuPresetId, setMenuPresetId] = useState<string | null>(null);
-  const [renamePresetId, setRenamePresetId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
-  const [newSaveOpen, setNewSaveOpen] = useState(false);
-  const [draftName, setDraftName] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const containerRef = useExclusivePopover('preset-control', open, setOpen);
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const clampRef = usePopoverViewportClamp<HTMLDivElement>(open);
-  const setPopoverRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      popoverRef.current = node;
-      clampRef(node);
-    },
-    [clampRef],
-  );
-
-  const matchingPreset = useMemo(
-    () => findMatchingBoardFilterPreset(presets, currentState),
-    [presets, currentState],
-  );
-
-  // 完全一致するプリセットがあればそれが現在のプリセット。無ければ最後に適用したものを
-  // 「選択中だが変更あり」として見せる — 選び直せば戻せる、を示すための状態。
-  const activePreset = useMemo(() => {
-    if (matchingPreset !== null) {
-      return matchingPreset;
-    }
-    return presets.find((preset) => preset.id === lastAppliedId) ?? null;
-  }, [matchingPreset, presets, lastAppliedId]);
-
-  const dirty = activePreset !== null && matchingPreset === null;
-
-  const resetTransientState = () => {
-    setMenuPresetId(null);
-    setRenamePresetId(null);
-    setRenameDraft('');
-    setNewSaveOpen(false);
-    setDraftName('');
-    setError(null);
-  };
-
-  const changeOpen = (next: boolean) => {
-    setOpen(next);
-    if (!next) {
-      resetTransientState();
-    }
-  };
-
-  // useExclusivePopover は document 単位で Escape/外側クリックの排他クローズを処理する。
-  // useFocusTrap の Escape ハンドラは event.preventDefault() してから閉じるので、
-  // ポップオーバー内(popoverRef の子孫)で発生した Escape はここで処理が完結し、
-  // document まで浮上した時点で useExclusivePopover 側は defaultPrevented を見て
-  // 二重発火せずに早期returnする(PopoverCoordinator.tsx の handleKeyDown 参照)。
-  useFocusTrap({
-    containerRef: popoverRef,
-    enabled: open,
-    onEscape: () => changeOpen(false),
+  const {
+    open,
+    changeOpen,
+    containerRef,
+    setPopoverRef,
+    activePreset,
+    dirty,
+    buttonLabel,
+    menuPresetId,
+    setMenuPresetId,
+    renamePresetId,
+    setRenamePresetId,
+    renameDraft,
+    setRenameDraft,
+    newSaveOpen,
+    setNewSaveOpen,
+    draftName,
+    setDraftName,
+    error,
+    setError,
+    handleApply,
+    handleOverwrite,
+    handleNewSave,
+    handleRenameCommit,
+    handleDuplicate,
+    handleToggleDefault,
+    handleDelete,
+  } = usePresetControlPopover({
+    presets,
+    onPresetsChange,
+    currentState,
+    onApplyPreset,
+    saveIntentToken,
   });
-
-  useEffect(() => {
-    if (saveIntentToken > 0) {
-      setOpen(true);
-      setNewSaveOpen(true);
-      setError(null);
-    }
-  }, [saveIntentToken]);
-
-  // 排他クローズ(他のポップオーバーが開いた/Esc/外側クリック)で閉じたときも中の
-  // 一時状態を残さない。
-  useEffect(() => {
-    if (!open) {
-      resetTransientState();
-    }
-  }, [open]);
-
-  const handleApply = (preset: BoardFilterPreset) => {
-    onApplyPreset(preset);
-    setLastAppliedId(preset.id);
-    changeOpen(false);
-  };
-
-  const handleOverwrite = () => {
-    if (activePreset === null) {
-      return;
-    }
-    onPresetsChange(
-      presets.map((preset) =>
-        preset.id === activePreset.id ? { ...preset, ...currentState } : preset,
-      ),
-    );
-    setLastAppliedId(activePreset.id);
-    changeOpen(false);
-  };
-
-  const handleNewSave = () => {
-    const name = draftName.trim();
-    const message = validatePresetName(name, presets, null);
-    if (message !== null) {
-      setError(message);
-      return;
-    }
-    const nextPreset: BoardFilterPreset = {
-      id: createBoardFilterPresetId(),
-      name,
-      ...currentState,
-    };
-    onPresetsChange([...presets, nextPreset]);
-    setLastAppliedId(nextPreset.id);
-    changeOpen(false);
-  };
-
-  const handleRenameCommit = (preset: BoardFilterPreset) => {
-    const name = renameDraft.trim();
-    const message = validatePresetName(name, presets, preset.id);
-    if (message !== null) {
-      setError(message);
-      return;
-    }
-    onPresetsChange(
-      presets.map((item) => (item.id === preset.id ? { ...item, name } : item)),
-    );
-    setRenamePresetId(null);
-    setRenameDraft('');
-    setError(null);
-  };
-
-  const handleDuplicate = (preset: BoardFilterPreset) => {
-    const copy: BoardFilterPreset = {
-      ...preset,
-      id: createBoardFilterPresetId(),
-      name: duplicateName(preset.name, presets),
-    };
-    delete copy.isDefault;
-    onPresetsChange([...presets, copy]);
-    setMenuPresetId(null);
-  };
-
-  const handleToggleDefault = (preset: BoardFilterPreset) => {
-    const makeDefault = preset.isDefault !== true;
-    onPresetsChange(
-      presets.map((item) => {
-        const next = { ...item };
-        delete next.isDefault;
-        if (makeDefault && item.id === preset.id) {
-          next.isDefault = true;
-        }
-        return next;
-      }),
-    );
-    setMenuPresetId(null);
-  };
-
-  const handleDelete = (preset: BoardFilterPreset) => {
-    onPresetsChange(presets.filter((item) => item.id !== preset.id));
-    if (lastAppliedId === preset.id) {
-      setLastAppliedId(null);
-    }
-    setMenuPresetId(null);
-  };
-
-  const buttonLabel =
-    activePreset !== null ? `プリセット: ${activePreset.name}` : 'プリセット';
 
   return (
     <div ref={containerRef} className="preset-control header-group">
@@ -267,206 +99,72 @@ export function PresetControl({
               const isActive = activePreset?.id === preset.id;
               if (renamePresetId === preset.id) {
                 return (
-                  <div key={preset.id} className="preset-control-rename">
-                    <input
-                      type="text"
-                      className="preset-control-name-input"
-                      aria-label={`「${preset.name}」の新しい名前`}
-                      value={renameDraft}
-                      maxLength={BOARD_FILTER_PRESET_NAME_MAX_LENGTH}
-                      autoFocus
-                      onChange={(event) => {
-                        setRenameDraft(event.target.value);
-                        setError(null);
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          if (isImeComposingKeyEvent(event)) {
-                            return;
-                          }
-                          event.preventDefault();
-                          handleRenameCommit(preset);
-                        }
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="btn btn-small"
-                      onClick={() => handleRenameCommit(preset)}
-                    >
-                      決定
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-small"
-                      onClick={() => {
-                        setRenamePresetId(null);
-                        setRenameDraft('');
-                        setError(null);
-                      }}
-                    >
-                      取消
-                    </button>
-                  </div>
+                  <PresetControlRenameRow
+                    key={preset.id}
+                    presetName={preset.name}
+                    renameDraft={renameDraft}
+                    onRenameDraftChange={(value) => {
+                      setRenameDraft(value);
+                      setError(null);
+                    }}
+                    onCommit={() => handleRenameCommit(preset)}
+                    onCancel={() => {
+                      setRenamePresetId(null);
+                      setRenameDraft('');
+                      setError(null);
+                    }}
+                  />
                 );
               }
 
               return (
-                <div key={preset.id} className="preset-control-item">
-                  <div className="preset-control-row">
-                    <button
-                      type="button"
-                      className={`preset-control-apply${isActive ? ' preset-control-apply-active' : ''}`}
-                      aria-pressed={isActive}
-                      onClick={() => handleApply(preset)}
-                    >
-                      <span className="preset-control-check" aria-hidden="true">
-                        {isActive ? '✓' : ''}
-                      </span>
-                      <span className="preset-control-name">{preset.name}</span>
-                      {preset.isDefault === true && (
-                        <span className="preset-control-badge preset-control-badge-default">
-                          既定
-                        </span>
-                      )}
-                      {isActive && dirty && (
-                        <span className="preset-control-badge preset-control-badge-dirty">
-                          変更あり
-                        </span>
-                      )}
-                    </button>
-
-                    <button
-                      type="button"
-                      className="preset-control-row-menu-button"
-                      aria-haspopup="menu"
-                      aria-expanded={menuPresetId === preset.id}
-                      aria-label={`「${preset.name}」の操作`}
-                      onClick={() =>
-                        setMenuPresetId(menuPresetId === preset.id ? null : preset.id)
-                      }
-                    >
-                      ⋯
-                    </button>
-                  </div>
-
-                  {menuPresetId === preset.id && (
-                    <div className="preset-control-row-menu" role="menu">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="preset-control-row-menu-item"
-                        onClick={() => {
-                          setRenamePresetId(preset.id);
-                          setRenameDraft(preset.name);
-                          setMenuPresetId(null);
-                          setError(null);
-                        }}
-                      >
-                        名前を変更
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="preset-control-row-menu-item"
-                        onClick={() => handleDuplicate(preset)}
-                      >
-                        複製
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="preset-control-row-menu-item"
-                        onClick={() => handleToggleDefault(preset)}
-                      >
-                        {preset.isDefault === true ? '既定を解除' : '既定にする'}
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="preset-control-row-menu-item preset-control-row-menu-danger"
-                        onClick={() => handleDelete(preset)}
-                      >
-                        削除
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <PresetControlItemRow
+                  key={preset.id}
+                  preset={preset}
+                  isActive={isActive}
+                  dirty={dirty}
+                  isMenuOpen={menuPresetId === preset.id}
+                  onApply={() => handleApply(preset)}
+                  onToggleMenu={() =>
+                    setMenuPresetId(menuPresetId === preset.id ? null : preset.id)
+                  }
+                  onStartRename={() => {
+                    setRenamePresetId(preset.id);
+                    setRenameDraft(preset.name);
+                    setMenuPresetId(null);
+                    setError(null);
+                  }}
+                  onDuplicate={() => handleDuplicate(preset)}
+                  onToggleDefault={() => handleToggleDefault(preset)}
+                  onDelete={() => handleDelete(preset)}
+                />
               );
             })}
           </div>
 
-          <div className="popover-foot preset-control-foot">
-            <p className="preset-control-target">
-              いまの絞り込み: {describeBoardFilterPresetState(currentState)}
-            </p>
-
-            {newSaveOpen ? (
-              <div className="preset-control-save-row">
-                <input
-                  type="text"
-                  className="preset-control-name-input"
-                  aria-label="新しいプリセットの名前"
-                  placeholder="例: P1バグだけ"
-                  value={draftName}
-                  maxLength={BOARD_FILTER_PRESET_NAME_MAX_LENGTH}
-                  autoFocus
-                  onChange={(event) => {
-                    setDraftName(event.target.value);
-                    setError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      if (isImeComposingKeyEvent(event)) {
-                        return;
-                      }
-                      event.preventDefault();
-                      handleNewSave();
-                    }
-                  }}
-                />
-                <button type="button" className="btn btn-small" onClick={handleNewSave}>
-                  保存
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  onClick={() => {
-                    setNewSaveOpen(false);
-                    setDraftName('');
-                    setError(null);
-                  }}
-                >
-                  取消
-                </button>
-              </div>
-            ) : (
-              <div className="preset-control-save-actions">
-                {activePreset !== null && (
-                  <button
-                    type="button"
-                    className="btn btn-small"
-                    disabled={!dirty}
-                    onClick={handleOverwrite}
-                  >
-                    「{activePreset.name}」を上書き
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-small"
-                  onClick={() => {
-                    setNewSaveOpen(true);
-                    setError(null);
-                  }}
-                >
-                  新規保存…
-                </button>
-              </div>
-            )}
-
-            {error !== null && <p className="preset-control-error">{error}</p>}
-          </div>
+          <PresetControlSaveFoot
+            currentStateDescription={describeBoardFilterPresetState(currentState)}
+            activePresetName={activePreset?.name ?? null}
+            dirty={dirty}
+            newSaveOpen={newSaveOpen}
+            draftName={draftName}
+            onDraftNameChange={(value) => {
+              setDraftName(value);
+              setError(null);
+            }}
+            onSave={handleNewSave}
+            onCancelSave={() => {
+              setNewSaveOpen(false);
+              setDraftName('');
+              setError(null);
+            }}
+            onStartSave={() => {
+              setNewSaveOpen(true);
+              setError(null);
+            }}
+            onOverwrite={handleOverwrite}
+            error={error}
+          />
         </div>
       )}
     </div>
