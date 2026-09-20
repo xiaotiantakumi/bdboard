@@ -1397,13 +1397,22 @@ describe('resolveKindAndBlockingGates', () => {
 // bdboard-giyt: gate 側 respond() が使う「この gate がブロックしている work ticket」の
 // 抽出ロジックを、resolveKindAndBlockingGates と同じ粒度で直接押さえる。
 describe('parseShowWithDependentsStdout', () => {
-  it('extracts open, blocks-typed, non-gate dependents', () => {
+  it('extracts non-closed, blocks-typed, non-gate dependents', () => {
     const stdout = JSON.stringify([
       {
         id: 'bdboard-gate',
         issue_type: 'gate',
         dependents: [
           { id: 'bdboard-open-task', issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+          // bdboard-giyt レビュー指摘: 'open' 以外の未終了ステータス(claim 済みの
+          // in_progress 等)も、'closed' でない限りは対象に含める。vy0h 側の
+          // filterBlockingHumanGateIds がチケットの状態を問わずラベルを外すのと対称。
+          {
+            id: 'bdboard-in-progress-task',
+            issue_type: 'task',
+            status: 'in_progress',
+            dependency_type: 'blocks',
+          },
           {
             id: 'bdboard-closed-task',
             issue_type: 'task',
@@ -1426,7 +1435,10 @@ describe('parseShowWithDependentsStdout', () => {
       },
     ]);
 
-    expect(parseShowWithDependentsStdout(stdout)).toEqual(['bdboard-open-task']);
+    expect(parseShowWithDependentsStdout(stdout)).toEqual([
+      'bdboard-open-task',
+      'bdboard-in-progress-task',
+    ]);
   });
 
   it.each([

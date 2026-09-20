@@ -101,17 +101,6 @@ function filterBlockingHumanGateIds(dependencies: unknown): readonly string[] {
   return ids;
 }
 
-// bd show <gate-id> --json --include-dependents の dependents[] 各要素。この gate が
-// dependency_type='blocks' でブロックしている work ticket を見つけるために使う
-// (bdboard-giyt)。gate 同士が blocks で繋がる例は無い想定だが、念のため
-// issue_type==='gate' の dependent は候補から除外する。
-const bdShowDependentSchema = z.object({
-  id: z.string(),
-  issue_type: z.string().optional(),
-  status: z.string().optional(),
-  dependency_type: z.string().optional(),
-});
-
 // bd show <gate-id> --json --include-dependents の item 全体。dependents 以外の
 // フィールドはここでは不要なので z.unknown() のまま受け取る(bdShowItemSchema と
 // 同じ「壊れた形が kind 判定に波及しない」方針)。
@@ -120,9 +109,14 @@ const bdShowWithDependentsItemSchema = z.object({
 });
 
 // gate の dependents[] のうち、respond() がラベルを外してよい対象だけを絞り込む。
-// 要素ごとに safeParse し、1件でも形が崩れていれば「その要素だけ」スキップする。
+// dependents[] の各要素は bdShowDependencySchema と同じ形(id/issue_type/await_type/
+// status/dependency_type)で返る(await_type はここでは使わないが、専用スキーマを
+// 別に持つと2つのほぼ同じ形を維持する重複になるだけなので再利用する)。要素ごとに
+// safeParse し、1件でも形が崩れていれば「その要素だけ」スキップする。
 // - dependency_type === 'blocks': この gate がブロックしている依存だけ
-// - status === 'open': 既に閉じているチケットは対象外(触る意味が無い)
+// - status !== 'closed': 既に閉じているチケットは対象外(触る意味が無い)。status が
+//   無い/未知の値でも「閉じている」と確証が持てない限りは対象に含める(vy0h 側の
+//   filterBlockingHumanGateIds がチケットの状態を問わずラベルを外すのと対称)。
 // - issue_type !== 'gate': gate 同士の blocks は対象外(human ラベルは work ticket 側の運用)
 function filterBlockedTicketIds(dependents: unknown): readonly string[] {
   if (!Array.isArray(dependents)) {
@@ -131,14 +125,14 @@ function filterBlockedTicketIds(dependents: unknown): readonly string[] {
 
   const ids: string[] = [];
   for (const rawDependent of dependents) {
-    const result = bdShowDependentSchema.safeParse(rawDependent);
+    const result = bdShowDependencySchema.safeParse(rawDependent);
     if (!result.success) {
       continue;
     }
     const dependent = result.data;
     if (
       dependent.dependency_type === 'blocks' &&
-      dependent.status === 'open' &&
+      dependent.status !== 'closed' &&
       dependent.issue_type !== 'gate'
     ) {
       ids.push(dependent.id);
