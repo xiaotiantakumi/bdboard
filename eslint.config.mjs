@@ -36,7 +36,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/SessionListPanel.tsx': 430, // 現在 427
   'scripts/check-drift.mjs': 410, // 現在 409
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
-  'src/application/runner/run-store.ts': 390, // 現在 381
   'scripts/check-commit-parse.mjs': 380, // 現在 380
   'web/src/components/nextUpRunLoop.ts': 380, // 現在 371
   'src/domain/board.ts': 370, // 現在 368
