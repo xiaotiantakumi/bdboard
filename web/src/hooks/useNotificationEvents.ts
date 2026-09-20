@@ -1,20 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { TicketDetailDto } from '../api';
 import { acquireSharedEventSource } from '../lib/sseConnection';
 import { writeNotificationLastEventId } from '../lib/notificationLastEventId';
-import { buildTicketWatchSnapshot, diffTicketWatchSnapshots, type TicketWatchSnapshot } from '../ticketWatch';
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { usePersistedState } from './usePersistedState';
 import { NOTIFICATION_BATCH_THRESHOLD, NOTIFICATION_BATCH_WINDOW_MS } from './notification-events/constants';
 import { mergeUniqueNotificationEvents } from './notification-events/eventMerging';
-import {
-  buildNotificationEventItem,
-  buildWatchedNotificationEventItem,
-} from './notification-events/eventBuilders';
+import { buildNotificationEventItem } from './notification-events/eventBuilders';
 import { isNotificationPayload, validateLastReadAt, validateNotificationEvents } from './notification-events/payloadValidation';
 import { notificationCopy, buildSummaryNotification } from './notification-events/notificationCopy';
 import { passesBrowserNotificationGate } from './notification-events/browserNotificationGate';
 import { useNotificationPermission } from './notification-events/useNotificationPermission';
+import { useWatchedTicketNotifications } from './notification-events/useWatchedTicketNotifications';
 import type {
   NotificationEventItem,
   UseNotificationEventsOptions,
@@ -55,11 +51,6 @@ export function useNotificationEvents(
 
   const batchBufferRef = useRef<NotificationEventItem[]>([]);
   const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const watchedSnapshotsRef = useRef<Map<string, TicketWatchSnapshot>>(new Map());
-
-  const watchedTicketIds = options?.watchedTicketIds;
-  const boardCardsById = options?.boardCardsById;
-  const watchedTicketDetails = options?.watchedTicketDetails;
 
   const deliverBrowserNotification = useCallback((title: string, body: string, tag: string) => {
     try {
@@ -145,47 +136,7 @@ export function useNotificationEvents(
     [setEvents, enqueueBrowserNotification],
   );
 
-  useEffect(() => {
-    if (
-      watchedTicketIds === undefined ||
-      watchedTicketIds.size === 0 ||
-      boardCardsById === undefined
-    ) {
-      watchedSnapshotsRef.current = new Map();
-      return;
-    }
-
-    const details = watchedTicketDetails ?? new Map<string, TicketDetailDto>();
-    const occurredAt = new Date().toISOString();
-    const newItems: NotificationEventItem[] = [];
-    const nextSnapshots = new Map<string, TicketWatchSnapshot>();
-
-    for (const ticketId of watchedTicketIds) {
-      const current = buildTicketWatchSnapshot(ticketId, boardCardsById, details);
-      if (current === null) {
-        const previous = watchedSnapshotsRef.current.get(ticketId);
-        if (previous !== undefined) {
-          nextSnapshots.set(ticketId, previous);
-        }
-        continue;
-      }
-
-      const previous = watchedSnapshotsRef.current.get(ticketId);
-      if (previous === undefined) {
-        nextSnapshots.set(ticketId, current);
-        continue;
-      }
-
-      const transitions = diffTicketWatchSnapshots(previous, current);
-      for (const transition of transitions) {
-        newItems.push(buildWatchedNotificationEventItem(transition, current, occurredAt));
-      }
-      nextSnapshots.set(ticketId, current);
-    }
-
-    watchedSnapshotsRef.current = nextSnapshots;
-    appendNotificationItems(newItems);
-  }, [watchedTicketIds, boardCardsById, watchedTicketDetails, appendNotificationItems]);
+  useWatchedTicketNotifications(options, appendNotificationItems);
 
   useEffect(() => {
     const conn = acquireSharedEventSource();
