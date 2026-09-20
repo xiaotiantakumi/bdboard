@@ -46,19 +46,21 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 詳細: `worktree-pr-flow.md` / `lease-params.md`
 
-## 規律3: 確認待ち — 質問はチケットに載せ、回答を待たずに次へ進む
+## 規律3: 確認待ち — 質問は gate 本体に書き、回答を待たずに次へ進む
 
-なぜ: 質問をチャットで投げて待つと、回答が来るまでセッション全体が止まる（実際に起きた
-事故）。台帳に載せればユーザーは自分のペースで回答でき、他のチケットを進められる。
+なぜ: 質問して待つとセッションが止まる。`--title`/`--reason` を省くと全ゲートが同じ見た目
+になり中身が読めない（bdboard-p5l.26）。
 
 手順:
 
-1. `bd comment <id> "<質問>"` — 選択肢と帰結・推奨・回答後の再開手順まで書く。
-2. `bd label add <id> human` で確認待ちレーンへ（`bd update --label` は存在しない）。
-3. `bd gate create --type=human --blocks <id>` で `bd ready` から外す（**`bd dep add` で代用しない**）。
-4. **回答を待たず次のチケットへ。** worktree は残し、heartbeat の対象に含め続ける。
-5. 回答が来たら `bd label remove <id> human` して再開（作業チケットは close しない）。
-6. **例外**: 破壊的・不可逆・外向きの操作はその場で確認する。
+1. `bd gate create --type=human --blocks <id> --title "Gate: <一行>"` で作成、id を控える。
+2. `bd update <gate-id> --description "<選択肢・帰結・推奨・再開手順>"`。
+3. `bd comment <id> "質問は gate <gate-id> 参照"` + `bd label add <id> human`（1行のみ・
+   `bd update --label` は無い）。
+4. **回答を待たず次へ。** worktree は残し heartbeat の対象に含め続ける。
+5. 変わったら手順2を再実行し全文書き換え（訂正コメントを積まない）。
+6. 回答が来たら `bd label remove <id> human` して再開（close しない）。
+7. **例外**: 破壊的・不可逆・外向きの操作はその場で確認する。
 
 詳細: `question-template.md`
 
