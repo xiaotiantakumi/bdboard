@@ -21,7 +21,8 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/TicketDetailPanel.tsx': 2180, // 現在 2177
   'web/src/components/SettingsPanel.tsx': 480, // 現在 463 (bdboard-sso1.10 PR-E: useHygieneThresholdsForm)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
-  'web/src/components/HygienePanel.tsx': 500, // 現在 493 (bdboard-sso1.11 PR-B で hygiene/ の kind 別コンポーネントへ移動)
+  'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
+  'web/src/components/hygiene/useHygieneRepairActions.ts': 315, // 現在 307 (bdboard-sso1.11 PR-C: repair/mutation ハンドラをカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'src/infrastructure/chat/bd-tool-catalog.ts': 840, // 現在 834
   'src/domain/hygiene.ts': 780, // 現在 780
