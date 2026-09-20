@@ -8,6 +8,7 @@ AGENTS.md「Build & Test」から分離した詳細。**`npm run verify` を回�
 - ローカルの起動 (`npm run start` / `dev` / `dev:web`) の違いを確認したい
 - e2e を足した・変えた / verify が通ったのに e2e がどうなったか分からない（下の「e2e は verify に含まれない」）
 - ローカルの `npm run check:commits` が exit 1 なのに CI の commit-parse は緑（下の「ローカルが exit 1 なのに…」）
+- `npm run check:file-size` が落ちた・巨大ファイルを足した/育てた（下の「ファイルサイズガード」）
 
 AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文書が詳細の正**。ただし slot の実装挙動は
 `scripts/verify.mjs` / `scripts/verify-slot.mjs` が正で、この文書はその要約。
@@ -17,7 +18,7 @@ AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文�
 コミット前 (server / web どちらの変更でも) に、フル検証チェーンをクリーンに通すこと:
 
 ```bash
-npm run verify   # build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
 Node が `package.json` の `engines.node` を満たさないと、verify は子プロセス (tsc / vite / vitest) を
@@ -66,12 +67,66 @@ by import is not enough, and neither is sitting next to files that are checked.
 サブセットだけ回したいとき:
 
 ```bash
+npm run check:file-size  # git ls-files 対象のファイル行数ガード (baseline との突き合わせ)
 npm run build            # tsc --noEmit x3 (src/, vitest.config.ts, test/e2e/)
 npm run build:web        # web tsc --noEmit x2 + vite build
 npm run test:server      # vitest run (src/)
 npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
 ```
+
+## ファイルサイズガード (`npm run check:file-size`)
+
+**趣旨: 行数そのものが目的ではない。** 1ファイルの行数が既定の目安を超えているのは、
+「そのファイルが複数の無関係な変更理由を同居させている」ことの代理指標として扱う。放置すると
+巨大ファイルが並行 PR の衝突点になり続ける (この節を追加した bdboard-jygp の調査時点で、直近
+120 コミットの変更回数上位はそのまま行数上位と一致していた)。超えたときにやることは2つに1つ:
+**ファイルを分割する**か、**理由を書いて baseline に登録する**。理由を書かずに黙って通す抜け道
+は用意していない (`--update-baseline` のような自動書き換えフラグは無い)。
+
+対象は `git ls-files --cached --others --exclude-standard`（ファイルシステム走査ではない。
+`node_modules` / `web/dist` 等は `.gitignore` 経由で自然に除外され、`git add` 前の新規ファイルも
+拾う）で `src/` `web/src/` `scripts/` `harness/` `test/` 配下の `.ts` `.tsx` `.mjs` `.js` `.css`
+`.sh` を集める。`fixtures/` 配下と生成物は対象外。
+
+既定上限・baseline (登録済みファイルの個別上限と理由) は両方とも
+[`scripts/file-size-baseline.json`](../scripts/file-size-baseline.json) に置き、スクリプト本体
+(`scripts/check-file-size.mjs`) には数値を埋め込まない。並行 PR がファイルを少し育てても、
+baseline の limit は現行行数を 100 行単位で切り上げた値にしてあるので、通常の小修正では
+baseline を触らずに通る。
+
+判定は4種類:
+
+| 記号 | 条件 | 結果 |
+|---|---|---|
+| (a) | baseline に無いファイルが既定上限 (非テスト 500 行 / テスト `*.test.*`・`*.spec.*` 1500 行) 超 | fail — 分割するか、理由を添えて baseline に登録する |
+| (b) | baseline にあるファイルが自分の `limit` 超 | fail — 分割するか、`limit` と `reason` を書き換える |
+| (c) | baseline にあるのに既定上限以下まで縮んだ、または対象ファイルが見つからない (削除・リネーム・対象ディレクトリ外への移動) | fail — baseline の `entries` から外す |
+| (d) | baseline の `limit` が現行行数より `ratchetWarningThreshold` (既定 200) 行以上大きい | warn のみ (exit には影響しない) — ラチェットを締める余地がある通知 |
+
+**baseline エントリの書き方**: `reason` は1ファイルずつ中身を見て書く。「ChatPanel コンポーネント
+1関数で約3665行 (449〜4114行目)。分割判断チケット bdboard-78ve は見送りで close 済み」のように、
+何が同居しているか・分割の検討状況を書く。同文のコピペは意図的に赤面するような値ではないが、
+レビューで指摘対象になる (機械的なテンプレ流用は「実態を見ていない」のと同義)。パスは常に
+POSIX 区切り (`/`) で書く — Windows でも git は `/` 区切りでファイルを返すので、baseline 側で
+バックスラッシュを使うと `check-file-size.mjs` が形式エラーとして拒否する (`verify-windows`
+対策)。行数のカウントは CRLF でも LF でも同じ値になるように正規化してある。
+
+**リネームは自動で引き継がれない。** 旧パスは baseline に残ったまま「見つからないファイル」
+(c) として fail し、新パスは baseline 未登録のまま既定上限を超えていれば (a) として fail する
+— 両方が赤くなるので、コミット時に確実に baseline を書き直す必要がある。「リネームで大きい
+ファイルの行数チェックだけ逃げる」という抜け道は無い。逆に「対象ディレクトリ外 (`src/` 等の
+配下から外れる場所) や `fixtures/` 配下へ動かすと対象外になる」のは、このガードのスコープ設計
+上の既知の限界であり検知できない — 対象ディレクトリ・拡張子の一覧そのものを変える場合は
+`scripts/check-file-size.mjs` の `TARGET_DIRS` / `TARGET_EXTENSIONS` を見直すこと。
+
+**並行 PR との衝突**: 複数の PR が同時に同じ大きいファイルを少しずつ育てていると、先にマージ
+された側の baseline 更新が後発 PR の rebase 後に (b) を再発させることがある。マージ直前の
+rebase 後には必ず `npm run check:file-size` を単体で再実行し、他 PR のマージで limit を超えて
+いたら baseline をその時点の実態に合わせ直す。
+
+一覧が欲しいだけなら `npm run check:file-size -- --report` で、baseline の有無を添えた全対象
+ファイルを行数降順で表示できる (これは診断用で、pass/fail の判定自体は変えない)。
 
 ## e2e は verify に含まれない (`npm run test:e2e`)
 

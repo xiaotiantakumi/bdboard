@@ -105,7 +105,7 @@ bd prime                # Refresh Beads context
 Before committing any change (server or web), run the full verification chain — it must be clean:
 
 ```bash
-npm run verify   # build + build:web + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + build + build:web + test:server + test:web + check:boundaries
 ```
 
 - **フルチェーンは必ず `npm run verify` で回す。`npm run verify:steps` の直叩きは禁止** —
@@ -116,8 +116,8 @@ npm run verify   # build + build:web + test:server + test:web + check:boundaries
   再実行すると列の最後尾に戻るだけなので、長めのタイムアウトで待つ。
 - ポートは `BDBOARD_PORT` (既定 8787)。**worktree で `npm run dev` を回さない** (メインチェック
   アウトのポートと衝突)。`vitest` / `tsc` / `depcruise` は並列 worktree で問題ない。
-- tsc 3 プロジェクトの表、slot の stale 処理と env ノブ、`npm run check:commits` と
-  コミットメッセージの括弧ガード: [docs/VERIFY.md](docs/VERIFY.md)。
+- tsc 3 プロジェクトの表、slot の stale 処理と env ノブ、`npm run check:file-size` の baseline
+  運用、`npm run check:commits` とコミットメッセージの括弧ガード: [docs/VERIFY.md](docs/VERIFY.md)。
 
 ## Always-On Local Hosting (main checkout)
 
