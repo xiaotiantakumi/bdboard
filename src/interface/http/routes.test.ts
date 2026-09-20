@@ -3289,6 +3289,48 @@ describe('createApiRoutes', () => {
     expect(respond).toHaveBeenCalledWith('/projects/a', 'bdboard-a', 'yes');
   });
 
+  // bdboard-v78e レビュー指摘#3: respond() が返す ambiguousGateIds (bdboard-q1k9) が
+  // HTTP レスポンスまで確実に転送されることを固定する配線テスト。web/src/api.ts 側の
+  // 単体テストは fetch のレスポンス JSON を直接モックしているため、ルートハンドラが
+  // 実際に outcome.ambiguousGateIds を転送している保証にはならない。
+  it('forwards ambiguousGateIds from the respond outcome to the decision response', async () => {
+    const cache = createFakeBoardCache();
+    const projectA = project('proj-a', '/projects/a');
+    seedCache(cache, [{ project: projectA, ticketId: 'bdboard-a' }]);
+
+    const respond = vi.fn<HumanDecisionsPort['respond']>(async () => ({
+      kind: 'ticket',
+      closed: false,
+      ambiguousGateIds: ['bdboard-gate-1', 'bdboard-gate-2'],
+    }));
+    const humanDecisions: HumanDecisionsPort = {
+      listPendingDecisions: vi.fn(async () => []),
+      respond,
+    };
+
+    const app = createApiRoutes(createDeps({ cache, humanDecisions }));
+    const response = await app.request(
+      '/api/tickets/bdboard-a/decision',
+      withLocalHost({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ choice: 'yes' }),
+      }),
+      LOCAL_ENV,
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      ok: true,
+      outcome: {
+        kind: 'ticket',
+        closed: false,
+        ambiguousGateIds: ['bdboard-gate-1', 'bdboard-gate-2'],
+      },
+    });
+  });
+
   it('returns 400 when decision body has neither choice nor freeform', async () => {
     const humanDecisions: HumanDecisionsPort = {
       listPendingDecisions: vi.fn(async () => []),
