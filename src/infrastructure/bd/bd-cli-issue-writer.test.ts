@@ -527,6 +527,28 @@ describe('createBdCliIssueWriter', () => {
     });
   });
 
+  // bdboard-miqg: claim は同一アクターの再実行が真の no-op (bdboard-pkr6.26 実測、
+  // 上の「別アクター保持中」テストの直前のコメント参照) であることが分かっている
+  // ため、一時的な .beads lock-contention に限り自動リトライする
+  // (bd-cli-session-link-writer.test.ts の同名テストと同じ形)。
+  it('retries claim once on lock-contention and succeeds on the second attempt (bdboard-miqg)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'error: database is locked', exitCode: 1 };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliIssueWriter(runner);
+
+    await port.claim(ROOT, TICKET_ID);
+
+    expect(calls).toHaveLength(2);
+  });
+
   // bdboard-pkr6.26 実測 (bd 1.x, 2026-09-19): 使い捨てチケットで
   // 1) 同一アクターの再 claim -> exit 0, revision すら変わらない真の no-op
   //    (reopen/undefer (bdboard-3tw.93) の「前提を満たさなくても no-op」パターンとは
