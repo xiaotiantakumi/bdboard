@@ -29,8 +29,9 @@ import { describe, expect, it } from 'vitest';
  * 1 件として数えていた箇所で、実際には `clamp()` を直接 `max-height` (型付き
  * プロパティ) に書いているだけで custom property は介さない。`clamp()`/`min()` は
  * 引数に dvh があれば宣言全体がトップレベルの dvh 宣言と同じ規則で無効化される
- * (bdboard-68ub のレビューで実測確認済み — index.css:3840 等の既存 `min()` 併記と
- * 同型) ので、単純な 2 行併記がそのまま効く。custom property 経由で本当に単純併記が
+ * (bdboard-68ub のレビューで実測確認済み — `.error-boundary-overlay .error-boundary` の
+ * `max-height: min(85vh, 720px)` / `max-height: min(85dvh, 720px)` 併記等、既存の
+ * `min()` と同型) ので、単純な 2 行併記がそのまま効く。custom property 経由で本当に単純併記が
  * 効かないのは `--chat-attachment-preview-size` (index.css の定義箇所コメント参照)
  * の 1 件だけだった。
  *
@@ -113,8 +114,9 @@ function findNakedDvhDeclarations(css: string): NakedDvhFinding[] {
 
     // 同じ規則内 (ブロック境界 { / } を跨がない) を上へ遡り、**同じプロパティの
     // 直近の宣言**を探す。CSS のカスケードは「同じプロパティなら後勝ち」なので、
-    // 間に別プロパティの行が挟まっていても構わない (例: height/max-height を
-    // vh 版 2 行→dvh 版 2 行の順に並べる書き方 — index.css:6808-6811)。直近の
+    // 間に別プロパティの行が挟まっていても構わない (例: `@media (max-width: 480px),
+    // (max-height: 500px) and (orientation: landscape)` 内の `.search-palette` が
+    // height/max-height を vh 版 2 行→dvh 版 2 行の順に並べる書き方)。直近の
     // 同名プロパティが vh のみ (dvh を含まない) ならフォールバックが効く。直近の
     // 同名プロパティ自体が dvh ならその宣言はさらに前を見ずに「フォールバック無し」
     // 確定 (それより前にあっても、直近の dvh 宣言がカスケードで勝つため無関係)。

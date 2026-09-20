@@ -16,9 +16,9 @@
  *
  * モバイル (`max-width: 700px`) の `web/src/index.css` で効いているのは 2 か所:
  *
- *   `.lane` / `.board-section .lane` (5967-5973)
+ *   `@media (max-width: 700px)` 内の `.lane` / `.board-section .lane`
  *       max-height: calc(100dvh - 260px - var(--bulk-bar-height, 0px))
- *   `.header` (172-174)
+ *   ベースの `.header` ルール
  *       position: sticky
  *
  * `.lane` の **260 は `--header-height` を参照しないリテラル**で、`.header` は sticky =
@@ -97,7 +97,7 @@
  *
  * ## このガードが構造的に見ていないもの
  *
- * `body` / `#root` / `.app` の `min-height: 100vh` (index.css 149 / 162 / 166)。`vh` は
+ * `body` / `#root` / `.app` の `min-height: 100vh` (いずれも `min-height: 100dvh` を併記)。`vh` は
  * large viewport にマップされるので、実機のモバイルブラウザではアドレスバーが出ている間
  * `lvh - dvh` ぶんの残差の床が常に乗る。Playwright の固定 viewport では
  * `lvh === dvh` で常に 0 になるため、この予算には一度も現れない。カード面積ゼロコストで
