@@ -43,7 +43,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/BoardView.tsx': 370, // 現在 365
   'scripts/check-file-size.mjs': 370, // 現在 362
   'web/src/components/NextUpView.tsx': 370, // 現在 362
-  'src/infrastructure/chat/cli-chat-agent.ts': 360, // 現在 351
   'src/infrastructure/chat/specs/claude-spec.ts': 340, // 現在 331
   'src/infrastructure/harness/fs-harness-injector.ts': 320, // 現在 312
   'src/infrastructure/process/cloudflared-tunnel.ts': 320, // 現在 311
