@@ -3,9 +3,10 @@ import { KNOWN_STAGE_ORDER } from '../../domain/ticket-model.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
 import {
-  buildWeekStarts,
-  isInWeek,
-  isInWeekRange,
+  buildWeekBoundaries,
+  isInWeekBounds,
+  isInWeekRangeBounds,
+  type WeekRange,
 } from './week-boundary.js';
 
 export interface WeeklyModelCloseCounts {
@@ -59,7 +60,7 @@ function uniqueModelsFromTicket(ticket: Ticket): readonly string[] {
 function countWeeklyModelCloses(
   tickets: readonly Ticket[],
   weekStarts: readonly Date[],
-  timeZone: string,
+  weekRanges: readonly WeekRange[],
 ): WeeklyModelCloseCounts[] {
   const buckets = createEmptyWeeklyModelCloses(weekStarts);
 
@@ -67,7 +68,7 @@ function countWeeklyModelCloses(
     if (ticket.closedAt === undefined) {
       continue;
     }
-    if (!isInWeekRange(ticket.closedAt, weekStarts, timeZone)) {
+    if (!isInWeekRangeBounds(ticket.closedAt, weekRanges)) {
       continue;
     }
 
@@ -76,16 +77,16 @@ function countWeeklyModelCloses(
       continue;
     }
 
-    for (let index = 0; index < weekStarts.length; index += 1) {
-      const weekStart = weekStarts[index];
-      if (weekStart !== undefined && isInWeek(ticket.closedAt, weekStart, timeZone)) {
+    for (let index = 0; index < weekRanges.length; index += 1) {
+      const range = weekRanges[index];
+      if (range !== undefined && isInWeekBounds(ticket.closedAt, range)) {
         const bucket = buckets[index];
         if (bucket !== undefined) {
           const counts = { ...bucket.counts };
           for (const modelName of modelNames) {
             counts[modelName] = (counts[modelName] ?? 0) + 1;
           }
-          buckets[index] = { weekStart, counts };
+          buckets[index] = { weekStart: bucket.weekStart, counts };
         }
         break;
       }
@@ -162,11 +163,11 @@ export function getModelStats(
 ): ModelStats {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
-  const weekStarts = buildWeekStarts(now, weeks, timeZone);
+  const { weekStarts, weekRanges } = buildWeekBoundaries(now, weeks, timeZone);
   const tickets = collectTickets(cache, options?.projectIds);
 
   return {
-    weeklyCloses: countWeeklyModelCloses(tickets, weekStarts, timeZone),
+    weeklyCloses: countWeeklyModelCloses(tickets, weekStarts, weekRanges),
     stageModelDistribution: countStageModelDistribution(tickets),
   };
 }
