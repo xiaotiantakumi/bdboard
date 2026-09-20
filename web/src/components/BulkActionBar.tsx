@@ -4,8 +4,6 @@ import {
   postTicketAddLabel,
   postTicketQuickAction,
   postTicketQuickActionUndo,
-  type BoardCardDto,
-  type QuickActionRequest,
 } from '../api';
 import {
   computeDeferUntilDate,
@@ -29,153 +27,20 @@ import { useFocusTrap } from '../hooks/useFocusTrap';
 import { describeWriteError } from '../writeAccessMessage';
 import { useBulkSelection } from './BulkSelectionProvider';
 import { useUndoSnackbar } from './UndoSnackbar';
+import {
+  bulkSuccessMessage,
+  formatBulkConfirmDescription,
+  formatBulkConfirmTitle,
+  formatBulkFailure,
+} from './bulk-action/messages';
+import {
+  buildTargetsForAction,
+  countEligibleForAction,
+  filterIdsPresentOnBoard,
+} from './bulk-action/targets';
+import type { BulkActionBarProps, BulkConfirmingAction } from './bulk-action/types';
 
-type BulkConfirmingAction =
-  | { kind: 'close' }
-  | { kind: 'defer'; untilDate: string }
-  | { kind: 'priority-up' }
-  | { kind: 'priority-down' }
-  | { kind: 'add-label'; label: string };
-
-function formatBulkConfirmTitle(action: BulkConfirmingAction): string {
-  switch (action.kind) {
-    case 'close':
-      return '一括完了の確認';
-    case 'defer':
-      return '一括延期の確認';
-    case 'priority-up':
-      return '一括で優先度を上げる確認';
-    case 'priority-down':
-      return '一括で優先度を下げる確認';
-    case 'add-label':
-      return '一括ラベル付与の確認';
-  }
-}
-
-function formatBulkConfirmDescription(
-  action: BulkConfirmingAction,
-  targetCount: number,
-): string {
-  switch (action.kind) {
-    case 'close':
-      return `選択中の ${targetCount} 件を完了にします。よろしいですか?`;
-    case 'defer':
-      return `選択中の ${targetCount} 件を ${action.untilDate} まで延期します。よろしいですか?`;
-    case 'priority-up':
-      return `選択中のうち優先度を上げられる ${targetCount} 件の優先度を上げます。よろしいですか?`;
-    case 'priority-down':
-      return `選択中のうち優先度を下げられる ${targetCount} 件の優先度を下げます。よろしいですか?`;
-    case 'add-label':
-      return `選択中の ${targetCount} 件にラベル「${action.label}」を付与します。よろしいですか?`;
-  }
-}
-
-function bulkSuccessMessage(action: BulkConfirmingAction, count: number): string {
-  switch (action.kind) {
-    case 'close':
-      return `${count}件を完了にしました`;
-    case 'defer':
-      return `${count}件を延期しました`;
-    case 'priority-up':
-      return `${count}件の優先度を上げました`;
-    case 'priority-down':
-      return `${count}件の優先度を下げました`;
-    case 'add-label':
-      return `${count}件にラベルを付与しました`;
-  }
-}
-
-function filterIdsPresentOnBoard(
-  selectedIds: ReadonlySet<string>,
-  cardsById: ReadonlyMap<string, BoardCardDto>,
-): string[] {
-  const ids: string[] = [];
-  for (const id of selectedIds) {
-    if (cardsById.has(id)) {
-      ids.push(id);
-    }
-  }
-  return ids;
-}
-
-function buildTargetsForAction(
-  action: BulkConfirmingAction,
-  selectedIds: ReadonlySet<string>,
-  cardsById: ReadonlyMap<string, BoardCardDto>,
-  closeReason: string,
-): BulkQuickActionTarget[] {
-  const targets: BulkQuickActionTarget[] = [];
-  for (const id of selectedIds) {
-    const card = cardsById.get(id);
-    if (card === undefined) {
-      continue;
-    }
-    const priority = card.ticket.priority;
-    switch (action.kind) {
-      case 'close': {
-        const trimmedReason = closeReason.trim();
-        const request: QuickActionRequest = {
-          action: 'close',
-          ...(trimmedReason.length > 0 ? { reason: trimmedReason } : {}),
-        };
-        targets.push({ id, request });
-        break;
-      }
-      case 'defer':
-        targets.push({
-          id,
-          request: { action: 'defer', untilDate: action.untilDate },
-        });
-        break;
-      case 'priority-up':
-        if (priority <= 0) {
-          continue;
-        }
-        targets.push({
-          id,
-          request: { action: 'priority', priority: priority - 1 },
-          previousPriority: priority,
-        });
-        break;
-      case 'priority-down':
-        if (priority >= 4) {
-          continue;
-        }
-        targets.push({
-          id,
-          request: { action: 'priority', priority: priority + 1 },
-          previousPriority: priority,
-        });
-        break;
-      case 'add-label':
-        break;
-    }
-  }
-  return targets;
-}
-
-function countEligibleForAction(
-  action: BulkConfirmingAction,
-  selectedIds: ReadonlySet<string>,
-  cardsById: ReadonlyMap<string, BoardCardDto>,
-): number {
-  if (action.kind === 'add-label') {
-    return filterIdsPresentOnBoard(selectedIds, cardsById).length;
-  }
-  return buildTargetsForAction(action, selectedIds, cardsById, '').length;
-}
-
-function formatBulkFailure(
-  outcome: BulkQuickActionOutcome | BulkIdOutcome,
-): string {
-  const ids = outcome.failed.map((entry) => entry.id).join(', ');
-  return `${outcome.failed.length}件失敗: ${ids}`;
-}
-
-export interface BulkActionBarProps {
-  cardsById: ReadonlyMap<string, BoardCardDto>;
-  availableLabels?: readonly string[];
-}
+export type { BulkActionBarProps } from './bulk-action/types';
 
 export function BulkActionBar({
   cardsById,
