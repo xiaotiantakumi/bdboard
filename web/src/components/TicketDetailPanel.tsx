@@ -302,13 +302,14 @@ export function TicketDetailPanel({
     setFreeformText('');
   }, []);
 
+  const resetQuickActions = quickActions.reset;
   const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
     clearCopyDisplay();
     resetDecisionAnswer();
     if (options?.clearSubmittedDecision === true) {
       setSubmittedDecision(null);
     }
-    quickActions.reset();
+    resetQuickActions();
     resetComment();
     resetDependencies();
     resetLabelInput();
@@ -322,7 +323,7 @@ export function TicketDetailPanel({
     setSelectedHistoryRunId(null);
   }, [
     clearCopyDisplay,
-    quickActions.reset,
+    resetQuickActions,
     resetComment,
     resetDecisionAnswer,
     resetDependencies,
