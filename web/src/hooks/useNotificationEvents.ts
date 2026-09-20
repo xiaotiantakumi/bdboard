@@ -3,7 +3,7 @@ import type { TicketDetailDto } from '../api';
 import { acquireSharedEventSource } from '../lib/sseConnection';
 import { writeNotificationLastEventId } from '../lib/notificationLastEventId';
 import { buildTicketWatchSnapshot, diffTicketWatchSnapshots, type TicketWatchSnapshot } from '../ticketWatch';
-import { UI_STORAGE_KEYS, validateBoolean } from '../uiPersistedState';
+import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { usePersistedState } from './usePersistedState';
 import { NOTIFICATION_BATCH_THRESHOLD, NOTIFICATION_BATCH_WINDOW_MS } from './notification-events/constants';
 import { mergeUniqueNotificationEvents } from './notification-events/eventMerging';
@@ -14,6 +14,7 @@ import {
 import { isNotificationPayload, validateLastReadAt, validateNotificationEvents } from './notification-events/payloadValidation';
 import { notificationCopy, buildSummaryNotification } from './notification-events/notificationCopy';
 import { passesBrowserNotificationGate } from './notification-events/browserNotificationGate';
+import { useNotificationPermission } from './notification-events/useNotificationPermission';
 import type {
   NotificationEventItem,
   UseNotificationEventsOptions,
@@ -42,14 +43,16 @@ export function useNotificationEvents(
     null,
     validateLastReadAt,
   );
-  const [notificationsEnabled, setNotificationsEnabled] = usePersistedState(
-    UI_STORAGE_KEYS.notificationsEnabled,
-    false,
-    validateBoolean,
-  );
+  const {
+    notificationsEnabled,
+    notificationsEnabledRef,
+    notificationsSupported,
+    permission,
+    enableNotifications,
+    disableNotifications,
+  } = useNotificationPermission();
   const [notificationDeliveryError, setNotificationDeliveryError] = useState<string | null>(null);
 
-  const notificationsEnabledRef = useRef(notificationsEnabled);
   const batchBufferRef = useRef<NotificationEventItem[]>([]);
   const batchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchedSnapshotsRef = useRef<Map<string, TicketWatchSnapshot>>(new Map());
@@ -57,10 +60,6 @@ export function useNotificationEvents(
   const watchedTicketIds = options?.watchedTicketIds;
   const boardCardsById = options?.boardCardsById;
   const watchedTicketDetails = options?.watchedTicketDetails;
-
-  useEffect(() => {
-    notificationsEnabledRef.current = notificationsEnabled;
-  }, [notificationsEnabled]);
 
   const deliverBrowserNotification = useCallback((title: string, body: string, tag: string) => {
     try {
@@ -95,6 +94,11 @@ export function useNotificationEvents(
       const { title, body } = notificationCopy(item);
       deliverBrowserNotification(title, body, item.id);
     }
+    // notificationsEnabledRef is the useRef object returned by useNotificationPermission();
+    // its identity is stable for the component's lifetime the same way a locally-declared
+    // useRef would be, so it is intentionally omitted here (deps arrays are kept identical to
+    // the pre-split hook body, per bdboard-sso1.30 PR-B's effect-order-invariance requirement).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deliverBrowserNotification]);
 
   const enqueueBrowserNotification = useCallback(
@@ -136,6 +140,8 @@ export function useNotificationEvents(
         enqueueBrowserNotification(item, notificationsEnabledRef.current);
       }
     },
+    // Same stable-ref rationale as flushNotificationBatch's deps array above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [setEvents, enqueueBrowserNotification],
   );
 
@@ -229,30 +235,6 @@ export function useNotificationEvents(
   const markAllRead = useCallback(() => {
     setLastReadAt(new Date().toISOString());
   }, [setLastReadAt]);
-
-  const enableNotifications = useCallback(async () => {
-    if (typeof Notification === 'undefined') {
-      return;
-    }
-    if (Notification.permission === 'granted') {
-      setNotificationsEnabled(true);
-      return;
-    }
-    if (Notification.permission === 'denied') {
-      return;
-    }
-    const result = await Notification.requestPermission();
-    if (result === 'granted') {
-      setNotificationsEnabled(true);
-    }
-  }, [setNotificationsEnabled]);
-
-  const disableNotifications = useCallback(() => {
-    setNotificationsEnabled(false);
-  }, [setNotificationsEnabled]);
-
-  const notificationsSupported = typeof Notification !== 'undefined';
-  const permission = notificationsSupported ? Notification.permission : 'unsupported';
 
   return {
     events,
