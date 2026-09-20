@@ -18,7 +18,7 @@ AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文�
 コミット前 (server / web どちらの変更でも) に、フル検証チェーンをクリーンに通すこと:
 
 ```bash
-npm run verify   # check:file-size + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + lint + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
 Node が `package.json` の `engines.node` を満たさないと、verify は子プロセス (tsc / vite / vitest) を
@@ -68,6 +68,7 @@ by import is not enough, and neither is sitting next to files that are checked.
 
 ```bash
 npm run check:file-size  # git ls-files 対象のファイル行数ガード (baseline との突き合わせ)
+npm run lint             # ESLint + typescript-eslint (src/ web/src/ scripts/、max-lines はラチェット許可リスト)
 npm run build            # tsc --noEmit x3 (src/, vitest.config.ts, test/e2e/)
 npm run build:web        # web tsc --noEmit x2 + vite build
 npm run test:server      # vitest run (src/)
@@ -88,6 +89,12 @@ npm run check:boundaries # dependency-cruiser (architecture layering)
 `node_modules` / `web/dist` 等は `.gitignore` 経由で自然に除外され、`git add` 前の新規ファイルも
 拾う）で `src/` `web/src/` `scripts/` `harness/` `test/` 配下の `.ts` `.tsx` `.mjs` `.js` `.css`
 `.sh` を集める。`fixtures/` 配下と生成物は対象外。
+
+**ESLint との住み分け (bdboard-sso1.8)**: `src/` `web/src/` `scripts/` 配下の `.ts`/`.tsx`/`.mjs`/`.js`
+の行数上限は `npm run lint` (`eslint.config.mjs` の `max-lines` + `MAX_LINES_ALLOWLIST`) に一本化した
+— この3ディレクトリではそれらの拡張子はこのガードの対象外になる。このガードはそれ以外
+(`web/src/index.css` のような ESLint が見ない拡張子)、および `harness/` (ESLint の `ignores`
+対象) と `test/` (ESLint の lint 対象外) の全拡張子を引き続き見る。
 
 既定上限・baseline (登録済みファイルの個別上限と理由) は両方とも
 [`scripts/file-size-baseline.json`](../scripts/file-size-baseline.json) に置き、スクリプト本体

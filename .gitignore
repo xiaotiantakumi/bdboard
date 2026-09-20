@@ -38,3 +38,5 @@ credentials.json
 
 # bd gate create の副産物 (ランタイムロックファイル)
 .beads.gate.lock
+# ESLint cache (bdboard-sso1.8, --cache)
+.eslintcache
