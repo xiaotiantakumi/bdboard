@@ -1,3 +1,4 @@
+import { getCachedDateTimeFormat } from '../intl-format-cache.js';
 import { isBlockingKind } from '../dependency.js';
 import type { Ticket } from '../ticket.js';
 import type { TicketId } from '../ticket-id.js';
@@ -47,7 +48,7 @@ export function hasBlockingDependencies(ticket: Ticket): boolean {
  */
 export function formatLocalDateKey(date: Date, timeZone?: string): string {
   if (timeZone !== undefined) {
-    return new Intl.DateTimeFormat('en-CA', {
+    return getCachedDateTimeFormat('en-CA', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
