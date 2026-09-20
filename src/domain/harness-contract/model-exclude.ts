@@ -6,7 +6,7 @@ import type { HarnessModelCandidate, HarnessModelExclude, HarnessContractModels 
 /** `models.exclude[].member` の文字集合。候補 (`member:model`) の member 部分と同じ。 */
 const MODEL_EXCLUDE_MEMBER_PATTERN = /^[a-z][a-z0-9-]{0,15}$/;
 const MODEL_EXCLUDE_UNTIL_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-export const MODEL_EXCLUDE_MAX_COUNT = 32;
+const MODEL_EXCLUDE_MAX_COUNT = 32;
 
 /** `YYYY-MM-DD` が実在する暦日かを確かめる (例: 2026-02-30 を弾く)。 */
 function isValidCalendarDate(dateStr: string): boolean {

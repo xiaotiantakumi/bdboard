@@ -1,3 +1,12 @@
+// model-routes.ts (models.routes/parseModels) と parse.ts の両方から使われる、
+// member:model 候補のパース・表示補助。bdboard-sso1.22: harness-contract.ts の
+// モジュール分割で切り出した。
+//
+// MODEL_STAGE_KEY_PATTERN / MODEL_STAGE_MAX_COUNT / describeContractValue /
+// isModelComplexityKey / parseModelCandidates は分割前は同一ファイル内の非公開
+// 定数・関数だったが、model-routes.ts からの cross-module import のため export
+// している — ただし入口 (harness-contract.ts) の公開エクスポート面には含めない
+// (分割前と同じく非公開)。
 import {
   HARNESS_MODEL_WILDCARD,
   HARNESS_MODEL_COMPLEXITIES,
