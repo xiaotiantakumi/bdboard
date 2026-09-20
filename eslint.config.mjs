@@ -30,7 +30,7 @@ const MAX_LINES_ALLOWLIST = {
   'scripts/commit-message-guard.mjs': 670, // 現在 667
   'web/src/components/BulkActionBar.tsx': 570, // 現在 565
   'web/src/components/HelpPanel.tsx': 500, // 現在 496
-  'web/src/components/TunnelControl.tsx': 470, // 現在 468
+  'web/src/components/TunnelControl.tsx': 230, // 現在 224 (bdboard-sso1.35: 純ヘルパー/表示部品/関心別フックを web/src/components/tunnel/ へ移動)
   'web/src/components/BoardKeyboardNavProvider.tsx': 440, // 現在 437
   'web/src/components/SessionListPanel.tsx': 430, // 現在 427
   'scripts/check-drift.mjs': 410, // 現在 409
