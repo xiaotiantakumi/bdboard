@@ -1,19 +1,14 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
 import {
   type BoardDto,
   type PrBadgeDto,
   type ProjectHarnessStatusDto,
-  projectNameFallback,
 } from '../api';
 import { NEXT_UP_LIMITS, type NextUpLimit } from '../uiPersistedState';
-import { describeHarnessRunBlock } from './agentRunShared';
-import { CardItem } from './LaneColumn';
-import {
-  NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES,
-  type NextUpLoopEndReason,
-  type NextUpRunLoopController,
-  type NextUpLoopProgress,
-} from './nextUpRunLoop';
+import { NextUpBatchRunControls } from './next-up/NextUpBatchRunControls';
+import { NextUpCardList } from './next-up/NextUpCardList';
+import { splitReadyCards } from './next-up/nextUpHelpers';
+import { useNextUpBatchRun } from './next-up/useNextUpBatchRun';
+import { type NextUpRunLoopController } from './nextUpRunLoop';
 import { togglePressedProps } from './toggleGroupA11y';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
@@ -37,105 +32,6 @@ export interface NextUpViewProps {
   harnessStatuses?: ReadonlyMap<string, ProjectHarnessStatusDto>;
 }
 
-function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
-  const regularCards = [];
-  const epicCards = [];
-  for (const card of readyCards) {
-    if (card.ticket.issueType === 'epic') {
-      epicCards.push(card);
-    } else {
-      regularCards.push(card);
-    }
-  }
-  return { regularCards, epicCards };
-}
-
-/** endReason ごとの表示ラベル。Record なので endReason が増えたら型エラーで気づける。 */
-const NEXT_UP_LOOP_END_REASON_LABELS: Record<NextUpLoopEndReason, string> = {
-  completed: '完走',
-  stopped: '中断',
-  poll_failed: '中断(状況を確認できず)',
-  consecutive_failures: '中断(連続失敗)',
-};
-
-function renderLoopProgressSummary(
-  progress: NextUpLoopProgress,
-  options?: { prefix?: string; showEndReason?: boolean },
-): string {
-  const completedPart = `完了 ${progress.completedCount}/${progress.totalCount}`;
-  const parts: string[] = [];
-
-  if (options?.prefix !== undefined && options.prefix.length > 0) {
-    let header = options.prefix;
-    if (options.showEndReason && progress.endReason !== null) {
-      header = `${header} ${NEXT_UP_LOOP_END_REASON_LABELS[progress.endReason]}`;
-    }
-    parts.push(`${header} | ${completedPart}`);
-  } else {
-    parts.push(completedPart);
-  }
-
-  parts.push(`失敗 ${progress.failedCount}`);
-  if (progress.cancelledCount > 0) {
-    parts.push(`中止 ${progress.cancelledCount}`);
-  }
-  if (progress.unknownCount > 0) {
-    parts.push(`不明 ${progress.unknownCount}`);
-  }
-  if (options?.showEndReason) {
-    let runningCount = 0;
-    if (progress.endReason === 'stopped' && progress.currentTicketId !== null) {
-      runningCount = 1;
-      parts.push(`実行中 ${runningCount}`);
-    }
-    const remaining =
-      progress.totalCount -
-      (progress.completedCount +
-        progress.failedCount +
-        progress.cancelledCount +
-        progress.unknownCount +
-        runningCount);
-    if (remaining > 0) {
-      parts.push(`未実行 ${remaining}`);
-    }
-  }
-  return parts.join(' | ');
-}
-
-function renderCardList(
-  cards: BoardDto['lanes']['ready'],
-  props: Pick<
-    NextUpViewProps,
-    | 'projectNames'
-    | 'projectActiveSessions'
-    | 'pendingDecisionIds'
-    | 'prLinksById'
-    | 'onCardClick'
-  >,
-) {
-  const {
-    projectNames,
-    projectActiveSessions,
-    pendingDecisionIds,
-    prLinksById,
-    onCardClick,
-  } = props;
-
-  return cards.map((card) => (
-    <CardItem
-      key={card.ticket.id}
-      card={card}
-      lane="ready"
-      showProjectName
-      projectName={projectNames.get(card.projectId) ?? projectNameFallback(card.projectId)}
-      activeSessionCount={projectActiveSessions.get(card.projectId) ?? 0}
-      hasPendingDecision={pendingDecisionIds.has(card.ticket.id)}
-      prLink={prLinksById.get(card.ticket.id)}
-      onClick={onCardClick}
-    />
-  ));
-}
-
 export function NextUpView({
   board,
   limit,
@@ -154,51 +50,24 @@ export function NextUpView({
   const { regularCards, epicCards } = splitReadyCards(readyCards);
   const visibleRegularCards = regularCards.slice(0, limit);
   const visibleEpicCards = epicCards.slice(0, limit);
-  const [pendingBatchTicketIds, setPendingBatchTicketIds] = useState<
-    readonly string[] | null
-  >(null);
-  const batchRunConfirmRef = useRef<HTMLDivElement>(null);
-  const cancelBatchRunConfirmRef = useRef<HTMLButtonElement>(null);
-  const loopPhase = batchRun.phase;
-  const loopProgress = batchRun.progress;
 
-  /**
-   * 一括実行は複数プロジェクトにまたがりうるので、対象カードのプロジェクトを
-   * 1 つでも前提未達なら止める — そのチケットに来た時点でサーバーが 409 を返し、
-   * 連続失敗でバッチ自体が停止するため、走らせても最後まで行かない。
-   * どのプロジェクトかが分からないと直せないので、理由には名前を添える。
-   */
-  const harnessBlockReason = useMemo(() => {
-    if (harnessStatuses === undefined) {
-      return null;
-    }
-    for (const card of visibleRegularCards) {
-      const reason = describeHarnessRunBlock(harnessStatuses.get(card.projectId));
-      if (reason !== null) {
-        const name =
-          projectNames.get(card.projectId) ?? projectNameFallback(card.projectId);
-        return `${name}: ${reason}`;
-      }
-    }
-    return null;
-  }, [harnessStatuses, projectNames, visibleRegularCards]);
-
-  const handleOpenBatchRunConfirm = useCallback(() => {
-    if (
-      loopPhase !== 'idle' ||
-      visibleRegularCards.length === 0 ||
-      harnessBlockReason !== null
-    ) {
-      return;
-    }
-    setPendingBatchTicketIds(
-      visibleRegularCards.map((card) => card.ticket.id),
-    );
-  }, [harnessBlockReason, loopPhase, visibleRegularCards]);
-
-  const handleCancelBatchRunConfirm = useCallback(() => {
-    setPendingBatchTicketIds(null);
-  }, []);
+  const {
+    loopPhase,
+    loopProgress,
+    harnessBlockReason,
+    pendingBatchTicketIds,
+    batchRunConfirmRef,
+    cancelBatchRunConfirmRef,
+    handleOpenBatchRunConfirm,
+    handleCancelBatchRunConfirm,
+    handleConfirmBatchRun,
+    handleStopLoop,
+  } = useNextUpBatchRun({
+    visibleRegularCards,
+    projectNames,
+    harnessStatuses,
+    batchRun,
+  });
 
   // 他の role="alertdialog" (TicketDetailPanel の quick-action / agent-run 確認)
   // と同じく useFocusTrap を通す。フォーカスを閉じ込めないと、確認を出したまま
@@ -212,24 +81,6 @@ export function NextUpView({
     onEscape: handleCancelBatchRunConfirm,
   });
 
-  const handleConfirmBatchRun = useCallback(() => {
-    const ticketIds = pendingBatchTicketIds;
-    setPendingBatchTicketIds(null);
-    if (ticketIds !== null) {
-      batchRun.beginBatchRun(ticketIds);
-    }
-  }, [batchRun, pendingBatchTicketIds]);
-
-  const handleStopLoop = useCallback(() => {
-    // Do not call cancelAgentRun here: the server-side run keeps going.
-    // Stopping means the batch loop will not advance to the next ticket and
-    // will stop polling progress, returning to idle immediately. To actually
-    // cancel the in-flight run, use TicketDetailPanel's per-run cancel button.
-    batchRun.stopBatchRun();
-  }, [batchRun]);
-
-  const isLoopActive = loopPhase !== 'idle';
-  const hasLastRunSummary = !isLoopActive && loopProgress.totalCount > 0;
   const cardListProps = {
     projectNames,
     projectActiveSessions,
@@ -245,112 +96,19 @@ export function NextUpView({
       <div className="next-up-header">
         <h2 className="next-up-title">次にやること</h2>
         <div className="next-up-controls">
-          <div className="next-up-run-group">
-            {!isLoopActive ? (
-              <button
-                type="button"
-                className="toggle-btn next-up-run-btn"
-                disabled={
-                  visibleRegularCards.length === 0 || harnessBlockReason !== null
-                }
-                title={harnessBlockReason ?? undefined}
-                onClick={handleOpenBatchRunConfirm}
-              >
-                ▶ 一括実行
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="toggle-btn next-up-run-btn next-up-run-btn-stop"
-                disabled={loopPhase === 'stopping'}
-                onClick={handleStopLoop}
-              >
-                {loopPhase === 'stopping' ? '■ 停止中…' : '■ 停止'}
-              </button>
-            )}
-            {harnessBlockReason !== null && !isLoopActive && (
-              <p className="next-up-run-blocked-reason">{harnessBlockReason}</p>
-            )}
-            {pendingBatchTicketIds !== null && !isLoopActive && (
-              <div
-                ref={batchRunConfirmRef}
-                className="quick-action-confirm-panel next-up-run-confirm-panel"
-                role="alertdialog"
-                aria-labelledby="next-up-run-confirm-title"
-                aria-describedby="next-up-run-confirm-desc"
-              >
-                <p
-                  id="next-up-run-confirm-title"
-                  className="quick-action-confirm-title"
-                >
-                  一括実行の確認
-                </p>
-                <p
-                  id="next-up-run-confirm-desc"
-                  className="quick-action-confirm-desc"
-                >
-                  表示中の着手可能チケット {pendingBatchTicketIds.length}{' '}
-                  件を、上から1件ずつ直列でエージェント実行します。Epic
-                  セクションのチケットは対象に含まれません。各チケットごとに
-                  worktree の作成（またはクリーンな既存 worktree の再利用）と Claude
-                  CLI の起動が走ります。1件失敗しても次へ進みますが、直近
-                  {NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES}
-                  件が失敗した場合はバッチを停止し、最後に失敗したチケットへ停止理由のコメントを残します。よろしいですか?
-                </p>
-                <div className="quick-action-confirm-actions">
-                  <button
-                    ref={cancelBatchRunConfirmRef}
-                    type="button"
-                    className="btn quick-action-confirm-cancel"
-                    onClick={handleCancelBatchRunConfirm}
-                  >
-                    キャンセル
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    onClick={handleConfirmBatchRun}
-                  >
-                    実行する
-                  </button>
-                </div>
-              </div>
-            )}
-            {(isLoopActive || hasLastRunSummary) && (
-              <>
-                <p
-                  className="next-up-run-progress"
-                  role="status"
-                  aria-live="polite"
-                >
-                  {isLoopActive ? (
-                    <>
-                      {loopProgress.currentTicketId !== null
-                        ? `現在: ${loopProgress.currentTicketId} | `
-                        : ''}
-                      {renderLoopProgressSummary(loopProgress)}
-                    </>
-                  ) : (
-                    renderLoopProgressSummary(loopProgress, {
-                      prefix: '前回の実行:',
-                      showEndReason: true,
-                    })
-                  )}
-                </p>
-                {loopProgress.lastFailureReason !== null && (
-                  <p className="next-up-run-failure-reason error-message">
-                    {loopProgress.lastFailureReason}
-                  </p>
-                )}
-                {!isLoopActive && loopProgress.currentTicketId !== null && (
-                  <p className="next-up-run-server-active-hint">
-                    {loopProgress.currentTicketId}{' '}
-                    はサーバー側で実行中の可能性があります
-                  </p>
-                )}
-              </>
-            )}
-          </div>
+          <NextUpBatchRunControls
+            loopPhase={loopPhase}
+            loopProgress={loopProgress}
+            harnessBlockReason={harnessBlockReason}
+            hasVisibleRegularCards={visibleRegularCards.length > 0}
+            pendingBatchTicketIds={pendingBatchTicketIds}
+            batchRunConfirmRef={batchRunConfirmRef}
+            cancelBatchRunConfirmRef={cancelBatchRunConfirmRef}
+            onOpenConfirm={handleOpenBatchRunConfirm}
+            onStopLoop={handleStopLoop}
+            onCancelConfirm={handleCancelBatchRunConfirm}
+            onConfirmRun={handleConfirmBatchRun}
+          />
           <div className="next-up-limit-group">
             <span className="header-label">表示件数</span>
             <div className="toggle-group">
@@ -382,7 +140,7 @@ export function NextUpView({
         <p className="empty-message">着手できるチケットはありません</p>
       ) : (
         <div className="next-up-cards">
-          {renderCardList(visibleRegularCards, cardListProps)}
+          <NextUpCardList cards={visibleRegularCards} {...cardListProps} />
         </div>
       )}
 
@@ -393,7 +151,7 @@ export function NextUpView({
             Epic は「▶ 一括実行」の対象外です
           </p>
           <div className="next-up-cards next-up-epic-cards">
-            {renderCardList(visibleEpicCards, cardListProps)}
+            <NextUpCardList cards={visibleEpicCards} {...cardListProps} />
           </div>
         </div>
       )}

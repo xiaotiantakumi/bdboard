@@ -37,7 +37,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/nextUpRunLoop.ts': 380, // 現在 371
   'web/src/components/BoardView.tsx': 370, // 現在 365
   'scripts/check-file-size.mjs': 370, // 現在 362
-  'web/src/components/NextUpView.tsx': 370, // 現在 362
   'src/infrastructure/chat/specs/claude-spec.ts': 340, // 現在 331
   'src/infrastructure/process/cloudflared-tunnel.ts': 320, // 現在 311
   'web/src/components/SearchPalette.tsx': 290, // 現在 282
