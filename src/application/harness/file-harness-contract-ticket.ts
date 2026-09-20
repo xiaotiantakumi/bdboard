@@ -42,6 +42,13 @@ export type FileHarnessContractTicketResult =
  * 冪等性: `HARNESS_CONTRACT_TICKET_LABEL` の付いた未クローズチケットが既にあれば
  * 作らず、その ID を `created: false` で返す。bd 側 (`bd list --label`) が持つ
  * 「既定で closed を除外する」挙動をそのまま存在確認に使う。
+ *
+ * **これは真の compare-and-swap ではない** — `findOpenTicketByLabel` の読み取りと
+ * `create` の書き込みの間に小さな競合窓がある (レビュー指摘)。この経路はボタンを
+ * 押した1リクエストからしか叩けず、実行中はフロント側で操作を無効化するため、
+ * 実際に踏むには極めて短い時間窓へ2つのブラウザセッションから同時にクリックする
+ * 必要がある。踏んでも起きるのは「閉じれば済む P2 チケットが2枚になる」程度なので、
+ * ここでは許容している。真の CAS (例: bd 側の一意制約) が要る場合は別途検討する。
  */
 export async function fileHarnessContractTicket(
   issueWriter: HarnessContractTicketWriter,

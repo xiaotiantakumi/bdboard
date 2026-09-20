@@ -716,6 +716,45 @@ describe('POST /api/projects/*/harness/contract-ticket', () => {
     expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
   });
 
+  it('does not fail the request when the post-create cache refresh rejects (fail-open)', async () => {
+    const cache = createFakeBoardCache();
+    const { proj, injector } = setUpMissingContractProject(cache);
+    const issueWriter = createFakeIssueWriter({
+      findOpenTicketByLabel: vi.fn(async () => null),
+      create: vi.fn(async () => ({ id: 'proj-a-1' })),
+    });
+    const refreshProjectByRootPath = vi.fn(async () => {
+      throw new Error('cache refresh exploded');
+    });
+    const consoleErrorSpy = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => {});
+
+    const app = createHarnessApp({
+      cache,
+      injector,
+      contractReader: createFakeContractReader({ contract: null }),
+      issueWriter,
+      refreshProjectByRootPath,
+    });
+    const response = await app.request(
+      `/api/projects/${encodeURIComponent(proj.id)}/harness/contract-ticket`,
+      withLocalHost({ method: 'POST' }),
+      LOCAL_ENV,
+    );
+
+    // A failed best-effort refresh must not turn a successful ticket creation
+    // into an error response — the ticket really was created.
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      ticketId: 'proj-a-1',
+      created: true,
+    });
+    expect(refreshProjectByRootPath).toHaveBeenCalledWith(proj.rootPath);
+
+    consoleErrorSpy.mockRestore();
+  });
+
   it('is idempotent: returns the existing ticket without creating a duplicate', async () => {
     const cache = createFakeBoardCache();
     const { proj, injector } = setUpMissingContractProject(cache);

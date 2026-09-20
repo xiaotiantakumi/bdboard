@@ -813,6 +813,24 @@ describe('createBdCliIssueWriter', () => {
       });
     });
 
+    it('throws BdError (does not silently treat it as "no ticket") when bd list output is not an array', async () => {
+      // Load-bearing for idempotency: a non-array/unexpected shape must not be
+      // treated the same as "no open ticket found", or a parse-shape drift in
+      // `bd` would silently start creating duplicate tickets on every click.
+      const { runner } = createFakeRunner({
+        handler: async () => ({
+          stdout: JSON.stringify({ unexpected: 'shape' }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      });
+      const port = createBdCliIssueWriter(runner);
+
+      await expect(
+        port.findOpenTicketByLabel?.(ROOT, 'harness-contract'),
+      ).rejects.toBeInstanceOf(BdError);
+    });
+
     it('throws BdError when bd list output is not valid JSON', async () => {
       const { runner } = createFakeRunner({
         handler: async () => ({ stdout: 'not json', stderr: '', exitCode: 0 }),

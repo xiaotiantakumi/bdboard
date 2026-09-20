@@ -190,7 +190,10 @@ async function readOpenTicketByLabel(
     timeoutMs,
     rootPath,
     ['--readonly', '-C', rootPath, 'list', '--label', label, '--json', '--limit', '0', '--no-pager'],
-    label,
+    // errorSubject は BdError.projectId に載る (throwBdToolFailure 参照)。ここでの
+    // 「対象」は label ではなく rootPath — 他の呼び出し箇所 (reopen の CAS 読み取り等)
+    // と揃え、失敗ログから実際に失敗したプロジェクトを追えるようにする (レビュー指摘)。
+    rootPath,
   );
 
   let parsed: unknown;
@@ -204,7 +207,18 @@ async function readOpenTicketByLabel(
     );
   }
 
-  if (!Array.isArray(parsed) || parsed.length === 0) {
+  // 配列でない出力は「該当なし」ではなく「bd の出力形式が想定と違う」ので、null を
+  // 返さず即座に投げる。ここを null にすると、冪等性チェックが「既存チケットなし」と
+  // 誤判定してチケットを重複作成してしまう — このチェック自体の存在理由を壊す
+  // (レビュー指摘の blocker 相当)。空配列 (該当なし) だけを null として扱う。
+  if (!Array.isArray(parsed)) {
+    throw new BdError(
+      'unknown',
+      rootPath,
+      `unexpected bd list output shape while checking for an existing ${label} ticket`,
+    );
+  }
+  if (parsed.length === 0) {
     return null;
   }
 

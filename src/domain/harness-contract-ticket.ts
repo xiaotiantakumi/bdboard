@@ -1,5 +1,6 @@
 import {
   HARNESS_CONTRACT_RELATIVE_PATH,
+  HARNESS_CONTRACT_VERSION,
   type ContractState,
   type VerifyPackageScripts,
 } from './harness-contract.js';
@@ -48,8 +49,11 @@ export function suggestVerifyCommand(scripts: VerifyPackageScripts): string | nu
 
 function buildMissingContractTemplate(verifySuggestion: string | null): string {
   const verify = verifySuggestion ?? '<検証コマンド (exit 0 が合格)>';
+  // version はハードコードせず HARNESS_CONTRACT_VERSION を参照する — 将来この定数が
+  // 上がったときに、テンプレートだけ古いバージョンを勧めてパーサに弾かれる事故を防ぐ
+  // (レビュー指摘)。
   return JSON.stringify(
-    { version: 1, verify, prFlow: 'pr', mainBranch: 'main' },
+    { version: HARNESS_CONTRACT_VERSION, verify, prFlow: 'pr', mainBranch: 'main' },
     null,
     2,
   );
