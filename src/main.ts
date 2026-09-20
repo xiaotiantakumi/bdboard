@@ -6,17 +6,13 @@ import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
-import { refreshProjects } from './application/board/refresh-projects.js';
 import type { RefreshResult } from './application/board/refresh-projects.js';
 import { runBdVersionStartupCheck } from './application/bd/run-bd-version-startup-check.js';
 import { runInitialRefresh } from './application/board/run-initial-refresh.js';
 import { runUnattendedRefresh } from './application/board/run-unattended-refresh.js';
 import { recordCfdSnapshot, pruneOldCfdSnapshots } from './application/board/record-cfd-snapshot.js';
 import { createShutdownDrain } from './application/board/shutdown-drain.js';
-import {
-  createBoardNotificationPublisher,
-  buildSessionDiedNotificationPayload,
-} from './application/board/board-notification-transitions.js';
+import { createBoardNotificationPublisher } from './application/board/board-notification-transitions.js';
 import { createWatchedProjectsSync } from './application/board/sync-watched-projects.js';
 import type { WatchedProjectsSync } from './application/board/sync-watched-projects.js';
 import {
@@ -35,18 +31,9 @@ import { createChatSessionStore } from './application/chat/chat-session-store.js
 import { buildChatAgentRegistry } from './infrastructure/chat/chat-agent-registry-builder.js';
 import { createTunnelService } from './application/tunnel/tunnel-service.js';
 import { createTunnelAccessService } from './application/tunnel/tunnel-access.js';
-import type { CachedProject, SessionLinkRow } from './application/ports/board-cache.js';
-import {
-  computeBoardNotificationSnapshot,
-  diffSessionLiveness,
-  type BoardSnapshotProjectInput,
-} from './domain/board-notifications.js';
+import { computeBoardNotificationSnapshot } from './domain/board-notifications.js';
 import { resolveAiQuotaAlertThresholdPercent } from './domain/ai-quota-alert-thresholds.js';
-import { compareStrings } from './domain/compare.js';
 import { generatePassphrase } from './domain/passphrase.js';
-import type { AgentSession, SessionLink } from './domain/session.js';
-import { MAX_TRANSCRIPT_SESSION_LINKS } from './domain/session.js';
-import { parseTicketId } from './domain/ticket-id.js';
 import {
   createBdCliCommentReader,
   createBdCliHumanDecisions,
@@ -149,89 +136,20 @@ import {
   createGracefulShutdown,
   DEFAULT_SHUTDOWN_TIMEOUT_MS,
 } from './interface/http/graceful-shutdown.js';
-
-function envString(name: string, defaultValue: string): string {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') {
-    return defaultValue;
-  }
-  return raw;
-}
-
-/** 未設定・空文字のとき undefined。health の instanceNonce など「無いときフィールド自体を出さない」用途向け。 */
-function envOptionalString(name: string): string | undefined {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') {
-    return undefined;
-  }
-  return raw;
-}
-
-function envBool(name: string): boolean {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') {
-    return false;
-  }
-
-  return raw === '1' || raw.toLowerCase() === 'true';
-}
-
-function envBoolDefaultTrue(name: string): boolean {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') {
-    return true;
-  }
-
-  return raw !== '0' && raw.toLowerCase() !== 'false';
-}
-
-function envInt(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') {
-    return defaultValue;
-  }
-
-  const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed)) {
-    return defaultValue;
-  }
-
-  return parsed;
-}
-
-function envFloat(name: string, defaultValue: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw === '') {
-    return defaultValue;
-  }
-
-  const parsed = Number.parseFloat(raw);
-  // 負値/0 を受理すると chat-routes.ts 経由のログ・descriptor 表示に「実態と異なる重み」が
-  // そのまま載ってしまう(chat-rate-limit.ts の normalizeWeight による <=0 クランプは
-  // limiter.consume() 時にしか効かない)。ここで弾いて既定へフォールバックさせる
-  // (bdboard-3tw.104.11 Opus レビュー N4、chat-agent-registry-builder.ts の envFloat と同じ判断)。
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return defaultValue;
-  }
-
-  return parsed;
-}
-
-/** ticketId のプレフィックス(例: "bdboard-3tw.83" -> "bdboard")から所属プロジェクトを引く */
-function projectIdForTicketId(
-  ticketId: string,
-  projects: readonly CachedProject[],
-): string | undefined {
-  let prefix: string;
-  try {
-    prefix = parseTicketId(ticketId).prefix;
-  } catch {
-    return undefined;
-  }
-
-  const match = projects.find((entry) => entry.project.prefixes.includes(prefix));
-  return match?.project.id;
-}
+import {
+  envBool,
+  envBoolDefaultTrue,
+  envFloat,
+  envInt,
+  envOptionalString,
+  envString,
+} from './bootstrap/env.js';
+import { createTranscriptLinkTracker } from './application/board/transcript-link-tracker.js';
+import { createSessionLivenessTracker } from './application/board/session-liveness-tracker.js';
+import {
+  boardSnapshotInputFromCache,
+  createRefreshRunner,
+} from './application/board/refresh-runner.js';
 
 function updateStatusFromResult(
   cache: ReturnType<typeof createSqliteBoardCache>,
@@ -359,149 +277,32 @@ async function main(): Promise<void> {
   const interactionReader = createJsonlInteractionReader(fsPort, cache);
   const sessionTailReader = createSessionTailReader(fsPort);
 
-  let sessions: readonly AgentSession[] = [];
-  let previousSessionFingerprint: string | null = null;
   const boardNotificationPublisher = createBoardNotificationPublisher();
 
-  const boardSnapshotInputFromCache = (
-    entries: readonly CachedProject[],
-  ): readonly BoardSnapshotProjectInput[] =>
-    entries.map((entry) => ({
-      projectId: entry.project.id,
-      tickets: entry.tickets,
-      decisionPendingTicketIds: entry.pendingDecisions?.map(
-        (decision) => decision.id,
-      ),
-    }));
+  // bdboard-sso1.9: transcript link のインメモリ集計 (旧 transcriptLinkMap 一式) は
+  // application/board/transcript-link-tracker.ts へ移動 (move only)。
+  const transcriptLinkTracker = createTranscriptLinkTracker({ cache });
 
-  const LINK_KEY_SEP = '\0';
-  const MAX_TRANSCRIPT_LINKS = MAX_TRANSCRIPT_SESSION_LINKS;
-  const transcriptLinkMap = new Map<string, SessionLink>();
-
-  const linkKey = (link: SessionLink): string =>
-    `${link.ticketId}${LINK_KEY_SEP}${link.sessionId}`;
-
-  const trimTranscriptLinksToCap = (): void => {
-    if (transcriptLinkMap.size <= MAX_TRANSCRIPT_LINKS) {
-      return;
-    }
-
-    const sorted = [...transcriptLinkMap.entries()].sort(
-      (a, b) => a[1].observedAt.getTime() - b[1].observedAt.getTime(),
-    );
-    const excess = transcriptLinkMap.size - MAX_TRANSCRIPT_LINKS;
-    for (let index = 0; index < excess; index += 1) {
-      const entry = sorted[index];
-      if (entry !== undefined) {
-        transcriptLinkMap.delete(entry[0]);
-      }
-    }
-  };
-
-  // 再起動でのリンク恒久消失を防ぐため、走査で得た新規/更新リンクは即座に SQLite にも
-  // upsert する(cache.setTranscriptOffset() は S8 から永続化済みだったが、リンク自体は
-  // これまでインメモリのみだった非対称の是正。bdboard-3tw.83)。
-  const persistTranscriptLinks = (links: readonly SessionLink[]): void => {
-    if (links.length === 0) {
-      return;
-    }
-
-    const projects = cache.listProjects();
-    const rows: SessionLinkRow[] = [];
-    for (const link of links) {
-      const projectId = projectIdForTicketId(link.ticketId, projects);
-      if (projectId === undefined) {
-        continue;
-      }
-      rows.push({ projectId, link });
-    }
-
-    if (rows.length > 0) {
-      cache.upsertSessionLinks(rows);
-    }
-  };
-
-  const mergeTranscriptLinks = (newLinks: readonly SessionLink[]): boolean => {
-    let hasNew = false;
-
-    for (const link of newLinks) {
-      const key = linkKey(link);
-      if (!transcriptLinkMap.has(key)) {
-        hasNew = true;
-      }
-      transcriptLinkMap.set(key, link);
-    }
-
-    trimTranscriptLinksToCap();
-    persistTranscriptLinks(newLinks);
-    return hasNew;
-  };
-
-  const listTranscriptLinks = (): readonly SessionLink[] => {
-    return [...transcriptLinkMap.values()].sort((a, b) => {
-      const ticketCmp = compareStrings(a.ticketId, b.ticketId);
-      if (ticketCmp !== 0) {
-        return ticketCmp;
-      }
-      return compareStrings(a.sessionId, b.sessionId);
-    });
-  };
-
-  // 起動時に SQLite の session_links から transcriptLinkMap を再構築する。走査位置
+  // 起動時に SQLite の session_links から transcriptLinkTracker を再構築する。走査位置
   // (transcript_offsets)は既に永続化されているため、これをやらないと再起動のたびに
   // 過去のリンクが読み直されずに失われる(bdboard-3tw.83)。
-  const hydrateTranscriptLinksFromCache = (): void => {
-    for (const row of cache.listSessionLinks()) {
-      transcriptLinkMap.set(linkKey(row.link), row.link);
-    }
-    trimTranscriptLinksToCap();
-  };
-
-  hydrateTranscriptLinksFromCache();
-  console.log(`Hydrated transcript links from cache: count=${transcriptLinkMap.size}`);
+  transcriptLinkTracker.hydrateFromCache();
+  console.log(`Hydrated transcript links from cache: count=${transcriptLinkTracker.size()}`);
 
   let transcriptScanRunning = false;
 
-  const refreshSessions = async (): Promise<void> => {
-    try {
-      const prevSessions = sessions;
-      const next = await sessionRegistry.listSessions();
-      const fingerprint = JSON.stringify(
-        next.map(
-          (session) =>
-            `${session.sessionId}:${session.alive}:${session.lastActivityAt.getTime()}`,
-        ),
-      );
-      const changed =
-        previousSessionFingerprint !== null &&
-        fingerprint !== previousSessionFingerprint;
-
-      for (const diedEvent of diffSessionLiveness(prevSessions, next)) {
-        events.publish({
-          name: 'notification',
-          data: buildSessionDiedNotificationPayload(diedEvent, new Date()),
-        });
-      }
-
-      // Always take the newest snapshot: the fingerprint only covers the fields
-      // clients react to (id/alive/lastActivityAt), not cwd/name/pid.
-      sessions = next;
-      previousSessionFingerprint = fingerprint;
-
-      if (changed) {
-        events.publish({
-          name: 'session.changed',
-          data: {
-            count: next.length,
-            activeCount: next.filter((session) => session.alive).length,
-          },
-        });
-      }
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(`Session refresh error: ${detail}`);
-    }
-  };
+  // bdboard-sso1.9: セッション生死の定期取得・差分検知 (旧 refreshSessions 一式) は
+  // application/board/session-liveness-tracker.ts へ移動 (move only)。
+  const sessionLivenessTracker = createSessionLivenessTracker({
+    registry: sessionRegistry,
+    now: () => new Date(),
+    publishSessionDied: (payload) => {
+      events.publish({ name: 'notification', data: payload });
+    },
+    publishSessionsChanged: (data) => {
+      events.publish({ name: 'session.changed', data });
+    },
+  });
 
   const runTranscriptScan = async (): Promise<void> => {
     if (transcriptScanRunning) {
@@ -526,7 +327,7 @@ async function main(): Promise<void> {
         now: new Date(),
       });
 
-      const hasNew = mergeTranscriptLinks(newLinks);
+      const hasNew = transcriptLinkTracker.merge(newLinks);
       if (hasNew) {
         events.publish({
           name: 'board.changed',
@@ -556,144 +357,33 @@ async function main(): Promise<void> {
     projectCount: 0,
   };
 
-  let refreshRunning = false;
-  interface PendingRefresh {
-    force: boolean;
-    /** undefined = 全プロジェクト対象 */
-    onlyProjectIds: Set<string> | undefined;
-  }
-  let pendingRefresh: PendingRefresh | undefined;
-  const refreshWaiters: Array<() => void> = [];
   // watcher はこの下の初期リフレッシュのあとに作るので、それまでは undefined。
   let watchedProjectsSync: WatchedProjectsSync | undefined;
 
-  const mergePendingRefresh = (
-    force: boolean,
-    onlyProjectIds: readonly string[] | undefined,
-  ): void => {
-    if (pendingRefresh === undefined) {
-      pendingRefresh = {
-        force,
-        onlyProjectIds:
-          onlyProjectIds === undefined ? undefined : new Set(onlyProjectIds),
-      };
-      return;
-    }
-    if (force) {
-      pendingRefresh.force = true;
-    }
-    if (onlyProjectIds === undefined) {
-      // 「全プロジェクト対象」の要求が来たら、絞り込みは解除される(広い方が勝つ)
-      pendingRefresh.onlyProjectIds = undefined;
-    } else if (pendingRefresh.onlyProjectIds !== undefined) {
-      for (const id of onlyProjectIds) {
-        pendingRefresh.onlyProjectIds.add(id);
-      }
-    }
-  };
-
-  const runRefresh = async (
-    force = false,
-    onlyProjectIds?: readonly string[],
-  ): Promise<void> => {
-    if (refreshRunning) {
-      mergePendingRefresh(force, onlyProjectIds);
-
-      return new Promise<void>((resolve) => {
-        refreshWaiters.push(resolve);
-      });
-    }
-
-    refreshRunning = true;
-    mergePendingRefresh(force, onlyProjectIds);
-
-    try {
-      // pendingRefresh が空になるまで回す。通知発行 / watcher sync の await 中に
-      // 届いた要求もここで拾う — 拾わずに finally へ抜けると、その要求の待ち手が
-      // 「実行されないまま解決」され、書き込み直後の再取得が陳腐化キャッシュを掴む
-      // (bdboard-6qs6 のバグ本体の再演)。入口で mergePendingRefresh() を呼んでいるので
-      // 初回は必ず1周する。
-      while (pendingRefresh !== undefined) {
-        // 内側は連続して届いた要求の合流。1周ごとに1回だけ refreshProjects を呼ぶ。
-        while (pendingRefresh !== undefined) {
-          const current = pendingRefresh;
-          // 実行中に届く要求を取りこぼさないよう、await に入る前にクリアする。
-          pendingRefresh = undefined;
-
-          const useOnlyProjectIds =
-            current.onlyProjectIds === undefined
-              ? undefined
-              : [...current.onlyProjectIds];
-
-          const result = await refreshProjects(
-            {
-              discovery,
-              repository,
-              fingerprinter,
-              cache,
-              now: () => new Date(),
-              humanDecisions,
-            },
-            {
-              force: current.force,
-              ...(useOnlyProjectIds !== undefined
-                ? { onlyProjectIds: useOnlyProjectIds }
-                : {}),
-            },
-          );
-
-          status = updateStatusFromResult(cache, result, new Date());
-
-          // Only announce a change when something actually changed. `bd --readonly`
-          // still touches .beads/last-touched, so every refresh re-triggers the
-          // watcher; without this guard each real change would emit a second,
-          // empty board.changed event (refreshed=[] reused=all) to every client.
-          if (result.refreshed.length > 0 || result.removed.length > 0) {
-            events.publish({
-              name: 'board.changed',
-              data: {
-                refreshed: result.refreshed,
-                reused: result.reused,
-                removed: result.removed,
-              },
-            });
-          }
-        }
-
-        const cacheEntries = cache.listProjects();
-        const refreshAt = new Date();
-        const notificationSnapshot = computeBoardNotificationSnapshot(
-          boardSnapshotInputFromCache(cacheEntries),
-          refreshAt,
-        );
-        for (const payload of boardNotificationPublisher.collectTransitions(
-          cacheEntries,
-          notificationSnapshot,
-          refreshAt,
-        )) {
-          events.publish({
-            name: 'notification',
-            data: payload,
-          });
-        }
-
-        // discovery で増えた/消えたプロジェクトを監視対象に反映する。これが無いと
-        // 起動後に現れたプロジェクトは定期リフレッシュ間隔ぶん遅れてしか画面に出ない。
-        try {
-          await watchedProjectsSync?.sync();
-        } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
-          console.error(`Project watcher update error: ${detail}`);
-        }
-      }
-    } finally {
-      refreshRunning = false;
-      const waiters = refreshWaiters.splice(0);
-      for (const resolve of waiters) {
-        resolve();
-      }
-    }
-  };
+  // bdboard-sso1.9: runRefresh の合流(coalescing)状態machine (旧 refreshRunning /
+  // pendingRefresh / refreshWaiters / mergePendingRefresh 一式) は
+  // application/board/refresh-runner.ts へ移動 (move only)。
+  const refreshRunner = createRefreshRunner({
+    discovery,
+    repository,
+    fingerprinter,
+    cache,
+    now: () => new Date(),
+    humanDecisions,
+    boardNotificationPublisher,
+    publishBoardChanged: (data) => {
+      events.publish({ name: 'board.changed', data });
+    },
+    publishNotification: (payload) => {
+      events.publish({ name: 'notification', data: payload });
+    },
+    getWatchedProjectsSync: () => watchedProjectsSync,
+    onResult: (result, refreshedAt) => {
+      status = updateStatusFromResult(cache, result, refreshedAt);
+    },
+  });
+  const runRefresh = (force = false, onlyProjectIds?: readonly string[]): Promise<void> =>
+    refreshRunner.run(force, onlyProjectIds);
 
   const initialResult = await runInitialRefresh({
     discovery,
@@ -721,9 +411,9 @@ async function main(): Promise<void> {
   );
 
   if (sessionDiscoverySupported) {
-    await refreshSessions();
+    await sessionLivenessTracker.refresh();
     console.log(
-      `Initial sessions: total=${sessions.length} alive=${sessions.filter((session) => session.alive).length}`,
+      `Initial sessions: total=${sessionLivenessTracker.current().length} alive=${sessionLivenessTracker.current().filter((session) => session.alive).length}`,
     );
   } else {
     // ps/lsof が無い環境で回しても毎周期失敗するだけなので、走らせない
@@ -768,7 +458,7 @@ async function main(): Promise<void> {
         ),
         now: new Date(),
       });
-      mergeTranscriptLinks(initialLinks);
+      transcriptLinkTracker.merge(initialLinks);
       console.log(`Initial transcript scan: links=${initialLinks.length}`);
 
       const initialInteractions = await interactionReader.read({
@@ -804,7 +494,7 @@ async function main(): Promise<void> {
 
   const sessionIntervalTimer = sessionDiscoverySupported
     ? setInterval(() => {
-        void refreshSessions();
+        void sessionLivenessTracker.refresh();
       }, sessionIntervalMs)
     : null;
 
@@ -966,8 +656,8 @@ async function main(): Promise<void> {
       events,
       boardThresholdsConfigStore,
       hygieneThresholdsConfigStore,
-      sessions: () => sessions,
-      links: () => listTranscriptLinks(),
+      sessions: () => sessionLivenessTracker.current(),
+      links: () => transcriptLinkTracker.list(),
       commentReader,
       prStatusReader,
       processScanner,
