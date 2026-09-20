@@ -47,6 +47,30 @@ function withDetail(base: string, detail: string | undefined): string {
   return detail !== undefined && detail.length > 0 ? `${base}（${detail}）` : base;
 }
 
+// エージェント run 開始時の claim 失敗 (bdboard-miqg/bdboard-ezs7): サーバーの
+// BdError メッセージは `[<kind>] project=<ticketId>: <bd の stdout+stderr を
+// lowercase した本文>` の形 (throwBdToolFailure / BdError のコンストラクタ、
+// src/infrastructure/bd/bd-cli-tool-runner.ts, issue-repository.ts)。「別アクターが
+// 既に claim している」ケースは bd の実メッセージが
+// `issue already claimed by <assignee>` (bd-cli-issue-writer.test.ts に実測値を
+// 固定済み) なので、その一部だけを表示用に抜き出す。抜き出せなければ undefined を
+// 返し、呼び出し側は汎用文言にフォールバックする。
+// `$` だけだと bd 出力が将来 "...claimed by <name>\nhint: ..." のように
+// 別行を続けてきたとき丸ごとマッチしなくなる (`.` は改行をまたがない) ため、
+// 改行を含まない一続きとして "by " の後ろを拾う。
+const CLAIM_FAILED_ALREADY_CLAIMED_PATTERN = /issue already claimed by ([^\n]+)/i;
+
+function extractClaimFailedAssignee(
+  errorMessage: string | undefined,
+): string | undefined {
+  if (errorMessage === undefined) {
+    return undefined;
+  }
+  const match = CLAIM_FAILED_ALREADY_CLAIMED_PATTERN.exec(errorMessage);
+  const assignee = match?.[1]?.trim();
+  return assignee !== undefined && assignee.length > 0 ? assignee : undefined;
+}
+
 export function isAgentRunInProgress(status: AgentRunStatusDto): boolean {
   return (
     status === 'pending' || status === 'running' || status === 'cancelling'
@@ -146,6 +170,19 @@ export function describeRunStartError(error: unknown): string {
       return actualBranch !== undefined
         ? `対象の worktree が別のブランチ（${actualBranch}）にあるため実行できません。正しいブランチに切り替えてから再実行してください。`
         : base;
+    }
+    // run 開始時の claim 失敗 (bdboard-pkr6.26 の排他ゲート、bdboard-ezs7)。
+    // 'worktree-dirty' 等と同じく機械可読な `reason` で分岐する。多くは
+    // 「別セッションが既にこのチケットを claim 中」のケース (一時的な
+    // lock-contention は bdboard-miqg でサーバー側が数回リトライ済みなので、
+    // ここまで 409 が届くのは大半が真の排他違反)。
+    if (error.status === 409 && error.reason === 'claim-failed') {
+      const assignee = extractClaimFailedAssignee(error.errorMessage);
+      const base =
+        assignee !== undefined
+          ? `このチケットは既に ${assignee} が claim 済みのため実行できません。`
+          : 'このチケットを claim できなかったため実行できません。';
+      return `${base}進行中のセッションが無いか確認し、しばらく待ってから再実行してください。`;
     }
     if (error.status === 409 || error.status === 429) {
       switch (error.errorMessage) {

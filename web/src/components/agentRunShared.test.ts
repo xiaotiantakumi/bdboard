@@ -41,6 +41,39 @@ describe('describeRunStartError', () => {
       '同時に実行できる上限に達しています。実行中のものが終わってからお試しください。',
     );
   });
+
+  it('maps claim-failed to a dedicated message naming the current assignee', () => {
+    // src/infrastructure/bd/bd-cli-issue-writer.test.ts に固定されている実測の
+    // bd stderr ("Error updating <id>: issue already claimed by <assignee>") を、
+    // サーバーの BdError 整形 (`[<kind>] project=<ticketId>: <lowercased body>`)
+    // 込みでそのまま流し込む。
+    const message = describeRunStartError(
+      new ApiError(
+        409,
+        "[unknown] project=bdboard-abc.1: error updating bdboard-abc.1: issue already claimed by takumi oda",
+        {
+          errorMessage:
+            "[unknown] project=bdboard-abc.1: error updating bdboard-abc.1: issue already claimed by takumi oda",
+          reason: 'claim-failed',
+        },
+      ),
+    );
+
+    expect(message).toContain('claim 済み');
+    expect(message).toContain('takumi oda');
+  });
+
+  it('falls back to a generic claim-failed message when the assignee cannot be parsed', () => {
+    const message = describeRunStartError(
+      new ApiError(409, '[lock-contention] project=bdboard-abc.1: database is locked', {
+        errorMessage: '[lock-contention] project=bdboard-abc.1: database is locked',
+        reason: 'claim-failed',
+      }),
+    );
+
+    expect(message).toContain('claim できなかった');
+    expect(message).not.toContain('undefined');
+  });
 });
 
 const OK_CONTRACT: ProjectHarnessContractDto = {
