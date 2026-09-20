@@ -104,6 +104,7 @@ web/               # Vite + React(別ビルド。src/ とは独立したバン�
 | `ChatSessionDiscoveryPort` | `createFsChatSessionDiscovery` | CLI で起動した既存 Claude セッションのトランスクリプトからの検出・所有権(cwd)検証・adopt 時の履歴シード読み取り |
 | `TunnelInterruptionStore` | `createFileTunnelInterruptionStore` | トンネル中断状態の記録と読み取り |
 | `ReleaseSource` | `createGithubReleaseSource` | リリース情報の取得 |
+| `AttachmentStoragePort` | `createFsAttachmentStorage` | チケット添付画像の保存/一覧/読み取り(bdboard-qw26) |
 
 表に載せないモジュール:
 

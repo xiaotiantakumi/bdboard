@@ -54,4 +54,6 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
   'ai-quota': '外部 AI のクォータは独自の定期ポーリングで更新する。',
   tunnel: 'トンネル状態は board データに依存せず、開始中のみ独自にポーリングする。',
   'update-check': 'ソフトウェア更新確認は board データに依存しない。',
+  'ticket-attachments':
+    'チケット添付画像 (bdboard-qw26) は .beads とは別のファイルシステム保存で、bd の書き込みからは変化しない。アップロードはエージェントが curl で行う想定で UI 側に投稿操作が無いため、既定の staleTime (30秒) 経過後の再マウント・フォーカス時の自動再取得に任せる。',
 } as const satisfies Readonly<Record<string, string>>;

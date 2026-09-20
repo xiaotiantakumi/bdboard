@@ -111,6 +111,9 @@ import { createCompressionMiddleware } from './interface/http/compression.js';
 import { buildApiDeps } from './interface/http/build-api-deps.js';
 import { createApiRoutes, type ApiStatus } from './interface/http/routes.js';
 import { createChatRoutes } from './interface/http/chat-routes.js';
+import { createAttachmentRoutes } from './interface/http/attachment-routes.js';
+import { createFsAttachmentStorage } from './infrastructure/fs/fs-attachment-storage.js';
+import { resolveAttachmentsDir } from './infrastructure/fs/resolve-attachments-dir.js';
 import {
   DEFAULT_CHAT_RATE_LIMIT_WEIGHT,
   DEFAULT_CHAT_RATE_LIMIT_PER_DAY,
@@ -1008,6 +1011,28 @@ async function main(): Promise<void> {
     app.use(pattern, createPlatformFeatureGuard(platformSupport, 'session-discovery'));
   }
   app.use('/api/chat/*', createPlatformFeatureGuard(platformSupport, 'chat'));
+
+  // チケット添付画像 (bdboard-qw26) は `inner` (routes.ts) より先に mount する。
+  // routes.ts の `GET /api/tickets/:id{.+}` は catch-all で `:id` に '/' を含む
+  // 任意の残りパスを飲み込むため、`/api/tickets/:id/attachments` 等を
+  // `inner` の後に mount すると先着の catch-all に横取りされ、常に
+  // "ticket not found" になってしまう (実機確認で発覚: bdboard-qw26)。
+  // Hono は method+path が重なる場合は登録順で先勝ちなので、ここで
+  // catch-all より先に登録して優先させる。保存先は常に main checkout 側
+  // (repoRoot) の gitignore 済みディレクトリで、BDBOARD_ATTACHMENTS_DIR で
+  // 上書きできる。書き込みは chat と同じ writeAccess 材料 (bdboard-9rz/cu4)
+  // を共有する。
+  const attachmentsDir = resolveAttachmentsDir(repoRoot, process.env);
+  const attachmentStorage = createFsAttachmentStorage(attachmentsDir);
+  app.route(
+    '/',
+    createAttachmentRoutes({
+      cache,
+      storage: attachmentStorage,
+      writeAccess,
+    }),
+  );
+  console.log(`Ticket attachments: storing under ${attachmentsDir}`);
 
   app.route('/', inner);
 
