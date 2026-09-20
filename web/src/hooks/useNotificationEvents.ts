@@ -94,6 +94,11 @@ export function useNotificationEvents(
       const { title, body } = notificationCopy(item);
       deliverBrowserNotification(title, body, item.id);
     }
+    // notificationsEnabledRef is the useRef object returned by useNotificationPermission();
+    // its identity is stable for the component's lifetime the same way a locally-declared
+    // useRef would be, so it is intentionally omitted here (deps arrays are kept identical to
+    // the pre-split hook body, per bdboard-sso1.30 PR-B's effect-order-invariance requirement).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deliverBrowserNotification]);
 
   const enqueueBrowserNotification = useCallback(
@@ -135,6 +140,8 @@ export function useNotificationEvents(
         enqueueBrowserNotification(item, notificationsEnabledRef.current);
       }
     },
+    // Same stable-ref rationale as flushNotificationBatch's deps array above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [setEvents, enqueueBrowserNotification],
   );
 
