@@ -17,8 +17,8 @@
     },
     {
       "path": "web/src/components/ChatPanel.tsx",
-      "limit": 4400,
-      "reason": "ChatPanel コンポーネント1関数で約3665行 (449〜4114行目)。分割判断チケット bdboard-78ve はリスクとコストを検討した上で見送りとして close 済み。"
+      "limit": 4100,
+      "reason": "ChatPanel コンポーネント1関数で約3786行 (bdboard-sso1.2 PR-B時点)。bdboard-78ve は custom hook 単位への分割を見送ったが、bdboard-sso1.2 で純粋ヘルパー(PR-A)→状態を持たない表示コンポーネント(PR-B〜)の順で段階的に分割を継続中。状態/effect/rekey はコンポーネント本体に残す方針。"
     },
     {
       "path": "web/src/components/TicketDetailPanel.tsx",

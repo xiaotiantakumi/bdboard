@@ -48,8 +48,6 @@ import {
   referenceDraftPayloadStoreCarryPlan,
   type DraftPayloadStoreTransform,
 } from './conversationKeyspace';
-import { DiscoveredSessionsPanel } from './DiscoveredSessionsPanel';
-import { MarkdownContent } from './MarkdownContent';
 import {
   PlatformLimitationNotice,
   usePlatformLimitation,
@@ -76,11 +74,9 @@ import {
 import {
   CHAT_IMAGE_ONLY_PROMPT,
   attachmentsToPayload,
-  formatImageSize,
   readFileAsDataUrl,
   validateChatAttachments,
   type ChatAttachment,
-  type ChatMessageImage,
 } from './chat/attachments';
 import {
   formatAgentOptionLabel,
@@ -95,6 +91,10 @@ import {
   summarizeTitle,
 } from './chat/threads';
 export { formatThreadUpdatedAt } from './chat/threads';
+import { ChatThreadDrawer } from './chat/ChatThreadDrawer';
+import { ChatMessageRow } from './chat/ChatMessageRow';
+import { ChatAttachmentPreview } from './chat/ChatAttachmentPreview';
+import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -107,17 +107,6 @@ interface ChatPanelProps {
   onClose: () => void;
 }
 
-type ChatMessage = {
-  role: 'user' | 'assistant' | 'error';
-  text: string;
-  at: number;
-  /** このターンで実行できなかった bd ツール呼び出しの名前(bdboard-l1t.4 MF3)。 */
-  failedTools?: string[];
-  /** ターンは成功したが運用者に知らせるべきエージェント側の警告(bdboard-l1t.6 N-e)。 */
-  agentWarnings?: string[];
-  /** 画像バイナリは履歴 API に残らないため、このマウント中だけ表示する preview。 */
-  images?: ChatMessageImage[];
-};
 
 // 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
 // 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
@@ -3502,91 +3491,27 @@ export function ChatPanel({
               : '開いているスレッドはありません。「+ 新規スレッド」で新しく始めてください。'}
           </p>
         )}
-        {threadDrawerOpen && (
-          <div
-            className="chat-thread-drawer-overlay"
-            role="presentation"
-            onClick={() => setThreadDrawerOpen(false)}
-          >
-            <div
-              ref={threadDrawerRef}
-              id="chat-thread-drawer"
-              className="chat-thread-drawer"
-              role="dialog"
-              aria-label="スレッド一覧"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <div className="chat-thread-drawer-header">
-                <span className="chat-thread-drawer-title">スレッド</span>
-                <button
-                  ref={threadDrawerCloseButtonRef}
-                  type="button"
-                  className="chat-thread-drawer-close"
-                  onClick={() => setThreadDrawerOpen(false)}
-                >
-                  閉じる
-                </button>
-              </div>
-
-              {pinnedThreadDrawerRows.length > 0 && (
-                <div className="chat-thread-drawer-section">
-                  <p className="chat-thread-drawer-section-title">ピン留め</p>
-                  {pinnedThreadDrawerRows}
-                </div>
-              )}
-
-              <div className="chat-thread-drawer-section">
-                <p className="chat-thread-drawer-section-title">開いているスレッド</p>
-                {openThreadDrawerRows.length > 0 ? (
-                  openThreadDrawerRows
-                ) : (
-                  <p className="chat-thread-drawer-section-empty">
-                    他に開いているスレッドはありません。
-                  </p>
-                )}
-              </div>
-
-              {hasVisibleClosedThreads && (
-                <div className="chat-thread-drawer-section">
-                  <p className="chat-thread-drawer-section-title">閉じたスレッド</p>
-                  <p className="chat-thread-drawer-section-hint">
-                    履歴は残っています。選ぶと一覧の上に戻ります。
-                  </p>
-                  {closedThreadDrawerRows}
-                </div>
-              )}
-
-              {selectedProjectId !== '' && (
-                <div className="chat-thread-drawer-section">
-                  <p className="chat-thread-drawer-section-title">
-                    bdboard 外で動いていた CLI セッション
-                  </p>
-                  <p className="chat-thread-drawer-section-hint">
-                    ターミナルの Claude Code の会話。選ぶと続きから話せます。
-                  </p>
-                  <button
-                    type="button"
-                    className="btn chat-discovered-sessions-toggle"
-                    onClick={() => setShowDiscoveredSessions((prev) => !prev)}
-                    disabled={isSending}
-                  >
-                    CLIセッションを再開
-                  </button>
-                  {showDiscoveredSessions && (
-                    <DiscoveredSessionsPanel
-                      projectId={selectedProjectId}
-                      onClose={() => setShowDiscoveredSessions(false)}
-                      onResume={(sessionId, agentId, seedMessages) => {
-                        handleResumeDiscoveredSession(sessionId, agentId, seedMessages);
-                        setThreadDrawerOpen(false);
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        <ChatThreadDrawer
+          open={threadDrawerOpen}
+          drawerRef={threadDrawerRef}
+          closeButtonRef={threadDrawerCloseButtonRef}
+          onClose={() => setThreadDrawerOpen(false)}
+          hasPinnedRows={pinnedThreadDrawerRows.length > 0}
+          pinnedRows={pinnedThreadDrawerRows}
+          hasOpenRows={openThreadDrawerRows.length > 0}
+          openRows={openThreadDrawerRows}
+          hasVisibleClosedThreads={hasVisibleClosedThreads}
+          closedRows={closedThreadDrawerRows}
+          selectedProjectId={selectedProjectId}
+          showDiscoveredSessions={showDiscoveredSessions}
+          onToggleDiscoveredSessions={() => setShowDiscoveredSessions((prev) => !prev)}
+          isSending={isSending}
+          onCloseDiscoveredSessions={() => setShowDiscoveredSessions(false)}
+          onResumeDiscoveredSession={(sessionId, agentId, seedMessages) => {
+            handleResumeDiscoveredSession(sessionId, agentId, seedMessages);
+            setThreadDrawerOpen(false);
+          }}
+        />
 
         <details className="chat-panel-settings">
           <summary className="chat-panel-settings-summary">
@@ -3687,46 +3612,12 @@ export function ChatPanel({
             </p>
           )}
           {currentMessages.map((message, index) => (
-            <div
+            <ChatMessageRow
               key={`${message.at}-${index}`}
-              className={`chat-message chat-message-${message.role}`}
-            >
-              {message.role === 'assistant' ? (
-                <MarkdownContent
-                  text={message.text}
-                  isTicketOnBoard={isTicketOnBoard}
-                  onOpenTicket={onOpenTicket}
-                  className="chat-message-text"
-                />
-              ) : (
-                <p className="chat-message-text">{message.text}</p>
-              )}
-              {message.images !== undefined && message.images.length > 0 && (
-                <div className="chat-message-images" aria-label="添付画像" role="list">
-                  {message.images.map((image, imageIndex) => (
-                    <figure key={`${image.previewUrl}-${imageIndex}`} role="listitem">
-                      <img src={image.previewUrl} alt={`添付画像: ${image.name}`} />
-                      <figcaption>
-                        {image.name} · {formatImageSize(image.size)}
-                      </figcaption>
-                    </figure>
-                  ))}
-                </div>
-              )}
-              {message.failedTools !== undefined &&
-                message.failedTools.length > 0 && (
-                  <p className="chat-message-failed-tools" role="alert">
-                    一部のツール呼び出しが実行できませんでした:{' '}
-                    {message.failedTools.join(', ')}
-                  </p>
-                )}
-              {message.agentWarnings !== undefined &&
-                message.agentWarnings.length > 0 && (
-                  <p className="chat-message-agent-warnings" role="alert">
-                    エージェントの警告: {message.agentWarnings.join('; ')}
-                  </p>
-                )}
-            </div>
+              message={message}
+              isTicketOnBoard={isTicketOnBoard}
+              onOpenTicket={onOpenTicket}
+            />
           ))}
           {activeStreamingText !== '' && (
             <div className="chat-message chat-message-assistant chat-message-streaming">
@@ -3796,34 +3687,11 @@ export function ChatPanel({
                 バックグラウンドで応答を処理中です…
               </p>
             )}
-            {currentAttachments.length > 0 && (
-              <div className="chat-attachments" aria-label="送信前の添付画像" role="list">
-                {currentAttachments.map((attachment) => (
-                  <div className="chat-attachment" key={attachment.id} role="listitem">
-                    <img
-                      className="chat-attachment-preview"
-                      src={attachment.previewUrl}
-                      alt={`送信前の添付画像: ${attachment.name}`}
-                    />
-                    <span className="chat-attachment-details">
-                      <span className="chat-attachment-name">{attachment.name}</span>
-                      <span className="chat-attachment-size">
-                        {formatImageSize(attachment.size)}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      className="chat-attachment-remove"
-                      aria-label={`添付画像「${attachment.name}」を削除`}
-                      disabled={isSending}
-                      onClick={() => removeAttachment(currentConversationKey, attachment.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
+            <ChatAttachmentPreview
+              attachments={currentAttachments}
+              isSending={isSending}
+              onRemove={(attachmentId) => removeAttachment(currentConversationKey, attachmentId)}
+            />
             {currentAttachmentError !== null && (
               <p className="chat-attachment-error" role="alert">
                 {currentAttachmentError}
