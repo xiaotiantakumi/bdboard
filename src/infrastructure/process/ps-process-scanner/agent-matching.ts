@@ -1,4 +1,4 @@
-export const AGENT_COMMAND_BASENAMES = new Set([
+const AGENT_COMMAND_BASENAMES = new Set([
   'claude',
   'claude.exe',
   'cursor-agent',
