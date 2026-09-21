@@ -1,9 +1,7 @@
 import { useRef } from 'react';
 import {
   type BoardDto,
-  type BoardCardDto,
   type Lane,
-  LANES,
   type PrBadgeDto,
   type ProjectBoardDto,
 } from '../api';
@@ -12,7 +10,6 @@ import { MOBILE_LAYOUT_MEDIA_QUERY } from '../mediaQueries';
 import {
   type BoardFilter,
   boardFilterKey,
-  EMPTY_BOARD_FILTER,
   filterBoardCards,
   isBoardFilterActive,
 } from '../boardFilter';
@@ -29,6 +26,12 @@ import {
   resolveWipLimitForLane,
   type WipLimitsOverrides,
 } from '../wip-limits';
+import {
+  applyStalledOnly,
+  hasVisibleCards as hasVisibleCardsHelper,
+  laneIndicatorCountLabel,
+  visibleLanes,
+} from './board/boardLanesHelpers';
 
 const EMPTY_PROJECT_NAMES = new Map<string, string>();
 const EMPTY_SESSION_COUNTS = new Map<string, number>();
@@ -51,45 +54,6 @@ interface BoardLanesProps {
   wipLimitsOverrides?: WipLimitsOverrides;
   /** SplitBoard ではプロジェクト ID、全体ビューでは undefined */
   wipProjectId?: string;
-}
-
-function visibleLanes(hideDone: boolean): Lane[] {
-  if (hideDone) {
-    return LANES.filter((lane) => lane !== 'done');
-  }
-  return [...LANES];
-}
-
-function applyStalledOnly(
-  cards: BoardCardDto[],
-  stalledOnly: boolean,
-): BoardCardDto[] {
-  if (!stalledOnly) {
-    return cards;
-  }
-  return cards.filter((card) => card.stalled);
-}
-
-function filterCards(
-  cards: BoardCardDto[],
-  stalledOnly: boolean,
-  filter: BoardFilter = EMPTY_BOARD_FILTER,
-): BoardCardDto[] {
-  return filterBoardCards(applyStalledOnly(cards, stalledOnly), filter);
-}
-
-function laneIndicatorCountLabel(
-  cards: BoardCardDto[],
-  unfilteredCount: number,
-  wipStatus: { limit: number; count: number; exceeded: true } | undefined,
-): string {
-  if (wipStatus?.exceeded === true) {
-    return `WIP超過: ${wipStatus.count}/${wipStatus.limit}`;
-  }
-  if (cards.length !== unfilteredCount) {
-    return `${cards.length}/${unfilteredCount}`;
-  }
-  return String(cards.length);
 }
 
 function LanesRow({
@@ -273,12 +237,9 @@ export function hasVisibleCards(
   board: BoardDto,
   hideDone: boolean,
   stalledOnly = false,
-  filter: BoardFilter = EMPTY_BOARD_FILTER,
+  filter?: BoardFilter,
 ): boolean {
-  const lanes = visibleLanes(hideDone);
-  return lanes.some((lane) =>
-    filterCards(board.lanes[lane] ?? [], stalledOnly, filter).length > 0,
-  );
+  return hasVisibleCardsHelper(board, hideDone, stalledOnly, filter);
 }
 
 interface SplitBoardProps {
