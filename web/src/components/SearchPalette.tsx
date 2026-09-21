@@ -1,27 +1,14 @@
-import {
-  type KeyboardEvent,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import { searchTickets, type TicketSearchResultDto } from '../api';
+import { useLayoutEffect, useRef, useState } from 'react';
+import type { TicketSearchResultDto } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
-import { isImeComposingKeyEvent } from '../imeGuard';
-import { filterPaletteActions, type PaletteAction } from '../paletteActions';
+import type { PaletteAction } from '../paletteActions';
 import type { RecentTicketEntry } from '../uiPersistedState';
-
-const DEBOUNCE_MS = 200;
-const SEARCH_LIMIT = 30;
-const EMPTY_RECENT_TICKETS: RecentTicketEntry[] = [];
-
-type PaletteRow =
-  | { kind: 'action'; action: PaletteAction }
-  | { kind: 'ticket'; ticket: TicketSearchResultDto }
-  | { kind: 'recent'; ticket: RecentTicketEntry };
+import { SearchResultList } from './search-palette/SearchResultList';
+import { EMPTY_RECENT_TICKETS } from './search-palette/types';
+import { useDebouncedTicketSearch } from './search-palette/useDebouncedTicketSearch';
+import { usePaletteActivation } from './search-palette/usePaletteActivation';
+import { usePaletteRows } from './search-palette/usePaletteRows';
 
 interface SearchPaletteProps {
   onClose: () => void;
@@ -45,52 +32,11 @@ export function SearchPalette({
   });
   const [query, setQuery] = useState('');
   const [ticketResults, setTicketResults] = useState<TicketSearchResultDto[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   const trimmedQuery = query.trim();
   const hasQuery = trimmedQuery.length > 0;
-
-  // actions は呼び出し元 (App.tsx) の useMemo が毎レンダー新しい参照を返して
-  // しまう場合があっても選択行がリセットされないよう、内容(id列)が前回と
-  // 同じであれば直前の参照を再利用する保険的な対策 (bdboard-t43h)。
-  // 根本原因である呼び出し元側の参照churnは別途修正済みだが、こちらは
-  // 将来同種の回帰が起きても選択行リセットに波及させないための防御。
-  const previousFilteredActionsRef = useRef<PaletteAction[]>([]);
-  const filteredActions = useMemo(() => {
-    const next = filterPaletteActions(actions, trimmedQuery);
-    const previous = previousFilteredActionsRef.current;
-    const isSameContent =
-      previous.length === next.length &&
-      previous.every((action, index) => action.id === next[index]?.id);
-    if (isSameContent) {
-      return previous;
-    }
-    previousFilteredActionsRef.current = next;
-    return next;
-  }, [actions, trimmedQuery]);
-
-  const rows = useMemo<PaletteRow[]>(() => {
-    const actionRows: PaletteRow[] = filteredActions.map((action) => ({
-      kind: 'action',
-      action,
-    }));
-
-    if (!hasQuery) {
-      const recentRows: PaletteRow[] = recentTickets.map((ticket) => ({
-        kind: 'recent',
-        ticket,
-      }));
-      return [...actionRows, ...recentRows];
-    }
-
-    const ticketRows: PaletteRow[] = ticketResults.map((ticket) => ({
-      kind: 'ticket',
-      ticket,
-    }));
-    return [...actionRows, ...ticketRows];
-  }, [filteredActions, ticketResults, hasQuery, recentTickets]);
 
   useFocusTrap({
     containerRef: panelRef,
@@ -102,88 +48,29 @@ export function SearchPalette({
     inputRef.current?.focus();
   }, []);
 
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [rows]);
+  const { filteredActions, rows, selectedIndex, setSelectedIndex } = usePaletteRows({
+    actions,
+    trimmedQuery,
+    hasQuery,
+    ticketResults,
+    recentTickets,
+  });
 
-  useEffect(() => {
-    if (!hasQuery) {
-      setTicketResults([]);
-      setIsLoading(false);
-      setError(null);
-      return;
-    }
+  useDebouncedTicketSearch({
+    hasQuery,
+    trimmedQuery,
+    setTicketResults,
+    setIsLoading,
+    setError,
+  });
 
-    let cancelled = false;
-    setIsLoading(true);
-    setError(null);
-
-    const handle = window.setTimeout(() => {
-      void searchTickets(trimmedQuery, SEARCH_LIMIT)
-        .then((hits) => {
-          if (cancelled) return;
-          setTicketResults(hits);
-          setIsLoading(false);
-        })
-        .catch((caught: unknown) => {
-          if (cancelled) return;
-          setError(
-            caught instanceof Error ? caught : new Error('検索に失敗しました'),
-          );
-          setTicketResults([]);
-          setIsLoading(false);
-        });
-    }, DEBOUNCE_MS);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [hasQuery, trimmedQuery]);
-
-  // 行の実行は selectTicket やパネル open など、自前の history エントリを push/replace しうる。
-  // 先に実行してから back() すると「たった今積まれた遷移先のエントリ」を pop してしまい、
-  // 逆に back() せずエントリを手放すと死にエントリが積み上がって
-  // useTicketDeepLink.closeDetail() の「1回 back すれば詳細が閉じる」前提を壊す (PR#303 レビュー)。
-  // そこで back() でパレットのエントリを確実に消費し、popstate の着地後に実行する。
-  const handleActivateRow = useCallback(
-    (row: PaletteRow) => {
-      requestCloseThen(() => {
-        if (row.kind === 'action') {
-          row.action.onSelect();
-        } else {
-          onSelect(row.ticket.id);
-        }
-      });
-    },
-    [requestCloseThen, onSelect],
-  );
-
-  const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    if (isImeComposingKeyEvent(event)) {
-      return;
-    }
-
-    if (event.key === 'ArrowDown' && rows.length > 0) {
-      event.preventDefault();
-      setSelectedIndex((current) => Math.min(current + 1, rows.length - 1));
-      return;
-    }
-
-    if (event.key === 'ArrowUp' && rows.length > 0) {
-      event.preventDefault();
-      setSelectedIndex((current) => Math.max(current - 1, 0));
-      return;
-    }
-
-    if (event.key === 'Enter' && rows.length > 0) {
-      event.preventDefault();
-      const row = rows[selectedIndex];
-      if (row !== undefined) {
-        handleActivateRow(row);
-      }
-    }
-  };
+  const { handleActivateRow, handleInputKeyDown } = usePaletteActivation({
+    rows,
+    selectedIndex,
+    setSelectedIndex,
+    requestCloseThen,
+    onSelect,
+  });
 
   const showEmptyTicketsMessage =
     hasQuery &&
@@ -241,9 +128,7 @@ export function SearchPalette({
           <p className="search-palette-recent-heading">最近開いたチケット</p>
         )}
 
-        {hasQuery && isLoading && (
-          <p className="loading">チケットを検索中…</p>
-        )}
+        {hasQuery && isLoading && <p className="loading">チケットを検索中…</p>}
 
         {hasQuery && !isLoading && error !== null && (
           <p className="error-message">{error.message}</p>
@@ -253,72 +138,12 @@ export function SearchPalette({
           <p className="empty-message">該当するコマンドやチケットがありません</p>
         )}
 
-        {rows.length > 0 && (
-          <ul className="search-result-list" role="listbox" aria-label="検索結果">
-            {rows.map((row, index) => {
-              if (row.kind === 'action') {
-                const { action } = row;
-                return (
-                  <li key={action.id}>
-                    <button
-                      type="button"
-                      className={`search-result-item search-result-action${index === selectedIndex ? ' selected' : ''}`}
-                      role="option"
-                      aria-selected={index === selectedIndex}
-                      onMouseEnter={() => setSelectedIndex(index)}
-                      onClick={() => handleActivateRow(row)}
-                    >
-                      <span className="search-result-group">{action.group}</span>
-                      <span className="search-result-title">{action.label}</span>
-                      {action.detail !== undefined && (
-                        <span className="search-result-detail">{action.detail}</span>
-                      )}
-                    </button>
-                  </li>
-                );
-              }
-
-              if (row.kind === 'recent') {
-                const { ticket } = row;
-                return (
-                  <li key={`recent-${ticket.id}`}>
-                    <button
-                      type="button"
-                      className={`search-result-item search-result-recent${index === selectedIndex ? ' selected' : ''}`}
-                      role="option"
-                      aria-selected={index === selectedIndex}
-                      onMouseEnter={() => setSelectedIndex(index)}
-                      onClick={() => handleActivateRow(row)}
-                    >
-                      <span className="search-result-project">{ticket.projectName}</span>
-                      <span className="search-result-id">{ticket.id}</span>
-                      <span className="search-result-title">{ticket.title}</span>
-                    </button>
-                  </li>
-                );
-              }
-
-              const { ticket } = row;
-              return (
-                <li key={ticket.id}>
-                  <button
-                    type="button"
-                    className={`search-result-item search-result-ticket${index === selectedIndex ? ' selected' : ''}`}
-                    role="option"
-                    aria-selected={index === selectedIndex}
-                    onMouseEnter={() => setSelectedIndex(index)}
-                    onClick={() => handleActivateRow(row)}
-                  >
-                    <span className="search-result-project">{ticket.projectName}</span>
-                    <span className="search-result-id">{ticket.id}</span>
-                    <span className="search-result-title">{ticket.title}</span>
-                    <span className="search-result-priority">P{ticket.priority}</span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <SearchResultList
+          rows={rows}
+          selectedIndex={selectedIndex}
+          onHoverIndex={setSelectedIndex}
+          onActivate={handleActivateRow}
+        />
       </div>
     </div>
   );
