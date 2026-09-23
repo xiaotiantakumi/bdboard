@@ -10,13 +10,26 @@ function isStringArray(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
-function parseConfig(value: unknown): ScanRootsConfig | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
+/** Outcome of parsing the on-disk JSON as a scan-roots config.
+ *  - 'ok': a well-formed config was found.
+ *  - 'absent': the JSON is a valid object but simply has no `scanRoots` key (e.g. a config.json
+ *    that only carries unrelated settings like allowRemoteAgentRuns). This is not a problem:
+ *    read() falls back to default roots silently.
+ *  - 'invalid': the JSON parsed but its shape is wrong (not an object, or `scanRoots`/
+ *    `excludePaths` present with the wrong type). This is a real problem worth a warning. */
+type ParsedConfig =
+  | { readonly kind: 'ok'; readonly config: ScanRootsConfig }
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'invalid' };
+
+function parseConfig(value: unknown): ParsedConfig {
+  if (typeof value !== 'object' || value === null) return { kind: 'invalid' };
   const record = value as Record<string, unknown>;
-  if (!isStringArray(record.scanRoots)) return undefined;
+  if (!('scanRoots' in record)) return { kind: 'absent' };
+  if (!isStringArray(record.scanRoots)) return { kind: 'invalid' };
   const excludePaths = record.excludePaths === undefined ? [] : record.excludePaths;
-  if (!isStringArray(excludePaths)) return undefined;
-  return { scanRoots: record.scanRoots, excludePaths };
+  if (!isStringArray(excludePaths)) return { kind: 'invalid' };
+  return { kind: 'ok', config: { scanRoots: record.scanRoots, excludePaths } };
 }
 
 /** Best-effort read of the raw JSON object on disk, used by write() to preserve any unrelated
@@ -57,11 +70,15 @@ export function createFileScanRootsConfigStore(filePath: string): ScanRootsConfi
         return undefined;
       }
 
-      const config = parseConfig(parsed);
-      if (config === undefined) {
+      const result = parseConfig(parsed);
+      if (result.kind === 'invalid') {
         console.warn(`bdboard: ignoring unreadable scan-roots config at ${filePath}`);
+        return undefined;
       }
-      return config;
+      if (result.kind === 'absent') {
+        return undefined;
+      }
+      return result.config;
     },
     async write(config: ScanRootsConfig): Promise<void> {
       await withConfigFileLock(filePath, async () => {
