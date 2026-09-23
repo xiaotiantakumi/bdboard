@@ -68,7 +68,7 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 }
 
 describe('getModelStats', () => {
-  it('defaults weeks to 8', () => {
+  it('defaults weeks to 8', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
 
@@ -79,11 +79,11 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { timeZone: UTC });
+    const stats = await getModelStats(cache, now, { timeZone: UTC });
     expect(stats.weeklyCloses).toHaveLength(8);
   });
 
-  it('respects weeks option', () => {
+  it('respects weeks option', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
 
@@ -94,11 +94,11 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 2, timeZone: UTC });
+    const stats = await getModelStats(cache, now, { weeks: 2, timeZone: UTC });
     expect(stats.weeklyCloses).toHaveLength(2);
   });
 
-  it('filters by projectIds', () => {
+  it('filters by projectIds', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -132,7 +132,7 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, {
+    const stats = await getModelStats(cache, now, {
       weeks: 1,
       projectIds: [projA.id],
       timeZone: UTC,
@@ -144,7 +144,7 @@ describe('getModelStats', () => {
     ]);
   });
 
-  it('deduplicates same model within one ticket for weeklyCloses', () => {
+  it('deduplicates same model within one ticket for weeklyCloses', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 13, 12);
     const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -167,11 +167,11 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 1 });
   });
 
-  it('sorts stageModelDistribution by KNOWN_STAGE_ORDER then alphabetically', () => {
+  it('sorts stageModelDistribution by KNOWN_STAGE_ORDER then alphabetically', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const closedAt = utcInstant(2026, 1, 1, 12);
@@ -203,7 +203,7 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.stageModelDistribution.map((entry) => entry.stage)).toEqual([
       'implement',
       'review',
@@ -211,7 +211,7 @@ describe('getModelStats', () => {
     ]);
   });
 
-  it('ignores tickets without models', () => {
+  it('ignores tickets without models', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 13, 12);
     const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -230,12 +230,12 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.weeklyCloses[0]?.counts).toEqual({});
     expect(stats.stageModelDistribution).toEqual([]);
   });
 
-  it('includes all closed tickets in stageModelDistribution regardless of week range', () => {
+  it('includes all closed tickets in stageModelDistribution regardless of week range', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const oldClosed = utcInstant(2020, 1, 6, 12);
@@ -255,14 +255,14 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.weeklyCloses[0]?.counts).toEqual({});
     expect(stats.stageModelDistribution).toEqual([
       { stage: 'test', counts: { 'legacy-model': 1 } },
     ]);
   });
 
-  it('creates empty counts for weeks with no data', () => {
+  it('creates empty counts for weeks with no data', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
 
@@ -273,14 +273,14 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 3, timeZone: UTC });
+    const stats = await getModelStats(cache, now, { weeks: 3, timeZone: UTC });
     expect(stats.weeklyCloses).toHaveLength(3);
     for (const entry of stats.weeklyCloses) {
       expect(entry.counts).toEqual({});
     }
   });
 
-  it('uses an explicit timezone for weekly boundaries', () => {
+  it('uses an explicit timezone for weekly boundaries', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 3);
     const mondayStart = new Date('2026-08-09T15:00:00.000Z');
@@ -300,7 +300,7 @@ describe('getModelStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getModelStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
+    const stats = await getModelStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
     expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 1 });
   });
 });
