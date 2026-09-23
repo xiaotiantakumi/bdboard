@@ -34,7 +34,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/BoardFilterBar.tsx': 250, // 現在 241
   'src/infrastructure/chat/repo-tool-catalog.ts': 230, // 現在 223
   'web/src/components/AiQuotaWidget.tsx': 220, // 現在 216
-  'src/infrastructure/transcript/jsonl-transcript-scanner.ts': 220, // 現在 212
   'src/domain/in-flight-overlap.ts': 210, // 現在 204
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
