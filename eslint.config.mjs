@@ -19,7 +19,7 @@ const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2195, // 現在 2184 (bdboard-sso1.83 第2段: ドラフト本文/添付/添付エラーの状態とハンドラを chat/chatDraftState.ts + chat/useChatDraftState.ts + chat/useChatAttachmentIngestion.ts へ抽出)
   'web/src/components/TicketDetailPanel.tsx': 690, // 現在 680 (bdboard-sso1.5: detail-header ブロックを TicketDetailHeaderSection.tsx へ、'c' キーボードショートカットを useCommentFocusShortcut.ts へ抽出)
-  'web/src/App.tsx': 635, // 現在 625 (bdboard-62p4 PR-3: 9本の useQuery と派生 useMemo/useEffect を関心ごとの web/src/hooks/useXxxData.ts へ抽出)
+  'web/src/App.tsx': 521, // 現在 511 (bdboard-62p4 第4段: ヘッダー橋渡し(GlobalBar/ViewToolbar)を AppHeader.tsx へ、オーバーレイ7点の配線を AppOverlayGroup.tsx へ、オーバーレイ開閉state+ハンドラを useAppOverlays.ts へ、Cmd/Ctrl+K・`?` の2effectを useAppKeyboardShortcuts.ts へ抽出)
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
   'web/src/components/TicketDetailPanel.test.tsx': 2774, // 現在 2764 (bdboard-sso1.5: ticketId 切替でのタイトル編集下書きクリアを検証するテストを追加)
