@@ -179,9 +179,18 @@ function makeParams(
     onClose: vi.fn(),
     onTicketViewed: vi.fn(),
     availableLabels: ['MARK-available-label'],
-    panelRef: { current: null },
-    closeButtonRef: { current: null },
-    commentTextareaRef: { current: null },
+    // panelRef/closeButtonRef/commentTextareaRef はすべて { current: null } だと
+    // toHaveBeenCalledWith が構造的に等しいと見なすため、useFocusTrap の
+    // containerRef<->initialFocusRef 取り違えや useCommentFocusShortcut への
+    // panelRef誤配線が検出できない (opus レビュー2巡目 finding A)。各 ref に
+    // 固有の current を入れて区別できるようにする(モック越しなので実要素は不要)。
+    panelRef: { current: 'MARK-panel-ref' as unknown as HTMLDivElement | null },
+    closeButtonRef: {
+      current: 'MARK-close-button-ref' as unknown as HTMLButtonElement | null,
+    },
+    commentTextareaRef: {
+      current: 'MARK-comment-textarea-ref' as unknown as HTMLTextAreaElement | null,
+    },
     ...overrides,
   };
 }

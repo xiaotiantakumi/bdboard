@@ -104,10 +104,15 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
       // confirm に同時に渡る2つの boolean (confirmingAgentRun/startRunPending) も同様。
       confirmingAgentRun: true,
       setConfirmingAgentRun: vi.fn(),
-      agentRunConfirmRef: { current: null },
-      cancelAgentRunConfirmRef: { current: null },
+      // { current: null } 同士は toEqual で構造的に等しいため、2つの ref を
+      // 取り違えても検出できない(opus レビュー2巡目 finding A)。固有の current を
+      // 入れて区別する(モック越しなので実要素は不要)。
+      agentRunConfirmRef: { current: 'MARK-agent-run-confirm-ref' },
+      cancelAgentRunConfirmRef: { current: 'MARK-cancel-agent-run-confirm-ref' },
       handleCancelAgentRun: vi.fn(),
-      startRunMutation: { mutate: vi.fn(), isPending: false, error: null },
+      // error: null のままだと「配線を忘れて null を固定で渡す」バグと本来の値が
+      // 一致してしまい検出できない(finding C)。null ではない値にしておく。
+      startRunMutation: { mutate: vi.fn(), isPending: false, error: 'MARK-start-run-error' },
     } as unknown as TicketDetailBodyProps['agentRun'],
     labels: {
       currentLabels: ['MARK-label-1'],
@@ -116,11 +121,13 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
       trimmedLabelInput: 'MARK-trimmed',
       labelSuggestions: ['MARK-suggestion'],
       // canSubmitLabel/labelMutationPending/isAddPending は同じ Section 呼び出しに
-      // 同時に渡るので、少なくとも隣接ペアが異なる値になるようにする
-      // (isAddPending <- labelMutationPending の取り違えを検出するのが目的)。
-      canSubmitLabel: false,
-      labelMutationPending: true,
-      isAddPending: false,
+      // 同時に渡る3つの boolean。boolean は2値しか取れないため3つ全部を pairwise で
+      // 区別することはできない(pigeonhole。opus レビュー2巡目 finding B)。
+      // 各 Section は素通しの配線コンポーネントで実際に boolean として評価しない
+      // ため、文字列マーカーに差し替えて完全に区別できるようにする。
+      canSubmitLabel: 'MARK-can-submit-label' as unknown as boolean,
+      labelMutationPending: 'MARK-label-mutation-pending' as unknown as boolean,
+      isAddPending: 'MARK-is-add-pending' as unknown as boolean,
       error: 'MARK-label-error',
       handleAddLabel: vi.fn(),
       handleRemoveLabel: vi.fn(),
@@ -139,8 +146,9 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
       descriptionEditing: true,
       descriptionDraft: 'MARK-desc-draft',
       setDescriptionDraft: vi.fn(),
-      canSaveDescription: false,
-      isSaving: false,
+      // canSaveDescription/isSaving も同じ理由(finding B)で文字列マーカーにする。
+      canSaveDescription: 'MARK-can-save-description' as unknown as boolean,
+      isSaving: 'MARK-is-saving' as unknown as boolean,
       error: 'MARK-desc-error',
       handleStartDescriptionEdit: vi.fn(),
       handleCancelDescriptionEdit: vi.fn(),
@@ -178,7 +186,7 @@ describe('TicketDetailBody', () => {
       onCancelAgentRun: props.agentRun.handleCancelAgentRun,
       onStartRun: expect.any(Function) as unknown,
       startRunPending: false,
-      startRunError: null,
+      startRunError: 'MARK-start-run-error',
     });
   });
 
@@ -192,9 +200,9 @@ describe('TicketDetailBody', () => {
       onLabelInputQueryChange: props.labels.setLabelInputQuery,
       trimmedLabelInput: 'MARK-trimmed',
       labelSuggestions: ['MARK-suggestion'],
-      canSubmitLabel: false,
-      labelMutationPending: true,
-      isAddPending: false,
+      canSubmitLabel: 'MARK-can-submit-label',
+      labelMutationPending: 'MARK-label-mutation-pending',
+      isAddPending: 'MARK-is-add-pending',
       error: 'MARK-label-error',
       onAddLabel: props.labels.handleAddLabel,
       onRemoveLabel: props.labels.handleRemoveLabel,
@@ -221,8 +229,8 @@ describe('TicketDetailBody', () => {
       descriptionEditing: true,
       descriptionDraft: 'MARK-desc-draft',
       onDescriptionDraftChange: props.description.setDescriptionDraft,
-      canSaveDescription: false,
-      isSaving: false,
+      canSaveDescription: 'MARK-can-save-description',
+      isSaving: 'MARK-is-saving',
       error: 'MARK-desc-error',
       onStartDescriptionEdit: props.description.handleStartDescriptionEdit,
       onCancelDescriptionEdit: props.description.handleCancelDescriptionEdit,
