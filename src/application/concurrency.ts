@@ -35,6 +35,11 @@ export class Semaphore {
   private readonly waiters: Array<() => void> = [];
 
   constructor(limit: number) {
+    // limit<=0 や NaN を渡すと acquire() が永久に解決しない静かなハングになる
+    // (opus レビューで指摘 — bdboard-se3v)。呼び出し側のバグを早期に落とす。
+    if (!Number.isFinite(limit) || limit <= 0) {
+      throw new Error(`Semaphore limit must be a positive finite number, got: ${limit}`);
+    }
     this.available = limit;
   }
 

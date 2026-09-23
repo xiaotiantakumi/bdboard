@@ -1722,6 +1722,93 @@ describe('getPrBadges: overallTimeoutMs (bdboard-se3v)', () => {
       await new Promise((resolve) => setTimeout(resolve, 250));
     },
   );
+
+  it(
+    'returns an already-cached status for one ticket even while statusGate is fully ' +
+      "occupied by a slow gh call for a different ticket (bdboard-se3v regression: " +
+      "resolvePrStatus's cache check happened only after acquiring statusGate, so a cache " +
+      'hit still queued behind an unrelated slow gh launch and could come back as ' +
+      'unfetched/null — opus review finding M1)',
+    async () => {
+      const cache = createFakeBoardCache();
+      const a = project('proj-a', '/projects/a');
+      const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+      const slowUrl = 'https://github.com/xiaotiantakumi/bdboard/pull/801';
+      const cachedUrl = 'https://github.com/xiaotiantakumi/bdboard/pull/802';
+
+      const commentReader: CommentReader = {
+        listComments: vi.fn(async (_rootPath: string, issueId: string) => [
+          {
+            id: 'c1',
+            issueId,
+            author: 'agent',
+            text: `PR: ${issueId === 'bdboard-slow-status' ? slowUrl : cachedUrl}`,
+            createdAt: updatedAt,
+          },
+        ]),
+      };
+
+      let slowShouldDelay = false;
+      const prStatusReader: PrStatusReader = {
+        getPrStatus: vi.fn(async (url: string) => {
+          if (url === slowUrl && slowShouldDelay) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          }
+          return { status: { state: 'merged', checkStatus: 'pass' } satisfies PrStatus };
+        }),
+      };
+
+      const commentCache = new PrBadgeCommentCache();
+      const statusCache = new PrBadgeStatusCache();
+
+      // 1回目の呼び出し: bdboard-cached-status だけを盤面に置いてインスタントに解決させ、
+      // cachedUrl のステータスを statusCache に乗せておく (merged は terminal なので
+      // 以降ずっとキャッシュされる)。この時点では bdboard-slow-status はまだ存在しない
+      // ので slowUrl はキャッシュされない。
+      cache.putProject({
+        project: a,
+        tickets: [
+          makeTicket({ id: 'bdboard-cached-status', projectId: a.id, commentCount: 1, updatedAt }),
+        ],
+        fingerprint: 'fp-a',
+        fetchedAt: updatedAt,
+      });
+      await getPrBadges(cache, commentReader, prStatusReader, { commentCache, statusCache });
+      expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+
+      // 2回目: bdboard-slow-status を盤面に追加する (キャッシュ未保持・gh 起動が必要)。
+      // workItems の先頭に置くことで、statusFetchConcurrency=1 の唯一の枠を先に掴む側に
+      // する。修正前の実装だと cachedUrl 側もキャッシュ確認の前に statusGate.acquire()
+      // で待たされ、50ms のタイムアウトに巻き込まれて status:null (未取得) になっていた。
+      cache.putProject({
+        project: a,
+        tickets: [
+          makeTicket({ id: 'bdboard-slow-status', projectId: a.id, commentCount: 1, updatedAt }),
+          makeTicket({ id: 'bdboard-cached-status', projectId: a.id, commentCount: 1, updatedAt }),
+        ],
+        fingerprint: 'fp-a-2',
+        fetchedAt: updatedAt,
+      });
+      slowShouldDelay = true;
+      (prStatusReader.getPrStatus as ReturnType<typeof vi.fn>).mockClear();
+      const badges = await getPrBadges(cache, commentReader, prStatusReader, {
+        commentCache,
+        statusCache,
+        statusFetchConcurrency: 1,
+        overallTimeoutMs: 50,
+      });
+
+      const cachedBadge = badges.find((badge) => badge.url === cachedUrl);
+      expect(cachedBadge).toBeDefined();
+      expect(cachedBadge?.status).toEqual({ state: 'merged', checkStatus: 'pass' });
+      // 実際に gh が起動されたのは遅い方だけ (キャッシュ済みの方は起動不要)。
+      expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+      expect(prStatusReader.getPrStatus).toHaveBeenCalledWith(slowUrl);
+
+      // バックグラウンドで走り続ける遅い gh 呼び出しが終わるまで待ってから片付ける。
+      await new Promise((resolve) => setTimeout(resolve, 550));
+    },
+  );
 });
 
 describe('PrBadgeCommentCache.prune', () => {

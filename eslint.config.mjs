@@ -29,6 +29,7 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
   'src/infrastructure/bd/bd-cli-human-decisions.test.ts': 1680, // 現在 1679
+  'src/application/board/get-pr-badges.test.ts': 1530, // 現在 1530 (bdboard-se3v: opus レビュー指摘 M1 [ステータスキャッシュ済みチケットが statusGate 待ちで巻き込まれてタイムアウトする回帰] の再現テストを追加)
 };
 
 const NON_TEST_MAX_LINES = 200;

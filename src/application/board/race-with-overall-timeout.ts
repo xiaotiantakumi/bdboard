@@ -16,9 +16,15 @@ export async function raceWithOverallTimeout(
       resolve();
     }, overallTimeoutMs);
   });
-  await Promise.race([mainWork, timeoutSignal]);
-  if (timer !== undefined) {
-    clearTimeout(timer);
+  try {
+    await Promise.race([mainWork, timeoutSignal]);
+  } finally {
+    // mainWork が reject しても timer を必ず片付ける (opus レビューで指摘 —
+    // bdboard-se3v)。runTicket は内部で失敗を握り潰すので今は起こらないはずだが、
+    // 将来 mainWork の作りが変わったときのリーク防止として finally にしておく。
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
   }
   return timedOut;
 }

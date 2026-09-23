@@ -195,6 +195,21 @@ export async function getPrBadges(
       status: null,
     });
 
+    // ステータスキャッシュに既にヒットしている場合は statusGate を消費しない
+    // (commentGate のキャッシュヒットと同じ理由: gh を起動しないのに並列枠を
+    // 1つ使うと、遅い gh 呼び出しで枠が埋まっている間、既知のステータスまで
+    // 「未取得」に劣化して返ってしまう。opus レビューで指摘 — bdboard-se3v)。
+    const cachedStatus = statusCache?.get(url);
+    if (cachedStatus !== undefined) {
+      badgesByTicket.set(ticket.id, {
+        ticketId: ticket.id,
+        projectId: entry.project.id,
+        url,
+        status: cachedStatus,
+      });
+      return;
+    }
+
     await statusGate.acquire();
     try {
       const status = await resolvePrStatus(url, {
