@@ -2,7 +2,7 @@ import fs, { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as tunnelModule from './cloudflared-tunnel.js';
+import * as startupBufferModule from './cloudflared-tunnel/startup-buffer.js';
 import {
   appendStartupOutputBuffer,
   createCloudflaredTunnel,
@@ -513,9 +513,16 @@ describe('createCloudflaredTunnel', () => {
     expect(unexpectedExit).not.toHaveBeenCalled();
   });
 
+  // bdboard-wdej: spyOn を cloudflared-tunnel.ts (再エクスポートするだけの入口) ではなく
+  // 呼び出し元が実際に import している startup-buffer.ts に向ける。vitest の ESM spy は
+  // モジュールオブジェクト経由の呼び出しだけを横取りできる — waitForTunnelUrl() は
+  // startup-buffer.js から直接 import した appendStartupOutputBuffer を呼ぶので、ここへの
+  // spy はその呼び出しを検知できる (以前は cloudflared-tunnel.ts 自身の再エクスポートを
+  // spy していたため、実装側の呼び出しを一度も検知できず expect(...).not.toHaveBeenCalled()
+  // が常に成立する vacuous pass になっていた)。
   it('does not append to the startup output buffer after the tunnel URL is settled', async () => {
     const fake = createFakeSpawnedProcess();
-    const appendSpy = vi.spyOn(tunnelModule, 'appendStartupOutputBuffer');
+    const appendSpy = vi.spyOn(startupBufferModule, 'appendStartupOutputBuffer');
     const tunnel = createCloudflaredTunnel({
       port: 8799,
       resolveExecutable: () => '/usr/bin/cloudflared',
@@ -526,6 +533,10 @@ describe('createCloudflaredTunnel', () => {
     const startPromise = tunnel.start();
     fake.emitStdout(`${TUNNEL_URL}\n`);
     await startPromise;
+
+    // settled 前は少なくとも1回呼ばれている(検知力を実質化する positive assertion。
+    // これが無いと、下の not.toHaveBeenCalled() が spy の壊れ方に関わらず常に通ってしまう)。
+    expect(appendSpy).toHaveBeenCalled();
     appendSpy.mockClear();
 
     fake.emitStdout('connection registered\n');
