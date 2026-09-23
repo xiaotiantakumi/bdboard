@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '../api';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { isLocalOnlyError } from './tunnel/tunnelHelpers';
@@ -7,11 +7,7 @@ import { useTunnelPublish } from './tunnel/useTunnelPublish';
 import { useTunnelQr } from './tunnel/useTunnelQr';
 import { useTunnelStop } from './tunnel/useTunnelStop';
 import { useTunnelDismiss } from './tunnel/useTunnelDismiss';
-import { TunnelUnavailableNotice } from './tunnel/TunnelUnavailableNotice';
-import { TunnelInterruptedNotice } from './tunnel/TunnelInterruptedNotice';
-import { TunnelPublishForm } from './tunnel/TunnelPublishForm';
-import { TunnelPublishConfirmDialog } from './tunnel/TunnelPublishConfirmDialog';
-import { TunnelOnPanel } from './tunnel/TunnelOnPanel';
+import { TunnelStatusPanel } from './tunnel/TunnelStatusPanel';
 
 export interface TunnelControlProps {
   open: boolean;
@@ -90,136 +86,6 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
     return null;
   }
 
-  let panelBody: ReactNode;
-
-  if (localOnlyNotice || (status.error !== null && isLocalOnlyError(status.error))) {
-    panelBody = (
-      <p className="tunnel-local-only">
-        この操作はローカルの画面からのみ実行できます
-      </p>
-    );
-  } else if (status.error !== null) {
-    const message =
-      status.error instanceof Error
-        ? status.error.message
-        : 'トンネル状態の取得に失敗しました';
-    panelBody = <p className="tunnel-error-message">{message}</p>;
-  } else {
-    const data = status.data;
-    const unavailable = data !== undefined && !data.available;
-    const authUnavailable = data !== undefined && data.authEnabled !== true;
-    // Never offer the publish control before the first response has told us whether
-    // cloudflared exists and whether this board is allowed to control the tunnel.
-    // The error state keeps the controls visible too, so a retry does not resend a
-    // password the user can no longer see.
-    const showOffControls =
-      data !== undefined && (data.state === 'off' || data.state === 'error');
-    const isOn = data?.state === 'on';
-    const interruptedAt =
-      data !== undefined && data.interruptedAt !== undefined && data.state !== 'on'
-        ? data.interruptedAt
-        : null;
-
-    const startDisabled =
-      unavailable ||
-      authUnavailable ||
-      isMutating ||
-      data?.state === 'starting' ||
-      isOn ||
-      publish.publishPhase === 'confirming';
-    const passwordDisabled =
-      unavailable ||
-      authUnavailable ||
-      isMutating ||
-      data?.state === 'starting' ||
-      isOn;
-    const stopDisabled = isMutating || data?.state === 'starting' || !isOn;
-
-    panelBody = (
-      <>
-      {authUnavailable && (
-        <p className="tunnel-help tunnel-error-message" role="status">
-          Basic Authが有効でないためトンネル公開はできません。
-          BDBOARD_AUTH_USERとBDBOARD_AUTH_PASSWORDを設定してください。
-        </p>
-      )}
-
-      {interruptedAt !== null && (
-        <TunnelInterruptedNotice
-          interruptedAt={interruptedAt}
-          onDismiss={() => dismiss.mutate()}
-          dismissPending={dismiss.isPending}
-        />
-      )}
-
-      {unavailable && <TunnelUnavailableNotice />}
-
-      {!unavailable && showOffControls && (
-        <>
-          <TunnelPublishForm
-            passwordInput={publish.passwordInput}
-            onPasswordChange={publish.handlePasswordChange}
-            passwordDisabled={passwordDisabled}
-            startDisabled={startDisabled}
-            authUnavailable={authUnavailable}
-            onRequestPublish={publish.handleRequestPublish}
-            startPending={publish.startMutation.isPending}
-          />
-
-          {publish.publishPhase === 'confirming' && (
-            <TunnelPublishConfirmDialog
-              confirmPanelRef={publish.confirmPanelRef}
-              cancelPublishRef={publish.cancelPublishRef}
-              startPending={publish.startMutation.isPending}
-              onCancel={publish.handleCancelPublish}
-              onConfirm={publish.handleConfirmPublish}
-            />
-          )}
-        </>
-      )}
-
-      {data?.state === 'starting' && (
-        <button type="button" className="btn" disabled>
-          起動中…
-        </button>
-      )}
-
-      {data?.state === 'on' && (
-        <TunnelOnPanel
-          writeAccess={data.writeAccess}
-          qrVisible={qr.qrVisible}
-          onQrToggle={qr.handleQrToggle}
-          tokenPending={qr.tokenMutation.isPending}
-          tokenIsError={qr.tokenMutation.isError}
-          tokenError={qr.tokenMutation.error}
-          tunnelUrl={data.url}
-          accessToken={qr.accessToken}
-          onStop={() => stop.mutate()}
-          stopDisabled={stopDisabled}
-          stopPending={stop.isPending}
-        />
-      )}
-
-      {data?.state === 'error' && (
-        <div className="tunnel-error-panel">
-          {/* Message only: the off-row above already renders the password field
-              and the publish button, so retrying here would be a second button
-              that submits a password the user cannot see. */}
-          <p className="tunnel-error-message">{data.message}</p>
-        </div>
-      )}
-
-      {publish.validationError !== null && (
-        <p className="tunnel-error-message">{publish.validationError}</p>
-      )}
-
-      {actionError !== null && (
-        <p className="tunnel-error-message">{actionError}</p>
-      )}
-      </>
-    );
-  }
-
   return (
     <div
       className="overlay tunnel-modal-overlay"
@@ -250,7 +116,19 @@ export function TunnelControl({ open, onClose }: TunnelControlProps) {
         </div>
 
         <div className="tunnel-modal-body">
-          <div className="tunnel-control header-group">{panelBody}</div>
+          <div className="tunnel-control header-group">
+            <TunnelStatusPanel
+              localOnlyNotice={localOnlyNotice}
+              statusError={status.error}
+              statusData={status.data}
+              isMutating={isMutating}
+              dismiss={dismiss}
+              publish={publish}
+              qr={qr}
+              stop={stop}
+              actionError={actionError}
+            />
+          </div>
         </div>
       </aside>
     </div>
