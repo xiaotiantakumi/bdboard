@@ -21,6 +21,31 @@ import {
   isValidAllowlistEntry,
   parseCommitsFromGitLog,
 } from './check-commit-parse.mjs';
+import * as CheckCommitParseModule from './check-commit-parse.mjs';
+
+// ---- export surface: bdboard-sso1.63 のモジュール分割で公開面が変わっていないことの固定 ----
+describe('check-commit-parse.mjs export surface', () => {
+  it('exposes exactly the expected public API', () => {
+    expect(Object.keys(CheckCommitParseModule).sort()).toEqual(
+      [
+        'KNOWN_UNPARSABLE',
+        'checkCommitMessage',
+        'isChangelogRelevant',
+        'isValidAllowlistEntry',
+        'findUnparsableCommits',
+        'escapeControlChars',
+        'caretLine',
+        'formatFindings',
+        'parseCommitsFromGitLog',
+        'readLastReleaseVersion',
+        'resolveDefaultBase',
+        'formatFallbackNotice',
+        'resolveRange',
+        'loadCommitsInRange',
+      ].sort(),
+    );
+  });
+});
 
 // fixture は行:列を byte 単位で再現する検証対象なので、CRLF に変換されていると
 // 桁がずれてアサーションが落ちる。.gitattributes で eol=lf を固定しているが、

@@ -31,7 +31,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'web/src/components/TunnelControl.tsx': 230, // 現在 224 (bdboard-sso1.35: 純ヘルパー/表示部品/関心別フックを web/src/components/tunnel/ へ移動)
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
-  'scripts/check-commit-parse.mjs': 380, // 現在 380
   'src/infrastructure/process/cloudflared-tunnel.ts': 220, // 現在 213 (bdboard-sso1.54: ./cloudflared-tunnel/*.ts へ関心別分割。createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   'web/src/api/chat.ts': 280, // 現在 279
   'src/application/tunnel/tunnel-service.ts': 215, // 現在 205 (bdboard-sso1.64: ./tunnel-service/*.ts へ関心別分割。createTunnelService() 本体は可変状態を共有するクロージャ群のため分割せず残した)
