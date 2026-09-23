@@ -5,12 +5,23 @@ import {
   type UseTicketFormResetParams,
 } from './useTicketFormReset';
 
-// このフックの不変条件は「ticketId/projectRootPath が変わったときだけ
-// リセットが走ること」と「決まった順序でリセットが呼ばれること」の2つ。
-// 前者を崩すと (a) チケットを開くたびに無関係な再レンダーでも下書きが
-// 消える、後者を崩すと agentRun 以外のセクションで復元順序が乱れる。
+// このテストで固定する不変条件は2つ:
+// 1. ticketId/projectRootPath が実際に変わったときだけリセットが走ること。
+//    これが崩れると、パネルを開いたまま起きる無関係な再レンダーのたびに、
+//    入力中の下書きが消えてしまう。
+// 2. 9つの reset が元の resetFormState と同じ順序で呼ばれること。
+//    各 reset は互いに独立した state 更新で、呼び出し順序そのものが機能的に
+//    必須というわけではない。ここで順序を固定するのは、move-only で抽出した
+//    元のコードをそのまま裏付け、将来の変更で意図せず順序が変わったときに
+//    気付けるようにするため。
 // TicketDetailPanel.tsx から抽出する前の resetFormState + useEffect の
-// 挙動をそのまま検証する (bdboard-sso1.5)。
+// 挙動をそのまま検証する (bdboard-sso1.5)。パネル本体の ticketId prop 変化で
+// 実際にこのフックが正しく配線されていることは
+// TicketDetailPanel.test.tsx の「clears an in-progress, unsaved title edit
+// when the panel switches to a different ticket」で確認する
+// (UseTicketFormResetParams は全フィールドが同じ `() => void` 型なので、
+// ここでのモック関数テストだけでは配線ミス — 例えば resetTitleEditing に
+// resetDescriptionEditing を渡す間違い — を検出できないため)。
 
 function makeParams(
   overrides: Partial<UseTicketFormResetParams> = {},
@@ -120,12 +131,35 @@ describe('useTicketFormReset', () => {
     expect(params.resetLabelInput).toHaveBeenCalledTimes(2);
   });
 
-  it('does not touch an agentRun reset — this hook takes no such param', () => {
-    // 型レベルの保証: UseTicketFormResetParams に agentRun 由来のフィールドが
-    // 無いことをコンパイル時に確認する (PR-L の effect 順序リグレッションの
-    // 再発防止。実行時の重複呼び出しをテストする対象が無いため、意図を
-    // ドキュメントする以外の意味は無い)。
-    const params = makeParams();
-    expect(Object.keys(params)).not.toContain('resetAgentRun');
+  it('re-runs the reset when projectRootPath goes from undefined to a value (first data arrival)', () => {
+    // 実際のマウント直後によく起きる遷移: data がまだ無い間は
+    // projectRootPath === undefined、ticket が届いた瞬間に文字列へ変わる
+    // (TicketDetailPanel.tsx の `projectRootPath = data === undefined ? undefined
+    // : projectRootPaths.get(data.projectId)` 参照)。'/repo-a' → '/repo-b' の
+    // ケースとは違う経路 (undefined から実値への遷移) も deps 配列に
+    // 正しく反応することを別途確認する。
+    const params = makeParams({ projectRootPath: undefined });
+    const { rerender } = renderHook(
+      (props: UseTicketFormResetParams) => useTicketFormReset(props),
+      { initialProps: params },
+    );
+
+    expect(params.resetDependencies).toHaveBeenCalledTimes(1);
+
+    rerender({ ...params, projectRootPath: '/repo' });
+
+    expect(params.resetDependencies).toHaveBeenCalledTimes(2);
   });
 });
+
+// 型レベルの保証: UseTicketFormResetParams に agentRun 由来のフィールド
+// (例: resetAgentRun) が追加されたら、この行で `npm run build:web` の
+// tsc --noEmit がコンパイルエラーとして検出する。PR-L の effect 順序
+// リグレッション(このフックが agentRun の reset/復元に触れると再発するクラスの
+// バグ)の再発防止。実行時アサーションではなく型だけの仕掛けなので、
+// vitest 上は何も検証しない(失敗するとすればビルド時)。
+type AgentRunFieldMustNotExist =
+  'resetAgentRun' extends keyof UseTicketFormResetParams ? never : true;
+// eslint の unused-vars を避けるためだけの最小参照。実行時の意味は無い。
+const _agentRunFieldGuard: AgentRunFieldMustNotExist = true;
+void _agentRunFieldGuard;

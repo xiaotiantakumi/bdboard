@@ -15,13 +15,18 @@
 // 呼ぶと、キャッシュ済みの実行中 run の復元を再びリセットで巻き戻してしまう。
 // このフックは今後も agentRun には一切触れないこと。
 //
-// 呼び出し位置の制約: React の effect 実行順は「レンダー中にどの位置でこの
-// フックが呼ばれたか」で決まる。呼び出し元 (TicketDetailPanel) では、各
-// セクションのフック (title/description/labels/dependencies/comment/
-// sessionLink/quickActions/decision) を呼び出した後、元の resetFormState
-// useEffect があった位置と同じ場所でこのフックを呼ぶこと。位置を動かすと
-// 「まず各下書きをリセット→その後に復元処理が走る」という宣言順に基づく
-// 順序保証(bdboard-sso1.5 PR-L のコメント参照)が壊れうる。
+// 呼び出し位置の制約: このフックの引数(各セクションフックの reset)は呼び出し元
+// (TicketDetailPanel)側で先に宣言されている必要があるため、各セクションのフック
+// (title/description/labels/dependencies/comment/sessionLink/quickActions/
+// decision)を呼び出した後でしか呼べない(TDZ)。それより後ろへ動かすこと自体は
+// 型上は可能だが、元の resetFormState useEffect があった位置(useFocusTrap の
+// 直前)からは動かさないこと — React の effect 実行順は「レンダー中にどの位置で
+// 呼ばれたか」で決まるため、動かすと他の effect との相対順序が変わりうる。
+// なお agentRun (useTicketAgentRun) はこのフックと無関係に自分の reset/復元を
+// 内部の2つの effect の順序だけで保証している(呼び出し位置は :162、このフックの
+// 前後どちらでも影響しない)ので、「このフックと agentRun の間の順序」自体は
+// 不変条件ではない。不変条件はあくまで「このフック内の9つの reset の呼び出し順」
+// と「useEffect の依存配列の中身」。
 import { useCallback, useEffect } from 'react';
 
 export interface UseTicketFormResetParams {
