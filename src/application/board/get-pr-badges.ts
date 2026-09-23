@@ -1,7 +1,5 @@
 import { compareStrings } from '../../domain/compare.js';
-import { extractLatestPrUrl, type PrBadge } from '../../domain/pr-link.js';
-import { hasCloseEvidenceMarker } from './close-evidence-marker.js';
-import { Semaphore } from '../concurrency.js';
+import type { PrBadge } from '../../domain/pr-link.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { CommentReader } from '../ports/comment-reader.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
@@ -10,6 +8,7 @@ import { describeFetchFailures, type FetchFailure } from './fetch-failure-log.js
 import type { PrBadgeCommentCache } from './pr-badge-comment-cache.js';
 import type { PrBadgeStatusCache } from './pr-badge-status-cache.js';
 import { resolvePrStatus, type PrStatusBudget } from './resolve-pr-status.js';
+import { resolvePrCommentUrl } from './resolve-pr-comment-url.js';
 import { raceWithOverallTimeout } from './race-with-overall-timeout.js';
 
 // 後方互換のため re-export する (hygiene-routes.ts / hygiene-status-routes.ts /
@@ -18,6 +17,11 @@ import { raceWithOverallTimeout } from './race-with-overall-timeout.js';
 // 分割したが、呼び出し側の import パスは変えていない)。
 export { PrBadgeCommentCache } from './pr-badge-comment-cache.js';
 export { PrBadgeStatusCache, type PrBadgeStatusCacheOptions } from './pr-badge-status-cache.js';
+// bdboard-sgpa: commentGate/statusGate 型と生成関数は行数上限対応で pr-badge-gates.ts に
+// 切り出した (move only)。pr-links-routes.ts / テストがこのファイルから import している
+// ため、後方互換で re-export する。
+export { createPrBadgeGates, type PrBadgeGates } from './pr-badge-gates.js';
+import { createPrBadgeGates, type PrBadgeGates } from './pr-badge-gates.js';
 
 export interface GetPrBadgesOptions {
   readonly projectIds?: readonly string[];
@@ -39,7 +43,9 @@ export interface GetPrBadgesOptions {
    * worker 内で直列に実行され、事実上ステータス取得もコメント取得と同じ並列数
    * (COMMENT_FETCH_CONCURRENCY=3) でしか起動できなかった。gh はネットワーク越しの
    * プロセス起動でボトルネックの本体なので、ここだけ高い並列数を持たせて短縮する
-   * (際限なく並列にはしない —— 上限は残す)。未指定なら DEFAULT_STATUS_FETCH_CONCURRENCY。
+   * (際限なく並列にはしない —— 上限は残す)。`gates` を渡した場合はそちらの並列数が
+   * 優先され、このオプションは無視される (bdboard-sgpa)。未指定なら
+   * DEFAULT_STATUS_FETCH_CONCURRENCY。
    */
   readonly statusFetchConcurrency?: number;
   /**
@@ -50,18 +56,21 @@ export interface GetPrBadgesOptions {
    * 温めて次回の呼び出しに備える。未指定ならタイムアウトなし (完了まで待つ、従来通り)。
    */
   readonly overallTimeoutMs?: number;
+  /**
+   * commentGate/statusGate をリクエストをまたいで共有するための注入口 (bdboard-sgpa)。
+   * 未指定なら呼び出しごとに新しい Semaphore ペアを作る (従来通り — テストや単発呼び出し
+   * はこれで十分)。/api/pr-links のように短い間隔で重なりうる呼び出し元は、
+   * createPrBadgeGates() で1組だけ作ってルートの寿命で使い回すこと。そうしないと、
+   * 重なった呼び出しそれぞれが独立した Semaphore を持ってしまい、意図した同時実行上限が
+   * 「1呼び出しあたり」にしか効かなくなる (重なった呼び出しの数だけ実質的な gh/bd 起動数
+   * の上限が掛け算される)。
+   */
+  readonly gates?: PrBadgeGates;
 }
-
-// Matches DEFAULT_CONCURRENCY in bd-cli-issue-repository.ts.
-const COMMENT_FETCH_CONCURRENCY = 3;
 
 // 1回の getPrBadges 呼び出しで新規に起動する gh の上限 (bdboard-7ln6 #6)。
 // in-flight 共有で乗っかれるものはこの上限を消費しない。
 const DEFAULT_MAX_NEW_FETCHES_PER_CALL = 20;
-
-// gh pr view (ステータス取得) 専用の既定並列数。GetPrBadgesOptions.statusFetchConcurrency
-// の説明を参照 (bdboard-se3v)。
-const DEFAULT_STATUS_FETCH_CONCURRENCY = 8;
 
 interface CommentFetchItem {
   readonly entry: CachedProject;
@@ -92,8 +101,6 @@ export async function getPrBadges(
   const commentCache = options?.commentCache;
   const statusCache = options?.statusCache;
   const maxNewFetchesPerCall = options?.maxNewFetchesPerCall ?? DEFAULT_MAX_NEW_FETCHES_PER_CALL;
-  const statusFetchConcurrency =
-    options?.statusFetchConcurrency ?? DEFAULT_STATUS_FETCH_CONCURRENCY;
   const overallTimeoutMs = options?.overallTimeoutMs;
   const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
 
@@ -117,14 +124,38 @@ export async function getPrBadges(
   // 未取得」を素直に表現できる (status:null は元々失敗/rate-limit/予算切れでも使っていた
   // 値であり、意味は変えない)。
   const badgesByTicket = new Map<string, PrBadge>();
+
+  // bdboard-3znc: commentCount>0 の全チケットに、処理開始前に「未取得」プレースホルダ
+  // (url:null, status:null) をあらかじめ置いておく。以前は URL 解決が終わったチケットに
+  // だけ Map エントリが入る設計だったため、全体タイムアウトがコメント走査の完了前
+  // (ゲート待ちで一度も bd を起動できていない段階) に来たチケットは Map に一切
+  // エントリが無いまま応答へスナップショットされ、「PR が無いチケット」と応答上
+  // 区別が付かなかった。runTicket は解決が終わり次第このプレースホルダを実際の結果で
+  // 上書きするか (PR あり)、削除する (PR 無し/コメント取得失敗) —— 何もしなければ
+  // 「commentCount>0 だが時間内に走査できなかった」ことがそのまま url:null として
+  // 応答に残る。url:null は「PR が無い」ではなく「まだ分からない」を表す新しい意味で、
+  // 既存の status:null (「URL は分かっているが状態が未取得」) の意味は変えていない。
+  for (const { entry, ticket } of workItems) {
+    badgesByTicket.set(ticket.id, {
+      ticketId: ticket.id,
+      projectId: entry.project.id,
+      url: null,
+      status: null,
+    });
+  }
+
   // 握り潰しの理由と、1行にまとめる理由は fetch-failure-log.ts を参照 (bdboard-fxxk)。
   const commentFailures: FetchFailure[] = [];
   const statusFailures: FetchFailure[] = [];
   let statusAttempts = 0;
   const statusBudget: PrStatusBudget = { remaining: maxNewFetchesPerCall };
   let deferredFetchCount = 0;
-  const commentGate = new Semaphore(COMMENT_FETCH_CONCURRENCY);
-  const statusGate = new Semaphore(statusFetchConcurrency);
+  // bdboard-sgpa: 呼び出し元が gates を渡していれば (/api/pr-links のようにリクエストを
+  // またいで共有したい場合) それを使う。渡さなければ従来通りこの呼び出し専用の
+  // Semaphore ペアを作る (テストや単発呼び出しはこちらで十分 —— 挙動は分割前と同じ)。
+  const { commentGate, statusGate } =
+    options?.gates ??
+    createPrBadgeGates({ statusFetchConcurrency: options?.statusFetchConcurrency });
 
   const logCompletionWarnings = (): void => {
     if (commentFailures.length > 0) {
@@ -147,44 +178,31 @@ export async function getPrBadges(
     }
   };
 
-  // 1チケットぶんの処理単位: URL 解決 (bd 経由) → 分かればステータス解決 (gh 経由) を
-  // 直列に行うが、どちらも専用のセマフォで別々に同時実行数を絞るだけで、全チケットの
-  // worker 自体は最初から並行に起動する (bdboard-se3v)。以前は「全チケットのURL解決
-  // (Pass 1) が終わってから全チケットのステータス解決 (Pass 2) を始める」という2段
-  // 構成だったが、実データで計測すると Pass 1 (bd 経由のコメント走査、
-  // COMMENT_FETCH_CONCURRENCY=3 で有界) だけで overallTimeoutMs を使い切ってしまい、
-  // gh が1件も起動できないまま毎回タイムアウトするケースが確認できた
-  // (ボード全体のチケット数が多いと bd 側の走査だけで数秒かかるため)。commentGate/
-  // statusGate それぞれの acquire は実際に処理を投げる直前に行われるので、サーキット
-  // ブレーカーやキャッシュの状態は dispatch のたびに再評価される (トリップ直後に
-  // 投げられる分だけを確実に止められる、という従来の性質を維持する)。
+  // 1チケットぶんの処理単位: URL 解決 (bd 経由・resolve-pr-comment-url.ts) → 分かれば
+  // ステータス解決 (gh 経由) を直列に行うが、どちらも専用のセマフォで別々に同時実行数を
+  // 絞るだけで、全チケットの worker 自体は最初から並行に起動する (bdboard-se3v)。以前は
+  // 「全チケットのURL解決 (Pass 1) が終わってから全チケットのステータス解決 (Pass 2) を
+  // 始める」という2段構成だったが、実データで計測すると Pass 1 だけで overallTimeoutMs を
+  // 使い切ってしまい、gh が1件も起動できないまま毎回タイムアウトするケースが確認できた。
+  // commentGate/statusGate それぞれの acquire は実際に処理を投げる直前に行われるので、
+  // サーキットブレーカーやキャッシュの状態は dispatch のたびに再評価される。
   const runTicket = async ({ entry, ticket }: CommentFetchItem): Promise<void> => {
-    const updatedAtMs = ticket.updatedAt.getTime();
-    const cachedUrl = commentCache?.get(ticket.id, ticket.commentCount, updatedAtMs);
     let url: string | null;
-
-    if (cachedUrl !== undefined) {
-      // キャッシュヒットは実際の bd 呼び出しが無いので commentGate を消費しない
-      // (以前は Pass 1 全体が1本の runWithConcurrencyLimit だったため、キャッシュ
-      // ヒットでも並列枠を1つ使っていた —— 使わない方が正しい)。
-      url = cachedUrl;
-    } else {
-      await commentGate.acquire();
-      try {
-        const comments = await commentReader.listComments(entry.project.rootPath, ticket.id);
-        url = extractLatestPrUrl(comments);
-        const hasCloseEvidence = comments.some((c) => hasCloseEvidenceMarker(c.text));
-        commentCache?.set(ticket.id, ticket.commentCount, updatedAtMs, url, hasCloseEvidence);
-      } catch (error) {
-        // コメントが読めないチケットは飛ばす。そのチケットのバッジは出ない。
-        commentFailures.push({ id: ticket.id, error });
-        return;
-      } finally {
-        commentGate.release();
-      }
+    try {
+      url = await resolvePrCommentUrl(entry, ticket, { commentReader, commentCache, commentGate });
+    } catch (error) {
+      // コメントが読めないチケットは飛ばす。そのチケットのバッジは出ない (bdboard-3znc の
+      // プレースホルダも「未取得」ではなくここで削除する —— 失敗は「まだ分からない」では
+      // なく既存契約通り「バッジ無し」のまま)。
+      commentFailures.push({ id: ticket.id, error });
+      badgesByTicket.delete(ticket.id);
+      return;
     }
 
     if (url === null) {
+      // コメント走査は終わったが PR は無かった —— 「未取得」ではなく「バッジ無し」
+      // なので、プレースホルダを消す (bdboard-3znc)。
+      badgesByTicket.delete(ticket.id);
       return;
     }
 

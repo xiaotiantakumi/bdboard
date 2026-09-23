@@ -12,7 +12,13 @@ export interface PrStatus {
 export interface PrBadge {
   readonly ticketId: TicketId;
   readonly projectId: string;
-  readonly url: string;
+  /**
+   * コメントから抽出した最新の PR URL。null は「PR が無い」ではなく「まだ分からない」
+   * を表す —— commentCount>0 のチケットの時間予算内にコメント走査が完了しなかった場合
+   * (bdboard-3znc)。PR が無いと判明したチケットはそもそもバッジ自体を出さない
+   * (getPrBadges の戻り値に含まれない)。
+   */
+  readonly url: string | null;
   /** gh呼び出しが成功して状態が分かったときだけ非null。取得不可/失敗時はnull(URLだけのバッジになる) */
   readonly status: PrStatus | null;
 }
