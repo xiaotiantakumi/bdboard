@@ -1,13 +1,11 @@
 import { z } from 'zod';
-import { isValidBdTicketId } from '../../../domain/chat.js';
+import { CONTROL_CHAR_PATTERN, isValidBdTicketId } from '../../../domain/chat.js';
 
 /**
  * bdboard-sso1.71: repo-tool-catalog.ts のモジュール分割で切り出した、入力検証用の
  * zod スキーマ群。./args-builder.ts の buildRepoToolArgs() からのみ使う内部実装で、
  * バレル (../repo-tool-catalog.ts) からは re-export しない。
  */
-
-const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
 
 /**
  * 対象 ref。既定は origin/main だが、既定ブランチが master のリポジトリでも
