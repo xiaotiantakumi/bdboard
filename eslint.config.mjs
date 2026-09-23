@@ -22,7 +22,7 @@ const MAX_LINES_ALLOWLIST = {
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/App.tsx': 941, // 現在 931 (bdboard-62p4 PR-1: ボードフィルタ state を useBoardFilterState.ts へ集約)
   // テスト (1500 行超)
-  'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
+  'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
   'src/application/board/get-pr-badges.test.ts': 1530, // 現在 1530 (bdboard-se3v: opus レビュー指摘 M1 [ステータスキャッシュ済みチケットが statusGate 待ちで巻き込まれてタイムアウトする回帰] の再現テストを追加)

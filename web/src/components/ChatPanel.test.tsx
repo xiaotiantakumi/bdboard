@@ -6300,6 +6300,36 @@ describe('ChatPanel', () => {
     );
   });
 
+  it('cancels an inline thread rename via Escape without saving (bdboard-sso1.83)', async () => {
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+    const { container } = renderChatPanel([PROJECT_A]);
+
+    const menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: 'リネーム' }));
+
+    const renameInput = screen.getByLabelText('スレッド「first thread」の新しいタイトル');
+    await user.clear(renameInput);
+    await user.type(renameInput, 'discarded edit');
+    fireEvent.keyDown(renameInput, { key: 'Escape' });
+
+    // Escape はリネームモードを閉じるだけで保存しない。
+    expect(updateChatThreadMock).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('スレッド「first thread」の新しいタイトル')).not.toBeInTheDocument();
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+    ).toBeInTheDocument();
+  });
+
   it('toggles thread pin state immediately', async () => {
     const user = userEvent.setup();
     fetchChatThreadsMock.mockResolvedValue([
