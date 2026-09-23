@@ -34,7 +34,6 @@ const MAX_LINES_ALLOWLIST = {
   'scripts/check-commit-parse.mjs': 380, // 現在 380
   'src/infrastructure/process/cloudflared-tunnel.ts': 220, // 現在 213 (bdboard-sso1.54: ./cloudflared-tunnel/*.ts へ関心別分割。createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   'web/src/api/chat.ts': 280, // 現在 279
-  'src/interface/http/basic-auth.ts': 270, // 現在 262
   'src/interface/http/hygiene-routes.ts': 250, // 現在 247
   'src/application/tunnel/tunnel-service.ts': 250, // 現在 245
   'web/src/components/BoardFilterBar.tsx': 250, // 現在 241
