@@ -105,7 +105,6 @@ async function advanceInAct(ms: number): Promise<'advanced' | 'aborted'> {
 // これは vi.useRealTimers() の順序で解消する問題ではない。呼び出し側は 'aborted' を受けたら必ず
 // return すること。続行すると timeout 済みのテスト本体が再開し、後続テストの DOM とモック呼び出し
 // 回数を汚染する（実測では return 無しだと起点を含む失敗が 1 件ではなく 3 件残った）。
-
 describe('TicketDetailPanel agent run', () => {
   let user: ReturnType<typeof userEvent.setup>;
 
