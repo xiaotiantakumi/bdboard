@@ -2,7 +2,7 @@ import fs, { mkdtempSync, existsSync, readFileSync, rmSync, writeFileSync } from
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import * as tunnelModule from './cloudflared-tunnel.js';
+import * as startupBufferModule from './cloudflared-tunnel/startup-buffer.js';
 import {
   appendStartupOutputBuffer,
   createCloudflaredTunnel,
@@ -13,6 +13,10 @@ import {
 import { createFakeSpawnedProcess } from './cloudflared-tunnel.test-support.js';
 
 const TUNNEL_URL = 'https://example-abc.trycloudflare.com';
+// A distinct URL for a stale/already-stopped process's output, so a test that
+// leaks it into a later session's buffer resolves with the WRONG url instead of
+// silently matching TUNNEL_URL by coincidence.
+const STALE_URL = 'https://stale-zzz.trycloudflare.com';
 
 function createFakeLogSink(): LogSink & { readonly lines: string[]; closed: boolean } {
   const sink = {
@@ -228,6 +232,154 @@ describe('createCloudflaredTunnel', () => {
     await expectation;
   });
 
+  // bdboard-sso1.57: タイムアウトの fail() は reject の前に stop() を呼ぶ(状態オブジェクトの
+  // kill 経路を通す)。分割後もこの順序(タイムアウト検出 -> kill -> reject)が保たれている
+  // ことを固定する。
+  it('kills the process via stop() when the start timeout fires', async () => {
+    vi.useFakeTimers();
+    const killSignals: Array<NodeJS.Signals | undefined> = [];
+    const fake = createFakeSpawnedProcess({
+      onKill: (signal) => {
+        killSignals.push(signal);
+      },
+    });
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/bin/cloudflared',
+      spawnFn: () => fake,
+      startTimeoutMs: 1000,
+      stopGraceMs: 100,
+      createLogSink: () => createFakeLogSink(),
+    });
+
+    const startPromise = tunnel.start();
+    const expectation = expect(startPromise).rejects.toThrow(
+      'timed out waiting for cloudflared tunnel URL',
+    );
+
+    // The start timeout fires here; fail() calls stop() synchronously before
+    // awaiting, so the SIGTERM is already visible right after this advance.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(killSignals).toEqual(['SIGTERM']);
+
+    // stop()'s own grace timer has to elapse (no close/error event ever fires on
+    // this fake) before fail()'s `stop().finally(...)` can reject startPromise.
+    await vi.advanceTimersByTimeAsync(100);
+    await expectation;
+  });
+
+  // bdboard-sso1.57: URL 検出前にプロセスが閉じた場合、wait-for-tunnel-url.ts の close
+  // ハンドラが settled=false を見て fail() する経路。分割前と同じ文言・タイミングで
+  // reject することを固定する(この経路は分割前は既存テストでカバーされていなかった)。
+  it('rejects when the process exits before ever publishing a URL', async () => {
+    vi.useFakeTimers();
+    const fake = createFakeSpawnedProcess();
+    const sink = createFakeLogSink();
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/bin/cloudflared',
+      spawnFn: () => fake,
+      createLogSink: () => sink,
+      stopGraceMs: 50,
+    });
+
+    const startPromise = tunnel.start();
+    const expectation = expect(startPromise).rejects.toThrow(
+      'cloudflared exited before publishing a URL (code=1)',
+    );
+
+    fake.emitClose(1);
+    expect(sink.closed).toBe(true);
+
+    // The close handler's fail() path also runs stop() (SIGTERM, no reply from this
+    // fake), so its grace timer needs to elapse before startPromise rejects.
+    await vi.advanceTimersByTimeAsync(50);
+    await expectation;
+  });
+
+  // bdboard-sso1.57: stop() を分割した状態オブジェクト経由でも、実行中に2回連続で
+  // 呼んだ場合に SIGTERM が2回飛ばないことを固定する。1回目の同期部分 (state.child を
+  // null に戻す) が完了してから2回目が呼ばれるため、2回目は即座に no-op で解決する。
+  it('does not send a second SIGTERM when stop() is called twice while running', async () => {
+    vi.useFakeTimers();
+    const killSignals: Array<NodeJS.Signals | undefined> = [];
+    const fake = createFakeSpawnedProcess({
+      onKill: (signal) => {
+        killSignals.push(signal);
+      },
+    });
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/bin/cloudflared',
+      spawnFn: () => fake,
+      stopGraceMs: 500,
+      createLogSink: () => createFakeLogSink(),
+    });
+
+    const startPromise = tunnel.start();
+    fake.emitStdout(`${TUNNEL_URL}\n`);
+    await vi.advanceTimersByTimeAsync(0);
+    await startPromise;
+
+    const firstStop = tunnel.stop();
+    expect(killSignals).toEqual(['SIGTERM']);
+
+    // second call races the first: state.child is already null by the time this
+    // runs, so it must resolve without touching the (already-stopped) process again.
+    const secondStop = tunnel.stop();
+    await expect(secondStop).resolves.toBeUndefined();
+
+    fake.emitClose(0);
+    await firstStop;
+
+    expect(killSignals).toEqual(['SIGTERM']);
+  });
+
+  // bdboard-sso1.57: kill 後、古い(切り離された)プロセスハンドルにまだ張られている
+  // stdout ハンドラが、新しい start() のセッション状態 (state.outputBuffer /
+  // 予期しない終了通知) を汚染しないことを固定する。runtime-state.ts への一本化で
+  // 「今どのプロセスを追跡しているか」の判定を誤ると壊れる経路。
+  it('ignores output from a stale process handle after stop() and a subsequent start()', async () => {
+    vi.useFakeTimers();
+    const firstFake = createFakeSpawnedProcess();
+    const secondFake = createFakeSpawnedProcess();
+    let callCount = 0;
+    const tunnel = createCloudflaredTunnel({
+      port: 8799,
+      resolveExecutable: () => '/usr/bin/cloudflared',
+      spawnFn: () => {
+        callCount += 1;
+        return callCount === 1 ? firstFake : secondFake;
+      },
+      createLogSink: () => createFakeLogSink(),
+      stopGraceMs: 50,
+    });
+
+    const firstStart = tunnel.start();
+    firstFake.emitStdout(`${TUNNEL_URL}\n`);
+    await firstStart;
+
+    const stopPromise = tunnel.stop();
+    await vi.advanceTimersByTimeAsync(50);
+    await stopPromise;
+
+    const unexpectedExit = vi.fn();
+    tunnel.onUnexpectedExit?.(unexpectedExit);
+
+    const secondStart = tunnel.start();
+
+    // Stale output from the already-stopped first process must not resolve the
+    // in-flight second start() (with the wrong, stale URL) or otherwise affect it.
+    // Using a URL distinct from TUNNEL_URL means a leak would make the final
+    // assertion below fail with the stale URL instead of passing by coincidence.
+    firstFake.emitStdout(`${STALE_URL}\n`);
+    firstFake.emitClose(0);
+    expect(unexpectedExit).not.toHaveBeenCalled();
+
+    secondFake.emitStdout(`${TUNNEL_URL}\n`);
+    await expect(secondStart).resolves.toEqual({ url: TUNNEL_URL });
+  });
+
   it('sends SIGTERM then SIGKILL on stop', async () => {
     vi.useFakeTimers();
     const killSignals: Array<NodeJS.Signals | undefined> = [];
@@ -369,9 +521,16 @@ describe('createCloudflaredTunnel', () => {
     expect(unexpectedExit).not.toHaveBeenCalled();
   });
 
+  // bdboard-wdej: spyOn を cloudflared-tunnel.ts (再エクスポートするだけの入口) ではなく
+  // 呼び出し元が実際に import している startup-buffer.ts に向ける。vitest の ESM spy は
+  // モジュールオブジェクト経由の呼び出しだけを横取りできる — waitForTunnelUrl() は
+  // startup-buffer.js から直接 import した appendStartupOutputBuffer を呼ぶので、ここへの
+  // spy はその呼び出しを検知できる (以前は cloudflared-tunnel.ts 自身の再エクスポートを
+  // spy していたため、実装側の呼び出しを一度も検知できず expect(...).not.toHaveBeenCalled()
+  // が常に成立する vacuous pass になっていた)。
   it('does not append to the startup output buffer after the tunnel URL is settled', async () => {
     const fake = createFakeSpawnedProcess();
-    const appendSpy = vi.spyOn(tunnelModule, 'appendStartupOutputBuffer');
+    const appendSpy = vi.spyOn(startupBufferModule, 'appendStartupOutputBuffer');
     const tunnel = createCloudflaredTunnel({
       port: 8799,
       resolveExecutable: () => '/usr/bin/cloudflared',
@@ -382,6 +541,10 @@ describe('createCloudflaredTunnel', () => {
     const startPromise = tunnel.start();
     fake.emitStdout(`${TUNNEL_URL}\n`);
     await startPromise;
+
+    // settled 前は少なくとも1回呼ばれている(検知力を実質化する positive assertion。
+    // これが無いと、下の not.toHaveBeenCalled() が spy の壊れ方に関わらず常に通ってしまう)。
+    expect(appendSpy).toHaveBeenCalled();
     appendSpy.mockClear();
 
     fake.emitStdout('connection registered\n');
