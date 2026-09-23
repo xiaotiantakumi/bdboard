@@ -1,140 +1,55 @@
-import { spawn as nodeSpawn, type ChildProcess } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
+// bdboard-sso1.54: src/infrastructure/process/cloudflared-tunnel.ts は
+// bdboard-sso1.54 でモジュール分割された。実体は ./cloudflared-tunnel/ 配下:
+//   - log-sink.ts          : ログパス解決 / 秘匿マスキング / ローテーション /
+//     LogSink 実装 (resolveDefaultTunnelLogFilePath / LogSink / maskSecrets /
+//     createNoopLogSink / createFileLogSink / DEFAULT_LOG_MAX_BYTES)
+//   - spawned-process.ts   : ChildProcess を SpawnedProcess へ薄くラップするアダプタ
+//     (DataStream / SpawnedProcess / SpawnFn / asSpawnedProcess)
+//   - executable-resolver.ts: cloudflared 実行ファイルの PATH 探索
+//     (resolveCloudflaredInPath)
+//   - startup-buffer.ts    : 起動待ち中の stdout/stderr バッファ管理
+//     (STARTUP_OUTPUT_BUFFER_MAX_BYTES / appendStartupOutputBuffer / extractTunnelUrl)
+// このファイルは createCloudflaredTunnel() 本体(可変状態を共有するクロージャ群のため
+// 分割せず残した)と、import 側(呼び出し元・テスト)を書き換えないための再エクスポートを
+// 兼ねる。挙動・型は一切変えていない(移動のみ)。
+import { spawn as nodeSpawn } from 'node:child_process';
 import type {
   TunnelProcess,
   TunnelStartResult,
 } from '../../application/ports/tunnel.js';
+import {
+  resolveDefaultTunnelLogFilePath,
+  DEFAULT_LOG_MAX_BYTES,
+  maskSecrets,
+  createNoopLogSink,
+  createFileLogSink,
+  type LogSink,
+} from './cloudflared-tunnel/log-sink.js';
+import {
+  asSpawnedProcess,
+  type SpawnedProcess,
+  type SpawnFn,
+} from './cloudflared-tunnel/spawned-process.js';
+import { resolveCloudflaredInPath } from './cloudflared-tunnel/executable-resolver.js';
+import {
+  appendStartupOutputBuffer,
+  extractTunnelUrl,
+} from './cloudflared-tunnel/startup-buffer.js';
 
-const TRY_CLOUDFLARE_URL_PATTERN =
-  /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
+export type { LogSink } from './cloudflared-tunnel/log-sink.js';
+export { resolveDefaultTunnelLogFilePath } from './cloudflared-tunnel/log-sink.js';
+export type {
+  DataStream,
+  SpawnedProcess,
+  SpawnFn,
+} from './cloudflared-tunnel/spawned-process.js';
+export {
+  STARTUP_OUTPUT_BUFFER_MAX_BYTES,
+  appendStartupOutputBuffer,
+} from './cloudflared-tunnel/startup-buffer.js';
 
 const DEFAULT_START_TIMEOUT_MS = 30_000;
 const DEFAULT_STOP_GRACE_MS = 5_000;
-/** URL 待ち中の stdout/stderr 蓄積上限。超過分は末尾を残して切り詰める。 */
-export const STARTUP_OUTPUT_BUFFER_MAX_BYTES = 256 * 1024;
-/**
- * cloudflared のログ既定パスを解決する。
- *
- * 以前は `path.join(process.cwd(), 'logs', ...)` だった (bdboard-3b0)。配布形態
- * (`npx bdboard`) は任意の cwd から起動されるので、cwd 基準だとトンネルを開いた
- * 瞬間に「ユーザーがたまたま居たディレクトリ」へ `logs/` を掘ることになる。
- * ホームディレクトリだろうが他人のリポジトリのルートだろうが掘る。
- *
- * 置き場はキャッシュ DB (`~/.bdboard/cache.db`, src/main.ts) と同じ `~/.bdboard/`
- * に揃えた。設定ファイル (`~/.config/bdboard/config.json`, infrastructure/fs/
- * config-path.ts) の側ではない — ログは人が編集する設定ではなく実行時生成物
- * なので、既に実行時生成物が置かれている場所に寄せる方が一貫する。
- *
- * homedir を注入できるのはテスト用。os.homedir() は Windows でもユーザー
- * プロファイルを返すので、プラットフォーム分岐は要らない。
- */
-export function resolveDefaultTunnelLogFilePath(opts?: {
-  homedir?: string;
-}): string {
-  const home = opts?.homedir ?? os.homedir();
-  return path.join(home, '.bdboard', 'logs', 'cloudflared-tunnel.log');
-}
-/** ログファイルの既定サイズ上限(5MB)。超過すると .log -> .log.1 へ退避される。 */
-const DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024;
-
-// cloudflared の標準出力に資格情報が乗ることは通常無いが、事後調査用ログとして残す以上、
-// 万一それらしき文字列が混ざっていた場合の最終防衛として伏せ字にする。
-const SECRET_LIKE_PATTERN = /\b(password|passwd|token|secret|authorization)\s*[:=]\s*\S+/gi;
-
-function maskSecrets(text: string): string {
-  return text.replace(SECRET_LIKE_PATTERN, (match) => {
-    const separatorIndex = match.search(/[:=]/);
-    return `${match.slice(0, separatorIndex + 1)} ***`;
-  });
-}
-
-/**
- * cloudflared の出力の書き込み先を抽象化する(テストではフェイクを注入する)。
- *
- * 契約: write/close は例外を投げてはならない。呼び出し側 (onData / close ハンドラ)
- * は無防備に呼ぶため、投げるとログの都合でトンネル動作が壊れる — この方針は
- * 生成失敗にもフォールバックを入れて揃えた (bdboard-nte)。
- */
-export interface LogSink {
-  write(chunk: string): void;
-  close(): void;
-}
-
-/**
- * filePath が maxBytes 以上であれば filePath -> `${filePath}.1` へリネームして退避する
- * (世代は1つのみ。既存の .1 があれば上書きされる)。ファイルが存在しない場合は何もしない。
- * 起動時チェック程度の粗い運用でよいため、書き込み中の継続監視は行わない。
- */
-function rotateLogFileIfOversized(filePath: string, maxBytes: number): void {
-  let stats: fs.Stats;
-  try {
-    stats = fs.statSync(filePath);
-  } catch {
-    return; // ファイルがまだ無い(初回起動など)
-  }
-
-  if (stats.size < maxBytes) {
-    return;
-  }
-
-  try {
-    fs.renameSync(filePath, `${filePath}.1`);
-  } catch {
-    // ローテーション失敗時は既存ファイルへの追記を続ける(ベストエフォート)
-  }
-}
-
-/**
- * 何も書かないシンク。ログ出力先を用意できなかったときのフォールバック
- * (bdboard-nte)。
- */
-function createNoopLogSink(): LogSink {
-  return {
-    write: () => {},
-    close: () => {},
-  };
-}
-
-function createFileLogSink(filePath: string, maxBytes: number): LogSink {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  rotateLogFileIfOversized(filePath, maxBytes);
-  const fd = fs.openSync(filePath, 'a');
-  return {
-    write: (chunk: string) => {
-      try {
-        fs.writeSync(fd, chunk);
-      } catch {
-        // ログ書き込み失敗はトンネル動作自体を阻害しない
-      }
-    },
-    close: () => {
-      try {
-        fs.closeSync(fd);
-      } catch {
-        // already closed, ignore
-      }
-    },
-  };
-}
-
-export interface DataStream {
-  on(event: 'data', listener: (chunk: Buffer | string) => void): void;
-}
-
-export interface SpawnedProcess {
-  readonly stdout: DataStream | null;
-  readonly stderr: DataStream | null;
-  kill(signal?: NodeJS.Signals): boolean;
-  on(event: 'close', listener: (code: number | null) => void): this;
-  on(event: 'error', listener: (err: Error) => void): this;
-}
-
-export type SpawnFn = (
-  command: string,
-  args: readonly string[],
-) => SpawnedProcess;
 
 export interface CloudflaredTunnelOptions {
   readonly port: number;
@@ -151,64 +66,6 @@ export interface CloudflaredTunnelOptions {
   readonly logMaxBytes?: number;
   /** テスト用にログ書き込み先を差し替えるフック */
   readonly createLogSink?: (filePath: string, maxBytes: number) => LogSink;
-}
-
-function resolveCloudflaredInPath(
-  pathEnv: string,
-  opts?: { platform?: NodeJS.Platform },
-): string | null {
-  const platform = opts?.platform ?? process.platform;
-  const platformPath = platform === 'win32' ? path.win32 : path.posix;
-  const executableName = platform === 'win32' ? 'cloudflared.exe' : 'cloudflared';
-  const directories = pathEnv.split(platformPath.delimiter);
-
-  for (const directory of directories) {
-    if (directory.length === 0) {
-      continue;
-    }
-
-    const candidate = platformPath.join(directory, executableName);
-    try {
-      fs.accessSync(candidate, fs.constants.X_OK);
-      return candidate;
-    } catch {
-      // try next directory
-    }
-  }
-
-  return null;
-}
-
-export function appendStartupOutputBuffer(
-  buffer: string,
-  chunk: Buffer | string,
-  maxBytes: number = STARTUP_OUTPUT_BUFFER_MAX_BYTES,
-): string {
-  const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-  const combined = buffer + text;
-  if (combined.length <= maxBytes) {
-    return combined;
-  }
-  // URL がチャンク境界で分割されるケースに備え、古い先頭を捨てて末尾を残す。
-  return combined.slice(combined.length - maxBytes);
-}
-
-function extractTunnelUrl(buffer: string): string | null {
-  const match = buffer.match(TRY_CLOUDFLARE_URL_PATTERN);
-  return match?.[0] ?? null;
-}
-
-function asSpawnedProcess(child: ChildProcess): SpawnedProcess {
-  const processHandle: SpawnedProcess = {
-    stdout: child.stdout,
-    stderr: child.stderr,
-    kill: (signal?: NodeJS.Signals) => child.kill(signal),
-    on: (event, listener) => {
-      child.on(event, listener as never);
-      return processHandle;
-    },
-  };
-  return processHandle;
 }
 
 export function createCloudflaredTunnel(
