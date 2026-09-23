@@ -39,7 +39,7 @@ export function createJsonlTranscriptScanner(
 
       const slices = planScan(
         targetsWithProject.map((entry) => entry.target),
-        planOptions,
+        deps.planOptions,
       );
 
       const links = await processScanSlices(
