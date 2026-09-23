@@ -35,7 +35,6 @@ import {
 import {
   applyDraftPayloadStoreCarryPlan,
   applyTransformToAllDraftPayloadStores,
-  defineDraftPayloadStoreCarryPlan,
   isNeverEmpty,
   migrateKeyInRecord,
   purgeKeysInRecord,
@@ -59,12 +58,7 @@ import {
 } from '../hooks/useResizableSidePanel';
 import type { ChatQuickCommand } from '../chatQuickCommands';
 import { isImeComposingKeyEvent } from '../imeGuard';
-import {
-  CHAT_AGENT_UNAVAILABLE_WARNING,
-  CHAT_BUSY_HELP,
-  chatAgentErrorMessage,
-  writeAccessErrorMessage,
-} from '../writeAccessMessage';
+import { CHAT_AGENT_UNAVAILABLE_WARNING } from '../writeAccessMessage';
 import {
   CHAT_IMAGE_ONLY_PROMPT,
   attachmentsToPayload,
@@ -72,8 +66,13 @@ import {
 } from './chat/attachments';
 import { hasSelectableModels, resolveDefaultModel } from './chat/agentOptions';
 import { makeDraftKey } from './chat/draftKey';
-import { resolveInitialProjectId } from './chat/projectSelection';
 import {
+  projectSelectionHint as computeProjectSelectionHint,
+  resolveInitialProjectId,
+  showProjectSelect as computeShowProjectSelect,
+} from './chat/projectSelection';
+import {
+  chatSettingsSummaryParts as computeChatSettingsSummaryParts,
   compareThreadsNewestFirst,
   formatThreadUpdatedAt,
   summarizeTitle,
@@ -90,7 +89,20 @@ import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
 import { useThreadDrawerState } from './chat/useThreadDrawerState';
 import { useChatNotifications } from './chat/useChatNotifications';
 import { useChatDraftState } from './chat/useChatDraftState';
-import type { ChatMessage } from './chat/messages';
+import { toAssistantMessage, toChatMessages, type ChatMessage } from './chat/messages';
+import {
+  APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY,
+  HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY,
+  START_NEW_DRAFT_THREAD_CARRY,
+  START_NEW_DRAFT_THREAD_PREFILL_CARRY,
+} from './chat/draftCarryPlans';
+import {
+  CHAT_STREAM_DETACHED_FAILED_MESSAGE,
+  TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS,
+  TURN_STATUS_POLL_RETRY_BACKOFF_MS,
+  UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS,
+} from './chat/turnStatusPolicy';
+import { describeChatSendError } from './chat/chatSendErrors';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -106,133 +118,6 @@ interface ChatPanelProps {
 // 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
 // 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
 const BOTTOM_STICK_THRESHOLD_PX = 48;
-
-// bdboard-3tw.164: turn-status の取得が一時的に失敗しても (ネットワークエラー /
-// 一時的な 5xx 等) ポーリングを止めずに再試行するためのバックオフ表。要素数が
-// そのまま再試行回数の上限になる (この配列なら5回)。値を使い切ってもなお失敗が
-// 続く場合はこのポーリング自体を諦める — このポーリングは「取れれば儲けもの」の
-// 付加的な回収経路であり、無限リトライでサーバーを叩き続けるより安全側に倒す。
-// 送信元スレッドの sessionId が既知なら (=新規スレッドの最初の送信でなければ)
-// unresolvedSends 経由の履歴再取得安全網 (bdboard-3tw.156) がスレッド閲覧時に
-// 拾えるが、sessionId 未確定の新規スレッドはこの安全網の対象外 (markUnresolvedSend
-// は sessionId undefined を no-op で無視する) — 諦めた場合そちらは回収されない。
-const TURN_STATUS_POLL_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 8_000];
-
-// bdboard-96rp (Opus レビュー指摘 B2): sessionId 未確定の送信を detachedAt (クライアント
-// の Date.now()) と status.failedAt/completedAt (サーバーの時刻) を突き合わせて絞り込む
-// 際、両者は別プロセス・別マシン (モバイルトンネル経由のクライアントもあり得る) の
-// クロックなので、わずかな時刻ずれで「本当は自分の送信の結果なのに detachedAt より
-// わずかに前の時刻として記録され、取りこぼす」誤判定が起き得る。実用上あり得るずれ幅
-// より十分大きいマージンを許容側に加えることで、取りこぼしより「多少広めに一致させる」
-// 方に倒す (単一ロックの isBusy により、この許容幅の中で無関係な別ターンの結果と
-// 衝突するリスクは実質無い)。
-const TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS = 30_000;
-
-// bdboard-96rp (round 2 再レビューで発見されたブロッカー): sessionId 未確定の
-// tracked send が、自分自身の sessionId 無し failed と時刻的に一致しない場合
-// (TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS を超えるずれ — 上のコメント群が言う
-// cloudflared トンネル越しの切断検知遅延等)、下の 'failed' 分岐は「無関係かもしれない
-// ので ACK せず何もしない」まま1秒間隔でポーリングを続け続ける。sessionId 無しの
-// エントリは ACK 経路が無く、bdboard-96rp B1 の dedupe によりサーバーはこの1件を
-// 置き換わるまで返し続けるので、これが本当に自分自身の (時刻がずれて観測された)
-// 失敗だった場合、何も置き換えが起きず無期限に一致しないまま — 送信ボタンが
-// 二度と解放されない実質的なデッドロックになる。これを避けるため、「一致しない
-// sessionId 無し failed」を一定回数 (=一定時間) 観測し続けたら、時刻の厳密な
-// 一致を諦めてこのエントリを自分自身の失敗として受け入れる。誤って無関係な
-// エントリを受け入れてしまうリスクはあるが、単一ロック (isBusy) 下でこの猶予
-// 時間の間ずっと同じ sessionId 無し failed が居座り続けるのは「本当に自分自身の
-// 失敗が遅れて観測されている」可能性の方が、他プロジェクトクライアントが偶然
-// 同じ猶予時間内に別の sessionId 無し失敗を起こす可能性より高いと判断した —
-// 無期限に沈黙してハングし続けるより、猶予後に (多少不正確でも) 解決して
-// 利用者に再送の機会を与える方を優先する。
-const UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS = 20;
-// ↑ 1秒間隔のポーリングなので実測で約20秒の猶予。既存の
-// TURN_STATUS_POLL_RETRY_BACKOFF_MS (5回・合計約23秒) と同じ桁数に揃えた —
-// この値そのものに強い根拠は無く、「無期限にブロックしない」ことが目的の
-// 主眼であり、猶予の長さは今後の実測次第で調整して良い。
-
-// bdboard-ru4d: 会話キー再割り当てサイトごとのドラフト積載物引き継ぎ選択。
-// ストアを1つ増やすと、ここと3サイト(handleAgentChange / startNewDraftThread /
-// applyChatSuccess)すべてで選択を書かない限り tsc が落ちる。
-
-/** handleAgentChange: 本文・添付・シード記録のみ引き継ぐ。 */
-const HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: { carry: true },
-  conversationAttachments: { carry: true },
-  draftSeedText: { carry: true },
-  attachmentErrors: {
-    carry: false,
-    reason: 'エージェント切替では添付エラー状態を引き継がない',
-  },
-  threadModelIds: {
-    carry: false,
-    reason: '旧エージェント向けモデル選択を新キーへ持ち込むとモデル漏れになる',
-  },
-});
-
-/** startNewDraftThread: 通常の「新規スレッド」は何も引き継がない。 */
-const START_NEW_DRAFT_THREAD_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  conversationAttachments: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  attachmentErrors: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  threadModelIds: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  draftSeedText: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-});
-
-/** startNewDraftThread: pendingPrefill 消化時は計算値を引き継ぐ。 */
-const START_NEW_DRAFT_THREAD_PREFILL_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: { carry: true },
-  conversationAttachments: { carry: true },
-  draftSeedText: { carry: true },
-  threadModelIds: { carry: true },
-  attachmentErrors: {
-    carry: false,
-    reason: 'pendingPrefill 消化では添付エラー状態を引き継がない',
-  },
-});
-
-/** applyChatSuccess: ドラフト積載物は送信時点でクリア済み。conversations のみ移送。 */
-const APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-  conversationAttachments: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-  attachmentErrors: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-  threadModelIds: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み(sessionId 確定後は別経路でモデルを設定)',
-  },
-  draftSeedText: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-});
-
-// bdboard-zlzo: 配信停止後にサーバー側でもターンの完了を確認できなかったときの文言。
-const CHAT_STREAM_DETACHED_FAILED_MESSAGE =
-  '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。';
 
 export function ChatPanel({
   projects,
@@ -824,19 +709,10 @@ export function ChatPanel({
   const selectedProject = projects.find(
     (project) => project.id === selectedProjectId,
   );
-  // レビュー major-1: select を出す条件は「選ぶ余地があるか」。複数あるとき、
-  // および1件しか無くてもまだ選ばれていないとき(チケットのプロジェクトが
-  // 一覧に無く未選択で固定される経路)は必ず選べるようにする。
-  const showProjectSelect =
-    projects.length > 1 || (projects.length === 1 && selectedProjectId === '');
-  // レビュー major-1: ヒントの条件は送信可否と同じ selectedProjectId === '' 単独。
-  // projects が空のときだけ「選べ」ではなく状況の説明に差し替える。
-  const projectSelectionHint =
-    selectedProjectId !== ''
-      ? null
-      : projects.length === 0
-        ? 'プロジェクトを読み込めていません。一覧が表示されない場合はスキャンルートの設定を確認してください。'
-        : '送信先のプロジェクトを選んでください。選ぶまで送信できません。';
+  // bdboard-sso1.83 第4段: showProjectSelect/projectSelectionHint の本体は
+  // chat/projectSelection.ts へ移した(挙動は変えていない)。
+  const showProjectSelect = computeShowProjectSelect(projects, selectedProjectId);
+  const projectSelectionHint = computeProjectSelectionHint(projects, selectedProjectId);
   const projectSelectionHintId =
     projectSelectionHint === null ? null : 'chat-project-unselected-hint';
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
@@ -1366,17 +1242,7 @@ export function ChatPanel({
         setConversations((prev) => ({
           ...prev,
           [status.sessionId]: {
-            messages: payload.messages.map((message) => ({
-              role: message.role,
-              text: message.content,
-              at: Date.parse(message.createdAt),
-              ...(message.failedTools !== undefined && message.failedTools.length > 0
-                ? { failedTools: message.failedTools }
-                : {}),
-              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
-                ? { agentWarnings: message.agentWarnings }
-                : {}),
-            })),
+            messages: toChatMessages(payload.messages),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
           },
@@ -1807,17 +1673,7 @@ export function ChatPanel({
         setConversations((prev) => ({
           ...prev,
           [currentConversationKey]: {
-            messages: payload.messages.map((message) => ({
-              role: message.role,
-              text: message.content,
-              at: Date.parse(message.createdAt),
-              ...(message.failedTools !== undefined && message.failedTools.length > 0
-                ? { failedTools: message.failedTools }
-                : {}),
-              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
-                ? { agentWarnings: message.agentWarnings }
-                : {}),
-            })),
+            messages: toChatMessages(payload.messages),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
           },
@@ -1999,17 +1855,7 @@ export function ChatPanel({
         setConversations((prev) => ({
           ...prev,
           [sessionId]: {
-            messages: payload.messages.map((message) => ({
-              role: message.role,
-              text: message.content,
-              at: Date.parse(message.createdAt),
-              ...(message.failedTools !== undefined && message.failedTools.length > 0
-                ? { failedTools: message.failedTools }
-                : {}),
-              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
-                ? { agentWarnings: message.agentWarnings }
-                : {}),
-            })),
+            messages: toChatMessages(payload.messages),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
           },
@@ -2173,17 +2019,7 @@ export function ChatPanel({
           [result.sessionId]: {
           messages: [
             ...(prev[convKey]?.messages ?? []),
-            {
-              role: 'assistant' as const,
-              text: result.reply,
-              at: Date.now(),
-              ...(result.failedTools !== undefined && result.failedTools.length > 0
-                ? { failedTools: result.failedTools }
-                : {}),
-              ...(result.agentWarnings !== undefined && result.agentWarnings.length > 0
-                ? { agentWarnings: result.agentWarnings }
-                : {}),
-            },
+            toAssistantMessage(result, Date.now()),
           ],
           sessionId: result.sessionId,
           agentId: result.agentId,
@@ -2241,45 +2077,10 @@ export function ChatPanel({
       error: unknown,
       sentAt: number,
     ) => {
-      let errorText: string;
-      let clearSession = false;
-      const accessMessage = writeAccessErrorMessage(error);
-      if (accessMessage !== null) {
-        errorText = accessMessage;
-      } else if (error instanceof ApiError) {
-        if (error.status === 403) errorText = 'チャットを利用する権限がありません。';
-        else if (error.status === 409) {
-          // bdboard-yzn: writeAccessMessage.ts の CHAT_BUSY_HELP と共有し、文言の fork を防ぐ。
-          errorText = CHAT_BUSY_HELP;
-        } else if (error.status === 400 && error.errorMessage === 'unknown chat session') {
-          errorText = '会話の続きが失われました。もう一度送信してください。';
-          clearSession = true;
-        } else if (error.status === 400 && error.errorMessage === 'chat agent mismatch') {
-          errorText = 'エージェントが切り替わったため、会話をやり直します。もう一度送信してください。';
-          clearSession = true;
-        } else if (
-          error.status === 400 &&
-          error.errorMessage === 'chat agent does not support image attachments'
-        ) {
-          errorText = 'このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。';
-        } else if (error.status === 404) errorText = 'プロジェクトが見つかりません。';
-        else if (error.status === 502 && error.code === 'agent-workspace-untrusted') {
-          // bdboard-l1t.5 Opus 再レビュー DF1: サーバー側は agent-workspace-untrusted
-          // (chat-agent.ts) を返しているのに、ここで拾わないと汎用の
-          // error.errorMessage ('chat failed') しか出ず利用者に理由が伝わらない。
-          errorText = 'このプロジェクト(ワークスペース)を cursor-agent に信頼させる必要があります。bdboard の外で一度 cursor-agent を対話実行し、ワークスペース信頼プロンプトに答えてから、もう一度送信してください。';
-        } else if (error.status === 502 && error.code === 'agent-headless-denied') {
-          // bdboard-l1t.6 Opus レビュー SF1 (l1t.5 DF1 と同型): agy の headless モードが
-          // ツール呼び出しを自動拒否して空応答になったケース。汎用文言では利用者に
-          // 「運用者側の許可設定が要る」ことが伝わらないため、code をマップして案内する。
-          errorText = 'エージェントの headless モードがツール呼び出しを自動拒否したため、応答を得られませんでした。bdboard の外で agy 側の設定 (~/.gemini/antigravity-cli/settings.json) の permissions.allow に bd コマンドの許可ルール(例: "command(bd)")を追加してから、もう一度送信してください。';
-        } else {
-          const agentMessage = chatAgentErrorMessage(error);
-          errorText =
-            agentMessage ?? error.errorMessage ?? error.message;
-        }
-      } else if (error instanceof Error) errorText = error.message;
-      else errorText = '送信に失敗しました';
+      // bdboard-sso1.83 第4段: エラー種別 → 文言/clearSession の判定は
+      // chat/chatSendErrors.ts の describeChatSendError へ移した。分岐の順番・
+      // 条件・文言は変えていない。
+      const { text: errorText, clearSession } = describeChatSendError(error);
 
       setConversations((prev) => {
         const current = prev[convKey] ?? { messages: [] };
@@ -3058,12 +2859,12 @@ export function ChatPanel({
     currentSessionId !== undefined
       ? (threadById.get(currentSessionId)?.title ?? '(無題)')
       : '新規';
-  const chatSettingsSummaryParts = [
-    'チャット設定',
+  // bdboard-sso1.83 第4段: 本体は chat/threads.ts へ移した(挙動は変えていない)。
+  const chatSettingsSummaryParts = computeChatSettingsSummaryParts(
     selectedProject?.name,
     currentThreadTitle,
     selectedAgent?.label,
-  ].filter((part): part is string => part !== undefined && part !== '');
+  );
 
   // Chat Redesign 1b: スレッド一覧ドロワーの行データ。ピン留めは開いている/
   // 閉じたスレッドのどちらに属していても「ピン留め」節へ寄せ、開いている/
