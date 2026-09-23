@@ -23,7 +23,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/ticket-detail/useTicketAgentRun.ts': 260, // 現在 246 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングの state/query/mutation/effect をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加。Opus レビュー対応でticketId変更リセットを内部effect化した分+4)
   'web/src/components/ticket-detail/TicketAgentRunSection.tsx': 250, // 現在 235 (bdboard-sso1.5 PR-L: エージェント実行の表示セクション(現在の状態/ログ/中止/実行履歴)を移動しただけの表示専用コンポーネント。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
-  'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
   'web/src/components/board/BoardLanes.tsx': 230, // 現在 214 (bdboard-sso1.44 PR-B: BoardView.tsx の LanesRow+BoardLanes を move-only 抽出。表示専用の1コンポーネント対で、これ以上分けるとJSX/DOMや親子関係を変えずには切れない。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/components/bulk-action/useBulkActions.ts': 230, // 現在 222 (bdboard-sso1.60: 一括クイックアクション/一括ラベル付与の mutation を ./actions/*.ts へ分割。272→222 (旧コメントの「現在 280」は分割前から既に実測とずれていたので実測値へ修正)。move-only 抽出のため引き続き例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
