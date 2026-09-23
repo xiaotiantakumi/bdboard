@@ -61,3 +61,14 @@ export function compareThreadsNewestFirst(
 ): number {
   return threadRecency(b) - threadRecency(a);
 }
+
+// bdboard-sso1.83 第4段: ChatPanel.tsx から純関数を移動しただけ。挙動は変えていない。
+export function chatSettingsSummaryParts(
+  projectName: string | undefined,
+  currentThreadTitle: string,
+  agentLabel: string | undefined,
+): string[] {
+  return ['チャット設定', projectName, currentThreadTitle, agentLabel].filter(
+    (part): part is string => part !== undefined && part !== '',
+  );
+}
