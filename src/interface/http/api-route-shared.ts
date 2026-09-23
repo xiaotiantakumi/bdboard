@@ -128,7 +128,8 @@ export interface InFlightOverlapMemo {
 }
 
 /**
- * /api/hygiene (hygiene-routes.ts) と /api/tickets/:id/in-flight-overlaps
+ * /api/hygiene (hygiene-status-routes.ts, bdboard-sso1.61 で hygiene-routes.ts から
+ * 分割) と /api/tickets/:id/in-flight-overlaps
  * (ticket-read-routes.ts) の両方が同じメモを共有する必要がある (bdboard-sso1.1)。
  * createApiRoutes の呼び出しごとに 1 個作り、両方のルートグループへ渡す。
  */

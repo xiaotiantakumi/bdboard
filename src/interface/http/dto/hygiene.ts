@@ -1,6 +1,7 @@
 // bdboard-sso1.12: dto.ts のモジュール分割。Hygiene パネルが検出する問題
 // (依存サイクル・期限超過・停滞・ハートビートループ・衝突ファイル等) の DTO。
-// hygiene-routes.ts が参照する (barrel 経由)。lease/merge-slot/PR バッジの
+// hygiene-status-routes.ts が参照する (barrel 経由。bdboard-sso1.61 で
+// hygiene-routes.ts から分割)。lease/merge-slot/PR バッジの
 // ステータス系は hygiene-status.ts、依存グラフは dependency-graph.ts に分けている。
 import type { HygieneIssue } from '../../../domain/hygiene.js';
 import type { NonTicketHarnessWorktreeWarning } from '../../../domain/non-ticket-harness-worktree.js';
