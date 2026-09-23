@@ -19,6 +19,13 @@ import { StatsCard } from './stats/StatsCard';
 import { ModelStatsTables } from './stats/ModelStatsTables';
 import { HarnessKpiTable } from './stats/HarnessKpiTable';
 
+// bdboard-ws2w: throughput-stats/model-stats/harness-kpi は board.changed の
+// invalidate 対象から外した (重い集計を夜間の board.changed 連発で毎回再取得する
+// と常駐サーバーが詰まっていたため。boardChangedQueryKeys.ts の exclusions 参照)。
+// 代わりに既定の staleTime (30秒) より長い間隔にして自動再取得の頻度を抑え、
+// 秒単位の鮮度が欲しい場合はヘッダーの再読み込みボタンで明示的に更新する。
+const STATS_QUERY_STALE_TIME_MS = 5 * 60_000;
+
 export interface ThroughputStatsProps {
   readonly projectIds: readonly string[];
   weeks: StatsWeeks;
@@ -35,6 +42,7 @@ export function ThroughputStats({
   const query = useQuery({
     queryKey: ['throughput-stats', weeks, projectIdsKey],
     queryFn: () => fetchThroughputStats(weeks, projectIds),
+    staleTime: STATS_QUERY_STALE_TIME_MS,
   });
   const cfdQuery = useQuery({
     queryKey: ['cfd-stats', cfdDays, projectIdsKey],
@@ -43,11 +51,29 @@ export function ThroughputStats({
   const modelStatsQuery = useQuery({
     queryKey: ['model-stats', weeks, projectIdsKey],
     queryFn: () => fetchModelStats(weeks, projectIds),
+    staleTime: STATS_QUERY_STALE_TIME_MS,
   });
   const harnessKpiQuery = useQuery({
     queryKey: ['harness-kpi', weeks, projectIdsKey],
     queryFn: () => fetchHarnessKpi(weeks, projectIds),
+    staleTime: STATS_QUERY_STALE_TIME_MS,
   });
+
+  // bdboard-ws2w: board.changed で自動追従しなくなった分、統計タブ自身に
+  // 明示的な再読み込み手段を置く。CFD は board.changed に残しているが、
+  // ボタンを押した時点の最新値に揃えるためここでもまとめて再取得する。
+  const isRefetchingStats =
+    query.isFetching ||
+    cfdQuery.isFetching ||
+    modelStatsQuery.isFetching ||
+    harnessKpiQuery.isFetching;
+
+  const handleReloadStats = () => {
+    void query.refetch();
+    void cfdQuery.refetch();
+    void modelStatsQuery.refetch();
+    void harnessKpiQuery.refetch();
+  };
 
   // ハーネスKPI は統計タブの中では付加的なブロックなので、ここが落ちても
   // スループット/CFD/モデル別実績まで巻き添えにしない (ブロック内だけで degrade する)。
@@ -82,6 +108,14 @@ export function ThroughputStats({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={handleReloadStats}
+            disabled={isRefetchingStats}
+          >
+            {isRefetchingStats ? '再読み込み中…' : '統計を再読み込み'}
+          </button>
         </div>
       </div>
 

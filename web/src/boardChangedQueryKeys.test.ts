@@ -175,3 +175,32 @@ describe('board.changed queryKey coverage', () => {
     ).toEqual([]);
   });
 });
+
+describe('bdboard-ws2w: heavy stats roots are excluded from board.changed', () => {
+  const STATS_ROOTS = ['throughput-stats', 'model-stats', 'harness-kpi'] as const;
+
+  it('does not include throughput-stats/model-stats/harness-kpi in the invalidated roots', () => {
+    const invalidatedRoots = new Set<string>(BOARD_CHANGED_QUERY_KEY_ROOTS);
+    for (const root of STATS_ROOTS) {
+      expect(invalidatedRoots.has(root)).toBe(false);
+    }
+  });
+
+  it('documents a non-empty Japanese exclusion reason for each stats root', () => {
+    for (const root of STATS_ROOTS) {
+      const reason = BOARD_CHANGED_QUERY_KEY_EXCLUSIONS[root];
+      expect(reason).toBeDefined();
+      expect(reason.trim().length).toBeGreaterThan(0);
+      // 除外理由であることが分かるように bdboard-ws2w への言及を必須にする。
+      expect(reason).toContain('bdboard-ws2w');
+    }
+  });
+
+  it('still tracks cfd-stats for board.changed (not part of this exclusion)', () => {
+    // throughput-stats と隣接していた cfd-stats はチケットの対象外なので、
+    // 誤って一緒に外してしまっていないことを確認する。
+    const invalidatedRoots = new Set<string>(BOARD_CHANGED_QUERY_KEY_ROOTS);
+    expect(invalidatedRoots.has('cfd-stats')).toBe(true);
+    expect(Object.hasOwn(BOARD_CHANGED_QUERY_KEY_EXCLUSIONS, 'cfd-stats')).toBe(false);
+  });
+});

@@ -20,10 +20,7 @@ export const BOARD_CHANGED_QUERY_KEY_ROOTS = [
   'merge-slot-status',
   'activity',
   'digest-activity',
-  'throughput-stats',
   'cfd-stats',
-  'model-stats',
-  'harness-kpi',
   'dependency-graph',
   'ticket-timeline',
   'similar-tickets',
@@ -56,4 +53,10 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
   'update-check': 'ソフトウェア更新確認は board データに依存しない。',
   'ticket-attachments':
     'チケット添付画像 (bdboard-qw26) は .beads とは別のファイルシステム保存で、bd の書き込みからは変化しない。アップロードはエージェントが curl で行う想定で UI 側に投稿操作が無いため、既定の staleTime (30秒) 経過後の再マウント・フォーカス時の自動再取得に任せる。',
+  'throughput-stats':
+    '/api/stats の集計は数秒〜十数秒かかる重い処理 (bdboard-ws2w で19秒を観測)。多数のエージェントが並行作業する夜間は board.changed が頻発するため、以前は統計タブを開いたままにするたびにこれが連続で走り、サーバーが CPU 100% に張り付いたまま戻らなくなっていた (bdboard-himp)。秒単位の鮮度を必要としない集計値なので board.changed では追従させず、staleTime を延ばして統計タブの再読み込みボタン、または既定の staleTime 経過後の再マウント・フォーカス時の自動再取得に任せる。',
+  'model-stats':
+    '/api/model-stats の集計も同様に重い処理 (bdboard-ws2w で12秒を観測)。理由は throughput-stats と同じ (bdboard-ws2w/bdboard-himp) で、board.changed では追従させず staleTime 延長 + 統計タブの再読み込みボタンに任せる。',
+  'harness-kpi':
+    'ハーネスKPI (reclaim・確認待ち滞留などの集計) も throughput-stats と同じ理由 (bdboard-ws2w/bdboard-himp) で重く、board.changed では追従させず staleTime 延長 + 統計タブの再読み込みボタンに任せる。',
 } as const satisfies Readonly<Record<string, string>>;

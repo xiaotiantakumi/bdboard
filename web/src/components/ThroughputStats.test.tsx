@@ -164,7 +164,7 @@ function renderThroughputStats(
     </QueryClientProvider>,
   );
 
-  return { onWeeksChange };
+  return { onWeeksChange, queryClient };
 }
 
 describe('ThroughputStats', () => {
@@ -529,6 +529,84 @@ describe('ThroughputStats', () => {
     expect(
       await screen.findByText('モデル別の実績データはまだありません'),
     ).toBeInTheDocument();
+  });
+
+  // bdboard-ws2w: board.changed が throughput-stats/model-stats/harness-kpi を
+  // 自動 invalidate しなくなった代わりに追加した挙動 (staleTime 延長 + 明示リロード)。
+  it('gives the heavy stats queries a longer staleTime than the app default (30s)', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    const { queryClient } = renderThroughputStats();
+
+    await screen.findByText('全体');
+
+    // Query#options の型 (QueryOptions) には staleTime が無いが、useQuery に渡した
+    // staleTime は実際には defaultedOptions として Query に保存されている。
+    const findStaleTime = (queryKeyRoot: string) => {
+      const query = queryClient
+        .getQueryCache()
+        .findAll({ predicate: (q) => q.queryKey[0] === queryKeyRoot })[0];
+      return (query?.options as { staleTime?: number } | undefined)?.staleTime;
+    };
+
+    // 統計タブ自身は素の QueryClient (defaultOptions で staleTime を設定していない)
+    // で描画しているので、staleTime が undefined でなく、かつ本番の main.tsx が
+    // 設定しているアプリ既定値 30秒より長ければ、コンポーネント側で明示的に
+    // 延ばしていることが分かる。
+    for (const root of ['throughput-stats', 'model-stats', 'harness-kpi']) {
+      const staleTime = findStaleTime(root);
+      expect(staleTime).toBeDefined();
+      expect(staleTime as number).toBeGreaterThan(30_000);
+    }
+
+    // cfd-stats はチケットの対象外 (board.changed に残したまま) なので、
+    // ここでは staleTime を延ばしていないことも確認する。
+    expect(findStaleTime('cfd-stats')).toBeUndefined();
+  });
+
+  it('refetches every stats query when the reload button is clicked', async () => {
+    const user = userEvent.setup();
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    await screen.findByText('全体');
+    expect(fetchThroughputStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchCfdStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchModelStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchHarnessKpiMock).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: '統計を再読み込み' }));
+
+    expect(fetchThroughputStatsMock).toHaveBeenCalledTimes(2);
+    expect(fetchCfdStatsMock).toHaveBeenCalledTimes(2);
+    expect(fetchModelStatsMock).toHaveBeenCalledTimes(2);
+    expect(fetchHarnessKpiMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('disables the reload button and shows progress text while refetching', async () => {
+    const user = userEvent.setup();
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    await screen.findByText('全体');
+
+    let resolveRefetch: (() => void) | undefined;
+    fetchThroughputStatsMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveRefetch = () => resolve(makeStats());
+      }),
+    );
+
+    const reloadButton = screen.getByRole('button', { name: '統計を再読み込み' });
+    await user.click(reloadButton);
+
+    const pendingButton = await screen.findByRole('button', { name: '再読み込み中…' });
+    expect(pendingButton).toBeDisabled();
+
+    resolveRefetch?.();
+    await screen.findByRole('button', { name: '統計を再読み込み' });
   });
 });
 

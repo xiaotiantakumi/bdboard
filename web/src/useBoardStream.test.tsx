@@ -95,9 +95,15 @@ describe('useBoardStream', () => {
 
     const keys = invalidatedKeys(invalidateSpy);
     expect([...keys].sort()).toEqual([...BOARD_CHANGED_QUERY_KEY_ROOTS].sort());
-    // bdboard-3tw.160 で漏れていた 2 root を明示的に固定する。
-    expect(keys).toContain('harness-kpi');
+    // bdboard-3tw.160 で漏れていた root を明示的に固定する。
     expect(keys).toContain('ticket-in-flight-overlaps');
+    // bdboard-ws2w: throughput-stats/model-stats/harness-kpi は重い集計 (/api/stats
+    // 等が数秒〜十数秒かかる) で、board.changed が頻発する夜間はここで invalidate
+    // され続けると常駐サーバーが詰まっていた (bdboard-himp)。意図的に対象から外した
+    // ので、ここに戻ってこないことを明示的に固定する。
+    expect(keys).not.toContain('throughput-stats');
+    expect(keys).not.toContain('model-stats');
+    expect(keys).not.toContain('harness-kpi');
   });
 
   // bdboard-cjsa: /api/hygiene の nonTicketHarnessWorktrees が生存セッションの有無で
