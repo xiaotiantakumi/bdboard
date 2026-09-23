@@ -10,7 +10,11 @@ import {
   BOARD_ISSUE_TYPES,
   type PriorityCeilingChoice,
 } from '../../uiPersistedState';
-import { PRIORITY_CEILING_OPTIONS, MISSING_LABEL_HINT_ID, MISSING_LABEL_HINT_TEXT } from './boardFilterBarHelpers';
+import {
+  MISSING_LABEL_HINT_ID,
+  MISSING_LABEL_HINT_TEXT,
+  PRIORITY_CEILING_OPTIONS,
+} from './boardFilterBarHelpers';
 
 export interface BoardFilterPanelProps {
   priorityCeiling: PriorityCeilingChoice;
