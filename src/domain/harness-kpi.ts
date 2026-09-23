@@ -1,12 +1,12 @@
 // src/domain/harness-kpi.ts は bdboard-sso1.52 でモジュール分割された。実体は
 // ./harness-kpi/ 配下。このファイルは import 側 (application/board・application/lease・
-// interface/http のテスト等) を書き換えないための re-export 入口としてのみ残す。
+// 既存の harness-kpi.test.ts 等) を書き換えないための re-export 入口としてのみ残す。
 // 挙動・型は一切変えていない (移動のみ)。
 //
-// 分割前は isInRange のような分位計算・期間判定の補助関数が同じファイル内の非公開関数
-// だった。分割後はサブモジュール間の cross-module import のために export を付けている
-// ものがあるが、ここで `export *` を使うと元は非公開だった補助関数まで公開エクスポート面に
-// 漏れてしまう。よって公開面は分割前の export 一覧のとおり名前を明示して re-export する
+// 分割前は isInRange (期間判定) が同じファイル内の非公開関数だった。分割後は
+// サブモジュール間の cross-module import のために export を付けているものがあるが、
+// ここで `export *` を使うと元は非公開だった補助関数まで公開エクスポート面に漏れて
+// しまう。よって公開面は分割前の export 一覧のとおり名前を明示して re-export する
 // (harness-contract.ts の分割 (PR #568) / board.ts の分割 (PR #595) と同じ方式。回帰ガードは
 // harness-kpi.exportSurface.test.ts / harness-kpi-type-export-surface.check.ts)。
 export {
