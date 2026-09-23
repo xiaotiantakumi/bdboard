@@ -30,7 +30,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/bulk-action/useBulkActions.ts': 290, // 現在 280 (bdboard-sso1.23 PR-C: 一括操作の確認/実行/Undo の state+mutation+handler をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'web/src/components/TunnelControl.tsx': 230, // 現在 224 (bdboard-sso1.35: 純ヘルパー/表示部品/関心別フックを web/src/components/tunnel/ へ移動)
-  'scripts/check-drift.mjs': 410, // 現在 409
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
   'scripts/check-commit-parse.mjs': 380, // 現在 380
   'scripts/check-file-size.mjs': 370, // 現在 362

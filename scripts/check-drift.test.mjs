@@ -6,6 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-drift.mjs');
+// bdboard-sso1.53: check-drift.mjs は入口 + scripts/check-drift/ 配下の関心別モジュールへ
+// move-only 分割された。CLI テストは work/scripts/ 配下にスクリプトを独立コピーして
+// (実リポジトリと切り離した) 隔離 git リポジトリで spawn するため、入口ファイルだけでなく
+// このディレクトリも一緒にコピーしないと ERR_MODULE_NOT_FOUND で即 exit 1 になる。
+const SCRIPT_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-drift');
 const FAKE_GH_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fake-gh.mjs');
 
 // bdboard-ypjz: Vitest 3.2.7 の同期テストは途中で打ち切れず、本体終了後に経過時間が
@@ -255,6 +260,7 @@ describe('check-drift CLI', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
       sh(templateRoot, 'git', 'clone', '-q', bare, work);
       fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
       fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
+      fs.cpSync(SCRIPT_DIR, path.join(work, 'scripts', 'check-drift'), { recursive: true });
       // rename 検出は類似度で効くので、中身が1行だと改名しても delete+add 扱いになり
       // --no-renames の有無が観測できない。十分な行数を持たせる。
       fs.writeFileSync(path.join(work, 'hot.ts'), hotContent);
@@ -1259,6 +1265,7 @@ describe('check-drift CLI', { timeout: CLI_TEST_TIMEOUT_MS }, () => {
       sh(spaced, 'git', 'clone', '-q', bare, work);
       fs.mkdirSync(path.join(work, 'scripts'), { recursive: true });
       fs.copyFileSync(SCRIPT_PATH, path.join(work, 'scripts', 'check-drift.mjs'));
+      fs.cpSync(SCRIPT_DIR, path.join(work, 'scripts', 'check-drift'), { recursive: true });
       fs.writeFileSync(path.join(work, 'hot.ts'), 'x\n');
       sh(work, 'git', 'add', '-A');
       sh(work, 'git', 'commit', '-qm', 'base');
