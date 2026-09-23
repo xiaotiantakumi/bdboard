@@ -7,7 +7,7 @@ import * as inFlightOverlap from './in-flight-overlap.js';
  *
  * このリストは分割前 (このコミット時点) の in-flight-overlap.ts から
  * `grep -nE '^export (const|function|async function) [A-Za-z0-9_]+' src/domain/in-flight-overlap.ts`
- * で機械的に採取した値エクスポート名 (6件) をそのままハードコードしている。
+ * で機械的に採取した値エクスポート名 (7件) をそのままハードコードしている。
  * `export interface` / `export type` は TypeScript の型のみの宣言で実行時のバインディングを
  * 持たない (コンパイルで消える) ため `Object.keys()` には現れずこのリストにも含めていない —
  * 型エクスポート面は in-flight-overlap-type-export-surface.check.ts が tsc (`npm run build`)
