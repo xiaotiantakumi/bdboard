@@ -9,9 +9,23 @@
 //     (resolveCloudflaredInPath)
 //   - startup-buffer.ts    : 起動待ち中の stdout/stderr バッファ管理
 //     (STARTUP_OUTPUT_BUFFER_MAX_BYTES / appendStartupOutputBuffer / extractTunnelUrl)
-// このファイルは createCloudflaredTunnel() 本体(可変状態を共有するクロージャ群のため
-// 分割せず残した)と、import 側(呼び出し元・テスト)を書き換えないための再エクスポートを
-// 兼ねる。挙動・型は一切変えていない(移動のみ)。
+//
+// bdboard-sso1.57: createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため
+// bdboard-sso1.54 では分割せず残っていた(213行、上限200行を超過)。この本体を
+// TunnelRuntimeState という明示的な状態オブジェクトへ組み替え、その状態を渡す形で
+// さらに分割した:
+//   - runtime-state.ts     : createCloudflaredTunnel() が持っていたクロージャ変数
+//     (child / outputBuffer / unexpectedExitListeners) をまとめた状態オブジェクト
+//   - spawn-tunnel-process.ts: spawn の関心
+//   - wait-for-tunnel-url.ts: stdout/stderr ハンドラ登録・起動タイムアウトタイマー・
+//     URL 検出の関心 (settled/fail/succeed の状態機械が3つを密結合させているため
+//     1モジュールにまとめた。詳細は同ファイル冒頭のコメント)
+//   - stop-controller.ts   : kill (stop / stopExistingSynchronously) の関心
+//   - start-tunnel.ts      : 上記を「実行ファイル解決 → 同期停止 → spawn → ログシンク
+//     生成 → 出力監視」の順で呼び出す start() 本体のオーケストレーション
+// spawn → ハンドラ登録 → タイマー開始 → URL 検出 → kill という順序、タイムアウト時・
+// プロセス早期終了時の挙動は変えていない。公開 API (export の集合・
+// createCloudflaredTunnel() の引数と戻り値) も変えていない。
 import { spawn as nodeSpawn } from 'node:child_process';
 import type {
   TunnelProcess,
@@ -20,8 +34,6 @@ import type {
 import {
   resolveDefaultTunnelLogFilePath,
   DEFAULT_LOG_MAX_BYTES,
-  maskSecrets,
-  createNoopLogSink,
   createFileLogSink,
   type LogSink,
 } from './cloudflared-tunnel/log-sink.js';
@@ -31,10 +43,12 @@ import {
   type SpawnFn,
 } from './cloudflared-tunnel/spawned-process.js';
 import { resolveCloudflaredInPath } from './cloudflared-tunnel/executable-resolver.js';
+import { createTunnelRuntimeState } from './cloudflared-tunnel/runtime-state.js';
 import {
-  appendStartupOutputBuffer,
-  extractTunnelUrl,
-} from './cloudflared-tunnel/startup-buffer.js';
+  stopTunnelProcess,
+  stopTunnelProcessSynchronously,
+} from './cloudflared-tunnel/stop-controller.js';
+import { startTunnel } from './cloudflared-tunnel/start-tunnel.js';
 
 export type { LogSink } from './cloudflared-tunnel/log-sink.js';
 export { resolveDefaultTunnelLogFilePath } from './cloudflared-tunnel/log-sink.js';
@@ -88,19 +102,7 @@ export function createCloudflaredTunnel(
   const logMaxBytes = options.logMaxBytes ?? DEFAULT_LOG_MAX_BYTES;
   const createLogSink = options.createLogSink ?? createFileLogSink;
 
-  let child: SpawnedProcess | null = null;
-  let outputBuffer = '';
-  const unexpectedExitListeners: Array<() => void> = [];
-
-  const onUnexpectedExit = (listener: () => void): void => {
-    unexpectedExitListeners.push(listener);
-  };
-
-  const notifyUnexpectedExit = (): void => {
-    for (const listener of unexpectedExitListeners) {
-      listener();
-    }
-  };
+  const state = createTunnelRuntimeState();
 
   // キャッシュは持たない。ここは「今 PATH に cloudflared があるか」を素直に答える。
   // 以前は結果を恒久キャッシュしていたが、「見つからない」は brew install 一つで
@@ -110,170 +112,27 @@ export function createCloudflaredTunnel(
   // 走査自体は PATH 46 エントリで実測 0.14ms 未満なので、素通しで問題ない。
   const isAvailable = async (): Promise<boolean> => resolveExecutable() !== null;
 
-  const stop = async (): Promise<void> => {
-    const current = child;
-    if (current === null) {
-      return;
-    }
+  const stop = (): Promise<void> => stopTunnelProcess(state, stopGraceMs);
 
-    child = null;
-    outputBuffer = '';
+  const stopExistingSynchronously = (): void =>
+    stopTunnelProcessSynchronously(state);
 
-    if (!current.kill('SIGTERM')) {
-      return;
-    }
-
-    await new Promise<void>((resolve) => {
-      let settled = false;
-      const finish = (): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(forceKillTimer);
-        resolve();
-      };
-
-      const forceKillTimer = setTimeout(() => {
-        current.kill('SIGKILL');
-        finish();
-      }, stopGraceMs);
-
-      current.on('close', () => {
-        finish();
-      });
-
-      current.on('error', () => {
-        finish();
-      });
+  const start = (): Promise<TunnelStartResult> =>
+    startTunnel({
+      state,
+      port: options.port,
+      spawnFn,
+      resolveExecutable,
+      logFilePath,
+      logMaxBytes,
+      createLogSink,
+      startTimeoutMs,
+      stop,
+      stopExistingSynchronously,
     });
-  };
 
-  const stopExistingSynchronously = (): void => {
-    const current = child;
-    if (current === null) {
-      return;
-    }
-
-    child = null;
-    outputBuffer = '';
-    current.kill('SIGTERM');
-  };
-
-  const start = (): Promise<TunnelStartResult> => {
-    const executable = resolveExecutable();
-    if (executable === null) {
-      return Promise.reject(
-        new Error('cloudflared executable not found in PATH'),
-      );
-    }
-
-    stopExistingSynchronously();
-
-    outputBuffer = '';
-    const processHandle = spawnFn(executable, [
-      'tunnel',
-      '--url',
-      `http://127.0.0.1:${options.port}`,
-    ]);
-    child = processHandle;
-
-    // シンクの生成失敗でトンネル起動を巻き込まない (bdboard-nte)。
-    // 出力先が通常ファイルとして存在する・権限が無い・read-only FS といった
-    // ケースで createFileLogSink の mkdirSync/openSync は throw する。書き込み
-    // 失敗自体は既に「トンネル動作を阻害しない」設計 (createFileLogSink の
-    // write/close、rotateLogFileIfOversized) なので、生成だけがその方針から
-    // 外れているのは一貫していない。
-    //
-    // なお、シンクを spawn より前に作る順序も検討したが採らなかった。先に
-    // 作ると spawnFn が throw した場合に開いた fd が閉じられずに漏れる。
-    // 「生成失敗を握り潰す」だけで目的は足りている。
-    let logSink: LogSink;
-    try {
-      logSink = createLogSink(logFilePath, logMaxBytes);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      console.error(
-        `cloudflared log sink unavailable (${logFilePath}): ${detail}. Continuing without a tunnel log.`,
-      );
-      logSink = createNoopLogSink();
-    }
-    logSink.write(`\n[${new Date().toISOString()}] cloudflared starting (port ${options.port})\n`);
-
-    return new Promise<TunnelStartResult>((resolve, reject) => {
-      let settled = false;
-
-      const fail = (err: Error): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timeoutTimer);
-        void stop().finally(() => {
-          reject(err);
-        });
-      };
-
-      const succeed = (url: string): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        clearTimeout(timeoutTimer);
-        resolve({ url });
-      };
-
-      const onData = (chunk: Buffer | string): void => {
-        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-        logSink.write(maskSecrets(text));
-
-        if (settled) {
-          return;
-        }
-
-        outputBuffer = appendStartupOutputBuffer(outputBuffer, chunk);
-        const url = extractTunnelUrl(outputBuffer);
-        if (url !== null) {
-          outputBuffer = '';
-          succeed(url);
-        }
-      };
-
-      const timeoutTimer = setTimeout(() => {
-        fail(new Error('timed out waiting for cloudflared tunnel URL'));
-      }, startTimeoutMs);
-
-      processHandle.stdout?.on('data', onData);
-      processHandle.stderr?.on('data', onData);
-
-      processHandle.on('error', (err) => {
-        fail(err);
-      });
-
-      processHandle.on('close', (code) => {
-        logSink.write(`[${new Date().toISOString()}] cloudflared exited (code=${String(code)})\n`);
-        logSink.close();
-
-        if (!settled) {
-          fail(
-            new Error(
-              `cloudflared exited before publishing a URL (code=${String(code)})`,
-            ),
-          );
-          return;
-        }
-
-        // 起動成功後の close: このハンドルがまだ「現在のトンネル」として追跡されている
-        // (= 自分たちが stop() を呼んで child をクリアしていない)場合のみ、予期せぬ終了と
-        // みなす。stop() は kill 前に child を null にするため、意図した停止ではここに
-        // 入らない。
-        if (child === processHandle) {
-          child = null;
-          outputBuffer = '';
-          notifyUnexpectedExit();
-        }
-      });
-    });
+  const onUnexpectedExit = (listener: () => void): void => {
+    state.unexpectedExitListeners.push(listener);
   };
 
   return {
