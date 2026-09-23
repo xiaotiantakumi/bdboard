@@ -1,34 +1,28 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ProjectDto } from './api';
-import { ErrorBoundary } from './components/ErrorBoundary';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
 import { BulkSelectionProvider } from './components/BulkSelectionProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
 import { PopoverCoordinatorProvider } from './components/PopoverCoordinator';
 import { AlertBar } from './components/AlertBar';
-import { GlobalBar } from './components/GlobalBar';
-import { ViewToolbar } from './components/ViewToolbar';
 import {
   createTicketRunsInvalidator,
   useNextUpRunLoopController,
 } from './components/nextUpRunLoop';
 import { TipsBanner } from './components/TipsBanner';
 import { useWatchedTickets } from './components/WatchedTicketsProvider';
-import { AppTicketDetailOverlay } from './components/app/AppTicketDetailOverlay';
-import { AppSessionListOverlay } from './components/app/AppSessionListOverlay';
-import { AppShortcutsOverlay } from './components/app/AppShortcutsOverlay';
-import { AppHelpOverlay } from './components/app/AppHelpOverlay';
-import { AppSearchOverlay } from './components/app/AppSearchOverlay';
-import { AppTunnelOverlay } from './components/app/AppTunnelOverlay';
-import { AppChatOverlay } from './components/app/AppChatOverlay';
+import { AppOverlayGroup } from './components/app/AppOverlayGroup';
 import { AppViewContent } from './components/app/AppViewContent';
+import { AppHeader } from './components/app/AppHeader';
 import { useHeaderHeightVar } from './hooks/useHeaderHeightVar';
 import { useNotificationEvents } from './hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from './hooks/useWatchedTicketDetails';
 import { usePersistedState } from './hooks/usePersistedState';
 import { useBoardFilterState } from './hooks/useBoardFilterState';
 import { useTicketDeepLink } from './hooks/useTicketDeepLink';
+import { useAppOverlays } from './hooks/useAppOverlays';
+import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts';
 import {
   boardApiModeFromView,
   DEFAULT_VIEW,
@@ -60,7 +54,6 @@ import { useChatAvailabilityData } from './hooks/useChatAvailabilityData';
 import { useBoardThresholdsData } from './hooks/useBoardThresholdsData';
 import { useHarnessStatusData } from './hooks/useHarnessStatusData';
 import { buildPaletteActions } from './paletteActions';
-import { isTypingTarget } from './keyboardShortcuts';
 
 export function App() {
   useHeaderHeightVar();
@@ -175,43 +168,17 @@ export function App() {
     goBackTicket,
   } = useTicketDeepLink({ view, onViewChange: setView });
   /*
-   * 詳細パネルの最大化 (bdboard-0hcx)。TicketDetailPanel ではなくここで持つ。
-   *
-   * AppTicketDetailOverlay 内の ErrorBoundary が key={selectedTicketId} を
-   * 持つため（bdboard-sso1.13 で分割、旧: 下の ErrorBoundary）、パネル側で
-   * useState するとチケットを1つたどるたびに remount されて最大化が解除される
-   * (PR#242 opus レビュー major-1)。詳細パネルは「似ているチケット」や
-   * 「← 戻る」でチケットを渡り歩く使い方をするので、その都度リセットされると
-   * 使い物にならない。key の外に置いて、パネルを閉じたときだけ解除する。
-   *
-   * 幅 (ticketDetailPanelWidth) と違い永続化はしない。最大化は「今この一連の
-   * チケットを広げて読みたい」という一時的な操作なので、次回起動時は保存済みの
-   * 通常幅から始めるのが期待に近い。
+   * 詳細パネルの最大化 (bdboard-0hcx) とオーバーレイ/パネルの開閉状態
+   * (検索・ショートカット一覧・ヘルプ・チャット・セッション一覧・トンネル・
+   * ステータス詳細・プリセット保存意図トークン) は useAppOverlays.ts に
+   * まとめた (bdboard-62p4 第4段)。ここでの呼び出し位置は元の状態群の
+   * 先頭 (旧 L191、detailMaximized の useState) と同じ — useTicketDeepLink
+   * の直後・データ取得9系統より前 — なので、内部の useState 群と
+   * detailMaximized の useEffect は元と同じ相対位置で登録される。
+   * 各ハンドラの前倒し理由・依存配列の扱いは useAppOverlays.ts の JSDoc を
+   * 参照。
    */
-  const [detailMaximized, setDetailMaximized] = useState(false);
-  const handleToggleDetailMaximized = useCallback(() => {
-    setDetailMaximized((maximized) => !maximized);
-  }, []);
-  useEffect(() => {
-    if (selectedTicketId === null) {
-      setDetailMaximized(false);
-    }
-  }, [selectedTicketId]);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [helpOpen, setHelpOpen] = useState(false);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [chatContext, setChatContext] = useState<
-    { projectId: string; ticketId: string } | undefined
-  >(undefined);
-  const [chatContextToken, setChatContextToken] = useState(0);
-  const [sessionListOpen, setSessionListOpen] = useState(false);
-  const [sessionListProjectId, setSessionListProjectId] = useState<string | undefined>(
-    undefined,
-  );
-  const [tunnelModalOpen, setTunnelModalOpen] = useState(false);
-  const [statusDetailOpen, setStatusDetailOpen] = useState(false);
-  const [presetSaveIntentToken, setPresetSaveIntentToken] = useState(0);
+  const overlays = useAppOverlays(selectedTicketId);
   // 初回起動判定は localStorage が書き戻される前(= 最初のレンダー中)に確定させる。
   const [hadStoredFilterStateAtStartup] = useState(() => hasStoredBoardFilterState());
   const defaultPresetHandledRef = useRef(false);
@@ -405,45 +372,20 @@ export function App() {
     setSelectedProjectIds([]);
   }, []);
 
-  const handleOpenSessionList = useCallback((projectId?: string) => {
-    setSessionListProjectId(projectId);
-    setSessionListOpen(true);
-  }, []);
-
-  const handleCloseSessionList = useCallback(() => {
-    setSessionListOpen(false);
-    setSessionListProjectId(undefined);
-  }, []);
-
-  const handleOpenSearch = useCallback(() => {
-    setSearchOpen(true);
-  }, []);
-
-  const handleCloseSearch = useCallback(() => {
-    setSearchOpen(false);
-  }, []);
-
-  const handleOpenShortcuts = useCallback(() => {
-    setShortcutsOpen(true);
-  }, []);
-
-  const handleCloseShortcuts = useCallback(() => {
-    setShortcutsOpen(false);
-  }, []);
-
-  const handleOpenHelp = useCallback(() => {
-    setHelpOpen(true);
-  }, []);
-
-  const handleCloseHelp = useCallback(() => {
-    setHelpOpen(false);
-  }, []);
+  // overlays.handleOpenChat/handleOpenHelp/handleOpenSessionList を
+  // useMemo の外で分割代入しておく。クロージャ内で `overlays.x` の形のまま
+  // 参照すると react-hooks/exhaustive-deps が `overlays` オブジェクト全体
+  // (毎レンダー新しい参照) を依存に要求し、paletteActions が毎レンダー
+  // 再計算されてしまう (useAppOverlays の各ハンドラ自体は useCallback で
+  // 安定しているので、分割代入した個別の関数を依存に使えば元と同じ
+  // メモ化粒度を保てる)。
+  const { handleOpenChat, handleOpenHelp, handleOpenSessionList } = overlays;
 
   const paletteActions = useMemo(
     () =>
       buildPaletteActions({
         onViewChange: setView,
-        onOpenChat: () => setChatOpen(true),
+        onOpenChat: handleOpenChat,
         onToggleHideDone: () => setHideDone((current) => !current),
         hideDone,
         onToggleStalledOnly: () => setStalledOnly((current) => !current),
@@ -455,6 +397,7 @@ export function App() {
       }),
     [
       chatAvailable,
+      handleOpenChat,
       handleOpenHelp,
       handleOpenSessionList,
       handleRefresh,
@@ -497,138 +440,80 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [epicFilterId]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      const isModifier = event.metaKey || event.ctrlKey;
-      if (!isModifier || event.altKey || event.shiftKey) {
-        return;
-      }
-      if (event.key !== 'k' && event.key !== 'K') {
-        return;
-      }
-
-      if (isTypingTarget(event.target)) {
-        return;
-      }
-
-      if (helpOpen || tunnelModalOpen) {
-        return;
-      }
-
-      event.preventDefault();
-      setSearchOpen(true);
-    };
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [helpOpen, tunnelModalOpen]);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== '?') {
-        return;
-      }
-      if (event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-
-      if (isTypingTarget(event.target)) {
-        return;
-      }
-
-      if (shortcutsOpen) {
-        event.preventDefault();
-        handleCloseShortcuts();
-        return;
-      }
-
-      if (
-        searchOpen ||
-        helpOpen ||
-        chatOpen ||
-        sessionListOpen ||
-        tunnelModalOpen ||
-        selectedTicketId !== null
-      ) {
-        return;
-      }
-
-      event.preventDefault();
-      handleOpenShortcuts();
-    };
-
-    document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
-  }, [
-    chatOpen,
-    helpOpen,
-    handleCloseShortcuts,
-    handleOpenShortcuts,
-    searchOpen,
-    sessionListOpen,
-    tunnelModalOpen,
+  // bdboard-62p4 第4段: グローバルキーボードショートカット2本
+  // (Cmd/Ctrl+K・`?`) は useAppKeyboardShortcuts.ts にまとめた。呼び出し位置は
+  // 元の2つの effect があった場所 (epicFilterId 切り替え effect の直後) と
+  // 同じなので、この2つの useEffect は元と同じ相対順序で登録される。
+  useAppKeyboardShortcuts({
+    helpOpen: overlays.helpOpen,
+    tunnelModalOpen: overlays.tunnelModalOpen,
+    chatOpen: overlays.chatOpen,
+    searchOpen: overlays.searchOpen,
+    sessionListOpen: overlays.sessionListOpen,
+    shortcutsOpen: overlays.shortcutsOpen,
     selectedTicketId,
-    shortcutsOpen,
-  ]);
+    onOpenSearch: overlays.handleOpenSearch,
+    onOpenShortcuts: overlays.handleOpenShortcuts,
+    onCloseShortcuts: overlays.handleCloseShortcuts,
+  });
 
   return (
     <UndoSnackbarProvider>
     <PopoverCoordinatorProvider>
     <div className="app">
-      <header className="header">
-        <ErrorBoundary label="ヘッダー">
-        <GlobalBar
-          view={view}
-          onViewChange={setView}
-          notificationUnreadCount={notificationEvents.unreadCount}
-          onOpenSearch={handleOpenSearch}
-          streamState={streamState}
-          connectStalled={connectStalled}
-          lastContactAtMs={lastContactAtMs}
-          generatedAt={boardQuery.data?.generatedAt}
-          lastRefreshAt={lastRefreshAt}
-          totalSessionCount={totalSessionCount}
-          activeSessionCount={activeSessionCount}
-          onOpenSessionList={() => handleOpenSessionList()}
-          statusDetailOpen={statusDetailOpen}
-          onStatusDetailOpenChange={setStatusDetailOpen}
-          projects={projectsQuery.data ?? []}
-          selectedProjectIds={selectedProjectIds}
-          onToggleProject={handleToggleProject}
-          onSelectAllProjects={handleSelectAll}
-          onClearAllProjects={handleClearAll}
-          onSaveProjectCombination={() => setPresetSaveIntentToken((token) => token + 1)}
-          onOpenSettings={() => setView('settings')}
-          onOpenTunnel={() => setTunnelModalOpen(true)}
-          onOpenHelp={handleOpenHelp}
-          onOpenShortcuts={handleOpenShortcuts}
-          tipsBannerDismissed={tipsBannerDismissed}
-          onShowTipsBanner={() => setTipsBannerDismissed(false)}
-        />
-        </ErrorBoundary>
-
-        <ErrorBoundary label="ツールバー">
-        <ViewToolbar
-          view={view}
-          boardFilterPresets={boardFilterPresets}
-          onBoardFilterPresetsChange={setBoardFilterPresets}
-          boardFilterPresetState={boardFilterPresetState}
-          onApplyBoardFilterPreset={handleApplyBoardFilterPreset}
-          hideDone={hideDone}
-          onHideDoneChange={setHideDone}
-          stalledOnly={stalledOnly}
-          onStalledOnlyChange={setStalledOnly}
-          totalSessionCount={totalSessionCount}
-          activeSessionCount={activeSessionCount}
-          onOpenSessionList={() => handleOpenSessionList()}
-          onRefresh={handleRefresh}
-          isRefreshing={isRefreshing}
-          chatAvailable={chatAvailable}
-          onOpenChat={() => setChatOpen(true)}
-          presetSaveIntentToken={presetSaveIntentToken}
-        />
-        </ErrorBoundary>
-      </header>
+      <AppHeader
+        view={view}
+        onViewChange={setView}
+        notificationUnreadCount={notificationEvents.unreadCount}
+        onOpenSearch={overlays.handleOpenSearch}
+        connection={{
+          streamState,
+          connectStalled,
+          lastContactAtMs,
+          generatedAt: boardQuery.data?.generatedAt,
+          lastRefreshAt,
+        }}
+        sessions={{
+          total: totalSessionCount,
+          active: activeSessionCount,
+          onOpen: overlays.handleOpenSessionList,
+        }}
+        statusDetail={{
+          open: overlays.statusDetailOpen,
+          onOpenChange: overlays.setStatusDetailOpen,
+        }}
+        projects={{
+          list: projectsQuery.data ?? [],
+          selectedIds: selectedProjectIds,
+          onToggle: handleToggleProject,
+          onSelectAll: handleSelectAll,
+          onClearAll: handleClearAll,
+          onSaveCombination: overlays.handleSaveProjectCombination,
+        }}
+        onOpenSettings={() => setView('settings')}
+        onOpenTunnel={overlays.handleOpenTunnel}
+        onOpenHelp={overlays.handleOpenHelp}
+        onOpenShortcuts={overlays.handleOpenShortcuts}
+        tipsBanner={{
+          dismissed: tipsBannerDismissed,
+          onShow: () => setTipsBannerDismissed(false),
+        }}
+        toolbar={{
+          boardFilterPresets,
+          onBoardFilterPresetsChange: setBoardFilterPresets,
+          boardFilterPresetState,
+          onApplyBoardFilterPreset: handleApplyBoardFilterPreset,
+          hideDone,
+          onHideDoneChange: setHideDone,
+          stalledOnly,
+          onStalledOnlyChange: setStalledOnly,
+          onRefresh: handleRefresh,
+          isRefreshing,
+          chatAvailable,
+          onOpenChat: overlays.handleOpenChat,
+          presetSaveIntentToken: overlays.presetSaveIntentToken,
+        }}
+      />
 
       <AlertBar
         streamState={streamState}
@@ -636,7 +521,7 @@ export function App() {
         connectStalled={connectStalled}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
-        onOpenDetails={() => setStatusDetailOpen(true)}
+        onOpenDetails={overlays.handleOpenStatusDetail}
       />
 
       {statusErrors.length > 0 && (
@@ -654,7 +539,7 @@ export function App() {
 
       {!tipsBannerDismissed && (
         <TipsBanner
-          onOpenHelp={handleOpenHelp}
+          onOpenHelp={overlays.handleOpenHelp}
           onDismiss={() => setTipsBannerDismissed(true)}
         />
       )}
@@ -687,7 +572,7 @@ export function App() {
           }}
           selectedTicketId={selectedTicketId}
           onCardClick={handleSelectTicket}
-          onSessionBadgeClick={handleOpenSessionList}
+          onSessionBadgeClick={overlays.handleOpenSessionList}
           nextUp={{
             limit: nextUpLimit,
             onLimitChange: setNextUpLimit,
@@ -711,74 +596,59 @@ export function App() {
         </BoardDnDProvider>
       </main>
 
-      <AppTicketDetailOverlay
-        selectedTicketId={selectedTicketId}
-        projectRootPaths={projectRootPaths}
-        pendingDecision={
-          selectedTicketId !== null ? pendingDecisionsById.get(selectedTicketId) : undefined
-        }
-        prLink={selectedTicketId !== null ? prLinksById.get(selectedTicketId) : undefined}
-        onClose={handleCloseDetail}
-        onChatAboutTicket={
-          chatAvailable
-            ? (context) => {
-                setChatContext(context);
-                setChatContextToken((token) => token + 1);
-                setChatOpen(true);
-              }
-            : undefined
-        }
-        onOpenTicket={handleSelectTicket}
-        onBackTicket={canGoBackTicket ? goBackTicket : undefined}
-        isMaximized={detailMaximized}
-        onToggleMaximized={handleToggleDetailMaximized}
-        isTicketOnBoard={isTicketOnBoard}
-        onFilterByEpic={handleFilterByEpic}
-        onTicketViewed={handleRecordRecentTicket}
-        availableLabels={availableLabels ?? []}
-      />
-
-      <AppSessionListOverlay
-        open={sessionListOpen}
-        projectId={sessionListProjectId}
-        onClose={handleCloseSessionList}
-      />
-
-      <AppShortcutsOverlay open={shortcutsOpen} onClose={handleCloseShortcuts} />
-
-      <AppHelpOverlay open={helpOpen} onClose={handleCloseHelp} />
-
-      <AppSearchOverlay
-        open={searchOpen}
-        onClose={handleCloseSearch}
-        onSelect={handleSelectTicket}
-        actions={paletteActions}
-        recentTickets={recentTickets}
-      />
-
-      <AppTunnelOverlay open={tunnelModalOpen} onClose={() => setTunnelModalOpen(false)} />
-
-      <AppChatOverlay
-        open={chatOpen}
-        projects={chatProjects}
-        initialProjectId={
-          chatContext?.projectId ??
-          (selectedProjectIds.length === 1
-            ? selectedProjectIds[0]
-            : lastChatProjectId !== ''
-              ? lastChatProjectId
-              : undefined)
-        }
-        initialInput={
-          chatContext === undefined ? undefined : `${chatContext.ticketId} について: `
-        }
-        ticketContextToken={chatContext === undefined ? undefined : chatContextToken}
-        onProjectIdChange={setLastChatProjectId}
-        isTicketOnBoard={isTicketOnBoard}
-        onOpenTicket={handleSelectTicket}
-        onClose={() => {
-          setChatOpen(false);
-          setChatContext(undefined);
+      <AppOverlayGroup
+        ticketDetail={{
+          selectedTicketId,
+          projectRootPaths,
+          pendingDecision:
+            selectedTicketId !== null ? pendingDecisionsById.get(selectedTicketId) : undefined,
+          prLink: selectedTicketId !== null ? prLinksById.get(selectedTicketId) : undefined,
+          onClose: handleCloseDetail,
+          onChatAboutTicket: chatAvailable ? overlays.handleChatAboutTicket : undefined,
+          onOpenTicket: handleSelectTicket,
+          onBackTicket: canGoBackTicket ? goBackTicket : undefined,
+          isMaximized: overlays.detailMaximized,
+          onToggleMaximized: overlays.handleToggleDetailMaximized,
+          isTicketOnBoard,
+          onFilterByEpic: handleFilterByEpic,
+          onTicketViewed: handleRecordRecentTicket,
+          availableLabels: availableLabels ?? [],
+        }}
+        sessionList={{
+          open: overlays.sessionListOpen,
+          projectId: overlays.sessionListProjectId,
+          onClose: overlays.handleCloseSessionList,
+        }}
+        shortcuts={{ open: overlays.shortcutsOpen, onClose: overlays.handleCloseShortcuts }}
+        help={{ open: overlays.helpOpen, onClose: overlays.handleCloseHelp }}
+        search={{
+          open: overlays.searchOpen,
+          onClose: overlays.handleCloseSearch,
+          onSelect: handleSelectTicket,
+          actions: paletteActions,
+          recentTickets,
+        }}
+        tunnel={{ open: overlays.tunnelModalOpen, onClose: overlays.handleCloseTunnel }}
+        chat={{
+          open: overlays.chatOpen,
+          projects: chatProjects,
+          initialProjectId:
+            overlays.chatContext?.projectId ??
+            (selectedProjectIds.length === 1
+              ? selectedProjectIds[0]
+              : lastChatProjectId !== ''
+                ? lastChatProjectId
+                : undefined),
+          initialInput:
+            overlays.chatContext === undefined
+              ? undefined
+              : `${overlays.chatContext.ticketId} について: `,
+          ticketContextToken:
+            overlays.chatContext === undefined ? undefined : overlays.chatContextToken,
+          onProjectIdChange: setLastChatProjectId,
+          isTicketOnBoard,
+          onOpenTicket: handleSelectTicket,
+          onClose: overlays.handleCloseChat,
         }}
       />
 
