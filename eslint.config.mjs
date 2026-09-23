@@ -32,7 +32,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/infrastructure/process/cloudflared-tunnel.ts': 220, // 現在 213 (bdboard-sso1.54: ./cloudflared-tunnel/*.ts へ関心別分割。createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   'src/application/tunnel/tunnel-service.ts': 215, // 現在 205 (bdboard-sso1.64: ./tunnel-service/*.ts へ関心別分割。createTunnelService() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   'web/src/components/AiQuotaWidget.tsx': 220, // 現在 216
-  'src/infrastructure/transcript/jsonl-transcript-scanner.ts': 220, // 現在 212
   'src/domain/in-flight-overlap.ts': 210, // 現在 204
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
