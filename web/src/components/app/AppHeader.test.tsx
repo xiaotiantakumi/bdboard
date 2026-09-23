@@ -25,7 +25,15 @@ const viewToolbarMock = vi.mocked(ViewToolbar);
 
 // マーカー値: 引数の取り違え(例えば sessions.total と sessions.active の
 // 入れ替わり)を確実に検知できるよう、同じ形の値でもフィールドごとに異なる
-// 識別可能な値にする。
+// 識別可能な値にする。ただし GlobalBar/ViewToolbar に渡る bool 系 prop は
+// 同名コンポーネント内に3〜4個あり、bool は2値しか取れないため単一の
+// render だけでは全ペアを pairwise に区別しきれない(鳩の巣原理: 値の種類
+// より prop 数が多い)。このため下の
+// 'does not swap same-target boolean props across a second, differently-patterned render'
+// で、1回目の render とは異なる組み合わせパターンの2回目の render を行い、
+// 1回目で値が偶然一致していた組(connectStalled/tipsBannerDismissed,
+// hideDone/chatAvailable, stalledOnly/isRefreshing)を2回目で区別する
+// (opus レビュー指摘 minor 1)。
 function makeProps(overrides: Partial<AppHeaderProps> = {}): AppHeaderProps {
   return {
     view: 'split',
@@ -61,7 +69,7 @@ function makeProps(overrides: Partial<AppHeaderProps> = {}): AppHeaderProps {
     onOpenHelp: vi.fn(),
     onOpenShortcuts: vi.fn(),
     tipsBanner: {
-      dismissed: true,
+      dismissed: false,
       onShow: vi.fn(),
     },
     toolbar: {
@@ -122,7 +130,7 @@ describe('AppHeader', () => {
     expect(globalBarProps.onOpenTunnel).toBe(props.onOpenTunnel);
     expect(globalBarProps.onOpenHelp).toBe(props.onOpenHelp);
     expect(globalBarProps.onOpenShortcuts).toBe(props.onOpenShortcuts);
-    expect(globalBarProps.tipsBannerDismissed).toBe(true);
+    expect(globalBarProps.tipsBannerDismissed).toBe(false);
     expect(globalBarProps.onShowTipsBanner).toBe(props.tipsBanner.onShow);
   });
 
@@ -167,5 +175,44 @@ describe('AppHeader', () => {
     expect(viewToolbarProps.chatAvailable).toBe(true);
     expect(viewToolbarProps.onOpenChat).toBe(props.toolbar.onOpenChat);
     expect(viewToolbarProps.presetSaveIntentToken).toBe(4);
+  });
+
+  it('does not swap same-target boolean props across a second, differently-patterned render (pigeonhole: a single render cannot pairwise-distinguish 3-4 same-target booleans)', () => {
+    const flipped = makeProps({
+      connection: {
+        streamState: 'open',
+        connectStalled: true,
+        lastContactAtMs: 12345,
+        generatedAt: '2026-09-24T00:00:00.000Z',
+        lastRefreshAt: '2026-09-24T00:00:01.000Z',
+      },
+      statusDetail: { open: false, onOpenChange: vi.fn() },
+      tipsBanner: { dismissed: false, onShow: vi.fn() },
+      toolbar: {
+        ...makeProps().toolbar,
+        hideDone: false,
+        stalledOnly: true,
+        isRefreshing: false,
+        chatAvailable: true,
+      },
+    });
+    render(<AppHeader {...flipped} />);
+
+    const globalBarProps = globalBarMock.mock.calls.at(-1)![0];
+    const viewToolbarProps = viewToolbarMock.mock.calls.at(-1)![0];
+
+    // GlobalBar: connectStalled=true vs tipsBannerDismissed=false now differ
+    // (both were false in the primary render, which would have hidden a swap
+    // between these two specific fields).
+    expect(globalBarProps.connectStalled).toBe(true);
+    expect(globalBarProps.statusDetailOpen).toBe(false);
+    expect(globalBarProps.tipsBannerDismissed).toBe(false);
+    // ViewToolbar: hideDone=false vs chatAvailable=true now differ, and
+    // stalledOnly=true vs isRefreshing=false now differ (both pairs
+    // coincided in the primary render).
+    expect(viewToolbarProps.hideDone).toBe(false);
+    expect(viewToolbarProps.stalledOnly).toBe(true);
+    expect(viewToolbarProps.isRefreshing).toBe(false);
+    expect(viewToolbarProps.chatAvailable).toBe(true);
   });
 });

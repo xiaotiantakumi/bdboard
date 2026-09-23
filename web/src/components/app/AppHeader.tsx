@@ -69,7 +69,7 @@ export interface AppHeaderProps {
  * 橋渡しするだけの JSX) を丸ごと移した表示専用コンポーネント。
  * state・effect は一切ここに移さず App.tsx 側に残す。
  *
- * GlobalBar (24 props) と ViewToolbar (17 props) はどちらも既存の独立
+ * GlobalBar (26 props) と ViewToolbar (17 props) はどちらも既存の独立
  * コンポーネントで、ここでは変更していない — 渡している値・prop名は
  * 元の App.tsx から1文字も変えていない。呼び出し元 (App.tsx) 側の
  * props 爆発を避けるため、このコンポーネント自体は関心ごとにまとめた

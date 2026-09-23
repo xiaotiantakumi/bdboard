@@ -21,10 +21,13 @@ export interface AppKeyboardShortcutsParams {
  * document.addEventListener の登録内容・イベント判定条件・early return の
  * 並びを一切変えていない。
  *
- * 呼び出し位置について: App.tsx では useAppOverlays() の直後、元の2つの
- * effect があった位置 (epicFilterId 切り替え effect の直後) でこのフックを
- * 1回だけ呼ぶ。これにより2つの useEffect は元と同じ相対順序 (Cmd/Ctrl+K →
- * `?`) で登録される。
+ * 呼び出し位置について: App.tsx では元の2つの effect があった位置
+ * (epicFilterId 切り替え effect の直後) でこのフックを1回だけ呼ぶ。
+ * これにより2つの useEffect は元と同じ相対順序 (Cmd/Ctrl+K → `?`) で
+ * 登録される。(useAppOverlays() 自体はこれより前、useTicketDeepLink の
+ * 直後で呼ばれている — opus レビュー指摘: 本コメントが誤って「このフックは
+ * useAppOverlays() の直後で呼ばれる」と書いていたのを修正。実際の呼び出し
+ * 位置は App.tsx 側のコメントを正とする。)
  *
  * 依存配列について: 元のコードは onOpenSearch/onOpenShortcuts/
  * onCloseShortcuts に相当する処理を setSearchOpen(true) 等の setState

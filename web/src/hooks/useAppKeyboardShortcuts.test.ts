@@ -24,7 +24,9 @@ function baseParams(
 }
 
 function fireKeydown(init: KeyboardEventInit) {
-  document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, ...init }));
+  const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+  document.dispatchEvent(event);
+  return event;
 }
 
 describe('useAppKeyboardShortcuts', () => {
@@ -138,6 +140,75 @@ describe('useAppKeyboardShortcuts', () => {
 
     expect(params.onOpenSearch).not.toHaveBeenCalled();
     expect(params.onOpenShortcuts).not.toHaveBeenCalled();
+  });
+
+  // opus レビュー指摘(major 1): このフックの2つの useEffect は依存配列に
+  // helpOpen/tunnelModalOpen/selectedTicketId 等を含むが、上のテストは
+  // すべて「1回 render して1回 key を撃つ」だけなので、依存配列から値を
+  // 誤って落とす退行(古いクロージャのまま effect が再登録されない)を
+  // 検知できなかった。ここでは rerender で値を変えた後に同じキーを撃ち、
+  // 新しい値が反映されていることを確認する。
+
+  it('re-subscribes the Cmd+K effect when helpOpen changes (pins the dependency array)', () => {
+    const params = baseParams();
+    const { rerender } = renderHook(
+      (p: AppKeyboardShortcutsParams) => useAppKeyboardShortcuts(p),
+      { initialProps: params },
+    );
+
+    rerender({ ...params, helpOpen: true });
+    fireKeydown({ key: 'k', metaKey: true });
+
+    expect(params.onOpenSearch).not.toHaveBeenCalled();
+  });
+
+  it('re-subscribes the "?" effect when selectedTicketId changes (pins the dependency array)', () => {
+    const params = baseParams();
+    const { rerender } = renderHook(
+      (p: AppKeyboardShortcutsParams) => useAppKeyboardShortcuts(p),
+      { initialProps: params },
+    );
+
+    rerender({ ...params, selectedTicketId: 't-1' });
+    fireKeydown({ key: '?' });
+
+    expect(params.onOpenShortcuts).not.toHaveBeenCalled();
+  });
+
+  it('calls preventDefault on the Cmd+K event when it opens the search palette', () => {
+    const params = baseParams();
+    renderHook(() => useAppKeyboardShortcuts(params));
+
+    const event = fireKeydown({ key: 'k', metaKey: true });
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('does not call preventDefault on Cmd+K when it is suppressed (help open)', () => {
+    const params = baseParams({ helpOpen: true });
+    renderHook(() => useAppKeyboardShortcuts(params));
+
+    const event = fireKeydown({ key: 'k', metaKey: true });
+
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it('calls preventDefault on the "?" event when it opens the shortcuts overlay', () => {
+    const params = baseParams();
+    renderHook(() => useAppKeyboardShortcuts(params));
+
+    const event = fireKeydown({ key: '?' });
+
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('calls preventDefault on the "?" event when it closes an already-open shortcuts overlay', () => {
+    const params = baseParams({ shortcutsOpen: true });
+    renderHook(() => useAppKeyboardShortcuts(params));
+
+    const event = fireKeydown({ key: '?' });
+
+    expect(event.defaultPrevented).toBe(true);
   });
 
   it('removes its listeners on unmount', () => {
