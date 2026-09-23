@@ -146,4 +146,23 @@ describe('useBoardFilterState', () => {
     expect(result.current.hideDone).toBe(false);
     expect(result.current.collapsedLanesSet.has('awaiting_human')).toBe(true);
   });
+
+  it('falls back to the default when persisted values fail validation', () => {
+    // validatePriorityCeiling only accepts 'all' | '0'..'4'; validateLaneArray
+    // only accepts known Lane values. Both should be rejected and replaced by
+    // their documented defaults instead of propagating the bad value (PR #649
+    // review nit: pin the validator wiring, not just the happy path).
+    localStorage.setItem(UI_STORAGE_KEYS.boardPriorityCeiling, JSON.stringify('not-a-choice'));
+    localStorage.setItem(
+      UI_STORAGE_KEYS.collapsedLanes,
+      JSON.stringify(['not_a_lane']),
+    );
+
+    const { result } = renderHook(() => useBoardFilterState());
+
+    expect(result.current.priorityCeiling).toBe('all');
+    expect(result.current.filter.priorityCeiling).toBeNull();
+    expect(result.current.collapsedLanes).toEqual([]);
+    expect(result.current.collapsedLanesSet.size).toBe(0);
+  });
 });
