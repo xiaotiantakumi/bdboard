@@ -35,6 +35,18 @@ export interface GetPrBadgesOptions {
    * 1回の呼び出しで新規に gh を起動する上限 (in-flight 共有で乗っかれるものは含まない)。
    * 上限に達した分は今回は URL のみのバッジで妥協し、次回の呼び出し (board.changed の
    * たびに来る) に回す (bdboard-7ln6 #6)。未指定なら DEFAULT_MAX_NEW_FETCHES_PER_CALL。
+   *
+   * **`overallTimeoutMs` を指定した呼び出しではこのオプションは無視される
+   * (bdboard-ksed)。** 応答時間は `overallTimeoutMs` 自体と `statusGate` の同時実行数
+   * 上限で既に守られており、この総数上限を重ねて掛ける意味が無い —— それどころか
+   * 実測では、commentCache が呼び出しをまたいで温まっているとほぼ全チケットが
+   * マイクロタスク単位で resolvePrStatus に到達するため、応答がタイムアウトする
+   * ずっと前にこの上限を使い切ってしまい、残りは今回の呼び出しでは二度と試みられ
+   * ない (「タイムアウト後だけ上限を外す」設計は、予算を使い切るタイミングが
+   * タイムアウトよりずっと早いため効果が無かった)。`overallTimeoutMs` 指定時は
+   * `statusGate`/`statusFetchConcurrency` の同時起動数上限とサーキットブレーカー
+   * だけで絞る (gh の同時起動数が無制限になるわけではない)。`overallTimeoutMs`
+   * 未指定 (完了まで同期的に待つ呼び出し) では、このオプションは従来通り効く。
    */
   readonly maxNewFetchesPerCall?: number;
   /**
@@ -148,7 +160,26 @@ export async function getPrBadges(
   const commentFailures: FetchFailure[] = [];
   const statusFailures: FetchFailure[] = [];
   let statusAttempts = 0;
-  const statusBudget: PrStatusBudget = { remaining: maxNewFetchesPerCall };
+  // bdboard-ksed: overallTimeoutMs を指定する呼び出し元 (/api/pr-links) は、応答時間
+  // そのものは overallTimeoutMs 自体と statusGate の同時実行上限で既に守られている。
+  // maxNewFetchesPerCall はそれとは別の「1回の呼び出しで新規に起動してよい gh の
+  // 総数」という上限だが、実測 (このチケットのレビューで確認) では効かない —— この
+  // ルートは commentCache をリクエストをまたいで共有するため、2回目以降の呼び出しは
+  // ほぼ全チケットが resolvePrStatus に到達するまでの URL 解決がキャッシュヒットで
+  // 一瞬 (マイクロタスク単位) に終わり、応答がタイムアウトするずっと前に
+  // maxNewFetchesPerCall 件ぶんの予算を使い切って残り全部を見送ってしまう。
+  // (「タイムアウト後だけ上限を外す」という設計を最初に試したが、上記の理由で
+  // ほぼ意味を持たないことが実験で分かった —— 予算はタイムアウトよりずっと前に
+  // 尽きているため、タイムアウト時点で外しても手遅れ。)
+  // そのため overallTimeoutMs 指定時は最初から総数上限を掛けず、同時起動数
+  // (statusGate) とサーキットブレーカー (isCircuitOpen) だけで絞る —— 応答時間の
+  // 保護という maxNewFetchesPerCall の役目は overallTimeoutMs 自体が既に果たして
+  // いるので、二重の制限を掛ける理由が無い。overallTimeoutMs 未指定 (完了まで
+  // 同期的に待つ呼び出し) では、1回の呼び出しで大量の gh を (concurrency の枠内で
+  // 順々にでも) 起動し尽くすのを避けるため、従来通り maxNewFetchesPerCall で絞る。
+  const statusBudget: PrStatusBudget = {
+    remaining: overallTimeoutMs !== undefined ? Number.POSITIVE_INFINITY : maxNewFetchesPerCall,
+  };
   let deferredFetchCount = 0;
   // bdboard-sgpa: 呼び出し元が gates を渡していれば (/api/pr-links のようにリクエストを
   // またいで共有したい場合) それを使う。渡さなければ従来通りこの呼び出し専用の
@@ -184,8 +215,11 @@ export async function getPrBadges(
   // 「全チケットのURL解決 (Pass 1) が終わってから全チケットのステータス解決 (Pass 2) を
   // 始める」という2段構成だったが、実データで計測すると Pass 1 だけで overallTimeoutMs を
   // 使い切ってしまい、gh が1件も起動できないまま毎回タイムアウトするケースが確認できた。
-  // commentGate/statusGate それぞれの acquire は実際に処理を投げる直前に行われるので、
-  // サーキットブレーカーやキャッシュの状態は dispatch のたびに再評価される。
+  // commentGate/statusGate それぞれの acquire は実際に gh/bd を起動する側だけが行う
+  // (bdboard-ksed: 相乗りする呼び出しはゲートに触れない)。キャッシュ/予算の判定は
+  // ゲート取得より前に行われ、サーキットブレーカーの状態だけはゲート取得の直後にも
+  // もう一度確認する (ゲート待ちの間にトリップした場合を拾うため。
+  // resolve-pr-status.ts 参照)。
   const runTicket = async ({ entry, ticket }: CommentFetchItem): Promise<void> => {
     let url: string | null;
     try {
@@ -228,31 +262,32 @@ export async function getPrBadges(
       return;
     }
 
-    await statusGate.acquire();
-    try {
-      const status = await resolvePrStatus(url, {
-        prStatusReader,
-        statusCache,
-        budget: statusBudget,
-        onDeferred: () => {
-          deferredFetchCount += 1;
-        },
-        onAttempt: () => {
-          statusAttempts += 1;
-        },
-        onFailure: (error) => {
-          statusFailures.push({ id: url, error });
-        },
-      });
-      badgesByTicket.set(ticket.id, {
-        ticketId: ticket.id,
-        projectId: entry.project.id,
-        url,
-        status,
-      });
-    } finally {
-      statusGate.release();
-    }
+    // bdboard-ksed: statusGate の acquire/release は resolvePrStatus 自身の中 —
+    // 実際に gh を起動する呼び出しだけが行う。既に in-flight の URL に相乗りする
+    // だけの呼び出しはゲートを一切待たない (以前はここで無条件に acquire していた
+    // ため、相乗りするだけの呼び出しもフェッチ完了までゲートの枠を占有していた —
+    // bdboard-sgpa の opus レビュー指摘)。
+    const status = await resolvePrStatus(url, {
+      prStatusReader,
+      statusCache,
+      statusGate,
+      budget: statusBudget,
+      onDeferred: () => {
+        deferredFetchCount += 1;
+      },
+      onAttempt: () => {
+        statusAttempts += 1;
+      },
+      onFailure: (error) => {
+        statusFailures.push({ id: url, error });
+      },
+    });
+    badgesByTicket.set(ticket.id, {
+      ticketId: ticket.id,
+      projectId: entry.project.id,
+      url,
+      status,
+    });
   };
 
   const mainWork = Promise.all(workItems.map(runTicket)).then(() => undefined);
