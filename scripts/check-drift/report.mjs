@@ -3,7 +3,7 @@ import { listOpenPullRequests } from './gh.mjs';
 import { classifyPullRequests, computeUpstreamCurrency, fetchPeerBranches } from './candidates.mjs';
 import { comparePullRequests } from './compare.mjs';
 
-export function printOverlapReport({
+function printOverlapReport({
   comparedCount,
   conflicts,
   conflictsOutsideBranchFiles,
