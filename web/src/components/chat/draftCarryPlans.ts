@@ -1,4 +1,4 @@
-// bdboard-sso1.83 第4段: ChatPanel.tsx から純関数と定数を移動しただけのファイル。
+// bdboard-sso1.83 第4段: ChatPanel.tsx から定数を移動しただけのファイル。
 // 挙動は一切変えていない。
 import { defineDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
 
