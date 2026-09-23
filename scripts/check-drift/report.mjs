@@ -112,13 +112,11 @@ export function printOverlapReport({
   }
 }
 
-/**
- * bdboard-b0yd R2-7: このブランチがまだ何も変更していないとき (worktree 作成
- * 直後など) は branchFiles が空集合であり、階層1の交差は定義上つねに空になる。
- * その結果、stale な peer が1本でもあれば毎回バケットC (「ファイルの外」) が
- * 100% 発火してノイズになる。比較そのものに材料が無いので、gh を呼ぶ前に畳む。
- */
 export function reportOpenPullRequestOverlap(currentBranch, branchFiles, shouldFetch, upstream) {
+  // bdboard-b0yd R2-7: このブランチがまだ何も変更していないとき (worktree 作成
+  // 直後など) は branchFiles が空集合であり、階層1の交差は定義上つねに空になる。
+  // その結果、stale な peer が1本でもあれば毎回バケットC (「ファイルの外」) が
+  // 100% 発火してノイズになる。比較そのものに材料が無いので、gh を呼ぶ前に畳む。
   if (branchFiles.length === 0) {
     console.log('drift: このブランチはまだ何も変更していないため、open PR との比較は省略しました。');
     return;
