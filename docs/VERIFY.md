@@ -129,7 +129,8 @@ POSIX 区切り (`/`) で書く — Windows でも git は `/` 区切りでフ�
 ファイルの行数チェックだけ逃げる」という抜け道は無い。逆に「対象ディレクトリ外 (`src/` 等の
 配下から外れる場所) や `fixtures/` 配下へ動かすと対象外になる」のは、このガードのスコープ設計
 上の既知の限界であり検知できない — 対象ディレクトリ・拡張子の一覧そのものを変える場合は
-`scripts/check-file-size/constants.mjs` の `TARGET_DIRS` / `TARGET_EXTENSIONS` を見直すこと。
+`scripts/check-file-size/constants.mjs` の `TARGET_DIRS` / `TARGET_EXTENSIONS`
+(入口の `scripts/check-file-size.mjs` が re-export している) を見直すこと。
 
 **並行 PR との衝突**: 複数の PR が同時に同じ大きいファイルを少しずつ育てていると、先にマージ
 された側の baseline 更新が後発 PR の rebase 後に (b) を再発させることがある。マージ直前の
