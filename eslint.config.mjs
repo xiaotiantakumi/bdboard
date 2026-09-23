@@ -17,7 +17,6 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'src/interface/http/agent-run-routes-test-support.ts': 240, // 現在 232 (bdboard-sso1.36: agent-run-routes.test.ts move-only 分割で5ファイルから共有される createFakeBoardCache/makeRoutes/seedOpenTicket 等のヘルパー置き場。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
   'web/src/components/TicketDetailPanel.tsx': 800, // 現在 757 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングを useTicketAgentRun.ts + TicketAgentRunTriggerSection.tsx + TicketAgentRunSection.tsx へ、human decision 回答を useTicketDecisionAnswer.ts + TicketDecisionSection.tsx へ移動)
   'web/src/components/ticket-detail/useTicketAgentRun.ts': 260, // 現在 246 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングの state/query/mutation/effect をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加。Opus レビュー対応でticketId変更リセットを内部effect化した分+4)
