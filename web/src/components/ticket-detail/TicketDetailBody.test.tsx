@@ -273,7 +273,12 @@ describe('TicketDetailBody', () => {
     // PR バッジ (state: 'open' -> "PR open" というラベルで描画される)。
     expect(getByText('PR open')).toBeInTheDocument();
     expect(getByText('Notes')).toBeInTheDocument();
-    expect(getByText('MARK-notes-body-text')).toBeInTheDocument();
+    // MarkdownContent はハイフン区切りの語を bead リンクとして解釈し、Notes 本文を
+    // 複数のノードに分割し得るため(例: "MARK-notes" と "body-text" が別ボタンになる)、
+    // getByText で単一ノード一致を求めず、Notes セクション全体の textContent へ
+    // 連結後の文字列で判定する(data.notes に正しくひも付いていることの確認が目的)。
+    const notesSection = getByText('Notes').closest('.detail-section');
+    expect(notesSection?.textContent).toContain('MARK-notes-body-text');
 
     const labels = Array.from(container.querySelectorAll('.detail-field-label')).map(
       (el) => el.textContent,
@@ -286,6 +291,7 @@ describe('TicketDetailBody', () => {
       'PR',
       'Assignee',
       'Owner',
+      'Parent ID',
       'Created',
       'Updated',
       'Started',
@@ -301,6 +307,7 @@ describe('TicketDetailBody', () => {
       data: makeData({
         assignee: undefined,
         owner: undefined,
+        parentId: undefined,
         startedAt: undefined,
         closedAt: undefined,
         deferUntil: undefined,
