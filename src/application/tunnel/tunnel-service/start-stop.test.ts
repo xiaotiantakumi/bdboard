@@ -22,6 +22,7 @@ function createFakeTunnel(
   readonly tunnel: TunnelProcess;
   readonly startMock: ReturnType<typeof vi.fn>;
   readonly stopMock: ReturnType<typeof vi.fn>;
+  readonly isAvailableMock: ReturnType<typeof vi.fn>;
 } {
   const startMock = vi.fn(
     overrides.start ?? (async (): Promise<TunnelStartResult> => ({ url: TUNNEL_URL })),
@@ -32,6 +33,7 @@ function createFakeTunnel(
     tunnel: { start: startMock, stop: stopMock, isAvailable: isAvailableMock },
     startMock,
     stopMock,
+    isAvailableMock,
   };
 }
 
@@ -115,7 +117,7 @@ describe('tunnel-service/start-stop.ts (bdboard-ksvs state-container split)', ()
   describe('start() vs stop() racing across the shared container', () => {
     it('lets stop() win: a slower in-flight start does not clobber the newer off state', async () => {
       let resolveTunnelStart: (result: TunnelStartResult) => void = () => {};
-      const { tunnel, startMock } = createFakeTunnel({
+      const { tunnel, startMock, stopMock } = createFakeTunnel({
         start: () =>
           new Promise<TunnelStartResult>((resolve) => {
             resolveTunnelStart = resolve;
@@ -129,6 +131,8 @@ describe('tunnel-service/start-stop.ts (bdboard-ksvs state-container split)', ()
 
       const stopResult = await stop(ctx, deps);
       expect(stopResult).toEqual({ kind: 'off' });
+      // stop() itself already called tunnel.stop() once.
+      expect(stopMock).toHaveBeenCalledTimes(1);
 
       resolveTunnelStart({ url: TUNNEL_URL });
       const startResult = await startPromise;
@@ -136,11 +140,15 @@ describe('tunnel-service/start-stop.ts (bdboard-ksvs state-container split)', ()
       expect(startMock).toHaveBeenCalledTimes(1);
       expect(startResult).toEqual({ kind: 'off' });
       expect(ctx.state).toEqual({ kind: 'off' });
+      // The now-stale start() must clean up the tunnel process it just started
+      // (startInternal's stale-generation branch after `deps.tunnel.start()` resolves),
+      // even though its result is discarded.
+      expect(stopMock).toHaveBeenCalledTimes(2);
     });
 
     it('start() joins an in-flight stop() before probing again', async () => {
       let resolveTunnelStop: () => void = () => {};
-      const { tunnel, startMock, stopMock } = createFakeTunnel({
+      const { tunnel, startMock, stopMock, isAvailableMock } = createFakeTunnel({
         stop: () =>
           new Promise<void>((resolve) => {
             resolveTunnelStop = resolve;
@@ -153,13 +161,20 @@ describe('tunnel-service/start-stop.ts (bdboard-ksvs state-container split)', ()
       await vi.waitFor(() => expect(stopMock).toHaveBeenCalledTimes(1));
 
       const startPromise = start(ctx, deps);
-      // start() must await the in-flight stop() before touching the tunnel process.
+      // start() must await the in-flight stop() before ever calling probeAvailability().
+      // probeAvailability() invokes deps.tunnel.isAvailable() synchronously on its very
+      // first line (before its own first await), so if the `await ctx.stopInFlight` join
+      // were missing, isAvailableMock would already have been called synchronously here
+      // (in the same call stack as `start(ctx, deps)`, with no await in between) —
+      // this assertion would then fail without needing to flush any microtasks.
+      expect(isAvailableMock).not.toHaveBeenCalled();
       expect(startMock).not.toHaveBeenCalled();
 
       resolveTunnelStop();
       await stopPromise;
       const startResult = await startPromise;
 
+      expect(isAvailableMock).toHaveBeenCalledTimes(1);
       expect(startMock).toHaveBeenCalledTimes(1);
       expect(startResult.kind).toBe('on');
       expect(ctx.state.kind).toBe('on');
@@ -195,9 +210,11 @@ describe('tunnel-service/start-stop.ts (bdboard-ksvs state-container split)', ()
       ctx.state = onState();
       const deps = createDeps(tunnel);
 
-      // Both calls read ctx.stopInFlight in the same synchronous tick (before either
-      // IIFE's first await runs), so stop() must see shutdown()'s in-flight slot and
-      // join it rather than starting a second stopInternal().
+      // shutdown(ctx, deps) runs synchronously up through assigning ctx.stopInFlight
+      // (its IIFE has already reached `await deps.tunnel.stop()` inside stopInternal by
+      // the time this line returns). The very next line calls stop(ctx, deps) in the
+      // same synchronous tick, so it reads that already-assigned ctx.stopInFlight and
+      // must join it rather than starting a second stopInternal() / second tunnel.stop().
       const shutdownPromise = shutdown(ctx, deps);
       const stopPromise = stop(ctx, deps);
 

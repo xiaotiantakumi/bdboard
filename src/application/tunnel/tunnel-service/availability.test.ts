@@ -76,20 +76,27 @@ describe('tunnel-service/availability.ts (bdboard-ksvs state-container split)', 
 
     it('caches a negative result until TUNNEL_AVAILABILITY_RECHECK_MS elapses, then re-probes', async () => {
       const isAvailable = vi.fn(async () => false);
-      let now = new Date('2026-08-14T12:00:00.000Z');
+      const start = new Date('2026-08-14T12:00:00.000Z');
+      let now = start;
       const deps = createDeps(isAvailable, () => now);
       const ctx = createTunnelServiceState();
 
       expect(await probeAvailability(ctx, deps)).toBe(false);
       expect(isAvailable).toHaveBeenCalledTimes(1);
 
-      now = new Date(now.getTime() + TUNNEL_AVAILABILITY_RECHECK_MS - 1);
+      // One millisecond short of the TTL: the `elapsed < TTL` check (source of truth:
+      // ./availability.ts's probeAvailability) is still true, so this must be served
+      // from cache without calling isAvailable() again.
+      now = new Date(start.getTime() + TUNNEL_AVAILABILITY_RECHECK_MS - 1);
       expect(await probeAvailability(ctx, deps)).toBe(false);
       expect(isAvailable).toHaveBeenCalledTimes(1); // still within TTL: no re-probe
 
-      now = new Date(now.getTime() + 2);
+      // Exactly at the TTL boundary: `elapsed < TTL` is false (elapsed === TTL), so this
+      // must re-probe. This pins the strict `<` (an off-by-one `<=` would instead cache
+      // through this tick and only re-probe on the next millisecond).
+      now = new Date(start.getTime() + TUNNEL_AVAILABILITY_RECHECK_MS);
       expect(await probeAvailability(ctx, deps)).toBe(false);
-      expect(isAvailable).toHaveBeenCalledTimes(2); // TTL elapsed: re-probed
+      expect(isAvailable).toHaveBeenCalledTimes(2); // TTL elapsed exactly: re-probed
     });
 
     it('treats a throwing probe as unavailable instead of leaving availability unset (probe failure)', async () => {
