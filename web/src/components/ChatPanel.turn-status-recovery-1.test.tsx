@@ -989,8 +989,9 @@ describe('ChatPanel', () => {
   // ことがある。E12 は deps(conversations、historyLoadedFor)が変わるまで
   // 再実行されないため、isHistoryPending が解けないまま送信ボタンが無効の
   // ままになる可能性がある。it.fails で実際に再現した。この計画(第5段)では
-  // ChatPanel.tsx を直さないため、it.fails で現状を固定して残す(第11/12段
-  // E8/E12 抽出時にあわせて修正する想定。bd 起票 discovered-from:bdboard-sso1.83)。
+  // ChatPanel.tsx を直さないため、it.fails で現状を固定してドキュメント化する
+  // (別途bdチケットは起票しない。bdboard-sso1.83へのコメントで報告済み。第11/12段
+  // E8/E12 抽出時にあわせて修正する想定)。
   it.fails('P2: re-enables the submit button after switching to a not-yet-history-loaded thread while streaming', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);

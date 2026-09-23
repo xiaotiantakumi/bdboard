@@ -1,7 +1,8 @@
 // bdboard-sso1.83 第5段: ChatPanel.test.tsx から複数ファイルで使う fixture builder /
 // render ヘルパーを move-only で切り出したもの。手本: sso1.85 の
-// HygienePanel-test-support.tsx。本文(関数の中身・型・定数値)は1文字も変えていない。
-// 元ファイルのトップレベル宣言に `export` を付けただけ。
+// HygienePanel-test-support.tsx。本文(関数の中身・型・定数値・ロジック)は変えて
+// いない — 元ファイルのトップレベル宣言に `export` を付け、ESLint max-lines の
+// 200行上限に収めるため改行位置のみ詰めた(末尾カンマの省略等、意味的な差分はない)。
 //
 // vi.mock はファイル単位でホイストされるため、ここには置かない(各テストファイル側に
 // 個別に持つ)。このファイル自体は vi.mock を宣言しないので、消費側の vi.mock 実行前後の

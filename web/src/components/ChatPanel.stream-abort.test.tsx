@@ -1097,8 +1097,9 @@ describe('ChatPanel', () => {
     // まま)少し遅れて発火させ、E7 の応答が threadListRequestId の不一致で
     // 握りつぶされる ―― 実際に it.fails で再現した(切替先 B のスレッド
     // 一覧がいつまでも表示されない)。この計画(第5段)では ChatPanel.tsx を
-    // 直さないため、it.fails で現状を固定して残す(第11/12段 E7/E8 抽出時に
-    // あわせて修正する想定。bd 起票 discovered-from:bdboard-sso1.83)。
+    // 直さないため、it.fails で現状を固定してドキュメント化する(別途bdチケットは
+    // 起票しない。bdboard-sso1.83へのコメントで報告済み。第11/12段 E7/E8 抽出時に
+    // あわせて修正する想定)。
     it.fails('P1: loads project B\'s thread list after switching away from a streaming project A', async () => {
       const user = userEvent.setup();
       fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
