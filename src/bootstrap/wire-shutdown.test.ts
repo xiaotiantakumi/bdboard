@@ -3,9 +3,11 @@ import { wireShutdown, type WireShutdownDeps } from './wire-shutdown.js';
 
 function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps {
   return {
+    runStore: { cancelAllAndWait: vi.fn(async () => {}) },
     watchHandle: { stop: vi.fn(async () => {}) },
     tunnelService: { shutdown: vi.fn(async () => ({ kind: 'off' as const })) },
     cache: { close: vi.fn() },
+    chatRepositories: [{ close: vi.fn() }],
     server: {
       close: (callback) => callback(),
       closeAllConnections: vi.fn(),
@@ -25,11 +27,16 @@ function createDeps(overrides: Partial<WireShutdownDeps> = {}): WireShutdownDeps
 }
 
 describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal を切り出したもの)', () => {
-  it('clears every interval timer and stops the reclaim scheduler before draining/exiting', async () => {
+  it('clears every interval timer, stops the reclaim scheduler, then drains runStore/tunnel/watch/cache/chat before exiting', async () => {
     vi.useFakeTimers();
     try {
       const order: string[] = [];
       const deps = createDeps({
+        runStore: {
+          cancelAllAndWait: vi.fn(async () => {
+            order.push('runStore.cancelAllAndWait');
+          }),
+        },
         tunnelService: {
           shutdown: vi.fn(async () => {
             order.push('tunnelService.shutdown');
@@ -46,6 +53,13 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
             order.push('cache.close');
           }),
         },
+        chatRepositories: [
+          {
+            close: vi.fn(() => {
+              order.push('chatRepositories[0].close');
+            }),
+          },
+        ],
         reclaimScheduler: {
           stop: vi.fn(() => {
             order.push('reclaimScheduler.stop');
@@ -60,33 +74,44 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
         },
       });
 
-      const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
+      // clearInterval そのものを order へ記録できるよう、どのタイマーが渡されたかで
+      // ラベルを引けるマップを先に作っておく (5本とも spy 一本で区別する)。
+      const timerLabels = new Map<unknown, string>([
+        [deps.refreshIntervalTimer, 'clearInterval(refresh)'],
+        [deps.sessionIntervalTimer, 'clearInterval(session)'],
+        [deps.transcriptIntervalTimer, 'clearInterval(transcript)'],
+        [deps.cfdSnapshotIntervalTimer, 'clearInterval(cfdSnapshot)'],
+        [deps.aiQuotaAlertIntervalTimer, 'clearInterval(aiQuotaAlert)'],
+      ]);
+      const clearIntervalSpy = vi.spyOn(global, 'clearInterval').mockImplementation((timer) => {
+        order.push(timerLabels.get(timer) ?? 'clearInterval(unknown)');
+      });
 
       const { shutdownForSignal } = wireShutdown(deps);
       shutdownForSignal();
 
-      // reclaimScheduler.stop() は同期区間 (drain 起動の前) で呼ばれる。
-      expect(order[0]).toBe('reclaimScheduler.stop');
-
       await vi.advanceTimersByTimeAsync(0);
 
-      // drain 内部の順序 (application/board/shutdown-drain.ts 側の契約): tunnelService
-      // → watchHandle → cache。reclaimScheduler.stop() はその手前で既に呼ばれている。
+      // drain 内部の順序 (application/board/shutdown-drain.ts 側の契約): runStore →
+      // tunnelService → watchHandle → cache → chatRepositories。タイマー停止と
+      // reclaimScheduler.stop() はその手前で既に呼ばれている。
       expect(order).toEqual([
+        'clearInterval(refresh)',
+        'clearInterval(session)',
+        'clearInterval(transcript)',
+        'clearInterval(cfdSnapshot)',
+        'clearInterval(aiQuotaAlert)',
         'reclaimScheduler.stop',
+        'runStore.cancelAllAndWait',
         'tunnelService.shutdown',
         'watchHandle.stop',
         'cache.close',
+        'chatRepositories[0].close',
         'server.close',
       ]);
 
-      expect(clearIntervalSpy).toHaveBeenCalledWith(deps.refreshIntervalTimer);
-      expect(clearIntervalSpy).toHaveBeenCalledWith(deps.sessionIntervalTimer);
-      expect(clearIntervalSpy).toHaveBeenCalledWith(deps.transcriptIntervalTimer);
-      expect(clearIntervalSpy).toHaveBeenCalledWith(deps.cfdSnapshotIntervalTimer);
-      expect(clearIntervalSpy).toHaveBeenCalledWith(deps.aiQuotaAlertIntervalTimer);
-
       expect(deps.exit).toHaveBeenCalledExactlyOnceWith(0);
+      clearIntervalSpy.mockRestore();
     } finally {
       vi.useRealTimers();
     }
@@ -110,6 +135,7 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       // refreshIntervalTimer は常に定義されるので必ず clearInterval される。
       expect(clearIntervalSpy).toHaveBeenCalledWith(deps.refreshIntervalTimer);
       expect(deps.exit).toHaveBeenCalledExactlyOnceWith(0);
+      clearIntervalSpy.mockRestore();
     } finally {
       vi.useRealTimers();
     }
@@ -144,6 +170,13 @@ describe('wireShutdown (bdboard-sso1.86 move only, main.ts の shutdownForSignal
       process.off('SIGINT', shutdownForSignal);
       process.off('SIGTERM', shutdownForSignal);
       onSpy.mockRestore();
+      // このテストは vi.useFakeTimers() を使わないため、createDeps() が張った
+      // 5本の実タイマーが残ったままだと vitest プロセスがハングしかねない。
+      clearInterval(deps.refreshIntervalTimer);
+      if (deps.sessionIntervalTimer !== null) clearInterval(deps.sessionIntervalTimer);
+      if (deps.transcriptIntervalTimer !== undefined) clearInterval(deps.transcriptIntervalTimer);
+      if (deps.cfdSnapshotIntervalTimer !== undefined) clearInterval(deps.cfdSnapshotIntervalTimer);
+      if (deps.aiQuotaAlertIntervalTimer !== undefined) clearInterval(deps.aiQuotaAlertIntervalTimer);
     }
   });
 });

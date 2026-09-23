@@ -1,7 +1,8 @@
 /**
  * bdboard-sso1.86: src/main.ts (composition root) から SIGINT/SIGTERM の
  * shutdown 配線 (drain → graceful shutdown → タイマー停止 → signal ハンドラ登録) を
- * 切り出したもの (move only, 挙動変更ゼロ)。
+ * 切り出したもの。runStore/chatRepositories を必須化した点を除けば、main.ts に
+ * あった配線ロジックそのものの移動で挙動は変えていない (レビュー指摘で必須化のみ追加)。
  *
  * shutdownForSignal 内の後始末順序 (refresh → session → transcript → CFD snapshot →
  * ai-quota-alert のタイマー停止 → reclaimScheduler.stop() → shutdown()) は元の
@@ -13,14 +14,31 @@
  * shutdownForSignal だけを直接呼んで検証できるよう false を渡せるようにしてある
  * (main.ts からの呼び出しは常に既定のまま)。
  */
-import { createShutdownDrain, type ShutdownDrainDeps } from '../application/board/shutdown-drain.js';
+import {
+  createShutdownDrain,
+  type ShutdownDrainDeps,
+} from '../application/board/shutdown-drain.js';
 import type { ReclaimScheduler } from '../application/lease/reclaim-scheduler.js';
 import {
   createGracefulShutdown,
   type GracefulShutdownServer,
 } from '../interface/http/graceful-shutdown.js';
 
-export interface WireShutdownDeps extends ShutdownDrainDeps {
+/**
+ * bdboard-sso1.86 レビュー指摘: ShutdownDrainDeps 側の runStore/chatRepositories は
+ * (in-memory 実装やテストの都合で) optional だが、main.ts の配線では両方とも必ず
+ * 実体を持つ値が揃っている。ここで必須化しておくことで、将来 main.ts 側の呼び出しで
+ * どちらかを渡し忘れても型エラーで即気づける (テストと tsc だけでは検知できなかった -
+ * 渡し忘れても drain 自体は残りのステップだけで正常終了してしまうため)。
+ */
+export interface WireShutdownDeps extends Omit<ShutdownDrainDeps, 'runStore' | 'chatRepositories'> {
+  // NonNullable<ShutdownDrainDeps[...]> で必須化する: RunStore 型を直接 import すると
+  // runner-reachability.test.ts の「ランナー dispatch 経路への参照は
+  // interface/http/agent-run-routes.ts 経由の単一許可パスに限る」というトークン走査
+  // ガードに引っかかる (bdboard-sso1.86 review で実際に検知)。ShutdownDrainDeps 側が
+  // 既に持つ型をそのまま必須化するだけなら、新規 import を増やさずに済む。
+  readonly runStore: NonNullable<ShutdownDrainDeps['runStore']>;
+  readonly chatRepositories: NonNullable<ShutdownDrainDeps['chatRepositories']>;
   readonly server: GracefulShutdownServer;
   readonly shutdownTimeoutMs: number;
   readonly refreshIntervalTimer: ReturnType<typeof setInterval>;
