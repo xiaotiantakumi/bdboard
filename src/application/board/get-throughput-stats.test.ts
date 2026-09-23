@@ -4,6 +4,7 @@ import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { AGGREGATION_YIELD_CHUNK_SIZE } from './aggregation-yield.js';
 import { getThroughputStats } from './get-throughput-stats.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -67,6 +68,28 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
     ...createEmptyInteractionsCacheMethods(),
     close(): void {},
   };
+}
+
+// bdboard-ve1y: race a competing setImmediate ("macrotask") task against
+// the work under test. Node fully drains the microtask queue between any
+// two macrotasks, so "did the competing task run in between" reliably
+// distinguishes "yielded to the event loop at least once" from "ran fully
+// synchronously" - unlike counting calls on a spied global.setImmediate,
+// which is flaky because Vitest/Node schedule their own background
+// setImmediate calls.
+async function raceAgainstOneMacrotask(work: () => Promise<unknown>): Promise<string[]> {
+  const events: string[] = [];
+  const competingTask = new Promise<void>((resolve) => {
+    setImmediate(() => {
+      events.push('competing-task');
+      resolve();
+    });
+  });
+  const workDone = work().then(() => {
+    events.push('work-done');
+  });
+  await Promise.all([competingTask, workDone]);
+  return events;
 }
 
 describe('getThroughputStats', () => {
@@ -528,5 +551,37 @@ describe('getThroughputStats', () => {
     );
 
     expect(fallBackWeek?.count).toBe(1);
+  });
+
+  // bdboard-ve1y: getThroughputStats shares one YieldGate across all
+  // projects in its loop specifically so that many *small* projects (each
+  // individually under the chunk size) still yield once their combined
+  // ticket count crosses it - this is this app's real-world data shape
+  // (many projects, each far smaller than the chunk size). A per-project
+  // gate (reset for every project, an earlier version of this fix) would
+  // never yield here even though the combined workload does; this test
+  // guards against that regression.
+  it('yields across many small projects whose combined ticket count crosses the chunk size (bdboard-ve1y)', async () => {
+    const cache = createFakeBoardCache();
+    const now = utcInstant(2026, 8, 15, 12);
+    const projectCount = 6;
+    const ticketsPerProject = Math.ceil((AGGREGATION_YIELD_CHUNK_SIZE * 1.5) / projectCount);
+    expect(ticketsPerProject).toBeLessThan(AGGREGATION_YIELD_CHUNK_SIZE);
+
+    for (let p = 0; p < projectCount; p += 1) {
+      const proj = project(`/p${p}`, `/projects/p${p}`);
+      const tickets = Array.from({ length: ticketsPerProject }, (_, i) =>
+        makeTicket({
+          id: `bdboard-p${p}-${i}`,
+          projectId: proj.id,
+          createdAt: new Date(now.getTime() - i * MS_PER_DAY),
+        }),
+      );
+      cache.putProject({ project: proj, tickets, fingerprint: `fp-${p}`, fetchedAt: now });
+    }
+
+    const events = await raceAgainstOneMacrotask(() => getThroughputStats(cache, now, { timeZone: UTC }));
+
+    expect(events).toEqual(['competing-task', 'work-done']);
   });
 });

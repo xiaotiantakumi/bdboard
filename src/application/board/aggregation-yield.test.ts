@@ -38,6 +38,17 @@ describe('yieldToEventLoop', () => {
     await pending;
     expect(order).toEqual(['microtask', 'yielded']);
   });
+
+  // The test above alone would still pass if yieldToEventLoop degraded to
+  // `await Promise.resolve()` (a microtask-only "yield" that never actually
+  // frees the event loop for other pending requests), because it only
+  // checks ordering against a microtask queued *before* it, not against a
+  // competing macrotask. This test catches exactly that regression: a
+  // competing setImmediate task must be able to run in between.
+  it('lets a competing macrotask run in between (regression guard for a microtask-only implementation)', async () => {
+    const events = await raceAgainstOneMacrotask(() => yieldToEventLoop());
+    expect(events).toEqual(['competing-task', 'work-done']);
+  });
 });
 
 describe('forEachChunked', () => {

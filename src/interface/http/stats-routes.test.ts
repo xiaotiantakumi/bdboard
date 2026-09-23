@@ -406,6 +406,19 @@ describe('createApiRoutes', () => {
         return response;
       })();
       const healthPromise = (async () => {
+        // Wait for our own macrotask boundary before issuing the request.
+        // Without this, a regression where the aggregation's "yield" is
+        // actually microtask-only (e.g. `await Promise.resolve()` instead
+        // of `setImmediate`) could still let this assertion pass by
+        // accident: /api/health's own handler is cheap and resolves via
+        // microtasks alone, so it could race ahead of a microtask-only
+        // "yield" without that proving the aggregation ever truly freed
+        // the event loop. Forcing a real setImmediate tick first means
+        // this only passes if the aggregation is still yielding (or
+        // already done) by the time that tick fires.
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
         const response = await app.request('/api/health');
         order.push('health');
         return { response, elapsedMs: Date.now() - statsStartedAt };

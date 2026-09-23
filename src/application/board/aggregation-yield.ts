@@ -21,23 +21,22 @@ export async function yieldToEventLoop(): Promise<void> {
 
 export interface YieldGate {
   /**
-   * 1件処理するたびに呼ぶ。呼び出し回数が chunkSize に達するごとに
-   * yieldToEventLoop() する。カウンタは gate 自身が保持するので、複数の
-   * 配列/ループ (例: プロジェクトをまたぐチケット集計) にまたがって
-   * 同じ gate を使い回しても、チャンク境界は通算件数で決まる
-   * (プロジェクトごとにリセットされない)。
+   * 1件処理するたびに呼ぶ。呼び出し回数が chunkSize に達するたびに true を
+   * 返す (それ以外は false を同期的に返すだけで、await は一切発生しない)。
+   * 呼び出し側は true が返ったときだけ yieldToEventLoop() を await する。
+   * カウンタは gate 自身が保持するので、複数の配列/ループ (例: プロジェクトを
+   * またぐチケット集計) にまたがって同じ gate を使い回しても、チャンク境界は
+   * 通算件数で決まる (プロジェクトごとにリセットされない)。
    */
-  tick(): Promise<void>;
+  shouldYield(): boolean;
 }
 
 export function createYieldGate(chunkSize: number = AGGREGATION_YIELD_CHUNK_SIZE): YieldGate {
   let processed = 0;
   return {
-    async tick(): Promise<void> {
+    shouldYield(): boolean {
       processed += 1;
-      if (processed % chunkSize === 0) {
-        await yieldToEventLoop();
-      }
+      return processed % chunkSize === 0;
     },
   };
 }
@@ -45,9 +44,11 @@ export function createYieldGate(chunkSize: number = AGGREGATION_YIELD_CHUNK_SIZE
 /**
  * items を順番に visit しつつ、gate 経由でチャンク境界ごとにイベントループへ
  * 制御を返す。visit の呼び出し順序・回数は同期版の for-of ループと同一なので、
- * 集計結果は変わらない。gate を省略すると items 単体用の gate を新規作成する
- * (単一配列で完結する場合はそれで十分)。プロジェクトをまたいで通算したい
- * 場合は呼び出し側で作った gate を渡す。
+ * 集計結果は変わらない。チャンク境界に達していない件では await を一切
+ * 発生させない (gate.shouldYield() は同期関数) ので、チャンク境界以外の
+ * オーバーヘッドは元の同期ループとほぼ変わらない。gate を省略すると items
+ * 単体用の gate を新規作成する (単一配列で完結する場合はそれで十分)。
+ * プロジェクトをまたいで通算したい場合は呼び出し側で作った gate を渡す。
  */
 export async function forEachChunked<T>(
   items: readonly T[],
@@ -59,6 +60,8 @@ export async function forEachChunked<T>(
     if (item !== undefined) {
       visit(item, index);
     }
-    await gate.tick();
+    if (gate.shouldYield()) {
+      await yieldToEventLoop();
+    }
   }
 }
