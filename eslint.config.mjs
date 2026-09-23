@@ -30,7 +30,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
-  'src/domain/hygiene.test.ts': 1840, // 現在 1835
   'src/infrastructure/bd/bd-cli-human-decisions.test.ts': 1680, // 現在 1679
 };
 
