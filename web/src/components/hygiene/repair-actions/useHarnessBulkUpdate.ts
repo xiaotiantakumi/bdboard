@@ -5,9 +5,8 @@
 // state 自体は、単体修復系のフック (useHarnessInjectRepair/useContractTicketRepair) の
 // onSuccess からも「古い一括結果を残さない」ために触られる共有 state のため、親
 // (useHygieneRepairActions) 側に残し、ここへは値とセッターを引数で渡す。
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, type QueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef } from 'react';
-import type { QueryClient } from '@tanstack/react-query';
 import { postProjectHarnessInject } from '../../../api';
 import {
   buildHarnessBulkSummaryMessage,

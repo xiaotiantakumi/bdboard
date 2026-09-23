@@ -7,7 +7,7 @@ import type { HygieneIssueDto, QuickActionRequest } from '../../../api';
 import { postTicketQuickAction, postTicketQuickActionUndo } from '../../../api';
 import { planQuickActionUndo } from '../../../quickActionUndo';
 import { describeWriteError } from '../../../writeAccessMessage';
-import { useUndoSnackbar } from '../../UndoSnackbar';
+import type { useUndoSnackbar } from '../../UndoSnackbar';
 import { buildRepairRequest, buildRepairSuccessMessage } from '../issueDisplay';
 import type { RepairMutationDeps } from './types';
 
