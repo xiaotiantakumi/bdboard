@@ -8,7 +8,7 @@
 // conversationAttachmentsRef.current 経由で同期的に読む。useReducer の state は
 // レンダーを経ないと更新されないため、dispatch と同時に ref も手動で
 // 先行更新し、「直後の同期読み取りが最新のマージ結果を見る」という元実装の
-// 保証を維持する(bdboard-c1pw 由来のコメント、元は ChatPanel.tsx 内にあった)。
+// 保証を維持する(bdboard-3tw.104.24 由来のコメント、元は ChatPanel.tsx 内にあった)。
 import { type ChangeEvent, type ClipboardEvent, useCallback, useRef } from 'react';
 import type { RefObject } from 'react';
 import type { ChatImageMimeType } from '../../api';

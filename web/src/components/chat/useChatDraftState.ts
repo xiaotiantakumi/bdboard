@@ -40,6 +40,9 @@ export interface UseChatDraftStateResult {
   conversationAttachmentsRef: RefObject<Record<string, ChatAttachment[]>>;
   draftSeedTextRef: RefObject<Record<string, string>>;
   setInput: (key: string, value: string) => void;
+  updateConversationInputs: (
+    updater: (previous: Record<string, string>) => Record<string, string>,
+  ) => void;
   updateConversationAttachments: (
     updater: (previous: Record<string, ChatAttachment[]>) => Record<string, ChatAttachment[]>,
   ) => void;
@@ -90,6 +93,17 @@ export function useChatDraftState(params: UseChatDraftStateParams): UseChatDraft
   const setInput = useCallback((key: string, value: string) => {
     dispatch({ type: 'set-input', key, value });
   }, []);
+
+  // updateConversationAttachments と同じ理由(呼び出し側が prev を関数で読む
+  // ことで、同一バッチ内の他の pending な入力更新も取りこぼさずに合成できる)。
+  // 会話キー再割り当て(bdboard-c1pw)のうち、引き継ぎ先キーの値を「引き継ぎ元
+  // キーの直前の値」から合成する箇所(handleAgentChange など)専用。
+  const updateConversationInputs = useCallback(
+    (updater: (previous: Record<string, string>) => Record<string, string>) => {
+      dispatch({ type: 'replace-inputs', updater });
+    },
+    [],
+  );
 
   const setAttachmentError = useCallback((key: string, message: string) => {
     dispatch({ type: 'set-attachment-error', key, message });
@@ -179,6 +193,7 @@ export function useChatDraftState(params: UseChatDraftStateParams): UseChatDraft
     conversationAttachmentsRef,
     draftSeedTextRef,
     setInput,
+    updateConversationInputs,
     updateConversationAttachments,
     setAttachmentError,
     clearAttachmentError,

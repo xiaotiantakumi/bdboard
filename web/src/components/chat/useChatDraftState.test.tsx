@@ -58,12 +58,6 @@ function Probe() {
     }
     seen.current[key] = current;
   }
-  // removeAttachment は isSending が変わるたびに再生成される(元実装と同じ、
-  // isSending をクロージャで直接ガードに使っているため)。別枠で isSending
-  // 自体との対応だけ検証する。
-  const removeAttachmentBySendingRef = useRef<Record<string, unknown>>({});
-  removeAttachmentBySendingRef.current[String(isSending)] = draft.removeAttachment;
-
   const currentValue = draft.conversationInputs[conversationKey] ?? '';
   const currentAttachments = draft.conversationAttachments[conversationKey] ?? [];
   const currentError = draft.attachmentErrors[conversationKey] ?? '';
@@ -163,9 +157,11 @@ describe('useChatDraftState (bdboard-sso1.83 第2段)', () => {
   it('handleComposedEnterSubmit submits on Cmd/Ctrl+Enter when not composing', async () => {
     render(<Probe />);
     const user = userEvent.setup();
-    // ChatPanel.test.tsx の W3 テストと同じ技法: userEvent の修飾キー付き入力で
-    // 実ブラウザに近い形で requestSubmit() を経由させる(fireEvent.keyDown 単体
-    // では jsdom 上で form の submit イベントまでは辿り着かないことがある)。
+    // ChatPanel.test.tsx の W3 テストと同じ技法: userEvent の修飾キー付き入力を
+    // 使う(他の3件の handleComposedEnterSubmit テストは fireEvent.keyDown で
+    // 十分 — 呼ばれないことだけを確認すればよいため)。このテストは
+    // requestSubmit() 経由で実際に submit イベントまで辿り着くことを検証する
+    // 必要があるので、実ブラウザのキー入力に近い userEvent を使う。
     await user.type(getInput(), '{Meta>}{Enter}{/Meta}');
     expect(screen.getByTestId('submit-count')).toHaveTextContent('1');
   });
@@ -185,18 +181,57 @@ describe('useChatDraftState (bdboard-sso1.83 第2段)', () => {
     });
   });
 
-  it('removeAttachment removes the attachment and clears its error', async () => {
+  it('removeAttachment removes the attachment and clears a lingering error for the same key', async () => {
+    render(<Probe />);
+    // まず有効な画像を貼り付けて添付を1件作る(エラーは無し)。
+    pasteFiles(getInput(), [makeImageFile('a.png')]);
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-count')).toHaveTextContent('1');
+    });
+    // 同じキーへ、許可リスト外の MIME を貼り付ける。ここでは既存の添付(a.png)は
+    // そのまま残り、バリデーション失敗のエラーだけが上書きで乗る — 現実には
+    // 「1枚目は貼れたが2枚目が弾かれた」ケースに相当する。これで「添付は
+    // あるがエラーも残っている」という remove-attachment のエラークリアを
+    // 検証するのに必要な状態を作れる。
+    pasteFiles(getInput(), [makeImageFile('bad.gif', 'image/gif')]);
+    await waitFor(() => {
+      expect(screen.getByTestId('attachment-error')).not.toBeEmptyDOMElement();
+    });
+    expect(screen.getByTestId('attachment-count')).toHaveTextContent('1');
+
+    const removeButton = screen.getByRole('button', { name: /^remove-/ });
+    act(() => {
+      removeButton.click();
+    });
+    // 添付が消えるだけでなく、同じキーに残っていたエラーも一緒に消える
+    // (chatDraftState.ts の attachmentErrorsSlice: remove-attachment は
+    // add-attachments と同じくそのキーのエラーを無条件でクリアする)。
+    expect(screen.getByTestId('attachment-count')).toHaveTextContent('0');
+    expect(screen.getByTestId('attachment-error')).toBeEmptyDOMElement();
+  });
+
+  it('removeAttachment is a no-op while isSending is true (旧: removeAttachment 冒頭の isSending ガード)', async () => {
     render(<Probe />);
     pasteFiles(getInput(), [makeImageFile('a.png')]);
     await waitFor(() => {
       expect(screen.getByTestId('attachment-count')).toHaveTextContent('1');
     });
+
+    click('toggleSending');
     const removeButton = screen.getByRole('button', { name: /^remove-/ });
     act(() => {
       removeButton.click();
     });
+    // isSending 中は removeAttachment が何もしない(元実装の `if (isSending) return;`
+    // ガードと同じ)ため、添付はそのまま残る。
+    expect(screen.getByTestId('attachment-count')).toHaveTextContent('1');
+
+    click('toggleSending');
+    act(() => {
+      screen.getByRole('button', { name: /^remove-/ }).click();
+    });
+    // isSending が false に戻れば通常どおり削除できる。
     expect(screen.getByTestId('attachment-count')).toHaveTextContent('0');
-    expect(screen.getByTestId('attachment-error')).toBeEmptyDOMElement();
   });
 
   it('pasting an unsupported image subtype sets an attachment error instead of adding an attachment (旧: validateChatAttachments)', async () => {

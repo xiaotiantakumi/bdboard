@@ -391,7 +391,7 @@ export function ChatPanel({
   // web/src/components/chat/useChatDraftState.ts(+
   // useChatAttachmentIngestion.ts, chatDraftState.ts)へ抜き出した。この
   // コンポーネント側は setInput/updateConversationAttachments 等
-  // (上の分割代入で受け取った各関数)経由で読み書きする。会話キーの再割り当て
+  // (下の分割代入で受け取った各関数)経由で読み書きする。会話キーの再割り当て
   // (bdboard-c1pw の対象、startNewDraftThread / handleAgentChange /
   // applyChatError / submitChatMessage / handleNewThread)はこのファイルに
   // 残る。
@@ -411,6 +411,7 @@ export function ChatPanel({
     conversationAttachmentsRef,
     draftSeedTextRef,
     setInput,
+    updateConversationInputs,
     updateConversationAttachments,
     setAttachmentError,
     clearAttachmentError,
@@ -2780,10 +2781,15 @@ export function ChatPanel({
       // こちらは従来どおり引き継がず空のドラフトのままにする。
       applyDraftPayloadStoreCarryPlan(HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY, {
         conversationInputs: () => {
-          setInput(
-            nextDraftKey,
-            conversationInputsRef.current[currentConversationKey] ?? '',
-          );
+          // opus レビュー(bdboard-sso1.83): ref 読み取り(最後にレンダーされた
+          // state)ではなく、元実装と同じく prev を関数で読む形にする —
+          // 同一バッチ内に別の pending な入力更新があった場合でも、それを
+          // 取りこぼさず引き継ぐため(updateConversationAttachments 直下と同じ
+          // 理由)。
+          updateConversationInputs((prev) => ({
+            ...prev,
+            [nextDraftKey]: prev[currentConversationKey] ?? '',
+          }));
         },
         conversationAttachments: () => {
           updateConversationAttachments((prev) => {
@@ -2827,9 +2833,8 @@ export function ChatPanel({
       selectedProjectId,
       currentConversationKey,
       updateConversationAttachments,
-      conversationInputsRef,
+      updateConversationInputs,
       draftSeedTextRef,
-      setInput,
     ],
   );
 
