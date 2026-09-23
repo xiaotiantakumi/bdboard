@@ -1,62 +1,22 @@
-import type { TunnelInterruptionStore } from '../ports/tunnel-interruption-store.js';
-import type { TunnelProcess } from '../ports/tunnel.js';
-import type { TunnelAccessService } from './tunnel-access.js';
-import {
-  passwordAllowsTunnelWrites,
-  type TunnelPasswordSource,
-} from './tunnel-write-policy.js';
+// bdboard-sso1.64: src/application/tunnel/tunnel-service.ts は
+// bdboard-sso1.64 でモジュール分割された。実体は ./tunnel-service/ 配下:
+//   - types.ts               : 公開型 (TunnelState / TunnelServiceDeps / TunnelService)
+//   - availability-recheck.ts: 可用性再probeの間隔定数 (TUNNEL_AVAILABILITY_RECHECK_MS)
+//   - error-message.ts       : unknown な catch 値をメッセージ文字列へ変換するヘルパー
+//     (errorMessage。分割前は module-private だったが、ここから使うため export した。
+//     外部への再エクスポートはしていないので公開面は変わらない)
+// createTunnelService() 本体はこのファイルに残した。start/stop/shutdown/probeAvailability
+// 等の内部クロージャが state/writeAllowed/availability/operationGeneration/startInFlight/
+// stopInFlight という可変状態を直接共有しており、これ以上分割すると状態を外へ持ち出す
+// (グローバル化・引数の増殖) ことになるため (#617 の cloudflared-tunnel.ts 分割と同じ判断)。
+// 挙動・型は一切変えていない(移動のみ)。
+import { passwordAllowsTunnelWrites, type TunnelPasswordSource } from './tunnel-write-policy.js';
+import { TUNNEL_AVAILABILITY_RECHECK_MS } from './tunnel-service/availability-recheck.js';
+import { errorMessage } from './tunnel-service/error-message.js';
+import type { TunnelService, TunnelServiceDeps, TunnelState } from './tunnel-service/types.js';
 
-export type TunnelState =
-  | { readonly kind: 'unavailable' }
-  | { readonly kind: 'off' }
-  | { readonly kind: 'starting' }
-  | {
-      readonly kind: 'on';
-      readonly url: string;
-      readonly username: string;
-      readonly password: string;
-      readonly startedAt: Date;
-    }
-  | { readonly kind: 'error'; readonly message: string };
-
-/**
- * cloudflared が「使えない」と判定されたあと、再度 probe するまでの間隔。
- * 未インストールは後から解消しうるので恒久キャッシュにはできず、かといって
- * 毎リクエスト PATH を舐めるのも無駄なので TTL で妥協する (bdboard-syr)。
- */
-export const TUNNEL_AVAILABILITY_RECHECK_MS = 30_000;
-
-export interface TunnelServiceDeps {
-  readonly tunnel: TunnelProcess;
-  readonly now: () => Date;
-  readonly username: string;
-  readonly generatePassword: () => string;
-  readonly access?: TunnelAccessService;
-  readonly interruptions?: TunnelInterruptionStore;
-}
-
-export interface TunnelService {
-  start(options?: { readonly password?: string }): Promise<TunnelState>;
-  stop(): Promise<TunnelState>;
-  /** サーバー停止時の後始末。稼働中なら中断記録を残してから off へ遷移する (bdboard-8v8)。 */
-  shutdown(): Promise<TunnelState>;
-  getState(): TunnelState;
-  getCredentials(): { readonly username: string; readonly password: string } | null;
-  /** 現在のトンネルがトンネル経由の書き込みを開放してよい資格情報で動いているか。
-   *  トンネルが on でなければ常に false(bdboard-9rz)。 */
-  isWriteAllowed(): boolean;
-  getAvailability(): boolean;
-  probeAvailability(): Promise<boolean>;
-  getInterruptedAt(): Date | null;
-  dismissInterruption(): void;
-}
-
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) {
-    return err.message;
-  }
-  return String(err);
-}
+export type { TunnelState, TunnelServiceDeps, TunnelService } from './tunnel-service/types.js';
+export { TUNNEL_AVAILABILITY_RECHECK_MS } from './tunnel-service/availability-recheck.js';
 
 export function createTunnelService(deps: TunnelServiceDeps): TunnelService {
   let state: TunnelState = { kind: 'off' };
