@@ -231,6 +231,40 @@ describe('ChatPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('does not confirm an inline thread rename on an IME composing Enter, but does confirm on blur (bdboard-sso1.83 特性テスト T1)', async () => {
+    // T1: リネーム入力で isComposing 中の Enter は確定しない。blur で確定する
+    // (第6段 ChatThreadDrawerOpenRow 抽出の前提)。
+    const user = userEvent.setup();
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+    ]);
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+      }
+      throw new Error(`Unexpected fetch: GET ${url}`);
+    });
+    const { container } = renderChatPanel([PROJECT_A]);
+
+    const menu = await openThreadDrawerItemMenu(container, user, 'first thread');
+    await user.click(within(menu).getByRole('menuitem', { name: 'リネーム' }));
+
+    const renameInput = screen.getByLabelText('スレッド「first thread」の新しいタイトル');
+    await user.clear(renameInput);
+    await user.type(renameInput, 'ime confirmed thread');
+    fireEvent.keyDown(renameInput, { key: 'Enter', isComposing: true });
+
+    // IME 変換確定の Enter では保存されず、入力モードのままである。
+    expect(updateChatThreadMock).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('スレッド「first thread」の新しいタイトル')).toBeInTheDocument();
+
+    fireEvent.blur(renameInput);
+
+    await waitFor(() =>
+      expect(updateChatThreadMock).toHaveBeenCalledWith('sess-1', 'proj-a', { title: 'ime confirmed thread' }),
+    );
+  });
+
   it('toggles thread pin state immediately', async () => {
     const user = userEvent.setup();
     fetchChatThreadsMock.mockResolvedValue([

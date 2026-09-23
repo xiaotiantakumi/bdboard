@@ -1435,4 +1435,25 @@ describe('ChatPanel', () => {
       ).not.toHaveAttribute('aria-current');
     });
   });
+
+  it('gives the textarea focus and places the caret at the prefill end after a warm ticket launch (bdboard-sso1.83 特性テスト T3)', async () => {
+    // T3: ticket 起動(同じプロジェクトで一覧取得済み = fetchChatThreadsMock は
+    // beforeEach の即時解決のまま、cold window にしない)の後、textarea に
+    // フォーカスがあり、selectionStart/selectionEnd がプリフィルの長さに
+    // なっていることを確認する(第14段 useTicketContextLaunch の前提)。
+    const prefill = 'bdboard-x.1 について: ';
+    renderChatPanel([PROJECT_A], {
+      initialProjectId: 'proj-a',
+      initialInput: prefill,
+      ticketContextToken: 1,
+    });
+
+    const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+    expect(textarea).toHaveValue(prefill);
+    await waitFor(() => {
+      expect(textarea).toHaveFocus();
+      expect(textarea.selectionStart).toBe(prefill.length);
+      expect(textarea.selectionEnd).toBe(prefill.length);
+    });
+  });
 });

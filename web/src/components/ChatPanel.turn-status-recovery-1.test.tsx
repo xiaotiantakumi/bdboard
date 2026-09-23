@@ -61,6 +61,7 @@ import {
   jsonResponse,
   openThreadDrawer,
   getThreadDrawer,
+  selectThreadFromDrawer,
   renderChatPanel,
 } from './ChatPanel-test-support';
 
@@ -978,5 +979,78 @@ describe('ChatPanel', () => {
     ).not.toBeInTheDocument();
     // 送信欄の本文も通常の送信失敗と同じく復元されている。
     expect(screen.getByLabelText('メッセージ')).toHaveValue('question from A');
+  });
+
+  // bdboard-sso1.83 特性テスト T6 (設計メモ §5 P2 の再現テスト): 同じプロジェクト
+  // 内で、まだ履歴未読込のスレッドへストリーム中に切り替えると、E12(履歴
+  // ローダー)の in-flight fetch が、切替による abort が少し遅れて発火させる
+  // E8 の generation bump(historyRequestIdRef の bump)で追い越され、応答も
+  // finally の historyLoadedFor 書き込みも requestId 不一致で握りつぶされる
+  // ことがある。E12 は deps(conversations、historyLoadedFor)が変わるまで
+  // 再実行されないため、isHistoryPending が解けないまま送信ボタンが無効の
+  // ままになる可能性がある。it.fails で実際に再現した。この計画(第5段)では
+  // ChatPanel.tsx を直さないため、it.fails で現状を固定して残す(第11/12段
+  // E8/E12 抽出時にあわせて修正する想定。bd 起票 discovered-from:bdboard-sso1.83)。
+  it.fails('P2: re-enables the submit button after switching to a not-yet-history-loaded thread while streaming', async () => {
+    const user = userEvent.setup();
+    fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+    fetchChatThreadsMock.mockResolvedValue([
+      { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-02T00:00:00Z' },
+      { sessionId: 'sess-2', agentId: 'claude', title: 'second thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+    ]);
+
+    const sess2History = createDeferred<Response>();
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/chat/sessions/sess-1/messages')) {
+        return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+      }
+      if (url.includes('/api/chat/sessions/sess-2/messages')) {
+        return sess2History.promise;
+      }
+      if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+        return new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'),
+              );
+              init.signal?.addEventListener('abort', () => {
+                controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+              });
+            },
+          }),
+        );
+      }
+      throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    });
+
+    const { container } = renderChatPanel([PROJECT_A]);
+    openThreadDrawer(container);
+    expect(
+      await within(getThreadDrawer(container)).findByRole('button', { name: 'first thread' }),
+    ).toBeInTheDocument();
+    await user.type(screen.getByLabelText('メッセージ'), 'question from sess-1');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+    await waitFor(() => {
+      expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+    });
+
+    // まだ履歴未読込の sess-2 へ切り替える。これが sess-1 のストリーミング
+    // fetch を abort する(useAbortOnConversationChange)。
+    await selectThreadFromDrawer(container, user, 'second thread');
+
+    // abort が submit の catch(AbortError) 経路を通って
+    // setTurnRecoveryGeneration(g => g+1) を呼ぶのは非同期タイミング。一呼吸
+    // おいてから sess-2 の履歴 fetch を解決し、「E8 の generation bump が
+    // E12 の in-flight fetch より後から割り込む」順序を作る。
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    sess2History.resolve(
+      jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] }),
+    );
+
+    await user.type(screen.getByLabelText('メッセージ'), 'question from sess-2');
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '送信' })).not.toBeDisabled();
+    });
   });
 });

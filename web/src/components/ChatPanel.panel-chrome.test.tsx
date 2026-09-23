@@ -12,7 +12,7 @@ import { expectNoA11yViolations } from '../test/axe';
 import { installFakeHistory } from '../test/fakeHistory';
 import { writePersistedChatThreadState } from '../chatThreadStorage';
 import { resetBoardTimeZoneForTests, setBoardTimeZoneOverride } from '../boardTimeZone';
-import { formatThreadUpdatedAt } from './ChatPanel';
+import { ChatPanel, formatThreadUpdatedAt } from './ChatPanel';
 
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -633,6 +633,174 @@ describe('ChatPanel', () => {
         'oldest thread',
         '(無題)',
       ]);
+    });
+  });
+
+  describe('T10: API call-order fingerprint (bdboard-sso1.83 特性テスト, §4 4b-4)', () => {
+    // T10: マウント時・プロジェクト切替時・abort 後の3パターンで、
+    // fetchChatThreads → fetchChatTurnStatus → fetchChatAgents →
+    // sessions/messages という API 呼び出し順を固定する。後続段
+    // (第9〜14段)がこの並びに依存する effect の登録順を変えていないことを
+    // 検出するための「指紋」であり、この並び自体が「正しい」という主張では
+    // ない(現状のまま固定するのが目的)。
+    function makeCallOrderRecorder() {
+      const callOrder: string[] = [];
+      return {
+        callOrder,
+        record: (tag: string) => callOrder.push(tag),
+      };
+    }
+
+    it('fingerprints the call order on mount', async () => {
+      const { callOrder, record } = makeCallOrderRecorder();
+      fetchChatThreadsMock.mockImplementation((_projectId: string) => {
+        record('threads');
+        return Promise.resolve([
+          { sessionId: 'sess-1', agentId: 'claude', title: 'first thread', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+        ]);
+      });
+      fetchChatTurnStatusMock.mockImplementation(() => {
+        record('turn-status');
+        return Promise.resolve({ state: 'idle' });
+      });
+      fetchChatAgentsMock.mockImplementation(() => {
+        record('agents');
+        return Promise.resolve([CLAUDE_AGENT]);
+      });
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url.includes('/api/chat/sessions/sess-1/messages')) {
+          record('messages');
+          return jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+        }
+        throw new Error(`Unexpected fetch: GET ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      renderChatPanel([PROJECT_A]);
+
+      await waitFor(() => {
+        expect(callOrder).toEqual(['threads', 'turn-status', 'agents', 'messages']);
+      });
+    });
+
+    it('fingerprints the call order when switching projects (not streaming)', async () => {
+      const { callOrder, record } = makeCallOrderRecorder();
+      fetchChatThreadsMock.mockImplementation((projectId: string) => {
+        record(`threads:${projectId}`);
+        return Promise.resolve([
+          { sessionId: `sess-${projectId}`, agentId: 'claude', title: `${projectId} thread`, pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
+        ]);
+      });
+      fetchChatTurnStatusMock.mockImplementation((projectId: string) => {
+        record(`turn-status:${projectId}`);
+        return Promise.resolve({ state: 'idle' });
+      });
+      fetchChatAgentsMock.mockImplementation(() => {
+        record('agents');
+        return Promise.resolve([CLAUDE_AGENT]);
+      });
+      const fetchMock = vi.fn(async (url: string) => {
+        const match = /\/api\/chat\/sessions\/sess-(proj-[ab])\/messages/.exec(url);
+        if (match) {
+          record(`messages:${match[1]}`);
+          return jsonResponse({ sessionId: `sess-${match[1]}`, agentId: 'claude', messages: [] });
+        }
+        throw new Error(`Unexpected fetch: GET ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+      await waitFor(() => {
+        expect(callOrder).toEqual([
+          'threads:proj-a',
+          'turn-status:proj-a',
+          'agents',
+          'messages:proj-a',
+        ]);
+      });
+
+      callOrder.length = 0;
+      await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+
+      await waitFor(() => {
+        expect(callOrder).toEqual([
+          'threads:proj-b',
+          'turn-status:proj-b',
+          'messages:proj-b',
+        ]);
+      });
+    });
+
+    it('fingerprints the call order after an abort-driven project switch while streaming', async () => {
+      const { callOrder, record } = makeCallOrderRecorder();
+      fetchChatThreadsMock.mockImplementation((projectId: string) => {
+        record(`threads:${projectId}`);
+        return Promise.resolve([]);
+      });
+      fetchChatTurnStatusMock.mockImplementation((projectId: string) => {
+        record(`turn-status:${projectId}`);
+        return Promise.resolve({ state: 'idle' });
+      });
+      fetchChatAgentsMock.mockResolvedValue([
+        { ...CLAUDE_AGENT, supportsStreaming: true },
+      ]);
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message/stream' && init?.method === 'POST') {
+          record('stream:post');
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: delta\ndata: {"text":"partial "}\n\n'),
+                );
+                init.signal?.addEventListener('abort', () => {
+                  controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+                });
+              },
+            }),
+          );
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+      vi.stubGlobal('fetch', fetchMock);
+
+      const user = userEvent.setup();
+      const rendered = renderChatPanel([PROJECT_A, PROJECT_B], {
+        initialProjectId: 'proj-a',
+        ticketContextToken: 1,
+      });
+      await screen.findByLabelText('チャットエージェント');
+      await user.type(screen.getByLabelText('メッセージ'), 'stream in A');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      callOrder.length = 0;
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A, PROJECT_B]}
+          initialProjectId="proj-b"
+          ticketContextToken={2}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
+          onClose={rendered.onClose}
+        />,
+      );
+
+      // abort 後、E8(turn-status 回収)は generation bump によって B 向けに
+      // 2回目の fetchChatTurnStatus 呼び出しを行う(1回目は選択直後の通常の
+      // effect 実行、2回目は abort の catch(AbortError) 経路が非同期で
+      // turnRecoveryGeneration を bump したことによる再実行)。B にはまだ
+      // スレッドが無い(fetchChatThreadsMock は空配列)ため
+      // fetchChatSessionMessages は呼ばれない。
+      await waitFor(
+        () => {
+          expect(callOrder).toEqual(['threads:proj-b', 'turn-status:proj-b', 'turn-status:proj-b']);
+        },
+        { timeout: 3_000 },
+      );
     });
   });
 });

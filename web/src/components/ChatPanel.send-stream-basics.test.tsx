@@ -4,7 +4,7 @@
 // から import する。vi.mock はファイル単位でホイストされるため、元ファイルの
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach をこのファイルにも複製している。
 
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
@@ -139,6 +139,21 @@ describe('ChatPanel', () => {
     });
     expect(body).not.toHaveProperty('sessionId');
     expect(await screen.findByText('Hello from AI')).toBeInTheDocument();
+  });
+
+  it('does not submit via Meta/Ctrl+Enter while the textarea is IME composing (bdboard-sso1.83 特性テスト T2)', async () => {
+    // T2: メイン入力で isComposing 中に Meta+Enter を押しても POST しない
+    // (第7段 ChatComposer 抽出の前提。今はフック単体(useChatDraftState)の
+    // テストにしか無いので、ChatPanel 統合テストとして固定する)。
+    const user = userEvent.setup();
+    renderChatPanel([PROJECT_A]);
+    const textarea = screen.getByLabelText('メッセージ');
+    await user.type(textarea, 'still composing');
+    fireEvent.keyDown(textarea, { key: 'Enter', metaKey: true, isComposing: true });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getChatMessagePostCalls(fetchMock)).toHaveLength(0);
+    expect(textarea).toHaveValue('still composing');
   });
 
   it('posts to the streaming endpoint and shows the completed streamed reply', async () => {
@@ -606,6 +621,83 @@ describe('ChatPanel', () => {
         (request as RequestInit | undefined)?.method === 'POST',
       ),
     ).toBe(false);
+  });
+
+  // bdboard-sso1.83 特性テスト T4: 設計メモは「送信完了後に textarea へ
+  // フォーカスが戻る」ことを第13段の前提として要求しているが、現状の
+  // ChatPanel.tsx で再現したところ実際には戻らない (it.fails で確認)。原因は
+  // submit の outer finally 内で `setIsSending(false)` の直後に同期的に
+  // `inputRef.current?.focus()` を呼んでいる点: React 18 はこの2つの状態変化を
+  // 同一マイクロタスクでバッチするため、focus() が呼ばれる瞬間の DOM 上の
+  // textarea はまだ直前の disabled=true のままで、disabled な要素への focus()
+  // はブラウザ/jsdom 双方で無視される。textarea が disabled=false に再描画
+  // された後に focus() を再試行する経路が無く、フォーカスは直前にクリックした
+  // 送信ボタンに残ったままになる。ChatPanel.tsx は第5段の対象外(move-only +
+  // 特性テスト追加のみ)のためここでは直さず、it.fails で現状を固定した上で
+  // bd 起票する(第13段 useChatSubmit 抽出時にあわせて修正する想定)。
+  it.fails('returns focus to the textarea after a send completes (bdboard-sso1.83 特性テスト T4)', async () => {
+    const user = userEvent.setup();
+    renderChatPanel([PROJECT_A]);
+    const textarea = screen.getByLabelText('メッセージ');
+    await user.type(textarea, 'focus check');
+    await user.click(screen.getByRole('button', { name: '送信' }));
+
+    await waitFor(() => {
+      expect(within(screen.getByRole('log')).getByText('AI reply')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(textarea).toHaveFocus();
+    });
+  });
+
+  it('advances 考え中…N秒 from 0 to 1 to 2 while sending, and resets to 0 once it completes (bdboard-sso1.83 特性テスト T5)', async () => {
+    // T5: fake timers で経過秒が 0→1→2 と進み、完了時に 0 へ戻ることを固定する
+    // (第8段 useStickToBottomScroll 分離、第13段 useChatSubmit 抽出の前提。
+    // 今は「考え中…N秒」の文言があることを正規表現で見ているだけで、実際に
+    // 1秒ごとに数字が進むことまでは確認していない)。
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      const deferred = createDeferred<Response>();
+      fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url === '/api/chat/message' && init?.method === 'POST') {
+          return deferred.promise;
+        }
+        throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+      });
+
+      renderChatPanel([PROJECT_A]);
+      await user.type(screen.getByLabelText('メッセージ'), 'timed message');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      expect(
+        screen.getByText('考え中…0秒（最大3分かかることがあります）'),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(
+        screen.getByText('考え中…1秒（最大3分かかることがあります）'),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(
+        screen.getByText('考え中…2秒（最大3分かかることがあります）'),
+      ).toBeInTheDocument();
+
+      deferred.resolve(
+        jsonResponse({ reply: 'done', sessionId: 'sess-done', agentId: 'claude' }),
+      );
+      await waitFor(() => {
+        expect(screen.getByText('done')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/考え中…\d+秒/)).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ本文を

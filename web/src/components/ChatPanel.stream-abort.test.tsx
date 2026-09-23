@@ -60,6 +60,7 @@ import {
   PROJECT_B,
   CLAUDE_AGENT,
   STREAMING_AGENT,
+  createDeferred,
   jsonResponse,
   getChatMessagePostCalls,
   parseChatMessageBody,
@@ -1087,6 +1088,82 @@ describe('ChatPanel', () => {
         expect(capturedSignal.current?.aborted).toBe(true);
       });
       expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
+    });
+
+    // bdboard-sso1.83 特性テスト T7 (設計メモ §5 P1 の再現テスト): generation>0
+    // の E8(turn-status 回収)は threadListRequestIdRef を bump する。
+    // ストリーミング中にプロジェクトを切り替えると、切替による abort が
+    // E8 の generation bump を(切替先の E7 スレッド一覧 fetch が in-flight の
+    // まま)少し遅れて発火させ、E7 の応答が threadListRequestId の不一致で
+    // 握りつぶされる ―― 実際に it.fails で再現した(切替先 B のスレッド
+    // 一覧がいつまでも表示されない)。この計画(第5段)では ChatPanel.tsx を
+    // 直さないため、it.fails で現状を固定して残す(第11/12段 E7/E8 抽出時に
+    // あわせて修正する想定。bd 起票 discovered-from:bdboard-sso1.83)。
+    it.fails('P1: loads project B\'s thread list after switching away from a streaming project A', async () => {
+      const user = userEvent.setup();
+      fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
+      const capturedSignal: { current: AbortSignal | undefined } = { current: undefined };
+      makeGatedStreamingFetchMock(fetchMock, { capturedSignal });
+
+      const projectBThreads = createDeferred<ChatThreadDto[]>();
+      fetchChatThreadsMock.mockImplementation((projectId: string) =>
+        projectId === 'proj-b' ? projectBThreads.promise : Promise.resolve([]),
+      );
+
+      const rendered = renderChatPanel([PROJECT_A, PROJECT_B], {
+        initialProjectId: 'proj-a',
+        ticketContextToken: 1,
+      });
+      await screen.findByLabelText('チャットエージェント');
+      await user.type(screen.getByLabelText('メッセージ'), 'stream in A');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
+      });
+
+      // B へ切り替える。「対象プロジェクト」の select はストリーミング中は
+      // disabled で使えないため、既存の「aborts the fetch signal when
+      // switching projects while streaming」テストと同じく、チケット起動
+      // (initialProjectId/ticketContextToken の変化)で外部からプロジェクトを
+      // 切り替える経路を使う。B の fetchChatThreads は in-flight (deferred)
+      // のまま。これが A のストリーミング fetch を abort する
+      // (useAbortOnConversationChange)。
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A, PROJECT_B]}
+          initialProjectId="proj-b"
+          ticketContextToken={2}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
+          onClose={rendered.onClose}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(capturedSignal.current?.aborted).toBe(true);
+      });
+
+      // abort が submit の catch(AbortError) 経路を通って
+      // setTurnRecoveryGeneration(g => g+1) を呼ぶのは、ストリーム読み取り
+      // ループへ abort が伝播した後の非同期タイミング。ここで一呼吸おいて
+      // から B の一覧 fetch を解決し、「E8 の generation bump が E7 の
+      // in-flight fetch より後から割り込む」順序を作る。
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      projectBThreads.resolve([
+        {
+          sessionId: 'sess-b',
+          agentId: 'claude',
+          title: 'project B thread',
+          pinned: false,
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]);
+
+      openThreadDrawer(rendered.container);
+      expect(
+        await within(getThreadDrawer(rendered.container)).findByRole('button', { name: 'project B thread' }),
+      ).toBeInTheDocument();
     });
 
     it('does not add an error bubble when abort comes from a thread switch', async () => {
