@@ -95,6 +95,7 @@ import { ChatInputNotices } from './chat/ChatInputNotices';
 import { ChatMessageList } from './chat/ChatMessageList';
 import { ChatProjectBar } from './chat/ChatProjectBar';
 import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
+import { useThreadDrawerState } from './chat/useThreadDrawerState';
 import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
@@ -271,27 +272,39 @@ export function ChatPanel({
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
   const [selectedThreadIds, setSelectedThreadIds] = useState<Record<string, string | undefined>>({});
   const [draftNonces, setDraftNonces] = useState<Record<string, number>>({});
-  const [confirmingDeleteSessionId, setConfirmingDeleteSessionId] = useState<string | null>(null);
-  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
   // Chat Redesign 1b: タブ帯を捨て、スレッド切り替えは「現在のスレッド名+件数」
-  // ボタン1つ→ドロワー(縦一覧)へ集約する。threadDrawerOpen がドロワーの開閉、
-  // threadActionMenuSessionId がドロワー内の各行にぶら下がる「⋯」操作メニュー
-  // (リネーム/ピン留め/タブから閉じる/削除)のうち今開いているものを指す
-  // (同時に1つだけ開ける設計。renamingSessionId/confirmingDeleteSessionId は
-  // 既存のリネーム確定/削除確認フローをそのまま流用する)。
-  const [threadDrawerOpen, setThreadDrawerOpen] = useState(false);
-  const [threadActionMenuSessionId, setThreadActionMenuSessionId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!threadDrawerOpen) {
-      setThreadActionMenuSessionId(null);
-    }
-  }, [threadDrawerOpen]);
+  // ボタン1つ→ドロワー(縦一覧)へ集約する。ドロワーの開閉・行の「⋯」操作メニュー・
+  // リネーム確定・削除確認・CLIセッション発見一覧の表示は互いに絡み合う相互排他の
+  // UI 状態なので、bdboard-sso1.83 でひとつの useReducer (chat/threadDrawerState.ts)
+  // へ畳んだ。個々の状態名(threadDrawerOpen 等)はこの後の分割代入で読み取り側の
+  // 変数名を維持しているため、以降の参照箇所は変わらない。
+  const {
+    state: {
+      drawerOpen: threadDrawerOpen,
+      menuSessionId: threadActionMenuSessionId,
+      renamingSessionId,
+      renameDraft,
+      confirmingDeleteSessionId,
+      showDiscoveredSessions,
+    },
+    toggleDrawer: toggleThreadDrawer,
+    closeDrawer: closeThreadDrawer,
+    selectThread: selectThreadDrawerThread,
+    toggleMenu: toggleThreadActionMenu,
+    closeMenu: closeThreadActionMenu,
+    startRename: startThreadRename,
+    changeRenameDraft: setRenameDraft,
+    cancelRename: cancelThreadRename,
+    startConfirmDelete: startThreadConfirmDelete,
+    cancelConfirmDelete: cancelThreadConfirmDelete,
+    cancelInteractionsForSession: cancelThreadInteractionsForSession,
+    toggleDiscoveredSessions: toggleShowDiscoveredSessions,
+    closeDiscoveredSessions: closeShowDiscoveredSessions,
+  } = useThreadDrawerState();
   const [threadError, setThreadError] = useState<string | null>(null);
   const [ticketProjectFallbackNotice, setTicketProjectFallbackNotice] = useState<string | null>(null);
   const [agents, setAgents] = useState<readonly ChatAgentDto[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [showDiscoveredSessions, setShowDiscoveredSessions] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState('');
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
@@ -639,7 +652,7 @@ export function ChatPanel({
       ...prev,
       [nextDraftKey]: true,
     }));
-    setConfirmingDeleteSessionId(null);
+    cancelThreadConfirmDelete();
     // MF1/SF1/SF2: ここが会話キーの nonce を実際に採番する唯一の場所なので、
     // 保留中のプリフィル(pendingPrefillRef、対象プロジェクトが一致する場合のみ)
     // をこのタイミングで、いま採番した本物のドラフトキーへ消化する。呼び出し元
@@ -740,7 +753,7 @@ export function ChatPanel({
     containerRef: threadDrawerRef,
     initialFocusRef: threadDrawerCloseButtonRef,
     enabled: threadDrawerOpen,
-    onEscape: () => setThreadDrawerOpen(false),
+    onEscape: closeThreadDrawer,
   });
 
   const currentSessionId = selectedThreadIds[selectedProjectId];
@@ -2955,12 +2968,7 @@ export function ChatPanel({
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
     }
     writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: nextSelectedSessionId });
-    if (confirmingDeleteSessionId === sessionId) {
-      setConfirmingDeleteSessionId(null);
-    }
-    if (renamingSessionId === sessionId) {
-      setRenamingSessionId(null);
-    }
+    cancelThreadInteractionsForSession(sessionId);
   };
   /**
    * bdboard-3tw.104.3 レビュー MF2: adopt 直後は `selectedThreadIds[projectId]` を
@@ -3057,7 +3065,7 @@ export function ChatPanel({
     });
 
     setSelectedThreadIds((prev) => ({ ...prev, [projectId]: sessionId }));
-    setConfirmingDeleteSessionId(null);
+    cancelThreadConfirmDelete();
     setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
 
     void fetchChatThreads(projectId)
@@ -3079,7 +3087,7 @@ export function ChatPanel({
       console.error('chat thread delete failed', error);
       setThreadError('スレッドの削除に失敗しました。');
     } finally {
-      setConfirmingDeleteSessionId(null);
+      cancelThreadConfirmDelete();
     }
   };
 
@@ -3099,7 +3107,7 @@ export function ChatPanel({
       console.error('chat thread rename failed', error);
       setThreadError('スレッド名の変更に失敗しました。');
     } finally {
-      setRenamingSessionId(null);
+      cancelThreadRename();
     }
   };
 
@@ -3181,7 +3189,7 @@ export function ChatPanel({
                 void handleRenameConfirm(sessionId);
               } else if (event.key === 'Escape') {
                 event.preventDefault();
-                setRenamingSessionId(null);
+                cancelThreadRename();
               }
             }}
             onBlur={() => void handleRenameConfirm(sessionId)}
@@ -3192,15 +3200,12 @@ export function ChatPanel({
             className="chat-thread-drawer-item-select"
             aria-current={isSelected ? 'true' : undefined}
             onClick={() => {
-              setConfirmingDeleteSessionId(null);
-              setRenamingSessionId(null);
-              setThreadActionMenuSessionId(null);
+              selectThreadDrawerThread();
               setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
               writePersistedChatThreadState(selectedProjectId, {
                 activeSessionIds: openThreads,
                 selectedSessionId: sessionId,
               });
-              setThreadDrawerOpen(false);
             }}
           >
             {isPinned && (
@@ -3223,9 +3228,7 @@ export function ChatPanel({
             aria-label={`スレッド「${threadTitle}」の操作`}
             aria-haspopup="menu"
             aria-expanded={isMenuOpen}
-            onClick={() =>
-              setThreadActionMenuSessionId((prev) => (prev === sessionId ? null : sessionId))
-            }
+            onClick={() => toggleThreadActionMenu(sessionId)}
           >
             ⋯
           </button>
@@ -3240,10 +3243,7 @@ export function ChatPanel({
                 role="menuitem"
                 className="chat-thread-drawer-menu-item"
                 onClick={() => {
-                  setThreadActionMenuSessionId(null);
-                  setConfirmingDeleteSessionId(null);
-                  setRenamingSessionId(sessionId);
-                  setRenameDraft(thread?.title ?? '');
+                  startThreadRename(sessionId, thread?.title ?? '');
                 }}
               >
                 リネーム
@@ -3253,7 +3253,7 @@ export function ChatPanel({
                 role="menuitem"
                 className="chat-thread-drawer-menu-item"
                 onClick={() => {
-                  setThreadActionMenuSessionId(null);
+                  closeThreadActionMenu();
                   void handlePinToggle(sessionId, isPinned);
                 }}
               >
@@ -3264,7 +3264,7 @@ export function ChatPanel({
                 role="menuitem"
                 className="chat-thread-drawer-menu-item"
                 onClick={() => {
-                  setThreadActionMenuSessionId(null);
+                  closeThreadActionMenu();
                   handleCloseThread(sessionId);
                 }}
               >
@@ -3291,7 +3291,7 @@ export function ChatPanel({
                   type="button"
                   role="menuitem"
                   className="chat-thread-drawer-menu-item chat-thread-drawer-menu-item-danger"
-                  onClick={() => setConfirmingDeleteSessionId(sessionId)}
+                  onClick={() => startThreadConfirmDelete(sessionId)}
                 >
                   <span className="chat-thread-delete-icon" aria-hidden="true">
                     🗑
@@ -3321,7 +3321,7 @@ export function ChatPanel({
             activeSessionIds: next,
             selectedSessionId: thread.sessionId,
           });
-          setThreadDrawerOpen(false);
+          closeThreadDrawer();
         }}
       >
         {thread.pinned && (
@@ -3403,11 +3403,11 @@ export function ChatPanel({
 
         <ChatThreadSwitcher
           threadDrawerOpen={threadDrawerOpen}
-          onToggleDrawer={() => setThreadDrawerOpen((prev) => !prev)}
+          onToggleDrawer={toggleThreadDrawer}
           currentThreadTitle={currentThreadTitle}
           openThreadsCount={openThreads.length}
           onNewThread={() => {
-            setThreadDrawerOpen(false);
+            closeThreadDrawer();
             handleNewThread();
           }}
           hasNoDisplayedOpenThreads={displayedOpenThreads.length === 0}
@@ -3417,7 +3417,7 @@ export function ChatPanel({
           open={threadDrawerOpen}
           drawerRef={threadDrawerRef}
           closeButtonRef={threadDrawerCloseButtonRef}
-          onClose={() => setThreadDrawerOpen(false)}
+          onClose={closeThreadDrawer}
           hasPinnedRows={pinnedThreadDrawerRows.length > 0}
           pinnedRows={pinnedThreadDrawerRows}
           hasOpenRows={openThreadDrawerRows.length > 0}
@@ -3426,12 +3426,12 @@ export function ChatPanel({
           closedRows={closedThreadDrawerRows}
           selectedProjectId={selectedProjectId}
           showDiscoveredSessions={showDiscoveredSessions}
-          onToggleDiscoveredSessions={() => setShowDiscoveredSessions((prev) => !prev)}
+          onToggleDiscoveredSessions={toggleShowDiscoveredSessions}
           isSending={isSending}
-          onCloseDiscoveredSessions={() => setShowDiscoveredSessions(false)}
+          onCloseDiscoveredSessions={closeShowDiscoveredSessions}
           onResumeDiscoveredSession={(sessionId, agentId, seedMessages) => {
             handleResumeDiscoveredSession(sessionId, agentId, seedMessages);
-            setThreadDrawerOpen(false);
+            closeThreadDrawer();
           }}
         />
 
