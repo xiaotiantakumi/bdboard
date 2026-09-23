@@ -2,7 +2,7 @@
 // 開閉操作 (単体トグル/全開閉/TOC からのジャンプ) のハンドラを move-only で
 // 切り出したフック。useCallback の依存配列は移動前から変えていない。各ハンドラの
 // setState 更新関数の中身は、分割前に書かれていた if/else の Set 操作を
-// ../help/helpPanelSectionSets.ts の純ヘルパー (openSection/closeSection/
+// ./helpPanelSectionSets.ts の純ヘルパー (openSection/closeSection/
 // addAllToSet/removeAllFromSet) の呼び出しに置き換えている
 // (呼び分けの対応は各ハンドラのコメントを参照。ロジックの等価性は
 // helpPanelSectionSets.test.ts と既存の HelpPanel.test.tsx で固定)。

@@ -72,11 +72,11 @@ describe('removeAllFromSet', () => {
     expect(removeAllFromSet(previous, sections)).toBe(previous);
   });
 
-  it('returns the same reference when the sizes match but contents differ (regression guard for the size-only shortcut)', () => {
-    // previous と next は同じ size (2) になり得るが、中身が違う場合は別物として next を返す必要がある。
+  it('returns a new reference when only some of the given ids were present', () => {
+    // previous に 'a' は含まれるが 'b' は含まれない。'a' の削除で size が変わる
+    // ため sameMembers の size チェックだけで「別物」と判定できるケース。
     const previous = new Set(['a', 'd']);
-    const next = removeAllFromSet(previous, [sections[0]]);
-    // 'a' は削除され 'd' は元々含まれていないので、next は { 'd' } になり previous ({'a','d'}) とは別内容。
+    const next = removeAllFromSet(previous, [sections[0], sections[1]]); // sections[0].id === 'a', sections[1].id === 'b'
     expect(next).toEqual(new Set(['d']));
     expect(next).not.toBe(previous);
   });
