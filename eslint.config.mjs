@@ -20,15 +20,13 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
   'web/src/components/TicketDetailPanel.tsx': 800, // 現在 757 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングを useTicketAgentRun.ts + TicketAgentRunTriggerSection.tsx + TicketAgentRunSection.tsx へ、human decision 回答を useTicketDecisionAnswer.ts + TicketDecisionSection.tsx へ移動)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
-  'web/src/components/bulk-action/useBulkActions.ts': 230, // 現在 222 (bdboard-sso1.60: 一括クイックアクション/一括ラベル付与の mutation を ./actions/*.ts へ分割。272→222 (旧コメントの「現在 280」は分割前から既に実測とずれていたので実測値へ修正)。move-only 抽出のため引き続き例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
-  'src/application/board/get-pr-badges.ts': 390, // 現在 388
-  'src/application/tunnel/tunnel-service.ts': 215, // 現在 205 (bdboard-sso1.64: ./tunnel-service/*.ts へ関心別分割。createTunnelService() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
   'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
   'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
   'src/infrastructure/bd/bd-cli-human-decisions.test.ts': 1680, // 現在 1679
+  'src/application/board/get-pr-badges.test.ts': 1530, // 現在 1530 (bdboard-se3v: opus レビュー指摘 M1 [ステータスキャッシュ済みチケットが statusGate 待ちで巻き込まれてタイムアウトする回帰] の再現テストを追加)
 };
 
 const NON_TEST_MAX_LINES = 200;

@@ -11,10 +11,11 @@
 // import し、1箇所の tuple 型で「使う」ことで `npm run build:web` (tsc --noEmit) に通す
 // (useHygieneRepairActions.ts 分割 #618 / dto.ts 分割 #540 の方式)。
 //
-// 分割後の useBulkActions.ts には、2つの mutation フック呼び出しの他に、
-// 両フックが共有する確認欄の state・useFocusTrap・handleConfirm 等の
-// ハンドラが引き続き残っている (BulkActionConfirmPanel の onConfirm が
-// 単一のため、どちらか片方のフックだけには帰属できない)。
+// bdboard-sso1.65: 確認欄の state・useFocusTrap・handleConfirm は
+// ./confirm-panel/*.ts の3フックへさらに切り出した。useBulkActions.ts に
+// 残るのは、2つの mutation フック (./actions/*.ts) と3つの confirm-panel
+// フックを呼び出して配線するだけの本体で、公開する `BulkActions` (このファイル
+// が検証する型エクスポート面) は分割前から変えていない。
 // ここが崩れる (型の移し忘れ・名前の変更・re-export の欠落) と、import 自体が
 // 解決できず tsc がこのファイルで落ちる (TS2305: has no exported member)。
 import type { BulkActions } from './useBulkActions';
