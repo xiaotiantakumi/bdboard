@@ -4,6 +4,12 @@ import {
   EMPTY_BOARD_FILTER,
   filterBoardCards,
 } from '../../boardFilter';
+import {
+  computeWipStatus,
+  resolveWipLimitForLane,
+  type WipLimitsOverrides,
+} from '../../wip-limits';
+import { type LaneIndicatorItem } from '../LaneScrollIndicator';
 
 export function visibleLanes(hideDone: boolean): Lane[] {
   if (hideDone) {
@@ -42,6 +48,56 @@ export function laneIndicatorCountLabel(
     return `${cards.length}/${unfilteredCount}`;
   }
   return String(cards.length);
+}
+
+export function deriveLaneRowData(
+  lanes: Lane[],
+  board: BoardDto,
+  stalledOnly: boolean,
+  filter: BoardFilter,
+  wipLimitsOverrides: WipLimitsOverrides | undefined,
+  wipProjectId: string | undefined,
+) {
+  return lanes.map((lane) => {
+    const laneCards = board.lanes[lane] ?? [];
+    const afterStalled = applyStalledOnly(laneCards, stalledOnly);
+    const filteredCards = filterBoardCards(afterStalled, filter);
+    const wipLimit =
+      lane === 'in_progress'
+        ? resolveWipLimitForLane(wipLimitsOverrides, wipProjectId)
+        : undefined;
+    const wipStatus =
+      lane === 'in_progress' && wipLimit !== undefined
+        ? computeWipStatus(laneCards.length, wipLimit)
+        : undefined;
+    const wipStatusForColumn:
+      | { limit: number; count: number; exceeded: true }
+      | undefined =
+      wipStatus?.exceeded === true && wipStatus.limit !== undefined
+        ? { limit: wipStatus.limit, count: wipStatus.count, exceeded: true }
+        : undefined;
+    return {
+      lane,
+      filteredCards,
+      afterStalled,
+      wipStatusForColumn,
+    };
+  });
+}
+
+export function laneIndicatorItemsFrom(
+  laneDerived: ReturnType<typeof deriveLaneRowData>,
+): LaneIndicatorItem[] {
+  return laneDerived.map(
+    ({ lane, filteredCards, afterStalled, wipStatusForColumn }) => ({
+      lane,
+      countLabel: laneIndicatorCountLabel(
+        filteredCards,
+        afterStalled.length,
+        wipStatusForColumn,
+      ),
+    }),
+  );
 }
 
 export function hasVisibleCards(
