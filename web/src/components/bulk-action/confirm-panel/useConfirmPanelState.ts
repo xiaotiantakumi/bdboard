@@ -79,9 +79,13 @@ export interface ConfirmPanelState extends ConfirmPanelFields {
     outcome: BulkQuickActionOutcome | BulkIdOutcome | null,
   ) => void;
   /** confirmingAction/deferPeriodKind/customDeferDate/closeReason を一括で
-   * 初期値へ戻す (キャンセル時・一括クイックアクション成功時の共通処理)。
-   * bulkLabelInput/lastOutcome はここでは戻さない (呼び出し元ごとに扱いが違う:
-   * 一括ラベル付与の成功時は bulkLabelInput だけを個別にクリアする)。 */
+   * 初期値へ戻す。現在の呼び出し元は useConfirmPanelDismissal.handleCancelConfirm
+   * (キャンセルボタン/Escape) のみ。一括クイックアクション成功時
+   * (useBulkQuickAction.ts の onSuccess) は、このフックの
+   * setConfirmingAction/setDeferPeriodKind/setCustomDeferDate/setCloseReason を
+   * 分割前と同じく個別に呼んでおり (#623 で切り出したファイルは無変更)、
+   * ここには依存していない。bulkLabelInput/lastOutcome はこの reset では戻さない
+   * (一括ラベル付与の成功時は setBulkLabelInput だけを個別にクリアする)。 */
   readonly resetConfirmFields: () => void;
 }
 

@@ -90,4 +90,29 @@ describe('useConfirmPanelState', () => {
     expect(result.current.confirmPanelRef.current).toBeNull();
     expect(result.current.cancelConfirmRef.current).toBeNull();
   });
+
+  it('keeps ref objects and every setter referentially stable across re-renders', () => {
+    // 分割前は useState のセッターだったため、参照が自動的に安定していた。
+    // useReducer 化後は各セッターを useCallback([]) でラップして同じ安定性を
+    // 再現している (依存配列で参照するコード (useConfirmPanelDismissal 等) が
+    // 余計な再実行をしないことの前提)。
+    const { result, rerender } = renderHook(() => useConfirmPanelState());
+
+    const before = { ...result.current };
+
+    act(() => {
+      result.current.setCloseReason('trigger a re-render');
+    });
+    rerender();
+
+    expect(result.current.confirmPanelRef).toBe(before.confirmPanelRef);
+    expect(result.current.cancelConfirmRef).toBe(before.cancelConfirmRef);
+    expect(result.current.setConfirmingAction).toBe(before.setConfirmingAction);
+    expect(result.current.setDeferPeriodKind).toBe(before.setDeferPeriodKind);
+    expect(result.current.setCustomDeferDate).toBe(before.setCustomDeferDate);
+    expect(result.current.setCloseReason).toBe(before.setCloseReason);
+    expect(result.current.setBulkLabelInput).toBe(before.setBulkLabelInput);
+    expect(result.current.setLastOutcome).toBe(before.setLastOutcome);
+    expect(result.current.resetConfirmFields).toBe(before.resetConfirmFields);
+  });
 });
