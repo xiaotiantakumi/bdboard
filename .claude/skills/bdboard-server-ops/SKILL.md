@@ -1,6 +1,6 @@
 ---
 name: bdboard-server-ops
-description: bdboard の常時稼働ローカルサーバー (メインチェックアウト・BDBOARD_PORT 既定 8787) の起動確認・起動・再起動・停止判断が要るときに読む。ヘルスチェックが 000 だった / リスナーは居るのに応答しない / マージ後にサーバーを作り直す / worktree から preview_start・npm run dev を打ちたくなった / web だけ変わったマージで再起動を省きたくなった / 再起動後の health 確認をループで待つ / cloudflared トンネルが同居している、のいずれかに当たったらこの skill の手順に従う。pkill・killall によるパターンマッチ kill の禁止理由もここ。
+description: bdboard の常時稼働ローカルサーバー (メインチェックアウト・BDBOARD_PORT 既定 8787) の起動確認・起動・再起動・停止判断が要るときに読む。ヘルスチェックが 000 だった / リスナーは居るのに応答しない / マージ後にサーバーを作り直す / worktree から preview_start・npm run dev を打ちたくなった / web だけ変わったマージで再起動を省きたくなった / 再起動後の health 確認をループで待つ / cloudflared トンネルが同居している、のいずれかに当たったらこの skill の手順に従う。再起動の唯一の入口 scripts/always-on-server.sh (議長のみ・--expect-pid の CAS・cloudflared 確認・監査ログ) と、サブエージェントの pull/start/kill を止める hook 規則 7 の説明、pkill・killall によるパターンマッチ kill の禁止理由もここ。
 ---
 
 # bdboard-server-ops — 常時稼働ローカルサーバーの運用
@@ -10,6 +10,38 @@ localhost whenever an agent session is active. Default port: `BDBOARD_PORT`
 (8787). This is an agent operational rule, not an OS daemon — do NOT create a
 launchd plist or any persistent daemon for this; if true 24/7 hosting is ever
 wanted, that is a separate, explicitly user-approved change.
+
+## 再起動の入口は `scripts/always-on-server.sh` (議長だけ)
+
+2026-09-20 に、PR をマージしたサブエージェントが「マージ後に再起動」の手順どおり main
+checkout を pull し 8787 を kill・再起動する事故が 3 件続いた (bdboard-hpu8)。以来、
+**サーバーを止める・起こす・作り直す操作はすべてこのスクリプト経由で、議長 (トップレベル
+セッション) だけが行う**。下の各節の手動手順は「スクリプトが何をしているか」の参照と、
+スクリプトが使えないときの `BDBOARD_SERVER_OVERRIDE="<理由>"` 付きの例外手順である。
+
+```bash
+scripts/always-on-server.sh status                         # 誰でも可: PID / HEAD / health / cloudflared
+BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy  --expect-pid <PID>   # マージ後: pull → (install) → build:web → 必要なら再起動
+BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID> [--pull] [--verify]
+BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                        # 000 (停止) のときだけ
+```
+
+- `BDBOARD_SERVER_CALLER=chair` は身元の証明ではなく**宣言と監査**。hook 規則 7 が
+  サブエージェント (hook 入力に `agent_id` がある) からのこのスクリプト実行・main checkout
+  での `git pull` / `npm run start`・listener PID の `kill` を deny するので、宣言を書き写しても
+  サブエージェントからは通らない。
+- `--expect-pid` は `status` で見た PID を渡す。実際の listener と一致しなければ exit 3 で
+  何もしない (別セッションが直前に再起動した新プロセスを巻き込まない CAS)。
+- cloudflared が動いていれば exit 2 で止まる。ユーザーへ「トンネル URL が失効する」と伝えた
+  うえで `--tunnel-ack` を付けて再実行する (下の「cloudflared トンネルの同居確認」)。
+- 実行のたびに `/tmp/bdboard-server-restarts.log` に 1 行 (時刻 / action / caller / 旧→新 PID /
+  HEAD / 結果) が残る。hook 側の deny は `${TMPDIR:-/tmp}/bdboard-server-guard.log`。
+- worktree の cwd から呼んでよい。main checkout は git common dir から解決する
+  (`cd` しない — 常時稼働サーバーの居場所へ作業を移さない)。
+- `--dry-run` は何もせず手順を表示する。手順の詳細は `scripts/always-on-server.sh --help`。
+
+サブエージェントとして作業していて再起動が必要になったら、**最終報告に「議長で再起動が必要
+(PR #N)」と書いて終える**。自分で pull・kill・start を試みない (hook に止められる)。
 
 ## セッション開始時のヘルスチェック
 
@@ -118,7 +150,9 @@ worktree-cwd case above, where every attempt reproduces (2/2).
 ## マージ後の再起動
 
 - **After merging a PR into main** (right after the fast-forward in the Git
-  Workflow cleanup): `git pull --ff-only` → `npm install` /
+  Workflow cleanup) the chair runs
+  `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy --expect-pid <PID>`,
+  which does exactly this sequence: `git pull --ff-only` → `npm install` /
   `npm --prefix web install` if lockfiles changed → `npm run build:web` →
   restart the server → wait for health as described in the next section.
   `npm run start` runs tsx without watch and serves a static `web/dist`, so
@@ -310,7 +344,12 @@ early. The procedure below closes both. Run each step as its own Bash call.
 ## 停止・kill の禁止事項
 
 - **Never kill the server** except for that post-merge restart (or an explicit
-  user request). Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
+  user request), and then only through `scripts/always-on-server.sh` from the
+  chair. Hook 規則 7 (`.claude/skills/bdboard-harness/hooks/server-guard.sh`) は
+  listener PID とその親 (npm / node) への直接 `kill`、`$(lsof … 8787 …)` や変数・
+  パイプ経由で port から引いた PID の kill を、呼び出し元を問わず deny する。議長が
+  手で止めざるを得ないときだけ `BDBOARD_SERVER_OVERRIDE="<理由>" kill <PID>` と前置する。
+- Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
   worktree のテスト用プロセスを狙った `pkill -f 'tsx.*src/main.ts'` がこの常時稼働
   サーバーにも当たった実例がある。必ず対象の PID を特定してから kill すること
   （委譲ブリーフにも毎回この禁止を明記する）。

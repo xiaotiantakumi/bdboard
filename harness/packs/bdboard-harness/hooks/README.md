@@ -35,6 +35,7 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
 | 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
+| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
 判定する。列全体をまとめて見ると `bd dolt push --remote backup; bd dolt push` や
@@ -199,6 +200,61 @@ complexity の choices 確認 → member 解決 → (セグメントが割れて
   規則 1 の禁止事項リストをそのまま heredoc に書き写した委譲ブリーフが、規則 1 自身に
   弾かれた (2026-09-05)。回避はプレースホルダで書いてから別プロセスで置換する。
 
+### 7 の常時稼働サーバー保護 (bdboard-hpu8)
+
+2026-09-20 に 3 件連続で「PR をマージしたサブエージェントが、CLAUDE.md の後片付け手順
+(掃除 → 常時稼働サーバー再起動) どおりに main checkout を `git pull` し、8787 の listener を
+`kill` して `npm run start` し直す」事故が起きた。手順は文章としては正しく、サブエージェントは
+正しく従っただけで、**誰が実行してよいか**が文章でしか区別されていなかった。委譲ブリーフの
+禁止文言だけが歯止めで、failure-catalog の「D: 文章で禁止しても再発する操作ミス」そのもの。
+
+本体は `hooks/server-guard.sh` で、`pre-bash-guard.sh` の規則 6 の直後から `.` で読み込む
+(`pre-bash-guard.sh` の行数上限を守るための分離。無ければ素通り)。**契約に
+`alwaysOnServer.port` が無い注入先では何もしない。**
+
+```json
+{ "alwaysOnServer": { "port": 8787, "restartScript": "scripts/always-on-server.sh" } }
+```
+
+- **呼び出し元の区別**は hook 入力 JSON の `agent_id` (Claude Code がサブエージェント内で
+  hook を発火させたときだけ付ける) の有無。環境変数には何も出ないので、これが唯一の手掛かり。
+  空ならトップレベル (議長) からの呼び出し。
+- **main checkout** は `git -C <cwd> rev-parse --git-common-dir` の親。worktree からでも同じ
+  場所に解決する。「そのディレクトリが main checkout か」は前方一致ではなく
+  `git -C <dir> rev-parse --show-toplevel` が main と一致するかで見る (worktree は main の下
+  `.claude/worktrees/` に置かれるため)。
+- **実効ディレクトリ**は cwd から始めて、コマンド列を `;` `&&` `||` `&` 改行で割った各
+  セグメントの `cd` / `pushd` / `popd` を静的に追う (`(` … `)` のサブシェルは閉じで巻き戻す)。
+  `git -C <dir>` / `npm --prefix <dir>` の明示も見る。同一コマンド内の `NAME=値` 代入は
+  `$NAME` / `${NAME}` として展開する。`BDBOARD_PORT=<別ポート>` を前置した `npm run start`
+  は常時稼働サーバーではない (worktree の一時サーバー) ので 7b の対象外。
+- **7c の PID** は kill を含むセグメントを見つけたときだけ
+  `lsof -nP -iTCP:<port> -sTCP:LISTEN -t` (無ければ `ss`) で引き、その親を 3 段まで
+  (`node` / `npm` / `sh` 系なら) 加える — `npm run start` → `node (tsx)` → listener の鎖の
+  どこを kill しても同じ結果になるため。`kill -0` / `kill -l` は判定しない。
+- **エスケープハッチ** `BDBOARD_SERVER_OVERRIDE=<理由>` はコマンド先頭の前置きだけを見て、
+  **議長のときだけ**効く (サブエージェントには効かない)。
+- deny のたびに `${TMPDIR:-/tmp}/bdboard-server-guard.log` へ 1 行 (時刻 / 規則 / agent /
+  cwd / コマンド先頭 300 文字) を残す。stderr 3 行では「誰が何を止められたか」を後から
+  追えないため。
+- 再起動スクリプト側 (`alwaysOnServer.restartScript`) は `BDBOARD_SERVER_CALLER=chair` の
+  宣言を要求し、`--expect-pid` で「いまの listener がその PID のときだけ」kill する (CAS)。
+  スクリプトの中の kill/pull/start は hook には見えないので、議長のスクリプト実行は通る。
+
+#### 限界
+
+- 別ファイルにコマンドを書いてから実行する迂回 (`bash /tmp/x.sh`) は見えない。hook は
+  「観測された事故の形 (インラインで pull → kill → start)」を止めるガードで、サンドボックス
+  ではない。
+- `preview_start` (MCP ツール) は Bash ではないのでこの hook の対象外。worktree からの
+  `preview_start` 禁止は引き続き文章の規律 (failure-catalog `worktree-preview-start`)。
+- 変数展開は同一コマンド内の単純代入だけ。`$MAIN` が別のコマンドで設定されていれば
+  解決できず fail-open。`agent_id` の有無は Claude Code の hook 入力仕様に依る
+  (2.1.x で確認)。無い版では 7a/7b は発火せず、7c だけが効く。
+- `pgrep -f … | xargs kill` のように port を含まないパターン kill は 7c では止めない
+  (規則 1 の pkill/killall 禁止と同じ精神だが、worktree の一時サーバーを狙う正当な用途と
+  区別できないため)。
+
 ### 誤検知について
 
 1 は「`# pkill` のようなコメント内でも deny する」ほど緩い判定にしてある。誤検知した
@@ -268,4 +324,6 @@ echo '{"tool_name":"Bash","tool_input":{"command":"bd dolt push --remote backup"
 ```
 
 自動テストは `src/infrastructure/harness/pack-hooks.test.ts` (bash で spawn して stdin に
-JSON を流す統合テスト。Windows では skip)。
+JSON を流す統合テスト。Windows では skip) と、規則 7 用の
+`src/infrastructure/harness/pack-hooks-server-guard.test.ts` (テストプロセス自身が空きポートで
+listen し、その PID を「守られる対象」にする。本物のサーバーには触れない)。

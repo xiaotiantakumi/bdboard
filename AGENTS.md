@@ -137,10 +137,10 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
 - **worktree からは `preview_start` 禁止** — `.claude/launch.json` は各 worktree にもあるため
   8787 を奪い、そのブランチの古い UI を配ってしまう (実測 2026-08-29、12 worktree 中 9 が該当)。
   起動はメインチェックアウトへ `cd` してから。
-- **サーバーを kill しない** (マージ後の再起動とユーザーの明示要求を除く)。その場合も
-  **pkill / killall 等のパターンマッチ kill を使わない** — worktree のテスト用プロセスを狙った
-  `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーを巻き込んだ実例がある。PID を特定して kill する
-  (委譲ブリーフにも毎回この禁止を明記する)。
+- **kill・再起動は議長だけが `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart
+  --expect-pid <PID>` で行う** (pull/build/health 待ち込み。PID は `status` で確認)。pkill/killall 等の
+  パターン kill は禁止 (worktree 狙いの `pkill -f` が本体を巻き込んだ実例)。サブエージェントからの
+  main checkout の pull / start / listener kill は hook 規則 7 が deny する (bdboard-hpu8)。
 - launchd plist 等の常駐デーモン化はしない (別途ユーザー承認が要る変更)。
 
 ## Git Workflow (multi-session: per-ticket worktree + branch + PR)
@@ -155,9 +155,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   ヘルプ原本 `docs/help-content.json` の追従を確認 → `npm run drift` (PR が数時間開いていたら
   再実行) → `npm run verify` (PR を開く前にクリーンであること) →
   `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
-  CI green → マージ (drift → `bd merge-slot acquire` → 直前に `git ls-remote origin main` で
-  CAS → `gh pr merge --squash --delete-branch` → `git pull --ff-only` して main で
-  `npm run verify` → `bd merge-slot release`) → **`bd close <id>` はマージ成功後だけ**
+  CI green → マージ (drift → `bd merge-slot acquire` → `git ls-remote origin main` で CAS →
+  `gh pr merge --squash --delete-branch` → 着地後検証: 議長は main で pull + `npm run verify`、
+  サブエージェントは main に触れずブランチ tip 検証 → `bd merge-slot release`) → **`bd close <id>` はマージ成功後だけ**
   (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
 - **Direct-to-main commits are banned.** 唯一の例外は `.github/workflows/` のみを触る CI 復旧コミット。
 - **`.beads/` はこのリポジトリで git 追跡していない** (ルート `.gitignore` 参照)。PR で
@@ -166,9 +166,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   この repo で禁止** — `origin` を Dolt 層が黙って採用しうる (bdboard-23v / bdboard-jb1)。事前に
   `bd dolt remote list` で `origin` が無いことを確認する。Dolt remote を使う環境では push はセッション終わりに。
 - **Cleanup after merge** (マージしたセッションの責任): `git worktree remove` →
-  `git branch -D bd/<id>` → `git remote prune origin` → 常時稼働サーバーを再起動
-  (skill `bdboard-server-ops`)。remove 前に `lsof -a -d cwd +D <worktree>` で他セッションが
-  居ないか確認する (bdboard-3tw.61)。
+  `git branch -D bd/<id>` → `git remote prune origin`。常時稼働サーバーの再起動は掃除に含めず
+  議長が行う (Always-On 節。サブエージェントは報告のみ)。remove 前に `lsof -a -d cwd +D <worktree>`
+  で他セッションが居ないか確認する (bdboard-3tw.61)。
 
 ## Architecture Overview
 

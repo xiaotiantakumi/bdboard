@@ -2,13 +2,14 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.31.0",
+      "version": "0.32.0",
       "injectedAt": "2026-09-05T17:53:47.483Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
         ".claude/skills/bdboard-harness/hooks/README.md",
         ".claude/skills/bdboard-harness/hooks/pre-bash-guard.sh",
         ".claude/skills/bdboard-harness/hooks/pre-edit-guard.sh",
+        ".claude/skills/bdboard-harness/hooks/server-guard.sh",
         ".claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh",
         ".claude/skills/bdboard-harness/references/brushup-protocol.md",
         ".claude/skills/bdboard-harness/references/close-template.md",
