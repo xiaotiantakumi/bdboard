@@ -49,9 +49,10 @@
 // それらに依存する hasActiveRun/runStartDisabled の算出、そして各下位フックを
 // 呼び出して結果を束ねる配線。useState/useRef/useQuery/useMutation の呼び出し順は
 // 分割前と同じ相対順序 (harness query → ticket-runs query → 6つの useState →
-// 確認ダイアログの2つの useRef → reset用 useCallback → ticketIdリセット effect →
-// 同期 effect → 履歴詳細 query → ポーリング effect → 起動/中止 mutation) を保って
-// いる。
+// 確認ダイアログの2つの useRef・handleCancelAgentRun 用 useCallback・
+// useFocusTrap → reset用 useCallback → ticketIdリセット effect → 3つの useMemo
+// (activeRunFromList/hasActiveRun/runStartDisabled) → 同期 effect → 履歴詳細
+// query → ポーリング effect → 起動/中止 mutation) を保っている。
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AgentRunDetailDto, TicketDetailDto } from '../../api';
