@@ -17,13 +17,15 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 2195, // 現在 2184 (bdboard-sso1.83 第2段: ドラフト本文/添付/添付エラーの状態とハンドラを chat/chatDraftState.ts + chat/useChatDraftState.ts + chat/useChatAttachmentIngestion.ts へ抽出)
-  'web/src/components/TicketDetailPanel.tsx': 690, // 現在 680 (bdboard-sso1.5: detail-header ブロックを TicketDetailHeaderSection.tsx へ、'c' キーボードショートカットを useCommentFocusShortcut.ts へ抽出)
+  'web/src/components/ChatPanel.tsx': 2195, // 現在 2185 (bdboard-sso1.83 第3段: threadError/ticketProjectFallbackNotice の状態を chat/chatNotificationsState.ts + chat/useChatNotifications.ts へ抽出)
+  // 'web/src/components/TicketDetailPanel.tsx' はこの一覧から除去 (bdboard-sso1.5:
+  // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
+  // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、
+  // 680 -> 141 行(ESLint実測)まで縮小。既定上限200行に対して59行の余裕がある)。
   'web/src/App.tsx': 521, // 現在 511 (bdboard-62p4 第4段: ヘッダー橋渡し(GlobalBar/ViewToolbar)を AppHeader.tsx へ、オーバーレイ7点の配線を AppOverlayGroup.tsx へ、オーバーレイ開閉state+ハンドラを useAppOverlays.ts へ、Cmd/Ctrl+K・`?` の2effectを useAppKeyboardShortcuts.ts へ抽出)
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
   'web/src/components/TicketDetailPanel.test.tsx': 2774, // 現在 2764 (bdboard-sso1.5: ticketId 切替でのタイトル編集下書きクリアを検証するテストを追加)
-  'src/application/board/get-pr-badges.test.ts': 1530, // 現在 1530 (bdboard-se3v: opus レビュー指摘 M1 [ステータスキャッシュ済みチケットが statusGate 待ちで巻き込まれてタイムアウトする回帰] の再現テストを追加)
 };
 
 const NON_TEST_MAX_LINES = 200;
