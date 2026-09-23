@@ -1,5 +1,5 @@
-import { z } from 'zod';
 import { repoPathExistsSchema, repoTicketLandedSchema } from './schemas.js';
+import { describeZodError } from '../bd-tool-catalog/args-helpers.js';
 
 /**
  * チャットから使える「リポジトリの事実確認」ツール(bdboard-3tw.159.4)。
@@ -40,17 +40,6 @@ export type RepoArgsBuildResult =
       readonly outputFilter: RepoOutputFilter;
     }
   | { readonly ok: false; readonly error: string };
-
-function describeZodError(error: z.ZodError): string {
-  return error.issues
-    .map((issue) => {
-      const path = issue.path.join('.');
-      const detail =
-        issue.code === 'unrecognized_keys' ? 'unrecognized key' : issue.message;
-      return path.length > 0 ? `${path}: ${detail}` : detail;
-    })
-    .join('; ');
-}
 
 export const REPO_DEFAULT_REF = 'origin/main';
 
