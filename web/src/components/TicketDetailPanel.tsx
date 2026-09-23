@@ -24,7 +24,6 @@ import {
 import { UI_STORAGE_KEYS } from '../uiPersistedState';
 import { MarkdownContent } from './MarkdownContent';
 import { PrLinkBadge } from './PrLinkBadge';
-import { WatchToggle } from './WatchToggle';
 import { TicketAttachments } from './TicketAttachments';
 import { useUndoSnackbar } from './UndoSnackbar';
 
@@ -46,7 +45,7 @@ import { TicketCommentsSection } from './ticket-detail/TicketCommentsSection';
 import { TicketInFlightOverlapsSection } from './ticket-detail/TicketInFlightOverlapsSection';
 import { TicketSimilarTicketsSection } from './ticket-detail/TicketSimilarTicketsSection';
 import { useTicketTitleEditing } from './ticket-detail/useTicketTitleEditing';
-import { TicketTitleSection } from './ticket-detail/TicketTitleSection';
+import { TicketDetailHeaderSection } from './ticket-detail/TicketDetailHeaderSection';
 import { useTicketDescriptionEditing } from './ticket-detail/useTicketDescriptionEditing';
 import { TicketDescriptionSection } from './ticket-detail/TicketDescriptionSection';
 import { useTicketLabels } from './ticket-detail/useTicketLabels';
@@ -71,6 +70,7 @@ import { TicketAgentRunSection } from './ticket-detail/TicketAgentRunSection';
 import { useTicketDecisionAnswer } from './ticket-detail/useTicketDecisionAnswer';
 import { TicketDecisionSection } from './ticket-detail/TicketDecisionSection';
 import { useTicketFormReset } from './ticket-detail/useTicketFormReset';
+import { useCommentFocusShortcut } from './ticket-detail/useCommentFocusShortcut';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -268,6 +268,15 @@ export function TicketDetailPanel({
     enabled: quickActions.confirmingQuickAction === null && !agentRun.confirmingAgentRun,
   });
 
+  // パネル外枠の 'c' キーボードショートカット (コメント入力欄へフォーカス)。
+  // useTicketFormReset と同じく、disabled の中身 (quickActions/agentRun の
+  // 確認中フラグ) は複数セクションのフックを跨ぐため、合成は親側に残す。
+  const handleCommentFocusShortcut = useCommentFocusShortcut({
+    textareaRef: commentTextareaRef,
+    disabled:
+      quickActions.confirmingQuickAction !== null || agentRun.confirmingAgentRun,
+  });
+
   useEffect(() => {
     const commentCount = data?.commentCount;
     const prevCommentCount = prevCommentCountRef.current;
@@ -347,41 +356,7 @@ export function TicketDetailPanel({
         className={`detail-panel resizable-side-panel${detailPanel.isResizing ? ' is-resizing' : ''}${isMaximized ? ' is-maximized' : ''}`}
         style={{ width: isMaximized ? '100%' : `${detailPanel.width}px` }}
         onClick={(event) => event.stopPropagation()}
-        onKeyDown={(event) => {
-          if (event.defaultPrevented) {
-            return;
-          }
-          if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
-            return;
-          }
-          if (event.key !== 'c') {
-            return;
-          }
-          const target = event.target;
-          if (target instanceof HTMLElement) {
-            const tag = target.tagName;
-            if (
-              tag === 'INPUT' ||
-              tag === 'TEXTAREA' ||
-              tag === 'SELECT' ||
-              target.isContentEditable
-            ) {
-              return;
-            }
-          }
-          if (quickActions.confirmingQuickAction !== null || agentRun.confirmingAgentRun) {
-            return;
-          }
-          const textarea = commentTextareaRef.current;
-          if (textarea === null || textarea.disabled) {
-            return;
-          }
-          event.preventDefault();
-          textarea.focus();
-          if (typeof textarea.scrollIntoView === 'function') {
-            textarea.scrollIntoView({ block: 'nearest' });
-          }
-        }}
+        onKeyDown={handleCommentFocusShortcut}
         role="dialog"
         aria-modal="true"
         aria-labelledby="detail-title"
@@ -394,72 +369,26 @@ export function TicketDetailPanel({
             panel={detailPanel}
           />
         )}
-        {/* .detail-header は7パネル共有のため、モバイル向け縦積みは ticket-detail-header
-            修飾クラスで詳細パネルだけに限定する (bdboard-h4xs.2)。 */}
-        <div className="detail-header ticket-detail-header">
-          <TicketTitleSection
-            title={data?.title}
-            hasData={data !== undefined}
-            isLoading={isLoading}
-            titleEditing={titleEditing}
-            titleDraft={titleDraft}
-            onTitleDraftChange={setTitleDraft}
-            canSaveTitle={canSaveTitle}
-            isSaving={isTitleSaving}
-            error={titleEditingError}
-            onStartTitleEdit={handleStartTitleEdit}
-            onCancelTitleEdit={handleCancelTitleEdit}
-            onSaveTitle={handleSaveTitle}
-          />
-          <div className="detail-header-actions">
-            {onBackTicket !== undefined && (
-              <button
-                type="button"
-                className="btn btn-small detail-back"
-                /* 「←」をアクセシブルネームに含めると読み上げが「左向き矢印、
-                   戻る」になるので、同ヘッダーの「タイトルを編集」と同じく
-                   aria-label でラベルを与える (PR#241 レビュー minor-4)。 */
-                aria-label="前のチケットへ戻る"
-                onClick={onBackTicket}
-              >
-                ← 戻る
-              </button>
-            )}
-            <WatchToggle ticketId={ticketId} className="detail-watch-toggle" />
-            <button
-              type="button"
-              className="btn btn-small detail-maximize"
-              onClick={(event) => {
-                /*
-                 * 最大化するとリサイズハンドルが DOM から外れる。ハンドルに
-                 * フォーカスがあるままだと activeElement が body に落ち、
-                 * useFocusTrap がパネル要素に張った keydown を受け取れなくなって
-                 * Escape で閉じられなくなる (PR#242 opus レビュー minor-1)。
-                 * Chrome/Firefox は button クリックでフォーカスがボタンへ移るので
-                 * 踏まないが、Safari/macOS は button にフォーカスを与えない。
-                 */
-                if (!isMaximized) {
-                  event.currentTarget.focus();
-                }
-                onToggleMaximized();
-              }}
-              title={isMaximized ? '元の幅に戻す' : '画面幅いっぱいに広げる'}
-            >
-              {/* aria-pressed は付けない。ラベル自体が「最大化」/「縮小」と
-                  入れ替わるので、押下状態も併せて伝えると「縮小、押されています」
-                  = 縮小が有効、と逆に読める (ChatPanel と同じ判断)。 */}
-              {isMaximized ? '縮小' : '最大化'}
-            </button>
-            <button
-              ref={closeButtonRef}
-              type="button"
-              className="btn detail-close"
-              onClick={onClose}
-            >
-              閉じる
-            </button>
-          </div>
-        </div>
+        <TicketDetailHeaderSection
+          title={data?.title}
+          hasData={data !== undefined}
+          isLoading={isLoading}
+          titleEditing={titleEditing}
+          titleDraft={titleDraft}
+          onTitleDraftChange={setTitleDraft}
+          canSaveTitle={canSaveTitle}
+          isSaving={isTitleSaving}
+          error={titleEditingError}
+          onStartTitleEdit={handleStartTitleEdit}
+          onCancelTitleEdit={handleCancelTitleEdit}
+          onSaveTitle={handleSaveTitle}
+          ticketId={ticketId}
+          onBackTicket={onBackTicket}
+          isMaximized={isMaximized}
+          onToggleMaximized={onToggleMaximized}
+          onClose={onClose}
+          closeButtonRef={closeButtonRef}
+        />
 
         {isLoading && <p className="loading">読み込み中…</p>}
         {error !== null && (
