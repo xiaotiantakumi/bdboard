@@ -7,6 +7,7 @@
 import type { ReactNode } from 'react';
 import type { TunnelDto } from '../../api';
 import { isLocalOnlyError } from './tunnelHelpers';
+import type { useTunnelStatus } from './useTunnelStatus';
 import { TunnelUnavailableNotice } from './TunnelUnavailableNotice';
 import { TunnelInterruptedNotice } from './TunnelInterruptedNotice';
 import { TunnelPublishForm } from './TunnelPublishForm';
@@ -19,7 +20,7 @@ import type { useTunnelDismiss } from './useTunnelDismiss';
 
 export interface TunnelStatusPanelProps {
   localOnlyNotice: boolean;
-  statusError: unknown;
+  statusError: ReturnType<typeof useTunnelStatus>['error'];
   statusData: TunnelDto | undefined;
   isMutating: boolean;
   dismiss: ReturnType<typeof useTunnelDismiss>;
