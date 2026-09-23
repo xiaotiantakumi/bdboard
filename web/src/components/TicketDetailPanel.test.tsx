@@ -2114,6 +2114,81 @@ describe('TicketDetailPanel title and description editing', () => {
 
     expect(await screen.findByText('network down')).toBeInTheDocument();
   });
+
+  // bdboard-sso1.5: useTicketFormReset.ts へ抽出した resetFormState 横断リセットが、
+  // パネル本体(TicketDetailPanel)側の ticketId prop 変化でも実際に発火することを
+  // 確認する。useTicketFormReset.test.ts はフック単体でモック関数を渡して呼び出し
+  // 順序・依存配列を検証しているが、UseTicketFormResetParams は全フィールドが
+  // 同じ `() => void` 型なので、呼び出し側(TicketDetailPanel.tsx)で誤って
+  // 別のセクションの reset を渡す(例: resetTitleEditing に resetDescriptionEditing
+  // を渡す)配線ミスがあっても型チェックでは検出できない。このテストは実際の
+  // TicketDetailPanel を2つの異なる ticketId でレンダーし、未保存のタイトル編集
+  // 下書きが実際に消えることを確認することで、その配線ミスを検出する。
+  it('clears an in-progress, unsaved title edit when the panel switches to a different ticket', async () => {
+    const otherTicket: TicketDetailDto = {
+      ...sampleTicket,
+      id: 'bdboard-other.1',
+      title: 'Other ticket title',
+    };
+    mockFetchTicket.mockImplementation((id: string) =>
+      Promise.resolve(id === otherTicket.id ? otherTicket : ticketWithDescription),
+    );
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <MaximizablePanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>,
+    );
+
+    await user.click(
+      await screen.findByRole('button', { name: 'タイトルを編集' }),
+    );
+    const input = screen.getByLabelText('タイトル');
+    await user.clear(input);
+    await user.type(input, 'DRAFT not saved');
+    expect(screen.getByLabelText('タイトル')).toHaveValue('DRAFT not saved');
+
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <MaximizablePanel
+            ticketId={otherTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={undefined}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={() => {}}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText(otherTicket.title)).toBeInTheDocument();
+    // 編集モードが解除されているので、タイトル入力欄(=編集中だけ出る)は無い。
+    expect(screen.queryByLabelText('タイトル')).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: 'タイトルを編集' }),
+    ).toBeInTheDocument();
+    // 下書きが漏れていないことの直接確認: 消えたタイトル入力欄ではなく、
+    // 表示中のタイトルが otherTicket のものであって DRAFT 文字列ではないこと。
+    expect(screen.queryByText('DRAFT not saved')).not.toBeInTheDocument();
+  });
 });
 
 describe('TicketDetailPanel models', () => {

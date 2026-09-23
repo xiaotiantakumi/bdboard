@@ -70,6 +70,7 @@ import {
 import { TicketAgentRunSection } from './ticket-detail/TicketAgentRunSection';
 import { useTicketDecisionAnswer } from './ticket-detail/useTicketDecisionAnswer';
 import { TicketDecisionSection } from './ticket-detail/TicketDecisionSection';
+import { useTicketFormReset } from './ticket-detail/useTicketFormReset';
 
 export type { TicketDetailPanelProps };
 export { AGENT_RUN_LOG_LOCAL_ONLY_HELP, AGENT_RUN_NEXT_STEP_LABEL };
@@ -243,39 +244,22 @@ export function TicketDetailPanel({
   const commentTextareaRef = useRef<HTMLTextAreaElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  const resetQuickActions = quickActions.reset;
-  const resetDecision = decision.reset;
-  // agentRun のリセットはこの親effectからは呼ばない — useTicketAgentRun が
-  // ticketId/projectRootPath 変更を自前で検知して内部effectの順序込みでリセット
-  // する (bdboard-sso1.5 PR-L Opus レビュー対応)。ここから重ねて呼ぶと、
-  // キャッシュ済みの実行中run復元を再び巻き戻してしまう。
-  const resetFormState = useCallback((options?: { clearSubmittedDecision?: boolean }) => {
-    clearCopyDisplay();
-    resetDecision({
-      clearSubmittedDecision: options?.clearSubmittedDecision === true,
-    });
-    resetQuickActions();
-    resetComment();
-    resetDependencies();
-    resetLabelInput();
-    resetTitleEditing();
-    resetDescriptionEditing();
-    resetSessionLink();
-  }, [
+  // ticketId/projectRootPath 変更時の各セクション横断リセットは
+  // useTicketFormReset.ts に抽出済み (bdboard-sso1.5)。agentRun は含まない
+  // (useTicketAgentRun が自前でリセットを持つ理由はそのフック冒頭のコメント参照)。
+  useTicketFormReset({
+    ticketId,
+    projectRootPath,
     clearCopyDisplay,
-    resetDecision,
-    resetQuickActions,
+    resetDecision: decision.reset,
+    resetQuickActions: quickActions.reset,
     resetComment,
     resetDependencies,
-    resetDescriptionEditing,
     resetLabelInput,
-    resetSessionLink,
     resetTitleEditing,
-  ]);
-
-  useEffect(() => {
-    resetFormState({ clearSubmittedDecision: true });
-  }, [ticketId, projectRootPath, resetFormState]);
+    resetDescriptionEditing,
+    resetSessionLink,
+  });
 
   useFocusTrap({
     containerRef: panelRef,
