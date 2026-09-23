@@ -24,7 +24,6 @@ const MAX_LINES_ALLOWLIST = {
   // 680 -> 141 行(ESLint実測)まで縮小。既定上限200行に対して59行の余裕がある)。
   'web/src/App.tsx': 521, // 現在 511 (bdboard-62p4 第4段: ヘッダー橋渡し(GlobalBar/ViewToolbar)を AppHeader.tsx へ、オーバーレイ7点の配線を AppOverlayGroup.tsx へ、オーバーレイ開閉state+ハンドラを useAppOverlays.ts へ、Cmd/Ctrl+K・`?` の2effectを useAppKeyboardShortcuts.ts へ抽出)
   // テスト (1500 行超)
-  'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
   'web/src/components/TicketDetailPanel.test.tsx': 2774, // 現在 2764 (bdboard-sso1.5: ticketId 切替でのタイトル編集下書きクリアを検証するテストを追加)
 };
 
