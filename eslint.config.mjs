@@ -21,7 +21,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/TicketDetailPanel.tsx': 690, // 現在 680 (bdboard-sso1.5: detail-header ブロックを TicketDetailHeaderSection.tsx へ、'c' キーボードショートカットを useCommentFocusShortcut.ts へ抽出)
   'web/src/App.tsx': 635, // 現在 625 (bdboard-62p4 PR-3: 9本の useQuery と派生 useMemo/useEffect を関心ごとの web/src/hooks/useXxxData.ts へ抽出)
   // テスト (1500 行超)
-  'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
   'web/src/components/TicketDetailPanel.test.tsx': 2774, // 現在 2764 (bdboard-sso1.5: ticketId 切替でのタイトル編集下書きクリアを検証するテストを追加)
 };
 
