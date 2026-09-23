@@ -19,7 +19,6 @@ const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
   'web/src/components/TicketDetailPanel.tsx': 690, // 現在 680 (bdboard-sso1.5: detail-header ブロックを TicketDetailHeaderSection.tsx へ、'c' キーボードショートカットを useCommentFocusShortcut.ts へ抽出)
-  'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/App.tsx': 810, // 現在 800 (bdboard-62p4 PR-2: ビュー切替本体を AppViewContent.tsx/AppBoardViewSwitch.tsx へ抽出)
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
