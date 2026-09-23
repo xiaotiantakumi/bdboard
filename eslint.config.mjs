@@ -26,7 +26,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/components/HygienePanel.tsx': 260, // 現在 252 (bdboard-sso1.11 PR-C: useHygieneRepairActions フックへ移動)
   'web/src/components/board/BoardLanes.tsx': 230, // 現在 214 (bdboard-sso1.44 PR-B: BoardView.tsx の LanesRow+BoardLanes を move-only 抽出。表示専用の1コンポーネント対で、これ以上分けるとJSX/DOMや親子関係を変えずには切れない。move-only 抽出のため新規ファイルだが例外的にここへ追加)
-  'web/src/components/hygiene/useHygieneRepairActions.ts': 315, // 現在 307 (bdboard-sso1.11 PR-C: repair/mutation ハンドラをカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/components/help/useHelpPanelFilter.ts': 275, // 現在 264 (bdboard-sso1.28: HelpPanel.tsx の絞り込み・開閉 state とハンドラをカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/components/bulk-action/useBulkActions.ts': 290, // 現在 280 (bdboard-sso1.23 PR-C: 一括操作の確認/実行/Undo の state+mutation+handler をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
