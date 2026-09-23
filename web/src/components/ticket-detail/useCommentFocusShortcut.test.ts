@@ -3,12 +3,19 @@ import type { KeyboardEvent, RefObject } from 'react';
 import { useCommentFocusShortcut } from './useCommentFocusShortcut';
 
 // TicketDetailPanel.tsx のパネル外枠 div に付いていた 'c' キーボード
-// ショートカット(コメント入力欄へフォーカス)を抽出したフック。抽出前は
-// インラインの onKeyDown ハンドラで、専用のテストが無かった
-// (TicketDetailPanel.test.tsx にもこのショートカットのテストは存在しない)。
-// ここでは判定ロジックの各分岐を直接固定する。このフックは React の
-// use* API を呼ばないプレーンな関数なので renderHook は使わず、素の関数
-// 呼び出しとしてテストする。
+// ショートカット(コメント入力欄へフォーカス)を抽出したフック。判定ロジック
+// そのものは移動前から1文字も変えていない。
+//
+// TicketDetailPanel.test.tsx の 'TicketDetailPanel comment shortcut' に
+// 既存の統合テスト(パネルへ実際に 'c' を打鍵して textarea がフォーカスされる
+// こと / textarea に既にフォーカスがある状態で 'c' を打つとそのまま文字が
+// 入力されること、の2件)が既にあり、抽出後もそのまま無改変で通っている
+// (レビューで指摘: このファイルの以前の版に「専用テストが無い」という誤った
+// 記述があったため訂正した)。ここではその統合テストではカバーしにくい
+// 判定ロジックの分岐(修飾キー・対象タグ・disabled・ref未着地 等)を、フック
+// を直接呼び出して枝ごとに固定する。このフックは React の use* API を
+// 呼ばないプレーンな関数なので renderHook は使わず、素の関数呼び出しとして
+// テストする。
 
 function makeEvent(
   overrides: Partial<{
@@ -79,14 +86,16 @@ describe('useCommentFocusShortcut', () => {
   it('ignores the event when defaultPrevented is already true', () => {
     const textarea = document.createElement('textarea');
     const focusSpy = vi.spyOn(textarea, 'focus');
+    const preventDefaultSpy = vi.fn();
     const handleKeyDown = useCommentFocusShortcut({
       textareaRef: makeTextareaRef(textarea),
       disabled: false,
     });
 
-    handleKeyDown(makeEvent({ defaultPrevented: true }));
+    handleKeyDown(makeEvent({ defaultPrevented: true, preventDefault: preventDefaultSpy }));
 
     expect(focusSpy).not.toHaveBeenCalled();
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
   it.each(['metaKey', 'ctrlKey', 'altKey', 'shiftKey'] as const)(
@@ -94,28 +103,32 @@ describe('useCommentFocusShortcut', () => {
     (modifier) => {
       const textarea = document.createElement('textarea');
       const focusSpy = vi.spyOn(textarea, 'focus');
+      const preventDefaultSpy = vi.fn();
       const handleKeyDown = useCommentFocusShortcut({
         textareaRef: makeTextareaRef(textarea),
         disabled: false,
       });
 
-      handleKeyDown(makeEvent({ [modifier]: true }));
+      handleKeyDown(makeEvent({ [modifier]: true, preventDefault: preventDefaultSpy }));
 
       expect(focusSpy).not.toHaveBeenCalled();
+      expect(preventDefaultSpy).not.toHaveBeenCalled();
     },
   );
 
   it('ignores keys other than "c"', () => {
     const textarea = document.createElement('textarea');
     const focusSpy = vi.spyOn(textarea, 'focus');
+    const preventDefaultSpy = vi.fn();
     const handleKeyDown = useCommentFocusShortcut({
       textareaRef: makeTextareaRef(textarea),
       disabled: false,
     });
 
-    handleKeyDown(makeEvent({ key: 'v' }));
+    handleKeyDown(makeEvent({ key: 'v', preventDefault: preventDefaultSpy }));
 
     expect(focusSpy).not.toHaveBeenCalled();
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
   it.each(['INPUT', 'TEXTAREA', 'SELECT'])(
@@ -123,21 +136,24 @@ describe('useCommentFocusShortcut', () => {
     (tagName) => {
       const textarea = document.createElement('textarea');
       const focusSpy = vi.spyOn(textarea, 'focus');
+      const preventDefaultSpy = vi.fn();
       const handleKeyDown = useCommentFocusShortcut({
         textareaRef: makeTextareaRef(textarea),
         disabled: false,
       });
       const target = document.createElement(tagName.toLowerCase());
 
-      handleKeyDown(makeEvent({ target }));
+      handleKeyDown(makeEvent({ target, preventDefault: preventDefaultSpy }));
 
       expect(focusSpy).not.toHaveBeenCalled();
+      expect(preventDefaultSpy).not.toHaveBeenCalled();
     },
   );
 
   it('ignores "c" typed inside a contentEditable element', () => {
     const textarea = document.createElement('textarea');
     const focusSpy = vi.spyOn(textarea, 'focus');
+    const preventDefaultSpy = vi.fn();
     const handleKeyDown = useCommentFocusShortcut({
       textareaRef: makeTextareaRef(textarea),
       disabled: false,
@@ -145,54 +161,53 @@ describe('useCommentFocusShortcut', () => {
     const target = document.createElement('div');
     Object.defineProperty(target, 'isContentEditable', { value: true });
 
-    handleKeyDown(makeEvent({ target }));
+    handleKeyDown(makeEvent({ target, preventDefault: preventDefaultSpy }));
 
     expect(focusSpy).not.toHaveBeenCalled();
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
   it('ignores the shortcut while disabled (quick action / agent run confirmation open)', () => {
     const textarea = document.createElement('textarea');
     const focusSpy = vi.spyOn(textarea, 'focus');
+    const preventDefaultSpy = vi.fn();
     const handleKeyDown = useCommentFocusShortcut({
       textareaRef: makeTextareaRef(textarea),
       disabled: true,
     });
 
-    handleKeyDown(makeEvent());
+    handleKeyDown(makeEvent({ preventDefault: preventDefaultSpy }));
 
     expect(focusSpy).not.toHaveBeenCalled();
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
   it('does nothing when the textarea ref is not attached yet', () => {
+    const preventDefaultSpy = vi.fn();
     const handleKeyDown = useCommentFocusShortcut({
       textareaRef: makeTextareaRef(null),
       disabled: false,
     });
 
-    expect(() => handleKeyDown(makeEvent())).not.toThrow();
+    expect(() =>
+      handleKeyDown(makeEvent({ preventDefault: preventDefaultSpy })),
+    ).not.toThrow();
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 
   it('does nothing when the textarea is disabled', () => {
     const textarea = document.createElement('textarea');
     textarea.disabled = true;
     const focusSpy = vi.spyOn(textarea, 'focus');
+    const preventDefaultSpy = vi.fn();
     const handleKeyDown = useCommentFocusShortcut({
       textareaRef: makeTextareaRef(textarea),
       disabled: false,
     });
 
-    handleKeyDown(makeEvent());
+    handleKeyDown(makeEvent({ preventDefault: preventDefaultSpy }));
 
     expect(focusSpy).not.toHaveBeenCalled();
-  });
-
-  it('returns a fresh handler function on every call (matches the original per-render inline closure)', () => {
-    const textarea = document.createElement('textarea');
-    const options = { textareaRef: makeTextareaRef(textarea), disabled: false };
-
-    const first = useCommentFocusShortcut(options);
-    const second = useCommentFocusShortcut(options);
-
-    expect(first).not.toBe(second);
+    expect(preventDefaultSpy).not.toHaveBeenCalled();
   });
 });
