@@ -117,7 +117,8 @@ export function createApiRoutes(deps: ApiDeps): Hono {
   // ルーティング解決より前に 403 になる(= ガード掛け忘れで出荷される経路が無い)。
   app.use('*', createWriteGuardMiddleware(deps.writeAccess ?? {}));
 
-  // /api/hygiene (hygiene-routes.ts) と /api/tickets/:id/in-flight-overlaps
+  // /api/hygiene (hygiene-status-routes.ts, bdboard-sso1.61 で hygiene-routes.ts
+  // から分割) と /api/tickets/:id/in-flight-overlaps
   // (ticket-read-routes.ts) が共有する着手中重複メモ。
   const inFlightOverlapMemo = createInFlightOverlapMemo();
 

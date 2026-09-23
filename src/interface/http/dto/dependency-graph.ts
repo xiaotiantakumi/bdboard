@@ -1,5 +1,6 @@
 // bdboard-sso1.12: dto.ts のモジュール分割。依存関係グラフ (DependencyGraphView)
-// の DTO。hygiene-routes.ts が参照する (barrel 経由)。
+// の DTO。dependency-graph-routes.ts が参照する (barrel 経由。bdboard-sso1.61 で
+// hygiene-routes.ts から分割)。
 import type { DependencyGraph } from '../../../domain/dependency-graph.js';
 
 export interface GraphNodeDto {

@@ -1,6 +1,8 @@
 // bdboard-sso1.12: dto.ts のモジュール分割。Hygiene パネルが表示する運用状態
-// (stale lease・回収スケジューラ・merge-slot・PR バッジ) の DTO。hygiene-routes.ts
-// が参照する (barrel 経由)。検出された問題そのものは hygiene.ts 側。
+// (stale lease・回収スケジューラ・merge-slot・PR バッジ) の DTO。
+// lease-health-routes.ts / merge-slot-status-routes.ts / pr-links-routes.ts が
+// 参照する (barrel 経由。bdboard-sso1.61 で hygiene-routes.ts から分割)。
+// 検出された問題そのものは hygiene.ts 側。
 import type { StaleLeaseIssue } from '../../../domain/lease.js';
 import type { MergeSlotStatus } from '../../../domain/merge-slot.js';
 import type { PrBadge } from '../../../domain/pr-link.js';
