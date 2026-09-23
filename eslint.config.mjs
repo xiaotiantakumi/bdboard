@@ -23,7 +23,6 @@ const MAX_LINES_ALLOWLIST = {
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
   'web/src/components/TicketDetailPanel.test.tsx': 2774, // 現在 2764 (bdboard-sso1.5: ticketId 切替でのタイトル編集下書きクリアを検証するテストを追加)
-  'src/application/board/get-pr-badges.test.ts': 1530, // 現在 1530 (bdboard-se3v: opus レビュー指摘 M1 [ステータスキャッシュ済みチケットが statusGate 待ちで巻き込まれてタイムアウトする回帰] の再現テストを追加)
 };
 
 const NON_TEST_MAX_LINES = 200;
