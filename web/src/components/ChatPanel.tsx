@@ -957,7 +957,7 @@ export function ChatPanel({
       }
       setSelectedProjectId(nextProjectId);
     },
-    [adoptProjectFromColdKeyspace, selectedProjectId],
+    [adoptProjectFromColdKeyspace, selectedProjectId, setTicketProjectFallbackNotice],
   );
 
   useEffect(() => {
@@ -1098,7 +1098,7 @@ export function ChatPanel({
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: persisted?.selectedSessionId ?? open[0] }));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId]);
+  }, [selectedProjectId, setThreadError]);
 
   useEffect(() => {
     if (selectedProjectId === '') return;

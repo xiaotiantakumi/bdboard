@@ -13,12 +13,18 @@
 // そのため reducer 化しても ChatPanel.tsx 側の呼び出し形
 // (setThreadError(x) / setTicketProjectFallbackNotice(x)) は変えずに済む。
 //
-// 同じ値を setXxx(現在値) で呼んだ場合、元の useState は React の Object.is
-// 比較で再レンダーを起こさない(プリミティブ値の bail-out)。reducer 化すると
-// dispatch のたびに新しいオブジェクトを spread で作ってしまい、この bail-out が
-// 失われて余計な再レンダーが増え得るため、各 action は「値が変わらなければ同じ
-// state 参照を返す」ガードを持つ(bdboard-sso1.83 第2段のレビュー指摘で
-// chatDraftState.ts に入れたのと同じパターン)。挙動は変えない。
+// 同じ値を setXxx(現在値) で呼んだ場合、reducer 化すると dispatch のたびに
+// 新しいオブジェクトを spread で作ってしまい、React が新しい state 参照だけを見て
+// 子コンポーネントの再描画・effect の再実行まで走らせてしまう。これを防ぐため、
+// 各 action は「値が変わらなければ同じ state 参照を返す」ガードを持つ
+// (bdboard-sso1.83 第2段のレビュー指摘で chatDraftState.ts に入れたのと同じ
+// パターン)。これは React のレンダー結果比較による bail-out(子の再描画・effect
+// スキップ)を保つものであり、useState 固有の「同じ値なら ChatPanel 関数本体の
+// 再実行自体を省略する」eager bail-out(dispatchSetState の仕組みで、
+// useReducer の dispatch には無い)までは再現しない。呼び出しサイトはいずれも
+// 同一バッチ内で他の setState を伴うか、無害な ref 再代入しか effect 内で
+// 行わないため、ChatPanel 関数本体が1回余分に実行されても実害は無い
+// (詳細: bdboard-sso1.83 第3段のレビュー参照)。挙動は変えない。
 export interface ChatNotificationsState {
   threadError: string | null;
   ticketProjectFallbackNotice: string | null;

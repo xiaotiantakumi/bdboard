@@ -57,6 +57,14 @@ describe('chatNotificationsReducer (bdboard-sso1.83 第3段)', () => {
       });
       expect(next).toBe(withError);
     });
+
+    it('returns the same state reference for a repeated null clear (旧: handleDeleteThread/handleRenameConfirm/handlePinToggle の成功時 setThreadError(null) が最も多く呼ばれる形)', () => {
+      const next = chatNotificationsReducer(initialChatNotificationsState, {
+        type: 'setThreadError',
+        message: null,
+      });
+      expect(next).toBe(initialChatNotificationsState);
+    });
   });
 
   describe('setTicketProjectFallbackNotice', () => {
