@@ -1,14 +1,17 @@
 // bdboard-sso1.23 PR-C: BulkActionBar.tsx の「一括操作の確認〜実行〜Undo」に関する
 // state + mutation + handler 一式を、挙動を変えずにこのカスタムフックへ抽出しただけの
 // ファイル。呼び出し順序・依存配列・queryKey・invalidate 対象は移動前から変えていない。
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+//
+// bdboard-sso1.60: 2つの mutation (一括クイックアクション/一括ラベル付与) をそれぞれ
+// 関心別フック (./actions/*.ts) へ move-only で抽出した。ここに残るのは、両方の
+// mutation が共有する確認欄の state (confirmingAction/deferPeriodKind/
+// customDeferDate/closeReason/bulkLabelInput/lastOutcome) と、確認欄の
+// フォーカストラップ効果、各フックを呼び出して結果を束ねる配線。
+// useMutation/useQueryClient の呼び出し順は分割前と同じ相対順序
+// (bulkMutation → bulkLabelMutation) を保っている。
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useMemo, useRef, useState, type RefObject } from 'react';
-import {
-  postTicketAddLabel,
-  postTicketQuickAction,
-  postTicketQuickActionUndo,
-  type BoardCardDto,
-} from '../../api';
+import { type BoardCardDto } from '../../api';
 import {
   computeDeferUntilDate,
   DEFAULT_DEFER_PERIOD,
@@ -18,20 +21,17 @@ import {
 import {
   type BulkIdOutcome,
   type BulkQuickActionOutcome,
-  type BulkQuickActionTarget,
-  runBulkById,
-  runBulkQuickAction,
 } from '../../bulkQuickAction';
-import { planQuickActionUndo } from '../../quickActionUndo';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import type { BulkSelectionContextValue } from '../BulkSelectionProvider';
 import { useUndoSnackbar } from '../UndoSnackbar';
+import { useBulkLabelAction } from './actions/useBulkLabelAction';
+import { useBulkQuickAction } from './actions/useBulkQuickAction';
 import {
   buildTargetsForAction,
   countEligibleForAction,
   filterIdsPresentOnBoard,
 } from './targets';
-import { bulkSuccessMessage } from './messages';
 import type { BulkConfirmingAction } from './types';
 
 export interface BulkActions {
@@ -120,74 +120,23 @@ export function useBulkActions(
     return false;
   }, [selectedIds, cardsById]);
 
-  const bulkMutation = useMutation({
-    mutationFn: async (vars: {
-      action: BulkConfirmingAction;
-      targets: BulkQuickActionTarget[];
-    }) => {
-      const outcome = await runBulkQuickAction(
-        vars.targets,
-        postTicketQuickAction,
-      );
-      return { action: vars.action, outcome };
-    },
-    onSuccess: async ({ action, outcome }) => {
-      await queryClient.invalidateQueries({ queryKey: ['board'] });
-      setLastOutcome(outcome);
-      setConfirmingAction(null);
-      setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
-      setCustomDeferDate('');
-      setCloseReason('');
-      bulkSelection?.deselectAll(outcome.succeeded.map((target) => target.id));
-
-      if (outcome.succeeded.length > 0 && undoSnackbar !== null) {
-        const succeeded = outcome.succeeded;
-        undoSnackbar.showUndo({
-          message: bulkSuccessMessage(action, succeeded.length),
-          onUndo: async () => {
-            const undoFailedIds: string[] = [];
-            let undoSucceededCount = 0;
-            for (const target of succeeded) {
-              const plan = planQuickActionUndo(
-                target.request,
-                target.previousPriority,
-              );
-              if (plan === null) {
-                continue;
-              }
-              try {
-                await postTicketQuickActionUndo(target.id, plan.undoRequest);
-                undoSucceededCount += 1;
-              } catch {
-                undoFailedIds.push(target.id);
-              }
-            }
-            await queryClient.invalidateQueries({ queryKey: ['board'] });
-            if (undoFailedIds.length > 0) {
-              throw new Error(
-                `${undoSucceededCount}件中${undoFailedIds.length}件は元に戻せませんでした（対象: ${undoFailedIds.join(', ')}）`,
-              );
-            }
-          },
-        });
-      }
-    },
+  const { bulkMutation } = useBulkQuickAction({
+    queryClient,
+    bulkSelection,
+    undoSnackbar,
+    setLastOutcome,
+    setConfirmingAction,
+    setDeferPeriodKind,
+    setCustomDeferDate,
+    setCloseReason,
   });
 
-  const bulkLabelMutation = useMutation({
-    mutationFn: async (vars: { label: string; ids: string[] }) => {
-      const outcome = await runBulkById(vars.ids, (id) =>
-        postTicketAddLabel(id, vars.label),
-      );
-      return { label: vars.label, outcome };
-    },
-    onSuccess: async ({ outcome }) => {
-      await queryClient.invalidateQueries({ queryKey: ['board'] });
-      setLastOutcome(outcome);
-      setConfirmingAction(null);
-      setBulkLabelInput('');
-      bulkSelection?.deselectAll(outcome.succeeded);
-    },
+  const { bulkLabelMutation } = useBulkLabelAction({
+    queryClient,
+    bulkSelection,
+    setLastOutcome,
+    setConfirmingAction,
+    setBulkLabelInput,
   });
 
   const handleCancelConfirm = useCallback(() => {
