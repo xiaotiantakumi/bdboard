@@ -18,28 +18,17 @@ import {
 } from './api';
 import { setBoardTimeZoneOverride } from './boardTimeZone';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { BoardLanes, hasVisibleCards, SplitBoard } from './components/BoardView';
-import { BoardFilterBar } from './components/BoardFilterBar';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
-import { BulkActionBar } from './components/BulkActionBar';
 import { BulkSelectionProvider } from './components/BulkSelectionProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
 import { PopoverCoordinatorProvider } from './components/PopoverCoordinator';
-import { ActivityFeed } from './components/ActivityFeed';
-import { DailyDigest } from './components/DailyDigest';
 import { AlertBar } from './components/AlertBar';
 import { GlobalBar } from './components/GlobalBar';
 import { ViewToolbar } from './components/ViewToolbar';
-import { DependencyGraphView } from './components/DependencyGraphView';
-import { HygienePanel } from './components/HygienePanel';
-import { SettingsPanel } from './components/SettingsPanel';
-import { EventCenterPanel } from './components/EventCenterPanel';
-import { NextUpView } from './components/NextUpView';
 import {
   createTicketRunsInvalidator,
   useNextUpRunLoopController,
 } from './components/nextUpRunLoop';
-import { ThroughputStats } from './components/ThroughputStats';
 import { TipsBanner } from './components/TipsBanner';
 import { useWatchedTickets } from './components/WatchedTicketsProvider';
 import { AppTicketDetailOverlay } from './components/app/AppTicketDetailOverlay';
@@ -49,7 +38,7 @@ import { AppHelpOverlay } from './components/app/AppHelpOverlay';
 import { AppSearchOverlay } from './components/app/AppSearchOverlay';
 import { AppTunnelOverlay } from './components/app/AppTunnelOverlay';
 import { AppChatOverlay } from './components/app/AppChatOverlay';
-import { isBoardFilterActive } from './boardFilter';
+import { AppViewContent } from './components/app/AppViewContent';
 import type { WipLimitsOverrides } from './wip-limits';
 import { useAppBadge } from './hooks/useAppBadge';
 import { useHeaderHeightVar } from './hooks/useHeaderHeightVar';
@@ -85,7 +74,7 @@ import {
   collectBoardLabels,
   collectBoardTicketIds,
 } from './boardTicketIds';
-import { buildPaletteActions, VIEW_LABELS } from './paletteActions';
+import { buildPaletteActions } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
 import { compareStrings } from './compare';
 
@@ -118,6 +107,13 @@ export function App() {
    * ここへ前倒しで移動している。詳細と安全性の理由は useBoardFilterState.ts の
    * JSDoc と PR 本文を参照。
    */
+  const boardFilterState = useBoardFilterState();
+  // bdboard-62p4 PR-2: collapsedLanesSet/onToggleLaneCollapse/filter はここでは
+  // 個別に取り出さず、下の AppViewContent へ boardFilterState をそのまま渡す
+  // (ビュー切替本体の JSX がそちら側に移動したため)。hideDone/stalledOnly と
+  // 優先度上限・issueType・ラベル・自由文字列は ViewToolbar・
+  // boardFilterPresetState・handleApplyBoardFilterPreset でも参照するため
+  // 引き続きここで個別変数に分割代入する。
   const {
     priorityCeiling: boardPriorityCeiling,
     setPriorityCeiling: setBoardPriorityCeiling,
@@ -131,10 +127,7 @@ export function App() {
     setHideDone,
     stalledOnly,
     setStalledOnly,
-    collapsedLanesSet,
-    onToggleLaneCollapse: handleToggleLaneCollapse,
-    filter: boardFilter,
-  } = useBoardFilterState();
+  } = boardFilterState;
   const [boardFilterPresets, setBoardFilterPresets] = usePersistedState(
     UI_STORAGE_KEYS.boardFilterPresets,
     [],
@@ -859,171 +852,48 @@ export function App() {
             context を配るだけの薄い描画なので、境界で守る価値もほぼ無い。 */}
         <BoardDnDProvider>
         <BulkSelectionProvider>
-        {/* view をキーにして、別ビューへ切り替えたら壊れた状態を持ち越さない。 */}
-        <ErrorBoundary key={view} label={VIEW_LABELS[view]}>
-        {(view === 'merged' || view === 'split') && (
-          <BoardFilterBar
-            priorityCeiling={boardPriorityCeiling}
-            onPriorityCeilingChange={setBoardPriorityCeiling}
-            issueTypes={boardIssueTypes}
-            onIssueTypesChange={setBoardIssueTypes}
-            labels={boardLabels}
-            onLabelsChange={setBoardLabels}
-            availableLabels={availableLabels}
-            filterText={boardFilterText}
-            onFilterTextChange={setBoardFilterText}
-          />
-        )}
-        {(view === 'merged' || view === 'split' || view === 'next') &&
-          epicFilterId !== undefined && (
-            <div className="filter-bar-epic-indicator">
-              <span>エピック {epicFilterId} のみ表示中</span>
-              <button
-                type="button"
-                className="btn btn-small"
-                onClick={() => setEpicFilterId(undefined)}
-              >
-                クリア
-              </button>
-            </div>
-          )}
-        {(view === 'merged' || view === 'split' || view === 'next') && boardQuery.isLoading && (
-          <p className="loading">読み込み中…</p>
-        )}
-        {(view === 'merged' || view === 'split' || view === 'next') && boardQuery.error !== null && (
-          <p className="error-message">
-            {boardQuery.error instanceof Error
-              ? boardQuery.error.message
-              : 'ボードの読み込みに失敗しました'}
-          </p>
-        )}
-        {/* Next Up も対象に含める (bdboard-ml0k)。BulkSelectionProvider は
-            ErrorBoundary の外に置いてビュー横断で選択を保つ設計 (PR#129) で、
-            Next Up のカードも LaneColumn の CardItem を再利用しているため
-            チェックボックスは出るし選択も入る。ここで操作バーだけを出さないと
-            「選べるのに何もできない」状態になる。Next Up が並べるのは
-            board.lanes.ready のカードだけで、cardsById は merged と全
-            projects から集めているので、表示中のカードは必ず含まれる。 */}
-        {(view === 'merged' || view === 'split' || view === 'next') && (
-          <BulkActionBar
-            cardsById={boardCardsById}
-            availableLabels={availableLabels ?? []}
-          />
-        )}
-        {boardQuery.data !== undefined && view === 'merged' && boardQuery.data.merged !== null && (
-          (stalledOnly || isBoardFilterActive(boardFilter)) &&
-          !hasVisibleCards(
-            boardQuery.data.merged,
-            hideDone,
-            stalledOnly,
-            boardFilter,
-          ) ? (
-            <p className="empty-message">
-              {isBoardFilterActive(boardFilter)
-                ? '表示できるチケットがありません'
-                : stalledOnly
-                  ? '滞留しているチケットはありません'
-                  : hideDone
-                    ? '表示できるチケットがありません(doneレーンは非表示中です)'
-                    : '表示できるチケットがありません'}
-            </p>
-          ) : (
-            <BoardLanes
-              board={boardQuery.data.merged}
-              hideDone={hideDone}
-              stalledOnly={stalledOnly}
-              filter={boardFilter}
-              showProjectName
-              projectNames={projectNames}
-              projectActiveSessions={projectActiveSessions}
-              pendingDecisionIds={pendingDecisionIds}
-              prLinksById={prLinksById}
-              sectionKey={`merged-${selectedProjectIdsJoined}`}
-              onCardClick={handleSelectTicket}
-              collapsedLanes={collapsedLanesSet}
-              onToggleLaneCollapse={handleToggleLaneCollapse}
-              wipLimitsOverrides={wipLimitsOverrides}
-            />
-          )
-        )}
-        {boardQuery.data !== undefined && view === 'split' && (
-          <SplitBoard
-            projects={boardQuery.data.projects}
-            hideDone={hideDone}
-            stalledOnly={stalledOnly}
-            filter={boardFilter}
-            pendingDecisionIds={pendingDecisionIds}
-            prLinksById={prLinksById}
-            sectionKeyPrefix={selectedProjectIdsJoined}
-            onCardClick={handleSelectTicket}
-            onSessionBadgeClick={handleOpenSessionList}
-            collapsedLanes={collapsedLanesSet}
-            onToggleLaneCollapse={handleToggleLaneCollapse}
-            wipLimitsOverrides={wipLimitsOverrides}
-          />
-        )}
-        {boardQuery.data !== undefined && view === 'next' && boardQuery.data.merged !== null && (
-          <NextUpView
-            board={boardQuery.data.merged}
-            limit={nextUpLimit}
-            onLimitChange={setNextUpLimit}
-            showEpics={nextUpShowEpics}
-            onShowEpicsChange={setNextUpShowEpics}
-            projectNames={projectNames}
-            projectActiveSessions={projectActiveSessions}
-            pendingDecisionIds={pendingDecisionIds}
-            prLinksById={prLinksById}
-            onCardClick={handleSelectTicket}
-            batchRun={nextUpBatchRun}
-            harnessStatuses={
-              harnessStatusQuery.data !== undefined ? harnessStatuses : undefined
-            }
-          />
-        )}
-        {view === 'activity' && (
-          <ActivityFeed
-            projectIds={selectedProjectIds}
-            windowDays={activityWindowDays}
-            onWindowDaysChange={setActivityWindowDays}
-            onSelectTicket={handleSelectTicket}
-          />
-        )}
-        {view === 'digest' && (
-          <DailyDigest
-            projectIds={selectedProjectIds}
-            windowDays={digestWindowDays}
-            onWindowDaysChange={setDigestWindowDays}
-          />
-        )}
-        {view === 'stats' && (
-          <ThroughputStats
-            projectIds={selectedProjectIds}
-            weeks={statsWeeks}
-            onWeeksChange={setStatsWeeks}
-          />
-        )}
-        {view === 'hygiene' && (
-          <HygienePanel
-            projectIds={selectedProjectIds}
-            onSelectTicket={handleSelectTicket}
-            projectRootPaths={projectRootPaths}
-          />
-        )}
-        {view === 'graph' && (
-          <DependencyGraphView
-            projectIds={selectedProjectIds}
-            focusTicketId={selectedTicketId ?? undefined}
-            onCardClick={handleSelectTicket}
-          />
-        )}
-        {view === 'settings' && <SettingsPanel />}
-        {view === 'events' && <EventCenterPanel {...notificationEvents} />}
-        {boardQuery.data !== undefined &&
-          (view === 'merged' || view === 'next') &&
-          boardQuery.data.merged === null && (
-            <p className="empty-message">統合ビューのデータがありません</p>
-          )}
-        </ErrorBoundary>
+        <AppViewContent
+          view={view}
+          filterState={boardFilterState}
+          epicFilterId={epicFilterId}
+          onClearEpicFilter={() => setEpicFilterId(undefined)}
+          board={{
+            query: boardQuery,
+            cardsById: boardCardsById,
+            availableLabels,
+          }}
+          boardMeta={{
+            projectNames,
+            projectActiveSessions,
+            projectRootPaths,
+            pendingDecisionIds,
+            prLinksById,
+            wipLimitsOverrides,
+            selectedProjectIds,
+            selectedProjectIdsJoined,
+          }}
+          selectedTicketId={selectedTicketId}
+          onCardClick={handleSelectTicket}
+          onSessionBadgeClick={handleOpenSessionList}
+          nextUp={{
+            limit: nextUpLimit,
+            onLimitChange: setNextUpLimit,
+            showEpics: nextUpShowEpics,
+            onShowEpicsChange: setNextUpShowEpics,
+            batchRun: nextUpBatchRun,
+            harnessStatuses:
+              harnessStatusQuery.data !== undefined ? harnessStatuses : undefined,
+          }}
+          windows={{
+            activityWindowDays,
+            onActivityWindowDaysChange: setActivityWindowDays,
+            digestWindowDays,
+            onDigestWindowDaysChange: setDigestWindowDays,
+            statsWeeks,
+            onStatsWeeksChange: setStatsWeeks,
+          }}
+          notificationEvents={notificationEvents}
+        />
         </BulkSelectionProvider>
         </BoardDnDProvider>
       </main>
