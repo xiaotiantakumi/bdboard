@@ -17,7 +17,7 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
+  'web/src/components/ChatPanel.tsx': 2195, // 現在 2184 (bdboard-sso1.83 第2段: ドラフト本文/添付/添付エラーの状態とハンドラを chat/chatDraftState.ts + chat/useChatDraftState.ts + chat/useChatAttachmentIngestion.ts へ抽出)
   'web/src/components/TicketDetailPanel.tsx': 690, // 現在 680 (bdboard-sso1.5: detail-header ブロックを TicketDetailHeaderSection.tsx へ、'c' キーボードショートカットを useCommentFocusShortcut.ts へ抽出)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/App.tsx': 810, // 現在 800 (bdboard-62p4 PR-2: ビュー切替本体を AppViewContent.tsx/AppBoardViewSwitch.tsx へ抽出)
