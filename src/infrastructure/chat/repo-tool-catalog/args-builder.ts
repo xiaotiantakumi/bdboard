@@ -1,5 +1,5 @@
 import { repoPathExistsSchema, repoTicketLandedSchema } from './schemas.js';
-import { describeZodError } from '../bd-tool-catalog/args-helpers.js';
+import { describeZodError } from '../zod-error-summary.js';
 
 /**
  * チャットから使える「リポジトリの事実確認」ツール(bdboard-3tw.159.4)。
