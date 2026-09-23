@@ -112,6 +112,10 @@ describe('useThresholdsSharedState', () => {
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
     });
+    // Confirm the refetch actually landed before asserting the guard held it back - otherwise
+    // this assertion would pass trivially even with no guard at all, if the refetch just hadn't
+    // resolved yet.
+    await waitFor(() => expect(result.current.query.data?.version).toBe('thresholds-v2'));
 
     expect(result.current.version).toBe('thresholds-v1');
   });
@@ -132,6 +136,7 @@ describe('useThresholdsSharedState', () => {
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
     });
+    await waitFor(() => expect(result.current.query.data?.version).toBe('thresholds-v2'));
 
     expect(result.current.version).toBe('thresholds-v1');
   });
@@ -152,6 +157,7 @@ describe('useThresholdsSharedState', () => {
     await act(async () => {
       await queryClient.invalidateQueries({ queryKey: ['board-thresholds-config'] });
     });
+    await waitFor(() => expect(result.current.query.data?.version).toBe('thresholds-v2'));
     expect(result.current.version).toBe('thresholds-v1');
 
     act(() => {

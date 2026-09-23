@@ -3,9 +3,9 @@
 // ファイル。呼び出し順序・依存配列・queryKey・onSuccess/onError の中身は移動前から
 // 変えていない。
 //
-// version と dirty フラグはこのフックの外(親の SettingsPanel)が持つ。理由は
-// useBoardThresholdsForm.ts の冒頭コメントと同じ (bdboard-chp): 閾値フォームと
-// WIP上限フォームはサーバー側で同じ設定ドキュメント = 同じ version を共有している。
+// version と dirty フラグはこのフックの外(親の SettingsPanel が呼ぶ useThresholdsSharedState,
+// bdboard-59if)が持つ。理由は useBoardThresholdsForm.ts の冒頭コメントと同じ (bdboard-chp):
+// 閾値フォームと WIP上限フォームはサーバー側で同じ設定ドキュメント = 同じ version を共有している。
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
