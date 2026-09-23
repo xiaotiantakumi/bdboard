@@ -35,7 +35,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/api/chat.ts': 280, // 現在 279
   'src/application/tunnel/tunnel-service.ts': 215, // 現在 205 (bdboard-sso1.64: ./tunnel-service/*.ts へ関心別分割。createTunnelService() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   'web/src/components/BoardFilterBar.tsx': 250, // 現在 241
-  'src/domain/harness-hooks.ts': 240, // 現在 234
   'src/infrastructure/chat/repo-tool-catalog.ts': 230, // 現在 223
   'web/src/components/AiQuotaWidget.tsx': 220, // 現在 216
   'src/infrastructure/transcript/jsonl-transcript-scanner.ts': 220, // 現在 212
