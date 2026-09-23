@@ -1,7 +1,7 @@
 import { compareStrings } from '../../domain/compare.js';
 import { extractLatestPrUrl, type PrBadge, type PrStatus } from '../../domain/pr-link.js';
 import { hasCloseEvidenceMarker } from './close-evidence-marker.js';
-import { runWithConcurrencyLimit } from '../concurrency.js';
+import { Semaphore } from '../concurrency.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import type { CommentReader } from '../ports/comment-reader.js';
 import type { PrStatusReader, PrStatusResult } from '../ports/pr-status-reader.js';
@@ -22,6 +22,23 @@ export interface GetPrBadgesOptions {
    * たびに来る) に回す (bdboard-7ln6 #6)。未指定なら DEFAULT_MAX_NEW_FETCHES_PER_CALL。
    */
   readonly maxNewFetchesPerCall?: number;
+  /**
+   * PR ステータス取得 (gh pr view 起動) 専用の並列数。コメント取得 (bd 経由・ローカル)
+   * とは独立した上限を持つ (bdboard-se3v)。以前はコメント取得とステータス取得が同じ
+   * worker 内で直列に実行され、事実上ステータス取得もコメント取得と同じ並列数
+   * (COMMENT_FETCH_CONCURRENCY=3) でしか起動できなかった。gh はネットワーク越しの
+   * プロセス起動でボトルネックの本体なので、ここだけ高い並列数を持たせて短縮する
+   * (際限なく並列にはしない —— 上限は残す)。未指定なら DEFAULT_STATUS_FETCH_CONCURRENCY。
+   */
+  readonly statusFetchConcurrency?: number;
+  /**
+   * この呼び出し全体 (コメント解決 + ステータス取得) の時間予算 (ms)。超過した時点で、
+   * その時点までに分かっている分だけを返す (未解決分は status:null のまま —— 既存の
+   * 「取得できていない」という意味を変えずに使い回す。bdboard-se3v)。超過後も内部の
+   * 取得処理はキャンセルせず裏で走らせ続け、各キャッシュ (commentCache/statusCache) を
+   * 温めて次回の呼び出しに備える。未指定ならタイムアウトなし (完了まで待つ、従来通り)。
+   */
+  readonly overallTimeoutMs?: number;
 }
 
 interface PrBadgeCommentCacheEntry {
@@ -365,9 +382,100 @@ const COMMENT_FETCH_CONCURRENCY = 3;
 // in-flight 共有で乗っかれるものはこの上限を消費しない。
 const DEFAULT_MAX_NEW_FETCHES_PER_CALL = 20;
 
+// gh pr view (ステータス取得) 専用の既定並列数。GetPrBadgesOptions.statusFetchConcurrency
+// の説明を参照 (bdboard-se3v)。
+const DEFAULT_STATUS_FETCH_CONCURRENCY = 8;
+
 interface CommentFetchItem {
   readonly entry: CachedProject;
   readonly ticket: Ticket;
+}
+
+export interface PrStatusBudget {
+  remaining: number;
+}
+
+export interface ResolvePrStatusDeps {
+  readonly prStatusReader: PrStatusReader;
+  readonly statusCache?: PrBadgeStatusCache;
+  readonly budget: PrStatusBudget;
+  /** 1リクエストあたりの新規起動上限に達し、今回は見送った (bdboard-7ln6 #6)。 */
+  readonly onDeferred: () => void;
+  /** gh を実際に起動しに行った (cache/circuit/budget いずれもすり抜けた)。 */
+  readonly onAttempt: () => void;
+  /** gh 起動が失敗した (バッジ自体は URL だけで出せるので劣化として扱う)。 */
+  readonly onFailure: (error: unknown) => void;
+}
+
+export async function resolvePrStatus(
+  url: string,
+  deps: ResolvePrStatusDeps,
+): Promise<PrBadge['status']> {
+  const { prStatusReader, statusCache, budget, onDeferred, onAttempt, onFailure } = deps;
+  const cachedStatus = statusCache?.get(url);
+
+  if (cachedStatus !== undefined) {
+    return cachedStatus;
+  }
+
+  if (statusCache === undefined) {
+    // statusCache 未指定: 従来通り毎回フェッチする (サーキット/予算/in-flight
+    // 共有はキャッシュに紐づく状態なので、キャッシュが無ければ効かせようがない)。
+    onAttempt();
+    try {
+      const result = await prStatusReader.getPrStatus(url);
+      return result.status;
+    } catch (error) {
+      onFailure(error);
+      return null;
+    }
+  }
+
+  if (statusCache.isCircuitOpen()) {
+    // rate-limit のクールダウン中: gh を1回も起動しない (bdboard-7ln6 #2)。
+    return null;
+  }
+
+  const alreadyInFlight = statusCache.isInFlight(url);
+  if (!alreadyInFlight && budget.remaining <= 0) {
+    // 1リクエストあたりの新規起動上限に達した。今回は URL のみのバッジで妥協し、
+    // 残りは次回の呼び出し (board.changed のたびに来る) に回す (bdboard-7ln6 #6)。
+    onDeferred();
+    return null;
+  }
+
+  if (!alreadyInFlight) {
+    budget.remaining -= 1;
+  }
+  onAttempt();
+  try {
+    const { promise } = statusCache.fetchStatus(url, () => prStatusReader.getPrStatus(url));
+    const result = await promise;
+    return result.status;
+  } catch (error) {
+    // バッジ自体は URL だけで出せるので、状態が引けないのは劣化であって失敗ではない。
+    onFailure(error);
+    return null;
+  }
+}
+
+export async function raceWithOverallTimeout(
+  mainWork: Promise<void>,
+  overallTimeoutMs: number,
+): Promise<boolean> {
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutSignal = new Promise<void>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      resolve();
+    }, overallTimeoutMs);
+  });
+  await Promise.race([mainWork, timeoutSignal]);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+  }
+  return timedOut;
 }
 
 export async function getPrBadges(
@@ -394,6 +502,11 @@ export async function getPrBadges(
   const commentCache = options?.commentCache;
   const statusCache = options?.statusCache;
   const maxNewFetchesPerCall = options?.maxNewFetchesPerCall ?? DEFAULT_MAX_NEW_FETCHES_PER_CALL;
+  const statusFetchConcurrency =
+    options?.statusFetchConcurrency ?? DEFAULT_STATUS_FETCH_CONCURRENCY;
+  const overallTimeoutMs = options?.overallTimeoutMs;
+  const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
+
   // フィルタ後の workItems ではなく盤面全体 (allEntries) の commentCount>0 集合で
   // pruning する。フィルタ済みの集合を使うと、projectIds でプロジェクトを絞った
   // 呼び出しのたびにフィルタ対象外プロジェクトのキャッシュエントリが間引かれ、
@@ -408,22 +521,65 @@ export async function getPrBadges(
     commentCache.prune(allTicketIds);
   }
 
-  const badges: PrBadge[] = [];
+  // ticketId をキーにする (配列 push ではなく) —— URL 解決が終わった時点で status:null の
+  // プレースホルダを入れ、ステータス解決が完了したら上書きする。全体タイムアウトで早期に
+  // 打ち切っても、この Map をそのままスナップショットすれば「PR は分かっているがステータス
+  // 未取得」を素直に表現できる (status:null は元々失敗/rate-limit/予算切れでも使っていた
+  // 値であり、意味は変えない)。
+  const badgesByTicket = new Map<string, PrBadge>();
   // 握り潰しの理由と、1行にまとめる理由は fetch-failure-log.ts を参照 (bdboard-fxxk)。
   const commentFailures: FetchFailure[] = [];
   const statusFailures: FetchFailure[] = [];
   let statusAttempts = 0;
-  let newFetchesRemaining = maxNewFetchesPerCall;
+  const statusBudget: PrStatusBudget = { remaining: maxNewFetchesPerCall };
   let deferredFetchCount = 0;
+  const commentGate = new Semaphore(COMMENT_FETCH_CONCURRENCY);
+  const statusGate = new Semaphore(statusFetchConcurrency);
 
-  await runWithConcurrencyLimit(workItems, COMMENT_FETCH_CONCURRENCY, async ({ entry, ticket }) => {
+  const logCompletionWarnings = (): void => {
+    if (commentFailures.length > 0) {
+      logWarn(
+        '[pr-links] could not load comments for some tickets; their PR badges are missing. ' +
+          describeFetchFailures(commentFailures, workItems.length),
+      );
+    }
+    if (statusFailures.length > 0) {
+      logWarn(
+        '[pr-links] could not load PR status for some links; those badges show no status. ' +
+          describeFetchFailures(statusFailures, statusAttempts),
+      );
+    }
+    if (deferredFetchCount > 0) {
+      logWarn(
+        `[pr-links] deferred ${deferredFetchCount} PR status fetch(es) to a later refresh ` +
+          `(reached the limit of ${maxNewFetchesPerCall} new gh launches for this request).`,
+      );
+    }
+  };
+
+  // 1チケットぶんの処理単位: URL 解決 (bd 経由) → 分かればステータス解決 (gh 経由) を
+  // 直列に行うが、どちらも専用のセマフォで別々に同時実行数を絞るだけで、全チケットの
+  // worker 自体は最初から並行に起動する (bdboard-se3v)。以前は「全チケットのURL解決
+  // (Pass 1) が終わってから全チケットのステータス解決 (Pass 2) を始める」という2段
+  // 構成だったが、実データで計測すると Pass 1 (bd 経由のコメント走査、
+  // COMMENT_FETCH_CONCURRENCY=3 で有界) だけで overallTimeoutMs を使い切ってしまい、
+  // gh が1件も起動できないまま毎回タイムアウトするケースが確認できた
+  // (ボード全体のチケット数が多いと bd 側の走査だけで数秒かかるため)。commentGate/
+  // statusGate それぞれの acquire は実際に処理を投げる直前に行われるので、サーキット
+  // ブレーカーやキャッシュの状態は dispatch のたびに再評価される (トリップ直後に
+  // 投げられる分だけを確実に止められる、という従来の性質を維持する)。
+  const runTicket = async ({ entry, ticket }: CommentFetchItem): Promise<void> => {
     const updatedAtMs = ticket.updatedAt.getTime();
-    let url: string | null;
     const cachedUrl = commentCache?.get(ticket.id, ticket.commentCount, updatedAtMs);
+    let url: string | null;
 
     if (cachedUrl !== undefined) {
+      // キャッシュヒットは実際の bd 呼び出しが無いので commentGate を消費しない
+      // (以前は Pass 1 全体が1本の runWithConcurrencyLimit だったため、キャッシュ
+      // ヒットでも並列枠を1つ使っていた —— 使わない方が正しい)。
       url = cachedUrl;
     } else {
+      await commentGate.acquire();
       try {
         const comments = await commentReader.listComments(entry.project.rootPath, ticket.id);
         url = extractLatestPrUrl(comments);
@@ -433,6 +589,8 @@ export async function getPrBadges(
         // コメントが読めないチケットは飛ばす。そのチケットのバッジは出ない。
         commentFailures.push({ id: ticket.id, error });
         return;
+      } finally {
+        commentGate.release();
       }
     }
 
@@ -440,87 +598,82 @@ export async function getPrBadges(
       return;
     }
 
-    let status: PrBadge['status'] = null;
-    const cachedStatus = statusCache?.get(url);
-
-    if (cachedStatus !== undefined) {
-      status = cachedStatus;
-    } else if (statusCache !== undefined) {
-      if (statusCache.isCircuitOpen()) {
-        // rate-limit のクールダウン中: gh を1回も起動しない (bdboard-7ln6 #2)。
-        status = null;
-      } else {
-        const alreadyInFlight = statusCache.isInFlight(url);
-        if (!alreadyInFlight && newFetchesRemaining <= 0) {
-          // 1リクエストあたりの新規起動上限に達した。今回は URL のみのバッジで
-          // 妥協し、残りは次回の呼び出し (board.changed のたびに来る) に回す
-          // (bdboard-7ln6 #6)。
-          deferredFetchCount += 1;
-          status = null;
-        } else {
-          if (!alreadyInFlight) {
-            newFetchesRemaining -= 1;
-          }
-          statusAttempts += 1;
-          try {
-            const { promise } = statusCache.fetchStatus(url, () => prStatusReader.getPrStatus(url));
-            const result = await promise;
-            status = result.status;
-          } catch (error) {
-            // バッジ自体は URL だけで出せるので、状態が引けないのは劣化であって失敗ではない。
-            status = null;
-            statusFailures.push({ id: url, error });
-          }
-        }
-      }
-    } else {
-      // statusCache 未指定: 従来通り毎回フェッチする (サーキット/予算/in-flight
-      // 共有はキャッシュに紐づく状態なので、キャッシュが無ければ効かせようがない)。
-      statusAttempts += 1;
-      try {
-        const result = await prStatusReader.getPrStatus(url);
-        status = result.status;
-      } catch (error) {
-        status = null;
-        statusFailures.push({ id: url, error });
-      }
-    }
-
-    badges.push({
+    badgesByTicket.set(ticket.id, {
       ticketId: ticket.id,
       projectId: entry.project.id,
       url,
-      status,
+      status: null,
     });
-  });
 
-  const logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
-  if (commentFailures.length > 0) {
-    logWarn(
-      '[pr-links] could not load comments for some tickets; their PR badges are missing. ' +
-        describeFetchFailures(commentFailures, workItems.length),
-    );
-  }
-  if (statusFailures.length > 0) {
-    logWarn(
-      '[pr-links] could not load PR status for some links; those badges show no status. ' +
-        describeFetchFailures(statusFailures, statusAttempts),
-    );
-  }
-  if (deferredFetchCount > 0) {
-    logWarn(
-      `[pr-links] deferred ${deferredFetchCount} PR status fetch(es) to a later refresh ` +
-        `(reached the limit of ${maxNewFetchesPerCall} new gh launches for this request).`,
-    );
-  }
-
-  badges.sort((a, b) => {
-    const projectDiff = compareStrings(a.projectId, b.projectId);
-    if (projectDiff !== 0) {
-      return projectDiff;
+    await statusGate.acquire();
+    try {
+      const status = await resolvePrStatus(url, {
+        prStatusReader,
+        statusCache,
+        budget: statusBudget,
+        onDeferred: () => {
+          deferredFetchCount += 1;
+        },
+        onAttempt: () => {
+          statusAttempts += 1;
+        },
+        onFailure: (error) => {
+          statusFailures.push({ id: url, error });
+        },
+      });
+      badgesByTicket.set(ticket.id, {
+        ticketId: ticket.id,
+        projectId: entry.project.id,
+        url,
+        status,
+      });
+    } finally {
+      statusGate.release();
     }
-    return compareStrings(a.ticketId, b.ticketId);
-  });
+  };
 
-  return badges;
+  const mainWork = Promise.all(workItems.map(runTicket)).then(() => undefined);
+
+  let timedOut = false;
+  if (overallTimeoutMs !== undefined) {
+    timedOut = await raceWithOverallTimeout(mainWork, overallTimeoutMs);
+  } else {
+    await mainWork;
+  }
+
+  const snapshotBadges = (): PrBadge[] => {
+    const badges = [...badgesByTicket.values()];
+    badges.sort((a, b) => {
+      const projectDiff = compareStrings(a.projectId, b.projectId);
+      if (projectDiff !== 0) {
+        return projectDiff;
+      }
+      return compareStrings(a.ticketId, b.ticketId);
+    });
+    return badges;
+  };
+
+  if (timedOut) {
+    const partial = snapshotBadges();
+    const stillUnresolved = partial.filter((badge) => badge.status === null).length;
+    logWarn(
+      `[pr-links] overall time budget of ${overallTimeoutMs}ms exceeded; returning ` +
+        `${partial.length} badge(s) so far (${stillUnresolved} without a resolved status yet). ` +
+        'The remaining comment/status lookups keep running in the background and will warm ' +
+        'the cache for the next refresh.',
+    );
+    // mainWork は止めない (キャッシュを温め続けさせる)。この応答はもう使わないので、
+    // 完了時の失敗ログだけ後追いで出す。想定外の reject に備えて拾っておく。
+    mainWork.then(logCompletionWarnings, (error: unknown) => {
+      logWarn(
+        `[pr-links] background continuation after timeout failed unexpectedly: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+    return partial;
+  }
+
+  logCompletionWarnings();
+  return snapshotBadges();
 }

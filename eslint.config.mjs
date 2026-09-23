@@ -22,7 +22,7 @@ const MAX_LINES_ALLOWLIST = {
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
   'web/src/components/bulk-action/useBulkActions.ts': 230, // 現在 222 (bdboard-sso1.60: 一括クイックアクション/一括ラベル付与の mutation を ./actions/*.ts へ分割。272→222 (旧コメントの「現在 280」は分割前から既に実測とずれていたので実測値へ修正)。move-only 抽出のため引き続き例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
-  'src/application/board/get-pr-badges.ts': 390, // 現在 388
+  'src/application/board/get-pr-badges.ts': 495, // 現在 488 (bdboard-se3v: gh起動の並列度をコメント取得と切り離し、全体タイムアウトで部分結果を返すよう挙動変更。関心ごとの分割は次のコミットで別途行う)
   'src/infrastructure/process/cloudflared-tunnel.ts': 220, // 現在 213 (bdboard-sso1.54: ./cloudflared-tunnel/*.ts へ関心別分割。createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   'src/application/tunnel/tunnel-service.ts': 215, // 現在 205 (bdboard-sso1.64: ./tunnel-service/*.ts へ関心別分割。createTunnelService() 本体は可変状態を共有するクロージャ群のため分割せず残した)
   // テスト (1500 行超)
