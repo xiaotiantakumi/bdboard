@@ -1,8 +1,5 @@
 import {
-  type ChangeEvent,
-  type ClipboardEvent,
   type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -22,7 +19,6 @@ import {
   postChatMessageStream,
   ChatStreamEndedWithoutResultError,
   type ChatAgentDto,
-  type ChatImageMimeType,
   type ChatMessageResponseDto,
   type ChatMessageRequest,
   type ProjectDto,
@@ -40,8 +36,6 @@ import {
   applyDraftPayloadStoreCarryPlan,
   applyTransformToAllDraftPayloadStores,
   defineDraftPayloadStoreCarryPlan,
-  isEmptyList,
-  isEmptyText,
   isNeverEmpty,
   migrateKeyInRecord,
   purgeKeysInRecord,
@@ -74,8 +68,6 @@ import {
 import {
   CHAT_IMAGE_ONLY_PROMPT,
   attachmentsToPayload,
-  readFileAsDataUrl,
-  validateChatAttachments,
   type ChatAttachment,
 } from './chat/attachments';
 import { hasSelectableModels, resolveDefaultModel } from './chat/agentOptions';
@@ -96,6 +88,7 @@ import { ChatMessageList } from './chat/ChatMessageList';
 import { ChatProjectBar } from './chat/ChatProjectBar';
 import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
 import { useThreadDrawerState } from './chat/useThreadDrawerState';
+import { useChatDraftState } from './chat/useChatDraftState';
 import type { ChatMessage } from './chat/messages';
 
 interface ChatPanelProps {
@@ -272,6 +265,22 @@ export function ChatPanel({
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
   const [selectedThreadIds, setSelectedThreadIds] = useState<Record<string, string | undefined>>({});
   const [draftNonces, setDraftNonces] = useState<Record<string, number>>({});
+  // bdboard-sso1.83 第2段: currentSessionId/draftKey/currentConversationKey/
+  // currentConversationKeyRef と isSending は、元は conversationInputs/
+  // conversationAttachments/attachmentErrors 宣言の直後(このファイル下部、旧
+  // 759行目付近)にあったが、それら3ストアを useChatDraftState.ts の
+  // useReducer へ抜き出したことで、そのフック呼び出しへ渡す値としてここより
+  // 先に確定させる必要が生じたため引き上げた。どちらも
+  // selectedThreadIds/draftNonces/selectedProjectId から計算する独立した
+  // 派生値・独立した useState で、他の hook の呼び出し順や依存配列には
+  // 影響しない(React の Rules of Hooks は呼び出し順が毎レンダー一定である
+  // ことだけを要求する)。
+  const currentSessionId = selectedThreadIds[selectedProjectId];
+  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
+  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
+  const currentConversationKeyRef = useRef(currentConversationKey);
+  currentConversationKeyRef.current = currentConversationKey;
+  const [isSending, setIsSending] = useState(false);
   // Chat Redesign 1b: タブ帯を捨て、スレッド切り替えは「現在のスレッド名+件数」
   // ボタン1つ→ドロワー(縦一覧)へ集約する。ドロワーの開閉・行の「⋯」操作メニュー・
   // リネーム確定・削除確認・CLIセッション発見一覧の表示は互いに絡み合う相互排他の
@@ -375,21 +384,51 @@ export function ChatPanel({
   // draftSeedTextRef.current と同一オブジェクト参照を共有しない(spread で
   // コピーを渡す) — 同一参照だと、どちらかが後で自分の Record を直接 mutate
   // した場合にもう片方まで無自覚に汚染されてしまうため。
-  const initialDraftSeed: Record<string, string> =
-    initialInput !== undefined && initialInput !== ''
-      ? { [makeDraftKey(selectedProjectId, 0)]: initialInput }
-      : {};
-  const draftSeedTextRef = useRef<Record<string, string>>(initialDraftSeed);
-  const [conversationInputs, setConversationInputs] = useState<Record<string, string>>(
-    () => ({ ...initialDraftSeed }),
-  );
-  // File/data URL はこの React state のみに置き、localStorage や履歴 DTO へは流さない。
-  // 本文と同じ会話キーを使うことで、project/thread 切替でも添付が混線しない。
-  const [conversationAttachments, setConversationAttachments] = useState<
-    Record<string, ChatAttachment[]>
-  >({});
-  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
-  const [isSending, setIsSending] = useState(false);
+  // bdboard-sso1.83 第2段: 上のコメント群が説明する
+  // initialDraftSeed/draftSeedTextRef/conversationInputs/conversationAttachments/
+  // attachmentErrors の初期化ロジックと、それらの読み書きハンドラ(paste・
+  // ファイル選択・削除・IME対応Enter送信・クイックコマンドのカーソル移動)は
+  // web/src/components/chat/useChatDraftState.ts(+
+  // useChatAttachmentIngestion.ts, chatDraftState.ts)へ抜き出した。この
+  // コンポーネント側は setInput/updateConversationAttachments 等
+  // (上の分割代入で受け取った各関数)経由で読み書きする。会話キーの再割り当て
+  // (bdboard-c1pw の対象、startNewDraftThread / handleAgentChange /
+  // applyChatError / submitChatMessage / handleNewThread)はこのファイルに
+  // 残る。
+  // bdboard-sso1.83 第2段(react-hooks/exhaustive-deps 対策):
+  // useThreadDrawerState と同じく、フックの戻り値はオブジェクトのまま
+  // 変数へ束縛せず分割代入する。`const chatDraft = useChatDraftState(...)` の
+  // ままだと、下の各 useCallback が `setInput` 等プロパティ経由で
+  // 参照するたびに ESLint が「chatDraft 自体が依存配列に無い」と警告する
+  // (draftApplicators は個々の関数だけが参照安定で、chatDraft オブジェクト
+  // 自体は毎レンダー新しいオブジェクト)。分割代入すれば各関数はただの
+  // ローカル変数になり、警告なしで依存配列に個別に載せられる。
+  const {
+    conversationInputs,
+    conversationAttachments,
+    attachmentErrors,
+    conversationInputsRef,
+    conversationAttachmentsRef,
+    draftSeedTextRef,
+    setInput,
+    updateConversationAttachments,
+    setAttachmentError,
+    clearAttachmentError,
+    draftApplicators,
+    handleImagePaste,
+    handleImageFileChange,
+    removeAttachment,
+    applyQuickCommandPrompt,
+    handleComposedEnterSubmit,
+  } = useChatDraftState({
+    initialInput,
+    selectedProjectId,
+    currentConversationKey,
+    currentConversationKeyRef,
+    isSending,
+    inputRef,
+    formRef,
+  });
   // 未対応プラットフォームでは入力自体を塞ぐ。案内を出したうえで送信でき、
   // 送って初めて 501 に気付く、では「無効化」になっていない
   // (bdboard-70z.9, PR#115 fable レビュー)。判定が付くまでは塞がない。
@@ -541,26 +580,12 @@ export function ChatPanel({
   const threadListRequestIdRef = useRef(0);
   const draftNoncesRef = useRef(draftNonces);
   draftNoncesRef.current = draftNonces;
-  // SF1: startNewDraftThread (stable callback)が「切り替え直前のドラフトに
-  // 何が入っていたか」を stale closure を経由せず読めるようにするための参照。
-  // draftNoncesRef と同じ「state をミラーする ref」パターン。
-  const conversationInputsRef = useRef(conversationInputs);
-  conversationInputsRef.current = conversationInputs;
-  const conversationAttachmentsRef = useRef(conversationAttachments);
-  conversationAttachmentsRef.current = conversationAttachments;
-  const attachmentIdRef = useRef(0);
-  const updateConversationAttachments = useCallback(
-    (
-      updater: (
-        previous: Record<string, ChatAttachment[]>,
-      ) => Record<string, ChatAttachment[]>,
-    ) => {
-      const next = updater(conversationAttachmentsRef.current);
-      conversationAttachmentsRef.current = next;
-      setConversationAttachments(next);
-    },
-    [],
-  );
+  // bdboard-sso1.83 第2段: conversationInputsRef/conversationAttachmentsRef
+  // (startNewDraftThread 等が stale closure を経由せず読むための「state を
+  // ミラーする ref」、draftNoncesRef と同じパターン)・attachmentIdRef・
+  // updateConversationAttachments は useChatDraftState.ts
+  // (+ useChatAttachmentIngestion.ts)へ移した。以降は上の分割代入で受け取った
+  // 各関数経由で読み書きする。
   // bdboard-c1pw / bdboard-ru4d: 会話キーで索かれる「ドラフト積載物」ストアの
   // 単一の登録簿。会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペース
   // の一括破棄(purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。
@@ -584,19 +609,34 @@ export function ChatPanel({
     (transform: DraftPayloadStoreTransform) => {
       applyTransformToAllDraftPayloadStores(
         {
-          conversationInputs: (t) => setConversationInputs((prev) => t(prev, isEmptyText)),
-          conversationAttachments: (t) =>
-            updateConversationAttachments((prev) => t(prev, isEmptyList)),
-          attachmentErrors: (t) => setAttachmentErrors((prev) => t(prev, isNeverEmpty)),
+          conversationInputs: draftApplicators.conversationInputs,
+          conversationAttachments: draftApplicators.conversationAttachments,
+          attachmentErrors: draftApplicators.attachmentErrors,
           threadModelIds: (t) => setThreadModelIds((prev) => t(prev, isNeverEmpty)),
-          draftSeedText: (t) => {
-            draftSeedTextRef.current = t(draftSeedTextRef.current, isNeverEmpty);
-          },
+          draftSeedText: draftApplicators.draftSeedText,
         },
         transform,
       );
     },
-    [updateConversationAttachments],
+    // bdboard-sso1.83 第2段(依存配列の変更理由): 以前はここに
+    // updateConversationAttachments(ChatPanel ローカルの useCallback、常に
+    // 参照安定)を1つ挙げるだけだった。今は4つとも draftApplicators.*
+    // (useChatDraftState.ts 内で useCallback により個別にメモ化された関数)を
+    // 直接使う。draftApplicators オブジェクト自体は毎レンダー新しいオブジェクト
+    // リテラルなので、それを丸ごと依存配列に入れると
+    // applyToDraftPayloadStores(→ migrateDraftPayloadKey/purgeDraftPayloadKeys
+    // → 下のコールドウィンドウ effect の依存配列)が毎レンダー再生成され、
+    // その effect が意図せず再実行されるようになってしまう。個々のプロパティ
+    // (conversationInputs/conversationAttachments/attachmentErrors/
+    // draftSeedText)はそれぞれ安定した参照を返すので、それらだけを列挙して
+    // 元の安定性を保つ(useChatDraftState.test.tsx に参照安定性の検証テストを
+    // 追加済み)。
+    [
+      draftApplicators.conversationInputs,
+      draftApplicators.conversationAttachments,
+      draftApplicators.attachmentErrors,
+      draftApplicators.draftSeedText,
+    ],
   );
 
   const migrateDraftPayloadKey = useCallback(
@@ -700,7 +740,7 @@ export function ChatPanel({
         : prefillAttachments;
       applyDraftPayloadStoreCarryPlan(START_NEW_DRAFT_THREAD_PREFILL_CARRY, {
         conversationInputs: () => {
-          setConversationInputs((prev) => ({ ...prev, [nextDraftKey]: textToApply }));
+          setInput(nextDraftKey, textToApply);
         },
         conversationAttachments: () => {
           if (attachmentsToCarry.length > 0) {
@@ -732,7 +772,14 @@ export function ChatPanel({
     // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
     // selectedSessionId をここで書き換える対象が無い — 既存の永続化済み選択は
     // そのまま(次回訪問時にまた同じ既存スレッドへ戻れるように)残す。
-  }, [updateConversationAttachments, cancelThreadConfirmDelete]);
+  }, [
+    updateConversationAttachments,
+    cancelThreadConfirmDelete,
+    conversationInputsRef,
+    conversationAttachmentsRef,
+    draftSeedTextRef,
+    setInput,
+  ]);
 
   const { requestClose } = useHistoryBackClose({
     panelId: 'chat',
@@ -756,11 +803,6 @@ export function ChatPanel({
     onEscape: closeThreadDrawer,
   });
 
-  const currentSessionId = selectedThreadIds[selectedProjectId];
-  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
-  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
-  const currentConversationKeyRef = useRef(currentConversationKey);
-  currentConversationKeyRef.current = currentConversationKey;
   const currentInput = conversationInputs[currentConversationKey] ?? '';
   const currentAttachments = conversationAttachments[currentConversationKey] ?? [];
   const currentAttachmentError = attachmentErrors[currentConversationKey] ?? null;
@@ -896,7 +938,7 @@ export function ChatPanel({
 
       setSelectedProjectId(resolved);
     },
-    [migrateDraftPayloadKey],
+    [migrateDraftPayloadKey, conversationInputsRef, conversationAttachmentsRef],
   );
 
   const handleProjectSelectChange = useCallback(
@@ -2093,121 +2135,11 @@ export function ChatPanel({
     [selectedAgent],
   );
 
-  const ingestImageFiles = useCallback(
-    (files: readonly File[]) => {
-      if (files.length === 0) {
-        return;
-      }
-      const attachmentKey = currentConversationKey;
-      // attachmentKey と imageFiles をキャプチャしたクロージャで .then() 内の再検証を行うため、
-      // 連続 paste が3回以上重なると conversationAttachmentsRef.current の読み取りタイミング次第で
-      // 上限判定が甘くなりうる。現行の上限4枚では実害が観測されていないが、上限を変えるときはここが表面化しうる。
-      const validationError = validateChatAttachments(
-        conversationAttachmentsRef.current[attachmentKey] ?? [],
-        files,
-      );
-      if (validationError !== null) {
-        setAttachmentErrors((prev) => ({ ...prev, [attachmentKey]: validationError }));
-        return;
-      }
-
-      void Promise.all(
-        files.map(async (file) => {
-          const previewUrl = await readFileAsDataUrl(file);
-          attachmentIdRef.current += 1;
-          return {
-            id: `chat-image-${attachmentIdRef.current}`,
-            file,
-            mimeType: file.type as ChatImageMimeType,
-            previewUrl,
-            name: file.name || `貼り付け画像 ${attachmentIdRef.current}`,
-            size: file.size,
-          } satisfies ChatAttachment;
-        }),
-      )
-        .then((prepared) => {
-          // FileReaderの完了前に会話が切り替わった場合、到達不能な旧キーへ
-          // 大きなdata URLを残さない。現在の入力欄へ貼り直せる状態を優先する。
-          if (currentConversationKeyRef.current !== attachmentKey) return;
-          const latestValidationError = validateChatAttachments(
-            conversationAttachmentsRef.current[attachmentKey] ?? [],
-            files,
-          );
-          if (latestValidationError !== null) {
-            setAttachmentErrors((prev) => ({
-              ...prev,
-              [attachmentKey]: latestValidationError,
-            }));
-            return;
-          }
-          updateConversationAttachments((prev) => ({
-            ...prev,
-            [attachmentKey]: [...(prev[attachmentKey] ?? []), ...prepared],
-          }));
-          setAttachmentErrors((prev) => {
-            if (!(attachmentKey in prev)) return prev;
-            const next = { ...prev };
-            delete next[attachmentKey];
-            return next;
-          });
-        })
-        .catch(() => {
-          setAttachmentErrors((prev) => ({
-            ...prev,
-            [attachmentKey]: '画像を読み込めませんでした。',
-          }));
-        });
-    },
-    [currentConversationKey, updateConversationAttachments],
-  );
-
-  const handleImagePaste = useCallback(
-    (event: ClipboardEvent<HTMLTextAreaElement>) => {
-      const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
-        file.type.startsWith('image/'),
-      );
-      // 通常のテキスト paste はブラウザへ委ねる。画像を含む paste のときだけ
-      // textarea へのバイナリ由来文字列挿入を止める。
-      if (imageFiles.length === 0) {
-        return;
-      }
-      event.preventDefault();
-      ingestImageFiles(imageFiles);
-    },
-    [ingestImageFiles],
-  );
-
-  const handleImageFileChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      if (files.length === 0) {
-        return;
-      }
-      ingestImageFiles(files);
-      event.target.value = '';
-    },
-    [ingestImageFiles],
-  );
-
-  const removeAttachment = useCallback(
-    (attachmentKey: string, attachmentId: string) => {
-      if (isSending) return;
-      updateConversationAttachments((prev) => ({
-        ...prev,
-        [attachmentKey]: (prev[attachmentKey] ?? []).filter(
-          (attachment) => attachment.id !== attachmentId,
-        ),
-      }));
-      setAttachmentErrors((prev) => {
-        if (!(attachmentKey in prev)) return prev;
-        const next = { ...prev };
-        delete next[attachmentKey];
-        return next;
-      });
-    },
-    [isSending, updateConversationAttachments],
-  );
-
+  // bdboard-sso1.83 第2段: ingestImageFiles/handleImagePaste/
+  // handleImageFileChange/removeAttachment は
+  // useChatAttachmentIngestion.ts (useChatDraftState.ts 経由) へ移した。
+  // 以降は handleImagePaste / handleImageFileChange /
+  // removeAttachment を呼ぶ。
   /**
    * 描画にも送信にもこの派生値だけを使う。エージェントを切り替えた直後の1フレームは
    * selectedModelId が前のエージェントのモデルIDのままなので、state を直接使うと
@@ -2414,7 +2346,7 @@ export function ChatPanel({
       // `value !== seed` により正しく「編集済み」と判定される — つまり delete
       // 無しの現状のまま(=既存の記録を変更しない)で両ケースとも正しい。
       if ((conversationInputsRef.current[convKey] ?? '') === '') {
-        setConversationInputs((prev) => ({ ...prev, [convKey]: sentText }));
+        setInput(convKey, sentText);
       }
       // 本文と同じく送信元キーへだけ戻し、送信後に同じキーへ新しい添付が
       // 置かれていた場合は上書きしない。AbortError はこの関数へ来ない。
@@ -2428,7 +2360,13 @@ export function ChatPanel({
         }));
       }
     },
-    [selectedProjectId, updateConversationAttachments],
+    [
+      selectedProjectId,
+      updateConversationAttachments,
+      conversationInputsRef,
+      conversationAttachmentsRef,
+      setInput,
+    ],
   );
 
   const submitChatMessage = useCallback(
@@ -2506,10 +2444,10 @@ export function ChatPanel({
           // 再度待たず、POST開始前の切替でdraftを失う非同期の窓を作らない。
           messagePayload.images = attachmentsToPayload(sentAttachments);
         } catch {
-          setAttachmentErrors((prev) => ({
-            ...prev,
-            [currentConversationKey]: '画像を送信形式に変換できませんでした。',
-          }));
+          setAttachmentError(
+            currentConversationKey,
+            '画像を送信形式に変換できませんでした。',
+          );
           return;
         }
       }
@@ -2545,10 +2483,7 @@ export function ChatPanel({
           ],
         },
       }));
-      setConversationInputs((prev) => ({
-        ...prev,
-        [currentConversationKey]: '',
-      }));
+      setInput(currentConversationKey, '');
       updateConversationAttachments((prev) => ({
         ...prev,
         [currentConversationKey]: [],
@@ -2756,6 +2691,8 @@ export function ChatPanel({
       applyChatError,
       updateConversationAttachments,
       markUnresolvedSend,
+      setAttachmentError,
+      setInput,
     ],
   );
 
@@ -2786,22 +2723,15 @@ export function ChatPanel({
       if (isSending || selectedProjectId === '' || isHistoryPending) {
         return;
       }
-      const prompt = command.prompt;
-      draftSeedTextRef.current[currentConversationKey] = prompt;
-      setConversationInputs((prev) => ({
-        ...prev,
-        [currentConversationKey]: prompt,
-      }));
-      requestAnimationFrame(() => {
-        const textarea = inputRef.current;
-        if (textarea === null) {
-          return;
-        }
-        textarea.focus();
-        textarea.setSelectionRange(prompt.length, prompt.length);
-      });
+      applyQuickCommandPrompt(currentConversationKey, command.prompt);
     },
-    [currentConversationKey, isHistoryPending, isSending, selectedProjectId],
+    [
+      currentConversationKey,
+      isHistoryPending,
+      isSending,
+      selectedProjectId,
+      applyQuickCommandPrompt,
+    ],
   );
 
   const handleModelChange = useCallback(
@@ -2850,10 +2780,10 @@ export function ChatPanel({
       // こちらは従来どおり引き継がず空のドラフトのままにする。
       applyDraftPayloadStoreCarryPlan(HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY, {
         conversationInputs: () => {
-          setConversationInputs((prev) => ({
-            ...prev,
-            [nextDraftKey]: prev[currentConversationKey] ?? '',
-          }));
+          setInput(
+            nextDraftKey,
+            conversationInputsRef.current[currentConversationKey] ?? '',
+          );
         },
         conversationAttachments: () => {
           updateConversationAttachments((prev) => {
@@ -2893,20 +2823,14 @@ export function ChatPanel({
         };
       });
     },
-    [selectedProjectId, currentConversationKey, updateConversationAttachments],
-  );
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        if (isImeComposingKeyEvent(event)) {
-          return;
-        }
-        event.preventDefault();
-        formRef.current?.requestSubmit();
-      }
-    },
-    [],
+    [
+      selectedProjectId,
+      currentConversationKey,
+      updateConversationAttachments,
+      conversationInputsRef,
+      draftSeedTextRef,
+      setInput,
+    ],
   );
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
@@ -2943,12 +2867,7 @@ export function ChatPanel({
       delete next[currentConversationKey];
       return next;
     });
-    setAttachmentErrors((prev) => {
-      if (!(currentConversationKey in prev)) return prev;
-      const next = { ...prev };
-      delete next[currentConversationKey];
-      return next;
-    });
+    clearAttachmentError(currentConversationKey);
     startNewDraftThread(selectedProjectId);
   };
   const handleCloseThread = (sessionId: string) => {
@@ -3520,11 +3439,10 @@ export function ChatPanel({
             value={currentInput}
             disabled={isSending || chatUnsupported}
             onChange={(event) => {
-              const value = event.target.value;
-              setConversationInputs((prev) => ({ ...prev, [currentConversationKey]: value }));
+              setInput(currentConversationKey, event.target.value);
             }}
             onPaste={handleImagePaste}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handleComposedEnterSubmit}
           />
           <ChatInputActions
             fileInputRef={fileInputRef}
