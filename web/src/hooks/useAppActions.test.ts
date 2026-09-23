@@ -298,5 +298,26 @@ describe('useAppActions', () => {
       rerender({ ...params, view: 'activity', epicFilterId: 'epic-2' });
       expect(params.setView).toHaveBeenCalledWith('merged');
     });
+
+    it('does not re-fire when only view changes while epicFilterId stays set (deps array must be [epicFilterId] only, not [epicFilterId, view])', () => {
+      // このテストは [epicFilterId, view] への deps 退行を検出するために
+      // epicFilterId を最初から設定した状態で rerender する(既存の
+      // 「re-subscribes...」テストは epicFilterId が undefined のまま
+      // view だけ変えるため、早期 return 分岐を通ってしまい
+      // [epicFilterId, view] でも [epicFilterId] でも同じ結果になって
+      // しまう=このリグレッションを検出できない)。
+      const params = baseParams({ epicFilterId: 'epic-1', view: 'merged' });
+      const { rerender } = renderHook(
+        (p: AppActionsParams) => useAppActions(p),
+        { initialProps: params },
+      );
+      expect(params.setView).not.toHaveBeenCalled();
+
+      // ユーザーが絞り込みを維持したまま非ボードビューへ自分で移動した場合、
+      // このユーザー操作を上書きして merged へ強制送還してはいけない
+      // (useAppActions.ts のコメント参照: epicFilterId-only は意図的な設計)。
+      rerender({ ...params, epicFilterId: 'epic-1', view: 'activity' });
+      expect(params.setView).not.toHaveBeenCalled();
+    });
   });
 });
