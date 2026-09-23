@@ -6,7 +6,7 @@ import { useCommentFocusShortcut } from './useCommentFocusShortcut';
 // ショートカット(コメント入力欄へフォーカス)を抽出したフック。判定ロジック
 // そのものは移動前から1文字も変えていない。
 //
-// TicketDetailPanel.test.tsx の 'TicketDetailPanel comment shortcut' に
+// TicketDetailPanel.comment-shortcut.test.tsx の 'TicketDetailPanel comment shortcut' に
 // 既存の統合テスト(パネルへ実際に 'c' を打鍵して textarea がフォーカスされる
 // こと / textarea に既にフォーカスがある状態で 'c' を打つとそのまま文字が
 // 入力されること、の2件)が既にあり、抽出後もそのまま無改変で通っている

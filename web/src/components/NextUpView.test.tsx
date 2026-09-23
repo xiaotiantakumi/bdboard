@@ -399,7 +399,7 @@ async function advanceInAct(ms: number): Promise<'advanced' | 'aborted'> {
 // timeout は予防策)。「useRealTimers() を後ろにずらせば漏れない」は誤りで、効くのは abort であって
 // useRealTimers() との順序ではない。本チケットでは advanceInAct で abort 可能にし afterEach が
 // act スコープ終了を待ってから useRealTimers() するので連鎖しない。
-// bdboard-z231: 直線の advanceInAct 呼び出しは、TicketDetailPanel.test.tsx と違って
+// bdboard-z231: 直線の advanceInAct 呼び出しは、TicketDetailPanel.agent-run.test.tsx と違って
 // 戻り値を捨ててよい。あちらは 'aborted' を受けたら必ず return する形になっているが、
 // それは advance の後ろで render / user.click / fireEvent / モック再設定を行うテストがあり、
 // timeout 済みの本体が abort 後に再開すると後続テストの DOM とモック呼び出し回数を汚すため

@@ -2,7 +2,6 @@
 // 「label-editing」関心のファイル。関数本体・アサーション・フィクスチャの値は
 // 元ファイルから1文字も変えていない。
 
-
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -130,4 +129,3 @@ describe('TicketDetailPanel label editing', () => {
     ).not.toBeInTheDocument();
   });
 });
-

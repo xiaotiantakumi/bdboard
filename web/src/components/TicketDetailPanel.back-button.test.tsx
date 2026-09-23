@@ -2,7 +2,6 @@
 // 「back-button」関心のファイル。関数本体・アサーション・フィクスチャの値は
 // 元ファイルから1文字も変えていない。
 
-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

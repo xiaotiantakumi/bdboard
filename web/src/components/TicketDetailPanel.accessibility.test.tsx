@@ -2,7 +2,6 @@
 // 「accessibility」関心のファイル。関数本体・アサーション・フィクスチャの値は
 // 元ファイルから1文字も変えていない。
 
-
 import { screen } from '@testing-library/react';
 import { beforeEach, describe, it, vi } from 'vitest';
 import {
@@ -62,4 +61,3 @@ describe('TicketDetailPanel accessibility', () => {
     await expectNoA11yViolations(container);
   });
 });
-

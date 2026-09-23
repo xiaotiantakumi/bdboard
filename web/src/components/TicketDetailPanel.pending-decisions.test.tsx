@@ -2,7 +2,6 @@
 // 「pending-decisions」関心のファイル。関数本体・アサーション・フィクスチャの値は
 // 元ファイルから1文字も変えていない。
 
-
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -707,4 +706,3 @@ describe('TicketDetailPanel pending decisions', () => {
     expect(screen.getByText(NETWORK_FETCH_HELP)).toBeInTheDocument();
   });
 });
-

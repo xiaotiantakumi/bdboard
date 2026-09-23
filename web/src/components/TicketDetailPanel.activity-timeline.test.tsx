@@ -2,7 +2,6 @@
 // 「activity-timeline」関心のファイル。関数本体・アサーション・フィクスチャの値は
 // 元ファイルから1文字も変えていない。
 
-
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -184,4 +183,3 @@ describe('変更履歴タイムライン', () => {
     expect(mockFetchTicketInFlightOverlaps).not.toHaveBeenCalled();
   });
 });
-
