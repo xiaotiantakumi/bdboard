@@ -16,6 +16,15 @@ import type { ApiDeps } from './routes.js';
 // キャッシュ (prBadgeStatusCache) はこのルートでしか使わないためここで
 // インスタンス化する。
 
+// bdboard-se3v: /api/pr-links が (再起動直後の未キャッシュ状態で) 55秒かかっていた
+// 問題への対応。gh 起動の並列度をコメント取得と切り離して上げた (get-pr-badges.ts
+// 側) のに加え、ここでリクエスト全体に時間予算を持たせる —— 予算を超えたら
+// その時点で分かっている分だけ返し (未解決分は status:null のまま)、残りは
+// バックグラウンドで走らせ続けて次回の呼び出し (board.changed のたびに来る) で
+// キャッシュヒットとして返す。受け入れ基準の「5秒以内」に余裕を持たせるため、
+// レスポンス自体のシリアライズ/転送時間を差し引いた 4.5 秒を予算にする。
+const PR_LINKS_OVERALL_TIMEOUT_MS = 4_500;
+
 export interface PrLinksRoutesParams {
   readonly prBadgeCommentCache: PrBadgeCommentCache;
 }
@@ -41,6 +50,7 @@ export function createPrLinksRoutes(
         ...(projectIds !== undefined ? { projectIds } : {}),
         commentCache: prBadgeCommentCache,
         statusCache: prBadgeStatusCache,
+        overallTimeoutMs: PR_LINKS_OVERALL_TIMEOUT_MS,
       },
     );
     return c.json(badges.map(toPrBadgeDto));
