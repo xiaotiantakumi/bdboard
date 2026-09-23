@@ -57,7 +57,16 @@ const RUNNER_REFERENCE_ALLOWLIST_FILES = [
   // フィクスチャのみで、実行時の dispatch 経路には一切関わらない。`.test.ts`
   // 拡張子ではないため collectSourceFiles のスキャン対象になるが、実体は
   // *.test.ts と同じテスト専用コードなのでここに明示的に許可する。
-  'src/interface/http/agent-run-routes-test-support.ts',
+  // bdboard-sso1.81: agent-run-routes-test-support.ts (232行) を move-only で
+  // ./agent-run-routes-test-support/*.ts へ分割した。入口 (agent-run-routes-test-support.ts)
+  // は再エクスポートのみになりトークンを含まなくなったため許可リストから外し、
+  // 分割後にトークンを含む2ファイル (run-deps.ts: AgentRunner 型/makeRunner、
+  // routes.ts: application/runner/ 配下からの import) だけをファイル単位で明示的に
+  // 許可する (bdboard-7lrm: テスト支援ファイルの無条件許可を避けるため、ディレクトリ
+  // 丸ごとではなく実際にトークンを含む個別ファイルのみを足す)。中身はどちらも
+  // 実行時の dispatch 経路には一切関わらないテスト専用フィクスチャのまま。
+  'src/interface/http/agent-run-routes-test-support/run-deps.ts',
+  'src/interface/http/agent-run-routes-test-support/routes.ts',
 ] as const;
 
 const RUNNER_REFERENCE_ALLOWLIST_PREFIXES = [
