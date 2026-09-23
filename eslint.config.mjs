@@ -18,7 +18,10 @@ import globals from 'globals';
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
   'web/src/components/ChatPanel.tsx': 2195, // 現在 2185 (bdboard-sso1.83 第3段: threadError/ticketProjectFallbackNotice の状態を chat/chatNotificationsState.ts + chat/useChatNotifications.ts へ抽出)
-  'web/src/components/TicketDetailPanel.tsx': 690, // 現在 680 (bdboard-sso1.5: detail-header ブロックを TicketDetailHeaderSection.tsx へ、'c' キーボードショートカットを useCommentFocusShortcut.ts へ抽出)
+  // 'web/src/components/TicketDetailPanel.tsx' はこの一覧から除去 (bdboard-sso1.5:
+  // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
+  // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、
+  // 680 -> 141 行(ESLint実測)まで縮小。既定上限200行に対して59行の余裕がある)。
   'web/src/App.tsx': 635, // 現在 625 (bdboard-62p4 PR-3: 9本の useQuery と派生 useMemo/useEffect を関心ごとの web/src/hooks/useXxxData.ts へ抽出)
   // テスト (1500 行超)
   'web/src/components/ChatPanel.test.tsx': 7662, // 現在 7652 (bdboard-sso1.83: Escape でリネーム取消のテストを追加)
