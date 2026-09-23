@@ -12,9 +12,9 @@
 //     (READY_CONTRACT/harnessPack/readyHarnessStatus)
 //   - routes.ts        : 上記を束ねて agent-run ルートを組み立てる工場 (makeRoutes)
 // このファイルは import 側 (5つのリソース別テストファイル) を書き換えないための
-// re-export 入口としてのみ残す (bdboard-sso1.36 で agent-run-routes.test.ts の move-only
-// 分割時に新設されたときの経緯は各サブモジュールのコメントを参照)。挙動・型は一切
-// 変えていない (移動のみ)。
+// re-export 入口としてのみ残す。元々は bdboard-sso1.36 で agent-run-routes.test.ts
+// (2007行) の move-only 分割時に、複数のテストファイルから共有されるフェイク/
+// ヘルパー置き場として新設されたファイル。挙動・型は一切変えていない (移動のみ)。
 export * from './agent-run-routes-test-support/constants.js';
 export * from './agent-run-routes-test-support/http-requests.js';
 export * from './agent-run-routes-test-support/board-cache.js';
