@@ -1,10 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
-import type { BoardCardDto, BoardViewDto } from '../../api';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BoardCardDto, BoardViewDto, PrBadgeDto, ProjectHarnessStatusDto } from '../../api';
 import { EMPTY_BOARD_FILTER } from '../../boardFilter';
 import type { BoardFilterState } from '../../hooks/useBoardFilterState';
-import type { NextUpRunLoopController } from '../next-up/run-loop/types';
+import type { NextUpRunLoopController } from '../nextUpRunLoop';
 import { AppBoardViewSwitch, type AppBoardViewSwitchProps } from './AppBoardViewSwitch';
 
 // bdboard-62p4 PR-2: このファイルは AppBoardViewSwitch が持つ「view に応じた
@@ -12,6 +12,14 @@ import { AppBoardViewSwitch, type AppBoardViewSwitchProps } from './AppBoardView
 // 各子コンポーネントの実際の prop)」を直接検証する。子コンポーネント自体の
 // 描画内容は各自のテストで押さえられているため、ここではモックに置き換えて
 // どの子がどの props で呼ばれるかだけを見る。
+//
+// opus レビュー(PR#654)指摘: 当初のバージョンは各モックが1つのスカラー値
+// だけを画面に出す形で、pendingDecisionIds/prLinksById/wipLimitsOverrides/
+// collapsedLanes/onToggleLaneCollapse/harnessStatuses 等が空値へ差し替え
+// られても検知できなかった(20件中12件の変異が素通り)。以降のテストは
+// 可能な限り `vi.mocked(X).mock.calls.at(-1)?.[0]` で実際に渡された props
+// オブジェクト全体を検証し、区別可能なマーカー値(固有の Map/Set/オブジェクト)
+// を使うことで「空値/デフォルト値にすり替わっていないか」まで見る。
 
 vi.mock('../BoardFilterBar', () => ({
   BoardFilterBar: vi.fn((props: { filterText: string }) => (
@@ -52,9 +60,26 @@ vi.mock('../NextUpView', () => ({
   )),
 }));
 
-import { hasVisibleCards } from '../BoardView';
+import { BoardFilterBar } from '../BoardFilterBar';
+import { BulkActionBar } from '../BulkActionBar';
+import { BoardLanes, hasVisibleCards, SplitBoard } from '../BoardView';
+import { NextUpView } from '../NextUpView';
 
 const hasVisibleCardsMock = vi.mocked(hasVisibleCards);
+const boardLanesMock = vi.mocked(BoardLanes);
+const splitBoardMock = vi.mocked(SplitBoard);
+const nextUpViewMock = vi.mocked(NextUpView);
+const bulkActionBarMock = vi.mocked(BulkActionBar);
+const boardFilterBarMock = vi.mocked(BoardFilterBar);
+
+// beforeEach で毎回クリアする: vitest.config は clearMocks/restoreMocks を
+// 有効にしていないため、素の状態だと hasVisibleCardsMock.mockReturnValue(...)
+// が後続テストへ漏れて実行順依存になる(opus レビュー指摘)。vi.clearAllMocks()
+// は呼び出し履歴だけを消し、vi.fn(impl) の実装は残すので描画は壊れない。
+beforeEach(() => {
+  vi.clearAllMocks();
+  hasVisibleCardsMock.mockReturnValue(true);
+});
 
 function makeFilterState(overrides: Partial<BoardFilterState> = {}): BoardFilterState {
   return {
@@ -125,7 +150,6 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
 
 describe('AppBoardViewSwitch', () => {
   it('renders BoardFilterBar/BulkActionBar for merged view but not for next view', () => {
-    hasVisibleCardsMock.mockReturnValue(true);
     const { rerender } = render(<AppBoardViewSwitch {...makeProps({ view: 'merged' })} />);
     expect(screen.getByTestId('board-filter-bar')).toBeInTheDocument();
     expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
@@ -139,6 +163,28 @@ describe('AppBoardViewSwitch', () => {
   it('renders nothing for a non-board view (e.g. activity)', () => {
     const { container } = render(<AppBoardViewSwitch {...makeProps({ view: 'activity' })} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('hides the loading state, epic-filter indicator, and filter/bulk bars for a non-board view, even when their trigger conditions are true', () => {
+    // opus レビュー指摘の変異「読み込み中表示が全ビューに出る」「エピック
+    // バナーが全ビューに出る」を直接検知するテスト。view が非ボード系なら
+    // isLoading/epicFilterId が真でも何も出してはいけない。
+    const { container } = render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'activity',
+          epicFilterId: 'bdboard-should-not-show',
+          board: {
+            query: { data: undefined, isLoading: true, error: null },
+            cardsById: new Map([['t-1', {} as BoardCardDto]]),
+            availableLabels: ['should-not-reach-bulk-bar'],
+          },
+        })}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+    expect(boardFilterBarMock).not.toHaveBeenCalled();
+    expect(bulkActionBarMock).not.toHaveBeenCalled();
   });
 
   it('shows the loading and error states independently of board.query.data', () => {
@@ -167,6 +213,25 @@ describe('AppBoardViewSwitch', () => {
       />,
     );
     expect(screen.getByText('boom')).toBeInTheDocument();
+  });
+
+  it('falls back to the generic error message when the error is not an Error instance', () => {
+    render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          board: {
+            query: {
+              data: undefined,
+              isLoading: false,
+              error: 'not-an-error-instance' as unknown as Error,
+            },
+            cardsById: new Map(),
+            availableLabels: [],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText('ボードの読み込みに失敗しました')).toBeInTheDocument();
   });
 
   it('shows the epic filter indicator and calls onClearEpicFilter on click', async () => {
@@ -199,8 +264,25 @@ describe('AppBoardViewSwitch', () => {
     expect(screen.queryByTestId('board-lanes')).not.toBeInTheDocument();
   });
 
+  it('shows the stalled-only empty message (not the generic one) when only stalledOnly is active', () => {
+    hasVisibleCardsMock.mockReturnValue(false);
+    render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'merged',
+          filterState: makeFilterState({ stalledOnly: true }),
+          board: {
+            query: { data: makeBoardData(), isLoading: false, error: null },
+            cardsById: new Map(),
+            availableLabels: [],
+          },
+        })}
+      />,
+    );
+    expect(screen.getByText('滞留しているチケットはありません')).toBeInTheDocument();
+  });
+
   it('renders BoardLanes with the merged-prefixed sectionKey when cards are visible', () => {
-    hasVisibleCardsMock.mockReturnValue(true);
     render(
       <AppBoardViewSwitch
         {...makeProps({
@@ -222,6 +304,69 @@ describe('AppBoardViewSwitch', () => {
       />,
     );
     expect(screen.getByTestId('board-lanes')).toHaveTextContent('merged-proj-1');
+  });
+
+  it('forwards all BoardLanes-specific props unchanged (filter state, metadata maps/sets, lane-collapse wiring)', () => {
+    // opus レビュー指摘の変異(レーン折りたたみの no-op 化・collapsedLanes/
+    // pendingDecisionIds/prLinksById の空値差し替え)を防ぐための直接検証。
+    // 区別可能なマーカー値を使い、デフォルト値(空Map/空Set)とすり替わって
+    // いないことまで見る。
+    const pendingDecisionIds = new Set(['bdboard-pending-1']);
+    const prLinksById = new Map<string, PrBadgeDto>([
+      ['bdboard-pr-1', { ticketId: 'bdboard-pr-1', projectId: 'proj-1', url: 'https://example.test/1', state: 'open', checkStatus: null }],
+    ]);
+    const projectNames = new Map([['proj-1', 'Project One']]);
+    const projectActiveSessions = new Map([['proj-1', 2]]);
+    const wipLimitsOverrides = { inProgressWipLimit: 7 };
+    const collapsedLanesSet = new Set(['in_progress' as const]);
+    const onToggleLaneCollapse = vi.fn();
+    const onCardClick = vi.fn();
+    const filterState = makeFilterState({
+      hideDone: true,
+      stalledOnly: true,
+      filter: { ...EMPTY_BOARD_FILTER, text: 'marker-text' },
+      collapsedLanesSet,
+      onToggleLaneCollapse,
+    });
+
+    render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'merged',
+          filterState,
+          board: {
+            query: { data: makeBoardData(), isLoading: false, error: null },
+            cardsById: new Map(),
+            availableLabels: [],
+          },
+          boardMeta: {
+            projectNames,
+            projectActiveSessions,
+            pendingDecisionIds,
+            prLinksById,
+            wipLimitsOverrides,
+            selectedProjectIdsJoined: 'proj-1',
+          },
+          onCardClick,
+        })}
+      />,
+    );
+
+    expect(boardLanesMock).toHaveBeenCalledTimes(1);
+    const props = boardLanesMock.mock.calls.at(-1)?.[0];
+    expect(props).toMatchObject({
+      hideDone: true,
+      stalledOnly: true,
+      filter: filterState.filter,
+      projectNames,
+      projectActiveSessions,
+      pendingDecisionIds,
+      prLinksById,
+      wipLimitsOverrides,
+      collapsedLanes: collapsedLanesSet,
+      onToggleLaneCollapse,
+      onCardClick,
+    });
   });
 
   it('renders SplitBoard for the split view and forwards onCardClick/onSessionBadgeClick unchanged', async () => {
@@ -257,6 +402,53 @@ describe('AppBoardViewSwitch', () => {
     expect(onSessionBadgeClick).toHaveBeenCalledWith('proj-1');
   });
 
+  it('forwards all SplitBoard-specific props unchanged (metadata maps, lane-collapse wiring)', () => {
+    const pendingDecisionIds = new Set(['bdboard-pending-split']);
+    const prLinksById = new Map<string, PrBadgeDto>([
+      ['bdboard-pr-split', { ticketId: 'bdboard-pr-split', projectId: 'proj-2', url: 'https://example.test/2', state: 'open', checkStatus: null }],
+    ]);
+    const wipLimitsOverrides = { inProgressWipLimit: 3 };
+    const collapsedLanesSet = new Set(['awaiting_human' as const]);
+    const onToggleLaneCollapse = vi.fn();
+    const filterState = makeFilterState({
+      hideDone: true,
+      collapsedLanesSet,
+      onToggleLaneCollapse,
+    });
+
+    render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'split',
+          filterState,
+          board: {
+            query: { data: makeBoardData({ projects: [] }), isLoading: false, error: null },
+            cardsById: new Map(),
+            availableLabels: [],
+          },
+          boardMeta: {
+            projectNames: new Map(),
+            projectActiveSessions: new Map(),
+            pendingDecisionIds,
+            prLinksById,
+            wipLimitsOverrides,
+            selectedProjectIdsJoined: 'proj-2',
+          },
+        })}
+      />,
+    );
+
+    const props = splitBoardMock.mock.calls.at(-1)?.[0];
+    expect(props).toMatchObject({
+      hideDone: true,
+      pendingDecisionIds,
+      prLinksById,
+      wipLimitsOverrides,
+      collapsedLanes: collapsedLanesSet,
+      onToggleLaneCollapse,
+    });
+  });
+
   it('renders NextUpView with the nextUp.limit for the next view', () => {
     render(
       <AppBoardViewSwitch
@@ -279,6 +471,80 @@ describe('AppBoardViewSwitch', () => {
       />,
     );
     expect(screen.getByTestId('next-up-view')).toHaveTextContent('20');
+  });
+
+  it('forwards harnessStatuses, batchRun, and board metadata to NextUpView unchanged', () => {
+    // opus レビュー指摘の変異「harnessStatuses が undefined に差し替わる」を
+    // 直接検知する。harnessStatuses は undefined と「値はあるが空」を区別
+    // できるよう、要素を持つ Map を渡して同一参照で届くことを見る。
+    const harnessStatuses = new Map<string, ProjectHarnessStatusDto>([
+      ['proj-1', {} as ProjectHarnessStatusDto],
+    ]);
+    const pendingDecisionIds = new Set(['bdboard-pending-next']);
+    const prLinksById = new Map<string, PrBadgeDto>();
+    const projectNames = new Map([['proj-1', 'Project One']]);
+    const projectActiveSessions = new Map([['proj-1', 1]]);
+    const batchRun = { id: 'marker-batch-run' } as unknown as NextUpRunLoopController;
+    const onCardClick = vi.fn();
+
+    render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'next',
+          board: {
+            query: { data: makeBoardData(), isLoading: false, error: null },
+            cardsById: new Map(),
+            availableLabels: [],
+          },
+          boardMeta: {
+            projectNames,
+            projectActiveSessions,
+            pendingDecisionIds,
+            prLinksById,
+            wipLimitsOverrides: {},
+            selectedProjectIdsJoined: 'proj-1',
+          },
+          onCardClick,
+          nextUp: {
+            limit: 5,
+            onLimitChange: vi.fn(),
+            showEpics: false,
+            onShowEpicsChange: vi.fn(),
+            batchRun,
+            harnessStatuses,
+          },
+        })}
+      />,
+    );
+
+    const props = nextUpViewMock.mock.calls.at(-1)?.[0];
+    expect(props).toMatchObject({
+      harnessStatuses,
+      batchRun,
+      projectNames,
+      projectActiveSessions,
+      pendingDecisionIds,
+      prLinksById,
+      onCardClick,
+    });
+  });
+
+  it('forwards the actual availableLabels to BulkActionBar instead of defaulting to an empty array', () => {
+    const availableLabels = ['bug', 'marker-label'];
+    render(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'merged',
+          board: {
+            query: { data: undefined, isLoading: false, error: null },
+            cardsById: new Map(),
+            availableLabels,
+          },
+        })}
+      />,
+    );
+    const props = bulkActionBarMock.mock.calls.at(-1)?.[0];
+    expect(props).toMatchObject({ availableLabels });
   });
 
   it('shows the "no merged data" message when merged is null for merged/next but not for other board views', () => {
