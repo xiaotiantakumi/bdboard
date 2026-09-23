@@ -278,10 +278,19 @@ export async function getPrBadges(
 
   if (timedOut) {
     const partial = snapshotBadges();
-    const stillUnresolved = partial.filter((badge) => badge.status === null).length;
+    // bdboard-3znc の url:null プレースホルダ (「まだ PR の有無すら分からない」) と、
+    // url は分かっているが status がまだ無いバッジ (「PR は分かっているが gh 未取得」)
+    // は意味が違うので別々に数える (opus レビュー指摘: 以前は両方まとめて「status
+    // 未取得」と表示しており、コメント走査すら終わっていないチケットを「PRの状態が
+    // 未取得なだけ」であるかのように誤解させていた)。
+    const unfetchedCount = partial.filter((badge) => badge.url === null).length;
+    const statusUnresolvedCount = partial.filter(
+      (badge) => badge.url !== null && badge.status === null,
+    ).length;
     logWarn(
       `[pr-links] overall time budget of ${overallTimeoutMs}ms exceeded; returning ` +
-        `${partial.length} badge(s) so far (${stillUnresolved} without a resolved status yet). ` +
+        `${partial.length} badge(s) so far (${unfetchedCount} with no PR found yet, ` +
+        `${statusUnresolvedCount} with a known PR but no status yet). ` +
         'The remaining comment/status lookups keep running in the background and will warm ' +
         'the cache for the next refresh.',
     );

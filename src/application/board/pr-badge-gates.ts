@@ -2,9 +2,11 @@ import { Semaphore } from '../concurrency.js';
 
 /**
  * commentGate/statusGate — getPrBadges() のコメント取得 (bd 経由) とステータス取得
- * (gh 経由) それぞれの同時実行数を絞る Semaphore ペア。get-pr-badges.ts から切り出した
- * (bdboard-sgpa: 行数上限対応。ロジックは createPrBadgeGates() ごと丸ごと移しただけで
- * 1文字も変えていない)。
+ * (gh 経由) それぞれの同時実行数を絞る Semaphore ペア。PrBadgeGates/createPrBadgeGates()
+ * は bdboard-sgpa で新規追加したもの (main 上の既存コードの移動ではない)。
+ * get-pr-badges.ts に直接書くと同ファイルの200行上限を超えるため、最初からこの
+ * 独立ファイルとして実装した (opus レビュー指摘: 以前の「move only」というコメントは
+ * main からの移動であるかのように読めて誤解を招くため訂正)。
  *
  * /api/pr-links のようにリクエストをまたいで呼び出される側は、createPrBadgeGates() を
  * ルート初期化時に一度だけ呼んで結果を GetPrBadgesOptions.gates として使い回すこと。

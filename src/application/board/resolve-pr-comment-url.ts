@@ -7,10 +7,16 @@ import type { Ticket } from '../../domain/ticket.js';
 import type { PrBadgeCommentCache } from './pr-badge-comment-cache.js';
 
 /**
- * get-pr-badges.ts の runTicket から切り出した (bdboard-sgpa: 行数上限対応。move only、
- * 挙動は1文字も変えていない)。1チケットぶんの PR URL 解決: キャッシュヒット → in-flight
- * 共有 + ゲート待ち後のキャッシュ再確認 → 直接フェッチ (commentCache 未指定時) の3経路。
- * 失敗時は reject する (呼び出し側で commentFailures に積んでプレースホルダを消す)。
+ * get-pr-badges.ts の runTicket から切り出した (bdboard-sgpa: 行数上限対応)。
+ * このファイルの中身自体 (キャッシュヒット判定・in-flight 共有・ゲート待ち後の
+ * キャッシュ再確認・直接フェッチ) は bdboard-sgpa でこの PR 内に新規追加したロジック
+ * であり、main の既存コードからの move ではない —— このファイルへの「切り出し」は
+ * 同じ PR 内で runTicket に一度実装した後にここへ移した、という意味 (opus レビュー
+ * 指摘: 以前の「move only、挙動は1文字も変えていない」は main からの移動であるかの
+ * ように読めて誤解を招くため訂正)。1チケットぶんの PR URL 解決: キャッシュヒット →
+ * in-flight 共有 + ゲート待ち後のキャッシュ再確認 → 直接フェッチ (commentCache 未指定時)
+ * の3経路。失敗時は reject する (呼び出し側で commentFailures に積んでプレースホルダを
+ * 消す)。
  */
 export interface ResolvePrCommentUrlDeps {
   readonly commentReader: CommentReader;
@@ -37,10 +43,13 @@ export async function resolvePrCommentUrl(
     return commentCache.resolveUrl(ticket.id, ticket.commentCount, updatedAtMs, async () => {
       await commentGate.acquire();
       try {
-        // ゲート待ちの間に、別の重なったリクエストが同じ (ticketId, commentCount,
-        // updatedAt) を先に解決し終えているかもしれない (in-flight の相乗りに間に
-        // 合わなかった競合)。無駄な bd 起動を避けるため、ゲートを取ってからもう
-        // 一度キャッシュを見る (bdboard-sgpa)。
+        // 防御的な再確認: resolveUrl() は cache→in-flight の判定と fetcher() 呼び出しの
+        // 登録を同期的に (await を挟まず) 行うため、現状の実装では in-flight 登録より
+        // 前に他の呼び出しがこのキーへ書き込む経路は無く、この再確認が実際に「無駄な
+        // bd 起動を防いだ」ことは無いはず (opus レビュー指摘)。とはいえコストはほぼ
+        // ゼロで、将来 set() の呼び出し元が増えたときの安全網として残す価値はあるため
+        // 削除はしていない —— 「競合を防いでいる」という説明が実態と合っていなかった
+        // 点だけを訂正する。
         const cachedAfterGate = commentCache.get(ticket.id, ticket.commentCount, updatedAtMs);
         if (cachedAfterGate !== undefined) {
           return {
