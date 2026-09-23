@@ -173,5 +173,53 @@ describe('createFileScanRootsConfigStore', () => {
         warn.mockRestore();
       }
     });
+
+    it('warns when scanRoots is explicitly null', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const filePath = makePath();
+        mkdirSync(path.dirname(filePath), { recursive: true });
+        writeFileSync(filePath, JSON.stringify({ scanRoots: null }), 'utf8');
+
+        const result = await createFileScanRootsConfigStore(filePath).read();
+
+        expect(result).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('warns when the whole file is a JSON array rather than an object', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const filePath = makePath();
+        mkdirSync(path.dirname(filePath), { recursive: true });
+        writeFileSync(filePath, JSON.stringify(['/one', '/two']), 'utf8');
+
+        const result = await createFileScanRootsConfigStore(filePath).read();
+
+        expect(result).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    it('warns when scanRoots is absent but excludePaths is present with the wrong type', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const filePath = makePath();
+        mkdirSync(path.dirname(filePath), { recursive: true });
+        writeFileSync(filePath, JSON.stringify({ excludePaths: 'not-an-array' }), 'utf8');
+
+        const result = await createFileScanRootsConfigStore(filePath).read();
+
+        expect(result).toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

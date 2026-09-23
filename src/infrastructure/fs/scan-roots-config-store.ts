@@ -15,17 +15,28 @@ function isStringArray(value: unknown): value is readonly string[] {
  *  - 'absent': the JSON is a valid object but simply has no `scanRoots` key (e.g. a config.json
  *    that only carries unrelated settings like allowRemoteAgentRuns). This is not a problem:
  *    read() falls back to default roots silently.
- *  - 'invalid': the JSON parsed but its shape is wrong (not an object, or `scanRoots`/
- *    `excludePaths` present with the wrong type). This is a real problem worth a warning. */
+ *  - 'invalid': the JSON parsed but its shape is wrong (not a plain object, e.g. an array or a
+ *    primitive; or `scanRoots`/`excludePaths` present with the wrong type). This is a real
+ *    problem worth a warning. */
 type ParsedConfig =
   | { readonly kind: 'ok'; readonly config: ScanRootsConfig }
   | { readonly kind: 'absent' }
   | { readonly kind: 'invalid' };
 
 function parseConfig(value: unknown): ParsedConfig {
-  if (typeof value !== 'object' || value === null) return { kind: 'invalid' };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return { kind: 'invalid' };
+  }
   const record = value as Record<string, unknown>;
-  if (!('scanRoots' in record)) return { kind: 'absent' };
+  if (!Object.hasOwn(record, 'scanRoots')) {
+    // No scanRoots key at all: a normal config.json that just doesn't set it (e.g. one that
+    // only carries allowRemoteAgentRuns). Not a problem on its own - but if excludePaths is
+    // present with the wrong type, that's still real corruption worth a warning.
+    if (record.excludePaths !== undefined && !isStringArray(record.excludePaths)) {
+      return { kind: 'invalid' };
+    }
+    return { kind: 'absent' };
+  }
   if (!isStringArray(record.scanRoots)) return { kind: 'invalid' };
   const excludePaths = record.excludePaths === undefined ? [] : record.excludePaths;
   if (!isStringArray(excludePaths)) return { kind: 'invalid' };
