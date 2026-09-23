@@ -13,6 +13,10 @@ import {
 import { createFakeSpawnedProcess } from './cloudflared-tunnel.test-support.js';
 
 const TUNNEL_URL = 'https://example-abc.trycloudflare.com';
+// A distinct URL for a stale/already-stopped process's output, so a test that
+// leaks it into a later session's buffer resolves with the WRONG url instead of
+// silently matching TUNNEL_URL by coincidence.
+const STALE_URL = 'https://stale-zzz.trycloudflare.com';
 
 function createFakeLogSink(): LogSink & { readonly lines: string[]; closed: boolean } {
   const sink = {
@@ -245,6 +249,7 @@ describe('createCloudflaredTunnel', () => {
       spawnFn: () => fake,
       startTimeoutMs: 1000,
       stopGraceMs: 100,
+      createLogSink: () => createFakeLogSink(),
     });
 
     const startPromise = tunnel.start();
@@ -308,6 +313,7 @@ describe('createCloudflaredTunnel', () => {
       resolveExecutable: () => '/usr/bin/cloudflared',
       spawnFn: () => fake,
       stopGraceMs: 500,
+      createLogSink: () => createFakeLogSink(),
     });
 
     const startPromise = tunnel.start();
@@ -362,9 +368,11 @@ describe('createCloudflaredTunnel', () => {
 
     const secondStart = tunnel.start();
 
-    // Stale output from the already-stopped first process must not resolve or
-    // otherwise affect the in-flight second start().
-    firstFake.emitStdout(`${TUNNEL_URL}\n`);
+    // Stale output from the already-stopped first process must not resolve the
+    // in-flight second start() (with the wrong, stale URL) or otherwise affect it.
+    // Using a URL distinct from TUNNEL_URL means a leak would make the final
+    // assertion below fail with the stale URL instead of passing by coincidence.
+    firstFake.emitStdout(`${STALE_URL}\n`);
     firstFake.emitClose(0);
     expect(unexpectedExit).not.toHaveBeenCalled();
 

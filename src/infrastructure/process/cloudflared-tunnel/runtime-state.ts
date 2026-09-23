@@ -6,7 +6,8 @@
 import type { SpawnedProcess } from './spawned-process.js';
 
 export interface TunnelRuntimeState {
-  /** 現在追跡している子プロセス。stop() 完了後や、URL 未検出のまま終了した後は null。 */
+  /** 現在追跡している子プロセス。stop() 呼び出し時点(kill より前)で同期的に null に
+   *  戻る。URL 未検出のまま終了した後も null。 */
   child: SpawnedProcess | null;
   /** URL 検出待ち中に蓄積する stdout/stderr の内容。URL 検出後・停止後にクリアする。 */
   outputBuffer: string;

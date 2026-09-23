@@ -23,9 +23,10 @@
 //   - stop-controller.ts   : kill (stop / stopExistingSynchronously) の関心
 //   - start-tunnel.ts      : 上記を「実行ファイル解決 → 同期停止 → spawn → ログシンク
 //     生成 → 出力監視」の順で呼び出す start() 本体のオーケストレーション
-// spawn → ハンドラ登録 → タイマー開始 → URL 検出 → kill という順序、タイムアウト時・
-// プロセス早期終了時の挙動は変えていない。公開 API (export の集合・
-// createCloudflaredTunnel() の引数と戻り値) も変えていない。
+// spawn → ログシンク生成 → タイマー開始・stdout/stderr ハンドラ登録(元のコードでも
+// この2つはこの順)→ URL 検出 → kill という順序、タイムアウト時・プロセス早期終了時の
+// 挙動は変えていない。公開 API (export の集合・createCloudflaredTunnel() の引数と
+// 戻り値) も変えていない。
 import { spawn as nodeSpawn } from 'node:child_process';
 import type {
   TunnelProcess,
