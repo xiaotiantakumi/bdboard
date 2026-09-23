@@ -11,7 +11,6 @@ import {
   fetchSessions,
   fetchStatus,
   type BoardCardDto,
-  type Lane,
   type PendingDecisionDto,
   type PrBadgeDto,
   type ProjectDto,
@@ -57,6 +56,7 @@ import { useHeaderHeightVar } from './hooks/useHeaderHeightVar';
 import { useNotificationEvents } from './hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from './hooks/useWatchedTicketDetails';
 import { usePersistedState } from './hooks/usePersistedState';
+import { useBoardFilterState } from './hooks/useBoardFilterState';
 import { useTicketDeepLink } from './hooks/useTicketDeepLink';
 import {
   boardApiModeFromView,
@@ -70,17 +70,11 @@ import {
   validateString,
   validateStringArray,
   validateViewMode,
-  validatePriorityCeiling,
-  priorityCeilingValue,
-  validateIssueTypeArray,
-  validateLaneArray,
   validateBoardFilterPresets,
   findDefaultBoardFilterPreset,
   hasStoredBoardFilterState,
   validateRecentTickets,
   recordRecentTicket,
-  DEFAULT_HIDE_DONE,
-  DEFAULT_STALLED_ONLY,
   DEFAULT_TIPS_BANNER_DISMISSED,
   type BoardFilterPreset,
   type BoardFilterPresetState,
@@ -113,41 +107,34 @@ export function App() {
     '',
     validateString,
   );
-  const [hideDone, setHideDone] = usePersistedState(
-    UI_STORAGE_KEYS.hideDone,
-    DEFAULT_HIDE_DONE,
-    validateBoolean,
-  );
-  const [stalledOnly, setStalledOnly] = usePersistedState(
-    UI_STORAGE_KEYS.stalledOnly,
-    DEFAULT_STALLED_ONLY,
-    validateBoolean,
-  );
-  const [collapsedLanes, setCollapsedLanes] = usePersistedState(
-    UI_STORAGE_KEYS.collapsedLanes,
-    [],
-    validateLaneArray,
-  );
-  const [boardPriorityCeiling, setBoardPriorityCeiling] = usePersistedState(
-    UI_STORAGE_KEYS.boardPriorityCeiling,
-    'all',
-    validatePriorityCeiling,
-  );
-  const [boardIssueTypes, setBoardIssueTypes] = usePersistedState(
-    UI_STORAGE_KEYS.boardIssueTypes,
-    [],
-    validateIssueTypeArray,
-  );
-  const [boardLabels, setBoardLabels] = usePersistedState(
-    UI_STORAGE_KEYS.boardLabels,
-    [],
-    validateStringArray,
-  );
-  const [boardFilterText, setBoardFilterText] = usePersistedState(
-    UI_STORAGE_KEYS.boardFilterText,
-    '',
-    validateString,
-  );
+  /*
+   * ボードのフィルタ/表示切り替え状態 (優先度上限・issueType・ラベル・自由文字列・
+   * doneレーン非表示・滞留のみ・レーン折りたたみ) は useBoardFilterState.ts に
+   * まとめた (bdboard-62p4)。元は7つの usePersistedState 呼び出しが個別に
+   * ここへ並んでいたのと同じ相対順序でフック内部から呼ばれるため、これらの
+   * hook 自体の呼び出し順は変わらない。フック呼び出し全体の位置は
+   * 元のブロックの先頭 (この位置) のまま据え置き、collapsedLanesSet /
+   * onToggleLaneCollapse / boardFilter だけが元の定義位置 (line ~391-413) から
+   * ここへ前倒しで移動している。詳細と安全性の理由は useBoardFilterState.ts の
+   * JSDoc と PR 本文を参照。
+   */
+  const {
+    priorityCeiling: boardPriorityCeiling,
+    setPriorityCeiling: setBoardPriorityCeiling,
+    issueTypes: boardIssueTypes,
+    setIssueTypes: setBoardIssueTypes,
+    labels: boardLabels,
+    setLabels: setBoardLabels,
+    filterText: boardFilterText,
+    setFilterText: setBoardFilterText,
+    hideDone,
+    setHideDone,
+    stalledOnly,
+    setStalledOnly,
+    collapsedLanesSet,
+    onToggleLaneCollapse: handleToggleLaneCollapse,
+    filter: boardFilter,
+  } = useBoardFilterState();
   const [boardFilterPresets, setBoardFilterPresets] = usePersistedState(
     UI_STORAGE_KEYS.boardFilterPresets,
     [],
@@ -387,30 +374,6 @@ export function App() {
     }
     return map;
   }, [prLinksQuery.data]);
-
-  const collapsedLanesSet = useMemo(
-    () => new Set<Lane>(collapsedLanes),
-    [collapsedLanes],
-  );
-
-  const handleToggleLaneCollapse = useCallback(
-    (lane: Lane) => {
-      setCollapsedLanes((prev) =>
-        prev.includes(lane) ? prev.filter((item) => item !== lane) : [...prev, lane],
-      );
-    },
-    [setCollapsedLanes],
-  );
-
-  const boardFilter = useMemo(
-    () => ({
-      priorityCeiling: priorityCeilingValue(boardPriorityCeiling),
-      issueTypes: boardIssueTypes,
-      labels: boardLabels,
-      text: boardFilterText,
-    }),
-    [boardPriorityCeiling, boardIssueTypes, boardLabels, boardFilterText],
-  );
 
   const boardFilterPresetState = useMemo<BoardFilterPresetState>(
     () => ({
