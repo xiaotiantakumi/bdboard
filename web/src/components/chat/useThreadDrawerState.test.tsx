@@ -23,11 +23,16 @@ function Probe() {
     'toggleDiscoveredSessions',
     'closeDiscoveredSessions',
   ] as const;
-  const identityMismatches: string[] = [];
+  // レビュー指摘(bdboard-sso1.83): 各レンダーの不一致だけを保持すると、途中の
+  // レンダーで起きた参照崩れが直後のレンダーで上書きされ、最終 DOM の
+  // アサーションからは見えなくなる。全レンダーを通じて一度でも崩れた key を
+  // 蓄積し続けることで、テスト末尾の1回の DOM チェックでも履歴全体を検証できる
+  // ようにする。
+  const allMismatchesRef = useRef<string[]>([]);
   for (const key of stableKeys) {
     const current = drawer[key];
     if (key in seen.current && seen.current[key] !== current) {
-      identityMismatches.push(key);
+      allMismatchesRef.current.push(key);
     }
     seen.current[key] = current;
   }
@@ -40,7 +45,7 @@ function Probe() {
       <p data-testid="rename-draft">{drawer.state.renameDraft}</p>
       <p data-testid="confirming-delete">{drawer.state.confirmingDeleteSessionId ?? ''}</p>
       <p data-testid="discovered-sessions">{String(drawer.state.showDiscoveredSessions)}</p>
-      <p data-testid="identity-mismatches">{identityMismatches.join(',')}</p>
+      <p data-testid="identity-mismatches">{allMismatchesRef.current.join(',')}</p>
       <button type="button" onClick={drawer.toggleDrawer}>
         toggleDrawer
       </button>

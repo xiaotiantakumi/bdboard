@@ -732,7 +732,7 @@ export function ChatPanel({
     // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
     // selectedSessionId をここで書き換える対象が無い — 既存の永続化済み選択は
     // そのまま(次回訪問時にまた同じ既存スレッドへ戻れるように)残す。
-  }, [updateConversationAttachments]);
+  }, [updateConversationAttachments, cancelThreadConfirmDelete]);
 
   const { requestClose } = useHistoryBackClose({
     panelId: 'chat',
