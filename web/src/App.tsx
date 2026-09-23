@@ -1,22 +1,6 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  fetchAllHarnessStatus,
-  fetchBoard,
-  fetchBoardThresholdsConfig,
-  fetchChatAvailability,
-  fetchPendingDecisions,
-  fetchPrLinks,
-  fetchProjects,
-  fetchSessions,
-  fetchStatus,
-  type BoardCardDto,
-  type PendingDecisionDto,
-  type PrBadgeDto,
-  type ProjectDto,
-  type ProjectHarnessStatusDto,
-} from './api';
-import { setBoardTimeZoneOverride } from './boardTimeZone';
+import type { ProjectDto } from './api';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
 import { BulkSelectionProvider } from './components/BulkSelectionProvider';
@@ -39,8 +23,6 @@ import { AppSearchOverlay } from './components/app/AppSearchOverlay';
 import { AppTunnelOverlay } from './components/app/AppTunnelOverlay';
 import { AppChatOverlay } from './components/app/AppChatOverlay';
 import { AppViewContent } from './components/app/AppViewContent';
-import type { WipLimitsOverrides } from './wip-limits';
-import { useAppBadge } from './hooks/useAppBadge';
 import { useHeaderHeightVar } from './hooks/useHeaderHeightVar';
 import { useNotificationEvents } from './hooks/useNotificationEvents';
 import { useWatchedTicketDetails } from './hooks/useWatchedTicketDetails';
@@ -50,7 +32,6 @@ import { useTicketDeepLink } from './hooks/useTicketDeepLink';
 import {
   boardApiModeFromView,
   DEFAULT_VIEW,
-  sanitizeProjectFilter,
   UI_STORAGE_KEYS,
   validateActivityWindowDays,
   validateBoolean,
@@ -69,14 +50,17 @@ import {
   type BoardFilterPresetState,
 } from './uiPersistedState';
 import { useLastServerContact } from './hooks/useLastServerContact';
-import {
-  collectBoardCardsById,
-  collectBoardLabels,
-  collectBoardTicketIds,
-} from './boardTicketIds';
+import { useProjectsData } from './hooks/useProjectsData';
+import { useSessionsData } from './hooks/useSessionsData';
+import { useStatusData } from './hooks/useStatusData';
+import { useBoardData } from './hooks/useBoardData';
+import { usePendingDecisionsData } from './hooks/usePendingDecisionsData';
+import { usePrLinksData } from './hooks/usePrLinksData';
+import { useChatAvailabilityData } from './hooks/useChatAvailabilityData';
+import { useBoardThresholdsData } from './hooks/useBoardThresholdsData';
+import { useHarnessStatusData } from './hooks/useHarnessStatusData';
 import { buildPaletteActions } from './paletteActions';
 import { isTypingTarget } from './keyboardShortcuts';
-import { compareStrings } from './compare';
 
 export function App() {
   useHeaderHeightVar();
@@ -235,138 +219,43 @@ export function App() {
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
 
-  const projectsQuery = useQuery({
-    queryKey: ['projects'],
-    queryFn: fetchProjects,
-  });
+  /*
+   * データ取得 9 系統 (bdboard-62p4 PR-3)。元は9つの useQuery とそこから導く
+   * useMemo/useEffect がすべて App 本体にフラットに並んでいたが、関心ごとの
+   * カスタムフック (web/src/hooks/useXxxData.ts) へ抽出した。各フックの
+   * queryKey/queryFn/enabled/retry と派生 useMemo の依存配列・本体は元の
+   * App.tsx から1文字も変えていない — 詳細は各フックの JSDoc と PR 本文の
+   * 対照表を参照。呼び出し順は元の宣言順 (projects → sessions → status →
+   * board → useLastServerContact → pendingDecisions → prLinks →
+   * chatAvailability → boardThresholds → harnessStatus) をそのまま維持して
+   * いる。useAppBadge の呼び出し位置だけ pendingDecisions 側へ前倒しした
+   * 理由は usePendingDecisionsData.ts の JSDoc を参照。
+   */
+  const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
+    useProjectsData({ setSelectedProjectIds });
 
-  // N7: `projectsQuery.data ?? []` builds a fresh array literal on every
-  // render while the query is still loading. ChatPanel's ticket-context
-  // effect (bdboard-3tw.104.14 S1) depends on `projects` to re-evaluate once
-  // the list arrives, so an unstable reference here would make that effect
-  // re-run on every unrelated App re-render in the meantime. Memoize a
-  // stable fallback so it only changes when the query data actually does.
-  const chatProjects = useMemo(() => projectsQuery.data ?? [], [projectsQuery.data]);
+  const { totalSessionCount, activeSessionCount } = useSessionsData();
 
-  const sessionsQuery = useQuery({
-    queryKey: ['sessions'],
-    queryFn: fetchSessions,
-  });
+  const { statusQuery, lastRefreshAt, statusErrors } = useStatusData();
 
-  const statusQuery = useQuery({
-    queryKey: ['status'],
-    queryFn: fetchStatus,
-  });
-
-  useEffect(() => {
-    setBoardTimeZoneOverride(statusQuery.data?.boardTimeZone);
-  }, [statusQuery.data?.boardTimeZone]);
-
-  const boardQuery = useQuery({
-    queryKey: ['board', boardApiMode, selectedProjectIdsJoined, epicFilterId],
-    queryFn: () =>
-      fetchBoard({
-        projectIds: selectedProjectIds,
-        view: boardApiMode,
-        ...(epicFilterId !== undefined ? { epicId: epicFilterId } : {}),
-      }),
+  const { boardQuery, boardTicketIds, availableLabels, boardCardsById } = useBoardData({
+    boardApiMode,
+    selectedProjectIds,
+    selectedProjectIdsJoined,
+    epicFilterId,
   });
 
   const { streamState, lastContactAtMs, reconnect, connectStalled } = useLastServerContact(boardQuery.dataUpdatedAt);
 
-  const pendingDecisionsQuery = useQuery({
-    queryKey: ['pending-decisions'],
-    queryFn: fetchPendingDecisions,
-  });
+  const { pendingDecisionsById, pendingDecisionIds } = usePendingDecisionsData();
 
-  const prLinksQuery = useQuery({
-    queryKey: ['pr-links', selectedProjectIdsJoined],
-    queryFn: () => fetchPrLinks(selectedProjectIds),
-    retry: false,
-  });
+  const { prLinksById } = usePrLinksData(selectedProjectIds, selectedProjectIdsJoined);
 
-  // PR バッジ用スキャンが close 証拠の唯一の走査元になったため、これが完了しても
-  // hygiene 側からは分からない。手動で invalidate しないと、静かなボードでは初回表示が
-  // 全件 unknown のまま SSE イベントまで解消しない (bdboard-pkr6.16 レビュー対応, m3)。
-  useEffect(() => {
-    if (prLinksQuery.dataUpdatedAt > 0) {
-      void queryClient.invalidateQueries({ queryKey: ['hygiene'] });
-    }
-  }, [prLinksQuery.dataUpdatedAt, queryClient]);
+  const { chatAvailable } = useChatAvailabilityData();
 
-  useAppBadge(pendingDecisionsQuery.data?.length);
+  const { wipLimitsOverrides } = useBoardThresholdsData();
 
-  const chatAvailabilityQuery = useQuery({
-    queryKey: ['chat-availability'],
-    queryFn: fetchChatAvailability,
-    retry: false,
-  });
-
-  const boardThresholdsQuery = useQuery({
-    queryKey: ['board-thresholds-config'],
-    queryFn: fetchBoardThresholdsConfig,
-    retry: false,
-  });
-
-  /*
-   * 一括実行の前提判定 (bdboard-pkr6.11) 用。Next Up を見ているときだけ引く
-   * — 判定に使うのはそのビューのボタンだけで、他のビューでは注入先の
-   * `.claude/` を読ませる理由が無い。取得できなくても「不明」として扱い、
-   * ボタンは殺さない (最終判定はサーバーの preflight)。
-   */
-  const harnessStatusQuery = useQuery({
-    queryKey: ['harness-status-all'],
-    queryFn: fetchAllHarnessStatus,
-    enabled: view === 'next',
-    retry: false,
-  });
-
-  const harnessStatuses = useMemo(() => {
-    const map = new Map<string, ProjectHarnessStatusDto>();
-    for (const entry of harnessStatusQuery.data?.projects ?? []) {
-      map.set(entry.projectId, { packs: entry.packs, contract: entry.contract });
-    }
-    return map;
-  }, [harnessStatusQuery.data]);
-
-  const wipLimitsOverrides = useMemo((): WipLimitsOverrides => {
-    const config = boardThresholdsQuery.data;
-    if (config === undefined) {
-      return {};
-    }
-    return {
-      ...(config.inProgressWipLimit !== null
-        ? { inProgressWipLimit: config.inProgressWipLimit }
-        : {}),
-      inProgressWipLimitByProject: config.inProgressWipLimitByProject,
-    };
-  }, [boardThresholdsQuery.data]);
-
-  // 'unknown'(認証未確認) でもチャット自体は開かせる。開けなくすると
-  // 「判定できていないだけ」を「使えない」と扱う別種の嘘になる。
-  const chatAvailable =
-    chatAvailabilityQuery.data !== undefined &&
-    chatAvailabilityQuery.data.availability !== 'unavailable';
-
-  const pendingDecisionsById = useMemo(() => {
-    const map = new Map<string, PendingDecisionDto>();
-    for (const decision of pendingDecisionsQuery.data ?? []) {
-      map.set(decision.id, decision);
-    }
-    return map;
-  }, [pendingDecisionsQuery.data]);
-
-  const pendingDecisionIds = useMemo(() => {
-    return new Set(pendingDecisionsById.keys());
-  }, [pendingDecisionsById]);
-
-  const prLinksById = useMemo(() => {
-    const map = new Map<string, PrBadgeDto>();
-    for (const badge of prLinksQuery.data ?? []) {
-      map.set(badge.ticketId, badge);
-    }
-    return map;
-  }, [prLinksQuery.data]);
+  const { harnessStatusQuery, harnessStatuses } = useHarnessStatusData(view);
 
   const boardFilterPresetState = useMemo<BoardFilterPresetState>(
     () => ({
@@ -430,86 +319,6 @@ export function App() {
     }
   }, [boardFilterPresets, hadStoredFilterStateAtStartup, handleApplyBoardFilterPreset]);
 
-  const projectNames = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const project of projectsQuery.data ?? []) {
-      map.set(project.id, project.name);
-    }
-    return map;
-  }, [projectsQuery.data]);
-
-  const projectActiveSessions = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const project of projectsQuery.data ?? []) {
-      map.set(project.id, project.activeSessionCount);
-    }
-    return map;
-  }, [projectsQuery.data]);
-
-  useEffect(() => {
-    const projects = projectsQuery.data;
-    if (projects === undefined) {
-      return;
-    }
-    const availableProjectIds = projects.map((project) => project.id);
-    setSelectedProjectIds((current) =>
-      sanitizeProjectFilter(current, availableProjectIds),
-    );
-  }, [projectsQuery.data, setSelectedProjectIds]);
-
-  const boardTicketIds = useMemo(() => {
-    const ids = new Set<string>();
-    const data = boardQuery.data;
-    if (data === undefined) {
-      return ids;
-    }
-    if (data.merged !== null) {
-      collectBoardTicketIds(data.merged, ids);
-    }
-    for (const entry of data.projects) {
-      collectBoardTicketIds(entry.board, ids);
-    }
-    return ids;
-  }, [boardQuery.data]);
-
-  // undefined = 「盤面をまだ知らない」(初回描画・クエリキー変更直後・取得失敗で
-  // data が undefined のまま)。空配列 = 「盤面は分かっていてラベルが 1 つも無い」。
-  // ここを [] に潰すと、選択中ラベルが localStorage から復元されている初回描画や
-  // 取得失敗中に「選んだラベルは全部盤面に無い」という嘘を BoardFilterBar が
-  // 出してしまう (bdboard-gxq5)。区別できる形のまま渡し、判定は受け手に任せる。
-  const availableLabels = useMemo<string[] | undefined>(() => {
-    const labels = new Set<string>();
-    const data = boardQuery.data;
-    if (data === undefined) {
-      return undefined;
-    }
-    if (data.merged !== null) {
-      collectBoardLabels(data.merged, labels);
-    }
-    for (const entry of data.projects) {
-      collectBoardLabels(entry.board, labels);
-    }
-    // BoardFilterBar が同じ集合を compareStrings で並べ直すので、ここも明示的に
-    // 同じコンパレータを使って desync のクラスごと消す。素の .sort() と
-    // compareStrings は同じ < 意味論なので、これは挙動として no-op (bdboard-254q)。
-    return [...labels].sort(compareStrings);
-  }, [boardQuery.data]);
-
-  const boardCardsById = useMemo(() => {
-    const map = new Map<string, BoardCardDto>();
-    const data = boardQuery.data;
-    if (data === undefined) {
-      return map;
-    }
-    if (data.merged !== null) {
-      collectBoardCardsById(data.merged, map);
-    }
-    for (const entry of data.projects) {
-      collectBoardCardsById(entry.board, map);
-    }
-    return map;
-  }, [boardQuery.data]);
-
   const { watchedSet, stopWatching } = useWatchedTickets();
   const watchedTicketDetails = useWatchedTicketDetails(
     watchedSet,
@@ -522,14 +331,6 @@ export function App() {
     boardCardsById,
     watchedTicketDetails,
   });
-
-  const projectRootPaths = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const project of projectsQuery.data ?? []) {
-      map.set(project.id, project.rootPath);
-    }
-    return map;
-  }, [projectsQuery.data]);
 
   const handleRecordRecentTicket = useCallback(
     (entry: { id: string; title: string; projectId: string }) => {
@@ -548,11 +349,6 @@ export function App() {
     (ticketId: string) => boardTicketIds.has(ticketId),
     [boardTicketIds],
   );
-
-  const totalSessionCount = (sessionsQuery.data ?? []).length;
-  const activeSessionCount = (sessionsQuery.data ?? []).filter(
-    (session) => session.liveness === 'active',
-  ).length;
 
   const isRefreshing = boardQuery.isFetching || statusQuery.isFetching;
 
@@ -754,9 +550,6 @@ export function App() {
     selectedTicketId,
     shortcutsOpen,
   ]);
-
-  const lastRefreshAt = statusQuery.data?.lastRefreshAt;
-  const statusErrors = statusQuery.data?.errors ?? [];
 
   return (
     <UndoSnackbarProvider>
