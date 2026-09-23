@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import type { ProjectThroughputStatsDto } from '../api';
 import {
   fetchCfdStats,
@@ -19,6 +20,13 @@ import { StatsCard } from './stats/StatsCard';
 import { ModelStatsTables } from './stats/ModelStatsTables';
 import { HarnessKpiTable } from './stats/HarnessKpiTable';
 
+// bdboard-ws2w: throughput-stats/model-stats/harness-kpi は board.changed の
+// invalidate 対象から外した (重い集計を夜間の board.changed 連発で毎回再取得する
+// と常駐サーバーが詰まっていたため。boardChangedQueryKeys.ts の exclusions 参照)。
+// 代わりに既定の staleTime (30秒) より長い間隔にして自動再取得の頻度を抑え、
+// 秒単位の鮮度が欲しい場合はヘッダーの再読み込みボタンで明示的に更新する。
+const STATS_QUERY_STALE_TIME_MS = 5 * 60_000;
+
 export interface ThroughputStatsProps {
   readonly projectIds: readonly string[];
   weeks: StatsWeeks;
@@ -35,6 +43,7 @@ export function ThroughputStats({
   const query = useQuery({
     queryKey: ['throughput-stats', weeks, projectIdsKey],
     queryFn: () => fetchThroughputStats(weeks, projectIds),
+    staleTime: STATS_QUERY_STALE_TIME_MS,
   });
   const cfdQuery = useQuery({
     queryKey: ['cfd-stats', cfdDays, projectIdsKey],
@@ -43,11 +52,34 @@ export function ThroughputStats({
   const modelStatsQuery = useQuery({
     queryKey: ['model-stats', weeks, projectIdsKey],
     queryFn: () => fetchModelStats(weeks, projectIds),
+    staleTime: STATS_QUERY_STALE_TIME_MS,
   });
   const harnessKpiQuery = useQuery({
     queryKey: ['harness-kpi', weeks, projectIdsKey],
     queryFn: () => fetchHarnessKpi(weeks, projectIds),
+    staleTime: STATS_QUERY_STALE_TIME_MS,
   });
+
+  // bdboard-ws2w: board.changed で自動追従しなくなった分、統計タブ自身に
+  // 明示的な再読み込み手段を置く。CFD は board.changed に残しているが、ボタンを
+  // 押した時点の最新値に揃えるためここでもまとめて再取得する。
+  // ボタンの活性状態は各クエリの生の isFetching ではなく、クリック起点の
+  // ローカル state で管理する: cfd-stats は board.changed のたびに裏で
+  // 再取得され続けるので、isFetching をそのまま使うと自分が押していなくても
+  // ボタンが「再読み込み中…」表示になってしまう (レビュー指摘)。実行中の
+  // 追加クリックは無視し、二重リクエストも防ぐ。
+  const [isManualReloading, setIsManualReloading] = useState(false);
+
+  const handleReloadStats = () => {
+    if (isManualReloading) return;
+    setIsManualReloading(true);
+    void Promise.allSettled([
+      query.refetch(),
+      cfdQuery.refetch(),
+      modelStatsQuery.refetch(),
+      harnessKpiQuery.refetch(),
+    ]).finally(() => setIsManualReloading(false));
+  };
 
   // ハーネスKPI は統計タブの中では付加的なブロックなので、ここが落ちても
   // スループット/CFD/モデル別実績まで巻き添えにしない (ブロック内だけで degrade する)。
@@ -82,6 +114,14 @@ export function ThroughputStats({
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            className="btn btn-small throughput-reload-btn"
+            onClick={handleReloadStats}
+            disabled={isManualReloading}
+          >
+            {isManualReloading ? '再読み込み中…' : '統計を再読み込み'}
+          </button>
         </div>
       </div>
 
