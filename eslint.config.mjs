@@ -38,7 +38,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/infrastructure/process/cloudflared-tunnel.ts': 320, // 現在 311
   'src/application/lease/reclaim-scheduler.ts': 280, // 現在 280
   'web/src/api/chat.ts': 280, // 現在 279
-  'src/domain/harness-kpi.ts': 270, // 現在 270
   'src/interface/http/harness-routes.ts': 270, // 現在 270
   'src/infrastructure/git/git-worktree-scanner.ts': 270, // 現在 269
   'src/interface/http/basic-auth.ts': 270, // 現在 262
