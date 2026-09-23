@@ -78,8 +78,14 @@ describe('usePrLinksData', () => {
 
   it('does not invalidate the hygiene query while the pr-links fetch is still pending', () => {
     fetchPrLinksMock.mockReturnValue(new Promise(() => {}));
-    const { queryClient } = renderPrLinksData([], '');
+    // The spy must be attached *before* renderHook mounts the component, since
+    // renderHook synchronously runs the first effect pass as part of mounting.
+    // Attaching it afterwards would silently miss that first invocation and let
+    // the assertion below pass even if the hook's `dataUpdatedAt > 0` guard were
+    // removed entirely (bdboard-62p4 PR-3 opus review finding #2).
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    renderPrLinksData([], '', queryClient);
 
     expect(invalidateSpy).not.toHaveBeenCalled();
   });

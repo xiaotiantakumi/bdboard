@@ -77,12 +77,24 @@ describe('useProjectsData', () => {
     expect(result.current.projectRootPaths.get('p-b')).toBe('/repo/beta');
   });
 
-  it('returns a stable empty array for chatProjects while the query is still pending', () => {
+  it('returns a referentially stable empty array for chatProjects while the query is still pending', () => {
+    // Asserts actual reference stability (toBe, not toEqual) across a re-render,
+    // which is the entire point of the N7 useMemo guard this hook preserves --
+    // ChatPanel's ticket-context effect depends on `chatProjects` and must not
+    // re-run on every unrelated App re-render while data is still loading.
+    // A toEqual-only check (bdboard-62p4 PR-3 opus review finding #4) would still
+    // pass even if the useMemo were deleted and replaced with a fresh `[]` literal
+    // on every render, since two empty arrays are toEqual but not toBe.
     fetchProjectsMock.mockReturnValue(new Promise(() => {}));
-    const { result } = renderProjectsData();
+    const { result, rerender } = renderProjectsData();
 
-    expect(result.current.chatProjects).toEqual([]);
+    const first = result.current.chatProjects;
+    expect(first).toEqual([]);
     expect(result.current.projectNames.size).toBe(0);
+
+    rerender();
+
+    expect(result.current.chatProjects).toBe(first);
   });
 
   it('sanitizes the selected project ids once the project list arrives, dropping ids no longer present', async () => {

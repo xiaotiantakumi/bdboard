@@ -76,11 +76,17 @@ describe('useStatusData', () => {
   });
 
   it('propagates a non-null boardTimeZone override into getBoardTimeZone via the sync effect', async () => {
-    fetchStatusMock.mockResolvedValue(makeStatus({ boardTimeZone: 'Asia/Tokyo' }));
+    // Deliberately an IANA zone ('Pacific/Chatham', UTC+12:45) that is never a
+    // developer/CI host's own local zone, so this assertion can only pass if the
+    // sync effect actually ran the override -- not because getBoardTimeZone()'s
+    // untouched default happens to already match (bdboard-62p4 PR-3 opus review
+    // finding #3: the previous 'Asia/Tokyo' value coincided with this machine's
+    // own zone and made the test pass even with the sync effect deleted).
+    fetchStatusMock.mockResolvedValue(makeStatus({ boardTimeZone: 'Pacific/Chatham' }));
     const { result } = renderStatusData();
 
-    await waitFor(() => expect(result.current.statusQuery.data?.boardTimeZone).toBe('Asia/Tokyo'));
-    await waitFor(() => expect(getBoardTimeZone()).toBe('Asia/Tokyo'));
+    await waitFor(() => expect(result.current.statusQuery.data?.boardTimeZone).toBe('Pacific/Chatham'));
+    await waitFor(() => expect(getBoardTimeZone()).toBe('Pacific/Chatham'));
   });
 
   it('does not override the board time zone when boardTimeZone is null', async () => {

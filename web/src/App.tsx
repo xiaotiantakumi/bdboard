@@ -220,43 +220,22 @@ export function App() {
   const boardApiMode = boardApiModeFromView(view);
 
   /*
-   * データ取得 9 系統 (bdboard-62p4 PR-3)。元は9つの useQuery とそこから導く
-   * useMemo/useEffect がすべて App 本体にフラットに並んでいたが、関心ごとの
-   * カスタムフック (web/src/hooks/useXxxData.ts) へ抽出した。各フックの
-   * queryKey/queryFn/enabled/retry と派生 useMemo の依存配列・本体は元の
-   * App.tsx から1文字も変えていない — 詳細は各フックの JSDoc と PR 本文の
-   * 対照表を参照。呼び出し順は元の宣言順 (projects → sessions → status →
-   * board → useLastServerContact → pendingDecisions → prLinks →
-   * chatAvailability → boardThresholds → harnessStatus) をそのまま維持して
-   * いる。useAppBadge の呼び出し位置だけ pendingDecisions 側へ前倒しした
-   * 理由は usePendingDecisionsData.ts の JSDoc を参照。
+   * bdboard-62p4 PR-3 レビュー対応: この2つ (boardFilterPresetState /
+   * handleApplyBoardFilterPreset) と「既定」プリセット自動適用 effect は、
+   * 元の App.tsx では下のデータ取得9系統より後ろで宣言されていたが、
+   * 依存先 (view/selectedProjectIds/boardFilterState 由来の値・setView・
+   * setSelectedProjectIds) はすべてこれより前で定義済みでデータ取得9系統には
+   * 依存しない。一方で useProjectsData 内のプロジェクト絞り込み sanitize
+   * effect は projectsQuery.data に依存し、元のコードでは「既定プリセット
+   * 適用 effect」→「sanitize effect」の順で実行されていた (同一コミット内で
+   * setSelectedProjectIds が2回連続で呼ばれる際の実行順)。抽出後にこの並びを
+   * そのまま (データ取得9系統を先に呼ぶ) にすると、初回マウント時に
+   * projectsQuery のデータが既にキャッシュ済みだと sanitize が先に走り、
+   * 既定プリセットが上書きするはずのサニタイズ結果を今度はプリセット適用が
+   * 上書きしてしまう逆転が起きる。それを避けるため、この3つを元の相対順序
+   * (プリセット適用 effect が先、sanitize effect が後) を保つようデータ
+   * 取得9系統より前に前倒しした。
    */
-  const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
-    useProjectsData({ setSelectedProjectIds });
-
-  const { totalSessionCount, activeSessionCount } = useSessionsData();
-
-  const { statusQuery, lastRefreshAt, statusErrors } = useStatusData();
-
-  const { boardQuery, boardTicketIds, availableLabels, boardCardsById } = useBoardData({
-    boardApiMode,
-    selectedProjectIds,
-    selectedProjectIdsJoined,
-    epicFilterId,
-  });
-
-  const { streamState, lastContactAtMs, reconnect, connectStalled } = useLastServerContact(boardQuery.dataUpdatedAt);
-
-  const { pendingDecisionsById, pendingDecisionIds } = usePendingDecisionsData();
-
-  const { prLinksById } = usePrLinksData(selectedProjectIds, selectedProjectIdsJoined);
-
-  const { chatAvailable } = useChatAvailabilityData();
-
-  const { wipLimitsOverrides } = useBoardThresholdsData();
-
-  const { harnessStatusQuery, harnessStatuses } = useHarnessStatusData(view);
-
   const boardFilterPresetState = useMemo<BoardFilterPresetState>(
     () => ({
       view,
@@ -318,6 +297,47 @@ export function App() {
       handleApplyBoardFilterPreset(defaultPreset);
     }
   }, [boardFilterPresets, hadStoredFilterStateAtStartup, handleApplyBoardFilterPreset]);
+
+  /*
+   * データ取得 9 系統 (bdboard-62p4 PR-3)。元は9つの useQuery とそこから導く
+   * useMemo/useEffect がすべて App 本体にフラットに並んでいたが、関心ごとの
+   * カスタムフック (web/src/hooks/useXxxData.ts) へ抽出した。各フックの
+   * queryKey/queryFn/enabled/retry と派生 useMemo の依存配列・本体は元の
+   * App.tsx から1文字も変えていない — 詳細は各フックの JSDoc と PR 本文の
+   * 対照表を参照。9系統どうしの呼び出し順は元の宣言順 (projects → sessions →
+   * status → board → useLastServerContact → pendingDecisions → prLinks →
+   * chatAvailability → boardThresholds → harnessStatus) をそのまま維持して
+   * いる。useAppBadge の呼び出し位置だけ pendingDecisions 側へ前倒しした
+   * 理由は usePendingDecisionsData.ts の JSDoc を参照。boardFilterPresetState/
+   * handleApplyBoardFilterPreset/既定プリセット適用 effect がこの9系統より
+   * 前に来ている理由は直前のコメントを参照 (sanitize effect との相対順序を
+   * 保つための前倒し)。
+   */
+  const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
+    useProjectsData({ setSelectedProjectIds });
+
+  const { totalSessionCount, activeSessionCount } = useSessionsData();
+
+  const { statusQuery, lastRefreshAt, statusErrors } = useStatusData();
+
+  const { boardQuery, boardTicketIds, availableLabels, boardCardsById } = useBoardData({
+    boardApiMode,
+    selectedProjectIds,
+    selectedProjectIdsJoined,
+    epicFilterId,
+  });
+
+  const { streamState, lastContactAtMs, reconnect, connectStalled } = useLastServerContact(boardQuery.dataUpdatedAt);
+
+  const { pendingDecisionsById, pendingDecisionIds } = usePendingDecisionsData();
+
+  const { prLinksById } = usePrLinksData(selectedProjectIds, selectedProjectIdsJoined);
+
+  const { chatAvailable } = useChatAvailabilityData();
+
+  const { wipLimitsOverrides } = useBoardThresholdsData();
+
+  const { harnessStatusQuery, harnessStatuses } = useHarnessStatusData(view);
 
   const { watchedSet, stopWatching } = useWatchedTickets();
   const watchedTicketDetails = useWatchedTicketDetails(

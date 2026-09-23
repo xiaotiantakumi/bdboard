@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
-import { fetchProjects, type ProjectDto } from '../api';
+import { fetchProjects } from '../api';
 import { sanitizeProjectFilter } from '../uiPersistedState';
 
 /**
@@ -65,7 +65,7 @@ export function useProjectsData({ setSelectedProjectIds }: UseProjectsDataParams
     if (projects === undefined) {
       return;
     }
-    const availableProjectIds = projects.map((project: ProjectDto) => project.id);
+    const availableProjectIds = projects.map((project) => project.id);
     setSelectedProjectIds((current) =>
       sanitizeProjectFilter(current, availableProjectIds),
     );

@@ -9,7 +9,10 @@ import type { ViewMode } from '../uiPersistedState';
  * useMemo の依存配列・本体は元の App.tsx (旧 L317-330) から1文字も
  * 変えていない。一括実行の前提判定 (bdboard-pkr6.11) 用で、Next Up を
  * 見ているときだけ引く — 判定に使うのはそのビューのボタンだけで、他の
- * ビューでは注入先の `.claude/` を読ませる理由が無い。
+ * ビューでは注入先の `.claude/` を読ませる理由が無い。取得できなくても
+ * 「不明」として扱い、ボタンは殺さない (最終判定はサーバーの preflight) —
+ * これが `retry: false` の理由 (opus review finding #7 で元コメントの
+ * この一文が抜けていた点を復元)。
  */
 export function useHarnessStatusData(view: ViewMode) {
   const harnessStatusQuery = useQuery({

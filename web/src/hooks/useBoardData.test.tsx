@@ -14,7 +14,11 @@ import { useBoardData } from './useBoardData';
 
 const fetchBoardMock = vi.mocked(fetchBoard);
 
-function makeCard(id: string, lane: BoardCardDto['lane'] = 'ready'): BoardCardDto {
+function makeCard(
+  id: string,
+  lane: BoardCardDto['lane'] = 'ready',
+  labels?: string[],
+): BoardCardDto {
   return {
     ticket: {
       id,
@@ -26,7 +30,7 @@ function makeCard(id: string, lane: BoardCardDto['lane'] = 'ready'): BoardCardDt
       createdAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-02T00:00:00.000Z',
       commentCount: 0,
-      labels: id === 'bdboard-labeled' ? ['frontend'] : [],
+      labels: labels ?? (id === 'bdboard-labeled' ? ['frontend'] : []),
     },
     lane,
     projectId: 'proj-1',
@@ -141,7 +145,22 @@ describe('useBoardData', () => {
 
   it('derives boardTicketIds/availableLabels/boardCardsById from merged and per-project boards', async () => {
     const boardView = makeBoardView({
-      merged: makeBoard({ lanes: { ready: [makeCard('bdboard-merged')], in_progress: [], awaiting_human: [], blocked: [], done: [] } }),
+      merged: makeBoard({
+        lanes: {
+          ready: [
+            makeCard('bdboard-merged'),
+            // Deliberately unsorted, multi-label card so this test actually
+            // exercises the compareStrings sort on availableLabels rather than
+            // passing vacuously on a single-label fixture (bdboard-62p4 PR-3
+            // opus review finding #5).
+            makeCard('bdboard-multilabel', 'ready', ['zebra', 'apple']),
+          ],
+          in_progress: [],
+          awaiting_human: [],
+          blocked: [],
+          done: [],
+        },
+      }),
       projects: [
         {
           project: {
@@ -173,7 +192,8 @@ describe('useBoardData', () => {
 
     expect(result.current.boardTicketIds.has('bdboard-merged')).toBe(true);
     expect(result.current.boardTicketIds.has('bdboard-labeled')).toBe(true);
-    expect(result.current.availableLabels).toEqual(['frontend']);
+    expect(result.current.boardTicketIds.has('bdboard-multilabel')).toBe(true);
+    expect(result.current.availableLabels).toEqual(['apple', 'frontend', 'zebra']);
     expect(result.current.boardCardsById.has('bdboard-merged')).toBe(true);
     expect(result.current.boardCardsById.has('bdboard-labeled')).toBe(true);
   });
