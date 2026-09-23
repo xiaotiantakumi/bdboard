@@ -2,26 +2,15 @@ import { useRef } from 'react';
 import { type BoardDto, type Lane, type PrBadgeDto } from '../../api';
 import { useMatchMedia } from '../../hooks/useMatchMedia';
 import { MOBILE_LAYOUT_MEDIA_QUERY } from '../../mediaQueries';
-import {
-  type BoardFilter,
-  boardFilterKey,
-  filterBoardCards,
-} from '../../boardFilter';
+import { type BoardFilter, boardFilterKey } from '../../boardFilter';
 import { useBoardDnD } from '../BoardDnDProvider';
 import { BoardKeyboardNavProvider, useBoardKeyboardNav } from '../BoardKeyboardNavProvider';
 import { LaneColumn } from '../LaneColumn';
+import { LaneScrollIndicator } from '../LaneScrollIndicator';
+import { type WipLimitsOverrides } from '../../wip-limits';
 import {
-  LaneScrollIndicator,
-  type LaneIndicatorItem,
-} from '../LaneScrollIndicator';
-import {
-  computeWipStatus,
-  resolveWipLimitForLane,
-  type WipLimitsOverrides,
-} from '../../wip-limits';
-import {
-  applyStalledOnly,
-  laneIndicatorCountLabel,
+  deriveLaneRowData,
+  laneIndicatorItemsFrom,
   visibleLanes,
 } from './boardLanesHelpers';
 
@@ -83,42 +72,16 @@ function LanesRow({
   const lanesRowRef = useRef<HTMLDivElement>(null);
   const showLaneIndicator = useMatchMedia(MOBILE_LAYOUT_MEDIA_QUERY);
 
-  const laneDerived = lanes.map((lane) => {
-    const laneCards = board.lanes[lane] ?? [];
-    const afterStalled = applyStalledOnly(laneCards, stalledOnly);
-    const filteredCards = filterBoardCards(afterStalled, filter);
-    const wipLimit =
-      lane === 'in_progress'
-        ? resolveWipLimitForLane(wipLimitsOverrides, wipProjectId)
-        : undefined;
-    const wipStatus =
-      lane === 'in_progress' && wipLimit !== undefined
-        ? computeWipStatus(laneCards.length, wipLimit)
-        : undefined;
-    const wipStatusForColumn:
-      | { limit: number; count: number; exceeded: true }
-      | undefined =
-      wipStatus?.exceeded === true && wipStatus.limit !== undefined
-        ? { limit: wipStatus.limit, count: wipStatus.count, exceeded: true }
-        : undefined;
-    return {
-      lane,
-      filteredCards,
-      afterStalled,
-      wipStatusForColumn,
-    };
-  });
-
-  const laneIndicatorItems: LaneIndicatorItem[] = laneDerived.map(
-    ({ lane, filteredCards, afterStalled, wipStatusForColumn }) => ({
-      lane,
-      countLabel: laneIndicatorCountLabel(
-        filteredCards,
-        afterStalled.length,
-        wipStatusForColumn,
-      ),
-    }),
+  const laneDerived = deriveLaneRowData(
+    lanes,
+    board,
+    stalledOnly,
+    filter,
+    wipLimitsOverrides,
+    wipProjectId,
   );
+
+  const laneIndicatorItems = laneIndicatorItemsFrom(laneDerived);
 
   const laneColumns = laneDerived.map(
     ({ lane, filteredCards, afterStalled, wipStatusForColumn }) => (

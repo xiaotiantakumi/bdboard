@@ -20,7 +20,6 @@ const MAX_LINES_ALLOWLIST = {
   'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
   'web/src/components/TicketDetailPanel.tsx': 800, // 現在 757 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングを useTicketAgentRun.ts + TicketAgentRunTriggerSection.tsx + TicketAgentRunSection.tsx へ、human decision 回答を useTicketDecisionAnswer.ts + TicketDecisionSection.tsx へ移動)
   'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
-  'web/src/components/board/BoardLanes.tsx': 230, // 現在 214 (bdboard-sso1.44 PR-B: BoardView.tsx の LanesRow+BoardLanes を move-only 抽出。表示専用の1コンポーネント対で、これ以上分けるとJSX/DOMや親子関係を変えずには切れない。move-only 抽出のため新規ファイルだが例外的にここへ追加)
   'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
   'src/application/board/get-pr-badges.ts': 390, // 現在 388
   'src/infrastructure/process/cloudflared-tunnel.ts': 220, // 現在 213 (bdboard-sso1.54: ./cloudflared-tunnel/*.ts へ関心別分割。createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため分割せず残した)
