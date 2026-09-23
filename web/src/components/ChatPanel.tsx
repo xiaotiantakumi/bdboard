@@ -88,6 +88,7 @@ import { ChatMessageList } from './chat/ChatMessageList';
 import { ChatProjectBar } from './chat/ChatProjectBar';
 import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
 import { useThreadDrawerState } from './chat/useThreadDrawerState';
+import { useChatNotifications } from './chat/useChatNotifications';
 import { useChatDraftState } from './chat/useChatDraftState';
 import type { ChatMessage } from './chat/messages';
 
@@ -310,8 +311,10 @@ export function ChatPanel({
     toggleDiscoveredSessions: toggleShowDiscoveredSessions,
     closeDiscoveredSessions: closeShowDiscoveredSessions,
   } = useThreadDrawerState();
-  const [threadError, setThreadError] = useState<string | null>(null);
-  const [ticketProjectFallbackNotice, setTicketProjectFallbackNotice] = useState<string | null>(null);
+  // bdboard-sso1.83 第3段: threadError/ticketProjectFallbackNotice を
+  // chat/useChatNotifications.ts へ抜き出した(詳細はそちら参照)。
+  const { threadError, setThreadError, ticketProjectFallbackNotice, setTicketProjectFallbackNotice } =
+    useChatNotifications();
   const [agents, setAgents] = useState<readonly ChatAgentDto[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [selectedModelId, setSelectedModelId] = useState('');
@@ -954,7 +957,7 @@ export function ChatPanel({
       }
       setSelectedProjectId(nextProjectId);
     },
-    [adoptProjectFromColdKeyspace, selectedProjectId],
+    [adoptProjectFromColdKeyspace, selectedProjectId, setTicketProjectFallbackNotice],
   );
 
   useEffect(() => {
@@ -1095,7 +1098,7 @@ export function ChatPanel({
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: persisted?.selectedSessionId ?? open[0] }));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId]);
+  }, [selectedProjectId, setThreadError]);
 
   useEffect(() => {
     if (selectedProjectId === '') return;
