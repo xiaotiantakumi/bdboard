@@ -260,8 +260,15 @@ describe('getPrBadges: background continuation after timeout is not capped at ma
       expect(prStatusReader.getPrStatus).not.toHaveBeenCalled();
 
       // バックグラウンド継続が6件全部のコメント解決 (最大2バッチ×30ms) + ステータス
-      // 取得 (最大3バッチ×15ms、concurrency=2) を終えるまで待つ。
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      // 取得 (最大3バッチ×15ms、concurrency=2) を終えるまで待つ。固定 sleep だと
+      // 負荷の高いマシン/CIでフレークしうるので (opus レビュー指摘)、条件が満たされる
+      // まで短い間隔でポーリングする vi.waitFor を使う。
+      await vi.waitFor(
+        () => {
+          expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(ticketCount);
+        },
+        { timeout: 2000, interval: 10 },
+      );
 
       // 本題: maxNewFetchesPerCall=2 のままなら2件で打ち止めのはずが、応答タイムアウト
       // 後のバックグラウンド継続ではこの上限を外しているので6件全部が解決する。
@@ -272,4 +279,117 @@ describe('getPrBadges: background continuation after timeout is not capped at ma
       expect(maxObserved.value).toBeGreaterThan(1);
     },
   );
+});
+
+describe('getPrBadges: maxNewFetchesPerCall is ignored whenever overallTimeoutMs is set, even with a warm comment cache (bdboard-ksed)', () => {
+  it(
+    'launches gh for all tickets past maxNewFetchesPerCall when comment resolution is instant ' +
+      '(no timeout race needed), while still bounding concurrency via statusGate',
+    async () => {
+      // opus レビュー指摘 (finding 2): 上の 'background continuation after timeout' テストは
+      // コメント解決を意図的に30ms遅くしていたため、「応答タイムアウト後に外れる」という
+      // 当初の (誤りが見つかった) 設計しか検証できていなかった。本番の
+      // /api/pr-links はコメントキャッシュをリクエストをまたいで共有するため、2回目
+      // 以降の呼び出しではコメント解決がキャッシュヒットでほぼ一瞬に終わり、
+      // maxNewFetchesPerCall の予算はタイムアウトよりずっと前 (マイクロタスク単位) に
+      // 尽きてしまう —— これが実際に踏んだ本番のシナリオであり、この修正の本体
+      // (statusBudget を overallTimeoutMs 指定時は最初から無制限にする) が対象とする
+      // ケースそのもの。コメント解決を遅延ゼロにして、このケースを直接検証する。
+      const cache = createFakeBoardCache();
+      const a = project('proj-a', '/projects/a');
+      const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+      const ticketCount = 6;
+      const urls = Array.from(
+        { length: ticketCount },
+        (_, index) => `https://github.com/xiaotiantakumi/bdboard/pull/${930 + index}`,
+      );
+      cache.putProject({
+        project: a,
+        tickets: Array.from({ length: ticketCount }, (_, index) =>
+          makeTicket({ id: `bdboard-ksed-warm-${index}`, projectId: a.id, commentCount: 1, updatedAt }),
+        ),
+        fingerprint: 'fp-a',
+        fetchedAt: updatedAt,
+      });
+      const tickets = cache.listProjects()[0]!.tickets;
+      // 遅延なし = キャッシュヒットでコメント解決が一瞬に終わる状況のアナロジー。
+      const commentReader = commentReaderForUrls(tickets, urls);
+
+      let activeCount = 0;
+      const maxObserved = { value: 0 };
+      const prStatusReader: PrStatusReader = {
+        getPrStatus: vi.fn(async () => {
+          activeCount += 1;
+          maxObserved.value = Math.max(maxObserved.value, activeCount);
+          await new Promise((resolve) => setTimeout(resolve, 15));
+          activeCount -= 1;
+          return { status: { state: 'open', checkStatus: 'pass' } } as const;
+        }),
+      };
+
+      const statusCache = new PrBadgeStatusCache();
+
+      await getPrBadges(cache, commentReader, prStatusReader, {
+        statusCache,
+        maxNewFetchesPerCall: 2,
+        statusFetchConcurrency: 2,
+        // overallTimeoutMs を指定しているだけで十分 —— 実際にタイムアウトが発火
+        // するかどうかとは無関係に、maxNewFetchesPerCall は最初から適用されない
+        // はずなので、ここでは十分大きい値にしてタイムアウト自体は起きないように
+        // しておく (このテストの主張は「タイムアウト後だから外れる」ではなく
+        // 「overallTimeoutMs 指定時は最初から掛からない」なので、タイムアウトの
+        // 発火有無を主張から切り離す)。
+        overallTimeoutMs: 5_000,
+      });
+
+      // 本題: maxNewFetchesPerCall=2 なのに、タイムアウトすら発火していないこの
+      // 呼び出し内で6件全部が gh を起動できている。
+      expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(ticketCount);
+      expect(maxObserved.value).toBeLessThanOrEqual(2);
+      expect(maxObserved.value).toBeGreaterThan(1);
+    },
+  );
+
+  it('still enforces maxNewFetchesPerCall when overallTimeoutMs is not set at all', async () => {
+    // 対照実験: overallTimeoutMs を渡さない (完了まで同期的に待つ) 呼び出しでは、
+    // 従来通り maxNewFetchesPerCall で総数が絞られる — この修正が「常に無制限」に
+    // 後退していないことの回帰ガード。
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+    const ticketCount = 6;
+    const urls = Array.from(
+      { length: ticketCount },
+      (_, index) => `https://github.com/xiaotiantakumi/bdboard/pull/${940 + index}`,
+    );
+    cache.putProject({
+      project: a,
+      tickets: Array.from({ length: ticketCount }, (_, index) =>
+        makeTicket({ id: `bdboard-ksed-nolimit-${index}`, projectId: a.id, commentCount: 1, updatedAt }),
+      ),
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+    const tickets = cache.listProjects()[0]!.tickets;
+    const commentReader = commentReaderForUrls(tickets, urls);
+
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(
+        async () => ({ status: { state: 'open', checkStatus: 'pass' } }) as const,
+      ),
+    };
+
+    const statusCache = new PrBadgeStatusCache();
+    const logWarn = vi.fn();
+
+    await getPrBadges(cache, commentReader, prStatusReader, {
+      statusCache,
+      logWarn,
+      maxNewFetchesPerCall: 2,
+      statusFetchConcurrency: 2,
+      // overallTimeoutMs を渡さない。
+    });
+
+    expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
+  });
 });
