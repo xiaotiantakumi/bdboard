@@ -65,11 +65,13 @@ const PR_URL = 'https://github.com/xiaotiantakumi/bdboard/pull/99';
 
 // bdboard-sso1.87: 7ln6 系 (gh レート制限のサーキットブレーカー/新規フェッチ予算/
 // in-flight URL 共有/非レート制限失敗のネガティブキャッシュバックオフ/merged+pending
-// 恒久化) のテストを get-pr-badges.7ln6.test.ts へ、se3v (overallTimeoutMs) と
-// PrBadgeCommentCache.prune のテストを get-pr-badges.se3v.test.ts へ切り出した
-// (ESLint max-lines 上限、eslint.config.mjs の MAX_LINES_ALLOWLIST 超過対応)。
-// 命名規約は sgpa/ksed に倣う。makeManyProjectTickets/commentReaderForUrls は
-// 切り出し先の get-pr-badges.7ln6.test.ts でしか使わないため、そちらにのみ複製した。
+// 恒久化) のテストを get-pr-badges.7ln6.test.ts へ、se3v (overallTimeoutMs) の
+// テストを get-pr-badges.se3v.test.ts へ切り出した (ESLint max-lines 上限、
+// eslint.config.mjs の MAX_LINES_ALLOWLIST 超過対応)。命名規約は sgpa/ksed に
+// 倣う。makeManyProjectTickets/commentReaderForUrls は切り出し先の
+// get-pr-badges.7ln6.test.ts でしか使わないため、このファイルからは削除して
+// そちらへ移した。PrBadgeCommentCache.prune は overallTimeoutMs と無関係なので
+// (bdboard-5v6p 起源) このファイルに残した。
 
 describe('getPrBadges', () => {
   it('returns badges with status when comments and gh lookup succeed', async () => {
@@ -1062,5 +1064,23 @@ describe('getPrBadges', () => {
         commentCache.getCloseEvidence(ticket.id, ticket.commentCount, ticket.updatedAt.getTime()),
       ).toBe(false);
     });
+  });
+});
+
+describe('PrBadgeCommentCache.prune', () => {
+  it('removes entries for ticket ids not in validTicketIds and keeps valid ones', () => {
+    const cache = new PrBadgeCommentCache();
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z').getTime();
+    const validId = 'bdboard-valid';
+    const staleId = 'bdboard-stale';
+    const staleUrl = 'https://github.com/xiaotiantakumi/bdboard/pull/100';
+
+    cache.set(validId, 1, updatedAt, PR_URL, false);
+    cache.set(staleId, 2, updatedAt, staleUrl, true);
+
+    cache.prune(new Set([validId]));
+
+    expect(cache.get(validId, 1, updatedAt)).toBe(PR_URL);
+    expect(cache.get(staleId, 2, updatedAt)).toBeUndefined();
   });
 });

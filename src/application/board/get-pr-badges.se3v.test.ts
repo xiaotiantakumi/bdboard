@@ -13,15 +13,16 @@ import type { PrStatus } from '../../domain/pr-link.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
 import { getPrBadges, PrBadgeCommentCache, PrBadgeStatusCache } from './get-pr-badges.js';
 
-// bdboard-sso1.87 用のテストをここへ切り出した (get-pr-badges.test.ts の ESLint
-// max-lines 上限、eslint.config.mjs の MAX_LINES_ALLOWLIST 超過対応)。対象は
-// bdboard-se3v (overallTimeoutMs による時間予算超過時の部分バッジ返却/バックグラウンド
-// 継続) と PrBadgeCommentCache.prune。hygiene.aggregate.test.ts /
+// bdboard-se3v (overallTimeoutMs による時間予算超過時の部分バッジ返却/
+// バックグラウンド継続) のテストを bdboard-sso1.87 でここへ切り出した
+// (get-pr-badges.test.ts の ESLint max-lines 上限、eslint.config.mjs の
+// MAX_LINES_ALLOWLIST 超過対応)。hygiene.aggregate.test.ts /
 // hygiene.shared.test.ts、get-pr-badges.sgpa.test.ts / get-pr-badges.ksed.test.ts の
-// 分割方針と同じ命名規約 (<basename>.<concern>.test.ts) に倣う。フィクスチャ用
-// ヘルパーは get-pr-badges.test.ts 側にも同名のものがあるが、テストファイル間の
-// 共有ヘルパーモジュールを新設するリスクより単純な複製の方がこの規模では安全と
-// 判断した (このファイルでしか使わない2つの小さい関数のみ)。
+// 分割方針と同じ命名規約 (<basename>.<concern>.test.ts) に倣う。project()/
+// createFakeBoardCache()/PR_URL は get-pr-badges.test.ts 側にも同名のものがあるが、
+// テストファイル間の共有ヘルパーモジュールを新設するリスクより単純な複製の方が
+// この規模では安全と判断した。PrBadgeCommentCache.prune は overallTimeoutMs と
+// 無関係 (bdboard-5v6p 起源) なので get-pr-badges.test.ts 側に残した。
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -350,22 +351,4 @@ describe('getPrBadges: overallTimeoutMs (bdboard-se3v)', () => {
       await new Promise((resolve) => setTimeout(resolve, 550));
     },
   );
-});
-
-describe('PrBadgeCommentCache.prune', () => {
-  it('removes entries for ticket ids not in validTicketIds and keeps valid ones', () => {
-    const cache = new PrBadgeCommentCache();
-    const updatedAt = new Date('2026-06-01T12:00:00.000Z').getTime();
-    const validId = 'bdboard-valid';
-    const staleId = 'bdboard-stale';
-    const staleUrl = 'https://github.com/xiaotiantakumi/bdboard/pull/100';
-
-    cache.set(validId, 1, updatedAt, PR_URL, false);
-    cache.set(staleId, 2, updatedAt, staleUrl, true);
-
-    cache.prune(new Set([validId]));
-
-    expect(cache.get(validId, 1, updatedAt)).toBe(PR_URL);
-    expect(cache.get(staleId, 2, updatedAt)).toBeUndefined();
-  });
 });

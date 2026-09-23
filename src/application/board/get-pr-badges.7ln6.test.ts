@@ -12,15 +12,17 @@ import type { CommentReader } from '../ports/comment-reader.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
 import { getPrBadges, PrBadgeStatusCache } from './get-pr-badges.js';
 
-// bdboard-sso1.87 用のテストをここへ切り出した (get-pr-badges.test.ts の ESLint
-// max-lines 上限、eslint.config.mjs の MAX_LINES_ALLOWLIST 超過対応)。対象は
-// bdboard-7ln6 系: gh レート制限のサーキットブレーカー/新規フェッチ予算/in-flight
-// URL 共有/非レート制限失敗のネガティブキャッシュバックオフ/merged+pending 恒久化。
+// bdboard-7ln6 系 (gh レート制限のサーキットブレーカー/新規フェッチ予算/in-flight
+// URL 共有/非レート制限失敗のネガティブキャッシュバックオフ/merged+pending 恒久化)
+// のテストを bdboard-sso1.87 でここへ切り出した (get-pr-badges.test.ts の ESLint
+// max-lines 上限、eslint.config.mjs の MAX_LINES_ALLOWLIST 超過対応)。
 // hygiene.aggregate.test.ts / hygiene.shared.test.ts、get-pr-badges.sgpa.test.ts /
 // get-pr-badges.ksed.test.ts の分割方針と同じ命名規約 (<basename>.<concern>.test.ts)
-// に倣う。フィクスチャ用ヘルパーは get-pr-badges.test.ts 側にも同名のものがあるが、
+// に倣う。project()/createFakeBoardCache() は get-pr-badges.test.ts 側にも同名の
+// ものがある (複製)。makeManyProjectTickets()/commentReaderForUrls() はこの
+// ファイルでしか使わないため get-pr-badges.test.ts からは削除してこちらへ移した。
 // テストファイル間の共有ヘルパーモジュールを新設するリスクより単純な複製の方が
-// この規模では安全と判断した (このファイルでしか使わない4つの小さい関数のみ)。
+// この規模では安全と判断した。
 
 function project(id: string, rootPath: string): Project {
   return {
