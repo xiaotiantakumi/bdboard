@@ -38,7 +38,6 @@ const MAX_LINES_ALLOWLIST = {
   'src/infrastructure/process/cloudflared-tunnel.ts': 320, // 現在 311
   'web/src/api/chat.ts': 280, // 現在 279
   'src/interface/http/harness-routes.ts': 270, // 現在 270
-  'src/infrastructure/git/git-worktree-scanner.ts': 270, // 現在 269
   'src/interface/http/basic-auth.ts': 270, // 現在 262
   'src/interface/http/hygiene-routes.ts': 250, // 現在 247
   'src/application/tunnel/tunnel-service.ts': 250, // 現在 245
