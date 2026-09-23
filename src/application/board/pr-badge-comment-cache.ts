@@ -13,6 +13,59 @@ interface PrBadgeCommentCacheEntry {
 /** チケットごとのコメント由来 PR URL を commentCount/updatedAt で無効化する薄いキャッシュ。 */
 export class PrBadgeCommentCache {
   private readonly entries = new Map<string, PrBadgeCommentCacheEntry>();
+  // resolveUrl の in-flight 共有用。キーは `${ticketId}\0${commentCount}\0${updatedAt}` —
+  // ticketId だけでキー化すると、重なったリクエストの間にチケットが更新された場合
+  // (稀だが起こりうる) に、古い commentCount/updatedAt 向けの解決結果を新しい方の
+  // 呼び出しへ誤って相乗りさせてしまう (bdboard-sgpa)。
+  private readonly inFlight = new Map<string, Promise<string | null>>();
+
+  private static inFlightKey(ticketId: string, commentCount: number, updatedAt: number): string {
+    return `${ticketId}\0${commentCount}\0${updatedAt}`;
+  }
+
+  /**
+   * ticketId 単位で URL 解決を行う。commentCache に既にヒットしていれば fetcher を
+   * 呼ばずそれを返す。ヒットしていなければ、同じ (ticketId, commentCount, updatedAt)
+   * の解決が既に進行中 (別の重なった /api/pr-links リクエストが起動した) かどうかを
+   * 確認し、進行中ならその Promise を共有して新しく fetcher を呼ばない (in-flight
+   * 共有 — PrBadgeStatusCache.fetchStatus が gh 側で既にやっているのと同じ考え方。
+   * bdboard-sgpa)。
+   *
+   * fetcher 自体の中で同時実行数のゲート (Semaphore) を acquire/release する設計を
+   * 前提にしている —— in-flight への登録は fetcher 呼び出し (= ゲート待ちを含む) の
+   * 前に同期的に行われるので、ゲート待ちの間に到着した重複リクエストもすぐにこの
+   * Promise を見つけて相乗りでき、ゲートの枠を余分に消費しない。fetcher が例外を
+   * 投げた場合はキャッシュへ書き込まない (PrBadgeStatusCache.fetchStatus と同じ契約
+   * —— 呼び出し元で個別に失敗として扱う)。
+   */
+  resolveUrl(
+    ticketId: string,
+    commentCount: number,
+    updatedAt: number,
+    fetcher: () => Promise<{ readonly url: string | null; readonly hasCloseEvidence: boolean }>,
+  ): Promise<string | null> {
+    const cached = this.get(ticketId, commentCount, updatedAt);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+
+    const key = PrBadgeCommentCache.inFlightKey(ticketId, commentCount, updatedAt);
+    const existing = this.inFlight.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const promise = fetcher()
+      .then(({ url, hasCloseEvidence }) => {
+        this.set(ticketId, commentCount, updatedAt, url, hasCloseEvidence);
+        return url;
+      })
+      .finally(() => {
+        this.inFlight.delete(key);
+      });
+    this.inFlight.set(key, promise);
+    return promise;
+  }
 
   get(
     ticketId: string,

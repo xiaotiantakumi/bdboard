@@ -159,7 +159,8 @@ export function fetchProjects(): Promise<ProjectDto[]> {
 export interface PrBadgeDto {
   ticketId: string;
   projectId: string;
-  url: string;
+  /** null は「時間予算内にコメント走査が完了しなかった」ことを表す (bdboard-3znc)。 */
+  url: string | null;
   state: string | null;
   checkStatus: string | null;
 }
