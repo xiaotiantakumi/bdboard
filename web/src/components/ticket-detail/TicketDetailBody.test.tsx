@@ -7,7 +7,12 @@ import type { TicketDetailDto } from '../../api';
 // #654 の opus レビュー指摘(スカラー1つだけ描くモックだと配線バグの大半を見逃す)を
 // 踏まえ、各 Section をモックし vi.mocked(X).mock.calls.at(-1)?.[0] で実際に渡された
 // props をマーカー値ごと深く検証する。
-
+//
+// このPR自身のレビュー(opus)で「同じ呼び出し内の複数の boolean がすべて true だと
+// 取り違え(例: agentRunActionsDisabled に hasActiveRun を渡す誤配線)を検出できない」
+// 「空配列同士は toEqual では区別が付かない」という2つの見逃しパターンを指摘された。
+// 対策として: (1) 同じ Section 呼び出しに渡る boolean は互いに異なる値にする、
+// (2) 空配列ではなく要素内容で識別できる配列を使う。
 vi.mock('./TicketAgentRunTriggerSection', () => ({
   TicketAgentRunTrigger: vi.fn(() => <div data-testid="agent-run-trigger" />),
   TicketAgentRunConfirm: vi.fn(() => <div data-testid="agent-run-confirm" />),
@@ -62,7 +67,7 @@ function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
     parentId: 'MARK-parent',
     commentCount: 7,
     description: 'MARK-description',
-    notes: 'MARK-notes',
+    notes: 'MARK-notes-body-text',
     dependencies: [],
     blockedBy: [],
     blocks: [],
@@ -90,16 +95,19 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
     onOpenTicket: vi.fn(),
     onFilterByEpic: vi.fn(),
     agentRun: {
+      // trigger に同時に渡る2つの boolean (agentRunActionsDisabled/hasActiveRun) は
+      // 取り違えを検出できるよう異なる値にする。
       actionsDisabled: true,
       runStartDisabled: { disabled: true, reason: 'MARK-run-block' },
       harnessRunBlockReason: 'MARK-harness-block',
-      hasActiveRun: true,
+      hasActiveRun: false,
+      // confirm に同時に渡る2つの boolean (confirmingAgentRun/startRunPending) も同様。
       confirmingAgentRun: true,
       setConfirmingAgentRun: vi.fn(),
       agentRunConfirmRef: { current: null },
       cancelAgentRunConfirmRef: { current: null },
       handleCancelAgentRun: vi.fn(),
-      startRunMutation: { mutate: vi.fn(), isPending: true, error: null },
+      startRunMutation: { mutate: vi.fn(), isPending: false, error: null },
     } as unknown as TicketDetailBodyProps['agentRun'],
     labels: {
       currentLabels: ['MARK-label-1'],
@@ -107,9 +115,12 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
       setLabelInputQuery: vi.fn(),
       trimmedLabelInput: 'MARK-trimmed',
       labelSuggestions: ['MARK-suggestion'],
-      canSubmitLabel: true,
+      // canSubmitLabel/labelMutationPending/isAddPending は同じ Section 呼び出しに
+      // 同時に渡るので、少なくとも隣接ペアが異なる値になるようにする
+      // (isAddPending <- labelMutationPending の取り違えを検出するのが目的)。
+      canSubmitLabel: false,
       labelMutationPending: true,
-      isAddPending: true,
+      isAddPending: false,
       error: 'MARK-label-error',
       handleAddLabel: vi.fn(),
       handleRemoveLabel: vi.fn(),
@@ -117,19 +128,19 @@ function makeProps(overrides: Partial<TicketDetailBodyProps> = {}): TicketDetail
     inFlightOverlaps: {
       inFlightOverlapsEnabled: true,
       inFlightOverlapsError: 'MARK-overlap-error',
-      inFlightOverlaps: [],
+      inFlightOverlaps: [{ MARK: 'overlap-1' }],
     } as unknown as TicketDetailBodyProps['inFlightOverlaps'],
     similarTickets: {
       similarTicketsLoading: true,
       similarTicketsError: 'MARK-similar-error',
-      similarTickets: [],
+      similarTickets: [{ MARK: 'similar-1' }],
     } as unknown as TicketDetailBodyProps['similarTickets'],
     description: {
       descriptionEditing: true,
       descriptionDraft: 'MARK-desc-draft',
       setDescriptionDraft: vi.fn(),
-      canSaveDescription: true,
-      isSaving: true,
+      canSaveDescription: false,
+      isSaving: false,
       error: 'MARK-desc-error',
       handleStartDescriptionEdit: vi.fn(),
       handleCancelDescriptionEdit: vi.fn(),
@@ -155,7 +166,7 @@ describe('TicketDetailBody', () => {
       agentRunActionsDisabled: true,
       runStartDisabled: props.agentRun.runStartDisabled,
       harnessRunBlockReason: 'MARK-harness-block',
-      hasActiveRun: true,
+      hasActiveRun: false,
       onStartConfirm: expect.any(Function) as unknown,
     });
 
@@ -166,12 +177,12 @@ describe('TicketDetailBody', () => {
       cancelAgentRunConfirmRef: props.agentRun.cancelAgentRunConfirmRef,
       onCancelAgentRun: props.agentRun.handleCancelAgentRun,
       onStartRun: expect.any(Function) as unknown,
-      startRunPending: true,
+      startRunPending: false,
       startRunError: null,
     });
   });
 
-  it('forwards labels/children/in-flight-overlaps/similar-tickets/description with marker values', () => {
+  it('forwards labels/in-flight-overlaps/similar-tickets/description with marker values, including non-empty arrays', () => {
     const props = makeProps();
     render(<TicketDetailBody {...props} />);
 
@@ -181,25 +192,18 @@ describe('TicketDetailBody', () => {
       onLabelInputQueryChange: props.labels.setLabelInputQuery,
       trimmedLabelInput: 'MARK-trimmed',
       labelSuggestions: ['MARK-suggestion'],
-      canSubmitLabel: true,
+      canSubmitLabel: false,
       labelMutationPending: true,
-      isAddPending: true,
+      isAddPending: false,
       error: 'MARK-label-error',
       onAddLabel: props.labels.handleAddLabel,
       onRemoveLabel: props.labels.handleRemoveLabel,
     });
 
-    expect(childrenMock.mock.calls.at(-1)?.[0]).toMatchObject({
-      children: props.data.children,
-      isTicketOnBoard: props.isTicketOnBoard,
-      onOpenTicket: props.onOpenTicket,
-      onFilterByEpic: expect.any(Function) as unknown,
-    });
-
     expect(inFlightMock.mock.calls.at(-1)?.[0]).toEqual({
       enabled: true,
       error: 'MARK-overlap-error',
-      overlaps: [],
+      overlaps: [{ MARK: 'overlap-1' }],
       isTicketOnBoard: props.isTicketOnBoard,
       onOpenTicket: props.onOpenTicket,
     });
@@ -207,7 +211,7 @@ describe('TicketDetailBody', () => {
     expect(similarMock.mock.calls.at(-1)?.[0]).toEqual({
       loading: true,
       error: 'MARK-similar-error',
-      tickets: [],
+      tickets: [{ MARK: 'similar-1' }],
       isTicketOnBoard: props.isTicketOnBoard,
       onOpenTicket: props.onOpenTicket,
     });
@@ -217,8 +221,8 @@ describe('TicketDetailBody', () => {
       descriptionEditing: true,
       descriptionDraft: 'MARK-desc-draft',
       onDescriptionDraftChange: props.description.setDescriptionDraft,
-      canSaveDescription: true,
-      isSaving: true,
+      canSaveDescription: false,
+      isSaving: false,
       error: 'MARK-desc-error',
       onStartDescriptionEdit: props.description.handleStartDescriptionEdit,
       onCancelDescriptionEdit: props.description.handleCancelDescriptionEdit,
@@ -228,9 +232,29 @@ describe('TicketDetailBody', () => {
     });
   });
 
-  it('renders the DetailField rows and Notes block from data, and hides the chat button when onChatAboutTicket is absent', () => {
-    const props = makeProps({ onChatAboutTicket: undefined });
-    const { getByText, queryByText, container } = render(<TicketDetailBody {...props} />);
+  it('forwards children props and wires onFilterByEpic to call through with data.id', () => {
+    const props = makeProps();
+    render(<TicketDetailBody {...props} />);
+
+    expect(childrenMock.mock.calls.at(-1)?.[0]).toEqual({
+      children: props.data.children,
+      isTicketOnBoard: props.isTicketOnBoard,
+      onOpenTicket: props.onOpenTicket,
+      onFilterByEpic: expect.any(Function) as unknown,
+    });
+
+    // onFilterByEpic は data.id を閉じ込めたラッパー関数として渡る。呼び出すと
+    // 実際に props.onFilterByEpic('MARK-id') が呼ばれることまで確認する
+    // (ラッパーが別のIDや別のハンドラを閉じ込めていないか)。
+    const onFilterByEpicWrapper = childrenMock.mock.calls.at(-1)?.[0]
+      .onFilterByEpic as () => void;
+    onFilterByEpicWrapper();
+    expect(props.onFilterByEpic).toHaveBeenCalledWith('MARK-id');
+  });
+
+  it('renders every DetailField row (ID/Status/Priority/IssueType/PR/Assignee/Owner/Created/Updated/Started/Closed/DeferUntil) and the Notes body from data', () => {
+    const props = makeProps();
+    const { getByText, container } = render(<TicketDetailBody {...props} />);
 
     expect(getByText('MARK-id')).toBeInTheDocument();
     expect(getByText('MARK-status')).toBeInTheDocument();
@@ -238,8 +262,65 @@ describe('TicketDetailBody', () => {
     expect(getByText('MARK-issue-type')).toBeInTheDocument();
     expect(getByText('MARK-assignee')).toBeInTheDocument();
     expect(getByText('MARK-owner')).toBeInTheDocument();
+    // formatDateTime はパース不能な文字列をそのまま返すので、各フィールドが
+    // 正しい元データにひも付いていることを個別の値で確認できる
+    // (Created が誤って updatedAt を表示している、等の入れ替わりを検出する)。
+    expect(getByText('MARK-created')).toBeInTheDocument();
+    expect(getByText('MARK-updated')).toBeInTheDocument();
+    expect(getByText('MARK-started')).toBeInTheDocument();
+    expect(getByText('MARK-closed')).toBeInTheDocument();
+    expect(getByText('MARK-defer')).toBeInTheDocument();
+    // PR バッジ (state: 'open' -> "PR open" というラベルで描画される)。
+    expect(getByText('PR open')).toBeInTheDocument();
     expect(getByText('Notes')).toBeInTheDocument();
+    expect(getByText('MARK-notes-body-text')).toBeInTheDocument();
+
+    const labels = Array.from(container.querySelectorAll('.detail-field-label')).map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual([
+      'ID',
+      'Status',
+      'Priority',
+      'Issue Type',
+      'PR',
+      'Assignee',
+      'Owner',
+      'Created',
+      'Updated',
+      'Started',
+      'Closed',
+      'Defer Until',
+    ]);
+  });
+
+  it('hides the chat button and omits assignee/owner/PR/dates when absent from data/props', () => {
+    const props = makeProps({
+      onChatAboutTicket: undefined,
+      prLink: undefined,
+      data: makeData({
+        assignee: undefined,
+        owner: undefined,
+        startedAt: undefined,
+        closedAt: undefined,
+        deferUntil: undefined,
+        notes: undefined,
+      }),
+    });
+    const { queryByText, container } = render(<TicketDetailBody {...props} />);
+
     expect(queryByText('このチケットについてチャット')).not.toBeInTheDocument();
-    expect(container.querySelectorAll('.detail-field').length).toBeGreaterThan(0);
+    expect(queryByText('MARK-assignee')).not.toBeInTheDocument();
+    expect(queryByText('MARK-owner')).not.toBeInTheDocument();
+    expect(queryByText('PR open')).not.toBeInTheDocument();
+    expect(queryByText('MARK-started')).not.toBeInTheDocument();
+    expect(queryByText('MARK-closed')).not.toBeInTheDocument();
+    expect(queryByText('MARK-defer')).not.toBeInTheDocument();
+    expect(queryByText('Notes')).not.toBeInTheDocument();
+
+    const labels = Array.from(container.querySelectorAll('.detail-field-label')).map(
+      (el) => el.textContent,
+    );
+    expect(labels).toEqual(['ID', 'Status', 'Priority', 'Issue Type', 'Created', 'Updated']);
   });
 });
