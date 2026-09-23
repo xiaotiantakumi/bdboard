@@ -21,8 +21,36 @@ import {
   parseBaselineConfig,
   validateEntryShape,
 } from './check-file-size.mjs';
+import * as CheckFileSizeModule from './check-file-size.mjs';
 
 const SCRIPT_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'check-file-size.mjs');
+
+// ---- export surface: bdboard-sso1.58 のモジュール分割で公開面が変わっていないことの固定 ----
+describe('check-file-size.mjs export surface', () => {
+  it('exposes exactly the expected public API', () => {
+    expect(Object.keys(CheckFileSizeModule).sort()).toEqual(
+      [
+        'CONFIG_RELATIVE_PATH',
+        'EXIT_FOUND',
+        'EXIT_OK',
+        'EXIT_UNAVAILABLE',
+        'TARGET_DIRS',
+        'TARGET_EXTENSIONS',
+        'buildFileRecords',
+        'countLines',
+        'evaluate',
+        'formatResult',
+        'isFixturePath',
+        'isTargetPath',
+        'isTestPath',
+        'listGitFiles',
+        'parseBaselineConfig',
+        'parseCliArgs',
+        'validateEntryShape',
+      ].sort(),
+    );
+  });
+});
 
 // ---- countLines: CRLF/LF/CR/空/末尾改行なしで同じ値になること ----
 describe('countLines', () => {
