@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useState } from 'react';
 import type { ProjectThroughputStatsDto } from '../api';
 import {
   fetchCfdStats,
@@ -60,19 +61,24 @@ export function ThroughputStats({
   });
 
   // bdboard-ws2w: board.changed で自動追従しなくなった分、統計タブ自身に
-  // 明示的な再読み込み手段を置く。CFD は board.changed に残しているが、
-  // ボタンを押した時点の最新値に揃えるためここでもまとめて再取得する。
-  const isRefetchingStats =
-    query.isFetching ||
-    cfdQuery.isFetching ||
-    modelStatsQuery.isFetching ||
-    harnessKpiQuery.isFetching;
+  // 明示的な再読み込み手段を置く。CFD は board.changed に残しているが、ボタンを
+  // 押した時点の最新値に揃えるためここでもまとめて再取得する。
+  // ボタンの活性状態は各クエリの生の isFetching ではなく、クリック起点の
+  // ローカル state で管理する: cfd-stats は board.changed のたびに裏で
+  // 再取得され続けるので、isFetching をそのまま使うと自分が押していなくても
+  // ボタンが「再読み込み中…」表示になってしまう (レビュー指摘)。実行中の
+  // 追加クリックは無視し、二重リクエストも防ぐ。
+  const [isManualReloading, setIsManualReloading] = useState(false);
 
   const handleReloadStats = () => {
-    void query.refetch();
-    void cfdQuery.refetch();
-    void modelStatsQuery.refetch();
-    void harnessKpiQuery.refetch();
+    if (isManualReloading) return;
+    setIsManualReloading(true);
+    void Promise.allSettled([
+      query.refetch(),
+      cfdQuery.refetch(),
+      modelStatsQuery.refetch(),
+      harnessKpiQuery.refetch(),
+    ]).finally(() => setIsManualReloading(false));
   };
 
   // ハーネスKPI は統計タブの中では付加的なブロックなので、ここが落ちても
@@ -110,11 +116,11 @@ export function ThroughputStats({
           </div>
           <button
             type="button"
-            className="btn btn-small"
+            className="btn btn-small throughput-reload-btn"
             onClick={handleReloadStats}
-            disabled={isRefetchingStats}
+            disabled={isManualReloading}
           >
-            {isRefetchingStats ? '再読み込み中…' : '統計を再読み込み'}
+            {isManualReloading ? '再読み込み中…' : '統計を再読み込み'}
           </button>
         </div>
       </div>

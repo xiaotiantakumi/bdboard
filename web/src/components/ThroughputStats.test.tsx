@@ -1,5 +1,5 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { focusManager, QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
@@ -176,6 +176,12 @@ describe('ThroughputStats', () => {
     fetchCfdStatsMock.mockResolvedValue(makeCfdStats());
     fetchModelStatsMock.mockResolvedValue(makeModelStats());
     fetchHarnessKpiMock.mockResolvedValue(makeHarnessKpi());
+  });
+
+  afterEach(() => {
+    // focusManager はモジュール単位のシングルトンなので、テスト内で
+    // setFocused() した場合は元 (document.visibilityState による自動判定) に戻す。
+    focusManager.setFocused(undefined);
   });
 
   it('renders the harness KPI panel with all five metrics', async () => {
@@ -562,6 +568,39 @@ describe('ThroughputStats', () => {
     // cfd-stats はチケットの対象外 (board.changed に残したまま) なので、
     // ここでは staleTime を延ばしていないことも確認する。
     expect(findStaleTime('cfd-stats')).toBeUndefined();
+  });
+
+  // bdboard-ws2w レビュー指摘: staleTime の設定値だけでなく、実際の挙動
+  // (フォーカス復帰時に再取得されるかどうか) を直接確認する。cfd-stats は
+  // staleTime 未設定 (=常にstale扱い) のままなので毎回再取得される一方、
+  // 3つの重いクエリは5分の staleTime 内では再取得されないはず。
+  it('does not refetch the heavy stats queries on window refocus, unlike cfd-stats', async () => {
+    fetchThroughputStatsMock.mockResolvedValue(makeStats());
+
+    renderThroughputStats();
+
+    await screen.findByText('全体');
+    expect(fetchThroughputStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchCfdStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchModelStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchHarnessKpiMock).toHaveBeenCalledTimes(1);
+
+    // タブを離れて戻ってきたことを模擬する (react-query の refetchOnWindowFocus)。
+    act(() => {
+      focusManager.setFocused(false);
+    });
+    act(() => {
+      focusManager.setFocused(true);
+    });
+
+    await waitFor(() => {
+      expect(fetchCfdStatsMock).toHaveBeenCalledTimes(2);
+    });
+    // cfd-stats は再取得された一方、staleTime を延ばした3クエリは
+    // 5分経っていないので再取得されないまま。
+    expect(fetchThroughputStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchModelStatsMock).toHaveBeenCalledTimes(1);
+    expect(fetchHarnessKpiMock).toHaveBeenCalledTimes(1);
   });
 
   it('refetches every stats query when the reload button is clicked', async () => {
