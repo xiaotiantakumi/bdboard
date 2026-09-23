@@ -35,6 +35,12 @@ export interface GetPrBadgesOptions {
    * 1回の呼び出しで新規に gh を起動する上限 (in-flight 共有で乗っかれるものは含まない)。
    * 上限に達した分は今回は URL のみのバッジで妥協し、次回の呼び出し (board.changed の
    * たびに来る) に回す (bdboard-7ln6 #6)。未指定なら DEFAULT_MAX_NEW_FETCHES_PER_CALL。
+   * `overallTimeoutMs` を超えて応答を返した後は、この上限を外して背後の継続処理を
+   * 進める (bdboard-ksed)。応答はもう戻せないのでリクエスト単位の上限という概念が
+   * 意味を持たなくなる一方、この上限のせいで1リクエストあたり数十件しかキャッシュが
+   * 温まらず盤面全体が温まるまでに大量の再取得が要る、という本番実測のボトルネックに
+   * なっていた。同時起動数そのものは `statusGate`/`statusFetchConcurrency` で引き続き
+   * 絞るため、gh の同時起動数が無制限になるわけではない。
    */
   readonly maxNewFetchesPerCall?: number;
   /**
@@ -228,31 +234,32 @@ export async function getPrBadges(
       return;
     }
 
-    await statusGate.acquire();
-    try {
-      const status = await resolvePrStatus(url, {
-        prStatusReader,
-        statusCache,
-        budget: statusBudget,
-        onDeferred: () => {
-          deferredFetchCount += 1;
-        },
-        onAttempt: () => {
-          statusAttempts += 1;
-        },
-        onFailure: (error) => {
-          statusFailures.push({ id: url, error });
-        },
-      });
-      badgesByTicket.set(ticket.id, {
-        ticketId: ticket.id,
-        projectId: entry.project.id,
-        url,
-        status,
-      });
-    } finally {
-      statusGate.release();
-    }
+    // bdboard-ksed: statusGate の acquire/release は resolvePrStatus 自身の中 —
+    // 実際に gh を起動する呼び出しだけが行う。既に in-flight の URL に相乗りする
+    // だけの呼び出しはゲートを一切待たない (以前はここで無条件に acquire していた
+    // ため、相乗りするだけの呼び出しもフェッチ完了までゲートの枠を占有していた —
+    // bdboard-sgpa の opus レビュー指摘)。
+    const status = await resolvePrStatus(url, {
+      prStatusReader,
+      statusCache,
+      statusGate,
+      budget: statusBudget,
+      onDeferred: () => {
+        deferredFetchCount += 1;
+      },
+      onAttempt: () => {
+        statusAttempts += 1;
+      },
+      onFailure: (error) => {
+        statusFailures.push({ id: url, error });
+      },
+    });
+    badgesByTicket.set(ticket.id, {
+      ticketId: ticket.id,
+      projectId: entry.project.id,
+      url,
+      status,
+    });
   };
 
   const mainWork = Promise.all(workItems.map(runTicket)).then(() => undefined);
@@ -277,6 +284,19 @@ export async function getPrBadges(
   };
 
   if (timedOut) {
+    // bdboard-ksed: 応答は返したが mainWork はキャッシュ温め目的で裏で走り続ける
+    // (下のコメント参照)。maxNewFetchesPerCall (既定20) は「1回の応答を組み立てる
+    // までに許容する新規 gh 起動の総数」という意味の上限であって、応答を返し
+    // 終えた後のバックグラウンド継続にまで効かせる理由が無い —— 本番実測 (#653
+    // 反映後) でも「1リクエストあたり約20件しか未解決が減らない」形でこの上限が
+    // バックグラウンド温めのボトルネックになっていた (bdboard-ksed)。同時に起動
+    // できる gh の数は既存の statusGate (concurrency 上限、既定8) で引き続き絞る
+    // ので、gh の同時起動数が無制限になるわけではない —— 1回の呼び出し内で
+    // 「合計何件まで新規に起動してよいか」という総数の上限だけを、応答を返した
+    // 後は外す (mainWork はこの後 await しない fire-and-forget なので、この呼び
+    // 出し自体の「リクエストあたり」という単位はもう意味を持たない)。
+    statusBudget.remaining = Number.POSITIVE_INFINITY;
+
     const partial = snapshotBadges();
     // bdboard-3znc の url:null プレースホルダ (「まだ PR の有無すら分からない」) と、
     // url は分かっているが status がまだ無いバッジ (「PR は分かっているが gh 未取得」)
