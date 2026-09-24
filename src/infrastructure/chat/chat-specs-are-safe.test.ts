@@ -124,14 +124,20 @@ describe('chat specs safety guards', () => {
     // left this assertion checking nothing meaningful, so collect the stub
     // plus every file under the split directory (reusing the same
     // directory-recursing helper the FORBIDDEN_CHAT_TOKENS guard above uses).
+    const submoduleFiles = collectSourceFiles(
+      path.join(CHAT_INFRA_DIR, 'cli-chat-agent'),
+    );
+    // Guard against this assertion silently passing if the split submodule
+    // directory ever becomes empty (e.g. everything gets re-merged back into
+    // the stub, or the directory gets renamed without updating this test):
+    // the stub file alone would keep `files` below non-empty regardless, so
+    // this must check the submodule list specifically, not the combined one.
+    expect(submoduleFiles.length).toBeGreaterThan(0);
+
     const files = [
       path.join(CHAT_INFRA_DIR, 'cli-chat-agent.ts'),
-      ...collectSourceFiles(path.join(CHAT_INFRA_DIR, 'cli-chat-agent')),
+      ...submoduleFiles,
     ];
-    // Guard against this assertion silently passing if the split directory
-    // structure ever changes again (renamed/emptied) and the file list
-    // becomes empty.
-    expect(files.length).toBeGreaterThan(0);
 
     const violations: string[] = [];
     for (const file of files) {
