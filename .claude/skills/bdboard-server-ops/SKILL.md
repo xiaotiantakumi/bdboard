@@ -152,13 +152,33 @@ worktree-cwd case above, where every attempt reproduces (2/2).
 - **After merging a PR into main** (right after the fast-forward in the Git
   Workflow cleanup) the chair runs
   `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy --expect-pid <PID>`,
-  which does exactly this sequence: `git pull --ff-only` → `npm install` /
-  `npm --prefix web install` if lockfiles changed → `npm run build:web` →
-  restart the server → wait for health as described in the next section.
+  which runs this sequence: `git pull --ff-only` → `npm install` /
+  `npm --prefix web install` if lockfiles changed → `npm run build:web` if
+  `web/`, `docs/help-content.json`, or `package.json` changed (or
+  `web/dist/index.html` is missing) → restart the listener if the diff is
+  relevant (see below) → wait for health as described in the next section.
   `npm run start` runs tsx without watch and serves a static `web/dist`, so
   neither server nor UI changes are picked up without this rebuild+restart.
   **This includes merges that change only `web/`** — see
   "web だけの変更でも再起動が要る" below for the measurement.
+  - **The restart step is conditional; the pull/install/build steps each
+    have their own, separate change-detection** (they are not simply
+    unconditional). `deploy` restarts the listener only when
+    `scripts/deploy-changed.sh`'s `DEPLOY_RESTART_PATHSPEC` /
+    `deploy_relevant_changed` finds a non-test-only diff under `src/`,
+    `web/`, `docs/help-content.json`, `package.json`, `package-lock.json`,
+    or `.env` between the old and new `HEAD` (test files, `__fixtures__/`,
+    and `*test-support*` paths are excluded — bdboard-cdoj; `.env` is
+    gitignored so in practice it never appears in this diff — a local
+    `.env`-only edit still needs a manual `restart`). Before bdboard-kpim,
+    `web/` and `docs/help-content.json` were missing from that pathspec, so
+    a `web/`-only or `docs/help-content.json`-only merge left the old
+    process — and its startup-cached `web/dist/index.html`
+    (`src/bootstrap/wire-feature-routes.ts`) / chat help text
+    (`src/infrastructure/chat/help-content.ts`) — running.
+    `docs/help-content.json` is also bundled directly into the web UI
+    (`web/src/helpContent.ts` imports it), so the `build:web` gate covers
+    it too, not just the restart gate.
   - **A `git pull --ff-only` here can be blocked by an uncommitted local
     diff to `.claude/bdboard-packs.json`** (measured 2026-08-29, bdboard-8okb):
     `Your local changes to the following files would be overwritten by
