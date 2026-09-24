@@ -119,6 +119,46 @@ describe('useChatHistoryLoader: history fetch effect', () => {
     await waitFor(() => expect(fetchChatSessionMessagesMock).toHaveBeenCalledTimes(2));
     expect(onSessionGoneNetwork).not.toHaveBeenCalled();
   });
+
+  it('suppresses onSessionGone when the conversation key changed before the dead-session response arrived', async () => {
+    let rejectFirst: (error: unknown) => void = () => {};
+    const firstPromise = new Promise<ChatSessionMessagesDto>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    fetchChatSessionMessagesMock.mockImplementationOnce(() => firstPromise);
+    // sess-2 側の fetch はこのテストでは解決させない(邪魔をさせないだけ)。
+    fetchChatSessionMessagesMock.mockImplementationOnce(() => new Promise(() => {}));
+
+    const onSessionGone = vi.fn();
+    // historyRequestIdRef は再描画をまたいで同じ参照を共有させる — cleanup が
+    // これを進める様子をそのまま観測するため。
+    const historyRequestIdRef = { current: 0 };
+    const { rerender } = renderHook(
+      (props: { key: string }) =>
+        useChatHistoryLoader(
+          baseParams({
+            currentConversationKey: props.key,
+            currentSessionId: props.key,
+            historyRequestIdRef,
+            onSessionGone,
+          }),
+        ),
+      { initialProps: { key: 'sess-1' } },
+    );
+    await waitFor(() => expect(fetchChatSessionMessagesMock).toHaveBeenCalledTimes(1));
+
+    // 会話キーが切り替わる — 前の effect の cleanup が historyRequestIdRef を
+    // 進め、「もう今のリクエストではない」印を付ける。
+    rerender({ key: 'sess-2' });
+    await waitFor(() => expect(fetchChatSessionMessagesMock).toHaveBeenCalledTimes(2));
+    expect(historyRequestIdRef.current).toBe(1);
+
+    // 古い(sess-1 の)リクエストが遅れて 404 を返しても、requestId ガードで
+    // 弾かれて prune には繋がらない。
+    rejectFirst(new ApiError(404, 'not found'));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(onSessionGone).not.toHaveBeenCalled();
+  });
 });
 
 describe('useChatHistoryLoader: unresolved-send retry effect', () => {

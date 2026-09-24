@@ -1619,7 +1619,8 @@ export function ChatPanel({
         ...prev,
         [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((id) => id !== sessionId),
       }));
-      // bdboard-23u: handleDeleteThread(旧 :1507付近)の prune と対称にする —
+      // bdboard-23u: handleDeleteThread(threadOps.deleteThread、bdboard-sso1.83
+      // 第10段で useChatThreadLists.ts へ移設済み)の prune と対称にする —
       // でないと閉じたスレッドの再オープン経路から死亡スレッドを再選択できる。
       setThreadLists((prev) => ({
         ...prev,

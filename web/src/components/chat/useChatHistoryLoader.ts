@@ -38,6 +38,14 @@ export function useChatHistoryLoader(params: {
   setSelectedAgentId: Dispatch<SetStateAction<string>>;
   unresolvedSends: Record<string, true>;
   clearUnresolvedSend: (sessionId: string) => void;
+  /**
+   * 死んだセッションの prune を ChatPanel.tsx 側へ委ねるコールバック。
+   * 履歴 fetch effect の依存配列に入るため、呼び出し側は useCallback で
+   * 安定させた参照を渡すこと — 毎描画で新しい関数を渡すと、この effect の
+   * クリーンアップが毎回 historyRequestIdRef を進めてしまい、fetch 中の
+   * リクエストを自分で捨てて取り直すループになる(E8/E13 の応答も巻き
+   * 添えで無効化される)。
+   */
   onSessionGone: (sessionId: string) => void;
 }): void {
   const {
@@ -169,10 +177,13 @@ export function useChatHistoryLoader(params: {
   ]);
 
   // turn-status の回収が完了を取りこぼしたときの安全網(bdboard-3tw.156)。
-  // 上の履歴 effect はこの用途に使えない(送信済みスレッドは
-  // historyLoadedFor が既に立っており素通りする)ため、意図的に取り直す。
-  // 走るのは「送信したのに完了を見届けられなかった」スレッドを表示した
-  // ときだけで、通常のスレッド切替に fetch は増えない。
+  // 上の履歴 effect はこの用途に使えない。あちらは「メッセージが1件でもあれば
+  // 何もしない」「一度読んだキーは二度と読まない」という二重のガードを持って
+  // いて、送信済みスレッドには楽観表示した自分の発言が既に入っているため、
+  // historyLoadedFor を落としても素通りしてしまう。ここは意図的に取り直す。
+  //
+  // 走るのは「送信したのに完了を見届けられなかった」と分かっているスレッドを
+  // 表示したときだけなので、通常のスレッド切替に fetch は増えない。
   useEffect(() => {
     if (selectedProjectId === '') return;
     const sessionId = currentSessionId;
@@ -184,10 +195,23 @@ export function useChatHistoryLoader(params: {
     void fetchChatSessionMessages(sessionId, selectedProjectId)
       .then((payload) => {
         if (requestId !== historyRequestIdRef.current) return;
-        // 短くなる置き換えはしない(進行中のターンはまだサーバーに反映
-        // されていないことがあるため)。件数が増えているか、末尾の
-        // createdAt がローカルの楽観送信時刻より新しいときだけ当てる
-        // (bdboard-3tw.158、CHAT_MESSAGES_MAX_PER_SESSION での eviction 対策)。
+        // 短くなる置き換えはしない。ターンがまだ走っている最中に戻ってくると、
+        // サーバーの履歴にはまだ今回のやり取りが入っていないので、そのまま
+        // 当てると楽観表示している自分の発言(と添付)が画面から消える。
+        // 完了後の履歴は「利用者の発言 + 返信」の2件分増えているので、
+        // 増えているときだけ当てれば取りこぼしだけを拾える。
+        //
+        // bdboard-3tw.158 (PR#135 レビュー minor-2 の対処): 保存件数が上限
+        // (CHAT_MESSAGES_MAX_PER_SESSION) に達したセッションでは、サーバー側が
+        // 古い方から捨てて件数を保つため取りこぼしたターンが載っても件数が
+        // 伸びず、件数比較だけでは永久にこの安全網が効かない。そこで末尾
+        // メッセージの createdAt 比較を併用する: send-chat-message.ts の
+        // finalizeChatTurnSuccess はユーザー発言とAI応答をターン完了時に
+        // まとめて1回で永続化するため、進行中のターンはサーバーに何も
+        // 書かれておらず、サーバー末尾の createdAt は必ず「今回の送信より前」
+        // のまま動かない。よって「サーバー末尾の createdAt が、ローカル末尾
+        // の at (楽観送信時刻、常にクライアント側 Date.now())より新しい」は
+        // 完了済みだけを正しく検知でき、進行中のケースを誤って壊さない。
         const localMessages = conversationsRef.current[sessionId]?.messages ?? [];
         const localCount = localMessages.length;
         const grew = payload.messages.length > localCount;
@@ -207,9 +231,13 @@ export function useChatHistoryLoader(params: {
           },
         }));
         setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
-        // モデルの復元はここでは行わない(PR#135 レビュー nit-3)。この
-        // 安全網は自分自身が送信したスレッドにしか走らず、送信成功時点で
-        // threadModelIds は既に書かれている。
+        // モデルの復元はここでは行わない (PR#135 レビュー nit-3)。回収経路や
+        // 履歴経路と非対称だが、この安全網が走るのは「このクライアント自身が
+        // 送信したスレッド」だけで、送信成功時点で threadModelIds は既に
+        // 書かれている。履歴側の「まだ値が無いキーにだけ書く」規律に従うと
+        // 常に書かない側へ落ちるので、足しても観測できる差が無い。
+        // 取り込めたときだけ印を外す。捨てた/短くて当てなかった場合は残して
+        // おいて、次にこのスレッドを開いたときにもう一度試す。
         clearUnresolvedSend(sessionId);
       })
       .catch(() => {
@@ -218,6 +246,10 @@ export function useChatHistoryLoader(params: {
       .finally(() => {
         unresolvedRefetchRef.current.delete(sessionId);
       });
+    // 表示中の会話の件数を依存に入れておく (PR#135 レビュー minor-1)。印が
+    // 立ったまま同じスレッドで次のターンが終わったとき、その場で取り直しへ
+    // 戻れる。ストリーミングの delta は conversations ではなく別の state へ
+    // 積まれるので、ここが配信ごとに揺れることはない。
   }, [
     selectedProjectId,
     currentSessionId,
