@@ -134,7 +134,8 @@ export async function resolveGateBlockedTicketIds(
 // bdboard-giyt(gate 側respond())と bdboard-ixx9(ticket 側respond())の両方が使う
 // 共通の fail-soft 清掃ループ。渡された各チケットについて、他に open な human gate が
 // 残っていない かつ standalone な decision_question を記録していない(bdboard-mw8y)
-// ものだけ human ラベルを外す。呼び出し時点でこのラベル解除の前提となる主処理
+// ものだけ human ラベルを外す。対象チケットが実際に human ラベルを持っている場合だけ
+// 外す(bdboard-ld8d)。呼び出し時点でこのラベル解除の前提となる主処理
 // (gate の close、または ticket 自身の gate resolve + ラベル解除)は既に成功して
 // いるので、個々のチケットでの読み取り・ラベル解除の失敗はそのチケットだけスキップして
 // 次へ進む(gate/ticket 側の既存コメントと同じ fail-soft 方針)。
@@ -157,7 +158,8 @@ export async function clearHumanLabelOnUnblockedTickets(
       if (
         ticketState.kind !== 'ticket' ||
         ticketState.blockingHumanGateIds.length > 0 ||
-        ticketState.hasOwnDecisionQuestion
+        ticketState.hasOwnDecisionQuestion ||
+        !ticketState.hasHumanLabel
       ) {
         continue;
       }

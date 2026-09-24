@@ -44,6 +44,7 @@ const bdShowItemSchema = z.object({
   issue_type: z.string().optional(),
   dependencies: z.unknown().optional(),
   metadata: z.unknown().optional(),
+  labels: z.unknown().optional(),
 });
 
 // mapListItemToPendingDecision の question 抽出と同じ判定(非空文字列の
@@ -61,6 +62,15 @@ function hasOwnDecisionQuestion(metadata: unknown): boolean {
   }
   const question = (metadata as Record<string, unknown>).decision_question;
   return typeof question === 'string' && question.length > 0;
+}
+
+// clearHumanLabelOnUnblockedTickets(labels.ts) が、実際には human ラベルを
+// 持っていなかったチケットまで clearedHumanLabelTicketIds に含めてしまう
+// バグ(bdboard-ld8d)を防ぐための判定。labels が配列でない、または 'human' を
+// 含まない場合は false に倒す(fail-safe: 判定できなければ「ラベルは無い」として
+// 扱い、bd label remove を呼ばない・cleared 扱いにもしない)。
+function hasHumanLabel(labels: unknown): boolean {
+  return Array.isArray(labels) && labels.includes('human');
 }
 
 // 作業チケットの dependencies[] のうち、respond() が resolve してよい対象だけを絞り込む。
@@ -111,6 +121,13 @@ interface ShowKindAndBlockingGates {
    * ため(bdboard-cine)。
    */
   readonly hasOwnDecisionQuestion: boolean;
+  /**
+   * kind === 'ticket' のときだけ意味を持つ。bd show の labels[] に 'human' が
+   * 含まれているかどうか(bdboard-ld8d)。clearHumanLabelOnUnblockedTickets が、
+   * 実際には human ラベルを持っていなかったチケットを誤って cleared 扱いしない
+   * ようにするために使う。
+   */
+  readonly hasHumanLabel: boolean;
 }
 
 // `bd show <id> --json` の stdout から種別(gate/ticket/unknown)と、作業チケットの場合に
@@ -121,23 +138,23 @@ interface ShowKindAndBlockingGates {
 function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
   const trimmedStdout = stdout.trim();
   if (trimmedStdout.length === 0) {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmedStdout) as unknown;
   } catch {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
   }
 
   const itemResult = bdShowItemSchema.safeParse(parsed[0]);
   if (!itemResult.success) {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
   }
 
   const kind = itemResult.data.issue_type === 'gate' ? 'gate' : 'ticket';
@@ -149,6 +166,7 @@ function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
     blockingHumanGateIds,
     hasOwnDecisionQuestion:
       kind === 'ticket' ? hasOwnDecisionQuestion(itemResult.data.metadata) : false,
+    hasHumanLabel: kind === 'ticket' ? hasHumanLabel(itemResult.data.labels) : false,
   };
 }
 
@@ -218,12 +236,12 @@ export async function resolveKindAndBlockingGates(
     );
 
     if (result === null) {
-      return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
+      return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
     }
 
     return parseShowStdout(result.stdout);
   } catch {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
   }
 }
 
