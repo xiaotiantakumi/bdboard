@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 interface QueuedSseMessage {
   readonly event?: string;

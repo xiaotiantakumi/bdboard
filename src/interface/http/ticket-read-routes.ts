@@ -31,7 +31,7 @@ import {
   parseActivityLimit,
   type InFlightOverlapMemo,
 } from './api-route-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 const SIMILAR_DEFAULT_LIMIT = 5;
 const SIMILAR_MIN_LIMIT = 1;
