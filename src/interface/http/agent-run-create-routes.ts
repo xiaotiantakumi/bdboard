@@ -1,3 +1,4 @@
+import type { AgentRunGuardToken } from './agent-run-guard.js';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { BoardCache } from '../../application/ports/board-cache.js';
@@ -52,7 +53,9 @@ export interface AgentRunCreateRoutesDeps {
   readonly issueWriter: IssueWriterPort;
 }
 
-export function createAgentRunCreateRoutes(deps: AgentRunCreateRoutesDeps): Hono {
+export function createAgentRunCreateRoutes(deps: AgentRunCreateRoutesDeps, guardToken: AgentRunGuardToken): Hono {
+  // bdboard-3knf: the token is the compile-time enforcement mechanism; there is nothing to check at runtime.
+  void guardToken;
   const app = new Hono();
 
   app.post('/api/runs', async (c) => {

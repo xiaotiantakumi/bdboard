@@ -1,4 +1,4 @@
-import type { Context, MiddlewareHandler } from 'hono';
+import type { Context, Hono, MiddlewareHandler } from 'hono';
 import { isLocalBasicAuthRequest } from './local-request.js';
 import {
   evaluateWriteAccess,
@@ -46,4 +46,29 @@ export function createAgentRunGuardMiddleware(deps: AgentRunGuardDeps): Middlewa
 
     await next();
   };
+}
+
+
+// bdboard-3knf: unexported unique symbol brand. No file outside this module can write a
+// literal object with this exact computed key, so `AgentRunGuardToken` cannot be
+// structurally satisfied except by calling `mountAgentRunGuard()` below (or an explicit
+// `as unknown as AgentRunGuardToken` escape hatch, same as any TS nominal-typing brand).
+const AGENT_RUN_GUARD_APPLIED: unique symbol = Symbol('agent-run-guard-applied');
+
+/**
+ * Proof that `mountAgentRunGuard()` has applied `agentRunGuard` to an app's
+ * `/api/runs` and `/api/runs/*` patterns. The route factories require this as a
+ * mandatory second argument, preventing mounting them without first applying the guard.
+ */
+export interface AgentRunGuardToken {
+  readonly [AGENT_RUN_GUARD_APPLIED]: true;
+}
+
+/** Applies the guard to both run patterns and returns proof of the application. */
+export function mountAgentRunGuard(app: Hono, deps: AgentRunGuardDeps): AgentRunGuardToken {
+  const agentRunGuard = createAgentRunGuardMiddleware(deps);
+  for (const pattern of ['/api/runs', '/api/runs/*']) {
+    app.use(pattern, agentRunGuard);
+  }
+  return { [AGENT_RUN_GUARD_APPLIED]: true };
 }

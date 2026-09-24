@@ -1,3 +1,4 @@
+import type { AgentRunGuardToken } from './agent-run-guard.js';
 import { Hono } from 'hono';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { RunStore, RunStoreRecord } from '../../application/runner/run-store.js';
@@ -82,7 +83,9 @@ async function resolveRunNextStep(
   }
 }
 
-export function createAgentRunReadRoutes(deps: AgentRunReadRoutesDeps): Hono {
+export function createAgentRunReadRoutes(deps: AgentRunReadRoutesDeps, guardToken: AgentRunGuardToken): Hono {
+  // bdboard-3knf: the token is the compile-time enforcement mechanism; there is nothing to check at runtime.
+  void guardToken;
   const app = new Hono();
 
   app.get('/api/runs', (c) => {

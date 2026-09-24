@@ -12,7 +12,7 @@ import {
   DEFAULT_AGENT_RUN_RATE_LIMIT_PER_DAY,
   DEFAULT_AGENT_RUN_RATE_LIMIT_PER_MINUTE,
 } from './agent-run-rate-limit.js';
-import { createAgentRunGuardMiddleware } from './agent-run-guard.js';
+import { mountAgentRunGuard } from './agent-run-guard.js';
 import type { WriteGuardDeps } from './write-guard.js';
 import { createAgentRunCreateRoutes } from './agent-run-create-routes.js';
 import { createAgentRunReadRoutes } from './agent-run-read-routes.js';
@@ -27,6 +27,15 @@ import { createAgentRunCancelRoutes } from './agent-run-cancel-routes.js';
 // 変わってはいけないため、ここに残したまま各グループのルート登録より先に呼ぶ
 // (元のファイルでの並び: ミドルウェア4件 → ルート4件、をそのまま維持。ticket-write-routes.ts
 // 分割 bdboard-sso1.25 / chat-routes.ts 分割 bdboard-sso1.17 と同じ方針)。
+//
+// bdboard-3knf: 分割後、createAgentRunCreateRoutes/ReadRoutes/CancelRoutes を将来の
+// 別ファイルが直接 import してガード無しでマウントできてしまう穴が型システム上は
+// 塞がれていなかった (「単一の守られた経路」という不変条件が convention 頼みだった)。
+// 各ファクトリは今、mountAgentRunGuard() が発行する AgentRunGuardToken (agent-run-guard.ts、
+// 未エクスポートの unique symbol でブランド化) を必須第2引数として要求する。この
+// トークンを得る唯一の方法が mountAgentRunGuard(app, ...) の呼び出し ── つまり app へ
+// ガードを実際に適用すること ── なので、ガードを経由せずにこれらのファクトリを呼ぶ
+// コードは型チェックで弾かれる。
 
 /** postRunsBodySchema は ticketId と mode だけなので 4KB で十分すぎる。 */
 export const AGENT_RUN_BODY_MAX_BYTES = 4 * 1024;
@@ -87,13 +96,10 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
   // ガードが漏れる。実測でリモートからボードが全損した。自分の持ちパスにだけ
   // スコープすること。コレクションとワイルドカードの両方を登録するのは
   // main.ts / chat-routes.ts と同じ作法 (掛け忘れ防止)。
-  const agentRunGuard = createAgentRunGuardMiddleware({
+  const guardToken = mountAgentRunGuard(app, {
     writeAccess: deps.writeAccess,
     isRemoteAgentRunAllowed: deps.isRemoteAgentRunAllowed,
   });
-  for (const pattern of ['/api/runs', '/api/runs/*']) {
-    app.use(pattern, agentRunGuard);
-  }
 
   const limiter = createChatRateLimiter({
     now: deps.now,
@@ -113,9 +119,9 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
   app.use('/api/runs', agentRunBodyLimit);
   app.use('/api/runs', rateLimit);
 
-  app.route('/', createAgentRunCreateRoutes(deps));
-  app.route('/', createAgentRunReadRoutes(deps));
-  app.route('/', createAgentRunCancelRoutes(deps));
+  app.route('/', createAgentRunCreateRoutes(deps, guardToken));
+  app.route('/', createAgentRunReadRoutes(deps, guardToken));
+  app.route('/', createAgentRunCancelRoutes(deps, guardToken));
 
   return app;
 }

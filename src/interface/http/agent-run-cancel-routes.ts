@@ -1,3 +1,4 @@
+import type { AgentRunGuardToken } from './agent-run-guard.js';
 import { Hono } from 'hono';
 import type { RunStore } from '../../application/runner/run-store.js';
 
@@ -10,7 +11,9 @@ export interface AgentRunCancelRoutesDeps {
   readonly runStore: RunStore;
 }
 
-export function createAgentRunCancelRoutes(deps: AgentRunCancelRoutesDeps): Hono {
+export function createAgentRunCancelRoutes(deps: AgentRunCancelRoutesDeps, guardToken: AgentRunGuardToken): Hono {
+  // bdboard-3knf: the token is the compile-time enforcement mechanism; there is nothing to check at runtime.
+  void guardToken;
   const app = new Hono();
 
   app.post('/api/runs/:runId/cancel', (c) => {
