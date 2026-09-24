@@ -38,7 +38,13 @@ import {
   fetchPlatformSupport,
 } from '../api';
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
-import { PROJECT_A, CLAUDE_AGENT, jsonResponse, renderChatPanel } from './ChatPanel-test-support';
+import {
+  PROJECT_A,
+  CLAUDE_AGENT,
+  createDeferred,
+  jsonResponse,
+  renderChatPanel,
+} from './ChatPanel-test-support';
 
 const fetchChatAgentsMock = vi.mocked(fetchChatAgents);
 const fetchChatThreadsMock = vi.mocked(fetchChatThreads);
@@ -123,6 +129,44 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
 
       expect(textarea).toHaveValue('proj-a のチケットについて: x');
       expect(someSpy.mock.calls.length).toBe(baseline);
+    });
+  });
+
+  describe('14b: handleHistorySessionGone stays stable, so E12 keeps its in-flight history fetch', () => {
+    it('does not discard and re-issue the history fetch while typing on the loading thread', async () => {
+      // handleHistorySessionGone は useChatHistoryLoader(E12)へ onSessionGone として
+      // 渡り、E12 の依存配列に入っている。参照が入力のたびに変わると、E12 の
+      // cleanup が historyRequestIdRef を進めて走っている fetch を捨て、同じ
+      // セッションの履歴を取り直す。第14b段で 23u の nonce 前進をフック側の関数に
+      // 置き換えても、この参照が安定していることを固定する。
+      const messages = createDeferred<Response>();
+      let messageFetches = 0;
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([THREAD_1]);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) => {
+          if (url.includes('/api/chat/sessions/sess-1/messages')) {
+            messageFetches += 1;
+            return messages.promise;
+          }
+          return Promise.reject(new Error(`Unexpected fetch: GET ${url}`));
+        }),
+      );
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+      await waitFor(() => expect(messageFetches).toBe(1));
+
+      await user.type(screen.getByLabelText('メッセージ'), 'abc');
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('abc');
+      expect(messageFetches).toBe(1);
+
+      messages.resolve(jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] }));
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(messageFetches).toBe(1);
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('abc');
     });
   });
 

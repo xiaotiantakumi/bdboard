@@ -3,8 +3,8 @@
 import { defineDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
 
 // bdboard-ru4d: 会話キー再割り当てサイトごとのドラフト積載物引き継ぎ選択。
-// ストアを1つ増やすと、ここと3サイト(handleAgentChange / startNewDraftThread /
-// chat/useChatSendCommits.ts の commitSuccess)すべてで選択を書かない限り tsc が落ちる。
+// ストアを1つ増やすと、ここと3サイト(chat/useDraftThreadLauncher.ts の handleAgentChange /
+// startNewDraftThread、chat/useChatSendCommits.ts の commitSuccess)すべてで選択を書かない限り tsc が落ちる。
 
 /** handleAgentChange: 本文・添付・シード記録のみ引き継ぐ。 */
 export const HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
