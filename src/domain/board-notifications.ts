@@ -101,7 +101,9 @@ export function diffBoardNotificationSnapshots(
       continue;
     }
 
-    events.push(...diffProjectNotificationSnapshots(prevProject, nextProject));
+    for (const event of diffProjectNotificationSnapshots(prevProject, nextProject)) {
+      events.push(event);
+    }
   }
 
   return events;

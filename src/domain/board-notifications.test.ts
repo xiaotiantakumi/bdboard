@@ -301,6 +301,25 @@ describe('diffBoardNotificationSnapshots', () => {
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
   });
+
+  it('emits all ready transitions for a large project without overflowing the call stack', () => {
+    const ticketIds = Array.from({ length: 150_000 }, (_, i) => `bdboard-large-${i}`);
+    const prev = boardSnapshot({
+      proj: projectSnapshot({ knownTicketIds: ticketIds }),
+    });
+    const next = boardSnapshot({
+      proj: projectSnapshot({ readyTicketIds: ticketIds, knownTicketIds: ticketIds }),
+    });
+
+    const events = diffBoardNotificationSnapshots(prev, next);
+
+    expect(events).toHaveLength(ticketIds.length);
+    expect(events[0]).toEqual({ kind: 'ticket_ready', ticketId: ticketIds[0] });
+    expect(events.at(-1)).toEqual({
+      kind: 'ticket_ready',
+      ticketId: ticketIds[ticketIds.length - 1],
+    });
+  });
 });
 
 describe('diffSessionLiveness', () => {
