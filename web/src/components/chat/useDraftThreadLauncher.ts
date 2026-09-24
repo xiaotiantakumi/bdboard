@@ -86,7 +86,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
   // 不変条件(N1): この関数を同一 tick 内(同期的なコールバック連鎖の中)で同じ
   // projectId に対して2回呼ぶと、両方とも同じ draftNoncesRef.current[projectId]
   // を読んでから +1 するため nonce が衝突し、2つのドラフトが同じ会話キーを
-  // 奪い合う。呼び出し側(ChatPanel.tsx の各 useEffect)は必ず「1回のトリガーにつき
+  // 奪い合う。呼び出し側(chat/useThreadListSync.ts の E7 と ChatPanel.tsx の E9)は必ず「1回のトリガーにつき
   // startNewDraftThread は高々1回」を守ること。
   const startNewDraftThread = useCallback((projectId: string) => {
     // bdboard-ru4d: ここも会話キーの再割り当てサイト。引き継ぎ選択は

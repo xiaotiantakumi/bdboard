@@ -54,8 +54,8 @@ export interface UseChatThreadListsResult {
  * bdboard-sso1.83 第10段: ChatPanel.tsx から「スレッド一覧(threadLists/
  * openThreadIds)の state と、開閉・選択・削除・リネーム・ピン留めの各操作」を
  * move-only で抜き出したもの。effect は持たない — スレッド一覧の fetch effect
- * (E7)自体は会話キー再割り当てクラスタ(第14段、bdboard-c1pw 領域)でまとめて
- * 扱う設計のため、このチケットの対象外。ここに残る/移した関数はどれも
+ * (E7)自体は会話キー再割り当てクラスタ(第14段、bdboard-c1pw 領域)の第14d段で
+ * chat/useThreadListSync.ts へ移した(このフックの対象外)。ここに残る/移した関数はどれも
  * 「今ある state を書き換えるだけ」の合成ハンドラで、元の読み取り方式
  * (render スコープの値を読む/ref から読む)・updater の内外での副作用呼び出し
  * (S4: writePersistedChatThreadState は setState の updater の外で呼ぶ)は
