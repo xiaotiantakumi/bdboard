@@ -440,6 +440,60 @@ describe('TicketDetailPanel pending decisions', () => {
     ).toBeInTheDocument();
   });
 
+  it('shows sibling human-label notices for ticket decisions alongside the normal outcome', async () => {
+    mockPostTicketDecision.mockResolvedValue({
+      kind: 'ticket',
+      closed: false,
+      clearedHumanLabelTicketIds: ['bdboard-sib-1', 'bdboard-sib-2'],
+    });
+
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'ticket',
+      projectId: sampleTicket.projectId,
+      options: [{ label: 'A案', value: 'a' }],
+      allowFreeform: true,
+    });
+
+    await user.click(await screen.findByRole('button', { name: 'A案' }));
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+
+    expect(await screen.findByText('他に 2 件のチケットの確認待ちも解除しました:')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-sib-1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-sib-2' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('shows sibling human-label notices for gate decisions alongside the gate outcome', async () => {
+    mockPostTicketDecision.mockResolvedValue({
+      kind: 'gate',
+      closed: true,
+      clearedHumanLabelTicketIds: ['bdboard-sib-3'],
+    });
+
+    renderPanel(new Map(), {
+      id: sampleTicket.id,
+      kind: 'gate',
+      projectId: sampleTicket.projectId,
+      allowFreeform: true,
+    });
+
+    await user.type(await screen.findByLabelText('自由記入'), 'ゲート回答');
+    await user.click(screen.getByRole('button', { name: '回答を送信' }));
+
+    expect(await screen.findByText('他に 1 件のチケットの確認待ちも解除しました:')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'bdboard-sib-3' })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('shows gate pre-submit notice when pendingDecision.kind is gate', async () => {
     renderPanel(new Map(), {
       id: sampleTicket.id,

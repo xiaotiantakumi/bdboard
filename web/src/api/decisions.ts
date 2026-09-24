@@ -25,6 +25,12 @@ export interface TicketDecisionOutcome {
    * 「確認待ちから外れました」メッセージは出さない(実際には何も変わっていないため)。
    */
   ambiguousGateIds?: string[];
+  /**
+   * kind や closed を問わず設定されうる(ticket 回答で兄弟チケットの human ラベルを
+   * 外した場合、または gate に直接回答してそれがブロックしていた作業チケットの
+   * human ラベルを外した場合)。1件も無ければこのフィールド自体が省略される。
+   */
+  clearedHumanLabelTicketIds?: string[];
 }
 
 export function fetchPendingDecisions(): Promise<PendingDecisionDto[]> {
@@ -65,10 +71,19 @@ function mapTicketDecisionOutcome(raw: unknown): TicketDecisionOutcome {
     rawAmbiguousGateIds.every((entry): entry is string => typeof entry === 'string')
       ? rawAmbiguousGateIds
       : undefined;
+  const rawClearedHumanLabelTicketIds =
+    (outcome as { clearedHumanLabelTicketIds?: unknown }).clearedHumanLabelTicketIds;
+  const clearedHumanLabelTicketIds =
+    Array.isArray(rawClearedHumanLabelTicketIds) &&
+    rawClearedHumanLabelTicketIds.length > 0 &&
+    rawClearedHumanLabelTicketIds.every((entry): entry is string => typeof entry === 'string')
+      ? rawClearedHumanLabelTicketIds
+      : undefined;
   return {
     kind: normalizedKind,
     closed: normalizedClosed,
     ...(ambiguousGateIds !== undefined ? { ambiguousGateIds } : {}),
+    ...(clearedHumanLabelTicketIds !== undefined ? { clearedHumanLabelTicketIds } : {}),
   };
 }
 
@@ -78,7 +93,12 @@ export function postTicketDecision(
 ): Promise<TicketDecisionOutcome> {
   return fetchJson<{
     ok: true;
-    outcome?: { kind?: string; closed?: boolean; ambiguousGateIds?: string[] };
+    outcome?: {
+      kind?: string;
+      closed?: boolean;
+      ambiguousGateIds?: string[];
+      clearedHumanLabelTicketIds?: string[];
+    };
   }>(`/api/tickets/${encodeURIComponent(id)}/decision`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -165,6 +165,26 @@ export function TicketDecisionSection({
                   : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
             </p>
           )}
+          {submittedDecision.outcome.clearedHumanLabelTicketIds !== undefined && (
+            <>
+              <p className="detail-help">
+                他に {submittedDecision.outcome.clearedHumanLabelTicketIds.length} 件のチケットの確認待ちも解除しました:
+              </p>
+              <ul className="detail-list">
+                {submittedDecision.outcome.clearedHumanLabelTicketIds.map((ticketId) => (
+                  <li key={ticketId}>
+                    <button
+                      type="button"
+                      className="ticket-id-link"
+                      onClick={() => onOpenTicket(ticketId)}
+                    >
+                      {ticketId}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </>
