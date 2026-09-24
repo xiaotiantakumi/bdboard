@@ -1,18 +1,11 @@
 import {
-  type FormEvent,
   useCallback,
   useEffect,
   useRef,
   useState,
 } from 'react';
 import {
-  acknowledgeChatTurn,
   fetchChatThreads,
-  postChatMessage,
-  postChatMessageStream,
-  ChatStreamEndedWithoutResultError,
-  type ChatMessageResponseDto,
-  type ChatMessageRequest,
   type ProjectDto,
   type ChatThreadDto,
   type ChatSessionMessagesDto,
@@ -46,15 +39,10 @@ import {
   useResizableSidePanel,
 } from '../hooks/useResizableSidePanel';
 import type { ChatQuickCommand } from '../chatQuickCommands';
-import { CHAT_AGENT_UNAVAILABLE_WARNING } from '../writeAccessMessage';
 import { useChatAgentModelState } from './chat/useChatAgentModelState';
 import { useAgentFromConversationSync } from './chat/useAgentFromConversationSync';
 import { useAgentListAndModelRestore } from './chat/useAgentListAndModelRestore';
-import {
-  CHAT_IMAGE_ONLY_PROMPT,
-  attachmentsToPayload,
-  type ChatAttachment,
-} from './chat/attachments';
+import { type ChatAttachment } from './chat/attachments';
 import { makeDraftKey } from './chat/draftKey';
 import {
   projectSelectionHint as computeProjectSelectionHint,
@@ -64,7 +52,6 @@ import {
 import {
   chatSettingsSummaryParts as computeChatSettingsSummaryParts,
   partitionThreadDrawerRows,
-  summarizeTitle,
 } from './chat/threads';
 export { formatThreadUpdatedAt } from './chat/threads';
 import { ChatThreadDrawer } from './chat/ChatThreadDrawer';
@@ -82,15 +69,14 @@ import { useChatNotifications } from './chat/useChatNotifications';
 import { useChatDraftState } from './chat/useChatDraftState';
 import { useChatSendState } from './chat/useChatSendState';
 import { useAbortOnConversationChange } from './chat/useAbortOnConversationChange';
-import { toAssistantMessage, toChatMessages, type ChatMessage } from './chat/messages';
+import { useChatSendCommits } from './chat/useChatSendCommits';
+import { useChatSubmit } from './chat/useChatSubmit';
+import { toChatMessages, type ChatMessage } from './chat/messages';
 import {
-  APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY,
   HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY,
   START_NEW_DRAFT_THREAD_CARRY,
   START_NEW_DRAFT_THREAD_PREFILL_CARRY,
 } from './chat/draftCarryPlans';
-import { CHAT_STREAM_DETACHED_FAILED_MESSAGE } from './chat/turnStatusPolicy';
-import { describeChatSendError } from './chat/chatSendErrors';
 import { useElapsedSeconds } from './chat/useElapsedSeconds';
 import { useStickToBottomScroll } from './chat/useStickToBottomScroll';
 import { useConversationKey } from './chat/useConversationKey';
@@ -162,20 +148,17 @@ export function ChatPanel({
     currentConversationKey,
     currentConversationKeyRef,
   } = useConversationKey(selectedProjectId);
+  const send = useChatSendState();
   const {
     isSending,
-    setIsSending,
     streamingReply,
-    setStreamingReply,
     turnRecoveryGeneration,
-    setTurnRecoveryGeneration,
     unresolvedSends,
-    markUnresolvedSend,
     clearUnresolvedSend,
     clearStreamingReplyForKey,
     detachedStreamSendRef,
     requestAbortControllerRef,
-  } = useChatSendState();
+  } = send;
   // Chat Redesign 1b: タブ帯を捨て、スレッド切り替えは「現在のスレッド名+件数」
   // ボタン1つ→ドロワー(縦一覧)へ集約する。ドロワーの開閉・行の「⋯」操作メニュー・
   // リネーム確定・削除確認・CLIセッション発見一覧の表示は互いに絡み合う相互排他の
@@ -329,8 +312,9 @@ export function ChatPanel({
   // コンポーネント側は setInput/updateConversationAttachments 等
   // (下の分割代入で受け取った各関数)経由で読み書きする。会話キーの再割り当て
   // (bdboard-c1pw の対象、startNewDraftThread / handleAgentChange /
-  // applyChatError / submitChatMessage / handleNewThread)はこのファイルに
-  // 残る。
+  // handleNewThread)はこのファイルに残る。送信失敗時の復元(commitFailure)は
+  // chat/useChatSendCommits.ts、送信時のクリア(submit)は chat/useChatSubmit.ts
+  // にある(第13b段)。
   // bdboard-sso1.83 第2段(react-hooks/exhaustive-deps 対策):
   // useThreadDrawerState と同じく、フックの戻り値はオブジェクトのまま
   // 変数へ束縛せず分割代入する。`const chatDraft = useChatDraftState(...)` の
@@ -433,15 +417,15 @@ export function ChatPanel({
   // DRAFT_PAYLOAD_STORE_NAMES 型により applicators の網羅性も tsc で強制される。
   // 新しい会話キー付きストアを足すときは conversationKeyspace.ts の正本に追加し、
   // ここと3再割り当てサイト(handleAgentChange / startNewDraftThread /
-  // applyChatSuccess)の引き継ぎ選択も更新すること。
+  // chat/useChatSendCommits.ts の commitSuccess)の引き継ぎ選択も更新すること。
   //
   // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
   // conversations / historyLoadedFor は「サーバーのセッション状態」側。
   // streamingReply は bdboard-1qoe で会話キーでスコープした Record になり形は
   // draft payload ストアと同じだが、これはクライアントが受信中のストリーム
   // バッファであり、ドラフトの「積載物」(未送信の入力/添付) ではないため対象に
-  // 含めない — sendKey は selectedProjectId==='' の間は submitChatMessage が
-  // 早期 return するため (~2641行目) '' キースペースに入ることが無く、かつ
+  // 含めない — sendKey は selectedProjectId==='' の間は chat/useChatSubmit.ts の
+  // submit が早期 return するため '' キースペースに入ることが無く、かつ
   // 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
   // ので、ここで移送/掃除しなくても取り残されない。下の2つの呼び出しサイト
   // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
@@ -636,7 +620,7 @@ export function ChatPanel({
   const currentAttachments = conversationAttachments[currentConversationKey] ?? [];
   const currentAttachmentError = attachmentErrors[currentConversationKey] ?? null;
   // bdboard-pbf: 既存スレッド選択中で履歴がまだ解決していない間は送信を
-  // ブロックする(送信ボタン disabled + handleSubmit 冒頭ガード)。この窓で
+  // ブロックする(送信ボタン disabled + chat/useChatSubmit.ts の submit 冒頭ガード)。この窓で
   // 送信すると conversations[key] が未定義のため sessionId 無しで POST され、
   // 既存スレッドの続きではなく別のサーバーセッションにフォークしてしまう。
   // loadingHistoryFor でなく historyLoadedFor を見るのは、履歴 effect が発火する
@@ -1281,17 +1265,17 @@ export function ChatPanel({
   // プロジェクト単位で同時に1ターンしか受け付けない (isBusy ロック) ため、
   // ここでブロックしなくても再送自体は通常 409 で弾かれるが、409 が返る
   // 前後のタイミング次第では再送がそのまま処理されてしまうことがあり、その
-  // 場合 submitChatMessage 冒頭の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }))
+  // 場合 chat/deliverChatSend.ts 冒頭の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }))
   // が回収中に保持していた部分テキストを即座に空文字で上書きしてしまう
   // (bdboard-v3ag のチケット本文、bdboard-3tw.166 の Opus レビュー由来)。
   //
   // detachedStreamSendRef は ref なので、その変更だけでは再レンダーが起きない
   // が、この ref への書き込み/クリアは必ず同じ同期ブロック内で別の setState
   // (setTurnRecoveryGeneration、setStreamingReply 等、上の checkTurnStatus /
-  // submitChatMessage を参照) を伴っており、その setState が再レンダーを
+  // chat/deliverChatSend.ts を参照) を伴っており、その setState が再レンダーを
   // 引き起こす。したがって useMemo 等でメモ化せず、毎レンダーでこの ref を
   // 直接読むだけで値が最新に保たれる。加えて、この値は
-  // submitChatMessage 自身の冒頭(クリック/Enter 時点)でも同様に ref を直接
+  // submit(chat/useChatSubmit.ts)自身の冒頭(クリック/Enter 時点)でも同様に ref を直接
   // 読んで判定しており、そちらはそもそも再レンダーに依存しない
   // (setTurnRecoveryGeneration より前に ref へ書き込まれるため、isSending が
   // false に落ちた直後の一瞬の隙間も塞げる)。
@@ -1312,518 +1296,45 @@ export function ChatPanel({
   // useChatAttachmentIngestion.ts (useChatDraftState.ts 経由) へ移した。
   // 以降は handleImagePaste / handleImageFileChange /
   // removeAttachment を呼ぶ。
-  const applyChatSuccess = useCallback(
-    (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
-      // bdboard-ru4d: 会話キーの再割り当て(ドラフトキー → 確定 sessionId)だが、
-      // ドラフト積載物は引き継がない(選択は APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY)。
-      // 移すのは conversations(返信を追記した計算済みの値)のみ。
-      referenceDraftPayloadStoreCarryPlan(APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY);
-      setConversations((prev) => {
-        const next = {
-          ...prev,
-          [result.sessionId]: {
-          messages: [
-            ...(prev[convKey]?.messages ?? []),
-            toAssistantMessage(result, Date.now()),
-          ],
-          sessionId: result.sessionId,
-          agentId: result.agentId,
-          },
-        };
-        if (convKey !== result.sessionId) delete next[convKey];
-        return next;
-      });
-      // bdboard-pbf: ドラフトからの初回送信で新しい sessionId が確定した直後、
-      // 下の setSelectedThreadIds でこのセッションが選択される。会話は今
-      // ここで組み立てた最新状態なので履歴ロード済みとして扱わないと、
-      // isHistoryPending が true のまま送信ボタンがロックされ続けてしまう
-      // (履歴 effect は messages がある会話では early-return して
-      // historyLoadedFor を立てないため)。
-      setHistoryLoadedFor((prev) => ({ ...prev, [result.sessionId]: true }));
-      writePersistedChatThread(selectedProjectId, {
-        sessionId: result.sessionId,
-        agentId: result.agentId,
-      });
-      if (showModelSelect && effectiveModelId !== '') {
-        // 送信で実際に使われたモデルは常に確定値として勝つべきなので、ここだけは
-        // 無条件で上書きする(履歴解決側の「未設定キーにだけ書く」ガードとは非対称)。
-        setThreadModelIds((prev) => ({ ...prev, [result.sessionId]: effectiveModelId }));
-      }
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: [
-          ...(prev[selectedProjectId] ?? []).filter((thread) => thread.sessionId !== result.sessionId),
-          { sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false, updatedAt: new Date().toISOString() },
-        ],
-      }));
-      setOpenThreadIds((prev) => ({
-        ...prev,
-        [selectedProjectId]: [...(prev[selectedProjectId] ?? []).filter((id) => id !== result.sessionId), result.sessionId],
-      }));
-      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
-      // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
-      // 通常の成功では印はそもそも立っていない (印を立てるのは abort の catch だけ)
-      // ので、外して意味があるのは「見届けられなかったスレッドへ戻り、取り直しが
-      // 当たる前に次を送信した」場合だけ。その場合の取りこぼし返信はまだローカルに
-      // 入っておらず、ここで外すと二度と取りに行かなくなる。印は取り直しが実際に
-      // 当たったときにだけ外す。
-      void acknowledgeChatTurn(selectedProjectId, result.sessionId).catch(() => {
-        // The reply is already incorporated. A failed ACK only causes safe re-hydration later.
-      });
-    },
-    [effectiveModelId, selectedProjectId, showModelSelect],
-  );
+  const { commitSuccess, commitFailure, appendTranscript } = useChatSendCommits({
+    selectedProjectId,
+    showModelSelect,
+    effectiveModelId,
+    setConversations,
+    setHistoryLoadedFor,
+    setThreadModelIds,
+    setThreadLists,
+    setOpenThreadIds,
+    setSelectedThreadIds,
+    conversationInputsRef,
+    conversationAttachmentsRef,
+    setInput,
+    updateConversationAttachments,
+  });
 
-  const applyChatError = useCallback(
-    (
-      convKey: string,
-      sentText: string,
-      sentAttachments: readonly ChatAttachment[],
-      error: unknown,
-      sentAt: number,
-    ) => {
-      // bdboard-sso1.83 第4段: エラー種別 → 文言/clearSession の判定は
-      // chat/chatSendErrors.ts の describeChatSendError へ移した。分岐の順番・
-      // 条件・文言は変えていない。
-      const { text: errorText, clearSession } = describeChatSendError(error);
-
-      setConversations((prev) => {
-        const current = prev[convKey] ?? { messages: [] };
-        // bdboard-sp2(議長裁定 方針(a)): 送信は成立しなかった — 楽観的に積んだ
-        // ユーザーメッセージを transcript から取り消し、本文は下の入力欄復元で返す。
-        // 取り消さないと失敗直後に transcript と入力欄で同じ本文が二重表示され、
-        // 1クリック再送で transcript にユーザー発話が二重に積まれる。
-        const messagesWithoutOptimisticUser = current.messages.filter(
-          (message) => !(message.role === 'user' && message.at === sentAt),
-        );
-        return {
-          ...prev,
-          [convKey]: {
-            messages: [
-              ...messagesWithoutOptimisticUser,
-              { role: 'error', text: errorText, at: Date.now() },
-            ],
-            sessionId: clearSession ? undefined : current.sessionId,
-            agentId: clearSession ? undefined : current.agentId,
-          },
-        };
-      });
-      if (clearSession) writePersistedChatThread(selectedProjectId, undefined);
-
-      // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ
-      // 本文を復元する。送信時のクリア(handleSubmit、try の前)は失敗しても巻き戻ら
-      // ないため、送信をやり損ねた本文がそのまま消えていた。復元先は convKey ——
-      // 呼び出し元(handleSubmit)がクロージャで捕まえた「送信時点の会話キー」
-      // (sendKey)であり、現在表示中のキー(currentConversationKey)ではない。
-      // 送信中にユーザーがスレッド/プロジェクトを切り替えていた場合、現在の入力欄
-      // ではなく元のキーへ復元することで、現在の入力欄を汚染しない。
-      // sentText は handleSubmit が渡す trim 前の本文(SF2、Opus レビュー) —
-      // プリフィル文言(例: `${ticketId} について: `)は末尾に半角スペースを
-      // 含む形式が本番で実在するため、trim 済みの値を復元すると下の SF1 の
-      // 「未編集シードの復元は seed 記録を維持する」判定が壊れる(復元値が
-      // draftSeedTextRef の末尾スペース込みシード文言と一致しなくなるため)。
-      // N5(Opus レビュー): 送信中にこの convKey 自体が(新規ドラフト採番などで)
-      // どこからも表示されなくなっていた場合、復元した本文もこのエラー
-      // メッセージ(上で conversations[convKey] へ積んだもの)も、以後どの UI
-      // 操作からも到達できない。ただしこれは base(このチケット以前)でも本文が
-      // 失われていた状況と同じであり、挙動の劣化ではない — 到達可能な場合の
-      // 復元漏れを防ぐのがこの変更の目的で、到達不能キーへの保証までは範囲外。
-      //
-      // 上書き防止(dpq「書きかけ本文を消さない」不変条件): 失敗するまでの間に
-      // ユーザーが同じ convKey へ新しい本文を打ち込んでいた場合、送信文言で
-      // それを上書きしてはいけない。conversationInputsRef(現在値を stale
-      // closure なしで読むための ref ミラー、このファイル内の他の書き込み側と
-      // 同じパターン)を見て、該当キーが空のときだけ復元する。
-      // N4(Opus レビュー): 現状の UI では isSending の間 textarea/各 select が
-      // すべて disabled になるため、送信中にこの convKey(=sendKey)へ新しい本文を
-      // 書き込める手段は実際には存在せず、このガードは現状到達しない防御的
-      // コードである。将来 disabled 制御を緩める変更が入ったときの保険として
-      // 残す(ガードとそれを固定する回帰テストは維持する)。
-      // bdboard-zlzo: 配信停止後の失敗判定 (detachedStreamSendRef の fail) は
-      // isSending が落ちた後に非同期で届くため、このガードへ実際に到達する。
-      //
-      // SF1(Opus レビュー): ここで draftSeedTextRef.current[convKey] を delete
-      // しては**いけない**。104.17 の isUserEdit は「ユーザーが書いた本文を
-      // システムシードとして記録するな」という規則だが、この復元が上書きする
-      // ケース(conversationInputsRef.current[convKey] === '')は、そもそも「未編集
-      // のプリフィルをそのまま送信して失敗した」場合そのものであり、復元される
-      // sentText は元のシード文言と一致する(=正真正銘のシード)。ここで delete
-      // すると、次にこの convKey に対して startNewDraftThread 等の「値がシード
-      // 文言のままなら未編集」判定が働いたとき、記録が失われているせいで
-      // 無条件に「編集済み」とみなされ、後続のプリフィル適用が無言で捨てられて
-      // 古い文言が居座ってしまう(実測で確認)。ユーザーが実際に編集していた
-      // ケースでは draftSeedTextRef は古いプリフィルのままなので、delete しなくても
-      // `value !== seed` により正しく「編集済み」と判定される — つまり delete
-      // 無しの現状のまま(=既存の記録を変更しない)で両ケースとも正しい。
-      if ((conversationInputsRef.current[convKey] ?? '') === '') {
-        setInput(convKey, sentText);
-      }
-      // 本文と同じく送信元キーへだけ戻し、送信後に同じキーへ新しい添付が
-      // 置かれていた場合は上書きしない。AbortError はこの関数へ来ない。
-      if (
-        sentAttachments.length > 0 &&
-        (conversationAttachmentsRef.current[convKey]?.length ?? 0) === 0
-      ) {
-        updateConversationAttachments((prev) => ({
-          ...prev,
-          [convKey]: [...sentAttachments],
-        }));
-      }
-    },
-    [
-      selectedProjectId,
-      updateConversationAttachments,
-      conversationInputsRef,
-      conversationAttachmentsRef,
-      setInput,
-    ],
-  );
-
-  const submitChatMessage = useCallback(
-    async (
-      text: string,
-      sentRawText: string,
-      sentAttachments: readonly ChatAttachment[],
-    ) => {
-      if (selectedAgentUnavailable) {
-        if (text !== '' || sentAttachments.length > 0) {
-          const blockedAt = Date.now();
-          setConversations((prev) => ({
-            ...prev,
-            [currentConversationKey]: {
-              ...prev[currentConversationKey],
-              messages: [
-                ...(prev[currentConversationKey]?.messages ?? []),
-                {
-                  role: 'error',
-                  text: CHAT_AGENT_UNAVAILABLE_WARNING,
-                  at: blockedAt,
-                },
-              ],
-            },
-          }));
-        }
-        return;
-      }
-      // bdboard-v3ag: detachedStreamSendRef を ref のまま直接読む(クリック/
-      // Enter 時点の最新値、hasUnresolvedProjectRecovery の定義コメント参照)。
-      // isSending は配信停止直後に false へ戻るため、isSending だけのガードでは
-      // 回収中の再送を防げない。
-      const unresolvedProjectRecoveryAtSubmit =
-        detachedStreamSendRef.current[selectedProjectId] !== undefined;
-      if (
-        (text === '' && sentAttachments.length === 0) ||
-        isSending ||
-        selectedProjectId === '' ||
-        isHistoryPending ||
-        unresolvedProjectRecoveryAtSubmit ||
-        (sentAttachments.length > 0 && selectedAgent?.supportsImages !== true)
-      ) {
-        return;
-      }
-
-      const conversation = conversations[currentConversationKey];
-      const agentMatches =
-        selectedAgentId === '' ||
-        conversation?.agentId === undefined ||
-        conversation.agentId === selectedAgentId;
-      // bdboard-pbf: conversations[key] が「まだ無い」(履歴 fetch がエラー等で
-      // 会話が復元されていない)ときは選択中スレッドの currentSessionId へ
-      // フォールバックし、sessionId 無し POST による別セッションへのフォークを防ぐ。
-      // 一方、conversation が「存在するが sessionId が undefined」なのは
-      // 'unknown chat session' 等の clearSession で意図的にクリアされた状態なので、
-      // そのときはフォールバックせず新規セッションを開始する(従来挙動)。
-      // 履歴 fetch の in-flight 中は上の isHistoryPending ガードで送信自体を
-      // ブロックしているため、ここに来る「conversation 無し」は fetch 失敗後のみ。
-      const sessionId = agentMatches
-        ? conversation !== undefined
-          ? conversation.sessionId
-          : currentSessionId
-        : undefined;
-      const sentAt = Date.now();
-      const messagePayload: ChatMessageRequest = {
-        projectId: selectedProjectId,
-        message: text,
-      };
-      if (sessionId !== undefined) messagePayload.sessionId = sessionId;
-      if (selectedAgentId !== '') messagePayload.agentId = selectedAgentId;
-      if (showModelSelect && effectiveModelId !== '') messagePayload.model = effectiveModelId;
-      if (sentAttachments.length > 0) {
-        try {
-          // preview生成時に読み終えたdata URLを再利用する。送信後にFileReaderを
-          // 再度待たず、POST開始前の切替でdraftを失う非同期の窓を作らない。
-          messagePayload.images = attachmentsToPayload(sentAttachments);
-        } catch {
-          setAttachmentError(
-            currentConversationKey,
-            '画像を送信形式に変換できませんでした。',
-          );
-          return;
-        }
-      }
-
-      setConversations((prev) => ({
-        ...prev,
-        [currentConversationKey]: {
-          ...prev[currentConversationKey],
-          // bdboard-pbf: 解決済みの sessionId を楽観的書き込みの時点で会話に
-          // 焼き込む。これが無いと、フォールバック (conversation 未定義 →
-          // currentSessionId) で送った 1 回目が transient エラー (409 等) に
-          // なったとき、エラーパスが「sessionId 無しの conversation」を作って
-          // しまい、リトライ時に clearSession 済みと誤分類されて sessionId 無し
-          // POST でフォークする。clearSession 経路ではそもそもローカルの
-          // sessionId が undefined なので、この条件付き spread は挙動を変えない。
-          ...(sessionId !== undefined ? { sessionId } : {}),
-          messages: [
-            ...(prev[currentConversationKey]?.messages ?? []),
-            {
-              role: 'user',
-              text,
-              at: sentAt,
-              ...(sentAttachments.length > 0
-                ? {
-                    images: sentAttachments.map(({ previewUrl, name, size }) => ({
-                      previewUrl,
-                      name,
-                      size,
-                    })),
-                  }
-                : {}),
-            },
-          ],
-        },
-      }));
-      setInput(currentConversationKey, '');
-      updateConversationAttachments((prev) => ({
-        ...prev,
-        [currentConversationKey]: [],
-      }));
-      resetBackgroundTurnStatus();
-      setIsSending(true);
-      const sendKey = currentConversationKey;
-      // bdboard-zlzo: 新しいターンが完走したならサーバーは空いていたので、前の配信停止分の
-      // 判定は捨てる (失われるのは失敗表示だけ)。送信の開始時点では捨てない —
-      // 前のターンが続いている間の再送は 409 で弾かれ、判定を失うと、その後に前の
-      // ターンが失敗しても何も表示されなくなる。
-      const settleEarlierDetachedSend = (): void => {
-        const detached = detachedStreamSendRef.current[selectedProjectId];
-        if (detached !== undefined) {
-          delete detachedStreamSendRef.current[selectedProjectId];
-          // bdboard-3tw.166: 前の配信停止分が残していた部分テキストも一緒に消す。
-          // 新しいターンが完走した以上、その古い部分テキストが後から置き換わる
-          // ことはもう無い (このあと fail() も呼ばれない)。
-          clearStreamingReplyForKey(detached.streamingKey);
-        }
-      };
-      const requestController = new AbortController();
-      requestAbortControllerRef.current = requestController;
-
-      try {
-        if (selectedAgent?.supportsStreaming === true) {
-          // bdboard-1qoe: 会話キーだけを初期化する (Record 全体を作り直さない)。
-          // 無関係な会話/プロジェクトが同じ Record に保持している部分テキストを
-          // 巻き添えで消さないため。
-          setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }));
-          // bdboard-3tw.166 (Opus レビュー指摘): 「この送信が今まさに配信停止した」を
-          // detachedStreamSendRef.current の中身 (streamingKey が sendKey と一致するか)
-          // で判定すると、同じ会話キーへの以前の (まだ未解決の) 配信停止が残っている
-          // ときに誤判定する — 例えば前のターンが配信停止で回収待ちのまま、同じ会話へ
-          // 再送し、その再送が (409 ではなく) 通常のネットワークエラー等で失敗した
-          // 場合、このプロジェクトのエントリは前のターンのままなので誤って「今回も
-          // 配信停止した」と
-          // 判定してしまい、この再送自身が受け取った部分テキストが消えずに残る。
-          // ローカル変数で「この送信自身が配信停止したか」だけを見る。
-          //
-          // bdboard-v3ag Opus レビュー指摘 (nit N1): 上で説明している「同じ会話への
-          // 以前の未解決の配信停止が残っている」ケース自体、bdboard-v3ag 以降は
-          // 単一タブの中では起こり得ない — submitChatMessage 冒頭の
-          // unresolvedProjectRecoveryAtSubmit ガードが、同じプロジェクトのエントリが
-          // 存在する間はこの関数の本体に到達する前に return するため。したがって
-          // このローカル変数による判定は今のところ常にエントリの有無の判定と一致
-          // するはず
-          // だが、ガードを潜り抜ける経路が将来増えても壊れない防御としてそのまま
-          // 残す(コード自体は変更しない、コメントのみ更新)。
-          let detachedThisSend = false;
-          try {
-            const result = await postChatMessageStream(
-              messagePayload,
-              {
-                onDelta: (delta) =>
-                  setStreamingReply((prev) => ({
-                    ...prev,
-                    [sendKey]: (prev[sendKey] ?? '') + delta,
-                  })),
-              },
-              requestController.signal,
-            );
-            applyChatSuccess(sendKey, text, result);
-            settleEarlierDetachedSend();
-          } catch (error) {
-            if (error instanceof DOMException && error.name === 'AbortError') {
-              // unmount / スレッド切替 / プロジェクト切替由来の意図的 abort。
-              // エラーバブルや入力欄復元は行わない。同一 project 内のスレッド
-              // 切替では selectedProjectId が変わらないため、status 回収 effect を
-              // generation で明示的に再起動する。
-              setTurnRecoveryGeneration((generation) => generation + 1);
-              // 回収が取りこぼしたときの安全網 (bdboard-3tw.156)。
-              markUnresolvedSend(sessionId);
-            } else if (error instanceof ChatStreamEndedWithoutResultError) {
-              // bdboard-zlzo: サーバーが done/error を送らずに配信だけを止めた
-              // (SSE キュー上限超過など)。ターンはサーバー側で完走・保存されるので、
-              // 送信失敗として扱うとエラー表示と入力復元で再送 → 重複ターンを招く。
-              // AbortError と同じく turn-status 回収へ流し、取りこぼしの安全網も張る。
-              // 回収前に idle が見えたら完走しなかったので、そこで送信失敗に戻す。
-              const detachedError = error;
-              detachedThisSend = true;
-              detachedStreamSendRef.current[selectedProjectId] = {
-                sessionId,
-                streamingKey: sendKey,
-                detachedAt: Date.now(),
-                fail: () =>
-                  applyChatError(
-                    sendKey,
-                    sentRawText,
-                    sentAttachments,
-                    new Error(CHAT_STREAM_DETACHED_FAILED_MESSAGE, { cause: detachedError }),
-                    sentAt,
-                  ),
-              };
-              setTurnRecoveryGeneration((generation) => generation + 1);
-              markUnresolvedSend(sessionId);
-            } else {
-              // bdboard-w26w: まだ接続中のクライアントがインライン SSE 'error' で
-              // 受け取った失敗 (この else 分岐、ApiError(502, ...) 等。プリストリーム
-              // の 409/400/404 やネットワーク断もここへ来るが、それらはサーバー側で
-              // recordFailedTurn されていないので以下の ACK は素通りする) も、
-              // 成功時の applyChatSuccess と対称に turn-status を ACK する。サーバーは
-              // ChatAgentError を無条件で failedTurns へ記録する (recordFailedTurn、
-              // finalizeChatTurnSuccess の隣の recordCompletedTurn と同型) ため、
-              // ACK しないとこのエントリが CHAT_COMPLETED_TURNS_MAX の上限で押し
-              // 出されるまで turn-status に残り続け、後から GET /api/chat/turn-status
-              // を見る別クライアント/再接続後のこの会話がこの古い失敗を拾ってしまう
-              // (この画面はすでにエラー表示済みなので二重に見る必要が無い)。
-              // sessionId が無い場合 (新規スレッドの初回送信中の失敗) はサーバー側も
-              // sessionId 無しで記録しており ACK できる識別子がクライアントに無いため、
-              // 何もしない (キャップ eviction に任せる、FailedChatTurn の設計どおり)。
-              //
-              // Opus レビュー指摘 (finding 1): DELETE /api/chat/turn-status は同じ
-              // sessionId の completed と failed を両方まとめて ACK する
-              // (ackCompletedTurn + ackFailedTurn、chat-routes.ts)。isBusy はプロジェクト
-              // 単位のロックなので、この送信 (N) の直前に「別の送信 (D) が配信停止し、
-              // まだ回収 (turn-status 回収 effect のポーリング) が終わっていない」状態が
-              // ありえ、しかも D と N が同じ会話 (同じ sessionId) を続けて送信した場合、
-              // D はサーバー側では既に完走していて未 ACK の completedTurns エントリを
-              // 残しているだけかもしれない。この状況で N の失敗をここで直接 ACK すると、
-              // 本来は「D の回収」が先に処理すべきだった D の completed エントリまで
-              // 巻き添えで消してしまい、次の poll が idle を見て D を「配信停止のまま
-              // 失敗した」と誤判定する (実際には D は成功していたのに)。
-              // detachedStreamSendRef が今まさに同じ project + sessionId を追っている
-              // 間はここで直接 ACK せず、回収 effect 自身の完了優先の掃き出しロジック
-              // (checkTurnStatus の completed 分岐 → 掃けたら再帰的に failed も掃く)
-              // に任せる — 結果として少し遅れて ACK されるだけで、正しい優先順位
-              // (completed を先に処理する) が保たれる。
-              // bdboard-v3ag Opus レビュー指摘 (nit N1): 上の finding-1 シナリオ
-              // (D が未回収のまま同じ会話へ N を送る) は、bdboard-v3ag 以降は単一タブ
-              // では再現できない — 同じ理由 (submitChatMessage 冒頭のガード) で、D が
-              // 未回収である間はそもそも N をこの関数の中まで進められない。この分岐
-              // 自体は「ガードを回避する経路が将来増えても安全」な防御としてそのまま
-              // 残している。別タブ/別クライアントから見ても、detachedStreamSendRef は
-              // タブ固有の ref (コンポーネントインスタンスのメモリ上) なので、他タブの
-              // D をこのタブのガードが知ることはできない — その意味では cross-tab の
-              // 防御にもなっていない。したがって現状はどちらのタブ内シナリオでも
-              // 到達しない、意図した防御的デッドコードだと理解した上で残している。
-              const unresolvedSameSessionDetach =
-                detachedStreamSendRef.current[selectedProjectId] !== undefined &&
-                detachedStreamSendRef.current[selectedProjectId].sessionId === sessionId;
-              if (sessionId !== undefined && !unresolvedSameSessionDetach) {
-                void acknowledgeChatTurn(selectedProjectId, sessionId).catch(() => {
-                  // ACK 失敗は turn-status に古い失敗エントリが残るだけ。表示は
-                  // このあとの applyChatError で既にエラーとして出る。
-                });
-              }
-              applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
-            }
-          } finally {
-            // bdboard-3tw.166: この送信自身が配信停止した (上の
-            // ChatStreamEndedWithoutResultError 分岐、detachedThisSend) 場合だけ、
-            // ここではまだ消さない。turn-status 回収が確定する (completed の
-            // ハイドレーション、または idle/failed からの fail()) まで、最後に
-            // 受け取った部分テキストを表示し続ける ("回収中は最後に受け取った部分
-            // テキストを表示し続ける" 要件)。それ以外 (成功 / この送信自身の通常失敗)
-            // は従来どおり即座に消す。
-            if (!detachedThisSend) {
-              // bdboard-1qoe: この会話キーのぶんだけ消す (Record 全体を null にしない)。
-              // 他の会話/プロジェクトがバックグラウンドで回収待ちの間に保持している
-              // 部分テキストを、この送信の完了/通常失敗のたびに巻き添えで消していた
-              // (単一スロットだった頃の元チケットのバグ)。
-              clearStreamingReplyForKey(sendKey);
-            }
-          }
-        } else {
-          try {
-            const result = await postChatMessage(messagePayload, requestController.signal);
-            applyChatSuccess(sendKey, text, result);
-            settleEarlierDetachedSend();
-          } catch (error) {
-            if (error instanceof DOMException && error.name === 'AbortError') {
-              setTurnRecoveryGeneration((generation) => generation + 1);
-              markUnresolvedSend(sessionId);
-            } else {
-              applyChatError(sendKey, sentRawText, sentAttachments, error, sentAt);
-            }
-          }
-        }
-      } catch (error) {
-        // Keep the common controller ref from surviving an unexpected adapter failure.
-        requestAbortControllerRef.current = null;
-        throw error;
-      } finally {
-        if (requestAbortControllerRef.current === requestController) {
-          requestAbortControllerRef.current = null;
-        }
-        setIsSending(false);
-        inputRef.current?.focus();
-      }
-    },
-    [
-      conversations,
-      isSending,
-      selectedAgentId,
-      effectiveModelId,
+  const { handleSubmit } = useChatSubmit({
+    context: {
       selectedProjectId,
       currentConversationKey,
       currentSessionId,
-      isHistoryPending,
-      showModelSelect,
+      conversations,
+      selectedAgentId,
       selectedAgent,
       selectedAgentUnavailable,
-      applyChatSuccess,
-      applyChatError,
-      updateConversationAttachments,
-      markUnresolvedSend,
-      setAttachmentError,
-      setInput,
-    ],
-  );
-
-  const handleSubmit = useCallback(
-    async (event: FormEvent) => {
-      event.preventDefault();
-      const trimmedText = currentInput.trim();
-      const text =
-        trimmedText === '' && currentAttachments.length > 0
-          ? CHAT_IMAGE_ONLY_PROMPT
-          : trimmedText;
-      // bdboard-otf Opus レビュー SF2: 送信失敗時の復元(下の applyChatError 呼び出し)
-      // には、この trim 済み text ではなく trim 前の本文を渡す。プリフィル文言は
-      // 末尾に半角スペースを含む形式(例: `${ticketId} について: `)が本番で実在し、
-      // 復元値が trim 済みだと未編集シード(draftSeedTextRef、末尾スペース込み)と
-      // 一致しなくなり、SF1 の「未編集シードの復元は seed 記録を維持する」判定が
-      // 壊れる。送信ペイロード自体は従来どおり trim 済み text を使う。
-      await submitChatMessage(text, currentInput, currentAttachments);
+      showModelSelect,
+      effectiveModelId,
+      isHistoryPending,
+      currentInput,
+      currentAttachments,
     },
-    [currentAttachments, currentInput, submitChatMessage],
-  );
+    draft: { setInput, updateConversationAttachments, setAttachmentError },
+    send,
+    commitSuccess,
+    commitFailure,
+    appendTranscript,
+    resetBackgroundTurnStatus,
+    inputRef,
+  });
 
   // bdboard-3tw.133: クイックコマンドは常にプリフィル(入力欄に文言を入れて
   // フォーカスするだけ)で、即時送信はしない。誤タップでそのまま送信されて

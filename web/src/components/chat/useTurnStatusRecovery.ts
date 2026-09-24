@@ -1,4 +1,4 @@
-import { useEffect, useState, type MutableRefObject } from 'react';
+import { useCallback, useEffect, useState, type MutableRefObject } from 'react';
 import {
   acknowledgeChatTurn,
   fetchChatSessionMessages,
@@ -35,7 +35,7 @@ export interface UseTurnStatusRecoveryResult {
  *
  * detachedSendsRef(旧 detachedStreamSendRef)と turnRecoveryGeneration は
  * chat/useChatSendState.ts (第13a段) の useReducer が持つ。送信/ストリーム側
- * (第13b段の対象、まだ ChatPanel.tsx に残っている)も直接読み書きするため、
+ * (第13b段で chat/useChatSubmit.ts・chat/deliverChatSend.ts へ移った)も直接読み書きするため、
  * この effect の内側だけでは完結しない。
  */
 export function useTurnStatusRecovery(params: {
@@ -224,7 +224,9 @@ export function useTurnStatusRecovery(params: {
     applyRecoveredTurn,
   ]);
 
-  const resetBackgroundTurnStatus = () => setBackgroundTurnStatus({ state: 'idle' });
+  // bdboard-sso1.83 第13b段: submit(chat/useChatSubmit.ts)の useCallback deps に入るので
+  // 参照を安定させる(setBackgroundTurnStatus は useState の setter で安定)。
+  const resetBackgroundTurnStatus = useCallback(() => setBackgroundTurnStatus({ state: 'idle' }), []);
 
   return { backgroundTurnStatus, backgroundTurnProjectId, resetBackgroundTurnStatus };
 }

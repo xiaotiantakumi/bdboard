@@ -7,8 +7,9 @@
 // 変えていない。
 //
 // 会話キーの再割り当て(bdboard-c1pw の対象、ここでは触らない)を行う呼び出し側
-// (startNewDraftThread / handleAgentChange / applyChatError の送信失敗時復元 /
-// submitChatMessage の送信時クリア / handleNewThread)は ChatPanel.tsx に残る。
+// (startNewDraftThread / handleAgentChange / handleNewThread)は ChatPanel.tsx に残る。
+// 送信失敗時復元(commitFailure)は chat/useChatSendCommits.ts、送信時クリア(submit)は
+// chat/useChatSubmit.ts にある(第13b段)。
 // それらは setInput / updateConversationAttachments / setAttachmentError /
 // clearAttachmentError と conversationInputsRef / draftSeedTextRef を、元の
 // setState 呼び出しと同じ形のまま呼び出す。

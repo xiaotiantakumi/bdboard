@@ -6,8 +6,8 @@
 // action は ChatPanel.tsx 側の元の setter 呼び出し(の組み合わせ)と1対1で対応する。
 //
 // 会話キーの再割り当て(bdboard-c1pw の対象、ここでは触らない)を行う呼び出し側
-// (startNewDraftThread / handleAgentChange / applyChatError の送信失敗時復元 /
-// submitChatMessage の送信時クリア / handleNewThread)のうち、新キーの値を
+// (startNewDraftThread / handleAgentChange / commitFailure の送信失敗時復元 /
+// submit の送信時クリア / handleNewThread)のうち、新キーの値を
 // 「旧キーの直前の値」から合成する必要がある箇所(handleAgentChange の本文
 // 引き継ぎ)だけは 'replace-inputs' 経由の updater(元の
 // setConversationInputs(prev => ...) をそのまま dispatch に載せ替えたもの)を
@@ -42,8 +42,8 @@ export type ChatDraftAction =
   | { type: 'set-input'; key: string; value: string }
   // 旧: handleAgentChange(引き継ぎ、新キーの値を旧キーの直前の値から合成)が
   // 行っていた setConversationInputs(updater) 呼び出し。新しい値が prev に
-  // 依存しない他の再割り当てサイト(startNewDraftThread / applyChatError の
-  // 送信失敗時復元 / submitChatMessage の送信時クリア)は 'set-input' で足りる
+  // 依存しない他の再割り当てサイト(startNewDraftThread / commitFailure の
+  // 送信失敗時復元 / submit の送信時クリア)は 'set-input' で足りる
   // ため、こちらは使わない。conversationKeyspace 経由の
   // migrateKeyInRecord/purgeKeysInRecord もここを通る。
   | { type: 'replace-inputs'; updater: RecordUpdater<string> }
@@ -54,11 +54,11 @@ export type ChatDraftAction =
   // 旧: removeAttachment の updateConversationAttachments(id で除外) +
   // setAttachmentErrors(該当キーの削除) の組み合わせを1 action に統合。
   | { type: 'remove-attachment'; key: string; id: string }
-  // 旧: startNewDraftThread / handleAgentChange(引き継ぎ) / applyChatError
-  // (送信失敗時の復元) / submitChatMessage(送信時クリア) / handleNewThread が
+  // 旧: startNewDraftThread / handleAgentChange(引き継ぎ) / applyChatError(現 commitFailure)
+  // (送信失敗時の復元) / submitChatMessage(現 chat/useChatSubmit.ts の submit、送信時クリア) / handleNewThread が
   // 行っていた updateConversationAttachments(updater) 呼び出し。
   | { type: 'replace-attachments'; updater: RecordUpdater<ChatAttachment[]> }
-  // 旧: ingestImageFiles のバリデーション失敗 / submitChatMessage の画像変換
+  // 旧: ingestImageFiles のバリデーション失敗 / submitChatMessage(現 submit)の画像変換
   // 失敗が行っていた setAttachmentErrors({...prev, [key]: message})。
   | { type: 'set-attachment-error'; key: string; message: string }
   // 旧: handleNewThread が行っていた setAttachmentErrors(該当キーの削除)。
