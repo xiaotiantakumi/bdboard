@@ -1,6 +1,23 @@
 
 
 /* --- bdboard-3tw.69: quick-action undo snackbar --- */
+/* bdboard-h4xs.27: 全画面パネル(.detail-panel 系)が開いている間、undo-snackbar を
+   .overlay(1400)より上に出し、パネルを開いたまま「元に戻す」を押せるようにする。
+
+   「ChatPanel が開いている間は適用しない」だけでよい(チャット以外が同時に開いていても含めて) — 実際の
+   DOM 構造を実測した結果: AppOverlayGroup.tsx の JSX は TicketDetail → SessionList →
+   Shortcuts → Help → Search → Tunnel → Chat の固定順で、各 .overlay は .app の直子としてこの順で
+   並ぶ(チケット詳細からチャットを開いてもチケット詳細の .overlay はアンマウントせずに
+   残る)。ChatPanel は常に最後に宣言されているので、開いていれば常に最上位(同じ z-index の兄弟は
+   DOM 順=描画順) — だから「ChatPanel が開いているか」だけで「最上位が ChatPanel か」を判定できる
+   (「最後の兄弟か」を :has(~ .overlay) で別途判定する必要はない — それだと :has() の引数に別の
+   :has() が入る二重ネストになり invalid selector になることを実測済み。
+   `body:has(A):not(:has(B))` の形なら A/B のどちらにも :has() が入らないので valid)。
+   ChatPanel が開いている間は overlay が snackbar より上のまま(bdboard-ysm / PR #66 の保護を維持)。 */
+body:has(.overlay .detail-panel:not(.chat-panel)):not(:has(.chat-panel)) .undo-snackbar {
+  z-index: 1450;
+}
+
 .undo-snackbar {
   position: fixed;
   left: 50%;
