@@ -216,35 +216,45 @@ Measured on 2026-09-23 (bdboard-iaqg): with S0 the slot was held 7.6 of 11 hours
 verify all ran inside it; merges were ≈12 minutes apart. S1 moves everything except
 `acquire → git ls-remote → gh pr merge → release` out of the slot (design:
 bdboard-ulxa §2 A; S2/S3 — verifying a predicted landed tree instead of rebasing —
-are bdboard-ulxa.2 and later). From the PR worktree:
+are bdboard-ulxa.2 and later). From the PR worktree (a linked worktree made by
+`git worktree add` — the landed verify refuses to run in the main checkout, because detaching it
+would also replace the `web/dist` the always-on server serves):
 
 ```bash
 npm run merge-pr -- prepare <N>   # outside the slot: PR open, local HEAD == PR head,
                                   # required checks green, origin/main is an ancestor of HEAD
-                                  # → records PRED_BASE (= origin/main) in .git/bdboard-merge/pr-<N>.json
-npm run merge-pr -- gate <N>      # layer 3: bdboard/landed-verify on PRED_BASE must be success
+                                  # → records PRED_BASE (= origin/main) in <git common dir>/bdboard-merge/pr-<N>.json
+npm run -s merge-pr -- gate <N>   # layer 3: bdboard/landed-verify on PRED_BASE must be success
                                   # → bd merge-slot acquire --holder "<id> / PR#<N>" → ls-remote == PRED_BASE
-                                  # → prints ONE line on stdout and exits holding the slot
+                                  # → prints the merge line on stdout and exits holding the slot
 gh pr merge <N> --squash --delete-branch --match-head-commit <head> --subject '<title> (#<N>)'
-npm run merge-pr -- finish <N>    # always, merged or not: release → (if merged) detach-checkout the
-                                  # landed SHA in this worktree → npm run verify → commit status
+npm run merge-pr -- finish <N>    # always, merged or not: release first → (if merged) detach-checkout
+                                  # the landed SHA in this worktree → npm run verify → commit status
 ```
+
+(`-s` keeps npm's `> bdboard@… merge-pr` banner off stdout, so stdout is exactly the one
+`gh pr merge …` line; everything else goes to stderr.)
 
 - **Exit codes**: `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
   → push → wait for CI → `prepare` again. `75` start over from `prepare` (CAS lost, main moved
-  while waiting, slot not free within `merge.slotWaitMinutes`, CI pending). `4` / `6` main is
-  broken → below. `5` finish found the PR unmerged and returned the slot.
+  while waiting, `ls-remote` failed, slot not free within `merge.slotWaitMinutes`, CI pending or
+  the GitHub API unreachable). `4` / `6` main is broken → below. `5` finish found the PR unmerged
+  (and returned the slot, except under `--repair`). `1` could not run at all (bd unusable, dirty
+  worktree, run from the main checkout, `npm ci` failed, …) — the message says what to fix; for a
+  landed verify that could not run, fix it and run `npm run merge-pr -- verify <sha>`.
 - **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
   permission classifier refuses `gh pr merge`, running it from inside a script would be a
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
   (ticket-flow). `--match-head-commit` makes GitHub reject the merge (409) if someone pushed to
   the branch after `prepare`; that also ends in `finish` + `prepare`.
 - **Layer 3 ledger** = GitHub commit status `bdboard/landed-verify` on each main SHA
-  (`gh api repos/xiaotiantakumi/bdboard/commits/<sha>/status`). `finish` posts `pending`, runs the
-  contract's `verify` on the landed tree in the PR worktree (`git checkout --detach <sha>`; `npm ci`
-  first if a lockfile differs from what that worktree last installed), posts `success` / `failure`,
-  and checks the branch out again. It never touches the main checkout, so hook rule 7 does not
-  apply. The verify log is `.git/bdboard-merge/landed-verify-<sha>.log`.
+  (`gh api repos/xiaotiantakumi/bdboard/commits/<sha>/status`). `finish` checks out the landed tree
+  in the PR worktree (`git checkout --detach <sha>`; `npm ci` first if a lockfile differs from what
+  that worktree last installed — a failing `npm ci` is reported, not recorded as `failure`), posts
+  `pending`, runs the contract's `verify` while re-posting `pending` every `leaseMinutes / 3` (so a
+  verify queued behind the machine-wide verify slots does not look abandoned), posts `success` /
+  `failure`, and checks the branch out again. It never touches the main checkout, so hook rule 7
+  does not apply. The verify log is `<git common dir>/bdboard-merge/landed-verify-<sha>.log`.
 - **The next merger's gate** reads that ledger for its PRED_BASE: `success` → go on; `failure` →
   do not merge; `pending` / none → wait (30 s polls) until `merge.leaseMinutes` (8) after the last
   update (or the commit time), then verify that SHA itself and post the result (self-heal —
@@ -267,15 +277,18 @@ Detected by a `failure` in `bdboard/landed-verify`, a red `verify` / `e2e` in ma
 revert:
 
 1. The detector takes the slot and keeps it until main is green again — the only long hold in S1
-   (`finish` does this itself when it records `failure`, holder `<id> / main-broken <sha>`).
+   (`finish` does this itself when it records `failure`, holder `<id> / main-broken <sha12>`).
 2. `bd create --type bug -p 0 "main 破損: <sha> <failing step>"`, first lines of the log in a comment.
 3. Find the last `success` and the first `failure` from the per-SHA statuses (CI runs on main are
    `cancel-in-progress`, so they can be missing; statuses are not).
 4. Fix-forward only if it is a one-liner doable in ~10 minutes; otherwise revert:
    `git switch -c bd/<bug-id> origin/main && git revert --no-edit <breaking squash sha>` (no `-m`
-   needed: it is a squash) → PR → CI → merge (S1: prepare / gate / finish).
-5. Once the fix's landed-verify is `success`, release the slot, reopen the ticket of the breaking
-   PR with the reason, and add the case to failure-catalog.md.
+   needed: it is a squash) → PR → CI → merge. Under S1: `prepare` → `gate <N> --repair` (skips the
+   ledger check, takes over the `… / main-broken <PRED_BASE sha12>` slot or takes it under that
+   name) → the printed merge line → `finish`, which keeps the slot unless the fix's landed verify is
+   `success`, and releases it when it is. `--repair` is only for the fix PR of the P0 bug.
+5. Once the fix's landed-verify is `success` (and the slot is released), reopen the ticket of the
+   breaking PR with the reason, and add the case to failure-catalog.md.
 
 Other mergers that see `failure` stop; they neither merge nor take the slot.
 

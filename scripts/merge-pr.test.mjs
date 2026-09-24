@@ -1,7 +1,7 @@
 // bdboard-ulxa.1: scripts/merge-pr (マージ手順 S1 の prepare / gate / finish) のテスト。
 //
-// 本物の GitHub・bd・main checkout には触れない。一時ディレクトリに bare の origin と PR の
-// worktree 役のクローンを作り、git は本物、gh / bd / npm は scripts/merge-pr/fake-tools.mjs
+// 本物の GitHub・bd・main checkout には触れない。一時ディレクトリに bare の origin と、main
+// checkout 役のクローン + そこから git worktree add した PR の worktree を作り、git は本物、gh / bd / npm は scripts/merge-pr/fake-tools.mjs
 // (状態 JSON を読み書きする代役) で動かす。検証コマンドは偽の `node verify.cjs` で、
 // どの SHA を検証したかをログに残す。Windows は統合部分を skip (bash 前提ではないが、
 // 運用するのは macOS のエージェントだけで、always-on-server.test.mjs と同じ扱い)。
@@ -26,6 +26,8 @@ const fs = require('node:fs');
 const { execSync } = require('node:child_process');
 const head = execSync('git rev-parse HEAD').toString().trim();
 fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
+const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
+if (sleepMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
 process.exit(Number(process.env.FAKE_VERIFY_EXIT || 0));
 `;
 
@@ -85,6 +87,9 @@ describe('merge-pr pure helpers', () => {
     expect(mergeCommand(12, 'abc123', 'fix(x-1): a b')).toBe(
       "gh pr merge 12 --squash --delete-branch --match-head-commit abc123 --subject 'fix(x-1): a b (#12)'",
     );
+    expect(mergeCommand(4, 'b0b', 'fix(z): multi\nline  title\n')).toBe(
+      "gh pr merge 4 --squash --delete-branch --match-head-commit b0b --subject 'fix(z): multi line title (#4)'",
+    );
     expect(mergeCommand(3, 'f00', "docs(y): it's $HOME `x`")).toBe(
       "gh pr merge 3 --squash --delete-branch --match-head-commit f00 --subject 'docs(y): it'\\''s $HOME `x` (#3)'",
     );
@@ -94,6 +99,7 @@ describe('merge-pr pure helpers', () => {
 // 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
 describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 30_000 }, () => {
   let tmp;
+  let mainCheckout;
   let work;
   let fakeState;
   let env;
@@ -114,12 +120,13 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
   const posted = () => readFake().posted ?? [];
   const verified = () => (existsSync(env.FAKE_VERIFY_LOG) ? readFileSync(env.FAKE_VERIFY_LOG, 'utf8').trim().split('\n') : []);
   const auditText = () => (existsSync(env.BDBOARD_MERGE_AUDIT_LOG) ? readFileSync(env.BDBOARD_MERGE_AUDIT_LOG, 'utf8') : '');
-  const stateFile = () => path.join(work, '.git', 'bdboard-merge', `pr-${PR}.json`);
+  // 状態は git common dir (= main checkout の .git) に置かれ、全 worktree から見える。
+  const stateFile = () => path.join(mainCheckout, '.git', 'bdboard-merge', `pr-${PR}.json`);
   const status = (state, updatedAt = new Date().toISOString()) => ({ state, context: CONTEXT, description: state, updated_at: updatedAt });
 
-  function run(args, extraEnv = {}) {
+  function run(args, extraEnv = {}, cwd = work) {
     const result = spawnSync(process.execPath, [SCRIPT, ...args], {
-      cwd: work,
+      cwd,
       env: { ...env, ...extraEnv },
       encoding: 'utf8',
       timeout: 60_000,
@@ -134,8 +141,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
   }
 
   /**
-   * origin (bare) と PR worktree 役の work を作る。main の先頭 (= PRED_BASE) は mainDate の時刻。
-   * work は bd/demo-1 (feature.txt を足した 1 コミット) を checkout した状態で返す。
+   * origin (bare)・main checkout 役の mainCheckout・そこから git worktree add した PR worktree の
+   * work を作る。main の先頭 (= PRED_BASE) は mainDate の時刻。work は bd/demo-1
+   * (feature.txt を足した 1 コミット) を checkout した状態で返す。
    */
   function setup({ merge = {}, mainDate, branchFiles = {} } = {}) {
     if (tmp) {
@@ -143,6 +151,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     }
     tmp = mkdtempSync(path.join(tmpdir(), 'bdboard-merge-pr-'));
     const origin = path.join(tmp, 'origin.git');
+    mainCheckout = path.join(tmp, 'main');
     work = path.join(tmp, 'work');
     fakeState = path.join(tmp, 'fake-state.json');
     mkdirSync(path.join(tmp, 'home'));
@@ -164,21 +173,21 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       FAKE_VERIFY_LOG: path.join(tmp, 'verified.log'),
     };
     git(tmp, ['init', '-q', '--bare', '-b', 'main', origin]);
-    git(tmp, ['init', '-q', '-b', 'main', work]);
+    git(tmp, ['init', '-q', '-b', 'main', mainCheckout]);
     const contract = {
       version: 1,
       verify: 'node verify.cjs',
       prFlow: 'pr',
       merge: { mode: 'S1', leaseMinutes: 1, slotWaitMinutes: 1, statusContext: CONTEXT, repo: 'example/demo', ...merge },
     };
-    mkdirSync(path.join(work, '.claude'));
-    writeFileSync(path.join(work, '.claude', 'bdboard-harness.json'), `${JSON.stringify(contract, null, 2)}\n`);
-    writeFileSync(path.join(work, 'verify.cjs'), VERIFY_JS);
-    writeFileSync(path.join(work, 'README.md'), 'demo\n');
-    base = commitAll(work, 'chore: init', mainDate ? { GIT_COMMITTER_DATE: mainDate } : {});
-    git(work, ['remote', 'add', 'origin', origin]);
-    git(work, ['push', '-q', 'origin', 'main']);
-    git(work, ['switch', '-q', '-c', 'bd/demo-1']);
+    mkdirSync(path.join(mainCheckout, '.claude'));
+    writeFileSync(path.join(mainCheckout, '.claude', 'bdboard-harness.json'), `${JSON.stringify(contract, null, 2)}\n`);
+    writeFileSync(path.join(mainCheckout, 'verify.cjs'), VERIFY_JS);
+    writeFileSync(path.join(mainCheckout, 'README.md'), 'demo\n');
+    base = commitAll(mainCheckout, 'chore: init', mainDate ? { GIT_COMMITTER_DATE: mainDate } : {});
+    git(mainCheckout, ['remote', 'add', 'origin', origin]);
+    git(mainCheckout, ['push', '-q', 'origin', 'main']);
+    git(mainCheckout, ['worktree', 'add', '-q', '-b', 'bd/demo-1', work, 'main']);
     writeFileSync(path.join(work, 'feature.txt'), 'feature\n');
     for (const [file, content] of Object.entries(branchFiles)) {
       writeFileSync(path.join(work, file), content);
@@ -302,7 +311,8 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     for (const event of ['\tprepare\t', '\tgate-acquired\t', '\tfinish-released\t', '\tlanded-verify\t']) {
       expect(audit).toContain(event);
     }
-    expect(audit).toMatch(/finish-released\tpr=7\tid=demo-1\tmerged=true\theld_s=\d+/);
+    expect(audit).toMatch(/finish-released\tpr=7\tid=demo-1\theld_s=\d+/);
+    expect(audit).toMatch(/finish-merged\tpr=7\tid=demo-1\tmerged=true\tnew=[0-9a-f]{40}/);
     expect(run(['finish', String(PR)]).status).toBe(2);
   });
 
@@ -467,5 +477,130 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     // finish: 入っているのは main の依存、着地した木はブランチの lockfile → もう一度 npm ci
     expect(run(['finish', String(PR)]).status).toBe(0);
     expect(calls('npm')).toEqual([['npm', 'ci'], ['npm', 'ci']]);
+  });
+
+  it('finish / verify refuse to detach the main checkout; only a linked PR worktree runs the landed verify', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge();
+    const finished = run(['finish', String(PR)], {}, mainCheckout);
+    expect(finished.status).toBe(1);
+    expect(finished.stderr).toContain('PR の worktree');
+    expect(readFake().slot.holder).toBeNull(); // 枠は検証より先に返している
+    expect(posted()).toEqual([]);
+    expect(verified()).toEqual([]);
+    expect(git(mainCheckout, ['symbolic-ref', '--short', 'HEAD'])).toBe('main');
+    expect(run(['verify', landed], {}, mainCheckout).status).toBe(1);
+    expect(posted()).toEqual([]);
+    // PR の worktree からなら手で検証して台帳に書ける。
+    expect(run(['verify', landed]).status).toBe(0);
+    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
+      [landed, 'pending'],
+      [landed, 'success'],
+    ]);
+  });
+
+  it('gate --repair: the fix PR for a broken main takes over the main-broken slot and returns it only after success', () => {
+    setup();
+    const brokenHolder = `demo-0 / main-broken ${base.slice(0, 12)}`;
+    writeFake({ statuses: { [base]: [status('failure')] }, slot: { holder: brokenHolder } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(4);
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    const gated = run(['gate', String(PR), '--repair']);
+    expect(gated.status).toBe(0);
+    expect(gated.stdout).toBe(`gh pr merge ${PR} --squash --delete-branch --match-head-commit ${head} --subject '${TITLE} (#${PR})'\n`);
+    expect(calls('bd', 'acquire')).toEqual([]);
+    expect(readFake().slot.holder).toBe(brokenHolder);
+    const landed = simulateMerge();
+    const finished = run(['finish', String(PR)]);
+    expect(finished.status).toBe(0);
+    expect(finished.stderr).toContain('main が緑に戻った');
+    expect(readFake().slot.holder).toBeNull();
+    expect(calls('bd', 'release')).toEqual([['bd', 'merge-slot', 'release', '--holder', brokenHolder]]);
+    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
+      [landed, 'pending'],
+      [landed, 'success'],
+    ]);
+    expect(auditText()).toContain('\trepair-released\t');
+  });
+
+  it('gate --repair: a refused or still-failing repair keeps holding the main-broken slot', () => {
+    setup();
+    writeFake({ statuses: { [base]: [status('failure')] } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR), '--repair']).status).toBe(0);
+    const holder = `demo-1 / main-broken ${base.slice(0, 12)}`;
+    expect(readFake().slot.holder).toBe(holder);
+    const refused = run(['finish', String(PR)]);
+    expect(refused.status).toBe(5);
+    expect(refused.stderr).toContain('保持しています');
+    expect(readFake().slot.holder).toBe(holder);
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR), '--repair']).status).toBe(0);
+    simulateMerge();
+    expect(run(['finish', String(PR)], { FAKE_VERIFY_EXIT: '1' }).status).toBe(6);
+    expect(readFake().slot.holder).toBe(holder);
+    expect(calls('bd', 'release')).toEqual([]);
+  });
+
+  it('finish keeps the pending status fresh while verify runs, so other gates wait instead of self-healing', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge();
+    const finished = run(['finish', String(PR)], { BDBOARD_MERGE_HEARTBEAT_MS: '100', FAKE_VERIFY_SLEEP_MS: '1500' });
+    expect(finished.status).toBe(0);
+    const states = posted()
+      .filter(({ sha }) => sha === landed)
+      .map(({ state }) => state);
+    expect(states[0]).toBe('pending');
+    expect(states.at(-1)).toBe('success');
+    expect(states.filter((state) => state === 'pending').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('gate: a broken bd fails fast instead of waiting out slotWaitMinutes', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFake({ slot: { holder: null, broken: true } });
+    const gated = run(['gate', String(PR)]);
+    expect(gated.status).toBe(1);
+    expect(gated.stderr).toContain('bd merge-slot を使えません');
+    expect(gated.stdout).toBe('');
+    expect(calls('bd', 'acquire')).toEqual([]);
+  });
+
+  it('prepare: a GitHub API error from gh pr checks is a retry (75), not red CI', () => {
+    setup();
+    writeFake({ checksError: { [PR]: 'GraphQL: API rate limit exceeded for user ID 1.' } });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(75);
+    expect(prepared.stderr).toContain('取得できませんでした');
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('gate: an unreadable remote after acquire returns the slot and is not reported as a CAS loss', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFake({ slot: { holder: null, onAcquire: ['git', '-C', work, 'remote', 'set-url', 'origin', path.join(tmp, 'gone.git')] } });
+    const gated = run(['gate', String(PR)]);
+    expect(gated.status).toBe(75);
+    expect(gated.stderr).toContain('ls-remote');
+    expect(gated.stderr).not.toContain('CAS 負け');
+    expect(gated.stdout).toBe('');
+    expect(readFake().slot.holder).toBeNull();
+  });
+
+  it('self-heal: a failing npm ci is an error (exit 1) and writes nothing to the ledger', () => {
+    setup({ mainDate: '2026-01-01T00:00:00Z', branchFiles: { 'package-lock.json': '{"lockfileVersion":3}\n' } });
+    writeFake({ statuses: {}, npmExit: 1 });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    const gated = run(['gate', String(PR)]);
+    expect(gated.status).toBe(1);
+    expect(gated.stderr).toContain('台帳には書きません');
+    expect(posted()).toEqual([]);
+    expect(calls('bd', 'acquire')).toEqual([]);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
   });
 });

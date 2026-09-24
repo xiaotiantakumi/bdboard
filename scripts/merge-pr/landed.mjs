@@ -1,14 +1,10 @@
-// bdboard-ulxa.1: 層3 (着地後検証) — commit status 台帳の読み取り・待ち・自前の検証。
+// bdboard-ulxa.1: 層3 (着地後検証) — commit status 台帳の読み取りと待ち。
 //
 // 台帳は GitHub commit status の context `bdboard/landed-verify` (設計 §2.1、裁定 2)。
-// 着地後検証は PR worktree で `git checkout --detach <sha>` して契約の verify を回す。main
-// checkout には触らない (hook 規則 7 の pull / 再起動 / kill のどれにも当たらない)。
-import { closeSync, openSync, readFileSync } from 'node:fs';
-import path from 'node:path';
-
-import { git, gitOk, run, runShellToLog } from './exec.mjs';
-import { getLandedStatus, postLandedStatus } from './github.mjs';
-import { readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
+// 検証そのもの (detach checkout + verify + 投稿) は landed-verify.mjs。
+import { git } from './exec.mjs';
+import { getLandedStatus } from './github.mjs';
+import { say } from './state.mjs';
 
 /**
  * 台帳の 1 件 (または無し) を判定に変える純関数。
@@ -62,91 +58,4 @@ export async function waitForLanded(ctx, sha, { mainMoved }) {
       return { verdict: 'moved' };
     }
   }
-}
-
-const LOCKFILES = [
-  { file: 'package-lock.json', args: ['ci'] },
-  { file: 'web/package-lock.json', args: ['--prefix', 'web', 'ci'] },
-];
-
-function lockfileChanged(root, from, to, file) {
-  if (from === to) {
-    return false;
-  }
-  const diff = run('git', ['diff', '--quiet', from, to, '--', file], { cwd: root });
-  return diff.status !== 0;
-}
-
-function tail(file, lines) {
-  try {
-    return readFileSync(file, 'utf8').trimEnd().split('\n').slice(-lines).join('\n');
-  } catch {
-    return '';
-  }
-}
-
-/**
- * 着地後検証の本体: pending を投稿 → detach checkout → (lockfile が変わっていれば npm ci) →
- * 契約の verify → success / failure を投稿 → 元のブランチ (か SHA) に戻る。
- * 返り値の result: 'success' | 'failure' | 'error' (error = 検証を実行できなかった。台帳は pending のまま)。
- */
-export function runLandedVerify(ctx, sha, by) {
-  const root = ctx.cwd;
-  if (git(['status', '--porcelain', '--untracked-files=no'], { cwd: root }) !== '') {
-    say('作業ツリーに未コミットの変更があるため着地後検証を始められません (detach checkout できない)。');
-    return { result: 'error' };
-  }
-  if (!gitOk(['cat-file', '-e', `${sha}^{commit}`], { cwd: root })) {
-    say(`${sha} がローカルにありません (git fetch できていない)。`);
-    return { result: 'error' };
-  }
-  const branch = run('git', ['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: root });
-  const originalHead = git(['rev-parse', 'HEAD'], { cwd: root });
-  const restoreTo = branch.status === 0 ? branch.stdout.trim() : originalHead;
-  postLandedStatus(ctx, sha, 'pending', `npm run verify running (by ${by})`);
-  const checkout = run('git', ['checkout', '--quiet', '--detach', sha], { cwd: root });
-  if (checkout.status !== 0) {
-    say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);
-    return { result: 'error' };
-  }
-  const logPath = path.join(stateDir(root), `landed-verify-${sha.slice(0, 12)}.log`);
-  let result = 'success';
-  let why = 'npm run verify passed';
-  try {
-    const installedFor = readInstalledFor(root) ?? originalHead;
-    for (const lock of LOCKFILES) {
-      if (lockfileChanged(root, installedFor, sha, lock.file)) {
-        say(`${lock.file} が変わっているので npm ${lock.args.join(' ')} を実行します`);
-        const installed = run('npm', lock.args, { cwd: root, stdio: ['ignore', 'inherit', 'inherit'] });
-        if (installed.status !== 0) {
-          result = 'failure';
-          why = `npm ${lock.args.join(' ')} failed`;
-          break;
-        }
-        writeInstalledFor(root, sha);
-      }
-    }
-    if (result === 'success') {
-      say(`${ctx.config.verify} を ${sha.slice(0, 8)} で実行します (ログ: ${logPath})`);
-      const fd = openSync(logPath, 'w');
-      let code;
-      try {
-        code = runShellToLog(ctx.config.verify, { cwd: root, logFd: fd });
-      } finally {
-        closeSync(fd);
-      }
-      if (code !== 0) {
-        result = 'failure';
-        why = `npm run verify failed (exit ${code})`;
-        say(`verify が失敗しました (exit ${code})。ログの末尾:`, tail(logPath, 40));
-      }
-    }
-    postLandedStatus(ctx, sha, result, `${why} (by ${by})`);
-  } finally {
-    const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
-    if (back.status !== 0) {
-      say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
-    }
-  }
-  return { result, logPath };
 }

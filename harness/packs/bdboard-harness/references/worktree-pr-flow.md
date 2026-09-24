@@ -461,13 +461,20 @@ PR をマージしない。
 ```bash
 npm run merge-pr -- prepare <N>   # 枠の外。PR / 必須チェック / main を確かめ PRED_BASE を記録
                                   #   exit 3 = main が動いた → rebase → push → CI → prepare から
-npm run merge-pr -- gate <N>      # 層3 ゲート → acquire → CAS → stdout にマージ行を印字 (枠は保持)
+npm run -s merge-pr -- gate <N>   # 層3 ゲート → acquire → CAS → stdout にマージ行を印字 (枠は保持)
 gh pr merge <N> --squash --delete-branch --match-head-commit <head> --subject '<title> (#N)'  # 印字どおり
 npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠を返す → 着地後検証 → 台帳
 ```
 
-- 終了コード 75 は「並び直し」（CAS 負け・main が動いた・枠が空かない・CI pending）。
-  prepare からやり直す。4 / 6 は main が壊れている（下記）。
+- 実行場所は **PR の worktree（linked worktree）**。main checkout では着地後検証を拒否する
+  （detach すると常時稼働サーバーの配信物まで置き換わるため）。`-s` は npm の見出し行を stdout に
+  出さないため（stdout はマージ行 1 行だけになる）。状態とログは git common dir の `bdboard-merge/`。
+- 終了コード 75 は「並び直し」（CAS 負け・main が動いた・ls-remote 失敗・枠が空かない・CI pending・
+  GitHub API に届かない）。prepare からやり直す。4 / 6 は main が壊れている（下記）。1 は実行
+  できなかった（bd が使えない・作業ツリーが dirty・npm ci 失敗など。表示に従って直す。着地後検証を
+  実行できなかったときは直してから `npm run merge-pr -- verify <sha>`）。
+- 着地後検証の間は pending を LEASE の 1/3 ごとに更新し続ける（verify スロット待ちで長引いても
+  他の merger が自己修復に走らない）。npm ci の失敗は環境要因とみなし failure と記録しない。
 - `gh pr merge` が権限判定で拒否された / 409（head 不一致）でも **finish を打って枠を返す**
   （finish は REST の `merged` で成否を判定し、未マージなら枠を返して exit 5）。拒否の後は
   再試行・別経路をせず人間判断へ（SKILL.md 規律3）。
@@ -477,8 +484,9 @@ npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠�
   修復まで握る（finish は failure を記録すると自分で取る。これが唯一の長時間保持）→
   P0 バグを起票 → commit status の SHA 単位の履歴で最後の success と最初の failure を特定 →
   短時間で直せるなら fix-forward、それ以外は `git revert --no-edit <壊した squash SHA>` の PR →
-  その PR も prepare / gate / finish で入れ、success が記録されたら枠を返す → 壊した PR の
-  チケットを再 open して理由を残す。
+  その PR は prepare → `gate <N> --repair`（台帳の failure を無視し、`… / main-broken <PRED_BASE 12 桁>`
+  の枠を引き継ぐ）→ 印字行 → finish で入れる（finish は success のときだけ枠を返す）→ 壊した PR の
+  チケットを再 open して理由を残す。`--repair` は P0 バグの修復 PR 専用。
 - 巻き戻し（S1 → S0）は契約の 1 行。gate 済みの PR があっても finish は動き、枠を返す。
 
 ### 6. close と掃除

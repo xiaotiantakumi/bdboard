@@ -59,6 +59,9 @@ export function prepare(ctx, pr, { dryRun = false } = {}) {
     removeState(ctx.cwd, pr);
     fail(EXIT.NEEDS_REBASE, ...rebaseSteps(ctx.mainRef));
   }
+  if (checks.verdict === 'unknown') {
+    fail(EXIT.RETRY, '必須チェックの状態を GitHub から取得できませんでした (API の枠・ネットワーク)。時間を置いて prepare し直してください:', checks.output);
+  }
   if (checks.verdict === 'pending') {
     fail(EXIT.RETRY, '必須チェックがまだ終わっていません。gh pr checks <n> --required --watch で待ってから prepare し直してください。');
   }

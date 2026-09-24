@@ -3,19 +3,25 @@
 // 枠の中に入るのは acquire → ls-remote → (エージェントが gh pr merge) → finish の release まで。
 // gh pr merge はここでは打たない: 印字した 1 行をエージェントが実行する (設計 §6 裁定 4。
 // 権限判定に拒否されたときにスクリプト経由で通すと「迂回」になるため)。
+//
+// --repair (main 破損の修復 PR 専用、設計 §3.6): PRED_BASE の台帳が failure でも止まらず、
+// `<id> / main-broken <PRED_BASE 12 桁>` の枠を引き継ぐ (無ければその名前で取る)。この枠は
+// gate でも finish でも、修復の着地後検証が success になるまで返さない。
 import { shellQuote } from './exec.mjs';
 import { EXIT, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
-import { runLandedVerify, waitForLanded } from './landed.mjs';
+import { waitForLanded } from './landed.mjs';
+import { runLandedVerify } from './landed-verify.mjs';
 import { brokenMainSteps, mergeInstructions } from './messages.mjs';
 import { assertOpenPull } from './prepare.mjs';
-import { acquireSlot, releaseSlot } from './slot.mjs';
+import { acquireSlot, readSlot, releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
 const CONVENTIONAL = /^[a-z]+(\([^)]+\))?!?: \S/;
 
 export function mergeCommand(pr, head, title) {
-  const subject = `${title.trim()} (#${pr})`;
+  // 改行を含むタイトルでも印字は必ず 1 行にする。
+  const subject = `${title.replace(/\s+/g, ' ').trim()} (#${pr})`;
   return `gh pr merge ${pr} --squash --delete-branch --match-head-commit ${head} --subject ${shellQuote(subject)}`;
 }
 
@@ -38,7 +44,7 @@ async function landedGate(ctx, pr, state) {
       '自分で検証して台帳に書きます (自己修復)。',
     );
     audit('gate-self-heal', { pr, id, base: predBase });
-    const healed = runLandedVerify(ctx, predBase, `${id} self-heal`);
+    const healed = await runLandedVerify(ctx, predBase, `${id} self-heal`);
     if (healed.result === 'error') {
       fail(EXIT.USAGE, '自己修復の検証を実行できませんでした (上のメッセージ参照)。');
     }
@@ -51,7 +57,17 @@ async function landedGate(ctx, pr, state) {
   }
 }
 
-export async function gate(ctx, pr) {
+/** 取る枠の名前。修復では既存の main-broken の枠 (誰が取ったものでも同じ PRED_BASE なら) を引き継ぐ。 */
+function holderFor(ctx, pr, state, repair) {
+  if (!repair) {
+    return `${state.id} / PR#${pr}`;
+  }
+  const suffix = ` / main-broken ${state.predBase.slice(0, 12)}`;
+  const current = readSlot(ctx.cwd);
+  return current.ok && current.holder?.endsWith(suffix) ? current.holder : `${state.id}${suffix}`;
+}
+
+export async function gate(ctx, pr, { repair = false } = {}) {
   if (ctx.config.mode !== 'S1') {
     fail(EXIT.PRECONDITION, `merge.mode は ${ctx.config.mode} です。gate は S1 でだけ動きます (現行手順でマージしてください)。`);
   }
@@ -74,13 +90,21 @@ export async function gate(ctx, pr) {
   if (fetchedMain(ctx) !== state.predBase) {
     startOver(ctx, pr, `prepare の後に ${ctx.mainRef} が動きました (CAS は必ず負けます)。`);
   }
-  await landedGate(ctx, pr, state);
+  if (repair) {
+    say(`--repair: ${state.predBase.slice(0, 12)} の台帳を見ずに進みます (main 破損の修復 PR 専用)。`);
+    audit('gate-repair', { pr, id: state.id, base: state.predBase });
+  } else {
+    await landedGate(ctx, pr, state);
+  }
 
-  const holder = `${state.id} / PR#${pr}`;
+  const holder = holderFor(ctx, pr, state, repair);
   const got = await acquireSlot(ctx.cwd, holder, {
     waitMinutes: ctx.config.slotWaitMinutes,
     mainMoved: () => refetchMain(ctx) !== state.predBase,
   });
+  if (!got.ok && got.reason === 'error') {
+    fail(EXIT.USAGE, `bd merge-slot を使えません: ${got.detail}`);
+  }
   if (!got.ok && got.reason === 'moved') {
     startOver(ctx, pr, `枠を待っている間に ${ctx.mainRef} が動きました。`);
   }
@@ -95,11 +119,20 @@ export async function gate(ctx, pr) {
   const acquiredAt = Date.now();
   const live = liveMain(ctx);
   if (live !== state.predBase) {
-    releaseSlot(ctx.cwd, holder);
+    const kept = repair ? `main は壊れたままなので枠 (${holder}) は保持しています。` : '枠は返しました。';
+    if (!repair) {
+      releaseSlot(ctx.cwd, holder);
+    }
     audit('gate-cas-lost', { pr, id: state.id, base: state.predBase, live: live ?? 'unknown' });
-    startOver(ctx, pr, `CAS 負け: remote の ${ctx.config.mainBranch} は ${String(live).slice(0, 12)} (期待 ${state.predBase.slice(0, 12)})。枠は返しました。`);
+    startOver(
+      ctx,
+      pr,
+      live === null
+        ? `git ls-remote で remote の ${ctx.config.mainBranch} を読めませんでした (ネットワーク?)。${kept}`
+        : `CAS 負け: remote の ${ctx.config.mainBranch} は ${live.slice(0, 12)} (期待 ${state.predBase.slice(0, 12)})。${kept}`,
+    );
   }
-  writeState(ctx.cwd, pr, { ...state, holder, gateAt: new Date(acquiredAt).toISOString() });
+  writeState(ctx.cwd, pr, { ...state, holder, repair, gateAt: new Date(acquiredAt).toISOString() });
   audit('gate-acquired', { pr, id: state.id, holder, base: state.predBase, live });
   if (!CONVENTIONAL.test(pull.title)) {
     say(`注意: PR タイトルが conventional commits の形ではありません: ${pull.title}`);

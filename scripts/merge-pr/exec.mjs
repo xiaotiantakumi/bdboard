@@ -4,9 +4,20 @@
 // 考え方で、PATH にもシェバンにも依存させない)。値は JSON 配列で、先頭が実行ファイル、
 // 残りがその前に差し込む引数。例: BDBOARD_MERGE_GH='["/usr/bin/node","/abs/fake-tools.mjs","gh"]'
 // git は差し替えない — テストは一時リポジトリと bare の origin で本物の git を動かす。
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const TOOL_ENV = { gh: 'BDBOARD_MERGE_GH', bd: 'BDBOARD_MERGE_BD', npm: 'BDBOARD_MERGE_NPM' };
+
+// ネットワークを跨ぐ呼び出し (gh / bd / git fetch / git ls-remote) の上限。枠を持ったまま
+// ハングしないように切る (切れたら status 127 = 失敗として扱われる)。
+const NETWORK_TIMEOUT_MS = 120_000;
+
+function defaultTimeout(tool, args) {
+  if (tool === 'gh' || tool === 'bd') {
+    return NETWORK_TIMEOUT_MS;
+  }
+  return tool === 'git' && (args[0] === 'fetch' || args[0] === 'ls-remote') ? NETWORK_TIMEOUT_MS : undefined;
+}
 
 function commandFor(tool) {
   const envName = TOOL_ENV[tool];
@@ -42,6 +53,7 @@ export function run(tool, args, options = {}) {
     stdio: options.stdio ?? ['ignore', 'pipe', 'pipe'],
     maxBuffer: 64 * 1024 * 1024,
     shell,
+    timeout: options.timeout ?? defaultTimeout(tool, args),
   });
   if (result.error) {
     return { status: 127, stdout: '', stderr: String(result.error.message ?? result.error) };
@@ -73,16 +85,27 @@ export function shellQuote(value) {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-/** 検証コマンド (契約の verify) を shell 経由で実行し、出力をログファイルへ落とす。 */
-export function runShellToLog(command, { cwd, logFd }) {
-  const result = spawnSync(command, {
-    cwd,
-    shell: true,
-    stdio: ['ignore', logFd, logFd],
-    env: process.env,
+/**
+ * 検証コマンド (契約の verify) を shell 経由で実行し、出力をログファイルへ落とす。終了コードを
+ * resolve する。実行中は heartbeatMs ごとに onHeartbeat を呼ぶ (台帳の pending を更新し続け、
+ * verify スロット待ちで長引いても他の merger の LEASE を切らさない)。onHeartbeat は throw しないこと。
+ */
+export function runShellToLog(command, { cwd, logFd, heartbeatMs = 0, onHeartbeat = () => {} }) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env: process.env });
+    const timer = heartbeatMs > 0 ? setInterval(onHeartbeat, heartbeatMs) : null;
+    const done = (code) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timer !== null) {
+        clearInterval(timer);
+      }
+      resolve(code);
+    };
+    child.once('error', () => done(127));
+    child.once('close', (code) => done(code ?? 1));
   });
-  if (result.error) {
-    return 127;
-  }
-  return result.status ?? 1;
 }

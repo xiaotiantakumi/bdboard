@@ -1,6 +1,7 @@
 // bdboard-ulxa.1: 3 フェーズ共通の下ごしらえ (リポジトリ・契約・main の取得) と終了コード。
 import { git, run } from './exec.mjs';
 import { loadMainConfig, loadWorktreeConfig } from './config.mjs';
+import { say } from './state.mjs';
 
 export const REMOTE = 'origin';
 
@@ -38,7 +39,7 @@ export function ticketIdFor(headRef, pr) {
  * repo root を決め、main を fetch し、main の契約を読む。
  * @returns ctx = { cwd, config, repo, statusContext, mainRef }
  */
-export function openContext() {
+export function openContext({ allowOffline = false } = {}) {
   const top = run('git', ['rev-parse', '--show-toplevel']);
   if (top.status !== 0) {
     fail(EXIT.USAGE, 'git リポジトリ (PR の worktree) の中で実行してください。');
@@ -50,14 +51,20 @@ export function openContext() {
   }
   const mainBranch = local.config.mainBranch;
   const fetched = run('git', ['fetch', '--quiet', REMOTE, mainBranch], { cwd });
-  if (fetched.status !== 0) {
+  if (fetched.status !== 0 && !allowOffline) {
     fail(EXIT.RETRY, `git fetch ${REMOTE} ${mainBranch} に失敗しました: ${fetched.stderr.trim()}`);
+  }
+  if (fetched.status !== 0) {
+    say(`注意: git fetch ${REMOTE} ${mainBranch} に失敗しました (${fetched.stderr.trim()})。手元の ${REMOTE}/${mainBranch} で続けます。`);
   }
   const loaded = loadMainConfig(cwd, REMOTE, mainBranch);
   if (!loaded.ok) {
     fail(EXIT.USAGE, loaded.message);
   }
   const config = loaded.config;
+  if (config.source.startsWith('worktree:')) {
+    say(`注意: ${REMOTE}/${mainBranch} に契約が無いので worktree の契約 (${config.source}) で動きます。`);
+  }
   return {
     cwd,
     config,

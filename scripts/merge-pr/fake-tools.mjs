@@ -7,7 +7,8 @@
 //   checks[n]           gh pr checks n --required の終了コード (既定 0)
 //   statuses[sha]       gh api repos/R/commits/sha/status の statuses 配列
 //   statusQueue[sha]    あれば GET のたびに先頭を取り出して statuses[sha] に据える (待ちの再現)
-//   slot                { holder, freeAfter, onAcquire } — bd merge-slot の代役
+//   checksError[n]      あれば gh pr checks n がこの stderr で exit 1 (API エラーの再現)
+//   slot                { holder, freeAfter, onAcquire, broken } — bd merge-slot の代役
 //   npmExit             npm の終了コード
 //   calls / posted      呼び出しと POST された status の記録 (テストが検証する)
 import { spawnSync } from 'node:child_process';
@@ -28,6 +29,11 @@ function flagValue(name) {
 }
 
 function gh() {
+  if (args[0] === 'pr' && args[1] === 'checks' && state.checksError?.[args[2]]) {
+    err = `${state.checksError[args[2]]}\n`;
+    code = 1;
+    return;
+  }
   if (args[0] === 'pr' && args[1] === 'checks') {
     code = state.checks?.[args[2]] ?? 0;
     out = code === 0 ? 'verify\tpass\ne2e\tpass\n' : 'verify\tpending\n';
@@ -81,7 +87,10 @@ function bd() {
   state.slot = slot;
   const sub = args[1];
   const holder = flagValue('--holder');
-  if (sub === 'check') {
+  if (slot.broken) {
+    err = 'Error: failed to open database: dolt server unreachable\n';
+    code = 1;
+  } else if (sub === 'check') {
     out = JSON.stringify({ available: slot.holder === null, holder: slot.holder, id: 'demo-merge-slot', waiters: [] });
   } else if (sub === 'acquire') {
     if (slot.holder !== null && slot.holder !== undefined) {

@@ -4,6 +4,8 @@
 // (どれが required かは ruleset 由来で、REST で組み立てると二重管理になる)。
 import { run } from './exec.mjs';
 
+const TRANSIENT = /graphql|rate limit|HTTP 5\d\d|timed? ?out|ETIMEDOUT|could not resolve|connection (refused|reset)|network/i;
+
 function ghJson(args, cwd) {
   const result = run('gh', args, { cwd });
   if (result.status !== 0) {
@@ -34,11 +36,16 @@ export function getPull(ctx, pr) {
 
 /**
  * 必須チェックの状態。`gh pr checks` の終了コードは 0 = 全 pass / 8 = pending /
- * それ以外 = 失敗 (または取得エラー)。
+ * それ以外 = 失敗。取得エラーと分かるものは 'unknown'。
  */
 export function requiredChecks(ctx, pr) {
   const result = run('gh', ['pr', 'checks', String(pr), '--required'], { cwd: ctx.cwd });
-  const verdict = result.status === 0 ? 'pass' : result.status === 8 ? 'pending' : 'fail';
+  let verdict = result.status === 0 ? 'pass' : result.status === 8 ? 'pending' : 'fail';
+  // gh pr checks は GraphQL。枠切れ・ネットワーク・タイムアウトを「CI が赤」と取り違えない
+  // (stderr だけを見る。stdout はチェック名の一覧で、名前に network 等が入りうる)。
+  if (verdict === 'fail' && TRANSIENT.test(result.stderr)) {
+    verdict = 'unknown';
+  }
   return { verdict, output: `${result.stdout}${result.stderr}`.trim() };
 }
 

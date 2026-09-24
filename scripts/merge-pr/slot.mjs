@@ -15,41 +15,50 @@ function pollMs() {
   return Number.isFinite(raw) && raw > 0 ? raw : 30_000;
 }
 
-function slotHolder(cwd) {
+/** 今の枠の状態。{ ok: true, holder: string|null } か、bd が使えなければ { ok: false, error }。 */
+export function readSlot(cwd) {
   const checked = run('bd', ['merge-slot', 'check', '--json'], { cwd });
   if (checked.status !== 0) {
-    return null;
+    return { ok: false, error: checked.stderr.trim() || `bd merge-slot check exit ${checked.status}` };
   }
   try {
     const parsed = JSON.parse(checked.stdout);
-    return typeof parsed.holder === 'string' && parsed.available !== true ? parsed.holder : null;
+    return { ok: true, holder: typeof parsed.holder === 'string' && parsed.available !== true ? parsed.holder : null };
   } catch {
-    return null;
+    return { ok: false, error: 'bd merge-slot check --json の出力が JSON ではありません' };
   }
 }
 
 /**
- * 枠を取る。取れたら { ok: true }、期限切れ・main が動いたら { ok: false, reason, holder }。
+ * 枠を取る。取れたら { ok: true }。期限切れ・main が動いた・bd が使えないときは
+ * { ok: false, reason: 'timeout' | 'moved' | 'error', holder, detail }。
  */
 export async function acquireSlot(cwd, holder, { waitMinutes, mainMoved }) {
   const deadline = Date.now() + waitMinutes * 60_000;
   for (;;) {
-    if (slotHolder(cwd) === holder) {
-      say(`枠は既に ${holder} (この PR の前回の gate) が保持しています。引き継ぎます。`);
+    const before = readSlot(cwd);
+    if (!before.ok) {
+      return { ok: false, reason: 'error', holder: null, detail: before.error };
+    }
+    if (before.holder === holder) {
+      say(`枠は既に ${holder} (この PR の前回の gate か、修復対象の main-broken) が保持しています。引き継ぎます。`);
       return { ok: true };
     }
     const acquired = run('bd', ['merge-slot', 'acquire', '--holder', holder], { cwd });
     if (acquired.status === 0) {
       return { ok: true };
     }
-    const other = slotHolder(cwd);
-    say(`枠が空いていません (${(other ?? acquired.stderr.trim()) || 'held'})。`);
+    const other = readSlot(cwd);
+    if (!other.ok) {
+      return { ok: false, reason: 'error', holder: null, detail: `${acquired.stderr.trim()} / ${other.error}` };
+    }
+    say(`枠が空いていません (${(other.holder ?? acquired.stderr.trim()) || 'held'})。`);
     if (Date.now() >= deadline) {
-      return { ok: false, reason: 'timeout', holder: other };
+      return { ok: false, reason: 'timeout', holder: other.holder };
     }
     await sleep(pollMs());
     if (mainMoved()) {
-      return { ok: false, reason: 'moved', holder: other };
+      return { ok: false, reason: 'moved', holder: other.holder };
     }
   }
 }
