@@ -738,12 +738,28 @@ describe('createChatRoutes behavior', () => {
   });
 });
 
-const CHAT_ROUTES_SOURCE = readFileSync(
-  path.join(
-    path.dirname(fileURLToPath(import.meta.url)),
-    'chat-routes.ts',
-  ),
-  'utf8',
+// bdboard-m92p: this guard used to read chat-routes.ts, which is where the
+// sessionId zod schema lived before bdboard-sso1.17 (PR #554) split
+// chat-routes.ts into per-resource route files. chat-routes.ts is now a
+// composition layer only (it re-exports/wires the split route modules and
+// defines no schema), so the old check silently passed regardless of what
+// the real schema said. `git grep -n "z\.string()\.refine(isValidChatSessionId"
+// src/` shows the sessionId schema is actually defined in two places now:
+// chat-message-routes.ts (POST /api/chat/message body) and
+// chat-thread-routes.ts (thread routes) -- both read this file's
+// isValidChatSessionId() rather than zod's own `.uuid()`, on purpose: other
+// CLI agents' session ids are not UUIDs (see isValidChatSessionId's doc
+// comment in src/domain/chat.ts), so accidentally reintroducing `.uuid()`
+// here would reject valid non-Claude session ids. Point the check at both
+// files that actually define the schema.
+const SESSION_ID_SCHEMA_SOURCES: ReadonlyMap<string, string> = new Map(
+  ['chat-message-routes.ts', 'chat-thread-routes.ts'].map((name) => [
+    name,
+    readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), name),
+      'utf8',
+    ),
+  ]),
 );
 
 describe('POST /api/chat/message sessionId/agentId/model validation (bdboard-l1t.2 step 2)', () => {
@@ -819,8 +835,19 @@ describe('POST /api/chat/message sessionId/agentId/model validation (bdboard-l1t
     expect(await res.json()).toEqual({ error: 'invalid request body' });
   });
 
-  it('does not use .uuid() in chat-routes.ts', () => {
-    expect(CHAT_ROUTES_SOURCE.includes('.uuid(')).toBe(false);
+  it('does not use .uuid() in the sessionId schemas (chat-message-routes.ts, chat-thread-routes.ts)', () => {
+    // Guard against this assertion silently passing over zero files if the
+    // schema source map above is ever emptied by mistake.
+    expect(SESSION_ID_SCHEMA_SOURCES.size).toBeGreaterThan(0);
+
+    const violations = [...SESSION_ID_SCHEMA_SOURCES.entries()]
+      .filter(([, source]) => source.includes('.uuid('))
+      .map(([name]) => name);
+
+    expect(
+      violations,
+      `sessionId schema must not use .uuid() (it must accept the non-UUID session id formats other CLI agents use, e.g. sess_...). Violations: ${violations.join(', ')}`,
+    ).toEqual([]);
   });
 
   it('returns agentId on success when agentId is specified for a new turn', async () => {
