@@ -36,19 +36,27 @@ export function classifyBdError(
     return 'not-a-beads-project';
   }
 
-  // NOTE: lock-contention is checked BEFORE the timeout pattern — bd can phrase
-  // its own internal lock-wait deadline as "acquiring lock: ... context deadline
-  // exceeded", and that's still fundamentally a lock-contention failure (short
-  // wait, likely to clear), not the client-side kill this timeout kind targets.
-  if (LOCK_CONTENTION_PATTERN.test(combinedOutput)) {
-    return 'lock-contention';
-  }
-
   // NOTE: must be checked BEFORE bd-not-found — a signal-terminated bd process
   // (SIGTERM, or the follow-up SIGKILL if it didn't exit in time) can report
   // exitCode -1, which the bd-not-found branch below would otherwise claim
   // first and hide the real (timeout) cause.
-  if (TIMEOUT_PATTERN.test(combinedOutput)) {
+  //
+  // Guarded with `&& !LOCK_CONTENTION_PATTERN.test(...)`: bd can phrase its own
+  // internal lock-wait deadline as "acquiring lock: ... context deadline
+  // exceeded", which also matches TIMEOUT_PATTERN. That's still fundamentally a
+  // lock-contention failure (short wait, likely to clear on its own), not the
+  // client-side kill this timeout kind targets, so it must fall through to the
+  // lock-contention branch below instead. This guard deliberately does NOT move
+  // lock-contention ahead of bd-not-found in the overall ordering (unlike an
+  // earlier revision of this function did) — bd-not-found keeping priority over
+  // lock-contention matches every other caller's pre-existing expectation
+  // (e.g. the write-path retry callers in bd-cli-human-decisions/shared.ts),
+  // and this guard is enough to fix the lock-wait-deadline misclassification
+  // without touching that unrelated ordering.
+  if (
+    TIMEOUT_PATTERN.test(combinedOutput) &&
+    !LOCK_CONTENTION_PATTERN.test(combinedOutput)
+  ) {
     return 'timeout';
   }
 
@@ -60,6 +68,10 @@ export function classifyBdError(
     BD_NOT_FOUND_PATTERN.test(combinedOutput)
   ) {
     return 'bd-not-found';
+  }
+
+  if (LOCK_CONTENTION_PATTERN.test(combinedOutput)) {
+    return 'lock-contention';
   }
 
   return 'unknown';

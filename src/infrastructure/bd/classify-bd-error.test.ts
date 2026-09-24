@@ -115,5 +115,22 @@ describe('classifyBdError', () => {
         classifyBdError(1, 'acquiring lock: context deadline exceeded'),
       ).toBe('lock-contention');
     });
+
+    it('still lets bd-not-found win over lock-contention when both patterns are present (no ordering regression)', () => {
+      // timeout の判定を lock-contention 文言でガードする際に、
+      // lock-contention 自体の優先順位を誤って bd-not-found より前に
+      // 動かしてしまうと、write 系の既存呼び出し元 (bd-cli-human-decisions/
+      // shared.ts の runBdCommandOrThrow など、classifyBdError を直接使う
+      // 他の経路) で「本来 bd-not-found であるべき失敗が lock-contention と
+      // 誤分類されリトライされてしまう」副作用が起きうる (2回目のレビューで
+      // 指摘)。bd-not-found は従来どおり lock-contention より優先されることを
+      // 固定する。
+      expect(
+        classifyBdError(127, 'lockbox/bd: command not found'),
+      ).toBe('bd-not-found');
+      expect(
+        classifyBdError(-1, 'failed to acquire lock: spawn bd enoent'),
+      ).toBe('bd-not-found');
+    });
   });
 });

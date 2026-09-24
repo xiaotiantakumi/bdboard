@@ -118,12 +118,13 @@ export function withLockContentionRetry<T>(
  *
  * lock-contention は従来どおり既定 retries(2 = 最大3試行)いっぱいまで
  * リトライしてよい(1試行がミリ秒〜秒オーダーで安い)。timeout は1試行が
- * timeoutMs(既定30秒)までかかりうるため、**同じ呼び出し内で timeout による
- * リトライは高々1回**に絞る — lock-contention と同じ既定 retries をそのまま
- * 流用すると最悪 3 試行 x 30秒 = 90秒 HTTP レスポンス(/api/hygiene は同期的に
- * これらを呼ぶ)を止めかねないため(bdboard-vpt3)。lock-contention → timeout →
- * lock-contention のように混在した場合でも、timeout 由来のリトライが2回目
- * 続けて起きることはない。
+ * timeoutMs(既定30秒。実際には SIGTERM→SIGKILL の猶予等が乗るため
+ * node-command-runner.ts 側で数秒上振れしうる、おおよそ30秒強)までかかりうる
+ * ため、**同じ呼び出し内で timeout によるリトライは高々1回**に絞る —
+ * lock-contention と同じ既定 retries をそのまま流用すると最悪 3 試行 x 約30秒
+ * = 約90秒 HTTP レスポンス(/api/hygiene は同期的にこれらを呼ぶ)を止めかね
+ * ないため(bdboard-vpt3)。lock-contention → timeout → lock-contention の
+ * ように混在した場合でも、timeout 由来のリトライが2回目続けて起きることはない。
  */
 export function withTransientReadRetry<T>(
   operation: () => Promise<T>,

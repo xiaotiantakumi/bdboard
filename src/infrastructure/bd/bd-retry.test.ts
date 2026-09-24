@@ -234,10 +234,15 @@ describe('withTransientReadRetry', () => {
     expect(sleep).not.toHaveBeenCalled();
   });
 
-  it('defaults to a single retry (max 2 attempts) so a full-timeout retry cannot stack up 90s', async () => {
+  it('caps repeated timeout failures at 2 attempts (1 retry) even with the default retries:2 budget', async () => {
     // 1 試行が timeoutMs (既定30秒) までかかりうるので、lock-contention 用の
-    // 既定 retries:2 をそのまま使うと最悪 3 試行 x 30秒 になる。ここでは既定
-    // retries が 1 (最大2試行) であることを、明示指定なしの呼び出しで確認する。
+    // 既定 retries:2 (最大3試行) をそのまま timeout にも使うと最悪 3 試行 x
+    // 30秒になりうる。既定 retries は 2 のままだが (lock-contention の予算は
+    // 減らさない、cf. 'keeps lock-contention on the full default retry
+    // budget' 直下のテスト)、withTransientReadRetry 内部の timeoutRetryUsed
+    // フラグが timeout 由来のリトライだけを高々1回に絞るので、timeout が
+    // 繰り返しても最大2試行で打ち切られることを、明示指定なしの呼び出しで
+    // 確認する。
     const error = new BdError('timeout', 'p', 'context canceled');
     const operation = vi.fn().mockRejectedValue(error);
     const sleep = vi.fn(noDelaySleep());
@@ -297,5 +302,24 @@ describe('withTransientReadRetry', () => {
     // 1回目(lock-contention, retry) → 2回目(timeout, retry, 予算消費) →
     // 3回目(timeout, 予算使い切り済みなのでリトライせず投げ直す) = 3試行。
     expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('caps timeout retries at 1 even when the overall retries budget is much larger (not just budget exhaustion)', async () => {
+    // 上のテストは既定 retries:2 (最大3試行) の枠を使い切ることでも 3 回で
+    // 止まって見えてしまい、「timeout 由来のリトライは高々1回」という
+    // timeoutRetryUsed フラグ自体の効果と区別できない (2回目のレビューで
+    // 指摘)。ここでは retries:5 (最大6試行) という、フラグが無ければ
+    // まだ何度でもリトライを続けられるはずの大きな予算を与えた上で、
+    // timeout が連続しても2試行目以降はリトライされず即座に投げ直される
+    // ことを直接確認する — 「予算切れ」ではなく「timeout 専用の上限」で
+    // 止まっていることのピン止め。
+    const error = new BdError('timeout', 'p', 'context canceled');
+    const operation = vi.fn().mockRejectedValue(error);
+    const sleep = vi.fn(noDelaySleep());
+
+    await expect(
+      withTransientReadRetry(operation, { retries: 5, sleep }),
+    ).rejects.toBe(error);
+    expect(operation).toHaveBeenCalledTimes(2);
   });
 });
