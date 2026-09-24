@@ -8,10 +8,14 @@ const BOTTOM_STICK_THRESHOLD_PX = 48;
 export function useStickToBottomScroll(
   containerRef: RefObject<HTMLDivElement | null>,
   resetKey: string,
-  messages: ChatMessage[],
+  messages: readonly ChatMessage[],
   isSending: boolean,
   streamingText: string,
 ): { onScroll: () => void } {
+  // 「最下部に貼り付いているときだけ追う」。ストリーミング中は streamingText が
+  // トークンごとに伸びるので、無条件に最下部へ飛ばすと利用者が過去ログを
+  // 読み返せなくなる。逆に追わないと、伸びていく返信が画面下に隠れたままになる
+  // (bdboard-22k の元バグ: deps に streaming が無かった)。
   const pinnedToBottomRef = useRef(true);
 
   // 直近に effect 自身が代入した scrollTop。プログラム的スクロールでも scroll
@@ -56,6 +60,11 @@ export function useStickToBottomScroll(
 
   // 会話を切り替えたら貼り付き状態に戻す。前の会話で上へスクロールしていた
   // からといって、新しい会話を途中から表示する理由は無い。
+  //
+  // 重要: この effect は必ず下の追従 effect より前に呼ぶこと(bdboard-22k)。
+  // 同じレンダーで resetKey と messages/isSending/streamingText が同時に
+  // 変わる場合、貼り付き状態のリセットが追従より後に実行されると、古い
+  // pinnedToBottomRef の値で追従の要否が判定されてしまう。
   useEffect(() => {
     pinnedToBottomRef.current = true;
     autoScrolledToRef.current = null;
