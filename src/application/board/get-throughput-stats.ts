@@ -2,6 +2,7 @@ import { getBoardTimeZone } from '../../config/board-timezone.js';
 import type { Project } from '../../domain/project.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { createYieldGate, forEachChunked, type YieldGate } from './aggregation-yield.js';
 import { MS_PER_DAY } from './board-date-time.js';
 import {
   buildWeekBoundaries,
@@ -56,19 +57,27 @@ function createEmptyWeeklyCloses(weekStarts: readonly Date[]): WeeklyCloseCount[
   return weekStarts.map((weekStart) => ({ weekStart, count: 0 }));
 }
 
-function countWeeklyCloses(
+// bdboard-ve1y: forEachChunked 経由でチケットを走査する。同じ tickets 配列を
+// 同じ順序で1件ずつ処理するので、結果は元の for-of ループと同一。gate は
+// getThroughputStats がプロジェクトをまたいで共有するので、1プロジェクトの
+// チケット数が chunk size 未満でも、全プロジェクト通算でチャンク境界に
+// 達すれば yield する (bdboard-ve1y: 実運用はプロジェクト数が多く1件あたりの
+// チケット数は少ない構成が多いため、プロジェクト単位でカウンタをリセットする
+// と実質 yield されないケースがあった)。
+async function countWeeklyCloses(
   tickets: readonly Ticket[],
   weekStarts: readonly Date[],
   weekRanges: readonly WeekRange[],
-): WeeklyCloseCount[] {
+  gate: YieldGate,
+): Promise<WeeklyCloseCount[]> {
   const counts = createEmptyWeeklyCloses(weekStarts);
 
-  for (const ticket of tickets) {
+  await forEachChunked(tickets, (ticket) => {
     if (ticket.closedAt === undefined) {
-      continue;
+      return;
     }
     if (!isInWeekRangeBounds(ticket.closedAt, weekRanges)) {
-      continue;
+      return;
     }
 
     for (let index = 0; index < weekRanges.length; index += 1) {
@@ -81,7 +90,7 @@ function countWeeklyCloses(
         break;
       }
     }
-  }
+  }, gate);
 
   return counts;
 }
@@ -103,22 +112,23 @@ function ageBucket(createdAt: Date, now: Date): keyof AgeDistribution {
   return 'd30plus';
 }
 
-function countOpenTicketAge(
+async function countOpenTicketAge(
   tickets: readonly Ticket[],
   now: Date,
-): AgeDistribution {
+  gate: YieldGate,
+): Promise<AgeDistribution> {
   const distribution: { -readonly [K in keyof AgeDistribution]: number } = {
     ...EMPTY_AGE_DISTRIBUTION,
   };
 
-  for (const ticket of tickets) {
+  await forEachChunked(tickets, (ticket) => {
     if (ticket.closedAt !== undefined) {
-      continue;
+      return;
     }
 
     const bucket = ageBucket(ticket.createdAt, now);
     distribution[bucket] += 1;
-  }
+  }, gate);
 
   return distribution;
 }
@@ -145,11 +155,11 @@ function mergeWeeklyCloses(
   }));
 }
 
-export function getThroughputStats(
+export async function getThroughputStats(
   cache: BoardCache,
   now: Date,
   options?: GetThroughputStatsOptions,
-): ThroughputStats {
+): Promise<ThroughputStats> {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
   const { weekStarts, weekRanges } = buildWeekBoundaries(now, weeks, timeZone);
@@ -164,10 +174,12 @@ export function getThroughputStats(
   const projects: ProjectThroughputStats[] = [];
   let totalsWeekly = createEmptyWeeklyCloses(weekStarts);
   let totalsAge: AgeDistribution = { ...EMPTY_AGE_DISTRIBUTION };
+  // bdboard-ve1y: 全プロジェクト通算でチャンク境界を数える共有 gate。
+  const gate = createYieldGate();
 
   for (const entry of entries) {
-    const weeklyCloses = countWeeklyCloses(entry.tickets, weekStarts, weekRanges);
-    const openTicketAge = countOpenTicketAge(entry.tickets, now);
+    const weeklyCloses = await countWeeklyCloses(entry.tickets, weekStarts, weekRanges, gate);
+    const openTicketAge = await countOpenTicketAge(entry.tickets, now, gate);
 
     projects.push({
       project: entry.project,

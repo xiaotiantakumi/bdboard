@@ -17,7 +17,7 @@ import {
 // TicketDetailPanel.tsx から抽出する前の resetFormState + useEffect の
 // 挙動をそのまま検証する (bdboard-sso1.5)。パネル本体の ticketId prop 変化で
 // 実際にこのフックが正しく配線されていることは
-// TicketDetailPanel.test.tsx の「clears an in-progress, unsaved title edit
+// TicketDetailPanel.title-description-editing.test.tsx の「clears an in-progress, unsaved title edit
 // when the panel switches to a different ticket」で確認する
 // (UseTicketFormResetParams は全フィールドが同じ `() => void` 型なので、
 // ここでのモック関数テストだけでは配線ミス — 例えば resetTitleEditing に
