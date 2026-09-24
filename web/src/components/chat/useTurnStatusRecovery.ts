@@ -28,7 +28,8 @@ export interface UseTurnStatusRecoveryResult {
  * bdboard-sso1.83 第12段: ChatPanel.tsx の旧 E8(turn-status 回収 effect)を
  * move+分割で抜き出したもの。呼び出し位置は元の E8 の位置のまま(E7 より後、
  * chat/useChatHistoryLoader.ts(旧 E12/E13)より前 — generation>0 のときに
- * historyRequestIdRef/threadListRequestIdRef を bump する順序を守る必要がある)。
+ * historyRequestIdRef を bump する順序を守る必要がある。threadListRequestIdRef は
+ * hydrate の直前にだけ進める。bdboard-x4mv)。
  * 「応答から何をすべきか決める」部分は chat/turnStatusStep.ts の
  * decideTurnStatusStep へ切り出し、ここには ACK・hydrate の fetch・setState・
  * ポーリングのタイマー/バックオフだけが残る。
@@ -70,7 +71,13 @@ export function useTurnStatusRecovery(params: {
     let pollTimer: ReturnType<typeof setTimeout> | undefined;
     if (generation > 0) {
       historyRequestIdRef.current += 1;
-      threadListRequestIdRef.current += 1;
+      // bdboard-x4mv: ここでは threadListRequestIdRef を進めない。進めると、
+      // プロジェクト切替と同時に始まった useThreadListSync(E7)の一覧 fetch が、
+      // 切替による abort から少し遅れて届く generation の bump で無効化され、
+      // この effect は hydrate しない限り一覧を取り直さないため、移動先の
+      // スレッド一覧がいつまでも表示されなかった。古い一覧応答が回収結果を
+      // 上書きしないためのガードは、下の hydrate 分岐が fetch の直前に進める
+      // recoveryThreadRequestId が担う(hydrate しないなら守るべき回収結果も無い)。
       setLoadingHistoryFor(null);
     }
     setBackgroundTurnProjectId(selectedProjectId);
