@@ -1019,20 +1019,47 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    await waitUntil(() => existsSync(pidFile));
-    const verifyPid = Number(readFileSync(pidFile, 'utf8').trim());
-    expect(pidAlive(verifyPid)).toBe(true);
+    let verifyPid;
+    try {
+      // fake verify がまだ書き込み中の pid ファイルを読まないよう、パース結果が正の整数に
+      // なるまで待つ (存在するだけでは不十分 — 書き込み途中の空/部分文字列を拾いうる)。
+      await waitUntil(() => {
+        if (!existsSync(pidFile)) {
+          return false;
+        }
+        const parsed = Number(readFileSync(pidFile, 'utf8').trim());
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return false;
+        }
+        verifyPid = parsed;
+        return true;
+      });
+      expect(pidAlive(verifyPid)).toBe(true);
 
-    child.kill('SIGINT');
-    const [code, signal] = await new Promise((resolve) => {
-      child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
-    });
-    expect(signal).toBeNull(); // 自分で process.exit したので signal 経由の終了ではない
-    expect(code).toBe(130); // SIGINT
+      child.kill('SIGINT');
+      const [code, signal] = await new Promise((resolve) => {
+        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
+      });
+      expect(signal).toBeNull(); // 自分で process.exit したので signal 経由の終了ではない
+      expect(code).toBe(130); // SIGINT
 
-    // 自然な sleep 終了 (60 秒) よりずっと短い窓で死んでいることを確かめる (kill が効いていない
-    // 場合に「たまたま自然終了と重なって green になる」誤検出を避ける)。
-    await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 }); // 孤児にならず、確かに終わっている
+      // 自然な sleep 終了 (60 秒) よりずっと短い窓で死んでいることを確かめる (kill が効いていない
+      // 場合に「たまたま自然終了と重なって green になる」誤検出を避ける)。
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 }); // 孤児にならず、確かに終わっている
+    } finally {
+      // アサーションが途中で失敗しても、子プロセスと (60 秒 sleep 中かもしれない) fake verify の
+      // 孫プロセスを確実に後始末する。正常系ではどちらも既に死んでいるので kill は no-op になる。
+      if (!child.killed) {
+        child.kill('SIGKILL');
+      }
+      if (verifyPid !== undefined && pidAlive(verifyPid)) {
+        try {
+          process.kill(verifyPid, 'SIGKILL');
+        } catch {
+          // 確認と kill の間に終了していれば無視する。
+        }
+      }
+    }
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1'); // detach のまま残らない
     expect(posted().map((entry) => entry.state)).not.toContain('failure'); // 中断を failure と記録しない
     expect(stderr).toContain('SIGINT');

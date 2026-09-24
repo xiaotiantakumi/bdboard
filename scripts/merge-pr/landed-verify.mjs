@@ -54,6 +54,13 @@ function untrackedFiles(root) {
     .filter((line) => line !== '');
 }
 
+function restoreBranch(root, restoreTo) {
+  const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
+  if (back.status !== 0) {
+    say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
+  }
+}
+
 function heartbeatMs(ctx) {
   const raw = Number(process.env.BDBOARD_MERGE_HEARTBEAT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : Math.max(10_000, (ctx.config.leaseMinutes * 60_000) / 3);
@@ -78,8 +85,9 @@ function postQuietly(ctx, sha, state, description) {
  *
  * bdboard-2twf: 未追跡ファイルがあれば (ignore 済みを除く) verify を始めずに 'error' を返す。
  * verify 実行中に SIGINT/SIGTERM を受けたら、子プロセスを終了して restoreTo に戻ってから
- * (台帳には何も書かずに) プロセスごと終了する — finish/prepare の後続処理 (ネットワーク呼び出し
- * や状態ファイルの書き換え) はそこから先に進まない。
+ * (台帳には何も書かずに) プロセスごと終了する — 呼び出し元 (finish/predicted/verify いずれの
+ * コマンドから来ても) の後続処理 (ネットワーク呼び出しや状態ファイルの書き換え) はそこから先に
+ * 進まない。
  */
 export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } = {}) {
   const root = ctx.cwd;
@@ -98,10 +106,14 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
   }
   const untracked = untrackedFiles(root);
   if (untracked.length > 0) {
+    const shown = untracked.slice(0, 20);
+    const more = untracked.length > shown.length ? `\n  ...ほか ${untracked.length - shown.length} 件` : '';
     say(
-      `作業ツリーに未追跡ファイル (.gitignore されていないもの) があるため${label}を始めません:`,
-      untracked.map((file) => `  ${file}`).join('\n'),
-      'コミットするか git clean/rm で消してから npm run merge-pr -- verify し直してください (混ざると検証した木と実際の木が一致しません)。',
+      `作業ツリーに未追跡ファイル (.gitignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
+      shown.map((file) => `  ${file}`).join('\n') + more,
+      ledger
+        ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
+        : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
     );
     return { result: 'error' };
   }
@@ -125,10 +137,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
     activeChild,
     onCleanup: (signal) => {
       say(`${signal} を受け取ったため${label}を中断します。子プロセスを終了して ${restoreTo} に戻します。`);
-      const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
-      if (back.status !== 0) {
-        say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
-      }
+      restoreBranch(root, restoreTo);
     },
   });
   let result;
@@ -140,10 +149,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
     result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild });
   } finally {
     removeInterruptHandler();
-    const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
-    if (back.status !== 0) {
-      say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
-    }
+    restoreBranch(root, restoreTo);
     if (installedAny && LOCKFILES.some((lock) => lockfileChanged(root, sha, originalHead, lock.file))) {
       say(`注意: この worktree の node_modules は ${sha.slice(0, 12)} 用に入れ直しました。ブランチで作業を続けるなら npm ci し直してください。`);
     }
