@@ -16,8 +16,9 @@ import type { ChatConversationEntry } from './useChatConversationsState';
  * 元の登録順のまま1つの effect フックへ move-only で抜き出したもの
  * (E12→E13 の順は維持)。呼び出し位置は元の E12 の位置のまま(E8 より後)。
  * E8(chat/useTurnStatusRecovery.ts)が historyRequestIdRef を進めるのは回収した
- * ターンを hydrate する直前だけで、そのときは conversations が変わるので、この
- * effect が捨てられた fetch を取り直す。以前は E8 が generation の bump のたびに
+ * ターンを hydrate する直前だけで、hydrate が成功して applyRecoveredTurn が
+ * conversations を変えれば、この effect が捨てられた fetch を取り直す(hydrate の
+ * fetch が失敗し続けた場合は bdboard-lsv2)。以前は E8 が generation の bump のたびに
  * 進めていて、conversations も historyLoadedFor も変わらないまま fetch だけが
  * 捨てられ、送信ボタンが無効のまま戻らなかった(bdboard-ibkf)。
  *
@@ -47,7 +48,7 @@ export function useChatHistoryLoader(params: {
    * 履歴 fetch effect の依存配列に入るため、呼び出し側は useCallback で
    * 安定させた参照を渡すこと — 毎描画で新しい関数を渡すと、この effect の
    * クリーンアップが毎回 historyRequestIdRef を進めてしまい、fetch 中の
-   * リクエストを自分で捨てて取り直すループになる(E8/E13 の応答も巻き
+   * リクエストを自分で捨てて取り直すループになる(E13 の応答も巻き
    * 添えで無効化される)。
    */
   onSessionGone: (sessionId: string) => void;
