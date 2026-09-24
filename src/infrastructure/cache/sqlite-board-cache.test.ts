@@ -97,15 +97,26 @@ describe('createSqliteBoardCache', () => {
       cache.close();
     });
 
-    it('invalidates the parsed project after putProject', () => {
+    it('invalidates the parsed project after putProject, even under an unchanged fingerprint', () => {
+      // bdboard-3c36 opus review: a naive test could "pass" purely because the
+      // second write uses a different fingerprint (a fingerprint mismatch alone
+      // forces a re-parse, without exercising the delete-on-write invalidation
+      // at all). Real callers can legitimately write new content under the same
+      // fingerprint (e.g. refresh-projects.ts's `force: true` path re-fetches
+      // from bd and writes whatever it returns even when the fingerprint -
+      // itself a file-mtime/size signature, not a content hash - didn't change).
+      // Keep the fingerprint identical here so this test only passes if
+      // putProject() actually invalidates the memoized entry.
       const cache = createSqliteBoardCache(':memory:');
       cache.putProject(makeEntry({ project: { id: 'proj-a', rootPath: '/z/project' } }));
       const before = cache.listProjects()[0];
+      expect(before?.fingerprint).toBe('fp-1');
       cache.putProject(
         makeEntry({
           project: { id: 'proj-a', rootPath: '/z/project' },
           tickets: [makeTicket({ id: 'pfx-new', title: 'New ticket' })],
-          fingerprint: 'fp-2',
+          // Deliberately the SAME fingerprint as the first write (makeEntry's
+          // default) - see comment above.
         }),
       );
       const after = cache.listProjects()[0];
@@ -114,7 +125,10 @@ describe('createSqliteBoardCache', () => {
       cache.close();
     });
 
-    it('invalidates deleted projects before re-adding the same id', () => {
+    it('invalidates deleted projects before re-adding the same id, even under an unchanged fingerprint', () => {
+      // Same rationale as above: keep the fingerprint identical across
+      // delete+re-add so a pass actually proves deleteProject() invalidated
+      // the memoized entry, not that the fingerprint happened to differ.
       const cache = createSqliteBoardCache(':memory:');
       cache.putProject(makeEntry({ project: { id: 'same', rootPath: '/old', name: 'Old' } }));
       cache.listProjects();
@@ -123,12 +137,56 @@ describe('createSqliteBoardCache', () => {
         makeEntry({
           project: { id: 'same', rootPath: '/new', name: 'New' },
           tickets: [makeTicket({ projectId: 'same', id: 'pfx-new', title: 'New ticket' })],
-          fingerprint: 'fp-new',
+          // Deliberately the SAME fingerprint as the deleted entry ('fp-1',
+          // makeEntry's default) - see comment above.
         }),
       );
       const after = cache.listProjects()[0];
+      expect(after?.fingerprint).toBe('fp-1');
       expect(after?.project.name).toBe('New');
       expect(after?.tickets[0]?.title).toBe('New ticket');
+      cache.close();
+    });
+
+    it('invalidates all memoized entries on clear(), even mid-flight listProjectsChunked() calls', async () => {
+      // bdboard-3c36 opus review found a real bug here: clear() deleted every
+      // `projects` row but forgot to clear the in-memory parseCache. That was
+      // invisible to listProjects()/getProject() (they always re-read fresh
+      // DB rows/ids first), but listProjectsChunked() snapshots `id,
+      // fingerprint` pairs up front and then, with a yield-every-1-project
+      // gate, processes the first project synchronously (up to the function's
+      // first `await`) before a caller-issued clear() can run at all. If a
+      // concurrent clear() lands right after that first project but before
+      // the second is processed, the *second* project's DB row is now gone,
+      // but (with the bug) its stale parseCache entry (same id, same
+      // fingerprint as the pre-clear snapshot) would still be served -
+      // a "ghost" project the caller can no longer see via listProjects().
+      const cache = createSqliteBoardCache(':memory:');
+      // rootPath ordering matters: listProjectsChunked() processes in
+      // root_path ASC order, so 'a' is guaranteed to be the one already
+      // processed synchronously before the first yield, and 'b' is the one
+      // still pending when clear() races in.
+      cache.putProject(makeEntry({ project: { id: 'a', rootPath: '/a' } }));
+      cache.putProject(makeEntry({ project: { id: 'b', rootPath: '/b' } }));
+      // Warm the memo cache for both projects.
+      cache.listProjects();
+
+      expect(cache.listProjectsChunked).toBeDefined();
+      const chunkedPromise = cache.listProjectsChunked!();
+      // The synchronous prefix of listProjectsChunked() (id/fingerprint
+      // query + processing project 'a') has already run by the time this
+      // line executes - async functions run synchronously up to their first
+      // `await`. It is now paused at yieldToEventLoop() between 'a' and 'b'.
+      // Clear while it's in flight.
+      cache.clear();
+      const chunkedResult = await chunkedPromise;
+
+      // 'a' was already committed to the result before clear() ran (true on
+      // origin/main too - not itself a caching bug). 'b' must NOT appear:
+      // with the bug, it would (a stale parseCache hit); with the fix, its
+      // DB row lookup correctly misses.
+      expect(chunkedResult.map((entry) => entry.project.id)).toEqual(['a']);
+      expect(cache.listProjects()).toEqual([]);
       cache.close();
     });
 

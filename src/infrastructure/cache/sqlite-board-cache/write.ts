@@ -96,6 +96,17 @@ export function createWriteOperations(db: Database.Database, parseCache: ParseCa
       db.exec(
         `DELETE FROM projects; DELETE FROM transcript_offsets; DELETE FROM session_usage; DELETE FROM session_links; DELETE FROM interactions;`,
       );
+      // bdboard-3c36 opus review で見つかったバグの修正: putProject/deleteProject
+      // と同じ理由で clear() も parseCache を空にする必要がある。これを忘れると
+      // 実害が2つあった: (1) 実行中の listProjectsChunked() (id一覧を先に
+      // スナップショットし、1件ずつ await で処理する) が、自分の開始後に
+      // clear() が呼ばれた場合、未処理の id について古い parseCache のエントリを
+      // 依然ヒットさせてしまい、DB からはもう消えた project を結果に混入させる
+      // (listProjects() は毎回 DB 行を先に読み直すので影響されないが、
+      // listProjectsChunked() は id 一覧取得後の各ステップで parseCache を
+      // 見るため影響される)。(2) clear() 後も Map が空にならず、消えたはずの
+      // project 分のパース結果がプロセス終了までメモリに残り続ける。
+      parseCache.clear();
     },
 
     setTranscriptOffset(filePath: string, offset: number): void {
