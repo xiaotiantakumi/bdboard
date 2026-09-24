@@ -6,6 +6,7 @@
 //   再実行そのものは画面に出にくいので、両 effect が必ず読む `projects.some` の
 //   呼び出し回数で「入力しても再実行されない」ことを見る。
 // - 14d: E7(スレッド一覧 effect)の再取得契機と、永続化済み選択の復元規則。
+// - 14e: E9(ticket-context effect)のプロジェクト不在時のフォーカスと、適用済み token のガード。
 // - T10 の追加パターン(設計書 §2 第14段): ticket 起動とコールドな projects の
 //   API 呼び出し順の指紋。並び自体が正しいという主張ではなく、現状を固定する。
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
@@ -321,6 +322,85 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
       await waitFor(() => expect(messageFetches).toEqual(['sess-2']));
       await settle();
       expect(messageFetches).toEqual(['sess-2']);
+    });
+  });
+
+  describe('14e: the ticket-context effect (E9) — missing-project focus and the applied-token guard', () => {
+    // 第14e段で E9 と appliedTicketContextTokenRef を useTicketContextLaunch へ移す前に、
+    // 既存テストが押さえていない2点を固定する。
+    // - チケットのプロジェクトが見つからず未選択のままの経路(r5we / minor-2)でも、
+    //   入力欄にフォーカスを当て、キャレットを今の文言(コールド中の編集を含む)の末尾へ置く。
+    // - 適用済みの token のまま projects だけが変わって E9 が再実行されても、
+    //   プリフィルを張り直さない(ユーザーの入力を上書きしない)。
+    it('focuses the textarea and puts the caret at the end of the cold text when the ticket project is missing', async () => {
+      const user = userEvent.setup();
+      const prefill = 'proj-missing のチケットについて: ';
+      const rendered = renderChatPanel([], {
+        initialProjectId: 'proj-missing',
+        initialInput: prefill,
+        ticketContextToken: 1,
+      });
+      const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+      await user.type(textarea, 'abc');
+      act(() => {
+        textarea.setSelectionRange(0, 0);
+        textarea.blur();
+      });
+      expect(textarea).not.toHaveFocus();
+
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A, PROJECT_B]}
+          initialProjectId="proj-missing"
+          initialInput={prefill}
+          ticketContextToken={1}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
+          onClose={rendered.onClose}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(document.querySelector('.chat-ticket-project-fallback-notice')).toHaveTextContent('見つかりません');
+        expect(textarea).toHaveFocus();
+        expect(textarea.selectionStart).toBe(`${prefill}abc`.length);
+      });
+      expect(textarea).toHaveValue(`${prefill}abc`);
+      expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('');
+    });
+
+    it('does not re-apply the prefill when projects change after the token was applied', async () => {
+      const user = userEvent.setup();
+      const prefill = 'proj-a のチケットについて: ';
+      const rendered = renderChatPanel([PROJECT_A], {
+        initialProjectId: 'proj-a',
+        initialInput: prefill,
+        ticketContextToken: 1,
+      });
+      const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-a'));
+      await user.clear(textarea);
+      await user.type(textarea, 'mine');
+
+      rendered.rerender(
+        <ChatPanel
+          projects={[PROJECT_A, PROJECT_B]}
+          initialProjectId="proj-a"
+          initialInput={prefill}
+          ticketContextToken={1}
+          isTicketOnBoard={rendered.isTicketOnBoard}
+          onOpenTicket={rendered.onOpenTicket}
+          onClose={rendered.onClose}
+        />,
+      );
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+      expect(textarea).toHaveValue('mine');
+      expect(screen.getByLabelText('対象プロジェクト')).toHaveValue('proj-a');
+      expect(fetchChatThreadsMock.mock.calls).toEqual([['proj-a']]);
+      expect(document.querySelector('.chat-ticket-project-fallback-notice')).toBeNull();
     });
   });
 
