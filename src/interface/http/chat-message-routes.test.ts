@@ -746,12 +746,16 @@ describe('createChatRoutes behavior', () => {
 // the real schema said. `git grep -n "z\.string()\.refine(isValidChatSessionId"
 // src/` shows the sessionId schema is actually defined in two places now:
 // chat-message-routes.ts (POST /api/chat/message body) and
-// chat-thread-routes.ts (thread routes) -- both read this file's
-// isValidChatSessionId() rather than zod's own `.uuid()`, on purpose: other
-// CLI agents' session ids are not UUIDs (see isValidChatSessionId's doc
-// comment in src/domain/chat.ts), so accidentally reintroducing `.uuid()`
-// here would reject valid non-Claude session ids. Point the check at both
-// files that actually define the schema.
+// chat-thread-routes.ts (thread routes) -- both refine() with the domain's
+// isValidChatSessionId() (src/domain/chat.ts) rather than zod's own
+// `.uuid()`, on purpose: other CLI agents' session ids are not UUIDs (see
+// isValidChatSessionId's doc comment), so accidentally reintroducing
+// `.uuid()` in either schema would reject valid non-Claude session ids.
+// chat-message-stream-routes.ts reuses chat-message-routes.ts's
+// messageBodySchema rather than defining its own, and
+// chat-discovery-routes.ts validates sessionId via isValidChatSessionId
+// directly (no zod), so neither needs its own entry here. Point the check
+// at both files that actually define a sessionId zod schema.
 const SESSION_ID_SCHEMA_SOURCES: ReadonlyMap<string, string> = new Map(
   ['chat-message-routes.ts', 'chat-thread-routes.ts'].map((name) => [
     name,
@@ -839,6 +843,19 @@ describe('POST /api/chat/message sessionId/agentId/model validation (bdboard-l1t
     // Guard against this assertion silently passing over zero files if the
     // schema source map above is ever emptied by mistake.
     expect(SESSION_ID_SCHEMA_SOURCES.size).toBeGreaterThan(0);
+
+    // Pin each file to actually still define the sessionId schema via
+    // refine(isValidChatSessionId), not just happen to be free of the
+    // literal substring '.uuid('. Without this, a future move of the
+    // schema out of these two files (while they both keep existing) would
+    // make the check below pass vacuously again -- the exact failure mode
+    // this ticket (bdboard-m92p) exists to fix.
+    for (const [name, source] of SESSION_ID_SCHEMA_SOURCES) {
+      expect(
+        source,
+        `${name} no longer defines the sessionId schema via refine(isValidChatSessionId); update this guard to point at wherever it moved`,
+      ).toContain('refine(isValidChatSessionId');
+    }
 
     const violations = [...SESSION_ID_SCHEMA_SOURCES.entries()]
       .filter(([, source]) => source.includes('.uuid('))
