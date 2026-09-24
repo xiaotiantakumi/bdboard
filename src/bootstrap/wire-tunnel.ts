@@ -12,7 +12,6 @@ import { randomInt } from 'node:crypto';
 import path from 'node:path';
 import {
   createCloudflaredTunnel,
-  resolveDefaultTunnelLogFilePath,
   createFileTunnelInterruptionStore,
 } from '../infrastructure/index.js';
 import {
@@ -28,6 +27,7 @@ export interface WireTunnelOptions {
   readonly port: number;
   /** トンネル中断記録の保存先を決めるための board cache DB パス。 */
   readonly dbPath: string;
+  readonly tunnelLogFilePath: string;
   readonly authUsername: string;
   readonly log?: (message: string) => void;
 }
@@ -47,7 +47,7 @@ export async function wireTunnel(options: WireTunnelOptions): Promise<WireTunnel
   // なる — このチケットが潰そうとしている cwd 依存が、明示指定の裏口から
   // 戻ってくる (PR#111 fable レビュー minor-3)。
   const tunnelLogFilePath = path.resolve(
-    envString(options.env, 'BDBOARD_TUNNEL_LOG_PATH', resolveDefaultTunnelLogFilePath()),
+    envString(options.env, 'BDBOARD_TUNNEL_LOG_PATH', options.tunnelLogFilePath),
   );
   const tunnelProcess = createCloudflaredTunnel({
     port: options.port,

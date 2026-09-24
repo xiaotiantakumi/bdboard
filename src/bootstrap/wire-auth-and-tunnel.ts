@@ -16,6 +16,7 @@ export interface WireAuthAndTunnelDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly port: number;
   readonly dbPath: string;
+  readonly tunnelLogFilePath: string;
   readonly log?: (message: string) => void;
 }
 
@@ -29,6 +30,7 @@ export async function wireAuthAndTunnel(deps: WireAuthAndTunnelDeps) {
     env: deps.env,
     port: deps.port,
     dbPath: deps.dbPath,
+    tunnelLogFilePath: deps.tunnelLogFilePath,
     authUsername,
   });
 
