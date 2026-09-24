@@ -48,7 +48,8 @@ hook_fields() {
         | [ (try ($d.tool_name) catch null | scalar),
             (try ($d.tool_input.command) catch null | scalar),
             (try ($d.tool_input.run_in_background) catch null | scalar),
-            (try ($d.cwd) catch null | scalar) ]
+            (try ($d.cwd) catch null | scalar),
+            (try ($d.agent_id) catch null | scalar) ]
         | join("\u001f")
       ' 2>/dev/null
       ;;
@@ -78,7 +79,7 @@ try:
 except Exception:
     sys.exit(0)
 sys.stdout.write("\x1f".join(scalar(doc, p) for p in sys.argv[1:]))
-' tool_name tool_input.command tool_input.run_in_background cwd 2>/dev/null
+' tool_name tool_input.command tool_input.run_in_background cwd agent_id 2>/dev/null
       ;;
   esac
 }
@@ -91,7 +92,11 @@ HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
 COMMAND="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
 HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
 RUN_IN_BACKGROUND="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
-HOOK_CWD="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+HOOK_CWD="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
+# agent_id は「サブエージェント内で hook が発火したときだけ」入力 JSON に付く (Claude Code
+# の hook 入力仕様)。空ならトップレベル (議長) からの呼び出し。規則 7 だけが使う。
+AGENT_ID="${HOOK_FIELDS#*"$US_SEPARATOR"}"
 
 [ -n "$HOOK_CWD" ] || HOOK_CWD="$PWD"
 
@@ -615,6 +620,17 @@ ROUTE_CANDIDATES_EOF
   done <<AIMIX_SEGMENTS_EOF
 $AIMIX_SEGMENTS
 AIMIX_SEGMENTS_EOF
+fi
+
+# 7. 常時稼働サーバーの保護 (bdboard-hpu8)。契約に alwaysOnServer.port があるときだけ有効。
+#    サブエージェント (agent_id あり) からの main checkout での git pull / サーバー起動 /
+#    再起動スクリプト実行と、誰からでも listener PID の直接 kill を止める。本体は隣の
+#    hooks/server-guard.sh (このファイルの行数上限を守るため分離)。規則 6 と同じ理由で
+#    規則 5 の `[ -n "$CONTRACT_PATTERN_LIST" ] || exit 0` より前に置く。無ければ素通り。
+SERVER_GUARD_SCRIPT="$(dirname "$0")/server-guard.sh"
+if [ -r "$SERVER_GUARD_SCRIPT" ]; then
+  # shellcheck source=server-guard.sh
+  . "$SERVER_GUARD_SCRIPT"
 fi
 
 contract_patterns() {

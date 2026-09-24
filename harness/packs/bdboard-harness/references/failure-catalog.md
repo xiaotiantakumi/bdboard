@@ -111,6 +111,11 @@
 - 防止: worktree から preview_start 禁止。起動はメインチェックアウトへ cd してから（本則: bdboard の `.claude/skills/bdboard-server-ops/SKILL.md`「Never call `preview_start` from a worktree session」）
 - 出典: `.claude/skills/bdboard-server-ops/SKILL.md` 該当節（実測記録つき）
 
+### subagent-restarted-always-on-server — PR をマージしたサブエージェントが CLAUDE.md の後片付け手順どおり main checkout を pull し、8787 を kill・再起動した（2026-09-20、3 件: bdboard-13mp / bdboard-sso1.10 / bdboard-sso1.5）
+- 原因: 「マージ後に常時稼働サーバーを再起動」の手順が誰の仕事かを文章でしか区別しておらず、`gh pr merge` まで委譲されたサブエージェントには手順どおりの正しい行動に見える。委譲ブリーフの禁止文言だけが歯止めで、9/20 以降の再発ゼロもブリーフと議長側の deploy スクリプト (スクラッチパッド、揮発) に依存していた
+- 防止: hook 規則 7 (`hooks/server-guard.sh`) — `agent_id` 付きの呼び出しから main checkout の `git pull` / `npm run start` / 再起動スクリプト実行を deny、listener PID の直接 kill は誰からでも deny。再起動は議長が `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>` で行い、サブエージェントは最終報告に「議長で再起動が必要」と書く（本則: CLAUDE.md「Always-On Local Hosting」、`hooks/README.md` 規則 7）
+- 出典: bdboard-hpu8（トランスクリプト調査。`bd comments bdboard-hpu8` と PR 本文に証跡）
+
 ## 検証・ビルド
 
 ### verify-storm — 6並列の `npm run verify` が自己増幅し load average 190–258 が数時間継続（2026-08-18）
