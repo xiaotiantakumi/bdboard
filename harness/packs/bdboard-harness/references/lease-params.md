@@ -62,12 +62,24 @@ heartbeat 途絶で reclaim が誤発火 — bdboard-3tw.99 / bdboard-l1t.4）�
 生ループを手書きしない。**同梱スクリプト `scripts/bd-heartbeat.sh` を使う**こと。
 呼び出し形（実行ビットは注入時に hooks にしか付かないので `bash` 経由）:
 
+**`--session-pid` に `$$` をそのまま渡さない（bdboard-tqba）。** Claude Code の Bash
+ツールは呼び出しごとに新しいシェルを起こして終わるため、そのシェル自身の `$$` は
+次の Bash 呼び出しの時点でもう死んでおり、渡した瞬間から寿命条件(2)（起動元セッション
+の消失検知）が誤発火する（実測: bdboard-sso1.28）。代わりに**その呼び出し元シェルの
+親プロセスの PID**を使う — Claude Code の Bash ツールは呼び出しごとに新しいシェルを
+起こすが、その**親プロセス（Claude Code 本体）はセッションの間ずっと生きている**ため、
+これが「起動元セッション」の実体として正しい:
+
 ```bash
+session_pid="$(ps -o ppid= -p $$ | tr -d ' ')"
 bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh start \
-  --session-pid $$ --interval 90 --repo . <id>...
-bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh stop   --session-pid $$
-bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh status --session-pid $$
+  --session-pid "$session_pid" --interval 90 --repo . <id>...
+bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh stop   --session-pid "$session_pid"
+bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh status --session-pid "$session_pid"
 ```
+
+（Claude Code の Bash ツールを介さず、対話シェルから直接叩く場合は従来どおり `$$`
+で構わない — その場合はシェル自身がセッションの実体なので寿命条件(2)が正しく働く。）
 
 `start` は**自分でデタッチする**ので、呼び出し側に `&` や `(nohup … &)` を書かせない
 （hooks の「二重バックグラウンド化」deny と衝突させないための設計）。
