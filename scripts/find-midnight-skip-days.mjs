@@ -17,9 +17,17 @@
 // Usage:
 //   node scripts/find-midnight-skip-days.mjs [startYear] [endYear]
 // Defaults to 2015-2030, matching the current fixture table's range. Paste
-// the printed array literal over `skippedMidnightDays` in
+// the printed rows into the `skippedMidnightDays` array literal in
 // board-date-time.test.ts, and update the "has exactly N known
 // skipped-midnight days" assertion in the same file to match the new count.
+//
+// Results depend on the tzdata/ICU version bundled with the Node build this
+// runs under (that's the whole reason this script exists -- see
+// bdboard-0uy7). Prefer running it on the oldest Node this project supports
+// (see package.json "engines"): a newer build's tzdata can know about zones
+// (e.g. a zone freshly split off an existing one) that an older supported
+// Node's `Intl` doesn't recognize, which would break the unconditional
+// round-trip test for that pair there even though it's a real skip day here.
 
 function getOffsetMs(utcMs, offsetFormatter) {
   const parts = offsetFormatter.formatToParts(new Date(utcMs));
@@ -113,7 +121,10 @@ function main() {
   }
   results.sort((a, b) => (a[1] === b[1] ? a[0].localeCompare(b[0]) : a[1].localeCompare(b[1])));
 
-  console.log(`Found ${results.length} skip-midnight (dateKey, timeZone) pairs, ${startYear}-${endYear}:\n`);
+  console.log(
+    `Found ${results.length} skip-midnight (dateKey, timeZone) pairs, ${startYear}-${endYear} ` +
+      `(node ${process.version}, tzdata ${process.versions.tz}, icu ${process.versions.icu}):\n`,
+  );
   for (const [dateKey, timeZone] of results) {
     console.log(`    ['${dateKey}', '${timeZone}'],`);
   }

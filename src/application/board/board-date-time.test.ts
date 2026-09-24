@@ -207,7 +207,12 @@ describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdb
   // zonedMidnight agrees with itself. offset2 !== offset1 means a DST
   // transition sits near this calendar-day boundary; if the offset-2-based
   // candidate still reads back as the previous day, local wall-clock 00:00
-  // for dateKey never occurred (it was skipped).
+  // for dateKey never occurred (it was skipped). Like the fixture table
+  // itself (see the scope note above skippedMidnightDays), this only
+  // recognizes the two-stage-offset-fallback shape of skip: it won't flag a
+  // zone where local midnight is skipped but happens to round-trip anyway
+  // without hitting that fallback (e.g. Asia/Beirut, deliberately excluded
+  // from the table for the same reason).
   function isMidnightSkippedUnderRuntimeTzdata(dateKey: string, timeZone: string): boolean {
     const [year, month, day] = dateKey.split('-').map(Number);
     const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
@@ -221,14 +226,43 @@ describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdb
     return localDateKey(new Date(candidate2), timeZone) !== dateKey;
   }
 
+  // A zone this Node/ICU build doesn't recognize at all (e.g. a zone newly
+  // split out of an existing one, on a build older than the split) would
+  // throw here. Treat that the same as "no longer confirmed": one unknown
+  // zone shouldn't crash collection of every other test in this file the
+  // way an uncaught throw at describe-body scope would.
+  function isMidnightSkippedOrStale(dateKey: string, timeZone: string): boolean {
+    try {
+      return isMidnightSkippedUnderRuntimeTzdata(dateKey, timeZone);
+    } catch {
+      return false;
+    }
+  }
+
   const stillSkippedFlags = skippedMidnightDays.map(([dateKey, timeZone]) =>
-    isMidnightSkippedUnderRuntimeTzdata(dateKey, timeZone),
+    isMidnightSkippedOrStale(dateKey, timeZone),
   );
   const staleFixturePairs = skippedMidnightDays.filter((_pair, index) => !stillSkippedFlags[index]);
   const stillSkippedCount = skippedMidnightDays.length - staleFixturePairs.length;
+  const staleFixtureList = staleFixturePairs.map(([d, tz]) => `${d} ${tz}`).join(', ');
+  const regenerateHint = 'Regenerate the table with: node scripts/find-midnight-skip-days.mjs';
+
+  // Don't let partial drift pass unremarked even when it stays under the
+  // failure threshold below (bdboard-0uy7: "テストを黙って通さない"). Still
+  // correct either way -- the round-trip checks below are unconditional --
+  // just no longer diagnostic for the listed pairs.
+  if (staleFixturePairs.length > 0) {
+    console.warn(
+      `${staleFixturePairs.length}/${skippedMidnightDays.length} skippedMidnightDays fixture pairs are no ` +
+        `longer confirmed local-midnight-skip days under this run's tzdata (bdboard-0uy7): ` +
+        `${staleFixtureList}. ${regenerateHint}`,
+    );
+  }
+
   // Threshold, not 100%: a handful of pairs going stale between tzdata
-  // releases is expected and shouldn't block unrelated PRs. Half the table
-  // going stale means it's no longer doing its job and needs regenerating.
+  // releases is expected (see the console.warn above) and shouldn't block
+  // unrelated PRs. Half the table going stale means it's no longer doing
+  // its job and needs regenerating.
   const MIN_DIAGNOSTIC_FRACTION = 0.5;
 
   it('keeps enough tzdata-confirmed skip-midnight pairs to stay diagnostic (bdboard-0uy7)', () => {
@@ -238,10 +272,8 @@ describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdb
       `local-midnight-skip days under this run's tzdata (need >= ${threshold}).`,
       "This Node/ICU build's bundled IANA tzdata has likely moved on since the",
       'table above was generated (e.g. a zone dropped or shifted its DST rule).',
-      staleFixturePairs.length > 0
-        ? `No-longer-diagnostic pairs: ${staleFixturePairs.map(([d, tz]) => `${d} ${tz}`).join(', ')}.`
-        : '',
-      'Regenerate the table with: node scripts/find-midnight-skip-days.mjs',
+      staleFixturePairs.length > 0 ? `No-longer-diagnostic pairs: ${staleFixtureList}.` : '',
+      regenerateHint,
     ]
       .filter((line) => line.length > 0)
       .join(' ');
