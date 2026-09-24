@@ -5,6 +5,7 @@
 //   いる。参照が毎レンダー変わると、両 effect が入力のたびに再実行される。effect の
 //   再実行そのものは画面に出にくいので、両 effect が必ず読む `projects.some` の
 //   呼び出し回数で「入力しても再実行されない」ことを見る。
+// - 14d: E7(スレッド一覧 effect)の再取得契機と、永続化済み選択の復元規則。
 // - T10 の追加パターン(設計書 §2 第14段): ticket 起動とコールドな projects の
 //   API 呼び出し順の指紋。並び自体が正しいという主張ではなく、現状を固定する。
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
@@ -14,6 +15,7 @@ import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
+import { writePersistedChatThreadState } from '../chatThreadStorage';
 import { installFakeHistory } from '../test/fakeHistory';
 import { ChatPanel } from './ChatPanel';
 
@@ -239,6 +241,81 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
       await waitFor(() => expect(messageFetches).toBe(1));
       await settle();
       expect(messageFetches).toBe(1);
+    });
+  });
+
+  describe('14d: the thread-list effect (E7) — refetch triggers and selection restore', () => {
+    // 第14d段で E7 を useThreadListSync へ移し、依存配列に(参照の変わらない)ref と
+    // setter と startNewDraftThread を加える前に、「再取得は selectedProjectId が
+    // 変わったときだけ」と、永続化済みの選択の復元規則を固定する。
+    const THREAD_2: ChatThreadDto = { ...THREAD_1, sessionId: 'sess-2', title: 'second thread' };
+    let messageFetches: string[] = [];
+
+    beforeEach(() => {
+      messageFetches = [];
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) => {
+          const match = /\/api\/chat\/sessions\/([^/]+)\/messages/.exec(url);
+          if (match !== null) {
+            messageFetches.push(match[1]!);
+            return Promise.resolve(jsonResponse({ sessionId: match[1], agentId: 'claude', messages: [] }));
+          }
+          return Promise.reject(new Error(`Unexpected fetch: GET ${url}`));
+        }),
+      );
+    });
+
+    async function settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    it('fetches the thread list once per project and not again on typing, a new thread or a thread switch', async () => {
+      fetchChatThreadsMock.mockResolvedValue([THREAD_1, THREAD_2]);
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+      await waitFor(() => expect(messageFetches).toEqual(['sess-1']));
+
+      await user.type(screen.getByLabelText('メッセージ'), 'abc');
+      await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+      await user.type(screen.getByLabelText('メッセージ'), 'draft');
+      await settle();
+      expect(fetchChatThreadsMock.mock.calls).toEqual([['proj-a']]);
+
+      await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-b');
+      await waitFor(() => expect(fetchChatThreadsMock.mock.calls).toEqual([['proj-a'], ['proj-b']]));
+      await settle();
+      expect(fetchChatThreadsMock.mock.calls).toEqual([['proj-a'], ['proj-b']]);
+    });
+
+    it('drops persisted ids the server no longer lists and falls back to the first open thread', async () => {
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-gone', 'sess-2'],
+        selectedSessionId: 'sess-gone',
+      });
+      fetchChatThreadsMock.mockResolvedValue([THREAD_1, THREAD_2]);
+      renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+
+      await waitFor(() => expect(messageFetches).toEqual(['sess-2']));
+      await settle();
+      expect(messageFetches).toEqual(['sess-2']);
+    });
+
+    it('restores the persisted selection without filtering when the thread list fetch fails', async () => {
+      writePersistedChatThreadState('proj-a', {
+        activeSessionIds: ['sess-1', 'sess-2'],
+        selectedSessionId: 'sess-2',
+      });
+      fetchChatThreadsMock.mockRejectedValue(new Error('threads unavailable'));
+      renderChatPanel([PROJECT_A], { initialProjectId: 'proj-a' });
+
+      expect(await screen.findByText('スレッド一覧の取得に失敗しました。')).toBeInTheDocument();
+      await waitFor(() => expect(messageFetches).toEqual(['sess-2']));
+      await settle();
+      expect(messageFetches).toEqual(['sess-2']);
     });
   });
 
