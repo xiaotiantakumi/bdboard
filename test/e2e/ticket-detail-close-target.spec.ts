@@ -188,6 +188,29 @@ async function assertUndoSnackbarStackingNested(page: Page) {
   ).toBe(false);
 }
 
+// bdboard-u9vr: フィクスチャの stub bd CLI は書き込みサブコマンドを実装していないため
+// (test/e2e/fixtures/bin/bd のコメント参照)、実際に bd へ書き込みを通すことはできない。
+// chat-panel-helpers.ts の stubAgentsUnavailable() と同じパターンで、この2エンドポイント
+// だけを page.route でモックし、本物の TicketDetailPanel / UndoSnackbar の成功時ロジック
+// (useTicketQuickActions.ts の onSuccess)を実際に走らせる。GET 系(ticket/board の
+// invalidateQueries による再取得)はモックしない — 実サーバー・実スタブのままでよい。
+async function mockQuickActionEndpoints(page: Page) {
+  await page.route('**/api/tickets/*/quick-action', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+  await page.route('**/api/tickets/*/quick-action/undo', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
+    });
+  });
+}
+
 async function navigateToLinkedTicketViaDependency(dialog: Locator, page: Page) {
   // bdboard-3tw.2 は fixture 上 status=closed。既定フィルタ (hideDone) で盤面に
   // 出ず TicketIdLink が button ではなく span.ticket-id-unavailable になるため
@@ -278,6 +301,115 @@ test.describe('ticket detail close target on phone viewport', () => {
   }) => {
     await page.goto('/');
     await assertUndoSnackbarStackingNested(page);
+  });
+
+  test('a real quick action shows a real undo snackbar on top of a real ticket detail panel, and its action button is pressable (bdboard-u9vr)', async ({
+    page,
+  }) => {
+    await mockQuickActionEndpoints(page);
+    const dialog = await openTicketDetail(page, true);
+    await dialog.getByRole('button', { name: '着手', exact: true }).click();
+    const confirmPanel = dialog.locator('.quick-action-confirm-panel');
+    await expect(confirmPanel).toBeVisible();
+    await confirmPanel.getByRole('button', { name: '実行する' }).click();
+
+    const snackbar = page.locator('.undo-snackbar');
+    await expect(snackbar).toBeVisible();
+    const actionBtn = page.locator('.undo-snackbar-action');
+    await expect(actionBtn).toBeVisible();
+    await expect(page.locator('.undo-snackbar-message')).toHaveText('着手しました');
+
+    // 合成 DOM 注入ではなく、本物の .overlay / .detail-panel / .undo-snackbar に対して
+    // 実測する(bdboard-u9vr: このファイルの他のテストは page.evaluate 内で偽の要素を
+    // 作って調べているが、ここでは実要素を見る)。
+    const stacking = await page.evaluate(() => {
+      const overlay = document.querySelector('.overlay');
+      const snackbarEl = document.querySelector('.undo-snackbar');
+      const action = document.querySelector('.undo-snackbar-action');
+      if (!overlay || !snackbarEl || !action) {
+        throw new Error(
+          'expected real .overlay/.undo-snackbar/.undo-snackbar-action to exist',
+        );
+      }
+      const overlayZ = Number.parseInt(getComputedStyle(overlay).zIndex, 10);
+      const snackbarZ = Number.parseInt(getComputedStyle(snackbarEl).zIndex, 10);
+      const rect = action.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+      const hitIsAction = hit !== null && (hit === action || action.contains(hit));
+      return { overlayZ, snackbarZ, hitIsAction };
+    });
+    expect(
+      stacking.snackbarZ,
+      'real undo-snackbar z-index should beat the real .overlay',
+    ).toBeGreaterThan(stacking.overlayZ);
+    expect(
+      stacking.hitIsAction,
+      'undo-snackbar-action must be the real top hit target',
+    ).toBe(true);
+
+    // hit-test だけでなく実際に押して機能することまで確認する。
+    await actionBtn.tap();
+    await expect(page.locator('.undo-snackbar-message')).toHaveText('元に戻しました');
+  });
+
+  test('undo snackbar stays obstructed by a real ChatPanel opened from within the real ticket detail panel (bdboard-ysm / bdboard-h4xs.27 real-DOM regression, bdboard-u9vr)', async ({
+    page,
+  }) => {
+    await mockQuickActionEndpoints(page);
+    const dialog = await openTicketDetail(page, true);
+    await dialog.getByRole('button', { name: '着手', exact: true }).click();
+    await dialog
+      .locator('.quick-action-confirm-panel')
+      .getByRole('button', { name: '実行する' })
+      .click();
+    await expect(page.locator('.undo-snackbar')).toBeVisible();
+    await expect(page.locator('.undo-snackbar-action')).toBeVisible();
+
+    // チケット詳細パネル自身の「このチケットについてチャット」ボタンから本物の
+    // ChatPanel を開く(ヘッダーの「チャット」ボタンではない — bdboard-h4xs.27 の
+    // 実際のバグ再現手順そのもの)。
+    await dialog.getByRole('button', { name: 'このチケットについてチャット' }).click();
+    const chatDialog = page.locator('.chat-panel[role="dialog"]');
+    await expect(chatDialog).toBeVisible();
+
+    // チケット詳細パネルはアンマウントされずDOM上に残っている(bdboard-h4xs.27)。
+    await expect(page.locator('.detail-panel:not(.chat-panel)')).toBeVisible();
+    await expect(page.locator('.undo-snackbar-action')).toBeVisible();
+
+    const stacking = await page.evaluate(() => {
+      const overlays = Array.from(document.querySelectorAll('.overlay'));
+      const snackbarEl = document.querySelector('.undo-snackbar');
+      const action = document.querySelector('.undo-snackbar-action');
+      if (overlays.length === 0 || !snackbarEl || !action) {
+        throw new Error(
+          'expected real .overlay (x2)/.undo-snackbar/.undo-snackbar-action to exist',
+        );
+      }
+      const overlayZs = overlays.map((el) =>
+        Number.parseInt(getComputedStyle(el).zIndex, 10),
+      );
+      const snackbarZ = Number.parseInt(getComputedStyle(snackbarEl).zIndex, 10);
+      const rect = action.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2,
+      );
+      const hitIsAction = hit !== null && (hit === action || action.contains(hit));
+      return { overlayZs, snackbarZ, hitIsAction };
+    });
+    for (const overlayZ of stacking.overlayZs) {
+      expect(
+        overlayZ,
+        '.overlay z-index should beat undo-snackbar when a real ChatPanel is open (bdboard-ysm)',
+      ).toBeGreaterThan(stacking.snackbarZ);
+    }
+    expect(
+      stacking.hitIsAction,
+      'undo-snackbar must stay obstructed while a real ChatPanel is open, even though it was opened from within the real ticket detail panel (bdboard-h4xs.27 real-DOM regression guard)',
+    ).toBe(false);
   });
 });
 
