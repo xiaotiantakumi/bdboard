@@ -38,7 +38,7 @@ export interface UseDraftPayloadRegistryResult {
  * の一括破棄(purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。
  * DRAFT_PAYLOAD_STORE_NAMES 型により applicators の網羅性も tsc で強制される。
  * 新しい会話キー付きストアを足すときは conversationKeyspace.ts の正本に追加し、
- * ここと3再割り当てサイト(ChatPanel.tsx の handleAgentChange / startNewDraftThread、
+ * ここと3再割り当てサイト(chat/useDraftThreadLauncher.ts の handleAgentChange / startNewDraftThread、
  * chat/useChatSendCommits.ts の commitSuccess)の引き継ぎ選択も更新すること。
  *
  * 意図的な非対象: conversations / historyLoadedFor / streamingReply。
