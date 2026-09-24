@@ -17,10 +17,11 @@ import { type NextUpRunLoopController } from '../nextUpRunLoop';
 /**
  * bdboard-62p4 PR-2: AppViewContent からボード系ビュー(split/next)の
  * 表示だけを切り出したもの。フィルタバー・エピック絞り込みインジケータ・
- * 読み込み中/エラー表示・一括操作バー・BoardLanes/SplitBoard/NextUpView の
+ * 読み込み中/エラー表示・一括操作バー・SplitBoard/NextUpView の
  * 出し分けをまとめる。元は AppViewContent.tsx 1ファイルに収めると ESLint の
- * 200行上限を超えたため分けた(表示専用・state/effect は持たない)。JSX・
- * 分岐条件・渡す値は App.tsx から移した時点から変えていない。
+ * 200行上限を超えたため分けた(表示専用・state/effect は持たない)。
+ * bdboard-mkm1.1 で「統合」タブ削除に伴い BoardLanes(merged 専用の描画分岐)
+ * を削除し、split 固定へ単純化した(それ以外の JSX・渡す値は変えていない)。
  */
 export interface AppBoardViewSwitchProps {
   view: ViewMode;
@@ -142,7 +143,7 @@ export function AppBoardViewSwitch({
       {board.query.data !== undefined &&
         view === 'next' &&
         board.query.data.merged === null && (
-          <p className="empty-message">統合ビューのデータがありません</p>
+          <p className="empty-message">Next Up のデータがありません</p>
         )}
     </>
   );

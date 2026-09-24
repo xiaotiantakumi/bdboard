@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  boardApiModeFromView,
   boardFilterPresetStatesEqual,
   DEFAULT_VIEW,
   describeBoardFilterPresetState,
@@ -39,6 +40,17 @@ describe('uiPersistedState', () => {
     expect(validateViewMode('merged')).toBe('split');
     expect(DEFAULT_VIEW).toBe('split');
     expect(VIEW_ITEMS.map(({ view }) => view)).toEqual(expect.not.arrayContaining(['merged']));
+  });
+
+  // bdboard-mkm1.1: 実装中に一度、常に 'split' を返す形へ書き換えられて Next Up が
+  // サーバーの merged 集約データを失う回帰が起きた(レビューで検出・修正済み)。
+  // 'merged' タブ削除後も、分割ビュー以外は引き続きサーバーへ 'merged' を要求する
+  // ことをここで直接固定する。
+  it('requests merged from the server for every non-split view, and split only for split', () => {
+    expect(boardApiModeFromView('split')).toBe('split');
+    for (const view of VIEW_ITEMS.map(({ view }) => view).filter((v) => v !== 'split')) {
+      expect(boardApiModeFromView(view)).toBe('merged');
+    }
   });
 
   it('accepts graph as a view mode', () => {

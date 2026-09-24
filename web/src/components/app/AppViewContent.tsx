@@ -34,7 +34,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  * ウィンドウ幅・limit 状態。JSX・分岐条件・渡す値は元の App.tsx から一切
  * 変えていない(変数参照をグループ化した prop 経由の参照に置き換えただけ)。
  *
- * ボード系ビュー(merged/split/next)の JSX は ESLint の200行上限のため
+ * ボード系ビュー(split/next)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
  * ボード以外のビュー(activity/digest/stats/hygiene/graph/settings/events)
  * の出し分けだけを持つ。

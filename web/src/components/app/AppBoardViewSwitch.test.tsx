@@ -554,7 +554,7 @@ describe('AppBoardViewSwitch', () => {
         })}
       />,
     );
-    expect(screen.queryByText('統合ビューのデータがありません')).not.toBeInTheDocument();
+    expect(screen.queryByText('Next Up のデータがありません')).not.toBeInTheDocument();
 
     // Next Up はサーバーの merged モードで取得したデータ(board.query.data.merged)を
     // 描画に使うので、それが無いときの空メッセージ分岐は 'merged' タブ削除後も
@@ -571,6 +571,6 @@ describe('AppBoardViewSwitch', () => {
         })}
       />,
     );
-    expect(screen.getByText('統合ビューのデータがありません')).toBeInTheDocument();
+    expect(screen.getByText('Next Up のデータがありません')).toBeInTheDocument();
   });
 });
