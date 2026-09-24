@@ -10,7 +10,7 @@ import {
   toSessionTailMessageDto,
 } from './dto.js';
 import { parseProjectIds, resolveLivenessThresholds } from './api-route-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 const SESSION_HISTORY_DEFAULT_LIMIT = 50;
 const SESSION_HISTORY_MIN_LIMIT = 1;

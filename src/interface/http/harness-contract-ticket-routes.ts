@@ -3,7 +3,7 @@ import { respondBdError } from './bd-error-response.js';
 import { readProjectHarnessStatus } from '../../application/harness/get-project-harness-status.js';
 import { fileHarnessContractTicket } from '../../application/harness/file-harness-contract-ticket.js';
 import { BdError } from '../../application/ports/issue-repository.js';
-import type { HarnessRoutesDeps } from './harness-routes.js';
+import type { HarnessRoutesDeps } from './harness-routes-deps.js';
 import { extractProjectIdFromHarnessPath, toContractJson } from './harness-routes-shared.js';
 
 // harness-routes.ts (旧347行) の分割 (bdboard-sso1.56) で、

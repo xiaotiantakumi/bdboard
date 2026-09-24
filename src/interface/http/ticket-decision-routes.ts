@@ -6,7 +6,7 @@ import {
   findProjectRootPathForTicket,
   createRefreshAfterWrite,
 } from './ticket-write-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 // 上限は ticket-comment-write-routes.ts の commentBodySchema と揃える。どちらの値も
 // 最終的に bd の argv に載るので、無制限だと spawn が E2BIG で落ち、exitCode:-1 が

@@ -3,7 +3,7 @@ import { getBoard } from '../../application/board/get-board.js';
 import { toCommentDto } from './dto.js';
 import { respondBdError } from './bd-error-response.js';
 import { buildGetBoardDeps } from './api-route-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 export function createCommentRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
