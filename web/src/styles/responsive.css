@@ -357,4 +357,26 @@
     max-height: 30dvh;
     overflow-y: auto;
   }
+
+  /* bdboard-h4xs.26: この @media (max-width: 700px) の中でだけ .chat-input が
+     固定高 (ここでは上の 48px。576px 以下の短い縦幅では chat-3.css がさらに
+     46px へ上書きする) になり、どちらも 16px フォント・line-height 1.45 の
+     1行分しか無い。プレースホルダー「例: in_progress のまま止まっているチケット
+     を教えて」(ChatComposer.tsx) がここで2行に折り返すと、2行目は
+     overflow-y:auto の外側にはみ出し上半分だけが見える状態で欠けていた。
+     1行に収め、はみ出す分は省略記号側で切る(文言は変えない)。
+
+     このルールをこの @media 内に留めるのが重要: 幅700px超のデスクトップ幅
+     では .chat-input は固定高にならず (min-height:72px, rows=3)、サイド
+     パネルは 360〜720px の間でユーザーがドラッグで狭められる
+     (useResizableSidePanel)。パネル幅を最小 360px 付近まで狭めると
+     14px フォントのプレースホルダーは1行に収まらないが、その場合は2行とも
+     欠けずに全文が見える(今回の固定高バグは存在しない)。この @media の外にまで
+     ::placeholder のルールを広げると、その「2行とも全文読める」デスクトップ側の
+     見た目まで1行切り詰めに変えてしまう(opus レビュー指摘、PR #742)。 */
+  .chat-input::placeholder {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }

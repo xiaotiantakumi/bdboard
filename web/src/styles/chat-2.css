@@ -359,17 +359,6 @@
   cursor: not-allowed;
 }
 
-/* bdboard-h4xs.26: モバイル幅では入力欄の固定高 (chat-3.css の 46px /
-   responsive.css の 48px) が概ね1行分しかなく、プレースホルダーが2行に
-   折り返すと2行目の上半分しか見えなかった。1行に収め、はみ出す分は
-   省略記号で切る (文言は変えない)。デスクトップ幅では元々1行に収まって
-   いるため見た目は変わらない。 */
-.chat-input::placeholder {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .chat-input-hint {
   font-size: 0.75rem;
   color: var(--color-text-tertiary);
