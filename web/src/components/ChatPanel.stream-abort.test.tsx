@@ -1145,10 +1145,16 @@ describe('ChatPanel', () => {
 
       // abort が submit の catch(AbortError) 経路を通って
       // setTurnRecoveryGeneration(g => g+1) を呼ぶのは、ストリーム読み取り
-      // ループへ abort が伝播した後の非同期タイミング。ここで一呼吸おいて
-      // から B の一覧 fetch を解決し、「E8 の generation bump が E7 の
-      // in-flight fetch より後から割り込む」順序を作る。
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // ループへ abort が伝播した後の非同期タイミング。E8 は B へ切り替えた
+      // ときと generation が進んだときの2回 B の turn-status を取りに行くので、
+      // 2回目を待ってから B の一覧 fetch を解決し、「E8 の generation bump が
+      // E7 の in-flight fetch より後から割り込む」順序を確実に作る(固定の
+      // sleep だと、遅い環境では bump より先に解決して修正前でも通ってしまう)。
+      await waitFor(() => {
+        expect(
+          fetchChatTurnStatusMock.mock.calls.filter(([projectId]) => projectId === 'proj-b'),
+        ).toHaveLength(2);
+      });
       projectBThreads.resolve([
         {
           sessionId: 'sess-b',

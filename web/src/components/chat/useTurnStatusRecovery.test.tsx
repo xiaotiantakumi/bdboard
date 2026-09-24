@@ -4,7 +4,7 @@
 // 始まった useThreadListSync の一覧 fetch を握りつぶす)。進めるのは回収した
 // ターンを hydrate する直前だけで、そこでは従来どおり古い一覧応答を無効化する。
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto, ChatTurnStatusDto } from '../../api';
 import { useTurnStatusRecovery, type DetachedTurnSend } from './useTurnStatusRecovery';
@@ -40,15 +40,22 @@ const setLoadingHistoryFor = vi.fn();
 const clearStreamingReplyForKey = vi.fn();
 const clearUnresolvedSend = vi.fn();
 
-function useRecoveryProbe({ generation, applyRecoveredTurn }: {
+function useRecoveryProbe({ projectId, generation, applyRecoveredTurn, onListFetch }: {
+  projectId: string;
   generation: number;
   applyRecoveredTurn: (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => void;
+  onListFetch: (projectId: string, requestId: number) => void;
 }) {
   const detachedSendsRef = useRef<Record<string, DetachedTurnSend>>({});
   const historyRequestIdRef = useRef(0);
   const threadListRequestIdRef = useRef(0);
+  // useThreadListSync(E7)の request-id の取り方だけを真似る。ChatPanel と同じく
+  // E8 より前に登録するので、プロジェクト切替の同じコミットでは E7 → E8 の順に走る。
+  useEffect(() => {
+    onListFetch(projectId, ++threadListRequestIdRef.current);
+  }, [projectId, onListFetch]);
   useTurnStatusRecovery({
-    selectedProjectId: 'proj-a',
+    selectedProjectId: projectId,
     generation,
     detachedSendsRef,
     historyRequestIdRef,
@@ -61,13 +68,16 @@ function useRecoveryProbe({ generation, applyRecoveredTurn }: {
   return { historyRequestIdRef, threadListRequestIdRef };
 }
 
-function renderProbe() {
+function renderProbe(initial: { projectId?: string; generation?: number } = {}) {
   const applyRecoveredTurn = vi.fn();
+  const listFetchIds: Record<string, number> = {};
+  const onListFetch = (projectId: string, requestId: number) => { listFetchIds[projectId] = requestId; };
   const rendered = renderHook(
-    (props: { generation: number }) => useRecoveryProbe({ generation: props.generation, applyRecoveredTurn }),
-    { initialProps: { generation: 0 } },
+    (props: { projectId: string; generation: number }) =>
+      useRecoveryProbe({ ...props, applyRecoveredTurn, onListFetch }),
+    { initialProps: { projectId: initial.projectId ?? 'proj-a', generation: initial.generation ?? 0 } },
   );
-  return { ...rendered, applyRecoveredTurn };
+  return { ...rendered, applyRecoveredTurn, listFetchIds };
 }
 
 describe('useTurnStatusRecovery request-id guards', () => {
@@ -81,18 +91,30 @@ describe('useTurnStatusRecovery request-id guards', () => {
   });
 
   it('does not advance the thread-list request id when a generation bump restarts the effect (bdboard-x4mv)', async () => {
-    const { result, rerender } = renderProbe();
+    const { result, rerender, listFetchIds } = renderProbe();
     await waitFor(() => expect(fetchChatTurnStatusMock).toHaveBeenCalledTimes(1));
-    // useThreadListSync がこの時点で一覧 fetch を始めていた(id を1つ進めた)とみなす。
-    const inFlightThreadListRequestId = ++result.current.threadListRequestIdRef.current;
-
-    rerender({ generation: 1 });
+    // E7 が proj-a の一覧 fetch を始めた(id を1つ進めた)まま、abort 由来の bump が遅れて届く。
+    rerender({ projectId: 'proj-a', generation: 1 });
     await waitFor(() => expect(fetchChatTurnStatusMock).toHaveBeenCalledTimes(2));
-    await act(async () => { await Promise.resolve(); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
 
     // idle なので hydrate しない。一覧の request-id は動かず、in-flight の一覧応答は生きている。
-    expect(result.current.threadListRequestIdRef.current).toBe(inFlightThreadListRequestId);
+    expect(result.current.threadListRequestIdRef.current).toBe(listFetchIds['proj-a']);
     expect(fetchChatThreadsMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the list request id E7 took for a project switched to after an earlier generation bump (bdboard-x4mv)', async () => {
+    // generation は減らないので、タブ内で一度でも abort / 配信停止があると、以後の
+    // プロジェクト切替は毎回「E7 が id を取る → 同じコミットの E8 が張り直す」になる。
+    const { result, rerender, listFetchIds } = renderProbe({ generation: 1 });
+    await waitFor(() => expect(fetchChatTurnStatusMock).toHaveBeenCalledWith('proj-a'));
+
+    rerender({ projectId: 'proj-b', generation: 1 });
+    await waitFor(() => expect(fetchChatTurnStatusMock).toHaveBeenCalledWith('proj-b'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    expect(listFetchIds['proj-b']).toBeGreaterThan(listFetchIds['proj-a']);
+    expect(result.current.threadListRequestIdRef.current).toBe(listFetchIds['proj-b']);
   });
 
   it('still advances the thread-list request id right before hydrating a recovered turn', async () => {
@@ -108,13 +130,13 @@ describe('useTurnStatusRecovery request-id guards', () => {
     });
     fetchChatSessionMessagesMock.mockResolvedValue(payload);
 
-    const { result, applyRecoveredTurn } = renderProbe();
+    const { result, applyRecoveredTurn, listFetchIds } = renderProbe();
     probe.ref = result.current.threadListRequestIdRef;
 
     await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledWith(threads, payload));
-    // hydrate の fetch より前に id が進んでいる = それ以前に始まった一覧応答は捨てられる。
-    expect(probe.idAtFetch).toBe(1);
-    expect(result.current.threadListRequestIdRef.current).toBe(1);
+    // hydrate の fetch より前に id が進んでいる = それ以前に始まった一覧応答(E7 の分)は捨てられる。
+    expect(probe.idAtFetch).toBe(listFetchIds['proj-a'] + 1);
+    expect(result.current.threadListRequestIdRef.current).toBe(listFetchIds['proj-a'] + 1);
   });
 
   it('drops a hydrate whose thread-list request id was superseded while its fetch was in flight', async () => {
@@ -131,8 +153,7 @@ describe('useTurnStatusRecovery request-id guards', () => {
     result.current.threadListRequestIdRef.current += 1;
     await act(async () => {
       resolveThreads([]);
-      await Promise.resolve();
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(applyRecoveredTurn).not.toHaveBeenCalled();

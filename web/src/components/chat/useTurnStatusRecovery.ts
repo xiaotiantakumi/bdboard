@@ -72,11 +72,13 @@ export function useTurnStatusRecovery(params: {
     if (generation > 0) {
       historyRequestIdRef.current += 1;
       // bdboard-x4mv: ここでは threadListRequestIdRef を進めない。進めると、
-      // プロジェクト切替と同時に始まった useThreadListSync(E7)の一覧 fetch が、
-      // 切替による abort から少し遅れて届く generation の bump で無効化され、
-      // この effect は hydrate しない限り一覧を取り直さないため、移動先の
-      // スレッド一覧がいつまでも表示されなかった。古い一覧応答が回収結果を
-      // 上書きしないためのガードは、下の hydrate 分岐が fetch の直前に進める
+      // プロジェクト切替で始まった useThreadListSync(E7)の一覧 fetch を無効化
+      // してしまう — 切替による abort から少し遅れて generation が進んだとき、
+      // そして generation は減らないので、一度 bump された後の切替では毎回
+      // (同じコミットで E7 → この effect の順に走るため)。この effect は
+      // hydrate しない限り一覧を取り直さないので、移動先のスレッド一覧が
+      // 表示されないままになっていた。古い一覧応答が回収結果を上書きしない
+      // ためのガードは、下の hydrate 分岐が fetch の直前に進める
       // recoveryThreadRequestId が担う(hydrate しないなら守るべき回収結果も無い)。
       setLoadingHistoryFor(null);
     }
