@@ -151,6 +151,12 @@ const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([]);
  *
  * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
  *
+ * bdboard-mkm1.1 (2026-09-24) で追加された唯一の登録エントリ
+ * (`span.project-harness-status.project-harness-status-missing`, light 4.32:1) を
+ * bdboard-an0k (2026-09-24) で解消した。`--badge-stalled-fg` は他の背景・用途と
+ * 共有されているため値は動かさず、`ProjectHarnessBadges.tsx` 専用の派生トークン
+ * `--project-harness-warn-fg` (light #9e4b00、4.75:1) を新設して適用した
+ * (tokens.css 参照)。空のまま維持するのが目標。
  */
 const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([]);
 
