@@ -104,8 +104,11 @@ interface ShowKindAndBlockingGates {
   /**
    * kind === 'ticket' のときだけ意味を持つ。このチケット自身が standalone な
    * decision_question(metadata.decision_question)を持っているかどうか(bdboard-mw8y)。
-   * gate 側の掃除(respond() の kind === 'gate' 分岐)が、このチケット自身の未回答の
-   * 質問を巻き込んで human ラベルを剥がさないようにするために使う。
+   * 2箇所で使う: (1) gate 側respond()の掃除(clearHumanLabelOnUnblockedTickets)が、
+   * このチケット自身の未回答の質問を巻き込んで human ラベルを剥がさないようにするため
+   * (bdboard-mw8y)。(2) ticket 側respond()が、このチケット自身の質問と、ちょうど1件の
+   * blocking human gate の質問のどちらへの回答か特定できない場合に ambiguous 扱いにする
+   * ため(bdboard-cine)。
    */
   readonly hasOwnDecisionQuestion: boolean;
 }

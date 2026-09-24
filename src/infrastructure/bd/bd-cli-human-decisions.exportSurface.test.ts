@@ -22,6 +22,7 @@ const EXPECTED_VALUE_EXPORTS = [
   'buildGateCloseReason',
   'buildResponseCommentBody',
   'buildTicketAmbiguousGatesResponseCommentBody',
+  'buildTicketOwnQuestionAmbiguousResponseCommentBody',
   'buildTicketResponseCommentBody',
   'buildUnknownKindResponseCommentBody',
   'createBdCliHumanDecisions',
