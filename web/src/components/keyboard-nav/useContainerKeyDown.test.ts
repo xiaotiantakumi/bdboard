@@ -25,8 +25,8 @@ function setup(overrides: Partial<UseContainerKeyDownParams> = {}) {
   };
   const { result } = renderHook(() => useContainerKeyDown(params));
   const handler = result.current;
-  const call = (key: string, shiftKey = false, composing = false) => {
-    const event = { key, shiftKey, nativeEvent: { isComposing: composing }, isComposing: composing, target: { tagName: 'DIV' }, defaultPrevented: composing, preventDefault: vi.fn() };
+  const call = (key: string, shiftKey = false, defaultPrevented = false) => {
+    const event = { key, shiftKey, target: { tagName: 'DIV' }, defaultPrevented, preventDefault: vi.fn() };
     handler(event as unknown as ReactKeyboardEvent<HTMLElement>);
     return event;
   };
@@ -34,7 +34,7 @@ function setup(overrides: Partial<UseContainerKeyDownParams> = {}) {
 }
 
 describe('useContainerKeyDown', () => {
-  it('ignores composing events', () => {
+  it('ignores events that already have defaultPrevented set (shouldIgnoreContainerKeydown guard)', () => {
     const { call, params } = setup();
     const event = call('ArrowDown', false, true);
     expect(event.preventDefault).not.toHaveBeenCalled();
@@ -89,9 +89,16 @@ describe('useContainerKeyDown', () => {
 
   it('does nothing when neither focused nor default card exists during range selection', () => {
     const { call, params } = setup({ focusedCardId: null, getDefaultFocusedCardId: () => null });
-    call('j', true);
+    const event = call('j', true);
+    expect(event.preventDefault).toHaveBeenCalledOnce();
     expect(params.resolveMoveWithinLane).not.toHaveBeenCalled();
     expect(params.focusCardByKeyboard).not.toHaveBeenCalled();
+  });
+
+  it('falls back to the default focused card during range selection when nothing is focused', () => {
+    const { call, params } = setup({ focusedCardId: null, getDefaultFocusedCardId: () => 'a' });
+    call('j', true);
+    expect(params.resolveMoveWithinLane).toHaveBeenCalledWith('a', 'next');
   });
 
   it('does not focus when range movement cannot resolve a next card', () => {
@@ -106,6 +113,24 @@ describe('useContainerKeyDown', () => {
     expect(event.preventDefault).not.toHaveBeenCalled();
     expect(params.moveWithinLane).not.toHaveBeenCalled();
   });
+
+  it.each(['x', 'X'])('does not toggle selection for shifted %s (x-toggle requires !shift)', (key) => {
+    const { call, bulkSelection } = setup();
+    const event = call(key, true);
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(bulkSelection.toggle).not.toHaveBeenCalled();
+  });
+
+  it.each(['ArrowRight', 'l', 'ArrowLeft', 'h', 'Home', 'End'])(
+    'does not move across/within lanes for shifted %s (only next/prev-in-lane keys trigger range selection)',
+    (key) => {
+      const { call, params } = setup();
+      const event = call(key, true);
+      expect(event.preventDefault).not.toHaveBeenCalled();
+      expect(params.moveAcrossLanes).not.toHaveBeenCalled();
+      expect(params.moveWithinLane).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(['ArrowDown', 'j', 'ArrowUp', 'k', 'ArrowRight', 'l', 'ArrowLeft', 'h', 'Home', 'End'])(
     'focuses the default card with %s when there is no current focus',

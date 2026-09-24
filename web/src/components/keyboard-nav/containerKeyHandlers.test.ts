@@ -112,6 +112,73 @@ describe('handleRangeSelectionKey', () => {
     handleRangeSelectionKey(ev.typed, params);
     expect(params.focusCardByKeyboard).not.toHaveBeenCalled();
   });
+
+  it('always calls preventDefault, even when there is no current or default focus', () => {
+    const ev = event('j', true);
+    const { params } = rangeParams({ focusedCardId: null, getDefaultFocusedCardId: () => null });
+    handleRangeSelectionKey(ev.typed, params);
+    expect(ev.value.preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it('falls back to the default focused card when nothing is focused', () => {
+    const ev = event('j', true);
+    const { params } = rangeParams({ focusedCardId: null, getDefaultFocusedCardId: () => 'a' });
+    handleRangeSelectionKey(ev.typed, params);
+    expect(params.resolveMoveWithinLane).toHaveBeenCalledWith('a', 'next');
+  });
+
+  it('initializes the range anchor to the current id even when move resolution returns null', () => {
+    const ev = event('j', true);
+    const { params } = rangeParams({ resolveMoveWithinLane: () => null });
+    expect(params.rangeAnchorRef.current).toBeNull();
+    handleRangeSelectionKey(ev.typed, params);
+    expect(params.rangeAnchorRef.current).toBe('b');
+  });
+
+  it('preserves an existing range anchor instead of resetting it to the current id', () => {
+    const ev = event('j', true);
+    const { params, bulkSelection } = rangeParams();
+    params.rangeAnchorRef.current = 'z';
+    handleRangeSelectionKey(ev.typed, params);
+    expect(params.rangeAnchorRef.current).toBe('z');
+    expect(params.resolveMoveWithinLane).toHaveBeenCalledWith('b', 'next');
+    expect(bulkSelection.selectRange).toHaveBeenCalledWith(['a', 'b', 'c'], 'z', 'c');
+  });
+
+  it('focuses the resolved card without touching selection when bulkSelection is null', () => {
+    const ev = event('j', true);
+    const { params } = rangeParams({ bulkSelection: null });
+    handleRangeSelectionKey(ev.typed, params);
+    expect(params.focusCardByKeyboard).toHaveBeenCalledWith('c');
+  });
+
+  it('does not call selectRange when the current card has no lane', () => {
+    const ev = event('j', true);
+    const { params, bulkSelection } = rangeParams({ findLaneForCard: () => null });
+    handleRangeSelectionKey(ev.typed, params);
+    expect(params.focusCardByKeyboard).toHaveBeenCalledWith('c');
+    expect(bulkSelection.selectRange).not.toHaveBeenCalled();
+  });
+
+  it('removes ids that fall outside the new range from the selection', () => {
+    const ev = event('j', true);
+    const { params, bulkSelection } = rangeParams();
+    params.lastRangeIdsRef.current = ['a'];
+    handleRangeSelectionKey(ev.typed, params);
+    // new range for anchor 'b' -> next 'c' within laneIds ['a','b','c'] is ['b','c'];
+    // 'a' falls outside it and must be deselected.
+    expect(bulkSelection.deselectAll).toHaveBeenCalledWith(['a']);
+    expect(bulkSelection.selectRange).toHaveBeenCalledWith(['a', 'b', 'c'], 'b', 'c');
+    expect(params.lastRangeIdsRef.current).toEqual(['b', 'c']);
+  });
+
+  it('does not call deselectAll when every previous id is still within the new range', () => {
+    const ev = event('j', true);
+    const { params, bulkSelection } = rangeParams();
+    params.lastRangeIdsRef.current = ['b'];
+    handleRangeSelectionKey(ev.typed, params);
+    expect(bulkSelection.deselectAll).not.toHaveBeenCalled();
+  });
 });
 
 describe('handleNormalMovementKey', () => {
