@@ -16,7 +16,7 @@
 // このフックは今後も agentRun には一切触れないこと。
 //
 // 呼び出し位置の制約: このフックの引数(各セクションフックの reset)は呼び出し元
-// (TicketDetailPanel)側で先に宣言されている必要があるため、各セクションのフック
+// (useTicketDetailController)側で先に宣言されている必要があるため、各セクションのフック
 // (title/description/labels/dependencies/comment/sessionLink/quickActions/
 // decision)を呼び出した後でしか呼べない(TDZ)。それより後ろへ動かすこと自体は
 // 型上は可能だが、元の resetFormState useEffect があった位置(useFocusTrap の
