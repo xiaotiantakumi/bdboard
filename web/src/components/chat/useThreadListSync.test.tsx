@@ -107,7 +107,7 @@ describe('useThreadListSync', () => {
     expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-2' });
   });
 
-  it('invalidates pending intents for another project at the start of the run and keeps this project\'s', async () => {
+  it('invalidates pending intents for another project at the start of the run and keeps this project\'s', () => {
     const list = deferred<ChatThreadDto[]>();
     fetchChatThreadsMock.mockReturnValue(list.promise);
     const { result, rerender } = renderProbe('');
@@ -201,6 +201,9 @@ describe('useThreadListSync', () => {
   });
 
   it('refetches only when the project changes, not on unrelated re-renders or nonce/selection updates', async () => {
+    // startNewDraftThread はここでは固定の vi.fn なので、本物の参照安定性は見ていない。
+    // それは ChatPanel.reassignment-characterization.test.tsx の 14d と
+    // useDraftThreadLauncher.test.tsx の参照安定性テストが押さえる。
     const { result, rerender } = renderProbe();
     await flush();
     act(() => { result.current.key.setDraftNonces({ 'proj-a': 2 }); });

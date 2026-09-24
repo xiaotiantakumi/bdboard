@@ -11,7 +11,7 @@
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach を複製している。
 
-import { act, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
@@ -45,7 +45,9 @@ import {
   PROJECT_B,
   CLAUDE_AGENT,
   createDeferred,
+  getThreadDrawer,
   jsonResponse,
+  openThreadDrawer,
   renderChatPanel,
 } from './ChatPanel-test-support';
 
@@ -259,7 +261,7 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
         vi.fn((url: string) => {
           const match = /\/api\/chat\/sessions\/([^/]+)\/messages/.exec(url);
           if (match !== null) {
-            messageFetches.push(match[1]!);
+            messageFetches.push(match[1]);
             return Promise.resolve(jsonResponse({ sessionId: match[1], agentId: 'claude', messages: [] }));
           }
           return Promise.reject(new Error(`Unexpected fetch: GET ${url}`));
@@ -276,12 +278,15 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
     it('fetches the thread list once per project and not again on typing, a new thread or a thread switch', async () => {
       fetchChatThreadsMock.mockResolvedValue([THREAD_1, THREAD_2]);
       const user = userEvent.setup();
-      renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
+      const { container } = renderChatPanel([PROJECT_A, PROJECT_B], { initialProjectId: 'proj-a' });
       await waitFor(() => expect(messageFetches).toEqual(['sess-1']));
 
       await user.type(screen.getByLabelText('メッセージ'), 'abc');
       await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
       await user.type(screen.getByLabelText('メッセージ'), 'draft');
+      openThreadDrawer(container);
+      await user.click(within(getThreadDrawer(container)).getByRole('button', { name: 'second thread' }));
+      await waitFor(() => expect(messageFetches).toEqual(['sess-1', 'sess-2']));
       await settle();
       expect(fetchChatThreadsMock.mock.calls).toEqual([['proj-a']]);
 

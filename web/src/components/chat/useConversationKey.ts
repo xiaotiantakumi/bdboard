@@ -41,7 +41,7 @@ export function useConversationKey(selectedProjectId: string): UseConversationKe
   const draftNoncesRef = useRef(draftNonces);
   draftNoncesRef.current = draftNonces;
 
-  // bdboard-ysu: 下の project-sync effect(ChatPanel 側に残る)が、非同期に解決する
+  // bdboard-ysu: chat/useThreadListSync.ts の project-sync effect(E7)が、非同期に解決する
   // fetchChatThreads().then/.catch の中から「今まさにどのスレッドが選択
   // されているか」を stale closure を経由せず読むための参照。draftNoncesRef /
   // conversationInputsRef と同じミラーパターン。
