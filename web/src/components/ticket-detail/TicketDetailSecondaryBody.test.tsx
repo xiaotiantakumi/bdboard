@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TicketDetailDto } from '../../api';
+import type { PendingDecisionDto } from '../../api/decisions';
 
 // bdboard-sso1.5: TicketDetailSecondaryBody は TicketDetailBody の後半分の
 // 配線コンポーネント。#654 opus レビュー指摘(スカラーだけのモックだと配線
@@ -314,6 +315,62 @@ describe('TicketDetailSecondaryBody', () => {
       onCommentTextChange: props.comment.setCommentText,
       canSubmit: 'MARK-can-submit-comment',
       mutation: props.comment.mutation,
+    });
+  });
+
+  describe('attachment section order', () => {
+    function sectionIndexes(container: HTMLElement): Map<string, number> {
+      return new Map(
+        [...container.querySelectorAll<HTMLElement>('[data-testid]')].map(
+          (element, index) => [element.dataset.testid ?? '', index],
+        ),
+      );
+    }
+
+    it('keeps attachments between timeline and comments when no decision is pending', () => {
+      const props = makeProps();
+      const { container } = render(<TicketDetailSecondaryBody {...props} />);
+      const indexes = sectionIndexes(container);
+
+      expect(indexes.get('attachments-section')).toBeGreaterThan(
+        indexes.get('timeline-section') ?? -1,
+      );
+      expect(indexes.get('attachments-section')).toBeLessThan(
+        indexes.get('comments-section') ?? -1,
+      );
+      expect(indexes.get('decision-section')).toBeLessThan(
+        indexes.get('attachments-section') ?? -1,
+      );
+      expect(attachmentsMock).toHaveBeenCalledTimes(1);
+      expect(attachmentsMock.mock.calls[0]?.[0]).toEqual({
+        ticketId: 'MARK-ticket-id',
+      });
+    });
+
+    it('places attachments between usage and decision while a decision is pending', () => {
+      const pendingDecision: PendingDecisionDto = {
+        id: 'MARK-pending-id',
+        kind: 'ticket',
+        projectId: 'MARK-project',
+        allowFreeform: true,
+      };
+      const props = makeProps({ pendingDecision });
+      const { container } = render(<TicketDetailSecondaryBody {...props} />);
+      const indexes = sectionIndexes(container);
+
+      expect(indexes.get('attachments-section')).toBeGreaterThan(
+        indexes.get('usage-section') ?? -1,
+      );
+      expect(indexes.get('attachments-section')).toBeLessThan(
+        indexes.get('decision-section') ?? -1,
+      );
+      expect(indexes.get('attachments-section')).toBeLessThan(
+        indexes.get('timeline-section') ?? -1,
+      );
+      expect(attachmentsMock).toHaveBeenCalledTimes(1);
+      expect(attachmentsMock.mock.calls[0]?.[0]).toEqual({
+        ticketId: 'MARK-ticket-id',
+      });
     });
   });
 

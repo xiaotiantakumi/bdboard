@@ -56,6 +56,8 @@ export function TicketDetailSecondaryBody({
   copy,
   commentTextareaRef,
 }: TicketDetailSecondaryBodyProps) {
+  const attachmentsSection = <TicketAttachments ticketId={ticketId} />;
+
   return (
     <>
       <TicketDependenciesSection
@@ -98,6 +100,7 @@ export function TicketDetailSecondaryBody({
         onUnlinkSession={sessionLink.onUnlinkSession}
       />
       <TicketUsageSection usage={data.usage} />
+      {pendingDecision !== undefined && attachmentsSection}
       <TicketDecisionSection
         pendingDecision={pendingDecision}
         selectedChoice={decision.selectedChoice}
@@ -118,7 +121,7 @@ export function TicketDetailSecondaryBody({
         error={timeline.timelineError}
         events={timeline.timelineEvents}
       />
-      <TicketAttachments ticketId={ticketId} />
+      {pendingDecision === undefined && attachmentsSection}
       <TicketCommentsSection
         enabled={comment.commentsEnabled}
         loading={comment.commentsLoading}
