@@ -28,4 +28,6 @@ export interface Ticket {
   /** `bdboard.session` メタデータ由来の手動セッションリンク。 */
   readonly manualSessionId?: string;
   readonly models?: readonly TicketModelRecord[];
+  /** `bdboard.complexity` メタデータ由来の複雑度(自由文字列)。bdboard-p5l.18 */
+  readonly complexity?: string;
 }

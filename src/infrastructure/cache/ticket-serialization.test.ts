@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Ticket } from '../../domain/ticket.js';
 import { deserializeTickets, serializeTickets } from './ticket-serialization.js';
 
-function fullTicket(): Ticket {
+// Required<Ticket> here is deliberate: it forces this fixture to list every
+// optional field on Ticket, so adding a new optional field without also
+// extending ticket-serialization.ts's SerializedTicket allowlist fails to
+// compile here instead of silently round-tripping to undefined in
+// production (see the bdboard-p5l.18 `complexity` cache bug this guarded
+// against).
+function fullTicket(): Required<Ticket> {
   return {
     id: 'proj-abc',
     projectId: 'my-project',
@@ -35,6 +41,9 @@ function fullTicket(): Ticket {
     closeReason: 'Merged via PR #42',
     labels: ['human', 'needs-review'],
     commentCount: 3,
+    manualSessionId: 'sess-manual',
+    models: [{ stage: 'implement', model: 'composer-2.5' }],
+    complexity: 'high',
   };
 }
 
@@ -156,5 +165,26 @@ describe('ticket serialization', () => {
     const restored = deserializeTickets(json)[0];
     expect(restored).toEqual(original);
     expect(restored?.models).toBeUndefined();
+  });
+
+  it('round-trips complexity when present', () => {
+    const original: Ticket = {
+      ...minimalTicket(),
+      complexity: 'med',
+    };
+
+    expect(deserializeTickets(serializeTickets([original]))[0]).toEqual(original);
+  });
+
+  it('omits complexity after round-trip when absent', () => {
+    const original = minimalTicket();
+    const json = serializeTickets([original]);
+    const parsed = JSON.parse(json) as Record<string, unknown>[];
+
+    expect(parsed[0]).not.toHaveProperty('complexity');
+
+    const restored = deserializeTickets(json)[0];
+    expect(restored).toEqual(original);
+    expect(restored?.complexity).toBeUndefined();
   });
 });
