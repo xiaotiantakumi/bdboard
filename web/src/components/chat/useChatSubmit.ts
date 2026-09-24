@@ -1,4 +1,4 @@
-import { type FormEvent, type RefObject, useCallback, useEffect, useRef } from 'react';
+import { type FormEvent, type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatAgentDto, ChatMessageRequest } from '../../api';
 import { CHAT_AGENT_UNAVAILABLE_WARNING } from '../../writeAccessMessage';
 import { CHAT_IMAGE_ONLY_PROMPT, type ChatAttachment } from './attachments';
@@ -74,9 +74,12 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
     requestAbortControllerRef,
   } = params.send;
   const { commitSuccess, commitFailure, appendTranscript, resetBackgroundTurnStatus, inputRef } = params;
-  // bdboard-dcyi: 送信の finally で立て、isSending=false が画面に反映された後の
-  // effect で入力欄へ focus を戻して下ろす。
-  const focusAfterSendRef = useRef(false);
+  // bdboard-dcyi: 送信の finally で setIsSending(false) と同じバッチで1つ進める
+  // 「focus を戻してほしい」要求の番号と、下の effect が処理済みの番号。isSending の
+  // 変化ではなくこの state の変化で effect を起こす(true/false が1回の描画に
+  // まとまって isSending が変わらなく見えても、要求の番号は必ず変わる)。
+  const [focusRequest, setFocusRequest] = useState(0);
+  const handledFocusRequestRef = useRef(0);
 
   // bdboard-dcyi: 以前は finally の中で setIsSending(false) の直後に同期で
   // focus() を呼んでいたが、その時点の textarea はまだ disabled(=isSending)で、
@@ -85,10 +88,10 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
   // 送信中にユーザーがパネルの外(チケット詳細の入力欄など)へフォーカスを移して
   // いたら奪わない: 戻すのは、フォーカスがどこにも無い(body。Cmd/Ctrl+Enter で送ると
   // textarea が disabled になり body へ落ちる)か、入力欄のフォーム内(送信ボタン
-  // /停止ボタン)にあるときだけ。
+  // など)にあるときだけ。
   useEffect(() => {
-    if (isSending || !focusAfterSendRef.current) return;
-    focusAfterSendRef.current = false;
+    if (isSending || focusRequest === handledFocusRequestRef.current) return;
+    handledFocusRequestRef.current = focusRequest;
     const textarea = inputRef.current;
     if (textarea === null) return;
     const active = textarea.ownerDocument.activeElement;
@@ -99,7 +102,7 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
     if (focusIsFree) {
       textarea.focus();
     }
-  }, [isSending, inputRef]);
+  }, [focusRequest, isSending, inputRef]);
 
   const submit = useCallback(
     async (text: string, sentRawText: string, sentAttachments: readonly ChatAttachment[]) => {
@@ -197,7 +200,7 @@ export function useChatSubmit(params: UseChatSubmitParams): UseChatSubmitResult 
           requestAbortControllerRef.current = null;
         }
         // focus はここでは呼ばない(isSending=false の反映後に上の effect が戻す)。
-        focusAfterSendRef.current = true;
+        setFocusRequest((previous) => previous + 1);
         setIsSending(false);
       }
     },

@@ -135,14 +135,14 @@ describe('useChatSubmit guards', () => {
 });
 
 describe('useChatSubmit send lifecycle', () => {
-  it('writes the optimistic message, clears the draft before the request, and leaves focus to the effect (not the finally)', async () => {
+  it('writes the optimistic message, clears the draft before the request, and focuses after isSending=false (from the effect)', async () => {
     postMock.mockResolvedValue(RESULT);
     const { hook, params, events } = setup({ currentAttachments: [] });
     await act(() => hook.result.current.submit('hello', '  hello ', []));
     const names = events.map((event) => event.split(':')[0]);
     expect(names).toEqual([
       'appendTranscript', 'setInput', 'updateConversationAttachments', 'resetBackgroundTurnStatus',
-      'setIsSending', 'commitSuccess', 'setIsSending',
+      'setIsSending', 'commitSuccess', 'setIsSending', 'focus',
     ]);
     const [key, optimistic, sessionId] = vi.mocked(params.appendTranscript).mock.calls[0];
     expect([key, sessionId]).toEqual(['key-a', 'sess-1']);
@@ -220,26 +220,37 @@ describe('useChatSubmit send lifecycle', () => {
     await act(async () => { await hook.result.current.submit('hello', 'hello', []).catch((error: unknown) => { caught = error; }); });
     expect((caught as Error).message).toBe('unexpected');
     expect(send.requestAbortControllerRef.current).toBeNull();
-    expect(events.slice(-1)).toEqual(['setIsSending:[false]']);
+    expect(events.slice(-2)).toEqual(['setIsSending:[false]', 'focus']);
   });
 });
 
 // bdboard-dcyi: finally の中の同期 focus() は、textarea がまだ disabled(=isSending)の
 // うちに呼ばれて無視されていた。focus は isSending=false が反映された後の effect で戻す。
 describe('useChatSubmit focus after a send (bdboard-dcyi)', () => {
-  it('focuses once isSending=false is rendered after its own send, and only once', async () => {
-    postMock.mockResolvedValue(RESULT);
+  it('does not focus while isSending is still true, focuses once it is false, and only once', async () => {
+    const pending = deferred<ChatMessageResponseDto>();
+    postMock.mockReturnValue(pending.promise);
     const { hook, params, send, events } = setup();
-    await act(() => hook.result.current.submit('hello', 'hello', []));
+    let sending!: Promise<void>;
+    act(() => { sending = hook.result.current.submit('hello', 'hello', []); });
+    hook.rerender({ ...params, send: { ...send, isSending: true } });
+    await act(async () => { pending.resolve(RESULT); await sending; });
+    expect(events.at(-1)).toBe('setIsSending:[false]');
     expect(events).not.toContain('focus');
 
-    hook.rerender({ ...params, send: { ...send, isSending: true } });
-    expect(events).not.toContain('focus');
     hook.rerender({ ...params, send: { ...send, isSending: false } });
     expect(events.filter((event) => event === 'focus')).toHaveLength(1);
 
     hook.rerender({ ...params, send: { ...send, isSending: true } });
     hook.rerender({ ...params, send: { ...send, isSending: false } });
+    expect(events.filter((event) => event === 'focus')).toHaveLength(1);
+  });
+
+  it('still focuses when isSending=true and false end up in the same render (the request number changes anyway)', async () => {
+    postMock.mockResolvedValue(RESULT);
+    const { hook, events } = setup();
+    // setIsSending はモック(isSending は false のまま) = true/false が1回の描画にまとまった形。
+    await act(() => hook.result.current.submit('hello', 'hello', []));
     expect(events.filter((event) => event === 'focus')).toHaveLength(1);
   });
 

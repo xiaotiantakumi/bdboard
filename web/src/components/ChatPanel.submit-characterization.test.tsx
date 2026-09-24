@@ -204,6 +204,7 @@ describe('ChatPanel submit characterization (bdboard-sso1.83 第13b段の前提)
       });
       await user.click(outside);
       expect(outside).toHaveFocus();
+      const focusSpy = vi.spyOn(textarea, 'focus');
 
       await act(async () => {
         deferred.resolve(jsonResponse({ reply: 'AI reply', sessionId: 'sess-default', agentId: 'claude' }));
@@ -214,6 +215,9 @@ describe('ChatPanel submit characterization (bdboard-sso1.83 第13b段の前提)
         expect(textarea).not.toBeDisabled();
       });
       expect(within(screen.getByRole('log')).getByText('AI reply')).toBeInTheDocument();
+      // 否定の確認なので、focus 用の passive effect が走り切ってから見る。
+      await act(() => Promise.resolve());
+      expect(focusSpy).not.toHaveBeenCalled();
       expect(outside).toHaveFocus();
       expect(getChatMessagePostCalls(fetchMock)).toHaveLength(1);
       expect(fetchMock).toHaveBeenCalledTimes(1);
