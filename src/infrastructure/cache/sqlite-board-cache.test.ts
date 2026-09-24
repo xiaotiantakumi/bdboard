@@ -224,6 +224,150 @@ describe('createSqliteBoardCache', () => {
     cache.close();
   });
 
+  // bdboard-mkkx: listProjects() reads all project rows and JSON-parses every
+  // project's tickets synchronously in one block, which (per bdboard-ve1y's
+  // follow-up) can block the event loop for hundreds of ms at large ticket
+  // counts, starving other in-flight requests (e.g. /api/health) the same
+  // way the pre-chunking stats aggregation did. listProjectsChunked() is the
+  // async, per-project-yielding alternative that stats aggregation now uses;
+  // these tests pin its result to match listProjects() exactly and confirm
+  // it actually yields (reusing bdboard-ve1y's race-against-a-competing-
+  // macrotask technique from aggregation-yield.test.ts, since asserting an
+  // exact setImmediate call count is flaky).
+  describe('listProjectsChunked', () => {
+    async function raceAgainstOneMacrotask(work: () => Promise<void>): Promise<string[]> {
+      const events: string[] = [];
+      const competingTask = new Promise<void>((resolve) => {
+        setImmediate(() => {
+          events.push('competing-task');
+          resolve();
+        });
+      });
+      const workDone = work().then(() => {
+        events.push('work-done');
+      });
+      await Promise.all([competingTask, workDone]);
+      return events;
+    }
+
+    it('returns the same projects, in the same rootPath-ascending order, as listProjects()', async () => {
+      const cache = createSqliteBoardCache(':memory:');
+
+      cache.putProject(
+        makeEntry({
+          project: { id: 'z', rootPath: '/z/last', name: 'Z' },
+          fingerprint: 'fp-z',
+        }),
+      );
+      cache.putProject(
+        makeEntry({
+          project: { id: 'a', rootPath: '/a/first', name: 'A' },
+          fingerprint: 'fp-a',
+        }),
+      );
+      cache.putProject(
+        makeEntry({
+          project: { id: 'm', rootPath: '/m/mid', name: 'M' },
+          fingerprint: 'fp-m',
+        }),
+      );
+
+      const chunked = await cache.listProjectsChunked?.();
+      expect(chunked).toEqual(cache.listProjects());
+      expect(chunked?.map((entry) => entry.project.rootPath)).toEqual([
+        '/a/first',
+        '/m/mid',
+        '/z/last',
+      ]);
+      cache.close();
+    });
+
+    it('skips corrupt project rows the same way listProjects() does', () => {
+      // Covers the same corruption path as the listProjects() tests above
+      // (invalid tickets JSON), through the iterate()-based read path that
+      // listProjectsChunked() uses instead of all().
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-cache-chunked-corrupt-'));
+      const dbPath = path.join(tmpDir, 'corrupt-tickets.db');
+
+      return (async () => {
+        try {
+          const cache = createSqliteBoardCache(dbPath);
+          cache.putProject(
+            makeEntry({
+              project: { id: 'good', rootPath: '/good', name: 'Good' },
+              fingerprint: 'fp-good',
+            }),
+          );
+          cache.close();
+
+          const rawDb = new Database(dbPath);
+          rawDb
+            .prepare(
+              `INSERT INTO projects (
+                id, name, root_path, prefixes, fingerprint, fetched_at, tickets, alias_paths
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              'bad-tickets',
+              'Bad Tickets',
+              '/bad/tickets',
+              '["pfx"]',
+              'fp-bad',
+              '2026-08-14T10:00:00.000Z',
+              '{not valid json',
+              '[]',
+            );
+          rawDb.close();
+
+          const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+          const reopened = createSqliteBoardCache(dbPath);
+
+          await expect(reopened.listProjectsChunked?.()).resolves.toHaveLength(1);
+          const chunked = await reopened.listProjectsChunked?.();
+          expect(chunked?.[0]?.project.id).toBe('good');
+          expect(warnSpy).toHaveBeenCalledWith(
+            'bdboard: skipping corrupt project cache row bad-tickets: invalid tickets',
+          );
+
+          reopened.close();
+          warnSpy.mockRestore();
+        } finally {
+          rmSync(tmpDir, { recursive: true, force: true });
+        }
+      })();
+    });
+
+    it('does not yield when the cache is empty (finishes before a competing macrotask)', async () => {
+      const cache = createSqliteBoardCache(':memory:');
+
+      const events = await raceAgainstOneMacrotask(async () => {
+        await cache.listProjectsChunked?.();
+      });
+
+      expect(events).toEqual(['work-done', 'competing-task']);
+      cache.close();
+    });
+
+    it('yields to the event loop while processing projects (a competing macrotask interleaves)', async () => {
+      const cache = createSqliteBoardCache(':memory:');
+      for (const id of ['a', 'b', 'c']) {
+        cache.putProject(
+          makeEntry({
+            project: { id, rootPath: `/${id}`, name: id },
+            fingerprint: `fp-${id}`,
+          }),
+        );
+      }
+
+      const events = await raceAgainstOneMacrotask(async () => {
+        await cache.listProjectsChunked?.();
+      });
+
+      expect(events).toEqual(['competing-task', 'work-done']);
+      cache.close();
+    });
+  });
+
   it('replaces an existing project without increasing the count', () => {
     const cache = createSqliteBoardCache(':memory:');
 

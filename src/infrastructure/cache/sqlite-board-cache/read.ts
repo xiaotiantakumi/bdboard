@@ -10,6 +10,7 @@ import type {
 import type { ModelUsageTotals } from '../../../application/transcript/extract-usage.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import { CACHE_TABLE_NAMES } from './schema.js';
+import { createYieldGate, yieldToEventLoop } from '../../../application/board/aggregation-yield.js';
 import { rowToCachedProject, rowToCfdSnapshot, rowToInteraction, rowToSessionLink } from './convert.js';
 import type {
   CfdSnapshotRowDb,
@@ -27,6 +28,7 @@ export type BoardCacheReadOperations = Pick<
   BoardCache,
   | 'getProject'
   | 'listProjects'
+  | 'listProjectsChunked'
   | 'getTranscriptOffset'
   | 'getSessionUsage'
   | 'listCfdSnapshots'
@@ -36,12 +38,16 @@ export type BoardCacheReadOperations = Pick<
   | 'listInteractions'
 >;
 
+// bdboard-mkkx: listProjectsChunked() は毎回 db.prepare() で新しい Statement を
+// 作る (下記参照)。SQL文字列を1箇所にまとめておく。
+const LIST_PROJECTS_SQL = `SELECT * FROM projects ORDER BY root_path ASC`;
+
 export function createReadOperations(
   db: Database.Database,
   dbPath: string,
 ): BoardCacheReadOperations {
   const getProjectStmt = db.prepare(`SELECT * FROM projects WHERE id = ?`);
-  const listProjectsStmt = db.prepare(`SELECT * FROM projects ORDER BY root_path ASC`);
+  const listProjectsStmt = db.prepare(LIST_PROJECTS_SQL);
   const getTranscriptOffsetStmt = db.prepare(
     `SELECT byte_offset FROM transcript_offsets WHERE file_path = ?`,
   );
@@ -85,6 +91,54 @@ export function createReadOperations(
       return rows
         .map(rowToCachedProject)
         .filter((entry): entry is CachedProject => entry !== null);
+    },
+
+    // bdboard-mkkx: listProjects() は SQLite からの読み出しと、行ごとの
+    // チケットJSONパース (rowToCachedProject -> deserializeTickets) を1回の
+    // 同期処理で行っており、チケット数が多い (実測: 200,000件で590-613ms) と
+    // その間イベントループを塞ぐ (bdboard-ve1y で chunk 化した集計ループの
+    // 手前で、集計自体より大きなブロックが起きうる)。
+    //
+    // stmt.all() で一括取得すると、行の読み出し自体 (SQLite の各行の TEXT
+    // 列をJSの文字列としてコピーする部分) がまだチャンク化されずに残る。
+    // 実際、200,000件をプロジェクト単位で分けても all() 自体が全プロジェクト
+    // 分のJSON文字列 (数十MB) をまとめて取り出すため、最初の yield に到達する
+    // 前にこの一括読み出しだけでイベントループを長時間塞いでしまい、
+    // 意味のある改善にならなかった (手元の計測で確認済み)。
+    //
+    // そこで stmt.iterate() (SQLite の cursor を1行ずつ step するレイジー
+    // イテレータ) を使い、行の読み出し自体も1プロジェクトずつに分割する。
+    // ただし listProjectsStmt (クロージャで共有している Statement) を
+    // iterate() すると、await を挟んでいる間その Statement が "busy" のまま
+    // になり、/api/stats と /api/model-stats が同時に listProjectsChunked()
+    // を呼ぶ (実際に起きる) と2回目の呼び出しが
+    // "This statement is busy executing a query" で例外になる (better-sqlite3
+    // は同一 Statement オブジェクトの同時 iterate を許さない)。これを避ける
+    // ため、呼び出しごとに新しい Statement を prepare する — 別オブジェクトなら
+    // 同じ SQL でも独立して同時 iterate できる (better-sqlite3 で確認済み)。
+    // prepare() 自体は軽い操作で、都度呼んでも listProjects() 側の性能には
+    // 影響しない (listProjects() は従来通り共有の listProjectsStmt を使う)。
+    //
+    // 1行 (=1プロジェクト) 読み出す・パースするたびに、bdboard-ve1y の
+    // YieldGate/yieldToEventLoop をそのまま再利用してイベントループへ制御を
+    // 返す。JSON.parse は途中で中断できないので、これ以上細かい粒度
+    // (チケット単位) でのチャンク化はできない — チャンク境界は「プロジェクト
+    // 単位」になる (受け入れ基準が許容する粒度)。listProjects() と同じ行順
+    // (ORDER BY root_path ASC) で処理するので、戻り値の順序は変わらない。
+    async listProjectsChunked(): Promise<readonly CachedProject[]> {
+      const stmt = db.prepare(LIST_PROJECTS_SQL);
+      const results: CachedProject[] = [];
+      const gate = createYieldGate(1);
+      for (const row of stmt.iterate() as IterableIterator<ProjectRow>) {
+        const entry = rowToCachedProject(row);
+        if (entry !== null) {
+          results.push(entry);
+        }
+        if (gate.shouldYield()) {
+          await yieldToEventLoop();
+        }
+      }
+      return results;
     },
 
     getTranscriptOffset(filePath: string): number | undefined {

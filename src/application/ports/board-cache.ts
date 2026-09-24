@@ -37,6 +37,17 @@ export interface BoardCache {
   putProject(entry: CachedProject): void;
   /** project.rootPath 昇順 */
   listProjects(): readonly CachedProject[];
+  /**
+   * bdboard-mkkx: listProjects() と同じ結果 (project.rootPath 昇順) を返すが、
+   * SQLite からの読み出し・チケットJSONのパースをプロジェクト単位でチャンク化し、
+   * 行を処理するたびにイベントループへ制御を返す (aggregation-yield.ts の
+   * YieldGate/yieldToEventLoop を再利用)。チケット数が多い (数十万件規模) と
+   * listProjects() は1回の同期処理で数百msブロックしうるため、/api/health 等
+   * 他リクエストを長時間待たせたくない経路 (stats集計) はこちらを使う。
+   * 省略可能: インメモリ fake は同期実装のままで構わない (listProjects() に
+   * フォールバックする)。
+   */
+  listProjectsChunked?(): Promise<readonly CachedProject[]>;
   deleteProject(projectId: string): void;
   clear(): void;
   /** S8で使う */
