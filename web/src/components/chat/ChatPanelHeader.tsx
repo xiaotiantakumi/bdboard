@@ -7,9 +7,11 @@ import type { RefObject } from 'react';
  * move-only で抽出した。状態(isChatPanelMaximized)とハンドラ(トグル・
  * requestClose)は ChatPanel 側に残り、このコンポーネントは props 経由で
  * 受け取って配線するだけ。closeButtonRef は ChatPanel の useRef と同一の
- * ものをそのまま渡す(新しい ref を作らない — useHistoryBackClose の
- * initialFocusRef、ドロワーを開いたときのフォーカス復帰先として使われて
- * いる同一性を崩さない)。
+ * ものをそのまま渡す(新しい ref を作らない — panelRef に対する
+ * useFocusTrap の initialFocusRef としてパネル表示時の初期フォーカス先に
+ * 使われている同一性を崩さない。壊れた場合の回帰テストは
+ * ChatPanel.panel-chrome.test.tsx の「focuses the header close button when
+ * the panel opens」)。
  */
 export interface ChatPanelHeaderProps {
   isMaximized: boolean;

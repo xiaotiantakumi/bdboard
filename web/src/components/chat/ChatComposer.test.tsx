@@ -4,7 +4,7 @@
 // 反映されること・textarea への ref/イベントハンドラの配線が壊れていないことを
 // 確認する。
 import { createRef } from 'react';
-import type { ComponentProps } from 'react';
+import type { ComponentProps, FormEvent } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ChatComposer } from './ChatComposer';
@@ -20,7 +20,7 @@ function baseProps(overrides: Partial<Props> = {}): Props {
     onChange: vi.fn(),
     onPaste: vi.fn(),
     onKeyDown: vi.fn(),
-    onSubmit: vi.fn((event) => event.preventDefault()),
+    onSubmit: vi.fn((event: FormEvent<HTMLFormElement>) => event.preventDefault()),
     hasAttachments: false,
     quickCommands: {
       isSending: false,
@@ -85,7 +85,7 @@ describe('ChatComposer', () => {
   });
 
   it('calls onSubmit when the form is submitted', () => {
-    const onSubmit = vi.fn((event) => event.preventDefault());
+    const onSubmit = vi.fn((event: FormEvent<HTMLFormElement>) => event.preventDefault());
     const { container } = render(<ChatComposer {...baseProps({ onSubmit })} />);
     const form = container.querySelector('form');
     expect(form).not.toBeNull();

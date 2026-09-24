@@ -170,4 +170,15 @@ describe('ChatPanel composer/header wiring (bdboard-sso1.83 第7段)', () => {
 
     expect(lastComposerProps().actions.submitDisabled).toBe(false);
   });
+
+  it('computes actions.ariaDescribedBy from the real project/agent hint ids (marker: composer-aria-describedby)', async () => {
+    // projectSelectionHintId/agentUnavailableHintId の組み立て(joinDescribedBy)
+    // が、引数の入れ替えや脱落なく ChatComposer まで配線されていることを
+    // 確認する。プロジェクト未選択(複数プロジェクトで initialProjectId 未指定)
+    // では projectSelectionHintId だけが立つ。
+    renderChatPanel([PROJECT_A, { ...PROJECT_A, id: 'proj-b', name: 'Project B' }]);
+    await waitFor(() => expect(composerMock).toHaveBeenCalled());
+
+    expect(lastComposerProps().actions.ariaDescribedBy).toBe('chat-project-unselected-hint');
+  });
 });
