@@ -36,6 +36,7 @@
     "verify": "node scripts/verify.mjs",
     "verify:steps": "npm run check:file-size && npm run lint && npm run build && npm run build:web && npm run test:server && npm run test:web && npm run check:boundaries",
     "drift": "node scripts/check-drift.mjs",
+    "merge-pr": "node scripts/merge-pr.mjs",
     "check:commits": "node scripts/check-commit-parse.mjs",
     "check:file-size": "node scripts/check-file-size.mjs",
     "lint": "eslint --cache --cache-location .eslintcache src web/src scripts",

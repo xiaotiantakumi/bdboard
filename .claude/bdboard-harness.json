@@ -7,6 +7,12 @@
     "port": 8787,
     "restartScript": "scripts/always-on-server.sh"
   },
+  "merge": {
+    "mode": "S0",
+    "leaseMinutes": 8,
+    "slotWaitMinutes": 10,
+    "statusContext": "bdboard/landed-verify"
+  },
   "hooks": {
     "denyBashPatterns": [
       "\\bnpm run verify:steps\\b",

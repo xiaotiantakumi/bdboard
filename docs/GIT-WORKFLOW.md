@@ -175,7 +175,7 @@ PRs that each pass CI independently but break when combined.
 
 Concurrent sessions have made this concrete, so the procedure is now
 spelled out rather than left to judgement. Run these in order for every
-merge:
+merge (this is **S0**, the procedure while `merge.mode` is `"S0"`; S1 follows):
 
 0. **Check for drift** — `npm run drift`. Rebase for main-branch drift; use
    peer-overlap reports to choose a merge order, then re-run CI before taking
@@ -203,6 +203,81 @@ merge:
 Steps 1 and 3 are conventions other sessions must also follow; step 2
 protects you regardless of what they do. Step 0 protects only you, but it
 is the only one that catches a conflict *before* it has cost you a CI run.
+
+Which procedure applies is decided by `merge.mode` in `.claude/bdboard-harness.json`
+**as it is on `origin/main`** (bdboard-ulxa): `S0` = the steps above (the default),
+`S1` = the steps below. Switching and rolling back are one-line edits of that key,
+landed through a normal PR; agents dispatched after the switch use the new steps.
+
+### S1 — hold the slot only for the CAS and the merge (`merge.mode: "S1"`)
+
+Measured on 2026-09-23 (bdboard-iaqg): with S0 the slot was held 7.6 of 11 hours
+(≈70%), because the rebase → CI (5–9 min) → CAS retry loop and the post-merge
+verify all ran inside it; merges were ≈12 minutes apart. S1 moves everything except
+`acquire → git ls-remote → gh pr merge → release` out of the slot (design:
+bdboard-ulxa §2 A; S2/S3 — verifying a predicted landed tree instead of rebasing —
+are bdboard-ulxa.2 and later). From the PR worktree:
+
+```bash
+npm run merge-pr -- prepare <N>   # outside the slot: PR open, local HEAD == PR head,
+                                  # required checks green, origin/main is an ancestor of HEAD
+                                  # → records PRED_BASE (= origin/main) in .git/bdboard-merge/pr-<N>.json
+npm run merge-pr -- gate <N>      # layer 3: bdboard/landed-verify on PRED_BASE must be success
+                                  # → bd merge-slot acquire --holder "<id> / PR#<N>" → ls-remote == PRED_BASE
+                                  # → prints ONE line on stdout and exits holding the slot
+gh pr merge <N> --squash --delete-branch --match-head-commit <head> --subject '<title> (#<N>)'
+npm run merge-pr -- finish <N>    # always, merged or not: release → (if merged) detach-checkout the
+                                  # landed SHA in this worktree → npm run verify → commit status
+```
+
+- **Exit codes**: `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
+  → push → wait for CI → `prepare` again. `75` start over from `prepare` (CAS lost, main moved
+  while waiting, slot not free within `merge.slotWaitMinutes`, CI pending). `4` / `6` main is
+  broken → below. `5` finish found the PR unmerged and returned the slot.
+- **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
+  permission classifier refuses `gh pr merge`, running it from inside a script would be a
+  bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
+  (ticket-flow). `--match-head-commit` makes GitHub reject the merge (409) if someone pushed to
+  the branch after `prepare`; that also ends in `finish` + `prepare`.
+- **Layer 3 ledger** = GitHub commit status `bdboard/landed-verify` on each main SHA
+  (`gh api repos/xiaotiantakumi/bdboard/commits/<sha>/status`). `finish` posts `pending`, runs the
+  contract's `verify` on the landed tree in the PR worktree (`git checkout --detach <sha>`; `npm ci`
+  first if a lockfile differs from what that worktree last installed), posts `success` / `failure`,
+  and checks the branch out again. It never touches the main checkout, so hook rule 7 does not
+  apply. The verify log is `.git/bdboard-merge/landed-verify-<sha>.log`.
+- **The next merger's gate** reads that ledger for its PRED_BASE: `success` → go on; `failure` →
+  do not merge; `pending` / none → wait (30 s polls) until `merge.leaseMinutes` (8) after the last
+  update (or the commit time), then verify that SHA itself and post the result (self-heal —
+  also covers SHAs merged under S0, which never write the ledger). Two self-healers at once just
+  verify the same tree twice.
+- **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
+  `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
+  `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.
+- Audit trail for occupancy (acquire → release seconds, CAS losses, self-heals):
+  `${TMPDIR}/bdboard-merge-audit.log` (`BDBOARD_MERGE_AUDIT_LOG` overrides).
+- If the PR worktree predates `scripts/merge-pr`, `git merge origin/main` first (it is class R
+  anyway once main has moved).
+- The chair deploys to the always-on server as before (see "Cleanup after merge"),
+  preferably once the tip's `bdboard/landed-verify` is `success`.
+
+### When main is broken (S0 and S1)
+
+Detected by a `failure` in `bdboard/landed-verify`, a red `verify` / `e2e` in main's push CI
+(`commit-parse` is not used as a gate), or a gate exiting 4. Squash merges make recovery one
+revert:
+
+1. The detector takes the slot and keeps it until main is green again — the only long hold in S1
+   (`finish` does this itself when it records `failure`, holder `<id> / main-broken <sha>`).
+2. `bd create --type bug -p 0 "main 破損: <sha> <failing step>"`, first lines of the log in a comment.
+3. Find the last `success` and the first `failure` from the per-SHA statuses (CI runs on main are
+   `cancel-in-progress`, so they can be missing; statuses are not).
+4. Fix-forward only if it is a one-liner doable in ~10 minutes; otherwise revert:
+   `git switch -c bd/<bug-id> origin/main && git revert --no-edit <breaking squash sha>` (no `-m`
+   needed: it is a squash) → PR → CI → merge (S1: prepare / gate / finish).
+5. Once the fix's landed-verify is `success`, release the slot, reopen the ticket of the breaking
+   PR with the reason, and add the case to failure-catalog.md.
+
+Other mergers that see `failure` stop; they neither merge nor take the slot.
 
 ## Cleanup after merge
 
@@ -302,7 +377,11 @@ other tools) reads the imported issue before it round-trips back through that sa
   だけを認める)。`verify-windows` は `continue-on-error` のまま必須化しない (判断は
   bdboard-51qb)。GitGuardian は外部 app なので必須にしない。**strict (up-to-date 必須) は
   off** — main が動いたときの追従は上の drift + merge-slot + CAS の運用に任せ、PR ごとの
-  rebase → CI 再走を強制しない。
+  rebase → CI 再走を強制しない。strict を on にすると main が動くたびに全 PR の
+  update-branch + CI 再走が要り、S0 で枠の中にあった待ちを GitHub 側へ移すだけになる。
+  「CI が見た木 = 着地する木」は S1 では PRED_BASE の CAS と着地後検証の台帳
+  (`bdboard/landed-verify`) で担保する (bdboard-ulxa §3.3)。Merge queue は user-owned の
+  private/public repo では使えない。
 - **force push 禁止** (`non_fast_forward`)、**ブランチ削除禁止** (`deletion`)。
 - **bypass = Repository admin (always)**。オーナーだけが唯一の例外 (CI 復旧) を直接
   コミットできる。bypass は「規約上の例外を打てる」ためであって、通常の変更を main に
