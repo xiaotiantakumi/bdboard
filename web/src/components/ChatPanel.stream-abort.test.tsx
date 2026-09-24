@@ -1090,17 +1090,15 @@ describe('ChatPanel', () => {
       expect(screen.getByRole('log').querySelector('.chat-message-streaming')).toBeNull();
     });
 
-    // bdboard-sso1.83 特性テスト T7 (設計メモ §5 P1 の再現テスト): generation>0
-    // の E8(turn-status 回収)は threadListRequestIdRef を bump する。
-    // ストリーミング中にプロジェクトを切り替えると、切替による abort が
-    // E8 の generation bump を(切替先の E7 スレッド一覧 fetch が in-flight の
-    // まま)少し遅れて発火させ、E7 の応答が threadListRequestId の不一致で
-    // 握りつぶされる ―― 実際に it.fails で再現した(切替先 B のスレッド
-    // 一覧がいつまでも表示されない)。この計画(第5段)では ChatPanel.tsx を
-    // 直さないため、it.fails で現状を固定してドキュメント化する(別途bdチケットは
-    // 起票しない。bdboard-sso1.83へのコメントで報告済み。第11/12段 E7/E8 抽出時に
-    // あわせて修正する想定)。
-    it.fails('P1: loads project B\'s thread list after switching away from a streaming project A', async () => {
+    // bdboard-sso1.83 特性テスト T7 (設計メモ §5 P1 の再現テスト): ストリーミング
+    // 中にプロジェクトを切り替えると、切替による abort が少し遅れて
+    // generation を bump し、E8(turn-status 回収)が再実行される。以前の E8 は
+    // generation>0 のたびに threadListRequestIdRef を進めていたため、切替先の
+    // E7 スレッド一覧 fetch(in-flight)の応答が request-id の不一致で握り
+    // つぶされ、切替先 B のスレッド一覧がいつまでも表示されなかった。第5段では
+    // it.fails で固定し、bdboard-x4mv で E8 が一覧の request-id を進めるのを
+    // hydrate の直前だけにして直した。
+    it('P1: loads project B\'s thread list after switching away from a streaming project A', async () => {
       const user = userEvent.setup();
       fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
       const capturedSignal: { current: AbortSignal | undefined } = { current: undefined };
@@ -1147,10 +1145,16 @@ describe('ChatPanel', () => {
 
       // abort が submit の catch(AbortError) 経路を通って
       // setTurnRecoveryGeneration(g => g+1) を呼ぶのは、ストリーム読み取り
-      // ループへ abort が伝播した後の非同期タイミング。ここで一呼吸おいて
-      // から B の一覧 fetch を解決し、「E8 の generation bump が E7 の
-      // in-flight fetch より後から割り込む」順序を作る。
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      // ループへ abort が伝播した後の非同期タイミング。E8 は B へ切り替えた
+      // ときと generation が進んだときの2回 B の turn-status を取りに行くので、
+      // 2回目を待ってから B の一覧 fetch を解決し、「E8 の generation bump が
+      // E7 の in-flight fetch より後から割り込む」順序を確実に作る(固定の
+      // sleep だと、遅い環境では bump より先に解決して修正前でも通ってしまう)。
+      await waitFor(() => {
+        expect(
+          fetchChatTurnStatusMock.mock.calls.filter(([projectId]) => projectId === 'proj-b'),
+        ).toHaveLength(2);
+      });
       projectBThreads.resolve([
         {
           sessionId: 'sess-b',

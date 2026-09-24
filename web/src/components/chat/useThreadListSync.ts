@@ -24,8 +24,10 @@ export interface UseThreadListSyncParams
  * 抜き出したもの。effect はこの1つだけで、ChatPanel では元の位置(コールド解決
  * effect E6 = useColdKeyspaceAdoption の直後、turn-status 回収 E8 より前)で呼ぶ。
  * 順序の理由: E9(ticket-context)より前に、本体の先頭で別プロジェクト宛の pending を
- * 無効化する(MF2/MF3)。E8 は generation>0 のとき、ここで ++ した
- * threadListRequestIdRef をさらに進める(設計書 §5 の P1)。
+ * 無効化する(MF2/MF3)。E8 が threadListRequestIdRef を進めるのは回収した
+ * ターンを hydrate する直前だけ(その応答が一覧を置き換える)。以前は generation>0
+ * のたびに進めていて、ここで始めた一覧 fetch を握りつぶしていた(設計書 §5 の P1、
+ * bdboard-x4mv で修正)。
  *
  * ref の種類: pendingPrefillRef / pendingTicketDraftProjectRef は[正本]
  * (useDraftThreadLauncher が持つ)、threadListRequestIdRef は request-id、
