@@ -5,7 +5,7 @@ import type { ClaudeRunnerOptions } from './options.js';
 
 const DEFAULT_TIMEOUT_MS = 60 * 60 * 1000;
 
-export function buildRunId(request: RunRequest, startedAt: Date): string {
+export function buildClaudeRunId(request: RunRequest, startedAt: Date): string {
   return `${request.ticketId}:${request.mode}:${startedAt.toISOString()}`;
 }
 
@@ -22,7 +22,7 @@ export function buildOutcome(
     failureKind,
     error,
     run: {
-      id: buildRunId(request, startedAt),
+      id: buildClaudeRunId(request, startedAt),
       ticketId: request.ticketId,
       runner: runnerId,
       mode: request.mode,
