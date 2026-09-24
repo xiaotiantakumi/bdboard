@@ -1,5 +1,5 @@
 import type { PrBadge } from '../../domain/pr-link.js';
-import type { Semaphore } from '../concurrency.js';
+import type { Semaphore, SemaphorePriority } from '../concurrency.js';
 import type { PrStatusReader } from '../ports/pr-status-reader.js';
 import type { PrBadgeStatusCache } from './pr-badge-status-cache.js';
 
@@ -36,14 +36,30 @@ export interface ResolvePrStatusDeps {
   readonly onAttempt: () => void;
   /** gh 起動が失敗した (バッジ自体は URL だけで出せるので劣化として扱う)。 */
   readonly onFailure: (error: unknown) => void;
+  /**
+   * statusGate.acquire() へ渡す優先度プロバイダ。Semaphore 側が permit を実際に渡す
+   * 瞬間に都度呼び直す (acquire() を呼んだこの瞬間の1回きりではない —— bdboard-gfqz:
+   * 待っている間に呼び出し元の状態が変わった場合に正しく反映するため。詳細は
+   * concurrency.ts の Semaphore の doc comment を参照)。省略時は常に 'high'
+   * (優先度を意識しない既存呼び出し元との後方互換)。
+   */
+  readonly getPriority?: () => SemaphorePriority;
 }
 
 export async function resolvePrStatus(
   url: string,
   deps: ResolvePrStatusDeps,
 ): Promise<PrBadge['status']> {
-  const { prStatusReader, statusCache, statusGate, budget, onDeferred, onAttempt, onFailure } =
-    deps;
+  const {
+    prStatusReader,
+    statusCache,
+    statusGate,
+    budget,
+    getPriority,
+    onDeferred,
+    onAttempt,
+    onFailure,
+  } = deps;
   const cachedStatus = statusCache?.get(url);
 
   if (cachedStatus !== undefined) {
@@ -53,7 +69,7 @@ export async function resolvePrStatus(
   if (statusCache === undefined) {
     // statusCache 未指定: in-flight 共有ができない (キャッシュに紐づく状態なので)
     // ので、従来通り毎回ゲート越しに直接フェッチする。
-    await statusGate.acquire();
+    await statusGate.acquire(() => getPriority?.() ?? 'high');
     try {
       onAttempt();
       const result = await prStatusReader.getPrStatus(url);
@@ -84,27 +100,31 @@ export async function resolvePrStatus(
   }
   onAttempt();
   try {
-    const { promise } = statusCache.fetchStatus(url, async () => {
-      // ここが実際に gh を起動する側だけが通る経路 (alreadyInFlight===false で
-      // in-flight map への登録の起点になった呼び出し)。相乗りする呼び出しは
-      // fetchStatus() が既存の Promise をそのまま返すため、この fetcher 自体が
-      // 呼ばれない — statusGate を待つのはここだけ (bdboard-ksed)。
-      await statusGate.acquire();
-      try {
-        // ゲート待ちの間にサーキットが開いた可能性がある。関数冒頭の
-        // isCircuitOpen() チェックはゲート取得より前なので、ゲート待ちで詰まって
-        // いる間のトリップまでは拾えない —— 実際に起動する直前でもう一度確認する
-        // (bdboard-ksed 課題文の「evaluate the circuit right before launch」)。
-        // rate-limit 扱いで返すと PrBadgeStatusCache.recordResult が tripCircuit()
-        // を呼ぶが、既に open なら no-op (二重ログ・二重バックオフにはならない)。
-        if (statusCache.isCircuitOpen()) {
-          return { status: null, reason: 'rate-limit' } as const;
+    const { promise } = statusCache.fetchStatus(
+      url,
+      async (getMergedPriority) => {
+        // ここが実際に gh を起動する側だけが通る経路 (alreadyInFlight===false で
+        // in-flight map への登録の起点になった呼び出し)。相乗りする呼び出しは
+        // fetchStatus() が既存の Promise をそのまま返すため、この fetcher 自体が
+        // 呼ばれない — statusGate を待つのはここだけ (bdboard-ksed)。
+        await statusGate.acquire(getMergedPriority);
+        try {
+          // ゲート待ちの間にサーキットが開いた可能性がある。関数冒頭の
+          // isCircuitOpen() チェックはゲート取得より前なので、ゲート待ちで詰まって
+          // いる間のトリップまでは拾えない —— 実際に起動する直前でもう一度確認する
+          // (bdboard-ksed 課題文の「evaluate the circuit right before launch」)。
+          // rate-limit 扱いで返すと PrBadgeStatusCache.recordResult が tripCircuit()
+          // を呼ぶが、既に open なら no-op (二重ログ・二重バックオフにはならない)。
+          if (statusCache.isCircuitOpen()) {
+            return { status: null, reason: 'rate-limit' } as const;
+          }
+          return await prStatusReader.getPrStatus(url);
+        } finally {
+          statusGate.release();
         }
-        return await prStatusReader.getPrStatus(url);
-      } finally {
-        statusGate.release();
-      }
-    });
+      },
+      () => getPriority?.() ?? 'high',
+    );
     const result = await promise;
     return result.status;
   } catch (error) {
