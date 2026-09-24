@@ -104,6 +104,8 @@ import {
   UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS,
 } from './chat/turnStatusPolicy';
 import { describeChatSendError } from './chat/chatSendErrors';
+import { useElapsedSeconds } from './chat/useElapsedSeconds';
+import { useStickToBottomScroll } from './chat/useStickToBottomScroll';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -115,10 +117,6 @@ interface ChatPanelProps {
   onOpenTicket: (ticketId: string) => void;
   onClose: () => void;
 }
-
-// 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
-// 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
-const BOTTOM_STICK_THRESHOLD_PX = 48;
 
 export function ChatPanel({
   projects,
@@ -326,19 +324,7 @@ export function ChatPanel({
   // Chat Redesign 改善点3: 「考え中…」表示に経過秒数を出す。isSending が false→true
   // に変わるたびに 0 から数え直し、1秒ごとに更新する。Date.now() は開始時点で
   // 1回だけ読んで setInterval のクロージャに閉じ込め、以後は差分計算にのみ使う。
-  const [sendElapsedSeconds, setSendElapsedSeconds] = useState(0);
-  useEffect(() => {
-    if (!isSending) {
-      setSendElapsedSeconds(0);
-      return;
-    }
-    const startedAt = Date.now();
-    setSendElapsedSeconds(0);
-    const timer = setInterval(() => {
-      setSendElapsedSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1_000);
-    return () => clearInterval(timer);
-  }, [isSending]);
+  const sendElapsedSeconds = useElapsedSeconds(isSending);
   // bdboard-1qoe: 会話キーでスコープした Record にする (単一スロットだった頃は、
   // 無関係な会話/プロジェクトへの書き込み (送信開始時の初期化・完了時のクリア) が
   // 無条件にスロット全体を上書きし、別の会話がバックグラウンドで回収待ちの間
@@ -1918,68 +1904,14 @@ export function ChatPanel({
   const hasUnresolvedProjectRecovery =
     detachedStreamSendRef.current[selectedProjectId] !== undefined;
 
-  // 「最下部に貼り付いているときだけ追う」。ストリーミング中は
-  // activeStreamingText がトークンごとに伸びるので、無条件に最下部へ飛ばすと
-  // 利用者が過去ログを読み返せなくなる。逆に追わないと、伸びていく返信が画面
-  // 下に隠れたままになる (bdboard-22k の元バグ: deps に streaming が無かった)。
-  const pinnedToBottomRef = useRef(true);
-
-  // 直近に effect 自身が代入した scrollTop。プログラム的スクロールでも scroll
-  // イベントは飛ぶので、そのイベントを「利用者が動かした」と取り違えないための
-  // 目印にする (bdboard-dtr)。
-  //
-  // 一回限りの「プログラム的スクロール中」フラグにはしない。値が変わらず
-  // イベントが飛ばなかった場合にフラグが残り、次の *本物の* 利用者スクロールを
-  // 握り潰す — 上へスクロールしても引き戻される、という元バグより悪い症状に
-  // なる。現在値との一致で判定すれば冪等なので、取りこぼしても次の
-  // イベントで正しく判定し直せる。
-  const autoScrolledToRef = useRef<number | null>(null);
-
-  const handleMessagesScroll = useCallback(() => {
-    const container = messagesRef.current;
-    if (container === null) {
-      return;
-    }
-    // effect が置いた位置から動いていないなら、これは自分で起こしたスクロールの
-    // 残響。ここで距離を測ると、イベントが遅れて届く間に次の delta で
-    // scrollHeight が伸びていた場合に「利用者が上へスクロールした」と誤判定し、
-    // 誰も触っていないのに追従が止まる (bdboard-dtr)。
-    //
-    // 判定を「触っていない」に倒すだけで、貼り付きを立て直しはしない。effect が
-    // 代入するのは貼り付いているときだけなので、正規の残響なら既に true。
-    // ここで true を書くと、後述のマーカーと利用者のスクロール位置が偶然
-    // 一致したときに勝手に貼り付きへ戻す効果しか持たない (PR#132 レビュー)。
-    if (container.scrollTop === autoScrolledToRef.current) {
-      return;
-    }
-    const distanceFromBottom =
-      container.scrollHeight - container.scrollTop - container.clientHeight;
-    const pinned = distanceFromBottom <= BOTTOM_STICK_THRESHOLD_PX;
-    pinnedToBottomRef.current = pinned;
-    if (!pinned) {
-      // 追うのをやめた時点でマーカーを捨てる。残したままにすると、利用者が
-      // 過去ログを読んでいる間ずっと「昔の最下部の座標」が生き続け、そこへ
-      // 偶然スクロールが止まったときに上のガードが誤って一致してしまう。
-      autoScrolledToRef.current = null;
-    }
-  }, []);
-
-  // 会話を切り替えたら貼り付き状態に戻す。前の会話で上へスクロールしていた
-  // からといって、新しい会話を途中から表示する理由は無い。
-  useEffect(() => {
-    pinnedToBottomRef.current = true;
-    autoScrolledToRef.current = null;
-  }, [currentConversationKey]);
-
-  useEffect(() => {
-    const container = messagesRef.current;
-    if (container !== null && pinnedToBottomRef.current) {
-      container.scrollTop = container.scrollHeight;
-      // ブラウザは範囲外の代入をクランプするので、書いた値ではなく
-      // 実際に落ち着いた値を覚える。
-      autoScrolledToRef.current = container.scrollTop;
-    }
-  }, [currentMessages, isSending, activeStreamingText]);
+  // 「最下部に貼り付いているときだけ追う」スクロール状態を管理する。
+  const { onScroll: handleMessagesScroll } = useStickToBottomScroll(
+    messagesRef,
+    currentConversationKey,
+    currentMessages,
+    isSending,
+    activeStreamingText,
+  );
 
   const showModelSelect = useMemo(
     () => selectedAgent !== undefined && hasSelectableModels(selectedAgent),
