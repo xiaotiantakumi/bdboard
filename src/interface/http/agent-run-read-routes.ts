@@ -1,5 +1,4 @@
-import type { AgentRunGuardToken } from './agent-run-guard.js';
-import { Hono } from 'hono';
+import { guardedApp, type AgentRunGuardToken } from './agent-run-guard.js';
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { RunStore, RunStoreRecord } from '../../application/runner/run-store.js';
 import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
@@ -83,10 +82,12 @@ async function resolveRunNextStep(
   }
 }
 
-export function createAgentRunReadRoutes(deps: AgentRunReadRoutesDeps, guardToken: AgentRunGuardToken): Hono {
-  // bdboard-3knf: the token is the compile-time enforcement mechanism; there is nothing to check at runtime.
-  void guardToken;
-  const app = new Hono();
+export function createAgentRunReadRoutes(deps: AgentRunReadRoutesDeps, guardToken: AgentRunGuardToken): void {
+  // bdboard-v0df: guardedApp(guardToken) always resolves to the exact Hono instance the
+  // guard was applied to. This factory mutates that instance in place and returns
+  // nothing — there is no independently mountable app for a caller to redirect
+  // elsewhere, or to remount under an unrelated path prefix.
+  const app = guardedApp(guardToken);
 
   app.get('/api/runs', (c) => {
     const ticketId = c.req.query('ticketId');
@@ -128,6 +129,4 @@ export function createAgentRunReadRoutes(deps: AgentRunReadRoutesDeps, guardToke
       nextStep,
     });
   });
-
-  return app;
 }

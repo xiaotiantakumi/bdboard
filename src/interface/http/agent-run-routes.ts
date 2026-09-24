@@ -32,12 +32,23 @@ import { createAgentRunCancelRoutes } from './agent-run-cancel-routes.js';
 // 別ファイルが直接 import してガード無しでマウントできてしまう穴が型システム上は
 // 塞がれていなかった (「単一の守られた経路」という不変条件が convention 頼みだった)。
 // 各ファクトリは今、mountAgentRunGuard() が発行する AgentRunGuardToken (agent-run-guard.ts、
-// 未エクスポートの unique symbol でブランド化) を必須第2引数として要求する。トークンを
-// 得る唯一の方法が mountAgentRunGuard(app, ...) の呼び出しなので、このファイルを経由
-// せずにこれらのファクトリを import して呼ぶコードは型チェックで弾かれる (sole-importer
-// を agent-run-route-factories-guard.test.ts が固定)。ただしトークンは「どの app に
-// ガードを適用したか」までは型で縛らない (opus レビュー, 2026-09-24) ── 詳細と残課題は
-// agent-run-guard.ts の AGENT_RUN_GUARD_APPLIED 直前のコメントを参照。
+// 未エクスポートの unique symbol でブランド化) を必須第2引数として要求する。トークン無しで
+// これらのファクトリを import して呼ぶコードは型チェックで弾かれる。ただし「このファイル
+// だけが呼ぶ」こと自体は型で強制されていない — 別ファイルが自前で mountAgentRunGuard() を
+// 呼んで正規のトークンを得れば、そのファクトリ呼び出し自体は型チェックを通ってしまう
+// (sole-importer は agent-run-route-factories-guard.test.ts の規約チェックに依存する。
+// 詳細は下の bdboard-v0df の段落を参照)。
+//
+// bdboard-v0df: 当初のトークンは「mountAgentRunGuard() がどこかで呼ばれた」ことしか
+// 証明せず、どの app に適用したかへは結び付いていなかった (opus レビュー, 2026-09-24)。
+// 今はトークンがガード適用先の Hono インスタンスそのものを保持し (guardedApp())、
+// 各ファクトリはそのインスタンスへ直接ハンドラを登録する (戻り値は void) —
+// 独立してマウント可能な Hono を自前で作って返すことはしない。これで防げるのは
+// 「トークンを別 app に付け替える」経路のみで、「このファイルだけが
+// mountAgentRunGuard()/各ファクトリを呼ぶ」こと自体は今も型で強制されておらず、
+// agent-run-route-factories-guard.test.ts の sole-importer チェックという規約
+// (テストで固定) に依存したままである。詳細は agent-run-guard.ts の
+// AGENT_RUN_GUARD_APPLIED 直前のコメントを参照。
 
 /** postRunsBodySchema は ticketId と mode だけなので 4KB で十分すぎる。 */
 export const AGENT_RUN_BODY_MAX_BYTES = 4 * 1024;
@@ -121,9 +132,15 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
   app.use('/api/runs', agentRunBodyLimit);
   app.use('/api/runs', rateLimit);
 
-  app.route('/', createAgentRunCreateRoutes(deps, guardToken));
-  app.route('/', createAgentRunReadRoutes(deps, guardToken));
-  app.route('/', createAgentRunCancelRoutes(deps, guardToken));
+  // bdboard-v0df: the three factories now register their handlers directly onto `app`
+  // (the exact instance mountAgentRunGuard() just guarded, obtained internally via
+  // guardedApp(guardToken)) instead of returning an independently mountable Hono of
+  // their own. There is nothing left to `app.route()` here — calling each factory is
+  // itself the mount step, at the routes' real absolute paths, in the same order as
+  // before.
+  createAgentRunCreateRoutes(deps, guardToken);
+  createAgentRunReadRoutes(deps, guardToken);
+  createAgentRunCancelRoutes(deps, guardToken);
 
   return app;
 }
