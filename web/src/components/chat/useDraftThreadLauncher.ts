@@ -295,5 +295,23 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     startNewDraftThread(selectedProjectId);
   };
 
-  return { pendingPrefillRef, pendingTicketDraftProjectRef, startNewDraftThread, handleNewThread, handleAgentChange };
+  // bdboard-23u: 死んだセッションからの自動回復(ChatPanel の
+  // handleHistorySessionGone、E12 の onSessionGone)での nonce の前進。
+  // handleAgentChange と同じインラインの nonce 前進パターンに揃える
+  // (pendingPrefillRef の消化などプリフィル固有の副作用を伴う
+  // startNewDraftThread は、ユーザー起因でないこの自動回復では意図的に
+  // 呼ばない)。参照は安定させること: handleHistorySessionGone を経由して
+  // E12 の依存配列に入る。
+  const advanceDraftNonceAfterSessionGone = useCallback(
+    (projectId: string) => {
+      const nextDraftNonce = (draftNoncesRef.current[projectId] ?? 0) + 1;
+      setDraftNonces((prev) => ({ ...prev, [projectId]: nextDraftNonce }));
+    },
+    [draftNoncesRef, setDraftNonces],
+  );
+
+  return {
+    pendingPrefillRef, pendingTicketDraftProjectRef, startNewDraftThread,
+    handleNewThread, handleAgentChange, advanceDraftNonceAfterSessionGone,
+  };
 }

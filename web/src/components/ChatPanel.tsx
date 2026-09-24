@@ -387,8 +387,9 @@ export function ChatPanel({
   // requestAbortControllerRef は chat/useChatSendState.ts (第13a段) へ移した。
 
   // bdboard-sso1.83 第14b段: pendingPrefillRef / pendingTicketDraftProjectRef /
-  // startNewDraftThread / handleNewThread(SF5)/ handleAgentChange は
-  // chat/useDraftThreadLauncher.ts へ move-only で抜き出した(不変条件 N1 と各引き継ぎの
+  // startNewDraftThread / handleNewThread(SF5)/ handleAgentChange と、23u の
+  // 自動回復での nonce 前進(advanceDraftNonceAfterSessionGone)は
+  // chat/useDraftThreadLauncher.ts へ抜き出した(不変条件 N1 と各引き継ぎの
   // 説明はそちら)。effect は持たないので、元の startNewDraftThread の位置で呼ぶ。
   const {
     pendingPrefillRef,
@@ -396,6 +397,7 @@ export function ChatPanel({
     startNewDraftThread,
     handleNewThread,
     handleAgentChange,
+    advanceDraftNonceAfterSessionGone,
   } = useDraftThreadLauncher({
     selectedProjectId,
     currentConversationKey,
@@ -1043,12 +1045,9 @@ export function ChatPanel({
           activeSessionIds: nextOpenThreads,
           selectedSessionId: undefined,
         });
-        // bdboard-23u: handleAgentChange と同じインラインの nonce 前進パターン
-        // に揃える(pendingPrefillRef の消化などプリフィル固有の副作用を伴う
-        // startNewDraftThread は、ユーザー起因でないこの自動回復では意図的に
-        // 呼ばない)。
-        const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
-        setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
+        // bdboard-23u: ドラフト nonce の前進(startNewDraftThread を意図的に使わない
+        // 理由も含む)は chat/useDraftThreadLauncher.ts に置いた(第14b段)。
+        advanceDraftNonceAfterSessionGone(selectedProjectId);
       }
     },
     [
@@ -1057,8 +1056,7 @@ export function ChatPanel({
       setThreadLists,
       setSelectedThreadIds,
       openThreadIdsRef,
-      draftNoncesRef,
-      setDraftNonces,
+      advanceDraftNonceAfterSessionGone,
     ],
   );
 
