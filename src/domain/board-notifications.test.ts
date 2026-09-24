@@ -301,6 +301,7 @@ describe('diffBoardNotificationSnapshots', () => {
 
     expect(diffBoardNotificationSnapshots(prev, next)).toEqual([]);
   });
+
   it('emits all ready transitions for a large project without overflowing the call stack', () => {
     const ticketIds = Array.from({ length: 150_000 }, (_, i) => `bdboard-large-${i}`);
     const prev = boardSnapshot({
