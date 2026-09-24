@@ -1,4 +1,4 @@
-import type { Lane } from './board';
+import type { Lane } from './lane';
 import { fetchJson } from './http';
 
 export interface TicketSummaryDto {
