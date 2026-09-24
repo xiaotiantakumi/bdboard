@@ -14,8 +14,12 @@ import type { ChatConversationEntry } from './useChatConversationsState';
  * bdboard-sso1.83 第11段: ChatPanel.tsx から履歴 fetch effect(旧 E12)と、
  * turn-status 回収の取りこぼしを拾う安全網 effect(旧 E13、bdboard-3tw.156)を、
  * 元の登録順のまま1つの effect フックへ move-only で抜き出したもの
- * (E12→E13 の順は維持。どちらも historyRequestIdRef を通じて E8 より後に
- * 実行される前提)。呼び出し位置は元の E12 の位置のまま。
+ * (E12→E13 の順は維持)。呼び出し位置は元の E12 の位置のまま(E8 より後)。
+ * E8(chat/useTurnStatusRecovery.ts)が historyRequestIdRef を進めるのは回収した
+ * ターンを hydrate する直前だけで、そのときは conversations が変わるので、この
+ * effect が捨てられた fetch を取り直す。以前は E8 が generation の bump のたびに
+ * 進めていて、conversations も historyLoadedFor も変わらないまま fetch だけが
+ * 捨てられ、送信ボタンが無効のまま戻らなかった(bdboard-ibkf)。
  *
  * 死んだセッション(404、または「不明なセッション」を意味する 400)を
  * 検出したときの openThreadIds/threadLists/selectedThreadIds の prune と、
