@@ -10,7 +10,7 @@
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach を複製している。
 
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
@@ -151,6 +151,13 @@ describe('ChatPanel session lifecycle characterization (bdboard-sso1.83 第15a�
   });
 
   afterEach(() => {
+    // bdboard-1ga8: モックを reset する前に RTL の cleanup(アンマウント)を済ませる。
+    // RTL の自動 cleanup はルートの afterEach なので、この describe の afterEach より
+    // 後に走る。アンマウントは保留中の passive effect を先に flush するため、前の
+    // テストの turn-status 回収(E8)などが reset の後に fetchChatTurnStatus 等を
+    // 呼び、その呼び出し記録が次のテストへ持ち越されていた(次のテストの呼び出し回数が
+    // 1 つ多く見える)。
+    cleanup();
     vi.unstubAllGlobals();
     vi.resetAllMocks();
     vi.restoreAllMocks();

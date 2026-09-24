@@ -4,7 +4,7 @@
 // から import する。vi.mock はファイル単位でホイストされるため、元ファイルの
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach をこのファイルにも複製している。
 
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
@@ -104,6 +104,13 @@ describe('ChatPanel', () => {
   });
 
   afterEach(() => {
+    // bdboard-1ga8: モックを reset する前に RTL の cleanup(アンマウント)を済ませる。
+    // RTL の自動 cleanup はルートの afterEach なので、この describe の afterEach より
+    // 後に走る。アンマウントは保留中の passive effect を先に flush するため、前の
+    // テストの turn-status 回収(E8)などが reset の後に fetchChatTurnStatus 等を
+    // 呼び、その呼び出し記録が次のテストへ持ち越されていた(次のテストの呼び出し回数が
+    // 1 つ多く見える)。
+    cleanup();
     Object.defineProperty(window, 'innerWidth', {
       configurable: true,
       value: defaultWindowInnerWidth,
@@ -1099,6 +1106,12 @@ describe('ChatPanel', () => {
     // it.fails で固定し、bdboard-x4mv で E8 が一覧の request-id を進めるのを
     // hydrate の直前だけにして直した。
     it('P1: loads project B\'s thread list after switching away from a streaming project A', async () => {
+      // bdboard-1ga8: 下の同期は「このテストの中で起きた proj-b の turn-status
+      // 呼び出し」を数える。前のテストの呼び出しが持ち越されていないこと(afterEach
+      // の cleanup → reset の順序)を前提として固定しておく。持ち越しがあると、
+      // 同期点が bump の前に来てしまい(修正前でも通りうる)、負荷の下では bump
+      // の後に 3 回目として数えられて waitFor が一度も 2 を見ずに落ちていた。
+      expect(fetchChatTurnStatusMock).not.toHaveBeenCalled();
       const user = userEvent.setup();
       fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
       const capturedSignal: { current: AbortSignal | undefined } = { current: undefined };
@@ -1120,6 +1133,8 @@ describe('ChatPanel', () => {
       await waitFor(() => {
         expect(screen.getByRole('log').querySelector('.chat-message-streaming')).not.toBeNull();
       });
+      // A ではストリーミングの部分テキストが見えている(末尾の「B に持ち込まれない」の対照)。
+      expect(await within(screen.getByRole('log')).findByText(/partial/)).toBeInTheDocument();
 
       // B へ切り替える。「対象プロジェクト」の select はストリーミング中は
       // disabled で使えないため、既存の「aborts the fetch signal when
@@ -1150,10 +1165,15 @@ describe('ChatPanel', () => {
       // 2回目を待ってから B の一覧 fetch を解決し、「E8 の generation bump が
       // E7 の in-flight fetch より後から割り込む」順序を確実に作る(固定の
       // sleep だと、遅い環境では bump より先に解決して修正前でも通ってしまう)。
+      // bdboard-1ga8: 「ちょうど 2 回」ではなく「2 回以上」で待つ。ちょうどの一致は
+      // waitFor が 2 の瞬間を観測できたときにしか成立せず、それ以後の呼び出しが
+      // 1 つでも増えると(持ち越し・将来の正当な再ポーリング)タイムアウトまで
+      // 失敗し続ける。この時点で B の turn-status を取りに行く経路は切替と bump の
+      // 2 つだけなので、2 回目が来ていれば bump 後の E8 は必ず走っている。
       await waitFor(() => {
         expect(
-          fetchChatTurnStatusMock.mock.calls.filter(([projectId]) => projectId === 'proj-b'),
-        ).toHaveLength(2);
+          fetchChatTurnStatusMock.mock.calls.filter(([projectId]) => projectId === 'proj-b').length,
+        ).toBeGreaterThanOrEqual(2);
       });
       projectBThreads.resolve([
         {
@@ -1169,6 +1189,9 @@ describe('ChatPanel', () => {
       expect(
         await within(getThreadDrawer(rendered.container)).findByRole('button', { name: 'project B thread' }),
       ).toBeInTheDocument();
+      // 切替元 A のストリーミング応答(abort 済みの部分テキスト)は B の会話に
+      // 持ち込まれない。
+      expect(within(screen.getByRole('log')).queryByText(/partial/)).toBeNull();
     });
 
     it('does not add an error bubble when abort comes from a thread switch', async () => {
