@@ -156,3 +156,80 @@ describe('resolveMainConfig dbPath resolution', () => {
     expect(() => resolveMainConfig(MAIN_CHECKOUT, false)).not.toThrow();
   });
 });
+
+// bdboard-6h6n: resolveDbPath() previously returned a relative BDBOARD_DB value as-is, so
+// config.json/tunnel-log's sibling directory (derived via path.dirname(dbPath)) stayed relative
+// too and implicitly depended on process.cwd() wherever it was later consumed, instead of the
+// cwd at startup. resolveDbPath() now pins BDBOARD_DB to an absolute path once, at resolution
+// time (opus review nit on PR #695).
+describe('resolveMainConfig relative BDBOARD_DB resolution (bdboard-6h6n)', () => {
+  const originalCwd = process.cwd();
+
+  afterEach(() => {
+    delete process.env.BDBOARD_DB;
+    process.chdir(originalCwd);
+  });
+
+  it('resolves a relative BDBOARD_DB against process.cwd() for a linked worktree', () => {
+    process.env.BDBOARD_DB = path.join('relative-dir', 'cache.db');
+    const config = resolveMainConfig(LINKED_WORKTREE, true);
+    const expectedDbPath = path.resolve(process.cwd(), 'relative-dir', 'cache.db');
+
+    expect(path.isAbsolute(config.dbPath)).toBe(true);
+    expect(config.dbPath).toBe(expectedDbPath);
+    expect(config.configFilePath).toBe(path.join(path.dirname(expectedDbPath), 'config.json'));
+    expect(config.tunnelLogFilePath).toBe(
+      path.join(path.dirname(expectedDbPath), 'logs', 'cloudflared-tunnel.log'),
+    );
+  });
+
+  it('resolves a relative BDBOARD_DB against process.cwd() for a main checkout as well', () => {
+    process.env.BDBOARD_DB = path.join('relative-dir', 'cache.db');
+    const config = resolveMainConfig(MAIN_CHECKOUT, false);
+
+    expect(config.dbPath).toBe(path.resolve(process.cwd(), 'relative-dir', 'cache.db'));
+  });
+
+  it('resolves the same relative BDBOARD_DB to different absolute paths depending on cwd at startup', () => {
+    process.env.BDBOARD_DB = path.join('relative-dir', 'cache.db');
+    const fromOriginalCwd = resolveMainConfig(LINKED_WORKTREE, true).dbPath;
+    expect(fromOriginalCwd).toBe(path.resolve(process.cwd(), 'relative-dir', 'cache.db'));
+
+    process.chdir(os.tmpdir());
+    const fromTmpdirCwd = resolveMainConfig(LINKED_WORKTREE, true).dbPath;
+    expect(fromTmpdirCwd).toBe(path.resolve(process.cwd(), 'relative-dir', 'cache.db'));
+
+    expect(fromOriginalCwd).not.toBe(fromTmpdirCwd);
+  });
+
+  it('still throws SharedStateDirectoryCollisionError when a relative BDBOARD_DB resolves into the shared ~/.bdboard directory', () => {
+    process.chdir(os.homedir());
+    process.env.BDBOARD_DB = path.join('.bdboard', 'wt-cache.db');
+
+    expect(() => resolveMainConfig(LINKED_WORKTREE, true)).toThrow(SharedStateDirectoryCollisionError);
+  });
+});
+
+// bdboard-6h6n: MainCheckoutDbPathRequiredError previously said "linked worktree checkout"
+// unconditionally, even though isLinkedWorktreeCheckout() also true-positives for a git
+// submodule, a --separate-git-dir clone, or a worktree of a bare repo (opus review nit on PR
+// #695). The message should describe the actual .git-is-a-file signal instead of asserting a
+// specific checkout kind.
+describe('MainCheckoutDbPathRequiredError message (bdboard-6h6n)', () => {
+  afterEach(() => {
+    delete process.env.BDBOARD_DB;
+  });
+
+  it('does not assert "linked worktree checkout" outright and names the alternative checkout kinds', () => {
+    delete process.env.BDBOARD_DB;
+    expect.assertions(3);
+    try {
+      resolveMainConfig(LINKED_WORKTREE, true);
+    } catch (error) {
+      expect(error).toBeInstanceOf(MainCheckoutDbPathRequiredError);
+      const message = (error as Error).message;
+      expect(message).not.toMatch(/is not set for linked worktree checkout/);
+      expect(message).toContain('could also be a git submodule or a checkout created with --separate-git-dir');
+    }
+  });
+});
