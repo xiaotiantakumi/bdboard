@@ -177,6 +177,21 @@ describe('useColdKeyspaceAdoption', () => {
     expect(result.current.draft.conversationInputs).toEqual({ 'new:proj-a:0': '同じバッチの入力' });
   });
 
+  it('pins that a same-batch attachment is seen by the content check (eager ref) and bumps', () => {
+    // conversationAttachmentsRef は[eager](dispatch 時点で ref に反映する)。
+    // 本文(render ミラー)と違い、同じバッチで積まれた添付は中身の判定に見える。
+    const shot = makeAttachment('shot');
+    const { result } = renderProbe();
+
+    act(() => {
+      result.current.draft.updateConversationAttachments(() => ({ 'new::0': [shot] }));
+      result.current.adoption.handleProjectSelectChange('proj-a');
+    });
+
+    expect(result.current.key.draftNonces).toEqual({ 'proj-a': 1 });
+    expect(result.current.draft.conversationAttachments).toEqual({ 'new:proj-a:1': [shot] });
+  });
+
   it('clears the fallback notice, ignores the empty option and switches directly once a project is chosen', () => {
     const { result } = renderProbe();
     act(() => {

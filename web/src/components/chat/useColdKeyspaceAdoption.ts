@@ -32,10 +32,11 @@ export interface UseColdKeyspaceAdoptionResult {
  * onProjectIdChange effect の直後、E7 のスレッド一覧 effect の直前)で呼ぶ。
  * E6 は ticket-context effect(E9)と排他(ticketContextToken で分岐)。
  *
- * 読み取り方式は元のまま: draftNoncesRef / conversationInputsRef /
- * conversationAttachmentsRef は[render ミラー](同じバッチの保留中の更新は
- * 見えない)、nonce の bump は「ref から計算して updater に埋め込む」混成(N1)、
- * 各ストアの移送は登録簿(migrateDraftPayloadKey)の関数型更新。
+ * 読み取り方式は元のまま: draftNoncesRef / conversationInputsRef は[render
+ * ミラー](同じバッチの保留中の更新は見えない)、conversationAttachmentsRef は
+ * [eager](dispatch 時点で反映されるので、同じバッチで積まれた添付も見える)。
+ * nonce の bump は「ref から計算して updater に埋め込む」混成(N1)、各ストアの
+ * 移送は登録簿(migrateDraftPayloadKey)の関数型更新。
  */
 export function useColdKeyspaceAdoption({
   projects,

@@ -80,7 +80,7 @@ export function useDraftPayloadRegistry({
     // 直接使う。draftApplicators オブジェクト自体は毎レンダー新しいオブジェクト
     // リテラルなので、それを丸ごと依存配列に入れると
     // applyToDraftPayloadStores(→ migrateDraftPayloadKey/purgeDraftPayloadKeys
-    // → ChatPanel のコールドウィンドウ effect の依存配列)が毎レンダー再生成され、
+    // → chat/useColdKeyspaceAdoption.ts のコールドウィンドウ effect の依存配列)が毎レンダー再生成され、
     // その effect が意図せず再実行されるようになってしまう。個々のプロパティ
     // (conversationInputs/conversationAttachments/attachmentErrors/
     // draftSeedText)はそれぞれ安定した参照を返すので、それらだけを列挙して

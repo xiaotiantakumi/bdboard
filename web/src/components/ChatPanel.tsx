@@ -558,7 +558,8 @@ export function ChatPanel({
     //
     // 判定を「fetch 開始時点からの nonce の変化」ではなく「fetch 解決時点で
     // nonce>0 かつ選択が undefined のまま」という絶対条件にしているのは、
-    // 後者(handleAgentChange 由来のケースや、後述のコールドウィンドウ引き継ぎ
+    // 後者(handleAgentChange 由来のケースや、コールドウィンドウ引き継ぎ
+    // (chat/useColdKeyspaceAdoption.ts の adoptProjectFromColdKeyspace)
     // 由来のケース)ではドラフトへの切り替えが必ずしも「この fetch の in-flight
     // 中」に起きるとは限らない(コールドウィンドウ経由では、プロジェクト解決
     // effect が selectedProjectId を切り替えるのと同じタイミングで nonce も
