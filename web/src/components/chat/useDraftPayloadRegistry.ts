@@ -81,11 +81,15 @@ export function useDraftPayloadRegistry({
     // draftSeedText)はそれぞれ安定した参照を返すので、それらだけを列挙して
     // 元の安定性を保つ(useChatDraftState.test.tsx に参照安定性の検証テストを
     // 追加済み)。
+    // bdboard-sso1.83 第14a段: フックの引数になったことで exhaustive-deps が
+    // setThreadModelIds も要求するので加えた(useState の setter で常に安定。
+    // 参照安定性は useDraftPayloadRegistry.test.tsx で確認している)。
     [
       draftApplicators.conversationInputs,
       draftApplicators.conversationAttachments,
       draftApplicators.attachmentErrors,
       draftApplicators.draftSeedText,
+      setThreadModelIds,
     ],
   );
 
