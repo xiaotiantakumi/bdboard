@@ -65,13 +65,15 @@ async function openTicketDetail(page: Page, useTap: boolean) {
   return dialog;
 }
 
-// bdboard-h4xs.27: クイックアクションはこの e2e フィクスチャ側のスタブ bd CLI
-// (test/e2e/fixtures/bin/bd) では書き込みコマンドが未実装なので、実際にミューテーションを走らせて
-// undo-snackbarを出すことはできない(実測: postTicketQuickAction が非0終了し、onSuccess が呼ばれず
-// snackbar が一度も表示されないまま 5s タイムアウトする)。代わりに、実際の
-// .overlay/.detail-panel/.undo-snackbar と同じ className 構造を DOM に直接注入し、
-// 本物のスタイルシート(board-7.css の :has() ルールと ticket-detail-3.css の
-// .overlay)が実際にどうカスケードされるかを getComputedStyle と elementFromPoint で検証する。
+// bdboard-h4xs.27: このヘルパーは合成 DOM (実際の .overlay/.detail-panel/.undo-snackbar と
+// 同じ className 構造を直接注入したもの) に対して、本物のスタイルシート(board-7.css の :has()
+// ルールと ticket-detail-3.css の .overlay)が実際にどうカスケードされるかを getComputedStyle と
+// elementFromPoint で検証する。CSS ルールの各分岐(chat-panel 単独/nested)を安価に総当たりできる
+// 一方、実コンポーネントのマウント・アンマウント挙動そのものは検証しない。
+// bdboard-u9vr: 実コンポーネント(本物の TicketDetailPanel/ChatPanel)側は、
+// mockQuickActionEndpoints() で書き込み2エンドポイントだけを page.route でモックし
+// (フィクスチャの stub bd CLI (test/e2e/fixtures/bin/bd) には書き込みサブコマンドが無いため)、
+// 以下の2テストで別途カバーする。
 // z-index の数値だけでなく、スナックバーの実際の画面座標で elementFromPoint を使うのは
 // chat-mobile.spec.ts の overlay z-index テスト(z-index の比較のみ)より一歩踏み込んだ確認。
 async function assertUndoSnackbarStacking(
@@ -383,9 +385,9 @@ test.describe('ticket detail close target on phone viewport', () => {
       const overlays = Array.from(document.querySelectorAll('.overlay'));
       const snackbarEl = document.querySelector('.undo-snackbar');
       const action = document.querySelector('.undo-snackbar-action');
-      if (overlays.length === 0 || !snackbarEl || !action) {
+      if (overlays.length !== 2 || !snackbarEl || !action) {
         throw new Error(
-          'expected real .overlay (x2)/.undo-snackbar/.undo-snackbar-action to exist',
+          `expected real .overlay (x2, got ${overlays.length})/.undo-snackbar/.undo-snackbar-action to exist`,
         );
       }
       const overlayZs = overlays.map((el) =>
@@ -398,7 +400,11 @@ test.describe('ticket detail close target on phone viewport', () => {
         rect.top + rect.height / 2,
       );
       const hitIsAction = hit !== null && (hit === action || action.contains(hit));
-      return { overlayZs, snackbarZ, hitIsAction };
+      // hitIsAction===false only proves *something* obstructs the button — it would still
+      // hold if AppOverlayGroup's sibling order were reordered and the ticket detail overlay
+      // (not ChatPanel) ended up topmost instead. Pin down which element is actually on top.
+      const hitInChatPanel = hit !== null && hit.closest('.chat-panel') !== null;
+      return { overlayZs, snackbarZ, hitIsAction, hitInChatPanel };
     });
     for (const overlayZ of stacking.overlayZs) {
       expect(
@@ -410,6 +416,10 @@ test.describe('ticket detail close target on phone viewport', () => {
       stacking.hitIsAction,
       'undo-snackbar must stay obstructed while a real ChatPanel is open, even though it was opened from within the real ticket detail panel (bdboard-h4xs.27 real-DOM regression guard)',
     ).toBe(false);
+    expect(
+      stacking.hitInChatPanel,
+      'the real ChatPanel must be the element actually on top at the snackbar action position, not just "not the action button" (catches an AppOverlayGroup sibling-order regression that hitIsAction alone would miss)',
+    ).toBe(true);
   });
 });
 
