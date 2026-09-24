@@ -982,17 +982,15 @@ describe('ChatPanel', () => {
   });
 
   // bdboard-sso1.83 特性テスト T6 (設計メモ §5 P2 の再現テスト): 同じプロジェクト
-  // 内で、まだ履歴未読込のスレッドへストリーム中に切り替えると、E12(履歴
-  // ローダー)の in-flight fetch が、切替による abort が少し遅れて発火させる
-  // E8 の generation bump(historyRequestIdRef の bump)で追い越され、応答も
-  // finally の historyLoadedFor 書き込みも requestId 不一致で握りつぶされる
-  // ことがある。E12 は deps(conversations、historyLoadedFor)が変わるまで
-  // 再実行されないため、isHistoryPending が解けないまま送信ボタンが無効の
-  // ままになる可能性がある。it.fails で実際に再現した。この計画(第5段)では
-  // ChatPanel.tsx を直さないため、it.fails で現状を固定してドキュメント化する
-  // (別途bdチケットは起票しない。bdboard-sso1.83へのコメントで報告済み。第11/12段
-  // E8/E12 抽出時にあわせて修正する想定)。
-  it.fails('P2: re-enables the submit button after switching to a not-yet-history-loaded thread while streaming', async () => {
+  // 内で、まだ履歴未読込のスレッドへストリーム中に切り替えると、切替による abort が
+  // 少し遅れて generation を bump し、E8(turn-status 回収)が再実行される。以前の
+  // E8 は generation>0 のたびに historyRequestIdRef を進めていたため、E12(履歴
+  // ローダー)の in-flight fetch の応答も finally の historyLoadedFor 書き込みも
+  // requestId 不一致で握りつぶされ、E12 は deps(conversations、historyLoadedFor)が
+  // 変わらないので再実行されず、送信ボタンが無効のまま戻らなかった。第5段では
+  // it.fails で固定し、bdboard-ibkf で E8 が履歴の request-id を進めるのを hydrate の
+  // 直前だけにして直した。
+  it('P2: re-enables the submit button after switching to a not-yet-history-loaded thread while streaming', async () => {
     const user = userEvent.setup();
     fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);
     fetchChatThreadsMock.mockResolvedValue([
@@ -1041,10 +1039,14 @@ describe('ChatPanel', () => {
     await selectThreadFromDrawer(container, user, 'second thread');
 
     // abort が submit の catch(AbortError) 経路を通って
-    // setTurnRecoveryGeneration(g => g+1) を呼ぶのは非同期タイミング。一呼吸
-    // おいてから sess-2 の履歴 fetch を解決し、「E8 の generation bump が
-    // E12 の in-flight fetch より後から割り込む」順序を作る。
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // setTurnRecoveryGeneration(g => g+1) を呼ぶのは非同期タイミング。E8 は
+    // generation が進むと turn-status を取り直すので、その2回目を待ってから
+    // sess-2 の履歴 fetch を解決し、「E8 の generation bump が E12 の in-flight
+    // fetch より後から割り込む」順序を確実に作る(固定の sleep だと、遅い環境
+    // では bump より先に解決して修正前でも通ってしまう)。
+    await waitFor(() => {
+      expect(fetchChatTurnStatusMock).toHaveBeenCalledTimes(2);
+    });
     sess2History.resolve(
       jsonResponse({ sessionId: 'sess-2', agentId: 'claude', messages: [] }),
     );
