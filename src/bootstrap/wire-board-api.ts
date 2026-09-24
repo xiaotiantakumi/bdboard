@@ -81,11 +81,25 @@ export function wireBoardApi(deps: WireBoardApiDeps) {
   const prBadgeStatusStore = createFilePrBadgeStatusStore(
     path.join(path.dirname(deps.dbPath), 'pr-badge-status-cache.json'),
   );
+  // bdboard-ye2p: cold start では数百件が短時間に連続で permanent へ遷移し
+  // うるので、毎回そのまま書き込むと (全件を毎回シリアライズする素朴な実装の
+  // ため) 書き込み回数・総バイト数が件数の2乗近くまで膨らむ (レビュー指摘)。
+  // 200ms のデバウンスでバーストを1回の書き込みにまとめる。タイマーは
+  // unref してシャットダウンをブロックしないようにする。
+  let pendingPersistTimer: NodeJS.Timeout | null = null;
+  const schedulePersist = (): void => {
+    if (pendingPersistTimer !== null) {
+      return;
+    }
+    pendingPersistTimer = setTimeout(() => {
+      pendingPersistTimer = null;
+      prBadgeStatusStore.write(prBadgeStatusCache.getTerminalEntries());
+    }, 200);
+    pendingPersistTimer.unref();
+  };
   const prBadgeStatusCache = new PrBadgeStatusCache({
     initialEntries: prBadgeStatusStore.read(),
-    onPersistableChange: () => {
-      prBadgeStatusStore.write(prBadgeStatusCache.getTerminalEntries());
-    },
+    onPersistableChange: schedulePersist,
   });
 
   const refreshProjectByRootPath = async (rootPath: string): Promise<void> => {

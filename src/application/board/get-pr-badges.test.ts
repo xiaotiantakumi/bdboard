@@ -1011,9 +1011,13 @@ describe('getPrBadges', () => {
         },
       ]),
     };
+    // gh が実際に呼ばれてしまった場合に検出できるよう、あえて initialEntries と
+    // 異なる状態 (open) を返すモックにする — もし gh が呼ばれれば badges の
+    // 中身が 'open' になり、'not called' のアサーションだけでなく戻り値からも
+    // バグが分かる (レビュー指摘: 同じ値を返すモックだと空振りしても気づけない)。
     const prStatusReader: PrStatusReader = {
       getPrStatus: vi.fn(async () =>
-        ({ status: { state: 'merged', checkStatus: 'pass' } satisfies PrStatus }),
+        ({ status: { state: 'open', checkStatus: 'pending' } satisfies PrStatus }),
       ),
     };
 

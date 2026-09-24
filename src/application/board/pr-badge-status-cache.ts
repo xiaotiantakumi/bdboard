@@ -56,8 +56,11 @@ const DEFAULT_CIRCUIT_MAX_COOLDOWN_MS = 60 * 60_000;
  * 起動を止めるサーキットブレーカー、(2) URL単位の失敗の指数バックオフ否定
  * キャッシュ、(3) merged/closed+pending の長め TTL + 最大再試行後の恒久化、
  * (4) 同一 URL への同時リクエストの in-flight 共有、を一手に引き受ける。
- * routes.ts はこれまで通り `new PrBadgeStatusCache()` を引数なしで生成すれば
- * 全部の既定値が効く (routes.ts 無変更で直す方針, bdboard-7ln6 の注意書き)。
+ * オプション省略時 (`new PrBadgeStatusCache()`) は全部の既定値が効く
+ * (routes.ts 無変更で直す方針, bdboard-7ln6 の注意書き)。bdboard-ye2p 以降は
+ * pr-links-routes.ts がこの無引数フォールバックを使うのは deps.prBadgeStatusCache
+ * 未指定時 (テスト等) だけで、本番経路は wire-board-api.ts が initialEntries /
+ * onPersistableChange 付きで構築したインスタンスを渡す。
  *
  * bdboard-ye2p: permanent なエントリだけを再起動をまたいで残す。読み込み
  * (initialEntries) と書き込み通知 (onPersistableChange) だけを持ち、実際の

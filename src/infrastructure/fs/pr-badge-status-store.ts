@@ -47,7 +47,14 @@ export function createFilePrBadgeStatusStore(filePath: string): PrBadgeStatusSto
   const write = (entries: readonly PersistedPrBadgeStatusEntry[]): void => {
     try {
       fs.mkdirSync(path.dirname(filePath), { recursive: true });
-      fs.writeFileSync(filePath, JSON.stringify({ entries }), 'utf8');
+      // bdboard-ye2p: write-then-rename でアトミックにする。writeFileSync を
+      // 直接 filePath に対して行うと、書き込み途中でプロセスが kill された場合
+      // (再起動のたびに起こり得る) 次回起動が「途中まで書かれた壊れた JSON」を
+      // 読む可能性がある。rename は同一ファイルシステム内ではアトミックなので
+      // これを避けられる (read() 側の JSON.parse 失敗時の劣化は変わらず残す)。
+      const tmpPath = `${filePath}.${process.pid}.tmp`;
+      fs.writeFileSync(tmpPath, JSON.stringify({ entries }), 'utf8');
+      fs.renameSync(tmpPath, filePath);
     } catch {
       // 書き込み失敗はプロセスを落とさない — 次回起動時はまた都度取得に戻るだけ。
     }
