@@ -122,6 +122,9 @@ git 運用(`prFlow`)・メインブランチ(`mainBranch`)」を宣言する。�
 bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)。候補文字列を
 `member:model` の狭い文字集合へ閉じることが唯一かつ十分な注入防御で、後段にサニタイズを
 重ねない。UI へ運ぶのは工程名と段数の要約だけで、候補列は DTO にも run プロンプトにも載せない。
+省略可能な `alwaysOnServer` 節 (`port` / `restartScript`) は、常時稼働サーバーの保護 (ハーネス
+パックの hook 規則 7) を有効にする宣言で、パーサーは読まず hook だけが読む (bdboard-hpu8)。
+bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している。
 
 `.claude/` 配下に置くのは、注入 API のパストラバーサルガード `resolveUnderClaudeDir` の内側に
 収めるため。パースと

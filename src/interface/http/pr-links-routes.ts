@@ -13,9 +13,14 @@ import type { ApiDeps } from './routes.js';
 // GET /api/pr-links をここへ切り出した (move only, 挙動変更ゼロ)。PR コメント
 // 走査キャッシュ (prBadgeCommentCache) は GET /api/hygiene
 // (hygiene-status-routes.ts) の close 証拠チェックと共有する (bdboard-pkr6.16)
-// ため、合成層 (hygiene-routes.ts) から明示引数で受け取る。PR ステータス
-// キャッシュ (prBadgeStatusCache) はこのルートでしか使わないためここで
-// インスタンス化する。
+// ため、合成層 (hygiene-routes.ts) から明示引数で受け取る。
+//
+// bdboard-ye2p: PR ステータスキャッシュ (prBadgeStatusCache) は以前このルートで
+// `new PrBadgeStatusCache()` として毎プロセス起動ごとに空で作っていたが、
+// サーバー再起動をまたいで terminal な結果を残すため deps 経由 (bootstrap 側で
+// 永続化ストアから読み込んで組み立てたインスタンス) で受け取るように変えた。
+// deps.prBadgeStatusCache が未設定 (テスト等で明示的に渡していない場合) は
+// 従来どおり空のインメモリキャッシュにフォールバックする。
 
 // bdboard-se3v: /api/pr-links が (再起動直後の未キャッシュ状態で) 55秒かかっていた
 // 問題への対応。gh 起動の並列度をコメント取得と切り離して上げた (get-pr-badges.ts
@@ -43,7 +48,9 @@ export function createPrLinksRoutes(
   { prBadgeCommentCache }: PrLinksRoutesParams,
 ): Hono {
   const app = new Hono();
-  const prBadgeStatusCache = new PrBadgeStatusCache();
+  // deps.prBadgeStatusCache が無いテスト/呼び出し経路では、従来どおり
+  // プロセス内だけの空キャッシュにフォールバックする (永続化なし、挙動は旧来通り)。
+  const prBadgeStatusCache = deps.prBadgeStatusCache ?? new PrBadgeStatusCache();
   // bdboard-sgpa: commentGate/statusGate をルート (= プロセス) の寿命で1組だけ作り、
   // すべての /api/pr-links 呼び出しで共有する。以前は getPrBadges() が呼び出しごとに
   // 新しい Semaphore ペアを作っていたため、重なったリクエスト (30秒 staleTime の

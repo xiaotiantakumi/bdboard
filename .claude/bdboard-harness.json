@@ -3,6 +3,10 @@
   "verify": "npm run verify",
   "prFlow": "pr",
   "mainBranch": "main",
+  "alwaysOnServer": {
+    "port": 8787,
+    "restartScript": "scripts/always-on-server.sh"
+  },
   "hooks": {
     "denyBashPatterns": [
       "\\bnpm run verify:steps\\b",

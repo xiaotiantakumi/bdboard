@@ -208,8 +208,12 @@ is the only one that catches a conflict *before* it has cost you a CI run.
 
 (the merging session's responsibility):
 `git worktree remove .claude/worktrees/<id>` → `git branch -d bd/<id>` →
-`git remote prune origin` → restart the always-on server per skill
-`bdboard-server-ops` (pull --ff-only / build:web / restart). At session start,
+`git remote prune origin`. Restarting the always-on server is **not** part of
+the cleanup a subagent does: the chair (top-level session) runs
+`BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy --expect-pid <pid>`
+(pull --ff-only / build:web / restart; see skill `bdboard-server-ops`), and hook
+rule 7 denies a subagent's main-checkout pull / start / kill (bdboard-hpu8). A
+subagent that merged a PR just reports that a restart is needed. At session start,
 sweep `git worktree list` for merged leftovers left behind by a prior
 session.
 
