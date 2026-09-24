@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import eslintConfig from '../eslint.config.mjs';
 
 import {
   CONFIG_RELATIVE_PATH,
@@ -87,6 +88,17 @@ describe('countLines', () => {
 // 見ないため、引き続き全対象拡張子を見る。
 describe('isTargetPath', () => {
   it.each([
+    ['src/foo.js', true], // ESLint (src/**/*.ts のみ) は .js を見ない
+    ['src/foo.mjs', true],
+    ['web/src/foo.js', true], // ESLint (web/src/**/*.{ts,tsx}) は .js/.mjs を見ない
+    ['web/src/foo.mjs', true],
+    ['scripts/foo.ts', true], // ESLint (scripts/**/*.mjs のみ) は .ts を見ない
+    ['scripts/foo.js', true],
+  ])('%s -> %s (eslint config gap, must stay covered by check-file-size)', (p, expected) => {
+    expect(isTargetPath(p)).toBe(expected);
+  });
+
+  it.each([
     ['web/src/foo.css', true], // ESLint が見ない拡張子は引き続き対象
     ['scripts/foo.sh', true], // scripts/ でも .sh は ESLint 対象外 (実在しないが仕様上は対象)
     ['harness/packs/x/foo.sh', true], // harness/ は ESLint の ignores 対象、全拡張子を見る
@@ -99,7 +111,7 @@ describe('isTargetPath', () => {
 
   it.each([
     ['src/foo.ts', false], // ESLint (src/**/*.ts) が見るため対象外
-    ['src/nested/foo.tsx', false],
+    ['src/nested/foo.tsx', true], // src/**/*.tsx は ESLint max-lines の対象外
     ['web/src/foo.tsx', false], // ESLint (web/src/**/*.tsx) が見るため対象外
     ['scripts/foo.mjs', false], // ESLint (scripts/**/*.mjs) が見るため対象外
     ['srcfoo/bar.ts', false], // ディレクトリ名の前方一致誤爆
@@ -127,6 +139,24 @@ describe('isTargetPath', () => {
     // 同じ拡張子でも ESLint が見ない harness/ test/ では引き続き対象。
     expect(isTargetPath('harness/foo.ts')).toBe(true);
     expect(isTargetPath('test/foo.ts')).toBe(true);
+  });
+});
+
+describe('eslint.config.mjs drift guard (bdboard-hncr)', () => {
+  it('keeps the max-lines-covered file globs in sync with classify.mjs\'s per-dir map', () => {
+    const maxLinesEntry = eslintConfig.find(
+      (entry) =>
+        Array.isArray(entry.files) &&
+        entry.rules?.['max-lines'] !== undefined &&
+        entry.files.length === 3,
+    );
+    expect(maxLinesEntry).toBeDefined();
+    // If this changes, update classify.mjs ESLINT_COVERED_EXTENSIONS_BY_DIR too.
+    expect(maxLinesEntry.files).toEqual([
+      'src/**/*.ts',
+      'web/src/**/*.{ts,tsx}',
+      'scripts/**/*.mjs',
+    ]);
   });
 });
 
