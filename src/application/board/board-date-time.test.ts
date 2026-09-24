@@ -86,9 +86,21 @@ describe('addCalendarDaysToDateKey', () => {
 });
 
 describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdboard-ybcv)', () => {
-  // All (dateKey, timeZone) pairs where local midnight is skipped by a DST
-  // transition, 2015-2030, across every IANA time zone (brute-force
-  // verified once; see PR description for the verification script/method).
+  // All (dateKey, timeZone) pairs, 2015-2030 across every IANA time zone,
+  // where the *pre-fix* zonedMidnight's round-trip broke (brute-force
+  // verified once against Node 22's bundled tzdata as of 2026-09-24; see PR
+  // description for the verification method). This is not the complete set
+  // of every day a local midnight is skipped by DST worldwide -- some zones
+  // (e.g. Asia/Beirut) skip local midnight too but the pre-fix two-stage
+  // offset resolution already happened to round-trip correctly for them, so
+  // they're not part of the pre-fix *failure* set this table regression-
+  // guards. This table is also a snapshot of a specific tzdata release: as
+  // IANA tzdata is updated (e.g. a country changing its DST rules), a given
+  // pair here can stop being a real transition day in a newer Node/ICU
+  // build -- the assertion still holds (round-trip is unconditionally
+  // correct post-fix) but stops being diagnostic for that pair. See
+  // bdboard-ybcv follow-up for a tzdata-version-independent regression
+  // guard.
   const skippedMidnightDays: ReadonlyArray<readonly [string, string]> = [
     ['2015-10-04', 'America/Asuncion'],
     ['2016-10-02', 'America/Asuncion'],
@@ -187,6 +199,14 @@ describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdb
     (dateKey, timeZone) => {
       const midnight = zonedMidnight(dateKey, timeZone);
       expect(localDateKey(midnight, timeZone)).toBe(dateKey);
+      // Tzdata-version-independent strengthening of the above: whatever
+      // instant zonedMidnight returns, it must be the *first* instant of
+      // dateKey (one ms earlier belongs to the previous day). This holds
+      // regardless of whether this particular (dateKey, timeZone) is still
+      // a DST transition day under the tzdata build running the test --
+      // unlike the round-trip check above, it stays diagnostic even if a
+      // future tzdata update turns one of these pairs into an ordinary day.
+      expect(localDateKey(new Date(midnight.getTime() - 1), timeZone)).not.toBe(dateKey);
     },
   );
 });
