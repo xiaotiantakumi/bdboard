@@ -109,6 +109,11 @@ describe('resolveMainConfig dbPath resolution', () => {
     expect(() => resolveMainConfig(LINKED_WORKTREE)).toThrow(MainCheckoutDbPathRequiredError);
   });
 
+  it('treats an empty BDBOARD_DB the same as unset for a linked worktree (matches envString semantics)', () => {
+    process.env.BDBOARD_DB = '';
+    expect(() => resolveMainConfig(LINKED_WORKTREE)).toThrow(MainCheckoutDbPathRequiredError);
+  });
+
   it('uses an explicitly configured database path for a linked worktree', () => {
     process.env.BDBOARD_DB = '/tmp/dedicated-copy.db';
     expect(resolveMainConfig(LINKED_WORKTREE).dbPath).toBe('/tmp/dedicated-copy.db');
