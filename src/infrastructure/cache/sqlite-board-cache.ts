@@ -19,6 +19,7 @@
 // (どちらも db を明示引数として受け取り、呼び出しは1回だけ — 生成タイミングは変わらない)。
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import { createReadOperations } from './sqlite-board-cache/read.js';
+import { createParseCache } from './sqlite-board-cache/parse-cache.js';
 import { createWriteOperations } from './sqlite-board-cache/write.js';
 import { openCacheDatabase } from './sqlite-board-cache/schema.js';
 
@@ -28,8 +29,9 @@ export { openCacheDatabase } from './sqlite-board-cache/schema.js';
 export function createSqliteBoardCache(dbPath: string): BoardCache {
   const db = openCacheDatabase(dbPath);
 
-  const readOperations = createReadOperations(db, dbPath);
-  const writeOperations = createWriteOperations(db);
+  const parseCache = createParseCache();
+  const readOperations = createReadOperations(db, dbPath, parseCache);
+  const writeOperations = createWriteOperations(db, parseCache);
 
   return {
     ...readOperations,
