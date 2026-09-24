@@ -56,6 +56,15 @@ export function TicketDetailSecondaryBody({
   copy,
   commentTextareaRef,
 }: TicketDetailSecondaryBodyProps) {
+  // bdboard-u6hf レビュー指摘: このセクションは pendingDecision の有無で2つの
+  // JSX 位置のどちらかにだけ出る(同じ fragment の子として)。key を付けないと
+  // 位置が変わるたびに unmount/remount され、ライトボックスの開閉状態が失われ、
+  // 添付一覧が再フェッチされる。key を固定することで React が同一インスタンスの
+  // 移動として扱い、状態を保持する。
+  const attachmentsSection = (
+    <TicketAttachments key="attachments" ticketId={ticketId} />
+  );
+
   return (
     <>
       <TicketDependenciesSection
@@ -98,6 +107,7 @@ export function TicketDetailSecondaryBody({
         onUnlinkSession={sessionLink.onUnlinkSession}
       />
       <TicketUsageSection usage={data.usage} />
+      {pendingDecision !== undefined && attachmentsSection}
       <TicketDecisionSection
         pendingDecision={pendingDecision}
         selectedChoice={decision.selectedChoice}
@@ -118,7 +128,7 @@ export function TicketDetailSecondaryBody({
         error={timeline.timelineError}
         events={timeline.timelineEvents}
       />
-      <TicketAttachments ticketId={ticketId} />
+      {pendingDecision === undefined && attachmentsSection}
       <TicketCommentsSection
         enabled={comment.commentsEnabled}
         loading={comment.commentsLoading}
