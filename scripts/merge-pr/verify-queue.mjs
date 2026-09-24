@@ -58,9 +58,9 @@ export function verifyEnv({ priority, queueSince }, base = process.env) {
  * verify の間のポーリング用で、同期版だと応答の遅いネットワークでイベントループ (= 中断シグナルの
  * 処理) を塞ぐため。読めなければ null。
  */
-export function liveMainAsync(cwd, remote, branch, timeoutMs = 60_000) {
+export function liveMainAsync(cwd, remote, branch, { signal, timeoutMs = 60_000 } = {}) {
   return new Promise((resolve) => {
-    execFile('git', ['ls-remote', remote, `refs/heads/${branch}`], { cwd, timeout: timeoutMs, encoding: 'utf8' }, (error, stdout) => {
+    execFile('git', ['ls-remote', remote, `refs/heads/${branch}`], { cwd, timeout: timeoutMs, encoding: 'utf8', signal }, (error, stdout) => {
       const sha = error ? '' : String(stdout).split('\t')[0].trim();
       resolve(sha === '' ? null : sha);
     });
@@ -73,11 +73,12 @@ function pollMs() {
 }
 
 /**
- * intervalMs ごとに abandonWhen() (同期でも Promise でもよい) を聞き、true なら (= main が動いて
+ * intervalMs ごとに abandonWhen(signal) (同期でも Promise でもよい) を聞き、true なら (= main が動いて
  * 結果が使えなくなったら) 実行中の子をプロセスグループごと終了する (verify スロットの待ち行列に
  * 居る間なら列から抜けるだけ)。activeChild.abandoned に「終了し終わったら resolve する Promise」を
  * 置く。問い合わせは同時に 1 本まで。答えを待つ間に子が終わった・中断シグナル
- * (activeChild.interrupted) が来た・監視を止めた場合は何もしない。戻り値は監視を止める関数。
+ * (activeChild.interrupted) が来た・監視を止めた場合は何もしない。戻り値は監視を止める関数で、
+ * 問い合わせ中なら signal を abort する (応答の遅い ls-remote で merge-pr の終了を待たせない)。
  */
 export function watchForAbandon({ activeChild, abandonWhen, intervalMs = pollMs() }) {
   if (typeof abandonWhen !== 'function') {
@@ -85,6 +86,7 @@ export function watchForAbandon({ activeChild, abandonWhen, intervalMs = pollMs(
   }
   let stopped = false;
   let checking = false;
+  const controller = new AbortController();
   const idle = (child) =>
     stopped || activeChild.interrupted || activeChild.abandoned || activeChild.current !== child ||
     child?.pid === undefined || child.exitCode !== null || child.signalCode !== null;
@@ -96,7 +98,7 @@ export function watchForAbandon({ activeChild, abandonWhen, intervalMs = pollMs(
     checking = true;
     let moved;
     try {
-      moved = (await abandonWhen()) === true;
+      moved = (await abandonWhen(controller.signal)) === true;
     } catch {
       moved = false; // 読めないときは続ける (終わった後の refetch で判定)
     } finally {
@@ -109,5 +111,6 @@ export function watchForAbandon({ activeChild, abandonWhen, intervalMs = pollMs(
   return () => {
     stopped = true;
     clearInterval(timer);
+    controller.abort();
   };
 }

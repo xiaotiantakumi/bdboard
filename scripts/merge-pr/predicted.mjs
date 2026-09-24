@@ -44,8 +44,8 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }) {
     retryHint: `npm run merge-pr -- prepare ${pr}`,
     priority: 'merge',
     queueSince: queueSinceFor(ctx.cwd, pr),
-    abandonWhen: async () => {
-      const live = await liveMainAsync(ctx.cwd, REMOTE, ctx.config.mainBranch);
+    abandonWhen: async (signal) => {
+      const live = await liveMainAsync(ctx.cwd, REMOTE, ctx.config.mainBranch, { signal });
       return live !== null && live !== predBase; // 読めないときは続ける (終わった後の refetch で判定)
     },
   });

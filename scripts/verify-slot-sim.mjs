@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // bdboard-ulxa.6: マージ手順 S2 の「着地予定ツリーの verify のやり直し」を、実際の負荷をかけずに
 // 比べる離散時間シミュレーション。`node scripts/verify-slot-sim.mjs` で表を出し、
 // verify-slot-sim.test.mjs が同じ関数で「並列 7 本でやり直しが減る」ことを固定する。

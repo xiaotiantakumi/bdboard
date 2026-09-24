@@ -272,7 +272,10 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   holders, could start a third run. Old scripts ignore the new fields. One
   pre-existing gap remains: an old script ignores any holder that *joined*
   more than 30 min ago, even a running one, exactly as before (a new holder
-  has joined at most 15 min before it starts, thanks to re-joining).
+  has joined at most 15 min before it starts, thanks to re-joining). The
+  price of re-joining in a mixed deployment: each re-join puts a new waiter
+  behind old-script waiters that joined during the previous 15 min (bounded,
+  since old scripts give up after 15 min).
 - **Simulation.** `node scripts/verify-slot-sim.mjs` replays 7 agents × 8 h
   with 2 slots, using the real ordering functions (no real verify, no CPU
   load); `scripts/verify-slot-sim.test.mjs` pins the result. Means over 8

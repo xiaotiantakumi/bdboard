@@ -142,8 +142,13 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
       const now = Date.now();
       if (now - holder.joinedAt > options.staleTtlMs / 2) {
         // 他の holder から stale と見なされる前に並び直す (順番は queuedAt で保つ)。
-        holder = { ...holder, joinedAt: now };
-        writeHolderAtomically(selfPath, holder);
+        const refreshed = { ...holder, joinedAt: now };
+        try {
+          writeHolderAtomically(selfPath, refreshed);
+          holder = refreshed; // 書けたときだけ (他の holder から見える joinedAt と揃える)
+        } catch {
+          /* 次周で再試行 (書けていない間は planSlots が自分を stale の年齢として取らせない) */
+        }
       }
       const plan = planSlots([holder, ...others], { ...options, selfPid: process.pid, now });
       for (const entry of plan.stale) {
