@@ -5,7 +5,9 @@
 //        分類表示だけを行い、gate / finish は動かない
 //   S1 = 枠は acquire → CAS → gh pr merge → release の一瞬だけ。着地後検証は枠の外で行い
 //        commit status (statusContext) に記録する
-// S2 / S3 (着地予定ツリーの verify・軽量チェック) は後続チケット (bdboard-ulxa.2 以降)。
+//   S2 = S1 + main が動いていても rebase しない (bdboard-ulxa.2)。prepare が着地予定ツリー
+//        (merge-tree) を作って verify し、テキスト衝突 / hot file (hotFiles) のときだけ rebase
+// S3 (重なりなしの PR の軽量チェック) は後続チケット (bdboard-ulxa.3)。
 //
 // 方針 (どちらの契約を読むか): 手順の切り替えは「main に入った設定」で決まる。PR ブランチは
 // 切った時点の設定を持っているので、ブランチ側を読むと議長が main で S1 に切り替えても
@@ -15,15 +17,31 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { run } from './exec.mjs';
+import { DEFAULT_HOT_FILES, globToRegExp } from './hot-files.mjs';
 
 export const CONTRACT_RELATIVE_PATH = '.claude/bdboard-harness.json';
-export const MERGE_MODES = ['S0', 'S1'];
+export const MERGE_MODES = ['S0', 'S1', 'S2'];
+/** gate / finish が動く段階 (S0 は prepare の表示だけ)。 */
+export const SLOT_MODES = ['S1', 'S2'];
 export const MERGE_DEFAULTS = Object.freeze({
   mode: 'S0',
   leaseMinutes: 8,
   slotWaitMinutes: 10,
   statusContext: 'bdboard/landed-verify',
+  hotFiles: DEFAULT_HOT_FILES,
 });
+
+function validHotFiles(value) {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === 'string')) {
+    return false;
+  }
+  try {
+    value.forEach(globToRegExp);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const SAFE_BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]+$/;
 const SLUG = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -71,6 +89,12 @@ export function parseMergeConfig(contract) {
       return { ok: false, message: 'merge.statusContext は英数字と . _ / - だけの文字列です' };
     }
     config.statusContext = merge.statusContext;
+  }
+  if (merge.hotFiles !== undefined) {
+    if (!validHotFiles(merge.hotFiles)) {
+      return { ok: false, message: 'merge.hotFiles はグロブ文字列の配列です (scripts/merge-pr/hot-files.mjs の文法)' };
+    }
+    config.hotFiles = [...merge.hotFiles];
   }
   if (merge.repo !== undefined) {
     if (typeof merge.repo !== 'string' || !SLUG.test(merge.repo)) {

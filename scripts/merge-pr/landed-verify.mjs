@@ -1,7 +1,8 @@
 // bdboard-ulxa.1: 層3 の着地後検証の本体 — PR worktree で `git checkout --detach <sha>` して
 // 契約の verify を回し、結果を commit status 台帳に書く。main checkout には触らない (linked
 // worktree でなければ拒否する。hook 規則 7 の pull / 再起動 / kill のどれにも当たらない)。
-import { closeSync, openSync, readFileSync } from 'node:fs';
+// bdboard-ulxa.2: S2 の着地予定ツリーの verify も同じ本体を ledger: false (台帳に書かない) で使う。
+import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { git, gitOk, run, runShellToLog } from './exec.mjs';
@@ -56,26 +57,29 @@ function postQuietly(ctx, sha, state, description) {
  * 契約の verify (実行中は pending を定期更新) → success / failure を投稿 → 元のブランチに戻る。
  * 返り値の result: 'success' | 'failure' | 'error' (error = 検証を実行できなかった。台帳に
  * failure は書かない。pending は verify を始める直前にしか書かないので、準備段階の失敗で
- * 他の merger の LEASE を延ばさない)。
+ * 他の merger の LEASE を延ばさない)。ledger: false なら台帳には何も書かない (S2 の着地予定ツリー)。
  */
-export async function runLandedVerify(ctx, sha, by) {
+export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } = {}) {
   const root = ctx.cwd;
   if (!isLinkedWorktree(root)) {
     say(
-      '着地後検証は PR の worktree (git worktree add で作った作業ツリー) でだけ実行します。',
+      `${ledger ? '着地後検証' : '着地予定ツリーの verify'}は PR の worktree (git worktree add で作った作業ツリー) でだけ実行します。`,
       'main checkout で detach checkout すると常時稼働サーバーの配信物 (web/dist) まで置き換わるため拒否しました。',
-      `PR の worktree に移って npm run merge-pr -- verify ${sha} を実行してください。`,
+      ledger ? `PR の worktree に移って npm run merge-pr -- verify ${sha} を実行してください。` : 'PR の worktree に移って prepare してください。',
     );
     return { result: 'error' };
   }
   if (git(['status', '--porcelain', '--untracked-files=no'], { cwd: root }) !== '') {
-    say('作業ツリーに未コミットの変更があるため着地後検証を始められません (detach checkout できない)。');
+    say(`作業ツリーに未コミットの変更があるため${ledger ? '着地後検証' : '着地予定ツリーの verify'}を始められません (detach checkout できない)。`);
     return { result: 'error' };
   }
   if (!gitOk(['cat-file', '-e', `${sha}^{commit}`], { cwd: root })) {
     say(`${sha} がローカルにありません (git fetch できていない)。`);
     return { result: 'error' };
   }
+  // 状態ファイルより先にログを書くことがある (S2 の prepare、手動の verify) ので置き場を作っておく。
+  mkdirSync(stateDir(root), { recursive: true });
+  const logPath = path.join(stateDir(root), logName ?? `landed-verify-${sha.slice(0, 12)}.log`);
   const branch = run('git', ['symbolic-ref', '-q', '--short', 'HEAD'], { cwd: root });
   const originalHead = git(['rev-parse', 'HEAD'], { cwd: root });
   const restoreTo = branch.status === 0 ? branch.stdout.trim() : originalHead;
@@ -84,14 +88,13 @@ export async function runLandedVerify(ctx, sha, by) {
     say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);
     return { result: 'error' };
   }
-  const logPath = path.join(stateDir(root), `landed-verify-${sha.slice(0, 12)}.log`);
   let result;
   let installedAny = false;
   try {
     const onInstall = () => {
       installedAny = true;
     };
-    result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall });
+    result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger });
   } finally {
     const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
     if (back.status !== 0) {
@@ -104,7 +107,7 @@ export async function runLandedVerify(ctx, sha, by) {
   return { result, logPath };
 }
 
-async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall }) {
+async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
@@ -120,7 +123,7 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
     }
   }
   const running = `npm run verify running (by ${by})`;
-  if (!postQuietly(ctx, sha, 'pending', running)) {
+  if (ledger && !postQuietly(ctx, sha, 'pending', running)) {
     return 'error';
   }
   say(`${ctx.config.verify} を ${sha.slice(0, 8)} で実行します (ログ: ${logPath})`);
@@ -130,7 +133,7 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
     code = await runShellToLog(ctx.config.verify, {
       cwd: root,
       logFd: fd,
-      heartbeatMs: heartbeatMs(ctx),
+      heartbeatMs: ledger ? heartbeatMs(ctx) : 0,
       onHeartbeat: () => postQuietly(ctx, sha, 'pending', running),
     });
   } finally {
@@ -139,6 +142,9 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
   const result = code === 0 ? 'success' : 'failure';
   if (result === 'failure') {
     say(`verify が失敗しました (exit ${code})。ログの末尾:`, tail(logPath, 40));
+  }
+  if (!ledger) {
+    return result;
   }
   const why = result === 'success' ? 'npm run verify passed' : `npm run verify failed (exit ${code})`;
   return postQuietly(ctx, sha, result, `${why} (by ${by})`) ? result : 'error';

@@ -15,7 +15,7 @@
 | `verify` | 回して **exit 0 が合格**の検証コマンド |
 | `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く |
 | `mainBranch` | rebase と、マージ直前 CAS（層2）の基準ブランチ名 |
-| `merge`（任意） | マージ手順の段階。`mode` が `S0`（既定）/ `S1`。§5「S1」参照 |
+| `merge`（任意） | マージ手順の段階。`mode` が `S0`（既定）/ `S1` / `S2`、`hotFiles` は S2 の hot file グロブ。§5「S1」「S2」参照 |
 
 **(3) に落ちたときのエスカレーション**（この文言をそのまま使う）:
 
@@ -488,6 +488,45 @@ npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠�
   の枠を引き継ぐ）→ 印字行 → finish で入れる（finish は success のときだけ枠を返す）→ 壊した PR の
   チケットを再 open して理由を残す。`--repair` は P0 バグの修復 PR 専用。
 - 巻き戻し（S1 → S0）は契約の 1 行。gate 済みの PR があっても finish は動き、枠を返す。
+
+#### S2 — rebase を省き、着地予定ツリーを手元で verify する（契約の `merge.mode` が `S2` のとき）
+
+S2 は S1 の層2 だけを変える（gate / finish / 台帳は S1 のまま）。S1 では main が進んでいれば
+常に rebase → push → CI やり直しだったが、その大半は衝突の無い「main が先に進んだだけ」
+だった。S2 の prepare は main が進んだ PR を分類する:
+
+| クラス | 条件 | prepare の動き |
+|---|---|---|
+| N | `origin/<mainBranch>` が PR head の祖先（main 不動） | S1 と同じ |
+| R | merge-base が 1 個でない / `git merge-tree` がテキスト衝突か実行できない / main 側と自分の変更が同じ `merge.hotFiles` パターン（= 同じ種類の hot file）に当たる / GitHub が `mergeable: false` | exit 3。S1 と同じく rebase → push → CI → prepare |
+| F | それ以外（衝突も hot file の衝突も無い） | `git merge-tree --write-tree origin/<mainBranch> HEAD` の木を `git commit-tree`（親 = PRED_BASE と PR head、push も ref 作成もしない）でコミットにし、**PR の worktree で** detach して契約の検証コマンドを回す。success → PRED_BASE と着地予定ツリーを記録して gate へ / failure → exit 3（R に格下げ） |
+
+- **検証した木 = 着地する木**: squash マージの木は「その時点の main に PR head を 3-way マージした
+  木」。gate の CAS（`ls-remote` == PRED_BASE、枠の中）が main を、`--match-head-commit` が head を
+  固定するので、着地する木は prepare が検証した `merge-tree(PRED_BASE, head)` と同じになる — ただし
+  **GitHub のマージと git の ort マージが一致する限り**（merge-tree は改名検出を git の既定値に固定して
+  走らせ、利用者の gitconfig で木が変わらないようにする）。finish はその一致を測る: 着地した木と記録
+  した木を比べて監査ログ `predicted-tree … match=` に残し、違えば警告する（判定は従来どおり着地後
+  検証）。`gh pr merge` が 405 "not mergeable" なら GitHub だけが衝突と見ている — finish で枠を返し
+  rebase する。
+- ファイルの重なりは判定に使わない（重なりも merge-tree もテキストの判定で、意味的衝突は着地する
+  木を検証しないと分からない）。hot file は種類ごとのグロブで、既定は依存（ルートと web の
+  `package.json` / `package-lock.json`）・`.github/workflows/**`・検証設定（tsconfig / depcruise /
+  verify スクリプト / vite / vitest / 契約ファイル）・`SKILL.md`（正本と注入コピー）。契約の `merge.hotFiles` を書くと既定を丸ごと置き換える。
+- 終了コードは S1 に加えて: `3` = 着地予定ツリーの検証 failure（ログを読み、既知のフレークと言える
+  ときだけ prepare し直す）、`75` = 検証の間に main が動いた、`1` = 検証を実行できなかった、`4` =
+  PRED_BASE の台帳が既に failure（壊れた main の上で検証しない。修復 PR は `git merge
+  origin/<mainBranch>` でクラス N にしてから `gate --repair`）。どれも枠と台帳に触れず、prepare の
+  記録は検証を始める前に消す（古い記録で gate に進ませない）。`git merge-tree --write-tree` は
+  git 2.38 以上が要る（古い git では main が動いた PR がすべて R になる）。
+- クラス F の prepare は検証コマンドを丸ごと回すので数分かかる。フォアグラウンドで長いタイムアウトで
+  待つ。中断されて detach のまま残ったら prepare が `git checkout <ブランチ>` を案内する。
+- `prepare <N> --dry-run` はどのモードでも S2 の分類を「参考」として表示する（検証も記録もしない）。
+  切り替えの前の見積もりに使う。
+- 切り替え・巻き戻し（S2 ⇄ S1）は契約の 1 行。main が S1 なのにクラス F の記録で gate すると 75 で
+  prepare からやり直させる。S2 対応前のスクリプトを持つ古いブランチは `S2` を未知のモードとして
+  拒否する（exit 1）ので `git merge origin/<mainBranch>` してから使う。1 日に revert 2 回・着地予定
+  ツリーが通った PR の着地後検証 failure・監査ログの `predicted-tree … match=false` のどれかで S1 に戻す。
 
 ### 6. close と掃除
 
