@@ -159,6 +159,17 @@ worktree-cwd case above, where every attempt reproduces (2/2).
   neither server nor UI changes are picked up without this rebuild+restart.
   **This includes merges that change only `web/`** — see
   "web だけの変更でも再起動が要る" below for the measurement.
+  - **The restart step itself is conditional.** `deploy` only restarts the
+    listener when `scripts/deploy-changed.sh`'s `deploy_relevant_changed`
+    finds a non-test-only diff under `src/`, `web/`, `docs/help-content.json`,
+    `package.json`, `package-lock.json`, or `.env` between the old and new
+    `HEAD` (test files, `__fixtures__/`, and `*test-support*` paths are
+    excluded — bdboard-cdoj). Before bdboard-kpim, `web/` and
+    `docs/help-content.json` were missing from that pathspec, so a
+    `web/`-only or `docs/help-content.json`-only merge left the old process
+    (and its startup-cached `web/dist/index.html` / chat help text) running.
+    `deploy` still runs `git pull` / `npm install` / `build:web` regardless;
+    only the restart is skipped when nothing in that pathspec changed.
   - **A `git pull --ff-only` here can be blocked by an uncommitted local
     diff to `.claude/bdboard-packs.json`** (measured 2026-08-29, bdboard-8okb):
     `Your local changes to the following files would be overwritten by

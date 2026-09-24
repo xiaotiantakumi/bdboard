@@ -24,8 +24,9 @@
 #   BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy  --expect-pid <pid> \
 #       [--verify] [--tunnel-ack] [--port N] [--dry-run]
 #     deploy = pull --ff-only → lockfile が変わっていれば npm install → web/ が変わっていれば
-#              build:web → src/ か依存が変わっていれば restart (テストファイル・__fixtures__・
-#              test-support 系は判定から除外)、そうでなければ health だけ
+#              build:web → src/・web/・docs/help-content.json か依存が変わっていれば restart
+#              (テストファイル・__fixtures__・test-support 系は判定から除外)、そうでなければ
+#              health だけ
 #
 # 終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・
 #             build 失敗) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
@@ -43,8 +44,9 @@ always-on-server.sh — 常時稼働サーバー (main checkout の npm run star
       [--verify] [--tunnel-ack] [--port N] [--dry-run]
 
   deploy = pull --ff-only → lockfile が変わっていれば npm install → web/ が変わっていれば
-           build:web → src/ か依存が変わっていれば restart (テストファイル・__fixtures__・
-           test-support 系は判定から除外)、そうでなければ health 確認だけ
+           build:web → src/・web/・docs/help-content.json か依存が変わっていれば restart
+           (テストファイル・__fixtures__・test-support 系は判定から除外)、そうでなければ
+           health 確認だけ
 
   --expect-pid  いま listen している PID がこれと一致するときだけ進む (CAS)。status で確認する
   --verify      kill の前に main checkout で契約の検証コマンド (npm run verify) を通す。赤なら触らない
@@ -285,9 +287,14 @@ if [ -n "$DO_VERIFY" ]; then
   (cd "$MAIN" && npm run verify) || { audit "$CURRENT_PIDS" '' 'verify-failed'; die 2 'main checkout の npm run verify が赤です。サーバーは触っていません (旧プロセスのまま)。'; }
 fi
 
-# deploy: サーバー側に変更がなければ再起動しない (静的 web/dist は再起動なしで反映される)。
+# deploy: 再起動が必要な範囲に変更がなければ再起動しない。web/dist の大半のファイルは
+# serveStatic が毎リクエスト disk から返すので再起動なしで反映されるが、SPA フォールバック
+# (src/main.ts) は web/dist/index.html を起動時に 1 回だけ読むため web/ の変更は再起動が
+# 要る。docs/help-content.json も src/infrastructure/chat/help-content.ts が起動時に 1 回だけ
+# 読むため同様 (bdboard-kpim)。
 if [ "$ACTION" = 'deploy' ] && [ -n "$CURRENT_PIDS" ]; then
-  if ! deploy_relevant_changed "$MAIN" "$OLD_HEAD" "$NEW_HEAD" src/ package.json package-lock.json .env; then
+  if ! deploy_relevant_changed "$MAIN" "$OLD_HEAD" "$NEW_HEAD" \
+    src/ web/ docs/help-content.json package.json package-lock.json .env; then
     printf '== server-side unchanged (%s..%s); keeping PID %s. health=HTTP %s\n' \
       "$(git -C "$MAIN" rev-parse --short "$OLD_HEAD")" "$(git -C "$MAIN" rev-parse --short "$NEW_HEAD")" \
       "$CURRENT_PIDS" "$(health_code)"

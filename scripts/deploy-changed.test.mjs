@@ -131,4 +131,67 @@ describe.skipIf(process.platform === 'win32' || !hasGit())('deploy-changed.sh', 
       relevantChanged(oldSha, newSha, 'src/', 'package.json', 'package-lock.json', '.env'),
     ).toBe(true);
   });
+
+  // bdboard-kpim: src/main.ts の SPA フォールバックは web/dist/index.html を起動時に 1 回
+  // だけ読むため、web/ だけの変更でも再起動が必要 (scripts/always-on-server.sh の
+  // deploy_relevant_changed 呼び出しが src/ package.json package-lock.json .env に加えて
+  // web/ と docs/help-content.json も渡すようになった)。
+  it('reports a relevant change when a real web/ file changes', () => {
+    const oldSha = commit('init');
+    mkdirSync(path.join(repo, 'web', 'src'), { recursive: true });
+    writeFileSync(path.join(repo, 'web', 'src', 'main.tsx'), 'export const App = () => null;\n');
+    const newSha = commit('add web/src/main.tsx');
+    expect(
+      relevantChanged(
+        oldSha,
+        newSha,
+        'src/',
+        'web/',
+        'docs/help-content.json',
+        'package.json',
+        'package-lock.json',
+        '.env',
+      ),
+    ).toBe(true);
+  });
+
+  it('does not report a relevant change when only a web/ test file changes', () => {
+    const oldSha = commit('init');
+    mkdirSync(path.join(repo, 'web', 'src'), { recursive: true });
+    writeFileSync(path.join(repo, 'web', 'src', 'App.test.tsx'), '// test\n');
+    const newSha = commit('add web/src/App.test.tsx');
+    expect(
+      relevantChanged(
+        oldSha,
+        newSha,
+        'src/',
+        'web/',
+        'docs/help-content.json',
+        'package.json',
+        'package-lock.json',
+        '.env',
+      ),
+    ).toBe(false);
+  });
+
+  // src/infrastructure/chat/help-content.ts も docs/help-content.json を起動時に 1 回だけ
+  // 読むため、この JSON だけの変更でも再起動が必要。
+  it('reports a relevant change when docs/help-content.json changes', () => {
+    const oldSha = commit('init');
+    mkdirSync(path.join(repo, 'docs'), { recursive: true });
+    writeFileSync(path.join(repo, 'docs', 'help-content.json'), '{"sections":[]}\n');
+    const newSha = commit('add docs/help-content.json');
+    expect(
+      relevantChanged(
+        oldSha,
+        newSha,
+        'src/',
+        'web/',
+        'docs/help-content.json',
+        'package.json',
+        'package-lock.json',
+        '.env',
+      ),
+    ).toBe(true);
+  });
 });
