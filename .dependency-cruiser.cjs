@@ -16,47 +16,9 @@ module.exports = {
     {
       name: 'no-circular',
       severity: 'error',
-      comment:
-        'bdboard-tml8: import 循環を禁止する。既知の循環のうち src/interface/http 側は' +
-        '型定義の抽出(api-deps.ts / harness-routes-deps.ts)で解消済み。' +
-        'web/src/api/board.ts <-> tickets-read.ts の型だけの相互循環は、下の2ルールで' +
-        '具体的なパス対のみ許容している(bdboard-a8e6 で解消予定)。ここではその2ファイルを' +
-        '「発信元」とする循環だけ除外し、他ファイルからの循環や、この2ファイルが絡む' +
-        '新しい(別の相手先への)循環は引き続き検出する。',
-      from: {
-        pathNot: [
-          '^web/src/api/board\\.ts$',
-          '^web/src/api/tickets-read\\.ts$',
-        ],
-      },
+      comment: 'bdboard-a8e6: import 循環を禁止する。例外なし。',
+      from: {},
       to: { circular: true },
-    },
-    {
-      name: 'no-circular-board-dto-allowlisted',
-      severity: 'error',
-      comment:
-        'bdboard-tml8 / bdboard-a8e6: board.ts -> tickets-read.ts は type-only の相互' +
-        '循環(board.ts が TicketSummaryDto を、tickets-read.ts が Lane を type-only' +
-        'import)。Lane が LANES/LANE_LABELS と密結合しており、この場で安全に切り離せる' +
-        '分量ではなかったため許容する。board.ts から他ファイルへの新しい循環は引き続き検出する。',
-      from: { path: '^web/src/api/board\\.ts$' },
-      to: {
-        circular: true,
-        pathNot: '^web/src/api/tickets-read\\.ts$',
-      },
-    },
-    {
-      name: 'no-circular-tickets-read-dto-allowlisted',
-      severity: 'error',
-      comment:
-        'bdboard-tml8 / bdboard-a8e6: tickets-read.ts -> board.ts の逆方向。上の' +
-        'no-circular-board-dto-allowlisted と対になる許容(bdboard-a8e6 で解消予定)。' +
-        'tickets-read.ts から他ファイルへの新しい循環は引き続き検出する。',
-      from: { path: '^web/src/api/tickets-read\\.ts$' },
-      to: {
-        circular: true,
-        pathNot: '^web/src/api/board\\.ts$',
-      },
     },
     {
       name: 'domain-no-upstream-deps',
