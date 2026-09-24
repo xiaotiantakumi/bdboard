@@ -8,10 +8,13 @@ import {
   type RefObject,
 } from 'react';
 import { type Lane } from '../../api';
+import type { BulkSelectionContextValue } from '../BulkSelectionProvider';
 import {
-  idsInInclusiveRange,
-  type BulkSelectionContextValue,
-} from '../BulkSelectionProvider';
+  handleEscapeKey,
+  handleNormalMovementKey,
+  handleRangeSelectionKey,
+  handleToggleSelectionKey,
+} from './containerKeyHandlers';
 import {
   isNextInLaneKey,
   isPrevInLaneKey,
@@ -65,128 +68,31 @@ export function useContainerKeyDown({
       const isNextInLane = isNextInLaneKey(key);
       const isPrevInLane = isPrevInLaneKey(key);
 
-      if (
-        key === 'Escape' &&
-        bulkSelection !== null &&
-        bulkSelection.selectedIds.size > 0
-      ) {
-        event.preventDefault();
-        bulkSelection.clear();
-        resetRangeSelectionRefs();
-        return;
+      if (key === 'Escape') {
+        const handled = handleEscapeKey(event, { bulkSelection, resetRangeSelectionRefs });
+        if (handled) return;
       }
 
       if ((key === 'x' || key === 'X') && !shift) {
-        if (focusedCardId !== null && bulkSelection !== null) {
-          event.preventDefault();
-          bulkSelection.toggle(focusedCardId);
-          rangeAnchorRef.current = focusedCardId;
-          lastRangeIdsRef.current = [];
-        }
+        handleToggleSelectionKey(event, { bulkSelection, focusedCardId, rangeAnchorRef, lastRangeIdsRef });
         return;
       }
 
       if (shift && (isNextInLane || isPrevInLane)) {
-        event.preventDefault();
-        const currentId = focusedCardId ?? getDefaultFocusedCardId();
-        if (currentId === null) {
-          return;
-        }
-
-        const direction = isNextInLane ? 'next' : 'prev';
-        const anchor = rangeAnchorRef.current ?? currentId;
-        rangeAnchorRef.current = anchor;
-        const nextId = resolveMoveWithinLane(currentId, direction);
-        if (nextId === null) {
-          return;
-        }
-
-        focusCardByKeyboard(nextId);
-
-        if (bulkSelection !== null) {
-          const lane = findLaneForCard(currentId);
-          const laneIds =
-            lane !== null ? laneCardsRef.current.get(lane) : undefined;
-          if (laneIds !== undefined) {
-            const newRange = idsInInclusiveRange(laneIds, anchor, nextId);
-            const idsToRemove = lastRangeIdsRef.current.filter(
-              (id) => !newRange.includes(id),
-            );
-            if (idsToRemove.length > 0) {
-              bulkSelection.deselectAll(idsToRemove);
-            }
-            bulkSelection.selectRange(laneIds, anchor, nextId);
-            lastRangeIdsRef.current = newRange;
-          }
-        }
+        handleRangeSelectionKey(event, {
+          direction: isNextInLane ? 'next' : 'prev',
+          bulkSelection, focusedCardId, getDefaultFocusedCardId, findLaneForCard,
+          laneCardsRef, resolveMoveWithinLane, focusCardByKeyboard, rangeAnchorRef, lastRangeIdsRef,
+        });
         return;
       }
 
-      if (shift) {
-        return;
-      }
+      if (shift) return;
 
-      if (focusedCardId === null) {
-        const defaultId = getDefaultFocusedCardId();
-        if (defaultId === null) {
-          return;
-        }
-        if (
-          key === 'ArrowDown' ||
-          key === 'j' ||
-          key === 'ArrowUp' ||
-          key === 'k' ||
-          key === 'ArrowRight' ||
-          key === 'l' ||
-          key === 'ArrowLeft' ||
-          key === 'h' ||
-          key === 'Home' ||
-          key === 'End'
-        ) {
-          event.preventDefault();
-          focusCardByKeyboard(defaultId);
-        }
-        return;
-      }
-
-      switch (key) {
-        case 'ArrowDown':
-        case 'j':
-          event.preventDefault();
-          resetRangeSelectionRefs();
-          moveWithinLane('next');
-          break;
-        case 'ArrowUp':
-        case 'k':
-          event.preventDefault();
-          resetRangeSelectionRefs();
-          moveWithinLane('prev');
-          break;
-        case 'ArrowRight':
-        case 'l':
-          event.preventDefault();
-          resetRangeSelectionRefs();
-          moveAcrossLanes('next');
-          break;
-        case 'ArrowLeft':
-        case 'h':
-          event.preventDefault();
-          resetRangeSelectionRefs();
-          moveAcrossLanes('prev');
-          break;
-        case 'Home':
-          event.preventDefault();
-          resetRangeSelectionRefs();
-          moveWithinLane('first');
-          break;
-        case 'End':
-          event.preventDefault();
-          resetRangeSelectionRefs();
-          moveWithinLane('last');
-          break;
-        default:
-          break;
-      }
+      handleNormalMovementKey(event, {
+        key, focusedCardId, getDefaultFocusedCardId, focusCardByKeyboard,
+        moveWithinLane, moveAcrossLanes, resetRangeSelectionRefs,
+      });
     },
     [
       bulkSelection,
