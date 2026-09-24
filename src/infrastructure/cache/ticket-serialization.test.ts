@@ -157,4 +157,25 @@ describe('ticket serialization', () => {
     expect(restored).toEqual(original);
     expect(restored?.models).toBeUndefined();
   });
+
+  it('round-trips complexity when present', () => {
+    const original: Ticket = {
+      ...minimalTicket(),
+      complexity: 'med',
+    };
+
+    expect(deserializeTickets(serializeTickets([original]))[0]).toEqual(original);
+  });
+
+  it('omits complexity after round-trip when absent', () => {
+    const original = minimalTicket();
+    const json = serializeTickets([original]);
+    const parsed = JSON.parse(json) as Record<string, unknown>[];
+
+    expect(parsed[0]).not.toHaveProperty('complexity');
+
+    const restored = deserializeTickets(json)[0];
+    expect(restored).toEqual(original);
+    expect(restored?.complexity).toBeUndefined();
+  });
 });

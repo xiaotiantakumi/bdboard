@@ -92,6 +92,9 @@ export function TicketDetailBody({
       <DetailField label="Status">{data.status}</DetailField>
       <DetailField label="Priority">P{data.priority}</DetailField>
       <DetailField label="Issue Type">{data.issueType}</DetailField>
+      {data.complexity !== undefined && (
+        <DetailField label="Complexity">{data.complexity}</DetailField>
+      )}
       {prLink !== undefined && (
         <DetailField label="PR">
           <PrLinkBadge prLink={prLink} />

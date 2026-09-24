@@ -160,6 +160,26 @@ describe('mapBdIssueToTicket', () => {
     expect(emptyMetadata.models).toBeUndefined();
   });
 
+  it('maps bdboard.complexity metadata to complexity', () => {
+    const ticket = mapBdIssueToTicket(
+      { ...fullIssue(), metadata: { 'bdboard.complexity': 'med' } },
+      'my-project',
+    );
+
+    expect(ticket.complexity).toBe('med');
+  });
+
+  it('omits complexity when metadata is absent or the value is not a non-empty string', () => {
+    const withoutMetadata = mapBdIssueToTicket(fullIssue(), 'my-project');
+    expect(withoutMetadata.complexity).toBeUndefined();
+
+    const emptyValue = mapBdIssueToTicket(
+      { ...fullIssue(), metadata: { 'bdboard.complexity': '' } },
+      'my-project',
+    );
+    expect(emptyValue.complexity).toBeUndefined();
+  });
+
   it('omits labels when the field is absent (older bd output)', () => {
     const issue = fullIssue();
     const { labels: _removed, ...withoutLabels } = issue;

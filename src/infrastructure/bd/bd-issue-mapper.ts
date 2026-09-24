@@ -4,6 +4,7 @@ import { compareStrings } from '../../domain/compare.js';
 import type { DependencyEdge } from '../../domain/dependency.js';
 import type { Priority } from '../../domain/status.js';
 import type { Ticket } from '../../domain/ticket.js';
+import { parseTicketComplexity } from '../../domain/ticket-complexity.js';
 import { parseTicketId } from '../../domain/ticket-id.js';
 import { parseTicketModelRecords } from '../../domain/ticket-model.js';
 import { parseTicketManualSessionId } from '../../domain/ticket-session-link.js';
@@ -33,7 +34,8 @@ type OptionalTicketFields = {
     | 'closeReason'
     | 'labels'
     | 'manualSessionId'
-    | 'models']?: Ticket[K];
+    | 'models'
+    | 'complexity']?: Ticket[K];
 };
 
 function summarizeZodError(error: { issues: readonly { path: readonly (string | number)[]; message: string }[] }): string {
@@ -136,6 +138,10 @@ export function mapBdIssueToTicket(raw: BdIssue, projectId: string): Ticket {
   const models = parseTicketModelRecords(raw.metadata);
   if (models.length > 0) {
     optionalFields.models = models;
+  }
+  const complexity = parseTicketComplexity(raw.metadata);
+  if (complexity !== undefined) {
+    optionalFields.complexity = complexity;
   }
 
   return { ...ticket, ...optionalFields };
