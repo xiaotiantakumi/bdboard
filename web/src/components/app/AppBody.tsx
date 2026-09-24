@@ -16,17 +16,22 @@ export interface AppBodyProps {
 /**
  * App.tsx の JSX 本体(旧322〜521行目)をそのまま持つ表示専用コンポーネント
  * (bdboard-62p4 第6段)。TicketDetailPanel/TicketDetailBody
- * (bdboard-sso1.5)と同じ構成で、useAppController が返す値を単一の
- * `controller` prop として受け取る(≤12 props soft guidance に対し、個々の
- * 値を並べると70近いprops になるため、フィールド名を変えない1オブジェクトに
- * まとめて渡す形をとった)。AppHeader / AppOverlayGroup
- * 呼び出し部分は行数の都合で AppHeaderSection.tsx / AppOverlaySection.tsx へ
- * さらに分けた(いずれも同じ `controller` prop を受け取るだけの表示専用
- * コンポーネント)。それ以外の JSX 自体は分割代入した変数名も含め元の
- * App.tsx から1文字も変えていない。唯一の例外は hideDone/setHideDone/
- * stalledOnly/setStalledOnly の参照元を `controller.boardFilterState.hideDone`
- * 等に変えた点(useAppController.ts の JSDoc の通り、同じ boardFilterState
- * オブジェクトの中身なので値は変わらない)。
+ * (bdboard-sso1.5)と同じ「controller hook + presentational body」の分割方針を
+ * 踏襲するが、prop の渡し方は精度が異なる: あちらの TicketDetailBody は
+ * useTicketDetailController の戻り値を関心事ごとにグループ化した上で
+ * (`title`/`agentRun`/`labels` 等)個別の型付き prop として受け取るのに対し、
+ * ここでは useAppController の戻り値(約70フィールドのフラットな1オブジェクト)
+ * をそのまま単一の `controller` prop として渡す(≤12 props soft guidance に
+ * 対し、個々の値を並べると70近い props になるため、フィールド名を変えない
+ * 1オブジェクトにまとめて渡す形をとった。関心事ごとのグループ化は将来の
+ * 改善余地として残る — bdboard-62p4 の opus レビュー参照)。AppHeader /
+ * AppOverlayGroup 呼び出し部分は行数の都合で AppHeaderSection.tsx /
+ * AppOverlaySection.tsx へさらに分けた(いずれも同じ `controller` prop を
+ * 受け取るだけの表示専用コンポーネント)。それ以外の JSX 自体は分割代入した
+ * 変数名も含め元の App.tsx から1文字も変えていない。唯一の例外は
+ * hideDone/setHideDone/stalledOnly/setStalledOnly の参照元を
+ * `controller.boardFilterState.hideDone` 等に変えた点(useAppController.ts の
+ * JSDoc の通り、同じ boardFilterState オブジェクトの中身なので値は変わらない)。
  */
 export function AppBody({ controller }: AppBodyProps) {
   const {

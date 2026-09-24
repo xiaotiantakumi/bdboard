@@ -123,11 +123,16 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     setNextUpLimit: vi.fn(),
     nextUpShowEpics: false,
     setNextUpShowEpics: vi.fn(),
-    activityWindowDays: 1,
+    // activityWindowDays/digestWindowDays/statsWeeks share a type (number) and,
+    // for the first two, a validator (see useAppUiPreferences.ts), so a silent
+    // swap between them in AppBody's `windows={{...}}` wiring wouldn't be
+    // caught by TypeScript. Giving them distinct values here (not just
+    // distinct setters) lets the assertions below catch that swap.
+    activityWindowDays: 7,
     setActivityWindowDays: vi.fn(),
-    digestWindowDays: 1,
+    digestWindowDays: 3,
     setDigestWindowDays: vi.fn(),
-    statsWeeks: 8,
+    statsWeeks: 12,
     setStatsWeeks: vi.fn(),
     recentTickets: [],
     setRecentTickets: vi.fn(),
@@ -248,6 +253,24 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     );
   });
 
+  it('does not swap activityWindowDays/digestWindowDays/statsWeeks (share a type, and the first two share a validator)', async () => {
+    capturedViewContentProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const controller = makeController();
+
+    renderAppBody(AppBody, controller);
+
+    const viewContent = capturedViewContentProps.at(-1);
+    expect(viewContent?.windows.activityWindowDays).toBe(7);
+    expect(viewContent?.windows.onActivityWindowDaysChange).toBe(
+      controller.setActivityWindowDays,
+    );
+    expect(viewContent?.windows.digestWindowDays).toBe(3);
+    expect(viewContent?.windows.onDigestWindowDaysChange).toBe(controller.setDigestWindowDays);
+    expect(viewContent?.windows.statsWeeks).toBe(12);
+    expect(viewContent?.windows.onStatsWeeksChange).toBe(controller.setStatsWeeks);
+  });
+
   it('resolves ticketDetail.pendingDecision/prLink from the controller Maps for the selected ticket', async () => {
     capturedOverlayGroupProps.length = 0;
     const { AppBody } = await import('./AppBody');
@@ -282,7 +305,7 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(overlayGroup?.ticketDetail.prLink).toBeUndefined();
   });
 
-  it('gates chat.onChatAboutTicket on chatAvailable, not always-on', async () => {
+  it('gates ticketDetail.onChatAboutTicket on chatAvailable, not always-on', async () => {
     capturedOverlayGroupProps.length = 0;
     const { AppBody } = await import('./AppBody');
     const controllerUnavailable = makeController({ chatAvailable: false });
