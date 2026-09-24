@@ -19,7 +19,12 @@ import { envBoolDefaultTrue, envInt, envOptionalString, envString } from './env.
 export class MainCheckoutDbPathRequiredError extends Error {
   constructor(repoRoot: string) {
     super(
-      `BDBOARD_DB is not set for linked worktree checkout "${repoRoot}". Startup is refused to avoid opening the same database as the resident server (~/.bdboard/cache.db). Set BDBOARD_DB to a dedicated database file (for example, a copy created with sqlite3 ~/.bdboard/cache.db ".backup '<path>'") and start again.`,
+      // bdboard-6h6n: isLinkedWorktreeCheckout() only checks whether "<repoRoot>/.git" is a
+      // file, which is also true for a git submodule, a `--separate-git-dir` clone, or a
+      // worktree of a bare repo -- not only a `.claude/worktrees/*`-style linked worktree.
+      // Don't claim "linked worktree" outright; describe the actual signal instead (opus
+      // review nit on PR #695).
+      `BDBOARD_DB is not set for "${repoRoot}", whose .git is a file rather than a directory (this checkout looks like a linked worktree, though it could also be a git submodule or a checkout created with --separate-git-dir). Startup is refused to avoid opening the same database as the resident server (~/.bdboard/cache.db). Set BDBOARD_DB to a dedicated database file (for example, a copy created with sqlite3 ~/.bdboard/cache.db ".backup '<path>'") and start again.`,
     );
     this.name = 'MainCheckoutDbPathRequiredError';
   }
@@ -35,7 +40,11 @@ export class MainCheckoutDbPathRequiredError extends Error {
 export class SharedStateDirectoryCollisionError extends Error {
   constructor(repoRoot: string, dbPath: string) {
     super(
-      `BDBOARD_DB="${dbPath}" for linked worktree checkout "${repoRoot}" resolves to a directory that is itself a shared bdboard state directory. Placing the database there would still colocate config.json and the tunnel log with the resident server's real shared files. Choose a different directory (for example <worktree>/.tmp-db/cache.db) and start again.`,
+      // bdboard-6h6n: same "don't overclaim linked worktree" reasoning as
+      // MainCheckoutDbPathRequiredError above -- this is only reachable when
+      // isLinkedWorktreeCheckout(repoRoot) is true, which is the same .git-is-a-file
+      // heuristic (opus review nit on PR #695).
+      `BDBOARD_DB="${dbPath}" for "${repoRoot}", whose .git is a file rather than a directory, resolves to a directory that is itself a shared bdboard state directory. Placing the database there would still colocate config.json and the tunnel log with the resident server's real shared files. Choose a different directory (for example <worktree>/.tmp-db/cache.db) and start again.`,
     );
     this.name = 'SharedStateDirectoryCollisionError';
   }
@@ -53,10 +62,19 @@ function collidesWithSharedStateDirectory(dbPath: string): boolean {
 function resolveDbPath(repoRoot: string, isLinkedWorktreeCheckout: boolean): string {
   const configuredPath = envOptionalString('BDBOARD_DB');
   if (configuredPath !== undefined) {
-    if (isLinkedWorktreeCheckout && collidesWithSharedStateDirectory(configuredPath)) {
-      throw new SharedStateDirectoryCollisionError(repoRoot, configuredPath);
+    // bdboard-6h6n: pin BDBOARD_DB to an absolute path once, here, at resolution time. A
+    // relative value would otherwise flow into dbPath (and from there into
+    // resolveSharedConfigFilePath/resolveSharedTunnelLogFilePath below via path.dirname(dbPath))
+    // still relative, so config.json/tunnel-log's sibling directory would silently depend on
+    // whatever process.cwd() happens to be wherever those paths get consumed, instead of the cwd
+    // at startup. collidesWithSharedStateDirectory() already resolves internally, so this does
+    // not change collision detection -- it only makes the *returned* dbPath (and everything
+    // derived from it) consistent.
+    const resolvedPath = path.resolve(configuredPath);
+    if (isLinkedWorktreeCheckout && collidesWithSharedStateDirectory(resolvedPath)) {
+      throw new SharedStateDirectoryCollisionError(repoRoot, resolvedPath);
     }
-    return configuredPath;
+    return resolvedPath;
   }
   if (isLinkedWorktreeCheckout) {
     // Refusal avoids the surprising lifecycle and staleness of an automatic database copy.

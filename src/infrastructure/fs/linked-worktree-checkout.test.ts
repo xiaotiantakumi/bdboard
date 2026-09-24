@@ -42,4 +42,21 @@ describe('isLinkedWorktreeCheckout', () => {
     fs.symlinkSync(realGitDir, path.join(root, '.git'), 'dir');
     expect(isLinkedWorktreeCheckout(root)).toBe(false);
   });
+
+  // bdboard-6h6n: documents the known false-positive cases (opus review nit on PR #695). The
+  // detection stays as-is on purpose -- guarding too eagerly (requiring an explicit BDBOARD_DB)
+  // is the safe direction to fail in, so these cases are left true. The caller-facing message
+  // (MainCheckoutDbPathRequiredError in resolve-main-config.ts) was reworded instead to not
+  // assert "linked worktree" outright; see resolve-main-config.test.ts for that coverage.
+  it('also returns true for a git submodule checkout, since its .git is a file too (documented false positive)', () => {
+    const root = makeTempDir();
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: ../.git/modules/some-submodule\n');
+    expect(isLinkedWorktreeCheckout(root)).toBe(true);
+  });
+
+  it('also returns true for a --separate-git-dir clone, since its .git is a file too (documented false positive)', () => {
+    const root = makeTempDir();
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /elsewhere/separate-git-dir\n');
+    expect(isLinkedWorktreeCheckout(root)).toBe(true);
+  });
 });
