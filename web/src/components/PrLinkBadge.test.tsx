@@ -57,4 +57,17 @@ describe('PrLinkBadge', () => {
 
     expect(container.querySelector('.pr-check-fail')).not.toBeNull();
   });
+
+  it('renders an unfetched, non-link badge when url is null (bdboard-3znc)', () => {
+    // 時間予算内にコメント走査が完了しなかったチケット。「PRが無い」(prLink自体が
+    // undefined) とは区別する必要がある — リンク先が無いので <a> ではなく <span> で
+    // 表示し、resolved な PR バッジ (badge-pr-open 等) や状態未取得バッジ
+    // (badge-pr-unknown, url は分かっている) とも別のクラスにする。
+    render(<PrLinkBadge prLink={makePrLink({ url: null, state: null, checkStatus: null })} />);
+
+    expect(screen.queryByRole('link')).toBeNull();
+    const badge = screen.getByText('PR 未取得');
+    expect(badge).toHaveClass('badge-pr-unfetched');
+    expect(badge.tagName).toBe('SPAN');
+  });
 });

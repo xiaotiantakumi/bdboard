@@ -49,7 +49,10 @@ export const ADOPT_SEED_MESSAGE_LIMIT = 20;
 
 export const BD_TICKET_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
-const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
+/** Matches any ASCII control character (incl. DEL). Shared with
+ *  src/infrastructure/chat/repo-tool-catalog/schemas.ts (bdboard-sso1.75) - domain is the
+ *  innermost layer so infrastructure may import this constant, never the reverse. */
+export const CONTROL_CHAR_PATTERN = /[\u0000-\u001f\u007f]/;
 
 export function isSafeCliArgument(value: string): boolean {
   if (value.length === 0) {

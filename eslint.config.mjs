@@ -17,22 +17,14 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 2309, // 現在 2301 (bdboard-sso1.2 PR-F でさらに分割)
-  'web/src/components/TicketDetailPanel.tsx': 800, // 現在 757 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングを useTicketAgentRun.ts + TicketAgentRunTriggerSection.tsx + TicketAgentRunSection.tsx へ、human decision 回答を useTicketDecisionAnswer.ts + TicketDecisionSection.tsx へ移動)
-  'web/src/components/ticket-detail/useTicketAgentRun.ts': 260, // 現在 246 (bdboard-sso1.5 PR-L: エージェント実行+ポーリングの state/query/mutation/effect をカスタムフックへ抽出。move-only 抽出のため新規ファイルだが例外的にここへ追加。Opus レビュー対応でticketId変更リセットを内部effect化した分+4)
-  'src/main.ts': 400, // 現在 400 (bdboard-sso1.14: 941 から分割)
-  'web/src/components/board/BoardLanes.tsx': 230, // 現在 214 (bdboard-sso1.44 PR-B: BoardView.tsx の LanesRow+BoardLanes を move-only 抽出。表示専用の1コンポーネント対で、これ以上分けるとJSX/DOMや親子関係を変えずには切れない。move-only 抽出のため新規ファイルだが例外的にここへ追加)
-  'web/src/components/bulk-action/useBulkActions.ts': 230, // 現在 222 (bdboard-sso1.60: 一括クイックアクション/一括ラベル付与の mutation を ./actions/*.ts へ分割。272→222 (旧コメントの「現在 280」は分割前から既に実測とずれていたので実測値へ修正)。move-only 抽出のため引き続き例外的にここへ追加)
-  'web/src/App.tsx': 980, // 現在 976 (bdboard-sso1.13 PR-A でオーバーレイ/パネル制御を分割)
-  'src/application/board/get-pr-badges.ts': 390, // 現在 388
-  'src/infrastructure/process/cloudflared-tunnel.ts': 220, // 現在 213 (bdboard-sso1.54: ./cloudflared-tunnel/*.ts へ関心別分割。createCloudflaredTunnel() 本体は可変状態を共有するクロージャ群のため分割せず残した)
-  'src/application/tunnel/tunnel-service.ts': 215, // 現在 205 (bdboard-sso1.64: ./tunnel-service/*.ts へ関心別分割。createTunnelService() 本体は可変状態を共有するクロージャ群のため分割せず残した)
+  'web/src/components/ChatPanel.tsx': 2057, // 現在 2047 (bdboard-sso1.83 第4段: carry plan 4つ/turn-status 定数/メッセージ変換(3箇所重複)/送信エラー文言/projectSelection・chatSettingsSummaryParts の派生値を chat/ 配下の純関数へ抽出)
+  // 'web/src/components/TicketDetailPanel.tsx' はこの一覧から除去 (bdboard-sso1.5:
+  // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
+  // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、
+  // 680 -> 141 行(ESLint実測)まで縮小。既定上限200行に対して59行の余裕がある)。
+  'web/src/App.tsx': 432, // 現在 422 (bdboard-62p4 第5段: boardFilterPresetState/handleApplyBoardFilterPreset/既定プリセット適用effectを useAppFilterPresets.ts へ、最近開いたチケット記録・ボード在籍判定・手動リフレッシュ・プロジェクト選択・コマンドパレット・エピック絞り込みのハンドラ群を useAppActions.ts へ抽出。190行にはまだ届かないため引き続き allowlist に残す。次段候補はチケット本文参照)
   // テスト (1500 行超)
-  'web/src/components/ChatPanel.test.tsx': 7630, // 現在 7627
-  'web/src/components/TicketDetailPanel.test.tsx': 2710, // 現在 2706
-  'web/src/components/HygienePanel.test.tsx': 2100, // 現在 2098
-  'src/domain/hygiene.test.ts': 1840, // 現在 1835
-  'src/infrastructure/bd/bd-cli-human-decisions.test.ts': 1680, // 現在 1679
+  'web/src/components/TicketDetailPanel.test.tsx': 2774, // 現在 2764 (bdboard-sso1.5: ticketId 切替でのタイトル編集下書きクリアを検証するテストを追加)
 };
 
 const NON_TEST_MAX_LINES = 200;

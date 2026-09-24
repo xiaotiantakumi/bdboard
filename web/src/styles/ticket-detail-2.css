@@ -20,6 +20,17 @@
   color: var(--badge-neutral-fg);
 }
 
+/* bdboard-3znc: commentCount>0 だが時間予算内にコメント走査が完了しなかったチケット。
+   badge-pr-unknown (URL は分かっているが状態が未取得) とは意味が違う新しい状態
+   (URLすら分かっていない) なので、区別できるクラス名にしつつ同じ neutral トークンを
+   使う (index.css の badgeNeutralContrast 回帰ガードが既にこのトークン対の
+   コントラストを検証している)。 */
+.badge-pr-unfetched {
+  background: var(--badge-neutral-bg);
+  color: var(--badge-neutral-fg);
+  cursor: default;
+}
+
 .pr-check-dot {
   display: inline-block;
   width: 6px;

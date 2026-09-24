@@ -68,6 +68,18 @@ export function PrLinkBadge({ prLink }: PrLinkBadgeProps) {
     return null;
   }
 
+  if (prLink.url === null) {
+    // bdboard-3znc: commentCount>0 だが、応答の時間予算内にコメント走査が完了しな
+    // かったチケット (「PR が無い」とは違う —— まだ分かっていないだけ)。リンク先が
+    // 無いので <a> ではなく非クリッカブルな <span> で表示する。次の /api/pr-links
+    // 呼び出し (board.changed のたびに来る) でキャッシュが温まれば解決するはず。
+    return (
+      <span className="badge badge-pr-unfetched" title="PR: 未取得 (時間内に確認できませんでした)">
+        PR 未取得
+      </span>
+    );
+  }
+
   const checkDotClassName = prCheckDotClassName(prLink.checkStatus);
 
   return (

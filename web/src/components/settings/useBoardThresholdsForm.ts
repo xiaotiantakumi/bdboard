@@ -2,10 +2,10 @@
 // 読む state + effect + mutation を、挙動を変えずにこのカスタムフックへ抽出しただけのファイル。
 // 呼び出し順序・依存配列・queryKey・onSuccess/onError の中身は移動前から変えていない。
 //
-// version と dirty フラグはこのフックの外(親の SettingsPanel)が持つ。閾値フォームと
-// WIP上限フォーム (useWipLimitsForm) は、サーバー側では同じ設定ドキュメント
-// (board-thresholds-config) = 同じ version を共有しており、version の書き戻しは
-// 両方のフォームが未編集のときに限る (bdboard-chp) ため、共有 state は親に残している。
+// version と dirty フラグはこのフックの外(親の SettingsPanel が呼ぶ useThresholdsSharedState,
+// bdboard-59if)が持つ。閾値フォームと WIP上限フォーム (useWipLimitsForm) は、サーバー側では
+// 同じ設定ドキュメント (board-thresholds-config) = 同じ version を共有しており、version の
+// 書き戻しは両方のフォームが未編集のときに限る (bdboard-chp) ため、共有 state は親に残している。
 import { useMutation, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 import {

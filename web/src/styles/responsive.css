@@ -182,6 +182,15 @@
     justify-content: center;
   }
 
+  /* 統計タブの再読み込みボタンも btn-small のままだと 26px で小さすぎるので、
+     同じ 44px タップ領域へ揃える (bdboard-ws2w) */
+  .btn.throughput-reload-btn {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   /* スマホ幅ではヘッダーを縦積みにして、アクション群（戻る / ウォッチ / 閉じる）を
      タイトルの下の独立した行へ下ろす。全画面パネルの右上は片手操作で親指が最も
      届きにくい位置で、そこに 44px の閉じるボタンを置いても押しにくさは解消しない

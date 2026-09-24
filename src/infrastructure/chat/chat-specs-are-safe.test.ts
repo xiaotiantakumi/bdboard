@@ -125,25 +125,34 @@ describe('chat specs safety guards', () => {
     expect(source.toLowerCase().includes('claude')).toBe(false);
   });
 
-  it('src/main.ts and src/bootstrap/wire-chat.ts wire chat agent registration through buildChatAgentRegistry (bdboard-l1t.4 SF6)', () => {
+  it('src/main.ts, src/bootstrap/wire-feature-routes.ts and src/bootstrap/wire-chat.ts wire chat agent registration through buildChatAgentRegistry (bdboard-l1t.4 SF6, bdboard-sso1.86 で main.ts の分割により wireChat( 呼び出しが wire-feature-routes.ts へ移動)', () => {
     // 実際の登録配線(claude 常時登録 / codex・cursor は opt-in)は
     // chat-agent-registry-builder.ts に切り出してユニットテストしてある
     // (chat-agent-registry-builder.test.ts)。main.ts 自体のチャット領域配線は
-    // bdboard-sso1.14 で src/bootstrap/wire-chat.ts へ move only で切り出した
-    // ため、buildChatAgentRegistry( の呼び出しはそちらにある。ここでは
-    // main.ts / wire-chat.ts のどちらも配線を自前で持たず、その関数を呼ぶ形を
-    // 保っていることだけを固定する。
+    // bdboard-sso1.14 で src/bootstrap/wire-chat.ts へ move only で切り出し、
+    // bdboard-sso1.86 で main.ts の行数削減のため wireChat( の直接呼び出し
+    // 箇所自体は src/bootstrap/wire-feature-routes.ts (agent-run/tunnel/
+    // update-check/ai-quota/chat をまとめて呼ぶ配線) へさらに移動した。ここでは
+    // main.ts / wire-feature-routes.ts / wire-chat.ts のいずれも登録配線を
+    // 自前で持たず、それぞれ次の関数を呼ぶ形を保っていることだけを固定する。
     const mainPath = path.join(REPO_ROOT, 'src/main.ts');
     const mainSource = readFileSync(mainPath, 'utf8');
-    // main.ts 自身は登録配線を持たず wireChat( 経由で委譲する形を保っていることを
-    // 固定する (bdboard-sso1.14 レビュー指摘)。これが無いと、将来 main.ts に
-    // 別の登録経路を直書きしても (create*ChatAgent の4シンボルさえ使わなければ)
-    // このテストは気付かない。
-    expect(mainSource).toContain('wireChat(');
+    // main.ts 自身は登録配線を持たず wireFeatureRoutes( 経由で委譲する形を保って
+    // いることを固定する。これが無いと、将来 main.ts に別の登録経路を直書きしても
+    // (create*ChatAgent の4シンボルさえ使わなければ) このテストは気付かない。
+    expect(mainSource).toContain('wireFeatureRoutes(');
     expect(mainSource).not.toContain('createClaudeChatAgent');
     expect(mainSource).not.toContain('createCodexChatAgent');
     expect(mainSource).not.toContain('createCursorChatAgent');
     expect(mainSource).not.toContain('createAgyChatAgent');
+
+    const wireFeatureRoutesPath = path.join(REPO_ROOT, 'src/bootstrap/wire-feature-routes.ts');
+    const wireFeatureRoutesSource = readFileSync(wireFeatureRoutesPath, 'utf8');
+    expect(wireFeatureRoutesSource).toContain('wireChat(');
+    expect(wireFeatureRoutesSource).not.toContain('createClaudeChatAgent');
+    expect(wireFeatureRoutesSource).not.toContain('createCodexChatAgent');
+    expect(wireFeatureRoutesSource).not.toContain('createCursorChatAgent');
+    expect(wireFeatureRoutesSource).not.toContain('createAgyChatAgent');
 
     const wireChatPath = path.join(REPO_ROOT, 'src/bootstrap/wire-chat.ts');
     const wireChatSource = readFileSync(wireChatPath, 'utf8');

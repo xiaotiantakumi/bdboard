@@ -38,24 +38,31 @@
 // 元の「リセット→復元」の順序が保証される。親からの明示的な `agentRun.reset()`
 // 呼び出しは廃止した (呼ぶと今回と同じ理由で再度上書きしてしまうため)。
 // `reset` はテスト・将来の手動リセット用途のために戻り値として公開したまま。
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  cancelAgentRun,
-  fetchAgentRun,
-  fetchProjectHarnessStatus,
-  fetchTicketRuns,
-  startTicketRun,
-  type AgentRunDetailDto,
-  type TicketDetailDto,
-} from '../../api';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
-import {
-  AGENT_RUN_POLL_INTERVAL_MS,
-  AGENT_RUN_POLL_MAX_FAILURES,
-  describeHarnessRunBlock,
-  isAgentRunInProgress,
-} from '../agentRunShared';
+//
+// bdboard-sso1.79: ハーネス前提クエリ・実行履歴一覧クエリ・確認ダイアログの
+// フォーカストラップ・履歴詳細クエリ・ポーリング effect・起動/中止 mutation を、
+// それぞれ ./agent-run/*.ts へ move-only で抽出した (#618 useHygieneRepairActions /
+// #623 useBulkActions と同じパターン)。ここに残るのは、複数の下位フックが共有する
+// state (confirmingAgentRun/activeRunId/activeRunMeta/polledRunDetail/
+// runStatusUnavailable/selectedHistoryRunId)、上記コメントの宣言順序が不変条件と
+// なっている2つの useEffect (ticketId 変更リセット → activeRunFromList 同期)、
+// それらに依存する hasActiveRun/runStartDisabled の算出、そして各下位フックを
+// 呼び出して結果を束ねる配線。useState/useRef/useQuery/useMutation の呼び出し順は
+// 分割前と同じ相対順序 (harness query → ticket-runs query → 6つの useState →
+// 確認ダイアログの2つの useRef・handleCancelAgentRun 用 useCallback・
+// useFocusTrap → reset用 useCallback → ticketIdリセット effect → 3つの useMemo
+// (activeRunFromList/hasActiveRun/runStartDisabled) → 同期 effect → 履歴詳細
+// query → ポーリング effect → 起動/中止 mutation) を保っている。
+import { useQueryClient } from '@tanstack/react-query';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { AgentRunDetailDto, TicketDetailDto } from '../../api';
+import { isAgentRunInProgress } from '../agentRunShared';
+import { useAgentRunConfirmDialog } from './agent-run/useAgentRunConfirmDialog';
+import { useAgentRunMutations } from './agent-run/useAgentRunMutations';
+import { useAgentRunPolling } from './agent-run/useAgentRunPolling';
+import { useHarnessRunBlockReason } from './agent-run/useHarnessRunBlockReason';
+import { useSelectedHistoryRun } from './agent-run/useSelectedHistoryRun';
+import { useTicketRunsQuery } from './agent-run/useTicketRunsQuery';
 import { computeRunStartDisabled } from './agentRun';
 
 export function useTicketAgentRun(
@@ -65,32 +72,11 @@ export function useTicketAgentRun(
 ) {
   const queryClient = useQueryClient();
 
-  // エージェント実行の前提 (bdboard-pkr6.11)。ProjectHarnessBadges と同じ
-  // queryKey なので、同じプロジェクトを表示中なら取得は 1 回に畳まれる。
   const harnessProjectId = data?.projectId;
-  const { data: harnessStatus } = useQuery({
-    queryKey: ['project-harness', harnessProjectId],
-    queryFn: () => {
-      if (harnessProjectId === undefined) {
-        throw new Error('project id is required');
-      }
-      return fetchProjectHarnessStatus(harnessProjectId);
-    },
-    enabled: harnessProjectId !== undefined,
-    // 前提の可視化が目的なので、落ちたら黙って未取得のまま (= ブロックしない)。
-    // リトライで詳細パネルを開くたびに 3 回叩く価値は無い。
-    retry: false,
-  });
-  const harnessRunBlockReason = describeHarnessRunBlock(harnessStatus);
+  const harnessRunBlockReason = useHarnessRunBlockReason(harnessProjectId);
 
-  const {
-    data: ticketRunsData,
-    isLoading: ticketRunsLoading,
-    error: ticketRunsError,
-  } = useQuery({
-    queryKey: ['ticket-runs', ticketId],
-    queryFn: () => fetchTicketRuns(ticketId),
-  });
+  const { ticketRunsData, ticketRunsLoading, ticketRunsError } =
+    useTicketRunsQuery(ticketId);
 
   const [confirmingAgentRun, setConfirmingAgentRun] = useState(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -107,19 +93,8 @@ export function useTicketAgentRun(
     null,
   );
 
-  const cancelAgentRunConfirmRef = useRef<HTMLButtonElement>(null);
-  const agentRunConfirmRef = useRef<HTMLDivElement>(null);
-
-  const handleCancelAgentRun = useCallback(() => {
-    setConfirmingAgentRun(false);
-  }, []);
-
-  useFocusTrap({
-    containerRef: agentRunConfirmRef,
-    initialFocusRef: cancelAgentRunConfirmRef,
-    enabled: confirmingAgentRun,
-    onEscape: handleCancelAgentRun,
-  });
+  const { cancelAgentRunConfirmRef, agentRunConfirmRef, handleCancelAgentRun } =
+    useAgentRunConfirmDialog(confirmingAgentRun, setConfirmingAgentRun);
 
   /**
    * ticketId/projectRootPath 切り替え時のフルリセット。手動呼び出し (テスト等)
@@ -179,122 +154,25 @@ export function useTicketAgentRun(
     setActiveRunId(activeRunFromList.id);
   }, [activeRunFromList?.id, ticketId]);
 
-  const {
-    data: selectedHistoryRun,
-    isLoading: selectedHistoryRunLoading,
-    error: selectedHistoryRunError,
-  } = useQuery({
-    queryKey: ['agent-run', selectedHistoryRunId],
-    queryFn: () => fetchAgentRun(selectedHistoryRunId!),
-    enabled: selectedHistoryRunId !== null,
-  });
+  const { selectedHistoryRun, selectedHistoryRunLoading, selectedHistoryRunError } =
+    useSelectedHistoryRun(selectedHistoryRunId);
 
-  useEffect(() => {
-    if (activeRunId === null) {
-      setPolledRunDetail(null);
-      setRunStatusUnavailable(false);
-      return;
-    }
+  useAgentRunPolling(
+    activeRunId,
+    queryClient,
+    ticketId,
+    setPolledRunDetail,
+    setRunStatusUnavailable,
+  );
 
-    let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | undefined;
-    let consecutiveFailures = 0;
-
-    setRunStatusUnavailable(false);
-    consecutiveFailures = 0;
-
-    const poll = async (): Promise<AgentRunDetailDto | null> => {
-      try {
-        const detail = await fetchAgentRun(activeRunId);
-        if (cancelled) {
-          return null;
-        }
-        consecutiveFailures = 0;
-        setRunStatusUnavailable(false);
-        setPolledRunDetail(detail);
-        if (!isAgentRunInProgress(detail.status)) {
-          void queryClient.invalidateQueries({
-            queryKey: ['ticket-runs', ticketId],
-          });
-        }
-        return detail;
-      } catch (pollError) {
-        console.error('Failed to poll agent run', pollError);
-        if (cancelled) {
-          return null;
-        }
-        consecutiveFailures += 1;
-        if (consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
-          setRunStatusUnavailable(true);
-          if (intervalId !== undefined) {
-            clearInterval(intervalId);
-            intervalId = undefined;
-          }
-        }
-        return null;
-      }
-    };
-
-    void (async () => {
-      const initialDetail = await poll();
-      if (cancelled || consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
-        return;
-      }
-      if (
-        initialDetail !== null &&
-        !isAgentRunInProgress(initialDetail.status)
-      ) {
-        return;
-      }
-
-      intervalId = setInterval(() => {
-        void (async () => {
-          const detail = await poll();
-          if (cancelled || consecutiveFailures >= AGENT_RUN_POLL_MAX_FAILURES) {
-            return;
-          }
-          if (
-            detail !== null &&
-            !isAgentRunInProgress(detail.status) &&
-            intervalId !== undefined
-          ) {
-            clearInterval(intervalId);
-            intervalId = undefined;
-          }
-        })();
-      }, AGENT_RUN_POLL_INTERVAL_MS);
-    })();
-
-    return () => {
-      cancelled = true;
-      if (intervalId !== undefined) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [activeRunId, queryClient, ticketId]);
-
-  const startRunMutation = useMutation({
-    mutationFn: () => startTicketRun(ticketId),
-    onSuccess: (response) => {
-      setConfirmingAgentRun(false);
-      setActiveRunId(response.runId);
-      setActiveRunMeta({
-        worktreePath: response.worktreePath,
-        branchName: response.branchName,
-        reused: response.reused,
-      });
-      void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
-    },
-  });
-
-  const cancelRunMutation = useMutation({
-    mutationFn: async () => {
-      if (activeRunId === null) {
-        throw new Error('active run is not available');
-      }
-      await cancelAgentRun(activeRunId);
-    },
-  });
+  const { startRunMutation, cancelRunMutation } = useAgentRunMutations(
+    ticketId,
+    queryClient,
+    activeRunId,
+    setConfirmingAgentRun,
+    setActiveRunId,
+    setActiveRunMeta,
+  );
 
   return {
     confirmingAgentRun,

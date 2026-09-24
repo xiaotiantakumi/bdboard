@@ -3,35 +3,28 @@
 // ファイル。呼び出し順序・依存配列・queryKey・invalidate 対象は移動前から変えていない。
 //
 // bdboard-sso1.60: 2つの mutation (一括クイックアクション/一括ラベル付与) をそれぞれ
-// 関心別フック (./actions/*.ts) へ move-only で抽出した。ここに残るのは、両方の
-// mutation が共有する確認欄の state (confirmingAction/deferPeriodKind/
-// customDeferDate/closeReason/bulkLabelInput/lastOutcome) と、確認欄の
-// フォーカストラップ効果、各フックを呼び出して結果を束ねる配線。
-// useMutation/useQueryClient の呼び出し順は分割前と同じ相対順序
-// (bulkMutation → bulkLabelMutation) を保っている。
+// 関心別フック (./actions/*.ts) へ move-only で抽出した。
+//
+// bdboard-sso1.65: 確認パネルの state・useFocusTrap・kind で分岐する handleConfirm を
+// ./confirm-panel/*.ts の3フック (useConfirmPanelState/useConfirmPanelDismissal/
+// useBulkConfirmDispatch) へ組み替えて抽出した。このフックが公開する `BulkActions`
+// (戻り値のキー名・型) は分割前から変えていない。呼び出し順序は
+// 「状態 → 2つの mutation フック → 閉じる経路(dismissal) → 実行の分岐(dispatch)」
+// で、分割前の相対順序 (state → bulkMutation → bulkLabelMutation →
+// handleCancelConfirm/useFocusTrap → handleConfirm) を保っている。
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useMemo, useRef, useState, type RefObject } from 'react';
+import { useCallback, useMemo, type RefObject } from 'react';
 import { type BoardCardDto } from '../../api';
-import {
-  computeDeferUntilDate,
-  DEFAULT_DEFER_PERIOD,
-  isFutureLocalDate,
-  type DeferPeriodKind,
-} from '../../deferPeriods';
-import {
-  type BulkIdOutcome,
-  type BulkQuickActionOutcome,
-} from '../../bulkQuickAction';
-import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { computeDeferUntilDate, isFutureLocalDate, type DeferPeriodKind } from '../../deferPeriods';
+import { type BulkIdOutcome, type BulkQuickActionOutcome } from '../../bulkQuickAction';
 import type { BulkSelectionContextValue } from '../BulkSelectionProvider';
 import { useUndoSnackbar } from '../UndoSnackbar';
 import { useBulkLabelAction } from './actions/useBulkLabelAction';
 import { useBulkQuickAction } from './actions/useBulkQuickAction';
-import {
-  buildTargetsForAction,
-  countEligibleForAction,
-  filterIdsPresentOnBoard,
-} from './targets';
+import { useBulkConfirmDispatch } from './confirm-panel/useBulkConfirmDispatch';
+import { useConfirmPanelDismissal } from './confirm-panel/useConfirmPanelDismissal';
+import { useConfirmPanelState } from './confirm-panel/useConfirmPanelState';
+import { countEligibleForAction } from './targets';
 import type { BulkConfirmingAction } from './types';
 
 export interface BulkActions {
@@ -73,18 +66,24 @@ export function useBulkActions(
 ): BulkActions {
   const undoSnackbar = useUndoSnackbar();
   const queryClient = useQueryClient();
-  const [confirmingAction, setConfirmingAction] =
-    useState<BulkConfirmingAction | null>(null);
-  const [deferPeriodKind, setDeferPeriodKind] =
-    useState<DeferPeriodKind>(DEFAULT_DEFER_PERIOD);
-  const [customDeferDate, setCustomDeferDate] = useState('');
-  const [closeReason, setCloseReason] = useState('');
-  const [bulkLabelInput, setBulkLabelInput] = useState('');
-  const [lastOutcome, setLastOutcome] = useState<
-    BulkQuickActionOutcome | BulkIdOutcome | null
-  >(null);
-  const confirmPanelRef = useRef<HTMLDivElement>(null);
-  const cancelConfirmRef = useRef<HTMLButtonElement>(null);
+
+  const {
+    confirmingAction,
+    deferPeriodKind,
+    customDeferDate,
+    closeReason,
+    bulkLabelInput,
+    lastOutcome,
+    confirmPanelRef,
+    cancelConfirmRef,
+    setConfirmingAction,
+    setDeferPeriodKind,
+    setCustomDeferDate,
+    setCloseReason,
+    setBulkLabelInput,
+    setLastOutcome,
+    resetConfirmFields,
+  } = useConfirmPanelState();
 
   const selectedIds = bulkSelection?.selectedIds ?? new Set<string>();
   const selectedCount = selectedIds.size;
@@ -139,53 +138,24 @@ export function useBulkActions(
     setBulkLabelInput,
   });
 
-  const handleCancelConfirm = useCallback(() => {
-    if (bulkMutation.isPending || bulkLabelMutation.isPending) {
-      return;
-    }
-    setConfirmingAction(null);
-    setDeferPeriodKind(DEFAULT_DEFER_PERIOD);
-    setCustomDeferDate('');
-    setCloseReason('');
-  }, [bulkMutation.isPending, bulkLabelMutation.isPending]);
+  const mutationPending = bulkMutation.isPending || bulkLabelMutation.isPending;
 
-  useFocusTrap({
-    containerRef: confirmPanelRef,
-    initialFocusRef: cancelConfirmRef,
-    enabled: confirmingAction !== null,
-    onEscape: handleCancelConfirm,
+  const { handleCancelConfirm } = useConfirmPanelDismissal({
+    confirmingAction,
+    mutationPending,
+    confirmPanelRef,
+    cancelConfirmRef,
+    resetConfirmFields,
   });
 
-  const handleConfirm = useCallback(() => {
-    if (confirmingAction === null) {
-      return;
-    }
-    if (confirmingAction.kind === 'add-label') {
-      const ids = filterIdsPresentOnBoard(selectedIds, cardsById);
-      if (ids.length === 0) {
-        return;
-      }
-      bulkLabelMutation.mutate({ label: confirmingAction.label, ids });
-      return;
-    }
-    const targets = buildTargetsForAction(
-      confirmingAction,
-      selectedIds,
-      cardsById,
-      closeReason,
-    );
-    if (targets.length === 0) {
-      return;
-    }
-    bulkMutation.mutate({ action: confirmingAction, targets });
-  }, [
+  const { handleConfirm } = useBulkConfirmDispatch({
     confirmingAction,
     selectedIds,
     cardsById,
     closeReason,
     bulkMutation,
     bulkLabelMutation,
-  ]);
+  });
 
   const handleDeferBulkAction = useCallback(() => {
     const untilDate =
@@ -193,27 +163,23 @@ export function useBulkActions(
         ? customDeferDate
         : computeDeferUntilDate(deferPeriodKind);
     setConfirmingAction({ kind: 'defer', untilDate });
-  }, [customDeferDate, deferPeriodKind]);
+  }, [customDeferDate, deferPeriodKind, setConfirmingAction]);
 
   const handleBulkLabelAction = useCallback(() => {
     if (!canSubmitBulkLabel) {
       return;
     }
     setConfirmingAction({ kind: 'add-label', label: trimmedBulkLabelInput });
-  }, [canSubmitBulkLabel, trimmedBulkLabelInput]);
+  }, [canSubmitBulkLabel, trimmedBulkLabelInput, setConfirmingAction]);
 
   const confirmingTargetCount =
     confirmingAction !== null
       ? countEligibleForAction(confirmingAction, selectedIds, cardsById)
       : 0;
 
-  const actionsDisabled =
-    bulkMutation.isPending ||
-    bulkLabelMutation.isPending ||
-    confirmingAction !== null;
+  const actionsDisabled = mutationPending || confirmingAction !== null;
   const deferSubmitDisabled =
     deferPeriodKind === 'custom' && !isFutureLocalDate(customDeferDate);
-  const mutationPending = bulkMutation.isPending || bulkLabelMutation.isPending;
   const mutationError = bulkMutation.error ?? bulkLabelMutation.error;
 
   return {

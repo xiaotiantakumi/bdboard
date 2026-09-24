@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { fetchBoardThresholdsConfig, fetchDbStats } from '../api';
+import { fetchDbStats } from '../api';
 import { EffectiveScanRootsSection } from './settings/EffectiveScanRootsSection';
 import { ScanRootsSection } from './settings/ScanRootsSection';
 import { ExcludePathsSection } from './settings/ExcludePathsSection';
@@ -16,14 +15,13 @@ import { useHygieneThresholdsForm } from './settings/useHygieneThresholdsForm';
 import { useScanRootsForm } from './settings/useScanRootsForm';
 import { useBoardThresholdsForm } from './settings/useBoardThresholdsForm';
 import { useWipLimitsForm } from './settings/useWipLimitsForm';
+import { useThresholdsSharedState } from './settings/useThresholdsSharedState';
 
 export function SettingsPanel() {
   const scanRootsForm = useScanRootsForm();
   const query = scanRootsForm.query;
-  const thresholdsQuery = useQuery({
-    queryKey: ['board-thresholds-config'],
-    queryFn: fetchBoardThresholdsConfig,
-  });
+  const thresholdsShared = useThresholdsSharedState();
+  const thresholdsQuery = thresholdsShared.query;
   const hygieneThresholdsForm = useHygieneThresholdsForm();
   const hygieneThresholdsQuery = hygieneThresholdsForm.query;
   const aiQuotaAlertForm = useAiQuotaAlertForm();
@@ -34,41 +32,20 @@ export function SettingsPanel() {
     queryKey: ['db-stats'],
     queryFn: fetchDbStats,
   });
-  const [thresholdsVersion, setThresholdsVersion] = useState('');
-  const [thresholdsDirty, setThresholdsDirty] = useState(false);
-  const [wipDirty, setWipDirty] = useState(false);
-
-  // 閾値フォームと WIP上限フォームは、サーバー側では1つの設定ドキュメント =
-  // 1つの version を共有している。そのため version の書き戻しは、**どちらの
-  // フォームにも未保存の編集が無いとき**に限る。
-  //
-  // 以前は上の2つの effect がそれぞれ自分の dirty フラグだけを見て version を
-  // 更新していた。片方だけを編集していると、もう片方の effect が refetch のたびに
-  // version を最新へ差し替えてしまい、保存時に 409 が出ず他セッションの変更を
-  // 黙って上書きしていた (bdboard-chp)。楽観ロックが効いていたのは「両方とも
-  // 編集中」のときだけだった。
-  //
-  // 逆に、どちらも未編集なら素直に進める必要がある。ここまで止めると、開いた
-  // ままのタブから保存すると必ず 409 になる。
-  useEffect(() => {
-    if (thresholdsQuery.data !== undefined && !thresholdsDirty && !wipDirty) {
-      setThresholdsVersion(thresholdsQuery.data.version);
-    }
-  }, [thresholdsDirty, wipDirty, thresholdsQuery.data]);
 
   const boardThresholdsForm = useBoardThresholdsForm({
-    query: thresholdsQuery,
-    version: thresholdsVersion,
-    onVersionChange: setThresholdsVersion,
-    dirty: thresholdsDirty,
-    onDirtyChange: setThresholdsDirty,
+    query: thresholdsShared.query,
+    version: thresholdsShared.version,
+    onVersionChange: thresholdsShared.onVersionChange,
+    dirty: thresholdsShared.thresholdsDirty,
+    onDirtyChange: thresholdsShared.setThresholdsDirty,
   });
   const wipLimitsForm = useWipLimitsForm({
-    query: thresholdsQuery,
-    version: thresholdsVersion,
-    onVersionChange: setThresholdsVersion,
-    dirty: wipDirty,
-    onDirtyChange: setWipDirty,
+    query: thresholdsShared.query,
+    version: thresholdsShared.version,
+    onVersionChange: thresholdsShared.onVersionChange,
+    dirty: thresholdsShared.wipDirty,
+    onDirtyChange: thresholdsShared.setWipDirty,
   });
 
   if (

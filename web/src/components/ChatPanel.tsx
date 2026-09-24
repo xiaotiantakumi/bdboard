@@ -1,8 +1,5 @@
 import {
-  type ChangeEvent,
-  type ClipboardEvent,
   type FormEvent,
-  type KeyboardEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -22,7 +19,6 @@ import {
   postChatMessageStream,
   ChatStreamEndedWithoutResultError,
   type ChatAgentDto,
-  type ChatImageMimeType,
   type ChatMessageResponseDto,
   type ChatMessageRequest,
   type ProjectDto,
@@ -39,9 +35,6 @@ import {
 import {
   applyDraftPayloadStoreCarryPlan,
   applyTransformToAllDraftPayloadStores,
-  defineDraftPayloadStoreCarryPlan,
-  isEmptyList,
-  isEmptyText,
   isNeverEmpty,
   migrateKeyInRecord,
   purgeKeysInRecord,
@@ -65,23 +58,21 @@ import {
 } from '../hooks/useResizableSidePanel';
 import type { ChatQuickCommand } from '../chatQuickCommands';
 import { isImeComposingKeyEvent } from '../imeGuard';
-import {
-  CHAT_AGENT_UNAVAILABLE_WARNING,
-  CHAT_BUSY_HELP,
-  chatAgentErrorMessage,
-  writeAccessErrorMessage,
-} from '../writeAccessMessage';
+import { CHAT_AGENT_UNAVAILABLE_WARNING } from '../writeAccessMessage';
 import {
   CHAT_IMAGE_ONLY_PROMPT,
   attachmentsToPayload,
-  readFileAsDataUrl,
-  validateChatAttachments,
   type ChatAttachment,
 } from './chat/attachments';
 import { hasSelectableModels, resolveDefaultModel } from './chat/agentOptions';
 import { makeDraftKey } from './chat/draftKey';
-import { resolveInitialProjectId } from './chat/projectSelection';
 import {
+  projectSelectionHint as computeProjectSelectionHint,
+  resolveInitialProjectId,
+  showProjectSelect as computeShowProjectSelect,
+} from './chat/projectSelection';
+import {
+  chatSettingsSummaryParts as computeChatSettingsSummaryParts,
   compareThreadsNewestFirst,
   formatThreadUpdatedAt,
   summarizeTitle,
@@ -95,7 +86,23 @@ import { ChatInputNotices } from './chat/ChatInputNotices';
 import { ChatMessageList } from './chat/ChatMessageList';
 import { ChatProjectBar } from './chat/ChatProjectBar';
 import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
-import type { ChatMessage } from './chat/messages';
+import { useThreadDrawerState } from './chat/useThreadDrawerState';
+import { useChatNotifications } from './chat/useChatNotifications';
+import { useChatDraftState } from './chat/useChatDraftState';
+import { toAssistantMessage, toChatMessages, type ChatMessage } from './chat/messages';
+import {
+  APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY,
+  HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY,
+  START_NEW_DRAFT_THREAD_CARRY,
+  START_NEW_DRAFT_THREAD_PREFILL_CARRY,
+} from './chat/draftCarryPlans';
+import {
+  CHAT_STREAM_DETACHED_FAILED_MESSAGE,
+  TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS,
+  TURN_STATUS_POLL_RETRY_BACKOFF_MS,
+  UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS,
+} from './chat/turnStatusPolicy';
+import { describeChatSendError } from './chat/chatSendErrors';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -111,133 +118,6 @@ interface ChatPanelProps {
 // 最下部から何 px 以内なら「貼り付いている」とみなすか。ちょうど 0 で判定すると、
 // 端数スクロールや sub-pixel なレイアウトで簡単に外れてしまう (bdboard-22k)。
 const BOTTOM_STICK_THRESHOLD_PX = 48;
-
-// bdboard-3tw.164: turn-status の取得が一時的に失敗しても (ネットワークエラー /
-// 一時的な 5xx 等) ポーリングを止めずに再試行するためのバックオフ表。要素数が
-// そのまま再試行回数の上限になる (この配列なら5回)。値を使い切ってもなお失敗が
-// 続く場合はこのポーリング自体を諦める — このポーリングは「取れれば儲けもの」の
-// 付加的な回収経路であり、無限リトライでサーバーを叩き続けるより安全側に倒す。
-// 送信元スレッドの sessionId が既知なら (=新規スレッドの最初の送信でなければ)
-// unresolvedSends 経由の履歴再取得安全網 (bdboard-3tw.156) がスレッド閲覧時に
-// 拾えるが、sessionId 未確定の新規スレッドはこの安全網の対象外 (markUnresolvedSend
-// は sessionId undefined を no-op で無視する) — 諦めた場合そちらは回収されない。
-const TURN_STATUS_POLL_RETRY_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 8_000];
-
-// bdboard-96rp (Opus レビュー指摘 B2): sessionId 未確定の送信を detachedAt (クライアント
-// の Date.now()) と status.failedAt/completedAt (サーバーの時刻) を突き合わせて絞り込む
-// 際、両者は別プロセス・別マシン (モバイルトンネル経由のクライアントもあり得る) の
-// クロックなので、わずかな時刻ずれで「本当は自分の送信の結果なのに detachedAt より
-// わずかに前の時刻として記録され、取りこぼす」誤判定が起き得る。実用上あり得るずれ幅
-// より十分大きいマージンを許容側に加えることで、取りこぼしより「多少広めに一致させる」
-// 方に倒す (単一ロックの isBusy により、この許容幅の中で無関係な別ターンの結果と
-// 衝突するリスクは実質無い)。
-const TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS = 30_000;
-
-// bdboard-96rp (round 2 再レビューで発見されたブロッカー): sessionId 未確定の
-// tracked send が、自分自身の sessionId 無し failed と時刻的に一致しない場合
-// (TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS を超えるずれ — 上のコメント群が言う
-// cloudflared トンネル越しの切断検知遅延等)、下の 'failed' 分岐は「無関係かもしれない
-// ので ACK せず何もしない」まま1秒間隔でポーリングを続け続ける。sessionId 無しの
-// エントリは ACK 経路が無く、bdboard-96rp B1 の dedupe によりサーバーはこの1件を
-// 置き換わるまで返し続けるので、これが本当に自分自身の (時刻がずれて観測された)
-// 失敗だった場合、何も置き換えが起きず無期限に一致しないまま — 送信ボタンが
-// 二度と解放されない実質的なデッドロックになる。これを避けるため、「一致しない
-// sessionId 無し failed」を一定回数 (=一定時間) 観測し続けたら、時刻の厳密な
-// 一致を諦めてこのエントリを自分自身の失敗として受け入れる。誤って無関係な
-// エントリを受け入れてしまうリスクはあるが、単一ロック (isBusy) 下でこの猶予
-// 時間の間ずっと同じ sessionId 無し failed が居座り続けるのは「本当に自分自身の
-// 失敗が遅れて観測されている」可能性の方が、他プロジェクトクライアントが偶然
-// 同じ猶予時間内に別の sessionId 無し失敗を起こす可能性より高いと判断した —
-// 無期限に沈黙してハングし続けるより、猶予後に (多少不正確でも) 解決して
-// 利用者に再送の機会を与える方を優先する。
-const UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS = 20;
-// ↑ 1秒間隔のポーリングなので実測で約20秒の猶予。既存の
-// TURN_STATUS_POLL_RETRY_BACKOFF_MS (5回・合計約23秒) と同じ桁数に揃えた —
-// この値そのものに強い根拠は無く、「無期限にブロックしない」ことが目的の
-// 主眼であり、猶予の長さは今後の実測次第で調整して良い。
-
-// bdboard-ru4d: 会話キー再割り当てサイトごとのドラフト積載物引き継ぎ選択。
-// ストアを1つ増やすと、ここと3サイト(handleAgentChange / startNewDraftThread /
-// applyChatSuccess)すべてで選択を書かない限り tsc が落ちる。
-
-/** handleAgentChange: 本文・添付・シード記録のみ引き継ぐ。 */
-const HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: { carry: true },
-  conversationAttachments: { carry: true },
-  draftSeedText: { carry: true },
-  attachmentErrors: {
-    carry: false,
-    reason: 'エージェント切替では添付エラー状態を引き継がない',
-  },
-  threadModelIds: {
-    carry: false,
-    reason: '旧エージェント向けモデル選択を新キーへ持ち込むとモデル漏れになる',
-  },
-});
-
-/** startNewDraftThread: 通常の「新規スレッド」は何も引き継がない。 */
-const START_NEW_DRAFT_THREAD_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  conversationAttachments: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  attachmentErrors: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  threadModelIds: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-  draftSeedText: {
-    carry: false,
-    reason: '明示的な新規スレッドは空のドラフトで始まる',
-  },
-});
-
-/** startNewDraftThread: pendingPrefill 消化時は計算値を引き継ぐ。 */
-const START_NEW_DRAFT_THREAD_PREFILL_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: { carry: true },
-  conversationAttachments: { carry: true },
-  draftSeedText: { carry: true },
-  threadModelIds: { carry: true },
-  attachmentErrors: {
-    carry: false,
-    reason: 'pendingPrefill 消化では添付エラー状態を引き継がない',
-  },
-});
-
-/** applyChatSuccess: ドラフト積載物は送信時点でクリア済み。conversations のみ移送。 */
-const APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY = defineDraftPayloadStoreCarryPlan({
-  conversationInputs: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-  conversationAttachments: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-  attachmentErrors: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-  threadModelIds: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み(sessionId 確定後は別経路でモデルを設定)',
-  },
-  draftSeedText: {
-    carry: false,
-    reason: '送信時点でドラフト積載物はクリア済み',
-  },
-});
-
-// bdboard-zlzo: 配信停止後にサーバー側でもターンの完了を確認できなかったときの文言。
-const CHAT_STREAM_DETACHED_FAILED_MESSAGE =
-  '返信の受信が途中で途切れ、サーバー側でも返信の完了を確認できませんでした。もう一度送信してください。';
 
 export function ChatPanel({
   projects,
@@ -271,27 +151,57 @@ export function ChatPanel({
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
   const [selectedThreadIds, setSelectedThreadIds] = useState<Record<string, string | undefined>>({});
   const [draftNonces, setDraftNonces] = useState<Record<string, number>>({});
-  const [confirmingDeleteSessionId, setConfirmingDeleteSessionId] = useState<string | null>(null);
-  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
-  const [renameDraft, setRenameDraft] = useState('');
+  // bdboard-sso1.83 第2段: currentSessionId/draftKey/currentConversationKey/
+  // currentConversationKeyRef と isSending は、元は conversationInputs/
+  // conversationAttachments/attachmentErrors 宣言の直後(このファイル下部、旧
+  // 759行目付近)にあったが、それら3ストアを useChatDraftState.ts の
+  // useReducer へ抜き出したことで、そのフック呼び出しへ渡す値としてここより
+  // 先に確定させる必要が生じたため引き上げた。どちらも
+  // selectedThreadIds/draftNonces/selectedProjectId から計算する独立した
+  // 派生値・独立した useState で、他の hook の呼び出し順や依存配列には
+  // 影響しない(React の Rules of Hooks は呼び出し順が毎レンダー一定である
+  // ことだけを要求する)。
+  const currentSessionId = selectedThreadIds[selectedProjectId];
+  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
+  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
+  const currentConversationKeyRef = useRef(currentConversationKey);
+  currentConversationKeyRef.current = currentConversationKey;
+  const [isSending, setIsSending] = useState(false);
   // Chat Redesign 1b: タブ帯を捨て、スレッド切り替えは「現在のスレッド名+件数」
-  // ボタン1つ→ドロワー(縦一覧)へ集約する。threadDrawerOpen がドロワーの開閉、
-  // threadActionMenuSessionId がドロワー内の各行にぶら下がる「⋯」操作メニュー
-  // (リネーム/ピン留め/タブから閉じる/削除)のうち今開いているものを指す
-  // (同時に1つだけ開ける設計。renamingSessionId/confirmingDeleteSessionId は
-  // 既存のリネーム確定/削除確認フローをそのまま流用する)。
-  const [threadDrawerOpen, setThreadDrawerOpen] = useState(false);
-  const [threadActionMenuSessionId, setThreadActionMenuSessionId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!threadDrawerOpen) {
-      setThreadActionMenuSessionId(null);
-    }
-  }, [threadDrawerOpen]);
-  const [threadError, setThreadError] = useState<string | null>(null);
-  const [ticketProjectFallbackNotice, setTicketProjectFallbackNotice] = useState<string | null>(null);
+  // ボタン1つ→ドロワー(縦一覧)へ集約する。ドロワーの開閉・行の「⋯」操作メニュー・
+  // リネーム確定・削除確認・CLIセッション発見一覧の表示は互いに絡み合う相互排他の
+  // UI 状態なので、bdboard-sso1.83 でひとつの useReducer (chat/threadDrawerState.ts)
+  // へ畳んだ。個々の状態名(threadDrawerOpen 等)はこの後の分割代入で読み取り側の
+  // 変数名を維持しているため、以降の参照箇所は変わらない。
+  const {
+    state: {
+      drawerOpen: threadDrawerOpen,
+      menuSessionId: threadActionMenuSessionId,
+      renamingSessionId,
+      renameDraft,
+      confirmingDeleteSessionId,
+      showDiscoveredSessions,
+    },
+    toggleDrawer: toggleThreadDrawer,
+    closeDrawer: closeThreadDrawer,
+    selectThread: selectThreadDrawerThread,
+    toggleMenu: toggleThreadActionMenu,
+    closeMenu: closeThreadActionMenu,
+    startRename: startThreadRename,
+    changeRenameDraft: setRenameDraft,
+    cancelRename: cancelThreadRename,
+    startConfirmDelete: startThreadConfirmDelete,
+    cancelConfirmDelete: cancelThreadConfirmDelete,
+    cancelInteractionsForSession: cancelThreadInteractionsForSession,
+    toggleDiscoveredSessions: toggleShowDiscoveredSessions,
+    closeDiscoveredSessions: closeShowDiscoveredSessions,
+  } = useThreadDrawerState();
+  // bdboard-sso1.83 第3段: threadError/ticketProjectFallbackNotice を
+  // chat/useChatNotifications.ts へ抜き出した(詳細はそちら参照)。
+  const { threadError, setThreadError, ticketProjectFallbackNotice, setTicketProjectFallbackNotice } =
+    useChatNotifications();
   const [agents, setAgents] = useState<readonly ChatAgentDto[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [showDiscoveredSessions, setShowDiscoveredSessions] = useState(false);
   const [selectedModelId, setSelectedModelId] = useState('');
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
@@ -362,21 +272,52 @@ export function ChatPanel({
   // draftSeedTextRef.current と同一オブジェクト参照を共有しない(spread で
   // コピーを渡す) — 同一参照だと、どちらかが後で自分の Record を直接 mutate
   // した場合にもう片方まで無自覚に汚染されてしまうため。
-  const initialDraftSeed: Record<string, string> =
-    initialInput !== undefined && initialInput !== ''
-      ? { [makeDraftKey(selectedProjectId, 0)]: initialInput }
-      : {};
-  const draftSeedTextRef = useRef<Record<string, string>>(initialDraftSeed);
-  const [conversationInputs, setConversationInputs] = useState<Record<string, string>>(
-    () => ({ ...initialDraftSeed }),
-  );
-  // File/data URL はこの React state のみに置き、localStorage や履歴 DTO へは流さない。
-  // 本文と同じ会話キーを使うことで、project/thread 切替でも添付が混線しない。
-  const [conversationAttachments, setConversationAttachments] = useState<
-    Record<string, ChatAttachment[]>
-  >({});
-  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
-  const [isSending, setIsSending] = useState(false);
+  // bdboard-sso1.83 第2段: 上のコメント群が説明する
+  // initialDraftSeed/draftSeedTextRef/conversationInputs/conversationAttachments/
+  // attachmentErrors の初期化ロジックと、それらの読み書きハンドラ(paste・
+  // ファイル選択・削除・IME対応Enter送信・クイックコマンドのカーソル移動)は
+  // web/src/components/chat/useChatDraftState.ts(+
+  // useChatAttachmentIngestion.ts, chatDraftState.ts)へ抜き出した。この
+  // コンポーネント側は setInput/updateConversationAttachments 等
+  // (下の分割代入で受け取った各関数)経由で読み書きする。会話キーの再割り当て
+  // (bdboard-c1pw の対象、startNewDraftThread / handleAgentChange /
+  // applyChatError / submitChatMessage / handleNewThread)はこのファイルに
+  // 残る。
+  // bdboard-sso1.83 第2段(react-hooks/exhaustive-deps 対策):
+  // useThreadDrawerState と同じく、フックの戻り値はオブジェクトのまま
+  // 変数へ束縛せず分割代入する。`const chatDraft = useChatDraftState(...)` の
+  // ままだと、下の各 useCallback が `setInput` 等プロパティ経由で
+  // 参照するたびに ESLint が「chatDraft 自体が依存配列に無い」と警告する
+  // (draftApplicators は個々の関数だけが参照安定で、chatDraft オブジェクト
+  // 自体は毎レンダー新しいオブジェクト)。分割代入すれば各関数はただの
+  // ローカル変数になり、警告なしで依存配列に個別に載せられる。
+  const {
+    conversationInputs,
+    conversationAttachments,
+    attachmentErrors,
+    conversationInputsRef,
+    conversationAttachmentsRef,
+    draftSeedTextRef,
+    setInput,
+    updateConversationInputs,
+    updateConversationAttachments,
+    setAttachmentError,
+    clearAttachmentError,
+    draftApplicators,
+    handleImagePaste,
+    handleImageFileChange,
+    removeAttachment,
+    applyQuickCommandPrompt,
+    handleComposedEnterSubmit,
+  } = useChatDraftState({
+    initialInput,
+    selectedProjectId,
+    currentConversationKey,
+    currentConversationKeyRef,
+    isSending,
+    inputRef,
+    formRef,
+  });
   // 未対応プラットフォームでは入力自体を塞ぐ。案内を出したうえで送信でき、
   // 送って初めて 501 に気付く、では「無効化」になっていない
   // (bdboard-70z.9, PR#115 fable レビュー)。判定が付くまでは塞がない。
@@ -528,26 +469,12 @@ export function ChatPanel({
   const threadListRequestIdRef = useRef(0);
   const draftNoncesRef = useRef(draftNonces);
   draftNoncesRef.current = draftNonces;
-  // SF1: startNewDraftThread (stable callback)が「切り替え直前のドラフトに
-  // 何が入っていたか」を stale closure を経由せず読めるようにするための参照。
-  // draftNoncesRef と同じ「state をミラーする ref」パターン。
-  const conversationInputsRef = useRef(conversationInputs);
-  conversationInputsRef.current = conversationInputs;
-  const conversationAttachmentsRef = useRef(conversationAttachments);
-  conversationAttachmentsRef.current = conversationAttachments;
-  const attachmentIdRef = useRef(0);
-  const updateConversationAttachments = useCallback(
-    (
-      updater: (
-        previous: Record<string, ChatAttachment[]>,
-      ) => Record<string, ChatAttachment[]>,
-    ) => {
-      const next = updater(conversationAttachmentsRef.current);
-      conversationAttachmentsRef.current = next;
-      setConversationAttachments(next);
-    },
-    [],
-  );
+  // bdboard-sso1.83 第2段: conversationInputsRef/conversationAttachmentsRef
+  // (startNewDraftThread 等が stale closure を経由せず読むための「state を
+  // ミラーする ref」、draftNoncesRef と同じパターン)・attachmentIdRef・
+  // updateConversationAttachments は useChatDraftState.ts
+  // (+ useChatAttachmentIngestion.ts)へ移した。以降は上の分割代入で受け取った
+  // 各関数経由で読み書きする。
   // bdboard-c1pw / bdboard-ru4d: 会話キーで索かれる「ドラフト積載物」ストアの
   // 単一の登録簿。会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペース
   // の一括破棄(purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。
@@ -571,19 +498,34 @@ export function ChatPanel({
     (transform: DraftPayloadStoreTransform) => {
       applyTransformToAllDraftPayloadStores(
         {
-          conversationInputs: (t) => setConversationInputs((prev) => t(prev, isEmptyText)),
-          conversationAttachments: (t) =>
-            updateConversationAttachments((prev) => t(prev, isEmptyList)),
-          attachmentErrors: (t) => setAttachmentErrors((prev) => t(prev, isNeverEmpty)),
+          conversationInputs: draftApplicators.conversationInputs,
+          conversationAttachments: draftApplicators.conversationAttachments,
+          attachmentErrors: draftApplicators.attachmentErrors,
           threadModelIds: (t) => setThreadModelIds((prev) => t(prev, isNeverEmpty)),
-          draftSeedText: (t) => {
-            draftSeedTextRef.current = t(draftSeedTextRef.current, isNeverEmpty);
-          },
+          draftSeedText: draftApplicators.draftSeedText,
         },
         transform,
       );
     },
-    [updateConversationAttachments],
+    // bdboard-sso1.83 第2段(依存配列の変更理由): 以前はここに
+    // updateConversationAttachments(ChatPanel ローカルの useCallback、常に
+    // 参照安定)を1つ挙げるだけだった。今は4つとも draftApplicators.*
+    // (useChatDraftState.ts 内で useCallback により個別にメモ化された関数)を
+    // 直接使う。draftApplicators オブジェクト自体は毎レンダー新しいオブジェクト
+    // リテラルなので、それを丸ごと依存配列に入れると
+    // applyToDraftPayloadStores(→ migrateDraftPayloadKey/purgeDraftPayloadKeys
+    // → 下のコールドウィンドウ effect の依存配列)が毎レンダー再生成され、
+    // その effect が意図せず再実行されるようになってしまう。個々のプロパティ
+    // (conversationInputs/conversationAttachments/attachmentErrors/
+    // draftSeedText)はそれぞれ安定した参照を返すので、それらだけを列挙して
+    // 元の安定性を保つ(useChatDraftState.test.tsx に参照安定性の検証テストを
+    // 追加済み)。
+    [
+      draftApplicators.conversationInputs,
+      draftApplicators.conversationAttachments,
+      draftApplicators.attachmentErrors,
+      draftApplicators.draftSeedText,
+    ],
   );
 
   const migrateDraftPayloadKey = useCallback(
@@ -639,7 +581,7 @@ export function ChatPanel({
       ...prev,
       [nextDraftKey]: true,
     }));
-    setConfirmingDeleteSessionId(null);
+    cancelThreadConfirmDelete();
     // MF1/SF1/SF2: ここが会話キーの nonce を実際に採番する唯一の場所なので、
     // 保留中のプリフィル(pendingPrefillRef、対象プロジェクトが一致する場合のみ)
     // をこのタイミングで、いま採番した本物のドラフトキーへ消化する。呼び出し元
@@ -687,7 +629,7 @@ export function ChatPanel({
         : prefillAttachments;
       applyDraftPayloadStoreCarryPlan(START_NEW_DRAFT_THREAD_PREFILL_CARRY, {
         conversationInputs: () => {
-          setConversationInputs((prev) => ({ ...prev, [nextDraftKey]: textToApply }));
+          setInput(nextDraftKey, textToApply);
         },
         conversationAttachments: () => {
           if (attachmentsToCarry.length > 0) {
@@ -719,7 +661,14 @@ export function ChatPanel({
     // ドラフトはセッションIDを持たない(非永続)ので、localStorage の
     // selectedSessionId をここで書き換える対象が無い — 既存の永続化済み選択は
     // そのまま(次回訪問時にまた同じ既存スレッドへ戻れるように)残す。
-  }, [updateConversationAttachments]);
+  }, [
+    updateConversationAttachments,
+    cancelThreadConfirmDelete,
+    conversationInputsRef,
+    conversationAttachmentsRef,
+    draftSeedTextRef,
+    setInput,
+  ]);
 
   const { requestClose } = useHistoryBackClose({
     panelId: 'chat',
@@ -740,14 +689,9 @@ export function ChatPanel({
     containerRef: threadDrawerRef,
     initialFocusRef: threadDrawerCloseButtonRef,
     enabled: threadDrawerOpen,
-    onEscape: () => setThreadDrawerOpen(false),
+    onEscape: closeThreadDrawer,
   });
 
-  const currentSessionId = selectedThreadIds[selectedProjectId];
-  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
-  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
-  const currentConversationKeyRef = useRef(currentConversationKey);
-  currentConversationKeyRef.current = currentConversationKey;
   const currentInput = conversationInputs[currentConversationKey] ?? '';
   const currentAttachments = conversationAttachments[currentConversationKey] ?? [];
   const currentAttachmentError = attachmentErrors[currentConversationKey] ?? null;
@@ -765,19 +709,10 @@ export function ChatPanel({
   const selectedProject = projects.find(
     (project) => project.id === selectedProjectId,
   );
-  // レビュー major-1: select を出す条件は「選ぶ余地があるか」。複数あるとき、
-  // および1件しか無くてもまだ選ばれていないとき(チケットのプロジェクトが
-  // 一覧に無く未選択で固定される経路)は必ず選べるようにする。
-  const showProjectSelect =
-    projects.length > 1 || (projects.length === 1 && selectedProjectId === '');
-  // レビュー major-1: ヒントの条件は送信可否と同じ selectedProjectId === '' 単独。
-  // projects が空のときだけ「選べ」ではなく状況の説明に差し替える。
-  const projectSelectionHint =
-    selectedProjectId !== ''
-      ? null
-      : projects.length === 0
-        ? 'プロジェクトを読み込めていません。一覧が表示されない場合はスキャンルートの設定を確認してください。'
-        : '送信先のプロジェクトを選んでください。選ぶまで送信できません。';
+  // bdboard-sso1.83 第4段: showProjectSelect/projectSelectionHint の本体は
+  // chat/projectSelection.ts へ移した(挙動は変えていない)。
+  const showProjectSelect = computeShowProjectSelect(projects, selectedProjectId);
+  const projectSelectionHint = computeProjectSelectionHint(projects, selectedProjectId);
   const projectSelectionHintId =
     projectSelectionHint === null ? null : 'chat-project-unselected-hint';
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
@@ -883,7 +818,7 @@ export function ChatPanel({
 
       setSelectedProjectId(resolved);
     },
-    [migrateDraftPayloadKey],
+    [migrateDraftPayloadKey, conversationInputsRef, conversationAttachmentsRef],
   );
 
   const handleProjectSelectChange = useCallback(
@@ -898,7 +833,7 @@ export function ChatPanel({
       }
       setSelectedProjectId(nextProjectId);
     },
-    [adoptProjectFromColdKeyspace, selectedProjectId],
+    [adoptProjectFromColdKeyspace, selectedProjectId, setTicketProjectFallbackNotice],
   );
 
   useEffect(() => {
@@ -1039,7 +974,7 @@ export function ChatPanel({
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: persisted?.selectedSessionId ?? open[0] }));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId]);
+  }, [selectedProjectId, setThreadError]);
 
   useEffect(() => {
     if (selectedProjectId === '') return;
@@ -1307,17 +1242,7 @@ export function ChatPanel({
         setConversations((prev) => ({
           ...prev,
           [status.sessionId]: {
-            messages: payload.messages.map((message) => ({
-              role: message.role,
-              text: message.content,
-              at: Date.parse(message.createdAt),
-              ...(message.failedTools !== undefined && message.failedTools.length > 0
-                ? { failedTools: message.failedTools }
-                : {}),
-              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
-                ? { agentWarnings: message.agentWarnings }
-                : {}),
-            })),
+            messages: toChatMessages(payload.messages),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
           },
@@ -1748,17 +1673,7 @@ export function ChatPanel({
         setConversations((prev) => ({
           ...prev,
           [currentConversationKey]: {
-            messages: payload.messages.map((message) => ({
-              role: message.role,
-              text: message.content,
-              at: Date.parse(message.createdAt),
-              ...(message.failedTools !== undefined && message.failedTools.length > 0
-                ? { failedTools: message.failedTools }
-                : {}),
-              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
-                ? { agentWarnings: message.agentWarnings }
-                : {}),
-            })),
+            messages: toChatMessages(payload.messages),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
           },
@@ -1940,17 +1855,7 @@ export function ChatPanel({
         setConversations((prev) => ({
           ...prev,
           [sessionId]: {
-            messages: payload.messages.map((message) => ({
-              role: message.role,
-              text: message.content,
-              at: Date.parse(message.createdAt),
-              ...(message.failedTools !== undefined && message.failedTools.length > 0
-                ? { failedTools: message.failedTools }
-                : {}),
-              ...(message.agentWarnings !== undefined && message.agentWarnings.length > 0
-                ? { agentWarnings: message.agentWarnings }
-                : {}),
-            })),
+            messages: toChatMessages(payload.messages),
             sessionId: payload.sessionId,
             agentId: payload.agentId,
           },
@@ -2080,121 +1985,11 @@ export function ChatPanel({
     [selectedAgent],
   );
 
-  const ingestImageFiles = useCallback(
-    (files: readonly File[]) => {
-      if (files.length === 0) {
-        return;
-      }
-      const attachmentKey = currentConversationKey;
-      // attachmentKey と imageFiles をキャプチャしたクロージャで .then() 内の再検証を行うため、
-      // 連続 paste が3回以上重なると conversationAttachmentsRef.current の読み取りタイミング次第で
-      // 上限判定が甘くなりうる。現行の上限4枚では実害が観測されていないが、上限を変えるときはここが表面化しうる。
-      const validationError = validateChatAttachments(
-        conversationAttachmentsRef.current[attachmentKey] ?? [],
-        files,
-      );
-      if (validationError !== null) {
-        setAttachmentErrors((prev) => ({ ...prev, [attachmentKey]: validationError }));
-        return;
-      }
-
-      void Promise.all(
-        files.map(async (file) => {
-          const previewUrl = await readFileAsDataUrl(file);
-          attachmentIdRef.current += 1;
-          return {
-            id: `chat-image-${attachmentIdRef.current}`,
-            file,
-            mimeType: file.type as ChatImageMimeType,
-            previewUrl,
-            name: file.name || `貼り付け画像 ${attachmentIdRef.current}`,
-            size: file.size,
-          } satisfies ChatAttachment;
-        }),
-      )
-        .then((prepared) => {
-          // FileReaderの完了前に会話が切り替わった場合、到達不能な旧キーへ
-          // 大きなdata URLを残さない。現在の入力欄へ貼り直せる状態を優先する。
-          if (currentConversationKeyRef.current !== attachmentKey) return;
-          const latestValidationError = validateChatAttachments(
-            conversationAttachmentsRef.current[attachmentKey] ?? [],
-            files,
-          );
-          if (latestValidationError !== null) {
-            setAttachmentErrors((prev) => ({
-              ...prev,
-              [attachmentKey]: latestValidationError,
-            }));
-            return;
-          }
-          updateConversationAttachments((prev) => ({
-            ...prev,
-            [attachmentKey]: [...(prev[attachmentKey] ?? []), ...prepared],
-          }));
-          setAttachmentErrors((prev) => {
-            if (!(attachmentKey in prev)) return prev;
-            const next = { ...prev };
-            delete next[attachmentKey];
-            return next;
-          });
-        })
-        .catch(() => {
-          setAttachmentErrors((prev) => ({
-            ...prev,
-            [attachmentKey]: '画像を読み込めませんでした。',
-          }));
-        });
-    },
-    [currentConversationKey, updateConversationAttachments],
-  );
-
-  const handleImagePaste = useCallback(
-    (event: ClipboardEvent<HTMLTextAreaElement>) => {
-      const imageFiles = Array.from(event.clipboardData.files).filter((file) =>
-        file.type.startsWith('image/'),
-      );
-      // 通常のテキスト paste はブラウザへ委ねる。画像を含む paste のときだけ
-      // textarea へのバイナリ由来文字列挿入を止める。
-      if (imageFiles.length === 0) {
-        return;
-      }
-      event.preventDefault();
-      ingestImageFiles(imageFiles);
-    },
-    [ingestImageFiles],
-  );
-
-  const handleImageFileChange = useCallback(
-    (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      if (files.length === 0) {
-        return;
-      }
-      ingestImageFiles(files);
-      event.target.value = '';
-    },
-    [ingestImageFiles],
-  );
-
-  const removeAttachment = useCallback(
-    (attachmentKey: string, attachmentId: string) => {
-      if (isSending) return;
-      updateConversationAttachments((prev) => ({
-        ...prev,
-        [attachmentKey]: (prev[attachmentKey] ?? []).filter(
-          (attachment) => attachment.id !== attachmentId,
-        ),
-      }));
-      setAttachmentErrors((prev) => {
-        if (!(attachmentKey in prev)) return prev;
-        const next = { ...prev };
-        delete next[attachmentKey];
-        return next;
-      });
-    },
-    [isSending, updateConversationAttachments],
-  );
-
+  // bdboard-sso1.83 第2段: ingestImageFiles/handleImagePaste/
+  // handleImageFileChange/removeAttachment は
+  // useChatAttachmentIngestion.ts (useChatDraftState.ts 経由) へ移した。
+  // 以降は handleImagePaste / handleImageFileChange /
+  // removeAttachment を呼ぶ。
   /**
    * 描画にも送信にもこの派生値だけを使う。エージェントを切り替えた直後の1フレームは
    * selectedModelId が前のエージェントのモデルIDのままなので、state を直接使うと
@@ -2224,17 +2019,7 @@ export function ChatPanel({
           [result.sessionId]: {
           messages: [
             ...(prev[convKey]?.messages ?? []),
-            {
-              role: 'assistant' as const,
-              text: result.reply,
-              at: Date.now(),
-              ...(result.failedTools !== undefined && result.failedTools.length > 0
-                ? { failedTools: result.failedTools }
-                : {}),
-              ...(result.agentWarnings !== undefined && result.agentWarnings.length > 0
-                ? { agentWarnings: result.agentWarnings }
-                : {}),
-            },
+            toAssistantMessage(result, Date.now()),
           ],
           sessionId: result.sessionId,
           agentId: result.agentId,
@@ -2292,45 +2077,10 @@ export function ChatPanel({
       error: unknown,
       sentAt: number,
     ) => {
-      let errorText: string;
-      let clearSession = false;
-      const accessMessage = writeAccessErrorMessage(error);
-      if (accessMessage !== null) {
-        errorText = accessMessage;
-      } else if (error instanceof ApiError) {
-        if (error.status === 403) errorText = 'チャットを利用する権限がありません。';
-        else if (error.status === 409) {
-          // bdboard-yzn: writeAccessMessage.ts の CHAT_BUSY_HELP と共有し、文言の fork を防ぐ。
-          errorText = CHAT_BUSY_HELP;
-        } else if (error.status === 400 && error.errorMessage === 'unknown chat session') {
-          errorText = '会話の続きが失われました。もう一度送信してください。';
-          clearSession = true;
-        } else if (error.status === 400 && error.errorMessage === 'chat agent mismatch') {
-          errorText = 'エージェントが切り替わったため、会話をやり直します。もう一度送信してください。';
-          clearSession = true;
-        } else if (
-          error.status === 400 &&
-          error.errorMessage === 'chat agent does not support image attachments'
-        ) {
-          errorText = 'このエージェントは画像入力に対応していません。画像対応エージェントへ切り替えるか、画像を削除してください。';
-        } else if (error.status === 404) errorText = 'プロジェクトが見つかりません。';
-        else if (error.status === 502 && error.code === 'agent-workspace-untrusted') {
-          // bdboard-l1t.5 Opus 再レビュー DF1: サーバー側は agent-workspace-untrusted
-          // (chat-agent.ts) を返しているのに、ここで拾わないと汎用の
-          // error.errorMessage ('chat failed') しか出ず利用者に理由が伝わらない。
-          errorText = 'このプロジェクト(ワークスペース)を cursor-agent に信頼させる必要があります。bdboard の外で一度 cursor-agent を対話実行し、ワークスペース信頼プロンプトに答えてから、もう一度送信してください。';
-        } else if (error.status === 502 && error.code === 'agent-headless-denied') {
-          // bdboard-l1t.6 Opus レビュー SF1 (l1t.5 DF1 と同型): agy の headless モードが
-          // ツール呼び出しを自動拒否して空応答になったケース。汎用文言では利用者に
-          // 「運用者側の許可設定が要る」ことが伝わらないため、code をマップして案内する。
-          errorText = 'エージェントの headless モードがツール呼び出しを自動拒否したため、応答を得られませんでした。bdboard の外で agy 側の設定 (~/.gemini/antigravity-cli/settings.json) の permissions.allow に bd コマンドの許可ルール(例: "command(bd)")を追加してから、もう一度送信してください。';
-        } else {
-          const agentMessage = chatAgentErrorMessage(error);
-          errorText =
-            agentMessage ?? error.errorMessage ?? error.message;
-        }
-      } else if (error instanceof Error) errorText = error.message;
-      else errorText = '送信に失敗しました';
+      // bdboard-sso1.83 第4段: エラー種別 → 文言/clearSession の判定は
+      // chat/chatSendErrors.ts の describeChatSendError へ移した。分岐の順番・
+      // 条件・文言は変えていない。
+      const { text: errorText, clearSession } = describeChatSendError(error);
 
       setConversations((prev) => {
         const current = prev[convKey] ?? { messages: [] };
@@ -2401,7 +2151,7 @@ export function ChatPanel({
       // `value !== seed` により正しく「編集済み」と判定される — つまり delete
       // 無しの現状のまま(=既存の記録を変更しない)で両ケースとも正しい。
       if ((conversationInputsRef.current[convKey] ?? '') === '') {
-        setConversationInputs((prev) => ({ ...prev, [convKey]: sentText }));
+        setInput(convKey, sentText);
       }
       // 本文と同じく送信元キーへだけ戻し、送信後に同じキーへ新しい添付が
       // 置かれていた場合は上書きしない。AbortError はこの関数へ来ない。
@@ -2415,7 +2165,13 @@ export function ChatPanel({
         }));
       }
     },
-    [selectedProjectId, updateConversationAttachments],
+    [
+      selectedProjectId,
+      updateConversationAttachments,
+      conversationInputsRef,
+      conversationAttachmentsRef,
+      setInput,
+    ],
   );
 
   const submitChatMessage = useCallback(
@@ -2493,10 +2249,10 @@ export function ChatPanel({
           // 再度待たず、POST開始前の切替でdraftを失う非同期の窓を作らない。
           messagePayload.images = attachmentsToPayload(sentAttachments);
         } catch {
-          setAttachmentErrors((prev) => ({
-            ...prev,
-            [currentConversationKey]: '画像を送信形式に変換できませんでした。',
-          }));
+          setAttachmentError(
+            currentConversationKey,
+            '画像を送信形式に変換できませんでした。',
+          );
           return;
         }
       }
@@ -2532,10 +2288,7 @@ export function ChatPanel({
           ],
         },
       }));
-      setConversationInputs((prev) => ({
-        ...prev,
-        [currentConversationKey]: '',
-      }));
+      setInput(currentConversationKey, '');
       updateConversationAttachments((prev) => ({
         ...prev,
         [currentConversationKey]: [],
@@ -2743,6 +2496,8 @@ export function ChatPanel({
       applyChatError,
       updateConversationAttachments,
       markUnresolvedSend,
+      setAttachmentError,
+      setInput,
     ],
   );
 
@@ -2773,22 +2528,15 @@ export function ChatPanel({
       if (isSending || selectedProjectId === '' || isHistoryPending) {
         return;
       }
-      const prompt = command.prompt;
-      draftSeedTextRef.current[currentConversationKey] = prompt;
-      setConversationInputs((prev) => ({
-        ...prev,
-        [currentConversationKey]: prompt,
-      }));
-      requestAnimationFrame(() => {
-        const textarea = inputRef.current;
-        if (textarea === null) {
-          return;
-        }
-        textarea.focus();
-        textarea.setSelectionRange(prompt.length, prompt.length);
-      });
+      applyQuickCommandPrompt(currentConversationKey, command.prompt);
     },
-    [currentConversationKey, isHistoryPending, isSending, selectedProjectId],
+    [
+      currentConversationKey,
+      isHistoryPending,
+      isSending,
+      selectedProjectId,
+      applyQuickCommandPrompt,
+    ],
   );
 
   const handleModelChange = useCallback(
@@ -2837,7 +2585,12 @@ export function ChatPanel({
       // こちらは従来どおり引き継がず空のドラフトのままにする。
       applyDraftPayloadStoreCarryPlan(HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY, {
         conversationInputs: () => {
-          setConversationInputs((prev) => ({
+          // opus レビュー(bdboard-sso1.83): ref 読み取り(最後にレンダーされた
+          // state)ではなく、元実装と同じく prev を関数で読む形にする —
+          // 同一バッチ内に別の pending な入力更新があった場合でも、それを
+          // 取りこぼさず引き継ぐため(updateConversationAttachments 直下と同じ
+          // 理由)。
+          updateConversationInputs((prev) => ({
             ...prev,
             [nextDraftKey]: prev[currentConversationKey] ?? '',
           }));
@@ -2880,20 +2633,13 @@ export function ChatPanel({
         };
       });
     },
-    [selectedProjectId, currentConversationKey, updateConversationAttachments],
-  );
-
-  const handleKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
-        if (isImeComposingKeyEvent(event)) {
-          return;
-        }
-        event.preventDefault();
-        formRef.current?.requestSubmit();
-      }
-    },
-    [],
+    [
+      selectedProjectId,
+      currentConversationKey,
+      updateConversationAttachments,
+      updateConversationInputs,
+      draftSeedTextRef,
+    ],
   );
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
@@ -2930,12 +2676,7 @@ export function ChatPanel({
       delete next[currentConversationKey];
       return next;
     });
-    setAttachmentErrors((prev) => {
-      if (!(currentConversationKey in prev)) return prev;
-      const next = { ...prev };
-      delete next[currentConversationKey];
-      return next;
-    });
+    clearAttachmentError(currentConversationKey);
     startNewDraftThread(selectedProjectId);
   };
   const handleCloseThread = (sessionId: string) => {
@@ -2955,12 +2696,7 @@ export function ChatPanel({
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
     }
     writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: nextSelectedSessionId });
-    if (confirmingDeleteSessionId === sessionId) {
-      setConfirmingDeleteSessionId(null);
-    }
-    if (renamingSessionId === sessionId) {
-      setRenamingSessionId(null);
-    }
+    cancelThreadInteractionsForSession(sessionId);
   };
   /**
    * bdboard-3tw.104.3 レビュー MF2: adopt 直後は `selectedThreadIds[projectId]` を
@@ -3057,7 +2793,7 @@ export function ChatPanel({
     });
 
     setSelectedThreadIds((prev) => ({ ...prev, [projectId]: sessionId }));
-    setConfirmingDeleteSessionId(null);
+    cancelThreadConfirmDelete();
     setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
 
     void fetchChatThreads(projectId)
@@ -3079,7 +2815,7 @@ export function ChatPanel({
       console.error('chat thread delete failed', error);
       setThreadError('スレッドの削除に失敗しました。');
     } finally {
-      setConfirmingDeleteSessionId(null);
+      cancelThreadConfirmDelete();
     }
   };
 
@@ -3099,7 +2835,7 @@ export function ChatPanel({
       console.error('chat thread rename failed', error);
       setThreadError('スレッド名の変更に失敗しました。');
     } finally {
-      setRenamingSessionId(null);
+      cancelThreadRename();
     }
   };
 
@@ -3123,12 +2859,12 @@ export function ChatPanel({
     currentSessionId !== undefined
       ? (threadById.get(currentSessionId)?.title ?? '(無題)')
       : '新規';
-  const chatSettingsSummaryParts = [
-    'チャット設定',
+  // bdboard-sso1.83 第4段: 本体は chat/threads.ts へ移した(挙動は変えていない)。
+  const chatSettingsSummaryParts = computeChatSettingsSummaryParts(
     selectedProject?.name,
     currentThreadTitle,
     selectedAgent?.label,
-  ].filter((part): part is string => part !== undefined && part !== '');
+  );
 
   // Chat Redesign 1b: スレッド一覧ドロワーの行データ。ピン留めは開いている/
   // 閉じたスレッドのどちらに属していても「ピン留め」節へ寄せ、開いている/
@@ -3181,7 +2917,7 @@ export function ChatPanel({
                 void handleRenameConfirm(sessionId);
               } else if (event.key === 'Escape') {
                 event.preventDefault();
-                setRenamingSessionId(null);
+                cancelThreadRename();
               }
             }}
             onBlur={() => void handleRenameConfirm(sessionId)}
@@ -3192,15 +2928,12 @@ export function ChatPanel({
             className="chat-thread-drawer-item-select"
             aria-current={isSelected ? 'true' : undefined}
             onClick={() => {
-              setConfirmingDeleteSessionId(null);
-              setRenamingSessionId(null);
-              setThreadActionMenuSessionId(null);
+              selectThreadDrawerThread();
               setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
               writePersistedChatThreadState(selectedProjectId, {
                 activeSessionIds: openThreads,
                 selectedSessionId: sessionId,
               });
-              setThreadDrawerOpen(false);
             }}
           >
             {isPinned && (
@@ -3223,9 +2956,7 @@ export function ChatPanel({
             aria-label={`スレッド「${threadTitle}」の操作`}
             aria-haspopup="menu"
             aria-expanded={isMenuOpen}
-            onClick={() =>
-              setThreadActionMenuSessionId((prev) => (prev === sessionId ? null : sessionId))
-            }
+            onClick={() => toggleThreadActionMenu(sessionId)}
           >
             ⋯
           </button>
@@ -3240,10 +2971,7 @@ export function ChatPanel({
                 role="menuitem"
                 className="chat-thread-drawer-menu-item"
                 onClick={() => {
-                  setThreadActionMenuSessionId(null);
-                  setConfirmingDeleteSessionId(null);
-                  setRenamingSessionId(sessionId);
-                  setRenameDraft(thread?.title ?? '');
+                  startThreadRename(sessionId, thread?.title ?? '');
                 }}
               >
                 リネーム
@@ -3253,7 +2981,7 @@ export function ChatPanel({
                 role="menuitem"
                 className="chat-thread-drawer-menu-item"
                 onClick={() => {
-                  setThreadActionMenuSessionId(null);
+                  closeThreadActionMenu();
                   void handlePinToggle(sessionId, isPinned);
                 }}
               >
@@ -3264,7 +2992,7 @@ export function ChatPanel({
                 role="menuitem"
                 className="chat-thread-drawer-menu-item"
                 onClick={() => {
-                  setThreadActionMenuSessionId(null);
+                  closeThreadActionMenu();
                   handleCloseThread(sessionId);
                 }}
               >
@@ -3291,7 +3019,7 @@ export function ChatPanel({
                   type="button"
                   role="menuitem"
                   className="chat-thread-drawer-menu-item chat-thread-drawer-menu-item-danger"
-                  onClick={() => setConfirmingDeleteSessionId(sessionId)}
+                  onClick={() => startThreadConfirmDelete(sessionId)}
                 >
                   <span className="chat-thread-delete-icon" aria-hidden="true">
                     🗑
@@ -3321,7 +3049,7 @@ export function ChatPanel({
             activeSessionIds: next,
             selectedSessionId: thread.sessionId,
           });
-          setThreadDrawerOpen(false);
+          closeThreadDrawer();
         }}
       >
         {thread.pinned && (
@@ -3403,11 +3131,11 @@ export function ChatPanel({
 
         <ChatThreadSwitcher
           threadDrawerOpen={threadDrawerOpen}
-          onToggleDrawer={() => setThreadDrawerOpen((prev) => !prev)}
+          onToggleDrawer={toggleThreadDrawer}
           currentThreadTitle={currentThreadTitle}
           openThreadsCount={openThreads.length}
           onNewThread={() => {
-            setThreadDrawerOpen(false);
+            closeThreadDrawer();
             handleNewThread();
           }}
           hasNoDisplayedOpenThreads={displayedOpenThreads.length === 0}
@@ -3417,7 +3145,7 @@ export function ChatPanel({
           open={threadDrawerOpen}
           drawerRef={threadDrawerRef}
           closeButtonRef={threadDrawerCloseButtonRef}
-          onClose={() => setThreadDrawerOpen(false)}
+          onClose={closeThreadDrawer}
           hasPinnedRows={pinnedThreadDrawerRows.length > 0}
           pinnedRows={pinnedThreadDrawerRows}
           hasOpenRows={openThreadDrawerRows.length > 0}
@@ -3426,12 +3154,12 @@ export function ChatPanel({
           closedRows={closedThreadDrawerRows}
           selectedProjectId={selectedProjectId}
           showDiscoveredSessions={showDiscoveredSessions}
-          onToggleDiscoveredSessions={() => setShowDiscoveredSessions((prev) => !prev)}
+          onToggleDiscoveredSessions={toggleShowDiscoveredSessions}
           isSending={isSending}
-          onCloseDiscoveredSessions={() => setShowDiscoveredSessions(false)}
+          onCloseDiscoveredSessions={closeShowDiscoveredSessions}
           onResumeDiscoveredSession={(sessionId, agentId, seedMessages) => {
             handleResumeDiscoveredSession(sessionId, agentId, seedMessages);
-            setThreadDrawerOpen(false);
+            closeThreadDrawer();
           }}
         />
 
@@ -3520,11 +3248,10 @@ export function ChatPanel({
             value={currentInput}
             disabled={isSending || chatUnsupported}
             onChange={(event) => {
-              const value = event.target.value;
-              setConversationInputs((prev) => ({ ...prev, [currentConversationKey]: value }));
+              setInput(currentConversationKey, event.target.value);
             }}
             onPaste={handleImagePaste}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handleComposedEnterSubmit}
           />
           <ChatInputActions
             fileInputRef={fileInputRef}
