@@ -80,10 +80,10 @@ npm run check:boundaries # dependency-cruiser (architecture layering)
 
 ## Lint のログ量 (`npm run lint:verify`、bdboard-ynp1)
 
-`npm run verify` の中で `npm run lint` をそのまま呼ぶと、既存の warning (台帳は
-`eslint.config.mjs` のルールごとのコメント、実測 2555 件) を毎回全件出力し、エージェントや
-CI のログで本当の失敗 (error) が埋もれていた。`scripts/lint-verify.mjs` (ESLint の Node API を
-直接呼ぶラッパー) が verify から呼ばれる:
+`npm run verify` の中で `npm run lint` をそのまま呼ぶと、既存の warning (概算のルール
+ごとの内訳は `eslint.config.mjs` のコメント、合計は都度変動する。本 PR 作成時点の実測は
+2554 件) を毎回全件出力し、エージェントや CI のログで本当の失敗 (error) が埋もれていた。
+`scripts/lint-verify.mjs` (ESLint の Node API を直接呼ぶラッパー) が verify から呼ばれる:
 
 - error が1件も無ければ、warning は1行も出力せず `eslint: 0 errors, N warnings (...)` の
   1行だけを出して exit 0。

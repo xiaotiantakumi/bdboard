@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // bdboard-ynp1: `npm run verify` から呼ぶ ESLint の要約ラッパー。
 //
-// 背景: `npm run lint` は既存の warning が約2400件 (台帳は eslint.config.mjs のコメント)
-// あり、verify のたびに全件出力するとエージェントや CI のログで本当の失敗 (error) が
+// 背景: `npm run lint` は既存の warning が数千件規模 (概算のルールごとの内訳は
+// eslint.config.mjs のコメント。正確な合計はこのスクリプトの標準出力が都度示す) あり、
+// verify のたびに全件出力するとエージェントや CI のログで本当の失敗 (error) が
 // 埋もれる。error の検出自体は弱めない — ESLint の実行内容・ルール・exit code の意味は
 // `npm run lint` と同じで、error が1件でもあれば exit 1 のまま。
 //
