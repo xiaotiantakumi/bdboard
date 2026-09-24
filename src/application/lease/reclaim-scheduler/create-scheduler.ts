@@ -10,6 +10,7 @@ import { runWithConcurrencyLimit } from '../../concurrency.js';
 import { parseReclaimStdout } from '../parse-reclaim-output.js';
 import { errorMessage, summarizeFailure } from './failure-summary.js';
 import { describeReclaimSkip } from './skip-reason.js';
+import { ensureProjectStatus, toProjectStatusSnapshot } from './status.js';
 import type {
   MutableProjectStatus,
   ReclaimProjectStatus,
@@ -28,22 +29,6 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
   let intervalTimer: ReturnType<typeof setInterval> | undefined;
   let running = false;
 
-  const ensureProjectStatus = (projectId: string): MutableProjectStatus => {
-    let entry = statusByProjectId.get(projectId);
-    if (entry === undefined) {
-      entry = {
-        projectId,
-        lastRunAt: null,
-        reclaimedCount: null,
-        reclaimedCountUnknown: false,
-        rawSummary: null,
-        lastError: null,
-      };
-      statusByProjectId.set(projectId, entry);
-    }
-    return entry;
-  };
-
   const notifyObserver = (run: ReclaimRunRecord): void => {
     const observer = deps.observer;
     if (observer === undefined) {
@@ -58,7 +43,7 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
   };
 
   const runForProject = async (project: Project): Promise<void> => {
-    const entry = ensureProjectStatus(project.id);
+    const entry = ensureProjectStatus(statusByProjectId, project.id);
     try {
       const outcome = await deps.planner(project);
       if (outcome.kind === 'skipped') {
@@ -166,29 +151,15 @@ export function createReclaimScheduler(deps: ReclaimSchedulerDeps): ReclaimSched
 
     for (const project of projects) {
       seen.add(project.id);
-      const entry = ensureProjectStatus(project.id);
-      projectStatuses.push({
-        projectId: entry.projectId,
-        lastRunAt: entry.lastRunAt?.toISOString() ?? null,
-        reclaimedCount: entry.reclaimedCount,
-        reclaimedCountUnknown: entry.reclaimedCountUnknown,
-        rawSummary: entry.rawSummary,
-        lastError: entry.lastError,
-      });
+      const entry = ensureProjectStatus(statusByProjectId, project.id);
+      projectStatuses.push(toProjectStatusSnapshot(entry));
     }
 
     for (const [projectId, entry] of statusByProjectId) {
       if (seen.has(projectId)) {
         continue;
       }
-      projectStatuses.push({
-        projectId: entry.projectId,
-        lastRunAt: entry.lastRunAt?.toISOString() ?? null,
-        reclaimedCount: entry.reclaimedCount,
-        reclaimedCountUnknown: entry.reclaimedCountUnknown,
-        rawSummary: entry.rawSummary,
-        lastError: entry.lastError,
-      });
+      projectStatuses.push(toProjectStatusSnapshot(entry));
     }
 
     projectStatuses.sort((a, b) => compareStrings(a.projectId, b.projectId));
