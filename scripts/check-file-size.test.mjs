@@ -419,6 +419,24 @@ describe('formatResult', () => {
     expect(text).not.toContain('docs/VERIFY.md');
   });
 
+  it('omits the docs/VERIFY.md footer when only a (d) ratchet warning is present (non-fatal)', () => {
+    const entries = new Map([['src/a.ts', { limit: 150, reason: 'r' }]]);
+    const cfg = { defaultLimits: { nonTest: 100, test: 300 }, ratchetWarningThreshold: 20, entries };
+    // 101 は既定上限(100)より上なので "ok" 枝に入り、gap = 150 - 101 = 49 >= threshold(20)
+    // で (d) 警告だけが付く。newOverLimit/overOwnLimit/shrunkBelowDefault/missingFiles は
+    // いずれも空 (total === 0、non-fatal) であること。
+    const result = evaluate([{ path: 'src/a.ts', isTest: false, lines: 101 }], cfg);
+    expect(
+      result.newOverLimit.length +
+        result.overOwnLimit.length +
+        result.shrunkBelowDefault.length +
+        result.missingFiles.length,
+    ).toBe(0);
+    const text = formatResult(result);
+    expect(text).toContain('ラチェット');
+    expect(text).not.toContain('docs/VERIFY.md');
+  });
+
   it('includes actionable text for each failing category', () => {
     const entries = new Map([
       ['src/over.ts', { limit: 150, reason: 'r' }],
@@ -648,6 +666,16 @@ describe('check-file-size CLI', () => {
     expect(result.stderr).toContain('baseline 設定を読み込めません');
   });
 
+  it('exits 2 (not a permanent (c) failure) when a baseline entry points outside the target scope', () => {
+    // bdboard-ihf6: 対象範囲外のパスを baseline に登録すると、走査結果に一度も現れず
+    // 永久に (c) missing で fail し続けていた。CLI レベルでも早期の形式エラー (exit 2)
+    // になることを固定する。
+    writeConfig({ entries: [{ path: 'docs/foo.ts', limit: 5, reason: 'out of scope' }] });
+    const result = runCheck();
+    expect(result.status).toBe(EXIT_UNAVAILABLE);
+    expect(result.stderr).toContain('対象範囲外');
+  });
+
   it('exits 2 when the baseline config file is missing entirely', () => {
     const result = runCheck();
     expect(result.status).toBe(EXIT_UNAVAILABLE);
@@ -694,7 +722,12 @@ describe('listGitFiles', () => {
     }
   });
 
-  it('returns non-ASCII filenames unquoted (core.quotePath=false)', () => {
+  it('returns non-ASCII filenames unquoted even when core.quotePath defaults to true', () => {
+    // core.quotePath の *リポジトリローカル* な既定値を明示的に true にしておく
+    // (グローバル設定が既に false の開発機では、-c を落としてもこのテストが偽陽性で
+    // 通ってしまうため)。listGitFiles が -c core.quotePath=false / -z を正しく渡していれば、
+    // ローカル設定の値に関わらずクォートされない。
+    execFileSync('git', ['config', 'core.quotePath', 'true'], { cwd: tmpRoot });
     fs.mkdirSync(path.join(tmpRoot, 'src'), { recursive: true });
     fs.writeFileSync(path.join(tmpRoot, 'src', '日本語.ts'), '1\n');
     expect(listGitFiles(tmpRoot)).toContain('src/日本語.ts');
