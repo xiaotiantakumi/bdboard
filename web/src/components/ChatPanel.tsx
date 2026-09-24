@@ -10,8 +10,6 @@ import {
   acknowledgeChatTurn,
   fetchChatThreads,
   fetchChatTurnStatus,
-  deleteChatThread,
-  updateChatThread,
   fetchChatSessionMessages,
   postChatMessage,
   postChatMessageStream,
@@ -69,7 +67,6 @@ import {
 } from './chat/projectSelection';
 import {
   chatSettingsSummaryParts as computeChatSettingsSummaryParts,
-  compareThreadsNewestFirst,
   partitionThreadDrawerRows,
   summarizeTitle,
 } from './chat/threads';
@@ -103,6 +100,8 @@ import {
 import { describeChatSendError } from './chat/chatSendErrors';
 import { useElapsedSeconds } from './chat/useElapsedSeconds';
 import { useStickToBottomScroll } from './chat/useStickToBottomScroll';
+import { useConversationKey } from './chat/useConversationKey';
+import { useChatThreadLists } from './chat/useChatThreadLists';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -143,25 +142,22 @@ export function ChatPanel({
       { messages: ChatMessage[]; sessionId?: string; agentId?: string }
     >
   >({});
-  const [threadLists, setThreadLists] = useState<Record<string, ChatThreadDto[]>>({});
-  const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
-  const [selectedThreadIds, setSelectedThreadIds] = useState<Record<string, string | undefined>>({});
-  const [draftNonces, setDraftNonces] = useState<Record<string, number>>({});
-  // bdboard-sso1.83 第2段: currentSessionId/draftKey/currentConversationKey/
-  // currentConversationKeyRef と isSending は、元は conversationInputs/
-  // conversationAttachments/attachmentErrors 宣言の直後(このファイル下部、旧
-  // 759行目付近)にあったが、それら3ストアを useChatDraftState.ts の
-  // useReducer へ抜き出したことで、そのフック呼び出しへ渡す値としてここより
-  // 先に確定させる必要が生じたため引き上げた。どちらも
-  // selectedThreadIds/draftNonces/selectedProjectId から計算する独立した
-  // 派生値・独立した useState で、他の hook の呼び出し順や依存配列には
-  // 影響しない(React の Rules of Hooks は呼び出し順が毎レンダー一定である
-  // ことだけを要求する)。
-  const currentSessionId = selectedThreadIds[selectedProjectId];
-  const draftKey = (projectId: string) => makeDraftKey(projectId, draftNonces[projectId] ?? 0);
-  const currentConversationKey = currentSessionId ?? draftKey(selectedProjectId);
-  const currentConversationKeyRef = useRef(currentConversationKey);
-  currentConversationKeyRef.current = currentConversationKey;
+  // bdboard-sso1.83 第10段: selectedThreadIds/draftNonces と、そこから計算する
+  // currentSessionId/currentConversationKey(+ stale-closure 回避用の ref ミラー)を
+  // chat/useConversationKey.ts へ move-only で抜き出した(旧第2段のコメントが
+  // 説明していた「呼び出し順・依存配列に影響しない独立した useState/派生値」と
+  // いう性質はそのまま、宣言場所だけがフックの中へ移った)。selectedThreadIds/
+  // draftNonces 自体(Record 全体)はこのコンポーネント側では直接読まれなくなった
+  // ため分割代入しない(setter と ref ミラー、および派生値だけを受け取る)。
+  const {
+    setSelectedThreadIds,
+    selectedThreadIdsRef,
+    setDraftNonces,
+    draftNoncesRef,
+    currentSessionId,
+    currentConversationKey,
+    currentConversationKeyRef,
+  } = useConversationKey(selectedProjectId);
   const [isSending, setIsSending] = useState(false);
   // Chat Redesign 1b: タブ帯を捨て、スレッド切り替えは「現在のスレッド名+件数」
   // ボタン1つ→ドロワー(縦一覧)へ集約する。ドロワーの開閉・行の「⋯」操作メニュー・
@@ -196,6 +192,48 @@ export function ChatPanel({
   // chat/useChatNotifications.ts へ抜き出した(詳細はそちら参照)。
   const { threadError, setThreadError, ticketProjectFallbackNotice, setTicketProjectFallbackNotice } =
     useChatNotifications();
+  // bdboard-sso1.83 第10段: threadLists/openThreadIds の state と、開閉・選択・
+  // 削除・リネーム・ピン留めの各操作を chat/useChatThreadLists.ts へ move-only で
+  // 抜き出した。呼び出し位置は元の useState(このファイル冒頭)より後ろにずれて
+  // いる — ドロワーの useReducer(上の useThreadDrawerState)の戻り値(drawer
+  // callbacks/renameDraft)と useChatNotifications の setThreadError に依存する
+  // ため。effect は持たない(スレッド一覧 fetch effect 自体は会話キー再割り当て
+  // クラスタ第14段でまとめて扱う設計のため、ここでは対象外)。closeThread/
+  // deleteThread/renameThread/togglePin は元の handleCloseThread/
+  // handleDeleteThread/handleRenameConfirm/handlePinToggle と同じ関数として
+  // 参照できるよう分割代入でエイリアスする(以降の参照箇所・コメント中の関数名は
+  // 変えていない)。
+  const {
+    setThreadLists,
+    openThreadIds,
+    setOpenThreadIds,
+    openThreadIdsRef,
+    openThreads,
+    threadById,
+    displayedOpenThreads,
+    closedThreads,
+    hasClosedThreads,
+    currentThreadTitle,
+    closeThread: handleCloseThread,
+    selectOpenThread,
+    reopenClosedThread,
+    deleteThread: handleDeleteThread,
+    renameThread: handleRenameConfirm,
+    togglePin: handlePinToggle,
+  } = useChatThreadLists({
+    selectedProjectId,
+    currentSessionId,
+    setSelectedThreadIds,
+    setThreadError,
+    renameDraft,
+    drawer: {
+      selectThread: selectThreadDrawerThread,
+      cancelInteractionsForSession: cancelThreadInteractionsForSession,
+      cancelConfirmDelete: cancelThreadConfirmDelete,
+      cancelRename: cancelThreadRename,
+      closeDrawer: closeThreadDrawer,
+    },
+  });
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
   // ticketContextToken 由来のプリフィル文言と、プロジェクト解決前に貼られた画像は
@@ -462,8 +500,7 @@ export function ChatPanel({
   threadModelIdsRef.current = threadModelIds;
   const historyRequestIdRef = useRef(0);
   const threadListRequestIdRef = useRef(0);
-  const draftNoncesRef = useRef(draftNonces);
-  draftNoncesRef.current = draftNonces;
+  // draftNoncesRef は chat/useConversationKey.ts(bdboard-sso1.83 第10段)へ移した。
   // bdboard-sso1.83 第2段: conversationInputsRef/conversationAttachmentsRef
   // (startNewDraftThread 等が stale closure を経由せず読むための「state を
   // ミラーする ref」、draftNoncesRef と同じパターン)・attachmentIdRef・
@@ -538,18 +575,8 @@ export function ChatPanel({
     },
     [applyToDraftPayloadStores],
   );
-  // bdboard-ysu: 下の project-sync effect が、非同期に解決する
-  // fetchChatThreads().then/.catch の中から「今まさにどのスレッドが選択
-  // されているか」を stale closure を経由せず読むための参照。draftNoncesRef /
-  // conversationInputsRef と同じミラーパターン。
-  const selectedThreadIdsRef = useRef(selectedThreadIds);
-  selectedThreadIdsRef.current = selectedThreadIds;
-  // bdboard-23u: 404/unknown session 自動回復の catch (このファイル内、下の
-  // 履歴フェッチ effect) が、依存配列に openThreadIds を含まないまま
-  // writePersistedChatThreadState 用の最新 activeSessionIds を stale closure
-  // なしで読むための参照。draftNoncesRef 等と同じミラーパターン。
-  const openThreadIdsRef = useRef(openThreadIds);
-  openThreadIdsRef.current = openThreadIds;
+  // selectedThreadIdsRef は chat/useConversationKey.ts、openThreadIdsRef は
+  // chat/useChatThreadLists.ts(いずれも bdboard-sso1.83 第10段)へ移した。
   // 取り直しの適用可否を判断するときに、現在の会話の長さを deps を増やさずに
   // 読むための参照 (bdboard-3tw.156)。
   const conversationsRef = useRef(conversations);
@@ -2493,21 +2520,9 @@ export function ChatPanel({
     ],
   );
 
-  const openThreads = openThreadIds[selectedProjectId] ?? [];
-  const threadById = new Map((threadLists[selectedProjectId] ?? []).map((thread) => [thread.sessionId, thread]));
-  // 開いているスレッドの並びは openThreadIds の挿入順(古いものが先)なので、
-  // ここで新しい順に並べ直す。openThreadIds 自体は並べ替えない — あれは
-  // 「どのスレッドを開いているか」の永続状態で、表示順とは別物 (bdboard-3tw.154)。
-  const displayedOpenThreads = [...openThreads].sort((a, b) =>
-    compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
-  );
-  // 閉じたスレッドはサーバーが更新の新しい順で返すが、送信直後にローカルで
-  // 末尾へ差し込む経路 (下の setThreadLists) があるので、表示側でも並べ直して
-  // 取得元の順序に依存しないようにしておく。
-  const closedThreads = (threadLists[selectedProjectId] ?? [])
-    .filter((thread) => !openThreads.includes(thread.sessionId))
-    .sort(compareThreadsNewestFirst);
-  const hasClosedThreads = closedThreads.length > 0;
+  // bdboard-sso1.83 第10段: openThreads/threadById/displayedOpenThreads/
+  // closedThreads/hasClosedThreads は chat/useChatThreadLists.ts へ move-only で
+  // 抜き出した(このコンポーネント冒頭の分割代入で受け取る)。
   const handleNewThread = () => {
     // SF5: pendingPrefillRef/pendingTicketDraftProjectRef の消化窓
     // (チケット文脈からの起動でスレッド一覧 fetch がまだ終わっていない間)に
@@ -2530,25 +2545,10 @@ export function ChatPanel({
     clearAttachmentError(currentConversationKey);
     startNewDraftThread(selectedProjectId);
   };
-  const handleCloseThread = (sessionId: string) => {
-    const next = openThreads.filter((id) => id !== sessionId);
-    const selectedSessionId = selectedThreadIds[selectedProjectId];
-    const wasSelected = selectedSessionId === sessionId;
-    // フォールバック先は openThreadIds の挿入順(next[0] = 最古)ではなく、
-    // displayedOpenThreads と同じ表示順(新しい順)の先頭に合わせる。3tw.154 で
-    // 表示順を挿入順→新しい順に変えたことで、挿入順の先頭のままだと選択が
-    // 見た目の最下段へ飛ぶ不整合が生じていた (bdboard-3tw.157)。
-    const nextDisplayed = [...next].sort((a, b) =>
-      compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
-    );
-    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : selectedSessionId;
-    setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
-    if (wasSelected) {
-      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
-    }
-    writePersistedChatThreadState(selectedProjectId, { activeSessionIds: next, selectedSessionId: nextSelectedSessionId });
-    cancelThreadInteractionsForSession(sessionId);
-  };
+  // bdboard-sso1.83 第10段: handleCloseThread は chat/useChatThreadLists.ts の
+  // closeThread として move-only で抜き出した(このコンポーネント冒頭の
+  // 分割代入で `closeThread: handleCloseThread` としてエイリアスして受け取って
+  // いるため、以降の呼び出し箇所・コメント中の関数名は変えていない)。
   /**
    * bdboard-3tw.104.3 レビュー MF2: adopt 直後は `selectedThreadIds[projectId]` を
    * 新しいセッションIDに向け、`openThreadIds`/`threadLists` を更新し、
@@ -2656,60 +2656,10 @@ export function ChatPanel({
       });
   };
 
-  const handleDeleteThread = async (sessionId: string) => {
-    try {
-      await deleteChatThread(sessionId, selectedProjectId);
-      handleCloseThread(sessionId);
-      setThreadLists((prev) => ({ ...prev, [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((thread) => thread.sessionId !== sessionId) }));
-      setThreadError(null);
-    } catch (error) {
-      console.error('chat thread delete failed', error);
-      setThreadError('スレッドの削除に失敗しました。');
-    } finally {
-      cancelThreadConfirmDelete();
-    }
-  };
-
-  const handleRenameConfirm = async (sessionId: string) => {
-    const trimmed = renameDraft.trim();
-    const patch = trimmed === '' ? { title: null as string | null } : { title: trimmed };
-    try {
-      const updated = await updateChatThread(sessionId, selectedProjectId, patch);
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).map((thread) =>
-          thread.sessionId === sessionId ? updated : thread,
-        ),
-      }));
-      setThreadError(null);
-    } catch (error) {
-      console.error('chat thread rename failed', error);
-      setThreadError('スレッド名の変更に失敗しました。');
-    } finally {
-      cancelThreadRename();
-    }
-  };
-
-  const handlePinToggle = async (sessionId: string, pinned: boolean) => {
-    try {
-      const updated = await updateChatThread(sessionId, selectedProjectId, { pinned: !pinned });
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).map((thread) =>
-          thread.sessionId === sessionId ? updated : thread,
-        ),
-      }));
-      setThreadError(null);
-    } catch (error) {
-      console.error('chat thread pin failed', error);
-      setThreadError('ピン留めの変更に失敗しました。');
-    }
-  };
-
-  const currentThreadTitle =
-    currentSessionId !== undefined
-      ? (threadById.get(currentSessionId)?.title ?? '(無題)')
-      : '新規';
+  // bdboard-sso1.83 第10段: handleDeleteThread/handleRenameConfirm/
+  // handlePinToggle/currentThreadTitle は chat/useChatThreadLists.ts の
+  // deleteThread/renameThread/togglePin/currentThreadTitle として move-only で
+  // 抜き出した(冒頭の分割代入でエイリアス済み。呼び出し箇所は変えていない)。
   // bdboard-sso1.83 第4段: 本体は chat/threads.ts へ移した(挙動は変えていない)。
   const chatSettingsSummaryParts = computeChatSettingsSummaryParts(
     selectedProject?.name,
@@ -2731,31 +2681,16 @@ export function ChatPanel({
 
   // bdboard-sso1.83 第6段: 行の JSX 本体は ChatThreadDrawerOpenRow/
   // ChatThreadDrawerClosedRow(chat/ 配下)へ move-only で抜き出した。ここに残るのは
-  // 元実装の「複数ステップをまとめたハンドラ」(select は selectThreadDrawerThread +
-  // setSelectedThreadIds + 永続化の3ステップ、reopenClosed は openThreadIds/
-  // selectedThreadIds の更新+永続化+ドロワーを閉じる、togglePin/closeThread は
-  // 「⋯」メニューを閉じたうえで本処理を呼ぶ)と、行ごとの派生値(agentLabel 等)の
-  // 計算だけ。actions オブジェクトは各行コンポーネントへそのまま渡す
-  // (元実装と同じく、毎レンダー新しいクロージャを作るだけで安定参照化はしていない)。
+  // 「⋯」メニューを閉じたうえで本処理(togglePin/closeThread、いずれも
+  // chat/useChatThreadLists.ts 由来)を呼ぶラッパーと、行ごとの派生値(agentLabel 等)の
+  // 計算だけ。select/reopenClosed 自体(元実装の「複数ステップをまとめたハンドラ」)は
+  // bdboard-sso1.83 第10段で chat/useChatThreadLists.ts の selectOpenThread/
+  // reopenClosedThread へ move-only で抜き出した。actions オブジェクトは各行
+  // コンポーネントへそのまま渡す(元実装と同じく、毎レンダー新しいクロージャを
+  // 作るだけで安定参照化はしていない)。
   const threadDrawerRowActions: ThreadDrawerRowActions = {
-    select: (sessionId) => {
-      selectThreadDrawerThread();
-      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
-      writePersistedChatThreadState(selectedProjectId, {
-        activeSessionIds: openThreads,
-        selectedSessionId: sessionId,
-      });
-    },
-    reopenClosed: (sessionId) => {
-      const next = [...openThreads, sessionId];
-      setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
-      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
-      writePersistedChatThreadState(selectedProjectId, {
-        activeSessionIds: next,
-        selectedSessionId: sessionId,
-      });
-      closeThreadDrawer();
-    },
+    select: selectOpenThread,
+    reopenClosed: reopenClosedThread,
     changeRenameDraft: setRenameDraft,
     confirmRename: (sessionId) => void handleRenameConfirm(sessionId),
     cancelRename: cancelThreadRename,
