@@ -33,6 +33,28 @@ resolve と human ラベルの解除は行っていません。確認待ちの�
 ${gateList})`;
 }
 
+// bdboard-cine: T 自身が standalone な decision_question(metadata.decision_question)を
+// 持っているのに、T をブロックする open な human gate も1件以上ある場合、この回答が
+// 「T自身の質問への回答」なのか「gate の質問への回答」なのか respond() 側では特定できない。
+// bdboard-q1k9(2件以上の gate で ambiguous にする分岐)と同じ安全側の方針で、gate は
+// resolve せず・human ラベルも外さない。回答自体は T 自身の質問への回答としてコメントに
+// 記録する。
+export function buildTicketOwnQuestionAmbiguousResponseCommentBody(
+  responseText: string,
+  blockingHumanGateIds: readonly string[],
+): string {
+  const gateList = blockingHumanGateIds.map((id) => `- ${id}`).join('\n');
+  return `${buildGateResponseCommentBody(responseText)}
+
+(bdboard: このチケット自身の確認待ちの質問への回答として記録しました。このチケットは同時に、
+別の質問を表している可能性がある open な human gate にもブロックされているため、その gate の
+resolve と human ラベルの解除は行っていません。確認待ちのまま残ります。以下の gate カードを
+個別に開いて、それぞれの質問に回答してください。gate に回答した後もこのチケットが確認待ちの
+まま残っている場合は、このチケットにもう一度回答してください(このチケット自身が
+decision_question を持つ限り、gate 側の自動掃除はこのチケットの human ラベルを外しません)。
+${gateList})`;
+}
+
 export function buildUnknownKindResponseCommentBody(responseText: string): string {
   return `${buildGateResponseCommentBody(responseText)}
 
@@ -44,14 +66,19 @@ export function buildResponseCommentBody(
   responseText: string,
   kind: ResolvedDecisionKind,
   blockingHumanGateIds: readonly string[] = [],
+  hasOwnDecisionQuestion = false,
 ): string {
   if (kind === 'gate') {
     return buildGateResponseCommentBody(responseText);
   }
   if (kind === 'ticket') {
-    return blockingHumanGateIds.length > 1
-      ? buildTicketAmbiguousGatesResponseCommentBody(responseText, blockingHumanGateIds)
-      : buildTicketResponseCommentBody(responseText);
+    if (blockingHumanGateIds.length > 1) {
+      return buildTicketAmbiguousGatesResponseCommentBody(responseText, blockingHumanGateIds);
+    }
+    if (hasOwnDecisionQuestion && blockingHumanGateIds.length >= 1) {
+      return buildTicketOwnQuestionAmbiguousResponseCommentBody(responseText, blockingHumanGateIds);
+    }
+    return buildTicketResponseCommentBody(responseText);
   }
   return buildUnknownKindResponseCommentBody(responseText);
 }
@@ -62,12 +89,13 @@ export function buildAddResponseCommentArgs(
   responseText: string,
   kind: ResolvedDecisionKind,
   blockingHumanGateIds: readonly string[] = [],
+  hasOwnDecisionQuestion = false,
 ): readonly string[] {
   return [
     '-C',
     rootPath,
     'comment',
     issueId,
-    buildResponseCommentBody(responseText, kind, blockingHumanGateIds),
+    buildResponseCommentBody(responseText, kind, blockingHumanGateIds, hasOwnDecisionQuestion),
   ];
 }

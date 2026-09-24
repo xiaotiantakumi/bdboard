@@ -8,6 +8,7 @@ import {
   buildGateCloseReason,
   buildResponseCommentBody,
   buildTicketAmbiguousGatesResponseCommentBody,
+  buildTicketOwnQuestionAmbiguousResponseCommentBody,
   buildTicketResponseCommentBody,
   buildUnknownKindResponseCommentBody,
   createBdCliHumanDecisions,
@@ -535,6 +536,206 @@ describe('createBdCliHumanDecisions', () => {
             call.args.includes('bdboard-discovered-from')),
       ),
     ).toBe(false);
+  });
+
+  // bdboard-cine: bdboard-vy0h(1件なら自動resolve)と bdboard-q1k9(2件以上ならambiguous)の
+  // 間隙。ちょうど1件の open human gate に blocked されていても、チケット自身が standalone な
+  // decision_question を持っていれば、その1件の回答が「gate への回答」なのか「チケット自身の
+  // 質問への回答」なのか respond() 側では特定できない。安全側に倒し、gate は resolve せず・
+  // human ラベルも外さない(bdboard-q1k9 と同じ ambiguous 分岐に合流させる)。
+  it('does not auto-resolve a single unrelated blocking human gate when the ticket carries its own standalone decision_question (bdboard-cine)', async () => {
+    const issueId = 'bdboard-task';
+    const gateId = 'bdboard-human-gate-1';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: issueId,
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: gateId,
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+                metadata: { decision_question: 'この場合どうしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, ambiguousGateIds: [gateId] });
+    expect(calls).toEqual([
+      {
+        command: '/usr/bin/bd',
+        args: expectedShowArgs('/my/root', issueId),
+        options: { timeoutMs: 5_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: [
+          '-C',
+          '/my/root',
+          'comment',
+          issueId,
+          buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId]),
+        ],
+        options: { timeoutMs: 30_000 },
+      },
+    ]);
+    expect(calls.some((call) => call.args.includes('gate') && call.args.includes('resolve'))).toBe(
+      false,
+    );
+    expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
+    expect(buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId])).toContain(
+      gateId,
+    );
+  });
+
+  // bdboard-cine: ticket が own decision_question を持っていなければ、ちょうど1件の
+  // blocking human gate は従来どおり(bdboard-vy0h)自動で resolve される。
+  it('still auto-resolves the single blocking human gate when the ticket has no own decision_question (bdboard-cine regression guard)', async () => {
+    const issueId = 'bdboard-task';
+    const gateId = 'bdboard-human-gate-1';
+    const { runner, calls } = createFakeRunner({
+      handler: showTaskWithDependenciesHandler(issueId, [
+        {
+          id: gateId,
+          issue_type: 'gate',
+          await_type: 'human',
+          status: 'open',
+          dependency_type: 'blocks',
+        },
+      ]),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, resolvedGateIds: [gateId] });
+    expect(calls.some((call) => call.args.includes('gate') && call.args.includes('resolve'))).toBe(
+      true,
+    );
+  });
+
+  // bdboard-cine: a ticket with its own standalone decision_question but zero blocking
+  // human gates is the common case for a standalone pending-decision ticket. The
+  // `hasOwnDecisionQuestion && blockingHumanGateIds.length >= 1` guard must not misfire
+  // here -- otherwise every such ticket would become permanently ambiguous (empty
+  // ambiguousGateIds, label never removed) even though there is no gate to disambiguate
+  // from.
+  it('still resolves normally (label removed, no gate to resolve) when the ticket has its own decision_question but no blocking human gate (bdboard-cine)', async () => {
+    const issueId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: issueId,
+                issue_type: 'task',
+                dependencies: [],
+                metadata: { decision_question: 'この場合どうしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, resolvedGateIds: [] });
+    expect(
+      calls.some((call) => call.args.includes('label') && call.args.includes('remove')),
+    ).toBe(true);
+    expect(
+      calls.some((call) => call.args.includes('gate') && call.args.includes('resolve')),
+    ).toBe(false);
+  });
+
+  // bdboard-cine: when a ticket has its own decision_question AND 2+ distinct blocking
+  // human gates, buildResponseCommentBody's `length > 1` check is evaluated before the
+  // own-question check, so the existing multi-gate message (bdboard-q1k9) is used, not
+  // the new own-question message. Both are "ambiguous, don't resolve" outcomes either
+  // way; this pins the current precedence so a future reordering of the branches is a
+  // deliberate choice, not an accident.
+  it('uses the multi-gate ambiguous message (not the own-question message) when both apply (bdboard-cine)', async () => {
+    const issueId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: issueId,
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: 'bdboard-human-gate-1',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                  {
+                    id: 'bdboard-human-gate-2',
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+                metadata: { decision_question: 'この場合どうしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({
+      kind: 'ticket',
+      closed: false,
+      ambiguousGateIds: ['bdboard-human-gate-1', 'bdboard-human-gate-2'],
+    });
+    expect(calls).toContainEqual({
+      command: '/usr/bin/bd',
+      args: [
+        '-C',
+        '/my/root',
+        'comment',
+        issueId,
+        buildTicketAmbiguousGatesResponseCommentBody('A案を採用', [
+          'bdboard-human-gate-1',
+          'bdboard-human-gate-2',
+        ]),
+      ],
+      options: { timeoutMs: 30_000 },
+    });
   });
 
   // bdboard-ixx9: bdboard-giyt (gate->ticket direction) added sibling-ticket cleanup when

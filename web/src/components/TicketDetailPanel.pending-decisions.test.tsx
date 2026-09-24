@@ -325,6 +325,12 @@ describe('TicketDetailPanel pending decisions', () => {
   // human gates blocked this ticket, so nothing was resolved), the UI must show guidance
   // to answer the gates individually instead of the generic closed:false message, which
   // would otherwise falsely imply the ticket left the awaiting-human queue.
+  // bdboard-cine: the wording is deliberately reason-neutral — ambiguousGateIds is also
+  // returned for a single blocking gate when the ticket itself carries its own
+  // decision_question (respond.ts), and RespondOutcome doesn't distinguish which reason
+  // applied. This test's 2-gate fixture exercises the q1k9 shape, but the same text (and
+  // this same assertion) covers the cine shape too — see
+  // bd-cli-human-decisions.respond.test.ts for the server-side behavior of each case.
   it('shows ambiguous-gate guidance instead of the generic message when the decision resolves nothing (bdboard-v78e)', async () => {
     mockPostTicketDecision.mockResolvedValue({
       kind: 'ticket',
@@ -348,7 +354,7 @@ describe('TicketDetailPanel pending decisions', () => {
 
     expect(
       await screen.findByText(
-        'このチケットは複数の質問(gate)に分かれています。どの質問への回答か特定できなかったため、回答はコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。',
+        'このチケットには、個別に回答が必要な human gate が残っています。回答はこのチケットへのコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。gate に回答した後もこのチケットが確認待ちのまま残っている場合は、このチケットにもう一度回答してください。',
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'bdboard-gate-1' })).toBeInTheDocument();

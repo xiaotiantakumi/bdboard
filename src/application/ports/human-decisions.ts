@@ -32,10 +32,14 @@ export interface RespondOutcome {
    */
   readonly clearedHumanLabelTicketIds?: readonly string[];
   /**
-   * kind === 'ticket' のときだけ設定される。このチケットをブロックしている open な
-   * human gate が2件以上あり、どの gate への回答か特定できなかったために、どの gate も
-   * resolve せず・human ラベルも外さなかった場合の、その gate ID 一覧(bdboard-q1k9)。
-   * 1件以下の場合は resolvedGateIds 側で処理され、この項目は設定されない。
+   * kind === 'ticket' のときだけ設定される。次のいずれかに該当し、どの gate も
+   * resolve せず・human ラベルも外さなかった場合の、その gate ID 一覧:
+   * (a) このチケットをブロックしている open な human gate が2件以上あり、どの gate
+   *     への回答か特定できない(bdboard-q1k9)。
+   * (b) 同 gate が1件以上あり、かつこのチケット自身が standalone な
+   *     decision_question(metadata.decision_question)も持っているため、回答が
+   *     gate 向けかチケット自身の質問向けか特定できない(bdboard-cine)。
+   * どちらにも該当しない場合は resolvedGateIds 側で処理され、この項目は設定されない。
    */
   readonly ambiguousGateIds?: readonly string[];
 }

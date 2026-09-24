@@ -61,6 +61,7 @@ export { buildGateCloseReason } from './bd-cli-human-decisions/respond-args.js';
 export {
   buildResponseCommentBody,
   buildTicketAmbiguousGatesResponseCommentBody,
+  buildTicketOwnQuestionAmbiguousResponseCommentBody,
   buildTicketResponseCommentBody,
   buildUnknownKindResponseCommentBody,
 } from './bd-cli-human-decisions/respond-comment.js';
