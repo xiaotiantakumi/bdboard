@@ -14,10 +14,17 @@
 //
 // 飢餓防止は「仮想到着時刻」: key = 到着時刻 + 段数 × tierStepMs (既定 4 分) の小さい順に渡す。
 // 1 段下の待ち手は tierStepMs 遅く着いた扱いになるだけなので、それより後に着いた上位の待ち手には
-// 抜かれない (待ち時間の上限 = FIFO の待ち + 段数 × tierStepMs)。gfqz (PR #728) の「連続 N 回で
+// 抜かれない (pr を抜けるのは、pr より 8 分以内に並んだ landed と、since の分を足して 14 分以内に
+// 並んだ merge だけ)。gfqz (PR #728) の「連続 N 回で
 // 下位へ強制」と同じ目的を、状態を共有しないプロセス間でも決定的に効く形にしたもの。
 // holder.since (BDBOARD_VERIFY_QUEUE_SINCE) は merge-pr が渡す「この PR が最初に並んだ時刻」で、
-// main が動いて並び直した PR が新顔に抜かれないようにする (maxSeniorityMs で頭打ち)。
+// main が動いて並び直した PR が新顔に抜かれないようにする (maxSeniorityMs = 10 分で頭打ち。
+// 30 分にしてもシミュレーションの結果は同じで、下位の待ちの上限だけが延びる)。
+//
+// 長く待っている新形式の待ち手は、他の holder から stale (joinedAt から staleTtlMs) と見なされる
+// 前に並び直す (joinedAt を今にする。verify-slot.mjs)。順番は変えないよう、並び順は queuedAt
+// (最初に並んだ時刻) から計算する。stale と見なされたまま自分だけ枠を取ると、他の待ち手からは
+// 見えないので上限を超えうる — planSlots も、自分が stale の年齢なら取らない。
 //
 // 旧形式 (holder.v が無い = bdboard-d48 のスクリプト) との混在: 旧プロセスは (joinedAt, pid) の
 // FIFO 順位 < slots で走り出し、走り出したことをファイルに書かない。そこで
@@ -30,6 +37,8 @@
 export const HOLDER_FORMAT = 2;
 export const PRIORITY_RANK = Object.freeze({ landed: 0, merge: 1, pr: 2 });
 export const DEFAULT_PRIORITY = 'pr';
+export const TIER_STEP_MS = 4 * 60_000;
+export const MAX_SENIORITY_MS = 10 * 60_000;
 
 export function normalizePriority(value) {
   return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PRIORITY_RANK, value) ? value : DEFAULT_PRIORITY;
@@ -57,11 +66,16 @@ export function legacyRank(holder, holders, now, staleTtlMs) {
 /** 並び順の鍵 (仮想到着時刻)。小さいほど先。 */
 export function queueKey(holder, { tierStepMs, maxSeniorityMs }) {
   const rank = PRIORITY_RANK[normalizePriority(holder.priority)];
-  let since = holder.joinedAt;
-  if (typeof holder.since === 'number' && Number.isFinite(holder.since)) {
-    since = Math.min(holder.joinedAt, Math.max(holder.since, holder.joinedAt - maxSeniorityMs));
+  const queuedAt = isFiniteNumber(holder.queuedAt) ? Math.min(holder.queuedAt, holder.joinedAt) : holder.joinedAt;
+  let since = queuedAt;
+  if (isFiniteNumber(holder.since)) {
+    since = Math.min(queuedAt, Math.max(holder.since, queuedAt - maxSeniorityMs));
   }
   return since + rank * tierStepMs;
+}
+
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 /**
@@ -97,8 +111,10 @@ export function planSlots(holders, { selfPid, slots, now, staleTtlMs, tierStepMs
     .sort((a, b) => queueKey(a, keyOptions) - queueKey(b, keyOptions) || byArrival(a, b));
   const queue = [...eligible, ...[...waiting.filter(blockedByLegacy), ...legacyWaiting].sort(byArrival)];
   const selfIndex = eligible.findIndex((holder) => holder.pid === selfPid);
+  // 他の holder から stale と見なされる年齢の待ち手は取らない (並び直してから)。
+  const selfVisible = eligible.some((holder) => holder.pid === selfPid && now - holder.joinedAt <= staleTtlMs);
   return {
-    acquire: selfIndex >= 0 && selfIndex < slots - running.length,
+    acquire: selfVisible && selfIndex < slots - running.length,
     running,
     queue,
     position: queue.findIndex((holder) => holder.pid === selfPid) + 1,

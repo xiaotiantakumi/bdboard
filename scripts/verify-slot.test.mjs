@@ -126,10 +126,26 @@ describe('acquireVerifySlot', () => {
     const before = Date.now();
     const slot = await acquireVerifySlot(fastOptions(dir, { priority: 'merge', queueSince: before - 60_000 }), noLog);
     const holder = JSON.parse(fs.readFileSync(holderFile(dir, process.pid), 'utf8'));
-    expect(holder).toMatchObject({ v: 2, pid: process.pid, priority: 'merge', since: before - 60_000 });
+    expect(holder).toMatchObject({ v: 2, pid: process.pid, priority: 'merge', since: before - 60_000, queuedAt: holder.joinedAt });
     expect(holder.acquiredAt).toBeGreaterThanOrEqual(holder.joinedAt);
     expect(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]); // 一時ファイルは残らない
     slot.release();
+  });
+
+  it('re-joins before other holders would treat it as stale, keeping its place (queuedAt)', async () => {
+    const dir = makeDir();
+    const other = spawnLiveProcess();
+    try {
+      const now = Date.now();
+      fs.writeFileSync(holderFile(dir, other.pid), JSON.stringify({ v: 2, pid: other.pid, joinedAt: now, queuedAt: now, acquiredAt: now, priority: 'pr' }));
+      // 走っている先客は 1.2 秒で stale になる。その前 (0.6 秒) に自分は並び直している。
+      const slot = await acquireVerifySlot(fastOptions(dir, { staleTtlMs: 1_200 }), noLog);
+      const holder = JSON.parse(fs.readFileSync(holderFile(dir, process.pid), 'utf8'));
+      expect(holder.joinedAt - holder.queuedAt).toBeGreaterThanOrEqual(500);
+      slot.release();
+    } finally {
+      other.kill('SIGKILL');
+    }
   });
 
   it('measures the wait timeout from the last change in who is running, not from joining', async () => {

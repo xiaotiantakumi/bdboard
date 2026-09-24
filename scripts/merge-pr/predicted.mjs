@@ -5,11 +5,11 @@
 // 本体は着地後検証と同じ runLandedVerify だが、このコミットは GitHub に無いので台帳 (commit status)
 // には書かない。枠 (bd merge-slot) にも触らない — prepare は枠の外。
 import { git } from './exec.mjs';
-import { EXIT, fail, liveMain, refetchMain } from './context.mjs';
+import { EXIT, fail, refetchMain, REMOTE } from './context.mjs';
 import { runLandedVerify } from './landed-verify.mjs';
 import { rebaseSteps } from './messages.mjs';
 import { audit, removeState } from './state.mjs';
-import { queueSinceFor } from './verify-queue.mjs';
+import { liveMainAsync, queueSinceFor } from './verify-queue.mjs';
 
 // 着地予定コミットの作者。利用者の git 設定に依存させず、ログ上で見分けられるようにする。
 const IDENTITY = {
@@ -44,8 +44,8 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }) {
     retryHint: `npm run merge-pr -- prepare ${pr}`,
     priority: 'merge',
     queueSince: queueSinceFor(ctx.cwd, pr),
-    abandonWhen: () => {
-      const live = liveMain(ctx);
+    abandonWhen: async () => {
+      const live = await liveMainAsync(ctx.cwd, REMOTE, ctx.config.mainBranch);
       return live !== null && live !== predBase; // 読めないときは続ける (終わった後の refetch で判定)
     },
   });

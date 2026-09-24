@@ -18,7 +18,7 @@ describe('verify slot simulation (7 agents, 2 slots)', () => {
   });
 
   it('keeps pre-PR verify waits bounded while merge runs go first', () => {
-    // 下位 (pr) の待ちの上限 = FIFO の待ち + 2 段 × tierStepMs 程度。30 分 (stale) には届かない。
+    // 下位 (pr) も有限の時間で順番が来る (抜けるのは後から 8〜14 分以内に並んだ上位だけ)。
     expect(after.prWaitMaxMin).toBeLessThan(30);
   });
 

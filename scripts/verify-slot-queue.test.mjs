@@ -4,11 +4,11 @@
 // 入り混ぜ、同時に走る本数が上限を超えないことを確かめる。
 import { describe, expect, it } from 'vitest';
 
-import { legacyRank, normalizePriority, planSlots, queueKey } from './verify-slot-queue.mjs';
+import { legacyRank, MAX_SENIORITY_MS, normalizePriority, planSlots, queueKey, TIER_STEP_MS } from './verify-slot-queue.mjs';
 
 const MIN = 60_000;
 const T0 = 1_000_000_000;
-const OPTIONS = { slots: 2, staleTtlMs: 30 * MIN, tierStepMs: 4 * MIN, maxSeniorityMs: 30 * MIN };
+const OPTIONS = { slots: 2, staleTtlMs: 30 * MIN, tierStepMs: TIER_STEP_MS, maxSeniorityMs: MAX_SENIORITY_MS };
 
 const v2 = (pid, joinedAt, priority = 'pr', extra = {}) => ({ v: 2, pid, joinedAt, cwd: '/fake', priority, ...extra });
 const legacy = (pid, joinedAt) => ({ pid, joinedAt, cwd: '/fake' });
@@ -81,9 +81,17 @@ describe('queueKey: seniority (holder.since)', () => {
     const options = { tierStepMs: OPTIONS.tierStepMs, maxSeniorityMs: OPTIONS.maxSeniorityMs };
     const base = queueKey(v2(1, T0, 'merge'), options);
     expect(queueKey(v2(1, T0, 'merge', { since: T0 - 5 * MIN }), options)).toBe(base - 5 * MIN);
-    expect(queueKey(v2(1, T0, 'merge', { since: T0 - 3 * 60 * MIN }), options)).toBe(base - 30 * MIN);
+    expect(queueKey(v2(1, T0, 'merge', { since: T0 - 3 * 60 * MIN }), options)).toBe(base - OPTIONS.maxSeniorityMs);
     expect(queueKey(v2(1, T0, 'merge', { since: T0 + 5 * MIN }), options)).toBe(base); // 未来の since は無視
     expect(queueKey(v2(1, T0, 'merge', { since: 'yesterday' }), options)).toBe(base);
+  });
+
+  it('orders a holder that re-joined by when it first queued (queuedAt)', () => {
+    const options = { tierStepMs: OPTIONS.tierStepMs, maxSeniorityMs: OPTIONS.maxSeniorityMs };
+    const first = v2(1, T0, 'pr', { queuedAt: T0 });
+    expect(queueKey({ ...first, joinedAt: T0 + 20 * MIN }, options)).toBe(queueKey(first, options));
+    expect(queueKey({ ...first, joinedAt: T0 + 20 * MIN, since: T0 - 5 * MIN }, options)).toBe(queueKey(first, options) - 5 * MIN);
+    expect(queueKey({ ...first, queuedAt: T0 + 60 * MIN }, options)).toBe(queueKey(first, options)); // joinedAt より後の queuedAt は無視
   });
 
   it('keeps a re-queued merge run ahead of a newer merge run', () => {
@@ -104,11 +112,25 @@ describe('planSlots: stale holders', () => {
     expect(result.acquire).toBe(true);
   });
 
-  it('judges legacy and waiting holders by joinedAt, and never treats itself as stale', () => {
+  it('judges legacy and waiting holders by joinedAt, and never lists itself as stale', () => {
     const now = T0 + 40 * MIN;
-    const result = plan([legacy(1, T0), v2(2, T0 + 1_000, 'pr'), v2(3, T0 + 2_000, 'pr')], 3, now, { slots: 1 });
+    const result = plan([legacy(1, T0), v2(2, T0 + 1_000, 'pr'), v2(3, now - MIN, 'pr')], 3, now, { slots: 1 });
     expect(pids(result.stale)).toEqual([1, 2]);
     expect(result.acquire).toBe(true);
+  });
+
+  it('does not let a waiter that others already treat as stale take a slot until it re-joins (review of PR #749)', () => {
+    // 他の holder から見えない (stale) 待ち手が自分の目では先頭だと、見えている待ち手と同時に取って
+    // 上限を超える。自分が stale の年齢なら取らず、並び直してから (joinedAt = 今、queuedAt は元のまま) 取る。
+    const now = T0 + 31 * MIN;
+    const running = v2(1, now - 2 * MIN, 'pr', { acquiredAt: now - 2 * MIN });
+    const oldWaiter = v2(2, T0, 'pr', { queuedAt: T0 });
+    const fresh = v2(3, now - 1_000, 'landed');
+    expect(plan([running, oldWaiter, fresh], 2, now).acquire).toBe(false);
+    expect(plan([running, oldWaiter, fresh], 3, now).acquire).toBe(true);
+    const rejoined = { ...oldWaiter, joinedAt: now - 1_000 };
+    expect(plan([running, rejoined, fresh], 2, now).acquire).toBe(true); // 並び順は queuedAt のまま
+    expect(plan([running, rejoined, fresh], 3, now).acquire).toBe(false);
   });
 });
 
@@ -182,6 +204,61 @@ describe('planSlots: mixing with legacy (bdboard-d48) holders', () => {
           }
         }
         expect(runningPids.size).toBeLessThanOrEqual(slots);
+      }
+    }
+  });
+
+  it('keeps running <= slots with the real 30-minute stale rule, long queues and re-joining waiters', () => {
+    // verify-slot.mjs の運用どおりに動かす: 新形式の待ち手は joinedAt から staleTtlMs / 2 で並び直し、
+    // 旧スクリプトの待ち手は 15 分 (旧来の合計待ち上限) で諦める。verify は最長 10 分で終わる。
+    let seed = 777;
+    const random = () => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    const priorities = ['landed', 'merge', 'pr'];
+    const staleTtlMs = OPTIONS.staleTtlMs;
+    for (let trial = 0; trial < 100; trial += 1) {
+      const slots = 1 + Math.floor(random() * 2);
+      const holders = [];
+      const startedAt = new Map();
+      let now = T0;
+      let nextPid = 1;
+      const remove = (pid) => {
+        startedAt.delete(pid);
+        holders.splice(holders.findIndex((holder) => holder.pid === pid), 1);
+      };
+      for (let step = 0; step < 150; step += 1) {
+        now += 5_000 + Math.floor(random() * 55_000);
+        if (random() < 0.45) {
+          const pid = nextPid++;
+          const holder = random() < 0.4 ? legacy(pid, now) : v2(pid, now, priorities[Math.floor(random() * 3)], { queuedAt: now });
+          if (holder.v === 2 && random() < 0.3) {
+            holder.since = now - Math.floor(random() * 40 * MIN);
+          }
+          holders.push(holder);
+        }
+        for (const holder of [...holders]) {
+          const ran = startedAt.get(holder.pid);
+          if ((ran !== undefined && (now - ran > 10 * MIN || random() < 0.08)) || (ran === undefined && holder.v !== 2 && now - holder.joinedAt > 15 * MIN)) {
+            remove(holder.pid);
+          } else if (ran === undefined && holder.v === 2 && now - holder.joinedAt > staleTtlMs / 2) {
+            holder.joinedAt = now; // 並び直し
+          }
+        }
+        for (const holder of [...holders].sort(() => random() - 0.5)) {
+          if (startedAt.has(holder.pid)) {
+            continue;
+          }
+          const go = holder.v === 2 ? plan(holders, holder.pid, now, { slots }).acquire : legacyRank(holder, holders, now, staleTtlMs) < slots;
+          if (go) {
+            startedAt.set(holder.pid, now);
+            if (holder.v === 2) {
+              holder.acquiredAt = now;
+            }
+          }
+        }
+        expect(startedAt.size).toBeLessThanOrEqual(slots);
       }
     }
   });

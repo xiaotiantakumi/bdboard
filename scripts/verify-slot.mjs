@@ -32,7 +32,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { holderPath, readOthers, unlinkQuietly, writeHolderAtomically } from './verify-slot-files.mjs';
-import { HOLDER_FORMAT, normalizePriority, planSlots } from './verify-slot-queue.mjs';
+import { HOLDER_FORMAT, MAX_SENIORITY_MS, normalizePriority, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
 
 export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   slots: 2,
@@ -44,8 +44,8 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   statusIntervalMs: 10_000,
   priority: 'pr',
   queueSince: undefined,
-  tierStepMs: 4 * 60_000,
-  maxSeniorityMs: 30 * 60_000,
+  tierStepMs: TIER_STEP_MS,
+  maxSeniorityMs: MAX_SENIORITY_MS,
 });
 
 export class SlotWaitTimeoutError extends Error {}
@@ -87,7 +87,8 @@ export function envSlotOptions(env = process.env) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function newHolder(options) {
-  const holder = { v: HOLDER_FORMAT, pid: process.pid, joinedAt: Date.now(), cwd: process.cwd(), priority: normalizePriority(options.priority) };
+  const joinedAt = Date.now();
+  const holder = { v: HOLDER_FORMAT, pid: process.pid, joinedAt, queuedAt: joinedAt, cwd: process.cwd(), priority: normalizePriority(options.priority) };
   if (typeof options.queueSince === 'number' && Number.isFinite(options.queueSince)) {
     holder.since = Math.min(options.queueSince, holder.joinedAt);
   }
@@ -108,7 +109,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
 
   fs.mkdirSync(dir, { recursive: true });
   const selfPath = holderPath(dir, process.pid);
-  const holder = newHolder(options);
+  let holder = newHolder(options);
   // 同名ファイルが既にある = かつて同じ pid を使ったプロセスの残骸 (pid 再利用)。
   // 今この pid の持ち主は自分なので、rename で置き換えてよい。
   writeHolderAtomically(selfPath, holder);
@@ -139,6 +140,11 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
         }
       }
       const now = Date.now();
+      if (now - holder.joinedAt > options.staleTtlMs / 2) {
+        // 他の holder から stale と見なされる前に並び直す (順番は queuedAt で保つ)。
+        holder = { ...holder, joinedAt: now };
+        writeHolderAtomically(selfPath, holder);
+      }
       const plan = planSlots([holder, ...others], { ...options, selfPid: process.pid, now });
       for (const entry of plan.stale) {
         if (!warnedStalePids.has(entry.pid)) {
@@ -152,7 +158,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
       if (plan.acquire) {
         writeHolderAtomically(selfPath, { ...holder, acquiredAt: Date.now() });
         if (waited) {
-          log(`verify: slot acquired after ${Math.round((Date.now() - holder.joinedAt) / 1000)}s in queue (priority ${holder.priority})`);
+          log(`verify: slot acquired after ${Math.round((Date.now() - holder.queuedAt) / 1000)}s in queue (priority ${holder.priority})`);
         }
         return { release };
       }
@@ -174,7 +180,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
         lastStatusAt = now;
         log(
           `verify: waiting for a verify slot (queue position ${plan.position}/${plan.queue.length}, priority ${holder.priority},` +
-            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.joinedAt) / 1000)}s) — queueing, not a hang`,
+            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.queuedAt) / 1000)}s) — queueing, not a hang`,
         );
       }
       await sleep(options.pollMs);

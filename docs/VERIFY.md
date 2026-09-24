@@ -213,7 +213,11 @@ What this means operationally:
   immediately (covers SIGKILLed verifies). A live holder stops counting
   toward the limit (logged, file left alone) once it has been *running* for
   >30 min (`acquiredAt`); a waiting holder, or one written by an older
-  script that does not record when it started, 30 min after it joined. If
+  script that does not record when it started, 30 min after it joined. A
+  new-format waiter re-joins (fresh `joinedAt`, same `queuedAt`, so the same
+  place in line) every 15 min, so it never looks stale to others — a waiter
+  invisible to the others yet first in its own view could otherwise start a
+  third run. If
   the set of running holders does not change for 15 min, the waiter exits
   non-zero naming those pids — investigate them (hung verify?) rather than
   disabling the slot. (The timeout counts time without progress, not total
@@ -241,19 +245,25 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
 `landed` goes first.
 
 - **Starvation bound (virtual arrival time).** Waiters are served in order of
-  `arrival + rank × 4 min` (rank: landed 0, merge 1, pr 2). A lower tier is
-  treated as if it arrived 4 min per tier later, so it is only overtaken by
-  higher-tier runs that queued within that window — a `pr` verify waits at
-  most its FIFO wait + 8 min. This is the cross-process, stateless form of
-  the gfqz joiner promotion (PR #728).
+  `arrival + rank × 4 min` (rank: landed 0, merge 1, pr 2; arrival is
+  `queuedAt`, moved earlier by seniority below). A lower tier is treated as
+  if it arrived 4 min per tier later, so it is only overtaken by higher-tier
+  runs whose virtual arrival is earlier: a `pr` verify is passed by `landed`
+  runs that queue up to 8 min after it and by `merge` runs up to 14 min after
+  it (4 min tier gap + at most 10 min of seniority) — a bounded wait, not
+  FIFO + 8 min. This is the cross-process, stateless form of the gfqz joiner
+  promotion (PR #728).
 - **Seniority.** `merge-pr prepare` also passes `BDBOARD_VERIFY_QUEUE_SINCE`,
   the time this PR first queued a predicted verify (kept in
   `<git common dir>/bdboard-merge/pr-<N>-queue.json`, reset after 2 h,
   removed by `finish`), so a PR sent back to prepare by a main move is not
-  overtaken by newer PRs. The head start is capped at 30 min.
-- **Holder format.** New holders carry `v: 2`, `priority`, an optional
-  `since`, and `acquiredAt` once running, and are written atomically (temp
-  file + rename). A file that fails to parse is deleted only after 5 s (an
+  overtaken by newer PRs. The head start is capped at 10 min: 10 and 30 give
+  the same simulation results, and the cap bounds how far a long-retrying
+  `merge` run can jump the critical-path `landed` runs: it passes only those
+  that queued less than 6 min before it.
+- **Holder format.** New holders carry `v: 2`, `priority`, `queuedAt`, an
+  optional `since`, and `acquiredAt` once running, and are written atomically
+  (temp file + rename). A file that fails to parse is deleted only after 5 s (an
   older script may be mid-write).
 - **Mixed old/new scripts** (a worktree on an older `main`). An old holder has
   no `v`. The new code infers whether it is running with the old script's own
@@ -261,7 +271,8 @@ the ledger every `gate` waits on (fewer merges, more CAS losses), so
   waiting old holder — otherwise the old script, which does not count later
   holders, could start a third run. Old scripts ignore the new fields. One
   pre-existing gap remains: an old script ignores any holder that *joined*
-  more than 30 min ago, even a running one, exactly as before.
+  more than 30 min ago, even a running one, exactly as before (a new holder
+  has joined at most 15 min before it starts, thanks to re-joining).
 - **Simulation.** `node scripts/verify-slot-sim.mjs` replays 7 agents × 8 h
   with 2 slots, using the real ordering functions (no real verify, no CPU
   load); `scripts/verify-slot-sim.test.mjs` pins the result. Means over 8

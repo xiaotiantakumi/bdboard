@@ -16,7 +16,7 @@
 //   verify 1 本は verifySecs ±15%。スロットは slots 本。
 import { fileURLToPath } from 'node:url';
 
-import { legacyRank, planSlots } from './verify-slot-queue.mjs';
+import { legacyRank, MAX_SENIORITY_MS, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
 
 const MIN = 60_000;
 
@@ -44,7 +44,7 @@ function mulberry32(seed) {
   };
 }
 
-const QUEUE_OPTIONS = { slots: 2, staleTtlMs: 30 * MIN, tierStepMs: 4 * MIN, maxSeniorityMs: 30 * MIN };
+const QUEUE_OPTIONS = { slots: 2, staleTtlMs: 30 * MIN, tierStepMs: TIER_STEP_MS, maxSeniorityMs: MAX_SENIORITY_MS };
 
 export function simulate(policy, { seed = 1, agents = 7, hours = 8, slots = 2, verifySecs = 330, ciSecs = 480, reactSecs = 30, pollSecs = 30, tickSecs = 5 } = {}) {
   const random = mulberry32(seed);
