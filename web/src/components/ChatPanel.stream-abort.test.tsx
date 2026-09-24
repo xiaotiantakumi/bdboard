@@ -110,14 +110,18 @@ describe('ChatPanel', () => {
     // テストの turn-status 回収(E8)などが reset の後に fetchChatTurnStatus 等を
     // 呼び、その呼び出し記録が次のテストへ持ち越されていた(次のテストの呼び出し回数が
     // 1 つ多く見える)。
-    cleanup();
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      value: defaultWindowInnerWidth,
-    });
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // cleanup が投げても後始末(グローバルの復元・モックの reset)は必ず行う。
+    try {
+      cleanup();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: defaultWindowInnerWidth,
+      });
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   describe('streaming abort on unmount / conversation switch (bdboard-7st)', () => {
@@ -1109,8 +1113,9 @@ describe('ChatPanel', () => {
       // bdboard-1ga8: 下の同期は「このテストの中で起きた proj-b の turn-status
       // 呼び出し」を数える。前のテストの呼び出しが持ち越されていないこと(afterEach
       // の cleanup → reset の順序)を前提として固定しておく。持ち越しがあると、
-      // 同期点が bump の前に来てしまい(修正前でも通りうる)、負荷の下では bump
-      // の後に 3 回目として数えられて waitFor が一度も 2 を見ずに落ちていた。
+      // 同期点(2 回)が bump の前に来てしまい、bump 後に解決する順序は waitFor の
+      // 後始末のタイミングに偶然頼ることになる。負荷の下では bump の後に 3 回目として
+      // 数えられ、waitFor が一度も 2 を見ずに落ちていた。
       expect(fetchChatTurnStatusMock).not.toHaveBeenCalled();
       const user = userEvent.setup();
       fetchChatAgentsMock.mockResolvedValue([STREAMING_AGENT]);

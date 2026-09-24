@@ -105,14 +105,18 @@ describe('ChatPanel', () => {
     // テストの turn-status 回収(E8)などが reset の後に fetchChatTurnStatus 等を
     // 呼び、その呼び出し記録が次のテストへ持ち越されていた(次のテストの呼び出し回数が
     // 1 つ多く見える)。
-    cleanup();
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      value: defaultWindowInnerWidth,
-    });
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // cleanup が投げても後始末(グローバルの復元・モックの reset)は必ず行う。
+    try {
+      cleanup();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: defaultWindowInnerWidth,
+      });
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('shows a detached turn as processing, then refreshes and restores its completed reply', async () => {
