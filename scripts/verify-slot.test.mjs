@@ -121,6 +121,93 @@ describe('acquireVerifySlot', () => {
     slot.release();
   });
 
+  it('writes a current-format holder with priority, seniority and acquiredAt (bdboard-ulxa.6)', async () => {
+    const dir = makeDir();
+    const before = Date.now();
+    const slot = await acquireVerifySlot(fastOptions(dir, { priority: 'merge', queueSince: before - 60_000 }), noLog);
+    const holder = JSON.parse(fs.readFileSync(holderFile(dir, process.pid), 'utf8'));
+    expect(holder).toMatchObject({ v: 2, pid: process.pid, priority: 'merge', since: before - 60_000, queuedAt: holder.joinedAt });
+    expect(holder.acquiredAt).toBeGreaterThanOrEqual(holder.joinedAt);
+    expect(fs.readdirSync(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]); // 一時ファイルは残らない
+    slot.release();
+  });
+
+  it('re-joins before other holders would treat it as stale, keeping its place (queuedAt)', async () => {
+    const dir = makeDir();
+    const other = spawnLiveProcess();
+    try {
+      const now = Date.now();
+      fs.writeFileSync(holderFile(dir, other.pid), JSON.stringify({ v: 2, pid: other.pid, joinedAt: now, queuedAt: now, acquiredAt: now, priority: 'pr' }));
+      // 走っている先客は 1.2 秒で stale になる。その前 (0.6 秒) に自分は並び直している。
+      const slot = await acquireVerifySlot(fastOptions(dir, { staleTtlMs: 1_200 }), noLog);
+      const holder = JSON.parse(fs.readFileSync(holderFile(dir, process.pid), 'utf8'));
+      expect(holder.joinedAt - holder.queuedAt).toBeGreaterThanOrEqual(500);
+      slot.release();
+    } finally {
+      other.kill('SIGKILL');
+    }
+  });
+
+  it('measures the wait timeout from the last change in who is running, not from joining', async () => {
+    const dir = makeDir();
+    const first = spawnLiveProcess();
+    const second = spawnLiveProcess();
+    try {
+      writeFakeHolder(dir, first.pid, Date.now() - 1_000);
+      const started = Date.now();
+      const pending = acquireVerifySlot(fastOptions(dir, { waitTimeoutMs: 600 }), noLog);
+      let rejectedAt = null;
+      pending.catch(() => {
+        rejectedAt = Date.now();
+      });
+      await sleep(400);
+      // 走っている holder が入れ替わった (列が進んだ) ので、待ちの打ち切りは数え直しになる。
+      fs.unlinkSync(holderFile(dir, first.pid));
+      writeFakeHolder(dir, second.pid, Date.now() - 500);
+      await expect(pending).rejects.toBeInstanceOf(SlotWaitTimeoutError);
+      expect(rejectedAt - started).toBeGreaterThanOrEqual(900);
+    } finally {
+      first.kill('SIGKILL');
+      second.kill('SIGKILL');
+    }
+  });
+
+  it('hands a freed slot to a landed run before a pr run that queued earlier (bdboard-ulxa.6)', { timeout: 20_000 }, async () => {
+    const dir = makeDir();
+    const logPath = path.join(dir, 'events.log');
+    const blocker = spawnLiveProcess();
+    writeFakeHolder(dir, blocker.pid, Date.now() - 1_000); // 旧形式の先客が唯一の枠を使っている
+    const childSource = `
+      import fs from 'node:fs';
+      const { acquireVerifySlot } = await import(process.env.VERIFY_SLOT_MODULE_URL);
+      const slot = await acquireVerifySlot(
+        { dir: process.env.VERIFY_SLOT_DIR, slots: 1, waitTimeoutMs: 15000, staleTtlMs: 60000, pollMs: 25, settleMs: 10,
+          statusIntervalMs: 60000, priority: process.env.PRIORITY },
+        () => {},
+      );
+      fs.appendFileSync(process.env.VERIFY_SLOT_LOG, process.env.PRIORITY + '\\n');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      slot.release();
+    `;
+    const run = (priority) =>
+      spawn(process.execPath, ['--input-type=module', '-e', childSource], {
+        env: { ...process.env, VERIFY_SLOT_MODULE_URL: pathToFileURL(modulePath).href, VERIFY_SLOT_DIR: dir, VERIFY_SLOT_LOG: logPath, PRIORITY: priority },
+        stdio: 'ignore',
+      });
+    const exited = (child) => new Promise((resolve) => child.on('exit', resolve));
+    try {
+      const pr = run('pr');
+      await sleep(300);
+      const landed = run('landed');
+      await sleep(300);
+      fs.unlinkSync(holderFile(dir, blocker.pid));
+      expect(await Promise.all([exited(pr), exited(landed)])).toEqual([0, 0]);
+      expect(fs.readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['landed', 'pr']);
+    } finally {
+      blocker.kill('SIGKILL');
+    }
+  });
+
   it('disables gating when slots <= 0', async () => {
     const dir = makeDir();
     const slot = await acquireVerifySlot(fastOptions(dir, { slots: 0 }), noLog);
@@ -221,5 +308,14 @@ describe('envSlotOptions', () => {
     ).toEqual({ slots: 3, dir: '/somewhere', waitTimeoutMs: 1_000 });
     expect(envSlotOptions({ BDBOARD_VERIFY_SLOTS: 'garbage', BDBOARD_VERIFY_SLOT_WAIT_MS: '' })).toEqual({});
     expect(envSlotOptions({ BDBOARD_VERIFY_SLOTS: '0' })).toEqual({ slots: 0 });
+  });
+
+  it('reads the priority and the seniority that merge-pr passes (bdboard-ulxa.6)', () => {
+    expect(envSlotOptions({ BDBOARD_VERIFY_PRIORITY: 'merge', BDBOARD_VERIFY_QUEUE_SINCE: '1700000000000' })).toEqual({
+      priority: 'merge',
+      queueSince: 1_700_000_000_000,
+    });
+    expect(envSlotOptions({ BDBOARD_VERIFY_PRIORITY: 'urgent' })).toEqual({ priority: 'pr' }); // 知らない値は既定に倒す
+    expect(envSlotOptions({ BDBOARD_VERIFY_PRIORITY: '', BDBOARD_VERIFY_QUEUE_SINCE: 'soon' })).toEqual({});
   });
 });

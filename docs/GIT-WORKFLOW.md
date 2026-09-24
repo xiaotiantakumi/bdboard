@@ -321,7 +321,12 @@ building / linting / testing the landed tree catches a semantic conflict) — it
 - **Exit codes** as in S1, plus: `3` also means "predicted tree failed `verify`" (a semantic conflict
   with main — read the log `<git common dir>/bdboard-merge/predicted-verify-pr<N>-<tree12>.log`; if it
   is a known flake such as bdboard-241s, `prepare` again, otherwise rebase and fix). `75` also means
-  "main moved while the predicted tree was being verified". `1` also covers a predicted verify that
+  "main moved while the predicted tree was being verified" — the result could no longer be used, so
+  since bdboard-ulxa.6 `prepare` does not wait for it: it reads the remote main with
+  `git ls-remote` (not the fetched ref) every `BDBOARD_MERGE_POLL_MS` (30 s, asynchronously) while
+  the verify queues or runs, and on a move kills the verify's
+  process group, restores `bd/<id>` and exits 75 (audit `result=abandoned`, message "…途中でやめました").
+  Just `prepare` again. `1` also covers a predicted verify that
   could not run (dirty worktree, `npm ci` failed). `4` also comes from `prepare` when PRED_BASE's
   ledger already says `failure` (class F would only verify on a broken main; a repair PR merges
   `origin/main` to become class N, then `gate --repair`). None of these touch the slot or the ledger,
@@ -329,7 +334,15 @@ building / linting / testing the landed tree catches a semantic conflict) — it
   stale one (gate also re-checks head and PRED_BASE against any record it reads).
 - `git merge-tree --write-tree` needs git ≥ 2.38; an older git makes every moved-main PR class R.
 - `prepare` takes minutes under S2 class F (a full `npm run verify`, including the machine-wide
-  verify-slot queue): run it in the foreground with a 600000 ms Bash timeout like `finish`. If it is
+  verify-slot queue): run it in the foreground with a 600000 ms Bash timeout like `finish`.
+- **Verify-slot priority (bdboard-ulxa.6).** The predicted verify queues with priority `merge` and the
+  landed verifies (`finish`, gate self-heal, `merge-pr verify`) with `landed`, ahead of ordinary
+  pre-PR verifies (`pr`), with a bounded wait for the lower tiers. A PR sent back by 75 keeps its
+  place (up to 10 min of head start): `prepare` passes the time the PR first queued
+  (`<git common dir>/bdboard-merge/pr-<N>-queue.json`, removed by `finish`). Details, the
+  old/new-script compatibility and the simulation (`node scripts/verify-slot-sim.mjs`: at 7 parallel
+  agents, wasted predicted runs per merge 3.4 → 1.2, worst-case redos 17 → 6) are in
+  [VERIFY.md](VERIFY.md) "Verify slots". If it is
   interrupted with SIGINT/SIGTERM (Ctrl-C, a Bash-tool timeout kill, session close), the verify child
   process is killed and the worktree is restored to `bd/<id>` automatically (bdboard-2twf); only a
   SIGKILL (`kill -9`) or a crash can still leave it detached on the predicted commit, in which case

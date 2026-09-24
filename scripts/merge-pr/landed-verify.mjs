@@ -13,6 +13,7 @@ import { git, gitOk, run, runShellToLog } from './exec.mjs';
 import { postLandedStatus } from './github.mjs';
 import { installInterruptHandler } from './interrupt.mjs';
 import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
+import { verifyEnv, watchForAbandon } from './verify-queue.mjs';
 
 const LOCKFILES = [
   { file: 'package-lock.json', args: ['ci'] },
@@ -99,6 +100,11 @@ function postQuietly(ctx, sha, state, description) {
  * SIGINT/SIGTERM を受けると detach したまま何もできず終わってしまうため)。retryHint は
  * 中断時の案内 (見送り分 3) に使う「次にやり直すコマンド」の文字列。
  *
+ * bdboard-ulxa.6: priority / queueSince は verify スロットの並び順 (verify-queue.mjs)。既定の
+ * 'landed' は着地後検証 (finish・gate の自己修復・手動 verify)。abandonWhen を渡すと verify の
+ * 間それを定期的に聞き、true になったら子を終了して result 'abandoned' を返す (台帳には書かない。
+ * 着地予定ツリーの verify が main の前進で使えなくなったときだけ使う)。
+ *
  * 中断された実行 (activeChild.interrupted) は 'error' を返して呼び出し元へ制御を戻すのではなく、
  * installAndVerify 内で resolve しない Promise を await し続ける (opus レビューで見つかった
  * 退行の修正: 台帳に書かないだけでは不十分で、finally の restoreBranch や呼び出し元の後続処理が
@@ -106,7 +112,7 @@ function postQuietly(ctx, sha, state, description) {
  * ブランチを戻すおそれがあった)。中断時の後始末は interrupt.mjs の onCleanup/settle が
  * プロセスグループが実際に空になったことを確認してから一元的に行い、最後に process.exit する。
  */
-export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint } = {}) {
+export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint, priority = 'landed', queueSince, abandonWhen } = {}) {
   const root = ctx.cwd;
   const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
   if (!isLinkedWorktree(root)) {
@@ -173,7 +179,8 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
       const onInstall = () => {
         installedAny = true;
       };
-      result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild });
+      const queue = { priority, queueSince, abandonWhen };
+      result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue });
     }
   } finally {
     // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
@@ -190,7 +197,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
   return { result, logPath };
 }
 
-async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild }) {
+async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild, queue }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
@@ -211,11 +218,13 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
   }
   say(`${ctx.config.verify} を ${sha.slice(0, 8)} で実行します (ログ: ${logPath})`);
   const fd = openSync(logPath, 'w');
+  const stopWatch = watchForAbandon({ activeChild, abandonWhen: queue.abandonWhen });
   let code;
   try {
     code = await runShellToLog(ctx.config.verify, {
       cwd: root,
       logFd: fd,
+      env: verifyEnv(queue),
       heartbeatMs: ledger ? heartbeatMs(ctx) : 0,
       onHeartbeat: () => postQuietly(ctx, sha, 'pending', running),
       onSpawn: (child) => {
@@ -223,6 +232,7 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
       },
     });
   } finally {
+    stopWatch();
     closeSync(fd);
   }
   if (activeChild.interrupted) {
@@ -240,6 +250,12 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
     // 一元的に行う — ここは何も返さずに待つだけにして、その経路に譲る。settle() は必ず
     // finish() → process.exit() で終わるので、このままハングし続けることはない。
     await new Promise(() => {});
+  }
+  if (activeChild.abandoned) {
+    // 結果がもう使えない verify を打ち切った (watchForAbandon)。プロセスグループが空になって
+    // から戻る (中断シグナルと同じ理由: 先に作業ツリーを戻さない)。
+    await activeChild.abandoned;
+    return 'abandoned';
   }
   const result = code === 0 ? 'success' : 'failure';
   if (result === 'failure') {

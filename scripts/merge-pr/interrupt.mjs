@@ -60,73 +60,91 @@ function groupAlive(pid) {
 }
 
 /**
- * activeChild.current (runShellToLog が onSpawn で渡す実行中の子) を中断シグナルから守る。
- * 子が居れば SIGTERM → (猶予後) SIGKILL でプロセスグループごと終了し (子自身が `npm run
- * verify` なら孫の tsc/vitest ワーカーまで含めて scripts/verify.mjs 自身が畳む)、実際に
- * 終わるのを待ってから onCleanup(signal) を呼んで process.exit する。子が居ない/すでに
- * 終わっていれば onCleanup だけ呼ぶ (checkout を戻すだけで済むケース)。onCleanup は同期関数であること。
+ * 子 (runShellToLog が起動した detached の子) をプロセスグループごと終了し、実際に終わったら
+ * resolve する Promise を返す: SIGTERM → (猶予後) SIGKILL。子自身が `npm run verify` なら孫の
+ * tsc/vitest ワーカーまで含めて scripts/verify.mjs 自身が畳む。
  *
  * POSIX では「終わった」の判定はプロセスグループ全体が空になったこと (`kill(-pid, 0)` が
  * ESRCH) で行い、空にならない限り SIGKILL を送り直す。win32 は taskkill /T /F が一括処理する
  * ので従来どおり直接の子の 'close' を待つ。
+ * bdboard-ulxa.6: 中断シグナル (下の installInterruptHandler) と、main が動いたので着地予定
+ * ツリーの verify を途中でやめる経路 (verify-queue.mjs の watchForAbandon) の両方が使う。
+ */
+export function terminateGroup(child) {
+  return new Promise((resolve) => {
+    if (process.platform === 'win32') {
+      terminateWin32(child, resolve);
+    } else {
+      terminatePosix(child, resolve);
+    }
+  });
+}
+
+function terminatePosix(child, done) {
+  const pid = child.pid;
+  const startedAt = Date.now();
+  let settled = false;
+  let pollTimer;
+  const settle = () => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    clearTimeout(pollTimer);
+    done();
+  };
+  const poll = () => {
+    if (settled) {
+      return;
+    }
+    if (!groupAlive(pid)) {
+      settle();
+      return;
+    }
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= killTotalTimeoutMs()) {
+      say(`プロセスグループ ${pid} が ${Math.round(killTotalTimeoutMs() / 1000)} 秒待っても空になったと確認できません (SIGKILL が効かない子孫 (uninterruptible sleep や EPERM で触れないもの) が残っている可能性。setsid 等で別グループへ抜けた子孫はこの判定自体に映らないため、この待ちとは別に見落としうる)。後始末は続けます。`);
+      settle();
+      return;
+    }
+    if (elapsed >= killGraceMs()) {
+      // 猶予を過ぎてもまだ生きている限り SIGKILL を送り直す (1 発撃って終わりにしない)。
+      killProcessTree(pid, 'SIGKILL');
+    }
+    pollTimer = setTimeout(poll, killPollMs());
+  };
+  killProcessTree(pid, 'SIGTERM');
+  pollTimer = setTimeout(poll, killPollMs());
+}
+
+function terminateWin32(child, done) {
+  let cleaned = false;
+  const finishCleanup = () => {
+    if (cleaned) {
+      return;
+    }
+    cleaned = true;
+    clearTimeout(killTimer);
+    done();
+  };
+  killProcessTree(child.pid, 'SIGTERM');
+  const killTimer = setTimeout(() => killProcessTree(child.pid, 'SIGKILL'), killGraceMs());
+  child.once('close', finishCleanup);
+  // 'close' が来なくても (listener を張る前に既に終わっていた等) 待ちきりにしない保険。
+  setTimeout(finishCleanup, killGraceMs() + 2_000).unref();
+}
+
+/**
+ * activeChild.current (runShellToLog が onSpawn で渡す実行中の子) を中断シグナルから守る。
+ * 子が居れば terminateGroup でプロセスグループごと終了し、実際に終わるのを待ってから
+ * onCleanup(signal) を呼んで process.exit する。子が居ない/すでに終わっていれば onCleanup
+ * だけ呼ぶ (checkout を戻すだけで済むケース)。onCleanup は同期関数であること。
  */
 export function installInterruptHandler({ activeChild, onCleanup }) {
   let interrupting = false;
   const finish = (signal) => {
     onCleanup(signal);
     process.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
-  };
-  const onSignalPosix = (signal, child) => {
-    const pid = child.pid;
-    const startedAt = Date.now();
-    let settled = false;
-    let pollTimer;
-    const settle = () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(pollTimer);
-      finish(signal);
-    };
-    const poll = () => {
-      if (settled) {
-        return;
-      }
-      if (!groupAlive(pid)) {
-        settle();
-        return;
-      }
-      const elapsed = Date.now() - startedAt;
-      if (elapsed >= killTotalTimeoutMs()) {
-        say(`プロセスグループ ${pid} が ${Math.round(killTotalTimeoutMs() / 1000)} 秒待っても空になったと確認できません (SIGKILL が効かない子孫 (uninterruptible sleep や EPERM で触れないもの) が残っている可能性。setsid 等で別グループへ抜けた子孫はこの判定自体に映らないため、この待ちとは別に見落としうる)。後始末は続けます。`);
-        settle();
-        return;
-      }
-      if (elapsed >= killGraceMs()) {
-        // 猶予を過ぎてもまだ生きている限り SIGKILL を送り直す (1 発撃って終わりにしない)。
-        killProcessTree(pid, 'SIGKILL');
-      }
-      pollTimer = setTimeout(poll, killPollMs());
-    };
-    killProcessTree(pid, 'SIGTERM');
-    pollTimer = setTimeout(poll, killPollMs());
-  };
-  const onSignalWin32 = (signal, child) => {
-    let cleaned = false;
-    const finishCleanup = () => {
-      if (cleaned) {
-        return;
-      }
-      cleaned = true;
-      clearTimeout(killTimer);
-      finish(signal);
-    };
-    killProcessTree(child.pid, 'SIGTERM');
-    const killTimer = setTimeout(() => killProcessTree(child.pid, 'SIGKILL'), killGraceMs());
-    child.once('close', finishCleanup);
-    // 'close' が来なくても (listener を張る前に既に終わっていた等) 待ちきりにしない保険。
-    setTimeout(finishCleanup, killGraceMs() + 2_000).unref();
   };
   const onSignal = (signal) => {
     if (interrupting) {
@@ -144,11 +162,7 @@ export function installInterruptHandler({ activeChild, onCleanup }) {
     // ので、そちらの continuation が先に走りうる — 中断を failure として台帳に書かせない
     // ためには、この時点 (まだ何も kill していない、同期区間) で立てておく必要がある。
     activeChild.interrupted = true;
-    if (process.platform === 'win32') {
-      onSignalWin32(signal, child);
-    } else {
-      onSignalPosix(signal, child);
-    }
+    terminateGroup(child).then(() => finish(signal));
   };
   const handlers = new Map(INTERRUPT_SIGNALS.map((signal) => [signal, () => onSignal(signal)]));
   for (const [signal, handler] of handlers) {
