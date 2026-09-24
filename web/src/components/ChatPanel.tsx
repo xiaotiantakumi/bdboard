@@ -6,7 +6,6 @@ import {
   useState,
 } from 'react';
 import {
-  ApiError,
   acknowledgeChatTurn,
   fetchChatThreads,
   fetchChatTurnStatus,
@@ -102,6 +101,8 @@ import { useElapsedSeconds } from './chat/useElapsedSeconds';
 import { useStickToBottomScroll } from './chat/useStickToBottomScroll';
 import { useConversationKey } from './chat/useConversationKey';
 import { useChatThreadLists } from './chat/useChatThreadLists';
+import { useChatConversationsState } from './chat/useChatConversationsState';
+import { useChatHistoryLoader } from './chat/useChatHistoryLoader';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -136,12 +137,20 @@ export function ChatPanel({
   const [selectedProjectId, setSelectedProjectId] = useState(() =>
     resolveInitialProjectId(projects, initialProjectId),
   );
-  const [conversations, setConversations] = useState<
-    Record<
-      string,
-      { messages: ChatMessage[]; sessionId?: string; agentId?: string }
-    >
-  >({});
+  const {
+    conversations,
+    setConversations,
+    conversationsRef,
+    historyLoadedFor,
+    setHistoryLoadedFor,
+    loadingHistoryFor,
+    setLoadingHistoryFor,
+    threadModelIds,
+    setThreadModelIds,
+    threadModelIdsRef,
+    historyRequestIdRef,
+    threadListRequestIdRef,
+  } = useChatConversationsState();
   // bdboard-sso1.83 第10段: selectedThreadIds/draftNonces と、そこから計算する
   // currentSessionId/currentConversationKey(+ stale-closure 回避用の ref ミラー)を
   // chat/useConversationKey.ts へ move-only で抜き出した(旧第2段のコメントが
@@ -374,9 +383,8 @@ export function ChatPanel({
   // (bdboard-3tw.156)。ref ではなく state なのは、まだ同じスレッドを見ている
   // うちに abort が確定した場合にも取り直しを走らせたいため。
   const [unresolvedSends, setUnresolvedSends] = useState<Record<string, true>>({});
-  // 取り直しが進行中のスレッド。state を使うと、印を外した瞬間に上の effect が
-  // 張り直されて自分の fetch を捨てるので、ここだけは ref で持つ。
-  const unresolvedRefetchRef = useRef<Set<string>>(new Set());
+  // unresolvedRefetchRef(取り直し二重取得の防止)は bdboard-sso1.83 第11段で
+  // chat/useChatHistoryLoader.ts の内部へ移した。
   // bdboard-zlzo: done/error なしで配信が止まった送信。ターンはサーバー側で続いて
   // いるはずなので、その場ではエラーにせず turn-status 回収に任せる。サーバーは
   // recordCompletedTurn を済ませてからロックを解放するため、完走したターンは
@@ -443,12 +451,6 @@ export function ChatPanel({
       return next;
     });
   }, []);
-  const [historyLoadedFor, setHistoryLoadedFor] = useState<
-    Record<string, true>
-  >({});
-  const [loadingHistoryFor, setLoadingHistoryFor] = useState<string | null>(
-    null,
-  );
   // 会話(スレッド)ごとに直近確定したモデルIDをキャッシュする。サーバーから復元した
   // 値も、送信時に実際に使った値も、ここに会話キー(セッションID、または新規ドラフト
   // キー)で記録しておく。エージェント読み込みタイミング(M1)やスレッド切り替え
@@ -476,7 +478,6 @@ export function ChatPanel({
   //     適用し、無ければ既定モデルへフォールバックする)であり、エージェントを
   //     切り替える操作が draftKey の nonce を進めることでキーが自然に分離される
   //     ことも合わせて働く。
-  const [threadModelIds, setThreadModelIds] = useState<Record<string, string>>({});
   const {
     agents,
     setAgents,
@@ -496,10 +497,6 @@ export function ChatPanel({
   });
   const chatPanel = useResizableSidePanel(UI_STORAGE_KEYS.chatPanelWidth);
   const [isChatPanelMaximized, setIsChatPanelMaximized] = useState(false);
-  const threadModelIdsRef = useRef(threadModelIds);
-  threadModelIdsRef.current = threadModelIds;
-  const historyRequestIdRef = useRef(0);
-  const threadListRequestIdRef = useRef(0);
   // draftNoncesRef は chat/useConversationKey.ts(bdboard-sso1.83 第10段)へ移した。
   // bdboard-sso1.83 第2段: conversationInputsRef/conversationAttachmentsRef
   // (startNewDraftThread 等が stale closure を経由せず読むための「state を
@@ -576,11 +573,9 @@ export function ChatPanel({
     [applyToDraftPayloadStores],
   );
   // selectedThreadIdsRef は chat/useConversationKey.ts、openThreadIdsRef は
-  // chat/useChatThreadLists.ts(いずれも bdboard-sso1.83 第10段)へ移した。
-  // 取り直しの適用可否を判断するときに、現在の会話の長さを deps を増やさずに
-  // 読むための参照 (bdboard-3tw.156)。
-  const conversationsRef = useRef(conversations);
-  conversationsRef.current = conversations;
+  // chat/useChatThreadLists.ts、conversationsRef は
+  // chat/useChatConversationsState.ts(いずれも bdboard-sso1.83
+  // 第10段・第11段)へ移した。
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
   const requestAbortControllerRef = useRef<AbortController | null>(null);
@@ -1618,252 +1613,73 @@ export function ChatPanel({
     setSelectedModelId,
   });
 
-  useEffect(() => {
-    if (selectedProjectId === '') {
-      return;
-    }
-
-    const conversation = conversations[currentConversationKey];
-    if ((conversation?.messages.length ?? 0) > 0) {
-      return;
-    }
-    if (historyLoadedFor[currentConversationKey] === true) {
-      return;
-    }
-
-    const sessionId = conversation?.sessionId ?? currentSessionId;
-    if (sessionId === undefined) {
-      setHistoryLoadedFor((prev) => ({ ...prev, [currentConversationKey]: true }));
-      return;
-    }
-
-    const requestId = historyRequestIdRef.current;
-    setLoadingHistoryFor(currentConversationKey);
-
-    void fetchChatSessionMessages(sessionId, selectedProjectId)
-      .then((payload) => {
-        if (requestId !== historyRequestIdRef.current) {
-          return;
-        }
-        setConversations((prev) => ({
-          ...prev,
-          [currentConversationKey]: {
-            messages: toChatMessages(payload.messages),
-            sessionId: payload.sessionId,
-            agentId: payload.agentId,
-          },
-        }));
-        writePersistedChatThread(selectedProjectId, {
-          sessionId: payload.sessionId,
-          agentId: payload.agentId,
+  const handleHistorySessionGone = useCallback(
+    (sessionId: string) => {
+      setOpenThreadIds((prev) => ({
+        ...prev,
+        [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((id) => id !== sessionId),
+      }));
+      // bdboard-23u: handleDeleteThread(threadOps.deleteThread、bdboard-sso1.83
+      // 第10段で useChatThreadLists.ts へ移設済み)の prune と対称にする —
+      // でないと閉じたスレッドの再オープン経路から死亡スレッドを再選択できる。
+      setThreadLists((prev) => ({
+        ...prev,
+        [selectedProjectId]: (prev[selectedProjectId] ?? []).filter(
+          (thread) => thread.sessionId !== sessionId,
+        ),
+      }));
+      const wasSelected = selectedThreadIdsRef.current[selectedProjectId] === sessionId;
+      if (wasSelected) {
+        setSelectedThreadIds((prev) =>
+          prev[selectedProjectId] === sessionId
+            ? { ...prev, [selectedProjectId]: undefined }
+            : prev,
+        );
+        // bdboard-23u: handleCloseThread と同じパターンで選択クリアを
+        // localStorage にも同期する。
+        const nextOpenThreads = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
+          (id) => id !== sessionId,
+        );
+        writePersistedChatThreadState(selectedProjectId, {
+          activeSessionIds: nextOpenThreads,
+          selectedSessionId: undefined,
         });
-        // bdboard-2n8: 以前はここで「リクエスト開始時点の selectedAgentId のスナップ
-        // ショット(agentIdAtRequestStart, ref経由)」と「現在の selectedAgentId」を
-        // 比較し、一致したときだけ復元していた。しかしこのスナップショットは
-        // 「エージェント一覧ロード後の既定エージェント自動選択」(下のagents取得
-        // useEffect内、`current === '' ? list[0]!.id : current` で1回だけ発火する)
-        // でも動いてしまう。そのため初回マウント時に履歴取得より先にエージェント
-        // 一覧が解決して既定エージェントが自動セットされる(スナップショットは ''
-        // のまま)と、ユーザーは何も手動操作していないのに「不一致」と誤判定され、
-        // 永続化されていたエージェントへの復元が失敗していた(stale-ref bug)。
-        //
-        // 正しく守りたい不変条件は「このレスポンスが今表示中の会話
-        // (currentConversationKey)に対応する最新のリクエストである」ことだけで、
-        // これは直前の `requestId !== historyRequestIdRef.current` ガードで既に
-        // 保証されている(`currentConversationKey` はこの effect の依存配列に
-        // 入っており、キーが変わると cleanup で historyRequestIdRef がインクリ
-        // メントされ、古い Promise は無効化される)。そして「ユーザーがエージェント
-        // を手動変更した」操作(handleAgentChange / handleResumeDiscoveredSession)は
-        // 必ず currentConversationKey も変える設計なので、「手動変更があった」ことと
-        // 「requestId が古くなる」ことは常に同時に起きる。よって追加のスナップ
-        // ショット比較は不要かつ有害で、104.9 のモデル復元(threadModelIds キャッシュ
-        // と現在の state だけを見る宣言的な比較)と同じ「現在の state(request の
-        // 生存性)との整合チェックだけに頼る」パターンに揃える。
-        if (payload.agentId !== '') {
-          setSelectedAgentId(payload.agentId);
-        }
-        if (payload.model !== undefined && payload.model !== '') {
-          const restoredModel = payload.model;
-          // bdboard-2n8: ユーザーが履歴フェッチの解決を待たずに手動でモデルを
-          // 選んでいた場合はそちらを優先し、サーバー復元値で上書きしない。
-          // 手動選択は下のモデル select の onChange (handleModelChange) が
-          // 既に threadModelIds[currentConversationKey] へ書き込み済みなので
-          // (このスレッドが選択中なら currentConversationKey === payload.sessionId)、
-          // 「まだ値が無いキーにだけ書く」ことで両立できる。
-          setThreadModelIds((prev) =>
-            prev[payload.sessionId] !== undefined
-              ? prev
-              : { ...prev, [payload.sessionId]: restoredModel },
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        if (requestId !== historyRequestIdRef.current) {
-          return;
-        }
-        if (
-          error instanceof ApiError &&
-          (error.status === 404 ||
-            (error.status === 400 && error.errorMessage === 'unknown chat session'))
-        ) {
-          setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((id) => id !== sessionId) }));
-          // bdboard-pbf: タブの prune だけだと selectedThreadIds が死んだ
-          // セッション id を指したまま残り、handleSubmit のフォールバックが
-          // 既知の死亡 id で POST して 400 エラー表示になる (修正前は silent に
-          // 新セッションで届いていた)。選択も外してドラフトへ戻し、サーバー側
-          // eviction (CHAT_SESSION_MAX_PER_PROJECT) 後の自動回復を維持する。
-          //
-          // bdboard-23u: pbf デルタレビュー残 nit の続き。ここで threadLists も
-          // prune しないと、handleDeleteThread (:1507付近) が prune しているのと
-          // 非対称になり、「閉じたスレッドを開く」(threadLists 由来の reopen
-          // dropdown、:1608付近) から死亡スレッドを再選択できてしまう。
-          // 再選択すると historyLoadedFor はこの effect で既に true 済み扱いの
-          // ままなので通常の履歴再取得が起きず、送信すると死亡 id での POST で
-          // 400 になる。
-          setThreadLists((prev) => ({
-            ...prev,
-            [selectedProjectId]: (prev[selectedProjectId] ?? []).filter(
-              (thread) => thread.sessionId !== sessionId,
-            ),
-          }));
-          const wasSelected = selectedThreadIdsRef.current[selectedProjectId] === sessionId;
-          if (wasSelected) {
-            setSelectedThreadIds((prev) =>
-              prev[selectedProjectId] === sessionId
-                ? { ...prev, [selectedProjectId]: undefined }
-                : prev,
-            );
-            // bdboard-23u: handleCloseThread (:1391付近) と同じパターンで選択
-            // クリアを localStorage にも同期する。呼ばないと死亡した
-            // selectedSessionId が persisted state に残り続ける (reload 時の
-            // available フィルタで実害は無いが、handleCloseThread との非一貫は
-            // レビュー指摘済み)。
-            const nextOpenThreads = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
-              (id) => id !== sessionId,
-            );
-            writePersistedChatThreadState(selectedProjectId, {
-              activeSessionIds: nextOpenThreads,
-              selectedSessionId: undefined,
-            });
-            // bdboard-23u: 最終タブ close (draft nonce を進めない既存の問題) と
-            // 同根 — このクリア処理が現在の draft nonce を再利用すると、同じ
-            // draftKey に applyChatSuccess が re-key 元として消さずに残した
-            // 古い楽観的メッセージが、ドラフトへのフォールバックで再表示されて
-            // しまう。handleAgentChange (:1307付近) と同じインラインの nonce
-            // 前進パターンに揃える (pendingPrefillRef の消化などプリフィル固有
-            // の副作用を伴う startNewDraftThread は、ユーザー起因でないこの
-            // 自動回復では意図的に呼ばない)。
-            const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
-            setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
-          }
-        }
-      })
-      .finally(() => {
-        if (requestId !== historyRequestIdRef.current) {
-          return;
-        }
-        setLoadingHistoryFor(null);
-        setHistoryLoadedFor((prev) => ({
-          ...prev,
-          [currentConversationKey]: true,
-        }));
-      });
+        // bdboard-23u: handleAgentChange と同じインラインの nonce 前進パターン
+        // に揃える(pendingPrefillRef の消化などプリフィル固有の副作用を伴う
+        // startNewDraftThread は、ユーザー起因でないこの自動回復では意図的に
+        // 呼ばない)。
+        const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
+        setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
+      }
+    },
+    [
+      selectedProjectId,
+      setOpenThreadIds,
+      setThreadLists,
+      setSelectedThreadIds,
+      openThreadIdsRef,
+      draftNoncesRef,
+      setDraftNonces,
+    ],
+  );
 
-    return () => {
-      historyRequestIdRef.current += 1;
-      setLoadingHistoryFor(null);
-    };
-  }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor, setSelectedAgentId]);
-
-  // turn-status の回収が完了を取りこぼしたときの安全網 (bdboard-3tw.156)。
-  //
-  // 上の履歴 effect はこの用途に使えない。あちらは「メッセージが1件でもあれば
-  // 何もしない」「一度読んだキーは二度と読まない」という二重のガードを持って
-  // いて、送信済みスレッドには楽観表示した自分の発言が既に入っているため、
-  // historyLoadedFor を落としても素通りしてしまう。ここは意図的に取り直す。
-  //
-  // 走るのは「送信したのに完了を見届けられなかった」と分かっているスレッドを
-  // 表示したときだけなので、通常のスレッド切替に fetch は増えない。
-  useEffect(() => {
-    if (selectedProjectId === '') return;
-    const sessionId = currentSessionId;
-    if (sessionId === undefined || unresolvedSends[sessionId] !== true) return;
-    // 二重取得の抑止は ref で持つ。印を先に state から外すと、その更新でこの
-    // effect 自身が張り直され、走り出した fetch を自分で捨ててしまう。
-    if (unresolvedRefetchRef.current.has(sessionId)) return;
-    unresolvedRefetchRef.current.add(sessionId);
-
-    const requestId = historyRequestIdRef.current;
-    void fetchChatSessionMessages(sessionId, selectedProjectId)
-      .then((payload) => {
-        // 回収 effect が同じ窓でより新しい状態を書いていたら、そちらを優先する。
-        // historyRequestIdRef はこのファイル共通の「この履歴応答はもう古い」印で、
-        // スレッドを離れたときにも進むので、離脱後の適用もここで止まる。
-        if (requestId !== historyRequestIdRef.current) return;
-        // 短くなる置き換えはしない。ターンがまだ走っている最中に戻ってくると、
-        // サーバーの履歴にはまだ今回のやり取りが入っていないので、そのまま
-        // 当てると楽観表示している自分の発言(と添付)が画面から消える。
-        // 完了後の履歴は「利用者の発言 + 返信」の2件分増えているので、
-        // 増えているときだけ当てれば取りこぼしだけを拾える。
-        //
-        // bdboard-3tw.158 (PR#135 レビュー minor-2 の対処): 保存件数が上限
-        // (CHAT_MESSAGES_MAX_PER_SESSION) に達したセッションでは、サーバー側が
-        // 古い方から捨てて件数を保つため取りこぼしたターンが載っても件数が
-        // 伸びず、件数比較だけでは永久にこの安全網が効かない。そこで末尾
-        // メッセージの createdAt 比較を併用する: send-chat-message.ts の
-        // finalizeChatTurnSuccess はユーザー発言とAI応答をターン完了時に
-        // まとめて1回で永続化するため、進行中のターンはサーバーに何も
-        // 書かれておらず、サーバー末尾の createdAt は必ず「今回の送信より前」
-        // のまま動かない。よって「サーバー末尾の createdAt が、ローカル末尾
-        // の at (楽観送信時刻、常にクライアント側 Date.now())より新しい」は
-        // 完了済みだけを正しく検知でき、進行中のケースを誤って壊さない。
-        const localMessages = conversationsRef.current[sessionId]?.messages ?? [];
-        const localCount = localMessages.length;
-        const grew = payload.messages.length > localCount;
-        const lastLocal = localMessages[localMessages.length - 1];
-        const lastServer = payload.messages[payload.messages.length - 1];
-        const serverTailIsNewer =
-          lastLocal !== undefined &&
-          lastServer !== undefined &&
-          Date.parse(lastServer.createdAt) > lastLocal.at;
-        if (!grew && !serverTailIsNewer) return;
-        setConversations((prev) => ({
-          ...prev,
-          [sessionId]: {
-            messages: toChatMessages(payload.messages),
-            sessionId: payload.sessionId,
-            agentId: payload.agentId,
-          },
-        }));
-        setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
-        // モデルの復元はここでは行わない (PR#135 レビュー nit-3)。回収経路や
-        // 履歴経路と非対称だが、この安全網が走るのは「このクライアント自身が
-        // 送信したスレッド」だけで、送信成功時点で threadModelIds は既に
-        // 書かれている。履歴側の「まだ値が無いキーにだけ書く」規律に従うと
-        // 常に書かない側へ落ちるので、足しても観測できる差が無い。
-        // 取り込めたときだけ印を外す。捨てた/短くて当てなかった場合は残して
-        // おいて、次にこのスレッドを開いたときにもう一度試す。
-        clearUnresolvedSend(sessionId);
-      })
-      .catch(() => {
-        // 取り直しは付加的。失敗しても通常の表示は壊さない。
-      })
-      .finally(() => {
-        unresolvedRefetchRef.current.delete(sessionId);
-      });
-    // 表示中の会話の件数を依存に入れておく (PR#135 レビュー minor-1)。印が
-    // 立ったまま同じスレッドで次のターンが終わったとき、その場で取り直しへ
-    // 戻れる。ストリーミングの delta は conversations ではなく別の state へ
-    // 積まれるので、ここが配信ごとに揺れることはない。
-  }, [
+  useChatHistoryLoader({
     selectedProjectId,
+    currentConversationKey,
     currentSessionId,
+    conversations,
+    historyLoadedFor,
+    setConversations,
+    setHistoryLoadedFor,
+    setLoadingHistoryFor,
+    setThreadModelIds,
+    historyRequestIdRef,
+    conversationsRef,
+    setSelectedAgentId,
     unresolvedSends,
     clearUnresolvedSend,
-    currentSessionId === undefined
-      ? 0
-      : (conversations[currentSessionId]?.messages.length ?? 0),
-  ]);
+    onSessionGone: handleHistorySessionGone,
+  });
 
   // 表示中の会話にだけ効くストリーミングテキスト。他の会話のストリームで
   // この会話をスクロールしない。streamingReply は会話キーでスコープした Record
