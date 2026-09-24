@@ -56,7 +56,9 @@ function collectTickets(
 
   const tickets: Ticket[] = [];
   for (const entry of entries) {
-    tickets.push(...entry.tickets);
+    for (const ticket of entry.tickets) {
+      tickets.push(ticket);
+    }
   }
   return tickets;
 }

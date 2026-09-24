@@ -280,6 +280,25 @@ describe('getModelStats', () => {
     }
   });
 
+  it('handles a project with 150,000 tickets', async () => {
+    const cache = createFakeBoardCache();
+    const now = utcInstant(2026, 8, 15, 12);
+    const proj = project('/large', '/projects/large');
+
+    cache.putProject({
+      project: proj,
+      tickets: Array.from({ length: 150_000 }, (_, index) =>
+        makeTicket({ id: `bdboard-large-${index}`, projectId: proj.id }),
+      ),
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+    expect(stats.weeklyCloses).toHaveLength(1);
+    expect(stats.stageModelDistribution).toEqual([]);
+  });
+
   it('uses an explicit timezone for weekly boundaries', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 3);
