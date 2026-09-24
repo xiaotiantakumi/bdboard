@@ -23,6 +23,7 @@ export * from './fs/beads-fingerprinter.js';
 export * from './fs/tunnel-interruption-store.js';
 export * from './fs/pr-badge-status-store.js';
 export * from './fs/config-path.js';
+export * from './fs/linked-worktree-checkout.js';
 export * from './fs/scan-roots-config-store.js';
 export * from './fs/board-thresholds-config-store.js';
 export * from './fs/hygiene-thresholds-config-store.js';

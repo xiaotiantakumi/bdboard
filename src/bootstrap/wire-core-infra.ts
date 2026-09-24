@@ -17,13 +17,13 @@ import {
   NodeFileSystem,
   NodeStreamingCommandRunner,
   readBdVersion,
-  resolveConfigFilePath,
 } from '../infrastructure/index.js';
 import { runBdVersionStartupCheck } from '../application/bd/run-bd-version-startup-check.js';
 import { envString } from './env.js';
 
 export interface WireCoreInfraDeps {
   readonly dbPath: string;
+  readonly configFilePath: string;
   readonly bdPath: string;
   readonly bdVersionCheckTimeoutMs: number;
   readonly log?: Pick<typeof console, 'log' | 'warn' | 'error'>;
@@ -43,7 +43,7 @@ export function wireCoreInfra(deps: WireCoreInfraDeps) {
     log,
   );
   const streamingCommandRunner = new NodeStreamingCommandRunner();
-  const configFilePath = resolveConfigFilePath();
+  const configFilePath = deps.configFilePath;
   const scanRootsConfigStore = createFileScanRootsConfigStore(
     envString('BDBOARD_SCAN_ROOTS_CONFIG_PATH', configFilePath),
   );

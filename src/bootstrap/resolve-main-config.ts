@@ -12,13 +12,9 @@ import {
   DEFAULT_RECLAIM_OLDER_THAN,
 } from '../application/lease/reclaim-scheduler.js';
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS } from '../interface/http/graceful-shutdown.js';
-import { WORKTREES_DIR } from '../domain/git-worktree.js';
+import { resolveConfigFilePath } from '../infrastructure/fs/config-path.js';
+import { resolveDefaultTunnelLogFilePath } from '../infrastructure/process/cloudflared-tunnel/log-sink.js';
 import { envBoolDefaultTrue, envInt, envOptionalString, envString } from './env.js';
-
-export function isLinkedWorktreeCheckout(repoRoot: string): boolean {
-  const normalizedRepoRoot = repoRoot.split(path.sep).join('/');
-  return normalizedRepoRoot.includes(`/${WORKTREES_DIR}/`);
-}
 
 export class MainCheckoutDbPathRequiredError extends Error {
   constructor(repoRoot: string) {
@@ -29,14 +25,26 @@ export class MainCheckoutDbPathRequiredError extends Error {
   }
 }
 
-function resolveDbPath(repoRoot: string): string {
+function resolveDbPath(repoRoot: string, isLinkedWorktreeCheckout: boolean): string {
   const configuredPath = envOptionalString('BDBOARD_DB');
   if (configuredPath !== undefined) return configuredPath;
-  if (isLinkedWorktreeCheckout(repoRoot)) {
+  if (isLinkedWorktreeCheckout) {
     // Refusal avoids the surprising lifecycle and staleness of an automatic database copy.
     throw new MainCheckoutDbPathRequiredError(repoRoot);
   }
   return path.join(os.homedir(), '.bdboard', 'cache.db');
+}
+
+// Shared settings can be written from the UI, so linked checkouts keep them beside their DB.
+function resolveSharedConfigFilePath(dbPath: string, isLinkedWorktreeCheckout: boolean): string {
+  return isLinkedWorktreeCheckout ? path.join(path.dirname(dbPath), 'config.json') : resolveConfigFilePath();
+}
+
+// Tunnel startup writes logs; linked checkouts keep those writes beside their DB as well.
+function resolveSharedTunnelLogFilePath(dbPath: string, isLinkedWorktreeCheckout: boolean): string {
+  return isLinkedWorktreeCheckout
+    ? path.join(path.dirname(dbPath), 'logs', 'cloudflared-tunnel.log')
+    : resolveDefaultTunnelLogFilePath();
 }
 
 export interface MainConfig {
@@ -45,6 +53,8 @@ export interface MainConfig {
   readonly port: number;
   readonly host: string;
   readonly dbPath: string;
+  readonly configFilePath: string;
+  readonly tunnelLogFilePath: string;
   readonly refreshIntervalMs: number;
   readonly sessionIntervalMs: number;
   readonly transcriptIntervalMs: number;
@@ -59,13 +69,16 @@ export interface MainConfig {
 }
 
 /** main() 冒頭の env 読み取り一式。process.env を直接見る (bootstrap/env.ts と同じ流儀)。 */
-export function resolveMainConfig(repoRoot: string): MainConfig {
+export function resolveMainConfig(repoRoot: string, isLinkedWorktreeCheckout: boolean): MainConfig {
+  const dbPath = resolveDbPath(repoRoot, isLinkedWorktreeCheckout);
   return {
     instanceNonce: envOptionalString('BDBOARD_INSTANCE_NONCE'),
     bdVersionCheckTimeoutMs: 3_000,
     port: envInt('BDBOARD_PORT', 8787),
     host: envString('BDBOARD_HOST', '127.0.0.1'),
-    dbPath: resolveDbPath(repoRoot),
+    dbPath,
+    configFilePath: resolveSharedConfigFilePath(dbPath, isLinkedWorktreeCheckout),
+    tunnelLogFilePath: resolveSharedTunnelLogFilePath(dbPath, isLinkedWorktreeCheckout),
     refreshIntervalMs: envInt('BDBOARD_REFRESH_INTERVAL_MS', 300_000),
     sessionIntervalMs: envInt('BDBOARD_SESSION_INTERVAL_MS', 10_000),
     transcriptIntervalMs: envInt('BDBOARD_TRANSCRIPT_INTERVAL_MS', 30_000),

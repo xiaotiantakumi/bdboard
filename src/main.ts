@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
-import { createPackageJsonVersionProvider } from './infrastructure/index.js';
+import { createPackageJsonVersionProvider, isLinkedWorktreeCheckout } from './infrastructure/index.js';
 import {
   describePlatformSupport,
   isPlatformFeatureSupported,
@@ -25,7 +25,7 @@ import { mountRoutes } from './bootstrap/mount-routes.js';
 async function main(): Promise<void> {
   const applicationVersion = createPackageJsonVersionProvider();
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const config = resolveMainConfig(repoRoot);
+  const config = resolveMainConfig(repoRoot, isLinkedWorktreeCheckout(repoRoot));
 
   const infra = wireCoreInfra({ ...config });
 
@@ -118,7 +118,6 @@ async function main(): Promise<void> {
   const features = await wireFeatureRoutes({
     env: process.env,
     repoRoot,
-    configFilePath: infra.configFilePath,
     cache: infra.cache,
     commandRunner: infra.commandRunner,
     streamingCommandRunner: infra.streamingCommandRunner,
