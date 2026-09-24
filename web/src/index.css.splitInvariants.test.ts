@@ -8,14 +8,15 @@ import { describe, expect, it } from 'vitest';
  * このテストは index.css 自体が import 行だけで構成されること、styles/ の各 CSS が
  * ちょうど一度 import されること、そしてカスケードに影響する import 順を保証する。
  * CSS の見た目や挙動そのものは検証しない。
- *
- * 将来 `web/src/styles/` を意図的に再構成する PR (bdboard-sso1 epic 配下) では、
- * この定数配列を新しい順序に更新すればよい。意図しない並べ替え (コピペミス・
- * リベース時の衝突解消ミス等) だけを検出するための fixture である。
  */
 const INDEX_CSS_PATH = fileURLToPath(new NodeUrl('./index.css', import.meta.url));
 const STYLES_DIR = fileURLToPath(new NodeUrl('./styles', import.meta.url));
 
+/**
+ * 将来 `web/src/styles/` を意図的に再構成する PR (bdboard-sso1 epic 配下) では、
+ * この定数配列を新しい順序に更新すればよい。意図しない並べ替え (コピペミス・
+ * リベース時の衝突解消ミス等) だけを検出するための fixture である。
+ */
 const EXPECTED_IMPORT_ORDER = [
   'tokens.css', 'base.css', 'header.css', 'base-2.css', 'help.css', 'insights.css', 'settings.css',
   'insights-2.css', 'hygiene.css', 'tokens-2.css', 'hygiene-2.css', 'insights-3.css', 'settings-2.css',
