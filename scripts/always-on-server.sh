@@ -118,8 +118,10 @@ MAIN="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P)" ||
   die 2 "main checkout を解決できません: $COMMON_DIR"
 [ -f "$MAIN/package.json" ] || die 2 "main checkout に package.json がありません: $MAIN"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd -P)"
-. "$SCRIPT_DIR/deploy-changed.sh"
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)" ||
+  die 2 '自身のディレクトリを解決できません'
+. "$SCRIPT_DIR/deploy-changed.sh" ||
+  die 2 "deploy-changed.sh を読み込めません: $SCRIPT_DIR/deploy-changed.sh"
 
 SERVER_LOG="${BDBOARD_SERVER_LOG:-/tmp/bdboard-server.log}"
 AUDIT_LOG="${BDBOARD_SERVER_AUDIT_LOG:-/tmp/bdboard-server-restarts.log}"
