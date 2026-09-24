@@ -32,6 +32,8 @@ export function git(args, cwd = REPO_ROOT) {
   return execFileSync('git', args, {
     cwd,
     encoding: 'utf8',
+    // 413 件程度の履歴でも 1MB を超えるため、将来の増加に備えて 64MB を確保する (bdboard-ni4r)。
+    maxBuffer: 64 * 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trimEnd();
 }

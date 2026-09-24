@@ -165,7 +165,13 @@ export async function getThroughputStats(
   const { weekStarts, weekRanges } = buildWeekBoundaries(now, weeks, timeZone);
   const projectIdFilter = options?.projectIds;
 
-  let entries = cache.listProjects();
+  // bdboard-mkkx: listProjectsChunked() があればそちらを使う (SQLite読み出し+
+  // チケットJSONパースをプロジェクト単位でチャンク化し、/api/health 等の他
+  // リクエストを長時間待たせない)。無ければ (インメモリ fake 等) listProjects()
+  // に同じ結果でフォールバックする。
+  let entries = cache.listProjectsChunked !== undefined
+    ? await cache.listProjectsChunked()
+    : cache.listProjects();
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
     entries = entries.filter((entry) => filterSet.has(entry.project.id));

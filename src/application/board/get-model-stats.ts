@@ -145,8 +145,15 @@ async function countStageModelDistribution(
   }));
 }
 
-function collectTickets(cache: BoardCache, projectIdFilter?: readonly string[]): Ticket[] {
-  let entries = cache.listProjects();
+async function collectTickets(
+  cache: BoardCache,
+  projectIdFilter?: readonly string[],
+): Promise<Ticket[]> {
+  // bdboard-mkkx: getThroughputStats と同じ理由で listProjectsChunked() を
+  // 優先し、無ければ listProjects() にフォールバックする。
+  let entries = cache.listProjectsChunked !== undefined
+    ? await cache.listProjectsChunked()
+    : cache.listProjects();
   if (projectIdFilter !== undefined) {
     const filterSet = new Set(projectIdFilter);
     entries = entries.filter((entry) => filterSet.has(entry.project.id));
@@ -167,7 +174,7 @@ export async function getModelStats(
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
   const { weekStarts, weekRanges } = buildWeekBoundaries(now, weeks, timeZone);
-  const tickets = collectTickets(cache, options?.projectIds);
+  const tickets = await collectTickets(cache, options?.projectIds);
 
   const weeklyCloses = await countWeeklyModelCloses(tickets, weekStarts, weekRanges);
   const stageModelDistribution = await countStageModelDistribution(tickets);
