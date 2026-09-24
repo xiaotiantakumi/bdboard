@@ -40,8 +40,12 @@ import { createAgentRunCancelRoutes } from './agent-run-cancel-routes.js';
 // bdboard-v0df: 当初のトークンは「mountAgentRunGuard() がどこかで呼ばれた」ことしか
 // 証明せず、どの app に適用したかへは結び付いていなかった (opus レビュー, 2026-09-24)。
 // 今はトークンがガード適用先の Hono インスタンスそのものを保持し (guardedApp())、
-// 各ファクトリはそのインスタンスへ直接ハンドラを登録する — 独立してマウント可能な
-// Hono を自前で作って返すことはしない。詳細は agent-run-guard.ts の
+// 各ファクトリはそのインスタンスへ直接ハンドラを登録する (戻り値は void) —
+// 独立してマウント可能な Hono を自前で作って返すことはしない。これで防げるのは
+// 「トークンを別 app に付け替える」経路のみで、「このファイルだけが
+// mountAgentRunGuard()/各ファクトリを呼ぶ」こと自体は今も型で強制されておらず、
+// agent-run-route-factories-guard.test.ts の sole-importer チェックという規約
+// (テストで固定) に依存したままである。詳細は agent-run-guard.ts の
 // AGENT_RUN_GUARD_APPLIED 直前のコメントを参照。
 
 /** postRunsBodySchema は ticketId と mode だけなので 4KB で十分すぎる。 */

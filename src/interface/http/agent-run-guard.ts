@@ -50,9 +50,15 @@ export function createAgentRunGuardMiddleware(deps: AgentRunGuardDeps): Middlewa
 
 // bdboard-3knf: unexported unique symbol brand. No file outside this module can write a
 // literal object with this exact computed key, so `AgentRunGuardToken` cannot be
-// structurally satisfied except by calling `mountAgentRunGuard()` below (or an explicit
-// `as unknown as AgentRunGuardToken` escape hatch, same as any TS nominal-typing brand —
-// not a silent one, it's a visible `as`/`any` in the diff).
+// structurally satisfied except by calling `mountAgentRunGuard()` below. This is a
+// compile-time guarantee only, with the same two escape hatches as any TS nominal-typing
+// brand: an explicit `as unknown as AgentRunGuardToken` cast (not silent — a visible
+// `as`/`any` in the diff), and reflection at runtime (e.g.
+// `Object.getOwnPropertySymbols()` can read/forge the branded property on a plain object
+// regardless of what TypeScript would allow). Neither is something this token, or any
+// unique-symbol brand, can close off — the property here is proof against accidental
+// misuse and structural typing, not a security boundary against a determined bypass
+// written in the same process.
 //
 // bdboard-v0df: the token literally carries the exact `Hono` instance `mountAgentRunGuard()`
 // applied the guard to (not just a boolean flag). The route factories no longer accept or

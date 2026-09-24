@@ -1,5 +1,4 @@
 import { guardedApp, type AgentRunGuardToken } from './agent-run-guard.js';
-import type { Hono } from 'hono';
 import type { RunStore } from '../../application/runner/run-store.js';
 
 /**
@@ -11,11 +10,11 @@ export interface AgentRunCancelRoutesDeps {
   readonly runStore: RunStore;
 }
 
-export function createAgentRunCancelRoutes(deps: AgentRunCancelRoutesDeps, guardToken: AgentRunGuardToken): Hono {
-  // bdboard-v0df: guardedApp(guardToken) always returns the exact Hono instance
-  // mountAgentRunGuard() applied the guard to — this factory never creates or returns an
-  // independently mountable app of its own, so there's no app-shaped value a caller could
-  // redirect onto a different, unguarded app or mount under an unprefixed path.
+export function createAgentRunCancelRoutes(deps: AgentRunCancelRoutesDeps, guardToken: AgentRunGuardToken): void {
+  // bdboard-v0df: guardedApp(guardToken) always resolves to the exact Hono instance the
+  // guard was applied to. This factory mutates that instance in place and returns
+  // nothing — there is no independently mountable app for a caller to redirect
+  // elsewhere, or to remount under an unrelated path prefix.
   const app = guardedApp(guardToken);
 
   app.post('/api/runs/:runId/cancel', (c) => {
@@ -33,6 +32,4 @@ export function createAgentRunCancelRoutes(deps: AgentRunCancelRoutesDeps, guard
     const cancelled = deps.runStore.cancel(runId);
     return c.json({ runId, status: cancelled?.status ?? 'cancelling' }, 202);
   });
-
-  return app;
 }
