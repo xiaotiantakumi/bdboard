@@ -22,9 +22,9 @@ const MAX_LINES_ALLOWLIST = {
   // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
   // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、
   // 680 -> 141 行(ESLint実測)まで縮小。既定上限200行に対して59行の余裕がある)。
-  'web/src/App.tsx': 432, // 現在 422 (bdboard-62p4 第5段: boardFilterPresetState/handleApplyBoardFilterPreset/既定プリセット適用effectを useAppFilterPresets.ts へ、最近開いたチケット記録・ボード在籍判定・手動リフレッシュ・プロジェクト選択・コマンドパレット・エピック絞り込みのハンドラ群を useAppActions.ts へ抽出。190行にはまだ届かないため引き続き allowlist に残す。次段候補はチケット本文参照)
   // テスト (1500 行超): 該当なし (ChatPanel.test.tsx は #669, TicketDetailPanel.test.tsx は
-  // 本チケット bdboard-sso1.88 でそれぞれ分割し、両方ともこの一覧から除去した)
+  // bdboard-sso1.88 でそれぞれ分割し、両方ともこの一覧から除去した。web/src/App.tsx は
+  // bdboard-62p4 第6段で 6行(ESLint実測)まで縮小しこの一覧から除去した)
 };
 
 const NON_TEST_MAX_LINES = 200;
