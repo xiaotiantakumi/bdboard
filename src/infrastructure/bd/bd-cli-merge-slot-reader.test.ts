@@ -174,6 +174,43 @@ describe('createBdCliMergeSlotReader', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('retries once on timeout and succeeds on the second attempt (bdboard-vpt3)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'context deadline exceeded', exitCode: 1 };
+        }
+        return { stdout: '[]', stderr: '', exitCode: 0 };
+      },
+    });
+    const reader = createBdCliMergeSlotReader(runner);
+
+    const signal = await reader.readMergeSlotSignal(ROOT);
+
+    expect(signal).toBeNull();
+    expect(calls).toHaveLength(2);
+  });
+
+  it('classifies as timeout via CommandResult.failureKind even without "context canceled" text (bdboard-vpt3)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        failureKind: 'timeout',
+      }),
+    });
+    const reader = createBdCliMergeSlotReader(runner);
+
+    await expect(reader.readMergeSlotSignal(ROOT)).rejects.toSatisfy((error: unknown) => {
+      expect(error).toBeInstanceOf(BdError);
+      expect((error as BdError).kind).toBe('timeout');
+      return true;
+    });
+  });
+
   it('throws schema-mismatch BdError for invalid JSON', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({ stdout: 'not-json', stderr: '', exitCode: 0 }),

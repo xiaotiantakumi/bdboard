@@ -71,4 +71,66 @@ describe('classifyBdError', () => {
       expect(classifyBdError(1, 'something unexpected happened')).toBe('unknown');
     });
   });
+
+  // bdboard-vpt3: 負荷が高い時間帯に他プロジェクトの bd 読み取りが断続的に
+  // context canceled でタイムアウトする件。bd は SIGTERM/SIGKILL を受けて
+  // context を cancel してから終了するため、これらの文言が stderr に出る。
+  describe('timeout classification (bdboard-vpt3)', () => {
+    it('classifies "context canceled" as timeout', () => {
+      expect(classifyBdError(1, "load custom types: context canceled")).toBe(
+        'timeout',
+      );
+    });
+
+    it('classifies "context deadline exceeded" as timeout', () => {
+      expect(
+        classifyBdError(1, 'begin read tx: context deadline exceeded'),
+      ).toBe('timeout');
+    });
+
+    it('classifies a signal-terminated process (exitCode -1) with "context canceled" as timeout, not bd-not-found', () => {
+      // NodeCommandRunner の finish() は SIGTERM/SIGKILL いずれでも 'close' で
+      // code=null を -1 に潰す。exitCode だけを見る bd-not-found 判定
+      // (exitCode === -1) より先に timeout を判定しないと、本当の原因
+      // (タイムアウト) が隠れる。
+      expect(classifyBdError(-1, 'begin read tx: context canceled')).toBe(
+        'timeout',
+      );
+    });
+
+    it('still classifies a plain exitCode -1 (e.g. spawn E2BIG, bdboard-xgvh) as bd-not-found', () => {
+      // 回帰確認: timeout 判定を bd-not-found より先に置いても、"context
+      // canceled" を含まない -1 のケースは従来どおり bd-not-found のまま。
+      expect(classifyBdError(-1, 'spawn bd E2BIG')).toBe('bd-not-found');
+    });
+
+    it('classifies bd\'s own internal lock-wait deadline as lock-contention, not timeout', () => {
+      // bd 自身が内部のロック待ちに deadline を設けていて、それを
+      // "acquiring lock: ... context deadline exceeded" のように表現する
+      // ことがある。文言上は TIMEOUT_PATTERN にも一致しうるが、これは
+      // クライアント側 (NodeCommandRunner) の SIGTERM/SIGKILL によるもの
+      // ではなく、短時間で解消しうる lock-contention として扱うべき
+      // (classify-bd-error.ts の分岐順コメント参照)。
+      expect(
+        classifyBdError(1, 'acquiring lock: context deadline exceeded'),
+      ).toBe('lock-contention');
+    });
+
+    it('still lets bd-not-found win over lock-contention when both patterns are present (no ordering regression)', () => {
+      // timeout の判定を lock-contention 文言でガードする際に、
+      // lock-contention 自体の優先順位を誤って bd-not-found より前に
+      // 動かしてしまうと、write 系の既存呼び出し元 (bd-cli-human-decisions/
+      // shared.ts の runBdCommandOrThrow など、classifyBdError を直接使う
+      // 他の経路) で「本来 bd-not-found であるべき失敗が lock-contention と
+      // 誤分類されリトライされてしまう」副作用が起きうる (2回目のレビューで
+      // 指摘)。bd-not-found は従来どおり lock-contention より優先されることを
+      // 固定する。
+      expect(
+        classifyBdError(127, 'lockbox/bd: command not found'),
+      ).toBe('bd-not-found');
+      expect(
+        classifyBdError(-1, 'failed to acquire lock: spawn bd enoent'),
+      ).toBe('bd-not-found');
+    });
+  });
 });

@@ -5,7 +5,7 @@ import type { IssueComment } from '../../domain/issue-comment.js';
 import type { TicketId } from '../../domain/ticket-id.js';
 import { bdCommentListSchema, type BdComment } from './bd-issue-schema.js';
 import { classifyBdError } from './classify-bd-error.js';
-import { withLockContentionRetry } from './bd-retry.js';
+import { withTransientReadRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -75,13 +75,13 @@ export function createBdCliCommentReader(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    // bd comments --readonly は読み取り専用でべき等なので、lock-contention
-    // なら数回まで自動リトライしてよい(bdboard-3tj)。
+    // bd comments --readonly は読み取り専用でべき等なので、lock-contention や
+    // timeout(bdboard-vpt3)なら数回まで自動リトライしてよい(bdboard-3tj)。
     async listComments(
       rootPath: string,
       issueId: TicketId,
     ): Promise<readonly IssueComment[]> {
-      const result = await withLockContentionRetry(async () => {
+      const result = await withTransientReadRetry(async () => {
         const commandResult = await commandRunner.run(
           bdPath,
           buildCommentsArgs(rootPath, issueId),
@@ -90,7 +90,13 @@ export function createBdCliCommentReader(
 
         if (commandResult.exitCode !== 0) {
           const combined = `${commandResult.stdout}\n${commandResult.stderr}`.toLowerCase();
-          const kind = classifyBdError(commandResult.exitCode, combined);
+          // bdboard-vpt3: NodeCommandRunner 自身が記録した timeout signal を最優先で見る
+          // (gh-cli-pr-status-reader.ts の classifyCommandFailure と同じ役割分担)。
+          // classifyBdError の文字列一致はこの signal が無い経路のフォールバック。
+          const kind =
+            commandResult.failureKind === 'timeout'
+              ? 'timeout'
+              : classifyBdError(commandResult.exitCode, combined);
           throw new BdError(
             kind,
             issueId,

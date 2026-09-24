@@ -8,7 +8,7 @@ import {
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import { classifyBdError } from './classify-bd-error.js';
-import { withLockContentionRetry } from './bd-retry.js';
+import { withTransientReadRetry } from './bd-retry.js';
 import { collectPrefixes, mapBdListToTickets } from './bd-issue-mapper.js';
 
 const DEFAULT_BD_PATH = 'bd';
@@ -59,16 +59,21 @@ export function createBdCliIssueRepository(
   const concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
 
   // bd list --readonly は読み取り専用でべき等なので、lock-contention
-  // (embedded doltのflock競合)なら数回まで自動リトライしてよい(bdboard-3tj)。
+  // (embedded doltのflock競合)や timeout(bdboard-vpt3)なら数回まで自動
+  // リトライしてよい(bdboard-3tj)。
   async function listTickets(project: Project): Promise<ProjectTickets> {
-    const commandResult = await withLockContentionRetry(async () => {
+    const commandResult = await withTransientReadRetry(async () => {
       const result = await commandRunner.run(bdPath, buildListArgs(project.rootPath), {
         timeoutMs,
       });
 
       if (result.exitCode !== 0) {
         const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
-        const kind = classifyBdError(result.exitCode, combined);
+        // bdboard-vpt3: NodeCommandRunner 自身が記録した timeout signal を最優先で見る
+        // (gh-cli-pr-status-reader.ts の classifyCommandFailure と同じ役割分担)。
+        // classifyBdError の文字列一致はこの signal が無い経路のフォールバック。
+        const kind =
+          result.failureKind === 'timeout' ? 'timeout' : classifyBdError(result.exitCode, combined);
         throw new BdError(kind, project.id, combined.trim() || `exit code ${result.exitCode}`);
       }
 
