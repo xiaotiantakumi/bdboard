@@ -13,10 +13,12 @@ import {
 const MAIN_CHECKOUT = '/Users/example/bdboard';
 const LINKED_WORKTREE = '/Users/example/bdboard/.claude/worktrees/bdboard-21e7';
 
-// リテラルで書く (bdboard-n4fc opus レビュー指摘): resolveConfigFilePath() /
-// resolveDefaultTunnelLogFilePath() を呼んで比較すると、既定値そのものが壊れても検出できない
-// (自己参照になる)。既存の dbPath の既定値アサーションと同じ流儀に揃える。
-const DEFAULT_CONFIG_FILE_PATH = path.join(os.homedir(), '.config', 'bdboard', 'config.json');
+// configFilePath は resolveConfigFilePath() が platform (win32 の APPDATA 分岐) に応じて値を
+// 変えるため、ここではリテラルにせず委譲先を直接呼ぶ (resolveConfigFilePath 自身の分岐は
+// infrastructure/fs/config-path.test.ts が別途担保する)。verify-windows で実際に破綻したため
+// (bdboard-n4fc)、POSIX 決め打ちのリテラルには戻さないこと。tunnelLogFilePath は
+// resolveDefaultTunnelLogFilePath() 自体がプラットフォーム分岐を持たない (log-sink.ts 参照) ので
+// リテラルで安全。
 const DEFAULT_TUNNEL_LOG_FILE_PATH = path.join(os.homedir(), '.bdboard', 'logs', 'cloudflared-tunnel.log');
 
 const ENV_KEYS = [
@@ -58,7 +60,7 @@ describe('resolveMainConfig (bdboard-sso1.86 move only, main.ts の env 解決�
       port: 8787,
       host: '127.0.0.1',
       dbPath: path.join(os.homedir(), '.bdboard', 'cache.db'),
-      configFilePath: DEFAULT_CONFIG_FILE_PATH,
+      configFilePath: resolveConfigFilePath(),
       tunnelLogFilePath: DEFAULT_TUNNEL_LOG_FILE_PATH,
       refreshIntervalMs: 300_000,
       sessionIntervalMs: 10_000,
@@ -124,7 +126,7 @@ describe('resolveMainConfig dbPath resolution', () => {
 
   it('keeps main checkout shared paths unchanged', () => {
     const config = resolveMainConfig(MAIN_CHECKOUT, false);
-    expect(config.configFilePath).toBe(DEFAULT_CONFIG_FILE_PATH);
+    expect(config.configFilePath).toBe(resolveConfigFilePath());
     expect(config.tunnelLogFilePath).toBe(DEFAULT_TUNNEL_LOG_FILE_PATH);
   });
 
