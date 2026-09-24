@@ -465,4 +465,14 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(header?.onOpenHelp).toBe(controller.overlays.handleOpenHelp);
     expect(header?.onOpenShortcuts).toBe(controller.overlays.handleOpenShortcuts);
   });
+
+  it('wires TipsBanner onOpenHelp to overlays.handleOpenHelp', async () => {
+    const { AppBody } = await import('./AppBody');
+    // tipsBannerDismissed のデフォルト (makeController) は true (非表示) なので、
+    // TipsBanner を描画させるには明示的に false を渡す。
+    const controller = makeController({ tipsBannerDismissed: false });
+    renderAppBody(AppBody, controller);
+    fireEvent.click(screen.getByRole('button', { name: '詳しく' }));
+    expect(controller.overlays.handleOpenHelp).toHaveBeenCalledTimes(1);
+  });
 });
