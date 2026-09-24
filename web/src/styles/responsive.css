@@ -379,4 +379,35 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  /* bdboard-h4xs.29: header.css の .view-toolbar-left > * { white-space: nowrap; } は
+     継承プロパティなので、.view-toolbar-left の子である .preset-control の子孫にも
+     伝わる。.preset-control-popover(width: 320px; overflow: hidden)の中にある
+     空状態の案内文(.preset-control-empty、className/文言なし)や「…を上書き」
+     ボタン(.btn、white-space未指定)がこの nowrap を継承し、折り返さずポップオーバー
+     右端で(省略記号も出ずに)切れていた。ここで継承を断つ。
+     .preset-control-name/.preset-control-apply などリスト側は自前で
+     white-space: nowrap を明示しており、より近い宣言としてこの上書きより優先される
+     (= 一覧行の省略記号つき切り詰めは変わらない)。
+
+     overflow-wrap: anywhere も併記する: 「…を上書き」ボタンの中身
+     「<プリセット名>」は空白を含まない1トークンになりうる(プリセット名に
+     スペースが無い場合、例: 38文字の英数字)。white-space: normal だけでは
+     日本語の括弧境界(」の前後)でしか折り返せず、英数字トークン自体はさらに
+     16px 前後ポップオーバーの右端をはみ出して overflow: hidden に切られたままだった
+     (実測、375px)。.preset-control-save-actions は flex 行で、単なる
+     overflow-wrap: break-word は flex/grid の min-content 幅計算に効かず
+     はみ出しを防げない(.card-title のコメント参照)。anywhere は min-content
+     にも効くため、空白の無い長大トークンでも折り返してポップオーバー幅に収まる。
+
+     このルールをこの @media 内に留める理由: .preset-control-popover 自体は幅
+     320px 固定(max-width: calc(100vw - 32px) は概ね 352px 未満のビューポートでしか
+     効かない)なので、この nowrap 継承バグは実はデスクトップ幅でも再現する。ただし
+     このチケットの受け入れ基準はモバイル幅(375/320px)に限定されており、直し方の
+     指針(PR #742 のレビュー指摘: 実際にバグが起きる範囲だけにスコープする)に従い、
+     デスクトップ側の見た目を変えないようこの @media の外までは広げない。 */
+  .preset-control-popover {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
