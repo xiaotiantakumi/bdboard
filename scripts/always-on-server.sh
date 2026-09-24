@@ -24,7 +24,8 @@
 #   BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy  --expect-pid <pid> \
 #       [--verify] [--tunnel-ack] [--port N] [--dry-run]
 #     deploy = pull --ff-only → lockfile が変わっていれば npm install → web/ が変わっていれば
-#              build:web → src/ か依存が変わっていれば restart、そうでなければ health だけ
+#              build:web → src/ か依存が変わっていれば restart (テストファイル・__fixtures__・
+#              test-support 系は判定から除外)、そうでなければ health だけ
 #
 # 終了コード: 0 成功 / 1 使い方 / 2 前提不成立 (トンネル稼働・ロック中・health 不通・
 #             build 失敗) / 3 --expect-pid 不一致 / 4 BDBOARD_SERVER_CALLER 未宣言
@@ -42,7 +43,8 @@ always-on-server.sh — 常時稼働サーバー (main checkout の npm run star
       [--verify] [--tunnel-ack] [--port N] [--dry-run]
 
   deploy = pull --ff-only → lockfile が変わっていれば npm install → web/ が変わっていれば
-           build:web → src/ か依存が変わっていれば restart、そうでなければ health 確認だけ
+           build:web → src/ か依存が変わっていれば restart (テストファイル・__fixtures__・
+           test-support 系は判定から除外)、そうでなければ health 確認だけ
 
   --expect-pid  いま listen している PID がこれと一致するときだけ進む (CAS)。status で確認する
   --verify      kill の前に main checkout で契約の検証コマンド (npm run verify) を通す。赤なら触らない
@@ -115,6 +117,11 @@ esac
 MAIN="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P)" ||
   die 2 "main checkout を解決できません: $COMMON_DIR"
 [ -f "$MAIN/package.json" ] || die 2 "main checkout に package.json がありません: $MAIN"
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)" ||
+  die 2 '自身のディレクトリを解決できません'
+. "$SCRIPT_DIR/deploy-changed.sh" ||
+  die 2 "deploy-changed.sh を読み込めません: $SCRIPT_DIR/deploy-changed.sh"
 
 SERVER_LOG="${BDBOARD_SERVER_LOG:-/tmp/bdboard-server.log}"
 AUDIT_LOG="${BDBOARD_SERVER_AUDIT_LOG:-/tmp/bdboard-server-restarts.log}"
@@ -280,7 +287,7 @@ fi
 
 # deploy: サーバー側に変更がなければ再起動しない (静的 web/dist は再起動なしで反映される)。
 if [ "$ACTION" = 'deploy' ] && [ -n "$CURRENT_PIDS" ]; then
-  if ! changed src/ package.json package-lock.json .env; then
+  if ! deploy_relevant_changed "$MAIN" "$OLD_HEAD" "$NEW_HEAD" src/ package.json package-lock.json .env; then
     printf '== server-side unchanged (%s..%s); keeping PID %s. health=HTTP %s\n' \
       "$(git -C "$MAIN" rev-parse --short "$OLD_HEAD")" "$(git -C "$MAIN" rev-parse --short "$NEW_HEAD")" \
       "$CURRENT_PIDS" "$(health_code)"
