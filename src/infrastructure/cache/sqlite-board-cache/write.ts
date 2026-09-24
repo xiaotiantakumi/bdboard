@@ -3,6 +3,7 @@ import type { BoardCache, CachedProject, SessionLinkRow } from '../../../applica
 import type { ModelUsageTotals } from '../../../application/transcript/extract-usage.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import { serializeTickets } from '../ticket-serialization.js';
+import type { ParseCache } from './parse-cache.js';
 import { createLinksWriteOperations } from './write-links.js';
 
 export { MAX_INTERACTIONS } from './write-links.js';
@@ -22,7 +23,7 @@ export type BoardCacheWriteOperations = Pick<
   | 'appendInteractions'
 >;
 
-export function createWriteOperations(db: Database.Database): BoardCacheWriteOperations {
+export function createWriteOperations(db: Database.Database, parseCache: ParseCache): BoardCacheWriteOperations {
   const putProjectStmt = db.prepare(`
     INSERT OR REPLACE INTO projects (
       id, name, root_path, prefixes, fingerprint, fetched_at, tickets, alias_paths, pending_decisions
@@ -74,10 +75,12 @@ export function createWriteOperations(db: Database.Database): BoardCacheWriteOpe
           ? JSON.stringify(entry.pendingDecisions)
           : null,
       );
+      parseCache.delete(entry.project.id);
     },
 
     deleteProject(projectId: string): void {
       deleteProjectStmt.run(projectId);
+      parseCache.delete(projectId);
     },
 
     clear(): void {
@@ -93,6 +96,17 @@ export function createWriteOperations(db: Database.Database): BoardCacheWriteOpe
       db.exec(
         `DELETE FROM projects; DELETE FROM transcript_offsets; DELETE FROM session_usage; DELETE FROM session_links; DELETE FROM interactions;`,
       );
+      // bdboard-3c36 opus review で見つかったバグの修正: putProject/deleteProject
+      // と同じ理由で clear() も parseCache を空にする必要がある。これを忘れると
+      // 実害が2つあった: (1) 実行中の listProjectsChunked() (id一覧を先に
+      // スナップショットし、1件ずつ await で処理する) が、自分の開始後に
+      // clear() が呼ばれた場合、未処理の id について古い parseCache のエントリを
+      // 依然ヒットさせてしまい、DB からはもう消えた project を結果に混入させる
+      // (listProjects() は毎回 DB 行を先に読み直すので影響されないが、
+      // listProjectsChunked() は id 一覧取得後の各ステップで parseCache を
+      // 見るため影響される)。(2) clear() 後も Map が空にならず、消えたはずの
+      // project 分のパース結果がプロセス終了までメモリに残り続ける。
+      parseCache.clear();
     },
 
     setTranscriptOffset(filePath: string, offset: number): void {
