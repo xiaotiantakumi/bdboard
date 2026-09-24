@@ -151,8 +151,8 @@ export function useColdKeyspaceAdoption({
   );
 
   useEffect(() => {
-    // ticketContextToken が定義されている場合は、ChatPanel.tsx の ticket-context
-    // effect(E9)が projects の遅延到着を処理するため、ここでは通常のチャット
+    // ticketContextToken が定義されている場合は、chat/useTicketContextLaunch.ts の
+    // ticket-context effect(E9)が projects の遅延到着を処理するため、ここでは通常のチャット
     // 起動だけを扱う。
     if (ticketContextToken !== undefined) return;
     if (selectedProjectId !== '') return;

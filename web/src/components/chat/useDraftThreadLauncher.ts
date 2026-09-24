@@ -38,7 +38,7 @@ export interface UseDraftThreadLauncherParams
  * effect は持たない(useRef と useCallback だけ)。呼び出し位置は元の
  * startNewDraftThread の位置。
  *
- * pending ref は2つとも[正本]: ChatPanel の ticket-context effect(E9)が積み、
+ * pending ref は2つとも[正本]: chat/useTicketContextLaunch.ts の ticket-context effect(E9)が積み、
  * スレッド一覧 effect(E7)が無効化・消化し、ここの startNewDraftThread が消化し、
  * handleNewThread が消去する。state から作り直してはいけない。
  */
@@ -86,7 +86,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
   // 不変条件(N1): この関数を同一 tick 内(同期的なコールバック連鎖の中)で同じ
   // projectId に対して2回呼ぶと、両方とも同じ draftNoncesRef.current[projectId]
   // を読んでから +1 するため nonce が衝突し、2つのドラフトが同じ会話キーを
-  // 奪い合う。呼び出し側(chat/useThreadListSync.ts の E7 と ChatPanel.tsx の E9)は必ず「1回のトリガーにつき
+  // 奪い合う。呼び出し側(chat/useThreadListSync.ts の E7 と chat/useTicketContextLaunch.ts の E9)は必ず「1回のトリガーにつき
   // startNewDraftThread は高々1回」を守ること。
   const startNewDraftThread = useCallback((projectId: string) => {
     // bdboard-ru4d: ここも会話キーの再割り当てサイト。引き継ぎ選択は
