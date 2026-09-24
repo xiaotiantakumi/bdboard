@@ -42,6 +42,16 @@
 //     below, confirmed against the current import graph), so any other production file
 //     importing anything at all from it, for any reason, under any local binding name, is
 //     suspicious.
+//
+// Follow-up (opus review of the above, 2026-09-25): the specifier regex only matched
+// static `from '...'`, so a module reached solely through a dynamic `import('...')` or a
+// `require('...')` would have escaped it — widened to catch both. The allowlist also only
+// proved nothing *else* imports agent-run-guard.ts directly; it did not prove none of the
+// 4 allowed importers turn around and re-export from it for a 5th file to pick up, so a
+// dedicated re-export check was added. The two runtime tests below that assert on a
+// factory's (now `void`) return value were also strengthened to check the guarded app's
+// actual routing table / a real local request, rather than relying on `toBeUndefined()`
+// alone, which would pass even for a factory that silently registered nothing.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +65,7 @@ import { createAgentRunCreateRoutes } from './agent-run-create-routes.js';
 import { createAgentRunReadRoutes } from './agent-run-read-routes.js';
 import { createFakeBoardCache } from './agent-run-routes-test-support/board-cache.js';
 import { LOCAL_ENV } from './agent-run-routes-test-support/constants.js';
-import { withRemoteTunnel } from './agent-run-routes-test-support/http-requests.js';
+import { withLocalHost, withRemoteTunnel } from './agent-run-routes-test-support/http-requests.js';
 import { allowingWriteAccess, makeIssueWriter, makeProvisioner } from './agent-run-routes-test-support/run-deps.js';
 import { readyHarnessStatus } from './agent-run-routes-test-support/harness-status.js';
 
@@ -114,17 +124,36 @@ function readSource(relativePath: string): string {
  * differently-named sibling module (e.g. an `agent-run-create-routes-test-support`
  * directory) — the pattern requires an optional `.js` and then the closing quote to
  * follow immediately, so a longer stem like `agent-run-create-routes-test-support` can
- * never satisfy it. Matching on the raw source (rather than a comment-stripped copy) is a
- * deliberate simplification versus the identifier-based check this replaces: a production
- * file would need a comment containing a literal `from '...agent-run-guard...'`-shaped
- * string for that to false-positive here, which is not a pattern used anywhere in this
- * codebase today.
+ * never satisfy it. Matches static `from '...'` / `from "..."` (with or without a space
+ * before the quote) as well as dynamic `import('...')` and `require('...')`, so a module
+ * reached only through a dynamic import or a CJS require isn't missed. Matching on the raw
+ * source (rather than a comment-stripped copy) is a deliberate simplification versus the
+ * identifier-based check this replaces: a production file would need a comment containing
+ * a literal specifier-shaped string for that to false-positive here, which is not a
+ * pattern used anywhere in this codebase today.
  */
 function findModuleSpecifierImporters(moduleStemPattern: string, definitionFile: string): string[] {
-  const specifierPattern = new RegExp(String.raw`from\s+['"][^'"]*${moduleStemPattern}(\.js)?['"]`);
+  const specifierPattern = new RegExp(
+    String.raw`(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)['"][^'"]*${moduleStemPattern}(\.js)?['"]`,
+  );
   return PRODUCTION_SOURCE_FILES.filter((relativePath) => relativePath !== definitionFile)
     .filter((relativePath) => specifierPattern.test(readSource(relativePath)))
     .sort();
+}
+
+/**
+ * bdboard-f9x8 (opus review of #723 follow-up, 2026-09-25): the specifier allowlist for
+ * agent-run-guard.ts trusts its 4 allowlisted importers not to themselves re-export
+ * anything from it to a 5th file (which would let that 5th file reach e.g.
+ * mountAgentRunGuard without ever importing agent-run-guard.ts directly, evading the check
+ * above). None of them do today — this pins that so a future re-export doesn't
+ * reintroduce the gap silently.
+ */
+function findReExports(fromModuleStemPattern: string, candidateFiles: readonly string[]): string[] {
+  const reExportPattern = new RegExp(
+    String.raw`export\s+(?:\*|\{[^}]*\})\s+from\s+['"][^'"]*${fromModuleStemPattern}(\.js)?['"]`,
+  );
+  return candidateFiles.filter((relativePath) => reExportPattern.test(readSource(relativePath))).sort();
 }
 
 const FACTORY_MODULES = [
@@ -177,6 +206,14 @@ describe('agent-run route factories stay behind the guard (bdboard-3knf)', () =>
         findModuleSpecifierImporters('agent-run-guard', AGENT_RUN_GUARD_DEFINITION_FILE),
       ).toEqual(AGENT_RUN_GUARD_ALLOWED_IMPORTERS);
     });
+
+    it('none of the allowed importers re-export anything from agent-run-guard.ts to a 5th file', () => {
+      // Closes a gap in the specifier allowlist check above: it only proves nothing
+      // *else* imports from agent-run-guard.ts directly, not that one of the 4 allowed
+      // importers doesn't turn around and re-export e.g. mountAgentRunGuard for a 5th
+      // file to pick up without ever spelling 'agent-run-guard' itself.
+      expect(findReExports('agent-run-guard', AGENT_RUN_GUARD_ALLOWED_IMPORTERS)).toEqual([]);
+    });
   });
 
   describe('the guard token is bound to the exact guarded app instance (bdboard-v0df)', () => {
@@ -193,13 +230,29 @@ describe('agent-run route factories stay behind the guard (bdboard-3knf)', () =>
       const token = mountAgentRunGuard(app, { isRemoteAgentRunAllowed: async () => true });
       const runStore = buildRunStore();
       const deps = buildCreateAndReadDeps(runStore);
+      const routesBefore = app.routes.length;
 
-      // The factories return void (bdboard-v0df finding #6) — a caller has no return
-      // value to mount elsewhere, only guardedApp(token), which always resolves to `app`.
+      // The factories return void — a caller has no return value to mount elsewhere,
+      // only guardedApp(token), which always resolves to `app`. Returning `app` itself
+      // (the pre-fix shape) would have been a footgun: a caller doing
+      // `app.route('/', createAgentRunCreateRoutes(...))` would self-mount `app` onto
+      // `app`, silently double-registering every route already on it.
       expect(createAgentRunCreateRoutes(deps, token)).toBeUndefined();
       expect(createAgentRunReadRoutes(deps, token)).toBeUndefined();
       expect(createAgentRunCancelRoutes({ runStore }, token)).toBeUndefined();
       expect(guardedApp(token)).toBe(app);
+
+      // toBeUndefined() alone doesn't prove the factories did anything — confirm the
+      // handlers actually landed on `app`'s own routing table (not a copy, and not
+      // silently dropped).
+      expect(app.routes.length).toBeGreaterThan(routesBefore);
+      expect(app.routes.some((r) => r.method === 'POST' && r.path === '/api/runs')).toBe(true);
+      expect(
+        app.routes.some((r) => r.method === 'GET' && r.path === '/api/runs/:runId'),
+      ).toBe(true);
+      expect(
+        app.routes.some((r) => r.method === 'POST' && r.path === '/api/runs/:runId/cancel'),
+      ).toBe(true);
     });
 
     it('a token minted for one app cannot be used to register guarded routes on a different, untrusted app (the exploit bdboard-v0df was filed against)', async () => {
@@ -239,6 +292,18 @@ describe('agent-run route factories stay behind the guard (bdboard-3knf)', () =>
 
       expect(response.status).toBe(403);
       expect(await response.json()).toEqual({ error: 'remote agent runs are disabled' });
+
+      // The 403 above only means something if the cancel handler is actually reachable
+      // at that path at all — otherwise Hono's own 404 for an unregistered route would
+      // also produce a non-2xx status and this test would pass for the wrong reason. A
+      // *local* request (which the guard's remote check doesn't block) to the same
+      // '/v2/...' path confirms the handler really is registered and reachable there.
+      const localResponse = await untrustedParent.request(
+        '/v2/api/runs/run-active/cancel',
+        withLocalHost({ method: 'POST' }),
+        LOCAL_ENV,
+      );
+      expect(localResponse.status).toBe(202);
     });
   });
 

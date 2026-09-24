@@ -53,12 +53,14 @@ export function createAgentRunGuardMiddleware(deps: AgentRunGuardDeps): Middlewa
 // structurally satisfied except by calling `mountAgentRunGuard()` below. This is a
 // compile-time guarantee only, with the same two escape hatches as any TS nominal-typing
 // brand: an explicit `as unknown as AgentRunGuardToken` cast (not silent — a visible
-// `as`/`any` in the diff), and reflection at runtime (e.g.
-// `Object.getOwnPropertySymbols()` can read/forge the branded property on a plain object
-// regardless of what TypeScript would allow). Neither is something this token, or any
-// unique-symbol brand, can close off — the property here is proof against accidental
-// misuse and structural typing, not a security boundary against a determined bypass
-// written in the same process.
+// `as`/`any` in the diff), and reflection at runtime — but only starting from a token you
+// already hold. `Object.getOwnPropertySymbols()` on a real token recovers the symbol
+// value, and from there code can mint further tokens or mutate the existing one (it isn't
+// frozen); it cannot conjure a token out of a plain `{}`, since the symbol itself is
+// never exported and nothing else in this module leaks it. Neither escape hatch is
+// something this token, or any unique-symbol brand, can close off — the property here is
+// proof against accidental misuse and structural typing, not a security boundary against
+// a determined bypass written in the same process with access to a real token.
 //
 // bdboard-v0df: the token literally carries the exact `Hono` instance `mountAgentRunGuard()`
 // applied the guard to (not just a boolean flag). The route factories no longer accept or
