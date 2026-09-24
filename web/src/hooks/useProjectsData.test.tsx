@@ -80,7 +80,8 @@ describe('useProjectsData', () => {
   it('returns a referentially stable empty array for chatProjects while the query is still pending', () => {
     // Asserts actual reference stability (toBe, not toEqual) across a re-render,
     // which is the entire point of the N7 useMemo guard this hook preserves --
-    // ChatPanel's ticket-context effect depends on `chatProjects` and must not
+    // the ticket-context effect (chat/useTicketContextLaunch.ts, fed by ChatPanel's
+    // `projects` prop) depends on `chatProjects` and must not
     // re-run on every unrelated App re-render while data is still loading.
     // A toEqual-only check (bdboard-62p4 PR-3 opus review finding #4) would still
     // pass even if the useMemo were deleted and replaced with a fresh `[]` literal

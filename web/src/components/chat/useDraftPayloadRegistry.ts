@@ -52,7 +52,7 @@ export interface UseDraftPayloadRegistryResult {
  * 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
  * ので、ここで移送/掃除しなくても取り残されない。2つの呼び出し
  * サイト(chat/useColdKeyspaceAdoption.ts の adoptProjectFromColdKeyspace による
- * コールドキースペースからの移送・ChatPanel.tsx の
+ * コールドキースペースからの移送・chat/useTicketContextLaunch.ts の
  * ticket-context effect の '' キースペースの掃除)では元々どちらも
  * 移送されていない。ここに含めると挙動が変わる。
  */
