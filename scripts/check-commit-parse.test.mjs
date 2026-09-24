@@ -342,6 +342,7 @@ describe('check-commit-parse CLI', () => {
     return execFileSync(args[0], args.slice(1), {
       cwd,
       encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
       env: {
         ...process.env,
         GIT_AUTHOR_NAME: 'T',
@@ -420,6 +421,31 @@ describe('check-commit-parse CLI', () => {
       const result = runCheck(work, ['--range', 'v0.0.0..HEAD']);
       expect(result.status).toBe(0);
       expect(result.stdout).toContain('CHANGELOG 対象の解析不能コミットはありません');
+    },
+    15000,
+  );
+
+  it(
+    'handles git log output larger than 1 MB',
+    () => {
+      const { work } = makeRepo('large-log');
+      // 30 件 × 640 行 × 約72文字 ≈ 1.4 MB。1コミットごとは約46 KBに保つ。
+      const line = 'A conventional commit body line with enough ordinary text to grow the log output.';
+      const message = `fix: large log fixture\n\n${Array.from({ length: 640 }, () => line).join('\n')}\n`;
+      for (let index = 0; index < 30; index += 1) {
+        fs.writeFileSync(path.join(work, 'change.txt'), `${index}\n`);
+        sh(work, 'git', 'add', 'change.txt');
+        fs.writeFileSync(path.join(tmpRoot, 'message.txt'), message);
+        sh(work, 'git', 'commit', '-F', path.join(tmpRoot, 'message.txt'));
+      }
+
+      const log = sh(work, 'git', 'log', '--format=%H%x1f%B%x1e', 'v0.0.0..HEAD');
+      expect(Buffer.byteLength(log, 'utf8')).toBeGreaterThan(1024 * 1024);
+
+      const result = runCheck(work, ['--range', 'v0.0.0..HEAD']);
+      const combined = `${result.stdout}\n${result.stderr}`;
+      expect(result.status).not.toBe(2);
+      expect(combined).not.toContain('ENOBUFS');
     },
     15000,
   );
