@@ -1,7 +1,7 @@
 import { render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TicketDetailDto } from '../../api';
-import type { PendingDecisionDto } from '../../api/decisions';
+import type { PendingDecisionDto } from '../../api';
 
 // bdboard-sso1.5: TicketDetailSecondaryBody は TicketDetailBody の後半分の
 // 配線コンポーネント。#654 opus レビュー指摘(スカラーだけのモックだと配線
@@ -371,6 +371,46 @@ describe('TicketDetailSecondaryBody', () => {
       expect(attachmentsMock.mock.calls[0]?.[0]).toEqual({
         ticketId: 'MARK-ticket-id',
       });
+    });
+
+    // bdboard-u6hf レビュー指摘: pendingDecision が解消された(または新たに付いた)
+    // ときに、添付画像セクションが重複表示/消失せず、正しい新しい位置に1つだけ
+    // 移動することを rerender で確認する(移動時に remount されないための
+    // key="attachments" の付与自体は、この DOM 上のアサーションでは直接検証できない
+    // が、少なくとも二重描画や消失が無いことは担保する)。
+    it('moves attachments to the new position when pendingDecision changes on rerender', () => {
+      const pendingDecision: PendingDecisionDto = {
+        id: 'MARK-pending-id',
+        kind: 'ticket',
+        projectId: 'MARK-project',
+        allowFreeform: true,
+      };
+      const pendingProps = makeProps({ pendingDecision });
+      const { container, rerender } = render(
+        <TicketDetailSecondaryBody {...pendingProps} />,
+      );
+
+      let indexes = sectionIndexes(container);
+      expect(indexes.get('attachments-section')).toBeLessThan(
+        indexes.get('decision-section') ?? -1,
+      );
+      expect(
+        container.querySelectorAll('[data-testid="attachments-section"]'),
+      ).toHaveLength(1);
+
+      const resolvedProps = makeProps({ pendingDecision: undefined });
+      rerender(<TicketDetailSecondaryBody {...resolvedProps} />);
+
+      indexes = sectionIndexes(container);
+      expect(indexes.get('decision-section')).toBeLessThan(
+        indexes.get('attachments-section') ?? -1,
+      );
+      expect(indexes.get('attachments-section')).toBeLessThan(
+        indexes.get('comments-section') ?? -1,
+      );
+      expect(
+        container.querySelectorAll('[data-testid="attachments-section"]'),
+      ).toHaveLength(1);
     });
   });
 
