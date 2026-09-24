@@ -95,7 +95,16 @@ function postQuietly(ctx, sha, state, description) {
  * 「後」に行う — 判定に使う .gitignore は、これから verify する sha のツリーのものであるべきで
  * (S2 の着地予定ツリーや、main が進んだ後の着地コミットでは、まだ detach していない現在の
  * ブランチの .gitignore と内容が違いうる)、checkout 前のままだと違う木の .gitignore で判定して
- * しまう。retryHint は中断時の案内 (見送り分 3) に使う「次にやり直すコマンド」の文字列。
+ * しまう。ハンドラの登録も checkout 直後・この判定より前に動かした (登録前の窓で
+ * SIGINT/SIGTERM を受けると detach したまま何もできず終わってしまうため)。retryHint は
+ * 中断時の案内 (見送り分 3) に使う「次にやり直すコマンド」の文字列。
+ *
+ * 中断された実行 (activeChild.interrupted) は 'error' を返して呼び出し元へ制御を戻すのではなく、
+ * installAndVerify 内で resolve しない Promise を await し続ける (opus レビューで見つかった
+ * 退行の修正: 台帳に書かないだけでは不十分で、finally の restoreBranch や呼び出し元の後続処理が
+ * interrupt.mjs 側のプロセスグループ・ポーリングより先に走ってしまい、後始末が完了する前に
+ * ブランチを戻すおそれがあった)。中断時の後始末は interrupt.mjs の onCleanup/settle が
+ * プロセスグループが実際に空になったことを確認してから一元的に行い、最後に process.exit する。
  */
 export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint } = {}) {
   const root = ctx.cwd;
@@ -127,22 +136,6 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
     say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);
     return { result: 'error' };
   }
-  // detach した後 (= sha のツリーの .gitignore) で判定する。checkout 前のままだと違う木の
-  // .gitignore で ignore 判定してしまう (見送り分 2)。
-  const untracked = untrackedFiles(root);
-  if (untracked.length > 0) {
-    restoreBranch(root, restoreTo);
-    const shown = untracked.slice(0, 20);
-    const more = untracked.length > shown.length ? `\n  ...ほか ${untracked.length - shown.length} 件` : '';
-    say(
-      `作業ツリーに未追跡ファイル (${sha.slice(0, 12)} の .gitignore で ignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
-      shown.map((file) => `  ${file}`).join('\n') + more,
-      ledger
-        ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
-        : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
-    );
-    return { result: 'error' };
-  }
   const activeChild = { current: undefined, interrupted: false };
   const removeInterruptHandler = installInterruptHandler({
     activeChild,
@@ -155,14 +148,39 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, re
       restoreBranch(root, restoreTo);
     },
   });
+  // ハンドラは checkout 直後、未追跡ファイルの判定より前に登録する — 判定自体は速いが、ここで
+  // 登録前の窓を空けると (見送り分 1・3 の opus レビュー指摘) SIGINT/SIGTERM を受けても
+  // detach したまま何もできずに終わってしまう (「detach したままになりうるのは SIGKILL/crash
+  // だけ」という docs/GIT-WORKFLOW.md の前提が崩れる)。
   let result;
   let installedAny = false;
   try {
-    const onInstall = () => {
-      installedAny = true;
-    };
-    result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild });
+    // detach した後 (= sha のツリーの .gitignore) で判定する。checkout 前のままだと違う木の
+    // .gitignore で ignore 判定してしまう (見送り分 2)。
+    const untracked = untrackedFiles(root);
+    if (untracked.length > 0) {
+      const shown = untracked.slice(0, 20);
+      const more = untracked.length > shown.length ? `\n  ...ほか ${untracked.length - shown.length} 件` : '';
+      say(
+        `作業ツリーに未追跡ファイル (${sha.slice(0, 12)} の .gitignore で ignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
+        shown.map((file) => `  ${file}`).join('\n') + more,
+        ledger
+          ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
+          : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
+      );
+      result = 'error';
+    } else {
+      const onInstall = () => {
+        installedAny = true;
+      };
+      result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild });
+    }
   } finally {
+    // activeChild.interrupted の間は installAndVerify がここへ戻ってこない (待つだけで
+    // resolve しない) ので、この finally は「中断されなかった」経路でしか走らない。中断時の
+    // 後始末 (restoreBranch・audit・process.exit) は上の onCleanup / interrupt.mjs 側が
+    // 一元的に行う (opus レビュー指摘: ここで先に restoreBranch すると、プロセスグループが
+    // まだ空になっていないうちにブランチを戻してしまう)。
     removeInterruptHandler();
     restoreBranch(root, restoreTo);
     if (installedAny && LOCKFILES.some((lock) => lockfileChanged(root, sha, originalHead, lock.file))) {
@@ -208,11 +226,20 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
     closeSync(fd);
   }
   if (activeChild.interrupted) {
-    // SIGINT/SIGTERM/SIGHUP で中断された実行。installInterruptHandler がこの後すぐ
-    // restoreBranch + process.exit するので、ここでは台帳に何も書かずに抜ける (中断を
-    // failure として記録しない — runShellToLog の 'close' はこの関数の外側にもう1つ登録
-    // されている interrupt.mjs 側のポーリングより先に解決しうるため、結果を使わずに戻る)。
-    return 'error';
+    // SIGINT/SIGTERM/SIGHUP で中断された実行。runShellToLog の 'close' は、interrupt.mjs
+    // 側のプロセスグループ・ポーリング (killPollMs() 間隔、既定 200ms) より先に解決しうる
+    // ため、ここに来た時点ではまだプロセスグループが空になっているとは限らない。
+    // 台帳に何も書かない (中断を failure として記録しない) だけでは足りず、ここで 'error' を
+    // 返して installAndVerify/runLandedVerify の finally (restoreBranch) や呼び出し元
+    // (finish/verify/prepare) の後続処理 (audit・ネットワーク呼び出し・状態ファイルの書き換え
+    // 等) まで進めてしまうと、interrupt.mjs 側のポーリングがまだ子孫を kill しきっていない
+    // うちに作業ツリーを元のブランチへ戻すことになり、後始末が本末転倒になる
+    // (bdboard-e8o1 opus レビュー指摘・再現確認済み)。中断時の後始末 (restoreBranch・
+    // audit・retryHint の案内・process.exit) は interrupt.mjs の onCleanup/settle が
+    // プロセスグループが実際に空になった (または諦めの上限に達した) ことを確認してから
+    // 一元的に行う — ここは何も返さずに待つだけにして、その経路に譲る。settle() は必ず
+    // finish() → process.exit() で終わるので、このままハングし続けることはない。
+    await new Promise(() => {});
   }
   const result = code === 0 ? 'success' : 'failure';
   if (result === 'failure') {

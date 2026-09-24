@@ -41,12 +41,15 @@ fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
 // この pid が本当に死んでいるかで「子プロセスが孤児にならない」ことを確かめる。
 if (process.env.FAKE_VERIFY_PID_FILE) fs.writeFileSync(process.env.FAKE_VERIFY_PID_FILE, String(process.pid));
 // bdboard-e8o1: 孫プロセスの kill 確認用。設定されていれば、この検証プロセス自身の子として
-// (detached せずに) 別の node プロセスを spawn する。同じプロセスグループに入るはずなので、
-// SIGTERM/SIGKILL がグループ全体に届けばこれも一緒に死ぬ (見送り分 1 のポーリング確認)。
+// (detached せずに) 別の node プロセスを spawn する。同じプロセスグループに入るので、グループ
+// 宛ての SIGTERM/SIGKILL は届くが、この孫は SIGTERM を無視する (見送り分 1 のポーリング確認:
+// 直接の子 (このプロセス自身) は SIGTERM で即座に死ぬので、孫が SIGTERM を無視しないと
+// 「直接の子の 'close' を見て後始末完了とみなす」旧実装でもたまたま道連れで死んでしまい、
+// 新しいポーリング (SIGTERM で死ななければ猶予後に SIGKILL を送り直す) を検証できない)。
 const grandchildPidFile = process.env.FAKE_VERIFY_GRANDCHILD_PID_FILE;
 if (grandchildPidFile) {
   const { spawn } = require('node:child_process');
-  const grandchildScript = "const fs=require('node:fs'); fs.writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);";
+  const grandchildScript = "process.on('SIGTERM', () => {}); const fs=require('node:fs'); fs.writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);";
   const grandchild = spawn(process.execPath, ['-e', grandchildScript], {
     stdio: 'ignore',
     env: { ...process.env, GRANDCHILD_PID_FILE: grandchildPidFile },
@@ -1080,6 +1083,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     // bdboard-e8o1 (見送り分 3): 次にやり直すコマンドのヒントと、監査ログのイベント。
     expect(stderr).toContain(`そのまま次を実行してやり直せます: npm run merge-pr -- finish ${PR}`);
     expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGINT/);
+    // opus レビューで見つかった退行の固定化: 中断されたのに installAndVerify が呼び出し元へ
+    // 制御を戻し、finish() の「検証を実行できなかった」エラーパスまで進んでしまわないこと。
+    expect(stderr).not.toContain('着地後検証を実行できませんでした');
 
     // 状態・枠・台帳は壊れていないので、そのまま finish をやり直せる。
     const retried = run(['finish', String(PR)]);
@@ -1141,6 +1147,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(posted().map((entry) => entry.state)).not.toContain('failure');
     expect(stderr).toContain('SIGTERM');
     expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGTERM/);
+    expect(stderr).not.toContain('着地後検証を実行できませんでした');
 
     const retried = run(['finish', String(PR)]);
     expect(retried.status).toBe(0);
@@ -1190,6 +1197,16 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       expect(verifyPid).not.toBe(grandchildPid);
 
       child.kill('SIGINT');
+      // 孫は SIGTERM を無視するので、後始末 (SIGKILL への昇格 → プロセスグループが実際に
+      // 空になるまでのポーリング → restoreBranch) には少なくとも killGraceMs (200ms) かかる。
+      // この時点ではまだ孫が生きていて、ブランチはまだ detach したままのはず — opus レビューで
+      // 見つかった退行の固定化 (後始末が終わる前に restoreBranch してしまうと、ここが
+      // 'bd/demo-1' に戻ってしまう)。
+      expect(pidAlive(grandchildPid)).toBe(true);
+      // symbolic-ref は detached HEAD だと非ゼロ終了で失敗する (git() ヘルパーが throw する) ので
+      // rev-parse --abbrev-ref を使う (detached なら文字列 'HEAD' を返す。throw しない)。
+      expect(git(work, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe('HEAD');
+
       const [code, signal] = await new Promise((resolve) => {
         child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
       });
@@ -1214,6 +1231,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     }
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
     expect(posted().map((entry) => entry.state)).not.toContain('failure');
+    expect(stderr).not.toContain('着地後検証を実行できませんでした');
   });
 
   it('S2 prepare (class F): SIGINT during the predicted-tree verify kills the process and restores the branch, leaving no state behind for a clean retry', async () => {
@@ -1268,6 +1286,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(posted()).toEqual([]); // ledger:false なので元々何も投稿しない
     expect(stderr).toContain('SIGINT');
     expect(stderr).toContain(`そのまま次を実行してやり直せます: npm run merge-pr -- prepare ${PR}`);
+    expect(stderr).not.toContain('着地予定ツリーの verify を実行できませんでした');
     expect(existsSync(stateFile())).toBe(false); // 記録が残らないのでそのまま prepare し直せる
 
     const retried = run(['prepare', String(PR)]);

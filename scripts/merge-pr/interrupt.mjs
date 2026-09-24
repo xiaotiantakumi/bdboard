@@ -14,7 +14,11 @@
 // `kill(-pid, 0)` でプロセスグループそのものが空になったかをポーリングし、空になるまで
 // SIGKILL を送り直す (「シェル→直接コマンドの 1 階層」ではなく、グループが実際に空になった
 // ことで後始末の完了を判定する)。setsid 等でこのプロセスグループを抜けた孫には元々シグナルが
-// 届かない (別グループ) ので、ポーリングにも上限を設けて後始末自体をハングさせない。
+// 届かず (別グループなので `kill(-pid, 0)` にも映らない)、その場合このポーリングは (誤って)
+// 早期に「空になった」と判定してしまう — 検知できないのはこの仕組みの既知の限界。ポーリングの
+// 総上限は、それとは別に (uninterruptible sleep や EPERM で触れない子孫が残るなどして)
+// SIGKILL を送り直しても空になったと確認できないまま待ち続けるケースに備えたもので、後始末
+// (process.exit) 自体をハングさせないためのもの。
 // win32 は元々プロセスグループの概念もシグナルも無く、killProcessTree が taskkill /T /F で
 // ツリーごと一括処理する (process-tree.mjs) ので、従来どおり直接の子の 'close' を待つ。
 import { killProcessTree } from '../process-tree.mjs';
@@ -95,7 +99,7 @@ export function installInterruptHandler({ activeChild, onCleanup }) {
       }
       const elapsed = Date.now() - startedAt;
       if (elapsed >= killTotalTimeoutMs()) {
-        say(`プロセスグループ ${pid} が ${Math.round(killTotalTimeoutMs() / 1000)} 秒待っても終了を確認できません (setsid 等でグループを抜けた子孫がいる可能性)。後始末は続けます。`);
+        say(`プロセスグループ ${pid} が ${Math.round(killTotalTimeoutMs() / 1000)} 秒待っても空になったと確認できません (SIGKILL が効かない子孫 (uninterruptible sleep や EPERM で触れないもの) が残っている可能性。setsid 等で別グループへ抜けた子孫はこの判定自体に映らないため、この待ちとは別に見落としうる)。後始末は続けます。`);
         settle();
         return;
       }
