@@ -176,6 +176,24 @@ describe('createBdCliCommentReader', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('classifies as timeout via CommandResult.failureKind even without "context canceled" text (bdboard-vpt3)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        failureKind: 'timeout',
+      }),
+    });
+
+    const reader = createBdCliCommentReader(runner);
+    await expect(
+      reader.listComments('/root/proj', 'bdboard-abc'),
+    ).rejects.toMatchObject({
+      kind: 'timeout',
+    } satisfies Partial<BdError>);
+  });
+
   it('passes the expected command and args including --readonly', async () => {
     const issueId = 'bdboard-3tw.27';
     const { runner, calls } = createFakeRunner();

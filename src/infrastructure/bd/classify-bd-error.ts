@@ -3,14 +3,21 @@ import type { BdErrorKind } from '../../application/ports/issue-repository.js';
 const LOCK_CONTENTION_PATTERN = /\block\w*\b/;
 const BD_NOT_FOUND_PATTERN = /\bbd\b[\s:'"-]{0,5}not found\b/;
 // bdboard-vpt3: 負荷が高い時間帯に「他プロジェクトの bd 読み取り」が断続的に
-// context canceled でタイムアウトする件の原因調査で判明した表現。bd はこちら側
-// (NodeCommandRunner) が timeoutMs 経過で送る SIGTERM/SIGKILL を受けて、進行中の
-// Dolt トランザクションの context を cancel してから終了する — Go の慣用表現で
-// stderr に "context canceled" / "context deadline exceeded" が出る。
-// exitCode は SIGKILL 経由だと null → -1 に潰れることがあり、下の bd-not-found
-// 判定 (exitCode === -1) より前に置かないと誤って bd-not-found に分類される
-// (bdboard-xgvh で exitCode -1 が spawn E2BIG とも衝突すると分かっている、
-// 同じ exitCode -1 の多義性の別ケース)。
+// context canceled でタイムアウトする件の原因調査で判明した表現。呼び出し元が
+// NodeCommandRunner の timeoutMs 経過で bd (Go 製・Dolt 使用) へ SIGTERM/SIGKILL
+// を送ると、bd は進行中の Dolt トランザクションの context を cancel してから
+// 終了することがある — Go の慣用表現で stderr に "context canceled" /
+// "context deadline exceeded" が出る。呼び出し元は `CommandResult.failureKind
+// === 'timeout'`(NodeCommandRunner 自身がタイマー発火を記録した、より確実な
+// signal)を優先して見るべきで、ここでの文字列一致はその signal が無い経路
+// (failureKind を経由しない呼び出しや、bd 自身の内部タイムアウト)向けの
+// フォールバックに過ぎない(gh-cli-pr-status-reader.ts の classifyCommandFailure
+// と同じ役割分担)。
+// exitCode はシグナル経由の終了 (SIGTERM 単独でも、それに従わず後続の
+// SIGKILL へ上げた場合でも) だと Node 側で null → -1 に潰れることがあり、
+// 下の bd-not-found 判定 (exitCode === -1) より前に置かないと誤って
+// bd-not-found に分類される (bdboard-xgvh で exitCode -1 が spawn E2BIG とも
+// 衝突すると分かっている、同じ exitCode -1 の多義性の別ケース)。
 const TIMEOUT_PATTERN = /context canceled|context deadline exceeded/;
 
 export function classifyBdError(
@@ -29,9 +36,18 @@ export function classifyBdError(
     return 'not-a-beads-project';
   }
 
-  // NOTE: must be checked BEFORE bd-not-found — a SIGKILL-terminated bd process
-  // can report exitCode -1, which the bd-not-found branch below would otherwise
-  // claim first and hide the real (timeout) cause.
+  // NOTE: lock-contention is checked BEFORE the timeout pattern — bd can phrase
+  // its own internal lock-wait deadline as "acquiring lock: ... context deadline
+  // exceeded", and that's still fundamentally a lock-contention failure (short
+  // wait, likely to clear), not the client-side kill this timeout kind targets.
+  if (LOCK_CONTENTION_PATTERN.test(combinedOutput)) {
+    return 'lock-contention';
+  }
+
+  // NOTE: must be checked BEFORE bd-not-found — a signal-terminated bd process
+  // (SIGTERM, or the follow-up SIGKILL if it didn't exit in time) can report
+  // exitCode -1, which the bd-not-found branch below would otherwise claim
+  // first and hide the real (timeout) cause.
   if (TIMEOUT_PATTERN.test(combinedOutput)) {
     return 'timeout';
   }
@@ -44,10 +60,6 @@ export function classifyBdError(
     BD_NOT_FOUND_PATTERN.test(combinedOutput)
   ) {
     return 'bd-not-found';
-  }
-
-  if (LOCK_CONTENTION_PATTERN.test(combinedOutput)) {
-    return 'lock-contention';
   }
 
   return 'unknown';

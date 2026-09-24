@@ -90,7 +90,13 @@ export function createBdCliCommentReader(
 
         if (commandResult.exitCode !== 0) {
           const combined = `${commandResult.stdout}\n${commandResult.stderr}`.toLowerCase();
-          const kind = classifyBdError(commandResult.exitCode, combined);
+          // bdboard-vpt3: NodeCommandRunner 自身が記録した timeout signal を最優先で見る
+          // (gh-cli-pr-status-reader.ts の classifyCommandFailure と同じ役割分担)。
+          // classifyBdError の文字列一致はこの signal が無い経路のフォールバック。
+          const kind =
+            commandResult.failureKind === 'timeout'
+              ? 'timeout'
+              : classifyBdError(commandResult.exitCode, combined);
           throw new BdError(
             kind,
             issueId,

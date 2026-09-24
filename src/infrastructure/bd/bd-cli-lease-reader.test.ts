@@ -183,7 +183,7 @@ describe('createBdCliLeaseReader', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('classifies "context canceled" (SIGTERM/SIGKILL timeout) as timeout, not bd-not-found (bdboard-vpt3)', async () => {
+  it('classifies "context canceled" (NodeCommandRunner timeout, SIGTERM/SIGKILL) as timeout, not bd-not-found (bdboard-vpt3)', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({
         stdout: '',
@@ -215,5 +215,25 @@ describe('createBdCliLeaseReader', () => {
 
     expect(result).toEqual([]);
     expect(calls).toHaveLength(2);
+  });
+
+  it('classifies as timeout via CommandResult.failureKind even without "context canceled" text (bdboard-vpt3)', async () => {
+    // NodeCommandRunner 自身が timeoutMs 経過を記録した signal (failureKind)
+    // を、classifyBdError の文字列一致より優先して見ることを直接確認する。
+    // stderr は空(bd が何も書かずに殺されるケースを模す)なので、文字列一致
+    // 経路だけに頼るとこれは 'unknown' に落ちてしまう。
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        failureKind: 'timeout',
+      }),
+    });
+
+    const reader = createBdCliLeaseReader(runner);
+    await expect(reader.listInProgressWithLease(ROOT)).rejects.toMatchObject({
+      kind: 'timeout',
+    } satisfies Partial<BdError>);
   });
 });

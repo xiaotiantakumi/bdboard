@@ -259,4 +259,43 @@ describe('withTransientReadRetry', () => {
     expect(operation).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });
+
+  it('keeps lock-contention on the full default retry budget (2 retries = 3 attempts), unreduced by the timeout cap', async () => {
+    // withTransientReadRetry は timeout 由来のリトライだけを高々1回に絞る。
+    // lock-contention は従来どおり withLockContentionRetry と同じ既定
+    // retries (2 = 最大3試行) をフルに使えることを、2連続の lock-contention
+    // 失敗 + 3回目で成功、というシナリオで直接確認する (bdboard-vpt3 の
+    // review で指摘された「timeout 対応の副作用で lock-contention の
+    // リトライ予算が静かに減っていないか」を pin する)。
+    const operation = vi
+      .fn()
+      .mockRejectedValueOnce(new BdError('lock-contention', 'p', 'locked'))
+      .mockRejectedValueOnce(new BdError('lock-contention', 'p', 'locked'))
+      .mockResolvedValueOnce('ok');
+    const sleep = vi.fn(noDelaySleep());
+
+    const result = await withTransientReadRetry(operation, { sleep });
+
+    expect(result).toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not let a timeout retry consume the lock-contention budget when kinds are interleaved', async () => {
+    // lock-contention → timeout → lock-contention という混在シーケンスでも、
+    // timeout 由来のリトライは高々1回に絞られたまま (2回目以降の timeout は
+    // リトライされない) ことを確認する。
+    const operation = vi
+      .fn()
+      .mockRejectedValueOnce(new BdError('lock-contention', 'p', 'locked'))
+      .mockRejectedValueOnce(new BdError('timeout', 'p', 'context canceled'))
+      .mockRejectedValueOnce(new BdError('timeout', 'p', 'context canceled'));
+    const sleep = vi.fn(noDelaySleep());
+
+    await expect(
+      withTransientReadRetry(operation, { sleep }),
+    ).rejects.toMatchObject({ kind: 'timeout' });
+    // 1回目(lock-contention, retry) → 2回目(timeout, retry, 予算消費) →
+    // 3回目(timeout, 予算使い切り済みなのでリトライせず投げ直す) = 3試行。
+    expect(operation).toHaveBeenCalledTimes(3);
+  });
 });

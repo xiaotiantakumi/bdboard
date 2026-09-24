@@ -90,12 +90,6 @@ export function isTransientReadError(error: unknown): boolean {
   return isLockContentionError(error) || isTimeoutError(error);
 }
 
-// timeout 分類の1試行は最大 timeoutMs(既定30秒)かかりうる。lock-contention と
-// 同じ retries:2 を流用すると最悪 3 試行 x 30秒 = 90秒 HTTP レスポンスを止め
-// かねない(/api/hygiene は同期的にこれらを呼ぶ)。retries:1(最大2試行、
-// 最悪でも約60秒)に抑える(bdboard-vpt3)。
-const DEFAULT_TRANSIENT_READ_RETRIES = 1;
-
 /**
  * embedded dolt の flock(プロセス単位の排他ロック)由来と分類された
  * `lock-contention` エラーに対する短期リトライ。ロックはプロセス終了で自動解放
@@ -120,15 +114,31 @@ export function withLockContentionRetry<T>(
  * `withLockContentionRetry` に加えて `timeout`(bdboard-vpt3: 負荷が高い時間帯に
  * 他プロジェクトの bd 読み取りが断続的に context canceled でタイムアウトする件)
  * も短期リトライの対象にする。読み取り専用コマンド限定の前提は
- * `withLockContentionRetry` と同じ。既定 retries は 1(timeout 1試行が
- * timeoutMs 分かかりうるため、lock-contention 用の既定 2 より控えめ)。
+ * `withLockContentionRetry` と同じ。
+ *
+ * lock-contention は従来どおり既定 retries(2 = 最大3試行)いっぱいまで
+ * リトライしてよい(1試行がミリ秒〜秒オーダーで安い)。timeout は1試行が
+ * timeoutMs(既定30秒)までかかりうるため、**同じ呼び出し内で timeout による
+ * リトライは高々1回**に絞る — lock-contention と同じ既定 retries をそのまま
+ * 流用すると最悪 3 試行 x 30秒 = 90秒 HTTP レスポンス(/api/hygiene は同期的に
+ * これらを呼ぶ)を止めかねないため(bdboard-vpt3)。lock-contention → timeout →
+ * lock-contention のように混在した場合でも、timeout 由来のリトライが2回目
+ * 続けて起きることはない。
  */
 export function withTransientReadRetry<T>(
   operation: () => Promise<T>,
   options?: RetryOptions,
 ): Promise<T> {
-  return withRetry(operation, isTransientReadError, {
-    retries: DEFAULT_TRANSIENT_READ_RETRIES,
-    ...options,
-  });
+  let timeoutRetryUsed = false;
+  const isRetryable = (error: unknown): boolean => {
+    if (isLockContentionError(error)) {
+      return true;
+    }
+    if (isTimeoutError(error) && !timeoutRetryUsed) {
+      timeoutRetryUsed = true;
+      return true;
+    }
+    return false;
+  };
+  return withRetry(operation, isRetryable, options);
 }

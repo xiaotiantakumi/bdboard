@@ -228,6 +228,22 @@ describe('createBdCliIssueRepository', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('classifies as timeout via CommandResult.failureKind even without "context canceled" text (bdboard-vpt3)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: '',
+        exitCode: -1,
+        failureKind: 'timeout',
+      }),
+    });
+
+    const repo = createBdCliIssueRepository(runner);
+    await expect(repo.listTickets(project('p', '/root'))).rejects.toMatchObject({
+      kind: 'timeout',
+    } satisfies Partial<BdError>);
+  });
+
   it('classifies unknown errors', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({

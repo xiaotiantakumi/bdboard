@@ -88,10 +88,11 @@ describe('classifyBdError', () => {
       ).toBe('timeout');
     });
 
-    it('classifies a SIGKILL-terminated process (exitCode -1) with "context canceled" as timeout, not bd-not-found', () => {
-      // NodeCommandRunner の finish() は SIGKILL 後の 'close' で code=null を
-      // -1 に潰す。exitCode だけを見る bd-not-found 判定 (exitCode === -1) より
-      // 先に timeout を判定しないと、本当の原因(タイムアウト)が隠れる。
+    it('classifies a signal-terminated process (exitCode -1) with "context canceled" as timeout, not bd-not-found', () => {
+      // NodeCommandRunner の finish() は SIGTERM/SIGKILL いずれでも 'close' で
+      // code=null を -1 に潰す。exitCode だけを見る bd-not-found 判定
+      // (exitCode === -1) より先に timeout を判定しないと、本当の原因
+      // (タイムアウト) が隠れる。
       expect(classifyBdError(-1, 'begin read tx: context canceled')).toBe(
         'timeout',
       );
@@ -101,6 +102,18 @@ describe('classifyBdError', () => {
       // 回帰確認: timeout 判定を bd-not-found より先に置いても、"context
       // canceled" を含まない -1 のケースは従来どおり bd-not-found のまま。
       expect(classifyBdError(-1, 'spawn bd E2BIG')).toBe('bd-not-found');
+    });
+
+    it('classifies bd\'s own internal lock-wait deadline as lock-contention, not timeout', () => {
+      // bd 自身が内部のロック待ちに deadline を設けていて、それを
+      // "acquiring lock: ... context deadline exceeded" のように表現する
+      // ことがある。文言上は TIMEOUT_PATTERN にも一致しうるが、これは
+      // クライアント側 (NodeCommandRunner) の SIGTERM/SIGKILL によるもの
+      // ではなく、短時間で解消しうる lock-contention として扱うべき
+      // (classify-bd-error.ts の分岐順コメント参照)。
+      expect(
+        classifyBdError(1, 'acquiring lock: context deadline exceeded'),
+      ).toBe('lock-contention');
     });
   });
 });
