@@ -429,7 +429,7 @@ describe('check-commit-parse CLI', () => {
     'handles git log output larger than 1 MB',
     () => {
       const { work } = makeRepo('large-log');
-      // 30 件 × 640 行 × 約72文字 ≈ 1.4 MB。1コミットごとは約46 KBに保つ。
+      // 30 件 × 640 行 × 81文字 ≈ 1.5 MB。1コミットごとは約51 KBに保つ。
       // 空コミット(--allow-empty)にして git add / ファイル書き込みをループから除去し、
       // git 子プロセス起動回数を 60 → 30 に減らす(Windows CI のプロセス起動オーバーヘッド対策。
       // bdboard-qlw1)。git log は diff ではなくコミットメッセージだけを読むスクリプトなので、
