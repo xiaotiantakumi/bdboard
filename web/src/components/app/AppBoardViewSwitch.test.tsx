@@ -62,11 +62,10 @@ vi.mock('../NextUpView', () => ({
 
 import { BoardFilterBar } from '../BoardFilterBar';
 import { BulkActionBar } from '../BulkActionBar';
-import { BoardLanes, hasVisibleCards, SplitBoard } from '../BoardView';
+import { hasVisibleCards, SplitBoard } from '../BoardView';
 import { NextUpView } from '../NextUpView';
 
 const hasVisibleCardsMock = vi.mocked(hasVisibleCards);
-const boardLanesMock = vi.mocked(BoardLanes);
 const splitBoardMock = vi.mocked(SplitBoard);
 const nextUpViewMock = vi.mocked(NextUpView);
 const bulkActionBarMock = vi.mocked(BulkActionBar);
@@ -117,7 +116,7 @@ function makeBoardData(overrides: Partial<BoardViewDto> = {}): BoardViewDto {
 
 function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardViewSwitchProps {
   return {
-    view: 'merged',
+    view: 'split',
     filterState: makeFilterState(),
     epicFilterId: undefined,
     onClearEpicFilter: vi.fn(),
@@ -149,8 +148,8 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
 }
 
 describe('AppBoardViewSwitch', () => {
-  it('renders BoardFilterBar/BulkActionBar for merged view but not for next view', () => {
-    const { rerender } = render(<AppBoardViewSwitch {...makeProps({ view: 'merged' })} />);
+  it('renders BoardFilterBar/BulkActionBar for split view but not for next view', () => {
+    const { rerender } = render(<AppBoardViewSwitch {...makeProps({ view: 'split' })} />);
     expect(screen.getByTestId('board-filter-bar')).toBeInTheDocument();
     expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
 
@@ -245,12 +244,11 @@ describe('AppBoardViewSwitch', () => {
     expect(onClearEpicFilter).toHaveBeenCalledTimes(1);
   });
 
-  it('shows an empty-state message instead of BoardLanes when hasVisibleCards is false and a filter is active', () => {
-    hasVisibleCardsMock.mockReturnValue(false);
+  it('renders SplitBoard when a filter is active', () => {
     render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'merged',
+          view: 'split',
           filterState: makeFilterState({ filter: { ...EMPTY_BOARD_FILTER, text: 'foo' } }),
           board: {
             query: { data: makeBoardData(), isLoading: false, error: null },
@@ -260,16 +258,14 @@ describe('AppBoardViewSwitch', () => {
         })}
       />,
     );
-    expect(screen.getByText('表示できるチケットがありません')).toBeInTheDocument();
-    expect(screen.queryByTestId('board-lanes')).not.toBeInTheDocument();
+    expect(screen.getByTestId('split-board')).toBeInTheDocument();
   });
 
-  it('shows the stalled-only empty message (not the generic one) when only stalledOnly is active', () => {
-    hasVisibleCardsMock.mockReturnValue(false);
+  it('renders SplitBoard when stalled-only is active', () => {
     render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'merged',
+          view: 'split',
           filterState: makeFilterState({ stalledOnly: true }),
           board: {
             query: { data: makeBoardData(), isLoading: false, error: null },
@@ -279,14 +275,14 @@ describe('AppBoardViewSwitch', () => {
         })}
       />,
     );
-    expect(screen.getByText('滞留しているチケットはありません')).toBeInTheDocument();
+    expect(screen.getByTestId('split-board')).toBeInTheDocument();
   });
 
-  it('renders BoardLanes with the merged-prefixed sectionKey when cards are visible', () => {
+  it('renders SplitBoard with the selected project section key when data is available', () => {
     render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'merged',
+          view: 'split',
           board: {
             query: { data: makeBoardData(), isLoading: false, error: null },
             cardsById: new Map(),
@@ -303,10 +299,10 @@ describe('AppBoardViewSwitch', () => {
         })}
       />,
     );
-    expect(screen.getByTestId('board-lanes')).toHaveTextContent('merged-proj-1');
+    expect(screen.getByTestId('split-board')).toHaveTextContent('proj-1');
   });
 
-  it('forwards all BoardLanes-specific props unchanged (filter state, metadata maps/sets, lane-collapse wiring)', () => {
+  it('forwards all SplitBoard props unchanged (filter state, metadata maps/sets, lane-collapse wiring)', () => {
     // opus レビュー指摘の変異(レーン折りたたみの no-op 化・collapsedLanes/
     // pendingDecisionIds/prLinksById の空値差し替え)を防ぐための直接検証。
     // 区別可能なマーカー値を使い、デフォルト値(空Map/空Set)とすり替わって
@@ -332,7 +328,7 @@ describe('AppBoardViewSwitch', () => {
     render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'merged',
+          view: 'split',
           filterState,
           board: {
             query: { data: makeBoardData(), isLoading: false, error: null },
@@ -352,14 +348,12 @@ describe('AppBoardViewSwitch', () => {
       />,
     );
 
-    expect(boardLanesMock).toHaveBeenCalledTimes(1);
-    const props = boardLanesMock.mock.calls.at(-1)?.[0];
+    expect(splitBoardMock).toHaveBeenCalledTimes(1);
+    const props = splitBoardMock.mock.calls.at(-1)?.[0];
     expect(props).toMatchObject({
       hideDone: true,
       stalledOnly: true,
       filter: filterState.filter,
-      projectNames,
-      projectActiveSessions,
       pendingDecisionIds,
       prLinksById,
       wipLimitsOverrides,
@@ -534,7 +528,7 @@ describe('AppBoardViewSwitch', () => {
     render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'merged',
+          view: 'split',
           board: {
             query: { data: undefined, isLoading: false, error: null },
             cardsById: new Map(),
@@ -547,11 +541,28 @@ describe('AppBoardViewSwitch', () => {
     expect(props).toMatchObject({ availableLabels });
   });
 
-  it('shows the "no merged data" message when merged is null for merged/next but not for other board views', () => {
+  it('shows the "no merged data" message for next view when merged is null, but not for split view', () => {
     const { rerender } = render(
       <AppBoardViewSwitch
         {...makeProps({
-          view: 'merged',
+          view: 'split',
+          board: {
+            query: { data: makeBoardData({ merged: null }), isLoading: false, error: null },
+            cardsById: new Map(),
+            availableLabels: [],
+          },
+        })}
+      />,
+    );
+    expect(screen.queryByText('統合ビューのデータがありません')).not.toBeInTheDocument();
+
+    // Next Up はサーバーの merged モードで取得したデータ(board.query.data.merged)を
+    // 描画に使うので、それが無いときの空メッセージ分岐は 'merged' タブ削除後も
+    // 'next' に残る (bdboard-mkm1.1: サーバー側 merged モードは変えない)。
+    rerender(
+      <AppBoardViewSwitch
+        {...makeProps({
+          view: 'next',
           board: {
             query: { data: makeBoardData({ merged: null }), isLoading: false, error: null },
             cardsById: new Map(),
@@ -561,19 +572,5 @@ describe('AppBoardViewSwitch', () => {
       />,
     );
     expect(screen.getByText('統合ビューのデータがありません')).toBeInTheDocument();
-
-    rerender(
-      <AppBoardViewSwitch
-        {...makeProps({
-          view: 'split',
-          board: {
-            query: { data: makeBoardData({ merged: null, projects: [] }), isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels: [],
-          },
-        })}
-      />,
-    );
-    expect(screen.queryByText('統合ビューのデータがありません')).not.toBeInTheDocument();
   });
 });

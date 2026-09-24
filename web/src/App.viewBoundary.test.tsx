@@ -20,15 +20,15 @@ vi.mock('./api', async (importOriginal) => {
   };
 });
 
-// 統合ビューの本体だけを throw させる。画面のほとんどを占める領域なので、
+// 分割ビューの本体だけを throw させる。画面のほとんどを占める領域なので、
 // ここが落ちても他が生き残ることと、ビューを切り替えれば復帰することの
 // 2点が、ビュー境界と key={view} の存在意義そのものになる。
 vi.mock('./components/BoardView', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./components/BoardView')>();
   return {
     ...actual,
-    BoardLanes: () => {
-      throw new Error('board lanes exploded');
+    SplitBoard: () => {
+      throw new Error('split board exploded');
     },
   };
 });
@@ -47,11 +47,11 @@ describe('App view boundary (bdboard-yfq)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('names the crashed view and keeps the rest of the chrome usable', async () => {
+  it('names the crashed split view and keeps the rest of the chrome usable', async () => {
     renderApp();
 
     expect(await screen.findByRole('alert')).toHaveTextContent(
-      '統合の表示に失敗しました',
+      '分割の表示に失敗しました',
     );
     // ビュー領域の外 (ヘッダー) は生きている。境界が無ければ App ごと落ちて
     // ここも消える。
@@ -64,7 +64,7 @@ describe('App view boundary (bdboard-yfq)', () => {
     renderApp();
 
     await screen.findByRole('alert');
-    await user.click(screen.getByRole('button', { name: '分割' }));
+    await user.click(screen.getByRole('button', { name: 'Next Up' }));
 
     // 境界から key={view} を外すと、壊れた状態を持ち越して別ビューでも
     // fallback が出たままになる。

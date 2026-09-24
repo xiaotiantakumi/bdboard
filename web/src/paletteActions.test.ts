@@ -68,6 +68,10 @@ describe('filterPaletteActions', () => {
 });
 
 describe('buildPaletteActions', () => {
+  it('omits the removed merged view action', () => {
+    expect(sampleActions().some((action) => action.id === 'view:merged')).toBe(false);
+  });
+
   it('includes done lane toggle with current state detail', () => {
     const actions = buildPaletteActions({
       onViewChange: vi.fn(),

@@ -44,6 +44,10 @@ describe('parseBoardHash', () => {
     });
   });
 
+  it('migrates a legacy merged view to split', () => {
+    expect(parseBoardHash('#view=merged')).toEqual({ ticketId: null, view: 'split' });
+  });
+
   it('drops unknown credential-like keys (AC4)', () => {
     expect(
       parseBoardHash(
@@ -70,8 +74,8 @@ describe('serializeBoardHash', () => {
     );
   });
 
-  it('omits default merged view and empty fields', () => {
-    expect(serializeBoardHash({ ticketId: null, view: 'merged' })).toBe('');
+  it('omits default split view and empty fields', () => {
+    expect(serializeBoardHash({ ticketId: null, view: 'split' })).toBe('');
     expect(serializeBoardHash({ ticketId: null, view: null })).toBe('');
   });
 });

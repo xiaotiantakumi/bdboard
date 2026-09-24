@@ -3,7 +3,6 @@
 import type { BoardMode } from '../api';
 
 export type ViewMode =
-  | 'merged'
   | 'split'
   | 'next'
   | 'activity'
@@ -14,14 +13,13 @@ export type ViewMode =
   | 'events'
   | 'settings';
 
-export const DEFAULT_VIEW: ViewMode = 'merged';
+export const DEFAULT_VIEW: ViewMode = 'split';
 
 /*
   ビュー切替タブの並び順とラベルの単一原本。GlobalBar のタブ列と、プリセットの
   保存対象サマリ(describeBoardFilterPresetState)の両方がここを参照する。
 */
 export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
-  { view: 'merged', label: '統合' },
   { view: 'split', label: '分割' },
   { view: 'next', label: 'Next Up' },
   { view: 'activity', label: 'アクティビティ' },
@@ -45,8 +43,11 @@ export function validateBoardMode(value: unknown): BoardMode | null {
 }
 
 export function validateViewMode(value: unknown): ViewMode | null {
+  // Migrate the removed Kanban view in saved state and old board hashes.
+  if (value === 'merged') {
+    return 'split';
+  }
   if (
-    value === 'merged' ||
     value === 'split' ||
     value === 'next' ||
     value === 'activity' ||
@@ -63,5 +64,9 @@ export function validateViewMode(value: unknown): ViewMode | null {
 }
 
 export function boardApiModeFromView(view: ViewMode): BoardMode {
+  // bdboard-mkm1.1: 'merged' タブは無くなったが、Next Up などボード以外の
+  // ビューはサーバーの merged モードで集約したデータ(board.query.data.merged)を
+  // 引き続き使う。ここを 'split' 固定にすると Next Up 等がデータを失うので、
+  // 分割ビューのときだけ 'split' を要求する元のロジックのまま変えない。
   return view === 'split' ? 'split' : 'merged';
 }

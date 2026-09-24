@@ -22,7 +22,7 @@ function HistoryHarness({
     },
   ],
 }: HistoryHarnessProps) {
-  const [view, setView] = useState<ViewMode>('merged');
+  const [view, setView] = useState<ViewMode>('split');
   const [searchOpen, setSearchOpen] = useState(false);
   const { selectedTicketId, selectTicket, closeDetail } = useTicketDeepLink({
     view,

@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render } from '@testing-library/react';
 import { vi } from 'vitest';
 import type {
+  BoardCardDto,
   BoardViewDto,
   ChatAvailabilityDto,
   CommentDto,
@@ -36,40 +37,68 @@ export class MockEventSource {
   close = vi.fn();
 }
 
+// bdboard-mkm1.1: split ビューが既定になったので projects[] にも同じカードを
+// 用意する (merged と同一データを指す1枚のカードの使い回し。重複を避けるため
+// sampleBoardCard を共有する)。
+const sampleBoardCard: BoardCardDto = {
+  ticket: {
+    id: 'bdboard-boom',
+    projectId: 'proj-1',
+    title: 'Board card stays alive',
+    status: 'open',
+    priority: 2,
+    issueType: 'task',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    commentCount: 0,
+  },
+  lane: 'ready',
+  projectId: 'proj-1',
+  blockedBy: [],
+  blocks: [],
+  unblocksCount: 0,
+  liveness: null,
+  sessions: [],
+  stalled: false,
+  epicProgress: null,
+  deferDays: null,
+  deferUrgency: null,
+  effectivePriority: 2,
+  priorityInheritedFrom: null,
+};
+
 export const boardWithCard: BoardViewDto = {
   mode: 'merged',
   generatedAt: '2026-01-01T00:00:00.000Z',
-  projects: [],
+  projects: [
+    {
+      project: {
+        id: 'proj-1',
+        name: 'Project One',
+        rootPath: '/projects/a',
+        prefixes: ['bdboard'],
+        sessionCount: 0,
+        activeSessionCount: 0,
+        incompleteTicketCount: 1,
+        sessions: [],
+      },
+      board: {
+        lanes: {
+          ready: [sampleBoardCard],
+          in_progress: [],
+          awaiting_human: [],
+          blocked: [],
+          done: [],
+        },
+        cardCount: 1,
+        closedTotal: 0,
+        truncatedClosedIds: [],
+      },
+    },
+  ],
   merged: {
     lanes: {
-      ready: [
-        {
-          ticket: {
-            id: 'bdboard-boom',
-            projectId: 'proj-1',
-            title: 'Board card stays alive',
-            status: 'open',
-            priority: 2,
-            issueType: 'task',
-            createdAt: '2026-01-01T00:00:00.000Z',
-            updatedAt: '2026-01-02T00:00:00.000Z',
-            commentCount: 0,
-          },
-          lane: 'ready',
-          projectId: 'proj-1',
-          blockedBy: [],
-          blocks: [],
-          unblocksCount: 0,
-          liveness: null,
-          sessions: [],
-          stalled: false,
-          epicProgress: null,
-          deferDays: null,
-          deferUrgency: null,
-          effectivePriority: 2,
-          priorityInheritedFrom: null,
-        },
-      ],
+      ready: [sampleBoardCard],
       in_progress: [],
       blocked: [],
       done: [],

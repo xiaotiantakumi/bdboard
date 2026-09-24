@@ -58,10 +58,11 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
     expect(screen.getByRole('button', { name: '全解除' })).toBeInTheDocument();
   });
 
-  // ガードは「カードを並べる3ビュー」の列挙なので、1つ落としても他のテストは
+  // ガードは「カードを並べる2ビュー」の列挙なので、1つ落としても他のテストは
   // 通ってしまう。Next Up だけを見ていると、例えば 'split' を落とす変異が
-  // 生き残る (fable レビュー指摘)。3つとも個別に固定する。
-  it.each(['統合', '分割', 'Next Up'])(
+  // 生き残る (fable レビュー指摘)。2つとも個別に固定する
+  // (bdboard-mkm1.1: 'merged' タブ削除に伴い3ビュー→2ビュー)。
+  it.each(['分割', 'Next Up'])(
     'shows the bar in the %s view',
     async (viewLabel) => {
       const user = userEvent.setup();

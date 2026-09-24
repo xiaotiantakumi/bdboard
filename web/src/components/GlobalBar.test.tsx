@@ -10,7 +10,7 @@ function renderGlobalBar(overrides?: Partial<React.ComponentProps<typeof GlobalB
   });
   const onViewChange = vi.fn();
   const props: React.ComponentProps<typeof GlobalBar> = {
-    view: 'merged',
+    view: 'split',
     onViewChange,
     notificationUnreadCount: 0,
     onOpenSearch: vi.fn(),
@@ -53,19 +53,19 @@ describe('GlobalBar view switcher a11y', () => {
       'aria-current',
       'true',
     );
-    expect(screen.getByRole('button', { name: '統合' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('button', { name: '分割' })).not.toHaveAttribute('aria-current');
     expect(screen.getByRole('button', { name: '統計' })).not.toHaveAttribute('aria-current');
   });
 
   it('does not use aria-pressed on view switcher buttons', () => {
-    renderGlobalBar({ view: 'merged' });
+    renderGlobalBar({ view: 'split' });
 
-    expect(screen.getByRole('button', { name: '統合' })).not.toHaveAttribute('aria-pressed');
+    expect(screen.getByRole('button', { name: '分割' })).not.toHaveAttribute('aria-pressed');
   });
 
   it('calls onViewChange when a view button is clicked', async () => {
     const user = userEvent.setup();
-    const { onViewChange } = renderGlobalBar({ view: 'merged' });
+    const { onViewChange } = renderGlobalBar({ view: 'split' });
 
     await user.click(screen.getByRole('button', { name: '統計' }));
 
@@ -111,7 +111,7 @@ describe('GlobalBar view switcher scroll', () => {
       defaultOptions: { queries: { retry: false } },
     });
     const props: React.ComponentProps<typeof GlobalBar> = {
-      view: 'merged',
+      view: 'split',
       onViewChange: vi.fn(),
       notificationUnreadCount: 0,
       onOpenSearch: vi.fn(),

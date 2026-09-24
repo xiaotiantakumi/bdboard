@@ -6,7 +6,7 @@ import { useAppFilterPresets, type AppFilterPresetsParams } from './useAppFilter
 
 function baseParams(overrides: Partial<AppFilterPresetsParams> = {}): AppFilterPresetsParams {
   return {
-    view: 'merged',
+    view: 'split',
     selectedProjectIds: ['proj-1'],
     priorityCeiling: 'all',
     issueTypes: [],
@@ -31,7 +31,7 @@ function makePreset(overrides: Partial<BoardFilterPreset> = {}): BoardFilterPres
   return {
     id: 'preset-1',
     name: 'Preset',
-    view: 'merged',
+    view: 'split',
     selectedProjectIds: [],
     priorityCeiling: 'all',
     issueTypes: [],

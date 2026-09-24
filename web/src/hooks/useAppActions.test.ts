@@ -52,7 +52,7 @@ function baseParams(overrides: Partial<AppActionsParams> = {}): AppActionsParams
     setEpicFilterId: vi.fn(),
     handleCloseDetail: vi.fn(),
     epicFilterId: undefined,
-    view: 'merged',
+    view: 'split',
     ...overrides,
   };
 }
@@ -260,7 +260,7 @@ describe('useAppActions', () => {
       expect(params.setView).not.toHaveBeenCalled();
     });
 
-    it.each(['merged', 'split', 'next'] as const)(
+    it.each(['split', 'next'] as const)(
       'does not force a view switch when epicFilterId is set and the current view (%s) can already show the filtered board',
       (view) => {
         const params = baseParams({ epicFilterId: 'epic-1', view });
@@ -271,12 +271,12 @@ describe('useAppActions', () => {
     );
 
     it.each(['activity', 'digest', 'stats', 'hygiene', 'graph'] as const)(
-      'forces a switch to merged when epicFilterId is set and the current view (%s) cannot show the filtered board',
+      'forces a switch to split when epicFilterId is set and the current view (%s) cannot show the filtered board',
       (view) => {
         const params = baseParams({ epicFilterId: 'epic-1', view });
         renderHook(() => useAppActions(params));
 
-        expect(params.setView).toHaveBeenCalledWith('merged');
+        expect(params.setView).toHaveBeenCalledWith('split');
       },
     );
 
@@ -285,7 +285,7 @@ describe('useAppActions', () => {
       // 設計(view の変化では再発火しない)。この rerender で view を
       // 'activity' に変えても、epicFilterId 自体は変わっていないので
       // setView は呼ばれない。
-      const params = baseParams({ epicFilterId: undefined, view: 'merged' });
+      const params = baseParams({ epicFilterId: undefined, view: 'split' });
       const { rerender } = renderHook(
         (p: AppActionsParams) => useAppActions(p),
         { initialProps: params },
@@ -296,7 +296,7 @@ describe('useAppActions', () => {
       expect(params.setView).not.toHaveBeenCalled();
 
       rerender({ ...params, view: 'activity', epicFilterId: 'epic-2' });
-      expect(params.setView).toHaveBeenCalledWith('merged');
+      expect(params.setView).toHaveBeenCalledWith('split');
     });
 
     it('does not re-fire when only view changes while epicFilterId stays set (deps array must be [epicFilterId] only, not [epicFilterId, view])', () => {
@@ -306,7 +306,7 @@ describe('useAppActions', () => {
       // view だけ変えるため、早期 return 分岐を通ってしまい
       // [epicFilterId, view] でも [epicFilterId] でも同じ結果になって
       // しまう=このリグレッションを検出できない)。
-      const params = baseParams({ epicFilterId: 'epic-1', view: 'merged' });
+      const params = baseParams({ epicFilterId: 'epic-1', view: 'split' });
       const { rerender } = renderHook(
         (p: AppActionsParams) => useAppActions(p),
         { initialProps: params },
@@ -314,7 +314,7 @@ describe('useAppActions', () => {
       expect(params.setView).not.toHaveBeenCalled();
 
       // ユーザーが絞り込みを維持したまま非ボードビューへ自分で移動した場合、
-      // このユーザー操作を上書きして merged へ強制送還してはいけない
+      // このユーザー操作を上書きして split へ強制送還してはいけない
       // (useAppActions.ts のコメント参照: epicFilterId-only は意図的な設計)。
       rerender({ ...params, epicFilterId: 'epic-1', view: 'activity' });
       expect(params.setView).not.toHaveBeenCalled();

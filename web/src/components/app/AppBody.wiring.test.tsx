@@ -110,7 +110,7 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
   const boardFilterState = makeBoardFilterState();
   const overlays = makeOverlays();
   const base = {
-    view: 'merged',
+    view: 'split',
     setView: vi.fn(),
     selectedProjectIds: ['__marker_selected_project__'],
     setSelectedProjectIds: vi.fn(),
@@ -140,7 +140,7 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     setTipsBannerDismissed: vi.fn(),
     boardFilterState,
     boardFilterPresetState: {
-      view: 'merged',
+      view: 'split',
       selectedProjectIds: [],
       priorityCeiling: 'all',
       issueTypes: [],
