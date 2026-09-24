@@ -89,11 +89,21 @@ export function shellQuote(value) {
  * 検証コマンド (契約の verify) を shell 経由で実行し、出力をログファイルへ落とす。終了コードを
  * resolve する。実行中は heartbeatMs ごとに onHeartbeat を呼ぶ (台帳の pending を更新し続け、
  * verify スロット待ちで長引いても他の merger の LEASE を切らさない)。onHeartbeat は throw しないこと。
+ *
+ * bdboard-2twf: 子は新しいセッション・プロセスグループ (detached) で起動する。呼び出し元が
+ * SIGINT/SIGTERM/SIGHUP を受けて中断するとき、scripts/process-tree.mjs の
+ * killProcessTree(child.pid, ...) でこのグループ (shell → npm → 契約の verify コマンド自身)
+ * を終了できるようにするため。既定の契約どおり command が `npm run verify` なら、それ自身が
+ * 自分の子孫 (tsc/vitest ワーカー等、別グループ) を scripts/verify.mjs のリーダーモードで畳む
+ * — このグループ宛て SIGTERM/SIGKILL がそのままそちらにも届く (同じシグナルなので)。
+ * onSpawn(child) で呼び出し元に子を渡す。detached はターミナル切断由来の SIGHUP からも子を
+ * 切り離すので、呼び出し元 (interrupt.mjs) も SIGHUP を自分で扱う。
  */
-export function runShellToLog(command, { cwd, logFd, heartbeatMs = 0, onHeartbeat = () => {} }) {
+export function runShellToLog(command, { cwd, logFd, heartbeatMs = 0, onHeartbeat = () => {}, onSpawn = () => {} }) {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env: process.env });
+    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env: process.env, detached: true });
+    onSpawn(child);
     const timer = heartbeatMs > 0 ? setInterval(onHeartbeat, heartbeatMs) : null;
     const done = (code) => {
       if (settled) {

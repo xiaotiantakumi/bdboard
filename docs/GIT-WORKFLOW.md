@@ -316,8 +316,10 @@ building / linting / testing the landed tree catches a semantic conflict) — it
 - `git merge-tree --write-tree` needs git ≥ 2.38; an older git makes every moved-main PR class R.
 - `prepare` takes minutes under S2 class F (a full `npm run verify`, including the machine-wide
   verify-slot queue): run it in the foreground with a 600000 ms Bash timeout like `finish`. If it is
-  interrupted, the worktree can be left detached on the predicted commit; `prepare` then exits 2 and
-  says `git checkout bd/<id>`.
+  interrupted with SIGINT/SIGTERM (Ctrl-C, a Bash-tool timeout kill, session close), the verify child
+  process is killed and the worktree is restored to `bd/<id>` automatically (bdboard-2twf); only a
+  SIGKILL (`kill -9`) or a crash can still leave it detached on the predicted commit, in which case
+  `prepare` exits 2 and says `git checkout bd/<id>`.
 - `prepare` refuses (exit 2) while this PR's record says it is gated and holds the slot — run
   `finish` first (applies to S1 too; otherwise the record `finish` needs to release the slot would be
   deleted).

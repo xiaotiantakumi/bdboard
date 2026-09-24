@@ -2,11 +2,14 @@
 // 契約の verify を回し、結果を commit status 台帳に書く。main checkout には触らない (linked
 // worktree でなければ拒否する。hook 規則 7 の pull / 再起動 / kill のどれにも当たらない)。
 // bdboard-ulxa.2: S2 の着地予定ツリーの verify も同じ本体を ledger: false (台帳に書かない) で使う。
+// bdboard-2twf: (1) 未追跡ファイルが verify に混ざるのを防ぐ (2) SIGINT/SIGTERM で子プロセスを
+// 終了し、detach checkout を restoreTo に戻す (PR #711 レビューの見送り分。手順は interrupt.mjs)。
 import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { git, gitOk, run, runShellToLog } from './exec.mjs';
 import { postLandedStatus } from './github.mjs';
+import { installInterruptHandler } from './interrupt.mjs';
 import { readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 
 const LOCKFILES = [
@@ -37,6 +40,27 @@ function isLinkedWorktree(root) {
   return dirs.status === 0 && gitDir !== commonDir;
 }
 
+/**
+ * ignore されていない未追跡ファイルのパス一覧 (`git status --porcelain` の `??` 行、ネストした
+ * ディレクトリの中身も展開する)。verify はこの worktree のファイルをそのまま見るので、コミット
+ * されていないファイルが紛れ込むと「検証した木」と「PR head / 着地予定ツリー」が一致しなくなる。
+ */
+function untrackedFiles(root) {
+  const status = run('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: root });
+  return status.stdout
+    .split('\n')
+    .filter((line) => line.startsWith('?? '))
+    .map((line) => line.slice(3).trim())
+    .filter((line) => line !== '');
+}
+
+function restoreBranch(root, restoreTo) {
+  const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
+  if (back.status !== 0) {
+    say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
+  }
+}
+
 function heartbeatMs(ctx) {
   const raw = Number(process.env.BDBOARD_MERGE_HEARTBEAT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : Math.max(10_000, (ctx.config.leaseMinutes * 60_000) / 3);
@@ -58,19 +82,39 @@ function postQuietly(ctx, sha, state, description) {
  * 返り値の result: 'success' | 'failure' | 'error' (error = 検証を実行できなかった。台帳に
  * failure は書かない。pending は verify を始める直前にしか書かないので、準備段階の失敗で
  * 他の merger の LEASE を延ばさない)。ledger: false なら台帳には何も書かない (S2 の着地予定ツリー)。
+ *
+ * bdboard-2twf: 未追跡ファイルがあれば (ignore 済みを除く) verify を始めずに 'error' を返す。
+ * verify 実行中に SIGINT/SIGTERM を受けたら、子プロセスを終了して restoreTo に戻ってから
+ * (台帳には何も書かずに) プロセスごと終了する — 呼び出し元 (finish/predicted/verify いずれの
+ * コマンドから来ても) の後続処理 (ネットワーク呼び出しや状態ファイルの書き換え) はそこから先に
+ * 進まない。
  */
 export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } = {}) {
   const root = ctx.cwd;
+  const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
   if (!isLinkedWorktree(root)) {
     say(
-      `${ledger ? '着地後検証' : '着地予定ツリーの verify'}は PR の worktree (git worktree add で作った作業ツリー) でだけ実行します。`,
+      `${label}は PR の worktree (git worktree add で作った作業ツリー) でだけ実行します。`,
       'main checkout で detach checkout すると常時稼働サーバーの配信物 (web/dist) まで置き換わるため拒否しました。',
       ledger ? `PR の worktree に移って npm run merge-pr -- verify ${sha} を実行してください。` : 'PR の worktree に移って prepare してください。',
     );
     return { result: 'error' };
   }
   if (git(['status', '--porcelain', '--untracked-files=no'], { cwd: root }) !== '') {
-    say(`作業ツリーに未コミットの変更があるため${ledger ? '着地後検証' : '着地予定ツリーの verify'}を始められません (detach checkout できない)。`);
+    say(`作業ツリーに未コミットの変更があるため${label}を始められません (detach checkout できない)。`);
+    return { result: 'error' };
+  }
+  const untracked = untrackedFiles(root);
+  if (untracked.length > 0) {
+    const shown = untracked.slice(0, 20);
+    const more = untracked.length > shown.length ? `\n  ...ほか ${untracked.length - shown.length} 件` : '';
+    say(
+      `作業ツリーに未追跡ファイル (.gitignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
+      shown.map((file) => `  ${file}`).join('\n') + more,
+      ledger
+        ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
+        : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
+    );
     return { result: 'error' };
   }
   if (!gitOk(['cat-file', '-e', `${sha}^{commit}`], { cwd: root })) {
@@ -88,18 +132,24 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
     say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);
     return { result: 'error' };
   }
+  const activeChild = { current: undefined };
+  const removeInterruptHandler = installInterruptHandler({
+    activeChild,
+    onCleanup: (signal) => {
+      say(`${signal} を受け取ったため${label}を中断します。子プロセスを終了して ${restoreTo} に戻します。`);
+      restoreBranch(root, restoreTo);
+    },
+  });
   let result;
   let installedAny = false;
   try {
     const onInstall = () => {
       installedAny = true;
     };
-    result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger });
+    result = await installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild });
   } finally {
-    const back = run('git', ['checkout', '--quiet', restoreTo], { cwd: root });
-    if (back.status !== 0) {
-      say(`元の ${restoreTo} に戻れませんでした: ${back.stderr.trim()}`);
-    }
+    removeInterruptHandler();
+    restoreBranch(root, restoreTo);
     if (installedAny && LOCKFILES.some((lock) => lockfileChanged(root, sha, originalHead, lock.file))) {
       say(`注意: この worktree の node_modules は ${sha.slice(0, 12)} 用に入れ直しました。ブランチで作業を続けるなら npm ci し直してください。`);
     }
@@ -107,7 +157,7 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
   return { result, logPath };
 }
 
-async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger }) {
+async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onInstall, ledger, activeChild }) {
   const installedFor = readInstalledFor(root) ?? originalHead;
   for (const lock of LOCKFILES) {
     if (lockfileChanged(root, installedFor, sha, lock.file)) {
@@ -135,6 +185,9 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
       logFd: fd,
       heartbeatMs: ledger ? heartbeatMs(ctx) : 0,
       onHeartbeat: () => postQuietly(ctx, sha, 'pending', running),
+      onSpawn: (child) => {
+        activeChild.current = child;
+      },
     });
   } finally {
     closeSync(fd);
