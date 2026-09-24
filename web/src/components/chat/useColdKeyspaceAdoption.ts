@@ -120,7 +120,18 @@ export function useColdKeyspaceAdoption({
 
       setSelectedProjectId(resolved);
     },
-    [migrateDraftPayloadKey, conversationInputsRef, conversationAttachmentsRef],
+    // bdboard-sso1.83 第14c段: フックの引数になったことで exhaustive-deps が
+    // draftNoncesRef / setDraftNonces / setSelectedProjectId も要求するので加えた。
+    // どれも useRef のオブジェクトか useState の setter で参照は変わらない(E6 の
+    // 依存配列の前提。useColdKeyspaceAdoption.test.tsx で確認している)。
+    [
+      migrateDraftPayloadKey,
+      conversationInputsRef,
+      conversationAttachmentsRef,
+      draftNoncesRef,
+      setDraftNonces,
+      setSelectedProjectId,
+    ],
   );
 
   const handleProjectSelectChange = useCallback(
@@ -135,7 +146,7 @@ export function useColdKeyspaceAdoption({
       }
       setSelectedProjectId(nextProjectId);
     },
-    [adoptProjectFromColdKeyspace, selectedProjectId, setTicketProjectFallbackNotice],
+    [adoptProjectFromColdKeyspace, selectedProjectId, setTicketProjectFallbackNotice, setSelectedProjectId],
   );
 
   useEffect(() => {
