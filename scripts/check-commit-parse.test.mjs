@@ -430,13 +430,16 @@ describe('check-commit-parse CLI', () => {
     () => {
       const { work } = makeRepo('large-log');
       // 30 件 × 640 行 × 約72文字 ≈ 1.4 MB。1コミットごとは約46 KBに保つ。
+      // 空コミット(--allow-empty)にして git add / ファイル書き込みをループから除去し、
+      // git 子プロセス起動回数を 60 → 30 に減らす(Windows CI のプロセス起動オーバーヘッド対策。
+      // bdboard-qlw1)。git log は diff ではなくコミットメッセージだけを読むスクリプトなので、
+      // 検証内容(1MB超のログをスクリプトが正しく扱えること)は変わらない。
       const line = 'A conventional commit body line with enough ordinary text to grow the log output.';
       const message = `fix: large log fixture\n\n${Array.from({ length: 640 }, () => line).join('\n')}\n`;
+      const messagePath = path.join(tmpRoot, 'message.txt');
+      fs.writeFileSync(messagePath, message);
       for (let index = 0; index < 30; index += 1) {
-        fs.writeFileSync(path.join(work, 'change.txt'), `${index}\n`);
-        sh(work, 'git', 'add', 'change.txt');
-        fs.writeFileSync(path.join(tmpRoot, 'message.txt'), message);
-        sh(work, 'git', 'commit', '-F', path.join(tmpRoot, 'message.txt'));
+        sh(work, 'git', 'commit', '--allow-empty', '-F', messagePath);
       }
 
       const log = sh(work, 'git', 'log', '--format=%H%x1f%B%x1e', 'v0.0.0..HEAD');
