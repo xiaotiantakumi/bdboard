@@ -89,11 +89,17 @@ export function shellQuote(value) {
  * 検証コマンド (契約の verify) を shell 経由で実行し、出力をログファイルへ落とす。終了コードを
  * resolve する。実行中は heartbeatMs ごとに onHeartbeat を呼ぶ (台帳の pending を更新し続け、
  * verify スロット待ちで長引いても他の merger の LEASE を切らさない)。onHeartbeat は throw しないこと。
+ *
+ * bdboard-2twf: 子は新しいプロセスグループ (detached) で起動する。呼び出し元が SIGINT/SIGTERM を
+ * 受けて中断するとき、scripts/process-tree.mjs の killProcessTree(child.pid, ...) でグループ全体
+ * (npm run verify が起こす孫プロセスまで) を掃除できるようにするため (scripts/verify.mjs のリーダー
+ * モードと同じパターン)。onSpawn(child) で呼び出し元に子を渡す。
  */
-export function runShellToLog(command, { cwd, logFd, heartbeatMs = 0, onHeartbeat = () => {} }) {
+export function runShellToLog(command, { cwd, logFd, heartbeatMs = 0, onHeartbeat = () => {}, onSpawn = () => {} }) {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env: process.env });
+    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env: process.env, detached: true });
+    onSpawn(child);
     const timer = heartbeatMs > 0 ? setInterval(onHeartbeat, heartbeatMs) : null;
     const done = (code) => {
       if (settled) {

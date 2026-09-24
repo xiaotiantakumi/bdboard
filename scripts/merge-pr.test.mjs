@@ -6,7 +6,7 @@
 // (状態 JSON を読み書きする代役) で動かす。検証コマンドは偽の `node verify.cjs` で、
 // どの SHA を検証したかをログに残す。Windows は統合部分を skip (bash 前提ではないが、
 // 運用するのは macOS のエージェントだけで、always-on-server.test.mjs と同じ扱い)。
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -37,6 +37,9 @@ const fs = require('node:fs');
 const { execSync } = require('node:child_process');
 const head = execSync('git rev-parse HEAD').toString().trim();
 fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
+// SIGINT/SIGTERM のテスト用: 自分の (実際に検証を実行している) pid を書いておく。中断後に
+// この pid が本当に死んでいるかで「子プロセスが孤児にならない」ことを確かめる。
+if (process.env.FAKE_VERIFY_PID_FILE) fs.writeFileSync(process.env.FAKE_VERIFY_PID_FILE, String(process.pid));
 // 意味的衝突の代役: 列挙したファイルが全部そろった木でだけ落ちる (片方だけなら緑)。
 const conflict = process.env.FAKE_VERIFY_CONFLICT;
 if (conflict && conflict.split(',').every((file) => fs.existsSync(file))) process.exit(3);
@@ -46,6 +49,30 @@ const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
 if (sleepMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
 process.exit(Number(process.env.FAKE_VERIFY_EXIT || 0));
 `;
+
+// bdboard-2twf: SIGINT テスト用の小さなヘルパー。pidAlive は finish.mjs の同名関数と同じ判定
+// (EPERM = 居るが触れない = alive、ESRCH = もう居ない)。
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+async function waitUntil(predicate, { timeoutMs = 10_000, intervalMs = 20 } = {}) {
+  const start = Date.now();
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitUntil: timed out');
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
 
 describe('merge-pr pure helpers', () => {
   const lease = 8 * 60_000;
@@ -951,5 +978,69 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     const prepared = run(['prepare', String(PR)]);
     expect(prepared.status).toBe(2);
     expect(prepared.stderr).toContain('git checkout bd/demo-1');
+  });
+
+  it('finish: refuses while the worktree has an untracked, non-ignored file (gitignored ones do not block)', () => {
+    setup({ branchFiles: { '.gitignore': 'ignored.log\n' } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = simulateMerge();
+    writeFileSync(path.join(work, 'ignored.log'), 'noise\n');
+    writeFileSync(path.join(work, 'stray.ts'), 'export const x = 1;\n');
+    const finished = run(['finish', String(PR)]);
+    expect(finished.status).toBe(1);
+    expect(finished.stderr).toContain('未追跡ファイル');
+    expect(finished.stderr).toContain('stray.ts');
+    expect(finished.stderr).not.toContain('ignored.log');
+    expect(readFake().slot.holder).toBeNull(); // 枠は検証より先に返している
+    expect(posted()).toEqual([]);
+    expect(verified()).toEqual([]);
+    expect(existsSync(stateFile())).toBe(true); // 記録は残る (finish をやり直せる)
+
+    rmSync(path.join(work, 'stray.ts'));
+    const retried = run(['finish', String(PR)]);
+    expect(retried.status).toBe(0);
+    expect(verified()).toEqual([landed]);
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('finish: SIGINT during the landed verify kills the verify process and restores the branch instead of leaving an orphan / detached HEAD', async () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    simulateMerge();
+    const pidFile = path.join(tmp, 'verify.pid');
+    const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
+      cwd: work,
+      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    await waitUntil(() => existsSync(pidFile));
+    const verifyPid = Number(readFileSync(pidFile, 'utf8').trim());
+    expect(pidAlive(verifyPid)).toBe(true);
+
+    child.kill('SIGINT');
+    const [code, signal] = await new Promise((resolve) => {
+      child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
+    });
+    expect(signal).toBeNull(); // 自分で process.exit したので signal 経由の終了ではない
+    expect(code).toBe(130); // SIGINT
+
+    // 自然な sleep 終了 (60 秒) よりずっと短い窓で死んでいることを確かめる (kill が効いていない
+    // 場合に「たまたま自然終了と重なって green になる」誤検出を避ける)。
+    await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 }); // 孤児にならず、確かに終わっている
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1'); // detach のまま残らない
+    expect(posted().map((entry) => entry.state)).not.toContain('failure'); // 中断を failure と記録しない
+    expect(stderr).toContain('SIGINT');
+    expect(stderr).toContain('bd/demo-1');
+
+    // 状態・枠・台帳は壊れていないので、そのまま finish をやり直せる。
+    const retried = run(['finish', String(PR)]);
+    expect(retried.status).toBe(0);
+    expect(existsSync(stateFile())).toBe(false);
   });
 });
