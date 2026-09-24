@@ -90,7 +90,12 @@ describe('resolveMainConfig (bdboard-sso1.86 move only, main.ts の env 解決�
     expect(config.instanceNonce).toBe('nonce-123');
     expect(config.port).toBe(9999);
     expect(config.host).toBe('0.0.0.0');
-    expect(config.dbPath).toBe('/tmp/custom-cache.db');
+    // bdboard-6h6n: resolveDbPath() now runs BDBOARD_DB through path.resolve(), so on
+    // win32 a POSIX-style absolute literal like '/tmp/...' gets a drive letter prepended
+    // (verify-windows caught this as a real regression when this test still compared
+    // against the raw literal). Compare against path.resolve(...) of the same literal so
+    // the assertion tracks resolveDbPath()'s actual (platform-dependent) behavior.
+    expect(config.dbPath).toBe(path.resolve('/tmp/custom-cache.db'));
     expect(config.bdPath).toBe('/opt/bin/bd');
     expect(config.ghPath).toBe('/opt/bin/gh');
     expect(config.reclaimEnabled).toBe(false);
@@ -119,9 +124,14 @@ describe('resolveMainConfig dbPath resolution', () => {
   it('uses an explicitly configured database path for a linked worktree', () => {
     process.env.BDBOARD_DB = '/tmp/dedicated-copy.db';
     const config = resolveMainConfig(LINKED_WORKTREE, true);
-    expect(config.dbPath).toBe('/tmp/dedicated-copy.db');
-    expect(config.configFilePath).toBe(path.join('/tmp', 'config.json'));
-    expect(config.tunnelLogFilePath).toBe(path.join('/tmp', 'logs', 'cloudflared-tunnel.log'));
+    // bdboard-6h6n: same win32 drive-letter reasoning as above -- resolve the literal the
+    // same way resolveDbPath() does instead of comparing to the raw POSIX-style string.
+    const expectedDbPath = path.resolve('/tmp/dedicated-copy.db');
+    expect(config.dbPath).toBe(expectedDbPath);
+    expect(config.configFilePath).toBe(path.join(path.dirname(expectedDbPath), 'config.json'));
+    expect(config.tunnelLogFilePath).toBe(
+      path.join(path.dirname(expectedDbPath), 'logs', 'cloudflared-tunnel.log'),
+    );
   });
 
   it('keeps main checkout shared paths unchanged', () => {

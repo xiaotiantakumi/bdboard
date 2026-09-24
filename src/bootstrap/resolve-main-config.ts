@@ -40,7 +40,11 @@ export class MainCheckoutDbPathRequiredError extends Error {
 export class SharedStateDirectoryCollisionError extends Error {
   constructor(repoRoot: string, dbPath: string) {
     super(
-      `BDBOARD_DB="${dbPath}" for linked worktree checkout "${repoRoot}" resolves to a directory that is itself a shared bdboard state directory. Placing the database there would still colocate config.json and the tunnel log with the resident server's real shared files. Choose a different directory (for example <worktree>/.tmp-db/cache.db) and start again.`,
+      // bdboard-6h6n: same "don't overclaim linked worktree" reasoning as
+      // MainCheckoutDbPathRequiredError above -- this is only reachable when
+      // isLinkedWorktreeCheckout(repoRoot) is true, which is the same .git-is-a-file
+      // heuristic (opus review nit on PR #695).
+      `BDBOARD_DB="${dbPath}" for "${repoRoot}", whose .git is a file rather than a directory, resolves to a directory that is itself a shared bdboard state directory. Placing the database there would still colocate config.json and the tunnel log with the resident server's real shared files. Choose a different directory (for example <worktree>/.tmp-db/cache.db) and start again.`,
     );
     this.name = 'SharedStateDirectoryCollisionError';
   }
