@@ -87,6 +87,122 @@ function makeEntry(overrides: {
 }
 
 describe('createSqliteBoardCache', () => {
+  describe('parse memoization (bdboard-3c36)', () => {
+    it('reuses parsed projects across repeated listProjects calls', () => {
+      const cache = createSqliteBoardCache(':memory:');
+      cache.putProject(makeEntry({ project: { id: 'proj-a', rootPath: '/z/project' } }));
+      const first = cache.listProjects();
+      const second = cache.listProjects();
+      expect(second[0]).toBe(first[0]);
+      cache.close();
+    });
+
+    it('invalidates the parsed project after putProject', () => {
+      const cache = createSqliteBoardCache(':memory:');
+      cache.putProject(makeEntry({ project: { id: 'proj-a', rootPath: '/z/project' } }));
+      const before = cache.listProjects()[0];
+      cache.putProject(
+        makeEntry({
+          project: { id: 'proj-a', rootPath: '/z/project' },
+          tickets: [makeTicket({ id: 'pfx-new', title: 'New ticket' })],
+          fingerprint: 'fp-2',
+        }),
+      );
+      const after = cache.listProjects()[0];
+      expect(after).not.toBe(before);
+      expect(after?.tickets.map((ticket) => ticket.title)).toEqual(['New ticket']);
+      cache.close();
+    });
+
+    it('invalidates deleted projects before re-adding the same id', () => {
+      const cache = createSqliteBoardCache(':memory:');
+      cache.putProject(makeEntry({ project: { id: 'same', rootPath: '/old', name: 'Old' } }));
+      cache.listProjects();
+      cache.deleteProject('same');
+      cache.putProject(
+        makeEntry({
+          project: { id: 'same', rootPath: '/new', name: 'New' },
+          tickets: [makeTicket({ projectId: 'same', id: 'pfx-new', title: 'New ticket' })],
+          fingerprint: 'fp-new',
+        }),
+      );
+      const after = cache.listProjects()[0];
+      expect(after?.project.name).toBe('New');
+      expect(after?.tickets[0]?.title).toBe('New ticket');
+      cache.close();
+    });
+
+    it('shares memoized entries between listProjects and listProjectsChunked', async () => {
+      const firstCache = createSqliteBoardCache(':memory:');
+      firstCache.putProject(makeEntry({ project: { id: 'proj-a', rootPath: '/z/project' } }));
+      const syncEntry = firstCache.listProjects()[0];
+      expect(firstCache.listProjectsChunked).toBeDefined();
+      const chunkedEntry = (await firstCache.listProjectsChunked!())[0];
+      expect(chunkedEntry).toBe(syncEntry);
+      firstCache.close();
+
+      const secondCache = createSqliteBoardCache(':memory:');
+      secondCache.putProject(makeEntry({ project: { id: 'proj-a', rootPath: '/z/project' } }));
+      expect(secondCache.listProjectsChunked).toBeDefined();
+      const reverseChunkedEntry = (await secondCache.listProjectsChunked!())[0];
+      const reverseSyncEntry = secondCache.listProjects()[0];
+      expect(reverseSyncEntry).toBe(reverseChunkedEntry);
+      secondCache.close();
+    });
+
+    it('freezes the cached project and its tickets array', () => {
+      const cache = createSqliteBoardCache(':memory:');
+      cache.putProject(makeEntry({ project: { id: 'proj-a', rootPath: '/z/project' } }));
+      const entry = cache.listProjects()[0];
+      expect(Object.isFrozen(entry)).toBe(true);
+      expect(Object.isFrozen(entry?.tickets)).toBe(true);
+      cache.close();
+    });
+
+    it('does not memoize a corrupt row and accepts a later valid write', () => {
+      const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-cache-memo-corrupt-'));
+      const dbPath = path.join(tmpDir, 'corrupt-tickets.db');
+      try {
+        const initialCache = createSqliteBoardCache(dbPath);
+        initialCache.close();
+        const rawDb = new Database(dbPath);
+        rawDb
+          .prepare(
+            `INSERT INTO projects
+              (id, name, root_path, prefixes, fingerprint, fetched_at, tickets, alias_paths)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            'recoverable',
+            'Corrupt',
+            '/recoverable',
+            '["pfx"]',
+            'fp-corrupt',
+            '2026-08-14T10:00:00.000Z',
+            '{not valid json',
+            '[]',
+          );
+        rawDb.close();
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const cache = createSqliteBoardCache(dbPath);
+        expect(cache.listProjects()).toHaveLength(0);
+        cache.putProject(
+          makeEntry({
+            project: { id: 'recoverable', rootPath: '/recoverable', name: 'Recovered' },
+            tickets: [makeTicket({ projectId: 'recoverable', title: 'Valid' })],
+            fingerprint: 'fp-valid',
+          }),
+        );
+        expect(cache.listProjects()[0]?.project.name).toBe('Recovered');
+        expect(cache.listProjects()[0]?.tickets[0]?.title).toBe('Valid');
+        cache.close();
+        warnSpy.mockRestore();
+      } finally {
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   it('round-trips put and get with dates, prefixes, and tickets', () => {
     const cache = createSqliteBoardCache(':memory:');
     const entry = makeEntry({

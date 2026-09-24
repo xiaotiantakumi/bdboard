@@ -3,6 +3,7 @@ import type { BoardCache, CachedProject, SessionLinkRow } from '../../../applica
 import type { ModelUsageTotals } from '../../../application/transcript/extract-usage.js';
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import { serializeTickets } from '../ticket-serialization.js';
+import type { ParseCache } from './parse-cache.js';
 import { createLinksWriteOperations } from './write-links.js';
 
 export { MAX_INTERACTIONS } from './write-links.js';
@@ -22,7 +23,7 @@ export type BoardCacheWriteOperations = Pick<
   | 'appendInteractions'
 >;
 
-export function createWriteOperations(db: Database.Database): BoardCacheWriteOperations {
+export function createWriteOperations(db: Database.Database, parseCache: ParseCache): BoardCacheWriteOperations {
   const putProjectStmt = db.prepare(`
     INSERT OR REPLACE INTO projects (
       id, name, root_path, prefixes, fingerprint, fetched_at, tickets, alias_paths, pending_decisions
@@ -74,10 +75,12 @@ export function createWriteOperations(db: Database.Database): BoardCacheWriteOpe
           ? JSON.stringify(entry.pendingDecisions)
           : null,
       );
+      parseCache.delete(entry.project.id);
     },
 
     deleteProject(projectId: string): void {
       deleteProjectStmt.run(projectId);
+      parseCache.delete(projectId);
     },
 
     clear(): void {

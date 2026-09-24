@@ -11,7 +11,7 @@ import type { ModelUsageTotals } from '../../../application/transcript/extract-u
 import type { InteractionRecord } from '../../../domain/interaction.js';
 import { CACHE_TABLE_NAMES } from './schema.js';
 import { createYieldGate, yieldToEventLoop } from '../../../application/board/aggregation-yield.js';
-import { rowToCachedProject, rowToCfdSnapshot, rowToInteraction, rowToSessionLink } from './convert.js';
+import { rowToCfdSnapshot, rowToInteraction, rowToSessionLink } from './convert.js';
 import type {
   CfdSnapshotRowDb,
   InteractionRowDb,
@@ -20,6 +20,7 @@ import type {
   SessionUsageRow,
   TranscriptOffsetRow,
 } from './row-types.js';
+import { parseCachedProjectRow, type ParseCache } from './parse-cache.js';
 
 // BoardCache (アプリ層のポート) の一部を実装する。Pick で束ねることで、ポート側に
 // メソッドが増減したときにここが自動追随し (増分は他モジュール側で要実装、削除は
@@ -47,31 +48,24 @@ const LIST_PROJECTS_SQL = `SELECT * FROM projects ORDER BY root_path ASC`;
 export function createReadOperations(
   db: Database.Database,
   dbPath: string,
+  parseCache: ParseCache,
 ): BoardCacheReadOperations {
   const getProjectStmt = db.prepare(`SELECT * FROM projects WHERE id = ?`);
   const listProjectsStmt = db.prepare(LIST_PROJECTS_SQL);
-  const getTranscriptOffsetStmt = db.prepare(
-    `SELECT byte_offset FROM transcript_offsets WHERE file_path = ?`,
+  const getTranscriptOffsetStmt = db.prepare(`SELECT byte_offset FROM transcript_offsets WHERE file_path = ?`);
+  const listCfdSnapshotsAllStmt = db.prepare(
+    `SELECT project_id, status, snapshot_date, snapshotted_at, count FROM cfd_snapshots ORDER BY snapshot_date ASC, project_id ASC, status ASC`,
   );
-  const listCfdSnapshotsAllStmt = db.prepare(`
-    SELECT project_id, status, snapshot_date, snapshotted_at, count
-    FROM cfd_snapshots
-    ORDER BY snapshot_date ASC, project_id ASC, status ASC
-  `);
-  const getLatestCfdSnapshotDateStmt = db.prepare(`
-    SELECT MAX(snapshot_date) AS snapshot_date FROM cfd_snapshots
-  `);
+  const getLatestCfdSnapshotDateStmt = db.prepare(`SELECT MAX(snapshot_date) AS snapshot_date FROM cfd_snapshots`);
   const countTableRowsStmts = Object.fromEntries(
     CACHE_TABLE_NAMES.map((tableName) => [
       tableName,
       db.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`),
     ]),
   ) as Record<(typeof CACHE_TABLE_NAMES)[number], Database.Statement>;
-  const listSessionLinksStmt = db.prepare(`
-    SELECT ticket_id, session_id, project_id, source, confidence, observed_at
-    FROM session_links
-    ORDER BY ticket_id ASC, session_id ASC
-  `);
+  const listSessionLinksStmt = db.prepare(
+    `SELECT ticket_id, session_id, project_id, source, confidence, observed_at FROM session_links ORDER BY ticket_id ASC, session_id ASC`,
+  );
   const listInteractionsAllStmt = db.prepare(`
     SELECT id, at, actor, ticket_id, field, old_value, new_value, reason
     FROM interactions
@@ -84,15 +78,19 @@ export function createReadOperations(
       if (row === undefined) {
         return undefined;
       }
-      const entry = rowToCachedProject(row);
-      return entry ?? undefined;
+      return parseCachedProjectRow(row, parseCache) ?? undefined;
     },
 
     listProjects(): readonly CachedProject[] {
       const rows = listProjectsStmt.all() as ProjectRow[];
-      return rows
-        .map(rowToCachedProject)
-        .filter((entry): entry is CachedProject => entry !== null);
+      const results: CachedProject[] = [];
+      for (const row of rows) {
+        const entry = parseCachedProjectRow(row, parseCache);
+        if (entry !== null) {
+          results.push(entry);
+        }
+      }
+      return results;
     },
 
     // bdboard-mkkx: listProjects() は SQLite からの読み出しと、行ごとの
@@ -150,16 +148,21 @@ export function createReadOperations(
     // このAPIの用途 (定期ポーリングされる集計) では許容できる。
     async listProjectsChunked(): Promise<readonly CachedProject[]> {
       const idRows = db
-        .prepare(`SELECT id FROM projects ORDER BY root_path ASC`)
-        .all() as { readonly id: string }[];
+        .prepare(`SELECT id, fingerprint FROM projects ORDER BY root_path ASC`)
+        .all() as { readonly id: string; readonly fingerprint: string }[];
       const results: CachedProject[] = [];
       const gate = createYieldGate(1);
-      for (const { id } of idRows) {
-        const row = getProjectStmt.get(id) as ProjectRow | undefined;
-        if (row !== undefined) {
-          const entry = rowToCachedProject(row);
-          if (entry !== null) {
-            results.push(entry);
+      for (const { id, fingerprint } of idRows) {
+        const cached = parseCache.get(id);
+        if (cached !== undefined && cached.fingerprint === fingerprint) {
+          results.push(cached.entry);
+        } else {
+          const row = getProjectStmt.get(id) as ProjectRow | undefined;
+          if (row !== undefined) {
+            const entry = parseCachedProjectRow(row, parseCache);
+            if (entry !== null) {
+              results.push(entry);
+            }
           }
         }
         if (gate.shouldYield()) {
