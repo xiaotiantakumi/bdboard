@@ -454,7 +454,6 @@ export function ChatPanel({
   } = useChatAgentModelState({
     selectedProjectId,
     currentConversationKey,
-    threadModelIds,
     setThreadModelIds,
   });
   const chatPanel = useResizableSidePanel(UI_STORAGE_KEYS.chatPanelWidth);
@@ -1346,7 +1345,7 @@ export function ChatPanel({
       cancelled = true;
       if (pollTimer !== undefined) clearTimeout(pollTimer);
     };
-  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey]);
+  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey, setSelectedAgentId]);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -1747,7 +1746,7 @@ export function ChatPanel({
       historyRequestIdRef.current += 1;
       setLoadingHistoryFor(null);
     };
-  }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor]);
+  }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor, setSelectedAgentId]);
 
   // turn-status の回収が完了を取りこぼしたときの安全網 (bdboard-3tw.156)。
   //

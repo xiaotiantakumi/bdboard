@@ -7,7 +7,6 @@ import { hasSelectableModels, resolveDefaultModel } from './agentOptions';
 export interface UseChatAgentModelStateParams {
   selectedProjectId: string;
   currentConversationKey: string;
-  threadModelIds: Record<string, string>;
   setThreadModelIds: Dispatch<SetStateAction<Record<string, string>>>;
 }
 

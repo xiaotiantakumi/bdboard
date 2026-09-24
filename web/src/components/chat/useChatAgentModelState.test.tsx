@@ -1,5 +1,5 @@
 import { act, renderHook } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto } from '../../api';
 import { useChatAgentModelState } from './useChatAgentModelState';
 
@@ -19,12 +19,13 @@ const agent: ChatAgentDto = {
 };
 
 describe('useChatAgentModelState', () => {
+  beforeEach(() => localStorage.clear());
+
   it('starts empty and computes selectable and effective model values', () => {
     const { result } = renderHook(() =>
       useChatAgentModelState({
         selectedProjectId: 'project-a',
         currentConversationKey: 'thread-a',
-        threadModelIds: {},
         setThreadModelIds: vi.fn(),
       }),
     );
@@ -51,7 +52,6 @@ describe('useChatAgentModelState', () => {
       useChatAgentModelState({
         selectedProjectId: '',
         currentConversationKey: 'thread-a',
-        threadModelIds: {},
         setThreadModelIds,
       }),
     );
@@ -66,7 +66,6 @@ describe('useChatAgentModelState', () => {
       useChatAgentModelState({
         selectedProjectId: 'project-a',
         currentConversationKey: 'thread-a',
-        threadModelIds: {},
         setThreadModelIds: vi.fn(),
       }),
     );
@@ -88,7 +87,6 @@ describe('useChatAgentModelState', () => {
         return useChatAgentModelState({
           selectedProjectId: 'project-a',
           currentConversationKey: 'thread-a',
-          threadModelIds: {},
           setThreadModelIds,
         });
       },

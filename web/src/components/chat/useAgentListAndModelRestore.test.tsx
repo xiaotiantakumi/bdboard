@@ -55,6 +55,8 @@ describe('useAgentListAndModelRestore', () => {
     [{ 'thread-a': 'cached' }, {}, 'cached'],
     [{}, { 'project-a': { 'agent-a': 'persisted' } }, 'persisted'],
     [{ 'thread-a': 'stale' }, { 'project-a': { 'agent-a': 'stale' } }, 'default'],
+    [{ 'thread-a': 'cached' }, { 'project-a': { 'agent-a': 'persisted' } }, 'cached'],
+    [{ 'thread-a': 'stale' }, { 'project-a': { 'agent-a': 'persisted' } }, 'persisted'],
   ])('restores model in cache, persisted, default order', async (threadModelIds, chatModelSelections, expected) => {
     const setSelectedModelId = vi.fn();
     const { rerender } = renderHook(
