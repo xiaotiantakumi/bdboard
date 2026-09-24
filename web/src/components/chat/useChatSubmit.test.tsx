@@ -6,7 +6,8 @@ import type { ChatAgentDto, ChatMessageResponseDto } from '../../api';
 // bdboard-sso1.83 第13b段: chat/useChatSubmit.ts の submit/handleSubmit を直接固定する。
 // POST とその結果の振り分けは deliverChatSend.test.ts、ChatPanel 越しの挙動は
 // ChatPanel.submit-characterization ほかの結合テストが見る。ここはガードの順番、
-// 楽観的な書き込み・入力欄クリアの順番、sendKey の確定、controller の後始末を見る。
+// 楽観的な書き込み・入力欄クリアの順番、sendKey の確定、controller の後始末、
+// 送信後の focus が isSending=false の反映後に来ること(bdboard-dcyi)を見る。
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
   return {
@@ -52,6 +53,10 @@ function setup(contextOverrides: Partial<ChatSubmitContext> = {}, sendOverrides:
     ...sendOverrides,
   };
   const focus = vi.fn(() => { events.push('focus'); });
+  // bdboard-dcyi: effect が ownerDocument/form を読むので本物の textarea を使う(document には
+  // 付けない。activeElement は body のまま = フォーカスがどこにも無い状態)。
+  const textarea = document.createElement('textarea');
+  textarea.focus = focus;
   const context: ChatSubmitContext = {
     selectedProjectId: 'proj-a', currentConversationKey: 'key-a', currentSessionId: undefined,
     conversations: { 'key-a': { messages: [], sessionId: 'sess-1', agentId: 'claude' } },
@@ -68,7 +73,7 @@ function setup(contextOverrides: Partial<ChatSubmitContext> = {}, sendOverrides:
     commitFailure: log('commitFailure'),
     appendTranscript: log('appendTranscript'),
     resetBackgroundTurnStatus: log('resetBackgroundTurnStatus'),
-    inputRef: { current: { focus } as unknown as HTMLTextAreaElement },
+    inputRef: { current: textarea },
   };
   const hook = renderHook((props: UseChatSubmitParams) => useChatSubmit(props), { initialProps: params });
   return { hook, params, send, events };
@@ -130,14 +135,14 @@ describe('useChatSubmit guards', () => {
 });
 
 describe('useChatSubmit send lifecycle', () => {
-  it('writes the optimistic message, clears the draft before the request, and focuses after isSending=false', async () => {
+  it('writes the optimistic message, clears the draft before the request, and leaves focus to the effect (not the finally)', async () => {
     postMock.mockResolvedValue(RESULT);
     const { hook, params, events } = setup({ currentAttachments: [] });
     await act(() => hook.result.current.submit('hello', '  hello ', []));
     const names = events.map((event) => event.split(':')[0]);
     expect(names).toEqual([
       'appendTranscript', 'setInput', 'updateConversationAttachments', 'resetBackgroundTurnStatus',
-      'setIsSending', 'commitSuccess', 'setIsSending', 'focus',
+      'setIsSending', 'commitSuccess', 'setIsSending',
     ]);
     const [key, optimistic, sessionId] = vi.mocked(params.appendTranscript).mock.calls[0];
     expect([key, sessionId]).toEqual(['key-a', 'sess-1']);
@@ -215,7 +220,34 @@ describe('useChatSubmit send lifecycle', () => {
     await act(async () => { await hook.result.current.submit('hello', 'hello', []).catch((error: unknown) => { caught = error; }); });
     expect((caught as Error).message).toBe('unexpected');
     expect(send.requestAbortControllerRef.current).toBeNull();
-    expect(events.slice(-2)).toEqual(['setIsSending:[false]', 'focus']);
+    expect(events.slice(-1)).toEqual(['setIsSending:[false]']);
+  });
+});
+
+// bdboard-dcyi: finally の中の同期 focus() は、textarea がまだ disabled(=isSending)の
+// うちに呼ばれて無視されていた。focus は isSending=false が反映された後の effect で戻す。
+describe('useChatSubmit focus after a send (bdboard-dcyi)', () => {
+  it('focuses once isSending=false is rendered after its own send, and only once', async () => {
+    postMock.mockResolvedValue(RESULT);
+    const { hook, params, send, events } = setup();
+    await act(() => hook.result.current.submit('hello', 'hello', []));
+    expect(events).not.toContain('focus');
+
+    hook.rerender({ ...params, send: { ...send, isSending: true } });
+    expect(events).not.toContain('focus');
+    hook.rerender({ ...params, send: { ...send, isSending: false } });
+    expect(events.filter((event) => event === 'focus')).toHaveLength(1);
+
+    hook.rerender({ ...params, send: { ...send, isSending: true } });
+    hook.rerender({ ...params, send: { ...send, isSending: false } });
+    expect(events.filter((event) => event === 'focus')).toHaveLength(1);
+  });
+
+  it('does not focus when isSending goes back to false without a send of its own finishing', () => {
+    const { hook, params, send, events } = setup();
+    hook.rerender({ ...params, send: { ...send, isSending: true } });
+    hook.rerender({ ...params, send: { ...send, isSending: false } });
+    expect(events).not.toContain('focus');
   });
 });
 
