@@ -8,7 +8,7 @@
     "restartScript": "scripts/always-on-server.sh"
   },
   "merge": {
-    "mode": "S1",
+    "mode": "S2",
     "leaseMinutes": 8,
     "slotWaitMinutes": 10,
     "statusContext": "bdboard/landed-verify"
