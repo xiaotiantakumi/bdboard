@@ -117,12 +117,40 @@ describe('chat specs safety guards', () => {
     ).toEqual([]);
   });
 
-  it('cli-chat-agent.ts does not reference claude-specific identifiers', () => {
-    const source = readFileSync(
-      path.join(CHAT_INFRA_DIR, 'cli-chat-agent.ts'),
-      'utf8',
+  it('cli-chat-agent.ts and its split submodules do not reference claude-specific identifiers', () => {
+    // bdboard-z4wx: PR #592 (bdboard-sso1.32) split cli-chat-agent.ts into a
+    // 12-line re-export stub plus src/infrastructure/chat/cli-chat-agent/*.ts
+    // (send-message.ts, send-message-stream.ts, etc.). Reading only the stub
+    // left this assertion checking nothing meaningful, so collect the stub
+    // plus every file under the split directory (reusing the same
+    // directory-recursing helper the FORBIDDEN_CHAT_TOKENS guard above uses).
+    const submoduleFiles = collectSourceFiles(
+      path.join(CHAT_INFRA_DIR, 'cli-chat-agent'),
     );
-    expect(source.toLowerCase().includes('claude')).toBe(false);
+    // Guard against this assertion silently passing if the split submodule
+    // directory ever becomes empty (e.g. everything gets re-merged back into
+    // the stub, or the directory gets renamed without updating this test):
+    // the stub file alone would keep `files` below non-empty regardless, so
+    // this must check the submodule list specifically, not the combined one.
+    expect(submoduleFiles.length).toBeGreaterThan(0);
+
+    const files = [
+      path.join(CHAT_INFRA_DIR, 'cli-chat-agent.ts'),
+      ...submoduleFiles,
+    ];
+
+    const violations: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8');
+      if (source.toLowerCase().includes('claude')) {
+        violations.push(path.relative(REPO_ROOT, file));
+      }
+    }
+
+    expect(
+      violations,
+      `these files reference claude-specific identifiers: ${violations.join(', ')}`,
+    ).toEqual([]);
   });
 
   it('src/main.ts, src/bootstrap/wire-feature-routes.ts and src/bootstrap/wire-chat.ts wire chat agent registration through buildChatAgentRegistry (bdboard-l1t.4 SF6, bdboard-sso1.86 で main.ts の分割により wireChat( 呼び出しが wire-feature-routes.ts へ移動)', () => {
