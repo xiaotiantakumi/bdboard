@@ -182,12 +182,11 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     // selectedSessionId をここで書き換える対象が無い — 既存の永続化済み選択は
     // そのまま(次回訪問時にまた同じ既存スレッドへ戻れるように)残す。
   }, [
-    updateConversationAttachments,
-    cancelThreadConfirmDelete,
-    conversationInputsRef,
-    conversationAttachmentsRef,
-    draftSeedTextRef,
-    setInput,
+    updateConversationAttachments, cancelThreadConfirmDelete, conversationInputsRef, conversationAttachmentsRef,
+    draftSeedTextRef, setInput,
+    // 第14b段: フックの引数になったので exhaustive-deps が求める分を加えた。
+    // ref と useState の setter だけなので、参照は変わらない。
+    draftNoncesRef, setDraftNonces, setSelectedThreadIds, setHistoryLoadedFor, setThreadModelIds,
   ]);
 
   const handleAgentChange = useCallback(
@@ -263,12 +262,11 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       });
     },
     [
-      selectedProjectId,
-      currentConversationKey,
-      updateConversationAttachments,
-      updateConversationInputs,
-      draftSeedTextRef,
-      setSelectedAgentId,
+      selectedProjectId, currentConversationKey, updateConversationAttachments, updateConversationInputs,
+      draftSeedTextRef, setSelectedAgentId,
+      // 第14b段: 上と同じ理由で加えた(ref と useState の setter だけ)。
+      historyRequestIdRef, setLoadingHistoryFor, setOpenThreadIds, setSelectedThreadIds,
+      draftNoncesRef, setDraftNonces, setConversations,
     ],
   );
 
