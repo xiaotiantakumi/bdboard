@@ -40,6 +40,7 @@ import {
 import { resetPlatformSupportCache } from './PlatformLimitationNotice';
 import {
   PROJECT_A,
+  PROJECT_B,
   CLAUDE_AGENT,
   createDeferred,
   jsonResponse,
@@ -167,6 +168,77 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
       });
       expect(messageFetches).toBe(1);
       expect(screen.getByLabelText('メッセージ')).toHaveValue('abc');
+    });
+  });
+
+  describe('14c: cold-keyspace adoption through the project select (handleProjectSelectChange → adopt)', () => {
+    // 第14c段で adopt / handleProjectSelectChange / E6 を useColdKeyspaceAdoption へ
+    // 移す前に、手動でプロジェクトを選んだ経路(r5we)の「中身があれば nonce を進めて
+    // ドラフトを守る」「中身が無ければ既存スレッドの自動選択に任せる」を固定する。
+    // E6(projects の遅延到着)側は ChatPanel.draft-carry.test.tsx の cold 系と
+    // 上の 14a のテストが押さえている。
+    let messageFetches = 0;
+
+    beforeEach(() => {
+      messageFetches = 0;
+      fetchChatAgentsMock.mockResolvedValue([CLAUDE_AGENT]);
+      fetchChatThreadsMock.mockResolvedValue([THREAD_1]);
+      vi.stubGlobal(
+        'fetch',
+        vi.fn((url: string) => {
+          if (url.includes('/api/chat/sessions/sess-1/messages')) {
+            messageFetches += 1;
+            return Promise.resolve(jsonResponse({ sessionId: 'sess-1', agentId: 'claude', messages: [] }));
+          }
+          return Promise.reject(new Error(`Unexpected fetch: GET ${url}`));
+        }),
+      );
+    });
+
+    async function settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
+    it('keeps a typed cold draft selected over the existing thread after picking the project (r5we: content bumps the nonce)', async () => {
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A, PROJECT_B]);
+      const projectSelect = screen.getByLabelText('対象プロジェクト');
+      expect(projectSelect).toHaveValue('');
+
+      await user.type(screen.getByLabelText('メッセージ'), 'cold draft');
+      await user.selectOptions(projectSelect, 'proj-a');
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-a'));
+      await settle();
+
+      expect(projectSelect).toHaveValue('proj-a');
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('cold draft');
+      expect(messageFetches).toBe(0);
+    });
+
+    it('keeps the cold draft selected when only the nonce advanced in the cold keyspace (ysu SF2 via the select)', async () => {
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A, PROJECT_B]);
+
+      await user.click(screen.getByRole('button', { name: '新しい空のスレッドを開始' }));
+      await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
+      await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledWith('proj-a'));
+      await settle();
+
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('');
+      expect(messageFetches).toBe(0);
+    });
+
+    it('lets the existing thread win when the cold draft is empty and the nonce never moved (no bump)', async () => {
+      const user = userEvent.setup();
+      renderChatPanel([PROJECT_A, PROJECT_B]);
+
+      await user.selectOptions(screen.getByLabelText('対象プロジェクト'), 'proj-a');
+
+      await waitFor(() => expect(messageFetches).toBe(1));
+      await settle();
+      expect(messageFetches).toBe(1);
     });
   });
 
