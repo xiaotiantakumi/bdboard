@@ -272,6 +272,12 @@ export async function getPrBadges(
       statusCache,
       statusGate,
       budget: statusBudget,
+      // bdboard-gfqz: このチケットの gh 起動が「まだ応答を待っている自分のリクエスト」
+      // 由来か「応答タイムアウト後のバックグラウンド継続」由来かを、実際に
+      // statusGate.acquire() する直前に都度判定する (timedOut は let なので、この
+      // 呼び出し時点ではまだ false でも、ゲート待ちしている間に true へ変わりうる —
+      // その場合でも判定はここではなく resolvePrStatus 内の acquire 直前で行われる)。
+      getPriority: () => (timedOut ? 'low' : 'high'),
       onDeferred: () => {
         deferredFetchCount += 1;
       },
