@@ -319,6 +319,10 @@ describe('TicketDetailPanel pending decisions', () => {
         'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。',
       ),
     ).toBeInTheDocument();
+    // bdboard-n5ns: no clearedHumanLabelTicketIds in the response means no sibling notice.
+    expect(
+      screen.queryByText(/他に .* 件のチケットの確認待ちも解除しました/),
+    ).not.toBeInTheDocument();
   });
 
   // bdboard-v78e: when respond() returns ambiguousGateIds (bdboard-q1k9: 2+ distinct open
@@ -447,25 +451,49 @@ describe('TicketDetailPanel pending decisions', () => {
       clearedHumanLabelTicketIds: ['bdboard-sib-1', 'bdboard-sib-2'],
     });
 
-    renderPanel(new Map(), {
-      id: sampleTicket.id,
-      kind: 'ticket',
-      projectId: sampleTicket.projectId,
-      options: [{ label: 'A案', value: 'a' }],
-      allowFreeform: true,
+    const onOpenTicket = vi.fn();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
     });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WatchedTicketsProvider>
+          <MaximizablePanel
+            ticketId={sampleTicket.id}
+            projectRootPaths={new Map()}
+            pendingDecision={{
+              id: sampleTicket.id,
+              kind: 'ticket',
+              projectId: sampleTicket.projectId,
+              options: [{ label: 'A案', value: 'a' }],
+              allowFreeform: true,
+            }}
+            onClose={() => {}}
+            onChatAboutTicket={() => {}}
+            onOpenTicket={onOpenTicket}
+            isTicketOnBoard={() => true}
+            onFilterByEpic={() => {}}
+          />
+        </WatchedTicketsProvider>
+      </QueryClientProvider>,
+    );
 
     await user.click(await screen.findByRole('button', { name: 'A案' }));
     await user.click(screen.getByRole('button', { name: '回答を送信' }));
 
     expect(await screen.findByText('他に 2 件のチケットの確認待ちも解除しました:')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'bdboard-sib-1' })).toBeInTheDocument();
+    const sib1Link = screen.getByRole('button', { name: 'bdboard-sib-1' });
+    expect(sib1Link).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'bdboard-sib-2' })).toBeInTheDocument();
     expect(
       screen.getByText(
         'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。',
       ),
     ).toBeInTheDocument();
+
+    await user.click(sib1Link);
+    expect(onOpenTicket).toHaveBeenCalledWith('bdboard-sib-1');
   });
 
   it('shows sibling human-label notices for gate decisions alongside the gate outcome', async () => {

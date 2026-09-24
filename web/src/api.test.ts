@@ -512,6 +512,146 @@ describe('postTicketDecision outcome normalization (bdboard-bh48)', () => {
       closed: true,
     });
   });
+
+  // bdboard-n5ns: clearedHumanLabelTicketIds (bdboard-ixx9 のゲート清掃) must reach the
+  // UI too, so a sibling ticket's dropped 確認待ち badge isn't silent. Unlike
+  // ambiguousGateIds this field can appear on either the ticket-side (closed: false) or
+  // gate-side (closed: true) answer path, so it is not gated on closed.
+  it('preserves clearedHumanLabelTicketIds from the ticket-side answer response', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'ticket',
+              closed: false,
+              clearedHumanLabelTicketIds: ['bdboard-sib-1', 'bdboard-sib-2'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+      clearedHumanLabelTicketIds: ['bdboard-sib-1', 'bdboard-sib-2'],
+    });
+  });
+
+  it('preserves clearedHumanLabelTicketIds from the gate-side answer response', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'gate',
+              closed: true,
+              clearedHumanLabelTicketIds: ['bdboard-sib-3'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'gate',
+      closed: true,
+      clearedHumanLabelTicketIds: ['bdboard-sib-3'],
+    });
+  });
+
+  it('omits clearedHumanLabelTicketIds when the server sends an empty array', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: { kind: 'ticket', closed: false, clearedHumanLabelTicketIds: [] },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+    });
+  });
+
+  it('ignores non-array clearedHumanLabelTicketIds values from the server', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'ticket',
+              closed: false,
+              clearedHumanLabelTicketIds: 'not-an-array',
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+    });
+  });
+
+  it('rejects the entire clearedHumanLabelTicketIds array when any entry is not a string', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'ticket',
+              closed: false,
+              clearedHumanLabelTicketIds: ['bdboard-sib-1', 123, 'bdboard-sib-2'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'ticket',
+      closed: false,
+    });
+  });
+
+  it('strips clearedHumanLabelTicketIds when kind could not be resolved, even if the server sends it', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            outcome: {
+              kind: 'unknown',
+              closed: false,
+              clearedHumanLabelTicketIds: ['bdboard-sib-1'],
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(postTicketDecision('ticket-1', { freeform: 'answer' })).resolves.toEqual({
+      kind: 'unknown',
+      closed: false,
+    });
+  });
 });
 
 describe('agent run API', () => {
