@@ -83,6 +83,11 @@
 - 防止: available なら waiters の中身に関わらず即 acquire する。`acquire --wait` は使わない（残骸を増やすだけ）。先頭待ちのポーリングを自作しない（本則: worktree-pr-flow.md §5 層1「waiters は参考情報」節）。waiters の自動失効・acquire/release時のエントリ除去など bd 本体側の改修は harness-upstream チケット（bdboard-c6wu）へ
 - 出典: bdboard-5avg（起票: bdboard-wadg / PR #480 マージ時のキュー飛び観測、停滞事故: 議長観測 2026-09-20）
 
+### merge-slot-held-through-ci — merge-slot を握ったまま rebase → CI 待ち → verify を回し、11 時間中 7.6 時間（約 70%）枠が埋まってマージ間隔が約 12 分に張り付いた（2026-09-23）
+- 原因: 「CAS は rebase 元と一致すること」を枠の中で満たそうとして、CAS 負け → rebase → CI 5–9 分 → CAS のやり直しをすべて枠の中で行っていた（待機ループ ≈250 分、CI 待ち ≈140 分、verify ≈80 分）。ruleset は strict=false で、この待ちは GitHub の要求ではない
+- 防止: 契約の `merge.mode: S1` — 枠は acquire → CAS → gh pr merge → release だけ、着地後検証は枠の外で commit status 台帳へ（本則: worktree-pr-flow.md §5「S1」、bdboard の `npm run merge-pr`）
+- 出典: bdboard-iaqg（計測）/ bdboard-ulxa（設計）/ bdboard-ulxa.1（S1 実装）
+
 ### ci-webhook-drop — GitHub 障害中の force-push で CI が起動せず、pending と誤認して待ち続けた（2026-08-17）
 - 原因: 障害中は webhook の synchronize イベントが無言でドロップされ、check-suite 自体が生成されない
 - 防止: check-runs/check-suites の REST 照会で「未起動」を判別し、空コミットで再トリガー（本則: worktree-pr-flow.md §4）

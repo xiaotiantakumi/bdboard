@@ -8,13 +8,14 @@
 `.claude/bdboard-harness.json` → (2) 無い/壊れていれば CLAUDE.md / AGENTS.md → (3) どちらにも
 無ければ検証せずに進めない**（SKILL.md 規律4 手順1）の順で決める。
 
-コントラクトの3キーの意味（この節が正本。SKILL.md 側はここへのポインタ）:
+コントラクトのキーの意味（この節が正本。SKILL.md 側はここへのポインタ）:
 
 | キー | 意味 |
 |---|---|
 | `verify` | 回して **exit 0 が合格**の検証コマンド |
 | `prFlow` | `pr` = PR 必須 / `direct` = main 直コミット可 / `none` = git 手順を省く |
 | `mainBranch` | rebase と、マージ直前 CAS（層2）の基準ブランチ名 |
+| `merge`（任意） | マージ手順の段階。`mode` が `S0`（既定）/ `S1`。§5「S1」参照 |
 
 **(3) に落ちたときのエスカレーション**（この文言をそのまま使う）:
 
@@ -429,6 +430,64 @@ rebase は必須（他セッションの WIP で main が汚れている状況�
 独立に緑だった2本の意味的衝突は、main 上の着地後検証か前掲のブランチ tip 検証の**どちらか**
 でしか捕まらない。squash マージなら壊れていても revert 1発で戻せる。緑を確認するまで次の
 PR をマージしない。
+
+#### S1 — 枠は CAS とマージの一瞬だけ握る（契約の `merge.mode` が `S1` のとき）
+
+ここまでの層1〜3 の手順は `merge.mode` が `S0`（既定・省略時）の手順。`S0` では枠を
+握ったまま rebase → CI 待ち → 着地後検証をするため、並列度が上がると枠の占有そのものが
+律速になる（failure-catalog.md の merge-slot-held-through-ci: 11 時間中 7.6 時間）。
+`S1` は手順をスクリプト化したプロジェクト（bdboard の `npm run merge-pr`）だけが宣言し、
+3 層の中身を次のように置き換える。**どちらの手順で動くかは `<mainBranch>` に入っている
+契約の `merge.mode` で決まる**（PR ブランチ側の古い値ではない。スクリプトは fetch 後の
+`origin/<mainBranch>` の契約を読む）。
+
+- **層1**: 枠の中は `acquire → git ls-remote（CAS）→ gh pr merge → release` だけ（数十秒）。
+  rebase・CI 待ち・検証はすべて枠の外。`--wait` は使わない。**他人の枠は release しない** —
+  空かなければ時間を置いて並び直し、握りっぱなしに見えるなら議長に報告する。
+- **層2**: CAS の比較対象は「rebase 元」ではなく **PRED_BASE**（prepare が「この main の上に
+  マージする」と記録した SHA）。S1 では PR head が PRED_BASE を含むとき（main 不動）だけ
+  進み、main が進んでいれば枠の外で rebase → CI → prepare からやり直す（CAS 負けも同じ。
+  rebase に直行せず prepare で分類し直す）。
+- **層3**: 台帳は GitHub commit status（context は契約の `merge.statusContext`、既定
+  `bdboard/landed-verify`）。**マージしたエージェント自身が PR worktree で**
+  `git checkout --detach <着地した SHA>` → 検証コマンド → success / failure を記録する。
+  main checkout に触れないので hook 規則 7 に当たらない。次の merger は PRED_BASE の台帳を
+  ゲートにする: success なら進む / failure ならマージしない（下の「main が壊れたとき」）/
+  pending か無しなら LEASE（`merge.leaseMinutes`、既定 8 分）まで待ち、過ぎていれば自分で
+  検証して台帳を書く（自己修復。failure には適用しない）。
+- **マージコマンドはスクリプトが印字し、エージェントが 1 回だけ実行する**（スクリプトの中で
+  `gh pr merge` を打たない — 権限判定に拒否されたときにスクリプト経由で通すと迂回になる）。
+
+```bash
+npm run merge-pr -- prepare <N>   # 枠の外。PR / 必須チェック / main を確かめ PRED_BASE を記録
+                                  #   exit 3 = main が動いた → rebase → push → CI → prepare から
+npm run -s merge-pr -- gate <N>   # 層3 ゲート → acquire → CAS → stdout にマージ行を印字 (枠は保持)
+gh pr merge <N> --squash --delete-branch --match-head-commit <head> --subject '<title> (#N)'  # 印字どおり
+npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠を返す → 着地後検証 → 台帳
+```
+
+- 実行場所は **PR の worktree（linked worktree）**。main checkout では着地後検証を拒否する
+  （detach すると常時稼働サーバーの配信物まで置き換わるため）。`-s` は npm の見出し行を stdout に
+  出さないため（stdout はマージ行 1 行だけになる）。状態とログは git common dir の `bdboard-merge/`。
+- 終了コード 75 は「並び直し」（CAS 負け・main が動いた・ls-remote 失敗・枠が空かない・CI pending・
+  GitHub API に届かない）。prepare からやり直す。4 / 6 は main が壊れている（下記）。1 は実行
+  できなかった（bd が使えない・作業ツリーが dirty・npm ci 失敗など。表示に従って直す。着地後検証を
+  実行できなかったときは直してから `npm run merge-pr -- verify <sha>`）。
+- 着地後検証の間は pending を LEASE の 1/3 ごとに更新し続ける（verify スロット待ちで長引いても
+  他の merger が自己修復に走らない）。npm ci の失敗は環境要因とみなし failure と記録しない。
+- `gh pr merge` が権限判定で拒否された / 409（head 不一致）でも **finish を打って枠を返す**
+  （finish は REST の `merged` で成否を判定し、未マージなら枠を返して exit 5）。拒否の後は
+  再試行・別経路をせず人間判断へ（SKILL.md 規律3）。
+- 着地後検証が success なら、着地した木と PR head の木が同一かを finish が表示する（S0 の
+  「ブランチ tip 検証」に相当。S1 では検証そのものを着地した木で行うので代用は要らない）。
+- **main が壊れたとき**（台帳 failure・main の CI の verify/e2e が赤）: 見つけた者が枠を取って
+  修復まで握る（finish は failure を記録すると自分で取る。これが唯一の長時間保持）→
+  P0 バグを起票 → commit status の SHA 単位の履歴で最後の success と最初の failure を特定 →
+  短時間で直せるなら fix-forward、それ以外は `git revert --no-edit <壊した squash SHA>` の PR →
+  その PR は prepare → `gate <N> --repair`（台帳の failure を無視し、`… / main-broken <PRED_BASE 12 桁>`
+  の枠を引き継ぐ）→ 印字行 → finish で入れる（finish は success のときだけ枠を返す）→ 壊した PR の
+  チケットを再 open して理由を残す。`--repair` は P0 バグの修復 PR 専用。
+- 巻き戻し（S1 → S0）は契約の 1 行。gate 済みの PR があっても finish は動き、枠を返す。
 
 ### 6. close と掃除
 

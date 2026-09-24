@@ -125,6 +125,9 @@ bdboard から読みに行くと層の逆依存になるため / bdboard-p5l.13)
 省略可能な `alwaysOnServer` 節 (`port` / `restartScript`) は、常時稼働サーバーの保護 (ハーネス
 パックの hook 規則 7) を有効にする宣言で、パーサーは読まず hook だけが読む (bdboard-hpu8)。
 bdboard 自身は `8787` / `scripts/always-on-server.sh` を宣言している。
+同じく省略可能な `merge` 節 (`mode` = `S0` / `S1`、`leaseMinutes`、`slotWaitMinutes`、
+`statusContext`) はマージ手順の段階の宣言で、パーサーは読まず `scripts/merge-pr` だけが
+`origin/main` 上の版を読む (bdboard-ulxa.1)。
 
 `.claude/` 配下に置くのは、注入 API のパストラバーサルガード `resolveUnderClaudeDir` の内側に
 収めるため。パースと
