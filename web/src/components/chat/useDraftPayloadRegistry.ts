@@ -29,6 +29,9 @@ export interface UseDraftPayloadRegistryResult {
  * 依存配列)と E9(ticket-context effect)の依存配列に入っている。参照が毎レンダー
  * 変わると両 effect が入力のたびに再実行されるので、依存配列には
  * draftApplicators オブジェクトではなく個々の関数を並べる(下のコメント参照)。
+ * 同じ理由で、引数の setThreadModelIds と draftApplicators の各関数は呼び出し側で
+ * 参照が安定していること(ChatPanel では useState の setter と useCallback)。
+ * 毎レンダー作り直すラッパーを渡すと E6/E9 が入力のたびに再実行される。
  *
  * bdboard-c1pw / bdboard-ru4d: 会話キーで索かれる「ドラフト積載物」ストアの
  * 単一の登録簿。会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペース

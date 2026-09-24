@@ -57,7 +57,9 @@ function useRegistryProbe(
   const setThreadModelIds = useCallback((action: SetStateAction<Record<string, string>>) => {
     calls.push('threadModelIds');
     setThreadModelIdsState(action);
-    // calls は各テストで1つだけ作る配列なので、参照は変わらない。
+    // 初回レンダーの calls だけを捕まえる。順番を見るテストは calls を明示的に
+    // 渡す(テストごとに1つの配列)ので、それで足りる。省略したテストでは
+    // 既定値の配列が毎レンダー作られるが、どのテストもそれを読まない。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const registry = useDraftPayloadRegistry({
@@ -84,7 +86,7 @@ describe('useDraftPayloadRegistry', () => {
     expect(result.current.purgeDraftPayloadKeys).toBe(first.purgeDraftPayloadKeys);
   });
 
-  it('recreates the functions only when one of the individual applicators changes', () => {
+  it('recreates the functions when one of the individual applicators changes', () => {
     const { applicators } = makeStores();
     let current = applicators;
     const { result, rerender } = renderHook(() => useRegistryProbe(current, {}));

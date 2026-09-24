@@ -10,7 +10,7 @@
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach を複製している。
 
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
@@ -127,6 +127,15 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
   });
 
   describe('T10 additions: API call-order fingerprint for ticket launch and cold projects', () => {
+    // waitFor は条件が揃った最初の瞬間に通るので、「この後に余計な呼び出しが
+    // 来ない」ことは言えない。残りの effect とマイクロタスクを流してから、
+    // 同じ並びをもう一度確かめる。
+    async function settle() {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+
     function recordCalls() {
       const callOrder: string[] = [];
       fetchChatThreadsMock.mockImplementation((projectId: string) => {
@@ -166,6 +175,8 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
         expect(screen.getByLabelText('メッセージ')).toHaveValue('チケット: ');
         expect(callOrder).toEqual(['threads:proj-a', 'turn-status:proj-a', 'agents']);
       });
+      await settle();
+      expect(callOrder).toEqual(['threads:proj-a', 'turn-status:proj-a', 'agents']);
     });
 
     it('fingerprints a regular mount whose projects arrive later (cold window → E6 adopt)', async () => {
@@ -186,6 +197,8 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
       await waitFor(() => {
         expect(callOrder).toEqual(['agents', 'threads:proj-a', 'turn-status:proj-a', 'messages:sess-1']);
       });
+      await settle();
+      expect(callOrder).toEqual(['agents', 'threads:proj-a', 'turn-status:proj-a', 'messages:sess-1']);
     });
 
     it('fingerprints a ticket launch whose projects arrive later (cold window → E9 purge + pending draft)', async () => {
@@ -213,6 +226,9 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
         expect(screen.getByLabelText('メッセージ')).toHaveValue('チケット: ');
         expect(callOrder).toEqual(['agents', 'threads:proj-a', 'turn-status:proj-a']);
       });
+      await settle();
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('チケット: ');
+      expect(callOrder).toEqual(['agents', 'threads:proj-a', 'turn-status:proj-a']);
     });
   });
 });
