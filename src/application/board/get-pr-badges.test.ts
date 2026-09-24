@@ -985,6 +985,67 @@ describe('getPrBadges', () => {
     expect(prStatusReader.getPrStatus).toHaveBeenCalledTimes(2);
   });
 
+  it('bdboard-ye2p: does not call gh for a URL restored via initialEntries (simulated restart)', async () => {
+    // 「サーバー再起動をまたいで terminal な結果を残す」の検証観点: 起動時に
+    // 永続化ストアから読み込んだエントリだけで statusCache.get() がヒットし、
+    // getPrBadges は一度も gh (prStatusReader.getPrStatus) を起動しない。
+    const cache = createFakeBoardCache();
+    const a = project('proj-a', '/projects/a');
+    const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+    cache.putProject({
+      project: a,
+      tickets: [makeTicket({ id: 'bdboard-pr', projectId: a.id, commentCount: 1, updatedAt })],
+      fingerprint: 'fp-a',
+      fetchedAt: updatedAt,
+    });
+
+    const commentReader: CommentReader = {
+      listComments: vi.fn(async () => [
+        {
+          id: 'c1',
+          issueId: 'bdboard-pr',
+          author: 'agent',
+          text: `PR: ${PR_URL}`,
+          createdAt: updatedAt,
+        },
+      ]),
+    };
+    const prStatusReader: PrStatusReader = {
+      getPrStatus: vi.fn(async () =>
+        ({ status: { state: 'merged', checkStatus: 'pass' } satisfies PrStatus }),
+      ),
+    };
+
+    const commentCache = new PrBadgeCommentCache();
+    // 「前回のプロセス」で terminal になった結果を、永続化ストアから読み込んだ
+    // 体で initialEntries に渡す (実際の読み込みは infrastructure/fs/pr-badge-status-store.ts
+    // の役目だが、ここでは PrBadgeStatusCache 側の契約だけを見る)。
+    const statusCache = new PrBadgeStatusCache({
+      initialEntries: [
+        {
+          url: PR_URL,
+          status: { state: 'merged', checkStatus: 'pass' },
+          fetchedAt: 0,
+          mergedPendingRetries: 0,
+        },
+      ],
+    });
+    const options = { commentCache, statusCache };
+
+    const badges = await getPrBadges(cache, commentReader, prStatusReader, options);
+
+    expect(prStatusReader.getPrStatus).not.toHaveBeenCalled();
+    expect(badges).toEqual([
+      {
+        ticketId: 'bdboard-pr',
+        projectId: a.id,
+        url: PR_URL,
+        status: { state: 'merged', checkStatus: 'pass' },
+      },
+    ]);
+  });
+
   describe('close-evidence derivation from the PR-badge comment scan (bdboard-pkr6.16, M2)', () => {
     it('derives hasCloseEvidence=true when any comment matches the PR/検証 marker', async () => {
       const cache = createFakeBoardCache();

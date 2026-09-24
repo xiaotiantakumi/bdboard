@@ -9,6 +9,7 @@ import type { IssueWriterPort } from '../../application/ports/issue-writer.js';
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
+import type { PrBadgeStatusCache } from '../../application/board/get-pr-badges.js';
 import type { ProcessScanner } from '../../application/ports/process-scanner.js';
 import type { SessionLinkWriterPort } from '../../application/ports/session-link-writer.js';
 import type { SessionTailReader } from '../../application/ports/session-tail-reader.js';
@@ -37,6 +38,7 @@ export interface BuildApiDepsParams {
   readonly links?: () => readonly SessionLink[];
   readonly commentReader?: CommentReader;
   readonly prStatusReader?: PrStatusReader;
+  readonly prBadgeStatusCache?: PrBadgeStatusCache;
   readonly processScanner?: ProcessScanner;
   readonly humanDecisions?: HumanDecisionsPort;
   readonly worktreeScanner?: WorktreeScanner;

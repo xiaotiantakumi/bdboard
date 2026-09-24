@@ -81,6 +81,7 @@ async function main(): Promise<void> {
     mergeSlotReader: bdServices.mergeSlotReader,
     reclaimScheduler: lifecycle.reclaimScheduler,
     reclaimHistory: lifecycle.reclaimHistory,
+    dbPath: config.dbPath,
   });
 
   const app = new Hono();

@@ -14,6 +14,7 @@ import type { SessionTailReader } from '../../application/ports/session-tail-rea
 import type { LeaseReader } from '../../application/ports/lease-reader.js';
 import type { MergeSlotReader } from '../../application/ports/merge-slot-reader.js';
 import type { PrStatusReader } from '../../application/ports/pr-status-reader.js';
+import type { PrBadgeStatusCache } from '../../application/board/get-pr-badges.js';
 import type { ReclaimScheduler } from '../../application/lease/reclaim-scheduler.js';
 import type { ReclaimHistory } from '../../application/lease/reclaim-history.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
@@ -89,6 +90,13 @@ export interface ApiDeps {
   readonly leaseReader?: LeaseReader;
   readonly mergeSlotReader?: MergeSlotReader;
   readonly prStatusReader?: PrStatusReader;
+  /**
+   * bdboard-ye2p: サーバー再起動をまたいで terminal な gh 結果を残すための
+   * PR ステータスキャッシュ。bootstrap (wire-board-api.ts) が永続化ストアから
+   * 読み込んで組み立てる。未指定なら pr-links-routes.ts が空のインメモリ
+   * キャッシュにフォールバックする (テスト等)。
+   */
+  readonly prBadgeStatusCache?: PrBadgeStatusCache;
   readonly reclaimScheduler?: ReclaimScheduler;
   /**
    * ハーネス KPI の reclaim 指標用。サーバー起動からの累積で永続化しない

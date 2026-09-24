@@ -21,6 +21,7 @@ export * from './git/git-worktree-scanner.js';
 export * from './gh/gh-cli-pr-status-reader.js';
 export * from './fs/beads-fingerprinter.js';
 export * from './fs/tunnel-interruption-store.js';
+export * from './fs/pr-badge-status-store.js';
 export * from './fs/config-path.js';
 export * from './fs/scan-roots-config-store.js';
 export * from './fs/board-thresholds-config-store.js';

@@ -1,27 +1,22 @@
 import type { PrStatus } from '../../domain/pr-link.js';
 import type { PrStatusResult } from '../ports/pr-status-reader.js';
+import {
+  buildInitialPrBadgeStatusEntries,
+  collectTerminalPrBadgeStatusEntries,
+  isMergedPendingStatus,
+  isTerminalPrStatus,
+  type PersistedPrBadgeStatusEntry,
+  type PrBadgeStatusCacheEntry,
+} from './pr-badge-status-cache-types.js';
+
+export type { PersistedPrBadgeStatusEntry } from './pr-badge-status-cache-types.js';
 
 /**
  * PrBadgeStatusCache — PR URL ごとの gh pr view 結果を TTL/恒久で保持する薄いキャッシュ。
  * get-pr-badges.ts から切り出した (bdboard-se3v: 挙動変更ついでの行数上限対応。関心の
- * 分割のみ、ロジックは1文字も変えていない)。
+ * 分割のみ、ロジックは1文字も変えていない)。エントリの型・terminal 判定・永続化用
+ * バリデーションは pr-badge-status-cache-types.ts へ切り出した (bdboard-ye2p, 行数上限)。
  */
-interface PrBadgeStatusCacheEntry {
-  readonly status: PrStatus | null;
-  readonly fetchedAt: number;
-  readonly permanent: boolean;
-  /**
-   * 連続で取得失敗 (rate-limit を除く。not-found/timeout/other) した回数。
-   * 否定キャッシュの指数バックオフに使う (bdboard-7ln6 #3)。成功すると 0 に戻る。
-   */
-  readonly failureStreak: number;
-  /**
-   * merged/closed だが checks が pending のまま再取得した回数。しきい値
-   * (mergedPendingMaxRetries) を超えたら、その時点の状態のまま恒久化する
-   * (bdboard-7ln6 #4)。state が merged/closed+pending でなくなると 0 に戻る。
-   */
-  readonly mergedPendingRetries: number;
-}
 
 export interface PrBadgeStatusCacheOptions {
   readonly now?: () => number;
@@ -39,6 +34,10 @@ export interface PrBadgeStatusCacheOptions {
   readonly circuitMaxCooldownMs?: number;
   /** サーキットが open になった瞬間の警告ログ。未指定なら console.warn。 */
   readonly logWarn?: (message: string) => void;
+  /** bdboard-ye2p: 起動時に永続化ストアから読み込んだ terminal エントリ (不正な形は無視)。 */
+  readonly initialEntries?: readonly PersistedPrBadgeStatusEntry[];
+  /** bdboard-ye2p: 新しく permanent になったエントリが増えた通知。fs には触れない。 */
+  readonly onPersistableChange?: () => void;
 }
 
 const DEFAULT_STATUS_TTL_MS = 60_000;
@@ -47,19 +46,6 @@ const DEFAULT_MERGED_PENDING_TTL_MS = 30 * 60_000;
 const DEFAULT_MERGED_PENDING_MAX_RETRIES = 3;
 const DEFAULT_CIRCUIT_INITIAL_COOLDOWN_MS = 15 * 60_000;
 const DEFAULT_CIRCUIT_MAX_COOLDOWN_MS = 60 * 60_000;
-
-function isTerminalPrStatus(status: PrStatus | null): boolean {
-  if (status === null) {
-    return false;
-  }
-  return (
-    (status.state === 'merged' || status.state === 'closed') && status.checkStatus !== 'pending'
-  );
-}
-
-function isMergedPendingStatus(status: PrStatus): boolean {
-  return (status.state === 'merged' || status.state === 'closed') && status.checkStatus === 'pending';
-}
 
 /**
  * PR URL ごとの gh pr view 結果を TTL/恒久で保持する薄いキャッシュ。
@@ -72,9 +58,13 @@ function isMergedPendingStatus(status: PrStatus): boolean {
  * (4) 同一 URL への同時リクエストの in-flight 共有、を一手に引き受ける。
  * routes.ts はこれまで通り `new PrBadgeStatusCache()` を引数なしで生成すれば
  * 全部の既定値が効く (routes.ts 無変更で直す方針, bdboard-7ln6 の注意書き)。
+ *
+ * bdboard-ye2p: permanent なエントリだけを再起動をまたいで残す。読み込み
+ * (initialEntries) と書き込み通知 (onPersistableChange) だけを持ち、実際の
+ * ファイル I/O は呼び出し側に任せる (このクラス自体は fs に依存しない)。
  */
 export class PrBadgeStatusCache {
-  private readonly entries = new Map<string, PrBadgeStatusCacheEntry>();
+  private readonly entries: Map<string, PrBadgeStatusCacheEntry>;
   private readonly inFlight = new Map<string, Promise<PrStatusResult>>();
   private readonly now: () => number;
   private readonly ttlMs: number;
@@ -84,6 +74,7 @@ export class PrBadgeStatusCache {
   private readonly circuitInitialCooldownMs: number;
   private readonly circuitMaxCooldownMs: number;
   private readonly logWarn: (message: string) => void;
+  private readonly onPersistableChange: (() => void) | undefined;
   private circuitOpenUntil: number | null = null;
   private nextCircuitCooldownMs: number;
 
@@ -98,7 +89,9 @@ export class PrBadgeStatusCache {
       options?.circuitInitialCooldownMs ?? DEFAULT_CIRCUIT_INITIAL_COOLDOWN_MS;
     this.circuitMaxCooldownMs = options?.circuitMaxCooldownMs ?? DEFAULT_CIRCUIT_MAX_COOLDOWN_MS;
     this.logWarn = options?.logWarn ?? ((message: string) => console.warn(message));
+    this.onPersistableChange = options?.onPersistableChange;
     this.nextCircuitCooldownMs = this.circuitInitialCooldownMs;
+    this.entries = buildInitialPrBadgeStatusEntries(options?.initialEntries);
   }
 
   get(url: string): PrStatus | null | undefined {
@@ -116,6 +109,11 @@ export class PrBadgeStatusCache {
     // 失うと「最大N回で恒久化」が二度と成立しなくなる (期限切れのたびにカウンタが
     // 0 に戻ってしまう)。表示に使う値は undefined を返すだけで十分。
     return undefined;
+  }
+
+  /** bdboard-ye2p: 永続化対象 (permanent なエントリ) だけのスナップショット。 */
+  getTerminalEntries(): readonly PersistedPrBadgeStatusEntry[] {
+    return collectTerminalPrBadgeStatusEntries(this.entries);
   }
 
   private computeTtl(entry: PrBadgeStatusCacheEntry): number {
@@ -193,6 +191,8 @@ export class PrBadgeStatusCache {
   }
 
   private recordSuccess(url: string, status: PrStatus): void {
+    const previous = this.entries.get(url);
+    const wasPermanent = previous?.permanent === true;
     if (isTerminalPrStatus(status)) {
       this.entries.set(url, {
         status,
@@ -201,18 +201,24 @@ export class PrBadgeStatusCache {
         failureStreak: 0,
         mergedPendingRetries: 0,
       });
+      if (!wasPermanent) {
+        this.onPersistableChange?.();
+      }
       return;
     }
     if (isMergedPendingStatus(status)) {
-      const previous = this.entries.get(url);
       const retries = (previous?.mergedPendingRetries ?? 0) + 1;
+      const permanent = retries >= this.mergedPendingMaxRetries;
       this.entries.set(url, {
         status,
         fetchedAt: this.now(),
-        permanent: retries >= this.mergedPendingMaxRetries,
+        permanent,
         failureStreak: 0,
         mergedPendingRetries: retries,
       });
+      if (permanent && !wasPermanent) {
+        this.onPersistableChange?.();
+      }
       return;
     }
     this.entries.set(url, {
