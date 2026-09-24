@@ -165,14 +165,14 @@ describe('parseBaselineConfig', () => {
     JSON.stringify({
       defaultLimits: { nonTest: 500, test: 1500 },
       ratchetWarningThreshold: 200,
-      entries: [{ path: 'src/big.ts', limit: 600, reason: '理由' }],
+      entries: [{ path: 'test/big.ts', limit: 600, reason: '理由' }],
     });
 
   it('parses a valid config', () => {
     const config = parseBaselineConfig(valid());
     expect(config.defaultLimits).toEqual({ nonTest: 500, test: 1500 });
     expect(config.ratchetWarningThreshold).toBe(200);
-    expect(config.entries.get('src/big.ts')).toEqual({ limit: 600, reason: '理由' });
+    expect(config.entries.get('test/big.ts')).toEqual({ limit: 600, reason: '理由' });
   });
 
   it('throws on broken JSON syntax', () => {
@@ -219,6 +219,12 @@ describe('parseBaselineConfig', () => {
     expect(() => parseBaselineConfig(JSON.stringify(bad))).toThrow(/正規化/);
   });
 
+  it('throws when an entry path is outside the target scope', () => {
+    const bad = JSON.parse(valid());
+    bad.entries[0].path = 'src/README.md';
+    expect(() => parseBaselineConfig(JSON.stringify(bad))).toThrow(/対象範囲外/);
+  });
+
   it('throws when limit is not a positive integer', () => {
     const bad = JSON.parse(valid());
     bad.entries[0].limit = 0;
@@ -239,7 +245,7 @@ describe('parseBaselineConfig', () => {
 
   it('throws on duplicate paths', () => {
     const bad = JSON.parse(valid());
-    bad.entries.push({ path: 'src/big.ts', limit: 700, reason: '別の理由' });
+    bad.entries.push({ path: 'test/big.ts', limit: 700, reason: '別の理由' });
     expect(() => parseBaselineConfig(JSON.stringify(bad))).toThrow(/重複しています/);
   });
 
@@ -258,11 +264,37 @@ describe('parseBaselineConfig', () => {
 
 describe('validateEntryShape', () => {
   it('accepts a well-formed entry', () => {
-    expect(validateEntryShape({ path: 'a/b.ts', limit: 10, reason: 'x' }, 0)).toEqual([]);
+    expect(validateEntryShape({ path: 'test/a/b.ts', limit: 10, reason: 'x' }, 0)).toEqual([]);
   });
 
   it('rejects a non-object entry', () => {
     expect(validateEntryShape('nope', 0)).toEqual(['entries[0] はオブジェクトである必要があります']);
+  });
+
+  it.each(['docs/foo.ts', 'src/README.md', 'src/fixtures/big.ts'])(
+    'rejects out-of-scope path %s',
+    (entryPath) => {
+      expect(validateEntryShape({ path: entryPath, limit: 10, reason: 'x' }, 0)).toEqual([
+        `entries[0].path (${entryPath}) は対象範囲外です (対象ディレクトリ/拡張子外、または fixtures/ 配下は baseline に登録できません)`,
+      ]);
+    },
+  );
+
+  // src/fixtures/big.ts は ESLint 対象拡張子 (.ts in src/) の除外だけでも isTargetPath が
+  // false になるため、上のケースだけでは isFixturePath 側の OR 分岐を検証できない
+  // (isFixturePath チェックを消しても通ってしまう)。test/ は ESLint 対象外で .ts も
+  // 対象拡張子なので isTargetPath は true になり、fixtures/ 配下であることだけを理由に
+  // 拒否されることを別途確認する。
+  it('rejects a fixtures/ path that is otherwise in scope (isFixturePath branch)', () => {
+    expect(validateEntryShape({ path: 'test/fixtures/big.ts', limit: 10, reason: 'x' }, 0)).toEqual([
+      'entries[0].path (test/fixtures/big.ts) は対象範囲外です (対象ディレクトリ/拡張子外、または fixtures/ 配下は baseline に登録できません)',
+    ]);
+  });
+
+  it.each(['src\\big.ts', 'src/../src/big.ts'])('does not scope-check malformed path %s', (entryPath) => {
+    const errors = validateEntryShape({ path: entryPath, limit: 10, reason: 'x' }, 0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).not.toContain('対象範囲外');
   });
 });
 
@@ -384,6 +416,25 @@ describe('formatResult', () => {
     const emptyConfig = { defaultLimits: { nonTest: 100, test: 300 }, ratchetWarningThreshold: 20, entries: new Map() };
     const text = formatResult(evaluate([{ path: 'src/ok.ts', isTest: false, lines: 10 }], emptyConfig));
     expect(text).toContain('巨大ファイルの新規発生・baseline 超過はありません');
+    expect(text).not.toContain('docs/VERIFY.md');
+  });
+
+  it('omits the docs/VERIFY.md footer when only a (d) ratchet warning is present (non-fatal)', () => {
+    const entries = new Map([['src/a.ts', { limit: 150, reason: 'r' }]]);
+    const cfg = { defaultLimits: { nonTest: 100, test: 300 }, ratchetWarningThreshold: 20, entries };
+    // 101 は既定上限(100)より上なので "ok" 枝に入り、gap = 150 - 101 = 49 >= threshold(20)
+    // で (d) 警告だけが付く。newOverLimit/overOwnLimit/shrunkBelowDefault/missingFiles は
+    // いずれも空 (total === 0、non-fatal) であること。
+    const result = evaluate([{ path: 'src/a.ts', isTest: false, lines: 101 }], cfg);
+    expect(
+      result.newOverLimit.length +
+        result.overOwnLimit.length +
+        result.shrunkBelowDefault.length +
+        result.missingFiles.length,
+    ).toBe(0);
+    const text = formatResult(result);
+    expect(text).toContain('ラチェット');
+    expect(text).not.toContain('docs/VERIFY.md');
   });
 
   it('includes actionable text for each failing category', () => {
@@ -408,6 +459,8 @@ describe('formatResult', () => {
     expect(text).toContain('src/shrunk.ts');
     expect(text).toContain('src/missing.ts');
     expect(text).toMatch(/対処が要る項目が 4 件あります/);
+    expect(text).toContain('docs/VERIFY.md');
+    expect(text).toContain('ファイルサイズガード');
   });
 
   it('--report mode lists every scanned file sorted by line count descending', () => {
@@ -613,6 +666,16 @@ describe('check-file-size CLI', () => {
     expect(result.stderr).toContain('baseline 設定を読み込めません');
   });
 
+  it('exits 2 (not a permanent (c) failure) when a baseline entry points outside the target scope', () => {
+    // bdboard-ihf6: 対象範囲外のパスを baseline に登録すると、走査結果に一度も現れず
+    // 永久に (c) missing で fail し続けていた。CLI レベルでも早期の形式エラー (exit 2)
+    // になることを固定する。
+    writeConfig({ entries: [{ path: 'docs/foo.ts', limit: 5, reason: 'out of scope' }] });
+    const result = runCheck();
+    expect(result.status).toBe(EXIT_UNAVAILABLE);
+    expect(result.stderr).toContain('対象範囲外');
+  });
+
   it('exits 2 when the baseline config file is missing entirely', () => {
     const result = runCheck();
     expect(result.status).toBe(EXIT_UNAVAILABLE);
@@ -657,5 +720,16 @@ describe('listGitFiles', () => {
     for (const f of files) {
       expect(f).not.toContain('\\');
     }
+  });
+
+  it('returns non-ASCII filenames unquoted even when core.quotePath defaults to true', () => {
+    // core.quotePath の *リポジトリローカル* な既定値を明示的に true にしておく
+    // (グローバル設定が既に false の開発機では、-c を落としてもこのテストが偽陽性で
+    // 通ってしまうため)。listGitFiles が -c core.quotePath=false / -z を正しく渡していれば、
+    // ローカル設定の値に関わらずクォートされない。
+    execFileSync('git', ['config', 'core.quotePath', 'true'], { cwd: tmpRoot });
+    fs.mkdirSync(path.join(tmpRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(tmpRoot, 'src', '日本語.ts'), '1\n');
+    expect(listGitFiles(tmpRoot)).toContain('src/日本語.ts');
   });
 });

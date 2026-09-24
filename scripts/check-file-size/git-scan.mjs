@@ -39,10 +39,20 @@ function git(args, cwd) {
  */
 export function listGitFiles(repoRoot) {
   const output = git(
-    ['ls-files', '--cached', '--others', '--exclude-standard', '--', ...TARGET_DIRS],
+    [
+      '-c',
+      'core.quotePath=false',
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+      '--',
+      ...TARGET_DIRS,
+    ],
     repoRoot,
   );
-  return output.length === 0 ? [] : output.split('\n');
+  return output.split('\0').filter((entry) => entry.length > 0);
 }
 
 /**

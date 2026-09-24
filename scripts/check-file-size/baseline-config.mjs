@@ -2,6 +2,8 @@
 // (fail-closed: 形式不正は「無視」ではなく実行不能)。bdboard-sso1.58: move-only 分割。
 import path from 'node:path';
 
+import { isFixturePath, isTargetPath } from './classify.mjs';
+
 function isPlainObject(value) {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -18,12 +20,20 @@ export function validateEntryShape(entry, index) {
     return [`${where} はオブジェクトである必要があります`];
   }
   const { path: entryPath, limit, reason } = entry;
+  let pathIsWellFormed = false;
   if (typeof entryPath !== 'string' || entryPath.length === 0) {
     errors.push(`${where}.path は空でない文字列にしてください`);
   } else if (entryPath.includes('\\')) {
     errors.push(`${where}.path (${entryPath}) はバックスラッシュを含めず POSIX 区切りで書いてください`);
   } else if (entryPath !== path.posix.normalize(entryPath) || entryPath.startsWith('/')) {
     errors.push(`${where}.path (${entryPath}) は正規化された相対パスにしてください`);
+  } else {
+    pathIsWellFormed = true;
+  }
+  if (pathIsWellFormed && (!isTargetPath(entryPath) || isFixturePath(entryPath))) {
+    errors.push(
+      `${where}.path (${entryPath}) は対象範囲外です (対象ディレクトリ/拡張子外、または fixtures/ 配下は baseline に登録できません)`,
+    );
   }
   if (!isPositiveInt(limit)) {
     errors.push(`${where}.limit (${String(limit)}) は正の整数にしてください`);

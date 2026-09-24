@@ -96,6 +96,10 @@ export function formatResult(evaluation, { report = false } = {}) {
     );
   }
 
+  if (total > 0) {
+    parts.push('file-size: 詳細: docs/VERIFY.md「ファイルサイズガード」');
+  }
+
   if (report) {
     const rows = [
       ...ok.map((r) => ({ path: r.path, lines: r.lines, limit: r.baseline?.limit ?? r.defaultLimit, hasBaseline: r.baseline != null })),
