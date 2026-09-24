@@ -18,12 +18,7 @@ import {
 } from '../chatThreadStorage';
 import {
   applyDraftPayloadStoreCarryPlan,
-  applyTransformToAllDraftPayloadStores,
-  isNeverEmpty,
-  migrateKeyInRecord,
-  purgeKeysInRecord,
   referenceDraftPayloadStoreCarryPlan,
-  type DraftPayloadStoreTransform,
 } from './conversationKeyspace';
 import {
   PlatformLimitationNotice,
@@ -84,6 +79,7 @@ import { useChatThreadLists } from './chat/useChatThreadLists';
 import { useChatConversationsState } from './chat/useChatConversationsState';
 import { useChatHistoryLoader } from './chat/useChatHistoryLoader';
 import { useTurnStatusRecovery } from './chat/useTurnStatusRecovery';
+import { useDraftPayloadRegistry } from './chat/useDraftPayloadRegistry';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -412,73 +408,15 @@ export function ChatPanel({
   // (+ useChatAttachmentIngestion.ts)へ移した。以降は上の分割代入で受け取った
   // 各関数経由で読み書きする。
   // bdboard-c1pw / bdboard-ru4d: 会話キーで索かれる「ドラフト積載物」ストアの
-  // 単一の登録簿。会話キーの再割り当て(migrateDraftPayloadKey)と、'' キースペース
-  // の一括破棄(purgeDraftPayloadKeys)は、どちらも必ずこの1箇所の列挙を通る。
-  // DRAFT_PAYLOAD_STORE_NAMES 型により applicators の網羅性も tsc で強制される。
-  // 新しい会話キー付きストアを足すときは conversationKeyspace.ts の正本に追加し、
-  // ここと3再割り当てサイト(handleAgentChange / startNewDraftThread /
-  // chat/useChatSendCommits.ts の commitSuccess)の引き継ぎ選択も更新すること。
-  //
-  // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
-  // conversations / historyLoadedFor は「サーバーのセッション状態」側。
-  // streamingReply は bdboard-1qoe で会話キーでスコープした Record になり形は
-  // draft payload ストアと同じだが、これはクライアントが受信中のストリーム
-  // バッファであり、ドラフトの「積載物」(未送信の入力/添付) ではないため対象に
-  // 含めない — sendKey は selectedProjectId==='' の間は chat/useChatSubmit.ts の
-  // submit が早期 return するため '' キースペースに入ることが無く、かつ
-  // 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
-  // ので、ここで移送/掃除しなくても取り残されない。下の2つの呼び出しサイト
-  // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
-  // 移送されていない。ここに含めると挙動が変わる。
-  const applyToDraftPayloadStores = useCallback(
-    (transform: DraftPayloadStoreTransform) => {
-      applyTransformToAllDraftPayloadStores(
-        {
-          conversationInputs: draftApplicators.conversationInputs,
-          conversationAttachments: draftApplicators.conversationAttachments,
-          attachmentErrors: draftApplicators.attachmentErrors,
-          threadModelIds: (t) => setThreadModelIds((prev) => t(prev, isNeverEmpty)),
-          draftSeedText: draftApplicators.draftSeedText,
-        },
-        transform,
-      );
-    },
-    // bdboard-sso1.83 第2段(依存配列の変更理由): 以前はここに
-    // updateConversationAttachments(ChatPanel ローカルの useCallback、常に
-    // 参照安定)を1つ挙げるだけだった。今は4つとも draftApplicators.*
-    // (useChatDraftState.ts 内で useCallback により個別にメモ化された関数)を
-    // 直接使う。draftApplicators オブジェクト自体は毎レンダー新しいオブジェクト
-    // リテラルなので、それを丸ごと依存配列に入れると
-    // applyToDraftPayloadStores(→ migrateDraftPayloadKey/purgeDraftPayloadKeys
-    // → 下のコールドウィンドウ effect の依存配列)が毎レンダー再生成され、
-    // その effect が意図せず再実行されるようになってしまう。個々のプロパティ
-    // (conversationInputs/conversationAttachments/attachmentErrors/
-    // draftSeedText)はそれぞれ安定した参照を返すので、それらだけを列挙して
-    // 元の安定性を保つ(useChatDraftState.test.tsx に参照安定性の検証テストを
-    // 追加済み)。
-    [
-      draftApplicators.conversationInputs,
-      draftApplicators.conversationAttachments,
-      draftApplicators.attachmentErrors,
-      draftApplicators.draftSeedText,
-    ],
-  );
-
-  const migrateDraftPayloadKey = useCallback(
-    (from: string, to: string) => {
-      applyToDraftPayloadStores((record, isEmpty) =>
-        migrateKeyInRecord(record, from, to, isEmpty),
-      );
-    },
-    [applyToDraftPayloadStores],
-  );
-
-  const purgeDraftPayloadKeys = useCallback(
-    (matches: (key: string) => boolean) => {
-      applyToDraftPayloadStores((record) => purgeKeysInRecord(record, matches));
-    },
-    [applyToDraftPayloadStores],
-  );
+  // 単一の登録簿(migrateDraftPayloadKey / purgeDraftPayloadKeys)。
+  // bdboard-sso1.83 第14a段で chat/useDraftPayloadRegistry.ts へ move-only で
+  // 抜き出した(対象ストアの列挙・意図的な非対象・依存配列の理由はそちら参照)。
+  // 返す関数の参照安定性は adoptProjectFromColdKeyspace(→ E6)と E9 の依存配列の
+  // 前提になっている。
+  const { migrateDraftPayloadKey, purgeDraftPayloadKeys } = useDraftPayloadRegistry({
+    draftApplicators,
+    setThreadModelIds,
+  });
   // selectedThreadIdsRef は chat/useConversationKey.ts、openThreadIdsRef は
   // chat/useChatThreadLists.ts、conversationsRef は
   // chat/useChatConversationsState.ts(いずれも bdboard-sso1.83
