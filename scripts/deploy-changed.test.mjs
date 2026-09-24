@@ -51,6 +51,21 @@ describe.skipIf(process.platform === 'win32' || !hasGit())('deploy-changed.sh', 
     return result.status === 0;
   }
 
+  // always-on-server.sh の実際の deploy 呼び出しが渡す pathspec を、deploy-changed.sh の
+  // DEPLOY_RESTART_PATHSPEC 配列をそのまま source して読む (bdboard-kpim レビュー指摘: ここへ
+  // リテラルを複製すると、呼び出し側の pathspec を変えてもテストが書き換え忘れに気付けない)。
+  function restartPathspec() {
+    const result = spawnSync(
+      'bash',
+      ['-c', '. "$1" && printf \'%s\\n\' "${DEPLOY_RESTART_PATHSPEC[@]}"', '_', SCRIPT],
+      { encoding: 'utf8', timeout: 10_000 },
+    );
+    if (result.status !== 0) {
+      throw new Error(`failed to read DEPLOY_RESTART_PATHSPEC from ${SCRIPT}: ${result.stderr}`);
+    }
+    return result.stdout.split('\n').filter((line) => line.length > 0);
+  }
+
   beforeEach(() => {
     tmpRoot = mkdtempSync(path.join(tmpdir(), 'bdboard-deploy-changed-'));
     repo = path.join(tmpRoot, 'repo');
@@ -132,27 +147,16 @@ describe.skipIf(process.platform === 'win32' || !hasGit())('deploy-changed.sh', 
     ).toBe(true);
   });
 
-  // bdboard-kpim: src/main.ts の SPA フォールバックは web/dist/index.html を起動時に 1 回
-  // だけ読むため、web/ だけの変更でも再起動が必要 (scripts/always-on-server.sh の
-  // deploy_relevant_changed 呼び出しが src/ package.json package-lock.json .env に加えて
-  // web/ と docs/help-content.json も渡すようになった)。
+  // bdboard-kpim: src/bootstrap/wire-feature-routes.ts の SPA フォールバックは
+  // web/dist/index.html を起動時に 1 回だけ読むため、web/ だけの変更でも再起動が必要
+  // (DEPLOY_RESTART_PATHSPEC が src/ package.json package-lock.json .env に加えて web/ と
+  // docs/help-content.json も持つようになった)。
   it('reports a relevant change when a real web/ file changes', () => {
     const oldSha = commit('init');
     mkdirSync(path.join(repo, 'web', 'src'), { recursive: true });
     writeFileSync(path.join(repo, 'web', 'src', 'main.tsx'), 'export const App = () => null;\n');
     const newSha = commit('add web/src/main.tsx');
-    expect(
-      relevantChanged(
-        oldSha,
-        newSha,
-        'src/',
-        'web/',
-        'docs/help-content.json',
-        'package.json',
-        'package-lock.json',
-        '.env',
-      ),
-    ).toBe(true);
+    expect(relevantChanged(oldSha, newSha, ...restartPathspec())).toBe(true);
   });
 
   it('does not report a relevant change when only a web/ test file changes', () => {
@@ -160,38 +164,17 @@ describe.skipIf(process.platform === 'win32' || !hasGit())('deploy-changed.sh', 
     mkdirSync(path.join(repo, 'web', 'src'), { recursive: true });
     writeFileSync(path.join(repo, 'web', 'src', 'App.test.tsx'), '// test\n');
     const newSha = commit('add web/src/App.test.tsx');
-    expect(
-      relevantChanged(
-        oldSha,
-        newSha,
-        'src/',
-        'web/',
-        'docs/help-content.json',
-        'package.json',
-        'package-lock.json',
-        '.env',
-      ),
-    ).toBe(false);
+    expect(relevantChanged(oldSha, newSha, ...restartPathspec())).toBe(false);
   });
 
-  // src/infrastructure/chat/help-content.ts も docs/help-content.json を起動時に 1 回だけ
-  // 読むため、この JSON だけの変更でも再起動が必要。
+  // src/infrastructure/chat/help-content.ts と web/src/helpContent.ts (web バンドルへ直接
+  // import) も docs/help-content.json を起動時/ビルド時に 1 回だけ読むため、この JSON だけの
+  // 変更でも再起動が必要。
   it('reports a relevant change when docs/help-content.json changes', () => {
     const oldSha = commit('init');
     mkdirSync(path.join(repo, 'docs'), { recursive: true });
     writeFileSync(path.join(repo, 'docs', 'help-content.json'), '{"sections":[]}\n');
     const newSha = commit('add docs/help-content.json');
-    expect(
-      relevantChanged(
-        oldSha,
-        newSha,
-        'src/',
-        'web/',
-        'docs/help-content.json',
-        'package.json',
-        'package-lock.json',
-        '.env',
-      ),
-    ).toBe(true);
+    expect(relevantChanged(oldSha, newSha, ...restartPathspec())).toBe(true);
   });
 });

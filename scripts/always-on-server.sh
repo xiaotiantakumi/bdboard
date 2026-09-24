@@ -23,8 +23,9 @@
 #       [--pull] [--build|--no-build] [--verify] [--tunnel-ack] [--port N] [--dry-run]
 #   BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy  --expect-pid <pid> \
 #       [--verify] [--tunnel-ack] [--port N] [--dry-run]
-#     deploy = pull --ff-only → lockfile が変わっていれば npm install → web/ が変わっていれば
-#              build:web → src/・web/・docs/help-content.json か依存が変わっていれば restart
+#     deploy = pull --ff-only → lockfile が変わっていれば npm install → web/・
+#              docs/help-content.json・package.json が変わっていれば build:web →
+#              src/・web/・docs/help-content.json か依存が変わっていれば restart
 #              (テストファイル・__fixtures__・test-support 系は判定から除外)、そうでなければ
 #              health だけ
 #
@@ -43,8 +44,9 @@ always-on-server.sh — 常時稼働サーバー (main checkout の npm run star
   BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh deploy  --expect-pid <pid> \
       [--verify] [--tunnel-ack] [--port N] [--dry-run]
 
-  deploy = pull --ff-only → lockfile が変わっていれば npm install → web/ が変わっていれば
-           build:web → src/・web/・docs/help-content.json か依存が変わっていれば restart
+  deploy = pull --ff-only → lockfile が変わっていれば npm install → web/・
+           docs/help-content.json・package.json が変わっていれば build:web →
+           src/・web/・docs/help-content.json か依存が変わっていれば restart
            (テストファイル・__fixtures__・test-support 系は判定から除外)、そうでなければ
            health 確認だけ
 
@@ -272,7 +274,11 @@ case "$BUILD_MODE" in
   never) ;;
   auto)
     if [ "$ACTION" = 'deploy' ] || [ -n "$DO_PULL" ]; then
-      changed web/ package.json && NEED_BUILD='yes'
+      # docs/help-content.json is bundled into the web UI too (web/src/helpContent.ts
+      # imports it directly), not just read server-side at startup, so a
+      # docs/help-content.json-only change needs a rebuild here as well as the
+      # restart below (bdboard-kpim).
+      changed web/ package.json docs/help-content.json && NEED_BUILD='yes'
     fi
     [ -f "$MAIN/web/dist/index.html" ] || NEED_BUILD='yes'
     ;;
@@ -287,14 +293,14 @@ if [ -n "$DO_VERIFY" ]; then
   (cd "$MAIN" && npm run verify) || { audit "$CURRENT_PIDS" '' 'verify-failed'; die 2 'main checkout の npm run verify が赤です。サーバーは触っていません (旧プロセスのまま)。'; }
 fi
 
-# deploy: 再起動が必要な範囲に変更がなければ再起動しない。web/dist の大半のファイルは
-# serveStatic が毎リクエスト disk から返すので再起動なしで反映されるが、SPA フォールバック
-# (src/main.ts) は web/dist/index.html を起動時に 1 回だけ読むため web/ の変更は再起動が
-# 要る。docs/help-content.json も src/infrastructure/chat/help-content.ts が起動時に 1 回だけ
-# 読むため同様 (bdboard-kpim)。
+# deploy: 再起動が必要な範囲 (deploy-changed.sh の DEPLOY_RESTART_PATHSPEC) に変更がなければ
+# 再起動しない。web/dist の大半のファイルは serveStatic が毎リクエスト disk から返すので
+# 再起動なしで反映されるが、SPA フォールバック (src/bootstrap/wire-feature-routes.ts) は
+# web/dist/index.html を起動時に 1 回だけ読むため web/ の変更は再起動が要る。
+# docs/help-content.json も src/infrastructure/chat/help-content.ts が起動時に 1 回だけ読む
+# ため同様 (bdboard-kpim)。
 if [ "$ACTION" = 'deploy' ] && [ -n "$CURRENT_PIDS" ]; then
-  if ! deploy_relevant_changed "$MAIN" "$OLD_HEAD" "$NEW_HEAD" \
-    src/ web/ docs/help-content.json package.json package-lock.json .env; then
+  if ! deploy_relevant_changed "$MAIN" "$OLD_HEAD" "$NEW_HEAD" "${DEPLOY_RESTART_PATHSPEC[@]}"; then
     printf '== server-side unchanged (%s..%s); keeping PID %s. health=HTTP %s\n' \
       "$(git -C "$MAIN" rev-parse --short "$OLD_HEAD")" "$(git -C "$MAIN" rev-parse --short "$NEW_HEAD")" \
       "$CURRENT_PIDS" "$(health_code)"

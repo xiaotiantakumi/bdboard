@@ -9,6 +9,16 @@ set -u
 # "latest-support.ts" のような無関係な本物のファイル名が誤って除外されてしまう)。
 DEPLOY_CHANGED_EXCLUDE_PATTERN='(^|/)__fixtures__/|(^|[/.-])test-support([/.-]|$)|\.test\.(ts|mjs|tsx)$'
 
+# always-on-server.sh の deploy がこの pathspec で deploy_relevant_changed を呼ぶ。
+# scripts/deploy-changed.test.mjs もこの配列をそのまま読んでテストする (bdboard-kpim: 呼び出し
+# 側にリテラルを複製すると、pathspec を変えてもテストが呼び出し側の引数の書き換え忘れに
+# 気付けない、というレビュー指摘への対応)。src/main.ts が委譲する
+# src/bootstrap/wire-feature-routes.ts の SPA フォールバックが web/dist/index.html を、
+# src/infrastructure/chat/help-content.ts と web/src/helpContent.ts (web バンドルへ直接
+# import) が docs/help-content.json を、それぞれ起動時 (web/src/helpContent.ts はビルド時) に
+# 1 回だけ読むため、いずれも変更があれば再起動が要る。
+DEPLOY_RESTART_PATHSPEC=(src/ web/ docs/help-content.json package.json package-lock.json .env)
+
 # deploy_relevant_changed <repo-dir> <old-sha> <new-sha> <pathspec...>
 # old と new が同じなら変更なし。除外後にパスが残れば再起動が必要。
 # --no-renames: rename detection が有効だと `git diff --name-only` は移動先のパスしか
