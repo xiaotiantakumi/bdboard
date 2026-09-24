@@ -2,7 +2,7 @@
 // streamingRunner.run() の結果 (StreamingCommandResult) を RunOutcome へ変換する。
 // createClaudeRunner の dispatch() 本体から末尾の結果分岐だけを、同じ入出力のまま
 // buildDispatchResultOutcome(id, request, startedAt, result) という1関数に切り出した
-// (内部で `const finishedAt = new Date()` と `buildRunId(request, startedAt)` を計算する
+// (内部で `const finishedAt = new Date()` と `buildClaudeRunId(request, startedAt)` を計算する
 // 順序も元のままなので、挙動は変わらない)。
 import type {
   RunOutcome,
@@ -10,7 +10,24 @@ import type {
 } from '../../../application/ports/agent-runner.js';
 import type { StreamingCommandResult } from '../../../application/ports/streaming-command-runner.js';
 import { describeClaudeSettingSourcesFailure } from '../../../domain/claude-version-check.js';
-import { buildRunId } from './run-outcome.js';
+import { buildClaudeRunId } from './run-outcome.js';
+
+/**
+ * bdboard-99g5: dispatch-result.ts 内で2箇所に完全重複していた
+ * settingSourcesHint/translated の計算を1関数へ統合。
+ * spawn-failed 分岐・generic failed 分岐のどちらも、元のインライン計算と
+ * 同じ入力(stderr)から同じ出力(translated)を返す。
+ */
+function translateStderrForSettingSourcesHint(
+  stderr: string,
+): string | null {
+  const settingSourcesHint = describeClaudeSettingSourcesFailure(stderr);
+  return settingSourcesHint === null
+    ? null
+    : stderr
+      ? `${settingSourcesHint}\n${stderr}`
+      : settingSourcesHint;
+}
 
 export function buildDispatchResultOutcome(
   id: string,
@@ -19,18 +36,10 @@ export function buildDispatchResultOutcome(
   result: StreamingCommandResult,
 ): RunOutcome {
   const finishedAt = new Date();
-  const runId = buildRunId(request, startedAt);
+  const runId = buildClaudeRunId(request, startedAt);
 
   if (result.failureKind === 'spawn-failed') {
-    const settingSourcesHint = describeClaudeSettingSourcesFailure(
-      result.stderr,
-    );
-    const translated =
-      settingSourcesHint === null
-        ? null
-        : result.stderr
-          ? `${settingSourcesHint}\n${result.stderr}`
-          : settingSourcesHint;
+    const translated = translateStderrForSettingSourcesHint(result.stderr);
     return {
       ok: false,
       failureKind: 'runner-unavailable',
@@ -87,15 +96,7 @@ export function buildDispatchResultOutcome(
     };
   }
 
-  const settingSourcesHint = describeClaudeSettingSourcesFailure(
-    result.stderr,
-  );
-  const translated =
-    settingSourcesHint === null
-      ? null
-      : result.stderr
-        ? `${settingSourcesHint}\n${result.stderr}`
-        : settingSourcesHint;
+  const translated = translateStderrForSettingSourcesHint(result.stderr);
 
   return {
     ok: false,
