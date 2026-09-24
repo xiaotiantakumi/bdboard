@@ -72,3 +72,28 @@ export function chatSettingsSummaryParts(
     (part): part is string => part !== undefined && part !== '',
   );
 }
+
+export interface ThreadDrawerRowPartition {
+  pinnedOpen: string[];
+  unpinnedOpen: string[];
+  pinnedClosed: ChatThreadDto[];
+  unpinnedClosed: ChatThreadDto[];
+}
+
+// bdboard-sso1.83 第6段: ChatPanel.tsx から純関数を移動しただけ。挙動は変えていない。
+// 開いている/閉じたスレッドのどちらに属していても、ピン留めされていれば
+// 「ピン留め」節へ寄せ、開いている/閉じた節には残さない(mutual exclusion)。
+// displayedOpen/closed は呼び出し側で既に新しい順にソート済みで、ピン留め優先は
+// この filter が担う(filter は相対順序を保つので、節の中は新しい順のまま)。
+export function partitionThreadDrawerRows(
+  displayedOpen: readonly string[],
+  closed: readonly ChatThreadDto[],
+  threadById: ReadonlyMap<string, ChatThreadDto>,
+): ThreadDrawerRowPartition {
+  return {
+    pinnedOpen: displayedOpen.filter((sessionId) => threadById.get(sessionId)?.pinned === true),
+    unpinnedOpen: displayedOpen.filter((sessionId) => threadById.get(sessionId)?.pinned !== true),
+    pinnedClosed: closed.filter((thread) => thread.pinned === true),
+    unpinnedClosed: closed.filter((thread) => thread.pinned !== true),
+  };
+}

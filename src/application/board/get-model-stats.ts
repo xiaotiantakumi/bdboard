@@ -2,6 +2,7 @@ import { getBoardTimeZone } from '../../config/board-timezone.js';
 import { KNOWN_STAGE_ORDER } from '../../domain/ticket-model.js';
 import type { Ticket } from '../../domain/ticket.js';
 import type { BoardCache } from '../ports/board-cache.js';
+import { forEachChunked } from './aggregation-yield.js';
 import {
   buildWeekBoundaries,
   isInWeekBounds,
@@ -57,24 +58,26 @@ function uniqueModelsFromTicket(ticket: Ticket): readonly string[] {
   return unique;
 }
 
-function countWeeklyModelCloses(
+// bdboard-ve1y: forEachChunked 経由でチケットを走査する (countWeeklyCloses と
+// 同じ理由。結果は元の for-of ループと同一)。
+async function countWeeklyModelCloses(
   tickets: readonly Ticket[],
   weekStarts: readonly Date[],
   weekRanges: readonly WeekRange[],
-): WeeklyModelCloseCounts[] {
+): Promise<WeeklyModelCloseCounts[]> {
   const buckets = createEmptyWeeklyModelCloses(weekStarts);
 
-  for (const ticket of tickets) {
+  await forEachChunked(tickets, (ticket) => {
     if (ticket.closedAt === undefined) {
-      continue;
+      return;
     }
     if (!isInWeekRangeBounds(ticket.closedAt, weekRanges)) {
-      continue;
+      return;
     }
 
     const modelNames = uniqueModelsFromTicket(ticket);
     if (modelNames.length === 0) {
-      continue;
+      return;
     }
 
     for (let index = 0; index < weekRanges.length; index += 1) {
@@ -91,7 +94,7 @@ function countWeeklyModelCloses(
         break;
       }
     }
-  }
+  });
 
   return buckets;
 }
@@ -118,14 +121,14 @@ function sortStages(stages: readonly string[]): string[] {
   });
 }
 
-function countStageModelDistribution(
+async function countStageModelDistribution(
   tickets: readonly Ticket[],
-): StageModelCounts[] {
+): Promise<StageModelCounts[]> {
   const stageCounts = new Map<string, Record<string, number>>();
 
-  for (const ticket of tickets) {
+  await forEachChunked(tickets, (ticket) => {
     if (ticket.closedAt === undefined) {
-      continue;
+      return;
     }
 
     const models = ticket.models ?? [];
@@ -134,7 +137,7 @@ function countStageModelDistribution(
       existing[record.model] = (existing[record.model] ?? 0) + 1;
       stageCounts.set(record.stage, existing);
     }
-  }
+  });
 
   return sortStages([...stageCounts.keys()]).map((stage) => ({
     stage,
@@ -156,18 +159,21 @@ function collectTickets(cache: BoardCache, projectIdFilter?: readonly string[]):
   return tickets;
 }
 
-export function getModelStats(
+export async function getModelStats(
   cache: BoardCache,
   now: Date,
   options?: GetModelStatsOptions,
-): ModelStats {
+): Promise<ModelStats> {
   const weeks = Math.max(1, options?.weeks ?? DEFAULT_WEEKS);
   const timeZone = options?.timeZone ?? getBoardTimeZone();
   const { weekStarts, weekRanges } = buildWeekBoundaries(now, weeks, timeZone);
   const tickets = collectTickets(cache, options?.projectIds);
 
+  const weeklyCloses = await countWeeklyModelCloses(tickets, weekStarts, weekRanges);
+  const stageModelDistribution = await countStageModelDistribution(tickets);
+
   return {
-    weeklyCloses: countWeeklyModelCloses(tickets, weekStarts, weekRanges),
-    stageModelDistribution: countStageModelDistribution(tickets),
+    weeklyCloses,
+    stageModelDistribution,
   };
 }

@@ -43,20 +43,20 @@ function parseCfdDays(raw: string | undefined): number {
 export function createStatsRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
 
-  app.get('/api/stats', (c) => {
+  app.get('/api/stats', async (c) => {
     const projectIds = parseProjectIds(c.req.query('projects'));
     const weeks = parseStatsWeeks(c.req.query('weeks'));
-    const stats = getThroughputStats(deps.cache, deps.now(), {
+    const stats = await getThroughputStats(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       weeks,
     });
     return c.json(toThroughputStatsDto(stats));
   });
 
-  app.get('/api/model-stats', (c) => {
+  app.get('/api/model-stats', async (c) => {
     const projectIds = parseProjectIds(c.req.query('projects'));
     const weeks = parseStatsWeeks(c.req.query('weeks'));
-    const stats = getModelStats(deps.cache, deps.now(), {
+    const stats = await getModelStats(deps.cache, deps.now(), {
       ...(projectIds !== undefined ? { projectIds } : {}),
       weeks,
     });
