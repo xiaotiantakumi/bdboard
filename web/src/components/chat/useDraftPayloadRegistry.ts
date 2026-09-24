@@ -25,7 +25,8 @@ export interface UseDraftPayloadRegistryResult {
  * purgeDraftPayloadKeys)を move-only で抜き出したもの。effect は持たない
  * (useCallback だけ)。呼び出し位置は元の applyToDraftPayloadStores の位置。
  *
- * 参照安定性: 返す3関数は ChatPanel の adoptProjectFromColdKeyspace(→ E6 の
+ * 参照安定性: 返す3関数は chat/useColdKeyspaceAdoption.ts の
+ * adoptProjectFromColdKeyspace(→ E6 の
  * 依存配列)と E9(ticket-context effect)の依存配列に入っている。参照が毎レンダー
  * 変わると両 effect が入力のたびに再実行されるので、依存配列には
  * draftApplicators オブジェクトではなく個々の関数を並べる(下のコメント参照)。
@@ -49,8 +50,9 @@ export interface UseDraftPayloadRegistryResult {
  * 含めない — sendKey は selectedProjectId==='' の間は chat/useChatSubmit.ts の
  * submit が早期 return するため '' キースペースに入ることが無く、かつ
  * 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
- * ので、ここで移送/掃除しなくても取り残されない。ChatPanel.tsx の2つの呼び出し
- * サイト(adoptProjectFromColdKeyspace のコールドキースペースからの移送・
+ * ので、ここで移送/掃除しなくても取り残されない。2つの呼び出し
+ * サイト(chat/useColdKeyspaceAdoption.ts の adoptProjectFromColdKeyspace による
+ * コールドキースペースからの移送・ChatPanel.tsx の
  * ticket-context effect の '' キースペースの掃除)では元々どちらも
  * 移送されていない。ここに含めると挙動が変わる。
  */
