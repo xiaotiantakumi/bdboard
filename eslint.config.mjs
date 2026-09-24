@@ -17,7 +17,7 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 697, // 現在 687 (ESLint実測。bdboard-sso1.83 第15a段: 回収の hydrate・23u prune・CLI セッション再開を chat/useChatSessionLifecycle.ts へ抽出)
+  'web/src/components/ChatPanel.tsx': 275, // 現在 265 (ESLint実測。bdboard-sso1.83 第15b段: JSX より前のフック配線を chat/useChatPanelController.ts と4つの区間フックへ移動)
   // 'web/src/components/TicketDetailPanel.tsx' はこの一覧から除去 (bdboard-sso1.5:
   // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
   // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、
