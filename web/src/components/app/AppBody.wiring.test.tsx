@@ -362,6 +362,30 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(capturedOverlayGroupProps.at(-1)?.chat.initialProjectId).toBe(
       '__marker_last_chat_project__',
     );
+
+    // 複数プロジェクトが選択されているとき (単一選択ではない) は selectedProjectIds を
+    // 使わず lastChatProjectId へフォールバックする。`selectedProjectIds.length === 1` の
+    // 判定が抜け落ちて「先頭要素を無条件に使う」実装に退行していないかを縛る。
+    capturedOverlayGroupProps.length = 0;
+    const controllerWithMultipleSelected = makeController({
+      overlays: makeOverlays(),
+      selectedProjectIds: ['__marker_selected_a__', '__marker_selected_b__'],
+      lastChatProjectId: '__marker_last_chat_project__',
+    });
+    renderAppBody(AppBody, controllerWithMultipleSelected);
+    expect(capturedOverlayGroupProps.at(-1)?.chat.initialProjectId).toBe(
+      '__marker_last_chat_project__',
+    );
+
+    // lastChatProjectId が空文字 (未設定の永続化値) のときは undefined に落ちる。
+    capturedOverlayGroupProps.length = 0;
+    const controllerWithNoFallback = makeController({
+      overlays: makeOverlays(),
+      selectedProjectIds: [],
+      lastChatProjectId: '',
+    });
+    renderAppBody(AppBody, controllerWithNoFallback);
+    expect(capturedOverlayGroupProps.at(-1)?.chat.initialProjectId).toBeUndefined();
   });
 
   it('gates ticketDetail.onBackTicket on canGoBackTicket', async () => {
