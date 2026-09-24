@@ -9,19 +9,19 @@ import { formatThreadUpdatedAt } from './threads';
  * (togglePin/closeThread は元実装どおりメニューを閉じる処理を内包している)。
  */
 export interface ThreadDrawerRowActions {
-  select(sessionId: string): void;
-  reopenClosed(sessionId: string): void;
-  changeRenameDraft(text: string): void;
-  confirmRename(sessionId: string): void;
-  cancelRename(): void;
-  toggleMenu(sessionId: string): void;
-  startRename(sessionId: string, initialDraft: string): void;
+  select: (sessionId: string) => void;
+  reopenClosed: (sessionId: string) => void;
+  changeRenameDraft: (text: string) => void;
+  confirmRename: (sessionId: string) => void;
+  cancelRename: () => void;
+  toggleMenu: (sessionId: string) => void;
+  startRename: (sessionId: string, initialDraft: string) => void;
   /** メニューを閉じたうえでピン留め状態を切り替える(元実装の closeThreadActionMenu 呼び出しを含む)。 */
-  togglePin(sessionId: string, pinned: boolean): void;
+  togglePin: (sessionId: string, pinned: boolean) => void;
   /** メニューを閉じたうえでタブから閉じる(元実装の closeThreadActionMenu 呼び出しを含む)。 */
-  closeThread(sessionId: string): void;
-  startConfirmDelete(sessionId: string): void;
-  deleteThread(sessionId: string): void;
+  closeThread: (sessionId: string) => void;
+  startConfirmDelete: (sessionId: string) => void;
+  deleteThread: (sessionId: string) => void;
 }
 
 interface ChatThreadDrawerOpenRowProps {
