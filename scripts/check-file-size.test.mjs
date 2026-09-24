@@ -82,9 +82,12 @@ describe('countLines', () => {
 });
 
 // ---- isTargetPath: 対象ディレクトリ x 対象拡張子。似た名前のディレクトリと衝突しないこと ----
-// bdboard-sso1.8: src/ web/src/ scripts/ の .ts/.tsx/.mjs/.js は eslint.config.mjs の
-// max-lines に一本化したため、この3ディレクトリではそれらの拡張子が対象外になった
-// (ESLint が見ない拡張子 = .css だけがここに残る)。harness/ と test/ は ESLint が
+// bdboard-sso1.8: src/ web/src/ scripts/ の行数上限は eslint.config.mjs の max-lines に
+// 一本化した。ただし対象拡張子はディレクトリごとに違う (bdboard-hncr:
+// src→.ts のみ、web/src→.ts/.tsx、scripts→.mjs のみ。classify.mjs の
+// ESLINT_COVERED_EXTENSIONS_BY_DIR 参照)。この3ディレクトリではそれぞれの対象拡張子が
+// このガードの対象外になり、それ以外の組み合わせ (.js/.mjs が src/ にある等) と、
+// ESLint が見ない拡張子 (.css 等) は引き続きここで見る。harness/ と test/ は ESLint が
 // 見ないため、引き続き全対象拡張子を見る。
 describe('isTargetPath', () => {
   it.each([
