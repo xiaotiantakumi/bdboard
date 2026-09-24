@@ -1574,6 +1574,113 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     // pidfile 掃除待ち 20s = 最悪 65s < 90s。
     90_000,
   );
+  // bdboard-tqba: lease-params.md の呼び出し例を「$$ をそのまま渡す」から
+  // 「呼び出し元シェルの親プロセスの PID を渡す」に変更した根拠を検証する。
+  // bd-heartbeat.sh 自体は変更していない — 検証したいのは「短命な子プロセス自身が
+  // `ps -o ppid= -p $$` で計算した値が、本当に長命な親プロセスの実 PID と一致するか」
+  // と「その値を --session-pid に渡した heartbeat ループが、計算した子プロセスが
+  // とっくに終了した後も打ち続けるか」の2点。
+  // 予算: セッション起動 5s + 子プロセスの計算待ち 10s + start 20s + 進捗待ち 20s +
+  // stop 20s = 最悪 75s < 90s。
+  it('accepts a --session-pid computed via ps -o ppid= from a short-lived invoking shell (bdboard-tqba)', async () => {
+    const HEARTBEAT_INTERVAL_SEC = 0.2;
+    const hbEnv = setupEnv();
+    writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok']);
+
+    // 「Bash ツールが1呼び出しごとに起こす新しいシェル」役。自分の ppid を計算して
+    // ファイルに書いたら即終了する。
+    const childScriptPath = path.join(tmpRoot, 'ppid-child.sh');
+    writeFileSync(
+      childScriptPath,
+      [
+        '#!/bin/sh',
+        "computed=$(ps -o ppid= -p $$ | tr -d ' ')",
+        'printf \'%s\' "$computed" > "$1"',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    chmodSync(childScriptPath, 0o755);
+
+    // 「Claude Code 本体」役。上の子プロセスを1本フォークしたら、そのまま生き続ける
+    // (sleep 600)。startSession と同じ「backgrounding して $! を返す」形で起動するので、
+    // 返る PID はこのプロセス自身の実 PID。
+    const computedPidFile = path.join(tmpRoot, 'ppid-computed.txt');
+    const sessionScriptPath = path.join(tmpRoot, 'ppid-session.sh');
+    writeFileSync(
+      sessionScriptPath,
+      // exec で sleep に置き換わる (fork ではなく同一 PID を保つ) — そうしないと
+      // afterEach の kill -TERM がこの sh を殺しても、フォアグラウンドの子
+      // `sleep 600` だけが取り残されて orphan になる (実測: 実行ごとに1本残留)。
+      ['#!/bin/sh', '"$CHILD_SCRIPT_PATH" "$COMPUTED_PID_FILE"', 'exec sleep 600', ''].join('\n'),
+      'utf8',
+    );
+    chmodSync(sessionScriptPath, 0o755);
+
+    const launch = await runner.run(
+      'bash',
+      ['-c', `"${sessionScriptPath}" & echo $!`],
+      {
+        cwd: tmpRoot,
+        env: { ...hbEnv.env, CHILD_SCRIPT_PATH: childScriptPath, COMPUTED_PID_FILE: computedPidFile },
+        timeoutMs: 5_000,
+      },
+    );
+    const sessionPid = Number.parseInt(launch.stdout.trim(), 10);
+    if (!Number.isFinite(sessionPid) || sessionPid <= 0) {
+      throw new Error(`failed to start ppid-session.sh: ${launch.stdout}`);
+    }
+    trackProcess(sessionPid, hbEnv.env);
+
+    // 子プロセスが自分の ppid を書き終えるまで待つ。この時点で子プロセスはもう
+    // 終了している。
+    await pollUntil(
+      // existsSync だけだと、子プロセスの open()/truncate と printf の書き込みの間の
+      // 極小窓を踏んで空文字列を読む可能性が理論上ある。内容が非空になるまで待つ。
+      () => existsSync(computedPidFile) && readFileSync(computedPidFile, 'utf8').length > 0,
+      {
+        timeoutMs: 10_000,
+        what: 'waiting for the short-lived child to compute and write its own ppid',
+      },
+    );
+    const computedPid = Number.parseInt(readFileSync(computedPidFile, 'utf8').trim(), 10);
+
+    // 本チケットの核心: 短命な子プロセス自身が計算した ppid が、長命な「セッション」
+    // プロセスの実 PID と一致すること。
+    expect(computedPid).toBe(sessionPid);
+    // 子プロセスは死んでいるが、セッション(親)はまだ生きていること。
+    expect(await isPidAlive(sessionPid, hbEnv.env)).toBe(true);
+
+    const start = await runHeartbeat(
+      [
+        'start',
+        '--session-pid',
+        String(computedPid),
+        '--interval',
+        String(HEARTBEAT_INTERVAL_SEC),
+        '--repo',
+        tmpRoot,
+        'a-1',
+      ],
+      hbEnv,
+    );
+    expect(start.exitCode).toBe(0);
+
+    // 計算元の子プロセスがとっくに終了した後でも(実際には最初から)、正しく親の
+    // PID で打ち続けること。
+    await pollUntilProgressing(
+      () => heartbeatCallCount(hbEnv.argsLog, 'a-1') >= 3,
+      {
+        counts: () => ({ 'a-1': heartbeatCallCount(hbEnv.argsLog, 'a-1') }),
+        what: 'waiting for 3 heartbeats using the ppid-computed session-pid',
+        intervalSec: HEARTBEAT_INTERVAL_SEC,
+        maxMs: 20_000,
+      },
+    );
+    expect(heartbeatCallCount(hbEnv.argsLog, 'a-1')).toBeGreaterThanOrEqual(3);
+
+    await runHeartbeat(['stop', '--session-pid', String(computedPid)], hbEnv);
+  }, 90_000);
 });
 
 describe.skipIf(process.platform === 'win32')('bdboard-harness pack shell scripts syntax', () => {
