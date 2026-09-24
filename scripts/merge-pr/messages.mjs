@@ -14,9 +14,9 @@ export function brokenMainSteps(sha, repo, context) {
   ];
 }
 
-export function rebaseSteps(mainRef) {
+export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら rebase') {
   return [
-    `main が PR のベース以降に進んでいます (S1 のクラス R)。枠の外で取り込んでから並び直してください:`,
+    `main が PR のベース以降に進んでいます (クラス R: ${reason})。枠の外で取り込んでから並び直してください:`,
     `  git fetch origin && git rebase ${mainRef} && git push --force-with-lease`,
     `  (force push が権限判定で拒否されたら git merge ${mainRef} → 通常の git push)`,
     '  → 必須チェック (verify / e2e / commit-parse) の green を待つ → npm run merge-pr -- prepare <PR 番号>',

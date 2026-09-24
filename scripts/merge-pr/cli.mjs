@@ -5,9 +5,11 @@ import { gate } from './gate.mjs';
 import { prepare } from './prepare.mjs';
 import { say } from './state.mjs';
 
-export const USAGE = `merge-pr — マージ手順 S1 (枠は CAS とマージの一瞬だけ握る。設計 bdboard-ulxa)
+export const USAGE = `merge-pr — マージ手順 S1 / S2 (枠は CAS とマージの一瞬だけ握る。設計 bdboard-ulxa)
 
   npm run merge-pr -- prepare <PR> [--dry-run]   枠の外: PR / 必須チェック / main を確かめ PRED_BASE を記録
+                                                 (S2: main が動いていれば着地予定ツリーを verify。--dry-run は
+                                                  どの段階でも S2 の分類を参考表示し、verify はしない)
   npm run merge-pr -- gate <PR> [--repair]       層3 ゲート → bd merge-slot acquire → CAS → マージ行を stdout に印字
                                                  (--repair: main 破損の修復 PR 専用。main-broken の枠を引き継ぐ)
   <印字された gh pr merge ... --match-head-commit ... を 1 回だけ実行>
@@ -19,7 +21,8 @@ export const USAGE = `merge-pr — マージ手順 S1 (枠は CAS とマージ�
 
   merge.mode (.claude/bdboard-harness.json、origin/main の値が正) が S0 の間は prepare の表示だけ動く。
 
-終了コード: 0 成功 / 1 使い方・想定外 / 2 前提不成立 / 3 rebase が要る / 4 main が壊れている
+終了コード: 0 成功 / 1 使い方・想定外 / 2 前提不成立 / 4 main が壊れている
+            3 rebase が要る (S1: main が動いた / S2: テキスト衝突・hot file・着地予定ツリーの verify failure)
             5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure / 75 やり直し (CAS 負け等)`;
 
 function parsePr(value) {
@@ -46,7 +49,7 @@ export async function main(argv) {
     switch (phase) {
       case 'prepare': {
         const pr = parsePr(target);
-        return prepare(openContext(), pr, { dryRun: flags.has('--dry-run') });
+        return await prepare(openContext(), pr, { dryRun: flags.has('--dry-run') });
       }
       case 'gate': {
         const pr = parsePr(target);

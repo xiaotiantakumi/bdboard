@@ -156,7 +156,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   再実行) → `npm run verify` (PR を開く前にクリーンであること) →
   `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
   CI green → マージ (`origin/main` の `merge.mode` で分岐。S0: drift → `bd merge-slot acquire` → ls-remote で CAS →
-  `gh pr merge --squash --delete-branch` → 着地後検証 → release / S1: `npm run merge-pr -- prepare|gate|finish <N>`
+  `gh pr merge --squash --delete-branch` → 着地後検証 → release / S1・S2: `npm run merge-pr -- prepare|gate|finish <N>`
   で枠は CAS とマージの間だけ・着地後検証は commit status。docs/GIT-WORKFLOW.md) → **`bd close <id>` はマージ成功後だけ**
   (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
 - **Direct-to-main commits are banned.** 唯一の例外は `.github/workflows/` のみを触る CI 復旧コミット。

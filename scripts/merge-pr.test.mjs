@@ -1,4 +1,5 @@
 // bdboard-ulxa.1: scripts/merge-pr (マージ手順 S1 の prepare / gate / finish) のテスト。
+// bdboard-ulxa.2: S2 (着地予定ツリーの verify で rebase を省く) の分岐と終了コードも同じ一時リポジトリで押さえる。
 //
 // 本物の GitHub・bd・main checkout には触れない。一時ディレクトリに bare の origin と、main
 // checkout 役のクローン + そこから git worktree add した PR の worktree を作り、git は本物、gh / bd / npm は scripts/merge-pr/fake-tools.mjs
@@ -12,7 +13,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { evaluateLandedStatus, mergeCommand, parseGitHubSlug, parseMergeConfig } from './merge-pr.mjs';
+import {
+  DEFAULT_HOT_FILES,
+  decideS2Class,
+  evaluateLandedStatus,
+  globToRegExp,
+  hotCollisions,
+  mergeCommand,
+  parseGitHubSlug,
+  parseMergeConfig,
+  readMergeTree,
+} from './merge-pr.mjs';
 
 const SCRIPT = fileURLToPath(new URL('./merge-pr.mjs', import.meta.url));
 const FAKE = fileURLToPath(new URL('./merge-pr/fake-tools.mjs', import.meta.url));
@@ -26,6 +37,11 @@ const fs = require('node:fs');
 const { execSync } = require('node:child_process');
 const head = execSync('git rev-parse HEAD').toString().trim();
 fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
+// 意味的衝突の代役: 列挙したファイルが全部そろった木でだけ落ちる (片方だけなら緑)。
+const conflict = process.env.FAKE_VERIFY_CONFLICT;
+if (conflict && conflict.split(',').every((file) => fs.existsSync(file))) process.exit(3);
+// verify の最中に main が動いたことの代役。
+if (process.env.FAKE_VERIFY_MOVE_MAIN) execSync('git push -q origin ' + process.env.FAKE_VERIFY_MOVE_MAIN + ':refs/heads/main');
 const sleepMs = Number(process.env.FAKE_VERIFY_SLEEP_MS || 0);
 if (sleepMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, sleepMs);
 process.exit(Number(process.env.FAKE_VERIFY_EXIT || 0));
@@ -56,10 +72,25 @@ describe('merge-pr pure helpers', () => {
     const parsed = parseMergeConfig(base);
     expect(parsed).toEqual({
       ok: true,
-      config: { mode: 'S0', leaseMinutes: 8, slotWaitMinutes: 10, statusContext: CONTEXT, verify: 'npm run verify', mainBranch: 'main', repo: null },
+      config: {
+        mode: 'S0',
+        leaseMinutes: 8,
+        slotWaitMinutes: 10,
+        statusContext: CONTEXT,
+        hotFiles: DEFAULT_HOT_FILES,
+        verify: 'npm run verify',
+        mainBranch: 'main',
+        repo: null,
+      },
     });
     expect(parseMergeConfig({ ...base, merge: { mode: 'S1', repo: 'o/r' } }).config).toMatchObject({ mode: 'S1', repo: 'o/r' });
-    expect(parseMergeConfig({ ...base, merge: { mode: 'S2' } }).ok).toBe(false);
+    expect(parseMergeConfig({ ...base, merge: { mode: 'S2' } }).config.mode).toBe('S2');
+    expect(parseMergeConfig({ ...base, merge: { mode: 'S3' } }).ok).toBe(false);
+    expect(parseMergeConfig({ ...base, merge: { hotFiles: ['a/**', '{b,c}.json'] } }).config.hotFiles).toEqual(['a/**', '{b,c}.json']);
+    expect(parseMergeConfig({ ...base, merge: { hotFiles: [] } }).config.hotFiles).toEqual([]);
+    expect(parseMergeConfig({ ...base, merge: { hotFiles: 'package.json' } }).ok).toBe(false);
+    expect(parseMergeConfig({ ...base, merge: { hotFiles: ['{a,b'] } }).ok).toBe(false);
+    expect(parseMergeConfig({ ...base, merge: { hotFiles: [''] } }).ok).toBe(false);
     expect(parseMergeConfig({ ...base, merge: { leaseMinutes: 0 } }).ok).toBe(false);
     expect(parseMergeConfig({ ...base, merge: { statusContext: 'has space' } }).ok).toBe(false);
     expect(parseMergeConfig({ ...base, merge: { repo: 'no-slash' } }).ok).toBe(false);
@@ -67,11 +98,12 @@ describe('merge-pr pure helpers', () => {
     expect(parseMergeConfig({ ...base, verify: '' }).ok).toBe(false);
   });
 
-  it("this repo's own contract has a valid merge block (the S0/S1 switch is one line)", () => {
+  it("this repo's own contract has a valid merge block (the S0/S1/S2 switch is one line)", () => {
     const contract = JSON.parse(readFileSync(path.join(REPO_ROOT, '.claude', 'bdboard-harness.json'), 'utf8'));
     const parsed = parseMergeConfig(contract);
     expect(parsed.ok).toBe(true);
-    expect(['S0', 'S1']).toContain(parsed.config.mode);
+    expect(['S0', 'S1', 'S2']).toContain(parsed.config.mode);
+    expect(parsed.config.hotFiles.some((pattern) => globToRegExp(pattern).test('package-lock.json'))).toBe(true);
     expect(parsed.config.statusContext).toBe(CONTEXT);
     expect(contract.merge.leaseMinutes).toBe(8);
   });
@@ -93,6 +125,62 @@ describe('merge-pr pure helpers', () => {
     expect(mergeCommand(3, 'f00', "docs(y): it's $HOME `x`")).toBe(
       "gh pr merge 3 --squash --delete-branch --match-head-commit f00 --subject 'docs(y): it'\\''s $HOME `x` (#3)'",
     );
+  });
+
+  it('globToRegExp: * stays inside a directory, ** crosses them, {a,b} alternates, and bad braces throw', () => {
+    const match = (glob, file) => globToRegExp(glob).test(file);
+    expect(match('package*.json', 'package-lock.json')).toBe(true);
+    expect(match('package*.json', 'web/package.json')).toBe(false);
+    expect(match('.github/workflows/**', '.github/workflows/ci.yml')).toBe(true);
+    expect(match('.github/workflows/**', '.github/dependabot.yml')).toBe(false);
+    expect(match('**/tsconfig.json', 'tsconfig.json')).toBe(true);
+    expect(match('**/tsconfig.json', 'web/tsconfig.json')).toBe(true);
+    expect(match('{a,b/c}.txt', 'b/c.txt')).toBe(true);
+    expect(match('{a,b/c}.txt', 'axtxt')).toBe(false); // . は文字どおり
+    expect(match('file?.md', 'file1.md')).toBe(true);
+    expect(() => globToRegExp('{a,b')).toThrow();
+    expect(() => globToRegExp('a}')).toThrow();
+    expect(() => globToRegExp('{a,{b}}')).toThrow();
+    expect(() => globToRegExp('')).toThrow();
+  });
+
+  it('hotCollisions: the same hot kind on both sides (not only the same file) collides; one side alone does not', () => {
+    expect(hotCollisions(['web/package-lock.json'], ['package.json'], DEFAULT_HOT_FILES)).toEqual([
+      { pattern: DEFAULT_HOT_FILES[0], main: ['web/package-lock.json'], mine: ['package.json'] },
+    ]);
+    expect(hotCollisions(['.github/workflows/ci.yml'], ['src/a.ts'], DEFAULT_HOT_FILES)).toEqual([]);
+    expect(hotCollisions(['src/a.ts'], ['tsconfig.json'], DEFAULT_HOT_FILES)).toEqual([]);
+    // eslint.config.mjs / file-size-baseline.json は hot ではない (設計 §6 裁定 3)。
+    expect(hotCollisions(['eslint.config.mjs', 'scripts/file-size-baseline.json'], ['eslint.config.mjs', 'scripts/file-size-baseline.json'], DEFAULT_HOT_FILES)).toEqual([]);
+    expect(hotCollisions(['.claude/skills/bdboard-harness/SKILL.md'], ['harness/packs/bdboard-harness/SKILL.md'], DEFAULT_HOT_FILES)).toHaveLength(1);
+  });
+
+  it('readMergeTree: exit 0 + OID is clean, exit 1 + OID is a conflict with its files, anything else is unavailable', () => {
+    const oid = 'a'.repeat(40);
+    expect(readMergeTree({ status: 0, stdout: `${oid}\n`, stderr: '' })).toEqual({ status: 'clean', tree: oid });
+    expect(readMergeTree({ status: 1, stdout: `${oid}\nsrc/a.ts\n\nAuto-merging src/a.ts\nCONFLICT (content): x\n`, stderr: '' })).toEqual({
+      status: 'conflict',
+      files: ['src/a.ts'],
+    });
+    // exit 0 でも OID が読めなければ木を信用しない。exit 128 等は実行できない扱い (呼び出し側は R)。
+    expect(readMergeTree({ status: 0, stdout: 'garbage\n', stderr: '' }).status).toBe('unavailable');
+    expect(readMergeTree({ status: 128, stdout: '', stderr: 'fatal: refusing to merge unrelated histories\n' })).toEqual({
+      status: 'unavailable',
+      reason: 'fatal: refusing to merge unrelated histories',
+    });
+    expect(readMergeTree({ status: 1, stdout: '', stderr: '' }).status).toBe('unavailable');
+  });
+
+  it('decideS2Class: R for anything but one merge-base, a clean merge-tree and no hot collision; otherwise F with the tree', () => {
+    const tree = 'b'.repeat(40);
+    const clean = { status: 'clean', tree };
+    expect(decideS2Class({ baseCount: 1, merge: clean, hot: [] })).toEqual({ class: 'F', reason: '衝突なし・hot file なし', tree });
+    expect(decideS2Class({ baseCount: 2, merge: clean, hot: [] })).toMatchObject({ class: 'R', reason: expect.stringContaining('criss-cross') });
+    expect(decideS2Class({ baseCount: 0, merge: null, hot: [] }).class).toBe('R');
+    expect(decideS2Class({ baseCount: 1, merge: { status: 'conflict', files: ['x.ts'] }, hot: [] }).reason).toBe('テキスト衝突: x.ts');
+    expect(decideS2Class({ baseCount: 1, merge: { status: 'unavailable', reason: 'boom' }, hot: [] }).class).toBe('R');
+    const hot = [{ pattern: 'p', main: ['package-lock.json'], mine: ['package.json'] }];
+    expect(decideS2Class({ baseCount: 1, merge: clean, hot })).toEqual({ class: 'R', reason: 'hot file: main package-lock.json / 自分 package.json' });
   });
 });
 
@@ -602,5 +690,223 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(posted()).toEqual([]);
     expect(calls('bd', 'acquire')).toEqual([]);
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+  });
+
+  // ---- bdboard-ulxa.2: S2 (着地予定ツリーを手元で verify して rebase を省く) ----
+
+  /** main checkout 役から origin/main を 1 コミット進める (files: パス → 内容)。 */
+  function advanceMain(files) {
+    for (const [file, content] of Object.entries(files)) {
+      mkdirSync(path.dirname(path.join(mainCheckout, file)), { recursive: true });
+      writeFileSync(path.join(mainCheckout, file), content);
+    }
+    const sha = commitAll(mainCheckout, 'feat(peer): landed meanwhile');
+    git(mainCheckout, ['push', '-q', 'origin', 'main']);
+    return sha;
+  }
+
+  /** GitHub の squash の代役: 今の remote main に head を 3-way マージした木 (または tree) を 1 親で着地させる。 */
+  function landSquash(tree) {
+    const parent = git(work, ['ls-remote', 'origin', 'refs/heads/main']).split('\t')[0];
+    const landedTree = tree ?? git(work, ['merge-tree', '--write-tree', parent, head]);
+    const landed = git(work, ['commit-tree', landedTree, '-p', parent, '-m', `${TITLE} (#${PR})`]);
+    git(work, ['push', '-q', 'origin', `${landed}:refs/heads/main`]);
+    const fake = readFake();
+    fake.pulls[PR] = { ...fake.pulls[PR], state: 'closed', merged: true, merge_commit_sha: landed };
+    writeFileSync(fakeState, JSON.stringify(fake));
+    return landed;
+  }
+
+  const readState = () => JSON.parse(readFileSync(stateFile(), 'utf8'));
+
+  it('S2 prepare: main not moved is class N exactly as in S1 (no predicted verify)', () => {
+    setup({ merge: { mode: 'S2' } });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(0);
+    expect(prepared.stderr).toContain('クラス=N');
+    expect(readState()).toMatchObject({ class: 'N', predBase: base, head });
+    expect(readState().predictedTree).toBeUndefined();
+    expect(verified()).toEqual([]);
+  });
+
+  it('S2 happy path: main moved on other files → F; the predicted tree is verified outside the slot and is the tree that lands', () => {
+    setup({ merge: { mode: 'S2' } });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.stderr).not.toContain('想定外');
+    expect(prepared.status).toBe(0);
+    expect(prepared.stderr).toContain('クラス=F');
+    const expectedTree = git(work, ['merge-tree', '--write-tree', moved, head]);
+    const state = readState();
+    expect(state).toMatchObject({ class: 'F', predBase: moved, head, predictedTree: expectedTree });
+    expect(git(work, ['rev-parse', `${state.predictedCommit}^{tree}`])).toBe(expectedTree);
+    expect(git(work, ['rev-list', '--parents', '-n', '1', state.predictedCommit]).split(' ').slice(1)).toEqual([moved, head]);
+    expect(verified()).toEqual([state.predictedCommit]);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+    expect(git(work, ['rev-parse', 'HEAD'])).toBe(head); // rebase も push もしていない
+    expect(calls('bd')).toEqual([]); // prepare は枠に触れない
+    expect(posted()).toEqual([]); // 着地予定コミットは GitHub に無いので台帳にも書かない
+    expect(calls('gh', 'checks')).toHaveLength(1);
+    expect(auditText()).toMatch(/\tpredicted-verify\t.*result=success/);
+
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    const gated = run(['gate', String(PR)]);
+    expect(gated.status).toBe(0);
+    expect(gated.stdout).toBe(`gh pr merge ${PR} --squash --delete-branch --match-head-commit ${head} --subject '${TITLE} (#${PR})'\n`);
+    const landed = landSquash();
+    expect(git(work, ['rev-parse', `${landed}^{tree}`])).toBe(expectedTree);
+    const finished = run(['finish', String(PR)]);
+    expect(finished.status).toBe(0);
+    expect(finished.stderr).toContain('着地予定ツリーと同一');
+    expect(verified()).toEqual([state.predictedCommit, landed]);
+    expect(posted().map(({ sha, state: s }) => [sha, s])).toEqual([
+      [landed, 'pending'],
+      [landed, 'success'],
+    ]);
+    expect(auditText()).toMatch(/\tpredicted-tree\tpr=7\tid=demo-1\tmatch=true/);
+    expect(readFake().slot.holder).toBeNull();
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('S2 prepare: a text conflict with main is class R (exit 3); nothing is verified and CI is not asked', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'feature.txt': 'main side\n' });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(3);
+    expect(prepared.stderr).toContain('クラス=R');
+    expect(prepared.stderr).toContain('テキスト衝突: feature.txt');
+    expect(prepared.stderr).toContain('git rebase origin/main');
+    expect(verified()).toEqual([]);
+    expect(calls('gh', 'checks')).toEqual([]);
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('S2 prepare: the same hot kind on both sides is class R without a text conflict; a one-sided hot file is still F', () => {
+    setup({ merge: { mode: 'S2' }, branchFiles: { 'package.json': '{"name":"demo"}\n' } });
+    advanceMain({ 'package-lock.json': '{"lockfileVersion":3}\n' });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(3);
+    expect(prepared.stderr).toContain('hot file: main package-lock.json / 自分 package.json');
+    expect(verified()).toEqual([]);
+
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ '.github/workflows/ci.yml': 'on: push\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(readState().class).toBe('F');
+  });
+
+  it('S2 prepare: merge.hotFiles in the contract replaces the default list', () => {
+    setup({ merge: { mode: 'S2', hotFiles: ['{feature,peer}.txt'] } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(3);
+    expect(prepared.stderr).toContain('hot file: main peer.txt / 自分 feature.txt');
+  });
+
+  it('S2 prepare: a file-disjoint semantic conflict fails the predicted verify → exit 3, no state, no ledger, no slot', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const prepared = run(['prepare', String(PR)], { FAKE_VERIFY_CONFLICT: 'feature.txt,peer.txt' });
+    expect(prepared.status).toBe(3);
+    expect(prepared.stderr).toContain('着地予定ツリー');
+    expect(prepared.stderr).toContain('rebase に格下げ');
+    expect(verified()).toHaveLength(1);
+    expect(existsSync(stateFile())).toBe(false);
+    expect(posted()).toEqual([]);
+    expect(calls('bd')).toEqual([]);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+    expect(auditText()).toMatch(/\tpredicted-verify\t.*result=failure/);
+  });
+
+  it('S2 prepare: main moving during the predicted verify is a retry (75) with no state left behind', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const later = git(mainCheckout, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'feat(peer2): landed during verify']);
+    const prepared = run(['prepare', String(PR)], { FAKE_VERIFY_MOVE_MAIN: later });
+    expect(prepared.status).toBe(75);
+    expect(prepared.stderr).toContain('verify の間に');
+    expect(existsSync(stateFile())).toBe(false);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+  });
+
+  it('S2 prepare: a dirty worktree cannot verify the predicted tree (exit 1) and a stale record from an earlier prepare is dropped', () => {
+    setup({ merge: { mode: 'S2' } });
+    expect(run(['prepare', String(PR)]).status).toBe(0); // 前回の prepare (クラス N) の記録
+    advanceMain({ 'peer.txt': 'peer\n' });
+    writeFileSync(path.join(work, 'feature.txt'), 'uncommitted\n');
+    expect(run(['prepare', String(PR)]).status).toBe(1);
+    expect(existsSync(stateFile())).toBe(false);
+    expect(verified()).toEqual([]);
+  });
+
+  it('S2 finish: a landed tree that differs from the predicted one is reported; the landed verify still decides', () => {
+    setup({ merge: { mode: 'S2' } });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFake({ statuses: { [moved]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const landed = landSquash(git(work, ['rev-parse', `${head}^{tree}`]));
+    const finished = run(['finish', String(PR)]);
+    expect(finished.status).toBe(0);
+    expect(finished.stderr).toContain('着地予定ツリー');
+    expect(finished.stderr).toContain('違います');
+    expect(auditText()).toMatch(/\tpredicted-tree\tpr=7\tid=demo-1\tmatch=false/);
+    expect(posted().map(({ sha, state }) => [sha, state])).toEqual([
+      [landed, 'pending'],
+      [landed, 'success'],
+    ]);
+  });
+
+  it('gate: a class-F record is sent back to prepare under S1 (rolled back) or when the predicted verify is not recorded', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFileSync(stateFile(), JSON.stringify({ ...readState(), class: 'F', predictedTree: 'c'.repeat(40), predictedVerifiedAt: 'x' }));
+    const rolledBack = run(['gate', String(PR)]);
+    expect(rolledBack.status).toBe(75);
+    expect(rolledBack.stderr).toContain('クラス F');
+    expect(existsSync(stateFile())).toBe(false);
+
+    setup({ merge: { mode: 'S2' } });
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    writeFileSync(stateFile(), JSON.stringify({ ...readState(), class: 'F' }));
+    expect(run(['gate', String(PR)]).status).toBe(75);
+    expect(calls('bd', 'acquire')).toEqual([]);
+  });
+
+  it('prepare refuses while this PR is gated and holds the slot (finish first); the record survives for finish', () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    const again = run(['prepare', String(PR), '--dry-run']);
+    expect(again.status).toBe(2);
+    expect(again.stderr).toContain('finish');
+    expect(readState().gateAt).toBeTruthy();
+    expect(run(['finish', String(PR)]).status).toBe(5);
+    expect(readFake().slot.holder).toBeNull();
+  });
+
+  it('prepare --dry-run previews the S2 class in any mode and never verifies or writes state', () => {
+    setup();
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const s1 = run(['prepare', String(PR), '--dry-run']);
+    expect(s1.status).toBe(3); // S1 では main が動いたら R のまま
+    expect(s1.stderr).toContain('参考: merge.mode が S2 ならクラス=F');
+
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const s2 = run(['prepare', String(PR), '--dry-run']);
+    expect(s2.status).toBe(0);
+    expect(s2.stderr).toContain('クラス=F');
+    expect(s2.stderr).toContain('verify もしません');
+    expect(verified()).toEqual([]);
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('prepare: a HEAD left detached (an interrupted verify) is refused with the way back', () => {
+    setup({ merge: { mode: 'S2' } });
+    git(work, ['checkout', '-q', '--detach', base]);
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(2);
+    expect(prepared.stderr).toContain('git checkout bd/demo-1');
   });
 });

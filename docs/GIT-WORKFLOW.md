@@ -175,7 +175,7 @@ PRs that each pass CI independently but break when combined.
 
 Concurrent sessions have made this concrete, so the procedure is now
 spelled out rather than left to judgement. Run these in order for every
-merge (this is **S0**, the procedure while `merge.mode` is `"S0"`; S1 follows):
+merge (this is **S0**, the procedure while `merge.mode` is `"S0"`; S1 and S2 follow):
 
 0. **Check for drift** — `npm run drift`. Rebase for main-branch drift; use
    peer-overlap reports to choose a merge order, then re-run CI before taking
@@ -206,7 +206,7 @@ is the only one that catches a conflict *before* it has cost you a CI run.
 
 Which procedure applies is decided by `merge.mode` in `.claude/bdboard-harness.json`
 **as it is on `origin/main`** (bdboard-ulxa): `S0` = the steps above (the default),
-`S1` = the steps below. Switching and rolling back are one-line edits of that key,
+`S1` / `S2` = the steps below. Switching and rolling back are one-line edits of that key,
 landed through a normal PR; agents dispatched after the switch use the new steps.
 
 ### S1 — hold the slot only for the CAS and the merge (`merge.mode: "S1"`)
@@ -215,8 +215,8 @@ Measured on 2026-09-23 (bdboard-iaqg): with S0 the slot was held 7.6 of 11 hours
 (≈70%), because the rebase → CI (5–9 min) → CAS retry loop and the post-merge
 verify all ran inside it; merges were ≈12 minutes apart. S1 moves everything except
 `acquire → git ls-remote → gh pr merge → release` out of the slot (design:
-bdboard-ulxa §2 A; S2/S3 — verifying a predicted landed tree instead of rebasing —
-are bdboard-ulxa.2 and later). From the PR worktree (a linked worktree made by
+bdboard-ulxa §2 A; S2 — verifying a predicted landed tree instead of rebasing — is the
+next subsection, S3 is bdboard-ulxa.3). From the PR worktree (a linked worktree made by
 `git worktree add` — the landed verify refuses to run in the main checkout, because detaching it
 would also replace the `web/dist` the always-on server serves):
 
@@ -270,7 +270,57 @@ npm run merge-pr -- finish <N>    # always, merged or not: release first → (if
 - The chair deploys to the always-on server as before (see "Cleanup after merge"),
   preferably once the tip's `bdboard/landed-verify` is `success`.
 
-### When main is broken (S0 and S1)
+### S2 — skip the rebase: verify the predicted landed tree (`merge.mode: "S2"`)
+
+S2 is S1 plus bdboard-ulxa §2 B (bdboard-ulxa.2). The S1 trial (bdboard-ulxa.4, 20 merges, 0 exit
+75, 0 broken main) showed that almost every `prepare` exit 3 was main simply moving ahead with no
+conflict — each one cost a rebase, a push and a 5–9 minute CI rerun. Under S2, `prepare` classifies
+the PR instead of always demanding a rebase when main has moved (design §2.3):
+
+| Class | When | What `prepare` does |
+|---|---|---|
+| N | `origin/main` is an ancestor of the PR head (main did not move) | same as S1 — records PRED_BASE, no extra verify |
+| R | main moved **and** (not exactly one merge-base / `git merge-tree` reports a text conflict or cannot run / main's changes and yours hit the same `merge.hotFiles` pattern) | exit 3, same as S1: rebase (or `git merge origin/main`) → push → CI → `prepare` |
+| F | main moved, no conflict, no hot-file collision | builds the predicted landed tree with `git merge-tree --write-tree origin/main HEAD`, commits it locally (`git commit-tree`, parents PRED_BASE and the PR head — not pushed, no ref), detach-checks it out **in the PR worktree**, runs the contract's `verify`, checks the branch out again. Green → records PRED_BASE = origin/main and the predicted tree; red → exit 3 (demoted to R) |
+
+`gate` and `finish` are the S1 ones. What makes "the tree we verified" equal "the tree that lands":
+GitHub's squash commit is the 3-way merge of the PR head into the main it merges onto; `gate`'s CAS
+(`ls-remote` == PRED_BASE, inside the slot) pins that main and `--match-head-commit` pins the head,
+so the landed tree is `merge-tree(PRED_BASE, head)` — the one `prepare` verified. `finish` compares
+the landed commit's tree with the recorded one and prints / audits `predicted-tree … match=true|false`;
+a mismatch is reported (to bdboard-ulxa.2), and the landed verify (layer 3, unchanged) still decides
+the ledger. File overlap is **not** a criterion (§3.2: overlap and merge-tree are textual; only
+building / linting / testing the landed tree catches a semantic conflict) — it is only logged for S3.
+
+- **Hot files** (`merge.hotFiles`, default in `scripts/merge-pr/hot-files.mjs`, a contract value
+  replaces the whole list): each entry is one *kind*; R when main and the PR both touch the same kind
+  (not only the same file): dependencies (`package.json` / `package-lock.json`, root and `web/`),
+  `.github/workflows/**`, verify configs (`tsconfig*.json`, `.dependency-cruiser.*`,
+  `scripts/verify.mjs`, `vite.config.*`, `vitest.config.*`), and the 8192-byte `SKILL.md` (canonical
+  and injected copy). `eslint.config.mjs` and `scripts/file-size-baseline.json` are deliberately not
+  hot (§6 decision 3): `lint` / `check:file-size` decide them on the predicted tree.
+- **Exit codes** as in S1, plus: `3` also means "predicted tree failed `verify`" (a semantic conflict
+  with main — read the log `<git common dir>/bdboard-merge/predicted-verify-pr<N>-<tree12>.log`; if it
+  is a known flake such as bdboard-241s, `prepare` again, otherwise rebase and fix). `75` also means
+  "main moved while the predicted tree was being verified". `1` also covers a predicted verify that
+  could not run (dirty worktree, `npm ci` failed). None of these touch the slot or the ledger, and
+  every failure removes the prepare record, so `gate` cannot run on a stale one.
+- `prepare` takes minutes under S2 class F (a full `npm run verify`, including the machine-wide
+  verify-slot queue): run it in the foreground with a 600000 ms Bash timeout like `finish`. If it is
+  interrupted, the worktree can be left detached on the predicted commit; `prepare` then exits 2 and
+  says `git checkout bd/<id>`.
+- `prepare` refuses (exit 2) while this PR's record says it is gated and holds the slot — run
+  `finish` first (applies to S1 too; otherwise the record `finish` needs to release the slot would be
+  deleted).
+- `npm run merge-pr -- prepare <N> --dry-run` prints the S2 class in every mode ("参考: merge.mode が
+  S2 ならクラス=…") without verifying or writing anything — use it to preview S2 before switching.
+- Switching: a one-line PR setting `merge.mode` to `"S2"` (rollback: back to `"S1"`). A `gate` that
+  finds a class-F record while main says S1 sends the agent back to `prepare`. Branches cut before
+  this script supported S2 reject `"S2"` as an unknown mode (exit 1): `git merge origin/main` first.
+  Roll back to S1 after two reverts in a day, or as soon as a landed verify fails on a PR whose
+  predicted tree had passed (design §5 / §6 decision 7).
+
+### When main is broken (S0, S1 and S2)
 
 Detected by a `failure` in `bdboard/landed-verify`, a red `verify` / `e2e` in main's push CI
 (`commit-parse` is not used as a gate), or a gate exiting 4. Squash merges make recovery one
@@ -393,7 +443,8 @@ other tools) reads the imported issue before it round-trips back through that sa
   rebase → CI 再走を強制しない。strict を on にすると main が動くたびに全 PR の
   update-branch + CI 再走が要り、S0 で枠の中にあった待ちを GitHub 側へ移すだけになる。
   「CI が見た木 = 着地する木」は S1 では PRED_BASE の CAS と着地後検証の台帳
-  (`bdboard/landed-verify`) で担保する (bdboard-ulxa §3.3)。Merge queue は user-owned の
+  (`bdboard/landed-verify`) で担保する (bdboard-ulxa §3.3)。S2 では CI が見ていない
+  「main + PR」の木を prepare が手元で verify し、同じ CAS でその木が着地することを保証する。Merge queue は user-owned の
   private/public repo では使えない。
 - **force push 禁止** (`non_fast_forward`)、**ブランチ削除禁止** (`deletion`)。
 - **bypass = Repository admin (always)**。オーナーだけが唯一の例外 (CI 復旧) を直接
