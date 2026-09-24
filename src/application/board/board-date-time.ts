@@ -56,8 +56,24 @@ export function zonedMidnight(dateKey: string, timeZone: string): Date {
   const offset1 = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
   const candidate1 = utcGuess - offset1;
   const offset2 = getTimeZoneOffsetMs(new Date(candidate1), timeZone);
-  const candidate2 = offset2 !== offset1 ? utcGuess - offset2 : candidate1;
-  return new Date(candidate2);
+  if (offset2 === offset1) {
+    return new Date(candidate1);
+  }
+  const candidate2 = utcGuess - offset2;
+  if (localDateKey(new Date(candidate2), timeZone) === dateKey) {
+    return new Date(candidate2);
+  }
+  // Local midnight for dateKey does not exist: this is a "spring forward at
+  // 00:00" DST transition day (e.g. America/Santiago), where the clock jumps
+  // from 23:59:59 the day before straight to 01:00:00. candidate2 above --
+  // computed using the post-transition offset -- lands back inside the
+  // skipped hour(s) and reads as the previous day. candidate1 is exactly the
+  // transition instant instead, which is the first local instant that
+  // belongs to dateKey (e.g. 01:00), keeping
+  // localDateKey(zonedMidnight(key, tz), tz) === key an invariant even on
+  // these days (verified across all 86 affected (dateKey, timeZone) pairs,
+  // 2015-2030, all IANA zones -- see board-date-time.test.ts).
+  return new Date(candidate1);
 }
 
 export function getWeekdayInTimeZone(date: Date, timeZone: string): number {
