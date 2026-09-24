@@ -81,8 +81,8 @@ export function useColdKeyspaceAdoption({
       // bdboard-ysu(Opus レビュー SF2): coldNonce > 0 は「projects 未解決の
       // コールドウィンドウ中に、ユーザーが '' キースペースで明示的に新規ドラフト
       // 操作(新規スレッド/エージェント切替)を行った」ことを意味する。この事実を
-      // resolved 側の draftNonces へ引き継がないと、ChatPanel.tsx の project-sync
-      // effect(E7)の「nonce>0 かつ選択が undefined」ガード(SF1 コメント参照)が resolved
+      // resolved 側の draftNonces へ引き継がないと、chat/useThreadListSync.ts の
+      // project-sync effect(E7)の「nonce>0 かつ選択が undefined」ガード(SF1 コメント参照)が resolved
       // プロジェクトの初回 fetch 開始時点でこれを検出できず、fetch が既存
       // スレッドで解決した瞬間にこのドラフト選択が上書きされてしまう(チケットの
       // 症状そのもの、実測で確認済み)。targetNonce は「実際にこの移行後の
