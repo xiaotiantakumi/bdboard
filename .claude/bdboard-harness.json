@@ -20,8 +20,8 @@
   "models": {
     "routes": {
       "implement": {
-        "low": ["codex:gpt-5.6-luna", "cursor:composer-2.5-fast", "claude:haiku"],
-        "med": ["codex:gpt-5.6-terra", "cursor:composer-2.5", "claude:sonnet"],
+        "low": ["codex:gpt-6-luna", "claude:sonnet"],
+        "med": ["codex:gpt-6-luna", "claude:sonnet"],
         "high": ["claude:opus", "codex:gpt-5.6-sol"]
       },
       "review": {
