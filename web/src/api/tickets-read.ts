@@ -51,6 +51,8 @@ export interface TicketDetailDto extends TicketSummaryDto {
   sessionLinks: TicketSessionLinkDto[];
   models: TicketModelDto[];
   children: TicketChildDto[];
+  /** `bdboard.complexity` メタデータ由来の複雑度(bdboard-p5l.18)。 */
+  complexity?: string;
 }
 
 export interface TicketChildDto {

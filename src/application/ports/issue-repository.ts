@@ -5,6 +5,7 @@ export type BdErrorKind =
   | 'bd-not-found'
   | 'not-a-beads-project'
   | 'lock-contention'
+  | 'timeout'
   | 'schema-mismatch'
   | 'unknown';
 

@@ -6,7 +6,7 @@ import type {
 } from '../../application/ports/merge-slot-reader.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import { classifyBdError } from './classify-bd-error.js';
-import { withLockContentionRetry } from './bd-retry.js';
+import { withTransientReadRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -55,10 +55,10 @@ export function createBdCliMergeSlotReader(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    // bd list --readonly は読み取り専用でべき等なので、lock-contention
-    // なら数回まで自動リトライしてよい(bdboard-3tj)。
+    // bd list --readonly は読み取り専用でべき等なので、lock-contention や
+    // timeout(bdboard-vpt3)なら数回まで自動リトライしてよい(bdboard-3tj)。
     async readMergeSlotSignal(projectRootPath: string): Promise<MergeSlotSignal | null> {
-      const commandResult = await withLockContentionRetry(async () => {
+      const commandResult = await withTransientReadRetry(async () => {
         const result = await commandRunner.run(
           bdPath,
           buildListArgs(projectRootPath),
@@ -67,7 +67,11 @@ export function createBdCliMergeSlotReader(
 
         if (result.exitCode !== 0) {
           const combined = `${result.stdout}\n${result.stderr}`.toLowerCase();
-          const kind = classifyBdError(result.exitCode, combined);
+          // bdboard-vpt3: NodeCommandRunner 自身が記録した timeout signal を最優先で見る
+          // (gh-cli-pr-status-reader.ts の classifyCommandFailure と同じ役割分担)。
+          // classifyBdError の文字列一致はこの signal が無い経路のフォールバック。
+          const kind =
+            result.failureKind === 'timeout' ? 'timeout' : classifyBdError(result.exitCode, combined);
           throw new BdError(
             kind,
             projectRootPath,

@@ -493,6 +493,35 @@ describe('dto', () => {
     expect(dto.children).toEqual([
       { id: 'bdboard-child', title: 'Child ticket', lane: 'in_progress' },
     ]);
+    expect(dto.complexity).toBeUndefined();
+  });
+
+  it('includes complexity when the ticket carries bdboard.complexity metadata, and omits it otherwise', () => {
+    const withComplexity = makeTicket({ id: 'bdboard-complex', complexity: 'high' });
+    const boardWithComplexity = buildBoard({
+      projectId: '/projects/a',
+      tickets: [withComplexity],
+      now: NOW,
+    });
+    const cardWithComplexity = boardWithComplexity.cards.find(
+      (entry) => entry.ticket.id === 'bdboard-complex',
+    );
+    expect(cardWithComplexity).toBeDefined();
+    expect(toTicketDetailDto(cardWithComplexity!, [], [], []).complexity).toBe('high');
+
+    const withoutComplexity = makeTicket({ id: 'bdboard-no-complex' });
+    const boardWithoutComplexity = buildBoard({
+      projectId: '/projects/a',
+      tickets: [withoutComplexity],
+      now: NOW,
+    });
+    const cardWithoutComplexity = boardWithoutComplexity.cards.find(
+      (entry) => entry.ticket.id === 'bdboard-no-complex',
+    );
+    expect(cardWithoutComplexity).toBeDefined();
+    expect(
+      toTicketDetailDto(cardWithoutComplexity!, [], [], []).complexity,
+    ).toBeUndefined();
   });
 
   it('maps ticket token usage totals to dto', () => {

@@ -66,6 +66,7 @@ function makeData(overrides: Partial<TicketDetailDto> = {}): TicketDetailDto {
     owner: 'MARK-owner',
     parentId: 'MARK-parent',
     commentCount: 7,
+    complexity: 'MARK-complexity',
     description: 'MARK-description',
     notes: 'MARK-notes-body-text',
     dependencies: [],
@@ -260,7 +261,7 @@ describe('TicketDetailBody', () => {
     expect(props.onFilterByEpic).toHaveBeenCalledWith('MARK-id');
   });
 
-  it('renders every DetailField row (ID/Status/Priority/IssueType/PR/Assignee/Owner/Created/Updated/Started/Closed/DeferUntil) and the Notes body from data', () => {
+  it('renders every DetailField row (ID/Status/Priority/IssueType/Complexity/PR/Assignee/Owner/Created/Updated/Started/Closed/DeferUntil) and the Notes body from data', () => {
     const props = makeProps();
     const { getByText, container } = render(<TicketDetailBody {...props} />);
 
@@ -268,6 +269,7 @@ describe('TicketDetailBody', () => {
     expect(getByText('MARK-status')).toBeInTheDocument();
     expect(getByText('P2')).toBeInTheDocument();
     expect(getByText('MARK-issue-type')).toBeInTheDocument();
+    expect(getByText('MARK-complexity')).toBeInTheDocument();
     expect(getByText('MARK-assignee')).toBeInTheDocument();
     expect(getByText('MARK-owner')).toBeInTheDocument();
     // formatDateTime はパース不能な文字列をそのまま返すので、各フィールドが
@@ -296,6 +298,7 @@ describe('TicketDetailBody', () => {
       'Status',
       'Priority',
       'Issue Type',
+      'Complexity',
       'PR',
       'Assignee',
       'Owner',
@@ -308,13 +311,14 @@ describe('TicketDetailBody', () => {
     ]);
   });
 
-  it('hides the chat button and omits assignee/owner/PR/dates when absent from data/props', () => {
+  it('hides the chat button and omits assignee/owner/complexity/PR/dates when absent from data/props', () => {
     const props = makeProps({
       onChatAboutTicket: undefined,
       prLink: undefined,
       data: makeData({
         assignee: undefined,
         owner: undefined,
+        complexity: undefined,
         parentId: undefined,
         startedAt: undefined,
         closedAt: undefined,
@@ -327,6 +331,7 @@ describe('TicketDetailBody', () => {
     expect(queryByText('このチケットについてチャット')).not.toBeInTheDocument();
     expect(queryByText('MARK-assignee')).not.toBeInTheDocument();
     expect(queryByText('MARK-owner')).not.toBeInTheDocument();
+    expect(queryByText('MARK-complexity')).not.toBeInTheDocument();
     expect(queryByText('PR open')).not.toBeInTheDocument();
     expect(queryByText('MARK-started')).not.toBeInTheDocument();
     expect(queryByText('MARK-closed')).not.toBeInTheDocument();

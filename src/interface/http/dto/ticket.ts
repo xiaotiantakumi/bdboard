@@ -44,6 +44,8 @@ export interface TicketDetailDto extends TicketSummaryDto {
   sessionLinks: TicketSessionLinkDto[];
   models: TicketModelDto[];
   children: TicketChildDto[];
+  /** `bdboard.complexity` メタデータ由来の複雑度(bdboard-p5l.18)。 */
+  complexity?: string;
 }
 
 export interface ModelUsageDto {
@@ -93,6 +95,9 @@ export function toTicketDetailDto(
       ? { description: card.ticket.description }
       : {}),
     ...(card.ticket.notes !== undefined ? { notes: card.ticket.notes } : {}),
+    ...(card.ticket.complexity !== undefined
+      ? { complexity: card.ticket.complexity }
+      : {}),
     dependencies: card.ticket.dependencies.map((edge) => ({
       issueId: edge.issueId,
       dependsOnId: edge.dependsOnId,
