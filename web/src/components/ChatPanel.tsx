@@ -2,14 +2,12 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from 'react';
 import {
   ApiError,
   acknowledgeChatTurn,
-  fetchChatAgents,
   fetchChatThreads,
   fetchChatTurnStatus,
   deleteChatThread,
@@ -18,7 +16,6 @@ import {
   postChatMessage,
   postChatMessageStream,
   ChatStreamEndedWithoutResultError,
-  type ChatAgentDto,
   type ChatMessageResponseDto,
   type ChatMessageRequest,
   type ProjectDto,
@@ -47,10 +44,8 @@ import {
 } from './PlatformLimitationNotice';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useHistoryBackClose } from '../hooks/useHistoryBackClose';
-import { usePersistedState } from '../hooks/usePersistedState';
 import {
   UI_STORAGE_KEYS,
-  validateChatModelSelections,
 } from '../uiPersistedState';
 import {
   SidePanelResizeHandle,
@@ -58,12 +53,14 @@ import {
 } from '../hooks/useResizableSidePanel';
 import type { ChatQuickCommand } from '../chatQuickCommands';
 import { CHAT_AGENT_UNAVAILABLE_WARNING } from '../writeAccessMessage';
+import { useChatAgentModelState } from './chat/useChatAgentModelState';
+import { useAgentFromConversationSync } from './chat/useAgentFromConversationSync';
+import { useAgentListAndModelRestore } from './chat/useAgentListAndModelRestore';
 import {
   CHAT_IMAGE_ONLY_PROMPT,
   attachmentsToPayload,
   type ChatAttachment,
 } from './chat/attachments';
-import { hasSelectableModels, resolveDefaultModel } from './chat/agentOptions';
 import { makeDraftKey } from './chat/draftKey';
 import {
   projectSelectionHint as computeProjectSelectionHint,
@@ -199,9 +196,6 @@ export function ChatPanel({
   // chat/useChatNotifications.ts へ抜き出した(詳細はそちら参照)。
   const { threadError, setThreadError, ticketProjectFallbackNotice, setTicketProjectFallbackNotice } =
     useChatNotifications();
-  const [agents, setAgents] = useState<readonly ChatAgentDto[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>('');
-  const [selectedModelId, setSelectedModelId] = useState('');
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
   // ticketContextToken 由来のプリフィル文言と、プロジェクト解決前に貼られた画像は
@@ -445,9 +439,23 @@ export function ChatPanel({
   //     切り替える操作が draftKey の nonce を進めることでキーが自然に分離される
   //     ことも合わせて働く。
   const [threadModelIds, setThreadModelIds] = useState<Record<string, string>>({});
-  const [chatModelSelections, setChatModelSelections] = usePersistedState<
-    Record<string, Record<string, string>>
-  >(UI_STORAGE_KEYS.chatModelSelections, {}, validateChatModelSelections);
+  const {
+    agents,
+    setAgents,
+    selectedAgentId,
+    setSelectedAgentId,
+    selectedAgent,
+    selectedAgentUnavailable,
+    setSelectedModelId,
+    chatModelSelections,
+    showModelSelect,
+    effectiveModelId,
+    handleModelChange,
+  } = useChatAgentModelState({
+    selectedProjectId,
+    currentConversationKey,
+    setThreadModelIds,
+  });
   const chatPanel = useResizableSidePanel(UI_STORAGE_KEYS.chatPanelWidth);
   const [isChatPanelMaximized, setIsChatPanelMaximized] = useState(false);
   const threadModelIdsRef = useRef(threadModelIds);
@@ -702,25 +710,18 @@ export function ChatPanel({
   const projectSelectionHint = computeProjectSelectionHint(projects, selectedProjectId);
   const projectSelectionHintId =
     projectSelectionHint === null ? null : 'chat-project-unselected-hint';
-  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId);
-  const selectedAgentUnavailable = selectedAgent?.availability === 'unavailable';
   const agentUnavailableHintId = selectedAgentUnavailable
     ? 'chat-agent-unavailable-hint'
     : null;
   const hasUnsupportedAttachments =
     currentAttachments.length > 0 && selectedAgent?.supportsImages !== true;
 
-  useEffect(() => {
-    if (currentSessionId === undefined) return;
-    const conversationAgentId = conversations[currentSessionId]?.agentId;
-    if (
-      conversationAgentId !== undefined &&
-      conversationAgentId !== '' &&
-      agents.some((agent) => agent.id === conversationAgentId)
-    ) {
-      setSelectedAgentId(conversationAgentId);
-    }
-  }, [currentSessionId, conversations, agents]);
+  useAgentFromConversationSync({
+    currentSessionId,
+    conversations,
+    agents,
+    setSelectedAgentId,
+  });
 
   useEffect(() => {
     return () => {
@@ -1344,7 +1345,7 @@ export function ChatPanel({
       cancelled = true;
       if (pollTimer !== undefined) clearTimeout(pollTimer);
     };
-  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey]);
+  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey, setSelectedAgentId]);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -1579,56 +1580,16 @@ export function ChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticketContextToken, projects, purgeDraftPayloadKeys]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void fetchChatAgents()
-      .then((list) => {
-        if (cancelled) {
-          return;
-        }
-        setAgents(list);
-        if (list.length > 0) {
-          setSelectedAgentId((current) =>
-            current === '' ? list[0]!.id : current,
-          );
-        }
-      })
-      .catch(() => {
-        // エージェント一覧が取れなくてもチャット自体は従来どおり使える
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (selectedAgent === undefined) {
-      return;
-    }
-    const cached = threadModelIds[currentConversationKey];
-    if (
-      cached !== undefined &&
-      (selectedAgent.models ?? []).some((model) => model.id === cached)
-    ) {
-      setSelectedModelId(cached);
-      return;
-    }
-    const persisted = chatModelSelections[selectedProjectId]?.[selectedAgent.id];
-    if (
-      persisted !== undefined &&
-      (selectedAgent.models ?? []).some((model) => model.id === persisted)
-    ) {
-      setSelectedModelId(persisted);
-      return;
-    }
-    setSelectedModelId(resolveDefaultModel(selectedAgent));
-  }, [
+  useAgentListAndModelRestore({
     selectedAgent,
     selectedProjectId,
     currentConversationKey,
     threadModelIds,
     chatModelSelections,
-  ]);
+    setAgents,
+    setSelectedAgentId,
+    setSelectedModelId,
+  });
 
   useEffect(() => {
     if (selectedProjectId === '') {
@@ -1785,7 +1746,7 @@ export function ChatPanel({
       historyRequestIdRef.current += 1;
       setLoadingHistoryFor(null);
     };
-  }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor]);
+  }, [selectedProjectId, currentConversationKey, currentSessionId, conversations, historyLoadedFor, setSelectedAgentId]);
 
   // turn-status の回収が完了を取りこぼしたときの安全網 (bdboard-3tw.156)。
   //
@@ -1913,33 +1874,11 @@ export function ChatPanel({
     activeStreamingText,
   );
 
-  const showModelSelect = useMemo(
-    () => selectedAgent !== undefined && hasSelectableModels(selectedAgent),
-    [selectedAgent],
-  );
-
   // bdboard-sso1.83 第2段: ingestImageFiles/handleImagePaste/
   // handleImageFileChange/removeAttachment は
   // useChatAttachmentIngestion.ts (useChatDraftState.ts 経由) へ移した。
   // 以降は handleImagePaste / handleImageFileChange /
   // removeAttachment を呼ぶ。
-  /**
-   * 描画にも送信にもこの派生値だけを使う。エージェントを切り替えた直後の1フレームは
-   * selectedModelId が前のエージェントのモデルIDのままなので、state を直接使うと
-   * 「どのオプションにも一致しない select」や「前のエージェントのモデルでの送信」が
-   * 一瞬成立してしまう。上の useEffect は state 側を追随させるだけの役割にする。
-   */
-  const effectiveModelId = useMemo(() => {
-    if (selectedAgent === undefined) {
-      return '';
-    }
-    const models = selectedAgent.models ?? [];
-    if (models.some((model) => model.id === selectedModelId)) {
-      return selectedModelId;
-    }
-    return resolveDefaultModel(selectedAgent);
-  }, [selectedAgent, selectedModelId]);
-
   const applyChatSuccess = useCallback(
     (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
       // bdboard-ru4d: 会話キーの再割り当て(ドラフトキー → 確定 sessionId)だが、
@@ -2472,28 +2411,6 @@ export function ChatPanel({
     ],
   );
 
-  const handleModelChange = useCallback(
-    (nextModelId: string) => {
-      setSelectedModelId(nextModelId);
-      // bdboard-2n8: このキャッシュ書き込みの理由は上の threadModelIds 宣言部の
-      // コメントを参照(履歴フェッチとの競合防止 / ドラフトスレッドでの保持)。
-      setThreadModelIds((prev) => ({
-        ...prev,
-        [currentConversationKey]: nextModelId,
-      }));
-      if (selectedAgentId !== '' && selectedProjectId !== '') {
-        setChatModelSelections((prev) => ({
-          ...prev,
-          [selectedProjectId]: {
-            ...(prev[selectedProjectId] ?? {}),
-            [selectedAgentId]: nextModelId,
-          },
-        }));
-      }
-    },
-    [currentConversationKey, selectedAgentId, selectedProjectId, setChatModelSelections],
-  );
-
   const handleAgentChange = useCallback(
     (nextId: string) => {
       // モデル選択のリセットはここでは行わない。selectedAgent を見る useEffect が
@@ -2572,6 +2489,7 @@ export function ChatPanel({
       updateConversationAttachments,
       updateConversationInputs,
       draftSeedTextRef,
+      setSelectedAgentId,
     ],
   );
 
