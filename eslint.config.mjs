@@ -17,7 +17,10 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 275, // 現在 265 (ESLint実測。bdboard-sso1.83 第15b段: JSX より前のフック配線を chat/useChatPanelController.ts と4つの区間フックへ移動)
+  // 'web/src/components/ChatPanel.tsx' はこの一覧から除去 (bdboard-sso1.83 第15段:
+  // フック配線を chat/useChatPanelController.ts と4つの区間フックへ、子へ渡す props を
+  // chat/chatPanelViewModel.ts へ、ドロワー行の組み立てを chat/chatThreadDrawerRows.tsx へ
+  // 移し、802 -> 72 行(ESLint実測)まで縮小。既定上限200行に対して128行の余裕がある)。
   // 'web/src/components/TicketDetailPanel.tsx' はこの一覧から除去 (bdboard-sso1.5:
   // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
   // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、

@@ -234,7 +234,7 @@ export function useChatPanelStores(params: ChatPanelControllerParams) {
     historyLoadedFor, setHistoryLoadedFor, loadingHistoryFor, setLoadingHistoryFor, threadModelIds,
     setThreadModelIds, threadModelIdsRef, historyRequestIdRef, threadListRequestIdRef,
     setSelectedThreadIds, selectedThreadIdsRef, setDraftNonces, draftNoncesRef, currentSessionId,
-    currentConversationKey, currentConversationKeyRef, send, isSending, streamingReply,
+    currentConversationKey, send, isSending, streamingReply,
     turnRecoveryGeneration, unresolvedSends, clearUnresolvedSend, clearStreamingReplyForKey,
     detachedStreamSendRef, requestAbortControllerRef, threadDrawerOpen, threadActionMenuSessionId,
     renamingSessionId, renameDraft, confirmingDeleteSessionId, showDiscoveredSessions,

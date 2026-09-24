@@ -32,3 +32,5 @@ export function useChatPanelController(params: ChatPanelControllerParams) {
   const composer = useChatPanelComposer({ ...params, ...stores, ...agentAndLauncher, ...sync });
   return { ...stores, ...agentAndLauncher, ...sync, ...composer };
 }
+
+export type ChatPanelController = ReturnType<typeof useChatPanelController>;
