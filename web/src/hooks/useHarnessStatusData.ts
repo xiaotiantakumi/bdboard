@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 import { fetchAllHarnessStatus, type ProjectHarnessStatusDto } from '../api';
-import type { ViewMode } from '../uiPersistedState';
 
 /**
  * bdboard-62p4 PR-3: App.tsx の `harness-status-all` クエリと、そこから導く
@@ -11,9 +10,13 @@ import type { ViewMode } from '../uiPersistedState';
  * この一文が抜けていた点を復元)。
  *
  * bdboard-mkm1.2: 一括操作バーの「▶ 実行」も同じ判定を使うので、取得条件を
- * `enabled` で受け取る版 (useAllHarnessStatuses) に切り出した。queryKey が同じなので
- * Next Up と一括操作バーでキャッシュを共有する。注入先の `.claude/` を読ませるのは
- * 判定が要るとき (Next Up を見ている / カードを選択している) だけ。
+ * `enabled` で受け取る版 (このフック) に切り出した。呼び出し元
+ * (useBulkAgentRun.ts) は選択があるときだけ enabled にする。queryKey は
+ * 固定なので、複数の呼び出し元がいても同じキャッシュを共有する。
+ *
+ * bdboard-mkm1.3: これを Next Up ビューを見ているときだけ enabled にする
+ * `useHarnessStatusData(view)` ラッパーがあったが、Next Up ビュー削除に伴い
+ * 削除した(唯一の呼び出し元だった NextUpView も削除済み)。
  */
 export function useAllHarnessStatuses(enabled: boolean) {
   const harnessStatusQuery = useQuery({
@@ -32,9 +35,4 @@ export function useAllHarnessStatuses(enabled: boolean) {
   }, [harnessStatusQuery.data]);
 
   return { harnessStatusQuery, harnessStatuses };
-}
-
-/** Next Up を見ているときだけ引く (判定に使うのはそのビューの「▶ 一括実行」)。 */
-export function useHarnessStatusData(view: ViewMode) {
-  return useAllHarnessStatuses(view === 'next');
 }

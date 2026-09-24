@@ -332,8 +332,6 @@
   .activity-window-group .toggle-btn,
   .throughput-weeks-group .toggle-btn,
   .session-list-tabs .toggle-btn,
-  .next-up-limit-group .toggle-btn,
-  .next-up-epic-toggle,
   .board-filter-bar .toggle-btn {
     min-height: 44px;
   }

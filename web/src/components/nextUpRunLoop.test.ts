@@ -944,13 +944,13 @@ describe('nextUpRunLoop', () => {
   describe('buildConsecutiveFailureComment', () => {
     it('uses the unknown-reason fallback when lastFailureReason is null', () => {
       expect(buildConsecutiveFailureComment(['ticket-1'], null)).toBe(
-        '[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
+        '[harness] bdboard の一括実行で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
       );
     });
 
     it('uses the unknown-reason fallback when lastFailureReason is empty', () => {
       expect(buildConsecutiveFailureComment(['ticket-1'], '')).toBe(
-        '[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
+        '[harness] bdboard の一括実行で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
       );
     });
 
@@ -958,7 +958,7 @@ describe('nextUpRunLoop', () => {
       expect(
         buildConsecutiveFailureComment(['ticket-1', 'ticket-2'], 'terminal failed'),
       ).toBe(
-        '[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1, ticket-2\n最後の失敗理由: terminal failed',
+        '[harness] bdboard の一括実行で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1, ticket-2\n最後の失敗理由: terminal failed',
       );
     });
   });

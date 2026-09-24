@@ -72,8 +72,8 @@ describe('ViewToolbar filter chips a11y', () => {
     expect(onHideDoneChange).toHaveBeenCalledWith(true);
   });
 
-  it('hides board filter chips outside merged/split views', () => {
-    renderToolbar({ view: 'next' });
+  it('hides board filter chips outside the split view', () => {
+    renderToolbar({ view: 'activity' });
 
     expect(screen.queryByRole('button', { name: /done レーンを隠す/ })).not.toBeInTheDocument();
   });

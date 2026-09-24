@@ -60,7 +60,6 @@ describe('buildBdSystemPrompt', () => {
     expect(prompt).toContain('bdboard の機能案内');
     expect(prompt).toContain('このボードの使い方');
     expect(prompt).toContain('Kanban（看板）');
-    expect(prompt).toContain('Next Up');
     expect(prompt).toContain('トンネル公開とQR');
     expect(prompt).toContain('PWA / ホーム画面への追加');
   });

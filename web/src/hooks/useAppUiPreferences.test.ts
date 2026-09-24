@@ -12,15 +12,13 @@ describe('useAppUiPreferences', () => {
     localStorage.clear();
   });
 
-  it('starts with the same defaults the 11 individual usePersistedState calls had in App.tsx', () => {
+  it('starts with the same defaults the 9 individual usePersistedState calls had in App.tsx', () => {
     const { result } = renderHook(() => useAppUiPreferences());
 
     expect(result.current.view).toBe(DEFAULT_VIEW);
     expect(result.current.selectedProjectIds).toEqual([]);
     expect(result.current.lastChatProjectId).toBe('');
     expect(result.current.boardFilterPresets).toEqual([]);
-    expect(result.current.nextUpLimit).toBe(10);
-    expect(result.current.nextUpShowEpics).toBe(false);
     expect(result.current.activityWindowDays).toBe(1);
     expect(result.current.digestWindowDays).toBe(1);
     expect(result.current.statsWeeks).toBe(8);
@@ -32,7 +30,7 @@ describe('useAppUiPreferences', () => {
     const { result } = renderHook(() => useAppUiPreferences());
 
     act(() => {
-      result.current.setView('next');
+      result.current.setView('digest');
       result.current.setView('split');
       result.current.setSelectedProjectIds(['proj-1']);
       result.current.setLastChatProjectId('proj-1');
@@ -50,8 +48,6 @@ describe('useAppUiPreferences', () => {
           stalledOnly: false,
         },
       ]);
-      result.current.setNextUpLimit(20);
-      result.current.setNextUpShowEpics(true);
       result.current.setActivityWindowDays(7);
       result.current.setDigestWindowDays(3);
       result.current.setStatsWeeks(12);
@@ -69,8 +65,6 @@ describe('useAppUiPreferences', () => {
       JSON.stringify('proj-1'),
     );
     expect(localStorage.getItem(UI_STORAGE_KEYS.boardFilterPresets)).not.toBeNull();
-    expect(localStorage.getItem(UI_STORAGE_KEYS.nextUpLimit)).toBe(JSON.stringify(20));
-    expect(localStorage.getItem(UI_STORAGE_KEYS.nextUpShowEpics)).toBe(JSON.stringify(true));
     expect(localStorage.getItem(UI_STORAGE_KEYS.activityWindowDays)).toBe(JSON.stringify(7));
     expect(localStorage.getItem(UI_STORAGE_KEYS.digestWindowDays)).toBe(JSON.stringify(3));
     expect(localStorage.getItem(UI_STORAGE_KEYS.statsWeeks)).toBe(JSON.stringify(12));
@@ -98,16 +92,16 @@ describe('useAppUiPreferences', () => {
 
   it('restores previously persisted values on mount, per key', () => {
     localStorage.setItem(UI_STORAGE_KEYS.view, JSON.stringify('split'));
-    localStorage.setItem(UI_STORAGE_KEYS.nextUpLimit, JSON.stringify(20));
+    localStorage.setItem(UI_STORAGE_KEYS.statsWeeks, JSON.stringify(12));
     localStorage.setItem(UI_STORAGE_KEYS.tipsBannerDismissed, JSON.stringify(true));
 
     const { result } = renderHook(() => useAppUiPreferences());
 
     expect(result.current.view).toBe('split');
-    expect(result.current.nextUpLimit).toBe(20);
+    expect(result.current.statsWeeks).toBe(12);
     expect(result.current.tipsBannerDismissed).toBe(true);
     // Untouched keys still fall back to their documented defaults.
-    expect(result.current.statsWeeks).toBe(8);
+    expect(result.current.activityWindowDays).toBe(1);
   });
 
   it('migrates a persisted merged view to split on mount', () => {
@@ -116,13 +110,22 @@ describe('useAppUiPreferences', () => {
     expect(result.current.view).toBe('split');
   });
 
+  // bdboard-mkm1.3: Next Up ビュー削除後、保存済み view が 'next' のまま
+  // 残っているユーザーも 'merged' と同じく 'split' へ読み替える
+  // (validateViewMode 経由、mkm1.1 の相乗り)。
+  it('migrates a persisted next view to split on mount', () => {
+    localStorage.setItem(UI_STORAGE_KEYS.view, JSON.stringify('next'));
+    const { result } = renderHook(() => useAppUiPreferences());
+    expect(result.current.view).toBe('split');
+  });
+
   it('falls back to the default when a persisted value fails validation', () => {
     localStorage.setItem(UI_STORAGE_KEYS.view, JSON.stringify('not-a-view'));
-    localStorage.setItem(UI_STORAGE_KEYS.nextUpLimit, JSON.stringify(-5));
+    localStorage.setItem(UI_STORAGE_KEYS.statsWeeks, JSON.stringify(-5));
 
     const { result } = renderHook(() => useAppUiPreferences());
 
     expect(result.current.view).toBe(DEFAULT_VIEW);
-    expect(result.current.nextUpLimit).toBe(10);
+    expect(result.current.statsWeeks).toBe(8);
   });
 });

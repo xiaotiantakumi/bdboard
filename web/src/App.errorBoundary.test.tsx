@@ -97,7 +97,7 @@ describe('App error boundaries (bdboard-yfq)', () => {
     await user.click(checkbox);
     expect(checkbox).toBeChecked();
 
-    await user.click(screen.getByRole('button', { name: 'Next Up' }));
+    await user.click(screen.getByRole('button', { name: '統計' }));
     await user.click(screen.getByRole('button', { name: '分割' }));
 
     // ビュー境界は key={view} で作り直される。選択プロバイダーをその内側に

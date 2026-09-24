@@ -203,22 +203,22 @@ export function useAppActions(params: AppActionsParams): AppActionsResult {
   // *after* our synchronous setView and silently overwrites it. Applying the
   // switch from an effect keyed only on epicFilterId sidesteps the race: it
   // reads `view` once, from the same render as the epicFilterId update (before
-  // any popstate has had a chance to fire), and — now that the epic-filter
-  // indicator/board render for 'split' | 'next' (bdboard-3tw.95
-  // review M2) — it only needs to force a switch when the ticket was opened
-  // from a non-board view (activity/digest/stats/hygiene/graph) that can't
-  // show the filtered board at all.
+  // any popstate has had a chance to fire), and only needs to force a switch
+  // when the ticket was opened from a non-board view (activity/digest/stats/
+  // hygiene/graph) that can't show the filtered board at all. bdboard-mkm1.3:
+  // Next Up ('next') removed, so 'split' is now the only board view that
+  // renders the epic-filter indicator/board.
   useEffect(() => {
     if (epicFilterId === undefined) {
       return;
     }
-    if (view !== 'split' && view !== 'next') {
+    if (view !== 'split') {
       setView('split');
     }
     // Intentionally epicFilterId-only: this must fire once per epic-filter
     // change, not on every subsequent view change (which would fight the
-    // user's own navigation, e.g. from 'split' to 'next' while the filter is
-    // still active).
+    // user's own navigation away from 'split' while the filter is still
+    // active).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [epicFilterId]);
 

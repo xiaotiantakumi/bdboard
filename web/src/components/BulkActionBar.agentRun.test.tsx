@@ -335,7 +335,7 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
     expect(batchRun.beginBatchRun).not.toHaveBeenCalled();
   });
 
-  it('does not reopen the dialog by itself after a batch started elsewhere (Next Up) finishes', async () => {
+  it('does not reopen the dialog by itself after a batch started elsewhere finishes', async () => {
     const cards = [makeRunCard('t-1')];
     const idle = makeController();
     const { user, rerenderWith } = await renderBar(

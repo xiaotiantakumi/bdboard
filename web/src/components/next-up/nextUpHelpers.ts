@@ -1,20 +1,9 @@
 // bdboard-sso1.43: NextUpView.tsx の純ヘルパー (React 非依存) を移動しただけ。
 // 挙動・出力文字列は移動前から変えていない。
-import type { BoardDto } from '../../api';
+// bdboard-mkm1.3: Next Up ビュー削除に伴い splitReadyCards (Next Up 専用) は削除した。
+// renderLoopProgressSummary はヘッダーの一括実行チップ (BatchRunProgressChip) が
+// 引き続き使うので残す。
 import type { NextUpLoopEndReason, NextUpLoopProgress } from '../nextUpRunLoop';
-
-export function splitReadyCards(readyCards: BoardDto['lanes']['ready']) {
-  const regularCards = [];
-  const epicCards = [];
-  for (const card of readyCards) {
-    if (card.ticket.issueType === 'epic') {
-      epicCards.push(card);
-    } else {
-      regularCards.push(card);
-    }
-  }
-  return { regularCards, epicCards };
-}
 
 /** endReason ごとの表示ラベル。Record なので endReason が増えたら型エラーで気づける。 */
 const NEXT_UP_LOOP_END_REASON_LABELS: Record<NextUpLoopEndReason, string> = {
