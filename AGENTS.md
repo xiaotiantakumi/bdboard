@@ -105,7 +105,7 @@ bd prime                # Refresh Beads context
 Before committing any change (server or web), run the full verification chain — it must be clean:
 
 ```bash
-npm run verify   # check:file-size + lint + build + build:web + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + lint:verify + build + build:web + test:server + test:web + check:boundaries
 ```
 
 - **フルチェーンは必ず `npm run verify` で回す。`npm run verify:steps` の直叩きは禁止** —

@@ -18,7 +18,7 @@ AGENTS.md 側に残っている 1 行要約と食い違ったら、**この文�
 コミット前 (server / web どちらの変更でも) に、フル検証チェーンをクリーンに通すこと:
 
 ```bash
-npm run verify   # check:file-size + lint + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
+npm run verify   # check:file-size + lint:verify + build (server tsc) + build:web (web tsc + vite build) + test:server + test:web + check:boundaries
 ```
 
 Node が `package.json` の `engines.node` を満たさないと、verify は子プロセス (tsc / vite / vitest) を
@@ -68,13 +68,29 @@ by import is not enough, and neither is sitting next to files that are checked.
 
 ```bash
 npm run check:file-size  # git ls-files 対象のファイル行数ガード (baseline との突き合わせ)
-npm run lint             # ESLint + typescript-eslint (src/ web/src/ scripts/、max-lines はラチェット許可リスト)
+npm run lint             # ESLint + typescript-eslint (src/ web/src/ scripts/、max-lines はラチェット許可リスト。warning を含め全件出力)
+npm run lint:verify      # verify から呼ぶ版。error は全文出力し exit code も同じだが、warning は件数のみ1行で出す
+npm run lint:warnings    # warning を含む全件を見たいときの単独実行 (中身は npm run lint と同じ)
 npm run build            # tsc --noEmit x3 (src/, vitest.config.ts, test/e2e/)
 npm run build:web        # web tsc --noEmit x2 + vite build
 npm run test:server      # vitest run (src/)
 npm run test:web         # vitest run (web/src/)
 npm run check:boundaries # dependency-cruiser (architecture layering)
 ```
+
+## Lint のログ量 (`npm run lint:verify`、bdboard-ynp1)
+
+`npm run verify` の中で `npm run lint` をそのまま呼ぶと、既存の warning (概算のルール
+ごとの内訳は `eslint.config.mjs` のコメント、合計は都度変動する。本 PR 作成時点の実測は
+2554 件) を毎回全件出力し、エージェントや CI のログで本当の失敗 (error) が埋もれていた。
+`scripts/lint-verify.mjs` (ESLint の Node API を直接呼ぶラッパー) が verify から呼ばれる:
+
+- error が1件も無ければ、warning は1行も出力せず `eslint: 0 errors, N warnings (...)` の
+  1行だけを出して exit 0。
+- error が1件でもあれば、`--quiet` と同じ絞り込みで **error だけ** を stylish フォーマッタで
+  出力し exit 1。ESLint 本体の実行内容・ルール・exit code の意味は `npm run lint` と同一で、
+  error の検出は弱めていない。
+- warning の全文が見たいときは `npm run lint:warnings` (絞り込み無しの通常実行) を使う。
 
 ## ファイルサイズガード (`npm run check:file-size`)
 
