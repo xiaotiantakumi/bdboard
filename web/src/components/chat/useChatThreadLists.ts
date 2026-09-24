@@ -76,8 +76,8 @@ export function useChatThreadLists({
   const [threadLists, setThreadLists] = useState<Record<string, ChatThreadDto[]>>({});
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
 
-  // bdboard-23u: 404/unknown session 自動回復の catch(ChatPanel 側に残る履歴
-  // フェッチ effect)が、依存配列に openThreadIds を含まないまま
+  // bdboard-23u: 404/unknown session 自動回復の catch(履歴フェッチ effect から
+  // 呼ばれる chat/useChatSessionLifecycle.ts の handleHistorySessionGone)が、依存配列に openThreadIds を含まないまま
   // writePersistedChatThreadState 用の最新 activeSessionIds を stale closure
   // なしで読むための参照。draftNoncesRef 等と同じミラーパターン。
   const openThreadIdsRef = useRef(openThreadIds);

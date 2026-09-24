@@ -293,7 +293,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     startNewDraftThread(selectedProjectId);
   };
 
-  // bdboard-23u: 死んだセッションからの自動回復(ChatPanel の
+  // bdboard-23u: 死んだセッションからの自動回復(chat/useChatSessionLifecycle.ts の
   // handleHistorySessionGone、E12 の onSessionGone)での nonce の前進。
   // handleAgentChange と同じインラインの nonce 前進パターンに揃える
   // (pendingPrefillRef の消化などプリフィル固有の副作用を伴う

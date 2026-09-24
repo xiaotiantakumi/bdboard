@@ -20,8 +20,8 @@ import type { ChatConversationEntry } from './useChatConversationsState';
  * 死んだセッション(404、または「不明なセッション」を意味する 400)を
  * 検出したときの openThreadIds/threadLists/selectedThreadIds の prune と、
  * 選択が外れた場合の永続化・ドラフト nonce の前進(bdboard-pbf/bdboard-23u)は、
- * 会話キー再割り当て(bdboard-c1pw 領域)を所有する ChatPanel.tsx 側に残し、
- * onSessionGone コールバック経由で呼ぶ(第11段では移さない)。
+ * このフックには持たせず、onSessionGone コールバック経由で呼ぶ(第11段では移さず、
+ * 第15a段で chat/useChatSessionLifecycle.ts の handleHistorySessionGone へ移した)。
  */
 export function useChatHistoryLoader(params: {
   selectedProjectId: string;
@@ -39,7 +39,7 @@ export function useChatHistoryLoader(params: {
   unresolvedSends: Record<string, true>;
   clearUnresolvedSend: (sessionId: string) => void;
   /**
-   * 死んだセッションの prune を ChatPanel.tsx 側へ委ねるコールバック。
+   * 死んだセッションの prune を呼び出し側(chat/useChatSessionLifecycle.ts)へ委ねるコールバック。
    * 履歴 fetch effect の依存配列に入るため、呼び出し側は useCallback で
    * 安定させた参照を渡すこと — 毎描画で新しい関数を渡すと、この effect の
    * クリーンアップが毎回 historyRequestIdRef を進めてしまい、fetch 中の
@@ -137,8 +137,8 @@ export function useChatHistoryLoader(params: {
           return;
         }
         // bdboard-pbf / bdboard-23u: 死んだセッションの prune・永続化・
-        // ドラフト nonce の前進は ChatPanel.tsx 側
-        // (handleHistorySessionGone)に委ねる。
+        // ドラフト nonce の前進は chat/useChatSessionLifecycle.ts の
+        // handleHistorySessionGone に委ねる。
         if (
           error instanceof ApiError &&
           (error.status === 404 ||
