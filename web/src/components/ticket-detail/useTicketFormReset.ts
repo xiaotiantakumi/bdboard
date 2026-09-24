@@ -23,9 +23,10 @@
 // 直前)からは動かさないこと — React の effect 実行順は「レンダー中にどの位置で
 // 呼ばれたか」で決まるため、動かすと他の effect との相対順序が変わりうる。
 // なお agentRun (useTicketAgentRun) はこのフックと無関係に自分の reset/復元を
-// 内部の2つの effect の順序だけで保証している(呼び出し位置は :162、このフックの
-// 前後どちらでも影響しない)ので、「このフックと agentRun の間の順序」自体は
-// 不変条件ではない。不変条件はあくまで「このフック内の9つの reset の呼び出し順」
+// 内部の2つの effect の順序だけで保証している(呼び出し位置は useTicketDetailController.ts
+// 内の useTicketAgentRun() 呼び出し、このフックの前後どちらでも影響しない)ので、
+// 「このフックと agentRun の間の順序」自体は不変条件ではない。不変条件はあくまで
+// 「このフック内の9つの reset の呼び出し順」
 // と「useEffect の依存配列の中身」。
 import { useCallback, useEffect } from 'react';
 

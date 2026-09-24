@@ -196,9 +196,10 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // Chat stays enabled for chat-mobile e2e; smoke scenarios never open the panel.
       BDBOARD_CLAUDE_PATH: claudeStub,
       BDBOARD_AI_QUOTA_DISABLED: '1',
-      // src/main.ts:254 の envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED') を落として、
-      // 自動 reclaim ループを e2e では止める。止めないと
-      // web/src/components/HygienePanel.tsx:583-586 の分岐が「自動 reclaim は無効です」
+      // src/bootstrap/resolve-main-config.ts の envBoolDefaultTrue('BDBOARD_RECLAIM_ENABLED') を
+      // 落として、自動 reclaim ループを e2e では止める。止めないと
+      // web/src/components/hygiene/StaleLeaseSection.tsx の reclaimEnabled 分岐が
+      // 「自動 reclaim は無効です」
       // ではなく reclaim 実行状況の行を描画し、そこに tmp のフルパス + bd スタブの
       // エラー文字列が折り返し指定無しで入る。375x812 で document.body.scrollWidth が
       // 375 → 437 に膨らみ、html{overflow-x:hidden} / body{overflow-x:clip} により
@@ -242,7 +243,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       // 直していない (JSON にコメントが書けないのでここに書く)。
       //
       // (m6) lease.in-progress.json の heartbeat_at は、
-      // src/domain/lease.ts:64-82 の detectStaleLeases が leaseExpiresAt しか見ないため
+      // src/domain/lease.ts の detectStaleLeases が leaseExpiresAt しか見ないため
       // 完全に飾り。実物の出力形に寄せるためだけに置いてある。
       BDBOARD_E2E_BD_GATE_LIST_FIXTURE: gateListFixture,
       BDBOARD_E2E_BD_LEASE_FIXTURE: leaseFixture,

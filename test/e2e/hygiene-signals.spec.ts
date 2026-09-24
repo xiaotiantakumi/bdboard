@@ -11,11 +11,11 @@ const TICKET_TITLE = 'Fixture ticket bdboard-3tw.8';
 
 // test/e2e/fixtures/bd/merge-slot.list.json の metadata.holder と同期
 const MERGE_SLOT_HOLDER = 'e2e-fixture-merge-slot-holder';
-// web/src/components/HygienePanel.tsx:78 の MERGE_SLOT_KIND_LABEL と同期
+// web/src/components/hygiene/constants.ts の MERGE_SLOT_KIND_LABEL と同期
 const MERGE_SLOT_KIND_LABEL = 'マージスロット';
-// web/src/components/HygienePanel.tsx:77 の STALE_LEASE_KIND_LABEL と同期
+// web/src/components/hygiene/constants.ts の STALE_LEASE_KIND_LABEL と同期
 const STALE_LEASE_KIND_LABEL = 'stale lease（heartbeat 途絶）';
-// web/src/components/TicketDetailPanel.tsx:2164-2166 の pendingDecision.kind === 'gate'
+// web/src/components/ticket-detail/TicketDecisionSection.tsx の pendingDecision.kind === 'gate'
 // のときだけ出る <p className="detail-help"> と同期
 const GATE_PRE_SUBMIT_NOTICE =
   'これは質問専用のゲートです。回答するとゲートはクローズされ、ブロックされていたチケットが着手可能になります。';
@@ -75,16 +75,17 @@ test.describe('hygiene signals from e2e bd fixtures', () => {
 
     const card = page.locator('article', { hasText: TICKET_TITLE });
     await expect(card).toBeVisible({ timeout: 15_000 });
-    // web/src/components/LaneColumn.tsx:328-330 の
+    // web/src/components/lane/CardBadges.tsx の
     // <span className="badge badge-pending-decision" title="ユーザー確認待ち"> と同期。
     // 第1アサートは前提条件であって gate 配線を守ってはいない。bdboard-3tw.8 は
     // human 一覧 (BDBOARD_E2E_BD_HUMAN_LIST_FIXTURE) にも入っているので、gate fixture
     // を外した origin/main の状態でも成立する。gate 配線を実際に守っているのは
     // ゲート予告文の可視性だけ (fixture を外すとカウント 0、配線すると 1 という実測)。
     // bdboard-3tw.8 は human 一覧にもあるため mergePendingDecisions
-    // (src/infrastructure/bd/bd-cli-human-decisions.ts:367-377) の上書き分岐を通る。
-    // 本来の動機である newGateIds 追記分岐 (同ファイル :387、human ラベルを持たない
-    // gate) は未カバーであり、カードが存在せず UI から観測できないため意図的に対象外。
+    // (src/infrastructure/bd/bd-cli-human-decisions/read-parse.ts の既存 gate 上書き分岐)
+    // を通る。本来の動機である newGateIds 追記分岐 (同ファイルの同関数内、human ラベルを
+    // 持たない gate) は未カバーであり、カードが存在せず UI から観測できないため意図的に
+    // 対象外。
     await expect(card.locator('.badge-pending-decision')).toHaveText('確認待ち');
 
     await card.click();

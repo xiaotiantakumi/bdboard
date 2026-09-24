@@ -1381,7 +1381,7 @@ describe('ChatPanel', () => {
     // MF3 再現:「パネルを閉じた状態からチケットチャットを開く」という主経路
     // (App.tsx は chatOpen が false→true になるたびに ChatPanel を新規マウント
     // し、ticketContextToken は既に確定した値で渡す)を StrictMode 下で検証する。
-    // main.tsx(web/src/main.tsx:34)は実際に StrictMode でレンダーしているため、
+    // main.tsx(web/src/main.tsx の mount() 内の <StrictMode>)は実際に StrictMode でレンダーしているため、
     // 開発時のダブル実行(mount→destroy→mount)は本番の初回起動でも発生する。
     // 修正前(pending クリアが cleanup 側にあった実装)では、この擬似アン
     // マウントを「別プロジェクトへ離脱した」と誤認して pending 意図を消して
