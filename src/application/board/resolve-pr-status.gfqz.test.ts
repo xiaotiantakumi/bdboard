@@ -60,6 +60,14 @@ describe('resolvePrStatus: getPriority is forwarded to statusGate.acquire (bdboa
   });
 
   it('passes a function returning getPriority()\'s current result via the fetchStatus in-flight-launcher branch (statusCache provided)', async () => {
+    // Note: with no joiner registered on this URL, PrBadgeStatusCache.fetchStatus()'s
+    // merged priority reduces to this single provider's own result, so this test cannot
+    // by itself distinguish "raw getPriority passed through" from "merged priority of one
+    // provider" — both look identical here. The merge behavior itself (multiple providers,
+    // live re-reads, no cross-URL leakage) is covered directly by
+    // pr-badge-status-cache.gfqz.test.ts, and the wiring that actually matters in
+    // production — a joiner's priority reaching the launcher's queued Semaphore waiter —
+    // is covered end-to-end by get-pr-badges.gfqz.test.ts's second it() (bdboard-gfqz B1).
     const statusGate = new Semaphore(1);
     const acquireSpy = vi.spyOn(statusGate, 'acquire');
     const budget: PrStatusBudget = { remaining: 10 };

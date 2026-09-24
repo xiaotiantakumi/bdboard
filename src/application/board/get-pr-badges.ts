@@ -275,10 +275,18 @@ export async function getPrBadges(
       statusGate,
       budget: statusBudget,
       // bdboard-gfqz: このチケットの gh 起動が「まだ応答を待っている自分のリクエスト」
-      // 由来か「応答タイムアウト後のバックグラウンド継続」由来かを、実際に
-      // statusGate.acquire() する直前に都度判定する (timedOut は let なので、この
-      // 呼び出し時点ではまだ false でも、ゲート待ちしている間に true へ変わりうる —
-      // その場合でも判定はここではなく resolvePrStatus 内の acquire 直前で行われる)。
+      // 由来か「応答タイムアウト後のバックグラウンド継続」由来かを表す closure。
+      // ここで判定結果を確定させるのではなく、closure そのものを resolvePrStatus →
+      // statusGate.acquire() まで運ぶ —— 実際に評価されるのは Semaphore.release() が
+      // 次の permit を誰に渡すか選ぶ瞬間 (grant time) であり、この呼び出しの時点
+      // (enqueue time) ではない (timedOut は let なので、ここではまだ false でも
+      // ゲート待ちの間に true へ変わりうる。grant time 評価はそれを正しく拾う)。
+      // さらに、この URL が既に別リクエストの背景継続で in-flight の場合
+      // (PrBadgeStatusCache.fetchStatus の相乗りパス)、このチケットは自前で
+      // acquire() を呼ばない代わりに、この closure が「その URL に関心を持つ
+      // 呼び出し元」の1つとして登録され、launcher 側の待ち行列エントリの優先度に
+      // マージされる (mergedGetPriority — pr-badge-status-cache.ts) —— 相乗りが
+      // 既に待ち行列にある低優先度の fetch を高優先度へ昇格させられるのはこの経路。
       getPriority: () => (timedOut ? 'low' : 'high'),
       onDeferred: () => {
         deferredFetchCount += 1;

@@ -33,9 +33,16 @@ import { createPrBadgeGates, getPrBadges, PrBadgeStatusCache } from './get-pr-ba
 // 瞬間に都度優先度を再評価するので、背景リクエストのチケットが「並んだ時点では
 // high だったが、待っている間に自分の overallTimeoutMs が発火して low に降格した」
 // 状態を正しく検出し、後から並んだ本当にまだ応答を待っている前景リクエストの
-// チケットを先に通す。Semaphore 自体のスケジューリング契約は
-// concurrency.gfqz.test.ts、resolvePrStatus の配線は resolve-pr-status.gfqz.test.ts
-// を参照。
+// チケットを先に通す。
+//
+// round 2 のこの修正だけでは、実はチケットの本命シナリオ (プロジェクト絞り込み
+// リクエストのチケットが、既に別リクエストの背景継続で in-flight 登録済みの URL と
+// 同じだった場合) をカバーできていなかった —— 相乗りする呼び出しは
+// statusGate.acquire() 自体を一度も呼ばない (bdboard-ksed) ため、独自の優先度を
+// 表明する機会が無い。下の2つ目の it() が、その本命シナリオ (相乗りによる昇格) を
+// 直接再現する。Semaphore 自体のスケジューリング契約は concurrency.gfqz.test.ts、
+// resolvePrStatus の配線は resolve-pr-status.gfqz.test.ts、相乗り優先度のマージは
+// pr-badge-status-cache.gfqz.test.ts を参照。
 
 function project(id: string, rootPath: string): Project {
   return {
