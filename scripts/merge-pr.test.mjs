@@ -40,6 +40,19 @@ fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
 // SIGINT/SIGTERM のテスト用: 自分の (実際に検証を実行している) pid を書いておく。中断後に
 // この pid が本当に死んでいるかで「子プロセスが孤児にならない」ことを確かめる。
 if (process.env.FAKE_VERIFY_PID_FILE) fs.writeFileSync(process.env.FAKE_VERIFY_PID_FILE, String(process.pid));
+// bdboard-e8o1: 孫プロセスの kill 確認用。設定されていれば、この検証プロセス自身の子として
+// (detached せずに) 別の node プロセスを spawn する。同じプロセスグループに入るはずなので、
+// SIGTERM/SIGKILL がグループ全体に届けばこれも一緒に死ぬ (見送り分 1 のポーリング確認)。
+const grandchildPidFile = process.env.FAKE_VERIFY_GRANDCHILD_PID_FILE;
+if (grandchildPidFile) {
+  const { spawn } = require('node:child_process');
+  const grandchildScript = "const fs=require('node:fs'); fs.writeFileSync(process.env.GRANDCHILD_PID_FILE, String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);";
+  const grandchild = spawn(process.execPath, ['-e', grandchildScript], {
+    stdio: 'ignore',
+    env: { ...process.env, GRANDCHILD_PID_FILE: grandchildPidFile },
+  });
+  grandchild.unref();
+}
 // 意味的衝突の代役: 列挙したファイルが全部そろった木でだけ落ちる (片方だけなら緑)。
 const conflict = process.env.FAKE_VERIFY_CONFLICT;
 if (conflict && conflict.split(',').every((file) => fs.existsSync(file))) process.exit(3);
@@ -1064,10 +1077,215 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(posted().map((entry) => entry.state)).not.toContain('failure'); // 中断を failure と記録しない
     expect(stderr).toContain('SIGINT');
     expect(stderr).toContain('bd/demo-1');
+    // bdboard-e8o1 (見送り分 3): 次にやり直すコマンドのヒントと、監査ログのイベント。
+    expect(stderr).toContain(`そのまま次を実行してやり直せます: npm run merge-pr -- finish ${PR}`);
+    expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGINT/);
 
     // 状態・枠・台帳は壊れていないので、そのまま finish をやり直せる。
     const retried = run(['finish', String(PR)]);
     expect(retried.status).toBe(0);
     expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('finish: SIGTERM during the landed verify kills the verify process and restores the branch (same guarantee as SIGINT, different signal)', async () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    simulateMerge();
+    const pidFile = path.join(tmp, 'verify-term.pid');
+    const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
+      cwd: work,
+      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    let verifyPid;
+    try {
+      await waitUntil(() => {
+        if (!existsSync(pidFile)) {
+          return false;
+        }
+        const parsed = Number(readFileSync(pidFile, 'utf8').trim());
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return false;
+        }
+        verifyPid = parsed;
+        return true;
+      });
+      expect(pidAlive(verifyPid)).toBe(true);
+
+      child.kill('SIGTERM');
+      const [code, signal] = await new Promise((resolve) => {
+        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
+      });
+      expect(signal).toBeNull();
+      expect(code).toBe(143); // SIGTERM
+
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+    } finally {
+      if (!child.killed) {
+        child.kill('SIGKILL');
+      }
+      if (verifyPid !== undefined && pidAlive(verifyPid)) {
+        try {
+          process.kill(verifyPid, 'SIGKILL');
+        } catch {
+          // 確認と kill の間に終了していれば無視する。
+        }
+      }
+    }
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+    expect(posted().map((entry) => entry.state)).not.toContain('failure');
+    expect(stderr).toContain('SIGTERM');
+    expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGTERM/);
+
+    const retried = run(['finish', String(PR)]);
+    expect(retried.status).toBe(0);
+  });
+
+  it('finish: SIGINT also kills a grandchild the verify process spawns, not just the direct npm/shell child (pgid polling, 見送り分 1)', async () => {
+    setup();
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    simulateMerge();
+    const pidFile = path.join(tmp, 'verify-gc.pid');
+    const grandchildPidFile = path.join(tmp, 'verify-gc-grandchild.pid');
+    const child = spawn(process.execPath, [SCRIPT, 'finish', String(PR)], {
+      cwd: work,
+      env: {
+        ...env,
+        FAKE_VERIFY_SLEEP_MS: '60000',
+        FAKE_VERIFY_PID_FILE: pidFile,
+        FAKE_VERIFY_GRANDCHILD_PID_FILE: grandchildPidFile,
+        BDBOARD_MERGE_KILL_GRACE_MS: '200',
+        BDBOARD_MERGE_KILL_POLL_MS: '50',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    let verifyPid;
+    let grandchildPid;
+    try {
+      await waitUntil(() => {
+        if (!existsSync(pidFile) || !existsSync(grandchildPidFile)) {
+          return false;
+        }
+        const v = Number(readFileSync(pidFile, 'utf8').trim());
+        const g = Number(readFileSync(grandchildPidFile, 'utf8').trim());
+        if (!Number.isInteger(v) || v <= 0 || !Number.isInteger(g) || g <= 0) {
+          return false;
+        }
+        verifyPid = v;
+        grandchildPid = g;
+        return true;
+      });
+      expect(pidAlive(verifyPid)).toBe(true);
+      expect(pidAlive(grandchildPid)).toBe(true);
+      expect(verifyPid).not.toBe(grandchildPid);
+
+      child.kill('SIGINT');
+      const [code, signal] = await new Promise((resolve) => {
+        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
+      });
+      expect(signal).toBeNull();
+      expect(code).toBe(130);
+
+      // グループ全体が本当に空になるまでポーリングで待つ (孫が生き残っていないか)。
+      await waitUntil(() => !pidAlive(verifyPid) && !pidAlive(grandchildPid), { timeoutMs: 5_000 });
+    } finally {
+      if (!child.killed) {
+        child.kill('SIGKILL');
+      }
+      for (const pid of [verifyPid, grandchildPid]) {
+        if (pid !== undefined && pidAlive(pid)) {
+          try {
+            process.kill(pid, 'SIGKILL');
+          } catch {
+            // 確認と kill の間に終了していれば無視する。
+          }
+        }
+      }
+    }
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+    expect(posted().map((entry) => entry.state)).not.toContain('failure');
+  });
+
+  it('S2 prepare (class F): SIGINT during the predicted-tree verify kills the process and restores the branch, leaving no state behind for a clean retry', async () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' }); // 衝突なし・hot file なしで main を進める → クラス F
+    const pidFile = path.join(tmp, 'predicted-verify.pid');
+    const child = spawn(process.execPath, [SCRIPT, 'prepare', String(PR)], {
+      cwd: work,
+      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    let verifyPid;
+    try {
+      await waitUntil(() => {
+        if (!existsSync(pidFile)) {
+          return false;
+        }
+        const parsed = Number(readFileSync(pidFile, 'utf8').trim());
+        if (!Number.isInteger(parsed) || parsed <= 0) {
+          return false;
+        }
+        verifyPid = parsed;
+        return true;
+      });
+      expect(pidAlive(verifyPid)).toBe(true);
+
+      child.kill('SIGINT');
+      const [code, signal] = await new Promise((resolve) => {
+        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]));
+      });
+      expect(signal).toBeNull();
+      expect(code).toBe(130);
+
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+    } finally {
+      if (!child.killed) {
+        child.kill('SIGKILL');
+      }
+      if (verifyPid !== undefined && pidAlive(verifyPid)) {
+        try {
+          process.kill(verifyPid, 'SIGKILL');
+        } catch {
+          // 確認と kill の間に終了していれば無視する。
+        }
+      }
+    }
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1'); // 着地予定ツリーの detach のまま残らない
+    expect(posted()).toEqual([]); // ledger:false なので元々何も投稿しない
+    expect(stderr).toContain('SIGINT');
+    expect(stderr).toContain(`そのまま次を実行してやり直せます: npm run merge-pr -- prepare ${PR}`);
+    expect(existsSync(stateFile())).toBe(false); // 記録が残らないのでそのまま prepare し直せる
+
+    const retried = run(['prepare', String(PR)]);
+    expect(retried.status).toBe(0);
+    expect(readState()).toMatchObject({ class: 'F' });
+  });
+
+  it('S2 prepare (class F): the untracked-file guard judges by the predicted landed tree\'s .gitignore, not the branch currently checked out', () => {
+    setup({ merge: { mode: 'S2' } });
+    // main が新しく .gitignore を追加する (PR 側は .gitignore を触らないのでクラス F のまま)。
+    // 現在チェックアウトしている bd/demo-1 には .gitignore が無いので、判定を checkout 前に
+    // 行うと (旧実装) stray.log は「ignore されていない未追跡ファイル」として誤ってブロック
+    // される。着地予定ツリー (main の .gitignore を含む) を detach した後に判定すれば無視される。
+    advanceMain({ '.gitignore': 'stray.log\n' });
+    writeFileSync(path.join(work, 'stray.log'), 'noise\n');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(0);
+    expect(prepared.stderr).not.toContain('未追跡ファイル');
+    expect(readState()).toMatchObject({ class: 'F' });
   });
 });

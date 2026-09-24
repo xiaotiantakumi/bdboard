@@ -36,6 +36,7 @@ export async function verifyPredicted(ctx, pr, id, { predBase, head, tree }) {
   const verified = await runLandedVerify(ctx, commit, `${id} predicted`, {
     ledger: false,
     logName: `predicted-verify-pr${pr}-${tree.slice(0, 12)}.log`,
+    retryHint: `npm run merge-pr -- prepare ${pr}`,
   });
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   audit('predicted-verify', { pr, id, base: predBase, head, tree, commit, result: verified.result, secs: seconds });

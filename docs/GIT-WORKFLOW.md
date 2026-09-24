@@ -240,8 +240,9 @@ npm run merge-pr -- finish <N>    # always, merged or not: release first → (if
   while waiting, `ls-remote` failed, slot not free within `merge.slotWaitMinutes`, CI pending or
   the GitHub API unreachable). `4` / `6` main is broken → below. `5` finish found the PR unmerged
   (and returned the slot, except under `--repair`). `1` could not run at all (bd unusable, dirty
-  worktree, run from the main checkout, `npm ci` failed, …) — the message says what to fix; for a
-  landed verify that could not run, fix it and run `npm run merge-pr -- verify <sha>`.
+  worktree, run from the main checkout, `npm ci` failed, untracked files not `.gitignore`d by the
+  tree about to be verified, …) — the message says what to fix; for a landed verify that could not
+  run, fix it and run `npm run merge-pr -- verify <sha>`.
 - **The merge line is printed, not run by the script** (decision 4 of bdboard-ulxa §6): if the
   permission classifier refuses `gh pr merge`, running it from inside a script would be a
   bypass. Refused → do not retry, run `finish` (it returns the slot), then the human gate
@@ -260,6 +261,19 @@ npm run merge-pr -- finish <N>    # always, merged or not: release first → (if
   update (or the commit time), then verify that SHA itself and post the result (self-heal —
   also covers SHAs merged under S0, which never write the ledger). Two self-healers at once just
   verify the same tree twice.
+- **Interrupting `finish` or `verify`** with SIGINT/SIGTERM (Ctrl-C, a Bash-tool timeout kill,
+  session close) while the landed verify is running kills the verify's whole process group and
+  checks the worktree back out to its original branch automatically (bdboard-2twf / bdboard-e8o1),
+  the same guarantee S2's `prepare` class F documents below — this is not S2-specific, it applies
+  to every call into the shared landed-verify code (`finish`, manual `verify`, and S2's predicted-
+  tree verify). The message on the way out says exactly what to rerun (`finish <N>` or
+  `verify <sha>`); nothing is posted to the ledger for an interrupted run, so re-running it is
+  always safe. Only a SIGKILL (`kill -9`) or a crash can still leave the worktree detached, in
+  which case `git checkout bd/<id>` and rerun. A contract whose `verify` is not `npm run verify`
+  has no self-cleanup of its own descendants (`scripts/verify.mjs`'s leader mode is what folds
+  `npm run verify`'s tsc/vitest workers), so the interrupt handler itself polls the process group
+  until it is actually empty and resends `SIGKILL` while anything in it is still alive, instead of
+  trusting the direct child's exit as a proxy for the whole tree being gone.
 - **Never release someone else's slot.** If it stays held past `merge.slotWaitMinutes` (10),
   `gate` exits 75 and the agent reports the holder to the chair. A holder equal to
   `<id> / PR#<N>` (this PR's own interrupted gate) is taken over.

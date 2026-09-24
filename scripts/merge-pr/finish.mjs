@@ -106,7 +106,7 @@ export async function finish(ctx, pr) {
     say(`注意: マージコミット ${landed.slice(0, 12)} の親が PRED_BASE (${state.predBase.slice(0, 12)}) ではありません。着地した木をそのまま検証します。`);
   }
   const predictedMatch = comparePredicted(ctx, pr, state, landed);
-  const verified = await runLandedVerify(ctx, landed, state.id);
+  const verified = await runLandedVerify(ctx, landed, state.id, { retryHint: `npm run merge-pr -- finish ${pr}` });
   audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result });
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
@@ -148,7 +148,7 @@ export async function finish(ctx, pr) {
 export async function verifyLanded(ctx, sha) {
   const full = git(['rev-parse', `${sha}^{commit}`], { cwd: ctx.cwd });
   const by = `manual ${git(['config', '--default', 'unknown', 'user.name'], { cwd: ctx.cwd })}`;
-  const verified = await runLandedVerify(ctx, full, by);
+  const verified = await runLandedVerify(ctx, full, by, { retryHint: `npm run merge-pr -- verify ${full}` });
   audit('landed-verify', { new: full, result: verified.result, by: 'manual' });
   if (verified.result === 'error') {
     fail(EXIT.USAGE, '着地後検証を実行できませんでした (上のメッセージ参照)。');

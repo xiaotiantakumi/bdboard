@@ -4,13 +4,15 @@
 // bdboard-ulxa.2: S2 の着地予定ツリーの verify も同じ本体を ledger: false (台帳に書かない) で使う。
 // bdboard-2twf: (1) 未追跡ファイルが verify に混ざるのを防ぐ (2) SIGINT/SIGTERM で子プロセスを
 // 終了し、detach checkout を restoreTo に戻す (PR #711 レビューの見送り分。手順は interrupt.mjs)。
+// bdboard-e8o1 (PR #722 のレビューで見送った残り): (1)の ignore 判定を detach 先の sha のツリーで
+// 行うよう順序を直し、(2)の中断メッセージに「次にやり直すコマンド」のヒントと監査ログを足した。
 import { closeSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { git, gitOk, run, runShellToLog } from './exec.mjs';
 import { postLandedStatus } from './github.mjs';
 import { installInterruptHandler } from './interrupt.mjs';
-import { readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
+import { audit, readInstalledFor, say, stateDir, writeInstalledFor } from './state.mjs';
 
 const LOCKFILES = [
   { file: 'package-lock.json', args: ['ci'] },
@@ -88,8 +90,14 @@ function postQuietly(ctx, sha, state, description) {
  * (台帳には何も書かずに) プロセスごと終了する — 呼び出し元 (finish/predicted/verify いずれの
  * コマンドから来ても) の後続処理 (ネットワーク呼び出しや状態ファイルの書き換え) はそこから先に
  * 進まない。
+ *
+ * bdboard-e8o1 (PR #722 レビューの見送り分 2): 未追跡ファイルの ignore 判定は detach checkout の
+ * 「後」に行う — 判定に使う .gitignore は、これから verify する sha のツリーのものであるべきで
+ * (S2 の着地予定ツリーや、main が進んだ後の着地コミットでは、まだ detach していない現在の
+ * ブランチの .gitignore と内容が違いうる)、checkout 前のままだと違う木の .gitignore で判定して
+ * しまう。retryHint は中断時の案内 (見送り分 3) に使う「次にやり直すコマンド」の文字列。
  */
-export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } = {}) {
+export async function runLandedVerify(ctx, sha, by, { ledger = true, logName, retryHint } = {}) {
   const root = ctx.cwd;
   const label = ledger ? '着地後検証' : '着地予定ツリーの verify';
   if (!isLinkedWorktree(root)) {
@@ -102,19 +110,6 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
   }
   if (git(['status', '--porcelain', '--untracked-files=no'], { cwd: root }) !== '') {
     say(`作業ツリーに未コミットの変更があるため${label}を始められません (detach checkout できない)。`);
-    return { result: 'error' };
-  }
-  const untracked = untrackedFiles(root);
-  if (untracked.length > 0) {
-    const shown = untracked.slice(0, 20);
-    const more = untracked.length > shown.length ? `\n  ...ほか ${untracked.length - shown.length} 件` : '';
-    say(
-      `作業ツリーに未追跡ファイル (.gitignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
-      shown.map((file) => `  ${file}`).join('\n') + more,
-      ledger
-        ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
-        : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
-    );
     return { result: 'error' };
   }
   if (!gitOk(['cat-file', '-e', `${sha}^{commit}`], { cwd: root })) {
@@ -132,11 +127,31 @@ export async function runLandedVerify(ctx, sha, by, { ledger = true, logName } =
     say(`git checkout --detach ${sha} に失敗しました: ${checkout.stderr.trim()}`);
     return { result: 'error' };
   }
-  const activeChild = { current: undefined };
+  // detach した後 (= sha のツリーの .gitignore) で判定する。checkout 前のままだと違う木の
+  // .gitignore で ignore 判定してしまう (見送り分 2)。
+  const untracked = untrackedFiles(root);
+  if (untracked.length > 0) {
+    restoreBranch(root, restoreTo);
+    const shown = untracked.slice(0, 20);
+    const more = untracked.length > shown.length ? `\n  ...ほか ${untracked.length - shown.length} 件` : '';
+    say(
+      `作業ツリーに未追跡ファイル (${sha.slice(0, 12)} の .gitignore で ignore されていないもの) が ${untracked.length} 件あるため${label}を始めません:`,
+      shown.map((file) => `  ${file}`).join('\n') + more,
+      ledger
+        ? `コミットするか git clean/rm で消してから npm run merge-pr -- verify ${sha} し直してください (混ざると検証した木と実際の木が一致しません)。`
+        : 'コミットするか git clean/rm で消してから prepare し直してください (混ざると検証した木と実際の木が一致しません)。',
+    );
+    return { result: 'error' };
+  }
+  const activeChild = { current: undefined, interrupted: false };
   const removeInterruptHandler = installInterruptHandler({
     activeChild,
     onCleanup: (signal) => {
-      say(`${signal} を受け取ったため${label}を中断します。子プロセスを終了して ${restoreTo} に戻します。`);
+      audit('landed-verify-interrupted', { sha, by, ledger, signal });
+      say(
+        `${signal} を受け取ったため${label}を中断します。子プロセスを終了して ${restoreTo} に戻します。`,
+        retryHint ? `そのまま次を実行してやり直せます: ${retryHint}` : `${restoreTo} に戻したので、直してからやり直してください。`,
+      );
       restoreBranch(root, restoreTo);
     },
   });
@@ -191,6 +206,13 @@ async function installAndVerify(ctx, { root, sha, by, originalHead, logPath, onI
     });
   } finally {
     closeSync(fd);
+  }
+  if (activeChild.interrupted) {
+    // SIGINT/SIGTERM/SIGHUP で中断された実行。installInterruptHandler がこの後すぐ
+    // restoreBranch + process.exit するので、ここでは台帳に何も書かずに抜ける (中断を
+    // failure として記録しない — runShellToLog の 'close' はこの関数の外側にもう1つ登録
+    // されている interrupt.mjs 側のポーリングより先に解決しうるため、結果を使わずに戻る)。
+    return 'error';
   }
   const result = code === 0 ? 'success' : 'failure';
   if (result === 'failure') {
