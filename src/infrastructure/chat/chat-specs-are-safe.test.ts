@@ -117,12 +117,34 @@ describe('chat specs safety guards', () => {
     ).toEqual([]);
   });
 
-  it('cli-chat-agent.ts does not reference claude-specific identifiers', () => {
-    const source = readFileSync(
+  it('cli-chat-agent.ts and its split submodules do not reference claude-specific identifiers', () => {
+    // bdboard-z4wx: PR #592 (bdboard-sso1.32) split cli-chat-agent.ts into a
+    // 12-line re-export stub plus src/infrastructure/chat/cli-chat-agent/*.ts
+    // (send-message.ts, send-message-stream.ts, etc.). Reading only the stub
+    // left this assertion checking nothing meaningful, so collect the stub
+    // plus every file under the split directory (reusing the same
+    // directory-recursing helper the FORBIDDEN_CHAT_TOKENS guard above uses).
+    const files = [
       path.join(CHAT_INFRA_DIR, 'cli-chat-agent.ts'),
-      'utf8',
-    );
-    expect(source.toLowerCase().includes('claude')).toBe(false);
+      ...collectSourceFiles(path.join(CHAT_INFRA_DIR, 'cli-chat-agent')),
+    ];
+    // Guard against this assertion silently passing if the split directory
+    // structure ever changes again (renamed/emptied) and the file list
+    // becomes empty.
+    expect(files.length).toBeGreaterThan(0);
+
+    const violations: string[] = [];
+    for (const file of files) {
+      const source = readFileSync(file, 'utf8');
+      if (source.toLowerCase().includes('claude')) {
+        violations.push(path.relative(REPO_ROOT, file));
+      }
+    }
+
+    expect(
+      violations,
+      `these files reference claude-specific identifiers: ${violations.join(', ')}`,
+    ).toEqual([]);
   });
 
   it('src/main.ts, src/bootstrap/wire-feature-routes.ts and src/bootstrap/wire-chat.ts wire chat agent registration through buildChatAgentRegistry (bdboard-l1t.4 SF6, bdboard-sso1.86 で main.ts の分割により wireChat( 呼び出しが wire-feature-routes.ts へ移動)', () => {
