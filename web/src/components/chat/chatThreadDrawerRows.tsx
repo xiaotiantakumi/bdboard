@@ -17,7 +17,8 @@ type ThreadDrawerRowSource = Pick<
  * bdboard-sso1.83 第15c段: スレッド一覧ドロワーの行(ピン留め・開いている・閉じた)を
  * 組み立てる。ChatPanel.tsx にあった行データの計算と行要素の生成を、中身を変えずに
  * 移したもの(フックではない。毎レンダー ChatPanel から呼ばれ、元どおり毎回新しい
- * 要素と actions オブジェクトを作る)。
+ * 要素と actions オブジェクトを作る)。render 中に呼ばれるので ref の `.current` は読まない
+ * (フックではないので react-hooks/refs はここを検査しない)。
  */
 export function buildThreadDrawerRows(source: ThreadDrawerRowSource) {
   const {

@@ -36,6 +36,8 @@ export interface ChatPanelViewModel {
  * props 渡しとインラインのハンドラを、値も組み合わせもそのまま移したもの。
  * フックではなく、毎レンダー ChatPanel から呼ばれる(インラインのハンドラが
  * 毎レンダー作り直されていたのも元どおり)。ロジックは足さない。
+ * controller には ref も入っているが、render 中に呼ばれる関数なので `*Ref.current` は
+ * 読まない(設計書 §4a-1。フックではないので react-hooks/refs はここを検査しない)。
  */
 export function buildChatPanelViewModel(
   controller: ChatPanelController,

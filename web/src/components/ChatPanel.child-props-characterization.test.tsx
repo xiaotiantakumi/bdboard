@@ -92,7 +92,7 @@ function persistOpenThreads() {
   });
 }
 
-describe('ChatPanel child props wiring before view models (bdboard-sso1.83 第15c段)', () => {
+describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)', () => {
   beforeEach(() => {
     installFakeHistory({});
     localStorage.clear();
