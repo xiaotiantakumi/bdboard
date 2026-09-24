@@ -57,7 +57,7 @@
 - 出典: bdboard-tqba（発端 bdboard-sso1.28。関連: reclaimed-live-ticket / heartbeat-orphan-loop）
 
 ### reclaimed-live-ticket — 生存セッションのチケット4件が作業中に自動 reclaim され、`bd ready` が「PR が飛んでいるチケット」を空きとして提示した（2026-09-05）
-- 原因: reclaim スーパーバイザー（常時稼働 bdboard サーバー自身）が **lease しか見ず worktree もブランチも PR も見ない**うえ、猶予窓の既定が lease TTL 由来の 10m と短かった。heartbeat は打たれていなかった（`scripts/bd-heartbeat.sh` は `--session-pid $$` を使うが、Claude Code の Bash ツールは呼び出しごとに別シェルを起こすため自壊する）。claim の 15〜19 分後に open へ戻された。**回収は `bd show` に出ない**ので台帳を眺めても気付けない（`bd history <id> --events` には `lease_reclaimed` として残る）
+- 原因: reclaim スーパーバイザー（常時稼働 bdboard サーバー自身）が **lease しか見ず worktree もブランチも PR も見ない**うえ、猶予窓の既定が lease TTL 由来の 10m と短かった。heartbeat は打たれていなかった（当時の呼び出し例は `--session-pid $$` を使っていたが、Claude Code の Bash ツールは呼び出しごとに別シェルを起こすため自壊していた。呼び出し例は bdboard-tqba で修正済み）。claim の 15〜19 分後に open へ戻された。**回収は `bd show` に出ない**ので台帳を眺めても気付けない（`bd history <id> --events` には `lease_reclaimed` として残る）
 - 防止: 回収前に worktree/ブランチの生存を見る（bdboard-6aci。保護は作業開始から 12 時間で打ち切る）。猶予窓の既定は 2h（bdboard-hybu）。`bd ready` の一覧だけで着手を決めず、規律2 の worktree/ブランチ不存在確認を必ず通す。すり抜けた誤回収は Hygiene の `reclaimed_live_worktree` が事後に出す（bdboard-rkde）（本則: SKILL.md 規律1 手順2 と session-start.md, lease-params.md）
 - 出典: bdboard-okdh / 53my / s0o7 / s1vj（対策 bdboard-hybu / rkde / 6aci）（鏡像: heartbeat-orphan-loop）
 

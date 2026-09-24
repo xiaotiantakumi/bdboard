@@ -1609,7 +1609,10 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     const sessionScriptPath = path.join(tmpRoot, 'ppid-session.sh');
     writeFileSync(
       sessionScriptPath,
-      ['#!/bin/sh', '"$CHILD_SCRIPT_PATH" "$COMPUTED_PID_FILE"', 'sleep 600', ''].join('\n'),
+      // exec で sleep に置き換わる (fork ではなく同一 PID を保つ) — そうしないと
+      // afterEach の kill -TERM がこの sh を殺しても、フォアグラウンドの子
+      // `sleep 600` だけが取り残されて orphan になる (実測: 実行ごとに1本残留)。
+      ['#!/bin/sh', '"$CHILD_SCRIPT_PATH" "$COMPUTED_PID_FILE"', 'exec sleep 600', ''].join('\n'),
       'utf8',
     );
     chmodSync(sessionScriptPath, 0o755);
@@ -1631,10 +1634,15 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
 
     // 子プロセスが自分の ppid を書き終えるまで待つ。この時点で子プロセスはもう
     // 終了している。
-    await pollUntil(() => existsSync(computedPidFile), {
-      timeoutMs: 10_000,
-      what: 'waiting for the short-lived child to compute and write its own ppid',
-    });
+    await pollUntil(
+      // existsSync だけだと、子プロセスの open()/truncate と printf の書き込みの間の
+      // 極小窓を踏んで空文字列を読む可能性が理論上ある。内容が非空になるまで待つ。
+      () => existsSync(computedPidFile) && readFileSync(computedPidFile, 'utf8').length > 0,
+      {
+        timeoutMs: 10_000,
+        what: 'waiting for the short-lived child to compute and write its own ppid',
+      },
+    );
     const computedPid = Number.parseInt(readFileSync(computedPidFile, 'utf8').trim(), 10);
 
     // 本チケットの核心: 短命な子プロセス自身が計算した ppid が、長命な「セッション」

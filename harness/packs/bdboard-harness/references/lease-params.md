@@ -81,6 +81,14 @@ bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh status --session-pid
 （Claude Code の Bash ツールを介さず、対話シェルから直接叩く場合は従来どおり `$$`
 で構わない — その場合はシェル自身がセッションの実体なので寿命条件(2)が正しく働く。）
 
+**同一セッション内のサブエージェント（Agent ツールで起動した子）も、この方法では
+議長と同じ session-pid になる**（Bash ツールの呼び出し元プロセスは議長・サブエージェント
+とも同一の Claude Code 本体プロセスであるため）。`start` は同一 session-pid の旧ループを
+置き換える仕様なので、サブエージェントが安易にこの手順で `start`/`stop` を打つと議長の
+ループを横取り・停止させてしまう。**heartbeat の起動・停止は議長だけが行う**（保持する
+全 in-flight チケットをまとめて1本のループで打つ。「複数チケットを並行保持している
+ときの一括 heartbeat」参照）。
+
 `start` は**自分でデタッチする**ので、呼び出し側に `&` や `(nohup … &)` を書かせない
 （hooks の「二重バックグラウンド化」deny と衝突させないための設計）。
 claim / close のたびに `start` を**再実行するだけ**で ID リストが更新される
