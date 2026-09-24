@@ -6,7 +6,7 @@ import {
 import type { CachedProject } from '../../application/ports/board-cache.js';
 import type { InFlightOverlap } from '../../domain/in-flight-overlap.js';
 import { parseClampedIntQueryParam } from './parse-clamped-int-query-param.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 /**
  * ここに置くのは複数のルートグループ (board / stats / hygiene / tickets 読み取り /

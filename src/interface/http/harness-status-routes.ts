@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getAllProjectsHarnessStatus } from '../../application/harness/get-all-projects-harness-status.js';
 import { readProjectHarnessStatus } from '../../application/harness/get-project-harness-status.js';
 import type { ProjectHarnessStatus } from '../../domain/harness-pack.js';
-import type { HarnessRoutesDeps } from './harness-routes.js';
+import type { HarnessRoutesDeps } from './harness-routes-deps.js';
 import { extractProjectIdFromHarnessPath, toHarnessStatusJson } from './harness-routes-shared.js';
 
 // harness-routes.ts (旧347行) の分割 (bdboard-sso1.56) で、ハーネス状態の読み取り系

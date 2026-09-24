@@ -7,7 +7,7 @@ import {
   findCachedTicket,
   createRefreshAfterWrite,
 } from './ticket-write-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 const dependencyBodySchema = z.object({
   dependsOnId: z.string().min(1).max(200),

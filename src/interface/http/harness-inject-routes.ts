@@ -6,7 +6,7 @@ import {
   resolveProjectContractState,
 } from '../../application/harness/get-project-harness-status.js';
 import { injectHarnessPack } from '../../application/harness/inject-harness-pack.js';
-import type { HarnessRoutesDeps } from './harness-routes.js';
+import type { HarnessRoutesDeps } from './harness-routes-deps.js';
 import { extractProjectIdFromHarnessPath, toHarnessStatusJson } from './harness-routes-shared.js';
 
 // harness-routes.ts (旧347行) の分割 (bdboard-sso1.56) で、

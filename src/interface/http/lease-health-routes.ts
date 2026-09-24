@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getStaleLeaseIssues } from '../../application/board/get-stale-lease-issues.js';
 import { toLeaseHealthDto } from './dto.js';
 import { parseProjectIds } from './api-route-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 // bdboard-sso1.61: hygiene-routes.ts (旧284行、5ルートが同居) の分割で
 // GET /api/lease-health をここへ切り出した (move only, 挙動変更ゼロ)。

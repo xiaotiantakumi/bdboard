@@ -90,7 +90,7 @@
 
 ### merge-slot-held-through-ci — merge-slot を握ったまま rebase → CI 待ち → verify を回し、11 時間中 7.6 時間（約 70%）枠が埋まってマージ間隔が約 12 分に張り付いた（2026-09-23）
 - 原因: 「CAS は rebase 元と一致すること」を枠の中で満たそうとして、CAS 負け → rebase → CI 5–9 分 → CAS のやり直しをすべて枠の中で行っていた（待機ループ ≈250 分、CI 待ち ≈140 分、verify ≈80 分）。ruleset は strict=false で、この待ちは GitHub の要求ではない
-- 防止: 契約の `merge.mode: S1` — 枠は acquire → CAS → gh pr merge → release だけ、着地後検証は枠の外で commit status 台帳へ（本則: worktree-pr-flow.md §5「S1」、bdboard の `npm run merge-pr`）
+- 防止: 契約の `merge.mode: S1`（S2 も同じ） — 枠は acquire → CAS → gh pr merge → release だけ、着地後検証は枠の外で commit status 台帳へ（本則: worktree-pr-flow.md §5「S1」、bdboard の `npm run merge-pr`）
 - 出典: bdboard-iaqg（計測）/ bdboard-ulxa（設計）/ bdboard-ulxa.1（S1 実装）
 
 ### ci-webhook-drop — GitHub 障害中の force-push で CI が起動せず、pending と誤認して待ち続けた（2026-08-17）

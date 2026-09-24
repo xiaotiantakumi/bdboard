@@ -14,7 +14,7 @@ import {
 } from '../../application/ports/board-cache-fakes.js';
 import type { WorktreeScanner } from '../../application/ports/worktree-scanner.js';
 import { createEventHub } from '../sse/event-hub.js';
-import type { ApiDeps, ApiStatus } from './routes.js';
+import type { ApiDeps, ApiStatus } from './api-deps.js';
 
 export const NOW = new Date('2026-06-01T12:00:00.000Z');
 

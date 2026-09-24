@@ -14,9 +14,9 @@ export function brokenMainSteps(sha, repo, context) {
   ];
 }
 
-export function rebaseSteps(mainRef) {
+export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら rebase') {
   return [
-    `main が PR のベース以降に進んでいます (S1 のクラス R)。枠の外で取り込んでから並び直してください:`,
+    `main が PR のベース以降に進んでいます (クラス R: ${reason})。枠の外で取り込んでから並び直してください:`,
     `  git fetch origin && git rebase ${mainRef} && git push --force-with-lease`,
     `  (force push が権限判定で拒否されたら git merge ${mainRef} → 通常の git push)`,
     '  → 必須チェック (verify / e2e / commit-parse) の green を待つ → npm run merge-pr -- prepare <PR 番号>',
@@ -29,6 +29,7 @@ export function mergeInstructions(pr) {
     `実行後は結果にかかわらず: npm run merge-pr -- finish ${pr} (着地後検証まで数分かかる。前景で待つ)`,
     '  - gh pr merge が権限判定で拒否された → 再試行・別経路はしない。finish で枠を返し、human gate へ',
     `  - 409 / "Head branch was modified" → finish で枠を返し、prepare からやり直す`,
+    '  - 405 "not mergeable" → finish で枠を返し、rebase してから prepare',
     "  - 'main' is already used by worktree の exit 1 は既知 (マージ本体は成功)。そのまま finish へ",
   ];
 }

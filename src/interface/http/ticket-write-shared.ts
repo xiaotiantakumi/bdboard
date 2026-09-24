@@ -1,6 +1,6 @@
 import type { BoardCache } from '../../application/ports/board-cache.js';
 import type { Ticket } from '../../domain/ticket.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 /**
  * ticket-write-routes.ts (旧511行, チケット書き込み系12ルートが同居) をリソース別の

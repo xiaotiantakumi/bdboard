@@ -10,7 +10,7 @@ import {
   findProjectRootPathForTicket,
   createRefreshAfterWrite,
 } from './ticket-write-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 const quickActionBodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('claim') }),

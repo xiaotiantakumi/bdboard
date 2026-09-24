@@ -8,6 +8,7 @@
 // `<id> / main-broken <PRED_BASE 12 桁>` の枠を引き継ぐ (無ければその名前で取る)。この枠は
 // gate でも finish でも、修復の着地後検証が success になるまで返さない。
 import { shellQuote } from './exec.mjs';
+import { SLOT_MODES } from './config.mjs';
 import { EXIT, fail, fetchedMain, liveMain, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
 import { waitForLanded } from './landed.mjs';
@@ -68,12 +69,16 @@ function holderFor(ctx, pr, state, repair) {
 }
 
 export async function gate(ctx, pr, { repair = false } = {}) {
-  if (ctx.config.mode !== 'S1') {
-    fail(EXIT.PRECONDITION, `merge.mode は ${ctx.config.mode} です。gate は S1 でだけ動きます (現行手順でマージしてください)。`);
+  if (!SLOT_MODES.includes(ctx.config.mode)) {
+    fail(EXIT.PRECONDITION, `merge.mode は ${ctx.config.mode} です。gate は ${SLOT_MODES.join(' / ')} でだけ動きます (現行手順でマージしてください)。`);
   }
   const state = readState(ctx.cwd, pr);
   if (state === null) {
     fail(EXIT.PRECONDITION, `prepare の記録がありません。先に npm run merge-pr -- prepare ${pr}`);
+  }
+  if (!state.gateAt && state.class === 'F' && (ctx.config.mode !== 'S2' || !state.predictedTree || !state.predictedVerifiedAt)) {
+    // S2 → S1 に巻き戻された (か記録が欠けた)。S1 では main が動いた PR は rebase なので分類し直す。
+    startOver(ctx, pr, `クラス F (rebase なし) の記録ですが merge.mode は ${ctx.config.mode} です。`);
   }
   if (state.gateAt) {
     fail(

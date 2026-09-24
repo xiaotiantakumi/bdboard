@@ -6,6 +6,8 @@
 // の merged で判定する。merge.mode が S0 に戻されていても、gate 済みの記録があれば動く。
 // --repair で gate した PR (state.repair) は main-broken の枠を握っているので、着地後検証が
 // success になるまで返さない (設計 §3.6)。
+// bdboard-ulxa.2: S2 のクラス F (rebase なし) は、着地した木が prepare で verify した着地予定ツリーと
+// 同じかを突き合わせて表示・監査ログに残す。違っても着地後検証の結果が正 (台帳はいつもどおり)。
 import { git, run } from './exec.mjs';
 import { EXIT, REMOTE, fail, refetchMain } from './context.mjs';
 import { getPull } from './github.mjs';
@@ -35,6 +37,30 @@ function holdBrokenMain(ctx, id, sha) {
       ? `枠を ${holder} で取りました。修復 PR は prepare → gate --repair → gh pr merge → finish (success で枠が返ります)。`
       : `枠を取れませんでした (${got.stderr.trim()})。他の merger は台帳の failure を見て止まります。`,
   );
+}
+
+/** クラス F: 着地した木と着地予定ツリーの一致を確かめる。一致なら true、確かめられなければ null。 */
+function comparePredicted(ctx, pr, state, landed) {
+  if (state.class !== 'F' || !state.predictedTree) {
+    return null;
+  }
+  const tree = run('git', ['rev-parse', `${landed}^{tree}`], { cwd: ctx.cwd });
+  const landedTree = tree.status === 0 ? tree.stdout.trim() : '';
+  if (landedTree === '') {
+    // オフラインの finish 等で着地コミットを読めない。不一致と数えない (S2 の受け入れ指標を汚さない)。
+    audit('predicted-tree', { pr, id: state.id, match: 'unknown', predicted: state.predictedTree, landed: 'unknown' });
+    say(`着地した木を読めないので着地予定ツリー (${state.predictedTree.slice(0, 12)}) と比べていません。`);
+    return null;
+  }
+  const match = landedTree === state.predictedTree;
+  audit('predicted-tree', { pr, id: state.id, match, predicted: state.predictedTree, landed: landedTree });
+  if (!match) {
+    say(
+      `注意: 着地した木 (${landedTree.slice(0, 12) || '読めない'}) が prepare で verify した着地予定ツリー (${state.predictedTree.slice(0, 12)}) と違います。`,
+      `着地後検証の結果を正とします。差分: git diff ${state.predictedCommit ?? state.predictedTree} ${landed} (bdboard-ulxa.2 に報告)`,
+    );
+  }
+  return match;
 }
 
 /** 通常の PR は最初に枠を返す (二度目の finish では返さない)。 */
@@ -69,6 +95,7 @@ export async function finish(ctx, pr) {
       `PR #${pr} はマージされていません。${state.repair ? kept : '枠は返しました。'}`,
       '  - gh pr merge が権限判定で拒否された → 再試行しない。bd comment にマージ手順を書き、human ラベル + human gate',
       `  - head 不一致 (409) / main が動いた → npm run merge-pr -- prepare ${pr} から`,
+      '  - 405 "not mergeable" (GitHub は衝突と判定) → rebase してから prepare (S2 のクラス F でも)',
     );
   }
   const landed = pull.mergeCommitSha;
@@ -78,6 +105,7 @@ export async function finish(ctx, pr) {
   if (parent.status === 0 && parent.stdout.trim() !== state.predBase) {
     say(`注意: マージコミット ${landed.slice(0, 12)} の親が PRED_BASE (${state.predBase.slice(0, 12)}) ではありません。着地した木をそのまま検証します。`);
   }
+  const predictedMatch = comparePredicted(ctx, pr, state, landed);
   const verified = await runLandedVerify(ctx, landed, state.id);
   audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result });
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
@@ -108,10 +136,11 @@ export async function finish(ctx, pr) {
     say(`main が緑に戻ったので枠 (${state.holder}) を返しました。壊した PR のチケットを再 open して理由を残してください。`);
   }
   const sameTree = run('git', ['diff', '--quiet', state.head, landed], { cwd: ctx.cwd }).status === 0;
-  say(
-    `着地後検証 success: ${landed.slice(0, 12)} (${ctx.statusContext})。`,
-    `着地した木と PR head ${state.head.slice(0, 12)} の木は${sameTree ? '同一' : '異なります (git diff --stat で確認)'}。次は close と掃除 (worktree-pr-flow.md §6)。`,
-  );
+  const compared =
+    predictedMatch === null
+      ? `着地した木と PR head ${state.head.slice(0, 12)} の木は${sameTree ? '同一' : '異なります (git diff --stat で確認)'}。`
+      : `クラス F: 着地した木は prepare で verify した着地予定ツリーと${predictedMatch ? '同一' : '異なります (上の注意を参照)'}。`;
+  say(`着地後検証 success: ${landed.slice(0, 12)} (${ctx.statusContext})。`, `${compared}次は close と掃除 (worktree-pr-flow.md §6)。`);
   return EXIT.OK;
 }
 

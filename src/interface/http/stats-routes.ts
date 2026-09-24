@@ -14,7 +14,7 @@ import {
   toHarnessKpiDto,
 } from './dto.js';
 import { parseProjectIds } from './api-route-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 const STATS_DEFAULT_WEEKS = 8;
 const STATS_MIN_WEEKS = 1;

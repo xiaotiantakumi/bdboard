@@ -6,7 +6,7 @@ import { createPrLinksRoutes } from './pr-links-routes.js';
 import { createMergeSlotStatusRoutes } from './merge-slot-status-routes.js';
 import { createDependencyGraphRoutes } from './dependency-graph-routes.js';
 import type { InFlightOverlapMemo } from './api-route-shared.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 // bdboard-sso1.61: hygiene-routes.ts (旧284行、5ルートが同居) を関心別のルート
 // 登録モジュール (hygiene-status-routes.ts / lease-health-routes.ts /
