@@ -6,7 +6,7 @@ import type { BoardCardDto, BoardViewDto } from '../../../api';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { useAllHarnessStatuses } from '../../../hooks/useHarnessStatusData';
 import type { BulkSelectionContextValue } from '../../BulkSelectionProvider';
-import type { NextUpRunLoopController } from '../../nextUpRunLoop';
+import type { NextUpLoopProgress, NextUpRunLoopController } from '../../nextUpRunLoop';
 import {
   type BulkRunPlan,
   buildBulkRunPlan,
@@ -51,6 +51,11 @@ export const BULK_RUN_HARNESS_CHECKING_REASON = 'ハーネスの状態を確認�
 
 const EMPTY_SELECTION: ReadonlySet<string> = new Set();
 
+interface PendingConfirm {
+  readonly selection: ReadonlySet<string>;
+  readonly progress: NextUpLoopProgress;
+}
+
 export function useBulkAgentRun({
   config,
   bulkSelection,
@@ -66,8 +71,8 @@ export function useBulkAgentRun({
   const harness = useAllHarnessStatuses(config !== undefined && selectedIds.size > 0);
   const harnessStatuses =
     harness.harnessStatusQuery.data !== undefined ? harness.harnessStatuses : undefined;
-  const harnessChecking =
-    harness.harnessStatusQuery.data === undefined && harness.harnessStatusQuery.isFetching;
+  // 初回取得中だけ止める。取得に失敗した後の再取得 (フォーカス復帰など) では止めない。
+  const harnessChecking = harness.harnessStatusQuery.isLoading;
 
   const readyDisplayOrder = useMemo(() => collectReadyDisplayOrder(board), [board]);
   const plan = useMemo(
@@ -87,14 +92,18 @@ export function useBulkAgentRun({
       ? BULK_RUN_HARNESS_CHECKING_REASON
       : harnessBlockReason;
 
-  // 開いた時点の選択 (Set の参照) を覚えておき、選択が変わったら (トグル・全解除・
-  // 実行開始による解除) 確認は自動的に閉じた扱いにする。古い選択のまま実行させない
-  // ためと、バーが一度消えて再び出たときに確認が開きっぱなしで戻らないようにするため。
-  const [pendingSelection, setPendingSelection] = useState<ReadonlySet<string> | null>(null);
+  // 開いた時点の選択 (Set の参照) と実行ループの進捗 (参照) を覚えておき、どちらかが
+  // 変わったら確認は自動的に閉じた扱いにする。選択が変わる (トグル・全解除・実行開始
+  // による解除) — 古い選択のまま実行させない / バーが一度消えて再び出たときに開きっぱなしで
+  // 戻らない。進捗が変わる — 確認中に別の入口 (Next Up の「▶ 一括実行」) からループが
+  // 始まったら、そのループが終わった後に確認がひとりでに開き直らない (beginBatchRun は
+  // 必ず progress を差し替える)。
+  const [pending, setPending] = useState<PendingConfirm | null>(null);
   const confirmOpen =
     config !== undefined &&
-    pendingSelection !== null &&
-    pendingSelection === bulkSelection?.selectedIds &&
+    pending !== null &&
+    pending.selection === bulkSelection?.selectedIds &&
+    pending.progress === config.batchRun.progress &&
     !loopActive;
   const canConfirm = confirmOpen && plan.runTicketIds.length > 0 && runDisabledReason === null;
   const confirmPanelRef = useRef<HTMLDivElement>(null);
@@ -104,11 +113,11 @@ export function useBulkAgentRun({
     if (config === undefined || bulkSelection === null || barBusy || runDisabledReason !== null) {
       return;
     }
-    setPendingSelection(bulkSelection.selectedIds);
+    setPending({ selection: bulkSelection.selectedIds, progress: config.batchRun.progress });
   }, [barBusy, bulkSelection, config, runDisabledReason]);
 
   const cancelConfirm = useCallback(() => {
-    setPendingSelection(null);
+    setPending(null);
   }, []);
 
   const confirmRun = useCallback(() => {
@@ -116,7 +125,7 @@ export function useBulkAgentRun({
       return;
     }
     config.batchRun.beginBatchRun(plan.runTicketIds);
-    setPendingSelection(null);
+    setPending(null);
     // 実行を始めたカードを選んだままにすると、次の一括操作で誤って巻き込みやすい。
     bulkSelection?.clear();
   }, [bulkSelection, canConfirm, config, plan]);

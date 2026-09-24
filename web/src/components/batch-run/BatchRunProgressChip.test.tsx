@@ -56,17 +56,14 @@ describe('BatchRunProgressChip (bdboard-mkm1.2)', () => {
 
   it('keeps the last result after the batch ends until it is dismissed', async () => {
     const user = userEvent.setup();
-    const { rerender } = render(
-      <BatchRunProgressChip
-        batchRun={makeController('idle', {
-          completedCount: 1,
-          failedCount: 1,
-          totalCount: 3,
-          endReason: 'consecutive_failures',
-          lastFailureReason: 'worktree を作れませんでした',
-        })}
-      />,
-    );
+    const finished = makeController('idle', {
+      completedCount: 1,
+      failedCount: 1,
+      totalCount: 3,
+      endReason: 'consecutive_failures',
+      lastFailureReason: 'worktree を作れませんでした',
+    });
+    const { rerender } = render(<BatchRunProgressChip batchRun={finished} />);
 
     expect(screen.getByRole('status')).toHaveTextContent(
       '前回の実行: 中断(連続失敗) | 完了 1/3 | 失敗 1 | 未実行 1',
@@ -75,6 +72,10 @@ describe('BatchRunProgressChip (bdboard-mkm1.2)', () => {
     expect(screen.queryByRole('button', { name: '■ 停止' })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '一括実行の結果を閉じる' }));
+    expect(chip()).not.toBeInTheDocument();
+
+    // 同じ結果 (progress の参照が同じ) のまま再描画されても閉じたまま。
+    rerender(<BatchRunProgressChip batchRun={{ ...finished }} />);
     expect(chip()).not.toBeInTheDocument();
 
     // 次の実行が始まれば (progress が差し替われば) 再び出す。

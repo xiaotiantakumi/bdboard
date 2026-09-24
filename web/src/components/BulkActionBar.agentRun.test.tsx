@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BoardCardDto, BoardViewDto, ProjectHarnessStatusDto } from '../api';
@@ -94,15 +94,17 @@ async function renderBar(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  const utils = render(
+  const ui = (batchRun: NextUpRunLoopController) => (
     <QueryClientProvider client={queryClient}>
       <UndoSnackbarProvider>
         <BulkSelectionProvider>
-          <Harness {...props} />
+          <Harness {...props} batchRun={batchRun} />
         </BulkSelectionProvider>
       </UndoSnackbarProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const utils = render(ui(props.batchRun));
+  const rerenderWith = (batchRun: NextUpRunLoopController) => utils.rerender(ui(batchRun));
   for (const id of selectIds) {
     await user.click(screen.getByRole('button', { name: `選択 ${id}` }));
   }
@@ -111,7 +113,7 @@ async function renderBar(
       expect(screen.queryByText(BULK_RUN_HARNESS_CHECKING_REASON)).not.toBeInTheDocument();
     });
   }
-  return { user, ...utils };
+  return { user, queryClient, rerenderWith, ...utils };
 }
 
 const runButton = () => screen.getByRole('button', { name: '▶ 実行' });
@@ -330,6 +332,51 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
 
     await user.click(screen.getByRole('button', { name: '選択 t-2' }));
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(batchRun.beginBatchRun).not.toHaveBeenCalled();
+  });
+
+  it('does not reopen the dialog by itself after a batch started elsewhere (Next Up) finishes', async () => {
+    const cards = [makeRunCard('t-1')];
+    const idle = makeController();
+    const { user, rerenderWith } = await renderBar(
+      { cards, board: makeSplitView([{ id: 'proj-1', cards }]), batchRun: idle },
+      ['t-1'],
+    );
+    await user.click(runButton());
+    expect(confirmDialog()).toBeInTheDocument();
+
+    // 確認を開いたまま、別の入口からループが始まって終わる (progress は毎回差し替わる)。
+    rerenderWith({ ...makeController('running'), progress: { ...idle.progress, totalCount: 2 } });
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    rerenderWith({ ...makeController('idle'), progress: { ...idle.progress, totalCount: 2 } });
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByTestId('selected')).toHaveTextContent('t-1');
+  });
+
+  it('disables 実行する when a harness gap shows up while the dialog is open', async () => {
+    const cards = [makeRunCard('t-1')];
+    const batchRun = makeController();
+    const { user, queryClient } = await renderBar(
+      { cards, board: makeSplitView([{ id: 'proj-1', cards }]), batchRun },
+      ['t-1'],
+    );
+    await user.click(runButton());
+    const confirm = within(confirmDialog()).getByRole('button', { name: '実行する' });
+    expect(confirm).toBeEnabled();
+
+    act(() => {
+      queryClient.setQueryData(['harness-status-all'], {
+        projects: [{ projectId: 'proj-1', ...makeHarnessStatus(false) }],
+      });
+    });
+
+    // react-query は購読者への通知を次のタスクへ遅らせるので待つ。
+    await waitFor(() => {
+      expect(confirm).toBeDisabled();
+    });
+    expect(confirmDialog()).toHaveTextContent('Project One: ハーネス未注入 — Hygiene から注入');
+    await user.click(confirm);
     expect(batchRun.beginBatchRun).not.toHaveBeenCalled();
   });
 

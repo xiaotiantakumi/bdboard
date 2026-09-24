@@ -39,7 +39,7 @@ export function BulkRunConfirmPanel({
       </p>
       <p id="bulk-run-confirm-desc" className="quick-action-confirm-desc">
         {runCount > 0
-          ? `選択中の ${runCount} 件を、優先度の高い順 (レーンの表示順) に1件ずつ直列でエージェント実行します。` +
+          ? `選択中の ${runCount} 件を、優先度の高い順 (同じ優先度は画面の並び順) に1件ずつ直列でエージェント実行します。` +
             '各チケットごとに worktree の作成（またはクリーンな既存 worktree の再利用）と Claude CLI の起動が走ります。' +
             `1件失敗しても次へ進みますが、直近${NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES}件が失敗した場合はバッチを停止し、最後に失敗したチケットへ停止理由のコメントを残します。` +
             '進捗と停止はヘッダーのチップに出ます。実行を始めると選択は解除されます。'
