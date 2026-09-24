@@ -34,4 +34,12 @@ describe('isLinkedWorktreeCheckout', () => {
   it('returns false when .git does not exist', () => {
     expect(isLinkedWorktreeCheckout(makeTempDir())).toBe(false);
   });
+
+  it('returns false when .git is a symlink to a directory (statSync follows the link)', () => {
+    const root = makeTempDir();
+    const realGitDir = path.join(root, 'real-git-dir');
+    fs.mkdirSync(realGitDir);
+    fs.symlinkSync(realGitDir, path.join(root, '.git'), 'dir');
+    expect(isLinkedWorktreeCheckout(root)).toBe(false);
+  });
 });

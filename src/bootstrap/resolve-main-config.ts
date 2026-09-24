@@ -25,9 +25,39 @@ export class MainCheckoutDbPathRequiredError extends Error {
   }
 }
 
+/**
+ * bdboard-n4fc: config.json / tunnel log は (dbPath が linked worktree で保護されている前提で)
+ * dbPath と同じディレクトリに退避させて共有を避ける (resolveSharedConfigFilePath /
+ * resolveSharedTunnelLogFilePath)。BDBOARD_DB がこの2つの実ディレクトリ自身を指すと、退避先が
+ * 実物とまた重なってしまう (opus レビュー指摘, PR #695)。dbPath のディレクトリがどちらかの
+ * 実ディレクトリそのものと一致する場合だけ拒否する (サブディレクトリなら重ならないので許可)。
+ */
+export class SharedStateDirectoryCollisionError extends Error {
+  constructor(repoRoot: string, dbPath: string) {
+    super(
+      `BDBOARD_DB="${dbPath}" for linked worktree checkout "${repoRoot}" resolves to a directory that is itself a shared bdboard state directory. Placing the database there would still colocate config.json and the tunnel log with the resident server's real shared files. Choose a different directory (for example <worktree>/.tmp-db/cache.db) and start again.`,
+    );
+    this.name = 'SharedStateDirectoryCollisionError';
+  }
+}
+
+function sharedStateDirectories(): readonly string[] {
+  return [path.join(os.homedir(), '.bdboard'), path.dirname(resolveConfigFilePath())];
+}
+
+function collidesWithSharedStateDirectory(dbPath: string): boolean {
+  const resolvedDbDir = path.resolve(path.dirname(dbPath));
+  return sharedStateDirectories().some((dir) => path.resolve(dir) === resolvedDbDir);
+}
+
 function resolveDbPath(repoRoot: string, isLinkedWorktreeCheckout: boolean): string {
   const configuredPath = envOptionalString('BDBOARD_DB');
-  if (configuredPath !== undefined) return configuredPath;
+  if (configuredPath !== undefined) {
+    if (isLinkedWorktreeCheckout && collidesWithSharedStateDirectory(configuredPath)) {
+      throw new SharedStateDirectoryCollisionError(repoRoot, configuredPath);
+    }
+    return configuredPath;
+  }
   if (isLinkedWorktreeCheckout) {
     // Refusal avoids the surprising lifecycle and staleness of an automatic database copy.
     throw new MainCheckoutDbPathRequiredError(repoRoot);

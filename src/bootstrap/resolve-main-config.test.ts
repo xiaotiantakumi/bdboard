@@ -4,11 +4,20 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_RECLAIM_INTERVAL_MS, DEFAULT_RECLAIM_OLDER_THAN } from '../application/lease/reclaim-scheduler.js';
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS } from '../interface/http/graceful-shutdown.js';
 import { resolveConfigFilePath } from '../infrastructure/fs/config-path.js';
-import { resolveDefaultTunnelLogFilePath } from '../infrastructure/process/cloudflared-tunnel/log-sink.js';
-import { MainCheckoutDbPathRequiredError, resolveMainConfig } from './resolve-main-config.js';
+import {
+  MainCheckoutDbPathRequiredError,
+  resolveMainConfig,
+  SharedStateDirectoryCollisionError,
+} from './resolve-main-config.js';
 
 const MAIN_CHECKOUT = '/Users/example/bdboard';
 const LINKED_WORKTREE = '/Users/example/bdboard/.claude/worktrees/bdboard-21e7';
+
+// リテラルで書く (bdboard-n4fc opus レビュー指摘): resolveConfigFilePath() /
+// resolveDefaultTunnelLogFilePath() を呼んで比較すると、既定値そのものが壊れても検出できない
+// (自己参照になる)。既存の dbPath の既定値アサーションと同じ流儀に揃える。
+const DEFAULT_CONFIG_FILE_PATH = path.join(os.homedir(), '.config', 'bdboard', 'config.json');
+const DEFAULT_TUNNEL_LOG_FILE_PATH = path.join(os.homedir(), '.bdboard', 'logs', 'cloudflared-tunnel.log');
 
 const ENV_KEYS = [
   'BDBOARD_INSTANCE_NONCE',
@@ -49,8 +58,8 @@ describe('resolveMainConfig (bdboard-sso1.86 move only, main.ts の env 解決�
       port: 8787,
       host: '127.0.0.1',
       dbPath: path.join(os.homedir(), '.bdboard', 'cache.db'),
-      configFilePath: resolveConfigFilePath(),
-      tunnelLogFilePath: resolveDefaultTunnelLogFilePath(),
+      configFilePath: DEFAULT_CONFIG_FILE_PATH,
+      tunnelLogFilePath: DEFAULT_TUNNEL_LOG_FILE_PATH,
       refreshIntervalMs: 300_000,
       sessionIntervalMs: 10_000,
       transcriptIntervalMs: 30_000,
@@ -115,7 +124,33 @@ describe('resolveMainConfig dbPath resolution', () => {
 
   it('keeps main checkout shared paths unchanged', () => {
     const config = resolveMainConfig(MAIN_CHECKOUT, false);
-    expect(config.configFilePath).toBe(resolveConfigFilePath());
-    expect(config.tunnelLogFilePath).toBe(resolveDefaultTunnelLogFilePath());
+    expect(config.configFilePath).toBe(DEFAULT_CONFIG_FILE_PATH);
+    expect(config.tunnelLogFilePath).toBe(DEFAULT_TUNNEL_LOG_FILE_PATH);
+  });
+
+  // bdboard-n4fc opus レビュー指摘: BDBOARD_DB が共有ディレクトリそのものを指すと、
+  // config.json / tunnel log の退避先がまた実物と重なってしまう。exact なディレクトリ一致だけ拒否する。
+  it('refuses a linked-worktree BDBOARD_DB placed directly in the shared ~/.bdboard directory', () => {
+    process.env.BDBOARD_DB = path.join(os.homedir(), '.bdboard', 'wt-cache.db');
+    expect(() => resolveMainConfig(LINKED_WORKTREE, true)).toThrow(SharedStateDirectoryCollisionError);
+  });
+
+  it('refuses a linked-worktree BDBOARD_DB placed directly in the shared config directory', () => {
+    process.env.BDBOARD_DB = path.join(path.dirname(resolveConfigFilePath()), 'wt-cache.db');
+    expect(() => resolveMainConfig(LINKED_WORKTREE, true)).toThrow(SharedStateDirectoryCollisionError);
+  });
+
+  it('allows a linked-worktree BDBOARD_DB in a subdirectory under the shared ~/.bdboard directory', () => {
+    process.env.BDBOARD_DB = path.join(os.homedir(), '.bdboard', 'wt-bdboard-21e7', 'cache.db');
+    const config = resolveMainConfig(LINKED_WORKTREE, true);
+    expect(config.dbPath).toBe(process.env.BDBOARD_DB);
+    expect(config.configFilePath).toBe(
+      path.join(os.homedir(), '.bdboard', 'wt-bdboard-21e7', 'config.json'),
+    );
+  });
+
+  it('does not apply the shared-directory collision guard outside a linked worktree', () => {
+    process.env.BDBOARD_DB = path.join(os.homedir(), '.bdboard', 'wt-cache.db');
+    expect(() => resolveMainConfig(MAIN_CHECKOUT, false)).not.toThrow();
   });
 });
