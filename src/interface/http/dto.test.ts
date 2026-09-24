@@ -402,7 +402,6 @@ describe('dto', () => {
     const afterSize = JSON.stringify(afterDto).length;
 
     // 削減効果を数値でログに残す(議長のレビュー用。bdboard-3tw.86)。
-    // eslint-disable-next-line no-console
     console.log(
       `[bdboard-3tw.86] payload size before=${beforeSize}B after=${afterSize}B ` +
         `reduction=${(((beforeSize - afterSize) / beforeSize) * 100).toFixed(1)}%`,

@@ -106,11 +106,17 @@ npm run check:boundaries # dependency-cruiser (architecture layering)
 拾う）で `src/` `web/src/` `scripts/` `harness/` `test/` 配下の `.ts` `.tsx` `.mjs` `.js` `.css`
 `.sh` を集める。`fixtures/` 配下と生成物は対象外。
 
-**ESLint との住み分け (bdboard-sso1.8)**: `src/` `web/src/` `scripts/` 配下の `.ts`/`.tsx`/`.mjs`/`.js`
-の行数上限は `npm run lint` (`eslint.config.mjs` の `max-lines` + `MAX_LINES_ALLOWLIST`) に一本化した
-— この3ディレクトリではそれらの拡張子はこのガードの対象外になる。このガードはそれ以外
-(`web/src/index.css` のような ESLint が見ない拡張子)、および `harness/` (ESLint の `ignores`
-対象) と `test/` (ESLint の lint 対象外) の全拡張子を引き続き見る。
+**ESLint との住み分け (bdboard-sso1.8 / bdboard-hncr)**: `src/` `web/src/` `scripts/` 配下の
+行数上限は `npm run lint` (`eslint.config.mjs` の `max-lines` + `MAX_LINES_ALLOWLIST`) に
+一本化したが、ESLint が実際に見る拡張子はディレクトリごとに違う (`src/**/*.ts`、
+`web/src/**/*.{ts,tsx}`、`scripts/**/*.mjs`)。この住み分けは
+`scripts/check-file-size/classify.mjs` の `ESLINT_COVERED_EXTENSIONS_BY_DIR`
+(ディレクトリ→拡張子のマップ) で管理しており、eslint.config.mjs の対象 globs とずれると
+`scripts/check-file-size.test.mjs` の drift guard テストが落ちる。この3ディレクトリでは
+それぞれの対象拡張子だけがこのガードの対象外になり、それ以外の組み合わせ
+(`src/foo.js` のように ESLint が見ない拡張子がこれらのディレクトリにある場合)、
+および `harness/` (ESLint の `ignores` 対象) と `test/` (ESLint の lint 対象外) の
+全拡張子は引き続きここで見る。
 
 既定上限・baseline (登録済みファイルの個別上限と理由) は両方とも
 [`scripts/file-size-baseline.json`](../scripts/file-size-baseline.json) に置き、スクリプト本体

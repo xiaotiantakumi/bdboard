@@ -5,8 +5,11 @@
 //
 // lint 対象は src/ (サーバー) と web/src/ (React+Vite) と scripts/ (補助スクリプト)
 // の3ディレクトリのみ。行数ガード (scripts/check-file-size.mjs) と二重管理しない
-// ため、この3ディレクトリ配下の .ts/.tsx/.mjs の行数上限は max-lines ルールに一本化
-// する (check-file-size 側は index.css など ESLint が見ない拡張子専用に絞ってある)。
+// ため、下の files globs (src/**/*.ts, web/src/**/*.{ts,tsx}, scripts/**/*.mjs) が
+// 実際に対象とする拡張子の行数上限は max-lines ルールに一本化する (check-file-size 側は
+// classify.mjs の ESLINT_COVERED_EXTENSIONS_BY_DIR でこの3パターンを個別に除外し、
+// index.css など ESLint が見ない拡張子専用に絞ってある。両者がずれないよう
+// scripts/check-file-size.test.mjs に drift guard テストがある)。
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import reactHooks from 'eslint-plugin-react-hooks';
