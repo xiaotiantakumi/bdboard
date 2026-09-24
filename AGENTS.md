@@ -155,9 +155,9 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   ヘルプ原本 `docs/help-content.json` の追従を確認 → `npm run drift` (PR が数時間開いていたら
   再実行) → `npm run verify` (PR を開く前にクリーンであること) →
   `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
-  CI green → マージ (drift → `bd merge-slot acquire` → `git ls-remote origin main` で CAS →
-  `gh pr merge --squash --delete-branch` → 着地後検証: 議長は main で pull + `npm run verify`、
-  サブエージェントは main に触れずブランチ tip 検証 → `bd merge-slot release`) → **`bd close <id>` はマージ成功後だけ**
+  CI green → マージ (`origin/main` の `merge.mode` で分岐。S0: drift → `bd merge-slot acquire` → ls-remote で CAS →
+  `gh pr merge --squash --delete-branch` → 着地後検証 → release / S1: `npm run merge-pr -- prepare|gate|finish <N>`
+  で枠は CAS とマージの間だけ・着地後検証は commit status。docs/GIT-WORKFLOW.md) → **`bd close <id>` はマージ成功後だけ**
   (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
 - **Direct-to-main commits are banned.** 唯一の例外は `.github/workflows/` のみを触る CI 復旧コミット。
 - **`.beads/` はこのリポジトリで git 追跡していない** (ルート `.gitignore` 参照)。PR で
