@@ -17,7 +17,7 @@ import globals from 'globals';
 // (詳細: docs/VERIFY.md「ファイルサイズガード」に準ずる運用を max-lines に適用)。
 const MAX_LINES_ALLOWLIST = {
   // 非テスト (200 行超, 分割して収まったら消す)
-  'web/src/components/ChatPanel.tsx': 1889, // 現在 1879 (bdboard-sso1.83 第7段: 入力フォーム(クイックコマンド行/通知群/textarea/アクション行/ヒント)を chat/ChatComposer.tsx へ、見出し(最大化/閉じる)を chat/ChatPanelHeader.tsx へ、送信可否判定と aria-describedby の組み立てを chat/composerState.ts へ抽出)
+  'web/src/components/ChatPanel.tsx': 1856, // 現在 1846 (ESLint実測。bdboard-sso1.83 第8段: スクロール追従を chat/useStickToBottomScroll.ts へ、経過秒数表示を chat/useElapsedSeconds.ts へ抽出)
   // 'web/src/components/TicketDetailPanel.tsx' はこの一覧から除去 (bdboard-sso1.5:
   // 残っていたフック呼び出し群を useTicketDetailController.ts/useTicketDetailQueries.ts へ、
   // 本体JSXを TicketDetailBody.tsx/TicketDetailSecondaryBody.tsx へ切り出し、
