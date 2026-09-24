@@ -25,6 +25,17 @@ export interface TicketDecisionOutcome {
    * 「確認待ちから外れました」メッセージは出さない(実際には何も変わっていないため)。
    */
   ambiguousGateIds?: string[];
+  /**
+   * kind が 'gate' または 'ticket' のときに設定されうる(closed の値は問わない —
+   * ticket 回答で兄弟チケットの human ラベルを外した場合は closed: false、gate に
+   * 直接回答してそれがブロックしていた作業チケットの human ラベルを外した場合は
+   * closed: true で付く)。kind === 'unknown' のときは respond() がラベル解除自体を
+   * 行わないため絶対に設定されない。ambiguousGateIds とは排他(ambiguousGateIds は
+   * 「何も resolve していない」場合にしか立たず、clearedHumanLabelTicketIds は
+   * 「他のチケットの human ラベルを外せた」場合にしか立たないため、respond() の実装上
+   * 両方が同時に設定されることはない)。1件も無ければこのフィールド自体が省略される。
+   */
+  clearedHumanLabelTicketIds?: string[];
 }
 
 export function fetchPendingDecisions(): Promise<PendingDecisionDto[]> {
@@ -65,10 +76,23 @@ function mapTicketDecisionOutcome(raw: unknown): TicketDecisionOutcome {
     rawAmbiguousGateIds.every((entry): entry is string => typeof entry === 'string')
       ? rawAmbiguousGateIds
       : undefined;
+  // clearedHumanLabelTicketIds は kind === 'unknown' のときは respond() が絶対に
+  // 設定しない(ラベル解除自体を行わないため)。ambiguousGateIds と同じ fail-safe な
+  // 不変条件の強制として、ここでも kind を確認しておく。
+  const rawClearedHumanLabelTicketIds =
+    (outcome as { clearedHumanLabelTicketIds?: unknown }).clearedHumanLabelTicketIds;
+  const clearedHumanLabelTicketIds =
+    normalizedKind !== 'unknown' &&
+    Array.isArray(rawClearedHumanLabelTicketIds) &&
+    rawClearedHumanLabelTicketIds.length > 0 &&
+    rawClearedHumanLabelTicketIds.every((entry): entry is string => typeof entry === 'string')
+      ? rawClearedHumanLabelTicketIds
+      : undefined;
   return {
     kind: normalizedKind,
     closed: normalizedClosed,
     ...(ambiguousGateIds !== undefined ? { ambiguousGateIds } : {}),
+    ...(clearedHumanLabelTicketIds !== undefined ? { clearedHumanLabelTicketIds } : {}),
   };
 }
 
@@ -78,7 +102,12 @@ export function postTicketDecision(
 ): Promise<TicketDecisionOutcome> {
   return fetchJson<{
     ok: true;
-    outcome?: { kind?: string; closed?: boolean; ambiguousGateIds?: string[] };
+    outcome?: {
+      kind?: string;
+      closed?: boolean;
+      ambiguousGateIds?: string[];
+      clearedHumanLabelTicketIds?: string[];
+    };
   }>(`/api/tickets/${encodeURIComponent(id)}/decision`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

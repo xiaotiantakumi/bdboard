@@ -116,7 +116,7 @@ export function TicketDecisionSection({
            * のに解決したかのように誤読させる(bdboard-v78e)。この分岐を優先し、
            * 個別の gate へ回答するよう促す。kind/closed との整合性
            * (kind==='ticket' かつ closed===false のときだけ設定される、配列は
-           * 非空)は web/src/api.ts の mapTicketDecisionOutcome 側で強制済みなので、
+           * 非空)は web/src/api/decisions.ts の mapTicketDecisionOutcome 側で強制済みなので、
            * ここでは ambiguousGateIds の有無だけを見ればよい。
            * bdboard-cine: ambiguousGateIds が付く理由は2つある — (1) 独立した
            * human gate が2件以上ブロックしている(bdboard-q1k9)、(2) gate が1件
@@ -164,6 +164,26 @@ export function TicketDecisionSection({
                   ? '確認用のゲートを解決しました。ブロックされていたチケットが次の更新で着手可能になります。'
                   : 'このチケットはクローズしていません。確認待ちから外れ、次の更新で通常のレーンに戻ります。'}
             </p>
+          )}
+          {submittedDecision.outcome.clearedHumanLabelTicketIds !== undefined && (
+            <>
+              <p className="detail-help">
+                他に {submittedDecision.outcome.clearedHumanLabelTicketIds.length} 件のチケットの確認待ちも解除しました:
+              </p>
+              <ul className="detail-list">
+                {submittedDecision.outcome.clearedHumanLabelTicketIds.map((ticketId) => (
+                  <li key={ticketId}>
+                    <button
+                      type="button"
+                      className="ticket-id-link"
+                      onClick={() => onOpenTicket(ticketId)}
+                    >
+                      {ticketId}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}
