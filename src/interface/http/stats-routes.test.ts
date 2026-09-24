@@ -356,4 +356,87 @@ describe('createApiRoutes', () => {
     expect(invalidWeeks.status).toBe(200);
     expect((await invalidWeeks.json()).totals.weeklyCloses).toHaveLength(8);
   });
+
+  // bdboard-ve1y: getThroughputStats / getModelStats used to run fully
+  // synchronously inside the route handler; with enough tickets that blocked
+  // the Node event loop long enough to starve other in-flight requests (see
+  // bdboard-himp: /api/health observed at 10-25s while stats were computed).
+  // This test proves /api/health, started *after* the two stats requests,
+  // still completes *before* them, because the aggregation now yields to
+  // the event loop (setImmediate) every AGGREGATION_YIELD_CHUNK_SIZE
+  // tickets instead of blocking until done.
+  it(
+    'does not block /api/health while aggregating a large stats fixture (bdboard-ve1y)',
+    async () => {
+      const cache = createFakeBoardCache();
+      const big = project('/big', '/projects/big');
+      const closedAt = new Date('2026-06-01T10:00:00.000Z');
+      const TICKET_COUNT = 20_000;
+      const tickets = Array.from({ length: TICKET_COUNT }, (_, index) =>
+        makeTicket({
+          id: `bdboard-big-${index}`,
+          projectId: big.id,
+          createdAt: closedAt,
+          closedAt: index % 2 === 0 ? closedAt : undefined,
+          models:
+            index % 3 === 0
+              ? [{ stage: 'implement', model: 'model-a' }]
+              : undefined,
+        }),
+      );
+      cache.putProject({
+        project: big,
+        tickets,
+        fingerprint: 'fp-big',
+        fetchedAt: NOW,
+      });
+
+      const app = createApiRoutes(createDeps({ cache }));
+
+      const order: string[] = [];
+      const statsStartedAt = Date.now();
+      const statsPromise = (async () => {
+        const response = await app.request('/api/stats?weeks=26');
+        order.push('stats');
+        return response;
+      })();
+      const modelStatsPromise = (async () => {
+        const response = await app.request('/api/model-stats?weeks=26');
+        order.push('model-stats');
+        return response;
+      })();
+      const healthPromise = (async () => {
+        // Wait for our own macrotask boundary before issuing the request.
+        // Without this, a regression where the aggregation's "yield" is
+        // actually microtask-only (e.g. `await Promise.resolve()` instead
+        // of `setImmediate`) could still let this assertion pass by
+        // accident: /api/health's own handler is cheap and resolves via
+        // microtasks alone, so it could race ahead of a microtask-only
+        // "yield" without that proving the aggregation ever truly freed
+        // the event loop. Forcing a real setImmediate tick first means
+        // this only passes if the aggregation is still yielding (or
+        // already done) by the time that tick fires.
+        await new Promise<void>((resolve) => {
+          setImmediate(resolve);
+        });
+        const response = await app.request('/api/health');
+        order.push('health');
+        return { response, elapsedMs: Date.now() - statsStartedAt };
+      })();
+
+      const [statsResponse, modelStatsResponse, health] = await Promise.all([
+        statsPromise,
+        modelStatsPromise,
+        healthPromise,
+      ]);
+
+      expect(statsResponse.status).toBe(200);
+      expect(modelStatsResponse.status).toBe(200);
+      expect(health.response.status).toBe(200);
+      // Requested last, but must finish first.
+      expect(order[0]).toBe('health');
+      expect(health.elapsedMs).toBeLessThan(1000);
+    },
+    10_000,
+  );
 });

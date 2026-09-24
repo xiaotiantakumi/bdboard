@@ -4,6 +4,7 @@ import type { Project } from '../../domain/project.js';
 import { makeTicket } from '../../domain/test-support.js';
 import type { BoardCache, CachedProject } from '../ports/board-cache.js';
 import { createEmptyCfdCacheMethods, createEmptyInteractionsCacheMethods, createEmptySessionLinksCacheMethods } from '../ports/board-cache-fakes.js';
+import { AGGREGATION_YIELD_CHUNK_SIZE } from './aggregation-yield.js';
 import { getThroughputStats } from './get-throughput-stats.js';
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -69,8 +70,30 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
   };
 }
 
+// bdboard-ve1y: race a competing setImmediate ("macrotask") task against
+// the work under test. Node fully drains the microtask queue between any
+// two macrotasks, so "did the competing task run in between" reliably
+// distinguishes "yielded to the event loop at least once" from "ran fully
+// synchronously" - unlike counting calls on a spied global.setImmediate,
+// which is flaky because Vitest/Node schedule their own background
+// setImmediate calls.
+async function raceAgainstOneMacrotask(work: () => Promise<unknown>): Promise<string[]> {
+  const events: string[] = [];
+  const competingTask = new Promise<void>((resolve) => {
+    setImmediate(() => {
+      events.push('competing-task');
+      resolve();
+    });
+  });
+  const workDone = work().then(() => {
+    events.push('work-done');
+  });
+  await Promise.all([competingTask, workDone]);
+  return events;
+}
+
 describe('getThroughputStats', () => {
-  it('defaults weeks to 8', () => {
+  it('defaults weeks to 8', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
 
@@ -81,12 +104,12 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { timeZone: UTC });
     expect(stats.totals.weeklyCloses).toHaveLength(8);
     expect(stats.projects[0]?.weeklyCloses).toHaveLength(8);
   });
 
-  it('counts closedAt at Monday 00:00:00.000 local in that week', () => {
+  it('counts closedAt at Monday 00:00:00.000 local in that week', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 13, 12);
     const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -105,11 +128,11 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toEqual([{ weekStart: mondayStart, count: 1 }]);
   });
 
-  it('counts closedAt at Sunday 23:59:59.999 local in the same week', () => {
+  it('counts closedAt at Sunday 23:59:59.999 local in the same week', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 13, 12);
     const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -129,11 +152,11 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toEqual([{ weekStart: mondayStart, count: 1 }]);
   });
 
-  it('fills zero-count weeks and returns weeks in ascending order', () => {
+  it('fills zero-count weeks and returns weeks in ascending order', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const currentWeekStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -153,7 +176,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 2, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 2, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toHaveLength(2);
     expect(stats.totals.weeklyCloses[0]).toEqual({
       weekStart: previousWeekStart,
@@ -165,7 +188,7 @@ describe('getThroughputStats', () => {
     });
   });
 
-  it('ignores closedAt outside the requested week range', () => {
+  it('ignores closedAt outside the requested week range', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const currentWeekStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
@@ -189,11 +212,11 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses).toEqual([{ weekStart: currentWeekStart, count: 0 }]);
   });
 
-  it('does not count tickets without closedAt in weekly closes', () => {
+  it('does not count tickets without closedAt in weekly closes', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
@@ -211,11 +234,11 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.weeklyCloses[0]?.count).toBe(0);
   });
 
-  it('places open tickets in age buckets using lower-inclusive upper-exclusive boundaries', () => {
+  it('places open tickets in age buckets using lower-inclusive upper-exclusive boundaries', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
@@ -253,7 +276,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.openTicketAge).toEqual({
       d0to1: 2,
       d1to7: 1,
@@ -262,7 +285,7 @@ describe('getThroughputStats', () => {
     });
   });
 
-  it('does not include closed tickets in open ticket age distribution', () => {
+  it('does not include closed tickets in open ticket age distribution', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
@@ -281,7 +304,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
     expect(stats.totals.openTicketAge).toEqual({
       d0to1: 0,
       d1to7: 0,
@@ -290,7 +313,7 @@ describe('getThroughputStats', () => {
     });
   });
 
-  it('aggregates totals across projects and preserves listProjects order', () => {
+  it('aggregates totals across projects and preserves listProjects order', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
@@ -326,7 +349,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
 
     expect(stats.projects.map((entry) => entry.project.id)).toEqual([a.id, b.id]);
     expect(stats.projects[0]?.weeklyCloses[0]?.count).toBe(1);
@@ -336,7 +359,7 @@ describe('getThroughputStats', () => {
     expect(stats.totals.openTicketAge.d1to7).toBe(1);
   });
 
-  it('is deterministic for a fixed now', () => {
+  it('is deterministic for a fixed now', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const proj = project('/a', '/projects/a');
@@ -359,12 +382,12 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const first = getThroughputStats(cache, now, { weeks: 3, timeZone: UTC });
-    const second = getThroughputStats(cache, now, { weeks: 3, timeZone: UTC });
+    const first = await getThroughputStats(cache, now, { weeks: 3, timeZone: UTC });
+    const second = await getThroughputStats(cache, now, { weeks: 3, timeZone: UTC });
     expect(second).toEqual(first);
   });
 
-  it('filters projects and recalculates totals when projectIds is specified', () => {
+  it('filters projects and recalculates totals when projectIds is specified', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
@@ -405,8 +428,8 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const allStats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
-    const filteredStats = getThroughputStats(cache, now, {
+    const allStats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const filteredStats = await getThroughputStats(cache, now, {
       weeks: 1,
       projectIds: [a.id],
       timeZone: UTC,
@@ -424,7 +447,7 @@ describe('getThroughputStats', () => {
     expect(filteredStats.totals.openTicketAge.d1to7).toBe(0);
   });
 
-  it('returns all projects when projectIds is not specified', () => {
+  it('returns all projects when projectIds is not specified', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
@@ -443,12 +466,12 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: UTC });
 
     expect(stats.projects).toHaveLength(2);
   });
 
-  it('returns no projects and zero totals when projectIds is an empty array', () => {
+  it('returns no projects and zero totals when projectIds is an empty array', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
     const a = project('/a', '/projects/a', 'Alpha');
@@ -466,7 +489,7 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, projectIds: [], timeZone: UTC });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, projectIds: [], timeZone: UTC });
 
     expect(stats.projects).toHaveLength(0);
     expect(stats.totals.weeklyCloses[0]?.count).toBe(0);
@@ -478,7 +501,7 @@ describe('getThroughputStats', () => {
     });
   });
 
-  it('uses an explicit timezone for weekly boundaries', () => {
+  it('uses an explicit timezone for weekly boundaries', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 3);
     const mondayStart = new Date('2026-08-09T15:00:00.000Z');
@@ -497,11 +520,11 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
+    const stats = await getThroughputStats(cache, now, { weeks: 1, timeZone: 'Asia/Tokyo' });
     expect(stats.totals.weeklyCloses[0]?.count).toBe(1);
   });
 
-  it('counts a Sunday close during the America/New_York DST fall-back week', () => {
+  it('counts a Sunday close during the America/New_York DST fall-back week', async () => {
     const cache = createFakeBoardCache();
     const timeZone = 'America/New_York';
     const now = new Date('2026-11-02T12:00:00.000Z');
@@ -522,11 +545,43 @@ describe('getThroughputStats', () => {
       fetchedAt: now,
     });
 
-    const stats = getThroughputStats(cache, now, { weeks: 2, timeZone });
+    const stats = await getThroughputStats(cache, now, { weeks: 2, timeZone });
     const fallBackWeek = stats.totals.weeklyCloses.find(
       (entry) => entry.weekStart.getTime() === fallBackWeekStart.getTime(),
     );
 
     expect(fallBackWeek?.count).toBe(1);
+  });
+
+  // bdboard-ve1y: getThroughputStats shares one YieldGate across all
+  // projects in its loop specifically so that many *small* projects (each
+  // individually under the chunk size) still yield once their combined
+  // ticket count crosses it - this is this app's real-world data shape
+  // (many projects, each far smaller than the chunk size). A per-project
+  // gate (reset for every project, an earlier version of this fix) would
+  // never yield here even though the combined workload does; this test
+  // guards against that regression.
+  it('yields across many small projects whose combined ticket count crosses the chunk size (bdboard-ve1y)', async () => {
+    const cache = createFakeBoardCache();
+    const now = utcInstant(2026, 8, 15, 12);
+    const projectCount = 6;
+    const ticketsPerProject = Math.ceil((AGGREGATION_YIELD_CHUNK_SIZE * 1.5) / projectCount);
+    expect(ticketsPerProject).toBeLessThan(AGGREGATION_YIELD_CHUNK_SIZE);
+
+    for (let p = 0; p < projectCount; p += 1) {
+      const proj = project(`/p${p}`, `/projects/p${p}`);
+      const tickets = Array.from({ length: ticketsPerProject }, (_, i) =>
+        makeTicket({
+          id: `bdboard-p${p}-${i}`,
+          projectId: proj.id,
+          createdAt: new Date(now.getTime() - i * MS_PER_DAY),
+        }),
+      );
+      cache.putProject({ project: proj, tickets, fingerprint: `fp-${p}`, fetchedAt: now });
+    }
+
+    const events = await raceAgainstOneMacrotask(() => getThroughputStats(cache, now, { timeZone: UTC }));
+
+    expect(events).toEqual(['competing-task', 'work-done']);
   });
 });
