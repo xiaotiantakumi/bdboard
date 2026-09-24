@@ -33,9 +33,10 @@ export interface UseTurnStatusRecoveryResult {
  * decideTurnStatusStep へ切り出し、ここには ACK・hydrate の fetch・setState・
  * ポーリングのタイマー/バックオフだけが残る。
  *
- * detachedSendsRef(旧 detachedStreamSendRef)と turnRecoveryGeneration の
- * useState 自体は ChatPanel.tsx 側に残る — 送信/ストリーム側(第13段の対象)も
- * 直接読み書きするため、この effect の内側だけでは完結しないため。
+ * detachedSendsRef(旧 detachedStreamSendRef)と turnRecoveryGeneration は
+ * chat/useChatSendState.ts (第13a段) の useReducer が持つ。送信/ストリーム側
+ * (第13b段の対象、まだ ChatPanel.tsx に残っている)も直接読み書きするため、
+ * この effect の内側だけでは完結しない。
  */
 export function useTurnStatusRecovery(params: {
   selectedProjectId: string;
