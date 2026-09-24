@@ -65,15 +65,22 @@ describe('useDraftThreadLauncher', () => {
     expect(result.current.key.currentConversationKey).toBe('new:proj-a:1');
     expect(result.current.draft.conversationInputs['new:proj-a:1']).toBe('x');
     expect(result.current.selectedAgentId).toBe('codex');
+    // 進行中の履歴取得を捨て、開いているスレッドを閉じる。
+    expect(result.current.conv.historyRequestIdRef.current).toBe(1);
+    expect(result.current.conv.loadingHistoryFor).toBeNull();
+    expect(result.current.openThreadIds).toEqual({ 'proj-a': [] });
     // N1: 1回のトリガーで nonce は1つだけ進む。
     expect(result.current.key.draftNonces).toEqual({ 'proj-a': 1 });
   });
 
-  it('moves attachments and copies the seed record on an agent switch (SFX)', () => {
+  it('moves attachments, copies the seed record and detaches the session on an agent switch (SFX)', () => {
     const { result } = renderHook(() => useLauncherProbe('proj-a'));
     const shot = makeAttachment('shot');
     act(() => {
       result.current.draft.updateConversationAttachments(() => ({ 'new:proj-a:0': [shot] }));
+      result.current.conv.setConversations({
+        'new:proj-a:0': { messages: [], sessionId: 'sess-1', agentId: 'claude' },
+      });
     });
     result.current.draft.draftSeedTextRef.current['new:proj-a:0'] = 'seed';
 
@@ -83,6 +90,11 @@ describe('useDraftThreadLauncher', () => {
 
     expect(result.current.draft.conversationAttachments).toEqual({ 'new:proj-a:1': [shot] });
     expect(result.current.draft.draftSeedTextRef.current['new:proj-a:1']).toBe('seed');
+    expect(result.current.conv.conversations['new:proj-a:0']).toEqual({
+      messages: [],
+      sessionId: undefined,
+      agentId: undefined,
+    });
   });
 
   it('consumes a pending prefill into the freshly numbered draft key (MF1/SF1)', () => {
