@@ -6,7 +6,7 @@ import { createTicketContentRoutes } from './ticket-content-routes.js';
 import { createTicketLabelWriteRoutes } from './ticket-label-write-routes.js';
 import { createTicketSessionLinkWriteRoutes } from './ticket-session-link-write-routes.js';
 import { createTicketCommentWriteRoutes } from './ticket-comment-write-routes.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 // このファイルはチケット書き込み系のルートモジュールを元の登録順で束ねる合成レイヤ
 // (bdboard-sso1.25)。旧 ticket-write-routes.ts (511行、12ルートが同居) をリソース別に

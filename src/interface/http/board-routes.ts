@@ -25,7 +25,7 @@ import {
   resolveLivenessThresholds,
 } from './api-route-shared.js';
 import { groupSessionsByProject } from '../../application/session/link-sessions-to-projects.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 const SEARCH_DEFAULT_LIMIT = 30;
 const SEARCH_MIN_LIMIT = 1;

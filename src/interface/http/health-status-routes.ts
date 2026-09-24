@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getBoardTimeZoneOverride } from '../../config/board-timezone.js';
-import type { ApiDeps } from './routes.js';
+import type { ApiDeps } from './api-deps.js';
 
 export function createHealthStatusRoutes(deps: ApiDeps): Hono {
   const app = new Hono();
