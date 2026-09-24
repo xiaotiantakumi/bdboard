@@ -20,7 +20,7 @@ import { resolveBoardThresholds } from '../../domain/board-thresholds.js';
 import { resolveHygieneThresholds } from '../../domain/hygiene-thresholds.js';
 import type { AgentSession, SessionLink } from '../../domain/session.js';
 import type { EventHub } from '../sse/event-hub.js';
-import type { ApiDeps, ApiStatus } from './routes.js';
+import type { ApiDeps, ApiStatus } from './api-deps.js';
 import type { WriteGuardDeps } from './write-guard.js';
 
 export interface BuildApiDepsParams {

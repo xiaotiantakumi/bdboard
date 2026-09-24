@@ -22,10 +22,11 @@ import type { WriteGuardDeps } from './write-guard.js';
 
 // bdboard-tml8: ApiStatus/ApiDeps を routes.ts から抜き出した専用ファイル。
 // 各ルートグループのファイルはこの型だけを直接 import する (routes.ts 経由にしない)。
-// routes.ts は各グループのファイルを import type: 'ApiDeps' で参照される側になるので、
-// routes.ts から型を再輸出する形のままだと「routes.ts <-> 各グループ」の型だけの
-// import 循環が dependency-cruiser の no-circular に引っかかる (このチケットの本題)。
-// routes.ts は引き続き `export type { ApiStatus, ApiDeps } from './api-deps.js'` で
+// 各グループのファイルは ApiDeps を type-only import する一方、routes.ts はその
+// グループのファイル自体を(ルーター組み立てのため)値として import する。両方を
+// routes.ts 経由にすると「routes.ts <-> 各グループ」の型だけの import 循環になり、
+// dependency-cruiser の no-circular に引っかかる(このチケットの本題)。routes.ts は
+// 引き続き `export type { ApiStatus, ApiDeps } from './api-deps.js'` で
 // 外部 (bootstrap 等) 向けの公開経路を保つ。
 
 export interface ApiStatus {
