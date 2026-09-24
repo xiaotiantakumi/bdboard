@@ -5,7 +5,7 @@ import { referenceDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
 import type { ChatAttachment } from './attachments';
 import { describeChatSendError } from './chatSendErrors';
 import { APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY } from './draftCarryPlans';
-import { toAssistantMessage } from './messages';
+import { toAssistantMessage, type ChatMessage } from './messages';
 import { summarizeTitle } from './threads';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatDraftStateResult } from './useChatDraftState';
@@ -25,12 +25,29 @@ export interface UseChatSendCommitsParams
   effectiveModelId: string;
 }
 
+export interface UseChatSendCommitsResult {
+  commitSuccess: (convKey: string, sentText: string, result: ChatMessageResponseDto) => void;
+  commitFailure: (
+    convKey: string,
+    sentText: string,
+    sentAttachments: readonly ChatAttachment[],
+    error: unknown,
+    sentAt: number,
+  ) => void;
+  appendTranscript: (convKey: string, message: ChatMessage, sessionId?: string) => void;
+}
+
 /**
- * bdboard-sso1.83 第13b段: ChatPanel.tsx の applyChatSuccess/applyChatError
- * (送信結果を会話ストア・スレッド一覧・入力欄へ書き戻す action)を抜き出したもの。
+ * bdboard-sso1.83 第13b段: 送信まわりで会話ストア・スレッド一覧・入力欄へ書く
+ * store 側の action。commitSuccess は旧 applyChatSuccess、commitFailure は旧
+ * applyChatError(ChatPanel.tsx)で、本体は変えていない。appendTranscript は旧
+ * submitChatMessage が2箇所(利用不可エージェントのエラーバブル、楽観的な
+ * ユーザー発話)で直接書いていた setConversations を1つにまとめたもの。
  * effect は持たない(useCallback だけ)。呼び出し位置は元の applyChatSuccess の位置。
+ * 依存配列は完全(setter と ref は安定しているので、実際に変わるのは
+ * selectedProjectId/showModelSelect/effectiveModelId だけ)。
  */
-export function useChatSendCommits(params: UseChatSendCommitsParams) {
+export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSendCommitsResult {
   const {
     selectedProjectId,
     showModelSelect,
@@ -47,7 +64,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams) {
     updateConversationAttachments,
   } = params;
 
-  const applyChatSuccess = useCallback(
+  const commitSuccess = useCallback(
     (convKey: string, sentText: string, result: ChatMessageResponseDto) => {
       // bdboard-ru4d: 会話キーの再割り当て(ドラフトキー → 確定 sessionId)だが、
       // ドラフト積載物は引き継がない(選択は APPLY_CHAT_SUCCESS_DRAFT_PAYLOAD_CARRY)。
@@ -106,10 +123,20 @@ export function useChatSendCommits(params: UseChatSendCommitsParams) {
         // The reply is already incorporated. A failed ACK only causes safe re-hydration later.
       });
     },
-    [effectiveModelId, selectedProjectId, showModelSelect],
+    [
+      effectiveModelId,
+      selectedProjectId,
+      showModelSelect,
+      setConversations,
+      setHistoryLoadedFor,
+      setThreadModelIds,
+      setThreadLists,
+      setOpenThreadIds,
+      setSelectedThreadIds,
+    ],
   );
 
-  const applyChatError = useCallback(
+  const commitFailure = useCallback(
     (
       convKey: string,
       sentText: string,
@@ -148,7 +175,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams) {
       // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ
       // 本文を復元する。送信時のクリア(handleSubmit、try の前)は失敗しても巻き戻ら
       // ないため、送信をやり損ねた本文がそのまま消えていた。復元先は convKey ——
-      // 呼び出し元(handleSubmit)がクロージャで捕まえた「送信時点の会話キー」
+      // 呼び出し元(chat/useChatSubmit.ts の submit)がクロージャで捕まえた「送信時点の会話キー」
       // (sendKey)であり、現在表示中のキー(currentConversationKey)ではない。
       // 送信中にユーザーがスレッド/プロジェクトを切り替えていた場合、現在の入力欄
       // ではなく元のキーへ復元することで、現在の入力欄を汚染しない。
@@ -207,6 +234,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams) {
     },
     [
       selectedProjectId,
+      setConversations,
       updateConversationAttachments,
       conversationInputsRef,
       conversationAttachmentsRef,
@@ -214,5 +242,19 @@ export function useChatSendCommits(params: UseChatSendCommitsParams) {
     ],
   );
 
-  return { applyChatSuccess, applyChatError };
+  const appendTranscript = useCallback(
+    (convKey: string, message: ChatMessage, sessionId?: string) => {
+      setConversations((prev) => ({
+        ...prev,
+        [convKey]: {
+          ...prev[convKey],
+          ...(sessionId !== undefined ? { sessionId } : {}),
+          messages: [...(prev[convKey]?.messages ?? []), message],
+        },
+      }));
+    },
+    [setConversations],
+  );
+
+  return { commitSuccess, commitFailure, appendTranscript };
 }

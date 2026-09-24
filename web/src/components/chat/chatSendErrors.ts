@@ -10,7 +10,7 @@ export interface ChatSendErrorDescription {
   clearSession: boolean;
 }
 
-// bdboard-sso1.83 第4段: applyChatError の前半(エラー種別 → 文言/clearSession
+// bdboard-sso1.83 第4段: applyChatError(現 chat/useChatSendCommits.ts の commitFailure)の前半(エラー種別 → 文言/clearSession
 // の判定)を移動しただけの純関数。分岐の順番・条件・文言は一切変えていない。
 // 壊しやすい点: writeAccessErrorMessage を最初に判定すること、409 は
 // writeAccessMessage.ts の CHAT_BUSY_HELP と共有すること(bdboard-yzn、文言の

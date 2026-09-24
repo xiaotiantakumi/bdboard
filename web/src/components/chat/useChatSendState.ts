@@ -69,7 +69,7 @@ export function useChatSendState(): UseChatSendStateResult {
   // その会話キーのものだけ消す。streamingReply は会話キーでスコープした Record
   // (bdboard-1qoe) なので、これはその1キーだけを delete する形になる。
   // bdboard-1qoe 以降、この「その会話キーだけ消す」性質に実際に依存している
-  // 呼び出し側がある (submitChatMessage の完了/通常失敗クリア、~2888行目) —
+  // 呼び出し側がある (chat/deliverChatSend.ts の完了/通常失敗クリア) —
   // 無関係な会話/プロジェクトの部分テキストを巻き添えで消さないための本番経路。
   const clearStreamingReplyForKey = useCallback(
     (key: string) => dispatch({ type: 'clear-streaming-reply-for-key', key }),

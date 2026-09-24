@@ -6,8 +6,8 @@
 // action は ChatPanel.tsx 側の元の setter 呼び出し(の組み合わせ)と1対1で対応する。
 //
 // 会話キーの再割り当て(bdboard-c1pw の対象、ここでは触らない)を行う呼び出し側
-// (startNewDraftThread / handleAgentChange / applyChatError の送信失敗時復元 /
-// submitChatMessage の送信時クリア / handleNewThread)のうち、新キーの値を
+// (startNewDraftThread / handleAgentChange / commitFailure の送信失敗時復元 /
+// submit の送信時クリア / handleNewThread)のうち、新キーの値を
 // 「旧キーの直前の値」から合成する必要がある箇所(handleAgentChange の本文
 // 引き継ぎ)だけは 'replace-inputs' 経由の updater(元の
 // setConversationInputs(prev => ...) をそのまま dispatch に載せ替えたもの)を
@@ -42,8 +42,8 @@ export type ChatDraftAction =
   | { type: 'set-input'; key: string; value: string }
   // 旧: handleAgentChange(引き継ぎ、新キーの値を旧キーの直前の値から合成)が
   // 行っていた setConversationInputs(updater) 呼び出し。新しい値が prev に
-  // 依存しない他の再割り当てサイト(startNewDraftThread / applyChatError の
-  // 送信失敗時復元 / submitChatMessage の送信時クリア)は 'set-input' で足りる
+  // 依存しない他の再割り当てサイト(startNewDraftThread / commitFailure の
+  // 送信失敗時復元 / submit の送信時クリア)は 'set-input' で足りる
   // ため、こちらは使わない。conversationKeyspace 経由の
   // migrateKeyInRecord/purgeKeysInRecord もここを通る。
   | { type: 'replace-inputs'; updater: RecordUpdater<string> }

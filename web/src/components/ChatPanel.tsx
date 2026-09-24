@@ -312,8 +312,9 @@ export function ChatPanel({
   // コンポーネント側は setInput/updateConversationAttachments 等
   // (下の分割代入で受け取った各関数)経由で読み書きする。会話キーの再割り当て
   // (bdboard-c1pw の対象、startNewDraftThread / handleAgentChange /
-  // applyChatError / submitChatMessage / handleNewThread)はこのファイルに
-  // 残る。
+  // handleNewThread)はこのファイルに残る。送信失敗時の復元(commitFailure)は
+  // chat/useChatSendCommits.ts、送信時のクリア(submit)は chat/useChatSubmit.ts
+  // にある(第13b段)。
   // bdboard-sso1.83 第2段(react-hooks/exhaustive-deps 対策):
   // useThreadDrawerState と同じく、フックの戻り値はオブジェクトのまま
   // 変数へ束縛せず分割代入する。`const chatDraft = useChatDraftState(...)` の
@@ -416,15 +417,15 @@ export function ChatPanel({
   // DRAFT_PAYLOAD_STORE_NAMES 型により applicators の網羅性も tsc で強制される。
   // 新しい会話キー付きストアを足すときは conversationKeyspace.ts の正本に追加し、
   // ここと3再割り当てサイト(handleAgentChange / startNewDraftThread /
-  // applyChatSuccess)の引き継ぎ選択も更新すること。
+  // chat/useChatSendCommits.ts の commitSuccess)の引き継ぎ選択も更新すること。
   //
   // 意図的な非対象: conversations / historyLoadedFor / streamingReply。
   // conversations / historyLoadedFor は「サーバーのセッション状態」側。
   // streamingReply は bdboard-1qoe で会話キーでスコープした Record になり形は
   // draft payload ストアと同じだが、これはクライアントが受信中のストリーム
   // バッファであり、ドラフトの「積載物」(未送信の入力/添付) ではないため対象に
-  // 含めない — sendKey は selectedProjectId==='' の間は submitChatMessage が
-  // 早期 return するため (~2641行目) '' キースペースに入ることが無く、かつ
+  // 含めない — sendKey は selectedProjectId==='' の間は chat/useChatSubmit.ts の
+  // submit が早期 return するため '' キースペースに入ることが無く、かつ
   // 各送信は自分の finally で自分のキーを必ず clearStreamingReplyForKey する
   // ので、ここで移送/掃除しなくても取り残されない。下の2つの呼び出しサイト
   // (コールドキースペースからの移送・'' キースペースの掃除)では元々どちらも
@@ -1264,17 +1265,17 @@ export function ChatPanel({
   // プロジェクト単位で同時に1ターンしか受け付けない (isBusy ロック) ため、
   // ここでブロックしなくても再送自体は通常 409 で弾かれるが、409 が返る
   // 前後のタイミング次第では再送がそのまま処理されてしまうことがあり、その
-  // 場合 submitChatMessage 冒頭の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }))
+  // 場合 chat/deliverChatSend.ts 冒頭の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' }))
   // が回収中に保持していた部分テキストを即座に空文字で上書きしてしまう
   // (bdboard-v3ag のチケット本文、bdboard-3tw.166 の Opus レビュー由来)。
   //
   // detachedStreamSendRef は ref なので、その変更だけでは再レンダーが起きない
   // が、この ref への書き込み/クリアは必ず同じ同期ブロック内で別の setState
   // (setTurnRecoveryGeneration、setStreamingReply 等、上の checkTurnStatus /
-  // submitChatMessage を参照) を伴っており、その setState が再レンダーを
+  // chat/deliverChatSend.ts を参照) を伴っており、その setState が再レンダーを
   // 引き起こす。したがって useMemo 等でメモ化せず、毎レンダーでこの ref を
   // 直接読むだけで値が最新に保たれる。加えて、この値は
-  // submitChatMessage 自身の冒頭(クリック/Enter 時点)でも同様に ref を直接
+  // submit(chat/useChatSubmit.ts)自身の冒頭(クリック/Enter 時点)でも同様に ref を直接
   // 読んで判定しており、そちらはそもそも再レンダーに依存しない
   // (setTurnRecoveryGeneration より前に ref へ書き込まれるため、isSending が
   // false に落ちた直後の一瞬の隙間も塞げる)。
@@ -1295,7 +1296,7 @@ export function ChatPanel({
   // useChatAttachmentIngestion.ts (useChatDraftState.ts 経由) へ移した。
   // 以降は handleImagePaste / handleImageFileChange /
   // removeAttachment を呼ぶ。
-  const { applyChatSuccess, applyChatError } = useChatSendCommits({
+  const { commitSuccess, commitFailure, appendTranscript } = useChatSendCommits({
     selectedProjectId,
     showModelSelect,
     effectiveModelId,
@@ -1328,9 +1329,9 @@ export function ChatPanel({
     },
     draft: { setInput, updateConversationAttachments, setAttachmentError },
     send,
-    setConversations,
-    applyChatSuccess,
-    applyChatError,
+    commitSuccess,
+    commitFailure,
+    appendTranscript,
     resetBackgroundTurnStatus,
     inputRef,
   });

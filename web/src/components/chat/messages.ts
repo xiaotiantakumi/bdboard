@@ -31,8 +31,8 @@ export function toChatMessages(dtos: readonly ChatSessionMessageDto[]): ChatMess
   }));
 }
 
-// bdboard-sso1.83 第4段: applyChatSuccess が組み立てるアシスタント発話1件分の変換。
-// at は呼び出し元(applyChatSuccess)が Date.now() を渡す — サーバーの createdAt を
+// bdboard-sso1.83 第4段: commitSuccess(旧 applyChatSuccess)が組み立てるアシスタント発話1件分の変換。
+// at は呼び出し元(commitSuccess)が Date.now() を渡す — サーバーの createdAt を
 // 使わない元の挙動のまま。
 export function toAssistantMessage(
   result: ChatMessageResponseDto,

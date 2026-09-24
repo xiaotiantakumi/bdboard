@@ -1,6 +1,7 @@
 // bdboard-sso1.83 第13a段: ChatPanel.tsx の送信・ストリーム回収状態を
 // useReducer にまとめる。各 action は旧 setter / helper の呼び出し形を保ち、
-// submitChatMessage 側の state 更新呼び出しはそのまま利用できる。
+// 送信本体(chat/useChatSubmit.ts、chat/deliverChatSend.ts)側の state 更新呼び出しは
+// そのまま利用できる。
 export interface ChatSendState {
   isSending: boolean;
   streamingReply: Record<string, string>;
