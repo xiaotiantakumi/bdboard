@@ -280,23 +280,37 @@ describe('getModelStats', () => {
     }
   });
 
-  it('handles a project with 150,000 tickets', async () => {
+  it('handles a project with 150,000 tickets without dropping any from the aggregation', async () => {
     const cache = createFakeBoardCache();
     const now = utcInstant(2026, 8, 15, 12);
+    const mondayStart = utcInstant(2026, 8, 10, 0, 0, 0, 0);
     const proj = project('/large', '/projects/large');
 
     cache.putProject({
       project: proj,
       tickets: Array.from({ length: 150_000 }, (_, index) =>
-        makeTicket({ id: `bdboard-large-${index}`, projectId: proj.id }),
+        makeTicket({
+          id: `bdboard-large-${index}`,
+          projectId: proj.id,
+          closedAt: mondayStart,
+          models: [{ stage: 'implement', model: 'composer-2.5' }],
+        }),
       ),
       fingerprint: 'fp',
       fetchedAt: now,
     });
 
     const stats = await getModelStats(cache, now, { weeks: 1, timeZone: UTC });
+    // Regression guard for bdboard-6nq2: the old tickets.push(...entry.tickets)
+    // threw RangeError before any counting happened. A weaker assertion here
+    // (e.g. just "does not throw") would also pass if collectTickets silently
+    // returned an empty array, so assert the full 150,000-ticket count landed
+    // in both aggregations.
     expect(stats.weeklyCloses).toHaveLength(1);
-    expect(stats.stageModelDistribution).toEqual([]);
+    expect(stats.weeklyCloses[0]?.counts).toEqual({ 'composer-2.5': 150_000 });
+    expect(stats.stageModelDistribution).toEqual([
+      { stage: 'implement', counts: { 'composer-2.5': 150_000 } },
+    ]);
   });
 
   it('uses an explicit timezone for weekly boundaries', async () => {
