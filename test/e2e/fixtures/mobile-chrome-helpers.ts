@@ -437,12 +437,14 @@ export async function pinTipsBannerRandom(page: Page, index: number, tipCount: n
  * 375x812 のモバイル縦方向を「ページ側スクロール残差 (maxScrollY)」とその内訳で測る。
  *
  * 残差のモデルは mobile-page-scroll-residual.spec.ts の冒頭に書いてある:
- *   maxScrollY = header + tipsBanner + boardFilterBarBox - 172
+ *   maxScrollY = header + tipsBanner + boardFilterBarBox - 172 + projectSectionOverhead
  * `boardFilterBarBox` は border-box 高 + margin-bottom。getBoundingClientRect().height は
  * margin を含まないので、`boardFilterBar` と `boardFilterBarMarginBottom` を別々に返す
  * (畳んで 4px / 展開して 8px。index.css の `.board-filter-bar` と
  * `:has(.board-filter-toggle[aria-expanded='false'])`)。この 4px の差が、展開時だけ
- * 実測の定数項が 168 ではなく 164 に見える理由そのもの。
+ * 実測の定数項が 168 ではなく 164 に見える理由そのもの。`projectSectionOverhead` は
+ * bdboard-m070 (分割ビューのプロジェクトセクション見出しぶん、下のフィールド参照) で
+ * 追加された項で、旧モデル (統合ビュー時代) には無かった。
  */
 export interface ResidualMetrics {
   maxScrollY: number;
@@ -540,7 +542,9 @@ export const RESIDUAL_MEASUREMENT_LOG_PREFIX = 'MOBILE_SCROLL_RESIDUAL_MEASUREME
 
 /**
  * 「ユーザーが消せない」残差 = maxScrollY から Tips と絞り込みバーの実測高を引いた残り。
- * モデル上は `header + filterBarMarginBottom - 172` になる。
+ * モデル上は `header + filterBarMarginBottom - 172 + projectSectionOverhead` になる
+ * (`projectSectionOverhead` は bdboard-m070 で追加された項。`ResidualMetrics` の
+ * フィールド JSDoc 参照)。
  * mobile-page-scroll-residual.spec.ts の 2 つ目の予算と同じ量。
  * アサーション対象は生値であり、丸めは表示側だけで行う。
  */
