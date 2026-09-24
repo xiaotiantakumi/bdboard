@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { AppHeaderProps } from './AppHeader';
 import type { AppOverlayGroupProps } from './AppOverlayGroup';
@@ -321,5 +321,124 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(capturedOverlayGroupProps.at(-1)?.ticketDetail.onChatAboutTicket).toBe(
       controllerAvailable.overlays.handleChatAboutTicket,
     );
+  });
+
+  it('resolves chat.initialProjectId with chatContext > single selected project > lastChatProjectId priority', async () => {
+    capturedOverlayGroupProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const controllerWithChatContext = makeController({
+      overlays: makeOverlays({
+        chatContext: { ticketId: 't1', projectId: '__marker_chat_context_project__' },
+      }),
+      selectedProjectIds: ['__marker_selected_project__'],
+      lastChatProjectId: '__marker_last_chat_project__',
+    });
+    renderAppBody(AppBody, controllerWithChatContext);
+    expect(capturedOverlayGroupProps.at(-1)?.chat.initialProjectId).toBe(
+      '__marker_chat_context_project__',
+    );
+    expect(capturedOverlayGroupProps.at(-1)?.chat.onProjectIdChange).toBe(
+      controllerWithChatContext.setLastChatProjectId,
+    );
+
+    capturedOverlayGroupProps.length = 0;
+    const controllerWithSelectedProject = makeController({
+      overlays: makeOverlays(),
+      selectedProjectIds: ['__marker_selected_project__'],
+      lastChatProjectId: '__marker_last_chat_project__',
+    });
+    renderAppBody(AppBody, controllerWithSelectedProject);
+    expect(capturedOverlayGroupProps.at(-1)?.chat.initialProjectId).toBe(
+      '__marker_selected_project__',
+    );
+
+    capturedOverlayGroupProps.length = 0;
+    const controllerWithLastChatProject = makeController({
+      overlays: makeOverlays(),
+      selectedProjectIds: [],
+      lastChatProjectId: '__marker_last_chat_project__',
+    });
+    renderAppBody(AppBody, controllerWithLastChatProject);
+    expect(capturedOverlayGroupProps.at(-1)?.chat.initialProjectId).toBe(
+      '__marker_last_chat_project__',
+    );
+  });
+
+  it('gates ticketDetail.onBackTicket on canGoBackTicket', async () => {
+    capturedOverlayGroupProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const controllerCannotGoBack = makeController({ canGoBackTicket: false });
+    renderAppBody(AppBody, controllerCannotGoBack);
+    expect(capturedOverlayGroupProps.at(-1)?.ticketDetail.onBackTicket).toBeUndefined();
+
+    capturedOverlayGroupProps.length = 0;
+    const goBackTicket = vi.fn();
+    const controllerCanGoBack = makeController({ canGoBackTicket: true, goBackTicket });
+    renderAppBody(AppBody, controllerCanGoBack);
+    expect(capturedOverlayGroupProps.at(-1)?.ticketDetail.onBackTicket).toBe(
+      controllerCanGoBack.goBackTicket,
+    );
+  });
+
+  it('passes recentTickets/actions into the search overlay', async () => {
+    capturedOverlayGroupProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const recentTicketsMarker = [{ ticketId: '__marker_recent_ticket__' }];
+    const paletteActionsMarker = [{ id: '__marker_palette_action__' }];
+    const controller = makeController({
+      recentTickets: recentTicketsMarker,
+      paletteActions: paletteActionsMarker,
+    });
+    renderAppBody(AppBody, controller);
+    expect(capturedOverlayGroupProps.at(-1)?.search.recentTickets).toBe(recentTicketsMarker);
+    expect(capturedOverlayGroupProps.at(-1)?.search.actions).toBe(paletteActionsMarker);
+  });
+
+  it('passes nextUp.batchRun by reference into AppViewContent', async () => {
+    capturedViewContentProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const controller = makeController();
+    renderAppBody(AppBody, controller);
+    expect(capturedViewContentProps.at(-1)?.nextUp.batchRun).toBe(controller.nextUpBatchRun);
+  });
+
+  it('gates nextUp.harnessStatuses on harnessStatusQuery.data being defined', async () => {
+    capturedViewContentProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const harnessStatuses = new Map([['t1', '__marker_harness_status__']]);
+    const controllerWithoutQueryData = makeController({
+      harnessStatusQuery: { data: undefined },
+      harnessStatuses,
+    });
+    renderAppBody(AppBody, controllerWithoutQueryData);
+    expect(capturedViewContentProps.at(-1)?.nextUp.harnessStatuses).toBeUndefined();
+
+    capturedViewContentProps.length = 0;
+    const controllerWithQueryData = makeController({
+      harnessStatusQuery: { data: [] },
+      harnessStatuses,
+    });
+    renderAppBody(AppBody, controllerWithQueryData);
+    expect(capturedViewContentProps.at(-1)?.nextUp.harnessStatuses).toBe(
+      controllerWithQueryData.harnessStatuses,
+    );
+  });
+
+  it('wires AlertBar onOpenDetails to overlays.handleOpenStatusDetail', async () => {
+    const { AppBody } = await import('./AppBody');
+    const controller = makeController({ streamState: 'error' });
+    renderAppBody(AppBody, controller);
+    fireEvent.click(screen.getByRole('button', { name: /詳細/ }));
+    expect(controller.overlays.handleOpenStatusDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes overlays.handleOpenHelp/handleOpenShortcuts into AppHeader', async () => {
+    capturedHeaderProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const controller = makeController();
+    renderAppBody(AppBody, controller);
+    const header = capturedHeaderProps.at(-1);
+    expect(header?.onOpenHelp).toBe(controller.overlays.handleOpenHelp);
+    expect(header?.onOpenShortcuts).toBe(controller.overlays.handleOpenShortcuts);
   });
 });
