@@ -227,3 +227,44 @@
 .project-picker-save {
   width: 100%;
 }
+/* bdboard-mkm1.2: エージェント一括実行の進捗チップ (AppHeader の GlobalBar と ViewToolbar の間)。
+   実行中か、終了後の結果を閉じるまでだけ出る。幅は中身に合わせ、狭い画面では折り返す。 */
+.batch-run-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 4px 6px 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--badge-neutral-bg);
+  font-size: 0.8125rem;
+}
+
+.batch-run-chip-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.batch-run-chip-label {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.batch-run-chip-summary {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.batch-run-chip-stop:not(:disabled) {
+  color: var(--color-danger);
+}
+
+.batch-run-chip-detail {
+  margin: 0;
+  overflow-wrap: anywhere;
+}

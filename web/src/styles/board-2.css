@@ -128,3 +128,26 @@
   flex-wrap: wrap;
   gap: 5px;
 }
+/* bdboard-mkm1.2: 一括操作バーの「▶ 実行」。押せない理由と確認ダイアログの対象外・実行順 */
+.bulk-run-blocked-reason,
+.bulk-run-confirm-excluded {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--color-text-secondary);
+}
+
+.bulk-run-confirm-excluded {
+  margin-bottom: 6px;
+}
+
+.bulk-run-confirm-list {
+  margin: 0 0 8px;
+  padding-left: 1.5em;
+  max-height: 12rem;
+  overflow-y: auto;
+  font-size: 0.8125rem;
+}
+
+.bulk-run-confirm-id {
+  color: var(--color-text-secondary);
+}

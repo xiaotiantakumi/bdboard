@@ -418,6 +418,17 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     expect(capturedOverlayGroupProps.at(-1)?.search.actions).toBe(paletteActionsMarker);
   });
 
+  it('passes the same nextUpBatchRun controller to the header progress chip (bdboard-mkm1.2)', async () => {
+    capturedHeaderProps.length = 0;
+    capturedViewContentProps.length = 0;
+    const { AppBody } = await import('./AppBody');
+    const controller = makeController();
+    renderAppBody(AppBody, controller);
+    // ヘッダーのチップと、ビュー側 (一括操作バー / Next Up) が同じループを見ること。
+    expect(capturedHeaderProps.at(-1)?.batchRun).toBe(controller.nextUpBatchRun);
+    expect(capturedViewContentProps.at(-1)?.nextUp.batchRun).toBe(controller.nextUpBatchRun);
+  });
+
   it('passes nextUp.batchRun by reference into AppViewContent', async () => {
     capturedViewContentProps.length = 0;
     const { AppBody } = await import('./AppBody');

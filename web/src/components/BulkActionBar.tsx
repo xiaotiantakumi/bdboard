@@ -8,12 +8,15 @@ import { BulkActionDeferGroup } from './bulk-action/BulkActionDeferGroup';
 import { BulkActionLabelGroup } from './bulk-action/BulkActionLabelGroup';
 import { BulkActionMessages } from './bulk-action/BulkActionMessages';
 import { BulkActionConfirmPanel } from './bulk-action/BulkActionConfirmPanel';
+import { useBulkAgentRun } from './bulk-action/agent-run/useBulkAgentRun';
+import { BulkRunConfirmPanel } from './bulk-action/agent-run/BulkRunConfirmPanel';
 
 export type { BulkActionBarProps } from './bulk-action/types';
 
 export function BulkActionBar({
   cardsById,
   availableLabels = [],
+  agentRun: agentRunConfig,
 }: BulkActionBarProps) {
   const bulkSelection = useBulkSelection();
   const barRef = useRef<HTMLDivElement>(null);
@@ -31,7 +34,7 @@ export function BulkActionBar({
     canRaiseAny,
     canLowerAny,
     confirmingTargetCount,
-    actionsDisabled,
+    actionsDisabled: mutationActionsDisabled,
     deferSubmitDisabled,
     mutationPending,
     mutationError,
@@ -47,6 +50,15 @@ export function BulkActionBar({
     handleDeferBulkAction,
     handleBulkLabelAction,
   } = useBulkActions(cardsById, availableLabels, bulkSelection);
+  // bdboard-mkm1.2: 「▶ 実行」の確認中は他の一括操作を押させない (逆も同じ —
+  // mutationActionsDisabled の間は「▶ 実行」を押させない)。
+  const agentRun = useBulkAgentRun({
+    config: agentRunConfig,
+    bulkSelection,
+    cardsById,
+    barBusy: mutationActionsDisabled,
+  });
+  const actionsDisabled = mutationActionsDisabled || agentRun.confirmOpen;
 
   useBulkBarHeightVar(barRef, selectedCount > 0);
 
@@ -108,7 +120,21 @@ export function BulkActionBar({
             setConfirmingAction({ kind: 'add-label', label });
           }}
         />
+        {agentRun.enabled && (
+          <button
+            type="button"
+            className="btn btn-small bulk-action-btn bulk-run-btn"
+            disabled={actionsDisabled || agentRun.runDisabledReason !== null}
+            title={agentRun.runDisabledReason ?? undefined}
+            onClick={agentRun.openConfirm}
+          >
+            ▶ 実行
+          </button>
+        )}
       </div>
+      {agentRun.enabled && agentRun.runDisabledReason !== null && (
+        <p className="bulk-run-blocked-reason">{agentRun.runDisabledReason}</p>
+      )}
       <BulkActionMessages lastOutcome={lastOutcome} mutationError={mutationError} />
       {confirmingAction !== null && (
         <BulkActionConfirmPanel
@@ -121,6 +147,17 @@ export function BulkActionBar({
           onConfirm={handleConfirm}
           confirmPanelRef={confirmPanelRef}
           cancelConfirmRef={cancelConfirmRef}
+        />
+      )}
+      {agentRun.confirmOpen && (
+        <BulkRunConfirmPanel
+          plan={agentRun.plan}
+          harnessBlockReason={agentRun.harnessBlockReason}
+          canConfirm={agentRun.canConfirm}
+          onCancel={agentRun.cancelConfirm}
+          onConfirm={agentRun.confirmRun}
+          confirmPanelRef={agentRun.confirmPanelRef}
+          cancelConfirmRef={agentRun.cancelConfirmRef}
         />
       )}
     </div>

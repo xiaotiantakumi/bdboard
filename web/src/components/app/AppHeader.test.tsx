@@ -15,13 +15,18 @@ vi.mock('../GlobalBar', () => ({
 vi.mock('../ViewToolbar', () => ({
   ViewToolbar: vi.fn(() => <div data-testid="view-toolbar" />),
 }));
+vi.mock('../batch-run/BatchRunProgressChip', () => ({
+  BatchRunProgressChip: vi.fn(() => <div data-testid="batch-run-chip" />),
+}));
 
+import { BatchRunProgressChip } from '../batch-run/BatchRunProgressChip';
 import { GlobalBar } from '../GlobalBar';
 import { ViewToolbar } from '../ViewToolbar';
 import { AppHeader } from './AppHeader';
 
 const globalBarMock = vi.mocked(GlobalBar);
 const viewToolbarMock = vi.mocked(ViewToolbar);
+const batchRunChipMock = vi.mocked(BatchRunProgressChip);
 
 // マーカー値: 引数の取り違え(例えば sessions.total と sessions.active の
 // 入れ替わり)を確実に検知できるよう、同じ形の値でもフィールドごとに異なる
@@ -96,6 +101,7 @@ function makeProps(overrides: Partial<AppHeaderProps> = {}): AppHeaderProps {
       onOpenChat: vi.fn(),
       presetSaveIntentToken: 4,
     },
+    batchRun: { __marker_batch_run__: true } as unknown as AppHeaderProps['batchRun'],
     ...overrides,
   };
 }
@@ -132,6 +138,14 @@ describe('AppHeader', () => {
     expect(globalBarProps.onOpenShortcuts).toBe(props.onOpenShortcuts);
     expect(globalBarProps.tipsBannerDismissed).toBe(false);
     expect(globalBarProps.onShowTipsBanner).toBe(props.tipsBanner.onShow);
+  });
+
+  it('renders the batch-run progress chip with the batchRun controller (bdboard-mkm1.2)', () => {
+    const props = makeProps();
+    const { getByTestId } = render(<AppHeader {...props} />);
+
+    expect(getByTestId('batch-run-chip')).toBeInTheDocument();
+    expect(batchRunChipMock.mock.calls.at(-1)![0].batchRun).toBe(props.batchRun);
   });
 
   it('discards any argument GlobalBar/ViewToolbar would pass to onOpenSessionList (always calls sessions.onOpen with none)', () => {

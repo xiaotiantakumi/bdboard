@@ -105,8 +105,18 @@ export function AppBoardViewSwitch({
           「選べるのに何もできない」状態になる。Next Up が並べるのは
           board.lanes.ready のカードだけで、cardsById は merged と全
           projects から集めているので、表示中のカードは必ず含まれる。 */}
+      {/* 「▶ 実行」(bdboard-mkm1.2) には App が持つ実行ループを渡す。バーはビューごとに
+          出し入れされるが、ループと進捗 (ヘッダーのチップ) はビューを切り替えても続く。 */}
       {(view === 'split' || view === 'next') && (
-        <BulkActionBar cardsById={board.cardsById} availableLabels={board.availableLabels ?? []} />
+        <BulkActionBar
+          cardsById={board.cardsById}
+          availableLabels={board.availableLabels ?? []}
+          agentRun={{
+            batchRun: nextUp.batchRun,
+            board: board.query.data,
+            projectNames: boardMeta.projectNames,
+          }}
+        />
       )}
       {board.query.data !== undefined && view === 'split' && (
         <SplitBoard

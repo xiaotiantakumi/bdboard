@@ -5,8 +5,10 @@ import type {
   BoardFilterPresetState,
   ViewMode,
 } from '../../uiPersistedState';
+import { BatchRunProgressChip } from '../batch-run/BatchRunProgressChip';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { GlobalBar } from '../GlobalBar';
+import type { NextUpRunLoopController } from '../nextUpRunLoop';
 import { ViewToolbar } from '../ViewToolbar';
 
 export interface AppHeaderProps {
@@ -61,6 +63,11 @@ export interface AppHeaderProps {
     onOpenChat: () => void;
     presetSaveIntentToken: number;
   };
+  /**
+   * エージェントの一括実行ループ (App が持つ)。進捗と停止をヘッダーのチップに出す
+   * (bdboard-mkm1.2)。ビューを切り替えてもヘッダーは残るので、実行中はどこからでも見える。
+   */
+  batchRun: NextUpRunLoopController;
 }
 
 /**
@@ -98,6 +105,7 @@ export function AppHeader({
   onOpenShortcuts,
   tipsBanner,
   toolbar,
+  batchRun,
 }: AppHeaderProps) {
   return (
     <header className="header">
@@ -130,6 +138,10 @@ export function AppHeader({
           tipsBannerDismissed={tipsBanner.dismissed}
           onShowTipsBanner={tipsBanner.onShow}
         />
+      </ErrorBoundary>
+
+      <ErrorBoundary label="一括実行の進捗">
+        <BatchRunProgressChip batchRun={batchRun} />
       </ErrorBoundary>
 
       <ErrorBoundary label="ツールバー">
