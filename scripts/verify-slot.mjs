@@ -15,16 +15,24 @@
 //   bd bead 方式はクロスマシン可視だがここでは不要で、`bd ready` 汚染
 //   (gt:slot ラベル除外の轍, bdboard-9k3) も acquire 忘れも起きない。
 // - Lamport bakery 風のチケットキュー: 各プロセスが自 pid 名の holder file を作り、
-//   (joinedAt, pid) 順で先着 slots 位以内に入ったら実行開始。FIFO なので待機者が
-//   飢餓しない。これは負荷スロットルであり厳密な相互排除ではない (ほぼ同時参加の
+//   順番が来たら実行開始。これは負荷スロットルであり厳密な相互排除ではない (ほぼ同時参加の
 //   極小レース窓で一瞬 slots+1 本になり得るが、settleMs で緩和済みかつ目的に対して
 //   無害 — 防ぎたいのは6本級の積み上がりであって一瞬の3本目ではない)。
+// - bdboard-ulxa.6: 順番は FIFO から「優先度 + 仮想到着時刻」に変えた (landed > merge > pr、
+//   上限本数は不変)。決め方と旧形式の holder との混在の扱いは verify-slot-queue.mjs。
+//   走り出すときに holder file へ acquiredAt を書く (書き込みは一時ファイル + rename で原子的に)。
 // - stale 処理: pid が死んだ holder は即回収 (SIGKILL された verify の後始末)。
 //   pid が生きていて staleTtlMs を超えた holder は枠のカウントから外す (ハング1本が
 //   枠を永久占有しない) が、ファイルは本人の後始末に任せて消さない。
+// - 待ちの打ち切り (waitTimeoutMs) は「走っている holder の顔ぶれが変わらないまま」の時間で
+//   測る (bdboard-ulxa.6)。優先度があると下位の待ちは合計では長くなりうるが、列が進んでいる
+//   限りハングではないため。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
+import { holderPath, readOthers, unlinkQuietly, writeHolderAtomically } from './verify-slot-files.mjs';
+import { HOLDER_FORMAT, normalizePriority, planSlots } from './verify-slot-queue.mjs';
 
 export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   slots: 2,
@@ -34,6 +42,10 @@ export const DEFAULT_SLOT_OPTIONS = Object.freeze({
   pollMs: 2_000,
   settleMs: 150,
   statusIntervalMs: 10_000,
+  priority: 'pr',
+  queueSince: undefined,
+  tierStepMs: 4 * 60_000,
+  maxSeniorityMs: 30 * 60_000,
 });
 
 export class SlotWaitTimeoutError extends Error {}
@@ -46,8 +58,9 @@ function parseIntegerEnv(value) {
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
-// env からの上書き。テストと緊急脱出ハッチ用であり、並列本数を増やす目的での常用は
-// しない (docs/VERIFY.md「Verify slots」参照)。
+// env からの上書き。スロット数・置き場・待ち時間はテストと緊急脱出ハッチ用であり、並列本数を
+// 増やす目的での常用はしない (docs/VERIFY.md「Verify slots」参照)。優先度 (BDBOARD_VERIFY_PRIORITY)
+// と並んだ時刻 (BDBOARD_VERIFY_QUEUE_SINCE) は merge-pr が着地予定ツリー / 着地後検証に渡す。
 export function envSlotOptions(env = process.env) {
   const options = {};
   const slots = parseIntegerEnv(env.BDBOARD_VERIFY_SLOTS);
@@ -61,48 +74,28 @@ export function envSlotOptions(env = process.env) {
   if (waitTimeoutMs !== undefined) {
     options.waitTimeoutMs = waitTimeoutMs;
   }
+  if (env.BDBOARD_VERIFY_PRIORITY) {
+    options.priority = normalizePriority(env.BDBOARD_VERIFY_PRIORITY);
+  }
+  const queueSince = parseIntegerEnv(env.BDBOARD_VERIFY_QUEUE_SINCE);
+  if (queueSince !== undefined) {
+    options.queueSince = queueSince;
+  }
   return options;
-}
-
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM = 存在するが権限がない (同一ユーザーの $TMPDIR 運用ではまず出ないが、
-    // 出た場合は「生きている」に倒す方が安全)。
-    return error.code === 'EPERM';
-  }
-}
-
-function holderPath(dir, pid) {
-  return path.join(dir, `holder-${pid}.json`);
-}
-
-function readHolder(filePath) {
-  try {
-    const holder = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    if (typeof holder.pid !== 'number' || typeof holder.joinedAt !== 'number') {
-      return null;
-    }
-    return holder;
-  } catch {
-    return null;
-  }
-}
-
-function unlinkQuietly(filePath) {
-  try {
-    fs.unlinkSync(filePath);
-  } catch {
-    /* already gone */
-  }
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-// スロットを1つ獲得する。空きが出るまで FIFO で待ち、waitTimeoutMs を超えたら
-// SlotWaitTimeoutError を投げる。戻り値の release() は冪等。process 'exit' でも
+function newHolder(options) {
+  const holder = { v: HOLDER_FORMAT, pid: process.pid, joinedAt: Date.now(), cwd: process.cwd(), priority: normalizePriority(options.priority) };
+  if (typeof options.queueSince === 'number' && Number.isFinite(options.queueSince)) {
+    holder.since = Math.min(options.queueSince, holder.joinedAt);
+  }
+  return holder;
+}
+
+// スロットを1つ獲得する。順番が来るまで待ち、走っている holder の顔ぶれが waitTimeoutMs の間
+// 変わらなければ SlotWaitTimeoutError を投げる。戻り値の release() は冪等。process 'exit' でも
 // 自動 release するので、呼び出し側が process.exit() する経路でも holder は残らない
 // (SIGKILL だけは残るが、それは次の参加者の dead-pid 回収が拾う)。
 export async function acquireVerifySlot(overrides = {}, log = (line) => console.error(line)) {
@@ -115,20 +108,10 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
 
   fs.mkdirSync(dir, { recursive: true });
   const selfPath = holderPath(dir, process.pid);
-  const holder = { pid: process.pid, joinedAt: Date.now(), cwd: process.cwd() };
-  const payload = JSON.stringify(holder);
-  const writeSelf = () => fs.writeFileSync(selfPath, payload, { flag: 'wx' });
-  try {
-    writeSelf();
-  } catch (error) {
-    if (error.code !== 'EEXIST') {
-      throw error;
-    }
-    // 同名ファイルが既にある = かつて同じ pid を使ったプロセスの残骸 (pid 再利用)。
-    // 今この pid の持ち主は自分なので、置き換えてよい。
-    unlinkQuietly(selfPath);
-    writeSelf();
-  }
+  const holder = newHolder(options);
+  // 同名ファイルが既にある = かつて同じ pid を使ったプロセスの残骸 (pid 再利用)。
+  // 今この pid の持ち主は自分なので、rename で置き換えてよい。
+  writeHolderAtomically(selfPath, holder);
   const onExit = () => unlinkQuietly(selfPath);
   process.on('exit', onExit);
   const release = () => {
@@ -142,71 +125,56 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
     await sleep(options.settleMs);
     let lastStatusAt = 0;
     let waited = false;
+    let runningKey = null;
+    let progressAt = Date.now();
     const warnedStalePids = new Set();
     for (;;) {
-      const active = [holder];
-      let sawSelf = false;
-      for (const name of fs.readdirSync(dir)) {
-        if (!/^holder-\d+\.json$/.test(name)) {
-          continue;
-        }
-        const filePath = path.join(dir, name);
-        if (filePath === selfPath) {
-          sawSelf = true;
-          continue;
-        }
-        const entry = readHolder(filePath);
-        if (entry === null) {
-          unlinkQuietly(filePath); // 壊れたファイル
-          continue;
-        }
-        if (!isProcessAlive(entry.pid)) {
-          unlinkQuietly(filePath); // 死んだ保持者 (SIGKILL された verify 等) を回収
-          continue;
-        }
-        if (Date.now() - entry.joinedAt > options.staleTtlMs) {
-          if (!warnedStalePids.has(entry.pid)) {
-            warnedStalePids.add(entry.pid);
-            log(
-              `verify: ignoring stale slot holder pid=${entry.pid}` +
-                ` (in the queue > ${Math.round(options.staleTtlMs / 60_000)} min; not counting it toward the limit)`,
-            );
-          }
-          continue;
-        }
-        active.push(entry);
-      }
+      const { others, sawSelf } = readOthers(dir, selfPath);
       if (!sawSelf) {
         // 自分の holder file が外的要因で消えた場合の自己修復 (他の参加者から見え続けるため)。
         try {
-          writeSelf();
+          writeHolderAtomically(selfPath, holder);
         } catch {
           /* 次周で再試行 */
         }
       }
-      active.sort((a, b) => a.joinedAt - b.joinedAt || a.pid - b.pid);
-      const rank = active.findIndex((entry) => entry.pid === process.pid);
-      if (rank < slots) {
+      const now = Date.now();
+      const plan = planSlots([holder, ...others], { ...options, selfPid: process.pid, now });
+      for (const entry of plan.stale) {
+        if (!warnedStalePids.has(entry.pid)) {
+          warnedStalePids.add(entry.pid);
+          log(
+            `verify: ignoring stale slot holder pid=${entry.pid}` +
+              ` (in the queue > ${Math.round(options.staleTtlMs / 60_000)} min; not counting it toward the limit)`,
+          );
+        }
+      }
+      if (plan.acquire) {
+        writeHolderAtomically(selfPath, { ...holder, acquiredAt: Date.now() });
         if (waited) {
-          log(`verify: slot acquired after ${Math.round((Date.now() - holder.joinedAt) / 1000)}s in queue`);
+          log(`verify: slot acquired after ${Math.round((Date.now() - holder.joinedAt) / 1000)}s in queue (priority ${holder.priority})`);
         }
         return { release };
       }
       waited = true;
-      const waitedMs = Date.now() - holder.joinedAt;
-      const holderPids = active.slice(0, slots).map((entry) => entry.pid).join(', ');
-      if (waitedMs > options.waitTimeoutMs) {
+      const holderPids = plan.running.map((entry) => entry.pid).join(', ');
+      const key = plan.running.map((entry) => entry.pid).sort((a, b) => a - b).join(',');
+      if (key !== runningKey) {
+        runningKey = key;
+        progressAt = now;
+      }
+      if (now - progressAt > options.waitTimeoutMs) {
         throw new SlotWaitTimeoutError(
-          `verify: timed out after ${Math.round(waitedMs / 1000)}s waiting for a verify slot` +
+          `verify: timed out after ${Math.round((now - progressAt) / 1000)}s without progress waiting for a verify slot` +
             ` (slots=${slots}, holders: pid ${holderPids}).` +
             ` Investigate those pids (hung verify?) before retrying; do not disable the slot to get past this.`,
         );
       }
-      if (Date.now() - lastStatusAt >= options.statusIntervalMs) {
-        lastStatusAt = Date.now();
+      if (now - lastStatusAt >= options.statusIntervalMs) {
+        lastStatusAt = now;
         log(
-          `verify: waiting for a verify slot (queue position ${rank - slots + 1}/${active.length - slots},` +
-            ` holders: pid ${holderPids}, waited ${Math.round(waitedMs / 1000)}s) — queueing, not a hang`,
+          `verify: waiting for a verify slot (queue position ${plan.position}/${plan.queue.length}, priority ${holder.priority},` +
+            ` holders: pid ${holderPids}, waited ${Math.round((now - holder.joinedAt) / 1000)}s) — queueing, not a hang`,
         );
       }
       await sleep(options.pollMs);

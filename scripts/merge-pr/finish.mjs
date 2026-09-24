@@ -15,6 +15,7 @@ import { runLandedVerify } from './landed-verify.mjs';
 import { brokenMainSteps } from './messages.mjs';
 import { releaseSlot } from './slot.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
+import { forgetQueueSince } from './verify-queue.mjs';
 
 function pidAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -99,6 +100,7 @@ export async function finish(ctx, pr) {
     );
   }
   const landed = pull.mergeCommitSha;
+  forgetQueueSince(ctx.cwd, pr); // 着地予定ツリーの verify に並んだ時刻 (bdboard-ulxa.6) はもう要らない
   writeState(ctx.cwd, pr, { ...state, newMain: landed, verifyingPid: process.pid });
   refetchMain(ctx);
   const parent = run('git', ['rev-parse', `${landed}^`], { cwd: ctx.cwd });

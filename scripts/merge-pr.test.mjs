@@ -40,6 +40,8 @@ fs.appendFileSync(process.env.FAKE_VERIFY_LOG, head + '\\n');
 // SIGINT/SIGTERM のテスト用: 自分の (実際に検証を実行している) pid を書いておく。中断後に
 // この pid が本当に死んでいるかで「子プロセスが孤児にならない」ことを確かめる。
 if (process.env.FAKE_VERIFY_PID_FILE) fs.writeFileSync(process.env.FAKE_VERIFY_PID_FILE, String(process.pid));
+// bdboard-ulxa.6: merge-pr が verify スロットに渡す優先度と並んだ時刻を記録する。
+if (process.env.FAKE_VERIFY_ENV_LOG) fs.appendFileSync(process.env.FAKE_VERIFY_ENV_LOG, (process.env.BDBOARD_VERIFY_PRIORITY || '-') + ' ' + (process.env.BDBOARD_VERIFY_QUEUE_SINCE || '-') + '\\n');
 // bdboard-e8o1: 孫プロセスの kill 確認用。設定されていれば、この検証プロセス自身の子として
 // (detached せずに) 別の node プロセスを spawn する。同じプロセスグループに入るので、グループ
 // 宛ての SIGTERM/SIGKILL は届くが、この孫は SIGTERM を無視する (見送り分 1 のポーリング確認:
@@ -874,6 +876,59 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(prepared.stderr).toContain('verify の間に');
     expect(existsSync(stateFile())).toBe(false);
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+  });
+
+  it('S2 prepare: main moving while the predicted verify is still running stops it right away (75, bdboard-ulxa.6)', async () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const pidFile = path.join(tmp, 'predicted-verify.pid');
+    const child = spawn(process.execPath, [SCRIPT, 'prepare', String(PR)], {
+      cwd: work,
+      env: { ...env, FAKE_VERIFY_SLEEP_MS: '60000', FAKE_VERIFY_PID_FILE: pidFile, BDBOARD_MERGE_KILL_GRACE_MS: '200' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    const exited = new Promise((resolve) => child.once('exit', (code) => resolve(code)));
+    let verifyPid;
+    try {
+      await waitUntil(() => existsSync(pidFile) && Number(readFileSync(pidFile, 'utf8')) > 0);
+      verifyPid = Number(readFileSync(pidFile, 'utf8'));
+      advanceMain({ 'peer2.txt': 'peer2\n' }); // 別 PR が着地した
+      const started = Date.now();
+      expect(await exited).toBe(75);
+      expect(Date.now() - started).toBeLessThan(15_000); // 60 秒の verify を最後まで待たない
+      await waitUntil(() => !pidAlive(verifyPid), { timeoutMs: 5_000 });
+    } finally {
+      child.kill('SIGKILL');
+      if (verifyPid !== undefined && pidAlive(verifyPid)) {
+        process.kill(verifyPid, 'SIGKILL');
+      }
+    }
+    expect(stderr).toContain('途中でやめました');
+    expect(stderr).toContain(`npm run merge-pr -- prepare ${PR}`);
+    expect(existsSync(stateFile())).toBe(false);
+    expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
+    expect(auditText()).toMatch(/\tpredicted-verify\t.*result=abandoned/);
+  });
+
+  it('S2: the predicted verify queues as merge with the time the PR first queued, kept across a 75 retry; finish verifies as landed and forgets it', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const envLog = path.join(tmp, 'verify-env.log');
+    const queueFile = path.join(mainCheckout, '.git', 'bdboard-merge', `pr-${PR}-queue.json`);
+    const later = git(mainCheckout, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'feat(peer2): landed during verify']);
+    expect(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog, FAKE_VERIFY_MOVE_MAIN: later }).status).toBe(75);
+    const { since } = JSON.parse(readFileSync(queueFile, 'utf8'));
+    expect(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }).status).toBe(0);
+    writeFake({ statuses: { [later]: [status('success')] } });
+    expect(run(['gate', String(PR)]).status).toBe(0);
+    landSquash();
+    expect(run(['finish', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }).status).toBe(0);
+    expect(readFileSync(envLog, 'utf8').trim().split('\n')).toEqual([`merge ${since}`, `merge ${since}`, 'landed -']);
+    expect(existsSync(queueFile)).toBe(false);
   });
 
   it('S2 prepare: a dirty worktree cannot verify the predicted tree (exit 1) and a stale record from an earlier prepare is dropped', () => {
