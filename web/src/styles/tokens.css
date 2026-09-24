@@ -115,6 +115,22 @@
   --badge-defer-fg: #0064d1;
   --badge-stalled-bg: rgba(255, 149, 0, 0.14);
   --badge-stalled-fg: #a85000;
+  /* bdboard-an0k: ProjectHarnessBadges.tsx の `.project-harness-status-missing` /
+     `.project-harness-status-drift` / `.project-harness-status-hooks` /
+     `.project-harness-contract-warn` は `.project-harness-pack` /
+     `.project-harness-contract` の `--badge-neutral-bg` 合成背景
+     (light rgb(227, 227, 233)) の上に `--badge-stalled-fg` を置いており、
+     light 4.32:1 (実測) で AA (4.5:1) 未達だった (bdboard-an0k、
+     bdboard-mkm1.1 で既定ビューが「分割」になり e2e コントラスト掃引が
+     このバッジを初めて描画対象に含めたことで検出)。`--badge-stalled-fg` は
+     base-3.css/base-6.css/header.css/hygiene.css/ticket-detail-2.css など
+     他の背景・用途 (ticket-detail-2.css の .pr-check-pending は背景色として使用) と共有されて
+     いるため値は動かさず、この badge ファミリー専用の派生トークンをここへ
+     新設する。同色相のまま明度だけ落とし、4.5:1 を超える安全マージンを見て
+     採用: light #9e4b00 (rgb(227, 227, 233) 上で 4.75:1)。dark は元々
+     AA を満たしていたため --badge-stalled-fg の dark 値 (#ffb340) を
+     そのまま複製する (見た目を変えない)。 */
+  --project-harness-warn-fg: #9e4b00;
   --badge-defer-soon-bg: rgba(255, 149, 0, 0.14);
   --badge-defer-soon-fg: #c25400;
   --badge-defer-overdue-bg: rgba(255, 59, 48, 0.12);
@@ -203,6 +219,7 @@
     --badge-defer-fg: #6cb4ff;
     --badge-stalled-bg: rgba(255, 159, 10, 0.2);
     --badge-stalled-fg: #ffb340;
+    --project-harness-warn-fg: #ffb340;
     --badge-defer-soon-bg: rgba(255, 159, 10, 0.2);
     --badge-defer-soon-fg: #ffb340;
     --badge-defer-overdue-bg: rgba(255, 69, 58, 0.18);

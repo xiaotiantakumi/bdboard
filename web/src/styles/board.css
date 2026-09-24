@@ -89,11 +89,11 @@
 }
 
 .project-harness-status-missing {
-  color: var(--badge-stalled-fg);
+  color: var(--project-harness-warn-fg);
 }
 
 .project-harness-status-drift {
-  color: var(--badge-stalled-fg);
+  color: var(--project-harness-warn-fg);
   font-weight: 600;
 }
 
@@ -102,7 +102,7 @@
 }
 
 .project-harness-status-hooks {
-  color: var(--badge-stalled-fg);
+  color: var(--project-harness-warn-fg);
   font-weight: 600;
 }
 
@@ -122,7 +122,7 @@
 }
 
 .project-harness-contract-warn {
-  color: var(--badge-stalled-fg);
+  color: var(--project-harness-warn-fg);
   font-weight: 600;
 }
 

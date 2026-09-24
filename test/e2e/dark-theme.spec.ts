@@ -151,26 +151,14 @@ const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([]);
  *
  * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
  *
- * bdboard-mkm1.1 (2026-09-24) で `span.project-harness-status.project-harness-status-missing`
- * (light 4.32:1) を
- * 追加。このバッジ (`ProjectHarnessBadges.tsx`) はプロジェクト単位描画でのみ出現し、
- * 既定ビューが「統合」(merged) だった間はこの掃引 (ボード+詳細パネル) が一度も
- * 描画対象に含めていなかった。既定ビューを「分割」に変えたことで初めて掃引に現れた
- * 既存の潜在バグで、bdboard-mkm1.1 が色を変えたわけではない。`--badge-stalled-fg` は
- * 他の複数セレクタ・背景と共有されているトークンなので、この PR の範囲では触れず
- * bdboard-an0k で追跡する(解消時にこのエントリを削除すること)。
+ * bdboard-mkm1.1 (2026-09-24) で追加された唯一の登録エントリ
+ * (`span.project-harness-status.project-harness-status-missing`, light 4.32:1) を
+ * bdboard-an0k (2026-09-24) で解消した。`--badge-stalled-fg` は他の背景・用途と
+ * 共有されているため値は動かさず、`ProjectHarnessBadges.tsx` 専用の派生トークン
+ * `--project-harness-warn-fg` (light #9e4b00、4.75:1) を新設して適用した
+ * (tokens.css 参照)。空のまま維持するのが目標。
  */
-const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([
-  [
-    'span.project-harness-status.project-harness-status-missing',
-    {
-      measured: 4.32,
-      floor: 4.27,
-      note: 'bdboard-an0k — --badge-stalled-fg (#a85000) on --badge-neutral-bg, light。' +
-        '分割ビュー既定化で掃引に初めて出現した既存バグ。',
-    },
-  ],
-]);
+const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([]);
 
 type Sample = {
   key: string;
