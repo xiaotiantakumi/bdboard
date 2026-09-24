@@ -4,7 +4,7 @@
 /* bdboard-h4xs.27: 全画面パネル(.detail-panel 系)が開いている間、undo-snackbar を
    .overlay(1400)より上に出し、パネルを開いたまま「元に戻す」を押せるようにする。
 
-   「 ChatPanel が開いている間は適用しない」だけでよい(チャット以外が同時に開いていても含めて) — 実際の
+   「ChatPanel が開いている間は適用しない」だけでよい(チャット以外が同時に開いていても含めて) — 実際の
    DOM 構造を実測した結果: AppOverlayGroup.tsx の JSX は TicketDetail → SessionList →
    Shortcuts → Help → Search → Tunnel → Chat の固定順で、各 .overlay は .app の直子としてこの順で
    並ぶ(チケット詳細からチャットを開いてもチケット詳細の .overlay はアンマウントせずに

@@ -19,9 +19,11 @@
   background: rgba(0, 0, 0, 0.4);
   /* Above undo-snackbar (1300) so modal controls stay tappable while undo is visible.
      bdboard-h4xs.27: board-7.css raises the snackbar above this overlay via :has()
-     whenever ChatPanel is not the topmost panel. Whenever ChatPanel is open (topmost
-     by JSX/DOM order, even with another detail panel still mounted underneath), this
-     overlay stays above the snackbar to protect ChatPanel's bottom-fixed controls. */
+     whenever a non-ChatPanel .detail-panel (e.g. TicketDetailPanel) is open AND no
+     .chat-panel exists anywhere. Whenever ChatPanel is open -- topmost by JSX/DOM
+     order (AppOverlayGroup.tsx declares it last), even with another detail panel
+     still mounted underneath -- this overlay stays above the snackbar to protect
+     ChatPanel's bottom-fixed controls. */
   z-index: 1400;
   display: flex;
   justify-content: flex-end;
