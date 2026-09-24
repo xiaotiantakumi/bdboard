@@ -27,6 +27,11 @@ body:has(.overlay .detail-panel:not(.chat-panel)):not(:has(.chat-panel)) .undo-s
   display: flex;
   align-items: center;
   gap: 10px;
+  /* bdboard-h4xs.28: fixed 配置 + left:50% + width 未指定だと、width:auto の
+     shrink-to-fit 上限が「containing block 幅 − left」= 画面の半分になり、
+     モバイル幅でメッセージが1文字ずつ縦に折り返す。width: max-content で内容に
+     合わせて広げつつ、既存の max-width で上限(480px または画面幅-32px)を維持する。 */
+  width: max-content;
   max-width: min(480px, calc(100vw - 32px));
   padding: 10px 12px 10px 16px;
   border-radius: var(--radius-md);
