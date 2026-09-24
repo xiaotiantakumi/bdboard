@@ -51,8 +51,12 @@ export function readMergeTree({ status, stdout, stderr }) {
   return { status: 'unavailable', reason };
 }
 
+// 利用者の gitconfig で木が変わらないよう改名検出を既定値に固定する (directoryRenames=true / false
+// だと衝突にならず別々の木になる。conflict なら R に倒れる)。
+const MERGE_CONFIG = ['-c', 'core.quotepath=false', '-c', 'merge.renames=true', '-c', 'merge.directoryRenames=conflict'];
+
 function mergeTree(ctx, mainSha, head) {
-  const result = run('git', ['-c', 'core.quotepath=false', 'merge-tree', '--write-tree', '--name-only', mainSha, head], {
+  const result = run('git', [...MERGE_CONFIG, 'merge-tree', '--write-tree', '--name-only', mainSha, head], {
     cwd: ctx.cwd,
     env: { ...process.env, LC_ALL: 'C' },
   });
@@ -66,7 +70,7 @@ function describeHot(hits) {
 /** 材料から S2 のクラスを決める純関数。 */
 export function decideS2Class({ baseCount, merge, hot }) {
   if (baseCount !== 1) {
-    const why = baseCount === 0 ? '共通の祖先がありません' : `merge-base が ${baseCount} 個あります (criss-cross)`;
+    const why = baseCount === 0 ? '共通の祖先がありません (または merge-base を実行できません)' : `merge-base が ${baseCount} 個あります (criss-cross)`;
     return { class: 'R', reason: why };
   }
   if (merge.status === 'conflict') {
@@ -86,6 +90,16 @@ export function decideS2Class({ baseCount, merge, hot }) {
  * @returns {{ class: 'R'|'F', reason: string, tree?: string, base?: string, mainFiles: string[], mineFiles: string[], overlap: string[] }}
  */
 export function classifyS2(ctx, mainSha, head) {
+  try {
+    return classifyMoved(ctx, mainSha, head);
+  } catch (error) {
+    // git が失敗したら分類できない = rebase 側 (R) に倒す。「想定外」の exit 1 にしない。
+    const reason = `git で分類できません: ${error instanceof Error ? error.message : String(error)}`;
+    return { class: 'R', reason, mainFiles: [], mineFiles: [], overlap: [] };
+  }
+}
+
+function classifyMoved(ctx, mainSha, head) {
   const bases = mergeBases(ctx, mainSha, head);
   if (bases.length !== 1) {
     return { ...decideS2Class({ baseCount: bases.length, merge: null, hot: [] }), mainFiles: [], mineFiles: [], overlap: [] };

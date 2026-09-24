@@ -11,8 +11,8 @@
 import { git, gitOk, run } from './exec.mjs';
 import { classifyS2 } from './classify.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
-import { getPull, requiredChecks } from './github.mjs';
-import { rebaseSteps } from './messages.mjs';
+import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
+import { brokenMainSteps, rebaseSteps } from './messages.mjs';
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
@@ -47,14 +47,36 @@ function assertLocalHead(ctx, pull, pr) {
 }
 
 /** クラスを決める。S2 か --dry-run のときは S2 の分類も求める (dry-run では参考表示だけ)。 */
-function classify(ctx, predBase, head, { dryRun }) {
+function classify(ctx, pull, predBase, head, { dryRun }) {
   const moved = !gitOk(['merge-base', '--is-ancestor', predBase, head], { cwd: ctx.cwd });
   const wantS2 = ctx.config.mode === 'S2' || dryRun;
-  const s2 = !wantS2 ? null : moved ? classifyS2(ctx, predBase, head) : { class: 'N', reason: 'main 不動', overlap: [], mainFiles: [] };
+  let s2 = !wantS2 ? null : moved ? classifyS2(ctx, predBase, head) : { class: 'N', reason: 'main 不動', overlap: [], mainFiles: [] };
+  if (s2?.class === 'F' && pull.mergeable === false) {
+    // GitHub が衝突と判定している (ort と GitHub の判定が食い違う)。gh pr merge が 405 で落ちるので R。
+    s2 = { ...s2, class: 'R', reason: 'GitHub が PR を mergeable=false と判定しています' };
+  }
   if (ctx.config.mode === 'S2') {
     return { cls: s2.class, s2 };
   }
   return { cls: moved ? 'R' : 'N', s2 };
+}
+
+/** 台帳が failure の main の上で着地予定ツリーを verify しても落ちるだけ。先に「main が壊れている」を返す。 */
+function refuseBrokenBase(ctx, pr, predBase) {
+  let ledger;
+  try {
+    ledger = getLandedStatus(ctx, predBase);
+  } catch {
+    return; // 読めなければ進む (gate が台帳を待つ・自己修復する)
+  }
+  if (ledger?.state === 'failure' || ledger?.state === 'error') {
+    audit('prepare-main-broken', { pr, base: predBase });
+    fail(
+      EXIT.MAIN_BROKEN,
+      ...brokenMainSteps(predBase, ctx.repo, ctx.statusContext),
+      `  (この PR が修復 PR なら: git merge ${ctx.mainRef} → push → CI → prepare でクラス N にしてから gate --repair)`,
+    );
+  }
 }
 
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
@@ -71,7 +93,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   const id = ticketIdFor(pull.headRef, pr);
   const predBase = fetchedMain(ctx);
   const mode = ctx.config.mode;
-  const { cls, s2 } = classify(ctx, predBase, head, { dryRun });
+  const { cls, s2 } = classify(ctx, pull, predBase, head, { dryRun });
   const checks = cls !== 'R' ? requiredChecks(ctx, pr) : { verdict: 'skipped', output: '' };
   audit('prepare', {
     pr,
@@ -121,6 +143,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   removeState(ctx.cwd, pr);
   const state = { pr, id, head, predBase, class: cls, preparedAt: new Date().toISOString() };
   if (cls === 'F') {
+    refuseBrokenBase(ctx, pr, predBase);
     say(`rebase せずに着地予定ツリー ${s2.tree.slice(0, 12)} を verify します (数分。verify スロット待ちを含む)。`);
     Object.assign(state, await verifyPredicted(ctx, pr, id, { predBase, head, tree: s2.tree }));
     say(`着地予定ツリーの verify success (${state.predictedVerifySecs} 秒)。`);

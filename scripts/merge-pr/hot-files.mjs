@@ -18,7 +18,8 @@ export const DEFAULT_HOT_FILES = Object.freeze([
   // CI の定義: PR の CI が見た定義と着地後の定義が違う
   '.github/workflows/**',
   // 検証系の設定: 着地予定ツリーで検出できるが、rebase して CI に見せた方が安い
-  '{tsconfig*.json,web/tsconfig*.json,.dependency-cruiser.*,scripts/verify.mjs,vite.config.*,vitest.config.*,web/vite.config.*,web/vitest.config.*}',
+  // (.claude/bdboard-harness.json は契約の verify コマンドと merge.hotFiles 自身を持つ)
+  '{**/tsconfig*.json,.dependency-cruiser.*,scripts/verify*.mjs,vite.config.*,vitest.config.*,web/vite.config.*,web/vitest.config.*,.claude/bdboard-harness.json}',
   // 8192 バイト上限の SKILL.md (正本と注入コピー): 両側が足すと上限を超える
   '{harness/packs/bdboard-harness/SKILL.md,.claude/skills/bdboard-harness/SKILL.md}',
 ]);

@@ -19,7 +19,7 @@ const IDENTITY = {
 };
 
 export function predictedCommit(ctx, pr, { predBase, head, tree }) {
-  return git(['commit-tree', tree, '-p', predBase, '-p', head, '-m', `bdboard merge-pr: predicted landed tree for PR #${pr}`], {
+  return git(['commit-tree', '--no-gpg-sign', tree, '-p', predBase, '-p', head, '-m', `bdboard merge-pr: predicted landed tree for PR #${pr}`], {
     cwd: ctx.cwd,
     env: { ...process.env, ...IDENTITY },
   });

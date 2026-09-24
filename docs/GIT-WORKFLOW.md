@@ -280,31 +280,40 @@ the PR instead of always demanding a rebase when main has moved (design §2.3):
 | Class | When | What `prepare` does |
 |---|---|---|
 | N | `origin/main` is an ancestor of the PR head (main did not move) | same as S1 — records PRED_BASE, no extra verify |
-| R | main moved **and** (not exactly one merge-base / `git merge-tree` reports a text conflict or cannot run / main's changes and yours hit the same `merge.hotFiles` pattern) | exit 3, same as S1: rebase (or `git merge origin/main`) → push → CI → `prepare` |
+| R | main moved **and** (not exactly one merge-base / `git merge-tree` reports a text conflict or cannot run / main's changes and yours hit the same `merge.hotFiles` pattern / GitHub reports the PR `mergeable: false`) | exit 3, same as S1: rebase (or `git merge origin/main`) → push → CI → `prepare` |
 | F | main moved, no conflict, no hot-file collision | builds the predicted landed tree with `git merge-tree --write-tree origin/main HEAD`, commits it locally (`git commit-tree`, parents PRED_BASE and the PR head — not pushed, no ref), detach-checks it out **in the PR worktree**, runs the contract's `verify`, checks the branch out again. Green → records PRED_BASE = origin/main and the predicted tree; red → exit 3 (demoted to R) |
 
 `gate` and `finish` are the S1 ones. What makes "the tree we verified" equal "the tree that lands":
 GitHub's squash commit is the 3-way merge of the PR head into the main it merges onto; `gate`'s CAS
 (`ls-remote` == PRED_BASE, inside the slot) pins that main and `--match-head-commit` pins the head,
-so the landed tree is `merge-tree(PRED_BASE, head)` — the one `prepare` verified. `finish` compares
-the landed commit's tree with the recorded one and prints / audits `predicted-tree … match=true|false`;
-a mismatch is reported (to bdboard-ulxa.2), and the landed verify (layer 3, unchanged) still decides
-the ledger. File overlap is **not** a criterion (§3.2: overlap and merge-tree are textual; only
+so the landed tree is `merge-tree(PRED_BASE, head)` — the one `prepare` verified — **as long as
+GitHub's merge agrees with git's ort merge** (merge-tree runs with rename detection pinned to git's
+defaults, `merge.renames=true` / `merge.directoryRenames=conflict`, so a merger's `~/.gitconfig` cannot
+change the tree). `finish` measures that agreement: it compares the landed commit's tree with the
+recorded one and prints / audits `predicted-tree … match=true|false|unknown`; a mismatch is reported
+(to bdboard-ulxa.2), and the landed verify (layer 3, unchanged) still decides the ledger. If
+`gh pr merge` answers 405 "not mergeable", GitHub sees a conflict ort did not: `finish` (returns the
+slot), then rebase. File overlap is **not** a criterion (§3.2: overlap and merge-tree are textual; only
 building / linting / testing the landed tree catches a semantic conflict) — it is only logged for S3.
 
 - **Hot files** (`merge.hotFiles`, default in `scripts/merge-pr/hot-files.mjs`, a contract value
   replaces the whole list): each entry is one *kind*; R when main and the PR both touch the same kind
   (not only the same file): dependencies (`package.json` / `package-lock.json`, root and `web/`),
-  `.github/workflows/**`, verify configs (`tsconfig*.json`, `.dependency-cruiser.*`,
-  `scripts/verify.mjs`, `vite.config.*`, `vitest.config.*`), and the 8192-byte `SKILL.md` (canonical
+  `.github/workflows/**`, verify configs (`**/tsconfig*.json`, `.dependency-cruiser.*`,
+  `scripts/verify*.mjs`, `vite.config.*`, `vitest.config.*`, the contract `.claude/bdboard-harness.json`),
+  and the 8192-byte `SKILL.md` (canonical
   and injected copy). `eslint.config.mjs` and `scripts/file-size-baseline.json` are deliberately not
   hot (§6 decision 3): `lint` / `check:file-size` decide them on the predicted tree.
 - **Exit codes** as in S1, plus: `3` also means "predicted tree failed `verify`" (a semantic conflict
   with main — read the log `<git common dir>/bdboard-merge/predicted-verify-pr<N>-<tree12>.log`; if it
   is a known flake such as bdboard-241s, `prepare` again, otherwise rebase and fix). `75` also means
   "main moved while the predicted tree was being verified". `1` also covers a predicted verify that
-  could not run (dirty worktree, `npm ci` failed). None of these touch the slot or the ledger, and
-  every failure removes the prepare record, so `gate` cannot run on a stale one.
+  could not run (dirty worktree, `npm ci` failed). `4` also comes from `prepare` when PRED_BASE's
+  ledger already says `failure` (class F would only verify on a broken main; a repair PR merges
+  `origin/main` to become class N, then `gate --repair`). None of these touch the slot or the ledger,
+  and the prepare record is removed before the predicted verify starts, so `gate` cannot run on a
+  stale one (gate also re-checks head and PRED_BASE against any record it reads).
+- `git merge-tree --write-tree` needs git ≥ 2.38; an older git makes every moved-main PR class R.
 - `prepare` takes minutes under S2 class F (a full `npm run verify`, including the machine-wide
   verify-slot queue): run it in the foreground with a 600000 ms Bash timeout like `finish`. If it is
   interrupted, the worktree can be left detached on the predicted commit; `prepare` then exits 2 and
@@ -317,8 +326,9 @@ building / linting / testing the landed tree catches a semantic conflict) — it
 - Switching: a one-line PR setting `merge.mode` to `"S2"` (rollback: back to `"S1"`). A `gate` that
   finds a class-F record while main says S1 sends the agent back to `prepare`. Branches cut before
   this script supported S2 reject `"S2"` as an unknown mode (exit 1): `git merge origin/main` first.
-  Roll back to S1 after two reverts in a day, or as soon as a landed verify fails on a PR whose
-  predicted tree had passed (design §5 / §6 decision 7).
+  Roll back to S1 after two reverts in a day, as soon as a landed verify fails on a PR whose
+  predicted tree had passed (design §5 / §6 decision 7), or when `predicted-tree … match=false` shows
+  up in the audit log (GitHub's merge and git's disagree — the guarantee above does not hold).
 
 ### When main is broken (S0, S1 and S2)
 

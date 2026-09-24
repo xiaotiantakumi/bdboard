@@ -153,6 +153,10 @@ describe('merge-pr pure helpers', () => {
     // eslint.config.mjs / file-size-baseline.json は hot ではない (設計 §6 裁定 3)。
     expect(hotCollisions(['eslint.config.mjs', 'scripts/file-size-baseline.json'], ['eslint.config.mjs', 'scripts/file-size-baseline.json'], DEFAULT_HOT_FILES)).toEqual([]);
     expect(hotCollisions(['.claude/skills/bdboard-harness/SKILL.md'], ['harness/packs/bdboard-harness/SKILL.md'], DEFAULT_HOT_FILES)).toHaveLength(1);
+    // 検証系: 入れ子の tsconfig・verify スクリプト群・契約 (verify コマンドを持つ) は同じ種類。
+    expect(hotCollisions(['test/e2e/tsconfig.json'], ['scripts/verify-slot.mjs'], DEFAULT_HOT_FILES)).toHaveLength(1);
+    expect(hotCollisions(['.claude/bdboard-harness.json'], ['web/tsconfig.app.json'], DEFAULT_HOT_FILES)).toHaveLength(1);
+    expect(hotCollisions(['scripts/other.mjs'], ['scripts/verify.mjs'], DEFAULT_HOT_FILES)).toEqual([]);
   });
 
   it('readMergeTree: exit 0 + OID is clean, exit 1 + OID is a conflict with its files, anything else is unavailable', () => {
@@ -883,6 +887,45 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(readState().gateAt).toBeTruthy();
     expect(run(['finish', String(PR)]).status).toBe(5);
     expect(readFake().slot.holder).toBeNull();
+  });
+
+  it("S2 prepare: the predicted tree ignores the merger's rename config (merge.renames=false in ~/.gitconfig)", () => {
+    setup({ merge: { mode: 'S2' }, branchFiles: { 'README.md': 'demo\nfrom the PR\n' } });
+    git(mainCheckout, ['mv', 'README.md', 'DOC.md']);
+    const moved = commitAll(mainCheckout, 'docs(peer): rename README');
+    git(mainCheckout, ['push', '-q', 'origin', 'main']);
+    // 既定の改名検出なら「改名 + 変更」で綺麗に混ざる。利用者設定のまま走ると modify/delete の衝突になる。
+    writeFileSync(path.join(env.HOME, '.gitconfig'), '[merge]\n\trenames = false\n');
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(0);
+    const expectedTree = git(work, ['-c', 'merge.renames=true', 'merge-tree', '--write-tree', moved, head]);
+    expect(readState()).toMatchObject({ class: 'F', predictedTree: expectedTree });
+    expect(git(work, ['show', `${expectedTree}:DOC.md`])).toBe('demo\nfrom the PR');
+  });
+
+  it('S2 prepare: GitHub saying mergeable=false demotes F to R (gh pr merge would fail with 405)', () => {
+    setup({ merge: { mode: 'S2' } });
+    advanceMain({ 'peer.txt': 'peer\n' });
+    const fake = readFake();
+    writeFake({ pulls: { ...fake.pulls, [PR]: { ...fake.pulls[PR], mergeable: false } } });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(3);
+    expect(prepared.stderr).toContain('mergeable=false');
+    expect(verified()).toEqual([]);
+    expect(existsSync(stateFile())).toBe(false);
+  });
+
+  it('S2 prepare: a failed ledger on PRED_BASE is a broken main (exit 4) before any predicted verify', () => {
+    setup({ merge: { mode: 'S2' } });
+    const moved = advanceMain({ 'peer.txt': 'peer\n' });
+    writeFake({ statuses: { [moved]: [status('failure')] } });
+    const prepared = run(['prepare', String(PR)]);
+    expect(prepared.status).toBe(4);
+    expect(prepared.stderr).toContain('bd create --type bug -p 0');
+    expect(prepared.stderr).toContain('gate --repair');
+    expect(verified()).toEqual([]);
+    expect(calls('bd')).toEqual([]);
+    expect(existsSync(stateFile())).toBe(false);
   });
 
   it('prepare --dry-run previews the S2 class in any mode and never verifies or writes state', () => {

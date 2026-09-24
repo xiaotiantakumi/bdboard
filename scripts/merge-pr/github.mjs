@@ -31,6 +31,8 @@ export function getPull(ctx, pr) {
     headRef: raw.head?.ref ?? null,
     baseRef: raw.base?.ref ?? null,
     draft: raw.draft === true,
+    // GitHub のマージ可否 (true / false / 計算中の null)。S2 は false をクラス R に倒す。
+    mergeable: typeof raw.mergeable === 'boolean' ? raw.mergeable : null,
   };
 }
 

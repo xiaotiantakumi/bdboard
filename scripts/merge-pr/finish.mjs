@@ -39,7 +39,6 @@ function holdBrokenMain(ctx, id, sha) {
   );
 }
 
-/** 通常の PR は最初に枠を返す (二度目の finish では返さない)。 */
 /** クラス F: 着地した木と着地予定ツリーの一致を確かめる。一致なら true、確かめられなければ null。 */
 function comparePredicted(ctx, pr, state, landed) {
   if (state.class !== 'F' || !state.predictedTree) {
@@ -47,8 +46,14 @@ function comparePredicted(ctx, pr, state, landed) {
   }
   const tree = run('git', ['rev-parse', `${landed}^{tree}`], { cwd: ctx.cwd });
   const landedTree = tree.status === 0 ? tree.stdout.trim() : '';
+  if (landedTree === '') {
+    // オフラインの finish 等で着地コミットを読めない。不一致と数えない (S2 の受け入れ指標を汚さない)。
+    audit('predicted-tree', { pr, id: state.id, match: 'unknown', predicted: state.predictedTree, landed: 'unknown' });
+    say(`着地した木を読めないので着地予定ツリー (${state.predictedTree.slice(0, 12)}) と比べていません。`);
+    return null;
+  }
   const match = landedTree === state.predictedTree;
-  audit('predicted-tree', { pr, id: state.id, match, predicted: state.predictedTree, landed: landedTree || 'unknown' });
+  audit('predicted-tree', { pr, id: state.id, match, predicted: state.predictedTree, landed: landedTree });
   if (!match) {
     say(
       `注意: 着地した木 (${landedTree.slice(0, 12) || '読めない'}) が prepare で verify した着地予定ツリー (${state.predictedTree.slice(0, 12)}) と違います。`,
@@ -58,6 +63,7 @@ function comparePredicted(ctx, pr, state, landed) {
   return match;
 }
 
+/** 通常の PR は最初に枠を返す (二度目の finish では返さない)。 */
 function releaseFirst(ctx, pr, state) {
   if (state.repair || state.releasedAt) {
     return state;
@@ -89,6 +95,7 @@ export async function finish(ctx, pr) {
       `PR #${pr} はマージされていません。${state.repair ? kept : '枠は返しました。'}`,
       '  - gh pr merge が権限判定で拒否された → 再試行しない。bd comment にマージ手順を書き、human ラベル + human gate',
       `  - head 不一致 (409) / main が動いた → npm run merge-pr -- prepare ${pr} から`,
+      '  - 405 "not mergeable" (GitHub は衝突と判定) → rebase してから prepare (S2 のクラス F でも)',
     );
   }
   const landed = pull.mergeCommitSha;
