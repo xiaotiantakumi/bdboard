@@ -193,6 +193,41 @@ describe('createBdCliIssueRepository', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('classifies "context canceled" as timeout (bdboard-vpt3)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'load custom types: context canceled',
+        exitCode: -1,
+      }),
+    });
+
+    const repo = createBdCliIssueRepository(runner);
+    await expect(repo.listTickets(project('p', '/root'))).rejects.toMatchObject({
+      kind: 'timeout',
+    } satisfies Partial<BdError>);
+  });
+
+  it('retries once on timeout and succeeds on the second attempt (bdboard-vpt3)', async () => {
+    const issue = minimalBdIssue('proj-retry-timeout');
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'load custom types: context canceled', exitCode: -1 };
+        }
+        return { stdout: JSON.stringify([issue]), stderr: '', exitCode: 0 };
+      },
+    });
+
+    const repo = createBdCliIssueRepository(runner);
+    const result = await repo.listTickets(project('p', '/root'));
+
+    expect(result.tickets).toHaveLength(1);
+    expect(calls).toHaveLength(2);
+  });
+
   it('classifies unknown errors', async () => {
     const { runner } = createFakeRunner({
       handler: async () => ({

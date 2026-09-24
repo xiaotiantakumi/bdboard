@@ -76,6 +76,27 @@ export function isLockContentionError(error: unknown): boolean {
 }
 
 /**
+ * `BdError` かつ `kind === 'timeout'` のときだけ true。NodeCommandRunner の
+ * timeoutMs 経過による SIGTERM/SIGKILL を受けて bd が context を cancel した
+ * ケース(bdboard-vpt3。stderr に "context canceled" 等が出る)。負荷が高い
+ * 時間帯に他プロジェクトの bd 読み取りで断続的に観測される。
+ */
+export function isTimeoutError(error: unknown): boolean {
+  return error instanceof BdError && error.kind === 'timeout';
+}
+
+/** `isLockContentionError` または `isTimeoutError`。 */
+export function isTransientReadError(error: unknown): boolean {
+  return isLockContentionError(error) || isTimeoutError(error);
+}
+
+// timeout 分類の1試行は最大 timeoutMs(既定30秒)かかりうる。lock-contention と
+// 同じ retries:2 を流用すると最悪 3 試行 x 30秒 = 90秒 HTTP レスポンスを止め
+// かねない(/api/hygiene は同期的にこれらを呼ぶ)。retries:1(最大2試行、
+// 最悪でも約60秒)に抑える(bdboard-vpt3)。
+const DEFAULT_TRANSIENT_READ_RETRIES = 1;
+
+/**
  * embedded dolt の flock(プロセス単位の排他ロック)由来と分類された
  * `lock-contention` エラーに対する短期リトライ。ロックはプロセス終了で自動解放
  * されるため、数百ms〜数秒待てば空く可能性が高いという前提の短期的緩和策
@@ -93,4 +114,21 @@ export function withLockContentionRetry<T>(
   options?: RetryOptions,
 ): Promise<T> {
   return withRetry(operation, isLockContentionError, options);
+}
+
+/**
+ * `withLockContentionRetry` に加えて `timeout`(bdboard-vpt3: 負荷が高い時間帯に
+ * 他プロジェクトの bd 読み取りが断続的に context canceled でタイムアウトする件)
+ * も短期リトライの対象にする。読み取り専用コマンド限定の前提は
+ * `withLockContentionRetry` と同じ。既定 retries は 1(timeout 1試行が
+ * timeoutMs 分かかりうるため、lock-contention 用の既定 2 より控えめ)。
+ */
+export function withTransientReadRetry<T>(
+  operation: () => Promise<T>,
+  options?: RetryOptions,
+): Promise<T> {
+  return withRetry(operation, isTransientReadError, {
+    retries: DEFAULT_TRANSIENT_READ_RETRIES,
+    ...options,
+  });
 }

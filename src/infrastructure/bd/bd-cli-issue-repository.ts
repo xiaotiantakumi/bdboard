@@ -8,7 +8,7 @@ import {
 import { compareStrings } from '../../domain/compare.js';
 import type { Project } from '../../domain/project.js';
 import { classifyBdError } from './classify-bd-error.js';
-import { withLockContentionRetry } from './bd-retry.js';
+import { withTransientReadRetry } from './bd-retry.js';
 import { collectPrefixes, mapBdListToTickets } from './bd-issue-mapper.js';
 
 const DEFAULT_BD_PATH = 'bd';
@@ -59,9 +59,10 @@ export function createBdCliIssueRepository(
   const concurrency = options?.concurrency ?? DEFAULT_CONCURRENCY;
 
   // bd list --readonly は読み取り専用でべき等なので、lock-contention
-  // (embedded doltのflock競合)なら数回まで自動リトライしてよい(bdboard-3tj)。
+  // (embedded doltのflock競合)や timeout(bdboard-vpt3)なら数回まで自動
+  // リトライしてよい(bdboard-3tj)。
   async function listTickets(project: Project): Promise<ProjectTickets> {
-    const commandResult = await withLockContentionRetry(async () => {
+    const commandResult = await withTransientReadRetry(async () => {
       const result = await commandRunner.run(bdPath, buildListArgs(project.rootPath), {
         timeoutMs,
       });

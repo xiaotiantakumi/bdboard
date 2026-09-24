@@ -71,4 +71,36 @@ describe('classifyBdError', () => {
       expect(classifyBdError(1, 'something unexpected happened')).toBe('unknown');
     });
   });
+
+  // bdboard-vpt3: 負荷が高い時間帯に他プロジェクトの bd 読み取りが断続的に
+  // context canceled でタイムアウトする件。bd は SIGTERM/SIGKILL を受けて
+  // context を cancel してから終了するため、これらの文言が stderr に出る。
+  describe('timeout classification (bdboard-vpt3)', () => {
+    it('classifies "context canceled" as timeout', () => {
+      expect(classifyBdError(1, "load custom types: context canceled")).toBe(
+        'timeout',
+      );
+    });
+
+    it('classifies "context deadline exceeded" as timeout', () => {
+      expect(
+        classifyBdError(1, 'begin read tx: context deadline exceeded'),
+      ).toBe('timeout');
+    });
+
+    it('classifies a SIGKILL-terminated process (exitCode -1) with "context canceled" as timeout, not bd-not-found', () => {
+      // NodeCommandRunner の finish() は SIGKILL 後の 'close' で code=null を
+      // -1 に潰す。exitCode だけを見る bd-not-found 判定 (exitCode === -1) より
+      // 先に timeout を判定しないと、本当の原因(タイムアウト)が隠れる。
+      expect(classifyBdError(-1, 'begin read tx: context canceled')).toBe(
+        'timeout',
+      );
+    });
+
+    it('still classifies a plain exitCode -1 (e.g. spawn E2BIG, bdboard-xgvh) as bd-not-found', () => {
+      // 回帰確認: timeout 判定を bd-not-found より先に置いても、"context
+      // canceled" を含まない -1 のケースは従来どおり bd-not-found のまま。
+      expect(classifyBdError(-1, 'spawn bd E2BIG')).toBe('bd-not-found');
+    });
+  });
 });

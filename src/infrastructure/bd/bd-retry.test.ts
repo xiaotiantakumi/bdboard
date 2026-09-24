@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { BdError } from '../../application/ports/issue-repository.js';
 import {
   isLockContentionError,
+  isTimeoutError,
+  isTransientReadError,
   withLockContentionRetry,
   withRetry,
+  withTransientReadRetry,
 } from './bd-retry.js';
 
 function noDelaySleep(): (delayMs: number) => Promise<void> {
@@ -158,6 +161,101 @@ describe('withLockContentionRetry', () => {
     await expect(withLockContentionRetry(operation, { sleep })).rejects.toBe(
       error,
     );
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+});
+
+// bdboard-vpt3: 健全性/リース回収での断続的な context canceled タイムアウトの
+// 緩和策として、lock-contention に加えて timeout も短期リトライの対象にした。
+describe('isTimeoutError', () => {
+  it('returns true only for a BdError with kind timeout', () => {
+    expect(isTimeoutError(new BdError('timeout', 'p', 'context canceled'))).toBe(
+      true,
+    );
+    expect(isTimeoutError(new BdError('unknown', 'p', 'something else'))).toBe(
+      false,
+    );
+    expect(isTimeoutError(new Error('plain error'))).toBe(false);
+    expect(isTimeoutError('not an error')).toBe(false);
+  });
+});
+
+describe('isTransientReadError', () => {
+  it('returns true for lock-contention or timeout, false otherwise', () => {
+    expect(
+      isTransientReadError(new BdError('lock-contention', 'p', 'locked')),
+    ).toBe(true);
+    expect(
+      isTransientReadError(new BdError('timeout', 'p', 'context canceled')),
+    ).toBe(true);
+    expect(
+      isTransientReadError(new BdError('bd-not-found', 'p', 'no bd')),
+    ).toBe(false);
+  });
+});
+
+describe('withTransientReadRetry', () => {
+  it('retries a timeout BdError and returns the eventual success', async () => {
+    const operation = vi
+      .fn()
+      .mockRejectedValueOnce(new BdError('timeout', 'p', 'context canceled'))
+      .mockResolvedValueOnce('ok');
+    const sleep = vi.fn(noDelaySleep());
+
+    const result = await withTransientReadRetry(operation, { sleep });
+
+    expect(result).toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a lock-contention BdError too', async () => {
+    const operation = vi
+      .fn()
+      .mockRejectedValueOnce(new BdError('lock-contention', 'p', 'locked'))
+      .mockResolvedValueOnce('ok');
+    const sleep = vi.fn(noDelaySleep());
+
+    const result = await withTransientReadRetry(operation, { sleep });
+
+    expect(result).toBe('ok');
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a non-transient BdError', async () => {
+    const error = new BdError('bd-not-found', 'p', 'no bd');
+    const operation = vi.fn().mockRejectedValue(error);
+    const sleep = vi.fn(noDelaySleep());
+
+    await expect(withTransientReadRetry(operation, { sleep })).rejects.toBe(
+      error,
+    );
+    expect(operation).toHaveBeenCalledTimes(1);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('defaults to a single retry (max 2 attempts) so a full-timeout retry cannot stack up 90s', async () => {
+    // 1 試行が timeoutMs (既定30秒) までかかりうるので、lock-contention 用の
+    // 既定 retries:2 をそのまま使うと最悪 3 試行 x 30秒 になる。ここでは既定
+    // retries が 1 (最大2試行) であることを、明示指定なしの呼び出しで確認する。
+    const error = new BdError('timeout', 'p', 'context canceled');
+    const operation = vi.fn().mockRejectedValue(error);
+    const sleep = vi.fn(noDelaySleep());
+
+    await expect(withTransientReadRetry(operation, { sleep })).rejects.toBe(
+      error,
+    );
+    expect(operation).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets the caller override the default retry budget', async () => {
+    const error = new BdError('timeout', 'p', 'context canceled');
+    const operation = vi.fn().mockRejectedValue(error);
+    const sleep = vi.fn(noDelaySleep());
+
+    await expect(
+      withTransientReadRetry(operation, { retries: 0, sleep }),
+    ).rejects.toBe(error);
     expect(operation).toHaveBeenCalledTimes(1);
     expect(sleep).not.toHaveBeenCalled();
   });

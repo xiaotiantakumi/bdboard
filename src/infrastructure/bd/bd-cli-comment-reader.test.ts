@@ -157,6 +157,25 @@ describe('createBdCliCommentReader', () => {
     expect(calls).toHaveLength(2);
   });
 
+  it('retries once on timeout and succeeds on the second attempt (bdboard-vpt3)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'load custom types: context canceled', exitCode: -1 };
+        }
+        return { stdout: '[]', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const reader = createBdCliCommentReader(runner);
+    const comments = await reader.listComments('/root/proj', 'bdboard-abc');
+
+    expect(comments).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
   it('passes the expected command and args including --readonly', async () => {
     const issueId = 'bdboard-3tw.27';
     const { runner, calls } = createFakeRunner();

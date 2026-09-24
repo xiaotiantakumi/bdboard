@@ -6,7 +6,7 @@ import type {
 } from '../../application/ports/lease-reader.js';
 import { BdError } from '../../application/ports/issue-repository.js';
 import { classifyBdError } from './classify-bd-error.js';
-import { withLockContentionRetry } from './bd-retry.js';
+import { withTransientReadRetry } from './bd-retry.js';
 
 const DEFAULT_BD_PATH = 'bd';
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -62,10 +62,10 @@ export function createBdCliLeaseReader(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
-    // bd list --readonly は読み取り専用でべき等なので、lock-contention
-    // なら数回まで自動リトライしてよい(bdboard-3tj)。
+    // bd list --readonly は読み取り専用でべき等なので、lock-contention や
+    // timeout(bdboard-vpt3)なら数回まで自動リトライしてよい(bdboard-3tj)。
     async listInProgressWithLease(projectRootPath: string): Promise<readonly InProgressWithLease[]> {
-      const commandResult = await withLockContentionRetry(async () => {
+      const commandResult = await withTransientReadRetry(async () => {
         const result = await commandRunner.run(
           bdPath,
           buildListArgs(projectRootPath),

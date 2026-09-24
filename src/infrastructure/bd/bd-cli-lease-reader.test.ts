@@ -182,4 +182,38 @@ describe('createBdCliLeaseReader', () => {
     expect(result).toEqual([]);
     expect(calls).toHaveLength(2);
   });
+
+  it('classifies "context canceled" (SIGTERM/SIGKILL timeout) as timeout, not bd-not-found (bdboard-vpt3)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async () => ({
+        stdout: '',
+        stderr: 'begin read tx: context canceled',
+        exitCode: -1,
+      }),
+    });
+
+    const reader = createBdCliLeaseReader(runner);
+    await expect(reader.listInProgressWithLease(ROOT)).rejects.toMatchObject({
+      kind: 'timeout',
+    } satisfies Partial<BdError>);
+  });
+
+  it('retries once on timeout and succeeds on the second attempt (bdboard-vpt3)', async () => {
+    let attempts = 0;
+    const { runner, calls } = createFakeRunner({
+      handler: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { stdout: '', stderr: 'begin read tx: context canceled', exitCode: -1 };
+        }
+        return { stdout: '[]', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const reader = createBdCliLeaseReader(runner);
+    const result = await reader.listInProgressWithLease(ROOT);
+
+    expect(result).toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
 });
