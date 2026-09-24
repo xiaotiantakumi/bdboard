@@ -36,7 +36,7 @@ export async function respond(
   issueId: string,
   responseText: string,
 ): Promise<RespondOutcome> {
-  const { kind, blockingHumanGateIds } = await resolveKindAndBlockingGates(
+  const { kind, blockingHumanGateIds, hasOwnDecisionQuestion } = await resolveKindAndBlockingGates(
     commandRunner,
     bdPath,
     rootPath,
@@ -47,11 +47,25 @@ export async function respond(
   // 1つの回答テキストで全部を resolve してしまうと回答していない質問まで
   // 閉じてしまう。この場合はコメントの文面を変え、どの gate も resolve せず・
   // human ラベルも外さない(下の分岐で resolvedGateIds は返さず ambiguousGateIds を返す)。
-  const isAmbiguousTicketAnswer = kind === 'ticket' && blockingHumanGateIds.length > 1;
+  // bdboard-cine: T 自身が standalone な decision_question を持っている場合、T の blocking
+  // human gate が1件でも「その1件への回答」と「T自身の質問への回答」のどちらのつもりかが
+  // 特定できない。安全側に倒し、この組み合わせも ambiguous 扱いにして gate を自動 resolve
+  // しない(T 自身の質問への回答としてコメントには記録するが、gate 側は個別に回答してもらう)。
+  const isAmbiguousTicketAnswer =
+    kind === 'ticket' &&
+    (blockingHumanGateIds.length > 1 ||
+      (hasOwnDecisionQuestion && blockingHumanGateIds.length >= 1));
 
   const commentResult = await commandRunner.run(
     bdPath,
-    buildAddResponseCommentArgs(rootPath, issueId, responseText, kind, blockingHumanGateIds),
+    buildAddResponseCommentArgs(
+      rootPath,
+      issueId,
+      responseText,
+      kind,
+      blockingHumanGateIds,
+      hasOwnDecisionQuestion,
+    ),
     { timeoutMs },
   );
 
@@ -118,8 +132,9 @@ export async function respond(
     // まさにこのチケット(bdboard-vy0h)の元バグと同じ形の中途半端な状態が
     // 残ってしまう。filterBlockingHumanGateIds が human/open/blocks だけに
     // 絞っているので、ここで timer/gh:run/gh:pr 等の gate を誤って resolve
-    // することはない。isAmbiguousTicketAnswer で 2 件以上は上で早期 return
-    // しているので、ここに来る時点で blockingHumanGateIds は高々 1 件。
+    // することはない。isAmbiguousTicketAnswer(2件以上、または own decision_question
+    // ありで1件以上、bdboard-cine)で該当するケースは上で早期 return しているので、
+    // ここに来る時点で blockingHumanGateIds は高々 1 件かつ hasOwnDecisionQuestion は false。
     const resolvedGateIds: string[] = [];
     for (const gateId of blockingHumanGateIds) {
       const gateResolveResult = await commandRunner.run(
