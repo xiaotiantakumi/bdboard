@@ -32,10 +32,12 @@ import { createAgentRunCancelRoutes } from './agent-run-cancel-routes.js';
 // 別ファイルが直接 import してガード無しでマウントできてしまう穴が型システム上は
 // 塞がれていなかった (「単一の守られた経路」という不変条件が convention 頼みだった)。
 // 各ファクトリは今、mountAgentRunGuard() が発行する AgentRunGuardToken (agent-run-guard.ts、
-// 未エクスポートの unique symbol でブランド化) を必須第2引数として要求する。この
-// トークンを得る唯一の方法が mountAgentRunGuard(app, ...) の呼び出し ── つまり app へ
-// ガードを実際に適用すること ── なので、ガードを経由せずにこれらのファクトリを呼ぶ
-// コードは型チェックで弾かれる。
+// 未エクスポートの unique symbol でブランド化) を必須第2引数として要求する。トークンを
+// 得る唯一の方法が mountAgentRunGuard(app, ...) の呼び出しなので、このファイルを経由
+// せずにこれらのファクトリを import して呼ぶコードは型チェックで弾かれる (sole-importer
+// を agent-run-route-factories-guard.test.ts が固定)。ただしトークンは「どの app に
+// ガードを適用したか」までは型で縛らない (opus レビュー, 2026-09-24) ── 詳細と残課題は
+// agent-run-guard.ts の AGENT_RUN_GUARD_APPLIED 直前のコメントを参照。
 
 /** postRunsBodySchema は ticketId と mode だけなので 4KB で十分すぎる。 */
 export const AGENT_RUN_BODY_MAX_BYTES = 4 * 1024;
