@@ -14,19 +14,14 @@ import { useChatDraftState } from './useChatDraftState';
 import { useChatNotifications } from './useChatNotifications';
 import { useConversationKey } from './useConversationKey';
 import { useDraftPayloadRegistry } from './useDraftPayloadRegistry';
+import type { useDraftThreadLauncher } from './useDraftThreadLauncher';
 import { useTicketContextLaunch } from './useTicketContextLaunch';
 
 const PROJECT_A = { id: 'proj-a', name: 'Project Alpha' } as ProjectDto;
 const PROJECT_B = { id: 'proj-b', name: 'Project Beta' } as ProjectDto;
 const PREFILL = 'チケット: ';
 
-type PendingPrefill = {
-  projectId: string;
-  text: string;
-  isUserEdit?: boolean;
-  modelId?: string;
-  attachments?: readonly ChatAttachment[];
-} | null;
+type PendingPrefill = ReturnType<typeof useDraftThreadLauncher>['pendingPrefillRef']['current'];
 
 interface ProbeProps {
   token: number | undefined;
@@ -118,10 +113,15 @@ describe('useTicketContextLaunch', () => {
   });
 
   it('does nothing without a ticket context token', () => {
-    const { result } = renderProbe('proj-a', { token: undefined, projects: [PROJECT_A], initialProjectId: 'proj-a' });
+    // 選択なし・シード入りのコールドキーで始め、purge も notice も起きないことまで見る。
+    const { result } = renderProbe('', {
+      token: undefined, projects: [PROJECT_A], initialProjectId: 'proj-a', initialInput: PREFILL,
+    });
     expect(result.current.pendingPrefillRef.current).toBeNull();
     expect(result.current.pendingTicketDraftProjectRef.current).toBeNull();
     expect(startNewDraftThread).not.toHaveBeenCalled();
+    expect(result.current.notifications.ticketProjectFallbackNotice).toBeNull();
+    expect(result.current.draft.conversationInputs['new::0']).toBe(PREFILL);
   });
 
   it('starts the draft at once when the ticket project is selected and its list is loaded, and focuses the prefill end', async () => {
@@ -213,6 +213,7 @@ describe('useTicketContextLaunch', () => {
     expect(Object.keys(result.current.draft.conversationInputs).filter((k) => k.startsWith('new::'))).toEqual([]);
     expect(Object.keys(result.current.draft.conversationAttachments).filter((k) => k.startsWith('new::'))).toEqual([]);
     expect(Object.keys(result.current.draft.draftSeedTextRef.current).filter((k) => k.startsWith('new::'))).toEqual([]);
+    expect(Object.keys(result.current.conv.threadModelIds).filter((k) => k.startsWith('new::'))).toEqual([]);
   });
 
   it('keeps the ticket prefill when the cold text is still the unedited seed', () => {
