@@ -220,6 +220,8 @@ export async function getPrBadges(
   // ゲート取得より前に行われ、サーキットブレーカーの状態だけはゲート取得の直後にも
   // もう一度確認する (ゲート待ちの間にトリップした場合を拾うため。
   // resolve-pr-status.ts 参照)。
+  let timedOut = false;
+
   const runTicket = async ({ entry, ticket }: CommentFetchItem): Promise<void> => {
     let url: string | null;
     try {
@@ -298,7 +300,6 @@ export async function getPrBadges(
 
   const mainWork = Promise.all(workItems.map(runTicket)).then(() => undefined);
 
-  let timedOut = false;
   if (overallTimeoutMs !== undefined) {
     timedOut = await raceWithOverallTimeout(mainWork, overallTimeoutMs);
   } else {

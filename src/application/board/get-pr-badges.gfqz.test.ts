@@ -16,12 +16,26 @@ import { createPrBadgeGates, getPrBadges, PrBadgeStatusCache } from './get-pr-ba
 // だったため、大きな (フィルタなしの) リクエストの overallTimeoutMs 超過後の
 // バックグラウンド継続 (bdboard-ksed) が大量に gh 起動を待ち行列に積むと、後から
 // 来た小さな (プロジェクト絞り込みの) リクエストの gh 起動がその後ろに並ばされて
-// いた。この修正で statusGate.acquire() に優先度 ('high'=前景 / 'low'=背景継続) を
-// 渡せるようにし (concurrency.ts)、getPrBadges() は自分の overallTimeoutMs が
-// 発火済みかどうか (timedOut) で 'low'/'high' を選ぶ (get-pr-badges.ts)。このファイルは
-// 実際の本番シナリオ (gates を共有した2つの getPrBadges 呼び出し) を end-to-end
-// で再現する。Semaphore 自体のスケジューリング契約は concurrency.gfqz.test.ts、
-// resolvePrStatus の配線は resolve-pr-status.gfqz.test.ts を参照。
+// いた。
+//
+// round 1 の修正 (優先度を acquire() を呼んだ瞬間=待ち行列に並んだ瞬間に固定する
+// 設計) は opus レビューで実質的に効かないことが分かった: 本番の典型的な状況
+// (comment/status キャッシュが温まっている) では、あるリクエストのほぼ全チケットが
+// 自分の overallTimeoutMs (本物の setTimeout) が発火するよりずっと前、マイクロ
+// タスクのバーストの中で resolvePrStatus/statusGate.acquire() に到達してしまう
+// (Node はタイマーフェーズに進む前に保留中のマイクロタスクを全部消化するため)。
+// つまり「並んだ瞬間」だけで優先度を決めると、並んだ時点ではほぼ全員が 'high' の
+// まま並び、その後いくらタイムアウトが発火しても並び順が変わらない。
+//
+// このファイルは、その「温まったキャッシュ」シナリオを直接再現する: 両リクエスト
+// ともコメント解決は即座 (遅延なし)、statusCache は本番同様 (pr-links-routes.ts の
+// prBadgeStatusCache) 両リクエストで共有する。修正後の Semaphore は permit を渡す
+// 瞬間に都度優先度を再評価するので、背景リクエストのチケットが「並んだ時点では
+// high だったが、待っている間に自分の overallTimeoutMs が発火して low に降格した」
+// 状態を正しく検出し、後から並んだ本当にまだ応答を待っている前景リクエストの
+// チケットを先に通す。Semaphore 自体のスケジューリング契約は
+// concurrency.gfqz.test.ts、resolvePrStatus の配線は resolve-pr-status.gfqz.test.ts
+// を参照。
 
 function project(id: string, rootPath: string): Project {
   return {
@@ -73,50 +87,50 @@ function createFakeBoardCache(): BoardCache & { readonly entries: Map<string, Ca
 function commentReaderForUrls(
   tickets: readonly { readonly id: string }[],
   urls: readonly string[],
-  delayMs: number,
 ): CommentReader {
   const urlByTicketId = new Map(tickets.map((ticket, index) => [ticket.id, urls[index]]));
   return {
-    listComments: vi.fn(async (_rootPath: string, issueId: string) => {
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-      return [
-        {
-          id: 'c1',
-          issueId,
-          author: 'agent',
-          text: `PR: ${urlByTicketId.get(issueId)}`,
-          createdAt: new Date('2026-06-01T12:00:00.000Z'),
-        },
-      ];
-    }),
+    // 遅延なし: 温まったキャッシュ相当 (マイクロタスクだけで解決する) を模す。
+    listComments: vi.fn(async (_rootPath: string, issueId: string) => [
+      {
+        id: 'c1',
+        issueId,
+        author: 'agent',
+        text: `PR: ${urlByTicketId.get(issueId)}`,
+        createdAt: new Date('2026-06-01T12:00:00.000Z'),
+      },
+    ]),
   };
 }
 
 describe(
   'getPrBadges: a later foreground request is not stuck behind a background-continuation ' +
-    'backlog on shared gates (bdboard-gfqz)',
+    'backlog on a shared statusGate, even with a warm cache where every ticket enqueues ' +
+    'before any timeout fires (bdboard-gfqz)',
   () => {
     it(
-      'launches the foreground gh fetch before the queued background-continuation gh fetches ' +
-        'when both share the same statusGate',
+      'launches the foreground gh fetch before the queued background-continuation gh fetches, ' +
+        'sharing one statusCache and one statusGate across both requests, with instant ' +
+        '(warm-cache-style) comment resolution',
       async () => {
         const callOrder: string[] = [];
         const gates = createPrBadgeGates({ statusFetchConcurrency: 1 });
+        // 本番の pr-links-routes.ts と同様、リクエストをまたいで1つの statusCache を
+        // 共有する (round 1 のテストは bg/fg で別々の statusCache を使っていたため、
+        // このレビュー指摘 (F4) の再現にならなかった)。
+        const sharedStatusCache = new PrBadgeStatusCache();
         const updatedAt = new Date('2026-06-01T12:00:00.000Z');
 
-        // --- 大きな (フィルタなしの) リクエスト: 応答をすぐタイムアウトさせ、残り2件の
-        // ステータス取得はバックグラウンド継続として走らせる。 ---
+        // --- 大きな (フィルタなしの) リクエスト ---
         const bgCache = createFakeBoardCache();
         const bgProject = project('proj-bg', '/projects/bg');
         const bgUrls = Array.from(
-          { length: 3 },
+          { length: 5 },
           (_, index) => `https://github.com/xiaotiantakumi/bdboard/pull/${800 + index}`,
         );
         bgCache.putProject({
           project: bgProject,
-          tickets: Array.from({ length: 3 }, (_, index) =>
+          tickets: Array.from({ length: 5 }, (_, index) =>
             makeTicket({
               id: `bdboard-gfqz-bg-${index}`,
               projectId: bgProject.id,
@@ -128,33 +142,34 @@ describe(
           fetchedAt: updatedAt,
         });
         const bgTickets = bgCache.listProjects()[0]!.tickets;
-        // コメント解決を overallTimeoutMs (5ms) より遅くする (30ms) —— どのチケットも
-        // タイムアウト発火前には resolvePrStatus に到達しない (=timedOut が立って
-        // から初めて statusGate.acquire('low') が呼ばれる) ことを保証するため。
-        const bgCommentReader = commentReaderForUrls(bgTickets, bgUrls, 30);
+        const bgCommentReader = commentReaderForUrls(bgTickets, bgUrls);
         const bgStatusReader: PrStatusReader = {
           getPrStatus: vi.fn(async (url: string) => {
             callOrder.push(url);
-            // 最初に permit を握った1件が居座り続けるくらい長くかかる gh 呼び出しを
-            // 模す。この間に foreground リクエストを差し込む。
-            await new Promise((resolve) => setTimeout(resolve, 80));
+            if (url === bgUrls[0]) {
+              // 最初に permit を握った1件だけ、foreground リクエストを差し込む余地が
+              // 出来るくらい長くかかる gh 呼び出しを模す。
+              await new Promise((resolve) => setTimeout(resolve, 80));
+            }
             return { status: { state: 'open', checkStatus: 'pass' } } as const;
           }),
         };
-        const bgStatusCache = new PrBadgeStatusCache();
 
         const bgCall = getPrBadges(bgCache, bgCommentReader, bgStatusReader, {
-          statusCache: bgStatusCache,
+          statusCache: sharedStatusCache,
           gates,
           overallTimeoutMs: 5,
         });
 
         const badges = await bgCall;
-        // 応答時点ではまだ1件も解決していない (コメント解決30ms、予算5msなので)。
+        // 応答時点ではまだ1件も解決していない (statusFetchConcurrency=1 なので1件目の
+        // 80ms 待ちの間に5msの応答タイムアウトが先に来る)。
         expect(badges.every((badge) => badge.status === null)).toBe(true);
 
-        // 背景継続が3件とも statusGate.acquire() を呼び終える (1件が permit を握り、
-        // 2件が待ち行列に並ぶ) まで待つ。
+        // 5件全部が statusGate.acquire() を呼び終える (1件が permit を握り、4件が
+        // 待ち行列に並ぶ) まで待つ —— コメント解決が即座なので、これは
+        // bgCall が解決するより先に (同じマイクロタスクのバーストの中で) 起きている
+        // はずだが、念のため待ち行列の形成を明示的に確認する。
         await vi.waitFor(
           () => {
             expect(bgStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
@@ -180,34 +195,35 @@ describe(
           fetchedAt: updatedAt,
         });
         const fgTickets = fgCache.listProjects()[0]!.tickets;
-        const fgCommentReader = commentReaderForUrls(fgTickets, [fgUrl], 0);
+        const fgCommentReader = commentReaderForUrls(fgTickets, [fgUrl]);
         const fgStatusReader: PrStatusReader = {
           getPrStatus: vi.fn(async (url: string) => {
             callOrder.push(url);
             return { status: { state: 'open', checkStatus: 'pass' } } as const;
           }),
         };
-        const fgStatusCache = new PrBadgeStatusCache();
 
-        // overallTimeoutMs を渡さない (通常の前景リクエスト): getPrBadges() 内部の
-        // timedOut は false のまま固定されるので、この呼び出し由来の
-        // statusGate.acquire() は必ず 'high' で呼ばれる。
+        // overallTimeoutMs を渡さない (通常の前景リクエスト): この呼び出し由来の
+        // statusGate.acquire() に渡される優先度プロバイダは常に 'high' を返す。
         await getPrBadges(fgCache, fgCommentReader, fgStatusReader, {
-          statusCache: fgStatusCache,
+          statusCache: sharedStatusCache,
           gates,
         });
 
         // 背景継続も最終的には完了する (飢えない)。
         await vi.waitFor(
           () => {
-            expect(bgStatusReader.getPrStatus).toHaveBeenCalledTimes(3);
+            expect(bgStatusReader.getPrStatus).toHaveBeenCalledTimes(5);
           },
           { timeout: 2000, interval: 5 },
         );
 
-        // 本題: 最初に permit を握った背景の1件目の次に、背景の残り2件 (待ち行列に
-        // 並んでいた分) より前に、前景リクエストの gh 起動が通っている。
-        expect(callOrder).toEqual([bgUrls[0], fgUrl, bgUrls[1], bgUrls[2]]);
+        // 本題: 背景リクエストの5件は、並んだ瞬間 (bgCall の overallTimeoutMs=5ms が
+        // 発火するより前) は全部 'high' として並んでいた。修正が正しく効いていれば、
+        // 最初に permit を握った1件目の次に、待ち行列に残っていた背景の4件より前に、
+        // 後から並んだ前景リクエストの gh 起動が通る (permit を渡す瞬間に
+        // timedOut===true と再評価されて 'low' に降格しているため)。
+        expect(callOrder).toEqual([bgUrls[0], fgUrl, bgUrls[1], bgUrls[2], bgUrls[3], bgUrls[4]]);
       },
       10_000,
     );

@@ -37,11 +37,11 @@ export interface ResolvePrStatusDeps {
   /** gh 起動が失敗した (バッジ自体は URL だけで出せるので劣化として扱う)。 */
   readonly onFailure: (error: unknown) => void;
   /**
-   * statusGate.acquire() へ渡す優先度を acquire する直前に都度評価する。省略時は
-   * 常に 'high' (優先度を意識しない既存呼び出し元との後方互換)。getPrBadges() は
-   * 自分の overallTimeoutMs 超過後のバックグラウンド継続 (応答は既に返し終えている)
-   * では 'low' を返し、まだ応答を待っている別リクエストの 'high' な gh 起動を
-   * 先に通す (bdboard-gfqz)。
+   * statusGate.acquire() へ渡す優先度プロバイダ。Semaphore 側が permit を実際に渡す
+   * 瞬間に都度呼び直す (acquire() を呼んだこの瞬間の1回きりではない —— bdboard-gfqz:
+   * 待っている間に呼び出し元の状態が変わった場合に正しく反映するため。詳細は
+   * concurrency.ts の Semaphore の doc comment を参照)。省略時は常に 'high'
+   * (優先度を意識しない既存呼び出し元との後方互換)。
    */
   readonly getPriority?: () => SemaphorePriority;
 }
@@ -69,7 +69,7 @@ export async function resolvePrStatus(
   if (statusCache === undefined) {
     // statusCache 未指定: in-flight 共有ができない (キャッシュに紐づく状態なので)
     // ので、従来通り毎回ゲート越しに直接フェッチする。
-    await statusGate.acquire(getPriority?.() ?? 'high');
+    await statusGate.acquire(() => getPriority?.() ?? 'high');
     try {
       onAttempt();
       const result = await prStatusReader.getPrStatus(url);
@@ -105,7 +105,7 @@ export async function resolvePrStatus(
       // in-flight map への登録の起点になった呼び出し)。相乗りする呼び出しは
       // fetchStatus() が既存の Promise をそのまま返すため、この fetcher 自体が
       // 呼ばれない — statusGate を待つのはここだけ (bdboard-ksed)。
-      await statusGate.acquire(getPriority?.() ?? 'high');
+      await statusGate.acquire(() => getPriority?.() ?? 'high');
       try {
         // ゲート待ちの間にサーキットが開いた可能性がある。関数冒頭の
         // isCircuitOpen() チェックはゲート取得より前なので、ゲート待ちで詰まって

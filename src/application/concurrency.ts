@@ -23,18 +23,20 @@ export async function runWithConcurrencyLimit<T>(
 }
 
 /**
- * Semaphore.acquire() の優先度。省略時は 'high' (優先度を意識しない既存呼び出し元
- * (commentGate 等) との後方互換 —— 'low' を一度も使わなければ単一 FIFO として今までと
- * 同じに振る舞う)。'high' の待ち手は 'low' の待ち手より先に permit を渡されるが、
- * LOW_PRIORITY_STARVATION_GUARD 回連続で 'high' に渡したあとに 'low' 待ちが残って
- * いれば、次の1回は必ず 'low' に渡す —— 'low' が無期限に飢えることはない
- * (bdboard-gfqz)。
+ * Semaphore.acquire() の優先度。'low' から 'high' へ戻ることは無い設計 (getPrBadges()
+ * の timedOut は一度 true になったら false に戻らない片方向の状態遷移であることが
+ * 前提 —— bdboard-gfqz)。
  */
 export type SemaphorePriority = 'high' | 'low';
 
-// 'low' 待ちの飢餓防止ガード。'high' の待ち手に連続でこの回数 permit を渡した時点で
-// 'low' 待ちが1件でも残っていれば、次の release は強制的に 'low' に渡す。
+// 'low' 待ちの飢餓防止ガード。'low' 待ちが実際に足止めされている状態で 'high' に
+// この回数連続で permit を渡した時点で、次の release は強制的に 'low' に渡す。
 const LOW_PRIORITY_STARVATION_GUARD = 4;
+
+interface SemaphoreWaiter {
+  readonly resolve: () => void;
+  readonly getPriority: () => SemaphorePriority;
+}
 
 /**
  * 固定数の「同時実行枠」を acquire/release で貸し出す軽量セマフォ。
@@ -44,14 +46,25 @@ const LOW_PRIORITY_STARVATION_GUARD = 4;
  * 進む場合に使う (bdboard-se3v: get-pr-badges.ts のコメント取得とステータス取得を
  * パイプライン化するために追加。前者が長引いても後者の gh 起動を止めないのが狙い)。
  *
- * bdboard-gfqz: acquire(priority) で2段優先度 ('high'/'low') を選べる。同時実行数の
+ * bdboard-gfqz: acquire(getPriority) で2段優先度 ('high'/'low') を選べる。同時実行数の
  * 上限 (limit) はこれまでどおり1本のまま —— 優先度は「空いた1枠を待ち手のどちらに
- * 渡すか」の順序だけを変える。全体のスループットや上限そのものは変えない。
+ * 渡すか」の順序だけを変える。
+ *
+ * 優先度は acquire() を呼んだ時点ではなく、permit を実際に渡す瞬間 (release() の中) に
+ * 都度 getPriority() を呼んで再評価する (待ち手ごとに関数のまま保持する設計)。これが
+ * 必須な理由: /api/pr-links の実際のトラフィックでは、待ち行列に並ぶ大半の呼び出しは
+ * (comment/status キャッシュが温まっているため) 自分のリクエストの overallTimeoutMs が
+ * 発火するよりずっと前、マイクロタスク単位でこの Semaphore に並ぶ。つまり「並んだ瞬間」
+ * だけで優先度を固定してしまうと、並んだ時点では全員 'high' (まだタイムアウトして
+ * いない) のまま並び、その後どれだけタイムアウトが発火しても待ち行列の並び順は変わら
+ * ない —— 優先度による並び替えが実質的に一度も効かない (bdboard-gfqz opus レビュー
+ * 指摘)。getPriority を関数のまま保持し release() のたびに再評価することで、待って
+ * いる間に元のリクエストがタイムアウトして 'low' へ降格した待ち手を、後から来た
+ * 本当にまだ応答を待っている 'high' な待ち手より正しく後回しにできる。
  */
 export class Semaphore {
   private available: number;
-  private readonly highWaiters: Array<() => void> = [];
-  private readonly lowWaiters: Array<() => void> = [];
+  private readonly waiters: SemaphoreWaiter[] = [];
   private consecutiveHighGrants = 0;
 
   constructor(limit: number) {
@@ -63,13 +76,13 @@ export class Semaphore {
     this.available = limit;
   }
 
-  async acquire(priority: SemaphorePriority = 'high'): Promise<void> {
+  async acquire(getPriority: () => SemaphorePriority = () => 'high'): Promise<void> {
     if (this.available > 0) {
       this.available -= 1;
       return;
     }
     await new Promise<void>((resolve) => {
-      (priority === 'low' ? this.lowWaiters : this.highWaiters).push(resolve);
+      this.waiters.push({ resolve, getPriority });
     });
   }
 
@@ -83,27 +96,36 @@ export class Semaphore {
   }
 
   /**
-   * 次に permit を渡す待ち手を選ぶ。'high' を優先するが、'high' に
-   * LOW_PRIORITY_STARVATION_GUARD 回連続で渡した時点で 'low' 待ちが残っていれば、
-   * カウンタをリセットしてその1回を必ず 'low' に渡す (bdboard-gfqz)。
+   * 次に permit を渡す待ち手を選ぶ。全待ち手の getPriority() を都度呼び直し、到着順を
+   * 保ったまま最初の 'high' を選ぶ —— ただし 'low' 待ちが残っている状態で 'high' に
+   * LOW_PRIORITY_STARVATION_GUARD 回連続で渡した直後だけ、次の1回は最初の 'low' に
+   * 強制的に渡す (bdboard-gfqz)。'high' が1件も無ければ (残り全員 'low') 到着順で
+   * 先頭を渡す。
    */
   private dequeueNextWaiter(): (() => void) | undefined {
-    if (
-      this.highWaiters.length > 0 &&
-      this.lowWaiters.length > 0 &&
-      this.consecutiveHighGrants >= LOW_PRIORITY_STARVATION_GUARD
-    ) {
+    if (this.waiters.length === 0) {
+      return undefined;
+    }
+
+    const highIndex = this.waiters.findIndex((waiter) => waiter.getPriority() === 'high');
+    if (highIndex === -1) {
+      // 'low' から 'high' へ戻ることは無い設計なので、'high' が1件も無ければ残りは
+      // 全部 'low' —— 到着順を保つため先頭を渡す。
       this.consecutiveHighGrants = 0;
-      return this.lowWaiters.shift();
+      return this.waiters.splice(0, 1)[0]!.resolve;
     }
-    if (this.highWaiters.length > 0) {
-      this.consecutiveHighGrants += 1;
-      return this.highWaiters.shift();
-    }
-    if (this.lowWaiters.length > 0) {
+
+    const hasLowWaiting = this.waiters.some((waiter) => waiter.getPriority() === 'low');
+    if (hasLowWaiting && this.consecutiveHighGrants >= LOW_PRIORITY_STARVATION_GUARD) {
       this.consecutiveHighGrants = 0;
-      return this.lowWaiters.shift();
+      const lowIndex = this.waiters.findIndex((waiter) => waiter.getPriority() === 'low');
+      return this.waiters.splice(lowIndex, 1)[0]!.resolve;
     }
-    return undefined;
+
+    // 'low' 待ちが実際に足止めされている間だけ数える (足止めしていないときまで数える
+    // と、後で 'low' が現れた瞬間にガードが即発動してしまい、ドキュメント通りの
+    // 「連続して不利に扱われた」という意味を持たなくなる)。
+    this.consecutiveHighGrants = hasLowWaiting ? this.consecutiveHighGrants + 1 : 0;
+    return this.waiters.splice(highIndex, 1)[0]!.resolve;
   }
 }
