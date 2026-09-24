@@ -95,6 +95,26 @@ describe('getHarnessKpi', () => {
     expect(kpi.reclaim.runCount).toBe(0);
   });
 
+  it('handles a project with 150,000 tickets', () => {
+    const cache = createFakeBoardCache();
+    const proj = project('/large', '/projects/large');
+    cache.putProject({
+      project: proj,
+      tickets: Array.from({ length: 150_000 }, (_, index) =>
+        makeTicket({
+          id: `bdboard-large-${index}`,
+          projectId: proj.id,
+          labels: ['human'],
+        }),
+      ),
+      fingerprint: 'fp',
+      fetchedAt: now,
+    });
+
+    const { kpi } = getHarnessKpi(cache, now, { timeZone: UTC });
+    expect(kpi.pendingDecisionDwell.openCount).toBe(150_000);
+  });
+
   it('starts the range at the first week monday of the selected week count', () => {
     const cache = createFakeBoardCache();
     cache.putProject({
