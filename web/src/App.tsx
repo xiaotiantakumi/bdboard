@@ -1,6 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ProjectDto } from './api';
+import { useState } from 'react';
 import { BoardDnDProvider } from './components/BoardDnDProvider';
 import { BulkSelectionProvider } from './components/BulkSelectionProvider';
 import { UndoSnackbarProvider } from './components/UndoSnackbar';
@@ -23,6 +22,8 @@ import { useBoardFilterState } from './hooks/useBoardFilterState';
 import { useTicketDeepLink } from './hooks/useTicketDeepLink';
 import { useAppOverlays } from './hooks/useAppOverlays';
 import { useAppKeyboardShortcuts } from './hooks/useAppKeyboardShortcuts';
+import { useAppFilterPresets } from './hooks/useAppFilterPresets';
+import { useAppActions } from './hooks/useAppActions';
 import {
   boardApiModeFromView,
   DEFAULT_VIEW,
@@ -35,13 +36,8 @@ import {
   validateStringArray,
   validateViewMode,
   validateBoardFilterPresets,
-  findDefaultBoardFilterPreset,
-  hasStoredBoardFilterState,
   validateRecentTickets,
-  recordRecentTicket,
   DEFAULT_TIPS_BANNER_DISMISSED,
-  type BoardFilterPreset,
-  type BoardFilterPresetState,
 } from './uiPersistedState';
 import { useLastServerContact } from './hooks/useLastServerContact';
 import { useProjectsData } from './hooks/useProjectsData';
@@ -53,7 +49,6 @@ import { usePrLinksData } from './hooks/usePrLinksData';
 import { useChatAvailabilityData } from './hooks/useChatAvailabilityData';
 import { useBoardThresholdsData } from './hooks/useBoardThresholdsData';
 import { useHarnessStatusData } from './hooks/useHarnessStatusData';
-import { buildPaletteActions } from './paletteActions';
 
 export function App() {
   useHeaderHeightVar();
@@ -179,91 +174,38 @@ export function App() {
    * 参照。
    */
   const overlays = useAppOverlays(selectedTicketId);
-  // 初回起動判定は localStorage が書き戻される前(= 最初のレンダー中)に確定させる。
-  const [hadStoredFilterStateAtStartup] = useState(() => hasStoredBoardFilterState());
-  const defaultPresetHandledRef = useRef(false);
 
   const selectedProjectIdsJoined = selectedProjectIds.join(',');
   const boardApiMode = boardApiModeFromView(view);
 
-  /*
-   * bdboard-62p4 PR-3 レビュー対応: この2つ (boardFilterPresetState /
-   * handleApplyBoardFilterPreset) と「既定」プリセット自動適用 effect は、
-   * 元の App.tsx では下のデータ取得9系統より後ろで宣言されていたが、
-   * 依存先 (view/selectedProjectIds/boardFilterState 由来の値・setView・
-   * setSelectedProjectIds) はすべてこれより前で定義済みでデータ取得9系統には
-   * 依存しない。一方で useProjectsData 内のプロジェクト絞り込み sanitize
-   * effect は projectsQuery.data に依存し、元のコードでは「既定プリセット
-   * 適用 effect」→「sanitize effect」の順で実行されていた (同一コミット内で
-   * setSelectedProjectIds が2回連続で呼ばれる際の実行順)。抽出後にこの並びを
-   * そのまま (データ取得9系統を先に呼ぶ) にすると、初回マウント時に
-   * projectsQuery のデータが既にキャッシュ済みだと sanitize が先に走り、
-   * 既定プリセットが上書きするはずのサニタイズ結果を今度はプリセット適用が
-   * 上書きしてしまう逆転が起きる。それを避けるため、この3つを元の相対順序
-   * (プリセット適用 effect が先、sanitize effect が後) を保つようデータ
-   * 取得9系統より前に前倒しした。
-   */
-  const boardFilterPresetState = useMemo<BoardFilterPresetState>(
-    () => ({
-      view,
-      selectedProjectIds,
-      priorityCeiling: boardPriorityCeiling,
-      issueTypes: boardIssueTypes,
-      labels: boardLabels,
-      filterText: boardFilterText,
-      hideDone,
-      stalledOnly,
-    }),
-    [
-      view,
-      selectedProjectIds,
-      boardPriorityCeiling,
-      boardIssueTypes,
-      boardLabels,
-      boardFilterText,
-      hideDone,
-      stalledOnly,
-    ],
-  );
-
-  const handleApplyBoardFilterPreset = useCallback((preset: BoardFilterPreset) => {
-    setView(preset.view);
-    setSelectedProjectIds(preset.selectedProjectIds);
-    setBoardPriorityCeiling(preset.priorityCeiling);
-    setBoardIssueTypes(preset.issueTypes);
-    setBoardLabels(preset.labels);
-    setBoardFilterText(preset.filterText);
-    setHideDone(preset.hideDone);
-    setStalledOnly(preset.stalledOnly);
-  }, [
+  // bdboard-62p4 第5段: boardFilterPresetState(現在の絞り込み状態の
+  // スナップショット)・handleApplyBoardFilterPreset・初回起動時の「既定」
+  // プリセット自動適用 effect は useAppFilterPresets.ts にまとめた。呼び出し
+  // 位置は元の3つ(+内部で使う useState/useRef)があった場所(useAppOverlays の
+  // 直後・データ取得9系統より前)と同じなので、内部の
+  // useState/useRef/useMemo/useCallback/useEffect は App.tsx 全体で見ても
+  // 元と同じ相対順序で登録される。この位置である理由(useProjectsData の
+  // sanitize effect との相対実行順序)は useAppFilterPresets.ts の JSDoc を
+  // 参照。
+  const { boardFilterPresetState, handleApplyBoardFilterPreset } = useAppFilterPresets({
+    view,
+    selectedProjectIds,
+    priorityCeiling: boardPriorityCeiling,
+    issueTypes: boardIssueTypes,
+    labels: boardLabels,
+    filterText: boardFilterText,
+    hideDone,
+    stalledOnly,
     setView,
     setSelectedProjectIds,
-    setBoardPriorityCeiling,
-    setBoardIssueTypes,
-    setBoardLabels,
-    setBoardFilterText,
+    setPriorityCeiling: setBoardPriorityCeiling,
+    setIssueTypes: setBoardIssueTypes,
+    setLabels: setBoardLabels,
+    setFilterText: setBoardFilterText,
     setHideDone,
     setStalledOnly,
-  ]);
-
-  /*
-    「既定」プリセットは、この端末にまだ絞り込み状態が1つも保存されていないとき
-    (= 実質的な初回起動)にだけ自動適用する。既に自分の絞り込みを持っている利用者の
-    状態を、起動のたびに勝手に上書きしないため。
-  */
-  useEffect(() => {
-    if (defaultPresetHandledRef.current) {
-      return;
-    }
-    defaultPresetHandledRef.current = true;
-    if (hadStoredFilterStateAtStartup) {
-      return;
-    }
-    const defaultPreset = findDefaultBoardFilterPreset(boardFilterPresets);
-    if (defaultPreset !== null) {
-      handleApplyBoardFilterPreset(defaultPreset);
-    }
-  }, [boardFilterPresets, hadStoredFilterStateAtStartup, handleApplyBoardFilterPreset]);
+    boardFilterPresets,
+  });
 
   /*
    * データ取得 9 系統 (bdboard-62p4 PR-3)。元は9つの useQuery とそこから導く
@@ -277,8 +219,8 @@ export function App() {
    * いる。useAppBadge の呼び出し位置だけ pendingDecisions 側へ前倒しした
    * 理由は usePendingDecisionsData.ts の JSDoc を参照。boardFilterPresetState/
    * handleApplyBoardFilterPreset/既定プリセット適用 effect がこの9系統より
-   * 前に来ている理由は直前のコメントを参照 (sanitize effect との相対順序を
-   * 保つための前倒し)。
+   * 前に来ている理由は useAppFilterPresets.ts の JSDoc を参照 (sanitize
+   * effect との相対順序を保つための前倒し)。
    */
   const { projectsQuery, chatProjects, projectNames, projectActiveSessions, projectRootPaths } =
     useProjectsData({ setSelectedProjectIds });
@@ -319,126 +261,46 @@ export function App() {
     watchedTicketDetails,
   });
 
-  const handleRecordRecentTicket = useCallback(
-    (entry: { id: string; title: string; projectId: string }) => {
-      setRecentTickets((current) =>
-        recordRecentTicket(current, {
-          id: entry.id,
-          title: entry.title,
-          projectName: projectNames.get(entry.projectId) ?? entry.projectId,
-        }),
-      );
-    },
-    [projectNames, setRecentTickets],
-  );
-
-  const isTicketOnBoard = useCallback(
-    (ticketId: string) => boardTicketIds.has(ticketId),
-    [boardTicketIds],
-  );
-
-  const isRefreshing = boardQuery.isFetching || statusQuery.isFetching;
-
-  // boardQuery/statusQuery は TanStack Query v5 の trackResult が毎レンダー
-  // 新しい Proxy を生成するため、オブジェクトそのものを依存配列に入れると
-  // useCallback が実質メモ化されない (bdboard-t43h)。refetch 自体は
-  // QueryObserver のコンストラクタで一度だけ bind される安定参照なので、
-  // それを分割代入して依存させる。
-  const { refetch: refetchBoard } = boardQuery;
-  const { refetch: refetchStatus } = statusQuery;
-
-  const handleRefresh = useCallback(() => {
-    void refetchBoard();
-    void refetchStatus();
-    reconnect();
-  }, [refetchBoard, refetchStatus, reconnect]);
-
-  const handleToggleProject = useCallback((projectId: string, checked: boolean) => {
-    setSelectedProjectIds((current) => {
-      if (checked) {
-        if (current.includes(projectId)) return current;
-        return [...current, projectId];
-      }
-      return current.filter((id) => id !== projectId);
-    });
-  }, []);
-
-  const handleSelectAll = useCallback(() => {
-    const allIds = (projectsQuery.data ?? []).map((project: ProjectDto) => project.id);
-    setSelectedProjectIds(allIds);
-  }, [projectsQuery.data]);
-
-  const handleClearAll = useCallback(() => {
-    setSelectedProjectIds([]);
-  }, []);
-
-  // overlays.handleOpenChat/handleOpenHelp/handleOpenSessionList を
-  // useMemo の外で分割代入しておく。クロージャ内で `overlays.x` の形のまま
-  // 参照すると react-hooks/exhaustive-deps が `overlays` オブジェクト全体
-  // (毎レンダー新しい参照) を依存に要求し、paletteActions が毎レンダー
-  // 再計算されてしまう (useAppOverlays の各ハンドラ自体は useCallback で
-  // 安定しているので、分割代入した個別の関数を依存に使えば元と同じ
-  // メモ化粒度を保てる)。
-  const { handleOpenChat, handleOpenHelp, handleOpenSessionList } = overlays;
-
-  const paletteActions = useMemo(
-    () =>
-      buildPaletteActions({
-        onViewChange: setView,
-        onOpenChat: handleOpenChat,
-        onToggleHideDone: () => setHideDone((current) => !current),
-        hideDone,
-        onToggleStalledOnly: () => setStalledOnly((current) => !current),
-        stalledOnly,
-        onOpenSessionList: () => handleOpenSessionList(),
-        onOpenHelp: handleOpenHelp,
-        onRefresh: handleRefresh,
-        chatAvailable,
-      }),
-    [
-      chatAvailable,
-      handleOpenChat,
-      handleOpenHelp,
-      handleOpenSessionList,
-      handleRefresh,
-      hideDone,
-      setHideDone,
-      setStalledOnly,
-      setView,
-      stalledOnly,
-    ],
-  );
-
-  const handleFilterByEpic = useCallback((ticketId: string) => {
-    setEpicFilterId(ticketId);
-    handleCloseDetail();
-  }, [handleCloseDetail]);
-
-  // bdboard-3tw.95 review (M3): switching the view synchronously inside
-  // handleFilterByEpic raced with handleCloseDetail()'s window.history.back() —
-  // the resulting async popstate (useTicketDeepLink's onLocationChange) restores
-  // the view that was active when the ticket panel was opened, which lands
-  // *after* our synchronous setView and silently overwrites it. Applying the
-  // switch from an effect keyed only on epicFilterId sidesteps the race: it
-  // reads `view` once, from the same render as the epicFilterId update (before
-  // any popstate has had a chance to fire), and — now that the epic-filter
-  // indicator/board render for 'merged' | 'split' | 'next' (bdboard-3tw.95
-  // review M2) — it only needs to force a switch when the ticket was opened
-  // from a non-board view (activity/digest/stats/hygiene/graph) that can't
-  // show the filtered board at all.
-  useEffect(() => {
-    if (epicFilterId === undefined) {
-      return;
-    }
-    if (view !== 'merged' && view !== 'split' && view !== 'next') {
-      setView('merged');
-    }
-    // Intentionally epicFilterId-only: this must fire once per epic-filter
-    // change, not on every subsequent view change (which would fight the
-    // user's own navigation, e.g. from 'merged' to 'next' while the filter is
-    // still active).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [epicFilterId]);
+  // bdboard-62p4 第5段: 最近開いたチケット記録・ボード在籍判定・手動
+  // リフレッシュ・プロジェクト選択・コマンドパレット・エピック絞り込みの
+  // ハンドラ群は useAppActions.ts にまとめた。呼び出し位置は元の並び(データ
+  // 取得9系統 + ウォッチ関連の直後、useAppKeyboardShortcuts の直前)と同じ
+  // なので、内部の useCallback(7個)/useMemo(1個)/useEffect(1個、
+  // epicFilterId 切り替え)は App.tsx 全体で見ても元と同じ相対順序で登録
+  // される。詳細は useAppActions.ts の JSDoc を参照。
+  const {
+    handleRecordRecentTicket,
+    isTicketOnBoard,
+    isRefreshing,
+    handleRefresh,
+    handleToggleProject,
+    handleSelectAll,
+    handleClearAll,
+    paletteActions,
+    handleFilterByEpic,
+  } = useAppActions({
+    setRecentTickets,
+    projectNames,
+    boardTicketIds,
+    boardQuery,
+    statusQuery,
+    reconnect,
+    setSelectedProjectIds,
+    projectsQuery,
+    setView,
+    handleOpenChat: overlays.handleOpenChat,
+    setHideDone,
+    hideDone,
+    setStalledOnly,
+    stalledOnly,
+    handleOpenSessionList: overlays.handleOpenSessionList,
+    handleOpenHelp: overlays.handleOpenHelp,
+    chatAvailable,
+    setEpicFilterId,
+    handleCloseDetail,
+    epicFilterId,
+    view,
+  });
 
   // bdboard-62p4 第4段: グローバルキーボードショートカット2本
   // (Cmd/Ctrl+K・`?`) は useAppKeyboardShortcuts.ts にまとめた。呼び出し位置は
