@@ -49,7 +49,9 @@ export function buildTicketOwnQuestionAmbiguousResponseCommentBody(
 (bdboard: このチケット自身の確認待ちの質問への回答として記録しました。このチケットは同時に、
 別の質問を表している可能性がある open な human gate にもブロックされているため、その gate の
 resolve と human ラベルの解除は行っていません。確認待ちのまま残ります。以下の gate カードを
-個別に開いて、それぞれの質問に回答してください。
+個別に開いて、それぞれの質問に回答してください。gate に回答した後もこのチケットが確認待ちの
+まま残っている場合は、このチケットにもう一度回答してください(このチケット自身が
+decision_question を持つ限り、gate 側の自動掃除はこのチケットの human ラベルを外しません)。
 ${gateList})`;
 }
 
