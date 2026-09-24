@@ -11,6 +11,7 @@ import {
   groupEventsByDate,
 } from './activityFeedFormatting';
 import { togglePressedProps } from './toggleGroupA11y';
+import { priorityBadgeClass } from './lane/cardHelpers';
 
 export interface ActivityFeedProps {
   readonly projectIds: readonly string[];
@@ -18,14 +19,6 @@ export interface ActivityFeedProps {
   onWindowDaysChange: (days: ActivityWindowDays) => void;
   onSelectTicket: (ticketId: string) => void;
   now?: Date;
-}
-
-function priorityBadgeClass(priority: number): string {
-  if (priority === 0) return 'badge-p0';
-  if (priority === 1) return 'badge-p1';
-  if (priority === 2) return 'badge-p2';
-  if (priority === 3) return 'badge-p3';
-  return 'badge-p4';
 }
 
 function kindBadgeClass(kind: keyof typeof ACTIVITY_KIND_LABELS): string {
