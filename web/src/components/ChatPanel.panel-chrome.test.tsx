@@ -252,6 +252,16 @@ describe('ChatPanel', () => {
     expect(fetchDiscoveredChatSessionsMock).toHaveBeenCalledWith('proj-a');
   });
 
+  it('focuses the header close button when the panel opens (bdboard-sso1.83 第7段: closeButtonRef 同一性の回帰ガード)', () => {
+    // ChatPanelHeader 抽出時、closeButtonRef が ChatPanel の useRef と同一の
+    // ものでなくなると(新しい ref を作ってしまうと)、useFocusTrap の
+    // initialFocusRef.current が空のままになり、この初期フォーカスが
+    // 静かに外れる(フォールバックで別の要素にフォーカスが移り、テストなしでは
+    // 気付きにくい)。
+    renderChatPanel([PROJECT_A]);
+    expect(screen.getByRole('button', { name: '閉じる' })).toHaveFocus();
+  });
+
   it('focuses the drawer close button when the thread drawer opens', async () => {
     fetchChatThreadsMock.mockResolvedValue([
       {

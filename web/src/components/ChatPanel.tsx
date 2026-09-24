@@ -81,12 +81,12 @@ import { ChatThreadDrawer } from './chat/ChatThreadDrawer';
 import { ChatThreadDrawerOpenRow, type ThreadDrawerRowActions } from './chat/ChatThreadDrawerOpenRow';
 import { ChatThreadDrawerClosedRow } from './chat/ChatThreadDrawerClosedRow';
 import { ChatSettingsPanel } from './chat/ChatSettingsPanel';
-import { ChatInputActions } from './chat/ChatInputActions';
-import { ChatQuickCommands } from './chat/ChatQuickCommands';
-import { ChatInputNotices } from './chat/ChatInputNotices';
 import { ChatMessageList } from './chat/ChatMessageList';
 import { ChatProjectBar } from './chat/ChatProjectBar';
 import { ChatThreadSwitcher } from './chat/ChatThreadSwitcher';
+import { ChatComposer } from './chat/ChatComposer';
+import { ChatPanelHeader } from './chat/ChatPanelHeader';
+import { computeSubmitDisabled, joinDescribedBy } from './chat/composerState';
 import { useThreadDrawerState } from './chat/useThreadDrawerState';
 import { useChatNotifications } from './chat/useChatNotifications';
 import { useChatDraftState } from './chat/useChatDraftState';
@@ -2968,38 +2968,12 @@ export function ChatPanel({
         {!isChatPanelMaximized && (
           <SidePanelResizeHandle label="チャットパネルの幅を変更" panel={chatPanel} />
         )}
-        <div className="detail-header">
-          <h2 id="chat-panel-title" className="detail-title">
-            チャット
-          </h2>
-          {/* 見出しの操作は他パネル(チケット詳細/ヘルプ)と同じく
-              .detail-header-actions にまとめる。.detail-header は
-              justify-content: space-between なので、直下に3つ並べると
-              「最大化」が見出しと「閉じる」の中間に浮いてしまう
-              (PR#139 レビュー major-2)。 */}
-          <div className="detail-header-actions">
-            <button
-              type="button"
-              className="btn chat-panel-maximize"
-              onClick={() => setIsChatPanelMaximized((maximized) => !maximized)}
-              title={isChatPanelMaximized ? '元の幅に戻す' : '画面幅いっぱいに広げる'}
-            >
-              {/* aria-pressed は付けない (PR#139 レビュー minor-3)。ラベル自体が
-                  「最大化」/「縮小」と入れ替わるので、押下状態も併せて伝えると
-                  「縮小、押されています」= 縮小が有効、と逆に読める。ラベルが
-                  次にどうなるかを示す通常のボタンとして扱う。 */}
-              {isChatPanelMaximized ? '縮小' : '最大化'}
-            </button>
-            <button
-              ref={closeButtonRef}
-              type="button"
-              className="btn detail-close"
-              onClick={requestClose}
-            >
-              閉じる
-            </button>
-          </div>
-        </div>
+        <ChatPanelHeader
+          isMaximized={isChatPanelMaximized}
+          onToggleMaximize={() => setIsChatPanelMaximized((maximized) => !maximized)}
+          closeButtonRef={closeButtonRef}
+          onClose={requestClose}
+        />
 
         <ChatProjectBar
           showProjectSelect={showProjectSelect}
@@ -3079,97 +3053,55 @@ export function ChatPanel({
           sendElapsedSeconds={sendElapsedSeconds}
         />
 
-        <form
-          ref={formRef}
-          className={`chat-input-form${currentAttachments.length > 0 ? ' has-attachments' : ''}`}
+        <ChatComposer
+          formRef={formRef}
+          inputRef={inputRef}
+          value={currentInput}
+          disabled={isSending || chatUnsupported}
+          onChange={(event) => {
+            setInput(currentConversationKey, event.target.value);
+          }}
+          onPaste={handleImagePaste}
+          onKeyDown={handleComposedEnterSubmit}
           onSubmit={(event) => {
             void handleSubmit(event);
           }}
-        >
-          <ChatQuickCommands
-            isSending={isSending}
-            isHistoryPending={isHistoryPending}
-            selectedProjectId={selectedProjectId}
-            onQuickCommand={handleQuickCommand}
-          />
-          {/* 「バナーが1つでもあるか」の条件式をここに書くと、将来バナーを足した人がその条件式の
-              更新を忘れた瞬間に空の div が gap を生む。`:empty` なら描画条件の集合を二重管理しない。
-              JSX は改行だけの空白テキストノードを出力しないので、5つとも false のとき要素は本当に空になり
-              `:empty` が成立する。 */}
-          {/* bdboard-3tw.166: 配信停止後の回収中インジケータを入力欄付近にも出す。
-              メッセージログ上部の同種インジケータ (role="status" 付きの
-              「返信をバックグラウンドで処理中…」、ログの aria-live="polite" 領域内)
-              と条件は同じだが、テキストは変えてある — 同一文言を2箇所に出すと
-              screen.findByText 等の単一マッチ前提のテストで区別できなくなるため。
-              role="status" は付けない (Opus レビュー指摘): 付けると同じ状態変化を
-              スクリーンリーダーが2回連続で読み上げることになる。ここは見た目上の
-              補助表示として置くだけで、状態変化の告知そのものはログ側の1箇所に
-              任せる。ログをスクロールしている/入力欄だけ見ている利用者にも視覚的に
-              処理継続中であることが伝わるようにする。
-              bdboard-v3ag Opus レビュー指摘 (W4): 条件を backgroundTurnStatus (poll
-              の1レスポンス単位でしか更新されない) から、送信ボタンの disabled と
-              全く同じ式 hasUnresolvedProjectRecovery に揃える。backgroundTurnStatus
-              だけに頼ると、ポーリングの谷間や B1 の「無関係な failed で足止め」
-              「バックオフ尽き」のような区間でボタンだけ disabled のままバナーが
-              消え、利用者に理由が伝わらない窓ができていた。 */}
-          <ChatInputNotices
-            hasUnresolvedProjectRecovery={hasUnresolvedProjectRecovery}
-            isSending={isSending}
-            attachments={currentAttachments}
-            onRemoveAttachment={(attachmentId) => removeAttachment(currentConversationKey, attachmentId)}
-            attachmentError={currentAttachmentError}
-            hasUnsupportedAttachments={hasUnsupportedAttachments}
-            selectedAgentUnavailable={selectedAgentUnavailable}
-            agentUnavailableHintId={agentUnavailableHintId}
-          />
-          <textarea
-            ref={inputRef}
-            className="chat-input"
-            rows={3}
-            placeholder="例: in_progress のまま止まっているチケットを教えて"
-            aria-label="メッセージ"
-            maxLength={4000}
-            value={currentInput}
-            disabled={isSending || chatUnsupported}
-            onChange={(event) => {
-              setInput(currentConversationKey, event.target.value);
-            }}
-            onPaste={handleImagePaste}
-            onKeyDown={handleComposedEnterSubmit}
-          />
-          <ChatInputActions
-            fileInputRef={fileInputRef}
-            isSending={isSending}
-            chatUnsupported={chatUnsupported}
-            onImageFileChange={handleImageFileChange}
-            submitDisabled={
-              selectedProjectId === '' ||
-              isSending ||
-              isHistoryPending ||
-              chatUnsupported ||
-              selectedAgentUnavailable ||
-              hasUnsupportedAttachments ||
-              // bdboard-v3ag: 配信停止からの turn-status 回収が終わるまで
-              // 再送を止める(hasUnresolvedProjectRecovery の定義コメント参照)。
-              hasUnresolvedProjectRecovery ||
-              (currentInput.trim() === '' && currentAttachments.length === 0)
-            }
-            ariaDescribedBy={
-              [
-                projectSelectionHintId,
-                agentUnavailableHintId,
-              ]
-                .filter((id): id is string => id !== null)
-                .join(' ') || undefined
-            }
-          />
-          <span className="chat-input-hint">
-            ⌘/Ctrl + Enter で送信 · 画像は PNG/JPEG/WebP を4枚まで（貼り付け可）
-          </span>
-          <span className="chat-image-privacy-hint">
-            画像はこの画面のメモリ上だけに保持され、履歴 API / localStorage には保存されません。
-          </span>
-        </form>
+          hasAttachments={currentAttachments.length > 0}
+          quickCommands={{
+            isSending,
+            isHistoryPending,
+            selectedProjectId,
+            onQuickCommand: handleQuickCommand,
+          }}
+          notices={{
+            hasUnresolvedProjectRecovery,
+            isSending,
+            attachments: currentAttachments,
+            onRemoveAttachment: (attachmentId) => removeAttachment(currentConversationKey, attachmentId),
+            attachmentError: currentAttachmentError,
+            hasUnsupportedAttachments,
+            selectedAgentUnavailable,
+            agentUnavailableHintId,
+          }}
+          actions={{
+            fileInputRef,
+            isSending,
+            chatUnsupported,
+            onImageFileChange: handleImageFileChange,
+            submitDisabled: computeSubmitDisabled({
+              selectedProjectId,
+              isSending,
+              isHistoryPending,
+              chatUnsupported,
+              selectedAgentUnavailable,
+              hasUnsupportedAttachments,
+              hasUnresolvedProjectRecovery,
+              currentInput,
+              attachmentsCount: currentAttachments.length,
+            }),
+            ariaDescribedBy: joinDescribedBy([projectSelectionHintId, agentUnavailableHintId]),
+          }}
+        />
       </div>
     </div>
   );
