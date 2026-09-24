@@ -30,6 +30,13 @@ export interface UseThreadListSyncParams
  * ref の種類: pendingPrefillRef / pendingTicketDraftProjectRef は[正本]
  * (useDraftThreadLauncher が持つ)、threadListRequestIdRef は request-id、
  * draftNoncesRef / selectedThreadIdsRef は[render ミラー]。
+ *
+ * 依存配列: 再実行の契機は従来どおり selectedProjectId(と参照の変わらない
+ * setThreadError)だけ。第14d段で exhaustive-deps が求める ref・setter・
+ * startNewDraftThread を加えたが、どれも参照が変わらない(startNewDraftThread の
+ * 依存は ref と setter と dispatch 由来の関数だけ)。startNewDraftThread の依存に
+ * レンダーごとに変わる値を足すと、この effect が一覧を取り直すようになる
+ * (ChatPanel.reassignment-characterization.test.tsx の 14d が検出する)。
  */
 export function useThreadListSync({
   selectedProjectId,
@@ -166,5 +173,19 @@ export function useThreadListSync({
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: persisted?.selectedSessionId ?? open[0] }));
       });
     return () => { cancelled = true; };
-  }, [selectedProjectId, setThreadError]);
+  }, [
+    selectedProjectId,
+    setThreadError,
+    // 第14d段: フックの引数になったので exhaustive-deps が求める分を加えた。
+    // ref / useState の setter / 参照の変わらない startNewDraftThread だけ。
+    pendingPrefillRef,
+    pendingTicketDraftProjectRef,
+    threadListRequestIdRef,
+    draftNoncesRef,
+    selectedThreadIdsRef,
+    setThreadLists,
+    setOpenThreadIds,
+    setSelectedThreadIds,
+    startNewDraftThread,
+  ]);
 }
