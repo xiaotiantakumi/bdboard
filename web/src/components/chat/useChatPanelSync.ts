@@ -21,7 +21,7 @@ import { useThreadListSync } from './useThreadListSync';
 import { useTicketContextLaunch } from './useTicketContextLaunch';
 import { useTurnStatusRecovery } from './useTurnStatusRecovery';
 
-export type UseChatPanelSyncParams = ChatPanelControllerParams &
+type UseChatPanelSyncParams = ChatPanelControllerParams &
   ChatPanelStores &
   ChatPanelAgentAndLauncher;
 

@@ -16,7 +16,7 @@ import { useDraftPayloadRegistry } from './useDraftPayloadRegistry';
 import { useDraftThreadLauncher } from './useDraftThreadLauncher';
 import { useElapsedSeconds } from './useElapsedSeconds';
 
-export type UseChatPanelAgentAndLauncherParams = ChatPanelControllerParams &
+type UseChatPanelAgentAndLauncherParams = ChatPanelControllerParams &
   ChatPanelStores;
 
 /**

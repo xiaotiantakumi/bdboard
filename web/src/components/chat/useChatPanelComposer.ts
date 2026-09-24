@@ -13,7 +13,7 @@ import { useChatSendCommits } from './useChatSendCommits';
 import { useChatSubmit } from './useChatSubmit';
 import { useStickToBottomScroll } from './useStickToBottomScroll';
 
-export type UseChatPanelComposerParams = ChatPanelControllerParams &
+type UseChatPanelComposerParams = ChatPanelControllerParams &
   ChatPanelStores &
   ChatPanelAgentAndLauncher &
   ChatPanelSync;
@@ -138,5 +138,3 @@ export function useChatPanelComposer(params: UseChatPanelComposerParams) {
     handleQuickCommand,
   };
 }
-
-export type ChatPanelComposer = ReturnType<typeof useChatPanelComposer>;
