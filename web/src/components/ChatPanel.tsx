@@ -5,15 +5,9 @@ import {
   useState,
 } from 'react';
 import {
-  fetchChatThreads,
   type ProjectDto,
   type ChatThreadDto,
-  type ChatSessionMessagesDto,
-  type SessionTailMessageDto,
 } from '../api';
-import {
-  writePersistedChatThreadState,
-} from '../chatThreadStorage';
 import {
   PlatformLimitationNotice,
   usePlatformLimitation,
@@ -58,7 +52,6 @@ import { useChatSendState } from './chat/useChatSendState';
 import { useAbortOnConversationChange } from './chat/useAbortOnConversationChange';
 import { useChatSendCommits } from './chat/useChatSendCommits';
 import { useChatSubmit } from './chat/useChatSubmit';
-import { toChatMessages, type ChatMessage } from './chat/messages';
 import { useElapsedSeconds } from './chat/useElapsedSeconds';
 import { useStickToBottomScroll } from './chat/useStickToBottomScroll';
 import { useConversationKey } from './chat/useConversationKey';
@@ -71,6 +64,7 @@ import { useDraftThreadLauncher } from './chat/useDraftThreadLauncher';
 import { useColdKeyspaceAdoption } from './chat/useColdKeyspaceAdoption';
 import { useThreadListSync } from './chat/useThreadListSync';
 import { useTicketContextLaunch } from './chat/useTicketContextLaunch';
+import { useChatSessionLifecycle } from './chat/useChatSessionLifecycle';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -527,48 +521,30 @@ export function ChatPanel({
     startNewDraftThread,
   });
 
-  const applyRecoveredTurn = useCallback(
-    (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => {
-      const currentOpen = openThreadIdsRef.current[selectedProjectId] ?? [];
-      const nextOpen = [...currentOpen.filter((id) => id !== payload.sessionId), payload.sessionId];
-      const currentSelected = selectedThreadIdsRef.current[selectedProjectId];
-      const nextSelected = currentSelected ?? payload.sessionId;
-      setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
-      setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
-      setConversations((prev) => ({
-        ...prev,
-        [payload.sessionId]: {
-          messages: toChatMessages(payload.messages),
-          sessionId: payload.sessionId,
-          agentId: payload.agentId,
-        },
-      }));
-      setHistoryLoadedFor((prev) => ({ ...prev, [payload.sessionId]: true }));
-      if (payload.model !== undefined && payload.model !== '') {
-        setThreadModelIds((prev) => ({ ...prev, [payload.sessionId]: payload.model! }));
-      }
-      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextSelected }));
-      if (nextSelected === payload.sessionId && payload.agentId !== '') {
-        setSelectedAgentId(payload.agentId);
-      }
-      writePersistedChatThreadState(selectedProjectId, {
-        activeSessionIds: nextOpen,
-        selectedSessionId: nextSelected,
-      });
-    },
-    [
+  // bdboard-sso1.83 第15a段: applyRecoveredTurn(E8 の hydrate)・
+  // handleHistorySessionGone(E12 の 23u prune)・handleResumeDiscoveredSession
+  // (CLI セッションの再開)を chat/useChatSessionLifecycle.ts へ move-only で
+  // 抜き出した。effect は持たない。applyRecoveredTurn の元の位置(E7 の後、E8 の前)で
+  // 呼ぶので、handleHistorySessionGone の useCallback だけが E8〜E11 より前へ移る
+  // (effect の登録順は変わらない)。
+  const { applyRecoveredTurn, handleHistorySessionGone, handleResumeDiscoveredSession } =
+    useChatSessionLifecycle({
       selectedProjectId,
-      openThreadIdsRef,
       selectedThreadIdsRef,
-      setThreadLists,
-      setOpenThreadIds,
+      setSelectedThreadIds,
+      historyRequestIdRef,
       setConversations,
       setHistoryLoadedFor,
+      setLoadingHistoryFor,
       setThreadModelIds,
-      setSelectedThreadIds,
+      openThreads,
+      openThreadIdsRef,
+      setThreadLists,
+      setOpenThreadIds,
       setSelectedAgentId,
-    ],
-  );
+      cancelThreadConfirmDelete,
+      advanceDraftNonceAfterSessionGone,
+    });
 
   const { backgroundTurnStatus, backgroundTurnProjectId, resetBackgroundTurnStatus } = useTurnStatusRecovery({
     selectedProjectId,
@@ -618,52 +594,6 @@ export function ChatPanel({
     setSelectedAgentId,
     setSelectedModelId,
   });
-
-  const handleHistorySessionGone = useCallback(
-    (sessionId: string) => {
-      setOpenThreadIds((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((id) => id !== sessionId),
-      }));
-      // bdboard-23u: handleDeleteThread(threadOps.deleteThread、bdboard-sso1.83
-      // 第10段で useChatThreadLists.ts へ移設済み)の prune と対称にする —
-      // でないと閉じたスレッドの再オープン経路から死亡スレッドを再選択できる。
-      setThreadLists((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).filter(
-          (thread) => thread.sessionId !== sessionId,
-        ),
-      }));
-      const wasSelected = selectedThreadIdsRef.current[selectedProjectId] === sessionId;
-      if (wasSelected) {
-        setSelectedThreadIds((prev) =>
-          prev[selectedProjectId] === sessionId
-            ? { ...prev, [selectedProjectId]: undefined }
-            : prev,
-        );
-        // bdboard-23u: handleCloseThread と同じパターンで選択クリアを
-        // localStorage にも同期する。
-        const nextOpenThreads = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
-          (id) => id !== sessionId,
-        );
-        writePersistedChatThreadState(selectedProjectId, {
-          activeSessionIds: nextOpenThreads,
-          selectedSessionId: undefined,
-        });
-        // bdboard-23u: ドラフト nonce の前進(startNewDraftThread を意図的に使わない
-        // 理由も含む)は chat/useDraftThreadLauncher.ts に置いた(第14b段)。
-        advanceDraftNonceAfterSessionGone(selectedProjectId);
-      }
-    },
-    [
-      selectedProjectId,
-      setOpenThreadIds,
-      setThreadLists,
-      setSelectedThreadIds,
-      openThreadIdsRef,
-      advanceDraftNonceAfterSessionGone,
-    ],
-  );
 
   useChatHistoryLoader({
     selectedProjectId,
@@ -791,112 +721,8 @@ export function ChatPanel({
   // closeThread として move-only で抜き出した(このコンポーネント冒頭の
   // 分割代入で `closeThread: handleCloseThread` としてエイリアスして受け取って
   // いるため、以降の呼び出し箇所・コメント中の関数名は変えていない)。
-  /**
-   * bdboard-3tw.104.3 レビュー MF2: adopt 直後は `selectedThreadIds[projectId]` を
-   * 新しいセッションIDに向け、`openThreadIds`/`threadLists` を更新し、
-   * `writePersistedChatThreadState` で永続化する(104.2 のマルチスレッド化前は
-   * `conversations[selectedProjectId]` に直書きしていたが、会話キーはスレッド
-   * (sessionId)単位になったのでプロジェクトIDキーでは合わなくなっていた)。
-   *
-   * M1(レビュー再指摘): 履歴シードは `/api/sessions/:id/tail`(ライブセッション
-   * インデックス由来、実測10件程度)を別途叩くのではなく、adopt レスポンスに
-   * 同梱された `seedMessages`(discovery が local-only ガード配下で既に読んだ
-   * トランスクリプト末尾)をそのまま使う。終了済みセッション(この機能の主用途)は
-   * ライブインデックスにまず載らないため、以前の実装(`fetchSessionTail` 呼び出し)
-   * はほぼ確実に 404 していた。取れる会話が無ければ簡単な説明メッセージ1行に
-   * フォールバックする。
-   *
-   * S4(レビュー指摘): `writePersistedChatThreadState`(localStorage への書き込み)は
-   * `setOpenThreadIds` の updater 関数の中では呼ばない — React の StrictMode は
-   * updater を2回呼び得るため、副作用がその中にあると二重発火する。ここでは
-   * 既に render スコープにある `openThreads`(このコンポーネント冒頭で
-   * `openThreadIds[selectedProjectId] ?? []` から導出済み)から次の配列を計算し、
-   * `setOpenThreadIds` には具体値を渡したうえで、副作用は updater の外側で呼ぶ
-   * (`handleCloseThread` と同じパターン)。
-   *
-   * threadModelIds との関係(レビュー指摘: 意図された挙動): 下で
-   * `historyLoadedFor[sessionId] = true` を先回りしてセットし、通常の
-   * ChatMessageRepository 由来の履歴読み込み effect(`payload.model` から
-   * `threadModelIds` を埋める側)を抑止している。そのため adopt したスレッドは
-   * `threadModelIds` に何も入らず、モデルセレクトは選択中エージェントの既定モデルに
-   * フォールバックする(= CLI セッション側が最後に使っていたモデルとは限らない)。
-   * これはこの実装の既知の制約であり、修正対象ではない — 是正するには adopt
-   * レスポンスにモデルIDも含めて `threadModelIds` を明示的に設定する追加変更が
-   * 必要だが、現状スコープ外。
-   *
-   * S5(レビュー指摘・既知の制約): シードした会話は `conversations`(メモリ上の
-   * state)にしか置かれず、`writePersistedChatThreadState` が永続化するのは
-   * スレッドの開閉状態(`activeSessionIds`/`selectedSessionId`)だけでメッセージ
-   * 本文は含まない。そのためページをリロードすると、スレッドタブ自体は
-   * 復元されるがシードした会話内容は失われ、通常の履歴読み込み effect が
-   * ChatMessageRepository(adopt 直後はまだ空)から読み直して「まだメッセージは
-   * ありません」に戻る。M1 はサーバー側のデータソースの問題(ライブインデックス
-   * vs トランスクリプト全体)を解決するもので、クライアント側の永続化範囲とは
-   * 別の話であり、ここには畳み込めない。会話メッセージ全体をクライアント
-   * ストレージへ永続化する設計変更は現状スコープ外のため、既知の制約として
-   * 明文化するに留める。
-   */
-  const handleResumeDiscoveredSession = (
-    sessionId: string,
-    agentId: string,
-    seedMessages: readonly SessionTailMessageDto[],
-  ) => {
-    const projectId = selectedProjectId;
-    const fallbackNote: ChatMessage = {
-      role: 'assistant',
-      text: 'このCLIセッションの直近の会話をここに表示できませんでした。続きから会話できます。',
-      at: Date.now(),
-    };
-    const seeded: ChatMessage[] =
-      seedMessages.length > 0
-        ? seedMessages.map((message, index) => ({
-            role: message.role,
-            text: message.text,
-            at:
-              message.timestamp !== undefined
-                ? Date.parse(message.timestamp)
-                : Date.now() + index,
-          }))
-        : [fallbackNote];
-
-    // bdboard-2n8 レビュー should-fix: handleAgentChange と同じ理由でここでも
-    // historyRequestIdRef を進める。resume したセッションIDが現在選択中の
-    // 会話キーと同じ(=既にそのスレッドが開かれていて履歴フェッチが in-flight)
-    // だった場合、キー自体は変わらないので通常の invalidation(currentConversationKey
-    // の変化に伴う effect cleanup)が働かない。increment しないと、下でセットする
-    // seeded conversation / agentId を、後から解決する古い履歴フェッチの `.then` が
-    // (サーバー側の別内容で)上書きしてしまう。
-    historyRequestIdRef.current += 1;
-    setSelectedAgentId(agentId);
-    setConversations((prev) => ({
-      ...prev,
-      [sessionId]: { messages: seeded, sessionId, agentId },
-    }));
-    // 履歴は上で seedMessages から取り込み済みなので、通常の(常に空の)
-    // ChatMessageRepository 由来の自動読み込み effect は動かさない。
-    setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
-
-    const nextOpenThreads = openThreads.includes(sessionId)
-      ? openThreads
-      : [...openThreads, sessionId];
-    setOpenThreadIds((prev) => ({ ...prev, [projectId]: nextOpenThreads }));
-    writePersistedChatThreadState(projectId, {
-      activeSessionIds: nextOpenThreads,
-      selectedSessionId: sessionId,
-    });
-
-    setSelectedThreadIds((prev) => ({ ...prev, [projectId]: sessionId }));
-    cancelThreadConfirmDelete();
-    setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
-
-    void fetchChatThreads(projectId)
-      .then((threads) => {
-        setThreadLists((prev) => ({ ...prev, [projectId]: threads }));
-      })
-      .catch(() => {
-        // 一覧の更新に失敗してもタブ表示が「(無題)」になるだけで再開自体は成立している。
-      });
-  };
+  // handleResumeDiscoveredSession(旧 bdboard-3tw.104.3 の M1/S4/S5 と既知の制約の
+  // JSDoc を含む)は chat/useChatSessionLifecycle.ts へ移した(第15a段)。
 
   // bdboard-sso1.83 第10段: handleDeleteThread/handleRenameConfirm/
   // handlePinToggle/currentThreadTitle は chat/useChatThreadLists.ts の
