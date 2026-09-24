@@ -623,20 +623,12 @@ describe('ChatPanel', () => {
     ).toBe(false);
   });
 
-  // bdboard-sso1.83 特性テスト T4: 設計メモは「送信完了後に textarea へ
-  // フォーカスが戻る」ことを第13段の前提として要求しているが、現状の
-  // ChatPanel.tsx で再現したところ実際には戻らない (it.fails で確認)。原因は
-  // submit の outer finally 内で `setIsSending(false)` の直後に同期的に
-  // `inputRef.current?.focus()` を呼んでいる点: React はこの2つの状態変化を
-  // 同一マイクロタスクでバッチするため、focus() が呼ばれる瞬間の DOM 上の
-  // textarea はまだ直前の disabled=true のままで、disabled な要素への focus()
-  // はブラウザ/jsdom 双方で無視される。textarea が disabled=false に再描画
-  // された後に focus() を再試行する経路が無く、フォーカスは直前にクリックした
-  // 送信ボタンに残ったままになる。ChatPanel.tsx は第5段の対象外(move-only +
-  // 特性テスト追加のみ)のためここでは直さず、it.fails で現状を固定して
-  // ドキュメント化する(別途bdチケットは起票しない。bdboard-sso1.83へのコメントで
-  // 報告済み。第13段 useChatSubmit 抽出時にあわせて修正する想定)。
-  it.fails('returns focus to the textarea after a send completes (bdboard-sso1.83 特性テスト T4)', async () => {
+  // bdboard-sso1.83 特性テスト T4: 送信完了後に textarea へフォーカスが戻る。
+  // 以前は submit の finally で setIsSending(false) の直後に同期で focus() を
+  // 呼んでおり、その瞬間の textarea はまだ disabled なので無視されていた
+  // (it.fails で固定していた)。bdboard-dcyi で isSending=false の反映後に
+  // focus する effect へ移して直した(chat/useChatSubmit.ts)。
+  it('returns focus to the textarea after a send completes (bdboard-sso1.83 特性テスト T4、bdboard-dcyi)', async () => {
     const user = userEvent.setup();
     renderChatPanel([PROJECT_A]);
     const textarea = screen.getByLabelText('メッセージ');

@@ -1,9 +1,10 @@
 // bdboard-sso1.83 第13b段の「先に足すもの」: 送信本体(submitChatMessage/handleSubmit)を
 // chat/useChatSubmit.ts へ移す前に、今の main の挙動をこのファイルで固定する。
-// - T4 補助: 送信の finally が textarea の focus() を呼ぶこと自体は今もある。効かない
-//   のは、呼んだ時点の textarea がまだ disabled だから(bdboard-dcyi、T4 は it.fails の
-//   まま)。ここでは「呼ばれる/その瞬間は disabled」を固定し、finally の中の
-//   setIsSending(false) → focus() の順と同期性が移動で変わらないことを見る。
+// - T4 補助: 送信が終わると textarea の focus() がちょうど1回呼ばれ、その瞬間の
+//   textarea はもう disabled でない(bdboard-dcyi: 以前は finally の中で
+//   setIsSending(false) の直後に同期で呼び、disabled のまま無視されていた。今は
+//   isSending=false の反映後の effect で呼ぶ)。Cmd+Enter 送信(フォーカスが body へ落ちる)
+//   でも戻ること、送信中にパネル外へ移したフォーカスは奪わないことも見る。
 // - T5 補助: 失敗で終わった送信でも「考え中…N秒」が消える(finally の isSending=false)。
 // - ガード: 利用不可エージェントの判定は空入力の判定より先に来るが、空入力(本文も添付も
 //   無い)ならエラーバブルも積まない。
@@ -92,7 +93,7 @@ describe('ChatPanel submit characterization (bdboard-sso1.83 第13b段の前提)
     return disabledAtCall;
   }
 
-  it('calls textarea.focus() exactly once in the send finally after a success, while the textarea is still disabled (T4 補助、bdboard-dcyi)', async () => {
+  it('calls textarea.focus() exactly once after a successful send, once the textarea is enabled again (T4 補助、bdboard-dcyi)', async () => {
     const user = userEvent.setup();
     renderChatPanel([PROJECT_A]);
     const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
@@ -107,10 +108,11 @@ describe('ChatPanel submit characterization (bdboard-sso1.83 第13b段の前提)
     await waitFor(() => {
       expect(textarea).not.toBeDisabled();
     });
-    expect(disabledAtCall).toEqual([true]);
+    expect(disabledAtCall).toEqual([false]);
+    expect(textarea).toHaveFocus();
   });
 
-  it('calls textarea.focus() exactly once in the send finally after a failure, too (T4 補助)', async () => {
+  it('calls textarea.focus() exactly once after a failed send, too, once the textarea is enabled again (T4 補助、bdboard-dcyi)', async () => {
     const user = userEvent.setup();
     fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
       if (url === '/api/chat/message' && init?.method === 'POST') {
@@ -129,7 +131,99 @@ describe('ChatPanel submit characterization (bdboard-sso1.83 第13b段の前提)
     await waitFor(() => {
       expect(textarea).not.toBeDisabled();
     });
-    expect(disabledAtCall).toEqual([true]);
+    expect(disabledAtCall).toEqual([false]);
+    expect(textarea).toHaveFocus();
+  });
+
+  // ブラウザでは Cmd/Ctrl+Enter で送ると textarea が disabled になった時点でフォーカスが
+  // body へ落ちる。jsdom は disabled になった要素のフォーカスを外さない(blur() も効かない)
+  // ので、パネル外の要素へ一度移してから blur して「フォーカスがどこにも無い」状態を作る。
+  it('returns focus to the textarea when nothing has focus (body) as the send completes (bdboard-dcyi)', async () => {
+    const user = userEvent.setup();
+    const deferred = createDeferred<Response>();
+    // fetch を呼ぶのは送信の POST だけ(一覧などは ../api のモック)。件数は最後に確かめる。
+    fetchMock.mockReturnValue(deferred.promise);
+    const outside = document.createElement('input');
+    document.body.appendChild(outside);
+    try {
+      renderChatPanel([PROJECT_A]);
+      const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+      await user.type(textarea, 'enter send');
+      await user.keyboard('{Meta>}{Enter}{/Meta}');
+      await waitFor(() => {
+        expect(textarea).toBeDisabled();
+      });
+      act(() => {
+        outside.focus();
+        outside.blur();
+      });
+      expect(document.body).toHaveFocus();
+
+      await act(async () => {
+        deferred.resolve(jsonResponse({ reply: 'AI reply', sessionId: 'sess-default', agentId: 'claude' }));
+        await deferred.promise;
+      });
+
+      await waitFor(() => {
+        expect(textarea).toHaveFocus();
+      });
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  it('does not move focus into the textarea just because the panel rendered (no send has finished、bdboard-dcyi)', async () => {
+    renderChatPanel([PROJECT_A]);
+    const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+    await waitFor(() => {
+      expect(fetchChatThreadsMock).toHaveBeenCalled();
+    });
+    // 開いた直後の初期フォーカスは useFocusTrap が閉じるボタンへ置く。送信後の focus 用の
+    // effect(mount 時にも1回走る)がそれを入力欄へ奪わないこと。
+    expect(textarea).not.toHaveFocus();
+    expect(document.activeElement).toHaveAccessibleName('閉じる');
+  });
+
+  it('does not steal focus from an element outside the panel that the user focused during the send (bdboard-dcyi)', async () => {
+    const user = userEvent.setup();
+    const deferred = createDeferred<Response>();
+    // fetch を呼ぶのは送信の POST だけ(一覧などは ../api のモック)。件数は最後に確かめる。
+    fetchMock.mockReturnValue(deferred.promise);
+    const outside = document.createElement('input');
+    outside.setAttribute('aria-label', 'panel outside');
+    document.body.appendChild(outside);
+    try {
+      renderChatPanel([PROJECT_A]);
+      const textarea = screen.getByLabelText<HTMLTextAreaElement>('メッセージ');
+      await user.type(textarea, 'keep my focus');
+      await user.click(screen.getByRole('button', { name: '送信' }));
+      await waitFor(() => {
+        expect(textarea).toBeDisabled();
+      });
+      await user.click(outside);
+      expect(outside).toHaveFocus();
+      const focusSpy = vi.spyOn(textarea, 'focus');
+
+      await act(async () => {
+        deferred.resolve(jsonResponse({ reply: 'AI reply', sessionId: 'sess-default', agentId: 'claude' }));
+        await deferred.promise;
+      });
+
+      await waitFor(() => {
+        expect(textarea).not.toBeDisabled();
+      });
+      expect(within(screen.getByRole('log')).getByText('AI reply')).toBeInTheDocument();
+      // 否定の確認なので、focus 用の passive effect が走り切ってから見る。
+      await act(() => Promise.resolve());
+      expect(focusSpy).not.toHaveBeenCalled();
+      expect(outside).toHaveFocus();
+      expect(getChatMessagePostCalls(fetchMock)).toHaveLength(1);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      outside.remove();
+    }
   });
 
   it('clears 考え中…N秒 once a failed send settles (T5 補助: finally の isSending=false)', async () => {
