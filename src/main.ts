@@ -24,7 +24,8 @@ import { mountRoutes } from './bootstrap/mount-routes.js';
 
 async function main(): Promise<void> {
   const applicationVersion = createPackageJsonVersionProvider();
-  const config = resolveMainConfig();
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const config = resolveMainConfig(repoRoot);
 
   const infra = wireCoreInfra({ ...config });
 
@@ -85,7 +86,6 @@ async function main(): Promise<void> {
   });
 
   const app = new Hono();
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
   const attachments = wireAttachments({
     repoRoot,

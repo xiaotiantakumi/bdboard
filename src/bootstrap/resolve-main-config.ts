@@ -12,7 +12,32 @@ import {
   DEFAULT_RECLAIM_OLDER_THAN,
 } from '../application/lease/reclaim-scheduler.js';
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS } from '../interface/http/graceful-shutdown.js';
+import { WORKTREES_DIR } from '../domain/git-worktree.js';
 import { envBoolDefaultTrue, envInt, envOptionalString, envString } from './env.js';
+
+export function isLinkedWorktreeCheckout(repoRoot: string): boolean {
+  const normalizedRepoRoot = repoRoot.split(path.sep).join('/');
+  return normalizedRepoRoot.includes(`/${WORKTREES_DIR}/`);
+}
+
+export class MainCheckoutDbPathRequiredError extends Error {
+  constructor(repoRoot: string) {
+    super(
+      `BDBOARD_DB is not set for linked worktree checkout "${repoRoot}". Startup is refused to avoid opening the same database as the resident server (~/.bdboard/cache.db). Set BDBOARD_DB to a dedicated database file (for example, a copy created with sqlite3 ~/.bdboard/cache.db ".backup '<path>'") and start again.`,
+    );
+    this.name = 'MainCheckoutDbPathRequiredError';
+  }
+}
+
+function resolveDbPath(repoRoot: string): string {
+  const configuredPath = envOptionalString('BDBOARD_DB');
+  if (configuredPath !== undefined) return configuredPath;
+  if (isLinkedWorktreeCheckout(repoRoot)) {
+    // Refusal avoids the surprising lifecycle and staleness of an automatic database copy.
+    throw new MainCheckoutDbPathRequiredError(repoRoot);
+  }
+  return path.join(os.homedir(), '.bdboard', 'cache.db');
+}
 
 export interface MainConfig {
   readonly instanceNonce: string | undefined;
@@ -34,13 +59,13 @@ export interface MainConfig {
 }
 
 /** main() 冒頭の env 読み取り一式。process.env を直接見る (bootstrap/env.ts と同じ流儀)。 */
-export function resolveMainConfig(): MainConfig {
+export function resolveMainConfig(repoRoot: string): MainConfig {
   return {
     instanceNonce: envOptionalString('BDBOARD_INSTANCE_NONCE'),
     bdVersionCheckTimeoutMs: 3_000,
     port: envInt('BDBOARD_PORT', 8787),
     host: envString('BDBOARD_HOST', '127.0.0.1'),
-    dbPath: envString('BDBOARD_DB', path.join(os.homedir(), '.bdboard', 'cache.db')),
+    dbPath: resolveDbPath(repoRoot),
     refreshIntervalMs: envInt('BDBOARD_REFRESH_INTERVAL_MS', 300_000),
     sessionIntervalMs: envInt('BDBOARD_SESSION_INTERVAL_MS', 10_000),
     transcriptIntervalMs: envInt('BDBOARD_TRANSCRIPT_INTERVAL_MS', 30_000),

@@ -3,7 +3,14 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_RECLAIM_INTERVAL_MS, DEFAULT_RECLAIM_OLDER_THAN } from '../application/lease/reclaim-scheduler.js';
 import { DEFAULT_SHUTDOWN_TIMEOUT_MS } from '../interface/http/graceful-shutdown.js';
-import { resolveMainConfig } from './resolve-main-config.js';
+import {
+  isLinkedWorktreeCheckout,
+  MainCheckoutDbPathRequiredError,
+  resolveMainConfig,
+} from './resolve-main-config.js';
+
+const MAIN_CHECKOUT = '/Users/example/bdboard';
+const LINKED_WORKTREE = '/Users/example/bdboard/.claude/worktrees/bdboard-21e7';
 
 const ENV_KEYS = [
   'BDBOARD_INSTANCE_NONCE',
@@ -31,7 +38,7 @@ describe('resolveMainConfig (bdboard-sso1.86 move only, main.ts の env 解決�
   });
 
   it('resolves every field to the same defaults main.ts used inline', () => {
-    const config = resolveMainConfig();
+    const config = resolveMainConfig(MAIN_CHECKOUT);
 
     expect(config).toEqual({
       instanceNonce: undefined,
@@ -62,7 +69,7 @@ describe('resolveMainConfig (bdboard-sso1.86 move only, main.ts の env 解決�
     process.env.BDBOARD_GH_PATH = '/opt/bin/gh';
     process.env.BDBOARD_RECLAIM_ENABLED = '0';
 
-    const config = resolveMainConfig();
+    const config = resolveMainConfig(MAIN_CHECKOUT);
 
     expect(config.instanceNonce).toBe('nonce-123');
     expect(config.port).toBe(9999);
@@ -74,6 +81,41 @@ describe('resolveMainConfig (bdboard-sso1.86 move only, main.ts の env 解決�
   });
 
   it('always resolves bdVersionCheckTimeoutMs to the fixed 3000ms (not env-configurable)', () => {
-    expect(resolveMainConfig().bdVersionCheckTimeoutMs).toBe(3_000);
+    expect(resolveMainConfig(MAIN_CHECKOUT).bdVersionCheckTimeoutMs).toBe(3_000);
+  });
+});
+
+describe('isLinkedWorktreeCheckout', () => {
+  it('recognizes linked worktree checkout paths', () => {
+    expect(isLinkedWorktreeCheckout(LINKED_WORKTREE)).toBe(true);
+  });
+
+  it('does not recognize a main checkout path', () => {
+    expect(isLinkedWorktreeCheckout(MAIN_CHECKOUT)).toBe(false);
+  });
+
+  it('does not match a similarly named directory', () => {
+    expect(isLinkedWorktreeCheckout('/Users/example/.claude/worktrees-backup/bdboard')).toBe(false);
+  });
+});
+
+describe('resolveMainConfig dbPath resolution', () => {
+  afterEach(() => {
+    delete process.env.BDBOARD_DB;
+  });
+
+  it('requires a dedicated database path for a linked worktree when BDBOARD_DB is unset', () => {
+    delete process.env.BDBOARD_DB;
+    expect(() => resolveMainConfig(LINKED_WORKTREE)).toThrow(MainCheckoutDbPathRequiredError);
+  });
+
+  it('treats an empty BDBOARD_DB the same as unset for a linked worktree (matches envString semantics)', () => {
+    process.env.BDBOARD_DB = '';
+    expect(() => resolveMainConfig(LINKED_WORKTREE)).toThrow(MainCheckoutDbPathRequiredError);
+  });
+
+  it('uses an explicitly configured database path for a linked worktree', () => {
+    process.env.BDBOARD_DB = '/tmp/dedicated-copy.db';
+    expect(resolveMainConfig(LINKED_WORKTREE).dbPath).toBe('/tmp/dedicated-copy.db');
   });
 });
