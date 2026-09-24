@@ -1199,9 +1199,12 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       child.kill('SIGINT');
       // 孫は SIGTERM を無視するので、後始末 (SIGKILL への昇格 → プロセスグループが実際に
       // 空になるまでのポーリング → restoreBranch) には少なくとも killGraceMs (200ms) かかる。
-      // この時点ではまだ孫が生きていて、ブランチはまだ detach したままのはず — opus レビューで
-      // 見つかった退行の固定化 (後始末が終わる前に restoreBranch してしまうと、ここが
-      // 'bd/demo-1' に戻ってしまう)。
+      // SIGINT 直後 (t=0) ではどちらの実装でもまだ何も起きていないので区別できない — 100ms
+      // 待ってから確認する: これは旧実装 (return 'error' で finally の restoreBranch が
+      // 同期区間ですぐ走る。孫の SIGKILL 猶予 200ms よりずっと早く完了する) なら既にブランチが
+      // 戻ってしまっているはずの時点で、新実装 (孫がまだ生きているので後始末が完了していない)
+      // なら detach したままのはずの時点 — opus レビューで見つかった退行の固定化。
+      await new Promise((resolve) => setTimeout(resolve, 100));
       expect(pidAlive(grandchildPid)).toBe(true);
       // symbolic-ref は detached HEAD だと非ゼロ終了で失敗する (git() ヘルパーが throw する) ので
       // rev-parse --abbrev-ref を使う (detached なら文字列 'HEAD' を返す。throw しない)。
