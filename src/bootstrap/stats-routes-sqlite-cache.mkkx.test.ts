@@ -36,14 +36,26 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
   // /api/health reliably gets a turn well under the 1s budget; concentrating
   // all 200,000 tickets in a handful of projects (as this app's real project
   // count of ~14 would, if scaled up literally) defeats the per-project
-  // chunking this fix relies on - confirmed by temporarily forcing the
-  // sync listProjects() fallback path during development of this test,
-  // which reliably failed this assertion (1.5-2s) at this same fixture
-  // size, proving the test actually exercises the fix rather than always
-  // passing regardless of it. Verified stable across repeated runs (18/18)
-  // under artificial heavy CPU contention (7 busy-loop processes on a
-  // 10-core machine, well beyond npm run verify's own worker cap) to guard
-  // against flakiness under `npm run verify`'s parallel test workers.
+  // chunking this fix relies on.
+  //
+  // Two assertions below, both against the same measured run:
+  // - `<1000ms` is the ticket's literal acceptance criterion.
+  // - `<400ms` is a *regression guard*: an opus review of an earlier
+  //   revision of this PR found that forcing the sync listProjects()
+  //   fallback (i.e. reverting the fix) only pushed this same assertion to
+  //   ~630-940ms on this machine - comfortably still under the 1000ms
+  //   acceptance budget, so that assertion alone would NOT have caught a
+  //   revert of the fix. The fixed path measures ~15-45ms end-to-end
+  //   (single-run and under 3-way artificial CPU contention alike; see
+  //   below), so 400ms leaves ample headroom above the fix's own numbers
+  //   while sitting well below every "fallback" measurement observed.
+  //   Confirmed by temporarily forcing the fallback during development:
+  //   it reliably fails the 400ms assertion (and, under contention, comes
+  //   close to or exceeds even the 1000ms one) at this fixture size, while
+  //   the real fix passes both. Verified stable across repeated runs (5/5
+  //   fixed, single-run <45ms; 3/3 fallback >800ms) under artificial CPU
+  //   contention (3 busy-loop processes) to guard against flakiness under
+  //   `npm run verify`'s parallel test workers.
   it(
     'does not block /api/health while reading a large real-SQLite project cache',
     async () => {
@@ -118,7 +130,8 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
       expect(health.response.status).toBe(200);
       // Requested last, but must finish first.
       expect(order[0]).toBe('health');
-      expect(health.elapsedMs).toBeLessThan(1000);
+      expect(health.elapsedMs).toBeLessThan(1000); // ticket's literal acceptance criterion
+      expect(health.elapsedMs).toBeLessThan(400); // regression guard - see comment above
 
       cache.close();
     },

@@ -38,8 +38,10 @@ export type BoardCacheReadOperations = Pick<
   | 'listInteractions'
 >;
 
-// bdboard-mkkx: listProjectsChunked() は毎回 db.prepare() で新しい Statement を
-// 作る (下記参照)。SQL文字列を1箇所にまとめておく。
+// listProjects() (同期・共有 Statement) が使う全件取得SQL。
+// listProjectsChunked() はこれとは別に「id だけ先に一括取得 →
+// 1件ずつ getProjectStmt.get(id)」という方式を取る (下記
+// listProjectsChunked() 本体のコメント参照)。
 const LIST_PROJECTS_SQL = `SELECT * FROM projects ORDER BY root_path ASC`;
 
 export function createReadOperations(
@@ -106,33 +108,59 @@ export function createReadOperations(
     // 前にこの一括読み出しだけでイベントループを長時間塞いでしまい、
     // 意味のある改善にならなかった (手元の計測で確認済み)。
     //
-    // そこで stmt.iterate() (SQLite の cursor を1行ずつ step するレイジー
-    // イテレータ) を使い、行の読み出し自体も1プロジェクトずつに分割する。
-    // ただし listProjectsStmt (クロージャで共有している Statement) を
-    // iterate() すると、await を挟んでいる間その Statement が "busy" のまま
-    // になり、/api/stats と /api/model-stats が同時に listProjectsChunked()
-    // を呼ぶ (実際に起きる) と2回目の呼び出しが
-    // "This statement is busy executing a query" で例外になる (better-sqlite3
-    // は同一 Statement オブジェクトの同時 iterate を許さない)。これを避ける
-    // ため、呼び出しごとに新しい Statement を prepare する — 別オブジェクトなら
-    // 同じ SQL でも独立して同時 iterate できる (better-sqlite3 で確認済み)。
-    // prepare() 自体は軽い操作で、都度呼んでも listProjects() 側の性能には
-    // 影響しない (listProjects() は従来通り共有の listProjectsStmt を使う)。
+    // 最初は stmt.iterate() (SQLite の cursor を1行ずつ step するレイジー
+    // イテレータ) を await を挟んで回す実装だったが、opusレビューで指摘され
+    // 実測でも再現した重大なバグがあった: better-sqlite3 は cursor が
+    // 開いたまま (iterate() を最後まで回し切る/break する前) の間、
+    // 同じ DB コネクション上での**書き込み**系ステートメントの実行を
+    // "This database connection is busy executing a query" で拒否する
+    // (SELECT 系の読み出しは通る — コネクション全体ではなく書き込みだけが
+    // ブロックされる)。listProjectsChunked() は行ごとに await で
+    // イベントループへ制御を返すため、その yield の合間に他のリクエスト
+    // (定期リフレッシュの putProject、CFDスナップショットの
+    // pruneCfdSnapshots、トランスクリプト取り込みの
+    // setTranscriptOffset/appendInteractions 等) が同じ DB コネクション
+    // に対して書き込もうとすると、この統計API呼び出しの最中ずっと例外に
+    // なりうる。単独の Statement オブジェクトの同時 iterate 不可
+    // ("This **statement** is busy executing a query"、別オブジェクトなら
+    // 回避可) とは別の、コネクション単位の問題なので、Statement を毎回
+    // 新規 prepare するだけでは直らない。
     //
-    // 1行 (=1プロジェクト) 読み出す・パースするたびに、bdboard-ve1y の
-    // YieldGate/yieldToEventLoop をそのまま再利用してイベントループへ制御を
-    // 返す。JSON.parse は途中で中断できないので、これ以上細かい粒度
-    // (チケット単位) でのチャンク化はできない — チャンク境界は「プロジェクト
-    // 単位」になる (受け入れ基準が許容する粒度)。listProjects() と同じ行順
+    // そこで cursor を await をまたいで開いたままにしない設計に変更した:
+    // (1) まず `id` 列だけを ORDER BY root_path ASC で一括取得する
+    // (`.all()`。id 文字列だけなのでチケットJSONを含む行全体の一括取得とは
+    // 違い軽い)。(2) 各 id ごとに `getProjectStmt.get(id)` (1行だけ取得して
+    // 即座に完了する呼び出し。iterate() と違って呼び出しの間に "開いたまま"
+    // の状態を残さない) でその行を取得し、JSON をパースする。(2)の1件ごとに
+    // bdboard-ve1y の YieldGate/yieldToEventLoop を再利用してイベントループ
+    // へ制御を返す。これで cursor 自体はどのステップでも await をまたがず、
+    // yield の合間は DB コネクションが空いているので他の書き込みが通る。
+    //
+    // JSON.parse は途中で中断できないので、これ以上細かい粒度 (チケット単位)
+    // でのチャンク化はできない — チャンク境界は「プロジェクト単位」になる
+    // (受け入れ基準が許容する粒度)。listProjects() と同じ行順
     // (ORDER BY root_path ASC) で処理するので、戻り値の順序は変わらない。
+    //
+    // トレードオフ: (1)の id 一覧取得は1回のスナップショットなので、
+    // listProjectsChunked() の実行中に削除された project は該当 id の
+    // get() が undefined を返しスキップされる (listProjects() の
+    // 1回の同期読み出しにあるようなアトミック性は無い)。実行中に新規追加
+    // された project は (1)の時点の一覧に含まれないため結果に現れない。
+    // どちらも「統計表示が一瞬だけ古いスナップショットを見る」程度の実害で、
+    // このAPIの用途 (定期ポーリングされる集計) では許容できる。
     async listProjectsChunked(): Promise<readonly CachedProject[]> {
-      const stmt = db.prepare(LIST_PROJECTS_SQL);
+      const idRows = db
+        .prepare(`SELECT id FROM projects ORDER BY root_path ASC`)
+        .all() as { readonly id: string }[];
       const results: CachedProject[] = [];
       const gate = createYieldGate(1);
-      for (const row of stmt.iterate() as IterableIterator<ProjectRow>) {
-        const entry = rowToCachedProject(row);
-        if (entry !== null) {
-          results.push(entry);
+      for (const { id } of idRows) {
+        const row = getProjectStmt.get(id) as ProjectRow | undefined;
+        if (row !== undefined) {
+          const entry = rowToCachedProject(row);
+          if (entry !== null) {
+            results.push(entry);
+          }
         }
         if (gate.shouldYield()) {
           await yieldToEventLoop();

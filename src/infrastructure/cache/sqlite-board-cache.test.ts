@@ -272,7 +272,12 @@ describe('createSqliteBoardCache', () => {
         }),
       );
 
-      const chunked = await cache.listProjectsChunked?.();
+      // bdboard-mkkx review nit: assert the optional method is actually
+      // present before calling it, so a future accidental removal of
+      // listProjectsChunked() fails loudly here instead of `?.()` silently
+      // resolving to undefined and the test passing vacuously.
+      expect(cache.listProjectsChunked).toBeDefined();
+      const chunked = await cache.listProjectsChunked!();
       expect(chunked).toEqual(cache.listProjects());
       expect(chunked?.map((entry) => entry.project.rootPath)).toEqual([
         '/a/first',
@@ -284,8 +289,8 @@ describe('createSqliteBoardCache', () => {
 
     it('skips corrupt project rows the same way listProjects() does', () => {
       // Covers the same corruption path as the listProjects() tests above
-      // (invalid tickets JSON), through the iterate()-based read path that
-      // listProjectsChunked() uses instead of all().
+      // (invalid tickets JSON), through the id-then-get() chunked read path
+      // that listProjectsChunked() uses instead of all().
       const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'bdboard-cache-chunked-corrupt-'));
       const dbPath = path.join(tmpDir, 'corrupt-tickets.db');
 
@@ -322,8 +327,9 @@ describe('createSqliteBoardCache', () => {
           const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
           const reopened = createSqliteBoardCache(dbPath);
 
-          await expect(reopened.listProjectsChunked?.()).resolves.toHaveLength(1);
-          const chunked = await reopened.listProjectsChunked?.();
+          expect(reopened.listProjectsChunked).toBeDefined();
+          await expect(reopened.listProjectsChunked!()).resolves.toHaveLength(1);
+          const chunked = await reopened.listProjectsChunked!();
           expect(chunked?.[0]?.project.id).toBe('good');
           expect(warnSpy).toHaveBeenCalledWith(
             'bdboard: skipping corrupt project cache row bad-tickets: invalid tickets',
@@ -340,8 +346,14 @@ describe('createSqliteBoardCache', () => {
     it('does not yield when the cache is empty (finishes before a competing macrotask)', async () => {
       const cache = createSqliteBoardCache(':memory:');
 
+      // bdboard-mkkx review nit: an empty cache resolving instantly is the
+      // same observable event order whether listProjectsChunked() ran (and
+      // had nothing to iterate) or was silently skipped by `?.()` because it
+      // no longer exists - assert it's actually present so this test can't
+      // pass vacuously if the method were ever removed.
+      expect(cache.listProjectsChunked).toBeDefined();
       const events = await raceAgainstOneMacrotask(async () => {
-        await cache.listProjectsChunked?.();
+        await cache.listProjectsChunked!();
       });
 
       expect(events).toEqual(['work-done', 'competing-task']);
@@ -359,8 +371,9 @@ describe('createSqliteBoardCache', () => {
         );
       }
 
+      expect(cache.listProjectsChunked).toBeDefined();
       const events = await raceAgainstOneMacrotask(async () => {
-        await cache.listProjectsChunked?.();
+        await cache.listProjectsChunked!();
       });
 
       expect(events).toEqual(['competing-task', 'work-done']);
