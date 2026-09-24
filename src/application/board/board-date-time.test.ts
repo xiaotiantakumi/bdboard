@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   addCalendarDaysToDateKey,
+  getTimeZoneOffsetMs,
   localDateKey,
   subtractCalendarDaysFromDateKey,
   zonedMidnight,
@@ -98,9 +99,13 @@ describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdb
   // IANA tzdata is updated (e.g. a country changing its DST rules), a given
   // pair here can stop being a real transition day in a newer Node/ICU
   // build -- the assertion still holds (round-trip is unconditionally
-  // correct post-fix) but stops being diagnostic for that pair. See
-  // bdboard-ybcv follow-up for a tzdata-version-independent regression
-  // guard.
+  // correct post-fix) but stops being diagnostic for that pair.
+  //
+  // bdboard-0uy7: rather than let that drift pass silently, the tests below
+  // re-derive (against *this* run's tzdata, not this snapshot) whether each
+  // pair is still a genuine skip day, and fail loudly with a regeneration
+  // pointer if too many have gone stale. Regenerate this table with
+  // `node scripts/find-midnight-skip-days.mjs` when that happens.
   const skippedMidnightDays: ReadonlyArray<readonly [string, string]> = [
     ['2015-10-04', 'America/Asuncion'],
     ['2016-10-02', 'America/Asuncion'],
@@ -192,6 +197,55 @@ describe('zonedMidnight / localDateKey round-trip on DST midnight-skip days (bdb
 
   it('has exactly 86 known skipped-midnight days (regression guard for the fixture list itself)', () => {
     expect(skippedMidnightDays.length).toBe(86);
+  });
+
+  // bdboard-0uy7: is dateKey's local midnight *actually* skipped under the
+  // tzdata bundled with the Node/ICU build running this test right now? This
+  // re-derives the answer independently of zonedMidnight's return value --
+  // using the same low-level primitives it's built on (getTimeZoneOffsetMs,
+  // localDateKey), but not its fallback branch -- so it isn't just asserting
+  // zonedMidnight agrees with itself. offset2 !== offset1 means a DST
+  // transition sits near this calendar-day boundary; if the offset-2-based
+  // candidate still reads back as the previous day, local wall-clock 00:00
+  // for dateKey never occurred (it was skipped).
+  function isMidnightSkippedUnderRuntimeTzdata(dateKey: string, timeZone: string): boolean {
+    const [year, month, day] = dateKey.split('-').map(Number);
+    const utcGuess = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+    const offset1 = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
+    const candidate1 = utcGuess - offset1;
+    const offset2 = getTimeZoneOffsetMs(new Date(candidate1), timeZone);
+    if (offset2 === offset1) {
+      return false;
+    }
+    const candidate2 = utcGuess - offset2;
+    return localDateKey(new Date(candidate2), timeZone) !== dateKey;
+  }
+
+  const stillSkippedFlags = skippedMidnightDays.map(([dateKey, timeZone]) =>
+    isMidnightSkippedUnderRuntimeTzdata(dateKey, timeZone),
+  );
+  const staleFixturePairs = skippedMidnightDays.filter((_pair, index) => !stillSkippedFlags[index]);
+  const stillSkippedCount = skippedMidnightDays.length - staleFixturePairs.length;
+  // Threshold, not 100%: a handful of pairs going stale between tzdata
+  // releases is expected and shouldn't block unrelated PRs. Half the table
+  // going stale means it's no longer doing its job and needs regenerating.
+  const MIN_DIAGNOSTIC_FRACTION = 0.5;
+
+  it('keeps enough tzdata-confirmed skip-midnight pairs to stay diagnostic (bdboard-0uy7)', () => {
+    const threshold = Math.ceil(skippedMidnightDays.length * MIN_DIAGNOSTIC_FRACTION);
+    const message = [
+      `${stillSkippedCount}/${skippedMidnightDays.length} fixture pairs are still confirmed`,
+      `local-midnight-skip days under this run's tzdata (need >= ${threshold}).`,
+      "This Node/ICU build's bundled IANA tzdata has likely moved on since the",
+      'table above was generated (e.g. a zone dropped or shifted its DST rule).',
+      staleFixturePairs.length > 0
+        ? `No-longer-diagnostic pairs: ${staleFixturePairs.map(([d, tz]) => `${d} ${tz}`).join(', ')}.`
+        : '',
+      'Regenerate the table with: node scripts/find-midnight-skip-days.mjs',
+    ]
+      .filter((line) => line.length > 0)
+      .join(' ');
+    expect(stillSkippedCount, message).toBeGreaterThanOrEqual(threshold);
   });
 
   it.each(skippedMidnightDays)(
