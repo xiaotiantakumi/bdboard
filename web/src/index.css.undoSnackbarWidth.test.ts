@@ -52,10 +52,12 @@ describe('index.css — .undo-snackbar のモバイル幅レイアウト契約 (
   });
 
   it('width: max-content が無いと shrink-to-fit の上限が画面幅の50%になる', () => {
+    // 先読み否定で `min-width:`/`max-width:` の末尾に誤って一致しないようにする
+    // (それらは別プロパティで、この幅バグの修正にはならない)。
     expect(
       body,
       'width: max-content が無いと left:50% の containing block 計算で幅が画面の半分に縮み、モバイル幅でメッセージが1文字ずつ縦に折り返す',
-    ).toMatch(/width\s*:\s*max-content\b/);
+    ).toMatch(/(?<![\w-])width\s*:\s*max-content\b/);
   });
 
   it('max-width の上限(480px または画面幅-32px)は維持する', () => {
