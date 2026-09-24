@@ -63,4 +63,12 @@ describe('useChatSendState (bdboard-sso1.83 第13a段)', () => {
     expect(screen.getByTestId('state')).toHaveTextContent('"turnRecoveryGeneration":1');
     expect(screen.getByTestId('state')).toHaveTextContent('"session":true');
   });
+
+  it('clearStreamingReplyForKey removes only the requested key', () => {
+    render(<Probe />);
+    act(() => screen.getByText('stream').click());
+    expect(screen.getByTestId('state')).toHaveTextContent('"key":"partial"');
+    act(() => screen.getByText('clear-stream').click());
+    expect(screen.getByTestId('state')).not.toHaveTextContent('"key":"partial"');
+  });
 });

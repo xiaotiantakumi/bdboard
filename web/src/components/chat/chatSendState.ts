@@ -56,6 +56,19 @@ function turnRecoveryGenerationSlice(value: number, action: ChatSendAction): num
   return action.type === 'replace-turn-recovery-generation' ? action.updater(value) : value;
 }
 
+// 送信したのに、このクライアントでは完了を見届けられなかったスレッド
+// (返信を待たずに別スレッドへ移った等)。turn-status の回収が取りこぼした場合の
+// 安全網で、そのスレッドを表示したときに履歴を取り直す起点になる
+// (bdboard-3tw.156)。ref ではなく state なのは、まだ同じスレッドを表示している
+// うちに abort が確定した場合にも取り直しを走らせたいため。
+// unresolvedRefetchRef(取り直し二重取得の防止)は bdboard-sso1.83 第11段で
+// chat/useChatHistoryLoader.ts の内部へ移した。
+// bdboard-zlzo: done/error なしで配信が止まった送信。ターンはサーバー側で続いて
+// いるはずなので、その場ではエラーにせず turn-status 回収に任せる。サーバーは
+// recordCompletedTurn を済ませてからロックを解放するため、完走したターンは
+// processing → completed と見え、間に idle を挟まない。回収前に idle が見えたら
+// ターンは完走しなかった (エージェント失敗など、配信停止後はサーバーが error を
+// 送らない) ので、fail() で通常の送信失敗 (エラー表示と入力復元) に戻す。
 function unresolvedSendsSlice(
   value: Record<string, true>,
   action: ChatSendAction,

@@ -38,36 +38,17 @@ export interface UseChatSendStateResult extends ChatSendState {
  */
 export function useChatSendState(): UseChatSendStateResult {
   const [state, dispatch] = useReducer(chatSendReducer, initialChatSendState);
-  // 送信したのに、このクライアントでは完了を見届けられなかったスレッド
-  // (返信を待たずに別スレッドへ移った等)。turn-status の回収が取りこぼした場合の
-  // 安全網で、そのスレッドを表示したときに履歴を取り直す起点になる
-  // (bdboard-3tw.156)。ref ではなく state なのは、まだ同じスレッドを表示している
-  // うちに abort が確定した場合にも取り直しを走らせたいため。
-  // unresolvedRefetchRef(取り直し二重取得の防止)は bdboard-sso1.83 第11段で
-  // chat/useChatHistoryLoader.ts の内部へ移した。
-  // bdboard-zlzo: done/error なしで配信が止まった送信。ターンはサーバー側で続いて
-  // いるはずなので、その場ではエラーにせず turn-status 回収に任せる。サーバーは
-  // recordCompletedTurn を済ませてからロックを解放するため、完走したターンは
-  // processing → completed と見え、間に idle を挟まない。回収前に idle が見えたら
-  // ターンは完走しなかった (エージェント失敗など、配信停止後はサーバーが error を
-  // 送らない) ので、fail() で通常の送信失敗 (エラー表示と入力復元) に戻す。
-  // streamingKey は配信停止時点の送信元の会話キー (streamingReply の Record を
-  // 引くキー、bdboard-1qoe) を保持する
-  // (bdboard-3tw.166)。回収が確定する (completed のハイドレーション or fail() 側の
-  // 送信失敗表示) まで、この会話キーに対応する部分テキストを画面に残し続けるための
-  // 目印で、確定した瞬間にだけ clearStreamingReplyForKey で消す。
-  // bdboard-1qoe: 会話キーでスコープした Record にする (単一スロットだった頃は、
-  // 無関係な会話/プロジェクトへの書き込み (送信開始時の初期化・完了時のクリア) が
-  // 無条件にスロット全体を上書きし、別の会話がバックグラウンドで回収待ちの間
-  // 表示し続けているはずの部分テキストを巻き添えで消してしまっていた。詳細は
-  // 元チケット (bdboard-v3ag PR #492 の Opus レビュー worth-considering W2) 参照。
+  // streamingReply(bdboard-1qoe)と unresolvedSends(bdboard-3tw.156/bdboard-zlzo)の
+  // 由来コメントは chatSendState.ts 側(initialChatSendState/unresolvedSendsSlice の
+  // 近く)にある。ここに残すのは detachedStreamSendRef/requestAbortControllerRef の
+  // 2つの ref だけ。
   const detachedStreamSendRef = useRef<Record<string, DetachedStreamSend>>({});
   // bdboard-t5i0 (bdboard-1qoe の残課題): streamingReply と対称的に、projectId を
   // キーにした Record にする。単一スロットの ref だった頃は、サーバー側の isBusy
   // ロックがプロジェクト単位である以上ごく普通に起きる「プロジェクト A の配信停止が
   // 回収待ちのまま、別プロジェクト B でも配信停止した」場合に、後から配信停止した B
   // への代入が A の { fail, streamingKey, ... } を無条件に上書きしていた。結果、A の
-  // fail() コールバックが永久に失われ、A の checkTurnStatus (下の effect) がその後
+  // fail() コールバックが永久に失われ、A の checkTurnStatus (chat/useTurnStatusRecovery.ts) がその後
   // 'failed'/'idle' を見ても、ref はもう B の情報しか持っていないため A 用の fail()
   // を呼べず、A 側の画面は「回収中」のまま二度と解決しない凍りついた表示になっていた
   // (実害の詳細はチケット本文・コメント参照)。projectId ごとに独立したエントリへ

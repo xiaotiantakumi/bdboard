@@ -28,4 +28,17 @@ describe('useAbortOnConversationChange', () => {
     rerender({ key: 'a' });
     expect(controller.signal.aborted).toBe(false);
   });
+
+  it('aborts on unmount (panel closed while a request is in flight)', () => {
+    const controller = new AbortController();
+    const ref = createRef<AbortController | null>();
+    ref.current = controller;
+    const { unmount } = renderHook(
+      ({ key }) => useAbortOnConversationChange(ref, key),
+      { initialProps: { key: 'a' } },
+    );
+    unmount();
+    expect(controller.signal.aborted).toBe(true);
+    expect(ref.current).toBeNull();
+  });
 });
