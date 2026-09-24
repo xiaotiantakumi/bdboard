@@ -50,7 +50,7 @@ describe('useHarnessStatusData', () => {
   it('is enabled only when view === "next", matching App.tsx', async () => {
     fetchAllHarnessStatusMock.mockResolvedValue(makeAllStatus());
 
-    renderHarnessStatusData('merged');
+    renderHarnessStatusData('split');
     // Give any accidental fetch a chance to fire.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchAllHarnessStatusMock).not.toHaveBeenCalled();
@@ -86,7 +86,7 @@ describe('useHarnessStatusData', () => {
 
   it('returns an empty harnessStatuses map while disabled (not on the Next Up view)', () => {
     fetchAllHarnessStatusMock.mockResolvedValue(makeAllStatus());
-    const { result } = renderHarnessStatusData('merged');
+    const { result } = renderHarnessStatusData('split');
 
     expect(result.current.harnessStatuses.size).toBe(0);
     expect(result.current.harnessStatusQuery.data).toBeUndefined();

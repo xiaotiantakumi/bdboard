@@ -6,7 +6,7 @@ import type { BoardFilterPreset, BoardFilterPresetState } from '../uiPersistedSt
 import { ViewToolbar } from './ViewToolbar';
 
 const emptyPresetState: BoardFilterPresetState = {
-  view: 'merged',
+  view: 'split',
   selectedProjectIds: [],
   priorityCeiling: 'all',
   issueTypes: [],
@@ -21,7 +21,7 @@ function renderToolbar(overrides?: Partial<React.ComponentProps<typeof ViewToolb
     defaultOptions: { queries: { retry: false } },
   });
   const props: React.ComponentProps<typeof ViewToolbar> = {
-    view: 'merged',
+    view: 'split',
     boardFilterPresets: [] as BoardFilterPreset[],
     onBoardFilterPresetsChange: vi.fn(),
     boardFilterPresetState: emptyPresetState,

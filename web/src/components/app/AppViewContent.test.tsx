@@ -11,7 +11,7 @@ import { AppViewContent, type AppViewContentProps } from './AppViewContent';
 // bdboard-62p4 PR-2: AppViewContent は「どの view のときにどの子コンポーネントを
 // 出すか」という出し分けロジックが全てなので、各子をモックに置き換えて view
 // ごとに正しいものが描画されることを直接検証する。ボード系ビュー
-// (merged/split/next) の出し分け自体は AppBoardViewSwitch.test.tsx が見ているので、
+// (split/next) の出し分け自体は AppBoardViewSwitch.test.tsx が見ているので、
 // ここでは「AppViewContent が AppBoardViewSwitch を無条件に描画し、view を
 // そのまま渡すこと」「AppBoardViewSwitch へ渡す boardMeta の再ピックが
 // 元の値を落とさず・すり替えずに転送されること」を確認する(自己ゲートは
@@ -114,7 +114,7 @@ function makeNotificationEvents(): UseNotificationEventsResult {
 
 function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContentProps {
   return {
-    view: 'merged',
+    view: 'split',
     filterState: makeFilterState(),
     epicFilterId: undefined,
     onClearEpicFilter: vi.fn(),
@@ -169,7 +169,7 @@ function expectOnlyLeaf(testid: string | null) {
 
 describe('AppViewContent', () => {
   it('always delegates to AppBoardViewSwitch regardless of view (self-gating lives there)', () => {
-    for (const view of ['merged', 'split', 'next', 'activity', 'settings'] as ViewMode[]) {
+    for (const view of ['split', 'next', 'activity', 'settings'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(screen.getByTestId('board-view-switch')).toBeInTheDocument();
       unmount();
@@ -180,7 +180,7 @@ describe('AppViewContent', () => {
     // "view をそのまま渡すこと" を直接検証する: AppBoardViewSwitch はモック
     // されているため描画結果からは view の値を確認できない。呼び出し引数を
     // 直接見ることで、view がハードコードされていないことを保証する。
-    for (const view of ['merged', 'split', 'next'] as ViewMode[]) {
+    for (const view of ['split', 'next'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(appBoardViewSwitchMock.mock.calls.at(-1)?.[0]).toMatchObject({ view });
       unmount();
@@ -219,7 +219,7 @@ describe('AppViewContent', () => {
     render(
       <AppViewContent
         {...makeProps({
-          view: 'merged',
+          view: 'split',
           board,
           boardMeta: {
             projectNames,
@@ -278,8 +278,8 @@ describe('AppViewContent', () => {
     });
   }
 
-  it('renders no non-board leaf view for the board views (merged/split/next)', () => {
-    for (const view of ['merged', 'split', 'next'] as ViewMode[]) {
+  it('renders no non-board leaf view for the board views (split/next)', () => {
+    for (const view of ['split', 'next'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expectOnlyLeaf(null);
       unmount();

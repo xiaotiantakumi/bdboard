@@ -150,8 +150,27 @@ const KNOWN_SUB_AA_DARK: ReadonlyMap<string, KnownSubAA> = new Map([]);
  *   適用して light 5.42:1 へ引き上げた (dark も同じ修正で 3.85:1 → 7.24:1)。
  *
  * floor の丸め方・両方向チェックの理由は KNOWN_SUB_AA_DARK の doc コメントと同じ。
+ *
+ * bdboard-mkm1.1 (2026-09-24) で `span.project-harness-status.project-harness-status-missing`
+ * (light 4.32:1) を
+ * 追加。このバッジ (`ProjectHarnessBadges.tsx`) はプロジェクト単位描画でのみ出現し、
+ * 既定ビューが「統合」(merged) だった間はこの掃引 (ボード+詳細パネル) が一度も
+ * 描画対象に含めていなかった。既定ビューを「分割」に変えたことで初めて掃引に現れた
+ * 既存の潜在バグで、bdboard-mkm1.1 が色を変えたわけではない。`--badge-stalled-fg` は
+ * 他の複数セレクタ・背景と共有されているトークンなので、この PR の範囲では触れず
+ * bdboard-an0k で追跡する(解消時にこのエントリを削除すること)。
  */
-const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([]);
+const KNOWN_SUB_AA_LIGHT: ReadonlyMap<string, KnownSubAA> = new Map([
+  [
+    'span.project-harness-status.project-harness-status-missing',
+    {
+      measured: 4.32,
+      floor: 4.27,
+      note: 'bdboard-an0k — --badge-stalled-fg (#a85000) on --badge-neutral-bg, light。' +
+        '分割ビュー既定化で掃引に初めて出現した既存バグ。',
+    },
+  ],
+]);
 
 type Sample = {
   key: string;
@@ -496,6 +515,12 @@ interface WipSweepBoardViewLike {
 
 /**
  * `in_progress`/`done` 以外のレーンから先頭 2 件 (中身は本物のまま) を `in_progress` へ動かす。
+ * 動かせたら true、この board に候補レーンが無ければ false を返す(bdboard-mkm1.1: 以前は
+ * 見つからなければ即 throw していたが、「分割」が既定ビューになったことで `body.projects`
+ * が実データで送られるようになり(bdboard-bdsd の想定は merged 既定 = projects は常に空
+ * だった)、複数プロジェクトのうち候補カードが無いプロジェクト単体が混ざると即死するように
+ * なった。呼び出し側 mockWipExceededLane で「どの board(プロジェクト別 or merged)も
+ * 1つも動かせなかった」ときだけ描画確認不能として扱う設計に変更した)。
  *
  * bdboard-bdsd: 当初は `ready` レーン固定だった。`deriveLane()` を机上でシミュレートして
  * `test/fixtures/bd/bdboard.list.json` は ready に 4 件と見積もったが、実際にサーバーが返す
@@ -507,7 +532,7 @@ interface WipSweepBoardViewLike {
  */
 const IN_PROGRESS_SOURCE_LANE_CANDIDATES = ['ready', 'awaiting_human', 'blocked'] as const;
 
-function boostIntoInProgress(board: WipSweepBoardLike): void {
+function boostIntoInProgress(board: WipSweepBoardLike): boolean {
   const inProgress = board.lanes.in_progress ?? [];
   for (const laneName of IN_PROGRESS_SOURCE_LANE_CANDIDATES) {
     const source = board.lanes[laneName] ?? [];
@@ -519,15 +544,10 @@ function boostIntoInProgress(board: WipSweepBoardLike): void {
         }
       }
       board.lanes.in_progress = [...inProgress, ...moved];
-      return;
+      return true;
     }
   }
-  throw new Error(
-    'bdboard-bdsd: WIP 超過レーンのモック元にできる候補レーン ' +
-      `(${IN_PROGRESS_SOURCE_LANE_CANDIDATES.join('/')}) のいずれにも 2 件以上のカードが無かった。` +
-      'フィクスチャ (test/fixtures/bd/bdboard.list.json) の構成が変わった可能性が高いので、' +
-      'このモックの前提を見直すこと。',
-  );
+  return false;
 }
 
 /**
@@ -560,11 +580,20 @@ async function mockWipExceededLane(page: Page): Promise<void> {
   await page.route('**/api/board?*', async (route) => {
     const response = await route.fetch();
     const body = (await response.json()) as WipSweepBoardViewLike;
+    let boostedAny = false;
     for (const entry of body.projects) {
-      boostIntoInProgress(entry.board);
+      boostedAny = boostIntoInProgress(entry.board) || boostedAny;
     }
     if (body.merged !== null) {
-      boostIntoInProgress(body.merged);
+      boostedAny = boostIntoInProgress(body.merged) || boostedAny;
+    }
+    if (!boostedAny) {
+      throw new Error(
+        'bdboard-bdsd: WIP 超過レーンのモック元にできる候補レーン ' +
+          `(${IN_PROGRESS_SOURCE_LANE_CANDIDATES.join('/')}) が、どの board(プロジェクト別 ` +
+          'および merged)にも1つも無かった。フィクスチャ (test/fixtures/bd/bdboard.list.json) ' +
+          'の構成が変わった可能性が高いので、このモックの前提を見直すこと。',
+      );
     }
     await route.fulfill({
       status: response.status(),

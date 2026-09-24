@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useTicketDeepLink } from './useTicketDeepLink';
 
 function renderDeepLink(
-  initialView: 'merged' | 'stats' = 'merged',
+  initialView: 'split' | 'stats' = 'split',
   onViewChange = vi.fn(),
 ) {
   return renderHook(
@@ -15,7 +15,7 @@ function renderDeepLink(
 
 function renderDeepLinkStrict() {
   return renderHook(({ view }) => useTicketDeepLink({ view, onViewChange: vi.fn() }), {
-    initialProps: { view: 'merged' as const },
+    initialProps: { view: 'split' as const },
     wrapper: StrictMode,
   });
 }
@@ -42,7 +42,7 @@ describe('useTicketDeepLink', () => {
     window.history.replaceState(null, '', '/#view=stats');
     const onViewChange = vi.fn();
 
-    renderDeepLink('merged', onViewChange);
+    renderDeepLink('split', onViewChange);
 
     await waitFor(() => {
       expect(onViewChange).toHaveBeenCalledWith('stats');

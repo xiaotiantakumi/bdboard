@@ -77,7 +77,8 @@ export function useTicketDeepLink({
   selectedTicketIdRef.current = selectedTicketId;
 
   // Apply view from the initial hash without letting the sync effect overwrite it
-  // with the stale persisted view (merged) first.
+  // with the stale persisted view first (e.g. a legacy 'merged' view migrated to
+  // 'split' by validateViewMode; bdboard-mkm1.1).
   useEffect(() => {
     const pending = pendingHashViewRef.current;
     if (pending === null) {

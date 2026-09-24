@@ -203,13 +203,13 @@ function priorityFilterBoardView(): BoardViewDto {
     lanes: {
       ...makeEmptyLanes(),
       ready: [
-        makeFilterCard('filter-p0-ready', 'ready', { priority: 0, title: 'Priority P0 Ready' }),
-        makeFilterCard('filter-p3-ready', 'ready', { priority: 3, title: 'Priority P3 Ready' }),
+        makeFilterCard('filter-p0-ready', 'ready', { priority: 0, title: 'Split P0 Ready' }),
+        makeFilterCard('filter-p3-ready', 'ready', { priority: 3, title: 'Split P3 Ready' }),
       ],
       in_progress: [
         makeFilterCard('filter-p1-progress', 'in_progress', {
           priority: 1,
-          title: 'Priority P1 Progress',
+          title: 'Split P1 Progress',
           status: 'in_progress',
         }),
       ],
@@ -226,8 +226,15 @@ function priorityFilterBoardView(): BoardViewDto {
         makeFilterCard('split-p0-ready', 'ready', { priority: 0, title: 'Split P0 Ready' }),
         makeFilterCard('split-p3-ready', 'ready', { priority: 3, title: 'Split P3 Ready' }),
       ],
+      in_progress: [
+        makeFilterCard('split-p1-progress', 'in_progress', {
+          priority: 1,
+          title: 'Split P1 Progress',
+          status: 'in_progress',
+        }),
+      ],
     },
-    cardCount: 2,
+    cardCount: 3,
     closedTotal: 0,
     truncatedClosedIds: [],
   };
@@ -514,24 +521,24 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     localStorage.clear();
   });
 
-  it('AC1: priority ceiling hides cards from merged view across lanes', async () => {
+  it('AC1: priority ceiling hides cards from split view across lanes', async () => {
     const user = userEvent.setup();
     setupFilterApiMocks(priorityFilterBoardView());
 
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
-      expect(screen.getByText('Priority P3 Ready')).toBeInTheDocument();
-      expect(screen.getByText('Priority P1 Progress')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P3 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P1 Progress')).toBeInTheDocument();
     });
 
     await user.selectOptions(screen.getByLabelText('優先度上限'), '1');
 
-    expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
-    expect(screen.getByText('Priority P1 Progress')).toBeInTheDocument();
-    expect(screen.queryByText('Priority P3 Ready')).not.toBeInTheDocument();
-    expect(screen.queryByText('filter-p3-ready')).not.toBeInTheDocument();
+    expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
+    expect(screen.getByText('Split P1 Progress')).toBeInTheDocument();
+    expect(screen.queryByText('Split P3 Ready')).not.toBeInTheDocument();
+    expect(screen.queryByText('split-p3-ready')).not.toBeInTheDocument();
   });
 
   it('AC1: priority ceiling hides cards from split view', async () => {
@@ -541,10 +548,8 @@ describe('board filter acceptance criteria (bdboard-3tw.101)', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
     });
-
-    await user.click(screen.getByRole('button', { name: '分割' }));
 
     await waitFor(() => {
       expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
@@ -883,7 +888,7 @@ describe('header help overlays', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
     });
 
     await user.keyboard('?');
@@ -921,7 +926,7 @@ describe('header help overlays', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
@@ -937,7 +942,7 @@ describe('header help overlays', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole('button', { name: 'その他のメニュー' }));
@@ -980,7 +985,7 @@ describe('header help overlays', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
     });
     expect(screen.queryByLabelText('使い方のヒント')).not.toBeInTheDocument();
   });
@@ -991,7 +996,7 @@ describe('header help overlays', () => {
     renderApp();
 
     await waitFor(() => {
-      expect(screen.getByText('Priority P0 Ready')).toBeInTheDocument();
+      expect(screen.getByText('Split P0 Ready')).toBeInTheDocument();
     });
     expect(screen.queryByLabelText('使い方のヒント')).not.toBeInTheDocument();
 

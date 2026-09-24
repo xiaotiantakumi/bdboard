@@ -65,7 +65,7 @@ export function ViewToolbar({
   onOpenChat,
   presetSaveIntentToken,
 }: ViewToolbarProps) {
-  const showBoardFilters = view === 'merged' || view === 'split';
+  const showBoardFilters = view === 'split';
 
   return (
     <div className="view-toolbar">

@@ -97,8 +97,8 @@ describe('App error boundaries (bdboard-yfq)', () => {
     await user.click(checkbox);
     expect(checkbox).toBeChecked();
 
+    await user.click(screen.getByRole('button', { name: 'Next Up' }));
     await user.click(screen.getByRole('button', { name: '分割' }));
-    await user.click(screen.getByRole('button', { name: '統合' }));
 
     // ビュー境界は key={view} で作り直される。選択プロバイダーをその内側に
     // 置くと再マウントが伝わり、ビューを往復しただけで選択が消える

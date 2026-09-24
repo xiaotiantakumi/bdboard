@@ -175,7 +175,9 @@ test.describe('mobile input font-size', () => {
     // = textarea[class] / select[class] 方式で取りこぼしていた形）は、settings view の
     // .settings-panel-add-row 直下の select が引き続きカバーする。
 
-    await page.getByRole('button', { name: '統合', exact: true }).click();
+    // bdboard-mkm1.1: 「統合」タブは削除された。既定ビューは既に「分割」だが、
+    // 直前に設定ビューへ遷移しているのでボード系ビューへ明示的に戻す必要がある。
+    await page.getByRole('button', { name: '分割', exact: true }).click();
     await expect(card).toBeVisible({ timeout: 15_000 });
 
     const chatButton = page.getByRole('button', { name: 'チャット' });

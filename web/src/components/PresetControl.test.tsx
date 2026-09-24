@@ -10,7 +10,7 @@ import {
 import { PresetControl } from './PresetControl';
 
 const currentState: BoardFilterPresetState = {
-  view: 'merged',
+  view: 'split',
   selectedProjectIds: ['proj-1'],
   priorityCeiling: '1',
   issueTypes: ['bug'],
@@ -24,7 +24,7 @@ const samplePresets: BoardFilterPreset[] = [
   {
     id: 'preset-1',
     name: 'P1バグだけ',
-    view: 'merged',
+    view: 'split',
     selectedProjectIds: ['proj-1'],
     priorityCeiling: '1',
     issueTypes: ['bug'],
@@ -171,7 +171,7 @@ describe('PresetControl', () => {
 
     await openControl(user, 'P1バグだけ');
     expect(
-      screen.getByText(/いまの絞り込み: ビュー: 統合 \/ プロジェクト1件 \/ P1以上/),
+      screen.getByText(/いまの絞り込み: ビュー: 分割 \/ プロジェクト1件 \/ P1以上/),
     ).toBeInTheDocument();
   });
 

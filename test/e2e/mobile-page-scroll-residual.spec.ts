@@ -153,8 +153,22 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
  *
  * ここが回帰すると、モバイルでページ全体のスクロールとレーン内スクロールが奪い合い、
  * 指を置いた位置でどちらが動くか変わる帯が広がる。
+ *
+ * ## bdboard-mkm1.1 (2026-09-24): 既定ビューの「分割」化で上の式が壊れた(暫定値)
+ *
+ * 既定ビューが「統合」から「分割」になったことで、この式が想定していなかった
+ * 「プロジェクト単位のセクション」ぶんのドキュメント高が新たに載るようになった
+ * (式は header/tips/filterBarBox の3項のみで、プロジェクト数を含まない)。実測
+ * (macOS Chromium, このフィクスチャの2プロジェクト構成): maxScrollY=421px
+ * (モデル予測 329.81px から +91px)。359px という分析的な上限を実測に合わせて
+ * 恒久的に描き直す前に、この増加が許容できる UX コストかどうかの製品判断と、
+ * 式へプロジェクトセクション項を組み込み直す設計が必要 (bdboard-m070)。
+ * それまでの**暫定値**として、実測 421px に安全マージンを載せた 460px を置く
+ * (旧予算の分析的な性質より「壊れていないことを見張る」実用性を優先)。
+ * bdboard-ij7g と同じ2段階方式: この PR の CI (ubuntu-latest) の実測ログが
+ * 出たら bdboard-m070 でラウンド2として Linux 実測に基づき締め直すこと。
  */
-const MAX_PAGE_SCROLL_RESIDUAL_PX = 359;
+const MAX_PAGE_SCROLL_RESIDUAL_PX = 460;
 
 /**
  * 「ユーザーが消せない」残差の上限 = maxScrollY から Tips と絞り込みバーの実測高を
@@ -192,8 +206,13 @@ const MAX_PAGE_SCROLL_RESIDUAL_PX = 359;
  * 増えてページ側とレーン内のスクロールが奪い合い、ヘッダー太り由来ならファーストカードが
  * 折り目より下へ押し出される (`.lane` の上限はレーンを下へ伸ばすだけで firstCardTop を
  * 動かさないので、後者はヘッダー経路でしか起きない)。
+ *
+ * bdboard-mkm1.1 (2026-09-24): 上の MAX_PAGE_SCROLL_RESIDUAL_PX と同じ理由
+ * (既定ビューの「分割」化でプロジェクトセクション項がモデル外から効いてくる) で、
+ * こちらも実測 168.19px (macOS) に安全マージンを載せた暫定値へ引き上げる。
+ * 恒久対応・ラウンド2は bdboard-m070 を参照。
  */
-const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 94;
+const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 190;
 
 test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
   test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });

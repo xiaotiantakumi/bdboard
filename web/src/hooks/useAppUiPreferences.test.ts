@@ -32,6 +32,7 @@ describe('useAppUiPreferences', () => {
     const { result } = renderHook(() => useAppUiPreferences());
 
     act(() => {
+      result.current.setView('next');
       result.current.setView('split');
       result.current.setSelectedProjectIds(['proj-1']);
       result.current.setLastChatProjectId('proj-1');
@@ -39,7 +40,7 @@ describe('useAppUiPreferences', () => {
         {
           id: 'preset-1',
           name: 'My preset',
-          view: 'merged',
+          view: 'split',
           selectedProjectIds: [],
           priorityCeiling: 'all',
           issueTypes: [],
@@ -107,6 +108,12 @@ describe('useAppUiPreferences', () => {
     expect(result.current.tipsBannerDismissed).toBe(true);
     // Untouched keys still fall back to their documented defaults.
     expect(result.current.statsWeeks).toBe(8);
+  });
+
+  it('migrates a persisted merged view to split on mount', () => {
+    localStorage.setItem(UI_STORAGE_KEYS.view, JSON.stringify('merged'));
+    const { result } = renderHook(() => useAppUiPreferences());
+    expect(result.current.view).toBe('split');
   });
 
   it('falls back to the default when a persisted value fails validation', () => {

@@ -5,23 +5,23 @@ import {
   type PrBadgeDto,
   type ProjectHarnessStatusDto,
 } from '../../api';
-import { isBoardFilterActive } from '../../boardFilter';
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
 import { type NextUpLimit, type ViewMode } from '../../uiPersistedState';
 import { type WipLimitsOverrides } from '../../wip-limits';
 import { BoardFilterBar } from '../BoardFilterBar';
-import { BoardLanes, hasVisibleCards, SplitBoard } from '../BoardView';
+import { SplitBoard } from '../BoardView';
 import { BulkActionBar } from '../BulkActionBar';
 import { NextUpView } from '../NextUpView';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 
 /**
- * bdboard-62p4 PR-2: AppViewContent からボード系ビュー(merged/split/next)の
+ * bdboard-62p4 PR-2: AppViewContent からボード系ビュー(split/next)の
  * 表示だけを切り出したもの。フィルタバー・エピック絞り込みインジケータ・
- * 読み込み中/エラー表示・一括操作バー・BoardLanes/SplitBoard/NextUpView の
+ * 読み込み中/エラー表示・一括操作バー・SplitBoard/NextUpView の
  * 出し分けをまとめる。元は AppViewContent.tsx 1ファイルに収めると ESLint の
- * 200行上限を超えたため分けた(表示専用・state/effect は持たない)。JSX・
- * 分岐条件・渡す値は App.tsx から移した時点から変えていない。
+ * 200行上限を超えたため分けた(表示専用・state/effect は持たない)。
+ * bdboard-mkm1.1 で「統合」タブ削除に伴い BoardLanes(merged 専用の描画分岐)
+ * を削除し、split 固定へ単純化した(それ以外の JSX・渡す値は変えていない)。
  */
 export interface AppBoardViewSwitchProps {
   view: ViewMode;
@@ -66,7 +66,7 @@ export function AppBoardViewSwitch({
 }: AppBoardViewSwitchProps) {
   return (
     <>
-      {(view === 'merged' || view === 'split') && (
+      {view === 'split' && (
         <BoardFilterBar
           priorityCeiling={filterState.priorityCeiling}
           onPriorityCeilingChange={filterState.setPriorityCeiling}
@@ -79,7 +79,7 @@ export function AppBoardViewSwitch({
           onFilterTextChange={filterState.setFilterText}
         />
       )}
-      {(view === 'merged' || view === 'split' || view === 'next') &&
+      {(view === 'split' || view === 'next') &&
         epicFilterId !== undefined && (
           <div className="filter-bar-epic-indicator">
             <span>エピック {epicFilterId} のみ表示中</span>
@@ -88,10 +88,10 @@ export function AppBoardViewSwitch({
             </button>
           </div>
         )}
-      {(view === 'merged' || view === 'split' || view === 'next') && board.query.isLoading && (
+      {(view === 'split' || view === 'next') && board.query.isLoading && (
         <p className="loading">読み込み中…</p>
       )}
-      {(view === 'merged' || view === 'split' || view === 'next') && board.query.error !== null && (
+      {(view === 'split' || view === 'next') && board.query.error !== null && (
         <p className="error-message">
           {board.query.error instanceof Error
             ? board.query.error.message
@@ -105,44 +105,8 @@ export function AppBoardViewSwitch({
           「選べるのに何もできない」状態になる。Next Up が並べるのは
           board.lanes.ready のカードだけで、cardsById は merged と全
           projects から集めているので、表示中のカードは必ず含まれる。 */}
-      {(view === 'merged' || view === 'split' || view === 'next') && (
+      {(view === 'split' || view === 'next') && (
         <BulkActionBar cardsById={board.cardsById} availableLabels={board.availableLabels ?? []} />
-      )}
-      {board.query.data !== undefined && view === 'merged' && board.query.data.merged !== null && (
-        (filterState.stalledOnly || isBoardFilterActive(filterState.filter)) &&
-        !hasVisibleCards(
-          board.query.data.merged,
-          filterState.hideDone,
-          filterState.stalledOnly,
-          filterState.filter,
-        ) ? (
-          <p className="empty-message">
-            {isBoardFilterActive(filterState.filter)
-              ? '表示できるチケットがありません'
-              : filterState.stalledOnly
-                ? '滞留しているチケットはありません'
-                : filterState.hideDone
-                  ? '表示できるチケットがありません(doneレーンは非表示中です)'
-                  : '表示できるチケットがありません'}
-          </p>
-        ) : (
-          <BoardLanes
-            board={board.query.data.merged}
-            hideDone={filterState.hideDone}
-            stalledOnly={filterState.stalledOnly}
-            filter={filterState.filter}
-            showProjectName
-            projectNames={boardMeta.projectNames}
-            projectActiveSessions={boardMeta.projectActiveSessions}
-            pendingDecisionIds={boardMeta.pendingDecisionIds}
-            prLinksById={boardMeta.prLinksById}
-            sectionKey={`merged-${boardMeta.selectedProjectIdsJoined}`}
-            onCardClick={onCardClick}
-            collapsedLanes={filterState.collapsedLanesSet}
-            onToggleLaneCollapse={filterState.onToggleLaneCollapse}
-            wipLimitsOverrides={boardMeta.wipLimitsOverrides}
-          />
-        )
       )}
       {board.query.data !== undefined && view === 'split' && (
         <SplitBoard
@@ -177,9 +141,9 @@ export function AppBoardViewSwitch({
         />
       )}
       {board.query.data !== undefined &&
-        (view === 'merged' || view === 'next') &&
+        view === 'next' &&
         board.query.data.merged === null && (
-          <p className="empty-message">統合ビューのデータがありません</p>
+          <p className="empty-message">Next Up のデータがありません</p>
         )}
     </>
   );

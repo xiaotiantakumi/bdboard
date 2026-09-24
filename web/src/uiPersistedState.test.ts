@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  boardApiModeFromView,
   boardFilterPresetStatesEqual,
+  DEFAULT_VIEW,
   describeBoardFilterPresetState,
   findDefaultBoardFilterPreset,
   findMatchingBoardFilterPreset,
@@ -32,6 +34,23 @@ import {
 describe('uiPersistedState', () => {
   it('accepts stats as a view mode', () => {
     expect(validateViewMode('stats')).toBe('stats');
+  });
+
+  it('migrates the removed merged view to split and exposes split as the only Kanban view', () => {
+    expect(validateViewMode('merged')).toBe('split');
+    expect(DEFAULT_VIEW).toBe('split');
+    expect(VIEW_ITEMS.map(({ view }) => view)).toEqual(expect.not.arrayContaining(['merged']));
+  });
+
+  // bdboard-mkm1.1: 実装中に一度、常に 'split' を返す形へ書き換えられて Next Up が
+  // サーバーの merged 集約データを失う回帰が起きた(レビューで検出・修正済み)。
+  // 'merged' タブ削除後も、分割ビュー以外は引き続きサーバーへ 'merged' を要求する
+  // ことをここで直接固定する。
+  it('requests merged from the server for every non-split view, and split only for split', () => {
+    expect(boardApiModeFromView('split')).toBe('split');
+    for (const view of VIEW_ITEMS.map(({ view }) => view).filter((v) => v !== 'split')) {
+      expect(boardApiModeFromView(view)).toBe('merged');
+    }
   });
 
   it('accepts graph as a view mode', () => {
@@ -118,7 +137,7 @@ describe('uiPersistedState', () => {
       {
         id: 'preset-1',
         name: 'P1バグだけ',
-        view: 'merged',
+        view: 'split',
         selectedProjectIds: ['proj-1'],
         priorityCeiling: '1',
         issueTypes: ['bug'],
@@ -132,6 +151,20 @@ describe('uiPersistedState', () => {
     expect(validateBoardFilterPresets([{ ...presets[0], id: '' }])).toBeNull();
     expect(validateBoardFilterPresets([{ ...presets[0], view: 'invalid' }])).toBeNull();
     expect(validateBoardFilterPresets('bad')).toBeNull();
+  });
+
+  it('migrates a saved merged-view preset to split', () => {
+    const [validated] = validateBoardFilterPresets([{
+      id: 'preset-merged',
+      name: '旧統合ビュー',
+      view: 'merged',
+      selectedProjectIds: [],
+      priorityCeiling: 'all',
+      issueTypes: [],
+      labels: [],
+      filterText: '',
+    }]) ?? [];
+    expect(validated.view).toBe('split');
   });
 
   it('backfills legacy presets missing hideDone / stalledOnly with toggle defaults', () => {
@@ -203,7 +236,7 @@ describe('uiPersistedState', () => {
       {
         id: 'preset-2',
         name: 'Other',
-        view: 'merged',
+        view: 'split',
         selectedProjectIds: [],
         priorityCeiling: 'all',
         issueTypes: [],
@@ -322,7 +355,7 @@ describe('preset defaults (Header Redesign Turn 4 / 4b)', () => {
   const base: BoardFilterPreset = {
     id: 'preset-1',
     name: 'P1バグだけ',
-    view: 'merged',
+    view: 'split',
     selectedProjectIds: ['proj-1'],
     priorityCeiling: '1',
     issueTypes: ['bug'],
@@ -384,7 +417,7 @@ describe('hasStoredBoardFilterState', () => {
 
 describe('describeBoardFilterPresetState', () => {
   const state: BoardFilterPresetState = {
-    view: 'merged',
+    view: 'split',
     selectedProjectIds: [],
     priorityCeiling: 'all',
     issueTypes: [],
@@ -395,7 +428,7 @@ describe('describeBoardFilterPresetState', () => {
   };
 
   it('always names the view and the project scope', () => {
-    expect(describeBoardFilterPresetState(state)).toBe('ビュー: 統合 / 全プロジェクト');
+    expect(describeBoardFilterPresetState(state)).toBe('ビュー: 分割 / 全プロジェクト');
     expect(
       describeBoardFilterPresetState({ ...state, view: 'next', selectedProjectIds: ['a', 'b'] }),
     ).toBe('ビュー: Next Up / プロジェクト2件');
@@ -412,13 +445,13 @@ describe('describeBoardFilterPresetState', () => {
         filterText: '  alpha  ',
       }),
     ).toBe(
-      'ビュー: 統合 / プロジェクト3件 / P1以上 / 種別1件 / ラベル2件 / 検索「alpha」',
+      'ビュー: 分割 / プロジェクト3件 / P1以上 / 種別1件 / ラベル2件 / 検索「alpha」',
     );
   });
 
   it('ignores whitespace-only search text', () => {
     expect(describeBoardFilterPresetState({ ...state, filterText: '   ' })).toBe(
-      'ビュー: 統合 / 全プロジェクト',
+      'ビュー: 分割 / 全プロジェクト',
     );
   });
 
@@ -429,18 +462,18 @@ describe('describeBoardFilterPresetState', () => {
         selectedProjectIds: ['a', 'b', 'c'],
         stalledOnly: true,
       }),
-    ).toBe('ビュー: 統合 / プロジェクト3件 / 滞留のみ');
+    ).toBe('ビュー: 分割 / プロジェクト3件 / 滞留のみ');
 
     expect(describeBoardFilterPresetState({ ...state, stalledOnly: false })).toBe(
-      'ビュー: 統合 / 全プロジェクト',
+      'ビュー: 分割 / 全プロジェクト',
     );
 
     expect(describeBoardFilterPresetState({ ...state, hideDone: false })).toBe(
-      'ビュー: 統合 / 全プロジェクト / 完了も表示',
+      'ビュー: 分割 / 全プロジェクト / 完了も表示',
     );
 
     expect(describeBoardFilterPresetState({ ...state, hideDone: true })).toBe(
-      'ビュー: 統合 / 全プロジェクト',
+      'ビュー: 分割 / 全プロジェクト',
     );
   });
 });
