@@ -62,6 +62,73 @@ describe('Semaphore priority (bdboard-gfqz)', () => {
     },
   );
 
+  it(
+    're-checks priority on every single release, not just the first time a waiter is ' +
+      'considered (a waiter granted after several releases still reflects its CURRENT ' +
+      'priority at the moment it is finally granted, not whatever it was when first queued ' +
+      'or first inspected)',
+    async () => {
+      const sem = new Semaphore(1);
+      const order: string[] = [];
+      await sem.acquire(); // 唯一の permit を握る
+
+      let bgTimedOut = false;
+      const warm = sem.acquire(() => 'high').then(() => order.push('warm')); // 最初に permit を握る
+      const bg = sem.acquire(() => (bgTimedOut ? 'low' : 'high')).then(() => order.push('bg'));
+
+      sem.release(); // warm が permit を得る。この時点では bg はまだ 'high' のまま
+      await warm;
+
+      bgTimedOut = true; // bg がここで初めて 'low' に降格する
+      const fg = sem.acquire(() => 'high').then(() => order.push('fg'));
+
+      sem.release();
+      await fg;
+      sem.release();
+      await bg;
+
+      expect(order).toEqual(['warm', 'fg', 'bg']);
+    },
+  );
+
+  it(
+    'the starvation-guard counter does not accumulate during a stretch with no low waiter ' +
+      'present, so a low waiter that arrives later is not granted prematurely (closes a ' +
+      'mutation-testing gap: an "always increment on every high grant" variant would grant ' +
+      'the low waiter here at the wrong moment)',
+    async () => {
+      const sem = new Semaphore(1);
+      const order: string[] = [];
+      await sem.acquire();
+
+      // 5件の high を、low が1件も無い状態で連続して通す (ガードのカウンタは
+      // 進まないはず —— 'low' 待ちが実在しない間は「足止めした」と数えない)。
+      for (let i = 0; i < 5; i += 1) {
+        const p = sem.acquire(() => 'high').then(() => order.push(`h${i}`));
+        sem.release();
+        await p;
+      }
+
+      // ここでようやく low と high を1件ずつ並べる。
+      const h5 = sem.acquire(() => 'high').then(() => order.push('h5'));
+      const low = sem.acquire(() => 'low').then(() => order.push('low'));
+      const h6 = sem.acquire(() => 'high').then(() => order.push('h6'));
+
+      sem.release();
+      await h5;
+      sem.release();
+      await h6;
+      sem.release();
+      await low;
+
+      // ガードが正しければ、low が来てから 'high' に4回連続で渡すまでは
+      // low は通らない —— h5, h6 の2回しか無いので、low は最後に回る
+      // (「常に加算」変種なら、この前の5回の高優先度連続許可が既にガードを
+      // 発動させてしまい、もっと早く low が通ってしまう)。
+      expect(order).toEqual(['h0', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'low']);
+    },
+  );
+
   it('never grants more concurrent permits than the configured limit, regardless of priority mix', async () => {
     const limit = 2;
     const sem = new Semaphore(limit);
@@ -161,4 +228,42 @@ describe('Semaphore priority (bdboard-gfqz)', () => {
       'h8', 'h9', 'l2',
     ]);
   });
+
+  it(
+    'callers that never pass a priority (the pre-bdboard-gfqz calling convention — e.g. ' +
+      'commentGate, which always calls acquire() with no argument at all) see byte-for-byte ' +
+      'the same plain FIFO grant order and the same concurrency cap as before priority ' +
+      'existed. This pins that adding priority support did not change the default ' +
+      '(no-argument acquire()) behavior for callers that opt out of it (chair directive, ' +
+      'bdboard-gfqz)',
+    async () => {
+      const limit = 2;
+      const sem = new Semaphore(limit);
+      let active = 0;
+      let maxActive = 0;
+      const grantOrder: number[] = [];
+      const completionOrder: number[] = [];
+
+      const worker = async (id: number) => {
+        await sem.acquire(); // 優先度を一切渡さない — commentGate はこの形でしか呼ばない
+        grantOrder.push(id);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        active -= 1;
+        completionOrder.push(id);
+        sem.release();
+      };
+
+      // 5件を同じタイミングで起動する。limit=2 なので同時 active は高々2件のはずで、
+      // permit を得る順序は起動順 (到着順) とそのまま一致するはず — 優先度が
+      // 一切絡まない素の FIFO であることを確認する。
+      await Promise.all([0, 1, 2, 3, 4].map((id) => worker(id)));
+
+      expect(maxActive).toBeLessThanOrEqual(limit);
+      expect(maxActive).toBe(limit);
+      expect(grantOrder).toEqual([0, 1, 2, 3, 4]);
+      expect(completionOrder).toEqual([0, 1, 2, 3, 4]);
+    },
+  );
 });

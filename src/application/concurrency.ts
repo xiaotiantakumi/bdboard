@@ -23,9 +23,11 @@ export async function runWithConcurrencyLimit<T>(
 }
 
 /**
- * Semaphore.acquire() の優先度。'low' から 'high' へ戻ることは無い設計 (getPrBadges()
- * の timedOut は一度 true になったら false に戻らない片方向の状態遷移であることが
- * 前提 —— bdboard-gfqz)。
+ * Semaphore.acquire() の優先度。個々の getPriority コールバックの元になる状態は
+ * 通常単調に変化する (例: getPrBadges() の timedOut) が、Semaphore 自体は単調性を
+ * 仮定しない。呼び出し元は getPriority の結果を呼び出し間でどちらの方向にも変更
+ * できる。PrBadgeStatusCache.fetchStatus() の複数プロバイダをまとめた優先度がその例。
+ * dequeueNextWaiter() は毎回現在の状態を読み直す。
  */
 export type SemaphorePriority = 'high' | 'low';
 
@@ -109,8 +111,8 @@ export class Semaphore {
 
     const highIndex = this.waiters.findIndex((waiter) => waiter.getPriority() === 'high');
     if (highIndex === -1) {
-      // 'low' から 'high' へ戻ることは無い設計なので、'high' が1件も無ければ残りは
-      // 全部 'low' —— 到着順を保つため先頭を渡す。
+      // この時点で残りの待ち手はどれも現在 'high' を返していない。単調性の仮定なしに
+      // 到着順を保つため先頭を渡す。
       this.consecutiveHighGrants = 0;
       return this.waiters.splice(0, 1)[0]!.resolve;
     }

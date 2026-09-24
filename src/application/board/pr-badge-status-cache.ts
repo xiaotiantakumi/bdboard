@@ -1,4 +1,5 @@
 import type { PrStatus } from '../../domain/pr-link.js';
+import type { SemaphorePriority } from '../concurrency.js';
 import type { PrStatusResult } from '../ports/pr-status-reader.js';
 import {
   buildInitialPrBadgeStatusEntries,
@@ -68,7 +69,16 @@ const DEFAULT_CIRCUIT_MAX_COOLDOWN_MS = 60 * 60_000;
  */
 export class PrBadgeStatusCache {
   private readonly entries: Map<string, PrBadgeStatusCacheEntry>;
-  private readonly inFlight = new Map<string, Promise<PrStatusResult>>();
+  /**
+   * bdboard-gfqz: 値を Promise だけでなく、この URL の結果に現在関心を持っている
+   * 全呼び出し元の優先度プロバイダの集合も一緒に保持する。同じ URL に後から相乗り
+   * する呼び出しがそれぞれの getPriority を追加登録できるようにするため —— 詳細は
+   * fetchStatus() の doc comment 参照。
+   */
+  private readonly inFlight = new Map<
+    string,
+    { readonly promise: Promise<PrStatusResult>; readonly priorityProviders: Set<() => SemaphorePriority> }
+  >();
   private readonly now: () => number;
   private readonly ttlMs: number;
   private readonly negativeCacheMaxMs: number;
@@ -149,16 +159,36 @@ export class PrBadgeStatusCache {
    * 呼び出し元は fetchStatus を呼ぶ前に isCircuitOpen() を確認すること — この
    * メソッド自体はサーキット状態を見ない (呼び出し元が起動可否の予算/計測と
    * まとめて判断できるようにするため)。
+   *
+   * bdboard-gfqz round 3: getPriority は「この呼び出し元がこの URL の結果に
+   * どれくらい急いでいるか」を表す。起動元 (in-flight 登録の起点になった呼び出し)
+   * だけでなく、後から同じ url に相乗りする呼び出しも自分の getPriority を
+   * 登録できる —— 相乗りする呼び出しは statusGate.acquire() を一切呼ばない
+   * (bdboard-ksed の設計をそのまま維持) ので、これが相乗り側が優先度を反映
+   * させる唯一の経路になる。fetcher は生の getPriority ではなく、現在登録されて
+   * いる全呼び出し元の優先度を「誰か1人でも high を求めていれば high」で
+   * まとめた mergedGetPriority を受け取り、それを statusGate.acquire() に渡す
+   * —— 相乗りが後から登録されても、まだ statusGate の待ち行列に残っている
+   * (permit をまだ貰っていない) 起動元の待ち手に正しく反映される (Semaphore は
+   * release() のたびに getPriority を呼び直すため — concurrency.ts 参照)。
+   * 既に permit を得て実際に gh が走り出している場合は、後から登録しても
+   * その gh 呼び出し自体の速度は変えられない (妥当 —— 実行中のプロセスを
+   * 優先度で追い越すことはできない)。
    */
   fetchStatus(
     url: string,
-    fetcher: () => Promise<PrStatusResult>,
+    fetcher: (getMergedPriority: () => SemaphorePriority) => Promise<PrStatusResult>,
+    getPriority: () => SemaphorePriority = () => 'high',
   ): { readonly promise: Promise<PrStatusResult>; readonly launched: boolean } {
     const existing = this.inFlight.get(url);
     if (existing !== undefined) {
-      return { promise: existing, launched: false };
+      existing.priorityProviders.add(getPriority);
+      return { promise: existing.promise, launched: false };
     }
-    const promise = fetcher()
+    const priorityProviders = new Set<() => SemaphorePriority>([getPriority]);
+    const mergedGetPriority = (): SemaphorePriority =>
+      [...priorityProviders].some((provider) => provider() === 'high') ? 'high' : 'low';
+    const promise = fetcher(mergedGetPriority)
       .then((result) => {
         this.recordResult(url, result);
         return result;
@@ -166,7 +196,7 @@ export class PrBadgeStatusCache {
       .finally(() => {
         this.inFlight.delete(url);
       });
-    this.inFlight.set(url, promise);
+    this.inFlight.set(url, { promise, priorityProviders });
     return { promise, launched: true };
   }
 

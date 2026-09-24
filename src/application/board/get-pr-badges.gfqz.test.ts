@@ -227,5 +227,118 @@ describe(
       },
       10_000,
     );
+
+    it(
+      'promotes an already-queued background fetch when a later foreground request joins ' +
+        'the SAME in-flight PR url (the ticket\'s dominant real scenario: a project-filtered ' +
+        'request whose ticket was already covered by an earlier unfiltered request)',
+      async () => {
+        const callOrder: string[] = [];
+        const gates = createPrBadgeGates({ statusFetchConcurrency: 1 });
+        const sharedStatusCache = new PrBadgeStatusCache();
+        const updatedAt = new Date('2026-06-01T12:00:00.000Z');
+
+        const bgCache = createFakeBoardCache();
+        const bgProject = project('proj-bg2', '/projects/bg2');
+        const bgUrls = Array.from(
+          { length: 5 },
+          (_, index) => `https://github.com/xiaotiantakumi/bdboard/pull/${1000 + index}`,
+        );
+        bgCache.putProject({
+          project: bgProject,
+          tickets: Array.from({ length: 5 }, (_, index) =>
+            makeTicket({
+              id: `bdboard-gfqz-bg2-${index}`,
+              projectId: bgProject.id,
+              commentCount: 1,
+              updatedAt,
+            }),
+          ),
+          fingerprint: 'fp-bg2',
+          fetchedAt: updatedAt,
+        });
+        const bgTickets = bgCache.listProjects()[0]!.tickets;
+        const bgCommentReader = commentReaderForUrls(bgTickets, bgUrls);
+        const bgStatusReader: PrStatusReader = {
+          getPrStatus: vi.fn(async (url: string) => {
+            callOrder.push(url);
+            if (url === bgUrls[0]) {
+              await new Promise((resolve) => setTimeout(resolve, 80));
+            }
+            return { status: { state: 'open', checkStatus: 'pass' } } as const;
+          }),
+        };
+
+        const bgCall = getPrBadges(bgCache, bgCommentReader, bgStatusReader, {
+          statusCache: sharedStatusCache,
+          gates,
+          overallTimeoutMs: 5,
+        });
+        await bgCall;
+
+        // 5件全部 (1件目が permit を握り、4件が待ち行列) が statusGate に
+        // 並び終えるまで待つ。
+        await vi.waitFor(
+          () => {
+            expect(bgStatusReader.getPrStatus).toHaveBeenCalledTimes(1);
+          },
+          { timeout: 2000, interval: 5 },
+        );
+
+        // --- 後から来た「プロジェクト絞り込み」リクエスト: 新しい URL では
+        // なく、背景リクエストが既に in-flight 登録済みの bgUrls[2] と同じ
+        // チケットに興味がある、という現実的な形を再現する (別プロジェクトの
+        // 無関係な URL ではなく、同じ URL への相乗り)。 ---
+        const fgCache = createFakeBoardCache();
+        const fgProject = project('proj-fg2', '/projects/fg2');
+        fgCache.putProject({
+          project: fgProject,
+          tickets: [
+            makeTicket({
+              id: 'bdboard-gfqz-fg2-0',
+              projectId: fgProject.id,
+              commentCount: 1,
+              updatedAt,
+            }),
+          ],
+          fingerprint: 'fp-fg2',
+          fetchedAt: updatedAt,
+        });
+        const fgTickets = fgCache.listProjects()[0]!.tickets;
+        // bgUrls[2] を再利用する (別プロジェクトの無関係な URL ではなく、
+        // 既に in-flight 登録済みの url に相乗りするケースを模す)。
+        const fgCommentReader = commentReaderForUrls(fgTickets, [bgUrls[2]!]);
+        const fgStatusReader: PrStatusReader = {
+          getPrStatus: vi.fn(async (url: string) => {
+            callOrder.push(url);
+            return { status: { state: 'open', checkStatus: 'pass' } } as const;
+          }),
+        };
+
+        await getPrBadges(fgCache, fgCommentReader, fgStatusReader, {
+          statusCache: sharedStatusCache,
+          gates,
+        });
+
+        // foreground 側は独自に gh を起動しない (相乗りのため) —— background
+        // 側の同じ url の fetch を共有する。
+        expect(fgStatusReader.getPrStatus).not.toHaveBeenCalled();
+
+        await vi.waitFor(
+          () => {
+            expect(bgStatusReader.getPrStatus).toHaveBeenCalledTimes(5);
+          },
+          { timeout: 2000, interval: 5 },
+        );
+
+        // 本題: bgUrls[2] は元々 bgUrls[1] より後、bgUrls[3]/[4] より前に並んで
+        // いたが、優先度としては (自分の overallTimeoutMs 発火後は) 低いまま
+        // だったはずのところ、foreground リクエストが同じ url に相乗りして
+        // 高優先度の関心を登録したことで、bgUrls[1] より先に通る (相乗り昇格が
+        // 効いている証拠)。
+        expect(callOrder).toEqual([bgUrls[0], bgUrls[2], bgUrls[1], bgUrls[3], bgUrls[4]]);
+      },
+      10_000,
+    );
   },
 );

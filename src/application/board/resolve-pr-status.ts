@@ -100,27 +100,31 @@ export async function resolvePrStatus(
   }
   onAttempt();
   try {
-    const { promise } = statusCache.fetchStatus(url, async () => {
-      // ここが実際に gh を起動する側だけが通る経路 (alreadyInFlight===false で
-      // in-flight map への登録の起点になった呼び出し)。相乗りする呼び出しは
-      // fetchStatus() が既存の Promise をそのまま返すため、この fetcher 自体が
-      // 呼ばれない — statusGate を待つのはここだけ (bdboard-ksed)。
-      await statusGate.acquire(() => getPriority?.() ?? 'high');
-      try {
-        // ゲート待ちの間にサーキットが開いた可能性がある。関数冒頭の
-        // isCircuitOpen() チェックはゲート取得より前なので、ゲート待ちで詰まって
-        // いる間のトリップまでは拾えない —— 実際に起動する直前でもう一度確認する
-        // (bdboard-ksed 課題文の「evaluate the circuit right before launch」)。
-        // rate-limit 扱いで返すと PrBadgeStatusCache.recordResult が tripCircuit()
-        // を呼ぶが、既に open なら no-op (二重ログ・二重バックオフにはならない)。
-        if (statusCache.isCircuitOpen()) {
-          return { status: null, reason: 'rate-limit' } as const;
+    const { promise } = statusCache.fetchStatus(
+      url,
+      async (getMergedPriority) => {
+        // ここが実際に gh を起動する側だけが通る経路 (alreadyInFlight===false で
+        // in-flight map への登録の起点になった呼び出し)。相乗りする呼び出しは
+        // fetchStatus() が既存の Promise をそのまま返すため、この fetcher 自体が
+        // 呼ばれない — statusGate を待つのはここだけ (bdboard-ksed)。
+        await statusGate.acquire(getMergedPriority);
+        try {
+          // ゲート待ちの間にサーキットが開いた可能性がある。関数冒頭の
+          // isCircuitOpen() チェックはゲート取得より前なので、ゲート待ちで詰まって
+          // いる間のトリップまでは拾えない —— 実際に起動する直前でもう一度確認する
+          // (bdboard-ksed 課題文の「evaluate the circuit right before launch」)。
+          // rate-limit 扱いで返すと PrBadgeStatusCache.recordResult が tripCircuit()
+          // を呼ぶが、既に open なら no-op (二重ログ・二重バックオフにはならない)。
+          if (statusCache.isCircuitOpen()) {
+            return { status: null, reason: 'rate-limit' } as const;
+          }
+          return await prStatusReader.getPrStatus(url);
+        } finally {
+          statusGate.release();
         }
-        return await prStatusReader.getPrStatus(url);
-      } finally {
-        statusGate.release();
-      }
-    });
+      },
+      () => getPriority?.() ?? 'high',
+    );
     const result = await promise;
     return result.status;
   } catch (error) {
