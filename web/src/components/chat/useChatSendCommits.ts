@@ -173,13 +173,13 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       if (clearSession) writePersistedChatThread(selectedProjectId, undefined);
 
       // bdboard-otf(bdboard-dpq レビュー N2 フォローアップ): 送信失敗時に入力欄へ
-      // 本文を復元する。送信時のクリア(handleSubmit、try の前)は失敗しても巻き戻ら
+      // 本文を復元する。送信時のクリア(chat/useChatSubmit.ts の submit、try の前)は失敗しても巻き戻ら
       // ないため、送信をやり損ねた本文がそのまま消えていた。復元先は convKey ——
       // 呼び出し元(chat/useChatSubmit.ts の submit)がクロージャで捕まえた「送信時点の会話キー」
       // (sendKey)であり、現在表示中のキー(currentConversationKey)ではない。
       // 送信中にユーザーがスレッド/プロジェクトを切り替えていた場合、現在の入力欄
       // ではなく元のキーへ復元することで、現在の入力欄を汚染しない。
-      // sentText は handleSubmit が渡す trim 前の本文(SF2、Opus レビュー) —
+      // sentText は handleSubmit → submit が渡す trim 前の本文(SF2、Opus レビュー) —
       // プリフィル文言(例: `${ticketId} について: `)は末尾に半角スペースを
       // 含む形式が本番で実在するため、trim 済みの値を復元すると下の SF1 の
       // 「未編集シードの復元は seed 記録を維持する」判定が壊れる(復元値が
@@ -194,7 +194,7 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       // 上書き防止(dpq「書きかけ本文を消さない」不変条件): 失敗するまでの間に
       // ユーザーが同じ convKey へ新しい本文を打ち込んでいた場合、送信文言で
       // それを上書きしてはいけない。conversationInputsRef(現在値を stale
-      // closure なしで読むための ref ミラー、このファイル内の他の書き込み側と
+      // closure なしで読むための ref ミラー、ChatPanel.tsx や useChatDraftState の他の利用箇所と
       // 同じパターン)を見て、該当キーが空のときだけ復元する。
       // N4(Opus レビュー): 現状の UI では isSending の間 textarea/各 select が
       // すべて disabled になるため、送信中にこの convKey(=sendKey)へ新しい本文を

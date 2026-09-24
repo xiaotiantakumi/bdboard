@@ -149,7 +149,7 @@ describe('useChatSubmit send lifecycle', () => {
     expect(postMock.mock.calls[0][0]).toEqual({ projectId: 'proj-a', message: 'hello', sessionId: 'sess-1', agentId: 'claude' });
   });
 
-  it('fixes sendKey before the await even if the conversation key changes while the request is in flight', async () => {
+  it('writes to the conversation key captured at submit time even after a rerender with another key', async () => {
     const pending = deferred<ChatMessageResponseDto>();
     postMock.mockReturnValue(pending.promise);
     const { hook, params } = setup();

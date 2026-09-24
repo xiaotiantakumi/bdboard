@@ -174,7 +174,7 @@ describe('commitFailure', () => {
     expect(store.attachments['key-a']).toEqual([IMAGE]);
   });
 
-  it('dpq/SF1: does not overwrite text or attachments typed into the send key meanwhile', () => {
+  it('dpq: does not overwrite text or attachments typed into the send key meanwhile', () => {
     const { hook, store, params } = setup();
     store.inputs['key-a'] = 'typed later';
     store.attachments['key-a'] = [{ ...IMAGE, id: 'att-later' }];

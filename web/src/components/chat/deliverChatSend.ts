@@ -37,7 +37,8 @@ export interface DeliverChatSendParams {
  * 元の submitChatMessage(ChatPanel.tsx)のまま。React には依存しない。
  * AbortError / 配信停止 / 通常失敗はここで吸収し、それ以外(アダプタの想定外の
  * 失敗)だけが呼び出し側へ throw される。isSending・focus・controller の後始末は
- * 呼び出し側の finally が持つ。
+ * 呼び出し側の finally が持つ。関数境界が1つ増えたぶん、呼び出し側の finally
+ * (setIsSending(false)/focus)は元より数 microtask 後に走る(ブラウザの paint の機会は増えない)。
  */
 export async function deliverChatSend(params: DeliverChatSendParams): Promise<void> {
   const { payload, streaming, signal, projectId, sendKey, sessionId, onSuccess, onFailure } = params;

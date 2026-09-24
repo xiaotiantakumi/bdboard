@@ -54,11 +54,11 @@ export type ChatDraftAction =
   // 旧: removeAttachment の updateConversationAttachments(id で除外) +
   // setAttachmentErrors(該当キーの削除) の組み合わせを1 action に統合。
   | { type: 'remove-attachment'; key: string; id: string }
-  // 旧: startNewDraftThread / handleAgentChange(引き継ぎ) / applyChatError
-  // (送信失敗時の復元) / submitChatMessage(送信時クリア) / handleNewThread が
+  // 旧: startNewDraftThread / handleAgentChange(引き継ぎ) / applyChatError(現 commitFailure)
+  // (送信失敗時の復元) / submitChatMessage(現 chat/useChatSubmit.ts の submit、送信時クリア) / handleNewThread が
   // 行っていた updateConversationAttachments(updater) 呼び出し。
   | { type: 'replace-attachments'; updater: RecordUpdater<ChatAttachment[]> }
-  // 旧: ingestImageFiles のバリデーション失敗 / submitChatMessage の画像変換
+  // 旧: ingestImageFiles のバリデーション失敗 / submitChatMessage(現 submit)の画像変換
   // 失敗が行っていた setAttachmentErrors({...prev, [key]: message})。
   | { type: 'set-attachment-error'; key: string; message: string }
   // 旧: handleNewThread が行っていた setAttachmentErrors(該当キーの削除)。

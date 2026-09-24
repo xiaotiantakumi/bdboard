@@ -620,7 +620,7 @@ export function ChatPanel({
   const currentAttachments = conversationAttachments[currentConversationKey] ?? [];
   const currentAttachmentError = attachmentErrors[currentConversationKey] ?? null;
   // bdboard-pbf: 既存スレッド選択中で履歴がまだ解決していない間は送信を
-  // ブロックする(送信ボタン disabled + handleSubmit 冒頭ガード)。この窓で
+  // ブロックする(送信ボタン disabled + chat/useChatSubmit.ts の submit 冒頭ガード)。この窓で
   // 送信すると conversations[key] が未定義のため sessionId 無しで POST され、
   // 既存スレッドの続きではなく別のサーバーセッションにフォークしてしまう。
   // loadingHistoryFor でなく historyLoadedFor を見るのは、履歴 effect が発火する
