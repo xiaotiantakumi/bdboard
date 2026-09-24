@@ -35,9 +35,14 @@ import { createAgentRunCancelRoutes } from './agent-run-cancel-routes.js';
 // 未エクスポートの unique symbol でブランド化) を必須第2引数として要求する。トークンを
 // 得る唯一の方法が mountAgentRunGuard(app, ...) の呼び出しなので、このファイルを経由
 // せずにこれらのファクトリを import して呼ぶコードは型チェックで弾かれる (sole-importer
-// を agent-run-route-factories-guard.test.ts が固定)。ただしトークンは「どの app に
-// ガードを適用したか」までは型で縛らない (opus レビュー, 2026-09-24) ── 詳細と残課題は
-// agent-run-guard.ts の AGENT_RUN_GUARD_APPLIED 直前のコメントを参照。
+// を agent-run-route-factories-guard.test.ts が固定)。
+//
+// bdboard-v0df: 当初のトークンは「mountAgentRunGuard() がどこかで呼ばれた」ことしか
+// 証明せず、どの app に適用したかへは結び付いていなかった (opus レビュー, 2026-09-24)。
+// 今はトークンがガード適用先の Hono インスタンスそのものを保持し (guardedApp())、
+// 各ファクトリはそのインスタンスへ直接ハンドラを登録する — 独立してマウント可能な
+// Hono を自前で作って返すことはしない。詳細は agent-run-guard.ts の
+// AGENT_RUN_GUARD_APPLIED 直前のコメントを参照。
 
 /** postRunsBodySchema は ticketId と mode だけなので 4KB で十分すぎる。 */
 export const AGENT_RUN_BODY_MAX_BYTES = 4 * 1024;
@@ -121,9 +126,15 @@ export function createAgentRunRoutes(deps: AgentRunRoutesDeps): Hono {
   app.use('/api/runs', agentRunBodyLimit);
   app.use('/api/runs', rateLimit);
 
-  app.route('/', createAgentRunCreateRoutes(deps, guardToken));
-  app.route('/', createAgentRunReadRoutes(deps, guardToken));
-  app.route('/', createAgentRunCancelRoutes(deps, guardToken));
+  // bdboard-v0df: the three factories now register their handlers directly onto `app`
+  // (the exact instance mountAgentRunGuard() just guarded, obtained internally via
+  // guardedApp(guardToken)) instead of returning an independently mountable Hono of
+  // their own. There is nothing left to `app.route()` here — calling each factory is
+  // itself the mount step, at the routes' real absolute paths, in the same order as
+  // before.
+  createAgentRunCreateRoutes(deps, guardToken);
+  createAgentRunReadRoutes(deps, guardToken);
+  createAgentRunCancelRoutes(deps, guardToken);
 
   return app;
 }
