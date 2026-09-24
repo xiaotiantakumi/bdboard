@@ -453,6 +453,14 @@ export interface ResidualMetrics {
   boardFilterBarMarginBottom: number;
   laneIndicatorStrip: number;
   lane: number;
+  /**
+   * bdboard-m070: 分割ビューが表示中のプロジェクトごとに積む `<section class="board-section">`
+   * の、旧モデル (`-172`) が想定していなかった追加ドキュメント高の合計。カードを1枚も持たない
+   * プロジェクトは `hasVisibleCards` (boardLanesHelpers.ts) でセクションごと描画されないため
+   * 含まれない。詳細な導出は mobile-page-scroll-residual.spec.ts の
+   * `PROJECT_SECTION_OVERHEAD_PX` の JSDoc を参照。
+   */
+  projectSectionOverhead: number;
 }
 
 export async function measureResidual(page: Page): Promise<ResidualMetrics> {
@@ -467,6 +475,27 @@ export async function measureResidual(page: Page): Promise<ResidualMetrics> {
       return el ? px(Number.parseFloat(getComputedStyle(el).marginBottom) || 0) : 0;
     };
     const root = document.documentElement;
+    // bdboard-m070: 分割ビューは表示中のプロジェクトごとに <section class="board-section"> で
+    // レーン行をラップし、その中に <h2 class="board-section-title"> (プロジェクト名 + 件数 +
+    // セッションバッジ + ハーネスバッジ) を積む。カードが1枚も無いプロジェクトは
+    // SplitBoard.tsx の hasVisibleCards フィルタで丸ごと描画されない。よってドキュメント高に
+    // 乗るのは「表示された .board-section の数」ぶんの (タイトル高 + タイトル margin-bottom +
+    // セクション自身の margin-bottom) の総和で、これは実測でしか求まらない (タイトルは
+    // プロジェクト名・件数・ハーネスバッジの折り返し行数に依存し、CSS の定数だけでは決まらない)。
+    const projectSectionOverhead = px(
+      Array.from(document.querySelectorAll('.board-section')).reduce((sum, section) => {
+        const sectionMarginBottom =
+          Number.parseFloat(getComputedStyle(section).marginBottom) || 0;
+        const title = section.querySelector('.board-section-title');
+        if (title === null) {
+          return sum + sectionMarginBottom;
+        }
+        const titleMarginBottom = Number.parseFloat(getComputedStyle(title).marginBottom) || 0;
+        return (
+          sum + title.getBoundingClientRect().height + titleMarginBottom + sectionMarginBottom
+        );
+      }, 0),
+    );
     return {
       // clientHeight はレイアウトビューポート (縦スクロールバーぶんを含まない) なので
       // innerHeight より「実際に scrollTo できる上限」に忠実。モバイルエミュレーションでは
@@ -479,6 +508,7 @@ export async function measureResidual(page: Page): Promise<ResidualMetrics> {
       boardFilterBarMarginBottom: marginBottomOf('.board-filter-bar'),
       laneIndicatorStrip: heightOf('.lane-indicator-strip'),
       lane: heightOf('.lanes-row .lane'),
+      projectSectionOverhead,
     };
   });
 }
@@ -488,7 +518,8 @@ export function describeResidualMetrics(m: ResidualMetrics): string {
     `maxScrollY=${m.maxScrollY}, viewportHeight=${m.viewportHeight}, ` +
     `header=${m.header}, tips=${m.tipsBanner}, ` +
     `filterBar=${m.boardFilterBar}(+${m.boardFilterBarMarginBottom} margin), ` +
-    `laneStrip=${m.laneIndicatorStrip}, lane=${m.lane}`
+    `laneStrip=${m.laneIndicatorStrip}, lane=${m.lane}, ` +
+    `projectSectionOverhead=${m.projectSectionOverhead}`
   );
 }
 
@@ -518,13 +549,21 @@ export function nonDismissibleResidualPx(m: ResidualMetrics): number {
 }
 
 /**
- * 残差モデル `maxScrollY = header + tips + filterBarBox - 172` の予測値。
- * 実測と並べて出しておくと、Linux でモデルのどの項がずれたのかがログだけで分かる。
+ * 残差モデル `maxScrollY = header + tips + filterBarBox - 172 + projectSectionOverhead` の
+ * 予測値。`projectSectionOverhead` は bdboard-m070 (分割ビューのプロジェクトセクション見出し
+ * ぶん) で追加された項。実測と並べて出しておくと、Linux でモデルのどの項がずれたのかが
+ * ログだけで分かる。
  */
 export function modelMaxScrollYPx(m: ResidualMetrics): number {
   return (
     Math.round(
-      (m.header + m.tipsBanner + m.boardFilterBar + m.boardFilterBarMarginBottom - 172) * 100,
+      (m.header +
+        m.tipsBanner +
+        m.boardFilterBar +
+        m.boardFilterBarMarginBottom -
+        172 +
+        m.projectSectionOverhead) *
+        100,
     ) / 100
   );
 }
@@ -558,6 +597,7 @@ export async function reportResidualMeasurement(
     viewportHeight: m.viewportHeight,
     laneIndicatorStrip: m.laneIndicatorStrip,
     lane: m.lane,
+    projectSectionOverhead: m.projectSectionOverhead,
     ...extra,
   };
   console.log(`${RESIDUAL_MEASUREMENT_LOG_PREFIX}${JSON.stringify(payload)}`);

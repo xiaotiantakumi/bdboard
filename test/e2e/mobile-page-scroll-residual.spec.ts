@@ -51,7 +51,8 @@
  * 決定論的に再現させるミューテーション手順は
  * `fixtures/mobile-chrome-helpers.ts` の `waitForHeaderHeightConvergence` に書いてある。
  *
- * したがって **Tips も絞り込みバーも畳んだあとに残る残差 = header - 168** (= header + 4 - 172)。
+ * したがって **Tips も絞り込みバーも畳んだあとに残る残差 = header - 168** (= header + 4 - 172、
+ * bdboard-mkm1.1 以降はこれに下の PROJECT_SECTION_OVERHEAD_PX が加わる)。
  * 正体は固定パディングではなく**ヘッダーそのもの**で、`kanban-mobile-lanes.spec.ts:69-70`
  * の「maxScrollY はヘッダー高 H に比例する」と一致する。
  *
@@ -74,9 +75,10 @@
  * `grep -o 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=.*'` で拾って macOS 実測と突き合わせられる。
  * bdboard-ij7g のラウンド 2 で、Linux/macOS の直接実測を得た。実測で締めたのは下の 2 つ目
  * (Tips に鈍い残差) で、1 つ目のページ予算は実測ではなく兄弟予算の合計から決めている
- * — 理由はその JSDoc に書いた。
+ * — 理由はその JSDoc に書いた。bdboard-m070 (2026-09-24) も同じ「成功時ログ→次ラウンドで
+ * 締め直す」手順で PROJECT_SECTION_OVERHEAD_PX を導出した。
  *
- * ## 予算を締めたときの直接実測 (2026-09-05)
+ * ## 予算を締めたときの直接実測 (2026-09-05、統合ビュー時代)
  *
  * 測定元は Linux が PR #399 の CI e2e ジョブ (ubuntu-latest, job 101315107278 / run 33969397023、
  * head aa4dd7d。squash 後の main は 8fb4e8a だが、測定が走ったのはその前の PR head である。
@@ -84,7 +86,8 @@
  * ローカルで `npx playwright test --config test/e2e/playwright.config.ts` を 2 回連続実行した結果
  * (完全一致) である。いずれも `grep -o 'MOBILE_SCROLL_RESIDUAL_MEASUREMENT=.*'` で抽出した。
  * `filterBar` は各行とも 54 (+ margin 4) で、tips は worst-case / first-card-worst-case-tip で
- * 198.81、tips-dismissed で 0 である。
+ * 198.81、tips-dismissed で 0 である。この表は「統合」が既定だった当時の値で、下の
+ * PROJECT_SECTION_OVERHEAD_PX の節にある「分割」既定化後の実測 (bdboard-m070) と対になる。
  *
  * | platform | label                       | header | maxScrollY | nonDismissibleResidual |
  * |----------|-----------------------------|-------:|-----------:|-----------------------:|
@@ -123,14 +126,81 @@ import {
 const MOBILE_VIEWPORT = { width: 375, height: 812 };
 
 /**
+ * 分割ビューのプロジェクトセクション1つぶんの、旧モデル (`-172`) が想定していなかった
+ * 追加ドキュメント高。bdboard-m070 (2026-09-24)、ラウンド2の恒久対応。
+ *
+ * bdboard-mkm1.1 で既定ビューが「統合」から「分割」になり、`SplitBoard.tsx` が可視カードを
+ * 1枚以上持つプロジェクトごとに
+ *
+ *   <section class="board-section">
+ *     <h2 class="board-section-title">名前 (N件) [セッションバッジ] [ProjectHarnessBadges]</h2>
+ *     <div class="lanes-scroll-region">…</div>
+ *   </section>
+ *
+ * を積むようになった。カードが0枚のプロジェクトは `hasVisibleCards` (boardLanesHelpers.ts) で
+ * セクションごと描画されない — このフィクスチャの2つ目のプロジェクト
+ * (`.beads/e2e-empty-list` マーカーで list/gate を [] 固定、global-setup.ts 参照) がそれで、
+ * 実測でも `.board-section` は常に1つしか現れない (`document.querySelectorAll('.board-section')`
+ * で確認済み)。よってこのフィクスチャでは「プロジェクトセクション項」は常にちょうど1回ぶんで、
+ * 旧モデルの `-172` (strip 44 + 固定パディング 44 + ヘッダー172ぶん) はこのラッパーが無かった
+ * 前提の定数のままで成立する (`.lanes-row`/strip の実測値が web/src/styles/board.css の値と
+ * 変わっていないことを確認済み)。新たに乗るのは
+ *
+ *   `.board-section-title` の border-box 高
+ *     + そのタイトルの margin-bottom (12px、web/src/styles/board.css:29、CSS リテラル)
+ *     + `.board-section` 自身の margin-bottom (28px、web/src/styles/board.css:4、CSS リテラル)
+ *
+ * の3項の合計。後ろ2つは固定だが、タイトル高はプロジェクト名・件数・セッションバッジ・
+ * `ProjectHarnessBadges` (ハーネスパック名+状態+アクションボタンのチップが
+ * `flex-wrap: wrap` で折り返す) の内容に依存し、CSS の定数だけでは決まらない
+ * (ヘッダーや tips のような自身専用のラチェットがまだ無い)。
+ *
+ * 実測 (375x812, このフィクスチャの1件目のプロジェクト "fixture-project (11 件)
+ * bdboard-harness 未導入 注入", 2026-09-24):
+ *
+ * | platform | titleHeight | overhead (title+12+28) | maxScrollY | nonDismissibleResidual |
+ * |----------|------------:|------------------------:|-----------:|-----------------------:|
+ * | macOS    |       50.95 |                    90.95 |        421 |                 168.19 |
+ * | Linux CI |      (逆算) |                    65.19 |        393 |                 140.19 |
+ *
+ * (Linux CI は PR #684 の e2e ジョブ run 35950596098 / job 107478091508 の
+ * `MOBILE_SCROLL_RESIDUAL_MEASUREMENT` ログから: header=243, tips=198.81, filterBar=58,
+ * maxScrollY=393 → 旧モデル予測 327.81 との差分 65.19 が overhead。titleHeight はここから
+ * 65.19 - 12 - 28 = 25.19 と逆算できる。)
+ *
+ * `.board-section-title` の line-height は 24.99px (getComputedStyle 実測)。macOS は
+ * 50.95px ≈ 2 行、Linux CI は 25.19px ≈ 1 行 — 同一のタイトル文字列が、ちょうど折り返し境界を
+ * またぐフォントメトリクスの差で macOS だけ2行になる。これは header の macOS/Linux 差
+ * (245 / 243、連続的な数px差) とは種類が違う離散的な差なので、`+16px` のような小さい慣行
+ * マージンでは足りない。
+ *
+ * PROJECT_SECTION_OVERHEAD_PX は**両プラットフォームで現に緑になっている今の最悪ケース
+ * (macOS の2行) をそのまま採用**した:
+ *
+ *   51 (= ceil(50.95)、macOS 実測2行ぶんのタイトル高)
+ *     + 12 (タイトル margin-bottom、CSS リテラル)
+ *     + 28 (セクション margin-bottom、CSS リテラル)
+ *     = 91
+ *
+ * ここへ「3行目ぶん」の追加 headroom を足さなかった理由: 下の MAX_PAGE_SCROLL_RESIDUAL_PX の
+ * macOS 側の余裕 (450 - 421 = 29px) が、統合ビュー時代の余裕 (359 - 330 = 29px) と
+ * 1px単位で一致する。これ以上緩めると、このラチェットの設計原則である「兄弟予算の合計」
+ * よりも「今のところ壊れていない」ことを優先することになってしまう。将来ハーネスパックが
+ * 増えてタイトルが3行目に折り返すようになったら、このラチェットが赤くなって知らせる
+ * (プロジェクトセクションが本当に太ったという意図した検知であり、弱める理由にはならない)。
+ */
+const PROJECT_SECTION_OVERHEAD_PX = 91;
+
+/**
  * ページスクロール残差の上限。
  *
  * **これは合成量の予算であり、実測 + 余裕では決められない。** 縛っている `maxScrollY` は
- * `header + tips + filterBarBox - 172` で、構成要素のうち header と tips には
- * `mobile-header-compact.spec.ts` に専用のラチェットがある。よってこの上限は
+ * `header + tips + filterBarBox - 172 + projectSectionOverhead` で、構成要素のうち header と
+ * tips には `mobile-header-compact.spec.ts` に専用のラチェットがある。よってこの上限は
  * **兄弟予算の合計を下回ってはならない**:
  *
- *   MAX_HEADER_HEIGHT_PX 250 + MAX_TIPS_BANNER_HEIGHT_PX 223 + filterBarBox 58 - 172 = 359
+ *   MAX_HEADER_HEIGHT_PX 250 + MAX_TIPS_BANNER_HEIGHT_PX 223 + filterBarBox 58
+ *     + PROJECT_SECTION_OVERHEAD_PX 91 - 172 = 450
  *
  * 下回らせると、兄弟の名前付きアサーションが全部緑のまま**この 1 本だけが赤くなる窓**が
  * できる。特に MAX_TIPS_BANNER_HEIGHT_PX の +24px は「Linux でバナーが 1 行折り返す」ために
@@ -138,81 +208,63 @@ const MOBILE_VIEWPORT = { width: 375, height: 812 };
  * tips がその範囲で太るとちょうど窓に落ちる。引き金として現実的なのは
  * `docs/help-content.json` の編集で、HELP_TIPS はこの JSON を直読みしており、CLAUDE.md は
  * ヘルプ原本の追従を機能 PR に義務付けている。しかもそのとき出る失敗メッセージは下の
- * アサーションどおり「ヘッダー高と `.lane` の 260px リテラルを疑え」と言うので、原因
- * (ヘルプ文言) から遠い 2 か所を探させることになる。
+ * アサーションどおり「ヘッダー高・`.lane` の 260px リテラル・プロジェクトセクションの
+ * 見出し」を疑えと言うので、原因 (ヘルプ文言) から遠い箇所を探させることになる。
  *
- * よって値は上の合計そのものを採る。直接実測はこの 359 に対する余裕の確認に使う:
- * worst-case は macOS Chromium 330px / Linux CI 328px なので、ゲートしている Linux 側で
- * 31px の余裕。`maxScrollY` は整数量なので +32px の劣化から捕まる。
+ * よって値は上の合計そのものを採る。直接実測はこの 450 に対する余裕の確認に使う
+ * (bdboard-m070、2026-09-24、分割ビュー): worst-case は macOS Chromium 421px / Linux CI
+ * 393px なので、より厳しい macOS 側で 29px の余裕、Linux 側で 57px の余裕。macOS 側の
+ * 29px は統合ビュー時代 (359 - 330 = 29px) と1px単位で一致する — PROJECT_SECTION_OVERHEAD_PX
+ * の節参照。Linux 側の余裕が広いのは意図的な緩和ではなく、このフィクスチャのタイトルが
+ * Linux では1行にしか折り返らないという実測結果の反映。
  *
- * 400 では緩すぎた: `.lane` の高さ上限を 60px 劣化させるミューテーション (maxScrollY=390)
- * が素通りしていた。359 はそれを捕まえ、bd 記載の起点 478px と qxt1 着手時の 436.48px の
- * どちらも下回るので、ラチェットとして本物である。**これ以上締めたいなら先に
- * MAX_TIPS_BANNER_HEIGHT_PX を締めること** — 兄弟が下がれば上の合計も下がり、ここも一緒に
- * 下げられる。順序を逆にすると上記の窓ができる。
+ * 400 では緩すぎた (統合ビュー時代): `.lane` の高さ上限を 60px 劣化させるミューテーション
+ * (maxScrollY=390) が素通りしていた。450 はそれを捕まえる: macOS 実測 421 + 60 = 481 > 450、
+ * Linux 実測 393 + 60 = 453 > 450 のどちらも予算を超える。**これ以上締めたいなら先に
+ * MAX_TIPS_BANNER_HEIGHT_PX か PROJECT_SECTION_OVERHEAD_PX を締めること** — 兄弟が下がれば
+ * 上の合計も下がり、ここも一緒に下げられる。順序を逆にすると上記の窓ができる。
  *
  * ここが回帰すると、モバイルでページ全体のスクロールとレーン内スクロールが奪い合い、
  * 指を置いた位置でどちらが動くか変わる帯が広がる。
- *
- * ## bdboard-mkm1.1 (2026-09-24): 既定ビューの「分割」化で上の式が壊れた(暫定値)
- *
- * 既定ビューが「統合」から「分割」になったことで、この式が想定していなかった
- * 「プロジェクト単位のセクション」ぶんのドキュメント高が新たに載るようになった
- * (式は header/tips/filterBarBox の3項のみで、プロジェクト数を含まない)。実測
- * (macOS Chromium, このフィクスチャの2プロジェクト構成): maxScrollY=421px
- * (モデル予測 329.81px から +91px)。359px という分析的な上限を実測に合わせて
- * 恒久的に描き直す前に、この増加が許容できる UX コストかどうかの製品判断と、
- * 式へプロジェクトセクション項を組み込み直す設計が必要 (bdboard-m070)。
- * それまでの**暫定値**として、実測 421px に安全マージンを載せた 460px を置く
- * (旧予算の分析的な性質より「壊れていないことを見張る」実用性を優先)。
- * bdboard-ij7g と同じ2段階方式: この PR の CI (ubuntu-latest) の実測ログが
- * 出たら bdboard-m070 でラウンド2として Linux 実測に基づき締め直すこと。
  */
-const MAX_PAGE_SCROLL_RESIDUAL_PX = 460;
+const MAX_PAGE_SCROLL_RESIDUAL_PX = 450;
 
 /**
  * 「ユーザーが消せない」残差の上限 = maxScrollY から Tips と絞り込みバーの実測高を
- * 引いた残り。モデル上これは `header + filterBarMarginBottom - 172`、つまり
- * **ヘッダー高そのもの**を別角度から縛る。
+ * 引いた残り。モデル上これは `header + filterBarMarginBottom - 172 + projectSectionOverhead`、
+ * つまり**ヘッダー高とプロジェクトセクションの見出しぶん**を別角度から縛る (どちらも
+ * 今のところユーザーが閉じたり畳んだりできない)。
  *
- * 上の予算だけだと、ヘッダーや `.lane` 上限が育っても Tips が短い日は吸収されて気付けない。
- * こちらは Tips/絞り込みバーの高さを両辺から落とすので、Tips の折り返し行数に鈍い。
+ * 上の予算だけだと、ヘッダーや `.lane` 上限・プロジェクトセクションが育っても Tips が
+ * 短い日は吸収されて気付けない。こちらは Tips/絞り込みバーの高さを両辺から落とすので、
+ * Tips の折り返し行数に鈍い。
  *
- * 根拠: 上の表の実測最大は macOS の 77.19px (Linux は 75.19px) なので、切り上げた 78px に
- * リポジトリ慣行の +16px を足した。これは実測済みのプラットフォーム差 2px の 8 倍であり、
- * フォントメトリクスや `documentElement.scrollHeight` の整数丸めが 1〜2px 動いても赤くならない。
+ * 根拠 (bdboard-m070、2026-09-24、分割ビュー): 実測最大は macOS の 168.19px (Linux は
+ * 140.19px)。切り上げた 169px にリポジトリ慣行の +16px を足して **185**。旧予算
+ * (bdboard-ij7g 当時、統合ビュー) は macOS 実測 77.19px + 16px = 94 だったので、+16px の
+ * マージン幅自体は変えていない — macOS 側の余裕 (185 - 168.19 = 16.81px) は旧予算の
+ * macOS 側の余裕 (94 - 77.19 = 16.81px) と小数点まで一致する。Linux 側の余裕は
+ * 44.81px (185 - 140.19) で旧予算の Linux 側の余裕 18.81px より大きいが、これは
+ * PROJECT_SECTION_OVERHEAD_PX の節で説明したとおり、このフィクスチャのタイトルが Linux
+ * では1行にしか折り返らないという実測結果の反映であり、意図的な緩和ではない。
  *
- * bdboard-4ij6 (#390) の 5 点実測には 81.00px も含まれていた。上の表と矛盾しない —
- * あれは**絞り込みバーが展開されている**状態で、`filterBarMarginBottom` が 4px でなく 8px に
- * なるぶん `header - 164` へ上がる。bdboard-qxt1 が既定を畳んだ状態にしたので現在は到達しない。
- * 仮に既定が展開へ巻き戻っても、そのときは maxScrollY 側が大きく跳ねて
- * MAX_PAGE_SCROLL_RESIDUAL_PX に落ちるので、こちらの予算を 81.00px 基準にする必要は無い
- * (下の `test` 内のコメントが「あえて assert しない」と言っているのはこの二重ガードのこと)。
+ * 下限は MAX_HEADER_HEIGHT_PX = 250 と PROJECT_SECTION_OVERHEAD_PX = 91 から逆算する。
+ * 既定の折りたたみ状態 (filterBar margin-bottom=4px) ではこの量は
+ * `header - 168 + projectSectionOverhead` なので 250 - 168 + 91 = 173。このテストは下の
+ * `test` 内のコメントどおり**折りたたみをあえて assert しない**ので、絞り込みバーが
+ * 展開されたケース (`header - 164 + projectSectionOverhead` = 177) も上回る必要があるが、
+ * 185 はどちらも上回る。それ未満まで締めると、ヘッダー太りやプロジェクトセクションの
+ * 肥大を、それぞれの名前付きアサーションより先にこちらが落とし、失敗メッセージが
+ * 原因から遠くなる。
  *
- * 下限は MAX_HEADER_HEIGHT_PX = 250 から逆算する。既定の折りたたみ状態
- * (filterBar margin-bottom=4px) ではこの量は `header - 168` なので 82px、絞り込みバーが
- * 展開されて margin-bottom=8px になると `header - 164` で 86px。このテストは下の `test` 内の
- * コメントどおり**折りたたみをあえて assert しない**ので、満たすべき下限は両状態を上回る
- * 86px (scrollHeight の整数丸めを見れば 87px) のほうである。それ未満まで締めると、
- * ヘッダー太りを `mobile-header-compact.spec.ts` の名前付きアサーションではなくこちらが先に
- * 落とし、失敗メッセージが原因から遠くなる。なお 82px が上の 81.00px とほぼ同値なのは偶然で、
- * 片方はヘッダー予算からの逆算、もう片方は展開時の実測という独立した根拠である。
- *
- * 94px は 86px より緩いまま、旧 104px (= ヘッダー換算 272px) から 10px 締めている。
- * 検知境界はゲートしている Linux 基準で書く: 実測 75.19px なので **18.81px を超える劣化**
- * から捕まる (旧 104px では 28.81px 超が必要だった)。macOS 実測 77.19px 基準なら 16.81px 超
- * だが、CI e2e は ubuntu-latest でしか回らないのでゲートするのは Linux の値のほう。
- * ここが回帰する経路は 2 つあり、症状が違う: `.lane` の 260px リテラル削り由来なら残差が
+ * ここが回帰する経路は 3 つあり、症状が違う: `.lane` の 260px リテラル削り由来なら残差が
  * 増えてページ側とレーン内のスクロールが奪い合い、ヘッダー太り由来ならファーストカードが
- * 折り目より下へ押し出される (`.lane` の上限はレーンを下へ伸ばすだけで firstCardTop を
- * 動かさないので、後者はヘッダー経路でしか起きない)。
- *
- * bdboard-mkm1.1 (2026-09-24): 上の MAX_PAGE_SCROLL_RESIDUAL_PX と同じ理由
- * (既定ビューの「分割」化でプロジェクトセクション項がモデル外から効いてくる) で、
- * こちらも実測 168.19px (macOS) に安全マージンを載せた暫定値へ引き上げる。
- * 恒久対応・ラウンド2は bdboard-m070 を参照。
+ * 折り目より下へ押し出され (`.lane` の上限はレーンを下へ伸ばすだけで firstCardTop を
+ * 動かさないので、後者はヘッダー経路でしか起きない)、プロジェクトセクションの見出しが
+ * 太る (ハーネスバッジ増加・プロジェクト名長大化) 由来ならタイトル自体の折り返し行数が
+ * 増える。
  */
-const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 190;
+const MAX_NON_DISMISSIBLE_RESIDUAL_PX = 185;
 
 test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
   test.use({ viewport: MOBILE_VIEWPORT, isMobile: true, hasTouch: true });
@@ -259,6 +311,9 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
       budgetNonDismissibleResidual: MAX_NON_DISMISSIBLE_RESIDUAL_PX,
       nonDismissibleHeadroom:
         Math.round((MAX_NON_DISMISSIBLE_RESIDUAL_PX - nonDismissibleResidual) * 100) / 100,
+      // bdboard-m070: 予算に組み込んだプロジェクトセクション項を実測 (before.projectSectionOverhead)
+      // と並べて出す。両者の差が広がってきたら PROJECT_SECTION_OVERHEAD_PX を締め直す材料になる。
+      projectSectionOverheadBudget: PROJECT_SECTION_OVERHEAD_PX,
       headerConvergedAfterMs: beforeConvergence.stableAfterMs,
       headerConvergenceQuietMs: beforeConvergence.quietMs,
       headerConvergenceSamples: beforeConvergence.samples,
@@ -277,8 +332,9 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
       `375x812: page scroll residual must stay within ${MAX_PAGE_SCROLL_RESIDUAL_PX}px — ` +
         `${describeResidualMetrics(before)}. ` +
         `ページ側に残るスクロール量が増えるほど「指を置いた位置でページとレーンのどちらが動くか」が` +
-        `変わる帯が広がる。モデルは maxScrollY = header + tips + filterBarBox - 172 なので、` +
-        `増えたときはまずヘッダー高と .lane の 260px リテラルを疑う。`,
+        `変わる帯が広がる。モデルは maxScrollY = header + tips + filterBarBox - 172 + ` +
+        `projectSectionOverhead なので、増えたときはヘッダー高・.lane の 260px リテラル・` +
+        `プロジェクトセクションの見出し (ハーネスバッジ等) を疑う。`,
     ).toBeLessThanOrEqual(MAX_PAGE_SCROLL_RESIDUAL_PX);
 
     expect(
@@ -286,8 +342,9 @@ test.describe('mobile page scroll residual (bdboard-4ij6)', () => {
       `375x812: residual that the user cannot dismiss must stay within ` +
         `${MAX_NON_DISMISSIBLE_RESIDUAL_PX}px — actual=${nonDismissibleResidual.toFixed(2)} ` +
         `(${describeResidualMetrics(before)}). ` +
-        `モデル上これは header + filterBar margin - 172 なので、ヘッダーが太ったか ` +
-        `.lane の 260px 上限が削られたときにここへ出る。`,
+        `モデル上これは header + filterBar margin - 172 + projectSectionOverhead なので、` +
+        `ヘッダーが太ったか、.lane の 260px 上限が削られたか、プロジェクトセクションの` +
+        `見出しが育ったときにここへ出る。`,
     ).toBeLessThanOrEqual(MAX_NON_DISMISSIBLE_RESIDUAL_PX);
 
     // Tips を閉じると残差がその高さぶん実際に減ること = 残差が「消せるクローム」に
