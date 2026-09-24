@@ -8,8 +8,6 @@ import {
 import {
   acknowledgeChatTurn,
   fetchChatThreads,
-  fetchChatTurnStatus,
-  fetchChatSessionMessages,
   postChatMessage,
   postChatMessageStream,
   ChatStreamEndedWithoutResultError,
@@ -18,7 +16,6 @@ import {
   type ProjectDto,
   type ChatThreadDto,
   type ChatSessionMessagesDto,
-  type ChatTurnStatusDto,
   type SessionTailMessageDto,
 } from '../api';
 import {
@@ -90,12 +87,7 @@ import {
   START_NEW_DRAFT_THREAD_CARRY,
   START_NEW_DRAFT_THREAD_PREFILL_CARRY,
 } from './chat/draftCarryPlans';
-import {
-  CHAT_STREAM_DETACHED_FAILED_MESSAGE,
-  TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS,
-  TURN_STATUS_POLL_RETRY_BACKOFF_MS,
-  UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS,
-} from './chat/turnStatusPolicy';
+import { CHAT_STREAM_DETACHED_FAILED_MESSAGE } from './chat/turnStatusPolicy';
 import { describeChatSendError } from './chat/chatSendErrors';
 import { useElapsedSeconds } from './chat/useElapsedSeconds';
 import { useStickToBottomScroll } from './chat/useStickToBottomScroll';
@@ -103,6 +95,7 @@ import { useConversationKey } from './chat/useConversationKey';
 import { useChatThreadLists } from './chat/useChatThreadLists';
 import { useChatConversationsState } from './chat/useChatConversationsState';
 import { useChatHistoryLoader } from './chat/useChatHistoryLoader';
+import { useTurnStatusRecovery } from './chat/useTurnStatusRecovery';
 
 interface ChatPanelProps {
   projects: readonly ProjectDto[];
@@ -372,10 +365,6 @@ export function ChatPanel({
   // 表示し続けているはずの部分テキストを巻き添えで消してしまっていた。詳細は
   // 元チケット (bdboard-v3ag PR #492 の Opus レビュー worth-considering W2) 参照。
   const [streamingReply, setStreamingReply] = useState<Record<string, string>>({});
-  const [backgroundTurnStatus, setBackgroundTurnStatus] = useState<ChatTurnStatusDto>({
-    state: 'idle',
-  });
-  const [backgroundTurnProjectId, setBackgroundTurnProjectId] = useState('');
   const [turnRecoveryGeneration, setTurnRecoveryGeneration] = useState(0);
   // 送信したのに、このクライアントでは完了を見届けられなかったスレッド
   // (返信を待たずに別スレッドへ移った等)。turn-status の回収が取りこぼした場合の
@@ -986,388 +975,60 @@ export function ChatPanel({
     return () => { cancelled = true; };
   }, [selectedProjectId, setThreadError]);
 
-  useEffect(() => {
-    if (selectedProjectId === '') return;
-    let cancelled = false;
-    let pollTimer: ReturnType<typeof setTimeout> | undefined;
-    if (turnRecoveryGeneration > 0) {
-      historyRequestIdRef.current += 1;
-      threadListRequestIdRef.current += 1;
-      setLoadingHistoryFor(null);
-    }
-    setBackgroundTurnProjectId(selectedProjectId);
-    setBackgroundTurnStatus({ state: 'idle' });
-    const recoveredSessionIds = new Set<string>();
-    // bdboard-3tw.165 (Opus レビュー指摘): failedTurns はプロジェクト1件の
-    // completedTurns と同じ「キュー」(bdboard-3tw.155/156) — idle (単一ロック下では
-    // 「今追っている detached 送信が settle した」以外に意味を持たない) と違って、
-    // ここに乗るのは「今 detachedStreamSendRef が追っている送信とは無関係の、古い/
-    // 別セッションの失敗」のことがある。ACK 済みでも印を付け、ACK がサーバー側で
-    // 効かず同じ1件を返し続けても tight loop しないようにする
-    // (recoveredSessionIds と同じ、bdboard-3tw.156 由来のガード)。
-    const drainedFailedSessionIds = new Set<string>();
-    // bdboard-3tw.164: 連続失敗回数。fetchChatTurnStatus が一度でも成功したら
-    // (idle/processing/completed いずれでも) 0 へ戻す — 「1回目が失敗、2回目で
-    // completed」のように失敗が連続しなければ上限を消費しない。
-    let consecutiveFailures = 0;
-    // bdboard-96rp: UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS 用のカウンタ。
-    // 「sessionId 未確定の tracked send を追っていて、sessionId 無しの failed が
-    // 見えているが時刻が一致しない」という特定の状況が連続した回数だけを数える —
-    // それ以外の状況 (一致した/無関係な session 付きエントリ/processing/completed/
-    // idle) を1回でも挟めば 0 に戻す。定数のコメント参照。
-    let unmatchedSessionlessFailedStreak = 0;
-
-    const checkTurnStatus = async (): Promise<void> => {
-      try {
-        const status = await fetchChatTurnStatus(selectedProjectId);
-        if (cancelled) return;
-        consecutiveFailures = 0;
-        setBackgroundTurnStatus(status);
-        if (status.state === 'idle') {
-          // 単一ロック下では、プロジェクトにつき同時に走るターンは高々1つ。idle に
-          // 落ちたのは「今追っている detached 送信が completed も failed も残さず
-          // settle した」ことを意味するので、セッションIDの突き合わせは不要
-          // (failed と違い、複数件が溜まる「キュー」ではない)。
-          unmatchedSessionlessFailedStreak = 0;
-          const detached = detachedStreamSendRef.current[selectedProjectId];
-          if (detached !== undefined) {
-            delete detachedStreamSendRef.current[selectedProjectId];
-            // bdboard-3tw.166: 送信失敗が確定した以上、回収中ずっと表示していた
-            // 部分テキストはここで消す (fail() が積むエラーメッセージと二重表示
-            // させない)。
-            clearStreamingReplyForKey(detached.streamingKey);
-            detached.fail();
-          }
-          return;
-        }
-        if (status.state === 'failed') {
-          // bdboard-3tw.165 (Opus レビュー指摘): completed 側と同じく、追っている
-          // detachedStreamSendRef と sessionId が一致する場合だけ解決する。一致しない
-          // 場合に idle と同じ無条件 fail() をすると、無関係な古い失敗で今追っている
-          // (まだ成功するかもしれない) 送信を誤って失敗扱いにしてしまう。
-          const detached = detachedStreamSendRef.current[selectedProjectId];
-          // bdboard-96rp: 追っている送信自身の sessionId がまだ未確定 (新規スレッド
-          // の初回送信) な場合、以前は「sessionId 無しの failed なら何でも自分の
-          // ものかもしれない」として無条件に一致させていた。これは (a) 別の既に
-          // sessionId が確定している送信の失敗 (status.sessionId が定義済み) まで
-          // 誤って一致させてしまう、(b) この送信を追い始める *前から* キューに
-          // 残っていた無関係な古い sessionId 無しエントリにも一致してしまう、という
-          // 2つの誤判定を許していた。sessionId 未確定の場合は
-          // status.sessionId も未確定であること・かつこの送信を追い始めた時刻
-          // (detachedAt) 以降に失敗したものであることまで確認する。
-          const matchesTrackedSend =
-            detached !== undefined &&
-            (detached.sessionId !== undefined
-              ? detached.sessionId === status.sessionId
-              : status.sessionId === undefined &&
-                Date.parse(status.failedAt) >=
-                  detached.detachedAt - TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS);
-          if (matchesTrackedSend) {
-            unmatchedSessionlessFailedStreak = 0;
-            if (status.sessionId !== undefined) {
-              try {
-                await acknowledgeChatTurn(selectedProjectId, status.sessionId);
-              } catch {
-                // ACK is best-effort; a later poll can just see the same failed turn again.
-              }
-              if (cancelled) return;
-            }
-            delete detachedStreamSendRef.current[selectedProjectId];
-            // bdboard-3tw.166: idle 分岐と同じ理由 — 送信失敗が確定したので、回収中
-            // 表示していた部分テキストをここで消す。
-            clearStreamingReplyForKey(detached!.streamingKey);
-            detached!.fail();
-            return;
-          }
-          // 追っている送信とは無関係: 後ろに隠れているかもしれない新しいエントリ
-          // (completed かもしれないし、本当に一致する failed かもしれない) を
-          // 取りこぼさないよう、ACK して掃いてから聞き直す。sessionId が無い失敗
-          // (エージェントがセッションを払い出す前の新規スレッド失敗) は ACK 経路が
-          // 無く区別もできないので、無関係な pending 送信を誤って失敗扱いにしない
-          // よう何もしない (CHAT_COMPLETED_TURNS_MAX の上限で自然に押し出されるまで
-          // 残る — bdboard-3tw.165 の既知の制約、サーバー側コメント参照)。
-          if (status.sessionId === undefined) {
-            // bdboard-96rp (round 2 再レビューで発見されたブロッカー): ここに来るのは
-            // 「sessionId 未確定の tracked send を追っているが上の時刻突き合わせで
-            // 一致しなかった」場合と「そもそも sessionId 未確定の送信を追っていない」
-            // 場合の両方。前者だけ、一致しない状態が
-            // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS 回続いたら、時刻の厳密な一致を
-            // 諦めてこのエントリを自分自身の失敗として受け入れる (定数のコメント参照 —
-            // でなければ ACK 経路が無いこの手の failed に対して無期限にブロックし得る)。
-            const maybeOwnDelayedFailure =
-              detached !== undefined && detached.sessionId === undefined;
-            if (maybeOwnDelayedFailure) {
-              unmatchedSessionlessFailedStreak += 1;
-              if (
-                unmatchedSessionlessFailedStreak >=
-                UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS
-              ) {
-                unmatchedSessionlessFailedStreak = 0;
-                delete detachedStreamSendRef.current[selectedProjectId];
-                clearStreamingReplyForKey(detached!.streamingKey);
-                detached!.fail();
-                return;
-              }
-            } else {
-              unmatchedSessionlessFailedStreak = 0;
-            }
-            // bdboard-v3ag Opus レビュー指摘 (blocker B1): 無条件の return だと、次の
-            // トリガー (=新しい送信の配信停止) が無い限りこの effect は二度と
-            // checkTurnStatus を呼ばない。無関係な failed が先頭に居座っている間、
-            // 本当に追っている送信の結末を永遠に確認できなくなり、ref も送信ボタンの
-            // disabled も解けない。'processing' 分岐と同じ間隔で聞き直しを続ける —
-            // サーバー側は CHAT_COMPLETED_TURNS_MAX の上限に達すればこのエントリを
-            // 自然に押し出すので、無限ループというより粘り強いポーリングになる。
-            pollTimer = setTimeout(() => {
-              void checkTurnStatus();
-            }, 1_000);
-            return;
-          }
-          unmatchedSessionlessFailedStreak = 0;
-          if (drainedFailedSessionIds.has(status.sessionId)) {
-            pollTimer = setTimeout(() => {
-              void checkTurnStatus();
-            }, 1_000);
-            return;
-          }
-          drainedFailedSessionIds.add(status.sessionId);
-          try {
-            await acknowledgeChatTurn(selectedProjectId, status.sessionId);
-          } catch {
-            // best-effort; if the ack didn't really take effect the dedup guard above
-            // still stops this from looping tightly on the exact same entry.
-          }
-          if (cancelled) return;
-          await checkTurnStatus();
-          return;
-        }
-        if (status.state === 'processing') {
-          unmatchedSessionlessFailedStreak = 0;
-          pollTimer = setTimeout(() => {
-            void checkTurnStatus();
-          }, 1_000);
-          return;
-        }
-        if (status.state !== 'completed') return;
-        unmatchedSessionlessFailedStreak = 0;
-        // ACK が効かずサーバーが同じ1件を返し続けても、掃き出しループが
-        // 回り続けないようにする (bdboard-3tw.156)。
-        if (recoveredSessionIds.has(status.sessionId)) {
-          // bdboard-v3ag Opus レビュー指摘 (blocker B1): drainedFailedSessionIds と
-          // 同じ理由で、ここも無条件 return にすると effect が二度と
-          // checkTurnStatus を呼ばなくなる。この completed エントリの背後に、
-          // detachedStreamSendRef が追っている別セッションの completed/failed が
-          // 隠れている場合、その解決を永遠に確認できず ref も送信ボタンの
-          // disabled も解けない。'failed' 分岐の無関係エントリと同じ間隔で
-          // 聞き直しを続ける (サーバー側の CHAT_COMPLETED_TURNS_MAX で自然に
-          // 押し出されるまでの、粘り強いポーリング)。
-          pollTimer = setTimeout(() => {
-            void checkTurnStatus();
-          }, 1_000);
-          return;
-        }
-        recoveredSessionIds.add(status.sessionId);
-        // bdboard-3tw.166 (Opus レビュー指摘): 表示中の部分テキストを消すのは下の
-        // ハイドレーション (fetch → setConversations) が実際に成功してからにする —
-        // ここで即座に消すと、2件の fetch を待つ間だけ「部分テキストも確定本文も
-        // どちらも無い」空白の間が生まれてしまい、"回収したターンの本文が届いたら
-        // 置き換える" という要件 (本文が届く *前* に消えない) を満たせない。
-        //
-        // bdboard-v3ag Opus レビュー指摘 (W1): detachedStreamSendRef 自体のクリアも
-        // 同じタイミングまで遅らせる。以前は「もう完了扱いで正しい」として即座に
-        // 外していたが、bdboard-v3ag のガード (hasUnresolvedProjectRecovery /
-        // unresolvedProjectRecoveryAtSubmit) はこのプロジェクトのエントリの有無を
-        // 「再送を止めるべき区間」の目印として使っている。ここで先にエントリだけ
-        // 外すと、
-        // ハイドレーション fetch が終わるまでの間だけ再送がすり抜けられるように
-        // なり、その再送自身の setStreamingReply((prev) => ({ ...prev, [sendKey]: '' })) が
-        // (a) このあと届く確定本文と同じ会話キーの部分テキストを本文到着前に消す、
-        // (b) 新しい送信自身のライブな部分テキストまで巻き添えで消す、という
-        // v3ag が塞ごうとした穴を completed 経路でだけ再現してしまう。ref のクリアと
-        // clearStreamingReplyForKey を下の「本文を書き込むタイミング」に揃えることで、
-        // 再送のブロックがハイドレーション完了まで一貫して効くようにする。
-        const detached = detachedStreamSendRef.current[selectedProjectId];
-        // bdboard-96rp (round 2 Opus レビューで W1 として一旦 'failed' 分岐と同じ
-        // detachedAt 突き合わせを入れたが、round 2 の再レビューでリバートした。理由:
-        // 'failed' の sessionId 無しエントリと違い、completed エントリは常に
-        // sessionId が確定しており、下のハイドレーション+ACK (この関数の後半、
-        // detachedMatchesThisRecovery の値に関わらず必ず実行される) で毎回
-        // drain されるため、無関係な古い completed に「一致」させてしまう実害は
-        // 「今追っている送信の部分テキスト表示をこの回では消し損ねる」程度に留まる
-        // (次の completed/failed/idle でいずれ解決する)。
-        // 一方で detachedAt 突き合わせを入れると、サーバーの completedAt がクライアント
-        // 側の detachedAt (ストリーム切断を検知した時刻) より大きく後ろにずれるケース
-        // (例: cloudflared トンネル越しの切断検知の遅延、bdboard-rrvr #499 が
-        // 'detached' SSE イベントを消した理由と同種の「サーバーは完走しているのに
-        // クライアントの切断検知が大きく遅れる」ケース) で、実際には成功して
-        // ハイドレーションも完了したこの送信を、直後の 'idle' 分岐
-        // (このプロジェクトの detachedStreamSendRef エントリが残ったまま次の
-        // ポーリングに入り、
-        // 「completed/failed を残さず idle に落ちた」と誤認される) が無条件に
-        // fail() してしまう実害の方が大きいと判断した (round 2 レビューで再現済み)。
-        // そのため sessionId 未確定の場合は 'failed' 分岐と違って時刻突き合わせをせず、
-        // 元の無条件マッチに戻す。
-        const detachedMatchesThisRecovery =
-          detached !== undefined &&
-          (detached.sessionId === undefined || detached.sessionId === status.sessionId);
-
-        // A detached turn can create a session whose id was unknown when the tab closed.
-        // Invalidate older history/thread-list requests before hydrating the server-owned
-        // result so a late initial response cannot overwrite the recovered state.
-        historyRequestIdRef.current += 1;
-        setLoadingHistoryFor(null);
-        const recoveryThreadRequestId = ++threadListRequestIdRef.current;
-        let threads: ChatThreadDto[];
-        let payload: ChatSessionMessagesDto;
-        try {
-          [threads, payload] = await Promise.all([
-            fetchChatThreads(selectedProjectId),
-            fetchChatSessionMessages(status.sessionId, selectedProjectId),
-          ]);
-        } catch (hydrationError) {
-          // bdboard-3tw.164 (Opus レビュー指摘): ここで投げると外側の catch の
-          // retry/backoff に乗るが、上の重複防止印 (recoveredSessionIds、
-          // bdboard-3tw.156) を外さないと、再試行のたびに fetchChatTurnStatus は
-          // 同じ completed を返すだけで「同じ1件を返し続けている」と誤認され、
-          // ハイドレーションを二度と試みないまま再試行予算を空費してしまう。
-          // ここでの失敗は「同じ1件を返し続けている」のではなく取得そのものの
-          // 一時的な失敗なので、印を外して再試行時にもう一度ハイドレーションを
-          // 試みられるようにする。
-          recoveredSessionIds.delete(status.sessionId);
-          throw hydrationError;
-        }
-        if (
-          cancelled ||
-          recoveryThreadRequestId !== threadListRequestIdRef.current
-        ) return;
-        const currentOpen = openThreadIdsRef.current[selectedProjectId] ?? [];
-        const nextOpen = [
-          ...currentOpen.filter((id) => id !== status.sessionId),
-          status.sessionId,
-        ];
-        const currentSelected = selectedThreadIdsRef.current[selectedProjectId];
-        const nextSelected = currentSelected ?? status.sessionId;
-        setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
-        setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
-        setConversations((prev) => ({
-          ...prev,
-          [status.sessionId]: {
-            messages: toChatMessages(payload.messages),
-            sessionId: payload.sessionId,
-            agentId: payload.agentId,
-          },
-        }));
-        if (detachedMatchesThisRecovery) {
-          // bdboard-3tw.166 (Opus レビュー指摘): 確定本文を conversations へ書き込む
-          // まさにこのタイミングで部分テキストを消す。同じ会話キーに部分テキストと
-          // 確定本文が二重に出ることも、本文が届く前に両方とも消えて空白になることも
-          // 防ぐ。detached!.streamingKey の detached は detachedMatchesThisRecovery が
-          // true の時点で undefined でないことが確定している (上で導出した局所変数)。
-          // bdboard-v3ag (W1): ref のクリアもここへ揃える (上のコメント参照) —
-          // ハイドレーションが成功して初めて、このターンの detached 追跡を終えたと
-          // 見なす。
-          delete detachedStreamSendRef.current[selectedProjectId];
-          clearStreamingReplyForKey(detached!.streamingKey);
-        }
-        setHistoryLoadedFor((prev) => ({ ...prev, [status.sessionId]: true }));
-        if (payload.model !== undefined && payload.model !== '') {
-          setThreadModelIds((prev) => ({
-            ...prev,
-            [status.sessionId]: payload.model!,
-          }));
-        }
-        setSelectedThreadIds((prev) => ({
-          ...prev,
-          [selectedProjectId]: nextSelected,
-        }));
-        if (nextSelected === status.sessionId && payload.agentId !== '') {
-          setSelectedAgentId(payload.agentId);
-        }
-        writePersistedChatThreadState(selectedProjectId, {
-          activeSessionIds: nextOpen,
-          selectedSessionId: nextSelected,
-        });
-        clearUnresolvedSend(status.sessionId);
-        try {
-          await acknowledgeChatTurn(selectedProjectId, status.sessionId);
-        } catch {
-          // ACK is best-effort; a later mount can safely hydrate the same persisted turn.
-          return;
-        }
-        if (cancelled) return;
-        // 未回収の完了は1件ずつ配られる。別スレッドの返信がまだ積まれている
-        // ことがあるので、掃けるまで聞き直す (bdboard-3tw.156)。
-        await checkTurnStatus();
-      } catch {
-        // bdboard-3tw.164: unmount / スレッド切替 / プロジェクト切替による中断は
-        // 従来どおり即座に止める (再試行しない)。cancelled はこの effect の
-        // cleanup でだけ立つので、ここでの失敗はネットワークエラーや一時的な
-        // 5xx 等の実際の取得失敗に限られる。
-        if (cancelled) return;
-        consecutiveFailures += 1;
-        const backoffMs =
-          TURN_STATUS_POLL_RETRY_BACKOFF_MS[consecutiveFailures - 1];
-        if (backoffMs === undefined) {
-          // 再試行の上限に達した。sessionId が既知の送信元は既に
-          // markUnresolvedSend 済みで、unresolvedSends 経由の安全網
-          // (bdboard-3tw.156) がスレッド閲覧時に取りこぼしを拾えるが、
-          // sessionId 未確定の新規スレッドはこの安全網の対象外 (上の定数の
-          // コメント参照)。Status recovery is additive; ordinary thread/history
-          // loading remains usable either way.
-          console.warn(
-            `chat turn-status polling gave up after ${TURN_STATUS_POLL_RETRY_BACKOFF_MS.length} consecutive failures`,
-          );
-          // bdboard-v3ag Opus レビュー指摘 (blocker B1): ここで何もせず return すると、
-          // detachedStreamSendRef が追っていた送信の結末を永遠に確認できないまま
-          // このプロジェクトのエントリが残り続ける。bdboard-v3ag はこのプロジェクトの
-          // エントリが存在する間ずっと送信ボタンを disabled にするため、対処しないと
-          // 利用者は
-          // 二度とこのプロジェクトへ送信できなくなる(ページ再読み込み以外に回復手段が
-          // 無いデッドロック)。ポーリング自体を諦める以上、idle/failed 分岐と同じ扱い
-          // (ref 解放 + 保持していた部分テキストのクリア + 失敗表示) にする。
-          //
-          // bdboard-qfps: setBackgroundTurnStatus(status) は checkTurnStatus の
-          // try 内、fetchChatTurnStatus が成功した直後の1箇所でしか呼ばれない。
-          // ここ (catch, ポーリング自体を諦めた場合) はその手前で諦めているので、
-          // backgroundTurnStatus は最後に成功した poll の値 (大抵 'processing') の
-          // まま二度と更新されない。detachedStreamSendRef の有無に関わらず (この
-          // プロジェクトの誰か/何かの 'processing' 表示を単に観測しているだけの
-          // ケースも含む)、ログ上部の「返信をバックグラウンドで処理中…」バナーと
-          // メッセージバブル (どちらも backgroundTurnStatus.state==='processing' 直結)
-          // が凍りついたまま残ってしまう。サーバーへの疎通自体を諦めた以上、実際の
-          // 状態は「不明」だが、ChatTurnStatusDto に unknown 相当の state は無いため、
-          // 'idle' (=このプロジェクトについて表示すべきバックグラウンドターンは
-          // 無い) にフォールバックし、凍りついたバナーを消す。
-          //
-          // bdboard-qfps Opus レビュー指摘 (worth-considering): 'processing' 以外
-          // (例えば直前の poll が 'completed' を返していて、その後のハイドレーション
-          // fetch が失敗してバックオフに入り、そのまま諦めたようなケース) まで
-          // 無条件に 'idle' へ巻き戻すと、まだ意味のある「バックグラウンドの返信が
-          // 完了しました。」通知を巻き添えで消してしまう。'processing' のときだけ
-          // 'idle' に落とし、それ以外 (completed/failed/idle) はそのまま残す。
-          setBackgroundTurnStatus((prev) =>
-            prev.state === 'processing' ? { state: 'idle' } : prev,
-          );
-          const exhaustedDetached = detachedStreamSendRef.current[selectedProjectId];
-          if (exhaustedDetached !== undefined) {
-            delete detachedStreamSendRef.current[selectedProjectId];
-            clearStreamingReplyForKey(exhaustedDetached.streamingKey);
-            exhaustedDetached.fail();
-          }
-          return;
-        }
-        pollTimer = setTimeout(() => {
-          void checkTurnStatus();
-        }, backoffMs);
+  const applyRecoveredTurn = useCallback(
+    (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => {
+      const currentOpen = openThreadIdsRef.current[selectedProjectId] ?? [];
+      const nextOpen = [...currentOpen.filter((id) => id !== payload.sessionId), payload.sessionId];
+      const currentSelected = selectedThreadIdsRef.current[selectedProjectId];
+      const nextSelected = currentSelected ?? payload.sessionId;
+      setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
+      setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
+      setConversations((prev) => ({
+        ...prev,
+        [payload.sessionId]: {
+          messages: toChatMessages(payload.messages),
+          sessionId: payload.sessionId,
+          agentId: payload.agentId,
+        },
+      }));
+      setHistoryLoadedFor((prev) => ({ ...prev, [payload.sessionId]: true }));
+      if (payload.model !== undefined && payload.model !== '') {
+        setThreadModelIds((prev) => ({ ...prev, [payload.sessionId]: payload.model! }));
       }
-    };
+      setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextSelected }));
+      if (nextSelected === payload.sessionId && payload.agentId !== '') {
+        setSelectedAgentId(payload.agentId);
+      }
+      writePersistedChatThreadState(selectedProjectId, {
+        activeSessionIds: nextOpen,
+        selectedSessionId: nextSelected,
+      });
+    },
+    [
+      selectedProjectId,
+      openThreadIdsRef,
+      selectedThreadIdsRef,
+      setThreadLists,
+      setOpenThreadIds,
+      setConversations,
+      setHistoryLoadedFor,
+      setThreadModelIds,
+      setSelectedThreadIds,
+      setSelectedAgentId,
+    ],
+  );
 
-    void checkTurnStatus();
-    return () => {
-      cancelled = true;
-      if (pollTimer !== undefined) clearTimeout(pollTimer);
-    };
-  }, [selectedProjectId, turnRecoveryGeneration, clearUnresolvedSend, clearStreamingReplyForKey, setSelectedAgentId]);
+  const { backgroundTurnStatus, backgroundTurnProjectId, resetBackgroundTurnStatus } = useTurnStatusRecovery({
+    selectedProjectId,
+    generation: turnRecoveryGeneration,
+    detachedSendsRef: detachedStreamSendRef,
+    historyRequestIdRef,
+    threadListRequestIdRef,
+    setLoadingHistoryFor,
+    clearStreamingReplyForKey,
+    clearUnresolvedSend,
+    applyRecoveredTurn,
+  });
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -2008,7 +1669,7 @@ export function ChatPanel({
         ...prev,
         [currentConversationKey]: [],
       }));
-      setBackgroundTurnStatus({ state: 'idle' });
+      resetBackgroundTurnStatus();
       setIsSending(true);
       const sendKey = currentConversationKey;
       // bdboard-zlzo: 新しいターンが完走したならサーバーは空いていたので、前の配信停止分の
