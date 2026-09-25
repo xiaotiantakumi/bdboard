@@ -84,6 +84,16 @@ export function startTicketRun(ticketId: string): Promise<StartAgentRunResponseD
   });
 }
 
+/**
+ * ticketId を付けずに GET /api/runs を叩き、盤面全体の run 一覧を返す。
+ * 一括実行 (bdboard-xuuz) が「既に実行中のエージェントがあるカード」を
+ * 対象外にする判定に使う — サーバーの canStart は ticket 単位でしか
+ * already-running を見ないので、開始前にクライアント側で弾く。
+ */
+export function fetchAllAgentRuns(): Promise<{ runs: AgentRunSummaryDto[] }> {
+  return fetchJson<{ runs: AgentRunSummaryDto[] }>('/api/runs');
+}
+
 export function fetchTicketRuns(ticketId: string): Promise<{ runs: AgentRunSummaryDto[] }> {
   const searchParams = new URLSearchParams({ ticketId });
   return fetchJson<{ runs: AgentRunSummaryDto[] }>(`/api/runs?${searchParams.toString()}`);
