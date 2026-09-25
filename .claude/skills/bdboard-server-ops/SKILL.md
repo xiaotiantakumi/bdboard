@@ -38,6 +38,12 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
   HEAD / 結果) が残る。hook 側の deny は `${TMPDIR:-/tmp}/bdboard-server-guard.log`。
 - worktree の cwd から呼んでよい。main checkout は git common dir から解決する
   (`cd` しない — 常時稼働サーバーの居場所へ作業を移さない)。
+- **相対パス呼び出し (`scripts/always-on-server.sh ...`) は議長の cwd が古い worktree でも
+  安全 (bdboard-9nah)。** スクリプトは起動直後、自分の置き場所が git common dir から解決した
+  main checkout の `scripts/` と一致するかを確認し、一致しなければ (=古い worktree に取り残された
+  版から呼ばれた) main 側の現在の版へ元の引数のまま `exec` し直す。main 側に同名ファイルが
+  無いとき (テスト用の使い捨てリポジトリ等) は fail-open で自分のまま続行する。再帰防止と
+  テスト用の脱出口は `BDBOARD_SERVER_SKIP_SELF_EXEC=1`。
 - `--dry-run` は何もせず手順を表示する。手順の詳細は `scripts/always-on-server.sh --help`。
 
 サブエージェントとして作業していて再起動が必要になったら、**最終報告に「議長で再起動が必要

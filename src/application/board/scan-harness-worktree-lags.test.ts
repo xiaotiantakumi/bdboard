@@ -28,6 +28,7 @@ describe('scanHarnessWorktreeLags', () => {
         countHarnessCommitsBehindDefaultBranch: async (path) => ({
           commitsBehind: path === '/repo/wt/a' ? 124 : 3,
           baseRef: 'origin/main',
+          hasCommonAncestor: true,
         }),
       }),
     );
@@ -39,6 +40,7 @@ describe('scanHarnessWorktreeLags', () => {
         worktreePath: '/repo/wt/a',
         commitsBehind: 124,
         baseRef: 'origin/main',
+        hasCommonAncestor: true,
       },
       {
         projectId: '/repo',
@@ -46,6 +48,7 @@ describe('scanHarnessWorktreeLags', () => {
         worktreePath: '/repo/wt/b',
         commitsBehind: 3,
         baseRef: 'origin/main',
+        hasCommonAncestor: true,
       },
     ]);
   });
@@ -68,7 +71,7 @@ describe('scanHarnessWorktreeLags', () => {
           if (path === '/repo/wt/a') {
             throw new Error('no origin/main');
           }
-          return { commitsBehind: 60, baseRef: 'origin/main' };
+          return { commitsBehind: 60, baseRef: 'origin/main', hasCommonAncestor: true };
         },
       }),
       { logWarn },
@@ -113,6 +116,7 @@ describe('scanHarnessWorktreeLags', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => ({
       commitsBehind: 9,
       baseRef: 'origin/main',
+      hasCommonAncestor: true,
     }));
 
     const lags = await scanHarnessWorktreeLags(
@@ -132,6 +136,7 @@ describe('scanHarnessWorktreeLags', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
       commitsBehind: 9,
       baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+      hasCommonAncestor: true,
     }));
     const projectWorktrees = [
       worktree('bdboard-a', '/repo/wt/a'),
@@ -152,6 +157,7 @@ describe('scanHarnessWorktreeLags', () => {
     });
     expect(lags).toContainEqual(expect.objectContaining({
       projectId: '/other', baseRef: 'origin/master',
+      hasCommonAncestor: true,
     }));
   });
 
@@ -159,6 +165,7 @@ describe('scanHarnessWorktreeLags', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => ({
       commitsBehind: 0,
       baseRef: 'origin/main',
+      hasCommonAncestor: true,
     }));
 
     const lags = await scanHarnessWorktreeLags(

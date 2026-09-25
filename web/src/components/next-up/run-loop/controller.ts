@@ -89,9 +89,10 @@ export function useNextUpRunLoopController(
 
   useEffect(() => {
     return () => {
-      // The controller is owned by App, not NextUpView. Consequently a view
-      // switch does not run this cleanup; only leaving the whole app ends the
-      // client-side loop and invalidates late progress from its generation.
+      // The controller is owned by App (bdboard-mkm1.2 moved it there from the
+      // deleted NextUpView; see bdboard-mkm1.3). Consequently a view switch does
+      // not run this cleanup; only leaving the whole app ends the client-side
+      // loop and invalidates late progress from its generation.
       stopRequestedRef.current = true;
       loopRunIdRef.current += 1;
       loopActiveRef.current = false;

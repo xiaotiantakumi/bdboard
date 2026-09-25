@@ -45,6 +45,9 @@ export const UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS = 20;
 // TURN_STATUS_POLL_RETRY_BACKOFF_MS (5回・合計約23秒) と同じ桁数に揃えた —
 // この値そのものに強い根拠は無く、「無期限にブロックしない」ことが目的の
 // 主眼であり、猶予の長さは今後の実測次第で調整して良い。
+// この値を上げるときは src/interface/http/chat-turn-tracker.ts の
+// FAILED_TURN_SESSIONLESS_TTL_MS (60s) より十分短く保つこと — 追い越すと
+// サーバー側の TTL 刈り取りとクライアント側の自己解決が競合しうる (bdboard-kg0m)。
 
 // bdboard-zlzo: 配信停止後にサーバー側でもターンの完了を確認できなかったときの文言。
 export const CHAT_STREAM_DETACHED_FAILED_MESSAGE =

@@ -11,7 +11,7 @@ import { AppViewContent, type AppViewContentProps } from './AppViewContent';
 // bdboard-62p4 PR-2: AppViewContent は「どの view のときにどの子コンポーネントを
 // 出すか」という出し分けロジックが全てなので、各子をモックに置き換えて view
 // ごとに正しいものが描画されることを直接検証する。ボード系ビュー
-// (split/next) の出し分け自体は AppBoardViewSwitch.test.tsx が見ているので、
+// (split) の出し分け自体は AppBoardViewSwitch.test.tsx が見ているので、
 // ここでは「AppViewContent が AppBoardViewSwitch を無条件に描画し、view を
 // そのまま渡すこと」「AppBoardViewSwitch へ渡す boardMeta の再ピックが
 // 元の値を落とさず・すり替えずに転送されること」を確認する(自己ゲートは
@@ -62,7 +62,7 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
 const appBoardViewSwitchMock = vi.mocked(AppBoardViewSwitch);
 
 // AppBoardViewSwitch は AppViewContent 側では view に関わらず無条件に描画される
-// (merged/split/next の自己ゲートは AppBoardViewSwitch 自身が持つ。
+// (split の自己ゲートは AppBoardViewSwitch 自身が持つ。
 // AppBoardViewSwitch.test.tsx の「非ボードビューでは何も描画しない」テストが
 // その自己ゲートを直接検証している)。よってここでの排他性チェックの対象は
 // ボード以外のリーフ view だけにする。
@@ -137,12 +137,7 @@ function makeProps(overrides: Partial<AppViewContentProps> = {}): AppViewContent
     onCardClick: vi.fn(),
     onSessionBadgeClick: vi.fn(),
     nextUp: {
-      limit: 10,
-      onLimitChange: vi.fn(),
-      showEpics: false,
-      onShowEpicsChange: vi.fn(),
       batchRun: {} as unknown as NextUpRunLoopController,
-      harnessStatuses: undefined,
     },
     windows: {
       activityWindowDays: 1,
@@ -169,7 +164,7 @@ function expectOnlyLeaf(testid: string | null) {
 
 describe('AppViewContent', () => {
   it('always delegates to AppBoardViewSwitch regardless of view (self-gating lives there)', () => {
-    for (const view of ['split', 'next', 'activity', 'settings'] as ViewMode[]) {
+    for (const view of ['split', 'activity', 'settings'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(screen.getByTestId('board-view-switch')).toBeInTheDocument();
       unmount();
@@ -180,7 +175,7 @@ describe('AppViewContent', () => {
     // "view をそのまま渡すこと" を直接検証する: AppBoardViewSwitch はモック
     // されているため描画結果からは view の値を確認できない。呼び出し引数を
     // 直接見ることで、view がハードコードされていないことを保証する。
-    for (const view of ['split', 'next'] as ViewMode[]) {
+    for (const view of ['split', 'digest'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expect(appBoardViewSwitchMock.mock.calls.at(-1)?.[0]).toMatchObject({ view });
       unmount();
@@ -206,12 +201,7 @@ describe('AppViewContent', () => {
       availableLabels: ['marker-label'],
     };
     const nextUp = {
-      limit: 20 as const,
-      onLimitChange: vi.fn(),
-      showEpics: true,
-      onShowEpicsChange: vi.fn(),
       batchRun: { id: 'marker-batch-run' } as unknown as NextUpRunLoopController,
-      harnessStatuses: undefined,
     };
     const onCardClick = vi.fn();
     const onSessionBadgeClick = vi.fn();
@@ -278,8 +268,8 @@ describe('AppViewContent', () => {
     });
   }
 
-  it('renders no non-board leaf view for the board views (split/next)', () => {
-    for (const view of ['split', 'next'] as ViewMode[]) {
+  it('renders no non-board leaf view for the board view (split)', () => {
+    for (const view of ['split'] as ViewMode[]) {
       const { unmount } = render(<AppViewContent {...makeProps({ view })} />);
       expectOnlyLeaf(null);
       unmount();

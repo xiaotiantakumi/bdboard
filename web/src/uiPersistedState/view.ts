@@ -4,7 +4,6 @@ import type { BoardMode } from '../api';
 
 export type ViewMode =
   | 'split'
-  | 'next'
   | 'activity'
   | 'digest'
   | 'stats'
@@ -21,7 +20,6 @@ export const DEFAULT_VIEW: ViewMode = 'split';
 */
 export const VIEW_ITEMS: readonly { view: ViewMode; label: string }[] = [
   { view: 'split', label: '分割' },
-  { view: 'next', label: 'Next Up' },
   { view: 'activity', label: 'アクティビティ' },
   { view: 'digest', label: 'ダイジェスト' },
   { view: 'stats', label: '統計' },
@@ -47,9 +45,13 @@ export function validateViewMode(value: unknown): ViewMode | null {
   if (value === 'merged') {
     return 'split';
   }
+  // bdboard-mkm1.3: Next Up ビュー削除。保存済み state・古い deep link・プリセットに
+  // 残る 'next' も 'split' へ読み替える (bdboard-mkm1.1 の 'merged' 移行と同じ相乗り)。
+  if (value === 'next') {
+    return 'split';
+  }
   if (
     value === 'split' ||
-    value === 'next' ||
     value === 'activity' ||
     value === 'digest' ||
     value === 'stats' ||
@@ -64,9 +66,10 @@ export function validateViewMode(value: unknown): ViewMode | null {
 }
 
 export function boardApiModeFromView(view: ViewMode): BoardMode {
-  // bdboard-mkm1.1: 'merged' タブは無くなったが、Next Up などボード以外の
-  // ビューはサーバーの merged モードで集約したデータ(board.query.data.merged)を
-  // 引き続き使う。ここを 'split' 固定にすると Next Up 等がデータを失うので、
-  // 分割ビューのときだけ 'split' を要求する元のロジックのまま変えない。
+  // bdboard-mkm1.1: 'merged' タブは無くなったが、アクティビティ/ダイジェストなど
+  // ボード一覧以外のビューはサーバーの merged モードで集約したデータ
+  // (board.query.data.merged) を引き続き使う (bdboard-mkm1.3 で Next Up が
+  // 使わなくなった後もこの前提は変わらない)。分割ビューのときだけ 'split' を
+  // 要求する元のロジックのまま変えない。
   return view === 'split' ? 'split' : 'merged';
 }

@@ -100,8 +100,7 @@ describe('uiPersistedState', () => {
     expect(validateIssueTypeArray([1, 2])).toBeNull();
   });
 
-  it('validates nextUpShowEpics persistence values', () => {
-    expect(UI_STORAGE_KEYS.nextUpShowEpics).toBe('bdboard.ui.nextUpShowEpics');
+  it('validates boolean persistence values', () => {
     expect(validateBoolean(true)).toBe(true);
     expect(validateBoolean(false)).toBe(false);
     expect(validateBoolean('true')).toBeNull();
@@ -167,6 +166,22 @@ describe('uiPersistedState', () => {
     expect(validated.view).toBe('split');
   });
 
+  // bdboard-mkm1.3: Next Up ビュー削除後、保存済みプリセットに残る 'next' も
+  // 'merged' と同じく 'split' へ読み替える (validateViewMode 経由、mkm1.1 の相乗り)。
+  it('migrates a saved next-view preset to split', () => {
+    const [validated] = validateBoardFilterPresets([{
+      id: 'preset-next',
+      name: '旧Next Up',
+      view: 'next',
+      selectedProjectIds: [],
+      priorityCeiling: 'all',
+      issueTypes: [],
+      labels: [],
+      filterText: '',
+    }]) ?? [];
+    expect(validated.view).toBe('split');
+  });
+
   it('backfills legacy presets missing hideDone / stalledOnly with toggle defaults', () => {
     const legacy = {
       id: 'preset-legacy',
@@ -218,7 +233,7 @@ describe('uiPersistedState', () => {
 
   it('matches board filter preset state', () => {
     const state: BoardFilterPresetState = {
-      view: 'next',
+      view: 'digest',
       selectedProjectIds: ['proj-1'],
       priorityCeiling: '1',
       issueTypes: ['bug', 'task'],
@@ -430,8 +445,8 @@ describe('describeBoardFilterPresetState', () => {
   it('always names the view and the project scope', () => {
     expect(describeBoardFilterPresetState(state)).toBe('ビュー: 分割 / 全プロジェクト');
     expect(
-      describeBoardFilterPresetState({ ...state, view: 'next', selectedProjectIds: ['a', 'b'] }),
-    ).toBe('ビュー: Next Up / プロジェクト2件');
+      describeBoardFilterPresetState({ ...state, view: 'digest', selectedProjectIds: ['a', 'b'] }),
+    ).toBe('ビュー: ダイジェスト / プロジェクト2件');
   });
 
   it('lists only the filters that are actually set', () => {

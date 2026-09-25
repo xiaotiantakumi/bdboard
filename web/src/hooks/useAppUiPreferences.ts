@@ -6,7 +6,6 @@ import {
   validateActivityWindowDays,
   validateBoardFilterPresets,
   validateBoolean,
-  validateNextUpLimit,
   validateRecentTickets,
   validateStatsWeeks,
   validateString,
@@ -14,7 +13,6 @@ import {
   validateViewMode,
   type ActivityWindowDays,
   type BoardFilterPreset,
-  type NextUpLimit,
   type RecentTicketEntry,
   type StatsWeeks,
   type ViewMode,
@@ -31,10 +29,6 @@ export interface AppUiPreferences {
   setLastChatProjectId: PersistedSetter<string>;
   boardFilterPresets: BoardFilterPreset[];
   setBoardFilterPresets: PersistedSetter<BoardFilterPreset[]>;
-  nextUpLimit: NextUpLimit;
-  setNextUpLimit: PersistedSetter<NextUpLimit>;
-  nextUpShowEpics: boolean;
-  setNextUpShowEpics: PersistedSetter<boolean>;
   activityWindowDays: ActivityWindowDays;
   setActivityWindowDays: PersistedSetter<ActivityWindowDays>;
   digestWindowDays: ActivityWindowDays;
@@ -48,28 +42,29 @@ export interface AppUiPreferences {
 }
 
 /**
- * App.tsx 直下に並んでいた11個の usePersistedState 呼び出し
- * (view/selectedProjectIds/lastChatProjectId/boardFilterPresets/nextUpLimit/
- * nextUpShowEpics/activityWindowDays/digestWindowDays/statsWeeks/
- * recentTickets/tipsBannerDismissed) をひとまとめにするフック
- * (bdboard-62p4 第6段)。boardFilterState (優先度上限などボードのフィルタ7種)
+ * App.tsx 直下に並んでいた usePersistedState 呼び出しをひとまとめにする
+ * フック (bdboard-62p4 第6段)。現在は9個
+ * (view/selectedProjectIds/lastChatProjectId/boardFilterPresets/
+ * activityWindowDays/digestWindowDays/statsWeeks/recentTickets/
+ * tipsBannerDismissed)。boardFilterState (優先度上限などボードのフィルタ7種)
  * は既に useBoardFilterState.ts に分かれているのでここには含めない。
+ * bdboard-mkm1.3: Next Up ビュー削除に伴い、Next Up 専用の表示件数/epic
+ * 表示トグルだった nextUpLimit/nextUpShowEpics を削除した (元は11個)。
  *
  * localStorage のキー名 (UI_STORAGE_KEYS の該当エントリ)・既定値・
  * バリデータは元の App.tsx の呼び出しから1文字も変えていない
  * (useAppUiPreferences.test.ts でキー名と既定値の一致を検証)。
  *
- * hook 呼び出し順について: 元の App.tsx ではこの11個は
+ * hook 呼び出し順について: 元の App.tsx ではこの並びは
  * boardFilterState / nextUpBatchRun (queryClient +
- * useNextUpRunLoopController) と互い違いに並んでいたが、この11個は
- * いずれも usePersistedState (内部は useState + useEffect のみ、
- * 他の localStorage キーや外部 I/O に依存しない) なので、互いの呼び出し
- * 順序を入れ替えても・boardFilterState/nextUpBatchRun との相対位置を
- * 変えても観測可能な挙動は変わらない。このフック内部での11個の呼び出し
- * 順序自体は元の宣言順 (view → selectedProjectIds → lastChatProjectId →
- * boardFilterPresets → nextUpLimit → nextUpShowEpics → activityWindowDays →
- * digestWindowDays → statsWeeks → recentTickets → tipsBannerDismissed) を
- * 保っている。
+ * useNextUpRunLoopController) と互い違いに並んでいたが、いずれも
+ * usePersistedState (内部は useState + useEffect のみ、他の localStorage
+ * キーや外部 I/O に依存しない) なので、互いの呼び出し順序を入れ替えても・
+ * boardFilterState/nextUpBatchRun との相対位置を変えても観測可能な挙動は
+ * 変わらない。このフック内部での呼び出し順序自体は元の宣言順 (view →
+ * selectedProjectIds → lastChatProjectId → boardFilterPresets →
+ * activityWindowDays → digestWindowDays → statsWeeks → recentTickets →
+ * tipsBannerDismissed) を保っている。
  */
 export function useAppUiPreferences(): AppUiPreferences {
   const [view, setView] = usePersistedState(UI_STORAGE_KEYS.view, DEFAULT_VIEW, validateViewMode);
@@ -87,16 +82,6 @@ export function useAppUiPreferences(): AppUiPreferences {
     UI_STORAGE_KEYS.boardFilterPresets,
     [],
     validateBoardFilterPresets,
-  );
-  const [nextUpLimit, setNextUpLimit] = usePersistedState(
-    UI_STORAGE_KEYS.nextUpLimit,
-    10,
-    validateNextUpLimit,
-  );
-  const [nextUpShowEpics, setNextUpShowEpics] = usePersistedState(
-    UI_STORAGE_KEYS.nextUpShowEpics,
-    false,
-    validateBoolean,
   );
   const [activityWindowDays, setActivityWindowDays] = usePersistedState(
     UI_STORAGE_KEYS.activityWindowDays,
@@ -133,10 +118,6 @@ export function useAppUiPreferences(): AppUiPreferences {
     setLastChatProjectId,
     boardFilterPresets,
     setBoardFilterPresets,
-    nextUpLimit,
-    setNextUpLimit,
-    nextUpShowEpics,
-    setNextUpShowEpics,
     activityWindowDays,
     setActivityWindowDays,
     digestWindowDays,

@@ -119,10 +119,6 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     setLastChatProjectId: vi.fn(),
     boardFilterPresets: [],
     setBoardFilterPresets: vi.fn(),
-    nextUpLimit: 10,
-    setNextUpLimit: vi.fn(),
-    nextUpShowEpics: false,
-    setNextUpShowEpics: vi.fn(),
     // activityWindowDays/digestWindowDays/statsWeeks share a type (number) and,
     // for the first two, a validator (see useAppUiPreferences.ts), so a silent
     // swap between them in AppBody's `windows={{...}}` wiring wouldn't be
@@ -179,8 +175,6 @@ function makeController(overrides: Record<string, unknown> = {}): Controller {
     prLinksById: new Map(),
     chatAvailable: true,
     wipLimitsOverrides: {},
-    harnessStatusQuery: { data: undefined },
-    harnessStatuses: new Map(),
     notificationEvents: { unreadCount: 0 },
     handleRecordRecentTicket: vi.fn(),
     isTicketOnBoard: vi.fn(),
@@ -424,7 +418,8 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     const { AppBody } = await import('./AppBody');
     const controller = makeController();
     renderAppBody(AppBody, controller);
-    // ヘッダーのチップと、ビュー側 (一括操作バー / Next Up) が同じループを見ること。
+    // ヘッダーのチップと、ビュー側(一括操作バー)が同じループを見ること
+    // (bdboard-mkm1.3: Next Up 自体は削除、この配線だけ残る)。
     expect(capturedHeaderProps.at(-1)?.batchRun).toBe(controller.nextUpBatchRun);
     expect(capturedViewContentProps.at(-1)?.nextUp.batchRun).toBe(controller.nextUpBatchRun);
   });
@@ -435,28 +430,6 @@ describe('AppBody wiring (bdboard-62p4 第6段: useAppController + AppHeaderSect
     const controller = makeController();
     renderAppBody(AppBody, controller);
     expect(capturedViewContentProps.at(-1)?.nextUp.batchRun).toBe(controller.nextUpBatchRun);
-  });
-
-  it('gates nextUp.harnessStatuses on harnessStatusQuery.data being defined', async () => {
-    capturedViewContentProps.length = 0;
-    const { AppBody } = await import('./AppBody');
-    const harnessStatuses = new Map([['t1', '__marker_harness_status__']]);
-    const controllerWithoutQueryData = makeController({
-      harnessStatusQuery: { data: undefined },
-      harnessStatuses,
-    });
-    renderAppBody(AppBody, controllerWithoutQueryData);
-    expect(capturedViewContentProps.at(-1)?.nextUp.harnessStatuses).toBeUndefined();
-
-    capturedViewContentProps.length = 0;
-    const controllerWithQueryData = makeController({
-      harnessStatusQuery: { data: [] },
-      harnessStatuses,
-    });
-    renderAppBody(AppBody, controllerWithQueryData);
-    expect(capturedViewContentProps.at(-1)?.nextUp.harnessStatuses).toBe(
-      controllerWithQueryData.harnessStatuses,
-    );
   });
 
   it('wires AlertBar onOpenDetails to overlays.handleOpenStatusDetail', async () => {

@@ -24,9 +24,13 @@
 // - stale 処理: pid が死んだ holder は即回収 (SIGKILL された verify の後始末)。
 //   pid が生きていて staleTtlMs を超えた holder は枠のカウントから外す (ハング1本が
 //   枠を永久占有しない) が、ファイルは本人の後始末に任せて消さない。
+// - 読み取り自体が失敗した holder (Windows で相手の置き換え rename と競合した EPERM / EBUSY 等) は、
+//   pid が生きていれば走っているとみなして数え、ファイルの mtime から staleTtlMs で外す (bdboard-wt5c。
+//   書きかけ = パースできないファイルは従来どおり数えない)。詳細は verify-slot-files.mjs。
 // - 待ちの打ち切り (waitTimeoutMs) は「走っている holder の顔ぶれが変わらないまま」の時間で
 //   測る (bdboard-ulxa.6)。優先度があると下位の待ちは合計では長くなりうるが、列が進んでいる
-//   限りハングではないため。
+//   限りハングではないため。読めない holder (下の bdboard-wt5c) が一瞬だけ顔ぶれに入ると測り直しに
+//   なるが、打ち切りが遅れる向きにしか働かない。
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -98,7 +102,8 @@ function newHolder(options) {
 // スロットを1つ獲得する。順番が来るまで待ち、走っている holder の顔ぶれが waitTimeoutMs の間
 // 変わらなければ SlotWaitTimeoutError を投げる。戻り値の release() は冪等。process 'exit' でも
 // 自動 release するので、呼び出し側が process.exit() する経路でも holder は残らない
-// (SIGKILL だけは残るが、それは次の参加者の dead-pid 回収が拾う)。
+// (SIGKILL だけは残るが、それは次の参加者の dead-pid 回収が拾う)。overrides.io は他の holder を
+// 読む fs の差し替え口 (テストの失敗注入用。既定は node:fs)。
 export async function acquireVerifySlot(overrides = {}, log = (line) => console.error(line)) {
   const options = { ...DEFAULT_SLOT_OPTIONS, ...overrides };
   const { slots, dir } = options;
@@ -129,8 +134,9 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
     let runningKey = null;
     let progressAt = Date.now();
     const warnedStalePids = new Set();
+    const unreadableSince = new Map(); // 読めない相手の年齢 (bdboard-wt5c、verify-slot-files.mjs)
     for (;;) {
-      const { others, sawSelf } = readOthers(dir, selfPath);
+      const { others, sawSelf } = readOthers(dir, selfPath, { io: options.io, unreadableSince });
       if (!sawSelf) {
         // 自分の holder file が外的要因で消えた場合の自己修復 (他の参加者から見え続けるため)。
         try {

@@ -4,6 +4,13 @@ export interface HarnessLagMeasurement {
   readonly commitsBehind: number;
   /** 遅れの計測に実際に使えた既定ブランチ ref。 */
   readonly baseRef: string;
+  /**
+   * baseRef と HEAD に共通の祖先があるか (`git merge-base` の exit code で判定。
+   * bdboard-0chq)。false は「履歴の作り直しより前に作られた checkout で、rebase
+   * では追いつけない」ことを意味する。shallow clone など判定できない場合は true
+   * 扱い (安全側 = 従来どおり rebase を案内する)。
+   */
+  readonly hasCommonAncestor: boolean;
 }
 
 export interface WorktreeScanner {

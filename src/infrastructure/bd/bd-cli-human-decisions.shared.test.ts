@@ -111,6 +111,7 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: ['bdboard-human-open'],
       hasOwnDecisionQuestion: false,
+      hasHumanLabel: false,
     });
   });
 
@@ -134,6 +135,7 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'gate',
       blockingHumanGateIds: [],
       hasOwnDecisionQuestion: false,
+      hasHumanLabel: false,
     });
   });
 
@@ -179,6 +181,7 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: ['bdboard-human-open'],
       hasOwnDecisionQuestion: false,
+      hasHumanLabel: false,
     });
   });
 
@@ -204,6 +207,7 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: [],
       hasOwnDecisionQuestion: false,
+      hasHumanLabel: false,
     });
   });
 
@@ -244,6 +248,7 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: [],
       hasOwnDecisionQuestion: false,
+      hasHumanLabel: false,
     });
   });
 
@@ -276,6 +281,7 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: [],
       hasOwnDecisionQuestion: false,
+      hasHumanLabel: false,
     });
   });
 
@@ -306,6 +312,31 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: [],
       hasOwnDecisionQuestion: true,
+      hasHumanLabel: false,
     });
+  });
+  it.each([
+    ['human label', { labels: ['human'] }, true],
+    ['empty labels', { labels: [] }, false],
+    ['missing labels', {}, false],
+    ['malformed labels', { labels: 'human' }, false],
+  ])('parses hasHumanLabel for %s without affecting ticket kind', async (_label, fields, expected) => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([{ id: 'bdboard-probe', issue_type: 'task', ...fields }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+
+    const result = await resolveKindAndBlockingGates(runner, 'bd', '/my/root', 'bdboard-probe');
+
+    expect(result.kind).toBe('ticket');
+    expect(result.hasHumanLabel).toBe(expected);
   });
 });

@@ -32,7 +32,7 @@ export function useHarnessInject(options?: UseHarnessInjectOptions) {
         queryKey: ['project-harness', result.projectId],
       });
       await queryClient.invalidateQueries({ queryKey: ['harness-drift'] });
-      // Next Up の一括実行ボタンは全プロジェクト分の一覧 (`harness-status-all`) を
+      // 一括操作バーの「▶ 実行」は全プロジェクト分の一覧 (`harness-status-all`) を
       // 見ているので、注入直後にブロック表示が解けるようこちらも落とす。
       await queryClient.invalidateQueries({ queryKey: ['harness-status-all'] });
       options?.onSuccess?.(

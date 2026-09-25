@@ -38,10 +38,6 @@ export function AppBody({ controller }: AppBodyProps) {
     view,
     selectedProjectIds,
     selectedProjectIdsJoined,
-    nextUpLimit,
-    setNextUpLimit,
-    nextUpShowEpics,
-    setNextUpShowEpics,
     activityWindowDays,
     setActivityWindowDays,
     digestWindowDays,
@@ -70,8 +66,6 @@ export function AppBody({ controller }: AppBodyProps) {
     pendingDecisionIds,
     prLinksById,
     wipLimitsOverrides,
-    harnessStatusQuery,
-    harnessStatuses,
     notificationEvents,
     handleRefresh,
     isRefreshing,
@@ -142,13 +136,7 @@ export function AppBody({ controller }: AppBodyProps) {
           onCardClick={handleSelectTicket}
           onSessionBadgeClick={overlays.handleOpenSessionList}
           nextUp={{
-            limit: nextUpLimit,
-            onLimitChange: setNextUpLimit,
-            showEpics: nextUpShowEpics,
-            onShowEpicsChange: setNextUpShowEpics,
             batchRun: nextUpBatchRun,
-            harnessStatuses:
-              harnessStatusQuery.data !== undefined ? harnessStatuses : undefined,
           }}
           windows={{
             activityWindowDays,

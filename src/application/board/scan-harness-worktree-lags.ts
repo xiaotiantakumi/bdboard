@@ -74,6 +74,7 @@ export async function scanHarnessWorktreeLags(
         worktreePath: worktree.worktreePath,
         commitsBehind: measurement.commitsBehind,
         baseRef: measurement.baseRef,
+        hasCommonAncestor: measurement.hasCommonAncestor,
       });
     } catch (error) {
       failures.push({ id: worktree.ticketId, error });

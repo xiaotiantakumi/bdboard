@@ -80,6 +80,44 @@ case "$ACTION" in
   *) die 1 "unknown action: $ACTION" 'actions: status | start | restart | deploy (--help で詳細)' ;;
 esac
 
+# main checkout: git common dir の親。worktree からでも同じ場所を指す。
+COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)" ||
+  die 2 'git リポジトリの中で実行してください (main checkout を git common dir から解決します)'
+case "$COMMON_DIR" in
+  /*) ;;
+  *) COMMON_DIR="$PWD/$COMMON_DIR" ;;
+esac
+MAIN="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P)" ||
+  die 2 "main checkout を解決できません: $COMMON_DIR"
+[ -f "$MAIN/package.json" ] || die 2 "main checkout に package.json がありません: $MAIN"
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)" ||
+  die 2 '自身のディレクトリを解決できません'
+
+# --- 自分の置き場所が main checkout の scripts/ でなければ、main 側の現在版へ委譲し直す
+# (bdboard-9nah)。案内どおり相対パスで (`scripts/always-on-server.sh ...`) 呼んでも、
+# 議長の cwd が古い worktree のままだと、その worktree に取り残された旧版が動いてしまい、
+# main に入った以後の修正 (安全策も含む) が効かない事故につながる
+# (bdboard-flpp の設計レビューで指摘)。git common dir で解決した MAIN の scripts/ 配下に
+# 同名ファイルがあり、かつ自分がそれでなければ、元の引数のまま exec し直す。
+# MAIN 側に同名ファイルが無いとき (テスト用の使い捨てリポジトリ、この安全策より前の
+# main など) は fail-open で自分自身のまま続行する — 「main の版が存在するのに自分が
+# それでない」ときだけ委譲する、の意図。BDBOARD_SERVER_SKIP_SELF_EXEC=1 は委譲後の
+# プロセスへの再帰防止と、テストで意図的にこの動作を止めるための脱出口。
+if [ -z "${BDBOARD_SERVER_SKIP_SELF_EXEC:-}" ]; then
+  SELF_BASENAME="$(basename -- "${BASH_SOURCE[0]:-$0}")"
+  MAIN_SCRIPT="$MAIN/scripts/$SELF_BASENAME"
+  MAIN_SCRIPT_DIR_CANON="$(CDPATH= cd -- "$MAIN/scripts" 2>/dev/null && pwd -P)" || MAIN_SCRIPT_DIR_CANON=''
+  if [ -n "$MAIN_SCRIPT_DIR_CANON" ] && [ "$SCRIPT_DIR" != "$MAIN_SCRIPT_DIR_CANON" ] && [ -f "$MAIN_SCRIPT" ]; then
+    printf 'always-on-server: %s は main checkout ( %s ) の版ではありません。%s へ委譲します (stale worktree 対策, bdboard-9nah)\n' \
+      "$SCRIPT_DIR/$SELF_BASENAME" "$MAIN" "$MAIN_SCRIPT" >&2
+    BDBOARD_SERVER_SKIP_SELF_EXEC=1 exec "$MAIN_SCRIPT" "$ACTION" "$@"
+  fi
+fi
+
+. "$SCRIPT_DIR/deploy-changed.sh" ||
+  die 2 "deploy-changed.sh を読み込めません: $SCRIPT_DIR/deploy-changed.sh"
+
 PORT="${BDBOARD_PORT:-8787}"
 EXPECT_PID=''
 DO_PULL=''
@@ -110,22 +148,6 @@ esac
 case "$EXPECT_PID" in
   '' | *[!0-9]*) [ -z "$EXPECT_PID" ] || die 1 "--expect-pid must be a number: $EXPECT_PID" ;;
 esac
-
-# main checkout: git common dir の親。worktree からでも同じ場所を指す。
-COMMON_DIR="$(git rev-parse --git-common-dir 2>/dev/null)" ||
-  die 2 'git リポジトリの中で実行してください (main checkout を git common dir から解決します)'
-case "$COMMON_DIR" in
-  /*) ;;
-  *) COMMON_DIR="$PWD/$COMMON_DIR" ;;
-esac
-MAIN="$(cd "$COMMON_DIR/.." 2>/dev/null && pwd -P)" ||
-  die 2 "main checkout を解決できません: $COMMON_DIR"
-[ -f "$MAIN/package.json" ] || die 2 "main checkout に package.json がありません: $MAIN"
-
-SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" && pwd -P)" ||
-  die 2 '自身のディレクトリを解決できません'
-. "$SCRIPT_DIR/deploy-changed.sh" ||
-  die 2 "deploy-changed.sh を読み込めません: $SCRIPT_DIR/deploy-changed.sh"
 
 SERVER_LOG="${BDBOARD_SERVER_LOG:-/tmp/bdboard-server.log}"
 AUDIT_LOG="${BDBOARD_SERVER_AUDIT_LOG:-/tmp/bdboard-server-restarts.log}"

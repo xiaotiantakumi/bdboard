@@ -64,7 +64,7 @@ describe('App view boundary (bdboard-yfq)', () => {
     renderApp();
 
     await screen.findByRole('alert');
-    await user.click(screen.getByRole('button', { name: 'Next Up' }));
+    await user.click(screen.getByRole('button', { name: '統計' }));
 
     // 境界から key={view} を外すと、壊れた状態を持ち越して別ビューでも
     // fallback が出たままになる。

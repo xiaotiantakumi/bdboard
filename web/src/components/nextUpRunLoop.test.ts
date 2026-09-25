@@ -858,17 +858,21 @@ describe('nextUpRunLoop', () => {
       );
     });
 
-    it('invalidates only the notified ticket runs query', () => {
+    it('invalidates only the notified ticket runs query, plus the board-wide active-runs query (bdboard-xuuz)', () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['ticket-runs', 'ticket-1'], []);
       queryClient.setQueryData(['ticket-runs', 'ticket-2'], []);
       queryClient.setQueryData(['ticket', 'ticket-1'], {});
+      queryClient.setQueryData(['agent-runs-active'], { runs: [] });
 
       createTicketRunsInvalidator(queryClient)('ticket-1');
 
       expect(queryClient.getQueryState(['ticket-runs', 'ticket-1'])?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(['ticket-runs', 'ticket-2'])?.isInvalidated).toBe(false);
       expect(queryClient.getQueryState(['ticket', 'ticket-1'])?.isInvalidated).toBe(false);
+      // 一括実行 (bdboard-xuuz) の「既に実行中のエージェントがあるカード」判定は
+      // board 全体の run 一覧を見るので、どのチケットの通知でも stale にしてよい。
+      expect(queryClient.getQueryState(['agent-runs-active'])?.isInvalidated).toBe(true);
       queryClient.clear();
     });
 
@@ -916,7 +920,7 @@ describe('nextUpRunLoop', () => {
    *   loopActiveRef false while fetchAgentRun is still pending is that same unmount
    *   cleanup path — same dead-setState situation.
    *
-   * NextUpView.test.tsx "does not let an unmounted loop generation overwrite progress
+   * "does not let an unmounted loop generation overwrite progress
    * after remount" exercises the remount UX but does not kill M3 for the reason above.
    * The guard remains documented at the call site in nextUpRunLoop.ts.
    */
@@ -944,13 +948,13 @@ describe('nextUpRunLoop', () => {
   describe('buildConsecutiveFailureComment', () => {
     it('uses the unknown-reason fallback when lastFailureReason is null', () => {
       expect(buildConsecutiveFailureComment(['ticket-1'], null)).toBe(
-        '[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
+        '[harness] bdboard の一括実行で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
       );
     });
 
     it('uses the unknown-reason fallback when lastFailureReason is empty', () => {
       expect(buildConsecutiveFailureComment(['ticket-1'], '')).toBe(
-        '[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
+        '[harness] bdboard の一括実行で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1\n最後の失敗理由: （不明）',
       );
     });
 
@@ -958,7 +962,7 @@ describe('nextUpRunLoop', () => {
       expect(
         buildConsecutiveFailureComment(['ticket-1', 'ticket-2'], 'terminal failed'),
       ).toBe(
-        '[harness] bdboard の一括実行（Next Up）で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1, ticket-2\n最後の失敗理由: terminal failed',
+        '[harness] bdboard の一括実行で直近2件が失敗したためバッチを停止しました。\n失敗したチケット: ticket-1, ticket-2\n最後の失敗理由: terminal failed',
       );
     });
   });

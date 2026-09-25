@@ -6,6 +6,7 @@ import {
   deleteChatThread,
   fetchAgentRun,
   fetchAgentRunConfig,
+  fetchAllAgentRuns,
   fetchChatThreads,
   fetchChatTurnStatus,
   fetchHarnessPacks,
@@ -802,6 +803,42 @@ describe('agent run API', () => {
       '/api/runs?ticketId=bdboard%2Ftarget',
       undefined,
     );
+  });
+
+  it('fetchAllAgentRuns hits /api/runs without a ticketId (board-wide list, bdboard-xuuz)', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            runs: [
+              {
+                id: 'run-1',
+                ticketId: 'bdboard/a',
+                runner: 'claude-spawn',
+                mode: 'spawn',
+                status: 'running',
+                startedAt: '2026-01-01T00:00:00.000Z',
+              },
+              {
+                id: 'run-2',
+                ticketId: 'bdboard/b',
+                runner: 'claude-spawn',
+                mode: 'spawn',
+                status: 'succeeded',
+                startedAt: '2026-01-01T00:00:00.000Z',
+                finishedAt: '2026-01-01T00:05:00.000Z',
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await fetchAllAgentRuns();
+
+    expect(result.runs).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledWith('/api/runs', undefined);
   });
 
   it('fetchAgentRun encodes runId and optional tailBytes', async () => {

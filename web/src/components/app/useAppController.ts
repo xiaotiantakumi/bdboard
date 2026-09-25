@@ -95,7 +95,6 @@ export function useAppController() {
   });
 
   const dataSources = useAppDataSources({
-    view,
     boardApiMode,
     selectedProjectIds,
     selectedProjectIdsJoined,

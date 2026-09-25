@@ -2,8 +2,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BoardCardDto, BoardViewDto, ProjectHarnessStatusDto } from '../api';
-import { fetchAllHarnessStatus } from '../api';
+import type { AgentRunSummaryDto, BoardCardDto, BoardViewDto, ProjectHarnessStatusDto } from '../api';
+import { fetchAllAgentRuns, fetchAllHarnessStatus } from '../api';
 import {
   cardsByIdOf,
   makeHarnessStatus,
@@ -25,19 +25,37 @@ import { UndoSnackbarProvider } from './UndoSnackbar';
 
 // bdboard-mkm1.2: 一括操作バーの「▶ 実行」。実行ループのコントローラは偽物に差し替え、
 // バーが「どの ID を・どの順で」渡すか、渡さない条件、渡した後の選択解除を直接見る。
-// ループ本体の挙動 (1件ずつ・失敗しても次へ) は nextUpRunLoop.test.ts / NextUpView.test.tsx
+// ループ本体の挙動 (1件ずつ・失敗しても次へ) は nextUpRunLoop.test.ts
 // が押さえている。ハーネスの状態は GET /api/harness/status (fetchAllHarnessStatus) を差し替える。
+// bdboard-xuuz: 既に実行中のカードを対象外にする判定は GET /api/runs (fetchAllAgentRuns)
+// を差し替える。既定 (beforeEach) では runs: [] — 実行中カード無しの従来どおりの挙動。
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
-  return { ...actual, fetchAllHarnessStatus: vi.fn() };
+  return { ...actual, fetchAllHarnessStatus: vi.fn(), fetchAllAgentRuns: vi.fn() };
 });
 
 const fetchAllHarnessStatusMock = vi.mocked(fetchAllHarnessStatus);
+const fetchAllAgentRunsMock = vi.mocked(fetchAllAgentRuns);
 
 function mockHarnessStatuses(statuses: ReadonlyMap<string, ProjectHarnessStatusDto>) {
   fetchAllHarnessStatusMock.mockResolvedValue({
     projects: [...statuses].map(([projectId, status]) => ({ projectId, ...status })),
   });
+}
+
+function mockActiveRuns(runs: readonly AgentRunSummaryDto[]) {
+  fetchAllAgentRunsMock.mockResolvedValue({ runs: [...runs] });
+}
+
+function makeRunningRun(ticketId: string): AgentRunSummaryDto {
+  return {
+    id: `run-${ticketId}`,
+    ticketId,
+    runner: 'claude-spawn',
+    mode: 'spawn',
+    status: 'running',
+    startedAt: '2026-01-01T00:00:00.000Z',
+  };
 }
 
 function makeController(phase: NextUpLoopPhase = 'idle'): NextUpRunLoopController {
@@ -123,6 +141,8 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
   beforeEach(() => {
     fetchAllHarnessStatusMock.mockReset();
     fetchAllHarnessStatusMock.mockResolvedValue({ projects: [] });
+    fetchAllAgentRunsMock.mockReset();
+    fetchAllAgentRunsMock.mockResolvedValue({ runs: [] });
   });
 
   it('does not show the run button when no agentRun config is passed', async () => {
@@ -244,6 +264,46 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
     expect(batchRun.beginBatchRun).toHaveBeenCalledWith(['ok-1', 'ok-2']);
   });
 
+  // bdboard-xuuz: 既に実行中のエージェントがあるカードを対象外にする。
+  it('excludes a ready-lane card with an already-running agent run, counted under 実行中', async () => {
+    const cards = [makeRunCard('ok'), makeRunCard('busy')];
+    mockActiveRuns([makeRunningRun('busy')]);
+    const board = makeSplitView([{ id: 'proj-1', cards }]);
+    const batchRun = makeController();
+    const { user } = await renderBar({ cards, board, batchRun }, ['ok', 'busy']);
+
+    await user.click(runButton());
+    const dialog = confirmDialog();
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('対象外 1 件: 実行中 1 件');
+    });
+    expect(dialog).toHaveTextContent('選択中の 1 件を');
+
+    await user.click(within(dialog).getByRole('button', { name: '実行する' }));
+    expect(batchRun.beginBatchRun).toHaveBeenCalledWith(['ok']);
+  });
+
+  it('does not exclude a card whose only run has already finished', async () => {
+    const cards = [makeRunCard('t-1')];
+    mockActiveRuns([
+      { ...makeRunningRun('t-1'), status: 'succeeded', finishedAt: '2026-01-01T00:05:00.000Z' },
+    ]);
+    const board = makeSplitView([{ id: 'proj-1', cards }]);
+    const batchRun = makeController();
+    const { user } = await renderBar({ cards, board, batchRun }, ['t-1']);
+
+    await waitFor(() => {
+      expect(fetchAllAgentRunsMock).toHaveBeenCalledTimes(1);
+    });
+    await user.click(runButton());
+    const dialog = confirmDialog();
+    expect(dialog).toHaveTextContent('選択中の 1 件を');
+    expect(dialog).not.toHaveTextContent('対象外');
+
+    await user.click(within(dialog).getByRole('button', { name: '実行する' }));
+    expect(batchRun.beginBatchRun).toHaveBeenCalledWith(['t-1']);
+  });
+
   it('keeps 実行する disabled when every selected card is excluded', async () => {
     const cards = [makeRunCard('epic', { issueType: 'epic' }), makeRunCard('b', { lane: 'blocked' })];
     const batchRun = makeController();
@@ -335,7 +395,7 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
     expect(batchRun.beginBatchRun).not.toHaveBeenCalled();
   });
 
-  it('does not reopen the dialog by itself after a batch started elsewhere (Next Up) finishes', async () => {
+  it('does not reopen the dialog by itself after a batch started elsewhere finishes', async () => {
     const cards = [makeRunCard('t-1')];
     const idle = makeController();
     const { user, rerenderWith } = await renderBar(

@@ -60,6 +60,7 @@ export async function scanNonTicketHarnessWorktreeLags(
         branchName: worktree.branchName,
         commitsBehind: measurement.commitsBehind,
         baseRef: measurement.baseRef,
+        hasCommonAncestor: measurement.hasCommonAncestor,
       });
     } catch (error) {
       failures.push({ id: worktree.worktreePath, error });

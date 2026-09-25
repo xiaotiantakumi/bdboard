@@ -9,7 +9,7 @@ vi.mock('../api', () => ({
 }));
 
 import { fetchAllHarnessStatus } from '../api';
-import { useHarnessStatusData } from './useHarnessStatusData';
+import { useAllHarnessStatuses } from './useHarnessStatusData';
 
 const fetchAllHarnessStatusMock = vi.mocked(fetchAllHarnessStatus);
 
@@ -34,35 +34,42 @@ function makeAllStatus(): AllHarnessStatusDto {
   };
 }
 
-function renderHarnessStatusData(view: Parameters<typeof useHarnessStatusData>[0]) {
+function renderAllHarnessStatuses(enabled: boolean) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
-  return { ...renderHook(() => useHarnessStatusData(view), { wrapper }), queryClient };
+  return { ...renderHook(() => useAllHarnessStatuses(enabled), { wrapper }), queryClient };
 }
 
-describe('useHarnessStatusData', () => {
+// bdboard-mkm1.3: this used to cover useHarnessStatusData(view), a wrapper that
+// gated useAllHarnessStatuses on `view === 'next'`. That wrapper (and its only
+// caller, NextUpView) was deleted with the Next Up view; useAllHarnessStatuses
+// itself is unchanged and is still relied on by the bulk action bar's agent-run
+// preflight (useBulkAgentRun.ts), so its `enabled` gating, queryKey, and
+// harnessStatuses derivation stay covered directly here instead of indirectly
+// through a `view` param that no longer exists.
+describe('useAllHarnessStatuses', () => {
   beforeEach(() => {
     fetchAllHarnessStatusMock.mockReset();
   });
 
-  it('is enabled only when view === "next", matching App.tsx', async () => {
+  it('only fetches while enabled', async () => {
     fetchAllHarnessStatusMock.mockResolvedValue(makeAllStatus());
 
-    renderHarnessStatusData('split');
+    renderAllHarnessStatuses(false);
     // Give any accidental fetch a chance to fire.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchAllHarnessStatusMock).not.toHaveBeenCalled();
 
-    const { result } = renderHarnessStatusData('next');
+    const { result } = renderAllHarnessStatuses(true);
     await waitFor(() => expect(fetchAllHarnessStatusMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(result.current.harnessStatusQuery.isSuccess).toBe(true));
   });
 
-  it('registers the harness-status-all query under the exact queryKey used by App.tsx', async () => {
+  it('registers the harness-status-all query under a shared queryKey', async () => {
     fetchAllHarnessStatusMock.mockResolvedValue(makeAllStatus());
-    const { result, queryClient } = renderHarnessStatusData('next');
+    const { result, queryClient } = renderAllHarnessStatuses(true);
 
     await waitFor(() => expect(result.current.harnessStatusQuery.isSuccess).toBe(true));
 
@@ -74,7 +81,7 @@ describe('useHarnessStatusData', () => {
   it('derives harnessStatuses keyed by projectId, carrying only packs/contract', async () => {
     const allStatus = makeAllStatus();
     fetchAllHarnessStatusMock.mockResolvedValue(allStatus);
-    const { result } = renderHarnessStatusData('next');
+    const { result } = renderAllHarnessStatuses(true);
 
     await waitFor(() => expect(result.current.harnessStatusQuery.data).toEqual(allStatus));
 
@@ -84,21 +91,21 @@ describe('useHarnessStatusData', () => {
     });
   });
 
-  it('returns an empty harnessStatuses map while disabled (not on the Next Up view)', () => {
+  it('returns an empty harnessStatuses map while disabled', () => {
     fetchAllHarnessStatusMock.mockResolvedValue(makeAllStatus());
-    const { result } = renderHarnessStatusData('split');
+    const { result } = renderAllHarnessStatuses(false);
 
     expect(result.current.harnessStatuses.size).toBe(0);
     expect(result.current.harnessStatusQuery.data).toBeUndefined();
   });
 
-  it('does not retry harness-status-all on failure (retry: false, matching App.tsx)', async () => {
+  it('does not retry harness-status-all on failure (retry: false)', async () => {
     fetchAllHarnessStatusMock.mockRejectedValue(new Error('boom'));
     const queryClient = new QueryClient();
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     );
-    const { result } = renderHook(() => useHarnessStatusData('next'), { wrapper });
+    const { result } = renderHook(() => useAllHarnessStatuses(true), { wrapper });
 
     await waitFor(() => expect(result.current.harnessStatusQuery.isError).toBe(true));
 

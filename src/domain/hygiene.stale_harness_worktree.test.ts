@@ -17,6 +17,7 @@ describe('checkHygiene stale_harness_worktree', () => {
       worktreePath: '/repo/.claude/worktrees/bdboard-frozen',
       commitsBehind: 17,
       baseRef: 'origin/main',
+      hasCommonAncestor: true,
       ...overrides,
     };
   }
@@ -87,6 +88,25 @@ describe('checkHygiene stale_harness_worktree', () => {
     expect(issues.find((issue) => issue.kind === 'stale_harness_worktree')?.message).toContain(
       'rebase origin/master で追従してください',
     );
+  });
+
+  it('tells the reader to sort it out by hand instead of rebasing when there is no common ancestor (bdboard-0chq)', () => {
+    const ticket = makeTicket({
+      id: 'bdboard-frozen',
+      projectId: repoRoot,
+      status: 'in_progress',
+    });
+
+    const issues = checkHygiene([ticket], {
+      now: NOW,
+      harnessWorktreeLags: [lag({ hasCommonAncestor: false })],
+    });
+
+    const found = issues.filter((issue) => issue.kind === 'stale_harness_worktree');
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toContain('共通の祖先がありません');
+    expect(found[0]?.message).toContain('worktree を作り直してください');
+    expect(found[0]?.message).not.toMatch(/rebase origin\/main/);
   });
 
   it('stays quiet just below the threshold and fires just above it', () => {
