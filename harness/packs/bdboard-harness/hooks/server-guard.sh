@@ -1002,15 +1002,20 @@ while IFS= read -r sg_seg; do
       sg_seg="${sg_seg#"${sg_seg%%[![:space:]]*}"}"
       ;;
   esac
-  sg_seg_rtrim="$sg_seg"
-  while :; do
-    case "$sg_seg_rtrim" in
-      *[[:space:]]) sg_seg_rtrim="${sg_seg_rtrim%?}" ;;
-      *) break ;;
-    esac
-  done
+  # bdboard-w8ad opus レビュー (B1, 2026-09-26): 末尾が ')' かどうかだけを見ると
+  # `X=$(cmd)` のようにセグメント自身の中で閉じている $(...) の ')' まで
+  # 「サブシェルを閉じた」と誤判定し、SG_DIR を早戻ししてしまう
+  # (`(cd $MAIN && BR=$(git branch --show-current) && git checkout -b tmp)` で
+  # 2番目のセグメントの誤判定により3番目の git checkout が main 判定から漏れる)。
+  # 空白位置に依存せず、このセグメント内の '(' と ')' の個数を数え、')' が
+  # '(' より多い場合だけ「外側の開いたサブシェルを閉じている」とみなす
+  # ($(...) 等セグメント内で開閉が対になっているものは差し引きゼロになる)。
+  sg_paren_open="${sg_seg//[^(]/}"
+  sg_paren_close="${sg_seg//[^)]/}"
   sg_closes_subshell=''
-  case "$sg_seg_rtrim" in *')') sg_closes_subshell='yes' ;; esac
+  if [ "${#sg_paren_close}" -gt "${#sg_paren_open}" ]; then
+    sg_closes_subshell='yes'
+  fi
 
   # 先頭の NAME=値 (export 付き含む) を記録して剥がす。値に $(…) と port があれば PID 由来。
   sg_git_env_override=''
@@ -1057,12 +1062,32 @@ while IFS= read -r sg_seg; do
   set -- $sg_clean
 
   # nohup / exec / command / time / sudo / env VAR=x 等の前置きを飛ばして本体のコマンド語へ。
+  # bdboard-w8ad opus レビュー (R2, 2026-09-26): if/while/until/elif だけでなく、対になる
+  # then/do/else と否定の ! も同じ理由 (予約語・演算子はコマンド語になり得ないので
+  # 前置き扱いにしても誤許可のリスクがゼロ) で読み飛ばす対象に加える
+  # (`if true; then git commit -m x; fi` / `for i in 1; do git commit -m x; done` /
+  # `! git commit -m x` のような、本体が then/do/else の直後や ! の直後に来る形)。
   while [ $# -gt 0 ]; do
     case "$1" in
-      nohup | exec | command | builtin | time | sudo | caffeinate | nice | if | while | until | elif) shift ;;
+      nohup | exec | command | builtin | time | sudo | caffeinate | nice | if | while | until | elif | then | do | else | '!') shift ;;
       timeout)
         shift
-        [ $# -gt 0 ] && shift
+        # bdboard-w8ad opus レビュー (B2, 2026-09-26): 無条件に次の1トークンを
+        # 「DURATION」とみなして読み飛ばすと、`timeout -s KILL 600 cmd` のように
+        # オプション付きの timeout ではオプション語 (-s) を DURATION と誤認して
+        # 読み飛ばし、その次のオプション値 (KILL) が sg_word になってしまう。
+        # KILL は後段の規則7bワイド走査トリガー一覧にもフラグ判定 (-*) にも
+        # 引っかからないため、restart スクリプト保護がすり抜ける
+        # (timeout -s KILL 600 scripts/always-on-server.sh restart 等)。
+        # 次トークンが '-' 始まりのオプションに見える場合は読み飛ばさずループを
+        # 打ち切る。$1 がオプション文字列のまま残るので、規則7bワイド走査の
+        # 「未知のフラグが残っている ⇒ 全引数走査」フォールバック (-*) が
+        # 正しく発火する (安全側)。DURATION らしい非オプション語のときだけ、
+        # 従来どおり1トークン読み飛ばす。
+        case "$1" in
+          -*) ;;
+          *) [ $# -gt 0 ] && shift ;;
+        esac
         ;;
       env)
         shift

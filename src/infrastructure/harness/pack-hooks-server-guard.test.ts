@@ -307,6 +307,23 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
       }
     });
 
+    // bdboard-w8ad opus レビュー (B2, 2026-09-26): timeout の前置き剥がしが「timeout の次の
+    // 1トークンは必ず DURATION」と決め打ちしていたため、`timeout -s KILL 600 ...` のように
+    // timeout 自身がオプション付きのときはオプション語 (-s) を DURATION と誤って読み飛ばし、
+    // その次のオプション値 (KILL) がコマンド語として扱われて規則7bのワイド走査もフラグ判定も
+    // 素通りしていた。timeout のオプションは読み飛ばさず未解決のまま残すことで、ワイド走査の
+    // 「未知のフラグが残っている ⇒ 全引数走査」フォールバックを発火させて塞ぐ。
+    it('still denies restart-script invocations through an option-bearing timeout prefix', async () => {
+      const wrappedCommands = [
+        'timeout -s KILL 600 scripts/always-on-server.sh restart',
+        'timeout --preserve-status 600 scripts/always-on-server.sh restart',
+        'timeout -k 5 600 scripts/always-on-server.sh restart',
+      ];
+      for (const command of wrappedCommands) {
+        expectDeny(await runHook({ command, cwd: worktree, agentId: 'agent-1' }));
+      }
+    });
+
     // bdboard-wa48: 規則 7b はもともとセグメント中の全引数位置に basename 一致を見ていたため、
     // 再起動スクリプト名をただの検索語・grep パターン・コミットメッセージに含めただけの
     // コマンドまで deny していた (fable の設計レビューでも 24h に 3 件実測)。一致はコマンド語

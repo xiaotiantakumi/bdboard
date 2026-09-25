@@ -328,6 +328,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       'if git checkout other',
       'while git checkout other',
       'until git checkout other',
+      // bdboard-w8ad opus レビュー (R2, 2026-09-26): if/while/until/elif の対になる予約語
+      // then/do/else と否定演算子 ! も、実際のコマンドがそれらの直後に来る形でカバーする
+      // (`if true; then git checkout other; fi` 等はセグメント分割後 "then git checkout other"
+      // という形になる)。予約語・演算子はコマンド語になり得ないので誤許可リスクはゼロ。
+      'then git checkout other',
+      'do git checkout other',
+      'else git checkout other',
+      '! git checkout other',
     ])('denies subagent checkout behind a command prefix: %s', async (command) => {
       expectDeny(
         await runBashHook({ command, cwd: mainWithPort, agentId: 'agent-1' }),
@@ -475,6 +483,46 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
         }),
         'main checkout',
         'git checkout',
+      );
+    });
+
+    // bdboard-w8ad opus レビュー (B1, 2026-09-26): サブシェルを閉じたかどうかを
+    // セグメント末尾が ')' かどうかだけで判定すると、`NAME=$(cmd)` のように
+    // セグメント自身が内部で完結した $(...) の ')' まで「サブシェルを閉じた」と
+    // 誤認し、まだ閉じていないサブシェルの外側ディレクトリへ SG_DIR を早戻し
+    // してしまう。結果、その後に続く同じサブシェル内の本物の変更コマンドが
+    // main checkout 判定から漏れて allow されていた。
+    it.each([
+      {
+        label: 'a bare $(...) command substitution mid-subshell',
+        command: (main: string) => `(cd ${main} && echo $(date) && git commit -m x)`,
+      },
+      {
+        label: 'an assignment whose value is a $(...) command substitution mid-subshell',
+        command: (main: string) => `(cd ${main} && BR=$(git branch --show-current) && git checkout -b tmp)`,
+      },
+      {
+        label: 'an assignment whose $(...) value is used by the next command in the same subshell',
+        command: (main: string) => `(cd ${main} && V=$(git rev-parse HEAD) && git reset --hard $V)`,
+      },
+    ])('does not prematurely restore the outer directory for $label', async ({ command }) => {
+      expectDeny(
+        await runBashHook({
+          command: command(mainWithPort),
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('still allows the same $(...)-mid-subshell shape when the subshell targets a worktree, not main', async () => {
+      expectAllow(
+        await runBashHook({
+          command: `(cd ${worktreeWithPort} && BR=$(git branch --show-current) && git checkout -b tmp2)`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
       );
     });
 
