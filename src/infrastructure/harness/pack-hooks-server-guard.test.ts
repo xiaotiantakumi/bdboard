@@ -832,6 +832,90 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         'aimix 経由の委譲実行',
       );
     });
+
+    it('denies cp into main even when an fd redirect follows the destination', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a.txt ${path.join(mainRepo, 'README.md')} 2>/dev/null`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies tee into main even when a pipe follows the destination', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee ${path.join(mainRepo, 'notes.txt')} | cat`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+    });
+
+    it('allows tee to a worktree-local file even when its stdin is redirected from a file under main (reading from main is not a write; without the pipe/redirect-stop guard the "< $MAIN/input.txt" token is wrongly picked up as a second write target and denied)', async () => {
+      expectAllow(
+        await runHook({
+          command: `tee local.txt < ${path.join(mainRepo, 'input.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows sed -i in a worktree when invoked from main without treating the script as a target (uses a slash-free script "1d" — a script like "s/x/y/" contains "/" itself, so it resolves to a nonexistent subpath rather than exactly $SG_DIR either way and would not actually discriminate this bug)', async () => {
+      expectAllow(
+        await runHook({
+          command: `sed -i '1d' ${path.join(worktree, 'file.txt')}`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows read-only aimix subcommands from main but still denies aimix run', async () => {
+      expectAllow(await runHook({ command: 'aimix members', cwd: mainRepo, agentId: 'agent-1' }));
+      expectAllow(await runHook({ command: 'aimix log', cwd: mainRepo, agentId: 'agent-1' }));
+      expectAllow(await runHook({ command: 'aimix --help', cwd: mainRepo, agentId: 'agent-1' }));
+      expectDeny(
+        await runHook({
+          command: 'aimix run --mode implement --member codex',
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'aimix 経由の委譲実行',
+      );
+    });
+
+    it('allows an unresolved variable redirect target instead of treating it as main', async () => {
+      expectAllow(
+        await runHook({
+          command: 'git diff HEAD > "$NOT_SET_BY_THIS_COMMAND"',
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('denies cp into an existing main directory without a trailing slash', async () => {
+      expectDeny(
+        await runHook({ command: `cp a.txt ${mainRepo}`, cwd: worktree, agentId: 'agent-1' }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it("denies redirect writes into the main checkout's .git internals", async () => {
+      expectDeny(
+        await runHook({
+          command: `echo x > ${path.join(mainRepo, '.git', 'config')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'リダイレクトでの書き込み',
+      );
+    });
   });
 
   describe('7c: killing the listener', () => {

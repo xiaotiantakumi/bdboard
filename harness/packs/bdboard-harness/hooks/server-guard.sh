@@ -93,6 +93,14 @@ sg_dir_is_main() {
   bh_dir_is_main "$1" "$SG_MAIN"
 }
 
+# bdboard-1zrs: sg_dir_is_main に加えて main checkout の共有 .git/ 配下も真を返す版。
+# このPRが追加した書き込み系チェック (sg_check_main_write / sg_check_main_write_targets)
+# 専用。既存の git サブコマンド判定 (sg_check_main_git_mutate 等) は sg_dir_is_main のまま
+# 変更しない (bdboard-1ef8 で明示的にスコープ外とした挙動を維持するため)。
+sg_dir_is_main_or_git_internal() {
+  bh_dir_is_main_or_git_internal "$1" "$SG_MAIN"
+}
+
 SG_IS_SUB=''
 [ -n "$AGENT_ID" ] && SG_IS_SUB='yes'
 
@@ -682,7 +690,7 @@ sg_deny_main_write() {
 # 引数: 実効 dir, ラベル, 説明。サブエージェントかつ main checkout なら deny。
 sg_check_main_write() {
   [ -n "$SG_IS_SUB" ] || return 0
-  sg_dir_is_main "$1" || return 0
+  sg_dir_is_main_or_git_internal "$1" || return 0
   sg_deny_main_write "$2" "$3"
 }
 
@@ -693,6 +701,14 @@ sg_check_main_write() {
 # 絶対/相対解決ルールに通す (スラッシュが無ければ実効 dir そのもの)。
 sg_resolve_target_dir() {
   sg_rtd_expanded="$(sg_expand "$1")"
+  case "$sg_rtd_expanded" in
+    /*) sg_rtd_abs="$sg_rtd_expanded" ;;
+    *) sg_rtd_abs="$SG_DIR/$sg_rtd_expanded" ;;
+  esac
+  if [ -d "$sg_rtd_abs" ]; then
+    sg_canon "$sg_rtd_abs"
+    return 0
+  fi
   case "$sg_rtd_expanded" in
     */*)
       sg_rtd_dir="${sg_rtd_expanded%/*}"
@@ -716,11 +732,29 @@ sg_check_main_write_targets() {
   shift 2
   for sg_cmwt_tok in "$@"; do
     [ -n "$sg_cmwt_tok" ] || continue
+    case "$(sg_expand "$sg_cmwt_tok")" in
+      *'$'*) continue ;;
+    esac
     sg_cmwt_dir="$(sg_resolve_target_dir "$sg_cmwt_tok")"
-    if sg_dir_is_main "$sg_cmwt_dir"; then
+    if sg_dir_is_main_or_git_internal "$sg_cmwt_dir"; then
       sg_deny_main_write "$sg_cmwt_label" "$sg_cmwt_desc"
     fi
   done
+}
+
+# 引数: トークン1つ。パイプ (|) またはリダイレクト演算子 (それ自身、または前置き融合形:
+# >, >>, 1>, 2>, &>, 1>>, 2>>, &>>, <, <<, <<<) なら真。cp/mv/tee/sed の対象引数スキャンで
+# 「ここから先はシェル構文であり、コマンド引数ではない」ことを検知して走査を打ち切るために使う
+# (bdboard-1zrs 独立レビュー: cp/mv の「最後の非フラグ語が宛先」ヒューリスティックが、宛先の
+# 後ろに `2>/dev/null` 等が続くだけで宛先を上書きしてしまい誤って許可する問題への対応)。
+sg_is_pipe_or_redirect_tok() {
+  case "$1" in
+    '|' | '||' | '&&' | ';' | '&') return 0 ;;
+    '&>>'* | '&>'* | '1>>'* | '1>'* | '2>>'* | '2>'* | '>>'* | '>'* | '<<<'* | '<<'* | '<'*)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 sg_effective_port_is_server() {
@@ -995,11 +1029,22 @@ while IFS= read -r sg_seg; do
       shift
       sg_sed_has_i=''
       sg_sed_targets=()
-      for sg_sed_tok in "$@"; do
-        case "$sg_sed_tok" in
-          -i | -i.* | --in-place | --in-place=*) sg_sed_has_i='yes' ;;
-          -*) ;;
-          *) sg_sed_targets+=("$sg_sed_tok") ;;
+      sg_sed_saw_script=''
+      while [ $# -gt 0 ]; do
+        sg_is_pipe_or_redirect_tok "$1" && break
+        case "$1" in
+          -i | -i.* | --in-place | --in-place=*) sg_sed_has_i='yes'; shift ;;
+          -e | -f | --expression | --file) sg_sed_saw_script='yes'; shift; shift ;;
+          -e* | -f* | --expression=* | --file=*) sg_sed_saw_script='yes'; shift ;;
+          -*) shift ;;
+          *)
+            if [ -z "$sg_sed_saw_script" ]; then
+              sg_sed_saw_script='yes'
+            else
+              sg_sed_targets+=("$1")
+            fi
+            shift
+            ;;
         esac
       done
       if [ -n "$sg_sed_has_i" ] && [ ${#sg_sed_targets[@]} -gt 0 ]; then
@@ -1011,6 +1056,7 @@ while IFS= read -r sg_seg; do
       sg_cpmv_dest=''
       sg_cpmv_last=''
       while [ $# -gt 0 ]; do
+        sg_is_pipe_or_redirect_tok "$1" && break
         case "$1" in
           -t | --target-directory) sg_cpmv_dest="${2:-}"; shift; shift ;;
           --target-directory=*) sg_cpmv_dest="${1#--target-directory=}"; shift ;;
@@ -1027,6 +1073,7 @@ while IFS= read -r sg_seg; do
       shift
       sg_tee_targets=()
       for sg_tee_tok in "$@"; do
+        sg_is_pipe_or_redirect_tok "$sg_tee_tok" && break
         case "$sg_tee_tok" in
           -*) ;;
           *) sg_tee_targets+=("$sg_tee_tok") ;;
@@ -1039,14 +1086,21 @@ while IFS= read -r sg_seg; do
     aimix)
       shift
       sg_aimix_dir="$SG_DIR"
+      sg_aimix_sub=''
       while [ $# -gt 0 ]; do
         case "$1" in
           --cwd) sg_aimix_dir="$(sg_resolve_dir "${2:-}")"; shift; shift ;;
           --cwd=*) sg_aimix_dir="$(sg_resolve_dir "${1#--cwd=}")"; shift ;;
-          *) shift ;;
+          -*) shift ;;
+          *)
+            [ -n "$sg_aimix_sub" ] || sg_aimix_sub="$1"
+            shift
+            ;;
         esac
       done
-      sg_check_main_write "$sg_aimix_dir" 'aimix-delegate' 'aimix 経由の委譲実行 (Codex/Cursor 子プロセスが hook を経由せず書き込むため)'
+      if [ "$sg_aimix_sub" = 'run' ]; then
+        sg_check_main_write "$sg_aimix_dir" 'aimix-delegate' 'aimix 経由の委譲実行 (Codex/Cursor 子プロセスが hook を経由せず書き込むため)'
+      fi
       ;;
     npx | tsx | node)
       for sg_tok in "$@"; do
