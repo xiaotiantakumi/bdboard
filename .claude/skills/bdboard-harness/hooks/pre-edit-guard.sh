@@ -160,14 +160,18 @@ done
 # の親) 配下を直接編集するのを止める (bdboard-kxqb)。議長 (agent_id なし) は対象外。
 # .claude/worktrees/<id>/... はそれ自身の --show-toplevel が main と異なるため、
 # bh_dir_is_main が自然に偽を返す (特別扱い不要)。main checkout 判定は server-guard.sh
-# (規則 8) と同じ lib-main-checkout.sh を共有する (二重実装しない)。
+# (規則 8) と同じ lib-main-checkout.sh を共有する (二重実装しない)。実際の判定には
+# bh_dir_is_main_or_git_internal を使う — bh_dir_is_main に加え、対象が main checkout の
+# 共有 .git/ 配下 (.git/config・.git/hooks/* 等、--show-toplevel が .git/ 内部では
+# エラーになるため元々すり抜けていた場所) であるケースも deny する (bdboard-1ef8)。
+# server-guard.sh が使う bh_dir_is_main 自体は変更していない。
 if [ -n "$AGENT_ID" ]; then
   LIB_MAIN_CHECKOUT="$(dirname "$0")/lib-main-checkout.sh"
   if [ -r "$LIB_MAIN_CHECKOUT" ]; then
     # shellcheck source=lib-main-checkout.sh
     . "$LIB_MAIN_CHECKOUT"
     EDIT_MAIN="$(bh_main_checkout "$GIT_DIR_CANDIDATE")"
-    if [ -n "$EDIT_MAIN" ] && bh_dir_is_main "$GIT_DIR_CANDIDATE" "$EDIT_MAIN"; then
+    if [ -n "$EDIT_MAIN" ] && bh_dir_is_main_or_git_internal "$GIT_DIR_CANDIDATE" "$EDIT_MAIN"; then
       deny \
         "bdboard-harness: サブエージェントは main checkout ($EDIT_MAIN) のファイルを編集できません。" \
         'worktree で作業してください: git -C '"$EDIT_MAIN"' worktree add .claude/worktrees/<id> -b bd/<id> origin/main' \
