@@ -16,11 +16,15 @@ const CORRUPT = 'corrupt';
 
 // bdboard-smyp: writeHolderAtomically の rename が一時的な errno で失敗したときに再試行する回数と
 // 待ち時間 (ms)。合計は 1 秒未満 (10+20+40+80+160+320 = 630ms)。これを使い切ってもまだ失敗するなら
-// 一時的な競合ではないとみなし、これまでどおり例外を投げる (呼び出し元の acquireVerifySlot が
-// スロットを release する)。
+// 一時的な競合ではないとみなし、これまでどおり例外を投げる。呼び出し元 (acquireVerifySlot) のうち、
+// 初回参加の書き込みと acquiredAt の書き込みはこの例外をそのまま外側の catch まで伝播させてスロットを
+// release する。joinedAt の並び直しと自己修復の書き込みは元から自前の try/catch で失敗を飲み込んで
+// 次の周に持ち越す作りなので、再試行を使い切った後もその挙動のまま (release はしない)。
 const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320];
-// Windows で「相手が置き換え中のファイルへの rename」が失敗するときの errno (bdboard-wt5c の
-// readHolder と同じ集合)。それ以外 (ENOENT など) は一時的な競合ではないので再試行しない。
+// Windows で「他の何かがこのファイルを開いている最中の rename」が失敗するときに典型的な errno
+// (readHolder が「読めない」として扱う失敗の主な原因と同じ想定だが、readHolder 自身は ENOENT 以外の
+// 全 errno を一律 UNREADABLE として扱っており、この3種に絞った集合を持っているわけではない)。
+// これ以外 (ENOENT など) は一時的な競合ではないので再試行しない。
 const RENAME_RETRY_ERRNOS = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
 const defaultWait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

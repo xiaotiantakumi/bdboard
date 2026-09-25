@@ -169,6 +169,11 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
         }
       }
       if (plan.acquire) {
+        // acquiredAt の rename が一時的な errno で再試行中 (最大 630ms 程度) は、他の待ち手からは
+        // まだ acquiredAt の無い holder = 待っている側に見える。その間隔で優先度の高い新参が
+        // 割り込むと一瞬 slots+1 本になりうるが、そもそもこのスロットは厳密な排他ではなく負荷の
+        // 間引きなので許容する (ファイル冒頭のコメント参照)。読めない相手はどのみち「走っている」に
+        // 倒しているのと同じ向き。
         await writeHolderAtomically(selfPath, { ...holder, acquiredAt: Date.now() }, { io: options.io });
         if (waited) {
           log(`verify: slot acquired after ${Math.round((Date.now() - holder.queuedAt) / 1000)}s in queue (priority ${holder.priority})`);

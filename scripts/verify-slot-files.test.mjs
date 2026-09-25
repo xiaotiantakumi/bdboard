@@ -161,7 +161,6 @@ describe('readOthers', () => {
   });
 });
 
-
 describe('writeHolderAtomically', () => {
   // bdboard-smyp: rename の一時的な失敗 (Windows の EPERM/EBUSY/EACCES) を短く・上限付きで
   // 再試行することを、待ち時間を実タイマーではなく記録するだけの wait 差し替え口で確認する
@@ -201,9 +200,16 @@ describe('writeHolderAtomically', () => {
     const dir = makeDir();
     const filePath = holderPath(dir, livePid);
     const waits = [];
+    let renameCalls = 0;
     const io = {
       ...fs,
       renameSync: () => {
+        renameCalls += 1;
+        // 上限判定が壊れて無限に再試行するようになった場合に、このテストがハングするのではなく
+        // はっきり失敗して終わるようにする安全弁 (再試行対象外の errno なので即座に例外が伝播する)。
+        if (renameCalls > 20) {
+          throw errnoError('ELOOP');
+        }
         throw errnoError('EBUSY');
       },
     };
@@ -212,8 +218,9 @@ describe('writeHolderAtomically', () => {
       writeHolderAtomically(filePath, { v: 2, pid: livePid, joinedAt: 1_000 }, { io, wait: recordingWait(waits) }),
     ).rejects.toMatchObject({ code: 'EBUSY' });
 
-    expect(waits.length).toBeGreaterThan(0); // 再試行はした
-    expect(waits.reduce((sum, ms) => sum + ms, 0)).toBeLessThan(1_000); // 合計は 1 秒未満
+    // 再試行の回数と待ち時間そのものを固定する (「上限を超えた」を「1回でも待った」より厳密に確認する)。
+    expect(renameCalls).toBe(7); // 最初の1回 + 再試行6回
+    expect(waits).toEqual([10, 20, 40, 80, 160, 320]); // 合計 630ms、1 秒未満
     expect(fs.existsSync(filePath)).toBe(false); // rename できていないので holder file は書き替わっていない
   });
 

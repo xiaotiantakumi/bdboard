@@ -228,6 +228,56 @@ describe('acquireVerifySlot', () => {
     },
   );
 
+  // bdboard-smyp: 対称の書き手側。走り出すときに自分の holder file へ acquiredAt を書く rename が
+  // 一時的な errno で失敗しても、writeHolderAtomically の再試行 (options.io 経由で注入) を挟んで
+  // acquireVerifySlot は変わらず解決する。単体の writeHolderAtomically のテスト (verify-slot-files.test.mjs)
+  // だけでは、この呼び出し元の await / io 中継が抜けても検知できない (抜けても acquiredAt 自体は
+  // いずれ書けるため) ので、実際に acquireVerifySlot を通す統合テストとして持つ。
+  it('recovers acquireVerifySlot when writing acquiredAt hits a transient rename failure', async () => {
+    const dir = makeDir();
+    let failuresLeft = 2;
+    let renameCalls = 0;
+    const io = {
+      ...fs,
+      renameSync: (from, to) => {
+        renameCalls += 1;
+        const written = JSON.parse(fs.readFileSync(from, 'utf8'));
+        if (written.acquiredAt !== undefined && failuresLeft > 0) {
+          failuresLeft -= 1;
+          throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+        }
+        fs.renameSync(from, to);
+      },
+    };
+    const slot = await acquireVerifySlot(fastOptions(dir, { io }), noLog);
+    try {
+      expect(renameCalls).toBeGreaterThan(1); // 少なくとも1回は再試行した (最初の rename が失敗した証拠)
+      const holder = JSON.parse(fs.readFileSync(holderFile(dir, process.pid), 'utf8'));
+      expect(holder.acquiredAt).toEqual(expect.any(Number));
+    } finally {
+      slot.release();
+    }
+  });
+
+  // acquiredAt の write が options.io を経由せず (real fs のまま) 走ると上の注入が一切効かず、この
+  // rejects も起きない — io が呼び出し元まで届いていることも合わせて確かめる。
+  it('propagates a rejection through acquireVerifySlot once the acquiredAt write exhausts its retry budget', async () => {
+    const dir = makeDir();
+    const io = {
+      ...fs,
+      renameSync: (from, to) => {
+        const written = JSON.parse(fs.readFileSync(from, 'utf8'));
+        if (written.acquiredAt !== undefined) {
+          throw Object.assign(new Error('EBUSY: injected'), { code: 'EBUSY' });
+        }
+        fs.renameSync(from, to);
+      },
+    };
+    await expect(acquireVerifySlot(fastOptions(dir, { io }), noLog)).rejects.toMatchObject({ code: 'EBUSY' });
+    // release() は投げた側でも呼ばれている (今までどおり) ので holder file は残らない。
+    expect(fs.existsSync(holderFile(dir, process.pid))).toBe(false);
+  });
+
   it('hands a freed slot to a landed run before a pr run that queued earlier (bdboard-ulxa.6)', { timeout: 20_000 }, async () => {
     const dir = makeDir();
     const logPath = path.join(dir, 'events.log');
