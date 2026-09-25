@@ -104,16 +104,16 @@ jobs:
     # (以前ここは bdboard-70z.9 を指していたが、70z.9 は「Windows 未対応機能を
     #  UI で明示する」という別件で、しかも既に closed。判断の持ち主が消えていた。)
     #
-    # 現況 (実測 2026-09-04): このジョブを入れた当初の前提だった
-    # 「Windows で test:server が 65 件落ちる」(bdboard-9dm) は解消済みで、
-    # 9dm も closed。直近の main / PR の run では verify-windows は概ね success。
-    # 残っている赤は bdboard-pqhe の flake (scripts/check-drift.test.mjs が
-    # Windows の遅いプロセス生成で per-test 5s を超える) 1系統のみ。
-    # つまり必須化を妨げている具体的な要因は pqhe だけまで絞れている。
+    # 現況 (実測 2026-09-25、bdboard-51qb): pqhe→npf9→ypjz→qlw1 と、Windows
+    # ランナー固有の git 子プロセス起動オーバーヘッドに起因する per-test
+    # タイムアウトが約1〜2週間おきに別ファイルで再発しており (直近は qlw1,
+    # PR #701, 2026-09-24)、根治 (呼び出し回数そのものを減らす設計変更) は
+    # まだされていない。加えて bdboard-c6nv ([vitest-worker] Timeout の
+    # 偽陽性失敗) が open のまま。
     #
-    # なぜ今このPRで必須化しないか: pqhe が未 land の状態で必須にすると、
-    # 既知の flake がそのまま全PRのマージブロッカーになる。必須化の発火条件は
-    # bdboard-51qb 側に書いてある。
+    # 裁定: 今は advisory のまま (continue-on-error を維持)。再検討の条件は
+    # (a) bdboard-c6nv が閉じる、(b) 2026-09-24 以降 14 日間 Windows だけの
+    # 失敗が 0。両方を満たしたらユーザーに Yes/No を確認する。
     continue-on-error: true
     runs-on: windows-latest
     timeout-minutes: 30
