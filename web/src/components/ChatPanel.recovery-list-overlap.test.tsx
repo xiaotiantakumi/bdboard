@@ -238,4 +238,44 @@ describe('ChatPanel: recovery hydrate overlapping the initial thread-list fetch 
     // 回収したセッションは開いている一覧に残る(ドラフトは永続化しない)。
     expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toContain('sess-rec');
   });
+
+  it('keeps the ticket-launch draft selected when the recovery hydrate lands after the initial list already started it (bdboard-cemi)', async () => {
+    mockCompletedUntilAcked();
+    // E7(初回の一覧取得)はすぐ解決するが、まだ回収セッションを含まない
+    // (サーバー側の一覧に載るのは turn 完了後)。hydrate 自身の2回目の
+    // fetchChatThreads 呼び出しでは含まれる。
+    let listCalls = 0;
+    fetchChatThreadsMock.mockImplementation(() =>
+      Promise.resolve(listCalls++ === 0 ? [THREAD_1, THREAD_2] : [THREAD_1, THREAD_2, RECOVERED_THREAD]),
+    );
+    const recoveredMessages = createDeferred<Response>();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((url: string) => {
+        if (url.startsWith('/api/chat/sessions/sess-rec/messages')) return recoveredMessages.promise;
+        return Promise.reject(new Error(`Unexpected fetch: GET ${url}`));
+      }),
+    );
+
+    const { container } = renderChatPanel([PROJECT_A], {
+      initialProjectId: 'proj-a',
+      initialInput: 'proj-a のチケットについて: ',
+      ticketContextToken: 1,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('メッセージ')).toHaveValue('proj-a のチケットについて: '),
+    );
+
+    await act(async () => {
+      recoveredMessages.resolve(recoveredMessagesResponse());
+      await recoveredMessages.promise;
+    });
+    await waitFor(() => expect(acknowledgeChatTurnMock).toHaveBeenCalledWith('proj-a', 'sess-rec'));
+    await settle();
+
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('proj-a のチケットについて: ');
+    expect(container.querySelector('.chat-thread-switcher-title')).not.toHaveTextContent('recovered thread');
+    expect(readPersistedChatThreads()['proj-a']?.activeSessionIds).toContain('sess-rec');
+  });
 });
