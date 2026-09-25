@@ -28,6 +28,13 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
   checkout (per-ticket worktree の親) か」を `server-guard.sh` (規則 8) と
   `pre-edit-guard.sh` (規則 2) の両方から `.` で読み込み、判定ロジックを一本化する
   (bdboard-kxqb)。
+- `lib-sg-mask.sh` / `lib-sg-dir.sh` / `lib-sg-git.sh` / `lib-sg-write.sh` も同様に
+  hook 本体ではなく共有ライブラリ。`server-guard.sh` (規則 7/8) が肥大化したため
+  (bdboard-qj0t)、引用符/ヒアドキュメントのマスク状態機械・実効ディレクトリ解決・git
+  token 判定・非 git 書き込み経路判定をそれぞれ切り出したもので、dispatch 本体 (セグメント
+  分割 → 前置語剥がし → コマンド語で case) は `server-guard.sh` に残る。4 本とも
+  `server-guard.sh` の dispatch ループより前に `.` で読み込まれ、挙動は分割前と同一
+  (純リファクタ)。
 
 ## pre-bash-guard.sh — PreToolUse (matcher: `Bash`)
 
