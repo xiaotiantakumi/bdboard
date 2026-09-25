@@ -240,7 +240,25 @@ while IFS= read -r wog_seg; do
         esac
       done
       case "${1:-}" in
-        push) wog_check_dir "$wog_git_dir" 'git push' ;;
+        push)
+          wog_check_dir "$wog_git_dir" 'git push'
+          shift
+          for wog_ptok in "$@"; do
+            case "$wog_ptok" in
+              -*) continue ;;
+            esac
+            wog_psrc="${wog_ptok%%:*}"
+            wog_pdst="${wog_ptok#*:}"
+            [ "$wog_pdst" = "$wog_ptok" ] && wog_pdst=''
+            for wog_pside in "$wog_psrc" "$wog_pdst"; do
+              [ -n "$wog_pside" ] || continue
+              wog_pside="${wog_pside#+}"
+              case "$wog_pside" in
+                bd/*) wog_check_id "${wog_pside#bd/}" 'git push' ;;
+              esac
+            done
+          done
+          ;;
         commit) wog_check_dir "$wog_git_dir" 'git commit' ;;
         worktree)
           if [ "${2:-}" = 'remove' ]; then
