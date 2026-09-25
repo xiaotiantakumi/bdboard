@@ -11,6 +11,8 @@
 # 規則 7 は契約 (.claude/bdboard-harness.json) に alwaysOnServer.port があるときだけ有効。
 #
 #   7a. サブエージェント (hook 入力に agent_id がある) から main checkout での git pull
+#       (alwaysOnServer.port 前提。サーバー再配備文脈の専用メッセージを持つ — 規則 8 の
+#       pull 対応 (下記) とは目的が異なるので併存させている)
 #   7b. サブエージェントから main checkout でのサーバー起動 (npm run start / tsx src/main.ts)
 #       と、再起動スクリプト (alwaysOnServer.restartScript) の呼び出し (cwd を問わない)
 #   7c. 呼び出し元を問わず、常時稼働サーバーの listener (とその親 npm/node) を PID で
@@ -26,12 +28,13 @@
 # 常用する運用 (bdboard-kxqb) では、サブエージェントの checkout / commit / reset / merge 等が
 # 議長の作業ツリーを直接壊しうる)。サブエージェント (agent_id あり) が main checkout を
 # 対象に git checkout / switch / commit / reset / merge / rebase / stash / restore /
-# cherry-pick / revert / am / clean / bisect / apply / rm / mv を実行するのを deny する
-# (opus レビュー 2026-09-25 で clean/bisect/apply/rm/mv の抜けを指摘され追加)。
-# pull は含まない — 元から 7a
-# (SG_PORT 前提) の対象で、規則 8 はそこに無かった working tree/HEAD 変更系だけを追加で
-# 塞ぐ (二重化しない。SG_PORT の無い契約では 7a 同様 pull は対象外のまま)。worktree
-# add/remove/list・branch (削除含む)・push・fetch・remote・log 等の読み取り/非破壊系も対象外。
+# cherry-pick / revert / am / clean / bisect / apply / rm / mv / pull を実行するのを deny
+# する (opus レビュー 2026-09-25 で clean/bisect/apply/rm/mv の抜けを指摘され追加)。pull は
+# bdboard-rj7y (2026-09-26) で追加: alwaysOnServer.port を宣言しないパック配布先では 7a
+# だけでは pull が fail-open のままだったため、working tree/HEAD 変更系として 7a とは独立に
+# (port の有無に関係なく) 規則 8 でも塞ぐことにした — port ありの契約では 7a が先に発火する
+# ので二重の deny メッセージにはならない。worktree add/remove/list・branch (削除含む)・
+# push・fetch・remote・log 等の読み取り/非破壊系は引き続き対象外。
 #
 # 限界 (hooks/README.md「規則 7」「規則 8」に明記): 実効ディレクトリは cwd と `cd` の静的
 # 追跡、変数は同一コマンド内の `NAME=値` 代入だけ解決する。別ファイルに書いて実行する迂回は
@@ -720,10 +723,19 @@ sg_handle_git_tokens() {
   sg_git_subcommand="${1:-}"
   case "$sg_git_subcommand" in
     pull)
-      # pull は既存の規則 7a だけが対象。規則 8 には含めない。
+      # 規則 7a (alwaysOnServer.port 前提、サーバー再配備文脈の専用メッセージ) はそのまま維持。
       if [ -n "$SG_PORT" ]; then
         sg_check_main_action "$sg_git_dir" '7a-git-pull' 'git pull'
       fi
+      # bdboard-rj7y (2026-09-26): 7a とは独立に、port の有無に関係なく規則 8 でも pull を
+      # working tree/HEAD 変更系として塞ぐ。alwaysOnServer.port を宣言しないパック配布先で
+      # 7a だけでは fail-open だった穴を閉じる。port ありの契約では上の 7a が先に deny して
+      # exit するので、ここまで到達した時点で「7a は通った (= main checkout ではないか議長)」
+      # ことが確定しており、二重の deny メッセージにはならない。
+      if [ -n "$SG_IS_SUB" ] && { [ -n "$sg_git_dir_unresolved" ] || [ -n "$sg_git_env_override" ]; }; then
+        sg_deny_git_mutate 'pull'
+      fi
+      sg_check_main_git_mutate "$sg_git_dir" 'pull'
       ;;
     checkout | switch | commit | reset | merge | rebase | stash | restore | cherry-pick | revert | am | clean | bisect | apply | rm | mv)
       if [ -n "$SG_IS_SUB" ] && { [ -n "$sg_git_dir_unresolved" ] || [ -n "$sg_git_env_override" ]; }; then
