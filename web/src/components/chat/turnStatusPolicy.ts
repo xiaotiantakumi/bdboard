@@ -25,8 +25,8 @@ export const TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS = 30_000;
 // bdboard-96rp (round 2 再レビューで発見されたブロッカー): sessionId 未確定の
 // tracked send が、自分自身の sessionId 無し failed と時刻的に一致しない場合
 // (TURN_STATUS_CLOCK_SKEW_TOLERANCE_MS を超えるずれ — 上のコメント群が言う
-// cloudflared トンネル越しの切断検知遅延等)、ChatPanel.tsx のターン状態ポーリング用
-// useEffect にある 'failed' 分岐は「無関係かもしれない
+// cloudflared トンネル越しの切断検知遅延等)、chat/useTurnStatusRecovery.ts のターン状態
+// ポーリング用 useEffect にある 'failed' 分岐は「無関係かもしれない
 // ので ACK せず何もしない」まま1秒間隔でポーリングを続け続ける。sessionId 無しの
 // エントリは ACK 経路が無く、bdboard-96rp B1 の dedupe によりサーバーはこの1件を
 // 置き換わるまで返し続けるので、これが本当に自分自身の (時刻がずれて観測された)

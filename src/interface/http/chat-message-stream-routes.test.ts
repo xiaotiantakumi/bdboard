@@ -941,8 +941,9 @@ describe('POST /api/chat/message/stream', () => {
     // doc comment), so before this fix it lingered until CHAT_COMPLETED_TURNS_MAX
     // eviction. Any client polling this project that is NOT the one that sent the doomed
     // message -- e.g. a viewer with no unresolved send of its own -- would see 'failed'
-    // forever, fail every matchesTrackedSend/detached check in ChatPanel.tsx's
-    // checkTurnStatus, and fall through to an unconditional 1-second re-poll with no
+    // forever, fail every matchesTrackedSend/detached check in
+    // chat/useTurnStatusRecovery.ts's checkTurnStatus, and fall through to an
+    // unconditional 1-second re-poll with no
     // bound. Once the entry ages past FAILED_TURN_SESSIONLESS_TTL_MS, GET must stop
     // surfacing it so such a poller can settle back to 'idle'.
     let currentMs = 0;
