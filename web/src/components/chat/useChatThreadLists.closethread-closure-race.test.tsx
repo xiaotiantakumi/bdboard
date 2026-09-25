@@ -28,7 +28,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatThreadDto } from '../../api';
-import { writePersistedChatThreadState } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
@@ -218,6 +218,7 @@ describe('closeThread render-time closure staleness via concurrent reopenClosedT
 
     // delete が解決し、closeThread の続きが走る。
     await act(async () => {
+      await Promise.resolve();
       resolveDelete?.();
     });
 
@@ -227,5 +228,47 @@ describe('closeThread render-time closure staleness via concurrent reopenClosedT
     // next = ['sess-2'] を計算し、setOpenThreadIds で丸ごと上書きする。
     // reopen で追加したはずの sess-3 が跡形もなく消える(黙った巻き戻り)。
     expect(result.current.threadLists.openThreadIds['project-a']).toEqual(['sess-2', 'sess-3']);
+    expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-3');
+    const persisted = readPersistedChatThreads()['project-a'];
+    expect(persisted?.activeSessionIds).toEqual(['sess-2', 'sess-3']);
+    expect(persisted?.selectedSessionId).toBe('sess-3');
+  });
+
+  it('keeps selection cleared when a draft starts while delete is in flight', async () => {
+    writePersistedChatThreadState('project-a', {
+      activeSessionIds: ['sess-1', 'sess-2'],
+      selectedSessionId: 'sess-1',
+    });
+    fetchChatThreadsMock.mockResolvedValue([
+      thread('sess-1', 'one'),
+      thread('sess-2', 'two'),
+      thread('sess-3', 'three'),
+    ]);
+    let resolveDelete: (() => void) | undefined;
+    deleteChatThreadMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useProbe('project-a'));
+    await waitFor(() =>
+      expect(result.current.threadLists.openThreadIds['project-a']).toEqual(['sess-1', 'sess-2']),
+    );
+
+    act(() => {
+      void result.current.threadLists.deleteThread('sess-1');
+    });
+    act(() => {
+      result.current.launcher.startNewDraftThread('project-a');
+    });
+    expect(result.current.key.selectedThreadIds['project-a']).toBeUndefined();
+
+    await act(async () => {
+      await Promise.resolve();
+      resolveDelete?.();
+    });
+
+    expect(result.current.key.selectedThreadIds['project-a']).toBeUndefined();
   });
 });

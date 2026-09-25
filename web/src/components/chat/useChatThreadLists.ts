@@ -90,6 +90,15 @@ export interface UseChatThreadListsResult {
  * これに伴い selectedThreadIdsRef が必須パラメータとして増えている。
  * selectOpenThread/reopenClosedThread は同期を追加していない(理由は各定義
  * 直前のコメント参照)。
+ *
+ * bdboard-ygrg で2つ目の例外: closeThread 内の next/wasSelected の計算を、
+ * render スコープの openThreads/currentSessionId ローカルではなく
+ * openThreadIdsRef.current/selectedThreadIdsRef.current から読むように
+ * 変更した(closeThread が deleteThread の async 継続から呼ばれた場合に
+ * stale なクロージャ値で他の並行更新を巻き戻してしまう closure-staleness
+ * 対策、詳細はその呼び出し箇所のコメント参照)。currentSessionId への
+ * フォールバックは意図的に持たない(フォールバックすると選択軸で同じ
+ * staleness バグが再発するため)。
  */
 export function useChatThreadLists({
   selectedProjectId,
@@ -139,12 +148,14 @@ export function useChatThreadLists({
 
   // bdboard-ygrg: deleteThread の async 継続から呼ばれる場合も最新の
   // open/selected state を使えるよう、next と wasSelected は render-mirror
-  // refs から読む。
+  // refs から読む。選択判定も ref の値だけを使い、render 時の props へフォールバック
+  // しない。選択解除後に古い値を復活させ、同じ stale closure バグを選択軸で
+  // 再発させるため。
   const closeThread = (sessionId: string) => {
     const liveOpenThreads = openThreadIdsRef.current[selectedProjectId] ?? [];
     const liveSelectedSessionId = selectedThreadIdsRef.current[selectedProjectId];
     const next = liveOpenThreads.filter((id) => id !== sessionId);
-    const wasSelected = (liveSelectedSessionId ?? currentSessionId) === sessionId;
+    const wasSelected = liveSelectedSessionId === sessionId;
     // フォールバック先は openThreadIds の挿入順(next[0] = 最古)ではなく、
     // displayedOpenThreads と同じ表示順(新しい順)の先頭に合わせる。3tw.154 で
     // 表示順を挿入順→新しい順に変えたことで、挿入順の先頭のままだと選択が
@@ -152,9 +163,7 @@ export function useChatThreadLists({
     const nextDisplayed = [...next].sort((a, b) =>
       compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
     );
-    const nextSelectedSessionId = wasSelected
-      ? nextDisplayed[0]
-      : liveSelectedSessionId ?? currentSessionId;
+    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : liveSelectedSessionId;
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
@@ -204,8 +213,14 @@ export function useChatThreadLists({
   // 別件: このハンドラの next 計算 ([...openThreads, sessionId]) は
   // render-time の openThreads state に依存しており、closeThread と同型の
   // 「async 継続から呼ばれた場合に stale な値を見る」リスクを理論上持つ。
-  // 現状 reopenClosedThread は同期 onClick からしか呼ばれないため実害は無いが、
-  // 詳細と修正方針は follow-up bdboard-ygrg を参照。
+  // bdboard-ygrg で closeThread 側の同型バグ(next/wasSelected の closure
+  // staleness)を openThreadIdsRef/selectedThreadIdsRef 参照に修正した際、
+  // reopenClosedThread はこの調査で「grep 済み・onClick からの同期呼び出し
+  // のみで async 継続として呼ばれる経路が無い」ため対象外にした
+  // (evidence-first、実害が無いものは修正しない方針)。将来 reopenClosedThread
+  // を async 経路(例: 何らかの確認 API を待ってから reopen する変更)から
+  // 呼ぶようになった場合は、closeThread と同じ ref 参照パターンへの修正を
+  // 検討すること。
   const reopenClosedThread = (sessionId: string) => {
     const next = [...openThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
