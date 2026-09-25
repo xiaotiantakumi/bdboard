@@ -209,12 +209,31 @@
     justify-content: flex-end;
   }
 
+  /* bdboard-h4xs.25: 明示 height (100vh/100dvh) を持たせない。ベースの
+     .overlay (styles/ticket-detail-3.css) は position: fixed; inset: 0; だけで
+     全画面へ常に追従するので、このオーバーライドで明示 height を足すと、top:0 +
+     bottom:0 (inset:0由来) + 明示height の over-constrained な状態になり、
+     bottom が無視されてその時点の dvh 値に下端が固定されてしまう。iOS Safari で
+     ソフトキーボードが開いたとき、この固定値と実際に見えている画面(visual
+     viewport)の下端がずれ、暗幕の無い帯からボードが透けて見えた
+     (再現: bdboard-h4xs.25 本文)。ズレの発生メカニズム自体
+     (interactive-widget=resizes-content によるものか、visualViewport の
+     オフセット変化によるものか)は実機で未検証の仮説 — レビュー時点
+     (2026-09-25) では前者を Safari が未サポートという指摘があり、後者の方が
+     濃厚。どちらであっても top:0+bottom:0+明示height の over-constrained
+     構造が「時点の値に凍結される」原因である点は変わらず、このオーバーライドで
+     明示 height を持たせない、という直し方は影響を受けない。
+     overscroll-behavior は height の決まり方と無関係にそのまま効くので残す。 */
   .overlay {
-    height: 100vh;
-    height: 100dvh;
     overscroll-behavior: none;
   }
 
+  /* bdboard-h4xs.25 で直上の .overlay から明示 height を外したため、このルールの
+     max-height: 100dvh は以前のような冗長な重ね書きではなくなった —
+     ChatPanel (.detail-panel.chat-panel.resizable-side-panel) の実際の高さの
+     上限として効く唯一の宣言になり、送信欄が iOS のキーボード/フローティング
+     ツールバーの下に隠れないための AC2 を支えている。削除・変更するときは
+     必ずこの依存を踏まえること。 */
   .detail-panel.resizable-side-panel {
     width: 100vw !important;
     min-width: 0;
