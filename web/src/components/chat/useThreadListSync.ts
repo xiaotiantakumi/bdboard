@@ -26,9 +26,10 @@ export interface UseThreadListSyncParams
  * effect E6 = useColdKeyspaceAdoption の直後、turn-status 回収 E8 より前)で呼ぶ。
  * 順序の理由: E9(ticket-context)より前に、本体の先頭で別プロジェクト宛の pending を
  * 無効化する(MF2/MF3)。E8 が threadListRequestIdRef を進めるのは回収した
- * ターンを hydrate する直前だけ(その応答が一覧を置き換える)。以前は generation>0
+ * ターンを当てる直前だけ(その応答が一覧を置き換える)。以前は generation>0
  * のたびに進めていて、ここで始めた一覧 fetch を握りつぶしていた(設計書 §5 の P1、
- * bdboard-x4mv で修正)。
+ * bdboard-x4mv で修正)。進められた後に届いた応答も、pending ドラフトの消化だけは
+ * 行う(bdboard-tsen)。
  *
  * ref の種類: pendingPrefillRef / pendingTicketDraftProjectRef は[正本]
  * (useDraftThreadLauncher が持つ)、threadListRequestIdRef は request-id、
@@ -136,15 +137,32 @@ export function useThreadListSync({
     const isExplicitDraftStillSelected = () =>
       (draftNoncesRef.current[selectedProjectId] ?? 0) > 0 &&
       selectedThreadIdsRef.current[selectedProjectId] === undefined;
+    // チケット起動の pending ドラフト(E9 が積んだもの)をこのプロジェクト宛なら消化する。
+    // N1: 1回の応答につき startNewDraftThread は高々1回。
+    const consumePendingTicketDraft = () => {
+      if (pendingTicketDraftProjectRef.current !== selectedProjectId) return false;
+      pendingTicketDraftProjectRef.current = null;
+      startNewDraftThread(selectedProjectId);
+      return true;
+    };
+    // bdboard-tsen: request-id が進んでいる(= fetch 中に turn-status 回収の hydrate が、
+    // より新しい一覧を当てた)ときは、一覧・open・選択は当てない(回収結果を古い一覧で
+    // 上書きしない。hydrate 側はこのプロジェクトが未復元なら永続化から復元してから回収分を
+    // 足している)。ただしチケット起動の pending ドラフトの消化はこの応答にしか担えないので
+    // 行う。以前は応答ごと捨てていて、pending が消化されないまま残っていた。
+    // プロジェクト切替・アンマウントでは cancelled が立つので、そちらは何もしない。
+    const isSupersededByRecovery = () => threadListRequestId !== threadListRequestIdRef.current;
     void fetchChatThreads(selectedProjectId)
       .then((threads) => {
-        if (cancelled || threadListRequestId !== threadListRequestIdRef.current) return;
+        if (cancelled) return;
+        if (isSupersededByRecovery()) {
+          consumePendingTicketDraft();
+          return;
+        }
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
         const { open, selected } = restoreThreadView(threads, persisted);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
-        if (pendingTicketDraftProjectRef.current === selectedProjectId) {
-          pendingTicketDraftProjectRef.current = null;
-          startNewDraftThread(selectedProjectId);
+        if (consumePendingTicketDraft()) {
           return;
         }
         if (isExplicitDraftStillSelected()) {
@@ -153,13 +171,15 @@ export function useThreadListSync({
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: selected }));
       })
       .catch(() => {
-        if (cancelled || threadListRequestId !== threadListRequestIdRef.current) return;
+        if (cancelled) return;
+        if (isSupersededByRecovery()) {
+          consumePendingTicketDraft();
+          return;
+        }
         setThreadError('スレッド一覧の取得に失敗しました。');
         const open = persisted?.activeSessionIds ?? [];
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
-        if (pendingTicketDraftProjectRef.current === selectedProjectId) {
-          pendingTicketDraftProjectRef.current = null;
-          startNewDraftThread(selectedProjectId);
+        if (consumePendingTicketDraft()) {
           return;
         }
         if (isExplicitDraftStillSelected()) {

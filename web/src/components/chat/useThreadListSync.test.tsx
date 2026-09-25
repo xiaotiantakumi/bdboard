@@ -188,6 +188,33 @@ describe('useThreadListSync', () => {
     expect(result.current.key.selectedThreadIds).toEqual({});
   });
 
+  it('still consumes a pending ticket draft when a recovery hydrate advanced the request id (bdboard-tsen)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result, startNewDraftThread } = renderProbe();
+    result.current.pendingTicketDraftProjectRef.current = 'proj-a';
+    result.current.conv.threadListRequestIdRef.current += 1;
+    await act(async () => { list.resolve([thread('sess-1')]); await list.promise; });
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+    expect(result.current.pendingTicketDraftProjectRef.current).toBeNull();
+    // 一覧・open・選択は回収側が当てたものを残す。
+    expect(result.current.threadLists).toEqual({});
+    expect(result.current.openThreadIds).toEqual({});
+    expect(result.current.key.selectedThreadIds).toEqual({});
+  });
+
+  it('still consumes a pending ticket draft on a superseded failure without reporting the error (bdboard-tsen)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result, startNewDraftThread } = renderProbe();
+    result.current.pendingTicketDraftProjectRef.current = 'proj-a';
+    result.current.conv.threadListRequestIdRef.current += 1;
+    await act(async () => { list.reject(new Error('down')); await list.promise.catch(() => undefined); });
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+    expect(result.current.notifications.threadError).toBeNull();
+    expect(result.current.openThreadIds).toEqual({});
+  });
+
   it('does not consume a pending ticket draft after unmount (cancelled)', async () => {
     const list = deferred<ChatThreadDto[]>();
     fetchChatThreadsMock.mockReturnValue(list.promise);

@@ -124,7 +124,7 @@ describe('useTurnStatusRecovery request-id guards', () => {
       { sessionId: 'sess-1', agentId: 'claude', title: 'recovered', pinned: false, updatedAt: '2026-01-01T00:00:00Z' },
     ];
     const payload: ChatSessionMessagesDto = { sessionId: 'sess-1', agentId: 'claude', messages: [] };
-    const probe: { ref?: { current: number }; idAtFetch?: number } = {};
+    const probe: { ref?: { current: number }; idAtFetch?: number; idAtApply?: number } = {};
     fetchChatThreadsMock.mockImplementation(() => {
       probe.idAtFetch = probe.ref?.current;
       return Promise.resolve(threads);
@@ -133,10 +133,16 @@ describe('useTurnStatusRecovery request-id guards', () => {
 
     const { result, applyRecoveredTurn, listFetchIds } = renderProbe();
     probe.ref = result.current.threadListRequestIdRef;
+    applyRecoveredTurn.mockImplementation(() => {
+      probe.idAtApply = probe.ref?.current;
+    });
 
     await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledWith(threads, payload));
-    // hydrate の fetch より前に id が進んでいる = それ以前に始まった一覧応答(E7 の分)は捨てられる。
-    expect(probe.idAtFetch).toBe(listFetchIds['proj-a'] + 1);
+    // bdboard-tsen: hydrate の fetch 中は id を進めない(その間に届く E7 の一覧応答は生きていて、
+    // 永続化済み open/選択の復元と pending ドラフトの消化を行える)。当てる直前に進めるので、
+    // それより後に届く E7 の応答は一覧・open・選択を当てない。
+    expect(probe.idAtFetch).toBe(listFetchIds['proj-a']);
+    expect(probe.idAtApply).toBe(listFetchIds['proj-a'] + 1);
     expect(result.current.threadListRequestIdRef.current).toBe(listFetchIds['proj-a'] + 1);
   });
 

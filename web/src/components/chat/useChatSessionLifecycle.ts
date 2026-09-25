@@ -5,8 +5,9 @@ import {
   type ChatSessionMessagesDto,
   type SessionTailMessageDto,
 } from '../../api';
-import { writePersistedChatThreadState } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { toChatMessages, type ChatMessage } from './messages';
+import { restoreThreadView } from './threadViewRestore';
 import type { UseChatAgentModelStateResult } from './useChatAgentModelState';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -31,7 +32,8 @@ export interface UseChatSessionLifecycleParams
  * 一覧と会話ストアの両方へ書き込む」3つのハンドラを、組み立て層(controller)へ
  * 移す前の準備として move-only で抜き出したもの。
  * - applyRecoveredTurn: turn-status 回収(chat/useTurnStatusRecovery.ts、E8)が
- *   hydrate するときに呼ぶ。
+ *   hydrate するときに呼ぶ。一覧がまだ復元されていないプロジェクトでは、先に
+ *   chat/threadViewRestore.ts の規則で永続化から復元する(bdboard-tsen)。
  * - handleHistorySessionGone: 履歴ローダー(chat/useChatHistoryLoader.ts、E12)が
  *   404/unknown session を見たときに呼ぶ(bdboard-23u の prune)。
  * - handleResumeDiscoveredSession: ドロワーの「CLIセッションを再開」から呼ぶ。
@@ -48,9 +50,19 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
 
   const applyRecoveredTurn = useCallback(
     (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => {
-      const currentOpen = openThreadIdsRef.current[selectedProjectId] ?? [];
+      // bdboard-tsen: スレッド一覧 effect(E7)がこのプロジェクトの open/選択をまだ復元して
+      // いない(初回の一覧 fetch が in-flight)なら、E7 と同じ規則で永続化から復元した上に
+      // 回収したセッションを足す。E7 の応答はこの後に届いても一覧・open・選択を当てない
+      // (chat/useTurnStatusRecovery.ts が当てる直前に一覧の request-id を進める)ので、
+      // ここで復元しないと開いていたスレッドと選択が失われ、永続化も回収分だけで上書きされた。
+      const knownOpen = openThreadIdsRef.current[selectedProjectId];
+      const restored =
+        knownOpen === undefined
+          ? restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId])
+          : undefined;
+      const currentOpen = knownOpen ?? restored?.open ?? [];
       const nextOpen = [...currentOpen.filter((id) => id !== payload.sessionId), payload.sessionId];
-      const currentSelected = selectedThreadIdsRef.current[selectedProjectId];
+      const currentSelected = selectedThreadIdsRef.current[selectedProjectId] ?? restored?.selected;
       const nextSelected = currentSelected ?? payload.sessionId;
       setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
