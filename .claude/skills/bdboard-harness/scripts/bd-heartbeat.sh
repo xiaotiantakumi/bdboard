@@ -586,21 +586,27 @@ cmd_start() {
   # いずれも TypeScript 側のポーリングや read 系の check-then-read を負荷非依存に
   # しただけで、ここには手を付けていなかった。高負荷下では
   # run_heartbeat_loop の最初の session_lstart() (=ps 呼び出し、fork+exec) 自体が
-  # 詰まりうる (bdboard-d48: load average 190 超の実績) — その間も子はちゃんと
-  # 生きて登録に向かって進んでいるのに、固定 100 回×0.05s=5s で見捨てて kill
-  # していたことが、npm run verify 並列実行下でのみ再現し busy-loop の
-  # CPU 負荷では再現しなかった (fork/exec 競合は CPU 専有と別物) フレークの
-  # 原因と見られる。子が登録前に本当に死んだ場合はここで即座に検出して
-  # 待たずに失敗させる (フェイルファスト、負荷とは無関係に決定的)。
-  # 300 回×0.05s=15s は、呼び出し側 (pack-heartbeat.test.ts の runHeartbeat)
-  # が `start` に割り当てている外側 20s タイムアウトに合わせつつ、nohup/env
-  # の起動オーバーヘッドと呼び出し元の後処理分の余白を残すための上限で、
-  # 「子が生きたまま永遠に登録しない」という本物の詰まりのときだけ効く
-  # 最後の歯止め (pollUntilProgressing/pollUntilStopped と同じ設計、
-  # bdboard-rg8o/69w1)。通常の合否判定はもっぱら子の生死で決まる。
-  i=0
+  # 詰まりうる可能性があり、その間も子はちゃんと生きて登録に向かって進んでいる
+  # のに、固定 100 回×0.05s=5s で見捨てて kill していた。これは opus レビュー
+  # (bdboard-241s PR#801) で確認済みの実際の欠陥だが、2026-09-20 に一度だけ
+  # 観測されたフレークそのものの原因と確定したわけではない — 再現は取れていない。
+  # 子が登録前に本当に死んだ場合はここで即座に検出して待たずに失敗させる
+  # (フェイルファスト、負荷とは無関係に決定的)。
+  #
+  # 上限は反復回数ではなく実時間 ($SECONDS) のデッドラインで取る。反復回数
+  # (旧: 100 回×0.05s) は各反復が read_pidfile の fork+exec を含むため、高負荷下
+  # では反復自体が遅くなり実経過時間が名目値より大きく膨らむ (opus レビューの
+  # 実測: 負荷13〜17で100回が約9s、300回のまま反復カウントで置き換えるだけだと
+  # 約24〜26s まで膨らみ、呼び出し側 pack-heartbeat.test.ts の runHeartbeat が
+  # `start` に割り当てる外側 20s タイムアウトを超えてしまう)。$SECONDS は
+  # bash 3.2 でも使えるビルトインなので、これで名目通りの 15s 上限を保証する。
+  # 「子が生きたまま永遠に登録しない」という本物の詰まりのときだけ効く最後の
+  # 歯止め (pollUntilProgressing/pollUntilStopped と同じ設計、bdboard-rg8o/69w1)。
+  # 通常の合否判定はもっぱら子の生死で決まる。
+  pf="$(pidfile_path "$session_pid")"
+  deadline=$((SECONDS + 15))
   child_dead=0
-  while [ "$i" -lt 300 ]; do
+  while [ "$SECONDS" -lt "$deadline" ]; do
     new_pid="$(read_pidfile "$session_pid")"
     if [ -n "$new_pid" ] && is_pid_alive "$new_pid"; then
       exit 0
@@ -610,16 +616,18 @@ cmd_start() {
       break
     fi
     sleep 0.05
-    i=$((i + 1))
   done
 
   if [ "$child_dead" -eq 1 ]; then
     printf '%s\n' "bd-heartbeat: loop process exited before registering a pidfile (session-pid=${session_pid})" >&2
   else
     printf '%s\n' "bd-heartbeat: loop did not register pidfile within 15s although still running (session-pid=${session_pid})" >&2
+    # child_dead=0 のときだけ kill する: 死亡確認済みの子を重ねて kill しても
+    # 無意味 (既に reap 済み) で、PID 再利用時に無関係なプロセスを叩く経路を
+    # 増やすだけなので避ける (opus レビュー nit)。
+    kill_pid_gracefully "$child_pid"
   fi
-  kill_pid_gracefully "$child_pid"
-  rm -f "$(pidfile_path "$session_pid")" "$(idsfile_path "$session_pid")"
+  rm -f "$pf" "$(idsfile_path "$session_pid")"
   exit 1
 }
 

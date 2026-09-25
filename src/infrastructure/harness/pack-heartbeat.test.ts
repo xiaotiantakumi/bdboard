@@ -1532,11 +1532,13 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
     }
   }, 30_000);
 
-  // bdboard-241s: cmd_start の登録待ちが壁時計固定 5s だった旧実装は、子プロセスが
-  // まだ生きていて単に ps (fork+exec) が詰まっているだけでも、その 5s で kill して
-  // exit 1 していた。ここでは「子が登録前に本当に死んだ」場合と「子は生きているが
-  // ps が遅いだけ」の場合を分けて、前者は即座に (旧実装の 5s はおろか、新しい 15s
-  // 上限も待たずに) 失敗し、後者は 5s を跨いでも失敗しないことを検証する。
+  // bdboard-241s: cmd_start の登録待ちが「反復回数 (名目 5s)」固定だった旧実装は、
+  // 子プロセスがまだ生きていて単に ps (fork+exec) が詰まっているだけでも、その
+  // 名目上限で kill して exit 1 していた。ここでは「子が登録前に本当に死んだ」
+  // 場合と「子は生きているが ps が遅いだけ」の場合を分けて、前者は即座に
+  // (メッセージ文言で判別、経路の実装を見ればどんな負荷でも決定的) 失敗し、
+  // 後者は新実装の実時間デッドライン (15s、$SECONDS ベースで負荷非依存) を
+  // 大きく下回る遅延を注入しても失敗しないことを検証する。
   it(
     'start fails fast, without waiting out the registration budget, when the loop exits before registering a pidfile',
     async () => {
@@ -1547,22 +1549,24 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       // 書く前に exit reason=session-lstart-unavailable で即終了する。
       const deadSessionPid = 880_010;
 
-      const startedAt = Date.now();
       const start = await runHeartbeat(
         ['start', '--session-pid', String(deadSessionPid), '--interval', '90', '--repo', tmpRoot, 'a-1'],
         hbEnv,
       );
-      const elapsedMs = Date.now() - startedAt;
 
       expect(start.exitCode).toBe(1);
+      // フェイルファストの判別は経過時間ではなくメッセージの内容で行う
+      // (opus レビュー, bdboard-241s PR#801)。「子の生死を見ずに反復回数だけで
+      // 判定していた」旧実装は、この dead-pid ケースでも `exited before
+      // registering` は絶対に出さず (常に `did not register ... within 5s` の
+      // 方になる) 反復上限まで待ってから失敗するため、経過時間の上限を assert
+      // しなくてもこの文言だけで新旧を判別できる。経過時間の上限アサーションは
+      // 高負荷下では ps/fork のスケジューリング遅延で成立しなくなりうるため
+      // 置かない (bdboard-rg8o/69w1 が同じ理由でこの種の assert を外した前例と同じ)。
       expect(start.stderr).toMatch(/exited before registering/);
-      // 旧実装ならここで固定 5s (新実装の上限なら 15s) を律儀に待ってから失敗していた。
-      // フェイルファストなら数百ms で戻るはずなので、大きな余裕を持って上限より
-      // 十分小さい値で判定する。
-      expect(elapsedMs).toBeLessThan(4_000);
       expect(readPidfile(hbEnv.tmpDir, deadSessionPid)).toBeUndefined();
     },
-    15_000,
+    25_000, // 予算: start 20s + 余裕。
   );
 
   it(
@@ -1576,11 +1580,22 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       activeSessions.push({ sessionPid: session.pid, hbEnv, stopSession: session.stop });
 
       // run_heartbeat_loop の最初の session_lstart(baseline) 呼び出し (pidfile を
-      // 書く前の唯一のブロッキング処理) に 6 秒の遅延を注入する。子プロセスは
+      // 書く前の唯一のブロッキング処理) に 12 秒の遅延を注入する。子プロセスは
       // その間ずっと生きたまま応答が遅いだけ、という高負荷下の状況を決定的に
-      // 再現する (旧実装の固定 5s 上限なら、この時点でまだ生きている子を kill
-      // して exit 1 していたはず)。
-      psLstartDelaySeconds(hbEnv, session.pid, 6);
+      // 再現する。
+      //
+      // 遅延を 12s にしている理由 (opus レビュー, bdboard-241s PR#801 で
+      // 6s だと不十分と判明): 旧実装の「反復 100 回」上限は名目 5s だが、
+      // 各反復が read_pidfile の fork+exec を含むため高負荷下では実経過時間が
+      // 膨らむ (レビューでの実測: 負荷 13〜15 で約 9s)。6s の遅延だと、この
+      // 膨張のせいで旧実装でもたまたま間に合ってしまい (実際にレビューの
+      // 再現実行で旧実装が rc=0 で通ってしまった)、新旧を判別できなかった。
+      // 12s なら旧実装の実測上限 (~9s) より上、新実装の実時間デッドライン
+      // (15s, $SECONDS ベースで負荷に依存せず一定) より下に収まる。
+      // ただし理論上は無制限の高負荷下ではこの余白も食い潰されうるので、
+      // 完全な決定性の保証ではなく実用上の改善と position づける
+      // (経路の正しさそのものは script 側の $SECONDS デッドラインで保証済み)。
+      psLstartDelaySeconds(hbEnv, session.pid, 12);
 
       const startedAt = Date.now();
       const start = await runHeartbeat(
@@ -1590,15 +1605,17 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       const elapsedMs = Date.now() - startedAt;
 
       expect(start.exitCode, start.stderr).toBe(0);
-      // 実際に注入した 6 秒の遅延を跨いで待ったこと (=シムが効いていたこと) の
-      // 裏付け。旧実装ならこの経過時間に達する前に 5s で失敗していたはず。
-      expect(elapsedMs).toBeGreaterThanOrEqual(5_500);
+      // 下限のみを assert する: 実際に注入した 12 秒の遅延を跨いで待った
+      // (=シムが効いていた) ことの裏付けであり、負荷でプロセスが遅くなる
+      // 方向にしか外れない安全な向きの assertion (bdboard-rg8o/69w1 と同じ
+      // 理由で上限は置かない)。
+      expect(elapsedMs).toBeGreaterThanOrEqual(11_500);
       expect(readPidfile(hbEnv.tmpDir, session.pid)).toBeDefined();
 
       await runHeartbeat(['stop', '--session-pid', String(session.pid)], hbEnv);
       activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
     },
-    30_000,
+    60_000, // 予算: startSession 5s + start 20s + stop 20s = 最悪 45s < 60s。
   );
 
   it(
