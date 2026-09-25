@@ -208,6 +208,38 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
     await claimA();
     expectAllow(await runBashHook({ command: `cd ${wtA} && git push`, cwd: main }));
   });
+  it('denies deleting another agent branch from main with git push --delete', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push origin --delete bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it("denies force pushing another agent's branch from the caller's own worktree", async () => {
+    await claimA();
+    expectAllow(await runBashHook({ command: `cd ${wtB} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-2' }));
+    expectDeny(await runBashHook({ command: 'git push -f origin HEAD:bd/ticket-a', cwd: wtB, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('denies a plain branch-name push target belonging to another agent from main', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push origin bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('denies deleting another agent branch with an empty-source refspec', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push origin :bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it("allows an agent to push its own branch by explicit refspec from main", async () => {
+    await claimA();
+    expectAllow(await runBashHook({ command: 'git push origin HEAD:bd/ticket-a', cwd: main, agentId: 'agent-1' }));
+  });
+  it("allows the chair to push another agent's branch by name", async () => {
+    await claimA();
+    expectAllow(await runBashHook({ command: 'git push origin --delete bd/ticket-a', cwd: main }));
+  });
+  it('allows an ordinary non-ticket push target from main', async () => {
+    expectAllow(await runBashHook({ command: 'git push origin main', cwd: main, agentId: 'agent-2' }));
+  });
+  it('allows an unrelated fully qualified branch target without claiming ownership', async () => {
+    expectAllow(await runBashHook({ command: 'git push origin refs/heads/other-branch', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'other-branch'))).toBe(false);
+  });
   it('lets the first subagent claim an unowned worktree', async () => {
     expectAllow(await runBashHook({ command: `cd ${wtB} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-2' }));
   });
