@@ -126,6 +126,11 @@
 - 防止: hook 規則 7 (`hooks/server-guard.sh`) — `agent_id` 付きの呼び出しから main checkout の `git pull` / `npm run start` / 再起動スクリプト実行を deny、listener PID の直接 kill は誰からでも deny。再起動は議長が `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>` で行い、サブエージェントは最終報告に「議長で再起動が必要」と書く（本則: CLAUDE.md「Always-On Local Hosting」、`hooks/README.md` 規則 7）
 - 出典: bdboard-hpu8（トランスクリプト調査。`bd comments bdboard-hpu8` と PR 本文に証跡）
 
+### stale-chair-checkout — 議長セッションの checkout が main から取り残され、main で入れた hook (規則 7 ほか) が議長と全サブエージェントで 1 か月以上効いていなかった（2026-09-24）
+- 原因: hook の登録も本体もセッション起動時の checkout (`$CLAUDE_PROJECT_DIR`) から読まれ、サブエージェントも同じ場所を読むが、長寿命セッションの checkout は誰も更新しない
+- 防止: `hooks/worktree-freshness.sh` が SessionStart / UserPromptSubmit / PostToolUse(Agent) で遅れ・共通祖先なし・本体欠落を警告し安全な追従コマンドを案内 (自動 merge はしない)。議長はマージ後に自分の checkout も追従 (本則: `hooks/README.md`、docs/GIT-WORKFLOW.md「Cleanup after merge」)
+- 出典: bdboard-flpp
+
 ## 検証・ビルド
 
 ### verify-storm — 6並列の `npm run verify` が自己増幅し load average 190–258 が数時間継続（2026-08-18）

@@ -7,14 +7,15 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 ## 共通の約束
 
 - **deny は exit 2**、stderr に「何を止めたか / なぜ / 代わりに何をするか」を 3 行以内。
-- **allow は exit 0 で無出力**。
+- **allow は exit 0 で無出力**。例外は警告専用の `worktree-freshness.sh` で、止めることは
+  無く常に exit 0、警告があるときだけ stdout に JSON を出す (後述)。
 - **判定不能はすべて allow (fail-open)**。`set -e` は使わない。hook が壊れて作業が
   止まるより、従来どおり文章ルールへ戻るほうが安全という判断。
 - 入力は stdin の Claude Code hook JSON。抽出は `jq` → `python3` の順に使い、必要な
   フィールドは 1 回の呼び出しでまとめて取り出す (US=0x1f 区切り。TAB も改行もコマンド
   文字列やパスに普通に含まれるので区切りには使えず、TAB は IFS 空白扱いで空フィールド
   も消える)。
-- **どちらの JSON ツールも無い環境では、3 本とも何も判定せず exit 0 で通す
+- **どちらの JSON ツールも無い環境では、4 本とも何も判定せず exit 0 で通す
   (fail-open)**。stderr は警告 1 行だけ
   `bdboard-harness hook: jq/python3 not found; skipping all checks (fail-open)`。
   生の JSON 文字列へ正規表現/部分一致を当てる縮退判定はしない — `git stash list` の
@@ -300,6 +301,82 @@ git が無い・パスが取れない・ブランチが判らない場合は all
 決まり、対象 worktree とは限らないので、渡さないと別チェックアウトの `.beads/` を
 読みかねない。
 
+## worktree-freshness.sh — SessionStart / UserPromptSubmit / PostToolUse (matcher: `Agent|Task`)
+
+「hook の読み込み元の checkout が既定ブランチから取り残されている」をセッション自身に知らせる
+(bdboard-flpp)。**警告だけで、自動の checkout / merge はしない** (作業中の変更を壊しうるため)。
+常に exit 0。
+
+### なぜ要るか
+
+hook の登録 (`.claude/settings.json`) も本体 (この `hooks/` や `scripts/*.mjs`) も、セッションを
+起動した checkout (`$CLAUDE_PROJECT_DIR`) から読まれる。Agent ツールで起動したサブエージェントの
+hook も**親と同じ** `$CLAUDE_PROJECT_DIR` から読まれる。何日も動く議長セッションの checkout は
+誰も更新しないので、main に入った hook の追加・修正が議長にも、議長が起動した全サブエージェントにも
+届かない。2026-09 には議長の worktree が公開前の旧履歴のまま 1 か月以上動き、規則 7 (#645) が
+一度も効いていなかった。ボードの Hygiene (`nonTicketHarnessWorktrees`) は外から同じ遅れを
+出していたが、セッション自身には届いていなかった。
+
+### 判定 (すべてローカルの ref だけで行う。fetch しない)
+
+見る checkout は `$CLAUDE_PROJECT_DIR` (未設定なら hook 入力の `cwd`) の toplevel。cwd では
+ない — 議長が別 worktree へ `cd` しても hook の読み込み元は変わらないため。既定ブランチは
+検証コントラクトの `mainBranch` (無ければ `main`)、比較先は `origin/<mainBranch>`。
+
+| 状態 | 条件 | 案内 |
+|---|---|---|
+| 共通祖先なし | `git merge-base HEAD origin/<main>` が空 (shallow clone は除く) | merge / rebase では追いつけない。退避して新しい worktree を作り、そこでセッションを起動し直す |
+| hook が古い | `HEAD..origin/<main>` のうち `.claude/settings.json`・`.claude/bdboard-harness.json`・`.claude/skills/*/hooks/**`・`.claude/skills/*/scripts/**`・settings が参照する本体を触ったコミットが **1 件以上** | 下の追従コマンド |
+| ハーネスが古い | 同じく `.claude` / `harness` を触ったコミットが **3 件以上** (ボードの閾値と同じ) | 同上 |
+| 本体欠落 | `settings.json` / `settings.local.json` が `$CLAUDE_PROJECT_DIR/…`・`${CLAUDE_PROJECT_DIR}/…`・`${CLAUDE_PROJECT_DIR:-.}/…` で参照するファイルが無い (登録コマンドの `[ -f "$0" ] \|\| exit 0` で無言のまま何もしない) | 追従するか再注入 |
+
+数えるのは `HEAD..origin/<main>` (既定ブランチ側にだけあるコミット) なので、自分のブランチで
+hook を直している PR worktree は自分のコミットでは警告されない。
+
+追従コマンドは条件を満たすときだけ出す (いずれも `git -C '<checkout>'` 形。議長の cwd が別の
+場所でも正しい checkout に当たるように。パスは空白を含みうるので単引用で包む):
+
+- main checkout で、契約に `alwaysOnServer.restartScript` がある → コマンドは出さず、
+  議長がその再起動スクリプトで更新するよう案内 (build と常時稼働サーバーの再起動を迂回させない)。
+- HEAD が detached、または merge / rebase / cherry-pick / revert / bisect の途中 → コマンドを出さない
+  (merge-pr の prepare が PR worktree を detach して verify している最中などに HEAD を動かさない)。
+- 追跡ファイルに未コミットの変更がある → 「ユーザーに確認のうえ、コミットしてから
+  `git merge origin/<main>`」。
+- 独自のコミットが無い (HEAD が merge-base) → `git merge --ff-only origin/<main>`。
+- 独自のコミットがある → 「ユーザーに確認のうえ `git merge origin/<main>`」(rebase は案内しない)。
+  案内を読んだ議長がそのまま実行しうるので、merge コミットを作る案内には確認を添える。
+- `HEAD..origin/<main>` に `package-lock.json` を触ったコミットがある → 追従後の `npm install` を添える。
+- `HEAD..origin/<main>` に `.claude/settings.json` を触ったコミットがある → 「追従後に `/hooks`
+  で新しい hook が載っているか確認し、載っていなければセッションを起動し直す」を添える
+  (本体は毎回読み直されるが、登録の変更がいつ反映されるかは Claude Code 側の版に依存するため)。
+
+### 出力と抑制
+
+- stdout に JSON 1 行: `systemMessage` (ユーザーに見える 1 文) と
+  `hookSpecificOutput.additionalContext` (Claude への文脈。`hookEventName` は入力の
+  `hook_event_name`)。PostToolUse は plain text を文脈に入れないので JSON に揃えている。
+- **サブエージェント (`agent_id` あり) では何も出さない** — 直せるのは議長だけで、
+  サブエージェントに議長の checkout を触らせないため。
+- SessionStart (startup / resume / clear / compact) は毎回出す。UserPromptSubmit と
+  PostToolUse(Agent) は「HEAD / origin の先端」が同じなら 60 分に 1 回だけ。この打ち切りは
+  遅れの計算より前に行い、既定ブランチの先端が HEAD の祖先なら遅れの計算自体を省く
+  (毎プロンプト走るため)。
+  状態ファイルは `${TMPDIR:-/tmp}/bdboard-harness-freshness/<checkout のハッシュ>-<session_id>`
+  (checkout の中に置くと `git status` を汚し、Stop ゲートの dirty 判定に響くため)。
+- PostToolUse(Agent) は、ユーザー入力が来ないまま委譲を回し続ける自律ループの議長にも
+  届かせるため。全 Bash 呼び出しに足すより頻度が桁違いに低い。
+- 差し戻し (exit 2) はしない。UserPromptSubmit の exit 2 はユーザーの入力を消してしまう。
+
+### 限界
+
+- **この hook 自身が登録されていない古い checkout では効かない** (鶏と卵)。最初の 1 回の
+  追従は、ボードの Hygiene (`nonTicketHarnessWorktrees` / チケット worktree の遅れ警告) と
+  議長のマージ後手順 (docs/GIT-WORKFLOW.md) で拾う。
+- `origin/<main>` を fetch しないので、誰も fetch しない環境では「最新」と誤認しうる。文脈に
+  `origin/<main>` の先端のコミット日時を添えている。
+- 閾値は 1 / 3 の固定値。`.claude/bdboard-packs.json` の `injectedAt` だけの更新もハーネスの
+  コミットとして数える。
+
 ## pack.json の `hooks[]` 宣言 (P1b への契約)
 
 各エントリは `event` / `matcher` / `script` / `timeout` を持つ。P1b (bdboard-pkr6.2) が
@@ -309,9 +386,10 @@ git が無い・パスが取れない・ブランチが判らない場合は all
   settings.json に書く。Claude Code の command hook の既定 timeout は 600 秒で、Stop
   イベントにはそれを短くする既定が無い。`bd` が刺さると 10 分セッションが止まりうるので、
   「fail-open のガードが原因で作業が止まる」ことのないよう明示的に縮める。
-- **Stop エントリの `matcher` は Claude Code 側が無視する**。空文字は「matcher 無し」の
+- **Stop / SessionStart / UserPromptSubmit エントリの `matcher` は空文字**。空文字は「matcher 無し」の
   意味で置いてあるだけなので、**P1b は settings.json に `matcher` キーを書かない**
-  (PreToolUse の 2 本は書く)。
+  (PreToolUse の 2 本と PostToolUse の `Agent|Task` は書く)。同じ script を複数 event に
+  宣言してよい (worktree-freshness.sh は 3 event)。登録状態の評価は event ごとに見る。
 
 ## 手で試す
 
@@ -326,4 +404,6 @@ echo '{"tool_name":"Bash","tool_input":{"command":"bd dolt push --remote backup"
 自動テストは `src/infrastructure/harness/pack-hooks.test.ts` (bash で spawn して stdin に
 JSON を流す統合テスト。Windows では skip) と、規則 7 用の
 `src/infrastructure/harness/pack-hooks-server-guard.test.ts` (テストプロセス自身が空きポートで
-listen し、その PID を「守られる対象」にする。本物のサーバーには触れない)。
+listen し、その PID を「守られる対象」にする。本物のサーバーには触れない)、
+`worktree-freshness.sh` 用の `src/infrastructure/harness/pack-hooks-worktree-freshness.test.ts`
+(bare の origin と worktree を tmp に作り、origin を進めて遅れを再現する)。

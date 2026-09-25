@@ -19,7 +19,7 @@ const CHAT_COMPLETED_TURNS_MAX = 20;
  * FailedChatTurn の doc comment 参照) には DELETE /api/chat/turn-status での
  * ACK 手段が無く、これまでは CHAT_COMPLETED_TURNS_MAX の上限に達するまで
  * 消えなかった。その間、当該プロジェクトを見ている「自分では何も送信して
- * いない」クライアントの checkTurnStatus (ChatPanel.tsx) がポーリングする
+ * いない」クライアントの checkTurnStatus (chat/useTurnStatusRecovery.ts) がポーリングする
  * たびに 'failed' を検知するが、matchesTrackedSend も detached も
  * 一致しないため消化できず、無条件に 1 秒間隔で再ポーリングし続ける —
  * そのポーリングは、このエントリが (キュー自体の上限
@@ -119,7 +119,7 @@ export function createChatTurnTracker(now: () => Date): ChatTurnTracker {
   // 結果で解決してしまう」害より大きいと判断した (turnStatusPolicy.ts 側にも
   // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS による猶予後の受け入れがあり、
   // どのみち無期限には待たない)。GET が返す sessionId 無しエントリは常に「最新の
-  // 1件」になり、クライアント側の detachedAt 突き合わせ (ChatPanel.tsx の
+  // 1件」になり、クライアント側の detachedAt 突き合わせ (chat/useTurnStatusRecovery.ts の
   // checkTurnStatus) が正しく解決できる。
   const failedTurns = new Map<string, readonly FailedChatTurn[]>();
   const recordFailed = (projectId: string, entry: FailedChatTurn): void => {

@@ -16,9 +16,11 @@ import type { ChatConversationEntry } from './useChatConversationsState';
  * 元の登録順のまま1つの effect フックへ move-only で抜き出したもの
  * (E12→E13 の順は維持)。呼び出し位置は元の E12 の位置のまま(E8 より後)。
  * E8(chat/useTurnStatusRecovery.ts)が historyRequestIdRef を進めるのは回収した
- * ターンを hydrate する直前だけで、hydrate が成功して applyRecoveredTurn が
- * conversations を変えれば、この effect が捨てられた fetch を取り直す(hydrate の
- * fetch が失敗し続けた場合は bdboard-lsv2)。以前は E8 が generation の bump のたびに
+ * ターンを当てる直前(hydrate の fetch が成功した後)だけで、そのとき applyRecoveredTurn
+ * が conversations を変えるので、この effect が捨てられた fetch を取り直す。hydrate の
+ * fetch が失敗しても id は進まず、in-flight の fetch はそのまま当たる(bdboard-lsv2。
+ * 以前は fetch の前に進めていて、失敗し続けると送信ボタンが無効のまま戻らなかった)。
+ * さらに以前は E8 が generation の bump のたびに
  * 進めていて、conversations も historyLoadedFor も変わらないまま fetch だけが
  * 捨てられ、送信ボタンが無効のまま戻らなかった(bdboard-ibkf)。
  *

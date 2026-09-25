@@ -1,7 +1,7 @@
 {
   "name": "bdboard-harness",
-  "version": "0.35.0",
-  "description": "bd(Beads)運用プロジェクト向けの自律作業規律パック。並列セッションの排他(worktree-first)、lease/heartbeatによる放棄検知、確認待ちのノンブロッキング化(bd human レーン + human gate)、per-ticket worktree+PRフローとマージ排他、ハーネス失敗の学習ループ(failure-catalog照合・brushupプロトコル・多層ハーネスの層判定と harness-upstream 還流)、そして検証コントラクトの models 表に沿った工程×複雑度のモデル振り分け(可用性フォールバックと品質エスカレーションの分離)の規律を skill として配布する。振り分け表は文章の規律だけでなく PreToolUse(Bash) hook の規則6でも強制され、aimix run --mode implement/refactor のモデル指定がセルの候補に含まれるかを scripts/route.sh 経由で照合する(理由付きの BDBOARD_ROUTE_OVERRIDE で逸脱可能)。契約に alwaysOnServer があれば規則7 (hooks/server-guard.sh) が常時稼働サーバーを守る: サブエージェント (agent_id 付き) からの main checkout での git pull / サーバー起動 / 再起動スクリプト実行と、誰からでも listener PID の直接 kill を deny する。",
+  "version": "0.36.0",
+  "description": "bd(Beads)運用プロジェクト向けの自律作業規律パック。並列セッションの排他(worktree-first)、lease/heartbeatによる放棄検知、確認待ちのノンブロッキング化(bd human レーン + human gate)、per-ticket worktree+PRフローとマージ排他、ハーネス失敗の学習ループ(failure-catalog照合・brushupプロトコル・多層ハーネスの層判定と harness-upstream 還流)、そして検証コントラクトの models 表に沿った工程×複雑度のモデル振り分け(可用性フォールバックと品質エスカレーションの分離)の規律を skill として配布する。振り分け表は文章の規律だけでなく PreToolUse(Bash) hook の規則6でも強制され、aimix run --mode implement/refactor のモデル指定がセルの候補に含まれるかを scripts/route.sh 経由で照合する(理由付きの BDBOARD_ROUTE_OVERRIDE で逸脱可能)。契約に alwaysOnServer があれば規則7 (hooks/server-guard.sh) が常時稼働サーバーを守る: サブエージェント (agent_id 付き) からの main checkout での git pull / サーバー起動 / 再起動スクリプト実行と、誰からでも listener PID の直接 kill を deny する。 さらに hooks/worktree-freshness.sh (SessionStart / UserPromptSubmit / PostToolUse(Agent)) が、hook の読み込み元 ($CLAUDE_PROJECT_DIR) の checkout が既定ブランチから取り残されている (hook 関連 1 コミット以上・ハーネス 3 コミット以上の遅れ、共通祖先なし、登録済み hook 本体の欠落) ときにセッションへ警告し、安全な追従コマンドを案内する (自動では checkout / merge しない)。",
   "hooks": [
     {
       "event": "PreToolUse",
@@ -19,6 +19,24 @@
       "event": "Stop",
       "matcher": "",
       "script": "hooks/stop-ticket-gate.sh",
+      "timeout": 10
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "",
+      "script": "hooks/worktree-freshness.sh",
+      "timeout": 10
+    },
+    {
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "script": "hooks/worktree-freshness.sh",
+      "timeout": 10
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Agent|Task",
+      "script": "hooks/worktree-freshness.sh",
       "timeout": 10
     }
   ]
