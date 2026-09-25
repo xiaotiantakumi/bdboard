@@ -1127,7 +1127,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
   });
 
   describe('activation', () => {
-    it('stays silent when the contract has no alwaysOnServer', async () => {
+    it('rule 7 (server start/kill) stays silent when the contract has no alwaysOnServer', async () => {
       const plainRepo = path.join(tmpRoot, 'plain');
       await initGitRepo(plainRepo, 'main');
       mkdirSync(path.join(plainRepo, '.claude'), { recursive: true });
@@ -1136,7 +1136,26 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         JSON.stringify({ version: 1, verify: 'npm test', prFlow: 'pr', mainBranch: 'main' }),
       );
       expectAllow(await runHook({ command: `kill ${process.pid}`, cwd: plainRepo }));
-      expectAllow(await runHook({ command: 'git pull --ff-only', cwd: plainRepo, agentId: 'agent-1' }));
+    });
+
+    // bdboard-rj7y (2026-09-26): 規則 7a は alwaysOnServer.port が無い契約では発火しないが、
+    // 規則 8 (main checkout の working tree/HEAD 保護、hooks/server-guard.sh 内で共存) は
+    // port の有無に関係なく常時有効で、pull も他の mutating サブコマンド同様に対象にした。
+    // このため plainRepo (それ自身が main checkout) への git pull は、alwaysOnServer が
+    // 無くてももはや「サイレントに許可」ではなく規則 8 経由で deny される。
+    it('rule 8 still denies main checkout pull even when the contract has no alwaysOnServer', async () => {
+      const plainRepo = path.join(tmpRoot, 'plain-pull');
+      await initGitRepo(plainRepo, 'main');
+      mkdirSync(path.join(plainRepo, '.claude'), { recursive: true });
+      writeFileSync(
+        path.join(plainRepo, '.claude', 'bdboard-harness.json'),
+        JSON.stringify({ version: 1, verify: 'npm test', prFlow: 'pr', mainBranch: 'main' }),
+      );
+      expectDeny(
+        await runHook({ command: 'git pull --ff-only', cwd: plainRepo, agentId: 'agent-1' }),
+        'main checkout',
+        'git pull',
+      );
     });
 
     it('does not slow down commands that cannot touch the server (pre-filter)', async () => {

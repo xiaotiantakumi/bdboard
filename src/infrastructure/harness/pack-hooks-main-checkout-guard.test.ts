@@ -14,11 +14,13 @@ import { NodeCommandRunner } from '../process/node-command-runner.js';
  *
  *   - pre-bash-guard.sh 規則 8 (本体 hooks/server-guard.sh): サブエージェントによる
  *     main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/
- *     cherry-pick/revert/am/clean/bisect/apply/rm/mv を deny。alwaysOnServer.port の有無に
- *     関係なく常時有効 (規則 7 とは独立)。pull は規則 8 に**含まない** — 既存の規則 7a
- *     (alwaysOnServer.port が要る) だけが引き続き担当する (二重化しない。下の
- *     MUTATING_FORMS の pull エントリは 7a 経由で deny されることの確認であって、
- *     規則 8 自身の対象ではない — 詳細は hooks/README.md「pull を対象外にした理由」)。
+ *     cherry-pick/revert/am/clean/bisect/apply/rm/mv/pull を deny。alwaysOnServer.port の
+ *     有無に関係なく常時有効 (規則 7 とは独立)。pull は bdboard-rj7y で追加: 既存の規則 7a
+ *     (alwaysOnServer.port が要る、サーバー再配備文脈の専用メッセージ) はそのまま残すが、
+ *     alwaysOnServer.port を宣言しない配布先では 7a だけでは pull が fail-open のままだった
+ *     ため、7a とは独立に規則 8 でも port の有無に関係なく塞ぐ (port ありの契約では 7a が
+ *     先に発火するので二重の deny メッセージにはならない — 詳細は
+ *     hooks/README.md「pull を規則 8 にも追加した理由」)。
  *   - pre-edit-guard.sh 規則 2: 同じ main checkout 判定 (hooks/lib-main-checkout.sh を
  *     server-guard.sh と共有) で、サブエージェントによる main checkout 配下への
  *     Edit/Write/MultiEdit/NotebookEdit を deny。
@@ -212,9 +214,12 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       { label: 'apply', command: 'git apply /tmp/patch.diff' },
       { label: 'rm', command: 'git rm file.txt' },
       { label: 'mv', command: 'git mv a.txt b.txt' },
-      // pull だけは規則 8 の対象ではなく既存の 7a (alwaysOnServer.port 必須) 経由で deny
-      // される。ここでは mainWithPort (port あり) を使うので 7a が発火し、他のエントリと
-      // 同じ「main checkout では deny」という観測結果になる — 経路が違うだけ (上のコメント参照)。
+      // pull はここでは mainWithPort (port あり) を使うので既存の 7a が先に発火する
+      // (規則 8 自身も port 非依存に pull を対象にしているが、port ありの契約では 7a が先に
+      // deny して exit するため、ここでは他のエントリと同じ「main checkout では deny」という
+      // 観測結果になる — 経路が違うだけ)。規則 8 が port 非依存に効くことは下の
+      // 'denies subagent pull directly in the main checkout even without alwaysOnServer.port'
+      // で個別に確認する。
       { label: 'pull', command: 'git pull --ff-only' },
     ];
 
@@ -258,6 +263,35 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
         }),
         'main checkout',
         'git reset',
+      );
+    });
+
+    // bdboard-rj7y (2026-09-26): 既存の規則 7a は alwaysOnServer.port が無い契約では pull を
+    // 対象にしないため、規則 8 が port 非依存に pull も塞ぐようになったことをここで確認する
+    // (mainNoPort/worktreeNoPort には alwaysOnServer 自体が無い)。
+    it('denies subagent pull directly in the main checkout even without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({ command: 'git pull --ff-only', cwd: mainNoPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git pull',
+      );
+    });
+
+    it('denies subagent pull via git -C <main> from a worktree cwd without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({
+          command: `git -C ${mainNoPort} pull --ff-only`,
+          cwd: worktreeNoPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git pull',
+      );
+    });
+
+    it('still allows a subagent pulling its own worktree without alwaysOnServer.port', async () => {
+      expectAllow(
+        await runBashHook({ command: 'git pull --ff-only', cwd: worktreeNoPort, agentId: 'agent-1' }),
       );
     });
 

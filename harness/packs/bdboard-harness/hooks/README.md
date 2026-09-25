@@ -41,8 +41,8 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
 | 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
-| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
-| 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` を実行する (`pull` は含まない。既存の 7a がその役目を持つので二重化しない — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
+| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` (bdboard-rj7y 以降、規則 8 も port 非依存に独立して対象にするが、port ありの契約では 7a が先に発火する) / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
+| 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` / `clean` / `bisect` / `apply` / `rm` / `mv` / `pull` を実行する (`pull` は bdboard-rj7y で追加。7a とは独立に、port の有無に関係なく規則 8 でも塞ぐ — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
 | 9 | 本体は `worktree-owner-guard.sh` (bdboard-gsnn)。持ち主でないサブエージェントが per-ticket worktree (`bd/<id>` ブランチが存在する `.claude/worktrees/<id>` のみ対象。chair 作成やisolation:"worktree"用のスクラッチworktreeは対象外) を対象に公開/マージ系操作をする。詳細は下記「9 の worktree 所有権保護」 | 自分の worktree で作業する。持ち主が動けないなら議長に `bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release <id>` を頼む |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
@@ -290,8 +290,6 @@ working tree/HEAD を守ること自体は常時稼働サーバーの有無と�
 - commit メッセージ・`bd comment` 本文・`gh pr create --body` 引用符内に
   `git checkout` 等の文字列が現れるだけのもの (規則 6 と同じ引用符マスク
   `sg_mask_quoted_separators` を再利用し、先頭語だけで判定するので誤爆しない)
-- `alwaysOnServer.port` を宣言していない契約下での、サブエージェントによる main checkout
-  での `git pull` (下記「pull を対象外にした理由」)
 
 **実際の判定境界 (正直な記述、opus レビューで訂正)**: `sg_check_main_git_mutate` は
 「対象ディレクトリが main checkout だと確定できたとき」だけ deny する。逆に言うと、
@@ -309,22 +307,31 @@ working tree/HEAD を守ること自体は常時稼働サーバーの有無と�
 誤検知の新規リスクを増やすと判断したため。残存する具体的なすり抜けパターンは
 「限界」に列挙する。
 
-#### pull を対象外にした理由
+#### pull を規則 8 にも追加した理由 (bdboard-rj7y)
 
-`git pull` は working tree/HEAD を変えるので性質上は他の 16 個と同列だが、規則 8 の
-サブコマンド一覧には**含めていない**。既存の 7a が「サブエージェントから main checkout
-での `git pull`」を `alwaysOnServer.port` があるときに deny 済みで、規則 8 の役割は
-「7 が元から対象にしていなかった working tree/HEAD 変更系を追加で塞ぐ」ことだけだからで、
-7a と重ねて判定すると deny 経路が二重になり保守面が増えるだけで得るものがない。
-`alwaysOnServer.port` を宣言していない契約 (bdboard 自身の契約には常にある) では
-サブエージェントの main checkout での `pull` は従来どおり fail-open のまま — これは
-規則 8 が新規に緩めたのではなく、7a の既存スコープをそのまま維持しているだけである。
+`git pull` は working tree/HEAD を変えるので性質上は他の 16 個と同列で、当初 (bdboard-kxqb)
+は既存の 7a が `alwaysOnServer.port` があるときにサブエージェントの main checkout での
+`git pull` を deny 済みだったため、二重化を避けて規則 8 のサブコマンド一覧からは意図的に
+外していた。
+
+しかし `bdboard-harness` パックは `harness/packs/` → 各プロジェクトの `.claude/skills/` へ
+注入する形で他プロジェクトにも配布される設計で、`alwaysOnServer.port` を宣言しない配布先
+では 7a・規則 8 のどちらも `pull` を対象にせず、サブエージェントの main checkout での
+`git pull` だけが fail-open のまま残っていた (bdboard 自身の契約には常に port があるため
+実害は無いが、配布先の一般ケースとしては穴)。
+
+対応: 規則 8 のディスパッチに `pull` を追加した。7a (port 前提、サーバー再配備文脈の
+専用メッセージ) はそのまま残し、7a とは独立に port の有無に関係なく規則 8 でも `pull` を
+working tree/HEAD 変更系として塞ぐ。port ありの契約では 7a が先に発火して `exit` するため
+規則 8 側の判定まで到達せず、二重の deny メッセージにはならない。`alwaysOnServer.port` を
+宣言していない契約でも、サブエージェントの main checkout での `pull` は他の 16 個の
+サブコマンド同様に deny されるようになった。
 
 #### 限界
 
 規則 7 の「限界」節と同じ (`hooks/lib-main-checkout.sh` を共有するため)。加えて:
 
-- 対象は列挙した 16 個の git サブコマンドのみ。`git log --format=... > FETCH_HEAD` の
+- 対象は列挙した 17 個の git サブコマンドのみ。`git log --format=... > FETCH_HEAD` の
   ような迂回や、git 以外のコマンドで working tree を書き換える経路 (`tar` 展開・`sed -i`・
   `cp`/`mv`/`rm`/`tee` 等) は対象外 (Bash hook 全体が対象とするのは「git/npm/再起動
   スクリプトのサブコマンド認識」であって、任意のファイル書き換えコマンドの追跡ではない)。
