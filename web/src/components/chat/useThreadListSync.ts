@@ -165,6 +165,19 @@ export function useThreadListSync({
           return;
         }
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
+        // bdboard-4w2d(Opus レビュー対応): この fetch が in-flight の間に、他経路
+        // (turn-status 回収の hydrate = applyRecoveredTurn、または handleAgentChange の
+        // 明示的リセット)が先にこのプロジェクトの open/選択を確立してマーク済みなら、
+        // ここで persisted から restoreThreadView をやり直して上書きしない。両者とも
+        // 「持っている情報を全部足し合わせて残す」和集合的な確立ではなく「これが今の
+        // 正しい状態そのもの」という確定的な確立なので、後から届いたこの応答が
+        // 素朴に persisted で置き換えると、hydrate が足した回収セッションや
+        // handleAgentChange が意図した「空」を取りこぼす/覆してしまう。
+        // pending なチケット起動ドラフトの消化だけは、この応答でしか担えないので続ける。
+        if (restoredProjectsRef.current.has(selectedProjectId)) {
+          consumePendingTicketDraft();
+          return;
+        }
         // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
         const { open, selected } = restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
@@ -188,6 +201,12 @@ export function useThreadListSync({
           return;
         }
         setThreadError('スレッド一覧の取得に失敗しました。');
+        // bdboard-4w2d(Opus レビュー対応): 失敗時も、成功時と同じ理由で「既に他経路が
+        // 確立・マーク済みなら上書きしない」を適用する。
+        if (restoredProjectsRef.current.has(selectedProjectId)) {
+          consumePendingTicketDraft();
+          return;
+        }
         // bdboard-4w2d: 失敗時のフォールバックも同じく応答時点の永続化を読む。
         const persisted = readPersistedChatThreads()[selectedProjectId];
         const open = persisted?.activeSessionIds ?? [];

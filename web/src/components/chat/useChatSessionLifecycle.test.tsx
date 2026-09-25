@@ -277,6 +277,57 @@ describe('useChatSessionLifecycle', () => {
       expect(params.restoredProjectsRef.current.has('project-a')).toBe(true);
     });
 
+    it('preserves a racing openThreadIds write even when persisted storage does not (yet) know about it (bdboard-4w2d, Opus レビュー major 指摘対応)', () => {
+      // 上のテストは racing write(sess-new)が persisted にも既に載っていたため、
+      // 和集合を取らずに persisted 側だけを使っても偶然同じ結果になり、和集合の
+      // 必要性そのものは検証できていなかった(Opus レビューが mutation-check で
+      // 指摘: 和集合を丸ごと削っても全テストが通った)。ここでは racing write が
+      // 足したセッション(sess-brand-new)を persisted の activeSessionIds に
+      // 含めないことで、和集合を取らなければ確実に失われる形にする。
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-old'],
+        selectedSessionId: 'sess-old',
+      });
+      const threads = [thread('sess-old'), thread('sess-rec')];
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-brand-new'] } },
+      });
+      act(() => result.current.applyRecoveredTurn(threads, RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-old', 'sess-brand-new', 'sess-rec'],
+      });
+      expect(params.restoredProjectsRef.current.has('project-a')).toBe(true);
+    });
+
+    it('still restores from persisted storage when the marker is set but openThreadIdsRef has not caught up yet (bdboard-4w2d, Opus レビュー blocker 1 対応)', () => {
+      // restoredProjectsRef への追加は同期的な ref 変更だが、openThreadIdsRef.current は
+      // chat/useChatThreadLists.ts の `openThreadIdsRef.current = openThreadIds` という
+      // 関数本体トップレベルの代入でしか追いつかない(= 次の再レンダーまで古いまま)。
+      // E7 の .then() がマークだけ先に済ませ、その再レンダーより前にこの hydrate が
+      // 割り込むと、マーカーは立っているのに knownOpen はまだ undefined(このプロジェクト
+      // 初回)ということが起き得る。ここでマーカーだけを信じて「復元済み・knownOpen は
+      // undefined ⇒ currentOpen = []」としてしまうと、persisted にあった sess-old が
+      // 消えてしまう。
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-old'],
+        selectedSessionId: 'sess-old',
+      });
+      const threads = [thread('sess-old'), thread('sess-rec')];
+      const { result, params } = setup({
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        // openThreadIdsRef はデフォルトの { current: {} } のまま(project-a はまだ undefined)。
+      });
+      act(() => result.current.applyRecoveredTurn(threads, RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-old', 'sess-rec'],
+      });
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-old',
+      });
+    });
+
     it('does not write a model for a missing or empty model, nor an agent for an empty agentId', () => {
       const { result, params } = setup();
       act(() => result.current.applyRecoveredTurn([], { ...RECOVERED, model: undefined, agentId: '' }));

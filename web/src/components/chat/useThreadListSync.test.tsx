@@ -202,6 +202,43 @@ describe('useThreadListSync', () => {
     expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
   });
 
+  it('does not overwrite openThreadIds when another writer already established this project\'s state before the fetch resolves (bdboard-4w2d, Opus レビュー blocker 2 対応)', async () => {
+    // 例: エージェント切替(handleAgentChange の明示的リセット)や、先に完了した
+    // turn-status 回収の hydrate が、この fetch の in-flight 中に既にこのプロジェクトの
+    // open/選択を確立してマーク済みだったとする。E7 は「持っている情報を足し合わせる」
+    // のではなく「これが正しい状態そのもの」という確定的な確立を上書きしてはならない —
+    // ここで上書きすると、persisted が(handleAgentChange により)未設定のまま
+    // restoreThreadView に渡り、「永続化が無い ⇒ 全スレッドを開く」既定則に従って
+    // 意図的な空状態へ全スレッドを再展開してしまう。
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result, startNewDraftThread } = renderProbe();
+    act(() => {
+      result.current.restoredProjectsRef.current.add('proj-a');
+    });
+    result.current.pendingTicketDraftProjectRef.current = 'proj-a';
+    await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+    expect(result.current.openThreadIds).toEqual({});
+    expect(result.current.key.selectedThreadIds).toEqual({});
+    // pending なチケット起動ドラフトの消化は、この応答でしか担えないので続く。
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+    expect(result.current.pendingTicketDraftProjectRef.current).toBeNull();
+  });
+
+  it('does not overwrite openThreadIds on the failure path either, when another writer already established this project\'s state (bdboard-4w2d, Opus レビュー blocker 2 対応)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result, startNewDraftThread } = renderProbe();
+    act(() => {
+      result.current.restoredProjectsRef.current.add('proj-a');
+    });
+    result.current.pendingTicketDraftProjectRef.current = 'proj-a';
+    await act(async () => { list.reject(new Error('down')); await list.promise.catch(() => undefined); });
+    expect(result.current.openThreadIds).toEqual({});
+    expect(result.current.key.selectedThreadIds).toEqual({});
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+  });
+
   it('consumes a pending ticket draft on the failure path too', async () => {
     const list = deferred<ChatThreadDto[]>();
     fetchChatThreadsMock.mockReturnValue(list.promise);

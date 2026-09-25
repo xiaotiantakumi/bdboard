@@ -39,16 +39,19 @@ function useLauncherProbe(projectId: string) {
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
   const [selectedAgentId, setSelectedAgentId] = useState('claude');
   const [cancelThreadConfirmDelete] = useState(() => vi.fn());
+  // bdboard-4w2d: E7 / applyRecoveredTurn と共有する「一覧・open 復元済み」マーカー。
+  const restoredProjectsRef = useRef<Set<string>>(new Set());
   const launcher = useDraftThreadLauncher({
     selectedProjectId: projectId,
     ...key,
     ...conv,
     ...draft,
     setOpenThreadIds,
+    restoredProjectsRef,
     setSelectedAgentId,
     cancelThreadConfirmDelete,
   });
-  return { key, conv, draft, launcher, openThreadIds, selectedAgentId, cancelThreadConfirmDelete };
+  return { key, conv, draft, launcher, openThreadIds, restoredProjectsRef, selectedAgentId, cancelThreadConfirmDelete };
 }
 
 describe('useDraftThreadLauncher', () => {
@@ -71,6 +74,12 @@ describe('useDraftThreadLauncher', () => {
     expect(result.current.openThreadIds).toEqual({ 'proj-a': [] });
     // N1: 1回のトリガーで nonce は1つだけ進む。
     expect(result.current.key.draftNonces).toEqual({ 'proj-a': 1 });
+    // bdboard-4w2d(Opus レビュー blocker 2 対応): 「open は空」という確定した状態を
+    // 立てたので、restoredProjectsRef もマークする — でないと後から届く
+    // turn-status 回収(applyRecoveredTurn)が「まだ未復元」と誤判定し、いま
+    // undefined にした persisted から restoreThreadView をやり直して全スレッドを
+    // 再展開してしまう。
+    expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
   });
 
   it('moves attachments, copies the seed record and detaches the session on an agent switch (SFX)', () => {

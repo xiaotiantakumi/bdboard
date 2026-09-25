@@ -25,7 +25,7 @@ export interface UseDraftThreadLauncherParams
       UseChatDraftStateResult,
       'setInput' | 'updateConversationInputs' | 'updateConversationAttachments' | 'clearAttachmentError'
     >,
-    Pick<UseChatThreadListsResult, 'setOpenThreadIds'>,
+    Pick<UseChatThreadListsResult, 'setOpenThreadIds' | 'restoredProjectsRef'>,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
   cancelThreadConfirmDelete: () => void;
@@ -47,7 +47,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
   const { conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, setInput } = params;
   const { updateConversationInputs, updateConversationAttachments, clearAttachmentError } = params;
-  const { setOpenThreadIds, setSelectedAgentId, cancelThreadConfirmDelete } = params;
+  const { setOpenThreadIds, setSelectedAgentId, cancelThreadConfirmDelete, restoredProjectsRef } = params;
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
   // ticketContextToken 由来のプリフィル文言と、プロジェクト解決前に貼られた画像は
@@ -197,6 +197,14 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       setLoadingHistoryFor(null);
       writePersistedChatThread(selectedProjectId, undefined);
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [] }));
+      // bdboard-4w2d(Opus レビュー blocker 2 対応): この明示的リセットは「このプロジェクトの
+      // open は空である」という確定した状態そのものであり、E7/applyRecoveredTurn の
+      // restoreThreadView による復元と同格に扱う必要がある。ここで restoredProjectsRef を
+      // 立てておかないと、後から届く turn-status 回収(applyRecoveredTurn)が「まだ未復元」と
+      // 誤判定して persisted(いま undefined にした直後)から restoreThreadView をやり直し、
+      // 「永続化が無い ⇒ 全スレッドを開く」という restoreThreadView の既定則に従って
+      // エージェント切替直後の空ドラフトへ全スレッドを再展開してしまう。
+      restoredProjectsRef.current.add(selectedProjectId);
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
       const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);

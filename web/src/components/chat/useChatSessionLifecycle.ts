@@ -72,8 +72,19 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // (chat/useChatThreadLists.ts)は「このプロジェクトの一覧・open を実際に
       // 復元する処理を通したか」だけを明示的に憶えるマーカーで、E7 が自分の復元後に
       // 立て、ここでも立てる。openThreadIds の中身の有無では推測しない。
-      const alreadyRestored = restoredProjectsRef.current.has(selectedProjectId);
+      //
+      // bdboard-4w2d(Opus レビュー blocker 1 対応): restoredProjectsRef への追加は
+      // 同期的な ref 変更だが、openThreadIdsRef.current は
+      // chat/useChatThreadLists.ts の `openThreadIdsRef.current = openThreadIds`
+      // (関数本体のトップレベル、つまり次の再レンダー時)でしか追いつかない。E7 の
+      // .then() がマークだけ済ませた直後、その再レンダーが走る前にこの hydrate が
+      // 割り込むと、マークは立っているのに knownOpen はまだ古い(このプロジェクトが
+      // 初めてなら undefined の)ままになり得る。knownOpen がまだ undefined のうちは
+      // マーカーだけでは「復元済み」と判定しない(この一手だけの安全弁 — marker が
+      // 立っていない限り knownOpen の有無だけで復元済み扱いにはならないので、
+      // 「populated openThreadIds を復元済みの代理にする」という元のバグには戻らない)。
       const knownOpen = openThreadIdsRef.current[selectedProjectId];
+      const alreadyRestored = restoredProjectsRef.current.has(selectedProjectId) && knownOpen !== undefined;
       const restored = alreadyRestored
         ? undefined
         : restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
