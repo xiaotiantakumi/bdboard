@@ -475,7 +475,7 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
-    ).resolves.toEqual({ commitsBehind: 17, baseRef: 'origin/main' });
+    ).resolves.toEqual({ commitsBehind: 17, baseRef: 'origin/main', hasCommonAncestor: true });
 
     const args = calls[0]?.args ?? [];
     expect(args).toContain('--');
@@ -490,7 +490,7 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
-    ).resolves.toEqual({ commitsBehind: 4, baseRef: 'main' });
+    ).resolves.toEqual({ commitsBehind: 4, baseRef: 'main', hasCommonAncestor: true });
   });
 
   // **「読めなかった」を 0 として返さない。** 0 は「遅れていない」を意味してしまい、
@@ -514,7 +514,7 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
-    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/master' });
+    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/master', hasCommonAncestor: true });
   });
 
   it('prefers the contract mainBranch over origin/main when both exist', async () => {
@@ -526,7 +526,7 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
-    ).resolves.toEqual({ commitsBehind: 7, baseRef: 'origin/master' });
+    ).resolves.toEqual({ commitsBehind: 7, baseRef: 'origin/master', hasCommonAncestor: true });
   });
 
   it.each(['-x', 'a..b'])('ignores unsafe contract mainBranch %s', async (mainBranch) => {
@@ -537,8 +537,8 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch }),
-    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/main' });
-    expect(calls).toHaveLength(1);
+    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/main', hasCommonAncestor: true });
+    expect(calls).toHaveLength(2);
   });
 
   it('falls back when the origin contract branch is missing', async () => {
@@ -549,7 +549,39 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
-    ).resolves.toEqual({ commitsBehind: 5, baseRef: 'master' });
+    ).resolves.toEqual({ commitsBehind: 5, baseRef: 'master', hasCommonAncestor: true });
+  });
+
+  it('reports hasCommonAncestor: false when merge-base exits 1 and the repo is not shallow (bdboard-0chq)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('rev-list')) return { stdout: '1\n', stderr: '', exitCode: 0 };
+        if (args.includes('merge-base')) return { stdout: '', stderr: '', exitCode: 1 };
+        if (args.includes('--is-shallow-repository')) return { stdout: 'false\n', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/main', hasCommonAncestor: false });
+  });
+
+  it('does not flag a shallow clone as having no common ancestor', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('rev-list')) return { stdout: '1\n', stderr: '', exitCode: 0 };
+        if (args.includes('merge-base')) return { stdout: '', stderr: '', exitCode: 1 };
+        if (args.includes('--is-shallow-repository')) return { stdout: 'true\n', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/main', hasCommonAncestor: true });
   });
 });
 
@@ -578,7 +610,7 @@ describe('countHarnessCommitsBehindDefaultBranch candidate order (bdboard-pkr6.1
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
-    ).resolves.toEqual({ commitsBehind: 6, baseRef: 'origin/main' });
+    ).resolves.toEqual({ commitsBehind: 6, baseRef: 'origin/main', hasCommonAncestor: true });
     expect(triedRanges(calls)).toEqual([
       'HEAD..origin/master',
       'HEAD..master',
@@ -592,7 +624,7 @@ describe('countHarnessCommitsBehindDefaultBranch candidate order (bdboard-pkr6.1
     const scanner = createGitWorktreeScanner(runner);
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'main' }),
-    ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/master' });
+    ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/master', hasCommonAncestor: true });
     expect(triedRanges(calls)).toEqual(['HEAD..origin/main', 'HEAD..main', 'HEAD..origin/master']);
   });
 });

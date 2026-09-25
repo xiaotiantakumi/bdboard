@@ -48,7 +48,11 @@ export async function countHarnessCommitsBehindDefaultBranch(
     }
     const parsed = Number.parseInt(result.stdout.trim(), 10);
     if (Number.isFinite(parsed)) {
-      return { commitsBehind: parsed, baseRef: ref };
+      return {
+        commitsBehind: parsed,
+        baseRef: ref,
+        hasCommonAncestor: await hasCommonAncestorWith(deps, worktreePath, ref),
+      };
     }
   }
 
@@ -56,4 +60,38 @@ export async function countHarnessCommitsBehindDefaultBranch(
     `could not count harness commits behind ${candidateRefs.join(' / ')} ` +
       `in ${worktreePath}`,
   );
+}
+
+/**
+ * HEAD と ref に共通の祖先があるかを `git merge-base` の exit code で判定する
+ * (bdboard-0chq)。harness/packs/bdboard-harness/hooks/worktree-freshness.sh の
+ * NO_BASE 判定と同じ規則を踏襲する: **exit 1 だけが「祖先なし」**。それ以外の失敗
+ * (オブジェクト破損など) は判定せず true を返す (従来どおり rebase 案内のまま扱う)。
+ * shallow clone では merge-base が見えないだけのことがあるので、shallow なら
+ * 判定せず true を返す。
+ */
+async function hasCommonAncestorWith(
+  deps: ScannerDeps,
+  worktreePath: string,
+  ref: string,
+): Promise<boolean> {
+  const { commandRunner, gitPath, timeoutMs } = deps;
+  const mergeBase = await runGitReadOnly(
+    commandRunner,
+    gitPath,
+    worktreePath,
+    ['merge-base', 'HEAD', ref],
+    timeoutMs,
+  );
+  if (mergeBase.exitCode !== 1) {
+    return true;
+  }
+  const shallow = await runGitReadOnly(
+    commandRunner,
+    gitPath,
+    worktreePath,
+    ['rev-parse', '--is-shallow-repository'],
+    timeoutMs,
+  );
+  return shallow.stdout.trim() === 'true';
 }

@@ -19,6 +19,11 @@ export interface NonTicketHarnessWorktreeLag {
   readonly commitsBehind: number;
   /** 遅れの計測に実際に使えた既定ブランチ ref。 */
   readonly baseRef: string;
+  /**
+   * baseRef と HEAD に共通の祖先があるか。false なら rebase では追いつけない
+   * (bdboard-0chq)。
+   */
+  readonly hasCommonAncestor: boolean;
 }
 
 /**
@@ -54,21 +59,32 @@ export function checkNonTicketHarnessWorktrees(
       continue;
     }
 
-    warnings.push({
-      projectId: lag.projectId,
-      worktreePath: lag.worktreePath,
-      branchName: lag.branchName,
-      commitsBehind: lag.commitsBehind,
-      baseRef: lag.baseRef,
-      message:
-        `この worktree (ブランチ ${lag.branchName}) のハーネスは ${lag.baseRef} より ` +
+    const message = lag.hasCommonAncestor
+      ? `この worktree (ブランチ ${lag.branchName}) のハーネスは ${lag.baseRef} より ` +
         `${lag.commitsBehind} コミットぶん古いままです。チケットに紐づかない worktree の` +
         'ため盤面のチケット一覧には出ません。ハーネス (.claude/skills と ' +
         '.claude/settings.json) はチェックアウト単位なので、生存セッションが cwd をここに' +
         '置いたまま動いているとその作成時点の古い規律・hooks のまま動作しています' +
         '(このレーンは生存セッションのある worktree だけを対象にしています ― まだ使うなら ' +
         `git -C ${lag.worktreePath} rebase ${lag.baseRef} で追従、使い終わったなら worktree ` +
-        'ごと削除してください)',
+        'ごと削除してください)'
+      : `この worktree (ブランチ ${lag.branchName}) は ${lag.baseRef} と共通の祖先が` +
+        'ありません (履歴の作り直しより前に作られた checkout)。チケットに紐づかない' +
+        'worktree のため盤面のチケット一覧には出ません。ハーネス (.claude/skills と ' +
+        '.claude/settings.json) はチェックアウト単位なので、生存セッションが cwd をここに' +
+        '置いたまま動いているとその作成時点の古い規律・hooks のまま動作しています' +
+        '(このレーンは生存セッションのある worktree だけを対象にしています ― rebase では' +
+        '追いつけないので、まだ使うなら中身を確認してから手で整理し、使い終わったなら' +
+        ` worktree ごと削除してください。git -C ${lag.worktreePath} の内容を確認してから` +
+        '判断してください)';
+
+    warnings.push({
+      projectId: lag.projectId,
+      worktreePath: lag.worktreePath,
+      branchName: lag.branchName,
+      commitsBehind: lag.commitsBehind,
+      baseRef: lag.baseRef,
+      message,
     });
   }
 
