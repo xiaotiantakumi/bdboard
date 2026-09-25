@@ -100,6 +100,30 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
     await claimA();
     expectDeny(await runBashHook({ command: 'git branch -D bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'worktree', 'bd/ticket-a');
   });
+  it('denies force deleting another agent branch via the long-form flags', async () => {
+    await claimA();
+    expectDeny(
+      await runBashHook({ command: 'git branch --delete --force bd/ticket-a', cwd: main, agentId: 'agent-2' }),
+      'worktree',
+      'bd/ticket-a',
+    );
+  });
+  it('allows a plain (non-forced) branch --delete of another agent branch', async () => {
+    await claimA();
+    expectAllow(await runBashHook({ command: 'git branch --delete bd/ticket-a', cwd: main, agentId: 'agent-2' }));
+  });
+  it('denies a chained git -C -C into another agent worktree', async () => {
+    await claimA();
+    expectDeny(
+      await runBashHook({
+        command: 'git -C .claude/worktrees -C ticket-a commit -m x --allow-empty',
+        cwd: main,
+        agentId: 'agent-2',
+      }),
+      'worktree',
+      'bd/ticket-a',
+    );
+  });
   it('denies merge-pr prepare in the owned worktree', async () => {
     await claimA();
     expectDeny(await runBashHook({ command: `cd ${wtA} && npm run merge-pr -- prepare 1`, cwd: main, agentId: 'agent-2' }), 'worktree', 'bd/ticket-a');
