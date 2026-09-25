@@ -317,8 +317,17 @@ working tree/HEAD を守ること自体は常時稼働サーバーの有無と�
 しかし `bdboard-harness` パックは `harness/packs/` → 各プロジェクトの `.claude/skills/` へ
 注入する形で他プロジェクトにも配布される設計で、`alwaysOnServer.port` を宣言しない配布先
 では 7a・規則 8 のどちらも `pull` を対象にせず、サブエージェントの main checkout での
-`git pull` だけが fail-open のまま残っていた (bdboard 自身の契約には常に port があるため
-実害は無いが、配布先の一般ケースとしては穴)。
+`git pull` だけが fail-open のまま残っていた。
+
+`alwaysOnServer.port` がある bdboard 自身の契約でも、無関係ではない: 7a (`sg_check_main_action`)
+は他の変更系サブコマンドと違い、bdboard-w8ad/bdboard-9882 (#796) が追加した「未解決の `-C`/
+`GIT_DIR`/`GIT_WORK_TREE` は fail-open ではなく deny に倒す」判定を共有していなかった。
+port ありの契約でも、サブエージェントが `MAIN=$(git rev-parse --git-common-dir)/..; git -C
+"$MAIN" pull` のような未解決ターゲット経由で main checkout を pull することは 7a だけでは
+素通りしていた (7a が deny するのは `sg_dir_is_main` が「main だと確定できた」ときだけで、
+未解決な `-C` 値は main と確定できないため)。規則 8 は他の 16 個のサブコマンド同様この
+fail-closed 判定を最初から持っているため、`pull` を規則 8 に追加したことで bdboard 自身の
+port ありの契約でもこの穴が閉じている。
 
 対応: 規則 8 のディスパッチに `pull` を追加した。7a (port 前提、サーバー再配備文脈の
 専用メッセージ) はそのまま残し、7a とは独立に port の有無に関係なく規則 8 でも `pull` を

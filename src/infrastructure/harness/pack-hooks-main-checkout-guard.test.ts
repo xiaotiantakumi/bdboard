@@ -470,6 +470,34 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       );
     });
 
+    // bdboard-rj7y opus レビュー (2026-09-26) の指摘: alwaysOnServer.port がある契約でも、
+    // 既存の規則 7a (sg_check_main_action) は「対象ディレクトリが main だと確定できたとき」
+    // しか deny せず、bdboard-w8ad/bdboard-9882 (#796) が他の 16 個の変更系サブコマンドに
+    // 追加した「未解決の -C/GIT_DIR は fail-open ではなく deny」という判定を共有していな
+    // かった。pull を規則 8 に追加したことで、port ありの契約でもこの fail-closed 判定が
+    // 初めて pull にも効くようになったことをここで確認する (mainWithPort/worktreeWithPort =
+    // port ありの契約)。
+    it.each(['git -C "$(pwd)" pull --ff-only', 'D=$(pwd); git -C $D pull --ff-only'])(
+      'conservatively denies an unresolved git -C value for pull even with alwaysOnServer.port: %s',
+      async (command) => {
+        expectDeny(
+          await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+          'git pull',
+        );
+      },
+    );
+
+    it('conservatively denies a same-command GIT_DIR override for pull even with alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'GIT_DIR=/tmp/somewhere git pull --ff-only',
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
     it('allows a fully resolvable relative git -C target that is a worktree', async () => {
       const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
       expectAllow(

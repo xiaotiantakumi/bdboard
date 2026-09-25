@@ -1136,6 +1136,13 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         JSON.stringify({ version: 1, verify: 'npm test', prFlow: 'pr', mainBranch: 'main' }),
       );
       expectAllow(await runHook({ command: `kill ${process.pid}`, cwd: plainRepo }));
+      // bdboard-rj7y opus レビューの指摘: kill はチェアからの呼び出し (agent_id 無し) なので
+      // 規則 7c の port ゲートしか確認していなかった。規則 7b がサブエージェントに対しても
+      // port 無しでは沈黙することを、rule 8 の対象ではない npm run start で別途確認する
+      // (pull は rule 8 が port 非依存に対象化したため、この確認には使えなくなった)。
+      expectAllow(
+        await runHook({ command: 'npm run start', cwd: plainRepo, agentId: 'agent-1' }),
+      );
     });
 
     // bdboard-rj7y (2026-09-26): 規則 7a は alwaysOnServer.port が無い契約では発火しないが、
@@ -1155,7 +1162,30 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         await runHook({ command: 'git pull --ff-only', cwd: plainRepo, agentId: 'agent-1' }),
         'main checkout',
         'git pull',
+        'working tree/HEAD',
       );
+    });
+
+    // bdboard-rj7y opus レビューの指摘: 'main checkout'/'git pull' というフラグメントだけでは
+    // 7a (常時稼働サーバー文言) と規則 8 (working tree/HEAD 文言) のどちらが発火したか区別
+    // できない。ここでメッセージ文言そのものを比較し、(1) port ありでは 7a のメッセージだけが
+    // 出て規則 8 のメッセージは出ない (7a が先に deny して exit するため) こと、(2) port 無し
+    // では規則 8 のメッセージだけが出ること、の両方を明示的に確認する。
+    it('7a and rule 8 produce distinguishable pull deny messages, and only one fires per contract', async () => {
+      const withPort = await runHook({ command: 'git pull --ff-only', cwd: mainRepo, agentId: 'agent-1' });
+      expect(withPort.stderr).toContain('常時稼働サーバー');
+      expect(withPort.stderr).not.toContain('working tree/HEAD');
+
+      const plainRepo = path.join(tmpRoot, 'plain-pull-msg');
+      await initGitRepo(plainRepo, 'main');
+      mkdirSync(path.join(plainRepo, '.claude'), { recursive: true });
+      writeFileSync(
+        path.join(plainRepo, '.claude', 'bdboard-harness.json'),
+        JSON.stringify({ version: 1, verify: 'npm test', prFlow: 'pr', mainBranch: 'main' }),
+      );
+      const noPort = await runHook({ command: 'git pull --ff-only', cwd: plainRepo, agentId: 'agent-1' });
+      expect(noPort.stderr).toContain('working tree/HEAD');
+      expect(noPort.stderr).not.toContain('常時稼働サーバー');
     });
 
     it('does not slow down commands that cannot touch the server (pre-filter)', async () => {
