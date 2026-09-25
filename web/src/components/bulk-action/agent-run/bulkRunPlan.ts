@@ -13,7 +13,13 @@ import {
 import { describeHarnessRunBlock } from '../../agentRunShared';
 
 /** 対象外にした理由。並び順はダイアログでの表示順でもある。 */
-export const BULK_RUN_EXCLUSION_REASONS = ['epic', 'blocked', 'not-ready', 'missing'] as const;
+export const BULK_RUN_EXCLUSION_REASONS = [
+  'epic',
+  'blocked',
+  'not-ready',
+  'running',
+  'missing',
+] as const;
 export type BulkRunExclusionReason = (typeof BULK_RUN_EXCLUSION_REASONS)[number];
 
 /** Record なので理由が増えたら型エラーで気づける。 */
@@ -21,6 +27,7 @@ export const BULK_RUN_EXCLUSION_LABELS: Record<BulkRunExclusionReason, string> =
   epic: 'epic',
   blocked: 'ブロック中',
   'not-ready': '着手可能レーン以外',
+  running: '実行中',
   missing: 'ボード上に見つからない',
 };
 
@@ -45,9 +52,14 @@ export interface BulkRunPlan {
  * 着手可能 (ready) 以外のレーンのうち、ブロック (blocked) だけは理由を分けて出す。
  * 選択は Provider がビューをまたいで保持するので、プロジェクトの絞り込みなどで
  * ボードから消えたカードの ID も残りうる (missing)。
+ * runningTicketIds (bdboard-xuuz) は着手可能レーンまで残ったカードだけを見る —
+ * blocked/not-ready は既にそこで理由が付くので、実行中かどうかを問わない。
+ * 省略時 (undefined) は判定しない (すべて実行対象になりうる) — 呼び出し元が
+ * board 全体の run 一覧を取得できていないとき用のフォールバック。
  */
 export function classifyBulkRunCard(
   card: BoardCardDto | undefined,
+  runningTicketIds?: ReadonlySet<string>,
 ): BulkRunExclusionReason | null {
   if (card === undefined) {
     return 'missing';
@@ -60,6 +72,9 @@ export function classifyBulkRunCard(
   }
   if (card.lane !== 'ready') {
     return 'not-ready';
+  }
+  if (runningTicketIds?.has(card.ticket.id) === true) {
+    return 'running';
   }
   return null;
 }
@@ -106,6 +121,7 @@ export function buildBulkRunPlan(
   selectedIds: ReadonlySet<string>,
   cardsById: ReadonlyMap<string, BoardCardDto>,
   readyDisplayOrder: readonly string[],
+  runningTicketIds?: ReadonlySet<string>,
 ): BulkRunPlan {
   const displayIndex = new Map<string, number>();
   readyDisplayOrder.forEach((id, index) => displayIndex.set(id, index));
@@ -114,7 +130,7 @@ export function buildBulkRunPlan(
   const counts = new Map<BulkRunExclusionReason, number>();
   for (const id of selectedIds) {
     const card = cardsById.get(id);
-    const reason = classifyBulkRunCard(card);
+    const reason = classifyBulkRunCard(card, runningTicketIds);
     if (reason !== null) {
       counts.set(reason, (counts.get(reason) ?? 0) + 1);
     } else if (card !== undefined) {

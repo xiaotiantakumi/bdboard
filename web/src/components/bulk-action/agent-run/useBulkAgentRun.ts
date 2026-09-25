@@ -3,6 +3,7 @@
 // 渡すだけで、ループ本体・サーバー側の実行経路 (POST /api/runs) には手を入れない。
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react';
 import type { BoardCardDto, BoardViewDto } from '../../../api';
+import { useActiveAgentRuns } from '../../../hooks/useActiveAgentRuns';
 import { useFocusTrap } from '../../../hooks/useFocusTrap';
 import { useAllHarnessStatuses } from '../../../hooks/useHarnessStatusData';
 import type { BulkSelectionContextValue } from '../../BulkSelectionProvider';
@@ -66,19 +67,25 @@ export function useBulkAgentRun({
   const projectNames = config?.projectNames;
   const loopActive = config !== undefined && config.batchRun.phase !== 'idle';
   const selectedIds = bulkSelection?.selectedIds ?? EMPTY_SELECTION;
+  const hasSelection = config !== undefined && selectedIds.size > 0;
   // ハーネスの前提は選択があるときだけ引く (useAllHarnessStatuses は queryKey 固定で
   // 他の呼び出し元ともキャッシュを共有する)。
   // 取得に失敗したら「不明」として止めない — 最終判定はサーバーの preflight。
-  const harness = useAllHarnessStatuses(config !== undefined && selectedIds.size > 0);
+  const harness = useAllHarnessStatuses(hasSelection);
   const harnessStatuses =
     harness.harnessStatusQuery.data !== undefined ? harness.harnessStatuses : undefined;
   // 初回取得中だけ止める。取得に失敗した後の再取得 (フォーカス復帰など) では止めない。
   const harnessChecking = harness.harnessStatusQuery.isLoading;
+  // 既に実行中のカードを対象外にする (bdboard-xuuz)。取得に失敗しても「不明」として
+  // 止めない — useActiveAgentRuns は失敗時も空の Set を返すので、buildBulkRunPlan は
+  // 実行中カードが無かった扱いで進む。最終判定はサーバーの canStart / 409
+  // already-running。
+  const activeRuns = useActiveAgentRuns(hasSelection);
 
   const readyDisplayOrder = useMemo(() => collectReadyDisplayOrder(board), [board]);
   const plan = useMemo(
-    () => buildBulkRunPlan(selectedIds, cardsById, readyDisplayOrder),
-    [selectedIds, cardsById, readyDisplayOrder],
+    () => buildBulkRunPlan(selectedIds, cardsById, readyDisplayOrder, activeRuns.runningTicketIds),
+    [selectedIds, cardsById, readyDisplayOrder, activeRuns.runningTicketIds],
   );
   const harnessBlockReason = useMemo(
     () =>

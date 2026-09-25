@@ -28,6 +28,12 @@ export function useAgentRunMutations(
         reused: response.reused,
       });
       void queryClient.invalidateQueries({ queryKey: ['ticket-runs', ticketId] });
+      // 一括実行 (bdboard-xuuz) の「既に実行中のエージェントがあるカード」判定が使う
+      // 盤面全体の run 一覧も、この画面から実行を始めた瞬間に stale にする — でないと
+      // 同じセッションで直後に一括実行を開こうとしたとき、既定の staleTime (30秒) の間
+      // このチケットが「実行中」に見えず、サーバー側の 409 already-running で
+      // 一括実行が失敗扱いになる (ticketRunsInvalidator.ts と同じ理由)。
+      void queryClient.invalidateQueries({ queryKey: ['agent-runs-active'] });
     },
   });
 

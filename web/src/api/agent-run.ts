@@ -84,6 +84,20 @@ export function startTicketRun(ticketId: string): Promise<StartAgentRunResponseD
   });
 }
 
+/**
+ * ticketId を付けずに GET /api/runs を叩き、盤面全体の run 一覧を返す。
+ * 一括実行 (bdboard-xuuz) が「既に実行中のエージェントがあるカード」を
+ * 対象外にする判定に使う。サーバーの canStart / 409 already-running は
+ * ticket 単位では確実に弾いてくれるが、一括実行ループはチケットごとに
+ * POST /api/runs を直列で叩くため、開始に失敗した 1 件は直近 2 件の連続失敗
+ * としてバッチ停止の対象に数えられる (next-up/run-loop/loop.ts) —
+ * だから 409 が返ってから諦めるのではなく、選択の時点でクライアント側にも
+ * 弾いておきたい。
+ */
+export function fetchAllAgentRuns(): Promise<{ runs: AgentRunSummaryDto[] }> {
+  return fetchJson<{ runs: AgentRunSummaryDto[] }>('/api/runs');
+}
+
 export function fetchTicketRuns(ticketId: string): Promise<{ runs: AgentRunSummaryDto[] }> {
   const searchParams = new URLSearchParams({ ticketId });
   return fetchJson<{ runs: AgentRunSummaryDto[] }>(`/api/runs?${searchParams.toString()}`);

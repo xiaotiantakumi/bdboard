@@ -39,6 +39,7 @@ const EXPECTED_VALUE_EXPORTS = [
   'fetchAgentRunConfig',
   'fetchAiQuota',
   'fetchAiQuotaAlertConfig',
+  'fetchAllAgentRuns',
   'fetchAllHarnessStatus',
   'fetchBoard',
   'fetchBoardThresholdsConfig',

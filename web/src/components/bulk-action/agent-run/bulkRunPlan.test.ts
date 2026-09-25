@@ -36,6 +36,35 @@ describe('classifyBulkRunCard', () => {
       expect(classifyBulkRunCard(makeRunCard('x', { lane }))).toBe('not-ready');
     }
   });
+
+  // bdboard-xuuz: 既に実行中のエージェントがあるカードを対象外にする。
+  it('reports a ready-lane card with an active run as running', () => {
+    const runningIds = new Set(['a']);
+    expect(classifyBulkRunCard(makeRunCard('a'), runningIds)).toBe('running');
+  });
+
+  it('does not report running for a card whose id is absent from runningTicketIds', () => {
+    const runningIds = new Set(['other']);
+    expect(classifyBulkRunCard(makeRunCard('a'), runningIds)).toBeNull();
+  });
+
+  it('treats running as unknown (does not exclude) when runningTicketIds is omitted', () => {
+    expect(classifyBulkRunCard(makeRunCard('a'))).toBeNull();
+  });
+
+  it('reports blocked (not running) for a blocked-lane card that also has an active run', () => {
+    const runningIds = new Set(['b']);
+    expect(classifyBulkRunCard(makeRunCard('b', { lane: 'blocked' }), runningIds)).toBe(
+      'blocked',
+    );
+  });
+
+  it('reports epic (not running) for an epic card that also has an active run', () => {
+    const runningIds = new Set(['e']);
+    expect(
+      classifyBulkRunCard(makeRunCard('e', { issueType: 'epic' }), runningIds),
+    ).toBe('epic');
+  });
 });
 
 describe('collectReadyDisplayOrder', () => {
@@ -147,6 +176,49 @@ describe('buildBulkRunPlan', () => {
     expect(plan.runTicketIds).toEqual([]);
     expect(plan.excludedCount).toBe(1);
   });
+
+  // bdboard-xuuz: 既に実行中のエージェントがあるカードを対象外にする。
+  it('excludes ready-lane cards with an active run and counts them as running', () => {
+    const cards = [
+      makeRunCard('ok'),
+      makeRunCard('busy-1'),
+      makeRunCard('busy-2'),
+      makeRunCard('epic', { issueType: 'epic' }),
+    ];
+    const plan = buildBulkRunPlan(
+      new Set(['ok', 'busy-1', 'busy-2', 'epic']),
+      cardsByIdOf(cards),
+      ['ok', 'busy-1', 'busy-2'],
+      new Set(['busy-1', 'busy-2']),
+    );
+
+    expect(plan.runTicketIds).toEqual(['ok']);
+    expect(plan.exclusions).toEqual([
+      { reason: 'epic', count: 1 },
+      { reason: 'running', count: 2 },
+    ]);
+    expect(plan.excludedCount).toBe(3);
+  });
+
+  it('does not exclude anything as running when runningTicketIds is omitted', () => {
+    const cards = [makeRunCard('a'), makeRunCard('b')];
+    const plan = buildBulkRunPlan(new Set(['a', 'b']), cardsByIdOf(cards), ['a', 'b']);
+
+    expect(plan.runTicketIds).toEqual(['a', 'b']);
+    expect(plan.exclusions).toEqual([]);
+  });
+
+  it('a blocked card with an active run is counted as blocked, not running', () => {
+    const cards = [makeRunCard('b', { lane: 'blocked' })];
+    const plan = buildBulkRunPlan(
+      new Set(['b']),
+      cardsByIdOf(cards),
+      [],
+      new Set(['b']),
+    );
+
+    expect(plan.exclusions).toEqual([{ reason: 'blocked', count: 1 }]);
+  });
 });
 
 describe('describeBulkRunExclusions', () => {
@@ -163,6 +235,15 @@ describe('describeBulkRunExclusions', () => {
         { reason: 'missing', count: 4 },
       ]),
     ).toBe('epic 1 件・ブロック中 2 件・着手可能レーン以外 3 件・ボード上に見つからない 4 件');
+  });
+
+  it('includes the running label in the reason join (bdboard-xuuz)', () => {
+    expect(
+      describeBulkRunExclusions([
+        { reason: 'not-ready', count: 1 },
+        { reason: 'running', count: 2 },
+      ]),
+    ).toBe('着手可能レーン以外 1 件・実行中 2 件');
   });
 });
 
