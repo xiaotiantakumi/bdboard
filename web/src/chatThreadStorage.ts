@@ -57,6 +57,25 @@ export function writePersistedChatThreadState(
   } catch { /* localStorage unavailable */ }
 }
 
+/**
+ * bdboard-e5cz: chat/useChatThreadLists.ts の closeThread は、ライブで選択中の
+ * スレッドが無い状態(draft 表示中、N2 draft-rule)でも呼ばれる。そのとき素朴に
+ * undefined を永続化すると、draft 表示中に無関係な別スレッドを閉じただけで、
+ * 既存の永続化済み選択が消えてしまう(N2 が守ろうとしている「次回訪問時に
+ * また同じ既存スレッドへ戻れる」という前提と食い違う)。永続化済みの選択を
+ * そのまま引き継ぎつつ、それが next(閉じた後の activeSessionIds として
+ * これから永続化する集合)にもう含まれていない場合(=まさに今閉じたスレッド
+ * だった等)だけ fallbackSessionId(表示順の先頭)へフォールバックする。
+ */
+export function resolvePersistedSelectionAfterClose(
+  projectId: string,
+  next: readonly string[],
+  fallbackSessionId: string | undefined,
+): string | undefined {
+  const persisted = readPersistedChatThreads()[projectId]?.selectedSessionId;
+  return persisted !== undefined && next.includes(persisted) ? persisted : fallbackSessionId;
+}
+
 // 既存のテスト・呼び出し元向けの一件追加 API。実体は v2 の一覧に保存する。
 export function writePersistedChatThread(
   projectId: string,
