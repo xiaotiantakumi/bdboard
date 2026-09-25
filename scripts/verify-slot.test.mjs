@@ -185,6 +185,49 @@ describe('acquireVerifySlot', () => {
     }
   });
 
+  // bdboard-wt5c: Windows では、相手が holder を置き換える rename (待ち手が acquiredAt を書いて走り出す瞬間など)
+  // と競合した読み取りが EPERM / EBUSY / EACCES で失敗する。それを書きかけと同じに飛ばすと、唯一の枠を使って
+  // いる相手が見えず、同時に 2 本 (上限 +1) 走る。errno は io (fs の差し替え口) に注入して再現する。
+  it.each(['EPERM', 'EBUSY', 'EACCES'])(
+    'does not take the only slot while the running holder cannot be read (%s), then takes it once it is released',
+    async (code) => {
+      const dir = makeDir();
+      const other = spawnLiveProcess();
+      try {
+        const now = Date.now();
+        const otherFile = holderFile(dir, other.pid);
+        fs.writeFileSync(otherFile, JSON.stringify({ v: 2, pid: other.pid, joinedAt: now, queuedAt: now, acquiredAt: now, priority: 'pr' }));
+        let failing = true;
+        let failedReads = 0;
+        const io = {
+          ...fs,
+          readFileSync: (filePath, ...rest) => {
+            if (failing && filePath === otherFile) {
+              failedReads += 1;
+              throw Object.assign(new Error(`${code}: injected`), { code });
+            }
+            return fs.readFileSync(filePath, ...rest);
+          },
+        };
+        const pending = acquireVerifySlot(fastOptions(dir, { priority: 'landed', io }), noLog);
+        let acquired = false;
+        pending.then(() => {
+          acquired = true;
+        });
+        // 読めない相手を何周か見たところで判定する (固定の sleep ではなく読み取りの回数で待つ)。
+        await waitFor(() => acquired || failedReads >= 5, 'several polls over the unreadable holder');
+        expect(acquired, 'took the only slot while its holder was unreadable: 2 running with slots=1').toBe(false);
+        expect(fs.existsSync(otherFile)).toBe(true); // 読めない相手のファイルは消さない
+        failing = false;
+        fs.unlinkSync(otherFile); // 先客が release した相当
+        const slot = await pending;
+        slot.release();
+      } finally {
+        other.kill('SIGKILL');
+      }
+    },
+  );
+
   it('hands a freed slot to a landed run before a pr run that queued earlier (bdboard-ulxa.6)', { timeout: 20_000 }, async () => {
     const dir = makeDir();
     const logPath = path.join(dir, 'events.log');
