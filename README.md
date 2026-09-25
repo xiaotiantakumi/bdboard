@@ -189,7 +189,7 @@ v1.2.2 で一度リグレッションしました。起動時にはこの前提�
 | `BDBOARD_PORT` | 待ち受けポート | `8787` |
 | `BDBOARD_HOST` | 待ち受けホスト | `127.0.0.1` |
 | `BDBOARD_DB` | ローカルキャッシュ用 SQLite ファイルのパス。main checkout 以外のリンク worktree(検出は `<repoRoot>/.git` がファイルかどうかで行う。bdboard 自身の `.claude/worktrees/<id>` に限らない)から未指定で起動すると、常駐サーバーと同じ実 DB を誤って開かないよう起動を拒否する(bdboard-21e7)。このときの既定では、各 `*_CONFIG_PATH` 系の設定ファイル(scan roots / thresholds / AI quota alert / agent run)と `BDBOARD_TUNNEL_LOG_PATH` のトンネルログも、個別に明示指定されていなければこの DB と同じディレクトリへ退避する(実物の `~/.config/bdboard/config.json` や `~/.bdboard/logs/` を誤って書き換えないため)。`BDBOARD_DB` に `~/.bdboard` または既定の設定ディレクトリそのものを直接指定すると起動を拒否する(bdboard-n4fc)。相対パスを指定した場合はサーバー起動時の cwd を基準に絶対パスへ解決する(bdboard-6h6n) | `~/.bdboard/cache.db` |
-| `BDBOARD_ATTACHMENTS_DIR` | チケット添付画像(bdboard-qw26)の保存先ディレクトリ | `<リポジトリルート>/data/attachments`(gitignore 済み) |
+| `BDBOARD_ATTACHMENTS_DIR` | チケット添付画像(bdboard-qw26)の保存先ディレクトリ | git の作業ツリー(clone / worktree)では `<リポジトリルート>/data/attachments`(gitignore 済み)、npm/npx インストール環境では `~/.bdboard/attachments` |
 | `BDBOARD_INSTANCE_NONCE` | health API の応答に含めるインスタンス識別子。ローリング再起動等で応答元を識別する用途 | (未設定 = フィールドを返さない) |
 | `BDBOARD_SHUTDOWN_TIMEOUT_MS` | graceful shutdown で接続を drain する最大時間(ミリ秒)。超過時は既存接続を閉じる | `5000`(5秒) |
 | `BDBOARD_SCAN_ROOTS` | `.beads/` を探索するルートディレクトリ(カンマ区切りで複数指定可) | `~/Documents`(存在しない場合は `~`。Windows は `%USERPROFILE%\Documents`、`%USERPROFILE%` 未設定時は `os.homedir()` 起点)。未設定時はユーザー設定(`~/.config/bdboard/config.json`、Windows は `%APPDATA%\bdboard\config.json`)、その後 OS 検出デフォルトを使用 |
@@ -456,6 +456,8 @@ Basic 認証の免除ではさらに `Host` が `localhost` / `127.0.0.1` / `[::
 `kubectl port-forward` など、Cloudflare ヘッダを付けず loopback で終端する橋渡しは認証免除の
 前提外なので、このサーバーへ向けて使用しないこと。必要ならローカル免除を無効化する仕組みを
 先に追加する。
+
+0.1.x 系の `npx bdboard` / `npm install -g bdboard` で添付した画像は、当時の既定どおりパッケージのインストール先(npx キャッシュやグローバル `node_modules`)にあります。0.2.0 以降は `~/.bdboard/attachments` が既定です。旧データを引き継ぐ場合は、`npm root -g` などで調べたインストール先の `<パッケージ>/data/attachments` から `~/.bdboard/attachments` へ手動でコピーしてください。
 
 ## 外部 MCP クライアント (Claude Code / Codex / Cursor)
 
