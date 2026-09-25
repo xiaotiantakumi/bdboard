@@ -72,7 +72,7 @@ describe('submit/commit deps reference stability (bdboard-sso1.83 第13b段)', (
         selectedProjectId: 'project-a',
         currentSessionId: undefined,
         setSelectedThreadIds: vi.fn(),
-        selectedThreadIdsRef: { current: {} as Record<string, string | undefined> },
+        selectedThreadIdsRef: { current: {} },
         setThreadError: vi.fn(),
         renameDraft: '',
         drawer,

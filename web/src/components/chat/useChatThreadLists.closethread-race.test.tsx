@@ -22,7 +22,20 @@
 // (applyRecoveredTurn、これも別の async resolve)が同じ flush で連続すれば
 // 同 tick 競合になり得る。selectOpenThread/reopenClosedThread にはこの経路が無い
 // (grep 済み: onClick から直接呼ばれる同期ハンドラのみで、promise の継続として
-// 呼ばれる経路が存在しない — 詳細は bdboard-197q の bd close 理由を参照)。
+// 呼ばれる経路が存在しない)。
+//
+// なぜ selectOpenThread/reopenClosedThread は「今のところ」安全と言えるか:
+// このリポジトリは React 19.1.0 (web/package.json で確認済み)。React 19 は
+// state 更新のある同期ハンドラの「最初の setState」の時点でレンダーを
+// microtask としてキューする。ユーザークリックは空の microtask queue から
+// 始まるため、その最初の setState より後にキューされる microtask (他ハンドラの
+// async 継続を含む)は、既にキュー済みのレンダー(→ ref 再同期)より後に実行され、
+// 常に最新の ref を読む。逆に最初の setState より前に microtask を挟むハンドラ
+// (例: 先頭に await を足す将来の変更)ではこの保護は崩れる。詳細と両ハンドラの
+// コード側コメントは useChatThreadLists.ts の selectOpenThread/reopenClosedThread
+// 定義直前を参照。reopenClosedThread 側にはさらに別種の closure-staleness
+// (render-time openThreads 依存)があり、これは follow-up bdboard-ygrg で
+// closeThread 側とあわせて追跡している。
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -229,7 +242,7 @@ describe('selectedThreadIdsRef render-mirror race via closeThread/deleteThread (
     // が1レンダー遅れる)なので、alreadyRestored 分岐(restoredProjectsRef 済み
     // かつ knownOpen 定義済み)では currentSelected が sess-1 のまま = たった今
     // 削除したはずのスレッドが選択に居座ってしまう(sess-2 へのフォールバックが
-        // 無言で巻き戻る)。
+    // 無言で巻き戻る)。
     expect(result.current.threadLists.openThreadIds['project-a']).toEqual(['sess-2', 'sess-rec']);
     expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-2');
   });
