@@ -217,7 +217,12 @@ What this means operationally:
   new-format waiter re-joins (fresh `joinedAt`, same `queuedAt`, so the same
   place in line) every 15 min, so it never looks stale to others — a waiter
   invisible to the others yet first in its own view could otherwise start a
-  third run. If
+  third run. A holder file that cannot be *read* at all (on Windows, a read
+  racing the owner's replace-by-rename fails with EPERM/EBUSY/EACCES) is
+  counted as running while its pid is alive and goes stale 30 min after its
+  mtime, and is never deleted; if its pid is dead it is reclaimed. Only a file
+  that reads but does not parse (a half-written holder from an older script)
+  is skipped, and deleted once it is more than 5 s old (bdboard-wt5c). If
   the set of running holders does not change for 15 min, the waiter exits
   non-zero naming those pids — investigate them (hung verify?) rather than
   disabling the slot. (The timeout counts time without progress, not total
