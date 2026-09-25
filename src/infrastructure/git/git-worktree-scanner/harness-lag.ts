@@ -64,11 +64,12 @@ export async function countHarnessCommitsBehindDefaultBranch(
 
 /**
  * HEAD と ref に共通の祖先があるかを `git merge-base` の exit code で判定する
- * (bdboard-0chq)。harness/packs/bdboard-harness/hooks/worktree-freshness.sh の
- * NO_BASE 判定と同じ規則を踏襲する: **exit 1 だけが「祖先なし」**。それ以外の失敗
- * (オブジェクト破損など) は判定せず true を返す (従来どおり rebase 案内のまま扱う)。
- * shallow clone では merge-base が見えないだけのことがあるので、shallow なら
- * 判定せず true を返す。
+ * (bdboard-0chq)。bdboard-flpp が提案した worktree-freshness.sh hook の NO_BASE 判定と
+ * 同じ規則を踏襲する: **exit 1 だけが「祖先なし」**。それ以外の失敗 (オブジェクト破損
+ * など) は判定せず true を返す (従来どおり rebase 案内のまま扱う)。shallow clone では
+ * merge-base が見えないだけのことがあるので、shallow なら判定せず true を返す。
+ * `--is-shallow-repository` 自体が失敗した (タイムアウト・spawn 失敗など) ときも同じ理由で
+ * 判定せず true を返す — 「祖先なし」と誤って案内するほうが害が大きい。
  */
 async function hasCommonAncestorWith(
   deps: ScannerDeps,
@@ -93,5 +94,8 @@ async function hasCommonAncestorWith(
     ['rev-parse', '--is-shallow-repository'],
     timeoutMs,
   );
+  if (shallow.exitCode !== 0) {
+    return true;
+  }
   return shallow.stdout.trim() === 'true';
 }

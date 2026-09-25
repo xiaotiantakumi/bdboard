@@ -59,7 +59,8 @@ export function checkStaleHarnessWorktree(
       '作られた checkout)。ハーネス (.claude/skills と .claude/settings.json) は' +
       'チェックアウト単位なので、このセッションは worktree 作成時点の古い規律・hooks の' +
       'まま動いています。rebase では追いつけないので、まず ' +
-      `git -C ${lag.worktreePath} の中身を確認してから、手で整理してください`;
+      `git -C ${lag.worktreePath} の中身を確認し、必要な成果だけ退避してから ` +
+      `${lag.baseRef} で worktree を作り直してください`;
 
   return {
     kind: 'stale_harness_worktree',

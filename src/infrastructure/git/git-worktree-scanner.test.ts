@@ -538,7 +538,11 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch }),
     ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/main', hasCommonAncestor: true });
+    // rev-list 1回 (最初の候補 origin/main で成功) + merge-base 1回 = 2回。
     expect(calls).toHaveLength(2);
+    // 安全でない mainBranch (-x / a..b) がどの git 呼び出しの引数にも一切現れないこと
+    // (bdboard-0chq: merge-base 呼び出しの追加で回帰しないことを保証する)。
+    expect(calls.some((call) => call.args.some((arg) => arg.includes(mainBranch)))).toBe(false);
   });
 
   it('falls back when the origin contract branch is missing', async () => {
@@ -550,6 +554,58 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
     ).resolves.toEqual({ commitsBehind: 5, baseRef: 'master', hasCommonAncestor: true });
+  });
+
+  it('treats a successful merge-base as having a common ancestor (bdboard-0chq)', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('rev-list')) return { stdout: '3\n', stderr: '', exitCode: 0 };
+        if (args.includes('merge-base')) return { stdout: 'abc123\n', stderr: '', exitCode: 0 };
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toEqual({ commitsBehind: 3, baseRef: 'origin/main', hasCommonAncestor: true });
+
+    // merge-base が成功した (exit 0) ときは shallow チェックまで行かない
+    // (exit 1 のときだけ判定するため)。
+    expect(calls.some((call) => call.args.includes('--is-shallow-repository'))).toBe(false);
+  });
+
+  it('checks merge-base against the same ref that produced the commit count (bdboard-0chq)', async () => {
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('rev-list')) {
+          const range = args.find((arg) => arg.includes('..'));
+          return range === 'HEAD..origin/master'
+            ? { stdout: '2\n', stderr: '', exitCode: 0 }
+            : { stdout: '', stderr: 'fatal: bad revision', exitCode: 128 };
+        }
+        if (args.includes('merge-base')) return { stdout: '', stderr: '', exitCode: 1 };
+        if (args.includes('--is-shallow-repository')) {
+          return { stdout: 'false\n', stderr: '', exitCode: 0 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a', { mainBranch: 'master' }),
+    ).resolves.toEqual({ commitsBehind: 2, baseRef: 'origin/master', hasCommonAncestor: false });
+
+    const mergeBaseCall = calls.find((call) => call.args.includes('merge-base'));
+    expect(mergeBaseCall?.args).toEqual([
+      '--no-optional-locks',
+      '-C',
+      '/repo/wt/a',
+      'merge-base',
+      'HEAD',
+      'origin/master',
+    ]);
   });
 
   it('reports hasCommonAncestor: false when merge-base exits 1 and the repo is not shallow (bdboard-0chq)', async () => {
@@ -579,6 +635,26 @@ describe('countHarnessCommitsBehindDefaultBranch', () => {
     });
 
     const scanner = createGitWorktreeScanner(runner);
+    await expect(
+      scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
+    ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/main', hasCommonAncestor: true });
+  });
+
+  it('does not flag no common ancestor when the shallow check itself fails (bdboard-0chq)', async () => {
+    const { runner } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('rev-list')) return { stdout: '1\n', stderr: '', exitCode: 0 };
+        if (args.includes('merge-base')) return { stdout: '', stderr: '', exitCode: 1 };
+        if (args.includes('--is-shallow-repository')) {
+          return { stdout: '', stderr: 'fatal: not a git repository (or any of the parent directories)', exitCode: 128 };
+        }
+        return { stdout: '', stderr: 'unexpected', exitCode: 1 };
+      },
+    });
+
+    const scanner = createGitWorktreeScanner(runner);
+    // shallow かどうかの判定自体が失敗したときは、安全側 (true = 従来どおり rebase 案内) を返す。
+    // 「祖先なし」と誤って案内するほうが害が大きいため (bdboard-0chq)。
     await expect(
       scanner.countHarnessCommitsBehindDefaultBranch?.('/repo/wt/a'),
     ).resolves.toEqual({ commitsBehind: 1, baseRef: 'origin/main', hasCommonAncestor: true });

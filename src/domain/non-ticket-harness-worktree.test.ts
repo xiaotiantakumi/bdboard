@@ -43,7 +43,7 @@ describe('checkNonTicketHarnessWorktrees', () => {
     const [warning] = checkNonTicketHarnessWorktrees([lag({ hasCommonAncestor: false })]);
 
     expect(warning?.message).toContain('共通の祖先が');
-    expect(warning?.message).toContain('手で整理');
+    expect(warning?.message).toContain('worktree を作り直してください');
     expect(warning?.message).not.toMatch(/rebase origin\/main/);
   });
 

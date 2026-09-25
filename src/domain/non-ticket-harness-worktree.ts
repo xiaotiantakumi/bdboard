@@ -69,14 +69,14 @@ export function checkNonTicketHarnessWorktrees(
         `git -C ${lag.worktreePath} rebase ${lag.baseRef} で追従、使い終わったなら worktree ` +
         'ごと削除してください)'
       : `この worktree (ブランチ ${lag.branchName}) は ${lag.baseRef} と共通の祖先が` +
-        'ありません (履歴の作り直しより前に作られた checkout)。チケットに紐づかない' +
-        'worktree のため盤面のチケット一覧には出ません。ハーネス (.claude/skills と ' +
+        'ありません (履歴の作り直しより前に作られた checkout)。チケットに紐づかない worktree の' +
+        'ため盤面のチケット一覧には出ません。ハーネス (.claude/skills と ' +
         '.claude/settings.json) はチェックアウト単位なので、生存セッションが cwd をここに' +
         '置いたまま動いているとその作成時点の古い規律・hooks のまま動作しています' +
         '(このレーンは生存セッションのある worktree だけを対象にしています ― rebase では' +
-        '追いつけないので、まだ使うなら中身を確認してから手で整理し、使い終わったなら' +
-        ` worktree ごと削除してください。git -C ${lag.worktreePath} の内容を確認してから` +
-        '判断してください)';
+        `追いつけないので、まだ使うなら git -C ${lag.worktreePath} の中身を確認し、必要な` +
+        `成果だけ退避してから ${lag.baseRef} で worktree を作り直してください。使い終わった` +
+        'ならそのまま worktree ごと削除してください)';
 
     warnings.push({
       projectId: lag.projectId,

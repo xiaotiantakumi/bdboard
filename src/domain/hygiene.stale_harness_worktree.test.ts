@@ -105,7 +105,7 @@ describe('checkHygiene stale_harness_worktree', () => {
     const found = issues.filter((issue) => issue.kind === 'stale_harness_worktree');
     expect(found).toHaveLength(1);
     expect(found[0]?.message).toContain('共通の祖先がありません');
-    expect(found[0]?.message).toContain('手で整理してください');
+    expect(found[0]?.message).toContain('worktree を作り直してください');
     expect(found[0]?.message).not.toMatch(/rebase origin\/main/);
   });
 
