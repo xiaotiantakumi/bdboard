@@ -213,15 +213,29 @@ describe('planSlots: mixing with legacy (bdboard-d48) holders', () => {
   // predicted-verify で実測 5253ms)。real timer は使っていない (`now` はシミュレーション内の仮想時刻
   // で、await/setTimeout の類は無い) ので fake timer の注入では解決しない — 純粋に CPU 負荷が高い
   // ループそのものが原因。steps を 150→100 に落とすことで 1 trial あたりの平均シミュレーション時間は
-  // 約 81 分→約 54 分 (30 分の stale しきい値を 1.8 倍超えるだけの長さは維持、既定 slots のもとで
-  // holders は平均 14〜19 件・最大 39〜52 件で "long queue" の状況は変わらない)。trials は 100 のまま
+  // 約 81 分→約 54 分 (v2 待ち手が joinedAt を並び直す staleTtlMs/2=15分・旧形式待ち手が諦める 15 分の
+  // サイクルを 3 周以上する長さは維持。slots は trial ごとに 1〜2 の乱数、holders は平均 14 件・最大 39
+  // 件 (旧: 平均 19 件・最大 52 件) で "long queue" の状況自体は変わらない)。trials は 100 のまま
   // (乱数パターンの多様性を落とさない)。単体実行で 5 回計測した結果 495〜912ms (旧: 2247〜3068ms、
-  // 約 3〜4 倍の削減)。PR #749 の selfVisible ガードを外す mutation (`selfVisible = true` に固定) で
-  // 確認したところ、steps=150/trials=100 はもちろん、steps=20/trials=5 まで削っても同じ trial=0,
-  // step=14 で `startedAt.size` が `slots` を超えて確実に検出された (この保証は step 数にほぼ依存
-  // しない)。上記の削減後もなお高負荷時の余裕を持たせるため、既定 5000ms より大きい明示のタイムアウト
-  // も付与する (単体実測の最大 912ms に対し 15000ms は 16 倍以上の余裕。旧設定の実測ワースト 5253ms
-  // に対しても約 3 倍の余裕)。
+  // 約 3〜4 倍の削減)。
+  //
+  // mutation 確認: planSlots の selfVisible ガードを `true` に固定すると steps=150/trials=100 はもちろん
+  // steps=20/trials=5 まで削っても trial=0, step=14 で `startedAt.size` が `slots` を超えて確実に検出
+  // された (この保証は step 数にほぼ依存しない)。ただし内訳を精査すると、この乱数列では待ち手の年齢が
+  // 最大でも約 16 分にしか達しない (v2 の 15 分並び直し・旧形式の 15 分諦めがそれより先に効くため) ので、
+  // step=14 の検出は selfVisible が兼ねる2つの役割のうち「先着の旧形式待ち手に阻まれている
+  // (blockedByLegacy で eligible から外れ、selfIndex が -1 になる) 待ち手を弾く」側であり、「30 分を
+  // 超えて stale になった待ち手を弾く」側 (文字通りの PR #749 のケース) はこのランダム化テストでは
+  // 経路を通らない。年齢ベースの stale 境界は上の「does not let a waiter that others already treat as
+  // stale take a slot until it re-joins (review of PR #749)」で決定的にカバーしている。この
+  // ランダム化テストの主な役割は、多数 holder・長い待ち行列のもとで両方の弾き方を含む planSlots 全体の
+  // 「running <= slots」不変条件を stress test することで、削減後もその力は落ちていない (上記の検出結果
+  // に加え、barrier 除去・free-slot 計算の off-by-one・stale しきい値の縮小など複数系統の mutation でも
+  // 150/100 steps で検出率に差が無いことを個別に確認済み)。
+  //
+  // 上記の削減後もなお高負荷時の余裕を持たせるため、既定 5000ms より大きい明示のタイムアウトも付与する
+  // (単体実測の最大 912ms に対し 15000ms は 16 倍以上の余裕。旧設定の実測ワースト 5253ms に対しても
+  // 約 3 倍の余裕)。
   it('keeps running <= slots with the real 30-minute stale rule, long queues and re-joining waiters', { timeout: 15_000 }, () => {
     // verify-slot.mjs の運用どおりに動かす: 新形式の待ち手は joinedAt から staleTtlMs / 2 で並び直し、
     // 旧スクリプトの待ち手は 15 分 (旧来の合計待ち上限) で諦める。verify は最長 10 分で終わる。
