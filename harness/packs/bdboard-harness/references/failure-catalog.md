@@ -104,6 +104,11 @@
 - 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約。**拒否されたら reset を待たずに REST へ切り替える**（create / merge / check-runs / ref DELETE の4経路とも REST で完走できる。本則: worktree-pr-flow.md §4）。reset まで待って1回だけ再試行するのは原因1のときだけ有効で、原因2では無駄に最大1時間を失う
 - 出典: bdboard-p5l.10 / bdboard-2w3 / bdboard-il3i（原因2の実測: PR #387 作成時）
 
+### unrelated-flake-broke-landed-verify — 無関係な flaky テストが、正しくマージされた PR の landed-verify を落として main を破損させた（2026-09-25、PR #779 → main-broken → PR #781）
+- 原因: `ChatPanel.recovery-list-overlap.test.tsx` に useChatSessionLifecycle.ts の stale-ref レース（applyRecoveredTurn が render 前の古い draftNoncesRef/openThreadIdsRef を読む）由来の real flake があり、マージした PR #779 の diff とは無関係のファイルで landed-verify が落ちた
+- 防止: main-broken 修復では「waitFor で包むだけ」のような表面的なタイミング修正を疑う。1回目の独立レビュー(Opus, max深考)が「final wrong state は待っても直らない」と機械的 repro で REQUEST_CHANGES、正しい同期点（レース前提となる副作用の完了を待つ）へ直させた後に merge した。緊急復旧でもレビューを省略しない（本則: docs/GIT-WORKFLOW.md「When main is broken」）
+- 出典: bdboard-yv45（修復チケット）/ bdboard-d29q（本物のプロダクションコードレース、P1）/ bdboard-9pzt（破った側、無傷と確認して close）/ PR #781
+
 ## サーバー・ポート
 
 ### pkill-collateral — worktree のテストプロセスを狙った `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーも巻き添えにした（2026-08-15）
