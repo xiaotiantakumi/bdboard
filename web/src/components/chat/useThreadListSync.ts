@@ -11,7 +11,7 @@ import type { useDraftThreadLauncher } from './useDraftThreadLauncher';
 export interface UseThreadListSyncParams
   extends Pick<UseConversationKeyResult, 'draftNoncesRef' | 'selectedThreadIdsRef' | 'setSelectedThreadIds'>,
     Pick<UseChatConversationsStateResult, 'threadListRequestIdRef'>,
-    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds'>,
+    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'restoredProjectsRef'>,
     Pick<UseChatNotificationsResult, 'setThreadError'>,
     Pick<
       ReturnType<typeof useDraftThreadLauncher>,
@@ -54,6 +54,7 @@ export function useThreadListSync({
   setOpenThreadIds,
   setSelectedThreadIds,
   startNewDraftThread,
+  restoredProjectsRef,
 }: UseThreadListSyncParams): void {
   useEffect(() => {
     if (selectedProjectId === '') return;
@@ -91,7 +92,11 @@ export function useThreadListSync({
     }
     let cancelled = false;
     const threadListRequestId = ++threadListRequestIdRef.current;
-    const persisted = readPersistedChatThreads()[selectedProjectId];
+    // bdboard-4w2d: persisted はここ(effect 開始時)で1回だけ読むのではなく、
+    // 下の .then()/.catch() の中で「応答が届いた時点」に読む(fetch の
+    // in-flight 中に他経路(useChatSendCommits.ts の送信成功、
+    // handleAgentChange)が永続化を更新することがあるため、古いスナップショットを
+    // 使うと復元時にその更新を取りこぼす)。
     // bdboard-ysu(Opus レビュー SF1 で正確化): 「今このプロジェクトの選択が
     // ユーザーの明示操作による新規ドラフトかどうか」を、draftNonces と
     // selectedThreadIds の組み合わせで判定する。draftNonces[projectId] を
@@ -160,8 +165,14 @@ export function useThreadListSync({
           return;
         }
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
-        const { open, selected } = restoreThreadView(threads, persisted);
+        // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
+        const { open, selected } = restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
+        // bdboard-4w2d: 「このプロジェクトの一覧・open は復元済み」を明示的に立てる。
+        // applyRecoveredTurn(chat/useChatSessionLifecycle.ts)はこれを見て、既に
+        // 復元済みなら自分では restoreThreadView を呼び直さず、openThreadIds の
+        // 有無では推測しない。
+        restoredProjectsRef.current.add(selectedProjectId);
         if (consumePendingTicketDraft()) {
           return;
         }
@@ -177,8 +188,13 @@ export function useThreadListSync({
           return;
         }
         setThreadError('スレッド一覧の取得に失敗しました。');
+        // bdboard-4w2d: 失敗時のフォールバックも同じく応答時点の永続化を読む。
+        const persisted = readPersistedChatThreads()[selectedProjectId];
         const open = persisted?.activeSessionIds ?? [];
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
+        // bdboard-4w2d: 取得に失敗した場合も、この「open」が最終形(永続化からの
+        // フォールバック)であることに変わりはないので、成功時と同じく復元済みとして立てる。
+        restoredProjectsRef.current.add(selectedProjectId);
         if (consumePendingTicketDraft()) {
           return;
         }
@@ -202,5 +218,6 @@ export function useThreadListSync({
     setOpenThreadIds,
     setSelectedThreadIds,
     startNewDraftThread,
+    restoredProjectsRef,
   ]);
 }

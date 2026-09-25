@@ -36,6 +36,7 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
     setThreadModelIds: vi.fn(),
     openThreads: [],
     openThreadIdsRef: { current: {} },
+    restoredProjectsRef: { current: new Set() },
     setThreadLists: vi.fn(),
     setOpenThreadIds: vi.fn(),
     setSelectedAgentId: vi.fn(),
@@ -70,7 +71,14 @@ describe('useChatSessionLifecycle', () => {
   describe('applyRecoveredTurn', () => {
     it('opens, selects and hydrates the recovered session when nothing is selected', () => {
       const threads = [thread('sess-rec', 'recovered title')];
-      const { result, params } = setup({ openThreadIdsRef: { current: { 'project-a': ['sess-old'] } } });
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+        // bdboard-4w2d: この項目はすでに一覧が復元済み(E7 が先に走った)という
+        // 前提を openThreadIdsRef の値で表していたので、restoredProjectsRef も
+        // 同じ前提に合わせて明示的に立てる(openThreadIds の有無で「復元済み」を
+        // 推測しなくなったため)。
+        restoredProjectsRef: { current: new Set(['project-a']) },
+      });
       act(() => result.current.applyRecoveredTurn(threads, RECOVERED));
 
       expect(lastUpdate(params.setThreadLists as ReturnType<typeof vi.fn>, {})).toEqual({ 'project-a': threads });
@@ -102,6 +110,7 @@ describe('useChatSessionLifecycle', () => {
       const { result, params } = setup({
         selectedThreadIdsRef: { current: { 'project-a': 'sess-1' } },
         openThreadIdsRef: { current: { 'project-a': ['sess-rec', 'sess-1'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
       });
       act(() => result.current.applyRecoveredTurn([], RECOVERED));
 
@@ -122,6 +131,7 @@ describe('useChatSessionLifecycle', () => {
       const { result, params } = setup({
         draftNoncesRef: { current: { 'project-a': 1 } },
         openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
       });
       act(() => result.current.applyRecoveredTurn([thread('sess-old')], RECOVERED));
 
@@ -142,6 +152,7 @@ describe('useChatSessionLifecycle', () => {
       const { result, params } = setup({
         draftNoncesRef: { current: { 'project-a': 1 } },
         openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
       });
       act(() => result.current.applyRecoveredTurn([thread('sess-old')], RECOVERED, true));
 
@@ -163,6 +174,7 @@ describe('useChatSessionLifecycle', () => {
       const { result, params } = setup({
         draftNoncesRef: { current: { 'project-a': 1 } },
         openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
       });
       act(() => result.current.applyRecoveredTurn([thread('sess-old')], RECOVERED));
 
@@ -225,13 +237,44 @@ describe('useChatSessionLifecycle', () => {
 
     it('ignores the persisted state once the project list is restored (an empty open list counts)', () => {
       writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
-      const { result, params } = setup({ openThreadIdsRef: { current: { 'project-a': [] } } });
+      // bdboard-4w2d: 「復元済み」は openThreadIds が空配列であること自体では
+      // 判定しない(空配列は「未復元で currentOpen が空」とも区別が付かない)。
+      // ここでは restoredProjectsRef を明示的に立てて「復元済み・0件」を表す。
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': [] } },
+        restoredProjectsRef: { current: new Set(['project-a']) },
+      });
       act(() => result.current.applyRecoveredTurn([thread('sess-1'), thread('sess-rec')], RECOVERED));
 
       expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({ 'project-a': ['sess-rec'] });
       expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
         'project-a': 'sess-rec',
       });
+    });
+
+    it('merges the persisted open threads with a racing openThreadIds write instead of mistaking it for "already restored" (bdboard-4w2d)', () => {
+      // bdboard-4w2d の再現: 初回一覧の読込中に別経路(useChatSendCommits.ts の
+      // 送信成功や handleAgentChange)が先に openThreadIds[projectId] を作ると、
+      // 以前は openThreadIdsRef.current[projectId] === undefined という代理判定が
+      // 「もう復元済み」と誤認し、restoreThreadView を呼ばずに racing write の
+      // 中身(sess-new だけ)をそのまま使っていた。結果、永続化にあった
+      // sess-old が nextOpen から失われていた。restoredProjectsRef はまだ
+      // 立っていない(このプロジェクトを実際に復元する処理はまだ誰も通っていない)。
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-old', 'sess-new'],
+        selectedSessionId: 'sess-new',
+      });
+      const threads = [thread('sess-old'), thread('sess-new')];
+      const { result, params } = setup({
+        openThreadIdsRef: { current: { 'project-a': ['sess-new'] } },
+      });
+      act(() => result.current.applyRecoveredTurn(threads, RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-old', 'sess-new', 'sess-rec'],
+      });
+      // 実際に復元する処理を通した後は、次回以降のためにマーカーを立てる。
+      expect(params.restoredProjectsRef.current.has('project-a')).toBe(true);
     });
 
     it('does not write a model for a missing or empty model, nor an agent for an empty agentId', () => {
