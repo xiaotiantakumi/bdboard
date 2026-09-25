@@ -81,6 +81,7 @@ describe('useChatThreadLists', () => {
     // remaining thread (sess-new), not next[0] (sess-mid) from insertion order.
     const { result, rerender, setSelectedThreadIds, params } = setup({
       currentSessionId: 'sess-old',
+      selectedThreadIdsRef: { current: { 'project-a': 'sess-old' } },
     });
     act(() => {
       result.current.setOpenThreadIds((prev) => ({
