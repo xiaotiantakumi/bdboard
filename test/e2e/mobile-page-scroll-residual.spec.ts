@@ -103,10 +103,12 @@
  * ## このガードが構造的に見ていないもの
  *
  * `body` / `#root` / `.app` の `min-height: 100vh` (いずれも `min-height: 100dvh` を併記)。`vh` は
- * large viewport にマップされるので、実機のモバイルブラウザではアドレスバーが出ている間
- * `lvh - dvh` ぶんの残差の床が常に乗る。Playwright の固定 viewport では
- * `lvh === dvh` で常に 0 になるため、この予算には一度も現れない。カード面積ゼロコストで
- * 消せる話なので bdboard-rhv0 に切り出した。
+ * large viewport にマップされるので、dvh 非対応の古いブラウザでは実機でアドレスバーが
+ * 出ている間 `lvh - dvh` ぶんの残差の床が乗る。dvh 対応ブラウザ (iOS Safari 15.4+ /
+ * Chrome 108+ / Firefox 101+) 向けには bdboard-rhv0 (PR #398、CLOSED) が上の
+ * `min-height: 100dvh` 併記を追加済みで、設計上はこの床は解消しているはず — 実機での
+ * 確認はまだ済んでおらず bdboard-h4xs.21 (OPEN) に切り出されている。Playwright の固定
+ * viewport では `lvh === dvh` で常に 0 になるため、この予算にはどちらの場合も一度も現れない。
  */
 
 import { expect, test } from '@playwright/test';
