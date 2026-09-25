@@ -29,8 +29,8 @@ export interface UseTurnStatusRecoveryResult {
  * move+分割で抜き出したもの。呼び出し位置は元の E8 の位置のまま(E7 より後、
  * chat/useChatHistoryLoader.ts(旧 E12/E13)より前)。historyRequestIdRef /
  * threadListRequestIdRef を進めるのは hydrate するときだけ(以前は generation>0 で
- * 張り直すたびに先頭で進めていた。bdboard-x4mv / bdboard-ibkf)。一覧の方は hydrate の
- * fetch の後、当てる直前に進める(bdboard-tsen)。
+ * 張り直すたびに先頭で進めていた。bdboard-x4mv / bdboard-ibkf)。どちらも hydrate の
+ * fetch の後、当てる直前に進める(一覧は bdboard-tsen、履歴は bdboard-lsv2)。
  * 「応答から何をすべきか決める」部分は chat/turnStatusStep.ts の
  * decideTurnStatusStep へ切り出し、ここには ACK・hydrate の fetch・setState・
  * ポーリングのタイマー/バックオフだけが残る。
@@ -82,8 +82,9 @@ export function useTurnStatusRecovery(params: {
     //   され、historyLoadedFor が立たないまま E12 も再実行されず、送信ボタンが
     //   無効のまま戻らなかった。
     // この effect は hydrate しない限り一覧も履歴も取り直さない。古い応答が回収結果を
-    // 上書きしないためのガードは、下の hydrate 分岐が進める request-id が担う(履歴は
-    // fetch の直前、一覧は当てる直前。hydrate しないなら守るべき回収結果も無い)。
+    // 上書きしないためのガードは、下の hydrate 分岐が当てる直前に進める request-id が
+    // 担う(一覧は bdboard-tsen、履歴は bdboard-lsv2。hydrate が成功しないなら守るべき
+    // 回収結果も無い)。
     setBackgroundTurnProjectId(selectedProjectId);
     setBackgroundTurnStatus({ state: 'idle' });
     const recoveredSessionIds = new Set<string>();
@@ -156,17 +157,12 @@ export function useTurnStatusRecovery(params: {
 
         // step.kind === 'hydrate'
         recoveredSessionIds.add(step.sessionId);
-        // A detached turn can create a session whose id was unknown when the tab
-        // closed. Invalidate older history requests before hydrating the
-        // server-owned result so a late initial response cannot overwrite the
-        // recovered state.
-        historyRequestIdRef.current += 1;
-        setLoadingHistoryFor(null);
         // bdboard-tsen: スレッド一覧の request-id は fetch の前ではなく、当てる直前に進める。
         // fetch の前に進めると、その間に届いた useThreadListSync(E7)の一覧応答が捨てられ、
         // E7 だけが担う永続化済み open/選択の復元とチケット起動の pending ドラフトの消化が
         // 失われた。ここで控えた id が当てる時点まで変わっていなければ(より新しい一覧
-        // fetch が始まっていなければ)当てる。
+        // fetch が始まっていなければ)当てる。履歴の request-id も同じく当てる直前に進める
+        // (bdboard-lsv2、下の apply 直前のコメント)。
         const listRequestIdAtStart = threadListRequestIdRef.current;
         let threads: ChatThreadDto[];
         let payload: ChatSessionMessagesDto;
@@ -185,6 +181,18 @@ export function useTurnStatusRecovery(params: {
         // まだ届いていない E7 の応答は、ここから先は一覧・open・選択を当てない
         // (pending ドラフトの消化だけ行う)。
         threadListRequestIdRef.current += 1;
+        // A detached turn can create a session whose id was unknown when the tab
+        // closed. Invalidate older history requests right before hydrating the
+        // server-owned result so a late response cannot overwrite the recovered state.
+        // bdboard-lsv2: 以前は fetch の前に進めていたため、hydrate の fetch が失敗し
+        // 続けると(または張り直しで打ち切られると)、その間に useChatHistoryLoader(E12)
+        // が読み込んでいた別スレッドの履歴応答と historyLoadedFor の書き込みが捨てられた
+        // まま conversations も変わらず、送信ボタンが無効のまま戻らなかった。ここで
+        // 進めても、回収したセッション自身の E12/E13 の応答は、それより前に届けば
+        // applyRecoveredTurn が上書きし、後に届けば捨てられるので、回収結果の保護は
+        // 変わらない。他のスレッドの応答は、それより前に届いたものはそのまま残る。
+        historyRequestIdRef.current += 1;
+        setLoadingHistoryFor(null);
         applyRecoveredTurn(threads, payload);
         if (step.detachedMatchesThisRecovery) {
           const matched = detachedSendsRef.current[selectedProjectId];
