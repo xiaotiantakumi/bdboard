@@ -275,6 +275,9 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       // 第14b段: 上と同じ理由で加えた(ref と useState の setter だけ)。
       historyRequestIdRef, setLoadingHistoryFor, setOpenThreadIds, setSelectedThreadIds,
       draftNoncesRef, setDraftNonces, setConversations,
+      // bdboard-4w2d(2巡目 Opus レビュー nit 対応): restoredProjectsRef も ref
+      // なので参照は変わらないが、他の ref と同じく exhaustive-deps に揃える。
+      restoredProjectsRef,
     ],
   );
 

@@ -92,6 +92,20 @@ export function useThreadListSync({
     }
     let cancelled = false;
     const threadListRequestId = ++threadListRequestIdRef.current;
+    // bdboard-4w2d(2巡目 Opus レビュー指摘対応): restoredProjectsRef は
+    // プロジェクトIDをキーにした Set で、どこからも delete/clear されない
+    // (ChatPanel がマウントされている限り一度立ったら残る)。下の .then()/.catch()
+    // に追加したガード(「既にマーク済みならこの応答での復元をスキップする」)は
+    // 「この fetch の in-flight 中に他経路が先に確立した」場合だけを狙ったものだが、
+    // マーカーを消さないままだと、一度でも復元したプロジェクトへ再訪するたびに
+    // 新しく始まるこの fetch サイクルもマーク済みと誤認し、E7 自身の復元(fresh な
+    // 一覧・永続化からの open/選択の再計算)が二度と走らなくなる(他タブでのスレッド
+    // 削除等が再訪時の open に反映されない退行)。この effect が実際に新しい
+    // fetch サイクルを始めるたびに(= selectedProjectId が変わって再実行されるたびに)
+    // このプロジェクトのマーカーをここで一旦下ろし、「このサイクルの中でまだ誰も
+    // 確立していない」状態から始める。in-flight 中に他経路が確立すればこのサイクルの
+    // 中で再び立つので、下のガードは元の意図(同一サイクル内のレース)どおりに働く。
+    restoredProjectsRef.current.delete(selectedProjectId);
     // bdboard-4w2d: persisted はここ(effect 開始時)で1回だけ読むのではなく、
     // 下の .then()/.catch() の中で「応答が届いた時点」に読む(fetch の
     // in-flight 中に他経路(useChatSendCommits.ts の送信成功、
@@ -165,15 +179,17 @@ export function useThreadListSync({
           return;
         }
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
-        // bdboard-4w2d(Opus レビュー対応): この fetch が in-flight の間に、他経路
-        // (turn-status 回収の hydrate = applyRecoveredTurn、または handleAgentChange の
-        // 明示的リセット)が先にこのプロジェクトの open/選択を確立してマーク済みなら、
-        // ここで persisted から restoreThreadView をやり直して上書きしない。両者とも
-        // 「持っている情報を全部足し合わせて残す」和集合的な確立ではなく「これが今の
-        // 正しい状態そのもの」という確定的な確立なので、後から届いたこの応答が
-        // 素朴に persisted で置き換えると、hydrate が足した回収セッションや
-        // handleAgentChange が意図した「空」を取りこぼす/覆してしまう。
-        // pending なチケット起動ドラフトの消化だけは、この応答でしか担えないので続ける。
+        // bdboard-4w2d(Opus レビュー対応、2巡目レビューで文言訂正): この fetch が
+        // in-flight の間に handleAgentChange が先にこのプロジェクトの open を [] に
+        // 確定させ、restoredProjectsRef もマーク済みなら、ここで persisted から
+        // restoreThreadView をやり直して上書きしない(handleAgentChange が意図した
+        // 「空」を取りこぼす/覆してしまう)。turn-status 回収の hydrate
+        // (applyRecoveredTurn)は既に上の isSupersededByRecovery() が先に捕まえて
+        // 早期 return するため、実際にはここまで到達しない(hydrate は自分の
+        // 適用直前に threadListRequestIdRef を進めるので、この fetch は必ず
+        // supersede される側になる) — このガードが効く経路は handleAgentChange の
+        // ケースだけ。pending なチケット起動ドラフトの消化だけは、この応答でしか
+        // 担えないので続ける。
         if (restoredProjectsRef.current.has(selectedProjectId)) {
           consumePendingTicketDraft();
           return;

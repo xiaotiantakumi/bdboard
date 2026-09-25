@@ -308,6 +308,34 @@ describe('useThreadListSync', () => {
     expect(pendingRef.current).toBe('proj-a');
   });
 
+  it('re-syncs open/selected from the fresh list on a revisit, instead of getting stuck at the first visit\'s snapshot (bdboard-4w2d, 2巡目 Opus レビュー指摘対応)', async () => {
+    // restoredProjectsRef はプロジェクトIDをキーにした Set で、どこからも
+    // delete/clear されない(ChatPanel がマウントされている限り一度立ったら残る)。
+    // ガード(「既にマーク済みならこの応答での復元をスキップする」)がこの effect の
+    // 開始時にマーカーを下ろさないと、一度でも復元したプロジェクトへ再訪するたびに
+    // 新しく始まる fetch サイクルもマーク済みと誤認し、E7 自身の復元が二度と
+    // 走らなくなる(離れている間に他タブでスレッドが削除・追加されても再訪時の
+    // open/選択に反映されない退行)。
+    fetchChatThreadsMock.mockResolvedValueOnce([thread('sess-1'), thread('sess-2')]);
+    const { result, rerender } = renderProbe('proj-a');
+    await flush();
+    expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1', 'sess-2'] });
+    expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-1' });
+    expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
+
+    // proj-b へ離脱している間に proj-a では sess-1 が消え、sess-3 が増えたとする。
+    fetchChatThreadsMock.mockResolvedValueOnce([thread('sess-b')]);
+    rerender({ projectId: 'proj-b' });
+    await flush();
+
+    fetchChatThreadsMock.mockResolvedValueOnce([thread('sess-2'), thread('sess-3')]);
+    rerender({ projectId: 'proj-a' });
+    await flush();
+
+    expect(result.current.openThreadIds).toMatchObject({ 'proj-a': ['sess-2', 'sess-3'] });
+    expect(result.current.key.selectedThreadIds).toMatchObject({ 'proj-a': 'sess-2' });
+  });
+
   it('refetches only when the project changes, not on unrelated re-renders or nonce/selection updates', async () => {
     // startNewDraftThread はここでは固定の vi.fn なので、本物の参照安定性は見ていない。
     // それは ChatPanel.reassignment-characterization.test.tsx の 14d と
