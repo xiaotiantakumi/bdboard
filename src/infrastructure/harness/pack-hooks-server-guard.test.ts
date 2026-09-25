@@ -261,6 +261,100 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         }),
       );
     });
+
+    it('denies direct execution of the restart script without an interpreter prefix', async () => {
+      expectDeny(
+        await runHook({
+          command: 'scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: './scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({
+          command: 'sh scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+
+    // bdboard-wa48 レビュー (opus): 狭めた一致がインタプリタのフラグやラッパー経由の
+    // 迂回を見逃していないか。narrow 一致 (コマンド語 / bash・sh の直後の引数だけ) に
+    // 単純化すると、これらは main の全引数走査より検知が弱くなってしまう。
+    it('still denies restart-script invocations through interpreter flags, wrappers, and indirection', async () => {
+      const wrappedCommands = [
+        'bash -x scripts/always-on-server.sh restart',
+        'timeout 600 scripts/always-on-server.sh restart',
+        'zsh scripts/always-on-server.sh restart',
+        'source scripts/always-on-server.sh restart',
+        '. scripts/always-on-server.sh restart',
+        'bash -c "scripts/always-on-server.sh restart"',
+        '$(git rev-parse --show-toplevel)/scripts/always-on-server.sh restart',
+        'env -i bash scripts/always-on-server.sh restart',
+      ];
+      for (const command of wrappedCommands) {
+        expectDeny(await runHook({ command, cwd: worktree, agentId: 'agent-1' }));
+      }
+    });
+
+    // bdboard-wa48: 規則 7b はもともとセグメント中の全引数位置に basename 一致を見ていたため、
+    // 再起動スクリプト名をただの検索語・grep パターン・コミットメッセージに含めただけの
+    // コマンドまで deny していた (fable の設計レビューでも 24h に 3 件実測)。一致はコマンド語
+    // 自身、または bash/sh の直後の引数だけに絞る。
+    it('allows commands that merely mention the restart script filename as an argument', async () => {
+      expectAllow(
+        await runHook({
+          command: 'bd search "always-on-server.sh"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'grep -r always-on-server.sh docs/',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'git log -S always-on-server.sh',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'cat scripts/always-on-server.sh',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'wc -l scripts/always-on-server.sh',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'git commit -m "docs: mention scripts/always-on-server.sh in README"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
   });
 
   describe('7c: killing the listener', () => {

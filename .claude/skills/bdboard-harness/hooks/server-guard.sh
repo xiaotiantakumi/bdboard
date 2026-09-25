@@ -360,12 +360,42 @@ while IFS= read -r sg_seg; do
   sg_word="${1##*/}"
 
   # 再起動スクリプトの呼び出し (bash path/to/script.sh ... / ./script.sh ...)。
+  # bdboard-wa48: 以前はセグメント中の全引数位置に basename 一致を見ていたため、
+  # ファイル名を検索語や grep パターン、コミットメッセージに含めただけの
+  # `bd search "always-on-server.sh"` / `grep always-on-server.sh` /
+  # `git log -S always-on-server.sh` まで誤って deny していた。
+  # 通常のコマンド (grep/cat/bd/git 等) はコマンド語そのもの、または
+  # インタプリタ/ラッパー語の直後の引数だけを見る。逆に bash/sh/zsh 等の
+  # インタプリタや timeout/env/nice/xargs/watch/stdbuf のようなラッパー、
+  # `$(...)`/バッククォートで始まる未解決のコマンド語のときは、迂回
+  # (`bash -x script.sh`、`timeout 600 script.sh`、`env -i bash script.sh`、
+  # `source script.sh` 等) を見逃さないよう元の全引数走査に戻す。
+  # レビュー (opus, 2026-09-25) で両方の抜けが実測されている。
   if [ -n "$SG_SCRIPT_BASE" ] && [ -n "$SG_IS_SUB" ]; then
-    for sg_tok in "$@"; do
-      if [ "${sg_tok##*/}" = "$SG_SCRIPT_BASE" ]; then
-        sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
-      fi
-    done
+    sg_restart_wide_scan=''
+    case "$sg_word" in
+      bash | sh | zsh | dash | ksh | . | source | timeout | nice | env | xargs | watch | stdbuf)
+        sg_restart_wide_scan='yes'
+        ;;
+      '$('* | '`'*)
+        sg_restart_wide_scan='yes'
+        ;;
+      -*)
+        # 未知のフラグが残っている = 手前の env/timeout 等のフラグをこの関数の
+        # プレフィックス剥がしが解決しきれなかった (例 `env -i bash script.sh`)。
+        # コマンド語が確定していないので安全側 (全引数走査) に倒す。
+        sg_restart_wide_scan='yes'
+        ;;
+    esac
+    if [ -n "$sg_restart_wide_scan" ]; then
+      for sg_tok in "$@"; do
+        if [ "${sg_tok##*/}" = "$SG_SCRIPT_BASE" ]; then
+          sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+        fi
+      done
+    elif [ "$sg_word" = "$SG_SCRIPT_BASE" ]; then
+      sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+    fi
   fi
 
   case "$sg_word" in
