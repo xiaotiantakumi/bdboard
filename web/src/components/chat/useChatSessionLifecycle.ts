@@ -188,6 +188,8 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
             ? { ...prev, [selectedProjectId]: undefined }
             : prev,
         );
+        // bdboard-d29q: 同じ理由(render-mirror の1レンダー遅延)で ref も直接同期する。
+        selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: undefined };
         // bdboard-23u: handleCloseThread と同じパターンで選択クリアを
         // localStorage にも同期する。
         const nextOpenThreads = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(

@@ -15,7 +15,7 @@ import type { UseChatThreadListsResult } from './useChatThreadLists';
 import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseDraftThreadLauncherParams
-  extends Pick<UseConversationKeyResult, 'currentConversationKey' | 'draftNoncesRef' | 'setDraftNonces' | 'setSelectedThreadIds'>,
+  extends Pick<UseConversationKeyResult, 'currentConversationKey' | 'draftNoncesRef' | 'selectedThreadIdsRef' | 'setDraftNonces' | 'setSelectedThreadIds'>,
     Pick<
       UseChatConversationsStateResult,
       'historyRequestIdRef' | 'setConversations' | 'setHistoryLoadedFor' | 'setLoadingHistoryFor' | 'setThreadModelIds'
@@ -43,7 +43,7 @@ export interface UseDraftThreadLauncherParams
  * handleNewThread が消去する。state から作り直してはいけない。
  */
 export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
-  const { selectedProjectId, currentConversationKey, draftNoncesRef, setDraftNonces, setSelectedThreadIds } = params;
+  const { selectedProjectId, currentConversationKey, draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setSelectedThreadIds } = params;
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
   const { conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, setInput } = params;
   const { updateConversationInputs, updateConversationAttachments, clearAttachmentError } = params;
@@ -83,11 +83,15 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
   } | null>(null);
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
 
-  // 不変条件(N1): この関数を同一 tick 内(同期的なコールバック連鎖の中)で同じ
-  // projectId に対して2回呼ぶと、両方とも同じ draftNoncesRef.current[projectId]
-  // を読んでから +1 するため nonce が衝突し、2つのドラフトが同じ会話キーを
-  // 奪い合う。呼び出し側(chat/useThreadListSync.ts の E7 と chat/useTicketContextLaunch.ts の E9)は必ず「1回のトリガーにつき
-  // startNewDraftThread は高々1回」を守ること。
+  // 不変条件(N1): bdboard-d29q の修正で draftNoncesRef は setDraftNonces と同じ
+  // 場所で同期的に更新されるようになったため、この関数を同一 tick 内(同期的な
+  // コールバック連鎖の中)で同じ projectId に対して2回呼んでも、2回目の呼び出しは
+  // 1回目が書いた draftNoncesRef.current[projectId] を読むので nonce の衝突
+  // (2つのドラフトが同じ会話キーを奪い合う)は起きない。ただし、その場合
+  // プリフィル(pendingPrefillRef)は最初の消化で null にされるため、2回目の
+  // 呼び出しには適用されない ―― 2つ目のドラフトへ引き継がれず消える。呼び出し側
+  // (chat/useThreadListSync.ts の E7 と chat/useTicketContextLaunch.ts の E9)は
+  // 引き続き「1回のトリガーにつき startNewDraftThread は高々1回」を守ること。
   const startNewDraftThread = useCallback((projectId: string) => {
     // bdboard-ru4d: ここも会話キーの再割り当てサイト。引き継ぎ選択は
     // START_NEW_DRAFT_THREAD_*_CARRY で型網羅を強制している。
@@ -97,6 +101,14 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     const nextDraftKey = makeDraftKey(projectId, nextDraftNonce);
     setSelectedThreadIds((prev) => ({ ...prev, [projectId]: undefined }));
     setDraftNonces((prev) => ({ ...prev, [projectId]: nextDraftNonce }));
+    // bdboard-d29q: draftNoncesRef/selectedThreadIdsRef (useConversationKey.ts) は
+    // レンダー本体でしか同期しない render-mirror。turn-status 回収
+    // (useChatSessionLifecycle.ts の applyRecoveredTurn)がこの直後、次の再レンダーの
+    // 前に isExplicitDraftStillSelected で読むと古い値を掴む。setState と同じ場所で
+    // ref 自体も直接更新し、1レンダー分のラグを消す(次のレンダーで同じ値が
+    // 再代入されるだけなので冪等)。
+    selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [projectId]: undefined };
+    draftNoncesRef.current = { ...draftNoncesRef.current, [projectId]: nextDraftNonce };
     setHistoryLoadedFor((prev) => ({
       ...prev,
       [nextDraftKey]: true,
@@ -186,7 +198,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     draftSeedTextRef, setInput,
     // 第14b段: フックの引数になったので exhaustive-deps が求める分を加えた。
     // ref と useState の setter だけなので、参照は変わらない。
-    draftNoncesRef, setDraftNonces, setSelectedThreadIds, setHistoryLoadedFor, setThreadModelIds,
+    draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setSelectedThreadIds, setHistoryLoadedFor, setThreadModelIds,
   ]);
 
   const handleAgentChange = useCallback(
@@ -206,11 +218,15 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       // エージェント切替直後の空ドラフトへ全スレッドを再展開してしまう。
       restoredProjectsRef.current.add(selectedProjectId);
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
+      // bdboard-d29q: startNewDraftThread と同じ理由(render-mirror の1レンダー遅延)。
+      selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: undefined };
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
       const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);
       // bdboard-ru4d: 会話キーの再割り当て。引き継ぎ選択は
       // HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY で型網羅を強制している。
       setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
+      // bdboard-d29q: 同上。
+      draftNoncesRef.current = { ...draftNoncesRef.current, [selectedProjectId]: nextDraftNonce };
       // MF1(N1: startNewDraftThread の SF1 引き継ぎと同じ family ——
       // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という
       // 不変条件): エージェント切替は会話キーを強制的に新しいドラフトへ進める
@@ -274,7 +290,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       draftSeedTextRef, setSelectedAgentId,
       // 第14b段: 上と同じ理由で加えた(ref と useState の setter だけ)。
       historyRequestIdRef, setLoadingHistoryFor, setOpenThreadIds, setSelectedThreadIds,
-      draftNoncesRef, setDraftNonces, setConversations,
+      draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setConversations,
       // bdboard-4w2d(2巡目 Opus レビュー nit 対応): restoredProjectsRef も ref
       // なので参照は変わらないが、他の ref と同じく exhaustive-deps に揃える。
       restoredProjectsRef,
@@ -315,6 +331,8 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     (projectId: string) => {
       const nextDraftNonce = (draftNoncesRef.current[projectId] ?? 0) + 1;
       setDraftNonces((prev) => ({ ...prev, [projectId]: nextDraftNonce }));
+      // bdboard-d29q: 同じ理由。
+      draftNoncesRef.current = { ...draftNoncesRef.current, [projectId]: nextDraftNonce };
     },
     [draftNoncesRef, setDraftNonces],
   );

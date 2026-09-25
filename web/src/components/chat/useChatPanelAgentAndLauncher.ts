@@ -28,7 +28,7 @@ type UseChatPanelAgentAndLauncherParams = ChatPanelControllerParams &
 export function useChatPanelAgentAndLauncher(params: UseChatPanelAgentAndLauncherParams) {
   const {
     selectedProjectId, currentConversationKey, setThreadModelIds, isSending, draftApplicators,
-    draftNoncesRef, setDraftNonces, setSelectedThreadIds, historyRequestIdRef, setConversations,
+    draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setSelectedThreadIds, historyRequestIdRef, setConversations,
     setHistoryLoadedFor, setLoadingHistoryFor, conversationInputsRef, conversationAttachmentsRef,
     draftSeedTextRef, setInput, updateConversationInputs, updateConversationAttachments,
     clearAttachmentError, setOpenThreadIds, restoredProjectsRef, cancelThreadConfirmDelete, onClose, panelRef,
@@ -130,6 +130,7 @@ export function useChatPanelAgentAndLauncher(params: UseChatPanelAgentAndLaunche
     selectedProjectId,
     currentConversationKey,
     draftNoncesRef,
+    selectedThreadIdsRef,
     setDraftNonces,
     setSelectedThreadIds,
     historyRequestIdRef,
