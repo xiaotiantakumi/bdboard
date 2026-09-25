@@ -633,6 +633,16 @@ if [ -r "$SERVER_GUARD_SCRIPT" ]; then
   . "$SERVER_GUARD_SCRIPT"
 fi
 
+# 9. worktree の持ち主保護 (bdboard-gsnn)。本体は隣の hooks/worktree-owner-guard.sh
+#    (このファイルの行数上限を守るため分離)。alwaysOnServer の有無に関係なく常に有効。
+#    規則 6/7 と同じ理由で規則 5 の `[ -n "$CONTRACT_PATTERN_LIST" ] || exit 0` より
+#    前に置く。無ければ素通り。
+WORKTREE_OWNER_GUARD_SCRIPT="$(dirname "$0")/worktree-owner-guard.sh"
+if [ -r "$WORKTREE_OWNER_GUARD_SCRIPT" ]; then
+  # shellcheck source=worktree-owner-guard.sh
+  . "$WORKTREE_OWNER_GUARD_SCRIPT"
+fi
+
 contract_patterns() {
   case "$JSON_TOOL" in
     jq)

@@ -487,6 +487,10 @@ npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠�
   その PR は prepare → `gate <N> --repair`（台帳の failure を無視し、`… / main-broken <PRED_BASE 12 桁>`
   の枠を引き継ぐ）→ 印字行 → finish で入れる（finish は success のときだけ枠を返す）→ 壊した PR の
   チケットを再 open して理由を残す。`--repair` は P0 バグの修復 PR 専用。
+  bdboard-gsnn 以降はこれを機械的にも強制する: `npm run merge-pr -- gate <N> --repair`
+  は規則 9 (worktree 所有権保護) の対象で、修復 PR の worktree の持ち主以外の
+  サブエージェントが実行すると deny される。実質的に `--repair` はその持ち主が、
+  自分の worktree からだけ実行できる。
 - 巻き戻し（S1 → S0）は契約の 1 行。gate 済みの PR があっても finish は動き、枠を返す。
 
 #### S2 — rebase を省き、着地予定ツリーを手元で verify する（契約の `merge.mode` が `S2` のとき）

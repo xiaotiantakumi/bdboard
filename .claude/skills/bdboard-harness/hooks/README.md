@@ -43,6 +43,7 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 | 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
 | 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` を実行する (`pull` は含まない。既存の 7a がその役目を持つので二重化しない — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
+| 9 | 本体は `worktree-owner-guard.sh` (bdboard-gsnn)。持ち主でないサブエージェントが per-ticket worktree (`bd/<id>` ブランチが存在する `.claude/worktrees/<id>` のみ対象。chair 作成やisolation:"worktree"用のスクラッチworktreeは対象外) を対象に公開/マージ系操作をする。詳細は下記「9 の worktree 所有権保護」 | 自分の worktree で作業する。持ち主が動けないなら議長に `bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release <id>` を頼む |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
 判定する。列全体をまとめて見ると `bd dolt push --remote backup; bd dolt push` や
@@ -349,6 +350,97 @@ working tree/HEAD を守ること自体は常時稼働サーバーの有無と�
   main checkout 判定関数 (`bh_main_checkout` / `bh_dir_is_main`) 自体は共有する。
   Bash 経由の `sed -i` / `cp` / `tee` 等によるファイル書き換えは pre-edit-guard.sh の
   対象外でもある (Edit|Write|MultiEdit|NotebookEdit ツールだけを見る hook のため)。
+
+### 9 の worktree 所有権保護 (bdboard-gsnn)
+
+2026-09-25 に、main 破損の修復 PR #781 (bdboard-yv45) を進めていた worktree
+`.claude/worktrees/bdboard-yv45` (bdboard-9pzt の担当が作成) へ、別チケット
+(bdboard-rftd) の担当が「持ち主が死んでいる」と誤認して `cd` し、
+`npm run merge-pr -- prepare 781` → `gate 781 --repair` を実行した (最後の
+`gh pr merge` は Claude Code 自身の権限判定でたまたま拒否され実害は無かった)。
+worktree-first 排他 (`git worktree add` の衝突) は worktree の二重作成は防ぐが、
+作成後の worktree と作成したサブエージェントを結び付けておらず、`gate --repair`
+の枠引き継ぎ (`scripts/merge-pr/gate.mjs` の `holderFor`、PRED_BASE の 12 桁 suffix
+一致だけで誰の worktree からでも乗っ取れる) と組み合わさると、他人の修復を横取り
+できてしまった。
+
+**記録の置き場所**: main checkout (`git rev-parse --git-common-dir` の親) の
+`.git/bdboard-worktree-owners/<ticket-id>` に、持ち主の `agent_id` を平文 1 行で
+記録する。`.git/` 配下なので git 追跡されない。
+
+**記録のタイミング (遅延クレーム)**: `git worktree add` の成功時点ではなく、下の
+表にある操作のどれかを、あるチケットの worktree を実効ディレクトリとして最初に
+実行しようとしたサブエージェントが、その場で自分の `agent_id` を記録して持ち主に
+なる。記録が既にあれば、自分の `agent_id` と一致するときだけ通す。この方式を選んだ
+理由:
+
+- `git worktree add` の成功だけを捉えるには PostToolUse (`tool_response` の成功
+  判定) が要り、実装・テストが PreToolUse 1 本より複雑になる。
+- 「持ち主の記録が無い worktree (このガードより前に作られたもの) は最初に触った
+  サブエージェントが持ち主になる」という要件も同じコードパスで自然に満たせる。
+- 理論上、worktree 作成者が一度もこれらの操作をする前に**別の**サブエージェントが
+  先に触れば、その別のサブエージェントが持ち主になってしまう狭い race がある。
+  実際に報告されたインシデントでは、修復 PR の担当が他人に触られる前に必ず自分で
+  `git commit`/`git push`/`npm run merge-pr` のいずれかを最初に行っているはずなので
+  発生しないが、既知の限界として明記する。
+
+**deny する操作 (対象は agent_id ありのサブエージェントが「他人の持ち物である
+worktree」を実効ディレクトリ/対象として実行しようとしたときだけ。議長は常に対象外)**:
+
+| 操作 | 判定 |
+|---|---|
+| `git push` | サブコマンドが `push` |
+| `git commit` | サブコマンドが `commit` |
+| `git worktree remove <path>` | `<path>` を解決した先が per-ticket worktree |
+| `git branch -D bd/<id>` (`-D` 短縮形のみ。`--delete --force` は対象外) | 引数に `-D` と `bd/<id>` が両方 |
+| `npm run merge-pr -- <prepare\|gate\|finish\|verify> ...` (`gate --repair` を含む) | `run merge-pr` |
+| `gh pr merge <N>` | `pr merge` |
+| 議長専用解除コマンド `scripts/worktree-owner.sh release <id>` をサブエージェントが実行 | `worktree-owner.sh` の直後のトークンが `release` |
+
+**必ず allow する**: 読み取り・テスト実行・Edit/Write (これらの持ち主チェックは
+このチケットのスコープ外)、自分の worktree での上の全操作、議長の全操作、
+`worktree-owner.sh show`/`list`、上の表に無い git/npm/gh サブコマンド。
+
+**解除**: 議長専用の `scripts/worktree-owner.sh release <id>` (`--main <path>`
+省略可)。記録ファイルを削除するだけで、次にその worktree で上の操作を行った
+サブエージェントが新しい持ち主になる (上の遅延クレームと同じコードパス)。
+サブエージェントからの `release` 実行は worktree-owner-guard.sh が deny する。
+
+**実効ディレクトリの解決はこのファイル専用の簡易版**: `cd`/`pushd`/`popd` と
+`git -C`・`npm --prefix` の直接指定だけを追う。規則 7/8 (`server-guard.sh`) の
+実効ディレクトリ解決エンジンは再利用しない。`NAME=値` 代入の展開・別ファイルへ
+書いて実行する迂回・絶対パス/バックスラッシュ経由の `git` 呼び出しは追わない
+(規則 7/8 と同種の既知の限界。見逃しは fail-open = このチケット以前と同じ)。
+
+**引用符を考慮したセグメント分割 (`sg_mask_quoted_separators`) はあえて使わない**:
+規則 9 が見るのはセグメントの先頭語 (`git`/`npm`/`gh`) と直後のサブコマンドだけなので、
+引用符内の `;`/`&`/`|` を素朴な分割で余分なセグメントに割っても、本物の呼び出しの
+先頭語が分断されることは通常の書き方では起きない。唯一の副作用は「引用符の中に
+たまたま `git commit` 等の並びがあると誤検知で deny 側に倒れる」ことだけで、これは
+規則 6 (bdboard-wa48) と同じ「言及しただけで deny」方針・「見逃しより誤検知」原則と
+整合する。既にレビュー済みで他セッションが依存する規則 7/8 のコード
+(`server-guard.sh`) へ、この機能のために手を入れるリスクの方が大きいと判断し、
+`server-guard.sh` は一切変更していない。
+
+**agent_id について確認したこと**: Claude Code の hook 入力の `agent_id` は
+サブエージェント内で発火した hook にだけ付与され、トップレベル (議長) の呼び出しでは
+付与されない (既存の規則 7/8/pre-edit-guard.sh 規則 2 が同じ前提で `AGENT_ID` を
+使っており、このチケットで新規に採用した前提ではない)。同一サブエージェントが
+`SendMessage` で再開されても値が変わらないかは、ドキュメント/実測のどちらでも
+確定できなかった — 変わらない前提でこの設計は動くが、変わる場合は「持ち主が
+急に他人に見える」形の誤検知 (fail-safe な方向) になるだけで、すり抜け方向の
+悪化にはならない。PR 本文に明記する。
+
+**既知の限界**:
+
+- `aimix` 経由で起動される Codex/Cursor の子プロセスは Claude Code の hook を
+  通らない (bdboard-1zrs と同じ限界)。Codex/Cursor 自身が `git push`/`git commit`
+  等を直接実行する運用ではこのガードは効かない。
+- Edit/Write の持ち主チェックはこのチケットのスコープ外 (レビュー用の子エージェントが
+  親の worktree で mutation 確認の一時編集をする既存フローを妨げないため)。
+- 遅延クレームの狭い race (上記)。
+- 実効ディレクトリ解決の限界 (上記)。
+- `git branch -D` は短縮形のみ対応。
 
 ### 誤検知について
 
