@@ -105,14 +105,28 @@ const expectedGateResolveArgs = (
   buildGateCloseReason(responseText),
 ];
 
-// bdboard-rftd: respond() が own-question ambiguous 分岐で metadata.decision_question を
-// 消すときに使う引数。buildUnsetDecisionQuestionArgs (respond-args.ts) は公開エクスポート面に
-// 含めていない (exportSurface テスト参照) ので、ここでも他の expected*Args と同じく、実際の
-// CLI 引数をこのテストファイル内に literal で固定する。
-const expectedUnsetDecisionQuestionArgs = (
+// bdboard-rftd: respond() が own-question ambiguous 分岐で T の own-question 状態
+// (decision_question / decision_options / decision_allow_freeform の3キー、opus レビュー
+// 指摘 major -- decision_question だけ消すと古い選択肢ボタンが残り、2回目の回答が無関係な
+// gate を誤って resolve しうる) を消すときに使う引数。buildUnsetOwnDecisionMetadataArgs
+// (respond-args.ts) は公開エクスポート面に含めていない (exportSurface テスト参照) ので、
+// ここでも他の expected*Args と同じく、実際の CLI 引数をこのテストファイル内に literal で
+// 固定する。
+const expectedUnsetOwnDecisionMetadataArgs = (
   rootPath: string,
   issueId: string,
-): readonly string[] => ['-C', rootPath, 'update', issueId, '--unset-metadata', 'decision_question'];
+): readonly string[] => [
+  '-C',
+  rootPath,
+  'update',
+  issueId,
+  '--unset-metadata',
+  'decision_question',
+  '--unset-metadata',
+  'decision_options',
+  '--unset-metadata',
+  'decision_allow_freeform',
+];
 
 function showGateHandler(issueId: string) {
   return async (_command: string, args: readonly string[]) => {
@@ -580,10 +594,15 @@ describe('createBdCliHumanDecisions', () => {
   // 質問への回答」なのか respond() 側では特定できない。安全側に倒し、gate は resolve せず・
   // human ラベルも外さない(bdboard-q1k9 と同じ ambiguous 分岐に合流させる)。
   // bdboard-rftd: この分岐は T 自身の質問への回答として確定的に記録されるため、respond() は
-  // コメント追記の直後に metadata.decision_question を unset する(3件目の bd update 呼び出し)。
-  it('does not auto-resolve a single unrelated blocking human gate, but does unset the ticket own decision_question (bdboard-cine / bdboard-rftd)', async () => {
+  // コメント追記の直後に T の own-question 状態(decision_question / decision_options /
+  // decision_allow_freeform の3キー、opus レビュー指摘 major)を unset する(3件目の
+  // bd update 呼び出し)。opus レビュー指摘(blocker): unset で消される前の質問文自体が、
+  // その直前のコメント本文に埋め込まれていることも直接押さえる(そうでなければ履歴から
+  // 質問文が本当に失われてしまう)。
+  it('does not auto-resolve a single unrelated blocking human gate, but does unset the ticket own decision state and preserve the question text in the comment (bdboard-cine / bdboard-rftd)', async () => {
     const issueId = 'bdboard-task';
     const gateId = 'bdboard-human-gate-1';
+    const ownQuestionText = 'この場合どうしますか?';
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {
         if (args.includes('show')) {
@@ -601,7 +620,7 @@ describe('createBdCliHumanDecisions', () => {
                     dependency_type: 'blocks',
                   },
                 ],
-                metadata: { decision_question: 'この場合どうしますか?' },
+                metadata: { decision_question: ownQuestionText },
               },
             ]),
             stderr: '',
@@ -629,13 +648,17 @@ describe('createBdCliHumanDecisions', () => {
           '/my/root',
           'comment',
           issueId,
-          buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId]),
+          buildTicketOwnQuestionAmbiguousResponseCommentBody(
+            'A案を採用',
+            [gateId],
+            ownQuestionText,
+          ),
         ],
         options: { timeoutMs: 30_000 },
       },
       {
         command: '/usr/bin/bd',
-        args: expectedUnsetDecisionQuestionArgs('/my/root', issueId),
+        args: expectedUnsetOwnDecisionMetadataArgs('/my/root', issueId),
         options: { timeoutMs: 30_000 },
       },
     ]);
@@ -643,8 +666,19 @@ describe('createBdCliHumanDecisions', () => {
       false,
     );
     expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
-    expect(buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId])).toContain(
-      gateId,
+    expect(
+      buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId], ownQuestionText),
+    ).toContain(gateId);
+    // opus レビュー指摘(blocker)の直接的な回帰ガード: unset で消される decision_question の
+    // 文面が、実際に送信された bd comment の引数に含まれていること(=履歴から失われないこと)
+    // を、respond() の実呼び出し経路(calls[1])で直接確認する。
+    const commentCall = calls[1];
+    expect(commentCall?.args.some((arg) => arg.includes(ownQuestionText))).toBe(true);
+    // 3キーとも unset していることを、respond() の実呼び出し経路(calls[2])で直接確認する。
+    const unsetCall = calls[2];
+    expect(unsetCall?.args.filter((arg) => arg === '--unset-metadata')).toHaveLength(3);
+    expect(unsetCall?.args).toEqual(
+      expect.arrayContaining(['decision_question', 'decision_options', 'decision_allow_freeform']),
     );
   });
 

@@ -312,6 +312,9 @@ describe('resolveKindAndBlockingGates', () => {
       kind: 'ticket',
       blockingHumanGateIds: [],
       hasOwnDecisionQuestion: true,
+      // bdboard-rftd opus レビュー指摘: respond() の own-question ambiguous 分岐が回答
+      // コメントに質問文を埋め込めるよう、実際の文字列も一緒に返す。
+      ownDecisionQuestionText: 'どちらにしますか?',
       hasHumanLabel: false,
     });
   });

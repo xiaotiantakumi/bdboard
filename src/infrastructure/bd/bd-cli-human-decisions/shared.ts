@@ -61,12 +61,19 @@ const bdShowItemSchema = z.object({
 // 独立した decision_question を持つことがある(実データにこの形自体は存在する。この場合は
 // ラベルがどちらの意味を担っているか区別できないので、gate 側の掃除では安全側に倒して
 // 剥がさない(bdboard-mw8y))。
-function hasOwnDecisionQuestion(metadata: unknown): boolean {
+// bdboard-rftd opus レビュー指摘: respond() の own-question ambiguous 分岐が回答コメントに
+// 質問文そのものを残すには、真偽値だけでなく実際の質問文字列が要る。hasOwnDecisionQuestion と
+// 同じ抽出条件(非空文字列)を1箇所にまとめ、両方から使う。
+function extractOwnDecisionQuestionText(metadata: unknown): string | undefined {
   if (metadata === null || typeof metadata !== 'object') {
-    return false;
+    return undefined;
   }
   const question = (metadata as Record<string, unknown>).decision_question;
-  return typeof question === 'string' && question.length > 0;
+  return typeof question === 'string' && question.length > 0 ? question : undefined;
+}
+
+function hasOwnDecisionQuestion(metadata: unknown): boolean {
+  return extractOwnDecisionQuestionText(metadata) !== undefined;
 }
 
 // clearHumanLabelOnUnblockedTickets(labels.ts) が、実際には human ラベルを
@@ -127,6 +134,13 @@ interface ShowKindAndBlockingGates {
    */
   readonly hasOwnDecisionQuestion: boolean;
   /**
+   * kind === 'ticket' かつ hasOwnDecisionQuestion === true のときだけ実際の質問文字列を
+   * 持つ(それ以外は undefined)。bdboard-rftd opus レビュー指摘: respond() の
+   * own-question ambiguous 分岐が回答コメントに質問文そのものを残すために追加した
+   * (hasOwnDecisionQuestion の真偽値だけでは文面を復元できない)。
+   */
+  readonly ownDecisionQuestionText: string | undefined;
+  /**
    * kind === 'ticket' のときだけ意味を持つ。bd show の labels[] に 'human' が
    * 含まれているかどうか(bdboard-ld8d)。clearHumanLabelOnUnblockedTickets が、
    * 実際には human ラベルを持っていなかったチケットを誤って cleared 扱いしない
@@ -143,23 +157,23 @@ interface ShowKindAndBlockingGates {
 function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
   const trimmedStdout = stdout.trim();
   if (trimmedStdout.length === 0) {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, ownDecisionQuestionText: undefined, hasHumanLabel: false };
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(trimmedStdout) as unknown;
   } catch {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, ownDecisionQuestionText: undefined, hasHumanLabel: false };
   }
 
   if (!Array.isArray(parsed) || parsed.length === 0) {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, ownDecisionQuestionText: undefined, hasHumanLabel: false };
   }
 
   const itemResult = bdShowItemSchema.safeParse(parsed[0]);
   if (!itemResult.success) {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, ownDecisionQuestionText: undefined, hasHumanLabel: false };
   }
 
   const kind = itemResult.data.issue_type === 'gate' ? 'gate' : 'ticket';
@@ -171,6 +185,8 @@ function parseShowStdout(stdout: string): ShowKindAndBlockingGates {
     blockingHumanGateIds,
     hasOwnDecisionQuestion:
       kind === 'ticket' ? hasOwnDecisionQuestion(itemResult.data.metadata) : false,
+    ownDecisionQuestionText:
+      kind === 'ticket' ? extractOwnDecisionQuestionText(itemResult.data.metadata) : undefined,
     hasHumanLabel: kind === 'ticket' ? hasHumanLabel(itemResult.data.labels) : false,
   };
 }
@@ -241,12 +257,12 @@ export async function resolveKindAndBlockingGates(
     );
 
     if (result === null) {
-      return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
+      return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, ownDecisionQuestionText: undefined, hasHumanLabel: false };
     }
 
     return parseShowStdout(result.stdout);
   } catch {
-    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, hasHumanLabel: false };
+    return { kind: 'unknown', blockingHumanGateIds: [], hasOwnDecisionQuestion: false, ownDecisionQuestionText: undefined, hasHumanLabel: false };
   }
 }
 
