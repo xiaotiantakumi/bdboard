@@ -38,24 +38,46 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
   // count of ~14 would, if scaled up literally) defeats the per-project
   // chunking this fix relies on.
   //
-  // Two assertions below, both against the same measured run:
+  // Three assertions below, all against the same measured run:
   // - `<1000ms` is the ticket's literal acceptance criterion.
-  // - `<400ms` is a *regression guard*: an opus review of an earlier
-  //   revision of this PR found that forcing the sync listProjects()
-  //   fallback (i.e. reverting the fix) only pushed this same assertion to
-  //   ~630-940ms on this machine - comfortably still under the 1000ms
-  //   acceptance budget, so that assertion alone would NOT have caught a
-  //   revert of the fix. The fixed path measures ~15-45ms end-to-end
-  //   (single-run and under 3-way artificial CPU contention alike; see
-  //   below), so 400ms leaves ample headroom above the fix's own numbers
-  //   while sitting well below every "fallback" measurement observed.
-  //   Confirmed by temporarily forcing the fallback during development:
-  //   it reliably fails the 400ms assertion (and, under contention, comes
-  //   close to or exceeds even the 1000ms one) at this fixture size, while
-  //   the real fix passes both. Verified stable across repeated runs (5/5
-  //   fixed, single-run <45ms; 3/3 fallback >800ms) under artificial CPU
-  //   contention (3 busy-loop processes) to guard against flakiness under
-  //   `npm run verify`'s parallel test workers.
+  // - `order[0] === 'health'` (requested last, must finish first) is a
+  //   necessary check but NOT sufficient on its own: bdboard-uy10 found that
+  //   forcing the pre-fix sync listProjects() fallback still resolves
+  //   'health' first (only its *magnitude* changes, not its position), so
+  //   an ordering-only check would not have caught a revert of the fix.
+  // - the elapsed-time comparison below `order[0]` is the actual
+  //   *regression guard*, and is the part bdboard-uy10 changed. It used to
+  //   be a fixed `<400ms`: an opus review of an earlier revision of this PR
+  //   found that forcing the sync listProjects() fallback (i.e. reverting
+  //   the fix) only pushed health.elapsedMs to ~630-940ms on that machine -
+  //   comfortably under the 1000ms acceptance budget on its own, so a
+  //   `<1000ms`-only check would not have caught a revert - and the fixed
+  //   path measured ~15-45ms there, so 400ms seemed to leave ample headroom
+  //   in both directions. That constant then broke main's landed-verify
+  //   (bdboard-uy10, 2026-09-25): under real multi-session machine
+  //   contention (load average 13-15, no artificial load) the *fixed* path
+  //   itself measured 532ms on a shared box - the fix was intact, but the
+  //   absolute-ms margin measured under synthetic single-machine contention
+  //   didn't hold under real contention, which slows the whole process
+  //   (both the fixed and the reverted path) by an amount that has nothing
+  //   to do with whether the fix is present.
+  //
+  //   Replaced with a comparison *relative to the same run's own slow
+  //   calls* instead of a wall-clock constant, so it scales with whatever
+  //   the machine's load happens to be on a given run: health must finish
+  //   in under half the wall time the slower of the stats/model-stats calls
+  //   took (they finish within ~1ms of each other since both run the same
+  //   cache read/aggregation work concurrently). Measured on this machine
+  //   (load average ~12-16 from unrelated concurrent sessions, no
+  //   artificial load, 21 repeated runs): the fixed path keeps
+  //   health.elapsedMs at 6-13% of the slower call's elapsed time (health
+  //   74-179ms vs. stats/model-stats 881-2251ms); forcing the pre-fix sync
+  //   listProjects() fallback (mutation check, 5 runs) pushed that ratio to
+  //   75-80% on the same machine (and past the literal 1000ms budget above,
+  //   1423-1937ms). The 50% cutoff sits with wide margin below every
+  //   reverted-fix ratio observed and well above every fixed-path ratio
+  //   observed, so - unlike a fixed ms figure - it stays meaningful
+  //   whether this run happens to be fast or slow in absolute terms.
   it(
     'does not block /api/health while reading a large real-SQLite project cache',
     async () => {
@@ -99,12 +121,12 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
       const statsPromise = (async () => {
         const response = await app.request('/api/stats?weeks=26');
         order.push('stats');
-        return response;
+        return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
       const modelStatsPromise = (async () => {
         const response = await app.request('/api/model-stats?weeks=26');
         order.push('model-stats');
-        return response;
+        return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
       const healthPromise = (async () => {
         // bdboard-ve1y (see stats-routes.test.ts): wait for our own
@@ -119,19 +141,23 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
         return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
 
-      const [statsResponse, modelStatsResponse, health] = await Promise.all([
+      const [stats, modelStats, health] = await Promise.all([
         statsPromise,
         modelStatsPromise,
         healthPromise,
       ]);
 
-      expect(statsResponse.status).toBe(200);
-      expect(modelStatsResponse.status).toBe(200);
+      expect(stats.response.status).toBe(200);
+      expect(modelStats.response.status).toBe(200);
       expect(health.response.status).toBe(200);
       // Requested last, but must finish first.
       expect(order[0]).toBe('health');
       expect(health.elapsedMs).toBeLessThan(1000); // ticket's literal acceptance criterion
-      expect(health.elapsedMs).toBeLessThan(400); // regression guard - see comment above
+
+      // bdboard-uy10: regression guard, relative to this run's own slow
+      // calls instead of a wall-clock constant - see the comment above.
+      const slowestStatsMs = Math.max(stats.elapsedMs, modelStats.elapsedMs);
+      expect(health.elapsedMs).toBeLessThan(slowestStatsMs * 0.5);
 
       cache.close();
     },
