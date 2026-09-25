@@ -42,14 +42,14 @@ export interface AppUiPreferences {
 }
 
 /**
- * App.tsx 直下に並んでいた11個の usePersistedState 呼び出し
- * (view/selectedProjectIds/lastChatProjectId/boardFilterPresets/nextUpLimit/
- * nextUpShowEpics/activityWindowDays/digestWindowDays/statsWeeks/
- * recentTickets/tipsBannerDismissed) をひとまとめにするフック
- * (bdboard-62p4 第6段)。boardFilterState (優先度上限などボードのフィルタ7種)
+ * App.tsx 直下に並んでいた usePersistedState 呼び出しをひとまとめにする
+ * フック (bdboard-62p4 第6段)。現在は9個
+ * (view/selectedProjectIds/lastChatProjectId/boardFilterPresets/
+ * activityWindowDays/digestWindowDays/statsWeeks/recentTickets/
+ * tipsBannerDismissed)。boardFilterState (優先度上限などボードのフィルタ7種)
  * は既に useBoardFilterState.ts に分かれているのでここには含めない。
- * bdboard-mkm1.3: Next Up ビュー削除に伴い nextUpLimit/nextUpShowEpics
- * (Next Up 専用の表示件数/epic表示トグル) は削除し、9個になった。
+ * bdboard-mkm1.3: Next Up ビュー削除に伴い、Next Up 専用の表示件数/epic
+ * 表示トグルだった nextUpLimit/nextUpShowEpics を削除した (元は11個)。
  *
  * localStorage のキー名 (UI_STORAGE_KEYS の該当エントリ)・既定値・
  * バリデータは元の App.tsx の呼び出しから1文字も変えていない

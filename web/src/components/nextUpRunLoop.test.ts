@@ -916,7 +916,7 @@ describe('nextUpRunLoop', () => {
    *   loopActiveRef false while fetchAgentRun is still pending is that same unmount
    *   cleanup path — same dead-setState situation.
    *
-   * NextUpView.test.tsx "does not let an unmounted loop generation overwrite progress
+   * "does not let an unmounted loop generation overwrite progress
    * after remount" exercises the remount UX but does not kill M3 for the reason above.
    * The guard remains documented at the call site in nextUpRunLoop.ts.
    */

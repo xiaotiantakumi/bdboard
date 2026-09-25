@@ -48,6 +48,10 @@ describe('parseBoardHash', () => {
     expect(parseBoardHash('#view=merged')).toEqual({ ticketId: null, view: 'split' });
   });
 
+  it('migrates a legacy next view to split (bdboard-mkm1.3)', () => {
+    expect(parseBoardHash('#view=next')).toEqual({ ticketId: null, view: 'split' });
+  });
+
   it('drops unknown credential-like keys (AC4)', () => {
     expect(
       parseBoardHash(

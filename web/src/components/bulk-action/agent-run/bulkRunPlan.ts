@@ -65,10 +65,11 @@ export function classifyBulkRunCard(
 }
 
 /**
- * 着手可能レーンのカード ID を画面の表示順で並べる。Next Up などは merged を、
- * 分割ビューはプロジェクトごとの盤面を描くので、merged → 各プロジェクト (画面上の
- * セクション順) の順に見て、初めて出てきた位置を採る。レーン内の並びはサーバーの
- * compareCards の順で、クライアントは並べ替えない。
+ * 着手可能レーンのカード ID を画面の表示順で並べる。board.merged は統合ビュー
+ * 削除 (bdboard-mkm1.1) 後もサーバー DTO 互換のため残っているので、
+ * merged → 各プロジェクト (画面上のセクション順) の順に見て、初めて出てきた
+ * 位置を採る。レーン内の並びはサーバーの compareCards の順で、クライアントは
+ * 並べ替えない。
  */
 export function collectReadyDisplayOrder(board: BoardViewDto | undefined): string[] {
   if (board === undefined) {
@@ -160,7 +161,7 @@ export function describeBulkRunExclusions(
  * コントラクト) を満たしていないものを「プロジェクト名: 理由」で並べる。1 つも
  * 無ければ null。対象外にしたカードは走らないので、そのプロジェクトは見ない。
  *
- * 判定は Next Up の一括実行 (useNextUpBatchRun) と同じ describeHarnessRunBlock。
+ * 判定は一括操作バーの「▶ 実行」(useBulkAgentRun) と同じ describeHarnessRunBlock。
  * 状態が未取得 (harnessStatuses が undefined、またはそのプロジェクトが載っていない)
  * なら「不明」であって「不備」ではないので止めない — 最終判定はサーバーの 409。
  */
