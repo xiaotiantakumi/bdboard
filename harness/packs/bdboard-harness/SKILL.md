@@ -112,7 +112,7 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 
 ## 機械ガード（hooks）— 文章で防げない操作は hook が止める
 
-- `hooks/` の3スクリプトは、注入時に注入先の `.claude/settings.json` へ登録される。
+- `hooks/` の4スクリプトは、注入時に注入先の `.claude/settings.json` へ登録される（鮮度警告だけは止めない）。
 - **hook に止められたら回避策を探さない。** stderr の代替手順に従う。hook 自体の不具合は
   `harness-upstream` チケットで起票する。
 - 止めるもの（deny 条件の一覧）・fail-open 方針・settings.json 登録契約: `hooks/README.md`。

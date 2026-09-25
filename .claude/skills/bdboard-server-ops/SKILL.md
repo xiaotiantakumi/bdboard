@@ -161,6 +161,13 @@ worktree-cwd case above, where every attempt reproduces (2/2).
   neither server nor UI changes are picked up without this rebuild+restart.
   **This includes merges that change only `web/`** — see
   "web だけの変更でも再起動が要る" below for the measurement.
+  - **After `deploy`, also bring the chair's own session checkout up to
+    date** (bdboard-flpp): `deploy` updates the main checkout, not the
+    worktree the chair session was started in, and hooks are read from the
+    latter for the chair and every subagent. Follow the command that the
+    `worktree-freshness.sh` warning prints (usually
+    `git -C <chair checkout> merge --ff-only origin/main`); it never runs on
+    its own. Details: docs/GIT-WORKFLOW.md "Cleanup after merge".
   - **The restart step is conditional; the pull/install/build steps each
     have their own, separate change-detection** (they are not simply
     unconditional). `deploy` restarts the listener only when

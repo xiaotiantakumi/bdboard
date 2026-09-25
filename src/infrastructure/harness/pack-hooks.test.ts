@@ -83,6 +83,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
           'hooks/pre-bash-guard.sh',
           'hooks/pre-edit-guard.sh',
           'hooks/stop-ticket-gate.sh',
+          'hooks/worktree-freshness.sh',
         ]),
       );
     });
@@ -105,7 +106,9 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack hooks', () =
       expect(hooks.length).toBeGreaterThan(0);
 
       for (const hook of hooks) {
-        expect(['PreToolUse', 'Stop']).toContain(hook.event);
+        expect(['PreToolUse', 'PostToolUse', 'Stop', 'SessionStart', 'UserPromptSubmit']).toContain(
+          hook.event,
+        );
         expect(typeof hook.script).toBe('string');
 
         const script = hook.script as string;
