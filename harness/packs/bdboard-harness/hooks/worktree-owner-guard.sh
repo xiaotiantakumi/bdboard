@@ -18,7 +18,13 @@
 #   - 解除は議長専用の scripts/worktree-owner.sh release <id> (このファイルの末尾で
 #     サブエージェントからの実行を deny する)。解除後は次に触ったサブエージェントが
 #     新しい持ち主になる。
+#   - git push は cwd ベースの判定 (通常のクレーム可能な経路) に加えて、各 refspec の
+#     両側の文字列 (先頭の + と refs/heads/・heads/・refs/ の前置きを剥がした後) を
+#     bd/* と照合する deny 専用の判定も行う (bdboard-qpxq #797 / bdboard-ob0l)。
+#     こちらはクレームしない — push 対象の文字列だけからは「その id の worktree に
+#     実際に触れた」とは言えないため (bdboard-ob0l F3)。
 #
+
 # 引用符を考慮したセグメント分割 (server-guard.sh の bdboard-kmh2 由来の
 # sg_mask_quoted_separators) はあえて再利用しない。規則 9 が見るのは各セグメントの
 # 先頭語 (git/npm/gh) と直後のサブコマンドだけなので、引用符内の ; & | が素朴な分割で
@@ -63,13 +69,15 @@ wog_audit() {
 wog_check_id() {
   wog_id="$1"
   wog_label="$2"
+  wog_allow_claim="${3:-yes}"
   wog_owner="$(bh_read_owner "$WOG_MAIN" "$wog_id")"
   if [ -z "$wog_owner" ]; then
-    if [ -z "$WOG_SEG_GENUINE" ]; then
-      # 引用符内から漏れ出た偽のセグメントによる誤クレームを防ぐ (bdboard-s9gi):
-      # 本物の呼び出しでないと判定できた場合のみクレームする。deny 側の判定
-      # (下の既存ロジック) は変更しない — 既に持ち主がいる場合はこの判定を
-      # 経由せずそちらに進む。
+    if [ "$wog_allow_claim" != 'yes' ] || [ -z "$WOG_SEG_GENUINE" ]; then
+      # 引用符内から漏れ出た偽のセグメントによる誤クレームを防ぐ (bdboard-s9gi)、
+      # または push refspec 対象由来でクレームを許可されていない (bdboard-ob0l F3)。
+      # 本物の呼び出しでないと判定できた場合、またはクレーム不可の判定経路の
+      # 場合のみここに来る。deny 側の判定 (下の既存ロジック) は変更しない —
+      # 既に持ち主がいる場合はこの判定を経由せずそちらに進む。
       return 0
     fi
     if bh_claim_owner "$WOG_MAIN" "$wog_id" "$AGENT_ID"; then
@@ -309,7 +317,12 @@ while IFS= read -r wog_seg; do
               [ -n "$wog_pside" ] || continue
               wog_pside="${wog_pside#+}"
               case "$wog_pside" in
-                bd/*) wog_check_id "${wog_pside#bd/}" 'git push' ;;
+                refs/heads/*) wog_pside="${wog_pside#refs/heads/}" ;;
+                heads/*) wog_pside="${wog_pside#heads/}" ;;
+                refs/*) wog_pside="${wog_pside#refs/}" ;;
+              esac
+              case "$wog_pside" in
+                bd/*) wog_check_id "${wog_pside#bd/}" 'git push' no ;;
               esac
             done
           done

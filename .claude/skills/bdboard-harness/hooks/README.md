@@ -431,7 +431,7 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
 
 | 操作 | 判定 |
 |---|---|
-| `git push` | サブコマンドが `push` |
+| `git push` | サブコマンドが `push`。加えて各 refspec (`src:dst`) の両側を、先頭の `+` と `refs/heads/`・`heads/`・`refs/` の前置きを剥がしたうえで `bd/*` と照合し、他人の worktree に対応する id が現れれば deny する (bdboard-qpxq #797 で `bd/*` の素の形を追加、bdboard-ob0l で `refs/heads/`・`heads/` の前置き形も追加)。この refspec 対象側の照合は **deny 専用** で、記録の無い id をクレームすることはない (bdboard-ob0l F3: cwd ベースの判定 (下記) とは異なり、push の対象文字列だけから「その id の worktree に実際に触れた」とは言えないため) |
 | `git commit` | サブコマンドが `commit` |
 | `git worktree remove <path>` | `<path>` を解決した先が per-ticket worktree |
 | `git branch -D bd/<id>` (`-D` 短縮形のみ。`--delete --force` は対象外) | 引数に `-D` と `bd/<id>` が両方 |
@@ -483,6 +483,15 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
 - 遅延クレームの狭い race (上記)。
 - 実効ディレクトリ解決の限界 (上記)。
 - `git branch -D` は短縮形のみ対応。
+- push refspec 対象側の `bd/*` 照合 (上表) は `refs/heads/`・`heads/`・`refs/` の
+  前置きと先頭の `+` は剥がすが、`--all`/`--mirror`/`--prune`、`*` を含むワイルド
+  カード refspec、素の `:`/`+:`、`-c remote.*.push`・`-c push.default`、
+  `git update-ref refs/heads/bd/*` はまだ対象外 (bdboard-p95o で対応予定)。
+  `env`/`timeout`/`nice`/`NAME=値` の前置きも規則 9 の先頭語判定はまだ読み飛ばさない
+  (同じく bdboard-p95o)。
+- 遅延クレームの引用符追跡 (`wog_scan_quote_state`) は `#` コメント・ヒアドキュメント
+  本体・二重引用符内の `$(`/`${`・`$'…'` を扱わない既知の残課題がある (bdboard-w6ch で
+  対応予定)。
 
 ### 誤検知について
 
