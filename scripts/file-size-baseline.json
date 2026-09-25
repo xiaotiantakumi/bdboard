@@ -14,6 +14,11 @@
       "path": "harness/packs/bdboard-harness/scripts/bd-heartbeat.sh",
       "limit": 1000,
       "reason": "bd heartbeat ループの同梱スクリプト。start/stop/status に加え孤児ループ防止の3重寿命判定を関数27個で実装。分割検討・チケット未起票。"
+    },
+    {
+      "path": "harness/packs/bdboard-harness/hooks/server-guard.sh",
+      "limit": 700,
+      "reason": "bdboard-qmum (再起動スクリプトの status/--help/-h を安全なサブコマンドとして deny から除外) と bdboard-kmh2 (; && || & と改行によるセグメント分割が引用符内の区切り文字を誤検知しないよう、引用符中の区切り文字だけをマスクする状態機械を追加) の2件のP3修正で590行に増加。どちらも rule 7 (常時稼働サーバー保護) の判定ロジックの一部で、分離すると判定の全体像 (deny 条件の網羅性) が追いにくくなるため1ファイルに留めた。分割検討・チケット未起票。"
     }
   ]
 }

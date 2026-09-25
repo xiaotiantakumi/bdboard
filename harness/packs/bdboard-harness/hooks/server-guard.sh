@@ -182,7 +182,87 @@ sg_pid_is_live_server() {
 # --- 3. コマンドを「1 コマンド」単位に割る。; && || & と改行で切り、パイプ | は残す
 #        (パイプの先の kill を同じセグメントで見るため)。行継続 (\改行) は空白に潰す。
 SG_NL=$'\n'
-SG_SEGMENTS="${COMMAND//\\$SG_NL/ }"
+
+# bdboard-kmh2: 上の分割はシェルの引用を理解しない素朴な文字列置換なので、引用符
+# ('...' / "..." 。複数行にまたがるものを含む) の中にある ; & | や改行までセグメント境界
+# として扱ってしまう (例: git commit -m "fix: guard; ..." / gh pr create --body
+# "$(cat <<'EOF' ... EOF)" —後者はヒアドキュメント全体が外側の "$(...)" に包まれている)。
+# 分割の前に、引用符の中身だけ ; & | と改行を空白に置き換えて無害化する。引用符の外側や
+# 中身の他の文字は一切変えない — 分割の判定材料はそのまま残す (「言及しただけ」を deny する
+# 設計 (bdboard-wa48) 自体は変えない)。
+#
+# 対応する範囲 (これ以上は「完全な shell パーサー」になるため対応しない。PR 本文に明記):
+#   - トップレベルの '...' と "..." のみ。$(...) やバッククォートの中に入れ子になった
+#     同種の引用符 (例 "$(echo "x")") は追わない — その場合は最初に出た内側の引用符で
+#     閉じたと誤認し、以降は元の (今回の修正前と同じ) 分割挙動に戻るだけ (安全側: 見逃し
+#     ではなく誤検知が残る側に倒れる)。
+#   - 二重引用符内のバックスラッシュエスケープは `\"` (閉じ引用符と誤認しない) だけを見る。
+#     `\$` `\\` 等は解釈しない (両方の文字をそのまま通すだけで、引用符の中は元々どの文字も
+#     区切りとして見ないので判定には影響しない)。
+#   - 引用符の外側で `\'` / `\"` のようにバックスラッシュでエスケープされた引用符文字は
+#     引用の開始とみなさない (ここを誤ると、閉じ引用符が無いとみなして残り全体を引用中
+#     として無害化してしまい、その後ろにある本物の危険なコマンドを隠しかねない)。
+#   - 独立したヒアドキュメント (外側に引用符が無い `<<EOF ... EOF`) は対象外。このリポジトリの
+#     規約 (commit -m / gh pr create --body は常に "$(cat <<'EOF' ... EOF)" で外側を引用符で
+#     包む) では該当しないため実害は無い想定。
+#   - 閉じられない引用符は、コマンド末尾まで引用中とみなして無害化する (見えなくなるのは
+#     引用符の中身だけ。閉じ引用符が無い時点で実際の bash も構文エラーで実行できない)。
+sg_mask_quoted_separators() {
+  sg_mqs_s="$1"
+  case "$sg_mqs_s" in
+    *[\'\"]*) ;;
+    *) printf '%s' "$sg_mqs_s"; return 0 ;;
+  esac
+  sg_mqs_len=${#sg_mqs_s}
+  sg_mqs_out=''
+  sg_mqs_state='n'
+  sg_mqs_i=0
+  while [ "$sg_mqs_i" -lt "$sg_mqs_len" ]; do
+    sg_mqs_c="${sg_mqs_s:sg_mqs_i:1}"
+    case "$sg_mqs_state" in
+      n)
+        case "$sg_mqs_c" in
+          \\)
+            if [ $((sg_mqs_i + 1)) -lt "$sg_mqs_len" ]; then
+              sg_mqs_out="$sg_mqs_out$sg_mqs_c${sg_mqs_s:sg_mqs_i+1:1}"
+              sg_mqs_i=$((sg_mqs_i + 2))
+              continue
+            fi
+            ;;
+          "'") sg_mqs_state="'" ;;
+          '"') sg_mqs_state='"' ;;
+        esac
+        ;;
+      "'")
+        case "$sg_mqs_c" in
+          "'") sg_mqs_state='n' ;;
+          ';' | '&' | '|') sg_mqs_c=' ' ;;
+          "$SG_NL") sg_mqs_c=' ' ;;
+        esac
+        ;;
+      '"')
+        case "$sg_mqs_c" in
+          \\)
+            if [ $((sg_mqs_i + 1)) -lt "$sg_mqs_len" ] && [ "${sg_mqs_s:sg_mqs_i+1:1}" = '"' ]; then
+              sg_mqs_out="$sg_mqs_out\\\""
+              sg_mqs_i=$((sg_mqs_i + 2))
+              continue
+            fi
+            ;;
+          '"') sg_mqs_state='n' ;;
+          ';' | '&' | '|') sg_mqs_c=' ' ;;
+          "$SG_NL") sg_mqs_c=' ' ;;
+        esac
+        ;;
+    esac
+    sg_mqs_out="$sg_mqs_out$sg_mqs_c"
+    sg_mqs_i=$((sg_mqs_i + 1))
+  done
+  printf '%s' "$sg_mqs_out"
+}
+
+SG_MASKED_COMMAND="$(sg_mask_quoted_separators "$COMMAND")"
+SG_SEGMENTS="${SG_MASKED_COMMAND//\\$SG_NL/ }"
 SG_SEGMENTS="${SG_SEGMENTS//&&/$SG_NL}"
 SG_SEGMENTS="${SG_SEGMENTS//\|\|/$SG_NL}"
 SG_SEGMENTS="${SG_SEGMENTS//;/$SG_NL}"
@@ -371,6 +451,16 @@ while IFS= read -r sg_seg; do
   # (`bash -x script.sh`、`timeout 600 script.sh`、`env -i bash script.sh`、
   # `source script.sh` 等) を見逃さないよう元の全引数走査に戻す。
   # レビュー (opus, 2026-09-25) で両方の抜けが実測されている。
+  # bdboard-qmum: status / --help / -h は SKILL.md (bdboard-server-ops) が「誰でも可」と
+  # 明記する読み取り専用サブコマンド。再起動スクリプトの直後の引数がこの3つのどれかのときだけ
+  # deny をスキップする。それ以外 (restart / start / deploy / 引数無し / 未知の引数) は
+  # 従来どおり deny する。
+  sg_restart_subcmd_is_safe() {
+    case "$1" in
+      status | --help | -h) return 0 ;;
+      *) return 1 ;;
+    esac
+  }
   if [ -n "$SG_SCRIPT_BASE" ] && [ -n "$SG_IS_SUB" ]; then
     sg_restart_wide_scan=''
     case "$sg_word" in
@@ -388,13 +478,27 @@ while IFS= read -r sg_seg; do
         ;;
     esac
     if [ -n "$sg_restart_wide_scan" ]; then
-      for sg_tok in "$@"; do
+      sg_restart_args=("$@")
+      sg_restart_argc=${#sg_restart_args[@]}
+      sg_restart_i=0
+      while [ "$sg_restart_i" -lt "$sg_restart_argc" ]; do
+        sg_tok="${sg_restart_args[$sg_restart_i]}"
         if [ "${sg_tok##*/}" = "$SG_SCRIPT_BASE" ]; then
-          sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+          sg_restart_next=''
+          sg_restart_next_i=$((sg_restart_i + 1))
+          if [ "$sg_restart_next_i" -lt "$sg_restart_argc" ]; then
+            sg_restart_next="${sg_restart_args[$sg_restart_next_i]}"
+          fi
+          if ! sg_restart_subcmd_is_safe "$sg_restart_next"; then
+            sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+          fi
         fi
+        sg_restart_i=$((sg_restart_i + 1))
       done
     elif [ "$sg_word" = "$SG_SCRIPT_BASE" ]; then
-      sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+      if ! sg_restart_subcmd_is_safe "${2:-}"; then
+        sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+      fi
     fi
   fi
 

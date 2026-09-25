@@ -355,6 +355,181 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         }),
       );
     });
+
+    // bdboard-qmum: bdboard-wa48 の opus レビューで発覚。.claude/skills/bdboard-server-ops/
+    // SKILL.md は status / --help / -h を「誰でも可」の読み取り専用サブコマンドとして
+    // 明記しているが、7b はサブコマンドを見ずにスクリプトの呼び出し自体を全面 deny して
+    // いた。直後の引数がこの3つのどれかのときだけ deny をスキップする。
+    it('allows status/--help/-h for a subagent, direct or via an interpreter wrapper', async () => {
+      expectAllow(
+        await runHook({
+          command: 'scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'scripts/always-on-server.sh --help',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'scripts/always-on-server.sh -h',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'bash scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('still denies restart/start/deploy/bare invocations of the restart script (status/--help exception is narrow)', async () => {
+      expectDeny(
+        await runHook({
+          command: 'scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'scripts/always-on-server.sh start',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({ command: 'scripts/always-on-server.sh', cwd: worktree, agentId: 'agent-1' }),
+      );
+      expectDeny(
+        await runHook({
+          command: 'bash -x scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('denies a status;restart / status&&restart compound even though status alone is safe', async () => {
+      expectDeny(
+        await runHook({
+          command:
+            'scripts/always-on-server.sh status; scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({
+          command:
+            'scripts/always-on-server.sh status && scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+  });
+
+  // bdboard-kmh2: 同じ opus レビューで発覚した2件目。セグメント分割 (; && || & と改行で
+  // split) はシェルの引用を理解しないため、引用符の中の区切り文字がセグメント境界として
+  // 扱われてしまい、規則 7 の誤検知が再発しうる (「区切り文字を含まないコミットメッセージ
+  // のみテスト済み」だった上の 'allows commands that merely mention...' を、区切り文字を
+  // 含む場合まで広げる)。
+  describe('quote-aware segmentation (bdboard-kmh2)', () => {
+    it('allows a commit message whose quotes contain ";" and merely mention the restart script or npm start', async () => {
+      expectAllow(
+        await runHook({
+          command:
+            'git commit -m "fix: guard; scripts/always-on-server.sh now checks pid before restart"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      // 旧実装 (引用符を理解しない ; 分割) では、この2発言目は
+      // `git commit -m "reminder` / `npm run start must never run in main (port N)"`
+      // の2セグメントに割れ、2セグメント目の sg_word が "npm" になり、cwd が main
+      // checkout であるため 7b の npm-start チェックが誤って deny していた
+      // (マスクがあれば1セグメントのまま git commit として allow される)。
+      expectAllow(
+        await runHook({
+          command: `git commit -m "reminder; npm run start must never run in main (port ${port})"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('still denies a real restart-script invocation that follows quoted decoy text after a real separator', async () => {
+      expectDeny(
+        await runHook({
+          command:
+            'git commit -m "fix: guard; harmless text"; scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+    });
+
+    // 旧実装は「引用符の中」の改行も区切りとして扱わないが、そもそも改行そのものは
+    // (行継続の \改行 を除き) 元々セグメント境界として使われていた。二重引用符の
+    // 中にある実改行がマスクなしだと境界として扱われ、2段落目がそのまま独立
+    // セグメントになる。2段落目の先頭トークンをスクリプト名そのものにして、
+    // 旧実装ではその独立セグメントの sg_word が一致して deny することを確認する。
+    it('allows a multi-line double-quoted commit message whose second paragraph starts with the script name', async () => {
+      expectAllow(
+        await runHook({
+          command:
+            'git commit -m "fix: guard\n\nscripts/always-on-server.sh is mentioned here; second paragraph text"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    // heredoc 本体は $(...) の外側二重引用符でくるまれているが、本体内の実改行は
+    // マスク前だとやはりセグメント境界として扱われうる。本体の1行をスクリプト名
+    // そのもので始め、旧実装ではその行が独立セグメントとして deny することを確認する。
+    it('allows a heredoc body wrapped in outer quotes ($(cat <<\'EOF\' ... EOF)) whose body line starts with the script name', async () => {
+      const command = [
+        'gh pr create --title x --body "$(cat <<\'HDEOF\'',
+        'fix: guard',
+        'scripts/always-on-server.sh is mentioned in passing, not invoked',
+        'HDEOF',
+        ')"',
+      ].join('\n');
+      expectAllow(await runHook({ command, cwd: worktree, agentId: 'agent-1' }));
+    });
+
+    // マスク関数自体の回帰ガード: 引用符の外側でバックスラッシュエスケープされた引用符
+    // ('\"') を引用の開始と誤認すると、閉じ引用符が見つからないまま残り全体を引用中と
+    // みなして無害化してしまい、その後ろの本物の危険なコマンドを隠しかねない (見逃し)。
+    it('does not let an escaped quote outside quoting hide a real trailing restart-script invocation', async () => {
+      expectDeny(
+        await runHook({
+          command: 'echo \\" ; scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+    });
+
+    it('still denies a plain unquoted git pull in the main checkout (no regression from the masking pass)', async () => {
+      expectDeny(
+        await runHook({ command: 'git pull --ff-only', cwd: mainRepo, agentId: 'agent-1' }),
+        'git pull',
+      );
+    });
   });
 
   describe('7c: killing the listener', () => {
