@@ -76,9 +76,10 @@ export function useBulkAgentRun({
     harness.harnessStatusQuery.data !== undefined ? harness.harnessStatuses : undefined;
   // 初回取得中だけ止める。取得に失敗した後の再取得 (フォーカス復帰など) では止めない。
   const harnessChecking = harness.harnessStatusQuery.isLoading;
-  // 既に実行中のカードを対象外にする (bdboard-xuuz)。取得できなければ判定しない
-  // (buildBulkRunPlan の runningTicketIds は省略扱い) — 最終判定はサーバーの
-  // canStart / 409 already-running。
+  // 既に実行中のカードを対象外にする (bdboard-xuuz)。取得に失敗しても「不明」として
+  // 止めない — useActiveAgentRuns は失敗時も空の Set を返すので、buildBulkRunPlan は
+  // 実行中カードが無かった扱いで進む。最終判定はサーバーの canStart / 409
+  // already-running。
   const activeRuns = useActiveAgentRuns(hasSelection);
 
   const readyDisplayOrder = useMemo(() => collectReadyDisplayOrder(board), [board]);

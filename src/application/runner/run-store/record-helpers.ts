@@ -9,6 +9,9 @@ export function toPublicRecord(entry: InternalRunEntry): RunStoreRecord {
   };
 }
 
+// web/src/hooks/useActiveAgentRuns.ts (bdboard-xuuz) がこの条件をクライアント側の
+// 文字列比較として複製している (web は src/ を import できないため)。ここを変えたら
+// 向こうも揃えること。
 export function isActiveStatus(status: RunStatus): boolean {
   return status === 'running' || status === 'cancelling';
 }

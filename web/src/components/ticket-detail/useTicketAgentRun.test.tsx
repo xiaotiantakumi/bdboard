@@ -129,6 +129,9 @@ describe('useTicketAgentRun', () => {
     });
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // bdboard-xuuz: 一括実行の「既に実行中のエージェントがあるカード」判定が使う
+    // board 全体の run 一覧も、この画面からの実行開始で stale になることを確認する。
+    queryClient.setQueryData(['agent-runs-active'], { runs: [] });
     const { result } = renderHook(() => useTicketAgentRun('bd-1', ticket, undefined), {
       wrapper: createWrapper(queryClient),
     });
@@ -149,6 +152,7 @@ describe('useTicketAgentRun', () => {
       reused: false,
     });
     expect(startTicketRunMock).toHaveBeenCalledWith('bd-1');
+    expect(queryClient.getQueryState(['agent-runs-active'])?.isInvalidated).toBe(true);
 
     await waitFor(() =>
       expect(result.current.polledRunDetail?.status).toBe('succeeded'),

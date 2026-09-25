@@ -37,7 +37,7 @@ export const BOARD_CHANGED_QUERY_KEY_EXCLUSIONS = {
   'agent-run':
     '履歴から選んだ 1 件の実行詳細で、bdboard 自身の実行記録 (runStore) 由来。.beads の変更では変わらず、実行中の進捗は詳細パネルの独自ポーリングで追う。',
   'agent-runs-active':
-    '一括実行 (bdboard-xuuz) が「既に実行中のエージェントがあるカード」を対象外にするための board 全体の run 一覧で、ticket-runs/agent-run と同じく bdboard 自身の実行記録 (runStore) 由来。.beads の変更では変わらない。一括操作バーで選択が始まる (enabled が false→true になる) たびに取り直すので、確認ダイアログを開いている間に他クライアントが新しく実行を始めても board.changed では追従しない — 最終判定はサーバーの canStart / 409 already-running。',
+    '一括実行 (bdboard-xuuz) が「既に実行中のエージェントがあるカード」を対象外にするための board 全体の run 一覧で、ticket-runs/agent-run と同じく bdboard 自身の実行記録 (runStore) 由来。.beads の変更では変わらないので、ticket-runs と同じく実行を開始した側と終端を観測した側が invalidate する: 詳細パネル自身の実行開始時 (useAgentRunMutations.ts)、Next Up ループの開始要求の結果が出た時と実行の終了時 (ticketRunsInvalidator.ts、App が useNextUpRunLoopController に渡す通知)。別タブ・別端末など他のクライアントで始めた実行は、既定の staleTime (30秒) 経過後の再取得まで反映されない — 最終判定はサーバーの canStart / 409 already-running。',
   'agent-runs-config': '設定パネル自身の保存操作で invalidate する設定値。',
   'ai-quota-alert-config': '設定パネル自身の保存操作で invalidate する設定値。',
   'board-thresholds-config': '設定パネル自身の保存操作で invalidate する設定値。',

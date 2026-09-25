@@ -858,17 +858,21 @@ describe('nextUpRunLoop', () => {
       );
     });
 
-    it('invalidates only the notified ticket runs query', () => {
+    it('invalidates only the notified ticket runs query, plus the board-wide active-runs query (bdboard-xuuz)', () => {
       const queryClient = new QueryClient();
       queryClient.setQueryData(['ticket-runs', 'ticket-1'], []);
       queryClient.setQueryData(['ticket-runs', 'ticket-2'], []);
       queryClient.setQueryData(['ticket', 'ticket-1'], {});
+      queryClient.setQueryData(['agent-runs-active'], { runs: [] });
 
       createTicketRunsInvalidator(queryClient)('ticket-1');
 
       expect(queryClient.getQueryState(['ticket-runs', 'ticket-1'])?.isInvalidated).toBe(true);
       expect(queryClient.getQueryState(['ticket-runs', 'ticket-2'])?.isInvalidated).toBe(false);
       expect(queryClient.getQueryState(['ticket', 'ticket-1'])?.isInvalidated).toBe(false);
+      // 一括実行 (bdboard-xuuz) の「既に実行中のエージェントがあるカード」判定は
+      // board 全体の run 一覧を見るので、どのチケットの通知でも stale にしてよい。
+      expect(queryClient.getQueryState(['agent-runs-active'])?.isInvalidated).toBe(true);
       queryClient.clear();
     });
 
