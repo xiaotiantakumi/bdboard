@@ -137,16 +137,14 @@ export function useChatThreadLists({
       ? (threadById.get(currentSessionId)?.title ?? '(無題)')
       : '新規';
 
-  // 既知の別件 (follow-up bdboard-ygrg、未修正): next/wasSelected は
-  // render-time の openThreads/currentSessionId state を読んでおり、
-  // closeThread が deleteThread の async 継続として呼ばれた場合、await 中に
-  // 他の更新が openThreads を変えていても closeThread のクロージャは古い値を
-  // 見て next を計算してしまう。本チケット(bdboard-197q)が直したのは
-  // selectedThreadIdsRef の render-mirror 同期漏れのみで、この closure-staleness
-  // は別バグクラスとして bdboard-ygrg に分離している。
+  // bdboard-ygrg: deleteThread の async 継続から呼ばれる場合も最新の
+  // open/selected state を使えるよう、next と wasSelected は render-mirror
+  // refs から読む。
   const closeThread = (sessionId: string) => {
-    const next = openThreads.filter((id) => id !== sessionId);
-    const wasSelected = currentSessionId === sessionId;
+    const liveOpenThreads = openThreadIdsRef.current[selectedProjectId] ?? [];
+    const liveSelectedSessionId = selectedThreadIdsRef.current[selectedProjectId];
+    const next = liveOpenThreads.filter((id) => id !== sessionId);
+    const wasSelected = (liveSelectedSessionId ?? currentSessionId) === sessionId;
     // フォールバック先は openThreadIds の挿入順(next[0] = 最古)ではなく、
     // displayedOpenThreads と同じ表示順(新しい順)の先頭に合わせる。3tw.154 で
     // 表示順を挿入順→新しい順に変えたことで、挿入順の先頭のままだと選択が
@@ -154,7 +152,9 @@ export function useChatThreadLists({
     const nextDisplayed = [...next].sort((a, b) =>
       compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
     );
-    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : currentSessionId;
+    const nextSelectedSessionId = wasSelected
+      ? nextDisplayed[0]
+      : liveSelectedSessionId ?? currentSessionId;
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
