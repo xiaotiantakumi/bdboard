@@ -32,8 +32,10 @@
 # git -C・npm --prefix の直接指定だけを追う。NAME=値 代入の展開・別ファイルへ書いて
 # 実行する迂回・絶対パス/バックスラッシュ経由の git 呼び出しは追わない (規則 7/8 の
 # 既知の限界と同種。見逃しは fail-open のまま = このチケット以前と同じ無防備さで、
-# 新規の後退ではない)。git branch -D の検出は `-D` 短縮形のみ対応
-# (`--delete --force` の長形式は対象外)。
+# 新規の後退ではない)。複数の `git -C a -C b` は前の -C からの相対で連鎖して解決する
+# (bdboard-2i15)。`git branch` の force delete 検出は `-D` に加えて `--delete`/`-d` と
+# `--force`/`-f` の組み合わせ (順不同) も見る (bdboard-2i15)。`npx npm run merge-pr` の
+# ような間接実行 (npm が先頭語にならない形) は引き続き対象外 (bdboard-2i15 では見送り)。
 
 matches '(^|[^[:alnum:]_./-])(git|gh|npm)([^[:alnum:]_-]|$)|\.sh([^[:alnum:]_-]|$)' || return 0
 
@@ -222,7 +224,16 @@ while IFS= read -r wog_seg; do
       wog_git_dir="$WOG_DIR"
       while [ $# -gt 0 ]; do
         case "$1" in
-          -C) wog_git_dir="$(wog_resolve_dir "${2:-}")"; shift; shift ;;
+          -C)
+            # 複数の -C は本物の git と同じく「直前の -C からの相対」で連鎖させる
+            # (bdboard-2i15): wog_resolve_dir は $WOG_DIR を基準に解決するので、
+            # 一時的に $WOG_DIR を直前の wog_git_dir に差し替えてから呼ぶ。
+            wog_c_saved_dir="$WOG_DIR"
+            WOG_DIR="$wog_git_dir"
+            wog_git_dir="$(wog_resolve_dir "${2:-}")"
+            WOG_DIR="$wog_c_saved_dir"
+            shift; shift
+            ;;
           -c | --git-dir | --work-tree | --namespace) shift; shift ;;
           -*) shift ;;
           *) break ;;
@@ -270,16 +281,19 @@ while IFS= read -r wog_seg; do
           ;;
         branch)
           shift
+          wog_branch_delete=''
           wog_branch_force=''
           wog_branch_names=''
           for wog_barg in "$@"; do
             case "$wog_barg" in
-              -D) wog_branch_force='yes' ;;
+              -D) wog_branch_delete='yes'; wog_branch_force='yes' ;;
+              -d | --delete) wog_branch_delete='yes' ;;
+              -f | --force) wog_branch_force='yes' ;;
               -*) ;;
               *) wog_branch_names="$wog_branch_names $wog_barg" ;;
             esac
           done
-          if [ -n "$wog_branch_force" ]; then
+          if [ -n "$wog_branch_delete" ] && [ -n "$wog_branch_force" ]; then
             for wog_bname in $wog_branch_names; do
               case "$wog_bname" in
                 bd/*)
