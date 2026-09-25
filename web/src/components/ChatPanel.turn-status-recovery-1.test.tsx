@@ -405,7 +405,7 @@ describe('ChatPanel', () => {
     // 「同じ会話への前の送信 (D) が配信停止し、まだ回収が終わっていない間に、後続の
     // 送信 (N) がインライン失敗する」状況が起きれば、N の失敗を直接 ACK すると D の
     // 未回収の completed エントリまで巻き添えで消しうる、というのが finding-1 の懸念
-    // だった。それを防ぐガード (unresolvedSameSessionDetach, ChatPanel.tsx) 自体は
+    // だった。それを防ぐガード (unresolvedSameSessionDetach, chat/deliverChatSend.ts) 自体は
     // まだ残っている。
     //
     // ただし bdboard-v3ag (このテスト) は、その前提そのもの — 「D が未回収の間に
