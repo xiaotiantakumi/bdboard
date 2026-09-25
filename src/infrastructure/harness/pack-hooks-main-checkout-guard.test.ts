@@ -74,7 +74,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
     };
 
     mainWithPort = path.join(tmpRoot, 'main-port');
-    worktreeWithPort = path.join(tmpRoot, 'wt-port');
+    worktreeWithPort = path.join(mainWithPort, '.claude', 'worktrees', 'bdboard-w8ad');
     await initGitRepo(mainWithPort, 'main');
     writeContract(mainWithPort, {
       version: 1,
@@ -261,11 +261,220 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       );
     });
 
+    it.each([
+      { label: 'commit', command: 'git -C ../../.. -C . commit -m x' },
+      { label: 'reset', command: 'git -C ../../.. -C . reset --hard' },
+      { label: 'checkout', command: 'git -C ../../.. -C . checkout -b tmp' },
+    ])('denies chained git -C traversal from a worktree for $label', async ({ label, command }) => {
+      expectDeny(
+        await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        `git ${label}`,
+      );
+    });
+
+    it.each([
+      { label: 'commit', command: 'git -C ../../.. commit -m x' },
+      { label: 'reset', command: 'git -C ../../.. reset --hard' },
+      { label: 'checkout', command: 'git -C ../../.. checkout -b tmp' },
+    ])('continues to deny a single git -C traversal from a worktree for $label', async ({ label, command }) => {
+      expectDeny(
+        await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        `git ${label}`,
+      );
+    });
+
+    it('allows chained git -C values whose final target remains inside a worktree', async () => {
+      expectAllow(
+        await runBashHook({
+          command: 'git -C .claude/worktrees/bdboard-w8ad -C subdir checkout other',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
     it('denies subagent clean directly in the main checkout even without alwaysOnServer.port', async () => {
       expectDeny(
         await runBashHook({ command: 'git clean -fdx', cwd: mainNoPort, agentId: 'agent-1' }),
         'main checkout',
         'git clean',
+      );
+    });
+
+    it.each(['/usr/bin/git checkout other', './bin/git checkout other'])(
+      'denies subagent checkout when git is invoked by path: %s',
+      async (command) => {
+        expectDeny(
+          await runBashHook({ command, cwd: mainWithPort, agentId: 'agent-1' }),
+          'main checkout',
+          'git checkout',
+        );
+      },
+    );
+
+    it('denies subagent checkout when a leading backslash bypasses aliases/functions', async () => {
+      expectDeny(
+        await runBashHook({ command: '\\git checkout other', cwd: mainWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it.each([
+      'nice git checkout other',
+      'timeout 60 git checkout other',
+      'if git checkout other',
+      'while git checkout other',
+      'until git checkout other',
+    ])('denies subagent checkout behind a command prefix: %s', async (command) => {
+      expectDeny(
+        await runBashHook({ command, cwd: mainWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it('denies a mutating git command after a real pipe', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'echo x | git commit -m x',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git commit',
+      );
+    });
+
+    it('denies a mutating git command after a pipe when the segment itself already starts with git', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'git status | git commit -m x',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git commit',
+      );
+    });
+
+    it('denies a mutating git command after the second of two real pipes in one segment', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'echo x | git status | git commit -m x',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git commit',
+      );
+    });
+
+    it('allows a quoted grep pattern after a pipe that merely mentions git checkout', async () => {
+      expectAllow(
+        await runBashHook({
+          command: 'echo x | grep "mentions git checkout"',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows a read-only git command followed by a pipe', async () => {
+      expectAllow(
+        await runBashHook({
+          command: 'git log | grep checkout',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it.each(['git -C "$(pwd)" checkout other', 'D=$(pwd); git -C $D checkout other'])(
+      'conservatively denies an unresolved git -C value: %s',
+      async (command) => {
+        expectDeny(
+          await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+          'git checkout',
+        );
+      },
+    );
+
+    it('conservatively denies a same-command GIT_DIR override for a mutating command', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'GIT_DIR=/tmp/somewhere git checkout other',
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+        'git checkout',
+      );
+    });
+
+    it('allows a fully resolvable relative git -C target that is a worktree', async () => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectAllow(
+        await runBashHook({
+          command: `git -C ${relativeWorktree} checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows a plain mutating git command in a worktree when no ambiguous override is present', async () => {
+      expectAllow(
+        await runBashHook({ command: 'git checkout other', cwd: worktreeWithPort, agentId: 'agent-1' }),
+      );
+    });
+
+    it('restores the real previous directory for cd - after two directory changes', async () => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectAllow(
+        await runBashHook({
+          command: `cd ${relativeWorktree} && cd /tmp && cd - && git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('swaps back to the main checkout for cd - after one directory change', async () => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectDeny(
+        await runBashHook({
+          command: `cd ${relativeWorktree} && cd - && git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it.each([
+      {
+        label: 'with whitespace before the subshell close',
+        command: (relativeWorktree: string) =>
+          `(cd ${relativeWorktree} && git commit -m x ) && git checkout other`,
+      },
+      {
+        label: 'without whitespace before the subshell close',
+        command: (relativeWorktree: string) =>
+          `(cd ${relativeWorktree} && git commit -m x) && git checkout other`,
+      },
+    ])('restores the outer directory after a subshell $label', async ({ command }) => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectDeny(
+        await runBashHook({
+          command: command(relativeWorktree),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
       );
     });
 
