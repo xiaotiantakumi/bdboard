@@ -437,3 +437,44 @@ for r in json.load(sys.stdin):
         if k.startswith('bdboard.model.'): c[(k,v)]+=1
 print(*sorted(c.items(), key=lambda x:-x[1]), sep='\n')"
 ```
+
+## 過去チケットの顛末を答えるとき — 台帳/コード/稼働物の3層を突き合わせる
+
+なぜ: 「あのチケット結局どうなった？」「対応したはずなのにまだ画面に出ている」に対して
+**bd の status だけを見て答えると必ず外す**。`closed` はマージ済みを意味せず、マージ済みで
+あってもリビルド/再起動していなければ画面には残る（常時稼働サーバーは静的 `web/dist` を
+配信するため）。3層のどこでズレたかを特定して初めて回答になる。
+
+手順:
+
+1. **特定** — `bd search <キーワード>`（closed も拾える）。元チケット・撤回チケットの
+   両方を辿る（例: 導入 3tw.58 → 削除 3tw.151）。
+2. **経緯** — `bd show <id> --include-comments`。**下の gotcha 必読**。
+3. **コード** — `git ls-tree -r --name-only origin/main | grep <対象>` と
+   `git log --oneline origin/main --grep=<ticket-id>` で、本当にマージされ、本当に
+   消えた/入ったかを確認する。チケットのコメントの「実装完了」は未マージのことがある。
+4. **稼働物** — 常時稼働サーバー（:8787）を実測する。削除機能なら
+   `curl -o /dev/null -w '%{http_code}' localhost:8787/api/<route>` が 404 か、
+   配信中バンドル（`curl localhost:8787/ | grep -o '/assets/[^"]*\.js'` → その URL を
+   grep）に該当文字列が残っていないか。ここまで揃うと「サーバーには無い →
+   ユーザーのタブが古い」と断定できる。
+
+回答は「結論 → 根拠（チケットID・コメント日時・commit SHA・実測値）→ 今そう見えている
+理由」の順で書く。ボードの「完了」レーンには closed チケットのカードが残るので、
+「まだ表示されている」がバッジではなくカードを指している可能性も潰す。
+
+### gotcha: `bd show --json` はコメント本文を落とす（bd 1.2.1 実測、2026-09-25 再確認）
+
+`bd show <id> --json` の返す JSON に `comments` キーは**無い**。あるのは
+`comment_count` と `comments_omitted: true` だけで、本文は取れない。決着の経緯
+（PR番号・レビュー結果・CI・マージスロット待ちの時系列）はほぼコメントに書かれるため、
+JSON だけ読んで「経緯の記録が無い」と結論するのは誤り。
+
+- 人が読むなら素の `bd show <id>`（コメント込みで表示される）。
+- 機械可読で本文が要るなら `bd show <id> --json --include-comments`。
+- 同様に `--refs`（この issue を参照している issue の逆引き）、`--as-of <sha|branch>`
+  （Dolt 上の過去時点）も既定の JSON には出ない。
+- **bdboard のチャット（bd MCP ツール）はこの影響を受けない**: `bd_show` は
+  `buildReadToolArgs`（`src/infrastructure/chat/bd-tool-catalog/read-tools.ts`）が
+  `show --json --include-comments --id=<id>` を組むため、チャットからでもコメント本文を
+  取得できる。
