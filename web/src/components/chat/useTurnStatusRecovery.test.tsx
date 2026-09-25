@@ -2,8 +2,8 @@
 // E8)の request-id の扱いを直接確かめる。generation の bump(ストリームの abort など)で
 // effect が張り直されても、スレッド一覧・履歴の request-id は進めない(進めると、同時に
 // 走っている useThreadListSync の一覧 fetch / useChatHistoryLoader の履歴 fetch を
-// 握りつぶす)。進めるのは回収したターンを hydrate する直前だけで、そこでは従来どおり
-// 古い応答を無効化する。
+// 握りつぶす)。進めるのは回収したターンを当てる直前だけ(hydrate の fetch の後。一覧は
+// bdboard-tsen、履歴は bdboard-lsv2)で、そこでは従来どおり古い応答を無効化する。
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { useEffect, useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -171,6 +171,9 @@ describe('useTurnStatusRecovery request-id guards', () => {
     });
 
     expect(applyRecoveredTurn).not.toHaveBeenCalled();
+    // bdboard-lsv2: 当てずに捨てた hydrate は履歴の request-id も進めない。
+    expect(result.current.historyRequestIdRef.current).toBe(0);
+    expect(setLoadingHistoryFor).not.toHaveBeenCalledWith(null);
   });
 
   it('does not advance the history request id nor clear the history loading flag on a generation bump (bdboard-ibkf)', async () => {
@@ -191,7 +194,13 @@ describe('useTurnStatusRecovery request-id guards', () => {
 
   it('still advances the history request id and clears the loading flag right before hydrating', async () => {
     fetchChatTurnStatusMock.mockResolvedValueOnce(COMPLETED).mockResolvedValue(IDLE);
-    const probe: { ref?: { current: number }; idAtFetch?: number; loadingClearedBeforeFetch?: boolean } = {};
+    const probe: {
+      ref?: { current: number };
+      idAtFetch?: number;
+      loadingClearedBeforeFetch?: boolean;
+      idAtApply?: number;
+      loadingClearedBeforeApply?: boolean;
+    } = {};
     fetchChatThreadsMock.mockResolvedValue([]);
     fetchChatSessionMessagesMock.mockImplementation(() => {
       probe.idAtFetch = probe.ref?.current;
@@ -201,10 +210,56 @@ describe('useTurnStatusRecovery request-id guards', () => {
 
     const { result, applyRecoveredTurn } = renderProbe();
     probe.ref = result.current.historyRequestIdRef;
+    applyRecoveredTurn.mockImplementation(() => {
+      probe.idAtApply = probe.ref?.current;
+      probe.loadingClearedBeforeApply = setLoadingHistoryFor.mock.calls.some(([value]) => value === null);
+    });
 
     await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledTimes(1));
-    // hydrate の fetch より前に id が進んでいる = それ以前に始まった履歴応答は捨てられる。
-    expect(probe.idAtFetch).toBe(1);
-    expect(probe.loadingClearedBeforeFetch).toBe(true);
+    // bdboard-lsv2: hydrate の fetch 中は id を進めず loading も外さない(その間に届く
+    // useChatHistoryLoader の応答は生きている)。当てる直前に進めるので、それより後に届く
+    // 履歴応答は捨てられ、回収結果を上書きしない。
+    expect(probe.idAtFetch).toBe(0);
+    expect(probe.loadingClearedBeforeFetch).toBe(false);
+    expect(probe.idAtApply).toBe(1);
+    expect(probe.loadingClearedBeforeApply).toBe(true);
+    expect(result.current.historyRequestIdRef.current).toBe(1);
+  });
+
+  it('does not advance the history request id nor clear the loading flag when the hydrate fetch fails (bdboard-lsv2)', async () => {
+    fetchChatTurnStatusMock.mockResolvedValueOnce(COMPLETED).mockResolvedValue(IDLE);
+    fetchChatThreadsMock.mockRejectedValue(new Error('hydrate list failed'));
+    fetchChatSessionMessagesMock.mockResolvedValue({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+
+    const { result, applyRecoveredTurn } = renderProbe();
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+
+    // 失敗した hydrate は何も当てないので、in-flight の履歴応答を捨てる理由も無い。
+    expect(applyRecoveredTurn).not.toHaveBeenCalled();
+    expect(result.current.historyRequestIdRef.current).toBe(0);
+    expect(setLoadingHistoryFor).not.toHaveBeenCalledWith(null);
+  });
+
+  it('does not advance the history request id when a generation bump cancels an in-flight hydrate (bdboard-lsv2)', async () => {
+    fetchChatTurnStatusMock.mockResolvedValueOnce(COMPLETED).mockResolvedValue(IDLE);
+    let resolveThreads!: (threads: ChatThreadDto[]) => void;
+    fetchChatThreadsMock.mockImplementation(
+      () => new Promise<ChatThreadDto[]>((resolve) => { resolveThreads = resolve; }),
+    );
+    fetchChatSessionMessagesMock.mockResolvedValue({ sessionId: 'sess-1', agentId: 'claude', messages: [] });
+
+    const { result, rerender, applyRecoveredTurn } = renderProbe();
+    await waitFor(() => expect(fetchChatThreadsMock).toHaveBeenCalledTimes(1));
+    rerender({ projectId: 'proj-a', generation: 1 });
+    await waitFor(() => expect(fetchChatTurnStatusMock).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      resolveThreads([]);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(applyRecoveredTurn).not.toHaveBeenCalled();
+    expect(result.current.historyRequestIdRef.current).toBe(0);
+    expect(setLoadingHistoryFor).not.toHaveBeenCalledWith(null);
   });
 });
