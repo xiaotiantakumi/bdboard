@@ -86,13 +86,21 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
     rmSync(tmpRoot, { recursive: true, force: true });
   });
 
-  function makeMainAndWorktree(label, { mainHasScript }) {
+  function makeMainAndWorktree(label, { mainHasScript, mainScriptKind = 'marker' }) {
     const mainRepo = path.join(tmpRoot, `${label}-main`);
     mkdirSync(mainRepo, { recursive: true });
     writeFileSync(path.join(mainRepo, 'package.json'), JSON.stringify({ name: 'fake-bdboard', private: true }));
     if (mainHasScript) {
       mkdirSync(path.join(mainRepo, 'scripts'), { recursive: true });
-      writeFileSync(path.join(mainRepo, 'scripts', SCRIPT_BASENAME), MAIN_MARKER_SCRIPT, { mode: 0o755 });
+      if (mainScriptKind === 'real') {
+        // 「すでに main checkout の版として呼ばれた」ケースを確かめるテスト用: 委譲先の
+        // マーカーではなく、いま編集中の実物を main 側にも置く (このときは worktree 側は使わない)。
+        copyFileSync(REAL_SCRIPT, path.join(mainRepo, 'scripts', SCRIPT_BASENAME));
+        chmodSync(path.join(mainRepo, 'scripts', SCRIPT_BASENAME), 0o755);
+        copyFileSync(REAL_DEPLOY_CHANGED, path.join(mainRepo, 'scripts', 'deploy-changed.sh'));
+      } else {
+        writeFileSync(path.join(mainRepo, 'scripts', SCRIPT_BASENAME), MAIN_MARKER_SCRIPT, { mode: 0o755 });
+      }
     }
     git(mainRepo, ['init', '-q', '-b', 'main'], env);
     commitAll(mainRepo, env, `${label} main`);
@@ -144,11 +152,19 @@ describe.skipIf(process.platform === 'win32')('always-on-server.sh self-exec gua
   });
 
   it('does not delegate when already invoked as the main checkout copy', () => {
-    const { mainRepo } = makeMainAndWorktree('canonical', { mainHasScript: true });
+    // マーカーへの委譲が起きた「ように見える」だけでは、本物のガード条件
+    // (SCRIPT_DIR == MAIN_SCRIPT_DIR_CANON なら exec しない) 自体は検証できない。
+    // ここでは main 側にも実物の always-on-server.sh を置き、main checkout から直接
+    // 実行して、委譲メッセージが一切出ず・通常の status 出力がそのまま返ることを確かめる。
+    const { mainRepo } = makeMainAndWorktree('canonical', { mainHasScript: true, mainScriptKind: 'real' });
     const mainScript = path.join(mainRepo, 'scripts', SCRIPT_BASENAME);
-    const result = run(mainScript, mainRepo, ['status'], env);
+    const result = run(mainScript, mainRepo, ['status', '--port', '19996'], env);
     expect(result.status).toBe(0);
-    expect(result.stdout).toBe('MAIN-VERSION-EXECUTED args=status\n');
-    expect(result.stderr).toBe('');
+    // 委譲時のメッセージ (bdboard-9nah を含む) が出ていない = exec し直していない。
+    expect(result.stderr).not.toContain('bdboard-9nah');
+    expect(result.stdout).not.toContain('MAIN-VERSION-EXECUTED');
+    // 委譲せず、実物の status 出力がそのまま返っている。
+    expect(result.stdout).toContain('main checkout :');
+    expect(result.stdout).toContain('listener PID  : (not listening)');
   });
 });
