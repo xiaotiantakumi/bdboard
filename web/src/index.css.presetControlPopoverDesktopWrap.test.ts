@@ -40,7 +40,7 @@ function stripCssComments(css: string): string {
 function ruleBody(css: string, selector: string): string | null {
   const source = stripCssComments(css);
   const pattern = new RegExp(
-    `(^|[}\\n])\\s*${selector.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}\\s*\\{([^{}]*)\\}`,
+    `(^|[}\\n])\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^{}]*)\\}`,
   );
   const match = source.match(pattern);
   return match === null ? null : match[2];
@@ -48,7 +48,7 @@ function ruleBody(css: string, selector: string): string | null {
 
 function ruleBodyForSelectorList(css: string, selectors: string[]): string | null {
   const source = stripCssComments(css);
-  const escaped = selectors.map((s) => s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&'));
+  const escaped = selectors.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   const pattern = new RegExp(`(^|[}\\n])\\s*${escaped.join('\\s*,\\s*')}\\s*\\{([^{}]*)\\}`);
   const match = source.match(pattern);
   return match === null ? null : match[2];

@@ -51,10 +51,13 @@ import { describe, expect, it } from 'vitest';
  * `.preset-control-popover` 自体は幅 320px 固定
  * (`max-width: calc(100vw - 32px)` は概ね 352px 未満のビューポートでしか
  * 効かない) なので、この `nowrap` 継承バグは実はデスクトップ幅でも再現する
- * (実ブラウザで確認済み。PR 本文)。ただしこのチケットの受け入れ基準はモバイル幅
- * (375px/320px) に限定されており、直し方の指針 (PR #742 のレビュー指摘: 実際に
- * バグが起きる範囲だけにスコープする) に従い、デスクトップ側の見た目を変えない
- * ようこの `@media` の外までは広げない。
+ * (実ブラウザで確認済み。PR 本文)。このチケット (bdboard-h4xs.29) の当時の
+ * 受け入れ基準はモバイル幅 (375px/320px) に限定されており、直し方の指針
+ * (PR #742 のレビュー指摘: 実際にバグが起きる範囲だけにスコープする) に従い、
+ * ここではデスクトップ側までは広げなかった。デスクトップ幅への対応は
+ * bdboard-wmtb (PR #765) で `settings-6.css` のベース規則に追加されている
+ * (下記のテストを参照。このモバイル専用ブロックは値が同じなので技術的には
+ * 冗長だが、このブロックの中身を厳密に検証する構造はそのまま活かしている)。
  *
  * jsdom にはレイアウトが無く、折り返し・オーバーフローの有無をコンポーネント
  * テストで検証できないため、ここでは CSS を**テキストとして**読み、
@@ -62,8 +65,10 @@ import { describe, expect, it } from 'vitest';
  * 厳密に切り出した上で、その中にある `.preset-control-popover` 規則に
  * `white-space: normal` と `overflow-wrap: anywhere` の両方が揃っていること、
  * `.preset-control-rename .btn, .preset-control-save-row .btn` 規則に
- * `white-space: nowrap` が付いていること、かつ `settings-6.css` のベース規則
- * (media query の外) にはこれらが付いていないことを固定する。ブロックを
+ * `white-space: nowrap` が付いていること、かつ (bdboard-wmtb / PR #765 以降は)
+ * `settings-6.css` のベース規則 (media query の外) にも同じ上書きがあることを
+ * 固定する (デスクトップ幅でも継承を解除するため。詳細は
+ * index.css.presetControlPopoverDesktopWrap.test.ts)。ブロックを
  * 波括弧の対応で厳密に切り出すのは、単純な部分一致だと `.preset-control-popover`
  * 規則が (誤って) `@media` の外に移動していても「ファイルのどこかに
  * `@media (max-width: 700px)` という文字列がある」だけで誤って合格してしまう
