@@ -11,8 +11,9 @@
 import { git, gitOk, run } from './exec.mjs';
 import { classifyS2 } from './classify.mjs';
 import { EXIT, fail, fetchedMain, ticketIdFor } from './context.mjs';
+import { bodyReferencesIssue, issueNumberFromExternalRef, readExternalRef } from './external-ref.mjs';
 import { getLandedStatus, getPull, requiredChecks } from './github.mjs';
-import { brokenMainSteps, rebaseSteps } from './messages.mjs';
+import { brokenMainSteps, externalRefSteps, rebaseSteps } from './messages.mjs';
 import { verifyPredicted } from './predicted.mjs';
 import { audit, readState, removeState, say, writeState } from './state.mjs';
 
@@ -79,6 +80,31 @@ function refuseBrokenBase(ctx, pr, predBase) {
   }
 }
 
+/**
+ * チケットの external-ref (gh-<N>) があるのに、PR 本文が issue #N を Closes/Fixes/Resolves/Refs
+ * のいずれでも指していなければ止める (bdboard-4y8q.8、既存の前提条件エラーと同じ EXIT.PRECONDITION)。
+ * bd が読めないときは fail-open — 警告だけして進む (bd 障害でマージ自体を止める理由にはしない)。
+ * S0 モード/rebase が要る (cls === 'R')/CI が緑でない/--dry-run、といった他の理由で止まる PR には
+ * このチェックを先回りさせない (bd への不要な呼び出しを避ける) — それらは全部このチェックより
+ * 前で return / fail する。一方、cls === 'F' の着地予定ツリー verify (数分・verify スロット消費)
+ * よりは前で呼ぶ — 本文が issue を指していないだけで結局 fail するなら、その重い verify を
+ * 走らせる前に安く弾く。
+ */
+function assertExternalRefLinked(ctx, pull, id, pr) {
+  const ref = readExternalRef(ctx, id);
+  if (!ref.ok) {
+    audit('prepare-external-ref-unreadable', { pr, id, reason: ref.reason });
+    say(`external-ref を確認できませんでした (${ref.reason})。このチェックは省略して進みます (fail-open)。`);
+    return;
+  }
+  const issueNumber = issueNumberFromExternalRef(ref.externalRef);
+  if (issueNumber === null || bodyReferencesIssue(pull.body, issueNumber)) {
+    return;
+  }
+  audit('prepare-external-ref-missing', { pr, id, external_ref: ref.externalRef, issue: issueNumber });
+  fail(EXIT.PRECONDITION, ...externalRefSteps(id, ref.externalRef, issueNumber, pr));
+}
+
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
   const prior = readState(ctx.cwd, pr);
   if (prior?.gateAt) {
@@ -141,6 +167,10 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     return EXIT.OK;
   }
   removeState(ctx.cwd, pr);
+  // external-ref のチェックは軽い (bd 呼び出し1回) 一方、cls === 'F' の着地予定ツリー verify は
+  // 数分かかり verify スロットも消費する。PR 本文が issue を指していないだけで結局 fail する
+  // なら、その重い verify の前に安く弾く (bdboard-4y8q.8 レビュー指摘)。
+  assertExternalRefLinked(ctx, pull, id, pr);
   const state = { pr, id, head, predBase, class: cls, preparedAt: new Date().toISOString() };
   if (cls === 'F') {
     refuseBrokenBase(ctx, pr, predBase);

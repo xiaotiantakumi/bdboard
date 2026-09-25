@@ -9,6 +9,8 @@
 //   statusQueue[sha]    あれば GET のたびに先頭を取り出して statuses[sha] に据える (待ちの再現)
 //   checksError[n]      あれば gh pr checks n がこの stderr で exit 1 (API エラーの再現)
 //   slot                { holder, freeAfter, onAcquire, broken } — bd merge-slot の代役
+//   bdShow[id]          あれば bd show <id> --json が返すチケットのフィールドを合成する (external_ref 等)
+//   bdShowError          あれば bd show がこの stderr で exit 1 (bd 未接続の再現)
 //   npmExit             npm の終了コード
 //   calls / posted      呼び出しと POST された status の記録 (テストが検証する)
 import { spawnSync } from 'node:child_process';
@@ -114,6 +116,18 @@ function bd() {
     } else {
       slot.holder = null;
       out = 'Released merge slot\n';
+    }
+  } else if (args[0] === 'show') {
+    // bdboard-4y8q.8: bd show <id> --json の代役。state.bdShowError があれば bd 接続不能を再現する
+    // (fail-open のテスト用)。state.bdShow[<id>] があればそのフィールドを持つ 1 件を返す
+    // (無ければ external_ref の無いチケットとして返す — 既定の挙動)。
+    const id = args[1];
+    if (state.bdShowError) {
+      err = `${state.bdShowError}\n`;
+      code = 1;
+    } else {
+      const entry = state.bdShow?.[id] ?? {};
+      out = JSON.stringify([{ id, ...entry }]);
     }
   } else {
     err = `fake bd: unsupported ${args.join(' ')}`;

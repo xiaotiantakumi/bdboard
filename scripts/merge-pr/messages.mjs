@@ -33,3 +33,14 @@ export function mergeInstructions(pr) {
     "  - 'main' is already used by worktree の exit 1 は既知 (マージ本体は成功)。そのまま finish へ",
   ];
 }
+
+/** external-ref (gh-<N>) を持つチケットの PR に、issue を閉じる/参照する語が無いときの案内
+ * (bdboard-4y8q.8)。 */
+export function externalRefSteps(id, externalRef, issueNumber, pr) {
+  return [
+    `チケット ${id} の external-ref (${externalRef}) に対応する #${issueNumber} への言及が PR #${pr} の本文にありません。`,
+    `この PR で GitHub issue #${issueNumber} を閉じるなら本文に "Closes #${issueNumber}" (Fixes / Resolves も可) を、`,
+    `同じ issue の他のチケットに任せる (最後にマージする PR ではない) なら "Refs #${issueNumber}" を追加してください。`,
+    '(1つの issue に複数チケットがあるときは、最後にマージする PR だけ Closes/Fixes/Resolves、それ以外は Refs。docs/GIT-WORKFLOW.md「PR 本文で external-ref の issue を閉じる」節)',
+  ];
+}

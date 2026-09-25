@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { main } from './merge-pr/cli.mjs';
 
 export { decideS2Class, readMergeTree } from './merge-pr/classify.mjs';
+export { bodyReferencesIssue, issueNumberFromExternalRef, stripCodeSpans } from './merge-pr/external-ref.mjs';
 export { DEFAULT_HOT_FILES, globToRegExp, hotCollisions } from './merge-pr/hot-files.mjs';
 export { evaluateLandedStatus } from './merge-pr/landed.mjs';
 export { parseGitHubSlug, parseMergeConfig } from './merge-pr/config.mjs';
