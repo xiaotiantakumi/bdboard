@@ -381,6 +381,121 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
     });
   });
 
+  describe('heredoc body masking (bdboard-u4ne)', () => {
+    it('allows a bd comment body passed via a single-quoted heredoc that mentions git checkout', async () => {
+      expectAllow(
+        await runBashHook({
+          command: `bd comment bdboard-xyz "$(cat <<'EOF'
+Repro:
+git checkout other
+EOF
+)"`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows a git commit -m body passed via a single-quoted heredoc with a blank line and a mention of checkout', async () => {
+      // このコマンド自体は commit なので main checkout では本来 deny (rule 8)。cwd を worktree にして
+      // 実コマンドは deny 対象にせず、ヒアドキュメント本文内の "checkout" という単語だけが
+      // 誤検知の種にならないことを見る (369行目の非ヒアドキュメント版と同じパターン)。
+      expectAllow(
+        await runBashHook({
+          command: `git commit -m "$(cat <<'EOF'
+fix: x
+
+Details about reverting a prior checkout mistake
+EOF
+)"`,
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows a gh pr create --body passed via a heredoc that mentions git reset', async () => {
+      expectAllow(
+        await runBashHook({
+          command: `gh pr create --title x --body "$(cat <<'EOF'
+Notes:
+also ran git reset --hard earlier
+EOF
+)"`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows an unquoted-delimiter heredoc (<<EOF, no surrounding quotes at all) whose body mentions git commit', async () => {
+      expectAllow(
+        await runBashHook({
+          command: `cat <<EOF
+git commit -m x
+EOF`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('still denies a real git checkout that follows a closed heredoc on a later line', async () => {
+      expectDeny(
+        await runBashHook({
+          command: `bd comment bdboard-xyz "$(cat <<'EOF'
+just a note
+EOF
+)"
+git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it('still denies a real git checkout on the line immediately after a bare (non-substituted) heredoc terminator', async () => {
+      // レビュー指摘 (bdboard-u4ne PR #790 Blocker 1): 上の「later line」テストは
+      // ヒアドキュメントが $(...) に包まれており、`)"` の行を挟んでから git checkout が
+      // 続くため、ヒアドキュメント終端そのものの実改行ではなく `)"` の後ろの実改行が
+      // 区切りとして働いていた (常にマスク対象外)。ここでは $(...) に包まれない裸の
+      // ヒアドキュメントを使い、終端行 EOF の直後 (中間に他の文字を挟まず) に
+      // 実コマンドを置く — 終端検出時の実改行そのものを区切りとして残せているかを見る。
+      expectDeny(
+        await runBashHook({
+          command: `cat > notes.md <<'EOF'
+hello
+EOF
+git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it('allows a heredoc body line prefixed with the delimiter word without closing the heredoc', async () => {
+      expectAllow(
+        await runBashHook({
+          command: `bd comment bdboard-xyz "$(cat <<'EOF'
+EOFISH not the real terminator
+git checkout other
+EOF
+)"`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('does not misparse a bash arithmetic left-shift as a heredoc', async () => {
+      expectAllow(await runBashHook({ command: 'echo $((1 << 2))', cwd: mainWithPort, agentId: 'agent-1' }));
+    });
+  });
+
   describe('pre-edit-guard.sh rule 2 — Edit/Write/MultiEdit/NotebookEdit', () => {
     it('denies a subagent Write of a new file directly in the main checkout', async () => {
       expectDeny(
