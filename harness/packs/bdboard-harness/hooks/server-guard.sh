@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# server-guard.sh — pre-bash-guard.sh の規則 7「常時稼働サーバーの保護」(bdboard-hpu8)。
+# server-guard.sh — pre-bash-guard.sh の規則 7「常時稼働サーバーの保護」(bdboard-hpu8) と
+# 規則 8「main checkout の working tree/HEAD を変える git 操作」(bdboard-kxqb)。
 #
 # 単独では実行しない。pre-bash-guard.sh の規則 6 の直後から `.` で読み込まれ、呼び出し元の
 #   COMMAND / HOOK_CWD / REPO_ROOT / CONTRACT / JSON_TOOL / AGENT_ID
@@ -7,7 +8,7 @@
 # を前提にする。別ファイルなのは pre-bash-guard.sh の行数上限 (file-size-baseline 900 行)
 # を守るため。判定できないものは `return 0` で呼び出し元へ戻す (fail-open)。
 #
-# 契約 (.claude/bdboard-harness.json) に alwaysOnServer.port があるときだけ有効になる。
+# 規則 7 は契約 (.claude/bdboard-harness.json) に alwaysOnServer.port があるときだけ有効。
 #
 #   7a. サブエージェント (hook 入力に agent_id がある) から main checkout での git pull
 #   7b. サブエージェントから main checkout でのサーバー起動 (npm run start / tsx src/main.ts)
@@ -20,9 +21,21 @@
 # 議長の再起動はスクリプト経由 (alwaysOnServer.restartScript) に一本化する。スクリプトの
 # 中の kill/pull/start は hook には見えないので、スクリプト呼び出しは議長なら通る。
 #
-# 限界 (hooks/README.md「規則 7」に明記): 実効ディレクトリは cwd と `cd` の静的追跡、変数は
-# 同一コマンド内の `NAME=値` 代入だけ解決する。別ファイルに書いて実行する迂回は見えない。
-# preview_start (MCP) は Bash ではないのでこの hook の対象外。
+# 規則 8 は alwaysOnServer の有無に関係なく有効 (main checkout の working tree/HEAD を
+# 保護すること自体は常時稼働サーバーの有無と独立の理由による — 議長が main checkout を
+# 常用する運用 (bdboard-kxqb) では、サブエージェントの checkout / commit / reset / merge 等が
+# 議長の作業ツリーを直接壊しうる)。サブエージェント (agent_id あり) が main checkout を
+# 対象に git checkout / switch / commit / reset / merge / rebase / stash / restore /
+# cherry-pick / revert / am / clean / bisect / apply / rm / mv を実行するのを deny する
+# (opus レビュー 2026-09-25 で clean/bisect/apply/rm/mv の抜けを指摘され追加)。
+# pull は含まない — 元から 7a
+# (SG_PORT 前提) の対象で、規則 8 はそこに無かった working tree/HEAD 変更系だけを追加で
+# 塞ぐ (二重化しない。SG_PORT の無い契約では 7a 同様 pull は対象外のまま)。worktree
+# add/remove/list・branch (削除含む)・push・fetch・remote・log 等の読み取り/非破壊系も対象外。
+#
+# 限界 (hooks/README.md「規則 7」「規則 8」に明記): 実効ディレクトリは cwd と `cd` の静的
+# 追跡、変数は同一コマンド内の `NAME=値` 代入だけ解決する。別ファイルに書いて実行する迂回は
+# 見えない。preview_start (MCP) は Bash ではないのでこの hook の対象外。
 
 # --- 0. 前置フィルタ: 関係しうる語が無ければ何もしない (git status 等の頻出コマンドは
 #        契約を読む前に通す。契約の読み取りは jq/python3 の起動を伴う)。
@@ -54,34 +67,30 @@ if isinstance(value, (str, int, float)):
   esac
 }
 
+# SG_PORT が空/非数値なら規則 7 (port 依存の 7a/7b/7c) は無効化するだけで、ここでは
+# return しない — 規則 8 (main checkout の git 保護) は alwaysOnServer の有無に関係なく
+# 動く必要があるため (下の各呼び出し箇所で `[ -n "$SG_PORT" ]` を個別に見る)。
 SG_PORT="$(server_contract_field port)"
 case "$SG_PORT" in
-  '' | *[!0-9]*) return 0 ;;
+  '' | *[!0-9]*) SG_PORT='' ;;
 esac
 SG_SCRIPT="$(server_contract_field restartScript)"
 SG_SCRIPT_BASE="${SG_SCRIPT##*/}"
 
-# --- 1. main checkout の場所: git common dir の親。worktree からでも同じ場所に解決する。
-sg_canon() {
-  (cd "$1" 2>/dev/null && pwd -P) || printf '%s' "$1"
-}
+# --- 1. main checkout の場所判定は lib-main-checkout.sh に一本化する (bdboard-kxqb:
+#        pre-edit-guard.sh の規則 2 と同じロジックを共有するため。二重実装しない)。
+LIB_MAIN_CHECKOUT="$(dirname "$0")/lib-main-checkout.sh"
+[ -r "$LIB_MAIN_CHECKOUT" ] || return 0
+# shellcheck source=lib-main-checkout.sh
+. "$LIB_MAIN_CHECKOUT"
 
-SG_COMMON="$(git -C "$HOOK_CWD" rev-parse --git-common-dir 2>/dev/null)"
-[ -n "$SG_COMMON" ] || return 0
-case "$SG_COMMON" in
-  /*) ;;
-  *) SG_COMMON="$HOOK_CWD/$SG_COMMON" ;;
-esac
-SG_MAIN="$(cd "$SG_COMMON/.." 2>/dev/null && pwd -P)"
+sg_canon() { bh_canon "$1"; }
+
+SG_MAIN="$(bh_main_checkout "$HOOK_CWD")"
 [ -n "$SG_MAIN" ] || return 0
 
-# そのディレクトリが属する checkout が main checkout か。worktree は main の下
-# (.claude/worktrees/) に置かれるので前方一致では判定できず、git に toplevel を答えさせる。
-# 存在しない dir (未知の変数など) は偽 = fail-open。
 sg_dir_is_main() {
-  sg_top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
-  [ -n "$sg_top" ] || return 1
-  [ "$(sg_canon "$sg_top")" = "$SG_MAIN" ]
+  bh_dir_is_main "$1" "$SG_MAIN"
 }
 
 SG_IS_SUB=''
@@ -498,6 +507,26 @@ sg_check_main_action() {
   sg_deny_sub "$2" "$3"
 }
 
+# --- 規則 8: main checkout の working tree/HEAD を変える git サブコマンド (bdboard-kxqb)。
+# sg_deny_sub (規則 7 用) とはメッセージの趣旨が違う (常時稼働サーバーの再配備ではなく
+# 「議長の作業ツリーを壊す」ことが理由) ので、専用の deny 文言を持つ。
+sg_deny_git_mutate() {
+  sg_audit "8-git-$1"
+  deny \
+    "bdboard-harness: サブエージェントは main checkout ($SG_MAIN) で git $1 を実行できません (working tree/HEAD を変更するため)。" \
+    "worktree で作業してください: cd <worktree> && git $1 ... か git -C <worktree> $1 ... を使ってください。" \
+    "worktree が無ければ: git -C $SG_MAIN worktree add .claude/worktrees/<id> -b bd/<id> origin/main"
+}
+
+# 引数: 実効 dir, サブコマンド名。サブエージェントかつ main checkout なら deny。
+# alwaysOnServer の有無 (SG_PORT) に関係なく有効 — main checkout の working tree/HEAD
+# 保護は常時稼働サーバーとは独立の理由による。
+sg_check_main_git_mutate() {
+  [ -n "$SG_IS_SUB" ] || return 0
+  sg_dir_is_main "$1" || return 0
+  sg_deny_git_mutate "$2"
+}
+
 sg_effective_port_is_server() {
   sg_env_port="$(sg_expand '$BDBOARD_PORT')"
   [ "$sg_env_port" = '$BDBOARD_PORT' ] || [ "$sg_env_port" = "$SG_PORT" ]
@@ -600,7 +629,7 @@ while IFS= read -r sg_seg; do
       *) return 1 ;;
     esac
   }
-  if [ -n "$SG_SCRIPT_BASE" ] && [ -n "$SG_IS_SUB" ]; then
+  if [ -n "$SG_PORT" ] && [ -n "$SG_SCRIPT_BASE" ] && [ -n "$SG_IS_SUB" ]; then
     sg_restart_wide_scan=''
     case "$sg_word" in
       bash | sh | zsh | dash | ksh | . | source | timeout | nice | env | xargs | watch | stdbuf)
@@ -679,9 +708,20 @@ while IFS= read -r sg_seg; do
           *) break ;;
         esac
       done
-      if [ "${1:-}" = 'pull' ]; then
-        sg_check_main_action "$sg_git_dir" '7a-git-pull' 'git pull'
-      fi
+      case "${1:-}" in
+        pull)
+          # pull は既存の 7a (SG_PORT = alwaysOnServer.port が要る) だけが対象にする。
+          # 規則 8 (このブロックの他の枝) には含めない — 規則 8 の役割は「7 が元々
+          # 対象にしていなかった working tree/HEAD 変更系」を追加で塞ぐことで、pull は
+          # 元から 7a の対象なので二重化しない (hooks/README.md「規則 8」参照)。
+          if [ -n "$SG_PORT" ]; then
+            sg_check_main_action "$sg_git_dir" '7a-git-pull' 'git pull'
+          fi
+          ;;
+        checkout | switch | commit | reset | merge | rebase | stash | restore | cherry-pick | revert | am | clean | bisect | apply | rm | mv)
+          sg_check_main_git_mutate "$sg_git_dir" "$1"
+          ;;
+      esac
       ;;
     npm)
       shift
@@ -701,7 +741,7 @@ while IFS= read -r sg_seg; do
       esac
       # BDBOARD_PORT=<別ポート> の前置きがあれば常時稼働サーバーの port ではない (worktree
       # の一時サーバー)。ただし main checkout の判定はそのまま効く。
-      if [ "$sg_npm_script" = 'start' ] && sg_effective_port_is_server; then
+      if [ -n "$SG_PORT" ] && [ "$sg_npm_script" = 'start' ] && sg_effective_port_is_server; then
         sg_check_main_action "$sg_npm_dir" '7b-npm-start' 'サーバー起動 (npm run start)'
       fi
       ;;
@@ -711,7 +751,7 @@ while IFS= read -r sg_seg; do
           */src/main.ts | src/main.ts)
             sg_main_dir="$SG_DIR"
             case "$sg_tok" in /*) sg_main_dir="${sg_tok%/src/main.ts}" ;; esac
-            if sg_effective_port_is_server; then
+            if [ -n "$SG_PORT" ] && sg_effective_port_is_server; then
               sg_check_main_action "$sg_main_dir" '7b-tsx-main' 'サーバー起動 (tsx src/main.ts)'
             fi
             ;;
@@ -719,7 +759,7 @@ while IFS= read -r sg_seg; do
       done
       ;;
     kill)
-      if [ -z "$SG_OVERRIDE" ] || [ -n "$SG_IS_SUB" ]; then
+      if [ -n "$SG_PORT" ] && { [ -z "$SG_OVERRIDE" ] || [ -n "$SG_IS_SUB" ]; }; then
         shift
         sg_check_kill_segment "$sg_raw_seg" "$@"
       fi
@@ -728,7 +768,7 @@ while IFS= read -r sg_seg; do
       # `lsof ... <port> ... | xargs kill` のようにコマンド語が kill でないパイプ。
       case "$sg_raw_seg" in
         *'|'*kill*)
-          if [ -z "$SG_OVERRIDE" ] || [ -n "$SG_IS_SUB" ]; then
+          if [ -n "$SG_PORT" ] && { [ -z "$SG_OVERRIDE" ] || [ -n "$SG_IS_SUB" ]; }; then
             sg_check_kill_segment "$sg_raw_seg"
           fi
           ;;

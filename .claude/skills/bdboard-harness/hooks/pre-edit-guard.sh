@@ -3,8 +3,9 @@
 # bdboard-harness / PreToolUse(Edit|Write|MultiEdit|NotebookEdit) ガード。
 #
 # 「注入コピーを直接編集して原本と乖離させる」「PR ブランチで .beads/ を触って CI
-# ガードに落ちる」の 2 つを機械的に止める (bdboard-pkr6.1)。deny 条件と回避手段は
-# 同ディレクトリの README.md を参照。
+# ガードに落ちる」「サブエージェントが main checkout を直接編集する」の 3 つを機械的に
+# 止める (bdboard-pkr6.1, bdboard-kxqb)。deny 条件と回避手段は同ディレクトリの
+# README.md を参照。
 #
 # 契約: stdin に Claude Code の hook 入力 JSON。deny は exit 2 + stderr 3 行以内、
 # allow は exit 0 で無出力。判定できないものはすべて allow に倒す (fail-open)。
@@ -52,7 +53,8 @@ hook_fields() {
         . as $d
         | [ (try ($d.cwd) catch null | scalar),
             (try ($d.tool_input.file_path) catch null | scalar),
-            (try ($d.tool_input.notebook_path) catch null | scalar) ]
+            (try ($d.tool_input.notebook_path) catch null | scalar),
+            (try ($d.agent_id) catch null | scalar) ]
         | join("\u001f")
       ' 2>/dev/null
       ;;
@@ -82,7 +84,7 @@ try:
 except Exception:
     sys.exit(0)
 sys.stdout.write("\x1f".join(scalar(doc, p) for p in sys.argv[1:]))
-' cwd tool_input.file_path tool_input.notebook_path 2>/dev/null
+' cwd tool_input.file_path tool_input.notebook_path agent_id 2>/dev/null
       ;;
   esac
 }
@@ -91,8 +93,12 @@ HOOK_FIELDS="$(hook_fields)"
 HOOK_CWD="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
 HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
 TARGET_PATH="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
-NOTEBOOK_PATH="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+HOOK_FIELDS="${HOOK_FIELDS#*"$US_SEPARATOR"}"
+NOTEBOOK_PATH="${HOOK_FIELDS%%"$US_SEPARATOR"*}"
 [ -n "$TARGET_PATH" ] || TARGET_PATH="$NOTEBOOK_PATH"
+# agent_id は「サブエージェント内で hook が発火したときだけ」入力 JSON に付く (Claude Code
+# の hook 入力仕様)。空ならトップレベル (議長) からの呼び出し。規則 2 だけが使う。
+AGENT_ID="${HOOK_FIELDS#*"$US_SEPARATOR"}"
 
 [ -n "$TARGET_PATH" ] || exit 0
 [ -n "$HOOK_CWD" ] || HOOK_CWD="$PWD"
@@ -139,13 +145,9 @@ case "$ABSOLUTE_PATH" in
     ;;
 esac
 
-# 2. PR ブランチ (bd/*) で .beads/ を触ると CI のガードに落ちる。
-case "$ABSOLUTE_PATH" in
-  *'/.beads/'*) ;;
-  *) exit 0 ;;
-esac
-
-# git に渡せる「実在する最も近い祖先ディレクトリ」を求める。
+# git に渡せる「実在する最も近い祖先ディレクトリ」を求める (規則 2・3 で共有)。
+# ABSOLUTE_PATH 自体は Write で新規作成されるパスかもしれず存在しないことがあるので、
+# 親から実在する祖先まで遡る。
 GIT_DIR_CANDIDATE="${ABSOLUTE_PATH%/*}"
 [ -n "$GIT_DIR_CANDIDATE" ] || GIT_DIR_CANDIDATE='/'
 while [ ! -d "$GIT_DIR_CANDIDATE" ] && [ "$GIT_DIR_CANDIDATE" != '/' ]; do
@@ -153,6 +155,32 @@ while [ ! -d "$GIT_DIR_CANDIDATE" ] && [ "$GIT_DIR_CANDIDATE" != '/' ]; do
   [ -n "$GIT_DIR_CANDIDATE" ] || GIT_DIR_CANDIDATE='/'
 done
 [ -d "$GIT_DIR_CANDIDATE" ] || GIT_DIR_CANDIDATE="$HOOK_CWD"
+
+# 2. サブエージェント (agent_id あり) が main checkout (git rev-parse --git-common-dir
+# の親) 配下を直接編集するのを止める (bdboard-kxqb)。議長 (agent_id なし) は対象外。
+# .claude/worktrees/<id>/... はそれ自身の --show-toplevel が main と異なるため、
+# bh_dir_is_main が自然に偽を返す (特別扱い不要)。main checkout 判定は server-guard.sh
+# (規則 8) と同じ lib-main-checkout.sh を共有する (二重実装しない)。
+if [ -n "$AGENT_ID" ]; then
+  LIB_MAIN_CHECKOUT="$(dirname "$0")/lib-main-checkout.sh"
+  if [ -r "$LIB_MAIN_CHECKOUT" ]; then
+    # shellcheck source=lib-main-checkout.sh
+    . "$LIB_MAIN_CHECKOUT"
+    EDIT_MAIN="$(bh_main_checkout "$GIT_DIR_CANDIDATE")"
+    if [ -n "$EDIT_MAIN" ] && bh_dir_is_main "$GIT_DIR_CANDIDATE" "$EDIT_MAIN"; then
+      deny \
+        "bdboard-harness: サブエージェントは main checkout ($EDIT_MAIN) のファイルを編集できません。" \
+        'worktree で作業してください: git -C '"$EDIT_MAIN"' worktree add .claude/worktrees/<id> -b bd/<id> origin/main' \
+        'その worktree 内のパスを file_path に指定してください。'
+    fi
+  fi
+fi
+
+# 3. PR ブランチ (bd/*) で .beads/ を触ると CI のガードに落ちる。
+case "$ABSOLUTE_PATH" in
+  *'/.beads/'*) ;;
+  *) exit 0 ;;
+esac
 
 BRANCH="$(git -C "$GIT_DIR_CANDIDATE" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 if [ -z "$BRANCH" ] || [ "$BRANCH" = 'HEAD' ]; then

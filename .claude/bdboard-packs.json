@@ -2,11 +2,12 @@
   "packs": [
     {
       "name": "bdboard-harness",
-      "version": "0.36.0",
-      "injectedAt": "2026-09-25T00:15:13.895Z",
+      "version": "0.38.0",
+      "injectedAt": "2026-09-25T07:14:50.223Z",
       "files": [
         ".claude/skills/bdboard-harness/SKILL.md",
         ".claude/skills/bdboard-harness/hooks/README.md",
+        ".claude/skills/bdboard-harness/hooks/lib-main-checkout.sh",
         ".claude/skills/bdboard-harness/hooks/pre-bash-guard.sh",
         ".claude/skills/bdboard-harness/hooks/pre-edit-guard.sh",
         ".claude/skills/bdboard-harness/hooks/server-guard.sh",
