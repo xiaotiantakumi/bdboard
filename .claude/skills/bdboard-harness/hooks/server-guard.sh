@@ -39,7 +39,7 @@
 
 # --- 0. 前置フィルタ: 関係しうる語が無ければ何もしない (git status 等の頻出コマンドは
 #        契約を読む前に通す。契約の読み取りは jq/python3 の起動を伴う)。
-matches '(^|[^[:alnum:]_.-])(kill|git|npm|npx|tsx|node|pushd)([^[:alnum:]_-]|$)|\.sh([^[:alnum:]_-]|$)' || return 0
+matches '(^|[^[:alnum:]_.-])(kill|git|npm|npx|tsx|node|pushd|sed|cp|mv|tee|aimix)([^[:alnum:]_-]|$)|\.sh([^[:alnum:]_-]|$)|>' || return 0
 
 server_contract_field() {
   case "$JSON_TOOL" in
@@ -91,6 +91,14 @@ SG_MAIN="$(bh_main_checkout "$HOOK_CWD")"
 
 sg_dir_is_main() {
   bh_dir_is_main "$1" "$SG_MAIN"
+}
+
+# bdboard-1zrs: sg_dir_is_main に加えて main checkout の共有 .git/ 配下も真を返す版。
+# このPRが追加した書き込み系チェック (sg_check_main_write / sg_check_main_write_targets)
+# 専用。既存の git サブコマンド判定 (sg_check_main_git_mutate 等) は sg_dir_is_main のまま
+# 変更しない (bdboard-1ef8 で明示的にスコープ外とした挙動を維持するため)。
+sg_dir_is_main_or_git_internal() {
+  bh_dir_is_main_or_git_internal "$1" "$SG_MAIN"
 }
 
 SG_IS_SUB=''
@@ -472,13 +480,13 @@ sg_mask_quoted_separators() {
               sg_mqs_c=' '
             fi
             ;;
-          ';' | '&' | '|') sg_mqs_c=' ' ;;
+          ';' | '&' | '|' | '>' | '<') sg_mqs_c=' ' ;;
         esac
         ;;
       "'")
         case "$sg_mqs_c" in
           "'") sg_mqs_state='n' ;;
-          ';' | '&' | '|') sg_mqs_c=' ' ;;
+          ';' | '&' | '|' | '>' | '<') sg_mqs_c=' ' ;;
           "$SG_NL") sg_mqs_c=' ' ;;
         esac
         ;;
@@ -513,7 +521,7 @@ sg_mask_quoted_separators() {
             sg_mqs_wordstart=1
             continue
             ;;
-          ';' | '&' | '|') sg_mqs_c=' ' ;;
+          ';' | '&' | '|' | '>' | '<') sg_mqs_c=' ' ;;
           "$SG_NL") sg_mqs_c=' ' ;;
         esac
         ;;
@@ -807,6 +815,172 @@ sg_check_pipe_git() {
   done
 }
 
+# --- bdboard-1zrs: git 以外の書き込み系コマンド (sed -i / cp / mv / tee / リダイレクト /
+# npm install) と、委譲ツール (aimix) の main checkout での起動を塞ぐ。sg_deny_sub
+# (規則7用、サーバー再配備の文言) / sg_deny_git_mutate (git専用の文言) とは別に、
+# コマンド非依存の汎用文言を持つ。
+sg_deny_main_write() {
+  sg_audit "8-write-$1"
+  deny \
+    "bdboard-harness: サブエージェントは main checkout ($SG_MAIN) で $2 を実行できません (working tree を直接変更するため)。" \
+    'worktree で作業してください: cd <worktree> && ... のように per-ticket worktree に向けてください。' \
+    "worktree が無ければ: git -C $SG_MAIN worktree add .claude/worktrees/<id> -b bd/<id> origin/main"
+}
+
+# 引数: 実効 dir, ラベル, 説明。サブエージェントかつ main checkout なら deny。
+sg_check_main_write() {
+  [ -n "$SG_IS_SUB" ] || return 0
+  sg_dir_is_main_or_git_internal "$1" || return 0
+  sg_deny_main_write "$2" "$3"
+}
+
+# 生パストークン (相対/絶対/~、sg_expand 前) の「親ディレクトリ」を実効 dir 基準で
+# 解決する。sg_resolve_dir はディレクトリ専用 (cd できる前提) なので、まだ存在しない
+# ファイルを書き込み先に取るコマンド (sed -i の対象、リダイレクト先、cp/mv/tee の宛先)
+# には使えない。トークンを展開してから最後の `/` で分割し、ディレクトリ側だけを既存の
+# 絶対/相対解決ルールに通す (スラッシュが無ければ実効 dir そのもの)。
+# sg_resolve_target_dir の本体。「展開済みの生パス文字列」を直接受け取る版 — 呼び出し元が
+# 展開後に何らかの前処理 (bdboard-1zrs round3: $VAR 未解決部分の切り詰めなど) をしてから
+# 渡したいケースのために分離してある。
+sg_resolve_target_dir_expanded() {
+  sg_rtd_expanded="$1"
+  case "$sg_rtd_expanded" in
+    /*) sg_rtd_abs="$sg_rtd_expanded" ;;
+    *) sg_rtd_abs="$SG_DIR/$sg_rtd_expanded" ;;
+  esac
+  if [ -d "$sg_rtd_abs" ]; then
+    sg_canon "$sg_rtd_abs"
+    return 0
+  fi
+  case "$sg_rtd_expanded" in
+    */*)
+      sg_rtd_dir="${sg_rtd_expanded%/*}"
+      [ -n "$sg_rtd_dir" ] || sg_rtd_dir='/'
+      ;;
+    *) sg_rtd_dir='' ;;
+  esac
+  case "$sg_rtd_dir" in
+    '') printf '%s' "$SG_DIR" ;;
+    /*) sg_canon "$sg_rtd_dir" ;;
+    *) sg_canon "$SG_DIR/$sg_rtd_dir" ;;
+  esac
+}
+
+sg_resolve_target_dir() {
+  sg_resolve_target_dir_expanded "$(sg_expand "$1")"
+}
+
+# 引数: ラベル, 説明, 以降チェック対象のパストークン列 (可変長)。サブエージェントかつ
+# main checkout ならその中の最初にマッチしたトークンで deny する。
+sg_check_main_write_targets() {
+  [ -n "$SG_IS_SUB" ] || return 0
+  sg_cmwt_label="$1"
+  sg_cmwt_desc="$2"
+  shift 2
+  for sg_cmwt_tok in "$@"; do
+    [ -n "$sg_cmwt_tok" ] || continue
+    sg_cmwt_expanded="$(sg_expand "$sg_cmwt_tok")"
+    case "$sg_cmwt_expanded" in
+      # 展開後も先頭が $ (= 何も分からない完全に未解決な変数参照) なら判定不能として
+      # 見逃す (fail-open)。先頭以外に $ がある場合は、その手前までは既知のパスなので
+      # 切り詰めて判定する (bdboard-1zrs round3 独立レビュー: 旧実装は文字列中の
+      # どこかに $ が1つでもあれば丸ごとスキップしていたため、
+      # `$MAIN/src/out-$$.txt` のように既知のディレクトリ + 未追跡変数 ($$ など) の
+      # 組み合わせを誤って見逃していた)。
+      '$'*) continue ;;
+      *'$'*) sg_cmwt_expanded="${sg_cmwt_expanded%%\$*}" ;;
+    esac
+    [ -n "$sg_cmwt_expanded" ] || continue
+    sg_cmwt_dir="$(sg_resolve_target_dir_expanded "$sg_cmwt_expanded")"
+    if sg_dir_is_main_or_git_internal "$sg_cmwt_dir"; then
+      sg_deny_main_write "$sg_cmwt_label" "$sg_cmwt_desc"
+    fi
+  done
+}
+
+# 引数: トークン1つ。「パイプ/コマンド区切り」なら真 — cp/mv/sed/tee の対象引数
+# スキャンをここで完全に打ち切ってよい、本当にシェル構文の境界であり、これ以降の
+# トークンはこのコマンドの引数ではないため。
+# (bdboard-1zrs round3 独立レビュー: round2 の sg_is_pipe_or_redirect_tok はリダイレクト
+# 演算子もここに含めて break していたため、宛先より前に `2>/dev/null` 等の単発
+# リダイレクトが来ただけで本当の宛先を見逃して誤って許可していた。リダイレクトは
+# 「打ち切り」ではなく「読み飛ばして継続」が正しい — 下の2関数を参照。)
+sg_is_scan_stop_tok() {
+  case "$1" in
+    '|' | '||' | '&&' | ';' | '&') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# 引数: トークン1つ。単発のリダイレクト演算子 (それ自身、または前置き融合形:
+# >, >>, 1>, 2>, &>, 1>>, 2>>, &>>, <, <<, <<-, <<< やそれに宛先/デリミタが
+# 融合した形) なら真。これらは「シェル構文だが、この先にコマンド引数が続く
+# 可能性がある」ため、対象引数スキャンは打ち切らずに読み飛ばして継続する
+# (`tee >/dev/null $MAIN/f` や `tee <<EOF $MAIN/f` のように宛先より前に現れても、
+# 宛先を見逃してはならない)。
+sg_is_skippable_redirect_tok() {
+  case "$1" in
+    '&>>'* | '&>'* | '1>>'* | '1>'* | '2>>'* | '2>'* | '>>'* | '>'* | '<'*)
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# 引数: トークン1つ。sg_is_skippable_redirect_tok が真だったトークンについて、
+# 「これ自身に宛先/デリミタが融合していない ("裸" の演算子) ため、次のトークンも
+# 合わせて読み飛ばすべきか」を判定する (裸なら真、`>file` のような融合形なら偽)。
+sg_redirect_tok_needs_next() {
+  case "$1" in
+    '>' | '>>' | '1>' | '1>>' | '2>' | '2>>' | '&>' | '&>>' | '<' | '<<' | '<<-' | '<<<')
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+# sed の単一ダッシュ短縮オプション束 ("-Ees/a/b/" 等) を1文字ずつ解析する。
+# 呼び出し元のグローバル sg_sed_has_i / sg_sed_saw_script を必要に応じて立てる。
+# e/f/l を見つけたら、その位置以降の残り文字列をそのオプションの引数とみなし
+# (空なら「次のトークンが引数」を意味する sg_sgf_consumed_next=yes を立てて)
+# この束の走査を打ち切る (GNU sed はこれらの引数を「同一トークン内の残り」か
+# 「次のトークン」のどちらかとしてのみ扱い、その後ろへさらに短縮フラグを
+# 束ねることはできないため)。i/I (in-place) も同様に残りを消費して打ち切るが、
+# 引数を次のトークンから取ることはしない (BSD sed は -i に対し常に次のトークンを
+# サフィックスとして要求するが、静的にそれを断定すると本当の対象/スクリプトを
+# 誤って呑み込みかねないため、より安全側 = 過検知はあっても見逃しにはならない側
+# に倒している。sg_sed_has_i さえ立っていれば、後続で見つかる本当の書き込み対象は
+# 引き続き検知される)。
+sg_sed_parse_flag_group() {
+  sg_sgf_body="${1#-}"
+  sg_sgf_consumed_next=''
+  sg_sgf_len=${#sg_sgf_body}
+  sg_sgf_k=0
+  while [ "$sg_sgf_k" -lt "$sg_sgf_len" ]; do
+    sg_sgf_c="${sg_sgf_body:sg_sgf_k:1}"
+    case "$sg_sgf_c" in
+      i | I)
+        sg_sed_has_i='yes'
+        sg_sgf_k=$sg_sgf_len
+        ;;
+      e | f)
+        sg_sed_saw_script='yes'
+        sg_sgf_rest="${sg_sgf_body:$((sg_sgf_k + 1))}"
+        [ -n "$sg_sgf_rest" ] || sg_sgf_consumed_next='yes'
+        sg_sgf_k=$sg_sgf_len
+        ;;
+      l)
+        sg_sgf_rest="${sg_sgf_body:$((sg_sgf_k + 1))}"
+        [ -n "$sg_sgf_rest" ] || sg_sgf_consumed_next='yes'
+        sg_sgf_k=$sg_sgf_len
+        ;;
+      *)
+        sg_sgf_k=$((sg_sgf_k + 1))
+        ;;
+    esac
+  done
+}
+
 sg_effective_port_is_server() {
   sg_env_port="$(sg_expand '$BDBOARD_PORT')"
   [ "$sg_env_port" = '$BDBOARD_PORT' ] || [ "$sg_env_port" = "$SG_PORT" ]
@@ -902,6 +1076,50 @@ while IFS= read -r sg_seg; do
   [ $# -gt 0 ] || continue
   case "$1" in \\*) set -- "${1#\\}" "${@:2}" ;; esac
   sg_word="${1##*/}"
+
+  # --- bdboard-1zrs: リダイレクト検知。sg_word によるコマンド語ディスパッチとは独立に
+  # このセグメントの全トークンを一度スキャンする (`exec > file` のように exec 剥がし後に
+  # リダイレクト演算子そのものが $1 に来る形にも対応するため)。空白あり (`> file`) と
+  # 空白なし (`>file`)、fd 接頭辞 (1>, 2>, &>) と追記形 (>>, 1>>, 2>>, &>>) の両方を見る。
+  # 長い演算子を短い演算子より先にマッチさせる (例 `>>file` が `>` 側に誤って
+  # マッチして "> file" を作らないよう、`>>` は `>` より前に判定する)。
+  # `N>&M` / `>&-` のような fd 複製・close はファイルパスではないので対象外。
+  # 引用符/ヒアドキュメント本体内の `>` は手順2のマスキングで既に空白化されている前提
+  # (誤検知回避: コミットメッセージ中の "fix: a > b" 等)。
+  sg_redirect_args=("$@")
+  sg_redirect_argc=${#sg_redirect_args[@]}
+  sg_redirect_i=0
+  while [ "$sg_redirect_i" -lt "$sg_redirect_argc" ]; do
+    sg_rtok="${sg_redirect_args[$sg_redirect_i]}"
+    sg_rop_matched=''
+    sg_rrest=''
+    case "$sg_rtok" in
+      '&>>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'&>>'}" ;;
+      '&>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'&>'}" ;;
+      '1>>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'1>>'}" ;;
+      '1>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'1>'}" ;;
+      '2>>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'2>>'}" ;;
+      '2>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'2>'}" ;;
+      '>>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'>>'}" ;;
+      '>'*) sg_rop_matched='yes'; sg_rrest="${sg_rtok#'>'}" ;;
+    esac
+    if [ -n "$sg_rop_matched" ]; then
+      sg_rtarget="$sg_rrest"
+      if [ -z "$sg_rtarget" ]; then
+        sg_rnext_i=$((sg_redirect_i + 1))
+        if [ "$sg_rnext_i" -lt "$sg_redirect_argc" ]; then
+          sg_rtarget="${sg_redirect_args[$sg_rnext_i]}"
+        fi
+      fi
+      case "$sg_rtarget" in
+        '&'[0-9]* | '&-') sg_rtarget='' ;;
+      esac
+      if [ -n "$sg_rtarget" ]; then
+        sg_check_main_write_targets 'redirect' 'リダイレクトでの書き込み' "$sg_rtarget"
+      fi
+    fi
+    sg_redirect_i=$((sg_redirect_i + 1))
+  done
 
   # 再起動スクリプトの呼び出し (bash path/to/script.sh ... / ./script.sh ...)。
   # bdboard-wa48: 以前はセグメント中の全引数位置に basename 一致を見ていたため、
@@ -1017,6 +1235,132 @@ while IFS= read -r sg_seg; do
       # の一時サーバー)。ただし main checkout の判定はそのまま効く。
       if [ -n "$SG_PORT" ] && [ "$sg_npm_script" = 'start' ] && sg_effective_port_is_server; then
         sg_check_main_action "$sg_npm_dir" '7b-npm-start' 'サーバー起動 (npm run start)'
+      fi
+      # bdboard-1zrs: npm install/ci は node_modules・package-lock.json を書き換える。
+      # サーバー再配備 (規則7b) とは独立の理由 (working tree破壊) のため、SG_PORT の
+      # 有無に関係なく常に有効 (git-mutate と同じ扱い)。
+      case "${1:-}" in
+        install | i | ci) sg_check_main_write "$sg_npm_dir" 'npm-install' "npm $1" ;;
+      esac
+      ;;
+    sed)
+      shift
+      sg_sed_has_i=''
+      sg_sed_targets=()
+      sg_sed_saw_script=''
+      while [ $# -gt 0 ]; do
+        if sg_is_scan_stop_tok "$1"; then
+          break
+        fi
+        if sg_is_skippable_redirect_tok "$1"; then
+          if sg_redirect_tok_needs_next "$1"; then
+            shift
+            [ $# -gt 0 ] && shift
+          else
+            shift
+          fi
+          continue
+        fi
+        case "$1" in
+          --e*=*) sg_sed_saw_script='yes'; shift ;;
+          --e*) sg_sed_saw_script='yes'; shift; shift ;;
+          --f*=*) sg_sed_saw_script='yes'; shift ;;
+          --f*) sg_sed_saw_script='yes'; shift; shift ;;
+          --i*) sg_sed_has_i='yes'; shift ;;
+          --l*=*) shift ;;
+          --l*) shift; shift ;;
+          --*) shift ;;
+          -*)
+            sg_sed_parse_flag_group "$1"
+            shift
+            [ -n "$sg_sgf_consumed_next" ] && shift
+            ;;
+          *)
+            if [ -z "$sg_sed_saw_script" ]; then
+              sg_sed_saw_script='yes'
+            else
+              sg_sed_targets+=("$1")
+            fi
+            shift
+            ;;
+        esac
+      done
+      if [ -n "$sg_sed_has_i" ] && [ ${#sg_sed_targets[@]} -gt 0 ]; then
+        sg_check_main_write_targets 'sed' 'sed -i での書き込み' "${sg_sed_targets[@]}"
+      fi
+      ;;
+    cp | mv)
+      shift
+      sg_cpmv_dest=''
+      sg_cpmv_last=''
+      while [ $# -gt 0 ]; do
+        if sg_is_scan_stop_tok "$1"; then
+          break
+        fi
+        if sg_is_skippable_redirect_tok "$1"; then
+          if sg_redirect_tok_needs_next "$1"; then
+            shift
+            [ $# -gt 0 ] && shift
+          else
+            shift
+          fi
+          continue
+        fi
+        case "$1" in
+          -t | --target-directory) sg_cpmv_dest="${2:-}"; shift; shift ;;
+          --target-directory=*) sg_cpmv_dest="${1#--target-directory=}"; shift ;;
+          -*) shift ;;
+          *) sg_cpmv_last="$1"; shift ;;
+        esac
+      done
+      [ -n "$sg_cpmv_dest" ] || sg_cpmv_dest="$sg_cpmv_last"
+      if [ -n "$sg_cpmv_dest" ]; then
+        sg_check_main_write_targets "$sg_word" "$sg_word コマンドでの書き込み" "$sg_cpmv_dest"
+      fi
+      ;;
+    tee)
+      shift
+      sg_tee_targets=()
+      while [ $# -gt 0 ]; do
+        if sg_is_scan_stop_tok "$1"; then
+          break
+        fi
+        if sg_is_skippable_redirect_tok "$1"; then
+          if sg_redirect_tok_needs_next "$1"; then
+            shift
+            [ $# -gt 0 ] && shift
+          else
+            shift
+          fi
+          continue
+        fi
+        case "$1" in
+          -*) ;;
+          *) sg_tee_targets+=("$1") ;;
+        esac
+        shift
+      done
+      if [ ${#sg_tee_targets[@]} -gt 0 ]; then
+        sg_check_main_write_targets 'tee' 'tee コマンドでの書き込み' "${sg_tee_targets[@]}"
+      fi
+      ;;
+    aimix)
+      shift
+      sg_aimix_dir="$SG_DIR"
+      sg_aimix_sub=''
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --cwd) sg_aimix_dir="$(sg_resolve_dir "${2:-}")"; shift; shift ;;
+          --cwd=*) sg_aimix_dir="$(sg_resolve_dir "${1#--cwd=}")"; shift ;;
+          -*) shift ;;
+          *)
+            [ -n "$sg_aimix_sub" ] || sg_aimix_sub="$1"
+            shift
+            ;;
+        esac
+      done
+      if [ "$sg_aimix_sub" = 'run' ]; then
+        sg_check_main_write "$sg_aimix_dir" 'aimix-delegate' 'aimix 経由の委譲実行 (Codex/Cursor 子プロセスが hook を経由せず書き込むため)'
       fi
       ;;
     npx | tsx | node)

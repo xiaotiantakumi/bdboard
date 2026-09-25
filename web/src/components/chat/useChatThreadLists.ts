@@ -12,6 +12,7 @@ import {
 } from '../../api';
 import { writePersistedChatThreadState } from '../../chatThreadStorage';
 import { compareThreadsNewestFirst } from './threads';
+import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseChatThreadListsDrawerActions {
   selectThread: () => void;
@@ -21,7 +22,8 @@ export interface UseChatThreadListsDrawerActions {
   closeDrawer: () => void;
 }
 
-export interface UseChatThreadListsParams {
+export interface UseChatThreadListsParams
+  extends Pick<UseConversationKeyResult, 'selectedThreadIdsRef'> {
   selectedProjectId: string;
   currentSessionId: string | undefined;
   setSelectedThreadIds: Dispatch<SetStateAction<Record<string, string | undefined>>>;
@@ -81,11 +83,28 @@ export interface UseChatThreadListsResult {
  * closeThread/togglePin は元実装どおり「⋯」メニューを閉じる処理を含まない
  * (呼び出し側の ChatPanel.tsx が threadDrawerRowActions 構築時に
  * closeThreadActionMenu() を先に呼ぶラッパーを保持する)。
+ *
+ * bdboard-197q で上記の move-only 原則に例外を1つ追加: closeThread は
+ * setSelectedThreadIds の直後に selectedThreadIdsRef.current も同期するように
+ * なった(render-mirror ラグ対策、詳細はその呼び出し箇所のコメント参照)。
+ * これに伴い selectedThreadIdsRef が必須パラメータとして増えている。
+ * selectOpenThread/reopenClosedThread は同期を追加していない(理由は各定義
+ * 直前のコメント参照)。
+ *
+ * bdboard-ygrg で2つ目の例外: closeThread 内の next/wasSelected の計算を、
+ * render スコープの openThreads/currentSessionId ローカルではなく
+ * openThreadIdsRef.current/selectedThreadIdsRef.current から読むように
+ * 変更した(closeThread が deleteThread の async 継続から呼ばれた場合に
+ * stale なクロージャ値で他の並行更新を巻き戻してしまう closure-staleness
+ * 対策、詳細はその呼び出し箇所のコメント参照)。currentSessionId への
+ * フォールバックは意図的に持たない(フォールバックすると選択軸で同じ
+ * staleness バグが再発するため)。
  */
 export function useChatThreadLists({
   selectedProjectId,
   currentSessionId,
   setSelectedThreadIds,
+  selectedThreadIdsRef,
   setThreadError,
   renameDraft,
   drawer,
@@ -127,9 +146,16 @@ export function useChatThreadLists({
       ? (threadById.get(currentSessionId)?.title ?? '(無題)')
       : '新規';
 
+  // bdboard-ygrg: deleteThread の async 継続から呼ばれる場合も最新の
+  // open/selected state を使えるよう、next と wasSelected は render-mirror
+  // refs から読む。選択判定も ref の値だけを使い、render 時の props へフォールバック
+  // しない。選択解除後に古い値を復活させ、同じ stale closure バグを選択軸で
+  // 再発させるため。
   const closeThread = (sessionId: string) => {
-    const next = openThreads.filter((id) => id !== sessionId);
-    const wasSelected = currentSessionId === sessionId;
+    const liveOpenThreads = openThreadIdsRef.current[selectedProjectId] ?? [];
+    const liveSelectedSessionId = selectedThreadIdsRef.current[selectedProjectId];
+    const next = liveOpenThreads.filter((id) => id !== sessionId);
+    const wasSelected = liveSelectedSessionId === sessionId;
     // フォールバック先は openThreadIds の挿入順(next[0] = 最古)ではなく、
     // displayedOpenThreads と同じ表示順(新しい順)の先頭に合わせる。3tw.154 で
     // 表示順を挿入順→新しい順に変えたことで、挿入順の先頭のままだと選択が
@@ -137,11 +163,19 @@ export function useChatThreadLists({
     const nextDisplayed = [...next].sort((a, b) =>
       compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
     );
-    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : currentSessionId;
+    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : liveSelectedSessionId;
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
+      // bdboard-197q: bdboard-d29q/bdboard-d7on と同じ render-mirror の理由で
+      // selectedThreadIdsRef も同期する。closeThread は deleteThread の async
+      // 継続からも呼ばれるため、他の async resolve (例: applyRecoveredTurn) と
+      // 同 tick で競合し得る。
+      selectedThreadIdsRef.current = {
+        ...selectedThreadIdsRef.current,
+        [selectedProjectId]: nextDisplayed[0],
+      };
     }
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,
@@ -150,6 +184,21 @@ export function useChatThreadLists({
     drawer.cancelInteractionsForSession(sessionId);
   };
 
+  // bdboard-197q: ここも setSelectedThreadIds の直後で selectedThreadIdsRef
+  // を同期していない (closeThread と同じ render-mirror の1レンダー遅延が
+  // 理論上ある)。bdboard-197q の調査 (grep + Opus レビューでの追加検証) では
+  // このハンドラは onClick から直接呼ばれる同期関数としてしか呼ばれず、
+  // promise の継続として呼ばれる経路が無いため、意図的に同期を追加していない。
+  // 安全な理由 (React 19 実測、Opus 調査で確認): React 19 は state 更新の
+  // ある同期ハンドラの「最初の setState」の時点でレンダーを microtask として
+  // キューする。ユーザークリックは空の microtask queue から始まるため、
+  // その setState より後にキューされる microtask (他ハンドラの async 継続等)
+  // は、既にキュー済みのレンダー(→ ref 再同期)より後に実行され、常に最新の
+  // ref を読む。ただしこの保護は「このハンドラが最初の setState より前に
+  // 他の microtask を挟まない」という現状のコード形に依存する暗黙の前提で、
+  // 将来ここに await 等を追加すると静かに崩れる。selectedThreadIdsRef を
+  // 読む新しい async 経路を足す変更をする際は、このハンドラも同期対象に
+  // 追加することを検討すること。
   const selectOpenThread = (sessionId: string) => {
     drawer.selectThread();
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
@@ -159,6 +208,19 @@ export function useChatThreadLists({
     });
   };
 
+  // bdboard-197q: selectOpenThread と同じ理由・同じ保護で selectedThreadIdsRef
+  // の同期を意図的に省略している (上のコメント参照)。
+  // 別件: このハンドラの next 計算 ([...openThreads, sessionId]) は
+  // render-time の openThreads state に依存しており、closeThread と同型の
+  // 「async 継続から呼ばれた場合に stale な値を見る」リスクを理論上持つ。
+  // bdboard-ygrg で closeThread 側の同型バグ(next/wasSelected の closure
+  // staleness)を openThreadIdsRef/selectedThreadIdsRef 参照に修正した際、
+  // reopenClosedThread はこの調査で「grep 済み・onClick からの同期呼び出し
+  // のみで async 継続として呼ばれる経路が無い」ため対象外にした
+  // (evidence-first、実害が無いものは修正しない方針)。将来 reopenClosedThread
+  // を async 経路(例: 何らかの確認 API を待ってから reopen する変更)から
+  // 呼ぶようになった場合は、closeThread と同じ ref 参照パターンへの修正を
+  // 検討すること。
   const reopenClosedThread = (sessionId: string) => {
     const next = [...openThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));

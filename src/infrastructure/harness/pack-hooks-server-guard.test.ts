@@ -703,6 +703,343 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
     });
   });
 
+  describe('rule 8 (extended write paths): sed/cp/mv/tee/redirect/npm-install/aimix', () => {
+    it('denies sed in-place writes to main, including backup suffixes', async () => {
+      expectDeny(
+        await runHook({ command: "sed -i 's/x/y/' README.md", cwd: mainRepo, agentId: 'agent-1' }),
+        'sed -i での書き込み',
+      );
+      expectDeny(
+        await runHook({ command: "sed -i.bak 's/x/y/' README.md", cwd: mainRepo, agentId: 'agent-1' }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('allows non-in-place sed, worktree sed -i, and chair sed -i in main', async () => {
+      expectAllow(
+        await runHook({ command: "sed 's/x/y/' README.md", cwd: mainRepo, agentId: 'agent-1' }),
+      );
+      expectAllow(
+        await runHook({ command: "sed -i 's/x/y/' README.md", cwd: worktree, agentId: 'agent-1' }),
+      );
+      expectAllow(await runHook({ command: "sed -i 's/x/y/' README.md", cwd: mainRepo }));
+    });
+
+    it('checks only the cp/mv destination and resolves relative traversal into main', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a.txt ${path.join(mainRepo, 'README.md')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+      expectAllow(
+        await runHook({
+          command: `cp ${path.join(mainRepo, 'README.md')} ${path.join(tmpRoot, 'out.md')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      const relativeMainTarget = path.join(path.relative(worktree, mainRepo), 'README.md');
+      expectDeny(
+        await runHook({
+          command: `mv draft.md ${relativeMainTarget}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'mv コマンドでの書き込み',
+      );
+    });
+
+    it('denies tee and redirect writes into main but allows a worktree redirect', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee -a ${path.join(mainRepo, 'notes.txt')} <<<x`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+      expectDeny(
+        await runHook({
+          command: `echo hi > ${path.join(mainRepo, 'scratch.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'リダイレクトでの書き込み',
+      );
+      expectAllow(
+        await runHook({ command: 'echo hi >> local.txt', cwd: worktree, agentId: 'agent-1' }),
+      );
+    });
+
+    it('allows a read-only git command with a quoted > in main checkout (proves the quote-masked > is required, not just harmless: git commit would already be denied by the pre-existing git-mutate check regardless of this fix, but git log is not, so only the redirect scan can wrongly deny it here)', async () => {
+      expectAllow(
+        await runHook({
+          command: 'git log --oneline --grep="a > b" -5',
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('does not treat quoted greater-than text or fd duplication as file writes', async () => {
+      expectAllow(
+        await runHook({
+          command: 'git commit -m "fix: a > b" --allow-empty',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(await runHook({ command: 'npm test 2>&1', cwd: mainRepo, agentId: 'agent-1' }));
+    });
+
+    it('denies npm install and ci in main but leaves npm run build allowed', async () => {
+      expectDeny(
+        await runHook({ command: 'npm install', cwd: mainRepo, agentId: 'agent-1' }),
+        'npm install',
+      );
+      expectDeny(
+        await runHook({ command: 'npm ci', cwd: mainRepo, agentId: 'agent-1' }),
+        'npm ci',
+      );
+      expectAllow(await runHook({ command: 'npm run build', cwd: mainRepo, agentId: 'agent-1' }));
+    });
+
+    it('allows aimix targeting a worktree and denies launches targeting main', async () => {
+      expectAllow(
+        await runHook({
+          command: `aimix run --mode implement --member codex --cwd ${worktree}`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({
+          command: 'aimix run --mode implement --member codex',
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'aimix 経由の委譲実行',
+      );
+      expectDeny(
+        await runHook({
+          command: `aimix run --mode implement --member codex --cwd ${mainRepo}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'aimix 経由の委譲実行',
+      );
+    });
+
+    it('denies cp into main even when an fd redirect follows the destination', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a.txt ${path.join(mainRepo, 'README.md')} 2>/dev/null`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies tee into main even when a pipe follows the destination', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee ${path.join(mainRepo, 'notes.txt')} | cat`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+    });
+
+    it('allows tee to a worktree-local file even when its stdin is redirected from a file under main (reading from main is not a write; without the pipe/redirect-stop guard the "< $MAIN/input.txt" token is wrongly picked up as a second write target and denied)', async () => {
+      expectAllow(
+        await runHook({
+          command: `tee local.txt < ${path.join(mainRepo, 'input.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows sed -i in a worktree when invoked from main without treating the script as a target (uses a slash-free script "1d" — a script like "s/x/y/" contains "/" itself, so it resolves to a nonexistent subpath rather than exactly $SG_DIR either way and would not actually discriminate this bug)', async () => {
+      expectAllow(
+        await runHook({
+          command: `sed -i '1d' ${path.join(worktree, 'file.txt')}`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('denies tee when a redirect appears before the real target (tee >/dev/null $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee >/dev/null ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+    });
+
+    it('denies cp when a redirect appears before the real target (cp 2>/dev/null a $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp 2>/dev/null a ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies cp past a quoted redirect-shaped decoy argument (cp a \'<x\' $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a '<x' ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies tee when a heredoc marker appears before the real target (tee <<EOF $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee <<EOF ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+    });
+
+    it('denies cp past a bare quoted "<" decoy (masking must neutralize it before tokenizing, not just the stop/skip redesign)', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a '<' ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies a redirect target with a known main-checkout prefix before an unresolved $$ suffix', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo hi > ${path.join(mainRepo, 'out-$$.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'リダイレクトでの書き込み',
+      );
+    });
+
+    it('denies a relative redirect target with an unresolved $$ suffix when cwd is main', async () => {
+      expectDeny(
+        await runHook({ command: 'echo hi > out-$$.txt', cwd: mainRepo, agentId: 'agent-1' }),
+        'リダイレクトでの書き込み',
+      );
+    });
+
+    it('denies sed -i when the script is bundled into a combined short-flag group (-Ees/a/b/)', async () => {
+      expectDeny(
+        await runHook({
+          command: `sed -i -Ees/a/b/ ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('denies sed -i when the script is given via an abbreviated long option (--expr=)', async () => {
+      expectDeny(
+        await runHook({
+          command: `sed -i --expr=s/a/b/ ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('denies sed -i when the script is given via a separate-token -e flag', async () => {
+      expectDeny(
+        await runHook({
+          command: `sed -i -e s/a/b/ ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('allows sed without -i even with multiple -e scripts (read-only, never checked)', async () => {
+      expectAllow(
+        await runHook({
+          command: `sed -n -e 1p -e 2p ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows sed -i with a combined-flag script when the target is outside main', async () => {
+      expectAllow(
+        await runHook({ command: 'sed -i -e 1d /tmp/x', cwd: mainRepo, agentId: 'agent-1' }),
+      );
+    });
+
+    it('allows read-only aimix subcommands from main but still denies aimix run', async () => {
+      expectAllow(await runHook({ command: 'aimix members', cwd: mainRepo, agentId: 'agent-1' }));
+      expectAllow(await runHook({ command: 'aimix log', cwd: mainRepo, agentId: 'agent-1' }));
+      expectAllow(await runHook({ command: 'aimix --help', cwd: mainRepo, agentId: 'agent-1' }));
+      expectDeny(
+        await runHook({
+          command: 'aimix run --mode implement --member codex',
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'aimix 経由の委譲実行',
+      );
+    });
+
+    it('allows an unresolved variable redirect target instead of treating it as main', async () => {
+      expectAllow(
+        await runHook({
+          command: 'git diff HEAD > "$NOT_SET_BY_THIS_COMMAND"',
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('denies cp into an existing main directory without a trailing slash', async () => {
+      expectDeny(
+        await runHook({ command: `cp a.txt ${mainRepo}`, cwd: worktree, agentId: 'agent-1' }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it("denies redirect writes into the main checkout's .git internals", async () => {
+      expectDeny(
+        await runHook({
+          command: `echo x > ${path.join(mainRepo, '.git', 'config')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'リダイレクトでの書き込み',
+      );
+    });
+  });
+
   describe('7c: killing the listener', () => {
     it('denies killing the listener PID for the chair and for subagents', async () => {
       expectDeny(
