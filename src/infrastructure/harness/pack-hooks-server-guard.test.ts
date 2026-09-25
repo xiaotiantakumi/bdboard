@@ -355,6 +355,343 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         }),
       );
     });
+
+    // bdboard-qmum: bdboard-wa48 の opus レビューで発覚。.claude/skills/bdboard-server-ops/
+    // SKILL.md は status / --help / -h を「誰でも可」の読み取り専用サブコマンドとして
+    // 明記しているが、7b はサブコマンドを見ずにスクリプトの呼び出し自体を全面 deny して
+    // いた。直後の引数がこの3つのどれかのときだけ deny をスキップする。
+    it('allows status/--help/-h for a subagent, direct or via an interpreter wrapper', async () => {
+      expectAllow(
+        await runHook({
+          command: 'scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'scripts/always-on-server.sh --help',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'scripts/always-on-server.sh -h',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'bash scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('still denies restart/start/deploy/bare invocations of the restart script (status/--help exception is narrow)', async () => {
+      expectDeny(
+        await runHook({
+          command: 'scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'scripts/always-on-server.sh start',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({ command: 'scripts/always-on-server.sh', cwd: worktree, agentId: 'agent-1' }),
+      );
+      expectDeny(
+        await runHook({
+          command: 'bash -x scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('denies a status;restart / status&&restart compound even though status alone is safe', async () => {
+      expectDeny(
+        await runHook({
+          command:
+            'scripts/always-on-server.sh status; scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({
+          command:
+            'scripts/always-on-server.sh status && scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    // bdboard-qmum の opus 再レビューで発覚: ワイド走査は「スクリプトパスの直後のトークン」を
+    // 安全判定に使うが、`bash -c '...' script.sh status` のような -c 呼び出しでは、引用符除去後に
+    // フラットな引数列へ潰れた時点でスクリプトパスの直後に来るトークンは「-c 文字列へ渡る位置
+    // 引数 ($0 等)」であって、実際にスクリプトへ渡る本当のサブコマンドではない (この例では -c
+    // 文字列の中の "restart" が本体で、末尾の "status" は無関係な位置引数)。-c/--command トークン
+    // や $ で始まるトークンが1つでもセグメント内にあれば、隣接トークンでの安全判定を諾めて
+    // 無条件に deny する。
+    it('denies restart smuggled past the status/--help allowlist via interpreter -c positional-parameter indirection', async () => {
+      expectDeny(
+        await runHook({
+          command: 'bash -c \'"$0" restart --expect-pid 1\' scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'sh -c \'"$1" restart --expect-pid 1\' x scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'bash -c \'$0 restart --expect-pid 1\' scripts/always-on-server.sh -h',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command:
+            'env X=restart bash -c \'"$0" "$X" --expect-pid 1\' scripts/always-on-server.sh --help',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'zsh -c \'"$0" deploy --expect-pid 1\' scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+    });
+
+    // -c indirection が無い、素直なラッパー越しの status/--help はこの安全側フォールバックの
+    // 対象にならず、引き続き allow されることを確認する (安全側に倒しすぎて誤て誰でも可のケースまで
+    // 巻き込んでいないか)。
+    it('does not over-widen the -c fallback: plain interpreter-wrapped status/--help/timeout-wrapped status stay allowed', async () => {
+      expectAllow(
+        await runHook({
+          command: 'bash scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'bash scripts/always-on-server.sh --help',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'timeout 5 scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+  });
+
+  // bdboard-kmh2: 同じ opus レビューで発覚した2件目。セグメント分割 (; && || & と改行で
+  // split) はシェルの引用を理解しないため、引用符の中の区切り文字がセグメント境界として
+  // 扱われてしまい、規則 7 の誤検知が再発しうる (「区切り文字を含まないコミットメッセージ
+  // のみテスト済み」だった上の 'allows commands that merely mention...' を、区切り文字を
+  // 含む場合まで広げる)。
+  describe('quote-aware segmentation (bdboard-kmh2)', () => {
+    it('allows a commit message whose quotes contain ";" and merely mention the restart script or npm start', async () => {
+      expectAllow(
+        await runHook({
+          command:
+            'git commit -m "fix: guard; scripts/always-on-server.sh now checks pid before restart"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      // 旧実装 (引用符を理解しない ; 分割) では、この2発言目は
+      // `git commit -m "reminder` / `npm run start must never run in main (port N)"`
+      // の2セグメントに割れ、2セグメント目の sg_word が "npm" になり、cwd が main
+      // checkout であるため 7b の npm-start チェックが誤って deny していた
+      // (マスクがあれば1セグメントのまま git commit として allow される)。
+      expectAllow(
+        await runHook({
+          command: `git commit -m "reminder; npm run start must never run in main (port ${port})"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('still denies a real restart-script invocation that follows quoted decoy text after a real separator', async () => {
+      expectDeny(
+        await runHook({
+          command:
+            'git commit -m "fix: guard; harmless text"; scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+    });
+
+    // 旧実装は「引用符の中」の改行も区切りとして扱わないが、そもそも改行そのものは
+    // (行継続の \改行 を除き) 元々セグメント境界として使われていた。二重引用符の
+    // 中にある実改行がマスクなしだと境界として扱われ、2段落目がそのまま独立
+    // セグメントになる。2段落目の先頭トークンをスクリプト名そのものにして、
+    // 旧実装ではその独立セグメントの sg_word が一致して deny することを確認する。
+    it('allows a multi-line double-quoted commit message whose second paragraph starts with the script name', async () => {
+      expectAllow(
+        await runHook({
+          command:
+            'git commit -m "fix: guard\n\nscripts/always-on-server.sh is mentioned here; second paragraph text"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    // bdboard-qmum の opus 再レビューで判明: 最初の kmh2 実装は $(...) の中の引用符トグルが
+    // 外側へ漏れないようにする代わりに、$(...) 自身の入れ子 (K4/K10/K15 系) や # コメント
+    // (K7 系) の扱いが甘く、無害化のつもりが本物の危険なコマンドまで隠す新規の見逃しを
+    // 複数含んでいた。安全側に作り直した現行実装は「確実に判定できる場合だけ無害化し、
+    // 少しでも自信が持てなければ無害化しない (= 元の素朴な分割に戻るだけ)」を徹底しており、
+    // $(...) やバッククォートの入れ子自身の中にある本物の区切り文字は意図的に無害化しない
+    // (旧来の素朴な分割がこれらを偶然にも区切りとして捕まえていた挙動を保つ)。ヒアドキュメント
+    // 本体も特別扱いしない (完全な shell パーサーになるため対応しない、と明記済み)。結果として
+    // このテストが以前検証していた「$(...) で包まれたヒアドキュメント本体の中にスクリプト名を
+    // 含む行があっても allow される」という挙動は、安全側の作り直しにより意図的に後退した
+    // (本体行がスクリプト名で始まる独立セグメントとして deny される)。これは見逃しより誤検知を
+    // 選ぶ設計方針どおりの想定内の scope reduction であり、バグではない。
+    it('denies a heredoc body wrapped in outer quotes ($(cat <<\'EOF\' ... EOF)) whose body line starts with the script name (documented scope reduction: heredoc bodies are not specially protected)', async () => {
+      const command = [
+        'gh pr create --title x --body "$(cat <<\'HDEOF\'',
+        'fix: guard',
+        'scripts/always-on-server.sh is mentioned in passing, not invoked',
+        'HDEOF',
+        ')"',
+      ].join('\n');
+      expectDeny(await runHook({ command, cwd: worktree, agentId: 'agent-1' }), '再起動スクリプト');
+    });
+
+    // bdboard-qmum opus 再レビュー: $(...) の入れ子自身の中にある本物の危険なコマンドは、
+    // 外側の二重引用符に包まれた入れ子の中にさらに空の "" が挙まっていても見逃さない
+    // (レビューでは元の実装がここで状態がずれ、本物の git pull を隠していた)。
+    it('still denies a real git pull hidden inside nested $() with empty double-quote pairs around it', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo "$(echo ""; git -C ${mainRepo} pull; echo "")"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // 同上、バッククォートの入れ子版。
+    it('still denies a real git pull hidden inside nested backticks with double-quote pairs around it', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo "\`echo "a"; git -C ${mainRepo} pull; echo "b"\`"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // 同上、$(...) の中にシングルクォートで包んだ二重引用符1文字だけ混ぜたケース
+    // (引用符の種類が入れ子の内外で食い違っても状態がずれないことを確認する)。
+    it('still denies a real git pull hidden inside nested $() containing a single-quoted stray double-quote character', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo "$(echo '"'; git -C ${mainRepo} pull; true)"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // # コメント中のアポストロフィで状態がずれ、後続の本物の git pull を見逃さないこと。
+    it('still denies a real git pull on the line after a comment containing an apostrophe', async () => {
+      expectDeny(
+        await runHook({
+          command: `# don't do this\ngit -C ${mainRepo} pull`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // 末尾コメント中のアポストロフィ版 (トップレベル、kill 検知)。
+    it('still denies a real kill on the line after a trailing comment containing an apostrophe', async () => {
+      expectDeny(
+        await runHook({
+          command: "true # it's fine\nkill " + String(process.pid),
+          cwd: worktree,
+        }),
+      );
+    });
+
+    // $'...' (ANSI-C クオート) は専用の理解をしていないが、閉じられない/バランスしない場合は
+    // 生のコマンドで判定する fail-closed の側に落ちるため、本物の危険なコマンドを見逃さない
+    // ことを確認する。
+    it('does not let ansi-c ($\'...\') quoting hide a real trailing git pull', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo $'\\''; git -C ${mainRepo} pull; echo ''`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // マスク関数自体の回帰ガード: 引用符の外側でバックスラッシュエスケープされた引用符
+    // ('\"') を引用の開始と誤認すると、閉じ引用符が見つからないまま残り全体を引用中と
+    // みなして無害化してしまい、その後ろの本物の危険なコマンドを隠しかねない (見逃し)。
+    it('does not let an escaped quote outside quoting hide a real trailing restart-script invocation', async () => {
+      expectDeny(
+        await runHook({
+          command: 'echo \\" ; scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+    });
+
+    it('still denies a plain unquoted git pull in the main checkout (no regression from the masking pass)', async () => {
+      expectDeny(
+        await runHook({ command: 'git pull --ff-only', cwd: mainRepo, agentId: 'agent-1' }),
+        'git pull',
+      );
+    });
   });
 
   describe('7c: killing the listener', () => {
