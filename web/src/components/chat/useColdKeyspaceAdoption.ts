@@ -32,8 +32,15 @@ export interface UseColdKeyspaceAdoptionResult {
  * onProjectIdChange effect の直後、E7 のスレッド一覧 effect の直前)で呼ぶ。
  * E6 は ticket-context effect(E9)と排他(ticketContextToken で分岐)。
  *
- * 読み取り方式は元のまま: draftNoncesRef / conversationInputsRef は[render
- * ミラー](同じバッチの保留中の更新は見えない)、conversationAttachmentsRef は
+ * 読み取り方式は元のまま: conversationInputsRef は[render ミラー](同じバッチの
+ * 保留中の更新は見えない)。draftNoncesRef も[render ミラー]で、bdboard-d29q により
+ * startNewDraftThread/handleAgentChange(chat/useDraftThreadLauncher.ts)は
+ * write site で同期的に ref も更新するようになった(bdboard-d7on Opus レビュー
+ * 指摘で判明: この adoptProjectFromColdKeyspace 自身の setDraftNonces は
+ * まだ同期していない — ただしここでの bump の消費者(chat/useThreadListSync.ts の
+ * E7)は setSelectedProjectId が引き起こす次の再レンダー後に effect として
+ * 読むだけなので、その時点では通常の render-mirror 代入で追いつく。同 tick の
+ * 別ハンドラ呼び出しから読まれることは無い)。conversationAttachmentsRef は
  * [eager](dispatch 時点で反映されるので、同じバッチで積まれた添付も見える)。
  * nonce の bump は「ref から計算して updater に埋め込む」混成(N1)、各ストアの
  * 移送は登録簿(migrateDraftPayloadKey)の関数型更新。

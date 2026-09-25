@@ -91,6 +91,7 @@ function useProbe(projectId: string) {
     updateConversationAttachments,
     clearAttachmentError,
     setOpenThreadIds,
+    openThreadIdsRef,
     restoredProjectsRef,
     setSelectedAgentId,
     cancelThreadConfirmDelete,

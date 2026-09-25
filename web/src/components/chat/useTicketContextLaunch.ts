@@ -69,7 +69,11 @@ function schedulePendingFocus(
  * 依存配列 [ticketContextToken, projects, purgeDraftPayloadKeys] と eslint-disable は
  * 元のまま(意図は effect 末尾のコメント)。他の値はトリガー時点の最新を読むだけ。
  * ref の種類: appliedTicketContextTokenRef と pendingFocusRef(bdboard-jlts)と pending ref 2つは[正本]、
- * draftNoncesRef / conversationInputsRef / threadModelIdsRef は[render ミラー]、
+ * draftNoncesRef(bdboard-d29q: startNewDraftThread/handleAgentChange
+ * (chat/useDraftThreadLauncher.ts)は write site で同期的に ref も更新するように
+ * なった。他の書き手にまだ漏れがあっても、このファイル自身は draftNoncesRef を
+ * 書かず読むだけで、かつ effect のトリガー時点の最新を読むだけなので実害は無い) /
+ * conversationInputsRef / threadModelIdsRef は[render ミラー]、
  * conversationAttachmentsRef は[eager]、draftSeedTextRef は[正本]。
  */
 export function useTicketContextLaunch({

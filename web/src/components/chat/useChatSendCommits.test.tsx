@@ -54,6 +54,15 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
   };
   const conversationInputsRef = { current: store.inputs };
   const conversationAttachmentsRef = { current: store.attachments };
+  // bdboard-d7on: commitSuccess は openThreadIdsRef.current から次の open 配列を
+  // 計算するようになった(render-mirror の同期漏れ対策)。この probe では
+  // store.openThreadIds を直接は読まない単純な ref で足りる(既存テストはどれも
+  // 事前に開いているスレッドを想定しないため)。
+  const openThreadIdsRef = { current: {} as Record<string, string[]> };
+  // bdboard-d7on(Opus レビュー B1/M1 対応): commitSuccess は selectedThreadIdsRef も
+  // 同じ場所で同期するようになった。既存テストはどれも ref の事前値を読まないので
+  // 単純な空 ref で足りる。
+  const selectedThreadIdsRef = { current: {} as Record<string, string | undefined> };
   const params: UseChatSendCommitsParams = {
     selectedProjectId: 'proj-a',
     showModelSelect: false,
@@ -63,7 +72,9 @@ function setup(overrides: Partial<UseChatSendCommitsParams> = {}) {
     setThreadModelIds: setterFor(store, 'threadModelIds'),
     setThreadLists: setterFor(store, 'threadLists'),
     setOpenThreadIds: setterFor(store, 'openThreadIds'),
+    openThreadIdsRef,
     setSelectedThreadIds: setterFor(store, 'selectedThreadIds'),
+    selectedThreadIdsRef,
     conversationInputsRef,
     conversationAttachmentsRef,
     setInput: vi.fn((key: string, value: string) => { store.inputs[key] = value; }),
@@ -113,7 +124,7 @@ describe('appendTranscript', () => {
 
 describe('commitSuccess', () => {
   it('re-keys a draft conversation to the confirmed sessionId and updates the thread stores', () => {
-    const { hook, store } = setup();
+    const { hook, params, store } = setup();
     store.conversations = { 'new:proj-a:0': { messages: [{ role: 'user', text: 'hello', at: 1 }] } };
     act(() => hook.result.current.commitSuccess('new:proj-a:0', 'hello', RESULT));
     expect(Object.keys(store.conversations)).toEqual(['sess-new']);
@@ -126,6 +137,11 @@ describe('commitSuccess', () => {
     expect(store.threadLists['proj-a']).toMatchObject([{ sessionId: 'sess-new', title: 'hello', pinned: false }]);
     expect(store.openThreadIds).toEqual({ 'proj-a': ['sess-new'] });
     expect(store.selectedThreadIds).toEqual({ 'proj-a': 'sess-new' });
+    // bdboard-d7on(Opus レビュー B1/M1): setState と同じ場所で openThreadIdsRef/
+    // selectedThreadIdsRef も同期していることを、state だけでなく ref 自体でも
+    // 確認する(同 tick で ref を読む他ハンドラの安全性はここでしか検証できない)。
+    expect(params.openThreadIdsRef.current).toEqual({ 'proj-a': ['sess-new'] });
+    expect(params.selectedThreadIdsRef.current).toEqual({ 'proj-a': 'sess-new' });
     expect(ackMock).toHaveBeenCalledWith('proj-a', 'sess-new');
   });
 

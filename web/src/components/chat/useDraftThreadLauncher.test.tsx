@@ -37,6 +37,10 @@ function useLauncherProbe(projectId: string) {
     formRef,
   });
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
+  // bdboard-d7on: handleAgentChange は openThreadIdsRef も同期する(render-mirror の
+  // 同期漏れ対策)。このテストは openThreadIds state だけを検証すれば足りるので
+  // 単純な useRef で十分。
+  const openThreadIdsRef = useRef<Record<string, string[]>>({});
   const [selectedAgentId, setSelectedAgentId] = useState('claude');
   const [cancelThreadConfirmDelete] = useState(() => vi.fn());
   // bdboard-4w2d: E7 / applyRecoveredTurn と共有する「一覧・open 復元済み」マーカー。
@@ -47,6 +51,7 @@ function useLauncherProbe(projectId: string) {
     ...conv,
     ...draft,
     setOpenThreadIds,
+    openThreadIdsRef,
     restoredProjectsRef,
     setSelectedAgentId,
     cancelThreadConfirmDelete,

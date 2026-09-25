@@ -378,7 +378,15 @@ describe('useChatSessionLifecycle', () => {
       });
       act(() => result.current.handleHistorySessionGone('sess-dead'));
 
-      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({ 'project-a': [] });
+      // bdboard-d7on: handleHistorySessionGone は openThreadIdsRef.current から
+      // (updater の prev ではなく)直接プルーンするようになった。prev はもはや
+      // 参照されないので、ここでは openThreadIdsRef.current と一致する現実的な
+      // baseline を渡し、sess-dead だけが除かれ sess-live は残ることを確かめる。
+      expect(
+        lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {
+          'project-a': ['sess-live', 'sess-dead'],
+        }),
+      ).toEqual({ 'project-a': ['sess-live'] });
       expect(params.setThreadLists).toHaveBeenCalledTimes(1);
       expect(params.setSelectedThreadIds).not.toHaveBeenCalled();
       expect(params.advanceDraftNonceAfterSessionGone).not.toHaveBeenCalled();
@@ -399,7 +407,16 @@ describe('useChatSessionLifecycle', () => {
       const refreshed = [thread('sess-new', 'refreshed')];
       fetchChatThreadsMock.mockResolvedValue(refreshed);
       const historyRequestIdRef = { current: 4 };
-      const { result, params } = setup({ historyRequestIdRef, openThreads: ['sess-1'] });
+      // bdboard-d7on: handleResumeDiscoveredSession はもう render 時点の
+      // openThreads prop を読まない(E7 の初回 fetch 解決前は stale/[] になり
+      // 得るため)。restoredProjectsRef が未マークのこのケースでは persisted
+      // storage を基点にする — 「前回訪問で sess-1 を開いたまま永続化されている」
+      // を再現する。
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-1'],
+        selectedSessionId: 'sess-1',
+      });
+      const { result, params } = setup({ historyRequestIdRef });
       act(() =>
         result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', [
           { role: 'user', text: 'with time', timestamp: '2026-08-16T11:00:00.000Z' },
@@ -442,10 +459,40 @@ describe('useChatSessionLifecycle', () => {
     });
 
     it('does not duplicate an already-open session', () => {
-      const { result, params } = setup({ openThreads: ['sess-new', 'sess-1'] });
+      // bdboard-d7on: 同上の理由で persisted storage に既存の open 状態を
+      // 用意する(render prop の openThreads はもう読まれない)。
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-new', 'sess-1'],
+        selectedSessionId: 'sess-1',
+      });
+      const { result, params } = setup();
       act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
       expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
         'project-a': ['sess-new', 'sess-1'],
+      });
+    });
+
+    it('bdboard-d7on: once the project is marked restored, bases the next open list on openThreadIdsRef (not persisted storage)', () => {
+      // このプロジェクトは既に E7/applyRecoveredTurn 等で復元済み。持続化には
+      // 古い('stale-persisted')値しか無いが、restoredProjectsRef が立っている
+      // 間は openThreadIdsRef.current の方を信頼するべき — persisted の方は
+      // in-flight の別経路から取り残された、参照すべきでない古い値かもしれない。
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['stale-persisted'],
+        selectedSessionId: 'stale-persisted',
+      });
+      const { result, params } = setup({
+        restoredProjectsRef: { current: new Set(['project-a']) },
+        openThreadIdsRef: { current: { 'project-a': ['sess-live'] } },
+      });
+      act(() => result.current.handleResumeDiscoveredSession('sess-new', 'agent-b', []));
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-live', 'sess-new'],
+      });
+      expect(params.openThreadIdsRef.current).toEqual({ 'project-a': ['sess-live', 'sess-new'] });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-live', 'sess-new'],
+        selectedSessionId: 'sess-new',
       });
     });
 
