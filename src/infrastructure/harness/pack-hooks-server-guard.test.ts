@@ -287,6 +287,26 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
       );
     });
 
+
+    // bdboard-wa48 レビュー (opus): 狭めた一致がインタプリタのフラグやラッパー経由の
+    // 迂回を見逃していないか。narrow 一致 (コマンド語 / bash・sh の直後の引数だけ) に
+    // 単純化すると、これらは main の全引数走査より検知が弱くなってしまう。
+    it('still denies restart-script invocations through interpreter flags, wrappers, and indirection', async () => {
+      const wrappedCommands = [
+        'bash -x scripts/always-on-server.sh restart',
+        'timeout 600 scripts/always-on-server.sh restart',
+        'zsh scripts/always-on-server.sh restart',
+        'source scripts/always-on-server.sh restart',
+        '. scripts/always-on-server.sh restart',
+        'bash -c "scripts/always-on-server.sh restart"',
+        '$(git rev-parse --show-toplevel)/scripts/always-on-server.sh restart',
+        'env -i bash scripts/always-on-server.sh restart',
+      ];
+      for (const command of wrappedCommands) {
+        expectDeny(await runHook({ command, cwd: worktree, agentId: 'agent-1' }));
+      }
+    });
+
     // bdboard-wa48: 規則 7b はもともとセグメント中の全引数位置に basename 一致を見ていたため、
     // 再起動スクリプト名をただの検索語・grep パターン・コミットメッセージに含めただけの
     // コマンドまで deny していた (fable の設計レビューでも 24h に 3 件実測)。一致はコマンド語
