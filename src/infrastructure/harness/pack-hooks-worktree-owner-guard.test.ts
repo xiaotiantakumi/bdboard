@@ -173,6 +173,10 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
     expectAllow(await runBashHook({ command: 'git branch -D bd/ticket-c', cwd: main, agentId: 'agent-2' }));
     expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-c'))).toBe(false);
   });
+  it('does not claim an unowned worktree merely because its branch is force-deleted from elsewhere', async () => {
+    expectAllow(await runBashHook({ command: 'git branch -D bd/ticket-b', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-b'))).toBe(false);
+  });
   it('clears ownership when an owned worktree is removed', async () => {
     const removed = path.join(main, '.claude', 'worktrees', 'ticket-c');
     await runGit(main, ['worktree', 'add', '-q', removed, '-b', 'bd/ticket-c']);

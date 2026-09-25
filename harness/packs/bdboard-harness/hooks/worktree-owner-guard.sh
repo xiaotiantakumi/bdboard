@@ -22,7 +22,9 @@
 #     両側の文字列 (先頭の + と refs/heads/・heads/・refs/ の前置きを剥がした後) を
 #     bd/* と照合する deny 専用の判定も行う (bdboard-qpxq #797 / bdboard-ob0l)。
 #     こちらはクレームしない — push 対象の文字列だけからは「その id の worktree に
-#     実際に触れた」とは言えないため (bdboard-ob0l F3)。
+#     実際に触れた」とは言えないため (bdboard-ob0l F3)。git branch -D bd/<id> も同じ
+#     理由でクレームしない (ブランチ名文字列だけから見ており、実効ディレクトリとは
+#     無関係。bdboard-ob0l で修正: opus レビューで発見・確認した F3 と同型のバグ)。
 #
 
 # 引用符を考慮したセグメント分割 (server-guard.sh の bdboard-kmh2 由来の
@@ -385,8 +387,12 @@ while IFS= read -r wog_seg; do
                 bd/*)
                   wog_bd_id="${wog_bname#bd/}"
                   # worktree が既に無いチケットの branch -D は所有権チェック対象外 (記録を汚さない。bdboard-gsnn round2)。
+                  # ブランチ名文字列だけから見ているので (呼び出し元の実効ディレクトリとは無関係)、
+                  # push-refspec 側の対象走査 (F3) と同じ理由でクレームはしない — deny のみ
+                  # (bdboard-ob0l 追加分、opus レビューで発見: 未所有の bd/<id> に別 agent から
+                  # branch -D すると幽霊クレームが書かれ、本当の持ち主を締め出していた)。
                   if [ -d "$WOG_MAIN/.claude/worktrees/$wog_bd_id" ]; then
-                    wog_check_id "$wog_bd_id" 'git branch -D'
+                    wog_check_id "$wog_bd_id" 'git branch -D' no
                   fi
                   ;;
               esac
