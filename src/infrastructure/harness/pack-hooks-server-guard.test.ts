@@ -437,6 +437,84 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         }),
       );
     });
+
+    // bdboard-qmum の opus 再レビューで発覚: ワイド走査は「スクリプトパスの直後のトークン」を
+    // 安全判定に使うが、`bash -c '...' script.sh status` のような -c 呼び出しでは、引用符除去後に
+    // フラットな引数列へ潰れた時点でスクリプトパスの直後に来るトークンは「-c 文字列へ渡る位置
+    // 引数 ($0 等)」であって、実際にスクリプトへ渡る本当のサブコマンドではない (この例では -c
+    // 文字列の中の "restart" が本体で、末尾の "status" は無関係な位置引数)。-c/--command トークン
+    // や $ で始まるトークンが1つでもセグメント内にあれば、隣接トークンでの安全判定を諾めて
+    // 無条件に deny する。
+    it('denies restart smuggled past the status/--help allowlist via interpreter -c positional-parameter indirection', async () => {
+      expectDeny(
+        await runHook({
+          command: 'bash -c \'"$0" restart --expect-pid 1\' scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'sh -c \'"$1" restart --expect-pid 1\' x scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'bash -c \'$0 restart --expect-pid 1\' scripts/always-on-server.sh -h',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command:
+            'env X=restart bash -c \'"$0" "$X" --expect-pid 1\' scripts/always-on-server.sh --help',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: 'zsh -c \'"$0" deploy --expect-pid 1\' scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+    });
+
+    // -c indirection が無い、素直なラッパー越しの status/--help はこの安全側フォールバックの
+    // 対象にならず、引き続き allow されることを確認する (安全側に倒しすぎて誤て誰でも可のケースまで
+    // 巻き込んでいないか)。
+    it('does not over-widen the -c fallback: plain interpreter-wrapped status/--help/timeout-wrapped status stay allowed', async () => {
+      expectAllow(
+        await runHook({
+          command: 'bash scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'bash scripts/always-on-server.sh --help',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'timeout 5 scripts/always-on-server.sh status',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
   });
 
   // bdboard-kmh2: 同じ opus レビューで発覚した2件目。セグメント分割 (; && || & と改行で
@@ -496,10 +574,19 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
       );
     });
 
-    // heredoc 本体は $(...) の外側二重引用符でくるまれているが、本体内の実改行は
-    // マスク前だとやはりセグメント境界として扱われうる。本体の1行をスクリプト名
-    // そのもので始め、旧実装ではその行が独立セグメントとして deny することを確認する。
-    it('allows a heredoc body wrapped in outer quotes ($(cat <<\'EOF\' ... EOF)) whose body line starts with the script name', async () => {
+    // bdboard-qmum の opus 再レビューで判明: 最初の kmh2 実装は $(...) の中の引用符トグルが
+    // 外側へ漏れないようにする代わりに、$(...) 自身の入れ子 (K4/K10/K15 系) や # コメント
+    // (K7 系) の扱いが甘く、無害化のつもりが本物の危険なコマンドまで隠す新規の見逃しを
+    // 複数含んでいた。安全側に作り直した現行実装は「確実に判定できる場合だけ無害化し、
+    // 少しでも自信が持てなければ無害化しない (= 元の素朴な分割に戻るだけ)」を徹底しており、
+    // $(...) やバッククォートの入れ子自身の中にある本物の区切り文字は意図的に無害化しない
+    // (旧来の素朴な分割がこれらを偶然にも区切りとして捕まえていた挙動を保つ)。ヒアドキュメント
+    // 本体も特別扱いしない (完全な shell パーサーになるため対応しない、と明記済み)。結果として
+    // このテストが以前検証していた「$(...) で包まれたヒアドキュメント本体の中にスクリプト名を
+    // 含む行があっても allow される」という挙動は、安全側の作り直しにより意図的に後退した
+    // (本体行がスクリプト名で始まる独立セグメントとして deny される)。これは見逃しより誤検知を
+    // 選ぶ設計方針どおりの想定内の scope reduction であり、バグではない。
+    it('denies a heredoc body wrapped in outer quotes ($(cat <<\'EOF\' ... EOF)) whose body line starts with the script name (documented scope reduction: heredoc bodies are not specially protected)', async () => {
       const command = [
         'gh pr create --title x --body "$(cat <<\'HDEOF\'',
         'fix: guard',
@@ -507,7 +594,82 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         'HDEOF',
         ')"',
       ].join('\n');
-      expectAllow(await runHook({ command, cwd: worktree, agentId: 'agent-1' }));
+      expectDeny(await runHook({ command, cwd: worktree, agentId: 'agent-1' }), '再起動スクリプト');
+    });
+
+    // bdboard-qmum opus 再レビュー: $(...) の入れ子自身の中にある本物の危険なコマンドは、
+    // 外側の二重引用符に包まれた入れ子の中にさらに空の "" が挙まっていても見逃さない
+    // (レビューでは元の実装がここで状態がずれ、本物の git pull を隠していた)。
+    it('still denies a real git pull hidden inside nested $() with empty double-quote pairs around it', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo "$(echo ""; git -C ${mainRepo} pull; echo "")"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // 同上、バッククォートの入れ子版。
+    it('still denies a real git pull hidden inside nested backticks with double-quote pairs around it', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo "\`echo "a"; git -C ${mainRepo} pull; echo "b"\`"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // 同上、$(...) の中にシングルクォートで包んだ二重引用符1文字だけ混ぜたケース
+    // (引用符の種類が入れ子の内外で食い違っても状態がずれないことを確認する)。
+    it('still denies a real git pull hidden inside nested $() containing a single-quoted stray double-quote character', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo "$(echo '"'; git -C ${mainRepo} pull; true)"`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // # コメント中のアポストロフィで状態がずれ、後続の本物の git pull を見逃さないこと。
+    it('still denies a real git pull on the line after a comment containing an apostrophe', async () => {
+      expectDeny(
+        await runHook({
+          command: `# don't do this\ngit -C ${mainRepo} pull`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    // 末尾コメント中のアポストロフィ版 (トップレベル、kill 検知)。
+    it('still denies a real kill on the line after a trailing comment containing an apostrophe', async () => {
+      expectDeny(
+        await runHook({
+          command: "true # it's fine\nkill " + String(process.pid),
+          cwd: worktree,
+        }),
+      );
+    });
+
+    // $'...' (ANSI-C クオート) は専用の理解をしていないが、閉じられない/バランスしない場合は
+    // 生のコマンドで判定する fail-closed の側に落ちるため、本物の危険なコマンドを見逃さない
+    // ことを確認する。
+    it('does not let ansi-c ($\'...\') quoting hide a real trailing git pull', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo $'\\''; git -C ${mainRepo} pull; echo ''`,
+          cwd: mainRepo,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
     });
 
     // マスク関数自体の回帰ガード: 引用符の外側でバックスラッシュエスケープされた引用符

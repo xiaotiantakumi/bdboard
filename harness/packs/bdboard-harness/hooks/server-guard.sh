@@ -185,28 +185,52 @@ SG_NL=$'\n'
 
 # bdboard-kmh2: 上の分割はシェルの引用を理解しない素朴な文字列置換なので、引用符
 # ('...' / "..." 。複数行にまたがるものを含む) の中にある ; & | や改行までセグメント境界
-# として扱ってしまう (例: git commit -m "fix: guard; ..." / gh pr create --body
-# "$(cat <<'EOF' ... EOF)" —後者はヒアドキュメント全体が外側の "$(...)" に包まれている)。
-# 分割の前に、引用符の中身だけ ; & | と改行を空白に置き換えて無害化する。引用符の外側や
-# 中身の他の文字は一切変えない — 分割の判定材料はそのまま残す (「言及しただけ」を deny する
-# 設計 (bdboard-wa48) 自体は変えない)。
+# として扱ってしまう (例: git commit -m "fix: guard; ..." のようにコミットメッセージの
+# 引用符内に ; がある場合)。分割の前に、引用符の中身だけ ; & | と改行を空白に置き換えて
+# 無害化する。引用符の外側や中身の他の文字は一切変えない — 分割の判定材料はそのまま残す
+# (「言及しただけ」を deny する設計 (bdboard-wa48) 自体は変えない)。
 #
-# 対応する範囲 (これ以上は「完全な shell パーサー」になるため対応しない。PR 本文に明記):
-#   - トップレベルの '...' と "..." のみ。$(...) やバッククォートの中に入れ子になった
-#     同種の引用符 (例 "$(echo "x")") は追わない — その場合は最初に出た内側の引用符で
-#     閉じたと誤認し、以降は元の (今回の修正前と同じ) 分割挙動に戻るだけ (安全側: 見逃し
-#     ではなく誤検知が残る側に倒れる)。
-#   - 二重引用符内のバックスラッシュエスケープは `\"` (閉じ引用符と誤認しない) だけを見る。
-#     `\$` `\\` 等は解釈しない (両方の文字をそのまま通すだけで、引用符の中は元々どの文字も
-#     区切りとして見ないので判定には影響しない)。
+# bdboard-qmum の opus レビュー (PR #767) で、最初の実装 (引用符を単純な状態機械で追う
+# だけで、# コメント・$(...) やバッククォートの入れ子・閉じられない引用符の扱いが甘い版)
+# には「無害化のつもりが本物の区切り文字まで隠してしまい、本来 deny すべき危険なコマンドを
+# 見逃す」という新規の穴が複数見つかった (例: コメント中のアポストロフィで状態が狂う、
+# $(...) の中の入れ子の引用符でずれる)。今の実装はそれを踏まえて安全側に倒し直したもの:
+#
+# 安全側の原則: 「確実に引用符の中だと判定できる場合だけ」区切り文字を無害化する。
+# 判定に少しでも自信が持てない場合は、区切り文字を無害化せず残す (= 元の素朴な分割に
+# 戻るだけで、誤検知が残る可能性はあっても見逃しにはならない)。
+#
+# 対応する範囲 (これ以上は「完全な shell パーサー」になるため対応しない):
+#   - トップレベルの '...' と "..." の中身にある ; & | と改行を無害化する。
+#   - # コメント (空白/行頭/;&|の直後などの語頭に現れたときだけ) は実改行まで丸ごと
+#     読み飛ばし、中の引用符文字は一切解釈しない (bash 本体もコメント中は構文解析しない
+#     ため、ここで引用符として数えると誤って状態がずれる — 過去の実装の穴の1つ)。
+#   - $(...) とバッククォートは新しい入れ子として扱い、その中の引用符トグルが外側の
+#     引用状態に漏れ出さないようにする。ただし $(...) 自身の中にある本物の ; & | と改行は
+#     「無害化しない」(= 見える状態を保つ) — 元の素朴な分割がこれらを偶然にも区切りとして
+#     捕まえていたのを壊さないため (bdboard-kmh2 の対象はあくまで「引用符の中の区切り文字」
+#     で、$(...) の中身まで安全に解析する保証は無い)。
+#   - ヒアドキュメント本体 (<<EOF ... EOF) は特別扱いしない。本体の中の改行は区切り文字
+#     として見える状態のままなので、"$(cat <<'EOF' ... EOF)" のようにヒアドキュメント全体を
+#     外側の引用符で包んだ形は、本体に引用符が1文字も無ければ結果的に無害化されるが、
+#     本体の行数や中身次第では誤検知が残ることがある (bdboard-kmh2 が名指ししていた
+#     ケースの一部は、この安全な作り直しにより「直らない」状態に後退した。完全な
+#     ヒアドキュメント解析は「完全な shell パーサー」寄りの実装が要るため次点課題)。
+#   - $'...' (ANSI-C クォート) は専用の理解をしない。中身に応じて偶然に安全側 (下記の
+#     「閉じられない/バランスしない場合は生のコマンドで判定」) に落ちる。
+#   - 二重引用符内のバックスラッシュは、次の1文字を常にエスケープ (そのまま通す) と
+#     みなす (`\"` に限らない — 限定すると `\\"` のような並びで閉じ引用符と誤認しうる)。
 #   - 引用符の外側で `\'` / `\"` のようにバックスラッシュでエスケープされた引用符文字は
-#     引用の開始とみなさない (ここを誤ると、閉じ引用符が無いとみなして残り全体を引用中
-#     として無害化してしまい、その後ろにある本物の危険なコマンドを隠しかねない)。
-#   - 独立したヒアドキュメント (外側に引用符が無い `<<EOF ... EOF`) は対象外。このリポジトリの
-#     規約 (commit -m / gh pr create --body は常に "$(cat <<'EOF' ... EOF)" で外側を引用符で
-#     包む) では該当しないため実害は無い想定。
-#   - 閉じられない引用符は、コマンド末尾まで引用中とみなして無害化する (見えなくなるのは
-#     引用符の中身だけ。閉じ引用符が無い時点で実際の bash も構文エラーで実行できない)。
+#     引用の開始とみなさない (誤ると、その後ろの本物の危険なコマンドを隠しかねない)。
+#   - コマンド全体を走査し終えた時点で「トップレベルの引用/コメントが閉じている」かつ
+#     「$(...) やバッククォートの入れ子がすべて閉じている」ことを確認する。どちらか一方
+#     でも満たさなければ、無害化を一切せず**元の生のコマンドをそのまま返す** (= 分割は
+#     完全に旧来の素朴な挙動に戻る。見逃しよりも誤検知が残る側に倒す)。
+#   - 走査は文字ごとの状態機械で、大きな入力では bash の文字列連結コストにより遅くなる
+#     (O(n^2))。hook 全体のタイムアウト (通常 10 秒) を超えないよう、コマンドが
+#     SG_MASK_MAX_LEN 文字を超える場合は無害化を試みず生のコマンドをそのまま返す。
+SG_MASK_MAX_LEN=3000
+
 sg_mask_quoted_separators() {
   sg_mqs_s="$1"
   case "$sg_mqs_s" in
@@ -214,23 +238,106 @@ sg_mask_quoted_separators() {
     *) printf '%s' "$sg_mqs_s"; return 0 ;;
   esac
   sg_mqs_len=${#sg_mqs_s}
+  if [ "$sg_mqs_len" -gt "$SG_MASK_MAX_LEN" ]; then
+    printf '%s' "$sg_mqs_s"
+    return 0
+  fi
   sg_mqs_out=''
   sg_mqs_state='n'
+  sg_mqs_stack=''
+  sg_mqs_saved=''
+  sg_mqs_wordstart=1
   sg_mqs_i=0
   while [ "$sg_mqs_i" -lt "$sg_mqs_len" ]; do
     sg_mqs_c="${sg_mqs_s:sg_mqs_i:1}"
+    sg_mqs_next=''
+    if [ $((sg_mqs_i + 1)) -lt "$sg_mqs_len" ]; then
+      sg_mqs_next="${sg_mqs_s:sg_mqs_i+1:1}"
+    fi
     case "$sg_mqs_state" in
+      c)
+        # # コメント: 実改行まで無解釈で素通しする (引用符もトグルしない)。
+        if [ "$sg_mqs_c" = "$SG_NL" ]; then
+          sg_mqs_state='n'
+        fi
+        sg_mqs_out="$sg_mqs_out$sg_mqs_c"
+        sg_mqs_i=$((sg_mqs_i + 1))
+        case "$sg_mqs_c" in
+          ' ' | '	' | "$SG_NL") sg_mqs_wordstart=1 ;;
+          *) sg_mqs_wordstart=0 ;;
+        esac
+        continue
+        ;;
       n)
         case "$sg_mqs_c" in
           \\)
-            if [ $((sg_mqs_i + 1)) -lt "$sg_mqs_len" ]; then
-              sg_mqs_out="$sg_mqs_out$sg_mqs_c${sg_mqs_s:sg_mqs_i+1:1}"
+            if [ -n "$sg_mqs_next" ]; then
+              sg_mqs_out="$sg_mqs_out$sg_mqs_c$sg_mqs_next"
               sg_mqs_i=$((sg_mqs_i + 2))
+              sg_mqs_wordstart=0
+              continue
+            fi
+            ;;
+          '#')
+            if [ "$sg_mqs_wordstart" = 1 ]; then
+              sg_mqs_state='c'
+              sg_mqs_out="$sg_mqs_out$sg_mqs_c"
+              sg_mqs_i=$((sg_mqs_i + 1))
+              sg_mqs_wordstart=0
               continue
             fi
             ;;
           "'") sg_mqs_state="'" ;;
           '"') sg_mqs_state='"' ;;
+          '$')
+            if [ "$sg_mqs_next" = '(' ]; then
+              sg_mqs_stack="${sg_mqs_stack}P"
+              sg_mqs_saved="${sg_mqs_saved}n"
+              sg_mqs_state='n'
+              sg_mqs_out="$sg_mqs_out\$("
+              sg_mqs_i=$((sg_mqs_i + 2))
+              sg_mqs_wordstart=1
+              continue
+            fi
+            ;;
+          '`')
+            sg_mqs_top=''
+            if [ -n "$sg_mqs_stack" ]; then
+              sg_mqs_slen=${#sg_mqs_stack}
+              sg_mqs_top="${sg_mqs_stack:sg_mqs_slen-1:1}"
+            fi
+            if [ "$sg_mqs_top" = 'B' ]; then
+              sg_mqs_slen=${#sg_mqs_stack}
+              sg_mqs_state="${sg_mqs_saved:sg_mqs_slen-1:1}"
+              sg_mqs_stack="${sg_mqs_stack:0:sg_mqs_slen-1}"
+              sg_mqs_saved="${sg_mqs_saved:0:sg_mqs_slen-1}"
+            else
+              sg_mqs_stack="${sg_mqs_stack}B"
+              sg_mqs_saved="${sg_mqs_saved}n"
+              sg_mqs_state='n'
+            fi
+            sg_mqs_out="$sg_mqs_out$sg_mqs_c"
+            sg_mqs_i=$((sg_mqs_i + 1))
+            sg_mqs_wordstart=1
+            continue
+            ;;
+          ')')
+            sg_mqs_top=''
+            if [ -n "$sg_mqs_stack" ]; then
+              sg_mqs_slen=${#sg_mqs_stack}
+              sg_mqs_top="${sg_mqs_stack:sg_mqs_slen-1:1}"
+            fi
+            if [ "$sg_mqs_top" = 'P' ]; then
+              sg_mqs_slen=${#sg_mqs_stack}
+              sg_mqs_state="${sg_mqs_saved:sg_mqs_slen-1:1}"
+              sg_mqs_stack="${sg_mqs_stack:0:sg_mqs_slen-1}"
+              sg_mqs_saved="${sg_mqs_saved:0:sg_mqs_slen-1}"
+              sg_mqs_out="$sg_mqs_out$sg_mqs_c"
+              sg_mqs_i=$((sg_mqs_i + 1))
+              sg_mqs_wordstart=0
+              continue
+            fi
+            ;;
         esac
         ;;
       "'")
@@ -243,13 +350,34 @@ sg_mask_quoted_separators() {
       '"')
         case "$sg_mqs_c" in
           \\)
-            if [ $((sg_mqs_i + 1)) -lt "$sg_mqs_len" ] && [ "${sg_mqs_s:sg_mqs_i+1:1}" = '"' ]; then
-              sg_mqs_out="$sg_mqs_out\\\""
+            if [ -n "$sg_mqs_next" ]; then
+              sg_mqs_out="$sg_mqs_out$sg_mqs_c$sg_mqs_next"
               sg_mqs_i=$((sg_mqs_i + 2))
+              sg_mqs_wordstart=0
               continue
             fi
             ;;
           '"') sg_mqs_state='n' ;;
+          '$')
+            if [ "$sg_mqs_next" = '(' ]; then
+              sg_mqs_stack="${sg_mqs_stack}P"
+              sg_mqs_saved="${sg_mqs_saved}\""
+              sg_mqs_state='n'
+              sg_mqs_out="$sg_mqs_out\$("
+              sg_mqs_i=$((sg_mqs_i + 2))
+              sg_mqs_wordstart=1
+              continue
+            fi
+            ;;
+          '`')
+            sg_mqs_stack="${sg_mqs_stack}B"
+            sg_mqs_saved="${sg_mqs_saved}\""
+            sg_mqs_state='n'
+            sg_mqs_out="$sg_mqs_out$sg_mqs_c"
+            sg_mqs_i=$((sg_mqs_i + 1))
+            sg_mqs_wordstart=1
+            continue
+            ;;
           ';' | '&' | '|') sg_mqs_c=' ' ;;
           "$SG_NL") sg_mqs_c=' ' ;;
         esac
@@ -257,8 +385,19 @@ sg_mask_quoted_separators() {
     esac
     sg_mqs_out="$sg_mqs_out$sg_mqs_c"
     sg_mqs_i=$((sg_mqs_i + 1))
+    case "$sg_mqs_c" in
+      ' ' | '	' | "$SG_NL" | ';' | '&' | '|') sg_mqs_wordstart=1 ;;
+      *) sg_mqs_wordstart=0 ;;
+    esac
   done
-  printf '%s' "$sg_mqs_out"
+  if [ -n "$sg_mqs_stack" ]; then
+    printf '%s' "$sg_mqs_s"
+    return 0
+  fi
+  case "$sg_mqs_state" in
+    n | c) printf '%s' "$sg_mqs_out" ;;
+    *) printf '%s' "$sg_mqs_s" ;;
+  esac
 }
 
 SG_MASKED_COMMAND="$(sg_mask_quoted_separators "$COMMAND")"
@@ -480,6 +619,25 @@ while IFS= read -r sg_seg; do
     if [ -n "$sg_restart_wide_scan" ]; then
       sg_restart_args=("$@")
       sg_restart_argc=${#sg_restart_args[@]}
+      # bdboard-qmum (opus レビュー追加分): ワイド走査は「スクリプトパスの次の
+      # トークン」を安全判定の材料にしているが、`bash -c '...' script.sh status`
+      # のような -c 呼び出しでは、クォート除去後にフラットな引数列へ潰れた時点で
+      # スクリプトパスの直後に来るトークンは「-c 文字列に渡る位置引数 ($0 等)」で
+      # あって、実際にスクリプトへ渡る本当のサブコマンドではない (例: 上の例だと
+      # -c 文字列の中の "restart" が本体で、"status" は無関係な位置引数)。位置関係
+      # からは -c 文字列の中身を安全に復元できないため、このセグメントに -c/--command
+      # トークンや $ で始まるトークン (位置引数・変数参照の疑い) が1つでもあれば、
+      # 「隣のトークンで安全と判定する」のを諦めて無条件に deny する (安全側)。
+      sg_restart_unsafe_ctx=''
+      sg_restart_i=0
+      while [ "$sg_restart_i" -lt "$sg_restart_argc" ]; do
+        sg_tok="${sg_restart_args[$sg_restart_i]}"
+        case "$sg_tok" in
+          -c | --command) sg_restart_unsafe_ctx='yes' ;;
+          '$'*) sg_restart_unsafe_ctx='yes' ;;
+        esac
+        sg_restart_i=$((sg_restart_i + 1))
+      done
       sg_restart_i=0
       while [ "$sg_restart_i" -lt "$sg_restart_argc" ]; do
         sg_tok="${sg_restart_args[$sg_restart_i]}"
@@ -489,7 +647,7 @@ while IFS= read -r sg_seg; do
           if [ "$sg_restart_next_i" -lt "$sg_restart_argc" ]; then
             sg_restart_next="${sg_restart_args[$sg_restart_next_i]}"
           fi
-          if ! sg_restart_subcmd_is_safe "$sg_restart_next"; then
+          if [ -n "$sg_restart_unsafe_ctx" ] || ! sg_restart_subcmd_is_safe "$sg_restart_next"; then
             sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
           fi
         fi
