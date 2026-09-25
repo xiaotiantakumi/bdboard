@@ -26,7 +26,7 @@ const CHAT_COMPLETED_TURNS_MAX = 20;
  * CHAT_COMPLETED_TURNS_MAX に達する等で) 消えるまで際限なく続く。
  *
  * クライアント側には自分自身が絡む検知失敗を諦めて自己解決する猶予
- * (UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS、ChatPanel.tsx で約20〜30秒)
+ * (UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS、turnStatusPolicy.ts で約20〜30秒)
  * が既にあるので、このTTLはそれより十分長く取り、正当な回収中クライアントの
  * 振る舞いには決して干渉しないようにする。
  */
