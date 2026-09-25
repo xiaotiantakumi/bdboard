@@ -261,6 +261,80 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         }),
       );
     });
+
+    it('denies direct execution of the restart script without an interpreter prefix', async () => {
+      expectDeny(
+        await runHook({
+          command: 'scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        '再起動スクリプト',
+      );
+      expectDeny(
+        await runHook({
+          command: './scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectDeny(
+        await runHook({
+          command: 'sh scripts/always-on-server.sh restart --expect-pid 1',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    // bdboard-wa48: 規則 7b はもともとセグメント中の全引数位置に basename 一致を見ていたため、
+    // 再起動スクリプト名をただの検索語・grep パターン・コミットメッセージに含めただけの
+    // コマンドまで deny していた (fable の設計レビューでも 24h に 3 件実測)。一致はコマンド語
+    // 自身、または bash/sh の直後の引数だけに絞る。
+    it('allows commands that merely mention the restart script filename as an argument', async () => {
+      expectAllow(
+        await runHook({
+          command: 'bd search "always-on-server.sh"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'grep -r always-on-server.sh docs/',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'git log -S always-on-server.sh',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'cat scripts/always-on-server.sh',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'wc -l scripts/always-on-server.sh',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+      expectAllow(
+        await runHook({
+          command: 'git commit -m "docs: mention scripts/always-on-server.sh in README"',
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
   });
 
   describe('7c: killing the listener', () => {

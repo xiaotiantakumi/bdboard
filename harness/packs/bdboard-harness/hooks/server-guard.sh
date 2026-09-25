@@ -360,12 +360,20 @@ while IFS= read -r sg_seg; do
   sg_word="${1##*/}"
 
   # 再起動スクリプトの呼び出し (bash path/to/script.sh ... / ./script.sh ...)。
+  # 一致はコマンド語そのもの、または bash/sh の直後の引数だけを見る。以前は
+  # セグメント中の全引数位置を見ていたため、ファイル名を検索語や grep パターン、
+  # コミットメッセージに含めただけの `bd search "always-on-server.sh"` /
+  # `grep always-on-server.sh` / `git log -S always-on-server.sh` まで
+  # 誤って deny していた (bdboard-wa48)。
   if [ -n "$SG_SCRIPT_BASE" ] && [ -n "$SG_IS_SUB" ]; then
-    for sg_tok in "$@"; do
-      if [ "${sg_tok##*/}" = "$SG_SCRIPT_BASE" ]; then
+    if [ "$sg_word" = "$SG_SCRIPT_BASE" ]; then
+      sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
+    elif [ "$sg_word" = 'bash' ] || [ "$sg_word" = 'sh' ]; then
+      sg_next_word="${2:-}"
+      if [ "${sg_next_word##*/}" = "$SG_SCRIPT_BASE" ]; then
         sg_deny_sub '7b-restart-script' "再起動スクリプト ($SG_SCRIPT_BASE) の実行"
       fi
-    done
+    fi
   fi
 
   case "$sg_word" in
