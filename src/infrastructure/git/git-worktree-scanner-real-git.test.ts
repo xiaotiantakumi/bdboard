@@ -107,3 +107,73 @@ describe('createGitWorktreeScanner.listChangedFiles against a real repository', 
     expect(filesBAgain).toContain('shared.ts');
   }, 60_000);
 });
+
+describe('countHarnessCommitsBehindDefaultBranch against a real repository (bdboard-0chq)', () => {
+  it('reports hasCommonAncestor: true for an ordinary worktree behind origin/main', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-harness-lag-'));
+    tmpDirs.push(tmpDir);
+
+    const repoRoot = path.join(tmpDir, 'repo');
+    const originPath = path.join(tmpDir, 'origin.git');
+
+    fs.mkdirSync(repoRoot, { recursive: true });
+    await git(['init', '--initial-branch=main', repoRoot]);
+    await git(['-C', repoRoot, 'config', 'user.name', 'bdboard-test']);
+    await git(['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    fs.mkdirSync(path.join(repoRoot, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, '.claude', 'settings.json'), '{}\n');
+    await git(['-C', repoRoot, 'add', '.']);
+    await git(['-C', repoRoot, 'commit', '-m', 'base']);
+
+    await git(['init', '--bare', originPath]);
+    await git(['-C', repoRoot, 'remote', 'add', 'origin', originPath]);
+    await git(['-C', repoRoot, 'push', '-u', 'origin', 'main']);
+
+    const worktreePath = path.join(repoRoot, '.claude', 'worktrees', 'ticket-a');
+    await git(['-C', repoRoot, 'worktree', 'add', '-b', 'bd/ticket-a', worktreePath, 'origin/main']);
+
+    fs.writeFileSync(path.join(repoRoot, '.claude', 'settings.json'), '{"x":1}\n');
+    await git(['-C', repoRoot, 'add', '.']);
+    await git(['-C', repoRoot, 'commit', '-m', 'harness update']);
+    await git(['-C', repoRoot, 'push', 'origin', 'main']);
+    await git(['-C', worktreePath, 'fetch', 'origin']);
+
+    const scanner = createGitWorktreeScanner(runner);
+    const measurement = await scanner.countHarnessCommitsBehindDefaultBranch?.(worktreePath);
+
+    expect(measurement).toEqual({ commitsBehind: 1, baseRef: 'origin/main', hasCommonAncestor: true });
+  }, 60_000);
+
+  it('reports hasCommonAncestor: false for a worktree with no common ancestor', async () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bdboard-harness-lag-orphan-'));
+    tmpDirs.push(tmpDir);
+
+    const repoRoot = path.join(tmpDir, 'repo');
+    const originPath = path.join(tmpDir, 'origin.git');
+
+    fs.mkdirSync(repoRoot, { recursive: true });
+    await git(['init', '--initial-branch=main', repoRoot]);
+    await git(['-C', repoRoot, 'config', 'user.name', 'bdboard-test']);
+    await git(['-C', repoRoot, 'config', 'user.email', 'test@example.invalid']);
+    fs.mkdirSync(path.join(repoRoot, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(repoRoot, '.claude', 'settings.json'), '{}\n');
+    await git(['-C', repoRoot, 'add', '.']);
+    await git(['-C', repoRoot, 'commit', '-m', 'base']);
+
+    await git(['init', '--bare', originPath]);
+    await git(['-C', repoRoot, 'remote', 'add', 'origin', originPath]);
+    await git(['-C', repoRoot, 'push', '-u', 'origin', 'main']);
+
+    const worktreePath = path.join(repoRoot, '.claude', 'worktrees', 'orphan');
+    await git(['-C', repoRoot, 'worktree', 'add', '--orphan', '-b', 'bd/orphan', worktreePath]);
+    fs.writeFileSync(path.join(worktreePath, 'orphan-file.txt'), 'orphan\n');
+    await git(['-C', worktreePath, 'add', '.']);
+    await git(['-C', worktreePath, 'commit', '-m', 'orphan root']);
+
+    const scanner = createGitWorktreeScanner(runner);
+    const measurement = await scanner.countHarnessCommitsBehindDefaultBranch?.(worktreePath);
+
+    expect(measurement?.baseRef).toBe('origin/main');
+    expect(measurement?.hasCommonAncestor).toBe(false);
+  }, 60_000);
+});

@@ -50,15 +50,23 @@ export function checkStaleHarnessWorktree(
     return null;
   }
 
+  const message = lag.hasCommonAncestor
+    ? `この worktree のハーネスは ${lag.baseRef} より ${lag.commitsBehind} コミットぶん古いままです。` +
+      'ハーネス (.claude/skills と .claude/settings.json) はチェックアウト単位なので、' +
+      'このセッションは worktree 作成時点の古い規律・hooks のまま動いています。' +
+      `git -C ${lag.worktreePath} rebase ${lag.baseRef} で追従してください`
+    : `この worktree は ${lag.baseRef} と共通の祖先がありません (履歴の作り直しより前に` +
+      '作られた checkout)。ハーネス (.claude/skills と .claude/settings.json) は' +
+      'チェックアウト単位なので、このセッションは worktree 作成時点の古い規律・hooks の' +
+      'まま動いています。rebase では追いつけないので、まず ' +
+      `git -C ${lag.worktreePath} の中身を確認し、必要な成果だけ退避してから ` +
+      `${lag.baseRef} で worktree を作り直してください`;
+
   return {
     kind: 'stale_harness_worktree',
     ticketId: ticket.id,
     projectId: ticket.projectId,
-    message:
-      `この worktree のハーネスは ${lag.baseRef} より ${lag.commitsBehind} コミットぶん古いままです。` +
-      'ハーネス (.claude/skills と .claude/settings.json) はチェックアウト単位なので、' +
-      'このセッションは worktree 作成時点の古い規律・hooks のまま動いています。' +
-      `git -C ${lag.worktreePath} rebase ${lag.baseRef} で追従してください`,
+    message,
     severity: 'warning',
     // cleanup は付けない。rebase は掃除ではないうえ、未コミットの成果を抱えた
     // worktree に対してワンクリック相当のコマンドを出すのは危険。

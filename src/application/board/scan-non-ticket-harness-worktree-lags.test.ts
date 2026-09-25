@@ -28,6 +28,7 @@ describe('scanNonTicketHarnessWorktreeLags', () => {
         countHarnessCommitsBehindDefaultBranch: async (path) => ({
           commitsBehind: path === '/repo/wt/a' ? 124 : 3,
           baseRef: 'origin/main',
+          hasCommonAncestor: true,
         }),
       }),
     );
@@ -41,6 +42,7 @@ describe('scanNonTicketHarnessWorktreeLags', () => {
         branchName: 'feature/a',
         commitsBehind: 124,
         baseRef: 'origin/main',
+        hasCommonAncestor: true,
       },
       {
         projectId: '/repo',
@@ -48,6 +50,7 @@ describe('scanNonTicketHarnessWorktreeLags', () => {
         branchName: 'feature/b',
         commitsBehind: 3,
         baseRef: 'origin/main',
+        hasCommonAncestor: true,
       },
     ]);
   });
@@ -70,7 +73,7 @@ describe('scanNonTicketHarnessWorktreeLags', () => {
           if (path === '/repo/wt/a') {
             throw new Error('no origin/main');
           }
-          return { commitsBehind: 60, baseRef: 'origin/main' };
+          return { commitsBehind: 60, baseRef: 'origin/main', hasCommonAncestor: true };
         },
       }),
       { logWarn },
@@ -99,6 +102,7 @@ describe('scanNonTicketHarnessWorktreeLags', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
       commitsBehind: 9,
       baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+      hasCommonAncestor: true,
     }));
     const projectWorktrees = [
       worktree('/repo', '/repo/wt/a', 'feature/a'),
@@ -126,6 +130,7 @@ describe('scanNonTicketHarnessWorktreeLags', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async () => ({
       commitsBehind: 0,
       baseRef: 'origin/main',
+      hasCommonAncestor: true,
     }));
 
     const lags = await scanNonTicketHarnessWorktreeLags(

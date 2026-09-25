@@ -15,6 +15,7 @@ function lag(overrides: Partial<NonTicketHarnessWorktreeLag> = {}): NonTicketHar
     branchName: 'feature/mac-slow-diagnosis-7ddee1',
     commitsBehind: STALE_HARNESS_WORKTREE_MIN_COMMITS_BEHIND,
     baseRef: 'origin/main',
+    hasCommonAncestor: true,
     ...overrides,
   };
 }
@@ -36,6 +37,14 @@ describe('checkNonTicketHarnessWorktrees', () => {
     expect(warnings[0]?.message).toContain(
       `git -C ${lag().worktreePath} rebase origin/main`,
     );
+  });
+
+  it('tells the reader to sort it out by hand instead of rebasing when there is no common ancestor (bdboard-0chq)', () => {
+    const [warning] = checkNonTicketHarnessWorktrees([lag({ hasCommonAncestor: false })]);
+
+    expect(warning?.message).toContain('共通の祖先が');
+    expect(warning?.message).toContain('worktree を作り直してください');
+    expect(warning?.message).not.toMatch(/rebase origin\/main/);
   });
 
   it('stays silent below the threshold', () => {

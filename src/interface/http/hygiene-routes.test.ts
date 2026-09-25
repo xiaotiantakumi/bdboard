@@ -501,6 +501,7 @@ describe('createApiRoutes', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
       commitsBehind: 5,
       baseRef: `origin/${options?.mainBranch}`,
+      hasCommonAncestor: true,
     }));
     const base = inFlightScanner(IN_FLIGHT_FILES);
     const app = createApiRoutes(
@@ -547,6 +548,7 @@ describe('createApiRoutes', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
       commitsBehind: 5,
       baseRef: options?.mainBranch === undefined ? 'origin/main' : 'origin/master',
+      hasCommonAncestor: true,
     }));
     const base = inFlightScanner(IN_FLIGHT_FILES);
     const app = createApiRoutes(
@@ -590,6 +592,7 @@ describe('createApiRoutes', () => {
       countHarnessCommitsBehindDefaultBranch: async (_path, options) => ({
         commitsBehind: 63,
         baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+        hasCommonAncestor: true,
       }),
     };
     const session = makeSession({
@@ -677,6 +680,7 @@ describe('createApiRoutes', () => {
     const countHarnessCommitsBehindDefaultBranch = vi.fn(async (_path, options) => ({
       commitsBehind: 63,
       baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+      hasCommonAncestor: true,
     }));
     const scanWithFeatureWorktree: WorktreeScanner = {
       ...base,
@@ -764,6 +768,7 @@ describe('createApiRoutes', () => {
       countHarnessCommitsBehindDefaultBranch: async (_path, options) => ({
         commitsBehind: 63,
         baseRef: `origin/${options?.mainBranch ?? 'main'}`,
+        hasCommonAncestor: true,
       }),
     };
 

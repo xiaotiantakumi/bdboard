@@ -98,6 +98,11 @@ export interface HarnessWorktreeLag {
   readonly commitsBehind: number;
   /** 遅れの計測に実際に使えた既定ブランチ ref。 */
   readonly baseRef: string;
+  /**
+   * baseRef と HEAD に共通の祖先があるか。false なら rebase では追いつけない
+   * (bdboard-0chq)。
+   */
+  readonly hasCommonAncestor: boolean;
 }
 
 /**
