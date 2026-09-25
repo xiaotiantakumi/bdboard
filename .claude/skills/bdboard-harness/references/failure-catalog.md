@@ -104,6 +104,11 @@
 - 防止: ポーリングは30秒以上間隔・複数 PR は1本の監視ループへ集約。**拒否されたら reset を待たずに REST へ切り替える**（create / merge / check-runs / ref DELETE の4経路とも REST で完走できる。本則: worktree-pr-flow.md §4）。reset まで待って1回だけ再試行するのは原因1のときだけ有効で、原因2では無駄に最大1時間を失う
 - 出典: bdboard-p5l.10 / bdboard-2w3 / bdboard-il3i（原因2の実測: PR #387 作成時）
 
+### unrelated-flake-broke-landed-verify — 無関係な flaky テストが、正しくマージされた PR の landed-verify を落として main を破損させた（2026-09-25、PR #779 → main-broken → PR #781）
+- 原因: `ChatPanel.recovery-list-overlap.test.tsx` に useChatSessionLifecycle.ts の stale-ref レース（applyRecoveredTurn が render 前の古い draftNoncesRef/openThreadIdsRef を読む）由来の real flake があり、マージした PR #779 の diff とは無関係のファイルで landed-verify が落ちた
+- 防止: main-broken 修復では「waitFor で包むだけ」のような表面的なタイミング修正を疑う。1回目の独立レビュー(Opus, max深考)が「final wrong state は待っても直らない」と機械的 repro で REQUEST_CHANGES、正しい同期点（レース前提となる副作用の完了を待つ）へ直させた後に merge した。緊急復旧でもレビューを省略しない（本則: docs/GIT-WORKFLOW.md「When main is broken」）
+- 出典: bdboard-yv45（修復チケット）/ bdboard-d29q（本物のプロダクションコードレース、P1）/ bdboard-9pzt（破った側、無傷と確認して close）/ PR #781
+
 ## サーバー・ポート
 
 ### pkill-collateral — worktree のテストプロセスを狙った `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーも巻き添えにした（2026-08-15）
@@ -130,6 +135,11 @@
 - 原因: hook の登録も本体もセッション起動時の checkout (`$CLAUDE_PROJECT_DIR`) から読まれ、サブエージェントも同じ場所を読むが、長寿命セッションの checkout は誰も更新しない
 - 防止: `hooks/worktree-freshness.sh` が SessionStart / UserPromptSubmit / PostToolUse(Agent) で遅れ・共通祖先なし・本体欠落を警告し安全な追従コマンドを案内 (自動 merge はしない)。議長はマージ後に自分の checkout も追従 (本則: `hooks/README.md`、docs/GIT-WORKFLOW.md「Cleanup after merge」)
 - 出典: bdboard-flpp
+
+### subagent-checkout-in-chair-worktree — 別チケットの担当サブエージェントが議長の worktree 内で自分のブランチへ checkout し、最後にその worktree の削除まで議長へ求めた（2026-09-25）
+- 原因: 議長を main checkout で動かす運用への移行に伴い、サブエージェントも main checkout を cwd として起動しうるようになったが、hook 規則 7 が main checkout に対して禁じていたのは git pull・サーバー起動・listener kill だけで、checkout/switch/commit/reset/merge/stash と Edit・Write によるファイル編集は禁じていなかった
+- 防止: hook 規則 8 (`hooks/server-guard.sh`、`alwaysOnServer.port` の有無に関係なく常時有効) が `agent_id` 付き呼び出しから main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/cherry-pick/revert/am/clean/bisect/apply/rm/mv を deny (pull は既存の規則 7a が担う)。`pre-edit-guard.sh` 規則 2 が同じ main checkout 判定 (`hooks/lib-main-checkout.sh` 共有) で Edit/Write/MultiEdit/NotebookEdit も deny する（本則: `hooks/README.md` 規則 8・pre-edit-guard.sh 規則 2）
+- 出典: bdboard-p5l.18（対策 bdboard-kxqb）（鏡像: subagent-restarted-always-on-server）
 
 ## 検証・ビルド
 

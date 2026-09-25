@@ -8,7 +8,7 @@
 // handleImageFileChange/setIsChatPanelMaximized/requestClose)まで配線されて
 // いる(スタブで終わっていない)ことを確認する。
 import type { ChangeEvent } from 'react';
-import { act, waitFor } from '@testing-library/react';
+import { act, cleanup, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
 import { installFakeHistory } from '../test/fakeHistory';
@@ -84,8 +84,14 @@ describe('ChatPanel composer/header wiring (bdboard-sso1.83 第7段)', () => {
   });
 
   afterEach(() => {
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('wires ChatPanelHeader maximize toggle to the real panel width state, and close to the real requestClose (marker: header)', async () => {

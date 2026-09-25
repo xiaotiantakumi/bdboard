@@ -4,7 +4,7 @@
 // から import する。vi.mock はファイル単位でホイストされるため、元ファイルの
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach をこのファイルにも複製している。
 
-import { screen, waitFor, within } from '@testing-library/react';
+import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
@@ -94,13 +94,19 @@ describe('ChatPanel', () => {
   });
 
   afterEach(() => {
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      value: defaultWindowInnerWidth,
-    });
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: defaultWindowInnerWidth,
+      });
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('keeps polling and recovers a completed turn after turn-status fails once (bdboard-3tw.164, done なし回収)', async () => {

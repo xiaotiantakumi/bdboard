@@ -263,9 +263,28 @@ describe('ChatPanel: recovery hydrate overlapping the initial thread-list fetch 
       ticketContextToken: 1,
     });
 
+    // bdboard-yv45: メッセージ欄の値は initialInput から初回レンダーで直接埋まるため、
+    // それだけを待っても E7(初回一覧取得)のレンダーが終わった証明にならない。
+    // draftNoncesRef / selectedThreadIdsRef (useConversationKey.ts) と openThreadIdsRef
+    // (useChatThreadLists.ts) は effect ではなくレンダー本体で直接 `ref.current = state`
+    // する mirror パターンなので、対応する state を更新したレンダーが一度でも走れば
+    // 直後には最新化されている。問題は「その render がまだ走っていない」窓:
+    // E7 の .then はここで一覧適用(setOpenThreadIds)とペンディングだったチケット
+    // ドラフトの開始(setDraftNonces/setSelectedThreadIds)を同じコールバック内で
+    // まとめて積むため、両方とも次の同一レンダーで一括して ref に反映される。
+    // 「スレッド 2」(THREAD_1 + THREAD_2、openThreads.length 由来)の出現を待つのは、
+    // まさにこのレンダーが完了した合図として使える(このテストで一覧件数が 2 になる
+    // 経路は E7 の成功パスしか無い)。ここを省いて先に回収レスポンスを流すと、
+    // useChatSessionLifecycle.ts の applyRecoveredTurn が古い(ドラフト開始前の)
+    // draftNoncesRef/openThreadIdsRef を読んでしまい、isExplicitDraftStillSelected が
+    // false と誤判定される → 復元経路(restoreThreadView)が古い openThreadIdsRef から
+    // 選択を作り直し、実際には sess-1 (最初のスレッド)へ選択が倒れてチケットドラフトが
+    // 無言で消える、という実プロダクションコードのレース (bdboard-d29q で追跡) が
+    // CPU 負荷が高い環境で稀に再現していた。
     await waitFor(() =>
-      expect(screen.getByLabelText('メッセージ')).toHaveValue('proj-a のチケットについて: '),
+      expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 2'),
     );
+    expect(screen.getByLabelText('メッセージ')).toHaveValue('proj-a のチケットについて: ');
 
     await act(async () => {
       recoveredMessages.resolve(recoveredMessagesResponse());

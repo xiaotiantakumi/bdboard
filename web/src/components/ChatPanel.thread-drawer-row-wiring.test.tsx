@@ -6,7 +6,7 @@
 // actions を実際に呼び出して ChatPanel 側の本物のハンドラ(select/togglePin/
 // closeThread/reopenClosed のような、元実装で複数ステップをまとめていた合成
 // ハンドラ)まで配線されている(スタブで終わっていない)ことを確認する。
-import { act, waitFor } from '@testing-library/react';
+import { act, cleanup, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
 import { installFakeHistory } from '../test/fakeHistory';
@@ -102,9 +102,15 @@ describe('ChatPanel thread drawer row wiring (bdboard-sso1.83 第6段)', () => {
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('wires per-row scalar and thread props, distinguished by session-id markers', async () => {

@@ -14,7 +14,7 @@
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
 // vi.mock('../api', ...) ブロックを複製している。
 
-import { screen, waitFor } from '@testing-library/react';
+import { cleanup, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
@@ -207,9 +207,15 @@ describe('ChatPanel hook call order (bdboard-sso1.83 第15b段の前提)', () =>
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('calls its hooks in the registration order of design doc §1c on the first render', () => {

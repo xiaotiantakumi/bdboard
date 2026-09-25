@@ -12,7 +12,7 @@
 // vi.mock はファイル単位でホイストされるため、他の ChatPanel.*.test.tsx と同じ
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach を複製している。
 
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto, ProjectDto } from '../api';
@@ -92,9 +92,15 @@ describe('ChatPanel conversation-key reassignment characterization (bdboard-sso1
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   describe('14a: the registry functions stay stable, so E6/E9 do not re-run on typing', () => {

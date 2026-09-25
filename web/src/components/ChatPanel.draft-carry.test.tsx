@@ -5,7 +5,7 @@
 // vi.mock('../api', ...) ブロックと beforeEach/afterEach をこのファイルにも複製している。
 
 import { StrictMode } from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
@@ -106,13 +106,19 @@ describe('ChatPanel', () => {
   });
 
   afterEach(() => {
-    Object.defineProperty(window, 'innerWidth', {
-      configurable: true,
-      value: defaultWindowInnerWidth,
-    });
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      Object.defineProperty(window, 'innerWidth', {
+        configurable: true,
+        value: defaultWindowInnerWidth,
+      });
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('resolves the initial project when projects arrive after a regular chat mount', async () => {
