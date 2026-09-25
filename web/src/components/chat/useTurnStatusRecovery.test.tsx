@@ -192,7 +192,7 @@ describe('useTurnStatusRecovery request-id guards', () => {
     expect(setLoadingHistoryFor).not.toHaveBeenCalled();
   });
 
-  it('still advances the history request id and clears the loading flag right before hydrating', async () => {
+  it('still advances the history request id and clears the loading flag right before applying the recovered turn', async () => {
     fetchChatTurnStatusMock.mockResolvedValueOnce(COMPLETED).mockResolvedValue(IDLE);
     const probe: {
       ref?: { current: number };

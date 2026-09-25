@@ -188,8 +188,9 @@ export function useTurnStatusRecovery(params: {
         // 続けると(または張り直しで打ち切られると)、その間に useChatHistoryLoader(E12)
         // が読み込んでいた別スレッドの履歴応答と historyLoadedFor の書き込みが捨てられた
         // まま conversations も変わらず、送信ボタンが無効のまま戻らなかった。ここで
-        // 進めれば、それより前に届いた E12/E13 の応答は applyRecoveredTurn が上書きし、
-        // 後に届く応答は捨てられるので、回収結果の保護は変わらない。
+        // 進めても、回収したセッション自身の E12/E13 の応答は、それより前に届けば
+        // applyRecoveredTurn が上書きし、後に届けば捨てられるので、回収結果の保護は
+        // 変わらない。他のスレッドの応答は、それより前に届いたものはそのまま残る。
         historyRequestIdRef.current += 1;
         setLoadingHistoryFor(null);
         applyRecoveredTurn(threads, payload);
