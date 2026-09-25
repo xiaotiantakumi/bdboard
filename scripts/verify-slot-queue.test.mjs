@@ -208,7 +208,21 @@ describe('planSlots: mixing with legacy (bdboard-d48) holders', () => {
     }
   });
 
-  it('keeps running <= slots with the real 30-minute stale rule, long queues and re-joining waiters', () => {
+  // bdboard-c4nc: 100 trials x 150 steps (旧設定) は単体 4.55s 中この 1 テストで 2.9〜3.1s 消費し、
+  // 並列 verify の高負荷下 (他プロセスとの CPU 競合) で既定 5000ms を超えて落ちた (PR #763 の
+  // predicted-verify で実測 5253ms)。real timer は使っていない (`now` はシミュレーション内の仮想時刻
+  // で、await/setTimeout の類は無い) ので fake timer の注入では解決しない — 純粋に CPU 負荷が高い
+  // ループそのものが原因。steps を 150→100 に落とすことで 1 trial あたりの平均シミュレーション時間は
+  // 約 81 分→約 54 分 (30 分の stale しきい値を 1.8 倍超えるだけの長さは維持、既定 slots のもとで
+  // holders は平均 14〜19 件・最大 39〜52 件で "long queue" の状況は変わらない)。trials は 100 のまま
+  // (乱数パターンの多様性を落とさない)。単体実行で 5 回計測した結果 495〜912ms (旧: 2247〜3068ms、
+  // 約 3〜4 倍の削減)。PR #749 の selfVisible ガードを外す mutation (`selfVisible = true` に固定) で
+  // 確認したところ、steps=150/trials=100 はもちろん、steps=20/trials=5 まで削っても同じ trial=0,
+  // step=14 で `startedAt.size` が `slots` を超えて確実に検出された (この保証は step 数にほぼ依存
+  // しない)。上記の削減後もなお高負荷時の余裕を持たせるため、既定 5000ms より大きい明示のタイムアウト
+  // も付与する (単体実測の最大 912ms に対し 15000ms は 16 倍以上の余裕。旧設定の実測ワースト 5253ms
+  // に対しても約 3 倍の余裕)。
+  it('keeps running <= slots with the real 30-minute stale rule, long queues and re-joining waiters', { timeout: 15_000 }, () => {
     // verify-slot.mjs の運用どおりに動かす: 新形式の待ち手は joinedAt から staleTtlMs / 2 で並び直し、
     // 旧スクリプトの待ち手は 15 分 (旧来の合計待ち上限) で諦める。verify は最長 10 分で終わる。
     let seed = 777;
@@ -228,7 +242,7 @@ describe('planSlots: mixing with legacy (bdboard-d48) holders', () => {
         startedAt.delete(pid);
         holders.splice(holders.findIndex((holder) => holder.pid === pid), 1);
       };
-      for (let step = 0; step < 150; step += 1) {
+      for (let step = 0; step < 100; step += 1) {
         now += 5_000 + Math.floor(random() * 55_000);
         if (random() < 0.45) {
           const pid = nextPid++;
