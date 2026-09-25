@@ -246,4 +246,39 @@ describe('selectedThreadIdsRef render-mirror race via closeThread/deleteThread (
     expect(result.current.threadLists.openThreadIds['project-a']).toEqual(['sess-2', 'sess-rec']);
     expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-2');
   });
+
+  it('falls back to the newly recovered thread, not the just-deleted one, when it was the only open thread', async () => {
+    writePersistedChatThreadState('project-a', {
+      activeSessionIds: ['sess-1'],
+      selectedSessionId: 'sess-1',
+    });
+    fetchChatThreadsMock.mockResolvedValue([thread('sess-1', 'one')]);
+    let resolveDelete: (() => void) | undefined;
+    deleteChatThreadMock.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveDelete = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useProbe('project-a'));
+    await waitFor(() =>
+      expect(result.current.threadLists.openThreadIds['project-a']).toEqual(['sess-1']),
+    );
+    expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-1');
+
+    act(() => {
+      void result.current.threadLists.deleteThread('sess-1');
+    });
+
+    await act(async () => {
+      resolveDelete?.();
+      await Promise.resolve();
+      result.current.lifecycle.applyRecoveredTurn([thread('sess-rec', 'recovered')], RECOVERED);
+    });
+
+    // nextDisplayed[0] が undefined になる境界ケース。先にフォールバック候補が
+    // openThreads にある場合だけ偶然通るのではなく、回収スレッドの選択も確認する。
+    expect(result.current.threadLists.openThreadIds['project-a']).toEqual(['sess-rec']);
+    expect(result.current.key.selectedThreadIds['project-a']).toBe('sess-rec');
+  });
 });
