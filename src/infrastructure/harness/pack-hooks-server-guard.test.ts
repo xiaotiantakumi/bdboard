@@ -875,6 +875,128 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
       );
     });
 
+    it('denies tee when a redirect appears before the real target (tee >/dev/null $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee >/dev/null ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+    });
+
+    it('denies cp when a redirect appears before the real target (cp 2>/dev/null a $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp 2>/dev/null a ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies cp past a quoted redirect-shaped decoy argument (cp a \'<x\' $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a '<x' ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies tee when a heredoc marker appears before the real target (tee <<EOF $MAIN/x)', async () => {
+      expectDeny(
+        await runHook({
+          command: `tee <<EOF ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'tee コマンドでの書き込み',
+      );
+    });
+
+    it('denies cp past a bare quoted "<" decoy (masking must neutralize it before tokenizing, not just the stop/skip redesign)', async () => {
+      expectDeny(
+        await runHook({
+          command: `cp a '<' ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'cp コマンドでの書き込み',
+      );
+    });
+
+    it('denies a redirect target with a known main-checkout prefix before an unresolved $$ suffix', async () => {
+      expectDeny(
+        await runHook({
+          command: `echo hi > ${path.join(mainRepo, 'out-$$.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'リダイレクトでの書き込み',
+      );
+    });
+
+    it('denies a relative redirect target with an unresolved $$ suffix when cwd is main', async () => {
+      expectDeny(
+        await runHook({ command: 'echo hi > out-$$.txt', cwd: mainRepo, agentId: 'agent-1' }),
+        'リダイレクトでの書き込み',
+      );
+    });
+
+    it('denies sed -i when the script is bundled into a combined short-flag group (-Ees/a/b/)', async () => {
+      expectDeny(
+        await runHook({
+          command: `sed -i -Ees/a/b/ ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('denies sed -i when the script is given via an abbreviated long option (--expr=)', async () => {
+      expectDeny(
+        await runHook({
+          command: `sed -i --expr=s/a/b/ ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('denies sed -i when the script is given via a separate-token -e flag', async () => {
+      expectDeny(
+        await runHook({
+          command: `sed -i -e s/a/b/ ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+        'sed -i での書き込み',
+      );
+    });
+
+    it('allows sed without -i even with multiple -e scripts (read-only, never checked)', async () => {
+      expectAllow(
+        await runHook({
+          command: `sed -n -e 1p -e 2p ${path.join(mainRepo, 'x.txt')}`,
+          cwd: worktree,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows sed -i with a combined-flag script when the target is outside main', async () => {
+      expectAllow(
+        await runHook({ command: 'sed -i -e 1d /tmp/x', cwd: mainRepo, agentId: 'agent-1' }),
+      );
+    });
+
     it('allows read-only aimix subcommands from main but still denies aimix run', async () => {
       expectAllow(await runHook({ command: 'aimix members', cwd: mainRepo, agentId: 'agent-1' }));
       expectAllow(await runHook({ command: 'aimix log', cwd: mainRepo, agentId: 'agent-1' }));
