@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto } from '../../api';
-import { readPersistedChatThreads } from '../../chatThreadStorage';
+import { readPersistedChatThreads, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { useChatSessionLifecycle, type UseChatSessionLifecycleParams } from './useChatSessionLifecycle';
 
 vi.mock('../../api', async (importOriginal) => {
@@ -114,6 +114,52 @@ describe('useChatSessionLifecycle', () => {
       expect(readPersistedChatThreads()['project-a']).toEqual({
         activeSessionIds: ['sess-1', 'sess-rec'],
         selectedSessionId: 'sess-1',
+      });
+    });
+
+    it('restores the persisted open threads and selection first when the project list is not restored yet (bdboard-tsen)', () => {
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-gone', 'sess-1', 'sess-2'],
+        selectedSessionId: 'sess-2',
+      });
+      const threads = [thread('sess-1'), thread('sess-2'), thread('sess-rec')];
+      const { result, params } = setup();
+      act(() => result.current.applyRecoveredTurn(threads, RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-1', 'sess-2', 'sess-rec'],
+      });
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-2',
+      });
+      expect(params.setSelectedAgentId).not.toHaveBeenCalled();
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-1', 'sess-2', 'sess-rec'],
+        selectedSessionId: 'sess-2',
+      });
+    });
+
+    it('opens every listed thread and selects the first when nothing is persisted and the list is not restored yet (bdboard-tsen)', () => {
+      const threads = [thread('sess-1'), thread('sess-rec')];
+      const { result, params } = setup();
+      act(() => result.current.applyRecoveredTurn(threads, RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-1', 'sess-rec'],
+      });
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-1',
+      });
+    });
+
+    it('ignores the persisted state once the project list is restored (an empty open list counts)', () => {
+      writePersistedChatThreadState('project-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
+      const { result, params } = setup({ openThreadIdsRef: { current: { 'project-a': [] } } });
+      act(() => result.current.applyRecoveredTurn([thread('sess-1'), thread('sess-rec')], RECOVERED));
+
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({ 'project-a': ['sess-rec'] });
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-rec',
       });
     });
 
