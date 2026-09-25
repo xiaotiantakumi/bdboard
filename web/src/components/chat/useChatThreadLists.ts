@@ -103,6 +103,13 @@ export interface UseChatThreadListsResult {
  * bdboard-e5cz で3つ目の例外: ライブ選択が undefined の場合(draft 表示中)に closeThread が
  * 永続化済み選択を消さないよう、chatThreadStorage.ts の resolvePersistedSelectionAfterClose
  * 経由で永続化済み selectedSessionId を引き継ぐ(詳細はその関数直前のコメント参照)。
+ *
+ * bdboard-dqbz で4つ目の例外: closeThread の nextDisplayed ソート(フォールバック選択の
+ * 並び替え)だけ、render スコープの threadById ではなく threadListsRef.current から都度
+ * 組み立てた Map を読むように変更した。next/wasSelected を ref から読む ygrg の修正だけでは、
+ * 並び替えに使う updatedAt メタデータ自体が古いままになりうる(要素の集合は正しくても順序が
+ * 古い)ケースを塞ぎきれていなかったため(詳細は threadListsRef 宣言・closeThread 内の
+ * 参照箇所のコメント参照)。
  */
 export function useChatThreadLists({
   selectedProjectId,
@@ -124,9 +131,14 @@ export function useChatThreadLists({
   openThreadIdsRef.current = openThreadIds;
 
   // bdboard-dqbz: closeThread の nextDisplayed ソートが render-time の
-  // threadById(クロージャ)ではなく最新の thread メタデータ(updatedAt/pinned)を
+  // threadById(クロージャ)ではなく最新の thread メタデータ(updatedAt)を
   // 読めるよう、openThreadIdsRef と同じ render-mirror パターンで threadLists を
   // ミラーする。詳細は closeThread 内の参照箇所のコメント参照。
+  // 注意: この ref は render 中にしか同期しない(書き込み側で明示同期する
+  // openThreadIdsRef/selectedThreadIdsRef と違う)。したがって「最新」とは
+  // 「直近の render 時点」の意味で、1回も render を挟まずに threadLists が
+  // 変わってから同じ tick で closeThread の続きが解決する、という極めて狭い
+  // window では古いままになりうる(実害は軽微な P4 cosmetic バグの範囲内)。
   const threadListsRef = useRef(threadLists);
   threadListsRef.current = threadLists;
 
@@ -174,7 +186,8 @@ export function useChatThreadLists({
     // async 継続として呼ばれた場合、この関数自体は呼ばれた時点の render の
     // クロージャに固定されるが、threadListsRef は全レンダーで共有される可変
     // オブジェクトなので、await の間に threadLists が更新されていても最新の
-    // updatedAt/pinned を読める(ygrg で next/wasSelected に適用したのと同じ理由)。
+    // updatedAt を読める(ygrg で next/wasSelected に適用したのと同じ理由。
+    // ref の同期タイミングの注意点は threadListsRef 宣言直前のコメント参照)。
     const liveThreadById = buildThreadById(threadListsRef.current[selectedProjectId] ?? []);
     const nextDisplayed = [...next].sort((a, b) =>
       compareThreadsNewestFirst(liveThreadById.get(a), liveThreadById.get(b)),
