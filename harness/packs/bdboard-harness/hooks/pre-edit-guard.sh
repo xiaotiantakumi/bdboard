@@ -167,7 +167,7 @@ if [ -n "$AGENT_ID" ]; then
     # shellcheck source=lib-main-checkout.sh
     . "$LIB_MAIN_CHECKOUT"
     EDIT_MAIN="$(bh_main_checkout "$GIT_DIR_CANDIDATE")"
-    if [ -n "$EDIT_MAIN" ] && bh_dir_is_main "$GIT_DIR_CANDIDATE" "$EDIT_MAIN"; then
+    if [ -n "$EDIT_MAIN" ] && bh_dir_is_main_or_git_internal "$GIT_DIR_CANDIDATE" "$EDIT_MAIN"; then
       deny \
         "bdboard-harness: サブエージェントは main checkout ($EDIT_MAIN) のファイルを編集できません。" \
         'worktree で作業してください: git -C '"$EDIT_MAIN"' worktree add .claude/worktrees/<id> -b bd/<id> origin/main' \

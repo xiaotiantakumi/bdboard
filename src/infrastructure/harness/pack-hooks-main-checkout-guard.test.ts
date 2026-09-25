@@ -480,5 +480,73 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
         '.claude/skills/bdboard-harness/',
       );
     });
+
+    it('denies a subagent Write to the main checkout shared .git/config', async () => {
+      expectDeny(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(mainWithPort, '.git', 'config'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('denies a subagent Write under the main checkout shared .git/hooks', async () => {
+      const hooksDir = path.join(mainWithPort, '.git', 'hooks');
+      mkdirSync(hooksDir, { recursive: true });
+      expectDeny(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(hooksDir, 'pre-commit'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('denies a subagent Edit under the main checkout shared .git/hooks', async () => {
+      const target = path.join(mainWithPort, '.git', 'hooks', 'pre-commit');
+      writeFileSync(target, '#!/bin/sh\n');
+      expectDeny(
+        await runEditHook({ toolName: 'Edit', filePath: target, cwd: mainWithPort, agentId: 'agent-1' }),
+        'main checkout',
+      );
+    });
+
+    it('denies a subagent MultiEdit to the main checkout shared .git/config', async () => {
+      expectDeny(
+        await runEditHook({
+          toolName: 'MultiEdit',
+          filePath: path.join(mainWithPort, '.git', 'config'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('allows the chair (no agent_id) to Write the main checkout shared .git/config', async () => {
+      expectAllow(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(mainWithPort, '.git', 'config'),
+          cwd: mainWithPort,
+        }),
+      );
+    });
+
+    it('allows a subagent to Write a regular file inside a worktree', async () => {
+      expectAllow(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(worktreeWithPort, 'src', 'foo.ts'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
   });
 });

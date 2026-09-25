@@ -98,3 +98,24 @@ bh_claim_owner() {
   bh_co_agent="$3"
   ( set -C; printf '%s\n' "$bh_co_agent" >"$bh_co_file" ) 2>/dev/null
 }
+
+# bh_dir_is_main_or_git_internal <dir> <main>
+#   bh_dir_is_main に加えて、<dir> が <main> の共有 .git/ 配下 (config・hooks/* 等、
+#   .git/ 内部からは `git rev-parse --show-toplevel` がエラーになる場所) であるケースも
+#   真を返す (bdboard-1ef8)。pre-edit-guard.sh の規則2専用。server-guard.sh (規則7/8) が
+#   使う bh_dir_is_main 自体は変更しない (既にレビュー済みで他セッションが依存するため、
+#   挙動を変えない)。
+#
+#   判定方法: <dir> を realpath 相当へ正規化し、それが <main>/.git 自身か、その配下かを
+#   文字列比較する。worktree (git worktree add で作った per-ticket worktree) は自分の
+#   `.git` が「ファイル」(gitdir 参照) であって「ディレクトリ」ではないため、この文字列
+#   比較にヒットすることはない (main checkout の .git/ だけが実在するディレクトリ)。
+bh_dir_is_main_or_git_internal() {
+  bh_dimg_dir="$(bh_canon "$1")"
+  bh_dimg_git="$2/.git"
+  case "$bh_dimg_dir" in
+    "$bh_dimg_git") return 0 ;;
+    "$bh_dimg_git"/*) return 0 ;;
+  esac
+  bh_dir_is_main "$1" "$2"
+}
