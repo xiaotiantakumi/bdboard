@@ -45,6 +45,19 @@ const spawnLiveProcess = () =>
 // 既に死んでいる pid が欲しいとき: 即終了する node を同期実行して、その pid を使う。
 const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid;
 
+// 条件が成り立つまで待つ (固定時間の sleep の代わり)。timeoutMs は「成り立たない」ときの上限で、
+// 普段の待ち時間ではない。子プロセスの起動が遅い環境 (Windows の CI・高負荷時) でも順序を保つため。
+// 既定の 9 秒は、1 テストで 2 回待っても it の timeout (20 秒) より先にこちらのメッセージが出る値。
+const waitFor = async (predicate, what, { timeoutMs = 9_000, intervalMs = 10 } = {}) => {
+  const started = Date.now();
+  while (!predicate()) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+    }
+    await sleep(intervalMs);
+  }
+};
+
 describe('acquireVerifySlot', () => {
   it('acquires immediately when a slot is free and removes the holder file on release', async () => {
     const dir = makeDir();
@@ -189,22 +202,34 @@ describe('acquireVerifySlot', () => {
       await new Promise((resolve) => setTimeout(resolve, 100));
       slot.release();
     `;
-    const run = (priority) =>
-      spawn(process.execPath, ['--input-type=module', '-e', childSource], {
+    const children = [];
+    const run = (priority) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', childSource], {
         env: { ...process.env, VERIFY_SLOT_MODULE_URL: pathToFileURL(modulePath).href, VERIFY_SLOT_DIR: dir, VERIFY_SLOT_LOG: logPath, PRIORITY: priority },
         stdio: 'ignore',
       });
+      children.push(child);
+      return child;
+    };
     const exited = (child) => new Promise((resolve) => child.on('exit', resolve));
     try {
+      // 固定の sleep ではなく、各子の holder file (= 列に並んだ証拠) が見えるまで待つ
+      // (bdboard-lmhs: Windows の CI で node の起動が 300ms を超え、landed が並ぶ前に枠が空いて
+      // pr が先に走った)。pr が先に並び、両方が並んでから先客が枠を空ける、という順序だけを固定する。
       const pr = run('pr');
-      await sleep(300);
+      const prExit = exited(pr);
+      await waitFor(() => fs.existsSync(holderFile(dir, pr.pid)), 'the pr run to join the queue');
       const landed = run('landed');
-      await sleep(300);
+      const landedExit = exited(landed);
+      await waitFor(() => fs.existsSync(holderFile(dir, landed.pid)), 'the landed run to join the queue');
       fs.unlinkSync(holderFile(dir, blocker.pid));
-      expect(await Promise.all([exited(pr), exited(landed)])).toEqual([0, 0]);
+      expect(await Promise.all([prExit, landedExit])).toEqual([0, 0]);
       expect(fs.readFileSync(logPath, 'utf8').trim().split('\n')).toEqual(['landed', 'pr']);
     } finally {
       blocker.kill('SIGKILL');
+      for (const child of children) {
+        child.kill('SIGKILL'); // 待ちが timeout で落ちたときに子を残さない (終了済みなら何もしない)
+      }
     }
   });
 
