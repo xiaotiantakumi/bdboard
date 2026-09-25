@@ -4,6 +4,10 @@
 import type { ChatThreadDto } from '../../api';
 import { getBoardTimeZone } from '../../boardTimeZone';
 
+export function buildThreadById(threads: readonly ChatThreadDto[]): Map<string, ChatThreadDto> {
+  return new Map(threads.map((thread) => [thread.sessionId, thread]));
+}
+
 export function summarizeTitle(content: string): string {
   const chars = Array.from(content.trim());
   return chars.length > 40 ? `${chars.slice(0, 40).join('')}…` : chars.join('');

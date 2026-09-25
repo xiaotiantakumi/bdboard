@@ -11,7 +11,7 @@ import {
   type ChatThreadDto,
 } from '../../api';
 import { resolvePersistedSelectionAfterClose, writePersistedChatThreadState } from '../../chatThreadStorage';
-import { compareThreadsNewestFirst } from './threads';
+import { buildThreadById, compareThreadsNewestFirst } from './threads';
 import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseChatThreadListsDrawerActions {
@@ -123,15 +123,20 @@ export function useChatThreadLists({
   const openThreadIdsRef = useRef(openThreadIds);
   openThreadIdsRef.current = openThreadIds;
 
+  // bdboard-dqbz: closeThread の nextDisplayed ソートが render-time の
+  // threadById(クロージャ)ではなく最新の thread メタデータ(updatedAt/pinned)を
+  // 読めるよう、openThreadIdsRef と同じ render-mirror パターンで threadLists を
+  // ミラーする。詳細は closeThread 内の参照箇所のコメント参照。
+  const threadListsRef = useRef(threadLists);
+  threadListsRef.current = threadLists;
+
   // bdboard-4w2d: UseChatThreadListsResult.restoredProjectsRef 参照。
   // プロジェクト単位の Set なので、useRef の初期値はこのフックの
   // 生存期間(ChatPanel 相当のマウント)を通じて1つだけ作られる。
   const restoredProjectsRef = useRef<Set<string>>(new Set());
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
-  const threadById = new Map(
-    (threadLists[selectedProjectId] ?? []).map((thread) => [thread.sessionId, thread]),
-  );
+  const threadById = buildThreadById(threadLists[selectedProjectId] ?? []);
   // 開いているスレッドの並びは openThreadIds の挿入順(古いものが先)なので、
   // ここで新しい順に並べ直す。openThreadIds 自体は並べ替えない — あれは
   // 「どのスレッドを開いているか」の永続状態で、表示順とは別物 (bdboard-3tw.154)。
@@ -164,8 +169,15 @@ export function useChatThreadLists({
     // displayedOpenThreads と同じ表示順(新しい順)の先頭に合わせる。3tw.154 で
     // 表示順を挿入順→新しい順に変えたことで、挿入順の先頭のままだと選択が
     // 見た目の最下段へ飛ぶ不整合が生じていた(bdboard-3tw.157)。
+    // bdboard-dqbz: ここだけは render スコープの threadById ではなく
+    // threadListsRef.current から都度組み立てる。closeThread が deleteThread の
+    // async 継続として呼ばれた場合、この関数自体は呼ばれた時点の render の
+    // クロージャに固定されるが、threadListsRef は全レンダーで共有される可変
+    // オブジェクトなので、await の間に threadLists が更新されていても最新の
+    // updatedAt/pinned を読める(ygrg で next/wasSelected に適用したのと同じ理由)。
+    const liveThreadById = buildThreadById(threadListsRef.current[selectedProjectId] ?? []);
     const nextDisplayed = [...next].sort((a, b) =>
-      compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
+      compareThreadsNewestFirst(liveThreadById.get(a), liveThreadById.get(b)),
     );
     // bdboard-e5cz: liveSelectedSessionId が undefined = draft 表示中(N2
     // draft-rule)。詳細は chatThreadStorage.ts の resolvePersistedSelectionAfterClose
