@@ -173,6 +173,10 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
     expectAllow(await runBashHook({ command: 'git branch -D bd/ticket-c', cwd: main, agentId: 'agent-2' }));
     expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-c'))).toBe(false);
   });
+  it('does not claim an unowned worktree merely because its branch is force-deleted from elsewhere', async () => {
+    expectAllow(await runBashHook({ command: 'git branch -D bd/ticket-b', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-b'))).toBe(false);
+  });
   it('clears ownership when an owned worktree is removed', async () => {
     const removed = path.join(main, '.claude', 'worktrees', 'ticket-c');
     await runGit(main, ['worktree', 'add', '-q', removed, '-b', 'bd/ticket-c']);
@@ -221,6 +225,48 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
   it('denies a plain branch-name push target belonging to another agent from main', async () => {
     await claimA();
     expectDeny(await runBashHook({ command: 'git push origin bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('denies deleting another agent branch via a fully-qualified refs/heads/ push target', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push origin --delete refs/heads/bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('denies force pushing another agent branch via a fully-qualified refs/heads/ destination', async () => {
+    await claimA();
+    expectAllow(await runBashHook({ command: `cd ${wtB} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-2' }));
+    expectDeny(await runBashHook({ command: 'git push -f origin HEAD:refs/heads/bd/ticket-a', cwd: wtB, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('denies deleting another agent branch via the short heads/ prefix', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push origin --delete heads/bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('denies an empty-source refs/heads/ delete refspec targeting another agent branch', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push origin :refs/heads/bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('still strips a leading + on a single-sided force refspec before matching refs/heads/', async () => {
+    // A leading `+` only ever appears on the whole refspec (before the source side of a
+    // `src:dst` pair), never on the destination side after the colon split — so a two-sided
+    // `+HEAD:refs/heads/bd/ticket-a` form never actually exercises the `${wog_pside#+}` strip
+    // against a `bd/*`-matching side. A single-sided force refspec (`+<ref>`, no colon) is the
+    // form where the `+` lands directly on the ref this guard needs to match.
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push -f origin +refs/heads/bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('still strips a leading + on a single-sided force refspec with the short bd/ form', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: 'git push -f origin +bd/ticket-a', cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('still allows the owner to push their own branch via a fully-qualified refs/heads/ target', async () => {
+    await claimA();
+    expectAllow(await runBashHook({ command: 'git push origin HEAD:refs/heads/bd/ticket-a', cwd: main, agentId: 'agent-1' }));
+  });
+  it('does not claim ownership from a push --delete refspec targeting an id with no worktree', async () => {
+    expectAllow(await runBashHook({ command: 'git push origin --delete bd/ticket-nonexistent', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-nonexistent'))).toBe(false);
+  });
+  it('does not claim an unowned worktree merely because its branch is named in a push refspec from elsewhere', async () => {
+    expectAllow(await runBashHook({ command: 'git push origin --delete bd/ticket-b', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-b'))).toBe(false);
   });
   it('denies deleting another agent branch with an empty-source refspec', async () => {
     await claimA();

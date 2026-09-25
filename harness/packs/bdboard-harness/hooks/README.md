@@ -431,10 +431,10 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
 
 | 操作 | 判定 |
 |---|---|
-| `git push` | サブコマンドが `push` |
+| `git push` | サブコマンドが `push`。加えて各 refspec (`src:dst`) の両側を、先頭の `+` と `refs/heads/`・`heads/`・`refs/` の前置きを剥がしたうえで `bd/*` と照合し、他人の worktree に対応する id が現れれば deny する (bdboard-qpxq #797 で `bd/*` の素の形を追加、bdboard-ob0l で `refs/heads/`・`heads/` の前置き形も追加)。この refspec 対象側の照合は **deny 専用** で、記録の無い id をクレームすることはない (bdboard-ob0l F3: cwd ベースの判定 (下記) とは異なり、push の対象文字列だけから「その id の worktree に実際に触れた」とは言えないため) |
 | `git commit` | サブコマンドが `commit` |
 | `git worktree remove <path>` | `<path>` を解決した先が per-ticket worktree |
-| `git branch -D bd/<id>` (`-D` 短縮形のみ。`--delete --force` は対象外) | 引数に `-D` と `bd/<id>` が両方 |
+| `git branch -D bd/<id>` (`-D` 短縮形に加えて `-d`/`--delete` と `-f`/`--force` の組み合わせも対応。bdboard-2i15) | 削除フラグ (force+delete 相当) と `bd/<id>` が両方。`git push` の refspec 対象側と同じ理由 (ブランチ名文字列だけから見ており、呼び出し元の実効ディレクトリとは無関係) で **deny 専用**、記録の無い id をクレームすることはない (bdboard-ob0l で修正: 以前はここもクレームしており、未所有の worktree に対して別 agent が `branch -D` するだけで幽霊クレームが書かれ、本当の持ち主を締め出せた) |
 | `npm run merge-pr -- <prepare\|gate\|finish\|verify> ...` (`gate --repair` を含む) | `run merge-pr` |
 | `gh pr merge <N>` | `pr merge` |
 | 議長専用解除コマンド `scripts/worktree-owner.sh release <id>` をサブエージェントが実行 | `worktree-owner.sh` の直後のトークンが `release` |
@@ -482,7 +482,15 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
   親の worktree で mutation 確認の一時編集をする既存フローを妨げないため)。
 - 遅延クレームの狭い race (上記)。
 - 実効ディレクトリ解決の限界 (上記)。
-- `git branch -D` は短縮形のみ対応。
+- push refspec 対象側の `bd/*` 照合 (上表) は `refs/heads/`・`heads/`・`refs/` の
+  前置きと先頭の `+` は剥がすが、`--all`/`--mirror`/`--prune`、`*` を含むワイルド
+  カード refspec、素の `:`/`+:`、`-c remote.*.push`・`-c push.default`、
+  `git update-ref refs/heads/bd/*` はまだ対象外 (bdboard-p95o で対応予定)。
+  `env`/`timeout`/`nice`/`NAME=値` の前置きも規則 9 の先頭語判定はまだ読み飛ばさない
+  (同じく bdboard-p95o)。
+- 遅延クレームの引用符追跡 (`wog_scan_quote_state`) は `#` コメント・ヒアドキュメント
+  本体・二重引用符内の `$(`/`${`・`$'…'` を扱わない既知の残課題がある (bdboard-w6ch で
+  対応予定)。
 
 ### 誤検知について
 
