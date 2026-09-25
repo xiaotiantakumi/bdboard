@@ -116,8 +116,9 @@ export function createChatTurnTracker(now: () => Date): ChatTurnTracker {
   // dedupe はこの2件目で1件目を意図的に上書きする: 古いエントリが先頭に居座ったまま
   // 後から積まれた別の sessionId 無し失敗をクライアントの checkTurnStatus から
   // 見えなくしてしまう害の方が、稀に「本当は1件目を待っていたクライアントが2件目の
-  // 結果で解決してしまう」害より大きいと判断した (turnStatusPolicy.ts 側にも
-  // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS による猶予後の受け入れがあり、
+  // 結果で解決してしまう」害より大きいと判断した (web/src/components/chat/turnStatusStep.ts の
+  // decideTurnStatusStep 'failed' 分岐側にも UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS による
+  // 猶予後の受け入れがあり、
   // どのみち無期限には待たない)。GET が返す sessionId 無しエントリは常に「最新の
   // 1件」になり、クライアント側の detachedAt 突き合わせ (chat/useTurnStatusRecovery.ts の
   // checkTurnStatus) が正しく解決できる。
