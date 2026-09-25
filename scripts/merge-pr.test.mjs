@@ -921,8 +921,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     const queueFile = path.join(mainCheckout, '.git', 'bdboard-merge', `pr-${PR}-queue.json`);
     const later = git(mainCheckout, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'feat(peer2): landed during verify']);
     // bdboard-lmhs: 高負荷の verify で 2 回目の prepare が 75 を返したことがある (原因未特定)。
-    // 次に落ちたとき原因が分かるよう、終了コードの不一致には merge-pr の出力を添える。
-    const expectExit = (result, code) => expect(result.status, `merge-pr exited ${result.status}:\n${result.stderr}`).toBe(code);
+    // 次に落ちたとき原因が分かるよう、終了コードの不一致には merge-pr の出力と監査ログを添える。
+    const expectExit = (result, code) =>
+      expect(result.status, `merge-pr exited ${result.status}:\n${result.stderr}\naudit:\n${auditText()}`).toBe(code);
     expectExit(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog, FAKE_VERIFY_MOVE_MAIN: later }), 75);
     const { since } = JSON.parse(readFileSync(queueFile, 'utf8'));
     expectExit(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }), 0);

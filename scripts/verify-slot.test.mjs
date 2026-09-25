@@ -47,7 +47,8 @@ const deadPid = () => spawnSync(process.execPath, ['-e', '']).pid;
 
 // 条件が成り立つまで待つ (固定時間の sleep の代わり)。timeoutMs は「成り立たない」ときの上限で、
 // 普段の待ち時間ではない。子プロセスの起動が遅い環境 (Windows の CI・高負荷時) でも順序を保つため。
-const waitFor = async (predicate, what, { timeoutMs = 15_000, intervalMs = 10 } = {}) => {
+// 既定の 9 秒は、1 テストで 2 回待っても it の timeout (20 秒) より先にこちらのメッセージが出る値。
+const waitFor = async (predicate, what, { timeoutMs = 9_000, intervalMs = 10 } = {}) => {
   const started = Date.now();
   while (!predicate()) {
     if (Date.now() - started > timeoutMs) {
