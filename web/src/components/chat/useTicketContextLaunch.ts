@@ -1,4 +1,4 @@
-import { useEffect, useRef, type Dispatch, type RefObject, type SetStateAction } from 'react';
+import { useEffect, useRef, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react';
 import type { ProjectDto } from '../../api';
 import { type ChatAttachment } from './attachments';
 import { makeDraftKey } from './draftKey';
@@ -30,6 +30,33 @@ export interface UseTicketContextLaunchParams
   inputRef: RefObject<HTMLTextAreaElement | null>;
 }
 
+/** 予約中のフォーカスのキャレット位置。'end' はフォーカス時点の textarea.value の末尾。 */
+type PendingFocusCaret = number | 'end';
+
+/**
+ * bdboard-jlts: 予約中のフォーカスを次のフレームで当てる。予約(pendingFocusRef)は
+ * 当てた時点で消費し、effect の cleanup では rAF だけを取り消して予約は残す。StrictMode
+ * の二重実行(mount → cleanup → mount)や、フレーム前の projects 変化による張り直しでは、
+ * 2回目の実行が「適用済み」の経路を通るので、そこで予約が残っていれば取り直す。
+ */
+function schedulePendingFocus(
+  inputRef: RefObject<HTMLTextAreaElement | null>,
+  pendingFocusRef: MutableRefObject<PendingFocusCaret | null>,
+): () => void {
+  const frameId = requestAnimationFrame(() => {
+    const caret = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    const textarea = inputRef.current;
+    if (caret === null || textarea === null) {
+      return;
+    }
+    textarea.focus();
+    const position = caret === 'end' ? textarea.value.length : caret;
+    textarea.setSelectionRange(position, position);
+  });
+  return () => cancelAnimationFrame(frameId);
+}
+
 /**
  * bdboard-sso1.83 第14e段: ChatPanel.tsx の ticket-context effect(設計書 §1c の E9)と、
  * それだけが読み書きする appliedTicketContextTokenRef を抜き出したもの。effect は
@@ -41,7 +68,7 @@ export interface UseTicketContextLaunchParams
  *
  * 依存配列 [ticketContextToken, projects, purgeDraftPayloadKeys] と eslint-disable は
  * 元のまま(意図は effect 末尾のコメント)。他の値はトリガー時点の最新を読むだけ。
- * ref の種類: appliedTicketContextTokenRef と pending ref 2つは[正本]、
+ * ref の種類: appliedTicketContextTokenRef と pendingFocusRef(bdboard-jlts)と pending ref 2つは[正本]、
  * draftNoncesRef / conversationInputsRef / threadModelIdsRef は[render ミラー]、
  * conversationAttachmentsRef は[eager]、draftSeedTextRef は[正本]。
  */
@@ -67,6 +94,7 @@ export function useTicketContextLaunch({
   startNewDraftThread,
 }: UseTicketContextLaunchParams): void {
   const appliedTicketContextTokenRef = useRef<number | undefined>(undefined);
+  const pendingFocusRef = useRef<PendingFocusCaret | null>(null);
 
   useEffect(() => {
     if (ticketContextToken === undefined) {
@@ -96,7 +124,9 @@ export function useTicketContextLaunch({
           `チケットのプロジェクト「${recoveredName}」が利用可能になりました。プロジェクト選択から切り替えられます。`,
         );
       }
-      return;
+      // bdboard-jlts: 適用時に予約したフォーカスがまだ当たっていなければ(StrictMode の
+      // 二重実行やフレーム前の張り直しで rAF が取り消された)、ここで予約し直す。
+      return pendingFocusRef.current === null ? undefined : schedulePendingFocus(inputRef, pendingFocusRef);
     }
 
     const requestedProjectId = initialProjectId;
@@ -128,16 +158,8 @@ export function useTicketContextLaunch({
       // 入力欄にフォーカスが当たらなかった。プロジェクトを跨がない(選択は ''
       // のまま)ので、textarea には既にコールドキースペースの文言が出ている。
       // キャレットはその現在値の末尾へ置く。
-      const rafId = requestAnimationFrame(() => {
-        const textarea = inputRef.current;
-        if (textarea === null) {
-          return;
-        }
-        textarea.focus();
-        const caret = textarea.value.length;
-        textarea.setSelectionRange(caret, caret);
-      });
-      return () => cancelAnimationFrame(rafId);
+      pendingFocusRef.current = 'end';
+      return schedulePendingFocus(inputRef, pendingFocusRef);
     }
     if (!requestedProjectFound && requestedProjectId !== undefined) {
       const fallbackName =
@@ -249,23 +271,17 @@ export function useTicketContextLaunch({
     // Opus レビュー nit6: ただしプロジェクトを跨ぐ経路(MF1、コールドウィンドウ
     // からの解決を含む)では、rAF 実行時点で textarea.value はまだ空(この
     // effect が起こす setSelectedProjectId/setConversationInputs の反映は
-    // 後続のレンダーを待つ)なので setSelectionRange(prefillLength,
-    // prefillLength) は 0 にクランプされ、実質何もしていない。104.17 でコールド
+    // 後続のレンダーを待つ)なので、文言の長さへの setSelectionRange は 0 に
+    // クランプされ、実質何もしていない。104.17 でコールド
     // ウィンドウ中の編集を引き継いだ場合に ticketPrefillText の長さを使うのも、
     // 上記と同じ理由でこの経路(常にプロジェクトを跨ぐ)では効果が無い —
     // 意図の一貫性のために initialInput ではなく実際に適用される文言の長さを
     // 使っているだけで、挙動そのものは 104.17 以前と変わらない。
     // N5: rAF ハンドルを保持し、コンポーネントがアンマウントされたら
-    // cancelAnimationFrame する(useFocusTrap と同じパターン)。
-    const prefillLength = ticketPrefillText.length;
-    const rafId = requestAnimationFrame(() => {
-      const textarea = inputRef.current;
-      if (textarea === null) {
-        return;
-      }
-      textarea.focus();
-      textarea.setSelectionRange(prefillLength, prefillLength);
-    });
+    // cancelAnimationFrame する(useFocusTrap と同じパターン)。bdboard-jlts: cleanup が
+    // 取り消すのは rAF だけで、予約(pendingFocusRef)は残す(schedulePendingFocus)。
+    pendingFocusRef.current = ticketPrefillText.length;
+    const cancelFocus = schedulePendingFocus(inputRef, pendingFocusRef);
 
     if (targetProjectId !== selectedProjectId) {
       // MF1: プロジェクトを跨ぐ場合、setSelectedProjectId は chat/useThreadListSync.ts の
@@ -279,7 +295,7 @@ export function useTicketContextLaunch({
       // catch)側に一本化する。
       setSelectedProjectId(targetProjectId);
       pendingTicketDraftProjectRef.current = targetProjectId; // 再走する fetch 側で消化させる
-      return () => cancelAnimationFrame(rafId);
+      return cancelFocus;
     }
 
     if (openThreadIds[targetProjectId] !== undefined) {
@@ -292,7 +308,7 @@ export function useTicketContextLaunch({
       pendingTicketDraftProjectRef.current = targetProjectId;
     }
 
-    return () => cancelAnimationFrame(rafId);
+    return cancelFocus;
     // ticketContextToken の変化(と、S1 で対象未解決だった場合の再評価、および
     // S3 で fallback notice を解消するための projects の変化)だけを起点にする
     // 意図的な依存配列。selectedProjectId / openThreadIds / initialProjectId /

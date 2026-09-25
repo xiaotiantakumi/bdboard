@@ -4,8 +4,8 @@
 // (見つかった / 見つからない / 未選択)、S1(projects 未到着)、ドラフトへの切り替え方
 // (即時 / pending / プロジェクトを跨ぐ)、コールドウィンドウの引き継ぎと '' キーの掃除、
 // 適用済み token のガードと S3、依存配列が [token, projects, purge] だけであることを確かめる。
-import { act, renderHook } from '@testing-library/react';
-import { useRef, useState } from 'react';
+import { act, cleanup, renderHook } from '@testing-library/react';
+import { StrictMode, useRef, useState } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectDto } from '../../api';
 import type { ChatAttachment } from './attachments';
@@ -93,6 +93,14 @@ function useLaunchProbe(props: ProbeProps & { initialSelected: string }) {
 
 function renderProbe(initialSelected: string, initialProps: ProbeProps) {
   return renderHook((props: ProbeProps) => useLaunchProbe({ ...props, initialSelected }), { initialProps });
+}
+
+/** web/src/main.tsx と同じく StrictMode で包む(effect が mount → cleanup → mount と二重に走る)。 */
+function renderStrictProbe(initialSelected: string, initialProps: ProbeProps) {
+  return renderHook((props: ProbeProps) => useLaunchProbe({ ...props, initialSelected }), {
+    initialProps,
+    wrapper: StrictMode,
+  });
 }
 
 async function flushFrame() {
@@ -269,5 +277,102 @@ describe('useTicketContextLaunch', () => {
     expect(result.current.notifications.ticketProjectFallbackNotice).toBe(
       'チケットのプロジェクト「Project Alpha」が利用可能になりました。プロジェクト選択から切り替えられます。',
     );
+  });
+});
+
+// bdboard-jlts: StrictMode の二重実行では、1回目の effect が予約した rAF の focus を cleanup が
+// 取り消し、2回目は「この token は適用済み」で早期 return していたため、開発ビルドでは入力欄に
+// フォーカスが当たらなかった。focus の予約は cleanup を越えて持ち越し、適用済みの経路でも
+// まだ当てていなければ予約し直す。
+describe('useTicketContextLaunch focus under StrictMode (bdboard-jlts)', () => {
+  beforeEach(() => {
+    textarea = document.createElement('textarea');
+    document.body.appendChild(textarea);
+    startNewDraftThread = vi.fn<(projectId: string) => void>();
+  });
+
+  afterEach(() => {
+    // bdboard-1ga8 と同じ作法: 片付けの前にアンマウントする。
+    try {
+      cleanup();
+    } finally {
+      textarea.remove();
+    }
+  });
+
+  it('focuses the prefill end and starts the draft only once when the list is loaded', async () => {
+    renderStrictProbe('proj-a', {
+      token: 1, projects: [PROJECT_A], initialProjectId: 'proj-a', initialInput: PREFILL, openThreadIds: { 'proj-a': [] },
+    });
+    // N1: 二重実行でもドラフトは1回だけ起こす(2回目は適用済みで早期 return)。
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+    textarea.value = PREFILL;
+    await flushFrame();
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(PREFILL.length);
+  });
+
+  it('focuses the textarea on the pending path while the list is not loaded yet', async () => {
+    const { result } = renderStrictProbe('proj-a', { token: 1, projects: [PROJECT_A], initialProjectId: 'proj-a', initialInput: PREFILL });
+    expect(result.current.pendingTicketDraftProjectRef.current).toBe('proj-a');
+    await flushFrame();
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it('focuses the textarea when the launch switches to another project (MF1)', async () => {
+    const { result } = renderStrictProbe('proj-a', {
+      token: 1, projects: [PROJECT_A, PROJECT_B], initialProjectId: 'proj-b', initialInput: PREFILL, openThreadIds: { 'proj-a': [], 'proj-b': [] },
+    });
+    expect(result.current.selectedProjectId).toBe('proj-b');
+    await flushFrame();
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it('focuses the current text end when the ticket project is missing and nothing is selected (r5we)', async () => {
+    renderStrictProbe('', { token: 1, projects: [PROJECT_A], initialProjectId: 'proj-missing', initialInput: PREFILL });
+    textarea.value = `${PREFILL}abc`;
+    textarea.setSelectionRange(0, 0);
+    await flushFrame();
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(`${PREFILL}abc`.length);
+  });
+
+  it('does not focus again once the reserved focus has run, even when projects change later', async () => {
+    const props: ProbeProps = {
+      token: 1, projects: [PROJECT_A], initialProjectId: 'proj-a', initialInput: PREFILL, openThreadIds: { 'proj-a': [] },
+    };
+    const { rerender } = renderStrictProbe('proj-a', props);
+    await flushFrame();
+    expect(document.activeElement).toBe(textarea);
+    textarea.blur();
+
+    // 適用済みの token のまま projects だけが変わる(S3 の経路)。
+    rerender({ ...props, projects: [PROJECT_A, PROJECT_B] });
+    await flushFrame();
+    expect(document.activeElement).not.toBe(textarea);
+  });
+
+  it('does not focus after an unmount before the frame (N5)', async () => {
+    const { unmount } = renderStrictProbe('proj-a', {
+      token: 1, projects: [PROJECT_A], initialProjectId: 'proj-a', initialInput: PREFILL, openThreadIds: { 'proj-a': [] },
+    });
+    unmount();
+    await flushFrame();
+    expect(document.activeElement).not.toBe(textarea);
+  });
+
+  it('still focuses when projects change before the reserved frame runs (without StrictMode)', async () => {
+    // StrictMode でなくても、focus の前に projects が変わって effect が張り直されると、同じ
+    // 取り消しが起きていた。
+    const props: ProbeProps = {
+      token: 1, projects: [PROJECT_A], initialProjectId: 'proj-a', initialInput: PREFILL, openThreadIds: { 'proj-a': [] },
+    };
+    const { rerender } = renderProbe('proj-a', props);
+    rerender({ ...props, projects: [PROJECT_A, PROJECT_B] });
+    textarea.value = PREFILL;
+    await flushFrame();
+    expect(document.activeElement).toBe(textarea);
+    expect(textarea.selectionStart).toBe(PREFILL.length);
+    expect(startNewDraftThread).toHaveBeenCalledTimes(1);
   });
 });
