@@ -26,7 +26,7 @@ const CHAT_COMPLETED_TURNS_MAX = 20;
  * CHAT_COMPLETED_TURNS_MAX に達する等で) 消えるまで際限なく続く。
  *
  * クライアント側には自分自身が絡む検知失敗を諦めて自己解決する猶予
- * (UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS、ChatPanel.tsx で約20〜30秒)
+ * (UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS、turnStatusPolicy.ts で約20〜30秒)
  * が既にあるので、このTTLはそれより十分長く取り、正当な回収中クライアントの
  * 振る舞いには決して干渉しないようにする。
  */
@@ -116,7 +116,7 @@ export function createChatTurnTracker(now: () => Date): ChatTurnTracker {
   // dedupe はこの2件目で1件目を意図的に上書きする: 古いエントリが先頭に居座ったまま
   // 後から積まれた別の sessionId 無し失敗をクライアントの checkTurnStatus から
   // 見えなくしてしまう害の方が、稀に「本当は1件目を待っていたクライアントが2件目の
-  // 結果で解決してしまう」害より大きいと判断した (ChatPanel.tsx 側にも
+  // 結果で解決してしまう」害より大きいと判断した (turnStatusPolicy.ts 側にも
   // UNMATCHED_SESSIONLESS_FAILED_GIVEUP_POLLS による猶予後の受け入れがあり、
   // どのみち無期限には待たない)。GET が返す sessionId 無しエントリは常に「最新の
   // 1件」になり、クライアント側の detachedAt 突き合わせ (ChatPanel.tsx の
