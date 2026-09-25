@@ -65,7 +65,15 @@ wog_check_id() {
   wog_label="$2"
   wog_owner="$(bh_read_owner "$WOG_MAIN" "$wog_id")"
   if [ -z "$wog_owner" ]; then
+    if [ -z "$WOG_SEG_GENUINE" ]; then
+      # 引用符内から漏れ出た偽のセグメントによる誤クレームを防ぐ (bdboard-s9gi):
+      # 本物の呼び出しでないと判定できた場合のみクレームする。deny 側の判定
+      # (下の既存ロジック) は変更しない — 既に持ち主がいる場合はこの判定を
+      # 経由せずそちらに進む。
+      return 0
+    fi
     if bh_claim_owner "$WOG_MAIN" "$wog_id" "$AGENT_ID"; then
+      wog_audit "9-claim-$wog_label-$wog_id"
       return 0
     fi
     wog_owner="$(bh_read_owner "$WOG_MAIN" "$wog_id")"
@@ -132,6 +140,49 @@ WOG_PREV_DIR="$WOG_DIR"
 WOG_SUBSHELL_DIR=''
 WOG_RELEASE_SCRIPT_BASE='worktree-owner.sh'
 
+WOG_QUOTE_STATE='n'
+
+# $1 の生テキストを走査し、引用符の開閉状態 ($WOG_QUOTE_STATE: n=通常 / '=シングル
+# クォート内 / "=ダブルクォート内) をセグメントをまたいで引き継ぐ。素朴な区切り文字
+# 分割 (WOG_SEGMENTS) が引用符の中で ; & | を割ってしまっても、次のセグメントの
+# 先頭が「本当に引用符の外で始まったか」を判定できるようにするため (bdboard-s9gi)。
+# シングルクォート内はバックスラッシュに特別な意味を持たせない (POSIX 準拠)。
+# ダブルクォート内・通常状態ではバックスラッシュは直後の1文字をエスケープする
+# (閉じクォート文字の直前がバックスラッシュなら閉じない)。ヒアドキュメント本体や
+# $() のネストは追わない (このファイルの既存の「限界」節と同種、規則7/8ほどの
+# 厳密さは元々持たない設計)。
+wog_scan_quote_state() {
+  wog_qs_s="$1"
+  wog_qs_len=${#wog_qs_s}
+  wog_qs_i=0
+  while [ "$wog_qs_i" -lt "$wog_qs_len" ]; do
+    wog_qs_c="${wog_qs_s:wog_qs_i:1}"
+    case "$WOG_QUOTE_STATE" in
+      n)
+        case "$wog_qs_c" in
+          '\')
+            wog_qs_i=$((wog_qs_i + 1))
+            ;;
+          "'") WOG_QUOTE_STATE="'" ;;
+          '"') WOG_QUOTE_STATE='"' ;;
+        esac
+        ;;
+      "'")
+        [ "$wog_qs_c" = "'" ] && WOG_QUOTE_STATE='n'
+        ;;
+      '"')
+        case "$wog_qs_c" in
+          '\')
+            wog_qs_i=$((wog_qs_i + 1))
+            ;;
+          '"') WOG_QUOTE_STATE='n' ;;
+        esac
+        ;;
+    esac
+    wog_qs_i=$((wog_qs_i + 1))
+  done
+}
+
 wog_resolve_dir() {
   case "$1" in
     '') printf '%s' "${HOME:-$WOG_DIR}" ;;
@@ -145,6 +196,10 @@ set -f
 while IFS= read -r wog_seg; do
   wog_seg="${wog_seg#"${wog_seg%%[![:space:]]*}"}"
   [ -n "$wog_seg" ] || continue
+  wog_seg_raw="$wog_seg"
+  WOG_SEG_GENUINE=''
+  [ "$WOG_QUOTE_STATE" = 'n' ] && WOG_SEG_GENUINE='yes'
+  wog_scan_quote_state "$wog_seg_raw"
   case "$wog_seg" in
     '('* )
       WOG_SUBSHELL_DIR="$WOG_DIR"
