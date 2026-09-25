@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,6 +37,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
   beforeEach(() => {
     rmSync(path.join(main, '.git', 'bdboard-worktree-owners'), { recursive: true, force: true });
     mkdirSync(path.join(main, '.git', 'bdboard-worktree-owners'), { recursive: true });
+    rmSync(path.join(tmpRoot, 'bdboard-worktree-owner-guard.log'), { force: true });
   });
 
   afterAll(() => rmSync(tmpRoot, { recursive: true, force: true }));
@@ -242,6 +243,27 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
   });
   it('lets the first subagent claim an unowned worktree', async () => {
     expectAllow(await runBashHook({ command: `cd ${wtB} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-2' }));
+  });
+  it('does not claim from a quoted pipe-split git commit mention', async () => {
+    expectAllow(await runBashHook({ command: `cd ${wtA} && grep -n "git status | git commit -m x\\|..." somefile`, cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-a'))).toBe(false);
+  });
+  it('does not claim from a quoted semicolon-split git commit mention', async () => {
+    expectAllow(await runBashHook({ command: 'vitest -t "git status; git commit -m x" run', cwd: wtB, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-b'))).toBe(false);
+  });
+  it('keeps conservative deny for quote-split fake match in an owned worktree', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: `cd ${wtA} && grep -n "git status | git commit -m x" somefile`, cwd: main, agentId: 'agent-2' }), 'bd/ticket-a');
+  });
+  it('audit logs a genuine claim', async () => {
+    await claimA();
+    expect(readFileSync(path.join(tmpRoot, 'bdboard-worktree-owner-guard.log'), 'utf8')).toMatch(/claim.*ticket-a/);
+  });
+  it('does not audit log a non-genuine claim', async () => {
+    expectAllow(await runBashHook({ command: `cd ${wtA} && grep -n "git status | git commit -m x\\|..." somefile`, cwd: main, agentId: 'agent-2' }));
+    const logPath = path.join(tmpRoot, 'bdboard-worktree-owner-guard.log');
+    expect(existsSync(logPath) ? readFileSync(logPath, 'utf8') : '').not.toMatch(/claim.*ticket-a/);
   });
   it('denies a later different agent after delayed claim', async () => {
     expectAllow(await runBashHook({ command: `cd ${wtB} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-2' }));
