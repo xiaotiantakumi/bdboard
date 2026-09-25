@@ -920,13 +920,16 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     const envLog = path.join(tmp, 'verify-env.log');
     const queueFile = path.join(mainCheckout, '.git', 'bdboard-merge', `pr-${PR}-queue.json`);
     const later = git(mainCheckout, ['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'feat(peer2): landed during verify']);
-    expect(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog, FAKE_VERIFY_MOVE_MAIN: later }).status).toBe(75);
+    // bdboard-lmhs: 高負荷の verify で 2 回目の prepare が 75 を返したことがある (原因未特定)。
+    // 次に落ちたとき原因が分かるよう、終了コードの不一致には merge-pr の出力を添える。
+    const expectExit = (result, code) => expect(result.status, `merge-pr exited ${result.status}:\n${result.stderr}`).toBe(code);
+    expectExit(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog, FAKE_VERIFY_MOVE_MAIN: later }), 75);
     const { since } = JSON.parse(readFileSync(queueFile, 'utf8'));
-    expect(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }).status).toBe(0);
+    expectExit(run(['prepare', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }), 0);
     writeFake({ statuses: { [later]: [status('success')] } });
-    expect(run(['gate', String(PR)]).status).toBe(0);
+    expectExit(run(['gate', String(PR)]), 0);
     landSquash();
-    expect(run(['finish', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }).status).toBe(0);
+    expectExit(run(['finish', String(PR)], { FAKE_VERIFY_ENV_LOG: envLog }), 0);
     expect(readFileSync(envLog, 'utf8').trim().split('\n')).toEqual([`merge ${since}`, `merge ${since}`, 'landed -']);
     expect(existsSync(queueFile)).toBe(false);
   });
