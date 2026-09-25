@@ -209,9 +209,15 @@
     justify-content: flex-end;
   }
 
+  /* bdboard-h4xs.25: 明示 height (100vh/100dvh) を持たせない。ベースの
+     .overlay (base.css) は position: fixed; inset: 0; だけで全画面へ常に
+     追従するので、このオーバーライドで明示 height を足すと、その時点の dvh
+     値に下端が固定されてしまう。iOS Safari でソフトキーボードが開いたとき
+     (viewport meta の interactive-widget=resizes-content により dvh が
+     再計算される)、この固定値と実際に見えている画面の下端がずれ、暗幕の
+     無い帯からボードが透けて見えた (再現: bdboard-h4xs.25 本文)。
+     overscroll-behavior は height の決まり方と無関係にそのまま効くので残す。 */
   .overlay {
-    height: 100vh;
-    height: 100dvh;
     overscroll-behavior: none;
   }
 
