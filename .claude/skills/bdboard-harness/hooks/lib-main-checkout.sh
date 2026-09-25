@@ -45,3 +45,38 @@ bh_dir_is_main() {
   [ -n "$bh_dim_top" ] || return 1
   [ "$(bh_canon "$bh_dim_top")" = "$2" ]
 }
+
+bh_worktree_owner_dir() {
+  printf '%s/.git/bdboard-worktree-owners' "$1"
+}
+
+bh_worktree_owner_file() {
+  printf '%s/%s' "$(bh_worktree_owner_dir "$1")" "$2"
+}
+
+bh_ticket_id_for_dir() {
+  bh_tifd_top="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "$bh_tifd_top" ] || return 1
+  bh_tifd_top="$(bh_canon "$bh_tifd_top")"
+  [ "$bh_tifd_top" != "$2" ] || return 1
+  case "$bh_tifd_top" in
+    "$2"/.claude/worktrees/*) ;;
+    *) return 1 ;;
+  esac
+  [ "$(bh_main_checkout "$bh_tifd_top")" = "$2" ] || return 1
+  printf '%s' "${bh_tifd_top#"$2"/.claude/worktrees/}"
+}
+
+bh_read_owner() {
+  bh_ro_file="$(bh_worktree_owner_file "$1" "$2")"
+  [ -f "$bh_ro_file" ] || return 0
+  cat "$bh_ro_file" 2>/dev/null | tr -d '\n\r'
+}
+
+bh_claim_owner() {
+  bh_co_dir="$(bh_worktree_owner_dir "$1")"
+  mkdir -p "$bh_co_dir" 2>/dev/null || return 1
+  bh_co_file="$bh_co_dir/$2"
+  bh_co_agent="$3"
+  ( set -C; printf '%s\n' "$bh_co_agent" >"$bh_co_file" ) 2>/dev/null
+}

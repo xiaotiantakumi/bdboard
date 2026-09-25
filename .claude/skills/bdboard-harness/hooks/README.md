@@ -350,6 +350,97 @@ working tree/HEAD を守ること自体は常時稼働サーバーの有無と�
   Bash 経由の `sed -i` / `cp` / `tee` 等によるファイル書き換えは pre-edit-guard.sh の
   対象外でもある (Edit|Write|MultiEdit|NotebookEdit ツールだけを見る hook のため)。
 
+### 9 の worktree 所有権保護 (bdboard-gsnn)
+
+2026-09-25 に、main 破損の修復 PR #781 (bdboard-yv45) を進めていた worktree
+`.claude/worktrees/bdboard-yv45` (bdboard-9pzt の担当が作成) へ、別チケット
+(bdboard-rftd) の担当が「持ち主が死んでいる」と誤認して `cd` し、
+`npm run merge-pr -- prepare 781` → `gate 781 --repair` を実行した (最後の
+`gh pr merge` は Claude Code 自身の権限判定でたまたま拒否され実害は無かった)。
+worktree-first 排他 (`git worktree add` の衝突) は worktree の二重作成は防ぐが、
+作成後の worktree と作成したサブエージェントを結び付けておらず、`gate --repair`
+の枠引き継ぎ (`scripts/merge-pr/gate.mjs` の `holderFor`、PRED_BASE の 12 桁 suffix
+一致だけで誰の worktree からでも乗っ取れる) と組み合わさると、他人の修復を横取り
+できてしまった。
+
+**記録の置き場所**: main checkout (`git rev-parse --git-common-dir` の親) の
+`.git/bdboard-worktree-owners/<ticket-id>` に、持ち主の `agent_id` を平文 1 行で
+記録する。`.git/` 配下なので git 追跡されない。
+
+**記録のタイミング (遅延クレーム)**: `git worktree add` の成功時点ではなく、下の
+表にある操作のどれかを、あるチケットの worktree を実効ディレクトリとして最初に
+実行しようとしたサブエージェントが、その場で自分の `agent_id` を記録して持ち主に
+なる。記録が既にあれば、自分の `agent_id` と一致するときだけ通す。この方式を選んだ
+理由:
+
+- `git worktree add` の成功だけを捉えるには PostToolUse (`tool_response` の成功
+  判定) が要り、実装・テストが PreToolUse 1 本より複雑になる。
+- 「持ち主の記録が無い worktree (このガードより前に作られたもの) は最初に触った
+  サブエージェントが持ち主になる」という要件も同じコードパスで自然に満たせる。
+- 理論上、worktree 作成者が一度もこれらの操作をする前に**別の**サブエージェントが
+  先に触れば、その別のサブエージェントが持ち主になってしまう狭い race がある。
+  実際に報告されたインシデントでは、修復 PR の担当が他人に触られる前に必ず自分で
+  `git commit`/`git push`/`npm run merge-pr` のいずれかを最初に行っているはずなので
+  発生しないが、既知の限界として明記する。
+
+**deny する操作 (対象は agent_id ありのサブエージェントが「他人の持ち物である
+worktree」を実効ディレクトリ/対象として実行しようとしたときだけ。議長は常に対象外)**:
+
+| 操作 | 判定 |
+|---|---|
+| `git push` | サブコマンドが `push` |
+| `git commit` | サブコマンドが `commit` |
+| `git worktree remove <path>` | `<path>` を解決した先が per-ticket worktree |
+| `git branch -D bd/<id>` (`-D` 短縮形のみ。`--delete --force` は対象外) | 引数に `-D` と `bd/<id>` が両方 |
+| `npm run merge-pr -- <prepare\|gate\|finish\|verify> ...` (`gate --repair` を含む) | `run merge-pr` |
+| `gh pr merge <N>` | `pr merge` |
+| 議長専用解除コマンド `scripts/worktree-owner.sh release <id>` をサブエージェントが実行 | コマンド中に `worktree-owner.sh` と `release` が同じセグメントに現れる |
+
+**必ず allow する**: 読み取り・テスト実行・Edit/Write (これらの持ち主チェックは
+このチケットのスコープ外)、自分の worktree での上の全操作、議長の全操作、
+`worktree-owner.sh show`/`list`、上の表に無い git/npm/gh サブコマンド。
+
+**解除**: 議長専用の `scripts/worktree-owner.sh release <id>` (`--main <path>`
+省略可)。記録ファイルを削除するだけで、次にその worktree で上の操作を行った
+サブエージェントが新しい持ち主になる (上の遅延クレームと同じコードパス)。
+サブエージェントからの `release` 実行は worktree-owner-guard.sh が deny する。
+
+**実効ディレクトリの解決はこのファイル専用の簡易版**: `cd`/`pushd`/`popd` と
+`git -C`・`npm --prefix` の直接指定だけを追う。規則 7/8 (`server-guard.sh`) の
+実効ディレクトリ解決エンジンは再利用しない。`NAME=値` 代入の展開・別ファイルへ
+書いて実行する迂回・絶対パス/バックスラッシュ経由の `git` 呼び出しは追わない
+(規則 7/8 と同種の既知の限界。見逃しは fail-open = このチケット以前と同じ)。
+
+**引用符を考慮したセグメント分割 (`sg_mask_quoted_separators`) はあえて使わない**:
+規則 9 が見るのはセグメントの先頭語 (`git`/`npm`/`gh`) と直後のサブコマンドだけなので、
+引用符内の `;`/`&`/`|` を素朴な分割で余分なセグメントに割っても、本物の呼び出しの
+先頭語が分断されることは通常の書き方では起きない。唯一の副作用は「引用符の中に
+たまたま `git commit` 等の並びがあると誤検知で deny 側に倒れる」ことだけで、これは
+規則 6 (bdboard-wa48) と同じ「言及しただけで deny」方針・「見逃しより誤検知」原則と
+整合する。既にレビュー済みで他セッションが依存する規則 7/8 のコード
+(`server-guard.sh`) へ、この機能のために手を入れるリスクの方が大きいと判断し、
+`server-guard.sh` は一切変更していない。
+
+**agent_id について確認したこと**: Claude Code の hook 入力の `agent_id` は
+サブエージェント内で発火した hook にだけ付与され、トップレベル (議長) の呼び出しでは
+付与されない (既存の規則 7/8/pre-edit-guard.sh 規則 2 が同じ前提で `AGENT_ID` を
+使っており、このチケットで新規に採用した前提ではない)。同一サブエージェントが
+`SendMessage` で再開されても値が変わらないかは、ドキュメント/実測のどちらでも
+確定できなかった — 変わらない前提でこの設計は動くが、変わる場合は「持ち主が
+急に他人に見える」形の誤検知 (fail-safe な方向) になるだけで、すり抜け方向の
+悪化にはならない。PR 本文に明記する。
+
+**既知の限界**:
+
+- `aimix` 経由で起動される Codex/Cursor の子プロセスは Claude Code の hook を
+  通らない (bdboard-1zrs と同じ限界)。Codex/Cursor 自身が `git push`/`git commit`
+  等を直接実行する運用ではこのガードは効かない。
+- Edit/Write の持ち主チェックはこのチケットのスコープ外 (レビュー用の子エージェントが
+  親の worktree で mutation 確認の一時編集をする既存フローを妨げないため)。
+- 遅延クレームの狭い race (上記)。
+- 実効ディレクトリ解決の限界 (上記)。
+- `git branch -D` は短縮形のみ対応。
+
 ### 誤検知について
 
 1 は「`# pkill` のようなコメント内でも deny する」ほど緩い判定にしてある。誤検知した

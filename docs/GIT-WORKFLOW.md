@@ -376,6 +376,10 @@ revert:
    ledger check, takes over the `… / main-broken <PRED_BASE sha12>` slot or takes it under that
    name) → the printed merge line → `finish`, which keeps the slot unless the fix's landed verify is
    `success`, and releases it when it is. `--repair` is only for the fix PR of the P0 bug.
+   Since bdboard-gsnn, this is also mechanically enforced: `npm run merge-pr -- gate
+   <N> --repair` goes through hook rule 9 (worktree ownership), which denies any
+   subagent other than the repair PR's own worktree owner from running it — so in
+   practice `--repair` can only be run by that owner, from their own worktree.
 5. Once the fix's landed-verify is `success` (and the slot is released), reopen the ticket of the
    breaking PR with the reason, and add the case to failure-catalog.md.
 
