@@ -421,6 +421,10 @@ describe('createBdCliHumanDecisions', () => {
                 issue_type: 'task',
                 dependencies: [],
                 metadata: { decision_question: 'この場合どうしますか?' },
+                // bdboard-ld8d レビュー指摘: labels を省くと hasHumanLabel の判定だけで
+                // 早期 continue してしまい、このテストが本来押さえたい
+                // hasOwnDecisionQuestion ガード(bdboard-mw8y)を素通りしてしまう。
+                labels: ['human'],
               },
             ]),
             stderr: '',
@@ -773,6 +777,11 @@ describe('createBdCliHumanDecisions', () => {
   // and get skipped by the ordinary blocking-gate check regardless of that guard, masking
   // a regression where the guard is removed and issueId's own label gets a redundant
   // second `label remove` and incorrectly appears in clearedHumanLabelTicketIds.
+  // bdboard-ld8d レビュー指摘: この issueId 用の show フィクスチャは labels を返さない
+  // ため、guard を外しても hasHumanLabel の判定(実運用では issueId の label は直前に
+  // 既に外れているので、実際の bd でも同じく false になるはず)が二重の安全網として
+  // 働き、このテストだけでは self-exclusion guard の完全な単離はできなくなった。
+  // guard 自体は無駄な `bd show <issueId>` 呼び出しを避ける最適化として引き続き有効。
   function ticketRespondHandler(options: {
     readonly issueId: string;
     readonly gateId: string;
@@ -922,6 +931,9 @@ describe('createBdCliHumanDecisions', () => {
                 dependency_type: 'blocks',
               },
             ],
+            // bdboard-ld8d レビュー指摘: labels が無いと hasHumanLabel だけで早期
+            // continue し、blockingHumanGateIds のガード(bdboard-ixx9)を素通りする。
+            labels: ['human'],
           },
         },
       }),
@@ -962,6 +974,9 @@ describe('createBdCliHumanDecisions', () => {
             issue_type: 'task',
             dependencies: [],
             metadata: { decision_question: '別の質問です' },
+            // bdboard-ld8d レビュー指摘: labels が無いと hasHumanLabel だけで早期
+            // continue し、hasOwnDecisionQuestion のガード(bdboard-mw8y)を素通りする。
+            labels: ['human'],
           },
         },
       }),
