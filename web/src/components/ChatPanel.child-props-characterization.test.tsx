@@ -10,7 +10,7 @@
 // - DOM の ref が取り違えられていないこと(ヘッダー/ドロワーの閉じるボタンへの
 //   フォーカスの行き来で見る)
 import type { ChangeEvent } from 'react';
-import { act, waitFor } from '@testing-library/react';
+import { act, cleanup, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatAgentDto, ChatThreadDto, ChatTurnStatusDto } from '../api';
 import { installFakeHistory } from '../test/fakeHistory';
@@ -106,9 +106,15 @@ describe('ChatPanel child props wiring (pinned before bdboard-sso1.83 第15c段)
   });
 
   afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.resetAllMocks();
-    vi.restoreAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを reset する前にアンマウントし、E8 のポーリングが
+    // 次のテストへ持ち越されないようにする。
+    try {
+      cleanup();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetAllMocks();
+      vi.restoreAllMocks();
+    }
   });
 
   it('passes exactly the same prop names to every child (no extra or missing keys)', async () => {
