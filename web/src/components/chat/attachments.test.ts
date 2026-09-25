@@ -54,9 +54,14 @@ describe('validateChatAttachments', () => {
 
   it('既存分と追加分の合計10 MiBちょうどを許可し、超過を拒否する', () => {
     expect(validateChatAttachments([attachment('old', 5 * 1024 * 1024)], [file('new.png', 'image/png', 5 * 1024 * 1024)])).toBeNull();
-    // incoming 単体は5 MiB以内(個別サイズ判定は通過)のまま、既存分と合わせて10 MiBを
-    // 超えるようにする(既存分は個別サイズ判定の対象外なので6 MiBでも許容される)。
-    expect(validateChatAttachments([attachment('old', 6 * 1024 * 1024)], [file('new.png', 'image/png', 5 * 1024 * 1024)])).toBe('画像の合計サイズは 10 MiB 以下にしてください。');
+    // incoming 単体は5 MiB以内(個別サイズ判定は通過)のまま、既存分と合わせてちょうど
+    // 10 MiB + 1 バイトにする(既存分は個別サイズ判定の対象外なので6 MiBでも許容される)。
+    expect(
+      validateChatAttachments(
+        [attachment('old', 6 * 1024 * 1024)],
+        [file('new.png', 'image/png', 4 * 1024 * 1024 + 1)],
+      ),
+    ).toBe('画像の合計サイズは 10 MiB 以下にしてください。');
   });
 
   it('すべての条件を通過した入力を許可する', () => {
@@ -71,13 +76,29 @@ describe('validateChatAttachments', () => {
 describe('readFileAsDataUrl', () => {
   it('File を data URL 文字列に変換する', async () => {
     const result = await readFileAsDataUrl(new File(['hello'], 'a.png', { type: 'image/png' }));
-    expect(typeof result).toBe('string');
-    expect(result.startsWith('data:')).toBe(true);
+    expect(result).toBe('data:image/png;base64,aGVsbG8=');
   });
 
-  it('FileReader の error イベントで reject する', async () => {
+  it('FileReader の error イベントで reject する(reader.error が無いときはフォールバック文言)', async () => {
     vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) {
       this.dispatchEvent(new Event('error'));
+    });
+    await expect(readFileAsDataUrl(new File(['x'], 'a.png', { type: 'image/png' }))).rejects.toThrow('画像を読み込めませんでした。');
+  });
+
+  it('FileReader の error イベントで reject する(reader.error があればそれを伝える)', async () => {
+    const domError = new DOMException('boom', 'NotReadableError');
+    vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) {
+      Object.defineProperty(this, 'error', { value: domError, configurable: true });
+      this.dispatchEvent(new Event('error'));
+    });
+    await expect(readFileAsDataUrl(new File(['x'], 'a.png', { type: 'image/png' }))).rejects.toBe(domError);
+  });
+
+  it('load イベントで result が文字列でなければフォールバック文言で reject する', async () => {
+    vi.spyOn(FileReader.prototype, 'readAsDataURL').mockImplementation(function (this: FileReader) {
+      Object.defineProperty(this, 'result', { value: new ArrayBuffer(0), configurable: true });
+      this.dispatchEvent(new Event('load'));
     });
     await expect(readFileAsDataUrl(new File(['x'], 'a.png', { type: 'image/png' }))).rejects.toThrow('画像を読み込めませんでした。');
   });

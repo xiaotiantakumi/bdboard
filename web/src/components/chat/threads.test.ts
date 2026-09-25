@@ -111,6 +111,11 @@ describe('summarizeTitle', () => {
     const title = '😀'.repeat(41);
     expect(Array.from(summarizeTitle(title))).toEqual([...Array.from('😀'.repeat(40)), '…']);
   });
+
+  it('絵文字40個(UTF-16では80コードユニット)はコードポイント単位でちょうど境界となり切り詰めない', () => {
+    const title = '😀'.repeat(40);
+    expect(summarizeTitle(title)).toBe(title);
+  });
 });
 
 describe('formatThreadUpdatedAt', () => {
