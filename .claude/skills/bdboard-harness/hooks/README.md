@@ -23,6 +23,11 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 - 依存は bash (3.2 互換) / coreutils / git / bd と、任意で jq・python3 のみ。**node に
   依存しない** (注入先が npm プロジェクトとは限らない)。
 - 実行ビットは注入時に付ける。手で叩くときは `bash <script>` で呼ぶ。
+- `lib-main-checkout.sh` は hook 本体ではなく共有ライブラリ (単独では実行しない、
+  `.claude/settings.json` にも登録しない)。「このディレクトリの属する checkout が main
+  checkout (per-ticket worktree の親) か」を `server-guard.sh` (規則 8) と
+  `pre-edit-guard.sh` (規則 2) の両方から `.` で読み込み、判定ロジックを一本化する
+  (bdboard-kxqb)。
 
 ## pre-bash-guard.sh — PreToolUse (matcher: `Bash`)
 
@@ -37,6 +42,7 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
 | 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 | 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
+| 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` を実行する (`pull` は含まない。既存の 7a がその役目を持つので二重化しない — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
 
 2・3 は**コマンド列を `;` `&` `|` と改行で「コマンド 1 個」へ割ってから**、その 1 個ずつ
 判定する。列全体をまとめて見ると `bd dolt push --remote backup; bd dolt push` や
@@ -256,6 +262,68 @@ complexity の choices 確認 → member 解決 → (セグメントが割れて
   (規則 1 の pkill/killall 禁止と同じ精神だが、worktree の一時サーバーを狙う正当な用途と
   区別できないため)。
 
+### 8 の main checkout 保護 (bdboard-kxqb)
+
+2026-09-25 に議長を main checkout (worktree ではなく
+`/Users/takumi/Documents/src/private_src/bdboard` 本体) で動かす運用に切り替えた。
+そうするとサブエージェントも main checkout を cwd として起動しうる。既存の規則 7 が
+サブエージェントに禁じていたのは main checkout での `git pull`・サーバー起動・listener
+kill だけで、`git checkout` / `switch` / `commit` / `reset` / `merge` / `stash` 等の
+working tree/HEAD 変更と Edit・Write によるファイル編集は止めていなかった。2026-09-25 に
+別チケット (bdboard-p5l.18) の担当が議長の worktree で自分のブランチへ `checkout`
+した実例があり、main checkout で同じことが起きると常時稼働サーバーの配信元 checkout が
+汚れ、デプロイの `git pull --ff-only` も失敗する。
+
+main checkout の判定・実効ディレクトリの静的追跡は規則 7 と共有する
+(`hooks/lib-main-checkout.sh` を `server-guard.sh` から `.` で読み込む。二重実装しない)。
+規則 7 との違いは、`alwaysOnServer.port` の有無に関係なく常に有効なこと (main checkout の
+working tree/HEAD を守ること自体は常時稼働サーバーの有無と独立の理由による) と、
+サブエージェントだけを対象にすること (議長は対象外)。
+
+**必ず allow する (誤検知させてはならない)** — 他セッションが依存する日常操作:
+
+- `git -C <main> worktree add/remove/list`、`git branch -D bd/<id>`、
+  `git push origin --delete bd/<id>`、`git remote prune origin`、`git fetch`
+- 読み取り系全般 (`log` / `status` / `diff` / `show` / `rev-parse` 等)
+- `cd <worktree> && git commit ...` / `git -C <worktree> checkout ...`
+  (実効ディレクトリが worktree に解決されるため)
+- commit メッセージ・`bd comment` 本文・`gh pr create --body` 引用符内に
+  `git checkout` 等の文字列が現れるだけのもの (規則 6 と同じ引用符マスク
+  `sg_mask_quoted_separators` を再利用し、先頭語だけで判定するので誤爆しない)
+- `alwaysOnServer.port` を宣言していない契約下での、サブエージェントによる main checkout
+  での `git pull` (下記「pull を対象外にした理由」)
+
+**fail-closed にした境界**: 「main checkout を対象にしている可能性があり、かつ
+サブコマンドが working tree/HEAD を変えうる」と判定できるが実効ディレクトリの解決に
+自信が持てない場合は deny 側に倒す (`sg_check_main_git_mutate` は対象ディレクトリが
+main と一致すると判定できたときだけ deny するので、この一文はロジックの新規追加では
+なく既存の判定精度に対する運用方針の宣言)。一方、**実効ディレクトリの解決自体**
+(`cd` の静的追跡・`NAME=値` 代入の展開) は規則 7 から引き継いだ既存の制約で、
+別ファイルに書いて実行する迂回 (`bash /tmp/x.sh`) や別コマンドで設定した変数の参照は
+解決できず、この部分は規則 7 と同じく fail-open のまま (下記「限界」)。
+
+#### pull を対象外にした理由
+
+`git pull` は working tree/HEAD を変えるので性質上は他の 11 個と同列だが、規則 8 の
+サブコマンド一覧には**含めていない**。既存の 7a が「サブエージェントから main checkout
+での `git pull`」を `alwaysOnServer.port` があるときに deny 済みで、規則 8 の役割は
+「7 が元から対象にしていなかった working tree/HEAD 変更系を追加で塞ぐ」ことだけだからで、
+7a と重ねて判定すると deny 経路が二重になり保守面が増えるだけで得るものがない。
+`alwaysOnServer.port` を宣言していない契約 (bdboard 自身の契約には常にある) では
+サブエージェントの main checkout での `pull` は従来どおり fail-open のまま — これは
+規則 8 が新規に緩めたのではなく、7a の既存スコープをそのまま維持しているだけである。
+
+#### 限界
+
+規則 7 の「限界」節と同じ (`hooks/lib-main-checkout.sh` を共有するため)。加えて:
+
+- 対象は列挙した 12 個の git サブコマンドのみ。`git log --format=... > FETCH_HEAD` の
+  ような迂回や、git 以外のコマンドで working tree を書き換える経路 (`tar` 展開など) は
+  対象外。
+- pre-edit-guard.sh の main checkout 保護 (下記) とは別実装 (Bash の引用符付きコマンド
+  文字列と Edit/Write の `file_path` は形が違うため、判定の入口は共有できない)。
+  main checkout 判定関数 (`bh_main_checkout` / `bh_dir_is_main`) 自体は共有する。
+
 ### 誤検知について
 
 1 は「`# pkill` のようなコメント内でも deny する」ほど緩い判定にしてある。誤検知した
@@ -271,11 +339,22 @@ complexity の choices 確認 → member 解決 → (セグメントが割れて
 | # | deny 条件 | 代わりに |
 |---|---|---|
 | 1 | パスが `/.claude/skills/bdboard-harness/` を含む (注入コピー。bdboard 自身でも deny) | 原本 `harness/packs/bdboard-harness/` を直して再注入。注入先固有の内容なら `.claude/skills/project-harness/` |
-| 2 | パスが `/.beads/` を含み、かつ現在ブランチが `bd/` で始まる | `.beads/` は PR に含めない。台帳の変更は bd コマンド経由で行う（ファイルを直接編集・コミットしない） |
+| 2 | hook 入力に `agent_id` があり (サブエージェント)、対象パスの実在する最も近い祖先ディレクトリが main checkout (worktree ではない) 配下 | worktree で作業する: `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` を作り、その worktree 内のパスを指定する |
+| 3 | パスが `/.beads/` を含み、かつ現在ブランチが `bd/` で始まる | `.beads/` は PR に含めない。台帳の変更は bd コマンド経由で行う（ファイルを直接編集・コミットしない） |
 
-ブランチは「そのパスの実在する最も近い祖先ディレクトリ」に対する
+ブランチ (規則 3) は「そのパスの実在する最も近い祖先ディレクトリ」に対する
 `git rev-parse --abbrev-ref HEAD` で見る (detached HEAD のときは `symbolic-ref` で再試行)。
 git が無い・パスが取れない・ブランチが判らない場合は allow。
+
+規則 2 の main checkout 判定は `server-guard.sh` の規則 8 と同じ `hooks/lib-main-checkout.sh`
+(`bh_main_checkout` / `bh_dir_is_main`) を共有する (main checkout 判定ロジックの二重実装を
+避けるため。bdboard-kxqb)。議長 (`agent_id` なし) は対象外。`.claude/worktrees/<id>/...`
+配下は、そのディレクトリ自身の `git rev-parse --show-toplevel` が main とは異なる worktree
+自身に解決するため、特別扱いせずに自然と除外される — 逆に main checkout の中に手で作った
+`.claude/worktrees/` 配下の非 worktree ディレクトリ (登録されていない普通のフォルダ) は
+toplevel が main のままなので deny される。ABSOLUTE_PATH が (Write での新規作成などで) まだ
+存在しない場合は、実在する親ディレクトリまで遡って判定する。git が無い・main checkout を
+解決できない場合は allow (fail-open)。
 
 ## stop-ticket-gate.sh — Stop (matcher なし)
 
@@ -406,4 +485,9 @@ JSON を流す統合テスト。Windows では skip) と、規則 7 用の
 `src/infrastructure/harness/pack-hooks-server-guard.test.ts` (テストプロセス自身が空きポートで
 listen し、その PID を「守られる対象」にする。本物のサーバーには触れない)、
 `worktree-freshness.sh` 用の `src/infrastructure/harness/pack-hooks-worktree-freshness.test.ts`
-(bare の origin と worktree を tmp に作り、origin を進めて遅れを再現する)。
+(bare の origin と worktree を tmp に作り、origin を進めて遅れを再現する)、規則 8 と
+pre-edit-guard.sh 規則 2 (main checkout 保護) 用の
+`src/infrastructure/harness/pack-hooks-main-checkout-guard.test.ts` (tmp に main + worktree の
+組を作り、`.claude/bdboard-harness.json` を `git worktree add` より前にコミットしてから
+サブエージェント/議長 × main/worktree × 各種フォーム × 引用符内言及の deny/allow 表を
+網羅する)。

@@ -533,13 +533,17 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         }),
       );
       // 旧実装 (引用符を理解しない ; 分割) では、この2発言目は
-      // `git commit -m "reminder` / `npm run start must never run in main (port N)"`
+      // `git log -1 --format="reminder` / `npm run start must never run in main (port N)"`
       // の2セグメントに割れ、2セグメント目の sg_word が "npm" になり、cwd が main
       // checkout であるため 7b の npm-start チェックが誤って deny していた
-      // (マスクがあれば1セグメントのまま git commit として allow される)。
+      // (マスクがあれば1セグメントのまま git log として allow される)。`git commit` ではなく
+      // `git log` を使うのは、規則 8 (bdboard-kxqb) が main checkout での subagent
+      // `git commit` をこの引用符の中身に関係なく deny するようになり、`commit` だと
+      // このテストが検証したい「7b の誤検知」ではなく規則 8 の正しい deny で落ちて
+      // 区別できなくなるため。
       expectAllow(
         await runHook({
-          command: `git commit -m "reminder; npm run start must never run in main (port ${port})"`,
+          command: `git log -1 --format="reminder; npm run start must never run in main (port ${port})"`,
           cwd: mainRepo,
           agentId: 'agent-1',
         }),

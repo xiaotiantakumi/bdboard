@@ -29,7 +29,11 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
 - `BDBOARD_SERVER_CALLER=chair` は身元の証明ではなく**宣言と監査**。hook 規則 7 が
   サブエージェント (hook 入力に `agent_id` がある) からのこのスクリプト実行・main checkout
   での `git pull` / `npm run start`・listener PID の `kill` を deny するので、宣言を書き写しても
-  サブエージェントからは通らない。
+  サブエージェントからは通らない。別の hook 規則 8 (同じ `server-guard.sh`。`alwaysOnServer.port`
+  の有無に関係なく常時有効) が、サブエージェントによる main checkout 対象の
+  `git checkout`/`commit`/`reset`/`merge`/`stash` 等と (`pre-edit-guard.sh` 規則 2 で)
+  Edit/Write も deny する — こちらは常時稼働サーバーではなく議長の main checkout 自体を
+  守る規則で、動機・詳細は `hooks/README.md`「8 の main checkout 保護」を参照 (bdboard-kxqb)。
 - `--expect-pid` は `status` で見た PID を渡す。実際の listener と一致しなければ exit 3 で
   何もしない (別セッションが直前に再起動した新プロセスを巻き込まない CAS)。
 - cloudflared が動いていれば exit 2 で止まる。ユーザーへ「トンネル URL が失効する」と伝えた
