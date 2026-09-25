@@ -264,6 +264,16 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         'done',
         '',
         'if [ "$want_lstart" = "1" ] && [ -n "$pid" ]; then',
+        '  df="$CONTROL_DIR/ps-lstart-delay-$pid"',
+        '  if [ -f "$df" ]; then',
+        '    # 一発だけ ps 自体の応答を遅らせる (fork/exec 競合で ps が詰まる高負荷を模す)。',
+        '    secs=$(cat "$df" 2>/dev/null || echo 0)',
+        '    rm -f "$df"',
+        '    case "$secs" in',
+        '      \'\'|*[!0-9.]*) secs=0 ;;',
+        '    esac',
+        '    sleep "$secs"',
+        '  fi',
         '  if [ -f "$CONTROL_DIR/ps-lstart-kill-$pid" ]; then',
         '    # kill -0 が通った後・ps が答える前にセッションが死ぬ窓を決定的に開ける',
         '    kill -TERM "$pid" 2>/dev/null || true',
@@ -303,6 +313,16 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
   /** 次の `times` 回だけ `ps -o lstart=` を空応答にする (ps 自体の一過性失敗を模す)。 */
   function psLstartEmpty(hbEnv: HeartbeatEnv, pid: number, times: number): void {
     writeFileSync(path.join(hbEnv.counterDir, `ps-lstart-empty-${pid}`), `${times}\n`, 'utf8');
+  }
+
+  /**
+   * 次の1回だけ `ps -o lstart=` の応答を `seconds` 秒遅らせてから本物の ps を呼ぶ
+   * (bdboard-241s)。高負荷下で fork/exec 自体が詰まり `ps` の応答が遅れる状況
+   * (bdboard-d48 で load average 190 超の実績あり) を、値を壊さずに再現する。
+   * 一発だけ効いて自動的に消える (ファイルは ps シム自身が使用後に rm する)。
+   */
+  function psLstartDelaySeconds(hbEnv: HeartbeatEnv, pid: number, seconds: number): void {
+    writeFileSync(path.join(hbEnv.counterDir, `ps-lstart-delay-${pid}`), `${seconds}\n`, 'utf8');
   }
 
   /** `ps -o lstart=` が呼ばれた瞬間にセッションを殺してから空応答を返す。 */
@@ -1511,6 +1531,75 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       expect(readPidfile(hbEnv.tmpDir, session.pid), label).toBeUndefined();
     }
   }, 30_000);
+
+  // bdboard-241s: cmd_start の登録待ちが壁時計固定 5s だった旧実装は、子プロセスが
+  // まだ生きていて単に ps (fork+exec) が詰まっているだけでも、その 5s で kill して
+  // exit 1 していた。ここでは「子が登録前に本当に死んだ」場合と「子は生きているが
+  // ps が遅いだけ」の場合を分けて、前者は即座に (旧実装の 5s はおろか、新しい 15s
+  // 上限も待たずに) 失敗し、後者は 5s を跨いでも失敗しないことを検証する。
+  it(
+    'start fails fast, without waiting out the registration budget, when the loop exits before registering a pidfile',
+    async () => {
+      const hbEnv = setupEnv();
+      writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok']);
+      // 実在しないと想定する PID (stop 系テストの 880_001/880_002 と同じ流儀)。
+      // session_lstart(baseline) が空を返し、run_heartbeat_loop は pidfile を
+      // 書く前に exit reason=session-lstart-unavailable で即終了する。
+      const deadSessionPid = 880_010;
+
+      const startedAt = Date.now();
+      const start = await runHeartbeat(
+        ['start', '--session-pid', String(deadSessionPid), '--interval', '90', '--repo', tmpRoot, 'a-1'],
+        hbEnv,
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(start.exitCode).toBe(1);
+      expect(start.stderr).toMatch(/exited before registering/);
+      // 旧実装ならここで固定 5s (新実装の上限なら 15s) を律儀に待ってから失敗していた。
+      // フェイルファストなら数百ms で戻るはずなので、大きな余裕を持って上限より
+      // 十分小さい値で判定する。
+      expect(elapsedMs).toBeLessThan(4_000);
+      expect(readPidfile(hbEnv.tmpDir, deadSessionPid)).toBeUndefined();
+    },
+    15_000,
+  );
+
+  it(
+    'start tolerates a slow first session_lstart call instead of killing a still-alive loop at a fixed 5s deadline',
+    async () => {
+      const hbEnv = setupEnv();
+      installPsShim(hbEnv);
+      writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok']);
+
+      const session = await startSession(hbEnv);
+      activeSessions.push({ sessionPid: session.pid, hbEnv, stopSession: session.stop });
+
+      // run_heartbeat_loop の最初の session_lstart(baseline) 呼び出し (pidfile を
+      // 書く前の唯一のブロッキング処理) に 6 秒の遅延を注入する。子プロセスは
+      // その間ずっと生きたまま応答が遅いだけ、という高負荷下の状況を決定的に
+      // 再現する (旧実装の固定 5s 上限なら、この時点でまだ生きている子を kill
+      // して exit 1 していたはず)。
+      psLstartDelaySeconds(hbEnv, session.pid, 6);
+
+      const startedAt = Date.now();
+      const start = await runHeartbeat(
+        ['start', '--session-pid', String(session.pid), '--interval', '90', '--repo', tmpRoot, 'a-1'],
+        hbEnv,
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(start.exitCode, start.stderr).toBe(0);
+      // 実際に注入した 6 秒の遅延を跨いで待ったこと (=シムが効いていたこと) の
+      // 裏付け。旧実装ならこの経過時間に達する前に 5s で失敗していたはず。
+      expect(elapsedMs).toBeGreaterThanOrEqual(5_500);
+      expect(readPidfile(hbEnv.tmpDir, session.pid)).toBeDefined();
+
+      await runHeartbeat(['stop', '--session-pid', String(session.pid)], hbEnv);
+      activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
+    },
+    30_000,
+  );
 
   it(
     'exits with reason=no-ids under /bin/bash 3.2 (empty array expansion regression)',
