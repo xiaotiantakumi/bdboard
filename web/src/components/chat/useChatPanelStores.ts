@@ -131,6 +131,7 @@ export function useChatPanelStores(params: ChatPanelControllerParams) {
     selectedProjectId,
     currentSessionId,
     setSelectedThreadIds,
+    selectedThreadIdsRef,
     setThreadError,
     renameDraft,
     drawer: {

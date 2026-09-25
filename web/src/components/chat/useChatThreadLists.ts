@@ -12,6 +12,7 @@ import {
 } from '../../api';
 import { writePersistedChatThreadState } from '../../chatThreadStorage';
 import { compareThreadsNewestFirst } from './threads';
+import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseChatThreadListsDrawerActions {
   selectThread: () => void;
@@ -21,7 +22,8 @@ export interface UseChatThreadListsDrawerActions {
   closeDrawer: () => void;
 }
 
-export interface UseChatThreadListsParams {
+export interface UseChatThreadListsParams
+  extends Pick<UseConversationKeyResult, 'selectedThreadIdsRef'> {
   selectedProjectId: string;
   currentSessionId: string | undefined;
   setSelectedThreadIds: Dispatch<SetStateAction<Record<string, string | undefined>>>;
@@ -86,6 +88,7 @@ export function useChatThreadLists({
   selectedProjectId,
   currentSessionId,
   setSelectedThreadIds,
+  selectedThreadIdsRef,
   setThreadError,
   renameDraft,
   drawer,
@@ -142,6 +145,14 @@ export function useChatThreadLists({
     openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
+      // bdboard-197q: bdboard-d29q/bdboard-d7on と同じ render-mirror の理由で
+      // selectedThreadIdsRef も同期する。closeThread は deleteThread の async
+      // 継続からも呼ばれるため、他の async resolve (例: applyRecoveredTurn) と
+      // 同 tick で競合し得る。
+      selectedThreadIdsRef.current = {
+        ...selectedThreadIdsRef.current,
+        [selectedProjectId]: nextDisplayed[0],
+      };
     }
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,
