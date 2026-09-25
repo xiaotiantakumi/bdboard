@@ -62,12 +62,39 @@ GitHub issue（別端末・別アカウントから起票されることもあ�
    `bd update <id> --external-ref gh-<番号>`（既存チケットへ後付け）で、少なくとも1件の
    bd チケットから GitHub issue を紐付ける（上の check スクリプトが認識する形式は
    `gh-<番号>` または `https://github.com/<owner>/<repo>/issues/<番号>`）。
-2. **進捗コメント**: 起票（bd チケット化した時点）・着手・PR 作成・マージ・close の節目ごとに、
-   紐付けた GitHub issue 側にもコメントで進捗を書く。対応が完了したら issue を閉じる。
-3. **判断が残る場合**: 対応方針の判断がまだ残っている（要確認・要議論）なら issue を閉じず、
-   その旨をコメントに書いて次のセッションに引き継ぐ。
+2. **進捗コメント**: 起票（bd チケット化した時点）・着手の節目では、紐付けた GitHub issue
+   側にもコメントで進捗を書いてよい。ただし **close は手でしない** — external-ref が
+   `gh-<N>` 形式のチケットは、対応 PR の本文に closing keyword を書けば squash
+   マージで issue が自動的に閉じる（下記「PR 本文で external-ref の issue を閉じる」節。
+   `npm run merge-pr -- prepare` が機械的に強制する）。
+3. **判断が残る場合**: 対応方針の判断がまだ残っている（要確認・要議論）なら、その旨を
+   issue にコメントして次のセッションに引き継ぐ（自動close の対象外にしたいときは、その旨も
+   書く）。
 4. **公開リポジトリの注意**: このリポジトリは public なので、issue コメントに内部パス・
    端末固有の設定・非公開の運用履歴やシークレットを書かない。
+
+### PR 本文で external-ref の issue を閉じる
+
+チケットの external-ref (`gh-<N>`) が持つ GitHub issue #N は、対応 PR の本文に GitHub の
+closing keyword (`Closes` / `Fixes` / `Resolves`。大小文字は無視) か `Refs` を `#N` 付きで
+書けば、squash マージで自動的に閉じる (`Refs` は閉じずにリンクだけ残す)。手でコメントして
+手で閉じる運用 (#432 や #437 で行っていたもの) はもうしない — PR はもともと公開なので、新しく
+公開される情報は増えない。
+
+**1 つの issue に複数チケットがある場合** (例: gh-432 に bdboard-jzla と bdboard-4sku の 2 件):
+最後にマージする PR だけ `Closes #N` (issue を閉じる) を書き、それ以外の PR は `Refs #N`
+(閉じずに参照だけ) を書く。どちらを書くかは担当の判断 — 「最後の PR かどうか」を機械的に
+決める情報が bd 側に無いため、スクリプトは判定しない。
+
+**機械的な強制 (bdboard-4y8q.8)**: `npm run merge-pr -- prepare <N>` が、対象チケットの
+external-ref が `gh-<N>` 形式のときだけ、PR 本文 (コードブロックを除く) に `Closes #N` /
+`Fixes #N` / `Resolves #N` / `Refs #N` のいずれか (大小文字無視) があるかを確かめる。無ければ
+既存の前提条件エラーと同じ exit code (2) で止め、どのキーワードを書けばよいかをメッセージに
+示す。external-ref がそもそも無いチケット、または `gh-<N>` 形式でない external-ref (例: URL
+形式) は対象外 (何もしない)。bd が読めない (bd 未接続・タイムアウト等) ときは、このチェック
+だけ **fail-open** — 止めずに理由付きの警告を出して進む。実装: `scripts/merge-pr/external-ref.mjs`
+と `scripts/merge-pr/prepare.mjs`。詳細な手順は
+harness/packs/bdboard-harness/references/worktree-pr-flow.md「PR 作成」節。
 
 ## Direct-to-main の禁止とその唯一の例外
 
