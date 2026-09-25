@@ -27,6 +27,7 @@ function setup(overrides: Partial<UseChatSessionLifecycleParams> = {}) {
   const params: UseChatSessionLifecycleParams = {
     selectedProjectId: 'project-a',
     selectedThreadIdsRef: { current: {} },
+    draftNoncesRef: { current: {} },
     setSelectedThreadIds: vi.fn(),
     historyRequestIdRef: { current: 0 },
     setConversations: vi.fn(),
@@ -115,6 +116,39 @@ describe('useChatSessionLifecycle', () => {
         activeSessionIds: ['sess-1', 'sess-rec'],
         selectedSessionId: 'sess-1',
       });
+    });
+
+    it('keeps an explicit draft selected instead of switching to the recovered session (bdboard-cemi)', () => {
+      const { result, params } = setup({
+        draftNoncesRef: { current: { 'project-a': 1 } },
+        openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+      });
+      act(() => result.current.applyRecoveredTurn([thread('sess-old')], RECOVERED));
+
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': undefined,
+      });
+      expect(params.setSelectedAgentId).not.toHaveBeenCalled();
+      expect(lastUpdate(params.setOpenThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': ['sess-old', 'sess-rec'],
+      });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-old', 'sess-rec'],
+        selectedSessionId: undefined,
+      });
+    });
+
+    it('still switches to the recovered session when a real thread (not a draft) is selected, even with a stale draft nonce (bdboard-cemi)', () => {
+      const { result, params } = setup({
+        draftNoncesRef: { current: { 'project-a': 3 } },
+        selectedThreadIdsRef: { current: { 'project-a': 'sess-1' } },
+      });
+      act(() => result.current.applyRecoveredTurn([], RECOVERED));
+
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-1',
+      });
+      expect(params.setSelectedAgentId).not.toHaveBeenCalled();
     });
 
     it('restores the persisted open threads and selection first when the project list is not restored yet (bdboard-tsen)', () => {

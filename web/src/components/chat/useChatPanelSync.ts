@@ -152,6 +152,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
       setSelectedAgentId,
       cancelThreadConfirmDelete,
       advanceDraftNonceAfterSessionGone,
+      draftNoncesRef,
     });
 
   const { backgroundTurnStatus, backgroundTurnProjectId, resetBackgroundTurnStatus } = useTurnStatusRecovery({
