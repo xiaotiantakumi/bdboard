@@ -289,6 +289,21 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       );
     });
 
+    // sg_check_pipe_git はパイプ直後の git トークンも sg_handle_git_tokens に通すので、
+    // pull もパイプ後段の形で main checkout 判定が効くことを確認する (checkout 等の既存の
+    // パイプテストと同じ経路)。
+    it('denies subagent pull after a real pipe without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'echo x | git pull --ff-only',
+          cwd: mainNoPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git pull',
+      );
+    });
+
     it('still allows a subagent pulling its own worktree without alwaysOnServer.port', async () => {
       expectAllow(
         await runBashHook({ command: 'git pull --ff-only', cwd: worktreeNoPort, agentId: 'agent-1' }),
