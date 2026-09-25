@@ -264,6 +264,16 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
         'done',
         '',
         'if [ "$want_lstart" = "1" ] && [ -n "$pid" ]; then',
+        '  df="$CONTROL_DIR/ps-lstart-delay-$pid"',
+        '  if [ -f "$df" ]; then',
+        '    # 一発だけ ps 自体の応答を遅らせる (fork/exec 競合で ps が詰まる高負荷を模す)。',
+        '    secs=$(cat "$df" 2>/dev/null || echo 0)',
+        '    rm -f "$df"',
+        '    case "$secs" in',
+        '      \'\'|*[!0-9.]*) secs=0 ;;',
+        '    esac',
+        '    sleep "$secs"',
+        '  fi',
         '  if [ -f "$CONTROL_DIR/ps-lstart-kill-$pid" ]; then',
         '    # kill -0 が通った後・ps が答える前にセッションが死ぬ窓を決定的に開ける',
         '    kill -TERM "$pid" 2>/dev/null || true',
@@ -303,6 +313,16 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
   /** 次の `times` 回だけ `ps -o lstart=` を空応答にする (ps 自体の一過性失敗を模す)。 */
   function psLstartEmpty(hbEnv: HeartbeatEnv, pid: number, times: number): void {
     writeFileSync(path.join(hbEnv.counterDir, `ps-lstart-empty-${pid}`), `${times}\n`, 'utf8');
+  }
+
+  /**
+   * 次の1回だけ `ps -o lstart=` の応答を `seconds` 秒遅らせてから本物の ps を呼ぶ
+   * (bdboard-241s)。高負荷下で fork/exec 自体が詰まり `ps` の応答が遅れる状況
+   * (bdboard-d48 で load average 190 超の実績あり) を、値を壊さずに再現する。
+   * 一発だけ効いて自動的に消える (ファイルは ps シム自身が使用後に rm する)。
+   */
+  function psLstartDelaySeconds(hbEnv: HeartbeatEnv, pid: number, seconds: number): void {
+    writeFileSync(path.join(hbEnv.counterDir, `ps-lstart-delay-${pid}`), `${seconds}\n`, 'utf8');
   }
 
   /** `ps -o lstart=` が呼ばれた瞬間にセッションを殺してから空応答を返す。 */
@@ -1511,6 +1531,92 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pack bd-heartbeat
       expect(readPidfile(hbEnv.tmpDir, session.pid), label).toBeUndefined();
     }
   }, 30_000);
+
+  // bdboard-241s: cmd_start の登録待ちが「反復回数 (名目 5s)」固定だった旧実装は、
+  // 子プロセスがまだ生きていて単に ps (fork+exec) が詰まっているだけでも、その
+  // 名目上限で kill して exit 1 していた。ここでは「子が登録前に本当に死んだ」
+  // 場合と「子は生きているが ps が遅いだけ」の場合を分けて、前者は即座に
+  // (メッセージ文言で判別、経路の実装を見ればどんな負荷でも決定的) 失敗し、
+  // 後者は新実装の実時間デッドライン (15s、$SECONDS ベースで負荷非依存) を
+  // 大きく下回る遅延を注入しても失敗しないことを検証する。
+  it(
+    'start fails fast, without waiting out the registration budget, when the loop exits before registering a pidfile',
+    async () => {
+      const hbEnv = setupEnv();
+      writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok']);
+      // 実在しないと想定する PID (stop 系テストの 880_001/880_002 と同じ流儀)。
+      // session_lstart(baseline) が空を返し、run_heartbeat_loop は pidfile を
+      // 書く前に exit reason=session-lstart-unavailable で即終了する。
+      const deadSessionPid = 880_010;
+
+      const start = await runHeartbeat(
+        ['start', '--session-pid', String(deadSessionPid), '--interval', '90', '--repo', tmpRoot, 'a-1'],
+        hbEnv,
+      );
+
+      expect(start.exitCode).toBe(1);
+      // フェイルファストの判別は経過時間ではなくメッセージの内容で行う
+      // (opus レビュー, bdboard-241s PR#801)。「子の生死を見ずに反復回数だけで
+      // 判定していた」旧実装は、この dead-pid ケースでも `exited before
+      // registering` は絶対に出さず (常に `did not register ... within 5s` の
+      // 方になる) 反復上限まで待ってから失敗するため、経過時間の上限を assert
+      // しなくてもこの文言だけで新旧を判別できる。経過時間の上限アサーションは
+      // 高負荷下では ps/fork のスケジューリング遅延で成立しなくなりうるため
+      // 置かない (bdboard-rg8o/69w1 が同じ理由でこの種の assert を外した前例と同じ)。
+      expect(start.stderr).toMatch(/exited before registering/);
+      expect(readPidfile(hbEnv.tmpDir, deadSessionPid)).toBeUndefined();
+    },
+    25_000, // 予算: start 20s + 余裕。
+  );
+
+  it(
+    'start tolerates a slow first session_lstart call instead of killing a still-alive loop at a fixed 5s deadline',
+    async () => {
+      const hbEnv = setupEnv();
+      installPsShim(hbEnv);
+      writeFixture(hbEnv.fixturePath, ['HEARTBEAT_a-1=ok']);
+
+      const session = await startSession(hbEnv);
+      activeSessions.push({ sessionPid: session.pid, hbEnv, stopSession: session.stop });
+
+      // run_heartbeat_loop の最初の session_lstart(baseline) 呼び出し (pidfile を
+      // 書く前の唯一のブロッキング処理) に 12 秒の遅延を注入する。子プロセスは
+      // その間ずっと生きたまま応答が遅いだけ、という高負荷下の状況を決定的に
+      // 再現する。
+      //
+      // 遅延を 12s にしている理由 (opus レビュー, bdboard-241s PR#801 で
+      // 6s だと不十分と判明): 旧実装の「反復 100 回」上限は名目 5s だが、
+      // 各反復が read_pidfile の fork+exec を含むため高負荷下では実経過時間が
+      // 膨らむ (レビューでの実測: 負荷 13〜15 で約 9s)。6s の遅延だと、この
+      // 膨張のせいで旧実装でもたまたま間に合ってしまい (実際にレビューの
+      // 再現実行で旧実装が rc=0 で通ってしまった)、新旧を判別できなかった。
+      // 12s なら旧実装の実測上限 (~9s) より上、新実装の実時間デッドライン
+      // (15s, $SECONDS ベースで負荷に依存せず一定) より下に収まる。
+      // ただし理論上は無制限の高負荷下ではこの余白も食い潰されうるので、
+      // 完全な決定性の保証ではなく実用上の改善と position づける
+      // (経路の正しさそのものは script 側の $SECONDS デッドラインで保証済み)。
+      psLstartDelaySeconds(hbEnv, session.pid, 12);
+
+      const startedAt = Date.now();
+      const start = await runHeartbeat(
+        ['start', '--session-pid', String(session.pid), '--interval', '90', '--repo', tmpRoot, 'a-1'],
+        hbEnv,
+      );
+      const elapsedMs = Date.now() - startedAt;
+
+      expect(start.exitCode, start.stderr).toBe(0);
+      // 下限のみを assert する: 実際に注入した 12 秒の遅延を跨いで待った
+      // (=シムが効いていた) ことの裏付けであり、負荷でプロセスが遅くなる
+      // 方向にしか外れない安全な向きの assertion (bdboard-rg8o/69w1 と同じ
+      // 理由で上限は置かない)。
+      expect(elapsedMs).toBeGreaterThanOrEqual(11_500);
+      expect(readPidfile(hbEnv.tmpDir, session.pid)).toBeDefined();
+
+      await runHeartbeat(['stop', '--session-pid', String(session.pid)], hbEnv);
+      activeSessions = activeSessions.filter((s) => s.sessionPid !== session.pid);
+    },
+    60_000, // 予算: startSession 5s + start 20s + stop 20s = 最悪 45s < 60s。
+  );
 
   it(
     'exits with reason=no-ids under /bin/bash 3.2 (empty array expansion regression)',
