@@ -37,8 +37,22 @@ describe('resolveAttachmentsDir (bdboard-727y)', () => {
     );
   });
 
-  it('uses BDBOARD_ATTACHMENTS_DIR when set, regardless of .git presence', () => {
+  it('uses BDBOARD_ATTACHMENTS_DIR when set and .git does not exist', () => {
     const root = makeTempDir();
+    const override = path.join(makeTempDir(), 'custom-attachments');
+    expect(resolveAttachmentsDir(root, { BDBOARD_ATTACHMENTS_DIR: override })).toBe(override);
+  });
+
+  it('uses BDBOARD_ATTACHMENTS_DIR when set even if .git is a directory (git clone)', () => {
+    const root = makeTempDir();
+    fs.mkdirSync(path.join(root, '.git'));
+    const override = path.join(makeTempDir(), 'custom-attachments');
+    expect(resolveAttachmentsDir(root, { BDBOARD_ATTACHMENTS_DIR: override })).toBe(override);
+  });
+
+  it('uses BDBOARD_ATTACHMENTS_DIR when set even if .git is a file (linked worktree)', () => {
+    const root = makeTempDir();
+    fs.writeFileSync(path.join(root, '.git'), 'gitdir: /somewhere/.git/worktrees/x\n');
     const override = path.join(makeTempDir(), 'custom-attachments');
     expect(resolveAttachmentsDir(root, { BDBOARD_ATTACHMENTS_DIR: override })).toBe(override);
   });

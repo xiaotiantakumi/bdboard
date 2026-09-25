@@ -34,4 +34,12 @@ describe('resolveDataDirBase (bdboard-727y)', () => {
     const root = makeTempDir();
     expect(resolveDataDirBase(root)).toBe(path.join(os.homedir(), '.bdboard'));
   });
+
+  it('does not walk up to an ancestor .git — only <repoRoot>/.git counts (e.g. a project-local `npm install bdboard` inside a git repo)', () => {
+    const projectRoot = makeTempDir();
+    fs.mkdirSync(path.join(projectRoot, '.git'));
+    const repoRoot = path.join(projectRoot, 'node_modules', 'bdboard');
+    fs.mkdirSync(repoRoot, { recursive: true });
+    expect(resolveDataDirBase(repoRoot)).toBe(path.join(os.homedir(), '.bdboard'));
+  });
 });
