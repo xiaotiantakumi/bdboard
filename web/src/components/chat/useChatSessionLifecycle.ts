@@ -49,7 +49,11 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
 
   const applyRecoveredTurn = useCallback(
-    (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => {
+    (
+      threads: ChatThreadDto[],
+      payload: ChatSessionMessagesDto,
+      detachedMatchesThisRecovery = false,
+    ) => {
       // bdboard-tsen: スレッド一覧 effect(E7)がこのプロジェクトの open/選択をまだ復元して
       // いない(初回の一覧 fetch が in-flight)なら、E7 と同じ規則で永続化から復元した上に
       // 回収したセッションを足す。E7 の応答はこの後に届いても一覧・open・選択を当てない
@@ -69,7 +73,16 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // 回収が届いても、その明示的なドラフト選択を回収セッションで上書きしない。
       // E7(スレッド一覧)が先に届く順だとドラフト開始後にここへ来るため、この判定が
       // 無いと選択が無言で回収セッションへ切り替わりドラフトが隠れていた。
+      // bdboard-cemi 追補(Opus レビュー major 指摘): ただし、この回収がこのタブ自身の
+      // detached 送信(ドラフトから送信したが配信が切れ、selectedThreadIds がまだ
+      // 確定していない)の結末そのものである場合は抑止しない — でないと送ったばかりの
+      // 返信が回収されても選択が切り替わらず、返信が別タブに隠れたまま気づけなくなる
+      // (この PR の修正が入る前は正しく切り替わっていた、既存挙動からの劣化だった)。
+      // detachedMatchesThisRecovery は chat/turnStatusStep.ts の decideTurnStatusStep が
+      // 既に計算している既存のシグナルをそのまま使う(chat/useTurnStatusRecovery.ts の
+      // 呼び出し側から渡される)。
       const isExplicitDraftStillSelected =
+        !detachedMatchesThisRecovery &&
         (draftNoncesRef.current[selectedProjectId] ?? 0) > 0 &&
         selectedThreadIdsRef.current[selectedProjectId] === undefined;
       const nextSelected = isExplicitDraftStillSelected ? undefined : currentSelected ?? payload.sessionId;
@@ -91,9 +104,17 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       if (!isExplicitDraftStillSelected && nextSelected === payload.sessionId && payload.agentId !== '') {
         setSelectedAgentId(payload.agentId);
       }
+      // bdboard-cemi 追補(Opus レビュー minor 指摘): 抑止時(isExplicitDraftStillSelected)は
+      // selectedSessionId を undefined で上書きしない — chat/useDraftThreadLauncher.ts の
+      // startNewDraftThread 内 N2 コメント(「ドラフトへの切り替えは永続化済みの選択を
+      // そのまま残す」)と同じ不変条件をここでも守る。抑止していない通常経路は今まで
+      // どおり nextSelected をそのまま書く。
+      const persistedSelectedSessionId = isExplicitDraftStillSelected
+        ? readPersistedChatThreads()[selectedProjectId]?.selectedSessionId
+        : nextSelected;
       writePersistedChatThreadState(selectedProjectId, {
         activeSessionIds: nextOpen,
-        selectedSessionId: nextSelected,
+        selectedSessionId: persistedSelectedSessionId,
       });
     },
     [

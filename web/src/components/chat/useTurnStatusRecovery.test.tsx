@@ -144,7 +144,10 @@ describe('useTurnStatusRecovery request-id guards', () => {
       probe.idAtApply = probe.ref?.current;
     });
 
-    await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledWith(threads, payload));
+    // bdboard-cemi(Opus レビュー): applyRecoveredTurn は第3引数に
+    // step.detachedMatchesThisRecovery を渡すようになった。このテストでは
+    // detachedSendsRef が空(何も追跡していない)なので false が渡る。
+    await waitFor(() => expect(applyRecoveredTurn).toHaveBeenCalledWith(threads, payload, false));
     // bdboard-tsen: hydrate の fetch 中は id を進めない(その間に届く E7 の一覧応答は生きていて、
     // 永続化済み open/選択の復元と pending ドラフトの消化を行える)。当てる直前に進めるので、
     // それより後に届く E7 の応答は一覧・open・選択を当てない。

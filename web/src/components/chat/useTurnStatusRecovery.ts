@@ -49,7 +49,11 @@ export function useTurnStatusRecovery(params: {
   setLoadingHistoryFor: (value: string | null) => void;
   clearStreamingReplyForKey: (key: string) => void;
   clearUnresolvedSend: (sessionId: string) => void;
-  applyRecoveredTurn: (threads: ChatThreadDto[], payload: ChatSessionMessagesDto) => void;
+  applyRecoveredTurn: (
+    threads: ChatThreadDto[],
+    payload: ChatSessionMessagesDto,
+    detachedMatchesThisRecovery?: boolean,
+  ) => void;
 }): UseTurnStatusRecoveryResult {
   const {
     selectedProjectId,
@@ -193,7 +197,7 @@ export function useTurnStatusRecovery(params: {
         // 変わらない。他のスレッドの応答は、それより前に届いたものはそのまま残る。
         historyRequestIdRef.current += 1;
         setLoadingHistoryFor(null);
-        applyRecoveredTurn(threads, payload);
+        applyRecoveredTurn(threads, payload, step.detachedMatchesThisRecovery);
         if (step.detachedMatchesThisRecovery) {
           const matched = detachedSendsRef.current[selectedProjectId];
           if (matched !== undefined) {

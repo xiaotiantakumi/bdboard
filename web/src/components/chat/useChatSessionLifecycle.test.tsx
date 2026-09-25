@@ -138,7 +138,44 @@ describe('useChatSessionLifecycle', () => {
       });
     });
 
-    it('still switches to the recovered session when a real thread (not a draft) is selected, even with a stale draft nonce (bdboard-cemi)', () => {
+    it('still switches to the recovered session when this tab is waiting on its own detached send, even while an explicit draft looks selected (bdboard-cemi Opus-review fix)', () => {
+      const { result, params } = setup({
+        draftNoncesRef: { current: { 'project-a': 1 } },
+        openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+      });
+      act(() => result.current.applyRecoveredTurn([thread('sess-old')], RECOVERED, true));
+
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': 'sess-rec',
+      });
+      expect(params.setSelectedAgentId).toHaveBeenCalledWith('agent-b');
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-old', 'sess-rec'],
+        selectedSessionId: 'sess-rec',
+      });
+    });
+
+    it('preserves a previously persisted selection instead of wiping it to undefined when suppressing (bdboard-cemi Opus-review fix)', () => {
+      writePersistedChatThreadState('project-a', {
+        activeSessionIds: ['sess-real'],
+        selectedSessionId: 'sess-real',
+      });
+      const { result, params } = setup({
+        draftNoncesRef: { current: { 'project-a': 1 } },
+        openThreadIdsRef: { current: { 'project-a': ['sess-old'] } },
+      });
+      act(() => result.current.applyRecoveredTurn([thread('sess-old')], RECOVERED));
+
+      expect(lastUpdate(params.setSelectedThreadIds as ReturnType<typeof vi.fn>, {})).toEqual({
+        'project-a': undefined,
+      });
+      expect(readPersistedChatThreads()['project-a']).toEqual({
+        activeSessionIds: ['sess-old', 'sess-rec'],
+        selectedSessionId: 'sess-real',
+      });
+    });
+
+    it('keeps a real (non-draft) thread selected instead of switching to the recovered session, even with a stale draft nonce (bdboard-cemi)', () => {
       const { result, params } = setup({
         draftNoncesRef: { current: { 'project-a': 3 } },
         selectedThreadIdsRef: { current: { 'project-a': 'sess-1' } },
