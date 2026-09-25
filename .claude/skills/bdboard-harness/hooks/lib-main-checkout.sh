@@ -64,16 +64,34 @@ bh_ticket_id_for_dir() {
     *) return 1 ;;
   esac
   [ "$(bh_main_checkout "$bh_tifd_top")" = "$2" ] || return 1
-  printf '%s' "${bh_tifd_top#"$2"/.claude/worktrees/}"
+  bh_tifd_id="${bh_tifd_top#"$2"/.claude/worktrees/}"
+  git -C "$2" show-ref --verify --quiet "refs/heads/bd/$bh_tifd_id" || return 1
+  printf '%s' "$bh_tifd_id"
+}
+
+bh_valid_owner_id() {
+  case "$1" in
+    '') return 1 ;;
+    */*) return 1 ;;
+    [A-Za-z0-9]*)
+      case "$1" in
+        *[!A-Za-z0-9._-]*) return 1 ;;
+        *) return 0 ;;
+      esac
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 bh_read_owner() {
+  bh_valid_owner_id "$2" || return 0
   bh_ro_file="$(bh_worktree_owner_file "$1" "$2")"
   [ -f "$bh_ro_file" ] || return 0
   cat "$bh_ro_file" 2>/dev/null | tr -d '\n\r'
 }
 
 bh_claim_owner() {
+  bh_valid_owner_id "$2" || return 1
   bh_co_dir="$(bh_worktree_owner_dir "$1")"
   mkdir -p "$bh_co_dir" 2>/dev/null || return 1
   bh_co_file="$bh_co_dir/$2"

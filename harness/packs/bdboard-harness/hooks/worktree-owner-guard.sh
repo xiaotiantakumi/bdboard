@@ -73,8 +73,8 @@ wog_check_id() {
   wog_audit "9-$wog_label-$wog_id"
   deny \
     "bdboard-harness: worktree bd/$wog_id は別のサブエージェント (${wog_owner:0:24}) の持ち物です。$wog_label はできません。" \
-    '自分のチケットの worktree で作業してください。読み取り・テスト実行は止めていません。' \
-    "持ち主が動けないなら議長に scripts/worktree-owner.sh release $wog_id を頼んでください。"
+    'このチケットの prepare/gate/finish/push/merge は、別ディレクトリからでも行わないでください。議長に報告してください。' \
+    "持ち主が動けないなら議長に bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release $wog_id を頼んでください。"
 }
 
 # 引数: dir, label。dir が登録済みの per-ticket worktree なら wog_check_id へ。
@@ -85,10 +85,43 @@ wog_check_dir() {
   wog_check_id "$wog_cd_id" "$2"
 }
 
+# 引数: pr番号。<main>/.git/bdboard-merge/pr-<N>.json の .id を返す (無ければ空)。
+# $JSON_TOOL が空 (jq も python3 も無い) なら常に空を返す (fail-open)。
+wog_ticket_id_for_pr() {
+  wog_pr_num="$1"
+  wog_state_file="$WOG_MAIN/.git/bdboard-merge/pr-$wog_pr_num.json"
+  [ -f "$wog_state_file" ] || return 0
+  case "$JSON_TOOL" in
+    jq)
+      jq -r '
+        try (.id) catch ""
+        | if type == "string" then . else "" end
+      ' <"$wog_state_file" 2>/dev/null
+      ;;
+    python3)
+      python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+value = doc.get("id") if isinstance(doc, dict) else None
+sys.stdout.write(value if isinstance(value, str) else "")
+' <"$wog_state_file" 2>/dev/null
+      ;;
+  esac
+}
+
 WOG_NL=$'\n'
-WOG_SEGMENTS="${COMMAND//\$WOG_NL/ }"
+# バックスラッシュ改行 (行継続) は素の $WOG_NL 分割に巻き込まれる前に空白へ潰す
+# (bdboard-gsnn のレビューで発見: 以前は誤って "\$WOG_NL" というリテラル文字列を
+# 探していて行継続を一切結合できていなかった)。
+WOG_SEGMENTS="${COMMAND//\\$WOG_NL/ }"
 WOG_SEGMENTS="${WOG_SEGMENTS//&&/$WOG_NL}"
 WOG_SEGMENTS="${WOG_SEGMENTS//\|\|/$WOG_NL}"
+# 単独の `|` も区切りとして扱う (上の || 置換より後段なので、ここに残るのは
+# 本物の単独パイプだけ)。
+WOG_SEGMENTS="${WOG_SEGMENTS//|/$WOG_NL}"
 WOG_SEGMENTS="${WOG_SEGMENTS//;/$WOG_NL}"
 WOG_SEGMENTS="${WOG_SEGMENTS//&/$WOG_NL}"
 
@@ -124,9 +157,22 @@ while IFS= read -r wog_seg; do
   wog_closes_subshell=''
   case "$wog_seg" in *')') wog_closes_subshell='yes' ;; esac
 
-  wog_clean="$(printf '%s' "$wog_seg" | tr -d "\"'")"
+  # `)` も一緒に剥がす (サブシェル閉じ括弧が最終トークンに残って `(cmd)` 形の
+  # 呼び出しが先頭語判定をすり抜けるのを防ぐ。閉じ判定自体は上の wog_seg の
+  # 生の文字列に対して既に済んでいるので、ここで剥がしても影響しない)。
+  wog_clean="$(printf '%s' "$wog_seg" | tr -d "\"')")"
   # shellcheck disable=SC2086
   set -- $wog_clean
+
+  case "$wog_seg" in
+    *bdboard-worktree-owners*)
+      wog_audit 'owner-record-tamper-denied'
+      deny \
+        'bdboard-harness: worktree の所有権記録 (bdboard-worktree-owners) への直接操作はサブエージェントから禁止です。' \
+        'worktree-owner-guard.sh 経由の通常操作か、議長への報告で対応してください。' \
+        '議長は必要なら直接ファイルを操作できます (agent_id が無いため対象外)。'
+      ;;
+  esac
 
   # release スクリプトの呼び出し検出はこのセグメントの全トークンを見る (bash/sh
   # 経由の間接実行にも耐えるため。先頭語だけの判定では bash scripts/worktree-owner.sh
@@ -138,7 +184,10 @@ while IFS= read -r wog_seg; do
       deny \
         'bdboard-harness: worktree-owner.sh release はサブエージェントから実行できません (議長専用)。' \
         '持ち主が動けない worktree があれば、その id を最終報告で議長に伝えてください。' \
-        '議長は直接 scripts/worktree-owner.sh release <id> を実行して引き継ぎを解除します。'
+        '議長は bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release <id> を実行して引き継ぎを解除します。'
+    fi
+    if [ -n "$wog_release_hit" ]; then
+      wog_release_hit=''
     fi
     if [ "${wog_tok##*/}" = "$WOG_RELEASE_SCRIPT_BASE" ]; then
       wog_release_hit='yes'
@@ -193,9 +242,29 @@ while IFS= read -r wog_seg; do
               esac
             done
             if [ -n "$wog_wt_path" ]; then
+              wog_saved_dir="$WOG_DIR"
+              WOG_DIR="$wog_git_dir"
               wog_target="$(wog_resolve_dir "$wog_wt_path")"
+              WOG_DIR="$wog_saved_dir"
               wog_wt_id="$(bh_ticket_id_for_dir "$wog_target" "$WOG_MAIN")" || wog_wt_id=''
+              if [ -z "$wog_wt_id" ]; then
+                # パスとして解決できない/worktree の実体と一致しない場合、bare なチケット id や
+                # ブランチ名として渡された可能性がある。basename 一致でフォールバックする。
+                wog_wt_base="${wog_wt_path##*/}"
+                case "$wog_wt_base" in
+                  */*|'') ;;
+                  *)
+                    if [ -d "$WOG_MAIN/.claude/worktrees/$wog_wt_base" ]; then
+                      wog_wt_id="$(bh_ticket_id_for_dir "$WOG_MAIN/.claude/worktrees/$wog_wt_base" "$WOG_MAIN")" || wog_wt_id=''
+                    fi
+                    ;;
+                esac
+              fi
               [ -n "$wog_wt_id" ] && wog_check_id "$wog_wt_id" 'git worktree remove'
+              if [ -n "$wog_wt_id" ]; then
+                # 許可された worktree remove は、そのチケットの所有権記録も一緒に消す (bdboard-gsnn round2: 残置記録が次の正当な持ち主を誤って deny するのを防ぐ)。
+                rm -f "$(bh_worktree_owner_file "$WOG_MAIN" "$wog_wt_id")" 2>/dev/null || true
+              fi
             fi
           fi
           ;;
@@ -213,7 +282,13 @@ while IFS= read -r wog_seg; do
           if [ -n "$wog_branch_force" ]; then
             for wog_bname in $wog_branch_names; do
               case "$wog_bname" in
-                bd/*) wog_check_id "${wog_bname#bd/}" 'git branch -D' ;;
+                bd/*)
+                  wog_bd_id="${wog_bname#bd/}"
+                  # worktree が既に無いチケットの branch -D は所有権チェック対象外 (記録を汚さない。bdboard-gsnn round2)。
+                  if [ -d "$WOG_MAIN/.claude/worktrees/$wog_bd_id" ]; then
+                    wog_check_id "$wog_bd_id" 'git branch -D'
+                  fi
+                  ;;
               esac
             done
           fi
@@ -233,13 +308,38 @@ while IFS= read -r wog_seg; do
         esac
       done
       case "${1:-} ${2:-}" in
-        'run merge-pr' | 'run-script merge-pr') wog_check_dir "$wog_npm_dir" 'npm run merge-pr' ;;
+        'run merge-pr' | 'run-script merge-pr')
+          wog_check_dir "$wog_npm_dir" 'npm run merge-pr'
+          # prepare は state ファイルがまだ無いので PR番号ひも付けは効かない (state ファイルが出来る gate/finish/verify 以降でのみ有効)。ネットワーク呼び出しはしない (hook タイムアウト回避のため)。
+          for wog_tok in "$@"; do
+            case "$wog_tok" in
+              ''|*[!0-9]*) ;;
+              *)
+                wog_pr_ticket="$(wog_ticket_id_for_pr "$wog_tok")"
+                [ -n "$wog_pr_ticket" ] && wog_check_id "$wog_pr_ticket" 'npm run merge-pr'
+                break
+                ;;
+            esac
+          done
+          ;;
       esac
       ;;
     gh)
       shift
       case "${1:-} ${2:-}" in
-        'pr merge') wog_check_dir "$WOG_DIR" 'gh pr merge' ;;
+        'pr merge')
+          wog_check_dir "$WOG_DIR" 'gh pr merge'
+          for wog_tok in "$@"; do
+            case "$wog_tok" in
+              ''|*[!0-9]*) ;;
+              *)
+                wog_pr_ticket="$(wog_ticket_id_for_pr "$wog_tok")"
+                [ -n "$wog_pr_ticket" ] && wog_check_id "$wog_pr_ticket" 'gh pr merge'
+                break
+                ;;
+            esac
+          done
+          ;;
       esac
       ;;
   esac

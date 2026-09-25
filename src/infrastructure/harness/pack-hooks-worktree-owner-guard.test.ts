@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +114,59 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
   });
   it('denies release from a subagent in any cwd', async () => {
     expectDeny(await runBashHook({ command: 'bash scripts/worktree-owner.sh release ticket-a', cwd: main, agentId: 'agent-2' }), '議長専用');
+  });
+  it('binds merge-pr gate to the PR ticket from main checkout', async () => {
+    await claimA();
+    const stateDir = path.join(main, '.git', 'bdboard-merge');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(path.join(stateDir, 'pr-781.json'), JSON.stringify({ id: 'ticket-a' }));
+    expectDeny(await runBashHook({ command: 'npm run merge-pr -- gate 781 --repair', cwd: main, agentId: 'agent-2' }), 'worktree', 'bd/ticket-a');
+  });
+  it('allows the owning agent to run merge-pr gate from main checkout', async () => {
+    await claimA();
+    const stateDir = path.join(main, '.git', 'bdboard-merge');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(path.join(stateDir, 'pr-782.json'), JSON.stringify({ id: 'ticket-a' }));
+    expectAllow(await runBashHook({ command: 'npm run merge-pr -- gate 782 --repair', cwd: main, agentId: 'agent-1' }));
+  });
+  it('binds gh pr merge to the PR ticket outside the victim worktree', async () => {
+    await claimA();
+    const stateDir = path.join(main, '.git', 'bdboard-merge');
+    mkdirSync(stateDir, { recursive: true });
+    writeFileSync(path.join(stateDir, 'pr-783.json'), JSON.stringify({ id: 'ticket-a' }));
+    expectDeny(await runBashHook({ command: 'gh pr merge 783', cwd: wtB, agentId: 'agent-2' }), 'worktree', 'bd/ticket-a');
+  });
+  it('does not claim ownership when deleting a branch with no worktree', async () => {
+    expectAllow(await runBashHook({ command: 'git branch -D bd/ticket-c', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-c'))).toBe(false);
+  });
+  it('clears ownership when an owned worktree is removed', async () => {
+    const removed = path.join(main, '.claude', 'worktrees', 'ticket-c');
+    await runGit(main, ['worktree', 'add', '-q', removed, '-b', 'bd/ticket-c']);
+    expectAllow(await runBashHook({ command: `git worktree remove ${removed}`, cwd: main, agentId: 'agent-1' }));
+    const removedOwnerRecord = path.join(main, '.git', 'bdboard-worktree-owners', 'ticket-c');
+    expect(existsSync(removedOwnerRecord)).toBe(false);
+    const recreated = path.join(main, '.claude', 'worktrees', 'ticket-c-recreated');
+    await runGit(main, ['worktree', 'add', '-q', recreated, '-b', 'bd/ticket-c-recreated']);
+    expectAllow(await runBashHook({ command: `cd ${recreated} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-2' }));
+  });
+  it('does not guard a non-ticket branch worktree under the worktrees directory', async () => {
+    const scratch = path.join(main, '.claude', 'worktrees', 'scratch-x');
+    await runGit(main, ['worktree', 'add', '-q', scratch, '-b', 'something-else']);
+    expectAllow(await runBashHook({ command: `cd ${scratch} && git commit -m x --allow-empty`, cwd: main, agentId: 'agent-1' }));
+    expectAllow(await runBashHook({ command: `cd ${scratch} && git commit -m y --allow-empty`, cwd: main, agentId: 'agent-2' }));
+  });
+  it('does not write an owner record outside git for a traversal branch id', async () => {
+    expectAllow(await runBashHook({ command: 'git branch -D bd/../../evil', cwd: main, agentId: 'agent-2' }));
+    expect(existsSync(path.join(main, '..', '..', 'evil'))).toBe(false);
+  });
+  it('denies a parenthesized push in another agent worktree', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: `(cd ${wtA} && git push)`, cwd: main, agentId: 'agent-2' }), 'worktree', 'bd/ticket-a');
+  });
+  it('denies a push continued onto the next line in another agent worktree', async () => {
+    await claimA();
+    expectDeny(await runBashHook({ command: `cd ${wtA} && \\\ngit push`, cwd: main, agentId: 'agent-2' }), 'worktree', 'bd/ticket-a');
   });
   it('allows the owner commit', async () => {
     await claimA();
