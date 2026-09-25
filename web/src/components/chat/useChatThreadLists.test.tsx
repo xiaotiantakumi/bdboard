@@ -63,6 +63,7 @@ describe('useChatThreadLists', () => {
       selectedProjectId: 'project-a',
       currentSessionId: undefined as string | undefined,
       setSelectedThreadIds,
+      selectedThreadIdsRef: { current: {} as Record<string, string | undefined> },
       setThreadError,
       renameDraft: '',
       drawer,
