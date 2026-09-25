@@ -50,12 +50,17 @@ const bdShowItemSchema = z.object({
 // mapListItemToPendingDecision の question 抽出と同じ判定(非空文字列の
 // decision_question)。true は「このチケットは decision_question を記録している」
 // ことだけを意味し、その質問がまだ未回答かどうかまでは保証しない(respond() は
-// decision_question を消す経路を持たないため、一度回答済みでも残り続けうる —
-// opus レビュー指摘, PR #517)。bd gate create --type=human --blocks によって
-// human ラベルが付いたチケットでも、そのチケット自身が独立した decision_question を
-// 持つことがある(実データにこの形自体は存在する。この場合はラベルがどちらの
-// 意味を担っているか区別できないので、gate 側の掃除では安全側に倒して剥がさない
-// (bdboard-mw8y))。
+// ほとんどの分岐で decision_question を消す経路を持たないため、一度回答済みでも
+// 残り続けうる — opus レビュー指摘, PR #517)。唯一の例外は bdboard-rftd: T 自身が
+// この decision_question を持ち、かつちょうど1件の無関係な blocking human gate が
+// あるために respond() が ambiguous 扱いにする分岐(respond.ts の
+// isOwnQuestionAmbiguousAnswer)では、T 自身の質問への回答が確定的に記録できるため、
+// その直後に decision_question を unset する。それ以外の分岐(通常の ticket 応答、
+// q1k9 の複数 gate ambiguous 分岐)では従来どおり消さない。bd gate create
+// --type=human --blocks によって human ラベルが付いたチケットでも、そのチケット自身が
+// 独立した decision_question を持つことがある(実データにこの形自体は存在する。この場合は
+// ラベルがどちらの意味を担っているか区別できないので、gate 側の掃除では安全側に倒して
+// 剥がさない(bdboard-mw8y))。
 function hasOwnDecisionQuestion(metadata: unknown): boolean {
   if (metadata === null || typeof metadata !== 'object') {
     return false;

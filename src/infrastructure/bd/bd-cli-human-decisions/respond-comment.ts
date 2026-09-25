@@ -39,6 +39,12 @@ ${gateList})`;
 // bdboard-q1k9(2件以上の gate で ambiguous にする分岐)と同じ安全側の方針で、gate は
 // resolve せず・human ラベルも外さない。回答自体は T 自身の質問への回答としてコメントに
 // 記録する。
+// bdboard-rftd: この回答は T 自身の質問への回答として確定的に記録されるため、respond() は
+// この直後に metadata.decision_question を消す(質問文自体はこのコメント本文に残るので
+// 履歴は失われない)。そのため以下の gate に個別に回答すれば、gate 側respond()の掃除
+// (bdboard-mw8y)が正しく T の human ラベルを外せる — PR #729 で暫定的に足していた
+// 「gate に回答した後もこのチケットが確認待ちのまま残っている場合は、もう一度回答して
+// ください」という案内は、この修正で不要になったため削除した。
 export function buildTicketOwnQuestionAmbiguousResponseCommentBody(
   responseText: string,
   blockingHumanGateIds: readonly string[],
@@ -49,9 +55,7 @@ export function buildTicketOwnQuestionAmbiguousResponseCommentBody(
 (bdboard: このチケット自身の確認待ちの質問への回答として記録しました。このチケットは同時に、
 別の質問を表している可能性がある open な human gate にもブロックされているため、その gate の
 resolve と human ラベルの解除は行っていません。確認待ちのまま残ります。以下の gate カードを
-個別に開いて、それぞれの質問に回答してください。gate に回答した後もこのチケットが確認待ちの
-まま残っている場合は、このチケットにもう一度回答してください(このチケット自身が
-decision_question を持つ限り、gate 側の自動掃除はこのチケットの human ラベルを外しません)。
+個別に開いて、それぞれの質問に回答してください。
 ${gateList})`;
 }
 

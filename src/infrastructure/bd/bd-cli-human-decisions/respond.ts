@@ -17,7 +17,11 @@ import {
   resolveGateBlockedTicketIds,
 } from './labels.js';
 import { buildAddResponseCommentArgs } from './respond-comment.js';
-import { buildCloseRespondedIssueArgs, buildGateResolveArgs } from './respond-args.js';
+import {
+  buildCloseRespondedIssueArgs,
+  buildGateResolveArgs,
+  buildUnsetDecisionQuestionArgs,
+} from './respond-args.js';
 
 // NOTE(bdboard-3tj): 以下の respond() はリトライ非対応のまま。bd comment は
 // 追記系で呼ぶたびに新しいコメントが増えるためべき等ではなく、bd close も
@@ -47,14 +51,21 @@ export async function respond(
   // 1つの回答テキストで全部を resolve してしまうと回答していない質問まで
   // 閉じてしまう。この場合はコメントの文面を変え、どの gate も resolve せず・
   // human ラベルも外さない(下の分岐で resolvedGateIds は返さず ambiguousGateIds を返す)。
+  const hasMultipleBlockingHumanGates = kind === 'ticket' && blockingHumanGateIds.length > 1;
   // bdboard-cine: T 自身が standalone な decision_question を持っている場合、T の blocking
   // human gate が1件でも「その1件への回答」と「T自身の質問への回答」のどちらのつもりかが
   // 特定できない。安全側に倒し、この組み合わせも ambiguous 扱いにして gate を自動 resolve
   // しない(T 自身の質問への回答としてコメントには記録するが、gate 側は個別に回答してもらう)。
-  const isAmbiguousTicketAnswer =
+  // hasMultipleBlockingHumanGates が先に true になるケース(2件以上 かつ own question)は
+  // buildResponseCommentBody も「複数 gate 側」の文面を優先する(q1k9 のほうが先にチェック
+  // される)ので、ここでは「1件だけの ambiguous」に絞る — isOwnQuestionAmbiguousAnswer は
+  // 「この回答は T 自身の質問への回答として記録された」と確信できる場合だけ true になる。
+  const isOwnQuestionAmbiguousAnswer =
     kind === 'ticket' &&
-    (blockingHumanGateIds.length > 1 ||
-      (hasOwnDecisionQuestion && blockingHumanGateIds.length >= 1));
+    !hasMultipleBlockingHumanGates &&
+    hasOwnDecisionQuestion &&
+    blockingHumanGateIds.length >= 1;
+  const isAmbiguousTicketAnswer = hasMultipleBlockingHumanGates || isOwnQuestionAmbiguousAnswer;
 
   const commentResult = await commandRunner.run(
     bdPath,
@@ -123,6 +134,31 @@ export async function respond(
     };
   } else if (kind === 'ticket') {
     if (isAmbiguousTicketAnswer) {
+      // bdboard-rftd(bdboard-cine の続き。裁定: 2026-09-25): isOwnQuestionAmbiguousAnswer
+      // の場合だけ、この回答を T 自身の decision_question への最終回答とみなし、
+      // metadata.decision_question を消す。質問文自体は直前の bd comment 呼び出しで
+      // 回答コメントに残るので、履歴からは失われない。これにより hasOwnDecisionQuestion
+      // が false に戻り、G(このチケットを塞いでいた無関係な gate)を個別に close したときの
+      // gate 側respond()の掃除(clearHumanLabelOnUnblockedTickets、bdboard-mw8y)が正しく
+      // T の human ラベルを外せるようになる(このチケットへの3回目の回答が不要になる)。
+      // bdboard-mw8y の「decision_question は respond() では消さない(一度回答済みでも
+      // 残り続けうる)」という fail-safe は、他の分岐(通常のticket応答・q1k9 の複数gate
+      // ambiguous分岐)には変更なく適用される — この own-question 分岐だけの例外。
+      // unset は fail-soft: 主処理(コメント記録・ambiguous 扱いでの early return)は
+      // 既に成立しているので、この清掃コマンドの失敗(lock-contention 等)を理由に
+      // respond() 全体を失敗させない。失敗した場合は従来どおり(このチケットへの
+      // もう一度の回答が必要)にフォールバックするだけで、悪化はしない。
+      if (isOwnQuestionAmbiguousAnswer) {
+        try {
+          await commandRunner.run(
+            bdPath,
+            buildUnsetDecisionQuestionArgs(rootPath, issueId),
+            { timeoutMs },
+          );
+        } catch {
+          // fail-soft: 上のコメント参照。
+        }
+      }
       return { kind, closed: false, ambiguousGateIds: blockingHumanGateIds };
     }
 

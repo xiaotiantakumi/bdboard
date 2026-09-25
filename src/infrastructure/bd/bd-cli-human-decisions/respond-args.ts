@@ -63,3 +63,16 @@ export function buildGateResolveArgs(
     buildGateCloseReason(responseText),
   ];
 }
+
+// bdboard-rftd: T が自分自身の standalone な decision_question を持ち、かつ
+// ちょうど1件の無関係な blocking human gate によって respond() が ambiguous
+// 扱いにする(このチケット自身の質問への回答として記録する)とき、その
+// metadata.decision_question を消すために使う。--unset-metadata は既にキーが
+// 無くても exit 0 で成功する(bdboard-3tj、bd-cli-session-link-writer.ts の
+// unlinkSession と同じ冪等性)。
+export function buildUnsetDecisionQuestionArgs(
+  rootPath: string,
+  issueId: string,
+): readonly string[] {
+  return ['-C', rootPath, 'update', issueId, '--unset-metadata', 'decision_question'];
+}
