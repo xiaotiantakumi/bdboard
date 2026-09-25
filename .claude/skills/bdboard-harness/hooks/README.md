@@ -465,17 +465,34 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
 git が無い・パスが取れない・ブランチが判らない場合は allow。
 
 規則 2 の main checkout 判定は `server-guard.sh` の規則 8 と同じ `hooks/lib-main-checkout.sh`
-(`bh_main_checkout` / `bh_dir_is_main`) を共有する (main checkout 判定ロジックの二重実装を
-避けるため。bdboard-kxqb)。議長 (`agent_id` なし) は対象外。`.claude/worktrees/<id>/...`
-配下は、そのディレクトリ自身の `git rev-parse --show-toplevel` が main とは異なる worktree
-自身に解決するため、特別扱いせずに自然と除外される — 逆に main checkout の中に手で作った
-`.claude/worktrees/` 配下の非 worktree ディレクトリ (登録されていない普通のフォルダ) は
-toplevel が main のままなので deny される。ABSOLUTE_PATH が (Write での新規作成などで) まだ
-存在しない場合は、実在する親ディレクトリまで遡って判定する。git が無い・main checkout を
-解決できない場合は allow (fail-open)。**既知の限界 (opus レビュー 2026-09-25)**:
-main checkout の `.git/` 配下 (`.git/config`・`.git/hooks/*` 等、全 worktree で共有される
-ファイル群) への Edit/Write は対象外 — `git rev-parse --show-toplevel` は `.git/` 内部では
-失敗するため main checkout 判定自体が成立せず allow に倒れる。follow-up 課題とする。
+の `bh_main_checkout` を共有する (main checkout 判定ロジックの二重実装を避けるため。
+bdboard-kxqb)。「main checkout 配下かどうか」自体の判定には `bh_dir_is_main` ではなく
+`bh_dir_is_main_or_git_internal` を使う (pre-edit-guard.sh 専用。server-guard.sh 規則 7/8 は
+引き続き `bh_dir_is_main` のまま — 挙動を変えていない)。議長 (`agent_id` なし) は対象外。
+`.claude/worktrees/<id>/...` 配下は、そのディレクトリ自身の `git rev-parse --show-toplevel`
+が main とは異なる worktree 自身に解決するため、特別扱いせずに自然と除外される — 逆に
+main checkout の中に手で作った `.claude/worktrees/` 配下の非 worktree ディレクトリ (登録
+されていない普通のフォルダ) は toplevel が main のままなので deny される。ABSOLUTE_PATH が
+(Write での新規作成などで) まだ存在しない場合は、実在する親ディレクトリまで遡って判定する。
+git が無い・main checkout を解決できない場合は allow (fail-open)。
+
+**修正済み (bdboard-1ef8)**: main checkout の共有 `.git/` 配下 (`.git/config`・
+`.git/hooks/*` 等) への Edit/Write は、以前は `git rev-parse --show-toplevel` が `.git/`
+内部で失敗し main checkout 判定自体が成立しないため allow に倒れていた (opus レビュー
+2026-09-25 で発見)。`bh_dir_is_main_or_git_internal` は `bh_dir_is_main` の判定に加えて、
+対象の実在する最も近い祖先ディレクトリが `<main>/.git` 自身かその配下であるケースも真を
+返すため、今は deny される。この判定は `<main>/.git` という実ディレクトリへの文字列一致で
+行っており、linked worktree は自分自身の `.git` が (実ディレクトリではなく) `gitdir:`
+参照を書いた**ファイル**であるため誤って一致することはない — 結果として
+`<main>/.git/worktrees/<id>/*` (各 worktree 固有の内部状態、実体は main checkout の `.git/`
+配下にある) への書き込みも意図して deny 対象に含まれる。これらへの正当な Edit/Write ツール
+経由の書き込みフローは存在しないため、安全側に倒している (opus レビューで確認済み)。
+
+**既知の限界**: 大文字小文字を区別しないファイルシステム (既定の macOS 等) では、`.GIT/` の
+ような大文字小文字違いのパスは文字列一致から漏れて allow になりうる。また `.git/` の外に
+ある symlink 経由で実体が main checkout の `.git/` 配下を指すケースも、symlink を解決しない
+という規則 2 全体の設計方針 (上記) により対象外。どちらも規則 2 の元々の設計 (symlink
+非解決・パス文字列ベースの判定) に内在する既存の限界であり、本チケットの新規劣化ではない。
 
 ## stop-ticket-gate.sh — Stop (matcher なし)
 

@@ -548,5 +548,20 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
         }),
       );
     });
+
+    it('denies a subagent Write under the main checkout .git/worktrees/<id>/ internal state', async () => {
+      // .git/worktrees/<id>/ は git worktree add で作った worktree の内部状態だが、実体は
+      // main checkout の .git/ 配下にある共有ファイル群 — 意図して deny 対象に含む
+      // (opus レビューで確認済み。hooks/README.md 「修正済み (bdboard-1ef8)」参照)。
+      expectDeny(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(mainWithPort, '.git', 'worktrees', 'wt-port', 'HEAD'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
   });
 });
