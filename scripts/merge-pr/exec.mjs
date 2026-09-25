@@ -97,12 +97,13 @@ export function shellQuote(value) {
  * 自分の子孫 (tsc/vitest ワーカー等、別グループ) を scripts/verify.mjs のリーダーモードで畳む
  * — このグループ宛て SIGTERM/SIGKILL がそのままそちらにも届く (同じシグナルなので)。
  * onSpawn(child) で呼び出し元に子を渡す。detached はターミナル切断由来の SIGHUP からも子を
- * 切り離すので、呼び出し元 (interrupt.mjs) も SIGHUP を自分で扱う。
+ * 切り離すので、呼び出し元 (interrupt.mjs) も SIGHUP を自分で扱う。env は子の環境変数
+ * (bdboard-ulxa.6: verify スロットの優先度を渡す。既定は process.env)。
  */
-export function runShellToLog(command, { cwd, logFd, heartbeatMs = 0, onHeartbeat = () => {}, onSpawn = () => {} }) {
+export function runShellToLog(command, { cwd, logFd, env = process.env, heartbeatMs = 0, onHeartbeat = () => {}, onSpawn = () => {} }) {
   return new Promise((resolve) => {
     let settled = false;
-    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env: process.env, detached: true });
+    const child = spawn(command, { cwd, shell: true, stdio: ['ignore', logFd, logFd], env, detached: true });
     onSpawn(child);
     const timer = heartbeatMs > 0 ? setInterval(onHeartbeat, heartbeatMs) : null;
     const done = (code) => {

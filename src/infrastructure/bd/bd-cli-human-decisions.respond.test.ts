@@ -158,6 +158,7 @@ function gateRespondHandler(options: {
   readonly gateId: string;
   readonly dependents?: readonly Record<string, unknown>[];
   readonly ticketDependencies?: Record<string, readonly Record<string, unknown>[]>;
+  readonly ticketLabels?: Record<string, readonly string[]>;
 }) {
   return async (_command: string, args: readonly string[]) => {
     if (args.includes('show')) {
@@ -180,8 +181,9 @@ function gateRespondHandler(options: {
         };
       }
       const dependencies = options.ticketDependencies?.[shownId as string] ?? [];
+      const labels = options.ticketLabels?.[shownId as string] ?? ['human'];
       return {
-        stdout: JSON.stringify([{ id: shownId, issue_type: 'task', dependencies }]),
+        stdout: JSON.stringify([{ id: shownId, issue_type: 'task', dependencies, labels }]),
         stderr: '',
         exitCode: 0,
       };
@@ -296,6 +298,27 @@ describe('createBdCliHumanDecisions', () => {
     ]);
   });
 
+  it('does not clear or remove the label on a blocked ticket that never had the human label (bdboard-ld8d)', async () => {
+    const gateId = 'bdboard-gate';
+    const ticketId = 'bdboard-task';
+    const { runner, calls } = createFakeRunner({
+      handler: gateRespondHandler({
+        gateId,
+        dependents: [
+          { id: ticketId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+        ticketDependencies: { [ticketId]: [] },
+        ticketLabels: { [ticketId]: [] },
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', gateId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'gate', closed: true });
+    expect(calls.some((call) => call.args.includes('label') && call.args.includes('remove'))).toBe(false);
+  });
+
   it('keeps the human label on the blocked ticket when another open human gate still blocks it (bdboard-giyt)', async () => {
     const gateId = 'bdboard-gate-a';
     const ticketId = 'bdboard-task';
@@ -398,6 +421,10 @@ describe('createBdCliHumanDecisions', () => {
                 issue_type: 'task',
                 dependencies: [],
                 metadata: { decision_question: 'この場合どうしますか?' },
+                // bdboard-ld8d レビュー指摘: labels を省くと hasHumanLabel の判定だけで
+                // 早期 continue してしまい、このテストが本来押さえたい
+                // hasOwnDecisionQuestion ガード(bdboard-mw8y)を素通りしてしまう。
+                labels: ['human'],
               },
             ]),
             stderr: '',
@@ -750,6 +777,11 @@ describe('createBdCliHumanDecisions', () => {
   // and get skipped by the ordinary blocking-gate check regardless of that guard, masking
   // a regression where the guard is removed and issueId's own label gets a redundant
   // second `label remove` and incorrectly appears in clearedHumanLabelTicketIds.
+  // bdboard-ld8d レビュー指摘: この issueId 用の show フィクスチャは labels を返さない
+  // ため、guard を外しても hasHumanLabel の判定(実運用では issueId の label は直前に
+  // 既に外れているので、実際の bd でも同じく false になるはず)が二重の安全網として
+  // 働き、このテストだけでは self-exclusion guard の完全な単離はできなくなった。
+  // guard 自体は無駄な `bd show <issueId>` 呼び出しを避ける最適化として引き続き有効。
   function ticketRespondHandler(options: {
     readonly issueId: string;
     readonly gateId: string;
@@ -799,6 +831,7 @@ describe('createBdCliHumanDecisions', () => {
           id: shownId,
           issue_type: 'task',
           dependencies: [],
+          labels: ['human'],
         };
         return { stdout: JSON.stringify([siblingItem]), stderr: '', exitCode: 0 };
       }
@@ -843,6 +876,36 @@ describe('createBdCliHumanDecisions', () => {
     expect(labelRemoveTargets).toEqual([issueId, siblingId]);
   });
 
+  it('does not clear or remove the label on a sibling ticket that never had the human label (bdboard-ld8d)', async () => {
+    const issueId = 'bdboard-task-a';
+    const gateId = 'bdboard-shared-gate';
+    const siblingId = 'bdboard-task-b';
+    const { runner, calls } = createFakeRunner({
+      handler: ticketRespondHandler({
+        issueId,
+        gateId,
+        gateDependents: [
+          { id: issueId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+          { id: siblingId, issue_type: 'task', status: 'open', dependency_type: 'blocks' },
+        ],
+        siblingShowResponses: {
+          [siblingId]: { id: siblingId, issue_type: 'task', dependencies: [], labels: [] },
+        },
+      }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, resolvedGateIds: [gateId] });
+    expect(
+      calls.some(
+        (call) =>
+          call.args.includes('label') && call.args.includes('remove') && call.args.includes(siblingId),
+      ),
+    ).toBe(false);
+  });
+
   it('keeps a sibling ticket label when it is still blocked by another open human gate (bdboard-ixx9)', async () => {
     const issueId = 'bdboard-task-a';
     const gateId = 'bdboard-shared-gate';
@@ -868,6 +931,9 @@ describe('createBdCliHumanDecisions', () => {
                 dependency_type: 'blocks',
               },
             ],
+            // bdboard-ld8d レビュー指摘: labels が無いと hasHumanLabel だけで早期
+            // continue し、blockingHumanGateIds のガード(bdboard-ixx9)を素通りする。
+            labels: ['human'],
           },
         },
       }),
@@ -908,6 +974,9 @@ describe('createBdCliHumanDecisions', () => {
             issue_type: 'task',
             dependencies: [],
             metadata: { decision_question: '別の質問です' },
+            // bdboard-ld8d レビュー指摘: labels が無いと hasHumanLabel だけで早期
+            // continue し、hasOwnDecisionQuestion のガード(bdboard-mw8y)を素通りする。
+            labels: ['human'],
           },
         },
       }),

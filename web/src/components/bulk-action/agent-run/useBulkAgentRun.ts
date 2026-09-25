@@ -66,7 +66,8 @@ export function useBulkAgentRun({
   const projectNames = config?.projectNames;
   const loopActive = config !== undefined && config.batchRun.phase !== 'idle';
   const selectedIds = bulkSelection?.selectedIds ?? EMPTY_SELECTION;
-  // ハーネスの前提は選択があるときだけ引く (Next Up と同じクエリ・同じキャッシュ)。
+  // ハーネスの前提は選択があるときだけ引く (useAllHarnessStatuses は queryKey 固定で
+  // 他の呼び出し元ともキャッシュを共有する)。
   // 取得に失敗したら「不明」として止めない — 最終判定はサーバーの preflight。
   const harness = useAllHarnessStatuses(config !== undefined && selectedIds.size > 0);
   const harnessStatuses =
@@ -95,7 +96,7 @@ export function useBulkAgentRun({
   // 開いた時点の選択 (Set の参照) と実行ループの進捗 (参照) を覚えておき、どちらかが
   // 変わったら確認は自動的に閉じた扱いにする。選択が変わる (トグル・全解除・実行開始
   // による解除) — 古い選択のまま実行させない / バーが一度消えて再び出たときに開きっぱなしで
-  // 戻らない。進捗が変わる — 確認中に別の入口 (Next Up の「▶ 一括実行」) からループが
+  // 戻らない。進捗が変わる — 確認中に何らかの理由でループが
   // 始まったら、そのループが終わった後に確認がひとりでに開き直らない (beginBatchRun は
   // 必ず progress を差し替える)。
   const [pending, setPending] = useState<PendingConfirm | null>(null);
@@ -130,7 +131,7 @@ export function useBulkAgentRun({
     bulkSelection?.clear();
   }, [bulkSelection, canConfirm, config, plan]);
 
-  // 他の alertdialog (一括操作の確認・Next Up の一括実行) と同じくフォーカスを閉じ込め、
+  // 他の alertdialog (一括操作の確認) と同じくフォーカスを閉じ込め、
   // 初期フォーカスは実行側ではなくキャンセル側に置く。
   useFocusTrap({
     containerRef: confirmPanelRef,

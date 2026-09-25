@@ -25,7 +25,7 @@ import { UndoSnackbarProvider } from './UndoSnackbar';
 
 // bdboard-mkm1.2: 一括操作バーの「▶ 実行」。実行ループのコントローラは偽物に差し替え、
 // バーが「どの ID を・どの順で」渡すか、渡さない条件、渡した後の選択解除を直接見る。
-// ループ本体の挙動 (1件ずつ・失敗しても次へ) は nextUpRunLoop.test.ts / NextUpView.test.tsx
+// ループ本体の挙動 (1件ずつ・失敗しても次へ) は nextUpRunLoop.test.ts
 // が押さえている。ハーネスの状態は GET /api/harness/status (fetchAllHarnessStatus) を差し替える。
 vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
@@ -335,7 +335,7 @@ describe('BulkActionBar ▶ 実行 (bdboard-mkm1.2)', () => {
     expect(batchRun.beginBatchRun).not.toHaveBeenCalled();
   });
 
-  it('does not reopen the dialog by itself after a batch started elsewhere (Next Up) finishes', async () => {
+  it('does not reopen the dialog by itself after a batch started elsewhere finishes', async () => {
     const cards = [makeRunCard('t-1')];
     const idle = makeController();
     const { user, rerenderWith } = await renderBar(

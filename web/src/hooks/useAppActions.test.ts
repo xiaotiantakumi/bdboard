@@ -260,7 +260,7 @@ describe('useAppActions', () => {
       expect(params.setView).not.toHaveBeenCalled();
     });
 
-    it.each(['split', 'next'] as const)(
+    it.each(['split'] as const)(
       'does not force a view switch when epicFilterId is set and the current view (%s) can already show the filtered board',
       (view) => {
         const params = baseParams({ epicFilterId: 'epic-1', view });

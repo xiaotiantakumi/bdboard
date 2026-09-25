@@ -186,7 +186,7 @@ e2e については verify と test:e2e が互いの穴を埋める関係なの�
 ## Verify slots (max 2 concurrent `npm run verify` per machine)
 
 `npm run verify` throttles itself: before running anything, `scripts/verify.mjs`
-takes a slot in a machine-local FIFO ticket queue (holder files under
+takes a slot in a machine-local ticket queue (holder files under
 `$TMPDIR/bdboard-verify-slots/`, logic in `scripts/verify-slot.mjs`), and at
 most **2** verifies run at once per machine. This is the fix for the
 2026-08-18 incident where 6 concurrent verifies self-amplified into load
@@ -205,20 +205,91 @@ What this means operationally:
   Running individual steps (`npm run build`, `npm run test:server`, …) while
   iterating is still fine; the slot only guards the full chain.
 - **Queue waits are normal, not hangs.** While waiting, verify prints
-  `verify: waiting for a verify slot (queue position N/M, holders: pid …)`
-  every 10s on stderr. Leave it queued — the queue is FIFO, so the wait is
-  bounded, and killing + re-running re-enters the queue at the back. Give
-  the command a generous timeout instead of assuming it wedged.
+  `verify: waiting for a verify slot (queue position N/M, priority X, holders: pid …)`
+  every 10s on stderr. Leave it queued — the wait is bounded (see
+  Priorities below), and killing + re-running re-enters the queue at the
+  back. Give the command a generous timeout instead of assuming it wedged.
 - **Stale handling is automatic.** A holder whose pid is dead is reclaimed
-  immediately (covers SIGKILLed verifies); a live holder in the queue for
-  >30 min stops counting toward the limit (logged, file left alone). If a
-  wait exceeds 15 min, verify exits non-zero naming the holder pids —
-  investigate those pids (hung verify?) rather than disabling the slot.
+  immediately (covers SIGKILLed verifies). A live holder stops counting
+  toward the limit (logged, file left alone) once it has been *running* for
+  >30 min (`acquiredAt`); a waiting holder, or one written by an older
+  script that does not record when it started, 30 min after it joined. A
+  new-format waiter re-joins (fresh `joinedAt`, same `queuedAt`, so the same
+  place in line) every 15 min, so it never looks stale to others — a waiter
+  invisible to the others yet first in its own view could otherwise start a
+  third run. If
+  the set of running holders does not change for 15 min, the waiter exits
+  non-zero naming those pids — investigate them (hung verify?) rather than
+  disabling the slot. (The timeout counts time without progress, not total
+  wait, because a low-priority verify may legitimately wait longer than 15
+  min while the queue keeps moving.)
 - **Env knobs are for tests and emergencies only**: `BDBOARD_VERIFY_SLOTS`
   (default 2; `0` disables gating), `BDBOARD_VERIFY_SLOT_DIR`,
   `BDBOARD_VERIFY_SLOT_WAIT_MS`. Do not raise or disable them just to run
   more verifies in parallel — that recreates the incident. CI needs no
   special casing (one verify per runner; the slot is acquired instantly).
+
+### Priorities (bdboard-ulxa.6)
+
+The limit never changes; only *which waiter gets a freed slot* does. Each
+holder carries a priority, read from `BDBOARD_VERIFY_PRIORITY`:
+
+| priority | set by | why |
+|---|---|---|
+| `landed` | `merge-pr finish`, the gate self-heal, `merge-pr verify` (landed-verify of a main tip) | the next `gate` waits for the ledger of `PRED_BASE`, so this run blocks every merge |
+| `merge` | `merge-pr prepare` class F (the predicted-tree verify) | on the merge critical path; the longer it queues, the likelier main moves under it |
+| `pr` (default) | everything else (the local verify before opening a PR) | on nobody's critical path |
+
+The first sketch put `landed` last; the simulation below showed that starves
+the ledger every `gate` waits on (fewer merges, more CAS losses), so
+`landed` goes first.
+
+- **Starvation bound (virtual arrival time).** Waiters are served in order of
+  `arrival + rank × 4 min` (rank: landed 0, merge 1, pr 2; arrival is
+  `queuedAt`, moved earlier by seniority below). A lower tier is treated as
+  if it arrived 4 min per tier later, so it is only overtaken by higher-tier
+  runs whose virtual arrival is earlier: a `pr` verify is passed by `landed`
+  runs that queue up to 8 min after it and by `merge` runs up to 14 min after
+  it (4 min tier gap + at most 10 min of seniority) — a bounded wait, not
+  FIFO + 8 min. This is the cross-process, stateless form of the gfqz joiner
+  promotion (PR #728).
+- **Seniority.** `merge-pr prepare` also passes `BDBOARD_VERIFY_QUEUE_SINCE`,
+  the time this PR first queued a predicted verify (kept in
+  `<git common dir>/bdboard-merge/pr-<N>-queue.json`, reset after 2 h,
+  removed by `finish`), so a PR sent back to prepare by a main move is not
+  overtaken by newer PRs. The head start is capped at 10 min: 10 and 30 give
+  the same simulation results, and the cap bounds how far a long-retrying
+  `merge` run can jump the critical-path `landed` runs: it passes only those
+  that queued less than 6 min before it.
+- **Holder format.** New holders carry `v: 2`, `priority`, `queuedAt`, an
+  optional `since`, and `acquiredAt` once running, and are written atomically
+  (temp file + rename). A file that fails to parse is deleted only after 5 s (an
+  older script may be mid-write).
+- **Mixed old/new scripts** (a worktree on an older `main`). An old holder has
+  no `v`. The new code infers whether it is running with the old script's own
+  rule (FIFO rank < slots), and never lets a new waiter pass an *earlier*
+  waiting old holder — otherwise the old script, which does not count later
+  holders, could start a third run. Old scripts ignore the new fields. One
+  pre-existing gap remains: an old script ignores any holder that *joined*
+  more than 30 min ago, even a running one, exactly as before (a new holder
+  has joined at most 15 min before it starts, thanks to re-joining). The
+  price of re-joining in a mixed deployment: each re-join puts a new waiter
+  behind old-script waiters that joined during the previous 15 min (bounded,
+  since old scripts give up after 15 min).
+- **Simulation.** `node scripts/verify-slot-sim.mjs` replays 7 agents × 8 h
+  with 2 slots, using the real ordering functions (no real verify, no CPU
+  load); `scripts/verify-slot-sim.test.mjs` pins the result. Means over 8
+  seeds (max columns are the max):
+
+  | policy | merges | wasted predicted runs / merge | redo mean / max | merge latency mean / max (min) | `pr` wait max (min) | max running |
+  |---|---|---|---|---|---|---|
+  | before (FIFO; stale predicted runs run to the end) | 25.9 | 3.4 | 2.8 / 17 | 61 / 310 | 16.2 | 2 |
+  | priority only, landed last | 24.5 | 1.6 | 2.1 / 14 | 50 / 285 | 17.6 | 2 |
+  | priority only, landed first | 27.9 | 2.9 | 2.5 / 16 | 53 / 269 | 20.3 | 2 |
+  | abandon only (FIFO) | 47.4 | 1.5 | 1.8 / 13 | 23 / 130 | 10.8 | 2 |
+  | **adopted**: priority + abandon + seniority | 45.8 | **1.2** | **1.4 / 6** | **21 / 75** | 19.0 | 2 |
+
+  "Abandon" is on the merge-pr side: see docs/GIT-WORKFLOW.md, S2.
 
 ## vitest worker RPC タイムアウトの既知 flake 判別 (撤去済み)
 

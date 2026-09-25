@@ -3,25 +3,25 @@ import {
   type BoardCardDto,
   type BoardViewDto,
   type PrBadgeDto,
-  type ProjectHarnessStatusDto,
 } from '../../api';
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
-import { type NextUpLimit, type ViewMode } from '../../uiPersistedState';
+import { type ViewMode } from '../../uiPersistedState';
 import { type WipLimitsOverrides } from '../../wip-limits';
 import { BoardFilterBar } from '../BoardFilterBar';
 import { SplitBoard } from '../BoardView';
 import { BulkActionBar } from '../BulkActionBar';
-import { NextUpView } from '../NextUpView';
 import { type NextUpRunLoopController } from '../nextUpRunLoop';
 
 /**
- * bdboard-62p4 PR-2: AppViewContent からボード系ビュー(split/next)の
+ * bdboard-62p4 PR-2: AppViewContent からボード系ビュー(split)の
  * 表示だけを切り出したもの。フィルタバー・エピック絞り込みインジケータ・
- * 読み込み中/エラー表示・一括操作バー・SplitBoard/NextUpView の
- * 出し分けをまとめる。元は AppViewContent.tsx 1ファイルに収めると ESLint の
- * 200行上限を超えたため分けた(表示専用・state/effect は持たない)。
+ * 読み込み中/エラー表示・一括操作バー・SplitBoard の出し分けをまとめる。元は
+ * AppViewContent.tsx 1ファイルに収めると ESLint の200行上限を超えたため分けた
+ * (表示専用・state/effect は持たない)。
  * bdboard-mkm1.1 で「統合」タブ削除に伴い BoardLanes(merged 専用の描画分岐)
- * を削除し、split 固定へ単純化した(それ以外の JSX・渡す値は変えていない)。
+ * を削除し、split 固定へ単純化した。bdboard-mkm1.3 で Next Up ビュー
+ * (NextUpView とその表示件数/epic表示トグル)を削除し、split 単独のビュー
+ * 切替へさらに単純化した(それ以外の JSX・渡す値は変えていない)。
  */
 export interface AppBoardViewSwitchProps {
   view: ViewMode;
@@ -44,12 +44,7 @@ export interface AppBoardViewSwitchProps {
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick: (projectId?: string) => void;
   nextUp: {
-    limit: NextUpLimit;
-    onLimitChange: (limit: NextUpLimit) => void;
-    showEpics: boolean;
-    onShowEpicsChange: (show: boolean) => void;
     batchRun: NextUpRunLoopController;
-    harnessStatuses?: ReadonlyMap<string, ProjectHarnessStatusDto>;
   };
 }
 
@@ -79,35 +74,29 @@ export function AppBoardViewSwitch({
           onFilterTextChange={filterState.setFilterText}
         />
       )}
-      {(view === 'split' || view === 'next') &&
-        epicFilterId !== undefined && (
-          <div className="filter-bar-epic-indicator">
-            <span>エピック {epicFilterId} のみ表示中</span>
-            <button type="button" className="btn btn-small" onClick={onClearEpicFilter}>
-              クリア
-            </button>
-          </div>
-        )}
-      {(view === 'split' || view === 'next') && board.query.isLoading && (
+      {view === 'split' && epicFilterId !== undefined && (
+        <div className="filter-bar-epic-indicator">
+          <span>エピック {epicFilterId} のみ表示中</span>
+          <button type="button" className="btn btn-small" onClick={onClearEpicFilter}>
+            クリア
+          </button>
+        </div>
+      )}
+      {view === 'split' && board.query.isLoading && (
         <p className="loading">読み込み中…</p>
       )}
-      {(view === 'split' || view === 'next') && board.query.error !== null && (
+      {view === 'split' && board.query.error !== null && (
         <p className="error-message">
           {board.query.error instanceof Error
             ? board.query.error.message
             : 'ボードの読み込みに失敗しました'}
         </p>
       )}
-      {/* Next Up も対象に含める (bdboard-ml0k)。BulkSelectionProvider は
-          ErrorBoundary の外に置いてビュー横断で選択を保つ設計 (PR#129) で、
-          Next Up のカードも LaneColumn の CardItem を再利用しているため
-          チェックボックスは出るし選択も入る。ここで操作バーだけを出さないと
-          「選べるのに何もできない」状態になる。Next Up が並べるのは
-          board.lanes.ready のカードだけで、cardsById は merged と全
-          projects から集めているので、表示中のカードは必ず含まれる。 */}
-      {/* 「▶ 実行」(bdboard-mkm1.2) には App が持つ実行ループを渡す。バーはビューごとに
-          出し入れされるが、ループと進捗 (ヘッダーのチップ) はビューを切り替えても続く。 */}
-      {(view === 'split' || view === 'next') && (
+      {/* BulkSelectionProvider は ErrorBoundary の外に置いてビュー横断で選択を
+          保つ設計 (PR#129)。「▶ 実行」(bdboard-mkm1.2) には App が持つ実行
+          ループを渡す。バーはビューごとに出し入れされるが、ループと進捗
+          (ヘッダーのチップ) はビューを切り替えても続く。 */}
+      {view === 'split' && (
         <BulkActionBar
           cardsById={board.cardsById}
           availableLabels={board.availableLabels ?? []}
@@ -134,27 +123,6 @@ export function AppBoardViewSwitch({
           wipLimitsOverrides={boardMeta.wipLimitsOverrides}
         />
       )}
-      {board.query.data !== undefined && view === 'next' && board.query.data.merged !== null && (
-        <NextUpView
-          board={board.query.data.merged}
-          limit={nextUp.limit}
-          onLimitChange={nextUp.onLimitChange}
-          showEpics={nextUp.showEpics}
-          onShowEpicsChange={nextUp.onShowEpicsChange}
-          projectNames={boardMeta.projectNames}
-          projectActiveSessions={boardMeta.projectActiveSessions}
-          pendingDecisionIds={boardMeta.pendingDecisionIds}
-          prLinksById={boardMeta.prLinksById}
-          onCardClick={onCardClick}
-          batchRun={nextUp.batchRun}
-          harnessStatuses={nextUp.harnessStatuses}
-        />
-      )}
-      {board.query.data !== undefined &&
-        view === 'next' &&
-        board.query.data.merged === null && (
-          <p className="empty-message">Next Up のデータがありません</p>
-        )}
     </>
   );
 }

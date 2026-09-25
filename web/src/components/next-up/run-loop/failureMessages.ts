@@ -34,5 +34,5 @@ export function buildConsecutiveFailureComment(
       ? `最後の失敗理由: ${lastFailureReason}`
       : // Loop callers always pass a non-empty lastFailureReason; fallback for standalone use.
         '最後の失敗理由: （不明）';
-  return `[harness] bdboard の一括実行（Next Up）で直近${NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES}件が失敗したためバッチを停止しました。\n失敗したチケット: ${ids}\n${reasonLine}`;
+  return `[harness] bdboard の一括実行で直近${NEXT_UP_LOOP_MAX_CONSECUTIVE_FAILURES}件が失敗したためバッチを停止しました。\n失敗したチケット: ${ids}\n${reasonLine}`;
 }

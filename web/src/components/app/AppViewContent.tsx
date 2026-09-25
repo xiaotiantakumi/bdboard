@@ -1,10 +1,9 @@
 import { type UseQueryResult } from '@tanstack/react-query';
-import { type BoardCardDto, type BoardViewDto, type PrBadgeDto, type ProjectHarnessStatusDto } from '../../api';
+import { type BoardCardDto, type BoardViewDto, type PrBadgeDto } from '../../api';
 import { type BoardFilterState } from '../../hooks/useBoardFilterState';
 import { type UseNotificationEventsResult } from '../../hooks/useNotificationEvents';
 import {
   type ActivityWindowDays,
-  type NextUpLimit,
   type StatsWeeks,
   type ViewMode,
 } from '../../uiPersistedState';
@@ -33,8 +32,10 @@ import { AppBoardViewSwitch } from './AppBoardViewSwitch';
  * 表示に必要なクエリ結果と派生 Map/Set、`nextUp`/`windows` は各ビュー固有の
  * ウィンドウ幅・limit 状態。JSX・分岐条件・渡す値は元の App.tsx から一切
  * 変えていない(変数参照をグループ化した prop 経由の参照に置き換えただけ)。
+ * bdboard-mkm1.3: Next Up ビュー削除に伴い、`nextUp` は一括実行ループの
+ * コントローラ(batchRun。一括操作バーが使う)だけを残した。
  *
- * ボード系ビュー(split/next)の JSX は ESLint の200行上限のため
+ * ボード系ビュー(split)の JSX は ESLint の200行上限のため
  * ./AppBoardViewSwitch.tsx へさらに分けた。ここは ErrorBoundary と
  * ボード以外のビュー(activity/digest/stats/hygiene/graph/settings/events)
  * の出し分けだけを持つ。
@@ -63,12 +64,7 @@ export interface AppViewContentProps {
   onCardClick: (ticketId: string) => void;
   onSessionBadgeClick: (projectId?: string) => void;
   nextUp: {
-    limit: NextUpLimit;
-    onLimitChange: (limit: NextUpLimit) => void;
-    showEpics: boolean;
-    onShowEpicsChange: (show: boolean) => void;
     batchRun: NextUpRunLoopController;
-    harnessStatuses?: ReadonlyMap<string, ProjectHarnessStatusDto>;
   };
   windows: {
     activityWindowDays: ActivityWindowDays;
