@@ -456,6 +456,27 @@ git checkout other`,
       );
     });
 
+    it('still denies a real git checkout on the line immediately after a bare (non-substituted) heredoc terminator', async () => {
+      // レビュー指摘 (bdboard-u4ne PR #790 Blocker 1): 上の「later line」テストは
+      // ヒアドキュメントが $(...) に包まれており、`)"` の行を挟んでから git checkout が
+      // 続くため、ヒアドキュメント終端そのものの実改行ではなく `)"` の後ろの実改行が
+      // 区切りとして働いていた (常にマスク対象外)。ここでは $(...) に包まれない裸の
+      // ヒアドキュメントを使い、終端行 EOF の直後 (中間に他の文字を挟まず) に
+      // 実コマンドを置く — 終端検出時の実改行そのものを区切りとして残せているかを見る。
+      expectDeny(
+        await runBashHook({
+          command: `cat > notes.md <<'EOF'
+hello
+EOF
+git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
     it('allows a heredoc body line prefixed with the delimiter word without closing the heredoc', async () => {
       expectAllow(
         await runBashHook({
