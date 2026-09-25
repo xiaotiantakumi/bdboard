@@ -4,7 +4,7 @@
 // 走っている useThreadListSync の一覧 fetch / useChatHistoryLoader の履歴 fetch を
 // 握りつぶす)。進めるのは回収したターンを hydrate する直前だけで、そこでは従来どおり
 // 古い応答を無効化する。
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react';
 import { useEffect, useRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto, ChatTurnStatusDto } from '../../api';
@@ -88,7 +88,14 @@ describe('useTurnStatusRecovery request-id guards', () => {
   });
 
   afterEach(() => {
-    vi.clearAllMocks();
+    // bdboard-1ga8 と同じ作法: モックを片付ける前にアンマウントし、ポーリングや再試行の
+    // タイマーが次のテストへ持ち越されないようにする。reset で実装も戻す(失敗させる
+    // 実装などが後のテストへ残らないように)。
+    try {
+      cleanup();
+    } finally {
+      vi.resetAllMocks();
+    }
   });
 
   it('does not advance the thread-list request id when a generation bump restarts the effect (bdboard-x4mv)', async () => {
