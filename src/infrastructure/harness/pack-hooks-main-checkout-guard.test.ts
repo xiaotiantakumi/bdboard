@@ -463,9 +463,13 @@ git checkout other`,
       // 区切りとして働いていた (常にマスク対象外)。ここでは $(...) に包まれない裸の
       // ヒアドキュメントを使い、終端行 EOF の直後 (中間に他の文字を挟まず) に
       // 実コマンドを置く — 終端検出時の実改行そのものを区切りとして残せているかを見る。
+      // bdboard-1zrs: リダイレクト書き込み検知の追加後、`cat > notes.md` はそれ単独でも
+      // main checkout への書き込みとして (正しく) deny 対象になるため、`> notes.md` を
+      // 落として heredoc 本体を素通りさせる (cat の標準出力のみ)。これによりこのテストは
+      // 本来の狙い通り、2番目のセグメント (git checkout) の検出だけを検証する。
       expectDeny(
         await runBashHook({
-          command: `cat > notes.md <<'EOF'
+          command: `cat <<'EOF'
 hello
 EOF
 git checkout other`,
