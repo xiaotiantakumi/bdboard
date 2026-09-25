@@ -4,7 +4,7 @@
   justify-content: center;
   align-items: flex-start;
   /* オーバーレイの padding とパネルの max-height は**必ずセットで** dvh にする。
-     高さの基準は帯によらず同じ: `.overlay` はベースの fixed; inset: 0; だけで全画面へ
+     高さの基準は帯によらず同じ: `.overlay` はベースの position: fixed; inset: 0; だけで全画面へ
      追従する (bdboard-h4xs.25 でモバイル向け `@media (max-width: 700px)` の明示
      `height: 100dvh` は撤去した — 撤去理由は responsive.css の `.overlay` 直前の
      コメント参照。以前は <=700px 帯だけこの明示 height で 100dvh 確定だったが、

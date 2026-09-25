@@ -38,8 +38,10 @@ describe('index.css — mobile overlay covers the backdrop (bdboard-h4xs.25)', (
     expect(first, '結合後 CSS に .overlay ルールが見つかりません').toBeDefined();
     if (!first) return;
 
-    // index.css の import 順で base.css が先頭付近に展開される。ルール直前に
-    // @media が無いことも確認し、メディア条件内の override を基底と誤認しない。
+    // index.css の import 順で styles/ticket-detail-3.css (22番目の @import) の
+    // .overlay が結合後 CSS 中で最初に現れる (@media の外)。ファイル名を決め打ちせず
+    // 「最初に見つかった .overlay ルール」を対象にし、ルール直前に @media が無いことも
+    // 確認して、メディア条件内の override を基底と誤認しないようにする。
     const preceding = css.slice(Math.max(0, first.start - 500), first.start);
     const excerpt = first.body.trim().replace(/\s+/g, ' ');
     expect(
@@ -72,5 +74,31 @@ describe('index.css — mobile overlay covers the backdrop (bdboard-h4xs.25)', (
       heightDeclarations,
       `モバイル .overlay ルール (行 ${lineNumberAt(css, mobile.start)}: { ${excerpt} }) に height 宣言があります: ${heightDeclarations.join('; ')}`,
     ).toEqual([]);
+  });
+
+  it('no .overlay rule anywhere declares an explicit height (present or future)', () => {
+    // 上記2件はそれぞれ「最初に見つかったルール」「overscroll-behavior:none を持つ
+    // ルール」という特定条件に絞った検証だが、これだと「将来どこか別の @media に
+    // .overlay { height: ... } が新設される」回帰を見逃す。ここでは結合後 CSS 中の
+    // 全ての .overlay ルールを走査し、height 宣言 (max-height/min-height は対象外) が
+    // 一つも無いことを保証する — .overlay は常に position:fixed + inset:0 由来の
+    // 高さにのみ従う、という設計不変条件そのもののガード。
+    const css = resolveCssImports(fileURLToPath(new NodeUrl(CSS_RELATIVE_PATH, import.meta.url)));
+    const rules = overlayRules(css);
+    expect(rules.length, '結合後 CSS に .overlay ルールが見つかりません').toBeGreaterThan(0);
+
+    const offenders = rules.flatMap((rule) => {
+      const heightDeclarations = rule.body
+        .split(';')
+        .map((declaration) => declaration.trim())
+        .filter((declaration) => /^height\s*:/i.test(declaration));
+      if (heightDeclarations.length === 0) {
+        return [];
+      }
+      const excerpt = rule.body.trim().replace(/\s+/g, ' ');
+      return [`行 ${lineNumberAt(css, rule.start)}: { ${excerpt} } — ${heightDeclarations.join('; ')}`];
+    });
+
+    expect(offenders, offenders.join('\n') || undefined).toEqual([]);
   });
 });
