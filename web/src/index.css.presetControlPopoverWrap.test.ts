@@ -208,15 +208,15 @@ describe('index.css — .preset-control-popover のモバイル幅 nowrap 継承
     ).toMatch(/white-space\s*:\s*nowrap\b/);
   });
 
-  it('settings-6.css のベース規則(@media の外)には同じ上書きを置かない(デスクトップ幅の見た目を変えないため)', () => {
+  it('settings-6.css のベース規則(@media の外)にも同じ上書きがある(デスクトップ幅でも継承を解除するため)', () => {
     expect(basePopoverBody, '.preset-control-popover のベース規則(settings-6.css)が見つからない').not.toBeNull();
     expect(
       basePopoverBody,
-      'ベース規則(@media の外)に white-space: normal が付くと、デスクトップ幅でも見た目が変わってしまう',
-    ).not.toMatch(/white-space\s*:\s*normal\b/);
+      'ベース規則(@media の外)に white-space: normal が無いとデスクトップ幅で nowrap を継承したまま',
+    ).toMatch(/white-space\s*:\s*normal\b/);
     expect(
       basePopoverBody,
-      'ベース規則(@media の外)に overflow-wrap: anywhere が付くと、デスクトップ幅でも見た目が変わってしまう',
-    ).not.toMatch(/overflow-wrap\s*:\s*anywhere\b/);
+      'ベース規則(@media の外)に overflow-wrap: anywhere が無いと長いトークンがはみ出しうる',
+    ).toMatch(/overflow-wrap\s*:\s*anywhere\b/);
   });
 });

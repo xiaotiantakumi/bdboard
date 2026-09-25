@@ -55,6 +55,15 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   box-shadow: 0 8px 24px var(--color-shadow);
+  /* bdboard-wmtb: header.css の .view-toolbar-left > * { white-space: nowrap; } の継承が、
+     .preset-control-popover 自身の幅が(max-width が効かない352px以上のビューポートでは)
+     常に320px固定であるため、デスクトップ幅でも「…を上書き」ボタンの文言を右端で切る
+     (bdboard-h4xs.29 のモバイル向け修正 responsive.css の @media (max-width: 700px) と
+     同じ理由・同じ値。あちらはモバイル幅限定、これは常時)。.preset-control-name /
+     .preset-control-button-label は自前で white-space: nowrap を明示しており、より近い
+     宣言としてこの上書きより優先されるため、一覧行の省略記号つき切り詰めは変わらない。 */
+  white-space: normal;
+  overflow-wrap: anywhere;
   overflow: hidden;
   /* transform creates a containing block: position:fixed descendants would anchor here, not the viewport. Safe today (only .preset-control-list, .popover-foot with buttons/inputs/<p> inside). */
   transform: translateX(var(--popover-shift-x, 0px));
@@ -222,6 +231,18 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* bdboard-wmtb: 上の .preset-control-popover の white-space: normal
+   (デスクトップ幅を含む常時)が、新規保存フォームの「保存」「取消」・行の名前変更フォームの
+   「決定」「取消」にも継承され、CJK の行分割規則で1文字ずつ縦に折り返す回帰を防ぐ
+   (bdboard-h4xs.29 の PR #753 opus レビューで見つかった回帰と同じ原因。あちらは
+   responsive.css の @media (max-width: 700px) 内でモバイル幅だけを保護しているが、
+   popover 幅はビューポート非依存(常に320px)なのでデスクトップ幅でも同じガードが要る)。 */
+
+.preset-control-rename .btn,
+.preset-control-save-row .btn {
+  white-space: nowrap;
 }
 
 .preset-control-name-input {
