@@ -14,11 +14,13 @@ import { NodeCommandRunner } from '../process/node-command-runner.js';
  *
  *   - pre-bash-guard.sh 規則 8 (本体 hooks/server-guard.sh): サブエージェントによる
  *     main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/
- *     cherry-pick/revert/am/clean/bisect/apply/rm/mv を deny。alwaysOnServer.port の有無に
- *     関係なく常時有効 (規則 7 とは独立)。pull は規則 8 に**含まない** — 既存の規則 7a
- *     (alwaysOnServer.port が要る) だけが引き続き担当する (二重化しない。下の
- *     MUTATING_FORMS の pull エントリは 7a 経由で deny されることの確認であって、
- *     規則 8 自身の対象ではない — 詳細は hooks/README.md「pull を対象外にした理由」)。
+ *     cherry-pick/revert/am/clean/bisect/apply/rm/mv/pull を deny。alwaysOnServer.port の
+ *     有無に関係なく常時有効 (規則 7 とは独立)。pull は bdboard-rj7y で追加: 既存の規則 7a
+ *     (alwaysOnServer.port が要る、サーバー再配備文脈の専用メッセージ) はそのまま残すが、
+ *     alwaysOnServer.port を宣言しない配布先では 7a だけでは pull が fail-open のままだった
+ *     ため、7a とは独立に規則 8 でも port の有無に関係なく塞ぐ (port ありの契約では 7a が
+ *     先に発火するので二重の deny メッセージにはならない — 詳細は
+ *     hooks/README.md「pull を規則 8 にも追加した理由」)。
  *   - pre-edit-guard.sh 規則 2: 同じ main checkout 判定 (hooks/lib-main-checkout.sh を
  *     server-guard.sh と共有) で、サブエージェントによる main checkout 配下への
  *     Edit/Write/MultiEdit/NotebookEdit を deny。
@@ -74,7 +76,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
     };
 
     mainWithPort = path.join(tmpRoot, 'main-port');
-    worktreeWithPort = path.join(tmpRoot, 'wt-port');
+    worktreeWithPort = path.join(mainWithPort, '.claude', 'worktrees', 'bdboard-w8ad');
     await initGitRepo(mainWithPort, 'main');
     writeContract(mainWithPort, {
       version: 1,
@@ -212,9 +214,12 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       { label: 'apply', command: 'git apply /tmp/patch.diff' },
       { label: 'rm', command: 'git rm file.txt' },
       { label: 'mv', command: 'git mv a.txt b.txt' },
-      // pull だけは規則 8 の対象ではなく既存の 7a (alwaysOnServer.port 必須) 経由で deny
-      // される。ここでは mainWithPort (port あり) を使うので 7a が発火し、他のエントリと
-      // 同じ「main checkout では deny」という観測結果になる — 経路が違うだけ (上のコメント参照)。
+      // pull はここでは mainWithPort (port あり) を使うので既存の 7a が先に発火する
+      // (規則 8 自身も port 非依存に pull を対象にしているが、port ありの契約では 7a が先に
+      // deny して exit するため、ここでは他のエントリと同じ「main checkout では deny」という
+      // 観測結果になる — 経路が違うだけ)。規則 8 が port 非依存に効くことは下の
+      // 'denies subagent pull directly in the main checkout even without alwaysOnServer.port'
+      // で個別に確認する。
       { label: 'pull', command: 'git pull --ff-only' },
     ];
 
@@ -261,11 +266,340 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       );
     });
 
+    // bdboard-rj7y (2026-09-26): 既存の規則 7a は alwaysOnServer.port が無い契約では pull を
+    // 対象にしないため、規則 8 が port 非依存に pull も塞ぐようになったことをここで確認する
+    // (mainNoPort/worktreeNoPort には alwaysOnServer 自体が無い)。
+    it('denies subagent pull directly in the main checkout even without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({ command: 'git pull --ff-only', cwd: mainNoPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git pull',
+      );
+    });
+
+    it('denies subagent pull via git -C <main> from a worktree cwd without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({
+          command: `git -C ${mainNoPort} pull --ff-only`,
+          cwd: worktreeNoPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git pull',
+      );
+    });
+
+    // sg_check_pipe_git はパイプ直後の git トークンも sg_handle_git_tokens に通すので、
+    // pull もパイプ後段の形で main checkout 判定が効くことを確認する (checkout 等の既存の
+    // パイプテストと同じ経路)。
+    it('denies subagent pull after a real pipe without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'echo x | git pull --ff-only',
+          cwd: mainNoPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git pull',
+      );
+    });
+
+    it('still allows a subagent pulling its own worktree without alwaysOnServer.port', async () => {
+      expectAllow(
+        await runBashHook({ command: 'git pull --ff-only', cwd: worktreeNoPort, agentId: 'agent-1' }),
+      );
+    });
+
+    it.each([
+      { label: 'commit', command: 'git -C ../../.. -C . commit -m x' },
+      { label: 'reset', command: 'git -C ../../.. -C . reset --hard' },
+      { label: 'checkout', command: 'git -C ../../.. -C . checkout -b tmp' },
+    ])('denies chained git -C traversal from a worktree for $label', async ({ label, command }) => {
+      expectDeny(
+        await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        `git ${label}`,
+      );
+    });
+
+    it.each([
+      { label: 'commit', command: 'git -C ../../.. commit -m x' },
+      { label: 'reset', command: 'git -C ../../.. reset --hard' },
+      { label: 'checkout', command: 'git -C ../../.. checkout -b tmp' },
+    ])('continues to deny a single git -C traversal from a worktree for $label', async ({ label, command }) => {
+      expectDeny(
+        await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        `git ${label}`,
+      );
+    });
+
+    it('allows chained git -C values whose final target remains inside a worktree', async () => {
+      expectAllow(
+        await runBashHook({
+          command: 'git -C .claude/worktrees/bdboard-w8ad -C subdir checkout other',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
     it('denies subagent clean directly in the main checkout even without alwaysOnServer.port', async () => {
       expectDeny(
         await runBashHook({ command: 'git clean -fdx', cwd: mainNoPort, agentId: 'agent-1' }),
         'main checkout',
         'git clean',
+      );
+    });
+
+    it.each(['/usr/bin/git checkout other', './bin/git checkout other'])(
+      'denies subagent checkout when git is invoked by path: %s',
+      async (command) => {
+        expectDeny(
+          await runBashHook({ command, cwd: mainWithPort, agentId: 'agent-1' }),
+          'main checkout',
+          'git checkout',
+        );
+      },
+    );
+
+    it('denies subagent checkout when a leading backslash bypasses aliases/functions', async () => {
+      expectDeny(
+        await runBashHook({ command: '\\git checkout other', cwd: mainWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it.each([
+      'nice git checkout other',
+      'timeout 60 git checkout other',
+      'if git checkout other',
+      'while git checkout other',
+      'until git checkout other',
+      // bdboard-w8ad opus レビュー (R2, 2026-09-26): if/while/until/elif の対になる予約語
+      // then/do/else と否定演算子 ! も、実際のコマンドがそれらの直後に来る形でカバーする
+      // (`if true; then git checkout other; fi` 等はセグメント分割後 "then git checkout other"
+      // という形になる)。予約語・演算子はコマンド語になり得ないので誤許可リスクはゼロ。
+      'then git checkout other',
+      'do git checkout other',
+      'else git checkout other',
+      '! git checkout other',
+    ])('denies subagent checkout behind a command prefix: %s', async (command) => {
+      expectDeny(
+        await runBashHook({ command, cwd: mainWithPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it('denies a mutating git command after a real pipe', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'echo x | git commit -m x',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git commit',
+      );
+    });
+
+    it('denies a mutating git command after a pipe when the segment itself already starts with git', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'git status | git commit -m x',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git commit',
+      );
+    });
+
+    it('denies a mutating git command after the second of two real pipes in one segment', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'echo x | git status | git commit -m x',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git commit',
+      );
+    });
+
+    it('allows a quoted grep pattern after a pipe that merely mentions git checkout', async () => {
+      expectAllow(
+        await runBashHook({
+          command: 'echo x | grep "mentions git checkout"',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows a read-only git command followed by a pipe', async () => {
+      expectAllow(
+        await runBashHook({
+          command: 'git log | grep checkout',
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it.each(['git -C "$(pwd)" checkout other', 'D=$(pwd); git -C $D checkout other'])(
+      'conservatively denies an unresolved git -C value: %s',
+      async (command) => {
+        expectDeny(
+          await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+          'git checkout',
+        );
+      },
+    );
+
+    it('conservatively denies a same-command GIT_DIR override for a mutating command', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'GIT_DIR=/tmp/somewhere git checkout other',
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+        'git checkout',
+      );
+    });
+
+    // bdboard-rj7y opus レビュー (2026-09-26) の指摘: alwaysOnServer.port がある契約でも、
+    // 既存の規則 7a (sg_check_main_action) は「対象ディレクトリが main だと確定できたとき」
+    // しか deny せず、bdboard-w8ad/bdboard-9882 (#796) が他の 16 個の変更系サブコマンドに
+    // 追加した「未解決の -C/GIT_DIR は fail-open ではなく deny」という判定を共有していな
+    // かった。pull を規則 8 に追加したことで、port ありの契約でもこの fail-closed 判定が
+    // 初めて pull にも効くようになったことをここで確認する (mainWithPort/worktreeWithPort =
+    // port ありの契約)。
+    it.each(['git -C "$(pwd)" pull --ff-only', 'D=$(pwd); git -C $D pull --ff-only'])(
+      'conservatively denies an unresolved git -C value for pull even with alwaysOnServer.port: %s',
+      async (command) => {
+        expectDeny(
+          await runBashHook({ command, cwd: worktreeWithPort, agentId: 'agent-1' }),
+          'git pull',
+        );
+      },
+    );
+
+    it('conservatively denies a same-command GIT_DIR override for pull even with alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({
+          command: 'GIT_DIR=/tmp/somewhere git pull --ff-only',
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+        'git pull',
+      );
+    });
+
+    it('allows a fully resolvable relative git -C target that is a worktree', async () => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectAllow(
+        await runBashHook({
+          command: `git -C ${relativeWorktree} checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('allows a plain mutating git command in a worktree when no ambiguous override is present', async () => {
+      expectAllow(
+        await runBashHook({ command: 'git checkout other', cwd: worktreeWithPort, agentId: 'agent-1' }),
+      );
+    });
+
+    it('restores the real previous directory for cd - after two directory changes', async () => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectAllow(
+        await runBashHook({
+          command: `cd ${relativeWorktree} && cd /tmp && cd - && git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('swaps back to the main checkout for cd - after one directory change', async () => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectDeny(
+        await runBashHook({
+          command: `cd ${relativeWorktree} && cd - && git checkout other`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    it.each([
+      {
+        label: 'with whitespace before the subshell close',
+        command: (relativeWorktree: string) =>
+          `(cd ${relativeWorktree} && git commit -m x ) && git checkout other`,
+      },
+      {
+        label: 'without whitespace before the subshell close',
+        command: (relativeWorktree: string) =>
+          `(cd ${relativeWorktree} && git commit -m x) && git checkout other`,
+      },
+    ])('restores the outer directory after a subshell $label', async ({ command }) => {
+      const relativeWorktree = path.relative(mainWithPort, worktreeWithPort);
+      expectDeny(
+        await runBashHook({
+          command: command(relativeWorktree),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+        'git checkout',
+      );
+    });
+
+    // bdboard-w8ad opus レビュー (B1, 2026-09-26): サブシェルを閉じたかどうかを
+    // セグメント末尾が ')' かどうかだけで判定すると、`NAME=$(cmd)` のように
+    // セグメント自身が内部で完結した $(...) の ')' まで「サブシェルを閉じた」と
+    // 誤認し、まだ閉じていないサブシェルの外側ディレクトリへ SG_DIR を早戻し
+    // してしまう。結果、その後に続く同じサブシェル内の本物の変更コマンドが
+    // main checkout 判定から漏れて allow されていた。
+    it.each([
+      {
+        label: 'a bare $(...) command substitution mid-subshell',
+        command: (main: string) => `(cd ${main} && echo $(date) && git commit -m x)`,
+      },
+      {
+        label: 'an assignment whose value is a $(...) command substitution mid-subshell',
+        command: (main: string) => `(cd ${main} && BR=$(git branch --show-current) && git checkout -b tmp)`,
+      },
+      {
+        label: 'an assignment whose $(...) value is used by the next command in the same subshell',
+        command: (main: string) => `(cd ${main} && V=$(git rev-parse HEAD) && git reset --hard $V)`,
+      },
+    ])('does not prematurely restore the outer directory for $label', async ({ command }) => {
+      expectDeny(
+        await runBashHook({
+          command: command(mainWithPort),
+          cwd: worktreeWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('still allows the same $(...)-mid-subshell shape when the subshell targets a worktree, not main', async () => {
+      expectAllow(
+        await runBashHook({
+          command: `(cd ${worktreeWithPort} && BR=$(git branch --show-current) && git checkout -b tmp2)`,
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
       );
     });
 

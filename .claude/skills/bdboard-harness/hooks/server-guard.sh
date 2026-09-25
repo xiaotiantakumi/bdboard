@@ -11,6 +11,8 @@
 # 規則 7 は契約 (.claude/bdboard-harness.json) に alwaysOnServer.port があるときだけ有効。
 #
 #   7a. サブエージェント (hook 入力に agent_id がある) から main checkout での git pull
+#       (alwaysOnServer.port 前提。サーバー再配備文脈の専用メッセージを持つ — 規則 8 の
+#       pull 対応 (下記) とは目的が異なるので併存させている)
 #   7b. サブエージェントから main checkout でのサーバー起動 (npm run start / tsx src/main.ts)
 #       と、再起動スクリプト (alwaysOnServer.restartScript) の呼び出し (cwd を問わない)
 #   7c. 呼び出し元を問わず、常時稼働サーバーの listener (とその親 npm/node) を PID で
@@ -26,12 +28,13 @@
 # 常用する運用 (bdboard-kxqb) では、サブエージェントの checkout / commit / reset / merge 等が
 # 議長の作業ツリーを直接壊しうる)。サブエージェント (agent_id あり) が main checkout を
 # 対象に git checkout / switch / commit / reset / merge / rebase / stash / restore /
-# cherry-pick / revert / am / clean / bisect / apply / rm / mv を実行するのを deny する
-# (opus レビュー 2026-09-25 で clean/bisect/apply/rm/mv の抜けを指摘され追加)。
-# pull は含まない — 元から 7a
-# (SG_PORT 前提) の対象で、規則 8 はそこに無かった working tree/HEAD 変更系だけを追加で
-# 塞ぐ (二重化しない。SG_PORT の無い契約では 7a 同様 pull は対象外のまま)。worktree
-# add/remove/list・branch (削除含む)・push・fetch・remote・log 等の読み取り/非破壊系も対象外。
+# cherry-pick / revert / am / clean / bisect / apply / rm / mv / pull を実行するのを deny
+# する (opus レビュー 2026-09-25 で clean/bisect/apply/rm/mv の抜けを指摘され追加)。pull は
+# bdboard-rj7y (2026-09-26) で追加: alwaysOnServer.port を宣言しないパック配布先では 7a
+# だけでは pull が fail-open のままだったため、working tree/HEAD 変更系として 7a とは独立に
+# (port の有無に関係なく) 規則 8 でも塞ぐことにした — port ありの契約では 7a が先に発火する
+# ので二重の deny メッセージにはならない。worktree add/remove/list・branch (削除含む)・
+# push・fetch・remote・log 等の読み取り/非破壊系は引き続き対象外。
 #
 # 限界 (hooks/README.md「規則 7」「規則 8」に明記): 実効ディレクトリは cwd と `cd` の静的
 # 追跡、変数は同一コマンド内の `NAME=値` 代入だけ解決する。別ファイルに書いて実行する迂回は
@@ -39,7 +42,7 @@
 
 # --- 0. 前置フィルタ: 関係しうる語が無ければ何もしない (git status 等の頻出コマンドは
 #        契約を読む前に通す。契約の読み取りは jq/python3 の起動を伴う)。
-matches '(^|[^[:alnum:]_./-])(kill|git|npm|npx|tsx|node|pushd|sed|cp|mv|tee|aimix)([^[:alnum:]_-]|$)|\.sh([^[:alnum:]_-]|$)|>' || return 0
+matches '(^|[^[:alnum:]_.-])(kill|git|npm|npx|tsx|node|pushd|sed|cp|mv|tee|aimix)([^[:alnum:]_-]|$)|\.sh([^[:alnum:]_-]|$)|>' || return 0
 
 server_contract_field() {
   case "$JSON_TOOL" in
@@ -675,6 +678,155 @@ sg_check_main_git_mutate() {
   sg_deny_git_mutate "$2"
 }
 
+# 引数: 実効 dir, 同一セグメントの GIT_DIR/GIT_WORK_TREE 上書き有無, git 以降の引数列。
+# 通常の git dispatch とパイプ後の git dispatch が同じ -C / subcommand 判定を共有する。
+sg_handle_git_tokens() {
+  local sg_git_dir="$1"
+  local sg_git_env_override="$2"
+  local sg_c_saved_dir=''
+  local sg_git_dir_unresolved=''
+  local sg_git_dir_value=''
+  local sg_git_subcommand=''
+  shift 2
+
+  [ $# -gt 0 ] || return 0
+  case "$1" in \\*) set -- "${1#\\}" "${@:2}" ;; esac
+  [ "${1##*/}" = 'git' ] || return 0
+  shift
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -C)
+        # 複数の -C は本物の git と同じく「直前の -C からの相対」で連鎖させる
+        # (bdboard-9882): sg_resolve_dir は $SG_DIR を基準に解決するので、
+        # 一時的に $SG_DIR を直前の sg_git_dir に差し替えてから呼ぶ。
+        sg_c_saved_dir="$SG_DIR"
+        SG_DIR="$sg_git_dir"
+        sg_git_dir_value="$(sg_expand "${2:-}")"
+        case "$sg_git_dir_value" in
+          *'$('* | *'`'* | *'$'*) sg_git_dir_unresolved='yes' ;;
+        esac
+        sg_git_dir="$(sg_resolve_dir "${2:-}")"
+        SG_DIR="$sg_c_saved_dir"
+        shift
+        [ $# -gt 0 ] && shift
+        ;;
+      -c | --git-dir | --work-tree | --namespace)
+        shift
+        [ $# -gt 0 ] && shift
+        ;;
+      -*) shift ;;
+      *) break ;;
+    esac
+  done
+
+  sg_git_subcommand="${1:-}"
+  case "$sg_git_subcommand" in
+    pull)
+      # 規則 7a (alwaysOnServer.port 前提、サーバー再配備文脈の専用メッセージ) はそのまま維持。
+      if [ -n "$SG_PORT" ]; then
+        sg_check_main_action "$sg_git_dir" '7a-git-pull' 'git pull'
+      fi
+      # bdboard-rj7y (2026-09-26): 7a とは独立に、port の有無に関係なく規則 8 でも pull を
+      # working tree/HEAD 変更系として塞ぐ。alwaysOnServer.port を宣言しないパック配布先で
+      # 7a だけでは fail-open だった穴を閉じる。port ありの契約では上の 7a が先に deny して
+      # exit するので、ここまで到達した時点で「7a は通った (= main checkout ではないか議長)」
+      # ことが確定しており、二重の deny メッセージにはならない。
+      if [ -n "$SG_IS_SUB" ] && { [ -n "$sg_git_dir_unresolved" ] || [ -n "$sg_git_env_override" ]; }; then
+        sg_deny_git_mutate 'pull'
+      fi
+      sg_check_main_git_mutate "$sg_git_dir" 'pull'
+      ;;
+    checkout | switch | commit | reset | merge | rebase | stash | restore | cherry-pick | revert | am | clean | bisect | apply | rm | mv)
+      if [ -n "$SG_IS_SUB" ] && { [ -n "$sg_git_dir_unresolved" ] || [ -n "$sg_git_env_override" ]; }; then
+        sg_deny_git_mutate "$sg_git_subcommand"
+      fi
+      sg_check_main_git_mutate "$sg_git_dir" "$sg_git_subcommand"
+      ;;
+  esac
+}
+
+# 引用符の外にある実パイプの直後のコマンド語だけを見る。引用符内の `git` 言及は無視する。
+sg_check_pipe_git() {
+  local sg_pipe_raw="$1"
+  local sg_pipe_dir="$2"
+  local sg_pipe_env_override="$3"
+  local sg_pipe_len=${#1}
+  local sg_pipe_i=0
+  local sg_pipe_j=0
+  local sg_pipe_start=0
+  local sg_pipe_single=''
+  local sg_pipe_double=''
+  local sg_pipe_token_single=''
+  local sg_pipe_token_double=''
+  local sg_pipe_pending=''
+  local sg_pipe_char=''
+  local sg_pipe_token=''
+  local sg_pipe_clean=''
+  local sg_pipe_rest=''
+
+  while [ "$sg_pipe_i" -lt "$sg_pipe_len" ]; do
+    sg_pipe_char="${sg_pipe_raw:$sg_pipe_i:1}"
+
+    if [ -n "$sg_pipe_single" ]; then
+      [ "$sg_pipe_char" = "'" ] && sg_pipe_single=''
+      sg_pipe_i=$((sg_pipe_i + 1))
+      continue
+    fi
+    if [ -n "$sg_pipe_double" ]; then
+      [ "$sg_pipe_char" = '"' ] && sg_pipe_double=''
+      sg_pipe_i=$((sg_pipe_i + 1))
+      continue
+    fi
+
+    case "$sg_pipe_char" in
+      "'") sg_pipe_single='yes' ;;
+      '"') sg_pipe_double='yes' ;;
+      '|') sg_pipe_pending='yes' ;;
+      [[:space:]]) ;;
+      *)
+        if [ -n "$sg_pipe_pending" ]; then
+          sg_pipe_start=$sg_pipe_i
+          sg_pipe_j=$sg_pipe_i
+          sg_pipe_token_single=''
+          sg_pipe_token_double=''
+          while [ "$sg_pipe_j" -lt "$sg_pipe_len" ]; do
+            sg_pipe_char="${sg_pipe_raw:$sg_pipe_j:1}"
+            if [ -n "$sg_pipe_token_single" ]; then
+              [ "$sg_pipe_char" = "'" ] && sg_pipe_token_single=''
+            elif [ -n "$sg_pipe_token_double" ]; then
+              [ "$sg_pipe_char" = '"' ] && sg_pipe_token_double=''
+            else
+              case "$sg_pipe_char" in
+                "'") sg_pipe_token_single='yes' ;;
+                '"') sg_pipe_token_double='yes' ;;
+                '|' | [[:space:]]) break ;;
+              esac
+            fi
+            sg_pipe_j=$((sg_pipe_j + 1))
+          done
+
+          sg_pipe_token="${sg_pipe_raw:$sg_pipe_start:$((sg_pipe_j - sg_pipe_start))}"
+          sg_pipe_clean="$(printf '%s' "$sg_pipe_token" | tr -d '"'"'"')')"
+          case "$sg_pipe_clean" in \\*) sg_pipe_clean="${sg_pipe_clean#\\}" ;; esac
+          if [ "${sg_pipe_clean##*/}" = 'git' ]; then
+            sg_pipe_rest="${sg_pipe_raw:$sg_pipe_start}"
+            sg_pipe_clean="$(printf '%s' "$sg_pipe_rest" | tr -d '"'"'"')')"
+            # shellcheck disable=SC2086
+            set -- $sg_pipe_clean
+            sg_handle_git_tokens "$sg_pipe_dir" "$sg_pipe_env_override" "$@"
+          fi
+
+          sg_pipe_pending=''
+          sg_pipe_i=$sg_pipe_j
+          continue
+        fi
+        ;;
+    esac
+    sg_pipe_i=$((sg_pipe_i + 1))
+  done
+}
+
 # --- bdboard-1zrs: git 以外の書き込み系コマンド (sed -i / cp / mv / tee / リダイレクト /
 # npm install) と、委譲ツール (aimix) の main checkout での起動を塞ぐ。sg_deny_sub
 # (規則7用、サーバー再配備の文言) / sg_deny_git_mutate (git専用の文言) とは別に、
@@ -862,14 +1014,30 @@ while IFS= read -r sg_seg; do
       sg_seg="${sg_seg#"${sg_seg%%[![:space:]]*}"}"
       ;;
   esac
+  # bdboard-w8ad opus レビュー (B1, 2026-09-26): 末尾が ')' かどうかだけを見ると
+  # `X=$(cmd)` のようにセグメント自身の中で閉じている $(...) の ')' まで
+  # 「サブシェルを閉じた」と誤判定し、SG_DIR を早戻ししてしまう
+  # (`(cd $MAIN && BR=$(git branch --show-current) && git checkout -b tmp)` で
+  # 2番目のセグメントの誤判定により3番目の git checkout が main 判定から漏れる)。
+  # 空白位置に依存せず、このセグメント内の '(' と ')' の個数を数え、')' が
+  # '(' より多い場合だけ「外側の開いたサブシェルを閉じている」とみなす
+  # ($(...) 等セグメント内で開閉が対になっているものは差し引きゼロになる)。
+  sg_paren_open="${sg_seg//[^(]/}"
+  sg_paren_close="${sg_seg//[^)]/}"
   sg_closes_subshell=''
-  case "$sg_seg" in *')') sg_closes_subshell='yes' ;; esac
+  if [ "${#sg_paren_close}" -gt "${#sg_paren_open}" ]; then
+    sg_closes_subshell='yes'
+  fi
 
   # 先頭の NAME=値 (export 付き含む) を記録して剥がす。値に $(…) と port があれば PID 由来。
+  sg_git_env_override=''
   while printf '%s\n' "$sg_seg" | grep -Eq '^(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=' 2>/dev/null; do
     sg_seg="${sg_seg#export}"
     sg_seg="${sg_seg#"${sg_seg%%[![:space:]]*}"}"
     sg_assign_name="${sg_seg%%=*}"
+    case "$sg_assign_name" in
+      GIT_DIR | GIT_WORK_TREE) sg_git_env_override='yes' ;;
+    esac
     sg_rest="${sg_seg#*=}"
     case "$sg_rest" in
       '$('* | '`'*)
@@ -905,10 +1073,34 @@ while IFS= read -r sg_seg; do
   # shellcheck disable=SC2086
   set -- $sg_clean
 
-  # nohup / exec / command / time / sudo / env VAR=x の前置きを飛ばして本体のコマンド語へ。
+  # nohup / exec / command / time / sudo / env VAR=x 等の前置きを飛ばして本体のコマンド語へ。
+  # bdboard-w8ad opus レビュー (R2, 2026-09-26): if/while/until/elif だけでなく、対になる
+  # then/do/else と否定の ! も同じ理由 (予約語・演算子はコマンド語になり得ないので
+  # 前置き扱いにしても誤許可のリスクがゼロ) で読み飛ばす対象に加える
+  # (`if true; then git commit -m x; fi` / `for i in 1; do git commit -m x; done` /
+  # `! git commit -m x` のような、本体が then/do/else の直後や ! の直後に来る形)。
   while [ $# -gt 0 ]; do
     case "$1" in
-      nohup | exec | command | builtin | time | sudo | caffeinate) shift ;;
+      nohup | exec | command | builtin | time | sudo | caffeinate | nice | if | while | until | elif | then | do | else | '!') shift ;;
+      timeout)
+        shift
+        # bdboard-w8ad opus レビュー (B2, 2026-09-26): 無条件に次の1トークンを
+        # 「DURATION」とみなして読み飛ばすと、`timeout -s KILL 600 cmd` のように
+        # オプション付きの timeout ではオプション語 (-s) を DURATION と誤認して
+        # 読み飛ばし、その次のオプション値 (KILL) が sg_word になってしまう。
+        # KILL は後段の規則7bワイド走査トリガー一覧にもフラグ判定 (-*) にも
+        # 引っかからないため、restart スクリプト保護がすり抜ける
+        # (timeout -s KILL 600 scripts/always-on-server.sh restart 等)。
+        # 次トークンが '-' 始まりのオプションに見える場合は読み飛ばさずループを
+        # 打ち切る。$1 がオプション文字列のまま残るので、規則7bワイド走査の
+        # 「未知のフラグが残っている ⇒ 全引数走査」フォールバック (-*) が
+        # 正しく発火する (安全側)。DURATION らしい非オプション語のときだけ、
+        # 従来どおり1トークン読み飛ばす。
+        case "$1" in
+          -*) ;;
+          *) [ $# -gt 0 ] && shift ;;
+        esac
+        ;;
       env)
         shift
         while [ $# -gt 0 ]; do
@@ -919,6 +1111,7 @@ while IFS= read -r sg_seg; do
     esac
   done
   [ $# -gt 0 ] || continue
+  case "$1" in \\*) set -- "${1#\\}" "${@:2}" ;; esac
   sg_word="${1##*/}"
 
   # --- bdboard-1zrs: リダイレクト検知。sg_word によるコマンド語ディスパッチとは独立に
@@ -1049,37 +1242,15 @@ while IFS= read -r sg_seg; do
 
   case "$sg_word" in
     cd | pushd)
+      sg_new_dir="$(sg_resolve_dir "${2:-}")"
       SG_PREV_DIR="$SG_DIR"
-      SG_DIR="$(sg_resolve_dir "${2:-}")"
+      SG_DIR="$sg_new_dir"
       ;;
     popd)
       SG_DIR="$SG_PREV_DIR"
       ;;
     git)
-      shift
-      sg_git_dir="$SG_DIR"
-      while [ $# -gt 0 ]; do
-        case "$1" in
-          -C) sg_git_dir="$(sg_resolve_dir "${2:-}")"; shift; shift ;;
-          -c | --git-dir | --work-tree | --namespace) shift; shift ;;
-          -*) shift ;;
-          *) break ;;
-        esac
-      done
-      case "${1:-}" in
-        pull)
-          # pull は既存の 7a (SG_PORT = alwaysOnServer.port が要る) だけが対象にする。
-          # 規則 8 (このブロックの他の枝) には含めない — 規則 8 の役割は「7 が元々
-          # 対象にしていなかった working tree/HEAD 変更系」を追加で塞ぐことで、pull は
-          # 元から 7a の対象なので二重化しない (hooks/README.md「規則 8」参照)。
-          if [ -n "$SG_PORT" ]; then
-            sg_check_main_action "$sg_git_dir" '7a-git-pull' 'git pull'
-          fi
-          ;;
-        checkout | switch | commit | reset | merge | rebase | stash | restore | cherry-pick | revert | am | clean | bisect | apply | rm | mv)
-          sg_check_main_git_mutate "$sg_git_dir" "$1"
-          ;;
-      esac
+      sg_handle_git_tokens "$SG_DIR" "$sg_git_env_override" "$@"
       ;;
     npm)
       shift
@@ -1258,6 +1429,10 @@ while IFS= read -r sg_seg; do
           ;;
       esac
       ;;
+  esac
+
+  case "$sg_raw_seg" in
+    *'|'*) sg_check_pipe_git "$sg_raw_seg" "$SG_DIR" "$sg_git_env_override" ;;
   esac
 
   if [ -n "$sg_closes_subshell" ] && [ -n "$SG_SUBSHELL_DIR" ]; then

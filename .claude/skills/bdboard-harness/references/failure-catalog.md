@@ -138,7 +138,7 @@
 
 ### subagent-checkout-in-chair-worktree — 別チケットの担当サブエージェントが議長の worktree 内で自分のブランチへ checkout し、最後にその worktree の削除まで議長へ求めた（2026-09-25）
 - 原因: 議長を main checkout で動かす運用への移行に伴い、サブエージェントも main checkout を cwd として起動しうるようになったが、hook 規則 7 が main checkout に対して禁じていたのは git pull・サーバー起動・listener kill だけで、checkout/switch/commit/reset/merge/stash と Edit・Write によるファイル編集は禁じていなかった
-- 防止: hook 規則 8 (`hooks/server-guard.sh`、`alwaysOnServer.port` の有無に関係なく常時有効) が `agent_id` 付き呼び出しから main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/cherry-pick/revert/am/clean/bisect/apply/rm/mv を deny (pull は既存の規則 7a が担う)。`pre-edit-guard.sh` 規則 2 が同じ main checkout 判定 (`hooks/lib-main-checkout.sh` 共有) で Edit/Write/MultiEdit/NotebookEdit も deny する（本則: `hooks/README.md` 規則 8・pre-edit-guard.sh 規則 2）
+- 防止: hook 規則 8 (`hooks/server-guard.sh`、`alwaysOnServer.port` の有無に関係なく常時有効) が `agent_id` 付き呼び出しから main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/cherry-pick/revert/am/clean/bisect/apply/rm/mv/pull を deny (pull は bdboard-rj7y で追加。既存の規則 7a は port ありの契約向けに独立に残っている)。`pre-edit-guard.sh` 規則 2 が同じ main checkout 判定 (`hooks/lib-main-checkout.sh` 共有) で Edit/Write/MultiEdit/NotebookEdit も deny する（本則: `hooks/README.md` 規則 8・pre-edit-guard.sh 規則 2）
 - 出典: bdboard-p5l.18（対策 bdboard-kxqb）（鏡像: subagent-restarted-always-on-server）
 
 ## 検証・ビルド

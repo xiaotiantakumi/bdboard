@@ -10,7 +10,7 @@ import {
   updateChatThread,
   type ChatThreadDto,
 } from '../../api';
-import { writePersistedChatThreadState } from '../../chatThreadStorage';
+import { resolvePersistedSelectionAfterClose, writePersistedChatThreadState } from '../../chatThreadStorage';
 import { compareThreadsNewestFirst } from './threads';
 import type { UseConversationKeyResult } from './useConversationKey';
 
@@ -99,6 +99,10 @@ export interface UseChatThreadListsResult {
  * 対策、詳細はその呼び出し箇所のコメント参照)。currentSessionId への
  * フォールバックは意図的に持たない(フォールバックすると選択軸で同じ
  * staleness バグが再発するため)。
+ *
+ * bdboard-e5cz で3つ目の例外: ライブ選択が undefined の場合(draft 表示中)に closeThread が
+ * 永続化済み選択を消さないよう、chatThreadStorage.ts の resolvePersistedSelectionAfterClose
+ * 経由で永続化済み selectedSessionId を引き継ぐ(詳細はその関数直前のコメント参照)。
  */
 export function useChatThreadLists({
   selectedProjectId,
@@ -163,7 +167,12 @@ export function useChatThreadLists({
     const nextDisplayed = [...next].sort((a, b) =>
       compareThreadsNewestFirst(threadById.get(a), threadById.get(b)),
     );
-    const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : liveSelectedSessionId;
+    // bdboard-e5cz: liveSelectedSessionId が undefined = draft 表示中(N2
+    // draft-rule)。詳細は chatThreadStorage.ts の resolvePersistedSelectionAfterClose
+    // 直前のコメント参照。
+    const selectedSessionIdToPersist = wasSelected
+      ? nextDisplayed[0]
+      : liveSelectedSessionId ?? resolvePersistedSelectionAfterClose(selectedProjectId, next, nextDisplayed[0]);
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
     openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
@@ -179,7 +188,7 @@ export function useChatThreadLists({
     }
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,
-      selectedSessionId: nextSelectedSessionId,
+      selectedSessionId: selectedSessionIdToPersist,
     });
     drawer.cancelInteractionsForSession(sessionId);
   };

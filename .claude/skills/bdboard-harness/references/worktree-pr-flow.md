@@ -421,11 +421,17 @@ rebase は必須（他セッションの WIP で main が汚れている状況�
 削除を手順化するほうが副作用が小さい。`git pull --ff-only` と着地後検証は原則メイン
 チェックアウトで行う（メインチェックアウトが汚れている場合の代替は前掲のブランチ tip 検証）。
 
-**注入先の契約に `alwaysOnServer` があるとき、サブエージェント（Agent ツールから起動された
-セッション）からのメインチェックアウトでの `git pull` は hook 規則 7 が deny する**
-（bdboard-hpu8。メインチェックアウトは常時稼働サーバーを抱え、pull → build → 再起動は議長の
-仕事）。その場合は前掲のブランチ tip 検証で層3を満たし、メインチェックアウトの pull と再起動は
-議長が `alwaysOnServer.restartScript` で行う。最終報告に「議長で再起動が必要（PR #N）」と書く。
+**サブエージェント（Agent ツールから起動されたセッション）からのメインチェックアウトでの
+`git pull` は hook 規則 8 が契約の `alwaysOnServer` の有無に関係なく常時 deny する**
+（bdboard-kxqb・bdboard-rj7y。メインチェックアウトの working tree/HEAD は議長の作業ツリーで
+あり、サブエージェントが直接動かしてはならない）。注入先の契約に `alwaysOnServer` がある
+ときは、これに加えて規則 7a も同じ操作を deny する（bdboard-hpu8。メインチェックアウトは
+常時稼働サーバーを抱え、pull → build → 再起動は議長の仕事）。いずれの場合も前掲のブランチ
+tip 検証で層3を満たす。`alwaysOnServer` がある契約では、メインチェックアウトの pull と
+再起動は議長が `alwaysOnServer.restartScript` で行い、最終報告に「議長で再起動が必要
+（PR #N）」と書く。`alwaysOnServer` が無い契約では再起動の概念が無いため、議長は
+`git -C <メインチェックアウト> pull --ff-only` だけを行えばよく、最終報告には「議長で
+メインチェックアウトの pull が必要（PR #N）」と書く。
 
 独立に緑だった2本の意味的衝突は、main 上の着地後検証か前掲のブランチ tip 検証の**どちらか**
 でしか捕まらない。squash マージなら壊れていても revert 1発で戻せる。緑を確認するまで次の

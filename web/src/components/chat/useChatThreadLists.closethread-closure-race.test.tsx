@@ -270,5 +270,14 @@ describe('closeThread render-time closure staleness via concurrent reopenClosedT
     });
 
     expect(result.current.key.selectedThreadIds['project-a']).toBeUndefined();
+    // bdboard-e5cz(Opus レビュー指摘): この deleteThread 継続は closeThread('sess-1')
+    // を呼び、sess-1 は「draft 開始前に永続化されていた選択」そのもの。next
+    // (削除後の activeSessionIds = ['sess-2']) には sess-1 が含まれないので、
+    // resolvePersistedSelectionAfterClose は sess-1 を dangling reference として
+    // 扱いフォールバック(表示順の先頭 = sess-2)を選ぶべき。next の代わりに
+    // 削除前の openThreadIds(sess-1 を含んだまま)を渡す退行が起きると、ここが
+    // 'sess-2' ではなく 'sess-1'(既に削除済みのスレッド)のままになる。
+    expect(readPersistedChatThreads()['project-a']?.activeSessionIds).toEqual(['sess-2']);
+    expect(readPersistedChatThreads()['project-a']?.selectedSessionId).toBe('sess-2');
   });
 });
