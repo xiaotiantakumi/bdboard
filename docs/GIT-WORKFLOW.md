@@ -394,6 +394,24 @@ subagent that merged a PR just reports that a restart is needed. At session star
 sweep `git worktree list` for merged leftovers left behind by a prior
 session.
 
+**The chair also brings its own session checkout up to date** (bdboard-flpp).
+Hooks and skills are read from the checkout the session was started in
+(`$CLAUDE_PROJECT_DIR`), and every subagent the chair launches reads its hooks
+from that same checkout — so a chair checkout left behind `origin/main` silently
+runs old guards for everyone (in 2026-09 hook rule 7 never fired for a month
+this way). Nothing updates it automatically, on purpose: the chair may have work
+in progress there. The pack hook `worktree-freshness.sh` (SessionStart /
+UserPromptSubmit / PostToolUse(Agent)) warns the chair when that checkout is
+behind and prints the safe command for its state — typically
+`git -C <chair checkout> merge --ff-only origin/main` when it has no commits of
+its own and a clean tree. Run it after `deploy`. If the warning says the
+registration (`.claude/settings.json`) changed too, check `/hooks` afterwards and
+restart the session if the new hook is not listed. A checkout with no common
+ancestor with `origin/main` cannot catch up: move the work out and start the
+session again from a new worktree. Sessions whose checkout predates this hook
+get no warning at all; for those the board's Hygiene lane
+(`nonTicketHarnessWorktrees`) is the only signal.
+
 Two things to expect here, so they are not mistaken for failures:
 
 - **`--delete-branch` always fails on the local branch**, with

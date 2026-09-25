@@ -9,6 +9,15 @@
           }
         ],
         "matcher": ""
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -49,6 +58,29 @@
           {
             "type": "command",
             "command": "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c '[ -f \"$0\" ] || exit 0; exec bash \"$0\"' \"$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh\"",
             "timeout": 10
           }
         ]
