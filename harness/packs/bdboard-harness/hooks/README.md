@@ -264,9 +264,8 @@ complexity の choices 確認 → member 解決 → (セグメントが割れて
 
 ### 8 の main checkout 保護 (bdboard-kxqb)
 
-2026-09-25 に議長を main checkout (worktree ではなく
-`/Users/takumi/Documents/src/private_src/bdboard` 本体) で動かす運用に切り替えた。
-そうするとサブエージェントも main checkout を cwd として起動しうる。既存の規則 7 が
+2026-09-25 に議長を main checkout (worktree ではなくリポジトリ本体) で動かす運用に
+切り替えた。そうするとサブエージェントも main checkout を cwd として起動しうる。既存の規則 7 が
 サブエージェントに禁じていたのは main checkout での `git pull`・サーバー起動・listener
 kill だけで、`git checkout` / `switch` / `commit` / `reset` / `merge` / `stash` 等の
 working tree/HEAD 変更と Edit・Write によるファイル編集は止めていなかった。2026-09-25 に
@@ -293,18 +292,25 @@ working tree/HEAD を守ること自体は常時稼働サーバーの有無と�
 - `alwaysOnServer.port` を宣言していない契約下での、サブエージェントによる main checkout
   での `git pull` (下記「pull を対象外にした理由」)
 
-**fail-closed にした境界**: 「main checkout を対象にしている可能性があり、かつ
-サブコマンドが working tree/HEAD を変えうる」と判定できるが実効ディレクトリの解決に
-自信が持てない場合は deny 側に倒す (`sg_check_main_git_mutate` は対象ディレクトリが
-main と一致すると判定できたときだけ deny するので、この一文はロジックの新規追加では
-なく既存の判定精度に対する運用方針の宣言)。一方、**実効ディレクトリの解決自体**
-(`cd` の静的追跡・`NAME=値` 代入の展開) は規則 7 から引き継いだ既存の制約で、
-別ファイルに書いて実行する迂回 (`bash /tmp/x.sh`) や別コマンドで設定した変数の参照は
-解決できず、この部分は規則 7 と同じく fail-open のまま (下記「限界」)。
+**実際の判定境界 (正直な記述、opus レビューで訂正)**: `sg_check_main_git_mutate` は
+「対象ディレクトリが main checkout だと確定できたとき」だけ deny する。逆に言うと、
+**実効ディレクトリの解決自体が不確実な場合は deny ではなく allow (fail-open) になる** —
+これは規則 7 からそのまま引き継いだ既存の制約で、`cd` の静的追跡・同一コマンド内
+`NAME=値` 代入の展開の範囲を超えるもの (別ファイルに書いて実行する迂回 `bash /tmp/x.sh`、
+別コマンドで設定した変数の参照、`git -C "$(pwd)"` のような未解決の `-C` 引数、
+`GIT_DIR`/`GIT_WORK_TREE` 環境変数、絶対パス `git` 呼び出し、パイプ・`if`/`for` 等の
+制御構文の後段に置かれた `git`) はどれも解決できず allow に倒れる (下記「限界」)。
+当初の設計意図は「main checkout かつ変更系サブコマンドと判定できるが確信が持てない
+ケースは deny に倒す」だったが、実装は規則 7 の実効ディレクトリ解決エンジンをそのまま
+再利用しており (二重実装しない方針、上記)、そのエンジン自体を deny 優先の新しい
+判定ロジックへ作り替えることはこのチケットのスコープ外とした — 規則 7 は既にレビュー
+済みで他セッションが依存する挙動のため、十分なテスト無しに判定方針を変えるとむしろ
+誤検知の新規リスクを増やすと判断したため。残存する具体的なすり抜けパターンは
+「限界」に列挙する。
 
 #### pull を対象外にした理由
 
-`git pull` は working tree/HEAD を変えるので性質上は他の 11 個と同列だが、規則 8 の
+`git pull` は working tree/HEAD を変えるので性質上は他の 16 個と同列だが、規則 8 の
 サブコマンド一覧には**含めていない**。既存の 7a が「サブエージェントから main checkout
 での `git pull`」を `alwaysOnServer.port` があるときに deny 済みで、規則 8 の役割は
 「7 が元から対象にしていなかった working tree/HEAD 変更系を追加で塞ぐ」ことだけだからで、
@@ -317,12 +323,32 @@ main と一致すると判定できたときだけ deny するので、この一
 
 規則 7 の「限界」節と同じ (`hooks/lib-main-checkout.sh` を共有するため)。加えて:
 
-- 対象は列挙した 12 個の git サブコマンドのみ。`git log --format=... > FETCH_HEAD` の
-  ような迂回や、git 以外のコマンドで working tree を書き換える経路 (`tar` 展開など) は
-  対象外。
+- 対象は列挙した 16 個の git サブコマンドのみ。`git log --format=... > FETCH_HEAD` の
+  ような迂回や、git 以外のコマンドで working tree を書き換える経路 (`tar` 展開・`sed -i`・
+  `cp`/`mv`/`rm`/`tee` 等) は対象外 (Bash hook 全体が対象とするのは「git/npm/再起動
+  スクリプトのサブコマンド認識」であって、任意のファイル書き換えコマンドの追跡ではない)。
+- 実効ディレクトリの解決を欺ける具体的な形が opus レビュー (2026-09-25) で複数実測された。
+  いずれも規則 7 から引き継いだ既存の制約の範囲内 (新規の後退ではない): `git` がセグメント
+  先頭語ではない形 (`echo x | git commit`、`if git checkout other; then …`、
+  `nice git checkout other`)、絶対パス/バックスラッシュ経由の `git` 呼び出し
+  (`/usr/bin/git checkout` 、`\git checkout`)、`-C` 引数が `$(pwd)` や別コマンドで設定した
+  変数など静的に解決できない形、`GIT_DIR`/`GIT_WORK_TREE` 環境変数、`cd -` (直前の
+  `SG_PREV_DIR` を巻き戻す前に上書きしてしまう)、末尾に空白を持つサブシェル閉じ
+  `... ) &&` の一部の並び。これらは意図的な回避手段の構築を要し、通常の (不注意な)
+  サブエージェント運用では起こりにくいと判断し、このチケットのスコープでは対応しない
+  (follow-up 課題として個別に起票する)。
+- 引用符マスク (`sg_mask_quoted_separators`) はヒアドキュメント本体 (`<<EOF ... EOF`) を
+  特別扱いしない (このファイル冒頭のコメント、bdboard-kmh2/PR #767 由来の既知の制限で、
+  このチケットが新規に持ち込んだものではない)。そのため `bd comment` / `gh pr create --body`
+  / commit メッセージの本文を `$(cat <<'EOF' ... EOF)` のようなヒアドキュメントで渡す形では、
+  本体の行が `git checkout` のような語で始まると規則 8 が誤って main checkout 判定に
+  巻き込むことがある。単純な `'...'` / `"..."` 引用 (誤検知しない、上記) と違い、
+  ヒアドキュメント全体の完全な解析には本格的な shell パーサーが要るため次点課題とする。
 - pre-edit-guard.sh の main checkout 保護 (下記) とは別実装 (Bash の引用符付きコマンド
   文字列と Edit/Write の `file_path` は形が違うため、判定の入口は共有できない)。
   main checkout 判定関数 (`bh_main_checkout` / `bh_dir_is_main`) 自体は共有する。
+  Bash 経由の `sed -i` / `cp` / `tee` 等によるファイル書き換えは pre-edit-guard.sh の
+  対象外でもある (Edit|Write|MultiEdit|NotebookEdit ツールだけを見る hook のため)。
 
 ### 誤検知について
 
@@ -354,7 +380,10 @@ git が無い・パスが取れない・ブランチが判らない場合は all
 `.claude/worktrees/` 配下の非 worktree ディレクトリ (登録されていない普通のフォルダ) は
 toplevel が main のままなので deny される。ABSOLUTE_PATH が (Write での新規作成などで) まだ
 存在しない場合は、実在する親ディレクトリまで遡って判定する。git が無い・main checkout を
-解決できない場合は allow (fail-open)。
+解決できない場合は allow (fail-open)。**既知の限界 (opus レビュー 2026-09-25)**:
+main checkout の `.git/` 配下 (`.git/config`・`.git/hooks/*` 等、全 worktree で共有される
+ファイル群) への Edit/Write は対象外 — `git rev-parse --show-toplevel` は `.git/` 内部では
+失敗するため main checkout 判定自体が成立せず allow に倒れる。follow-up 課題とする。
 
 ## stop-ticket-gate.sh — Stop (matcher なし)
 

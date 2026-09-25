@@ -26,7 +26,9 @@
 # 常用する運用 (bdboard-kxqb) では、サブエージェントの checkout / commit / reset / merge 等が
 # 議長の作業ツリーを直接壊しうる)。サブエージェント (agent_id あり) が main checkout を
 # 対象に git checkout / switch / commit / reset / merge / rebase / stash / restore /
-# cherry-pick / revert / am を実行するのを deny する。pull は含まない — 元から 7a
+# cherry-pick / revert / am / clean / bisect / apply / rm / mv を実行するのを deny する
+# (opus レビュー 2026-09-25 で clean/bisect/apply/rm/mv の抜けを指摘され追加)。
+# pull は含まない — 元から 7a
 # (SG_PORT 前提) の対象で、規則 8 はそこに無かった working tree/HEAD 変更系だけを追加で
 # 塞ぐ (二重化しない。SG_PORT の無い契約では 7a 同様 pull は対象外のまま)。worktree
 # add/remove/list・branch (削除含む)・push・fetch・remote・log 等の読み取り/非破壊系も対象外。
@@ -716,7 +718,7 @@ while IFS= read -r sg_seg; do
             sg_check_main_action "$sg_git_dir" '7a-git-pull' 'git pull'
           fi
           ;;
-        checkout | switch | commit | reset | merge | rebase | stash | restore | cherry-pick | revert | am)
+        checkout | switch | commit | reset | merge | rebase | stash | restore | cherry-pick | revert | am | clean | bisect | apply | rm | mv)
           sg_check_main_git_mutate "$sg_git_dir" "$1"
           ;;
       esac

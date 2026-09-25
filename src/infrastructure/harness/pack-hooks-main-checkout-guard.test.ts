@@ -14,8 +14,11 @@ import { NodeCommandRunner } from '../process/node-command-runner.js';
  *
  *   - pre-bash-guard.sh 規則 8 (本体 hooks/server-guard.sh): サブエージェントによる
  *     main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/
- *     cherry-pick/revert/am/pull を deny。alwaysOnServer.port の有無に関係なく常時有効
- *     (規則 7 とは独立)。
+ *     cherry-pick/revert/am/clean/bisect/apply/rm/mv を deny。alwaysOnServer.port の有無に
+ *     関係なく常時有効 (規則 7 とは独立)。pull は規則 8 に**含まない** — 既存の規則 7a
+ *     (alwaysOnServer.port が要る) だけが引き続き担当する (二重化しない。下の
+ *     MUTATING_FORMS の pull エントリは 7a 経由で deny されることの確認であって、
+ *     規則 8 自身の対象ではない — 詳細は hooks/README.md「pull を対象外にした理由」)。
  *   - pre-edit-guard.sh 規則 2: 同じ main checkout 判定 (hooks/lib-main-checkout.sh を
  *     server-guard.sh と共有) で、サブエージェントによる main checkout 配下への
  *     Edit/Write/MultiEdit/NotebookEdit を deny。
@@ -201,6 +204,17 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
       { label: 'cherry-pick', command: 'git cherry-pick abc123' },
       { label: 'revert', command: 'git revert --no-edit abc123' },
       { label: 'am', command: 'git am /tmp/patch.mbox' },
+      // opus レビュー (2026-09-25, bdboard-kxqb PR #775) で working tree を変える他の
+      // サブコマンドの抜けを指摘され追加。clean/bisect は working tree の削除・HEAD 移動を
+      // 伴い、apply/rm/mv は working tree/index を直接書き換える。
+      { label: 'clean', command: 'git clean -fd' },
+      { label: 'bisect', command: 'git bisect start' },
+      { label: 'apply', command: 'git apply /tmp/patch.diff' },
+      { label: 'rm', command: 'git rm file.txt' },
+      { label: 'mv', command: 'git mv a.txt b.txt' },
+      // pull だけは規則 8 の対象ではなく既存の 7a (alwaysOnServer.port 必須) 経由で deny
+      // される。ここでは mainWithPort (port あり) を使うので 7a が発火し、他のエントリと
+      // 同じ「main checkout では deny」という観測結果になる — 経路が違うだけ (上のコメント参照)。
       { label: 'pull', command: 'git pull --ff-only' },
     ];
 
@@ -244,6 +258,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness main checkout gua
         }),
         'main checkout',
         'git reset',
+      );
+    });
+
+    it('denies subagent clean directly in the main checkout even without alwaysOnServer.port', async () => {
+      expectDeny(
+        await runBashHook({ command: 'git clean -fdx', cwd: mainNoPort, agentId: 'agent-1' }),
+        'main checkout',
+        'git clean',
       );
     });
 
