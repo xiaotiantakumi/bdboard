@@ -103,7 +103,9 @@ function newHolder(options) {
 // 変わらなければ SlotWaitTimeoutError を投げる。戻り値の release() は冪等。process 'exit' でも
 // 自動 release するので、呼び出し側が process.exit() する経路でも holder は残らない
 // (SIGKILL だけは残るが、それは次の参加者の dead-pid 回収が拾う)。overrides.io は他の holder を
-// 読む fs の差し替え口 (テストの失敗注入用。既定は node:fs)。
+// 読む/自分の holder file を書く fs の差し替え口 (テストの失敗注入用。既定は node:fs)。自分の
+// 書き込み (acquiredAt 等) の rename が一時的な errno で失敗しても writeHolderAtomically が
+// 短く再試行する (bdboard-smyp、verify-slot-files.mjs)。
 export async function acquireVerifySlot(overrides = {}, log = (line) => console.error(line)) {
   const options = { ...DEFAULT_SLOT_OPTIONS, ...overrides };
   const { slots, dir } = options;
@@ -117,7 +119,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
   let holder = newHolder(options);
   // 同名ファイルが既にある = かつて同じ pid を使ったプロセスの残骸 (pid 再利用)。
   // 今この pid の持ち主は自分なので、rename で置き換えてよい。
-  writeHolderAtomically(selfPath, holder);
+  await writeHolderAtomically(selfPath, holder, { io: options.io });
   const onExit = () => unlinkQuietly(selfPath);
   process.on('exit', onExit);
   const release = () => {
@@ -140,7 +142,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
       if (!sawSelf) {
         // 自分の holder file が外的要因で消えた場合の自己修復 (他の参加者から見え続けるため)。
         try {
-          writeHolderAtomically(selfPath, holder);
+          await writeHolderAtomically(selfPath, holder, { io: options.io });
         } catch {
           /* 次周で再試行 */
         }
@@ -150,7 +152,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
         // 他の holder から stale と見なされる前に並び直す (順番は queuedAt で保つ)。
         const refreshed = { ...holder, joinedAt: now };
         try {
-          writeHolderAtomically(selfPath, refreshed);
+          await writeHolderAtomically(selfPath, refreshed, { io: options.io });
           holder = refreshed; // 書けたときだけ (他の holder から見える joinedAt と揃える)
         } catch {
           /* 次周で再試行 (書けていない間は planSlots が自分を stale の年齢として取らせない) */
@@ -167,7 +169,7 @@ export async function acquireVerifySlot(overrides = {}, log = (line) => console.
         }
       }
       if (plan.acquire) {
-        writeHolderAtomically(selfPath, { ...holder, acquiredAt: Date.now() });
+        await writeHolderAtomically(selfPath, { ...holder, acquiredAt: Date.now() }, { io: options.io });
         if (waited) {
           log(`verify: slot acquired after ${Math.round((Date.now() - holder.queuedAt) / 1000)}s in queue (priority ${holder.priority})`);
         }

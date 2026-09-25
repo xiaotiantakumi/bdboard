@@ -14,6 +14,17 @@ const GONE = 'gone';
 const UNREADABLE = 'unreadable';
 const CORRUPT = 'corrupt';
 
+// bdboard-smyp: writeHolderAtomically の rename が一時的な errno で失敗したときに再試行する回数と
+// 待ち時間 (ms)。合計は 1 秒未満 (10+20+40+80+160+320 = 630ms)。これを使い切ってもまだ失敗するなら
+// 一時的な競合ではないとみなし、これまでどおり例外を投げる (呼び出し元の acquireVerifySlot が
+// スロットを release する)。
+const RENAME_RETRY_DELAYS_MS = [10, 20, 40, 80, 160, 320];
+// Windows で「相手が置き換え中のファイルへの rename」が失敗するときの errno (bdboard-wt5c の
+// readHolder と同じ集合)。それ以外 (ENOENT など) は一時的な競合ではないので再試行しない。
+const RENAME_RETRY_ERRNOS = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+const defaultWait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
@@ -92,10 +103,31 @@ function unreadableHolder(io, filePath, pid, now, unreadableSince) {
 
 // 一時ファイルに書いてから rename する (読み手が書きかけを「壊れたファイル」として消さないように)。
 // 一時ファイル名は holder-<pid>.json に一致しないので、新旧どちらの読み手にも無視される。
-export function writeHolderAtomically(filePath, holder) {
+//
+// bdboard-smyp: Windows では、自分の acquiredAt 書き込み (rename) が、たまたま同じ瞬間に相手が
+// この holder file を読んでいる操作 (アンチウイルスのスキャン等、ファイルを一時的に開く何か) と
+// 競合すると MoveFileEx が ERROR_ACCESS_DENIED (EPERM/EBUSY/EACCES) を返しうる (未検証。CI の直近
+// 実績では再現なし — 直近の verify-windows run に同種の失敗は見当たらない。bdboard-wt5c fable
+// レビュー指摘6)。起きても一瞬の競合のはずなので、読み手側 (readHolder) と対称に、短く・上限
+// 付きで再試行してから諦める。options.io / options.wait はテストの差し替え口 (既定は node:fs /
+// 実タイマー)。
+export async function writeHolderAtomically(filePath, holder, options = {}) {
+  const io = options.io || fs;
+  const wait = options.wait || defaultWait;
   const temporary = `${filePath}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(holder));
-  fs.renameSync(temporary, filePath);
+  io.writeFileSync(temporary, JSON.stringify(holder));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      io.renameSync(temporary, filePath);
+      return;
+    } catch (error) {
+      const code = error && error.code;
+      if (!RENAME_RETRY_ERRNOS.has(code) || attempt >= RENAME_RETRY_DELAYS_MS.length) {
+        throw error; // 対象外の errno、または再試行の上限に達した — 今までどおり呼び出し元に投げる
+      }
+      await wait(RENAME_RETRY_DELAYS_MS[attempt]);
+    }
+  }
 }
 
 /**

@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { holderPath, readOthers } from './verify-slot-files.mjs';
+import { holderPath, readOthers, writeHolderAtomically } from './verify-slot-files.mjs';
 import { MAX_SENIORITY_MS, planSlots, TIER_STEP_MS } from './verify-slot-queue.mjs';
 
 const makeDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'verify-slot-files-test-'));
@@ -158,5 +158,80 @@ describe('readOthers', () => {
     fs.unlinkSync(filePath);
     readOthers(dir, selfPathIn(dir), { io, now: later, unreadableSince }); // 消えた
     expect(unreadableSince.size).toBe(0);
+  });
+});
+
+
+describe('writeHolderAtomically', () => {
+  // bdboard-smyp: rename の一時的な失敗 (Windows の EPERM/EBUSY/EACCES) を短く・上限付きで
+  // 再試行することを、待ち時間を実タイマーではなく記録するだけの wait 差し替え口で確認する
+  // (固定 sleep に頼らない。sum の 1 秒未満・再試行が有限であることも合わせて確認)。
+  const recordingWait = (waits) => async (ms) => {
+    waits.push(ms);
+  };
+
+  const renameFailingNTimes = (n, code) => {
+    let remaining = n;
+    return (from, to) => {
+      if (remaining > 0) {
+        remaining -= 1;
+        throw errnoError(code);
+      }
+      fs.renameSync(from, to);
+    };
+  };
+
+  it.each(['EPERM', 'EBUSY', 'EACCES'])(
+    'recovers once the transient rename failure (%s) goes away',
+    async (code) => {
+      const dir = makeDir();
+      const filePath = holderPath(dir, livePid);
+      const waits = [];
+      const io = { ...fs, renameSync: renameFailingNTimes(2, code) };
+      const holder = { v: 2, pid: livePid, joinedAt: 1_000 };
+
+      await writeHolderAtomically(filePath, holder, { io, wait: recordingWait(waits) });
+
+      expect(JSON.parse(fs.readFileSync(filePath, 'utf8'))).toEqual(holder);
+      expect(waits).toEqual([10, 20]); // 2 回だけ待って 3 回目の rename で回復した
+    },
+  );
+
+  it('throws the original error once the retry budget is exhausted', async () => {
+    const dir = makeDir();
+    const filePath = holderPath(dir, livePid);
+    const waits = [];
+    const io = {
+      ...fs,
+      renameSync: () => {
+        throw errnoError('EBUSY');
+      },
+    };
+
+    await expect(
+      writeHolderAtomically(filePath, { v: 2, pid: livePid, joinedAt: 1_000 }, { io, wait: recordingWait(waits) }),
+    ).rejects.toMatchObject({ code: 'EBUSY' });
+
+    expect(waits.length).toBeGreaterThan(0); // 再試行はした
+    expect(waits.reduce((sum, ms) => sum + ms, 0)).toBeLessThan(1_000); // 合計は 1 秒未満
+    expect(fs.existsSync(filePath)).toBe(false); // rename できていないので holder file は書き替わっていない
+  });
+
+  it.each(['ENOENT', 'EIO'])('does not retry an errno outside the transient set (%s)', async (code) => {
+    const dir = makeDir();
+    const filePath = holderPath(dir, livePid);
+    const waits = [];
+    const io = {
+      ...fs,
+      renameSync: () => {
+        throw errnoError(code);
+      },
+    };
+
+    await expect(
+      writeHolderAtomically(filePath, { v: 2, pid: livePid, joinedAt: 1_000 }, { io, wait: recordingWait(waits) }),
+    ).rejects.toMatchObject({ code });
+
+    expect(waits).toEqual([]); // 一度も待たずに即座に失敗する
   });
 });

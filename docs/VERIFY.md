@@ -222,7 +222,12 @@ What this means operationally:
   counted as running while its pid is alive and goes stale 30 min after its
   mtime, and is never deleted; if its pid is dead it is reclaimed. Only a file
   that reads but does not parse (a half-written holder from an older script)
-  is skipped, and deleted once it is more than 5 s old (bdboard-wt5c). If
+  is skipped, and deleted once it is more than 5 s old (bdboard-wt5c). The
+  write side has the same seam: a holder's own rename (writing its `joinedAt`
+  refresh or `acquiredAt`) retries the same transient errno briefly and
+  boundedly (six tries, well under 1 s total) before giving up and letting
+  the caller release the slot as before (bdboard-smyp; unverified on real CI
+  as of writing, added defensively to match the read side). If
   the set of running holders does not change for 15 min, the waiter exits
   non-zero naming those pids — investigate them (hung verify?) rather than
   disabling the slot. (The timeout counts time without progress, not total
