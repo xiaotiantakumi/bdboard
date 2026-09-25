@@ -105,6 +105,29 @@ const expectedGateResolveArgs = (
   buildGateCloseReason(responseText),
 ];
 
+// bdboard-rftd: respond() が own-question ambiguous 分岐で T の own-question 状態
+// (decision_question / decision_options / decision_allow_freeform の3キー、opus レビュー
+// 指摘 major -- decision_question だけ消すと古い選択肢ボタンが残り、2回目の回答が無関係な
+// gate を誤って resolve しうる) を消すときに使う引数。buildUnsetOwnDecisionMetadataArgs
+// (respond-args.ts) は公開エクスポート面に含めていない (exportSurface テスト参照) ので、
+// ここでも他の expected*Args と同じく、実際の CLI 引数をこのテストファイル内に literal で
+// 固定する。
+const expectedUnsetOwnDecisionMetadataArgs = (
+  rootPath: string,
+  issueId: string,
+): readonly string[] => [
+  '-C',
+  rootPath,
+  'update',
+  issueId,
+  '--unset-metadata',
+  'decision_question',
+  '--unset-metadata',
+  'decision_options',
+  '--unset-metadata',
+  'decision_allow_freeform',
+];
+
 function showGateHandler(issueId: string) {
   return async (_command: string, args: readonly string[]) => {
     if (args.includes('show')) {
@@ -570,9 +593,16 @@ describe('createBdCliHumanDecisions', () => {
   // decision_question を持っていれば、その1件の回答が「gate への回答」なのか「チケット自身の
   // 質問への回答」なのか respond() 側では特定できない。安全側に倒し、gate は resolve せず・
   // human ラベルも外さない(bdboard-q1k9 と同じ ambiguous 分岐に合流させる)。
-  it('does not auto-resolve a single unrelated blocking human gate when the ticket carries its own standalone decision_question (bdboard-cine)', async () => {
+  // bdboard-rftd: この分岐は T 自身の質問への回答として確定的に記録されるため、respond() は
+  // コメント追記の直後に T の own-question 状態(decision_question / decision_options /
+  // decision_allow_freeform の3キー、opus レビュー指摘 major)を unset する(3件目の
+  // bd update 呼び出し)。opus レビュー指摘(blocker): unset で消される前の質問文自体が、
+  // その直前のコメント本文に埋め込まれていることも直接押さえる(そうでなければ履歴から
+  // 質問文が本当に失われてしまう)。
+  it('does not auto-resolve a single unrelated blocking human gate, but does unset the ticket own decision state and preserve the question text in the comment (bdboard-cine / bdboard-rftd)', async () => {
     const issueId = 'bdboard-task';
     const gateId = 'bdboard-human-gate-1';
+    const ownQuestionText = 'この場合どうしますか?';
     const { runner, calls } = createFakeRunner({
       handler: async (_command, args) => {
         if (args.includes('show')) {
@@ -590,7 +620,7 @@ describe('createBdCliHumanDecisions', () => {
                     dependency_type: 'blocks',
                   },
                 ],
-                metadata: { decision_question: 'この場合どうしますか?' },
+                metadata: { decision_question: ownQuestionText },
               },
             ]),
             stderr: '',
@@ -618,8 +648,17 @@ describe('createBdCliHumanDecisions', () => {
           '/my/root',
           'comment',
           issueId,
-          buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId]),
+          buildTicketOwnQuestionAmbiguousResponseCommentBody(
+            'A案を採用',
+            [gateId],
+            ownQuestionText,
+          ),
         ],
+        options: { timeoutMs: 30_000 },
+      },
+      {
+        command: '/usr/bin/bd',
+        args: expectedUnsetOwnDecisionMetadataArgs('/my/root', issueId),
         options: { timeoutMs: 30_000 },
       },
     ]);
@@ -627,9 +666,169 @@ describe('createBdCliHumanDecisions', () => {
       false,
     );
     expect(calls.some((call) => call.args.includes('remove'))).toBe(false);
-    expect(buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId])).toContain(
-      gateId,
+    expect(
+      buildTicketOwnQuestionAmbiguousResponseCommentBody('A案を採用', [gateId], ownQuestionText),
+    ).toContain(gateId);
+    // opus レビュー指摘(blocker)の直接的な回帰ガード: unset で消される decision_question の
+    // 文面が、実際に送信された bd comment の引数に含まれていること(=履歴から失われないこと)
+    // を、respond() の実呼び出し経路(calls[1])で直接確認する。
+    const commentCall = calls[1];
+    expect(commentCall?.args.some((arg) => arg.includes(ownQuestionText))).toBe(true);
+    // 3キーとも unset していることを、respond() の実呼び出し経路(calls[2])で直接確認する。
+    const unsetCall = calls[2];
+    expect(unsetCall?.args.filter((arg) => arg === '--unset-metadata')).toHaveLength(3);
+    expect(unsetCall?.args).toEqual(
+      expect.arrayContaining(['decision_question', 'decision_options', 'decision_allow_freeform']),
     );
+  });
+
+  // bdboard-rftd: unset-metadata の失敗(lock-contention 等)は fail-soft。respond() 全体は
+  // 例外を投げず、ambiguousGateIds を返した従来の成功結果をそのまま返す(このチケットへの
+  // 3回目の回答が必要、という旧来の挙動にフォールバックするだけで悪化はしない)。
+  it('does not throw when unsetting the own decision_question fails (fail-soft, bdboard-rftd)', async () => {
+    const issueId = 'bdboard-task';
+    const gateId = 'bdboard-human-gate-1';
+    const { runner, calls } = createFakeRunner({
+      handler: async (_command, args) => {
+        if (args.includes('show')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: issueId,
+                issue_type: 'task',
+                dependencies: [
+                  {
+                    id: gateId,
+                    issue_type: 'gate',
+                    await_type: 'human',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+                metadata: { decision_question: 'この場合どうしますか?' },
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args.includes('--unset-metadata')) {
+          throw new Error('database is locked');
+        }
+        return { stdout: '', stderr: '', exitCode: 0 };
+      },
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    const outcome = await port.respond('/my/root', issueId, 'A案を採用');
+
+    expect(outcome).toEqual({ kind: 'ticket', closed: false, ambiguousGateIds: [gateId] });
+    expect(
+      calls.some((call) => call.args.includes('--unset-metadata')),
+    ).toBe(true);
+  });
+
+  // bdboard-rftd (裁定の核心): stateful two-call round-trip pinning the actual fix this
+  // ticket asked for -- answering T's own card first (ambiguous branch, unsets
+  // decision_question), then answering the unrelated blocking gate G individually, must
+  // now clear T's human label via the gate-side cleanup (clearHumanLabelOnUnblockedTickets,
+  // bdboard-mw8y) without a third answer to T. Before this fix, mw8y's
+  // hasOwnDecisionQuestion guard would keep skipping T here because decision_question was
+  // never unset (see the now-updated shared.ts comment).
+  function ownQuestionThenGateHandler(options: { readonly issueId: string; readonly gateId: string }) {
+    let gateClosed = false;
+    let decisionQuestionUnset = false;
+    return async (_command: string, args: readonly string[]) => {
+      if (args.includes('close') && args.includes(options.gateId)) {
+        gateClosed = true;
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }
+      if (args.includes('--unset-metadata') && args.includes(options.issueId)) {
+        decisionQuestionUnset = true;
+        return { stdout: '', stderr: '', exitCode: 0 };
+      }
+      if (args.includes('show')) {
+        const showIndex = args.indexOf('show');
+        const shownId = args[showIndex + 1];
+        if (args.includes('--include-dependents')) {
+          return {
+            stdout: JSON.stringify([
+              {
+                id: shownId,
+                issue_type: 'gate',
+                dependents: [
+                  {
+                    id: options.issueId,
+                    issue_type: 'task',
+                    status: 'open',
+                    dependency_type: 'blocks',
+                  },
+                ],
+              },
+            ]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (shownId === options.gateId) {
+          return {
+            stdout: JSON.stringify([{ id: shownId, issue_type: 'gate' }]),
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        // shownId === options.issueId (T): reflects gate closure and the
+        // decision_question unset as they happen, exactly like real bd state.
+        return {
+          stdout: JSON.stringify([
+            {
+              id: shownId,
+              issue_type: 'task',
+              dependencies: [
+                {
+                  id: options.gateId,
+                  issue_type: 'gate',
+                  await_type: 'human',
+                  status: gateClosed ? 'closed' : 'open',
+                  dependency_type: 'blocks',
+                },
+              ],
+              metadata: decisionQuestionUnset ? {} : { decision_question: 'この場合どうしますか?' },
+              labels: ['human'],
+            },
+          ]),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    };
+  }
+
+  it('clears T human label when G is answered individually after T already answered its own question (bdboard-rftd: T then G)', async () => {
+    const issueId = 'bdboard-task'; // T: has its own decision_question
+    const gateId = 'bdboard-gate'; // G: unrelated blocking human gate, exactly 1
+    const { runner, calls } = createFakeRunner({
+      handler: ownQuestionThenGateHandler({ issueId, gateId }),
+    });
+    const port = createBdCliHumanDecisions(runner, { bdPath: '/usr/bin/bd' });
+
+    // Step 1: answer T's own card. Ambiguous (own question + 1 unrelated gate), so G is
+    // NOT resolved here -- but metadata.decision_question is unset as a side effect.
+    const ticketOutcome = await port.respond('/my/root', issueId, 'T自身の質問への回答');
+    expect(ticketOutcome).toEqual({ kind: 'ticket', closed: false, ambiguousGateIds: [gateId] });
+    expect(calls.some((call) => call.args.includes('--unset-metadata'))).toBe(true);
+
+    // Step 2: answer G's own card individually. The gate-side cleanup re-probes T: T no
+    // longer has any open blocking human gate (G just closed) AND no longer has its own
+    // decision_question (unset in step 1), so T's human label is cleared here -- with no
+    // third answer to T's own card required.
+    const gateOutcome = await port.respond('/my/root', gateId, 'Gの質問への回答');
+    expect(gateOutcome).toEqual({
+      kind: 'gate',
+      closed: true,
+      clearedHumanLabelTicketIds: [issueId],
+    });
   });
 
   // bdboard-cine: ticket が own decision_question を持っていなければ、ちょうど1件の
@@ -656,6 +855,8 @@ describe('createBdCliHumanDecisions', () => {
     expect(calls.some((call) => call.args.includes('gate') && call.args.includes('resolve'))).toBe(
       true,
     );
+    // bdboard-rftd: no own decision_question here, so nothing to unset.
+    expect(calls.some((call) => call.args.includes('--unset-metadata'))).toBe(false);
   });
 
   // bdboard-cine: a ticket with its own standalone decision_question but zero blocking
@@ -696,6 +897,10 @@ describe('createBdCliHumanDecisions', () => {
     expect(
       calls.some((call) => call.args.includes('gate') && call.args.includes('resolve')),
     ).toBe(false);
+    // bdboard-rftd: this is NOT the ambiguous own-question branch (no blocking gate at
+    // all, so isOwnQuestionAmbiguousAnswer is false) -- the mw8y fail-safe ("respond()
+    // never clears decision_question") still applies unchanged here.
+    expect(calls.some((call) => call.args.includes('--unset-metadata'))).toBe(false);
   });
 
   // bdboard-cine: when a ticket has its own decision_question AND 2+ distinct blocking
@@ -763,6 +968,12 @@ describe('createBdCliHumanDecisions', () => {
       ],
       options: { timeoutMs: 30_000 },
     });
+    // bdboard-rftd: the own-question unset is scoped to isOwnQuestionAmbiguousAnswer only,
+    // which requires hasMultipleBlockingHumanGates to be false. With 2 blocking gates this
+    // is the q1k9 multi-gate path, not the cine own-question path, so even though the
+    // ticket also has its own decision_question, nothing is unset -- which of the 2+
+    // gates (if any) this answer was "for" is still genuinely ambiguous.
+    expect(calls.some((call) => call.args.includes('--unset-metadata'))).toBe(false);
   });
 
   // bdboard-ixx9: bdboard-giyt (gate->ticket direction) added sibling-ticket cleanup when

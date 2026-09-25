@@ -123,15 +123,18 @@ export function TicketDecisionSection({
            * 以上あり、かつこのチケット自身も standalone な decision_question を
            * 持っている(bdboard-cine)。RespondOutcome はどちらの理由かを区別して
            * 返さないため、文言はどちらでも正しく読める理由不問の表現にしている。
-           * (2) の場合、gate に個別に回答しても mw8y の fail-safe により
-           * このチケットの human ラベルは自動では外れない(このチケット自身が
-           * decision_question を持つ限り、gate 側respond()の掃除はこのチケットを
-           * 対象外にする)ため、その旨も案内する。
+           * bdboard-rftd: (2) の場合、respond() はこの回答を T 自身の質問への
+           * 最終回答とみなし、metadata.decision_question を消す(質問文自体は
+           * この回答コメントに残るので履歴は失われない)。そのため以下の gate に
+           * 個別に回答すれば、mw8y の gate 側respond()の掃除(clearHumanLabelOnUnblockedTickets)
+           * が正しくこのチケットの human ラベルを外せる — このチケットへの
+           * もう一度の回答は不要になったため、その案内(PR #729 の暫定文言)は
+           * この PR で削除した。
            */}
           {submittedDecision.outcome.ambiguousGateIds !== undefined ? (
             <>
               <p className="detail-help">
-                このチケットには、個別に回答が必要な human gate が残っています。回答はこのチケットへのコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。gate に回答した後もこのチケットが確認待ちのまま残っている場合は、このチケットにもう一度回答してください。
+                このチケットには、個別に回答が必要な human gate が残っています。回答はこのチケットへのコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。
               </p>
               {/*
                * bdboard-v78e レビュー指摘: gate はエピック絞り込みの対象外

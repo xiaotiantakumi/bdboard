@@ -335,6 +335,11 @@ describe('TicketDetailPanel pending decisions', () => {
   // applied. This test's 2-gate fixture exercises the q1k9 shape, but the same text (and
   // this same assertion) covers the cine shape too — see
   // bd-cli-human-decisions.respond.test.ts for the server-side behavior of each case.
+  // bdboard-rftd: PR #729 had added a trailing "answer this ticket a third time if it's
+  // still pending after answering the gate" sentence to cover the cine shape. That is no
+  // longer needed — respond() now unsets the ticket's own decision_question in that
+  // branch, so the gate-side cleanup (mw8y) clears the label on its own — so this PR
+  // removed the sentence and this test's expectation.
   it('shows ambiguous-gate guidance instead of the generic message when the decision resolves nothing (bdboard-v78e)', async () => {
     mockPostTicketDecision.mockResolvedValue({
       kind: 'ticket',
@@ -358,7 +363,7 @@ describe('TicketDetailPanel pending decisions', () => {
 
     expect(
       await screen.findByText(
-        'このチケットには、個別に回答が必要な human gate が残っています。回答はこのチケットへのコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。gate に回答した後もこのチケットが確認待ちのまま残っている場合は、このチケットにもう一度回答してください。',
+        'このチケットには、個別に回答が必要な human gate が残っています。回答はこのチケットへのコメントとして記録しましたが、gate の解決と確認待ちの解除は行っていません。このチケットは確認待ちのまま残ります。下の gate を開いて個別に回答してください。',
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'bdboard-gate-1' })).toBeInTheDocument();
