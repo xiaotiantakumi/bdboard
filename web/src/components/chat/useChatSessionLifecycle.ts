@@ -19,7 +19,10 @@ export interface UseChatSessionLifecycleParams
       UseChatConversationsStateResult,
       'historyRequestIdRef' | 'setConversations' | 'setHistoryLoadedFor' | 'setLoadingHistoryFor' | 'setThreadModelIds'
     >,
-    Pick<UseChatThreadListsResult, 'openThreads' | 'openThreadIdsRef' | 'setThreadLists' | 'setOpenThreadIds'>,
+    Pick<
+      UseChatThreadListsResult,
+      'openThreads' | 'openThreadIdsRef' | 'restoredProjectsRef' | 'setThreadLists' | 'setOpenThreadIds'
+    >,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
   cancelThreadConfirmDelete: () => void;
@@ -45,7 +48,7 @@ export interface UseChatSessionLifecycleParams
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
-  const { openThreads, openThreadIdsRef, setThreadLists, setOpenThreadIds } = params;
+  const { openThreads, openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds } = params;
   const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
 
   const applyRecoveredTurn = useCallback(
@@ -59,12 +62,42 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       // 回収したセッションを足す。E7 の応答はこの後に届いても一覧・open・選択を当てない
       // (chat/useTurnStatusRecovery.ts が当てる直前に一覧の request-id を進める)ので、
       // ここで復元しないと開いていたスレッドと選択が失われ、永続化も回収分だけで上書きされた。
+      //
+      // bdboard-4w2d: 「まだ復元していない」の判定に openThreadIdsRef.current[projectId]
+      // === undefined を代理として使っていたが、初回一覧の読込中に別経路
+      // (chat/useChatSendCommits.ts の送信成功、handleAgentChange)が先に
+      // openThreadIds[projectId] を作ると、この代理は「復元済み」と誤判定し、
+      // 永続化からの復元(restoreThreadView)を飛ばして writePersistedChatThreadState で
+      // open を racing write 分と回収分だけに上書きしていた。restoredProjectsRef
+      // (chat/useChatThreadLists.ts)は「このプロジェクトの一覧・open を実際に
+      // 復元する処理を通したか」だけを明示的に憶えるマーカーで、E7 が自分の復元後に
+      // 立て、ここでも立てる。openThreadIds の中身の有無では推測しない。
+      //
+      // bdboard-4w2d(Opus レビュー blocker 1 対応): restoredProjectsRef への追加は
+      // 同期的な ref 変更だが、openThreadIdsRef.current は
+      // chat/useChatThreadLists.ts の `openThreadIdsRef.current = openThreadIds`
+      // (関数本体のトップレベル、つまり次の再レンダー時)でしか追いつかない。E7 の
+      // .then() がマークだけ済ませた直後、その再レンダーが走る前にこの hydrate が
+      // 割り込むと、マークは立っているのに knownOpen はまだ古い(このプロジェクトが
+      // 初めてなら undefined の)ままになり得る。knownOpen がまだ undefined のうちは
+      // マーカーだけでは「復元済み」と判定しない(この一手だけの安全弁 — marker が
+      // 立っていない限り knownOpen の有無だけで復元済み扱いにはならないので、
+      // 「populated openThreadIds を復元済みの代理にする」という元のバグには戻らない)。
       const knownOpen = openThreadIdsRef.current[selectedProjectId];
-      const restored =
-        knownOpen === undefined
-          ? restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId])
-          : undefined;
-      const currentOpen = knownOpen ?? restored?.open ?? [];
+      const alreadyRestored = restoredProjectsRef.current.has(selectedProjectId) && knownOpen !== undefined;
+      const restored = alreadyRestored
+        ? undefined
+        : restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
+      if (!alreadyRestored) {
+        restoredProjectsRef.current.add(selectedProjectId);
+      }
+      // bdboard-4w2d: 復元を行う場合、永続化からの open と、この fetch の in-flight
+      // 中に別経路が先に openThreadIds へ書いていた分の両方を残す(和集合)。
+      // 復元を「永続化からの完全な置き換え」にすると、その racing write を
+      // 握りつぶしてしまう。
+      const currentOpen = alreadyRestored
+        ? (knownOpen ?? [])
+        : Array.from(new Set([...(restored?.open ?? []), ...(knownOpen ?? [])]));
       const nextOpen = [...currentOpen.filter((id) => id !== payload.sessionId), payload.sessionId];
       const currentSelected = selectedThreadIdsRef.current[selectedProjectId] ?? restored?.selected;
       // bdboard-cemi: チケット起動のドラフト表示中(draftNonces[projectId] > 0 かつ
@@ -120,6 +153,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     [
       selectedProjectId,
       openThreadIdsRef,
+      restoredProjectsRef,
       selectedThreadIdsRef,
       setThreadLists,
       setOpenThreadIds,

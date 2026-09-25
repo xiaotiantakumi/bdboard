@@ -47,6 +47,8 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
   const pendingPrefillRef = useRef<PendingPrefill>(null);
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
+  // bdboard-4w2d: E7 と applyRecoveredTurn が共有する「一覧・open 復元済み」マーカー。
+  const restoredProjectsRef = useRef<Set<string>>(new Set());
   useThreadListSync({
     selectedProjectId: projectId,
     setThreadError: notifications.setThreadError,
@@ -59,8 +61,18 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     setOpenThreadIds,
     setSelectedThreadIds: key.setSelectedThreadIds,
     startNewDraftThread,
+    restoredProjectsRef,
   });
-  return { key, conv, notifications, threadLists, openThreadIds, pendingPrefillRef, pendingTicketDraftProjectRef };
+  return {
+    key,
+    conv,
+    notifications,
+    threadLists,
+    openThreadIds,
+    pendingPrefillRef,
+    pendingTicketDraftProjectRef,
+    restoredProjectsRef,
+  };
 }
 
 function renderProbe(projectId = 'proj-a') {
@@ -97,6 +109,8 @@ describe('useThreadListSync', () => {
     expect(result.current.threadLists['proj-a']?.map((t) => t.sessionId)).toEqual(['sess-1', 'sess-2']);
     expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1', 'sess-2'] });
     expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-1' });
+    // bdboard-4w2d: 復元を実際に行った後はマーカーを立てる。
+    expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
   });
 
   it('keeps only persisted ids the server still lists and restores the persisted selection', async () => {
@@ -156,6 +170,73 @@ describe('useThreadListSync', () => {
     expect(result.current.notifications.threadError).toBe('スレッド一覧の取得に失敗しました。');
     expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-gone', 'sess-2'] });
     expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-gone' });
+  });
+
+  it('uses the persisted state as of when the response arrives, not a stale snapshot from when the fetch started (bdboard-4w2d)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result } = renderProbe();
+    // 効果開始の時点ではまだ何も永続化されていない。fetch が in-flight の間に
+    // 別経路(useChatSendCommits.ts の送信成功に相当)が永続化を書き込む —
+    // 以前はここで effect 開始時に読んだ古いスナップショット(undefined)を
+    // 使い続けていたため、この書き込みを取りこぼして全スレッドを開いていた。
+    act(() => {
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-1'], selectedSessionId: 'sess-1' });
+    });
+    await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+    expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1'] });
+    expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-1' });
+    expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
+  });
+
+  it('falls back to the persisted state as of when the failure arrives, not a stale snapshot (bdboard-4w2d)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result } = renderProbe();
+    act(() => {
+      writePersistedChatThreadState('proj-a', { activeSessionIds: ['sess-9'], selectedSessionId: 'sess-9' });
+    });
+    await act(async () => { list.reject(new Error('down')); await list.promise.catch(() => undefined); });
+    expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-9'] });
+    expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-9' });
+    expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
+  });
+
+  it('does not overwrite openThreadIds when another writer already established this project\'s state before the fetch resolves (bdboard-4w2d, Opus レビュー blocker 2 対応)', async () => {
+    // 例: エージェント切替(handleAgentChange の明示的リセット)や、先に完了した
+    // turn-status 回収の hydrate が、この fetch の in-flight 中に既にこのプロジェクトの
+    // open/選択を確立してマーク済みだったとする。E7 は「持っている情報を足し合わせる」
+    // のではなく「これが正しい状態そのもの」という確定的な確立を上書きしてはならない —
+    // ここで上書きすると、persisted が(handleAgentChange により)未設定のまま
+    // restoreThreadView に渡り、「永続化が無い ⇒ 全スレッドを開く」既定則に従って
+    // 意図的な空状態へ全スレッドを再展開してしまう。
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result, startNewDraftThread } = renderProbe();
+    act(() => {
+      result.current.restoredProjectsRef.current.add('proj-a');
+    });
+    result.current.pendingTicketDraftProjectRef.current = 'proj-a';
+    await act(async () => { list.resolve([thread('sess-1'), thread('sess-2')]); await list.promise; });
+    expect(result.current.openThreadIds).toEqual({});
+    expect(result.current.key.selectedThreadIds).toEqual({});
+    // pending なチケット起動ドラフトの消化は、この応答でしか担えないので続く。
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
+    expect(result.current.pendingTicketDraftProjectRef.current).toBeNull();
+  });
+
+  it('does not overwrite openThreadIds on the failure path either, when another writer already established this project\'s state (bdboard-4w2d, Opus レビュー blocker 2 対応)', async () => {
+    const list = deferred<ChatThreadDto[]>();
+    fetchChatThreadsMock.mockReturnValue(list.promise);
+    const { result, startNewDraftThread } = renderProbe();
+    act(() => {
+      result.current.restoredProjectsRef.current.add('proj-a');
+    });
+    result.current.pendingTicketDraftProjectRef.current = 'proj-a';
+    await act(async () => { list.reject(new Error('down')); await list.promise.catch(() => undefined); });
+    expect(result.current.openThreadIds).toEqual({});
+    expect(result.current.key.selectedThreadIds).toEqual({});
+    expect(startNewDraftThread.mock.calls).toEqual([['proj-a']]);
   });
 
   it('consumes a pending ticket draft on the failure path too', async () => {
@@ -225,6 +306,34 @@ describe('useThreadListSync', () => {
     await act(async () => { list.resolve([thread('sess-1')]); await list.promise; });
     expect(startNewDraftThread).not.toHaveBeenCalled();
     expect(pendingRef.current).toBe('proj-a');
+  });
+
+  it('re-syncs open/selected from the fresh list on a revisit, instead of getting stuck at the first visit\'s snapshot (bdboard-4w2d, 2巡目 Opus レビュー指摘対応)', async () => {
+    // restoredProjectsRef はプロジェクトIDをキーにした Set で、どこからも
+    // delete/clear されない(ChatPanel がマウントされている限り一度立ったら残る)。
+    // ガード(「既にマーク済みならこの応答での復元をスキップする」)がこの effect の
+    // 開始時にマーカーを下ろさないと、一度でも復元したプロジェクトへ再訪するたびに
+    // 新しく始まる fetch サイクルもマーク済みと誤認し、E7 自身の復元が二度と
+    // 走らなくなる(離れている間に他タブでスレッドが削除・追加されても再訪時の
+    // open/選択に反映されない退行)。
+    fetchChatThreadsMock.mockResolvedValueOnce([thread('sess-1'), thread('sess-2')]);
+    const { result, rerender } = renderProbe('proj-a');
+    await flush();
+    expect(result.current.openThreadIds).toEqual({ 'proj-a': ['sess-1', 'sess-2'] });
+    expect(result.current.key.selectedThreadIds).toEqual({ 'proj-a': 'sess-1' });
+    expect(result.current.restoredProjectsRef.current.has('proj-a')).toBe(true);
+
+    // proj-b へ離脱している間に proj-a では sess-1 が消え、sess-3 が増えたとする。
+    fetchChatThreadsMock.mockResolvedValueOnce([thread('sess-b')]);
+    rerender({ projectId: 'proj-b' });
+    await flush();
+
+    fetchChatThreadsMock.mockResolvedValueOnce([thread('sess-2'), thread('sess-3')]);
+    rerender({ projectId: 'proj-a' });
+    await flush();
+
+    expect(result.current.openThreadIds).toMatchObject({ 'proj-a': ['sess-2', 'sess-3'] });
+    expect(result.current.key.selectedThreadIds).toMatchObject({ 'proj-a': 'sess-2' });
   });
 
   it('refetches only when the project changes, not on unrelated re-renders or nonce/selection updates', async () => {

@@ -36,6 +36,23 @@ export interface UseChatThreadListsResult {
   openThreadIds: Record<string, string[]>;
   setOpenThreadIds: Dispatch<SetStateAction<Record<string, string[]>>>;
   openThreadIdsRef: MutableRefObject<Record<string, string[]>>;
+  /**
+   * bdboard-4w2d: プロジェクトごとに「一覧・open
+   * の初回復元(永続化からの復元、または回収の hydrate
+   * による復元)を、E7(chat/useThreadListSync.ts)と
+   * applyRecoveredTurn(chat/useChatSessionLifecycle.ts)のどちらかが
+   * 既に行ったか」を示すマーカー。以前は
+   * openThreadIdsRef.current[projectId] === undefined
+   * を「未復元」の代理にしていたが、初回一覧の読込中に
+   * useChatSendCommits.ts の送信成功や handleAgentChange
+   * が先に openThreadIds[projectId] を作ると、この代理が
+   * 誤って「復元済み」と判定し、永続化済みの open
+   * スレッドを取りこぼして上書きしてしまっていた。
+   * このマーカーは「一覧を実際に復元する処理を1回でも
+   * 通したか」だけを表し、openThreadIds の中身の有無では
+   * 推測しない。
+   */
+  restoredProjectsRef: MutableRefObject<Set<string>>;
   openThreads: string[];
   threadById: Map<string, ChatThreadDto>;
   displayedOpenThreads: string[];
@@ -82,6 +99,11 @@ export function useChatThreadLists({
   // なしで読むための参照。draftNoncesRef 等と同じミラーパターン。
   const openThreadIdsRef = useRef(openThreadIds);
   openThreadIdsRef.current = openThreadIds;
+
+  // bdboard-4w2d: UseChatThreadListsResult.restoredProjectsRef 参照。
+  // プロジェクト単位の Set なので、useRef の初期値はこのフックの
+  // 生存期間(ChatPanel 相当のマウント)を通じて1つだけ作られる。
+  const restoredProjectsRef = useRef<Set<string>>(new Set());
 
   const openThreads = openThreadIds[selectedProjectId] ?? [];
   const threadById = new Map(
@@ -208,6 +230,7 @@ export function useChatThreadLists({
     openThreadIds,
     setOpenThreadIds,
     openThreadIdsRef,
+    restoredProjectsRef,
     openThreads,
     threadById,
     displayedOpenThreads,

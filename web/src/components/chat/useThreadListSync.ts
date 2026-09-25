@@ -11,7 +11,7 @@ import type { useDraftThreadLauncher } from './useDraftThreadLauncher';
 export interface UseThreadListSyncParams
   extends Pick<UseConversationKeyResult, 'draftNoncesRef' | 'selectedThreadIdsRef' | 'setSelectedThreadIds'>,
     Pick<UseChatConversationsStateResult, 'threadListRequestIdRef'>,
-    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds'>,
+    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'restoredProjectsRef'>,
     Pick<UseChatNotificationsResult, 'setThreadError'>,
     Pick<
       ReturnType<typeof useDraftThreadLauncher>,
@@ -54,6 +54,7 @@ export function useThreadListSync({
   setOpenThreadIds,
   setSelectedThreadIds,
   startNewDraftThread,
+  restoredProjectsRef,
 }: UseThreadListSyncParams): void {
   useEffect(() => {
     if (selectedProjectId === '') return;
@@ -91,7 +92,25 @@ export function useThreadListSync({
     }
     let cancelled = false;
     const threadListRequestId = ++threadListRequestIdRef.current;
-    const persisted = readPersistedChatThreads()[selectedProjectId];
+    // bdboard-4w2d(2巡目 Opus レビュー指摘対応): restoredProjectsRef は
+    // プロジェクトIDをキーにした Set で、どこからも delete/clear されない
+    // (ChatPanel がマウントされている限り一度立ったら残る)。下の .then()/.catch()
+    // に追加したガード(「既にマーク済みならこの応答での復元をスキップする」)は
+    // 「この fetch の in-flight 中に他経路が先に確立した」場合だけを狙ったものだが、
+    // マーカーを消さないままだと、一度でも復元したプロジェクトへ再訪するたびに
+    // 新しく始まるこの fetch サイクルもマーク済みと誤認し、E7 自身の復元(fresh な
+    // 一覧・永続化からの open/選択の再計算)が二度と走らなくなる(他タブでのスレッド
+    // 削除等が再訪時の open に反映されない退行)。この effect が実際に新しい
+    // fetch サイクルを始めるたびに(= selectedProjectId が変わって再実行されるたびに)
+    // このプロジェクトのマーカーをここで一旦下ろし、「このサイクルの中でまだ誰も
+    // 確立していない」状態から始める。in-flight 中に他経路が確立すればこのサイクルの
+    // 中で再び立つので、下のガードは元の意図(同一サイクル内のレース)どおりに働く。
+    restoredProjectsRef.current.delete(selectedProjectId);
+    // bdboard-4w2d: persisted はここ(effect 開始時)で1回だけ読むのではなく、
+    // 下の .then()/.catch() の中で「応答が届いた時点」に読む(fetch の
+    // in-flight 中に他経路(useChatSendCommits.ts の送信成功、
+    // handleAgentChange)が永続化を更新することがあるため、古いスナップショットを
+    // 使うと復元時にその更新を取りこぼす)。
     // bdboard-ysu(Opus レビュー SF1 で正確化): 「今このプロジェクトの選択が
     // ユーザーの明示操作による新規ドラフトかどうか」を、draftNonces と
     // selectedThreadIds の組み合わせで判定する。draftNonces[projectId] を
@@ -160,8 +179,29 @@ export function useThreadListSync({
           return;
         }
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
-        const { open, selected } = restoreThreadView(threads, persisted);
+        // bdboard-4w2d(Opus レビュー対応、2巡目レビューで文言訂正): この fetch が
+        // in-flight の間に handleAgentChange が先にこのプロジェクトの open を [] に
+        // 確定させ、restoredProjectsRef もマーク済みなら、ここで persisted から
+        // restoreThreadView をやり直して上書きしない(handleAgentChange が意図した
+        // 「空」を取りこぼす/覆してしまう)。turn-status 回収の hydrate
+        // (applyRecoveredTurn)は既に上の isSupersededByRecovery() が先に捕まえて
+        // 早期 return するため、実際にはここまで到達しない(hydrate は自分の
+        // 適用直前に threadListRequestIdRef を進めるので、この fetch は必ず
+        // supersede される側になる) — このガードが効く経路は handleAgentChange の
+        // ケースだけ。pending なチケット起動ドラフトの消化だけは、この応答でしか
+        // 担えないので続ける。
+        if (restoredProjectsRef.current.has(selectedProjectId)) {
+          consumePendingTicketDraft();
+          return;
+        }
+        // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
+        const { open, selected } = restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
+        // bdboard-4w2d: 「このプロジェクトの一覧・open は復元済み」を明示的に立てる。
+        // applyRecoveredTurn(chat/useChatSessionLifecycle.ts)はこれを見て、既に
+        // 復元済みなら自分では restoreThreadView を呼び直さず、openThreadIds の
+        // 有無では推測しない。
+        restoredProjectsRef.current.add(selectedProjectId);
         if (consumePendingTicketDraft()) {
           return;
         }
@@ -177,8 +217,19 @@ export function useThreadListSync({
           return;
         }
         setThreadError('スレッド一覧の取得に失敗しました。');
+        // bdboard-4w2d(Opus レビュー対応): 失敗時も、成功時と同じ理由で「既に他経路が
+        // 確立・マーク済みなら上書きしない」を適用する。
+        if (restoredProjectsRef.current.has(selectedProjectId)) {
+          consumePendingTicketDraft();
+          return;
+        }
+        // bdboard-4w2d: 失敗時のフォールバックも同じく応答時点の永続化を読む。
+        const persisted = readPersistedChatThreads()[selectedProjectId];
         const open = persisted?.activeSessionIds ?? [];
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
+        // bdboard-4w2d: 取得に失敗した場合も、この「open」が最終形(永続化からの
+        // フォールバック)であることに変わりはないので、成功時と同じく復元済みとして立てる。
+        restoredProjectsRef.current.add(selectedProjectId);
         if (consumePendingTicketDraft()) {
           return;
         }
@@ -202,5 +253,6 @@ export function useThreadListSync({
     setOpenThreadIds,
     setSelectedThreadIds,
     startNewDraftThread,
+    restoredProjectsRef,
   ]);
 }
