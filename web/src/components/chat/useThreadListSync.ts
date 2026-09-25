@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { fetchChatThreads } from '../../api';
 import { readPersistedChatThreads } from '../../chatThreadStorage';
+import { restoreThreadView } from './threadViewRestore';
 import type { UseChatConversationsStateResult } from './useChatConversationsState';
 import type { UseChatNotificationsResult } from './useChatNotifications';
 import type { UseChatThreadListsResult } from './useChatThreadLists';
@@ -139,13 +140,7 @@ export function useThreadListSync({
       .then((threads) => {
         if (cancelled || threadListRequestId !== threadListRequestIdRef.current) return;
         setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
-        const available = new Set(threads.map((thread) => thread.sessionId));
-        const persistedOpen = (persisted?.activeSessionIds ?? []).filter((id) =>
-          available.has(id),
-        );
-        const open = persisted !== undefined
-          ? persistedOpen
-          : threads.map((thread) => thread.sessionId);
+        const { open, selected } = restoreThreadView(threads, persisted);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
         if (pendingTicketDraftProjectRef.current === selectedProjectId) {
           pendingTicketDraftProjectRef.current = null;
@@ -155,8 +150,6 @@ export function useThreadListSync({
         if (isExplicitDraftStillSelected()) {
           return;
         }
-        const selected = persisted?.selectedSessionId && available.has(persisted.selectedSessionId)
-          ? persisted.selectedSessionId : open[0];
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: selected }));
       })
       .catch(() => {
