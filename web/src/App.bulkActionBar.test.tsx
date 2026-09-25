@@ -23,9 +23,13 @@ vi.mock('./api', async (importOriginal) => {
 import { primeAppApiMocks, renderApp } from './test/appHarness';
 
 /*
-  bdboard-ml0k: Next Up でもカードのチェックボックスは出て選択も入るのに、
-  一括操作バーだけがビューのガードで消えていた (選べるのに何もできない)。
-  「チェックボックスが出るビューでは操作バーも出る」を固定する。
+  bdboard-ml0k: カードのチェックボックスは出て選択も入るのに、一括操作バー
+  だけがビューのガードで消えていた (選べるのに何もできない)。「チェック
+  ボックスが出るビューでは操作バーも出る」を固定する。
+  bdboard-mkm1.3: Next Up ビュー削除により、カードを並べる(=一括操作バーが
+  出る)ボード系ビューは 'split' の1つだけになった。以前は 'split'/'next'
+  の2ビューを it.each で個別に固定していたが、'next' 自体が無くなったため
+  'split' 単独のテストに単純化した。
 */
 describe('App bulk action bar visibility (bdboard-ml0k)', () => {
   beforeEach(() => {
@@ -38,45 +42,22 @@ describe('App bulk action bar visibility (bdboard-ml0k)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('shows the bulk action bar in Next Up once a card is selected', async () => {
+  it('shows the bar in the split view (the only board view)', async () => {
     const user = userEvent.setup();
     renderApp();
-
-    await user.click(await screen.findByRole('button', { name: 'Next Up' }));
 
     // 選択前はどのビューでも出ない (selectedCount === 0 の早期 return)。
     expect(screen.queryByText('1件選択中')).toBeNull();
 
-    // Next Up のカードにチェックボックスが出ていること自体が前提。
-    // これが無ければバグの形が変わるので、ここで一緒に固定する。
     const checkbox = await screen.findByRole('checkbox', {
       name: 'bdboard-boom を選択',
     });
     await user.click(checkbox);
+    await user.click(screen.getByRole('button', { name: '分割' }));
 
     expect(await screen.findByText('1件選択中')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '全解除' })).toBeInTheDocument();
   });
-
-  // ガードは「カードを並べる2ビュー」の列挙なので、1つ落としても他のテストは
-  // 通ってしまう。Next Up だけを見ていると、例えば 'split' を落とす変異が
-  // 生き残る (fable レビュー指摘)。2つとも個別に固定する
-  // (bdboard-mkm1.1: 'merged' タブ削除に伴い3ビュー→2ビュー)。
-  it.each(['分割', 'Next Up'])(
-    'shows the bar in the %s view',
-    async (viewLabel) => {
-      const user = userEvent.setup();
-      renderApp();
-
-      const checkbox = await screen.findByRole('checkbox', {
-        name: 'bdboard-boom を選択',
-      });
-      await user.click(checkbox);
-      await user.click(screen.getByRole('button', { name: viewLabel }));
-
-      expect(await screen.findByText('1件選択中')).toBeInTheDocument();
-    },
-  );
 
   // 逆向きも1ビューだけだと `view !== 'stats'` のような変異が生き残る。
   it.each(['統計', '設定', '依存グラフ'])(

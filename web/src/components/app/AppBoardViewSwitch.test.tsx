@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BoardCardDto, BoardViewDto, PrBadgeDto, ProjectHarnessStatusDto } from '../../api';
+import type { BoardCardDto, BoardViewDto, PrBadgeDto } from '../../api';
 import { EMPTY_BOARD_FILTER } from '../../boardFilter';
 import type { BoardFilterState } from '../../hooks/useBoardFilterState';
 import type { NextUpRunLoopController } from '../nextUpRunLoop';
@@ -20,6 +20,11 @@ import { AppBoardViewSwitch, type AppBoardViewSwitchProps } from './AppBoardView
 // 可能な限り `vi.mocked(X).mock.calls.at(-1)?.[0]` で実際に渡された props
 // オブジェクト全体を検証し、区別可能なマーカー値(固有の Map/Set/オブジェクト)
 // を使うことで「空値/デフォルト値にすり替わっていないか」まで見る。
+//
+// bdboard-mkm1.3: Next Up ビュー削除により NextUpView とその表示件数/
+// epic表示トグル(nextUp.limit/showEpics)、harnessStatuses は
+// AppBoardViewSwitch から消えた。nextUp は batchRun (一括操作バー用の
+// 実行ループ) だけを持つ形に単純化されたので、このテストも追随する。
 
 vi.mock('../BoardFilterBar', () => ({
   BoardFilterBar: vi.fn((props: { filterText: string }) => (
@@ -54,20 +59,13 @@ vi.mock('../BoardView', () => ({
   ),
   hasVisibleCards: vi.fn(),
 }));
-vi.mock('../NextUpView', () => ({
-  NextUpView: vi.fn((props: { limit: number }) => (
-    <div data-testid="next-up-view">{props.limit}</div>
-  )),
-}));
 
 import { BoardFilterBar } from '../BoardFilterBar';
 import { BulkActionBar } from '../BulkActionBar';
 import { hasVisibleCards, SplitBoard } from '../BoardView';
-import { NextUpView } from '../NextUpView';
 
 const hasVisibleCardsMock = vi.mocked(hasVisibleCards);
 const splitBoardMock = vi.mocked(SplitBoard);
-const nextUpViewMock = vi.mocked(NextUpView);
 const bulkActionBarMock = vi.mocked(BulkActionBar);
 const boardFilterBarMock = vi.mocked(BoardFilterBar);
 
@@ -136,27 +134,21 @@ function makeProps(overrides: Partial<AppBoardViewSwitchProps> = {}): AppBoardVi
     onCardClick: vi.fn(),
     onSessionBadgeClick: vi.fn(),
     nextUp: {
-      limit: 10,
-      onLimitChange: vi.fn(),
-      showEpics: false,
-      onShowEpicsChange: vi.fn(),
       batchRun: {} as unknown as NextUpRunLoopController,
-      harnessStatuses: undefined,
     },
     ...overrides,
   };
 }
 
 describe('AppBoardViewSwitch', () => {
-  it('renders BoardFilterBar/BulkActionBar for split view but not for next view', () => {
+  it('renders BoardFilterBar/BulkActionBar for split view but not for other views', () => {
     const { rerender } = render(<AppBoardViewSwitch {...makeProps({ view: 'split' })} />);
     expect(screen.getByTestId('board-filter-bar')).toBeInTheDocument();
     expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
 
-    rerender(<AppBoardViewSwitch {...makeProps({ view: 'next' })} />);
+    rerender(<AppBoardViewSwitch {...makeProps({ view: 'activity' })} />);
     expect(screen.queryByTestId('board-filter-bar')).not.toBeInTheDocument();
-    // Next Up も一括操作バーの対象 (bdboard-ml0k)
-    expect(screen.getByTestId('bulk-action-bar')).toBeInTheDocument();
+    expect(screen.queryByTestId('bulk-action-bar')).not.toBeInTheDocument();
   });
 
   it('renders nothing for a non-board view (e.g. activity)', () => {
@@ -443,86 +435,6 @@ describe('AppBoardViewSwitch', () => {
     });
   });
 
-  it('renders NextUpView with the nextUp.limit for the next view', () => {
-    render(
-      <AppBoardViewSwitch
-        {...makeProps({
-          view: 'next',
-          board: {
-            query: { data: makeBoardData(), isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels: [],
-          },
-          nextUp: {
-            limit: 20,
-            onLimitChange: vi.fn(),
-            showEpics: true,
-            onShowEpicsChange: vi.fn(),
-            batchRun: {} as unknown as NextUpRunLoopController,
-            harnessStatuses: undefined,
-          },
-        })}
-      />,
-    );
-    expect(screen.getByTestId('next-up-view')).toHaveTextContent('20');
-  });
-
-  it('forwards harnessStatuses, batchRun, and board metadata to NextUpView unchanged', () => {
-    // opus レビュー指摘の変異「harnessStatuses が undefined に差し替わる」を
-    // 直接検知する。harnessStatuses は undefined と「値はあるが空」を区別
-    // できるよう、要素を持つ Map を渡して同一参照で届くことを見る。
-    const harnessStatuses = new Map<string, ProjectHarnessStatusDto>([
-      ['proj-1', {} as ProjectHarnessStatusDto],
-    ]);
-    const pendingDecisionIds = new Set(['bdboard-pending-next']);
-    const prLinksById = new Map<string, PrBadgeDto>();
-    const projectNames = new Map([['proj-1', 'Project One']]);
-    const projectActiveSessions = new Map([['proj-1', 1]]);
-    const batchRun = { id: 'marker-batch-run' } as unknown as NextUpRunLoopController;
-    const onCardClick = vi.fn();
-
-    render(
-      <AppBoardViewSwitch
-        {...makeProps({
-          view: 'next',
-          board: {
-            query: { data: makeBoardData(), isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels: [],
-          },
-          boardMeta: {
-            projectNames,
-            projectActiveSessions,
-            pendingDecisionIds,
-            prLinksById,
-            wipLimitsOverrides: {},
-            selectedProjectIdsJoined: 'proj-1',
-          },
-          onCardClick,
-          nextUp: {
-            limit: 5,
-            onLimitChange: vi.fn(),
-            showEpics: false,
-            onShowEpicsChange: vi.fn(),
-            batchRun,
-            harnessStatuses,
-          },
-        })}
-      />,
-    );
-
-    const props = nextUpViewMock.mock.calls.at(-1)?.[0];
-    expect(props).toMatchObject({
-      harnessStatuses,
-      batchRun,
-      projectNames,
-      projectActiveSessions,
-      pendingDecisionIds,
-      prLinksById,
-      onCardClick,
-    });
-  });
-
   it('forwards the actual availableLabels to BulkActionBar instead of defaulting to an empty array', () => {
     const availableLabels = ['bug', 'marker-label'];
     render(
@@ -563,38 +475,5 @@ describe('AppBoardViewSwitch', () => {
     expect(agentRun?.batchRun).toBe(batchRun);
     expect(agentRun?.board).toBe(data);
     expect(agentRun?.projectNames).toBe(projectNames);
-  });
-
-  it('shows the "no merged data" message for next view when merged is null, but not for split view', () => {
-    const { rerender } = render(
-      <AppBoardViewSwitch
-        {...makeProps({
-          view: 'split',
-          board: {
-            query: { data: makeBoardData({ merged: null }), isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels: [],
-          },
-        })}
-      />,
-    );
-    expect(screen.queryByText('Next Up のデータがありません')).not.toBeInTheDocument();
-
-    // Next Up はサーバーの merged モードで取得したデータ(board.query.data.merged)を
-    // 描画に使うので、それが無いときの空メッセージ分岐は 'merged' タブ削除後も
-    // 'next' に残る (bdboard-mkm1.1: サーバー側 merged モードは変えない)。
-    rerender(
-      <AppBoardViewSwitch
-        {...makeProps({
-          view: 'next',
-          board: {
-            query: { data: makeBoardData({ merged: null }), isLoading: false, error: null },
-            cardsById: new Map(),
-            availableLabels: [],
-          },
-        })}
-      />,
-    );
-    expect(screen.getByText('Next Up のデータがありません')).toBeInTheDocument();
   });
 });

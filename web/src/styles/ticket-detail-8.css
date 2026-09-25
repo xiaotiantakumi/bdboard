@@ -19,14 +19,9 @@
 }
 
 /* エージェント実行の前提 (ハーネス) が揃っていない理由。ボタン脇に 1 行 */
-.agent-run-blocked-reason,
-.next-up-run-blocked-reason {
+.agent-run-blocked-reason {
   font-size: 0.8125rem;
   color: var(--color-text-secondary);
-}
-
-.next-up-run-blocked-reason {
-  margin: 0;
 }
 
 /* run 完了後に run の外で回す検証コマンドの導線 */

@@ -1,7 +1,8 @@
 // bdboard-mkm1.2: エージェントの一括実行の進捗と「■ 停止」をヘッダーに出すチップ。
 // 実行ループのコントローラは App (useAppController) が持っていてビューを切り替えても
 // 動き続けるので、進捗もビューに依存しない場所 (ヘッダー) に置く。一括操作バーの
-// 「▶ 実行」と Next Up の「▶ 一括実行」のどちらから始めた実行もここに出る。
+// 「▶ 実行」から始めた実行はここに出る (bdboard-mkm1.3: Next Up 自体の「▶ 一括実行」と
+// その専用進捗表示は削除、この共通チップだけが残った)。
 import { useState } from 'react';
 import { renderLoopProgressSummary } from '../next-up/nextUpHelpers';
 import type { NextUpLoopProgress, NextUpRunLoopController } from '../nextUpRunLoop';
