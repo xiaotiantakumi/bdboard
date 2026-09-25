@@ -25,7 +25,7 @@ export interface UseDraftThreadLauncherParams
       UseChatDraftStateResult,
       'setInput' | 'updateConversationInputs' | 'updateConversationAttachments' | 'clearAttachmentError'
     >,
-    Pick<UseChatThreadListsResult, 'setOpenThreadIds' | 'restoredProjectsRef'>,
+    Pick<UseChatThreadListsResult, 'setOpenThreadIds' | 'restoredProjectsRef' | 'openThreadIdsRef'>,
     Pick<UseChatAgentModelStateResult, 'setSelectedAgentId'> {
   selectedProjectId: string;
   cancelThreadConfirmDelete: () => void;
@@ -47,7 +47,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
   const { conversationInputsRef, conversationAttachmentsRef, draftSeedTextRef, setInput } = params;
   const { updateConversationInputs, updateConversationAttachments, clearAttachmentError } = params;
-  const { setOpenThreadIds, setSelectedAgentId, cancelThreadConfirmDelete, restoredProjectsRef } = params;
+  const { setOpenThreadIds, openThreadIdsRef, setSelectedAgentId, cancelThreadConfirmDelete, restoredProjectsRef } = params;
   // MF1/SF2 一括解消: 「これから採番される nonce」を先読みして直接
   // conversationInputs へ書き込む旧実装(未来ドラフトキーの先読み予測)は廃止した。
   // ticketContextToken 由来のプリフィル文言と、プロジェクト解決前に貼られた画像は
@@ -209,6 +209,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       setLoadingHistoryFor(null);
       writePersistedChatThread(selectedProjectId, undefined);
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [] }));
+      openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: [] };
       // bdboard-4w2d(Opus レビュー blocker 2 対応): この明示的リセットは「このプロジェクトの
       // open は空である」という確定した状態そのものであり、E7/applyRecoveredTurn の
       // restoreThreadView による復元と同格に扱う必要がある。ここで restoredProjectsRef を
@@ -289,7 +290,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       selectedProjectId, currentConversationKey, updateConversationAttachments, updateConversationInputs,
       draftSeedTextRef, setSelectedAgentId,
       // 第14b段: 上と同じ理由で加えた(ref と useState の setter だけ)。
-      historyRequestIdRef, setLoadingHistoryFor, setOpenThreadIds, setSelectedThreadIds,
+      historyRequestIdRef, setLoadingHistoryFor, setOpenThreadIds, openThreadIdsRef, setSelectedThreadIds,
       draftNoncesRef, selectedThreadIdsRef, setDraftNonces, setConversations,
       // bdboard-4w2d(2巡目 Opus レビュー nit 対応): restoredProjectsRef も ref
       // なので参照は変わらないが、他の ref と同じく exhaustive-deps に揃える。

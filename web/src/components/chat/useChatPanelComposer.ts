@@ -26,9 +26,9 @@ type UseChatPanelComposerParams = ChatPanelControllerParams &
 export function useChatPanelComposer(params: UseChatPanelComposerParams) {
   const {
     messagesRef, inputRef, selectedProjectId, setConversations, setHistoryLoadedFor,
-    setThreadModelIds, setSelectedThreadIds, currentSessionId, currentConversationKey,
+    setThreadModelIds, setSelectedThreadIds, selectedThreadIdsRef, currentSessionId, currentConversationKey,
     conversations, send, isSending, streamingReply, detachedStreamSendRef, setThreadLists,
-    setOpenThreadIds, conversationInputsRef, conversationAttachmentsRef, setInput,
+    setOpenThreadIds, openThreadIdsRef, conversationInputsRef, conversationAttachmentsRef, setInput,
     updateConversationAttachments, setAttachmentError, applyQuickCommandPrompt, selectedAgentId,
     selectedAgent, selectedAgentUnavailable, showModelSelect, effectiveModelId, currentInput,
     currentAttachments, currentMessages, isHistoryPending, resetBackgroundTurnStatus,
@@ -83,7 +83,9 @@ export function useChatPanelComposer(params: UseChatPanelComposerParams) {
     setThreadModelIds,
     setThreadLists,
     setOpenThreadIds,
+    openThreadIdsRef,
     setSelectedThreadIds,
+    selectedThreadIdsRef,
     conversationInputsRef,
     conversationAttachmentsRef,
     setInput,

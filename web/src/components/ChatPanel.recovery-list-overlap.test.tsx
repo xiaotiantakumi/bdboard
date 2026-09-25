@@ -279,7 +279,7 @@ describe('ChatPanel: recovery hydrate overlapping the initial thread-list fetch 
     // draftNoncesRef/openThreadIdsRef を読んでしまい、isExplicitDraftStillSelected が
     // false と誤判定される → 復元経路(restoreThreadView)が古い openThreadIdsRef から
     // 選択を作り直し、実際には sess-1 (最初のスレッド)へ選択が倒れてチケットドラフトが
-    // 無言で消える、という実プロダクションコードのレース (bdboard-d29q で追跡) が
+    // 無言で消える、という実プロダクションコードのレース (bdboard-d29q で draftNoncesRef/selectedThreadIdsRef 分を、bdboard-d7on で openThreadIdsRef 分を修正済み) が
     // CPU 負荷が高い環境で稀に再現していた。
     await waitFor(() =>
       expect(container.querySelector('.chat-thread-switcher-count')).toHaveTextContent('スレッド 2'),

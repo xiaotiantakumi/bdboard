@@ -48,7 +48,7 @@ export interface UseChatSessionLifecycleParams
 export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
   const { selectedProjectId, selectedThreadIdsRef, setSelectedThreadIds } = params;
   const { historyRequestIdRef, setConversations, setHistoryLoadedFor, setLoadingHistoryFor, setThreadModelIds } = params;
-  const { openThreads, openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds } = params;
+  const { openThreadIdsRef, restoredProjectsRef, setThreadLists, setOpenThreadIds } = params;
   const { setSelectedAgentId, cancelThreadConfirmDelete, advanceDraftNonceAfterSessionGone, draftNoncesRef } = params;
 
   const applyRecoveredTurn = useCallback(
@@ -121,6 +121,7 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
       const nextSelected = isExplicitDraftStillSelected ? undefined : currentSelected ?? payload.sessionId;
       setThreadLists((prev) => ({ ...prev, [selectedProjectId]: threads }));
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpen }));
+      openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: nextOpen };
       setConversations((prev) => ({
         ...prev,
         [payload.sessionId]: {
@@ -134,6 +135,11 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
         setThreadModelIds((prev) => ({ ...prev, [payload.sessionId]: payload.model! }));
       }
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextSelected }));
+      // bdboard-d7on: openThreadIdsRef と同じ理由(render-mirror の1レンダー遅延)で
+      // selectedThreadIdsRef も同じ場所で直接同期する — でないと、この関数呼び出しの
+      // 直後・再レンダーを挟まない同 tick で選択を読む別のハンドラ(E7 の復元、
+      // commitSuccess 等)が古い選択を読んでしまう(bdboard-d7on Opus レビュー指摘)。
+      selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: nextSelected };
       if (!isExplicitDraftStillSelected && nextSelected === payload.sessionId && payload.agentId !== '') {
         setSelectedAgentId(payload.agentId);
       }
@@ -168,10 +174,14 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
 
   const handleHistorySessionGone = useCallback(
     (sessionId: string) => {
-      setOpenThreadIds((prev) => ({
-        ...prev,
-        [selectedProjectId]: (prev[selectedProjectId] ?? []).filter((id) => id !== sessionId),
-      }));
+      const nextOpenAfterGone = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
+        (id) => id !== sessionId,
+      );
+      setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpenAfterGone }));
+      openThreadIdsRef.current = {
+        ...openThreadIdsRef.current,
+        [selectedProjectId]: nextOpenAfterGone,
+      };
       // bdboard-23u: handleDeleteThread(threadOps.deleteThread、bdboard-sso1.83
       // 第10段で useChatThreadLists.ts へ移設済み)の prune と対称にする —
       // でないと閉じたスレッドの再オープン経路から死亡スレッドを再選択できる。
@@ -192,11 +202,8 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
         selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: undefined };
         // bdboard-23u: handleCloseThread と同じパターンで選択クリアを
         // localStorage にも同期する。
-        const nextOpenThreads = (openThreadIdsRef.current[selectedProjectId] ?? []).filter(
-          (id) => id !== sessionId,
-        );
         writePersistedChatThreadState(selectedProjectId, {
-          activeSessionIds: nextOpenThreads,
+          activeSessionIds: nextOpenAfterGone,
           selectedSessionId: undefined,
         });
         // bdboard-23u: ドラフト nonce の前進(startNewDraftThread を意図的に使わない
@@ -299,16 +306,23 @@ export function useChatSessionLifecycle(params: UseChatSessionLifecycleParams) {
     // ChatMessageRepository 由来の自動読み込み effect は動かさない。
     setHistoryLoadedFor((prev) => ({ ...prev, [sessionId]: true }));
 
-    const nextOpenThreads = openThreads.includes(sessionId)
-      ? openThreads
-      : [...openThreads, sessionId];
+    const baseOpenThreads = [...(restoredProjectsRef.current.has(projectId)
+      ? (openThreadIdsRef.current[projectId] ?? [])
+      : (readPersistedChatThreads()[projectId]?.activeSessionIds ?? []))];
+    const nextOpenThreads = baseOpenThreads.includes(sessionId)
+      ? baseOpenThreads
+      : [...baseOpenThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [projectId]: nextOpenThreads }));
+    openThreadIdsRef.current = { ...openThreadIdsRef.current, [projectId]: nextOpenThreads };
+    restoredProjectsRef.current.add(projectId);
     writePersistedChatThreadState(projectId, {
       activeSessionIds: nextOpenThreads,
       selectedSessionId: sessionId,
     });
 
     setSelectedThreadIds((prev) => ({ ...prev, [projectId]: sessionId }));
+    // bdboard-d7on: applyRecoveredTurn と同じ理由で selectedThreadIdsRef も同期する。
+    selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [projectId]: sessionId };
     cancelThreadConfirmDelete();
     setLoadingHistoryFor((prev) => (prev === sessionId ? null : prev));
 

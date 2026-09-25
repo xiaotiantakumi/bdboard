@@ -47,6 +47,8 @@ export function useConversationKey(selectedProjectId: string): UseConversationKe
   // conversationInputsRef と同じミラーパターン。
   const selectedThreadIdsRef = useRef(selectedThreadIds);
   selectedThreadIdsRef.current = selectedThreadIds;
+  // bdboard-d29q 以降、意味のある遷移を書く呼び出し元も write site で ref を同期する。
+  // ここでのミラー代入は初回レンダーと、同期書き込みをしない呼び出し元のフォールバック。
 
   return {
     selectedThreadIds,

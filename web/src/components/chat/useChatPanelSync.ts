@@ -125,6 +125,7 @@ export function useChatPanelSync(params: UseChatPanelSyncParams) {
     selectedThreadIdsRef,
     setThreadLists,
     setOpenThreadIds,
+    openThreadIdsRef,
     setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,

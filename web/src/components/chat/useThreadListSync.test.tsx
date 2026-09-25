@@ -45,6 +45,10 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
   const notifications = useChatNotifications();
   const [threadLists, setThreadLists] = useState<Record<string, ChatThreadDto[]>>({});
   const [openThreadIds, setOpenThreadIds] = useState<Record<string, string[]>>({});
+  // bdboard-d7on: E7 の書き込み側は openThreadIdsRef も同期する(render-mirror の
+  // 同期漏れ対策)。このテストは復元結果を openThreadIds state で検証しており、
+  // ref 自体の値は読まないので、単純な useRef で足りる。
+  const openThreadIdsRef = useRef<Record<string, string[]>>({});
   const pendingPrefillRef = useRef<PendingPrefill>(null);
   const pendingTicketDraftProjectRef = useRef<string | null>(null);
   // bdboard-4w2d: E7 と applyRecoveredTurn が共有する「一覧・open 復元済み」マーカー。
@@ -59,6 +63,7 @@ function useSyncProbe({ projectId, startNewDraftThread }: { projectId: string; s
     selectedThreadIdsRef: key.selectedThreadIdsRef,
     setThreadLists,
     setOpenThreadIds,
+    openThreadIdsRef,
     setSelectedThreadIds: key.setSelectedThreadIds,
     startNewDraftThread,
     restoredProjectsRef,

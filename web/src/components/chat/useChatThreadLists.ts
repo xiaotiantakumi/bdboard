@@ -139,6 +139,7 @@ export function useChatThreadLists({
     );
     const nextSelectedSessionId = wasSelected ? nextDisplayed[0] : currentSessionId;
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
+    openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     if (wasSelected) {
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextDisplayed[0] }));
     }
@@ -161,6 +162,7 @@ export function useChatThreadLists({
   const reopenClosedThread = (sessionId: string) => {
     const next = [...openThreads, sessionId];
     setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: next }));
+    openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: next };
     setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: sessionId }));
     writePersistedChatThreadState(selectedProjectId, {
       activeSessionIds: next,

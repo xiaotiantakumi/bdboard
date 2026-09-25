@@ -14,8 +14,8 @@ import type { UseConversationKeyResult } from './useConversationKey';
 
 export interface UseChatSendCommitsParams
   extends Pick<UseChatConversationsStateResult, 'setConversations' | 'setHistoryLoadedFor' | 'setThreadModelIds'>,
-    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds'>,
-    Pick<UseConversationKeyResult, 'setSelectedThreadIds'>,
+    Pick<UseChatThreadListsResult, 'setThreadLists' | 'setOpenThreadIds' | 'openThreadIdsRef'>,
+    Pick<UseConversationKeyResult, 'setSelectedThreadIds' | 'selectedThreadIdsRef'>,
     Pick<
       UseChatDraftStateResult,
       'conversationInputsRef' | 'conversationAttachmentsRef' | 'setInput' | 'updateConversationAttachments'
@@ -57,7 +57,9 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
     setThreadModelIds,
     setThreadLists,
     setOpenThreadIds,
+    openThreadIdsRef,
     setSelectedThreadIds,
+    selectedThreadIdsRef,
     conversationInputsRef,
     conversationAttachmentsRef,
     setInput,
@@ -108,11 +110,14 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
           { sessionId: result.sessionId, agentId: result.agentId, title: summarizeTitle(sentText), pinned: false, updatedAt: new Date().toISOString() },
         ],
       }));
-      setOpenThreadIds((prev) => ({
-        ...prev,
-        [selectedProjectId]: [...(prev[selectedProjectId] ?? []).filter((id) => id !== result.sessionId), result.sessionId],
-      }));
+      const nextOpenAfterCommit = [
+        ...(openThreadIdsRef.current[selectedProjectId] ?? []).filter((id) => id !== result.sessionId),
+        result.sessionId,
+      ];
+      setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: nextOpenAfterCommit }));
+      openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: nextOpenAfterCommit };
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: result.sessionId }));
+      selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: result.sessionId };
       // ここでは未回収の印を外さない (PR#135 レビュー minor-1)。
       // 通常の成功では印はそもそも立っていない (印を立てるのは abort の catch だけ)
       // ので、外して意味があるのは「見届けられなかったスレッドへ戻り、取り直しが
@@ -132,7 +137,9 @@ export function useChatSendCommits(params: UseChatSendCommitsParams): UseChatSen
       setThreadModelIds,
       setThreadLists,
       setOpenThreadIds,
+      openThreadIdsRef,
       setSelectedThreadIds,
+      selectedThreadIdsRef,
     ],
   );
 
