@@ -219,12 +219,15 @@ SG_NL=$'\n'
 #     「無害化しない」(= 見える状態を保つ) — 元の素朴な分割がこれらを偶然にも区切りとして
 #     捕まえていたのを壊さないため (bdboard-kmh2 の対象はあくまで「引用符の中の区切り文字」
 #     で、$(...) の中身まで安全に解析する保証は無い)。
-#   - ヒアドキュメント本体 (<<EOF ... EOF) は特別扱いしない。本体の中の改行は区切り文字
-#     として見える状態のままなので、"$(cat <<'EOF' ... EOF)" のようにヒアドキュメント全体を
-#     外側の引用符で包んだ形は、本体に引用符が1文字も無ければ結果的に無害化されるが、
-#     本体の行数や中身次第では誤検知が残ることがある (bdboard-kmh2 が名指ししていた
-#     ケースの一部は、この安全な作り直しにより「直らない」状態に後退した。完全な
-#     ヒアドキュメント解析は「完全な shell パーサー」寄りの実装が要るため次点課題)。
+#   - ヒアドキュメント本体 (<<EOF / <<'EOF' / <<-EOF ... 対応する終端行まで) は bdboard-u4ne
+#     (opus レビュー 2026-09-25, PR #775) 以降、専用の状態 (state h) で追跡し、区間内の
+#     改行と ; & | を「引用符の中」と同様に無害化する。開始行の区切り文字 (<<・オプションの
+#     `-`・区切り語の引用符有無) を検出してから終端行 (`-` 指定時は先頭タブを読み飛ばした上で
+#     区切り語と完全一致する行。コマンド末尾で入力が尽きる場合も同様に終端とみなす) までを
+#     1つの安全な区間として扱う。区切り語が数字だけで引用符も無い形 (`(( x << 2 ))` のような
+#     算術左シフト) はヒアドキュメントと誤認しない。$(...) やバッククォートの入れ子と同様、
+#     区間の終端が最後まで確定できない (入力が尽きても終端行が現れない) 場合は、無害化を
+#     一切せず生のコマンドのまま返す (見逃しより誤検知)。
 #   - $'...' (ANSI-C クォート) は専用の理解をしない。中身に応じて偶然に安全側 (下記の
 #     「閉じられない/バランスしない場合は生のコマンドで判定」) に落ちる。
 #   - 二重引用符内のバックスラッシュは、次の1文字を常にエスケープ (そのまま通す) と
@@ -244,6 +247,7 @@ sg_mask_quoted_separators() {
   sg_mqs_s="$1"
   case "$sg_mqs_s" in
     *[\'\"]*) ;;
+    *'<<'*) ;;
     *) printf '%s' "$sg_mqs_s"; return 0 ;;
   esac
   sg_mqs_len=${#sg_mqs_s}
@@ -257,6 +261,10 @@ sg_mask_quoted_separators() {
   sg_mqs_saved=''
   sg_mqs_wordstart=1
   sg_mqs_i=0
+  sg_mqs_heredoc_pending=''
+  sg_mqs_heredoc_delim=''
+  sg_mqs_heredoc_strip=''
+  sg_mqs_h_line=''
   while [ "$sg_mqs_i" -lt "$sg_mqs_len" ]; do
     sg_mqs_c="${sg_mqs_s:sg_mqs_i:1}"
     sg_mqs_next=''
@@ -348,6 +356,116 @@ sg_mask_quoted_separators() {
             fi
             ;;
         esac
+        case "$sg_mqs_c" in
+          '<')
+            if [ -z "$sg_mqs_heredoc_pending" ] && [ "$sg_mqs_next" = '<' ]; then
+              sg_mqs_h_after=''
+              if [ $((sg_mqs_i + 2)) -lt "$sg_mqs_len" ]; then
+                sg_mqs_h_after="${sg_mqs_s:sg_mqs_i+2:1}"
+              fi
+              if [ "$sg_mqs_h_after" != '<' ]; then
+                sg_mqs_h_scan=$((sg_mqs_i + 2))
+                sg_mqs_h_strip=''
+                if [ "$sg_mqs_h_after" = '-' ]; then
+                  sg_mqs_h_strip='yes'
+                  sg_mqs_h_scan=$((sg_mqs_h_scan + 1))
+                fi
+                while [ "$sg_mqs_h_scan" -lt "$sg_mqs_len" ]; do
+                  sg_mqs_h_ch="${sg_mqs_s:sg_mqs_h_scan:1}"
+                  case "$sg_mqs_h_ch" in
+                    ' ' | $'\t') sg_mqs_h_scan=$((sg_mqs_h_scan + 1)) ;;
+                    *) break ;;
+                  esac
+                done
+                sg_mqs_h_delim=''
+                sg_mqs_h_quoted=''
+                if [ "$sg_mqs_h_scan" -lt "$sg_mqs_len" ]; then
+                  sg_mqs_h_open="${sg_mqs_s:sg_mqs_h_scan:1}"
+                  case "$sg_mqs_h_open" in
+                    "'" | '"')
+                      sg_mqs_h_close_idx=-1
+                      sg_mqs_h_j=$((sg_mqs_h_scan + 1))
+                      while [ "$sg_mqs_h_j" -lt "$sg_mqs_len" ]; do
+                        if [ "${sg_mqs_s:sg_mqs_h_j:1}" = "$sg_mqs_h_open" ]; then
+                          sg_mqs_h_close_idx=$sg_mqs_h_j
+                          break
+                        fi
+                        sg_mqs_h_j=$((sg_mqs_h_j + 1))
+                      done
+                      if [ "$sg_mqs_h_close_idx" -ge 0 ]; then
+                        sg_mqs_h_delim="${sg_mqs_s:sg_mqs_h_scan+1:sg_mqs_h_close_idx-sg_mqs_h_scan-1}"
+                        sg_mqs_h_scan=$((sg_mqs_h_close_idx + 1))
+                        sg_mqs_h_quoted='yes'
+                      fi
+                      ;;
+                    *)
+                      sg_mqs_h_j=$sg_mqs_h_scan
+                      while [ "$sg_mqs_h_j" -lt "$sg_mqs_len" ]; do
+                        sg_mqs_h_ch="${sg_mqs_s:sg_mqs_h_j:1}"
+                        case "$sg_mqs_h_ch" in
+                          ' ' | $'\t' | "$SG_NL" | ';' | '&' | '|' | '<' | '>' | '(' | ')') break ;;
+                        esac
+                        sg_mqs_h_j=$((sg_mqs_h_j + 1))
+                      done
+                      if [ "$sg_mqs_h_j" -gt "$sg_mqs_h_scan" ]; then
+                        sg_mqs_h_delim="${sg_mqs_s:sg_mqs_h_scan:sg_mqs_h_j-sg_mqs_h_scan}"
+                        sg_mqs_h_scan=$sg_mqs_h_j
+                      fi
+                      ;;
+                  esac
+                fi
+                # Unquoted numeric delimiters are arithmetic shifts, not heredocs.
+                if [ -n "$sg_mqs_h_delim" ] && [ -z "$sg_mqs_h_quoted" ]; then
+                  case "$sg_mqs_h_delim" in
+                    *[!0-9]*) ;;
+                    *) sg_mqs_h_delim='' ;;
+                  esac
+                fi
+                if [ -n "$sg_mqs_h_delim" ]; then
+                  sg_mqs_heredoc_pending='yes'
+                  sg_mqs_heredoc_delim="$sg_mqs_h_delim"
+                  sg_mqs_heredoc_strip="$sg_mqs_h_strip"
+                  sg_mqs_out="$sg_mqs_out${sg_mqs_s:sg_mqs_i:sg_mqs_h_scan-sg_mqs_i}"
+                  sg_mqs_i=$sg_mqs_h_scan
+                  sg_mqs_wordstart=0
+                  continue
+                fi
+              fi
+            fi
+            ;;
+          "$SG_NL")
+            if [ -n "$sg_mqs_heredoc_pending" ]; then
+              sg_mqs_heredoc_pending=''
+              sg_mqs_state='h'
+              sg_mqs_h_line=''
+              sg_mqs_c=' '
+            fi
+            ;;
+        esac
+        ;;
+      h)
+        sg_mqs_h_line="$sg_mqs_h_line$sg_mqs_c"
+        case "$sg_mqs_c" in
+          "$SG_NL")
+            sg_mqs_h_check="${sg_mqs_h_line%"$SG_NL"}"
+            if [ -n "$sg_mqs_heredoc_strip" ]; then
+              while :; do
+                case "$sg_mqs_h_check" in
+                  $'\t'*) sg_mqs_h_check="${sg_mqs_h_check#?}" ;;
+                  *) break ;;
+                esac
+              done
+            fi
+            if [ "$sg_mqs_h_check" = "$sg_mqs_heredoc_delim" ]; then
+              sg_mqs_state='n'
+              sg_mqs_heredoc_delim=''
+              sg_mqs_heredoc_strip=''
+            fi
+            sg_mqs_h_line=''
+            sg_mqs_c=' '
+            ;;
+          ';' | '&' | '|') sg_mqs_c=' ' ;;
+        esac
         ;;
       "'")
         case "$sg_mqs_c" in
@@ -399,6 +517,20 @@ sg_mask_quoted_separators() {
       *) sg_mqs_wordstart=0 ;;
     esac
   done
+  if [ "$sg_mqs_state" = 'h' ]; then
+    sg_mqs_h_check="$sg_mqs_h_line"
+    if [ -n "$sg_mqs_heredoc_strip" ]; then
+      while :; do
+        case "$sg_mqs_h_check" in
+          $'\t'*) sg_mqs_h_check="${sg_mqs_h_check#?}" ;;
+          *) break ;;
+        esac
+      done
+    fi
+    if [ "$sg_mqs_h_check" = "$sg_mqs_heredoc_delim" ]; then
+      sg_mqs_state='n'
+    fi
+  fi
   if [ -n "$sg_mqs_stack" ]; then
     printf '%s' "$sg_mqs_s"
     return 0

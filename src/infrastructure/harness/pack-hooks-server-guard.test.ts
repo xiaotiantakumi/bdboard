@@ -581,16 +581,21 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
     // bdboard-qmum の opus 再レビューで判明: 最初の kmh2 実装は $(...) の中の引用符トグルが
     // 外側へ漏れないようにする代わりに、$(...) 自身の入れ子 (K4/K10/K15 系) や # コメント
     // (K7 系) の扱いが甘く、無害化のつもりが本物の危険なコマンドまで隠す新規の見逃しを
-    // 複数含んでいた。安全側に作り直した現行実装は「確実に判定できる場合だけ無害化し、
+    // 複数含んでいた。安全側に作り直した実装は「確実に判定できる場合だけ無害化し、
     // 少しでも自信が持てなければ無害化しない (= 元の素朴な分割に戻るだけ)」を徹底しており、
     // $(...) やバッククォートの入れ子自身の中にある本物の区切り文字は意図的に無害化しない
-    // (旧来の素朴な分割がこれらを偶然にも区切りとして捕まえていた挙動を保つ)。ヒアドキュメント
-    // 本体も特別扱いしない (完全な shell パーサーになるため対応しない、と明記済み)。結果として
-    // このテストが以前検証していた「$(...) で包まれたヒアドキュメント本体の中にスクリプト名を
-    // 含む行があっても allow される」という挙動は、安全側の作り直しにより意図的に後退した
-    // (本体行がスクリプト名で始まる独立セグメントとして deny される)。これは見逃しより誤検知を
-    // 選ぶ設計方針どおりの想定内の scope reduction であり、バグではない。
-    it('denies a heredoc body wrapped in outer quotes ($(cat <<\'EOF\' ... EOF)) whose body line starts with the script name (documented scope reduction: heredoc bodies are not specially protected)', async () => {
+    // (旧来の素朴な分割がこれらを偶然にも区切りとして捕まえていた挙動を保つ)。この方針の
+    // もとで、ヒアドキュメント本体 (<<EOF ... EOF) は qmum 時点では特別扱いされておらず、
+    // 本体行がスクリプト名で始まる独立セグメントとして deny されていた (見逃しより誤検知を
+    // 選ぶ設計方針どおりの想定内の scope reduction だった)。
+    //
+    // bdboard-u4ne (opus レビュー 2026-09-25, PR #775 由来) でこの scope reduction 自体を
+    // 解消した: ヒアドキュメントの開始 (<<EOF / <<'EOF' / <<-EOF) を検出し、対応する終端行
+    // までの区間を「引用符の中と同様に確実な区間」として扱い、区間内の改行・;/&/| を空白に
+    // 無害化するようになった (終端行の判定はコマンド末尾で入力が尽きる場合も含む)。そのため
+    // 下のケースは今は allow が正しい — スクリプト名は本文の1行に過ぎず、実際には呼び出され
+    // ていない。
+    it('allows a heredoc body wrapped in outer quotes ($(cat <<\'EOF\' ... EOF)) whose body line merely mentions the script name (bdboard-u4ne: heredoc bodies are now masked)', async () => {
       const command = [
         'gh pr create --title x --body "$(cat <<\'HDEOF\'',
         'fix: guard',
@@ -598,7 +603,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness pre-bash-guard ru
         'HDEOF',
         ')"',
       ].join('\n');
-      expectDeny(await runHook({ command, cwd: worktree, agentId: 'agent-1' }), '再起動スクリプト');
+      expectAllow(await runHook({ command, cwd: worktree, agentId: 'agent-1' }));
     });
 
     // bdboard-qmum opus 再レビュー: $(...) の入れ子自身の中にある本物の危険なコマンドは、
