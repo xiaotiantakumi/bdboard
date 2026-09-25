@@ -574,5 +574,88 @@ EOF
         '.claude/skills/bdboard-harness/',
       );
     });
+
+    it('denies a subagent Write to the main checkout shared .git/config', async () => {
+      expectDeny(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(mainWithPort, '.git', 'config'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('denies a subagent Write under the main checkout shared .git/hooks', async () => {
+      const hooksDir = path.join(mainWithPort, '.git', 'hooks');
+      mkdirSync(hooksDir, { recursive: true });
+      expectDeny(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(hooksDir, 'pre-commit'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('denies a subagent Edit under the main checkout shared .git/hooks', async () => {
+      const target = path.join(mainWithPort, '.git', 'hooks', 'pre-commit');
+      writeFileSync(target, '#!/bin/sh\n');
+      expectDeny(
+        await runEditHook({ toolName: 'Edit', filePath: target, cwd: mainWithPort, agentId: 'agent-1' }),
+        'main checkout',
+      );
+    });
+
+    it('denies a subagent MultiEdit to the main checkout shared .git/config', async () => {
+      expectDeny(
+        await runEditHook({
+          toolName: 'MultiEdit',
+          filePath: path.join(mainWithPort, '.git', 'config'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
+
+    it('allows the chair (no agent_id) to Write the main checkout shared .git/config', async () => {
+      expectAllow(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(mainWithPort, '.git', 'config'),
+          cwd: mainWithPort,
+        }),
+      );
+    });
+
+    it('allows a subagent to Write a regular file inside a worktree', async () => {
+      expectAllow(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(worktreeWithPort, 'src', 'foo.ts'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+      );
+    });
+
+    it('denies a subagent Write under the main checkout .git/worktrees/<id>/ internal state', async () => {
+      // .git/worktrees/<id>/ は git worktree add で作った worktree の内部状態だが、実体は
+      // main checkout の .git/ 配下にある共有ファイル群 — 意図して deny 対象に含む
+      // (opus レビューで確認済み。hooks/README.md 「修正済み (bdboard-1ef8)」参照)。
+      expectDeny(
+        await runEditHook({
+          toolName: 'Write',
+          filePath: path.join(mainWithPort, '.git', 'worktrees', 'wt-port', 'HEAD'),
+          cwd: mainWithPort,
+          agentId: 'agent-1',
+        }),
+        'main checkout',
+      );
+    });
   });
 });
