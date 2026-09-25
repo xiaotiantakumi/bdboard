@@ -108,6 +108,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness worktree owner gu
       'bd/ticket-a',
     );
   });
+  it('denies force deleting another agent branch via the separate short -d -f flags', async () => {
+    await claimA();
+    expectDeny(
+      await runBashHook({ command: 'git branch -d -f bd/ticket-a', cwd: main, agentId: 'agent-2' }),
+      'worktree',
+      'bd/ticket-a',
+    );
+  });
   it('allows a plain (non-forced) branch --delete of another agent branch', async () => {
     await claimA();
     expectAllow(await runBashHook({ command: 'git branch --delete bd/ticket-a', cwd: main, agentId: 'agent-2' }));
