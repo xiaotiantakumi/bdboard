@@ -28,6 +28,7 @@ import { act, renderHook } from '@testing-library/react';
 import { useRef, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatSessionMessagesDto, ChatThreadDto } from '../../api';
+import type { ChatAttachment } from './attachments';
 
 vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>();
@@ -63,7 +64,7 @@ function useProbe(projectId: string) {
   const [setSelectedAgentId] = useState(() => vi.fn());
   const [cancelThreadConfirmDelete] = useState(() => vi.fn());
   const conversationInputsRef = useRef<Record<string, string>>({});
-  const conversationAttachmentsRef = useRef<Record<string, unknown[]>>({});
+  const conversationAttachmentsRef = useRef<Record<string, ChatAttachment[]>>({});
   const draftSeedTextRef = useRef<Record<string, string>>({});
   const [setInput] = useState(() => vi.fn());
   const [updateConversationInputs] = useState(() => vi.fn());
@@ -74,9 +75,6 @@ function useProbe(projectId: string) {
     selectedProjectId: projectId,
     currentConversationKey: key.currentConversationKey,
     draftNoncesRef: key.draftNoncesRef,
-    // bdboard-d29q の修正で useDraftThreadLauncher の Params に追加される想定の
-    // 依存。修正前の型には存在しないため、修正前はこのプロパティは単に無視される
-    // (実行時エラーにはならない。tsc の型検査は npm run build 側で別途かかる)。
     selectedThreadIdsRef: key.selectedThreadIdsRef,
     setDraftNonces: key.setDraftNonces,
     setSelectedThreadIds: key.setSelectedThreadIds,
@@ -96,8 +94,7 @@ function useProbe(projectId: string) {
     restoredProjectsRef,
     setSelectedAgentId,
     cancelThreadConfirmDelete,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 修正前の型には無いフィールドを probe から渡すための一時的な any 経由。
-  } as any);
+  });
 
   const lifecycle = useChatSessionLifecycle({
     selectedProjectId: projectId,
@@ -155,6 +152,47 @@ describe('useDraftThreadLauncher + useChatSessionLifecycle: cross-hook draft/rec
     // isExplicitDraftStillSelected が「ドラフトはまだ無い」と誤判定し、選択は
     // 永続化が無い新規プロジェクトの既定則(restoreThreadView: 永続化が無ければ
     // 先頭スレッドを選ぶ)に従って 'sess-1' に倒れる。
+    expect(result.current.key.selectedThreadIds['project-a']).toBeUndefined();
+    expect(result.current.key.draftNonces['project-a']).toBe(1);
+  });
+
+  it('keeps a just-started ticket-launch draft selected even when the project was already restored with a different thread selected (P1: revisit, not a fresh/unpersisted project)', () => {
+    // bdboard-d29q Opus レビュー(finding 1): 最初のテストはプロジェクトが未復元
+    // (persisted state 無し)の場合しか踏まない。より典型的な「以前から開いている
+    // プロジェクトで、別スレッドが選択された状態からチケット起動する」経路
+    // (alreadyRestored=true, currentSelected が restored?.selected ではなく
+    // selectedThreadIdsRef.current の既存値そのものになる経路)は未検証だった。
+    // このテストはその経路を踏む。
+    const { result } = renderHook(() => useProbe('project-a'));
+
+    act(() => {
+      // このプロジェクトはすでに E7 で復元済み(restoredProjectsRef に登録済みかつ
+      // openThreadIdsRef.current が populated)で、'sess-old' が選択されている
+      // ―― という「直前のレンダーまでに確定していた状態」を、ref を直接書いて
+      // 再現する(ref 自体への代入は再レンダーを起こさないので、この act() の中では
+      // 何も反映されず、次の act() まで static に残る。本物の env では、この状態は
+      // 実際の以前のレンダーが作る)。
+      result.current.restoredProjectsRef.current.add('project-a');
+      result.current.openThreadIdsRef.current = { 'project-a': ['sess-old'] };
+      result.current.key.selectedThreadIdsRef.current = { 'project-a': 'sess-old' };
+    });
+
+    act(() => {
+      // チケット起動でドラフトを開始した直後、再レンダーを挟まずに turn-status
+      // 回収が届く(1つ目のテストと同じ force ordering)。
+      result.current.launcher.startNewDraftThread('project-a');
+      result.current.lifecycle.applyRecoveredTurn(
+        [thread('sess-old', 'old thread'), thread('sess-rec', 'recovered thread')],
+        RECOVERED,
+      );
+    });
+
+    // 修正前の壊れ方(このケース固有): alreadyRestored なので restoreThreadView は
+    // 呼ばれず、currentSelected は selectedThreadIdsRef.current(まだ startNewDraftThread
+    // の更新に追いついていない古い 'sess-old')をそのまま読む。isExplicitDraftStillSelected
+    // も selectedThreadIdsRef.current !== undefined で誤って false になるため、
+    // 選択は 'sess-1' のような一覧先頭ではなく、直前に見ていた 'sess-old' へ
+    // 無言で戻ってしまう(1つ目のテストとは異なる壊れ方だが、原因は同じ)。
     expect(result.current.key.selectedThreadIds['project-a']).toBeUndefined();
     expect(result.current.key.draftNonces['project-a']).toBe(1);
   });
