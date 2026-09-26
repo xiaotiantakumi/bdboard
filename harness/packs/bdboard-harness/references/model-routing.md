@@ -132,8 +132,10 @@ route.sh は選択に必要な構造と候補を検証する読み取り専用�
 ## aimix-run.sh — 規律6 の照合ラッパー
 
 aimix は `scripts/aimix-run.sh <aimix run の引数…>` 経由で呼ぶ (bdboard-cm2q.12、パック 0.55.0。
-注入先では `.claude/skills/bdboard-harness/scripts/aimix-run.sh`)。素の `aimix run` は注入先の
-`.claude/settings.json` の `Bash(aimix run *)` deny で止まる。ラッパーはシェルが引用符を外した後の
+注入先では `.claude/skills/bdboard-harness/scripts/aimix-run.sh`)。素の `aimix run` を止める
+`Bash(aimix run *)` deny は bdboard 自身の `.claude/settings.json` にある。注入 API が配るのは
+`hooks` だけで `permissions` はパックの管轄外なので、ほかの注入先で素の呼び出しを止めたければ
+同じ行を自分の settings.json に足す。ラッパーはシェルが引用符を外した後の
 argv をそのまま受け取るので、旧 pre-bash-guard.sh 規則 6 のようなコマンド文字列の分割・引用符の
 復元はしない。照合するのは実効 mode が `implement` / `refactor` のときだけで、mode 省略 (aimix の
 既定 `consult`) と `consult` / `review` / `debate` はそのまま実行する。
@@ -158,7 +160,9 @@ registry 等から自動選択し、後者も `--model` を無視して tier 既
 止めたときは exit 2 で、stderr に理由・候補・`BDBOARD_ROUTE_OVERRIDE="<理由>"` の案内の 3 行を
 出す (aimix は起動しない)。照合できないとき (git リポジトリ外・route.sh が無い・route.sh が
 失敗) は警告 1 行を出して照合せずに実行する (fail-open。振り分けの不備で委譲そのものを止めない)。
-契約は `--cwd` があればそのプロジェクト、無ければカレントのプロジェクトから読む。aimix が PATH に
+契約は `--cwd` が git リポジトリならそのプロジェクト、そうでなければ (`--cwd` 無し・リポジトリ外を
+指す) 呼び出したカレントのプロジェクトから読む。候補との照合は行単位の完全一致なので、改行を
+含む `--member` / `--model` は候補の 1 行に一致せず止まる。aimix が PATH に
 無ければ `AIMIX_BIN=<aimix の絶対パス>` を付ける。
 
 deny が止めるのは Claude Code が書く普段の形 (`aimix run …`、`&&` の後ろ、`timeout` 等の

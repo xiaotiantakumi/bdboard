@@ -20,8 +20,11 @@ bdboard は 0.55.0 (bdboard-cm2q.12) で deny に次を足した: bare `git stas
 `git stash pop` / `git stash save` (規則 3 の主な形)、`aimix run` (規則 6 の正規経路を
 `scripts/aimix-run.sh` に移したため)、`bd -C <dir> dolt push`/`pull` と `--remote origin` /
 `--remote=origin` / push の `--yes`・`-y` (規則 2 の抜け)、注入コピー
-`.claude/skills/bdboard-harness/` と `.beads/` への Edit。Bash ルールは Claude Code が普段
-書く形を止める網で境界ではない (`git -C . stash pop` や絶対パス呼び出しは止まらない)。
+`.claude/skills/bdboard-harness/` と `.beads/` への Edit。push の `--yes` / `-y` は
+`--remote <name>` 付きでも止まる (`--yes` が効くのは remote 未設定時に git origin 由来の remote を
+採用する場面だけなので、`--remote` 付きなら外せばよい)。Bash ルールは Claude Code が普段
+書く形を止める網で境界ではない (`git -C . stash pop`・`--remote 'origin'` の引用符付き・
+絶対パス呼び出し・`FOO=1 aimix run` は止まらない)。
 
 bdboard では PID を指定した `kill` 自体も deny される。代わりに: 常時稼働サーバーは
 議長が `scripts/always-on-server.sh` を使う / プロセスの生死確認は `ps -p <pid>` /
@@ -111,7 +114,8 @@ Claude が起動したバックグラウンドタスクの停止は `TaskStop` /
 failure-catalog の「D: 文章で禁止しても再発する操作ミス」に落ちるため。
 
 **0.55.0 以降の正規経路は `scripts/aimix-run.sh`** (bdboard-cm2q.12)。同じ判定を argv で行い、
-素の `aimix run` は `.claude/settings.json` の `Bash(aimix run *)` deny で止まる。ラッパーの
+bdboard では素の `aimix run` を `.claude/settings.json` の `Bash(aimix run *)` deny で止める
+(`permissions` はパックが配らないので、ほかの注入先では各自の設定)。ラッパーの
 コマンド行には `aimix run` が現れないので、この規則はラッパー経由の呼び出しには発火しない。
 deny をすり抜ける形 (絶対パス・`bash -c`) への網として残し、hook ごと bdboard-cm2q.10 で外す。
 詳細: `references/model-routing.md`「aimix-run.sh — 規律6 の照合ラッパー」。

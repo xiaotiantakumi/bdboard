@@ -20,6 +20,8 @@ import { createFsPackRegistry } from './fs-pack-registry.js';
 
 const PACKS_ROOT = fileURLToPath(new URL('../../../harness/packs/', import.meta.url));
 const AIMIX_RUN = path.join(PACKS_ROOT, 'bdboard-harness', 'scripts', 'aimix-run.sh');
+// macOS では PATH の bash (Homebrew 5.x) ではなく /bin/bash 3.2 で走らせ、3.2 互換を実際に確かめる。
+const BASH = process.platform === 'darwin' ? '/bin/bash' : 'bash';
 
 const ROUTES = {
   implement: {
@@ -77,7 +79,7 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness scripts/aimix-run
     args: readonly string[],
     options?: { readonly cwd?: string; readonly extraEnv?: Record<string, string> },
   ): Promise<CommandResult> {
-    return runner.run('bash', [AIMIX_RUN, ...args], {
+    return runner.run(BASH, [AIMIX_RUN, ...args], {
       cwd: options?.cwd ?? projectRoot,
       env: { ...env, ...options?.extraEnv },
       timeoutMs: 20_000,
@@ -197,6 +199,25 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness scripts/aimix-run
     );
   });
 
+  it('lets a non-empty --member win over --members, as aimix does', async () => {
+    writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+    const memberFirst = [
+      '--mode', 'implement', '--member', 'codex', '--members', 'cursor', '--model', 'gpt-5.6-sol', '--complexity', 'high',
+    ];
+    expectPassed(await aimixRun(memberFirst), memberFirst);
+    const membersFirst = ['--mode', 'implement', '--members', 'codex', '--member', 'cursor', '--model', 'composer-2.5'];
+    expectPassed(await aimixRun(membersFirst), membersFirst);
+  });
+
+  it('does not accept a --model that smuggles a candidate on another line', async () => {
+    writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+    const result = await aimixRun([
+      '--mode', 'implement', '--member', 'codex', '--model', 'gpt-5.6-sol\nbogus', '--complexity', 'high',
+    ]);
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout).toBe('');
+  });
+
   it('passes an off-cell model when BDBOARD_ROUTE_OVERRIDE carries a reason, but not an empty one', async () => {
     writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
     const args = ['--mode', 'implement', '--member', 'codex', '--model', 'bogus', '--complexity', 'high'];
@@ -231,6 +252,19 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness scripts/aimix-run
     );
     const other = ['--mode', 'implement', '--member', 'cursor', '--model', 'composer-2.5', '--complexity', 'high'];
     expectPassed(await aimixRun(other), other);
+    // --members の先頭の空でない member (空白・空要素を飛ばす) が除外中なら止める。
+    expectStopped(
+      await aimixRun(['--mode', 'implement', '--members', ' , codex', '--complexity', 'high']),
+      'models.exclude',
+    );
+  });
+
+  it('runs without checking, with one warning line, when route.sh rejects the contract', async () => {
+    writeFileSync(path.join(projectRoot, '.claude', 'bdboard-harness.json'), '{not json\n', 'utf8');
+    const args = ['--mode', 'implement', '--member', 'codex', '--model', 'bogus'];
+    const result = await aimixRun(args);
+    expectPassed(result, args);
+    expect(result.stderr.trim().split('\n')).toHaveLength(1);
   });
 
   it('runs without checking, with one warning line, outside a git repository', async () => {
@@ -261,6 +295,14 @@ describe.skipIf(process.platform === 'win32')('bdboard-harness scripts/aimix-run
       ['--mode', 'implement', '--cwd', projectRoot, '--member', 'codex', '--model', 'bogus'],
       { cwd: outside },
     );
+    expectStopped(result, 'codex:bogus');
+  });
+
+  it('falls back to the calling project when --cwd is outside any git repository', async () => {
+    writeContract({ mainBranch: 'main', models: { routes: ROUTES } });
+    const outside = path.join(tmpRoot, 'outside');
+    mkdirSync(outside, { recursive: true });
+    const result = await aimixRun(['--mode', 'implement', '--cwd', outside, '--member', 'codex', '--model', 'bogus']);
     expectStopped(result, 'codex:bogus');
   });
 });

@@ -35,6 +35,16 @@ stop() {
   exit 2
 }
 
+# stdin の行のどれかが $1 と完全一致するか。grep -xF は $1 の改行をパターン区切りとして
+# 扱い、`--model "$(printf 'a\nb')"` が a の行に一致してしまうので使わない。
+has_line() {
+  local line
+  while IFS= read -r line; do
+    [ "$line" = "$1" ] && return 0
+  done
+  return 1
+}
+
 # aimix run の argparse (allow_abbrev=True) と同じ長オプション解決。完全一致を優先し、
 # そうでなければ一意な前方一致だけを返す。曖昧・未知は空 (aimix 自身がエラーにする)。
 resolve_option() {
@@ -105,6 +115,7 @@ from_members=''
 if [ -z "$member" ] && [ -n "$members" ]; then
   old_ifs="$IFS"
   IFS=','
+  set -f
   for candidate in $members; do
     candidate="${candidate#"${candidate%%[![:space:]]*}"}"
     candidate="${candidate%"${candidate##*[![:space:]]}"}"
@@ -114,11 +125,20 @@ if [ -z "$member" ] && [ -n "$members" ]; then
       break
     fi
   done
+  set +f
   IFS="$old_ifs"
 fi
 
-# 契約は委譲先の作業ディレクトリのプロジェクトから読む (--cwd があればそこ)。
-repo_root="$(git -C "${work_dir:-$PWD}" rev-parse --show-toplevel 2>/dev/null)"
+# 契約は委譲先のプロジェクトから読む: --cwd が git リポジトリならそこ、そうでなければ
+# (--cwd 無し・リポジトリ外を指す) 呼び出したカレントのプロジェクト。--cwd を
+# リポジトリ外へ向けただけで照合が外れないようにする。
+repo_root=''
+if [ -n "$work_dir" ]; then
+  repo_root="$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null)"
+fi
+if [ -z "$repo_root" ]; then
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+fi
 if [ -z "$repo_root" ] || [ ! -r "$ROUTE_SCRIPT" ]; then
   printf '%s\n' 'aimix-run.sh: 振り分け表を読めないので照合せずに実行します (git リポジトリ外か route.sh が無い)。' >&2
   run_aimix "$@"
@@ -138,7 +158,7 @@ if [ -z "$candidates" ]; then
   [ -n "$member" ] || stop \
     "aimix-run.sh: ${mode}/${complexity} セルは models.exclude で候補が 0 件です。--member の明示が必須です。" \
     "除外中: $excluded_list"
-  if printf '%s\n' "$excluded" | grep -qxF -- "$member"; then
+  if printf '%s\n' "$excluded" | has_line "$member"; then
     stop "aimix-run.sh: $member は models.exclude で除外中です (${mode}/${complexity} セル)。" \
       "除外中: $excluded_list"
   fi
@@ -155,7 +175,7 @@ candidate_list="$(printf '%s' "$candidates" | tr '\n' ',' | sed 's/,$//')"
 [ -n "$model" ] || stop \
   "aimix-run.sh: ${mode}/${complexity} セルでは --model の明示が必須です (どの候補を使ったか記録に残すため)。" \
   "候補: $candidate_list"
-printf '%s\n' "$candidates" | grep -qxF -- "$member:$model" || stop \
+printf '%s\n' "$candidates" | has_line "$member:$model" || stop \
   "aimix-run.sh: $member:$model は ${mode}/${complexity} セルの候補ではありません。" \
   "候補: $candidate_list"
 

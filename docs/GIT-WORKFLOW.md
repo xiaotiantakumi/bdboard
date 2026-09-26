@@ -435,7 +435,10 @@ get no warning at all; for those the board's Hygiene lane
 session started in a worktree gets that branch's copy, and `EnterWorktree` does
 not change it — while `.claude/settings.local.json` is read from the main
 checkout's root even in a worktree session
-(https://code.claude.com/docs/en/settings). A deny merged to `main` therefore
+(https://code.claude.com/docs/en/settings: "In a worktree, it uses the file at
+the main checkout's root"; observed 2026-09-26: a deny line added to the main
+checkout's `settings.local.json` took effect, without a restart, in a chair
+session running in a worktree). A deny merged to `main` therefore
 does not reach sessions started from an older worktree (observed 2026-09-26: a
 chair session started in a worktree from before cm2q.1 never saw that PR's deny
 lines). Copying the lines into the main checkout's untracked

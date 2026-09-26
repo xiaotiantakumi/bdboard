@@ -2,7 +2,7 @@
 name: codex-implementer
 description: >-
   Codex 実装委譲サブエージェント（bdboardプロジェクト用オーバーライド）。ai-mix の
-  implement/refactor 分岐から起動され、Codex CLI(GPT-5.6ファミリー)の呼び出し元が選んだモデルに
+  implement/refactor 分岐から起動され、Codex CLI の呼び出し元が選んだモデルに
   実際のコード編集を行わせる専用エージェント。呼び出し元(議長Claude)が「Codexで実装して」
   「これをCodexで実装/リファクタして」と判断したときに、実装タスクを本文メインループから
   切り離してこのサブエージェントへ投げる。役割: (1)ラッパー `aimix-run.sh` 経由で
