@@ -269,6 +269,8 @@ harness ラベルの起票率、重複解消/やり直しチケットの比率�
 **目的**: D 分類の失敗を「文章で禁止」から「実行できない」へ移す。公式の hooks-guide の
 守備範囲そのもの。
 
+**但し書き**: 追加する hook も brushup-protocol.md §4 の4問と行数予算（bdboard-cm2q.5）を通す。まず効果と害を測り、§2 分類 E に当たらないときだけ議長が追加を検討する（bdboard-cm2q）。
+
 - パックに `hooks/` を追加 (シェルスクリプト、bd/git 以外に依存しない):
   - `pre-bash-guard.sh` (PreToolUse: Bash): `pkill|killall` / `bd dolt (push|pull)` に
     `--remote` 無し / `npm run verify:steps` / 素の `git stash` / `run_in_background` 併用時の

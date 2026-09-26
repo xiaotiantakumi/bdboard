@@ -391,7 +391,7 @@ working tree/HEAD 変更系として塞ぐ。port ありの契約では 7a が�
   リターンを追加した (4KB のヒアドキュメント commit メッセージで平均実測 ~761ms →
   ~470ms、約 38%/291ms 減。測定条件は PR 説明を参照)。**それでも残る制約** (意図的な回避
   手段の構築を要し、通常の (不注意な) サブエージェント運用では起こりにくいと判断して
-  このチケットのスコープでは対応しない、follow-up 課題として個別に起票する): 別ファイルに
+  このチケットのスコープでは対応しない。個別には起票せず「守らないもの」に記録する): 別ファイルに
   書いて実行する迂回 (`bash /tmp/x.sh`)、別コマンド/別セグメントで事前に設定した変数の
   参照、`env FOO=bar git ...` 以外の形 (別セグメントの `export` 等) で環境変数を仕込む迂回、
   `$(which git)` のようにコマンド語自体が展開結果に依存する形。
@@ -406,7 +406,8 @@ working tree/HEAD 変更系として塞ぐ。port ありの契約では 7a が�
   単位チェックから見えなくなる (bdboard-kmh2 由来の既存の受容済み制限と同種)。here-string
   (`<<<`) の誤検出・区切り子のエスケープ差異・1行複数ヒアドキュメント・開始行直後の `#`
   コメント等のパーサーエッジケースも含め、opus レビュー (2026-09-25, PR #790) で指摘され
-  ブロッキング扱いとしなかった残課題は bdboard-u1kx で個別に追跡する。
+  ブロッキング扱いとしなかった残課題は個別には対応しない（「守らないもの」を参照。保留
+  チケットは bdboard-4up4 で仕分ける）。
 - pre-edit-guard.sh の main checkout 保護 (下記) とは別実装 (Bash の引用符付きコマンド
   文字列と Edit/Write の `file_path` は形が違うため、判定の入口は共有できない)。
   main checkout 判定関数 (`bh_main_checkout` / `bh_dir_is_main`) 自体は共有する。
@@ -505,12 +506,12 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
 - push refspec 対象側の `bd/*` 照合 (上表) は `refs/heads/`・`heads/`・`refs/` の
   前置きと先頭の `+` は剥がすが、`--all`/`--mirror`/`--prune`、`*` を含むワイルド
   カード refspec、素の `:`/`+:`、`-c remote.*.push`・`-c push.default`、
-  `git update-ref refs/heads/bd/*` はまだ対象外 (bdboard-p95o で対応予定)。
-  `env`/`timeout`/`nice`/`NAME=値` の前置きも規則 9 の先頭語判定はまだ読み飛ばさない
-  (同じく bdboard-p95o)。
+  `git update-ref refs/heads/bd/*` はまだ対象外。`env`/`timeout`/`nice`/`NAME=値` の前置きも
+  規則 9 の先頭語判定はまだ読み飛ばさない。個別には対応しない（「守らないもの」を参照。
+  保留チケットは bdboard-4up4 で仕分ける）。
 - 遅延クレームの引用符追跡 (`wog_scan_quote_state`) は `#` コメント・ヒアドキュメント
-  本体・二重引用符内の `$(`/`${`・`$'…'` を扱わない既知の残課題がある (bdboard-w6ch で
-  対応予定)。
+  本体・二重引用符内の `$(`/`${`・`$'…'` を扱わない既知の残課題がある。個別には対応しない
+  （「守らないもの」を参照。保留チケットは bdboard-4up4 で仕分ける）。
 
 ### 誤検知について
 
@@ -663,6 +664,19 @@ hook を直している PR worktree は自分のコミットでは警告され�
   `origin/<main>` の先端のコミット日時を添えている。
 - 閾値は 1 / 3 の固定値。`.claude/bdboard-packs.json` の `injectedAt` だけの更新もハーネスの
   コミットとして数える。
+
+## 守らないもの（既知の限界）
+
+- kill 系: 規則1 (hook) は `sh -c`/絶対パス形の `pkill`/`killall` も止めるが、deny (#812) は
+  パス形の `kill`・`sh -c`/`bash -c` 包み・`env`/`exec`/`eval`/`sudo` 前置き・フラグ付き `xargs`・
+  `find -exec kill`・別言語 (`node -e`/`python3 -c`)・スクリプト経由を取り漏らす。`kill` 単体は
+  無防備（`pgrep | xargs kill` はフラグ無しなら deny の文書上の対象内、実行時未検証は V-1 参照）。
+  Codex/Cursor が aimix 経由で起動する子プロセスは Claude Code の設定が届かず対象外
+- 10秒 timeout の fail-open: hook が timeout しても deny の7パターンはそれでも効く
+- Dolt: `bd dolt push --remote origin`・`bd sync`・`bd -C <path> dolt push` は deny に無く、
+  規則2/5 (hook) だけが見るため hook timeout 時は素通り
+- git 以外で Bash から main checkout へ絶対パスで書くこと（規則8 を bdboard-cm2q.10 で削除後。
+  `sed -i`/`cp`/`tee` 等。`isolation: "worktree"` も止めない。Edit/Write は規則2 が止める）
 
 ## pack.json の `hooks[]` 宣言 (P1b への契約)
 

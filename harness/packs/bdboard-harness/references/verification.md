@@ -26,7 +26,7 @@
   処理は detached のまま動き続け、通知は来ない（実測: failure-catalog.md の
   double-background-verify）。長時間コマンドを待つときは、コマンド自体を（末尾に `&` を
   付けず）そのまま `run_in_background: true` へ渡すか、
-  `while kill -0 <pid> 2>/dev/null; do sleep 5; done` のような foreground な待ち合わせ
+  `while ps -p <pid> >/dev/null 2>&1; do sleep 5; done` のような foreground な待ち合わせ
   ループを同様に渡す（このループ自体は verify の成否を運ばないので、判定は上の
   `EXIT=` 行規律と組み合わせる）。「数秒で完了通知が来た」のに長時間コマンドのはずなら、
   まずこの二重バックグラウンド化を疑い、`pgrep`/`ps` で実プロセスの生死を確認する。
@@ -191,6 +191,9 @@ TZ=UTC npm run verify   # CI と同じ条件
 - 報告の末尾で `git status --porcelain` を報告する（上の禁止が守られたことの証拠になる）
 - 自分が触っていないファイルを片付けない
 - 作業メモを書くなら `/tmp` 配下のみ
+- **敵対的な回避**（実際の事故や通常手順の形では起こらず、意図して作り込んだときだけ現れる形）
+  の探索・指摘は対象外（brushup-protocol.md §5/§2 分類 E）。実事故・通常手順の形をした穴は
+  引き続き対象
 
 ## 委譲ブリーフの git 制約 — 宛先別の定型
 
