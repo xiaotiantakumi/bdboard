@@ -155,11 +155,11 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   ヘルプ原本 `docs/help-content.json` の追従を確認 → `npm run drift` (PR が数時間開いていたら
   再実行) → `npm run verify` (PR を開く前にクリーンであること) →
   `gh pr create --fill --body "Closes: <ticket-id> …"` → `bd comment <id> "PR: <url>"` →
-  CI green → マージ (`origin/main` の `merge.mode` で分岐。S0: drift → `bd merge-slot acquire` → ls-remote で CAS →
+  CI green → マージ (マージは議長のみ。S1/S2 の gate/finish は `BDBOARD_MERGER=chair` を要求。`origin/main` の `merge.mode` で分岐。S0: drift → `bd merge-slot acquire` → ls-remote で CAS →
   `gh pr merge --squash --delete-branch` → 着地後検証 → release / S1・S2: `npm run merge-pr -- prepare|gate|finish <N>`
   で枠は CAS とマージの間だけ・着地後検証は commit status。docs/GIT-WORKFLOW.md) → **`bd close <id>` はマージ成功後だけ**
   (PR を開いた時点では閉じない — `bd ready` が他セッションに嘘をつく)。
-- **Direct-to-main commits are banned.** 唯一の例外は `.github/workflows/` のみを触る CI 復旧コミット。
+- **Direct-to-main commits are banned, no exceptions.** CI 復旧も PR 経由 (bypass は pull requests only、2026-09-26 変更)。
 - **`.beads/` はこのリポジトリで git 追跡していない** (ルート `.gitignore` 参照)。PR で
   `.beads/` 配下を追加・変更しない — CI が `origin/main` との diff に含めば PR を落とす。
 - **Dolt remote は必ず `--remote <name>` を明示する（`--remote origin` も不可）。素の `bd dolt push` / `bd dolt pull` は

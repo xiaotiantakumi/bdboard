@@ -478,8 +478,8 @@ so this arm normally checks the to-be-merged message before it lands
 (bdboard-qhsb). It has a gap the `push` arm then closes: on a multi-commit
 branch the squash subject becomes the PR title (or whatever is typed on the
 merge screen), not any individual branch commit, and a commit that reaches
-`main` without a PR (the sole exception in docs/GIT-WORKFLOW.md, a CI-recovery
-commit) skips the `pull_request` arm entirely — both surface only once the
+`main` without a PR (formerly the CI-recovery exception in docs/GIT-WORKFLOW.md;
+impossible since the 2026-09-26 ruleset change) skips the `pull_request` arm entirely — both surface only once the
 `push` arm scans `v<last-release>..HEAD` after the fact. The `PreToolUse(Bash)`
 hook registered in `.claude/settings.json` looks at something earlier than
 either arm: **every commit written locally**, before `git commit` even runs —
