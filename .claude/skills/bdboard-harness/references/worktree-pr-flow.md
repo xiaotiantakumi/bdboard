@@ -290,6 +290,9 @@ GraphQL 枠だけが 0/5000 になり `gh pr create` が失敗。core 枠は 500
 
 ### 5. マージ排他3層
 
+`npm run merge-pr -- gate` と `finish` は議長だけが実行し、必ず `BDBOARD_MERGER=chair` を前置する。
+サブエージェントはこれらを実行せず、必要なコマンドを最終報告に記す。
+
 並列セッションが同時に main へマージしてくること自体は（branch protection が無い環境では）
 止められない。独立に CI 緑だった2本の PR が組み合わさると壊れる「意味的衝突」も CI では
 捕まらない。3層で守る。層2は単独で機械的に効き、層1と層3は協調規律。
@@ -455,7 +458,7 @@ PR をマージしない。
   進み、main が進んでいれば枠の外で rebase → CI → prepare からやり直す（CAS 負けも同じ。
   rebase に直行せず prepare で分類し直す）。
 - **層3**: 台帳は GitHub commit status（context は契約の `merge.statusContext`、既定
-  `bdboard/landed-verify`）。**マージしたエージェント自身が PR worktree で**
+  `bdboard/landed-verify`）。**議長が gate から finish まで枠を保持し、議長自身が PR worktree で**
   `git checkout --detach <着地した SHA>` → 検証コマンド → success / failure を記録する。
   main checkout に触れないので hook 規則 7 に当たらない。次の merger は PRED_BASE の台帳を
   ゲートにする: success なら進む / failure ならマージしない（下の「main が壊れたとき」）/
@@ -467,15 +470,16 @@ PR をマージしない。
 ```bash
 npm run merge-pr -- prepare <N>   # 枠の外。PR / 必須チェック / main を確かめ PRED_BASE を記録
                                   #   exit 3 = main が動いた → rebase → push → CI → prepare から
-npm run -s merge-pr -- gate <N>   # 層3 ゲート → acquire → CAS → stdout にマージ行を印字 (枠は保持)
+BDBOARD_MERGER=chair npm run -s merge-pr -- gate <N>   # 層3 ゲート → acquire → CAS → stdout にマージ行を印字 (枠は保持)
 gh pr merge <N> --squash --delete-branch --match-head-commit <head> --subject '<title> (#N)'  # 印字どおり
-npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠を返す → 着地後検証 → 台帳
+BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠を返す → 着地後検証 → 台帳
 ```
 
 - 実行場所は **PR の worktree（linked worktree）**。main checkout では着地後検証を拒否する
   （detach すると常時稼働サーバーの配信物まで置き換わるため）。`-s` は npm の見出し行を stdout に
   出さないため（stdout はマージ行 1 行だけになる）。状態とログは git common dir の `bdboard-merge/`。
-- 終了コード 75 は「並び直し」（CAS 負け・main が動いた・ls-remote 失敗・枠が空かない・CI pending・
+- 終了コード `2` は前提不成立（レビュー記録なし・チケット未検出等）、`7` は議長以外の gate / finish / verify。
+  `75` は「並び直し」（CAS 負け・main が動いた・ls-remote 失敗・枠が空かない・CI pending・
   GitHub API に届かない）。prepare からやり直す。4 / 6 は main が壊れている（下記）。1 は実行
   できなかった（bd が使えない・作業ツリーが dirty・npm ci 失敗など。表示に従って直す。着地後検証を
   実行できなかったときは直してから `npm run merge-pr -- verify <sha>`）。
@@ -484,6 +488,9 @@ npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠�
 - `gh pr merge` が権限判定で拒否された / 409（head 不一致）でも **finish を打って枠を返す**
   （finish は REST の `merged` で成否を判定し、未マージなら枠を返して exit 5）。拒否の後は
   再試行・別経路をせず人間判断へ（SKILL.md 規律3）。
+- レビュー記録 `bdboard.model.review` はチケット単位で、PR head SHA には結び付かないため、
+  記録後に push されたコミットも通過する。P0 修復 PR にもレビュー記録が要る。議長が Opus で
+  自身の PR をレビューした場合は、議長自身のモデル名を記録してよい。
 - 着地後検証が success なら、着地した木と PR head の木が同一かを finish が表示する（S0 の
   「ブランチ tip 検証」に相当。S1 では検証そのものを着地した木で行うので代用は要らない）。
 - **main が壊れたとき**（台帳 failure・main の CI の verify/e2e が赤）: 見つけた者が枠を取って
@@ -493,10 +500,8 @@ npm run merge-pr -- finish <N>    # 結果にかかわらず必ず打つ。枠�
   その PR は prepare → `gate <N> --repair`（台帳の failure を無視し、`… / main-broken <PRED_BASE 12 桁>`
   の枠を引き継ぐ）→ 印字行 → finish で入れる（finish は success のときだけ枠を返す）→ 壊した PR の
   チケットを再 open して理由を残す。`--repair` は P0 バグの修復 PR 専用。
-  bdboard-gsnn 以降はこれを機械的にも強制する: `npm run merge-pr -- gate <N> --repair`
-  は規則 9 (worktree 所有権保護) の対象で、修復 PR の worktree の持ち主以外の
-  サブエージェントが実行すると deny される。実質的に `--repair` はその持ち主が、
-  自分の worktree からだけ実行できる。
+  `--repair` も gate と同様に `BDBOARD_MERGER=chair` が必要で、実行責任は議長だけにある。
+  hook 規則 9 (worktree 所有権保護) も追加の防御として適用される。
 - 巻き戻し（S1 → S0）は契約の 1 行。gate 済みの PR があっても finish は動き、枠を返す。
 
 #### S2 — rebase を省き、着地予定ツリーを手元で verify する（契約の `merge.mode` が `S2` のとき）

@@ -18,6 +18,7 @@ export { DEFAULT_HOT_FILES, globToRegExp, hotCollisions } from './merge-pr/hot-f
 export { evaluateLandedStatus } from './merge-pr/landed.mjs';
 export { parseGitHubSlug, parseMergeConfig } from './merge-pr/config.mjs';
 export { mergeCommand } from './merge-pr/gate.mjs';
+export { hasApprovedReview, isReleasePleasePull } from './merge-pr/prepare.mjs';
 
 const isMain =
   process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
