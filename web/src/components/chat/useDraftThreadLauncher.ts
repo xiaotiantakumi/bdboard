@@ -211,10 +211,11 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       // bdboard-4w2d(Opus レビュー blocker 2 対応): この明示的リセットは「このプロジェクトの
       // open は空である」という確定した状態そのものであり、E7/applyRecoveredTurn の
       // restoreThreadView による復元と同格に扱う必要がある。ここで restoredProjectsRef を
-      // 立てておかないと、後から届く turn-status 回収(applyRecoveredTurn)が「まだ未復元」と
-      // 誤判定して persisted(いま undefined にした直後)から restoreThreadView をやり直し、
-      // 「永続化が無い ⇒ 全スレッドを開く」という restoreThreadView の既定則に従って
-      // エージェント切替直後の空ドラフトへ全スレッドを再展開してしまう。
+      // 立てておかないと、後から届く E7 の応答や turn-status 回収(applyRecoveredTurn)が
+      // 「まだ未復元」と誤判定して restoreThreadView による復元を重ねて走らせる
+      // (bdboard-4w2d 当時は persisted を undefined にしていたため、「永続化が無い ⇒
+      // 全スレッドを開く」の既定則で全スレッドを再展開していた。bdboard-rhl4 以降 persisted は
+      // 空配列で確定済みだが、復元を重ねない役割はそのまま残る)。
       restoredProjectsRef.current.add(selectedProjectId);
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
