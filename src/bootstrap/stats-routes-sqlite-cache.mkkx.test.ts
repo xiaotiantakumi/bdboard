@@ -38,24 +38,48 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
   // count of ~14 would, if scaled up literally) defeats the per-project
   // chunking this fix relies on.
   //
-  // Two assertions below, both against the same measured run:
+  // Three assertions below, all against the same measured run:
   // - `<1000ms` is the ticket's literal acceptance criterion.
-  // - `<400ms` is a *regression guard*: an opus review of an earlier
-  //   revision of this PR found that forcing the sync listProjects()
-  //   fallback (i.e. reverting the fix) only pushed this same assertion to
-  //   ~630-940ms on this machine - comfortably still under the 1000ms
-  //   acceptance budget, so that assertion alone would NOT have caught a
-  //   revert of the fix. The fixed path measures ~15-45ms end-to-end
-  //   (single-run and under 3-way artificial CPU contention alike; see
-  //   below), so 400ms leaves ample headroom above the fix's own numbers
-  //   while sitting well below every "fallback" measurement observed.
-  //   Confirmed by temporarily forcing the fallback during development:
-  //   it reliably fails the 400ms assertion (and, under contention, comes
-  //   close to or exceeds even the 1000ms one) at this fixture size, while
-  //   the real fix passes both. Verified stable across repeated runs (5/5
-  //   fixed, single-run <45ms; 3/3 fallback >800ms) under artificial CPU
-  //   contention (3 busy-loop processes) to guard against flakiness under
-  //   `npm run verify`'s parallel test workers.
+  // - `order[0] === 'health'` (requested last, must finish first) is
+  //   necessary but NOT sufficient alone: bdboard-uy10 found that forcing
+  //   the pre-fix sync listProjects() fallback still resolves 'health'
+  //   first every time (only its *magnitude* changes, not its position).
+  // - the ratio assertion right below `order[0]` is the actual regression
+  //   guard, and is what bdboard-uy10 changed. It used to be a fixed
+  //   `health.elapsedMs < 400`: bdboard-mkkx's PR #680 review found that
+  //   forcing the fallback only pushed health.elapsedMs to ~630-940ms on
+  //   that reviewer's machine (under the 1000ms budget above on its own,
+  //   so that assertion alone wouldn't have caught a revert), while the
+  //   fixed path measured ~15-45ms there - 400ms seemed to leave headroom
+  //   in both directions. That constant then broke main's landed-verify
+  //   (bdboard-uy10, 2026-09-25): under real multi-session contention (load
+  //   average 13-15, no artificial load) the *fixed* path itself measured
+  //   532ms on a shared box. The fix was intact; the absolute-ms margin
+  //   measured under synthetic single-machine contention just didn't hold
+  //   under real contention, which slows the whole process - fixed and
+  //   reverted alike - by an amount unrelated to whether the fix is
+  //   present.
+  //
+  //   Replaced with a comparison relative to this run's own slow calls
+  //   instead of a wall-clock constant, so it scales with the machine's
+  //   load instead of assuming a fixed number is comparable across runs:
+  //   health must finish in under half the wall time the slower of
+  //   stats/model-stats took (the two finish within ~1ms of each other -
+  //   both walk the same yield-gate cadence in lockstep, see
+  //   listProjectsChunked()). Measured on this development machine (load
+  //   average ~12-16 from unrelated concurrent sessions, no artificial
+  //   load): 21 fixed-path runs kept health.elapsedMs at 6-13% of the
+  //   slower call's time (health 74-179ms vs. stats/model-stats
+  //   881-2251ms); forcing the fallback (mutation check, 9 runs) pushed
+  //   that ratio to 74-81% (and past the literal 1000ms budget: health
+  //   1423-1937ms). 50% leaves wide margin on both sides. Keep the
+  //   `<1000ms` line too - it's a useful backstop for a heavy-load stall
+  //   landing inside health's own window, which can trip it before the
+  //   ratio does. If this fixture's ticket/project counts ever change,
+  //   re-measure rather than assuming 50% still holds: health's fixed-path
+  //   time is mostly a fixed one-off (router setup, first project parse),
+  //   so a much smaller fixture would shrink the *gap* faster than that
+  //   overhead, pushing the fixed-path ratio toward the cutoff.
   it(
     'does not block /api/health while reading a large real-SQLite project cache',
     async () => {
@@ -99,12 +123,12 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
       const statsPromise = (async () => {
         const response = await app.request('/api/stats?weeks=26');
         order.push('stats');
-        return response;
+        return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
       const modelStatsPromise = (async () => {
         const response = await app.request('/api/model-stats?weeks=26');
         order.push('model-stats');
-        return response;
+        return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
       const healthPromise = (async () => {
         // bdboard-ve1y (see stats-routes.test.ts): wait for our own
@@ -119,19 +143,28 @@ describe('createApiRoutes + createSqliteBoardCache (bdboard-mkkx)', () => {
         return { response, elapsedMs: Date.now() - statsStartedAt };
       })();
 
-      const [statsResponse, modelStatsResponse, health] = await Promise.all([
+      const [stats, modelStats, health] = await Promise.all([
         statsPromise,
         modelStatsPromise,
         healthPromise,
       ]);
 
-      expect(statsResponse.status).toBe(200);
-      expect(modelStatsResponse.status).toBe(200);
+      expect(stats.response.status).toBe(200);
+      expect(modelStats.response.status).toBe(200);
       expect(health.response.status).toBe(200);
       // Requested last, but must finish first.
       expect(order[0]).toBe('health');
-      expect(health.elapsedMs).toBeLessThan(1000); // ticket's literal acceptance criterion
-      expect(health.elapsedMs).toBeLessThan(400); // regression guard - see comment above
+
+      // bdboard-uy10: both timing assertions below carry the raw
+      // measurements in their failure message, so a landed-verify failure
+      // can be triaged at a glance - a high health/slowestStatsMs ratio
+      // means the fix likely regressed; a low ratio with only the <1000ms
+      // line failing points at a heavy-load stall instead (see comment
+      // above).
+      const slowestStatsMs = Math.max(stats.elapsedMs, modelStats.elapsedMs);
+      const timingSummary = `health=${health.elapsedMs}ms stats=${stats.elapsedMs}ms modelStats=${modelStats.elapsedMs}ms ratio=${(health.elapsedMs / slowestStatsMs).toFixed(2)}`;
+      expect(health.elapsedMs, timingSummary).toBeLessThan(1000); // ticket's literal acceptance criterion
+      expect(health.elapsedMs, timingSummary).toBeLessThan(slowestStatsMs * 0.5); // regression guard, relative not absolute
 
       cache.close();
     },
