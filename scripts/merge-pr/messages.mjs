@@ -9,7 +9,7 @@ export function brokenMainSteps(sha, repo, context) {
     `  1. 状況: gh api repos/${repo}/commits/${sha}/status で description を確認し、最後の success と最初の failure の sha を特定する`,
     `  2. bd create --type bug -p 0 "main 破損: ${sha.slice(0, 12)} <失敗ステップ>" (失敗ログの先頭を bd comment に)`,
     '  3. 10 分以内に直せるなら fix-forward PR、それ以外は revert PR (git revert --no-edit <壊した squash sha>)',
-    '  4. 修復 PR は prepare → gate --repair → gh pr merge → finish で入れる (main-broken の枠を引き継ぎ、finish の success で返す)',
+    '  4. 修復 PR は prepare → BDBOARD_MERGER=chair npm run merge-pr -- gate --repair → gh pr merge → BDBOARD_MERGER=chair npm run merge-pr -- finish で入れる (main-broken の枠を引き継ぎ、finish の success で返す)',
     '  自分で直せないときは議長に報告し、human ラベル + human gate に載せる。',
   ];
 }
@@ -26,7 +26,7 @@ export function rebaseSteps(mainRef, reason = 'S1 では main が動いたら re
 export function mergeInstructions(pr) {
   return [
     '上の 1 行 (stdout) をそのまま 1 回だけ実行してください。枠は保持したままです。',
-    `実行後は結果にかかわらず: npm run merge-pr -- finish ${pr} (着地後検証まで数分かかる。前景で待つ)`,
+    `実行後は結果にかかわらず: BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr} (着地後検証まで数分かかる。前景で待つ)`,
     '  - gh pr merge が権限判定で拒否された → 再試行・別経路はしない。finish で枠を返し、human gate へ',
     `  - 409 / "Head branch was modified" → finish で枠を返し、prepare からやり直す`,
     '  - 405 "not mergeable" → finish で枠を返し、rebase してから prepare',

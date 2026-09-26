@@ -131,7 +131,7 @@ if matches '(^|[^[:alnum:]_-])(pkill|killall)([^[:alnum:]_-]|$)'; then
   deny \
     'bdboard-harness: pkill/killall はパターンに一致した無関係なプロセス (常時稼働サーバー等) を巻き込むため禁止です。' \
     'まず lsof -nP -iTCP:<port> -sTCP:LISTEN や pgrep -x <name> で対象の PID を特定してください。' \
-    'そのうえで kill <pid> のように PID を指定して終了させてください。'
+    'そのうえで kill <pid> で終了させてください (permissions.deny が kill 自体を拒否する場合は hooks/README.md の「deny と hook の分担」を参照)。'
 fi
 
 # 2. bare な bd dolt push/pull: git origin 由来の remote を採用して私的な履歴を公開先へ

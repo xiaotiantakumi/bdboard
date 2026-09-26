@@ -8,7 +8,8 @@
 - 失敗が起きたら、まずここと照合する。既知の再発なら「ルールがあるのに防げなかった」
   = brushup-protocol.md §2 の分類 D（またはルールの置き場所の問題）として扱う。
 
-エントリの書式（1件5行以内。長い分析は本則側へ）:
+エントリの書式（1件5行以内。hook 由来のエントリは効果/害を1行必須とし6行まで許容。長い
+分析は本則側へ）:
 
 ```
 ### <slug> — <一行症状>（<日付>）
@@ -17,7 +18,20 @@
 - 出典: <bd チケットID / bd memory キー / 記録場所>
 ```
 
-日付が特定できない事故は（<日付>）を省略してよい（出典から辿れることを優先する）。
+hook 由来のエントリのテンプレ（効果/害は必須。他は上と同じ）:
+
+```
+### <slug> — <一行症状>（<日付>）
+- 原因: <根本原因を一行で>
+- 防止: <再発防止ルールを一行で>（本則: <所在>）
+- 効果・害: <止めた回数と最終発火日 / 誤検知件数・追加行数>
+- 出典: <bd チケットID / bd memory キー / 記録場所>
+```
+
+日付が特定できない事故は（<日付>）を省略してよい（出典から辿れることを優先する）。hook 由来
+以外のエントリでも任意で効果/害を足してよい（本則: brushup-protocol.md §7、bdboard-cm2q.5）。
+上限は**50件**。50件に達したら、1件足すごとに1件外す。外したエントリは消す（履歴は git）。
+スタブは残さない。
 
 ## 排他・worktree
 
@@ -48,7 +62,7 @@
 
 ### heartbeat-orphan-loop — デタッチした heartbeat ループが close 後・セッション終了後も残り in_progress の lease を延命し続けた（2026-09-04、同日5本）
 - 原因: lease-params.md が heartbeat の頻度・対象範囲は規定していたが**寿命を規定していなかった**ため、静的 ID リスト＋時間上限だけの生ループが書かれた
-- 防止: 生ループを書かず `scripts/bd-heartbeat.sh` を使う（寿命は ID リスト・セッション・`--max-hours` の3重に束縛）。本則: `lease-params.md`「heartbeat ループの寿命」。フック deny は現時点では作らない（スクリプト＋規律で足りる）。同じ失敗が再発して D 化したら pre-bash-guard 規則の追加を起票する
+- 防止: 生ループを書かず `scripts/bd-heartbeat.sh` を使う（寿命は ID リスト・セッション・`--max-hours` の3重に束縛）。本則: `lease-params.md`「heartbeat ループの寿命」。フック deny は現時点では作らない（スクリプト＋規律で足りる）。再発したら、まず効果と害を測る。§2 分類 E に当たらないときだけ、議長が規則の追加を検討する
 - 出典: bdboard-0kql（実測 bdboard-cdqb）（鏡像: heartbeat-partial）
 
 ### heartbeat-session-pid-self-destruct — `--session-pid $$` が Claude Code の Bash ツールでは起動直後に自壊する（実測 2026-09-21、bdboard-sso1.28）
@@ -113,7 +127,7 @@
 
 ### pkill-collateral — worktree のテストプロセスを狙った `pkill -f 'tsx.*src/main.ts'` が常時稼働サーバーも巻き添えにした（2026-08-15）
 - 原因: パターンマッチ kill はメインチェックアウトと worktree のプロセスを区別できない
-- 防止: pkill/killall 等のパターンマッチ kill 禁止。PID を特定して kill。委譲ブリーフにも毎回明記（本則: CLAUDE.md「Always-On Local Hosting」）
+- 防止: pkill/killall 等のパターンマッチ kill 禁止。サーバーは always-on-server.sh（議長）、それ以外は議長かユーザーに依頼。委譲ブリーフにも毎回明記（本則: CLAUDE.md「Always-On Local Hosting」）
 - 出典: bd memory `bdboard-2026-08-15-src-main-ts-sigterm`
 
 ### health-check-false-negative — `curl -f` が 401 で失敗し「サーバー停止」と誤認、二重起動を試みた（2026-08-16）
@@ -126,20 +140,15 @@
 - 防止: worktree から preview_start 禁止。起動はメインチェックアウトへ cd してから（本則: bdboard の `.claude/skills/bdboard-server-ops/SKILL.md`「Never call `preview_start` from a worktree session」）
 - 出典: `.claude/skills/bdboard-server-ops/SKILL.md` 該当節（実測記録つき）
 
-### subagent-restarted-always-on-server — PR をマージしたサブエージェントが CLAUDE.md の後片付け手順どおり main checkout を pull し、8787 を kill・再起動した（2026-09-20、3 件: bdboard-13mp / bdboard-sso1.10 / bdboard-sso1.5）
-- 原因: 「マージ後に常時稼働サーバーを再起動」の手順が誰の仕事かを文章でしか区別しておらず、`gh pr merge` まで委譲されたサブエージェントには手順どおりの正しい行動に見える。委譲ブリーフの禁止文言だけが歯止めで、9/20 以降の再発ゼロもブリーフと議長側の deploy スクリプト (スクラッチパッド、揮発) に依存していた
-- 防止: hook 規則 7 (`hooks/server-guard.sh`) — `agent_id` 付きの呼び出しから main checkout の `git pull` / `npm run start` / 再起動スクリプト実行を deny、listener PID の直接 kill は誰からでも deny。再起動は議長が `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>` で行い、サブエージェントは最終報告に「議長で再起動が必要」と書く（本則: CLAUDE.md「Always-On Local Hosting」、`hooks/README.md` 規則 7）
-- 出典: bdboard-hpu8（トランスクリプト調査。`bd comments bdboard-hpu8` と PR 本文に証跡）
+### hook-rules-7-8-9-retiring — サブエージェントが常時稼働サーバー(8787)を再起動・別担当の worktree へ checkout した事故で追加した規則7/8/9は退役方針（2026-09-26）
+- 退役: 後継は `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>`・`BDBOARD_MERGER=chair`・`isolation: "worktree"`・`permissions.deny`・pre-edit-guard.sh 規則2（本則: brushup-protocol.md §2 分類 E、bdboard-cm2q）
+- 効果・害: bdboard-cm2q.8/.9 で計測後、bdboard-cm2q.10 で削除。サーバーの再起動は議長が行い、最終報告に書く
+- 出典: bdboard-hpu8（規則7）/ bdboard-kxqb（規則8）/ bdboard-gsnn（規則9）
 
 ### stale-chair-checkout — 議長セッションの checkout が main から取り残され、main で入れた hook (規則 7 ほか) が議長と全サブエージェントで 1 か月以上効いていなかった（2026-09-24）
 - 原因: hook の登録も本体もセッション起動時の checkout (`$CLAUDE_PROJECT_DIR`) から読まれ、サブエージェントも同じ場所を読むが、長寿命セッションの checkout は誰も更新しない
 - 防止: `hooks/worktree-freshness.sh` が SessionStart / UserPromptSubmit / PostToolUse(Agent) で遅れ・共通祖先なし・本体欠落を警告し安全な追従コマンドを案内 (自動 merge はしない)。議長はマージ後に自分の checkout も追従 (本則: `hooks/README.md`、docs/GIT-WORKFLOW.md「Cleanup after merge」)
 - 出典: bdboard-flpp
-
-### subagent-checkout-in-chair-worktree — 別チケットの担当サブエージェントが議長の worktree 内で自分のブランチへ checkout し、最後にその worktree の削除まで議長へ求めた（2026-09-25）
-- 原因: 議長を main checkout で動かす運用への移行に伴い、サブエージェントも main checkout を cwd として起動しうるようになったが、hook 規則 7 が main checkout に対して禁じていたのは git pull・サーバー起動・listener kill だけで、checkout/switch/commit/reset/merge/stash と Edit・Write によるファイル編集は禁じていなかった
-- 防止: hook 規則 8 (`hooks/server-guard.sh`、`alwaysOnServer.port` の有無に関係なく常時有効) が `agent_id` 付き呼び出しから main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/cherry-pick/revert/am/clean/bisect/apply/rm/mv/pull を deny (pull は bdboard-rj7y で追加。既存の規則 7a は port ありの契約向けに独立に残っている)。`pre-edit-guard.sh` 規則 2 が同じ main checkout 判定 (`hooks/lib-main-checkout.sh` 共有) で Edit/Write/MultiEdit/NotebookEdit も deny する（本則: `hooks/README.md` 規則 8・pre-edit-guard.sh 規則 2）
-- 出典: bdboard-p5l.18（対策 bdboard-kxqb）（鏡像: subagent-restarted-always-on-server）
 
 ## 検証・ビルド
 
@@ -155,7 +164,7 @@
 
 ### double-background-verify — `run_in_background:true` 内に `&` を書き、harness の completed 通知が echo だけの完了を指した（2026-08-30）
 - 原因: `nohup npm run verify > log 2>&1 &\necho pid $!` を run_in_background:true で実行し、シェルの `&` が harness の追跡単位を『verify』ではなく直後の echo にすり替えた
-- 防止: run_in_background:true のコマンド文字列にバックグラウンド化の末尾 `&`（`2>&1`/`&&` は可）を書かない。長時間コマンドはそのまま渡すか `while kill -0 <pid> 2>/dev/null; do sleep 5; done` で待つ（本則: verification.md）
+- 防止: run_in_background:true のコマンド文字列にバックグラウンド化の末尾 `&`（`2>&1`/`&&` は可）を書かない。長時間コマンドはそのまま渡すか `while ps -p <pid> >/dev/null 2>&1; do sleep 5; done` で待つ（本則: verification.md）
 - 出典: bdboard-j0us（同一セッション内で2回再発、pgrep で detached プロセス生存を確認して発覚）
 
 ### wrong-node-version — シェルスナップショットの nvm 不全で意図しない Node により npm install が lockfile を書き換えた

@@ -4,9 +4,27 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 の hook で機械的に止めるスクリプト群 (bdboard-pkr6.1 / docs/HARNESS-EVALUATION.md
 §2.3・§5 P1)。`.claude/settings.json` への登録は注入 API 側が行う (bdboard-pkr6.2)。
 
+## deny と hook の分担
+
+`permissions.deny` (`.claude/settings.json`) は hook がタイムアウト等で素通りしても効く
+最後の守り。これは bdboard 自身の設定で、注入 API が配布するのは `hooks` キーだけ —
+`permissions` はパックの管轄外で、各プロジェクトが自分で設定する。
+
+pkill/killall (規則 1)・`--remote` 無しの `bd dolt push`/`pull` (規則 2)・`npm run
+verify:steps` 直叩き (規則 5) は hook でも判定済みなので、対応する deny entry は
+**二重の保険**にすぎない — 先に走る hook が理由付きで止め、hook がタイムアウトした
+ときだけ deny の番になる。**唯一 `kill` だけはそれを説明する hook が無く**、deny が
+理由を出さずに拒否する (bdboard-cm2q.1)。
+
+bdboard では PID を指定した `kill` 自体も deny される。代わりに: 常時稼働サーバーは
+議長が `scripts/always-on-server.sh` を使う / プロセスの生死確認は `ps -p <pid>` /
+Claude が起動したバックグラウンドタスクの停止は `TaskStop` / それ以外は議長かユーザーに
+聞く。
+
 ## 共通の約束
 
-- **deny は exit 2**、stderr に「何を止めたか / なぜ / 代わりに何をするか」を 3 行以内。
+- **hook の deny は exit 2**、stderr に「何を止めたか / なぜ / 代わりに何をするか」を
+  3 行以内 (`permissions.deny` とは別物 — 上の「deny と hook の分担」参照)。
 - **allow は exit 0 で無出力**。例外は警告専用の `worktree-freshness.sh` で、止めることは
   無く常に exit 0、警告があるときだけ stdout に JSON を出す (後述)。
 - **判定不能はすべて allow (fail-open)**。`set -e` は使わない。hook が壊れて作業が
@@ -35,13 +53,13 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 
 | # | deny 条件 | 代わりに |
 |---|---|---|
-| 1 | `pkill` / `killall` (単語境界。コメント内も含む) | `lsof -nP -iTCP:<port> -sTCP:LISTEN` や `pgrep -x <name>` で PID を特定し `kill <pid>` |
+| 1 | `pkill` / `killall` (単語境界。コメント内も含む) | `lsof -nP -iTCP:<port> -sTCP:LISTEN` や `pgrep -x <name>` で PID を特定して止める。bdboard では kill 自体も deny されるので「deny と hook の分担」を参照 |
 | 2 | `--remote` の無い `bd dolt push` / `bd dolt pull` | `bd dolt push --remote <name>`。事前に `bd dolt remote list` で `origin` が無いことを確認 |
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
 | 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
-| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` (bdboard-rj7y 以降、規則 8 も port 非依存に独立して対象にするが、port ありの契約では 7a が先に発火する) / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
+| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` (bdboard-rj7y 以降、規則 8 も port 非依存に独立して対象にするが、port ありの契約では 7a が先に発火する) / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 (bdboard では kill 自体も deny されるので「deny と hook の分担」を参照) |
 | 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` / `clean` / `bisect` / `apply` / `rm` / `mv` / `pull` を実行する (`pull` は bdboard-rj7y で追加。7a とは独立に、port の有無に関係なく規則 8 でも塞ぐ — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
 | 9 | 本体は `worktree-owner-guard.sh` (bdboard-gsnn)。持ち主でないサブエージェントが per-ticket worktree (`bd/<id>` ブランチが存在する `.claude/worktrees/<id>` のみ対象。chair 作成やisolation:"worktree"用のスクラッチworktreeは対象外) を対象に公開/マージ系操作をする。詳細は下記「9 の worktree 所有権保護」 | 自分の worktree で作業する。持ち主が動けないなら議長に `bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release <id>` を頼む |
 
@@ -241,7 +259,9 @@ complexity の choices 確認 → member 解決 → (セグメントが割れて
   (`node` / `npm` / `sh` 系なら) 加える — `npm run start` → `node (tsx)` → listener の鎖の
   どこを kill しても同じ結果になるため。`kill -0` / `kill -l` は判定しない。
 - **エスケープハッチ** `BDBOARD_SERVER_OVERRIDE=<理由>` はコマンド先頭の前置きだけを見て、
-  **議長のときだけ**効く (サブエージェントには効かない)。
+  **議長のときだけ**効く (サブエージェントには効かない)。bdboard では解除後も kill 自体が
+  `permissions.deny` で拒否されるので、実際に止めるには「deny と hook の分担」の代替手段
+  (`scripts/always-on-server.sh` 等) を使う。
 - deny のたびに `${TMPDIR:-/tmp}/bdboard-server-guard.log` へ 1 行 (時刻 / 規則 / agent /
   cwd / コマンド先頭 300 文字) を残す。stderr 3 行では「誰が何を止められたか」を後から
   追えないため。
@@ -371,7 +391,7 @@ working tree/HEAD 変更系として塞ぐ。port ありの契約では 7a が�
   リターンを追加した (4KB のヒアドキュメント commit メッセージで平均実測 ~761ms →
   ~470ms、約 38%/291ms 減。測定条件は PR 説明を参照)。**それでも残る制約** (意図的な回避
   手段の構築を要し、通常の (不注意な) サブエージェント運用では起こりにくいと判断して
-  このチケットのスコープでは対応しない、follow-up 課題として個別に起票する): 別ファイルに
+  このチケットのスコープでは対応しない。個別には起票せず「守らないもの」に記録する): 別ファイルに
   書いて実行する迂回 (`bash /tmp/x.sh`)、別コマンド/別セグメントで事前に設定した変数の
   参照、`env FOO=bar git ...` 以外の形 (別セグメントの `export` 等) で環境変数を仕込む迂回、
   `$(which git)` のようにコマンド語自体が展開結果に依存する形。
@@ -386,7 +406,8 @@ working tree/HEAD 変更系として塞ぐ。port ありの契約では 7a が�
   単位チェックから見えなくなる (bdboard-kmh2 由来の既存の受容済み制限と同種)。here-string
   (`<<<`) の誤検出・区切り子のエスケープ差異・1行複数ヒアドキュメント・開始行直後の `#`
   コメント等のパーサーエッジケースも含め、opus レビュー (2026-09-25, PR #790) で指摘され
-  ブロッキング扱いとしなかった残課題は bdboard-u1kx で個別に追跡する。
+  ブロッキング扱いとしなかった残課題は個別には対応しない（「守らないもの」を参照。保留
+  チケットは bdboard-4up4 で仕分ける）。
 - pre-edit-guard.sh の main checkout 保護 (下記) とは別実装 (Bash の引用符付きコマンド
   文字列と Edit/Write の `file_path` は形が違うため、判定の入口は共有できない)。
   main checkout 判定関数 (`bh_main_checkout` / `bh_dir_is_main`) 自体は共有する。
@@ -431,10 +452,10 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
 
 | 操作 | 判定 |
 |---|---|
-| `git push` | サブコマンドが `push` |
+| `git push` | サブコマンドが `push`。加えて各 refspec (`src:dst`) の両側を、先頭の `+` と `refs/heads/`・`heads/`・`refs/` の前置きを剥がしたうえで `bd/*` と照合し、他人の worktree に対応する id が現れれば deny する (bdboard-qpxq #797 で `bd/*` の素の形を追加、bdboard-ob0l で `refs/heads/`・`heads/` の前置き形も追加)。この refspec 対象側の照合は **deny 専用** で、記録の無い id をクレームすることはない (bdboard-ob0l F3: cwd ベースの判定 (下記) とは異なり、push の対象文字列だけから「その id の worktree に実際に触れた」とは言えないため) |
 | `git commit` | サブコマンドが `commit` |
 | `git worktree remove <path>` | `<path>` を解決した先が per-ticket worktree |
-| `git branch -D bd/<id>` (`-D` 短縮形のみ。`--delete --force` は対象外) | 引数に `-D` と `bd/<id>` が両方 |
+| `git branch -D bd/<id>` (`-D` 短縮形に加えて `-d`/`--delete` と `-f`/`--force` の組み合わせも対応。bdboard-2i15) | 削除フラグ (force+delete 相当) と `bd/<id>` が両方。`git push` の refspec 対象側と同じ理由 (ブランチ名文字列だけから見ており、呼び出し元の実効ディレクトリとは無関係) で **deny 専用**、記録の無い id をクレームすることはない (bdboard-ob0l で修正: 以前はここもクレームしており、未所有の worktree に対して別 agent が `branch -D` するだけで幽霊クレームが書かれ、本当の持ち主を締め出せた) |
 | `npm run merge-pr -- <prepare\|gate\|finish\|verify> ...` (`gate --repair` を含む) | `run merge-pr` |
 | `gh pr merge <N>` | `pr merge` |
 | 議長専用解除コマンド `scripts/worktree-owner.sh release <id>` をサブエージェントが実行 | `worktree-owner.sh` の直後のトークンが `release` |
@@ -482,7 +503,15 @@ worktree」を実効ディレクトリ/対象として実行しようとした�
   親の worktree で mutation 確認の一時編集をする既存フローを妨げないため)。
 - 遅延クレームの狭い race (上記)。
 - 実効ディレクトリ解決の限界 (上記)。
-- `git branch -D` は短縮形のみ対応。
+- push refspec 対象側の `bd/*` 照合 (上表) は `refs/heads/`・`heads/`・`refs/` の
+  前置きと先頭の `+` は剥がすが、`--all`/`--mirror`/`--prune`、`*` を含むワイルド
+  カード refspec、素の `:`/`+:`、`-c remote.*.push`・`-c push.default`、
+  `git update-ref refs/heads/bd/*` はまだ対象外。`env`/`timeout`/`nice`/`NAME=値` の前置きも
+  規則 9 の先頭語判定はまだ読み飛ばさない。個別には対応しない（「守らないもの」を参照。
+  保留チケットは bdboard-4up4 で仕分ける）。
+- 遅延クレームの引用符追跡 (`wog_scan_quote_state`) は `#` コメント・ヒアドキュメント
+  本体・二重引用符内の `$(`/`${`・`$'…'` を扱わない既知の残課題がある。個別には対応しない
+  （「守らないもの」を参照。保留チケットは bdboard-4up4 で仕分ける）。
 
 ### 誤検知について
 
@@ -635,6 +664,19 @@ hook を直している PR worktree は自分のコミットでは警告され�
   `origin/<main>` の先端のコミット日時を添えている。
 - 閾値は 1 / 3 の固定値。`.claude/bdboard-packs.json` の `injectedAt` だけの更新もハーネスの
   コミットとして数える。
+
+## 守らないもの（既知の限界）
+
+- kill 系: 規則1 (hook) は `sh -c`/絶対パス形の `pkill`/`killall` も止めるが、deny (#812) は
+  パス形の `kill`・`sh -c`/`bash -c` 包み・`env`/`exec`/`eval`/`sudo` 前置き・フラグ付き `xargs`・
+  `find -exec kill`・別言語 (`node -e`/`python3 -c`)・スクリプト経由を取り漏らす。`kill` 単体は
+  無防備（`pgrep | xargs kill` はフラグ無しなら deny の文書上の対象内、実行時未検証は V-1 参照）。
+  Codex/Cursor が aimix 経由で起動する子プロセスは Claude Code の設定が届かず対象外
+- 10秒 timeout の fail-open: hook が timeout しても deny の7パターンはそれでも効く
+- Dolt: `bd dolt push --remote origin`・`bd sync`・`bd -C <path> dolt push` は deny に無く、
+  規則2/5 (hook) だけが見るため hook timeout 時は素通り
+- git 以外で Bash から main checkout へ絶対パスで書くこと（規則8 を bdboard-cm2q.10 で削除後。
+  `sed -i`/`cp`/`tee` 等。`isolation: "worktree"` も止めない。Edit/Write は規則2 が止める）
 
 ## pack.json の `hooks[]` 宣言 (P1b への契約)
 

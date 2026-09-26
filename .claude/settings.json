@@ -1,4 +1,15 @@
 {
+  "permissions": {
+    "deny": [
+      "Bash(pkill *)",
+      "Bash(killall *)",
+      "Bash(kill *)",
+      "Bash(bd dolt push)",
+      "Bash(bd dolt pull)",
+      "Bash(npm run verify:steps *)",
+      "Bash(bdboard-deny-canary *)"
+    ]
+  },
   "hooks": {
     "SessionStart": [
       {

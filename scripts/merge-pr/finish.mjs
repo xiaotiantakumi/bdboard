@@ -35,7 +35,7 @@ function holdBrokenMain(ctx, id, sha) {
   const got = run('bd', ['merge-slot', 'acquire', '--holder', holder], { cwd: ctx.cwd });
   say(
     got.status === 0
-      ? `枠を ${holder} で取りました。修復 PR は prepare → gate --repair → gh pr merge → finish (success で枠が返ります)。`
+      ? `枠を ${holder} で取りました。修復 PR は prepare → BDBOARD_MERGER=chair npm run merge-pr -- gate --repair → gh pr merge → BDBOARD_MERGER=chair npm run merge-pr -- finish (success で枠が返ります)。`
       : `枠を取れませんでした (${got.stderr.trim()})。他の merger は台帳の failure を見て止まります。`,
   );
 }
@@ -108,7 +108,7 @@ export async function finish(ctx, pr) {
     say(`注意: マージコミット ${landed.slice(0, 12)} の親が PRED_BASE (${state.predBase.slice(0, 12)}) ではありません。着地した木をそのまま検証します。`);
   }
   const predictedMatch = comparePredicted(ctx, pr, state, landed);
-  const verified = await runLandedVerify(ctx, landed, state.id, { retryHint: `npm run merge-pr -- finish ${pr}` });
+  const verified = await runLandedVerify(ctx, landed, state.id, { retryHint: `BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}` });
   audit('landed-verify', { pr, id: state.id, new: landed, result: verified.result });
   const leftover = run('git', ['ls-remote', REMOTE, `refs/heads/${pull.headRef}`], { cwd: ctx.cwd });
   if (leftover.status === 0 && leftover.stdout.trim() !== '') {
