@@ -4,9 +4,27 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 の hook で機械的に止めるスクリプト群 (bdboard-pkr6.1 / docs/HARNESS-EVALUATION.md
 §2.3・§5 P1)。`.claude/settings.json` への登録は注入 API 側が行う (bdboard-pkr6.2)。
 
+## deny と hook の分担
+
+`permissions.deny` (`.claude/settings.json`) は hook がタイムアウト等で素通りしても効く
+最後の守り。これは bdboard 自身の設定で、注入 API が配布するのは `hooks` キーだけ —
+`permissions` はパックの管轄外で、各プロジェクトが自分で設定する。
+
+pkill/killall (規則 1)・`--remote` 無しの `bd dolt push`/`pull` (規則 2)・`npm run
+verify:steps` 直叩き (規則 5) は hook でも判定済みなので、対応する deny entry は
+**二重の保険**にすぎない — 先に走る hook が理由付きで止め、hook がタイムアウトした
+ときだけ deny の番になる。**唯一 `kill` だけはそれを説明する hook が無く**、deny が
+理由を出さずに拒否する (bdboard-cm2q.1)。
+
+bdboard では PID を指定した `kill` 自体も deny される。代わりに: 常時稼働サーバーは
+議長が `scripts/always-on-server.sh` を使う / プロセスの生死確認は `ps -p <pid>` /
+Claude が起動したバックグラウンドタスクの停止は `TaskStop` / それ以外は議長かユーザーに
+聞く。
+
 ## 共通の約束
 
-- **deny は exit 2**、stderr に「何を止めたか / なぜ / 代わりに何をするか」を 3 行以内。
+- **hook の deny は exit 2**、stderr に「何を止めたか / なぜ / 代わりに何をするか」を
+  3 行以内 (`permissions.deny` とは別物 — 上の「deny と hook の分担」参照)。
 - **allow は exit 0 で無出力**。例外は警告専用の `worktree-freshness.sh` で、止めることは
   無く常に exit 0、警告があるときだけ stdout に JSON を出す (後述)。
 - **判定不能はすべて allow (fail-open)**。`set -e` は使わない。hook が壊れて作業が
@@ -35,13 +53,13 @@ failure-catalog の「D: 文章で禁止しても再発する操作ミス」を�
 
 | # | deny 条件 | 代わりに |
 |---|---|---|
-| 1 | `pkill` / `killall` (単語境界。コメント内も含む) | `lsof -nP -iTCP:<port> -sTCP:LISTEN` や `pgrep -x <name>` で PID を特定し `kill <pid>` |
+| 1 | `pkill` / `killall` (単語境界。コメント内も含む) | `lsof -nP -iTCP:<port> -sTCP:LISTEN` や `pgrep -x <name>` で PID を特定して止める。bdboard では kill 自体も deny されるので「deny と hook の分担」を参照 |
 | 2 | `--remote` の無い `bd dolt push` / `bd dolt pull` | `bd dolt push --remote <name>`。事前に `bd dolt remote list` で `origin` が無いことを確認 |
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
 | 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
-| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` (bdboard-rj7y 以降、規則 8 も port 非依存に独立して対象にするが、port ありの契約では 7a が先に発火する) / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 |
+| 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` (bdboard-rj7y 以降、規則 8 も port 非依存に独立して対象にするが、port ありの契約では 7a が先に発火する) / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 (bdboard では kill 自体も deny されるので「deny と hook の分担」を参照) |
 | 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` / `clean` / `bisect` / `apply` / `rm` / `mv` / `pull` を実行する (`pull` は bdboard-rj7y で追加。7a とは独立に、port の有無に関係なく規則 8 でも塞ぐ — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
 | 9 | 本体は `worktree-owner-guard.sh` (bdboard-gsnn)。持ち主でないサブエージェントが per-ticket worktree (`bd/<id>` ブランチが存在する `.claude/worktrees/<id>` のみ対象。chair 作成やisolation:"worktree"用のスクラッチworktreeは対象外) を対象に公開/マージ系操作をする。詳細は下記「9 の worktree 所有権保護」 | 自分の worktree で作業する。持ち主が動けないなら議長に `bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release <id>` を頼む |
 
@@ -241,7 +259,9 @@ complexity の choices 確認 → member 解決 → (セグメントが割れて
   (`node` / `npm` / `sh` 系なら) 加える — `npm run start` → `node (tsx)` → listener の鎖の
   どこを kill しても同じ結果になるため。`kill -0` / `kill -l` は判定しない。
 - **エスケープハッチ** `BDBOARD_SERVER_OVERRIDE=<理由>` はコマンド先頭の前置きだけを見て、
-  **議長のときだけ**効く (サブエージェントには効かない)。
+  **議長のときだけ**効く (サブエージェントには効かない)。bdboard では解除後も kill 自体が
+  `permissions.deny` で拒否されるので、実際に止めるには「deny と hook の分担」の代替手段
+  (`scripts/always-on-server.sh` 等) を使う。
 - deny のたびに `${TMPDIR:-/tmp}/bdboard-server-guard.log` へ 1 行 (時刻 / 規則 / agent /
   cwd / コマンド先頭 300 文字) を残す。stderr 3 行では「誰が何を止められたか」を後から
   追えないため。

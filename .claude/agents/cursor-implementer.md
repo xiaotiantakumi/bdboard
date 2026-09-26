@@ -144,12 +144,14 @@ tools: Bash, Read, Glob, Grep
      フォークでは再発しうる前提で確認する）。孤児シェルのcwdがworktreeを指したまま後で
      worktreeが削除されると、`pyenv-version-file` 等cwdを親へ遡って探索するツールが終端条件に
      到達できず無限ループしCPUを専有し続ける事故につながる（実測: bdboard-3tw.61、CPU1コアを
-     102分間専有）。worktree運用時は特に注意——**worktree削除の前に**必ず:
+     102分間専有）。worktree運用時は特に注意——**このエージェントは自分では kill しない**
+     （deny される前提のため）。必ず:
      ```bash
      pgrep -fl "cursor-agent|pyenv-version-file|pyenv-sh-activate" | grep -F "<対象worktreeの絶対パス>" || true
      ```
-     で当該worktreeパスに紐づく残存プロセスが無いか確認し、見つかったら `kill -9` してから
-     worktreeを削除する（削除後だとcwdが消えて`grep`で検出できなくなるため、順序が重要）。
+     で当該worktreeパスに紐づく残存プロセスが無いか確認し、見つかったら**PIDとコマンドを結果
+     報告に書く**。呼び出し元（議長）がユーザーに伝える。**worktreeは消さずに残す**（議長が
+     ユーザーの対応後に削除するかどうかを判断する）。
      結果報告にも残存有無を含める。詳細は `~/.claude/skills/orchestration/reference/lessons-learned.md`。
    - **既知の不具合(2026-07-19 修正済み)**: 以前は Cursorで一度も開いたことのない新規リポジトリで
      `_run_cursor()` に `--trust` が無く "Workspace Trust Required" で失敗し0編集になることが
