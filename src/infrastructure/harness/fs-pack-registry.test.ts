@@ -147,14 +147,12 @@ describe('createFsPackRegistry (repo fixture)', () => {
     ).toBe(true);
   });
 
-  it('declares the three machine guards and the worktree freshness warning as hooks', async () => {
+  it('declares the stop gate and worktree freshness hooks', async () => {
     const repoRoot = path.resolve(import.meta.dirname, '../../..');
     const registry = createFsPackRegistry(path.join(repoRoot, 'harness', 'packs'));
     const pack = await registry.getPack('bdboard-harness');
 
     expect(pack?.hooks.map((hook) => [hook.event, hook.script])).toEqual([
-      ['PreToolUse', 'hooks/pre-bash-guard.sh'],
-      ['PreToolUse', 'hooks/pre-edit-guard.sh'],
       ['Stop', 'hooks/stop-ticket-gate.sh'],
       ['SessionStart', 'hooks/worktree-freshness.sh'],
       ['UserPromptSubmit', 'hooks/worktree-freshness.sh'],

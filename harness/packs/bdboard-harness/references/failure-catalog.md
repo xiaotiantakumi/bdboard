@@ -141,7 +141,7 @@ hook 由来のエントリのテンプレ（効果/害は必須。他は上と�
 - 出典: `.claude/skills/bdboard-server-ops/SKILL.md` 該当節（実測記録つき）
 
 ### hook-rules-7-8-9-retiring — サブエージェントが常時稼働サーバー(8787)を再起動・別担当の worktree へ checkout した事故で追加した規則7/8/9は退役方針（2026-09-26）
-- 退役: 後継は `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>`・`BDBOARD_MERGER=chair`・`isolation: "worktree"`・`permissions.deny`・pre-edit-guard.sh 規則2（本則: brushup-protocol.md §2 分類 E、bdboard-cm2q）
+- 退役: 後継は `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>`・`BDBOARD_MERGER=chair`・`isolation: "worktree"`（File edits チェックが main checkout への Edit/Write も塞ぐ）・`permissions.deny`（本則: brushup-protocol.md §2 分類 E、bdboard-cm2q）
 - 効果・害: bdboard-cm2q.8/.9 で計測後、bdboard-cm2q.10 で削除。サーバーの再起動は議長が行い、最終報告に書く
 - 出典: bdboard-hpu8（規則7）/ bdboard-kxqb（規則8）/ bdboard-gsnn（規則9）
 

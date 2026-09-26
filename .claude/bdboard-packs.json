@@ -18,6 +18,7 @@
         ".claude/skills/bdboard-harness/references/model-routing.md",
         ".claude/skills/bdboard-harness/references/question-template.md",
         ".claude/skills/bdboard-harness/references/session-start.md",
+        ".claude/skills/bdboard-harness/references/settings-snippet.json",
         ".claude/skills/bdboard-harness/references/verification.md",
         ".claude/skills/bdboard-harness/references/worktree-pr-flow.md",
         ".claude/skills/bdboard-harness/scripts/aimix-run.sh",

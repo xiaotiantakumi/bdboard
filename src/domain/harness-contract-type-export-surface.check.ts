@@ -7,7 +7,8 @@
 // ため、Object.keys() には現れずその手法では検証できない。代わりに、分割前
 // (このコミット時点) の harness-contract.ts から
 // `grep -nE '^export (interface|type) [A-Za-z0-9_]+' src/domain/harness-contract.ts`
-// で機械的に採取した型エクスポート名 (16件) を入口 (./harness-contract.js) からまとめて
+// で機械的に採取した型エクスポート名 (15件、bdboard-cm2q.10 で
+// HarnessContractHooks を廃止) を入口 (./harness-contract.js) からまとめて
 // import し、1箇所の tuple 型で「使う」ことで `npm run build` (tsc --noEmit) に通す。
 //
 // 分割後の harness-contract.ts は名前を明示した re-export のみになる。ここが崩れる
@@ -16,7 +17,6 @@
 import type {
   ContractState,
   HarnessContract,
-  HarnessContractHooks,
   HarnessContractModels,
   HarnessContractParseFailureReason,
   HarnessModelCandidate,
@@ -36,7 +36,6 @@ import type {
 export type HarnessContractTypeExportSurfaceCheck = [
   ContractState,
   HarnessContract,
-  HarnessContractHooks,
   HarnessContractModels,
   HarnessContractParseFailureReason,
   HarnessModelCandidate,

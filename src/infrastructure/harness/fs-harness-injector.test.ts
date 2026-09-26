@@ -490,16 +490,16 @@ describe('createFsHarnessInjector', () => {
       description: 'test',
       hooks: [
         {
-          event: 'PreToolUse',
-          matcher: 'Bash',
-          script: 'hooks/pre-bash-guard.sh',
+          event: 'PostToolUse',
+          matcher: 'Agent|Task',
+          script: 'hooks/worktree-freshness.sh',
           timeout: 10,
         },
         { event: 'Stop', matcher: '', script: 'hooks/stop-ticket-gate.sh', timeout: 20 },
       ],
       files: [
         { relativePath: 'SKILL.md' },
-        { relativePath: 'hooks/pre-bash-guard.sh' },
+        { relativePath: 'hooks/worktree-freshness.sh' },
         { relativePath: 'hooks/stop-ticket-gate.sh' },
       ],
     } as const;
@@ -509,7 +509,7 @@ describe('createFsHarnessInjector', () => {
     function writeHookedPack(): void {
       writePack('bdboard-harness', '0.1.0', {
         'SKILL.md': '# harness',
-        'hooks/pre-bash-guard.sh': '#!/usr/bin/env bash\nexit 3\n',
+        'hooks/worktree-freshness.sh': '#!/usr/bin/env bash\nexit 3\n',
         'hooks/stop-ticket-gate.sh': '#!/usr/bin/env bash\nexit 3\n',
       });
     }
@@ -529,14 +529,14 @@ describe('createFsHarnessInjector', () => {
       );
 
       const settings = JSON.parse(readFileSync(settingsPath(), 'utf8'));
-      expect(settings.hooks.PreToolUse).toEqual([
+      expect(settings.hooks.PostToolUse).toEqual([
         {
-          matcher: 'Bash',
+          matcher: 'Agent|Task',
           hooks: [
             {
               type: 'command',
               command:
-                `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh"`,
+                `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh"`,
               timeout: 10,
             },
           ],
@@ -544,7 +544,7 @@ describe('createFsHarnessInjector', () => {
       ]);
       expect(settings.hooks.Stop[0].matcher).toBeUndefined();
       expect(manifest.packs[0]?.hooks).toEqual([
-        `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh"`,
+        `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh"`,
         `bash -c '[ -f "$0" ] || exit 0; exec bash "$0"' "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"`,
       ]);
     });
@@ -558,7 +558,7 @@ describe('createFsHarnessInjector', () => {
         // 引き継ぐので、上書き注入でも chmod が要ることを固定する。
         const destination = path.join(
           projectRoot,
-          '.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh',
+          '.claude/skills/bdboard-harness/hooks/worktree-freshness.sh',
         );
         mkdirSync(path.dirname(destination), { recursive: true });
         writeFileSync(destination, 'old\n', { encoding: 'utf8', mode: 0o644 });
@@ -726,7 +726,7 @@ describe('createFsHarnessInjector', () => {
 
       expect(await injector.readSettings(projectRoot)).toBeNull();
       await injector.injectPack(projectRoot, HOOKED_PACK, new Date('2026-09-04T10:00:00.000Z'));
-      expect(await injector.readSettings(projectRoot)).toContain('pre-bash-guard.sh');
+      expect(await injector.readSettings(projectRoot)).toContain('worktree-freshness.sh');
     });
   });
 });

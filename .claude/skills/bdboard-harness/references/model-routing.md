@@ -218,7 +218,7 @@ route.sh の通常出力はこのとき空 (無出力 exit 0) で、「宣言さ
 意見なしで、除外中の member でも止めない。
 ボード側はこの状態を「検証コントラクト不正」にはせず、`modelExclusionWarnings` の
 警告として拾う（`models.routes.<工程>.<複雑度>: 除外 (<member>) により候補が 0 件に
-なりました (hook は除外中の member の委譲を止め、他の member は表の判定なしで通します)`）。
+なりました (ラッパー scripts/aimix-run.sh は除外中の member の委譲を止め、他の member は表の判定なしで通します)`）。
 
 ## 呼び出し側と委譲先の責任
 

@@ -106,17 +106,17 @@ description: .beads/ を持つプロジェクトでチケット作業・自律�
 手順:
 
 1. 着手時に複雑度を推定して記録する（**declared は自動上書き禁止、降格は人間のみ**）。
-2. `scripts/route.sh <stage> <complexity>` の出力順で候補を試す。
+2. `scripts/route.sh <stage> <complexity>` の出力順で候補を試す（aimix は
+   `scripts/aimix-run.sh` 経由。素の `aimix run` は deny）。
 3. **可用性の失敗**は同じセルの次候補へ、**品質の失敗**は 3 トリガーだけで 1 段上のセルへ。
 
 詳細: `model-routing.md`
 
-## 機械ガード（hooks）— 文章で防げない操作は hook が止める
+## 機械ガード（hooks）— 文章で防げない操作は hook / deny が止める
 
-- `hooks/` の4スクリプトは、注入時に注入先の `.claude/settings.json` へ登録される（鮮度警告だけは止めない）。
-- **hook に止められたら回避策を探さない。** stderr の代替手順に従う。hook 自体の不具合は
-  `harness-upstream` チケットで起票する。
-- 止めるもの（deny 条件の一覧）・fail-open 方針・settings.json 登録契約: `hooks/README.md`。
+- `hooks/` の2本 (stop-ticket-gate.sh / worktree-freshness.sh) は状態だけを見る。コマンド/
+  パスを読む禁止判定は `permissions.deny` へ移した（詳細: `hooks/README.md`）。
+- **hook/deny に止められたら回避策を探さない。** 案内に従う。不具合は `harness-upstream` へ。
 
 ## references
 

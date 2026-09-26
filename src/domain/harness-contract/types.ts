@@ -24,15 +24,6 @@ export type HarnessPrFlow = 'pr' | 'direct' | 'none';
 export const HARNESS_PR_FLOWS: readonly HarnessPrFlow[] = ['pr', 'direct', 'none'];
 
 /**
- * P1a の pre-bash-guard が読む、プロジェクト固有の禁止パターン。
- * ここでは型とバリデーションだけを持ち、hook 側の解釈には踏み込まない。
- */
-export interface HarnessContractHooks {
-  readonly denyBashPatterns: readonly string[];
-  readonly denyBashMessages: readonly string[];
-}
-
-/**
  * モデル振り分け表の複雑度。**`low` / `med` / `high` の 3 段で固定**し、
  * 注入先プロジェクトに増やさせない。
  *
@@ -115,7 +106,6 @@ export interface HarnessContract {
   readonly verify: string;
   readonly prFlow: HarnessPrFlow;
   readonly mainBranch: string;
-  readonly hooks: HarnessContractHooks | null;
   /** 工程 × 複雑度のモデル振り分け表。未宣言なら null (従来どおりの挙動)。 */
   readonly models: HarnessContractModels | null;
 }
