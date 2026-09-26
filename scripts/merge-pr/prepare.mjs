@@ -131,7 +131,15 @@ function refuseBrokenBase(ctx, pr, predBase) {
 }
 
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
-  if (!gitOk(['diff', '--quiet', 'HEAD', ctx.mainRef, '--', 'scripts/merge-pr', 'scripts/merge-pr.mjs'], { cwd: ctx.cwd })) {
+  const mergeBase = run('git', ['merge-base', 'HEAD', ctx.mainRef], { cwd: ctx.cwd });
+  if (mergeBase.status !== 0) {
+    fail(
+      EXIT.USAGE,
+      `HEAD と ${ctx.mainRef} の merge base を特定できませんでした: ${mergeBase.stderr.trim()}`,
+    );
+  }
+  const mergeBaseSha = mergeBase.stdout.trim();
+  if (!gitOk(['diff', '--quiet', mergeBaseSha, ctx.mainRef, '--', 'scripts/merge-pr', 'scripts/merge-pr.mjs'], { cwd: ctx.cwd })) {
     fail(
       EXIT.NEEDS_REBASE,
       `merge-pr 自身のコード (scripts/merge-pr) が ${ctx.mainRef} と食い違っています。`,

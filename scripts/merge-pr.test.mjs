@@ -352,7 +352,9 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     git(mainCheckout, ['worktree', 'add', '-q', '-b', 'bd/demo-1', work, 'main']);
     writeFileSync(path.join(work, 'feature.txt'), 'feature\n');
     for (const [file, content] of Object.entries(branchFiles)) {
-      writeFileSync(path.join(work, file), content);
+      const dest = path.join(work, file);
+      mkdirSync(path.dirname(dest), { recursive: true });
+      writeFileSync(dest, content);
     }
     head = commitAll(work, TITLE);
     git(work, ['push', '-q', 'origin', 'bd/demo-1']);
@@ -418,6 +420,26 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(result.stderr).toContain('scripts/merge-pr');
     expect(calls('gh')).toEqual([]);
     expect(calls('bd')).toEqual([]);
+  });
+
+  it('prepare: a PR that only changes scripts/merge-pr itself does not trip the staleness check', () => {
+    setup({ branchFiles: { 'scripts/merge-pr/whatever.mjs': '// pr-only change\n' } });
+    const result = run(['prepare', String(PR)]);
+    expect(result.status).not.toBe(3);
+    expect(result.stderr).toContain('クラス=N');
+    expect(result.stderr).not.toContain('scripts/merge-pr');
+  });
+
+  it('prepare: main changing scripts/merge-pr after the branch point still trips the check', () => {
+    setup();
+    mkdirSync(path.join(mainCheckout, 'scripts', 'merge-pr'), { recursive: true });
+    writeFileSync(path.join(mainCheckout, 'scripts', 'merge-pr', 'foo.mjs'), '// main moved this tool\n');
+    commitAll(mainCheckout, 'chore: touch merge-pr directory');
+    git(mainCheckout, ['push', '-q', 'origin', 'main']);
+    const result = run(['prepare', String(PR)]);
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain('git merge');
+    expect(result.stderr).toContain('取り込んで');
   });
 
   it('S0: prepare only reports the class and gate / finish refuse to run', () => {
