@@ -1,6 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { applyDraftPayloadStoreCarryPlan, referenceDraftPayloadStoreCarryPlan } from '../conversationKeyspace';
-import { writePersistedChatThread } from '../../chatThreadStorage';
+import { writePersistedChatThreadState } from '../../chatThreadStorage';
 import { type ChatAttachment } from './attachments';
 import { makeDraftKey } from './draftKey';
 import {
@@ -206,7 +206,7 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       // 一箇所で担当する(同じ規則を2箇所に持つと片方だけ直す drift が起きる)。
       historyRequestIdRef.current += 1;
       setLoadingHistoryFor(null);
-      writePersistedChatThread(selectedProjectId, undefined);
+      writePersistedChatThreadState(selectedProjectId, { activeSessionIds: [], selectedSessionId: undefined });
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [] }));
       // bdboard-4w2d(Opus レビュー blocker 2 対応): この明示的リセットは「このプロジェクトの
       // open は空である」という確定した状態そのものであり、E7/applyRecoveredTurn の

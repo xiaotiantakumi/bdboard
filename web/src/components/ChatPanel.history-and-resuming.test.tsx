@@ -829,7 +829,7 @@ describe('ChatPanel', () => {
     expect(screen.queryByText('stale history')).not.toBeInTheDocument();
   });
 
-  it('keeps agent selection and clears persisted thread when switching agents during a pending history fetch', async () => {
+  it('keeps agent selection and persists zero open threads (not a deleted entry, bdboard-rhl4) when switching agents during a pending history fetch', async () => {
     const user = userEvent.setup();
     writePersistedChatThread('proj-a', {
       sessionId: 'sess-pending-agent',
@@ -864,7 +864,9 @@ describe('ChatPanel', () => {
 
     await user.selectOptions(agentSelect, 'example-agent');
     expect(agentSelect).toHaveValue('example-agent');
-    expect(readPersistedChatThreads()).toEqual({});
+    // bdboard-rhl4: 削除(エントリ無し)ではなく、空配列を持つエントリとして永続化される
+    // ―― でないと次回訪問時に restoreThreadView が「初回訪問」と誤認し全スレッドを開き直す。
+    expect(readPersistedChatThreads()).toEqual({ 'proj-a': { activeSessionIds: [] } });
 
     deferred.resolve(
       jsonResponse({
@@ -885,7 +887,7 @@ describe('ChatPanel', () => {
     });
     expect(agentSelect).toHaveValue('example-agent');
     expect(screen.queryByText('history from claude session')).not.toBeInTheDocument();
-    expect(readPersistedChatThreads()).toEqual({});
+    expect(readPersistedChatThreads()).toEqual({ 'proj-a': { activeSessionIds: [] } });
   });
 
   describe('resuming a discovered CLI session (bdboard-3tw.104.3 レビュー M1/M2/S3/S4)', () => {
