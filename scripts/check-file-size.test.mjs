@@ -331,9 +331,35 @@ describe('validateEntryShape', () => {
   });
 
   it.each(['src\\big.ts', 'src/../src/big.ts'])('does not scope-check malformed path %s', (entryPath) => {
-    const errors = validateEntryShape({ path: entryPath, limit: 10, reason: 'x' }, 0);
+    const errors = validateEntryShape({ path: entryPath, limit: 10, reason: 'x (bdboard-test10)' }, 0);
     expect(errors).toHaveLength(1);
     expect(errors[0]).not.toContain('対象範囲外');
+  });
+
+  it.each([
+    'bdboard-',
+    'bdboard-harness の hooks を触った',
+    '分割検討・チケット未起票 (bdboard-cm2q.7 は今作業中のチケット)',
+    '未起票 (bdboard-cm2q.7)',
+  ])('rejects reason without a usable tracking ticket: %s', (reason) => {
+    const errors = validateEntryShape({ path: 'test/big.ts', limit: 10, reason }, 0);
+    expect(errors).toHaveLength(1);
+    if (reason.includes('未起票')) {
+      expect(errors[0]).toBe(
+        'entries[0].reason (test/big.ts) に分割 (または削減) を追跡するチケットの ID を書き、『未起票』を消す。今作業中のチケットの ID ではなく、上限を下げる作業のチケットを起票してその ID を書く',
+      );
+    } else {
+      expect(errors[0]).toContain('チケット ID');
+    }
+  });
+
+  it.each([
+    '（bdboard-jygp）を参照',
+    '追跡チケット bdboard-jygp。',
+    'bdboard-cm2q.7 のために分割予定',
+    'bdboard-3tw.138.4 で追跡中',
+  ])('accepts reason with a valid tracking ticket: %s', (reason) => {
+    expect(validateEntryShape({ path: 'test/big.ts', limit: 10, reason }, 0)).toEqual([]);
   });
 });
 

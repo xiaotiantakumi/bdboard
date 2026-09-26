@@ -133,11 +133,12 @@ baseline の limit は現行行数に 200 行の余白を足した上で 100 行
 | 記号 | 条件 | 結果 |
 |---|---|---|
 | (a) | baseline に無いファイルが既定上限 (非テスト 500 行 / テスト `*.test.*`・`*.spec.*` 1500 行) 超 | fail — 分割するか、理由を添えて baseline に登録する |
-| (b) | baseline にあるファイルが自分の `limit` 超 | fail — 分割するか、`limit` と `reason` を書き換える |
+| (b) | baseline にあるファイルが自分の `limit` 超 | fail — 分割するか、`limit` と `reason` を書き換える (上げるときは、分割 (または削減) を追跡するチケットを起票し、その ID を reason に書く) |
 | (c) | baseline にあるのに既定上限以下まで縮んだ、または対象ファイルが見つからない (削除・リネーム・対象ディレクトリ外への移動) | fail — baseline の `entries` から外す |
 | (d) | baseline の `limit` が現行行数より `ratchetWarningThreshold` (既定 400) 行以上大きい | warn のみ (exit には影響しない) — ラチェットを締める余地がある通知 |
 
-**baseline エントリの書き方**: `reason` は1ファイルずつ中身を見て書き、チケット ID（`bdboard-xxxx` 形式）を必ず含める。「ChatPanel コンポーネント
+**baseline エントリの書き方**: `reason` は1ファイルずつ中身を見て書き、チケット ID
+(`bdboard-xxxx` 形式) を必ず含める。「ChatPanel コンポーネント
 1関数で約3665行 (449〜4114行目)。分割判断チケット bdboard-78ve は見送りで close 済み」のように、
 何が同居しているか・分割の検討状況を書く。同文のコピペは意図的に赤面するような値ではないが、
 レビューで指摘対象になる (機械的なテンプレ流用は「実態を見ていない」のと同義)。パスは常に
@@ -160,7 +161,8 @@ POSIX 区切り (`/`) で書く — Windows でも git は `/` 区切りでフ�
 **並行 PR との衝突**: 複数の PR が同時に同じ大きいファイルを少しずつ育てていると、先にマージ
 された側の baseline 更新が後発 PR の rebase 後に (b) を再発させることがある。マージ直前の
 rebase 後には必ず `npm run check:file-size` を単体で再実行し、他 PR のマージで limit を超えて
-いたら baseline をその時点の実態に合わせ直す。
+いたら baseline をその時点の実態に合わせ直す。上げるときは、分割 (または削減) を追跡する
+チケットを起票し、その ID を reason に書く。
 
 一覧が欲しいだけなら `npm run check:file-size -- --report` で、baseline の有無を添えた全対象
 ファイルを行数降順で表示できる (これは診断用で、pass/fail の判定自体は変えない)。
