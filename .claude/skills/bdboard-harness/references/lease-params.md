@@ -90,7 +90,8 @@ bash .claude/skills/bdboard-harness/scripts/bd-heartbeat.sh status --session-pid
 ときの一括 heartbeat」参照）。
 
 `start` は**自分でデタッチする**ので、呼び出し側に `&` や `(nohup … &)` を書かせない
-（hooks の「二重バックグラウンド化」deny と衝突させないための設計）。
+（旧 hook 規則4「二重バックグラウンド化」との衝突回避が動機。規則は bdboard-cm2q.10 で
+廃止したが、自分でデタッチする設計は維持する）。
 claim / close のたびに `start` を**再実行するだけ**で ID リストが更新される
 （同一 session-pid の旧ループは PID 指定で停止されて置き換わる。reclaim → open → 再 claim の
 往復もこれで吸収される）。

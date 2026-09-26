@@ -511,7 +511,7 @@ describe('HygienePanel repair actions', () => {
         packs: [{
           ...makeCurrentPack('bdboard-harness'),
           hooksState: 'missing' as const,
-          missingHooks: ['bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh"'],
+          missingHooks: ['bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"'],
         }],
       }],
     });
@@ -684,7 +684,7 @@ describe('HygienePanel repair actions', () => {
               drift: false,
               hooksState: 'missing',
               missingHooks: [
-                'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/pre-bash-guard.sh"',
+                'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/worktree-freshness.sh"',
                 'bash "$CLAUDE_PROJECT_DIR/.claude/skills/bdboard-harness/hooks/stop-ticket-gate.sh"',
               ],
             },

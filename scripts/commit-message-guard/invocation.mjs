@@ -203,8 +203,9 @@ function commandSegment(tokens, commitStart, residualLength) {
  *
  * コマンド全体の部分一致にすると、コミットメッセージ本文にこの変数名を書くだけでガードが
  * 外れる。しかも下の deny 文言自身がこの名前を含むので、deny をそのまま本文へ貼り付けて
- * 再試行するだけで無効化できてしまう (pre-bash-guard 規則 6 の BDBOARD_ROUTE_OVERRIDE と
- * 同じ理由・同じ形)。heredoc 本文は residual から抜けているので、そこからも届かない。
+ * 再試行するだけで無効化できてしまう (bdboard-harness の scripts/aimix-run.sh が扱う
+ * BDBOARD_ROUTE_OVERRIDE と同じ理由・同じ形)。heredoc 本文は residual から抜けているので、
+ * そこからも届かない。
  */
 function hasOverride(tokens, commitStart) {
   const fromEnv = process.env[OVERRIDE_ENV];

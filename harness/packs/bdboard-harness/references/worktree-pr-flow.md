@@ -399,7 +399,8 @@ git -C <メインチェックアウト> status --porcelain   # 汚れている�
 汚れていれば **他セッションの WIP を `git checkout --` で絶対に捨てない**。復旧手順:
 (1) `git -C <メインチェックアウト> diff > <退避先>/<tag>.patch` で追跡ファイルの差分を
 退避する。未追跡ファイルも含めて退避したいときの bare `git stash` / `git stash pop` は
-hook（pre-bash-guard.sh）に拒否され、拒否メッセージは WIP コミットを勧めてくるが、これは
+`permissions.deny`（`Bash(git stash)` / `Bash(git stash pop *)`）に理由なしで拒否される。
+WIP コミットに流れがちだが、これは
 **他セッションの WIP であり自分が main へコミットしてよい理由にはならない**ので従わない —
 `git stash push -u -m "<tag>"` を使い、直後に `git stash list --format='%H %gs'` で SHA を
 控える（復元は `pop` ではなく `apply <sha>`）。(2) 発見をチケット化
@@ -424,12 +425,13 @@ rebase は必須（他セッションの WIP で main が汚れている状況�
 削除を手順化するほうが副作用が小さい。`git pull --ff-only` と着地後検証は原則メイン
 チェックアウトで行う（メインチェックアウトが汚れている場合の代替は前掲のブランチ tip 検証）。
 
-**サブエージェント（Agent ツールから起動されたセッション）からのメインチェックアウトでの
-`git pull` は hook 規則 8 が契約の `alwaysOnServer` の有無に関係なく常時 deny する**
-（bdboard-kxqb・bdboard-rj7y。メインチェックアウトの working tree/HEAD は議長の作業ツリーで
-あり、サブエージェントが直接動かしてはならない）。注入先の契約に `alwaysOnServer` がある
-ときは、これに加えて規則 7a も同じ操作を deny する（bdboard-hpu8。メインチェックアウトは
-常時稼働サーバーを抱え、pull → build → 再起動は議長の仕事）。いずれの場合も前掲のブランチ
+**サブエージェント（`isolation: "worktree"` で隔離される bdboard-worker）は、そもそも
+メインチェックアウトを対象に `git pull` を実行できない** — Command working directory /
+Git redirects のチェックがそれを塞ぐ（bdboard-kxqb・bdboard-rj7y の事故を機に追加した
+hook 規則8/7a の役目を bdboard-cm2q.10 で `isolation: "worktree"` に移した。メイン
+チェックアウトの working tree/HEAD は議長の作業ツリーであり、サブエージェントが直接
+動かしてはならない。常時稼働サーバーを抱える契約では、pull → build → 再起動は議長の仕事）。
+いずれの場合も前掲のブランチ
 tip 検証で層3を満たす。`alwaysOnServer` がある契約では、メインチェックアウトの pull と
 再起動は議長が `alwaysOnServer.restartScript` で行い、最終報告に「議長で再起動が必要
 （PR #N）」と書く。`alwaysOnServer` が無い契約では再起動の概念が無いため、議長は
@@ -460,7 +462,8 @@ PR をマージしない。
 - **層3**: 台帳は GitHub commit status（context は契約の `merge.statusContext`、既定
   `bdboard/landed-verify`）。**議長が gate から finish まで枠を保持し、議長自身が PR worktree で**
   `git checkout --detach <着地した SHA>` → 検証コマンド → success / failure を記録する。
-  main checkout に触れないので hook 規則 7 に当たらない。次の merger は PRED_BASE の台帳を
+  main checkout には一切触れないため、常時稼働サーバー保護 (permissions.deny・
+  `isolation: "worktree"`) の対象にもならない。次の merger は PRED_BASE の台帳を
   ゲートにする: success なら進む / failure ならマージしない（下の「main が壊れたとき」）/
   pending か無しなら LEASE（`merge.leaseMinutes`、既定 8 分）まで待ち、過ぎていれば自分で
   検証して台帳を書く（自己修復。failure には適用しない）。
@@ -501,7 +504,9 @@ BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # 結果にかかわら�
   の枠を引き継ぐ）→ 印字行 → finish で入れる（finish は success のときだけ枠を返す）→ 壊した PR の
   チケットを再 open して理由を残す。`--repair` は P0 バグの修復 PR 専用。
   `--repair` も gate と同様に `BDBOARD_MERGER=chair` が必要で、実行責任は議長だけにある。
-  hook 規則 9 (worktree 所有権保護) も追加の防御として適用される。
+  1 チケット = 1 隔離 worker (`isolation: "worktree"`) の構造自体が他人の worktree への
+  乗っ取りを起こしにくくし、`BDBOARD_MERGER=chair` の必須宣言と GitHub 側の protect-main
+  ruleset (bypass を "pull requests only" に制限) が追加の防御として働く。
 - 巻き戻し（S1 → S0）は契約の 1 行。gate 済みの PR があっても finish は動き、枠を返す。
 
 #### S2 — rebase を省き、着地予定ツリーを手元で verify する（契約の `merge.mode` が `S2` のとき）
@@ -558,8 +563,9 @@ git remote prune origin
 
 掃除はマージした本人の責務。残骸は全セッションの空き確認（規律2）を狂わせる。
 **常時稼働サーバーの再起動は掃除に含めない** — 契約に `alwaysOnServer` がある注入先では
-議長だけが `restartScript` で行う（hook 規則 7 がサブエージェントの pull / start / kill を
-止める）。サブエージェントは最終報告で再起動が必要な旨を伝えて終える。
+議長だけが `restartScript` で行う（`isolation: "worktree"` がサブエージェントの main
+checkout での pull / start を、`permissions.deny` が kill を止める）。サブエージェントは
+最終報告で再起動が必要な旨を伝えて終える。
 
 **層3の `gh pr merge --delete-branch` はブランチ削除の後処理がまず失敗する — エラーが
 指すブランチ名で2パターンを見分ける**。観測例ではいずれも squash マージ自体は GitHub 側で

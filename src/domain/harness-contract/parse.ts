@@ -1,6 +1,5 @@
 import { isPlainObject, isSafeSingleLineValue } from './shared.js';
 import { isSafeMainBranchName } from './main-branch.js';
-import { parseHooks } from './hooks.js';
 import { parseModels } from './model-routes.js';
 import {
   DEFAULT_MAIN_BRANCH,
@@ -70,11 +69,6 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
     mainBranch = parsed.mainBranch.trim();
   }
 
-  const hooks = parseHooks(parsed.hooks);
-  if (!hooks.ok) {
-    return schemaFailure(hooks.message);
-  }
-
   const models = parseModels(parsed.models);
   if (!models.ok) {
     return schemaFailure(models.message);
@@ -87,7 +81,6 @@ export function parseHarnessContract(text: string): ParseHarnessContractResult {
       verify: parsed.verify.trim(),
       prFlow: prFlow as HarnessPrFlow,
       mainBranch,
-      hooks: hooks.hooks,
       models: models.models,
     },
   };

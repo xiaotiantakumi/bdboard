@@ -2,7 +2,7 @@
 // bdboard-sso1.22: harness-contract.ts のモジュール分割で切り出した。
 //
 // ここに置くのは複数サブモジュールから import される関数だけ (isPlainObject は
-// hooks.ts / model-exclude.ts / model-routes.ts / parse.ts、isSafeSingleLineValue は
+// model-exclude.ts / model-routes.ts / parse.ts、isSafeSingleLineValue は
 // model-exclude.ts / parse.ts から使う)。1 サブモジュール内でしか使わない補助関数は
 // そのサブモジュールに残し、ここへは寄せない。
 

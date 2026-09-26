@@ -174,7 +174,7 @@ export function computeModelExclusionWarnings(
       if (remaining.length === 0) {
         warnings.push(
           `models.routes.${route.stage}.${complexity}: 除外 (${[...excludedHere].join(', ')}) ` +
-            'により候補が 0 件になりました (hook は除外中の member の委譲を止め、' +
+            'により候補が 0 件になりました (ラッパー scripts/aimix-run.sh は除外中の member の委譲を止め、' +
             '他の member は表の判定なしで通します)',
         );
       }
