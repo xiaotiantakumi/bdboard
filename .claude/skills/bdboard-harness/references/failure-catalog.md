@@ -17,7 +17,9 @@
 - 出典: <bd チケットID / bd memory キー / 記録場所>
 ```
 
-日付が特定できない事故は（<日付>）を省略してよい（出典から辿れることを優先する）。
+日付が特定できない事故は（<日付>）を省略してよい（出典から辿れることを優先する）。新しい
+エントリは任意で「効果: <止めた回数と最終発火日>」「害: <誤検知件数・追加行数>」を足してよい
+（本則: brushup-protocol.md §7 H-4）。上限は**50件**。追加時は既存1件を退役させる（§7）。
 
 ## 排他・worktree
 
@@ -48,7 +50,7 @@
 
 ### heartbeat-orphan-loop — デタッチした heartbeat ループが close 後・セッション終了後も残り in_progress の lease を延命し続けた（2026-09-04、同日5本）
 - 原因: lease-params.md が heartbeat の頻度・対象範囲は規定していたが**寿命を規定していなかった**ため、静的 ID リスト＋時間上限だけの生ループが書かれた
-- 防止: 生ループを書かず `scripts/bd-heartbeat.sh` を使う（寿命は ID リスト・セッション・`--max-hours` の3重に束縛）。本則: `lease-params.md`「heartbeat ループの寿命」。フック deny は現時点では作らない（スクリプト＋規律で足りる）。同じ失敗が再発して D 化したら pre-bash-guard 規則の追加を起票する
+- 防止: 生ループを書かず `scripts/bd-heartbeat.sh` を使う（寿命は ID リスト・セッション・`--max-hours` の3重に束縛）。本則: `lease-params.md`「heartbeat ループの寿命」。フック deny は現時点では作らない（スクリプト＋規律で足りる）。再発したら、まず効果と害を測る。§2 分類 E に当たらないときだけ、議長が規則の追加を検討する
 - 出典: bdboard-0kql（実測 bdboard-cdqb）（鏡像: heartbeat-partial）
 
 ### heartbeat-session-pid-self-destruct — `--session-pid $$` が Claude Code の Bash ツールでは起動直後に自壊する（実測 2026-09-21、bdboard-sso1.28）
@@ -126,20 +128,14 @@
 - 防止: worktree から preview_start 禁止。起動はメインチェックアウトへ cd してから（本則: bdboard の `.claude/skills/bdboard-server-ops/SKILL.md`「Never call `preview_start` from a worktree session」）
 - 出典: `.claude/skills/bdboard-server-ops/SKILL.md` 該当節（実測記録つき）
 
-### subagent-restarted-always-on-server — PR をマージしたサブエージェントが CLAUDE.md の後片付け手順どおり main checkout を pull し、8787 を kill・再起動した（2026-09-20、3 件: bdboard-13mp / bdboard-sso1.10 / bdboard-sso1.5）
-- 原因: 「マージ後に常時稼働サーバーを再起動」の手順が誰の仕事かを文章でしか区別しておらず、`gh pr merge` まで委譲されたサブエージェントには手順どおりの正しい行動に見える。委譲ブリーフの禁止文言だけが歯止めで、9/20 以降の再発ゼロもブリーフと議長側の deploy スクリプト (スクラッチパッド、揮発) に依存していた
-- 防止: hook 規則 7 (`hooks/server-guard.sh`) — `agent_id` 付きの呼び出しから main checkout の `git pull` / `npm run start` / 再起動スクリプト実行を deny、listener PID の直接 kill は誰からでも deny。再起動は議長が `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh restart --expect-pid <PID>` で行い、サブエージェントは最終報告に「議長で再起動が必要」と書く（本則: CLAUDE.md「Always-On Local Hosting」、`hooks/README.md` 規則 7）
-- 出典: bdboard-hpu8（トランスクリプト調査。`bd comments bdboard-hpu8` と PR 本文に証跡）
+### hook-rules-7-8-9-retiring — 規則7/8/9（常時稼働サーバー保護・main checkout 保護・worktree 所有権保護）は退役方針（2026-09-26）
+- 退役: permissions.deny・isolation:worktree・merge-pr 前提条件へ置き換え中（本則: brushup-protocol.md §2 分類 E、bdboard-cm2q）。効果・害を bdboard-cm2q.8/.9 で計測後、bdboard-cm2q.10 で削除
+- 出典: bdboard-hpu8（規則7）/ bdboard-kxqb（規則8）/ bdboard-gsnn（規則9）
 
 ### stale-chair-checkout — 議長セッションの checkout が main から取り残され、main で入れた hook (規則 7 ほか) が議長と全サブエージェントで 1 か月以上効いていなかった（2026-09-24）
 - 原因: hook の登録も本体もセッション起動時の checkout (`$CLAUDE_PROJECT_DIR`) から読まれ、サブエージェントも同じ場所を読むが、長寿命セッションの checkout は誰も更新しない
 - 防止: `hooks/worktree-freshness.sh` が SessionStart / UserPromptSubmit / PostToolUse(Agent) で遅れ・共通祖先なし・本体欠落を警告し安全な追従コマンドを案内 (自動 merge はしない)。議長はマージ後に自分の checkout も追従 (本則: `hooks/README.md`、docs/GIT-WORKFLOW.md「Cleanup after merge」)
 - 出典: bdboard-flpp
-
-### subagent-checkout-in-chair-worktree — 別チケットの担当サブエージェントが議長の worktree 内で自分のブランチへ checkout し、最後にその worktree の削除まで議長へ求めた（2026-09-25）
-- 原因: 議長を main checkout で動かす運用への移行に伴い、サブエージェントも main checkout を cwd として起動しうるようになったが、hook 規則 7 が main checkout に対して禁じていたのは git pull・サーバー起動・listener kill だけで、checkout/switch/commit/reset/merge/stash と Edit・Write によるファイル編集は禁じていなかった
-- 防止: hook 規則 8 (`hooks/server-guard.sh`、`alwaysOnServer.port` の有無に関係なく常時有効) が `agent_id` 付き呼び出しから main checkout 対象の git checkout/switch/commit/reset/merge/rebase/stash/restore/cherry-pick/revert/am/clean/bisect/apply/rm/mv/pull を deny (pull は bdboard-rj7y で追加。既存の規則 7a は port ありの契約向けに独立に残っている)。`pre-edit-guard.sh` 規則 2 が同じ main checkout 判定 (`hooks/lib-main-checkout.sh` 共有) で Edit/Write/MultiEdit/NotebookEdit も deny する（本則: `hooks/README.md` 規則 8・pre-edit-guard.sh 規則 2）
-- 出典: bdboard-p5l.18（対策 bdboard-kxqb）（鏡像: subagent-restarted-always-on-server）
 
 ## 検証・ビルド
 
