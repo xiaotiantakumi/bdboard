@@ -23,7 +23,17 @@ export const USAGE = `merge-pr — マージ手順 S1 / S2 (枠は CAS とマー
 
 終了コード: 0 成功 / 1 使い方・想定外 / 2 前提不成立 / 4 main が壊れている
             3 rebase が要る (S1: main が動いた / S2: テキスト衝突・hot file・着地予定ツリーの verify failure)
-            5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure / 75 やり直し (CAS 負け等)`;
+            5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure / 7 議長以外の gate / finish
+            75 やり直し (CAS 負け等)`;
+
+function assertMerger() {
+  if (process.env.BDBOARD_MERGER !== 'chair') {
+    throw new MergePrError(EXIT.NOT_MERGER, [
+      'gate / finish は議長だけが行います。BDBOARD_MERGER=chair を前置してください。',
+      'サブエージェントは実行せず、最終報告に必要なコマンドを書いてください。',
+    ]);
+  }
+}
 
 function parsePr(value) {
   if (!/^[1-9][0-9]*$/.test(value ?? '')) {
@@ -53,10 +63,12 @@ export async function main(argv) {
       }
       case 'gate': {
         const pr = parsePr(target);
+        assertMerger();
         return await gate(openContext(), pr, { repair: flags.has('--repair') });
       }
       case 'finish': {
         const pr = parsePr(target);
+        assertMerger();
         // 枠を返すのが最優先。fetch に失敗しても手元の origin/main で続ける。
         return await finish(openContext({ allowOffline: true }), pr);
       }

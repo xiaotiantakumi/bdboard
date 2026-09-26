@@ -83,6 +83,16 @@ function gh() {
 }
 
 function bd() {
+  if (args[0] === 'show' && args[2] === '--json') {
+    const shown = state.bdShow?.[args[1]];
+    if (shown === undefined) {
+      err = `Error: issue ${args[1]} not found\n`;
+      code = 1;
+    } else {
+      out = JSON.stringify(shown);
+    }
+    return;
+  }
   const slot = state.slot ?? { holder: null };
   state.slot = slot;
   const sub = args[1];

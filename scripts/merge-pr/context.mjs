@@ -14,6 +14,7 @@ export const EXIT = Object.freeze({
   MAIN_BROKEN: 4, // 着地後検証が failure。マージしない (設計 §3.6)
   NOT_MERGED: 5, // finish: PR はマージされていない。枠は返した
   LANDED_FAILED: 6, // finish: マージ後の着地後検証が failure (§3.6 へ)
+  NOT_MERGER: 7, // gate / finish: 議長以外はマージ手順を進めない
   RETRY: 75, // EX_TEMPFAIL: CAS 負け / main が動いた / 枠が空かない / CI pending。prepare から並び直す
 });
 

@@ -32,6 +32,36 @@ export function assertOpenPull(ctx, pull, pr) {
   }
 }
 
+/** release-please は Beads のチケットを持たないリリース自動 PR。 */
+export function isReleasePleasePull(pull) {
+  return pull.headRef?.startsWith('release-please--') === true;
+}
+
+/** レビューは Opus または Fable の記録がある PR だけをマージ手順へ進める。 */
+export function hasApprovedReview(metadata) {
+  return /^(opus|fable)/.test(metadata?.['bdboard.model.review'] ?? '');
+}
+
+function assertReviewRecorded(ctx, pull, pr) {
+  if (isReleasePleasePull(pull)) {
+    return;
+  }
+  const id = ticketIdFor(pull.headRef, pr);
+  if (!pull.headRef?.startsWith('bd/') || id === '') {
+    fail(EXIT.PRECONDITION, `PR #${pr} のチケット ID がありません。bd/<id> ブランチで作成してください。`);
+  }
+  const shown = run('bd', ['show', id, '--json'], { cwd: ctx.cwd });
+  let ticket;
+  try {
+    ticket = JSON.parse(shown.stdout)[0];
+  } catch {
+    ticket = undefined;
+  }
+  if (shown.status !== 0 || !hasApprovedReview(ticket?.metadata)) {
+    fail(EXIT.PRECONDITION, `レビュー記録がありません: bd update ${id} --set-metadata bdboard.model.review=<model>`);
+  }
+}
+
 function assertLocalHead(ctx, pull, pr) {
   const head = git(['rev-parse', 'HEAD'], { cwd: ctx.cwd });
   if (head !== pull.headSha) {
@@ -89,6 +119,7 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
   }
   const pull = getPull(ctx, pr);
   assertOpenPull(ctx, pull, pr);
+  assertReviewRecorded(ctx, pull, pr);
   const head = assertLocalHead(ctx, pull, pr);
   const id = ticketIdFor(pull.headRef, pr);
   const predBase = fetchedMain(ctx);
