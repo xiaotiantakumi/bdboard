@@ -101,14 +101,13 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     const nextDraftKey = makeDraftKey(projectId, nextDraftNonce);
     setSelectedThreadIds((prev) => ({ ...prev, [projectId]: undefined }));
     setDraftNonces((prev) => ({ ...prev, [projectId]: nextDraftNonce }));
-    // bdboard-d29q: draftNoncesRef/selectedThreadIdsRef (useConversationKey.ts) は
-    // レンダー本体でしか同期しない render-mirror。turn-status 回収
-    // (useChatSessionLifecycle.ts の applyRecoveredTurn)がこの直後、次の再レンダーの
-    // 前に isExplicitDraftStillSelected で読むと古い値を掴む。setState と同じ場所で
-    // ref 自体も直接更新し、1レンダー分のラグを消す(次のレンダーで同じ値が
-    // 再代入されるだけなので冪等)。
-    selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [projectId]: undefined };
-    draftNoncesRef.current = { ...draftNoncesRef.current, [projectId]: nextDraftNonce };
+    // bdboard-d29q: turn-status 回収(useChatSessionLifecycle.ts の
+    // applyRecoveredTurn)がこの直後、次の再レンダーの前に
+    // isExplicitDraftStillSelected で読んでも古い値を掴まない —
+    // draftNoncesRef/selectedThreadIdsRef (useConversationKey.ts) は
+    // bdboard-33jm 以降 useLiveMirroredState 経由で、上の setSelectedThreadIds/
+    // setDraftNonces を呼んだ時点で ref.current も同期的に更新されている
+    // (以前は書き手側がここで個別に `xxxRef.current = ...` する必要があった)。
     setHistoryLoadedFor((prev) => ({
       ...prev,
       [nextDraftKey]: true,
@@ -209,7 +208,6 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       setLoadingHistoryFor(null);
       writePersistedChatThread(selectedProjectId, undefined);
       setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [] }));
-      openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: [] };
       // bdboard-4w2d(Opus レビュー blocker 2 対応): この明示的リセットは「このプロジェクトの
       // open は空である」という確定した状態そのものであり、E7/applyRecoveredTurn の
       // restoreThreadView による復元と同格に扱う必要がある。ここで restoredProjectsRef を
@@ -219,15 +217,15 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
       // エージェント切替直後の空ドラフトへ全スレッドを再展開してしまう。
       restoredProjectsRef.current.add(selectedProjectId);
       setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: undefined }));
-      // bdboard-d29q: startNewDraftThread と同じ理由(render-mirror の1レンダー遅延)。
-      selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: undefined };
       const nextDraftNonce = (draftNoncesRef.current[selectedProjectId] ?? 0) + 1;
       const nextDraftKey = makeDraftKey(selectedProjectId, nextDraftNonce);
       // bdboard-ru4d: 会話キーの再割り当て。引き継ぎ選択は
       // HANDLE_AGENT_CHANGE_DRAFT_PAYLOAD_CARRY で型網羅を強制している。
+      // bdboard-d29q/bdboard-33jm: selectedThreadIdsRef/draftNoncesRef は
+      // useLiveMirroredState 経由で上の setSelectedThreadIds と、直後の
+      // setDraftNonces の呼び出し時点でそれぞれ ref.current も同期的に
+      // 更新される(手で `xxxRef.current = ...` する必要は無い)。
       setDraftNonces((prev) => ({ ...prev, [selectedProjectId]: nextDraftNonce }));
-      // bdboard-d29q: 同上。
-      draftNoncesRef.current = { ...draftNoncesRef.current, [selectedProjectId]: nextDraftNonce };
       // MF1(N1: startNewDraftThread の SF1 引き継ぎと同じ family ——
       // 「表示キーが切り替わるなら、旧キーの編集を新キーへ引き継ぐ」という
       // 不変条件): エージェント切替は会話キーを強制的に新しいドラフトへ進める
@@ -332,8 +330,6 @@ export function useDraftThreadLauncher(params: UseDraftThreadLauncherParams) {
     (projectId: string) => {
       const nextDraftNonce = (draftNoncesRef.current[projectId] ?? 0) + 1;
       setDraftNonces((prev) => ({ ...prev, [projectId]: nextDraftNonce }));
-      // bdboard-d29q: 同じ理由。
-      draftNoncesRef.current = { ...draftNoncesRef.current, [projectId]: nextDraftNonce };
     },
     [draftNoncesRef, setDraftNonces],
   );

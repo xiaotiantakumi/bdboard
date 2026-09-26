@@ -48,7 +48,15 @@ export function writePersistedChatThreadState(
     const storage = getStorage();
     if (storage === null) return;
     const current = readPersistedChatThreads();
-    if (state === undefined || state.activeSessionIds.length === 0) {
+    // bdboard-ij6e: state が undefined(このプロジェクトの永続化を明示的に
+    // クリアする呼び出し、例: writePersistedChatThread(projectId, undefined))と、
+    // state.activeSessionIds が空(このプロジェクトで開いているスレッドを
+    // 意図的に0件にした呼び出し、例: closeThread が最後の1つを閉じた)は別物。
+    // どちらも「削除」に倒すと、後者が前者と区別できなくなり、次回訪問時に
+    // threadViewRestore.ts の restoreThreadView が「エントリが無い = 初回訪問」と
+    // 誤認して全スレッドを再び開いてしまう(意図的に全部閉じた直後の挙動として
+    // 誤り)。削除は state === undefined のときだけ行う。
+    if (state === undefined) {
       const { [projectId]: _, ...rest } = current;
       storage.setItem(CHAT_THREAD_STORAGE_KEY, JSON.stringify(rest));
       return;

@@ -441,10 +441,16 @@ describe('ChatPanel', () => {
       ).not.toBeInTheDocument();
     });
 
-    // (2) 開いているスレッドが無くなったので、writePersistedChatThreadState は
-    // 永続化エントリごと削除する (activeSessionIds が空の書き込みは
-    // chatThreadStorage の実装上、エントリ削除と等価)。
-    expect(readPersistedChatThreads()['proj-a']).toBeUndefined();
+    // (2) 開いているスレッドが無くなったので、選択はクリアされ空の
+    // activeSessionIds が永続化される。bdboard-ij6e 以降、activeSessionIds が
+    // 空でもエントリ自体は削除しない(削除するのは state === undefined の
+    // 明示的なクリアだけ) — 削除してしまうと次回訪問時に
+    // threadViewRestore.ts が「エントリが無い = 初回訪問」と誤認し、
+    // 意図的に0件にしたはずの open が全スレッド再オープンに化けてしまう。
+    expect(readPersistedChatThreads()['proj-a']).toEqual({
+      activeSessionIds: [],
+      selectedSessionId: undefined,
+    });
   });
 
   it('advances the draft nonce during auto-recovery so a stale optimistic message does not resurface (bdboard-23u)', async () => {

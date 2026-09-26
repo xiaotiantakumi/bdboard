@@ -34,9 +34,11 @@ export interface UseThreadListSyncParams
  * ref の種類: pendingPrefillRef / pendingTicketDraftProjectRef は[正本]
  * (useDraftThreadLauncher が持つ)、threadListRequestIdRef は request-id、
  * draftNoncesRef / selectedThreadIdsRef / openThreadIdsRef は[render ミラー]
- * (bdboard-d29q / bdboard-d7on: 各 write 側が setState と同じ場所で ref も
- * 同期的に更新するため、この effect からは対応する state を書き換えた同 tick の後でも
- * 最新値を読める。書き手側の対応が漏れない限り、次の再レンダーまで古い制約はない)。
+ * (bdboard-33jm 以降 chat/useLiveMirroredState.ts に一本化 — 対応する
+ * setState を呼んだ時点で ref.current も同期的に更新されるため、この effect
+ * からは対応する state を書き換えた同 tick の後でも最新値を読める。以前
+ * (bdboard-d29q/bdboard-d7on)は書き手側が個別に write site で ref を同期する
+ * 運用で、書き忘れが再発の原因になっていた)。
  *
  * 依存配列: 再実行の契機は従来どおり selectedProjectId(と参照の変わらない
  * setThreadError)だけ。第14d段で exhaustive-deps が求める ref・setter・
@@ -201,7 +203,6 @@ export function useThreadListSync({
         // bdboard-4w2d: 応答が届いた時点の永続化を読む(効果開始時のスナップショットではない)。
         const { open, selected } = restoreThreadView(threads, readPersistedChatThreads()[selectedProjectId]);
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: open }));
-        openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: open };
         // bdboard-4w2d: 「このプロジェクトの一覧・open は復元済み」を明示的に立てる。
         // applyRecoveredTurn(chat/useChatSessionLifecycle.ts)はこれを見て、既に
         // 復元済みなら自分では restoreThreadView を呼び直さず、openThreadIds の
@@ -214,7 +215,6 @@ export function useThreadListSync({
           return;
         }
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: selected }));
-        selectedThreadIdsRef.current = { ...selectedThreadIdsRef.current, [selectedProjectId]: selected };
       })
       .catch(() => {
         if (cancelled) return;
@@ -233,7 +233,6 @@ export function useThreadListSync({
         const persisted = readPersistedChatThreads()[selectedProjectId];
         const open = persisted?.activeSessionIds ?? [];
         setOpenThreadIds((prev) => ({ ...prev, [selectedProjectId]: [...open] }));
-        openThreadIdsRef.current = { ...openThreadIdsRef.current, [selectedProjectId]: [...open] };
         // bdboard-4w2d: 取得に失敗した場合も、この「open」が最終形(永続化からの
         // フォールバック)であることに変わりはないので、成功時と同じく復元済みとして立てる。
         restoredProjectsRef.current.add(selectedProjectId);
@@ -244,10 +243,6 @@ export function useThreadListSync({
           return;
         }
         setSelectedThreadIds((prev) => ({ ...prev, [selectedProjectId]: persisted?.selectedSessionId ?? open[0] }));
-        selectedThreadIdsRef.current = {
-          ...selectedThreadIdsRef.current,
-          [selectedProjectId]: persisted?.selectedSessionId ?? open[0],
-        };
       });
     return () => { cancelled = true; };
   }, [
