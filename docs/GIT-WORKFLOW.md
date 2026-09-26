@@ -36,6 +36,12 @@ port, so those run fine in parallel worktrees.
 `bd/bdboard-3tw.65` — dots are legal in git ref names). Non-ticket
 exploratory branches use `spike/` and never get a PR.
 
+`bdboard-worker` サブエージェント (bdboard-cm2q.3) は上記の手動 `git worktree add` では
+なく、Claude Code 組み込みの `isolation: worktree` で動く — worktree の作成/削除自体は
+Claude Code 側が行い、人手のコマンドでは触らない。ディレクトリ名も Claude Code が付ける
+任意の slug (`bd/<ticket-id>` 由来ではない) なので、その worktree がどのチケットの作業か
+はディレクトリ名では分からない。手順1で作り直すブランチ `bd/<ticket-id>` の方で識別する。
+
 ## bd チケット title の命名規約
 
 チケット title に `[bug]` 等の type 接頭辞を付けない。`type=bug` は `bd` CLI 側で既に
