@@ -37,28 +37,49 @@ export function isReleasePleasePull(pull) {
   return pull.headRef?.startsWith('release-please--') === true;
 }
 
+const REVIEW_MODEL = /^(?:claude[-:])?(?:opus|fable)(?![a-z])/i;
+
 /** レビューは Opus または Fable の記録がある PR だけをマージ手順へ進める。 */
 export function hasApprovedReview(metadata) {
-  return /^(opus|fable)/.test(metadata?.['bdboard.model.review'] ?? '');
+  const value = metadata?.['bdboard.model.review'];
+  return typeof value === 'string' && REVIEW_MODEL.test(value.trim());
 }
 
 function assertReviewRecorded(ctx, pull, pr) {
   if (isReleasePleasePull(pull)) {
     return;
   }
-  const id = ticketIdFor(pull.headRef, pr);
-  if (!pull.headRef?.startsWith('bd/') || id === '') {
+  const match = /^bd\/(.+)$/.exec(pull.headRef ?? '');
+  if (match === null) {
     fail(EXIT.PRECONDITION, `PR #${pr} のチケット ID がありません。bd/<id> ブランチで作成してください。`);
   }
-  const shown = run('bd', ['show', id, '--json'], { cwd: ctx.cwd });
-  let ticket;
-  try {
-    ticket = JSON.parse(shown.stdout)[0];
-  } catch {
-    ticket = undefined;
+  const id = match[1];
+  const shown = run('bd', ['show', id, '--json', '--readonly'], { cwd: ctx.cwd });
+  if (shown.status !== 0) {
+    const detail = `${shown.stdout}${shown.stderr}`;
+    if (/no issue(s)? found/i.test(detail)) {
+      audit('prepare-review-missing', { pr, id, reason: 'not-found' });
+      fail(EXIT.PRECONDITION, `チケット ${id} が bd にありません`);
+    }
+    audit('prepare-review-missing', { pr, id, reason: 'bd-error' });
+    fail(EXIT.USAGE, `bd show ${id} --json に失敗しました: ${(shown.stderr || shown.stdout).trim()}`);
   }
-  if (shown.status !== 0 || !hasApprovedReview(ticket?.metadata)) {
-    fail(EXIT.PRECONDITION, `レビュー記録がありません: bd update ${id} --set-metadata bdboard.model.review=<model>`);
+  let parsed;
+  try {
+    parsed = JSON.parse(shown.stdout);
+  } catch {
+    audit('prepare-review-missing', { pr, id, reason: 'bad-json' });
+    fail(EXIT.USAGE, `bd show ${id} --json の出力が JSON ではありません: ${shown.stdout.trim()}`);
+  }
+  const ticket = Array.isArray(parsed) ? parsed[0] : parsed;
+  const value = ticket?.metadata?.['bdboard.model.review'];
+  if (!hasApprovedReview(ticket?.metadata)) {
+    audit('prepare-review-missing', { pr, id, reason: 'no-match', value: value ?? '' });
+    fail(
+      EXIT.PRECONDITION,
+      `レビュー記録がありません: bd update ${id} --set-metadata bdboard.model.review=<model>`,
+      `現在の値: ${value ?? 'なし'}`,
+    );
   }
 }
 
@@ -110,11 +131,18 @@ function refuseBrokenBase(ctx, pr, predBase) {
 }
 
 export async function prepare(ctx, pr, { dryRun = false } = {}) {
+  if (!gitOk(['diff', '--quiet', 'HEAD', ctx.mainRef, '--', 'scripts/merge-pr', 'scripts/merge-pr.mjs'], { cwd: ctx.cwd })) {
+    fail(
+      EXIT.NEEDS_REBASE,
+      `merge-pr 自身のコード (scripts/merge-pr) が ${ctx.mainRef} と食い違っています。`,
+      `git merge ${ctx.mainRef} で取り込んでから npm run merge-pr -- prepare ${pr} をやり直してください。`,
+    );
+  }
   const prior = readState(ctx.cwd, pr);
   if (prior?.gateAt) {
     fail(
       EXIT.PRECONDITION,
-      `PR #${pr} は gate 済みで枠を保持しています (${prior.holder})。prepare の前に npm run merge-pr -- finish ${pr}`,
+      `PR #${pr} は gate 済みで枠を保持しています (${prior.holder})。prepare の前に BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}`,
     );
   }
   const pull = getPull(ctx, pr);
@@ -180,6 +208,6 @@ export async function prepare(ctx, pr, { dryRun = false } = {}) {
     say(`着地予定ツリーの verify success (${state.predictedVerifySecs} 秒)。`);
   }
   writeState(ctx.cwd, pr, state);
-  say(`準備完了。次: npm run merge-pr -- gate ${pr}`);
+  say(`準備完了。次: BDBOARD_MERGER=chair npm run merge-pr -- gate ${pr}`);
   return EXIT.OK;
 }

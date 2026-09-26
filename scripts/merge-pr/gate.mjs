@@ -84,7 +84,7 @@ export async function gate(ctx, pr, { repair = false } = {}) {
     fail(
       EXIT.PRECONDITION,
       `PR #${pr} は既に gate 済みで枠を保持しています (${state.holder})。`,
-      `gh pr merge を打ったかどうかにかかわらず、次は npm run merge-pr -- finish ${pr}`,
+      `gh pr merge を打ったかどうかにかかわらず、次は BDBOARD_MERGER=chair npm run merge-pr -- finish ${pr}`,
     );
   }
   const pull = getPull(ctx, pr);

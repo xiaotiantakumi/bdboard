@@ -3,18 +3,18 @@ import { EXIT, MergePrError, openContext } from './context.mjs';
 import { finish, verifyLanded } from './finish.mjs';
 import { gate } from './gate.mjs';
 import { prepare } from './prepare.mjs';
-import { say } from './state.mjs';
+import { audit, say } from './state.mjs';
 
 export const USAGE = `merge-pr — マージ手順 S1 / S2 (枠は CAS とマージの一瞬だけ握る。設計 bdboard-ulxa)
 
   npm run merge-pr -- prepare <PR> [--dry-run]   枠の外: PR / 必須チェック / main を確かめ PRED_BASE を記録
                                                  (S2: main が動いていれば着地予定ツリーを verify。--dry-run は
                                                   どの段階でも S2 の分類を参考表示し、verify はしない)
-  npm run merge-pr -- gate <PR> [--repair]       層3 ゲート → bd merge-slot acquire → CAS → マージ行を stdout に印字
+  BDBOARD_MERGER=chair npm run merge-pr -- gate <PR> [--repair] 層3 ゲート → bd merge-slot acquire → CAS → マージ行を stdout に印字
                                                  (--repair: main 破損の修復 PR 専用。main-broken の枠を引き継ぐ)
   <印字された gh pr merge ... --match-head-commit ... を 1 回だけ実行>
-  npm run merge-pr -- finish <PR>                枠を返す → 着地後検証 (detach checkout + verify) → commit status
-  npm run merge-pr -- verify <SHA>               任意の main の SHA を着地後検証して台帳に書く (復旧用)
+  BDBOARD_MERGER=chair npm run merge-pr -- finish <PR> 枠を返す → 着地後検証 (detach checkout + verify) → commit status
+  BDBOARD_MERGER=chair npm run merge-pr -- verify <SHA> 任意の main の SHA を着地後検証して台帳に書く (復旧用)
 
   PR の worktree (git worktree add で作ったもの) で実行する。main checkout では着地後検証を拒否する。
   stdout を機械的に使うなら npm run -s merge-pr -- ... (npm の見出し行を出さない)。
@@ -23,11 +23,12 @@ export const USAGE = `merge-pr — マージ手順 S1 / S2 (枠は CAS とマー
 
 終了コード: 0 成功 / 1 使い方・想定外 / 2 前提不成立 / 4 main が壊れている
             3 rebase が要る (S1: main が動いた / S2: テキスト衝突・hot file・着地予定ツリーの verify failure)
-            5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure / 7 議長以外の gate / finish
+            5 finish: 未マージ (枠は返した) / 6 finish: 着地後検証 failure / 7 議長以外の gate / finish / verify
             75 やり直し (CAS 負け等)`;
 
-function assertMerger() {
+function assertMerger(phase) {
   if (process.env.BDBOARD_MERGER !== 'chair') {
+    audit('not-merger', { phase });
     throw new MergePrError(EXIT.NOT_MERGER, [
       'gate / finish は議長だけが行います。BDBOARD_MERGER=chair を前置してください。',
       'サブエージェントは実行せず、最終報告に必要なコマンドを書いてください。',
@@ -63,12 +64,12 @@ export async function main(argv) {
       }
       case 'gate': {
         const pr = parsePr(target);
-        assertMerger();
+        assertMerger('gate');
         return await gate(openContext(), pr, { repair: flags.has('--repair') });
       }
       case 'finish': {
         const pr = parsePr(target);
-        assertMerger();
+        assertMerger('finish');
         // 枠を返すのが最優先。fetch に失敗しても手元の origin/main で続ける。
         return await finish(openContext({ allowOffline: true }), pr);
       }
@@ -76,6 +77,7 @@ export async function main(argv) {
         if (!/^[0-9a-f]{7,40}$/.test(target ?? '')) {
           throw new MergePrError(EXIT.USAGE, [`SHA が必要です (受領: ${target ?? '(なし)'})`]);
         }
+        assertMerger('verify');
         return await verifyLanded(openContext(), target);
       default:
         throw new MergePrError(EXIT.USAGE, [`unknown phase: ${phase}。npm run merge-pr -- --help`]);

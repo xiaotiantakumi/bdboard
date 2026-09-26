@@ -244,6 +244,19 @@ describe('merge-pr pure helpers', () => {
   });
 });
 
+describe('hasApprovedReview spelling variants', () => {
+  const has = (value) => hasApprovedReview({ 'bdboard.model.review': value });
+  it('accepts supported model spellings and rejects near matches and non-strings', () => {
+    for (const value of ['claude-opus-5', 'claude-opus-5-5', 'claude:opus', 'Opus 5.5', 'fable-5.1']) {
+      expect(has(value)).toBe(true);
+    }
+    for (const value of ['opusx-fake', 'fabled-sonnet', 'sonnet-5', 42, null, undefined, [], {}]) {
+      expect(has(value)).toBe(false);
+    }
+    expect(hasApprovedReview({})).toBe(false);
+  });
+});
+
 // 1 テストで node / git を十数回起こす。verify の並列実行中でも既定 5 秒で落ちないよう余裕を取る。
 describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp repo + fake gh/bd/npm', { timeout: 30_000 }, () => {
   let tmp;
@@ -394,6 +407,19 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(readFake().calls).toEqual([]);
   });
 
+  it("prepare: refuses when its own tooling (scripts/merge-pr) is stale vs origin/main", () => {
+    setup();
+    mkdirSync(path.join(mainCheckout, 'scripts'), { recursive: true });
+    writeFileSync(path.join(mainCheckout, 'scripts', 'merge-pr.mjs'), '// pretend main moved this tool\n');
+    commitAll(mainCheckout, 'chore: touch merge-pr tool');
+    git(mainCheckout, ['push', '-q', 'origin', 'main']);
+    const result = run(['prepare', String(PR)]);
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain('scripts/merge-pr');
+    expect(calls('gh')).toEqual([]);
+    expect(calls('bd')).toEqual([]);
+  });
+
   it('S0: prepare only reports the class and gate / finish refuse to run', () => {
     setup({ merge: { mode: 'S0' } });
     const prepared = run(['prepare', String(PR)]);
@@ -403,7 +429,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(existsSync(stateFile())).toBe(false);
     expect(run(['gate', String(PR)]).status).toBe(2);
     expect(run(['finish', String(PR)]).status).toBe(2);
-    expect(calls('bd', 'merge-slot')).toEqual([]);
+    expect(calls('bd').filter((c) => c[1] !== 'show')).toEqual([]);
   });
 
   it('prepare: requires an Opus/Fable review record and a ticket branch, except release-please', () => {
@@ -412,6 +438,47 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     const missing = run(['prepare', String(PR)]);
     expect(missing.status).toBe(2);
     expect(missing.stderr).toContain('レビュー記録がありません: bd update demo-1 --set-metadata bdboard.model.review=<model>');
+    expect(missing.stderr).toContain('現在の値: なし');
+
+    setup();
+    writeFake({ bdShow: { 'demo-1': [] } });
+    expect(run(['prepare', String(PR)]).stderr).toContain('現在の値: なし');
+
+    setup();
+    writeFake({ bdShow: { 'demo-1': [{ metadata: null }] } });
+    expect(run(['prepare', String(PR)]).stderr).toContain('現在の値: なし');
+
+    setup();
+    writeFake({ bdShow: { 'demo-1': 'not-found' } });
+    const notFound = run(['prepare', String(PR)]);
+    expect(notFound.status).toBe(2);
+    expect(notFound.stderr.trim()).toBe('merge-pr: チケット demo-1 が bd にありません');
+
+    setup();
+    writeFake({ bdShow: { 'demo-1': 'unreachable' } });
+    const unreachable = run(['prepare', String(PR)]);
+    expect(unreachable.status).toBe(1);
+    expect(unreachable.stderr).toContain('dolt server unreachable');
+
+    setup();
+    writeFake({ bdShow: { 'demo-1': 'bad-json' } });
+    expect(run(['prepare', String(PR)]).status).toBe(1);
+
+    setup();
+    expect(run(['prepare', String(PR), '--dry-run']).status).toBe(0);
+    writeFake({ bdShow: { 'demo-1': [{ metadata: {} }] } });
+    expect(run(['prepare', String(PR), '--dry-run']).status).toBe(2);
+
+    setup();
+    const child = readFake();
+    child.pulls[PR].head.ref = 'bd/demo-1.2';
+    child.bdShow['demo-1.2'] = [{ metadata: { 'bdboard.model.review': 'opus-5' } }];
+    writeFileSync(fakeState, JSON.stringify(child));
+    expect(run(['prepare', String(PR)]).status).toBe(0);
+    expect(calls('bd', 'show').some((call) => call.includes('demo-1.2'))).toBe(true);
+
+    setup();
+    expect(run(['prepare', String(PR)], { BDBOARD_MERGER: '' }).status).toBe(0);
 
     setup();
     const fake = readFake();
@@ -427,6 +494,8 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     writeFileSync(fakeState, JSON.stringify(release));
     expect(run(['prepare', String(PR), '--dry-run']).status).toBe(0);
     expect(calls('bd', 'show')).toEqual([]);
+    run(['prepare', String(PR)]);
+    expect(calls('bd', 'show')).toEqual([]);
   });
 
   it('gate and finish require BDBOARD_MERGER=chair, including gate --repair', () => {
@@ -435,11 +504,13 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
       ['gate', String(PR)],
       ['gate', String(PR), '--repair'],
       ['finish', String(PR)],
+      ['verify', '0123456789abcdef'],
     ]) {
       const result = run(args, { BDBOARD_MERGER: '' });
       expect(result.status).toBe(7);
       expect(result.stderr).toContain('gate / finish は議長だけが行います。BDBOARD_MERGER=chair を前置してください。');
     }
+    expect(run(['gate', String(PR)], { BDBOARD_MERGER: 'Chair' }).status).toBe(7);
     expect(readFake().calls).toEqual([]);
   });
 
@@ -843,7 +914,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(verified()).toEqual([state.predictedCommit]);
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
     expect(git(work, ['rev-parse', 'HEAD'])).toBe(head); // rebase も push もしていない
-    expect(calls('bd', 'merge-slot')).toEqual([]); // prepare は枠に触れない
+    expect(calls('bd').filter((c) => c[1] !== 'show')).toEqual([]); // prepare は枠に触れない
     expect(posted()).toEqual([]); // 着地予定コミットは GitHub に無いので台帳にも書かない
     expect(calls('gh', 'checks')).toHaveLength(1);
     expect(auditText()).toMatch(/\tpredicted-verify\t.*result=success/);
@@ -912,7 +983,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(verified()).toHaveLength(1);
     expect(existsSync(stateFile())).toBe(false);
     expect(posted()).toEqual([]);
-    expect(calls('bd', 'merge-slot')).toEqual([]);
+    expect(calls('bd').filter((c) => c[1] !== 'show')).toEqual([]);
     expect(git(work, ['symbolic-ref', '--short', 'HEAD'])).toBe('bd/demo-1');
     expect(auditText()).toMatch(/\tpredicted-verify\t.*result=failure/);
   });
@@ -1076,7 +1147,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(prepared.stderr).toContain('bd create --type bug -p 0');
     expect(prepared.stderr).toContain('gate --repair');
     expect(verified()).toEqual([]);
-    expect(calls('bd', 'merge-slot')).toEqual([]);
+    expect(calls('bd').filter((c) => c[1] !== 'show')).toEqual([]);
     expect(existsSync(stateFile())).toBe(false);
   });
 
@@ -1190,7 +1261,7 @@ describe.skipIf(process.platform === 'win32')('merge-pr phases against a temp re
     expect(stderr).toContain('SIGINT');
     expect(stderr).toContain('bd/demo-1');
     // bdboard-e8o1 (見送り分 3): 次にやり直すコマンドのヒントと、監査ログのイベント。
-    expect(stderr).toContain(`そのまま次を実行してやり直せます: npm run merge-pr -- finish ${PR}`);
+    expect(stderr).toContain(`そのまま次を実行してやり直せます: BDBOARD_MERGER=chair npm run merge-pr -- finish ${PR}`);
     expect(auditText()).toMatch(/\tlanded-verify-interrupted\tsha=[0-9a-f]{40}\tby=demo-1\tledger=true\tsignal=SIGINT/);
     // opus レビューで見つかった退行の固定化: 中断されたのに installAndVerify が呼び出し元へ
     // 制御を戻し、finish() の「検証を実行できなかった」エラーパスまで進んでしまわないこと。

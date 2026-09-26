@@ -6,6 +6,7 @@
 //   pulls[n]            gh api repos/R/pulls/n の応答 (REST の形)
 //   checks[n]           gh pr checks n --required の終了コード (既定 0)
 //   statuses[sha]       gh api repos/R/commits/sha/status の statuses 配列
+//   bdShow[id]          bd show の応答。'not-found' / 'unreachable' / 'bad-json' は異常系 sentinel
 //   statusQueue[sha]    あれば GET のたびに先頭を取り出して statuses[sha] に据える (待ちの再現)
 //   checksError[n]      あれば gh pr checks n がこの stderr で exit 1 (API エラーの再現)
 //   slot                { holder, freeAfter, onAcquire, broken } — bd merge-slot の代役
@@ -88,6 +89,14 @@ function bd() {
     if (shown === undefined) {
       err = `Error: issue ${args[1]} not found\n`;
       code = 1;
+    } else if (shown === 'not-found') {
+      err = 'Error: no issues found\n';
+      code = 1;
+    } else if (shown === 'unreachable') {
+      err = 'Error: failed to open database: dolt server unreachable\n';
+      code = 1;
+    } else if (shown === 'bad-json') {
+      out = 'not json\n';
     } else {
       out = JSON.stringify(shown);
     }
