@@ -16,6 +16,16 @@ verify:steps` 直叩き (規則 5) は hook でも判定済みなので、対応
 ときだけ deny の番になる。**唯一 `kill` だけはそれを説明する hook が無く**、deny が
 理由を出さずに拒否する (bdboard-cm2q.1)。
 
+bdboard は 0.55.0 (bdboard-cm2q.12) で deny に次を足した: bare `git stash` /
+`git stash pop` / `git stash save` (規則 3 の主な形)、`aimix run` (規則 6 の正規経路を
+`scripts/aimix-run.sh` に移したため)、`bd -C <dir> dolt push`/`pull` と `--remote origin` /
+`--remote=origin` / push の `--yes`・`-y` (規則 2 の抜け)、注入コピー
+`.claude/skills/bdboard-harness/` と `.beads/` への Edit。push の `--yes` / `-y` は
+`--remote <name>` 付きでも止まる (`--yes` が効くのは remote 未設定時に git origin 由来の remote を
+採用する場面だけなので、`--remote` 付きなら外せばよい)。Bash ルールは Claude Code が普段
+書く形を止める網で境界ではない (`git -C . stash pop`・`--remote 'origin'` の引用符付き・
+絶対パス呼び出し・`FOO=1 aimix run` は止まらない)。
+
 bdboard では PID を指定した `kill` 自体も deny される。代わりに: 常時稼働サーバーは
 議長が `scripts/always-on-server.sh` を使う / プロセスの生死確認は `ps -p <pid>` /
 Claude が起動したバックグラウンドタスクの停止は `TaskStop` / それ以外は議長かユーザーに
@@ -58,7 +68,7 @@ Claude が起動したバックグラウンドタスクの停止は `TaskStop` /
 | 3 | `git stash` のうち `push` + メッセージ指定 / `apply <sha>` / `list` / `drop` / `show` 以外 (= bare `git stash`・`git stash pop`・`git stash save`・メッセージ無しの `push`) | WIP コミット。どうしても要るなら `git stash push -u -m "<tag>"` + `git stash apply <sha>` |
 | 4 | `tool_input.run_in_background` が true で、行末 (または `;` 直前) に単独の `&` (`&&`・`2>&1`・`>&2` は除外) | 末尾 `&` を外して `run_in_background` だけに任せる |
 | 5 | 検証コントラクトの `hooks.denyBashPatterns` にマッチ | 同 index の `hooks.denyBashMessages` (無ければ既定文) が案内する手順 |
-| 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`--member <member> --model <model>` で渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
+| 6 | `aimix run` の実効 mode が `implement` / `refactor` で、`models.routes` の該当セルに候補があるのに member が不明、`--members` 由来、`--model` 無し、または `<member>:<model>` が候補外。セルが `models.exclude` で候補 0 件なら、実効 member が除外中のとき | `scripts/route.sh <工程> <low\|med\|high>` で候補を引き、`scripts/aimix-run.sh` 経由で `--member <member> --model <model>` を渡す。表から外れるなら `BDBOARD_ROUTE_OVERRIDE="<理由>"` を前置 |
 | 7 | 検証コントラクトに `alwaysOnServer.port` があるとき (本体は `server-guard.sh`): **7a** サブエージェント (hook 入力に `agent_id` がある) から main checkout での `git pull` (bdboard-rj7y 以降、規則 8 も port 非依存に独立して対象にするが、port ありの契約では 7a が先に発火する) / **7b** 同じくサーバー起動 (`npm run start`・`tsx src/main.ts`) と `alwaysOnServer.restartScript` の実行 (cwd 不問) / **7c** 呼び出し元を問わず listener PID (とその親 npm/node) の直接 `kill`、`$(lsof … <port> …)` や同一コマンド内の変数・パイプ経由で port から引いた PID の kill | 再起動は議長が `BDBOARD_SERVER_CALLER=chair <restartScript> restart --expect-pid <PID>`。サブエージェントは最終報告に「議長で再起動が必要」と書く。議長が手で止めるなら `BDBOARD_SERVER_OVERRIDE="<理由>"` を前置 (bdboard では kill 自体も deny されるので「deny と hook の分担」を参照) |
 | 8 | `alwaysOnServer.port` の有無に関係なく有効 (本体は `server-guard.sh`)。サブエージェントが main checkout を対象に `git checkout` / `switch` / `commit` / `reset` / `merge` / `rebase` / `stash` / `restore` / `cherry-pick` / `revert` / `am` / `clean` / `bisect` / `apply` / `rm` / `mv` / `pull` を実行する (`pull` は bdboard-rj7y で追加。7a とは独立に、port の有無に関係なく規則 8 でも塞ぐ — 下記「8 の main checkout 保護」参照) | worktree で作業する: `cd <worktree> && git <cmd> ...` か `git -C <worktree> <cmd> ...`。無ければ `git -C <main> worktree add .claude/worktrees/<id> -b bd/<id> origin/main` |
 | 9 | 本体は `worktree-owner-guard.sh` (bdboard-gsnn)。持ち主でないサブエージェントが per-ticket worktree (`bd/<id>` ブランチが存在する `.claude/worktrees/<id>` のみ対象。chair 作成やisolation:"worktree"用のスクラッチworktreeは対象外) を対象に公開/マージ系操作をする。詳細は下記「9 の worktree 所有権保護」 | 自分の worktree で作業する。持ち主が動けないなら議長に `bash .claude/skills/bdboard-harness/scripts/worktree-owner.sh release <id>` を頼む |
@@ -102,6 +112,13 @@ Claude が起動したバックグラウンドタスクの停止は `TaskStop` /
 
 規律 6 (SKILL.md) の「工程 × 複雑度のモデル振り分け表」を機械で強制する。文章だけの規律は
 failure-catalog の「D: 文章で禁止しても再発する操作ミス」に落ちるため。
+
+**0.55.0 以降の正規経路は `scripts/aimix-run.sh`** (bdboard-cm2q.12)。同じ判定を argv で行い、
+bdboard では素の `aimix run` を `.claude/settings.json` の `Bash(aimix run *)` deny で止める
+(`permissions` はパックが配らないので、ほかの注入先では各自の設定)。ラッパーの
+コマンド行には `aimix run` が現れないので、この規則はラッパー経由の呼び出しには発火しない。
+deny をすり抜ける形 (絶対パス・`bash -c`) への網として残し、hook ごと bdboard-cm2q.10 で外す。
+詳細: `references/model-routing.md`「aimix-run.sh — 規律6 の照合ラッパー」。
 
 判定対象は `command_segments` で割った各コマンドのうち、`aimix run` かつ実効 mode が
 `implement` / `refactor` のもの。mode 省略時は aimix と同じ `consult` なので、`consult` /

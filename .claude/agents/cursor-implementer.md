@@ -5,8 +5,9 @@ description: >-
   implement/refactor 分岐から起動され、Cursor の呼び出し元が選んだモデルに実際のコード編集を
   行わせる専用エージェント。呼び出し元(議長Claude/サブオーケストレーター)が
   「Cursorで実装して」「これをCursorで実装/リファクタして」と判断したときに、実装タスクを本文
-  メインループから切り離してこのサブエージェントへ投げる。役割: (1)`aimix run --mode implement
-  --member cursor --model <受け取ったmodel>` を実行して指定モデルに編集させる、
+  メインループから切り離してこのサブエージェントへ投げる。役割: (1)ラッパー `aimix-run.sh`
+  経由で `aimix run --mode implement --member cursor --model <受け取ったmodel>` を実行して
+  指定モデルに編集させる (素の `aimix run` は permissions.deny で止まる)、
   (2)変更点(diff)と残課題を構造化して呼び出し元に返す。書き込みを伴うのはこのエージェントのみ。
   **IDEインデックス温め(cursor-index.sh warm)は行わない/禁止**(cursor-agentは自前でインデックス
   同期するため不要。詳細は本文参照)。
@@ -44,7 +45,14 @@ tools: Bash, Read, Glob, Grep
   このエージェントではモデルを決め打ち・再選択・自動フォールバックしない。
 
 ## 前提パス
-- `aimix`: PATH 済み。無ければ `~/.agent/skills/ai-mix/bin/aimix`
+- `aimix`: PATH 済み。無ければ `AIMIX_BIN=~/.agent/skills/ai-mix/bin/aimix` を付けてラッパーを呼ぶ
+- **ラッパー** `<repo>/.claude/skills/bdboard-harness/scripts/aimix-run.sh` (bdboard-cm2q.12):
+  `aimix run` の引数をそのまま受け取り、`--model` が振り分け表の候補かを確かめてから
+  `aimix run` を実行する。素の `aimix run` は `.claude/settings.json` の `Bash(aimix run *)`
+  deny で止まるので、**aimix の呼び出しは必ずこのラッパー経由**。`<repo>` に無い (0.55.0 より
+  前に切った worktree) ときは main checkout の同じパス (`git -C "<repo>" worktree list` の
+  1 行目) を使う。素の `aimix run` や `aimix` の絶対パス呼び出しへフォールバックしない。
+  ラッパーが exit 2 で止めたら、stderr の候補と理由をそのまま `status=failed` で返す。
 
 ## 手順
 1. **IDEインデックス温めはしない（2026-08-15廃止）**: 以前はここで
@@ -102,13 +110,14 @@ tools: Bash, Read, Glob, Grep
    （QAレビューは呼び出し元の議長=Claude Code が effort 特大で行う方針。Codex 自動QAは廃止）。
    ```bash
    CURSOR_MODEL="<呼び出し元から受け取ったmodel>"
+   AIMIX_RUN="<repo>/.claude/skills/bdboard-harness/scripts/aimix-run.sh"
    # bd運用時（既定）は --task ではなく、手順2で生成したファイルを渡す:
-   aimix run --mode implement --member cursor --model "$CURSOR_MODEL" \
+   bash "$AIMIX_RUN" --mode implement --member cursor --model "$CURSOR_MODEL" \
      --complexity <low|med|high> --cwd "<repo>" --json \
      --task-file "<repo>/.aimix-task-<bd-id>.md"
 
    # 「bdチケット無し」のときのみ従来どおり:
-   aimix run --mode implement --member cursor --model "$CURSOR_MODEL" \
+   bash "$AIMIX_RUN" --mode implement --member cursor --model "$CURSOR_MODEL" \
      --complexity <low|med|high> --cwd "<repo>" --json \
      --task "<実装タスク本文>"
    ```
@@ -252,7 +261,7 @@ cursor-agentが自前でインデックス同期を行うため semantic search�
   自己判断で `aimix run --mode implement`（指定 Cursor モデルへの委譲）を省略し、自分で編集を
   完結させてはいけない（実例: bdboard-3tw.60、Cursor委譲をスキップして自己実装し、本来
   Cursorのクォータで賄われるべき作業がClaudeのトークン消費に付け替わった）。タスクが
-  具体化されているかどうかに関わらず、実コード編集は必ず `aimix run --mode implement` 経由で
+  具体化されているかどうかに関わらず、実コード編集は必ず `aimix-run.sh --mode implement` 経由で
   指定モデルにやらせる。編集ツールが手元に無いのは制約ではなく設計——書けないのだから
   委譲するしかない、という状態を意図して作っている。
 - シークレット値は出力しない（グローバル方針）。
@@ -260,4 +269,6 @@ cursor-agentが自前でインデックス同期を行うため semantic search�
   "Workspace Trust Required" 等で止まった場合、`--trust`・`--force`・`--yes` のような
   ゲートを無効化するフラグを自己判断で付け足して回避してはいけない。壊れている/失敗する
   委譲経路の代わりにゲートを無効化する生呼び出しへフォールバックするのは、結果コードの
-  安全性に関わらず未承認の操作である。必ず `status=failed` で理由を返し、呼び出し元に委ねる。
+  安全性に関わらず未承認の操作である。ラッパー `aimix-run.sh` の停止を
+  `BDBOARD_ROUTE_OVERRIDE` で自己判断で越えるのも同じ扱い (越えるかは呼び出し元が決める)。
+  必ず `status=failed` で理由を返し、呼び出し元に委ねる。

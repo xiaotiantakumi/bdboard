@@ -192,8 +192,8 @@ local-only and read once at startup). Original design doc: [docs/PLAN.md](docs/P
   (「更新不要」も正当な結論だが、確認自体は省略しない)。Web ヘルプ・チャット system prompt・
   ボード上部の Tips はすべてここから派生する。詳細: [docs/HELP-CONTENT.md](docs/HELP-CONTENT.md)
   (bdboard-3tw.138.4)。
-- **工程ごとの使用モデルを bd に記録する**:
-  `bd update <id> --set-metadata bdboard.model.<工程>=<モデル名>`
+- **aimix は `.claude/skills/bdboard-harness/scripts/aimix-run.sh` 経由で呼ぶ** (素の `aimix run` は deny。bdboard-cm2q.12)。
+- **工程ごとの使用モデルを bd に記録する**: `bd update <id> --set-metadata bdboard.model.<工程>=<モデル名>`
   (例 `bdboard.model.implement=composer-2.5`、解除は `--unset-metadata bdboard.model.<工程>`)。
   工程名は自由文字列で、慣用は `implement` / `test` / `review` / `check` (この順で詳細パネルに
   表示され、未知の工程はその後にアルファベット順)。bdboard 側は表示専用で入力 UI は無く、記録は
