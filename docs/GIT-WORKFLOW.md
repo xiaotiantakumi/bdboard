@@ -236,18 +236,19 @@ would also replace the `web/dist` the always-on server serves):
 npm run merge-pr -- prepare <N>   # outside the slot: PR open, local HEAD == PR head,
                                   # required checks green, origin/main is an ancestor of HEAD
                                   # → records PRED_BASE (= origin/main) in <git common dir>/bdboard-merge/pr-<N>.json
-npm run -s merge-pr -- gate <N>   # layer 3: bdboard/landed-verify on PRED_BASE must be success
+BDBOARD_MERGER=chair npm run -s merge-pr -- gate <N>   # layer 3: bdboard/landed-verify on PRED_BASE must be success
                                   # → bd merge-slot acquire --holder "<id> / PR#<N>" → ls-remote == PRED_BASE
                                   # → prints the merge line on stdout and exits holding the slot
 gh pr merge <N> --squash --delete-branch --match-head-commit <head> --subject '<title> (#<N>)'
-npm run merge-pr -- finish <N>    # always, merged or not: release first → (if merged) detach-checkout
+BDBOARD_MERGER=chair npm run merge-pr -- finish <N>    # always, merged or not: release first → (if merged) detach-checkout
                                   # the landed SHA in this worktree → npm run verify → commit status
 ```
 
 (`-s` keeps npm's `> bdboard@… merge-pr` banner off stdout, so stdout is exactly the one
 `gh pr merge …` line; everything else goes to stderr.)
 
-- **Exit codes**: `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
+- **Exit codes**: `2` precondition failed (no review record / ticket not found in bd); `7` caller is not the chair.
+  `3` main moved (class R) → `git rebase origin/main` (or `git merge origin/main`)
   → push → wait for CI → `prepare` again. `75` start over from `prepare` (CAS lost, main moved
   while waiting, `ls-remote` failed, slot not free within `merge.slotWaitMinutes`, CI pending or
   the GitHub API unreachable). `4` / `6` main is broken → below. `5` finish found the PR unmerged
@@ -388,10 +389,8 @@ revert:
    ledger check, takes over the `… / main-broken <PRED_BASE sha12>` slot or takes it under that
    name) → the printed merge line → `finish`, which keeps the slot unless the fix's landed verify is
    `success`, and releases it when it is. `--repair` is only for the fix PR of the P0 bug.
-   Since bdboard-gsnn, this is also mechanically enforced: `npm run merge-pr -- gate
-   <N> --repair` goes through hook rule 9 (worktree ownership), which denies any
-   subagent other than the repair PR's own worktree owner from running it — so in
-   practice `--repair` can only be run by that owner, from their own worktree.
+   `--repair`, like `gate` generally, requires `BDBOARD_MERGER=chair`; only the chair is responsible
+   for running it. Hook rule 9 (worktree ownership) remains a secondary defense where applicable.
 5. Once the fix's landed-verify is `success` (and the slot is released), reopen the ticket of the
    breaking PR with the reason, and add the case to failure-catalog.md.
 
