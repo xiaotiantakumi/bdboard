@@ -135,12 +135,12 @@ curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
   (`.claude/skills/bdboard-server-ops/SKILL.md`)。ブラウザのタブが描画されていることは生存証明に
   ならない (キャッシュで動いて見える)。
 - **worktree からは `preview_start` 禁止** — `.claude/launch.json` は各 worktree にもあるため
-  8787 を奪い、そのブランチの古い UI を配ってしまう (実測 2026-08-29、12 worktree 中 9 が該当)。起動はメインチェックアウトへ `cd` してから。
+  8787 を奪い、そのブランチの古い UI を配ってしまう (実測 2026-08-29、12 worktree 中 9 が該当)。
 - **止める・作り直しは `scripts/always-on-server.sh` 経由だけ (議長のみ)**: `BDBOARD_SERVER_CALLER=chair
-  scripts/always-on-server.sh restart --expect-pid <PID>` (pull/build/health 待ち込み。PID は
-  `status` で確認。cwd が古い worktree でも main の現在版へ exec し直す安全策あり。bdboard-9nah)。
-  **Bash からの直接の停止コマンド (`kill`/`pkill`/`killall`) は `permissions.deny` で拒否される** —
-  サブエージェントの main checkout pull/start/listener kill は hook 規則 7 も deny する (bdboard-hpu8)。
+  scripts/always-on-server.sh restart --expect-pid <PID> [--pull]` (`--pull` 無しでは pull しない。
+  マージ直後は `deploy` を使う。PID は `status` で確認)。**pkill/killall 等のパターン指定の停止は全
+  エージェントで禁止** (Claude Code では `permissions.deny` でも拒否される) — サブエージェントの
+  main checkout pull/start/listener kill は hook 規則 7 も deny する (bdboard-hpu8)。
 - launchd plist 等の常駐デーモン化はしない (別途ユーザー承認が要る変更)。
 
 ## Git Workflow (multi-session: per-ticket worktree + branch + PR)

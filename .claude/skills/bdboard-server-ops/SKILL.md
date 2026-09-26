@@ -16,8 +16,9 @@ wanted, that is a separate, explicitly user-approved change.
 2026-09-20 に、PR をマージしたサブエージェントが「マージ後に再起動」の手順どおり main
 checkout を pull し 8787 を kill・再起動する事故が 3 件続いた (bdboard-hpu8)。以来、
 **サーバーを止める・起こす・作り直す操作はすべてこのスクリプト経由で、議長 (トップレベル
-セッション) だけが行う**。下の各節の手動手順は「スクリプトが何をしているか」の参照と、
-スクリプトが使えないときの `BDBOARD_SERVER_OVERRIDE="<理由>"` 付きの例外手順である。
+セッション) だけが行う**。下の各節の手動手順は「スクリプトが何をしているか」の参照であり、
+手で真似る手順ではない。スクリプトで止められないときは手で止めない — ユーザーに PID と
+理由を伝え、ユーザー自身の端末で止めてもらう（下の「スクリプトで対処できない場面」参照）。
 
 ```bash
 scripts/always-on-server.sh status                         # 誰でも可: PID / HEAD / health / cloudflared
@@ -53,12 +54,24 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
 サブエージェントとして作業していて再起動が必要になったら、**最終報告に「議長で再起動が必要
 (PR #N)」と書いて終える**。自分で pull・kill・start を試みない (hook に止められる)。
 
+### スクリプトで対処できない場面
+
+次の場面は `scripts/always-on-server.sh` では対処できない。手で kill/start しない —
+ユーザーに listener PID と状況を伝え、**ユーザー自身の端末で**止めてもらってから
+`status` で確認し、必要なら `start` する。
+
+- **listener が2つ以上ある**: `--expect-pid` は1つの PID しか受け取れない。
+- **`port-still-bound`**: 停止後も port が解放されない (下の「再起動後の health 待ち」
+  手順1・「失敗時の終了コード」参照)。
+- **main checkout に壊れたスクリプトが入った**: `scripts/always-on-server.sh` 自身が
+  動かない、または誤動作する。
+
 ## セッション開始時のヘルスチェック
 
 - **At session start**: check the server with
 
   ```bash
-  curl -sS -o /dev/null -w '%{http_code}\n' http://localhost:8787/api/health
+  curl -sS -o /dev/null -w '%{http_code}\n' --max-time 5 http://localhost:8787/api/health
   ```
 
   **Judge by the status code, not by curl's exit status.** Local direct
@@ -69,11 +82,13 @@ BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start                   
   Do **not** use `curl -f`, because it hides the response body/status distinction.
 
   Only a **connection failure** means the server is down: curl prints `000`
-  and exits 7. In that case start it — **from a session whose cwd is the
-  main checkout**, prefer the Browser tool's `preview_start` with the `start`
-  config in `.claude/launch.json`; otherwise run `npm run start` in the
-  background. From a worktree session, neither: see the `preview_start`
-  entry below.
+  and exits 7. In that case start it with
+  `BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start` — from the
+  chair, from any cwd (the script resolves the main checkout itself, so a
+  worktree session does not need to `cd` anywhere first). Do not use
+  `preview_start` or a hand-typed `nohup npm run start`; see the
+  `preview_start` entry below for why `preview_start` specifically must
+  never run from a worktree.
 
   Before starting anything, confirm with
 
@@ -132,16 +147,16 @@ If that path is not the main checkout, the wrong server is running
 (`lsof -p <pid> -d cwd` answers the same question for an already-running
 process).
 
-From a worktree, start the server in the main checkout instead — the `cd`
-is load-bearing precisely because it selects which checkout's `src/main.ts`
-runs (and therefore which `web/dist` is served):
+From a worktree, use the script instead of a hand-typed start — it resolves
+the main checkout on its own, so which checkout's `src/main.ts` runs (and
+therefore which `web/dist` is served) is never in question:
 
 ```bash
-cd /path/to/main/checkout && nohup npm run start > /tmp/bdboard-server.log 2>&1 &
+BDBOARD_SERVER_CALLER=chair scripts/always-on-server.sh start
 ```
 
-(That log path is truncated on every restart; use a distinct name if you
-need to keep an earlier run's output.)
+(Startup logs go to `/tmp/bdboard-server.log`, truncated on every restart —
+save a copy first if you need to keep an earlier run's output.)
 
 A separate, independently-possible failure was seen just before this one:
 `preview_start` returned a serverId, but the port answered **connection
@@ -230,25 +245,41 @@ worktree-cwd case above, where every attempt reproduces (2/2).
    が終わるまで `server.close()` は呼ばれないため、この間は旧プロセスがまだ `/api/health` に
    **200 を返し続ける** (測定: 2026-09-13、#466 マージ直後。kill 直後の health poll が死に
    つつある旧プロセスから 200 を受け、成功と誤判定した — `lsof` はその後で listener 無しを
-   示し、新 PID は約5秒後にようやく listen し始めた)。最大 10 秒 (`DEFAULT_SHUTDOWN_TIMEOUT_MS`
-   5000ms + 余裕。起動ログの `Shutdown timeout: <N>ms` が実効値、`.env` で上書き可) 待って
-   消えなければ強制停止し、port の解放も確認する (解放されなければ `port-still-bound` で
-   止まり、サーバーには触らない)。生存確認を自分の手で行いたいとき (例: スクリプト実行中の
-   別ターミナルからの様子見) は `ps -p <pid> >/dev/null 2>&1; echo $?` (`0` = まだ生きている)
-   を使う — `kill -0` と同じ判定だが `permissions.deny` の kill 系パターンには当たらない。
-2. **起動して health を待つ**: 新しい `npm run start` を起動し、`/api/health` が **200** を
-   返し、かつ listener PID が旧 PID と異なることの両方を確認できるまで待つ (内部では 0.5 秒
-   間隔で最大 60 回 = 30 秒)。ステータスコードだけでは手順1の偽陽性 200 を拾ってしまうため、
-   新しい PID であることの確認が要る。冷起動の実測は 15 秒 (2026-09-13、並列 verify 実行下、
-   bdboard-pkr6.22.5)。30 秒を過ぎても `000`/非200 なら `/tmp/bdboard-server.log` を読み、
+   示し、新 PID は約5秒後にようやく listen し始めた)。最大 10 秒（スクリプト側の固定値。
+   アプリの `BDBOARD_SHUTDOWN_TIMEOUT_MS` とは連動しない）待って消えなければ強制停止し、
+   port の解放も確認する (解放されなければ `port-still-bound` で止まる — 下の「失敗時の
+   終了コード」参照)。強制停止しても消えない場合は SSE drain の話ではない —
+   `bdboard-3tw.91` のタイムアウト経路は `closeAllConnections()` を呼んで確定的に終わる
+   ため、それより長く生き残るのはイベントループの詰まりを疑う。restart する前に
+   `/tmp/bdboard-server.log` を退避する (スクリプトは起動時にログを空にする)。LISTEN が
+   残っていれば restart で対処し、LISTEN だけ閉じてプロセスが生きているなら `status` が
+   not listening と示すので、上の「スクリプトで対処できない場面」に従ってユーザーに止めて
+   もらう。生存確認を自分の手で行いたいとき (例: スクリプト実行中の別ターミナルからの様子見)
+   は `ps -p <pid> >/dev/null 2>&1; echo $?` (`0` = まだ生きている) を使う — `kill -0` と
+   同じ判定だが `permissions.deny` の kill 系パターンには当たらない。
+2. **起動して health を待つ**: 新しい `npm run start` を起動し、`/api/health` が **200**
+   になるまで待つ (0.5 秒間隔で最大 60 回 = 30 秒。この間 PID は見ない)。200 になった、
+   またはタイムアウトしたその時点で listener PID を1回だけ取得し、旧 PID と異なるかを
+   確認する — ステータスコードだけでは手順1の偽陽性 200 を拾ってしまうため、この一度きりの
+   PID 比較が要る。冷起動の実測は 15 秒 (2026-09-13、並列 verify 実行下、bdboard-pkr6.22.5)。
+   30 秒を過ぎても `000`/非200 なら `/tmp/bdboard-server.log` を読み、
    `lsof -nP -iTCP:8787 -sTCP:LISTEN -t | wc -l` で複数リスナーが無いか数える。勘でもう1つ
-   起動しない。
+   起動しない — 2026-09-05 には待ちゼロのリトライが即座に「成功」と誤判定し、裏で本来の
+   サーバーが数秒後に正常起動していたところへ2つ目の `npm run start` を重ね、
+   `/tmp/bdboard-server.log` を空にした直後に `EADDRINUSE` で落ちた実例がある。
 3. **起動ログの確認**: `Serving static web UI from <main checkout>/web/dist` が出ているかを
    スクリプトが確認する (出ていなければ別 checkout から起動した可能性の警告を出す)。
 
-失敗時の終了コード (詳細は `scripts/always-on-server.sh --help`): `2` = 前提不成立
-(トンネル稼働・health 不通・build 失敗・port 未解放)、`3` = `--expect-pid` 不一致、
-`4` = `BDBOARD_SERVER_CALLER` 未宣言。いずれもサーバーには触っていない。
+失敗時の終了コード (詳細は `scripts/always-on-server.sh --help`): `3` = `--expect-pid`
+不一致、`4` = `BDBOARD_SERVER_CALLER` 未宣言 — いずれも旧プロセスは無傷。
+
+`2` (前提不成立) は2種類ある:
+- **停止前の失敗** — トンネル稼働・ロック中・`pull` 失敗・`install` 失敗・`build:web`
+  失敗・`--verify` の赤。この場合サーバーは無傷 (旧プロセスがまだ動いている)。
+- **停止後の失敗** — `port-still-bound`・health 不通・pid 不変。この場合**旧プロセスは
+  既に止まっている**。新しいプロセスが起動中の可能性もある。手でもう一度 `start` しない
+  — まず `status` を見直し、`/tmp/bdboard-server.log` を読む。起動中らしければ待ち、それ
+  でも上がらなければ上の「スクリプトで対処できない場面」に従ってユーザーに伝える。
 
 ## web だけの変更でも再起動が要る
 
@@ -334,11 +365,12 @@ worktree-cwd case above, where every attempt reproduces (2/2).
   user request), and then only through `scripts/always-on-server.sh` from the
   chair. Hook 規則 7 (`.claude/skills/bdboard-harness/hooks/server-guard.sh`) は
   listener PID とその親 (npm / node) への直接 `kill`、`$(lsof … 8787 …)` や変数・
-  パイプ経由で port から引いた PID の kill を、呼び出し元を問わず deny する。議長が
-  手で止めざるを得ないときだけ `BDBOARD_SERVER_OVERRIDE="<理由>" kill <PID>` と前置する。
+  パイプ経由で port から引いた PID の kill を、呼び出し元を問わず deny する。
+  スクリプトで止められないとき (上の「スクリプトで対処できない場面」参照) も、議長は
+  手で止めない — ユーザーに PID と理由を伝え、ユーザー自身の端末で止めてもらう。
 - Kill には **pkill / killall 等のパターンマッチ kill を使わない** —
   worktree のテスト用プロセスを狙った `pkill -f 'tsx.*src/main.ts'` がこの常時稼働
-  サーバーにも当たった実例がある。必ず対象の PID を特定してから kill すること
+  サーバーにも当たった実例がある。必ず対象の PID を特定して `--expect-pid` に渡すこと
   （委譲ブリーフにも毎回この禁止を明記する）。
 
 ## この規約が支えているもの
